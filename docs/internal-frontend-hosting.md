@@ -437,3 +437,7 @@ Read-only [deployment diagnostics](internal-frontend-hosting-diagnostics.md) exp
 Guided internal GitHub setup is independently default-off. See
 [workflow generation and local preflight](internal-frontend-hosting-ci-setup.md)
 for reviewable downloads based on an existing immutable site trust.
+
+The separately flagged [deployment activity view](internal-frontend-hosting-activity.md)
+lists retained CI intents with bounded pagination and links to diagnostics and
+release review. It performs no mutations or live provider checks.

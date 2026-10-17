@@ -260,3 +260,11 @@ func (h hostingHost) HostingDiagnosticReader() hostingapi.DiagnosticReader {
 func (h hostingHost) HostingCISetupEnabled() bool {
 	return h.s.runtimeBool(runtimeConfigFrontendHostingCISetup, false)
 }
+
+func (h hostingHost) HostingActivityEnabled() bool {
+	return h.s.runtimeBool(runtimeConfigFrontendHostingActivity, false)
+}
+func (h hostingHost) HostingActivityReader() state.HostingActivityReader {
+	reader, _ := h.s.store.(state.HostingActivityReader)
+	return reader
+}

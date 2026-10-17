@@ -11,6 +11,102 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const hostingActivityList = `-- name: HostingActivityList :many
+SELECT r.site_id,r.id,r.release_id,r.preview_id,r.preview_created,r.created_at,r.preview_expires_at,
+ rel.id AS release_record_id,rel.state AS release_state,rel.provenance AS release_provenance,
+ p.id AS preview_record_id,p.release_id AS preview_release_id,p.origin_id AS preview_origin_id,
+ p.expires_at AS preview_expiry,p.revoked AS preview_revoked,p.generation AS preview_generation,
+ p.published_generation AS preview_published_generation,p.published_at AS preview_published_at,
+ p.next_attempt_at AS preview_next_attempt_at,p.last_error_code AS preview_last_error_code
+FROM hosting_ci_runs r
+JOIN hosting_sites s ON s.id=r.site_id
+LEFT JOIN hosting_releases rel ON rel.id=r.release_id AND rel.site_id=r.site_id
+LEFT JOIN hosting_previews p ON p.id=r.preview_id AND p.site_id=r.site_id AND p.account_id=s.account_id
+WHERE s.account_id=$1 AND r.site_id=$2
+ AND (NOT $3::boolean OR (r.created_at,r.id)<($4::timestamptz,$5::uuid))
+ORDER BY r.created_at DESC,r.id DESC LIMIT $6
+`
+
+type HostingActivityListParams struct {
+	AccountID       pgtype.UUID
+	SiteID          pgtype.UUID
+	HasCursor       bool
+	BeforeCreatedAt pgtype.Timestamptz
+	BeforeID        pgtype.UUID
+	PageSize        int32
+}
+
+type HostingActivityListRow struct {
+	SiteID                     pgtype.UUID
+	ID                         pgtype.UUID
+	ReleaseID                  pgtype.UUID
+	PreviewID                  pgtype.UUID
+	PreviewCreated             bool
+	CreatedAt                  pgtype.Timestamptz
+	PreviewExpiresAt           pgtype.Timestamptz
+	ReleaseRecordID            pgtype.UUID
+	ReleaseState               pgtype.Text
+	ReleaseProvenance          []byte
+	PreviewRecordID            pgtype.UUID
+	PreviewReleaseID           pgtype.UUID
+	PreviewOriginID            pgtype.Text
+	PreviewExpiry              pgtype.Timestamptz
+	PreviewRevoked             pgtype.Bool
+	PreviewGeneration          pgtype.Int8
+	PreviewPublishedGeneration pgtype.Int8
+	PreviewPublishedAt         pgtype.Timestamptz
+	PreviewNextAttemptAt       pgtype.Timestamptz
+	PreviewLastErrorCode       pgtype.Text
+}
+
+func (q *Queries) HostingActivityList(ctx context.Context, db DBTX, arg HostingActivityListParams) ([]HostingActivityListRow, error) {
+	rows, err := db.Query(ctx, hostingActivityList,
+		arg.AccountID,
+		arg.SiteID,
+		arg.HasCursor,
+		arg.BeforeCreatedAt,
+		arg.BeforeID,
+		arg.PageSize,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []HostingActivityListRow{}
+	for rows.Next() {
+		var i HostingActivityListRow
+		if err := rows.Scan(
+			&i.SiteID,
+			&i.ID,
+			&i.ReleaseID,
+			&i.PreviewID,
+			&i.PreviewCreated,
+			&i.CreatedAt,
+			&i.PreviewExpiresAt,
+			&i.ReleaseRecordID,
+			&i.ReleaseState,
+			&i.ReleaseProvenance,
+			&i.PreviewRecordID,
+			&i.PreviewReleaseID,
+			&i.PreviewOriginID,
+			&i.PreviewExpiry,
+			&i.PreviewRevoked,
+			&i.PreviewGeneration,
+			&i.PreviewPublishedGeneration,
+			&i.PreviewPublishedAt,
+			&i.PreviewNextAttemptAt,
+			&i.PreviewLastErrorCode,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const hostingCIRunCount = `-- name: HostingCIRunCount :one
 SELECT count(*)::bigint FROM hosting_ci_runs WHERE site_id=$1
 `

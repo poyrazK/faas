@@ -11368,6 +11368,13 @@ const (
 
 const HostingCIWorkflowTimeout = 20 * time.Minute
 
+// Read-only deployment activity never changes the retained CI-run quota.
+const (
+	HostingActivityPageSize       = 25
+	HostingActivityCursorMaxBytes = 128
+	HostingActivityTimeout        = 15 * time.Second
+)
+
 const HostingDiagnosticsTimeout = 15 * time.Second
 
 const (

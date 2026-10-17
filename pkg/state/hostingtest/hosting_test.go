@@ -16,6 +16,7 @@ import (
 )
 
 type hostingTestStore interface {
+	state.HostingActivityReader
 	state.HostingOIDCStore
 	state.Store
 	state.HostingStore
@@ -50,6 +51,7 @@ func TestHostingStores(t *testing.T) {
 			t.Run("account_storage_usage", func(t *testing.T) { accountStorageUsage(t, store) })
 			t.Run("staged_release_visibility", func(t *testing.T) { stagedReleaseVisibility(t, store) })
 			t.Run("oidc_credentials", func(t *testing.T) { hostingOIDCLifecycle(t, store) })
+			t.Run("deployment_activity", func(t *testing.T) { hostingActivityLifecycle(t, store) })
 			t.Run("automation_credentials", func(t *testing.T) { hostingCredentialLifecycle(t, store) })
 			t.Run("retention", func(t *testing.T) { hostingRetentionLifecycle(t, store) })
 			t.Run("retention_races", func(t *testing.T) { hostingRetentionRaces(t, store) })

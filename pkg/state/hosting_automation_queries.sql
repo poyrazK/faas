@@ -19,3 +19,18 @@ INSERT INTO hosting_ci_runs(site_id,id,release_id,preview_id,fingerprint,created
 SELECT r.* FROM hosting_ci_runs r JOIN hosting_sites s ON s.id=r.site_id WHERE s.account_id=$1 AND r.site_id=$2 AND r.id=$3;
 -- name: HostingCIRunPreviewCreated :exec
 UPDATE hosting_ci_runs SET preview_created=true WHERE site_id=$1 AND id=$2;
+
+-- name: HostingActivityList :many
+SELECT r.site_id,r.id,r.release_id,r.preview_id,r.preview_created,r.created_at,r.preview_expires_at,
+ rel.id AS release_record_id,rel.state AS release_state,rel.provenance AS release_provenance,
+ p.id AS preview_record_id,p.release_id AS preview_release_id,p.origin_id AS preview_origin_id,
+ p.expires_at AS preview_expiry,p.revoked AS preview_revoked,p.generation AS preview_generation,
+ p.published_generation AS preview_published_generation,p.published_at AS preview_published_at,
+ p.next_attempt_at AS preview_next_attempt_at,p.last_error_code AS preview_last_error_code
+FROM hosting_ci_runs r
+JOIN hosting_sites s ON s.id=r.site_id
+LEFT JOIN hosting_releases rel ON rel.id=r.release_id AND rel.site_id=r.site_id
+LEFT JOIN hosting_previews p ON p.id=r.preview_id AND p.site_id=r.site_id AND p.account_id=s.account_id
+WHERE s.account_id=sqlc.arg(account_id) AND r.site_id=sqlc.arg(site_id)
+ AND (NOT sqlc.arg(has_cursor)::boolean OR (r.created_at,r.id)<(sqlc.arg(before_created_at)::timestamptz,sqlc.arg(before_id)::uuid))
+ORDER BY r.created_at DESC,r.id DESC LIMIT sqlc.arg(page_size);

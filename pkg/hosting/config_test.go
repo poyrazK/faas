@@ -115,3 +115,16 @@ func TestHostingCISetupNeedsIsolatedProviderConfiguration(t *testing.T) {
 		}
 	}
 }
+
+func TestHostingActivityNeedsIsolatedProviderConfiguration(t *testing.T) {
+	for _, value := range []string{"1", "true"} {
+		if _, err := Load(func(key string) string {
+			if key == "FAAS_FRONTEND_HOSTING_ACTIVITY_ENABLED" {
+				return value
+			}
+			return ""
+		}, "gregale.dev"); err == nil {
+			t.Fatal("activity without internal hosting configuration")
+		}
+	}
+}

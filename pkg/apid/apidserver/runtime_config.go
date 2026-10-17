@@ -33,6 +33,7 @@ const (
 	runtimeConfigFrontendHostingPreviews    = "frontend_hosting_previews_enabled"
 	runtimeConfigFrontendHostingHistory     = "frontend_hosting_history_enabled"
 	runtimeConfigFrontendHostingRetention   = "frontend_hosting_retention_enabled"
+	runtimeConfigFrontendHostingActivity    = "frontend_hosting_activity_enabled"
 	runtimeConfigFrontendHostingCISetup     = "frontend_hosting_ci_setup_enabled"
 	runtimeConfigFrontendHostingDiagnostics = "frontend_hosting_diagnostics_enabled"
 	runtimeConfigFrontendHostingOIDC        = "frontend_hosting_oidc_enabled"
@@ -68,6 +69,7 @@ var runtimeConfigCatalog = []runtimeConfigDefinition{
 	{Key: runtimeConfigFrontendHostingPreviews, Label: "Internal hosting private previews", Description: "Admit immutable private release previews. Worker serving has a separate default-off switch.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
 	{Key: runtimeConfigFrontendHostingHistory, Label: "Internal hosting release history", Description: "Admit caller-provided provenance, record accepted promotions transactionally, and expose bounded history.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
 	{Key: runtimeConfigFrontendHostingRetention, Label: "Internal hosting retention", Description: "Opt in to per-site automatic retirement of abandoned uploads and expired never-published CI releases.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
+	{Key: runtimeConfigFrontendHostingActivity, Label: "Internal hosting deployment activity", Description: "List bounded stored CI intent and release/preview evidence without mutations or provider probes.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
 	{Key: runtimeConfigFrontendHostingCISetup, Label: "Internal hosting GitHub setup", Description: "Render and preflight reviewed deployment configuration without repository writes or deployments.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
 	{Key: runtimeConfigFrontendHostingDiagnostics, Label: "Internal hosting diagnostics", Description: "Read stored site and CI evidence with safe recovery guidance. Does not probe or mutate providers.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
 	{Key: runtimeConfigFrontendHostingOIDC, Label: "Internal hosting GitHub OIDC", Description: "Exchange explicitly trusted GitHub job identities for short-lived site staging and private preview credentials.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
@@ -128,6 +130,8 @@ func runtimeConfigEnvDefault(def runtimeConfigDefinition, getenv func(string) st
 		envName = "FAAS_FRONTEND_HOSTING_DURABLE_ROUTING_ENABLED"
 	case runtimeConfigFrontendHostingRetention:
 		envName = "FAAS_FRONTEND_HOSTING_RETENTION_ENABLED"
+	case runtimeConfigFrontendHostingActivity:
+		envName = "FAAS_FRONTEND_HOSTING_ACTIVITY_ENABLED"
 	case runtimeConfigFrontendHostingCISetup:
 		envName = "FAAS_FRONTEND_HOSTING_CI_SETUP_ENABLED"
 	case runtimeConfigFrontendHostingDiagnostics:

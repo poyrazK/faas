@@ -277,3 +277,11 @@ run "ci_setup_default_off" {
     error_message = "Guided GitHub setup must default off independently of serving and deployment."
   }
 }
+
+run "activity_default_off" {
+  command = plan
+  assert {
+    condition     = output.apid_environment.FAAS_FRONTEND_HOSTING_ACTIVITY_ENABLED == "0"
+    error_message = "Deployment activity must default off independently of serving and automation."
+  }
+}

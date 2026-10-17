@@ -26,7 +26,7 @@ func cmdSites(args []string) int {
 		return printErr("Internal frontend hosting is disabled", errors.New("set FAAS_FRONTEND_HOSTING_ENABLED=1 on an operator workstation; the server must also enable the feature"))
 	}
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale sites <create|list|status|diagnose|ci-setup|ci-preflight|deploy|releases|diff|ci|tokens|cleanup|retention|history|previews|promote|rollback|suspend|resume|retire|delete> [flags]", "sites")
+		PrintUsage(os.Stderr, "usage: gregale sites <create|list|status|runs|diagnose|ci-setup|ci-preflight|deploy|releases|diff|ci|tokens|cleanup|retention|history|previews|promote|rollback|suspend|resume|retire|delete> [flags]", "sites")
 		return 1
 	}
 	if args[0] == "cleanup" || args[0] == "retention" {
@@ -34,6 +34,9 @@ func cmdSites(args []string) int {
 	}
 	if args[0] == "ci-setup" || args[0] == "ci-preflight" {
 		return cmdSitesCISetup(args[1:], args[0] == "ci-preflight")
+	}
+	if args[0] == "runs" {
+		return cmdSitesRuns(args[1:])
 	}
 	if args[0] == "diagnose" {
 		return cmdSitesDiagnose(args[1:])

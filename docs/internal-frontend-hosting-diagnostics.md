@@ -96,3 +96,7 @@ endpoints or production readiness gates.
 
 Local fake-provider and HTTP/browser tests exercise these behaviors. Live
 GitHub/Cloudflare/Access qualification remains deferred.
+
+For discovery without copying run IDs, independently enable the
+[deployment activity view](internal-frontend-hosting-activity.md). Its **Inspect run**
+button selects the exact original intent here; it never chooses a latest run.

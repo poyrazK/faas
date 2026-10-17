@@ -1378,6 +1378,7 @@ type Querier interface {
 	HoldProjectEnvironmentCloneConfiguration(ctx context.Context, db DBTX, arg HoldProjectEnvironmentCloneConfigurationParams) (ProjectEnvironmentCloneConfigurationGuard, error)
 	HostingAccountLock(ctx context.Context, db DBTX, accountID pgtype.UUID) (pgtype.UUID, error)
 	HostingAccountUsage(ctx context.Context, db DBTX, arg HostingAccountUsageParams) (HostingAccountUsageRow, error)
+	HostingActivityList(ctx context.Context, db DBTX, arg HostingActivityListParams) ([]HostingActivityListRow, error)
 	HostingCIRunCount(ctx context.Context, db DBTX, siteID pgtype.UUID) (int64, error)
 	HostingCIRunCreate(ctx context.Context, db DBTX, arg HostingCIRunCreateParams) (HostingCiRun, error)
 	HostingCIRunGet(ctx context.Context, db DBTX, arg HostingCIRunGetParams) (HostingCiRun, error)

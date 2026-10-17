@@ -19,6 +19,8 @@ import (
 )
 
 type testHost struct {
+	activity                  bool
+	activityReader            state.HostingActivityReader
 	ciSetup                   bool
 	oidcStore                 state.HostingOIDCStore
 	diagnostics               bool
