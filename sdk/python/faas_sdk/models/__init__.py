@@ -68,6 +68,7 @@ from .admin_status_update_edit_request import AdminStatusUpdateEditRequest
 from .adopt_environment_git_ops_request import AdoptEnvironmentGitOpsRequest
 from .adopt_environment_git_ops_response import AdoptEnvironmentGitOpsResponse
 from .adopt_environment_git_ops_response_status import AdoptEnvironmentGitOpsResponseStatus
+from .advance_automation_live_suite_request import AdvanceAutomationLiveSuiteRequest
 from .advance_canary_request import AdvanceCanaryRequest
 from .after_restore_hook import AfterRestoreHook
 from .alert_delivery_response import AlertDeliveryResponse
@@ -126,6 +127,7 @@ from .api_key_response_status import APIKeyResponseStatus
 from .app_binding_inventory import AppBindingInventory
 from .app_binding_inventory_item import AppBindingInventoryItem
 from .app_binding_inventory_item_type import AppBindingInventoryItemType
+from .app_binding_inventory_service_targets import AppBindingInventoryServiceTargets
 from .app_configured_resources import AppConfiguredResources
 from .app_configured_resources_cpu_millicores import AppConfiguredResourcesCpuMillicores
 from .app_effective_limits import AppEffectiveLimits
@@ -450,6 +452,35 @@ from .automation_health_response_status_counts import AutomationHealthResponseSt
 from .automation_health_run import AutomationHealthRun
 from .automation_health_run_status import AutomationHealthRunStatus
 from .automation_health_step_failure import AutomationHealthStepFailure
+from .automation_live_baseline import AutomationLiveBaseline
+from .automation_live_baseline_case_health import AutomationLiveBaselineCaseHealth
+from .automation_live_baseline_case_health_status import AutomationLiveBaselineCaseHealthStatus
+from .automation_live_baseline_health import AutomationLiveBaselineHealth
+from .automation_live_baseline_health_evidence_status import AutomationLiveBaselineHealthEvidenceStatus
+from .automation_live_baseline_health_renewal_status import AutomationLiveBaselineHealthRenewalStatus
+from .automation_live_baseline_history import AutomationLiveBaselineHistory
+from .automation_live_baseline_policy import AutomationLiveBaselinePolicy
+from .automation_live_baseline_policy_version import AutomationLiveBaselinePolicyVersion
+from .automation_live_baseline_retirement import AutomationLiveBaselineRetirement
+from .automation_live_expectation import AutomationLiveExpectation
+from .automation_live_expectation_state import AutomationLiveExpectationState
+from .automation_live_report import AutomationLiveReport
+from .automation_live_suite import AutomationLiveSuite
+from .automation_live_suite_case import AutomationLiveSuiteCase
+from .automation_live_suite_case_comparison import AutomationLiveSuiteCaseComparison
+from .automation_live_suite_case_comparison_change import AutomationLiveSuiteCaseComparisonChange
+from .automation_live_suite_case_outcome import AutomationLiveSuiteCaseOutcome
+from .automation_live_suite_comparison import AutomationLiveSuiteComparison
+from .automation_live_suite_comparison_counts import AutomationLiveSuiteComparisonCounts
+from .automation_live_suite_counts import AutomationLiveSuiteCounts
+from .automation_live_suite_member import AutomationLiveSuiteMember
+from .automation_live_suite_observation import AutomationLiveSuiteObservation
+from .automation_live_suite_observation_result import AutomationLiveSuiteObservationResult
+from .automation_live_suite_outcome import AutomationLiveSuiteOutcome
+from .automation_live_suite_summary import AutomationLiveSuiteSummary
+from .automation_live_test import AutomationLiveTest
+from .automation_live_test_expected_run_status import AutomationLiveTestExpectedRunStatus
+from .automation_live_verification import AutomationLiveVerification
 from .automation_publish_check_scenario import AutomationPublishCheckScenario
 from .automation_publish_policy import AutomationPublishPolicy
 from .automation_publish_policy_mode import AutomationPublishPolicyMode
@@ -465,6 +496,21 @@ from .automation_simulation_mock_attempt_outcome import AutomationSimulationMock
 from .automation_simulation_step import AutomationSimulationStep
 from .automation_simulation_step_kind import AutomationSimulationStepKind
 from .automation_simulation_step_state import AutomationSimulationStepState
+from .automation_test_case import AutomationTestCase
+from .automation_test_case_result import AutomationTestCaseResult
+from .automation_test_case_result_issue import AutomationTestCaseResultIssue
+from .automation_test_inputs import AutomationTestInputs
+from .automation_test_inputs_mock_attempts import AutomationTestInputsMockAttempts
+from .automation_test_inputs_mock_item_attempts import AutomationTestInputsMockItemAttempts
+from .automation_test_inputs_mock_item_attempts_additional_property import (
+    AutomationTestInputsMockItemAttemptsAdditionalProperty,
+)
+from .automation_test_inputs_mock_item_outputs import AutomationTestInputsMockItemOutputs
+from .automation_test_inputs_mock_outputs import AutomationTestInputsMockOutputs
+from .automation_test_report import AutomationTestReport
+from .automation_test_step_result import AutomationTestStepResult
+from .automation_test_step_result_mismatches_item import AutomationTestStepResultMismatchesItem
+from .automation_test_suite import AutomationTestSuite
 from .before_checkpoint_hook import BeforeCheckpointHook
 from .billing_cancel_response import BillingCancelResponse
 from .billing_catalog_entry import BillingCatalogEntry
@@ -497,6 +543,7 @@ from .binding_check_binding_result_object_storage_mode import BindingCheckBindin
 from .binding_check_binding_result_required_object_storage_mode import (
     BindingCheckBindingResultRequiredObjectStorageMode,
 )
+from .binding_check_binding_result_required_queue_evidence import BindingCheckBindingResultRequiredQueueEvidence
 from .binding_check_finding import BindingCheckFinding
 from .binding_check_report import BindingCheckReport
 from .binding_inventory_issue import BindingInventoryIssue
@@ -513,8 +560,30 @@ from .binding_runtime_deployment_status import BindingRuntimeDeploymentStatus
 from .binding_runtime_freshness import BindingRuntimeFreshness
 from .binding_runtime_instance_counts import BindingRuntimeInstanceCounts
 from .binding_verification import BindingVerification
+from .binding_verification_budget import BindingVerificationBudget
 from .binding_verification_check import BindingVerificationCheck
+from .binding_verification_diagnostic_blocker import BindingVerificationDiagnosticBlocker
+from .binding_verification_diagnostic_blocker_recovery import BindingVerificationDiagnosticBlockerRecovery
+from .binding_verification_diagnostic_blocker_resource_kind import BindingVerificationDiagnosticBlockerResourceKind
+from .binding_verification_difference import BindingVerificationDifference
 from .binding_verification_object_storage_mode import BindingVerificationObjectStorageMode
+from .binding_verification_plan_step import BindingVerificationPlanStep
+from .binding_verification_qualification import BindingVerificationQualification
+from .binding_verification_qualification_condition import BindingVerificationQualificationCondition
+from .binding_verification_qualification_condition_code import BindingVerificationQualificationConditionCode
+from .binding_verification_recovery_action import BindingVerificationRecoveryAction
+from .binding_verification_recovery_action_action import BindingVerificationRecoveryActionAction
+from .binding_verification_review import BindingVerificationReview
+from .binding_verification_review_service_targets import BindingVerificationReviewServiceTargets
+from .binding_verification_run import BindingVerificationRun
+from .binding_verification_run_diagnostics import BindingVerificationRunDiagnostics
+from .binding_verification_run_diagnostics_status import BindingVerificationRunDiagnosticsStatus
+from .binding_verification_run_list import BindingVerificationRunList
+from .binding_verification_run_status import BindingVerificationRunStatus
+from .binding_verification_run_step import BindingVerificationRunStep
+from .binding_verification_run_step_resource_kind import BindingVerificationRunStepResourceKind
+from .binding_verification_run_summary import BindingVerificationRunSummary
+from .binding_verification_run_summary_status import BindingVerificationRunSummaryStatus
 from .browser_promotion_approval_exchange import BrowserPromotionApprovalExchange
 from .browser_promotion_approval_request import BrowserPromotionApprovalRequest
 from .browser_promotion_approval_response import BrowserPromotionApprovalResponse
@@ -564,6 +633,20 @@ from .check_automation_publication_response import CheckAutomationPublicationRes
 from .check_platform_tenant_self_workflow_readiness_body import CheckPlatformTenantSelfWorkflowReadinessBody
 from .check_profile_regression_request import CheckProfileRegressionRequest
 from .check_route_requirements_request import CheckRouteRequirementsRequest
+from .checked_project_release_manifest import CheckedProjectReleaseManifest
+from .checked_project_release_manifest_deployments import CheckedProjectReleaseManifestDeployments
+from .checked_project_release_manifest_expected_fallback_deployments import (
+    CheckedProjectReleaseManifestExpectedFallbackDeployments,
+)
+from .checked_project_release_manifest_expected_policy_revisions import (
+    CheckedProjectReleaseManifestExpectedPolicyRevisions,
+)
+from .checked_project_release_manifest_service_targets import CheckedProjectReleaseManifestServiceTargets
+from .checked_project_release_manifest_service_targets_additional_property import (
+    CheckedProjectReleaseManifestServiceTargetsAdditionalProperty,
+)
+from .checked_project_release_response import CheckedProjectReleaseResponse
+from .checked_project_release_response_bindings_checks import CheckedProjectReleaseResponseBindingsChecks
 from .claim_api_consumer_usage_statement_request import ClaimAPIConsumerUsageStatementRequest
 from .clear_obsolete_deployments_body import ClearObsoleteDeploymentsBody
 from .clear_obsolete_report import ClearObsoleteReport
@@ -591,6 +674,10 @@ from .configure_managed_realtime_push_provider_response_200 import ConfigureMana
 from .configure_managed_realtime_push_provider_response_200_provider import (
     ConfigureManagedRealtimePushProviderResponse200Provider,
 )
+from .connection_budget_capacity import ConnectionBudgetCapacity
+from .connection_budget_capacity_state import ConnectionBudgetCapacityState
+from .connection_budget_demand import ConnectionBudgetDemand
+from .connection_budget_inventory import ConnectionBudgetInventory
 from .consume_invoice_response import ConsumeInvoiceResponse
 from .consumed_credit_row import ConsumedCreditRow
 from .consumer_key_list_response import ConsumerKeyListResponse
@@ -642,6 +729,8 @@ from .create_application_standard_log_destination_request import CreateApplicati
 from .create_application_standard_log_destination_request_kind import CreateApplicationStandardLogDestinationRequestKind
 from .create_application_standard_publisher_request import CreateApplicationStandardPublisherRequest
 from .create_application_standard_version_request import CreateApplicationStandardVersionRequest
+from .create_binding_verification_run_request import CreateBindingVerificationRunRequest
+from .create_binding_verification_run_request_service_targets import CreateBindingVerificationRunRequestServiceTargets
 from .create_commit_source_body import CreateCommitSourceBody
 from .create_commit_source_request import CreateCommitSourceRequest
 from .create_commit_source_request_contract_version import CreateCommitSourceRequestContractVersion
@@ -750,6 +839,10 @@ from .create_platform_tenant_webhook_request_retry_policy import CreatePlatformT
 from .create_preview_request import CreatePreviewRequest
 from .create_private_network_peering_request import CreatePrivateNetworkPeeringRequest
 from .create_private_network_request import CreatePrivateNetworkRequest
+from .create_project_binding_verification_run_request import CreateProjectBindingVerificationRunRequest
+from .create_project_binding_verification_run_request_review_digests import (
+    CreateProjectBindingVerificationRunRequestReviewDigests,
+)
 from .create_project_environment_approval_request import CreateProjectEnvironmentApprovalRequest
 from .create_project_environment_qualification_request import CreateProjectEnvironmentQualificationRequest
 from .create_project_environment_qualification_request_secret_revision_hashes import (
@@ -759,6 +852,7 @@ from .create_project_environment_qualification_request_workload_config_hashes im
     CreateProjectEnvironmentQualificationRequestWorkloadConfigHashes,
 )
 from .create_project_environment_request import CreateProjectEnvironmentRequest
+from .create_queue_binding_canary_request import CreateQueueBindingCanaryRequest
 from .create_queue_binding_request import CreateQueueBindingRequest
 from .create_queue_binding_request_mode import CreateQueueBindingRequestMode
 from .create_queue_binding_request_workload_class import CreateQueueBindingRequestWorkloadClass
@@ -799,6 +893,9 @@ from .dashboard_discard_failed_event_body import DashboardDiscardFailedEventBody
 from .dashboard_replay_account_failed_event_body import DashboardReplayAccountFailedEventBody
 from .dashboard_replay_app_debug_request_body import DashboardReplayAppDebugRequestBody
 from .dashboard_replay_failed_event_body import DashboardReplayFailedEventBody
+from .data_api_connection_budgets import DataAPIConnectionBudgets
+from .data_api_connection_budgets_state import DataAPIConnectionBudgetsState
+from .data_api_connection_budgets_version import DataAPIConnectionBudgetsVersion
 from .data_upstream_history_bucket import DataUpstreamHistoryBucket
 from .data_upstream_history_response import DataUpstreamHistoryResponse
 from .data_upstream_history_response_kind import DataUpstreamHistoryResponseKind
@@ -1193,6 +1290,24 @@ from .environment_workload_source_kind import EnvironmentWorkloadSourceKind
 from .environment_workload_source_runtime import EnvironmentWorkloadSourceRuntime
 from .environment_workload_variables import EnvironmentWorkloadVariables
 from .error_new_webhook_payload import ErrorNewWebhookPayload
+from .event_acknowledgment_failure_request import EventAcknowledgmentFailureRequest
+from .event_acknowledgment_history import EventAcknowledgmentHistory
+from .event_acknowledgment_history_coverage import EventAcknowledgmentHistoryCoverage
+from .event_acknowledgment_history_page import EventAcknowledgmentHistoryPage
+from .event_acknowledgment_history_page_coverage import EventAcknowledgmentHistoryPageCoverage
+from .event_acknowledgment_history_query import EventAcknowledgmentHistoryQuery
+from .event_acknowledgment_history_query_kind import EventAcknowledgmentHistoryQueryKind
+from .event_acknowledgment_outcome import EventAcknowledgmentOutcome
+from .event_acknowledgment_outcome_kind import EventAcknowledgmentOutcomeKind
+from .event_acknowledgment_policy import EventAcknowledgmentPolicy
+from .event_acknowledgment_policy_request import EventAcknowledgmentPolicyRequest
+from .event_acknowledgment_recording_coverage import EventAcknowledgmentRecordingCoverage
+from .event_acknowledgment_request import EventAcknowledgmentRequest
+from .event_acknowledgment_status import EventAcknowledgmentStatus
+from .event_acknowledgment_status_disposition import EventAcknowledgmentStatusDisposition
+from .event_acknowledgment_status_processing_state import EventAcknowledgmentStatusProcessingState
+from .event_acknowledgment_window_health import EventAcknowledgmentWindowHealth
+from .event_acknowledgment_window_health_coverage import EventAcknowledgmentWindowHealthCoverage
 from .event_backlog_consumer import EventBacklogConsumer
 from .event_backlog_consumer_consumer_kind import EventBacklogConsumerConsumerKind
 from .event_backlog_consumer_pending_waiting_reasons import EventBacklogConsumerPendingWaitingReasons
@@ -1225,6 +1340,11 @@ from .event_consumer_health_coverage import EventConsumerHealthCoverage
 from .event_consumer_pending_sample import EventConsumerPendingSample
 from .event_consumer_pending_sample_coverage import EventConsumerPendingSampleCoverage
 from .event_consumer_pending_sample_waiting_reasons import EventConsumerPendingSampleWaitingReasons
+from .event_consumer_processing_health import EventConsumerProcessingHealth
+from .event_consumer_processing_health_coverage import EventConsumerProcessingHealthCoverage
+from .event_consumer_processing_health_renewal_failure_coverage import (
+    EventConsumerProcessingHealthRenewalFailureCoverage,
+)
 from .event_consumer_waiting_reasons import EventConsumerWaitingReasons
 from .event_consumer_waiting_reasons_counts import EventConsumerWaitingReasonsCounts
 from .event_consumer_waiting_reasons_coverage import EventConsumerWaitingReasonsCoverage
@@ -1474,8 +1594,42 @@ from .event_subscription_capacity_commands import EventSubscriptionCapacityComma
 from .event_subscription_capacity_commands_outcome import EventSubscriptionCapacityCommandsOutcome
 from .event_subscription_capacity_guard import EventSubscriptionCapacityGuard
 from .event_subscription_capacity_request import EventSubscriptionCapacityRequest
+from .event_subscription_deadline_page import EventSubscriptionDeadlinePage
+from .event_subscription_deadline_page_coverage import EventSubscriptionDeadlinePageCoverage
+from .event_subscription_deadline_recipient import EventSubscriptionDeadlineRecipient
+from .event_subscription_deadline_recipient_waiting_reason import EventSubscriptionDeadlineRecipientWaitingReason
+from .event_subscription_deadline_window import EventSubscriptionDeadlineWindow
+from .event_subscription_deadline_window_coverage import EventSubscriptionDeadlineWindowCoverage
+from .event_subscription_deadline_window_expired_waiting_reasons import (
+    EventSubscriptionDeadlineWindowExpiredWaitingReasons,
+)
+from .event_subscription_deadline_window_upcoming_waiting_reasons import (
+    EventSubscriptionDeadlineWindowUpcomingWaitingReasons,
+)
 from .event_subscription_delivery_control import EventSubscriptionDeliveryControl
 from .event_subscription_list_response import EventSubscriptionListResponse
+from .event_subscription_pending_summary import EventSubscriptionPendingSummary
+from .event_subscription_pending_summary_capacity_blocking_scopes_item import (
+    EventSubscriptionPendingSummaryCapacityBlockingScopesItem,
+)
+from .event_subscription_pending_summary_circuit_state import EventSubscriptionPendingSummaryCircuitState
+from .event_subscription_pending_summary_constraints_item import EventSubscriptionPendingSummaryConstraintsItem
+from .event_subscription_pending_summary_coverage import EventSubscriptionPendingSummaryCoverage
+from .event_subscription_rate_command_receipt import EventSubscriptionRateCommandReceipt
+from .event_subscription_rate_command_receipt_outcome import EventSubscriptionRateCommandReceiptOutcome
+from .event_subscription_rate_commands import EventSubscriptionRateCommands
+from .event_subscription_rate_deadline_risk import EventSubscriptionRateDeadlineRisk
+from .event_subscription_rate_deadline_risk_reason import EventSubscriptionRateDeadlineRiskReason
+from .event_subscription_rate_limit import EventSubscriptionRateLimit
+from .event_subscription_rate_preview import EventSubscriptionRatePreview
+from .event_subscription_rate_preview_capacity_blocking_scopes_item import (
+    EventSubscriptionRatePreviewCapacityBlockingScopesItem,
+)
+from .event_subscription_rate_preview_coverage import EventSubscriptionRatePreviewCoverage
+from .event_subscription_rate_preview_deadline_coverage import EventSubscriptionRatePreviewDeadlineCoverage
+from .event_subscription_rate_preview_request import EventSubscriptionRatePreviewRequest
+from .event_subscription_rate_preview_sample_limit import EventSubscriptionRatePreviewSampleLimit
+from .event_subscription_rate_request import EventSubscriptionRateRequest
 from .event_subscription_response import EventSubscriptionResponse
 from .event_subscription_response_filter import EventSubscriptionResponseFilter
 from .event_subscription_response_work_action import EventSubscriptionResponseWorkAction
@@ -1866,8 +2020,12 @@ from .list_account_workflow_readiness_queue_requirement import ListAccountWorkfl
 from .list_admin_status_events_kind import ListAdminStatusEventsKind
 from .list_audit_events_response import ListAuditEventsResponse
 from .list_audit_log_response import ListAuditLogResponse
+from .list_automation_live_baselines_response import ListAutomationLiveBaselinesResponse
+from .list_automation_live_suites_response import ListAutomationLiveSuitesResponse
+from .list_automation_live_verifications_response import ListAutomationLiveVerificationsResponse
 from .list_automation_revisions_response import ListAutomationRevisionsResponse
 from .list_automations_response import ListAutomationsResponse
+from .list_binding_verification_runs_status import ListBindingVerificationRunsStatus
 from .list_bucket_objects_response_200 import ListBucketObjectsResponse200
 from .list_bucket_objects_response_200_items_item import ListBucketObjectsResponse200ItemsItem
 from .list_cron_runs_response import ListCronRunsResponse
@@ -1878,6 +2036,7 @@ from .list_dev_bridges_response import ListDevBridgesResponse
 from .list_durable_entity_registry_response_200 import ListDurableEntityRegistryResponse200
 from .list_edge_rule_events_outcome import ListEdgeRuleEventsOutcome
 from .list_edge_rule_lists_response import ListEdgeRuleListsResponse
+from .list_event_acknowledgment_history_page_kind import ListEventAcknowledgmentHistoryPageKind
 from .list_event_deliveries_state import ListEventDeliveriesState
 from .list_event_execution_lineage_retry_job_controls_action import ListEventExecutionLineageRetryJobControlsAction
 from .list_event_execution_lineage_retry_job_controls_credential_type import (
@@ -1889,6 +2048,8 @@ from .list_event_recoveries_mode import ListEventRecoveriesMode
 from .list_event_recoveries_state import ListEventRecoveriesState
 from .list_event_replay_backfill_items_state import ListEventReplayBackfillItemsState
 from .list_event_subscription_capacity_commands_outcome import ListEventSubscriptionCapacityCommandsOutcome
+from .list_event_subscription_deadlines_status import ListEventSubscriptionDeadlinesStatus
+from .list_event_subscription_deadlines_waiting_reason import ListEventSubscriptionDeadlinesWaitingReason
 from .list_executions_status import ListExecutionsStatus
 from .list_instances_response import ListInstancesResponse
 from .list_invocations_response import ListInvocationsResponse
@@ -1960,6 +2121,7 @@ from .list_platform_tenant_self_workflow_runs_status import ListPlatformTenantSe
 from .list_profile_deployment_checks_response import ListProfileDeploymentChecksResponse
 from .list_profile_investigations_response import ListProfileInvestigationsResponse
 from .list_profile_periodic_monitors_response import ListProfilePeriodicMonitorsResponse
+from .list_project_binding_verification_runs_status import ListProjectBindingVerificationRunsStatus
 from .list_project_environment_promotions_status import ListProjectEnvironmentPromotionsStatus
 from .list_schedule_occurrences_response import ListScheduleOccurrencesResponse
 from .list_secrets_for_account_response import ListSecretsForAccountResponse
@@ -2006,11 +2168,26 @@ from .managed_postgres_capabilities_credential_access_item import ManagedPostgre
 from .managed_postgres_capabilities_service_classes_item import ManagedPostgresCapabilitiesServiceClassesItem
 from .managed_postgres_compute_policy_change import ManagedPostgresComputePolicyChange
 from .managed_postgres_compute_policy_change_state import ManagedPostgresComputePolicyChangeState
+from .managed_postgres_connection_budget import ManagedPostgresConnectionBudget
+from .managed_postgres_connection_budget_model import ManagedPostgresConnectionBudgetModel
+from .managed_postgres_connection_budget_state import ManagedPostgresConnectionBudgetState
+from .managed_postgres_connection_budget_version import ManagedPostgresConnectionBudgetVersion
 from .managed_postgres_cutover import ManagedPostgresCutover
 from .managed_postgres_cutover_member import ManagedPostgresCutoverMember
 from .managed_postgres_cutover_member_access import ManagedPostgresCutoverMemberAccess
 from .managed_postgres_cutover_member_state import ManagedPostgresCutoverMemberState
+from .managed_postgres_cutover_preflight import ManagedPostgresCutoverPreflight
+from .managed_postgres_cutover_preflight_blockers_item import ManagedPostgresCutoverPreflightBlockersItem
+from .managed_postgres_cutover_preflight_state import ManagedPostgresCutoverPreflightState
+from .managed_postgres_cutover_runtime_drain import ManagedPostgresCutoverRuntimeDrain
+from .managed_postgres_cutover_runtime_drain_member import ManagedPostgresCutoverRuntimeDrainMember
+from .managed_postgres_cutover_runtime_drain_member_state import ManagedPostgresCutoverRuntimeDrainMemberState
+from .managed_postgres_cutover_runtime_drain_state import ManagedPostgresCutoverRuntimeDrainState
+from .managed_postgres_cutover_source_sessions import ManagedPostgresCutoverSourceSessions
+from .managed_postgres_cutover_source_sessions_state import ManagedPostgresCutoverSourceSessionsState
 from .managed_postgres_cutover_state import ManagedPostgresCutoverState
+from .managed_postgres_cutover_writer_isolation import ManagedPostgresCutoverWriterIsolation
+from .managed_postgres_cutover_writer_isolation_state import ManagedPostgresCutoverWriterIsolationState
 from .managed_postgres_database import ManagedPostgresDatabase
 from .managed_postgres_database_availability import ManagedPostgresDatabaseAvailability
 from .managed_postgres_database_list import ManagedPostgresDatabaseList
@@ -3317,6 +3494,7 @@ from .preflight_report import PreflightReport
 from .preflight_source import PreflightSource
 from .preflight_verdict import PreflightVerdict
 from .prepare_managed_postgres_cutover_request import PrepareManagedPostgresCutoverRequest
+from .prepare_project_rollback_request import PrepareProjectRollbackRequest
 from .prepare_workflow_operation_artifact_x_gregale_operation_execution_kind import (
     PrepareWorkflowOperationArtifactXGregaleOperationExecutionKind,
 )
@@ -3438,6 +3616,15 @@ from .programmatic_signup_magic_link_response_200 import ProgrammaticSignupMagic
 from .programmatic_signup_magic_link_response_200_status import ProgrammaticSignupMagicLinkResponse200Status
 from .progressive_rollout import ProgressiveRollout
 from .project_apply_request import ProjectApplyRequest
+from .project_binding_verification_review import ProjectBindingVerificationReview
+from .project_binding_verification_review_members import ProjectBindingVerificationReviewMembers
+from .project_binding_verification_review_review_digests import ProjectBindingVerificationReviewReviewDigests
+from .project_binding_verification_run import ProjectBindingVerificationRun
+from .project_binding_verification_run_diagnostics import ProjectBindingVerificationRunDiagnostics
+from .project_binding_verification_run_diagnostics_members import ProjectBindingVerificationRunDiagnosticsMembers
+from .project_binding_verification_run_diagnostics_status import ProjectBindingVerificationRunDiagnosticsStatus
+from .project_binding_verification_run_members import ProjectBindingVerificationRunMembers
+from .project_binding_verification_run_status import ProjectBindingVerificationRunStatus
 from .project_delete_preview_response import ProjectDeletePreviewResponse
 from .project_environment_approval_response import ProjectEnvironmentApprovalResponse
 from .project_environment_approval_response_status import ProjectEnvironmentApprovalResponseStatus
@@ -3560,14 +3747,19 @@ from .project_environment_variable_change_response import ProjectEnvironmentVari
 from .project_environment_variable_change_response_kind import ProjectEnvironmentVariableChangeResponseKind
 from .project_environment_variable_response import ProjectEnvironmentVariableResponse
 from .project_environment_workload_diff_response import ProjectEnvironmentWorkloadDiffResponse
+from .project_release_deactivation_receipt import ProjectReleaseDeactivationReceipt
 from .project_release_set_list_response import ProjectReleaseSetListResponse
 from .project_release_set_member_response import ProjectReleaseSetMemberResponse
 from .project_release_set_response import ProjectReleaseSetResponse
+from .project_release_stage import ProjectReleaseStage
+from .project_release_stage_member import ProjectReleaseStageMember
+from .project_release_stage_status import ProjectReleaseStageStatus
 from .project_response import ProjectResponse
 from .project_scan_request import ProjectScanRequest
 from .project_source_ref_scan_request import ProjectSourceRefScanRequest
 from .project_summary_response import ProjectSummaryResponse
 from .project_workload_response import ProjectWorkloadResponse
+from .promote_automation_live_baseline_request import PromoteAutomationLiveBaselineRequest
 from .promote_project_environment_request import PromoteProjectEnvironmentRequest
 from .public_auth_block import PublicAuthBlock
 from .public_auth_block_mode import PublicAuthBlockMode
@@ -3629,6 +3821,8 @@ from .put_outbound_request_policy_request import PutOutboundRequestPolicyRequest
 from .put_outbound_runs_binding_request import PutOutboundRunsBindingRequest
 from .put_webhook_automation_binding_request import PutWebhookAutomationBindingRequest
 from .put_webhook_automation_binding_request_filter import PutWebhookAutomationBindingRequestFilter
+from .queue_binding_canary import QueueBindingCanary
+from .queue_binding_canary_status import QueueBindingCanaryStatus
 from .queue_binding_response import QueueBindingResponse
 from .queue_binding_response_mode import QueueBindingResponseMode
 from .queue_binding_response_workload_class import QueueBindingResponseWorkloadClass
@@ -3653,6 +3847,8 @@ from .queue_peek_response import QueuePeekResponse
 from .queue_receive_response import QueueReceiveResponse
 from .queue_receive_response_payload import QueueReceiveResponsePayload
 from .queue_receive_response_result import QueueReceiveResponseResult
+from .queue_release_requirements import QueueReleaseRequirements
+from .queue_release_requirements_additional_property import QueueReleaseRequirementsAdditionalProperty
 from .queue_send_request import QueueSendRequest
 from .queue_send_request_payload import QueueSendRequestPayload
 from .queue_send_response import QueueSendResponse
@@ -3828,6 +4024,7 @@ from .restore_automation_revision_request import RestoreAutomationRevisionReques
 from .restore_managed_postgres_database_request import RestoreManagedPostgresDatabaseRequest
 from .resume_automation_failure_pause_request import ResumeAutomationFailurePauseRequest
 from .resume_workflow_run_request import ResumeWorkflowRunRequest
+from .retire_automation_live_baseline_request import RetireAutomationLiveBaselineRequest
 from .retry_deployment_request import RetryDeploymentRequest
 from .retry_deployment_request_from_stage import RetryDeploymentRequestFromStage
 from .retry_event_execution_lineage_case_request import RetryEventExecutionLineageCaseRequest
@@ -3840,6 +4037,9 @@ from .reuse_workflow_operation_artifact_x_gregale_operation_execution_kind impor
 from .reuse_workflow_operation_upload_x_gregale_operation_execution_kind import (
     ReuseWorkflowOperationUploadXGregaleOperationExecutionKind,
 )
+from .review_binding_verification_request import ReviewBindingVerificationRequest
+from .review_binding_verification_request_service_targets import ReviewBindingVerificationRequestServiceTargets
+from .review_project_binding_verification_request import ReviewProjectBindingVerificationRequest
 from .revoke_application_standard_exception_request import RevokeApplicationStandardExceptionRequest
 from .revoke_execution_artifact_grant_response import RevokeExecutionArtifactGrantResponse
 from .revoke_platform_tenant_self_consumers_request import RevokePlatformTenantSelfConsumersRequest
@@ -4103,6 +4303,7 @@ from .route_row import RouteRow
 from .route_throttle_requirement import RouteThrottleRequirement
 from .route_throttle_requirement_key_by import RouteThrottleRequirementKeyBy
 from .route_throttle_requirement_missing_key_policy import RouteThrottleRequirementMissingKeyPolicy
+from .run_automation_tests_request import RunAutomationTestsRequest
 from .runtime_config_restart_status_response import RuntimeConfigRestartStatusResponse
 from .runtime_config_restart_status_response_failure_reason import RuntimeConfigRestartStatusResponseFailureReason
 from .runtime_config_restart_status_response_status import RuntimeConfigRestartStatusResponseStatus
@@ -4125,6 +4326,8 @@ from .runtime_upgrade_preview_response import RuntimeUpgradePreviewResponse
 from .runtime_upgrade_preview_response_changes_item import RuntimeUpgradePreviewResponseChangesItem
 from .runtime_upgrade_preview_response_disposition import RuntimeUpgradePreviewResponseDisposition
 from .save_automation_draft_request import SaveAutomationDraftRequest
+from .save_automation_live_suite_request import SaveAutomationLiveSuiteRequest
+from .save_automation_test_suite_request import SaveAutomationTestSuiteRequest
 from .save_profile_deployment_policy_request import SaveProfileDeploymentPolicyRequest
 from .save_profile_investigation_request import SaveProfileInvestigationRequest
 from .save_route_requirements_request import SaveRouteRequirementsRequest
@@ -4249,6 +4452,7 @@ from .set_platform_tenant_hostname_policy_request import SetPlatformTenantHostna
 from .set_platform_tenant_request_budget_request import SetPlatformTenantRequestBudgetRequest
 from .set_platform_tenant_status_request import SetPlatformTenantStatusRequest
 from .set_platform_tenant_status_request_status import SetPlatformTenantStatusRequestStatus
+from .set_queue_binding_release_policy_request import SetQueueBindingReleasePolicyRequest
 from .set_route_health_gate_request import SetRouteHealthGateRequest
 from .set_route_health_gate_request_mode import SetRouteHealthGateRequestMode
 from .set_route_health_gate_request_on_regression import SetRouteHealthGateRequestOnRegression
@@ -4294,6 +4498,9 @@ from .source_review_request import SourceReviewRequest
 from .source_review_response import SourceReviewResponse
 from .source_tarball_deploy_request import SourceTarballDeployRequest
 from .source_tarball_deploy_request_tag import SourceTarballDeployRequestTag
+from .stage_project_release_request import StageProjectReleaseRequest
+from .start_automation_live_suite_request import StartAutomationLiveSuiteRequest
+from .start_automation_live_verification_request import StartAutomationLiveVerificationRequest
 from .start_durable_entity_quota_migration_body import StartDurableEntityQuotaMigrationBody
 from .start_durable_entity_quota_migration_response_200 import StartDurableEntityQuotaMigrationResponse200
 from .start_durable_entity_registry_cleanup_body import StartDurableEntityRegistryCleanupBody
@@ -4847,6 +5054,7 @@ __all__ = (
     "AdoptEnvironmentGitOpsRequest",
     "AdoptEnvironmentGitOpsResponse",
     "AdoptEnvironmentGitOpsResponseStatus",
+    "AdvanceAutomationLiveSuiteRequest",
     "AdvanceCanaryRequest",
     "AfterRestoreHook",
     "AlertDeliveryResponse",
@@ -4905,6 +5113,7 @@ __all__ = (
     "AppBindingInventory",
     "AppBindingInventoryItem",
     "AppBindingInventoryItemType",
+    "AppBindingInventoryServiceTargets",
     "AppConfiguredResources",
     "AppConfiguredResourcesCpuMillicores",
     "AppEffectiveLimits",
@@ -5225,6 +5434,35 @@ __all__ = (
     "AutomationHealthRun",
     "AutomationHealthRunStatus",
     "AutomationHealthStepFailure",
+    "AutomationLiveBaseline",
+    "AutomationLiveBaselineCaseHealth",
+    "AutomationLiveBaselineCaseHealthStatus",
+    "AutomationLiveBaselineHealth",
+    "AutomationLiveBaselineHealthEvidenceStatus",
+    "AutomationLiveBaselineHealthRenewalStatus",
+    "AutomationLiveBaselineHistory",
+    "AutomationLiveBaselinePolicy",
+    "AutomationLiveBaselinePolicyVersion",
+    "AutomationLiveBaselineRetirement",
+    "AutomationLiveExpectation",
+    "AutomationLiveExpectationState",
+    "AutomationLiveReport",
+    "AutomationLiveSuite",
+    "AutomationLiveSuiteCase",
+    "AutomationLiveSuiteCaseComparison",
+    "AutomationLiveSuiteCaseComparisonChange",
+    "AutomationLiveSuiteCaseOutcome",
+    "AutomationLiveSuiteComparison",
+    "AutomationLiveSuiteComparisonCounts",
+    "AutomationLiveSuiteCounts",
+    "AutomationLiveSuiteMember",
+    "AutomationLiveSuiteObservation",
+    "AutomationLiveSuiteObservationResult",
+    "AutomationLiveSuiteOutcome",
+    "AutomationLiveSuiteSummary",
+    "AutomationLiveTest",
+    "AutomationLiveTestExpectedRunStatus",
+    "AutomationLiveVerification",
     "AutomationPublishCheckScenario",
     "AutomationPublishPolicy",
     "AutomationPublishPolicyMode",
@@ -5240,6 +5478,19 @@ __all__ = (
     "AutomationSimulationStep",
     "AutomationSimulationStepKind",
     "AutomationSimulationStepState",
+    "AutomationTestCase",
+    "AutomationTestCaseResult",
+    "AutomationTestCaseResultIssue",
+    "AutomationTestInputs",
+    "AutomationTestInputsMockAttempts",
+    "AutomationTestInputsMockItemAttempts",
+    "AutomationTestInputsMockItemAttemptsAdditionalProperty",
+    "AutomationTestInputsMockItemOutputs",
+    "AutomationTestInputsMockOutputs",
+    "AutomationTestReport",
+    "AutomationTestStepResult",
+    "AutomationTestStepResultMismatchesItem",
+    "AutomationTestSuite",
     "BeforeCheckpointHook",
     "BillingCancelResponse",
     "BillingCatalogEntry",
@@ -5270,6 +5521,7 @@ __all__ = (
     "BindingCheckBindingResult",
     "BindingCheckBindingResultObjectStorageMode",
     "BindingCheckBindingResultRequiredObjectStorageMode",
+    "BindingCheckBindingResultRequiredQueueEvidence",
     "BindingCheckFinding",
     "BindingCheckReport",
     "BindingInventoryIssue",
@@ -5286,8 +5538,30 @@ __all__ = (
     "BindingRuntimeFreshness",
     "BindingRuntimeInstanceCounts",
     "BindingVerification",
+    "BindingVerificationBudget",
     "BindingVerificationCheck",
+    "BindingVerificationDiagnosticBlocker",
+    "BindingVerificationDiagnosticBlockerRecovery",
+    "BindingVerificationDiagnosticBlockerResourceKind",
+    "BindingVerificationDifference",
     "BindingVerificationObjectStorageMode",
+    "BindingVerificationPlanStep",
+    "BindingVerificationQualification",
+    "BindingVerificationQualificationCondition",
+    "BindingVerificationQualificationConditionCode",
+    "BindingVerificationRecoveryAction",
+    "BindingVerificationRecoveryActionAction",
+    "BindingVerificationReview",
+    "BindingVerificationReviewServiceTargets",
+    "BindingVerificationRun",
+    "BindingVerificationRunDiagnostics",
+    "BindingVerificationRunDiagnosticsStatus",
+    "BindingVerificationRunList",
+    "BindingVerificationRunStatus",
+    "BindingVerificationRunStep",
+    "BindingVerificationRunStepResourceKind",
+    "BindingVerificationRunSummary",
+    "BindingVerificationRunSummaryStatus",
     "BrowserPromotionApprovalExchange",
     "BrowserPromotionApprovalRequest",
     "BrowserPromotionApprovalResponse",
@@ -5334,6 +5608,14 @@ __all__ = (
     "CheckAccountWorkflowReadinessBody",
     "CheckAutomationPublicationRequest",
     "CheckAutomationPublicationResponse",
+    "CheckedProjectReleaseManifest",
+    "CheckedProjectReleaseManifestDeployments",
+    "CheckedProjectReleaseManifestExpectedFallbackDeployments",
+    "CheckedProjectReleaseManifestExpectedPolicyRevisions",
+    "CheckedProjectReleaseManifestServiceTargets",
+    "CheckedProjectReleaseManifestServiceTargetsAdditionalProperty",
+    "CheckedProjectReleaseResponse",
+    "CheckedProjectReleaseResponseBindingsChecks",
     "CheckPlatformTenantSelfWorkflowReadinessBody",
     "CheckProfileRegressionRequest",
     "CheckRouteRequirementsRequest",
@@ -5362,6 +5644,10 @@ __all__ = (
     "ConfigureManagedRealtimePushProviderProvider",
     "ConfigureManagedRealtimePushProviderResponse200",
     "ConfigureManagedRealtimePushProviderResponse200Provider",
+    "ConnectionBudgetCapacity",
+    "ConnectionBudgetCapacityState",
+    "ConnectionBudgetDemand",
+    "ConnectionBudgetInventory",
     "ConsumedCreditRow",
     "ConsumeInvoiceResponse",
     "ConsumerKeyListResponse",
@@ -5413,6 +5699,8 @@ __all__ = (
     "CreateAppWebhookRequestDeliveryFormat",
     "CreateAppWebhookRequestEventFilterItem",
     "CreateAppWebhookRequestRetryPolicy",
+    "CreateBindingVerificationRunRequest",
+    "CreateBindingVerificationRunRequestServiceTargets",
     "CreateCommitSourceBody",
     "CreateCommitSourceRequest",
     "CreateCommitSourceRequestContractVersion",
@@ -5513,11 +5801,14 @@ __all__ = (
     "CreatePreviewRequest",
     "CreatePrivateNetworkPeeringRequest",
     "CreatePrivateNetworkRequest",
+    "CreateProjectBindingVerificationRunRequest",
+    "CreateProjectBindingVerificationRunRequestReviewDigests",
     "CreateProjectEnvironmentApprovalRequest",
     "CreateProjectEnvironmentQualificationRequest",
     "CreateProjectEnvironmentQualificationRequestSecretRevisionHashes",
     "CreateProjectEnvironmentQualificationRequestWorkloadConfigHashes",
     "CreateProjectEnvironmentRequest",
+    "CreateQueueBindingCanaryRequest",
     "CreateQueueBindingRequest",
     "CreateQueueBindingRequestMode",
     "CreateQueueBindingRequestWorkloadClass",
@@ -5554,6 +5845,9 @@ __all__ = (
     "DashboardReplayAccountFailedEventBody",
     "DashboardReplayAppDebugRequestBody",
     "DashboardReplayFailedEventBody",
+    "DataAPIConnectionBudgets",
+    "DataAPIConnectionBudgetsState",
+    "DataAPIConnectionBudgetsVersion",
     "DataUpstreamHistoryBucket",
     "DataUpstreamHistoryResponse",
     "DataUpstreamHistoryResponseKind",
@@ -5944,6 +6238,24 @@ __all__ = (
     "EnvironmentWorkloadSourceRuntime",
     "EnvironmentWorkloadVariables",
     "ErrorNewWebhookPayload",
+    "EventAcknowledgmentFailureRequest",
+    "EventAcknowledgmentHistory",
+    "EventAcknowledgmentHistoryCoverage",
+    "EventAcknowledgmentHistoryPage",
+    "EventAcknowledgmentHistoryPageCoverage",
+    "EventAcknowledgmentHistoryQuery",
+    "EventAcknowledgmentHistoryQueryKind",
+    "EventAcknowledgmentOutcome",
+    "EventAcknowledgmentOutcomeKind",
+    "EventAcknowledgmentPolicy",
+    "EventAcknowledgmentPolicyRequest",
+    "EventAcknowledgmentRecordingCoverage",
+    "EventAcknowledgmentRequest",
+    "EventAcknowledgmentStatus",
+    "EventAcknowledgmentStatusDisposition",
+    "EventAcknowledgmentStatusProcessingState",
+    "EventAcknowledgmentWindowHealth",
+    "EventAcknowledgmentWindowHealthCoverage",
     "EventBacklogConsumer",
     "EventBacklogConsumerConsumerKind",
     "EventBacklogConsumerPendingWaitingReasons",
@@ -5976,6 +6288,9 @@ __all__ = (
     "EventConsumerPendingSample",
     "EventConsumerPendingSampleCoverage",
     "EventConsumerPendingSampleWaitingReasons",
+    "EventConsumerProcessingHealth",
+    "EventConsumerProcessingHealthCoverage",
+    "EventConsumerProcessingHealthRenewalFailureCoverage",
     "EventConsumerWaitingReasons",
     "EventConsumerWaitingReasonsCounts",
     "EventConsumerWaitingReasonsCoverage",
@@ -6203,8 +6518,34 @@ __all__ = (
     "EventSubscriptionCapacityCommandsOutcome",
     "EventSubscriptionCapacityGuard",
     "EventSubscriptionCapacityRequest",
+    "EventSubscriptionDeadlinePage",
+    "EventSubscriptionDeadlinePageCoverage",
+    "EventSubscriptionDeadlineRecipient",
+    "EventSubscriptionDeadlineRecipientWaitingReason",
+    "EventSubscriptionDeadlineWindow",
+    "EventSubscriptionDeadlineWindowCoverage",
+    "EventSubscriptionDeadlineWindowExpiredWaitingReasons",
+    "EventSubscriptionDeadlineWindowUpcomingWaitingReasons",
     "EventSubscriptionDeliveryControl",
     "EventSubscriptionListResponse",
+    "EventSubscriptionPendingSummary",
+    "EventSubscriptionPendingSummaryCapacityBlockingScopesItem",
+    "EventSubscriptionPendingSummaryCircuitState",
+    "EventSubscriptionPendingSummaryConstraintsItem",
+    "EventSubscriptionPendingSummaryCoverage",
+    "EventSubscriptionRateCommandReceipt",
+    "EventSubscriptionRateCommandReceiptOutcome",
+    "EventSubscriptionRateCommands",
+    "EventSubscriptionRateDeadlineRisk",
+    "EventSubscriptionRateDeadlineRiskReason",
+    "EventSubscriptionRateLimit",
+    "EventSubscriptionRatePreview",
+    "EventSubscriptionRatePreviewCapacityBlockingScopesItem",
+    "EventSubscriptionRatePreviewCoverage",
+    "EventSubscriptionRatePreviewDeadlineCoverage",
+    "EventSubscriptionRatePreviewRequest",
+    "EventSubscriptionRatePreviewSampleLimit",
+    "EventSubscriptionRateRequest",
     "EventSubscriptionResponse",
     "EventSubscriptionResponseFilter",
     "EventSubscriptionResponseWorkAction",
@@ -6583,8 +6924,12 @@ __all__ = (
     "ListAdminStatusEventsKind",
     "ListAuditEventsResponse",
     "ListAuditLogResponse",
+    "ListAutomationLiveBaselinesResponse",
+    "ListAutomationLiveSuitesResponse",
+    "ListAutomationLiveVerificationsResponse",
     "ListAutomationRevisionsResponse",
     "ListAutomationsResponse",
+    "ListBindingVerificationRunsStatus",
     "ListBucketObjectsResponse200",
     "ListBucketObjectsResponse200ItemsItem",
     "ListCronRunsResponse",
@@ -6595,6 +6940,7 @@ __all__ = (
     "ListDurableEntityRegistryResponse200",
     "ListEdgeRuleEventsOutcome",
     "ListEdgeRuleListsResponse",
+    "ListEventAcknowledgmentHistoryPageKind",
     "ListEventDeliveriesState",
     "ListEventExecutionLineageRetryJobControlsAction",
     "ListEventExecutionLineageRetryJobControlsCredentialType",
@@ -6604,6 +6950,8 @@ __all__ = (
     "ListEventRecoveriesState",
     "ListEventReplayBackfillItemsState",
     "ListEventSubscriptionCapacityCommandsOutcome",
+    "ListEventSubscriptionDeadlinesStatus",
+    "ListEventSubscriptionDeadlinesWaitingReason",
     "ListExecutionsStatus",
     "ListInstancesResponse",
     "ListInvocationsResponse",
@@ -6645,6 +6993,7 @@ __all__ = (
     "ListProfileDeploymentChecksResponse",
     "ListProfileInvestigationsResponse",
     "ListProfilePeriodicMonitorsResponse",
+    "ListProjectBindingVerificationRunsStatus",
     "ListProjectEnvironmentPromotionsStatus",
     "ListScheduleOccurrencesResponse",
     "ListSecretsForAccountResponse",
@@ -6691,11 +7040,26 @@ __all__ = (
     "ManagedPostgresCapabilitiesServiceClassesItem",
     "ManagedPostgresComputePolicyChange",
     "ManagedPostgresComputePolicyChangeState",
+    "ManagedPostgresConnectionBudget",
+    "ManagedPostgresConnectionBudgetModel",
+    "ManagedPostgresConnectionBudgetState",
+    "ManagedPostgresConnectionBudgetVersion",
     "ManagedPostgresCutover",
     "ManagedPostgresCutoverMember",
     "ManagedPostgresCutoverMemberAccess",
     "ManagedPostgresCutoverMemberState",
+    "ManagedPostgresCutoverPreflight",
+    "ManagedPostgresCutoverPreflightBlockersItem",
+    "ManagedPostgresCutoverPreflightState",
+    "ManagedPostgresCutoverRuntimeDrain",
+    "ManagedPostgresCutoverRuntimeDrainMember",
+    "ManagedPostgresCutoverRuntimeDrainMemberState",
+    "ManagedPostgresCutoverRuntimeDrainState",
+    "ManagedPostgresCutoverSourceSessions",
+    "ManagedPostgresCutoverSourceSessionsState",
     "ManagedPostgresCutoverState",
+    "ManagedPostgresCutoverWriterIsolation",
+    "ManagedPostgresCutoverWriterIsolationState",
     "ManagedPostgresDatabase",
     "ManagedPostgresDatabaseAvailability",
     "ManagedPostgresDatabaseList",
@@ -7858,6 +8222,7 @@ __all__ = (
     "PreflightSource",
     "PreflightVerdict",
     "PrepareManagedPostgresCutoverRequest",
+    "PrepareProjectRollbackRequest",
     "PrepareWorkflowOperationArtifactXGregaleOperationExecutionKind",
     "PreviewAccountWorkflowActionsBody",
     "PreviewArtifactResponse",
@@ -7975,6 +8340,15 @@ __all__ = (
     "ProgrammaticSignupMagicLinkResponse200Status",
     "ProgressiveRollout",
     "ProjectApplyRequest",
+    "ProjectBindingVerificationReview",
+    "ProjectBindingVerificationReviewMembers",
+    "ProjectBindingVerificationReviewReviewDigests",
+    "ProjectBindingVerificationRun",
+    "ProjectBindingVerificationRunDiagnostics",
+    "ProjectBindingVerificationRunDiagnosticsMembers",
+    "ProjectBindingVerificationRunDiagnosticsStatus",
+    "ProjectBindingVerificationRunMembers",
+    "ProjectBindingVerificationRunStatus",
     "ProjectDeletePreviewResponse",
     "ProjectEnvironmentApprovalResponse",
     "ProjectEnvironmentApprovalResponseStatus",
@@ -8073,14 +8447,19 @@ __all__ = (
     "ProjectEnvironmentVariableChangeResponseKind",
     "ProjectEnvironmentVariableResponse",
     "ProjectEnvironmentWorkloadDiffResponse",
+    "ProjectReleaseDeactivationReceipt",
     "ProjectReleaseSetListResponse",
     "ProjectReleaseSetMemberResponse",
     "ProjectReleaseSetResponse",
+    "ProjectReleaseStage",
+    "ProjectReleaseStageMember",
+    "ProjectReleaseStageStatus",
     "ProjectResponse",
     "ProjectScanRequest",
     "ProjectSourceRefScanRequest",
     "ProjectSummaryResponse",
     "ProjectWorkloadResponse",
+    "PromoteAutomationLiveBaselineRequest",
     "PromoteProjectEnvironmentRequest",
     "PublicAuthBlock",
     "PublicAuthBlockMode",
@@ -8142,6 +8521,8 @@ __all__ = (
     "PutOutboundRunsBindingRequest",
     "PutWebhookAutomationBindingRequest",
     "PutWebhookAutomationBindingRequestFilter",
+    "QueueBindingCanary",
+    "QueueBindingCanaryStatus",
     "QueueBindingResponse",
     "QueueBindingResponseMode",
     "QueueBindingResponseWorkloadClass",
@@ -8166,6 +8547,8 @@ __all__ = (
     "QueueReceiveResponse",
     "QueueReceiveResponsePayload",
     "QueueReceiveResponseResult",
+    "QueueReleaseRequirements",
+    "QueueReleaseRequirementsAdditionalProperty",
     "QueueSendRequest",
     "QueueSendRequestPayload",
     "QueueSendResponse",
@@ -8335,6 +8718,7 @@ __all__ = (
     "RestoreManagedPostgresDatabaseRequest",
     "ResumeAutomationFailurePauseRequest",
     "ResumeWorkflowRunRequest",
+    "RetireAutomationLiveBaselineRequest",
     "RetryDeploymentRequest",
     "RetryDeploymentRequestFromStage",
     "RetryEventExecutionLineageCaseRequest",
@@ -8343,6 +8727,9 @@ __all__ = (
     "RetryPolicyDTO",
     "ReuseWorkflowOperationArtifactXGregaleOperationExecutionKind",
     "ReuseWorkflowOperationUploadXGregaleOperationExecutionKind",
+    "ReviewBindingVerificationRequest",
+    "ReviewBindingVerificationRequestServiceTargets",
+    "ReviewProjectBindingVerificationRequest",
     "RevokeApplicationStandardExceptionRequest",
     "RevokeExecutionArtifactGrantResponse",
     "RevokePlatformTenantSelfConsumersRequest",
@@ -8604,6 +8991,7 @@ __all__ = (
     "RouteThrottleRequirement",
     "RouteThrottleRequirementKeyBy",
     "RouteThrottleRequirementMissingKeyPolicy",
+    "RunAutomationTestsRequest",
     "RuntimeConfigRestartStatusResponse",
     "RuntimeConfigRestartStatusResponseFailureReason",
     "RuntimeConfigRestartStatusResponseStatus",
@@ -8626,6 +9014,8 @@ __all__ = (
     "RuntimeUpgradePreviewResponseChangesItem",
     "RuntimeUpgradePreviewResponseDisposition",
     "SaveAutomationDraftRequest",
+    "SaveAutomationLiveSuiteRequest",
+    "SaveAutomationTestSuiteRequest",
     "SavedRouteRequirements",
     "SaveProfileDeploymentPolicyRequest",
     "SaveProfileInvestigationRequest",
@@ -8744,6 +9134,7 @@ __all__ = (
     "SetPlatformTenantRequestBudgetRequest",
     "SetPlatformTenantStatusRequest",
     "SetPlatformTenantStatusRequestStatus",
+    "SetQueueBindingReleasePolicyRequest",
     "SetRouteHealthGateRequest",
     "SetRouteHealthGateRequestMode",
     "SetRouteHealthGateRequestOnRegression",
@@ -8787,6 +9178,9 @@ __all__ = (
     "SourceReviewResponse",
     "SourceTarballDeployRequest",
     "SourceTarballDeployRequestTag",
+    "StageProjectReleaseRequest",
+    "StartAutomationLiveSuiteRequest",
+    "StartAutomationLiveVerificationRequest",
     "StartDurableEntityQuotaMigrationBody",
     "StartDurableEntityQuotaMigrationResponse200",
     "StartDurableEntityRegistryCleanupBody",

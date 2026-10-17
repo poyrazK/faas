@@ -2,6 +2,7 @@ import { createHash, createPrivateKey, randomBytes, sign, timingSafeEqual } from
 import http from 'node:http'
 import { gotrue, limits } from './config.mjs'
 import { HTTPError, readJSON } from './authz.mjs'
+import { ssoRoute } from './sso.mjs'
 
 // /admin/v1: owner administration of an application Auth app (ADR-1190
 // phase 6). The owner holds the key; the app stores only its SHA-256 as
@@ -199,6 +200,7 @@ export async function adminRoute({ pool, admin }, method, url, body) {
   const path = url.pathname.replace(/^\/admin\/v1/, '')
   const parts = path.split('/').filter(Boolean)
   const query = async (sql, args) => (await pool.query(sql, args)).rows
+  if (parts[0] === 'sso') return ssoRoute({ query, admin, goTrueError }, method, parts, body)
   const user = parts[0] === 'users' && parts[1] && parts[1] !== 'import' ? (uuid.test(parts[1]) ? parts[1] : null) : undefined
   if (user === null) throw new HTTPError(400, 'invalid_id')
 
@@ -279,7 +281,7 @@ export function createAdminHandler({ pool, admin, keys, origins = [] }) {
     if (keys.length === 0) { req.resume(); return reply(404, { status: 404, code: 'not_found' }) }
     if (req.method === 'OPTIONS') {
       if (!origin || !allowed.has(origin)) return reply(403, { status: 403, code: 'origin_not_allowed' })
-      res.writeHead(204, { ...headers, 'Access-Control-Allow-Methods': 'GET,POST,DELETE,OPTIONS', 'Access-Control-Allow-Headers': 'Authorization,Content-Type', 'Access-Control-Max-Age': '600' })
+      res.writeHead(204, { ...headers, 'Access-Control-Allow-Methods': 'GET,POST,PATCH,DELETE,OPTIONS', 'Access-Control-Allow-Headers': 'Authorization,Content-Type', 'Access-Control-Max-Age': '600' })
       return res.end()
     }
     try {

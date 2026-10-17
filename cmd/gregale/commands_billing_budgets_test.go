@@ -70,7 +70,7 @@ func TestFinancialBudgetCLIOutputFailure(t *testing.T) {
 // retries can use one stable key, and machine output preserves readiness.
 func TestFinancialBudgetCRUDCLI(t *testing.T) {
 	id := "6dc4f678-5766-4a06-a061-845c2b133fdd"
-	spec := financial.BudgetSpec{Name: "draft", Scope: financial.BudgetScope{Kind: "account"}, Currency: "EUR", Meters: []string{"compute"}, Basis: "net_usage", LimitMillicents: 1000001, NotifyMillicents: []int64{}, Mode: "monitored", Action: "stop_previews", DrainSeconds: 30, ResumeRule: "manual", Enabled: false}
+	spec := financial.BudgetSpec{Name: "draft", Scope: financial.BudgetScope{Kind: "account"}, Currency: "USD", Meters: []string{"compute"}, Basis: "net_usage", LimitMillicents: 1000001, NotifyMillicents: []int64{}, Mode: "monitored", Action: "stop_previews", DrainSeconds: 30, ResumeRule: "manual", Enabled: false}
 	file := filepath.Join(t.TempDir(), "draft.json")
 	data, _ := json.Marshal(spec)
 	if err := os.WriteFile(file, data, 0600); err != nil {

@@ -38,6 +38,15 @@ func deliveryHealthMetricThreshold(metric string, threshold float64) bool {
 	if math.IsNaN(threshold) || math.IsInf(threshold, 0) || threshold <= 0 {
 		return false
 	}
+	if _, near := rateDeadlineWindow(metric); near {
+		return threshold == 1
+	}
+	if deliveryRateRiskMetric(metric) {
+		return threshold <= rateRiskMetricValueMax(metric) && math.Trunc(threshold) == threshold
+	}
+	if processingWindowMetric(metric) {
+		return (metric == "processing_renewal_rejection_fraction" && threshold <= 1) || (metric == "processing_lease_expiry_rate_per_second" && threshold <= float64(EventDeliveryHealthWatchCountMax))
+	}
 	if strings.HasPrefix(metric, "slo.") {
 		switch metric {
 		case "slo.routing_latency_p95_seconds", "slo.completion_latency_p95_seconds":
@@ -55,7 +64,7 @@ func deliveryHealthMetricThreshold(metric string, threshold float64) bool {
 	}
 	count := metric == "retrying_executions" || metric == "dead_lettered_executions" || metric == "lineage_retry_stalled_jobs" || metric == "lineage_retry_retention_risk_jobs"
 	switch metric {
-	case "oldest_pending_seconds", "paused_seconds", "circuit_blocked_seconds", "capacity_blocked_seconds", "retrying_executions", "dead_lettered_executions", "lineage_retry_stalled_jobs", "lineage_retry_retention_risk_jobs", "lineage_retry_paused_seconds", "capacity_command_receipt_budget_full_seconds":
+	case "processing_oldest_seconds", "processing_lease_risk_seconds", "processing_expired_seconds", "oldest_pending_seconds", "paused_seconds", "circuit_blocked_seconds", "capacity_blocked_seconds", "retrying_executions", "dead_lettered_executions", "lineage_retry_stalled_jobs", "lineage_retry_retention_risk_jobs", "lineage_retry_paused_seconds", "capacity_command_receipt_budget_full_seconds":
 	default:
 		parts := strings.Split(metric, ".")
 		if len(parts) != 3 || parts[0] != "waiting_reason" {
@@ -90,13 +99,23 @@ func ValidateEventDeliveryHealthCheckpoint(saved EventDeliveryHealthCheckpoint) 
 		if _, exists := metrics[c.Metric]; exists || !deliveryHealthMetricThreshold(c.Metric, c.Threshold) || math.IsNaN(c.Value) || math.IsInf(c.Value, 0) || c.Value < 0 {
 			return ErrValidation("invalid checkpoint condition")
 		}
-		if !validDeliveryHealthRecoveryPolicy(c) {
+		if !validProcessingWindowCondition(c) || !validDeliveryHealthRecoveryPolicy(c) {
 			return ErrValidation("invalid checkpoint recovery policy")
 		}
 		hasRecovery = hasRecovery || c.RecoverySustainSeconds > 0
-		if strings.HasPrefix(c.Metric, "slo.") {
+		if processingWindowMetric(c.Metric) {
+			// Per-window request samples and sustained distinct-window confirmation.
+		} else if deliveryRateRiskMetric(c.Metric) {
+			if !validRateRiskCondition(c) {
+				return ErrValidation("invalid checkpoint rate-risk configuration")
+			}
+		} else if strings.HasPrefix(c.Metric, "slo.") {
 			if c.MinimumSamples < 1 || c.MinimumSamples > EventDeliveryHealthWatchCountMax || !finiteSLOValue(c.SustainSeconds) || c.SustainSeconds < EventDeliveryHealthWatchThresholdMin.Seconds() || c.SustainSeconds > EventDeliveryHealthWatchThresholdMax.Seconds() {
 				return ErrValidation("invalid checkpoint SLO configuration")
+			}
+		} else if c.Metric == "processing_oldest_seconds" {
+			if c.MinimumSamples != 2 || c.SustainSeconds != EventProcessingAlertSustain.Seconds() {
+				return ErrValidation("invalid processing age confirmation")
 			}
 		} else if c.Metric == "capacity_command_receipt_budget_used_slots" {
 			if c.MinimumSamples != 2 || !finiteSLOValue(c.SustainSeconds) || c.SustainSeconds < EventDeliveryHealthWatchThresholdMin.Seconds() || c.SustainSeconds > EventDeliveryHealthWatchThresholdMax.Seconds() || c.Value > EventSubscriptionCapacityCommandMaxReceipts || math.Trunc(c.Value) != c.Value {
@@ -145,11 +164,20 @@ func ValidateEventDeliveryHealthCheckpoint(saved EventDeliveryHealthCheckpoint) 
 	for _, a := range history {
 		c, known := metrics[a.Metric]
 		n, ok := deliveryHealthIncidentSequence(a.IncidentID, saved.Session)
-		if !known || !ok || n > a.Sequence || a.Sequence <= last || a.Sequence > saved.Sequence || a.AppID != saved.AppID || a.SubscriptionID != saved.SubscriptionID || a.At.IsZero() || a.Threshold != c.Threshold || a.MinimumSamples != c.MinimumSamples || a.SustainSeconds != c.SustainSeconds || a.RecoveryThreshold != c.RecoveryThreshold || a.RecoverySustainSeconds != c.RecoverySustainSeconds || math.IsNaN(a.Value) || math.IsInf(a.Value, 0) || a.Value < 0 || closed[a.IncidentID] || (lineage[a.IncidentID] != "" && lineage[a.IncidentID] != a.Metric) {
+		if !known || !ok || n > a.Sequence || a.Sequence <= last || a.Sequence > saved.Sequence || a.AppID != saved.AppID || a.SubscriptionID != saved.SubscriptionID || a.At.IsZero() || a.Threshold != c.Threshold || a.MinimumSamples != c.MinimumSamples || a.SustainSeconds != c.SustainSeconds || a.RecoveryThreshold != c.RecoveryThreshold || a.RecoverySustainSeconds != c.RecoverySustainSeconds || !sameProcessingRecordingSince(a.MetricRecordingSince, c.MetricRecordingSince) || (a.MetricRecordingSince != nil && a.MetricRecordingSince.After(a.At)) || math.IsNaN(a.Value) || math.IsInf(a.Value, 0) || a.Value < 0 || closed[a.IncidentID] || (lineage[a.IncidentID] != "" && lineage[a.IncidentID] != a.Metric) {
 			return ErrValidation("invalid checkpoint pending alert")
+		}
+		if _, near := rateDeadlineWindow(a.Metric); near && a.Value > 1 {
+			return ErrValidation("invalid near-deadline checkpoint value")
+		}
+		if !validRateContributors(a.Metric, a.RateConstraints) || (deliveryRateRiskMetric(a.Metric) && !validRateRiskValue(a.Metric, a.Value)) {
+			return ErrValidation("invalid rate-risk checkpoint evidence")
 		}
 		if a.Metric == "capacity_command_receipt_budget_used_slots" && (a.Value > EventSubscriptionCapacityCommandMaxReceipts || math.Trunc(a.Value) != a.Value) {
 			return ErrValidation("invalid checkpoint receipt budget alert usage")
+		}
+		if (a.Metric == "processing_renewal_rejection_fraction" && a.Value > 1) || (a.Metric == "processing_lease_expiry_rate_per_second" && a.Value > float64(EventDeliveryHealthWatchCountMax)) {
+			return ErrValidation("invalid checkpoint processing metric value")
 		}
 		switch a.Transition {
 		case "opened":
@@ -247,7 +275,7 @@ func restoreDeliveryHealthCheckpoint(out *EventDeliveryHealthWatchResult, condit
 	}
 	for i, c := range conditions {
 		previous := saved.Conditions[i]
-		if c.Metric != previous.Metric || c.Threshold != previous.Threshold || c.MinimumSamples != previous.MinimumSamples || c.SustainSeconds != previous.SustainSeconds || c.RecoveryThreshold != previous.RecoveryThreshold || c.RecoverySustainSeconds != previous.RecoverySustainSeconds {
+		if c.Metric != previous.Metric || c.Threshold != previous.Threshold || c.MinimumSamples != previous.MinimumSamples || c.SustainSeconds != previous.SustainSeconds || c.RecoveryThreshold != previous.RecoveryThreshold || c.RecoverySustainSeconds != previous.RecoverySustainSeconds || !sameProcessingRecordingSince(c.MetricRecordingSince, previous.MetricRecordingSince) {
 			return ErrValidation("checkpoint thresholds mismatch")
 		}
 		c.observedAt = previous.ObservedAt
@@ -292,6 +320,18 @@ func deliveryHealthOpeningCapacity(out *EventDeliveryHealthWatchResult) bool {
 func validDeliveryHealthRecoveryPolicy(c EventDeliveryHealthCondition) bool {
 	if !finiteSLOValue(c.RecoveryThreshold) || !finiteSLOValue(c.RecoverySustainSeconds) {
 		return false
+	}
+	if processingWindowMetric(c.Metric) {
+		return c.RecoveryThreshold == c.Threshold && c.RecoverySustainSeconds == c.SustainSeconds
+	}
+	if _, _, _, deadlineCount := deadlineCountWindow(c.Metric); deadlineCount {
+		return math.Trunc(c.RecoveryThreshold) == c.RecoveryThreshold && c.RecoveryThreshold < c.Threshold && c.RecoverySustainSeconds >= EventDeliveryHealthWatchThresholdMin.Seconds() && c.RecoverySustainSeconds <= EventDeliveryHealthWatchThresholdMax.Seconds()
+	}
+	if _, _, ratio := deadlineRatioWindow(c.Metric); ratio {
+		return math.Trunc(c.RecoveryThreshold) == c.RecoveryThreshold && c.RecoveryThreshold < c.Threshold && c.RecoverySustainSeconds >= EventDeliveryHealthWatchThresholdMin.Seconds() && c.RecoverySustainSeconds <= EventDeliveryHealthWatchThresholdMax.Seconds()
+	}
+	if deliveryRateRiskMetric(c.Metric) {
+		return c.RecoveryThreshold == c.Threshold-1 && c.RecoverySustainSeconds >= EventDeliveryHealthWatchThresholdMin.Seconds() && c.RecoverySustainSeconds <= EventDeliveryHealthWatchThresholdMax.Seconds()
 	}
 	if c.RecoverySustainSeconds == 0 {
 		return c.RecoveryThreshold == 0

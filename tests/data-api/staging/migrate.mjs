@@ -28,6 +28,7 @@ export async function migrate(connectionString, version = readFileSync(new URL('
       CREATE OR REPLACE FUNCTION api.private_note() RETURNS text
         LANGUAGE sql SECURITY INVOKER AS 'SELECT ''private''::text';
       REVOKE EXECUTE ON FUNCTION api.private_note() FROM PUBLIC;`)
+    await client.query(readFileSync(new URL('./load-fixture.sql', import.meta.url), 'utf8'))
     if (version === '2') await client.query('ALTER TABLE api.notes ADD COLUMN IF NOT EXISTS priority integer NOT NULL DEFAULT 0')
     await client.query('COMMIT')
   } catch (error) {

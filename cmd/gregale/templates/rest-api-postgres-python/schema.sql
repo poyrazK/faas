@@ -1,0 +1,5 @@
+CREATE TABLE IF NOT EXISTS public.notes (
+ id SERIAL PRIMARY KEY,
+ body TEXT NOT NULL,
+ created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);

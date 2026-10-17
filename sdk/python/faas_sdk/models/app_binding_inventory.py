@@ -12,6 +12,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.app_binding_inventory_item import AppBindingInventoryItem
+    from ..models.app_binding_inventory_service_targets import AppBindingInventoryServiceTargets
     from ..models.binding_inventory_issue import BindingInventoryIssue
     from ..models.binding_runtime_freshness import BindingRuntimeFreshness
 
@@ -28,6 +29,8 @@ class AppBindingInventory:
     complete: bool
     """All binding sections could be read; this does not mean that bindings are healthy or verified."""
     bindings: list[AppBindingInventoryItem]
+    service_targets: AppBindingInventoryServiceTargets | Unset = UNSET
+    """Applied exact service target selectors; absent for ordinary evidence selection."""
     scope: str | Unset = UNSET
     """Resource scope filter. Absent means all scopes."""
     requested_deployment_id: UUID | Unset = UNSET
@@ -56,6 +59,10 @@ class AppBindingInventory:
         for bindings_item_data in self.bindings:
             bindings_item = bindings_item_data.to_dict()
             bindings.append(bindings_item)
+
+        service_targets: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.service_targets, Unset):
+            service_targets = self.service_targets.to_dict()
 
         scope = self.scope
 
@@ -94,6 +101,8 @@ class AppBindingInventory:
                 "bindings": bindings,
             }
         )
+        if service_targets is not UNSET:
+            field_dict["service_targets"] = service_targets
         if scope is not UNSET:
             field_dict["scope"] = scope
         if requested_deployment_id is not UNSET:
@@ -114,6 +123,7 @@ class AppBindingInventory:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.app_binding_inventory_item import AppBindingInventoryItem
+        from ..models.app_binding_inventory_service_targets import AppBindingInventoryServiceTargets
         from ..models.binding_inventory_issue import BindingInventoryIssue
         from ..models.binding_runtime_freshness import BindingRuntimeFreshness
 
@@ -130,6 +140,13 @@ class AppBindingInventory:
             bindings_item = AppBindingInventoryItem.from_dict(bindings_item_data)
 
             bindings.append(bindings_item)
+
+        _service_targets = d.pop("service_targets", UNSET)
+        service_targets: AppBindingInventoryServiceTargets | Unset
+        if isinstance(_service_targets, Unset):
+            service_targets = UNSET
+        else:
+            service_targets = AppBindingInventoryServiceTargets.from_dict(_service_targets)
 
         scope = d.pop("scope", UNSET)
 
@@ -172,6 +189,7 @@ class AppBindingInventory:
             generated_at=generated_at,
             complete=complete,
             bindings=bindings,
+            service_targets=service_targets,
             scope=scope,
             requested_deployment_id=requested_deployment_id,
             verification_deployment_id=verification_deployment_id,

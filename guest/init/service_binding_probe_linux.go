@@ -28,25 +28,30 @@ type serviceBindingProbeResolver interface {
 }
 
 func isServiceBindingProbeCommand(req apptaskproto.Request) bool {
-	return len(req.Command) > 0 && req.Command[0] == api.AppTaskServiceBindingProbeCommand
+	return len(req.Command) > 0 && (req.Command[0] == api.AppTaskServiceBindingProbeCommand || req.Command[0] == api.AppTaskServiceBindingTargetProbeCommand)
 }
 
 func executeServiceBindingProbeCommand(ctx context.Context, req apptaskproto.Request, manifest api.AppManifest, secrets, apiEnv map[string]string, stdout io.Writer) (apptaskproto.Result, error) {
 	service := ""
+	target := ""
+	if api.IsServiceBindingTargetProbeCommand(req.Command, req.CommandShell) {
+		target = req.Command[2]
+	}
 	report := api.ServiceBindingProbeReport{
 		DNS:           api.ServiceBindingProbeCheck{Status: "not_checked"},
 		TLS:           api.ServiceBindingProbeCheck{Status: "not_checked"},
 		Authorization: api.ServiceBindingProbeCheck{Status: "not_checked"},
 		Routing:       api.ServiceBindingProbeCheck{Status: "not_checked"},
 	}
-	if !req.CommandShell && len(req.Command) == 2 {
+	if !req.CommandShell && (len(req.Command) == 2 || target != "") {
 		service = strings.TrimSpace(req.Command[1])
 	}
+	report.TargetDeploymentID = target
 	report.Service = service
 	if service != "" {
 		report.URL = "https://" + service + ".internal"
 	}
-	if req.CommandShell || len(req.Command) != 2 {
+	if req.CommandShell || (len(req.Command) != 2 && target == "") || (req.Command[0] == api.AppTaskServiceBindingTargetProbeCommand && target == "") {
 		report.Error = "invalid platform service-binding probe request"
 		return writeServiceBindingProbeReport(stdout, report)
 	}
@@ -66,7 +71,7 @@ func executeServiceBindingProbeCommand(ctx context.Context, req apptaskproto.Req
 		if err != nil {
 			detail = boundedProbeDetail("prepare service CA trust: " + err.Error())
 		}
-		report = runServiceBindingProbe(ctx, service, nil, net.DefaultResolver, nil)
+		report = runServiceBindingTargetProbe(ctx, service, target, nil, net.DefaultResolver, nil)
 		if report.DNS.Status == "passed" {
 			report.TLS = api.ServiceBindingProbeCheck{Status: "failed", Detail: detail}
 			report.Error = "private service trust is not available in this task guest"
@@ -75,25 +80,30 @@ func executeServiceBindingProbeCommand(ctx context.Context, req apptaskproto.Req
 	}
 	caBundle, err := os.ReadFile(trust.bundle)
 	if err != nil {
-		report = runServiceBindingProbe(ctx, service, nil, net.DefaultResolver, nil)
+		report = runServiceBindingTargetProbe(ctx, service, target, nil, net.DefaultResolver, nil)
 		if report.DNS.Status == "passed" {
 			report.TLS = api.ServiceBindingProbeCheck{Status: "failed", Detail: "service CA trust bundle could not be read"}
 			report.Error = "private service trust could not be read in this task guest"
 		}
 		return writeServiceBindingProbeReport(stdout, report)
 	}
-	report = runServiceBindingProbe(ctx, service, caBundle, net.DefaultResolver, nil)
+	report = runServiceBindingTargetProbe(ctx, service, target, caBundle, net.DefaultResolver, nil)
 	return writeServiceBindingProbeReport(stdout, report)
 }
 
 func runServiceBindingProbe(ctx context.Context, service string, caBundle []byte, resolver serviceBindingProbeResolver, dialContext func(context.Context, string, string) (net.Conn, error)) api.ServiceBindingProbeReport {
+	return runServiceBindingTargetProbe(ctx, service, "", caBundle, resolver, dialContext)
+}
+
+func runServiceBindingTargetProbe(ctx context.Context, service, target string, caBundle []byte, resolver serviceBindingProbeResolver, dialContext func(context.Context, string, string) (net.Conn, error)) api.ServiceBindingProbeReport {
 	report := api.ServiceBindingProbeReport{
-		Service:       service,
-		URL:           "https://" + service + ".internal",
-		DNS:           api.ServiceBindingProbeCheck{Status: "not_checked"},
-		TLS:           api.ServiceBindingProbeCheck{Status: "not_checked"},
-		Authorization: api.ServiceBindingProbeCheck{Status: "not_checked"},
-		Routing:       api.ServiceBindingProbeCheck{Status: "not_checked"},
+		TargetDeploymentID: target,
+		Service:            service,
+		URL:                "https://" + service + ".internal",
+		DNS:                api.ServiceBindingProbeCheck{Status: "not_checked"},
+		TLS:                api.ServiceBindingProbeCheck{Status: "not_checked"},
+		Authorization:      api.ServiceBindingProbeCheck{Status: "not_checked"},
+		Routing:            api.ServiceBindingProbeCheck{Status: "not_checked"},
 	}
 	host := service + ".internal"
 	if resolver == nil {
@@ -152,6 +162,9 @@ func runServiceBindingProbe(ctx context.Context, service string, caBundle []byte
 		return report
 	}
 	request.Header.Set(api.ServiceBindingProbeRequestHeader, api.ServiceBindingProbeVersion)
+	if target != "" {
+		request.Header.Set(api.TargetDeploymentHeader, target)
+	}
 	response, err := client.Do(request)
 	if err != nil {
 		report.TLS = api.ServiceBindingProbeCheck{Status: "failed", Detail: boundedProbeDetail("HTTPS request failed: " + err.Error())}
@@ -169,7 +182,7 @@ func runServiceBindingProbe(ctx context.Context, service string, caBundle []byte
 
 	stage := response.Header.Get(api.ServiceBindingProbeStageHeader)
 	marker := response.Header.Get(api.ServiceBindingProbeResponseHeader)
-	if response.StatusCode == http.StatusNoContent && marker == api.ServiceBindingProbeVersion && stage == "complete" {
+	if response.StatusCode == http.StatusNoContent && marker == api.ServiceBindingProbeVersion && stage == "complete" && (target == "" || response.Header.Get(api.TargetDeploymentHeader) == target) {
 		report.Authorization = api.ServiceBindingProbeCheck{Status: "passed", Detail: "caller binding and target policy allowed the request"}
 		report.Routing = api.ServiceBindingProbeCheck{Status: "passed", Detail: "healthy endpoint is registered; target was not woken"}
 		return report

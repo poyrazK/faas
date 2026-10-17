@@ -17,6 +17,9 @@
  * POST /v1/apps/{slug}/tasks; exclusive-operation task admission rejects them.
  * `command_shell=false` executes argv directly. Shell mode requires one
  * command string and is explicit so clients preserve quoting semantics.
+ * `__gregale_service_binding_probe_v2__ <service> <target_uuid>` requires
+ * verification_deployment_id and qualifies only that exact live target in
+ * the caller scope. It sends a safe HEAD without waking or invoking the target.
  * `__gregale_service_binding_probe_v1__ <service>` is reserved for the
  * Gregale HTTPS service-binding canary and is handled by guest-init.
  * `__gregale_outbound_binding_probe_v1__ <integration-id>` selects a

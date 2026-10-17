@@ -268,6 +268,17 @@ func TestDeployManifestIncludesEveryParserFlag(t *testing.T) {
 			if !ok || receiver.Name != "fs" {
 				return true
 			}
+			if sel.Sel.Name == "Var" && len(call.Args) > 1 {
+				if literal, ok := call.Args[1].(*ast.BasicLit); ok {
+					name, err := strconv.Unquote(literal.Value)
+					if err != nil {
+						t.Error(err)
+					} else {
+						parsed[name] = true
+					}
+				}
+				return true
+			}
 			switch sel.Sel.Name {
 			case "Bool", "String", "Int", "Int64", "Duration":
 				literal, ok := call.Args[0].(*ast.BasicLit)

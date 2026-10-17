@@ -1,4 +1,4 @@
-// adr: 1030 — policy-driven storage verification preserves explicit write consent.
+// adr: 1347 — policy-driven verification qualifies mixed binding dependencies.
 package main
 
 import (
@@ -7,192 +7,181 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"sort"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/bindingcheck"
 )
 
-type storagePolicyProbePlan struct {
-	Prefix       string   `json:"prefix"`
-	RequiredMode string   `json:"required_mode"`
-	ProbeMode    string   `json:"probe_mode"`
-	Operations   []string `json:"operations"`
+type bindingPolicyProbePlan = api.BindingVerificationPlanStep
+
+type bindingPolicyProbeResult struct {
+	ResourceID     string                               `json:"resource_id,omitempty"`
+	ResourceKind   string                               `json:"resource_kind,omitempty"`
+	Type           string                               `json:"type"`
+	Name           string                               `json:"name"`
+	Binding        string                               `json:"binding"`
+	Scope          string                               `json:"scope"`
+	TaskID         string                               `json:"task_id,omitempty"`
+	Prefix         string                               `json:"prefix,omitempty"`
+	Status         string                               `json:"status"`
+	Report         *api.ObjectStorageBindingProbeReport `json:"report,omitempty"`
+	ServiceReport  *api.ServiceBindingProbeReport       `json:"service_report,omitempty"`
+	PostgresReport *api.PostgresBindingProbeReport      `json:"postgres_report,omitempty"`
+	QueueReport    *api.QueueBindingCanary              `json:"queue_report,omitempty"`
+	OutboundReport *api.OutboundBindingProbeReport      `json:"outbound_report,omitempty"`
 }
 
-type storagePolicyProbeResult struct {
-	Prefix string                              `json:"prefix"`
-	Status string                              `json:"status"`
-	Report api.ObjectStorageBindingProbeReport `json:"report"`
+type bindingPolicyVerificationReport struct {
+	Recovery                    *bindingRecoverySummary                `json:"recovery,omitempty"`
+	Diagnostics                 *api.BindingVerificationRunDiagnostics `json:"diagnostics,omitempty"`
+	ReviewDigest                string                                 `json:"review_digest,omitempty"`
+	RunID                       string                                 `json:"run_id,omitempty"`
+	App                         string                                 `json:"app"`
+	DeploymentID                string                                 `json:"deployment_id,omitempty"`
+	Scope                       string                                 `json:"scope,omitempty"`
+	DryRun                      bool                                   `json:"dry_run"`
+	PlanReady                   bool                                   `json:"plan_ready"`
+	QueuePublishConsentRequired bool                                   `json:"queue_publish_consent_required"`
+	WriteConsentRequired        bool                                   `json:"write_consent_required"`
+	WriteConsent                bool                                   `json:"write_consent"`
+	SnapshotConfirmed           bool                                   `json:"snapshot_confirmed"`
+	Passed                      bool                                   `json:"passed"`
+	Status                      string                                 `json:"status"`
+	ReleasePolicy               *api.BindingReleasePolicy              `json:"release_policy,omitempty"`
+	ConfigChangedAt             *time.Time                             `json:"config_changed_at,omitempty"`
+	Plan                        []bindingPolicyProbePlan               `json:"plan"`
+	PlanBlockers                []bindingcheck.Finding                 `json:"plan_blockers,omitempty"`
+	ObservedCheck               *bindingcheck.Report                   `json:"observed_check,omitempty"`
+	Probes                      []bindingPolicyProbeResult             `json:"probes"`
+	Preflight                   *bindingReleasePolicyCheckReport       `json:"preflight,omitempty"`
+	ErrorCode                   string                                 `json:"error_code,omitempty"`
+	Error                       string                                 `json:"error,omitempty"`
 }
 
-type storagePolicyVerificationReport struct {
-	App                  string                           `json:"app"`
-	DeploymentID         string                           `json:"deployment_id,omitempty"`
-	Scope                string                           `json:"scope,omitempty"`
-	DryRun               bool                             `json:"dry_run"`
-	PlanReady            bool                             `json:"plan_ready"`
-	WriteConsentRequired bool                             `json:"write_consent_required"`
-	WriteConsent         bool                             `json:"write_consent"`
-	SnapshotConfirmed    bool                             `json:"snapshot_confirmed"`
-	Passed               bool                             `json:"passed"`
-	Status               string                           `json:"status"`
-	ReleasePolicy        *api.BindingReleasePolicy        `json:"release_policy,omitempty"`
-	ConfigChangedAt      *time.Time                       `json:"config_changed_at,omitempty"`
-	Plan                 []storagePolicyProbePlan         `json:"plan"`
-	Probes               []storagePolicyProbeResult       `json:"probes"`
-	Preflight            *bindingReleasePolicyCheckReport `json:"preflight,omitempty"`
-	ErrorCode            string                           `json:"error_code,omitempty"`
-	Error                string                           `json:"error,omitempty"`
-}
-
-func runStoragePolicyVerification(ctx context.Context, client *api.Client, slug, deployment string, dryRun, writeConsent bool, interval, timeout time.Duration) int {
+func runBindingPolicyVerification(ctx context.Context, client *api.Client, slug, deployment string, dryRun, writeConsent bool, interval, timeout time.Duration, targets ...map[string]string) int {
 	interrupted, stop := signal.NotifyContext(ctx, os.Interrupt)
 	defer stop()
 	bounded, cancel := context.WithTimeout(interrupted, timeout)
 	defer cancel()
-	report, code := executeStoragePolicyVerification(bounded, client, slug, deployment, dryRun, writeConsent, interval, timeout)
+	report, code := executeBindingPolicyVerification(bounded, client, slug, deployment, dryRun, writeConsent, interval, timeout, targets...)
 	if jsonOutput {
 		if outputCode := jsonOut(writeJSON(report)); outputCode != 0 {
 			return outputCode
 		}
 	} else {
-		renderStoragePolicyVerification(report)
+		renderBindingPolicyVerification(report)
 	}
 	return code
 }
 
-func executeStoragePolicyVerification(ctx context.Context, client *api.Client, slug, deployment string, dryRun, consent bool, interval, timeout time.Duration) (storagePolicyVerificationReport, int) {
-	r := storagePolicyVerificationReport{App: slug, DryRun: dryRun, WriteConsent: consent, Status: "blocked",
-		Plan: []storagePolicyProbePlan{}, Probes: []storagePolicyProbeResult{}}
-	snapshot, err := prepareStoragePolicyVerification(ctx, client, slug, deployment)
+func executeBindingPolicyVerification(ctx context.Context, client *api.Client, slug, deployment string, dryRun, consent bool, interval, timeout time.Duration, targets ...map[string]string) (bindingPolicyVerificationReport, int) {
+	if dryRun {
+		return executeServerBindingReview(ctx, client, slug, deployment, consent, targets...)
+	}
+	r := bindingPolicyVerificationReport{App: slug, DryRun: dryRun, WriteConsent: consent, Status: "blocked",
+		Plan: []bindingPolicyProbePlan{}, Probes: []bindingPolicyProbeResult{}}
+	snapshot, err := prepareBindingPolicyVerification(ctx, client, slug, deployment, targets...)
 	if err != nil {
-		return storagePolicyVerificationFailed(r, "plan_unavailable", err)
+		return bindingPolicyVerificationFailed(r, "plan_unavailable", err)
+	}
+	if expected, ok := ctx.Value(bindingPolicyExpectedRevisionKey{}).(int64); ok && expected != snapshot.policy.Revision {
+		return bindingPolicyVerificationFailed(r, "release_policy_changed", errors.New("prepared graph policy changed; prepare and qualify again"))
 	}
 	r.DeploymentID, r.Scope = snapshot.inventory.VerificationDeploymentID, snapshot.policy.Scope
 	r.ReleasePolicy, r.ConfigChangedAt = &snapshot.policy, snapshot.inventory.RuntimeFreshness.ConfigChangedAt
-	r.Plan, err = storagePolicyVerificationPlan(snapshot.inventory, snapshot.policy)
+	r.Plan, r.PlanBlockers, r.ObservedCheck, err = bindingPolicyVerificationPlan(snapshot.inventory, snapshot.policy, time.Now())
 	if err != nil {
-		return storagePolicyVerificationFailed(r, "plan_invalid", err)
+		return bindingPolicyVerificationFailed(r, "plan_invalid", err)
+	}
+	if run, ok := ctx.Value(bindingVerificationRunKey{}).(*api.BindingVerificationRun); ok {
+		r.RunID = run.ID
+		r.Plan = make([]bindingPolicyProbePlan, len(run.Steps))
+		for i, step := range run.Steps {
+			r.Plan[i] = step.Plan
+		}
 	}
 	r.PlanReady = true
 	for _, step := range r.Plan {
-		r.WriteConsentRequired = r.WriteConsentRequired || step.ProbeMode != "read"
+		r.QueuePublishConsentRequired = r.QueuePublishConsentRequired || step.Action == "queue-canary"
+		r.WriteConsentRequired = r.WriteConsentRequired || step.Action == "probe" && step.Type == api.BindingTypeObjectStorage && step.ProbeMode != "read"
 	}
 	if err := snapshot.confirm(ctx); err != nil {
-		return storagePolicyVerificationFailed(r, "snapshot_unconfirmed", err)
+		return bindingPolicyVerificationFailed(r, "snapshot_unconfirmed", err)
 	}
 	r.SnapshotConfirmed = true
-	if dryRun {
-		r.Status = "planned" // A preview is never a verification pass.
-		return r, 0
-	}
 	if r.WriteConsentRequired && !consent {
-		return storagePolicyVerificationFailed(r, "write_consent_required", errors.New("the plan requires upload and cleanup; review --dry-run, then supply --object-storage-write to consent to every planned write and read/write download"))
+		return bindingPolicyVerificationFailed(r, "write_consent_required", errors.New("the plan requires upload and cleanup; review --dry-run, then supply --object-storage-write to consent to every planned write and read/write download"))
 	}
-	probeClient := &storagePolicyProbeClient{deploymentBindingProbeClient: &deploymentBindingProbeClient{Client: client, slug: slug, inventory: snapshot.inventory}, snapshot: snapshot}
+	queueConsent, _ := ctx.Value(queueCanaryConsentKey{}).(bool)
 	for _, step := range r.Plan {
-		r.SnapshotConfirmed = false
-		mode := step.ProbeMode
-		if mode == "read" {
-			mode = "" // The existing listing command uses the legacy empty mode.
+		if step.Action == "queue-canary" && !queueConsent {
+			return bindingPolicyVerificationFailed(r, "queue_publish_consent_required", errors.New("supply --queue-publish to consent to the planned safe queue messages"))
 		}
-		probe, _, title, code, err := executeObjectStorageBindingProbeMode(ctx, probeClient, slug, step.Prefix, mode, interval, timeout)
-		status := "passed"
-		if code != 0 {
-			status = "failed"
-		}
-		r.Probes = append(r.Probes, storagePolicyProbeResult{Prefix: step.Prefix, Status: status, Report: probe})
-		if code != 0 {
-			if err == nil {
-				if code == 130 {
-					err = errors.New("verification interrupted; cancellation requested for the admitted canary task")
-				} else {
-					err = fmt.Errorf("%s: %s", step.Prefix, probe.Error)
-				}
-			}
-			if title != "" {
-				err = fmt.Errorf("%s: %w", title, err)
-			}
-			r, failedCode := storagePolicyVerificationFailed(r, "probe_failed", err)
-			if code == 130 {
-				r.Status = "cancelled"
-				failedCode = 130
-			}
-			return r, failedCode
-		}
-		if err := snapshot.confirm(ctx); err != nil {
-			return storagePolicyVerificationFailed(r, "snapshot_unconfirmed", err)
-		}
-		r.SnapshotConfirmed = true
 	}
+	ctx = withBindingVerificationBudget(ctx, bindingVerificationConcurrency(ctx))
+	outcomes := make([]bindingVerificationOutcome, len(r.Plan))
+	runBindingVerificationJobs(ctx, len(r.Plan), func(jobCtx context.Context, index int) error {
+		step := r.Plan[index]
+		if run, ok := ctx.Value(bindingVerificationRunKey{}).(*api.BindingVerificationRun); ok {
+			jobCtx = context.WithValue(jobCtx, bindingVerificationRunStepKey{}, bindingVerificationRunStepContext{Run: run, Index: index})
+		}
+		if run, ok := ctx.Value(bindingVerificationRunKey{}).(*api.BindingVerificationRun); ok && run.Status == "passed" {
+			return nil
+		}
+		if step.Action != "probe" && step.Action != "queue-canary" && step.Action != "wait-queue" {
+			return nil
+		}
+		return withBindingVerificationSlot(jobCtx, func() error {
+			outcomes[index] = executeBindingPolicyStep(jobCtx, client, snapshot, step, queueConsent, interval, timeout)
+			return outcomes[index].err
+		})
+	})
+	var failure *bindingVerificationOutcome
+	for index := range outcomes {
+		outcome := &outcomes[index]
+		if outcome.result != nil {
+			r.Probes = append(r.Probes, *outcome.result)
+		}
+		if outcome.err != nil && (failure == nil || errors.Is(failure.err, context.Canceled) && !errors.Is(outcome.err, context.Canceled)) {
+			failure = outcome
+		}
+	}
+	if failure != nil {
+		r.SnapshotConfirmed = false
+		return bindingPolicyVerificationFailed(r, failure.code, failure.err)
+	}
+	if err := ctx.Err(); err != nil {
+		return bindingPolicyVerificationFailed(r, "verification_cancelled", err)
+	}
+	return finalizeBindingPolicyVerification(ctx, snapshot, r, interval)
+}
+
+func finalizeBindingPolicyVerification(ctx context.Context, snapshot *bindingPolicySnapshotClient, r bindingPolicyVerificationReport, interval time.Duration) (bindingPolicyVerificationReport, int) {
 	// Confirm the original snapshot through every fresh preflight read. Do not
 	// silently accept a new policy by starting an independent check at the end.
 	age, _ := time.ParseDuration(snapshot.policy.MaxVerificationAge)
-	policy := bindingcheck.Policy{App: slug, Scope: r.Scope, DeploymentID: r.DeploymentID, MaxVerificationAge: age}
-	preflight, err := pollBindingCheckReleasePolicy(ctx, snapshot, policy, false, interval)
+	policy := bindingcheck.Policy{App: snapshot.slug, Scope: r.Scope, DeploymentID: r.DeploymentID, MaxVerificationAge: age}
+	preflight, err := pollBindingCheckReleasePolicy(ctx, snapshot, policy, true, interval)
 	r.Preflight = &preflight
 	if err != nil {
 		r.SnapshotConfirmed = false
-		return storagePolicyVerificationFailed(r, "preflight_incomplete", err)
+		return bindingPolicyVerificationFailed(r, "preflight_incomplete", err)
 	}
 	if !preflight.Passed || !preflight.ReleasePolicyConfirmed {
-		return storagePolicyVerificationFailed(r, "preflight_blocked", errors.New("required storage canaries completed, but binding preflight still has blockers; inspect preflight.blockers"))
+		return bindingPolicyVerificationFailed(r, "preflight_blocked", errors.New("binding preflight still has blockers; inspect preflight.blockers"))
 	}
 	r.Status, r.Passed = "passed", true
 	return r, 0
 }
 
-func storagePolicyVerificationPlan(inventory api.AppBindingInventory, policy api.BindingReleasePolicy) ([]storagePolicyProbePlan, error) {
-	plan := []storagePolicyProbePlan{}
-	if policy.Mode != "enforce" || len(policy.ObjectStorageRequirements) == 0 {
-		return plan, errors.New("an enforced release policy with explicit object-storage requirements is required")
-	}
-	prefixes := make([]string, 0, len(policy.ObjectStorageRequirements))
-	for prefix := range policy.ObjectStorageRequirements {
-		prefixes = append(prefixes, prefix)
-	}
-	sort.Strings(prefixes)
-	for _, prefix := range prefixes {
-		required := policy.ObjectStorageRequirements[prefix]
-		var selected *api.AppBindingInventoryItem
-		for index := range inventory.Bindings {
-			item := &inventory.Bindings[index]
-			if item.Type != api.BindingTypeObjectStorage || item.Binding != prefix || item.Scope != policy.Scope {
-				continue
-			}
-			if selected != nil {
-				return plan, fmt.Errorf("required prefix %s is ambiguous in scope %s", prefix, policy.Scope)
-			}
-			selected = item
-		}
-		if selected == nil || selected.State != "active" || selected.RotationPending == nil || *selected.RotationPending {
-			return plan, fmt.Errorf("required prefix %s must have one active binding with confirmed settled rotation", prefix)
-		}
-		if selected.Access != required && selected.Access != "read_write" {
-			return plan, fmt.Errorf("required prefix %s permission does not cover %s", prefix, required)
-		}
-		step := storagePolicyProbePlan{Prefix: prefix, RequiredMode: required, ProbeMode: "read", Operations: []string{"list"}}
-		if required != "read" {
-			// Admission requires the actual binding permission. A read/write
-			// binding therefore also tests download when policy only asks for write.
-			step.ProbeMode = selected.Access
-			step.Operations = []string{"upload", "cleanup"}
-			if selected.Access == "read_write" {
-				step.Operations = []string{"upload", "download", "cleanup"}
-			}
-		}
-		plan = append(plan, step)
-	}
-	sort.Slice(plan, func(i, j int) bool { return plan[i].Prefix < plan[j].Prefix })
-	return plan, nil
-}
-
-func storagePolicyVerificationFailed(r storagePolicyVerificationReport, code string, err error) (storagePolicyVerificationReport, int) {
-	var snapshotErr *storagePolicySnapshotError
+func bindingPolicyVerificationFailed(r bindingPolicyVerificationReport, code string, err error) (bindingPolicyVerificationReport, int) {
+	var snapshotErr *bindingPolicySnapshotError
 	if errors.As(err, &snapshotErr) {
 		code = snapshotErr.code
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		code = "verification_timeout"
 	}
 	r.Status, r.Passed, r.ErrorCode, r.Error = "blocked", false, code, err.Error()
 	if errors.Is(err, context.Canceled) {
@@ -202,20 +191,37 @@ func storagePolicyVerificationFailed(r storagePolicyVerificationReport, code str
 	return r, 1
 }
 
-func renderStoragePolicyVerification(r storagePolicyVerificationReport) {
-	_, _ = fmt.Fprintf(osStdout, "Storage release verification: %s deployment=%s scope=%s status=%s\n", r.App, r.DeploymentID, r.Scope, r.Status)
+func renderBindingPolicyVerification(r bindingPolicyVerificationReport) {
+	_, _ = fmt.Fprintf(osStdout, "Binding release verification: %s deployment=%s scope=%s status=%s\n", r.App, r.DeploymentID, r.Scope, r.Status)
 	if r.ReleasePolicy != nil {
 		_, _ = fmt.Fprintf(osStdout, "Policy revision=%d; write consent required=%t granted=%t\n", r.ReleasePolicy.Revision, r.WriteConsentRequired, r.WriteConsent)
 	}
 	for _, step := range r.Plan {
-		_, _ = fmt.Fprintf(osStdout, "%s: required=%s probe=%s operations=%v\n", step.Prefix, step.RequiredMode, step.ProbeMode, step.Operations)
+		selector := step.Binding
+		if selector == "" || step.Type == api.BindingTypeService || step.Type == api.BindingTypeOutbound {
+			selector = step.Name
+		}
+		_, _ = fmt.Fprintf(osStdout, "%s %s: %s (%s)\n", step.Type, selector, step.Action, step.Reason)
+		if step.Prefix != "" {
+			_, _ = fmt.Fprintf(osStdout, "  storage canary=%s operations=%v\n", step.ProbeMode, step.Operations)
+		}
+		if step.RequiredEvidence != "" {
+			_, _ = fmt.Fprintf(osStdout, "  required=%s; connectivity remains unverified\n", step.RequiredEvidence)
+		}
 	}
 	for _, probe := range r.Probes {
-		renderObjectStorageBindingProbeReport(r.App, probe.Report, api.AppTaskResponse{ID: probe.Report.TaskID, DeploymentID: probe.Report.DeploymentID})
+		renderBindingPolicyProbe(r.App, probe)
+	}
+	for _, blocker := range r.PlanBlockers {
+		PrintFail(osStderr, "%s %s: %s", blocker.Type, blocker.Binding, blocker.Message)
 	}
 	if r.Preflight != nil {
 		renderBindingCheck(r.Preflight.Report)
 	}
+	if r.Diagnostics != nil {
+		renderAutomaticDiagnostics(r.Diagnostics.Blockers, r.Diagnostics.Recovery)
+	}
+	renderBindingRecovery(r.Recovery)
 	if r.Error != "" {
 		PrintFail(osStderr, "%s: %s", r.ErrorCode, r.Error)
 	}

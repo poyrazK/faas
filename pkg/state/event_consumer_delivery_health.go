@@ -66,6 +66,13 @@ func getEventConsumerDeliveryHealth(ctx context.Context, store eventConsumerDeli
 		}
 		out.CapacityPressure = &pressure
 	}
+	if processing, ok := store.(EventConsumerProcessingHealthStore); ok {
+		health, err := processing.GetEventConsumerProcessingHealth(ctx, account, app, sub, window)
+		if err != nil {
+			return out, err
+		}
+		out.Processing = &health
+	}
 	out.PendingSample = sample
 	out.ObservedAt = time.Now().UTC()
 	return out, nil

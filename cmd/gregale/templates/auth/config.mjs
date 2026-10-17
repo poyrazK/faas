@@ -1,7 +1,7 @@
 // Mirrors pkg/api/limits.go; TestAuthTemplateRuntimeBounds checks this contract.
-export const limits = Object.freeze({ accessTokenSeconds: 600, pool: 4, frontPool: 2, bodyBytes: 1048576, authzBodyBytes: 65536, authzConfigBytes: 65536, redirectURLs: 50, migrationStatementMs: 600000, invitationSeconds: 604800, emailTimeoutMs: 10000, hookBodyBytes: 262144, storageURLSeconds: 60, adminBodyBytes: 1048576, importBatch: 100, signingKeys: 4, uiNameChars: 60, auditRetentionMaxDays: 3650, auditPruneBatch: 5000, auditPruneBatches: 20, auditPruneIntervalSeconds: 21600, eventBatch: 50, eventLeaseSeconds: 120, eventMaxBackoffSeconds: 3600, eventRetentionSeconds: 259200, smsCodeSeconds: 300 })
+export const limits = Object.freeze({ accessTokenSeconds: 600, pool: 4, frontPool: 2, bodyBytes: 1048576, authzBodyBytes: 65536, authzConfigBytes: 65536, redirectURLs: 50, migrationStatementMs: 600000, invitationSeconds: 604800, emailTimeoutMs: 10000, hookBodyBytes: 262144, storageURLSeconds: 60, adminBodyBytes: 1048576, importBatch: 100, signingKeys: 4, uiNameChars: 60, auditRetentionMaxDays: 3650, auditPruneBatch: 5000, auditPruneBatches: 20, auditPruneIntervalSeconds: 21600, eventBatch: 50, eventLeaseSeconds: 120, eventMaxBackoffSeconds: 3600, eventRetentionSeconds: 259200, smsCodeSeconds: 300, ssoMetadataBytes: 524288, ssoDomains: 50 })
 
-import { createPrivateKey } from 'node:crypto'
+import { createECDH, createPrivateKey } from 'node:crypto'
 
 export const gotrue = Object.freeze({ binary: '/usr/local/bin/gotrue-auth', migrations: '/app/gotrue-migrations', host: '127.0.0.1', port: 9999 })
 
@@ -75,9 +75,17 @@ export function signingKeys(env) {
     if (!id) continue
     let jwk
     try { jwk = JSON.parse(value) } catch { throw new Error(`Invalid ${name}`) }
-    const valid = jwk && typeof jwk === 'object' && jwk.kty === 'EC' && jwk.crv === 'P-256' && jwk.alg === 'ES256' && jwk.kid === signingKeyID(id) && ['x', 'y', 'd'].every(field => typeof jwk[field] === 'string')
+    const valid = jwk && typeof jwk === 'object' && jwk.kty === 'EC' && jwk.crv === 'P-256' && jwk.alg === 'ES256' && jwk.kid === signingKeyID(id) && ['x', 'y', 'd'].every(field => typeof jwk[field] === 'string' && /^[A-Za-z0-9_-]{43}$/.test(jwk[field]))
     if (!valid) throw new Error(`${name} must hold the ES256 private key ${signingKeyID(id)}`)
-    try { createPrivateKey({ key: { kty: jwk.kty, crv: jwk.crv, x: jwk.x, y: jwk.y, d: jwk.d }, format: 'jwk' }) } catch { throw new Error(`${name} must hold the ES256 private key ${signingKeyID(id)}`) }
+    try {
+      createPrivateKey({ key: { kty: jwk.kty, crv: jwk.crv, x: jwk.x, y: jwk.y, d: jwk.d }, format: 'jwk' })
+      // OpenSSL may import a short scalar or inconsistent public coordinates.
+      // Derive the public point to prove this is one usable P-256 key pair.
+      const curve = createECDH('prime256v1')
+      curve.setPrivateKey(Buffer.from(jwk.d, 'base64url'))
+      const expected = Buffer.concat([Buffer.from([4]), Buffer.from(jwk.x, 'base64url'), Buffer.from(jwk.y, 'base64url')])
+      if (!curve.getPublicKey().equals(expected)) throw new Error('inconsistent key pair')
+    } catch { throw new Error(`${name} must hold the ES256 private key ${signingKeyID(id)}`) }
     keys.push({ id, jwk })
   }
   if (keys.length < 1 || keys.length > limits.signingKeys) throw new Error(`Configure one to ${limits.signingKeys} AUTH_JWT_KEY_<ID> secrets`)
@@ -171,7 +179,7 @@ export function runtimeConfig(env) {
   if (redirects.length > limits.redirectURLs) throw new Error('Too many AUTH_REDIRECT_URLS')
   redirects.forEach(value => redirectURL(value, 'AUTH_REDIRECT_URLS'))
   if (typeof env.AUTH_JWT_SECRET !== 'string' || env.AUTH_JWT_SECRET.length < 32) throw new Error('AUTH_JWT_SECRET must hold at least 32 characters')
-  for (const flag of ['AUTH_AUTOCONFIRM', 'AUTH_DISABLE_SIGNUP', 'AUTH_LIFECYCLE_EVENTS']) {
+  for (const flag of ['AUTH_AUTOCONFIRM', 'AUTH_DISABLE_SIGNUP', 'AUTH_LIFECYCLE_EVENTS', 'AUTH_SSO']) {
     if (env[flag] !== undefined && env[flag] !== '1' && env[flag] !== '0') throw new Error(`Invalid ${flag}`)
   }
   const passthrough = {}
@@ -221,7 +229,7 @@ export function runtimeConfig(env) {
   }
   const email = emailConfig(env)
   const branding = brandingConfig(env, site)
-  Object.assign(gotrueEnv, smsEnv(passthrough, branding.name))
+  Object.assign(gotrueEnv, smsEnv(passthrough, branding.name), samlEnv(env))
   const captcha = captchaConfig(env)
   const retention = env.AUTH_AUDIT_RETENTION_DAYS ?? ''
   if (retention !== '' && (!/^[1-9][0-9]{0,3}$/.test(retention) || Number(retention) > limits.auditRetentionMaxDays)) throw new Error(`AUTH_AUDIT_RETENTION_DAYS must be 1 to ${limits.auditRetentionMaxDays}`)
@@ -255,6 +263,11 @@ export function publicSettings({ gotrueEnv: g, redirects, keys, email, app, bran
     branding: { name: branding.name, color: branding.color, logo_url: branding.logoURL },
     captcha: captcha ? { provider: captcha.provider, site_key: captcha.siteKey } : null,
     phone: { enabled: g.GOTRUE_EXTERNAL_PHONE_ENABLED === 'true', provider: g.GOTRUE_EXTERNAL_PHONE_ENABLED === 'true' ? g.GOTRUE_SMS_PROVIDER : null },
+    // What an identity provider needs to trust this app: GoTrue uses its
+    // metadata URL as the service provider's entity ID.
+    sso: g.GOTRUE_SAML_ENABLED === 'true'
+      ? { enabled: true, entity_id: `${g.API_EXTERNAL_URL}/sso/saml/metadata`, acs_url: `${g.API_EXTERNAL_URL}/sso/saml/acs` }
+      : { enabled: false, entity_id: null, acs_url: null },
     keys,
   }
 }
@@ -270,6 +283,24 @@ export function smsEnv(passthrough, appName) {
     ...(passthrough.GOTRUE_SMS_OTP_EXP ? {} : { GOTRUE_SMS_OTP_EXP: String(limits.smsCodeSeconds) }),
     ...(passthrough.GOTRUE_SMS_TEMPLATE ? {} : { GOTRUE_SMS_TEMPLATE: `Your ${appName.replace(/[{}]/g, '')} code is {{ .Code }}` }),
   }
+}
+
+// samlEnv turns on GoTrue's SAML service provider for organization single
+// sign-on. AUTH_SAML_PRIVATE_KEY is the RSA key GoTrue signs requests with
+// and publishes in its metadata, as GoTrue requires it: base64 PKCS#1 DER,
+// at least 2048 bits, exponent 65537. It stays sealed when SSO is turned off,
+// so turning it back on keeps every identity provider's trust.
+export function samlEnv(env) {
+  if (env.AUTH_SSO !== '1') return { GOTRUE_SAML_ENABLED: 'false' }
+  const value = env.AUTH_SAML_PRIVATE_KEY ?? ''
+  let key
+  try {
+    if (!/^[A-Za-z0-9+/]+={0,2}$/.test(value)) throw new Error('not base64')
+    key = createPrivateKey({ key: Buffer.from(value, 'base64'), format: 'der', type: 'pkcs1' })
+  } catch { throw new Error('AUTH_SSO requires AUTH_SAML_PRIVATE_KEY, a base64 PKCS#1 RSA key') }
+  const details = key.asymmetricKeyDetails
+  if (key.asymmetricKeyType !== 'rsa' || details.modulusLength < 2048 || details.publicExponent !== 65537n) throw new Error('AUTH_SAML_PRIVATE_KEY must be an RSA key of at least 2048 bits with exponent 65537')
+  return { GOTRUE_SAML_ENABLED: 'true', GOTRUE_SAML_PRIVATE_KEY: value }
 }
 
 // AUTH_AUTHZ declares custom roles and policies; gregale_auth.apply_authz

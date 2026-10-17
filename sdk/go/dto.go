@@ -30,6 +30,9 @@ type (
 	AppConfiguredResources    = api.AppConfiguredResources
 	AppServiceBinding         = api.AppServiceBinding
 	ServiceReliabilityPolicy  = api.ServiceReliabilityPolicy
+	ServiceBindingTransport   = api.ServiceBindingTransport
+	ServiceCallScope          = api.ServiceCallScope
+	ServiceCallerScopes       = api.ServiceCallerScopes
 	ServiceBindingPolicy      = api.ServiceBindingPolicy
 	PreviewServiceCallsPolicy = api.PreviewServiceCallsPolicy
 	DeclaredRoute             = api.DeclaredRoute
@@ -284,6 +287,8 @@ type (
 )
 
 const (
+	ServiceBindingTransportHTTP  = api.ServiceBindingTransportHTTP
+	ServiceBindingTransportHTTPS = api.ServiceBindingTransportHTTPS
 	ServiceBindingPolicyAccount  = api.ServiceBindingPolicyAccount
 	ServiceBindingPolicyDeclared = api.ServiceBindingPolicyDeclared
 	PreviewServiceCallsAllow     = api.PreviewServiceCallsAllow
@@ -563,3 +568,60 @@ type EventSubscriptionCapacityCommandsQuery = api.EventSubscriptionCapacityComma
 type EventSubscriptionCapacityCommandBudget = api.EventSubscriptionCapacityCommandBudget
 
 type EventDeliveryHealthConfirmation = api.EventDeliveryHealthConfirmation
+
+// Subscription token-bucket controls and retained command evidence.
+type (
+	EventSubscriptionRateRequest        = api.EventSubscriptionRateRequest
+	EventSubscriptionRateLimit          = api.EventSubscriptionRateLimit
+	EventSubscriptionRateCommandReceipt = api.EventSubscriptionRateCommandReceipt
+	EventSubscriptionRateCommands       = api.EventSubscriptionRateCommands
+)
+
+// Read-only delivery pacing previews.
+type (
+	EventSubscriptionRatePreviewRequest = api.EventSubscriptionRatePreviewRequest
+	EventSubscriptionRatePreview        = api.EventSubscriptionRatePreview
+	EventSubscriptionRateDeadlineRisk   = api.EventSubscriptionRateDeadlineRisk
+)
+
+// Opt-in Go SDK consumer pacing and deadline-risk watch diagnostics.
+type (
+	EventDeliveryRateRiskOptions = api.EventDeliveryRateRiskOptions
+	EventDeliveryRateEvidence    = api.EventDeliveryRateEvidence
+)
+
+// Complete retained pending-recipient observations.
+type EventSubscriptionPendingSummary = api.EventSubscriptionPendingSummary
+
+// Read-only effective-deadline triage.
+type (
+	EventSubscriptionDeadlineQuery     = api.EventSubscriptionDeadlineQuery
+	EventSubscriptionDeadlineRecipient = api.EventSubscriptionDeadlineRecipient
+	EventSubscriptionDeadlinePage      = api.EventSubscriptionDeadlinePage
+)
+
+// Full, disjoint deadline-window counts and opt-in sustained count alerts.
+type (
+	EventSubscriptionDeadlineWindow    = api.EventSubscriptionDeadlineWindow
+	EventDeliveryDeadlineWindowOptions = api.EventDeliveryDeadlineWindowOptions
+	EventDeliveryDeadlineRatioOptions  = api.EventDeliveryDeadlineRatioOptions
+)
+
+// EventSubscriptionDeadlineWindowCountsComplete checks complete known cohort partitions.
+func EventSubscriptionDeadlineWindowCountsComplete(v EventSubscriptionDeadlineWindow) bool {
+	return api.EventSubscriptionDeadlineWindowCountsComplete(v)
+}
+
+// EventDeliveryDeadlineRatioBasisPointsMax represents 100% in deadline ratio options.
+const EventDeliveryDeadlineRatioBasisPointsMax = api.EventDeliveryDeadlineRatioBasisPointsMax
+
+// Read-only alert-to-current-triage correlation helpers.
+type (
+	EventDeadlineInvestigationOptions = api.EventDeadlineInvestigationOptions
+	EventDeadlineAlertReference       = api.EventDeadlineAlertReference
+	EventDeadlineInvestigation        = api.EventDeadlineInvestigation
+	EventDeadlineExplanations         = api.EventDeadlineExplanations
+	EventDeadlineExplanation          = api.EventDeadlineExplanation
+	EventDeadlineRoutingExplanation   = api.EventDeadlineRoutingExplanation
+	EventDeadlineOrderingExplanation  = api.EventDeadlineOrderingExplanation
+)

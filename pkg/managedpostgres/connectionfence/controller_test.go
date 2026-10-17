@@ -16,8 +16,8 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
-	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/connectionfence/sqlc"
+	"github.com/onebox-faas/faas/pkg/managedpostgres/pgerrors"
 )
 
 type fixture struct {
@@ -213,11 +213,11 @@ func TestConnectionFenceClosesAdmissionAndObservesDrain(t *testing.T) {
 		case "database_set":
 			bad.DatabaseNames = bad.DatabaseNames[:1]
 		}
-		if _, err := replacement.Close(ctx, bad); !errors.Is(err, managedpostgres.ErrConflict) {
+		if _, err := replacement.Close(ctx, bad); !errors.Is(err, pgerrors.ErrConflict) {
 			t.Fatalf("%s close adopted source: %v", fault, err)
 		}
 		if fault == "owner" || fault == "source" {
-			if _, err := replacement.Release(ctx, bad.Identity); !errors.Is(err, managedpostgres.ErrConflict) {
+			if _, err := replacement.Release(ctx, bad.Identity); !errors.Is(err, pgerrors.ErrConflict) {
 				t.Fatalf("%s released source: %v", fault, err)
 			}
 		}
@@ -234,7 +234,7 @@ func TestConnectionFenceClosesAdmissionAndObservesDrain(t *testing.T) {
 	if _, err := f.connect(t.Context(), t, f.request.DatabaseNames[1], f.admin); err == nil {
 		t.Fatal("original closed setting was reopened")
 	}
-	if _, err := replacement.Close(ctx, f.request); !errors.Is(err, managedpostgres.ErrConflict) {
+	if _, err := replacement.Close(ctx, f.request); !errors.Is(err, pgerrors.ErrConflict) {
 		t.Fatalf("released owner reused: %v", err)
 	}
 }
@@ -278,13 +278,13 @@ func TestConnectionFenceRejectsChangedDatabaseIdentity(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if _, err := f.c.Observe(ctx, f.request.Identity); !errors.Is(err, managedpostgres.ErrConflict) {
+			if _, err := f.c.Observe(ctx, f.request.Identity); !errors.Is(err, pgerrors.ErrConflict) {
 				t.Fatalf("%s changed source observed as drained: %v", fault, err)
 			}
-			if _, err := f.c.Release(ctx, f.request.Identity); !errors.Is(err, managedpostgres.ErrConflict) {
+			if _, err := f.c.Release(ctx, f.request.Identity); !errors.Is(err, pgerrors.ErrConflict) {
 				t.Fatalf("%s changed source was released: %v", fault, err)
 			}
-			if _, err := f.c.Abandon(ctx, f.request.Identity); !errors.Is(err, managedpostgres.ErrConflict) {
+			if _, err := f.c.Abandon(ctx, f.request.Identity); !errors.Is(err, pgerrors.ErrConflict) {
 				t.Fatalf("%s changed source was abandoned: %v", fault, err)
 			}
 		})
@@ -323,7 +323,7 @@ func TestConnectionFenceRequiresPrivateMaintenance(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if _, err := f.c.Close(ctx, f.request); !errors.Is(err, managedpostgres.ErrUnsupported) {
+			if _, err := f.c.Close(ctx, f.request); !errors.Is(err, pgerrors.ErrUnsupported) {
 				t.Fatalf("%s accepted unsafe maintenance: %v", fault, err)
 			}
 			var allowed bool
@@ -342,7 +342,7 @@ func TestConnectionFenceAdmissionIsAtomicAndConcurrentOwnersConflict(t *testing.
 	}
 	bad := f.request
 	bad.DatabaseNames = append(append([]string(nil), bad.DatabaseNames...), "absent_database")
-	if _, err := f.c.Close(ctx, bad); !errors.Is(err, managedpostgres.ErrConflict) {
+	if _, err := f.c.Close(ctx, bad); !errors.Is(err, pgerrors.ErrConflict) {
 		t.Fatalf("missing source accepted: %v", err)
 	}
 	var count int
@@ -375,7 +375,7 @@ func TestConnectionFenceAdmissionIsAtomicAndConcurrentOwnersConflict(t *testing.
 	for err := range errs {
 		if err == nil {
 			wins++
-		} else if errors.Is(err, managedpostgres.ErrConflict) {
+		} else if errors.Is(err, pgerrors.ErrConflict) {
 			conflicts++
 		} else {
 			t.Fatal(err)
@@ -417,7 +417,7 @@ func TestConnectionFenceLockTimeoutRollsBackPartialClosure(t *testing.T) {
 	waitForCloseDatabaseLock(t, f)
 	select {
 	case err := <-result:
-		if !errors.Is(err, managedpostgres.ErrUnavailable) {
+		if !errors.Is(err, pgerrors.ErrUnavailable) {
 			t.Fatalf("server lock timeout: %v", err)
 		}
 	case <-time.After(3 * time.Second):
@@ -439,7 +439,7 @@ func TestConnectionFenceLockTimeoutRollsBackPartialClosure(t *testing.T) {
 			t.Fatal("partial closure changed recorded original setting")
 		}
 	}
-	if _, err := f.c.Observe(ctx, f.request.Identity); !errors.Is(err, managedpostgres.ErrNotFound) {
+	if _, err := f.c.Observe(ctx, f.request.Identity); !errors.Is(err, pgerrors.ErrNotFound) {
 		t.Fatalf("rejected owner ledger survived: %v", err)
 	}
 	if _, err := f.c.Release(ctx, retry.Identity); err != nil {
@@ -476,7 +476,7 @@ func TestConnectionFenceAbandonPreventsLateClose(t *testing.T) {
 	if err != nil || marker.State != "abandoned" || !marker.ClosedAt.IsZero() || marker.ReleasedAt.IsZero() || marker.Drained || len(marker.Databases) != 0 {
 		t.Fatalf("abandon before dispatch: %+v %v", marker, err)
 	}
-	if _, err := f.c.Close(ctx, f.request); !errors.Is(err, managedpostgres.ErrConflict) {
+	if _, err := f.c.Close(ctx, f.request); !errors.Is(err, pgerrors.ErrConflict) {
 		t.Fatalf("delayed close passed terminal marker: %v", err)
 	}
 	other := f.request
@@ -499,10 +499,10 @@ func TestConnectionFenceAbandonPreventsLateClose(t *testing.T) {
 	}
 	wrong := f.request.Identity
 	wrong.SourceResourceID += "-other"
-	if _, err := f.c.Abandon(ctx, wrong); !errors.Is(err, managedpostgres.ErrConflict) {
+	if _, err := f.c.Abandon(ctx, wrong); !errors.Is(err, pgerrors.ErrConflict) {
 		t.Fatalf("marker source was changed: %v", err)
 	}
-	if _, err := f.c.Release(ctx, f.request.Identity); !errors.Is(err, managedpostgres.ErrConflict) {
+	if _, err := f.c.Release(ctx, f.request.Identity); !errors.Is(err, pgerrors.ErrConflict) {
 		t.Fatalf("abandoned capture was treated as completed: %v", err)
 	}
 	if _, err := f.c.Abandon(ctx, other.Identity); err != nil {
@@ -569,7 +569,7 @@ func TestConnectionFenceAbandonRecoversCancelledInFlightClose(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("abandonment did not recover the pending close")
 	}
-	if _, err := replacement.Close(ctx, f.request); !errors.Is(err, managedpostgres.ErrConflict) {
+	if _, err := replacement.Close(ctx, f.request); !errors.Is(err, pgerrors.ErrConflict) {
 		t.Fatalf("cancelled owner reopened closure: %v", err)
 	}
 	for i, name := range f.request.DatabaseNames {
@@ -589,7 +589,7 @@ func TestConnectionFenceValidationAndCancellation(t *testing.T) {
 	for _, names := range [][]string{nil, {f.config.MaintenanceDatabase}, {""}, {"bad\x00name"}, {f.request.DatabaseNames[0], f.request.DatabaseNames[0]}} {
 		bad := f.request
 		bad.DatabaseNames = names
-		if _, err := f.c.Close(ctx, bad); !errors.Is(err, managedpostgres.ErrInvalid) {
+		if _, err := f.c.Close(ctx, bad); !errors.Is(err, pgerrors.ErrInvalid) {
 			t.Fatalf("invalid names %q: %v", names, err)
 		}
 	}
@@ -598,7 +598,7 @@ func TestConnectionFenceValidationAndCancellation(t *testing.T) {
 	if _, err := f.c.Close(cancelled, f.request); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled closure: %v", err)
 	}
-	if _, err := f.c.Observe(ctx, f.request.Identity); !errors.Is(err, managedpostgres.ErrNotFound) {
+	if _, err := f.c.Observe(ctx, f.request.Identity); !errors.Is(err, pgerrors.ErrNotFound) {
 		t.Fatalf("cancelled closure committed: %v", err)
 	}
 	if err := classifyError(fmt.Errorf("sensitive provider info: %w", &pgconn.PgError{Code: "XX000", Message: "password"})); err.Error() != "managed postgres unavailable" {

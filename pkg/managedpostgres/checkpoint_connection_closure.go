@@ -32,6 +32,7 @@ type CheckpointConnectionClosure struct {
 	Databases           []CheckpointConnectionDatabase
 	Drained             bool
 	UnselectedDatabases int64
+	WriterInventory     *CheckpointWriterInventory
 }
 
 func (CheckpointConnectionClosure) String() string {
@@ -43,6 +44,15 @@ func (CheckpointConnectionClosure) MarshalJSON() ([]byte, error) {
 }
 
 func (o CheckpointConnectionClosure) Validate(r CheckpointConnectionRequest) error {
+	if o.WriterInventory != nil && o.WriterInventory.Validate() != nil {
+		return ErrConflict
+	}
+	if i := o.WriterInventory; i != nil {
+		outside := int64(i.DatabaseCount) - int64(len(o.Databases)) - 1
+		if i.CatalogComplete && outside != o.UnselectedDatabases || !i.CatalogComplete && outside > o.UnselectedDatabases {
+			return ErrConflict
+		}
+	}
 	if r.Validate() != nil || o.CheckpointConnectionIdentity != r.CheckpointConnectionIdentity || o.State != "closed" ||
 		o.ClosedAt.IsZero() || o.ClosedAt.Year() < 1 || o.ClosedAt.Year() > 9999 || o.ClosedAt.Nanosecond()%1000 != 0 ||
 		o.ClosedAt.After(time.Now()) || len(o.Databases) != len(r.DatabaseNames) || o.UnselectedDatabases < 0 {
@@ -120,6 +130,10 @@ func (s *Service) checkpointConnectionClosure(ctx context.Context, d RestoreSour
 		return CheckpointConnectionClosure{}, err
 	}
 	actual.Databases = slices.Clone(actual.Databases)
+	if actual.WriterInventory != nil {
+		inventory := *actual.WriterInventory
+		actual.WriterInventory = &inventory
+	}
 	actual.ClosedAt = actual.ClosedAt.UTC()
 	if err := providerCtx.Err(); err != nil {
 		return CheckpointConnectionClosure{}, err

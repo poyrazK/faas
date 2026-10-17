@@ -5967,7 +5967,7 @@ type StorageUsage struct {
 // returns this type — never expose the cross-account scan.
 //
 // Money is integer cents in the provider's currency; the financial
-// model distills to EUR at the API edge. Currency is preserved per
+// model distills to the billing currency at the API edge. Currency is preserved per
 // row so future multi-currency support can land without a backfill.
 //
 // HostedURL is intentionally NOT exposed on the read surface — the
@@ -6097,6 +6097,7 @@ type CreditLedgerEntry struct {
 // lifecycle fields are stored as an app-owned manifest patch alongside the
 // existing resource and scaling settings.
 type UpdateAppParams struct {
+	ExpectedServiceBindingFingerprint string
 	// Visibility is the app edge exposure policy. SetVisibility distinguishes
 	// an explicit public reset from an omitted field.
 	Visibility     *api.AppVisibility
