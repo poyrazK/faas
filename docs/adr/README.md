@@ -1,5 +1,7 @@
 # Architecture Decision Records
 
+- [1660 · Publish final Node build source maps with build completion](1660-builder-issue-source-map-publication.md)
+
 - [Restart-safe Go acknowledgment recovery alerts](20261017182028-go-recovery-alert-checkpoints.md)
 
 - [Bounded Go acknowledgment intent recovery passes](20261017181200-bounded-go-intent-recovery.md)

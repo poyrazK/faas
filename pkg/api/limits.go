@@ -10065,8 +10065,13 @@ const (
 
 // Match Node build discovery's bundle hashing bounds (ADR-1659).
 const (
-	IssueSourceMapBundleMaxBytes  = 16 << 20
-	IssueSourceMapBundlesMaxBytes = 64 << 20
+	IssueSourceMapBundleMaxBytes      = 16 << 20
+	IssueSourceMapBundlesMaxBytes     = 64 << 20
+	IssueSourceMapDiscoveryEntriesMax = 4096
+	IssueSourceMapBuildConfigMaxBytes = 4096
+	// Includes build binding fields or cache toolchain metadata around the
+	// bounded, sanitized publication request.
+	IssueSourceMapBuildMetadataMaxBytes = IssueSourceMapsUploadMaxBytes + (64 << 10)
 )
 
 // IssueGroupMembersMax bounds reversible manual group links (ADR-1114).

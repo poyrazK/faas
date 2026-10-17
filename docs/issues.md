@@ -453,6 +453,53 @@ retries keep their original occurrence even after retirement. App or deployment
 deletion cascades artifacts. Existing occurrences retain their mapped evidence;
 source contents and producer extensions are never persisted in artifact storage.
 
+### Publish source maps from Node builds
+
+For JavaScript bundles generated during Gregale's remote build, commit
+`gregale.issue-source-maps.json` beside the selected workload's `package.json`:
+
+```json
+{"version": 1, "directory": "/app/dist"}
+```
+
+Configure your bundler to emit flat Source Map v3 files into that final-image
+directory, including its subdirectories. Deploy normally using local source or
+a connected repository; a workspace uses the selected workload's source root.
+Keep the configuration in the uploaded source archive. This path supports
+production Railpack Node builds; Dockerfiles, other languages and developer
+watch-mode builds reject the opt-in.
+
+The builder discovers final `.js`, `.mjs` and `.cjs` bundles, follows their last
+complete relative `sourceMappingURL` comment, or uses `bundle.js.map` for hidden
+maps. URLs are never fetched. Maps must remain within the configured directory;
+links, inline maps, indexed maps and absolute source paths are unsupported.
+`node_modules` and `.git` are skipped. Bounds are 4,096 visited entries, 16 MiB
+per bundle, 64 MiB total bundles and the existing map/count/decoded-entry limits.
+Empty discovery and invalid/missing referenced maps fail the build.
+
+The artifact sidecar contains only sanitized map metadata: source contents and
+producer extensions are removed. The deployed image remains unchanged, including
+any `.map` files the application ships; control their public serving separately.
+The handoff verifies the exact source archive,
+build, deployment and final OCI image; bundle SHA-256 values describe final
+output bytes. The build commits its source maps and success together, before
+imaging, readiness or production promotion. A verified build-cache hit carries
+the same sanitized maps into the new deployment's artifact set. Temporary
+publication interruptions retry the same completion without another build or
+deployment; a lost image notification is recovered by the existing durable poll.
+Process death before that commit follows the existing build-reaper behavior.
+
+Inspect readiness with `gregale issues source-maps status --app APP --deployment ID`.
+The existing 32-ready-deployment cap and immutable-manifest conflicts still
+apply; retire obsolete sets to free capacity. Do not also use the prebuilt CLI
+publication flags for the same deployment. Automatic publication does not enable
+reporters or grouping: opt into `deployment-source-maps-v1` as described above.
+
+Operators must update both builderd and the builder guest before enabling this
+source-file opt-in. An old guest with a new builderd fails closed on the missing
+handoff; an old builderd does not understand the opt-in. Native builder acceptance
+of the dual-export path remains a rollout requirement.
+
 ### Publish prebuilt source maps during deployment
 
 For prebuilt JavaScript bundles, `deploy` can publish the manifest to the exact
