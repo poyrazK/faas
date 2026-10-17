@@ -200,3 +200,32 @@ func TestObjectStorageInventoryPublishesOnlyCompleteScans(t *testing.T) {
 		})
 	}
 }
+
+// TestBucketCreationWakesInventorySweep pins H10-129: on production-us the
+// first upload after `gregale add bucket` was refused as
+// object_storage_usage_stale until the minute-long inventory sweep reached
+// the new bucket. Creation now wakes the sweep.
+func TestBucketCreationWakesInventorySweep(t *testing.T) {
+	e := setup(t, api.PlanPro)
+	createApp(t, e, "inventory-wake")
+	e.s.WithObjectStorage(objectRegistry(t, &fakeObjectProvider{}, &fakeObjectProvider{}, "external"))
+	setS3Flag(t, e, true)
+	select {
+	case <-e.s.object.InventoryWake:
+		t.Fatal("inventory sweep woken before any bucket was created")
+	default:
+	}
+	bucketResponse(t, e.do(t, "POST", "/v1/apps/inventory-wake/buckets", map[string]any{"name": "assets"}, nil), 201)
+	select {
+	case <-e.s.object.InventoryWake:
+	default:
+		t.Fatal("bucket creation did not wake the inventory sweep")
+	}
+	// A retried create of the same bucket provisions nothing new.
+	bucketResponse(t, e.do(t, "POST", "/v1/apps/inventory-wake/buckets", map[string]any{"name": "assets"}, nil), 200)
+	select {
+	case <-e.s.object.InventoryWake:
+		t.Fatal("retried create woke the sweep again")
+	default:
+	}
+}

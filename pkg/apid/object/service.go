@@ -55,4 +55,18 @@ type Host interface {
 // Service is the object storage surface.
 type Service struct {
 	Host Host
+	// InventoryWake, when set, lets bucket creation run the inventory sweep
+	// now instead of at its next tick (H10-129). Buffered with capacity one.
+	InventoryWake chan struct{}
+}
+
+// wakeObjectInventory asks the inventory sweep to run now. Admission needs a
+// verified inventory of every bucket in the account, so a new bucket blocked
+// transfers on every bucket of its account until the minute-long sweep tick
+// reached it (production-us hunt #10, H10-129). Never blocks.
+func (s *Service) wakeObjectInventory() {
+	select {
+	case s.InventoryWake <- struct{}{}:
+	default:
+	}
 }

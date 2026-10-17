@@ -1252,6 +1252,7 @@ func newServerWithDeps(
 	s.oidcHandler = s.buildOIDCHandler()
 	s.durable.Host = durableHost{s}
 	s.object.Host = objectHost{s}
+	s.object.InventoryWake = make(chan struct{}, 1)
 	s.operation.Host = operationHost{s}
 	s.edgeRules.Host = edgeRulesHost{s}
 	s.queueLeases.Host = queueLeasesHost{s}
