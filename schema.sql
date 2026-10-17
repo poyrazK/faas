@@ -34500,6 +34500,48 @@ CREATE TABLE public.object_multipart_part_writers (
 
 
 --
+-- Name: object_node_settlement_outbox; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.object_node_settlement_outbox (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    bucket_id uuid NOT NULL,
+    kind text NOT NULL,
+    backend_id text NOT NULL,
+    backend_fingerprint text NOT NULL,
+    physical_name text NOT NULL,
+    payload jsonb,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    ready_at timestamp with time zone,
+    retry_at timestamp with time zone,
+    lease_token uuid,
+    lease_until timestamp with time zone,
+    attempts integer DEFAULT 0 NOT NULL,
+    last_error text DEFAULT ''::text NOT NULL,
+    CONSTRAINT object_node_settlement_lease CHECK (((lease_token IS NULL) = (lease_until IS NULL))),
+    CONSTRAINT object_node_settlement_outbox_account_id_check CHECK ((account_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT object_node_settlement_outbox_app_id_check CHECK ((app_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT object_node_settlement_outbox_attempts_check CHECK ((attempts >= 0)),
+    CONSTRAINT object_node_settlement_outbox_backend_fingerprint_check CHECK ((backend_fingerprint <> ''::text)),
+    CONSTRAINT object_node_settlement_outbox_backend_id_check CHECK ((backend_id <> ''::text)),
+    CONSTRAINT object_node_settlement_outbox_bucket_id_check CHECK ((bucket_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT object_node_settlement_outbox_check CHECK (((payload IS NULL) OR COALESCE(((jsonb_typeof(payload) = 'object'::text) AND (octet_length((payload)::text) <= 16384) AND ((payload ->> 'id'::text) = (id)::text) AND ((payload ->> 'bucket'::text) = physical_name) AND ((payload ->> 'kind'::text) = kind) AND ((payload ->> 'status'::text) = ANY (ARRAY['committed'::text, 'rejected'::text, 'aborted'::text])) AND (payload ?& ARRAY['id'::text, 'bucket'::text, 'key'::text, 'kind'::text, 'status'::text, 'size'::text, 'etag'::text, 'manifest_hash'::text]) AND (jsonb_typeof((payload -> 'size'::text)) = 'number'::text) AND (jsonb_typeof((payload -> 'key'::text)) = 'string'::text) AND (jsonb_typeof((payload -> 'etag'::text)) = 'string'::text) AND (jsonb_typeof((payload -> 'manifest_hash'::text)) = 'string'::text)), false))),
+    CONSTRAINT object_node_settlement_outbox_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT object_node_settlement_outbox_id_check CHECK (((id)::text ~ '^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'::text)),
+    CONSTRAINT object_node_settlement_outbox_kind_check CHECK ((kind = ANY (ARRAY['put'::text, 'multipart'::text]))),
+    CONSTRAINT object_node_settlement_outbox_last_error_check CHECK ((last_error = ANY (ARRAY[''::text, 'configuration'::text, 'unavailable'::text]))),
+    CONSTRAINT object_node_settlement_outbox_lease_token_check CHECK ((lease_token <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT object_node_settlement_outbox_lease_until_check CHECK (isfinite(lease_until)),
+    CONSTRAINT object_node_settlement_outbox_physical_name_check CHECK ((physical_name <> ''::text)),
+    CONSTRAINT object_node_settlement_outbox_ready_at_check CHECK (isfinite(ready_at)),
+    CONSTRAINT object_node_settlement_outbox_retry_at_check CHECK (isfinite(retry_at)),
+    CONSTRAINT object_node_settlement_ready CHECK ((((payload IS NULL) AND (ready_at IS NULL) AND (retry_at IS NULL) AND (lease_token IS NULL) AND (lease_until IS NULL) AND (attempts = 0) AND (last_error = ''::text)) OR ((payload IS NOT NULL) AND (ready_at IS NOT NULL) AND (retry_at IS NOT NULL) AND isfinite(ready_at))))
+);
+
+
+--
 -- Name: object_s3_copy_source_epochs; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -47568,6 +47610,14 @@ ALTER TABLE ONLY public.object_multipart_part_writers
 
 
 --
+-- Name: object_node_settlement_outbox object_node_settlement_outbox_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_node_settlement_outbox
+    ADD CONSTRAINT object_node_settlement_outbox_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: object_s3_copy_source_epochs object_s3_copy_source_epochs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -56401,6 +56451,20 @@ CREATE INDEX object_lifecycle_multipart_discovery ON public.object_storage_multi
 --
 
 CREATE INDEX object_lifecycle_scan_due ON public.object_lifecycle_scans USING btree (retry_at, bucket_id) WHERE (state = 'scanning'::text);
+
+
+--
+-- Name: object_node_settlement_age; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX object_node_settlement_age ON public.object_node_settlement_outbox USING btree (ready_at) WHERE (ready_at IS NOT NULL);
+
+
+--
+-- Name: object_node_settlement_due; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX object_node_settlement_due ON public.object_node_settlement_outbox USING btree (retry_at, id) WHERE (ready_at IS NOT NULL);
 
 
 --

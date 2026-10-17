@@ -92,6 +92,13 @@ func (s *Service) scanObjectCapacity(ctx context.Context, st state.ObjectCapacit
 // Complete scans reject partial pages, invalid keys, out-of-order/duplicate
 // entries and cursor cycles before any capacity ledger is changed.
 func CompleteObjectInventory(ctx context.Context, p objectstorage.Provider, physical string, record ...func(context.Context) error) (bytes, keys int64, err error) {
+	var recorder func(context.Context) error
+	if len(record) != 0 {
+		recorder = record[0]
+	}
+	if bytes, keys, owned, err := objectstorage.CompleteOwnedInventory(ctx, p, physical, recorder); owned {
+		return bytes, keys, err
+	}
 	cursor, last := "", ""
 	seen := map[string]bool{}
 	for range api.ObjectStorageInventoryMaxPages {

@@ -315,6 +315,20 @@ migration-version-hygiene-check: ## Reject hand-typed migration versions and ver
 migration-version-hygiene-check-test: ## Exercise the migration-version gate with synthetic pull request events
 	bash scripts/ci/check_migration_version_hygiene_test.sh
 
+.PHONY: version-skew-check
+version-skew-check: ## Fail a proto or guest-protocol change an N-1 peer cannot handle (BASE=<ref>, default merge-base with origin/main)
+	$(GO) run ./scripts/ci/versionskew $(if $(BASE),-base $(BASE))
+
+.PHONY: migration-lint
+migration-lint: ## Expand/contract lint of the migrations added since BASE (default merge-base with origin/main)
+	python3 scripts/ci/check_migration_expand_contract.py $(if $(BASE),--base $(BASE))
+
+.PHONY: release-safety-check-test
+release-safety-check-test: ## Unit tests of the version-skew check, migration linter and post-deploy SLO gate
+	python3 scripts/ci/check_migration_expand_contract_test.py
+	python3 scripts/ci/slo_gate_test.py
+	$(GO) test -count=1 ./scripts/ci/versionskew
+
 .PHONY: text-encoding-check-test
 text-encoding-check-test: ## Exercise the text-encoding gate against fixture trees in both directions
 	bash scripts/ci/check_text_encoding_test.sh
@@ -416,6 +430,7 @@ grafana-jq-check: ## Validate every Grafana dashboard JSON parses cleanly (jq -e
 	    jq -e . "$$f" > /dev/null || (echo "grafana-jq-check: parse failed $$f"; exit 1); \
 	  fi; \
 	done
+	@jq -e . examples/event-acknowledgment-monitoring/preparation-dashboard.json > /dev/null
 
 .PHONY: grafana-mirror-check
 grafana-mirror-check: ## SHA-256 byte-identity check for deploy/grafana/ → deploy/ansible/roles/grafana/files/ mirror. PR #837 (ADR-091 Amendment 1, issue #561) wired this into `test`.

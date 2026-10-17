@@ -57002,9 +57002,10 @@ func (q *Queries) ObjectMultipartDue(ctx context.Context, db DBTX, batchLimit in
 }
 
 const objectMultipartFinish = `-- name: ObjectMultipartFinish :execrows
-UPDATE object_storage_multipart_uploads SET state=$3,lease_token=NULL,lease_until=NULL,
+UPDATE object_storage_multipart_uploads AS u SET state=$3,lease_token=NULL,lease_until=NULL,
 attempt_count=0,last_error_code='',retry_at=now(),updated_at=now()
-WHERE id=$1 AND lease_token=$2 AND
+WHERE u.id=$1 AND u.lease_token=$2
+AND NOT EXISTS (SELECT 1 FROM object_node_settlement_outbox o WHERE o.id=u.id) AND
 (state IN ('completing','completing_conditional') AND $3='completed' AND NOT completion_dispatched AND encryption_snapshot='{}' AND protection_snapshot='{}')
 `
 
@@ -58089,6 +58090,224 @@ type ObjectMutationEventAppendParams struct {
 func (q *Queries) ObjectMutationEventAppend(ctx context.Context, db DBTX, arg ObjectMutationEventAppendParams) error {
 	_, err := db.Exec(ctx, objectMutationEventAppend, arg.AccountID, arg.Payload, arg.At)
 	return err
+}
+
+const objectNodeSettlementClaim = `-- name: ObjectNodeSettlementClaim :many
+WITH due AS (
+    SELECT id FROM object_node_settlement_outbox
+    WHERE ready_at IS NOT NULL AND retry_at <= clock_timestamp() AND (lease_until IS NULL OR lease_until <= clock_timestamp())
+    ORDER BY retry_at, id LIMIT $4::integer FOR UPDATE SKIP LOCKED
+)
+UPDATE object_node_settlement_outbox o SET lease_token=$1::uuid,
+    lease_until=clock_timestamp()+make_interval(secs=>$2::integer),
+    attempts=least(o.attempts::bigint+1, $3::bigint)::integer
+FROM due WHERE o.id=due.id RETURNING o.id, o.account_id, o.app_id, o.bucket_id, o.kind, o.backend_id, o.backend_fingerprint, o.physical_name, o.payload, o.created_at, o.ready_at, o.retry_at, o.lease_token, o.lease_until, o.attempts, o.last_error
+`
+
+type ObjectNodeSettlementClaimParams struct {
+	Token        pgtype.UUID
+	LeaseSeconds int32
+	MaxAttempts  int64
+	Batch        int32
+}
+
+func (q *Queries) ObjectNodeSettlementClaim(ctx context.Context, db DBTX, arg ObjectNodeSettlementClaimParams) ([]ObjectNodeSettlementOutbox, error) {
+	rows, err := db.Query(ctx, objectNodeSettlementClaim,
+		arg.Token,
+		arg.LeaseSeconds,
+		arg.MaxAttempts,
+		arg.Batch,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ObjectNodeSettlementOutbox{}
+	for rows.Next() {
+		var i ObjectNodeSettlementOutbox
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.AppID,
+			&i.BucketID,
+			&i.Kind,
+			&i.BackendID,
+			&i.BackendFingerprint,
+			&i.PhysicalName,
+			&i.Payload,
+			&i.CreatedAt,
+			&i.ReadyAt,
+			&i.RetryAt,
+			&i.LeaseToken,
+			&i.LeaseUntil,
+			&i.Attempts,
+			&i.LastError,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const objectNodeSettlementDiscard = `-- name: ObjectNodeSettlementDiscard :execrows
+DELETE FROM object_node_settlement_outbox WHERE id=$1::uuid AND ready_at IS NULL
+`
+
+func (q *Queries) ObjectNodeSettlementDiscard(ctx context.Context, db DBTX, id pgtype.UUID) (int64, error) {
+	result, err := db.Exec(ctx, objectNodeSettlementDiscard, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const objectNodeSettlementEnroll = `-- name: ObjectNodeSettlementEnroll :execrows
+INSERT INTO object_node_settlement_outbox (id, account_id, app_id, bucket_id, kind, backend_id, backend_fingerprint, physical_name)
+SELECT src.id, src.account_id, src.app_id, src.bucket_id, src.kind, m.backend_id, m.backend_fingerprint, m.physical_name
+FROM (
+    SELECT id, account_id, app_id, bucket_id, 'put'::text AS kind FROM object_upload_completions WHERE status='pending' AND write_phase='prepared'
+    UNION ALL
+    SELECT id, account_id, app_id, bucket_id, 'multipart'::text AS kind FROM object_storage_multipart_uploads WHERE state='initiating'
+) src
+JOIN object_bucket_mutations m ON m.bucket_id=src.bucket_id AND ((src.kind='put' AND m.upload_id=src.id) OR (src.kind='multipart' AND m.multipart_upload_id=src.id))
+WHERE src.id=$1::uuid AND src.account_id=$2::uuid AND src.app_id=$3::uuid
+AND src.bucket_id=$4::uuid AND src.kind=$5::text AND m.kind='request'
+`
+
+type ObjectNodeSettlementEnrollParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	BucketID  pgtype.UUID
+	Kind      string
+}
+
+func (q *Queries) ObjectNodeSettlementEnroll(ctx context.Context, db DBTX, arg ObjectNodeSettlementEnrollParams) (int64, error) {
+	result, err := db.Exec(ctx, objectNodeSettlementEnroll,
+		arg.ID,
+		arg.AccountID,
+		arg.AppID,
+		arg.BucketID,
+		arg.Kind,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const objectNodeSettlementFinish = `-- name: ObjectNodeSettlementFinish :execrows
+DELETE FROM object_node_settlement_outbox
+WHERE id=$1::uuid AND lease_token=$2::uuid AND lease_until > clock_timestamp()
+`
+
+type ObjectNodeSettlementFinishParams struct {
+	ID    pgtype.UUID
+	Token pgtype.UUID
+}
+
+func (q *Queries) ObjectNodeSettlementFinish(ctx context.Context, db DBTX, arg ObjectNodeSettlementFinishParams) (int64, error) {
+	result, err := db.Exec(ctx, objectNodeSettlementFinish, arg.ID, arg.Token)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const objectNodeSettlementLock = `-- name: ObjectNodeSettlementLock :one
+SELECT id, account_id, app_id, bucket_id, kind, backend_id, backend_fingerprint, physical_name, payload, created_at, ready_at, retry_at, lease_token, lease_until, attempts, last_error FROM object_node_settlement_outbox WHERE id=$1::uuid FOR UPDATE
+`
+
+func (q *Queries) ObjectNodeSettlementLock(ctx context.Context, db DBTX, id pgtype.UUID) (ObjectNodeSettlementOutbox, error) {
+	row := db.QueryRow(ctx, objectNodeSettlementLock, id)
+	var i ObjectNodeSettlementOutbox
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.BucketID,
+		&i.Kind,
+		&i.BackendID,
+		&i.BackendFingerprint,
+		&i.PhysicalName,
+		&i.Payload,
+		&i.CreatedAt,
+		&i.ReadyAt,
+		&i.RetryAt,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.Attempts,
+		&i.LastError,
+	)
+	return i, err
+}
+
+const objectNodeSettlementReady = `-- name: ObjectNodeSettlementReady :execrows
+UPDATE object_node_settlement_outbox SET payload=$1::jsonb, ready_at=clock_timestamp(), retry_at=clock_timestamp()
+WHERE id=$2::uuid AND ready_at IS NULL
+`
+
+type ObjectNodeSettlementReadyParams struct {
+	Payload []byte
+	ID      pgtype.UUID
+}
+
+func (q *Queries) ObjectNodeSettlementReady(ctx context.Context, db DBTX, arg ObjectNodeSettlementReadyParams) (int64, error) {
+	result, err := db.Exec(ctx, objectNodeSettlementReady, arg.Payload, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const objectNodeSettlementRetry = `-- name: ObjectNodeSettlementRetry :execrows
+UPDATE object_node_settlement_outbox SET lease_token=NULL, lease_until=NULL, last_error=$1::text,
+    retry_at=clock_timestamp()+make_interval(secs=>$2::integer)
+WHERE id=$3::uuid AND lease_token=$4::uuid AND lease_until > clock_timestamp()
+`
+
+type ObjectNodeSettlementRetryParams struct {
+	Code         string
+	DelaySeconds int32
+	ID           pgtype.UUID
+	Token        pgtype.UUID
+}
+
+func (q *Queries) ObjectNodeSettlementRetry(ctx context.Context, db DBTX, arg ObjectNodeSettlementRetryParams) (int64, error) {
+	result, err := db.Exec(ctx, objectNodeSettlementRetry,
+		arg.Code,
+		arg.DelaySeconds,
+		arg.ID,
+		arg.Token,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const objectNodeSettlementStats = `-- name: ObjectNodeSettlementStats :one
+SELECT count(*) FILTER (WHERE ready_at IS NULL)::bigint AS waiting,
+       count(*) FILTER (WHERE ready_at IS NOT NULL)::bigint AS ready,
+       min(ready_at)::timestamptz AS oldest_ready_at
+FROM object_node_settlement_outbox
+`
+
+type ObjectNodeSettlementStatsRow struct {
+	Waiting       int64
+	Ready         int64
+	OldestReadyAt pgtype.Timestamptz
+}
+
+func (q *Queries) ObjectNodeSettlementStats(ctx context.Context, db DBTX) (ObjectNodeSettlementStatsRow, error) {
+	row := db.QueryRow(ctx, objectNodeSettlementStats)
+	var i ObjectNodeSettlementStatsRow
+	err := row.Scan(&i.Waiting, &i.Ready, &i.OldestReadyAt)
+	return i, err
 }
 
 const objectNotificationInvocationExisting = `-- name: ObjectNotificationInvocationExisting :one

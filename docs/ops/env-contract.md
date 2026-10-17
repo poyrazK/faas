@@ -394,6 +394,13 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_NODE_NAME` | apid, builderd, gatewayd-internal, gatewayd-public, githubd, imaged, meterd, realtimed, schedd, vmmd, shared | `dropin` |  |  | `` |  |
 | `FAAS_NODE_PUBLIC_IP` | gatewayd-public | `default` |  |  | `` |  |
 | `FAAS_NOTIFICATIONS_UNSUBSCRIBE_URL` | meterd | `default` |  |  | `` |  |
+| `FAAS_OBJECT_NODE_ACCESS_KEY_ID` | shared | `dev-only` |  |  | `` | private development node credential; supplied only by the operator or disposable qualifier, never to customers or production units |
+| `FAAS_OBJECT_NODE_BACKENDS_ENABLED` | shared | `dev-only` |  | 0 | `` | ADR-1570 private backend-loading gate; also requires the master gate and explicit backend configuration; restart required |
+| `FAAS_OBJECT_NODE_ENABLED` | shared | `dev-only` |  | 0 | `` | ADR-1570 private object-node master gate; explicit capability opt-in also required; restart required |
+| `FAAS_OBJECT_NODE_SECRET_ACCESS_KEY` | shared | `dev-only` |  |  | `` | private development node secret; supplied only by the operator or disposable qualifier, never to customers or production units |
+| `FAAS_OBJECT_NODE_SERVER_ENABLED` | shared | `dev-only` |  | 0 | `` | ADR-1570 loopback development node startup gate; also requires the master gate; restart required |
+| `FAAS_OBJECT_NODE_SETTLEMENTS_ENABLED` | shared | `dev-only` |  | 0 | `` | ADR-1570 recovery settlement enrollment gate; also requires master/backend gates and the backend option; restart required |
+| `FAAS_OBJECT_NODE_USAGE_COUNTERS_ENABLED` | shared | `dev-only` |  | 0 | `` | ADR-1570 logical usage-counter integration gate; also requires master/backend gates and the backend option; restart required |
 | `FAAS_OBJECT_STORAGE_CONFIG` | apid, gatewayd-public, s3-gatewayd, shared | `unit` |  |  | `` | gatewayd-public and s3-gatewayd read /etc/faas/object-storage.json; apid uses the same optional drop-in; s3_enabled runtime config separately defaults off |
 | `FAAS_OCI_BLOB_CACHE_DIR` | imaged | `default` |  |  | `` | defaults to <FAAS_STORAGE_CACHE_DIR>/oci-blobs for OCI-backed deployments; local-storage deployments may opt in explicitly |
 | `FAAS_OCI_BLOB_CACHE_MAX_BYTES` | imaged | `default` |  |  | `` | 8 GiB byte budget for the node-local OCI blob cache; override when sizing compute-node disks |

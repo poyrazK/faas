@@ -330,6 +330,7 @@ type MemStore struct {
 	syntheticRuns               map[string][]SyntheticCheckRun
 	objectBuckets               map[string]ObjectBucket
 	objectMutations             map[string]ObjectBucketMutation
+	objectNodeSettlements       map[string]ObjectNodeSettlement
 	objectWriteFences           map[string]ObjectBucketWriteFence
 	objectUploadGrants          map[string]ObjectUploadGrant
 	objectUsage                 map[string]ObjectBucketUsage
