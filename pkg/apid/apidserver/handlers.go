@@ -275,6 +275,10 @@ func (s *server) buildApp(acct state.Account, req api.CreateAppRequest, limits a
 		return state.App{}, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 			"Invalid runtime", "functions require runtime "+strings.Join(api.FunctionRuntimes, ", "))
 	}
+	if typ == state.AppTypeApp && req.Runtime != "" {
+		return state.App{}, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+			"Runtime is only valid for functions", "omit runtime for type app; the container supplies its own process")
+	}
 	visibility := api.AppVisibility(req.Visibility)
 	if visibility == "" {
 		visibility = api.AppVisibilityPublic
@@ -712,7 +716,7 @@ func (s *server) createImageDeployment(w http.ResponseWriter, r *http.Request, a
 	}
 	if !isDigestPinned(req.Image) {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeImageRequired,
-			"Image required", "image: deploys require a digest-pinned reference, e.g. registry.gregale.dev/app@sha256:..."))
+			"Image digest required", "image: deploys require a digest-pinned reference, e.g. registry.gregale.dev/app@sha256:..."))
 		return
 	}
 	// Pre-CreateDeployment validation gates (#472 / #460 / #463).

@@ -54,6 +54,49 @@ type Cache struct {
 	root            string
 	mu              sync.RWMutex
 	leaseReferenced func(context.Context, string, string) (bool, error)
+	// minFreeFraction is the share of the cache filesystem Sweep keeps
+	// free by evicting oldest-first; 0 disables the floor.
+	minFreeFraction float64
+	// fsUsage reports the cache filesystem's available and total bytes.
+	// A seam so tests can drive the floor without filling a disk.
+	fsUsage func(path string) (avail, size uint64, err error)
+}
+
+// DefaultCacheMinFreeFraction keeps a fifth of the cache filesystem free.
+// The cache shares the host root filesystem with releases, logs and the
+// journal; the 50 GiB size cap alone exceeds a 48 GB root disk, which left
+// both production-us compute nodes at 86% used with FaasHostDiskSpaceLow
+// firing (hunt #10, H10-109). 20% keeps the sweep ahead of that 15% alert.
+const DefaultCacheMinFreeFraction = 0.20
+
+// WithMinFreeFraction sets the free-space floor Sweep enforces.
+func (c *Cache) WithMinFreeFraction(fraction float64) *Cache {
+	if c != nil {
+		c.minFreeFraction = fraction
+	}
+	return c
+}
+
+func statfsUsage(path string) (avail, size uint64, err error) {
+	var stat unix.Statfs_t
+	if err := unix.Statfs(path, &stat); err != nil {
+		return 0, 0, err
+	}
+	return uint64(stat.Bavail) * uint64(stat.Bsize), uint64(stat.Blocks) * uint64(stat.Bsize), nil
+}
+
+// belowFreeFloor reports whether the cache filesystem has less free space
+// than the configured floor.
+func (c *Cache) belowFreeFloor() (bool, error) {
+	usage := c.fsUsage
+	if usage == nil {
+		usage = statfsUsage
+	}
+	avail, size, err := usage(c.root)
+	if err != nil || size == 0 {
+		return false, err
+	}
+	return float64(avail)/float64(size) < c.minFreeFraction, nil
 }
 
 // cacheArtifactMode is the shared publication mode for cache artifacts.
@@ -381,11 +424,16 @@ func CacheGCSweepLoop(ctx context.Context, c *Cache, interval time.Duration, max
 	}
 	t := time.NewTicker(interval)
 	defer t.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-t.C:
+	// Sweep at startup, then on every tick. builderd restarts on every
+	// rollout, so a loop that only swept on its first daily tick never
+	// swept on a fleet releasing more often than daily (H10-109).
+	for first := true; ; first = false {
+		if !first {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+			}
 		}
 		n, err := c.Sweep(maxBytes, maxAge, time.Now(), log)
 		if err != nil {
@@ -398,15 +446,18 @@ func CacheGCSweepLoop(ctx context.Context, c *Cache, interval time.Duration, max
 }
 
 // Sweep deletes cache entries that are older than maxAge OR pushes the
-// total cache size below maxBytes by deleting oldest-first.
+// total cache size below maxBytes OR the filesystem back above the
+// free-space floor, by deleting oldest-first.
 //
-// Two policies, applied in order:
+// Three policies, applied in order:
 //
 //  1. TTL eviction: every entry whose ModTime is before now.Add(-maxAge)
 //     is removed. Stable-sorted by (ModTime, path) so the same inputs
 //     produce the same deletion order on every tick.
 //  2. Size cap: if dirSize still exceeds maxBytes after TTL eviction,
 //     delete oldest-first by (ModTime, path) until under cap.
+//  3. Free-space floor: while the cache filesystem has less than the
+//     WithMinFreeFraction share free, keep deleting oldest-first.
 //
 // Errors are best-effort: per-entry os.RemoveAll failures are logged
 // via the cache's slog logger and the sweep continues. Returns the
@@ -481,6 +532,16 @@ func (c *Cache) Sweep(maxBytes int64, maxAge time.Duration, now time.Time, log *
 		swept++
 	}
 
+	// Policies 2 and 3 evict the surviving entries oldest-first; next is
+	// the first entry neither has removed yet.
+	sort.SliceStable(fresh, func(i, j int) bool {
+		if fresh[i].modTime.Equal(fresh[j].modTime) {
+			return fresh[i].path < fresh[j].path
+		}
+		return fresh[i].modTime.Before(fresh[j].modTime)
+	})
+	next := 0
+
 	// Policy 2: size cap. Only if maxBytes > 0 (zero means "no cap").
 	// Recompute total after TTL — the deleted entries no longer count.
 	if maxBytes > 0 {
@@ -488,30 +549,42 @@ func (c *Cache) Sweep(maxBytes int64, maxAge time.Duration, now time.Time, log *
 		for _, e := range fresh {
 			total += e.size
 		}
-		if total > maxBytes {
-			// Sort fresh oldest-first; delete until under cap.
-			sort.SliceStable(fresh, func(i, j int) bool {
-				if fresh[i].modTime.Equal(fresh[j].modTime) {
-					return fresh[i].path < fresh[j].path
-				}
-				return fresh[i].modTime.Before(fresh[j].modTime)
-			})
-			for _, e := range fresh {
-				if total <= maxBytes {
-					break
-				}
-				if err := os.RemoveAll(e.path); err != nil {
-					log.Warn("cache: sweep: size-cap remove", "path", e.path, "err", err)
-					continue
-				}
-				total -= e.size
-				swept++
+		for ; next < len(fresh) && total > maxBytes; next++ {
+			e := fresh[next]
+			if err := os.RemoveAll(e.path); err != nil {
+				log.Warn("cache: sweep: size-cap remove", "path", e.path, "err", err)
+				continue
 			}
+			total -= e.size
+			swept++
+		}
+	}
+
+	// Policy 3: free-space floor. The size cap bounds the cache, not the
+	// filesystem it shares with everything else on the host; evict until
+	// the filesystem is back above the floor. A leased entry frees no
+	// blocks until imaged releases it, so the floor may take more.
+	if c.minFreeFraction > 0 {
+		for ; next < len(fresh); next++ {
+			low, err := c.belowFreeFloor()
+			if err != nil {
+				log.Warn("cache: sweep: free-space check", "root", c.root, "err", err)
+				break
+			}
+			if !low {
+				break
+			}
+			e := fresh[next]
+			if err := os.RemoveAll(e.path); err != nil {
+				log.Warn("cache: sweep: free-space remove", "path", e.path, "err", err)
+				continue
+			}
+			swept++
 		}
 	}
 
 	if swept > 0 {
-		log.Info("cache: swept", "count", swept, "max_age", maxAge, "max_bytes", maxBytes)
+		log.Info("cache: swept", "count", swept, "max_age", maxAge, "max_bytes", maxBytes, "min_free_fraction", c.minFreeFraction)
 	}
 	return swept, nil
 }

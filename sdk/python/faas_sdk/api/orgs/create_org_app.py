@@ -114,8 +114,9 @@ def sync_detailed(
     Args:
         slug (str):
         idempotency_key (str | Unset):
-        body (CreateAppRequest): App creation payload: slug, type (app|function), runtime (only
-            for function), RAM MB, max concurrency, idle timeout, and optional manifest.
+        body (CreateAppRequest): App creation payload: slug, type (app|function), runtime
+            (required for function; must be omitted for app), RAM MB, max concurrency, idle timeout,
+            and optional manifest.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -157,8 +158,9 @@ def sync(
     Args:
         slug (str):
         idempotency_key (str | Unset):
-        body (CreateAppRequest): App creation payload: slug, type (app|function), runtime (only
-            for function), RAM MB, max concurrency, idle timeout, and optional manifest.
+        body (CreateAppRequest): App creation payload: slug, type (app|function), runtime
+            (required for function; must be omitted for app), RAM MB, max concurrency, idle timeout,
+            and optional manifest.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -195,8 +197,9 @@ async def asyncio_detailed(
     Args:
         slug (str):
         idempotency_key (str | Unset):
-        body (CreateAppRequest): App creation payload: slug, type (app|function), runtime (only
-            for function), RAM MB, max concurrency, idle timeout, and optional manifest.
+        body (CreateAppRequest): App creation payload: slug, type (app|function), runtime
+            (required for function; must be omitted for app), RAM MB, max concurrency, idle timeout,
+            and optional manifest.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -236,8 +239,9 @@ async def asyncio(
     Args:
         slug (str):
         idempotency_key (str | Unset):
-        body (CreateAppRequest): App creation payload: slug, type (app|function), runtime (only
-            for function), RAM MB, max concurrency, idle timeout, and optional manifest.
+        body (CreateAppRequest): App creation payload: slug, type (app|function), runtime
+            (required for function; must be omitted for app), RAM MB, max concurrency, idle timeout,
+            and optional manifest.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

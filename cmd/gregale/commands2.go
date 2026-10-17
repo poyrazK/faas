@@ -2727,9 +2727,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		return printErr("Invalid flags", err)
 	}
 	if *image != "" && !api.ValidDeploymentImage(*image) {
-		problem := api.NewProblem(http.StatusBadRequest, api.CodeImageRequired,
-			"Image required", "image: deploys require a digest-pinned reference, e.g. registry.gregale.dev/app@sha256:...")
-		return printErr("Invalid --image", &api.APIError{Problem: *problem})
+		return printErr("Invalid --image", &api.APIError{Problem: *imageDigestRequiredProblem(*image)})
 	}
 	// Resolve template shape into immutable command intent before any source
 	// materialization. The parsed flag pointers remain an exact record of what
@@ -4913,22 +4911,29 @@ func cmdTrafficStatus(args []string) int {
 	}
 	live := make([]api.DeploymentResponse, 0, len(deployments))
 	total := 0
+	byScope := map[string]int{}
 	for _, deployment := range deployments {
 		if deployment.Status != statusLive {
 			continue
 		}
 		live = append(live, deployment)
 		total += deployment.TrafficPercent
+		byScope[trafficScope(deployment)] += deployment.TrafficPercent
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(struct {
-			App          string                   `json:"app"`
-			Deployments  []api.DeploymentResponse `json:"deployments"`
-			TotalPercent int                      `json:"total_percent"`
-		}{App: slug, Deployments: live, TotalPercent: total}))
+			App                 string                   `json:"app"`
+			Deployments         []api.DeploymentResponse `json:"deployments"`
+			TotalPercent        int                      `json:"total_percent"`
+			TotalPercentByScope map[string]int           `json:"total_percent_by_scope"`
+		}{App: slug, Deployments: live, TotalPercent: total, TotalPercentByScope: byScope}))
 	}
 	if len(live) == 0 {
 		_, _ = fmt.Fprintf(osStdout, "No live deployments for app %q.\n", slug)
+		return 0
+	}
+	if len(byScope) > 1 {
+		printScopedTrafficStatus(live, byScope)
 		return 0
 	}
 	// ADR-198: lead with the revision, because that is the handle the
@@ -4945,6 +4950,40 @@ func cmdTrafficStatus(args []string) int {
 	}
 	_, _ = fmt.Fprintf(osStdout, "Total\t\t\t%d%%\n", total)
 	return 0
+}
+
+// trafficScope names a deployment's traffic scope; an unscoped row is the
+// default scope.
+func trafficScope(deployment api.DeploymentResponse) string {
+	if deployment.Scope == "" {
+		return api.DefaultEnvScope
+	}
+	return deployment.Scope
+}
+
+// printScopedTrafficStatus renders one weight table per scope. Each project
+// environment carries its own 100%; one combined total read "Total 300%" for
+// an app live in three environments (H10-114).
+func printScopedTrafficStatus(live []api.DeploymentResponse, byScope map[string]int) {
+	scopes := make([]string, 0, len(byScope))
+	for scope := range byScope {
+		scopes = append(scopes, scope)
+	}
+	sort.Strings(scopes)
+	_, _ = fmt.Fprintln(osStdout, "SCOPE\tREVISION\tDEPLOYMENT\tSTATUS\tTRAFFIC")
+	for _, scope := range scopes {
+		for _, deployment := range live {
+			if trafficScope(deployment) != scope {
+				continue
+			}
+			revision := renderRevision(deployment.Revision)
+			if revision == "" {
+				revision = "-"
+			}
+			_, _ = fmt.Fprintf(osStdout, "%s\t%s\t%s\t%s\t%d%%\n", scope, revision, deployment.ID, deployment.Status, deployment.TrafficPercent)
+		}
+		_, _ = fmt.Fprintf(osStdout, "Total %s\t\t\t\t%d%%\n", scope, byScope[scope])
+	}
 }
 
 // peelLeadingSlug lets the flag-addressed traffic leaves accept the app the
@@ -6808,6 +6847,15 @@ func runLogs(ctx context.Context, slug, deployment string, filter api.LogFilter,
 	}
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt)
 	defer stop()
+	// The live stream reads only running instances. Print what instances
+	// that parked inside an explicit --since window wrote first, from the
+	// retained archive (H10-100).
+	retainedLines := 0
+	if archive == nil && !follow && !jsonOutput && deployment == "" && filter.Since != "" {
+		if since, err := time.Parse(time.RFC3339Nano, filter.Since); err == nil {
+			retainedLines = printParkedWindowLogs(ctx, client, slug, filter, since, osStdout, osStderr)
+		}
+	}
 	var body io.ReadCloser
 	if archive != nil {
 		body, err = client.StreamAppArchivedLogs(ctx, slug, *archive)
@@ -6837,7 +6885,7 @@ func runLogs(ctx context.Context, slug, deployment string, filter api.LogFilter,
 	if explain {
 		collector = newExplainCollector(slug, deployment)
 	}
-	printedLines := 0
+	printedLines := retainedLines
 	parkedFallback := false
 	code, streamErr := consumeLogStream(ctx, dec.Events(), dec.Errors(), func(e api.Event) (bool, int) {
 		// Move 4 (issue #254): the apid stub emits `event: degraded`
@@ -6906,6 +6954,9 @@ func runLogs(ctx context.Context, slug, deployment string, filter api.LogFilter,
 		return printErr("Stream closed", streamErr)
 	}
 	if parkedFallback {
+		if retainedLines > 0 {
+			return 0
+		}
 		return runParkedAppLogs(ctx, client, slug, deployment, filter, explain)
 	}
 	if code == 0 && !jsonOutput && !follow && printedLines == 0 {
