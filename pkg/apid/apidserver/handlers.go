@@ -716,7 +716,7 @@ func (s *server) createImageDeployment(w http.ResponseWriter, r *http.Request, a
 	}
 	if !isDigestPinned(req.Image) {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeImageRequired,
-			"Image required", "image: deploys require a digest-pinned reference, e.g. registry.gregale.dev/app@sha256:..."))
+			"Image digest required", "image: deploys require a digest-pinned reference, e.g. registry.gregale.dev/app@sha256:..."))
 		return
 	}
 	// Pre-CreateDeployment validation gates (#472 / #460 / #463).

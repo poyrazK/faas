@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestAppHealth_CLIReadOnlyRoute(t *testing.T) {
@@ -59,5 +60,43 @@ func TestAppHealth_CLIHistory(t *testing.T) {
 		if !strings.Contains(output.String(), expected) {
 			t.Fatalf("missing %q: %s", expected, output.String())
 		}
+	}
+}
+
+// TestAppHealth_CLIEnvironment pins H10-113: a project app's hostname served
+// its production environment while `app health` could only assess the
+// default scope, whose older release received no traffic, so it always read
+// idle. --environment selects the environment, and --check then requires
+// that scope rather than "default".
+func TestAppHealth_CLIEnvironment(t *testing.T) {
+	cases := map[string]struct {
+		args     []string
+		scope    string
+		wantCode int
+		wantPath bool
+	}{
+		"single read":         {args: []string{"--environment", "production"}, scope: "production", wantPath: true},
+		"check passes":        {args: []string{"--environment", "production", "--check"}, scope: "production", wantPath: true},
+		"check wrong scope":   {args: []string{"--environment", "production", "--check"}, scope: "default", wantCode: 1, wantPath: true},
+		"history is rejected": {args: []string{"--environment", "production", "--history"}, wantCode: 1},
+		"invalid slug":        {args: []string{"--environment", "Not A Slug"}, wantCode: 1},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			resetJSONOut(t)
+			var output bytes.Buffer
+			previous := osStdout
+			osStdout = &output
+			t.Cleanup(func() { osStdout = previous })
+			body := `{"app_id":"app","status":"healthy","phase":"serving","summary":"Serving","scope":"` + tc.scope + `","evaluated_at":"` + time.Now().UTC().Format(time.RFC3339Nano) + `","valid_for_seconds":120,"serving_deployment_ids":["v5"],"checks":[]}`
+			f := authedFakeAPI(t, body, http.StatusOK)
+			if code := cmdAppHealth("demo", tc.args); code != tc.wantCode {
+				t.Fatalf("exit %d, want %d: %s", code, tc.wantCode, output.String())
+			}
+			sawEnvironment := f.sawPath == "/v1/apps/demo/health" && f.sawQuery == "environment=production"
+			if sawEnvironment != tc.wantPath {
+				t.Fatalf("request = %s %s?%s", f.sawMethod, f.sawPath, f.sawQuery)
+			}
+		})
 	}
 }
