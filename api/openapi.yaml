@@ -24858,7 +24858,8 @@ paths:
         `snapshot_prepare` / `readiness`) is enforced at the
         database layer by `deployments_stage_state_current_check`,
         so a malformed row would never reach the wire. The
-        `current` field is the stage the deploy is in right now;
+        `current` field is the stage the deploy is in right now
+        (empty once the deployment is live, failed or cancelled);
         `history` lists the closed rows in transition order
         (oldest → newest), each carrying server-measured
         `duration_ms` so the CLI / dashboard don't have to trust
@@ -24870,41 +24871,11 @@ paths:
             no account-existence leak).
       responses:
         '200':
-          description: "The raw `deployments.stage_state` jsonb. Shape: {current, current_started_at, history: [{name, started_at, ended_at, duration_ms, status, reason}]}."
+          description: The deployment's stored `stage_state` document, served verbatim.
           content:
             application/json:
               schema:
-                type: object
-                description: The raw `deployments.stage_state` jsonb. Closed-vocabulary enforcement lives at the database layer (`deployments_stage_state_current_check`).
-                properties:
-                  current:
-                    type: string
-                    enum: [source_download, dependency_restore, image_build, security_scan, snapshot_prepare, readiness]
-                  current_started_at:
-                    type: [string, "null"]
-                    format: date-time
-                  history:
-                    type: array
-                    items:
-                      type: object
-                      properties:
-                        name:
-                          type: string
-                          enum: [source_download, dependency_restore, image_build, security_scan, snapshot_prepare, readiness]
-                        started_at:
-                          type: [string, "null"]
-                          format: date-time
-                        ended_at:
-                          type: [string, "null"]
-                          format: date-time
-                        duration_ms:
-                          type: integer
-                          format: int64
-                        status:
-                          type: string
-                          enum: [completed, failed]
-                        reason:
-                          type: string
+                $ref: '#/components/schemas/DeploymentStageState'
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404':
           description: Deployment row missing or cross-account probe (IDOR-safe; never 403).
@@ -72257,6 +72228,118 @@ components:
         source: { type: string, enum: [registry, object_storage] }
         sha256: { type: string, pattern: '^[0-9a-f]{64}$' }
 
+    # Wire shape of `deployments.stage_state` (state.StageState, ADR-117).
+    # Served verbatim by GET /v1/deployments/{id}/stages and embedded as
+    # DeploymentResponse.stage_state. TestSpecComplianceDeploymentStageState
+    # pins property names, required fields and enums to the Go structs.
+    DeploymentStageState:
+      type: object
+      description: >-
+        Customer-visible deployment stage progress (ADR-117). `current` is the
+        open stage, or an empty string once the deployment is live, failed or
+        cancelled and that stage has moved into `history`.
+      required: [current, history]
+      properties:
+        current:
+          type: string
+          enum: ['', source_download, dependency_restore, image_build, security_scan, snapshot_prepare, readiness]
+        current_started_at:
+          type: [string, "null"]
+          format: date-time
+          description: Start of the open stage. Null or absent when no stage is open, and on legacy rows created before stage timing.
+        history:
+          type: array
+          description: Closed stages, oldest first. Writers keep the most recent 64 (MaxStageHistory).
+          items: { $ref: '#/components/schemas/DeploymentStageHistoryEntry' }
+        retry_requested_stage:
+          type: string
+          enum: [source_download, dependency_restore, image_build, security_scan, snapshot_prepare, readiness]
+          description: Stage a retry asked to resume from (ADR-162). Present only on retry deployments, which always restart at source_download.
+        retry_restart_reason:
+          type: string
+          description: Why a retry restarted from source_download rather than retry_requested_stage.
+        dependency_gate: { $ref: '#/components/schemas/DeploymentDependencyGate' }
+        hosting_verification: { $ref: '#/components/schemas/DeploymentHostingVerification' }
+    DeploymentStageHistoryEntry:
+      type: object
+      description: One closed stage with server-measured duration.
+      required: [name, started_at, ended_at, duration_ms, status]
+      properties:
+        name:
+          type: string
+          enum: [source_download, dependency_restore, image_build, security_scan, snapshot_prepare, readiness]
+        started_at: { type: [string, "null"], format: date-time }
+        ended_at: { type: [string, "null"], format: date-time }
+        duration_ms: { type: integer, format: int64, minimum: 0 }
+        status: { type: string, enum: [completed, failed, cancelled] }
+        reason: { type: string, description: Failure or cancellation detail; absent or empty for completed stages. }
+    DeploymentDependencyGate:
+      type: object
+      description: >-
+        Compose dependency readiness gate pinned at admission (ADR-685). The
+        deadline starts when the candidate first presents its own readiness proof.
+      required: [dependencies, status]
+      properties:
+        dependencies:
+          type: array
+          items: { $ref: '#/components/schemas/DeploymentDependencyPin' }
+        started_at: { type: string, format: date-time }
+        deadline_at: { type: string, format: date-time }
+        status: { type: string, enum: [waiting, ready, failed] }
+        blocker: { type: string, description: The dependency or deadline currently blocking release. }
+    DeploymentDependencyPin:
+      type: object
+      description: A dependency deployment captured at admission; it never follows a later deployment.
+      required: [service, app_id, deployment_id]
+      properties:
+        service: { type: string }
+        app_id: { type: string }
+        deployment_id: { type: string }
+    DeploymentHostingVerification:
+      type: object
+      description: >-
+        Candidate hosting verification recovery progress (ADR-481, ADR-482).
+        last_error_code distinguishes publication, gateway, transport and
+        candidate-evidence failures; a transport failure does not attribute blame
+        to the app or platform. retry_not_before is an eligibility floor, not a
+        promised delivery time; completed_at means the attempt finished, while
+        the hosting receipt records its verdict.
+      required: [started_at, deadline_at, attempts]
+      properties:
+        started_at: { type: string, format: date-time }
+        deadline_at: { type: string, format: date-time }
+        attempts: { type: integer, minimum: 0 }
+        last_error_code: { type: string }
+        last_route_checks: { $ref: '#/components/schemas/HostingRouteCheckSet' }
+        retry_not_before: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
+    HostingRouteCheckSet:
+      type: object
+      description: API route checks from the app's imported OpenAPI document. document_sha256 binds them to that exact document.
+      required: [source, status, checks]
+      properties:
+        source: { type: string, enum: [app_openapi] }
+        document_sha256: { type: string }
+        status: { type: string, enum: [verified, failed, unavailable] }
+        checks:
+          type: array
+          maxItems: 10
+          items: { $ref: '#/components/schemas/HostingRouteCheckResult' }
+    HostingRouteCheckResult:
+      type: object
+      description: Bounded, non-secret evidence from one authenticated candidate GET. Request and response bodies are omitted.
+      required: [method, path, status, verified_at]
+      properties:
+        method: { type: string }
+        path: { type: string }
+        status: { type: string, enum: [verified, failed, skipped] }
+        status_code: { type: integer }
+        latency_ms: { type: integer, format: int64 }
+        verified_at: { type: string, format: date-time, description: Zero time (0001-01-01T00:00:00Z) when the check did not run. }
+        request_id: { type: string }
+        error_code: { type: string }
+        error: { type: string }
+
     DeploymentResponse:
       description: "One deployment: id, app, source ref, build status, commit SHA, and lifecycle timestamps. The optional `has_overrides` and `override_*` fields are the persisted echo of the create-time overrides object (issue #460 / ADR-053); they round-trip via `GET /v1/apps/{slug}/deployments/{id}` so a customer can audit what their last deploy pinned. Env values are NEVER echoed — only the keys (`override_env_keys`); env_secrets refs ARE echoed because the ref shape is non-secret by design."
       type: object
@@ -72273,18 +72356,13 @@ components:
         durable_entity_validator:
           $ref: '#/components/schemas/DurableEntityValidatorDeploymentInfo'
         stage_state:
-          type: object
+          $ref: '#/components/schemas/DeploymentStageState'
           description: >-
-            Actual stage progress, including retry_requested_stage and
-            retry_restart_reason when prerequisites must be rebuilt. Optional
-            hosting_verification records started_at, deadline_at, attempts,
-            last_error_code, retry_not_before and completed_at during unavailable
-            candidate verification recovery (ADR-481, ADR-482). last_error_code
-            distinguishes publication, gateway, transport and candidate-evidence
-            failures; a transport failure does not attribute blame to the app or
-            platform. retry_not_before is an
-            eligibility floor, not a promised delivery time; completed_at means
-            the attempt finished, while the hosting receipt records its verdict.
+            Actual stage progress; the same document GET
+            /v1/deployments/{id}/stages serves. retry_requested_stage and
+            retry_restart_reason appear when prerequisites must be rebuilt;
+            hosting_verification appears during unavailable candidate
+            verification recovery (ADR-481, ADR-482).
         dev_patch:
           $ref: '#/components/schemas/DevPatchPreview'
         id: { type: string, pattern: '^[a-f0-9]{32}$', example: "0123456789abcdef0123456789abcdef" }

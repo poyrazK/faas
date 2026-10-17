@@ -6,36 +6,54 @@ from typing import Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
-T = TypeVar("T", bound="DeploymentResponseStageState")
+T = TypeVar("T", bound="DeploymentDependencyPin")
 
 
 @_attrs_define
-class DeploymentResponseStageState:
-    """Actual stage progress, including retry_requested_stage and retry_restart_reason when prerequisites must be rebuilt.
-    Optional hosting_verification records started_at, deadline_at, attempts, last_error_code, retry_not_before and
-    completed_at during unavailable candidate verification recovery (ADR-481, ADR-482). last_error_code distinguishes
-    publication, gateway, transport and candidate-evidence failures; a transport failure does not attribute blame to the
-    app or platform. retry_not_before is an eligibility floor, not a promised delivery time; completed_at means the
-    attempt finished, while the hosting receipt records its verdict.
+class DeploymentDependencyPin:
+    """A dependency deployment captured at admission; it never follows a later deployment."""
 
-    """
-
+    service: str
+    app_id: str
+    deployment_id: str
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        service = self.service
+
+        app_id = self.app_id
+
+        deployment_id = self.deployment_id
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
+        field_dict.update(
+            {
+                "service": service,
+                "app_id": app_id,
+                "deployment_id": deployment_id,
+            }
+        )
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         d = dict(src_dict)
-        deployment_response_stage_state = cls()
+        service = d.pop("service")
 
-        deployment_response_stage_state.additional_properties = d
-        return deployment_response_stage_state
+        app_id = d.pop("app_id")
+
+        deployment_id = d.pop("deployment_id")
+
+        deployment_dependency_pin = cls(
+            service=service,
+            app_id=app_id,
+            deployment_id=deployment_id,
+        )
+
+        deployment_dependency_pin.additional_properties = d
+        return deployment_dependency_pin
 
     @property
     def additional_keys(self) -> list[str]:

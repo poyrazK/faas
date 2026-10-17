@@ -721,6 +721,16 @@ var schemaSpecOnly = map[string]bool{
 	"FailureRule":    true,
 	"FailureRules":   true,
 	"WorkDecision":   true,
+	// deployments.stage_state is served from pkg/state and
+	// pkg/apihostingreceipt structs, not pkg/api DTOs.
+	// TestSpecComplianceDeploymentStageState checks their fields and enums.
+	"DeploymentStageState":          true,
+	"DeploymentStageHistoryEntry":   true,
+	"DeploymentDependencyGate":      true,
+	"DeploymentDependencyPin":       true,
+	"DeploymentHostingVerification": true,
+	"HostingRouteCheckSet":          true,
+	"HostingRouteCheckResult":       true,
 }
 
 // findRepoRoot walks up from the working directory until it finds a go.mod.

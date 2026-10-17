@@ -487,10 +487,13 @@ export type { DeploymentAliasListResponse } from './models/DeploymentAliasListRe
 export type { DeploymentAliasResponse } from './models/DeploymentAliasResponse.js';
 export type { DeploymentAuditResponse } from './models/DeploymentAuditResponse.js';
 export type { DeploymentChange } from './models/DeploymentChange.js';
+export type { DeploymentDependencyGate } from './models/DeploymentDependencyGate.js';
+export type { DeploymentDependencyPin } from './models/DeploymentDependencyPin.js';
 export type { DeploymentFailedWebhookPayload } from './models/DeploymentFailedWebhookPayload.js';
 export type { DeploymentGRPCHealthcheck } from './models/DeploymentGRPCHealthcheck.js';
 export type { DeploymentGRPCLivenessProbe } from './models/DeploymentGRPCLivenessProbe.js';
 export type { DeploymentHealthcheck } from './models/DeploymentHealthcheck.js';
+export type { DeploymentHostingVerification } from './models/DeploymentHostingVerification.js';
 export type { DeploymentListResponse } from './models/DeploymentListResponse.js';
 export type { DeploymentLivenessProbe } from './models/DeploymentLivenessProbe.js';
 export type { DeploymentLiveWebhookPayload } from './models/DeploymentLiveWebhookPayload.js';
@@ -500,6 +503,8 @@ export type { DeploymentReadinessProbe } from './models/DeploymentReadinessProbe
 export type { DeploymentResponse } from './models/DeploymentResponse.js';
 export type { DeploymentRoutePolicySnapshotResponse } from './models/DeploymentRoutePolicySnapshotResponse.js';
 export type { DeploymentRuntimeResponse } from './models/DeploymentRuntimeResponse.js';
+export type { DeploymentStageHistoryEntry } from './models/DeploymentStageHistoryEntry.js';
+export type { DeploymentStageState } from './models/DeploymentStageState.js';
 export type { DeploymentSummaryResponse } from './models/DeploymentSummaryResponse.js';
 export type { DeploymentWorkerDrainStatus } from './models/DeploymentWorkerDrainStatus.js';
 export type { DeployTokenResponse } from './models/DeployTokenResponse.js';
@@ -872,6 +877,8 @@ export type { GithubWebhookDeliveryRecord } from './models/GithubWebhookDelivery
 export type { GraceWindowResponse } from './models/GraceWindowResponse.js';
 export type { GregaleRelease } from './models/GregaleRelease.js';
 export type { GregaleRevision } from './models/GregaleRevision.js';
+export type { HostingRouteCheckResult } from './models/HostingRouteCheckResult.js';
+export type { HostingRouteCheckSet } from './models/HostingRouteCheckSet.js';
 export type { Id32 } from './models/Id32.js';
 export type { IdempotencyKey } from './models/IdempotencyKey.js';
 export type { ImageRunResponse } from './models/ImageRunResponse.js';

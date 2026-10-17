@@ -969,11 +969,15 @@ from .deployment_change import DeploymentChange
 from .deployment_change_after_type_3 import DeploymentChangeAfterType3
 from .deployment_change_before_type_3 import DeploymentChangeBeforeType3
 from .deployment_change_field import DeploymentChangeField
+from .deployment_dependency_gate import DeploymentDependencyGate
+from .deployment_dependency_gate_status import DeploymentDependencyGateStatus
+from .deployment_dependency_pin import DeploymentDependencyPin
 from .deployment_failed_webhook_payload import DeploymentFailedWebhookPayload
 from .deployment_failed_webhook_payload_status import DeploymentFailedWebhookPayloadStatus
 from .deployment_grpc_healthcheck import DeploymentGRPCHealthcheck
 from .deployment_grpc_liveness_probe import DeploymentGRPCLivenessProbe
 from .deployment_healthcheck import DeploymentHealthcheck
+from .deployment_hosting_verification import DeploymentHostingVerification
 from .deployment_list_response import DeploymentListResponse
 from .deployment_live_webhook_payload import DeploymentLiveWebhookPayload
 from .deployment_live_webhook_payload_status import DeploymentLiveWebhookPayloadStatus
@@ -994,11 +998,16 @@ from .deployment_response_parked_reason_type_1 import DeploymentResponseParkedRe
 from .deployment_response_parked_reason_type_2_type_1 import DeploymentResponseParkedReasonType2Type1
 from .deployment_response_parked_reason_type_3_type_1 import DeploymentResponseParkedReasonType3Type1
 from .deployment_response_rollout_state import DeploymentResponseRolloutState
-from .deployment_response_stage_state import DeploymentResponseStageState
 from .deployment_response_tag import DeploymentResponseTag
 from .deployment_route_policy_snapshot_response import DeploymentRoutePolicySnapshotResponse
 from .deployment_runtime_response import DeploymentRuntimeResponse
 from .deployment_runtime_response_status import DeploymentRuntimeResponseStatus
+from .deployment_stage_history_entry import DeploymentStageHistoryEntry
+from .deployment_stage_history_entry_name import DeploymentStageHistoryEntryName
+from .deployment_stage_history_entry_status import DeploymentStageHistoryEntryStatus
+from .deployment_stage_state import DeploymentStageState
+from .deployment_stage_state_current import DeploymentStageStateCurrent
+from .deployment_stage_state_retry_requested_stage import DeploymentStageStateRetryRequestedStage
 from .deployment_summary_response import DeploymentSummaryResponse
 from .deployment_worker_drain_status import DeploymentWorkerDrainStatus
 from .detach_environment_git_source_request import DetachEnvironmentGitSourceRequest
@@ -1745,11 +1754,6 @@ from .get_apps_metrics_range import GetAppsMetricsRange
 from .get_build_sbom_response_200 import GetBuildSbomResponse200
 from .get_builds_status import GetBuildsStatus
 from .get_deployment_open_api_doc_response_200 import GetDeploymentOpenAPIDocResponse200
-from .get_deployment_stages_response_200 import GetDeploymentStagesResponse200
-from .get_deployment_stages_response_200_current import GetDeploymentStagesResponse200Current
-from .get_deployment_stages_response_200_history_item import GetDeploymentStagesResponse200HistoryItem
-from .get_deployment_stages_response_200_history_item_name import GetDeploymentStagesResponse200HistoryItemName
-from .get_deployment_stages_response_200_history_item_status import GetDeploymentStagesResponse200HistoryItemStatus
 from .get_durable_entity_readiness_response_200 import GetDurableEntityReadinessResponse200
 from .get_edge_rule_stats_window import GetEdgeRuleStatsWindow
 from .get_environment_route_budgets_scope import GetEnvironmentRouteBudgetsScope
@@ -1803,6 +1807,11 @@ from .github_recovery_status_response import GithubRecoveryStatusResponse
 from .github_webhook_delivery_record import GithubWebhookDeliveryRecord
 from .github_webhook_delivery_record_status import GithubWebhookDeliveryRecordStatus
 from .grace_window_response import GraceWindowResponse
+from .hosting_route_check_result import HostingRouteCheckResult
+from .hosting_route_check_result_status import HostingRouteCheckResultStatus
+from .hosting_route_check_set import HostingRouteCheckSet
+from .hosting_route_check_set_source import HostingRouteCheckSetSource
+from .hosting_route_check_set_status import HostingRouteCheckSetStatus
 from .image_run_response import ImageRunResponse
 from .image_run_response_image_status import ImageRunResponseImageStatus
 from .image_run_response_status import ImageRunResponseStatus
@@ -5865,11 +5874,15 @@ __all__ = (
     "DeploymentChangeAfterType3",
     "DeploymentChangeBeforeType3",
     "DeploymentChangeField",
+    "DeploymentDependencyGate",
+    "DeploymentDependencyGateStatus",
+    "DeploymentDependencyPin",
     "DeploymentFailedWebhookPayload",
     "DeploymentFailedWebhookPayloadStatus",
     "DeploymentGRPCHealthcheck",
     "DeploymentGRPCLivenessProbe",
     "DeploymentHealthcheck",
+    "DeploymentHostingVerification",
     "DeploymentListResponse",
     "DeploymentLivenessProbe",
     "DeploymentLiveWebhookPayload",
@@ -5890,11 +5903,16 @@ __all__ = (
     "DeploymentResponseParkedReasonType2Type1",
     "DeploymentResponseParkedReasonType3Type1",
     "DeploymentResponseRolloutState",
-    "DeploymentResponseStageState",
     "DeploymentResponseTag",
     "DeploymentRoutePolicySnapshotResponse",
     "DeploymentRuntimeResponse",
     "DeploymentRuntimeResponseStatus",
+    "DeploymentStageHistoryEntry",
+    "DeploymentStageHistoryEntryName",
+    "DeploymentStageHistoryEntryStatus",
+    "DeploymentStageState",
+    "DeploymentStageStateCurrent",
+    "DeploymentStageStateRetryRequestedStage",
     "DeploymentSummaryResponse",
     "DeploymentWorkerDrainStatus",
     "DeployTokenResponse",
@@ -6606,11 +6624,6 @@ __all__ = (
     "GetBuildSbomResponse200",
     "GetBuildsStatus",
     "GetDeploymentOpenAPIDocResponse200",
-    "GetDeploymentStagesResponse200",
-    "GetDeploymentStagesResponse200Current",
-    "GetDeploymentStagesResponse200HistoryItem",
-    "GetDeploymentStagesResponse200HistoryItemName",
-    "GetDeploymentStagesResponse200HistoryItemStatus",
     "GetDurableEntityReadinessResponse200",
     "GetEdgeRuleStatsWindow",
     "GetEnvironmentRouteBudgetsScope",
@@ -6662,6 +6675,11 @@ __all__ = (
     "GithubWebhookDeliveryRecord",
     "GithubWebhookDeliveryRecordStatus",
     "GraceWindowResponse",
+    "HostingRouteCheckResult",
+    "HostingRouteCheckResultStatus",
+    "HostingRouteCheckSet",
+    "HostingRouteCheckSetSource",
+    "HostingRouteCheckSetStatus",
     "ImageRunResponse",
     "ImageRunResponseImageStatus",
     "ImageRunResponseStatus",
