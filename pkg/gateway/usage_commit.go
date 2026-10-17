@@ -62,7 +62,8 @@ type usageEventInput struct {
 	// consumer and tenant-source requests (ADR-1308, ADR-1310); zero
 	// elsewhere.
 	computeMS, responseBytes int64
-	// meterUnits are the units the app reported (ADR-1318).
+	// meterUnits are the units the app reported (ADR-1318), billed for
+	// consumers and tenant surfaces and JWT rules (ADR-1319).
 	meterUnits map[string]int64
 }
 
@@ -91,7 +92,7 @@ func (h *Handler) usageEvent(r *http.Request, in usageEventInput) usageoutbox.Ev
 		event.BillingRoute = billingRouteFrom(r)
 		if billableUnits > 0 {
 			event.ComputeMS, event.ResponseBytes = max(in.computeMS, 0), max(in.responseBytes, 0)
-			if event.ConsumerID != "" && len(in.meterUnits) > 0 {
+			if len(in.meterUnits) > 0 {
 				event.MeterUnits = in.meterUnits
 			}
 		}

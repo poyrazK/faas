@@ -77,6 +77,7 @@ type consumerFlags struct {
 	endsAt                               string
 	blockOverdueAfterDays                int
 	baseFeeMillicents, minimumMillicents int64
+	prorateMonthlyFees                   bool
 	tiers                                multiFlag
 	weights                              multiFlag
 	plan                                 string
@@ -92,7 +93,7 @@ var consumerVerbFlags = map[string][]string{
 	"usage":              {"since", "until"},
 	"quote":              {"since", "until"},
 	"completeness":       {"period-start", "period-end", "month"},
-	"rate-card-create":   {"currency", "price-millicents", "included-units", "tier", "weight", "plan", "effective-from", "unit", "tier-mode", "base-fee-millicents", "minimum-millicents"},
+	"rate-card-create":   {"currency", "price-millicents", "included-units", "tier", "weight", "plan", "effective-from", "unit", "tier-mode", "base-fee-millicents", "minimum-millicents", "prorate-monthly-fees"},
 	"plan-create":        {"name", "max-requests-per-minute", "max-units-per-month", "alert-at"},
 	"plan-update":        {"plan", "max-requests-per-minute", "max-units-per-month", "alert-at"},
 	"set-plan":           {"plan", "effective-from"},
@@ -133,6 +134,7 @@ func cmdConsumers(args []string) int {
 	fs.StringVar(&f.tierMode, "tier-mode", "", "how --tier steps price a month: graduated (default) or volume (rate-card-create)")
 	fs.Int64Var(&f.baseFeeMillicents, "base-fee-millicents", 0, "fixed charge per consumer per UTC month; 100000 = 1.00 (rate-card-create)")
 	fs.Int64Var(&f.minimumMillicents, "minimum-millicents", 0, "minimum usage charge per consumer per UTC month, topped up when usage costs less (rate-card-create)")
+	fs.BoolVar(&f.prorateMonthlyFees, "prorate-monthly-fees", false, "scale the fee and minimum in a consumer's first month to the share left after it was created (rate-card-create)")
 	fs.StringVar(&f.since, "since", "", "usage window start (RFC3339)")
 	fs.StringVar(&f.until, "until", "", "usage window end (RFC3339)")
 	fs.StringVar(&f.currency, "currency", "", "ISO-4217 currency, e.g. EUR (rate-card-create)")
@@ -280,6 +282,7 @@ func buildAppRateCardRequest(f consumerFlags) (api.CreateAPIConsumerRateCardRequ
 	}
 	req.Unit, req.TierMode = strings.TrimSpace(f.unit), strings.TrimSpace(f.tierMode)
 	req.BaseFeeMillicentsPerMonth, req.MinimumMillicentsPerMonth = f.baseFeeMillicents, f.minimumMillicents
+	req.ProrateMonthlyFees = f.prorateMonthlyFees
 	req.RouteWeights, err = parseRouteWeights(f.weights)
 	return req, err
 }

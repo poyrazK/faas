@@ -123,23 +123,35 @@ func AppStatementInvoice(statement state.APIConsumerUsageStatement, cards []stat
 			return inv, err
 		}
 	}
-	for _, fee := range statement.Fees {
-		key := invoiceLineKey{rateCardID: fee.RateCardID, fee: fee.Kind}
-		line := lines[key]
-		if line == nil {
-			line = &StatementInvoiceLine{RateCardID: fee.RateCardID, Fee: fee.Kind}
-			lines[key] = line
-		}
-		if !addsWithinInt64(line.AmountMillicents, fee.AmountMillicents) {
-			return inv, fmt.Errorf("billing: statement invoice line overflow")
-		}
-		line.AmountMillicents += fee.AmountMillicents
+	if err := addFeeLines(statement.Fees, false, lines); err != nil {
+		return inv, err
 	}
 	inv, err := finishStatementInvoice(inv, lines, statement.AmountMillicents)
 	if err != nil || statement.CreditAppliedMillicents == 0 {
 		return inv, err
 	}
 	return withCreditLine(inv, statement.CreditAppliedMillicents, statement.AmountDueMillicents())
+}
+
+// addFeeLines adds each base fee and minimum top-up (ADR-1316, ADR-1322) as
+// its own line; tenant marks a tenant card's fee.
+func addFeeLines(fees []state.APIConsumerStatementFee, tenant bool, lines map[invoiceLineKey]*StatementInvoiceLine) error {
+	for _, fee := range fees {
+		key := invoiceLineKey{rateCardID: fee.RateCardID, fee: fee.Kind}
+		if tenant {
+			key = invoiceLineKey{tenantCardID: fee.RateCardID, fee: fee.Kind}
+		}
+		line := lines[key]
+		if line == nil {
+			line = &StatementInvoiceLine{RateCardID: key.rateCardID, PlatformTenantRateCardID: key.tenantCardID, Fee: fee.Kind}
+			lines[key] = line
+		}
+		if !addsWithinInt64(line.AmountMillicents, fee.AmountMillicents) {
+			return fmt.Errorf("billing: statement invoice line overflow")
+		}
+		line.AmountMillicents += fee.AmountMillicents
+	}
+	return nil
 }
 
 // withCreditLine appends the prepaid credit a statement drew (ADR-1306) as a
@@ -161,18 +173,27 @@ func withCreditLine(inv StatementInvoice, creditMillicents, dueMillicents int64)
 }
 
 // TenantStatementInvoice groups a platform tenant statement's lines across
-// apps and subjects by price source and unit price.
-func TenantStatementInvoice(statement state.PlatformTenantStatement) (StatementInvoice, error) {
+// apps and subjects by price source and unit price, naming each tenant
+// card's unit (ADR-1319) from cards, and adds its fees (ADR-1322).
+func TenantStatementInvoice(statement state.PlatformTenantStatement, cards ...state.PlatformTenantRateCard) (StatementInvoice, error) {
 	inv := StatementInvoice{Currency: statement.Currency}
+	units := map[string]string{}
+	for _, card := range cards {
+		units[card.ID] = bucketUnit(tenantCardUnit(card))
+	}
 	lines := map[invoiceLineKey]*StatementInvoiceLine{}
 	for _, line := range statement.Lines {
 		if line.RateCardID == "" && line.PlatformTenantRateCardID == "" {
 			return inv, fmt.Errorf("%w: unpriced units", ErrStatementNotInvoiceable)
 		}
-		key := invoiceLineKey{rateCardID: line.RateCardID, tenantCardID: line.PlatformTenantRateCardID, price: line.PriceMillicentsPerUnit}
+		key := invoiceLineKey{rateCardID: line.RateCardID, tenantCardID: line.PlatformTenantRateCardID, price: line.PriceMillicentsPerUnit,
+			unit: units[line.PlatformTenantRateCardID]}
 		if err := inv.add(key, line.BillableUnits, lines); err != nil {
 			return inv, err
 		}
+	}
+	if err := addFeeLines(statement.Fees, true, lines); err != nil {
+		return inv, err
 	}
 	return finishStatementInvoice(inv, lines, statement.AmountMillicents)
 }

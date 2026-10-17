@@ -235,9 +235,14 @@ func (s *PgStore) DiscoverBillingRunItems(ctx context.Context, runID, owner, ten
 			select $1::uuid, 'platform_tenant', p.id, p.external_ref, 'pending', $5::timestamptz, $5::timestamptz
 			  from platform_tenants p
 			 where p.account_id = $2::uuid
-			   and exists (select 1 from platform_tenant_usage_minutes t
-			                where t.account_id = $2::uuid and t.platform_tenant_id = p.id and t.billable_units > 0
-			                  and t.window_start >= $3 and t.window_start < $4)
+			   and (exists (select 1 from platform_tenant_usage_minutes t
+			                 where t.account_id = $2::uuid and t.platform_tenant_id = p.id and t.billable_units > 0
+			                   and t.window_start >= $3 and t.window_start < $4)
+			        -- A card with a base fee or minimum bills tenants without
+			        -- usage too (ADR-1322).
+			        or (p.created_at < $4 and exists (select 1 from platform_tenant_rate_cards r
+			             where r.account_id = $2::uuid and r.platform_tenant_id = p.id and r.effective_from < $4
+			               and (r.base_fee_millicents_per_month > 0 or r.minimum_millicents_per_month > 0))))
 			on conflict do nothing`, runID, run.AccountID, run.PeriodStart, run.PeriodEnd, now); err != nil {
 			return fmt.Errorf("discover platform tenants: %w", err)
 		}

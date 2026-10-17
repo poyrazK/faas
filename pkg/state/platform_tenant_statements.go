@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -79,10 +80,13 @@ type PlatformTenantStatement struct {
 	UnpricedUnits    int64
 	AmountMillicents int64
 	Lines            []PlatformTenantStatementLine
-	Coverage         []PlatformTenantStatementCoverage `json:"-"`
-	AsOf             time.Time
-	CreatedAt        time.Time
-	FinalizedAt      *time.Time
+	// Fees are the monthly base fee and minimum top-up this revision bills
+	// (ADR-1322); AmountMillicents includes them.
+	Fees        []APIConsumerStatementFee
+	Coverage    []PlatformTenantStatementCoverage `json:"-"`
+	AsOf        time.Time
+	CreatedAt   time.Time
+	FinalizedAt *time.Time
 }
 
 // PlatformTenantStatementSummary is the bounded list projection. It omits
@@ -128,8 +132,11 @@ type PlatformTenantStatementInput struct {
 	UnpricedUnits    int64
 	AmountMillicents int64
 	Lines            []PlatformTenantStatementLine
-	Coverage         []PlatformTenantStatementCoverage `json:"-"`
-	AsOf             time.Time
+	// Fees are monthly base fees and minimum top-ups (ADR-1322). A revision
+	// may carry fees without usage: no lines, no coverage, zero units.
+	Fees     []APIConsumerStatementFee
+	Coverage []PlatformTenantStatementCoverage `json:"-"`
+	AsOf     time.Time
 	// Repriced marks a revision that re-prices a whole UTC month for tenant
 	// allowances or tiers (ADR-975). Its lines are the difference from the
 	// finalized revisions' lines, so a line can be negative and a subject can
@@ -179,6 +186,19 @@ func validatePlatformTenantStatementInput(in PlatformTenantStatementInput) error
 	if (in.Revision == 1 && in.PriorStatus != "") ||
 		(in.Revision > 1 && in.PriorStatus != APIConsumerUsageStatementDraft && in.PriorStatus != APIConsumerUsageStatementFinalized) {
 		return ErrInvalidArgument
+	}
+	feeAmount, err := sumStatementFees(in.Fees, in.Currency)
+	if err != nil {
+		return fmt.Errorf("%w: platform tenant statement: %w", ErrInvalidArgument, err)
+	}
+	if len(in.Lines) == 0 && len(in.Coverage) == 0 {
+		// A revision that bills only monthly fees, for a tenant without
+		// new usage (ADR-1322).
+		if len(in.Fees) == 0 || !in.Repriced || in.BillableUnits != 0 || in.UnpricedUnits != 0 ||
+			in.AmountMillicents != feeAmount {
+			return ErrInvalidArgument
+		}
+		return nil
 	}
 	if in.BillableUnits < 1 || in.UnpricedUnits < 0 || in.AmountMillicents < 0 || len(in.Lines) == 0 || len(in.Coverage) == 0 {
 		return ErrInvalidArgument
@@ -290,7 +310,10 @@ func validatePlatformTenantStatementInput(in PlatformTenantStatementInput) error
 		}
 		coverageWindows[subject] = window
 	}
-	if lineUnits != in.BillableUnits || lineUnpriced != in.UnpricedUnits || lineAmount != in.AmountMillicents ||
+	if !addsWithin(lineAmount, feeAmount) {
+		return ErrInvalidArgument
+	}
+	if lineUnits != in.BillableUnits || lineUnpriced != in.UnpricedUnits || lineAmount+feeAmount != in.AmountMillicents ||
 		(!in.Weighted && coverageUnits != in.BillableUnits) {
 		return fmt.Errorf("platform tenant statement: line totals do not match statement totals")
 	}
@@ -391,6 +414,7 @@ func platformTenantCoverageKey(appID, consumerID, surfaceID, jwtRuleID string, m
 }
 
 func clonePlatformTenantStatement(s PlatformTenantStatement) PlatformTenantStatement {
+	s.Fees = append([]APIConsumerStatementFee(nil), s.Fees...)
 	s.Lines = append([]PlatformTenantStatementLine(nil), s.Lines...)
 	s.Coverage = append([]PlatformTenantStatementCoverage(nil), s.Coverage...)
 	if s.FinalizedAt != nil {
@@ -408,7 +432,8 @@ func clonePlatformTenantStatementHeader(s PlatformTenantStatement) PlatformTenan
 func samePlatformTenantStatementSnapshot(existing PlatformTenantStatement, input PlatformTenantStatementInput) bool {
 	if existing.Currency != input.Currency || existing.BillableUnits != input.BillableUnits ||
 		existing.UnpricedUnits != input.UnpricedUnits || existing.AmountMillicents != input.AmountMillicents ||
-		len(existing.Lines) != len(input.Lines) || len(existing.Coverage) != len(input.Coverage) {
+		len(existing.Lines) != len(input.Lines) || len(existing.Coverage) != len(input.Coverage) ||
+		!slices.Equal(existing.Fees, input.Fees) {
 		return false
 	}
 	for i, line := range existing.Lines {

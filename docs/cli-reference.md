@@ -9161,7 +9161,7 @@ List an app&#39;s per-request price versions
 
 Add an immutable per-request price version
 
-`gregale consumers rate-card-create --currency <CODE> --price-millicents <N> [--included-units <N>] [--tier <UP_TO:PRICE>]... [--weight <METHOD /template=N>]... [--plan <NAME>] [--effective-from <RFC3339>] [--unit <UNIT>] [--tier-mode <MODE>] [--base-fee-millicents <N>] [--minimum-millicents <N>] <slug>`
+`gregale consumers rate-card-create --currency <CODE> --price-millicents <N> [--included-units <N>] [--tier <UP_TO:PRICE>]... [--weight <METHOD /template=N>]... [--plan <NAME>] [--effective-from <RFC3339>] [--unit <UNIT>] [--tier-mode <MODE>] [--base-fee-millicents <N>] [--minimum-millicents <N>] [--prorate-monthly-fees] <slug>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -9176,6 +9176,7 @@ Add an immutable per-request price version
 | `--tier-mode <MODE>` | how tiers price a month: graduated (each unit at its step) or volume (every unit at the step the month reaches) | one of `graduated` · `volume` |
 | `--base-fee-millicents <N>` | fixed charge per consumer per UTC month, billed by the month&#39;s statement |  |
 | `--minimum-millicents <N>` | minimum usage charge per consumer per UTC month; the statement tops up the difference |  |
+| `--prorate-monthly-fees` | scale the fee and minimum in a consumer&#39;s first month to the share of it left after the consumer was created |  |
 
 Examples:
 
@@ -9584,7 +9585,7 @@ List a customer&#39;s cross-app price versions
 
 Add a customer-wide per-request price version
 
-`gregale platform-tenants rate-card-create --id <UUID> --currency <CODE> --price-millicents <N> [--included-units <N>] [--tier <UP_TO:PRICE>]... [--weight <"METHOD /template=N">]... [--effective-from <RFC3339>] [--unit <UNIT>] [--tier-mode <MODE>]`
+`gregale platform-tenants rate-card-create --id <UUID> --currency <CODE> --price-millicents <N> [--included-units <N>] [--tier <UP_TO:PRICE>]... [--weight <"METHOD /template=N">]... [--effective-from <RFC3339>] [--unit <UNIT>] [--base-fee-millicents <N>] [--minimum-millicents <N>] [--prorate-monthly-fees] [--tier-mode <MODE>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -9595,7 +9596,10 @@ Add a customer-wide per-request price version
 | `--tier <UP_TO:PRICE>` | graduated step counted per tenant per UTC month; repeat in order, last UP_TO is inf (replaces price and included units) |  |
 | `--weight <"METHOD /template=N">` | units per request on a route, including surface and JWT-rule requests; repeat per route, unlisted routes count 1 (statements then cover calendar months) |  |
 | `--effective-from <RFC3339>` | UTC minute the price starts (default next minute) |  |
-| `--unit <UNIT>` | what the price is per: request, compute second or response megabyte, rounded per subject minute | one of `request` · `compute_second` · `response_megabyte` |
+| `--unit <UNIT>` | what the price is per: request, compute_second or response_megabyte (rounded per subject minute), or app:&lt;meter&gt; for units the app reports in Gregale-Usage; cards of different units price side by side |  |
+| `--base-fee-millicents <N>` | fixed charge per tenant per UTC month, billed by the month&#39;s statement |  |
+| `--minimum-millicents <N>` | minimum usage charge per tenant per UTC month; the statement tops up the difference |  |
+| `--prorate-monthly-fees` | scale the fee and minimum in a tenant&#39;s first month to the share of it left after the tenant was created |  |
 | `--tier-mode <MODE>` | how tiers price a month: graduated (each unit at its step) or volume (every unit at the step the month reaches) | one of `graduated` · `volume` |
 
 ### platform-tenants statements
@@ -9679,7 +9683,7 @@ List tenant plans: reusable price and request-budget bundles
 
 Create a tenant plan
 
-`gregale platform-tenants plan-create --name <NAME> [--currency <CODE>] [--price-millicents <N>] [--included-units <N>] [--tier <UP_TO:PRICE>]... [--weight <"METHOD /template=N">]... [--max-requests-per-minute <N>] [--max-requests-per-day <N>] [--unit <UNIT>] [--tier-mode <MODE>]`
+`gregale platform-tenants plan-create --name <NAME> [--currency <CODE>] [--price-millicents <N>] [--included-units <N>] [--tier <UP_TO:PRICE>]... [--weight <"METHOD /template=N">]... [--max-requests-per-minute <N>] [--max-requests-per-day <N>] [--unit <UNIT>] [--base-fee-millicents <N>] [--minimum-millicents <N>] [--prorate-monthly-fees] [--tier-mode <MODE>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -9691,7 +9695,10 @@ Create a tenant plan
 | `--weight <"METHOD /template=N">` | units per request on a route; repeat per route |  |
 | `--max-requests-per-minute <N>` | request budget per minute the plan sets (with --max-requests-per-day) |  |
 | `--max-requests-per-day <N>` | request budget per day the plan sets (with --max-requests-per-minute) |  |
-| `--unit <UNIT>` | what the price is per: request, compute second or response megabyte, rounded per subject minute | one of `request` · `compute_second` · `response_megabyte` |
+| `--unit <UNIT>` | what the price is per: request, compute_second or response_megabyte (rounded per subject minute), or app:&lt;meter&gt; for units the app reports in Gregale-Usage; cards of different units price side by side |  |
+| `--base-fee-millicents <N>` | fixed charge per tenant per UTC month, billed by the month&#39;s statement |  |
+| `--minimum-millicents <N>` | minimum usage charge per tenant per UTC month; the statement tops up the difference |  |
+| `--prorate-monthly-fees` | scale the fee and minimum in a tenant&#39;s first month to the share of it left after the tenant was created |  |
 | `--tier-mode <MODE>` | how tiers price a month: graduated (each unit at its step) or volume (every unit at the step the month reaches) | one of `graduated` · `volume` |
 
 Examples:
@@ -9704,7 +9711,7 @@ gregale platform-tenants plan-create --name growth --currency EUR --price-millic
 
 Change a tenant plan; flags not given keep their value, and tenants get it when the plan is assigned again
 
-`gregale platform-tenants plan-update --plan <NAME> [--name <NAME>] [--currency <CODE>] [--price-millicents <N>] [--included-units <N>] [--tier <UP_TO:PRICE>]... [--weight <"METHOD /template=N">]... [--max-requests-per-minute <N>] [--max-requests-per-day <N>] [--unit <UNIT>] [--tier-mode <MODE>]`
+`gregale platform-tenants plan-update --plan <NAME> [--name <NAME>] [--currency <CODE>] [--price-millicents <N>] [--included-units <N>] [--tier <UP_TO:PRICE>]... [--weight <"METHOD /template=N">]... [--max-requests-per-minute <N>] [--max-requests-per-day <N>] [--unit <UNIT>] [--base-fee-millicents <N>] [--minimum-millicents <N>] [--prorate-monthly-fees] [--tier-mode <MODE>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -9717,12 +9724,15 @@ Change a tenant plan; flags not given keep their value, and tenants get it when 
 | `--weight <"METHOD /template=N">` | units per request on a route; repeat per route |  |
 | `--max-requests-per-minute <N>` | request budget per minute (with --max-requests-per-day) |  |
 | `--max-requests-per-day <N>` | request budget per day (with --max-requests-per-minute) |  |
-| `--unit <UNIT>` | what the price is per: request, compute second or response megabyte, rounded per subject minute | one of `request` · `compute_second` · `response_megabyte` |
+| `--unit <UNIT>` | what the price is per: request, compute_second or response_megabyte (rounded per subject minute), or app:&lt;meter&gt; for units the app reports in Gregale-Usage; cards of different units price side by side |  |
+| `--base-fee-millicents <N>` | fixed charge per tenant per UTC month, billed by the month&#39;s statement |  |
+| `--minimum-millicents <N>` | minimum usage charge per tenant per UTC month; the statement tops up the difference |  |
+| `--prorate-monthly-fees` | scale the fee and minimum in a tenant&#39;s first month to the share of it left after the tenant was created |  |
 | `--tier-mode <MODE>` | how tiers price a month: graduated (each unit at its step) or volume (every unit at the step the month reaches) | one of `graduated` · `volume` |
 
 ### platform-tenants set-plan
 
-Move a tenant onto a plan: its rate card from the next minute (the next month when the unit changes) and its request budget at once
+Move a tenant onto a plan: its rate card from the next minute, free cards for its other priced units, and its request budget at once
 
 `gregale platform-tenants set-plan --id <UUID> --plan <NAME>`
 
@@ -9740,6 +9750,72 @@ List a tenant&#39;s plan assignments, newest first
 | Flag | Meaning | |
 |---|---|---|
 | `--id <UUID>` | platform tenant UUID | required |
+
+### platform-tenants trial
+
+Show a tenant&#39;s free trial
+
+`gregale platform-tenants trial --id <UUID>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--id <UUID>` | platform tenant UUID | required |
+
+### platform-tenants trial-set
+
+Start a tenant&#39;s one free trial at the next minute, or move the end of a running one
+
+`gregale platform-tenants trial-set --id <UUID> [--days <N>] [--ends-at <RFC3339>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--id <UUID>` | platform tenant UUID | required |
+| `--days <N>` | trial length from its start |  |
+| `--ends-at <RFC3339>` | trial end (UTC minute, not in the past) |  |
+
+Examples:
+
+```sh
+gregale platform-tenants trial-set --id TENANT_ID --days 30
+```
+
+### platform-tenants trial-end
+
+End a tenant&#39;s running trial at the next minute
+
+`gregale platform-tenants trial-end --id <UUID>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--id <UUID>` | platform tenant UUID | required |
+
+### platform-tenants billing-policy
+
+Show the account&#39;s overdue-invoice rule for tenants
+
+### platform-tenants billing-policy-set
+
+Refuse tenants whose exported invoice is unpaid some days after its due date
+
+`gregale platform-tenants billing-policy-set --block-overdue-after-days <N>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--block-overdue-after-days <N>` | days past the due date before the gateway answers 402 (0 blocks at once) | required |
+
+Examples:
+
+```sh
+gregale platform-tenants billing-policy-set --block-overdue-after-days 14
+```
+
+### platform-tenants billing-policy-delete
+
+Stop blocking tenants for overdue invoices; holds lift within minutes
+
+### platform-tenants overdue-holds
+
+List tenants the gateway refuses because of an overdue invoice
 
 
 ## edge-rule-lists

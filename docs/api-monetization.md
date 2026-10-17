@@ -192,7 +192,8 @@ gregale consumers rate-card-create my-api --currency EUR --price-millicents 50 -
 - **Separate counts.** Each unit has its own free units, tiers and volume
   steps. A statement shows one line per unit for each minute.
 - **Stopping a unit.** To stop charging a unit, add a card for it at price 0.
-- **Customer-wide cards** still price one unit at a time.
+- **Customer-wide cards** price several units the same way (see
+  [Customers across several apps](#customers-across-several-apps)).
 
 ### Monthly base fee and minimum spend
 
@@ -208,7 +209,11 @@ request, and at least EUR 100.00 of usage a month.
 
 - **Which card.** The card in force when a consumer's month starts (the 1st
   at 00:00 UTC, or when the consumer was created) sets that month's fee and
-  minimum. There is no proration.
+  minimum.
+- **Proration.** By default a consumer created mid-month pays the whole
+  month. Add `--prorate-monthly-fees` to charge the first month's fee and
+  minimum for the share of the month left after the consumer was created.
+  A consumer revoked mid-month still pays its last month in full.
 - **Minimum.** When usage costs less than the minimum, the statement adds a
   top-up for the difference. Late usage lowers the top-up instead of adding
   to the total.
@@ -605,10 +610,16 @@ gregale platform-tenants statement-draft --id TENANT_ID --month 2026-09
   `--unit response_megabyte` prices the customer's compute time or response
   size across their apps. Each consumer, surface or JWT rule rounds its own
   minute to the nearest second or megabyte. As for app cards, these cards take
-  no route weights, can't be backdated, and a change of unit must start on
-  the 1st of a month at 00:00 UTC. `--tier-mode volume` works here too.
+  no route weights and can't be backdated. `--tier-mode volume` works here
+  too.
+- **Units your app counts.** `--unit app:<meter>` prices the units your app
+  reports in `Gregale-Usage`, for the customer's consumers and for requests
+  through their surfaces and JWT rules.
+- **Several units at once.** Customer-wide cards of different units price
+  side by side, each with its own free units and tiers. To stop charging a
+  unit, add a card for it at price 0.
 - **Monthly statements.** While a card with free requests, tiers, route
-  weights, or a compute or response-size unit is in force, cross-app
+  weights, monthly fees, or a unit other than requests is in force, cross-app
   statements must cover one calendar month.
   Late usage re-prices the month: the adjustment bills only the difference,
   so a line can be negative when free units move to an earlier minute, but
@@ -617,6 +628,30 @@ gregale platform-tenants statement-draft --id TENANT_ID --month 2026-09
   or plans don't block a cross-app statement for minutes a tenant card prices.
   A minute only an app card prices still needs a flat app card; otherwise bill
   those consumers with app statements.
+
+### Customer fees, trials and overdue invoices
+
+Customer-wide cards take the monthly fees app cards do, customers can have a
+free trial, and you can stop serving customers who don't pay:
+
+```bash
+gregale platform-tenants rate-card-create --id TENANT_ID --currency EUR --price-millicents 20 \
+  --included-units 1000000 --base-fee-millicents 49900000 --prorate-monthly-fees
+gregale platform-tenants trial-set --id TENANT_ID --days 30
+gregale platform-tenants billing-policy-set --block-overdue-after-days 14
+gregale platform-tenants overdue-holds
+```
+
+- **Fees.** A base fee and minimum per customer month, from the card in force
+  when the customer's month starts. Statements show them as `fees`, billing
+  runs bill customers without usage, and finalized-statement webhooks carry
+  them.
+- **Trials.** A customer's usage in the trial is priced at zero, and a month
+  that starts during it has no fee or minimum.
+- **Overdue invoices.** The rule covers all of the account's customers. A
+  customer whose exported invoice is unpaid that many days past due gets
+  `402 tenant_invoice_overdue` on every request, through consumers, surfaces
+  and JWT rules, until the invoice is paid or voided.
 
 ### Tenant plans
 
@@ -632,9 +667,11 @@ gregale platform-tenants plan-history --id TENANT_ID
 
 - **Assigning.** `set-plan` adds the plan's rate card for the tenant from the
   next minute and sets its [request budget](platform-tenants.md) at once. The
-  tenant keeps its earlier cards for earlier minutes. If the plan prices a
-  different unit than the tenant's current card (`--unit`), its card starts
-  at the next UTC month boundary instead.
+  tenant keeps its earlier cards for earlier minutes. The plan is the
+  tenant's whole price: any other unit the tenant is charged for gets a free
+  card from the same minute.
+- **Fees.** `--base-fee-millicents`, `--minimum-millicents` and
+  `--prorate-monthly-fees` set the plan card's monthly fees.
 - **Changing a plan.** `plan-update` changes the plan for future assignments.
   Customers already on it keep their price until you run `set-plan` again.
 - **Limits.** An account keeps up to 100 tenant plans. A plan's currency must
@@ -644,9 +681,8 @@ gregale platform-tenants plan-history --id TENANT_ID
 
 - Units are requests, optionally weighted by route, the compute seconds or
   response megabytes of billable requests, or units your app reports. App
-  cards can price several units at once. Customer-wide cards price one
-  unit at a time and can't price app-reported units, base fees, minimums
-  or trials.
+  and customer-wide cards can price several units at once.
+- Spend caps are for app consumers only.
 - Usage recorded before an upgrade has no compute time, response size or
   route for surface and JWT-rule requests, so it prices as zero seconds and
   megabytes and weight 1.
@@ -688,6 +724,10 @@ See [ADR-949](adr/949-app-consumer-statement-revisions-and-platform-failure-bill
 [ADR-1316](adr/1316-monthly-base-fee-and-minimum-spend.md),
 [ADR-1317](adr/1317-parallel-unit-price-streams.md),
 [ADR-1318](adr/1318-app-reported-usage-units.md),
+[ADR-1319](adr/1319-platform-tenant-unit-streams-and-app-units.md),
+[ADR-1322](adr/1322-platform-tenant-fees-and-trials.md),
+[ADR-1324](adr/1324-block-tenants-with-overdue-invoices.md),
+[ADR-1325](adr/1325-prorated-monthly-fees.md),
 [ADR-1310](adr/1310-platform-tenant-resource-pricing-and-source-routes.md), and
 [ADR-1311](adr/1311-statement-invoice-collection.md) for the billing rules.
 

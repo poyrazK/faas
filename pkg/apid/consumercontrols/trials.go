@@ -1,7 +1,8 @@
-// Package consumercontrols serves API consumer billing controls: free
-// trials (ADR-1314) and blocking consumers whose invoices are overdue
-// (ADR-1315). Like the other apid domains (ADR-982), it reaches apid only
-// through Host; apidserver keeps the route table.
+// Package consumercontrols serves API consumer and platform tenant billing
+// controls: free trials (ADR-1314, ADR-1322) and blocking consumers and
+// tenants whose invoices are overdue (ADR-1315, ADR-1324). Like the other
+// apid domains (ADR-982), it reaches apid only through Host; apidserver
+// keeps the route table.
 package consumercontrols
 
 import (
@@ -24,6 +25,9 @@ type Host interface {
 	ConsumerRoute(w http.ResponseWriter, r *http.Request, acct state.Account) (state.App, state.APIConsumer, bool)
 	// AppRoute resolves the {slug} app; on false it has written the problem.
 	AppRoute(w http.ResponseWriter, r *http.Request, acct state.Account) (state.App, bool)
+	// TenantRoute resolves the {id} platform tenant; on false it has
+	// written the problem.
+	TenantRoute(w http.ResponseWriter, r *http.Request, acct state.Account) (state.PlatformTenant, bool)
 	Audit(ctx context.Context, event, accountID string, fields map[string]any)
 }
 

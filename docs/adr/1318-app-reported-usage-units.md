@@ -15,7 +15,7 @@
 - **Consequences:**
   - **Trust.** Reported units are what the app says; Gregale bounds them but cannot verify them. Operators bill their own customers from their own app's counts.
   - **Trailers and length.** A trailer is read only when the response is streamed (chunked). On a response with a declared length, Gregale records the usage as soon as the body completes, so the units must come in the header.
-  - **App consumers only.** Customer-wide (platform tenant) cards cannot price app meters, and gateway plan limits (ADR-953) still count requests.
+  - **App consumers only.** Customer-wide (platform tenant) cards cannot price app meters, and gateway plan limits (ADR-953) still count requests. *Superseded for tenants by ADR-1319: tenant cards price app meters, including surface and JWT-rule requests.*
   - **Rollout.** apid must be upgraded before gateways. Events with reported units wait for an apid that acknowledges them.
 - **Rejected alternatives:**
   - An ingestion API for usage events would decouple counts from requests, but needs its own idempotency, consumer attribution and late-arrival rules. The response already carries the consumer, the minute and exactly-once delivery (ADR-1303).

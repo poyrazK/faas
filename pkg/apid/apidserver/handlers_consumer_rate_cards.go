@@ -20,6 +20,7 @@ func apiConsumerRateCardResponse(card state.APIConsumerRateCard) api.APIConsumer
 		Tiers: apiRateCardTiers(card.Tiers), TierMode: rateCardTierMode(card.TierMode), RouteWeights: card.RouteWeights,
 		PlanID: card.PlanID, EffectiveFrom: card.EffectiveFrom.UTC(), CreatedAt: card.CreatedAt.UTC(),
 		BaseFeeMillicentsPerMonth: card.BaseFeeMillicentsPerMonth, MinimumMillicentsPerMonth: card.MinimumMillicentsPerMonth,
+		ProrateMonthlyFees: card.ProrateMonthlyFees,
 	}
 }
 
@@ -226,6 +227,7 @@ func (s *server) createAPIConsumerRateCard(w http.ResponseWriter, r *http.Reques
 		IncludedUnitsPerMonth: req.IncludedUnitsPerMonth, Tiers: stateRateCardTiers(req.Tiers),
 		RouteWeights: req.RouteWeights, PlanID: req.PlanID, EffectiveFrom: effectiveFrom, Unit: req.Unit, TierMode: req.TierMode,
 		BaseFeeMillicentsPerMonth: req.BaseFeeMillicentsPerMonth, MinimumMillicentsPerMonth: req.MinimumMillicentsPerMonth,
+		ProrateMonthlyFees: req.ProrateMonthlyFees,
 	})
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {

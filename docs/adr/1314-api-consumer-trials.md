@@ -12,7 +12,7 @@
   - **Never retroactive.** Trials only start or end at the next minute, so a minute a finalized statement billed never changes price, and no revision needs a credit.
   - **One trial per consumer.** Reusing a consumer for a second trial would need trial history to keep earlier statements exact; operators create a new consumer instead.
   - **Unpriced minutes stay unpriced.** A trial minute no card prices is still unpriced, so a statement with it cannot be finalized until a card exists, as before.
-  - **App consumers only.** Customer-wide (platform tenant) statements price consumers by tenant cards and ignore app consumer trials.
+  - **App consumers only.** Customer-wide (platform tenant) statements price consumers by tenant cards and ignore app consumer trials. *ADR-1322 gives tenants their own trial.*
 - **Rejected alternatives:**
   - Trial days on plans, applied when a consumer is assigned, would change plan storage and the plan update API for a setting operators can pass when creating the consumer.
   - Pricing trial minutes as unpriced would block finalizing every statement that covers a trial.

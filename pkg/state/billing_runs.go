@@ -396,6 +396,14 @@ func (m *MemStore) DiscoverBillingRunItems(_ context.Context, runID, owner, tena
 		}
 	}
 	if run.Includes(BillingRunSourcePlatformTenants) {
+		// A tenant card with a base fee or minimum bills tenants without
+		// usage too (ADR-1322).
+		for _, card := range m.platformTenantRateCards {
+			if tenant, ok := m.platformTenants[card.TenantID]; ok && card.AccountID == run.AccountID && card.MonthlyFees() &&
+				card.EffectiveFrom.Before(run.PeriodEnd) && tenant.CreatedAt.Before(run.PeriodEnd) {
+				tenants[card.TenantID] = true
+			}
+		}
 		for tenantID := range tenants {
 			if tenant, ok := m.platformTenants[tenantID]; ok && tenant.AccountID == run.AccountID {
 				add(BillingRunItem{SourceKind: StatementSourcePlatformTenant, SourceID: tenant.ID, ExternalRef: tenant.ExternalRef, Outcome: BillingRunItemPending})

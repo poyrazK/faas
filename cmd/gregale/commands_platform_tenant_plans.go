@@ -15,9 +15,11 @@ import (
 // platformTenantPlanVerbs are the tenant plan verbs of `gregale
 // platform-tenants` (ADR-1307), mapped to the flags each accepts.
 var platformTenantPlanVerbs = map[string][]string{
-	"plans":        {},
-	"plan-create":  {"name", "currency", "price-millicents", "included-units", "tier", "weight", "max-requests-per-minute", "max-requests-per-day", "unit", "tier-mode"},
-	"plan-update":  {"plan", "name", "currency", "price-millicents", "included-units", "tier", "weight", "max-requests-per-minute", "max-requests-per-day", "unit", "tier-mode"},
+	"plans": {},
+	"plan-create": {"name", "currency", "price-millicents", "included-units", "tier", "weight", "max-requests-per-minute", "max-requests-per-day", "unit", "tier-mode",
+		"base-fee-millicents", "minimum-millicents", "prorate-monthly-fees"},
+	"plan-update": {"plan", "name", "currency", "price-millicents", "included-units", "tier", "weight", "max-requests-per-minute", "max-requests-per-day", "unit", "tier-mode",
+		"base-fee-millicents", "minimum-millicents", "prorate-monthly-fees"},
 	"set-plan":     {"id", "plan"},
 	"plan-history": {"id"},
 }
@@ -29,6 +31,8 @@ type platformTenantPlanFlags struct {
 	includedUnits            int64
 	tiers, weights           multiFlag
 	maxPerMinute, maxPerDay  int64
+	baseFee, minimum         int64
+	prorate                  bool
 	set                      map[string]bool
 }
 
@@ -49,7 +53,10 @@ func cmdPlatformTenantPlans(verb string, args []string) (handled bool, code int)
 	fs.Int64Var(&f.includedUnits, "included-units", 0, "free units per tenant per UTC calendar month")
 	fs.Var(&f.tiers, "tier", "graduated step UP_TO:PRICE_MILLICENTS, repeatable; the last step's UP_TO is inf")
 	fs.Var(&f.weights, "weight", "route weight \"METHOD /template=N\", repeatable")
-	fs.StringVar(&f.unit, "unit", "", "what the plan's card prices: request (default), compute_second or response_megabyte")
+	fs.StringVar(&f.unit, "unit", "", "what the plan's card prices: request (default), compute_second, response_megabyte or app:<meter>")
+	fs.Int64Var(&f.baseFee, "base-fee-millicents", 0, "fixed charge per tenant per UTC month; 100000 = 1.00")
+	fs.Int64Var(&f.minimum, "minimum-millicents", 0, "minimum usage charge per tenant per UTC month, topped up when usage costs less")
+	fs.BoolVar(&f.prorate, "prorate-monthly-fees", false, "scale the fee and minimum in a tenant's first month to the share left after it was created")
 	fs.StringVar(&f.tierMode, "tier-mode", "", "how --tier steps price a month: graduated (default) or volume")
 	fs.Int64Var(&f.maxPerMinute, "max-requests-per-minute", -1, "request budget per minute the plan sets; 0 disables the ceiling")
 	fs.Int64Var(&f.maxPerDay, "max-requests-per-day", -1, "request budget per day the plan sets; 0 disables the ceiling")
@@ -99,7 +106,9 @@ func callPlatformTenantPlans(ctx context.Context, client *Client, verb string, f
 		}
 		req, err := applyPlanFlags(api.PlatformTenantPlanRequest{Name: plan.Name, Currency: plan.Currency,
 			PriceMillicentsPerUnit: plan.PriceMillicentsPerUnit, IncludedUnitsPerMonth: plan.IncludedUnitsPerMonth,
-			Tiers: plan.Tiers, RouteWeights: plan.RouteWeights, RequestBudget: plan.RequestBudget, Unit: plan.Unit, TierMode: plan.TierMode}, f)
+			Tiers: plan.Tiers, RouteWeights: plan.RouteWeights, RequestBudget: plan.RequestBudget, Unit: plan.Unit, TierMode: plan.TierMode,
+			BaseFeeMillicentsPerMonth: plan.BaseFeeMillicentsPerMonth, MinimumMillicentsPerMonth: plan.MinimumMillicentsPerMonth,
+			ProrateMonthlyFees: plan.ProrateMonthlyFees}, f)
 		if err != nil {
 			return nil, err
 		}
@@ -150,6 +159,15 @@ func applyPlanFlags(req api.PlatformTenantPlanRequest, f platformTenantPlanFlags
 	}
 	if f.set["tier-mode"] {
 		req.TierMode = strings.TrimSpace(f.tierMode)
+	}
+	if f.set["base-fee-millicents"] {
+		req.BaseFeeMillicentsPerMonth = f.baseFee
+	}
+	if f.set["minimum-millicents"] {
+		req.MinimumMillicentsPerMonth = f.minimum
+	}
+	if f.set["prorate-monthly-fees"] {
+		req.ProrateMonthlyFees = f.prorate
 	}
 	if f.set["max-requests-per-minute"] != f.set["max-requests-per-day"] {
 		return req, errors.New("set --max-requests-per-minute and --max-requests-per-day together")
