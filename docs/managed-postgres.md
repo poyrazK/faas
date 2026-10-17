@@ -729,7 +729,65 @@ every member's evidence to be no older than five minutes. Request `verify` again
 to refresh it. These checks do not prove application VM reachability, data
 correctness, or application compatibility.
 
-Workloads keep using the source throughout this workflow. The current API has
+To inspect the remaining activation blockers, send
+`POST /v1/postgres/cutovers/{id}/preflight`, then poll
+`GET /v1/postgres/cutovers/{id}/preflight`. The request starts `pending` and
+finishes `blocked`, with affected source binding IDs, target and binding checks,
+credential verification findings, and the remaining runtime safety requirements.
+Manage scope is required to request a check; read scope can inspect it.
+
+Preflight requests survive control-plane restarts and work while provisioning is
+disabled. Repeating a pending request preserves its revision; requesting a
+completed check starts a new revision. Findings describe the catalog at
+`checked_at`. Inspect `stale` and `expires_at` before relying on those findings;
+positive fields remain historical after expiry or cutover changes. An HTTP
+idempotency replay returns the original response; use GET for latest progress.
+
+Completed checks include `runtime_drain`, a historical observation of the existing
+scheduler drain plan. It reports captured workload counts and each instance's
+deployment, scope, mode, retirement state and blocker. `not_fenced` means admission
+has not been fenced; `missing` means no drain plan exists. These checks initiate
+neither operation. A `stopped` instance without a matching native retirement
+receipt remains pending. Unsupported workloads retain specific blockers.
+
+GET also checks current runtime authority and receipts. Changes mark the saved
+report `stale`; request a new preflight to refresh its counts and findings.
+Reports created before runtime observations were supported require a new check.
+`catalog_retired` covers only the captured instance catalog and does not establish
+complete writer isolation, SQL-session drainage or permission to switch bindings.
+
+Completed reports also include `source_sessions`, a historical observation of
+an explicitly requested internal SQL fence. It reports connection-admission
+closure, selected database count, active sessions, prepared transactions and
+unselected database count. Missing requests, incomplete coverage, failed refresh
+and expired evidence retain specific blockers. GET marks the report stale after
+SQL evidence changes; request a new preflight to refresh the saved findings.
+Database names, OIDs and private ownership tokens are never returned. Preflight
+reads the durable journal and makes no provider calls.
+
+`source_sessions.writer_isolation` adds the SQL writer inventory and optional
+provider evidence. Client, background, replication and unknown backend counts
+cover the observed source cluster; hidden or unrecognized backend types remain
+unknown and prevent confirmation. `catalog_matches` compares the complete native
+catalog with an immutable original fingerprint. Detected drift is permanent for
+the operation, including when settings later return to their original values.
+Cancellation and a new cutover are required to establish a new baseline.
+
+An unchanged fingerprint and zero counts do not prove future isolation.
+`confirmed` additionally requires fresh provider evidence that a durable guard
+covers database creation/replacement and all write paths across the dataset's
+endpoints. Its expiry also bounds the parent report. This is an internal provider
+contract, not deployed-provider qualification or permission to activate. Neon
+currently lacks that stronger guarantee and remains blocked; its SQL inventory
+is diagnostic. Preflight never acquires these guards. Private owner tokens,
+catalog fingerprints and provider receipts remain in the operational journal.
+See [ADR-1335](adr/1335-managed-postgres-source-writer-isolation.md).
+
+`activation_allowed` is always false. Preflight does not install admission
+fences, drain writers, publish credentials or resume workloads. See
+[ADR-1333](adr/1333-managed-postgres-activation-preflight.md).
+
+Preparation, verification and preflight keep bindings on the source. The current API has
 no activation operation; complete writer draining and atomic publication remain
 pending. Both databases and the selected source bindings stay pinned until
 `gregale postgres cutover cancel CUTOVER_ID` finishes revoking every staged role.
@@ -787,6 +845,28 @@ external SQL-session isolation, empty host inventory, route convergence or
 permission to publish target credentials. Prepare/Verify do not create plans;
 there is still no customer activation operation. Production provisioning and
 customer cutover activation remain disabled.
+
+An explicit internal controller can reserve a durable source SQL connection
+fence after the complete native catalog has retired
+([ADR-1334](adr/1334-managed-postgres-cutover-source-fences.md)). It requires
+fresh credential verification, independently recorded dataset identity and
+exclusive source bindings for the selected app/scope. Private maintenance and
+operation owners, the exact database selection and possible close dispatch are
+persisted before provider I/O. Recovery observes the same operation after lost
+replies or restart. Existing sessions and prepared transactions remain visible;
+the controller does not forcibly terminate them. Clone and cutover fences cannot
+hold the same source dataset concurrently.
+
+Cancellation retains the source pin and admission fence until SQL cleanup is
+confirmed. Once close dispatch is possible, an authenticated remote terminal
+tombstone must fence delayed requests before the local hold is released. Cleanup
+and observation continue with provisioning disabled. Maintenance owners persist
+for reuse. `selected_databases_drained` describes the frozen selection at the
+observation time; stronger writer isolation requires separate provider evidence
+and qualification.
+There is no customer SQL-fence endpoint, and activation remains disabled pending
+complete isolation, route convergence, snapshot invalidation and controlled
+publication/resume qualification.
 
 See [ADR-468](adr/468-managed-postgres-vmmd-admission.md). Teardown now retains
 live and failed-boot ownership until process exit and cleanup are confirmed;

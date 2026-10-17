@@ -40,6 +40,8 @@
 <label>Secret (auth token, access key, API key or API secret; required whenever you change SMS)<input name="sms_secret" type="password" autocomplete="off" maxlength="4096"></label>
 </fieldset>
 <label>Keep sign-in activity for this many days (empty keeps it forever)<input name="activity_retention_days" type="number" min="1" max="3650"></label>
+<label>Organization single sign-on (SAML)<select name="sso"><option value="off">Off</option><option value="on">On (register identity providers with gregale auth sso add)</option></select></label>
+<p id="sso-status" class="muted"></p>
 <button type="submit">Save and restart</button>
 </form>
 <h3>Sign-in providers</h3>
@@ -399,12 +401,14 @@
       captcha_provider: settings.captcha?.provider ?? '', captcha_site_key: settings.captcha?.site_key ?? '', captcha_secret: '',
       activity_retention_days: settings.activity?.retention_days ? String(settings.activity.retention_days) : '',
       sms_provider: settings.phone?.enabled ? settings.phone.provider : '', sms_account: '', sms_sender: '', sms_secret: '',
+      sso: settings.sso?.enabled ? 'on' : 'off',
     }
     for (const box of classes) box.checked = settings.password.required.includes(box.value)
     values.password_require = requireValue()
     for (const [name, value] of Object.entries(values)) { control(name).value = value; control(name).dataset.initial = value }
     const custom = settings.password.required.includes('custom')
     $('settings-status').textContent = custom ? 'Passwords also need characters from a custom set; saving password classes replaces it.' : ''
+    $('sso-status').textContent = settings.sso?.enabled ? 'Identity providers trust entity ID ' + settings.sso.entity_id + ' with ACS URL ' + settings.sso.acs_url + '.' : ''
     form.hidden = false
     $('provider-form').hidden = false
     const known = [...$('provider-form').elements.namedItem('provider').options].map(option => option.value)

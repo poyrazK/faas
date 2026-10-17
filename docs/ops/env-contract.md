@@ -204,6 +204,8 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_ENVIRONMENT_GITOPS_QUALIFICATION_SERVICE_PROXY_HTTP_URL` | schedd | `default` |  |  | `url` | optional local private HTTP service proxy URL for qualification; unset rejects HTTP service-bound graphs before VM admission |
 | `FAAS_ENVIRONMENT_GIT_DRIFT_REPORTING_ENABLED` | apid | `default` |  | false | `` | ADR-568 opt-in continuous Git-owned environment drift reporting; disabled unless explicitly true; grants no intent execution or qualification dispatch |
 | `FAAS_ENVIRONMENT_GIT_SOURCE_POLLING_ENABLED` | apid | `default` |  | true | `` | ADR-568 immutable definition polling and reviewed source approval for registered sources; explicit false disables polling; grants no environment execution authority |
+| `FAAS_EVENT_ACK_WRITER_ROSTER` | apid, schedd | `default` |  |  | `` | optional JSON deployment inventory override for event_acknowledgment_writer_roster TOML; unset preserves TOML and absent inventory leaves recording coverage unverified |
+| `FAAS_EVENT_ACK_WRITER_SLOT` | apid, schedd | `default` |  |  | `` | optional override for event_acknowledgment_writer_slot TOML; absent slot defaults to role:hostname without an explicit roster; a configured roster requires a stable explicit slot |
 | `FAAS_EVENT_RECIPIENT_CLAIMS_ENABLED` | schedd | `default` |  | 1 | `` | ADR-647 independent event recipient routing defaults on when unset; explicit 1 also enables, other nonempty values disable adoption; set 0 during mixed-version API/scheduler upgrades; disabling continues draining adopted receipts |
 | `FAAS_EXECUTION_` | schedd | `default` |  |  | `` | prefix for release-pinned execution runtime metadata; only consulted when FAAS_EXECUTION_DISPATCH=1 |
 | `FAAS_EXECUTION_API_ENABLED` | apid | `unit` |  |  | `` | explicit 0 until the restore/execute/destroy isolation path is enabled; set to 1 only after the ADR-171 metal suite passes |
@@ -420,11 +422,11 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_PROFILING_ENDPOINT` | guest, shared | `guest` |  |  | `` | loopback bridge stamped by guest-init for SDKs |
 | `FAAS_PROMETHEUS_URL` | apid, meterd | `default` |  |  | `` |  |
 | `FAAS_PUBLIC_CONTROL_ADDR` | gatewayd-public, shared | `unit` |  |  | `` |  |
-| `FAAS_PUBLIC_EDGE_CONTROL_PLANE_TARGET` | gatewayd-public | `default` |  |  | `` | ADR-1343; a compute-node edge forwards public object reads, uploads and the OTLP endpoint to this control-plane gatewayd-public URL (http://<private>:<port>); unset answers them 503 |
-| `FAAS_PUBLIC_EDGE_MODE` | gatewayd-public | `default` |  |  | `` | ADR-1343; "compute" runs gatewayd-public as a compute-node app edge (app hosts only, node-local gateway first); unset is the control-plane edge |
+| `FAAS_PUBLIC_EDGE_CONTROL_PLANE_TARGET` | gatewayd-public | `dropin` |  |  | `` | ADR-1343; a compute-node edge forwards public object reads, uploads and the OTLP endpoint to this control-plane gatewayd-public URL (http://<private>:<port>); unset answers them 503 |
+| `FAAS_PUBLIC_EDGE_MODE` | gatewayd-public | `unit` |  |  | `` | ADR-1343; "compute" runs gatewayd-public as a compute-node app edge (app hosts only, node-local gateway first); unset is the control-plane edge |
 | `FAAS_PUBLIC_IFACE` | vmmd, shared | `dropin` |  |  | `` | vmmd egress drop-in; provider-specific outward NIC detected or overridden by Ansible; "shared" covers pkg/e2etest forwarding the host's NIC to a harness-booted vmmd (the row is not Required, so this adds no boot-time enforcement) |
 | `FAAS_PUBLIC_LISTEN_ADDR` | gatewayd-public | `unit` |  |  | `` | matches faas-gatewayd-public.socket ListenStream; explicit loopback satisfies ADR-126's multi-host check |
-| `FAAS_PUBLIC_PRIVATE_LISTEN_ADDR` | gatewayd-public | `default` |  |  | `` | ADR-1343; a second listener for the public handler on the control plane's private address, for compute-node edges; unset means none |
+| `FAAS_PUBLIC_PRIVATE_LISTEN_ADDR` | gatewayd-public | `dropin` |  |  | `` | ADR-1343; a second listener for the public handler on the control plane's private address, for compute-node edges; unset means none |
 | `FAAS_PUBLIC_STATUS_LAUNCH_AT` | apid | `dropin` |  |  | `` | public-beta launch boundary rendered by the control-plane deployment |
 | `FAAS_PYROSCOPE_TOKEN` | apid, profiled | `default` |  |  | `` | operator backend credential; never sent into guests |
 | `FAAS_PYROSCOPE_URL` | apid, profiled | `default` |  |  | `` | private tenant-enabled backend configured in /etc/faas/profiling.env |

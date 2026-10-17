@@ -140,7 +140,7 @@ func TestSSEAuthorizationCachesCallbacksAndAccess(t *testing.T) {
 	if f.jwt.calls != 1 || f.channels.calls != 1 || f.access.calls != 2 {
 		t.Fatalf("after access refresh jwt=%d channel=%d access=%d", f.jwt.calls, f.channels.calls, f.access.calls)
 	}
-	f.auth.authorizedAt = time.Now().Add(-sseReauthorizeInterval)
+	f.auth.authorizedAt = time.Now().Add(-channelReauthorizeInterval)
 	f.auth.check(context.Background())
 	if f.jwt.calls != 2 || f.channels.calls != 2 {
 		t.Fatalf("after reauthorization jwt=%d channel=%d", f.jwt.calls, f.channels.calls)

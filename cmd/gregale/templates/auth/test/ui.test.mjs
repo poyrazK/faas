@@ -39,7 +39,7 @@ test('serves the hosted pages with a strict policy', async t => {
   await once(server, 'listening')
   t.after(() => server.close())
   const base = `http://127.0.0.1:${server.address().port}`
-  for (const path of ['/ui', '/ui/sign-in', '/ui/sign-up', '/ui/forgot-password', '/ui/reset-password', '/ui/invitation', '/ui/phone']) {
+  for (const path of ['/ui', '/ui/sign-in', '/ui/sign-up', '/ui/forgot-password', '/ui/reset-password', '/ui/invitation', '/ui/phone', '/ui/sso']) {
     const response = await fetch(base + path)
     assert.equal(response.status, 200, path)
     assert.match(response.headers.get('content-type'), /^text\/html/)

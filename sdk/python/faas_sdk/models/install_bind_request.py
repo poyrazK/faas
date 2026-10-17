@@ -23,11 +23,15 @@ class InstallBindRequest:
     the dashboard's bind picker commits. `production_branch` is
     optional — when omitted, githubd uses the install's
     `default_branch` from `/installations/{id}`.
+    Binding requires a `csrf_token` issued for `bind_app_to_repo`
+    by `GET /v1/auth/csrf` and its matching HttpOnly cookie.
 
     """
 
     installation_id: int
     repo_full_name: str
+    csrf_token: str | Unset = UNSET
+    """Action-bound CSRF token required by the browser bind mutation; not required for repository listing."""
     production_branch: str | Unset = UNSET
     deploy_branches: InstallBindRequestDeployBranches | Unset = UNSET
     """GitHub branch names mapped to deployment environment scopes. An empty object clears existing rules."""
@@ -37,6 +41,8 @@ class InstallBindRequest:
         installation_id = self.installation_id
 
         repo_full_name = self.repo_full_name
+
+        csrf_token = self.csrf_token
 
         production_branch = self.production_branch
 
@@ -52,6 +58,8 @@ class InstallBindRequest:
                 "repo_full_name": repo_full_name,
             }
         )
+        if csrf_token is not UNSET:
+            field_dict["csrf_token"] = csrf_token
         if production_branch is not UNSET:
             field_dict["production_branch"] = production_branch
         if deploy_branches is not UNSET:
@@ -68,6 +76,8 @@ class InstallBindRequest:
 
         repo_full_name = d.pop("repo_full_name")
 
+        csrf_token = d.pop("csrf_token", UNSET)
+
         production_branch = d.pop("production_branch", UNSET)
 
         _deploy_branches = d.pop("deploy_branches", UNSET)
@@ -80,6 +90,7 @@ class InstallBindRequest:
         install_bind_request = cls(
             installation_id=installation_id,
             repo_full_name=repo_full_name,
+            csrf_token=csrf_token,
             production_branch=production_branch,
             deploy_branches=deploy_branches,
         )

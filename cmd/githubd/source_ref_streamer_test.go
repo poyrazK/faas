@@ -12,6 +12,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/gitfetch"
 	"github.com/onebox-faas/faas/pkg/githubd"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -66,8 +67,14 @@ func TestSourceRefStreamer_ResolvesBranchAndPinsArchive(t *testing.T) {
 				!strings.HasSuffix(r.URL.Path, "commits/feature/branch") {
 				t.Errorf("commit lookup path = %q, want feature/branch", r.URL.EscapedPath())
 			}
-			w.Header().Set("Content-Type", "application/json")
-			_, _ = io.WriteString(w, `{"sha":"`+commitSHA+`"}`)
+			if r.Header.Get("Accept") == "application/vnd.github.sha" {
+				_, _ = io.WriteString(w, commitSHA+"\n")
+			} else {
+				// GitHub's default representation is not a string-valued map,
+				// and even a small commit can exceed the old 8 KiB body limit.
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, `{"sha":"`+commitSHA+`","commit":{"message":"`+strings.Repeat("patch", 4096)+`"},"parents":[],"stats":{"total":1},"files":[]}`)
+			}
 		case strings.Contains(r.URL.Path, "/tar.gz/"):
 			archiveCalls++
 			archivePath = r.URL.Path
@@ -128,7 +135,10 @@ func TestSourceRefStreamer_RetriesUnauthorizedCommitLookup(t *testing.T) {
 				http.Error(w, "expired", http.StatusUnauthorized)
 				return
 			}
-			_, _ = io.WriteString(w, `{"sha":"`+commitSHA+`"}`)
+			if got := r.Header.Get("Accept"); got != "application/vnd.github.sha" {
+				t.Errorf("Accept = %q, want SHA representation", got)
+			}
+			_, _ = io.WriteString(w, commitSHA)
 			return
 		}
 		if strings.Contains(r.URL.Path, "/tar.gz/") {
@@ -166,6 +176,28 @@ func TestSourceRefStreamer_RetriesUnauthorizedCommitLookup(t *testing.T) {
 	tokens.mu.Unlock()
 	if gotCalls != 2 || gotInvalidates != 1 {
 		t.Errorf("token calls = %d invalidates = %d, want 2 and 1", gotCalls, gotInvalidates)
+	}
+}
+
+func TestSourceRefStreamer_RejectsInvalidResolvedSHA(t *testing.T) {
+	for _, body := range []string{"", "main", strings.Repeat("g", 40), `{"sha":"` + strings.Repeat("a", 40) + `"}`, strings.Repeat("a", 40) + strings.Repeat(" ", 100)} {
+		t.Run(strconv.Itoa(len(body))+"/"+strings.TrimSpace(body)[:min(8, len(strings.TrimSpace(body)))], func(t *testing.T) {
+			archiveCalls := 0
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if strings.Contains(r.URL.Path, "/commits/") {
+					_, _ = io.WriteString(w, body)
+					return
+				}
+				archiveCalls++
+			}))
+			defer srv.Close()
+			streamer := newSourceRefStreamer(sourceRefTestInstalls{inst: state.GitHubInstall{AccountID: "acct", InstallationID: 7}}, &sourceRefTestTokens{}, srv.Client(), nil)
+			streamer.apiBaseURL, streamer.codeloadBaseURL = srv.URL, srv.URL
+			_, err := streamer.Stream(t.Context(), "acct", 7, "acme/api", "main", 0)
+			if !errors.Is(err, gitfetch.ErrBadArchive) || archiveCalls != 0 {
+				t.Fatalf("invalid SHA: err=%v archive calls=%d", err, archiveCalls)
+			}
+		})
 	}
 }
 

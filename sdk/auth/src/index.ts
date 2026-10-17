@@ -238,6 +238,16 @@ export function createAuthClient(options: AuthClientOptions) {
     async verifyPhone(input: { phone: string; code: string }): Promise<Session> {
       return save(toSession(await call<TokenResponse>('POST', '/auth/v1/verify', { body: { type: 'sms', phone: input.phone, token: input.code } })), 'SIGNED_IN')
     },
+    /**
+     * Starts organization single sign-on (SAML) for the identity provider of
+     * an email domain, or a provider ID. Navigate the browser to the returned
+     * URL; the Auth app returns to redirectTo with the session in the URL
+     * fragment, which sessionFromUrl() reads.
+     */
+    async signInWithSSO(input: ({ domain: string } | { providerId: string }) & { redirectTo?: string } & Captcha): Promise<{ url: string }> {
+      const target = 'domain' in input ? { domain: input.domain.trim().toLowerCase() } : { provider_id: input.providerId }
+      return call<{ url: string }>('POST', '/auth/v1/sso', { body: { ...target, ...(input.redirectTo ? { redirect_to: input.redirectTo } : {}), skip_http_redirect: true, ...captcha(input) } })
+    },
     /** Signs in with a passkey; the browser asks the user to choose one. */
     async signInWithPasskey(input: Captcha = {}): Promise<Session> {
       const { challenge_id, options } = await call<{ challenge_id: string; options: CredentialOptionsJSON }>('POST', '/auth/v1/passkeys/authentication/options', { body: captcha(input) })
