@@ -10588,20 +10588,50 @@ type OperatorIntentAcceptedResponse struct {
 // force_cold_boot (warm + init tiers walked). On failure,
 // Error carries the bounded dispatch error message (1 KB cap).
 type OperatorIntentResponse struct {
-	IntentID           string          `json:"intent_id"`
-	Kind               string          `json:"kind"`
-	Status             string          `json:"status"`
-	TargetID           string          `json:"target_id"`
-	AccountID          string          `json:"account_id,omitempty"`
-	ActorID            string          `json:"actor_id"`
-	Reason             string          `json:"reason"`
-	Metadata           json.RawMessage `json:"metadata"`
-	TraceID            string          `json:"trace_id,omitempty"`
-	RequestedAt        time.Time       `json:"requested_at"`
-	StartedAt          *time.Time      `json:"started_at,omitempty"`
-	FinishedAt         *time.Time      `json:"finished_at,omitempty"`
-	Error              string          `json:"error,omitempty"`
-	SnapIDsMarkedStale []string        `json:"snap_ids_marked_stale,omitempty"`
+	ParkExecution      *OperatorParkExecutionResponse    `json:"park_execution,omitempty"`
+	ColdBootGeneration int64                             `json:"cold_boot_generation,omitempty"`
+	RestartExecution   *OperatorRestartExecutionResponse `json:"restart_execution,omitempty"`
+	IntentID           string                            `json:"intent_id"`
+	Kind               string                            `json:"kind"`
+	Status             string                            `json:"status"`
+	TargetID           string                            `json:"target_id"`
+	AccountID          string                            `json:"account_id,omitempty"`
+	ActorID            string                            `json:"actor_id"`
+	Reason             string                            `json:"reason"`
+	Metadata           json.RawMessage                   `json:"metadata"`
+	TraceID            string                            `json:"trace_id,omitempty"`
+	RequestedAt        time.Time                         `json:"requested_at"`
+	StartedAt          *time.Time                        `json:"started_at,omitempty"`
+	FinishedAt         *time.Time                        `json:"finished_at,omitempty"`
+	Error              string                            `json:"error,omitempty"`
+	SnapIDsMarkedStale []string                          `json:"snap_ids_marked_stale,omitempty"`
+}
+
+// OperatorParkExecutionResponse exposes proof of capture and cleanup (ADR-1525).
+type OperatorParkExecutionResponse struct {
+	Phase            string     `json:"phase"`
+	NodeID           string     `json:"node_id"`
+	WakeID           string     `json:"wake_id"`
+	Generation       string     `json:"generation"`
+	Action           string     `json:"action"`
+	CaptureCompleted bool       `json:"capture_completed"`
+	StoppedAt        *time.Time `json:"stopped_at,omitempty"`
+	TerminalState    string     `json:"terminal_state,omitempty"`
+	ColdBootRequired bool       `json:"cold_boot_required"`
+	Reason           string     `json:"reason,omitempty"`
+	UpdatedAt        time.Time  `json:"updated_at"`
+}
+
+// OperatorRestartExecutionResponse exposes durable evidence without internal
+// claim/destroy tokens. outcome_unknown requires reconciliation before a new action.
+type OperatorRestartExecutionResponse struct {
+	Phase       string     `json:"phase"`
+	NodeID      string     `json:"node_id"`
+	WakeID      string     `json:"wake_id"`
+	Generation  string     `json:"generation"`
+	SnapshotIDs []string   `json:"snapshot_ids"`
+	DestroyedAt *time.Time `json:"destroyed_at,omitempty"`
+	UpdatedAt   time.Time  `json:"updated_at"`
 }
 
 // SweepStuckBuildsResponse is the wire shape returned by POST

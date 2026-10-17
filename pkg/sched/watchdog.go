@@ -153,6 +153,20 @@ func (w *Watchdog) runOne(ctx context.Context, now time.Time, st state.State, bu
 				continue
 			}
 		}
+		// ADR-1525: an interrupted operator park needs its own physical receipt.
+		// Ordinary watchdog cleanup cannot prove that operation's outcome.
+		if holds, ok := w.engine.Store().(interface {
+			OperatorParkHoldsInstance(context.Context, string) (bool, error)
+		}); ok {
+			held, err := holds.OperatorParkHoldsInstance(ctx, ins.ID)
+			if err != nil {
+				w.log.Warn("watchdog: read operator park ownership", "instance", ins.ID, "err", err)
+				continue
+			}
+			if held {
+				continue
+			}
+		}
 		if err := w.engine.KillStuck(ctx, ins.ID, ins.AppID, reason); err != nil {
 			w.log.Warn("watchdog: kill stuck", "instance", ins.ID, "state", st, "reason", reason, "err", err)
 		}

@@ -217,7 +217,17 @@ func (s *server) requireStepUpStrict(ttl time.Duration) func(accountHandler) acc
 // caller a platform operator. It is part of the policy so a handler can no
 // longer forget its in-handler adminAllows call.
 func (s *server) requireAdminMutation(next accountHandler) accountHandler {
-	return s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireOperator(s.requireStepUpStrict(5 * time.Minute)(s.requireSameOrigin(s.requireIdempotency(next))))))
+	return s.requireAdminMutationPolicy(s.requireIdempotency(next))
+}
+
+// Recovery submissions own their atomic, non-expiring idempotency contract
+// (ADR-1524). Keep exactly the same authentication gates on every replay.
+func (s *server) requireAdminRecoveryMutation(next accountHandler) accountHandler {
+	return s.requireAdminMutationPolicy(next)
+}
+
+func (s *server) requireAdminMutationPolicy(next accountHandler) accountHandler {
+	return s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireOperator(s.requireStepUpStrict(5 * time.Minute)(s.requireSameOrigin(next)))))
 }
 
 // requireOperator admits only accounts in the operator allowlist. Use it on

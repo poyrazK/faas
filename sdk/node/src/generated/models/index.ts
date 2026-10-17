@@ -1700,6 +1700,8 @@ export type { OperationXGregaleOperationWorkflowStep } from './OperationXGregale
 export type { OperationXGregaleRelease } from './OperationXGregaleRelease.js';
 export type { OperatorIntentAcceptedResponse } from './OperatorIntentAcceptedResponse.js';
 export type { OperatorIntentResponse } from './OperatorIntentResponse.js';
+export type { OperatorParkExecutionResponse } from './OperatorParkExecutionResponse.js';
+export type { OperatorRestartExecutionResponse } from './OperatorRestartExecutionResponse.js';
 export type { OperatorRuntimeConfig } from './OperatorRuntimeConfig.js';
 export type { OperatorRuntimeConfigOperation } from './OperatorRuntimeConfigOperation.js';
 export type { OperatorRuntimeConfigRevision } from './OperatorRuntimeConfigRevision.js';

@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/scheddgrpc"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -31,19 +32,22 @@ const (
 )
 
 type instanceMutationSpec struct {
-	action  string
-	target  string
-	reason  string
-	traceID string
-	timeout time.Duration
+	action     string
+	target     string
+	reason     string
+	traceID    string
+	requestKey string
+	timeout    time.Duration
 }
 
 func cmdInstancesDispatch(args []string) int {
 	if len(args) == 0 {
-		_, _ = fmt.Fprintln(osStderr, "gregalectl instances: missing subcommand; want force-park|force-cold-boot|force-restart")
+		_, _ = fmt.Fprintln(osStderr, "gregalectl instances: missing subcommand; want force-park|force-cold-boot|force-restart|wait")
 		return 2
 	}
 	switch args[0] {
+	case "wait":
+		return cmdInstancesWait(args[1:])
 	case "force-park":
 		return cmdInstancesForcePark(args[1:])
 	case "force-cold-boot":
@@ -124,6 +128,7 @@ func cmdInstancesForcePark(args []string) int {
 	instanceID := fs.String("instance-id", "", "instance id (uuid) to force-park")
 	reason := fs.String("reason", "", "audit reason slug ([a-z0-9_]{1,64})")
 	timeout := fs.Duration("timeout", instanceMutationDefaultTimeout, "maximum durable-intent wait")
+	requestKey := fs.String("request-key", "", "reuse this key with the same target and reason after an uncertain submission")
 	traceIDFlag := fs.String("trace-id", "", "OTel 32-char-hex trace id (auto-generated when empty)")
 	breakGlass := fs.Bool("break-glass-local", false, "bypass apid and call the local schedd directly")
 	ack := fs.Bool("yes", false, "acknowledge that the instance will be evicted from the wake path")
@@ -140,6 +145,10 @@ func cmdInstancesForcePark(args []string) int {
 	}
 	traceID := instanceTraceID(*traceIDFlag)
 	if *breakGlass {
+		if *requestKey != "" {
+			_, _ = fmt.Fprintln(osStderr, "--request-key requires the apid submission path")
+			return 2
+		}
 		if !instanceBreakGlassAllowed("force-park", *reason) {
 			return 2
 		}
@@ -148,7 +157,7 @@ func cmdInstancesForcePark(args []string) int {
 	return mutateInstanceViaAPI(instanceMutationSpec{
 		action: "force-park", target: *instanceID,
 		reason:  instanceMutationReason(*reason, "operator_force_park"),
-		traceID: traceID, timeout: *timeout,
+		traceID: traceID, requestKey: *requestKey, timeout: *timeout,
 	})
 }
 
@@ -158,6 +167,7 @@ func cmdInstancesForceColdBoot(args []string) int {
 	appSlug := fs.String("app-slug", "", "app slug whose latest deployment will be cold-booted on next wake")
 	reason := fs.String("reason", "", "audit reason slug ([a-z0-9_]{1,64})")
 	timeout := fs.Duration("timeout", instanceMutationDefaultTimeout, "maximum durable-intent wait")
+	requestKey := fs.String("request-key", "", "reuse this key with the same target and reason after an uncertain submission")
 	traceIDFlag := fs.String("trace-id", "", "OTel 32-char-hex trace id (auto-generated when empty)")
 	breakGlass := fs.Bool("break-glass-local", false, "bypass apid and use the local database and schedd")
 	ack := fs.Bool("yes", false, "acknowledge that the customer's next wake will be a cold boot")
@@ -174,6 +184,10 @@ func cmdInstancesForceColdBoot(args []string) int {
 	}
 	traceID := instanceTraceID(*traceIDFlag)
 	if *breakGlass {
+		if *requestKey != "" {
+			_, _ = fmt.Fprintln(osStderr, "--request-key requires the apid submission path")
+			return 2
+		}
 		if !instanceBreakGlassAllowed("force-cold-boot", *reason) {
 			return 2
 		}
@@ -182,7 +196,7 @@ func cmdInstancesForceColdBoot(args []string) int {
 	return mutateInstanceViaAPI(instanceMutationSpec{
 		action: "force-cold-boot", target: *appSlug,
 		reason:  instanceMutationReason(*reason, "operator_force_cold_boot"),
-		traceID: traceID, timeout: *timeout,
+		traceID: traceID, requestKey: *requestKey, timeout: *timeout,
 	})
 }
 
@@ -192,6 +206,7 @@ func cmdInstancesForceRestart(args []string) int {
 	instanceID := fs.String("instance-id", "", "instance id (uuid) to force-restart (kill + cold-boot on next wake)")
 	reason := fs.String("reason", "", "audit reason slug ([a-z0-9_]{1,64})")
 	timeout := fs.Duration("timeout", instanceMutationDefaultTimeout, "maximum durable-intent wait")
+	requestKey := fs.String("request-key", "", "reuse this key with the same target and reason after an uncertain submission")
 	traceIDFlag := fs.String("trace-id", "", "OTel 32-char-hex trace id (auto-generated when empty)")
 	breakGlass := fs.Bool("break-glass-local", false, "bypass apid and call the local schedd directly")
 	ack := fs.Bool("yes", false, "acknowledge that the instance will be killed and the next wake will be a cold boot")
@@ -208,6 +223,10 @@ func cmdInstancesForceRestart(args []string) int {
 	}
 	traceID := instanceTraceID(*traceIDFlag)
 	if *breakGlass {
+		if *requestKey != "" {
+			_, _ = fmt.Fprintln(osStderr, "--request-key requires the apid submission path")
+			return 2
+		}
 		if !instanceBreakGlassAllowed("force-restart", *reason) {
 			return 2
 		}
@@ -216,7 +235,7 @@ func cmdInstancesForceRestart(args []string) int {
 	return mutateInstanceViaAPI(instanceMutationSpec{
 		action: "force-restart", target: *instanceID,
 		reason:  instanceMutationReason(*reason, "operator_force_restart"),
-		traceID: traceID, timeout: *timeout,
+		traceID: traceID, requestKey: *requestKey, timeout: *timeout,
 	})
 }
 
@@ -225,6 +244,31 @@ func instanceTraceID(raw string) string {
 		return strings.TrimSpace(raw)
 	}
 	return wire.NewTraceID()
+}
+
+// cmdInstancesWait only reads an existing intent; it never submits an action.
+func cmdInstancesWait(args []string) int {
+	fs := flag.NewFlagSet("instances wait", flag.ContinueOnError)
+	fs.SetOutput(osStderr)
+	intentID := fs.String("intent-id", "", "existing operator intent UUID to poll")
+	timeout := fs.Duration("timeout", instanceMutationDefaultTimeout, "maximum wait")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	id, err := uuid.Parse(*intentID)
+	if err != nil || id == uuid.Nil || *timeout <= 0 || fs.NArg() != 0 {
+		_, _ = fmt.Fprintln(osStderr, "gregalectl instances wait: a valid --intent-id and positive --timeout are required")
+		return 2
+	}
+	sess, err := loadOperatorSession()
+	if err != nil {
+		_, _ = fmt.Fprintln(osStderr, "gregalectl instances wait:", err)
+		return 1
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+	defer cancel()
+	accepted := api.OperatorIntentAcceptedResponse{IntentID: id.String(), StatusURL: "/v1/admin/operator-intents/" + id.String()}
+	return waitForInstanceIntent(ctx, newOperatorHTTPClient(&sess), instanceMutationSpec{action: "wait", timeout: *timeout}, accepted)
 }
 
 func instanceMutationReason(raw, fallback string) string {
@@ -260,6 +304,10 @@ func mutateInstanceViaAPI(spec instanceMutationSpec) int {
 		_, _ = fmt.Fprintf(osStderr, "gregalectl instances %s: --timeout must be positive\n", spec.action)
 		return 2
 	}
+	if spec.requestKey != "" && !state.ValidOperatorRecoveryKey(spec.requestKey) {
+		_, _ = fmt.Fprintln(osStderr, "--request-key must contain 1 to 255 visible ASCII characters")
+		return 2
+	}
 	path, err := instanceMutationPath(spec)
 	if err != nil {
 		_, _ = fmt.Fprintln(osStderr, err)
@@ -274,10 +322,15 @@ func mutateInstanceViaAPI(spec instanceMutationSpec) int {
 	ctx, cancel := context.WithTimeout(context.Background(), spec.timeout)
 	defer cancel()
 
+	if spec.requestKey == "" {
+		spec.requestKey = uuid.NewString()
+	}
+	_, _ = fmt.Fprintf(osStderr, "gregalectl instances %s: request_key=%s (retry with --request-key and the same target and reason)\n", spec.action, spec.requestKey)
 	headers := make(http.Header)
 	headers.Set(operatorTraceIDHeader, spec.traceID)
+	headers.Set("Idempotency-Key", spec.requestKey)
 	var accepted api.OperatorIntentAcceptedResponse
-	if err := client.doJSONWithHeaders(ctx, http.MethodPost, path, nil, &accepted, true, nil, headers); err != nil {
+	if err := client.doJSONWithHeaders(ctx, http.MethodPost, path, nil, &accepted, false, nil, headers); err != nil {
 		_, _ = fmt.Fprintf(osStderr, "gregalectl instances %s: %v\n", spec.action, err)
 		return 1
 	}
@@ -286,6 +339,11 @@ func mutateInstanceViaAPI(spec instanceMutationSpec) int {
 		return 1
 	}
 
+	_, _ = fmt.Fprintf(osStderr, "intent=%s; resume: gregalectl instances wait --intent-id=%s\n", accepted.IntentID, accepted.IntentID)
+	return waitForInstanceIntent(ctx, client, spec, accepted)
+}
+
+func waitForInstanceIntent(ctx context.Context, client *operatorHTTPClient, spec instanceMutationSpec, accepted api.OperatorIntentAcceptedResponse) int {
 	var outcome api.OperatorIntentResponse
 	for {
 		if err := client.doJSON(ctx, http.MethodGet, accepted.StatusURL, nil, &outcome, false, nil); err != nil {
@@ -294,7 +352,16 @@ func mutateInstanceViaAPI(spec instanceMutationSpec) int {
 		}
 		switch state.OperatorIntentStatus(outcome.Status) {
 		case state.OperatorIntentSucceeded:
-			return renderInstanceMutationSuccess(spec, accepted, outcome)
+			return renderInstanceMutationOutcome(spec, accepted, outcome)
+		case state.OperatorIntentOutcomeUnknown:
+			if jsonEnabled() {
+				if code := renderInstanceMutationOutcome(spec, accepted, outcome); code != 0 {
+					return code
+				}
+			} else {
+				_, _ = fmt.Fprintf(osStderr, "gregalectl instances %s: intent %s outcome unknown: %s; automatic redispatch stopped; inspect %s before another action\n", spec.action, accepted.IntentID, outcome.Error, accepted.StatusURL)
+			}
+			return 1
 		case state.OperatorIntentFailed, state.OperatorIntentCancelled:
 			_, _ = fmt.Fprintf(osStderr, "gregalectl instances %s: intent %s %s: %s\n", spec.action, accepted.IntentID, outcome.Status, outcome.Error)
 			return 1
@@ -308,12 +375,20 @@ func mutateInstanceViaAPI(spec instanceMutationSpec) int {
 	}
 }
 
-func renderInstanceMutationSuccess(spec instanceMutationSpec, accepted api.OperatorIntentAcceptedResponse, outcome api.OperatorIntentResponse) int {
+func renderInstanceMutationOutcome(spec instanceMutationSpec, accepted api.OperatorIntentAcceptedResponse, outcome api.OperatorIntentResponse) int {
+	if spec.action == "wait" {
+		if jsonEnabled() {
+			return emitOperatorJSON(outcome)
+		}
+		_, _ = fmt.Fprintf(osStdout, "intent=%s kind=%s status=%s target=%s trace_id=%s\n", outcome.IntentID, outcome.Kind, outcome.Status, outcome.TargetID, outcome.TraceID)
+		return 0
+	}
 	if jsonEnabled() {
 		return emitOperatorJSON(struct {
-			Operation api.OperatorIntentAcceptedResponse `json:"operation"`
-			Outcome   api.OperatorIntentResponse         `json:"outcome"`
-		}{accepted, outcome})
+			Operation  api.OperatorIntentAcceptedResponse `json:"operation"`
+			Outcome    api.OperatorIntentResponse         `json:"outcome"`
+			RequestKey string                             `json:"request_key"`
+		}{accepted, outcome, spec.requestKey})
 	}
 	traceID := outcome.TraceID
 	if traceID == "" {
@@ -322,6 +397,9 @@ func renderInstanceMutationSuccess(spec instanceMutationSpec, accepted api.Opera
 	_, _ = fmt.Fprintf(osStdout, "%s succeeded target=%s intent=%s trace_id=%s", spec.action, spec.target, accepted.IntentID, traceID)
 	if accepted.DeploymentID != "" {
 		_, _ = fmt.Fprintf(osStdout, " deployment=%s", accepted.DeploymentID)
+	}
+	if park := outcome.ParkExecution; park != nil {
+		_, _ = fmt.Fprintf(osStdout, " park_phase=%s terminal_state=%s capture_completed=%t cold_boot_required=%t", park.Phase, park.TerminalState, park.CaptureCompleted, park.ColdBootRequired)
 	}
 	if len(outcome.SnapIDsMarkedStale) > 0 {
 		_, _ = fmt.Fprintf(osStdout, " snap_ids_marked_stale=%v", outcome.SnapIDsMarkedStale)

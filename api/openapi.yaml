@@ -47581,7 +47581,28 @@ paths:
         operator fat-fingering. Optional `?reason=<slug>` defaults
         to `operator_force_park`; values are clamped to the
         `[a-z0-9_]{1,64}` shape.
+
+        ADR-1524: requires an MFA-verified operator session with step-up in
+        the last five minutes, admin scope, the operator allowlist and same
+        origin. Bearer keys do not satisfy step-up. Requires one
+        Idempotency-Key (1-255 visible ASCII characters), an empty body,
+        exactly one confirm=true and at most one reason; other query
+        parameters are rejected. The key is scoped to the actor across all
+        three recovery routes. Intent, exact 202 response and attributed
+        request audit handoff commit atomically. Matching retries return
+        the original response before reading mutable target state, without
+        expiry; changed action, target or reason returns 409
+        operator_submission_conflict. Trace changes do not change identity.
+        An existing legacy recovery cache/reservation returns 409
+        operator_submission_legacy and requires reconciliation. Notification
+        after acceptance is best effort; the scheduler safety tick recovers
+        a lost notification.
       parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 255, pattern: '^[!-~]+$' }
+          description: Park request key. Reuse with the original target and reason to recover an uncertain submission. No receipt expiry.
         - in: path
           name: id
           required: true
@@ -47599,7 +47620,7 @@ paths:
           description: Audit-log slug. Default `operator_force_park`. Clamped to `[a-z0-9_]{1,64}`.
       responses:
         '202':
-          description: Intent row written + pg_notify emitted. Poll `status_url` for terminal state.
+          description: Intent, response receipt and request audit handoff committed; notification attempted. Poll `status_url` for terminal state.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/OperatorIntentAcceptedResponse' }
@@ -47620,7 +47641,7 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
         '409':
-          description: 'code: instance_not_parkable — instance state is not in {RUNNING, WAKING, COLD_BOOTING}.'
+          description: 'code: instance_not_parkable — instance state is not in {RUNNING, WAKING, COLD_BOOTING}. Also operator_submission_conflict for changed parameters or operator_submission_legacy for an ambiguous pre-upgrade key.'
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -47652,12 +47673,33 @@ paths:
 
         Requires `?confirm=true` as a tripwire. Optional
         `?reason=<slug>` defaults to `operator_force_cold_boot`.
+
+        ADR-1524: requires an MFA-verified operator session with step-up in
+        the last five minutes, admin scope, the operator allowlist and same
+        origin. Bearer keys do not satisfy step-up. Requires one
+        Idempotency-Key (1-255 visible ASCII characters), an empty body,
+        exactly one confirm=true and at most one reason; other query
+        parameters are rejected. The key is scoped to the actor across all
+        three recovery routes. Intent, exact 202 response and attributed
+        request audit handoff commit atomically. Matching retries return
+        the original response before reading mutable target state, without
+        expiry; changed action, target or reason returns 409
+        operator_submission_conflict. Trace changes do not change identity.
+        An existing legacy recovery cache/reservation returns 409
+        operator_submission_legacy and requires reconciliation. Notification
+        after acceptance is best effort; the scheduler safety tick recovers
+        a lost notification.
       parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 255, pattern: '^[!-~]+$' }
+          description: Cold-boot request key. Reuse with the original target and reason to recover an uncertain submission. No receipt expiry.
         - in: path
           name: slug
           required: true
           schema: { type: string }
-          description: App slug (e.g. "my-app"). Resolved to the app's latest deployment by `created_at DESC`.
+          description: App slug (e.g. "my-app"). Resolved once at acceptance by `created_at DESC, id DESC`; retries retain the original deployment.
         - in: query
           name: confirm
           required: true
@@ -47670,7 +47712,7 @@ paths:
           description: Audit-log slug. Default `operator_force_cold_boot`. Clamped to `[a-z0-9_]{1,64}`.
       responses:
         '202':
-          description: Intent row written + pg_notify emitted. Poll `status_url` for terminal state and `snap_ids_marked_stale`.
+          description: Intent, response receipt and request audit handoff committed; notification attempted. Poll `status_url` for terminal state and `snap_ids_marked_stale`.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/OperatorIntentAcceptedResponse' }
@@ -47687,6 +47729,11 @@ paths:
               schema: { $ref: '#/components/schemas/Problem' }
         '404':
           description: 'code: app_not_found — no app with the supplied slug; OR code: deployment_not_found — app has no deployments to force-cold-boot.'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: 'operator_submission_conflict for changed parameters; operator_submission_legacy for an ambiguous pre-upgrade request key.'
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -47742,7 +47789,28 @@ paths:
         operator fat-fingering. Optional `?reason=<slug>` defaults
         to `operator_force_restart`; values are clamped to the
         `[a-z0-9_]{1,64}` shape.
+
+        ADR-1524: requires an MFA-verified operator session with step-up in
+        the last five minutes, admin scope, the operator allowlist and same
+        origin. Bearer keys do not satisfy step-up. Requires one
+        Idempotency-Key (1-255 visible ASCII characters), an empty body,
+        exactly one confirm=true and at most one reason; other query
+        parameters are rejected. The key is scoped to the actor across all
+        three recovery routes. Intent, exact 202 response and attributed
+        request audit handoff commit atomically. Matching retries return
+        the original response before reading mutable target state, without
+        expiry; changed action, target or reason returns 409
+        operator_submission_conflict. Trace changes do not change identity.
+        An existing legacy recovery cache/reservation returns 409
+        operator_submission_legacy and requires reconciliation. Notification
+        after acceptance is best effort; the scheduler safety tick recovers
+        a lost notification.
       parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 255, pattern: '^[!-~]+$' }
+          description: Restart request key. Reuse with the original target and reason to recover an uncertain submission. No receipt expiry.
         - in: path
           name: id
           required: true
@@ -47760,7 +47828,7 @@ paths:
           description: Audit-log slug. Default `operator_force_restart`. Clamped to `[a-z0-9_]{1,64}`.
       responses:
         '202':
-          description: 'Force-restart 202: intent row written + pg_notify emitted. Poll `status_url` for terminal state and `snap_ids_marked_stale`.'
+          description: 'Force-restart 202: intent, response receipt and request audit handoff committed; notification attempted. Poll `status_url` for terminal state and `snap_ids_marked_stale`.'
           content:
             application/json:
               schema: { $ref: '#/components/schemas/OperatorIntentAcceptedResponse' }
@@ -47781,7 +47849,7 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
         '409':
-          description: 'Force-restart 409: code: instance_not_restartable — instance state is not RUNNING. WAKING / COLD_BOOTING / PARKED / STOPPED all return this code without writing an intent row.'
+          description: 'Force-restart 409: code: instance_not_restartable — instance state is not RUNNING. WAKING / COLD_BOOTING / PARKED / STOPPED all return this code without writing an intent row. Also operator_submission_conflict for changed parameters or operator_submission_legacy for an ambiguous pre-upgrade key.'
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -70314,7 +70382,9 @@ components:
         under operator.action.{park_instance, restart_instance,
         force_cold_boot} with target_account_id = the instance's /
         app's owning account. StatusURL is the relative path;
-        clients prepend the apid base URL.
+        clients prepend the apid base URL. The exact response is retained for
+        matching request-key retries independently of target state and audit
+        queue retention (ADR-1524).
       type: object
       required: [ok, intent_id, status_url, expires_at, kind, reason]
       properties:
@@ -70330,7 +70400,7 @@ components:
         expires_at:
           type: string
           format: date-time
-          description: Recommended horizon to stop polling (UTC, RFC 3339).
+          description: Advisory horizon for one polling session (UTC, RFC 3339), retained unchanged on replay. This is not receipt expiry.
         kind:
           type: string
           enum: [force_park, force_cold_boot, force_restart]
@@ -70340,7 +70410,7 @@ components:
           description: Populated for force_park and force_restart. The instance the operator targeted.
         previous_state:
           type: string
-          enum: [RUNNING, WAKING, COLD_BOOTING]
+          enum: [running, waking, cold_booting]
           description: Populated for force_park and force_restart. Gate-time read of `instances.state`.
         app_id:
           type: string
@@ -70414,6 +70484,57 @@ components:
     # SnapIDsMarkedStale is populated for force_cold_boot (warm +
     # init tiers walked). On failure, Error carries the bounded
     # dispatch error message (1 KB cap).
+    OperatorParkExecutionResponse:
+      type: object
+      description: Verified force-park execution evidence for the original VM generation.
+      required: [phase, node_id, wake_id, generation, action, capture_completed, cold_boot_required, updated_at]
+      properties:
+        phase:
+          type: string
+          enum: [prepared, started, acknowledged, outcome_unknown, completed, failed, cancelled]
+        node_id:
+          type: string
+        wake_id:
+          type: string
+        generation:
+          type: string
+        action:
+          type: string
+          enum: [capture, stop]
+        capture_completed:
+          type: boolean
+          description: Capture and original VM cleanup were durably acknowledged.
+        stopped_at:
+          type: string
+          format: date-time
+        terminal_state:
+          type: string
+          enum: [parked, stopped]
+        cold_boot_required:
+          type: boolean
+          description: The verified result is stopped and requires a cold boot.
+        reason:
+          type: string
+        updated_at:
+          type: string
+          format: date-time
+    OperatorRestartExecutionResponse:
+      type: object
+      description: Durable restart evidence. An uncertain teardown is never automatically repeated. A later durable acknowledgement can resume database completion against the original target.
+      required: [phase, node_id, wake_id, generation, snapshot_ids, updated_at]
+      properties:
+        phase:
+          type: string
+          enum: [prepared, started, destroyed, outcome_unknown, completed, failed]
+        node_id: {type: string, format: uuid}
+        wake_id: {type: string, format: uuid}
+        generation: {type: string, maxLength: 128}
+        snapshot_ids:
+          type: array
+          items: {type: string, format: uuid}
+        destroyed_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+
     OperatorIntentResponse:
       description: |
         Wire shape for GET /v1/admin/operator-intents/{id}
@@ -70424,13 +70545,22 @@ components:
       type: object
       required: [intent_id, kind, status, target_id, actor_id, reason, metadata, requested_at]
       properties:
+        cold_boot_generation:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Durable recovery generation committed by a successful force_cold_boot intent. Retries retain the original value.
+        park_execution:
+          $ref: "#/components/schemas/OperatorParkExecutionResponse"
+        restart_execution:
+          $ref: "#/components/schemas/OperatorRestartExecutionResponse"
         intent_id: { type: string, format: uuid }
         kind:
           type: string
           enum: [force_park, force_cold_boot, force_restart, node_drain, node_force_drain, node_activate]
         status:
           type: string
-          enum: [pending, running, succeeded, failed, cancelled]
+          enum: [pending, running, succeeded, failed, cancelled, outcome_unknown]
         target_id:
           type: string
           description: Instance UUID (force_park or force_restart), deployment UUID (force_cold_boot), or compute-node UUID (node lifecycle intents).
@@ -70462,7 +70592,7 @@ components:
           description: Set on terminal status (succeeded/failed/cancelled).
         error:
           type: string
-          description: Bounded dispatch error message (1 KB cap) on failed status.
+          description: Bounded dispatch error message (1 KB cap) on failed or outcome_unknown status.
         snap_ids_marked_stale:
           type: array
           items: { type: string, format: uuid }

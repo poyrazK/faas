@@ -1,4 +1,7 @@
 // adr: 435
+// adr: 1522
+// adr: 1525
+// adr: 1529
 package gateway
 
 // ADR-435: the gateway forwarding fake implements the expanded generated
@@ -44,6 +47,22 @@ func (*stubVmmdClient) MaterializeVerifiedParentExt4(context.Context, *vmmdpb.Ma
 
 func (*stubVmmdClient) MaterializeRuntimeScan(context.Context, *vmmdpb.MaterializeRuntimeScanRequest, ...grpc.CallOption) (*vmmdpb.MaterializeRuntimeScanResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "gateway forwarding stub does not materialize runtime scans")
+}
+
+func (*stubVmmdClient) GetOperatorRestartGeneration(context.Context, *vmmdpb.GetOperatorRestartGenerationRequest, ...grpc.CallOption) (*vmmdpb.GetOperatorRestartGenerationResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "gateway forwarding stub does not resolve operator restart generations")
+}
+
+func (*stubVmmdClient) ExecuteOperatorRestartDestroy(context.Context, *vmmdpb.ExecuteOperatorRestartDestroyRequest, ...grpc.CallOption) (*vmmdpb.ExecuteOperatorRestartDestroyResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "gateway forwarding stub does not execute operator restarts")
+}
+
+func (*stubVmmdClient) ExecuteOperatorPark(context.Context, *vmmdpb.ExecuteOperatorParkRequest, ...grpc.CallOption) (*vmmdpb.ExecuteOperatorParkResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "gateway forwarding stub does not execute operator parks")
+}
+
+func (*stubVmmdClient) RetireMigrationAdoption(context.Context, *vmmdpb.RetireMigrationAdoptionRequest, ...grpc.CallOption) (*vmmdpb.RetireMigrationAdoptionResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "gateway forwarding stub does not retire migration adoptions")
 }
 
 var _ vmmdpb.VmmdClient = (*stubVmmdClient)(nil)

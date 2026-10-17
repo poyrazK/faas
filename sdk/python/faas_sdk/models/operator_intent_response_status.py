@@ -1,10 +1,11 @@
 from typing import Literal
 
-OperatorIntentResponseStatus = Literal["cancelled", "failed", "pending", "running", "succeeded"]
+OperatorIntentResponseStatus = Literal["cancelled", "failed", "outcome_unknown", "pending", "running", "succeeded"]
 
 OPERATOR_INTENT_RESPONSE_STATUS_VALUES: set[OperatorIntentResponseStatus] = {
     "cancelled",
     "failed",
+    "outcome_unknown",
     "pending",
     "running",
     "succeeded",
