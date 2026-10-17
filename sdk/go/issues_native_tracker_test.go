@@ -61,7 +61,7 @@ func TestIssueNativeCreationSDKRetainsRequestIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := client.CreateNativeIssueTicket(t.Context(), "payments", "issue", input)
+	out, err := client.CreateNativeIssueTicket(faas.SDKTestContext(t), "payments", "issue", input)
 	if err != nil || out.RequestID != input.RequestID || out.State != "linked" {
 		t.Fatal(out, err)
 	}
@@ -88,10 +88,10 @@ func TestIssueNativeAutoSyncSDKKeepsRevisionAndDelegationSnapshot(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.GetIssueTrackerAutoSync(t.Context(), "payments", "issue", "link"); err != nil {
+	if _, err := client.GetIssueTrackerAutoSync(faas.SDKTestContext(t), "payments", "issue", "link"); err != nil {
 		t.Fatal(err)
 	}
-	out, err := client.UpdateIssueTrackerAutoSync(t.Context(), "payments", "issue", "link", input)
+	out, err := client.UpdateIssueTrackerAutoSync(faas.SDKTestContext(t), "payments", "issue", "link", input)
 	if err != nil || !out.Enabled || out.Revision != 8 {
 		t.Fatal(out, err)
 	}
@@ -117,10 +117,10 @@ func TestIssueNativeLinearConnectionSDKPreservesDecisionAndRevision(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.GetIssueTrackerLinearConnection(t.Context(), "payments"); err != nil {
+	if _, err := client.GetIssueTrackerLinearConnection(faas.SDKTestContext(t), "payments"); err != nil {
 		t.Fatal(err)
 	}
-	out, err := client.UpdateIssueTrackerLinearConnection(t.Context(), "payments", input)
+	out, err := client.UpdateIssueTrackerLinearConnection(faas.SDKTestContext(t), "payments", input)
 	if err != nil || out.Revision != 8 || !out.Connected || out.AuthMethod != "oauth" || out.OAuthStatus != "reconnect_required" {
 		t.Fatal("connection response lost", err)
 	}
@@ -144,7 +144,7 @@ func TestIssueNativeLinearCreationSDKPreservesUUIDRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := client.CreateNativeLinearIssueTicket(t.Context(), "payments", "issue", input)
+	out, err := client.CreateNativeLinearIssueTicket(faas.SDKTestContext(t), "payments", "issue", input)
 	if err != nil || out.RequestID != input.RequestID || out.State != "linked" {
 		t.Fatal(out, err)
 	}
@@ -171,10 +171,10 @@ func TestIssueNativeLinearStatusSDKPreservesPreviewFences(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.GetNativeLinearIssueTrackerStatus(t.Context(), "payments", "issue", "link"); err != nil {
+	if _, err := client.GetNativeLinearIssueTrackerStatus(faas.SDKTestContext(t), "payments", "issue", "link"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.UpdateNativeLinearIssueTrackerStatus(t.Context(), "payments", "issue", "link", input); err != nil {
+	if _, err := client.UpdateNativeLinearIssueTrackerStatus(faas.SDKTestContext(t), "payments", "issue", "link", input); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -197,7 +197,7 @@ func TestIssueNativeLinearAutoSyncSDKPreservesMappingsAndScope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := client.UpdateIssueTrackerAutoSync(t.Context(), "payments", "issue", "link", input)
+	out, err := client.UpdateIssueTrackerAutoSync(faas.SDKTestContext(t), "payments", "issue", "link", input)
 	if err != nil || out.LinearOpenStateID != "open" || out.LinearResolvedStateID != "resolved" || out.Direction != "both" || out.ObservedState != "resolved" {
 		t.Fatal(out, err)
 	}
@@ -217,7 +217,7 @@ func TestIssueNativeLinearCallbackSDKPreservesWriteOnlySecretAndMetadata(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := client.UpdateIssueTrackerLinearConnection(t.Context(), "payments", faas.UpdateIssueTrackerLinearConnectionRequest{Connected: true, ExpectedRevision: 2, APIKey: "key", TeamID: "team", WebhookSecret: secret})
+	out, err := client.UpdateIssueTrackerLinearConnection(faas.SDKTestContext(t), "payments", faas.UpdateIssueTrackerLinearConnectionRequest{Connected: true, ExpectedRevision: 2, APIKey: "key", TeamID: "team", WebhookSecret: secret})
 	if err != nil || !out.WebhookEnabled || out.CallbackPath != "/hooks/issue-trackers/linear/app" {
 		t.Fatal(out, err)
 	}
