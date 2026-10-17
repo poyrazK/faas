@@ -2143,6 +2143,7 @@ gregale ai content-policy <integration-id> --moderation block --moderation-kind 
 printf '%s\n' "$SECOND_KEY" | gregale ai keys add <integration-id> --label second --from-stdin
 gregale ai logs <integration-id> --limit 20
 gregale ai tags <integration-id> --key feature
+gregale ai tags export <integration-id> --from 2026-10-01 --to 2026-10-31 --key customer > ai-tags.csv
 gregale ai tag-limits <integration-id> --set feature=search:20
 gregale ai logs show <integration-id> <request-id>
 gregale ai content-policy <integration-id> --email redact --secrets block --block-term 'Project Falcon'
@@ -2201,15 +2202,18 @@ Show or set content guardrails: redact or block e-mail, cards, IBANs and secrets
 
 ### ai tags
 
-Show one UTC day&#39;s AI usage by X-Gregale-AI-Tags tag, with each tag&#39;s limit
+Show one UTC day&#39;s AI usage by X-Gregale-AI-Tags tag, with each tag&#39;s limit, or export a day range: tags export &lt;integration-id&gt;
 
-`gregale ai tags [--date <YYYY-MM-DD>] [--key <KEY>] [--limit <N>] <integration-id>`
+`gregale ai tags [--date <YYYY-MM-DD>] [--key <KEY>] [--limit <N>] [--from <YYYY-MM-DD>] [--to <YYYY-MM-DD>] [--format <FORMAT>] [export] <integration-id>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--date <YYYY-MM-DD>` | UTC day within the last 31 days (default today) |  |
-| `--key <KEY>` | show only this tag key&#39;s tags |  |
+| `--key <KEY>` | show or export only this tag key&#39;s tags |  |
 | `--limit <N>` | tags to show, 1 to 1000 |  |
+| `--from <YYYY-MM-DD>` | export: first UTC day within the last 31 days (default today) |  |
+| `--to <YYYY-MM-DD>` | export: last UTC day (default today) |  |
+| `--format <FORMAT>` | export: csv (default) or ndjson | one of `csv` · `ndjson` |
 
 ### ai tag-limits
 

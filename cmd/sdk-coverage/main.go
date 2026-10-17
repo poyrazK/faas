@@ -686,6 +686,7 @@ var methodRouteMap = map[string]string{
 	"PUT /v1/outbound/integrations/{integration}/ai-content-policy":                    "SetOutboundAIContentPolicy",
 	"GET /v1/outbound/integrations/{integration}/ai-usage/users":                       "GetOutboundAIUserUsage",
 	"GET /v1/outbound/integrations/{integration}/ai-usage/tags":                        "GetOutboundAITagUsage",
+	"GET /v1/outbound/integrations/{integration}/ai-usage/tags/export":                 "ExportOutboundAITagUsage",
 	"GET /v1/outbound/integrations/{integration}/ai-tag-limits":                        "GetOutboundAITagLimits",
 	"PUT /v1/outbound/integrations/{integration}/ai-tag-limits":                        "SetOutboundAITagLimits",
 	"GET /v1/outbound/integrations/{integration}/ai-usage/users/export":                "ExportOutboundAIUserUsage",

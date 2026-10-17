@@ -1594,6 +1594,7 @@ export type { OutboundAIRouteTarget } from './models/OutboundAIRouteTarget.js';
 export type { OutboundAIRouteTargetStats } from './models/OutboundAIRouteTargetStats.js';
 export type { OutboundAITagLimit } from './models/OutboundAITagLimit.js';
 export type { OutboundAITagLimits } from './models/OutboundAITagLimits.js';
+export type { OutboundAITagUsageExportRow } from './models/OutboundAITagUsageExportRow.js';
 export type { OutboundAITagUsageItem } from './models/OutboundAITagUsageItem.js';
 export type { OutboundAITagUsageResponse } from './models/OutboundAITagUsageResponse.js';
 export type { OutboundAIUsageItem } from './models/OutboundAIUsageItem.js';

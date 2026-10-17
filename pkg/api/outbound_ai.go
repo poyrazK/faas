@@ -527,6 +527,9 @@ const (
 	// Per-end-user UTC-day budgets (ADR-995); their alerts name EndUser.
 	OutboundAIBudgetUserDailyTokens = "user_daily_tokens"
 	OutboundAIBudgetUserDailyCost   = "user_daily_cost"
+	// OutboundAIBudgetTagDailyCost is one tag's UTC-day cost limit
+	// (ADR-1430); its alerts name Tag.
+	OutboundAIBudgetTagDailyCost = "tag_daily_cost"
 )
 
 // OutboundAIBudgetIsPerUser reports whether a budget is one end user's.
@@ -548,6 +551,8 @@ type OutboundAIBudgetAlert struct {
 	Limit            int64     `json:"limit"`
 	Used             int64     `json:"used"`
 	CrossedAt        time.Time `json:"crossed_at"`
+	// Tag is the tag of a tag_daily_cost alert (ADR-1430).
+	Tag *string `json:"tag"`
 }
 
 type OutboundAIBudgetAlertList struct {
@@ -568,6 +573,9 @@ type OutboundAIBudgetThresholdWebhookPayload struct {
 	Limit            int64     `json:"limit"`
 	Used             int64     `json:"used"`
 	CrossedAt        time.Time `json:"crossed_at"`
+	// Tag is the tag whose daily cost limit crossed the threshold
+	// (ADR-1430).
+	Tag *string `json:"tag"`
 }
 
 // OutboundAIRequestLogEntry is one settled AI call's metadata (ADR-991).

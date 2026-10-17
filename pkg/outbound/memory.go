@@ -56,7 +56,7 @@ type memoryState struct {
 	// per-tag one, with the tags the latest admissions limited (ADR-1410).
 	userUsage      map[string]AIUserUsageTotals
 	tagUsage       map[string]AIUserUsageTotals
-	limitedTags    map[string]struct{}
+	tagLimits      map[string]int64
 	bindingMinutes map[string]memoryMinute
 	// The limits of the latest admission, used to detect budget alerts at
 	// settlement (ADR-991), and the alerts and request log recorded.
@@ -639,12 +639,13 @@ func (b *MemoryBackend) RecordAIUsageAlerts(ctx context.Context, record AIUsageR
 	row.CodeSessionGB += record.Usage.CodeSessionGB
 	state.aiUsage[key] = row
 	crossings := []aiBudgetCrossing{
-		{api.OutboundAIBudgetDailyTokens, "", utcDayStart(utcNow), state.aiLimits.dailyTokens, before.dailyTokens, state.dailyAITokenCount, ""},
-		{api.OutboundAIBudgetDailyCost, "", utcDayStart(utcNow), state.aiLimits.dailyCost, before.dailyCost, state.dailyAICost, ""},
-		{api.OutboundAIBudgetMonthlyCost, "", utcMonthStart(utcNow), state.aiLimits.monthlyCost, before.monthlyCost, state.monthlyAICost, ""},
+		{api.OutboundAIBudgetDailyTokens, "", utcDayStart(utcNow), state.aiLimits.dailyTokens, before.dailyTokens, state.dailyAITokenCount, "", ""},
+		{api.OutboundAIBudgetDailyCost, "", utcDayStart(utcNow), state.aiLimits.dailyCost, before.dailyCost, state.dailyAICost, "", ""},
+		{api.OutboundAIBudgetMonthlyCost, "", utcMonthStart(utcNow), state.aiLimits.monthlyCost, before.monthlyCost, state.monthlyAICost, "", ""},
 	}
+	var tagDays []aiTagDay
 	for _, tag := range record.Tags {
-		state.recordTagUsage(tag, record)
+		tagDays = append(tagDays, state.recordTagUsage(tag, record))
 	}
 	if record.EndUser != "" {
 		endUser, totals := state.recordUserUsage(record)
@@ -653,8 +654,9 @@ func (b *MemoryBackend) RecordAIUsageAlerts(ctx context.Context, record AIUsageR
 	}
 	if appCaller(record.Caller) {
 		crossings = append(crossings, aiBudgetCrossing{api.OutboundAIBudgetAppDailyTokens, record.Caller, utcDayStart(utcNow),
-			state.bindingTokenLimits[record.Caller], before.bindingTokens, state.bindingAITokenCounts[record.Caller], ""})
+			state.bindingTokenLimits[record.Caller], before.bindingTokens, state.bindingAITokenCounts[record.Caller], "", ""})
 	}
+	crossings = append(crossings, tagBudgetCrossings(tagDays, utcDayStart(utcNow), record.CostMillicents)...)
 	var recorded []AIBudgetAlert
 	for _, alert := range aiBudgetAlertsFor(record.IntegrationID, crossings, utcNow) {
 		if memoryAlertSeen(state.aiAlerts, alert) {
@@ -734,10 +736,10 @@ func (s *memoryState) tagStates(spec AdmissionSpec) []aiTagState {
 		if !ok {
 			continue
 		}
-		if s.limitedTags == nil {
-			s.limitedTags = make(map[string]struct{})
+		if s.tagLimits == nil {
+			s.tagLimits = make(map[string]int64)
 		}
-		s.limitedTags[tag] = struct{}{}
+		s.tagLimits[tag] = limit
 		state := aiTagState{tag: tag, limit: limit, used: s.tagUsage[tag].CostMillicents}
 		for _, lease := range s.leases {
 			if slices.Contains(lease.tags, tag) {
@@ -751,8 +753,8 @@ func (s *memoryState) tagStates(spec AdmissionSpec) []aiTagState {
 
 // recordTagUsage adds a call to one tag's rollup, or to its key's overflow
 // row past the day's cap of distinct tags (ADR-1410).
-func (s *memoryState) recordTagUsage(tag string, record AIUsageRecord) {
-	_, limited := s.limitedTags[tag]
+func (s *memoryState) recordTagUsage(tag string, record AIUsageRecord) aiTagDay {
+	_, limited := s.tagLimits[tag]
 	if _, exists := s.tagUsage[tag]; !exists && !limited && len(s.tagUsage) >= api.OutboundAITagsPerDay {
 		tag = tagOverflow(tag)
 	}
@@ -765,6 +767,11 @@ func (s *memoryState) recordTagUsage(tag string, record AIUsageRecord) {
 	row.OutputTokens += record.Usage.OutputTokens
 	row.CostMillicents += record.CostMillicents
 	s.tagUsage[tag] = row
+	day := aiTagDay{tag: tag, cost: row.CostMillicents}
+	if limit, ok := s.tagLimits[tag]; ok {
+		day.limit = &limit
+	}
+	return day
 }
 
 // AITagUsage reports one tag's UTC-day rollup for tests.
@@ -793,7 +800,8 @@ func (b *MemoryBackend) AIUserUsage(integrationID, endUser string) (AIUserUsageT
 
 func memoryAlertSeen(alerts []AIBudgetAlert, alert AIBudgetAlert) bool {
 	for _, seen := range alerts {
-		if seen.Budget == alert.Budget && seen.AppID == alert.AppID && seen.EndUser == alert.EndUser && seen.PeriodStart.Equal(alert.PeriodStart) &&
+		if seen.Budget == alert.Budget && seen.AppID == alert.AppID && seen.EndUser == alert.EndUser && seen.Tag == alert.Tag &&
+			seen.PeriodStart.Equal(alert.PeriodStart) &&
 			seen.ThresholdPercent == alert.ThresholdPercent {
 			return true
 		}

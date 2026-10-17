@@ -6688,6 +6688,7 @@ type OutboundAiBudgetAlert struct {
 	UsedValue        int64
 	CrossedAt        pgtype.Timestamptz
 	EndUser          pgtype.Text
+	Tag              pgtype.Text
 }
 
 type OutboundAiEvaluation struct {

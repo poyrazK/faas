@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -88,4 +89,42 @@ func (m *MemStore) SeedOutboundAITagUsage(integrationID, usageDate string, items
 	}
 	key := integrationID + "/" + usageDate
 	m.outboundAITagUsage[key] = append(m.outboundAITagUsage[key], items...)
+}
+
+func (m *MemStore) ExportOutboundAITagUsage(_ context.Context, accountID, integrationID, from, to, key string,
+	visit func(OutboundAITagUsageRow) error) error {
+	from, to, ok := outboundAITagExportRange(from, to, key, time.Now())
+	if !ok {
+		return ErrInvalidArgument
+	}
+	m.mu.Lock()
+	owned := m.memOutboundIntegrationOwned(accountID, integrationID)
+	var rows []OutboundAITagUsageRow
+	for storeKey, items := range m.outboundAITagUsage {
+		id, day, _ := strings.Cut(storeKey, "/")
+		if !owned || id != integrationID || day < from || day > to {
+			continue
+		}
+		for _, item := range items {
+			if outboundAITagKeyMatches(item.Tag, key) {
+				rows = append(rows, OutboundAITagUsageRow{UsageDate: day, OutboundAITagUsageItem: item})
+			}
+		}
+	}
+	m.mu.Unlock()
+	if !owned {
+		return ErrNotFound
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].UsageDate != rows[j].UsageDate {
+			return rows[i].UsageDate < rows[j].UsageDate
+		}
+		return rows[i].Tag < rows[j].Tag
+	})
+	for _, row := range rows {
+		if err := visit(row); err != nil {
+			return err
+		}
+	}
+	return nil
 }

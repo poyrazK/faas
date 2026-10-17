@@ -305,8 +305,10 @@ func scanAIUsageRows(results pgx.BatchResults, record AIUsageRecord, opened open
 			return nil, err
 		}
 	}
+	var tagDays []aiTagDay
 	if plan.tags {
-		if _, err := results.Exec(); err != nil {
+		var err error
+		if tagDays, err = scanAITagDays(results); err != nil {
 			return nil, err
 		}
 	}
@@ -327,9 +329,9 @@ func scanAIUsageRows(results pgx.BatchResults, record AIUsageRecord, opened open
 		}
 		if err == nil {
 			crossings = append(crossings,
-				aiBudgetCrossing{api.OutboundAIBudgetDailyTokens, "", day, positiveLimit(limits.dailyTokens), dailyTokens - budgetTokens, dailyTokens, ""},
-				aiBudgetCrossing{api.OutboundAIBudgetDailyCost, "", day, positiveLimit(limits.dailyCost), dailyCost - cost, dailyCost, ""},
-				aiBudgetCrossing{api.OutboundAIBudgetMonthlyCost, "", month, positiveLimit(limits.monthlyCost), monthlyCost - cost, monthlyCost, ""})
+				aiBudgetCrossing{api.OutboundAIBudgetDailyTokens, "", day, positiveLimit(limits.dailyTokens), dailyTokens - budgetTokens, dailyTokens, "", ""},
+				aiBudgetCrossing{api.OutboundAIBudgetDailyCost, "", day, positiveLimit(limits.dailyCost), dailyCost - cost, dailyCost, "", ""},
+				aiBudgetCrossing{api.OutboundAIBudgetMonthlyCost, "", month, positiveLimit(limits.monthlyCost), monthlyCost - cost, monthlyCost, "", ""})
 		}
 	}
 	if plan.binding {
@@ -340,7 +342,7 @@ func scanAIUsageRows(results pgx.BatchResults, record AIUsageRecord, opened open
 		}
 		if err == nil {
 			crossings = append(crossings, aiBudgetCrossing{api.OutboundAIBudgetAppDailyTokens, record.Caller, day,
-				positiveLimit(bindingLimit), bindingTokens - budgetTokens, bindingTokens, ""})
+				positiveLimit(bindingLimit), bindingTokens - budgetTokens, bindingTokens, "", ""})
 		}
 	}
 	if plan.lease {
@@ -362,6 +364,7 @@ func scanAIUsageRows(results pgx.BatchResults, record AIUsageRecord, opened open
 	}
 	crossings = append(crossings, userBudgetCrossings(user.endUser, day, positiveLimit(limits.userTokens),
 		positiveLimit(limits.userCost), user.tokens, user.cost, record.Usage.InputTokens+record.Usage.OutputTokens, cost)...)
+	crossings = append(crossings, tagBudgetCrossings(tagDays, day, cost)...)
 	return crossings, nil
 }
 
@@ -431,11 +434,11 @@ func recordAIBudgetAlerts(ctx context.Context, tx pgx.Tx, integrationID uuid.UUI
 		var crossedAt time.Time
 		err := tx.QueryRow(ctx, `
 			INSERT INTO outbound_ai_budget_alerts
-			    (integration_id, account_id, budget, app_id, end_user, period_start, threshold_percent, limit_value, used_value)
-			VALUES ($1, $2, $3, $4, NULLIF($5, ''), $6, $7, $8, $9)
+			    (integration_id, account_id, budget, app_id, end_user, period_start, threshold_percent, limit_value, used_value, tag)
+			VALUES ($1, $2, $3, $4, NULLIF($5, ''), $6, $7, $8, $9, NULLIF($10, ''))
 			ON CONFLICT DO NOTHING
 			RETURNING id, crossed_at`, integrationID, limits.accountID, alert.Budget, appID, alert.EndUser, alert.PeriodStart,
-			alert.ThresholdPercent, alert.Limit, alert.Used).Scan(&id, &crossedAt)
+			alert.ThresholdPercent, alert.Limit, alert.Used, alert.Tag).Scan(&id, &crossedAt)
 		if errors.Is(err, pgx.ErrNoRows) {
 			continue
 		}
@@ -444,14 +447,16 @@ func recordAIBudgetAlerts(ctx context.Context, tx pgx.Tx, integrationID uuid.UUI
 		}
 		alert.ID, alert.CrossedAt = id.String(), crossedAt.UTC()
 		notify := alert.AppID
-		if alert.EndUser != "" {
-			// Runs have no app to notify; the alert is still listed.
+		perCall := alert.EndUser != "" || alert.Tag != ""
+		if perCall {
+			// A user's or tag's budget notifies the app whose call crossed it;
+			// Runs have no app to notify, and the alert is still listed.
 			notify = ""
 			if appCaller(caller) {
 				notify = caller
 			}
 		}
-		if alert.EndUser == "" || notify != "" {
+		if !perCall || notify != "" {
 			if err := enqueueAIBudgetWebhooks(ctx, tx, integrationID, limits, alert, notify); err != nil {
 				return nil, err
 			}
@@ -474,6 +479,9 @@ func enqueueAIBudgetWebhooks(ctx context.Context, tx pgx.Tx, integrationID uuid.
 	}
 	if alert.EndUser != "" {
 		payload.EndUser = &alert.EndUser
+	}
+	if alert.Tag != "" {
+		payload.Tag = &alert.Tag
 	}
 	encoded, err := json.Marshal(payload)
 	if err != nil {
@@ -575,8 +583,9 @@ func (b *PostgresBackend) PruneAIUsage(ctx context.Context) (int64, error) {
 		{`DELETE FROM outbound_ai_user_usage_daily WHERE usage_date < (now() AT TIME ZONE 'UTC')::date - $1::int`, api.OutboundAIUserUsageRetentionDays},
 		// ADR-1410: tag rows follow the per-user rollup retention.
 		{`DELETE FROM outbound_ai_tag_usage_daily WHERE usage_date < (now() AT TIME ZONE 'UTC')::date - $1::int`, api.OutboundAIUserUsageRetentionDays},
-		// ADR-995: end users' alerts follow the per-user rollup retention.
-		{`DELETE FROM outbound_ai_budget_alerts WHERE end_user IS NOT NULL AND period_start < (now() AT TIME ZONE 'UTC')::date - $1::int`, api.OutboundAIUserUsageRetentionDays},
+		// ADR-995: end users' alerts follow the per-user rollup retention, and
+		// tags' alerts the tag rollup's (ADR-1430).
+		{`DELETE FROM outbound_ai_budget_alerts WHERE (end_user IS NOT NULL OR tag IS NOT NULL) AND period_start < (now() AT TIME ZONE 'UTC')::date - $1::int`, api.OutboundAIUserUsageRetentionDays},
 		// ADR-1120: a settled call's key only has to outlive its retries.
 		{`DELETE FROM outbound_ai_settlements WHERE settled_at < now() - make_interval(mins => $1::int)`, api.OutboundAISettlementKeyRetentionMinutes},
 		// ADR-1340: canary rows and export lines.

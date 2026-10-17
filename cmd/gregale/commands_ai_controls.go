@@ -214,13 +214,15 @@ func cmdAIAlerts(args []string) int {
 		return 0
 	}
 	tw := tabwriter.NewWriter(osStdout, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "CROSSED\tBUDGET\tAPP / END USER\tPERIOD\tTHRESHOLD\tUSED\tLIMIT")
+	_, _ = fmt.Fprintln(tw, "CROSSED\tBUDGET\tAPP / END USER / TAG\tPERIOD\tTHRESHOLD\tUSED\tLIMIT")
 	for _, alert := range alerts.Items {
 		app := "-"
 		if alert.AppID != nil {
 			app = *alert.AppID
 		} else if alert.EndUser != nil {
 			app = *alert.EndUser
+		} else if alert.Tag != nil {
+			app = *alert.Tag
 		}
 		used, limitText := strconv.FormatInt(alert.Used, 10), strconv.FormatInt(alert.Limit, 10)
 		if strings.HasSuffix(alert.Budget, "_cost") {

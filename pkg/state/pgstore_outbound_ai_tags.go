@@ -105,3 +105,60 @@ func (s *PgStore) SetOutboundAITagLimits(ctx context.Context, accountID, integra
 	}
 	return mapErr(tx.Commit(ctx))
 }
+
+// outboundAITagExportBatch is the keyset page size of a tag export.
+const outboundAITagExportBatch = 2000
+
+// ExportOutboundAITagUsage pages the range by (usage_date, tag), so a whole
+// retention window of capped rows streams without being held (ADR-1430).
+func (s *PgStore) ExportOutboundAITagUsage(ctx context.Context, accountID, integrationID, from, to, key string,
+	visit func(OutboundAITagUsageRow) error) error {
+	from, to, ok := outboundAITagExportRange(from, to, key, time.Now())
+	if !ok {
+		return ErrInvalidArgument
+	}
+	if err := s.outboundManagedIntegrationExists(ctx, accountID, integrationID); err != nil {
+		return err
+	}
+	afterDate, afterTag := from, ""
+	for {
+		batch, err := s.outboundAITagExportPage(ctx, integrationID, afterDate, afterTag, to, key)
+		if err != nil {
+			return err
+		}
+		for _, row := range batch {
+			if err := visit(row); err != nil {
+				return err
+			}
+		}
+		if len(batch) < outboundAITagExportBatch {
+			return nil
+		}
+		last := batch[len(batch)-1]
+		afterDate, afterTag = last.UsageDate, last.Tag
+	}
+}
+
+func (s *PgStore) outboundAITagExportPage(ctx context.Context, integrationID, afterDate, afterTag, to, key string) ([]OutboundAITagUsageRow, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT usage_date::text, tag, requests, error_requests, input_tokens, output_tokens, cost_millicents
+		  FROM outbound_ai_tag_usage_daily
+		 WHERE integration_id = $1 AND (usage_date, tag) > ($2::date, $3) AND usage_date <= $4::date
+		   AND ($5 = '' OR tag LIKE $5 || '=%')
+		 ORDER BY usage_date, tag
+		 LIMIT $6`, mustPgUUID(integrationID), afterDate, afterTag, to, key, outboundAITagExportBatch)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	defer rows.Close()
+	batch := make([]OutboundAITagUsageRow, 0, outboundAITagExportBatch)
+	for rows.Next() {
+		var row OutboundAITagUsageRow
+		if err := rows.Scan(&row.UsageDate, &row.Tag, &row.Requests, &row.ErrorRequests, &row.InputTokens,
+			&row.OutputTokens, &row.CostMillicents); err != nil {
+			return nil, mapErr(err)
+		}
+		batch = append(batch, row)
+	}
+	return batch, mapErr(rows.Err())
+}

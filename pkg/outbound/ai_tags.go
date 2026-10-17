@@ -108,6 +108,23 @@ func queueAITagState(batch *pgx.Batch, integrationID uuid.UUID, today, now time.
 		 ORDER BY tag_limit.tag`, integrationID, today, now, tags)
 }
 
+func scanAITagDays(results pgx.BatchResults) ([]aiTagDay, error) {
+	rows, err := results.Query()
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var days []aiTagDay
+	for rows.Next() {
+		var day aiTagDay
+		if err := rows.Scan(&day.tag, &day.cost, &day.limit); err != nil {
+			return nil, err
+		}
+		days = append(days, day)
+	}
+	return days, rows.Err()
+}
+
 func scanAITagState(results pgx.BatchResults) ([]aiTagState, error) {
 	rows, err := results.Query()
 	if err != nil {
@@ -128,7 +145,8 @@ func scanAITagState(results pgx.BatchResults) ([]aiTagState, error) {
 // queueAITagUsageRollup adds a tagged call to each tag's UTC-day row. A new
 // tag gets its own row while the integration tracks fewer than
 // OutboundAITagsPerDay tags today, or when it has a limit; otherwise it
-// adds to its key's overflow row.
+// adds to its key's overflow row. Each row comes back with its day cost and
+// its tag's limit, for budget alerts (ADR-1430).
 func queueAITagUsageRollup(batch *pgx.Batch, integrationID uuid.UUID, record AIUsageRecord) {
 	var errorRequests int64
 	if record.Outcome == AIUsageOutcomeError {
@@ -158,7 +176,10 @@ func queueAITagUsageRollup(batch *pgx.Batch, integrationID uuid.UUID, record AIU
 		    input_tokens = usage.input_tokens + EXCLUDED.input_tokens,
 		    output_tokens = usage.output_tokens + EXCLUDED.output_tokens,
 		    cost_millicents = usage.cost_millicents + EXCLUDED.cost_millicents,
-		    updated_at = now()`,
+		    updated_at = now()
+		RETURNING usage.tag, usage.cost_millicents,
+		          (SELECT tag_limit.daily_cost_limit_millicents FROM outbound_ai_tag_limits tag_limit
+		            WHERE tag_limit.integration_id = usage.integration_id AND tag_limit.tag = usage.tag)`,
 		integrationID, record.Tags, overflow, api.OutboundAITagsPerDay, errorRequests,
 		record.Usage.InputTokens, record.Usage.OutputTokens, record.CostMillicents)
 }

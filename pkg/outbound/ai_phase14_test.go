@@ -152,7 +152,7 @@ func TestTagDailyCostLimits(t *testing.T) {
 }
 
 func TestTagRowsOverflowPerKey(t *testing.T) {
-	state := &memoryState{tagUsage: map[string]AIUserUsageTotals{}, limitedTags: map[string]struct{}{"team=core": {}}}
+	state := &memoryState{tagUsage: map[string]AIUserUsageTotals{}, tagLimits: map[string]int64{"team=core": 1}}
 	for index := range api.OutboundAITagsPerDay {
 		state.tagUsage["seed="+strconv.Itoa(index)] = AIUserUsageTotals{Requests: 1}
 	}

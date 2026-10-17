@@ -43,11 +43,13 @@ type OutboundCredentialKey struct {
 // settlement. AppID is set only for an app budget, EndUser only for an end
 // user's budget (ADR-995).
 type OutboundAIBudgetAlert struct {
-	ID               string
-	IntegrationID    string
-	Budget           string
-	AppID            string
-	EndUser          string
+	ID            string
+	IntegrationID string
+	Budget        string
+	AppID         string
+	EndUser       string
+	// Tag is the tag of a tag_daily_cost alert (ADR-1430).
+	Tag              string
 	PeriodStart      time.Time
 	ThresholdPercent int32
 	Limit            int64

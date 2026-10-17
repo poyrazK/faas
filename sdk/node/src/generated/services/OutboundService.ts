@@ -25,6 +25,7 @@ import type { OutboundAIRouteCanaryStatus } from '../models/OutboundAIRouteCanar
 import type { OutboundAIRouteList } from '../models/OutboundAIRouteList.js';
 import type { OutboundAIRouteStats } from '../models/OutboundAIRouteStats.js';
 import type { OutboundAITagLimits } from '../models/OutboundAITagLimits.js';
+import type { OutboundAITagUsageExportRow } from '../models/OutboundAITagUsageExportRow.js';
 import type { OutboundAITagUsageResponse } from '../models/OutboundAITagUsageResponse.js';
 import type { OutboundAIUsageResponse } from '../models/OutboundAIUsageResponse.js';
 import type { OutboundAIUserUsageResponse } from '../models/OutboundAIUserUsageResponse.js';
@@ -751,6 +752,65 @@ export class OutboundService {
         'date': date,
         'key': key,
         'limit': limit,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: plan_feature_gated — the account plan does not include the AI gateway; upgrade to Hobby or above (ADR-998).`,
+        403: `code: outbound_ai_gateway_unavailable — the AI gateway is closed on this platform, or the account is not yet in its staged preview rollout (ADR-998).`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Export a day range of AI gateway usage by tag.
+   * Requires MFA and read scope (ADR-1430). Streams every tag row of the UTC days from through to, optionally of one key, ordered by day and tag, as NDJSON (the default) or CSV with the columns of OutboundAITagUsageExportRow.
+   * @returns OutboundAITagUsageExportRow The tag rows of the range.
+   * @throws ApiError
+   */
+  public static exportOutboundAiTagUsage({
+    integration,
+    from,
+    to,
+    key,
+    format,
+  }: {
+    /**
+     * UUID of the integration whose AI usage by tag is exported.
+     */
+    integration: string,
+    /**
+     * First UTC day of the export as YYYY-MM-DD within the last 31 days; defaults to today.
+     */
+    from?: string,
+    /**
+     * Last UTC day of the export as YYYY-MM-DD, not before from; defaults to today.
+     */
+    to?: string,
+    /**
+     * Export only this tag key's rows, its overflow row included.
+     */
+    key?: string,
+    /**
+     * ndjson (the default) or csv.
+     */
+    format?: 'ndjson' | 'csv',
+  }): CancelablePromise<OutboundAITagUsageExportRow> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/outbound/integrations/{integration}/ai-usage/tags/export',
+      path: {
+        'integration': integration,
+      },
+      query: {
+        'from': from,
+        'to': to,
+        'key': key,
+        'format': format,
       },
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,

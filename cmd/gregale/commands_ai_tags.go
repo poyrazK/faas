@@ -16,10 +16,14 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const aiTagsUsage = "usage: gregale ai tags <integration-id> [--date YYYY-MM-DD] [--key KEY] [--limit N]"
+const aiTagsUsage = "usage: gregale ai tags <integration-id> [--date YYYY-MM-DD] [--key KEY] [--limit N] | " +
+	"gregale ai tags export <integration-id> [--from YYYY-MM-DD] [--to YYYY-MM-DD] [--key KEY] [--format csv|ndjson]"
 
 // cmdAITags lists one UTC day's tags by cost, then tokens.
 func cmdAITags(args []string) int {
+	if len(args) > 0 && args[0] == "export" {
+		return cmdAITagsExport(args[1:])
+	}
 	fs := newFlagSet("ai tags", flag.ContinueOnError)
 	date := fs.String("date", "", "UTC day within the last 31 days (default today)")
 	key := fs.String("key", "", "show only this tag key's tags")
@@ -46,6 +50,29 @@ func cmdAITags(args []string) int {
 			item.InputTokens, item.OutputTokens, financialMoney(item.CostMillicents), formatOptionalMoney(item.DailyCostLimitMillicents))
 	}
 	_ = tw.Flush()
+	return 0
+}
+
+// cmdAITagsExport writes a day range of usage by tag to stdout, CSV by
+// default, for chargeback reports (ADR-1430).
+func cmdAITagsExport(args []string) int {
+	fs := newFlagSet("ai tags export", flag.ContinueOnError)
+	from := fs.String("from", "", "first UTC day within the last 31 days (default today)")
+	to := fs.String("to", "", "last UTC day (default today)")
+	key := fs.String("key", "", "export only this tag key's tags")
+	format := fs.String("format", "csv", "csv or ndjson")
+	if err := parseInterspersed(fs, args); err != nil || fs.NArg() != 1 || (*format != "csv" && *format != "ndjson") {
+		return printErr("Invalid ai tags export arguments", errors.New(aiTagsUsage))
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	body, err := client.ExportOutboundAITagUsage(context.Background(), fs.Arg(0), *from, *to, *key, *format)
+	if err != nil {
+		return printErr("Could not export AI usage by tag", err)
+	}
+	_, _ = osStdout.Write(body)
 	return 0
 }
 

@@ -53,8 +53,8 @@ account during the preview; contact support to have it turned on for yours.
   80% and 100%, an opt-in request log, opt-in capture of request and response
   bodies, and replay of a captured call against other models.
 - **Usage tags.** Name up to five `key=value` tags per call, such as
-  `feature=search` or `tier=free`, to see cost by your own dimensions, and cap
-  one tag's daily cost.
+  `feature=search` or `tier=free`, to see and export cost by your own
+  dimensions, and cap one tag's daily cost with alerts at 80% and 100%.
 - **Log export.** Send each call's metadata to your app's log drains, HTTP or
   OpenTelemetry, as one JSON line. Prompts and completions are never
   exported.
@@ -122,6 +122,7 @@ usage by tag, and cap one tag's daily cost:
 ```sh
 gregale ai tags <id> --key feature
 gregale ai tag-limits <id> --set feature=search:20     # EUR per UTC day
+gregale ai tags export <id> --from 2026-10-01 --to 2026-10-31 > ai-tags.csv
 ```
 
 ### Outside Gregale

@@ -21,6 +21,12 @@ type OutboundAITagUsageItem struct {
 	DailyCostLimit *int64
 }
 
+// OutboundAITagUsageRow is one tag's UTC day in an export (ADR-1430).
+type OutboundAITagUsageRow struct {
+	UsageDate string
+	OutboundAITagUsageItem
+}
+
 // OutboundAITagUsage is one UTC day of per-tag rollups.
 type OutboundAITagUsage struct {
 	UsageDate   string
@@ -36,6 +42,19 @@ type OutboundAITagStore interface {
 	// SetOutboundAITagLimits replaces the limits of a managed AI
 	// integration; an empty list removes them.
 	SetOutboundAITagLimits(ctx context.Context, accountID, integrationID string, limits []api.OutboundAITagLimit) error
+	// ExportOutboundAITagUsage visits every tag row of the UTC days from
+	// through to, optionally of one key, ordered by day and tag (ADR-1430).
+	// It returns ErrNotFound or ErrInvalidArgument before visiting any row.
+	ExportOutboundAITagUsage(ctx context.Context, accountID, integrationID, from, to, key string, visit func(OutboundAITagUsageRow) error) error
+}
+
+// outboundAITagExportRange validates an export's inclusive day range and
+// optional key.
+func outboundAITagExportRange(from, to, key string, now time.Time) (string, string, bool) {
+	if key != "" && !api.ValidOutboundAITag(key+"=x") {
+		return "", "", false
+	}
+	return outboundAIUserExportRange(from, to, now)
 }
 
 // outboundAITagUsageQuery validates a per-tag read: a day inside the

@@ -177,6 +177,23 @@ func (c *Client) GetOutboundAITagUsage(ctx context.Context, integrationID, date,
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
+// ExportOutboundAITagUsage returns a day range of usage by tag as NDJSON
+// or CSV, optionally for one key (ADR-1430).
+func (c *Client) ExportOutboundAITagUsage(ctx context.Context, integrationID, from, to, key, format string) ([]byte, error) {
+	query := url.Values{}
+	for name, value := range map[string]string{"from": from, "to": to, "key": key, "format": format} {
+		if value != "" {
+			query.Set(name, value)
+		}
+	}
+	path := "/v1/outbound/integrations/" + url.PathEscape(integrationID) + "/ai-usage/tags/export"
+	if encoded := query.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	var out []byte
+	return out, c.doBytes(ctx, "GET", path, nil, &out)
+}
+
 // GetOutboundAITagLimits reads an integration's tag limits (ADR-1410).
 func (c *Client) GetOutboundAITagLimits(ctx context.Context, integrationID string) (OutboundAITagLimits, error) {
 	var out OutboundAITagLimits

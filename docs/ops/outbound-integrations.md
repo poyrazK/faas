@@ -902,7 +902,21 @@ to 20 limits; `--remove` drops one and `--clear` drops them all.
   `X-Gregale-Outbound-Rejection: tag_daily_cost_limit` until the next UTC day.
 - Calls without the tag are unaffected. To cap each customer instead of one
   tag, use the per-end-user limits above.
-- Tag limits have no budget alerts yet.
+
+**Alerts.** A tag with a limit alerts at 80% and 100% of it, once per tag, UTC
+day and threshold (ADR-1430):
+
+- the budget is `tag_daily_cost`, and the alert names the `tag`;
+- the `outbound.ai_budget.threshold` webhook carries `tag` and goes only to
+  the app whose call crossed the threshold;
+- `gregale ai alerts` shows the tag;
+- these alerts are kept for 31 days. Overflow rows never alert.
+
+**Export.** `gregale ai tags export <id> --from 2026-10-01 --to 2026-10-31
+--key customer > ai-tags.csv` (or `GET .../ai-usage/tags/export?from=&to=&key=&format=csv`)
+streams every tag row of each day in the range, ordered by day and tag. The
+columns are `usage_date, tag, requests, error_requests, input_tokens,
+output_tokens, tokens, cost_millicents`. The API's default format is NDJSON.
 
 The tag check joins admission's existing database read, so it adds no round
 trip.

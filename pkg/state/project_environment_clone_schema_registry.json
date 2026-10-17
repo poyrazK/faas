@@ -7823,6 +7823,7 @@
       "integration_id",
       "limit_value",
       "period_start",
+      "tag",
       "threshold_percent",
       "used_value"
     ],

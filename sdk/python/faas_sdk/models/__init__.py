@@ -1537,6 +1537,7 @@ from .execution_workflow_status_counts import ExecutionWorkflowStatusCounts
 from .execution_workflow_usage import ExecutionWorkflowUsage
 from .export_app_debug_requests_format import ExportAppDebugRequestsFormat
 from .export_focus_invoices_format import ExportFOCUSInvoicesFormat
+from .export_outbound_ai_tag_usage_format import ExportOutboundAITagUsageFormat
 from .export_outbound_integration_ai_user_usage_format import ExportOutboundIntegrationAIUserUsageFormat
 from .failure_rule import FailureRule
 from .failure_rule_action import FailureRuleAction
@@ -3136,6 +3137,7 @@ from .outbound_ai_route_target import OutboundAIRouteTarget
 from .outbound_ai_route_target_stats import OutboundAIRouteTargetStats
 from .outbound_ai_tag_limit import OutboundAITagLimit
 from .outbound_ai_tag_limits import OutboundAITagLimits
+from .outbound_ai_tag_usage_export_row import OutboundAITagUsageExportRow
 from .outbound_ai_tag_usage_item import OutboundAITagUsageItem
 from .outbound_ai_tag_usage_response import OutboundAITagUsageResponse
 from .outbound_ai_usage_item import OutboundAIUsageItem
@@ -6277,6 +6279,7 @@ __all__ = (
     "ExecutionWorkflowUsage",
     "ExportAppDebugRequestsFormat",
     "ExportFOCUSInvoicesFormat",
+    "ExportOutboundAITagUsageFormat",
     "ExportOutboundIntegrationAIUserUsageFormat",
     "FailureRule",
     "FailureRuleAction",
@@ -7708,6 +7711,7 @@ __all__ = (
     "OutboundAIRouteTargetStats",
     "OutboundAITagLimit",
     "OutboundAITagLimits",
+    "OutboundAITagUsageExportRow",
     "OutboundAITagUsageItem",
     "OutboundAITagUsageResponse",
     "OutboundAIUsageItem",
