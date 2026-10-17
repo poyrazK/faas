@@ -371,6 +371,7 @@ func assertCustomerWorkflowFence(t *testing.T, err error) {
 
 // customerWorkflowWaitChains are the ADR-1287 Stage 2 workflows deployed beside
 // export-chain. Step names equal the guest's routes; waits have no route.
+// finish names collect as a dependency because it reads collect's output.
 func customerWorkflowWaitChains() []api.WorkflowSpec {
 	finish := json.RawMessage(`{"mode":"{{steps.collect.output.mode}}","rows":"{{steps.collect.output.rows}}"}`)
 	return []api.WorkflowSpec{
@@ -378,12 +379,12 @@ func customerWorkflowWaitChains() []api.WorkflowSpec {
 			{Name: "collect", Path: "/collect", Timeout: 2 * time.Minute},
 			{Name: "review", WaitForCallback: true, Timeout: 30 * time.Minute, DependsOn: []string{"collect"}},
 			{Name: "payment", WaitForEvent: "payment.succeeded", Timeout: 30 * time.Minute, DependsOn: []string{"review"}},
-			{Name: "finish", Path: "/finish", DependsOn: []string{"payment"}, Input: finish, Timeout: 2 * time.Minute},
+			{Name: "finish", Path: "/finish", DependsOn: []string{"payment", "collect"}, Input: finish, Timeout: 2 * time.Minute},
 		}},
 		{Name: "timeout-chain", Steps: []api.WorkflowStepSpec{
 			{Name: "collect", Path: "/collect", Timeout: 2 * time.Minute},
 			{Name: "payment", WaitForEvent: "payment.succeeded", Timeout: 15 * time.Second, DependsOn: []string{"collect"}},
-			{Name: "finish", Path: "/finish", DependsOn: []string{"payment"}, Input: finish, Timeout: 2 * time.Minute},
+			{Name: "finish", Path: "/finish", DependsOn: []string{"payment", "collect"}, Input: finish, Timeout: 2 * time.Minute},
 		}},
 	}
 }
