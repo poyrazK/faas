@@ -2,6 +2,11 @@
 
 This candidate is local and unpublished. Use dedicated native x86_64 Linux KVM.
 
+The [physical two-host lane](financial-two-host-qualification.md) prepares
+separate native owners, per-host SQL partitions and recovery evidence. Its
+report remains scoped to those components; the full workload/performance and
+remote HTTP accounting gates must pass before promotion.
+
 ## Automated qualification
 
 Run the existing complete metal host gate with the financial lane enabled.

@@ -94,6 +94,15 @@ restoration, host facts and artifact hashes. See the
 for commands and evidence. A local compilation or portable pass does not close
 native, physical two-host, full workload/performance or external-provider gates.
 
+The local implementation now also includes a guarded
+[physical two-host qualification](runbooks/financial-two-host-qualification.md)
+runner and CI wiring. It uses a real remote native owner, per-host SQL network
+cuts, retained credits, owner restart, source-derived component selection and
+cleanup evidence from both hosts. The full-daemon CI job retains and rechecks
+raw provider/receipt vectors. These are implementation and execution gates;
+remote HTTP accounting, the full workload matrix and performance still block
+promotion. No physical two-host execution has been performed locally.
+
 ## Rollout and rollback
 
 1. Review and merge the platform preview PR after its migrations, accounting,
