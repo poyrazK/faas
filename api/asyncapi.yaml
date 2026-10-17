@@ -1389,6 +1389,14 @@ components:
         finalized_at:
           type: string
           format: date-time
+        credit_applied_millicents:
+          type: integer
+          format: int64
+          description: Prepaid credit drawn at finalization (ADR-1306).
+        amount_due_millicents:
+          type: integer
+          format: int64
+          description: What is left to bill after prepaid credit.
       additionalProperties: false
     UsageStatementBucket:
       type: object

@@ -83,6 +83,43 @@ func weightedUnits(weights map[string]int64, units int64, routes []state.APICons
 	return total, nil
 }
 
+// MeterAPIConsumerUsage converts each minute priced by a compute or
+// response-size card into that card's units (ADR-1308): the minute's
+// billable compute time in seconds, or response size in megabytes
+// (1,000,000 bytes), rounded to the nearest whole unit with halves rounding
+// up. Late usage can only raise a minute's units, so finalized revisions
+// stay consistent. Request cards leave minutes unchanged. Callers pass
+// usage ascending by minute.
+func MeterAPIConsumerUsage(cards []state.APIConsumerRateCard, usage []state.APIConsumerUsageBucket) []state.APIConsumerUsageBucket {
+	ordered := append([]state.APIConsumerRateCard(nil), cards...)
+	sort.Slice(ordered, func(i, j int) bool { return ordered[i].EffectiveFrom.Before(ordered[j].EffectiveFrom) })
+	out := make([]state.APIConsumerUsageBucket, 0, len(usage))
+	cardIndex := -1
+	for _, bucket := range usage {
+		minute := bucket.WindowStart.UTC()
+		for cardIndex+1 < len(ordered) && !ordered[cardIndex+1].EffectiveFrom.After(minute) {
+			cardIndex++
+		}
+		if cardIndex >= 0 {
+			switch ordered[cardIndex].Unit {
+			case state.APIConsumerRateCardUnitComputeSecond:
+				bucket.BillableUnits = roundHalfUp(bucket.ComputeMS, 1000)
+			case state.APIConsumerRateCardUnitResponseMegabyte:
+				bucket.BillableUnits = roundHalfUp(bucket.ResponseBytes, 1_000_000)
+			}
+		}
+		out = append(out, bucket)
+	}
+	return out
+}
+
+func roundHalfUp(value, unit int64) int64 {
+	if value <= 0 {
+		return 0
+	}
+	return value/unit + (value%unit*2)/unit
+}
+
 // IsCalendarMonth reports whether [start, end) is exactly one UTC month.
 func IsCalendarMonth(start, end time.Time) bool {
 	return start.Equal(MonthStart(start)) && end.Equal(MonthStart(start).AddDate(0, 1, 0))
@@ -104,9 +141,9 @@ func APIConsumerStatementDelta(current APIConsumerUsageQuote, revisions []state.
 	}
 	delta := APIConsumerUsageQuote{Currency: current.Currency, Buckets: make([]APIConsumerUsageChargeBucket, 0, len(current.Buckets))}
 	for _, bucket := range current.Buckets {
-		minute := bucket.WindowStart.UTC().Unix()
-		prior := covered[minute]
-		delete(covered, minute)
+		key := coverageKey{minute: bucket.WindowStart.UTC().Unix(), unit: bucket.Unit}
+		prior := covered[key]
+		delete(covered, key)
 		if bucket.BillableUnits < prior.units || bucket.ChargedUnits < prior.charged {
 			return APIConsumerUsageQuote{}, ErrAPIConsumerUsageRegressed
 		}
@@ -133,14 +170,53 @@ func APIConsumerStatementDelta(current APIConsumerUsageQuote, revisions []state.
 	return delta, nil
 }
 
-func finalizedCoverage(revisions []state.APIConsumerUsageStatement) (map[int64]statementCoverage, error) {
-	covered := map[int64]statementCoverage{}
+// LockedVolumeSteps returns, for each volume card (ADR-1309) its finalized
+// revisions billed, the ladder step they billed it at (ADR-1312). Pricing a
+// period's late usage at that step keeps an adjustment from lowering what
+// finalized revisions charged; callers use it only when exact re-rating
+// would.
+func LockedVolumeSteps(cards []state.APIConsumerRateCard, revisions []state.APIConsumerUsageStatement) map[string]int {
+	volume := map[string]bool{}
+	for _, card := range cards {
+		volume[card.ID] = len(card.Tiers) > 0 && card.TierMode == state.RateCardTierModeVolume
+	}
+	net := map[string][]int64{}
 	for _, statement := range revisions {
 		if statement.Status != state.APIConsumerUsageStatementFinalized {
 			continue
 		}
 		for _, bucket := range statement.Buckets {
-			minute := bucket.WindowStart.UTC().Unix()
+			if volume[bucket.RateCardID] && bucket.TierUnits != nil {
+				net[bucket.RateCardID] = addTierUnits(net[bucket.RateCardID], bucket.TierUnits)
+			}
+		}
+	}
+	locked := map[string]int{}
+	for cardID, units := range net {
+		for step := len(units) - 1; step >= 0; step-- {
+			if units[step] > 0 {
+				locked[cardID] = step
+				break
+			}
+		}
+	}
+	return locked
+}
+
+// coverageKey is one minute of one price stream (ADR-1317).
+type coverageKey struct {
+	minute int64
+	unit   string
+}
+
+func finalizedCoverage(revisions []state.APIConsumerUsageStatement) (map[coverageKey]statementCoverage, error) {
+	covered := map[coverageKey]statementCoverage{}
+	for _, statement := range revisions {
+		if statement.Status != state.APIConsumerUsageStatementFinalized {
+			continue
+		}
+		for _, bucket := range statement.Buckets {
+			minute := coverageKey{minute: bucket.WindowStart.UTC().Unix(), unit: bucket.Unit}
 			prior := covered[minute]
 			if prior.units > maxInt64-bucket.BillableUnits || prior.charged > maxInt64-bucket.Charged() {
 				return nil, fmt.Errorf("billing: API consumer statement coverage overflow")

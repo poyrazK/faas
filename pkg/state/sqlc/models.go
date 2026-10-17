@@ -93,6 +93,21 @@ type AccountAsyncQuotum struct {
 	UpdatedAt       pgtype.Timestamptz
 }
 
+// Sealed credentials for exporting usage statements to the account's own payment provider; only key_last4 and livemode are ever returned.
+type AccountBillingConnection struct {
+	AccountID    pgtype.UUID
+	Provider     string
+	SealedSecret []byte
+	KeyLast4     string
+	Livemode     bool
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
+	ApiUrl       pgtype.Text
+	Collection   string
+	DaysUntilDue int32
+	AutomaticTax bool
+}
+
 // Operator-issued EUR-cent credits; one credit cent offsets one GB-RAM-hour of overage at the current public rate.
 type AccountCredit struct {
 	ID             pgtype.UUID
@@ -263,6 +278,59 @@ type ApiConsumer struct {
 	PlatformTenantManaged bool
 }
 
+// Per-app rule blocking API consumers whose exported invoice is unpaid that many days after its due date (ADR-1315).
+type ApiConsumerBillingPolicy struct {
+	AppID                 pgtype.UUID
+	AccountID             pgtype.UUID
+	BlockOverdueAfterDays int32
+	CreatedAt             pgtype.Timestamptz
+	UpdatedAt             pgtype.Timestamptz
+}
+
+type ApiConsumerCreditApplication struct {
+	GrantID          pgtype.UUID
+	StatementID      pgtype.UUID
+	AccountID        pgtype.UUID
+	AmountMillicents int64
+	CreatedAt        pgtype.Timestamptz
+}
+
+// Prepaid credit granted to an API consumer; finalized statements draw it down oldest-expiring first (ADR-1306).
+type ApiConsumerCreditGrant struct {
+	ID                  pgtype.UUID
+	AccountID           pgtype.UUID
+	AppID               pgtype.UUID
+	ConsumerID          pgtype.UUID
+	Currency            string
+	AmountMillicents    int64
+	RemainingMillicents int64
+	Note                string
+	ExpiresAt           pgtype.Timestamptz
+	VoidedAt            pgtype.Timestamptz
+	CreatedAt           pgtype.Timestamptz
+}
+
+// Units an app reported per consumer, meter and UTC minute for billable requests (ADR-1318).
+type ApiConsumerMeterUsageMinute struct {
+	AccountID   pgtype.UUID
+	AppID       pgtype.UUID
+	ConsumerKey string
+	Meter       string
+	WindowStart pgtype.Timestamptz
+	Units       int64
+	UpdatedAt   pgtype.Timestamptz
+}
+
+// API consumers the gateway refuses because of an overdue invoice; recomputed by apid (ADR-1315).
+type ApiConsumerOverdueHold struct {
+	ConsumerID pgtype.UUID
+	AccountID  pgtype.UUID
+	AppID      pgtype.UUID
+	ExportID   pgtype.UUID
+	DueAt      pgtype.Timestamptz
+	Since      pgtype.Timestamptz
+}
+
 // Named consumer plans: enforcement limits plus their own rate-card history (api_consumer_rate_cards.plan_id).
 type ApiConsumerPlan struct {
 	ID                   pgtype.UUID
@@ -314,7 +382,10 @@ type ApiConsumerRateCard struct {
 	// Units charged per request on a route label ("METHOD /template" -> weight); unlisted routes count 1.
 	RouteWeights []byte
 	// Plan whose price history this card belongs to; NULL is the app default plan.
-	PlanID pgtype.UUID
+	PlanID                    pgtype.UUID
+	TierMode                  string
+	BaseFeeMillicentsPerMonth int64
+	MinimumMillicentsPerMonth int64
 }
 
 // Billable units per consumer, bounded route label, and UTC minute; per-minute totals stay in api_consumer_usage_minutes.
@@ -326,6 +397,33 @@ type ApiConsumerRouteUsageMinute struct {
 	WindowStart   pgtype.Timestamptz
 	BillableUnits int64
 	UpdatedAt     pgtype.Timestamptz
+}
+
+// Monthly spend cap per API consumer; apid checks the month to date and the gateway denies capped consumers (ADR-1306).
+type ApiConsumerSpendCap struct {
+	ConsumerID           pgtype.UUID
+	AccountID            pgtype.UUID
+	AppID                pgtype.UUID
+	Currency             string
+	MonthlyCapMillicents int64
+	Capped               bool
+	MonthStart           pgtype.Timestamptz
+	AmountDueMillicents  pgtype.Int8
+	CheckedAt            pgtype.Timestamptz
+	NextCheckAt          pgtype.Timestamptz
+	CreatedAt            pgtype.Timestamptz
+	UpdatedAt            pgtype.Timestamptz
+}
+
+// One free trial per API consumer (ADR-1314): usage in [starts_at, ends_at) is priced at zero.
+type ApiConsumerTrial struct {
+	ConsumerID pgtype.UUID
+	AccountID  pgtype.UUID
+	AppID      pgtype.UUID
+	StartsAt   pgtype.Timestamptz
+	EndsAt     pgtype.Timestamptz
+	CreatedAt  pgtype.Timestamptz
+	UpdatedAt  pgtype.Timestamptz
 }
 
 // One row per consumer, UTC month, and plan alert threshold crossed at gateway admission; source of the consumer.usage_threshold webhook.
@@ -367,6 +465,8 @@ type ApiConsumerUsageMinute struct {
 	ErrorCount    int64
 	BillableUnits int64
 	UpdatedAt     pgtype.Timestamptz
+	ComputeMs     int64
+	ResponseBytes int64
 }
 
 type ApiConsumerUsageStatement struct {
@@ -387,7 +487,9 @@ type ApiConsumerUsageStatement struct {
 	CreatedAt        pgtype.Timestamptz
 	FinalizedAt      pgtype.Timestamptz
 	// Monotonic revision within one exact period. Revisions after a finalized one carry only later usage.
-	Revision int32
+	Revision                int32
+	CreditAppliedMillicents int64
+	Fees                    []byte
 }
 
 type ApiConsumerUsageStatementHandoff struct {
@@ -1575,6 +1677,63 @@ type BillingMeterUsageDelivery struct {
 	WindowStart pgtype.Timestamptz
 	Quantity    int64
 	DeliveredAt pgtype.Timestamptz
+}
+
+// Month-end billing runs (ADR-1301): one ended UTC month billed for every customer with billable usage; worker-leased.
+type BillingRun struct {
+	ID             pgtype.UUID
+	AccountID      pgtype.UUID
+	PeriodStart    pgtype.Timestamptz
+	PeriodEnd      pgtype.Timestamptz
+	Sources        []string
+	Finalize       bool
+	ExportProvider string
+	HoldOnGaps     bool
+	Trigger        string
+	Status         string
+	DiscoveredAt   pgtype.Timestamptz
+	LeaseOwner     pgtype.Text
+	LeaseUntil     pgtype.Timestamptz
+	CreatedAt      pgtype.Timestamptz
+	StartedAt      pgtype.Timestamptz
+	CompletedAt    pgtype.Timestamptz
+	NotifiedAt     pgtype.Timestamptz
+}
+
+// One customer of a billing run: the statement drafted, finalized or exported for it, or why it was held, skipped or failed.
+type BillingRunItem struct {
+	RunID            pgtype.UUID
+	SourceKind       string
+	SourceID         pgtype.UUID
+	AppID            pgtype.UUID
+	ExternalRef      string
+	Outcome          string
+	StatementID      pgtype.UUID
+	Revision         pgtype.Int4
+	Currency         pgtype.Text
+	AmountMillicents pgtype.Int8
+	Completeness     pgtype.Text
+	InvoiceID        pgtype.Text
+	ExportedCount    int32
+	Reason           pgtype.Text
+	Attempts         int32
+	NextAttemptAt    pgtype.Timestamptz
+	UpdatedAt        pgtype.Timestamptz
+}
+
+// Per-account schedule that starts a billing run for each month after month end plus delay_hours.
+type BillingRunSchedule struct {
+	AccountID       pgtype.UUID
+	Sources         []string
+	Finalize        bool
+	ExportProvider  string
+	HoldOnGaps      bool
+	DelayHours      int32
+	NextPeriodStart pgtype.Timestamptz
+	NextRunAt       pgtype.Timestamptz
+	LastPeriodStart pgtype.Timestamptz
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
 }
 
 type BillingUsageDelivery struct {
@@ -7672,6 +7831,34 @@ type PlatformTenantOffboardingReceipt struct {
 	Actions   []byte
 }
 
+// Reusable platform tenant price and request-budget bundle; assigning one creates the tenant's rate card and sets its budget (ADR-1307).
+type PlatformTenantPlan struct {
+	ID                     pgtype.UUID
+	AccountID              pgtype.UUID
+	Name                   string
+	Currency               string
+	PriceMillicentsPerUnit int64
+	IncludedUnitsPerMonth  int64
+	Tiers                  []byte
+	RouteWeights           []byte
+	MaxRequestsPerMinute   pgtype.Int8
+	MaxRequestsPerDay      pgtype.Int8
+	CreatedAt              pgtype.Timestamptz
+	UpdatedAt              pgtype.Timestamptz
+	TierMode               string
+	Unit                   string
+}
+
+type PlatformTenantPlanAssignment struct {
+	ID            pgtype.UUID
+	AccountID     pgtype.UUID
+	TenantID      pgtype.UUID
+	PlanID        pgtype.UUID
+	RateCardID    pgtype.UUID
+	EffectiveFrom pgtype.Timestamptz
+	CreatedAt     pgtype.Timestamptz
+}
+
 type PlatformTenantRateCard struct {
 	ID                     pgtype.UUID
 	AccountID              pgtype.UUID
@@ -7685,6 +7872,9 @@ type PlatformTenantRateCard struct {
 	IncludedUnitsPerMonth int64
 	// Graduated price ladder [{up_to, price_millicents_per_unit}], counted per tenant per UTC calendar month across all attributed apps; empty means the single price and allowance apply.
 	Tiers []byte
+	// Units charged per consumer request on a route label ("METHOD /template" -> weight); unlisted routes and non-consumer subjects count 1.
+	RouteWeights []byte
+	TierMode     string
 }
 
 type PlatformTenantReconciliationReceipt struct {
@@ -7706,6 +7896,19 @@ type PlatformTenantRequestBudget struct {
 	DayStart             pgtype.Timestamptz
 	DayUsed              int64
 	UpdatedAt            pgtype.Timestamptz
+}
+
+// Billable units per tenant surface or JWT authorization rule, bounded route label, and UTC minute; consumer routes stay in api_consumer_route_usage_minutes.
+type PlatformTenantSourceRouteUsageMinute struct {
+	AccountID        pgtype.UUID
+	PlatformTenantID pgtype.UUID
+	AppID            pgtype.UUID
+	SourceKind       string
+	SourceID         pgtype.UUID
+	Route            string
+	WindowStart      pgtype.Timestamptz
+	BillableUnits    int64
+	UpdatedAt        pgtype.Timestamptz
 }
 
 type PlatformTenantStatement struct {
@@ -7769,6 +7972,8 @@ type PlatformTenantUsageMinute struct {
 	BillableUnits    int64
 	UpdatedAt        pgtype.Timestamptz
 	SourceKind       string
+	ComputeMs        int64
+	ResponseBytes    int64
 }
 
 type PlatformTenantWorkflowScheduleCursor struct {
@@ -10380,6 +10585,36 @@ type UsageMonthly struct {
 	NetRxBytes     int64
 	ColdBootCount  int64
 	BuilderSeconds int64
+}
+
+// One draft provider invoice per finalized usage statement, recorded before provider calls so retries resume the same invoice.
+type UsageStatementInvoiceExport struct {
+	ID                pgtype.UUID
+	AccountID         pgtype.UUID
+	SourceKind        string
+	StatementID       pgtype.UUID
+	Provider          string
+	Customer          string
+	Status            string
+	ProviderInvoiceID pgtype.Text
+	Currency          string
+	AmountMinor       int64
+	Livemode          bool
+	CreatedAt         pgtype.Timestamptz
+	CompletedAt       pgtype.Timestamptz
+	// Stripe invoice status last read by apid (ADR-1302); NULL until the first sync.
+	PaymentStatus        pgtype.Text
+	AmountPaidMinor      pgtype.Int8
+	AmountRemainingMinor pgtype.Int8
+	DueAt                pgtype.Timestamptz
+	PaidAt               pgtype.Timestamptz
+	HostedInvoiceUrl     pgtype.Text
+	StatusSyncedAt       pgtype.Timestamptz
+	NextStatusSyncAt     pgtype.Timestamptz
+	OverdueNotifiedAt    pgtype.Timestamptz
+	Collection           string
+	DaysUntilDue         int32
+	AutomaticTax         bool
 }
 
 type WarmHint struct {

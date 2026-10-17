@@ -40,8 +40,9 @@ resolves aliases and reads one repeatable-read snapshot. Its eligibility explain
 only this policy's environment and cooldown checks; delivery still depends on
 native subscription, ignore/response state, eligible routing, capacity and sender
 checks. Preview never reserves a receipt, changes lifecycle or contacts Slack.
-Reads/previews require app read access and Issues entitlement; writes require
-deploy-write and session MFA. Dashboard writes/previews additionally require CSRF.
+REST reads/previews require app read access and Issues entitlement; writes require
+deploy-write and session MFA. The HTML policy editor requires deploy-write and
+session MFA, with CSRF on its save and preview forms.
 
 Policy edits affect future admission and do not recall already queued or in-flight
 alerts. No automatic history replay occurs. Store configuration and operational

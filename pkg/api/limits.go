@@ -279,6 +279,102 @@ const (
 	ProfileDefaultSocket            = "/run/faas/profiled.sock"
 )
 
+// Billing runs (ADR-1503).
+const (
+	// BillingRunSettleDelay is how long after month end a run may start, so
+	// gateway usage outboxes have delivered the month's last minutes.
+	BillingRunSettleDelay = time.Hour
+	// Schedules start a month's run delay_hours after month end.
+	BillingRunScheduleMinDelayHours     = 1
+	BillingRunScheduleMaxDelayHours     = 240
+	BillingRunScheduleDefaultDelayHours = 24
+	// The worker leases one run per tick and processes a bounded batch of
+	// its items; a crashed worker's lease expires after BillingRunLeaseTTL.
+	BillingRunTickInterval      = 15 * time.Second
+	BillingRunLeaseTTL          = 2 * time.Minute
+	BillingRunBatchSize         = 25
+	BillingRunScheduleBatchSize = 100
+	// A transient failure retries the item with exponential backoff from
+	// BillingRunRetryBase, failing it after BillingRunItemMaxAttempts.
+	BillingRunItemMaxAttempts = 5
+	BillingRunRetryBase       = time.Minute
+	// List page sizes.
+	BillingRunListDefault     = 20
+	BillingRunListMax         = 100
+	BillingRunItemListDefault = 100
+	BillingRunItemListMax     = 500
+)
+
+// Payment status of exported statement invoices (ADR-1504).
+const (
+	// A completed export is first synced after StatementInvoiceFirstSyncDelay,
+	// then polled by status until paid, void or deleted.
+	StatementInvoiceFirstSyncDelay            = time.Hour
+	StatementInvoiceDraftSyncInterval         = 6 * time.Hour
+	StatementInvoiceOpenSyncInterval          = time.Hour
+	StatementInvoiceOverdueSyncInterval       = 6 * time.Hour
+	StatementInvoiceUncollectibleSyncInterval = 24 * time.Hour
+	// A failed sync retries after StatementInvoiceSyncRetry; a key Stripe
+	// rejects after StatementInvoiceSyncKeyRetry.
+	StatementInvoiceSyncRetry    = 15 * time.Minute
+	StatementInvoiceSyncKeyRetry = 6 * time.Hour
+	// Workers claim a batch per tick and hold each claim for the lease.
+	StatementInvoiceSyncTickInterval = time.Minute
+	StatementInvoiceSyncLease        = 5 * time.Minute
+	StatementInvoiceSyncBatchSize    = 50
+	// The daily overdue email lists at most this many invoices.
+	StatementInvoiceOverdueDigestMax = 20
+	// List page sizes.
+	StatementInvoiceListDefault = 50
+	StatementInvoiceListMax     = 200
+)
+
+// Consumer billing self-service (ADR-1506).
+const (
+	// Requests per minute and burst allowed per consumer key prefix.
+	ConsumerBillingRequestsPerMinute = 60
+	ConsumerBillingBurst             = 20
+	// The usage endpoint returns at most this many days per call.
+	ConsumerBillingUsageMaxDays = 31
+	// The statements endpoint returns at most this many finalized statements.
+	ConsumerBillingStatementsMax = 24
+)
+
+// Consumer prepaid credits and spend caps (ADR-1306).
+const (
+	// One grant and one monthly cap are at most 10,000,000.00 in their
+	// currency.
+	ConsumerCreditGrantMaxMillicents int64 = 1_000_000_000_000
+	ConsumerSpendCapMaxMillicents    int64 = 1_000_000_000_000
+	// A consumer holds at most this many grants with credit left.
+	ConsumerCreditOpenGrantsMax = 100
+	ConsumerCreditNoteMaxBytes  = 200
+	// apid rechecks each capped consumer's month to date this often, in
+	// batches; a claimed check is retried after the lease.
+	ConsumerSpendCapCheckInterval = time.Minute
+	ConsumerSpendCapCheckLease    = 2 * time.Minute
+	ConsumerSpendCapBatchSize     = 500
+)
+
+// Consumer controls (ADR-1314, ADR-1315).
+const (
+	// ConsumerTrialMaxDays bounds one consumer's free trial.
+	ConsumerTrialMaxDays = 365
+	// ConsumerOverdueBlockMaxDays bounds how long after its due date an
+	// unpaid invoice blocks its consumer.
+	ConsumerOverdueBlockMaxDays = 365
+	// apid recomputes overdue holds this often; payment status itself is
+	// synced on the ADR-1504 schedule.
+	ConsumerOverdueCheckInterval = 5 * time.Minute
+	// An invoice holding its consumer has its payment status read at least
+	// this often, so paying it lifts the hold within minutes.
+	ConsumerOverdueHeldSyncInterval = 15 * time.Minute
+)
+
+// PlatformTenantPlansMax bounds the tenant plans one account keeps
+// (ADR-1307).
+const PlatformTenantPlansMax = 100
+
 type ProfilingLimits struct {
 	Enabled          bool
 	RetentionDays    int
