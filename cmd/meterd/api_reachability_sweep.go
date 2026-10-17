@@ -36,10 +36,26 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+
 	"github.com/onebox-faas/faas/pkg/meter"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
+
+// apiReachabilityStore is the slice of state.Store the sweep reads.
+type apiReachabilityStore interface {
+	ListAllAccounts(ctx context.Context) ([]state.Account, error)
+	ListApps(ctx context.Context, accountID string) ([]state.App, error)
+	WasInvokedSuccessfullySince(ctx context.Context, accountID, appID string, since time.Time) (bool, error)
+}
+
+// apiReachabilityStepTimeout bounds each store read in the sweep. The walk
+// used to share one 60 s deadline, so a single stall while meterd's small
+// pool was busy failed every remaining app at once with an already-cancelled
+// context (61 apps at 07:02:52 UTC on production-us, hunt #10, H10-133) and
+// left their gauges stale.
+const apiReachabilityStepTimeout = 10 * time.Second
 
 // APIReachabilitySweepParams is the param bundle for
 // APIReachabilitySweepLoop. Store is required; Log and Ops are
@@ -100,41 +116,13 @@ func APIReachabilitySweepLoop(ctx context.Context, p APIReachabilitySweepParams)
 	}
 
 	do := func() {
-		walkCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
-		defer cancel()
-		accounts, err := p.Store.ListAllAccounts(walkCtx)
-		if err != nil {
-			p.Log.Warn("meterd: list accounts (api reachability sweep) failed", "err", err)
-			return
-		}
 		gauge := p.Ops.MeterdAPIReachable()
 		if gauge == nil {
 			return
 		}
-		now := nowFn()
-		since := now.Add(-p.ReachWindow)
-		stamped := 0
-		for _, a := range accounts {
-			apps, listErr := p.Store.ListApps(walkCtx, a.ID)
-			if listErr != nil {
-				p.Log.Warn("meterd: list apps (api reachability sweep) failed", "account_id", a.ID, "err", listErr)
-				continue
-			}
-			for _, app := range apps {
-				ok, invErr := p.Store.WasInvokedSuccessfullySince(walkCtx, a.ID, app.ID, since)
-				if invErr != nil {
-					p.Log.Warn("meterd: was-invoked-successfully-since failed", "account_id", a.ID, "app_id", app.ID, "err", invErr)
-					continue
-				}
-				if ok {
-					gauge.WithLabelValues(a.ID, app.ID).Set(1.0)
-				} else {
-					gauge.WithLabelValues(a.ID, app.ID).Set(0.0)
-				}
-				stamped++
-			}
-		}
-		p.Log.Info("meterd: api reachability sweep tick ok", "accounts", len(accounts), "stamped", stamped)
+		since := nowFn().Add(-p.ReachWindow)
+		stamped, failed := sweepAPIReachability(ctx, p.Store, gauge, since, apiReachabilityStepTimeout, p.Log)
+		p.Log.Info("meterd: api reachability sweep tick ok", "stamped", stamped, "failed", failed)
 	}
 	do()
 	t := time.NewTicker(p.Interval)
@@ -147,4 +135,48 @@ func APIReachabilitySweepLoop(ctx context.Context, p APIReachabilitySweepParams)
 			do()
 		}
 	}
+}
+
+// sweepAPIReachability stamps the gauge for every (account, app) pair. Each
+// store read gets its own deadline, so one slow read fails only its own app.
+func sweepAPIReachability(ctx context.Context, store apiReachabilityStore, gauge *prometheus.GaugeVec, since time.Time, step time.Duration, log *slog.Logger) (stamped, failed int) {
+	listCtx, cancel := context.WithTimeout(ctx, step)
+	accounts, err := store.ListAllAccounts(listCtx)
+	cancel()
+	if err != nil {
+		log.Warn("meterd: list accounts (api reachability sweep) failed", "err", err)
+		return 0, 0
+	}
+	for _, a := range accounts {
+		if ctx.Err() != nil {
+			return stamped, failed
+		}
+		appsCtx, cancel := context.WithTimeout(ctx, step)
+		apps, listErr := store.ListApps(appsCtx, a.ID)
+		cancel()
+		if listErr != nil {
+			log.Warn("meterd: list apps (api reachability sweep) failed", "account_id", a.ID, "err", listErr)
+			continue
+		}
+		for _, app := range apps {
+			if ctx.Err() != nil {
+				return stamped, failed
+			}
+			readCtx, cancel := context.WithTimeout(ctx, step)
+			ok, invErr := store.WasInvokedSuccessfullySince(readCtx, a.ID, app.ID, since)
+			cancel()
+			if invErr != nil {
+				log.Warn("meterd: was-invoked-successfully-since failed", "account_id", a.ID, "app_id", app.ID, "err", invErr)
+				failed++
+				continue
+			}
+			value := 0.0
+			if ok {
+				value = 1.0
+			}
+			gauge.WithLabelValues(a.ID, app.ID).Set(value)
+			stamped++
+		}
+	}
+	return stamped, failed
 }
