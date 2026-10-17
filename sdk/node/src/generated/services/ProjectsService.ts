@@ -3368,5 +3368,1853 @@ export class ProjectsService {
         `,
       },
     });
+  }  /**
+   * List projects owned by a company organization.
+   * @returns ProjectSummaryResponse Projects visible to the current company member.
+   * @throws ApiError
+   */
+  public static listOrgProjects({
+    organization,
+  }: {
+    /**
+     * Company organization slug that owns the addressed project; requires current membership and compatible organization credentials.
+     */
+    organization: string,
+  }): CancelablePromise<Array<ProjectSummaryResponse>> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{organization}/projects',
+      path: {
+        'organization': organization,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Create or apply an organization project from uploaded source.
+   * Upload source and project_slug using the existing multipart contract. An adopted organization supplies the new project resource namespace and deployment budget. Database and async-route manifest bindings are rejected before personal services are resolved.
+   * @returns ApplyResponse Applied organization project and workload results.
+   * @throws ApiError
+   */
+  public static applyOrgProject({
+    organization,
+    formData,
+    planToken,
+    idempotencyKey,
+  }: {
+    /**
+     * Company organization slug that owns the addressed project; requires current membership and compatible organization credentials.
+     */
+    organization: string,
+    formData: ProjectApplyRequest,
+    /**
+     * Plan token returned by the organization source scan; must match the uploaded source and addressed project.
+     */
+    planToken?: string,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<ApplyResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{organization}/projects',
+      path: {
+        'organization': organization,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      query: {
+        'plan_token': planToken,
+      },
+      formData: formData,
+      mediaType: 'multipart/form-data',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: cron_invalid | plan_crons_not_allowed | plan_cron_quota`,
+        403: `code: plan_limit_apps | plan_limit_ram | plan_limit_concurrency | plan_min_instances_not_allowed | plan_limit_secrets | plan_cron_quota | app_layer_too_large | image_egress_denied`,
+        404: `code: not_found`,
+        409: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        413: `code: source_too_large`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Inspect an organization project and its workloads.
+   * @returns ProjectResponse Company project metadata, exclusions and recovery state.
+   * @throws ApiError
+   */
+  public static getOrgProject({
+    organization,
+    slug,
+  }: {
+    /**
+     * Company organization slug that owns the addressed project; requires current membership and compatible organization credentials.
+     */
+    organization: string,
+    /**
+     * Project slug within the organization named in the URL.
+     */
+    slug: string,
+  }): CancelablePromise<ProjectResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{organization}/projects/{slug}',
+      path: {
+        'organization': organization,
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Update an organization project production branch.
+   * @returns ProjectResponse Updated company project source settings.
+   * @throws ApiError
+   */
+  public static updateOrgProject({
+    organization,
+    slug,
+    requestBody,
+  }: {
+    /**
+     * Company organization slug that owns the addressed project; requires current membership and compatible organization credentials.
+     */
+    organization: string,
+    /**
+     * Project slug within the organization named in the URL.
+     */
+    slug: string,
+    requestBody: UpdateProjectRequest,
+  }): CancelablePromise<ProjectResponse> {
+    return __request(OpenAPI, {
+      method: 'PATCH',
+      url: '/v1/orgs/{organization}/projects/{slug}',
+      path: {
+        'organization': organization,
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Delete a company project and detach its workloads.
+   * Owners and admins may remove the company project. Its workloads remain live and are detached from the deleted project.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteOrgProject({
+    organization,
+    slug,
+  }: {
+    /**
+     * Company organization slug that owns the addressed project; requires current membership and compatible organization credentials.
+     */
+    organization: string,
+    /**
+     * Project slug within the organization named in the URL.
+     */
+    slug: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/orgs/{organization}/projects/{slug}',
+      path: {
+        'organization': organization,
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * List an organization project environment registry.
+   * @returns ProjectEnvironmentResponse Registered environments for this company project.
+   * @throws ApiError
+   */
+  public static listOrgProjectEnvironments({
+    organization,
+    slug,
+  }: {
+    /**
+     * Company organization slug that owns the addressed project; requires current membership and compatible organization credentials.
+     */
+    organization: string,
+    /**
+     * Project slug within the organization named in the URL.
+     */
+    slug: string,
+  }): CancelablePromise<Array<ProjectEnvironmentResponse>> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{organization}/projects/{slug}/environments',
+      path: {
+        'organization': organization,
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Create an empty organization project environment.
+   * Developers may create an empty environment. Creating it protected requires an owner or admin. from_environment and full cloning return a conflict until shared resource cloning is supported.
+   * @returns ProjectEnvironmentResponse New empty company environment and protection policy.
+   * @throws ApiError
+   */
+  public static createOrgProjectEnvironment({
+    organization,
+    slug,
+    requestBody,
+  }: {
+    /**
+     * Company organization slug that owns the addressed project; requires current membership and compatible organization credentials.
+     */
+    organization: string,
+    /**
+     * Project slug within the organization named in the URL.
+     */
+    slug: string,
+    requestBody: CreateProjectEnvironmentRequest,
+  }): CancelablePromise<ProjectEnvironmentResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{organization}/projects/{slug}/environments',
+      path: {
+        'organization': organization,
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Inspect a registered company project environment.
+   * @returns ProjectEnvironmentResponse Company environment metadata and current release state.
+   * @throws ApiError
+   */
+  public static getOrgProjectEnvironment({
+    organization,
+    slug,
+    environment,
+  }: {
+    /**
+     * Company organization slug that owns the addressed project; requires current membership and compatible organization credentials.
+     */
+    organization: string,
+    /**
+     * Project slug within the organization named in the URL.
+     */
+    slug: string,
+    /**
+     * Registered environment in the addressed organization project.
+     */
+    environment: string,
+  }): CancelablePromise<ProjectEnvironmentResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{organization}/projects/{slug}/environments/{environment}',
+      path: {
+        'organization': organization,
+        'slug': slug,
+        'environment': environment,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Change protection on an organization project environment.
+   * @returns ProjectEnvironmentResponse Updated company environment protection settings.
+   * @throws ApiError
+   */
+  public static updateOrgProjectEnvironment({
+    organization,
+    slug,
+    environment,
+    requestBody,
+  }: {
+    /**
+     * Company organization slug that owns the addressed project; requires current membership and compatible organization credentials.
+     */
+    organization: string,
+    /**
+     * Project slug within the organization named in the URL.
+     */
+    slug: string,
+    /**
+     * Registered environment in the addressed organization project.
+     */
+    environment: string,
+    requestBody: UpdateProjectEnvironmentRequest,
+  }): CancelablePromise<ProjectEnvironmentResponse> {
+    return __request(OpenAPI, {
+      method: 'PATCH',
+      url: '/v1/orgs/{organization}/projects/{slug}/environments/{environment}',
+      path: {
+        'organization': organization,
+        'slug': slug,
+        'environment': environment,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Delete an unused company project environment.
+   * An owner or admin may delete an unprotected, unused, non-production company environment. Existing release, configuration and resource guards still apply.
+   * @returns any Unused company project environment deleted.
+   * @throws ApiError
+   */
+  public static deleteOrgProjectEnvironment({
+    organization,
+    slug,
+    environment,
+    idempotencyKey,
+  }: {
+    /**
+     * Company organization slug that owns the addressed project; requires current membership and compatible organization credentials.
+     */
+    organization: string,
+    /**
+     * Project slug within the organization named in the URL.
+     */
+    slug: string,
+    /**
+     * Registered environment in the addressed organization project.
+     */
+    environment: string,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<any> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/orgs/{organization}/projects/{slug}/environments/{environment}',
+      path: {
+        'organization': organization,
+        'slug': slug,
+        'environment': environment,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Read live workload releases in a company environment.
+   * Each company workload contributes non-secret live release metadata. Stable environment URLs become available when a live deployment exists.
+   * @returns ProjectEnvironmentReleaseListResponse Non-secret live release metadata for the company environment.
+   * @throws ApiError
+   */
+  public static getOrgProjectEnvironmentReleases({
+    organization,
+    slug,
+    environment,
+  }: {
+    /**
+     * Company organization slug that owns the addressed project; requires current membership and compatible organization credentials.
+     */
+    organization: string,
+    /**
+     * Project slug within the organization named in the URL.
+     */
+    slug: string,
+    /**
+     * Registered environment in the addressed organization project.
+     */
+    environment: string,
+  }): CancelablePromise<ProjectEnvironmentReleaseListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{organization}/projects/{slug}/environments/{environment}/releases',
+      path: {
+        'organization': organization,
+        'slug': slug,
+        'environment': environment,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * List organization project release-set history.
+   * Company release graphs are ordered newest first. Supply next_before as before to continue through retained history.
+   * @returns ProjectReleaseSetListResponse Newest-first release graphs retained by this company project.
+   * @throws ApiError
+   */
+  public static listOrgProjectReleaseSets({
+    organization,
+    slug,
+    environment,
+    before,
+    limit = 50,
+  }: {
+    /**
+     * Company organization slug that owns the addressed project; requires current membership and compatible organization credentials.
+     */
+    organization: string,
+    /**
+     * Project slug within the organization named in the URL.
+     */
+    slug: string,
+    /**
+     * Registered environment in the addressed organization project.
+     */
+    environment: string,
+    /**
+     * Opaque next_before cursor from this company project history.
+     */
+    before?: string,
+    /**
+     * Maximum company history entries returned in one page; capped at 100.
+     */
+    limit?: number,
+  }): CancelablePromise<ProjectReleaseSetListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{organization}/projects/{slug}/environments/{environment}/release-sets',
+      path: {
+        'organization': organization,
+        'slug': slug,
+        'environment': environment,
+      },
+      query: {
+        'before': before,
+        'limit': limit,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Activate an immutable organization project release graph.
+   * Every company workload must have a live deployment with revision pinning that covers the requested TTL. Earlier organization release sets stay addressable until expiry.
+   * @returns ProjectReleaseSetResponse Newly activated company project deployment graph.
+   * @throws ApiError
+   */
+  public static publishOrgProjectReleaseSet({
+    organization,
+    slug,
+    environment,
+    requestBody,
+  }: {
+    /**
+     * Company organization slug that owns the addressed project; requires current membership and compatible organization credentials.
+     */
+    organization: string,
+    /**
+     * Project slug within the organization named in the URL.
+     */
+    slug: string,
+    /**
+     * Registered environment in the addressed organization project.
+     */
+    environment: string,
+    requestBody: PublishProjectReleaseSetRequest,
+  }): CancelablePromise<ProjectReleaseSetResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{organization}/projects/{slug}/environments/{environment}/release-sets',
+      path: {
+        'organization': organization,
+        'slug': slug,
+        'environment': environment,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Read the active organization project release graph.
+   * The addressed company environment must have an active release graph; otherwise this operation returns 404.
+   * @returns ProjectReleaseSetResponse Active release graph in the requested company environment.
+   * @throws ApiError
+   */
+  public static getActiveOrgProjectReleaseSet({
+    organization,
+    slug,
+    environment,
+  }: {
+    /**
+     * Company organization slug that owns the addressed project; requires current membership and compatible organization credentials.
+     */
+    organization: string,
+    /**
+     * Project slug within the organization named in the URL. The value is resolved in the selected project.
+     */
+    slug: string,
+    /**
+     * Registered environment in the addressed organization project. The value is resolved in the selected project.
+     */
+    environment: string,
+  }): CancelablePromise<ProjectReleaseSetResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{organization}/projects/{slug}/environments/{environment}/release-sets/active',
+      path: {
+        'organization': organization,
+        'slug': slug,
+        'environment': environment,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Inspect a retained organization project release set.
+   * Retired and expired company graphs remain inspectable for diagnosis. Inspecting one does not reactivate its routing.
+   * @returns ProjectReleaseSetResponse Retained company release graph, including retired or expired members.
+   * @throws ApiError
+   */
+  public static getOrgProjectReleaseSet({
+    organization,
+    slug,
+    environment,
+    release,
+  }: {
+    /**
+     * Company organization slug that owns the addressed project; requires current membership and compatible organization credentials.
+     */
+    organization: string,
+    /**
+     * Project slug within the organization named in the URL. The value is resolved in the selected project.
+     */
+    slug: string,
+    /**
+     * Registered environment in the addressed organization project. The value is resolved in the selected project.
+     */
+    environment: string,
+    /**
+     * Immutable release-set UUID retained by the company project.
+     */
+    release: string,
+  }): CancelablePromise<ProjectReleaseSetResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{organization}/projects/{slug}/environments/{environment}/release-sets/{release}',
+      path: {
+        'organization': organization,
+        'slug': slug,
+        'environment': environment,
+        'release': release,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Read effective state for a company project environment.
+   * Returns the company environment configuration, live releases, runtime variables and secret metadata without revealing secret values.
+   * @returns ProjectEnvironmentStateResponse Effective company configuration, routes and live release references.
+   * @throws ApiError
+   */
+  public static getOrgProjectEnvironmentState({
+    organization,
+    slug,
+    environment,
+  }: {
+    /**
+     * Company organization slug that owns the addressed project; requires current membership and compatible organization credentials.
+     */
+    organization: string,
+    /**
+     * Project slug within the organization named in the URL.
+     */
+    slug: string,
+    /**
+     * Registered environment in the addressed organization project.
+     */
+    environment: string,
+  }): CancelablePromise<ProjectEnvironmentStateResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{organization}/projects/{slug}/environments/{environment}/state',
+      path: {
+        'organization': organization,
+        'slug': slug,
+        'environment': environment,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Compare effective state between company project environments.
+   * Compares effective company environment configuration, workload releases, variables, secret metadata and declared routes.
+   * @returns ProjectEnvironmentDiffResponse Non-secret effective-state differences within the company project.
+   * @throws ApiError
+   */
+  public static getOrgProjectEnvironmentDiff({
+    organization,
+    slug,
+    environment,
+    from,
+  }: {
+    /**
+     * Company organization slug that owns the addressed project; requires current membership and compatible organization credentials.
+     */
+    organization: string,
+    /**
+     * Project slug within the organization named in the URL.
+     */
+    slug: string,
+    /**
+     * Registered environment in the addressed organization project.
+     */
+    environment: string,
+    /**
+     * Source environment filter within this company project.
+     */
+    from: string,
+  }): CancelablePromise<ProjectEnvironmentDiffResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{organization}/projects/{slug}/environments/{environment}/diff',
+      path: {
+        'organization': organization,
+        'slug': slug,
+        'environment': environment,
+      },
+      query: {
+        'from': from,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Read organization project environment configuration.
+   * @returns ProjectEnvironmentConfigResponse Latest immutable non-secret configuration for the company environment.
+   * @throws ApiError
+   */
+  public static getOrgProjectEnvironmentConfig({
+    organization,
+    slug,
+    environment,
+  }: {
+    /**
+     * Company organization slug that owns the addressed project; requires current membership and compatible organization credentials.
+     */
+    organization: string,
+    /**
+     * Project slug within the organization named in the URL.
+     */
+    slug: string,
+    /**
+     * Registered environment in the addressed organization project.
+     */
+    environment: string,
+  }): CancelablePromise<ProjectEnvironmentConfigResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{organization}/projects/{slug}/environments/{environment}/config',
+      path: {
+        'organization': organization,
+        'slug': slug,
+        'environment': environment,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Append an organization environment configuration version.
+   * Publishes a new immutable company configuration snapshot. Secret-shaped keys are refused; use the reviewed application secret APIs for sensitive values.
+   * @returns ProjectEnvironmentConfigResponse Published company environment configuration version and hash.
+   * @throws ApiError
+   */
+  public static updateOrgProjectEnvironmentConfig({
+    organization,
+    slug,
+    environment,
+    requestBody,
+  }: {
+    /**
+     * Company organization slug that owns the addressed project; requires current membership and compatible organization credentials.
+     */
+    organization: string,
+    /**
+     * Project slug within the organization named in the URL.
+     */
+    slug: string,
+    /**
+     * Registered environment in the addressed organization project.
+     */
+    environment: string,
+    requestBody: UpdateProjectEnvironmentConfigRequest,
+  }): CancelablePromise<ProjectEnvironmentConfigResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/orgs/{organization}/projects/{slug}/environments/{environment}/config',
+      path: {
+        'organization': organization,
+        'slug': slug,
+        'environment': environment,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Compare company environment configuration snapshots.
+   * @returns ProjectEnvironmentConfigDiffResponse Key-level differences between company configuration snapshots.
+   * @throws ApiError
+   */
+  public static getOrgProjectEnvironmentConfigDiff({
+    organization,
+    slug,
+    environment,
+    from,
+  }: {
+    /**
+     * Company organization slug that owns the addressed project; requires current membership and compatible organization credentials.
+     */
+    organization: string,
+    /**
+     * Project slug within the organization named in the URL.
+     */
+    slug: string,
+    /**
+     * Registered environment in the addressed organization project.
+     */
+    environment: string,
+    /**
+     * Source environment filter within this company project.
+     */
+    from: string,
+  }): CancelablePromise<ProjectEnvironmentConfigDiffResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{organization}/projects/{slug}/environments/{environment}/config/diff',
+      path: {
+        'organization': organization,
+        'slug': slug,
+        'environment': environment,
+      },
+      query: {
+        'from': from,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Preview promotion between organization project environments.
+   * Builds a company promotion plan from current source and target state. Protected target environments require an owner or admin to approve the exact returned plan.
+   * @returns ProjectEnvironmentPromotionPreviewResponse Current company promotion plan and its bound preview token.
+   * @throws ApiError
+   */
+  public static getOrgProjectEnvironmentPromotionPreview({
+    organization,
+    slug,
+    environment,
+    from,
+    syncConfig = false,
+  }: {
+    /**
+     * Company organization slug that owns the addressed project; requires current membership and compatible organization credentials.
+     */
+    organization: string,
+    /**
+     * Project slug within the organization named in the URL.
+     */
+    slug: string,
+    /**
+     * Registered environment in the addressed organization project.
+     */
+    environment: string,
+    /**
+     * Source environment filter within this company project.
+     */
+    from: string,
+    /**
+     * Copy non-secret company source configuration together with the target promotion graph.
+     */
+    syncConfig?: boolean,
+  }): CancelablePromise<ProjectEnvironmentPromotionPreviewResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{organization}/projects/{slug}/environments/{environment}/promotion-preview',
+      path: {
+        'organization': organization,
+        'slug': slug,
+        'environment': environment,
+      },
+      query: {
+        'from': from,
+        'sync_config': syncConfig,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Inspect a protected company environment approval.
+   * Reads the company approval lifecycle without returning its raw one-time approval token.
+   * @returns ProjectEnvironmentApprovalStatusResponse Lifecycle metadata for a company approval, without its raw token.
+   * @throws ApiError
+   */
+  public static getOrgProjectEnvironmentApprovalStatus({
+    organization,
+    slug,
+    environment,
+    approval,
+  }: {
+    /**
+     * Company organization slug that owns the addressed project; requires current membership and compatible organization credentials.
+     */
+    organization: string,
+    /**
+     * Project slug within the organization named in the URL.
+     */
+    slug: string,
+    /**
+     * Registered environment in the addressed organization project.
+     */
+    environment: string,
+    /**
+     * Plan approval UUID belonging to this company project environment.
+     */
+    approval: string,
+  }): CancelablePromise<ProjectEnvironmentApprovalStatusResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{organization}/projects/{slug}/environments/{environment}/approvals/{approval}',
+      path: {
+        'organization': organization,
+        'slug': slug,
+        'environment': environment,
+        'approval': approval,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Inspect an organization project promotion operation.
+   * Includes the company promotion cutover state, post-cutover verification result and safe workload checkpoints.
+   * @returns ProjectEnvironmentPromotionStatusResponse Company promotion status, verification and workload checkpoints.
+   * @throws ApiError
+   */
+  public static getOrgProjectEnvironmentPromotionStatus({
+    organization,
+    slug,
+    environment,
+    promotion,
+  }: {
+    /**
+     * Company organization slug that owns the addressed project; requires current membership and compatible organization credentials.
+     */
+    organization: string,
+    /**
+     * Project slug within the organization named in the URL.
+     */
+    slug: string,
+    /**
+     * Registered environment in the addressed organization project.
+     */
+    environment: string,
+    /**
+     * Durable promotion identifier in the company environment history.
+     */
+    promotion: string,
+  }): CancelablePromise<ProjectEnvironmentPromotionStatusResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{organization}/projects/{slug}/environments/{environment}/promotions/{promotion}',
+      path: {
+        'organization': organization,
+        'slug': slug,
+        'environment': environment,
+        'promotion': promotion,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * List organization project environment promotions.
+   * Returns compact company promotion history. Read a specific promotion operation for its complete workload checkpoints.
+   * @returns ProjectEnvironmentPromotionListResponse Newest-first company promotion history with continuation cursor.
+   * @throws ApiError
+   */
+  public static listOrgProjectEnvironmentPromotions({
+    organization,
+    slug,
+    environment,
+    before,
+    limit = 50,
+    from,
+    status,
+  }: {
+    /**
+     * Company organization slug that owns the addressed project; requires current membership and compatible organization credentials.
+     */
+    organization: string,
+    /**
+     * Project slug within the organization named in the URL.
+     */
+    slug: string,
+    /**
+     * Registered environment in the addressed organization project.
+     */
+    environment: string,
+    /**
+     * Opaque next_before cursor from this company project history. The value is resolved in the selected project.
+     */
+    before?: string,
+    /**
+     * Maximum company history entries returned in one page; capped at 100. The value is resolved in the selected project.
+     */
+    limit?: number,
+    /**
+     * Source environment filter within this company project. A slug pattern is validated.
+     */
+    from?: string,
+    /**
+     * Promotion lifecycle status to include from the company history.
+     */
+    status?: 'running' | 'succeeded' | 'failed',
+  }): CancelablePromise<ProjectEnvironmentPromotionListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{organization}/projects/{slug}/environments/{environment}/promotions',
+      path: {
+        'organization': organization,
+        'slug': slug,
+        'environment': environment,
+      },
+      query: {
+        'before': before,
+        'limit': limit,
+        'from': from,
+        'status': status,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Preview deletion of an organization project.
+   * @returns ProjectDeletePreviewResponse Company workloads and related state affected by project deletion.
+   * @throws ApiError
+   */
+  public static previewDeleteOrgProject({
+    organization,
+    slug,
+  }: {
+    /**
+     * Company organization slug that owns the addressed project; requires current membership and compatible organization credentials.
+     */
+    organization: string,
+    /**
+     * Project slug within the organization named in the URL.
+     */
+    slug: string,
+  }): CancelablePromise<ProjectDeletePreviewResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{organization}/projects/{slug}/delete-preview',
+      path: {
+        'organization': organization,
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Replace declared routes in a company project environment.
+   * The declared contract applies to the company workload environment URLs. The ordinary app hostname keeps its application-wide contract.
+   * @returns ProjectEnvironmentRoutePolicyResponse Updated company workload route contract and revision.
+   * @throws ApiError
+   */
+  public static updateOrgProjectEnvironmentRoutes({
+    organization,
+    slug,
+    environment,
+    workload,
+    requestBody,
+  }: {
+    /**
+     * Company organization slug that owns the addressed project; requires current membership and compatible organization credentials.
+     */
+    organization: string,
+    /**
+     * Project slug within the organization named in the URL. The value is resolved in the selected project.
+     */
+    slug: string,
+    /**
+     * Registered environment in the addressed organization project. The value is resolved in the selected project.
+     */
+    environment: string,
+    /**
+     * Workload name registered in the company project environment.
+     */
+    workload: string,
+    requestBody: UpdateProjectEnvironmentRoutePolicyRequest,
+  }): CancelablePromise<ProjectEnvironmentRoutePolicyResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/orgs/{organization}/projects/{slug}/environments/{environment}/workloads/{workload}/routes',
+      path: {
+        'organization': organization,
+        'slug': slug,
+        'environment': environment,
+        'workload': workload,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Remove a persisted company project deployment exclusion.
+   * Removes a company workload exclusion saved by a previous persist-exclude deployment so a later source apply can include it again.
+   * @returns any Company workload exclusion removed.
+   * @throws ApiError
+   */
+  public static orgProjectDeleteDeploymentScopeExclusion({
+    organization,
+    slug,
+    slug2,
+  }: {
+    /**
+     * Company organization slug that owns the addressed project; requires current membership and compatible organization credentials.
+     */
+    organization: string,
+    /**
+     * Project slug within the organization named in the URL. The value is resolved in the selected project.
+     */
+    slug: string,
+    /**
+     * Company workload app slug whose saved deployment exclusion is removed.
+     */
+    slug2: string,
+  }): CancelablePromise<{
+    ok?: boolean;
+  }> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/orgs/{organization}/projects/{slug}/exclusions/{slug2}',
+      path: {
+        'organization': organization,
+        'slug': slug,
+        'slug2': slug2,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `The company project or saved workload exclusion was not found; both return scope_exclusion_not_found.`,
+        409: `code: conflict`,
+      },
+    });
+  }
+  /**
+   * Preview an organization source upload before applying it.
+   * Accepts a source tarball and project_slug without mutating the organization project. Existing projects in a legacy creator namespace must use their project-specific scan URL.
+   * @returns PlanResponse Company source scan, workload partitions and deployment plan.
+   * @throws ApiError
+   */
+  public static scanOrgProject({
+    organization,
+    formData,
+  }: {
+    /**
+     * Company organization slug that owns the addressed project; requires current membership and compatible organization credentials.
+     */
+    organization: string,
+    formData: ProjectScanRequest,
+  }): CancelablePromise<PlanResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{organization}/projects/scan',
+      path: {
+        'organization': organization,
+      },
+      formData: formData,
+      mediaType: 'multipart/form-data',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: cron_invalid | plan_crons_not_allowed | plan_cron_quota`,
+        403: `code: plan_limit_apps | plan_limit_ram | plan_limit_concurrency | plan_min_instances_not_allowed | plan_limit_secrets | plan_cron_quota | app_layer_too_large | image_egress_denied`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        413: `code: source_too_large`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Record qualification of a company project release set.
+   * Binds closed-schema health and smoke evidence to the exact active release set in this company environment.
+   * @returns ProjectEnvironmentQualificationResponse Qualification evidence bound to the active company release graph.
+   * @throws ApiError
+   */
+  public static createOrgProjectEnvironmentQualification({
+    organization,
+    slug,
+    environment,
+    requestBody,
+  }: {
+    /**
+     * Company organization slug that owns the addressed project; requires current membership and compatible organization credentials.
+     */
+    organization: string,
+    /**
+     * Project slug within the organization named in the URL.
+     */
+    slug: string,
+    /**
+     * Registered environment in the addressed organization project.
+     */
+    environment: string,
+    requestBody: CreateProjectEnvironmentQualificationRequest,
+  }): CancelablePromise<ProjectEnvironmentQualificationResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{organization}/projects/{slug}/environments/{environment}/qualifications',
+      path: {
+        'organization': organization,
+        'slug': slug,
+        'environment': environment,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Promote live workloads between company project environments.
+   * Revalidates current company source and target state before cutover. A protected target consumes an approval bound to that exact plan. The authenticated teammate is recorded as the deployment actor.
+   * @returns ProjectEnvironmentPromotionResponse Durable company promotion result and per-workload deployment references.
+   * @throws ApiError
+   */
+  public static promoteOrgProjectEnvironment({
+    organization,
+    slug,
+    environment,
+    idempotencyKey,
+    requestBody,
+  }: {
+    /**
+     * Company organization slug that owns the addressed project; requires current membership and compatible organization credentials.
+     */
+    organization: string,
+    /**
+     * Project slug within the organization named in the URL.
+     */
+    slug: string,
+    /**
+     * Registered environment in the addressed organization project.
+     */
+    environment: string,
+    /**
+     * Company operation replay key, partitioned by the authenticated actor and credential.
+     */
+    idempotencyKey: string,
+    requestBody: PromoteProjectEnvironmentRequest,
+  }): CancelablePromise<ProjectEnvironmentPromotionResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{organization}/projects/{slug}/environments/{environment}/promote',
+      path: {
+        'organization': organization,
+        'slug': slug,
+        'environment': environment,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Restore company workloads from a recorded promotion.
+   * Restores the target deployments captured before this company promotion. Membership and deployment permission are checked before replaying an existing rollback receipt.
+   * @returns ProjectEnvironmentPromotionStatusResponse Company rollback result restoring captured target deployments.
+   * @throws ApiError
+   */
+  public static rollbackOrgProjectEnvironmentPromotion({
+    organization,
+    slug,
+    environment,
+    promotion,
+    idempotencyKey,
+  }: {
+    /**
+     * Company organization slug that owns the addressed project; requires current membership and compatible organization credentials.
+     */
+    organization: string,
+    /**
+     * Project slug within the organization named in the URL.
+     */
+    slug: string,
+    /**
+     * Registered environment in the addressed organization project.
+     */
+    environment: string,
+    /**
+     * Durable promotion identifier in the company environment history.
+     */
+    promotion: string,
+    /**
+     * Company operation replay key, partitioned by the authenticated actor and credential.
+     */
+    idempotencyKey: string,
+  }): CancelablePromise<ProjectEnvironmentPromotionStatusResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{organization}/projects/{slug}/environments/{environment}/promotions/{promotion}/rollback',
+      path: {
+        'organization': organization,
+        'slug': slug,
+        'environment': environment,
+        'promotion': promotion,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Replace company environment headers and CORS policy.
+   * An owner or admin may replace environment-specific headers and CORS rules. An explicit empty list disables inherited rules on that company environment URL.
+   * @returns ProjectEnvironmentEdgePolicyResponse Published company workload headers and CORS revision.
+   * @throws ApiError
+   */
+  public static updateOrgProjectEnvironmentPolicies({
+    organization,
+    slug,
+    environment,
+    workload,
+    requestBody,
+  }: {
+    /**
+     * Company organization slug that owns the addressed project; requires current membership and compatible organization credentials.
+     */
+    organization: string,
+    /**
+     * Project slug within the organization named in the URL. The value is resolved in the selected project.
+     */
+    slug: string,
+    /**
+     * Registered environment in the addressed organization project. The value is resolved in the selected project.
+     */
+    environment: string,
+    /**
+     * Workload name registered in the company project environment.
+     */
+    workload: string,
+    requestBody: UpdateProjectEnvironmentEdgePolicyRequest,
+  }): CancelablePromise<ProjectEnvironmentEdgePolicyResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/orgs/{organization}/projects/{slug}/environments/{environment}/workloads/{workload}/policies',
+      path: {
+        'organization': organization,
+        'slug': slug,
+        'environment': environment,
+        'workload': workload,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Approve an exact protected organization environment plan.
+   * @returns ProjectEnvironmentApprovalResponse Company approval receipt and one-time plan-bound token.
+   * @throws ApiError
+   */
+  public static approveOrgProjectEnvironment({
+    organization,
+    slug,
+    environment,
+    requestBody,
+  }: {
+    /**
+     * Company organization slug that owns the addressed project; requires current membership and compatible organization credentials.
+     */
+    organization: string,
+    /**
+     * Project slug within the organization named in the URL.
+     */
+    slug: string,
+    /**
+     * Registered environment in the addressed organization project.
+     */
+    environment: string,
+    requestBody: CreateProjectEnvironmentApprovalRequest,
+  }): CancelablePromise<ProjectEnvironmentApprovalResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{organization}/projects/{slug}/environments/{environment}/approvals',
+      path: {
+        'organization': organization,
+        'slug': slug,
+        'environment': environment,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Preview source for an existing organization project.
+   * The uploaded project_slug must match the addressed company project. This preview preserves existing resource IDs and works with legacy creator namespaces after erasure.
+   * @returns PlanResponse Deployment preview bound to the addressed company project.
+   * @throws ApiError
+   */
+  public static scanOrgProjectDeployment({
+    organization,
+    slug,
+    formData,
+  }: {
+    /**
+     * Company organization slug that owns the addressed project; requires current membership and compatible organization credentials.
+     */
+    organization: string,
+    /**
+     * Project slug within the organization named in the URL.
+     */
+    slug: string,
+    formData: ProjectScanRequest,
+  }): CancelablePromise<PlanResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{organization}/projects/{slug}/scan',
+      path: {
+        'organization': organization,
+        'slug': slug,
+      },
+      formData: formData,
+      mediaType: 'multipart/form-data',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: cron_invalid | plan_crons_not_allowed | plan_cron_quota`,
+        403: `code: plan_limit_apps | plan_limit_ram | plan_limit_concurrency | plan_min_instances_not_allowed | plan_limit_secrets | plan_cron_quota | app_layer_too_large | image_egress_denied`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        413: `code: source_too_large`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Deploy uploaded source to an existing company project.
+   * Uses the existing company project resource namespace even after creator erasure. The uploaded slug must match the URL; protected environments require an exact approved plan.
+   * @returns ApplyResponse Applied source results in the existing company resource namespace.
+   * @throws ApiError
+   */
+  public static deployOrgProject({
+    organization,
+    slug,
+    formData,
+    planToken,
+    idempotencyKey,
+  }: {
+    /**
+     * Company organization slug that owns the addressed project; requires current membership and compatible organization credentials.
+     */
+    organization: string,
+    /**
+     * Project slug within the organization named in the URL.
+     */
+    slug: string,
+    formData: ProjectApplyRequest,
+    /**
+     * Plan token returned by the organization source scan; must match the uploaded source and addressed project.
+     */
+    planToken?: string,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<ApplyResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/orgs/{organization}/projects/{slug}/deploy',
+      path: {
+        'organization': organization,
+        'slug': slug,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      query: {
+        'plan_token': planToken,
+      },
+      formData: formData,
+      mediaType: 'multipart/form-data',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: cron_invalid | plan_crons_not_allowed | plan_cron_quota`,
+        403: `code: plan_limit_apps | plan_limit_ram | plan_limit_concurrency | plan_min_instances_not_allowed | plan_limit_secrets | plan_cron_quota | app_layer_too_large | image_egress_denied`,
+        404: `code: not_found`,
+        409: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        413: `code: source_too_large`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Organization queues: Read a stage workload's complete desired queue configuration
+   * Organization queues: Read a stage workload's complete desired queue configuration. Owners, admins, developers and viewers can read metadata. Requires current membership and the corresponding credential scope. Mutations require organization billing adoption. IDs, messages, retries and receipts survive creator erasure. Returns logical definitions and the current workload revision. A missing
+   * collection returns 409 environment_queue_collection_unavailable and never
+   * inherits production queues. X-Gregale-Workload-Revision identifies the
+   * head to use when initializing or replacing the collection.
+   * Consumer activation is currently unavailable; saved definitions do not
+   * activate delivery or qualify the stage for promotion.
+   * @returns ProjectEnvironmentQueueBindingsResponse Organization queues: Read a stage workload's complete desired queue configuration. Complete stage-owned desired queue collection.
+   * @throws ApiError
+   */
+  public static getOrgProjectEnvironmentQueueBindings({
+    organization,
+    slug,
+    environment,
+    workload,
+  }: {
+    /**
+     * Organization queues: Read a stage workload's complete desired queue configuration. Company owning the application or project.
+     */
+    organization: string,
+    /**
+     * Organization queues: Read a stage workload's complete desired queue configuration. Project containing the workload and stage.
+     */
+    slug: string,
+    /**
+     * Organization queues: Read a stage workload's complete desired queue configuration. Registered stage. Production is managed through the app queue-bindings API.
+     */
+    environment: string,
+    /**
+     * Organization queues: Read a stage workload's complete desired queue configuration. Workload application slug belonging to this project.
+     */
+    workload: string,
+  }): CancelablePromise<ProjectEnvironmentQueueBindingsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{organization}/projects/{slug}/environments/{environment}/workloads/{workload}/queue-bindings',
+      path: {
+        'organization': organization,
+        'slug': slug,
+        'environment': environment,
+        'workload': workload,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Organization queues: Replace a stage workload's complete desired queue configuration
+   * Organization queues: Replace a stage workload's complete desired queue configuration. Owners, admins and developers can configure and operate queues. Requires current membership and the corresponding credential scope. Mutations require organization billing adoption. IDs, messages, retries and receipts survive creator erasure. Requires expected_revision to match the complete workload settings head,
+   * with zero for an uninitialized workload. An explicit empty bindings list
+   * removes all stage definitions. Stale revisions and protected stages
+   * return 409, including protected no-op writes. Definitions have logical
+   * names and no production consumer IDs. Existing deployments retain their
+   * pinned definitions. Consumer activation is currently unavailable.
+   * @returns ProjectEnvironmentQueueBindingsResponse Organization queues: Replace a stage workload's complete desired queue configuration. Stored desired queue definitions and their workload revision.
+   * @throws ApiError
+   */
+  public static replaceOrgProjectEnvironmentQueueBindings({
+    organization,
+    slug,
+    environment,
+    workload,
+    requestBody,
+  }: {
+    /**
+     * Organization queues: Read a stage workload's complete desired queue configuration. Company owning the application or project.
+     */
+    organization: string,
+    /**
+     * Organization queues: Read a stage workload's complete desired queue configuration. Project containing the workload and stage.
+     */
+    slug: string,
+    /**
+     * Organization queues: Read a stage workload's complete desired queue configuration. Registered stage. Production is managed through the app queue-bindings API.
+     */
+    environment: string,
+    /**
+     * Organization queues: Read a stage workload's complete desired queue configuration. Workload application slug belonging to this project.
+     */
+    workload: string,
+    requestBody: ReplaceProjectEnvironmentQueueBindingsRequest,
+  }): CancelablePromise<ProjectEnvironmentQueueBindingsResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/orgs/{organization}/projects/{slug}/environments/{environment}/workloads/{workload}/queue-bindings',
+      path: {
+        'organization': organization,
+        'slug': slug,
+        'environment': environment,
+        'workload': workload,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: feature_not_allowed — request targets a feature the plan does not entitle (async_invoke / queues / delayed_tasks on Free).`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
   }
 }

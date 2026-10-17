@@ -656,7 +656,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	// customer's cached layer must not serve a Pro build (the layer
 	// was built against the Hobby cap, not the Pro cap). Load the
 	// account eagerly so the cache lookup below can include the plan.
-	acct, acctErr := b.store.AccountByID(ctx, app.AccountID)
+	acct, acctErr := state.AppResourceAccount(ctx, b.store, app)
 	if acctErr != nil {
 		b.recoverClaimAfterLookupFailure(ctx, build, "load account", acctErr)
 		return BuildResult{}, fmt.Errorf("builderd: load account: %w", acctErr)

@@ -28,7 +28,7 @@ func (s *server) getManagedPostgresAccountingDiagnostics(w http.ResponseWriter, 
 		managedPostgresProblem(w, err)
 		return
 	}
-	target, err := s.store.AccountByID(r.Context(), accountID)
+	target, err := state.BillingResourceAccount(r.Context(), s.store, accountID)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Account not found", "the target account does not exist"))

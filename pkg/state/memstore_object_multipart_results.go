@@ -9,9 +9,13 @@ import (
 
 var _ ObjectMultipartCompletionStore = (*MemStore)(nil)
 
-func (m *MemStore) DispatchObjectMultipartCompletion(_ context.Context, u ObjectMultipartUpload) error {
+func (m *MemStore) DispatchObjectMultipartCompletion(ctx context.Context, u ObjectMultipartUpload) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return err
+	}
+
 	old, ok := m.objectMultipartUploads[u.ID]
 	if !ok || !m.ownedMultipartResultLocked(old, u) {
 		return ErrConflict
@@ -22,12 +26,17 @@ func (m *MemStore) DispatchObjectMultipartCompletion(_ context.Context, u Object
 	return nil
 }
 
-func (m *MemStore) FinishObjectMultipartCompletion(_ context.Context, u ObjectMultipartUpload, result ObjectMultipartCompletionResult) (ObjectMultipartUpload, error) {
+func (m *MemStore) FinishObjectMultipartCompletion(ctx context.Context, u ObjectMultipartUpload, result ObjectMultipartCompletionResult) (ObjectMultipartUpload, error) {
 	if !validMultipartFinalResult(u, result) {
 		return ObjectMultipartUpload{}, ErrConflict
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectMultipartUpload
+		return zero0, err
+	}
+
 	old, ok := m.objectMultipartUploads[u.ID]
 	b, owned := m.objectBuckets[u.BucketID]
 	if !ok || !owned || m.multipartPartWriterPendingLocked(u.ID, 0) || b.AccountID != u.AccountID || b.State != "ready" || !validMultipartResultOwner(old, u) || !old.CompletionDispatched {
@@ -55,12 +64,16 @@ func (m *MemStore) FinishObjectMultipartCompletion(_ context.Context, u ObjectMu
 	return cloneObjectMultipartUpload(old), nil
 }
 
-func (m *MemStore) RetryObjectMultipartCompletion(_ context.Context, u ObjectMultipartUpload, result ObjectMultipartCompletionResult, code string, delay time.Duration) error {
+func (m *MemStore) RetryObjectMultipartCompletion(ctx context.Context, u ObjectMultipartUpload, result ObjectMultipartCompletionResult, code string, delay time.Duration) error {
 	if !validMultipartRecoveryResult(result) || !validObjectMultipartRetry(code, delay) {
 		return ErrConflict
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return err
+	}
+
 	old, ok := m.objectMultipartUploads[u.ID]
 	if !ok || !m.ownedMultipartResultLocked(old, u) || !old.CompletionDispatched {
 		return ErrConflict
@@ -73,9 +86,13 @@ func (m *MemStore) RetryObjectMultipartCompletion(_ context.Context, u ObjectMul
 	return nil
 }
 
-func (m *MemStore) RejectObjectMultipartCompletionResult(_ context.Context, u ObjectMultipartUpload, result ObjectMultipartCompletionResult, code string) error {
+func (m *MemStore) RejectObjectMultipartCompletionResult(ctx context.Context, u ObjectMultipartUpload, result ObjectMultipartCompletionResult, code string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return err
+	}
+
 	old, ok := m.objectMultipartUploads[u.ID]
 	if !ok || !m.ownedMultipartResultLocked(old, u) || !old.CompletionDispatched || old.State != ObjectMultipartCompletingConditional || !validMultipartCompletionFailure(code) {
 		return ErrConflict

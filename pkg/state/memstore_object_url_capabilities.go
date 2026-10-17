@@ -10,9 +10,14 @@ import (
 
 var _ ObjectURLCapabilityStore = (*MemStore)(nil)
 
-func (m *MemStore) DispatchObjectURLUpload(_ context.Context, account, bucket, id string) (ObjectUploadCompletion, error) {
+func (m *MemStore) DispatchObjectURLUpload(ctx context.Context, account, bucket, id string) (ObjectUploadCompletion, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectUploadCompletion
+		return zero0, err
+	}
+
 	c, ok := m.objectUploadCompletions[id]
 	credential, exists := m.objectS3Credentials[c.SubjectID]
 	if !ok || !exists || credential.URL == nil || c.AccountID != account || c.BucketID != bucket || c.WritePhase != ObjectUploadPrepared || !validObjectURLReceipt(credential, c) || !m.objectURLCredentialLiveLocked(credential) {
@@ -48,12 +53,18 @@ func (m *MemStore) objectURLCredentialLiveLocked(c ObjectS3Credential) bool {
 	}
 	k, ok := m.keys[c.URL.APIKeyID]
 	g, granted := m.objectAccessGrants[objectBucketAccessGrantKey(c.BucketID, c.URL.APIKeyID)]
-	return ok && k.AccountID == c.AccountID && (k.Status == string(APIKeyStatusActive) || k.Status == string(APIKeyStatusGrace)) && (k.ExpiresAt == nil || k.ExpiresAt.After(m.clock())) && (apiKeyHasScope(k, "admin") || granted && g.AccountID == c.AccountID && apiKeyHasScope(k, "storage:"+c.Permission) && (g.Permission == c.Permission || g.Permission == ObjectBucketPermissionReadWrite))
+	return ok && m.objectKeyBelongsLocked(k, b) && (k.Status == string(APIKeyStatusActive) || k.Status == string(APIKeyStatusGrace)) && (k.ExpiresAt == nil || k.ExpiresAt.After(m.clock())) && (apiKeyHasScope(k, "admin") || granted && g.AccountID == c.AccountID && apiKeyHasScope(k, "storage:"+c.Permission) && (g.Permission == c.Permission || g.Permission == ObjectBucketPermissionReadWrite))
 }
 
-func (m *MemStore) IssueObjectURLCredential(_ context.Context, c ObjectS3Credential, receipt ObjectUploadCompletion, p api.ObjectStoragePolicy) (ObjectS3Credential, ObjectUploadCompletion, error) {
+func (m *MemStore) IssueObjectURLCredential(ctx context.Context, c ObjectS3Credential, receipt ObjectUploadCompletion, p api.ObjectStoragePolicy) (ObjectS3Credential, ObjectUploadCompletion, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectS3Credential
+		var zero1 ObjectUploadCompletion
+		return zero0, zero1, err
+	}
+
 	if !receipt.Protection.ValidInput() || receipt.VerifiedProtection != "" || receipt.EncryptionDefaultRevision != 0 || !validObjectURLCredential(c, receipt, m.clock()) || !m.objectURLCredentialLiveLocked(c) {
 		return ObjectS3Credential{}, ObjectUploadCompletion{}, ErrConflict
 	}
@@ -79,7 +90,7 @@ func (m *MemStore) IssueObjectURLCredential(_ context.Context, c ObjectS3Credent
 			return ObjectS3Credential{}, ObjectUploadCompletion{}, ErrConflict
 		}
 	}
-	c, err := m.insertObjectURLCredentialLocked(c)
+	c, err := m.insertObjectURLCredentialLocked(ctx, c)
 	if err != nil {
 		return ObjectS3Credential{}, ObjectUploadCompletion{}, err
 	}
@@ -96,7 +107,12 @@ func (m *MemStore) IssueObjectURLCredential(_ context.Context, c ObjectS3Credent
 	return cloneObjectS3Credential(c), cloneObjectUploadCompletion(receipt), nil
 }
 
-func (m *MemStore) insertObjectURLCredentialLocked(c ObjectS3Credential) (ObjectS3Credential, error) {
+func (m *MemStore) insertObjectURLCredentialLocked(ctx context.Context, c ObjectS3Credential) (ObjectS3Credential, error) {
+	var err error
+	c, err = m.prepareObjectIssuerLocked(ctx, c)
+	if err != nil {
+		return ObjectS3Credential{}, err
+	}
 	active := 0
 	for id, old := range m.objectS3Credentials {
 		if old.ID == c.ID || old.AccessKeyID == c.AccessKeyID {

@@ -371,7 +371,7 @@ func (p *workerScopePlan) applyCooldown(policy *state.ScalingPolicy, history sta
 }
 
 func (e *Engine) workerReplicaTargetForScope(ctx context.Context, app state.App, scope string, currentReplicas int, override *int) (int, string, error) {
-	account, err := e.store.AccountByID(ctx, app.AccountID)
+	account, err := state.AppResourceAccount(ctx, e.store, app)
 	if err != nil {
 		return 0, "", err
 	}
@@ -627,7 +627,7 @@ func (e *Engine) capWorkerReplicasToAccount(ctx context.Context, app state.App, 
 	if desired <= 0 {
 		return desired, nil
 	}
-	account, err := e.store.AccountByID(ctx, app.AccountID)
+	account, err := state.AppResourceAccount(ctx, e.store, app)
 	if err != nil {
 		return 0, err
 	}
@@ -635,7 +635,7 @@ func (e *Engine) capWorkerReplicasToAccount(ctx context.Context, app state.App, 
 	if !ok || limits.WorkerReplicasMax <= 0 {
 		return 0, nil
 	}
-	all, err := e.store.ListInstancesForAccount(ctx, app.AccountID)
+	all, err := e.store.ListInstancesForAccount(ctx, account.ResourceOwnerID())
 	if err != nil {
 		return 0, err
 	}

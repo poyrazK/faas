@@ -59,7 +59,7 @@ func (m *MemStore) CancelOperation(_ context.Context, accountID, tenantID, opera
 		}
 		m.invocations[inv.ID] = inv
 		if reserved {
-			m.decrementAccountAsyncInflightLocked(inv.AccountID)
+			m.decrementAccountAsyncInflightLocked(invocationAsyncSubject(inv))
 		}
 		op = m.operationData.operations[op.ID]
 	default:
@@ -119,7 +119,7 @@ func (s *PgStore) CancelOperation(ctx context.Context, accountID, tenantID, oper
 			return Operation{}, err
 		}
 		if inv.QuotaReserved {
-			if err := decrementAccountAsyncInflightTx(ctx, tx, inv.AccountID); err != nil {
+			if err := decrementAccountAsyncInflightTx(ctx, tx, invocationAsyncSubject(inv)); err != nil {
 				return Operation{}, err
 			}
 		}

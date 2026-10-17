@@ -38,14 +38,17 @@ func checkGatewayEgress(s ObjectUsageSnapshot, bucket string, bytes int64, at ti
 	return nil
 }
 
-func (m *MemStore) ReserveObjectStorageGatewayEgress(_ context.Context, bucket string, bytes int64, at time.Time, p api.ObjectStoragePolicy) error {
+func (m *MemStore) ReserveObjectStorageGatewayEgress(ctx context.Context, bucket string, bytes int64, at time.Time, p api.ObjectStoragePolicy) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return err
+	}
 	b, ok := m.objectBuckets[bucket]
 	if !ok {
 		return ErrNotFound
 	}
-	if err := checkGatewayEgress(m.objectUsageLocked(b.AccountID, at), bucket, bytes, at, p); err != nil {
+	if err := checkGatewayEgress(m.objectUsageLocked(m.objectBillingSubjectLocked(b), at), bucket, bytes, at, p); err != nil {
 		return err
 	}
 	if m.objectProviderRequests == nil {
@@ -69,10 +72,14 @@ func (s *PgStore) ReserveObjectStorageGatewayEgress(ctx context.Context, bucket 
 	if err != nil {
 		return err
 	}
-	if _, err = q.ObjectUsageLockAccount(ctx, tx, account); err != nil {
+	owner, ownerErr := q.ObjectStorageLockOwner(ctx, tx, sqlc.ObjectStorageLockOwnerParams{BucketID: mustPgUUID(bucket), AccountID: account})
+	if ownerErr != nil {
+		return mapErr(ownerErr)
+	}
+	if _, err = lockObjectUsageScope(ctx, tx, account, mustPgUUID(bucket)); err != nil {
 		return err
 	}
-	snapshot, err := readObjectUsage(ctx, tx, pgUUIDString(account), at)
+	snapshot, err := readObjectUsage(ctx, tx, pgUUIDString(owner.Subject), at)
 	if err != nil {
 		return err
 	}

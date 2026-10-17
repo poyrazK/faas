@@ -86,6 +86,15 @@ func TestUnverifiedAccountCannotReachDeployOrBilling_Property(t *testing.T) {
 		if _, err := store.CreateAPIKey(context.Background(), res.Account.ID, hash, "verification-property", api.ScopesAdminOnly); err != nil {
 			t.Fatal(err)
 		}
+		// Address a real personal app so resource authorization reaches the
+		// verification gate rather than returning an absent-resource response.
+		if _, err := store.CreateApp(t.Context(), state.App{AccountID: res.Account.ID, OrgID: res.PersonalOrg.ID, Slug: "blocked-app", Type: state.AppTypeApp}); err != nil {
+			t.Fatal(err)
+		}
+		before, err := store.CountDeployedApps(t.Context(), res.Account.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
 		srv := apidserver.NewServer(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "gregale.dev", apidserver.NoopNotifier{})
 		h := srv.Handler()
 		cases := []struct {
@@ -132,7 +141,7 @@ func TestUnverifiedAccountCannotReachDeployOrBilling_Property(t *testing.T) {
 				t.Fatalf("iteration %d %s %s code = %q", n, tc.method, tc.path, problem.Code)
 			}
 		}
-		if count, err := store.CountDeployedApps(context.Background(), res.Account.ID); err != nil || count != 0 {
+		if count, err := store.CountDeployedApps(context.Background(), res.Account.ID); err != nil || count != before {
 			t.Fatalf("iteration %d deployed apps = %d, err=%v", n, count, err)
 		}
 	}

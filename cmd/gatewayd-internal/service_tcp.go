@@ -20,10 +20,9 @@ import (
 )
 
 // newServiceTCPTargetResolver maps a service address to an app in the
-// caller's account (ADR-576). The account comes from the caller row, never
-// from the connection, so an address from another account resolves to
-// nothing. Availability and ports come from the same projection the HTTP
-// gateway routes with.
+// caller's storage namespace (ADR-576). The namespace comes from the caller
+// row, never the connection. Organization ownership must also match because
+// apps from separate organizations can share a creator's namespace.
 func newServiceTCPTargetResolver(store state.Store) gateway.ServiceTCPTargetResolver {
 	return func(ctx context.Context, callerAppID string, address netip.Addr) (gateway.ServiceTCPTarget, bool, error) {
 		index, ok := api.ServiceAddressIndexOf(address)
@@ -46,6 +45,9 @@ func newServiceTCPTargetResolver(store state.Store) gateway.ServiceTCPTargetReso
 		}
 		if err != nil {
 			return gateway.ServiceTCPTarget{}, false, fmt.Errorf("service TCP: resolve address: %w", err)
+		}
+		if app.Status == state.AppDeleted || !state.SameAppResourceOwner(caller, app) {
+			return gateway.ServiceTCPTarget{}, false, nil
 		}
 		resolved, routable, err := (pgRouter{store: store}).toApp(ctx, app)
 		if err != nil {

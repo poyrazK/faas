@@ -248,7 +248,7 @@ func recoverExpiredOperationExecutionsTx(ctx context.Context, tx pgx.Tx, now tim
 			return 0, err
 		}
 		if reserved {
-			if err := decrementAccountAsyncInflightTx(ctx, tx, inv.AccountID); err != nil {
+			if err := decrementAccountAsyncInflightTx(ctx, tx, invocationAsyncSubject(inv)); err != nil {
 				return 0, err
 			}
 		}

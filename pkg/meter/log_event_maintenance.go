@@ -30,7 +30,7 @@ const retentionLogEventsBatchSQL = `
 WITH expired AS MATERIALIZED (
     SELECT e.id, e.occurred_at
       FROM log_events e
-      LEFT JOIN accounts ac ON ac.id = e.account_id
+      LEFT JOIN app_resource_accounts ac ON ac.app_id = e.app_id
      WHERE e.occurred_at < now() - interval '1 day'
        AND e.occurred_at < now() - (CASE ac.plan
            WHEN 'free'  THEN interval '1 day'

@@ -9,6 +9,9 @@ import (
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/appaccess"
+	"github.com/onebox-faas/faas/pkg/apid/postgresaccess"
+	"github.com/onebox-faas/faas/pkg/apid/projectaccess"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -53,6 +56,16 @@ func (s *server) loadAndResolveProjectManifest(
 	}
 	if !present || manifest == nil {
 		return resolvedProjectManifest{}, nil
+	}
+	if _, shared := projectaccess.From(ctx); shared && manifest.AsyncRoutes != nil {
+		return resolvedProjectManifest{}, api.NewProblem(http.StatusConflict, api.CodeConflict, "Organization async bindings unavailable", "deploy application workloads with environment configuration; async-route bindings require separate organization ownership support")
+	}
+	_, sharedProject := projectaccess.From(ctx)
+	_, sharedApp := appaccess.FromContext(ctx)
+	if len(manifest.Databases) > 0 && (sharedProject || sharedApp) {
+		if p := postgresaccess.AuthorizeManifestBindings(ctx, loadOrgAuditFrom(s.audit)); p != nil {
+			return resolvedProjectManifest{}, p
+		}
 	}
 	if prob := validateManifestAgainstPlan(manifest, acct.Plan); prob != nil {
 		return resolvedProjectManifest{}, prob
@@ -103,6 +116,13 @@ func (s *server) resolveManifestPostgresBindings(
 	}
 	sort.Strings(selectedSlugs)
 
+	if managedpostgres.Organization(ctx) == "" {
+		org, err := s.store.OrgByPersonalAccount(ctx, acct.ID)
+		if err != nil && !errors.Is(err, state.ErrNotFound) {
+			return nil, api.ErrCapacity("could not resolve database ownership")
+		}
+		ctx = managedpostgres.WithOwnership(ctx, org.ID, acct.ID)
+	}
 	databases, err := s.managedPostgres.List(ctx, acct.ID)
 	if err != nil {
 		return nil, managedPostgresManifestProblem(err, "could not list managed PostgreSQL databases")
@@ -230,7 +250,7 @@ func (s *server) bindResolvedManagedPostgresBindings(
 				"Invalid manifest", fmt.Sprintf("database dependency %d targets workload %q, but no deployed app exists", i+1, dependency.appSlug))
 		}
 		binding, wasCreated, err := s.managedPostgresBindings.CreateWithResult(ctx, managedpostgres.CreateBindingRequest{
-			AccountID: acct.ID, DatabaseID: dependency.database.ID, AppID: appID,
+			AccountID: acct.ID, DatabaseAccountID: dependency.database.AccountID, DatabaseID: dependency.database.ID, AppID: appID,
 			Scope: dependency.scope, EnvironmentKey: dependency.environmentKey, Access: dependency.access,
 		})
 		if wasCreated && binding.ID != "" {

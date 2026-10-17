@@ -27,8 +27,8 @@ func (s *PgStore) CompleteInvocationClaim(ctx context.Context, id string, claim 
 	return s.completeInvocation(ctx, id, claim.Attempt, &claim, result)
 }
 
-func (m *MemStore) CompleteInvocationClaim(_ context.Context, id string, claim InvocationClaim, result json.RawMessage) error {
-	return m.completeInvocation(id, 0, &claim, result)
+func (m *MemStore) CompleteInvocationClaim(ctx context.Context, id string, claim InvocationClaim, result json.RawMessage) error {
+	return m.completeInvocationContext(ctx, id, 0, &claim, result)
 }
 
 func lockInvocationAttemptClaim(ctx context.Context, tx pgx.Tx, id string, claim InvocationClaim) error {

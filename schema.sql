@@ -45,6 +45,107 @@ CREATE TYPE public.compute_node_lifecycle AS ENUM (
 
 
 --
+-- Name: activate_org_billing_identity(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.activate_org_billing_identity() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF NEW.customer_id<>'' AND NEW.subscription_id<>'' THEN
+  UPDATE orgs SET resource_ownership_enabled=resource_ownership_enabled,updated_at=now()
+  WHERE id=NEW.account_id AND NOT personal_org
+   AND provider_customer_id=NEW.customer_id AND stripe_subscription_item=NEW.subscription_id;
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: activate_org_resource_ownership(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.activate_org_resource_ownership() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE already_enabled boolean:=false;
+BEGIN
+ IF TG_OP='UPDATE' THEN already_enabled:=OLD.resource_ownership_enabled;END IF;
+ NEW.resource_ownership_enabled:=already_enabled OR (NOT NEW.personal_org AND
+  (NEW.plan='free' OR EXISTS(SELECT 1 FROM billing_identities b WHERE b.account_id=NEW.id
+   AND b.customer_id=NEW.provider_customer_id AND b.subscription_id=NEW.stripe_subscription_item
+   AND b.customer_id<>'' AND b.subscription_id<>'')));
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: adopt_org_async_reservations(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.adopt_org_async_reservations(company uuid) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+DECLARE moved record; total bigint:=0; changed integer;
+BEGIN
+ PERFORM id FROM orgs WHERE id=company AND NOT personal_org AND resource_ownership_enabled FOR UPDATE;
+ IF NOT FOUND THEN RETURN; END IF;
+ -- Lock accepted work before counters; completion has the same row-before-counter order.
+ PERFORM i.id FROM invocations i JOIN apps a ON a.id=i.app_id WHERE a.org_id=company
+   AND i.quota_reserved AND i.async_quota_subject_id<>company ORDER BY i.id FOR UPDATE OF i;
+ FOR moved IN SELECT i.async_quota_subject_id AS subject,count(*) AS amount
+  FROM invocations i JOIN apps a ON a.id=i.app_id WHERE a.org_id=company AND i.quota_reserved
+  AND i.async_quota_subject_id<>company GROUP BY i.async_quota_subject_id ORDER BY i.async_quota_subject_id LOOP
+  UPDATE account_async_quota SET current_inflight=current_inflight-moved.amount,updated_at=now()
+   WHERE account_id=moved.subject AND current_inflight>=moved.amount;
+  GET DIAGNOSTICS changed=ROW_COUNT;
+  IF changed<>1 THEN RAISE EXCEPTION 'remediate inconsistent async reservation counters before organization adoption'; END IF;
+  total:=total+moved.amount;
+ END LOOP;
+ IF total>0 THEN
+  -- A compatible claimant installs the current api.Limits plan cap before admission.
+  INSERT INTO account_async_quota(account_id,max_inflight,current_inflight) VALUES(company,0,total)
+   ON CONFLICT(account_id) DO UPDATE SET current_inflight=account_async_quota.current_inflight+EXCLUDED.current_inflight,updated_at=now();
+  UPDATE invocations i SET async_quota_subject_id=company FROM apps a
+   WHERE a.id=i.app_id AND a.org_id=company AND i.quota_reserved AND i.async_quota_subject_id<>company;
+ END IF;
+END $$;
+
+
+--
+-- Name: adopt_queue_reservations_on_org_adoption(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.adopt_queue_reservations_on_org_adoption() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF NEW.resource_ownership_enabled AND NOT OLD.resource_ownership_enabled THEN PERFORM adopt_org_async_reservations(NEW.id); END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: advance_org_access_revision(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.advance_org_access_revision() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF NEW.role IS DISTINCT FROM OLD.role
+       OR NEW.removed_at IS DISTINCT FROM OLD.removed_at
+       OR NEW.joined_at IS DISTINCT FROM OLD.joined_at THEN
+        NEW.access_revision := nextval('org_memberships_access_revision_seq');
+    ELSE
+        NEW.access_revision := OLD.access_revision;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: alert_presets_set_updated_at(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -588,7 +689,7 @@ BEGIN
  IF NOT pg_try_advisory_xact_lock(hashtextextended('gregale.application-standard.controls.'||NEW.app_id::text,0)) THEN
   RAISE EXCEPTION 'standard egress inputs are busy' USING ERRCODE='55P03';
  END IF;
- PERFORM a.id FROM apps a JOIN orgs o ON o.id=a.org_id JOIN accounts acct ON acct.id=a.account_id
+ PERFORM a.id FROM apps a JOIN orgs o ON o.id=a.org_id JOIN app_resource_accounts acct ON acct.app_id=a.id
  JOIN app_application_standards e ON e.app_id=a.id WHERE a.id=NEW.app_id FOR SHARE OF a,o,acct,e NOWAIT;
  PERFORM id FROM compute_nodes WHERE id=NEW.node_id FOR SHARE NOWAIT;
  PERFORM id FROM instances WHERE app_id=NEW.app_id AND node_id=NEW.node_id
@@ -607,18 +708,18 @@ $$;
 
 
 --
--- Name: apps_streaming_plan_allowed(uuid); Type: FUNCTION; Schema: public; Owner: -
+-- Name: apps_streaming_owner_allowed(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.apps_streaming_plan_allowed(p_account_id uuid) RETURNS boolean
+CREATE FUNCTION public.apps_streaming_owner_allowed(namespace_id uuid, organization_id uuid) RETURNS boolean
     LANGUAGE sql STABLE
     AS $$
-    SELECT EXISTS (
-        SELECT 1
-          FROM accounts
-         WHERE id = p_account_id
-           AND plan <> 'free'
-    );
+ SELECT CASE WHEN o.personal_org=false AND o.resource_ownership_enabled THEN o.plan<>'free'
+        ELSE EXISTS(SELECT 1 FROM accounts a WHERE a.id=namespace_id AND a.plan<>'free') END
+ FROM orgs o WHERE o.id=organization_id
+ UNION ALL
+ SELECT EXISTS(SELECT 1 FROM accounts a WHERE a.id=namespace_id AND a.plan<>'free')
+ WHERE organization_id IS NULL;
 $$;
 
 
@@ -746,7 +847,7 @@ CREATE TABLE public.apps (
     CONSTRAINT apps_service_address_index_chk CHECK (((service_address_index IS NULL) OR ((service_address_index >= 1) AND (service_address_index <= 65534)))),
     CONSTRAINT apps_static_egress_ip_family_check CHECK (((static_egress_ip IS NULL) OR (family(static_egress_ip) = 4))),
     CONSTRAINT apps_status_check CHECK ((status = ANY (ARRAY['active'::text, 'evicted_cold'::text, 'deleted'::text]))),
-    CONSTRAINT apps_streaming_enabled_plan_check CHECK (((NOT streaming_enabled) OR public.apps_streaming_plan_allowed(account_id))),
+    CONSTRAINT apps_streaming_enabled_plan_check CHECK (((NOT streaming_enabled) OR public.apps_streaming_owner_allowed(account_id, org_id))),
     CONSTRAINT apps_type_check CHECK ((type = ANY (ARRAY['app'::text, 'function'::text]))),
     CONSTRAINT apps_visibility_chk CHECK ((visibility = ANY (ARRAY['public'::text, 'internal'::text]))),
     CONSTRAINT apps_warm_pool_size_chk CHECK (((warm_pool_size >= 0) AND (warm_pool_size <= max_concurrency))),
@@ -825,7 +926,7 @@ CREATE FUNCTION public.application_standard_egress_target(app uuid, node uuid) R
  'identity',jsonb_build_object('ProtocolVersion',coalesce(n.vmmd_admission_protocol,0),'NodeID',n.id::text,'Incarnation',coalesce(n.vmmd_incarnation::text,'')),
  'policy',jsonb_build_object('app_id',a.id::text,'revision',a.egress_allowlist_revision,'allowlist',to_jsonb(a.egress_allowlist::text[]),'ports',to_jsonb(a.egress_ports)),
  'policy_hash',application_standard_egress_policy_hash(a))
- FROM apps a JOIN orgs o ON o.id=a.org_id JOIN accounts acct ON acct.id=a.account_id
+ FROM apps a JOIN orgs o ON o.id=a.org_id JOIN app_resource_accounts acct ON acct.app_id=a.id
  JOIN app_application_standards e ON e.app_id=a.id JOIN compute_nodes n ON n.id=node
  WHERE a.id=app AND a.status='active' AND o.status='active' AND NOT o.deleted_pending AND acct.status='active'
  AND e.org_id=a.org_id AND e.project_id IS NOT DISTINCT FROM a.project_id
@@ -1223,7 +1324,7 @@ BEGIN
  IF NOT pg_try_advisory_xact_lock(hashtextextended('gregale.application-standard.controls.'||application_id::text,0)) THEN
   RAISE EXCEPTION 'application standard controls are busy' USING ERRCODE='55P03';
  END IF;
- PERFORM a.id FROM apps a JOIN orgs o ON o.id=a.org_id JOIN accounts acct ON acct.id=a.account_id
+ PERFORM a.id FROM apps a JOIN orgs o ON o.id=a.org_id JOIN app_resource_accounts acct ON acct.app_id=a.id
  WHERE a.id=application_id FOR SHARE OF o,acct NOWAIT;
  PERFORM p.id FROM projects p JOIN apps a ON a.project_id=p.id WHERE a.id=application_id FOR SHARE OF p NOWAIT;
  PERFORM d.id FROM app_log_drains d WHERE d.app_id=application_id ORDER BY d.id FOR SHARE NOWAIT;
@@ -1363,7 +1464,7 @@ CREATE FUNCTION public.application_standard_log_binding(app uuid, drain uuid) RE
   'resource_id',r.id::text,'desired_revision',e.desired_revision,'effective_hash',e.effective_hash,
   'resource_config_hash',r.config_hash,'drain_config_hash',application_standard_log_drain_hash(d))
 FROM app_log_drains d
- JOIN apps a ON a.id=d.app_id JOIN orgs o ON o.id=a.org_id JOIN accounts acct ON acct.id=a.account_id
+ JOIN apps a ON a.id=d.app_id JOIN orgs o ON o.id=a.org_id JOIN app_resource_accounts acct ON acct.app_id=a.id
  JOIN app_application_standards e ON e.app_id=a.id
  JOIN application_standard_control_bindings b ON b.app_id=a.id AND b.field='log_destinations' AND b.physical_id=d.id::text
  JOIN application_standard_log_destinations r ON r.id=b.resource_id
@@ -1568,7 +1669,7 @@ BEGIN
  END IF;
  PERFORM h.app_id FROM application_standard_log_health h
   WHERE h.app_id=NEW.app_id AND h.drain_id=NEW.drain_id AND h.node_id=NEW.node_id FOR UPDATE NOWAIT;
- PERFORM a.id FROM apps a JOIN orgs o ON o.id=a.org_id JOIN accounts acct ON acct.id=a.account_id
+ PERFORM a.id FROM apps a JOIN orgs o ON o.id=a.org_id JOIN app_resource_accounts acct ON acct.app_id=a.id
   JOIN app_application_standards e ON e.app_id=a.id WHERE a.id=NEW.app_id FOR SHARE OF a,o,acct,e NOWAIT;
  PERFORM d.id FROM app_log_drains d JOIN application_standard_control_bindings b ON b.app_id=d.app_id AND b.field='log_destinations' AND b.physical_id=d.id::text
   JOIN application_standard_log_destinations r ON r.id=b.resource_id
@@ -1618,7 +1719,7 @@ CREATE FUNCTION public.application_standard_log_inventory(app uuid) RETURNS json
   'desired_revision',e.desired_revision,'effective_hash',e.effective_hash,'drains',
   coalesce((SELECT jsonb_agg(jsonb_build_object('drain_id',d.id::text,'config_hash',application_standard_log_drain_hash(d)) ORDER BY d.id)
    FROM app_log_drains d WHERE d.app_id=a.id AND d.enabled),'[]'::jsonb))
- FROM apps a JOIN orgs o ON o.id=a.org_id JOIN accounts acct ON acct.id=a.account_id
+ FROM apps a JOIN orgs o ON o.id=a.org_id JOIN app_resource_accounts acct ON acct.app_id=a.id
  JOIN app_application_standards e ON e.app_id=a.id
  WHERE a.id=app AND a.status='active' AND o.status='active' AND NOT o.deleted_pending AND acct.status='active'
  AND e.org_id=a.org_id AND e.project_id IS NOT DISTINCT FROM a.project_id
@@ -1640,7 +1741,7 @@ BEGIN
  IF NOT pg_try_advisory_xact_lock(hashtextextended('gregale.application-standard.controls.'||NEW.app_id::text,0)) THEN
   RAISE EXCEPTION 'logging inventory is busy' USING ERRCODE='55P03';
  END IF;
- PERFORM a.id FROM apps a JOIN orgs o ON o.id=a.org_id JOIN accounts acct ON acct.id=a.account_id
+ PERFORM a.id FROM apps a JOIN orgs o ON o.id=a.org_id JOIN app_resource_accounts acct ON acct.app_id=a.id
  JOIN app_application_standards e ON e.app_id=a.id
  WHERE a.id=NEW.app_id FOR SHARE OF a,o,acct,e NOWAIT;
  PERFORM c.node_id FROM application_standard_log_consumers c JOIN compute_nodes n ON n.id=c.node_id
@@ -3286,14 +3387,17 @@ CREATE FUNCTION public.application_standard_runtime_snapshot(application_id uuid
     LANGUAGE plpgsql
     AS $$
 DECLARE a apps%ROWTYPE; e app_application_standards%ROWTYPE;
-        acct accounts%ROWTYPE; o orgs%ROWTYPE; d deployments%ROWTYPE; producers jsonb;
+        acct app_resource_accounts%ROWTYPE; o orgs%ROWTYPE; d deployments%ROWTYPE; producers jsonb;
 BEGIN
  SELECT * INTO a FROM apps WHERE id=application_id FOR SHARE NOWAIT;
  IF NOT FOUND THEN
   RAISE EXCEPTION 'runtime application is missing' USING ERRCODE='23514',CONSTRAINT='application_standards_pending';
  END IF;
  SELECT * INTO o FROM orgs WHERE id=a.org_id FOR SHARE NOWAIT;
- SELECT * INTO acct FROM accounts WHERE id=a.account_id FOR SHARE NOWAIT;
+ IF o.personal_org OR a.org_id IS NULL THEN
+  PERFORM id FROM accounts WHERE id=a.account_id FOR SHARE NOWAIT;
+ END IF;
+ SELECT * INTO acct FROM app_resource_accounts WHERE app_id=a.id;
  SELECT * INTO e FROM app_application_standards WHERE app_id=a.id FOR SHARE NOWAIT;
  IF NOT FOUND OR a.status='deleted' OR acct.status NOT IN ('active','past_due') OR acct.abuse_hold_at IS NOT NULL OR o.status NOT IN ('active','past_due') OR o.deleted_pending
    OR e.org_id IS DISTINCT FROM a.org_id OR e.project_id IS DISTINCT FROM a.project_id
@@ -4262,22 +4366,28 @@ CREATE FUNCTION public.apps_streaming_plan_account_guard() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
 BEGIN
-    IF NEW.plan = 'free'
-       AND OLD.plan IS DISTINCT FROM NEW.plan
-       AND EXISTS (
-           SELECT 1
-             FROM apps
-            WHERE account_id = NEW.id
-              AND streaming_enabled
-       ) THEN
-        RAISE EXCEPTION
-            'account % cannot downgrade to Free while a streaming-enabled app exists',
-            NEW.id
-            USING ERRCODE = '23514',
-                  CONSTRAINT = 'apps_streaming_enabled_plan_check';
-    END IF;
-    RETURN NEW;
-END;
+ IF NEW.plan='free' AND OLD.plan IS DISTINCT FROM NEW.plan AND EXISTS(
+  SELECT 1 FROM apps a LEFT JOIN orgs o ON o.id=a.org_id WHERE a.account_id=NEW.id
+  AND (a.org_id IS NULL OR o.personal_org OR NOT o.resource_ownership_enabled) AND a.streaming_enabled) THEN
+  RAISE EXCEPTION 'personal streaming app prevents Free downgrade' USING ERRCODE='23514',CONSTRAINT='apps_streaming_enabled_plan_check';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: apps_streaming_plan_allowed(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.apps_streaming_plan_allowed(p_account_id uuid) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $$
+    SELECT EXISTS (
+        SELECT 1
+          FROM accounts
+         WHERE id = p_account_id
+           AND plan <> 'free'
+    );
 $$;
 
 
@@ -4289,18 +4399,15 @@ CREATE FUNCTION public.apps_streaming_plan_app_guard() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
 BEGIN
-    IF NEW.streaming_enabled
-       AND (TG_OP = 'INSERT'
-            OR NOT OLD.streaming_enabled
-            OR OLD.account_id IS DISTINCT FROM NEW.account_id) THEN
-        PERFORM 1
-          FROM accounts
-         WHERE id = NEW.account_id
-         FOR NO KEY UPDATE;
-    END IF;
-    RETURN NEW;
-END;
-$$;
+ IF NEW.streaming_enabled THEN
+  IF EXISTS(SELECT 1 FROM orgs WHERE id=NEW.org_id AND NOT personal_org AND resource_ownership_enabled) THEN
+   PERFORM id FROM orgs WHERE id=NEW.org_id FOR SHARE;
+  ELSE
+   PERFORM id FROM accounts WHERE id=NEW.account_id FOR NO KEY UPDATE;
+  END IF;
+ END IF;
+ RETURN NEW;
+END $$;
 
 
 --
@@ -4598,6 +4705,99 @@ $$;
 
 
 --
+-- Name: bind_app_builder_owner(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.bind_app_builder_owner() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE app_org uuid;
+BEGIN
+ SELECT o.id INTO app_org FROM apps a JOIN orgs o ON o.id=a.org_id WHERE a.id=NEW.app_id AND NOT o.personal_org AND o.resource_ownership_enabled;
+ IF app_org IS NOT NULL THEN NEW.account_id:=app_org;NEW.org_id:=app_org;END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: bind_app_quota_owner(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.bind_app_quota_owner() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE personal_owner uuid; is_personal boolean;
+BEGIN
+    IF NEW.org_id IS NULL THEN
+        SELECT id INTO NEW.org_id FROM orgs
+        WHERE personal_org AND personal_owner_account_id = NEW.account_id;
+    END IF;
+    IF NEW.org_id IS NOT NULL THEN
+        SELECT personal_org, personal_owner_account_id INTO is_personal, personal_owner
+        FROM orgs WHERE id = NEW.org_id FOR SHARE;
+        IF is_personal AND personal_owner IS DISTINCT FROM NEW.account_id THEN
+            RAISE EXCEPTION 'app personal organization does not match account' USING ERRCODE = '23514';
+        END IF;
+    END IF;
+    RETURN NEW;
+END $$;
+
+
+--
+-- Name: bind_app_storage_owner(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.bind_app_storage_owner() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE app_org uuid; original_subject uuid;
+BEGIN
+ SELECT o.id INTO app_org FROM apps a JOIN orgs o ON o.id=a.org_id WHERE a.id=NEW.app_id AND NOT o.personal_org AND o.resource_ownership_enabled;
+ IF app_org IS NOT NULL THEN
+  SELECT account_id INTO original_subject FROM snapshot_storage_daily WHERE app_id=NEW.app_id AND day=NEW.day ORDER BY account_id LIMIT 1;
+  NEW.account_id:=coalesce(original_subject,app_org);
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: bind_app_usage_owner(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.bind_app_usage_owner() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE app_org uuid; personal boolean;
+BEGIN
+    IF NEW.app_id IS NOT NULL AND NEW.meter_kind = 'app' THEN
+        SELECT o.id, o.personal_org INTO app_org, personal FROM apps a JOIN orgs o ON o.id=a.org_id
+        WHERE a.id=NEW.app_id;
+        IF app_org IS NOT NULL THEN
+            NEW.org_id := app_org;
+            IF NOT personal AND EXISTS(SELECT 1 FROM orgs WHERE id=app_org AND resource_ownership_enabled) THEN NEW.account_id := app_org; END IF;
+        END IF;
+    END IF;
+    RETURN NEW;
+END $$;
+
+
+--
+-- Name: bind_core_app_resource_org(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.bind_core_app_resource_org() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE owning_org uuid;
+BEGIN
+ SELECT org_id INTO owning_org FROM apps WHERE id=NEW.app_id;
+ IF owning_org IS NOT NULL THEN NEW.org_id:=owning_org;END IF;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: bind_deployment_runtime_environment(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -4646,6 +4846,122 @@ BEGIN
     RETURN NEW;
 END;
 $$;
+
+
+--
+-- Name: bind_managed_postgres_resource_owner(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.bind_managed_postgres_resource_owner() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='UPDATE' AND (NEW.org_id IS DISTINCT FROM OLD.org_id OR NEW.account_id<>OLD.account_id) THEN
+  RAISE EXCEPTION 'database ownership is immutable' USING ERRCODE='23514', CONSTRAINT='managed_postgres_resource_owner';
+ END IF;
+ IF NEW.org_id IS NULL AND NEW.environment_clone_operation_id IS NOT NULL THEN
+  SELECT p.org_id INTO NEW.org_id FROM project_environment_clone_operations c JOIN projects p ON p.id=c.project_id WHERE c.id=NEW.environment_clone_operation_id;
+ END IF;
+ IF NEW.org_id IS NULL THEN SELECT id INTO NEW.org_id FROM orgs WHERE personal_org AND personal_owner_account_id=NEW.account_id; END IF;
+ PERFORM id FROM orgs WHERE id=NEW.org_id AND NOT deleted_pending FOR SHARE;
+ IF NOT FOUND THEN RAISE EXCEPTION 'database organization unavailable' USING ERRCODE='23514',CONSTRAINT='managed_postgres_resource_owner'; END IF;
+ IF NOT EXISTS(SELECT 1 FROM orgs o JOIN resource_namespaces n ON n.id=NEW.account_id
+               WHERE o.id=NEW.org_id AND (NOT o.personal_org OR o.personal_owner_account_id=NEW.account_id))
+ OR (NEW.restore_source_database_id IS NOT NULL AND NOT EXISTS(
+     SELECT 1 FROM managed_postgres_databases s WHERE s.id=NEW.restore_source_database_id AND s.org_id=NEW.org_id)) THEN
+  RAISE EXCEPTION 'invalid database organization' USING ERRCODE='23514', CONSTRAINT='managed_postgres_resource_owner';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: bind_object_bucket_organization(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.bind_object_bucket_organization() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE parent_org uuid; parent_account uuid;
+BEGIN
+ IF TG_OP='UPDATE' AND (NEW.org_id IS DISTINCT FROM OLD.org_id OR NEW.account_id<>OLD.account_id OR NEW.app_id<>OLD.app_id) THEN
+  RAISE EXCEPTION 'bucket ownership is immutable' USING ERRCODE='23514',CONSTRAINT='object_bucket_organization';
+ END IF;
+ SELECT a.org_id,a.account_id INTO parent_org,parent_account FROM apps a WHERE a.id=NEW.app_id;
+ IF NEW.org_id IS NULL THEN NEW.org_id=parent_org; END IF;
+ IF parent_org IS NULL OR NEW.org_id<>parent_org OR NEW.account_id<>parent_account THEN
+  RAISE EXCEPTION 'invalid bucket organization' USING ERRCODE='23514',CONSTRAINT='object_bucket_organization';
+ END IF;
+ PERFORM id FROM orgs WHERE id=NEW.org_id AND NOT deleted_pending FOR SHARE;
+ IF NOT FOUND THEN RAISE EXCEPTION 'bucket organization unavailable' USING ERRCODE='23514',CONSTRAINT='object_bucket_organization'; END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: bind_project_resource_owner(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.bind_project_resource_owner() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='UPDATE' AND (NEW.org_id IS DISTINCT FROM OLD.org_id OR NEW.account_id<>OLD.account_id) THEN
+  RAISE EXCEPTION 'project ownership is immutable' USING ERRCODE='23514', CONSTRAINT='project_resource_owner';
+ END IF;
+ IF NEW.org_id IS NULL THEN
+  SELECT o.id INTO NEW.org_id FROM orgs o WHERE o.personal_org AND o.personal_owner_account_id=NEW.account_id;
+ END IF;
+ IF NOT EXISTS (SELECT 1 FROM orgs o JOIN resource_namespaces n ON n.id=NEW.account_id
+                WHERE o.id=NEW.org_id AND (NOT o.personal_org OR o.personal_owner_account_id=NEW.account_id)) THEN
+  RAISE EXCEPTION 'invalid project ownership' USING ERRCODE='23503', CONSTRAINT='project_resource_owner';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: bind_project_workload_owner(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.bind_project_workload_owner() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE p projects%ROWTYPE;
+BEGIN
+ IF NEW.project_id IS NULL THEN RETURN NEW; END IF;
+ SELECT * INTO p FROM projects WHERE id=NEW.project_id FOR SHARE;
+ IF NOT FOUND OR p.account_id<>NEW.account_id THEN
+  RAISE EXCEPTION 'workload project namespace mismatch' USING ERRCODE='23514', CONSTRAINT='project_workload_owner';
+ END IF;
+ IF NEW.org_id IS NULL THEN NEW.org_id=p.org_id; END IF;
+ IF p.org_id<>NEW.org_id THEN
+  RAISE EXCEPTION 'workload project organization mismatch' USING ERRCODE='23514', CONSTRAINT='project_workload_owner';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: bind_queue_organization(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.bind_queue_organization() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE owner_org uuid; namespace uuid;
+BEGIN
+ SELECT org_id,account_id INTO owner_org,namespace FROM apps WHERE id=NEW.app_id FOR SHARE;
+ IF NOT FOUND OR owner_org IS NULL OR namespace IS DISTINCT FROM NEW.account_id
+   OR (NEW.org_id IS NOT NULL AND NEW.org_id IS DISTINCT FROM owner_org) THEN
+  RAISE EXCEPTION 'queue binding organization does not match its app' USING ERRCODE='23514';
+ END IF;
+ IF TG_OP='UPDATE' AND (NEW.account_id,NEW.app_id,NEW.org_id) IS DISTINCT FROM (OLD.account_id,OLD.app_id,OLD.org_id) THEN
+  RAISE EXCEPTION 'queue binding ownership is immutable' USING ERRCODE='23514';
+ END IF;
+ NEW.org_id:=owner_org;
+ RETURN NEW;
+END $$;
 
 
 --
@@ -5022,7 +5338,7 @@ BEGIN
     END IF;
     SELECT * INTO STRICT p FROM service_capacity_policy WHERE singleton;
     SELECT greatest(a.cpu_millicores,p.startup_cpu),coalesce((p.plan_vcpus->>ac.plan)::integer,4)
-      INTO main_cpu,guest_vcpu FROM apps a JOIN accounts ac ON ac.id=a.account_id WHERE a.id=NEW.app_id;
+      INTO main_cpu,guest_vcpu FROM apps a JOIN app_resource_accounts ac ON ac.app_id=a.id WHERE a.id=NEW.app_id;
     SELECT coalesce(sum(greatest(0,(sc->>'ram_mb')::integer)),0),
            coalesce(sum(greatest(0,coalesce(nullif(greatest(0,(sc->>'cpu_millicores')::integer),0),p.startup_cpu))),0)
       INTO side_ram,side_cpu FROM deployments d,
@@ -5193,6 +5509,37 @@ BEGIN
   RAISE EXCEPTION 'resize receipt does not match database' USING ERRCODE='23514', CONSTRAINT='managed_postgres_resize_conflict';
  END IF;
  RETURN NULL;
+END;
+$$;
+
+
+--
+-- Name: check_org_credential_membership(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.check_org_credential_membership() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    target_org uuid;
+    is_personal boolean;
+BEGIN
+    IF NEW.status = 'revoked' THEN RETURN NEW; END IF;
+    IF TG_TABLE_NAME = 'deploy_tokens' THEN
+        SELECT a.org_id INTO target_org FROM apps a WHERE a.id = NEW.app_id;
+    ELSE
+        target_org := NEW.org_id;
+    END IF;
+    SELECT o.personal_org INTO is_personal FROM orgs o WHERE o.id = target_org;
+    IF is_personal IS FALSE THEN
+        PERFORM 1 FROM org_memberships
+        WHERE org_id = target_org AND account_id = NEW.account_id AND removed_at IS NULL
+        FOR SHARE;
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'organization access revoked' USING ERRCODE = '42501';
+        END IF;
+    END IF;
+    RETURN NEW;
 END;
 $$;
 
@@ -10022,11 +10369,17 @@ END $$;
 CREATE FUNCTION public.fence_object_bucket_account_cleanup() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
-DECLARE current_status text;
+DECLARE current_status text; owner_org uuid; adopted boolean;
 BEGIN
- SELECT status INTO current_status FROM accounts WHERE id=NEW.account_id FOR UPDATE;
+ SELECT o.id,NOT o.personal_org AND o.resource_ownership_enabled INTO owner_org,adopted
+ FROM apps a JOIN orgs o ON o.id=a.org_id WHERE a.id=NEW.app_id AND a.account_id=NEW.account_id;
+ IF adopted THEN
+  SELECT CASE WHEN deleted_pending THEN 'deleted_pending' ELSE status END INTO current_status FROM orgs WHERE id=owner_org FOR UPDATE;
+ ELSE
+  SELECT status INTO current_status FROM accounts WHERE id=NEW.account_id FOR UPDATE;
+ END IF;
  IF current_status IS DISTINCT FROM 'active' THEN
-  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_bucket_account_cleanup_fenced',MESSAGE='Inactive account cannot reserve new object buckets';
+  RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_bucket_account_cleanup_fenced',MESSAGE='Inactive storage owner cannot reserve new object buckets';
  END IF;
  RETURN NEW;
 END $$;
@@ -10161,7 +10514,7 @@ BEGIN
  -- lock order. Re-read the lease and revision after acquiring those locks.
  SELECT account_id INTO aid FROM object_buckets WHERE id=NEW.bucket_id AND state='ready' FOR NO KEY UPDATE;
  IF aid IS NULL THEN RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Lifecycle deletion requires a ready owned bucket'; END IF;
- PERFORM 1 FROM accounts WHERE id=aid FOR UPDATE;
+ PERFORM 1 FROM resource_namespaces WHERE id=aid FOR UPDATE;
  SELECT EXISTS(
   SELECT 1 FROM object_lifecycle_scans s JOIN object_bucket_lifecycle p ON p.bucket_id=s.bucket_id,
    LATERAL jsonb_array_elements(s.rules) r
@@ -10216,7 +10569,7 @@ BEGIN
  -- follow the same bucket/account/upload ordering to avoid deadlocks.
  SELECT account_id INTO aid FROM object_buckets WHERE id=NEW.bucket_id AND account_id=NEW.account_id AND app_id=NEW.app_id AND state='ready' FOR NO KEY UPDATE;
  IF aid IS NULL THEN RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Multipart lifecycle admission requires an owned ready bucket'; END IF;
- PERFORM 1 FROM accounts WHERE id=aid FOR UPDATE;
+ PERFORM 1 FROM resource_namespaces WHERE id=aid FOR UPDATE;
  SELECT EXISTS(
   SELECT 1 FROM object_lifecycle_scans s JOIN object_bucket_lifecycle p ON p.bucket_id=s.bucket_id,
    LATERAL jsonb_array_elements(s.rules) r
@@ -10251,7 +10604,7 @@ BEGIN
    RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Protected lifecycle intents must begin prepared and unverified';
   END IF;
   SELECT account_id INTO aid FROM object_buckets WHERE id=NEW.bucket_id;
-  PERFORM 1 FROM accounts WHERE id=aid FOR UPDATE;
+  PERFORM 1 FROM resource_namespaces WHERE id=aid FOR UPDATE;
   PERFORM 1 FROM object_buckets WHERE id=NEW.bucket_id FOR NO KEY UPDATE;
   SELECT NEW.lifecycle_scan_id IS NOT NULL AND NEW.selector<>'' AND EXISTS(
    SELECT 1 FROM object_bucket_object_lock l WHERE l.bucket_id=NEW.bucket_id
@@ -10428,7 +10781,7 @@ BEGIN
  END IF;
  -- Match the application admission order: account before source bucket.
  -- An older replica's INSERT must not invert the account FK/row locks.
- PERFORM id FROM accounts WHERE id=NEW.account_id FOR UPDATE;
+ PERFORM id FROM resource_namespaces WHERE id=NEW.account_id FOR UPDATE;
  SELECT state INTO bucket_state FROM object_buckets
  WHERE id=NEW.bucket_id AND account_id=NEW.account_id AND app_id=NEW.app_id FOR UPDATE;
  IF bucket_state IS DISTINCT FROM 'ready' THEN
@@ -10527,7 +10880,7 @@ CREATE FUNCTION public.fence_object_write_key() RETURNS trigger
 DECLARE owner uuid; own_write uuid;
 BEGIN
  SELECT account_id INTO owner FROM object_buckets WHERE id=NEW.bucket_id;
- PERFORM 1 FROM accounts WHERE id=owner FOR UPDATE;
+ PERFORM 1 FROM resource_namespaces WHERE id=owner FOR UPDATE;
  PERFORM 1 FROM object_buckets WHERE id=NEW.bucket_id FOR SHARE;
  IF TG_TABLE_NAME='object_storage_write_admissions' THEN
   own_write:=NEW.id;
@@ -10559,7 +10912,7 @@ BEGIN
  ELSE
   IF NEW.kind<>'proxy' OR NEW.route_receipt THEN RETURN NEW; END IF;
  END IF;
- PERFORM 1 FROM accounts a JOIN object_buckets b ON b.account_id=a.id WHERE b.id=NEW.bucket_id FOR UPDATE OF a;
+ PERFORM 1 FROM resource_namespaces a JOIN object_buckets b ON b.account_id=a.id WHERE b.id=NEW.bucket_id FOR UPDATE OF a;
  PERFORM 1 FROM object_buckets WHERE id=NEW.bucket_id FOR NO KEY UPDATE;
  IF EXISTS(SELECT 1 FROM object_bucket_object_lock WHERE bucket_id=NEW.bucket_id AND (enabled_required OR native_enabled_observed OR state<>'ready')) THEN
   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_lock_admission_fenced',MESSAGE='Object Lock requires a tracked protection-aware write';
@@ -10628,7 +10981,9 @@ CREATE FUNCTION public.guard_account_managed_postgres_databases() RETURNS trigge
     AS $$
 BEGIN
     IF NEW.status = 'deleted_pending' AND EXISTS (
-        SELECT 1 FROM managed_postgres_databases WHERE account_id = NEW.id AND state <> 'deleted'
+        SELECT 1 FROM managed_postgres_databases d JOIN orgs o ON o.id=d.org_id
+        WHERE d.account_id=NEW.id AND d.state<>'deleted'
+          AND (o.personal_org OR NOT o.resource_ownership_enabled)
     ) THEN
         RAISE EXCEPTION 'account has managed postgres databases'
             USING ERRCODE = '23514', CONSTRAINT = 'account_has_managed_postgres_databases';
@@ -10636,6 +10991,22 @@ BEGIN
     RETURN NEW;
 END;
 $$;
+
+
+--
+-- Name: guard_account_shared_app_purge(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_account_shared_app_purge() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF org_app_identity_erasure_blocked(OLD.id) THEN
+        RAISE EXCEPTION 'organization ownership or unsupported resource migration required before account purge'
+            USING ERRCODE = '23514', CONSTRAINT = 'account_shared_app_ownership_pending';
+    END IF;
+    RETURN OLD;
+END $$;
 
 
 --
@@ -12612,7 +12983,7 @@ BEGIN
   RAISE EXCEPTION 'environment workload execution requires its current qualification attempt' USING ERRCODE='23514';
  END IF;
  SELECT a.ram_mb,c.status='active' AND c.abuse_hold_at IS NULL INTO app_ram,may_deploy
-  FROM apps a JOIN accounts c ON c.id=a.account_id WHERE a.id=NEW.app_id FOR SHARE OF c;
+  FROM apps a JOIN app_resource_accounts c ON c.app_id=a.id WHERE a.id=NEW.app_id FOR SHARE OF a;
  IF NOT coalesce(may_deploy,false) OR NEW.ram_mb IS DISTINCT FROM app_ram OR NOT EXISTS(
   SELECT 1 FROM compute_nodes WHERE id=NEW.node_id AND active AND lifecycle='active') OR
   (TG_OP='INSERT' AND (NEW.state<>'cold_booting' OR coalesce(NEW.netns,'')<>'' OR NEW.host_ip IS NOT NULL
@@ -12635,7 +13006,7 @@ DECLARE
  resource_name text; paths text[]; controller boolean;
 BEGIN
  IF TG_OP='DELETE' THEN row_value:=to_jsonb(OLD); ELSE row_value:=to_jsonb(NEW); END IF;
- IF TG_OP='DELETE' AND NOT EXISTS(SELECT 1 FROM apps a JOIN accounts c ON c.id=a.account_id
+ IF TG_OP='DELETE' AND NOT EXISTS(SELECT 1 FROM apps a JOIN app_resource_accounts c ON c.app_id=a.id
   JOIN project_environments e ON e.account_id=a.account_id AND e.project_id=a.project_id
   WHERE a.id=OLD.app_id AND a.account_id=OLD.account_id AND e.id=OLD.environment_id) THEN
   RETURN OLD;
@@ -13593,12 +13964,18 @@ CREATE FUNCTION public.guard_managed_postgres_binding_owner() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
 BEGIN
+    IF TG_OP='UPDATE' AND (NEW.account_id<>OLD.account_id OR NEW.database_id<>OLD.database_id OR NEW.app_id<>OLD.app_id
+       OR NEW.database_account_id IS DISTINCT FROM OLD.database_account_id) THEN
+        RAISE EXCEPTION 'binding ownership is immutable' USING ERRCODE='23514', CONSTRAINT='managed_postgres_binding_owner';
+    END IF;
+    SELECT account_id INTO NEW.database_account_id FROM managed_postgres_databases WHERE id=NEW.database_id;
     IF NOT EXISTS (
         SELECT 1
         FROM managed_postgres_databases database
         JOIN apps app ON app.id = NEW.app_id
         WHERE database.id = NEW.database_id
-          AND database.account_id = NEW.account_id
+          AND database.account_id = NEW.database_account_id
+          AND database.org_id = app.org_id
           AND app.account_id = NEW.account_id
           AND database.state <> 'deleted'
           AND app.status <> 'deleted'
@@ -14182,7 +14559,7 @@ BEGIN
   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_multipart_initiation_isolation',MESSAGE='Initiation dispatch requires READ COMMITTED';
  END IF;
  SELECT * INTO u FROM object_storage_multipart_uploads WHERE id=NEW.multipart_upload_id;
- PERFORM id FROM accounts WHERE id=u.account_id FOR UPDATE;
+ PERFORM id FROM resource_namespaces WHERE id=u.account_id FOR UPDATE;
  PERFORM id FROM object_buckets WHERE id=u.bucket_id FOR UPDATE;
  SELECT * INTO u FROM object_storage_multipart_uploads WHERE id=NEW.multipart_upload_id FOR UPDATE;
  IF u.id IS NULL OR u.state<>'initiating' OR u.provider_upload_id<>'' OR NOT EXISTS(
@@ -14249,7 +14626,7 @@ BEGIN
   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_multipart_part_writer_conflict',MESSAGE='Part writers require READ COMMITTED';
  END IF;
  SELECT * INTO u FROM object_storage_multipart_uploads WHERE id=NEW.upload_id;
- PERFORM id FROM accounts WHERE id=u.account_id FOR UPDATE;
+ PERFORM id FROM resource_namespaces WHERE id=u.account_id FOR UPDATE;
  PERFORM id FROM object_buckets WHERE id=u.bucket_id FOR UPDATE;
  SELECT * INTO u FROM object_storage_multipart_uploads WHERE id=NEW.upload_id FOR UPDATE;
  SELECT * INTO g FROM object_storage_multipart_part_grants WHERE upload_id=NEW.upload_id AND part_number=NEW.part_number;
@@ -14301,6 +14678,68 @@ BEGIN
  END IF;
  RETURN NEW;
 END $_$;
+
+
+--
+-- Name: guard_object_storage_billing_origin(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_object_storage_billing_origin() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF OLD.object_storage_owned_from IS NOT NULL AND NEW.object_storage_owned_from IS DISTINCT FROM OLD.object_storage_owned_from THEN
+  RAISE EXCEPTION 'storage billing origin is immutable' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: guard_org_managed_postgres_databases(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_org_managed_postgres_databases() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF (NEW.deleted_pending OR NEW.status='deleted_pending') AND EXISTS(
+     SELECT 1 FROM managed_postgres_databases WHERE org_id=NEW.id AND state<>'deleted') THEN
+  RAISE EXCEPTION 'organization has managed PostgreSQL databases' USING ERRCODE='23514',CONSTRAINT='org_has_managed_postgres_databases';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: guard_org_object_buckets(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_org_object_buckets() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF (NEW.deleted_pending OR NEW.status='deleted_pending') AND EXISTS(SELECT 1 FROM object_buckets b WHERE b.org_id=NEW.id AND b.state<>'deleted') THEN
+  RAISE EXCEPTION 'organization has object buckets' USING ERRCODE='23514',CONSTRAINT='org_has_object_buckets';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: guard_org_queue_bindings(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_org_queue_bindings() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF (NEW.deleted_pending OR NEW.status='deleted_pending') AND EXISTS
+  (SELECT 1 FROM queue_bindings b WHERE b.org_id=NEW.id AND b.retired_at IS NULL) THEN
+  RAISE EXCEPTION 'retire organization queue bindings before deletion' USING ERRCODE='23514',CONSTRAINT='org_has_queue_bindings';
+ END IF;
+ RETURN NEW;
+END $$;
 
 
 --
@@ -15553,6 +15992,29 @@ END $$;
 
 
 --
+-- Name: invalidate_object_usage_on_adoption(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.invalidate_object_usage_on_adoption() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF NEW.resource_ownership_enabled AND (TG_OP='INSERT' OR NOT OLD.resource_ownership_enabled) THEN
+  IF NEW.object_storage_owned_from IS NULL THEN
+   UPDATE orgs SET object_storage_owned_from=now() WHERE id=NEW.id;
+  END IF;
+  IF EXISTS(SELECT 1 FROM object_storage_billing_periods p WHERE p.period_start>=date_trunc('month',now())
+    AND EXISTS(SELECT 1 FROM object_buckets b WHERE b.org_id=NEW.id AND b.account_id=p.account_id)) THEN
+   RAISE EXCEPTION 'remediate finalized current-period object billing before adoption' USING ERRCODE='23514';
+  END IF;
+  DELETE FROM object_storage_usage_heads h WHERE h.period_start>=date_trunc('month',now()) AND
+   (h.account_id=NEW.id OR EXISTS(SELECT 1 FROM object_buckets b WHERE b.org_id=NEW.id AND b.account_id=h.account_id));
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: invalidate_route_lifecycle_approvals(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -15564,6 +16026,18 @@ BEGIN
  WHERE r.invalidated_at IS NULL AND ((r.app_id=OLD.app_id AND (r.baseline_deployment_id=OLD.deployment_id OR r.candidate_deployment_id=OLD.deployment_id)) OR EXISTS(SELECT 1 FROM jsonb_array_elements(r.receipt->'mappings') m WHERE m->>'successor_deployment_id'=OLD.deployment_id::text));
  RETURN NULL;
 END $$;
+
+
+--
+-- Name: invocation_async_subject(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.invocation_async_subject(app uuid, namespace uuid) RETURNS uuid
+    LANGUAGE sql STABLE
+    AS $$
+ SELECT CASE WHEN NOT o.personal_org AND o.resource_ownership_enabled THEN o.id ELSE a.account_id END
+ FROM apps a JOIN orgs o ON o.id=a.org_id WHERE a.id=app AND a.account_id=namespace;
+$$;
 
 
 --
@@ -15805,7 +16279,7 @@ CREATE FUNCTION public.lifecycle_configuration(app uuid) RETURNS jsonb
  'manifest',a.manifest,'ram_mb',a.ram_mb,'max_concurrency',a.max_concurrency,'idle_timeout_s',a.idle_timeout_s,'type',a.type,'cpu_millicores',a.cpu_millicores,'scaling_policy',a.scaling_policy,'request_rate_limit_rps',a.request_rate_limit_rps,'request_rate_limit_burst',a.request_rate_limit_burst),
  'account',jsonb_build_object('plan',c.plan,'status',c.status,'past_due_at',c.past_due_at,'abuse_hold_at',c.abuse_hold_at),
  'rules',coalesce((SELECT jsonb_agg(to_jsonb(r) ORDER BY r.id) FROM edge_rules r WHERE r.app_id=a.id),'[]'::jsonb))
- FROM apps a JOIN accounts c ON c.id=a.account_id WHERE a.id=app
+ FROM apps a JOIN app_resource_accounts c ON c.app_id=a.id WHERE a.id=app
 $$;
 
 
@@ -16264,6 +16738,17 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
+
+
+--
+-- Name: managed_postgres_usage_subject(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.managed_postgres_usage_subject(owner_org uuid, namespace uuid) RETURNS uuid
+    LANGUAGE sql STABLE
+    AS $$
+ SELECT CASE WHEN NOT o.personal_org AND o.resource_ownership_enabled THEN o.id ELSE namespace END FROM orgs o WHERE o.id=owner_org
+$$;
 
 
 --
@@ -17042,6 +17527,24 @@ $$;
 
 
 --
+-- Name: notify_org_app_resource_policy(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.notify_org_app_resource_policy() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE application record;
+BEGIN
+ IF ROW(NEW.plan,NEW.status,NEW.deleted_pending,NEW.abuse_hold_at,NEW.resource_ownership_enabled) IS NOT DISTINCT FROM
+    ROW(OLD.plan,OLD.status,OLD.deleted_pending,OLD.abuse_hold_at,OLD.resource_ownership_enabled) THEN RETURN NEW;END IF;
+ FOR application IN SELECT id,account_id FROM apps WHERE org_id=NEW.id ORDER BY id LOOP
+  PERFORM pg_notify('app_changed',jsonb_build_object('kind','updated','app_id',application.id,'account_id',application.account_id)::text);
+ END LOOP;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: notify_project_environment_workload_head(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -17281,6 +17784,62 @@ $_$;
 
 
 --
+-- Name: object_storage_credential_live(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.object_storage_credential_live(credential uuid) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $$
+ SELECT EXISTS(SELECT 1 FROM object_storage_s3_credentials c JOIN object_buckets b ON b.id=c.bucket_id
+ JOIN orgs o ON o.id=b.org_id WHERE c.id=credential AND c.status='active' AND b.state='ready' AND NOT o.deleted_pending
+ AND (CASE WHEN NOT o.personal_org AND o.resource_ownership_enabled THEN o.status IN ('active','past_due') AND o.abuse_hold_at IS NULL
+ ELSE EXISTS(SELECT 1 FROM accounts a WHERE a.id=b.account_id AND a.status IN ('active','past_due') AND a.abuse_hold_at IS NULL) END)
+ AND (o.personal_org OR c.managed_app_id IS NOT NULL OR c.rotation_parent_id IS NOT NULL
+      OR EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=b.org_id AND m.account_id=c.issuer_account_id
+         AND m.removed_at IS NULL AND m.access_revision=c.issuer_access_revision AND m.role IN ('owner','admin','developer'))))
+$$;
+
+
+--
+-- Name: object_storage_key_live(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.object_storage_key_live(key_id uuid, bucket_id uuid) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $$
+ SELECT EXISTS(SELECT 1 FROM api_keys k JOIN object_buckets b ON b.id=bucket_id JOIN orgs o ON o.id=b.org_id
+ WHERE k.id=key_id AND k.status IN ('active','grace') AND (k.expires_at IS NULL OR k.expires_at>now())
+
+ AND ((o.personal_org AND k.account_id=b.account_id AND k.org_id=o.id)
+ OR (NOT o.personal_org AND k.org_id=o.id AND EXISTS(SELECT 1 FROM org_memberships m
+ WHERE m.org_id=o.id AND m.account_id=k.account_id AND m.removed_at IS NULL AND m.role IN ('owner','admin','developer')))))
+$$;
+
+
+--
+-- Name: object_storage_usage_subject(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.object_storage_usage_subject(owner_org uuid, namespace uuid) RETURNS uuid
+    LANGUAGE sql STABLE
+    AS $$
+ SELECT object_storage_usage_subject(owner_org,namespace,date_trunc('month',now()))
+$$;
+
+
+--
+-- Name: object_storage_usage_subject(uuid, uuid, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.object_storage_usage_subject(owner_org uuid, namespace uuid, period_start timestamp with time zone) RETURNS uuid
+    LANGUAGE sql STABLE
+    AS $$
+ SELECT CASE WHEN EXISTS(SELECT 1 FROM orgs o WHERE o.id=owner_org AND NOT o.personal_org AND o.resource_ownership_enabled
+ AND period_start>=date_trunc('month',coalesce(o.object_storage_owned_from,now()) AT TIME ZONE 'UTC') AT TIME ZONE 'UTC') THEN owner_org ELSE namespace END
+$$;
+
+
+--
 -- Name: object_url_issuer_live(uuid, uuid, uuid, text, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -17289,7 +17848,7 @@ CREATE FUNCTION public.object_url_issuer_live(owner uuid, bucket uuid, issuer uu
     AS $$
  SELECT expiry>clock_timestamp() AND EXISTS(SELECT 1 FROM object_buckets b WHERE b.id=bucket AND b.account_id=owner AND b.state='ready') AND
   (issuer IS NULL OR EXISTS(SELECT 1 FROM api_keys k
-    WHERE k.id=issuer AND k.account_id=owner AND k.status IN ('active','grace') AND (k.expires_at IS NULL OR k.expires_at>clock_timestamp()) AND
+    WHERE k.id=issuer AND object_storage_key_live(k.id,bucket) AND k.status IN ('active','grace') AND (k.expires_at IS NULL OR k.expires_at>clock_timestamp()) AND
     ('admin'=ANY(k.scopes) OR (('storage:'||permission)=ANY(k.scopes) AND EXISTS(SELECT 1 FROM object_storage_access_grants g WHERE g.api_key_id=k.id AND g.account_id=owner AND g.bucket_id=bucket AND (g.permission=permission OR g.permission='read_write'))))));
 $$;
 
@@ -17511,7 +18070,10 @@ CREATE TABLE public.object_storage_s3_credentials (
     url_api_key_id uuid,
     url_expires_at timestamp with time zone,
     url_receipt_id uuid,
+    issuer_account_id uuid,
+    issuer_access_revision bigint,
     CONSTRAINT object_s3_conditional_url_request CHECK (((url_request IS NULL) OR public.valid_object_conditional_url_request(url_request))),
+    CONSTRAINT object_s3_issuer_pair CHECK ((((issuer_account_id IS NULL) AND (issuer_access_revision IS NULL)) OR ((issuer_account_id IS NOT NULL) AND (issuer_access_revision IS NOT NULL) AND (issuer_access_revision > 0)))),
     CONSTRAINT object_storage_s3_credentials_access_key_id_check CHECK ((access_key_id ~ '^GRGA[A-Z2-7]{16}$'::text)),
     CONSTRAINT object_storage_s3_credentials_check CHECK ((((status = 'active'::text) AND (revoked_at IS NULL)) OR ((status = 'revoked'::text) AND (revoked_at IS NOT NULL)))),
     CONSTRAINT object_storage_s3_credentials_kid_check CHECK (((length(kid) >= 1) AND (length(kid) <= 255))),
@@ -17678,6 +18240,204 @@ CREATE FUNCTION public.operator_node_receipt_immutable() RETURNS trigger
     AS $$
 BEGIN
  RAISE EXCEPTION 'Operator node execution receipts are immutable' USING ERRCODE='23514';
+END $$;
+
+
+--
+-- Name: org_app_identity_erasure_blocked(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.org_app_identity_erasure_blocked(identity_id uuid) RETURNS boolean
+    LANGUAGE plpgsql STABLE
+    AS $_$
+DECLARE resource_table text; found boolean;
+BEGIN
+    IF EXISTS (SELECT 1 FROM org_memberships m JOIN orgs o ON o.id=m.org_id
+               WHERE m.account_id=identity_id AND m.removed_at IS NULL
+                 AND m.role='owner' AND NOT o.personal_org AND NOT o.deleted_pending) THEN
+        RETURN true;
+    END IF;
+    IF EXISTS (SELECT 1 FROM managed_postgres_databases d JOIN orgs o ON o.id=d.org_id
+               WHERE d.account_id=identity_id AND NOT o.personal_org AND NOT o.resource_ownership_enabled) THEN
+        RETURN true;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM managed_postgres_databases d JOIN orgs o ON o.id=d.org_id
+                   WHERE d.account_id=identity_id AND NOT o.personal_org)
+       AND NOT EXISTS (SELECT 1 FROM apps a JOIN orgs o ON o.id=a.org_id
+                   WHERE a.account_id=identity_id AND NOT o.personal_org)
+       AND NOT EXISTS (SELECT 1 FROM projects p JOIN orgs o ON o.id=p.org_id
+                       WHERE p.account_id=identity_id AND NOT o.personal_org) THEN
+        RETURN false;
+    END IF;
+    IF EXISTS (SELECT 1 FROM apps a JOIN orgs o ON o.id=a.org_id
+               WHERE a.account_id=identity_id AND NOT o.personal_org
+                 AND (a.github_install_id IS NOT NULL OR NOT o.resource_ownership_enabled)) THEN
+        RETURN true;
+    END IF;
+    IF EXISTS (SELECT 1 FROM projects p JOIN orgs o ON o.id=p.org_id
+               WHERE p.account_id=identity_id AND NOT o.personal_org
+                 AND (coalesce(p.install_id,0) <> 0 OR NOT o.resource_ownership_enabled))
+       OR EXISTS (SELECT 1 FROM environment_git_sources g JOIN projects p ON p.id=g.project_id
+                  JOIN orgs o ON o.id=p.org_id WHERE p.account_id=identity_id AND NOT o.personal_org) THEN
+        RETURN true;
+    END IF;
+    IF EXISTS (SELECT 1 FROM triggers t JOIN apps a ON a.id=t.app_id JOIN orgs o ON o.id=a.org_id
+       WHERE t.account_id=identity_id AND NOT o.personal_org AND NOT
+       (t.kind='queue' AND t.source='queue' AND EXISTS(SELECT 1 FROM queue_bindings b
+        WHERE b.id=t.queue_binding_id AND b.app_id=t.app_id AND b.account_id=t.account_id AND b.org_id=a.org_id))) THEN
+      RETURN true;
+    END IF;
+    IF EXISTS (SELECT 1 FROM dead_letter_events d LEFT JOIN apps a ON a.id=d.app_id
+       LEFT JOIN orgs o ON o.id=a.org_id WHERE d.account_id=identity_id AND (a.id IS NULL OR
+       (NOT o.personal_org AND NOT (
+        (d.source='invocation' AND (d.origin='queue' OR EXISTS(SELECT 1 FROM invocations i WHERE i.id=d.source_id AND i.source='queue' AND i.app_id=d.app_id)))
+        OR (d.source='trigger_record' AND EXISTS(SELECT 1 FROM triggers t JOIN queue_bindings b ON b.id=t.queue_binding_id
+          WHERE t.id=d.trigger_id AND t.app_id=d.app_id AND t.account_id=d.account_id AND t.kind='queue' AND t.source='queue')))))) THEN
+      RETURN true;
+    END IF;
+    FOR resource_table IN SELECT unnest(ARRAY[
+        'alert_deliveries',
+        'alert_rules',
+        'api_consumer_plan_admissions',
+        'api_consumer_plan_assignments',
+        'api_consumer_plans',
+        'api_consumer_rate_cards',
+        'api_consumer_route_usage_minutes',
+        'api_consumer_usage_alerts',
+        'api_consumer_usage_events',
+        'api_consumer_usage_minutes',
+        'api_consumer_usage_statement_handoffs',
+        'api_consumer_usage_statements',
+        'api_consumers',
+        'app_api_routes',
+        'app_issues',
+        'app_private_network_attachment_nodes',
+        'app_private_network_attachments',
+        'app_route_priorities',
+        'app_route_removal_policies',
+        'app_tcp_listeners',
+        'app_udp_listeners',
+        'app_webhook_deliveries',
+        'app_webhook_event_outbox',
+        'app_webhooks',
+        'application_standard_snapshot_captures',
+        'automatic_route_checks',
+        'canary_route_gates',
+        'commit_sources',
+        'consumer_keys',
+        'cors_presets',
+        'customer_operation_definitions',
+        'customer_operation_idempotency',
+        'customer_operation_stream_leases',
+        'customer_operation_webhook_bindings',
+        'customer_operation_workflow_states',
+        'customer_operations',
+        'customer_workflow_playbook_progress',
+        'customer_workflow_readiness_subscriptions',
+        'data_upstreams',
+        'dev_bridge_sessions',
+        'dev_bridge_webhook_replays',
+        'edge_rules',
+        'entity_outbox_acceptances',
+        'event_recovery_jobs',
+        'event_subscription_capacity_commands',
+        'event_subscription_circuit_breakers',
+        'event_subscription_delivery_controls',
+        'event_subscriptions',
+        'exclusive_work_operations',
+        'exclusive_work_trigger_bindings',
+        'inbound_webhook_endpoints',
+        'issue_ingest_tokens',
+        'job_runs',
+        'managed_realtime_drain_operations',
+        'managed_realtime_endpoints',
+        'mcp_catalog_monitors',
+        'meterd_tenant_surface_cert_expiry_state',
+        'mirror_rules',
+        'outbound_app_bindings',
+        'platform_tenant_usage_minutes',
+        'prewarm_intents',
+        'profile_canary_checks',
+        'profile_deployment_checks',
+        'profile_deployment_policies',
+        'profile_investigations',
+        'profile_periodic_monitors',
+        'profile_route_alert_state',
+        'project_environment_clone_checkpoint_postgres_credentials',
+        'project_environment_clone_postgres_archives',
+        'project_environment_clone_postgres_contents',
+        'project_environment_clone_postgres_copy_readers',
+        'project_environment_clone_postgres_copy_targets',
+        'project_environment_clone_postgres_database_plans',
+        'project_environment_clone_postgres_database_sql_pins',
+        'project_environment_clone_postgres_imports',
+        'project_environment_clone_postgres_inventories',
+        'project_environment_clone_postgres_membership_plans',
+        'project_environment_clone_postgres_role_plans',
+        'project_environment_clone_postgres_snapshot_restores',
+        'project_environment_clone_postgres_target_sql_pins',
+        'project_environment_clone_postgres_verification_read_budgets',
+        'project_environment_clone_postgres_verifications',
+        'reserved_ip_leases',
+        'route_check_history',
+        'route_health_gates',
+        'route_health_history',
+        'route_health_notification_state',
+        'route_lifecycle_approvals',
+        'route_monitor_incidents',
+        'route_monitors',
+        'route_policy_receipts',
+        'route_removal_approvals',
+        'runtime_upgrade_operations',
+        'saved_route_requirements',
+        'scenario_test_chaos_matches',
+        'scenario_test_members',
+        'schedule_occurrences',
+        'tenant_surfaces',
+        'workflow_automation_publish_receipts',
+        'workflow_operation_effects',
+        'workflow_run_resumes'
+    ]::text[]) LOOP
+        EXECUTE format('SELECT EXISTS (SELECT 1 FROM %I WHERE account_id = $1)', resource_table)
+            INTO found USING identity_id;
+        IF found THEN RETURN true; END IF;
+    END LOOP;
+    RETURN false;
+END $_$;
+
+
+--
+-- Name: org_owner_identity_active(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.org_owner_identity_active() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE identity_status text;
+BEGIN
+ IF NEW.role='owner' AND NEW.removed_at IS NULL THEN
+  SELECT status INTO identity_status FROM accounts WHERE id=NEW.account_id FOR KEY SHARE;
+  IF identity_status IS DISTINCT FROM 'active' THEN
+   RAISE EXCEPTION 'organization owner must have an active human identity' USING ERRCODE='23514';
+  END IF;
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: org_streaming_plan_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.org_streaming_plan_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF NOT NEW.personal_org AND NEW.plan='free' AND OLD.plan IS DISTINCT FROM NEW.plan
+  AND EXISTS(SELECT 1 FROM apps WHERE org_id=NEW.id AND streaming_enabled) THEN
+  RAISE EXCEPTION 'company streaming app prevents Free downgrade' USING ERRCODE='23514',CONSTRAINT='apps_streaming_enabled_plan_check';
+ END IF;
+ RETURN NEW;
 END $$;
 
 
@@ -17975,7 +18735,7 @@ CREATE FUNCTION public.protect_financial_budget_revision() RETURNS trigger
 BEGIN
   -- Account removal may erase its financial data; ordinary policy deletion
   -- is a revisioned tombstone and never removes the audit trail.
-  IF TG_OP = 'DELETE' AND NOT EXISTS(SELECT 1 FROM accounts WHERE id = OLD.account_id) THEN RETURN OLD; END IF;
+  IF TG_OP = 'DELETE' AND NOT EXISTS(SELECT 1 FROM resource_namespaces WHERE id = OLD.account_id) THEN RETURN OLD; END IF;
   RAISE EXCEPTION 'financial budget revisions are append-only';
 END $$;
 
@@ -17988,7 +18748,7 @@ CREATE FUNCTION public.protect_financial_history() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
 BEGIN
-  IF TG_OP = 'DELETE' AND NOT EXISTS(SELECT 1 FROM accounts WHERE id = OLD.account_id) THEN RETURN OLD; END IF;
+  IF TG_OP = 'DELETE' AND NOT EXISTS(SELECT 1 FROM resource_namespaces WHERE id = OLD.account_id) THEN RETURN OLD; END IF;
   IF TG_TABLE_NAME = 'financial_price_snapshots' AND TG_OP = 'UPDATE' AND NEW IS NOT DISTINCT FROM OLD THEN RETURN NEW; END IF;
   RAISE EXCEPTION 'financial history is append-only';
 END $$;
@@ -18636,7 +19396,7 @@ CREATE FUNCTION public.protect_object_s3_copy_source_epoch() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
 BEGIN
- IF TG_OP='UPDATE' OR EXISTS(SELECT 1 FROM accounts WHERE id=OLD.account_id) THEN
+ IF TG_OP='UPDATE' OR EXISTS(SELECT 1 FROM resource_namespaces WHERE id=OLD.account_id) THEN
   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_copy_source_fenced',MESSAGE='Published copy source identities are immutable';
  END IF;
  RETURN OLD;
@@ -18794,7 +19554,7 @@ DECLARE b object_buckets; owner uuid;
 BEGIN
  -- The admission/cascade boundary uses account-before-bucket locking.
  SELECT account_id INTO owner FROM object_buckets WHERE id=coalesce(NEW.bucket_id,OLD.bucket_id);
- PERFORM 1 FROM accounts WHERE id=owner FOR UPDATE;
+ PERFORM 1 FROM resource_namespaces WHERE id=owner FOR UPDATE;
  SELECT * INTO b FROM object_buckets WHERE id=coalesce(NEW.bucket_id,OLD.bucket_id) FOR NO KEY UPDATE;
  IF TG_OP='DELETE' THEN
   IF FOUND AND b.state<>'deleted' THEN RAISE EXCEPTION USING ERRCODE='23514',MESSAGE='Preserve protection receipts until physical bucket deletion'; END IF;
@@ -18860,7 +19620,7 @@ CREATE FUNCTION public.protect_object_write_protection() RETURNS trigger
 DECLARE j object_bucket_object_lock; protected boolean; url_request jsonb;
 BEGIN
  IF TG_OP='INSERT' THEN
-  PERFORM 1 FROM accounts WHERE id=NEW.account_id FOR UPDATE;
+  PERFORM 1 FROM resource_namespaces WHERE id=NEW.account_id FOR UPDATE;
   PERFORM 1 FROM object_buckets WHERE id=NEW.bucket_id FOR NO KEY UPDATE;
   SELECT * INTO j FROM object_bucket_object_lock WHERE bucket_id=NEW.bucket_id;
   protected := FOUND AND (j.enabled_required OR j.native_enabled_observed OR j.observed_snapshot->>'enabled'='true');
@@ -19776,8 +20536,8 @@ BEGIN
       'project_id', app.project_id::text, 'deployment_id', instance.deployment_id::text,
       'environment_id', environment.id::text, 'name', COALESCE(app.slug, job.name)))
     INTO captured_plan, captured_attribution
-    FROM accounts account
-    LEFT JOIN apps app ON app.id = NEW.app_id AND app.account_id = account.id
+    FROM billing_resource_accounts account
+    LEFT JOIN apps app ON app.id = NEW.app_id AND (app.account_id = account.id OR app.org_id = account.id)
     LEFT JOIN jobs job ON job.id = NEW.job_id AND job.account_id = account.id
     LEFT JOIN instances instance ON instance.id = NEW.instance_id AND instance.app_id = app.id
     LEFT JOIN deployments deployment ON deployment.id = instance.deployment_id AND deployment.app_id = app.id
@@ -19874,6 +20634,45 @@ BEGIN
   NEW.schedule_revision := OLD.schedule_revision + 1;
  END IF;
  RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: revoke_object_storage_member_keys(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.revoke_object_storage_member_keys() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='DELETE' OR NEW.access_revision<>OLD.access_revision THEN
+  UPDATE object_storage_s3_credentials c SET status='revoked',revoked_at=coalesce(c.revoked_at,now())
+  FROM object_buckets b WHERE b.id=c.bucket_id AND b.org_id=OLD.org_id AND c.issuer_account_id=OLD.account_id AND c.status='active';
+ END IF;
+ RETURN NULL;
+END $$;
+
+
+--
+-- Name: revoke_removed_org_member_credentials(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.revoke_removed_org_member_credentials() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF NEW.removed_at IS NOT NULL AND OLD.removed_at IS NULL THEN
+        UPDATE api_keys SET status = 'revoked', revoked_at = coalesce(revoked_at, now())
+        WHERE org_id = NEW.org_id AND account_id = NEW.account_id AND status <> 'revoked';
+        UPDATE deploy_tokens t SET status = 'revoked', revoked_at = coalesce(t.revoked_at, now())
+        FROM apps a WHERE t.app_id = a.id AND a.org_id = NEW.org_id
+          AND t.account_id = NEW.account_id AND t.status <> 'revoked';
+        UPDATE org_invitations SET revoked_at = coalesce(revoked_at, now())
+        WHERE org_id = NEW.org_id AND consumed_at IS NULL AND revoked_at IS NULL
+          AND lower(email::text) = (SELECT lower(email::text) FROM accounts WHERE id = NEW.account_id);
+    END IF;
+    RETURN NEW;
 END;
 $$;
 
@@ -20158,6 +20957,19 @@ $$;
 
 
 --
+-- Name: seed_resource_namespace(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.seed_resource_namespace() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    INSERT INTO resource_namespaces(id) VALUES (NEW.id) ON CONFLICT DO NOTHING;
+    RETURN NEW;
+END $$;
+
+
+--
 -- Name: seed_runtime_upgrade_public_edge_withdrawals(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -20329,7 +21141,7 @@ WITH policy AS (SELECT * FROM service_capacity_policy WHERE singleton),
 eligible AS (
     SELECT a.id, a.ram_mb, a.cpu_millicores, a.manifest,
            coalesce((p.plan_vcpus->>ac.plan)::integer, 4) AS vcpu
-      FROM apps a JOIN accounts ac ON ac.id=a.account_id CROSS JOIN policy p
+      FROM apps a JOIN app_resource_accounts ac ON ac.app_id=a.id CROSS JOIN policy p
      WHERE a.status IN ('active','evicted_cold') AND a.manifest->>'execution_mode'='service'
 ), scopes AS (
     SELECT id AS app_id, 'default'::text AS scope FROM eligible
@@ -20368,7 +21180,7 @@ eligible AS (
            greatest(i.capacity_vcpu,CASE WHEN i.app_id IS NULL THEN 1 ELSE coalesce((p.plan_vcpus->>ac.plan)::integer,4) END) AS vcpu,
            (i.state<>'warm' AND i.mode IN ('normal','service') AND a.manifest->>'execution_mode'='service'
               AND EXISTS (SELECT 1 FROM demand x WHERE x.key=a.id::text || ':' || coalesce(d.scope,'default') )) AS service
-      FROM instances i LEFT JOIN apps a ON a.id=i.app_id LEFT JOIN accounts ac ON ac.id=a.account_id
+      FROM instances i LEFT JOIN apps a ON a.id=i.app_id LEFT JOIN app_resource_accounts ac ON ac.app_id=a.id
       LEFT JOIN deployments d ON d.id=i.deployment_id CROSS JOIN policy p
      WHERE i.state IN ('waking','cold_booting','running','draining','warm','snapshotting','migrating')
     UNION ALL
@@ -20724,6 +21536,65 @@ BEGIN
   NEW.serving_ended_at := NULL;
  ELSIF OLD.status = 'live' AND OLD.traffic_percent > 0 AND NEW.status <> 'snapshotting' THEN
   NEW.serving_ended_at := now();
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: stamp_invocation_async_subject(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.stamp_invocation_async_subject() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE expected uuid;
+BEGIN
+ IF NEW.quota_reserved THEN
+  expected:=invocation_async_subject(NEW.app_id,NEW.account_id);
+  IF expected IS NULL THEN RAISE EXCEPTION 'invalid invocation quota ownership' USING ERRCODE='23514'; END IF;
+  IF TG_OP='INSERT' OR NOT OLD.quota_reserved THEN
+   NEW.async_quota_subject_id:=expected;
+  ELSIF NEW.async_quota_subject_id IS DISTINCT FROM OLD.async_quota_subject_id AND NEW.async_quota_subject_id IS DISTINCT FROM expected THEN
+   RAISE EXCEPTION 'invocation quota reservation ownership is fenced' USING ERRCODE='23514';
+  END IF;
+ ELSIF TG_OP='UPDATE' AND OLD.quota_reserved THEN
+  NEW.async_quota_subject_id:=OLD.async_quota_subject_id;
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: stamp_object_storage_issuer(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.stamp_object_storage_issuer() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE owner_org uuid; personal boolean; issuer_revision bigint;
+BEGIN
+ SELECT b.org_id,o.personal_org INTO owner_org,personal FROM object_buckets b JOIN orgs o ON o.id=b.org_id
+ WHERE b.id=NEW.bucket_id AND b.account_id=NEW.account_id;
+ IF NOT FOUND THEN RAISE EXCEPTION 'invalid storage credential bucket' USING ERRCODE='23514'; END IF;
+ IF NEW.managed_app_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM apps a WHERE a.id=NEW.managed_app_id AND a.org_id=owner_org AND a.account_id=NEW.account_id) THEN
+  RAISE EXCEPTION 'invalid storage binding organization' USING ERRCODE='23514';
+ END IF;
+ IF TG_OP='UPDATE' AND (NEW.account_id<>OLD.account_id OR NEW.bucket_id<>OLD.bucket_id OR NEW.issuer_account_id IS DISTINCT FROM OLD.issuer_account_id
+ OR NEW.issuer_access_revision IS DISTINCT FROM OLD.issuer_access_revision OR NEW.managed_app_id IS DISTINCT FROM OLD.managed_app_id OR NEW.rotation_parent_id IS DISTINCT FROM OLD.rotation_parent_id) THEN
+  RAISE EXCEPTION 'storage credential ownership is immutable' USING ERRCODE='23514';
+ END IF;
+ IF (NEW.managed_app_id IS NOT NULL OR NEW.rotation_parent_id IS NOT NULL) AND NEW.issuer_account_id IS NOT NULL THEN
+  RAISE EXCEPTION 'application credentials cannot carry human authority' USING ERRCODE='23514';
+ END IF;
+ IF NOT personal AND NEW.managed_app_id IS NULL AND NEW.rotation_parent_id IS NULL THEN
+  NEW.issuer_account_id=coalesce(NEW.issuer_account_id,(SELECT account_id FROM api_keys WHERE id=NEW.url_api_key_id),NEW.account_id);
+  SELECT access_revision INTO issuer_revision FROM org_memberships WHERE org_id=owner_org AND account_id=NEW.issuer_account_id
+   AND removed_at IS NULL AND role IN ('owner','admin','developer') FOR SHARE;
+  IF NOT FOUND OR (NEW.issuer_access_revision IS NOT NULL AND NEW.issuer_access_revision<>issuer_revision) THEN
+   RAISE EXCEPTION 'organization access revoked' USING ERRCODE='42501';
+  END IF;
+  NEW.issuer_access_revision=issuer_revision;
  END IF;
  RETURN NEW;
 END $$;
@@ -21323,7 +22194,7 @@ CREATE FUNCTION public.workflow_event_recipients(target_account uuid, event_sour
    'account_id', a.account_id, 'app_id', a.id, 'deployment_id', d.id,
    'source', definition->'trigger'->>'source', 'type', definition->'trigger'->>'event_type',
    'filter', coalesce(definition->'trigger'->'filter', '{}'::jsonb), 'workflow', definition)
- FROM apps a JOIN accounts ac ON ac.id = a.account_id
+ FROM apps a JOIN app_resource_accounts ac ON ac.app_id=a.id
  JOIN LATERAL (
    SELECT dep.id, dep.workflows FROM deployments dep
    WHERE dep.app_id = a.id AND dep.status = 'live' AND dep.scope = 'default'
@@ -21380,7 +22251,7 @@ CREATE FUNCTION public.workflow_tenant_event_recipients(target_account uuid, tar
    'deployment_id', d.id,
    'source', definition->'trigger'->>'source', 'type', definition->'trigger'->>'event_type',
    'filter', coalesce(definition->'trigger'->'filter', '{}'::jsonb), 'workflow', definition)
- FROM apps a JOIN accounts ac ON ac.id = a.account_id
+ FROM apps a JOIN app_resource_accounts ac ON ac.app_id=a.id
  JOIN platform_tenants t ON t.id = target_tenant AND t.account_id = a.account_id AND t.status = 'active'
  JOIN LATERAL (
    SELECT dep.id, dep.workflows FROM deployments dep
@@ -23064,6 +23935,113 @@ CREATE TABLE public.app_registry_credentials (
 
 
 --
+-- Name: orgs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.orgs (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    slug text NOT NULL,
+    name text NOT NULL,
+    personal_org boolean DEFAULT false NOT NULL,
+    personal_owner_account_id uuid,
+    plan text DEFAULT 'free'::text NOT NULL,
+    status text DEFAULT 'active'::text NOT NULL,
+    provider_customer_id text,
+    stripe_subscription_item text,
+    deleted_pending boolean DEFAULT false NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    resource_ownership_enabled boolean DEFAULT false NOT NULL,
+    past_due_at timestamp with time zone,
+    last_quota_warning_at timestamp with time zone,
+    suspended_reason text,
+    abuse_hold_at timestamp with time zone,
+    abuse_hold_reason text,
+    billing_email text DEFAULT ''::text NOT NULL,
+    business_name text DEFAULT ''::text NOT NULL,
+    billing_address text DEFAULT ''::text NOT NULL,
+    tax_id text DEFAULT ''::text NOT NULL,
+    object_storage_owned_from timestamp with time zone,
+    CONSTRAINT org_object_storage_owned_from_finite CHECK (((object_storage_owned_from IS NULL) OR isfinite(object_storage_owned_from))),
+    CONSTRAINT orgs_personal_owner_link CHECK ((((personal_org = true) AND (personal_owner_account_id IS NOT NULL)) OR ((personal_org = false) AND (personal_owner_account_id IS NULL)))),
+    CONSTRAINT orgs_plan_chk CHECK ((plan = ANY (ARRAY['free'::text, 'hobby'::text, 'pro'::text, 'scale'::text]))),
+    CONSTRAINT orgs_slug_shape CHECK ((slug ~ '^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$'::text)),
+    CONSTRAINT orgs_status_chk CHECK ((status = ANY (ARRAY['active'::text, 'past_due'::text, 'suspended'::text, 'deleted_pending'::text]))),
+    CONSTRAINT orgs_suspended_reason_check CHECK (((suspended_reason IS NULL) OR (suspended_reason = 'free_quota'::text)))
+);
+
+
+--
+-- Name: app_resource_accounts; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.app_resource_accounts AS
+ SELECT a.id AS app_id,
+    a.account_id AS id,
+        CASE
+            WHEN ((o.personal_org = false) AND o.resource_ownership_enabled) THEN o.past_due_at
+            ELSE ac.past_due_at
+        END AS past_due_at,
+        CASE
+            WHEN ((o.personal_org = false) AND o.resource_ownership_enabled) THEN NULL::timestamp with time zone
+            ELSE ac.deletion_requested_at
+        END AS deletion_requested_at,
+        CASE
+            WHEN ((o.personal_org = false) AND o.resource_ownership_enabled) THEN o.last_quota_warning_at
+            ELSE ac.last_quota_warning_at
+        END AS last_quota_warning_at,
+        CASE
+            WHEN ((o.personal_org = false) AND o.resource_ownership_enabled) THEN o.suspended_reason
+            ELSE ac.suspended_reason
+        END AS suspended_reason,
+    COALESCE(
+        CASE
+            WHEN ((o.personal_org = false) AND o.resource_ownership_enabled) THEN o.plan
+            ELSE ac.plan
+        END, ''::text) AS plan,
+    COALESCE(
+        CASE
+            WHEN ((o.personal_org = false) AND (o.resource_ownership_enabled OR (o.status <> ALL (ARRAY['active'::text, 'past_due'::text])) OR o.deleted_pending)) THEN
+            CASE
+                WHEN o.deleted_pending THEN 'deleted_pending'::text
+                ELSE o.status
+            END
+            ELSE ac.status
+        END, ''::text) AS status,
+        CASE
+            WHEN ((o.personal_org = false) AND o.resource_ownership_enabled) THEN o.abuse_hold_at
+            ELSE ac.abuse_hold_at
+        END AS abuse_hold_at,
+        CASE
+            WHEN ((o.personal_org = false) AND o.resource_ownership_enabled) THEN o.abuse_hold_reason
+            ELSE ac.abuse_hold_reason
+        END AS abuse_hold_reason,
+        CASE
+            WHEN ((o.personal_org = false) AND o.resource_ownership_enabled) THEN 0
+            ELSE ac.egress_allowlist_extra
+        END AS egress_allowlist_extra,
+        CASE
+            WHEN ((o.personal_org = false) AND o.resource_ownership_enabled) THEN o.created_at
+            ELSE ac.created_at
+        END AS created_at,
+        CASE
+            WHEN ((o.personal_org = false) AND o.resource_ownership_enabled) THEN o.billing_email
+            ELSE (ac.email)::text
+        END AS email,
+        CASE
+            WHEN ((o.personal_org = false) AND o.resource_ownership_enabled) THEN o.provider_customer_id
+            ELSE ac.provider_customer_id
+        END AS provider_customer_id,
+        CASE
+            WHEN ((o.personal_org = false) AND o.resource_ownership_enabled) THEN o.stripe_subscription_item
+            ELSE ac.stripe_subscription_item
+        END AS stripe_subscription_item
+   FROM ((public.apps a
+     LEFT JOIN public.orgs o ON ((o.id = a.org_id)))
+     LEFT JOIN public.accounts ac ON ((ac.id = a.account_id)));
+
+
+--
 -- Name: app_route_priorities; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -24215,6 +25193,28 @@ CREATE TABLE public.billing_meter_usage_deliveries (
     CONSTRAINT billing_meter_usage_deliveries_provider_check CHECK ((provider = ANY (ARRAY['stripe'::text, 'paddle'::text, 'polar'::text]))),
     CONSTRAINT billing_meter_usage_deliveries_quantity_check CHECK ((quantity >= 0))
 );
+
+
+--
+-- Name: billing_resource_accounts; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.billing_resource_accounts AS
+ SELECT accounts.id,
+    accounts.plan,
+    accounts.status,
+    accounts.abuse_hold_at
+   FROM public.accounts
+UNION ALL
+ SELECT orgs.id,
+    orgs.plan,
+        CASE
+            WHEN orgs.deleted_pending THEN 'deleted_pending'::text
+            ELSE orgs.status
+        END AS status,
+    orgs.abuse_hold_at
+   FROM public.orgs
+  WHERE (NOT orgs.personal_org);
 
 
 --
@@ -30070,6 +31070,8 @@ CREATE TABLE public.invocations (
     environment_id uuid,
     replay_root_invocation_id uuid,
     replay_root_created_at timestamp with time zone,
+    async_quota_subject_id uuid,
+    CONSTRAINT invocation_async_subject_required CHECK (((NOT quota_reserved) OR (async_quota_subject_id IS NOT NULL))),
     CONSTRAINT invocation_deployment_scope_check CHECK ((deployment_scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'::text)),
     CONSTRAINT invocation_platform_tenant_source CHECK (((platform_tenant_id IS NULL) OR (source = ANY (ARRAY['async_invoke'::text, 'replay'::text, 'queue'::text])))),
     CONSTRAINT invocation_queue_binding_source CHECK (((queue_binding_id IS NULL) OR (source = 'queue'::text))),
@@ -30409,6 +31411,8 @@ CREATE TABLE public.org_memberships (
     invited_by_account_id uuid,
     joined_at timestamp with time zone DEFAULT now() NOT NULL,
     removed_at timestamp with time zone,
+    access_revision bigint NOT NULL,
+    CONSTRAINT org_memberships_access_revision_chk CHECK ((access_revision > 0)),
     CONSTRAINT org_memberships_removed_role_chk CHECK (((removed_at IS NULL) OR (role = ANY (ARRAY['admin'::text, 'developer'::text, 'viewer'::text, 'billing'::text])))),
     CONSTRAINT org_memberships_role_chk CHECK ((role = ANY (ARRAY['owner'::text, 'admin'::text, 'developer'::text, 'viewer'::text, 'billing'::text])))
 );
@@ -31853,6 +32857,7 @@ CREATE TABLE public.managed_postgres_bindings (
     rotation_wake_id uuid,
     rotation_cleanup_ready boolean DEFAULT false NOT NULL,
     cutover_id uuid,
+    database_account_id uuid NOT NULL,
     CONSTRAINT managed_postgres_bindings_access_check CHECK ((access = ANY (ARRAY['read_write'::text, 'read_only'::text, 'migration'::text, 'data_api'::text, 'auth'::text]))),
     CONSTRAINT managed_postgres_bindings_attempt_count_check CHECK (((attempt_count >= 0) AND (attempt_count <= 30))),
     CONSTRAINT managed_postgres_bindings_check CHECK (((state <> 'ready'::text) OR ((provider_identity_id IS NOT NULL) AND (credential_ref IS NOT NULL)))),
@@ -32209,6 +33214,7 @@ CREATE TABLE public.managed_postgres_databases (
     data_resource_id text,
     clone_resource_role text DEFAULT 'target'::text NOT NULL,
     accounting_required boolean DEFAULT true NOT NULL,
+    org_id uuid NOT NULL,
     CONSTRAINT managed_postgres_clone_has_restore CHECK (((environment_clone_operation_id IS NULL) OR ((restore_source_database_id IS NOT NULL) AND (restore_source_resource_id IS NOT NULL) AND (restore_point_in_time IS NOT NULL)))),
     CONSTRAINT managed_postgres_clone_is_independent CHECK (((environment_clone_operation_id IS NULL) OR ((id <> restore_source_database_id) AND ((provider_resource_id IS NULL) OR (provider_resource_id <> restore_source_resource_id))))),
     CONSTRAINT managed_postgres_databases_attempt_count_check CHECK (((attempt_count >= 0) AND (attempt_count <= 30))),
@@ -34268,6 +35274,7 @@ CREATE TABLE public.object_buckets (
     serve_at text,
     environment_clone_source_bucket_id uuid,
     environment_clone_operation_id uuid,
+    org_id uuid NOT NULL,
     CONSTRAINT object_buckets_attempt_count_check CHECK (((attempt_count >= 0) AND (attempt_count <= 30))),
     CONSTRAINT object_buckets_backend_fingerprint_check CHECK ((backend_fingerprint ~ '^[a-f0-9]{64}$'::text)),
     CONSTRAINT object_buckets_backend_id_check CHECK (((length(backend_id) >= 1) AND (length(backend_id) <= 63))),
@@ -35282,27 +36289,22 @@ CREATE TABLE public.org_invitations (
 
 
 --
--- Name: orgs; Type: TABLE; Schema: public; Owner: -
+-- Name: org_memberships_access_revision_seq; Type: SEQUENCE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.orgs (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    slug text NOT NULL,
-    name text NOT NULL,
-    personal_org boolean DEFAULT false NOT NULL,
-    personal_owner_account_id uuid,
-    plan text DEFAULT 'free'::text NOT NULL,
-    status text DEFAULT 'active'::text NOT NULL,
-    provider_customer_id text,
-    stripe_subscription_item text,
-    deleted_pending boolean DEFAULT false NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT orgs_personal_owner_link CHECK ((((personal_org = true) AND (personal_owner_account_id IS NOT NULL)) OR ((personal_org = false) AND (personal_owner_account_id IS NULL)))),
-    CONSTRAINT orgs_plan_chk CHECK ((plan = ANY (ARRAY['free'::text, 'hobby'::text, 'pro'::text, 'scale'::text]))),
-    CONSTRAINT orgs_slug_shape CHECK ((slug ~ '^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$'::text)),
-    CONSTRAINT orgs_status_chk CHECK ((status = ANY (ARRAY['active'::text, 'past_due'::text, 'suspended'::text, 'deleted_pending'::text])))
-);
+CREATE SEQUENCE public.org_memberships_access_revision_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: org_memberships_access_revision_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.org_memberships_access_revision_seq OWNED BY public.org_memberships.access_revision;
 
 
 --
@@ -38597,7 +39599,7 @@ CREATE TABLE public.projects (
     scan_source text DEFAULT 'unknown'::text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    org_id uuid,
+    org_id uuid NOT NULL,
     CONSTRAINT projects_scan_source_chk CHECK ((scan_source = ANY (ARRAY['compose'::text, 'procfile'::text, 'k8s'::text, 'render'::text, 'fly'::text, 'serverless'::text, 'workspace'::text, 'convention'::text, 'single'::text, 'unknown'::text]))),
     CONSTRAINT projects_slug_shape CHECK ((slug ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$'::text))
 );
@@ -38661,6 +39663,7 @@ CREATE TABLE public.queue_bindings (
     retired_at timestamp with time zone,
     deployment_scope text DEFAULT ''::text NOT NULL,
     environment_id uuid,
+    org_id uuid NOT NULL,
     CONSTRAINT queue_binding_scope_shape CHECK ((((deployment_scope = ''::text) AND (environment_id IS NULL)) OR ((deployment_scope ~ '^[a-z0-9]([a-z0-9-]{0,31}[a-z0-9])?$'::text) AND (environment_id IS NOT NULL)))),
     CONSTRAINT queue_bindings_max_concurrency_chk CHECK (((max_concurrency >= 1) AND (max_concurrency <= 10000))),
     CONSTRAINT queue_bindings_mode_chk CHECK ((mode = ANY (ARRAY['pull'::text, 'push'::text]))),
@@ -39140,6 +40143,15 @@ CREATE TABLE public.reserved_ip_leases (
     CONSTRAINT reserved_ip_leases_generation_chk CHECK ((generation >= 0)),
     CONSTRAINT reserved_ip_leases_region_chk CHECK ((region ~ '^[a-z][a-z0-9-]{0,62}$'::text)),
     CONSTRAINT reserved_ip_leases_status_chk CHECK ((status = ANY (ARRAY['available'::text, 'pending'::text, 'assigned'::text, 'error'::text])))
+);
+
+
+--
+-- Name: resource_namespaces; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.resource_namespaces (
+    id uuid NOT NULL
 );
 
 
@@ -41876,6 +42888,13 @@ ALTER TABLE ONLY public.execution_events ALTER COLUMN id SET DEFAULT nextval('pu
 --
 
 ALTER TABLE ONLY public.instance_billing_intervals ALTER COLUMN id SET DEFAULT nextval('public.instance_billing_intervals_id_seq'::regclass);
+
+
+--
+-- Name: org_memberships access_revision; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.org_memberships ALTER COLUMN access_revision SET DEFAULT nextval('public.org_memberships_access_revision_seq'::regclass);
 
 
 --
@@ -49636,6 +50655,14 @@ ALTER TABLE ONLY public.reserved_ip_leases
 
 
 --
+-- Name: resource_namespaces resource_namespaces_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.resource_namespaces
+    ADD CONSTRAINT resource_namespaces_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: response_cache_purge_change_log response_cache_purge_change_log_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -51893,6 +52920,13 @@ CREATE INDEX apps_node_id_status_partial_idx ON public.apps USING btree (node_id
 --
 
 CREATE INDEX apps_org_id_idx ON public.apps USING btree (org_id) WHERE (org_id IS NOT NULL);
+
+
+--
+-- Name: apps_org_quota_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX apps_org_quota_idx ON public.apps USING btree (org_id) WHERE (status = ANY (ARRAY['active'::text, 'evicted_cold'::text]));
 
 
 --
@@ -54584,6 +55618,13 @@ CREATE INDEX instances_watchdog_state_idx ON public.instances USING btree (state
 
 
 --
+-- Name: invocation_async_subject_reserved_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX invocation_async_subject_reserved_idx ON public.invocations USING btree (async_quota_subject_id) WHERE quota_reserved;
+
+
+--
 -- Name: invocation_attempt_history_retention_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -55532,7 +56573,14 @@ CREATE INDEX managed_postgres_databases_backend_idx ON public.managed_postgres_d
 -- Name: managed_postgres_databases_name_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX managed_postgres_databases_name_idx ON public.managed_postgres_databases USING btree (account_id, name) WHERE (state <> 'deleted'::text);
+CREATE UNIQUE INDEX managed_postgres_databases_name_idx ON public.managed_postgres_databases USING btree (org_id, name) WHERE (state <> 'deleted'::text);
+
+
+--
+-- Name: managed_postgres_databases_org_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_postgres_databases_org_idx ON public.managed_postgres_databases USING btree (org_id, id);
 
 
 --
@@ -56107,6 +57155,13 @@ CREATE INDEX object_buckets_account_app_idx ON public.object_buckets USING btree
 --
 
 CREATE UNIQUE INDEX object_buckets_name_idx ON public.object_buckets USING btree (app_id, scope, name) WHERE (state <> 'deleted'::text);
+
+
+--
+-- Name: object_buckets_org_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX object_buckets_org_idx ON public.object_buckets USING btree (org_id, id);
 
 
 --
@@ -57097,6 +58152,13 @@ CREATE INDEX projects_org_id_idx ON public.projects USING btree (org_id) WHERE (
 
 
 --
+-- Name: projects_org_slug_uniq; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX projects_org_slug_uniq ON public.projects USING btree (org_id, slug);
+
+
+--
 -- Name: provisioned_static_egress_ips_customer_ip_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -57150,6 +58212,13 @@ CREATE UNIQUE INDEX queue_bindings_app_queue_name_uniq ON public.queue_bindings 
 --
 
 CREATE INDEX queue_bindings_enabled_idx ON public.queue_bindings USING btree (app_id, enabled) WHERE enabled;
+
+
+--
+-- Name: queue_bindings_org_id_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX queue_bindings_org_id_idx ON public.queue_bindings USING btree (org_id);
 
 
 --
@@ -59008,10 +60077,31 @@ ALTER INDEX public.request_telemetry_trace_idx ATTACH PARTITION public.request_t
 
 
 --
+-- Name: apps aa_project_workload_owner; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER aa_project_workload_owner BEFORE INSERT OR UPDATE OF project_id, account_id, org_id ON public.apps FOR EACH ROW EXECUTE FUNCTION public.bind_project_workload_owner();
+
+
+--
 -- Name: accounts account_managed_postgres_databases_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER account_managed_postgres_databases_guard BEFORE UPDATE OF status ON public.accounts FOR EACH ROW EXECUTE FUNCTION public.guard_account_managed_postgres_databases();
+
+
+--
+-- Name: accounts account_resource_namespace; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER account_resource_namespace AFTER INSERT ON public.accounts FOR EACH ROW EXECUTE FUNCTION public.seed_resource_namespace();
+
+
+--
+-- Name: accounts account_shared_app_purge; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER account_shared_app_purge BEFORE DELETE ON public.accounts FOR EACH ROW EXECUTE FUNCTION public.guard_account_shared_app_purge();
 
 
 --
@@ -59040,6 +60130,76 @@ CREATE TRIGGER api_key_rotation_copy_object_storage_grants AFTER INSERT ON publi
 --
 
 CREATE TRIGGER api_keys_preserve_runs_principal BEFORE INSERT ON public.api_keys FOR EACH ROW EXECUTE FUNCTION public.preserve_api_key_runs_principal();
+
+
+--
+-- Name: builder_usage app_builder_owner; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER app_builder_owner BEFORE INSERT ON public.builder_usage FOR EACH ROW EXECUTE FUNCTION public.bind_app_builder_owner();
+
+
+--
+-- Name: app_envs app_core_resource_org; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER app_core_resource_org BEFORE INSERT OR UPDATE OF app_id, org_id ON public.app_envs FOR EACH ROW EXECUTE FUNCTION public.bind_core_app_resource_org();
+
+
+--
+-- Name: app_secrets app_core_resource_org; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER app_core_resource_org BEFORE INSERT OR UPDATE OF app_id, org_id ON public.app_secrets FOR EACH ROW EXECUTE FUNCTION public.bind_core_app_resource_org();
+
+
+--
+-- Name: builder_usage app_core_resource_org; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER app_core_resource_org BEFORE INSERT OR UPDATE OF app_id, org_id ON public.builder_usage FOR EACH ROW EXECUTE FUNCTION public.bind_core_app_resource_org();
+
+
+--
+-- Name: crons app_core_resource_org; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER app_core_resource_org BEFORE INSERT OR UPDATE OF app_id, org_id ON public.crons FOR EACH ROW EXECUTE FUNCTION public.bind_core_app_resource_org();
+
+
+--
+-- Name: custom_domains app_core_resource_org; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER app_core_resource_org BEFORE INSERT OR UPDATE OF app_id, org_id ON public.custom_domains FOR EACH ROW EXECUTE FUNCTION public.bind_core_app_resource_org();
+
+
+--
+-- Name: instances app_core_resource_org; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER app_core_resource_org BEFORE INSERT OR UPDATE OF app_id, org_id ON public.instances FOR EACH ROW EXECUTE FUNCTION public.bind_core_app_resource_org();
+
+
+--
+-- Name: invocations app_core_resource_org; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER app_core_resource_org BEFORE INSERT OR UPDATE OF app_id, org_id ON public.invocations FOR EACH ROW EXECUTE FUNCTION public.bind_core_app_resource_org();
+
+
+--
+-- Name: usage_daily app_core_resource_org; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER app_core_resource_org BEFORE INSERT OR UPDATE OF app_id, org_id ON public.usage_daily FOR EACH ROW EXECUTE FUNCTION public.bind_core_app_resource_org();
+
+
+--
+-- Name: usage_minutes app_core_resource_org; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER app_core_resource_org BEFORE INSERT OR UPDATE OF app_id, org_id ON public.usage_minutes FOR EACH ROW EXECUTE FUNCTION public.bind_core_app_resource_org();
 
 
 --
@@ -59078,6 +60238,13 @@ CREATE TRIGGER app_private_network_attachment_set_updated_at_trg BEFORE UPDATE O
 
 
 --
+-- Name: apps app_quota_owner_insert; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER app_quota_owner_insert BEFORE INSERT ON public.apps FOR EACH ROW EXECUTE FUNCTION public.bind_app_quota_owner();
+
+
+--
 -- Name: app_runtime_config_changes app_runtime_config_change_lock_app; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -59099,6 +60266,13 @@ CREATE TRIGGER app_secret_managed_postgres_owner_guard BEFORE INSERT OR UPDATE O
 
 
 --
+-- Name: snapshot_storage_daily app_storage_owner; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER app_storage_owner BEFORE INSERT ON public.snapshot_storage_daily FOR EACH ROW EXECUTE FUNCTION public.bind_app_storage_owner();
+
+
+--
 -- Name: app_tasks app_tasks_schedule_occurrence; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -59110,6 +60284,13 @@ CREATE TRIGGER app_tasks_schedule_occurrence AFTER UPDATE OF status ON public.ap
 --
 
 CREATE TRIGGER app_tasks_status_transition BEFORE UPDATE ON public.app_tasks FOR EACH ROW EXECUTE FUNCTION public.enforce_app_task_status_transition();
+
+
+--
+-- Name: usage_minutes app_usage_owner; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER app_usage_owner BEFORE INSERT ON public.usage_minutes FOR EACH ROW EXECUTE FUNCTION public.bind_app_usage_owner();
 
 
 --
@@ -61493,6 +62674,13 @@ CREATE TRIGGER invalidate_route_lifecycle_approvals AFTER DELETE OR UPDATE ON pu
 
 
 --
+-- Name: invocations invocation_async_subject; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER invocation_async_subject BEFORE INSERT OR UPDATE ON public.invocations FOR EACH ROW EXECUTE FUNCTION public.stamp_invocation_async_subject();
+
+
+--
 -- Name: invocations invocation_attempt_history_transition; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -61839,7 +63027,7 @@ CREATE TRIGGER managed_postgres_app_task_admission_guard BEFORE INSERT OR UPDATE
 -- Name: managed_postgres_bindings managed_postgres_binding_owner_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER managed_postgres_binding_owner_guard BEFORE INSERT OR UPDATE OF account_id, database_id, app_id ON public.managed_postgres_bindings FOR EACH ROW EXECUTE FUNCTION public.guard_managed_postgres_binding_owner();
+CREATE TRIGGER managed_postgres_binding_owner_guard BEFORE INSERT OR UPDATE OF account_id, database_id, app_id, database_account_id ON public.managed_postgres_bindings FOR EACH ROW EXECUTE FUNCTION public.guard_managed_postgres_binding_owner();
 
 
 --
@@ -61952,6 +63140,13 @@ CREATE TRIGGER managed_postgres_resize_intent_guard BEFORE DELETE OR UPDATE ON p
 --
 
 CREATE CONSTRAINT TRIGGER managed_postgres_resize_receipt_guard AFTER INSERT OR UPDATE ON public.managed_postgres_resizes DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.check_managed_postgres_resize_receipt();
+
+
+--
+-- Name: managed_postgres_databases managed_postgres_resource_owner; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER managed_postgres_resource_owner BEFORE INSERT OR UPDATE OF org_id, account_id, restore_source_database_id ON public.managed_postgres_databases FOR EACH ROW EXECUTE FUNCTION public.bind_managed_postgres_resource_owner();
 
 
 --
@@ -62232,6 +63427,13 @@ CREATE TRIGGER object_bucket_encryption_immutable BEFORE INSERT OR DELETE OR UPD
 --
 
 CREATE TRIGGER object_bucket_object_lock_protected BEFORE INSERT OR DELETE OR UPDATE ON public.object_bucket_object_lock FOR EACH ROW EXECUTE FUNCTION public.protect_object_bucket_object_lock();
+
+
+--
+-- Name: object_buckets object_bucket_organization; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_bucket_organization BEFORE INSERT OR UPDATE OF org_id, account_id, app_id ON public.object_buckets FOR EACH ROW EXECUTE FUNCTION public.bind_object_bucket_organization();
 
 
 --
@@ -62704,6 +63906,27 @@ CREATE TRIGGER object_route_encryption_receipt_bound BEFORE INSERT ON public.obj
 
 
 --
+-- Name: orgs object_storage_billing_origin; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_storage_billing_origin BEFORE UPDATE OF object_storage_owned_from ON public.orgs FOR EACH ROW EXECUTE FUNCTION public.guard_object_storage_billing_origin();
+
+
+--
+-- Name: object_storage_s3_credentials object_storage_issuer; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_storage_issuer BEFORE INSERT OR UPDATE OF account_id, bucket_id, issuer_account_id, issuer_access_revision, managed_app_id, rotation_parent_id ON public.object_storage_s3_credentials FOR EACH ROW EXECUTE FUNCTION public.stamp_object_storage_issuer();
+
+
+--
+-- Name: org_memberships object_storage_member_revocation; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_storage_member_revocation AFTER DELETE OR UPDATE ON public.org_memberships FOR EACH ROW EXECUTE FUNCTION public.revoke_object_storage_member_keys();
+
+
+--
 -- Name: object_upload_completions object_upload_bound_journal; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -62774,6 +63997,13 @@ CREATE TRIGGER object_url_write_guard BEFORE INSERT OR UPDATE ON public.object_u
 
 
 --
+-- Name: orgs object_usage_adoption; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER object_usage_adoption AFTER INSERT OR UPDATE OF resource_ownership_enabled ON public.orgs FOR EACH ROW EXECUTE FUNCTION public.invalidate_object_usage_on_adoption();
+
+
+--
 -- Name: object_upload_completions object_version_history_latch; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -62834,6 +64064,104 @@ CREATE TRIGGER operator_node_completion_guard BEFORE UPDATE ON public.operator_i
 --
 
 CREATE TRIGGER operator_node_receipt_immutable BEFORE DELETE OR UPDATE ON public.operator_node_executions FOR EACH ROW EXECUTE FUNCTION public.operator_node_receipt_immutable();
+
+
+--
+-- Name: api_keys org_api_key_membership; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER org_api_key_membership BEFORE INSERT OR UPDATE OF status, org_id, account_id ON public.api_keys FOR EACH ROW EXECUTE FUNCTION public.check_org_credential_membership();
+
+
+--
+-- Name: orgs org_app_resource_policy; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER org_app_resource_policy AFTER UPDATE OF plan, status, deleted_pending, abuse_hold_at, resource_ownership_enabled ON public.orgs FOR EACH ROW EXECUTE FUNCTION public.notify_org_app_resource_policy();
+
+
+--
+-- Name: billing_identities org_billing_identity; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER org_billing_identity AFTER INSERT OR UPDATE OF customer_id, subscription_id ON public.billing_identities FOR EACH ROW EXECUTE FUNCTION public.activate_org_billing_identity();
+
+
+--
+-- Name: deploy_tokens org_deploy_token_membership; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER org_deploy_token_membership BEFORE INSERT OR UPDATE OF status, app_id, account_id ON public.deploy_tokens FOR EACH ROW EXECUTE FUNCTION public.check_org_credential_membership();
+
+
+--
+-- Name: orgs org_managed_postgres_databases_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER org_managed_postgres_databases_guard BEFORE UPDATE OF status, deleted_pending ON public.orgs FOR EACH ROW EXECUTE FUNCTION public.guard_org_managed_postgres_databases();
+
+
+--
+-- Name: org_memberships org_member_credentials_revoked; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER org_member_credentials_revoked AFTER UPDATE OF removed_at ON public.org_memberships FOR EACH ROW EXECUTE FUNCTION public.revoke_removed_org_member_credentials();
+
+
+--
+-- Name: org_memberships org_membership_access_revision; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER org_membership_access_revision BEFORE UPDATE ON public.org_memberships FOR EACH ROW EXECUTE FUNCTION public.advance_org_access_revision();
+
+
+--
+-- Name: orgs org_object_buckets_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER org_object_buckets_guard BEFORE UPDATE OF status, deleted_pending ON public.orgs FOR EACH ROW EXECUTE FUNCTION public.guard_org_object_buckets();
+
+
+--
+-- Name: org_memberships org_owner_identity; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER org_owner_identity BEFORE INSERT OR UPDATE OF role, removed_at, account_id ON public.org_memberships FOR EACH ROW EXECUTE FUNCTION public.org_owner_identity_active();
+
+
+--
+-- Name: orgs org_queue_bindings_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER org_queue_bindings_guard BEFORE UPDATE OF status, deleted_pending ON public.orgs FOR EACH ROW EXECUTE FUNCTION public.guard_org_queue_bindings();
+
+
+--
+-- Name: orgs org_queue_reservation_adoption; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER org_queue_reservation_adoption AFTER UPDATE OF resource_ownership_enabled ON public.orgs FOR EACH ROW EXECUTE FUNCTION public.adopt_queue_reservations_on_org_adoption();
+
+
+--
+-- Name: orgs org_resource_namespace; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER org_resource_namespace AFTER INSERT ON public.orgs FOR EACH ROW EXECUTE FUNCTION public.seed_resource_namespace();
+
+
+--
+-- Name: orgs org_resource_ownership; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER org_resource_ownership BEFORE INSERT OR UPDATE ON public.orgs FOR EACH ROW EXECUTE FUNCTION public.activate_org_resource_ownership();
+
+
+--
+-- Name: orgs org_streaming_plan; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER org_streaming_plan BEFORE UPDATE OF plan ON public.orgs FOR EACH ROW EXECUTE FUNCTION public.org_streaming_plan_guard();
 
 
 --
@@ -62970,6 +64298,13 @@ CREATE TRIGGER project_release_set_policy_deleted_trg BEFORE DELETE ON public.pr
 
 
 --
+-- Name: projects project_resource_owner; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER project_resource_owner BEFORE INSERT OR UPDATE ON public.projects FOR EACH ROW EXECUTE FUNCTION public.bind_project_resource_owner();
+
+
+--
 -- Name: apps prune_pr_preview_set_on_root_delete; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -63030,6 +64365,13 @@ CREATE TRIGGER queue_dead_letter_failure_history BEFORE INSERT ON public.trigger
 --
 
 CREATE TRIGGER queue_dead_letter_recapture_event AFTER UPDATE ON public.trigger_dead_letter FOR EACH ROW EXECUTE FUNCTION public.faas_capture_trigger_dead_letter_event();
+
+
+--
+-- Name: queue_bindings queue_organization; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER queue_organization BEFORE INSERT OR UPDATE ON public.queue_bindings FOR EACH ROW EXECUTE FUNCTION public.bind_queue_organization();
 
 
 --
@@ -63947,7 +65289,7 @@ CREATE TRIGGER zz_workload_retirement_source_lifecycle BEFORE DELETE OR UPDATE O
 --
 
 ALTER TABLE ONLY public.account_async_quota
-    ADD CONSTRAINT account_async_quota_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT account_async_quota_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -63963,7 +65305,7 @@ ALTER TABLE ONLY public.account_billing_connections
 --
 
 ALTER TABLE ONLY public.account_credits
-    ADD CONSTRAINT account_credits_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT account_credits_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -63971,7 +65313,7 @@ ALTER TABLE ONLY public.account_credits
 --
 
 ALTER TABLE ONLY public.account_deploy_rate_limits
-    ADD CONSTRAINT account_deploy_rate_limits_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT account_deploy_rate_limits_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -63987,7 +65329,7 @@ ALTER TABLE ONLY public.account_passwords
 --
 
 ALTER TABLE ONLY public.account_spend_snapshot
-    ADD CONSTRAINT account_spend_snapshot_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT account_spend_snapshot_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -64579,7 +65921,7 @@ ALTER TABLE ONLY public.app_egress_policy_node_status
 --
 
 ALTER TABLE ONLY public.app_environment_route_budgets
-    ADD CONSTRAINT app_environment_route_budgets_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT app_environment_route_budgets_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -64611,7 +65953,7 @@ ALTER TABLE ONLY public.app_environment_route_budgets
 --
 
 ALTER TABLE ONLY public.app_environment_secret_ref_suppressions
-    ADD CONSTRAINT app_environment_secret_ref_suppressions_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT app_environment_secret_ref_suppressions_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -64643,7 +65985,7 @@ ALTER TABLE ONLY public.app_environment_secret_ref_suppressions
 --
 
 ALTER TABLE ONLY public.app_environment_secret_refs
-    ADD CONSTRAINT app_environment_secret_refs_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT app_environment_secret_refs_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -64675,7 +66017,7 @@ ALTER TABLE ONLY public.app_environment_secret_refs
 --
 
 ALTER TABLE ONLY public.app_environment_workload_intents
-    ADD CONSTRAINT app_environment_workload_intents_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT app_environment_workload_intents_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -64707,7 +66049,7 @@ ALTER TABLE ONLY public.app_environment_workload_intents
 --
 
 ALTER TABLE ONLY public.app_envs
-    ADD CONSTRAINT app_envs_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT app_envs_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -64723,7 +66065,7 @@ ALTER TABLE ONLY public.app_envs
 --
 
 ALTER TABLE ONLY public.app_error_requests
-    ADD CONSTRAINT app_error_requests_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT app_error_requests_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -64747,7 +66089,7 @@ ALTER TABLE ONLY public.app_error_requests
 --
 
 ALTER TABLE ONLY public.app_errors
-    ADD CONSTRAINT app_errors_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT app_errors_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -64771,7 +66113,7 @@ ALTER TABLE ONLY public.app_errors
 --
 
 ALTER TABLE ONLY public.app_health_collection_state
-    ADD CONSTRAINT app_health_collection_state_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT app_health_collection_state_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -64787,7 +66129,7 @@ ALTER TABLE ONLY public.app_health_collection_state
 --
 
 ALTER TABLE ONLY public.app_health_history
-    ADD CONSTRAINT app_health_history_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT app_health_history_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -64955,7 +66297,7 @@ ALTER TABLE ONLY public.app_log_drain_health
 --
 
 ALTER TABLE ONLY public.app_log_drains
-    ADD CONSTRAINT app_log_drains_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT app_log_drains_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -64979,7 +66321,7 @@ ALTER TABLE ONLY public.app_mcp_task_compatibility
 --
 
 ALTER TABLE ONLY public.app_openapi_docs
-    ADD CONSTRAINT app_openapi_docs_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT app_openapi_docs_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -65035,7 +66377,7 @@ ALTER TABLE ONLY public.app_private_network_attachments
 --
 
 ALTER TABLE ONLY public.app_registry_credentials
-    ADD CONSTRAINT app_registry_credentials_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT app_registry_credentials_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -65131,7 +66473,7 @@ ALTER TABLE ONLY public.app_secret_revocation_targets
 --
 
 ALTER TABLE ONLY public.app_secret_revocations
-    ADD CONSTRAINT app_secret_revocations_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT app_secret_revocations_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -65179,7 +66521,7 @@ ALTER TABLE ONLY public.app_secret_runtime_reload_observations
 --
 
 ALTER TABLE ONLY public.app_secrets
-    ADD CONSTRAINT app_secrets_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT app_secrets_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -65203,7 +66545,7 @@ ALTER TABLE ONLY public.app_secrets
 --
 
 ALTER TABLE ONLY public.app_service_address_cursors
-    ADD CONSTRAINT app_service_address_cursors_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT app_service_address_cursors_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -65211,7 +66553,7 @@ ALTER TABLE ONLY public.app_service_address_cursors
 --
 
 ALTER TABLE ONLY public.app_service_wake_ahead
-    ADD CONSTRAINT app_service_wake_ahead_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT app_service_wake_ahead_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -65235,7 +66577,7 @@ ALTER TABLE ONLY public.app_task_attach_sessions
 --
 
 ALTER TABLE ONLY public.app_tasks
-    ADD CONSTRAINT app_tasks_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT app_tasks_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -65307,7 +66649,7 @@ ALTER TABLE ONLY public.app_tcp_listeners
 --
 
 ALTER TABLE ONLY public.app_trusted_signers
-    ADD CONSTRAINT app_trusted_signers_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT app_trusted_signers_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -65411,7 +66753,7 @@ ALTER TABLE ONLY public.app_webhooks
 --
 
 ALTER TABLE ONLY public.app_work_policies
-    ADD CONSTRAINT app_work_policies_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT app_work_policies_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -65715,7 +67057,7 @@ ALTER TABLE ONLY public.application_standards
 --
 
 ALTER TABLE ONLY public.apps
-    ADD CONSTRAINT apps_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id);
+    ADD CONSTRAINT apps_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id);
 
 
 --
@@ -65827,7 +67169,7 @@ ALTER TABLE ONLY public.base_image_scans
 --
 
 ALTER TABLE ONLY public.billing_identities
-    ADD CONSTRAINT billing_identities_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT billing_identities_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -65835,7 +67177,7 @@ ALTER TABLE ONLY public.billing_identities
 --
 
 ALTER TABLE ONLY public.billing_meter_usage_deliveries
-    ADD CONSTRAINT billing_meter_usage_deliveries_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT billing_meter_usage_deliveries_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -65867,7 +67209,7 @@ ALTER TABLE ONLY public.billing_runs
 --
 
 ALTER TABLE ONLY public.billing_usage_deliveries
-    ADD CONSTRAINT billing_usage_deliveries_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT billing_usage_deliveries_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -66139,7 +67481,7 @@ ALTER TABLE ONLY public.cors_presets
 --
 
 ALTER TABLE ONLY public.credit_ledger
-    ADD CONSTRAINT credit_ledger_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT credit_ledger_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -66691,7 +68033,7 @@ ALTER TABLE ONLY public.data_upstreams
 --
 
 ALTER TABLE ONLY public.dead_letter_events
-    ADD CONSTRAINT dead_letter_events_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT dead_letter_events_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -66835,7 +68177,7 @@ ALTER TABLE ONLY public.deployment_mcp_task_migration_overrides
 --
 
 ALTER TABLE ONLY public.deployment_openapi_docs
-    ADD CONSTRAINT deployment_openapi_docs_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT deployment_openapi_docs_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -67107,7 +68449,7 @@ ALTER TABLE ONLY public.deployment_runtime_upgrade_targets
 --
 
 ALTER TABLE ONLY public.deployment_scope_exclusions
-    ADD CONSTRAINT deployment_scope_exclusions_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT deployment_scope_exclusions_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -67675,7 +69017,7 @@ ALTER TABLE ONLY public.environment_qualification_snapshot_receipts
 --
 
 ALTER TABLE ONLY public.environment_route_budget_receipts
-    ADD CONSTRAINT environment_route_budget_receipts_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT environment_route_budget_receipts_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -67739,7 +69081,7 @@ ALTER TABLE ONLY public.environment_workload_qualification_requests
 --
 
 ALTER TABLE ONLY public.environment_workload_retirements
-    ADD CONSTRAINT environment_workload_retirements_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT environment_workload_retirements_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -67995,7 +69337,7 @@ ALTER TABLE ONLY public.event_fanout_history_summaries
 --
 
 ALTER TABLE ONLY public.event_fanout_outbox
-    ADD CONSTRAINT event_fanout_outbox_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT event_fanout_outbox_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -68443,7 +69785,7 @@ ALTER TABLE ONLY public.executions
 --
 
 ALTER TABLE ONLY public.feature_flag_versions
-    ADD CONSTRAINT feature_flag_versions_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT feature_flag_versions_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -68467,7 +69809,7 @@ ALTER TABLE ONLY public.feature_flag_versions
 --
 
 ALTER TABLE ONLY public.financial_budget_policies
-    ADD CONSTRAINT financial_budget_policies_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT financial_budget_policies_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -68483,7 +69825,7 @@ ALTER TABLE ONLY public.financial_budget_revisions
 --
 
 ALTER TABLE ONLY public.financial_price_snapshots
-    ADD CONSTRAINT financial_price_snapshots_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT financial_price_snapshots_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -68499,7 +69841,7 @@ ALTER TABLE ONLY public.financial_usage_evidence
 --
 
 ALTER TABLE ONLY public.financial_usage_evidence
-    ADD CONSTRAINT financial_usage_evidence_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT financial_usage_evidence_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -68747,7 +70089,7 @@ ALTER TABLE ONLY public.hosting_sites
 --
 
 ALTER TABLE ONLY public.idempotency_keys
-    ADD CONSTRAINT idempotency_keys_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id);
+    ADD CONSTRAINT idempotency_keys_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id);
 
 
 --
@@ -68899,7 +70241,7 @@ ALTER TABLE ONLY public.invocation_attempt_history
 --
 
 ALTER TABLE ONLY public.invocation_environment_queue_admissions
-    ADD CONSTRAINT invocation_environment_queue_admissions_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id);
+    ADD CONSTRAINT invocation_environment_queue_admissions_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id);
 
 
 --
@@ -69083,7 +70425,7 @@ ALTER TABLE ONLY public.invocation_work_lanes
 --
 
 ALTER TABLE ONLY public.invocations
-    ADD CONSTRAINT invocations_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id);
+    ADD CONSTRAINT invocations_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id);
 
 
 --
@@ -69092,6 +70434,14 @@ ALTER TABLE ONLY public.invocations
 
 ALTER TABLE ONLY public.invocations
     ADD CONSTRAINT invocations_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id);
+
+
+--
+-- Name: invocations invocations_async_quota_subject_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.invocations
+    ADD CONSTRAINT invocations_async_quota_subject_id_fkey FOREIGN KEY (async_quota_subject_id) REFERENCES public.resource_namespaces(id);
 
 
 --
@@ -69155,7 +70505,7 @@ ALTER TABLE ONLY public.invoice_refunds
 --
 
 ALTER TABLE ONLY public.invoices
-    ADD CONSTRAINT invoices_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT invoices_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -69931,7 +71281,7 @@ ALTER TABLE ONLY public.mail_suppressions
 --
 
 ALTER TABLE ONLY public.managed_postgres_accounting_reconciliations
-    ADD CONSTRAINT managed_postgres_accounting_reconciliations_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT managed_postgres_accounting_reconciliations_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -69947,7 +71297,7 @@ ALTER TABLE ONLY public.managed_postgres_accounting_reconciliations
 --
 
 ALTER TABLE ONLY public.managed_postgres_bindings
-    ADD CONSTRAINT managed_postgres_bindings_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id);
+    ADD CONSTRAINT managed_postgres_bindings_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id);
 
 
 --
@@ -69964,6 +71314,14 @@ ALTER TABLE ONLY public.managed_postgres_bindings
 
 ALTER TABLE ONLY public.managed_postgres_bindings
     ADD CONSTRAINT managed_postgres_bindings_cutover_id_fkey FOREIGN KEY (cutover_id) REFERENCES public.managed_postgres_cutovers(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: managed_postgres_bindings managed_postgres_bindings_database_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_bindings
+    ADD CONSTRAINT managed_postgres_bindings_database_account_id_fkey FOREIGN KEY (database_account_id) REFERENCES public.resource_namespaces(id);
 
 
 --
@@ -70003,7 +71361,7 @@ ALTER TABLE ONLY public.managed_postgres_checkpoint_maintenance
 --
 
 ALTER TABLE ONLY public.managed_postgres_creation_receipts
-    ADD CONSTRAINT managed_postgres_creation_receipts_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE RESTRICT;
+    ADD CONSTRAINT managed_postgres_creation_receipts_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE RESTRICT;
 
 
 --
@@ -70083,7 +71441,7 @@ ALTER TABLE ONLY public.managed_postgres_cutover_source_fences
 --
 
 ALTER TABLE ONLY public.managed_postgres_cutovers
-    ADD CONSTRAINT managed_postgres_cutovers_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT managed_postgres_cutovers_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -70115,7 +71473,7 @@ ALTER TABLE ONLY public.managed_postgres_cutovers
 --
 
 ALTER TABLE ONLY public.managed_postgres_databases
-    ADD CONSTRAINT managed_postgres_databases_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id);
+    ADD CONSTRAINT managed_postgres_databases_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id);
 
 
 --
@@ -70127,11 +71485,19 @@ ALTER TABLE ONLY public.managed_postgres_databases
 
 
 --
+-- Name: managed_postgres_databases managed_postgres_databases_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_databases
+    ADD CONSTRAINT managed_postgres_databases_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id);
+
+
+--
 -- Name: managed_postgres_health managed_postgres_health_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.managed_postgres_health
-    ADD CONSTRAINT managed_postgres_health_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT managed_postgres_health_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -70147,7 +71513,7 @@ ALTER TABLE ONLY public.managed_postgres_health
 --
 
 ALTER TABLE ONLY public.managed_postgres_resizes
-    ADD CONSTRAINT managed_postgres_resizes_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT managed_postgres_resizes_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -70179,7 +71545,7 @@ ALTER TABLE ONLY public.managed_postgres_databases
 --
 
 ALTER TABLE ONLY public.managed_postgres_restore_verifications
-    ADD CONSTRAINT managed_postgres_restore_verifications_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE RESTRICT;
+    ADD CONSTRAINT managed_postgres_restore_verifications_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE RESTRICT;
 
 
 --
@@ -70195,7 +71561,7 @@ ALTER TABLE ONLY public.managed_postgres_restore_verifications
 --
 
 ALTER TABLE ONLY public.managed_postgres_usage
-    ADD CONSTRAINT managed_postgres_usage_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT managed_postgres_usage_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -70227,7 +71593,7 @@ ALTER TABLE ONLY public.managed_postgres_usage
 --
 
 ALTER TABLE ONLY public.managed_postgres_usage_imports
-    ADD CONSTRAINT managed_postgres_usage_imports_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT managed_postgres_usage_imports_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -70955,7 +72321,7 @@ ALTER TABLE ONLY public.object_bucket_write_fences
 --
 
 ALTER TABLE ONLY public.object_buckets
-    ADD CONSTRAINT object_buckets_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id);
+    ADD CONSTRAINT object_buckets_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id);
 
 
 --
@@ -70964,6 +72330,14 @@ ALTER TABLE ONLY public.object_buckets
 
 ALTER TABLE ONLY public.object_buckets
     ADD CONSTRAINT object_buckets_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id);
+
+
+--
+-- Name: object_buckets object_buckets_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_buckets
+    ADD CONSTRAINT object_buckets_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id);
 
 
 --
@@ -71019,7 +72393,7 @@ ALTER TABLE ONLY public.object_multipart_part_writers
 --
 
 ALTER TABLE ONLY public.object_s3_copy_source_epochs
-    ADD CONSTRAINT object_s3_copy_source_epochs_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT object_s3_copy_source_epochs_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -71027,7 +72401,7 @@ ALTER TABLE ONLY public.object_s3_copy_source_epochs
 --
 
 ALTER TABLE ONLY public.object_s3_copy_source_grants
-    ADD CONSTRAINT object_s3_copy_source_grants_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT object_s3_copy_source_grants_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -71059,7 +72433,7 @@ ALTER TABLE ONLY public.object_s3_copy_source_grants
 --
 
 ALTER TABLE ONLY public.object_storage_access_grants
-    ADD CONSTRAINT object_storage_access_grants_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT object_storage_access_grants_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -71083,7 +72457,7 @@ ALTER TABLE ONLY public.object_storage_access_grants
 --
 
 ALTER TABLE ONLY public.object_storage_authorizations
-    ADD CONSTRAINT object_storage_authorizations_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT object_storage_authorizations_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -71099,7 +72473,7 @@ ALTER TABLE ONLY public.object_storage_billing_deliveries
 --
 
 ALTER TABLE ONLY public.object_storage_billing_periods
-    ADD CONSTRAINT object_storage_billing_periods_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT object_storage_billing_periods_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -71123,7 +72497,7 @@ ALTER TABLE ONLY public.object_storage_capacity_reconciliations
 --
 
 ALTER TABLE ONLY public.object_storage_customer_usage_reports_v2
-    ADD CONSTRAINT object_storage_customer_usage_reports_v2_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT object_storage_customer_usage_reports_v2_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -71163,7 +72537,7 @@ ALTER TABLE ONLY public.object_storage_multipart_part_grants
 --
 
 ALTER TABLE ONLY public.object_storage_multipart_uploads
-    ADD CONSTRAINT object_storage_multipart_uploads_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT object_storage_multipart_uploads_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -71203,7 +72577,7 @@ ALTER TABLE ONLY public.object_storage_request_metrics
 --
 
 ALTER TABLE ONLY public.object_storage_s3_credentials
-    ADD CONSTRAINT object_storage_s3_credentials_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT object_storage_s3_credentials_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -71227,7 +72601,7 @@ ALTER TABLE ONLY public.object_storage_s3_credentials
 --
 
 ALTER TABLE ONLY public.object_storage_upload_grants
-    ADD CONSTRAINT object_storage_upload_grants_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT object_storage_upload_grants_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -71267,7 +72641,7 @@ ALTER TABLE ONLY public.object_storage_usage_heads
 --
 
 ALTER TABLE ONLY public.object_storage_usage_reports
-    ADD CONSTRAINT object_storage_usage_reports_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT object_storage_usage_reports_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -71307,7 +72681,7 @@ ALTER TABLE ONLY public.object_storage_write_admissions
 --
 
 ALTER TABLE ONLY public.object_upload_completions
-    ADD CONSTRAINT object_upload_completions_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT object_upload_completions_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -71339,7 +72713,7 @@ ALTER TABLE ONLY public.object_upload_completions
 --
 
 ALTER TABLE ONLY public.object_upload_routes
-    ADD CONSTRAINT object_upload_routes_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT object_upload_routes_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -71363,7 +72737,7 @@ ALTER TABLE ONLY public.object_upload_routes
 --
 
 ALTER TABLE ONLY public.object_version_protection
-    ADD CONSTRAINT object_version_protection_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT object_version_protection_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -71763,7 +73137,7 @@ ALTER TABLE ONLY public.outbound_integrations
 --
 
 ALTER TABLE ONLY public.paddle_overage_dedupe
-    ADD CONSTRAINT paddle_overage_dedupe_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT paddle_overage_dedupe_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -72299,7 +73673,7 @@ ALTER TABLE ONLY public.project_binding_verification_runs
 --
 
 ALTER TABLE ONLY public.project_environment_approvals
-    ADD CONSTRAINT project_environment_approvals_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT project_environment_approvals_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -72595,7 +73969,7 @@ ALTER TABLE ONLY public.project_environment_clone_configuration_guards
 --
 
 ALTER TABLE ONLY public.project_environment_clone_configuration_guards
-    ADD CONSTRAINT project_environment_clone_configuration_guards_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT project_environment_clone_configuration_guards_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -72707,7 +74081,7 @@ ALTER TABLE ONLY public.project_environment_clone_object_secret_withdrawals
 --
 
 ALTER TABLE ONLY public.project_environment_clone_operations
-    ADD CONSTRAINT project_environment_clone_operations_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT project_environment_clone_operations_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -73331,7 +74705,7 @@ ALTER TABLE ONLY public.project_environment_clone_workloads
 --
 
 ALTER TABLE ONLY public.project_environment_config_versions
-    ADD CONSTRAINT project_environment_config_versions_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT project_environment_config_versions_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -73355,7 +74729,7 @@ ALTER TABLE ONLY public.project_environment_edge_policies
 --
 
 ALTER TABLE ONLY public.project_environment_edge_policies
-    ADD CONSTRAINT project_environment_edge_policies_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT project_environment_edge_policies_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -73443,7 +74817,7 @@ ALTER TABLE ONLY public.project_environment_promotion_workloads
 --
 
 ALTER TABLE ONLY public.project_environment_promotions
-    ADD CONSTRAINT project_environment_promotions_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT project_environment_promotions_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -73483,7 +74857,7 @@ ALTER TABLE ONLY public.project_environment_promotions
 --
 
 ALTER TABLE ONLY public.project_environment_qualifications
-    ADD CONSTRAINT project_environment_qualifications_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT project_environment_qualifications_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -73523,7 +74897,7 @@ ALTER TABLE ONLY public.project_environment_queue_consumers
 --
 
 ALTER TABLE ONLY public.project_environment_queue_runtime_sets
-    ADD CONSTRAINT project_environment_queue_runtime_sets_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT project_environment_queue_runtime_sets_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -73579,7 +74953,7 @@ ALTER TABLE ONLY public.project_environment_route_policies
 --
 
 ALTER TABLE ONLY public.project_environment_route_policies
-    ADD CONSTRAINT project_environment_route_policies_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT project_environment_route_policies_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -73635,7 +75009,7 @@ ALTER TABLE ONLY public.project_environment_workload_specs
 --
 
 ALTER TABLE ONLY public.project_environments
-    ADD CONSTRAINT project_environments_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT project_environments_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -73675,7 +75049,7 @@ ALTER TABLE ONLY public.project_release_members
 --
 
 ALTER TABLE ONLY public.project_release_sets
-    ADD CONSTRAINT project_release_sets_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT project_release_sets_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -73739,7 +75113,7 @@ ALTER TABLE ONLY public.project_release_stages
 --
 
 ALTER TABLE ONLY public.projects
-    ADD CONSTRAINT projects_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT projects_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -73803,7 +75177,7 @@ ALTER TABLE ONLY public.queue_binding_canaries
 --
 
 ALTER TABLE ONLY public.queue_bindings
-    ADD CONSTRAINT queue_bindings_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT queue_bindings_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -73812,6 +75186,14 @@ ALTER TABLE ONLY public.queue_bindings
 
 ALTER TABLE ONLY public.queue_bindings
     ADD CONSTRAINT queue_bindings_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: queue_bindings queue_bindings_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.queue_bindings
+    ADD CONSTRAINT queue_bindings_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id);
 
 
 --
@@ -73835,7 +75217,7 @@ ALTER TABLE ONLY public.recent_build_claims
 --
 
 ALTER TABLE ONLY public.request_audit_events
-    ADD CONSTRAINT request_audit_events_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT request_audit_events_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -73859,7 +75241,7 @@ ALTER TABLE ONLY public.request_audit_events
 --
 
 ALTER TABLE ONLY public.request_id_journal
-    ADD CONSTRAINT request_id_journal_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT request_id_journal_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -74731,7 +76113,7 @@ ALTER TABLE ONLY public.status_incident_updates
 --
 
 ALTER TABLE ONLY public.stripe_push_dedupe
-    ADD CONSTRAINT stripe_push_dedupe_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT stripe_push_dedupe_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
@@ -74819,7 +76201,7 @@ ALTER TABLE ONLY public.trigger_work_bindings
 --
 
 ALTER TABLE ONLY public.triggers
-    ADD CONSTRAINT triggers_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+    ADD CONSTRAINT triggers_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --

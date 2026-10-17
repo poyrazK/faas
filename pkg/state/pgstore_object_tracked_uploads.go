@@ -39,7 +39,7 @@ func (s *PgStore) BeginTrackedObjectUpload(ctx context.Context, c ObjectUploadCo
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 	q := sqlc.New()
-	if _, err = q.ObjectUsageLockAccount(ctx, tx, mustPgUUID(c.AccountID)); err != nil {
+	if _, err = lockObjectUsageScope(ctx, tx, mustPgUUID(c.AccountID), mustPgUUID(c.BucketID)); err != nil {
 		return c, false, mapErr(err)
 	}
 	if c.IdempotencyKey != "" {
@@ -111,7 +111,7 @@ func (s *PgStore) lockTrackedObjectUpload(ctx context.Context, c ObjectUploadCom
 		return nil, c, err
 	}
 	q := sqlc.New()
-	if _, err = q.ObjectUsageLockAccount(ctx, tx, mustPgUUID(c.AccountID)); err == nil {
+	if _, err = lockObjectUsageScope(ctx, tx, mustPgUUID(c.AccountID), mustPgUUID(c.BucketID)); err == nil {
 		var r sqlc.ObjectUploadCompletion
 		r, err = q.ObjectTrackedUploadGet(ctx, tx, sqlc.ObjectTrackedUploadGetParams{ID: mustPgUUID(c.ID), AccountID: mustPgUUID(c.AccountID), BucketID: mustPgUUID(c.BucketID)})
 		if err == nil {
@@ -296,7 +296,7 @@ func (s *PgStore) beginTrackedGatewayWrite(ctx context.Context, c ObjectUploadCo
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 	q := sqlc.New()
-	if _, err = q.ObjectUsageLockAccount(ctx, tx, mustPgUUID(c.AccountID)); err != nil {
+	if _, err = lockObjectUsageScope(ctx, tx, mustPgUUID(c.AccountID), mustPgUUID(c.BucketID)); err != nil {
 		return c, mapErr(err)
 	}
 	if c.SourceBucketID != "" {

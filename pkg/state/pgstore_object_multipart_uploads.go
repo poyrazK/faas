@@ -89,7 +89,7 @@ func (s *PgStore) reserveObjectMultipart(ctx context.Context, upload ObjectMulti
 	q := sqlc.New()
 	// Both public and fixed admissions must lock the account before the bucket.
 	// Otherwise insertion's account FK lock can deadlock with configuration.
-	if _, err = q.ObjectUsageLockAccount(ctx, tx, mustPgUUID(upload.AccountID)); err != nil {
+	if _, err = lockObjectUsageScope(ctx, tx, mustPgUUID(upload.AccountID), mustPgUUID(upload.BucketID)); err != nil {
 		return ObjectMultipartUpload{}, mapErr(err)
 	}
 	if policy != nil {

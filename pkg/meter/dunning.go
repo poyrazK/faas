@@ -150,7 +150,7 @@ func (d *Dunning) Run(ctx context.Context) error {
 // Exported so tests drive the sweep deterministically without
 // spinning up a real ticker.
 func (d *Dunning) RunOnce(ctx context.Context) error {
-	rows, err := d.p.Store.ListAllAccounts(ctx)
+	rows, err := state.ListBillingResourceAccounts(ctx, d.p.Store)
 	if err != nil {
 		return err
 	}

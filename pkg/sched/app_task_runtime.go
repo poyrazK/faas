@@ -63,7 +63,7 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 	if err != nil {
 		return ResolvedAppTaskRuntime{}, fmt.Errorf("sched: resolve app task workload settings: %w", err)
 	}
-	acct, err := e.store.AccountByID(ctx, request.AccountID)
+	acct, err := state.AppResourceAccount(ctx, e.store, app)
 	if err != nil {
 		return ResolvedAppTaskRuntime{}, fmt.Errorf("sched: resolve app task account: %w", err)
 	}

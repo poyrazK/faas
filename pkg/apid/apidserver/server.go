@@ -17,6 +17,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid"
+	"github.com/onebox-faas/faas/pkg/apid/appaccess"
 	"github.com/onebox-faas/faas/pkg/apid/appevents"
 	"github.com/onebox-faas/faas/pkg/apid/automationconsole"
 	"github.com/onebox-faas/faas/pkg/apid/billingruns"
@@ -34,6 +35,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/apid/operation"
 	"github.com/onebox-faas/faas/pkg/apid/outboundai"
+	"github.com/onebox-faas/faas/pkg/apid/postgresaccess"
+	"github.com/onebox-faas/faas/pkg/apid/projectaccess"
 	"github.com/onebox-faas/faas/pkg/apid/queueleases"
 	"github.com/onebox-faas/faas/pkg/apid/servicemap"
 	"github.com/onebox-faas/faas/pkg/apid/statementinvoices"
@@ -1453,7 +1456,10 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/apps/{slug}/buckets/{bucket}/multipart-uploads/{upload}/parts", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageWriteSurface...)(s.object.ListObjectMultipartParts))))
 	mux.HandleFunc("POST /v1/apps/{slug}/buckets/{bucket}/multipart-uploads/{upload}/parts/{part}/signed-url", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageWriteSurface...)(s.object.SignObjectMultipartPart))))
 	mux.HandleFunc("POST /v1/apps/{slug}/buckets/{bucket}/multipart-uploads/{upload}/complete", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageWriteSurface...)(s.object.CompleteObjectMultipartUpload))))
-	// Managed PostgreSQL is an account-scoped control-plane resource. The
+	s.registerOrgPostgresRoutes(mux)
+	s.registerOrgObjectRoutes(mux)
+	s.registerOrgQueueRoutes(mux)
+	// Managed PostgreSQL has immutable organization ownership. The
 	// read/write scopes are intentionally separate from generic app scopes so
 	// CI credentials can bind workloads without receiving unrelated access.
 	mux.HandleFunc("GET /v1/postgres/databases", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.listManagedPostgresDatabases))))
@@ -2873,6 +2879,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/projects/scan", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.scanProject))))
 	mux.HandleFunc("POST /v1/projects/scan/source-ref", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.scanProjectSourceRef))))
 	mux.HandleFunc("POST /v1/projects", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireVerifiedEmail(s.idempotent(s.applyProject))))))
+	s.registerOrganizationProjectRoutes(mux)
 	mux.HandleFunc("GET /v1/projects", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listProjects))))
 	mux.HandleFunc("GET /v1/projects/{slug}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getProject))))
 	mux.HandleFunc("PATCH /v1/projects/{slug}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.updateProject))))
@@ -3921,6 +3928,12 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/billing/portal", s.authLimited(s.requireScope(api.ScopesUsageReadSurface...)(s.requireVerifiedEmail(s.getBillingPortal))))
 	// Customer billing status is a read-only account projection. It must not
 	// depend on operator allowlists or provider-specific catalog APIs.
+
+	mux.HandleFunc("GET /v1/orgs/{slug}/billing/status", s.orgBillingRoute(authz.OrgActionView, s.getBillingStatus))
+	mux.HandleFunc("GET /v1/orgs/{slug}/usage", s.orgBillingRoute(authz.OrgActionView, s.getUsage))
+	mux.HandleFunc("GET /v1/orgs/{slug}/invoices", s.orgBillingRoute(authz.OrgActionManageBilling, s.listInvoices))
+	mux.HandleFunc("GET /v1/orgs/{slug}/billing/portal", s.orgBillingRoute(authz.OrgActionChangePlan, s.getBillingPortal))
+	mux.HandleFunc("PATCH /v1/orgs/{slug}/plan", s.orgBillingRoute(authz.OrgActionChangePlan, s.changeOrgPlan))
 	mux.HandleFunc("GET /v1/billing/status", s.authLimited(s.requireScope(api.ScopesUsageReadSurface...)(s.getBillingStatus)))
 
 	// Billing retry (issue #242). Closes the customer-trust lie in
@@ -5070,6 +5083,10 @@ func (s *server) idempotentWithInEnvironment(environmentID string, next accountH
 			next(w, r, acct)
 			return
 		}
+		// Shared app handlers use the legacy resource account for storage.
+		// Partition receipts by the actual caller and credential so another
+		// member cannot replay an earlier member's response under that account.
+		key = postgresaccess.IdempotencyKey(r, projectaccess.IdempotencyKey(r, appaccess.IdempotencyKey(r, key)))
 		if strings.HasPrefix(r.URL.Path, "/v1/executions") || strings.HasPrefix(r.URL.Path, "/v1/execution-artifact-grants/") {
 			access, problem := executionAccessForRequest(r)
 			if problem != nil {

@@ -97,7 +97,7 @@ func (s *Service) ExecuteBucketOperation(ctx context.Context, st state.ObjectBuc
 }
 
 func (s *Service) ownedBucketCleanupRequired(ctx context.Context, bucket state.ObjectBucket) (bool, error) {
-	account, err := s.Host.Store().AccountByID(ctx, bucket.AccountID)
+	account, err := state.ObjectBucketPolicyAccount(ctx, s.Host.Store(), bucket)
 	if err != nil {
 		return false, err
 	}

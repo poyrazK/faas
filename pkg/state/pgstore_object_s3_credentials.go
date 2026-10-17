@@ -23,6 +23,7 @@ var _ ObjectS3CredentialRekeyStore = (*PgStore)(nil)
 var _ ObjectS3CredentialBindingStore = (*PgStore)(nil)
 
 func (s *PgStore) CreateObjectS3Credential(ctx context.Context, credential ObjectS3Credential, maxPerBucket int) (ObjectS3Credential, error) {
+	credential = stampObjectCredentialIssuer(ctx, credential)
 	if !validObjectS3Credential(credential) || maxPerBucket < 1 {
 		return ObjectS3Credential{}, ErrConflict
 	}
@@ -54,6 +55,7 @@ func insertObjectS3CredentialTx(ctx context.Context, tx pgx.Tx, credential Objec
 	row, err := q.ObjectS3CredentialInsert(ctx, tx, sqlc.ObjectS3CredentialInsertParams{
 		ID: mustPgUUID(credential.ID), AccountID: mustPgUUID(credential.AccountID), BucketID: mustPgUUID(credential.BucketID),
 		AccessKeyID: credential.AccessKeyID, SecretSealed: credential.SecretSealed, Kid: credential.KID, Label: credential.Label, Permission: credential.Permission,
+		IssuerAccountID: mustPgUUID(credential.IssuerAccountID), IssuerAccessRevision: pgtype.Int8{Int64: credential.IssuerAccessRevision, Valid: credential.IssuerAccessRevision != 0},
 		Column9: credential.ManagedAppID, Column10: credential.ManagedScope, Column11: credential.ManagedPrefix,
 	})
 	if err != nil {
@@ -104,6 +106,7 @@ func insertObjectS3ComputeBindingTx(ctx context.Context, tx pgx.Tx, req ObjectS3
 	row, err := q.ObjectS3CredentialInsert(ctx, tx, sqlc.ObjectS3CredentialInsertParams{
 		ID: mustPgUUID(c.ID), AccountID: mustPgUUID(c.AccountID), BucketID: mustPgUUID(c.BucketID),
 		AccessKeyID: c.AccessKeyID, SecretSealed: c.SecretSealed, Kid: c.KID, Label: c.Label, Permission: c.Permission,
+		IssuerAccountID: mustPgUUID(c.IssuerAccountID), IssuerAccessRevision: pgtype.Int8{Int64: c.IssuerAccessRevision, Valid: c.IssuerAccessRevision != 0},
 		Column9: c.ManagedAppID, Column10: c.ManagedScope, Column11: c.ManagedPrefix,
 	})
 	if err != nil {
@@ -331,7 +334,7 @@ func (s *PgStore) ResolveObjectS3Credential(ctx context.Context, accessKeyID str
 		return ObjectS3Credential{}, ObjectBucket{}, mapErr(err)
 	}
 	credential := ObjectS3Credential{
-		ID: pgUUIDString(row.ID), AccountID: pgUUIDString(row.AccountID), BucketID: pgUUIDString(row.BucketID),
+		ID: pgUUIDString(row.ID), IssuerAccountID: pgUUIDStringNullable(row.IssuerAccountID), IssuerAccessRevision: row.IssuerAccessRevision.Int64, AccountID: pgUUIDString(row.AccountID), BucketID: pgUUIDString(row.BucketID),
 		AccessKeyID: row.AccessKeyID, SecretSealed: append([]byte(nil), row.SecretSealed...), KID: row.Kid,
 		Label: row.Label, Permission: row.Permission, Status: row.Status, CreatedAt: row.CreatedAt.Time,
 		LastUsedAt: optionalObjectS3Time(row.LastUsedAt), RevokedAt: optionalObjectS3Time(row.RevokedAt),
@@ -340,7 +343,7 @@ func (s *PgStore) ResolveObjectS3Credential(ctx context.Context, accessKeyID str
 		RotationStampedAt: optionalObjectS3Time(row.RotationStampedAt),
 	}
 	bucket := ObjectBucket{
-		ID: pgUUIDString(row.BucketID), AccountID: pgUUIDString(row.AccountID), AppID: pgUUIDString(row.AppID),
+		ID: pgUUIDString(row.BucketID), OrgID: pgUUIDString(row.OrgID), AccountID: pgUUIDString(row.AccountID), AppID: pgUUIDString(row.AppID),
 		Name: row.BucketName, Scope: row.BucketScope, Region: row.BucketRegion,
 		BackendID: row.BackendID, BackendFingerprint: row.BackendFingerprint, PhysicalName: row.PhysicalName,
 		State: row.BucketState, CreatedAt: row.BucketCreatedAt.Time, UpdatedAt: row.BucketUpdatedAt.Time,
@@ -398,7 +401,7 @@ func (s *PgStore) ResealObjectS3Credential(ctx context.Context, credentialID, pr
 
 func objectS3CredentialFromSQL(row sqlc.ObjectStorageS3Credential) ObjectS3Credential {
 	return ObjectS3Credential{
-		ID: pgUUIDString(row.ID), AccountID: pgUUIDString(row.AccountID), BucketID: pgUUIDString(row.BucketID),
+		ID: pgUUIDString(row.ID), IssuerAccountID: pgUUIDStringNullable(row.IssuerAccountID), IssuerAccessRevision: row.IssuerAccessRevision.Int64, AccountID: pgUUIDString(row.AccountID), BucketID: pgUUIDString(row.BucketID),
 		AccessKeyID: row.AccessKeyID, SecretSealed: append([]byte(nil), row.SecretSealed...), KID: row.Kid,
 		Label: row.Label, Permission: row.Permission, Status: row.Status, CreatedAt: row.CreatedAt.Time,
 		LastUsedAt: optionalObjectS3Time(row.LastUsedAt), RevokedAt: optionalObjectS3Time(row.RevokedAt),

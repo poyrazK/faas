@@ -32,13 +32,18 @@ func (m *MemStore) activeLifecycleScanLocked(bucket string) (ObjectLifecycleScan
 	}
 	return ObjectLifecycleScan{}, false
 }
-func (m *MemStore) SetObjectBucketLifecycle(_ context.Context, account, app, bucket string, rules []api.ObjectLifecycleRule) (ObjectLifecyclePolicy, error) {
+func (m *MemStore) SetObjectBucketLifecycle(ctx context.Context, account, app, bucket string, rules []api.ObjectLifecycleRule) (ObjectLifecyclePolicy, error) {
 	normal, err := api.NormalizeObjectLifecycleRules(rules)
 	if err != nil {
 		return ObjectLifecyclePolicy{}, ErrConflict
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectLifecyclePolicy
+		return zero0, err
+	}
+
 	p, err := m.ownedLifecyclePolicyLocked(account, app, bucket)
 	if err != nil || lifecycleRulesEqual(p.Rules, normal) {
 		return p, err
@@ -62,17 +67,27 @@ func (m *MemStore) SetObjectBucketLifecycle(_ context.Context, account, app, buc
 	m.objectLifecyclePolicies[bucket] = cloneLifecyclePolicy(p)
 	return cloneLifecyclePolicy(p), nil
 }
-func (m *MemStore) GetObjectBucketLifecycle(_ context.Context, account, app, bucket string) (ObjectLifecyclePolicy, error) {
+func (m *MemStore) GetObjectBucketLifecycle(ctx context.Context, account, app, bucket string) (ObjectLifecyclePolicy, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectLifecyclePolicy
+		return zero0, err
+	}
+
 	return m.ownedLifecyclePolicyLocked(account, app, bucket)
 }
-func (m *MemStore) DueObjectLifecyclePolicies(_ context.Context, limit int32) ([]ObjectLifecyclePolicy, error) {
+func (m *MemStore) DueObjectLifecyclePolicies(ctx context.Context, limit int32) ([]ObjectLifecyclePolicy, error) {
 	if limit < 1 || limit > api.ObjectLifecycleBatch {
 		return nil, ErrConflict
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 []ObjectLifecyclePolicy
+		return zero0, err
+	}
+
 	out := []ObjectLifecyclePolicy{}
 	dueAt := map[string]time.Time{}
 	now := m.clock()
@@ -102,9 +117,14 @@ func (m *MemStore) DueObjectLifecyclePolicies(_ context.Context, limit int32) ([
 	}
 	return out, nil
 }
-func (m *MemStore) StartObjectLifecycleScan(_ context.Context, account, app, bucket string) (ObjectLifecycleScan, error) {
+func (m *MemStore) StartObjectLifecycleScan(ctx context.Context, account, app, bucket string) (ObjectLifecycleScan, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectLifecycleScan
+		return zero0, err
+	}
+
 	p, err := m.ownedLifecyclePolicyLocked(account, app, bucket)
 	if err != nil {
 		return ObjectLifecycleScan{}, err
@@ -122,9 +142,14 @@ func (m *MemStore) StartObjectLifecycleScan(_ context.Context, account, app, buc
 	m.objectLifecycleScans[j.ID] = cloneLifecycleScan(j)
 	return cloneLifecycleScan(j), nil
 }
-func (m *MemStore) GetObjectLifecycleScan(_ context.Context, account, bucket, id string) (ObjectLifecycleScan, error) {
+func (m *MemStore) GetObjectLifecycleScan(ctx context.Context, account, bucket, id string) (ObjectLifecycleScan, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectLifecycleScan
+		return zero0, err
+	}
+
 	j, ok := m.objectLifecycleScans[id]
 	b := m.objectBuckets[bucket]
 	if !ok || j.AccountID != account || j.BucketID != bucket || b.AccountID != account {
@@ -147,16 +172,26 @@ func (m *MemStore) mutateLifecycleScanLocked(id string, fn func(ObjectLifecycleS
 	}
 	return cloneLifecycleScan(j), err
 }
-func (m *MemStore) ClaimObjectLifecycleScan(_ context.Context, id, token string) (ObjectLifecycleScan, error) {
+func (m *MemStore) ClaimObjectLifecycleScan(ctx context.Context, id, token string) (ObjectLifecycleScan, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectLifecycleScan
+		return zero0, err
+	}
+
 	return m.mutateLifecycleScanLocked(id, func(j ObjectLifecycleScan) (ObjectLifecycleScan, error) {
 		return claimLifecycleScan(j, token, m.clock())
 	})
 }
-func (m *MemStore) CheckpointObjectLifecycleScan(_ context.Context, id, token, key string, done bool) (ObjectLifecycleScan, error) {
+func (m *MemStore) CheckpointObjectLifecycleScan(ctx context.Context, id, token, key string, done bool) (ObjectLifecycleScan, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectLifecycleScan
+		return zero0, err
+	}
+
 	j, err := m.mutateLifecycleScanLocked(id, func(j ObjectLifecycleScan) (ObjectLifecycleScan, error) {
 		return checkpointLifecycleScan(j, token, key, done, m.clock())
 	})
@@ -167,9 +202,13 @@ func (m *MemStore) CheckpointObjectLifecycleScan(_ context.Context, id, token, k
 	}
 	return j, err
 }
-func (m *MemStore) RetryObjectLifecycleScan(_ context.Context, id, token string) error {
+func (m *MemStore) RetryObjectLifecycleScan(ctx context.Context, id, token string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return err
+	}
+
 	_, err := m.mutateLifecycleScanLocked(id, func(j ObjectLifecycleScan) (ObjectLifecycleScan, error) {
 		if !validLifecycleScanLease(j, token, m.clock()) {
 			return j, ErrConflict

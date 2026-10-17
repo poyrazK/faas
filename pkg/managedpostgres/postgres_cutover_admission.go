@@ -20,11 +20,11 @@ type CutoverAdmissionFence struct {
 // this slice, after every staged provider credential has been revoked.
 func (s *PostgresStore) FenceCutoverAdmission(ctx context.Context, account, id string) (CutoverAdmissionFence, error) {
 	q := sqlc.New()
-	initial, err := q.GetManagedPostgresCutover(ctx, s.pool, sqlc.GetManagedPostgresCutoverParams{AccountID: account, ID: id})
+	initial, err := q.GetManagedPostgresCutover(ctx, s.catalog, sqlc.GetManagedPostgresCutoverParams{AccountID: account, ID: id})
 	if err != nil {
 		return CutoverAdmissionFence{}, mapPostgresError(err)
 	}
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.catalog.Begin(ctx)
 	if err != nil {
 		return CutoverAdmissionFence{}, err
 	}

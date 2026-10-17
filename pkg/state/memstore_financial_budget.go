@@ -18,7 +18,7 @@ func (m *MemStore) ValidateFinancialBudgetScope(_ context.Context, account strin
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, ok := m.accounts[account]; !ok {
+	if _, ok := m.billingResourceAccountLocked(account); !ok {
 		return ErrNotFound
 	}
 	return m.financialBudgetScopeOwnedLocked(account, spec)
@@ -65,7 +65,7 @@ func (m *MemStore) CreateFinancialBudget(_ context.Context, account, id, actor s
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, ok := m.accounts[account]; !ok {
+	if _, ok := m.billingResourceAccountLocked(account); !ok {
 		return FinancialBudget{}, ErrNotFound
 	}
 	if err := m.financialBudgetScopeOwnedLocked(account, spec); err != nil {

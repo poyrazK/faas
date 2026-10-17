@@ -4563,18 +4563,6 @@
     "kind": "operational"
   },
   {
-    "table": "event_subscription_circuit_breakers",
-    "columns": [
-      "account_id",
-      "app_id",
-      "policy",
-      "state_data",
-      "subscription_id",
-      "updated_at"
-    ],
-    "kind": "operational"
-  },
-  {
     "table": "event_subscription_capacity_commands",
     "columns": [
       "account_id",
@@ -4585,6 +4573,18 @@
       "request",
       "retain_until",
       "subscription_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "event_subscription_circuit_breakers",
+    "columns": [
+      "account_id",
+      "app_id",
+      "policy",
+      "state_data",
+      "subscription_id",
+      "updated_at"
     ],
     "kind": "operational"
   },
@@ -5642,6 +5642,7 @@
       "account_id",
       "ack_url",
       "app_id",
+      "async_quota_subject_id",
       "attempts",
       "completed_at",
       "created_at",
@@ -6114,6 +6115,7 @@
       "credential_generation",
       "credential_ref",
       "cutover_id",
+      "database_account_id",
       "database_id",
       "deleted_at",
       "environment_key",
@@ -6359,6 +6361,7 @@
       "lease_until",
       "name",
       "observed_generation",
+      "org_id",
       "postgres_major",
       "provider_resource_id",
       "region",
@@ -7660,6 +7663,7 @@
       "lease_token",
       "lease_until",
       "name",
+      "org_id",
       "physical_name",
       "public_read",
       "region",
@@ -8009,6 +8013,8 @@
       "bucket_id",
       "created_at",
       "id",
+      "issuer_access_revision",
+      "issuer_account_id",
       "kid",
       "label",
       "last_used_at",
@@ -8320,6 +8326,7 @@
   {
     "table": "org_memberships",
     "columns": [
+      "access_revision",
       "account_id",
       "invited_by_account_id",
       "joined_at",
@@ -8332,17 +8339,28 @@
   {
     "table": "orgs",
     "columns": [
+      "abuse_hold_at",
+      "abuse_hold_reason",
+      "billing_address",
+      "billing_email",
+      "business_name",
       "created_at",
       "deleted_pending",
       "id",
+      "last_quota_warning_at",
       "name",
+      "object_storage_owned_from",
+      "past_due_at",
       "personal_org",
       "personal_owner_account_id",
       "plan",
       "provider_customer_id",
+      "resource_ownership_enabled",
       "slug",
       "status",
       "stripe_subscription_item",
+      "suspended_reason",
+      "tax_id",
       "updated_at"
     ],
     "kind": "account_identity"
@@ -10602,6 +10620,7 @@
       "max_concurrency",
       "mode",
       "name",
+      "org_id",
       "queue_name",
       "retired_at",
       "retry_policy",
@@ -10770,6 +10789,13 @@
       "updated_at"
     ],
     "kind": "configuration"
+  },
+  {
+    "table": "resource_namespaces",
+    "columns": [
+      "id"
+    ],
+    "kind": "account_identity"
   },
   {
     "table": "response_cache_purge_change_log",

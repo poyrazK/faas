@@ -13,20 +13,22 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 // PostgresStore is the production catalog adapter for managed PostgreSQL.
 // The pool remains owned by the daemon and may be shared with other stores.
 type PostgresStore struct {
-	pool *pgxpool.Pool
+	pool    *pgxpool.Pool
+	catalog *db.IntentPool
 }
 
 func NewPostgresStore(pool *pgxpool.Pool) (*PostgresStore, error) {
 	if pool == nil {
 		return nil, ErrInvalid
 	}
-	return &PostgresStore{pool: pool}, nil
+	return &PostgresStore{pool: pool, catalog: db.NewIntentPool(pool)}, nil
 }
 
 var _ Store = (*PostgresStore)(nil)
@@ -50,17 +52,17 @@ func (s *PostgresStore) Reserve(ctx context.Context, database Database, limit in
 	if database.RetryAt.IsZero() {
 		database.RetryAt = database.CreatedAt
 	}
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := s.catalog.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return Database{}, false, fmt.Errorf("managed postgres: begin reservation: %w", err)
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	q := new(sqlc.Queries)
 	// Serialize tenant quotas and race safely with account deletion.
-	if _, err := q.LockManagedPostgresLifecycleAccount(ctx, tx, accountID); err != nil {
+	if err := s.lockReservationOwner(ctx, tx, database); err != nil {
 		return Database{}, false, mapPostgresError(err)
 	}
-	row, err := q.FindManagedPostgresLifecycleDatabase(ctx, tx, sqlc.FindManagedPostgresLifecycleDatabaseParams{AccountID: accountID, Name: database.Name})
+	row, err := q.FindManagedPostgresLifecycleDatabase(ctx, tx, sqlc.FindManagedPostgresLifecycleDatabaseParams{AccountID: accountID, Name: database.Name, OwnerOrgID: databaseNullableUUID(Organization(ctx))})
 	if err == nil {
 		existing := databaseFromSQL(row)
 		if existing.EnvironmentCloneOperationID != "" {
@@ -94,7 +96,7 @@ func (s *PostgresStore) Reserve(ctx context.Context, database Database, limit in
 			return Database{}, false, ErrConflict
 		}
 	}
-	active, err := q.CountManagedPostgresLifecycleDatabases(ctx, tx, accountID)
+	active, err := s.countReservationOwner(ctx, tx, database)
 	if err != nil {
 		return Database{}, false, mapPostgresError(err)
 	}
@@ -102,7 +104,7 @@ func (s *PostgresStore) Reserve(ctx context.Context, database Database, limit in
 		return Database{}, false, ErrQuotaExceeded
 	}
 	row, err = q.InsertManagedPostgresLifecycleDatabase(ctx, tx, sqlc.InsertManagedPostgresLifecycleDatabaseParams{
-		ID: databaseID, AccountID: accountID, Name: database.Name, Region: database.Spec.Region,
+		ID: databaseID, AccountID: accountID, OrgID: databaseNullableUUID(database.OrgID), Name: database.Name, Region: database.Spec.Region,
 		PostgresMajor: int16(database.Spec.PostgresMajor), ServiceClass: string(database.Spec.Class), Availability: string(database.Spec.Availability),
 		ScaleToZero: database.Spec.ScaleToZero, StorageLimitBytes: database.Spec.StorageLimitBytes, RestoreWindowSeconds: database.Spec.RestoreWindowSeconds,
 		BackendID: database.BackendID, BackendFingerprint: database.BackendFingerprint, RestoreSourceDatabaseID: databaseNullableUUID(database.RestoreSourceDatabaseID),
@@ -124,7 +126,7 @@ func (s *PostgresStore) FindByName(ctx context.Context, accountID, name string) 
 	if err != nil || !ValidName(name) {
 		return Database{}, ErrInvalid
 	}
-	row, err := new(sqlc.Queries).FindManagedPostgresLifecycleDatabase(ctx, s.pool, sqlc.FindManagedPostgresLifecycleDatabaseParams{AccountID: account, Name: name})
+	row, err := new(sqlc.Queries).FindManagedPostgresLifecycleDatabase(ctx, s.catalog, sqlc.FindManagedPostgresLifecycleDatabaseParams{AccountID: account, Name: name, OwnerOrgID: databaseNullableUUID(Organization(ctx))})
 	return databaseFromSQL(row), mapPostgresError(err)
 }
 
@@ -137,8 +139,12 @@ func (s *PostgresStore) Get(ctx context.Context, accountID, databaseID string) (
 	if err != nil {
 		return Database{}, err
 	}
-	row, err := new(sqlc.Queries).GetManagedPostgresLifecycleDatabase(ctx, s.pool, sqlc.GetManagedPostgresLifecycleDatabaseParams{AccountID: account, ID: id})
-	return databaseFromSQL(row), mapPostgresError(err)
+	row, err := new(sqlc.Queries).GetManagedPostgresLifecycleDatabase(ctx, s.catalog, sqlc.GetManagedPostgresLifecycleDatabaseParams{AccountID: account, ID: id})
+	d := databaseFromSQL(row)
+	if err == nil && !inOwnershipScope(ctx, d, accountID) {
+		return Database{}, ErrNotFound
+	}
+	return d, mapPostgresError(err)
 }
 
 func (s *PostgresStore) List(ctx context.Context, accountID string) ([]Database, error) {
@@ -146,7 +152,7 @@ func (s *PostgresStore) List(ctx context.Context, accountID string) ([]Database,
 	if err != nil {
 		return nil, err
 	}
-	rows, err := new(sqlc.Queries).ListManagedPostgresLifecycleDatabases(ctx, s.pool, account)
+	rows, err := new(sqlc.Queries).ListManagedPostgresLifecycleDatabases(ctx, s.catalog, account)
 	return databasesFromSQL(rows), mapPostgresError(err)
 }
 
@@ -154,7 +160,7 @@ func (s *PostgresStore) Due(ctx context.Context, includeProvisioning bool, limit
 	if limit < 1 || limit > 100 || now.IsZero() {
 		return nil, ErrInvalid
 	}
-	rows, err := new(sqlc.Queries).DueManagedPostgresLifecycleDatabases(ctx, s.pool, sqlc.DueManagedPostgresLifecycleDatabasesParams{
+	rows, err := new(sqlc.Queries).DueManagedPostgresLifecycleDatabases(ctx, s.catalog, sqlc.DueManagedPostgresLifecycleDatabasesParams{
 		IncludeProvisioning: includeProvisioning, At: databaseNullableTime(now), RowLimit: int32(limit)})
 	return databasesFromSQL(rows), mapPostgresError(err)
 }
@@ -178,12 +184,12 @@ func (s *PostgresStore) Claim(ctx context.Context, accountID, databaseID, leaseT
 		return s.claimResize(ctx, accountID, databaseID, leaseToken, now, leaseUntil)
 	}
 	q := new(sqlc.Queries)
-	row, err := q.ClaimManagedPostgresLifecycleProvision(ctx, s.pool, sqlc.ClaimManagedPostgresLifecycleProvisionParams{
+	row, err := q.ClaimManagedPostgresLifecycleProvision(ctx, s.catalog, sqlc.ClaimManagedPostgresLifecycleProvisionParams{
 		AccountID: account, DatabaseID: id, LeaseToken: leaseToken, LeaseUntil: databaseNullableTime(leaseUntil), At: databaseNullableTime(now)})
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return databaseFromSQL(row), mapPostgresError(err)
 	}
-	exists, err := q.ExistsManagedPostgresLifecycleDatabase(ctx, s.pool, sqlc.ExistsManagedPostgresLifecycleDatabaseParams{AccountID: account, ID: id})
+	exists, err := q.ExistsManagedPostgresLifecycleDatabase(ctx, s.catalog, sqlc.ExistsManagedPostgresLifecycleDatabaseParams{AccountID: account, ID: id})
 	if err != nil {
 		return Database{}, mapPostgresError(err)
 	}
@@ -210,7 +216,7 @@ func (s *PostgresStore) ClaimDelete(ctx context.Context, accountID, databaseID, 
 	if err != nil {
 		return Database{}, err
 	}
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := s.catalog.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return Database{}, fmt.Errorf("managed postgres: begin delete claim: %w", err)
 	}
@@ -250,7 +256,7 @@ func (s *PostgresStore) RecordProviderResource(ctx context.Context, databaseID, 
 	if err != nil {
 		return err
 	}
-	affected, err := new(sqlc.Queries).RecordManagedPostgresLifecycleResource(ctx, s.pool, sqlc.RecordManagedPostgresLifecycleResourceParams{
+	affected, err := new(sqlc.Queries).RecordManagedPostgresLifecycleResource(ctx, s.catalog, sqlc.RecordManagedPostgresLifecycleResourceParams{
 		DatabaseID: id, LeaseToken: leaseToken, ProviderResourceID: providerResourceID, At: databaseNullableTime(now)})
 	if err != nil {
 		return mapPostgresError(err)
@@ -269,7 +275,7 @@ func (s *PostgresStore) FinishProvision(ctx context.Context, databaseID, leaseTo
 	if err != nil {
 		return Database{}, err
 	}
-	row, err := new(sqlc.Queries).FinishManagedPostgresLifecycleProvision(ctx, s.pool, sqlc.FinishManagedPostgresLifecycleProvisionParams{
+	row, err := new(sqlc.Queries).FinishManagedPostgresLifecycleProvision(ctx, s.catalog, sqlc.FinishManagedPostgresLifecycleProvisionParams{
 		DatabaseID: id, LeaseToken: leaseToken, At: databaseNullableTime(now)})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Database{}, ErrConflict
@@ -285,7 +291,7 @@ func (s *PostgresStore) Release(ctx context.Context, databaseID, leaseToken stri
 	if err != nil {
 		return err
 	}
-	affected, err := new(sqlc.Queries).ReleaseManagedPostgresLifecycleLease(ctx, s.pool, sqlc.ReleaseManagedPostgresLifecycleLeaseParams{
+	affected, err := new(sqlc.Queries).ReleaseManagedPostgresLifecycleLease(ctx, s.catalog, sqlc.ReleaseManagedPostgresLifecycleLeaseParams{
 		DatabaseID: id, LeaseToken: leaseToken, NextState: string(next), ErrorCode: errorCode, RetryAt: databaseNullableTime(retryAt), At: databaseNullableTime(now)})
 	if err != nil {
 		return mapPostgresError(err)
@@ -304,7 +310,7 @@ func (s *PostgresStore) FinishDelete(ctx context.Context, databaseID, leaseToken
 	if err != nil {
 		return Database{}, err
 	}
-	row, err := new(sqlc.Queries).FinishManagedPostgresLifecycleDelete(ctx, s.pool, sqlc.FinishManagedPostgresLifecycleDeleteParams{
+	row, err := new(sqlc.Queries).FinishManagedPostgresLifecycleDelete(ctx, s.catalog, sqlc.FinishManagedPostgresLifecycleDeleteParams{
 		DatabaseID: id, LeaseToken: leaseToken, At: databaseNullableTime(now)})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Database{}, ErrConflict
