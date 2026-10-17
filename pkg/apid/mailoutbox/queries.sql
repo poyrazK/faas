@@ -69,6 +69,8 @@ WITH candidate AS (
           AND o.verification_key_id=ANY(sqlc.arg(magic_link_keys)::text[]))
         OR (o.template='mfa_disable_request' AND sqlc.arg(mfa_disable_enabled)::boolean AND o.verification_origin=sqlc.arg(mfa_disable_origin)::text
           AND o.verification_key_id=ANY(sqlc.arg(mfa_disable_keys)::text[]))
+        OR (o.template='mfa_disabled' AND sqlc.arg(mfa_disabled_alert_enabled)::boolean
+          AND o.security_alert_key_id=ANY(sqlc.arg(mfa_disabled_alert_keys)::text[]))
         OR (o.template='mfa_recovery_used' AND sqlc.arg(mfa_recovery_alert_enabled)::boolean
           AND o.security_alert_key_id=ANY(sqlc.arg(mfa_recovery_alert_keys)::text[])))
       AND o.attempts<sqlc.arg(max_attempts) AND o.expires_at>clock_timestamp()
@@ -140,7 +142,7 @@ SELECT o.id,o.revision,o.state,o.template,o.from_address,o.expires_at,o.recovery
     coalesce(m.sender_address,'')::text AS sender_address
 FROM platform_mail_producer_outbox o
 LEFT JOIN internal_mail_messages m ON m.namespace=o.namespace AND m.producer_id=o.producer_id
-    AND m.idempotency_key=(CASE o.template WHEN 'email_verification' THEN 'verify-email:' WHEN 'password_reset' THEN 'password-reset:' WHEN 'magic_link' THEN 'magic-link:' WHEN 'mfa_recovery_used' THEN 'mfa-recovery-alert:' WHEN 'mfa_disable_request' THEN 'mfa-disable:' ELSE 'account-delete:' END)||o.id::text
+    AND m.idempotency_key=(CASE o.template WHEN 'email_verification' THEN 'verify-email:' WHEN 'password_reset' THEN 'password-reset:' WHEN 'magic_link' THEN 'magic-link:' WHEN 'mfa_recovery_used' THEN 'mfa-recovery-alert:' WHEN 'mfa_disabled' THEN 'mfa-disabled:' WHEN 'mfa_disable_request' THEN 'mfa-disable:' ELSE 'account-delete:' END)||o.id::text
 WHERE o.namespace=$1 AND o.id=$2;
 
 -- name: ReconciliationReady :exec
@@ -360,3 +362,36 @@ WITH expired AS (
     ORDER BY expires_at,token_hash LIMIT $1 FOR UPDATE SKIP LOCKED
 )
 DELETE FROM mfa_disable_tokens t USING expired e WHERE t.token_hash=e.token_hash;
+
+-- name: MFADisabledAlertReady :one
+SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_constraint c
+    JOIN pg_catalog.pg_class t ON t.oid=c.conrelid JOIN pg_catalog.pg_namespace n ON n.oid=t.relnamespace
+    WHERE n.nspname=current_schema() AND t.relname='platform_mail_producer_outbox'
+      AND c.conname='platform_mail_producer_outbox_security_alert_check'
+      AND position('mfa_disabled' in pg_catalog.pg_get_constraintdef(c.oid))>0)::boolean AS ready;
+
+-- name: MFADisabledAlertKeyReferences :many
+SELECT DISTINCT security_alert_key_id FROM platform_mail_producer_outbox
+WHERE namespace=$1 AND producer_id=$2 AND template='mfa_disabled' AND state IN ('queued','claimed') AND expires_at>clock_timestamp();
+
+-- name: CreateMFADisabledAlertIntent :exec
+INSERT INTO platform_mail_producer_outbox(id,account_id,namespace,producer_id,from_address,recipient_address,
+    template,template_version,expires_at,recovery_id,sealed_security_alert,security_alert_key_id)
+VALUES($1,$2,$3,$4,$5,$6,'mfa_disabled',1,$7,$8,$9,$10);
+
+-- Read the password proof without holding the namespace/account locks during
+-- expensive verification. Every password/MFA writer advances a locked revision.
+-- name: MFADisabledPasswordProof :one
+SELECT a.password_reset_revision,a.mfa_revision,p.hash FROM accounts a JOIN account_passwords p ON p.account_id=a.id WHERE a.id=$1;
+
+-- name: LockMFADisabledAccount :one
+SELECT id,email,status,abuse_hold_at,password_reset_revision,mfa_revision,mfa_enrolled_at,mfa_recovery_codes_hash FROM accounts WHERE id=$1 FOR UPDATE;
+
+-- Legacy tokens have no expiry or saved password/factor version. Keep their
+-- existing age-sealed proof and cooldown, and refuse pre-enrollment requests.
+-- name: LockLegacyMFADisableRequest :one
+SELECT token_hash,account_id,requested_at,consumed_at FROM mfa_disable_requests WHERE token_hash=$1 AND account_id=$2 FOR UPDATE;
+
+-- name: ConsumeLegacyMFADisableRequest :execrows
+UPDATE mfa_disable_requests SET consumed_at=clock_timestamp()
+WHERE token_hash=$1 AND account_id=$2 AND consumed_at IS NULL AND requested_at+interval '24 hours'<=clock_timestamp();

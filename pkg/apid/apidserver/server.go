@@ -144,6 +144,7 @@ type server struct {
 	passwordResetCredentials         *mailoutbox.ResetCredentials
 	magicLinkMailOutboxRequested     func() bool
 	mfaRecoveryAlertOutboxRequested  func() bool
+	mfaDisabledAlertOutboxRequested  func() bool
 	magicLinkCredentials             *mailoutbox.MagicLinkCredentials
 	mfaDisableMailOutboxRequested    func() bool
 	mfaDisableCredentials            *mailoutbox.MFADisableCredentials

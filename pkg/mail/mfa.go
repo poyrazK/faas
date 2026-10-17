@@ -201,3 +201,28 @@ password and contact support@gregale.dev so we can investigate.
 `, email, requested, ready, confirmURL, expiry)
 	return
 }
+
+// MFADisabledBodyV1 is frozen for retries of committed MFA removal events.
+func MFADisabledBodyV1(email, method string, disabledAt time.Time) (subject, body string) {
+	label := "an email confirmation after the waiting period"
+	switch method {
+	case "password":
+		label = "your password from an MFA-verified session"
+	case "recovery_code":
+		label = "a recovery code"
+	}
+	subject = "MFA disabled on your Gregale account"
+	body = fmt.Sprintf(`Hi,
+
+MFA was disabled for your Gregale account (%s) at %s using %s.
+The authenticator and its recovery codes were removed.
+
+If this was you, sign in and enroll MFA again to protect your account.
+
+If this was not you, change your password immediately, revoke other
+sessions and contact support@gregale.dev.
+
+— Gregale
+`, safeRecipient(email), disabledAt.UTC().Format("2006-01-02 15:04:05 UTC"), label)
+	return
+}

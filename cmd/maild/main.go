@@ -109,6 +109,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		PasswordResetOutboxEnabled:    func() bool { return internalmail.PasswordResetOutboxEnabled(os.Getenv) },
 		MagicLinkOutboxEnabled:        func() bool { return internalmail.MagicLinkOutboxEnabled(os.Getenv) },
 		MFADisableOutboxEnabled:       func() bool { return internalmail.MFADisableOutboxEnabled(os.Getenv) },
+		MFADisabledAlertOutboxEnabled: func() bool { return internalmail.MFADisabledAlertOutboxEnabled(os.Getenv) },
 		MFARecoveryAlertOutboxEnabled: func() bool { return internalmail.MFARecoveryAlertOutboxEnabled(os.Getenv) },
 		RecoveryEnabled:               func() bool { return internalmail.RecoveryEnabled(os.Getenv) },
 		SuppressionControlsEnabled:    func() bool { return internalmail.SuppressionControlsEnabled(os.Getenv) },

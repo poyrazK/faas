@@ -517,6 +517,15 @@ func (s *server) mfaDisable(w http.ResponseWriter, r *http.Request, acct state.A
 		return
 	}
 
+	if s.tryMFADisabledAlert(w, r, acct, req) {
+		return
+	}
+	s.completeInlineMFADisable(w, r, acct, req)
+}
+
+func (s *server) completeInlineMFADisable(w http.ResponseWriter, r *http.Request, acct state.Account, req api.MFADisableRequest) {
+	hasPassword := req.Password != ""
+
 	switch {
 	case hasPassword:
 		// The password is the first factor. An mfa_pending session has
@@ -631,12 +640,13 @@ func (s *server) mfaDisableEmailConfirm(w http.ResponseWriter, r *http.Request, 
 		s.writeMFADisableEmailInvalid(w, r, acct, "token_malformed")
 		return
 	}
-	if !s.consumeDurableMFADisableEmail(w, r, acct, sealed) {
-		s.confirmInlineMFADisableEmail(w, r, acct, sealed)
+	alertRequested := s.mfaDisabledAlertRequested()
+	if !s.consumeDurableMFADisableEmail(w, r, acct, sealed, alertRequested) {
+		s.confirmInlineMFADisableEmail(w, r, acct, sealed, alertRequested)
 	}
 }
 
-func (s *server) confirmInlineMFADisableEmail(w http.ResponseWriter, r *http.Request, acct state.Account, sealed []byte) {
+func (s *server) confirmInlineMFADisableEmail(w http.ResponseWriter, r *http.Request, acct state.Account, sealed []byte, alertRequested bool) {
 	idents := s.mfaDisableTokenIdentities()
 	if len(idents) == 0 {
 		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,
@@ -646,6 +656,10 @@ func (s *server) confirmInlineMFADisableEmail(w http.ResponseWriter, r *http.Req
 	namespace, plaintext, err := secretbox.OpenBytesMulti(idents, sealed)
 	if err != nil || namespace != "mfa-disable" || len(plaintext) != 32 {
 		s.writeMFADisableEmailInvalid(w, r, acct, "token_invalid")
+		return
+	}
+	if alertRequested {
+		s.confirmLegacyMFADisabledAlert(w, r, acct, sealed)
 		return
 	}
 	reqRow, err := s.store.GetMFADisableRequest(r.Context(), api.HashToken(sealed))

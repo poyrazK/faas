@@ -2772,3 +2772,66 @@ credential fields. Base maintenance can expire mail and purge expired token
 bindings while the child gate is off. Hard account deletion cascades both;
 opaque reconciliation audit survives. Migration Down refuses any disable-token,
 intent or audit history. No resend override or cooldown bypass is provided.
+
+## Durable MFA-disabled security alerts
+
+`FAAS_INTERNAL_MAIL_MFA_DISABLED_ALERT_OUTBOX_ENABLED=0` independently gates
+internal removal alerts in apid, maild and private reconciliation. Units and
+examples keep it off. It adds no customer email API or public listener.
+Apply
+[`20261017094937523_platform_mail_mfa_disabled_alert_outbox.sql`](../../migrations/20261017094937523_platform_mail_mfa_disabled_alert_outbox.sql)
+before enabling the new capability; enabled startup checks the migrated alert
+constraint. See
+[ADR-20261017094937](../adr/20261017094937-mail-mfa-disabled-alerts.md).
+
+The capability requires the existing master, producer, scheduling and
+producer-outbox gates, scoped `internal-producer` transport and dedicated apid
+credential readers. Historical reader names remain
+`FAAS_INTERNAL_MAIL_VERIFICATION_IDENTITY_PATH` and
+`FAAS_INTERNAL_MAIL_VERIFICATION_PREVIOUS_IDENTITY_PATH`. No origin is needed.
+Retain readers for all enabled families' pending payloads; startup refuses a
+missing live reader. No apid key is delivered to maild or mailctl.
+
+Enabled password, recovery-code and email-confirmation removal commits an
+encrypted alert in the same transaction. Both email-token formats are covered;
+this does not enable durable link issuance or its page. A final recovery code
+can remove MFA. The removal alert replaces any code-use notification for this
+operation. Token consumption, factor removal and alert save all roll back if any
+write fails, the queue is full, recovery is held or the child gate closes before
+commit. Enabled failure never falls back to unnotified removal.
+
+Authentication and CSRF stay in the existing routes. A pending MFA session cannot
+remove MFA with a password. Password verification runs before locks and its
+password/MFA revisions are checked again under the account lock. Recovery hashes
+are matched under that lock; removal clears the authenticator and all its codes
+while preserving explicit MFA policy. Confirmation issues no session or step-up
+proof. Concurrent removals of the same enrollment produce one alert.
+
+Durable email proofs keep every original binding, cooldown and deadline. Expiry
+is checked after saving the alert so a blocked save cannot extend a token's life.
+Legacy age envelopes still require host identities, the same authenticated
+account, unused hash and original database-checked 24-hour cooldown. Requests
+preceding the current enrollment are refused. Legacy rows lack a stored expiry
+and saved factor/password versions; these cannot be inferred retroactively.
+
+The encrypted payload contains only event time and method. No password, email
+token, TOTP secret, recovery code or recovery HMAC enters intent, email or logs.
+Retries preserve event time/method, the frozen V1 body, original 24-hour delivery
+deadline and `mfa-disabled:<intent UUID>` admission key. Re-enrollment, later
+password changes, billing suspension and later abuse holds do not alter history.
+Changed address or account deletion stops pending delivery. Existing suppression,
+producer budgets, lease fencing and recovery-generation quarantine apply.
+
+Private inspection returns existing bounded metadata without payload, recipient
+or reader key. Admission acknowledgement and exact audit replay require this own
+child gate plus the existing reconciliation/operator gates. Acknowledgement only
+records an existing receipt; it cannot send mail or reset a deadline. Maild
+admission is not destination delivery evidence. Live qualification remains
+separate.
+
+Flag rollback restores the previous removal flow for later calls and pauses old
+alerts; an operation already selected for an atomic alert fails closed on late
+withdrawal. Base maintenance can expire and erase payloads with this child off.
+Terminal settlement and reconciliation erase recipient and ciphertext. Hard
+account deletion cascades intent while opaque audit survives. Migration Down
+refuses remaining alert intent or audit. No forced replay is provided.

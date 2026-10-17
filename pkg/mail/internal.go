@@ -33,6 +33,7 @@ type InternalSender struct {
 	passwordResetEnabled    func() bool
 	magicLinkEnabled        func() bool
 	mfaRecoveryAlertEnabled func() bool
+	mfaDisabledAlertEnabled func() bool
 	mfaDisableEnabled       func() bool
 }
 

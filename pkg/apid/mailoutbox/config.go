@@ -30,6 +30,7 @@ type Service struct {
 	magicLink                 *credentialConfig
 	mfaDisable                *credentialConfig
 	mfaRecoveryAlert          *credentialConfig
+	mfaDisabledAlert          *credentialConfig
 	requested, enabled        func() bool
 }
 

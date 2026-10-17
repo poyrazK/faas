@@ -39,6 +39,13 @@ func mfaDisableAvailable(email, status string, abuse pgtype.Timestamptz, passwor
 // enrolled factor and consumes the token in one commit. It neither authenticates
 // a session nor clears the account's explicit MFA policy.
 func (c *MFADisableCredentials) Redeem(ctx context.Context, accountID string, hash []byte) (time.Time, error) {
+	return c.redeem(ctx, accountID, hash, nil)
+}
+
+func (c *MFADisableCredentials) redeem(ctx context.Context, accountID string, hash []byte, alert *Service) (time.Time, error) {
+	if alert != nil && !alert.mfaDisabledAlertEnabled() {
+		return time.Time{}, internalmail.ErrDisabled
+	}
 	if c == nil || !validID(accountID) || len(hash) != api.MFADisableTokenBytes {
 		return time.Time{}, internalmail.ErrInvalid
 	}
@@ -48,6 +55,11 @@ func (c *MFADisableCredentials) Redeem(ctx context.Context, accountID string, ha
 	}
 	defer rollback(ctx, tx)
 	queries := q.New()
+	if alert != nil {
+		if err := queries.LockAdmission(ctx, tx, alert.namespace); err != nil {
+			return time.Time{}, err
+		}
+	}
 	account, err := queries.LockMFADisableCredentialAccount(ctx, tx, hash)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return time.Time{}, ErrMFADisableUnknown
@@ -64,6 +76,9 @@ func (c *MFADisableCredentials) Redeem(ctx context.Context, accountID string, ha
 	}
 	if err != nil {
 		return time.Time{}, err
+	}
+	if alert != nil && token.Namespace != alert.namespace {
+		return time.Time{}, ErrMFADisableInvalid
 	}
 	if err := queries.ShareRecovery(ctx, tx, token.Namespace); err != nil {
 		return time.Time{}, err
@@ -88,12 +103,20 @@ func (c *MFADisableCredentials) Redeem(ctx context.Context, accountID string, ha
 	if err := queries.ClearMFADisableFactor(ctx, tx, account.ID); err != nil {
 		return time.Time{}, err
 	}
+	if alert != nil {
+		if err := alert.saveMFADisabledAlert(ctx, tx, account.ID, account.Email, recovery.RecoveryID, now.Time, "email"); err != nil {
+			return time.Time{}, err
+		}
+	}
 	n, err := queries.ConsumeMFADisableToken(ctx, tx, q.ConsumeMFADisableTokenParams{TokenHash: hash, AccountID: account.ID})
 	if err != nil {
 		return time.Time{}, err
 	}
 	if n != 1 {
 		return time.Time{}, ErrMFADisableInvalid
+	}
+	if alert != nil && !alert.mfaDisabledAlertEnabled() {
+		return time.Time{}, internalmail.ErrDisabled
 	}
 	return time.Time{}, tx.Commit(ctx)
 }

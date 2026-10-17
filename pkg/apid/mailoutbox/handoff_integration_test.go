@@ -80,6 +80,7 @@ CREATE TABLE mail_suppressions(email text NOT NULL,expires_at timestamptz)`); er
 	var magicLinkGate atomic.Bool
 	var mfaAlertGate atomic.Bool
 	var mfaDisableGate atomic.Bool
+	var mfaDisabledAlertGate atomic.Bool
 	outboxGate.Store(true)
 	daemon := &internalmail.Service{Store: store, Codec: internalmail.AgeCodec{Identity: identity, Namespace: "platform"}, Resolver: resolver, SendingIP: netip.MustParseAddr("192.0.2.10"),
 		Enabled: func() bool { return true }, ProducersEnabled: func() bool { return true }, SchedulingEnabled: func() bool { return true }, DeliveryEnabled: func() bool { return true },
@@ -90,6 +91,7 @@ CREATE TABLE mail_suppressions(email text NOT NULL,expires_at timestamptz)`); er
 		MagicLinkOutboxEnabled:        magicLinkGate.Load,
 		MFARecoveryAlertOutboxEnabled: mfaAlertGate.Load,
 		MFADisableOutboxEnabled:       mfaDisableGate.Load,
+		MFADisabledAlertOutboxEnabled: mfaDisabledAlertGate.Load,
 		Producers:                     map[string]internalmail.Producer{"auth": {ID: "auth", Token: testProducerToken, From: []string{"notify@example.test"}, DailyRecipientLimit: 10, PendingRecipientLimit: 100}},
 		RecipientAllowed:              func(string) bool { return true }, Transport: smtp}
 	domain, err := daemon.RegisterDomain(t.Context(), "example.test")
@@ -548,6 +550,55 @@ CREATE TABLE mail_suppressions(email text NOT NULL,expires_at timestamptz)`); er
 	if smtp.accepted.Load() != 7 {
 		t.Fatal("disable-email retry duplicated SMTP custody")
 	}
+	// A committed removal alert survives a remote pause and a lost response.
+	env[internalmail.MFADisabledAlertOutboxEnableEnv] = "1"
+	f.service = restarted
+	if err := restarted.ConfigureMFADisabledAlert(t.Context(), func(k string) string { return env[k] }); err != nil {
+		t.Fatal(err)
+	}
+	removedID, removedHashes := mfaAlertAccount(t, f, 3)
+	removed := queueDisabledRecovery(t, f, removedID, removedHashes[0])
+	if err := restarted.DeliverOne(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if got := row(t, f, uuidString(removed.ID.Bytes)); got.State != "queued" || len(got.SealedSecurityAlert) == 0 {
+		t.Fatal("remote alert rollback discarded committed history")
+	}
+	mfaDisabledAlertGate.Store(true)
+	for attempt := 0; attempt < 2; attempt++ {
+		if _, err := pool.Exec(t.Context(), "UPDATE platform_mail_producer_outbox SET next_attempt_at=clock_timestamp() WHERE id=$1", removed.ID); err != nil {
+			t.Fatal(err)
+		}
+		restarted, err = NewFromEnv(pool, func(k string) string { return env[k] })
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := restarted.ConfigureMFADisabledAlert(t.Context(), func(k string) string { return env[k] }); err != nil {
+			t.Fatal(err)
+		}
+		if attempt == 0 {
+			dropped.Store(false)
+		}
+		if err := restarted.DeliverOne(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if got := row(t, f, uuidString(removed.ID.Bytes)); attempt == 0 && got.State != "queued" {
+			t.Fatal("alert admission acknowledgement was not lost")
+		}
+	}
+	if got := row(t, f, uuidString(removed.ID.Bytes)); got.State != "admitted" {
+		t.Fatal("alert retry lost receipt")
+	} else {
+		assertMFAAlertErased(t, got)
+	}
+	for range 2 {
+		if err := daemon.DeliverOne(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if smtp.accepted.Load() != 8 {
+		t.Fatal("MFA disabled alert retry duplicated SMTP custody")
+	}
 	// The producer must retain no recovery advisory lock across HTTP. Start
 	// and release a new recovery after producer preflight but before maild
 	// admission: the owner's generation check must reject this stale request.
@@ -567,7 +618,7 @@ CREATE TABLE mail_suppressions(email text NOT NULL,expires_at timestamptz)`); er
 	if got := row(t, f, uuid.UUID(late.ID.Bytes).String()); got.State != "queued" {
 		t.Fatal("stale generation was admitted")
 	}
-	if err := pool.QueryRow(t.Context(), "SELECT count(*) FROM internal_mail_messages WHERE producer_id='auth'").Scan(&count); err != nil || count != 7 {
+	if err := pool.QueryRow(t.Context(), "SELECT count(*) FROM internal_mail_messages WHERE producer_id='auth'").Scan(&count); err != nil || count != 8 {
 		t.Fatal("stale generation created new mail after release", err)
 	}
 	// A remote management rollback keeps a generation-bound intent retryable.

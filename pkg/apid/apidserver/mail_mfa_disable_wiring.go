@@ -26,7 +26,10 @@ func (s *server) queueMFADisableEmail(w http.ResponseWriter, r *http.Request, ac
 	return true
 }
 
-func (s *server) consumeDurableMFADisableEmail(w http.ResponseWriter, r *http.Request, acct state.Account, raw []byte) bool {
+func (s *server) consumeDurableMFADisableEmail(w http.ResponseWriter, r *http.Request, acct state.Account, raw []byte, alertRequested bool) bool {
+	if alertRequested {
+		return s.consumeMFADisabledAlertCredential(w, r, acct, raw)
+	}
 	if s.mfaDisableCredentials == nil {
 		if len(raw) == api.MFADisableTokenBytes {
 			s.writeMFADisableEmailInvalid(w, r, acct, "token_invalid")

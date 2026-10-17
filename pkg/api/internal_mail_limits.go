@@ -136,3 +136,8 @@ const (
 	MFADisableEmailConfirmWindow = 24 * time.Hour
 	InternalMailMFADisableTTL    = 24 * time.Hour
 )
+
+const (
+	InternalMailMFADisabledAlertTTL      = 24 * time.Hour
+	InternalMailMFADisabledAlertMaxBytes = 512
+)
