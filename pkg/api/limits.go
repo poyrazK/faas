@@ -309,6 +309,14 @@ const (
 	ImageSignatureVerificationTTL                   = 24 * time.Hour
 )
 
+// Owner-authorized deployment GET checks retain only a bounded response preview.
+const DeploymentResponseCheckMaxBodyBytes = 4096
+const DeploymentResponseCheckMaxPathBytes = 2048
+const DeploymentResponseCheckMaxWireBytes = 64 << 10
+const DeploymentResponseCheckTimeout = 20 * time.Second
+const DeploymentResponseCheckCapabilityTimeout = 3 * time.Second
+const DeploymentResponseCheckPreflightTimeout = 5 * time.Second
+
 // Business condition evidence is bounded independently of milestone payload bytes.
 const OperationBusinessConditionsMax = 16
 const OperationBusinessConditionDescriptionMaxBytes = 1024

@@ -4,7 +4,7 @@
 - **Date:** 2026-10-15
 - **Decision:** Integrate Product Control with the existing server-rendered owner
   dashboard, behind the existing default-off flag, using the execution and billing
-  safeguards in ADRs 1331–1334.
+  safeguards in ADRs 1591–1594.
 
 ## Customer management
 

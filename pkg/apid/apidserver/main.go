@@ -1711,6 +1711,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		Metrics: budgetMetrics,
 		Log:     log,
 		DefaultFor: func(r *http.Request) time.Duration {
+			if reqbudget.IsDeploymentResponseCheckRequest(r) {
+				return api.DeploymentResponseCheckTimeout
+			}
 			if reqbudget.IsSyncInvokeRequest(r) || reqbudget.IsDeploySubmissionRequest(r) || managedrealtime.IsRealtimeGroupClaimRequest(r) {
 				// invokeApp applies the plan-specific 5s/30s wait, a deploy
 				// commit scans its source archive (H9-157), and realtime
