@@ -185,4 +185,3 @@ tests:
       - eval_time: 10m
         alertname: InternalMailComplaint
         exp_alerts: []
-
