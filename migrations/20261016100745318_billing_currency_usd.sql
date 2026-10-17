@@ -1,4 +1,4 @@
--- filename: 20261016100745000_billing_currency_usd.sql
+-- filename: 20261016100745318_billing_currency_usd.sql
 
 -- +goose Up
 -- +goose StatementBegin
