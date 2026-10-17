@@ -329,7 +329,7 @@ async function serveFile(request, url, env, ctx, deps, route, selected, trace) {
 
 async function dispatch(request, env, ctx, deps, trace) {
   const fail = (status, code) => { trace.code = code; return problem(status, code); };
-  if (env.FAAS_FRONTEND_HOSTING_ENABLED !== "true") return fail(404, "frontend_hosting_disabled");
+  if (env.FAAS_FRONTEND_HOSTING_ENABLED !== "true") return fail(404, "not_found");
   if (!env.ROUTES || !env.ARTIFACTS) return fail(503, "hosting_unconfigured");
   try {
     const url = new URL(request.url);

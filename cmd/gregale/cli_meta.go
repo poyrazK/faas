@@ -39,6 +39,7 @@ import (
 // cliAudience controls how a command is presented in the customer binary.
 // The complete manifest remains authoritative for dispatch, man pages, and
 // compatibility checks; audience only affects the default discovery surface.
+// Internal hosting additionally requires opt-in on all discovery surfaces.
 type cliAudience uint8
 
 const (
@@ -112,17 +113,23 @@ func customerCliCommands() []cliCommand {
 func advancedCliCommands() []cliCommand {
 	commands := make([]cliCommand, 0, len(cliCommands))
 	for _, command := range cliCommands {
-		if command.Audience != cliAudienceCustomer {
+		if command.Audience != cliAudienceCustomer && cliCommandAvailable(command.Name) {
 			commands = append(commands, command)
 		}
 	}
 	return commands
 }
 
+// Internal hosting requires opt-in for discovery as well as execution.
+// Keep the full manifest available for contract checks and operator builds.
+func cliCommandAvailable(name string) bool {
+	return name != "sites" || hostingCLIEnabled()
+}
+
 // cliHelpGroup maps the customer command vocabulary to the workflow sections
 // used by root help. Operator and compatibility entries intentionally fall
-// through to Advanced so `gregale help --all` keeps them discoverable without
-// making them part of the normal customer path.
+// through to Advanced so `gregale help --all` keeps available commands
+// discoverable without making them part of the normal customer path.
 func cliHelpGroup(command cliCommand) string {
 	if command.Audience != cliAudienceCustomer {
 		return "Advanced"

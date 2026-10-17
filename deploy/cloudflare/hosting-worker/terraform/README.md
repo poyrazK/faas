@@ -70,7 +70,7 @@ Do not also deploy this Worker with Wrangler: Terraform owns its versions,
 bindings, deployment, and route.
 
 Disabling `worker_enabled` and applying leaves the protected route attached and
-returns `frontend_hosting_disabled`, including for previously cached files.
+returns a generic `not_found` 404, including for previously cached files.
 Disabling Gregale's API flag separately rejects new operations and lets existing
 edge leases expire; durable sites retain their last published state. Detaching
 the route alone is not a feature-switch test.

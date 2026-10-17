@@ -484,7 +484,7 @@ class Qualification(PilotProbes, AcceptanceChecks, ProviderFaultChecks):
             self.infrastructure.switch(True, False)
             def disabled():
                 status, headers, payload = self.edge()
-                return status == 404 and 'x-gregale-release' not in headers and decode_json(payload).get('code') == 'frontend_hosting_disabled'
+                return status == 404 and 'x-gregale-release' not in headers and decode_json(payload).get('code') == 'not_found'
             _, elapsed = self.wait('Worker deployment switch', disabled)
             self.checked('worker_deployment_switch_disabled', observed_after_seconds=elapsed)
         finally:

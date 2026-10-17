@@ -5,6 +5,35 @@ This is the internal static-site pilot from
 default. It deploys prebuilt files without a running customer VM. There is no
 public hosting entitlement, customer billing integration, or production SLA.
 
+## Customer release visibility
+
+Keep the effective API runtime setting `frontend_hosting_enabled=false`. Its
+`FAAS_FRONTEND_HOSTING_ENABLED` environment value only seeds runtime configuration;
+check for persisted overrides. The entire disabled API namespace returns the
+ordinary missing-route 404, including anonymous, wrong-method and OIDC requests.
+Workstation CLI help, manuals, suggestions and execution require local opt-in.
+
+Build the customer dashboard with `NEXT_PUBLIC_FRONTEND_HOSTING_ENABLED=false`
+(or unset), then run `npm run verify:hosting-hidden` in `faas-frontend`. Disabled
+builds exclude the hosting client implementation as well as hiding its link and
+returning a non-cacheable 404. Changing only a running container's environment
+cannot change an already-built public flag. Use fresh release artifacts and retire
+any previously published enabled build/assets through the hosting provider.
+
+Worker `FAAS_FRONTEND_HOSTING_ENABLED` is a separate serving switch: keep it
+`false`, with Terraform `worker_enabled=false` and `attach_route=false` for a
+disabled deployment. An enabled internal pilot must stay on its isolated zone,
+behind Access and the Worker's explicit internal identity allowlist; never add
+customer identities. API disable alone does not stop existing durable serving.
+Do not enable public R2 access, workers.dev or Worker preview URLs.
+
+These checks hide the feature in released product surfaces. Public repository
+source, internal runbooks and previously distributed enabled artifacts are not
+made secret by feature flags. The deployment settings still need verification
+before release; local tests do not establish live configuration.
+
+See [the visibility decision](adr/202610171453-hide-disabled-hosting-surfaces.md).
+
 ## Configure an isolated internal deployment
 
 The [Terraform pilot configuration](../deploy/cloudflare/hosting-worker/terraform/README.md)

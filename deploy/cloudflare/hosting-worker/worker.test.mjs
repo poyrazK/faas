@@ -233,7 +233,10 @@ test("invalid durable heads never fall back to enabled KV or cached files", asyn
 test("default-off and missing Access identity never consult routing or caches", async () => {
   const f = fixture();
   delete f.env.FAAS_FRONTEND_HOSTING_ENABLED;
-  assert.equal((await f.request()).status, 404);
+  const hidden = await f.request();
+  assert.equal(hidden.status, 404);
+  assert.deepEqual(await hidden.json(), { status: 404, code: 'not_found' });
+  assert.equal(hidden.headers.get('Cache-Control'), 'no-store');
   f.env.FAAS_FRONTEND_HOSTING_ENABLED = "true";
   assert.equal((await f.request("/", { headers: { "Cf-Access-Jwt-Assertion": "" } })).status, 403);
   assert.deepEqual(f.calls, { storage: 0, cache: 0, routes: 0 });

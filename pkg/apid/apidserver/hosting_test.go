@@ -3,6 +3,7 @@ package apidserver_test
 import (
 	"encoding/json"
 	"fmt"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -10,6 +11,33 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+func TestHostingDisabledNamespaceBeforeAuthenticationAndMethodRouting(t *testing.T) {
+	// adr: 202610171453 — default-off paths must behave like unregistered routes.
+	t.Setenv("FAAS_FRONTEND_HOSTING_ENABLED", "false")
+	env := apidserver.Setup(t, api.PlanHobby)
+	baseline := env.Do(t, "GET", "/v1/does-not-exist", nil, nil)
+	for _, route := range []struct{ method, path string }{
+		{"GET", "/v1/internal/hosting/sites"},
+		{"POST", "/v1/internal/hosting/oidc/exchange"},
+		{"PATCH", "/v1/internal/hosting/capabilities"},
+		{"OPTIONS", "/v1/internal/hosting/sites"},
+		{"GET", "/v1/internal/hosting/unknown"},
+		{"GET", "/v1/internal/%68osting/sites"},
+	} {
+		for _, credential := range []string{"", "Bearer invalid", "Bearer " + (*env.Key())} {
+			r := httptest.NewRequest(route.method, route.path, nil)
+			r.Header.Set("Authorization", credential)
+			r.Header.Set("Origin", "https://customer.example")
+			r.Header.Set("Access-Control-Request-Method", "POST")
+			w := httptest.NewRecorder()
+			(*env.H()).ServeHTTP(w, r)
+			if w.Code != 404 || w.Body.String() != baseline.Body.String() || w.Header().Get("Allow") != "" || w.Header().Get("Cache-Control") != "no-store" {
+				t.Fatalf("%s %s: %d %v %s", route.method, route.path, w.Code, w.Header(), w.Body)
+			}
+		}
+	}
+}
 
 func TestHostingRoutesDefaultOffAndOperatorOnly(t *testing.T) {
 	// adr: 20261015 — all hosting routes require both opt-in and operator identity.
@@ -26,8 +54,8 @@ func TestHostingRoutesDefaultOffAndOperatorOnly(t *testing.T) {
 			release := site + "/releases/22222222-2222-4222-8222-222222222222"
 			for _, route := range []struct{ method, path string }{{"GET", "/v1/internal/hosting/capabilities"}, {"GET", "/v1/internal/hosting/usage"}, {"GET", root}, {"POST", root}, {"GET", site}, {"GET", site + "/status"}, {"GET", site + "/traffic"}, {"GET", site + "/history"}, {"GET", site + "/diagnostics"}, {"GET", site + "/cleanup"}, {"PUT", site + "/retention"}, {"GET", site + "/oidc-trusts"}, {"POST", site + "/oidc-trusts"}, {"DELETE", site + "/oidc-trusts/33333333-3333-4333-8333-333333333333"}, {"GET", site + "/automation-credentials"}, {"POST", site + "/automation-credentials"}, {"DELETE", site + "/automation-credentials/33333333-3333-4333-8333-333333333333"}, {"PUT", site + "/ci/33333333-3333-4333-8333-333333333333"}, {"GET", site + "/ci/33333333-3333-4333-8333-333333333333"}, {"POST", site + "/ci/33333333-3333-4333-8333-333333333333/preview"}, {"GET", site + "/previews"}, {"POST", site + "/previews"}, {"DELETE", site + "/previews/33333333-3333-4333-8333-333333333333"}, {"GET", site + "/domains"}, {"POST", site + "/domains"}, {"DELETE", site + "/domains/33333333-3333-4333-8333-333333333333"}, {"POST", site + "/domains/33333333-3333-4333-8333-333333333333/recover"}, {"DELETE", site}, {"PUT", site + "/suspension"}, {"GET", site + "/releases"}, {"POST", site + "/releases"}, {"POST", site + "/promotions"}, {"POST", release + "/uploads"}, {"POST", release + "/finalize"}, {"DELETE", release}} {
 				response := env.Do(t, route.method, route.path, map[string]any{}, nil)
-				want := 503
-				code := "frontend_hosting_disabled"
+				want := 404
+				code := api.CodeNotFound
 				if enabled {
 					want = 403
 					code = "admin_required"
@@ -70,7 +98,7 @@ func TestHostingDisablePrecedesIdempotencyReplay(t *testing.T) {
 	manager := apidserver.NewRuntimeConfigManager(func(string) string { return "" })
 	(*env.S()).WithRuntimeConfigManager(manager)
 	replay := env.Do(t, "POST", "/v1/internal/hosting/sites", request, headers)
-	if replay.Code != 503 || !strings.Contains(replay.Body.String(), "frontend_hosting_disabled") {
+	if replay.Code != 404 || !strings.Contains(replay.Body.String(), api.CodeNotFound) {
 		t.Fatalf("replayed enabled response after disable: %d %s", replay.Code, replay.Body)
 	}
 }

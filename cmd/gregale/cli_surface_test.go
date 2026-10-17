@@ -55,6 +55,7 @@ func TestTopLevelUsageAllKeepsCompatibilityAliasesDiscoverable(t *testing.T) {
 }
 
 func TestCliAudienceFiltersOnlyDiscoverySurfaces(t *testing.T) {
+	t.Setenv("FAAS_FRONTEND_HOSTING_ENABLED", "1")
 	for _, command := range cliCommands {
 		if command.Audience == cliAudienceCustomer {
 			continue

@@ -4433,7 +4433,7 @@ func (s *server) handler() http.Handler {
 	// + JSON so the gate is unconditionally true.
 	return middleware.RequestID(httpsec.Static(httpsec.Nonce(
 		func(*http.Request) bool { return true },
-		s.observeWrap(operation.OperationCustomerCORS(apiContractHandler(mux, s.durable.Hidden))),
+		s.observeWrap(s.hosting.HideDisabled(operation.OperationCustomerCORS(apiContractHandler(mux, s.durable.Hidden)))),
 	)))
 }
 

@@ -21,9 +21,14 @@ import (
 	"github.com/onebox-faas/faas/pkg/hosting"
 )
 
+func hostingCLIEnabled() bool {
+	value := strings.ToLower(os.Getenv("FAAS_FRONTEND_HOSTING_ENABLED"))
+	return value == "1" || value == "true"
+}
+
 func cmdSites(args []string) int {
-	if value := strings.ToLower(os.Getenv("FAAS_FRONTEND_HOSTING_ENABLED")); value != "1" && value != "true" {
-		return printErr("Internal frontend hosting is disabled", errors.New("set FAAS_FRONTEND_HOSTING_ENABLED=1 on an operator workstation; remote operations also require server opt-in"))
+	if !hostingCLIEnabled() {
+		return unknownCommand("sites")
 	}
 	if len(args) == 0 {
 		PrintUsage(os.Stderr, "usage: gregale sites <create|list|status|serve|plan|capacity|cancel|runs|diagnose|ci-setup|ci-preflight|deploy|releases|diff|ci|tokens|cleanup|retention|history|previews|promote|rollback|suspend|resume|retire|delete> [flags]", "sites")
