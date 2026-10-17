@@ -2,6 +2,7 @@
 
 -- +goose Up
 -- +goose StatementBegin
+SET LOCAL lock_timeout = '5s';
 -- apid binds new private-outbox tokens to the address observed at issuance.
 -- Empty preserves the existing legacy hash-only token behavior.
 ALTER TABLE email_verification_tokens ADD COLUMN IF NOT EXISTS email_address text NOT NULL DEFAULT ''
@@ -40,6 +41,7 @@ ALTER TABLE platform_mail_outbox_reconciliations ADD COLUMN IF NOT EXISTS templa
 
 -- +goose Down
 -- +goose StatementBegin
+SET LOCAL lock_timeout = '5s';
 LOCK TABLE platform_mail_producer_outbox,platform_mail_outbox_reconciliations,email_verification_tokens IN ACCESS EXCLUSIVE MODE;
 DO $$
 BEGIN

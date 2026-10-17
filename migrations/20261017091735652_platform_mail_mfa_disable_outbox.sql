@@ -2,6 +2,7 @@
 
 -- +goose Up
 -- +goose StatementBegin
+SET LOCAL lock_timeout = '5s';
 -- MFA enrollment/secret/policy mutations advance this counter even with mail
 -- flags off. Recovery-code burns do not change the enrolled factor.
 ALTER TABLE accounts ADD COLUMN IF NOT EXISTS mfa_revision bigint NOT NULL DEFAULT 1 CHECK (mfa_revision>0);
@@ -48,6 +49,7 @@ ALTER TABLE platform_mail_outbox_reconciliations ADD CONSTRAINT platform_mail_ou
 
 -- +goose Down
 -- +goose StatementBegin
+SET LOCAL lock_timeout = '5s';
 LOCK TABLE accounts,mfa_disable_requests,mfa_disable_tokens,platform_mail_producer_outbox,platform_mail_outbox_reconciliations IN ACCESS EXCLUSIVE MODE;
 DO $$
 BEGIN

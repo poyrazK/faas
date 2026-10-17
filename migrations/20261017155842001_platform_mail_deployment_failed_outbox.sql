@@ -2,6 +2,7 @@
 
 -- +goose Up
 -- +goose StatementBegin
+SET LOCAL lock_timeout = '5s';
 ALTER TABLE platform_mail_producer_outbox DROP CONSTRAINT IF EXISTS platform_mail_producer_outbox_template_check;
 ALTER TABLE platform_mail_producer_outbox ADD CONSTRAINT platform_mail_producer_outbox_template_check
     CHECK (template IN ('account_deletion_pending','email_verification','password_reset','magic_link','mfa_recovery_used','mfa_disable_request','mfa_disabled','password_changed','mfa_enabled','payment_failed','account_restored','account_suspended','nonpayment_deletion','quota_warning','subscription_ended','deployment_failed'));
@@ -136,8 +137,7 @@ CREATE TRIGGER deployments_mail_failure_guard
     BEFORE INSERT OR DELETE OR UPDATE OF status,app_id,scope,deployed_by_user_id,deleted_at,mail_failure_revision,mail_failed_at,
         mail_failure_account_id,mail_failure_account_revision,mail_failure_app_revision,mail_failure_success_revision ON deployments
     FOR EACH ROW EXECUTE FUNCTION stamp_deployment_mail_failure();
-CREATE INDEX IF NOT EXISTS deployments_mail_failures_pending_idx ON deployments(mail_failed_at,id)
-    WHERE status='failed' AND deleted_at IS NULL AND mail_failed_at IS NOT NULL;
+-- The pending-failure index is built concurrently by the following index migration.
 CREATE TABLE IF NOT EXISTS platform_mail_deployment_capture (
     namespace text NOT NULL CHECK(namespace ~ '^[a-z][a-z0-9_-]{0,63}$'),
     producer_id text NOT NULL CHECK(producer_id ~ '^[a-z][a-z0-9_-]{0,31}$'),
@@ -187,6 +187,7 @@ CREATE INDEX IF NOT EXISTS platform_mail_deployment_observations_account_idx ON 
 
 -- +goose Down
 -- +goose StatementBegin
+SET LOCAL lock_timeout = '5s';
 LOCK TABLE platform_mail_producer_outbox,platform_mail_outbox_reconciliations,platform_mail_deployment_observations,platform_mail_deployment_capture,deployments,apps,accounts IN ACCESS EXCLUSIVE MODE;
 DO $$ BEGIN
     IF EXISTS(SELECT 1 FROM platform_mail_producer_outbox WHERE template='deployment_failed')

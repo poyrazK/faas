@@ -2,6 +2,7 @@
 
 -- +goose Up
 -- +goose StatementBegin
+SET LOCAL lock_timeout = '5s';
 ALTER TABLE platform_mail_producer_outbox DROP CONSTRAINT IF EXISTS platform_mail_producer_outbox_template_check;
 ALTER TABLE platform_mail_producer_outbox ADD CONSTRAINT platform_mail_producer_outbox_template_check
     CHECK (template IN ('account_deletion_pending','email_verification','password_reset','magic_link','mfa_recovery_used','mfa_disable_request','mfa_disabled','password_changed','mfa_enabled','payment_failed','account_restored','account_suspended','nonpayment_deletion','quota_warning'));
@@ -82,6 +83,7 @@ CREATE TABLE IF NOT EXISTS billing_quota_warnings (
 
 -- +goose Down
 -- +goose StatementBegin
+SET LOCAL lock_timeout = '5s';
 LOCK TABLE platform_mail_producer_outbox,platform_mail_outbox_reconciliations,billing_quota_warnings,accounts IN ACCESS EXCLUSIVE MODE;
 DO $$
 BEGIN

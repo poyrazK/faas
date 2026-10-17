@@ -2,6 +2,7 @@
 
 -- +goose Up
 -- +goose StatementBegin
+SET LOCAL lock_timeout = '5s';
 -- Only apid writes passwords. Account-first password writes advance this
 -- revision atomically, invalidating every reset issued for an older credential.
 ALTER TABLE accounts ADD COLUMN IF NOT EXISTS password_reset_revision bigint NOT NULL DEFAULT 1 CHECK (password_reset_revision>0);
@@ -42,6 +43,7 @@ ALTER TABLE platform_mail_outbox_reconciliations ADD CONSTRAINT platform_mail_ou
 
 -- +goose Down
 -- +goose StatementBegin
+SET LOCAL lock_timeout = '5s';
 LOCK TABLE accounts,account_passwords,platform_mail_producer_outbox,platform_mail_outbox_reconciliations,password_reset_tokens IN ACCESS EXCLUSIVE MODE;
 DO $$
 BEGIN
