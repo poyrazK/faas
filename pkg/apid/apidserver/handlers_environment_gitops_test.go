@@ -222,6 +222,7 @@ func TestEnvironmentGitOpsHandlersStageScopedWorkloadWithoutClaimingServing(t *t
 		t.Fatalf("API claimed an unprepared serving graph: %d %s", rec.Code, rec.Body.String())
 	}
 	if evidence := status.WorkloadEvidence; evidence == nil || evidence.SourceID != status.Source.ID || evidence.RevisionID != status.Source.ApprovedRevisionID ||
+		evidence.CommitSHA != sha ||
 		evidence.Generation != status.Source.Generation || evidence.IntentVersion != status.Source.IntentVersion || evidence.GraphPhase == "" ||
 		evidence.Activated || evidence.Serving || evidence.Qualified {
 		t.Fatalf("status omitted current held-graph blockers or overstated readiness: %+v", evidence)

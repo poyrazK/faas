@@ -7,6 +7,10 @@ import type { EnvironmentWorkloadProgress } from './EnvironmentWorkloadProgress.
  * Evidence summary for the exact current reviewed workload graph; retained workloads count only when their exact live deployment remains in the active release set. This evidence does not authorize candidate activation or serving.
  */
 export type EnvironmentWorkloadActivationEvidence = {
+  /**
+   * Approved revision commit verified in the same current graph snapshot. Independent source-ref observations never supply this identity. Older servers may omit this field.
+   */
+  commit_sha?: string;
   workloads?: Array<EnvironmentWorkloadProgress>;
   graph_id: string;
   source_id: string;

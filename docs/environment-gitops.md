@@ -23,6 +23,60 @@ The PostgreSQL journey serves an API and queue worker, observes a Git source out
 
 The opt-in apid reporter has a separate PostgreSQL journey for API variables, routes and policies alongside a worker queue binding. It retains durable drift reports across a Git source outage and controller restart while leaving console values and the queue contract unchanged. This validates report mode, not live workload activation or enforcement.
 
+## Wait for a merged commit to serve
+
+After normal review, approval and merge, CI can wait for recorded serving proof
+for that exact merged commit:
+
+    gregale projects environments gitops wait shop production \
+      --commit "$MERGED_SHA" --timeout 15m --json
+
+The commit must be a full lowercase 40-character SHA from the environment's
+bound repository. Use the merged commit, which can differ from the proposal head
+after a squash or merge commit. A project_environments:read credential suffices.
+This command only reads status; normal controllers and approval policy must
+perform the rollout separately.
+
+Success requires the requested commit's current approved graph, exact source,
+environment, generation, intent and definition identities, complete artifact
+preparation, qualification, activation and whole-graph serving, complete member
+progress and fresh verified source checks. An old serving release, a polled
+branch head, a completed build or historical applied revision cannot pass.
+Scheduled Jobs require the successful current post-activation occurrence.
+Missing or contradictory evidence remains unproven. Older APIs without the
+current graph's commit identity cannot satisfy the wait; upgrade both API and CLI.
+
+The wait pins the initial source binding. Once it observes the requested graph,
+it also pins that approved revision and generation. Binding or approval changes
+end as superseded. Before observing the target graph, a different commit remains
+waiting; the command does not infer commit ancestry or whether the target
+previously deployed. Normal intent changes can progress only with fresh evidence
+for the same approval.
+
+Text mode prints changed progress and workload actions to stderr, with a final
+receipt on stdout. Explicit --json and global JSON emit one final JSON receipt
+without progress text for rollout outcomes. Request, validation and output
+errors use the normal CLI error channel. The overall deadline defaults to 15m and is bounded at
+24h. --poll-interval defaults to 2s and accepts 1s–1m; each read is bounded by 30s
+and the remaining deadline. Transient transport, rate-limit and server failures
+retry within that budget. Permanent request/authentication/scope errors stop.
+
+| Exit | Outcome |
+| --- | --- |
+| 0 | Requested commit has current serving proof |
+| 1 | Invalid request, permanent API error or output error |
+| 2 | Current rollout failed, or reconciliation is inactive/report-only |
+| 3 | Deadline expired without success |
+| 4 | Source binding or observed target approval was superseded |
+| 130 | Interrupted; server work is unaffected |
+
+Timeout receipts describe the last observation, not a fresh readiness guarantee.
+Inspect current blockers with gitops explain and rerun with the same explicit
+commit if appropriate. Neither waiting nor its exit code grants deployment
+authority or enables production gates. Exclusive native VM/leak acceptance
+remains pending. See [ADR-1354](adr/1354-gitops-wait-for-serving-commit.md) and the
+[post-merge CI examples](../examples/gitops-ci/README.md#wait-after-merge).
+
 ## Try review and reporting
 
 Use `gregale projects environments gitops explain shop production` for a

@@ -20,11 +20,44 @@ from faas_sdk.models import (
     CreateEnvironmentGitSourceRequest,
     EnvironmentGitOpsExplanation,
     EnvironmentGitOpsStatusResponse,
+    EnvironmentWorkloadActivationEvidence,
     PreviewEnvironmentGitRevisionRequest,
     PreviewEnvironmentGitRevisionResponse,
     RemoveEnvironmentGitOpsOverrideRequest,
 )
 from faas_sdk.models.service_binding_transport import ServiceBindingTransport
+
+
+def test_gitops_evidence_commit_is_optional_and_independent_of_ref() -> None:
+    body = {
+        "graph_id": "11111111-2222-4333-8444-555555555555",
+        "source_id": "11111111-2222-4333-8444-555555555555",
+        "environment_id": "11111111-2222-4333-8444-555555555555",
+        "revision_id": "11111111-2222-4333-8444-555555555555",
+        "definition_digest": "a" * 64,
+        "generation": 2,
+        "intent_version": 3,
+        "plan_hash": "b" * 64,
+        "graph_phase": "prepared",
+        "artifacts_prepared": True,
+        "candidates": 1,
+        "retained_workloads_recorded": 0,
+        "captures_recorded": 1,
+        "guest_config_acknowledgements_recorded": 1,
+        "restores_recorded": 1,
+        "smokes_recorded": 1,
+        "job_smokes_recorded": 0,
+        "framework_ready_acknowledgements_recorded": 1,
+        "qualified": True,
+        "activated": True,
+        "serving": True,
+        "blocking_reasons": [],
+    }
+    assert "commit_sha" not in EnvironmentWorkloadActivationEvidence.from_dict(body).to_dict()
+    body["commit_sha"] = "c" * 40
+    evidence = EnvironmentWorkloadActivationEvidence.from_dict(body)
+    assert evidence.commit_sha == "c" * 40
+    assert evidence.to_dict() == body
 
 
 @pytest.mark.parametrize("transport", ["http", "https"])

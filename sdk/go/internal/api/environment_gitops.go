@@ -44,9 +44,10 @@ type ApproveEnvironmentGitRevisionResponse struct {
 }
 
 type EnvironmentGitOpsStatusResponse struct {
-	WorkloadRetirements []EnvironmentWorkloadRetirement `json:"workload_retirements,omitempty"`
-	Source              EnvironmentGitSource            `json:"source"`
-	Runs                []EnvironmentGitOpsRun          `json:"runs"`
+	WorkloadEvidence    *EnvironmentWorkloadActivationEvidence `json:"workload_evidence,omitempty"`
+	WorkloadRetirements []EnvironmentWorkloadRetirement        `json:"workload_retirements,omitempty"`
+	Source              EnvironmentGitSource                   `json:"source"`
+	Runs                []EnvironmentGitOpsRun                 `json:"runs"`
 }
 
 type AdoptEnvironmentGitOpsRequest struct {

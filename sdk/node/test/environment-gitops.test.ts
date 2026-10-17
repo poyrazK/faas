@@ -80,12 +80,15 @@ test('GitOps status carries scoped diagnostics without inventing serving', async
   };
   const client = new FaaSClient('https://api.example.test', { token: 'token', fetch: async (_input, init) => {
     assert.equal(init?.method, 'GET');
-    return Response.json({ source: {}, runs: [], explanation });
+    return Response.json({ source: { source_commit_sha: 'b'.repeat(40) }, runs: [], explanation,
+      workload_evidence: { commit_sha: 'a'.repeat(40), revision_id: 'approved' } });
   } });
   try {
     const status = await ProjectsService.getEnvironmentGitOps({ slug: 'shop', environment: 'production' });
     assert.deepEqual(status.explanation, explanation);
     assert.equal(status.explanation?.serving_revision_id, undefined);
+    assert.equal(status.workload_evidence?.commit_sha, 'a'.repeat(40));
+    assert.equal(status.source.source_commit_sha, 'b'.repeat(40));
   } finally { client.uninstall(); }
 });
 

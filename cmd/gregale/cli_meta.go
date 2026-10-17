@@ -430,6 +430,7 @@ func projectsCLICompletionPositions() []cliCompletionPosition {
 		"environments gitops promotion-pr",
 		"environments gitops rollback-plan",
 		"environments gitops rollback-pr",
+		"environments gitops wait",
 		"environments gitops releases",
 		"environments gitops adoption-preview", "environments gitops adopt",
 		"environments gitops controls", "environments gitops override",
@@ -4745,6 +4746,7 @@ var cliCommands = []cliCommand{
 				{Name: "gitops", Short: "Review Git definitions, adopt owned fields, and inspect reconciliation", Subcommands: []cliSub{
 					{Name: "status", Positionals: []string{"<project>", "<environment>"}, Short: "Inspect the source and recent reconciliation attempts"},
 					{Name: "explain", Positionals: []string{"<project>", "<environment>"}, Short: "Explain recorded workload progress and safe next actions", Flags: []cliFlag{{Name: "json", Short: "Output the read-only assessment as JSON", Bool: true}}, Examples: []string{"gregale projects environments gitops explain shop production"}},
+					{Name: "wait", Positionals: []string{"<project>", "<environment>"}, Short: "Wait for recorded serving evidence for an exact merged Git commit", Flags: []cliFlag{{Name: "commit", Value: "SHA", Short: "Exact merged lowercase Git commit to wait for", Req: true}, {Name: "timeout", Value: "DURATION", Short: "Overall deadline (default 15m, maximum 24h)"}, {Name: "poll-interval", Value: "DURATION", Short: "Status read delay (default 2s, from 1s to 1m)"}, {Name: "json", Short: "Emit one final read-only rollout receipt as JSON", Bool: true}}, Examples: []string{"gregale projects environments gitops wait shop production --commit MERGED_SHA --timeout 15m --json"}},
 					{Name: "bind", Positionals: []string{"<project>", "<environment>"}, Short: "Bind the verified project repository to a definition", Flags: []cliFlag{
 						{Name: "manifest-path", Value: "PATH", Short: "Environment definition path in Git"},
 						{Name: "provider", Value: "PROVIDER", Short: "github (default) or gitlab"},

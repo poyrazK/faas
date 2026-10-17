@@ -46,6 +46,9 @@ class EnvironmentWorkloadActivationEvidence:
     activated: bool
     serving: bool
     blocking_reasons: list[str]
+    commit_sha: str | Unset = UNSET
+    """Approved revision commit verified in the same current graph snapshot. Independent source-ref observations
+    never supply this identity. Older servers may omit this field."""
     workloads: list[EnvironmentWorkloadProgress] | Unset = UNSET
     graph_error_code: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -95,6 +98,8 @@ class EnvironmentWorkloadActivationEvidence:
 
         blocking_reasons = self.blocking_reasons
 
+        commit_sha = self.commit_sha
+
         workloads: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.workloads, Unset):
             workloads = []
@@ -132,6 +137,8 @@ class EnvironmentWorkloadActivationEvidence:
                 "blocking_reasons": blocking_reasons,
             }
         )
+        if commit_sha is not UNSET:
+            field_dict["commit_sha"] = commit_sha
         if workloads is not UNSET:
             field_dict["workloads"] = workloads
         if graph_error_code is not UNSET:
@@ -188,6 +195,8 @@ class EnvironmentWorkloadActivationEvidence:
 
         blocking_reasons = cast(list[str], d.pop("blocking_reasons"))
 
+        commit_sha = d.pop("commit_sha", UNSET)
+
         _workloads = d.pop("workloads", UNSET)
         workloads: list[EnvironmentWorkloadProgress] | Unset = UNSET
         if _workloads is not UNSET:
@@ -222,6 +231,7 @@ class EnvironmentWorkloadActivationEvidence:
             activated=activated,
             serving=serving,
             blocking_reasons=blocking_reasons,
+            commit_sha=commit_sha,
             workloads=workloads,
             graph_error_code=graph_error_code,
         )

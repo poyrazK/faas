@@ -58,8 +58,10 @@ type EnvironmentGitOpsStatusResponse struct {
 // EnvironmentWorkloadActivationEvidence summarizes the current reviewed
 // candidate graph. It reports committed evidence only; it grants no activation
 // or serving authority.
+// CommitSHA identifies the approved revision in this snapshot, never a polled ref.
 type EnvironmentWorkloadActivationEvidence struct {
 	Workloads                              []EnvironmentWorkloadProgress `json:"workloads,omitempty"`
+	CommitSHA                              string                        `json:"commit_sha,omitempty"`
 	GraphID                                string                        `json:"graph_id"`
 	SourceID                               string                        `json:"source_id"`
 	EnvironmentID                          string                        `json:"environment_id"`

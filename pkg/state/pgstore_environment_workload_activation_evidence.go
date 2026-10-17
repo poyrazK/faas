@@ -103,6 +103,7 @@ func currentEnvironmentGitOpsWorkloadEvidenceTx(ctx context.Context, tx sqlc.DBT
 	if err != nil {
 		return nil, err
 	}
+	evidence.CommitSHA = revision.CommitSHA
 	return &evidence, nil
 }
 

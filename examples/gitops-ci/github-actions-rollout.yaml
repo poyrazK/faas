@@ -1,0 +1,26 @@
+name: Gregale GitOps rollout
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  gitops-rollout:
+    runs-on: [self-hosted, gregale-cli]
+    timeout-minutes: 20
+    steps:
+      - name: Wait for this merged commit to serve
+        env:
+          FAAS_API: ${{ vars.GREGALE_API }}
+          FAAS_TOKEN: ${{ secrets.GREGALE_PLAN_TOKEN }}
+          GREGALE_PROJECT: ${{ vars.GREGALE_PROJECT }}
+          GREGALE_ENVIRONMENT: ${{ vars.GREGALE_ENVIRONMENT }}
+        shell: bash
+        run: |
+          set +e
+          gregale projects environments gitops wait "$GREGALE_PROJECT" "$GREGALE_ENVIRONMENT" \
+            --commit "$GITHUB_SHA" --timeout 15m --json > gitops-rollout.json
+          rollout_exit=$?
+          set -e
+          cat gitops-rollout.json >> "$GITHUB_STEP_SUMMARY"
+          exit "$rollout_exit"

@@ -91,6 +91,7 @@ func (m *MemStore) currentEnvironmentGitOpsWorkloadEvidenceLocked(accountID, sou
 		return nil, nil
 	}
 	evidence := m.environmentWorkloadActivationEvidenceLocked(memory, graph, true)
+	evidence.CommitSHA = revision.CommitSHA
 	return &evidence, nil
 }
 

@@ -41,7 +41,7 @@ func TestEnvironmentGitOpsActivationEvidenceRequiresWholeGraphAndSeparateProofs(
 		}
 		assertEvidence(0, 0, 0)
 		current, err := basic.(state.EnvironmentGitOpsCurrentWorkloadEvidenceStore).CurrentEnvironmentGitOpsWorkloadEvidence(t.Context(), lease.Source.AccountID, lease.Source.ID)
-		if err != nil || current == nil || len(current.Workloads) != 2 {
+		if err != nil || current == nil || len(current.Workloads) != 2 || current.CommitSHA != lease.Revision.CommitSHA {
 			t.Fatalf("status omitted workload-scoped facts: %+v %v", current, err)
 		}
 		for _, workload := range current.Workloads {

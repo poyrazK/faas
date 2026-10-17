@@ -14378,7 +14378,7 @@ gregale projects environments queues set shop staging shop-worker --file queues.
 
 Review Git definitions, adopt owned fields, and inspect reconciliation
 
-`gregale projects environments gitops <status|explain|bind|rebind|unbind|review|plan|promotion-plan|promotion-pr|releases|rollback-plan|rollback-pr|approve|adoption-preview|adopt|controls|override|remove-override>`
+`gregale projects environments gitops <status|explain|wait|bind|rebind|unbind|review|plan|promotion-plan|promotion-pr|releases|rollback-plan|rollback-pr|approve|adoption-preview|adopt|controls|override|remove-override>`
 
 ##### projects environments gitops status
 
@@ -14400,6 +14400,25 @@ Examples:
 
 ```sh
 gregale projects environments gitops explain shop production
+```
+
+##### projects environments gitops wait
+
+Wait for recorded serving evidence for an exact merged Git commit
+
+`gregale projects environments gitops wait --commit <SHA> [--timeout <DURATION>] [--poll-interval <DURATION>] [--json] <project> <environment>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--commit <SHA>` | Exact merged lowercase Git commit to wait for | required |
+| `--timeout <DURATION>` | Overall deadline (default 15m, maximum 24h) |  |
+| `--poll-interval <DURATION>` | Status read delay (default 2s, from 1s to 1m) |  |
+| `--json` | Emit one final read-only rollout receipt as JSON |  |
+
+Examples:
+
+```sh
+gregale projects environments gitops wait shop production --commit MERGED_SHA --timeout 15m --json
 ```
 
 ##### projects environments gitops bind

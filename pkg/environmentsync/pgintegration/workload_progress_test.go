@@ -25,7 +25,7 @@ func TestEnvironmentGitOpsCurrentWorkloadProgressTracksCandidateBuildFailure(t *
 		assertProgress := func(build state.BuildStatus, preparation string) {
 			t.Helper()
 			current, err := basic.(state.EnvironmentGitOpsCurrentWorkloadEvidenceStore).CurrentEnvironmentGitOpsWorkloadEvidence(t.Context(), lease.Source.AccountID, lease.Source.ID)
-			if err != nil || current == nil || len(current.Workloads) != 1 {
+			if err != nil || current == nil || len(current.Workloads) != 1 || current.CommitSHA != lease.Revision.CommitSHA {
 				t.Fatalf("current progress: %+v %v", current, err)
 			}
 			row := current.Workloads[0]

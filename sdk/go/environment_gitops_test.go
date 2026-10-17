@@ -50,7 +50,7 @@ func TestEnvironmentGitOpsReviewedRevisionAndOverrideTransport(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(faas.EnvironmentGitOpsStatusResponse{Source: faas.EnvironmentGitSource{
 				ApprovedRevisionID: "approved", SourceCommitSHA: sha, SourceDefinitionDigest: digest, SourceVerifiedAt: &verified,
 				SourceErrorCode: "environment_git_source_unavailable",
-			}})
+			}, WorkloadEvidence: &faas.EnvironmentWorkloadActivationEvidence{CommitSHA: strings.Repeat("c", 40), RevisionID: "approved"}})
 		}
 	}))
 	defer server.Close()
@@ -71,6 +71,7 @@ func TestEnvironmentGitOpsReviewedRevisionAndOverrideTransport(t *testing.T) {
 	}
 	status, err := client.GetEnvironmentGitOps(ctx, "my project", "production")
 	if err != nil || status.Source.SourceCommitSHA != sha || status.Source.SourceDefinitionDigest != digest ||
+		status.WorkloadEvidence == nil || status.WorkloadEvidence.CommitSHA != strings.Repeat("c", 40) ||
 		status.Source.SourceVerifiedAt == nil || !status.Source.SourceVerifiedAt.Equal(verified) ||
 		status.Source.SourceErrorCode != "environment_git_source_unavailable" || status.Source.ApprovedRevisionID != "approved" {
 		t.Fatalf("source availability/authority: %+v %v", status, err)

@@ -59122,6 +59122,10 @@ components:
       type: object
       description: Evidence summary for the exact current reviewed workload graph; retained workloads count only when their exact live deployment remains in the active release set. This evidence does not authorize candidate activation or serving.
       properties:
+        commit_sha:
+          type: string
+          pattern: '^([a-f0-9]{40}|[a-f0-9]{64})$'
+          description: Approved revision commit verified in the same current graph snapshot. Independent source-ref observations never supply this identity. Older servers may omit this field.
         workloads:
           type: array
           items:
