@@ -1616,7 +1616,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	)...)
 	impl := vmmdgrpc.NewWithCPUAndNetAndActivity(signalAdapter{mgr}, ops, fcVersion, log, cpuCache, netCache, activityTracker).
 		WithFlowCounter(flowcount.NewReader(wire.ExecRunner{})).
-		WithNodeID(nodeID).
+		// The physical node identity: runtime admission and promotion grants,
+		// wake.boot_observed events and migration ownership all compare it
+		// with rows that a single box records on default-local.
+		WithNodeID(identityNodeID).
 		WithQualificationNodeID(qualificationNodeID).
 		WithExecutionIdentitySigner(identitySigner).
 		WithDivergedInstances(divergedInstances)
