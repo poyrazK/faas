@@ -43,12 +43,13 @@ import (
 // into cmdDiff. Kept small so the diff path doesn't grow a
 // second flag-set surface.
 type diffCLIOptions struct {
-	Slug     string
-	AppShape shape
-	Runtime  string
-	Handler  string
-	Image    string
-	Cwd      string
+	QueueCanaryBindings []string
+	Slug                string
+	AppShape            shape
+	Runtime             string
+	Handler             string
+	Image               string
+	Cwd                 string
 	// AppConfigPatch mirrors the CLI flags that affect app-level
 	// fields the diff should project (memory, concurrency,
 	// require_authn, …). nil = "no change".
@@ -619,7 +620,13 @@ func runServerDiff(ctx context.Context, client *api.Client, opts diffCLIOptions)
 }
 
 func appendDeployPreviewAnnotationIntent(d *deploydiff.Diff, opts diffCLIOptions) {
-	if d == nil || opts.PRNumber <= 0 {
+	if d == nil {
+		return
+	}
+	if len(opts.QueueCanaryBindings) > 0 {
+		d.Changes = append(d.Changes, deploydiff.Change{Field: "deployment.queue_canary_bindings", Kind: deploydiff.ChangeAdd, After: deploydiff.AsAny(opts.QueueCanaryBindings)})
+	}
+	if opts.PRNumber <= 0 {
 		return
 	}
 	d.Changes = append(d.Changes, deploydiff.Change{

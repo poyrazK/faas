@@ -13,7 +13,7 @@ import (
 func TestCostMeterSharedAllowanceAndReplay(t *testing.T) {
 	start := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
 	end := start.AddDate(0, 1, 0)
-	price := Price{Version: "compute-v1", Meter: "compute", Currency: "EUR", Unit: "mb_seconds", UnitQuantity: 10, MillicentsPerUnit: 100, IncludedQuantity: 5}
+	price := Price{Version: "compute-v1", Meter: "compute", Currency: BillingCurrency, Unit: "mb_seconds", UnitQuantity: 10, MillicentsPerUnit: 100, IncludedQuantity: 5}
 	entries := []Evidence{evidence(start, "one", "app-a", 4), evidence(start, "two", "app-b", 6)}
 	entries = append(entries, entries[0])
 	got, err := CostMeter("account", start, end, price, entries)
@@ -38,7 +38,7 @@ func TestCostMeterAllocationProperties(t *testing.T) {
 	end := start.AddDate(0, 1, 0)
 	rng := rand.New(rand.NewSource(431))
 	for trial := 0; trial < 500; trial++ {
-		p := Price{Version: "v1", Meter: "compute", Currency: "EUR", Unit: "unit", UnitQuantity: int64(rng.Intn(100) + 1), MillicentsPerUnit: int64(rng.Intn(1000)), IncludedQuantity: int64(rng.Intn(100))}
+		p := Price{Version: "v1", Meter: "compute", Currency: BillingCurrency, Unit: "unit", UnitQuantity: int64(rng.Intn(100) + 1), MillicentsPerUnit: int64(rng.Intn(1000)), IncludedQuantity: int64(rng.Intn(100))}
 		es := []Evidence{evidence(start, "a", "one", int64(rng.Intn(100))), evidence(start, "b", "two", int64(rng.Intn(100))), evidence(start, "c", "three", int64(rng.Intn(100)))}
 		got, err := CostMeter("account", start, end, p, es)
 		if err != nil {
@@ -69,7 +69,7 @@ func TestCostMeterAllocationProperties(t *testing.T) {
 func TestCostMeterCorrectionAndOwnership(t *testing.T) {
 	start := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
 	end := start.AddDate(0, 1, 0)
-	p := Price{Version: "v1", Meter: "compute", Currency: "EUR", Unit: "unit", UnitQuantity: 1, MillicentsPerUnit: 1}
+	p := Price{Version: "v1", Meter: "compute", Currency: BillingCurrency, Unit: "unit", UnitQuantity: 1, MillicentsPerUnit: 1}
 	original := evidence(start, "original", "deleted-app", 10)
 	correction := original
 	correction.SourceID = "correction"
@@ -100,7 +100,7 @@ func TestCostMeterCorrectionAndOwnership(t *testing.T) {
 func TestCostMeterOverflow(t *testing.T) {
 	start := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
 	end := start.AddDate(0, 1, 0)
-	p := Price{Version: "v1", Meter: "compute", Currency: "EUR", Unit: "unit", UnitQuantity: math.MaxInt64, MillicentsPerUnit: math.MaxInt64}
+	p := Price{Version: "v1", Meter: "compute", Currency: BillingCurrency, Unit: "unit", UnitQuantity: math.MaxInt64, MillicentsPerUnit: math.MaxInt64}
 	got, err := CostMeter("account", start, end, p, []Evidence{evidence(start, "a", "app", math.MaxInt64)})
 	if err != nil || got.NetMillicents != math.MaxInt64 {
 		t.Fatalf("exact boundary=%+v %v", got, err)

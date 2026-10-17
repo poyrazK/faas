@@ -153,7 +153,7 @@ func (s *PgStore) CreateConsumerKeyForConsumer(ctx context.Context, accountID, c
 	}
 	for _, scope := range scopes {
 		switch scope {
-		case "read", "write", "admin":
+		case "read", "write", "admin", "billing":
 		default:
 			return ConsumerKey{}, fmt.Errorf("pgstore: CreateConsumerKeyForConsumer: scope %q is not in the closed-set {read, write, admin}", scope)
 		}

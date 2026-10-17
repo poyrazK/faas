@@ -27,7 +27,7 @@ func seedInvoiceDirect(t *testing.T, store *state.MemStore, accountID, provider,
 		PeriodStart:       periodEnd.AddDate(0, 0, -30),
 		PeriodEnd:         periodEnd,
 		TotalCents:        totalCents,
-		Currency:          "eur",
+		Currency:          "usd",
 		PDFAvailable:      true,
 	}
 	// MemStore exposes invoices via the unexported `invoices` field;

@@ -312,5 +312,5 @@ that must finish with the invocation; the generated Node `waitUntil` scaffold
 is not qualified for keeping an instance alive after its response. Use a
 durable queue for detached work that must survive worker replacement.
 
-See [ADR-1345](adr/1345-function-cancellation-cleanup-and-lifecycle-context.md)
+See [ADR-1540](adr/1540-function-cancellation-cleanup-and-lifecycle-context.md)
 and [backend concurrency acceptance](ops/function-backend-concurrency-acceptance.md).

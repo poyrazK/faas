@@ -13,6 +13,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.object_storage_release_requirements import ObjectStorageReleaseRequirements
+    from ..models.queue_release_requirements import QueueReleaseRequirements
 
 
 T = TypeVar("T", bound="BindingReleasePolicy")
@@ -32,6 +33,10 @@ class BindingReleasePolicy:
     max_verification_age: str
     """Canonical Go duration between 1s and 24h; default 10m0s."""
     require_application_ack: bool
+    queue_requirements: QueueReleaseRequirements | Unset = UNSET
+    """Binding name to explicit required queue evidence. Names match ^[a-z][a-z0-9-]{0,62}$. consumer_readiness
+    requires one enabled push consumer with a healthy poll no older than thirty seconds; connectivity coverage
+    remains partial."""
     object_storage_requirements: ObjectStorageReleaseRequirements | Unset = UNSET
     """Managed environment prefix to required canary mode in the selected scope. Prefixes match
     ^[A-Z][A-Z0-9_]{0,47}$. read covers listing; read_write requires byte transfer; write and read_write require
@@ -53,6 +58,10 @@ class BindingReleasePolicy:
         max_verification_age = self.max_verification_age
 
         require_application_ack = self.require_application_ack
+
+        queue_requirements: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.queue_requirements, Unset):
+            queue_requirements = self.queue_requirements.to_dict()
 
         object_storage_requirements: dict[str, Any] | Unset = UNSET
         if not isinstance(self.object_storage_requirements, Unset):
@@ -76,6 +85,8 @@ class BindingReleasePolicy:
                 "require_application_ack": require_application_ack,
             }
         )
+        if queue_requirements is not UNSET:
+            field_dict["queue_requirements"] = queue_requirements
         if object_storage_requirements is not UNSET:
             field_dict["object_storage_requirements"] = object_storage_requirements
         if updated_at is not UNSET:
@@ -88,6 +99,7 @@ class BindingReleasePolicy:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.object_storage_release_requirements import ObjectStorageReleaseRequirements
+        from ..models.queue_release_requirements import QueueReleaseRequirements
 
         d = dict(src_dict)
         app_id = UUID(d.pop("app_id"))
@@ -101,6 +113,13 @@ class BindingReleasePolicy:
         max_verification_age = d.pop("max_verification_age")
 
         require_application_ack = d.pop("require_application_ack")
+
+        _queue_requirements = d.pop("queue_requirements", UNSET)
+        queue_requirements: QueueReleaseRequirements | Unset
+        if isinstance(_queue_requirements, Unset):
+            queue_requirements = UNSET
+        else:
+            queue_requirements = QueueReleaseRequirements.from_dict(_queue_requirements)
 
         _object_storage_requirements = d.pop("object_storage_requirements", UNSET)
         object_storage_requirements: ObjectStorageReleaseRequirements | Unset
@@ -125,6 +144,7 @@ class BindingReleasePolicy:
             revision=revision,
             max_verification_age=max_verification_age,
             require_application_ack=require_application_ack,
+            queue_requirements=queue_requirements,
             object_storage_requirements=object_storage_requirements,
             updated_at=updated_at,
             reason=reason,

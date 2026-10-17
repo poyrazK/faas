@@ -34,6 +34,10 @@ class APIConsumerUsageStatementFinalizedWebhookPayload:
     as_of: datetime.datetime
     finalized_at: datetime.datetime
     currency: str | Unset = UNSET
+    credit_applied_millicents: int | Unset = UNSET
+    """Prepaid credit drawn at finalization (ADR-1306)."""
+    amount_due_millicents: int | Unset = UNSET
+    """What is left to bill after prepaid credit."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -66,6 +70,10 @@ class APIConsumerUsageStatementFinalizedWebhookPayload:
 
         currency = self.currency
 
+        credit_applied_millicents = self.credit_applied_millicents
+
+        amount_due_millicents = self.amount_due_millicents
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -86,6 +94,10 @@ class APIConsumerUsageStatementFinalizedWebhookPayload:
         )
         if currency is not UNSET:
             field_dict["currency"] = currency
+        if credit_applied_millicents is not UNSET:
+            field_dict["credit_applied_millicents"] = credit_applied_millicents
+        if amount_due_millicents is not UNSET:
+            field_dict["amount_due_millicents"] = amount_due_millicents
 
         return field_dict
 
@@ -125,6 +137,10 @@ class APIConsumerUsageStatementFinalizedWebhookPayload:
 
         currency = d.pop("currency", UNSET)
 
+        credit_applied_millicents = d.pop("credit_applied_millicents", UNSET)
+
+        amount_due_millicents = d.pop("amount_due_millicents", UNSET)
+
         api_consumer_usage_statement_finalized_webhook_payload = cls(
             app_id=app_id,
             consumer_id=consumer_id,
@@ -139,6 +155,8 @@ class APIConsumerUsageStatementFinalizedWebhookPayload:
             as_of=as_of,
             finalized_at=finalized_at,
             currency=currency,
+            credit_applied_millicents=credit_applied_millicents,
+            amount_due_millicents=amount_due_millicents,
         )
 
         api_consumer_usage_statement_finalized_webhook_payload.additional_properties = d

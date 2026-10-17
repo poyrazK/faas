@@ -1,6 +1,6 @@
 # Concurrent backend cancellation — portable evidence, 2026-10-16
 
-Implementation: [ADR-1345](../../../adr/1345-function-cancellation-cleanup-and-lifecycle-context.md).
+Implementation: [ADR-1540](../../../adr/1540-function-cancellation-cleanup-and-lifecycle-context.md).
 Procedure: [function backend concurrency acceptance](../../function-backend-concurrency-acceptance.md).
 Branch: `codex/concurrent-function-postgres`, integrating PR #4768
 (`2dfcbada3a1aeca997d8e0b946e48e3feb6c4eba`) with the PostgreSQL SDK work

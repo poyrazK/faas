@@ -3,6 +3,7 @@ package api
 import "time"
 
 type EventSubscriptionDeliveryControl struct {
+	RateLimit                     *EventSubscriptionRateLimit              `json:"rate_limit,omitempty"`
 	CapacityCommandBudget         *EventSubscriptionCapacityCommandBudget  `json:"capacity_command_budget,omitempty"`
 	CapacityCommandReceipt        *EventSubscriptionCapacityCommandReceipt `json:"capacity_command_receipt,omitempty"`
 	MaxPendingDeliveries          int                                      `json:"max_pending_deliveries"`

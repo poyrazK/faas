@@ -1,7 +1,7 @@
 # Function backend concurrency acceptance
 
 This gate completes the shared-worker implementation in PR #4768 with
-request-scoped cancellation and PostgreSQL integration (ADR-1345). The setting
+request-scoped cancellation and PostgreSQL integration (ADR-1540). The setting
 remains opt-in and takes effect after redeployment. This guide does not enable
 production traffic or certify Vercel performance parity.
 

@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -34,9 +35,11 @@ func TestPostgresStarterRestoreManifest(t *testing.T) {
 	if hook == nil || hook.Path != "/internal/after-restore" || hook.TimeoutMS != 2000 {
 		t.Fatalf("starter hook = %#v", hook)
 	}
-	checkpoint := manifest.Lifecycle.ToAPI().BeforeCheckpoint
-	if checkpoint == nil || checkpoint.Path != "/internal/before-checkpoint" || checkpoint.TimeoutMS != 2000 {
-		t.Fatalf("starter checkpoint hook = %#v", checkpoint)
+	dockerfile, err := os.ReadFile(filepath.Join(dest, "Dockerfile"))
+	if err != nil || !strings.Contains(string(dockerfile), `com.gregale.secret-reload-signal="SIGHUP"`) ||
+		!strings.Contains(string(dockerfile), `com.gregale.secret-reload-readiness="required"`) ||
+		!strings.Contains(string(dockerfile), `COPY runtime ./runtime`) {
+		t.Fatal("PostgreSQL image must include its runtime and opt into startup-safe reload", err)
 	}
 }
 

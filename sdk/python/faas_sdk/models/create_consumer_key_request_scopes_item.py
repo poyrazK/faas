@@ -1,9 +1,10 @@
 from typing import Literal
 
-CreateConsumerKeyRequestScopesItem = Literal["admin", "read", "write"]
+CreateConsumerKeyRequestScopesItem = Literal["admin", "billing", "read", "write"]
 
 CREATE_CONSUMER_KEY_REQUEST_SCOPES_ITEM_VALUES: set[CreateConsumerKeyRequestScopesItem] = {
     "admin",
+    "billing",
     "read",
     "write",
 }

@@ -43,18 +43,13 @@ export function createApp(express, database) {
     } catch (error) { failure(res, error); }
     finally { request.dispose(); }
   });
-  for (const [path, header, callback] of [
-    ["/internal/before-checkpoint", "X-Faas-Before-Checkpoint", (options) => database.beforeCheckpoint(options)],
-    ["/internal/after-restore", "X-Faas-After-Restore", (options) => database.restore(options)],
-  ]) {
-    app.post(path, async (req, res) => {
-      if (!["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(req.socket.remoteAddress) ||
-          req.get(header) !== "1") return res.sendStatus(403);
-      const request = requestSignal(req, res);
-      try { await callback(request); res.sendStatus(204); }
-      catch (error) { failure(res, error); }
-      finally { request.dispose(); }
-    });
-  }
+  app.post("/internal/after-restore", async (req, res) => {
+    if (!["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(req.socket.remoteAddress) ||
+        req.get("X-Faas-After-Restore") !== "1") return res.sendStatus(403);
+    const request = requestSignal(req, res);
+    try { await database.restore(request); res.sendStatus(204); }
+    catch (error) { failure(res, error); }
+    finally { request.dispose(); }
+  });
   return app;
 }

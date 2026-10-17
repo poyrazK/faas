@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"strings"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 // IssueImpactSummaryWindow is the fixed window used for list-level triage
@@ -22,26 +20,31 @@ const IssueOwnershipRulesMax = 50
 // IssueEvent is the instrumentation envelope. Identity and deployment fields
 // are resolved from the ingest credential, never accepted from this body.
 type IssueEvent struct {
-	Causes              []IssueCause `json:"causes,omitempty"`
-	CausesIncomplete    bool         `json:"causes_incomplete,omitempty"`
-	EventID             string       `json:"event_id"`
-	OccurredAt          time.Time    `json:"occurred_at"`
-	ExceptionType       string       `json:"exception_type"`
-	Message             string       `json:"message"`
-	StackTrace          string       `json:"stack_trace,omitempty"`
-	Frames              []IssueFrame `json:"frames,omitempty"`
-	FingerprintOverride string       `json:"fingerprint_override,omitempty"`
-	GroupingStrategy    string       `json:"grouping_strategy,omitempty"`
-	FrameOrder          string       `json:"frame_order,omitempty"`
-	ErrorCode           string       `json:"error_code,omitempty"`
-	TraceID             string       `json:"trace_id,omitempty"`
-	SpanID              string       `json:"span_id,omitempty"`
-	RequestID           string       `json:"request_id,omitempty"`
-	InvocationID        string       `json:"invocation_id,omitempty"`
-	Route               string       `json:"route,omitempty"`
-	HTTPStatus          int          `json:"http_status,omitempty"`
-	SourceKind          string       `json:"source_kind,omitempty"`
-	Redactions          []string     `json:"redactions,omitempty"`
+	Breadcrumbs           []IssueBreadcrumb         `json:"breadcrumbs,omitempty"`
+	BreadcrumbsDropped    int                       `json:"breadcrumbs_dropped,omitempty"`
+	Tags                  map[string]string         `json:"tags,omitempty"`
+	SymbolicationStrategy string                    `json:"symbolication_strategy,omitempty"`
+	Symbolication         *IssueSymbolicationResult `json:"symbolication,omitempty"`
+	Causes                []IssueCause              `json:"causes,omitempty"`
+	CausesIncomplete      bool                      `json:"causes_incomplete,omitempty"`
+	EventID               string                    `json:"event_id"`
+	OccurredAt            time.Time                 `json:"occurred_at"`
+	ExceptionType         string                    `json:"exception_type"`
+	Message               string                    `json:"message"`
+	StackTrace            string                    `json:"stack_trace,omitempty"`
+	Frames                []IssueFrame              `json:"frames,omitempty"`
+	FingerprintOverride   string                    `json:"fingerprint_override,omitempty"`
+	GroupingStrategy      string                    `json:"grouping_strategy,omitempty"`
+	FrameOrder            string                    `json:"frame_order,omitempty"`
+	ErrorCode             string                    `json:"error_code,omitempty"`
+	TraceID               string                    `json:"trace_id,omitempty"`
+	SpanID                string                    `json:"span_id,omitempty"`
+	RequestID             string                    `json:"request_id,omitempty"`
+	InvocationID          string                    `json:"invocation_id,omitempty"`
+	Route                 string                    `json:"route,omitempty"`
+	HTTPStatus            int                       `json:"http_status,omitempty"`
+	SourceKind            string                    `json:"source_kind,omitempty"`
+	Redactions            []string                  `json:"redactions,omitempty"`
 }
 
 // IssueCause describes one linear cause, ordered from immediate to deepest.
@@ -54,6 +57,7 @@ type IssueCause struct {
 }
 
 type IssueFrame struct {
+	Column   int    `json:"column,omitempty"`
 	File     string `json:"file"`
 	Function string `json:"function"`
 	Line     int    `json:"line,omitempty"`
@@ -69,6 +73,7 @@ type Issue struct {
 	GroupingVersion          int                 `json:"grouping_version"`
 	Title                    string              `json:"title"`
 	State                    string              `json:"state"`
+	AssigneeTeamID           string              `json:"assignee_team_id,omitempty"`
 	AssigneeAccountID        string              `json:"assignee_account_id,omitempty"`
 	FirstSeenAt              time.Time           `json:"first_seen_at"`
 	LastSeenAt               time.Time           `json:"last_seen_at"`
@@ -103,12 +108,15 @@ type UpdateIssueImpactAlertPolicyRequest struct {
 }
 
 // IssueOwnershipRule applies when every populated matcher equals the incoming
-// event. The first matching rule assigns a newly-created issue to the account.
+// event. The first matching rule assigns a newly-created issue to an account or team.
 type IssueOwnershipRule struct {
+	SourcePathPrefix  string `json:"source_path_prefix,omitempty"`
+	Tag               string `json:"tag,omitempty"`
 	ExceptionType     string `json:"exception_type,omitempty"`
 	SourceKind        string `json:"source_kind,omitempty"`
 	RoutePrefix       string `json:"route_prefix,omitempty"`
-	AssigneeAccountID string `json:"assignee_account_id"`
+	AssigneeAccountID string `json:"assignee_account_id,omitempty"`
+	AssigneeTeamID    string `json:"assignee_team_id,omitempty"`
 }
 
 // IssueOwnershipRules is the complete, ordered app-level routing policy.
@@ -127,7 +135,7 @@ func NormalizeIssueOwnershipRules(rules []IssueOwnershipRule) ([]IssueOwnershipR
 		rule.ExceptionType = strings.TrimSpace(rule.ExceptionType)
 		rule.SourceKind = strings.TrimSpace(rule.SourceKind)
 		rule.RoutePrefix = strings.TrimSpace(rule.RoutePrefix)
-		if rule.ExceptionType == "" && rule.SourceKind == "" && rule.RoutePrefix == "" {
+		if rule.ExceptionType == "" && rule.SourceKind == "" && rule.RoutePrefix == "" && rule.SourcePathPrefix == "" && rule.Tag == "" {
 			return nil, fmt.Errorf("rules[%d] must include at least one matcher", i)
 		}
 		if len(rule.ExceptionType) > IssueMaxTypeBytes {
@@ -139,11 +147,21 @@ func NormalizeIssueOwnershipRules(rules []IssueOwnershipRule) ([]IssueOwnershipR
 		if rule.RoutePrefix != "" && (len(rule.RoutePrefix) > IssueMaxTypeBytes || !strings.HasPrefix(rule.RoutePrefix, "/") || strings.ContainsAny(rule.RoutePrefix, "?#")) {
 			return nil, fmt.Errorf("rules[%d].route_prefix must be a path prefix starting with / and contain no query or fragment", i)
 		}
-		id, err := uuid.Parse(strings.TrimSpace(rule.AssigneeAccountID))
-		if err != nil {
-			return nil, fmt.Errorf("rules[%d].assignee_account_id must be a UUID", i)
+		if rule.SourcePathPrefix != "" {
+			prefix, err := NormalizeIssueSourcePathPrefix(rule.SourcePathPrefix)
+			if err != nil {
+				return nil, fmt.Errorf("rules[%d]: %w", i, err)
+			}
+			rule.SourcePathPrefix = prefix
 		}
-		rule.AssigneeAccountID = id.String()
+		if _, err := ParseIssueTagFilter(rule.Tag); err != nil {
+			return nil, fmt.Errorf("rules[%d]: %w", i, err)
+		}
+		account, team, err := NormalizeIssueAssignment(rule.AssigneeAccountID, rule.AssigneeTeamID)
+		if err != nil || account == "" && team == "" {
+			return nil, fmt.Errorf("rules[%d] require exactly one account or team UUID", i)
+		}
+		rule.AssigneeAccountID, rule.AssigneeTeamID = account, team
 		out[i] = rule
 	}
 	return out, nil
@@ -243,6 +261,7 @@ type IssueActionRequest struct {
 	TargetIssueID     string     `json:"target_issue_id,omitempty"`
 	MemberIssueID     string     `json:"member_issue_id,omitempty"`
 	AssigneeAccountID string     `json:"assignee_account_id,omitempty"`
+	AssigneeTeamID    string     `json:"assignee_team_id,omitempty"`
 	FixedDeploymentID string     `json:"fixed_deployment_id,omitempty"`
 	IgnoredUntil      *time.Time `json:"ignored_until,omitempty"`
 }

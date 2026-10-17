@@ -135,9 +135,9 @@ func TestMillicentsToPaddleAmount(t *testing.T) {
 		mc   int64
 		want string
 	}{
-		{"€9 = 900 cents", 900_000, "900"},
-		{"€29 = 2900 cents", 2_900_000, "2900"},
-		{"€99 = 9900 cents", 9_900_000, "9900"},
+		{"$10 = 1000 cents", 1_000_000, "1000"},
+		{"$30 = 3000 cents", 3_000_000, "3000"},
+		{"$99 = 9900 cents", 9_900_000, "9900"},
 		{"overage €0.01 = 1 cent", 1_000, "1"},
 		{"zero (free)", 0, "0"},
 	}

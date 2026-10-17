@@ -1,0 +1,21 @@
+# ADR-1306: Consumer prepaid credit and spend caps
+
+- **Status:** accepted
+- **Date:** 2026-10-14
+- **Decision:** An app can grant each API consumer prepaid credit and cap its monthly spend.
+  - **Credit grants.** `POST /v1/apps/{slug}/consumers/{id}/credits` grants credit in one currency, with an optional expiry and note. `GET` lists grants with the usable balance per currency, and `DELETE …/credits/{credit_id}` voids what is left. A consumer holds at most 100 grants with credit left.
+  - **Applied at finalize.** Finalizing a statement draws usable grants in its currency down, oldest-expiring first and never-expiring last, in the same transaction that finalizes it. The statement records `credit_applied_millicents`, and `amount_due_millicents` is the rest. Credit never pays more than a statement's amount, never crosses currencies, and is never returned by a later revision. A ledger of applications records which grant paid which statement.
+  - **Exports.** An exported invoice carries the credit as a negative "Prepaid credit applied" line, so its total is the amount due rounded to the cent. Paddle and Lago reject negative lines, so they receive one summary item (ADR-1507). Billing runs skip statements that credit pays in full, with the reason "prepaid credit covers the statement".
+  - **Spend caps.** `PUT /v1/apps/{slug}/consumers/{id}/spend-cap` sets a monthly cap in one currency. Every minute an apid worker computes the consumer's amount due for the month: the month to date priced like a statement, minus usable credit and minus credit already applied to this month's statements. A consumer is capped when that amount passes the cap, so a zero cap allows prepaid usage only. Setting a cap, granting credit or voiding it checks at once.
+  - **Enforcement.** The gateway reads the cap flag with the consumer's plan policy (ADR-953), on any plan, and answers a capped consumer with 402 `consumer_spend_cap_reached`, including the cap as `limit` and the amount due as `observed`. The denied request is not billed. A flag from an earlier month never applies.
+  - **Statements and webhooks.** Statement responses and the `usage_statement.finalized` webhook gain `credit_applied_millicents` and `amount_due_millicents`.
+- **Why:** API businesses sell prepaid bundles and want to stop a customer's spend at an agreed limit. Without credit, the operator had to subtract it by hand on every invoice. Without caps, a customer could run up an unbounded bill between statements.
+- **Consequences:**
+  - **Soft cap.** The cap is checked on usage that has reached the ledger, once a minute, and the gateway caches the policy for up to 15 seconds. A consumer can therefore overshoot by up to about two minutes of traffic. The cap limits exposure; it is not an exact ceiling.
+  - **Currency.** A cap compares only with a month-to-date price in its own currency; a consumer priced in another currency is never capped.
+  - **Scope.** Credit applies to app consumer statements. Platform tenant statements (ADR-975) do not draw consumer credit.
+  - **Ownership.** apid writes grants, applications and cap checks; the gateway only reads the cap flag.
+- **Rejected alternatives:**
+  - Having the gateway price each request against remaining credit would put rate cards, tiers and allowances on the request path and need a cross-replica balance per request.
+  - Applying credit when exporting instead of at finalize would make the statement total depend on when it was exported and on which provider.
+  - A hard cap enforced by reserving spend before each request was rejected for the same reason as gateway pricing.

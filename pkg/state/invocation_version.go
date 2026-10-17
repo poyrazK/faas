@@ -67,6 +67,35 @@ func resolveInvocationVersion(ctx context.Context, store invocationAppReader, in
 	if inv.AccountID != "" && inv.AccountID != app.AccountID {
 		return inv, InvocationVersion{}, ErrNotFound
 	}
+	// PgStore and MemStore combine persisted canary membership with the owner
+	// read already required for durable dispatch. Never trust inv.Source or a
+	// payload/header marker as a negative membership assertion.
+	ownerRead := false
+	if reader, ok := store.(invocationDispatchAuthorityReader); ok && canonicalStateUUID(inv.ID) {
+		authority, readErr := reader.invocationDispatchAuthority(ctx, inv.ID)
+		if readErr != nil && !errors.Is(readErr, ErrNotFound) {
+			return inv, InvocationVersion{}, readErr
+		}
+		ownerRead = true
+		if readErr == nil {
+			if authority.EnvironmentID != inv.EnvironmentID {
+				return inv, InvocationVersion{}, ErrInvocationEnvironmentWorkIsolation
+			}
+			if authority.QueueCanary {
+				if authority.AppID != app.ID || authority.AccountID != app.AccountID || ingress {
+					return inv, InvocationVersion{}, ErrConflict
+				}
+				if err := validateQueueCanaryDispatch(ctx, store, app, inv, true); err != nil {
+					return inv, InvocationVersion{}, err
+				}
+			}
+		}
+	} else if !ingress {
+		// Older store adapters retain the conservative persisted lookup.
+		if err := validateQueueCanaryDispatch(ctx, store, app, inv, false); err != nil {
+			return inv, InvocationVersion{}, err
+		}
+	}
 	headers := map[string]string{}
 	if len(inv.Headers) > 0 {
 		if err := json.Unmarshal(inv.Headers, &headers); err != nil {
@@ -94,7 +123,7 @@ func resolveInvocationVersion(ctx context.Context, store invocationAppReader, in
 	}
 	// Durable private work must retain its original marker and explicit pin.
 	// Never repair a damaged envelope by resolving today's active release.
-	if reader, ok := store.(InvocationEnvironmentOwnerReader); ok && inv.ID != "" && !syntheticTriggerInvocation(inv) {
+	if reader, ok := store.(InvocationEnvironmentOwnerReader); ok && !ownerRead && inv.ID != "" && !syntheticTriggerInvocation(inv) {
 		stored, readErr := reader.InvocationEnvironmentID(ctx, inv.ID)
 		if readErr != nil && !errors.Is(readErr, ErrNotFound) {
 			return inv, InvocationVersion{}, readErr

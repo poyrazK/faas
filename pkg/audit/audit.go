@@ -254,7 +254,7 @@ func (a *Auditor) emit(ctx context.Context, actor, kind string, accountID *strin
 	}
 	payload, err := json.Marshal(data)
 	if err != nil {
-		a.log.Error("audit: marshal", "kind", kind, "err", err)
+		a.log.Error("audit: marshal", "kind", logsanitize.Field(kind), "err", logsanitize.FieldAny(err))
 		return
 	}
 	// Normalize the subject into a string we can label the metric

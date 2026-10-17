@@ -31,10 +31,14 @@ func rolloutFixture(t *testing.T) (*Registry, *qualificationProvider, Qualificat
 		t.Fatal(err)
 	}
 	artifact := QualificationArtifact{Version: QualificationArtifactVersion, BackendID: backend.ID, BackendFingerprint: backend.Fingerprint, Spec: testSpec(), Report: report, Lifecycle: &lifecycle, Approval: &approval}
-	guest := guestqualification.Report{Version: 1, SuiteVersion: guestqualification.SuiteContract().Version, RootTest: guestqualification.SuiteContract().Root, HostClass: "native", HostOS: "linux", HostArch: "amd64", SourceClean: true, PostgresMajor: artifact.Spec.PostgresMajor, StartedAt: now.Add(-2 * time.Minute), CompletedAt: now.Add(-time.Minute), ExpiresAt: now.Add(time.Hour), LeakCheckBefore: true, LeakCheckAfter: true, ResultsSHA256: strings.Repeat("a", 64), Runtime: guestqualification.RuntimeManifest{Version: 1, SourceRevision: strings.Repeat("b", 40), Artifacts: make(map[string]string)}}
+	guest := guestqualification.Report{Version: guestqualification.Version, SuiteVersion: guestqualification.SuiteContract().Version, RootTest: guestqualification.SuiteContract().Root, HostClass: "native", HostOS: "linux", HostArch: "amd64", SourceClean: true, PostgresMajor: artifact.Spec.PostgresMajor, StartedAt: now.Add(-2 * time.Minute), CompletedAt: now.Add(-time.Minute), ExpiresAt: now.Add(time.Hour), LeakCheckBefore: true, LeakCheckAfter: true, ResultsSHA256: strings.Repeat("a", 64), Runtime: guestqualification.RuntimeManifest{Version: guestqualification.Version, SourceRevision: strings.Repeat("b", 40), Artifacts: make(map[string]string)}}
 	for _, name := range guestqualification.SuiteContract().Artifacts {
 		guest.Runtime.Artifacts[name] = strings.Repeat("c", 64)
 	}
+	guest.Runtime.Artifacts["probe_app_layer"] = strings.Repeat("d", 64)
+	guest.Runtime.Artifacts["probe_source_archive"] = strings.Repeat("e", 64)
+	guest.Runtime.Artifacts["python312_app_layer"] = strings.Repeat("0", 64)
+	guest.Runtime.Artifacts["python312_source_archive"] = strings.Repeat("1", 64)
 	for _, phase := range guestqualification.SuiteContract().Phases {
 		guest.Checks = append(guest.Checks, guestqualification.PhaseCheck{Name: phase, Passed: true})
 	}
@@ -73,6 +77,20 @@ func TestRolloutReadinessCombinesEvidenceWithoutProviderCalls(t *testing.T) {
 	artifact.BackendFingerprint = "different-provider-placement"
 	if r.VerifyRolloutQualification(artifact, &guest, &guest.Runtime, []string{"account-a"}, now).Ready {
 		t.Fatal("backend change reused old qualification")
+	}
+}
+
+func TestRolloutReadinessRejectsLegacyGuestEvidence(t *testing.T) {
+	r, _, artifact, guest, now := rolloutFixture(t)
+	expected := guest.Runtime
+	for _, version := range []int{1, 2} {
+		old := guest
+		old.Version, old.SuiteVersion, old.Runtime.Version = version, version, version
+		old.EvidenceSHA256 = guestqualification.EvidenceDigest(old)
+		result := r.VerifyRolloutQualification(artifact, &old, &expected, []string{"account-a"}, now)
+		if result.Ready || result.Guest.Ready || !result.ProviderLifecycle.Ready {
+			t.Fatalf("legacy guest evidence reused current provider qualification: %+v", result)
+		}
 	}
 }
 

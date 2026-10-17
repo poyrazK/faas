@@ -27,11 +27,23 @@ func buildExportFixture(t *testing.T, s buildExportTestStore) (BuildExportPublic
 
 func buildExportFixtureRuntime(t *testing.T, s buildExportTestStore, runtime string) (BuildExportPublicationInput, App, Deployment, Build, *ecdsa.PrivateKey) {
 	t.Helper()
+	typ := AppTypeApp
+	if runtime != "" {
+		typ = AppTypeFunction
+	}
+	return buildExportFixtureClaim(t, s, typ, runtime, runtime)
+}
+
+// buildExportFixtureClaim signs an export claiming claimedRuntime for an app
+// of typ that declares appRuntime.
+func buildExportFixtureClaim(t *testing.T, s buildExportTestStore, typ AppType, appRuntime, claimedRuntime string) (BuildExportPublicationInput, App, Deployment, Build, *ecdsa.PrivateKey) {
+	t.Helper()
+	runtime := appRuntime
 	owner, err := s.CreateAccountWithPersonalOrg(t.Context(), CreateAccountWithPersonalOrgParams{Email: uuid.NewString() + "@example.com", Plan: api.PlanPro})
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := s.CreateApp(t.Context(), App{AccountID: owner.Account.ID, OrgID: owner.PersonalOrg.ID, Slug: "export-" + uuid.NewString()[:8], Runtime: runtime, RAMMB: 128, MaxConcurrency: 2})
+	app, err := s.CreateApp(t.Context(), App{AccountID: owner.Account.ID, OrgID: owner.PersonalOrg.ID, Slug: "export-" + uuid.NewString()[:8], Type: typ, Runtime: runtime, RAMMB: 128, MaxConcurrency: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +70,7 @@ func buildExportFixtureRuntime(t *testing.T, s buildExportTestStore, runtime str
 	if _, _, err := s.UpsertAppTrustedSigner(t.Context(), app.AccountID, app.ID, "company", der, app.AccountID); err != nil {
 		t.Fatal(err)
 	}
-	c := buildpublisher.Claims{Format: buildpublisher.Format, AccountID: canonicalStandardUUID(app.AccountID), OrgID: registryCanonicalOrg(app.OrgID), AppID: canonicalStandardUUID(app.ID), DeploymentID: canonicalStandardUUID(dep.ID), BuildID: canonicalStandardUUID(b.ID), ClaimStartedAt: b.StartedAt.UTC().Format(time.RFC3339Nano), SourceSHA256: dep.SourceSHA256, ExportDigest: "sha256:" + strings.Repeat("b", 64), ExportBytes: 42, Runtime: app.Runtime, BuilderNodeID: "builder-one"}
+	c := buildpublisher.Claims{Format: buildpublisher.Format, AccountID: canonicalStandardUUID(app.AccountID), OrgID: registryCanonicalOrg(app.OrgID), AppID: canonicalStandardUUID(app.ID), DeploymentID: canonicalStandardUUID(dep.ID), BuildID: canonicalStandardUUID(b.ID), ClaimStartedAt: b.StartedAt.UTC().Format(time.RFC3339Nano), SourceSHA256: dep.SourceSHA256, ExportDigest: "sha256:" + strings.Repeat("b", 64), ExportBytes: 42, Runtime: claimedRuntime, BuilderNodeID: "builder-one"}
 	proof, err := buildpublisher.Sign(t.Context(), c, "company", key)
 	if err != nil {
 		t.Fatal(err)

@@ -15,6 +15,7 @@ import (
 // a reserved platform canary. Revision hashes binding configuration, private
 // credential revision facts and the runtime configuration change stamp.
 type BindingVerificationPin struct {
+	TargetDeploymentID   string                        `json:"target_deployment_id,omitempty"`
 	Type                 string                        `json:"type"`
 	Binding              string                        `json:"binding"`
 	Revision             string                        `json:"revision"`
@@ -24,6 +25,7 @@ type BindingVerificationPin struct {
 }
 
 type BindingVerificationTask struct {
+	TaskID                              string
 	Pin                                 BindingVerificationPin
 	DeploymentID, Scope, Status, Stdout string
 	CreatedAt                           time.Time
@@ -40,8 +42,9 @@ type BindingVerificationStore interface {
 // selectors never fall back; default inventory may retain stale prior evidence
 // when the selected deployment has no admitted probe for a binding.
 type BindingVerificationSelection struct {
-	DeploymentID  string
-	AllowFallback bool
+	ServiceTargets map[string]string
+	DeploymentID   string
+	AllowFallback  bool
 }
 
 func resolveBindingVerificationSelection(selections []BindingVerificationSelection) (BindingVerificationSelection, error) {
@@ -85,6 +88,12 @@ func validateBindingVerificationPin(params CreateAppTaskParams) error {
 			return fmt.Errorf("%w: invalid object-storage verification mode", ErrAppTaskInvalid)
 		}
 		command, commandLen = api.AppTaskObjectStorageWriteProbeCommand, 3
+	}
+	if pin.TargetDeploymentID != "" {
+		if pin.Type != api.BindingTypeService || !api.IsServiceBindingTargetProbeCommand(params.Command, params.CommandShell) || params.Command[2] != pin.TargetDeploymentID || !params.RequireLiveDeployment {
+			return fmt.Errorf("%w: invalid service target verification pin", ErrAppTaskInvalid)
+		}
+		command, commandLen = api.AppTaskServiceBindingTargetProbeCommand, 3
 	}
 	if pin.Type == api.BindingTypeOutbound {
 		commandLen = 3

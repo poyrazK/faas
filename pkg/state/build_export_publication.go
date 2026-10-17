@@ -65,7 +65,7 @@ func validateBuildExportPublication(value BuildExportPublication) error {
 }
 
 func checkBuildExportOwner(c buildpublisher.Claims, app App, dep Deployment, build Build) error {
-	if c.AccountID != canonicalStandardUUID(app.AccountID) || c.OrgID != registryCanonicalOrg(app.OrgID) || c.AppID != canonicalStandardUUID(app.ID) || c.DeploymentID != canonicalStandardUUID(dep.ID) || c.BuildID != canonicalStandardUUID(build.ID) || !sameStandardUUID(dep.AppID, app.ID) || !sameStandardUUID(build.DeploymentID, dep.ID) || app.Status == AppDeleted || c.Runtime != app.Runtime || c.ClaimStartedAt != build.StartedAt.UTC().Format(time.RFC3339Nano) {
+	if c.AccountID != canonicalStandardUUID(app.AccountID) || c.OrgID != registryCanonicalOrg(app.OrgID) || c.AppID != canonicalStandardUUID(app.ID) || c.DeploymentID != canonicalStandardUUID(dep.ID) || c.BuildID != canonicalStandardUUID(build.ID) || !sameStandardUUID(dep.AppID, app.ID) || !sameStandardUUID(build.DeploymentID, dep.ID) || app.Status == AppDeleted || !SourceRuntimeClaimAllowed(app, c.Runtime) || c.ClaimStartedAt != build.StartedAt.UTC().Format(time.RFC3339Nano) {
 		return ErrApplicationStandardRuntimeStale
 	}
 	switch dep.Kind {

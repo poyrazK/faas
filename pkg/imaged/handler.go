@@ -4165,8 +4165,8 @@ func (h *Handler) transitionWithStage(ctx context.Context, depID string, from, t
 }
 
 // markDeployFailed transitions a deployment to `failed` with the given
-// RFC 7807 code (or "" if the upstream error didn't map to a sentinel)
-// and a free-text message. The code column carries the stable signal;
+// RFC 7807 code (deploy_failed if the upstream error didn't map to a
+// sentinel, as schedd's prime failure does; H10-107) and a free-text message. The code column carries the stable signal;
 // the message preserves the upstream string for debugging. Returns
 // the mark error so the caller can choose to log-and-continue or
 // bubble it up; in practice callers ignore the mark error (the
@@ -4191,6 +4191,9 @@ func (h *Handler) markDeployFailed(ctx context.Context, depID string, err error,
 	}
 	if errors.Is(err, errImageAbuseDetected) {
 		code = api.CodeImageAbuseDetected
+	}
+	if code == "" {
+		code = api.CodeDeployFailed
 	}
 	detail := err.Error()
 	if prefix != "" {

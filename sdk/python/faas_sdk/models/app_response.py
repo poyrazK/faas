@@ -93,6 +93,9 @@ class AppResponse:
     """Per-instance CPU% target (1..100) for the reactive scale-up trigger. 0 = disabled. Pro/Scale only. When
     measured per-instance CPU% exceeds this value, schedd admits another instance (up to max_concurrency). See
     ADR-037."""
+    service_binding_fingerprint: str | Unset = UNSET
+    """Opaque fingerprint of app identity, source ownership and service binding settings. Use as the atomic
+    precondition for a reviewed service-only update."""
     visibility: AppResponseVisibility | Unset = "public"
     """Public exposes the app through the edge; internal keeps it available only to authenticated service-to-
     service routing. Available on every plan."""
@@ -293,6 +296,8 @@ class AppResponse:
         autoscale_target_rps = self.autoscale_target_rps
 
         autoscale_target_cpu_pct = self.autoscale_target_cpu_pct
+
+        service_binding_fingerprint = self.service_binding_fingerprint
 
         visibility: str | Unset = UNSET
         if not isinstance(self.visibility, Unset):
@@ -543,6 +548,8 @@ class AppResponse:
                 "autoscale_target_cpu_pct": autoscale_target_cpu_pct,
             }
         )
+        if service_binding_fingerprint is not UNSET:
+            field_dict["service_binding_fingerprint"] = service_binding_fingerprint
         if visibility is not UNSET:
             field_dict["visibility"] = visibility
         if workload_class is not UNSET:
@@ -704,6 +711,8 @@ class AppResponse:
         autoscale_target_rps = d.pop("autoscale_target_rps")
 
         autoscale_target_cpu_pct = d.pop("autoscale_target_cpu_pct")
+
+        service_binding_fingerprint = d.pop("service_binding_fingerprint", UNSET)
 
         _visibility = d.pop("visibility", UNSET)
         visibility: AppResponseVisibility | Unset
@@ -1086,6 +1095,7 @@ class AppResponse:
             manifest=manifest,
             autoscale_target_rps=autoscale_target_rps,
             autoscale_target_cpu_pct=autoscale_target_cpu_pct,
+            service_binding_fingerprint=service_binding_fingerprint,
             visibility=visibility,
             workload_class=workload_class,
             runtime=runtime,

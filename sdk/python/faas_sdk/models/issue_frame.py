@@ -19,6 +19,8 @@ class IssueFrame:
     function: str
     in_app: bool
     line: int | Unset = UNSET
+    column: int | Unset = UNSET
+    """One-based generated or original column; omitted when unknown. Excluded from grouping identity."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -29,6 +31,8 @@ class IssueFrame:
         in_app = self.in_app
 
         line = self.line
+
+        column = self.column
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -41,6 +45,8 @@ class IssueFrame:
         )
         if line is not UNSET:
             field_dict["line"] = line
+        if column is not UNSET:
+            field_dict["column"] = column
 
         return field_dict
 
@@ -55,11 +61,14 @@ class IssueFrame:
 
         line = d.pop("line", UNSET)
 
+        column = d.pop("column", UNSET)
+
         issue_frame = cls(
             file=file,
             function=function,
             in_app=in_app,
             line=line,
+            column=column,
         )
 
         issue_frame.additional_properties = d

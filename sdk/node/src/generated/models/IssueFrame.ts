@@ -9,6 +9,10 @@ export type IssueFrame = {
   file: string;
   function: string;
   line?: number;
+  /**
+   * One-based generated or original column; omitted when unknown. Excluded from grouping identity.
+   */
+  column?: number;
   in_app: boolean;
 };
 

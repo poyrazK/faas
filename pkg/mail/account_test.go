@@ -93,7 +93,7 @@ func TestSubscriptionEndedBody(t *testing.T) {
 	if !strings.Contains(subject, "Free plan") {
 		t.Errorf("subject = %q, want it to mention the Free plan", subject)
 	}
-	for _, want := range []string{"alice@example.com", "2026-09-05 10:00 UTC", "pro subscription", "5 GB-hours", "gregale plan"} {
+	for _, want := range []string{"alice@example.com", "2026-09-05 10:00 UTC", "pro subscription", "20 GB-hours", "256 MB RAM", "gregale plan"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("body missing %q:\n%s", want, body)
 		}

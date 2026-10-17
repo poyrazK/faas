@@ -1,0 +1,48 @@
+name: cancel conflicted PR runs
+
+# GitHub does not start pull_request workflows for a PR that already
+# conflicts with its base, but runs that started while the PR was clean keep
+# going after main moves under them. They test a merge that can no longer
+# land and hold hosted runners the rest of the queue waits for (about one PR
+# run in five on 2026-10-17). A push to main is when PRs start conflicting,
+# so each one sweeps; the schedule catches PRs whose mergeability GitHub had
+# not computed yet. scripts/ci/cancel_conflicted_pr_runs.py has the rules.
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: Report the runs that would be cancelled without cancelling them
+        type: boolean
+        default: false
+
+# The newest sweep sees the newest main; an older one has nothing to add.
+concurrency:
+  group: cancel-conflicted-pr-runs
+  cancel-in-progress: true
+
+permissions:
+  actions: write        # cancel workflow runs
+  contents: read
+  pull-requests: read   # read each PR's mergeability
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: scripts/ci/cancel_conflicted_pr_runs.py
+          sparse-checkout-cone-mode: false
+      - name: cancel runs of pull requests that conflict with their base
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DRY_RUN: ${{ inputs.dry-run && 'true' || 'false' }}
+        run: |
+          args=(--repo "$GITHUB_REPOSITORY")
+          if [[ "$DRY_RUN" == true ]]; then args+=(--dry-run); fi
+          python3 scripts/ci/cancel_conflicted_pr_runs.py "${args[@]}"

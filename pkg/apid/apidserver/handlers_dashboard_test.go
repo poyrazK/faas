@@ -495,7 +495,7 @@ func TestDashboardHandler_Billing_PaidPlan(t *testing.T) {
 		Provider:          "stripe",
 		Status:            "paid",
 		TotalCents:        1240,
-		Currency:          "eur",
+		Currency:          "usd",
 		PeriodStart:       time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC),
 		PeriodEnd:         time.Date(2026, 7, 31, 0, 0, 0, 0, time.UTC),
 	})
@@ -530,7 +530,7 @@ func TestDashboardHandler_Billing_PaidPlan(t *testing.T) {
 		"https://billing.example.com/portal?account=" + acct.ID,
 		"Last invoice",
 		"2026-07-31",
-		"€12.40",
+		"$12.40",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("paid-plan body missing %q\n--- body ---\n%s", want, body)

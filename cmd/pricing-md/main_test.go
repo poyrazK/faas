@@ -43,9 +43,9 @@ func TestFormatPrice(t *testing.T) {
 		millicents int64
 		want       string
 	}{
-		{0, "€0"},
-		{900_000, "€9"},
-		{1_234_000, "€12.34"},
+		{0, "$0"},
+		{1_000_000, "$10"},
+		{1_234_000, "$12.34"},
 	} {
 		if got := formatPrice(tc.millicents); got != tc.want {
 			t.Errorf("formatPrice(%d) = %q, want %q", tc.millicents, got, tc.want)
