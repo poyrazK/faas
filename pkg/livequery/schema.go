@@ -171,10 +171,22 @@ func (e *Engine) applySchemaChange(ctx context.Context, tx pgx.Tx, sc *schemaCha
 			continue
 		}
 		e.Stats.Recompiles++
-		plan, err := recompile(ctx, tx, g.plan.SQL)
+		var plan *Plan
+		var err error
+		if e.Compiler != nil {
+			// A remote compiler has its own session; nothing it does can
+			// abort the round transaction.
+			plan, err = e.Compiler(ctx, g.plan.SQL)
+		} else {
+			plan, err = recompile(ctx, tx, g.plan.SQL)
+		}
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
+			}
+			if errors.Is(err, ErrCompilerUnavailable) {
+				// Not the query's fault: fail the round, which is retried.
+				return nil, err
 			}
 			closed = append(closed, e.closeGroup(g, &QueryError{Code: SchemaChanged, Message: err.Error()})...)
 			continue

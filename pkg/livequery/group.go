@@ -142,7 +142,7 @@ func (g *planGroup) readKeyed(ctx context.Context, tx pgx.Tx, sql string, ms []*
 			}
 			if g.plan.Order != nil {
 				r.sort = pick(values, shape.order)
-				for _, rel := range g.plan.outer {
+				for _, rel := range g.plan.Outer {
 					r.sort = append(r.sort, pick(values, shape.lineage[rel])...)
 				}
 			}
@@ -460,7 +460,7 @@ func (g *planGroup) expand(ctx context.Context, tx pgx.Tx, ms []*member, keys []
 			continue
 		}
 		addOuter := func(lineage []string) {
-			for _, o := range p.outer {
+			for _, o := range p.Outer {
 				if lineage[o] == "" {
 					continue
 				}

@@ -6,6 +6,7 @@ import (
 	"encoding/gob"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
@@ -230,6 +231,11 @@ func saveRow(id string, r *keyedRow) checkpointRow {
 // whose query no longer compiles are closed with schema_changed at the first
 // round.
 func RestoreEngine(ctx context.Context, pool *pgxpool.Pool, capture *Capture, r io.Reader) (*Engine, error) {
+	return RestoreEngineWith(ctx, pool, capture, r, nil)
+}
+
+// RestoreEngineWith restores with a compiler (nil compiles in process).
+func RestoreEngineWith(ctx context.Context, pool *pgxpool.Pool, capture *Capture, r io.Reader, compiler Compiler) (*Engine, error) {
 	var f checkpointFile
 	if err := gob.NewDecoder(r).Decode(&f); err != nil {
 		return nil, fmt.Errorf("livequery: read checkpoint: %w", err)
@@ -239,6 +245,7 @@ func RestoreEngine(ctx context.Context, pool *pgxpool.Pool, capture *Capture, r 
 	}
 	e := NewEngine(pool, capture)
 	e.Checkpointed = true
+	e.Compiler = compiler
 	e.round = f.Round
 	if f.Applied != "" && !capture.Created {
 		snap, err := ParseSnapshot(f.Applied)
@@ -253,10 +260,13 @@ func RestoreEngine(ctx context.Context, pool *pgxpool.Pool, capture *Capture, r 
 	}
 	defer conn.Release()
 	for _, cg := range f.Groups {
-		plan, err := Compile(ctx, conn.Conn(), cg.SQL)
+		plan, err := e.compile(ctx, conn.Conn(), cg.SQL)
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
+			}
+			if errors.Is(err, ErrCompilerUnavailable) {
+				return nil, err
 			}
 			qe := &QueryError{Code: SchemaChanged, Message: err.Error()}
 			for _, cm := range cg.Members {

@@ -123,6 +123,9 @@ type Engine struct {
 	// Checkpointed engines confirm the slot only when a checkpoint is
 	// written, so it never moves past state a crash could lose.
 	Checkpointed bool
+	// Compiler, when set, compiles queries instead of the engine itself, so
+	// the engine never starts the SQL parser (see compiler.go).
+	Compiler Compiler
 	// MaxResultRows closes a subscription whose result (or ordered window)
 	// grows past it with live_query_limit; zero means
 	// api.LiveQueryResultRowsMax.
@@ -152,7 +155,7 @@ func (e *Engine) Register(ctx context.Context, id, sql string, args ...any) (*Pl
 	defer conn.Release()
 	g := e.bySQL[sql]
 	if g == nil {
-		plan, err := Compile(ctx, conn.Conn(), sql)
+		plan, err := e.compile(ctx, conn.Conn(), sql)
 		if err != nil {
 			return nil, err
 		}

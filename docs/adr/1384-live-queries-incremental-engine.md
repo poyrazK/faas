@@ -704,6 +704,38 @@ Phase 0 did not cover:
       once; decoding skips the empty transaction. On the loaded laptop, idle
       rounds went from p50 406 ms to 9 ms. Clean numbers need a quiet host.
 
+- **Memory, and the compiler split** (2026-10-17).
+  - **Where the memory goes.** The engine itself is small: 101 queries and
+    2,000 subscriptions over 10,000 rows hold about 23 MiB of Go heap. The
+    fixed cost is PostgreSQL's parser, which runs as WebAssembly:
+    - starting it reserves about 280 MiB of address space, mostly virtual;
+    - it keeps about 9 MiB of decoded module on the heap;
+    - it spikes resident memory while wazero compiles the parser to native
+      code: 65 to 127 MiB on the first parse.
+  - **The split.** Rounds never parse; they run statements compiled ahead of
+    time. So the engine takes a `Compiler`, and `livequery.RemoteCompiler`
+    sends compilation over HTTP (`CompilerHandler`) to the host. Plans travel
+    as JSON, with fingerprints identical to in-process compilation. Schema
+    changes and restores compile remotely too, and a compiler outage fails
+    the round (retried) instead of closing subscriptions.
+  - **`livequeryd -role`:**
+    - `engine` runs beside the database and never starts the parser;
+    - `compiler` runs on the host;
+    - `all` runs both in one process.
+  - **Measured on the laptop** (macOS RSS, indicative), 600 subscriptions
+    over 60 distinct queries:
+
+    | Engine process | Peak RSS | Final RSS | Go heap |
+    |---|---|---|---|
+    | With the parser (`-role all`) | 197 MiB | 31 MiB | 40 MiB |
+    | Without it (`-role engine`) | 66 MiB | 25 MiB | 29 MiB |
+
+    The engine idles at 23 MiB; the compiler process holds about 24 MiB.
+  - **Open question resolved:** compilation belongs in livequeryd on the
+    host, as section 2 drew it.
+  - **Still owed:** cgroup-accurate numbers inside a Linux database VM, and
+    the engine's memory ceiling per class.
+
 ## Consequences
 
 - **TRUNCATE waits.** TRUNCATE and table rewrites on live tables wait for the
@@ -747,8 +779,10 @@ Phase 0 did not cover:
 
 - Engine memory share and the starting limit values per class, from Phase 0
   measurements.
-- Whether compilation belongs in livequeryd or apid. livequeryd keeps catalog
-  access local to the database node.
+- ~~Whether compilation belongs in livequeryd or apid.~~ Resolved: livequeryd
+  on the host. It keeps catalog access local to the database node, and keeps
+  the parser's memory out of the VM (see Phase 1 progress, "Memory, and the
+  compiler split").
 - Whether live queries ride existing realtime endpoints (proposed) or get a
   dedicated endpoint kind.
 - Seal format compatibility: whether to accept Neon-style sealed-query shapes

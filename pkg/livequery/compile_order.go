@@ -123,7 +123,7 @@ func (p *Plan) compileOrder(ctx context.Context, conn *pgx.Conn, sel, rowSel *pg
 		sorts = append(sorts, sortBy(expr, desc, nullsFirst))
 		rowSel.TargetList = append(rowSel.TargetList, resTarget(orderColumn(k), cloneNode(expr)))
 	}
-	for _, i := range p.outer {
+	for _, i := range p.Outer {
 		rel := p.Relations[i]
 		for _, key := range rel.Keys {
 			expr := columnRef(rel.Alias, key)
@@ -272,7 +272,7 @@ func (p *Plan) orderTypes(ctx context.Context, conn *pgx.Conn, sel, rowSel *pgq.
 	for k := range o.NUser {
 		oids = append(oids, byName[orderColumn(k)])
 	}
-	for _, rel := range p.outer {
+	for _, rel := range p.Outer {
 		for k := range p.Relations[rel].Keys {
 			oids = append(oids, byName[lineageColumn(rel, k)])
 		}

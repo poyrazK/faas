@@ -273,7 +273,7 @@ func (p *Plan) compileSemiJoins(sel *pgq.SelectStmt, subs []subquery) error {
 		}
 		joined := pgq.MakeJoinExprNode(pgq.JoinType_JOIN_INNER, from, cloneNode(sq.table), cloneNode(sq.cond))
 		semi := cloneSelect(plainSelect([]*pgq.Node{joined}, nil))
-		rels := append(append([]int{}, p.outer...), sq.rel)
+		rels := append(append([]int{}, p.Outer...), sq.rel)
 		semi.TargetList = p.withParams(p.lineageTargets(rels))
 		sql, restricted, err := p.restricted(semi, rels)
 		if err != nil {

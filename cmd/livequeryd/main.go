@@ -41,24 +41,56 @@ var (
 	devSecretFile     = flag.String("dev-secret-file", "", "file holding the database's live secret (glsk1_...), for -dev-listen")
 	devAllowOrigins   = flag.String("dev-allow-origin", "", "comma-separated browser origins allowed on -dev-listen; * allows any")
 	verify            = flag.Bool("verify", false, "compare every result with PostgreSQL each round (slow; debugging only)")
+	role              = flag.String("role", "all", "all (engine and compiler in one process), engine, or compiler")
+	compilerURL       = flag.String("compiler-url", "", "with -role engine: the compiler to send queries to; the engine then never starts the SQL parser")
+	compilerListen    = flag.String("compiler-listen", "", "with -role compiler or all: serve compilation at http://<addr>/compile")
 )
 
 func main() {
 	wire.Daemon("livequeryd", run)
 }
 
+// The roles split livequeryd in two (ADR-1384): the engine runs beside the
+// database, inside its VM, and never parses SQL; the compiler runs on the
+// host with the parser and the memory it needs. -role all runs both in one
+// process.
 func run(ctx context.Context, log *slog.Logger) error {
-	if *databaseURL == "" || *databaseID == "" {
-		return errors.New("livequeryd: -database-url and -database-id are required")
+	if *databaseURL == "" {
+		return errors.New("livequeryd: -database-url is required")
 	}
-	ops := wire.NewOpsMetrics("livequeryd")
-	metrics := liveserver.NewMetrics(ops.Registry())
-
 	pool, err := pgxpool.New(ctx, *databaseURL)
 	if err != nil {
 		return fmt.Errorf("livequeryd: connect: %w", err)
 	}
 	defer pool.Close()
+	switch *role {
+	case "compiler":
+		if *compilerListen == "" {
+			return errors.New("livequeryd: -role compiler needs -compiler-listen")
+		}
+		srv, err := serve(*compilerListen, compilerMux(pool), log)
+		if err != nil {
+			return err
+		}
+		<-ctx.Done()
+		shutdown, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		return srv.Shutdown(shutdown)
+	case "engine", "all":
+	default:
+		return fmt.Errorf("livequeryd: unknown -role %q", *role)
+	}
+	if *databaseID == "" {
+		return errors.New("livequeryd: -database-id is required")
+	}
+	var compiler livequery.Compiler
+	if *compilerURL != "" {
+		compiler = livequery.RemoteCompiler(*compilerURL, &http.Client{Timeout: 30 * time.Second})
+	} else if *role == "engine" {
+		return errors.New("livequeryd: -role engine needs -compiler-url")
+	}
+	ops := wire.NewOpsMetrics("livequeryd")
+	metrics := liveserver.NewMetrics(ops.Registry())
 	if *install {
 		if err := livequery.Install(ctx, pool); err != nil {
 			return err
@@ -74,7 +106,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return err
 	}
 	defer func() { _ = capture.Close() }() //nolint:contextcheck // Close bounds its own shutdown
-	engine, err := openEngine(ctx, pool, capture, log)
+	engine, err := openEngine(ctx, pool, capture, compiler, log)
 	if err != nil {
 		return err
 	}
@@ -94,6 +126,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 	})
 
 	var servers []*http.Server
+	if *compilerListen != "" {
+		srv, err := serve(*compilerListen, compilerMux(pool), log)
+		if err != nil {
+			return err
+		}
+		servers = append(servers, srv)
+	}
 	defer func() {
 		for _, srv := range servers {
 			shutdown, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
@@ -126,13 +165,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 }
 
 // openEngine restores the engine from its checkpoint, or starts a new one.
-func openEngine(ctx context.Context, pool *pgxpool.Pool, capture *livequery.Capture, log *slog.Logger) (*livequery.Engine, error) {
+func openEngine(ctx context.Context, pool *pgxpool.Pool, capture *livequery.Capture, compiler livequery.Compiler, log *slog.Logger) (*livequery.Engine, error) {
 	if *checkpointPath != "" {
 		f, err := os.Open(*checkpointPath) //nolint:forbidigo // livequeryd's own state file, from its flags
 		switch {
 		case err == nil:
 			defer func() { _ = f.Close() }()
-			engine, err := livequery.RestoreEngine(ctx, pool, capture, f)
+			engine, err := livequery.RestoreEngineWith(ctx, pool, capture, f, compiler)
 			if err == nil {
 				log.Info("livequeryd: restored from checkpoint", "queries", engine.Queries(), "subscriptions", engine.Subscriptions())
 				return engine, nil
@@ -145,7 +184,14 @@ func openEngine(ctx context.Context, pool *pgxpool.Pool, capture *livequery.Capt
 	}
 	engine := livequery.NewEngine(pool, capture)
 	engine.Checkpointed = *checkpointPath != ""
+	engine.Compiler = compiler
 	return engine, nil
+}
+
+func compilerMux(pool *pgxpool.Pool) http.Handler {
+	mux := http.NewServeMux()
+	mux.Handle("/compile", livequery.CompilerHandler(pool))
+	return mux
 }
 
 func ensurePublication(ctx context.Context, pool *pgxpool.Pool, name string) error {

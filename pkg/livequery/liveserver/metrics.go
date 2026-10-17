@@ -1,7 +1,7 @@
 package liveserver
 
 import (
-	"runtime"
+	"runtime/metrics"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -41,7 +41,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Help: "Full re-evaluations of a plan group (recompute mode, truncation, schema changes)."}),
 		resnapshots: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "livequery_resnapshots_total",
 			Help: "Queries read again from scratch, by reason."}, []string{"reason"}),
-		memory:  prometheus.NewGauge(prometheus.GaugeOpts{Name: "livequery_engine_memory_bytes", Help: "Heap in use by the engine process."}),
+		memory:  prometheus.NewGauge(prometheus.GaugeOpts{Name: "livequery_engine_memory_bytes", Help: "Live heap of the engine process after the last collection."}),
 		slotLag: prometheus.NewGauge(prometheus.GaugeOpts{Name: "livequery_slot_lag_bytes", Help: "WAL the slot retains."}),
 		checkpoint: prometheus.NewHistogram(prometheus.HistogramOpts{Name: "livequery_checkpoint_duration_seconds",
 			Help: "Duration of writing a checkpoint.", Buckets: latency}),
@@ -71,9 +71,13 @@ func (m *Metrics) observeRound(d time.Duration, before, after livequery.Stats, s
 	m.windowRefills.Add(float64(after.WindowRefills - before.WindowRefills))
 	m.appliedTxns.Add(float64(after.Applied - before.Applied))
 	m.maintenanceSec.Add((after.StatementTime - before.StatementTime).Seconds())
-	var ms runtime.MemStats
-	runtime.ReadMemStats(&ms)
-	m.memory.Set(float64(ms.HeapAlloc))
+	// The heap that survived the last collection: what the engine keeps,
+	// not the garbage a round leaves behind.
+	sample := []metrics.Sample{{Name: "/gc/heap/live:bytes"}}
+	metrics.Read(sample)
+	if sample[0].Value.Kind() == metrics.KindUint64 {
+		m.memory.Set(float64(sample[0].Value.Uint64()))
+	}
 }
 
 func (m *Metrics) observeCommitToDelta(d time.Duration) {

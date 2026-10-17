@@ -117,9 +117,9 @@ type Plan struct {
 	// RowSQL and RowRestricted read at most a window's worth of rows each.
 	Order *OrderPlan
 
-	// outer lists the relations of the FROM clause; subquery relations
+	// Outer lists the relations of the FROM clause; subquery relations
 	// follow them.
-	outer []int
+	Outer []int
 
 	// params holds one hidden, explicitly typed target per query parameter.
 	// Every derived query carries them, so parameter numbers and types stay
@@ -459,7 +459,7 @@ func (p *Plan) compileKeyed(ctx context.Context, conn *pgx.Conn, sel *pgq.Select
 	if err != nil {
 		return err
 	}
-	p.outer = outer
+	p.Outer = outer
 	lineage := p.lineageTargets(outer)
 	grouped := len(sel.GroupClause) > 0 || hasAgg || sel.HavingClause != nil || plainDistinct(sel)
 	if !grouped {
@@ -507,7 +507,7 @@ func (p *Plan) lineageTargets(rels []int) []*pgq.Node {
 }
 
 func (p *Plan) restrictRows(sel *pgq.SelectStmt) error {
-	sql, restricted, err := p.restricted(sel, p.outer)
+	sql, restricted, err := p.restricted(sel, p.Outer)
 	if err != nil {
 		return err
 	}
