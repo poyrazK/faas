@@ -49,7 +49,7 @@ func ReadFinancialCosts(ctx context.Context, store state.Store, account string, 
 	if err != nil {
 		return api.FinancialCostsResponse{}, err
 	}
-	out := api.FinancialCostsResponse{AccountID: account, Currency: "EUR", PeriodStart: start, PeriodEnd: end, AsOf: asOf, RetainedFrom: retained, EvidenceThroughID: head, Scope: "retained_compute_and_interface_egress", Meters: []api.FinancialMeterCosts{}, Invoices: []api.Invoice{}, InvoiceReconciliation: "not_reconciled", MissingBillComponents: []string{"subscription_and_addons", "credits_and_adjustments", "tax", "external_and_managed_resource_meters"}}
+	out := api.FinancialCostsResponse{AccountID: account, Currency: api.BillingCurrency, PeriodStart: start, PeriodEnd: end, AsOf: asOf, RetainedFrom: retained, EvidenceThroughID: head, Scope: "retained_compute_and_interface_egress", Meters: []api.FinancialMeterCosts{}, Invoices: []api.Invoice{}, InvoiceReconciliation: "not_reconciled", MissingBillComponents: []string{"subscription_and_addons", "credits_and_adjustments", "tax", "external_and_managed_resource_meters"}}
 	total := new(big.Int)
 	for _, meter := range []string{"compute", "egress"} {
 		m, err := financialMeterCosts(account, start, end, asOf, now, retained, meter, coverage, rows, prices)
@@ -81,7 +81,7 @@ func financialMeterCosts(account string, start, end, asOf, now, retained time.Ti
 	}
 	complete := !start.Before(retained) && expected > 0 && minutes == expected
 	fresh := !now.Before(end) || (!sampling.ObservedAt.IsZero() && now.Sub(sampling.ObservedAt) <= api.FinancialEvidenceFreshness && !sampling.ObservedAt.After(now))
-	out := api.FinancialMeterCosts{Meter: meter, Coverage: api.FinancialMeterCoverage{Complete: complete, Fresh: fresh, ExpectedMinutes: expected, CompleteMinutes: minutes, Reasons: []string{}}, Accrued: financial.ContractCosts{Meter: meter, Contracts: []financial.MeterCost{}}, Forecast: financial.Forecast{AccountID: account, Meter: meter, Currency: "EUR", PeriodStart: start, PeriodEnd: end, CompleteThrough: asOf, Method: "elapsed_time_run_rate_v1"}}
+	out := api.FinancialMeterCosts{Meter: meter, Coverage: api.FinancialMeterCoverage{Complete: complete, Fresh: fresh, ExpectedMinutes: expected, CompleteMinutes: minutes, Reasons: []string{}}, Accrued: financial.ContractCosts{Meter: meter, Contracts: []financial.MeterCost{}}, Forecast: financial.Forecast{AccountID: account, Meter: meter, Currency: api.BillingCurrency, PeriodStart: start, PeriodEnd: end, CompleteThrough: asOf, Method: "elapsed_time_run_rate_v1"}}
 	if start.Before(retained) {
 		out.Coverage.Reasons = append(out.Coverage.Reasons, "retention_started_during_or_after_period")
 	}

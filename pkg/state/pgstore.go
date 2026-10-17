@@ -14879,7 +14879,7 @@ func (s *PgStore) WasInvokedSuccessfullySince(ctx context.Context, accountID, ap
 func (s *PgStore) MTDSpendEurCents(ctx context.Context, accountID string) (int64, error) {
 	// account_spend_snapshot has no production writer (only
 	// UpsertAccountSpendSnapshot, which nothing calls), so summing it
-	// returned 0 for every account: the enabled "Spend exceeds €20"
+	// returned 0 for every account: the enabled "Spend exceeds $20"
 	// preset and the meterd_account_spend_eur gauge could never move.
 	// Read the month-to-date usage spend beyond the plan's included
 	// allowance from usage_minutes — the same figure the billing page

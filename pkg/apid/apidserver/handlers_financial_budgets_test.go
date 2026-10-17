@@ -19,7 +19,7 @@ import (
 )
 
 func financialDraftSpec() financial.BudgetSpec {
-	return financial.BudgetSpec{Name: "Preview spending", Scope: financial.BudgetScope{Kind: "account"}, Currency: "EUR", Meters: []string{"compute"}, Basis: "net_usage", LimitMillicents: 1000000, NotifyMillicents: []int64{800000}, Mode: "monitored", Action: "stop_previews", DrainSeconds: 30, ResumeRule: "manual"}
+	return financial.BudgetSpec{Name: "Preview spending", Scope: financial.BudgetScope{Kind: "account"}, Currency: "USD", Meters: []string{"compute"}, Basis: "net_usage", LimitMillicents: 1000000, NotifyMillicents: []int64{800000}, Mode: "monitored", Action: "stop_previews", DrainSeconds: 30, ResumeRule: "manual"}
 }
 
 func decodeFinancialBudget(t *testing.T, rec *httptest.ResponseRecorder, status int) api.FinancialBudgetResponse {

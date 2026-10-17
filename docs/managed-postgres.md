@@ -16,12 +16,17 @@ deletion reconciliation remain safe while provisioning is disabled.
 Plan entitlements are enforced before provider work and again at the atomic
 database reservation boundary:
 
-| Plan | Databases | Storage | Restore window | Classes |
-| --- | ---: | ---: | ---: | --- |
-| Free | 0 | — | — | — |
-| Hobby | 1 | 10 GiB | 7 days | development |
-| Pro | 3 | 50 GiB | 7 days | development, burstable |
-| Scale | 10 | 100 GiB | 7 days | development, burstable, production |
+| Plan | Databases | Pooled storage | Compute per month | Restore window | Classes |
+| --- | ---: | ---: | ---: | ---: | --- |
+| Free | 1 | 0.5 GiB | 5 CU-hours | 7 days | development |
+| Hobby | 1 | 1 GiB | 25 CU-hours | 7 days | development |
+| Pro | 3 | 5 GiB | 75 CU-hours | 7 days | development, burstable |
+| Scale | 10 | 20 GiB | 200 CU-hours | 7 days | development, burstable, production |
+
+Storage is pooled across the account's databases: one database may use the
+whole pool. Storage and compute are limits, not billed overage, until managed
+PostgreSQL is invoiced
+([ADR-1430](adr/1430-plan-entitlements-from-october-2026-cogs-report.md)).
 
 All current plans use provider-managed compute suspension. Always-on database
 compute is not included in the bundled plans, and requests that disable
@@ -523,10 +528,10 @@ resource created inside the current, still-open window owes no completed window 
 so its missing first observation does not block; once that window closes it needs
 coverage like any other resource. Missing or stale observations fail
 closed; an existing named database remains idempotent and can still be
-reconciled. The plan's per-database storage entitlement is multiplied by the
-plan's database-count allowance, converted to the canonical byte-second meter,
-and intersected with the operator ceiling; compute, history,
-egress, and spend remain operator-configured COGS ceilings. This keeps the
+reconciled. The plan's pooled storage, held for a whole billing month, becomes
+the canonical byte-second ceiling, and its monthly compute units the
+compute-unit-second ceiling; both are intersected with the operator ceilings,
+while history, egress, and spend remain operator-configured COGS ceilings. This keeps the
 admission path provider-neutral and prevents a plan or provider adapter from
 raising the operator's safety budget.
 

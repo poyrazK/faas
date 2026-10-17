@@ -11,7 +11,7 @@ import (
 func TestCostContractsSharedGrantAndRateChanges(t *testing.T) {
 	start := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
 	end := start.AddDate(0, 1, 0)
-	prices := []Price{{Version: "a", Meter: "compute", Currency: "EUR", Unit: "mb_seconds", UnitQuantity: 1, MillicentsPerUnit: 1, IncludedQuantity: 50}, {Version: "b", Meter: "compute", Currency: "EUR", Unit: "mb_seconds", UnitQuantity: 1, MillicentsPerUnit: 2, IncludedQuantity: 100}}
+	prices := []Price{{Version: "a", Meter: "compute", Currency: BillingCurrency, Unit: "mb_seconds", UnitQuantity: 1, MillicentsPerUnit: 1, IncludedQuantity: 50}, {Version: "b", Meter: "compute", Currency: BillingCurrency, Unit: "mb_seconds", UnitQuantity: 1, MillicentsPerUnit: 2, IncludedQuantity: 100}}
 	entries := []VersionedEvidence{{PriceVersion: "a", Evidence: Evidence{AccountID: "acct", SourceID: "1", Meter: "compute", Quantity: 100, Start: start, End: start.Add(time.Minute), Attribution: Attribution{AppID: "app"}}}, {PriceVersion: "b", Evidence: Evidence{AccountID: "acct", SourceID: "2", Meter: "compute", Quantity: 100, Start: start.Add(time.Minute), End: start.Add(2 * time.Minute), Attribution: Attribution{AppID: "job"}}}}
 	got, err := CostContracts("acct", start, end, prices, entries)
 	if err != nil || got.Quantity != 200 || got.IncludedQuantity != 100 || got.NetMillicents != 150 {

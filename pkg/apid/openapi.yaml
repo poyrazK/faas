@@ -16664,7 +16664,7 @@ paths:
         Overage computation: `overage_gb_hours = max(0, gb_hours -
         plan_included_gb_hours)`. The included band is echoed from
         `acct.Plan.PlanIncludedGBHours()`; the overage figure is the
-        integer-rounded float the Stripe pusher bills at €0.01/GB-h.
+        integer-rounded float the Stripe pusher bills at $0.01/GB-h.
 
         Source: `usage_minutes` today (after the 30d retention cap).
         `usage_daily` / `mixed` land with the trail-period reader
@@ -91011,7 +91011,7 @@ components:
         rounding). `overage_gb_hours = max(0, gb_hours -
         plan_included_gb_hours)` — 0 when the customer is under
         their included band, the billable overage above the band
-        otherwise. The Stripe pusher bills overage at €0.01/GB-h
+        otherwise. The Stripe pusher bills overage at $0.01/GB-h
         (CLAUDE.md integer-cents-only rule).
       type: object
       required: [slug, period_start, period_end, mb_seconds, gb_hours, requests, tx_bytes, net_tx_bytes, builder_seconds, cold_boot_count, plan_included_gb_hours, overage_gb_hours, source, as_of]
@@ -91645,7 +91645,7 @@ components:
         used_gb_hours: { type: number , example: 1.234}
         included_gb_hours: { type: integer, format: int64 }
         overage_gb_hours: { type: number }
-        overage_cents: { type: integer, format: int64, description: 'Integer cents. Includes compute at €0.01/GB-h and configured live egress overage; shadow egress is excluded.' }
+        overage_cents: { type: integer, format: int64, description: 'Integer cents. Includes compute at $0.01/GB-h and configured live egress overage; shadow egress is excluded.' }
         used_cpu_hours:
           type: number
           description: 'Per-month CPU-hours (informational; not billed). issue #279 / PR-B.'
