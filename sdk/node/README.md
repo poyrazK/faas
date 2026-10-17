@@ -3597,3 +3597,12 @@ business code. Explicit `retry` / `deadLetter` decisions check for an existing
 receipt first. The application owns durable job storage and exclusive ownership.
 See [usage, cancellation and recovery](../../docs/event-acknowledgment-node-worker.md)
 and the [durable-job integration](../../examples/event-acknowledgment-node/README.md).
+
+`runDurable` commits a completion intent with the receipt and business writes.
+`saveCompletionIntent` stages a saved receipt without business code;
+`saveRetryIntent` / `saveDeadLetterIntent` persist explicit negative decisions.
+Install `eventAcknowledgmentIntentSchema` explicitly in the application database,
+and run `recoverNextEventAcknowledgmentIntent` from a durable recovery host.
+Recovery sends only the saved callback; inspect its returned `state` / `lastCode`.
+`listEventAcknowledgmentIntents` provides bounded metadata without tokens or results.
+See [transaction, recovery and retention details](../../docs/event-acknowledgment-node-intents.md).

@@ -605,3 +605,10 @@ export { EVENT_DEADLINE_RATIO_BASIS_POINTS_MAX, type EventDeadlineRatioOptions,
 
 export { investigateEventDeadlineAlert, type EventDeadlineInvestigationOptions,
   type EventDeadlineInvestigationQuery, type EventDeadlineInvestigation } from './event-deadline-investigation.js';
+
+export { eventAcknowledgmentIntentSchema, EventAcknowledgmentIntentError, listEventAcknowledgmentIntents,
+  type EventAcknowledgmentIntentErrorCode, type EventAcknowledgmentIntentStatus,
+  type EventAcknowledgmentIntentResult } from './event-acknowledgment-intent-store.js';
+export { EventAcknowledgmentIntentClaim, claimEventAcknowledgmentIntent, recoverNextEventAcknowledgmentIntent,
+  type EventAcknowledgmentIntentClaimOptions, type EventAcknowledgmentIntentDeliveryOptions,
+  type EventAcknowledgmentIntentRecoveryOptions } from './event-acknowledgment-intent-recovery.js';

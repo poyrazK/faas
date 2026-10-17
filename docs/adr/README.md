@@ -1,5 +1,7 @@
 # Architecture Decision Records
 
+- [Durable Node acknowledgment intents](20261017105545-node-durable-acknowledgment-intents.md)
+
 - [Node deferred event acknowledgment worker](20261017-node-event-acknowledgment-worker.md)
 
 ADR-001 through ADR-010 are **accepted and locked for v1**; they live inline in

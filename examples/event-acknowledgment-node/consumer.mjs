@@ -1,7 +1,7 @@
 // Integration functions for an application-owned durable queue. See README for
 // the adapter's persistence and exclusive-ownership requirements.
 import { randomUUID } from 'node:crypto';
-import { eventAcknowledgmentWorkerFromHeaders } from '@gregale/sdk-node';
+import { eventAcknowledgmentWorkerFromHeaders, recoverNextEventAcknowledgmentIntent, EventAcknowledgmentIntentError } from '@gregale/sdk-node';
 
 const names = new Set([
   'x-gregale-event-source', 'x-gregale-event-id', 'x-gregale-event-subscription-id',
@@ -28,7 +28,7 @@ export async function acceptAuthenticatedDelivery(headers, body, scope, queue) {
   const original = Buffer.from(body), savedHeaders = deliveryHeaders(headers), target = owner(scope);
   eventAcknowledgmentWorkerFromHeaders(target.app, savedHeaders, original, target.accountId, target.appId);
   await queue.enqueueProtected({
-    id: randomUUID(), version: 1, phase: 'process', owner: target,
+    id: randomUUID(), version: 2, mode: 'durable-intent', owner: target,
     headers: savedHeaders, bodyBase64: original.toString('base64'),
   });
   return { statusCode: 202, body: '{"accepted":true}' };
@@ -40,25 +40,31 @@ export async function processOwnedDelivery(job, scope, pool, handler) {
   const record = job.record, target = owner(scope), signal = job.signal;
   if (!(signal instanceof AbortSignal)) throw new TypeError('owned job signal required');
   signal.throwIfAborted();
-  if (record.version !== 1 || !['process', 'reconcile'].includes(record.phase)
+  if (record.version !== 2 || record.mode !== 'durable-intent'
     || record.owner?.app !== target.app || record.owner?.accountId !== target.accountId || record.owner?.appId !== target.appId
     || typeof record.bodyBase64 !== 'string' || record.bodyBase64.length > 1_398_104) throw new TypeError('invalid protected delivery job');
   const original = Buffer.from(record.bodyBase64, 'base64');
   if (original.toString('base64') !== record.bodyBase64) throw new TypeError('invalid protected original body encoding');
   const worker = eventAcknowledgmentWorkerFromHeaders(target.app, record.headers, original, target.accountId, target.appId);
-  const phase = record.phase;
-  let result;
-  if (phase === 'process') {
-    if (typeof handler !== 'function') throw new TypeError('business handler required');
-    // Commit this phase BEFORE work. A crash from here onward selects receipt-only
-    // reconciliation, including a lost business COMMIT or completion response.
-    await job.savePhase('reconcile');
-    signal.throwIfAborted();
-    result = await worker.run(pool, (tx, workSignal) => handler(tx, workSignal, original), { signal });
-  } else {
-    result = await worker.completeReceipt(pool, { signal });
-  }
+  if (typeof handler !== 'function') throw new TypeError('business handler required');
+  // The receipt and intent serialize recovery with an uncertain earlier COMMIT.
+  // A saved receipt skips the handler; only transactional writes belong in it.
+  const result = await worker.runDurable(pool, (tx, workSignal) => handler(tx, workSignal, original), { signal });
   signal.throwIfAborted();
+  // Local commit transfers callback responsibility to the durable intent host.
   await job.ack();
   return result;
+}
+
+/** Run from a durable recovery host, independently of the ingestion queue. */
+export async function recoverOneAcknowledgment(scope, pool, signal) {
+  const target = owner(scope);
+  try {
+    return await recoverNextEventAcknowledgmentIntent(pool, target.accountId, target.appId, {
+      signal, claimDurationMs: 30000, backoffMs: 1000,
+    });
+  } catch (error) {
+    if (error instanceof EventAcknowledgmentIntentError && error.code === 'event_acknowledgment_intent_empty') return undefined;
+    throw error;
+  }
 }

@@ -1,41 +1,44 @@
 # Durable Node event acknowledgment integration
 
-This module connects the [Node acknowledgment worker](../../docs/event-acknowledgment-node-worker.md)
-to an existing application-owned durable queue. Copy/import `consumer.mjs` into
-the authenticated ingress and recoverable worker hosts. It starts no in-process
-background worker and supplies no queue/storage implementation.
+This module connects the [Node durable intent store](../../docs/event-acknowledgment-node-intents.md)
+to an application-owned durable ingestion queue and a separate recovery host.
+Copy/import `consumer.mjs` into those hosts. It starts no in-process background
+worker and supplies no queue/storage implementation.
 
 Install the Node SDK, configure one `FaaSClient` with `apps:read` and `deploy:write`
-(or admin) credentials, and explicitly install `eventConsumerReceiptSchema` in the business
-PostgreSQL database. Configure bounded pool acquisition, query and statement
-timeouts. Enable a deferred acknowledgment policy only after compatible schedulers
-are deployed, as described by the [platform protocol](../../docs/event-deferred-acknowledgments.md).
+(or admin) credentials, and explicitly install `eventConsumerReceiptSchema` and
+`eventAcknowledgmentIntentSchema` in the business PostgreSQL database. Restrict
+intent table and backup access: pending rows contain the raw token and result.
+Configure bounded pool acquisition, query and statement timeouts. Enable deferred
+acknowledgment only after compatible schedulers are deployed, as described by the
+[platform protocol](../../docs/event-deferred-acknowledgments.md).
 
 ## Queue adapter
 
 `queue.enqueueProtected(record)` durably commits the entire record before
-resolving. Encrypt/restrict job, backup and queue-console access: its selected
-delivery headers contain the raw token and its body is application data. The
-random job ID is independent of the token. Never log or expose the record.
-Ordinary bearer authorization headers are excluded.
+resolving. Encrypt/restrict job, backup and queue-console access: selected delivery
+headers contain the raw token and the body is application data. The random job ID
+is independent of the token. Never log or expose the record. Ordinary bearer
+credentials are excluded.
 
 The worker host supplies an exclusively owned `job` with:
 
-- `record`: the exact saved record, including immutable owner scope/headers/body.
+- `record`: the exact saved version 2 `durable-intent` record, including immutable owner scope/headers/body.
 - `signal`: aborted when ownership or the worker's processing deadline is lost.
-- `savePhase('reconcile')`: a durable, ownership-fenced update which commits before
-  resolving and updates the record returned by subsequent queue claims.
 - `ack()`: an ownership-fenced durable deletion/acknowledgment.
 
-The host must retain an unacknowledged job and its latest phase across failure.
-Use actual durable queue leases and preserve exclusive ownership during processing;
-an SDK object guard is not a distributed job lease. The adapter must not reset the
-phase on a retry. Retain receipts for the entire possible retry/replay period.
+Keep failed/unacknowledged jobs across restarts and preserve exclusive ownership.
+The SDK's object guard is not a distributed lease. The example accepts only new
+version 2 records so old immediate-mode jobs cannot silently change recovery mode.
+Drain or explicitly reconcile old version 1 jobs with their original protocol;
+do not relabel them, mix modes on an attempt or reset an old recovery phase.
+Retain receipts throughout possible retry/replay and retain intent metadata while
+stale jobs can return. No helper prunes these tables.
 
 ## Authenticated ingress
 
 After the existing route authenticates and authorizes the internal request,
-captures bounded original bytes without JSON reserialization, and loads trusted
+captures bounded original bytes without JSON reserialization and loads trusted
 owner configuration:
 
 ```js
@@ -49,11 +52,10 @@ res.end(response.body);
 ```
 
 Reject a failed enqueue/factory call instead of sending 202. Header parsing is not
-authentication. The job records configured owner scope and the worker compares it
-to current trusted configuration before processing, preventing accidental reuse
-after a host is reconfigured for another app.
+authentication. Saved owner scope is compared to current trusted configuration
+before processing, preventing accidental reuse after host reconfiguration.
 
-## Owned worker
+## Owned processing worker
 
 ```js
 import { processOwnedDelivery } from './consumer.mjs';
@@ -68,21 +70,41 @@ await processOwnedDelivery(job, { app: appSlug, accountId, appId }, pool,
   });
 ```
 
-Only database writes through `tx` belong in this callback. The example's phase
-update precedes business execution. After a crash or uncertain response, the next
-claim calls only `completeReceipt`; it cannot automatically invoke the callback.
-If a matching receipt exists, the saved result is completed and the job is acked.
-If receipt reconciliation reports missing/conflicting data, retain the job for
-the owner's recovery policy. A crash between the phase update and first business
-execution can legitimately produce a missing receipt. Resetting the phase requires
-known rollback, stopped work and an explicit exclusive-owner decision.
+Use only transactional writes through `tx` in this callback. `runDurable` commits
+business writes, the consumer receipt and completion intent together. The job is
+acked after this local commit; that transfers callback delivery responsibility to
+the durable intent recovery host. It does not confirm the platform acknowledgment.
 
-Do not automatically map failures to a platform retry/dead-letter callback. Those
-decisions require their own protected durable action/reason, known rollback and
-exclusive ownership. On a new platform delivery, enqueue its original metadata;
-the shared acceptance/consumer receipt protects already committed business writes.
+A restart after commit replays the receipt and same intent without invoking the
+handler. A retry after an uncertain COMMIT waits for the consumer identity lock;
+new business work requires confirmed platform renewal and no committed receipt.
+For an explicit receipt-only policy use `saveCompletionIntent`; if the receipt is
+missing, retain the job for the owner's recovery policy. Do not infer rollback
+from COMMIT uncertainty or automatically convert errors into negative callbacks.
+Explicit negative decisions require stopped work, known rollback, exclusive
+ownership and the same persisted action/reason on subsequent saves.
 
-Two subscriptions can process the same acceptance independently. One consumer's
-receipt/completion does not settle the other's job. The module's integration and
-restart/concurrency behavior require hosted acceptance coverage before release;
-the local validation for this increment is SDK generation/build and static checks.
+## Independent intent recovery host
+
+Run a bounded iteration from a durable host that can reach PostgreSQL and apid:
+
+```js
+import { recoverOneAcknowledgment } from './consumer.mjs';
+
+const status = await recoverOneAcknowledgment({ app: appSlug, accountId, appId }, pool, signal);
+if (status) {
+  // Metadata only. Inspect state/lastCode; do not treat resolution as confirmation.
+  reportAcknowledgmentStatus(status);
+}
+```
+
+The host owns scheduling, shutdown and concurrency. `undefined` means no due,
+unclaimed row. `unconfirmed` has a database-time retry scheduled; `superseded`
+stops this row. Storage/claim/settlement errors can leave a lease until expiry.
+Recovery never executes business code and sends only the saved callback. Terminal
+rows clear their raw token/result/claim, while backups and in-memory claims remain
+protected. Expired platform leases can require a new delivery; receipt identity
+still keeps consumers independent and prevents repeated committed writes.
+
+The module's concurrency/restart behavior requires hosted acceptance coverage
+before release. Local validation is generation, SDK build and static checks.

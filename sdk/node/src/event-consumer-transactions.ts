@@ -33,7 +33,7 @@ export class EventConsumerCommitUnknownError extends Error {
     this.name = 'EventConsumerCommitUnknownError';
   }
 }
-function uuid(value: string): string {
+export function eventConsumerUUID(value: string): string {
   if (typeof value !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)
       || value === '00000000-0000-0000-0000-000000000000') throw new TypeError('event consumer scope must be nonzero UUIDs');
   return value.toLowerCase();
@@ -55,8 +55,8 @@ export function newEventConsumerRequest(identity: EventConsumerIdentity, body: U
   const event = envelope as Record<string, unknown>;
   if (event.specversion !== '1.0' || event.source !== identity.source || event.id !== identity.eventId
       || typeof event.type !== 'string' || !event.type || !Object.hasOwn(event, 'data')) throw new TypeError('event envelope identity differs');
-  const request = Object.freeze({ accountId: uuid(identity.accountId), appId: uuid(identity.appId),
-    subscriptionId: uuid(identity.subscriptionId), acceptanceId: identity.acceptanceId, source: identity.source, eventId: identity.eventId });
+  const request = Object.freeze({ accountId: eventConsumerUUID(identity.accountId), appId: eventConsumerUUID(identity.appId),
+    subscriptionId: eventConsumerUUID(identity.subscriptionId), acceptanceId: identity.acceptanceId, source: identity.source, eventId: identity.eventId });
   requests.set(request, copy);
   return request;
 }
@@ -85,18 +85,36 @@ export async function withEventConsumerTransaction(
   pool: EventConsumerPool, input: EventConsumerRequest, handler: (transaction: EventConsumerTransaction) => Promise<string>,
   options: EventConsumerTransactionOptions = {},
 ): Promise<EventConsumerTransactionResult> {
+  return eventConsumerTransaction(pool, input, handler, options);
+}
+/** Internal hooks are deliberately excluded from the package entry point. */
+export interface EventConsumerTransactionHooks {
+  beforeCommit?: (tx: EventConsumerTransaction, receipt: EventConsumerTransactionResult) => Promise<void>;
+  storageError?: () => Error;
+}
+export function eventConsumerDigests(input: EventConsumerRequest): { identity: Buffer; request: Buffer } {
+  const original = requests.get(input);
+  if (!original) throw new TypeError('use an event consumer request constructor');
+  return {
+    identity: createHash('sha256').update(['gregale.event-consumer.v1', input.accountId, input.appId,
+      input.subscriptionId, input.acceptanceId].join('\n')).digest(),
+    request: createHash('sha256').update('gregale.event-consumer-input.v1\n').update(original).digest(),
+  };
+}
+export async function eventConsumerTransaction(
+  pool: EventConsumerPool, input: EventConsumerRequest, handler: (transaction: EventConsumerTransaction) => Promise<string>,
+  options: EventConsumerTransactionOptions = {}, hooks: EventConsumerTransactionHooks = {},
+): Promise<EventConsumerTransactionResult> {
   const signal = options.signal;
   if (signal !== undefined && !(signal instanceof AbortSignal)) throw new TypeError('invalid event consumer signal');
   signal?.throwIfAborted();
   const original = requests.get(input);
   if (!original || typeof handler !== 'function') throw new TypeError('use an event consumer request constructor');
-  const identityDigest = createHash('sha256').update(['gregale.event-consumer.v1', input.accountId, input.appId,
-    input.subscriptionId, input.acceptanceId].join('\n')).digest();
-  const requestDigest = createHash('sha256').update('gregale.event-consumer-input.v1\n').update(original).digest();
-  const connection = await pool.connect();
+  const { identity: identityDigest, request: requestDigest } = eventConsumerDigests(input);
+  const connection = await pool.connect().catch(error => { throw hooks.storageError?.() ?? error; });
   const query: EventConsumerTransaction['query'] = async (sql, values) => {
     signal?.throwIfAborted();
-    const result = await connection.query(sql, values);
+    const result = await connection.query(sql, values).catch(error => { throw hooks.storageError?.() ?? error; });
     signal?.throwIfAborted();
     return result;
   };
@@ -112,7 +130,7 @@ export async function withEventConsumerTransaction(
           || !(stored.request_digest instanceof Uint8Array) || !requestDigest.equals(Buffer.from(stored.request_digest))) throw new EventConsumerConflictError();
       if (typeof stored.response_body !== 'string') throw new TypeError('invalid saved event response');
       body = stored.response_body;
-      validateResult(body);
+      try { validateResult(body); } catch (error) { throw hooks.storageError?.() ?? error; }
     } else {
       signal?.throwIfAborted();
       body = await handler(Object.freeze({ query }));
@@ -121,12 +139,14 @@ export async function withEventConsumerTransaction(
       await query(`INSERT INTO public.gregale_event_consumer_inbox(identity_digest,account_id,app_id,subscription_id,acceptance_id,event_source,event_id,request_digest,response_body) VALUES ($1,$2::uuid,$3::uuid,$4::uuid,$5::bigint,$6,$7,$8,$9)`,
         [identityDigest, input.accountId, input.appId, input.subscriptionId, input.acceptanceId, input.source, input.eventId, requestDigest, body]);
     }
+    const receipt = { body, replayed: stored !== undefined };
+    await hooks.beforeCommit?.(Object.freeze({ query }), Object.freeze({ ...receipt }));
     // Once COMMIT is sent, cancellation cannot establish rollback. Preserve a
     // confirmed result or the existing unknown-commit error even after abort.
     signal?.throwIfAborted();
     try { await connection.query('COMMIT'); }
-    catch (error) { discard = true; throw new EventConsumerCommitUnknownError(error); }
-    return { body, replayed: stored !== undefined };
+    catch (error) { discard = true; throw new EventConsumerCommitUnknownError(hooks.storageError?.() ?? error); }
+    return receipt;
   } catch (error) {
     try { await connection.query('ROLLBACK'); } catch { discard = true; }
     throw error;

@@ -4,6 +4,7 @@ The opt-in Go intent store persists the callback an application must send after 
 crash. `RunDurable` commits its completion intent, consumer receipt and business
 writes together. Recovery reads the saved callback and never invokes business code.
 Applications still own durable job ingestion, process lifetime and scheduling.
+The [Node intent store](event-acknowledgment-node-intents.md) uses the same application-owned schema and protocol.
 
 ## Install and protect
 

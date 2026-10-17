@@ -1,65 +1,18 @@
 import { inspect } from 'node:util';
-import { eventConsumerRequestFromHeaders, withEventConsumerTransaction, EventConsumerCommitUnknownError,
+import { eventConsumerRequestFromHeaders, eventConsumerTransaction, EventConsumerCommitUnknownError,
+  type EventConsumerTransactionHooks,
   type EventConsumerPool, type EventConsumerRequest, type EventConsumerTransaction, type EventConsumerTransactionResult } from './event-consumer-transactions.js';
+import { settings, operationSignal, reasonCode, callbackError, missing, emptyResult, observation, terminal, time, EventAcknowledgmentWorkerError,
+  type EventAcknowledgmentWorkerOptions, type EventAcknowledgmentWorkerOperationOptions, type EventAcknowledgmentWorkerResult } from './event-acknowledgment-protocol.js';
+export { EventAcknowledgmentWorkerError, type EventAcknowledgmentWorkerOptions, type EventAcknowledgmentWorkerOperationOptions,
+  type EventAcknowledgmentWorkerResult, type EventAcknowledgmentWorkerErrorCode } from './event-acknowledgment-protocol.js';
 import { eventConsumerDeliveryContextFromHeaders, type EventConsumerDeliveryContext } from './event-consumer-delivery-context.js';
-import { timestamp } from './event-deadline-policy.js';
-import type { EventAcknowledgmentStatus } from './generated/models/EventAcknowledgmentStatus.js';
 import { acknowledgmentCall, acknowledgmentWait, AcknowledgmentCallbackFailure,
   type AcknowledgmentWorkerSettings, type AcknowledgmentWorkerScope } from './event-acknowledgment-callbacks.js';
 
-export interface EventAcknowledgmentWorkerOptions {
-  /** Integer 1..10; default three, including the first call. */
-  callbackAttempts?: number;
-  /** Whole milliseconds, 1..min(5000, lease/6); default that maximum rounded down. */
-  callbackTimeoutMs?: number;
-  /** Whole milliseconds, 1..lease/3; default min(100, lease/12) rounded down. */
-  retryBackoffMs?: number;
-}
-export interface EventAcknowledgmentWorkerOperationOptions { signal?: AbortSignal }
-export interface EventAcknowledgmentWorkerResult {
-  /** False does not establish rollback. Reconcile unknown commits using completeReceipt. */
-  readonly receiptConfirmed: boolean;
-  readonly receipt?: Readonly<EventConsumerTransactionResult>;
-  readonly acknowledgment?: Readonly<EventAcknowledgmentStatus>;
-}
-export type EventAcknowledgmentWorkerErrorCode = 'event_acknowledgment_lease_lost' | 'event_acknowledgment_unconfirmed'
-  | 'event_acknowledgment_worker_busy' | 'event_consumer_receipt_missing' | 'event_consumer_receipt_committed';
-const messages: Record<EventAcknowledgmentWorkerErrorCode, string> = {
-  event_acknowledgment_lease_lost: 'event acknowledgment lease expired, replaced or unavailable',
-  event_acknowledgment_unconfirmed: 'event acknowledgment callback outcome unconfirmed',
-  event_acknowledgment_worker_busy: 'event acknowledgment worker operation already running',
-  event_consumer_receipt_missing: 'no committed event consumer receipt',
-  event_consumer_receipt_committed: 'event consumer receipt already committed; complete instead of rejecting',
-};
-const emptyResult: EventAcknowledgmentWorkerResult = Object.freeze({ receiptConfirmed: false });
+import { saveIntent, saveNegativeIntent, intentStoreError, type EventAcknowledgmentIntentResult,
+  type EventAcknowledgmentIntentStatus, type IntentInput } from './event-acknowledgment-intent-store.js';
 
-/** Callback errors exclude remote bodies, request objects and raw transport causes. */
-export class EventAcknowledgmentWorkerError extends Error {
-  readonly result: EventAcknowledgmentWorkerResult;
-  constructor(readonly code: EventAcknowledgmentWorkerErrorCode, result: EventAcknowledgmentWorkerResult = emptyResult,
-    readonly status?: number) {
-    super(messages[code]);
-    this.name = 'EventAcknowledgmentWorkerError';
-    this.result = Object.freeze({ ...result });
-  }
-  toJSON(): object { return { name: this.name, code: this.code, receiptConfirmed: this.result.receiptConfirmed, status: this.status }; }
-  [inspect.custom](): object { return this.toJSON(); }
-}
-
-function settings(options: EventAcknowledgmentWorkerOptions, seconds: number): AcknowledgmentWorkerSettings {
-  if (!options || typeof options !== 'object' || Array.isArray(options)) throw new TypeError('invalid acknowledgment worker options');
-  const renewalIntervalMs = seconds * 1000 / 3;
-  const maximumTimeout = Math.floor(Math.min(5000, renewalIntervalMs / 2));
-  const callbackAttempts = options.callbackAttempts === undefined ? 3 : options.callbackAttempts;
-  const callbackTimeoutMs = options.callbackTimeoutMs === undefined ? maximumTimeout : options.callbackTimeoutMs;
-  const retryBackoffMs = options.retryBackoffMs === undefined ? Math.floor(Math.min(100, renewalIntervalMs / 4)) : options.retryBackoffMs;
-  if (!Number.isInteger(callbackAttempts) || callbackAttempts < 1 || callbackAttempts > 10
-    || !Number.isInteger(callbackTimeoutMs) || callbackTimeoutMs < 1 || callbackTimeoutMs > maximumTimeout
-    || !Number.isInteger(retryBackoffMs) || retryBackoffMs < 1 || retryBackoffMs > renewalIntervalMs) {
-    throw new TypeError('invalid acknowledgment worker callback budget');
-  }
-  return Object.freeze({ callbackAttempts, callbackTimeoutMs, retryBackoffMs, renewalIntervalMs });
-}
 function header(headers: Record<string, string | readonly string[] | undefined>, name: string): string {
   const entries = Object.entries(headers).filter(([key]) => key.toLowerCase() === name);
   const raw = entries[0]?.[1];
@@ -69,29 +22,6 @@ function header(headers: Record<string, string | readonly string[] | undefined>,
   }
   return value;
 }
-function operationSignal(options: EventAcknowledgmentWorkerOperationOptions): AbortSignal | undefined {
-  if (!options || typeof options !== 'object' || Array.isArray(options)
-    || (options.signal !== undefined && !(options.signal instanceof AbortSignal))) throw new TypeError('invalid acknowledgment worker signal');
-  const signal = options.signal;
-  signal?.throwIfAborted();
-  return signal;
-}
-function reasonCode(reason: string): boolean { return typeof reason === 'string' && /^[a-z0-9_.-]{1,128}$/.test(reason); }
-function callbackError(error: unknown, result = emptyResult): EventAcknowledgmentWorkerError {
-  const status = error instanceof AcknowledgmentCallbackFailure ? error.status : undefined;
-  const lost = error instanceof AcknowledgmentCallbackFailure && error.leaseLost;
-  return new EventAcknowledgmentWorkerError(lost || status === 404 || status === 409 || status === 410
-    ? 'event_acknowledgment_lease_lost' : 'event_acknowledgment_unconfirmed', result, status);
-}
-function missing(error: unknown): boolean {
-  return error instanceof EventAcknowledgmentWorkerError && error.code === 'event_consumer_receipt_missing';
-}
-const minimumTime = timestamp('0001-01-01T00:00:00Z')!;
-const maximumTime = timestamp('9999-12-31T23:59:59.999999999Z')!;
-function time(value: unknown): bigint | undefined {
-  const at = timestamp(value);
-  return at !== undefined && at > minimumTime && at <= maximumTime ? at : undefined;
-}
 
 /** Configure FaaSClient first. Authenticate delivery before constructing this capability.
  * The application owns protected durable jobs; this class does not enqueue or install schemas. */
@@ -100,11 +30,12 @@ export class EventAcknowledgmentWorker {
   readonly #settings: AcknowledgmentWorkerSettings;
   readonly #input: EventConsumerRequest;
   readonly #delivery: EventConsumerDeliveryContext;
+  readonly #seconds: number;
   #busy = false;
 
   private constructor(scope: AcknowledgmentWorkerScope, budget: AcknowledgmentWorkerSettings,
-    input: EventConsumerRequest, delivery: EventConsumerDeliveryContext) {
-    this.#scope = Object.freeze(scope); this.#settings = budget; this.#input = input; this.#delivery = delivery;
+    input: EventConsumerRequest, delivery: EventConsumerDeliveryContext, seconds: number) {
+    this.#scope = Object.freeze(scope); this.#settings = budget; this.#input = input; this.#delivery = delivery; this.#seconds = seconds;
     Object.freeze(this);
   }
   static fromHeaders(app: string, headers: Record<string, string | readonly string[] | undefined>, body: Uint8Array,
@@ -124,7 +55,7 @@ export class EventAcknowledgmentWorker {
     if (!/^[a-f0-9]{64}$/.test(token) || !/^[1-9][0-9]{0,2}$/.test(lease) || Number(lease) > 300) {
       throw new TypeError('invalid acknowledgment token or lease');
     }
-    return new EventAcknowledgmentWorker({ app, invocationId: delivery.invocationId, token }, settings(options, Number(lease)), input, delivery);
+    return new EventAcknowledgmentWorker({ app, invocationId: delivery.invocationId, token }, settings(options, Number(lease)), input, delivery, Number(lease));
   }
   toJSON(): string { return this.toString(); }
   toString(): string { return 'EventAcknowledgmentWorker{redacted}'; }
@@ -133,33 +64,63 @@ export class EventAcknowledgmentWorker {
   /** Business callback uses only tx, observes signal and returns exact JSON text. No external effects. */
   async run(pool: EventConsumerPool, handler: (transaction: EventConsumerTransaction, signal: AbortSignal) => Promise<string>,
     options: EventAcknowledgmentWorkerOperationOptions = {}): Promise<EventAcknowledgmentWorkerResult> {
-    return this.#operate(pool, options, async signal => {
-      if (typeof handler !== 'function') throw new TypeError('invalid event consumer handler');
-      try { return await this.#complete(await this.#receipt(pool, signal), signal); }
-      catch (error) { if (!missing(error)) throw error; }
-      await this.#startLease(signal);
-      const work = new AbortController();
-      const abort = () => work.abort(signal?.reason);
-      signal?.addEventListener('abort', abort, { once: true });
-      if (signal?.aborted) abort();
-      const stop = this.#monitor(work);
-      let receipt: EventConsumerTransactionResult;
-      try {
-        receipt = await withEventConsumerTransaction(pool, this.#input, tx => handler(tx, work.signal), { signal: work.signal });
-      } catch (error) {
-        // An abort after COMMIT was sent cannot establish rollback.
-        if (error instanceof EventConsumerCommitUnknownError) throw error;
-        if (work.signal.aborted) throw work.signal.reason;
-        throw error;
-      } finally {
-        await stop();
-        signal?.removeEventListener('abort', abort);
-        work.abort();
-      }
-      // Even a late renewal failure cannot undo a confirmed receipt. The server
-      // decides whether completion still matches the attempt/token fence.
-      return this.#complete(receipt, signal);
-    });
+    return this.#operate(pool, options, async signal => this.#complete(await this.#process(pool, handler, signal), signal));
+  }
+  /** Commit business writes, receipt and completion intent together. Sends no terminal callback. */
+  async runDurable(pool: EventConsumerPool, handler: (transaction: EventConsumerTransaction, signal: AbortSignal) => Promise<string>,
+    options: EventAcknowledgmentWorkerOperationOptions = {}): Promise<EventAcknowledgmentIntentResult> {
+    if (typeof handler !== 'function') throw new TypeError('invalid event consumer handler');
+    return this.#operate(pool, options, signal => this.#durable(pool, signal, handler));
+  }
+  /** Receipt-only staging after uncertain COMMIT. Never invokes business code. */
+  async saveCompletionIntent(pool: EventConsumerPool, options: EventAcknowledgmentWorkerOperationOptions = {}): Promise<EventAcknowledgmentIntentResult> {
+    return this.#operate(pool, options, signal => this.#durable(pool, signal));
+  }
+  /** Requires stopped work, known rollback and exclusive ownership. Saves locally before callback delivery. */
+  async saveRetryIntent(pool: EventConsumerPool, reason: string, options: EventAcknowledgmentWorkerOperationOptions = {}): Promise<EventAcknowledgmentIntentStatus> {
+    return this.#operate(pool, options, signal => saveNegativeIntent(pool, this.#intentInput(), 'retry', reason, signal));
+  }
+  /** Same ownership requirements as saveRetryIntent. */
+  async saveDeadLetterIntent(pool: EventConsumerPool, reason: string, options: EventAcknowledgmentWorkerOperationOptions = {}): Promise<EventAcknowledgmentIntentStatus> {
+    return this.#operate(pool, options, signal => saveNegativeIntent(pool, this.#intentInput(), 'dead-letter', reason, signal));
+  }
+  #intentInput(): IntentInput {
+    return { input: this.#input, scope: this.#scope, delivery: this.#delivery, seconds: this.#seconds };
+  }
+  async #durable(pool: EventConsumerPool, signal?: AbortSignal,
+    handler?: (transaction: EventConsumerTransaction, signal: AbortSignal) => Promise<string>): Promise<EventAcknowledgmentIntentResult> {
+    let intent: EventAcknowledgmentIntentStatus | undefined;
+    const input = this.#intentInput();
+    const hooks: EventConsumerTransactionHooks = { storageError: intentStoreError,
+      beforeCommit: async (tx, receipt) => { intent = await saveIntent(tx, input, 'complete', '', receipt.body); } };
+    const receipt = handler === undefined ? await this.#receipt(pool, signal, hooks) : await this.#process(pool, handler, signal, hooks);
+    return Object.freeze({ receiptConfirmed: true, receipt: Object.freeze(receipt), intent: intent! });
+  }
+  async #process(pool: EventConsumerPool, handler: (transaction: EventConsumerTransaction, signal: AbortSignal) => Promise<string>,
+    signal?: AbortSignal, hooks: EventConsumerTransactionHooks = {}): Promise<EventConsumerTransactionResult> {
+    if (typeof handler !== 'function') throw new TypeError('invalid event consumer handler');
+    try { return await this.#receipt(pool, signal, hooks); }
+    catch (error) { if (!missing(error)) throw error; }
+    await this.#startLease(signal);
+    const work = new AbortController();
+    const abort = () => work.abort(signal?.reason);
+    signal?.addEventListener('abort', abort, { once: true });
+    if (signal?.aborted) abort();
+    const stop = this.#monitor(work);
+    let receipt: EventConsumerTransactionResult;
+    try {
+      receipt = await eventConsumerTransaction(pool, this.#input, tx => handler(tx, work.signal), { signal: work.signal }, hooks);
+    } catch (error) {
+      // An abort after COMMIT was sent cannot establish rollback.
+      if (error instanceof EventConsumerCommitUnknownError) throw error;
+      if (work.signal.aborted) throw work.signal.reason;
+      throw error;
+    } finally {
+      await stop();
+      signal?.removeEventListener('abort', abort);
+      work.abort();
+    }
+    return receipt;
   }
   /** Reconcile an uncertain commit/callback without ever invoking business code. */
   async completeReceipt(pool: EventConsumerPool, options: EventAcknowledgmentWorkerOperationOptions = {}): Promise<EventAcknowledgmentWorkerResult> {
@@ -181,8 +142,8 @@ export class EventAcknowledgmentWorker {
     this.#busy = true;
     try { return await operation(signal); } finally { this.#busy = false; }
   }
-  async #receipt(pool: EventConsumerPool, signal?: AbortSignal): Promise<EventConsumerTransactionResult> {
-    return withEventConsumerTransaction(pool, this.#input, async () => { throw new EventAcknowledgmentWorkerError('event_consumer_receipt_missing'); }, { signal });
+  async #receipt(pool: EventConsumerPool, signal?: AbortSignal, hooks: EventConsumerTransactionHooks = {}): Promise<EventConsumerTransactionResult> {
+    return eventConsumerTransaction(pool, this.#input, async () => { throw new EventAcknowledgmentWorkerError('event_consumer_receipt_missing'); }, { signal }, hooks);
   }
   async #reject(pool: EventConsumerPool, action: 'retry' | 'dead-letter', reason: string,
     options: EventAcknowledgmentWorkerOperationOptions): Promise<EventAcknowledgmentWorkerResult> {
@@ -192,36 +153,14 @@ export class EventAcknowledgmentWorker {
       try { receipt = await this.#receipt(pool, signal); }
       catch (error) { if (!missing(error)) throw error; }
       if (receipt) throw new EventAcknowledgmentWorkerError('event_consumer_receipt_committed', { receiptConfirmed: true, receipt: Object.freeze(receipt) });
-      return this.#terminal(action, reason, emptyResult, signal);
+      return terminal(this.#scope, this.#settings, this.#delivery, action, reason, emptyResult, signal);
     });
   }
   async #complete(receipt: EventConsumerTransactionResult, signal?: AbortSignal): Promise<EventAcknowledgmentWorkerResult> {
-    return this.#terminal('complete', receipt.body, Object.freeze({ receiptConfirmed: true, receipt: Object.freeze(receipt) }), signal);
-  }
-  #observation(raw: unknown): EventAcknowledgmentStatus {
-    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new AcknowledgmentCallbackFailure();
-    const r = raw as Record<string, unknown>;
-    if (typeof r.invocation_id !== 'string' || r.invocation_id.toLowerCase() !== this.#delivery.invocationId
-      || r.attempt !== this.#delivery.attempt || typeof r.replay_generation !== 'number' || !Number.isSafeInteger(r.replay_generation)
-      || String(r.replay_generation) !== this.#delivery.replayGeneration) throw new AcknowledgmentCallbackFailure(undefined, undefined, true);
-    if (typeof r.state !== 'string' || !/^[a-z_]{1,32}$/.test(r.state)
-      || !['waiting', 'delivering', 'processing', 'expired', 'completed', 'failed', 'dead_letter', 'cancelled', 'superseded'].includes(r.processing_state as string)
-      || (r.disposition !== undefined && r.disposition !== 'retry' && r.disposition !== 'dead-letter')
-      || (r.failure_reason !== undefined && r.failure_reason !== '' && !reasonCode(r.failure_reason as string))
-      || ['lease_expires_at', 'deadline_at', 'next_attempt_at'].some(k => r[k] !== undefined && time(r[k]) === undefined)) {
-      throw new AcknowledgmentCallbackFailure();
-    }
-    // Copy only known bounded fields. Future server fields must not leak tokens or payloads.
-    return Object.freeze({ invocation_id: this.#delivery.invocationId, attempt: this.#delivery.attempt,
-      replay_generation: r.replay_generation, state: r.state, processing_state: r.processing_state as EventAcknowledgmentStatus['processing_state'],
-      ...(r.disposition === undefined ? {} : { disposition: r.disposition as 'retry' | 'dead-letter' }),
-      ...(r.failure_reason === undefined ? {} : { failure_reason: r.failure_reason as string }),
-      ...(r.lease_expires_at === undefined ? {} : { lease_expires_at: r.lease_expires_at as string }),
-      ...(r.deadline_at === undefined ? {} : { deadline_at: r.deadline_at as string }),
-      ...(r.next_attempt_at === undefined ? {} : { next_attempt_at: r.next_attempt_at as string }) });
+    return terminal(this.#scope, this.#settings, this.#delivery, 'complete', receipt.body, Object.freeze({ receiptConfirmed: true, receipt: Object.freeze(receipt) }), signal);
   }
   #renewed(raw: unknown): void {
-    const s = this.#observation(raw);
+    const s = observation(this.#delivery, raw);
     if (s.state !== 'dispatching' || s.processing_state !== 'processing' || s.disposition || s.failure_reason) throw new AcknowledgmentCallbackFailure(undefined, undefined, true);
     const expires = time(s.lease_expires_at), deadline = time(s.deadline_at);
     if (expires === undefined || deadline === undefined || expires > deadline) throw new AcknowledgmentCallbackFailure();
@@ -236,7 +175,7 @@ export class EventAcknowledgmentWorker {
         let offered = false;
         if (!signal?.aborted && error instanceof AcknowledgmentCallbackFailure && error.status === 409) {
           try {
-            const current = this.#observation(await acknowledgmentCall(this.#scope, this.#settings, 'get', signal));
+            const current = observation(this.#delivery, await acknowledgmentCall(this.#scope, this.#settings, 'get', signal));
             if (current.state !== 'dispatching' || current.processing_state !== 'delivering') throw new AcknowledgmentCallbackFailure(undefined, undefined, true);
             // GET is not token proof. Only a subsequent successful renewal admits work.
             delay = this.#settings.retryBackoffMs;
@@ -268,25 +207,6 @@ export class EventAcknowledgmentWorker {
       } catch (error) { if (!monitor.signal.aborted) work.abort(callbackError(error)); }
     })();
     return async () => { monitor.abort(); await done; work.signal.removeEventListener('abort', abort); };
-  }
-  async #terminal(action: 'complete' | 'retry' | 'dead-letter', value: string, result: EventAcknowledgmentWorkerResult,
-    signal?: AbortSignal): Promise<EventAcknowledgmentWorkerResult> {
-    for (let attempt = 0; attempt < this.#settings.callbackAttempts; attempt++) {
-      try {
-        const s = this.#observation(await acknowledgmentCall(this.#scope, this.#settings, action, signal, value));
-        const valid = action === 'complete' ? s.state === 'completed' && s.processing_state === 'completed' && !s.disposition && !s.failure_reason
-          : s.disposition === action && s.failure_reason === value && s.lease_expires_at === undefined
-            && (action === 'retry' && s.state === 'pending' && s.processing_state === 'waiting' && s.next_attempt_at !== undefined
-              || s.state === 'dead_letter' && s.processing_state === 'dead_letter' && s.next_attempt_at === undefined);
-        if (!valid) throw new AcknowledgmentCallbackFailure();
-        return Object.freeze({ ...result, acknowledgment: s });
-      } catch (error) {
-        const delay = error instanceof AcknowledgmentCallbackFailure ? error.retryDelayMs : undefined;
-        if (signal?.aborted || delay === undefined || attempt + 1 === this.#settings.callbackAttempts) throw callbackError(error, result);
-        try { await acknowledgmentWait(delay, signal); } catch { throw callbackError(undefined, result); }
-      }
-    }
-    throw callbackError(undefined, result);
   }
 }
 

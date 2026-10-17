@@ -127,9 +127,11 @@ Live renewal stops on its first failure. Each operation accepts an optional
 SDK transport may retry within each RPC deadline. Configure its retry policy
 appropriately when the helper should own the retry budget.
 
-See the [durable-job integration module](../examples/event-acknowledgment-node/README.md)
-for protecting original inputs and persisting reconciliation before business work.
-This increment adds no platform migration or API route, installs no schemas or
-background services, and does not add Node processing-lease or durable-intent tables.
-The [Go acknowledgment worker](event-acknowledgment-worker.md) and
-[platform protocol](event-deferred-acknowledgments.md) describe the shared boundaries.
+For atomic callback persistence, use [durable Node acknowledgment intents](event-acknowledgment-node-intents.md).
+`runDurable` commits the intent with the receipt and business writes; a separate
+recovery host delivers it. The [durable-job integration module](../examples/event-acknowledgment-node/README.md)
+uses that mode for new jobs. Keep existing immediate-mode jobs on their original
+recovery protocol; do not mix modes for the same attempt. Neither mode installs
+schemas or background services. No Node preparation lease is added. See the
+[Go worker](event-acknowledgment-worker.md) and [platform protocol](event-deferred-acknowledgments.md)
+for shared boundaries.
