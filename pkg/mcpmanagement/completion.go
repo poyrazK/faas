@@ -12,6 +12,20 @@ import (
 func (m *management) completeArgument(ctx context.Context, req *mcp.CompleteRequest) (*mcp.CompleteResult, error) {
 	ctx, cancel := context.WithTimeout(ctx, m.opts.Timeout)
 	defer cancel()
+	if req.Params.Ref != nil && req.Params.Ref.Type == "ref/prompt" && (req.Params.Ref.Name == "gregale_performance_diagnosis" || req.Params.Ref.Name == "gregale_residency_diagnosis") {
+		result, err := m.completePerformanceArgument(ctx, req)
+		if err != nil {
+			return nil, m.contextError(err)
+		}
+		return result, nil
+	}
+	if req.Params.Ref != nil && req.Params.Ref.Type == "ref/prompt" && req.Params.Ref.Name == "gregale_request_diagnosis" {
+		result, err := m.completeRequestArgument(ctx, req)
+		if err != nil {
+			return nil, m.contextError(err)
+		}
+		return result, nil
+	}
 	fields, err := completionFields(req.Params.Ref)
 	if err != nil {
 		return nil, m.contextError(err)

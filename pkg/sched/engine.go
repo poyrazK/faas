@@ -507,6 +507,7 @@ type Engine struct {
 	// the leaser). Production cmd/schedd wires a real PgLeaser via
 	// WithJobLeaser.
 	jobLeaser JobLeaser
+	ciJobs    *ciJobsRuntime
 	// jobVmmClient is the vmmd gRPC surface for cold-booting
 	// job-task VMs. nil means "unit-test mode" — WakeJob returns
 	// a synthetic JobWakeResult without touching vmmd. Production
@@ -942,6 +943,7 @@ func NewEngine(ctx context.Context, store state.Store, ledger *NodeLedger, vmm R
 		workerStops:              newWorkerStopTracker(),
 		now:                      time.Now, // tests override post-construction
 	}
+	e.initCIJobsRuntime()
 	// Resolve default-local. Use a bounded context so a wedged DB
 	// doesn't block the daemon's boot forever — the watchdog goroutine
 	// in cmd/schedd/main.go is the right place for retry, not here.

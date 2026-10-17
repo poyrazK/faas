@@ -94,6 +94,29 @@ help: ## List targets
 	  awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
 
 .PHONY: build
+.PHONY: ci-runner-build test-ci-runtime test-ci-scheduler test-ci-storage test-ci-service test-ci-acceptance native-ci-acceptance
+ci-runner-build: ## Build the internal guest-only CI runner; no image publication or dispatch
+	@mkdir -p $(BINDIR)
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build $(GO_BUILD_FLAGS) -ldflags '-s -w' -o $(BINDIR)/gregale-ci-runner ./cmd/ci-runner
+
+test-ci-runtime: ## CI runner/transport contract tests with fake compute; requires isolated test PostgreSQL
+	FAAS_PGTEST_TEMPLATE_DATABASE=1 $(GO) test -race -count=1 ./guest/cirunner ./pkg/apid/ciruntime ./pkg/ci/... -run 'Test(Archive|Guest|RunnerCannot|CIRunner|CIJobs(Runtime|Scheduler|Stopped))'
+
+test-ci-scheduler: ## Disabled CI scheduler integration with real PostgreSQL and simulated VM receipts
+	FAAS_PGTEST_TEMPLATE_DATABASE=1 $(GO) test -race -count=1 ./pkg/sched -run '^TestCIJob'
+
+test-ci-storage: ## Scoped CI storage, retention, conditional GCS protocol and HTTPS boundary tests
+	FAAS_PGTEST_TEMPLATE_DATABASE=1 $(GO) test -race -count=1 ./pkg/ci/... ./pkg/apid/ciruntime -run '^TestCI(Storage|RuntimeHTTPS)'
+
+test-ci-service: ## Bounded CI dispatcher, execution API and operator CLI checks with synthetic compute
+	FAAS_PGTEST_TEMPLATE_DATABASE=1 $(GO) test -race -count=1 ./pkg/ci/... ./pkg/apid/ciapi ./pkg/githubd ./cmd/gregalectl -run '^TestCI(Health|Archive|Automation|Check|Dispatch|Execution|Profile|SourceRPC|Artifact)'
+
+test-ci-acceptance: ## Portable native CI gate ownership, evidence and configuration checks; no VM execution
+	$(GO) test -race -count=1 ./tests/ci/acceptance ./pkg/e2etest -run 'TestCI(Acceptance|NativeHarness)'
+
+native-ci-acceptance: ## Explicit dedicated KVM/GCS CI qualification; never enables fleet flags
+	bash scripts/ci/run-native-ci-acceptance.sh
+
 build: guest-runners ## Build every daemon + CLIs + guest init + function runners into ./bin
 	@mkdir -p $(BINDIR)
 	@for d in $(DAEMONS); do \
@@ -1158,6 +1181,8 @@ sqlc-check: sqlc ## CI gate: verify checked-in sqlc output matches what would be
 	  trap 'rm -rf "$$tmp"' EXIT; \
 	  mkdir -p "$$tmp/pkg/state" "$$tmp/pkg/db" "$$tmp/pkg/managedpostgres/connectionfence" "$$tmp/pkg/managedpostgres/copyinventory" "$$tmp/pkg/managedpostgres/copyroles" "$$tmp/pkg/managedpostgres/copydatabases" "$$tmp/pkg/managedpostgres/copycontents" "$$tmp/pkg/managedpostgres/credentialdelivery"; \
 	  cp sqlc.yaml schema.sql "$$tmp/"; \
+	  mkdir -p "$$tmp/pkg/ci/db"; \
+	  cp pkg/ci/db/*.sql "$$tmp/pkg/ci/db/"; \
 	  for realtime_package in realtimettl realtimebulk; do \
 	    mkdir -p "$$tmp/pkg/state/$$realtime_package"; \
 	    cp "pkg/state/$$realtime_package/queries.sql" "pkg/state/$$realtime_package/schema.sql" "$$tmp/pkg/state/$$realtime_package/"; \
@@ -1173,7 +1198,7 @@ sqlc-check: sqlc ## CI gate: verify checked-in sqlc output matches what would be
 	  cp pkg/managedpostgres/copydatabases/queries.sql pkg/managedpostgres/copydatabases/maintenance.sql pkg/managedpostgres/copydatabases/verification.sql pkg/managedpostgres/copydatabases/verification_retries.sql pkg/managedpostgres/copydatabases/schema.sql "$$tmp/pkg/managedpostgres/copydatabases/"; \
 	  cp pkg/managedpostgres/credentialdelivery/probe_queries.sql pkg/managedpostgres/credentialdelivery/probe_schema.sql "$$tmp/pkg/managedpostgres/credentialdelivery/"; \
 	  (cd "$$tmp" && $(SQLC) generate); \
-	  for package in pkg/state/realtimettl/sqlc pkg/state/realtimebulk/sqlc pkg/state/sqlc pkg/db/migrationsqlc pkg/managedpostgres/connectionfence/sqlc pkg/managedpostgres/copyinventory/sqlc pkg/managedpostgres/copyroles/sqlc pkg/managedpostgres/copydatabases/sqlc pkg/managedpostgres/copycontents/sqlc pkg/managedpostgres/credentialdelivery/sqlc; do \
+	  for package in pkg/ci/db/sqlc pkg/state/realtimettl/sqlc pkg/state/realtimebulk/sqlc pkg/state/sqlc pkg/db/migrationsqlc pkg/managedpostgres/connectionfence/sqlc pkg/managedpostgres/copyinventory/sqlc pkg/managedpostgres/copyroles/sqlc pkg/managedpostgres/copydatabases/sqlc pkg/managedpostgres/copycontents/sqlc pkg/managedpostgres/credentialdelivery/sqlc; do \
 	    diff -r "$$package" "$$tmp/$$package" || \
 	      { echo "sqlc-check: generated $$package is out of sync; run 'make sqlc-generate' and commit the diff"; exit 1; }; \
 	  done
@@ -1563,6 +1588,14 @@ test-flags-metal: ## Validate Node Flags refresh after native VM restore (root, 
 	@test -r "$$FAAS_BUILDER_BASE_PATH" || (echo "FAAS_BUILDER_BASE_PATH must name a readable builder base" >&2; exit 1)
 	@cd sdk/node && npm ci --ignore-scripts --no-audit --no-fund && npm run build
 	@RUN_REGEX='^TestFeatureFlagsNativeParkRestoreMetal$$' $(MAKE) test-metal PKGS=./cmd/e2e/...
+
+PROMTOOL ?= promtool
+.PHONY: test-ci-observability
+test-ci-observability: grafana-mirror-check grafana-jq-check prometheus-alert-metadata-check ## Internal CI metrics, quiet-default alerts and dashboard contracts; no KVM or provider access.
+	$(GO) test -race -count=1 ./pkg/ci -run '^TestCI(HealthMetrics|WorkerConfiguration)'
+	$(GO) test -count=1 ./pkg/promqlrules -run '^TestCIAlertsAndDashboard'
+	$(PROMTOOL) check rules deploy/ansible/roles/prometheus/files/faas.rules.yml
+	$(PROMTOOL) test rules pkg/promqlrules/testdata/internal_ci.test.yml
 
 .PHONY: test-environment-gitops-core
 test-environment-gitops-core: ## Strict contract, planner, worker, and real PostgreSQL lease/revision acceptance (no KVM).
