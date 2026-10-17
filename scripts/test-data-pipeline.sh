@@ -48,4 +48,5 @@ unset FAAS_SKIP_PG_TESTS
 go test -race -count=1 ./pkg/datapipeline ./pkg/apid/datapipelines ./pkg/apid/apidsource ./pkg/dashboard
 go test -race -count=1 -run '^(TestCapacity|TestConnectionBudget|TestPipelineDatabase|TestPipelineAndWritable|TestSetup|TestCreateWithID)' ./pkg/managedpostgres
 go test -race -count=1 -run '^TestBoundedCredential' ./pkg/managedpostgres/neon
-go test -race -count=1 -run '^(TestPipeline|TestConnectionCheck|TestDataAPIConnectionBudget|TestConnectionBudgetAccepts)' ./cmd/gregale
+# Match the platform CI's bounded CLI compiler settings as the command grows.
+go test '-gcflags=github.com/onebox-faas/faas/cmd/gregale=-c=1 -dwarf=false' -race -count=1 -run '^(TestPipeline|TestConnectionCheck|TestDataAPIConnectionBudget|TestConnectionBudgetAccepts)' ./cmd/gregale

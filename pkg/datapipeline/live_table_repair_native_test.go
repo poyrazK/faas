@@ -135,12 +135,20 @@ func assertNativeLiveTableRepair(t *testing.T, ctx context.Context, store *Postg
 		err := originalTarget(c, a, id, run)
 		var exists bool
 		if err == nil && !lostQuarantine {
+			// Inspect committed state independently of the worker's operation
+			// deadline. Cancelling that deadline must not close the shared
+			// fixture connection and disguise later results as provider loss.
+			probe, cancel := context.WithTimeout(ctx, 5*time.Second)
+			defer cancel()
 			var present bool
-			if err = target.QueryRow(c, `SELECT to_regclass('gregale_pipeline.live_repairs') IS NOT NULL`).Scan(&present); err != nil {
-				return err
+			if err = target.QueryRow(probe, `SELECT to_regclass('gregale_pipeline.live_repairs') IS NOT NULL`).Scan(&present); err != nil {
+				t.Fatalf("inspect quarantine receipt table: %v", err)
 			}
 			if present {
-				err = target.QueryRow(c, `SELECT EXISTS(SELECT 1 FROM gregale_pipeline.live_repairs WHERE pipeline_id=$1 AND stage='quarantined')`, p.ID).Scan(&exists)
+				err = target.QueryRow(probe, `SELECT EXISTS(SELECT 1 FROM gregale_pipeline.live_repairs WHERE pipeline_id=$1 AND stage='quarantined')`, p.ID).Scan(&exists)
+				if err != nil {
+					t.Fatalf("inspect committed quarantine receipt: %v", err)
+				}
 			}
 			if err == nil && exists {
 				lostQuarantine = true
