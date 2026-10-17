@@ -2727,9 +2727,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		return printErr("Invalid flags", err)
 	}
 	if *image != "" && !api.ValidDeploymentImage(*image) {
-		problem := api.NewProblem(http.StatusBadRequest, api.CodeImageRequired,
-			"Image required", "image: deploys require a digest-pinned reference, e.g. registry.gregale.dev/app@sha256:...")
-		return printErr("Invalid --image", &api.APIError{Problem: *problem})
+		return printErr("Invalid --image", &api.APIError{Problem: *imageDigestRequiredProblem(*image)})
 	}
 	// Resolve template shape into immutable command intent before any source
 	// materialization. The parsed flag pointers remain an exact record of what
