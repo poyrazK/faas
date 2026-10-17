@@ -4402,7 +4402,7 @@ paths:
         - name: date
           in: query
           required: false
-          description: UTC day as YYYY-MM-DD within the last 31 days; defaults to today.
+          description: UTC day of the tag rows as YYYY-MM-DD within the last 31 days; defaults to today.
           schema: { type: string, format: date }
         - name: key
           in: query
@@ -4412,7 +4412,7 @@ paths:
         - name: limit
           in: query
           required: false
-          description: Rows to return, 1 to 1000; defaults to 1000.
+          description: Tag rows to return, 1 to 1000; defaults to 1000.
           schema: { type: integer, minimum: 1, maximum: 1000 }
       responses:
         '200':
@@ -62498,6 +62498,7 @@ components:
         daily_cost_limit_millicents: { type: integer, format: int64, minimum: 1, maximum: 1000000000000 }
     OutboundAITagLimits:
       type: object
+      description: An integration's per-tag daily cost limits, ordered by tag (ADR-1410).
       required: [limits]
       properties:
         limits:

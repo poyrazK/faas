@@ -729,7 +729,7 @@ export class OutboundService {
      */
     integration: string,
     /**
-     * UTC day as YYYY-MM-DD within the last 31 days; defaults to today.
+     * UTC day of the tag rows as YYYY-MM-DD within the last 31 days; defaults to today.
      */
     date?: string,
     /**
@@ -737,7 +737,7 @@ export class OutboundService {
      */
     key?: string,
     /**
-     * Rows to return, 1 to 1000; defaults to 1000.
+     * Tag rows to return, 1 to 1000; defaults to 1000.
      */
     limit?: number,
   }): CancelablePromise<OutboundAITagUsageResponse> {
