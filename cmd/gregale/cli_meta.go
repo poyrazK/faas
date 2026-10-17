@@ -39,6 +39,7 @@ import (
 // cliAudience controls how a command is presented in the customer binary.
 // The complete manifest remains authoritative for dispatch, man pages, and
 // compatibility checks; audience only affects the default discovery surface.
+// Internal hosting additionally requires opt-in on all discovery surfaces.
 type cliAudience uint8
 
 const (
@@ -112,17 +113,23 @@ func customerCliCommands() []cliCommand {
 func advancedCliCommands() []cliCommand {
 	commands := make([]cliCommand, 0, len(cliCommands))
 	for _, command := range cliCommands {
-		if command.Audience != cliAudienceCustomer {
+		if command.Audience != cliAudienceCustomer && cliCommandAvailable(command.Name) {
 			commands = append(commands, command)
 		}
 	}
 	return commands
 }
 
+// Internal hosting requires opt-in for discovery as well as execution.
+// Keep the full manifest available for contract checks and operator builds.
+func cliCommandAvailable(name string) bool {
+	return name != "sites" || hostingCLIEnabled()
+}
+
 // cliHelpGroup maps the customer command vocabulary to the workflow sections
 // used by root help. Operator and compatibility entries intentionally fall
-// through to Advanced so `gregale help --all` keeps them discoverable without
-// making them part of the normal customer path.
+// through to Advanced so `gregale help --all` keeps available commands
+// discoverable without making them part of the normal customer path.
 func cliHelpGroup(command cliCommand) string {
 	if command.Audience != cliAudienceCustomer {
 		return "Advanced"
@@ -504,6 +511,36 @@ var templateNames13 = []string{
 // catches the omission; the manifest-drift guard is the load-bearing
 // sync mechanism per ADR-083 §Decision 4.
 var cliCommands = []cliCommand{
+	{
+		Name: "sites", DocSlug: "sites", Audience: cliAudienceOperator,
+		Short: "Internal static hosting (requires the frontend hosting flag)",
+		Subcommands: []cliSub{
+			{Name: "create", Short: "Create an internal site", Flags: []cliFlag{{Name: "name", Value: "NAME"}, {Name: "project", Value: "PROJECT"}, {Name: "environment", Value: "ENV"}}},
+			{Name: "list", Short: "List owned internal sites"},
+			{Name: "status", Short: "Inspect intent, publication, and pending retries", Flags: []cliFlag{{Name: "site", Value: "ID"}}},
+			{Name: "serve", Short: "Preview a validated build on loopback (independent internal opt-in)", Flags: []cliFlag{{Name: "path", Value: "DIR"}, {Name: "port", Value: "PORT"}, {Name: "spa", Bool: true}}},
+			{Name: "plan", Short: "Compare a local build and prospective quotas without uploading (internal opt-in)", Flags: []cliFlag{{Name: "site", Req: true, Value: "UUID"}, {Name: "path", Value: "DIR"}, {Name: "spa", Bool: true}}},
+			{Name: "deploy", Short: "Publish a prebuilt static directory", Flags: []cliFlag{{Name: "site", Value: "ID"}, {Name: "path", Value: "DIR"}, {Name: "spa", Bool: true}, {Name: "source-repository", Value: "LABEL"}, {Name: "source-commit", Value: "SHA"}, {Name: "source-branch", Value: "BRANCH"}, {Name: "description", Value: "TEXT"}, {Name: "no-promote", Bool: true}, {Name: "plan", Value: "FILE", Short: "reviewed saved plan; requires --no-promote and independent opt-in"}, {Name: "resume-release", Value: "UUID", Short: "recover an exact retained release; requires --plan and independent opt-in"}, {Name: "wait", Bool: true}, {Name: "wait-timeout", Value: "DURATION"}}},
+			{Name: "tokens", Short: "Create, list or revoke one-site CI credentials (internal opt-in)", Flags: []cliFlag{{Name: "site", Value: "ID"}, {Name: "credential", Value: "ID"}, {Name: "label", Value: "LABEL"}, {Name: "out", Value: "PRIVATE_FILE"}, {Name: "ttl", Value: "DURATION"}, {Name: "operations", Value: "stage,preview"}}},
+			{Name: "cleanup", Short: "Preview eligible/protected releases and catalog reservations without retiring anything", Flags: []cliFlag{{Name: "site", Value: "ID"}, {Name: "pending-age", Value: "DURATION"}, {Name: "staged-age", Value: "DURATION"}}},
+			{Name: "retention", Short: "Show or set the default-off per-site cleanup policy", Flags: []cliFlag{{Name: "site", Value: "ID"}, {Name: "pending-age", Value: "DURATION"}, {Name: "staged-age", Value: "DURATION"}, {Name: "enabled", Bool: true}, {Name: "expected-revision", Value: "N"}}},
+			{Name: "runs", Short: "List recorded CI runs and stored release/preview evidence", Flags: []cliFlag{{Name: "site", Req: true, Value: "UUID"}, {Name: "before", Value: "CURSOR"}}},
+			{Name: "ci-setup", Short: "Export a reviewable GitHub workflow from an existing site trust", Flags: []cliFlag{{Name: "config", Req: true, Value: "FILE"}, {Name: "out", Req: true, Value: "FILE"}}},
+			{Name: "ci-preflight", Short: "Compare a saved workflow and local preparation Action without uploading them", Flags: []cliFlag{{Name: "config", Req: true, Value: "FILE"}, {Name: "repo-root", Req: true, Value: "DIR"}}},
+			{Name: "diagnose", Short: "Explain stored deployment evidence without mutations or health probes", Flags: []cliFlag{{Name: "site", Req: true, Value: "UUID"}, {Name: "run-id", Value: "UUID"}, {Name: "path", Value: "DIR"}, {Name: "spa", Bool: true}, {Name: "oidc-trust", Value: "UUID"}}},
+			{Name: "ci", Short: "Resume a stable prebuilt-to-preview CI intent without promoting", Flags: []cliFlag{{Name: "oidc-trust", Value: "UUID", Short: "explicit GitHub site trust; requires independent OIDC opt-in"}, {Name: "site", Value: "ID"}, {Name: "run-id", Value: "UUID"}, {Name: "path", Value: "DIR"}, {Name: "spa", Bool: true}, {Name: "preview-ttl", Value: "DURATION"}, {Name: "wait-timeout", Value: "DURATION"}, {Name: "source-repository", Value: "LABEL"}, {Name: "source-commit", Value: "SHA"}, {Name: "source-branch", Value: "BRANCH"}, {Name: "description", Value: "TEXT"}}},
+			{Name: "history", Short: "Inspect retained accepted-promotion history (internal opt-in)", Flags: []cliFlag{{Name: "site", Value: "ID"}, {Name: "before-revision", Value: "N"}}},
+			{Name: "previews", Short: "Create, list, or revoke a private immutable release preview", Flags: []cliFlag{{Name: "site", Value: "ID"}, {Name: "release", Value: "ID"}, {Name: "preview", Value: "ID"}, {Name: "ttl", Value: "DURATION"}, {Name: "expected-generation", Value: "N"}}},
+			{Name: "diff", Short: "Compare a verified release with the active site revision", Flags: []cliFlag{{Name: "site", Value: "ID"}, {Name: "release", Value: "ID"}}},
+			{Name: "promote", Short: "Publish using the reviewed site revision", Flags: []cliFlag{{Name: "site", Value: "ID"}, {Name: "release", Value: "ID"}, {Name: "expected-revision", Value: "N"}, {Name: "wait", Bool: true}, {Name: "wait-timeout", Value: "DURATION"}}},
+			{Name: "releases", Short: "List releases", Flags: []cliFlag{{Name: "site", Value: "ID"}}},
+			{Name: "rollback", Short: "Promote a retained ready release", Flags: []cliFlag{{Name: "site", Value: "ID"}, {Name: "release", Value: "ID"}}},
+			{Name: "suspend", Short: "Suspend traffic for a durable site", Flags: []cliFlag{{Name: "site", Value: "ID"}}},
+			{Name: "resume", Short: "Resume traffic for a durable site", Flags: []cliFlag{{Name: "site", Value: "ID"}}},
+			{Name: "retire", Short: "Retire an inactive release", Flags: []cliFlag{{Name: "site", Value: "ID"}, {Name: "release", Value: "ID"}}},
+			{Name: "delete", Short: "Disable a site and retire its artifacts", Flags: []cliFlag{{Name: "site", Value: "ID"}}},
+		},
+	},
 	mcpCLICommand(),
 	{
 		Name: "menu", DocSlug: "cli", Short: "Choose a common task and open its guided command",

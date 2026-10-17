@@ -96,6 +96,48 @@ const (
 // /dashboard/account/set-password into the public spec — the
 // dashboard auth surface is now real auth, not a backstop fallback.
 var routeExclude = map[string]bool{
+	// ADR-202610171453: default-off internal hosting is absent from public OpenAPI/SDK discovery.
+	"DELETE /v1/internal/hosting/sites/{site}":                                     true,
+	"DELETE /v1/internal/hosting/sites/{site}/automation-credentials/{credential}": true,
+	"DELETE /v1/internal/hosting/sites/{site}/domains/{domain}":                    true,
+	"DELETE /v1/internal/hosting/sites/{site}/oidc-trusts/{trust}":                 true,
+	"DELETE /v1/internal/hosting/sites/{site}/previews/{preview}":                  true,
+	"DELETE /v1/internal/hosting/sites/{site}/releases/{release}":                  true,
+	"GET /v1/internal/hosting/capabilities":                                        true,
+	"GET /v1/internal/hosting/sites":                                               true,
+	"GET /v1/internal/hosting/sites/{site}":                                        true,
+	"GET /v1/internal/hosting/sites/{site}/automation-credentials":                 true,
+	"GET /v1/internal/hosting/sites/{site}/ci/{run}":                               true,
+	"GET /v1/internal/hosting/sites/{site}/cleanup":                                true,
+	"GET /v1/internal/hosting/sites/{site}/diagnostics":                            true,
+	"GET /v1/internal/hosting/sites/{site}/domains":                                true,
+	"GET /v1/internal/hosting/sites/{site}/history":                                true,
+	"GET /v1/internal/hosting/sites/{site}/oidc-trusts":                            true,
+	"GET /v1/internal/hosting/sites/{site}/preview-capacity":                       true,
+	"GET /v1/internal/hosting/sites/{site}/previews":                               true,
+	"GET /v1/internal/hosting/sites/{site}/releases":                               true,
+	"GET /v1/internal/hosting/sites/{site}/runs":                                   true,
+	"GET /v1/internal/hosting/sites/{site}/status":                                 true,
+	"GET /v1/internal/hosting/sites/{site}/traffic":                                true,
+	"GET /v1/internal/hosting/usage":                                               true,
+	"POST /v1/internal/hosting/oidc/exchange":                                      true,
+	"POST /v1/internal/hosting/sites":                                              true,
+	"POST /v1/internal/hosting/sites/{site}/automation-credentials":                true,
+	"POST /v1/internal/hosting/sites/{site}/ci-setup":                              true,
+	"POST /v1/internal/hosting/sites/{site}/ci/{run}/cancel":                       true,
+	"POST /v1/internal/hosting/sites/{site}/ci/{run}/preview":                      true,
+	"POST /v1/internal/hosting/sites/{site}/domains":                               true,
+	"POST /v1/internal/hosting/sites/{site}/domains/{domain}/recover":              true,
+	"POST /v1/internal/hosting/sites/{site}/oidc-trusts":                           true,
+	"POST /v1/internal/hosting/sites/{site}/previews":                              true,
+	"POST /v1/internal/hosting/sites/{site}/promotions":                            true,
+	"POST /v1/internal/hosting/sites/{site}/releases":                              true,
+	"POST /v1/internal/hosting/sites/{site}/releases/{release}/finalize":           true,
+	"POST /v1/internal/hosting/sites/{site}/releases/{release}/uploads":            true,
+	"PUT /v1/internal/hosting/sites/{site}/ci/{run}":                               true,
+	"PUT /v1/internal/hosting/sites/{site}/retention":                              true,
+	"PUT /v1/internal/hosting/sites/{site}/suspension":                             true,
+
 	"POST /integrations/slack/actions":                     true, // ADR-1497 signed managed Slack actions.
 	"POST /integrations/slack/events":                      true, // ADR-1497 signed Slack uninstall/revocation callbacks.
 	"POST /integrations/slack/issues/{app_id}":             true, // ADR-1496 Slack-signed provider callback; no account credentials
@@ -907,6 +949,39 @@ func TestSpecCompliance(t *testing.T) {
 	t.Run("ErrorCodes", func(t *testing.T) {
 		testErrorCodesParity(t, root, spec)
 	})
+}
+
+func TestInternalHostingRoutesRemainPrivate(t *testing.T) {
+	// adr: 202610171453 — private routes must not be added to public discovery to satisfy parity.
+	root, err := findRepoRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, err := loadSpec(filepath.Join(root, "api", "openapi.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	routes, err := scanServerRoutes(filepath.Join(root, "pkg/apid/apidserver", serverSrcPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	count := 0
+	for _, route := range routes {
+		if strings.Contains(route, " /v1/internal/hosting/") {
+			count++
+			if !routeExclude[route] {
+				t.Errorf("internal hosting route lacks an explicit private exclusion: %s", route)
+			}
+		}
+	}
+	if count == 0 {
+		t.Fatal("no hosting routes inspected")
+	}
+	for p := range spec.Paths {
+		if p == "/v1/internal/hosting" || strings.HasPrefix(p, "/v1/internal/hosting/") {
+			t.Errorf("internal hosting route advertised in public OpenAPI: %s", p)
+		}
+	}
 }
 
 // --- Spec loader -----------------------------------------------------------

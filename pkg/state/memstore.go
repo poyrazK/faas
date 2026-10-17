@@ -141,6 +141,17 @@ type jobRegistryCredentialKey struct {
 
 type MemStore struct {
 	productData                                *productMemory
+	hostingOIDCTrusts                          map[string]api.HostingOIDCTrust
+	hostingCredentials                         map[string]api.HostingAutomationCredential
+	hostingRetentionPolicies                   map[string]api.HostingRetentionPolicy
+	hostingCIRuns                              map[string]api.HostingCIRun
+	hostingHistory                             map[string][]api.HostingPromotionEvent
+	hostingPreviews                            map[string]api.HostingPreview
+	hostingDomains                             map[string]memHostingDomain
+	hostingDomainClaims                        map[string]string
+	hostingSites                               map[string]api.HostingSite
+	hostingReleases                            map[string]api.HostingRelease
+	hostingPublications                        map[string]hostingPublication
 	eventAcknowledgmentWriters                 map[string]eventAcknowledgmentWriter
 	eventAcknowledgmentCoverageHead            eventAcknowledgmentCoverageHead
 	eventAcknowledgmentMetrics                 map[eventAcknowledgmentMetricKey]eventAcknowledgmentMetric
@@ -3506,6 +3517,11 @@ func (m *MemStore) UpdateProjectBinding(_ context.Context, accountID, projectID,
 func (m *MemStore) DeleteProject(_ context.Context, projectID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	for _, site := range m.hostingSites {
+		if site.ProjectID == projectID {
+			return ErrConflict
+		}
+	}
 	p, ok := m.projects[projectID]
 	if !ok {
 		return ErrNotFound
@@ -3725,6 +3741,11 @@ func (m *MemStore) DeleteProjectEnvironmentWithCleanup(
 	}
 	if slug == "production" || slug == DefaultEnvScope || environment.Protected {
 		return ProjectEnvironmentCleanupJob{}, ErrConflict
+	}
+	for _, site := range m.hostingSites {
+		if site.ProjectID == projectID && site.Environment == slug {
+			return ProjectEnvironmentCleanupJob{}, ErrConflict
+		}
 	}
 
 	for _, app := range m.apps {
