@@ -69,6 +69,9 @@ func (s *Service) allowedProducerSenders() []string {
 }
 
 func (s *Service) producerMessagePermitted(m Message) bool {
+	if quotaWarningMessage(m) && !s.quotaWarningOutboxEnabled() {
+		return false
+	}
 	if nonpaymentDeletionMessage(m) && !s.nonpaymentDeletionOutboxEnabled() {
 		return false
 	}

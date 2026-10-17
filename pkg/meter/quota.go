@@ -67,12 +67,8 @@ type QuotaAction struct {
 // (apid handler), so meterd's job on Free is to keep RAM off the box until
 // the customer pays — i.e. suspend and stay suspended.
 //
-// TODO(M7-followup): collapse this 9-positional signature into a
-// QuotaParams struct when adding the next collaborator. The first
-// follow-up to land already pushed past 7 args; the next one shouldn't
-// have to thread a 10th positional through six call sites in
-// pkg/meter/meter_test.go + pkg/meter/loop.go. DunningParams / RunParams
-// are the precedent.
+// EnforceQuota preserves the legacy call seam. Production adds private warning
+// commands through QuotaParams instead of extending the positional signature.
 func EnforceQuota(
 	ctx context.Context,
 	store state.Store,
@@ -84,6 +80,23 @@ func EnforceQuota(
 	usedGB float64,
 	at time.Time,
 ) (QuotaAction, error) {
+	return (QuotaParams{Store: store, Notif: notif, Parker: schedd, Mailer: mailer, Log: log}).Enforce(ctx, account, usedGB, at)
+}
+
+type QuotaParams struct {
+	Store            state.Store
+	Notif            Notifier
+	Parker           ScheddParker
+	Mailer           DunningSender
+	Log              *slog.Logger
+	WarningRequested func() bool
+	WarningCommands  QuotaWarningCommands
+}
+
+// Enforce keeps the existing quota/parking ladder; only paid warning issuance
+// switches to the private handoff when its own flag is selected.
+func (p QuotaParams) Enforce(ctx context.Context, account state.Account, usedGB float64, at time.Time) (QuotaAction, error) {
+	store, notif, schedd, mailer, log := p.Store, p.Notif, p.Parker, p.Mailer, p.Log
 	res := CheckQuota(account.Plan, usedGB)
 	act := QuotaAction{
 		AccountID: account.ID, Plan: account.Plan,
@@ -125,6 +138,13 @@ func EnforceQuota(
 			log.Warn("meter: notify billing_past_due", "err", err)
 		}
 	case "warn":
+		if handled, err := p.warnWithNotice(ctx, account, at); handled {
+			if err != nil {
+				log.Warn("meter: durable quota warning unavailable", "account", account.ID)
+			}
+			break
+		}
+
 		// Paid overage — one warning event per UTC day (spec §4.7).
 		// The dedupe gate is persisted in accounts.last_quota_warning_at
 		// (added in migration 00013). LoadAndStampLastQuotaWarning

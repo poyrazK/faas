@@ -1021,6 +1021,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// suspended → deleted_pending transitions (spec §4.7, §17). Wired
 	// into the loop alongside sample/quota/stripe so all five timers
 	// share the same ctx-cancel lifecycle.
+	quotaWarningCommands, err := configureQuotaWarningCommands(ctx, deps.getenv)
+	if err != nil {
+		return err
+	}
 	nonpaymentDeletionCommands, err := configureNonpaymentDeletionCommands(ctx, deps.getenv)
 	if err != nil {
 		return err
@@ -1217,6 +1221,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// gauges without a nil check (zero value is a no-op).
 	jobMetrics := meter.NewJobMetrics()
 	loop := meter.NewLoop(store, cpu, parker, pusher, pn, mailer, dunning, residency, evaluator, deps.now, log, mc, ops).
+		WithQuotaWarnings(func() bool { return deps.getenv(internalmail.QuotaWarningOutboxEnableEnv) == "1" }, quotaWarningCommands).
 		WithBillingEnabled(billingMode.Enabled()).
 		WithEgress(egress).
 		WithProbe(probe).

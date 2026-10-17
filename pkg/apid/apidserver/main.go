@@ -2097,6 +2097,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	metricsAddr := resolveMetricsAddr(deps.getenv, cfg.GetMetricsAddr(deps.getenv))
 	canaryServiceToken := strings.TrimSpace(deps.getenv("FAAS_CANARY_PROGRESSION_TOKEN"))
 	safeDeployServiceToken := strings.TrimSpace(deps.getenv("FAAS_SAFEDEPLOY_TOKEN"))
+	if metricsAddr == "" && deps.getenv(internalmail.QuotaWarningOutboxEnableEnv) == "1" {
+		return errors.New("apid: quota warning mail requires the loopback operator listener")
+	}
 	if metricsAddr == "" && deps.getenv(internalmail.NonpaymentDeletionOutboxEnableEnv) == "1" {
 		return errors.New("apid: non-payment deletion mail requires the loopback operator listener")
 	}
@@ -2125,6 +2128,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		))
 		metricsMux.Handle("/v1/internal/metrics/", srv.metricsDiscoveryHandler())
 		if err := srv.mountInternalSafeDeploy(metricsMux, metricsAddr, canaryServiceToken, safeDeployServiceToken); err != nil {
+			_ = l.Close()
+			return err
+		}
+		if err := srv.mountInternalMailQuotaWarning(metricsMux, metricsAddr, deps.getenv); err != nil {
 			_ = l.Close()
 			return err
 		}

@@ -145,6 +145,7 @@ type server struct {
 	magicLinkMailOutboxRequested        func() bool
 	mfaRecoveryAlertOutboxRequested     func() bool
 	mfaDisabledAlertOutboxRequested     func() bool
+	quotaWarningOutboxRequested         func() bool
 	nonpaymentDeletionOutboxRequested   func() bool
 	accountSuspendedOutboxRequested     func() bool
 	accountRestoredOutboxRequested      func() bool

@@ -21,9 +21,7 @@ func MonthlyUsageGB(usages []state.Usage) float64 {
 	for _, u := range usages {
 		mbSec += u.MBSeconds
 	}
-	gb := GBHours(mbSec)
-	// round to 6 dp — well below the 0.1 % acceptance delta.
-	return float64(int64(gb*1e6+0.5)) / 1e6
+	return api.InternalMailQuotaWarningUsageGBHours(mbSec)
 }
 
 // QuotaResult is the verdict the quota loop hands to the caller. Negative

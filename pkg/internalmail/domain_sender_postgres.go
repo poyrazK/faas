@@ -74,6 +74,15 @@ func (s *PGStore) beginScheduled(ctx context.Context, r Recipient, selector stri
 			return err
 		}
 	}
+	quotaGate, quotaBound := ctx.Value(quotaWarningSubmissionGateKey{}).(func() bool)
+	if quotaBound {
+		if quotaGate == nil || !quotaGate() {
+			return ErrDisabled
+		}
+		if err := s.shareQuotaWarningAccount(ctx, tx, r); err != nil {
+			return err
+		}
+	}
 	nonpaymentGate, nonpaymentBound := ctx.Value(nonpaymentDeletionSubmissionGateKey{}).(func() bool)
 	if nonpaymentBound {
 		if nonpaymentGate == nil || !nonpaymentGate() {
@@ -179,6 +188,9 @@ func (s *PGStore) beginScheduled(ctx context.Context, r Recipient, selector stri
 			}
 		}
 		return ErrLeaseLost
+	}
+	if quotaBound && !quotaGate() {
+		return ErrDisabled
 	}
 	if nonpaymentBound && !nonpaymentGate() {
 		return ErrDisabled

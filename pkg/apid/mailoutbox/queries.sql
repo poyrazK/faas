@@ -27,7 +27,7 @@ SELECT count(*)::bigint FROM platform_mail_producer_outbox WHERE namespace=$1 AN
 SELECT id,email,status,deletion_requested_at FROM accounts WHERE id=$1 FOR UPDATE;
 
 -- name: ShareAccount :one
-SELECT id,email,status,deletion_requested_at,email_verified_at,abuse_hold_at,password_reset_revision,mfa_enrolled_at,mfa_revision,past_due_at,billing_mail_revision FROM accounts WHERE id=$1 FOR SHARE;
+SELECT plan,last_quota_warning_at,quota_mail_revision,id,email,status,deletion_requested_at,email_verified_at,abuse_hold_at,password_reset_revision,mfa_enrolled_at,mfa_revision,past_due_at,billing_mail_revision FROM accounts WHERE id=$1 FOR SHARE;
 
 -- name: ScheduleDeletion :one
 UPDATE accounts SET status='deleted_pending',deletion_requested_at=coalesce(deletion_requested_at,clock_timestamp())
@@ -69,6 +69,8 @@ WITH candidate AS (
           AND o.verification_key_id=ANY(sqlc.arg(magic_link_keys)::text[]))
         OR (o.template='mfa_disable_request' AND sqlc.arg(mfa_disable_enabled)::boolean AND o.verification_origin=sqlc.arg(mfa_disable_origin)::text
           AND o.verification_key_id=ANY(sqlc.arg(mfa_disable_keys)::text[]))
+        OR (o.template='quota_warning' AND sqlc.arg(quota_warning_enabled)::boolean
+          AND o.security_alert_key_id=ANY(sqlc.arg(quota_warning_keys)::text[]))
         OR (o.template='nonpayment_deletion' AND sqlc.arg(nonpayment_deletion_enabled)::boolean
           AND o.security_alert_key_id=ANY(sqlc.arg(nonpayment_deletion_keys)::text[]))
         OR (o.template='account_suspended' AND sqlc.arg(account_suspended_enabled)::boolean
@@ -154,7 +156,7 @@ SELECT o.id,o.revision,o.state,o.template,o.from_address,o.expires_at,o.recovery
     coalesce(m.sender_address,'')::text AS sender_address
 FROM platform_mail_producer_outbox o
 LEFT JOIN internal_mail_messages m ON m.namespace=o.namespace AND m.producer_id=o.producer_id
-    AND m.idempotency_key=(CASE o.template WHEN 'email_verification' THEN 'verify-email:' WHEN 'password_reset' THEN 'password-reset:' WHEN 'magic_link' THEN 'magic-link:' WHEN 'mfa_recovery_used' THEN 'mfa-recovery-alert:' WHEN 'nonpayment_deletion' THEN 'nonpayment-deletion:' WHEN 'account_suspended' THEN 'account-suspended:' WHEN 'account_restored' THEN 'account-restored:' WHEN 'payment_failed' THEN 'payment-failed:' WHEN 'mfa_enabled' THEN 'mfa-enabled:' WHEN 'password_changed' THEN 'password-changed:' WHEN 'mfa_disabled' THEN 'mfa-disabled:' WHEN 'mfa_disable_request' THEN 'mfa-disable:' ELSE 'account-delete:' END)||o.id::text
+    AND m.idempotency_key=(CASE o.template WHEN 'email_verification' THEN 'verify-email:' WHEN 'password_reset' THEN 'password-reset:' WHEN 'magic_link' THEN 'magic-link:' WHEN 'mfa_recovery_used' THEN 'mfa-recovery-alert:' WHEN 'quota_warning' THEN 'quota-warning:' WHEN 'nonpayment_deletion' THEN 'nonpayment-deletion:' WHEN 'account_suspended' THEN 'account-suspended:' WHEN 'account_restored' THEN 'account-restored:' WHEN 'payment_failed' THEN 'payment-failed:' WHEN 'mfa_enabled' THEN 'mfa-enabled:' WHEN 'password_changed' THEN 'password-changed:' WHEN 'mfa_disabled' THEN 'mfa-disabled:' WHEN 'mfa_disable_request' THEN 'mfa-disable:' ELSE 'account-delete:' END)||o.id::text
 WHERE o.namespace=$1 AND o.id=$2;
 
 -- name: ReconciliationReady :exec
@@ -786,3 +788,89 @@ UPDATE platform_mail_producer_outbox SET state='cancelled',code='account_changed
     recipient_address='',lease_id=NULL,lease_until=NULL,sealed_security_alert='',security_alert_key_id='',
     updated_at=clock_timestamp(),revision=revision+1
 WHERE account_id=$1 AND template IN ('payment_failed','account_suspended') AND state IN ('queued','claimed');
+
+-- name: QuotaWarningReady :one
+WITH own_constraint AS MATERIALIZED (
+    SELECT c.oid FROM pg_catalog.pg_constraint c
+    JOIN pg_catalog.pg_class t ON t.oid=c.conrelid JOIN pg_catalog.pg_namespace n ON n.oid=t.relnamespace
+    WHERE n.nspname=current_schema() AND t.relname='platform_mail_producer_outbox'
+      AND c.conname='platform_mail_producer_outbox_security_alert_check'
+)
+SELECT EXISTS(SELECT 1 FROM own_constraint c
+    WHERE position('quota_warning' in pg_catalog.pg_get_constraintdef(c.oid))>0)::boolean AS ready;
+
+-- name: QuotaWarningLifecycleReady :one
+SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_trigger g JOIN pg_catalog.pg_class t ON t.oid=g.tgrelid
+    JOIN pg_catalog.pg_namespace n ON n.oid=t.relnamespace
+    WHERE n.nspname=current_schema() AND t.relname='accounts'
+      AND g.tgname='accounts_quota_mail_revision_guard' AND g.tgenabled IN ('O','A'))::boolean AS ready;
+
+-- name: QuotaWarningSchemaReady :exec
+SELECT a.plan,a.last_quota_warning_at,a.quota_mail_revision,o.quota_warning_day,o.quota_warning_plan,o.quota_warning_revision,p.followup_completed_at,p.lease_id,u.mb_seconds
+FROM accounts a JOIN platform_mail_producer_outbox o ON o.account_id=a.id
+JOIN billing_quota_warnings p ON p.intent_id=o.id LEFT JOIN usage_minutes u ON u.account_id=a.id LIMIT 0;
+
+-- name: QuotaWarningKeyReferences :many
+SELECT DISTINCT security_alert_key_id FROM platform_mail_producer_outbox
+WHERE namespace=$1 AND producer_id=$2 AND template='quota_warning' AND state IN ('queued','claimed') AND expires_at>clock_timestamp();
+
+-- name: LockQuotaWarningAccount :one
+SELECT id,email,status,plan,deletion_requested_at,last_quota_warning_at,quota_mail_revision
+FROM accounts WHERE id=$1 FOR UPDATE;
+
+-- name: QuotaWarningDay :one
+SELECT (date_trunc('day',clock_timestamp() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')::timestamptz AS day;
+
+-- Same UTC range as meterd's UsageByMonth. Return integer physical usage;
+-- rounding to GB-hours is shared with the existing quota decision.
+-- name: QuotaWarningUsage :one
+SELECT coalesce(sum(mb_seconds),0)::bigint AS used_mb_seconds FROM usage_minutes
+WHERE account_id=$1 AND minute>=$2 AND minute<$3;
+
+-- name: StampQuotaWarning :one
+UPDATE accounts SET last_quota_warning_at=$2 WHERE id=$1
+RETURNING quota_mail_revision,clock_timestamp()::timestamptz AS observed_at;
+
+-- name: CreateQuotaWarningIntent :exec
+INSERT INTO platform_mail_producer_outbox(id,account_id,namespace,producer_id,from_address,recipient_address,
+    template,template_version,expires_at,recovery_id,sealed_security_alert,security_alert_key_id,quota_warning_revision,quota_warning_day,quota_warning_plan)
+VALUES($1,$2,$3,$4,$5,$6,'quota_warning',1,$7,$8,$9,$10,$11,$12,$13);
+
+-- name: RecordQuotaWarning :exec
+INSERT INTO billing_quota_warnings(account_id,warning_day,intent_id,observed_at,plan,used_mb_seconds,quota_gb,quota_revision)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8);
+
+-- name: QuotaWarningPeriod :one
+SELECT p.*,o.namespace,o.producer_id,o.from_address,o.recovery_id
+FROM billing_quota_warnings p JOIN platform_mail_producer_outbox o ON o.id=p.intent_id
+WHERE p.account_id=$1 AND p.warning_day=$2 FOR UPDATE OF p;
+
+-- name: ClaimQuotaWarningFollowup :one
+UPDATE billing_quota_warnings SET lease_id=sqlc.arg(lease_id),lease_until=clock_timestamp()+make_interval(secs=>sqlc.arg(lease_seconds)::integer)
+WHERE intent_id=sqlc.arg(intent_id) AND followup_completed_at IS NULL
+    AND (lease_id IS NULL OR lease_until<=clock_timestamp() OR lease_id=sqlc.arg(lease_id))
+RETURNING lease_id;
+
+-- name: CompleteQuotaWarningFollowup :execrows
+UPDATE billing_quota_warnings p SET followup_completed_at=coalesce(p.followup_completed_at,clock_timestamp())
+FROM platform_mail_producer_outbox o
+WHERE o.id=p.intent_id AND o.namespace=$1 AND o.producer_id=$2 AND p.account_id=$3 AND p.intent_id=$4 AND p.lease_id=$5;
+
+-- name: CancelOlderQuotaWarningIntents :exec
+UPDATE platform_mail_producer_outbox SET state='cancelled',code='account_changed',
+    recipient_address='',lease_id=NULL,lease_until=NULL,sealed_security_alert='',security_alert_key_id='',updated_at=clock_timestamp(),revision=revision+1
+WHERE account_id=$1 AND template='quota_warning' AND quota_warning_day<$2 AND state IN ('queued','claimed');
+
+-- name: ShareQuotaWarningSubmissionAccount :one
+SELECT a.email,a.plan,a.status,a.deletion_requested_at,a.last_quota_warning_at,a.quota_mail_revision,
+    o.quota_warning_day,o.quota_warning_plan,o.quota_warning_revision,o.from_address,m.sender_address,
+    (date_trunc('day',clock_timestamp() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')::timestamptz AS current_day
+FROM internal_mail_messages m JOIN platform_mail_producer_outbox o
+    ON o.namespace=m.namespace AND o.producer_id=m.producer_id
+    AND m.idempotency_key='quota-warning:'||o.id::text AND o.template='quota_warning' AND o.expires_at=m.expires_at
+JOIN accounts a ON a.id=o.account_id
+WHERE m.namespace=$1 AND m.id=$2 FOR SHARE OF a;
+
+-- name: QuotaWarningDeliveryReady :exec
+SELECT a.plan,a.status,a.last_quota_warning_at,a.quota_mail_revision,o.quota_warning_day,o.quota_warning_plan,o.quota_warning_revision
+FROM accounts a JOIN platform_mail_producer_outbox o ON o.account_id=a.id LIMIT 0;

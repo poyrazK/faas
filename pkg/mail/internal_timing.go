@@ -28,6 +28,7 @@ func (s *InternalSender) WithOutbox(enabled func() bool) *InternalSender {
 // Both the sender and maild gate it independently from deletion notifications.
 func (s *InternalSender) WithVerificationOutbox(enabled func() bool) *InternalSender {
 	copy := *s
+	copy.quotaWarningEnabled = nil
 	copy.nonpaymentDeletionEnabled = nil
 	copy.verificationEnabled = enabled
 	copy.mfaDisableEnabled = nil
@@ -45,6 +46,7 @@ func (s *InternalSender) WithVerificationOutbox(enabled func() bool) *InternalSe
 
 func (s *InternalSender) WithPasswordResetOutbox(enabled func() bool) *InternalSender {
 	copy := *s
+	copy.quotaWarningEnabled = nil
 	copy.nonpaymentDeletionEnabled = nil
 	copy.passwordResetEnabled = enabled
 	copy.mfaDisableEnabled = nil
@@ -62,6 +64,7 @@ func (s *InternalSender) WithPasswordResetOutbox(enabled func() bool) *InternalS
 
 func (s *InternalSender) WithMagicLinkOutbox(enabled func() bool) *InternalSender {
 	copy := *s
+	copy.quotaWarningEnabled = nil
 	copy.nonpaymentDeletionEnabled = nil
 	copy.magicLinkEnabled = enabled
 	copy.mfaDisableEnabled = nil
@@ -79,6 +82,7 @@ func (s *InternalSender) WithMagicLinkOutbox(enabled func() bool) *InternalSende
 
 func (s *InternalSender) WithMFARecoveryAlertOutbox(enabled func() bool) *InternalSender {
 	copy := *s
+	copy.quotaWarningEnabled = nil
 	copy.nonpaymentDeletionEnabled = nil
 	copy.mfaDisableEnabled = nil
 	copy.accountSuspendedEnabled = nil
@@ -96,6 +100,7 @@ func (s *InternalSender) WithMFARecoveryAlertOutbox(enabled func() bool) *Intern
 
 func (s *InternalSender) WithMFADisableOutbox(enabled func() bool) *InternalSender {
 	copy := *s
+	copy.quotaWarningEnabled = nil
 	copy.nonpaymentDeletionEnabled = nil
 	copy.mfaDisableEnabled = enabled
 	copy.accountSuspendedEnabled = nil
@@ -113,6 +118,7 @@ func (s *InternalSender) WithMFADisableOutbox(enabled func() bool) *InternalSend
 
 func (s *InternalSender) WithMFADisabledAlertOutbox(enabled func() bool) *InternalSender {
 	copy := *s
+	copy.quotaWarningEnabled = nil
 	copy.nonpaymentDeletionEnabled = nil
 	copy.accountSuspendedEnabled = nil
 	copy.accountRestoredEnabled = nil
@@ -130,6 +136,7 @@ func (s *InternalSender) WithMFADisabledAlertOutbox(enabled func() bool) *Intern
 
 func (s *InternalSender) WithPasswordChangedAlertOutbox(enabled func() bool) *InternalSender {
 	copy := *s
+	copy.quotaWarningEnabled = nil
 	copy.nonpaymentDeletionEnabled = nil
 	copy.accountSuspendedEnabled = nil
 	copy.accountRestoredEnabled = nil
@@ -147,6 +154,7 @@ func (s *InternalSender) WithPasswordChangedAlertOutbox(enabled func() bool) *In
 
 func (s *InternalSender) WithMFAEnabledAlertOutbox(enabled func() bool) *InternalSender {
 	copy := *s
+	copy.quotaWarningEnabled = nil
 	copy.nonpaymentDeletionEnabled = nil
 	copy.accountSuspendedEnabled = nil
 	copy.accountRestoredEnabled = nil
@@ -164,6 +172,7 @@ func (s *InternalSender) WithMFAEnabledAlertOutbox(enabled func() bool) *Interna
 
 func (s *InternalSender) WithPaymentFailedOutbox(enabled func() bool) *InternalSender {
 	copy := *s
+	copy.quotaWarningEnabled = nil
 	copy.nonpaymentDeletionEnabled = nil
 	copy.accountSuspendedEnabled = nil
 	copy.accountRestoredEnabled = nil
@@ -181,6 +190,7 @@ func (s *InternalSender) WithPaymentFailedOutbox(enabled func() bool) *InternalS
 
 func (s *InternalSender) WithAccountSuspendedOutbox(enabled func() bool) *InternalSender {
 	copy := *s
+	copy.quotaWarningEnabled = nil
 	copy.nonpaymentDeletionEnabled = nil
 	copy.accountSuspendedEnabled = enabled
 	copy.accountRestoredEnabled = nil
@@ -198,6 +208,7 @@ func (s *InternalSender) WithAccountSuspendedOutbox(enabled func() bool) *Intern
 
 func (s *InternalSender) WithAccountRestoredOutbox(enabled func() bool) *InternalSender {
 	copy := *s
+	copy.quotaWarningEnabled = nil
 	copy.nonpaymentDeletionEnabled = nil
 	copy.accountRestoredEnabled = enabled
 	copy.accountSuspendedEnabled = nil
@@ -215,6 +226,7 @@ func (s *InternalSender) WithAccountRestoredOutbox(enabled func() bool) *Interna
 
 func (s *InternalSender) WithNonpaymentDeletionOutbox(enabled func() bool) *InternalSender {
 	copy := *s
+	copy.quotaWarningEnabled = nil
 	copy.nonpaymentDeletionEnabled = enabled
 	copy.accountSuspendedEnabled = nil
 	copy.accountRestoredEnabled = nil
@@ -230,7 +242,28 @@ func (s *InternalSender) WithNonpaymentDeletionOutbox(enabled func() bool) *Inte
 	return &copy
 }
 
+func (s *InternalSender) WithQuotaWarningOutbox(enabled func() bool) *InternalSender {
+	copy := *s
+	copy.quotaWarningEnabled = enabled
+	copy.nonpaymentDeletionEnabled = nil
+	copy.accountSuspendedEnabled = nil
+	copy.accountRestoredEnabled = nil
+	copy.paymentFailedEnabled = nil
+	copy.mfaEnabledAlertEnabled = nil
+	copy.passwordChangedAlertEnabled = nil
+	copy.mfaDisabledAlertEnabled = nil
+	copy.mfaDisableEnabled = nil
+	copy.mfaRecoveryAlertEnabled = nil
+	copy.verificationEnabled = nil
+	copy.passwordResetEnabled = nil
+	copy.magicLinkEnabled = nil
+	return &copy
+}
+
 func (s *InternalSender) credentialOutboxGate() (string, func() bool) {
+	if s.quotaWarningEnabled != nil {
+		return internalmail.ProducerOutboxQuotaWarningTemplate, s.quotaWarningEnabled
+	}
 	if s.nonpaymentDeletionEnabled != nil {
 		return internalmail.ProducerOutboxNonpaymentDeletionTemplate, s.nonpaymentDeletionEnabled
 	}

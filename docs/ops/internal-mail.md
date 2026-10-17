@@ -3247,3 +3247,69 @@ Account erasure cascades intent/receipt; terminal settlement erases address and
 ciphertext. Opaque reconciliation audit survives; Down refuses used history.
 No activation, deployment, credential enrollment or real email is part of this
 change. Live qualification remains separate.
+
+## Durable paid-tier quota warnings
+
+`FAAS_INTERNAL_MAIL_QUOTA_WARNING_OUTBOX_ENABLED=0` independently gates daily
+paid-tier quota warnings across apid, meterd, maild and private reconciliation.
+Units and examples keep it off. Apply
+[`20261017133739854_platform_mail_quota_warning_outbox.sql`](../../migrations/20261017133739854_platform_mail_quota_warning_outbox.sql)
+before opting in; see
+[ADR-20261017133739](../adr/20261017133739-mail-quota-warnings.md).
+
+The dedicated `FAAS_INTERNAL_MAIL_QUOTA_WARNING_TOKEN_PATH` is supplied only to
+apid and meterd, through apid's private environment and meterd's existing
+`/etc/faas/secrets/meterd/billing.env`. Provision at least 32 printable bytes,
+protected for those daemon users. Keep it distinct from producer, Safe Deploy
+and enabled suspension/non-payment deletion credentials. Maild receives no
+command credential. Meterd uses `FAAS_APID_INTERNAL_BASE_URL` on the existing
+loopback operator listener: plain HTTP, literal loopback IP and explicit port.
+The client disables proxies/redirects, bounds bodies and times out in five
+seconds. Enabled startup probes authenticated readiness. Disabled setup reads
+only the exact own flag; late enablement requires configuration/restart.
+
+Private routes are `GET /v1/internal/billing/quota-warnings/readyz`,
+`POST /v1/internal/billing/accounts/{id}/quota-warning` and its `/complete`
+suffix. Commands contain expected UTC day/paid plan/request UUID or exact
+account/intent/lease completion proof. They cannot select usage, included quota,
+recipient or content. No customer route, mail permission or listener is added.
+
+Apid verifies the locked account and database UTC day, reads authoritative
+monthly MB-seconds from `usage_minutes`, applies the existing six-decimal GB-h
+rounding and canonical paid-plan included quota, then saves the daily stamp,
+encrypted notice and business snapshot receipt together. Persistence failure,
+capacity exhaustion, recovery hold or gate withdrawal leaves issuance retryable.
+Concurrent ticks reuse one notice; today's/future legacy stamps are not
+backfilled. Free-tier parking and billing computations keep their existing rules.
+
+Both message alternatives retain the original plan, usage and day. Optional
+`FAAS_NOTIFICATIONS_UNSUBSCRIBE_URL` must also be configured in apid when this
+family is enabled; it is validated and frozen in the encrypted payload, including
+the RFC 8058 header pair. Empty configuration omits those headers. Dedicated
+current/previous payload identities remain apid-only; retain reader coverage for
+all enabled families' unexpired pending payloads. No dashboard origin is needed.
+Retries preserve `quota-warning:<intent UUID>`, body and expiry. Each warning
+expires at UTC midnight, including month rollover.
+
+The always-active quota revision trigger tracks plan, address, status, overdue
+anchor, deletion request and daily stamp. Both apid and maild recheck the original
+plan/day/stamp/revision before handoff/SMTP submission start. Cycles back to the
+old value still cancel stale notices. Deleting or erased accounts and old usage
+days cannot send. Shared suppression, budgets and recovery quarantine apply.
+After submission start, SMTP custody cannot be recalled or automatically resent.
+
+The saved five-minute notification lease allows meterd to recover lost replies
+and interrupted follow-up during the original day. Notifications use the saved
+plan, usage, quota and observation time. Completion requires exact opaque proof
+and is idempotent. Individual notification failures remain best effort; crash
+recovery can repeat notification attempts. No scheduler call or inline email is
+made on this path, and mail failure does not block paid-upgrade restoration.
+
+Rollback pauses durable issuance, handoff, delivery and private follow-up.
+Today's saved stamp still suppresses legacy inline mail; later days use the
+legacy path. Review incomplete receipts before rollback and re-enable during
+the original day for eligible recovery. Old days, changed revisions and changed
+recovery generations cannot be replayed. Account erasure cascades intent and
+receipt; terminal settlement erases address/ciphertext. Opaque audit survives,
+and Down refuses used history. Deployment, activation, credential enrollment and
+live delivery qualification remain separate work.

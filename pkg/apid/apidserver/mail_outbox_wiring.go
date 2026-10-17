@@ -18,6 +18,7 @@ func (s *server) configureMailOutbox(ctx context.Context, pool *pgxpool.Pool, ge
 	s.mfaDisableCredentials = mailoutbox.NewMFADisableCredentials(pool)
 	s.mfaDisableMailOutboxRequested = func() bool { return getenv(internalmail.MFADisableOutboxEnableEnv) == "1" }
 	s.magicLinkCredentials = mailoutbox.NewMagicLinkCredentials(pool)
+	s.quotaWarningOutboxRequested = func() bool { return getenv(internalmail.QuotaWarningOutboxEnableEnv) == "1" }
 	s.nonpaymentDeletionOutboxRequested = func() bool { return getenv(internalmail.NonpaymentDeletionOutboxEnableEnv) == "1" }
 	s.accountSuspendedOutboxRequested = func() bool { return getenv(internalmail.AccountSuspendedOutboxEnableEnv) == "1" }
 	s.accountRestoredOutboxRequested = func() bool { return getenv(internalmail.AccountRestoredOutboxEnableEnv) == "1" }
@@ -43,6 +44,9 @@ func (s *server) configureMailOutbox(ctx context.Context, pool *pgxpool.Pool, ge
 		return err
 	}
 	if err := outbox.ConfigureMFADisable(ctx, getenv); err != nil {
+		return err
+	}
+	if err := outbox.ConfigureQuotaWarning(ctx, getenv); err != nil {
 		return err
 	}
 	if err := outbox.ConfigureNonpaymentDeletion(ctx, getenv); err != nil {

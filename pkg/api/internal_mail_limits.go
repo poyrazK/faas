@@ -138,6 +138,14 @@ const (
 )
 
 const (
+	InternalMailQuotaWarningTTL                   = 24 * time.Hour
+	InternalMailQuotaWarningMaxBytes              = 3072
+	InternalMailQuotaWarningUnsubscribeMaxBytes   = 2048
+	InternalMailQuotaWarningFollowupLease         = 5 * time.Minute
+	InternalMailQuotaWarningCommandTimeout        = 5 * time.Second
+	InternalMailQuotaWarningCommandMaxBytes       = 4096
+	InternalMailQuotaWarningTokenMinBytes         = 32
+	InternalMailQuotaWarningTokenMaxBytes         = 4096
 	InternalMailNonpaymentDeletionTTL             = 24 * time.Hour
 	InternalMailNonpaymentDeletionMaxBytes        = 512
 	InternalMailNonpaymentDeletionFollowupLease   = 5 * time.Minute

@@ -35,6 +35,7 @@ func (s *Service) claim(ctx context.Context) (q.PlatformMailProducerOutbox, erro
 	alertKeys := []string{}
 	disabledKeys := []string{}
 	changedKeys := []string{}
+	quotaKeys := []string{}
 	nonpaymentKeys := []string{}
 	suspendedKeys := []string{}
 	restoredKeys := []string{}
@@ -68,6 +69,11 @@ func (s *Service) claim(ctx context.Context) (q.PlatformMailProducerOutbox, erro
 	}
 	if err := s.queries.PurgeExpiredMFADisableTokens(ctx, tx, api.InternalMailProducerOutboxMaintenanceBatch); err != nil {
 		return q.PlatformMailProducerOutbox{}, err
+	}
+	if s.quotaWarningEnabled() {
+		for key := range s.quotaWarning.readers {
+			quotaKeys = append(quotaKeys, key)
+		}
 	}
 	if s.nonpaymentDeletionEnabled() {
 		for key := range s.nonpaymentDeletion.readers {
@@ -115,7 +121,7 @@ func (s *Service) claim(ctx context.Context) (q.PlatformMailProducerOutbox, erro
 	if err := s.queries.PurgeExpiredPasswordResetTokens(ctx, tx, api.InternalMailProducerOutboxMaintenanceBatch); err != nil {
 		return q.PlatformMailProducerOutbox{}, err
 	}
-	r, err := s.queries.Claim(ctx, tx, q.ClaimParams{Namespace: s.namespace, ProducerID: s.producer, FromAddress: s.from, VerificationEnabled: s.verificationEnabled(), VerificationOrigin: origin, VerificationKeys: keys, PasswordResetEnabled: s.passwordResetEnabled(), PasswordResetOrigin: resetOrigin, PasswordResetKeys: resetKeys, MagicLinkEnabled: s.magicLinkEnabled(), MagicLinkOrigin: magicOrigin, MagicLinkKeys: magicKeys, MfaDisableEnabled: s.mfaDisableEnabled(), MfaDisableOrigin: disableOrigin, MfaDisableKeys: disableKeys, NonpaymentDeletionEnabled: s.nonpaymentDeletionEnabled(), NonpaymentDeletionKeys: nonpaymentKeys, AccountSuspendedEnabled: s.accountSuspendedEnabled(), AccountSuspendedKeys: suspendedKeys, AccountRestoredEnabled: s.accountRestoredEnabled(), AccountRestoredKeys: restoredKeys, PaymentFailedEnabled: s.paymentFailedEnabled(), PaymentFailedKeys: paymentKeys, MfaEnabledAlertEnabled: s.mfaEnabledAlertEnabled(), MfaEnabledAlertKeys: enabledKeys, PasswordChangedAlertEnabled: s.passwordChangedAlertEnabled(), PasswordChangedAlertKeys: changedKeys, MfaDisabledAlertEnabled: s.mfaDisabledAlertEnabled(), MfaDisabledAlertKeys: disabledKeys, MfaRecoveryAlertEnabled: s.mfaRecoveryAlertEnabled(), MfaRecoveryAlertKeys: alertKeys, MaxAttempts: api.InternalMailProducerOutboxMaxAttempts, LeaseID: pgID(uuid.NewString()), LeaseSeconds: int32(api.InternalMailProducerOutboxLease / time.Second)})
+	r, err := s.queries.Claim(ctx, tx, q.ClaimParams{Namespace: s.namespace, ProducerID: s.producer, FromAddress: s.from, VerificationEnabled: s.verificationEnabled(), VerificationOrigin: origin, VerificationKeys: keys, PasswordResetEnabled: s.passwordResetEnabled(), PasswordResetOrigin: resetOrigin, PasswordResetKeys: resetKeys, MagicLinkEnabled: s.magicLinkEnabled(), MagicLinkOrigin: magicOrigin, MagicLinkKeys: magicKeys, MfaDisableEnabled: s.mfaDisableEnabled(), MfaDisableOrigin: disableOrigin, MfaDisableKeys: disableKeys, QuotaWarningEnabled: s.quotaWarningEnabled(), QuotaWarningKeys: quotaKeys, NonpaymentDeletionEnabled: s.nonpaymentDeletionEnabled(), NonpaymentDeletionKeys: nonpaymentKeys, AccountSuspendedEnabled: s.accountSuspendedEnabled(), AccountSuspendedKeys: suspendedKeys, AccountRestoredEnabled: s.accountRestoredEnabled(), AccountRestoredKeys: restoredKeys, PaymentFailedEnabled: s.paymentFailedEnabled(), PaymentFailedKeys: paymentKeys, MfaEnabledAlertEnabled: s.mfaEnabledAlertEnabled(), MfaEnabledAlertKeys: enabledKeys, PasswordChangedAlertEnabled: s.passwordChangedAlertEnabled(), PasswordChangedAlertKeys: changedKeys, MfaDisabledAlertEnabled: s.mfaDisabledAlertEnabled(), MfaDisabledAlertKeys: disabledKeys, MfaRecoveryAlertEnabled: s.mfaRecoveryAlertEnabled(), MfaRecoveryAlertKeys: alertKeys, MaxAttempts: api.InternalMailProducerOutboxMaxAttempts, LeaseID: pgID(uuid.NewString()), LeaseSeconds: int32(api.InternalMailProducerOutboxLease / time.Second)})
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return r, err
 	}
@@ -201,6 +207,8 @@ func (s *Service) dispatch(ctx context.Context, claimed q.PlatformMailProducerOu
 		state, code = "cancelled", "account_changed"
 	case r.Template == PaymentFailedTemplate && (account.Status != "past_due" || account.DeletionRequestedAt.Valid || !account.PastDueAt.Valid || !r.PaymentPastDueAt.Valid || !account.PastDueAt.Time.Equal(r.PaymentPastDueAt.Time)):
 		state, code = "cancelled", "account_changed"
+	case r.Template == QuotaWarningTemplate && (!quotaWarningAccountAvailable(account.Status) || account.DeletionRequestedAt.Valid || !account.LastQuotaWarningAt.Valid || !r.QuotaWarningDay.Valid || !account.LastQuotaWarningAt.Time.Equal(r.QuotaWarningDay.Time) || !r.QuotaWarningRevision.Valid || account.QuotaMailRevision != r.QuotaWarningRevision.Int64 || !r.QuotaWarningPlan.Valid || account.Plan != r.QuotaWarningPlan.String):
+		state, code = "cancelled", "account_changed"
 	case r.Template == NonpaymentDeletionTemplate && (account.Status != "deleted_pending" || !account.DeletionRequestedAt.Valid || !r.NonpaymentDeletionAt.Valid || !account.DeletionRequestedAt.Time.Equal(r.NonpaymentDeletionAt.Time) || !account.PastDueAt.Valid || !r.NonpaymentPastDueAt.Valid || !account.PastDueAt.Time.Equal(r.NonpaymentPastDueAt.Time) || !r.NonpaymentDeletionRevision.Valid || account.BillingMailRevision != r.NonpaymentDeletionRevision.Int64):
 		state, code = "cancelled", "account_changed"
 	case r.Template == AccountSuspendedTemplate && (account.Status != "suspended" || account.DeletionRequestedAt.Valid || !account.PastDueAt.Valid || !r.SuspensionPastDueAt.Valid || !account.PastDueAt.Time.Equal(r.SuspensionPastDueAt.Time) || !r.AccountSuspendedRevision.Valid || account.BillingMailRevision != r.AccountSuspendedRevision.Int64):
@@ -240,13 +248,18 @@ func (s *Service) handoff(ctx context.Context, tx pgx.Tx, r q.PlatformMailProduc
 	sender := s.sender
 	var message mail.Message
 	switch r.Template {
-	case VerificationTemplate, PasswordResetTemplate, MagicLinkTemplate, MFARecoveryAlertTemplate, MFADisableTemplate, MFADisabledAlertTemplate, PasswordChangedAlertTemplate, MFAEnabledAlertTemplate, PaymentFailedTemplate, AccountRestoredTemplate, AccountSuspendedTemplate, NonpaymentDeletionTemplate:
+	case VerificationTemplate, PasswordResetTemplate, MagicLinkTemplate, MFARecoveryAlertTemplate, MFADisableTemplate, MFADisabledAlertTemplate, PasswordChangedAlertTemplate, MFAEnabledAlertTemplate, PaymentFailedTemplate, AccountRestoredTemplate, AccountSuspendedTemplate, NonpaymentDeletionTemplate, QuotaWarningTemplate:
 		var err error
 		switch r.Template {
 		case MFADisableTemplate:
 			message, err = s.mfaDisableMessage(ctx, tx, r, account)
 			if s.mfaDisable != nil {
 				sender = s.mfaDisable.sender
+			}
+		case QuotaWarningTemplate:
+			message, err = s.quotaWarningMessage(r)
+			if s.quotaWarning != nil {
+				sender = s.quotaWarning.sender
 			}
 		case NonpaymentDeletionTemplate:
 			message, err = s.nonpaymentDeletionMessage(r)

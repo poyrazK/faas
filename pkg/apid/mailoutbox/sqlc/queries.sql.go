@@ -249,7 +249,7 @@ SELECT o.id,o.revision,o.state,o.template,o.from_address,o.expires_at,o.recovery
     coalesce(m.sender_address,'')::text AS sender_address
 FROM platform_mail_producer_outbox o
 LEFT JOIN internal_mail_messages m ON m.namespace=o.namespace AND m.producer_id=o.producer_id
-    AND m.idempotency_key=(CASE o.template WHEN 'email_verification' THEN 'verify-email:' WHEN 'password_reset' THEN 'password-reset:' WHEN 'magic_link' THEN 'magic-link:' WHEN 'mfa_recovery_used' THEN 'mfa-recovery-alert:' WHEN 'nonpayment_deletion' THEN 'nonpayment-deletion:' WHEN 'account_suspended' THEN 'account-suspended:' WHEN 'account_restored' THEN 'account-restored:' WHEN 'payment_failed' THEN 'payment-failed:' WHEN 'mfa_enabled' THEN 'mfa-enabled:' WHEN 'password_changed' THEN 'password-changed:' WHEN 'mfa_disabled' THEN 'mfa-disabled:' WHEN 'mfa_disable_request' THEN 'mfa-disable:' ELSE 'account-delete:' END)||o.id::text
+    AND m.idempotency_key=(CASE o.template WHEN 'email_verification' THEN 'verify-email:' WHEN 'password_reset' THEN 'password-reset:' WHEN 'magic_link' THEN 'magic-link:' WHEN 'mfa_recovery_used' THEN 'mfa-recovery-alert:' WHEN 'quota_warning' THEN 'quota-warning:' WHEN 'nonpayment_deletion' THEN 'nonpayment-deletion:' WHEN 'account_suspended' THEN 'account-suspended:' WHEN 'account_restored' THEN 'account-restored:' WHEN 'payment_failed' THEN 'payment-failed:' WHEN 'mfa_enabled' THEN 'mfa-enabled:' WHEN 'password_changed' THEN 'password-changed:' WHEN 'mfa_disabled' THEN 'mfa-disabled:' WHEN 'mfa_disable_request' THEN 'mfa-disable:' ELSE 'account-delete:' END)||o.id::text
 WHERE o.namespace=$1 AND o.id=$2
 `
 
@@ -299,6 +299,22 @@ func (q *Queries) AdmissionLookup(ctx context.Context, db DBTX, arg AdmissionLoo
 	return i, err
 }
 
+const cancelOlderQuotaWarningIntents = `-- name: CancelOlderQuotaWarningIntents :exec
+UPDATE platform_mail_producer_outbox SET state='cancelled',code='account_changed',
+    recipient_address='',lease_id=NULL,lease_until=NULL,sealed_security_alert='',security_alert_key_id='',updated_at=clock_timestamp(),revision=revision+1
+WHERE account_id=$1 AND template='quota_warning' AND quota_warning_day<$2 AND state IN ('queued','claimed')
+`
+
+type CancelOlderQuotaWarningIntentsParams struct {
+	AccountID       pgtype.UUID
+	QuotaWarningDay pgtype.Timestamptz
+}
+
+func (q *Queries) CancelOlderQuotaWarningIntents(ctx context.Context, db DBTX, arg CancelOlderQuotaWarningIntentsParams) error {
+	_, err := db.Exec(ctx, cancelOlderQuotaWarningIntents, arg.AccountID, arg.QuotaWarningDay)
+	return err
+}
+
 const cancelPaymentFailedIntents = `-- name: CancelPaymentFailedIntents :exec
 UPDATE platform_mail_producer_outbox SET state='cancelled',code='account_changed',recipient_address='',
     lease_id=NULL,lease_until=NULL,sealed_security_alert='',security_alert_key_id='',
@@ -335,30 +351,32 @@ WITH candidate AS (
           AND o.verification_key_id=ANY($14::text[]))
         OR (o.template='mfa_disable_request' AND $15::boolean AND o.verification_origin=$16::text
           AND o.verification_key_id=ANY($17::text[]))
-        OR (o.template='nonpayment_deletion' AND $18::boolean
+        OR (o.template='quota_warning' AND $18::boolean
           AND o.security_alert_key_id=ANY($19::text[]))
-        OR (o.template='account_suspended' AND $20::boolean
+        OR (o.template='nonpayment_deletion' AND $20::boolean
           AND o.security_alert_key_id=ANY($21::text[]))
-        OR (o.template='account_restored' AND $22::boolean
+        OR (o.template='account_suspended' AND $22::boolean
           AND o.security_alert_key_id=ANY($23::text[]))
-        OR (o.template='payment_failed' AND $24::boolean
+        OR (o.template='account_restored' AND $24::boolean
           AND o.security_alert_key_id=ANY($25::text[]))
-        OR (o.template='mfa_enabled' AND $26::boolean
+        OR (o.template='payment_failed' AND $26::boolean
           AND o.security_alert_key_id=ANY($27::text[]))
-        OR (o.template='password_changed' AND $28::boolean
+        OR (o.template='mfa_enabled' AND $28::boolean
           AND o.security_alert_key_id=ANY($29::text[]))
-        OR (o.template='mfa_disabled' AND $30::boolean
+        OR (o.template='password_changed' AND $30::boolean
           AND o.security_alert_key_id=ANY($31::text[]))
-        OR (o.template='mfa_recovery_used' AND $32::boolean
-          AND o.security_alert_key_id=ANY($33::text[])))
-      AND o.attempts<$34 AND o.expires_at>clock_timestamp()
+        OR (o.template='mfa_disabled' AND $32::boolean
+          AND o.security_alert_key_id=ANY($33::text[]))
+        OR (o.template='mfa_recovery_used' AND $34::boolean
+          AND o.security_alert_key_id=ANY($35::text[])))
+      AND o.attempts<$36 AND o.expires_at>clock_timestamp()
       AND ((o.state='queued' AND o.next_attempt_at<=clock_timestamp()) OR (o.state='claimed' AND o.lease_until<=clock_timestamp()))
       AND NOT EXISTS(SELECT 1 FROM internal_mail_recovery_state s WHERE s.namespace=o.namespace AND (s.held OR s.recovery_id<>o.recovery_id))
     ORDER BY next_attempt_at,id LIMIT 1 FOR UPDATE SKIP LOCKED
 )
 UPDATE platform_mail_producer_outbox o SET state='claimed',attempts=attempts+1,lease_id=$1,
     lease_until=clock_timestamp()+$2::integer*interval '1 second',updated_at=clock_timestamp(),revision=o.revision+1
-FROM candidate c WHERE o.id=c.id RETURNING o.id, o.account_id, o.namespace, o.producer_id, o.from_address, o.recipient_address, o.template, o.template_version, o.deletion_requested_at, o.restore_until, o.expires_at, o.recovery_id, o.state, o.attempts, o.next_attempt_at, o.lease_id, o.lease_until, o.code, o.created_at, o.updated_at, o.revision, o.verification_token_hash, o.sealed_verification, o.verification_key_id, o.verification_origin, o.sealed_security_alert, o.security_alert_key_id, o.payment_past_due_at, o.account_restored_revision, o.suspension_past_due_at, o.account_suspended_revision, o.nonpayment_past_due_at, o.nonpayment_deletion_revision, o.nonpayment_deletion_at
+FROM candidate c WHERE o.id=c.id RETURNING o.id, o.account_id, o.namespace, o.producer_id, o.from_address, o.recipient_address, o.template, o.template_version, o.deletion_requested_at, o.restore_until, o.expires_at, o.recovery_id, o.state, o.attempts, o.next_attempt_at, o.lease_id, o.lease_until, o.code, o.created_at, o.updated_at, o.revision, o.verification_token_hash, o.sealed_verification, o.verification_key_id, o.verification_origin, o.sealed_security_alert, o.security_alert_key_id, o.payment_past_due_at, o.account_restored_revision, o.suspension_past_due_at, o.account_suspended_revision, o.nonpayment_past_due_at, o.nonpayment_deletion_revision, o.nonpayment_deletion_at, o.quota_warning_day, o.quota_warning_plan, o.quota_warning_revision
 `
 
 type ClaimParams struct {
@@ -379,6 +397,8 @@ type ClaimParams struct {
 	MfaDisableEnabled           bool
 	MfaDisableOrigin            string
 	MfaDisableKeys              []string
+	QuotaWarningEnabled         bool
+	QuotaWarningKeys            []string
 	NonpaymentDeletionEnabled   bool
 	NonpaymentDeletionKeys      []string
 	AccountSuspendedEnabled     bool
@@ -417,6 +437,8 @@ func (q *Queries) Claim(ctx context.Context, db DBTX, arg ClaimParams) (Platform
 		arg.MfaDisableEnabled,
 		arg.MfaDisableOrigin,
 		arg.MfaDisableKeys,
+		arg.QuotaWarningEnabled,
+		arg.QuotaWarningKeys,
 		arg.NonpaymentDeletionEnabled,
 		arg.NonpaymentDeletionKeys,
 		arg.AccountSuspendedEnabled,
@@ -471,6 +493,9 @@ func (q *Queries) Claim(ctx context.Context, db DBTX, arg ClaimParams) (Platform
 		&i.NonpaymentPastDueAt,
 		&i.NonpaymentDeletionRevision,
 		&i.NonpaymentDeletionAt,
+		&i.QuotaWarningDay,
+		&i.QuotaWarningPlan,
+		&i.QuotaWarningRevision,
 	)
 	return i, err
 }
@@ -499,6 +524,26 @@ type ClaimNonpaymentDeletionFollowupParams struct {
 
 func (q *Queries) ClaimNonpaymentDeletionFollowup(ctx context.Context, db DBTX, arg ClaimNonpaymentDeletionFollowupParams) (pgtype.UUID, error) {
 	row := db.QueryRow(ctx, claimNonpaymentDeletionFollowup, arg.LeaseID, arg.LeaseSeconds, arg.IntentID)
+	var lease_id pgtype.UUID
+	err := row.Scan(&lease_id)
+	return lease_id, err
+}
+
+const claimQuotaWarningFollowup = `-- name: ClaimQuotaWarningFollowup :one
+UPDATE billing_quota_warnings SET lease_id=$1,lease_until=clock_timestamp()+make_interval(secs=>$2::integer)
+WHERE intent_id=$3 AND followup_completed_at IS NULL
+    AND (lease_id IS NULL OR lease_until<=clock_timestamp() OR lease_id=$1)
+RETURNING lease_id
+`
+
+type ClaimQuotaWarningFollowupParams struct {
+	LeaseID      pgtype.UUID
+	LeaseSeconds int32
+	IntentID     pgtype.UUID
+}
+
+func (q *Queries) ClaimQuotaWarningFollowup(ctx context.Context, db DBTX, arg ClaimQuotaWarningFollowupParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, claimQuotaWarningFollowup, arg.LeaseID, arg.LeaseSeconds, arg.IntentID)
 	var lease_id pgtype.UUID
 	err := row.Scan(&lease_id)
 	return lease_id, err
@@ -552,6 +597,34 @@ type CompleteNonpaymentDeletionFollowupParams struct {
 
 func (q *Queries) CompleteNonpaymentDeletionFollowup(ctx context.Context, db DBTX, arg CompleteNonpaymentDeletionFollowupParams) (int64, error) {
 	result, err := db.Exec(ctx, completeNonpaymentDeletionFollowup,
+		arg.Namespace,
+		arg.ProducerID,
+		arg.AccountID,
+		arg.IntentID,
+		arg.LeaseID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const completeQuotaWarningFollowup = `-- name: CompleteQuotaWarningFollowup :execrows
+UPDATE billing_quota_warnings p SET followup_completed_at=coalesce(p.followup_completed_at,clock_timestamp())
+FROM platform_mail_producer_outbox o
+WHERE o.id=p.intent_id AND o.namespace=$1 AND o.producer_id=$2 AND p.account_id=$3 AND p.intent_id=$4 AND p.lease_id=$5
+`
+
+type CompleteQuotaWarningFollowupParams struct {
+	Namespace  string
+	ProducerID string
+	AccountID  pgtype.UUID
+	IntentID   pgtype.UUID
+	LeaseID    pgtype.UUID
+}
+
+func (q *Queries) CompleteQuotaWarningFollowup(ctx context.Context, db DBTX, arg CompleteQuotaWarningFollowupParams) (int64, error) {
+	result, err := db.Exec(ctx, completeQuotaWarningFollowup,
 		arg.Namespace,
 		arg.ProducerID,
 		arg.AccountID,
@@ -1251,6 +1324,47 @@ func (q *Queries) CreatePaymentFailedIntent(ctx context.Context, db DBTX, arg Cr
 	return err
 }
 
+const createQuotaWarningIntent = `-- name: CreateQuotaWarningIntent :exec
+INSERT INTO platform_mail_producer_outbox(id,account_id,namespace,producer_id,from_address,recipient_address,
+    template,template_version,expires_at,recovery_id,sealed_security_alert,security_alert_key_id,quota_warning_revision,quota_warning_day,quota_warning_plan)
+VALUES($1,$2,$3,$4,$5,$6,'quota_warning',1,$7,$8,$9,$10,$11,$12,$13)
+`
+
+type CreateQuotaWarningIntentParams struct {
+	ID                   pgtype.UUID
+	AccountID            pgtype.UUID
+	Namespace            string
+	ProducerID           string
+	FromAddress          string
+	RecipientAddress     string
+	ExpiresAt            pgtype.Timestamptz
+	RecoveryID           pgtype.UUID
+	SealedSecurityAlert  []byte
+	SecurityAlertKeyID   string
+	QuotaWarningRevision pgtype.Int8
+	QuotaWarningDay      pgtype.Timestamptz
+	QuotaWarningPlan     pgtype.Text
+}
+
+func (q *Queries) CreateQuotaWarningIntent(ctx context.Context, db DBTX, arg CreateQuotaWarningIntentParams) error {
+	_, err := db.Exec(ctx, createQuotaWarningIntent,
+		arg.ID,
+		arg.AccountID,
+		arg.Namespace,
+		arg.ProducerID,
+		arg.FromAddress,
+		arg.RecipientAddress,
+		arg.ExpiresAt,
+		arg.RecoveryID,
+		arg.SealedSecurityAlert,
+		arg.SecurityAlertKeyID,
+		arg.QuotaWarningRevision,
+		arg.QuotaWarningDay,
+		arg.QuotaWarningPlan,
+	)
+	return err
+}
+
 const createVerificationIntent = `-- name: CreateVerificationIntent :exec
 INSERT INTO platform_mail_producer_outbox(id,account_id,namespace,producer_id,from_address,recipient_address,
     template,template_version,expires_at,recovery_id,verification_token_hash,sealed_verification,verification_key_id,verification_origin)
@@ -1421,7 +1535,7 @@ func (q *Queries) InsertReconciliation(ctx context.Context, db DBTX, arg InsertR
 }
 
 const intent = `-- name: Intent :one
-SELECT id, account_id, namespace, producer_id, from_address, recipient_address, template, template_version, deletion_requested_at, restore_until, expires_at, recovery_id, state, attempts, next_attempt_at, lease_id, lease_until, code, created_at, updated_at, revision, verification_token_hash, sealed_verification, verification_key_id, verification_origin, sealed_security_alert, security_alert_key_id, payment_past_due_at, account_restored_revision, suspension_past_due_at, account_suspended_revision, nonpayment_past_due_at, nonpayment_deletion_revision, nonpayment_deletion_at FROM platform_mail_producer_outbox WHERE namespace=$1 AND id=$2
+SELECT id, account_id, namespace, producer_id, from_address, recipient_address, template, template_version, deletion_requested_at, restore_until, expires_at, recovery_id, state, attempts, next_attempt_at, lease_id, lease_until, code, created_at, updated_at, revision, verification_token_hash, sealed_verification, verification_key_id, verification_origin, sealed_security_alert, security_alert_key_id, payment_past_due_at, account_restored_revision, suspension_past_due_at, account_suspended_revision, nonpayment_past_due_at, nonpayment_deletion_revision, nonpayment_deletion_at, quota_warning_day, quota_warning_plan, quota_warning_revision FROM platform_mail_producer_outbox WHERE namespace=$1 AND id=$2
 `
 
 type IntentParams struct {
@@ -1467,6 +1581,9 @@ func (q *Queries) Intent(ctx context.Context, db DBTX, arg IntentParams) (Platfo
 		&i.NonpaymentPastDueAt,
 		&i.NonpaymentDeletionRevision,
 		&i.NonpaymentDeletionAt,
+		&i.QuotaWarningDay,
+		&i.QuotaWarningPlan,
+		&i.QuotaWarningRevision,
 	)
 	return i, err
 }
@@ -1595,7 +1712,7 @@ func (q *Queries) LockAdmission(ctx context.Context, db DBTX, dollar_1 string) e
 }
 
 const lockIntent = `-- name: LockIntent :one
-SELECT id, account_id, namespace, producer_id, from_address, recipient_address, template, template_version, deletion_requested_at, restore_until, expires_at, recovery_id, state, attempts, next_attempt_at, lease_id, lease_until, code, created_at, updated_at, revision, verification_token_hash, sealed_verification, verification_key_id, verification_origin, sealed_security_alert, security_alert_key_id, payment_past_due_at, account_restored_revision, suspension_past_due_at, account_suspended_revision, nonpayment_past_due_at, nonpayment_deletion_revision, nonpayment_deletion_at FROM platform_mail_producer_outbox WHERE namespace=$1 AND id=$2 FOR UPDATE
+SELECT id, account_id, namespace, producer_id, from_address, recipient_address, template, template_version, deletion_requested_at, restore_until, expires_at, recovery_id, state, attempts, next_attempt_at, lease_id, lease_until, code, created_at, updated_at, revision, verification_token_hash, sealed_verification, verification_key_id, verification_origin, sealed_security_alert, security_alert_key_id, payment_past_due_at, account_restored_revision, suspension_past_due_at, account_suspended_revision, nonpayment_past_due_at, nonpayment_deletion_revision, nonpayment_deletion_at, quota_warning_day, quota_warning_plan, quota_warning_revision FROM platform_mail_producer_outbox WHERE namespace=$1 AND id=$2 FOR UPDATE
 `
 
 type LockIntentParams struct {
@@ -1641,6 +1758,9 @@ func (q *Queries) LockIntent(ctx context.Context, db DBTX, arg LockIntentParams)
 		&i.NonpaymentPastDueAt,
 		&i.NonpaymentDeletionRevision,
 		&i.NonpaymentDeletionAt,
+		&i.QuotaWarningDay,
+		&i.QuotaWarningPlan,
+		&i.QuotaWarningRevision,
 	)
 	return i, err
 }
@@ -2129,6 +2249,36 @@ func (q *Queries) LockPaymentFailedAccount(ctx context.Context, db DBTX, id pgty
 	row := db.QueryRow(ctx, lockPaymentFailedAccount, id)
 	var i LockPaymentFailedAccountRow
 	err := row.Scan(&i.ID, &i.Email, &i.Status)
+	return i, err
+}
+
+const lockQuotaWarningAccount = `-- name: LockQuotaWarningAccount :one
+SELECT id,email,status,plan,deletion_requested_at,last_quota_warning_at,quota_mail_revision
+FROM accounts WHERE id=$1 FOR UPDATE
+`
+
+type LockQuotaWarningAccountRow struct {
+	ID                  pgtype.UUID
+	Email               string
+	Status              string
+	Plan                string
+	DeletionRequestedAt pgtype.Timestamptz
+	LastQuotaWarningAt  pgtype.Timestamptz
+	QuotaMailRevision   int64
+}
+
+func (q *Queries) LockQuotaWarningAccount(ctx context.Context, db DBTX, id pgtype.UUID) (LockQuotaWarningAccountRow, error) {
+	row := db.QueryRow(ctx, lockQuotaWarningAccount, id)
+	var i LockQuotaWarningAccountRow
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.Status,
+		&i.Plan,
+		&i.DeletionRequestedAt,
+		&i.LastQuotaWarningAt,
+		&i.QuotaMailRevision,
+	)
 	return i, err
 }
 
@@ -2966,6 +3116,172 @@ func (q *Queries) PurgeExpiredPasswordResetTokens(ctx context.Context, db DBTX, 
 	return err
 }
 
+const quotaWarningDay = `-- name: QuotaWarningDay :one
+SELECT (date_trunc('day',clock_timestamp() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')::timestamptz AS day
+`
+
+func (q *Queries) QuotaWarningDay(ctx context.Context, db DBTX) (pgtype.Timestamptz, error) {
+	row := db.QueryRow(ctx, quotaWarningDay)
+	var day pgtype.Timestamptz
+	err := row.Scan(&day)
+	return day, err
+}
+
+const quotaWarningDeliveryReady = `-- name: QuotaWarningDeliveryReady :exec
+SELECT a.plan,a.status,a.last_quota_warning_at,a.quota_mail_revision,o.quota_warning_day,o.quota_warning_plan,o.quota_warning_revision
+FROM accounts a JOIN platform_mail_producer_outbox o ON o.account_id=a.id LIMIT 0
+`
+
+func (q *Queries) QuotaWarningDeliveryReady(ctx context.Context, db DBTX) error {
+	_, err := db.Exec(ctx, quotaWarningDeliveryReady)
+	return err
+}
+
+const quotaWarningKeyReferences = `-- name: QuotaWarningKeyReferences :many
+SELECT DISTINCT security_alert_key_id FROM platform_mail_producer_outbox
+WHERE namespace=$1 AND producer_id=$2 AND template='quota_warning' AND state IN ('queued','claimed') AND expires_at>clock_timestamp()
+`
+
+type QuotaWarningKeyReferencesParams struct {
+	Namespace  string
+	ProducerID string
+}
+
+func (q *Queries) QuotaWarningKeyReferences(ctx context.Context, db DBTX, arg QuotaWarningKeyReferencesParams) ([]string, error) {
+	rows, err := db.Query(ctx, quotaWarningKeyReferences, arg.Namespace, arg.ProducerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var security_alert_key_id string
+		if err := rows.Scan(&security_alert_key_id); err != nil {
+			return nil, err
+		}
+		items = append(items, security_alert_key_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const quotaWarningLifecycleReady = `-- name: QuotaWarningLifecycleReady :one
+SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_trigger g JOIN pg_catalog.pg_class t ON t.oid=g.tgrelid
+    JOIN pg_catalog.pg_namespace n ON n.oid=t.relnamespace
+    WHERE n.nspname=current_schema() AND t.relname='accounts'
+      AND g.tgname='accounts_quota_mail_revision_guard' AND g.tgenabled IN ('O','A'))::boolean AS ready
+`
+
+func (q *Queries) QuotaWarningLifecycleReady(ctx context.Context, db DBTX) (bool, error) {
+	row := db.QueryRow(ctx, quotaWarningLifecycleReady)
+	var ready bool
+	err := row.Scan(&ready)
+	return ready, err
+}
+
+const quotaWarningPeriod = `-- name: QuotaWarningPeriod :one
+SELECT p.account_id, p.warning_day, p.intent_id, p.observed_at, p.plan, p.used_mb_seconds, p.quota_gb, p.quota_revision, p.followup_completed_at, p.lease_id, p.lease_until,o.namespace,o.producer_id,o.from_address,o.recovery_id
+FROM billing_quota_warnings p JOIN platform_mail_producer_outbox o ON o.id=p.intent_id
+WHERE p.account_id=$1 AND p.warning_day=$2 FOR UPDATE OF p
+`
+
+type QuotaWarningPeriodParams struct {
+	AccountID  pgtype.UUID
+	WarningDay pgtype.Timestamptz
+}
+
+type QuotaWarningPeriodRow struct {
+	AccountID           pgtype.UUID
+	WarningDay          pgtype.Timestamptz
+	IntentID            pgtype.UUID
+	ObservedAt          pgtype.Timestamptz
+	Plan                string
+	UsedMbSeconds       int64
+	QuotaGb             int32
+	QuotaRevision       int64
+	FollowupCompletedAt pgtype.Timestamptz
+	LeaseID             pgtype.UUID
+	LeaseUntil          pgtype.Timestamptz
+	Namespace           string
+	ProducerID          string
+	FromAddress         string
+	RecoveryID          pgtype.UUID
+}
+
+func (q *Queries) QuotaWarningPeriod(ctx context.Context, db DBTX, arg QuotaWarningPeriodParams) (QuotaWarningPeriodRow, error) {
+	row := db.QueryRow(ctx, quotaWarningPeriod, arg.AccountID, arg.WarningDay)
+	var i QuotaWarningPeriodRow
+	err := row.Scan(
+		&i.AccountID,
+		&i.WarningDay,
+		&i.IntentID,
+		&i.ObservedAt,
+		&i.Plan,
+		&i.UsedMbSeconds,
+		&i.QuotaGb,
+		&i.QuotaRevision,
+		&i.FollowupCompletedAt,
+		&i.LeaseID,
+		&i.LeaseUntil,
+		&i.Namespace,
+		&i.ProducerID,
+		&i.FromAddress,
+		&i.RecoveryID,
+	)
+	return i, err
+}
+
+const quotaWarningReady = `-- name: QuotaWarningReady :one
+WITH own_constraint AS MATERIALIZED (
+    SELECT c.oid FROM pg_catalog.pg_constraint c
+    JOIN pg_catalog.pg_class t ON t.oid=c.conrelid JOIN pg_catalog.pg_namespace n ON n.oid=t.relnamespace
+    WHERE n.nspname=current_schema() AND t.relname='platform_mail_producer_outbox'
+      AND c.conname='platform_mail_producer_outbox_security_alert_check'
+)
+SELECT EXISTS(SELECT 1 FROM own_constraint c
+    WHERE position('quota_warning' in pg_catalog.pg_get_constraintdef(c.oid))>0)::boolean AS ready
+`
+
+func (q *Queries) QuotaWarningReady(ctx context.Context, db DBTX) (bool, error) {
+	row := db.QueryRow(ctx, quotaWarningReady)
+	var ready bool
+	err := row.Scan(&ready)
+	return ready, err
+}
+
+const quotaWarningSchemaReady = `-- name: QuotaWarningSchemaReady :exec
+SELECT a.plan,a.last_quota_warning_at,a.quota_mail_revision,o.quota_warning_day,o.quota_warning_plan,o.quota_warning_revision,p.followup_completed_at,p.lease_id,u.mb_seconds
+FROM accounts a JOIN platform_mail_producer_outbox o ON o.account_id=a.id
+JOIN billing_quota_warnings p ON p.intent_id=o.id LEFT JOIN usage_minutes u ON u.account_id=a.id LIMIT 0
+`
+
+func (q *Queries) QuotaWarningSchemaReady(ctx context.Context, db DBTX) error {
+	_, err := db.Exec(ctx, quotaWarningSchemaReady)
+	return err
+}
+
+const quotaWarningUsage = `-- name: QuotaWarningUsage :one
+SELECT coalesce(sum(mb_seconds),0)::bigint AS used_mb_seconds FROM usage_minutes
+WHERE account_id=$1 AND minute>=$2 AND minute<$3
+`
+
+type QuotaWarningUsageParams struct {
+	AccountID pgtype.UUID
+	Minute    pgtype.Timestamptz
+	Minute_2  pgtype.Timestamptz
+}
+
+// Same UTC range as meterd's UsageByMonth. Return integer physical usage;
+// rounding to GB-hours is shared with the existing quota decision.
+func (q *Queries) QuotaWarningUsage(ctx context.Context, db DBTX, arg QuotaWarningUsageParams) (int64, error) {
+	row := db.QueryRow(ctx, quotaWarningUsage, arg.AccountID, arg.Minute, arg.Minute_2)
+	var used_mb_seconds int64
+	err := row.Scan(&used_mb_seconds)
+	return used_mb_seconds, err
+}
+
 const ready = `-- name: Ready :exec
 SELECT o.id,o.recovery_id,o.template_version,o.recipient_address,o.revision,o.sealed_security_alert,o.security_alert_key_id,a.mfa_enrolled_at,a.mfa_recovery_codes_hash,a.password_reset_revision,t.password_revision,m.password_revision,d.mfa_revision,a.mfa_revision
 FROM platform_mail_producer_outbox o LEFT JOIN accounts a ON a.id=o.account_id
@@ -3109,6 +3425,36 @@ func (q *Queries) RecordPaymentRecoveryReceipt(ctx context.Context, db DBTX, arg
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const recordQuotaWarning = `-- name: RecordQuotaWarning :exec
+INSERT INTO billing_quota_warnings(account_id,warning_day,intent_id,observed_at,plan,used_mb_seconds,quota_gb,quota_revision)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8)
+`
+
+type RecordQuotaWarningParams struct {
+	AccountID     pgtype.UUID
+	WarningDay    pgtype.Timestamptz
+	IntentID      pgtype.UUID
+	ObservedAt    pgtype.Timestamptz
+	Plan          string
+	UsedMbSeconds int64
+	QuotaGb       int32
+	QuotaRevision int64
+}
+
+func (q *Queries) RecordQuotaWarning(ctx context.Context, db DBTX, arg RecordQuotaWarningParams) error {
+	_, err := db.Exec(ctx, recordQuotaWarning,
+		arg.AccountID,
+		arg.WarningDay,
+		arg.IntentID,
+		arg.ObservedAt,
+		arg.Plan,
+		arg.UsedMbSeconds,
+		arg.QuotaGb,
+		arg.QuotaRevision,
+	)
+	return err
 }
 
 const recovery = `-- name: Recovery :one
@@ -3305,10 +3651,13 @@ func (q *Queries) Settle(ctx context.Context, db DBTX, arg SettleParams) (int64,
 }
 
 const shareAccount = `-- name: ShareAccount :one
-SELECT id,email,status,deletion_requested_at,email_verified_at,abuse_hold_at,password_reset_revision,mfa_enrolled_at,mfa_revision,past_due_at,billing_mail_revision FROM accounts WHERE id=$1 FOR SHARE
+SELECT plan,last_quota_warning_at,quota_mail_revision,id,email,status,deletion_requested_at,email_verified_at,abuse_hold_at,password_reset_revision,mfa_enrolled_at,mfa_revision,past_due_at,billing_mail_revision FROM accounts WHERE id=$1 FOR SHARE
 `
 
 type ShareAccountRow struct {
+	Plan                  string
+	LastQuotaWarningAt    pgtype.Timestamptz
+	QuotaMailRevision     int64
 	ID                    pgtype.UUID
 	Email                 string
 	Status                string
@@ -3326,6 +3675,9 @@ func (q *Queries) ShareAccount(ctx context.Context, db DBTX, id pgtype.UUID) (Sh
 	row := db.QueryRow(ctx, shareAccount, id)
 	var i ShareAccountRow
 	err := row.Scan(
+		&i.Plan,
+		&i.LastQuotaWarningAt,
+		&i.QuotaMailRevision,
 		&i.ID,
 		&i.Email,
 		&i.Status,
@@ -3618,6 +3970,57 @@ func (q *Queries) SharePaymentFailedSubmissionAccount(ctx context.Context, db DB
 	return i, err
 }
 
+const shareQuotaWarningSubmissionAccount = `-- name: ShareQuotaWarningSubmissionAccount :one
+SELECT a.email,a.plan,a.status,a.deletion_requested_at,a.last_quota_warning_at,a.quota_mail_revision,
+    o.quota_warning_day,o.quota_warning_plan,o.quota_warning_revision,o.from_address,m.sender_address,
+    (date_trunc('day',clock_timestamp() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')::timestamptz AS current_day
+FROM internal_mail_messages m JOIN platform_mail_producer_outbox o
+    ON o.namespace=m.namespace AND o.producer_id=m.producer_id
+    AND m.idempotency_key='quota-warning:'||o.id::text AND o.template='quota_warning' AND o.expires_at=m.expires_at
+JOIN accounts a ON a.id=o.account_id
+WHERE m.namespace=$1 AND m.id=$2 FOR SHARE OF a
+`
+
+type ShareQuotaWarningSubmissionAccountParams struct {
+	Namespace string
+	ID        pgtype.UUID
+}
+
+type ShareQuotaWarningSubmissionAccountRow struct {
+	Email                string
+	Plan                 string
+	Status               string
+	DeletionRequestedAt  pgtype.Timestamptz
+	LastQuotaWarningAt   pgtype.Timestamptz
+	QuotaMailRevision    int64
+	QuotaWarningDay      pgtype.Timestamptz
+	QuotaWarningPlan     pgtype.Text
+	QuotaWarningRevision pgtype.Int8
+	FromAddress          string
+	SenderAddress        string
+	CurrentDay           pgtype.Timestamptz
+}
+
+func (q *Queries) ShareQuotaWarningSubmissionAccount(ctx context.Context, db DBTX, arg ShareQuotaWarningSubmissionAccountParams) (ShareQuotaWarningSubmissionAccountRow, error) {
+	row := db.QueryRow(ctx, shareQuotaWarningSubmissionAccount, arg.Namespace, arg.ID)
+	var i ShareQuotaWarningSubmissionAccountRow
+	err := row.Scan(
+		&i.Email,
+		&i.Plan,
+		&i.Status,
+		&i.DeletionRequestedAt,
+		&i.LastQuotaWarningAt,
+		&i.QuotaMailRevision,
+		&i.QuotaWarningDay,
+		&i.QuotaWarningPlan,
+		&i.QuotaWarningRevision,
+		&i.FromAddress,
+		&i.SenderAddress,
+		&i.CurrentDay,
+	)
+	return i, err
+}
+
 const shareRecovery = `-- name: ShareRecovery :exec
 SELECT pg_advisory_xact_lock_shared(hashtextextended($1::text,871739))
 `
@@ -3660,6 +4063,28 @@ func (q *Queries) ShareVerificationToken(ctx context.Context, db DBTX, arg Share
 		&i.ConsumedAt,
 		&i.EmailAddress,
 	)
+	return i, err
+}
+
+const stampQuotaWarning = `-- name: StampQuotaWarning :one
+UPDATE accounts SET last_quota_warning_at=$2 WHERE id=$1
+RETURNING quota_mail_revision,clock_timestamp()::timestamptz AS observed_at
+`
+
+type StampQuotaWarningParams struct {
+	ID                 pgtype.UUID
+	LastQuotaWarningAt pgtype.Timestamptz
+}
+
+type StampQuotaWarningRow struct {
+	QuotaMailRevision int64
+	ObservedAt        pgtype.Timestamptz
+}
+
+func (q *Queries) StampQuotaWarning(ctx context.Context, db DBTX, arg StampQuotaWarningParams) (StampQuotaWarningRow, error) {
+	row := db.QueryRow(ctx, stampQuotaWarning, arg.ID, arg.LastQuotaWarningAt)
+	var i StampQuotaWarningRow
+	err := row.Scan(&i.QuotaMailRevision, &i.ObservedAt)
 	return i, err
 }
 

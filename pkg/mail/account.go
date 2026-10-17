@@ -39,7 +39,7 @@ func safeRecipient(email string) string {
 // DELETE (deletion_requested_at); restoreUntil is the same moment + 30
 // days, the deadline after which pkg/grace performs the hard delete.
 func AccountDeletionPendingBody(email string, scheduledAt, restoreUntil time.Time) (subject, body string) {
-    return AccountDeletionPendingBodyV1(email, scheduledAt, restoreUntil)
+	return AccountDeletionPendingBodyV1(email, scheduledAt, restoreUntil)
 }
 
 // AccountDeletionPendingBodyV1 is frozen for durable producer retries. Future

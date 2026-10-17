@@ -12,6 +12,8 @@ type Account struct {
 	ID                    pgtype.UUID
 	Email                 string
 	Status                string
+	Plan                  string
+	LastQuotaWarningAt    pgtype.Timestamptz
 	DeletionRequestedAt   pgtype.Timestamptz
 	EmailVerifiedAt       pgtype.Timestamptz
 	AbuseHoldAt           pgtype.Timestamptz
@@ -24,6 +26,7 @@ type Account struct {
 	PasswordResetRevision int64
 	MfaRevision           int64
 	BillingMailRevision   int64
+	QuotaMailRevision     int64
 }
 
 type AccountPassword struct {
@@ -78,6 +81,20 @@ type BillingPaymentRecoveryReceipt struct {
 	EventID     string
 	AccountID   pgtype.UUID
 	ProcessedAt pgtype.Timestamptz
+}
+
+type BillingQuotaWarning struct {
+	AccountID           pgtype.UUID
+	WarningDay          pgtype.Timestamptz
+	IntentID            pgtype.UUID
+	ObservedAt          pgtype.Timestamptz
+	Plan                string
+	UsedMbSeconds       int64
+	QuotaGb             int32
+	QuotaRevision       int64
+	FollowupCompletedAt pgtype.Timestamptz
+	LeaseID             pgtype.UUID
+	LeaseUntil          pgtype.Timestamptz
 }
 
 type EmailVerificationToken struct {
@@ -231,10 +248,19 @@ type PlatformMailProducerOutbox struct {
 	NonpaymentPastDueAt        pgtype.Timestamptz
 	NonpaymentDeletionRevision pgtype.Int8
 	NonpaymentDeletionAt       pgtype.Timestamptz
+	QuotaWarningDay            pgtype.Timestamptz
+	QuotaWarningPlan           pgtype.Text
+	QuotaWarningRevision       pgtype.Int8
 }
 
 type Session struct {
 	ID        pgtype.UUID
 	AccountID pgtype.UUID
 	RevokedAt pgtype.Timestamptz
+}
+
+type UsageMinute struct {
+	AccountID pgtype.UUID
+	Minute    pgtype.Timestamptz
+	MbSeconds int64
 }

@@ -1352,3 +1352,7 @@ func (r *server) MountInternalMailSuspension(mux *http.ServeMux, addr string, ge
 func (r *server) MountInternalMailNonpaymentDeletion(mux *http.ServeMux, addr string, getenv func(string) string) error {
 	return r.mountInternalMailNonpaymentDeletion(mux, addr, getenv)
 }
+
+func (r *server) MountInternalMailQuotaWarning(mux *http.ServeMux, addr string, getenv func(string) string) error {
+	return r.mountInternalMailQuotaWarning(mux, addr, getenv)
+}
