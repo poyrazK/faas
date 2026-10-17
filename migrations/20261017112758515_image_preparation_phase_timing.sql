@@ -1,6 +1,7 @@
 -- filename: 20261017112758515_image_preparation_phase_timing.sql
 
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 -- Do not backfill: updated_at includes claims that made no phase progress.
 ALTER TABLE deployment_image_preparations
     ADD COLUMN IF NOT EXISTS phase_started_at timestamptz
