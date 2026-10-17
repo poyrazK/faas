@@ -82,6 +82,18 @@ keeps its reservation until its RPC reply or persisted preparation deadline plus
 clock grace, followed by confirmed teardown. Queued work remains pending unless
 its existing customer-selected expiration/cancellation policy applies.
 
+## Acceptance preparation
+
+The local backend also includes a dedicated full-daemon financial lane and
+real-meterd/provider reconciliation fixtures. They check uncertain provider
+replies, failed receipt writes, cumulative-counter replay, exact invoice versus
+commitment bounds, native funded retirement during database loss and owner
+restart. A source-derived JSON verdict includes final leakcheck, service
+restoration, host facts and artifact hashes. See the
+[full-daemon lane](runbooks/financial-strict-compute-acceptance.md#full-daemon-financial-lane-and-provider-reconciliation)
+for commands and evidence. A local compilation or portable pass does not close
+native, physical two-host, full workload/performance or external-provider gates.
+
 ## Rollout and rollback
 
 1. Review and merge the platform preview PR after its migrations, accounting,

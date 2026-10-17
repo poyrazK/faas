@@ -238,3 +238,100 @@ Egress funding pins its lowest recorded allowance for the UTC month; allowance
 increases do not release prior invoice authority. Test plan changes before and
 after hourly delivery, lost provider responses and receipt recovery. Provider
 configuration and actual external meter pricing must agree before promotion.
+
+## Full-daemon financial lane and provider reconciliation
+
+The `financial-system` lane in `scripts/ci/run-native-e2e.sh` adds a matching
+subprocess graph: APID, imaged, schedd, VMMD with native process recovery, both
+gateways and meterd. It deploys through the customer API, activates the account
+compute/egress policy using real owner readiness, sends public HTTP responses,
+and requires actual compute and interface-byte samples for the funded attempt.
+It does not register synthetic native owners or manufacture sampling completeness.
+
+A TCP proxy interrupts every daemon's PostgreSQL sessions while an independent
+observer retains access. After killing schedd, the test requires the exact native
+process incarnation, namespace and veth to disappear within the funded teardown
+window. Funding and byte credits must remain unchanged while settlement is
+unavailable. Restarting VMMD must settle the original attempt before scheduler
+recovery. A second phase crashes a live owner and checks physical retirement and
+durable settlement of that generation. API balance readback must fit the shared
+paid limit. These are single-host scenarios; physical two-host partitions and
+contention remain separate release checks.
+
+The same lane first runs portable acceptance against real PostgreSQL and a real
+meterd child. A loopback-only Polar fixture validates the configured catalog and
+records immutable provider events. The fixture covers:
+
+- Provider outage before acceptance: neither accepted events nor receipts exist.
+- Acceptance followed by a lost HTTP response: retry keeps the same external ID
+  and payload and creates exactly one accepted event per window and meter.
+- A failed local receipt transaction after provider acceptance: restart recovers
+  receipts without adding another provider charge.
+- Restart after completed delivery: old windows make no further wire calls.
+- Out-of-order insertion of completed hours and replay of cumulative network
+  observations through new store handles: neither ledger nor invoice inflates.
+- A newly finalized hour after restart: delivery proves the new pusher scans,
+  while earlier receipts still suppress old calls.
+- A catalog-consistent price above the retained funding ceiling: no egress event
+  or receipt appears until a compatible provider configuration is restored.
+
+The replay fixture restores historical settled books and completed sampling
+windows. Its initial six events cost exactly 10,000 millicents, against 13,000
+millicents of conservative commitments. A later measured window takes the exact
+invoice to 13,000 without changing those commitments. It does not execute guests
+or prove packet enforcement. The native scenario supplies the physical evidence.
+No external billing provider or email delivery is used.
+
+The meter fixture accepts only a pgtest database/schema. Before executing meterd,
+it connects using the derived DSN and verifies the database and schema against
+the observer. The proxy preserves this isolation for both PostgreSQL URL and
+keyword DSNs. Do not pass `pool.Config().ConnString()` directly after changing
+the parsed configuration: pgx retains its original DSN string.
+
+Portable checks, using an empty disposable PostgreSQL database as `DATABASE_URL`:
+
+```sh
+export FAAS_PGTEST_TEMPLATE_DATABASE=1
+export FAAS_FINANCIAL_EVIDENCE_DIR=/absolute/path/to/financial-evidence
+go test -race -p=1 -count=1 -v ./pkg/e2etest/financialfixture
+go test -race -p=1 -count=1 -run '^Test(DatabaseURL|FinancialVMMD)' ./pkg/e2etest
+python3 scripts/ci/financial-system-verdict_test.py
+bash scripts/ci/native-e2e-phases_test.sh
+bash scripts/ci/run-native-e2e_test.sh
+```
+
+On an isolated designated native host, stage the exact reviewed source archive
+and pinned toolchain as for the existing full-platform gate:
+
+```sh
+export FAAS_E2E_PHASE=financial-system
+export FAAS_E2E_SOURCE_SHA='<reviewed 40-character source SHA>'
+export FAAS_E2E_GO='<absolute path to pinned Go binary>'
+export FAAS_E2E_RUN_ID='<unique run identifier>'
+export DATABASE_URL='<disposable acceptance PostgreSQL URL or keyword DSN>'
+bash scripts/ci/run-native-e2e.sh
+```
+
+The existing host marker, root, KVM, source marker, staged kernel, image, bridge,
+locking and service-quiescing requirements still apply. The financial lane
+rejects `FAAS_SKIP_PG_TESTS`. It enables native recovery only for this fixture.
+It runs neither a deployment nor a remote-host orchestrator.
+
+Preserve `financial-system-provider.log`, `cmd-e2e-financial-system.log`,
+`financial-system-records/reconciliation-*.json`, the wrapper output and
+`financial-system-verdict-<run-id>.json` from the transfer directory (or
+`/var/tmp` when unset). Reconciliation files retain the exact expected,
+provider-accepted and locally receipted vectors, provider retry counts, measured
+invoice amounts and commitment bounds. Test logs contain only fixture identities
+and placeholder credentials.
+
+The JSON verdict is written after final leakcheck and service restoration. It
+requires zero command exits, every source-derived top-level test to pass exactly
+once, every native recovery phase to pass, and no failed or skipped subtests.
+It records source/log/artifact SHA-256 hashes and native host/boot identity
+hashes. Missing source, tests, logs, KVM, matching binaries, guest-init, kernel,
+cleanup or restoration evidence fails qualification. The verdict's scope is
+`single_host_full_daemon_and_provider_replay`; its remaining release gates
+explicitly include the physical two-host run, workload/offload/performance matrix,
+external provider reconciliation and complete native/component suites.
+Compilation and synthetic verdict-contract tests cannot qualify this lane.
