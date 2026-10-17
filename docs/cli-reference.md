@@ -13060,7 +13060,7 @@ Show the issuer, JWKS URL and readiness of an Auth app
 
 Show the running Auth settings, or change them and restart the app
 
-`gregale auth config [--site-url <URL>] [--redirect-urls <URLS>] [--signup <on|off>] [--autoconfirm <on|off>] [--password-min-length <N>] [--password-require <CLASSES>] [--leaked-password-check <on|off>] [--mfa <on|off>] [--email-provider <PROVIDER>] [--email-from <SENDER>] [--email-api-key-stdin] [--authz <FILE>] [--events <on|off>] [--passkeys <on|off>] [--passkey-rp-id <DOMAIN>] [--brand-name <NAME>] [--brand-color <#RRGGBB>] [--brand-logo-url <URL>] [--captcha <PROVIDER>] [--captcha-site-key <KEY>] [--captcha-secret-stdin] [--activity-retention <DAYS>] [--sms <PROVIDER>] [--sms-account <ID>] [--sms-sender <SENDER>] [--sms-secret-stdin] [--sso <on|off>] [--scope <SCOPE>] <name>`
+`gregale auth config [--site-url <URL>] [--redirect-urls <URLS>] [--signup <on|off>] [--autoconfirm <on|off>] [--password-min-length <N>] [--password-require <CLASSES>] [--leaked-password-check <on|off>] [--mfa <on|off>] [--mfa-phone <on|off>] [--recovery-codes <on|off>] [--email-provider <PROVIDER>] [--email-from <SENDER>] [--email-api-key-stdin] [--authz <FILE>] [--events <on|off>] [--passkeys <on|off>] [--passkey-rp-id <DOMAIN>] [--brand-name <NAME>] [--brand-color <#RRGGBB>] [--brand-logo-url <URL>] [--captcha <PROVIDER>] [--captcha-site-key <KEY>] [--captcha-secret-stdin] [--activity-retention <DAYS>] [--sms <PROVIDER>] [--sms-account <ID>] [--sms-sender <SENDER>] [--sms-secret-stdin] [--sso <on|off>] [--scope <SCOPE>] <name>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -13072,6 +13072,8 @@ Show the running Auth settings, or change them and restart the app
 | `--password-require <CLASSES>` | character classes every password needs: lower,upper,digit,symbol, or none |  |
 | `--leaked-password-check <on|off>` | refuse passwords found in known breaches (Have I Been Pwned) | one of `on` · `off` |
 | `--mfa <on|off>` | let users enrol an authenticator app (TOTP); enrolled users keep verifying when off | one of `on` · `off` |
+| `--mfa-phone <on|off>` | let users enrol SMS codes as a second factor (needs an SMS provider) | one of `on` · `off` |
+| `--recovery-codes <on|off>` | let users create one-time recovery codes for their second factor | one of `on` · `off` |
 | `--email-provider <PROVIDER>` | HTTPS email provider, or none to remove it | one of `resend` · `postmark` · `none` |
 | `--email-from <SENDER>` | sender address, or a display name with the address in angle brackets |  |
 | `--email-api-key-stdin` | read the email provider API key from stdin (prompted on a terminal) |  |

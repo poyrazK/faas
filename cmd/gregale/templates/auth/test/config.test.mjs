@@ -110,7 +110,7 @@ test('enabled providers get this app\'s callback, and settings report only publi
     app: 'shop.example.com', site_url: 'https://shop.example.com', redirect_urls: [],
     signup: { enabled: false, autoconfirm: false }, providers: ['github', 'google'],
     password: { min_length: 12, required: ['lower', 'digit', 'custom'], leaked_password_check: false },
-    mfa: { totp: false }, email: { configured: false, provider: null, from: null }, events: { lifecycle: false },
+    mfa: { totp: false, phone: false, recovery_codes: false }, email: { configured: false, provider: null, from: null }, events: { lifecycle: false },
     passkeys: { enabled: false, rp_id: 'shop-auth.gregale.app', origins: ['https://shop-auth.gregale.app'] },
     branding: { name: 'shop.example.com', color: null, logo_url: null }, captcha: null, activity: { retention_days: null }, phone: { enabled: false, provider: null }, sso: { enabled: false, entity_id: null, acs_url: null }, keys: { signing: '0A1B2C3D', verifying: ['FFFF0001'] },
   })
@@ -193,4 +193,21 @@ test('phone sign-in needs a known SMS provider and names the app in the message'
   assert.equal(off.gotrueEnv.GOTRUE_SMS_OTP_EXP, undefined)
   assert.deepEqual(off.settings.phone, { enabled: false, provider: null })
   assert.throws(() => runtimeConfig(env({ GOTRUE_RATE_LIMIT_SMS_SENT: '1000' })), /managed by Gregale/)
+})
+
+test('SMS codes as a second factor need an SMS provider', () => {
+  const sms = { GOTRUE_SMS_PROVIDER: 'twilio', GOTRUE_SMS_TWILIO_ACCOUNT_SID: 'AC1', GOTRUE_SMS_TWILIO_MESSAGE_SERVICE_SID: 'MG1', GOTRUE_SMS_TWILIO_AUTH_TOKEN: 't' }
+  const on = runtimeConfig(env({ ...sms, GOTRUE_MFA_PHONE_ENROLL_ENABLED: 'true', GOTRUE_MFA_PHONE_VERIFY_ENABLED: 'true', GOTRUE_MFA_RECOVERY_CODES_ENROLL_ENABLED: 'true', AUTH_UI_NAME: 'Shop' }))
+  assert.deepEqual(on.settings.mfa, { totp: true, phone: true, recovery_codes: true })
+  assert.equal(on.gotrueEnv.GOTRUE_MFA_PHONE_TEMPLATE, 'Your Shop verification code is {{ .Code }}')
+  const errors = []
+  const original = console.error
+  console.error = line => errors.push(line)
+  try {
+    const off = runtimeConfig(env({ GOTRUE_MFA_PHONE_ENROLL_ENABLED: 'true', GOTRUE_MFA_PHONE_VERIFY_ENABLED: 'true' }))
+    assert.equal(off.gotrueEnv.GOTRUE_MFA_PHONE_ENROLL_ENABLED, 'false')
+    assert.equal(off.gotrueEnv.GOTRUE_MFA_PHONE_VERIFY_ENABLED, 'true')
+    assert.equal(off.settings.mfa.phone, false)
+  } finally { console.error = original }
+  assert.deepEqual(errors.map(line => JSON.parse(line).event), ['phone_mfa_without_sms_provider'])
 })

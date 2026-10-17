@@ -231,3 +231,35 @@ test('organization single sign-on returns the identity provider URL', async () =
   assert.deepEqual(api.calls[1].body, { provider_id: 'p1', skip_http_redirect: true })
   await assert.rejects(auth.signInWithSSO({ domain: 'globex.com' }), { status: 404, code: 'sso_provider_not_found' })
 })
+
+test('second factors enrol, challenge and verify to aal2', async () => {
+  const jwt = level => `h.${Buffer.from(JSON.stringify({ aal: level })).toString('base64url')}.s`
+  const session = level => ({ access_token: jwt(level), refresh_token: `r-${level}`, expires_in: 600, user: { id: 'u1' } })
+  const api = server({
+    'POST /auth/v1/token': () => [200, session('aal1')],
+    'GET /auth/v1/user': () => [200, { id: 'u1', factors: [{ id: 'f1', factor_type: 'totp', status: 'verified' }, { id: 'rc', factor_type: 'recovery_code', status: 'verified' }] }],
+    'POST /auth/v1/factors': call => [200, call.body.factor_type === 'totp' ? { id: 'f2', type: 'totp', totp: { qr_code: 'data:', secret: 'S', uri: 'otpauth://' } } : { id: 'f3', factor_type: 'phone', status: 'unverified' }],
+    'POST /auth/v1/factors/f1/challenge': () => [200, { id: 'c1', type: 'totp', expires_at: 1 }],
+    'POST /auth/v1/factors/f1/verify': call => call.body.code === '123456' ? [200, session('aal2')] : [422, { error_code: 'mfa_verification_failed' }],
+    'POST /auth/v1/factors/recovery-codes/verify': () => [200, session('aal2')],
+    'DELETE /auth/v1/factors/f3': () => [200, {}],
+  })
+  const auth = createAuthClient({ url: origin, fetch: api.fetch, store: null })
+  const events = []
+  auth.onAuthStateChange(event => events.push(event))
+  await auth.signInWithPassword({ email: 'a@example.test', password: 'pw' })
+  assert.deepEqual(await auth.mfa.assuranceLevel(), { current: 'aal1', next: 'aal2' })
+  assert.deepEqual((await auth.mfa.enrollTOTP({ friendlyName: 'Phone app' })).totp.uri, 'otpauth://')
+  assert.deepEqual(api.calls.at(-1).body, { factor_type: 'totp', friendly_name: 'Phone app' })
+  await auth.mfa.enrollPhone({ phone: '+447700900123' })
+  assert.deepEqual(api.calls.at(-1).body, { factor_type: 'phone', phone: '+447700900123' })
+  const challenge = await auth.mfa.challenge('f1')
+  await assert.rejects(auth.mfa.verify({ factorId: 'f1', challengeId: challenge.id, code: '000000' }), { status: 422, code: 'mfa_verification_failed' })
+  await auth.mfa.verify({ factorId: 'f1', challengeId: challenge.id, code: '123456' })
+  assert.deepEqual(api.calls.at(-1).body, { challenge_id: 'c1', code: '123456' })
+  assert.deepEqual(await auth.mfa.assuranceLevel(), { current: 'aal2', next: 'aal2' })
+  await auth.mfa.recoveryCodes.verify('abcd-efgh')
+  assert.deepEqual(api.calls.at(-1).body, { code: 'abcd-efgh' })
+  await auth.mfa.unenroll('f3')
+  assert.deepEqual(events, ['SIGNED_IN', 'MFA_VERIFIED', 'MFA_VERIFIED'])
+})

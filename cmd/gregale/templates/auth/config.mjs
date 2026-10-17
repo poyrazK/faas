@@ -229,7 +229,7 @@ export function runtimeConfig(env) {
   }
   const email = emailConfig(env)
   const branding = brandingConfig(env, site)
-  Object.assign(gotrueEnv, smsEnv(passthrough, branding.name), samlEnv(env))
+  Object.assign(gotrueEnv, smsEnv(passthrough, branding.name), samlEnv(env), phoneMFAEnv(passthrough, branding.name))
   const captcha = captchaConfig(env)
   const retention = env.AUTH_AUDIT_RETENTION_DAYS ?? ''
   if (retention !== '' && (!/^[1-9][0-9]{0,3}$/.test(retention) || Number(retention) > limits.auditRetentionMaxDays)) throw new Error(`AUTH_AUDIT_RETENTION_DAYS must be 1 to ${limits.auditRetentionMaxDays}`)
@@ -255,7 +255,8 @@ export function publicSettings({ gotrueEnv: g, redirects, keys, email, app, bran
     // GoTrue's defaults: six characters, no classes, TOTP enrolment on.
     // `--mfa off` stops enrolment only; enrolled users keep verifying.
     password: { min_length: Number(g.GOTRUE_PASSWORD_MIN_LENGTH ?? 6), required, leaked_password_check: flag(g.GOTRUE_PASSWORD_HIBP_ENABLED, false) },
-    mfa: { totp: flag(g.GOTRUE_MFA_TOTP_ENROLL_ENABLED, true) },
+    // GoTrue's defaults: TOTP on, SMS codes and recovery codes off.
+    mfa: { totp: flag(g.GOTRUE_MFA_TOTP_ENROLL_ENABLED, true), phone: flag(g.GOTRUE_MFA_PHONE_ENROLL_ENABLED, false), recovery_codes: flag(g.GOTRUE_MFA_RECOVERY_CODES_ENROLL_ENABLED, false) },
     email: { configured: email !== null, provider: email?.provider ?? null, from: email?.from ?? null },
     events: { lifecycle: lifecycleEvents },
     activity: { retention_days: auditRetentionDays },
@@ -270,6 +271,19 @@ export function publicSettings({ gotrueEnv: g, redirects, keys, email, app, bran
       : { enabled: false, entity_id: null, acs_url: null },
     keys,
   }
+}
+
+// phoneMFAEnv: SMS codes as a second factor are sent through the SMS
+// provider. Without one, enrolment stays off rather than creating factors no
+// code can ever reach; verification is left as configured, so enrolled users
+// recover once a provider is set again. The message names the app.
+export function phoneMFAEnv(passthrough, appName) {
+  if (passthrough.GOTRUE_MFA_PHONE_ENROLL_ENABLED !== 'true') return {}
+  if (!smsProviders.includes(passthrough.GOTRUE_SMS_PROVIDER)) {
+    console.error(JSON.stringify({ level: 'warning', event: 'phone_mfa_without_sms_provider' }))
+    return { GOTRUE_MFA_PHONE_ENROLL_ENABLED: 'false' }
+  }
+  return passthrough.GOTRUE_MFA_PHONE_TEMPLATE ? {} : { GOTRUE_MFA_PHONE_TEMPLATE: `Your ${appName.replace(/[{}]/g, '')} verification code is {{ .Code }}` }
 }
 
 // smsEnv checks phone sign-in's provider. Unless the owner set them, codes

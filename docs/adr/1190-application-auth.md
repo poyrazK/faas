@@ -1,6 +1,6 @@
 # ADR-1190: Application Auth on a pinned GoTrue server
 
-- **Status:** proposed; phases 1–6 implemented (the `auth` credential mode; the template and `gregale auth create|status`; organizations, roles, `authorize()` and `--auth`; email, hosted pages and `@gregale/auth`; storage, realtime and workflow checks; owner administration, the dashboard screens and user import; signing-key rotation and typed settings; lifecycle events and the activity view; passkeys, branded hosted pages, CAPTCHA and activity retention; Go and Python backend SDKs; phone sign-in by SMS; organization SAML single sign-on), not yet qualified on a live backend or native builder
+- **Status:** proposed; phases 1–6 implemented (the `auth` credential mode; the template and `gregale auth create|status`; organizations, roles, `authorize()` and `--auth`; email, hosted pages and `@gregale/auth`; storage, realtime and workflow checks; owner administration, the dashboard screens and user import; signing-key rotation and typed settings; lifecycle events and the activity view; passkeys, branded hosted pages, CAPTCHA and activity retention; Go and Python backend SDKs; phone sign-in by SMS; organization SAML single sign-on; SMS and recovery-code second factors with a hosted verification step), not yet qualified on a live backend or native builder
 - **Date:** 2026-10-13
 - **Decision:** Package a pinned Supabase Auth (GoTrue) server with a Gregale front process as an ordinary Gregale app bound to the customer's managed PostgreSQL. Add Gregale-owned organizations, invitations, roles and one SQL authorization function that the Data API, object downloads, realtime channels and workflow starts all use.
 - **Why:** Gregale authenticates its own accounts, and its gateway, Data API and realtime service verify tokens from an identity provider the customer brings. Gregale issues no tokens for an application's own users, so every customer must still design sign-up, sessions, recovery, membership and permissions alone.
@@ -370,6 +370,18 @@ the token on sign-up, password and magic-link sign-in, recovery and the start
 of a passkey sign-in; the hosted pages render the provider's widget and add a
 fresh token to each of those requests. Only when CAPTCHA is on does the pages'
 policy allow the provider's script, frame, style and connection origins.
+
+### Two-step verification
+
+GoTrue's factors are typed settings: TOTP (on by default), SMS codes and
+recovery codes, each with enrolment switchable and verification left on so
+enrolled users are never locked out. SMS codes need the SMS provider; without
+one the Auth app keeps their enrolment off instead of creating factors that
+no code can reach. The hosted pages complete a verified second factor after
+every first-factor sign-in they perform, so they never hand an application an
+`aal1` session for a user who has one; `@gregale/auth` exposes enrolment,
+challenge, verification, recovery codes and the assurance level. Applications
+enforce `aal2` themselves, through the `aal` claim.
 
 ### Phone sign-in
 
