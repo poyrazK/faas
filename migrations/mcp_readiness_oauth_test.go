@@ -1,15 +1,22 @@
 package migrations_test
 
 import (
-	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
 
 func TestMCPReadinessOAuthMigrationReplay(t *testing.T) {
-	pool := pgtest.OpenMigrated(t)
+	// Always migrate an isolated schema, even when the template database
+	// harness is enabled: cloning public would hide schema-qualified DDL bugs.
+	pool := pgtest.Open(t)
 	ctx := t.Context()
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)

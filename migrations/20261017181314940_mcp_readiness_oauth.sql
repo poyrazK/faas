@@ -1,8 +1,9 @@
 -- +goose Up
 -- +goose StatementBegin
-DO $migration$ DECLARE original_guard text; BEGIN
+DO $migration$ DECLARE original_guard text; subject_schema text; BEGIN
  IF to_regprocedure('mcp_readiness_runtime_subject(deployments)') IS NOT NULL THEN RETURN; END IF;
- EXECUTE replace(pg_get_functiondef('mcp_readiness_subject(deployments)'::regprocedure),'FUNCTION public.mcp_readiness_subject(','FUNCTION public.mcp_readiness_runtime_subject(');
+ SELECT n.nspname INTO STRICT subject_schema FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE p.oid='mcp_readiness_subject(deployments)'::regprocedure;
+ EXECUTE replace(pg_get_functiondef('mcp_readiness_subject(deployments)'::regprocedure),format('FUNCTION %I.mcp_readiness_subject(',subject_schema),format('FUNCTION %I.mcp_readiness_runtime_subject(',subject_schema));
  original_guard:=pg_get_functiondef('guard_deployment_mcp_readiness()'::regprocedure);
  IF position('subject:=mcp_readiness_subject(NEW);' IN original_guard)=0 THEN RAISE EXCEPTION 'unsupported readiness guard definition'; END IF;
  EXECUTE format('CREATE FUNCTION mcp_readiness_oauth_guard_base() RETURNS text LANGUAGE sql IMMUTABLE AS %L',format('SELECT %L',original_guard));
@@ -29,10 +30,11 @@ END $migration$;
 -- +goose StatementEnd
 -- +goose Down
 -- +goose StatementBegin
-DO $$ BEGIN
+DO $$ DECLARE subject_schema text; BEGIN
  IF EXISTS(SELECT 1 FROM app_mcp_readiness_policies p CROSS JOIN LATERAL jsonb_array_elements(p.policy->'roles') AS role(value) WHERE role.value#>'{monitor,oauth_connection}' IS NOT NULL AND role.value#>'{monitor,oauth_connection}'<>'null'::jsonb) THEN RAISE EXCEPTION 'remove readiness OAuth connection references before rollback'; END IF;
  EXECUTE mcp_readiness_oauth_guard_base();
- EXECUTE replace(pg_get_functiondef('mcp_readiness_runtime_subject(deployments)'::regprocedure),'FUNCTION public.mcp_readiness_runtime_subject(','FUNCTION public.mcp_readiness_subject(');
+ SELECT n.nspname INTO STRICT subject_schema FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE p.oid='mcp_readiness_runtime_subject(deployments)'::regprocedure;
+ EXECUTE replace(pg_get_functiondef('mcp_readiness_runtime_subject(deployments)'::regprocedure),format('FUNCTION %I.mcp_readiness_runtime_subject(',subject_schema),format('FUNCTION %I.mcp_readiness_subject(',subject_schema));
 END $$;
 DROP FUNCTION mcp_readiness_oauth_guard_base();
 DROP FUNCTION mcp_readiness_runtime_subject(deployments);
