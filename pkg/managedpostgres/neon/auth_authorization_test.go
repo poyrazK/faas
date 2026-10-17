@@ -492,3 +492,51 @@ func TestSQLSCIMLinksProvisionedPeopleOnFirstSignIn(t *testing.T) {
 		t.Fatalf("records left after the provider was removed: %d %v", left, err)
 	}
 }
+
+func TestSQLSelfServiceOrganizationSSONeedsVerifiedDomainsAndPermission(t *testing.T) {
+	f := newCredentialFixture(t)
+	ctx := context.Background()
+	_, owner := installAuthorization(t, f)
+	alice, bob := newAuthUser(t, owner, "alice@acme.com"), newAuthUser(t, owner, "bob@globex.com")
+	var acme, globex uuid.UUID
+	actAs(ctx, t, owner, alice)
+	if err := owner.QueryRow(ctx, `SELECT id FROM gregale_auth.create_organization('acme', 'Acme')`).Scan(&acme); err != nil {
+		t.Fatal(err)
+	}
+	actAs(ctx, t, owner, bob)
+	if err := owner.QueryRow(ctx, `SELECT id FROM gregale_auth.create_organization('globex', 'Globex')`).Scan(&globex); err != nil {
+		t.Fatal(err)
+	}
+	token := strings.Repeat("a", 32)
+	// Only someone with sso:manage in the organization manages its domains.
+	wantSQLError(t, owner, "42501", "forbidden", `SELECT gregale_auth.add_org_domain($1, 'acme.com', $2)`, acme, token)
+	actAs(ctx, t, owner, alice)
+	executeSQL(t, owner, `SELECT gregale_auth.add_org_domain($1, 'Acme.com', $2)`, acme, token)
+	wantSQLError(t, owner, "22023", "invalid_domain", `SELECT gregale_auth.add_org_domain($1, 'localhost', $2)`, acme, token)
+	wantSQLError(t, owner, "42501", "domain_not_verified", `SELECT gregale_auth.check_org_sso($1, NULL, ARRAY['acme.com'], 'member')`, acme)
+	executeSQL(t, owner, `SELECT gregale_auth.verify_org_domain($1, 'acme.com')`, acme)
+	executeSQL(t, owner, `SELECT gregale_auth.check_org_sso($1, NULL, ARRAY['acme.com'], 'member')`, acme)
+	wantSQLError(t, owner, "22023", "unknown_role", `SELECT gregale_auth.check_org_sso($1, NULL, ARRAY['acme.com'], 'owner')`, acme)
+	// A domain verified by one organization cannot be claimed by another.
+	actAs(ctx, t, owner, bob)
+	wantSQLError(t, owner, "23505", "domain_taken", `SELECT gregale_auth.add_org_domain($1, 'acme.com', $2)`, globex, token)
+	wantSQLError(t, owner, "42501", "forbidden", `SELECT gregale_auth.list_org_domains($1)`, acme)
+	wantSQLError(t, owner, "42501", "forbidden", `SELECT gregale_auth.check_org_sso($1, NULL, ARRAY['acme.com'], 'member')`, acme)
+	wantSQLError(t, owner, "42501", "domain_not_verified", `SELECT gregale_auth.check_org_sso($1, NULL, ARRAY['acme.com'], 'member')`, globex)
+	// A domain an organization's provider serves cannot be removed.
+	actAs(ctx, t, owner, alice)
+	provider := uuid.New()
+	executeSQL(t, owner, `INSERT INTO auth.sso_providers (id) VALUES ($1)`, provider)
+	executeSQL(t, owner, `INSERT INTO auth.sso_domains (sso_provider_id, domain) VALUES ($1, 'acme.com')`, provider)
+	executeSQL(t, owner, `SELECT gregale_auth.link_sso_organization($1, $2, 'member')`, provider, acme)
+	wantSQLError(t, owner, "23503", "domain_in_use", `SELECT gregale_auth.remove_org_domain($1, 'acme.com')`, acme)
+	actAs(ctx, t, owner, bob)
+	wantSQLError(t, owner, "42501", "forbidden", `SELECT gregale_auth.check_org_sso($1, $2, NULL, NULL)`, acme, provider)
+	wantSQLError(t, owner, "P0002", "not_found", `SELECT gregale_auth.check_org_sso($1, $2, NULL, NULL)`, globex, provider)
+	if err := f.manager.Ensure(ctx, f.material, f.runtime); err != nil {
+		t.Fatal(err)
+	}
+	if code, _ := sqlCode(t, f.connect(t, f.runtime.name), `SELECT gregale_auth.list_org_domains(gen_random_uuid())`); code != "42501" {
+		t.Fatalf("runtime credential called the organization SSO functions: %s", code)
+	}
+}

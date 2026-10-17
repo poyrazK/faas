@@ -13188,7 +13188,7 @@ Show the issuer, JWKS URL and readiness of an Auth app
 
 Show the running Auth settings, or change them and restart the app
 
-`gregale auth config [--site-url <URL>] [--redirect-urls <URLS>] [--signup <on|off>] [--autoconfirm <on|off>] [--password-min-length <N>] [--password-require <CLASSES>] [--leaked-password-check <on|off>] [--mfa <on|off>] [--email-provider <PROVIDER>] [--email-from <SENDER>] [--email-api-key-stdin] [--authz <FILE>] [--events <on|off>] [--passkeys <on|off>] [--passkey-rp-id <DOMAIN>] [--brand-name <NAME>] [--brand-color <#RRGGBB>] [--brand-logo-url <URL>] [--captcha <PROVIDER>] [--captcha-site-key <KEY>] [--captcha-secret-stdin] [--activity-retention <DAYS>] [--sms <PROVIDER>] [--sms-account <ID>] [--sms-sender <SENDER>] [--sms-secret-stdin] [--sso <on|off>] [--scope <SCOPE>] <name>`
+`gregale auth config [--site-url <URL>] [--redirect-urls <URLS>] [--signup <on|off>] [--autoconfirm <on|off>] [--password-min-length <N>] [--password-require <CLASSES>] [--leaked-password-check <on|off>] [--mfa <on|off>] [--email-provider <PROVIDER>] [--email-from <SENDER>] [--email-api-key-stdin] [--authz <FILE>] [--events <on|off>] [--passkeys <on|off>] [--passkey-rp-id <DOMAIN>] [--brand-name <NAME>] [--brand-color <#RRGGBB>] [--brand-logo-url <URL>] [--captcha <PROVIDER>] [--captcha-site-key <KEY>] [--captcha-secret-stdin] [--activity-retention <DAYS>] [--sms <PROVIDER>] [--sms-account <ID>] [--sms-sender <SENDER>] [--sms-secret-stdin] [--sso <on|off>] [--org-sso <on|off>] [--scope <SCOPE>] <name>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -13219,6 +13219,7 @@ Show the running Auth settings, or change them and restart the app
 | `--sms-sender <SENDER>` | Twilio messaging or Verify service SID (or phone number), MessageBird originator, Textlocal sender or Vonage from |  |
 | `--sms-secret-stdin` | read the Twilio auth token, MessageBird access key, Textlocal API key or Vonage API secret from stdin |  |
 | `--sso <on|off>` | organization single sign-on (SAML); manage identity providers with gregale auth sso | one of `on` · `off` |
+| `--org-sso <on|off>` | let organizations verify their email domains and connect their own identity provider (needs --sso on) | one of `on` · `off` |
 | `--scope <SCOPE>` | environment scope |  |
 
 Examples:

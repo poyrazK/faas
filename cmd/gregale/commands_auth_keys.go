@@ -393,9 +393,10 @@ type authPublicSettings struct {
 		Provider string `json:"provider"`
 	} `json:"phone"`
 	SSO struct {
-		Enabled  bool   `json:"enabled"`
-		EntityID string `json:"entity_id"`
-		ACSURL   string `json:"acs_url"`
+		Enabled     bool   `json:"enabled"`
+		EntityID    string `json:"entity_id"`
+		ACSURL      string `json:"acs_url"`
+		SelfService bool   `json:"self_service"`
 	} `json:"sso"`
 	Keys struct {
 		Signing   string   `json:"signing"`

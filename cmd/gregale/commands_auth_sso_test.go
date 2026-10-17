@@ -175,3 +175,15 @@ func TestAuthSSOSCIMToken(t *testing.T) {
 		t.Fatal("scim-token accepted provider settings")
 	}
 }
+
+func TestAuthConfigOrganizationSSO(t *testing.T) {
+	resetJSONEnv(t)
+	sealed, _, _ := authSettingsWorld(t, []string{"AUTH_SAML_PRIVATE_KEY"}, nil)
+	captureAuthStdout(t)
+	if code := cmdAuth([]string{"config", "shop-auth", "--sso", "on", "--org-sso", "on"}); code != 0 || sealed["AUTH_SSO"] != "1" || sealed["AUTH_ORG_SSO"] != "1" {
+		t.Fatalf("config = %d, sealed %v", code, sortedKeys(sealed))
+	}
+	if code := cmdAuth([]string{"config", "shop-auth", "--org-sso", "off"}); code != 0 || sealed["AUTH_ORG_SSO"] != "0" {
+		t.Fatalf("off = %d, sealed %v", code, sortedKeys(sealed))
+	}
+}

@@ -114,6 +114,9 @@ type Change struct {
 	// SSO turns organization single sign-on (SAML) on or off. Turning it on
 	// also needs SAMLKeySecret, which the caller creates once.
 	SSO *bool
+	// OrgSSO lets organizations verify their email domains and connect
+	// their own SAML identity provider; it needs SSO.
+	OrgSSO *bool
 }
 
 // Captcha is a CAPTCHA provider and its keys; the secret stays in the app.
@@ -208,6 +211,9 @@ func (c Change) Secrets() (map[string]string, []string, error) {
 	}
 	if c.SSO != nil {
 		set["AUTH_SSO"] = flag(*c.SSO)
+	}
+	if c.OrgSSO != nil {
+		set["AUTH_ORG_SSO"] = flag(*c.OrgSSO)
 	}
 	if c.SMS != nil {
 		sms, removed, err := c.SMS.secrets()
