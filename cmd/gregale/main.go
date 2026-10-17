@@ -140,6 +140,9 @@ func run(args []string) (status int) {
 		fmt.Print(topLevelUsage(false))
 		return 0
 	}
+	if !cliCommandAvailable(args[0]) {
+		return unknownCommand(args[0])
+	}
 	// Help is always local and comes from the same manifest as completion and
 	// the generated reference. This also handles flags preceding --help.
 	if len(args) > 1 && args[0] != "help" && hasHelpFlag(args[1:]) {
@@ -176,7 +179,7 @@ func run(args []string) (status int) {
 			fmt.Print(topLevelUsage(len(args) == 2 && args[1] == "--all"))
 			return 0
 		}
-		if command, ok := lookupCliCommand(args[1]); ok {
+		if command, ok := lookupCliCommand(args[1]); ok && cliCommandAvailable(command.Name) {
 			if printManifestHelp(osStdout, command, args[2:]) {
 				return 0
 			}
@@ -434,6 +437,8 @@ func run(args []string) (status int) {
 		return cmdUploadCache(args[1:])
 	case "domains":
 		return cmdDomains(args[1:])
+	case "sites":
+		return cmdSites(args[1:])
 	case "tenant-surfaces":
 		return cmdTenantSurfaces(args[1:])
 	case "flags":

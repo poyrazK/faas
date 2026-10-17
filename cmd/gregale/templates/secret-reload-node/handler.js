@@ -22,6 +22,19 @@ app.get("/healthz", async (_req, res) => {
     res.status(200).json({ok: true, db: "ok"});
   } catch {res.status(503).json({ok: false, db: "unavailable"});}
 });
+// guest-init calls these over loopback with one exact marker header. The drain
+// keeps SQL sessions out of a capture; restore replaces any captured pool.
+for (const [path, marker, run] of [
+  ["/internal/before-checkpoint", "X-Faas-Before-Checkpoint", () => database.checkpoint()],
+  ["/internal/after-restore", "X-Faas-After-Restore", () => database.restore()],
+]) {
+  app.post(path, async (req, res) => {
+    if (!["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(req.socket.remoteAddress) ||
+        req.get(marker) !== "1") return res.sendStatus(403);
+    try {await run(); res.sendStatus(204);}
+    catch {res.sendStatus(503);}
+  });
+}
 try {
   database = createDatabase(config => {
     const url = new URL(config.connectionString);

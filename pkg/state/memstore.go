@@ -140,6 +140,17 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
+	hostingOIDCTrusts                          map[string]api.HostingOIDCTrust
+	hostingCredentials                         map[string]api.HostingAutomationCredential
+	hostingRetentionPolicies                   map[string]api.HostingRetentionPolicy
+	hostingCIRuns                              map[string]api.HostingCIRun
+	hostingHistory                             map[string][]api.HostingPromotionEvent
+	hostingPreviews                            map[string]api.HostingPreview
+	hostingDomains                             map[string]memHostingDomain
+	hostingDomainClaims                        map[string]string
+	hostingSites                               map[string]api.HostingSite
+	hostingReleases                            map[string]api.HostingRelease
+	hostingPublications                        map[string]hostingPublication
 	eventAcknowledgmentWriters                 map[string]eventAcknowledgmentWriter
 	eventAcknowledgmentCoverageHead            eventAcknowledgmentCoverageHead
 	eventAcknowledgmentMetrics                 map[eventAcknowledgmentMetricKey]eventAcknowledgmentMetric
@@ -528,7 +539,10 @@ type MemStore struct {
 	// migrationLeases mirrors the durable source-side migration lease table.
 	// It lets vmmd migration tests exercise restart-safe lease semantics without
 	// requiring Postgres.
-	migrationLeases map[string]MigrationLease // lease_token → lease
+	migrationLeases       map[string]MigrationLease // lease_token → lease
+	migrationSources      map[string]MigrationSource
+	migrationAdmissions   map[string]MigrationAdmission
+	migrationResumeFences map[string]bool
 
 	// workflows / workflowSteps / workflowEvents mirror ADR-081 (the
 	// timestamped workflow schema migration).
@@ -562,7 +576,14 @@ type MemStore struct {
 	// operatorIntents mirrors operator_intents (migrations/00431)
 	// for handler + subscriber tests. Keyed by intent id (UUID);
 	// status transitions follow the production 5-state CHECK.
-	operatorIntents map[string]OperatorIntent
+	operatorIntents             map[string]OperatorIntent
+	operatorRestarts            map[string]OperatorRestartExecution
+	operatorParks               map[string]OperatorParkExecution
+	operatorNodes               map[string]OperatorNodeResult
+	nodeLifecycleCompletions    map[nodeLifecycleCompletionKey]NodeLifecycleCompletionResult
+	operatorRecoverySubmissions map[string]operatorRecoverySubmissionRow
+	snapshotRecoveryGenerations map[string]int64
+	instanceSnapshotRecovery    map[string]instanceSnapshotRecovery
 	// runtimeConfigs mirrors runtime_config_entries (migration 00466).
 	// The key is config_key + scope + scope_id, matching the production
 	// unique constraint and the reconciliation lookup path.
@@ -3505,6 +3526,11 @@ func (m *MemStore) UpdateProjectBinding(_ context.Context, accountID, projectID,
 func (m *MemStore) DeleteProject(_ context.Context, projectID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	for _, site := range m.hostingSites {
+		if site.ProjectID == projectID {
+			return ErrConflict
+		}
+	}
 	p, ok := m.projects[projectID]
 	if !ok {
 		return ErrNotFound
@@ -3724,6 +3750,11 @@ func (m *MemStore) DeleteProjectEnvironmentWithCleanup(
 	}
 	if slug == "production" || slug == DefaultEnvScope || environment.Protected {
 		return ProjectEnvironmentCleanupJob{}, ErrConflict
+	}
+	for _, site := range m.hostingSites {
+		if site.ProjectID == projectID && site.Environment == slug {
+			return ProjectEnvironmentCleanupJob{}, ErrConflict
+		}
 	}
 
 	for _, app := range m.apps {
@@ -5950,6 +5981,9 @@ func (m *MemStore) MigrateInstanceOwner(ctx context.Context, instanceID, fromNod
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkNodeAdmissionLocked(ctx, toNodeID); err != nil {
+		return err
+	}
 	ins, ok := m.instances[instanceID]
 	if !ok {
 		return ErrNotFound
@@ -5977,7 +6011,11 @@ func (m *MemStore) MigrateInstanceOwner(ctx context.Context, instanceID, fromNod
 	if err := m.guardInstanceRuntimeTransitionLocked(ctx, m.instances[instanceID], ins); err != nil {
 		return err
 	}
+	if err := m.validateMigrationAdmissionCommitLocked(ctx, ins, fromNodeID, toNodeID, leaseToken); err != nil {
+		return err
+	}
 	m.instances[instanceID] = ins
+	m.consumeMigrationAdmissionLocked(ins, fromNodeID, leaseToken)
 	// Stamp apps.migrated_at to match the SQL transaction's
 	// second UPDATE.
 	delete(m.instanceRuntimeConfigReceipts, instanceID)
@@ -12672,7 +12710,14 @@ func (m *MemStore) ClaimPendingOperatorIntent(_ context.Context) (OperatorIntent
 	var oldestID string
 	var oldestAt time.Time
 	for id, r := range m.operatorIntents {
-		if r.Status != OperatorIntentPending {
+		execution := m.operatorRestarts[id]
+		instance := m.instances[execution.Target.InstanceID]
+		recovered := r.Status == OperatorIntentOutcomeUnknown && execution.Phase == RestartDestroyed &&
+			execution.Target.MatchesInstance(instance) && (instance.State == string(StateRunning) || instance.State == string(StateStopped))
+		park := m.operatorParks[id]
+		parkInstance := m.instances[park.Target.InstanceID]
+		recoveredPark := r.Kind == OperatorIntentKindForcePark && r.Status == OperatorIntentOutcomeUnknown && park.Phase == ParkAcknowledged && park.CanReconcile(parkInstance)
+		if r.Status != OperatorIntentPending && !recovered && !recoveredPark {
 			continue
 		}
 		if oldestID == "" || r.RequestedAt.Before(oldestAt) ||
@@ -12686,6 +12731,9 @@ func (m *MemStore) ClaimPendingOperatorIntent(_ context.Context) (OperatorIntent
 	}
 	r := m.operatorIntents[oldestID]
 	r.Status = OperatorIntentRunning
+	r.ClaimToken = uuid.NewString()
+	r.Error = ""
+	r.FinishedAt = nil
 	now := time.Now().UTC()
 	r.StartedAt = &now
 	m.operatorIntents[oldestID] = r
@@ -12698,6 +12746,9 @@ func (m *MemStore) MarkOperatorIntentSucceeded(_ context.Context, id string, sna
 	r, ok := m.operatorIntents[id]
 	if !ok || r.Status != OperatorIntentRunning {
 		return ErrOperatorIntentNotFound
+	}
+	if r.Kind == OperatorIntentKindForceRestart || r.Kind == OperatorIntentKindForceColdBoot || r.Kind == OperatorIntentKindForcePark || IsOperatorNodeKind(r.Kind) {
+		return ErrConflict
 	}
 	r.Status = OperatorIntentSucceeded
 	r.SnapIDsMarkedStale = snapIDs
@@ -12713,6 +12764,9 @@ func (m *MemStore) MarkOperatorIntentFailed(_ context.Context, id, errMsg string
 	r, ok := m.operatorIntents[id]
 	if !ok || r.Status != OperatorIntentRunning {
 		return ErrOperatorIntentNotFound
+	}
+	if r.Kind == OperatorIntentKindForceRestart || r.Kind == OperatorIntentKindForceColdBoot || r.Kind == OperatorIntentKindForcePark || IsOperatorNodeKind(r.Kind) {
+		return ErrConflict
 	}
 	errMsg = safetext.Truncate(errMsg, api.AuditReasonMaxBytes)
 	r.Status = OperatorIntentFailed
@@ -12739,6 +12793,15 @@ func (m *MemStore) GetOperatorIntent(_ context.Context, id string) (OperatorInte
 	if !ok {
 		return OperatorIntent{}, ErrOperatorIntentNotFound
 	}
+	if execution, exists := m.operatorRestarts[id]; exists {
+		execution = cloneOperatorRestart(execution)
+		r.RestartExecution = &execution
+	}
+	if execution, exists := m.operatorParks[id]; exists {
+		execution = cloneOperatorPark(execution)
+		r.ParkExecution = &execution
+	}
+	r.SnapIDsMarkedStale = slices.Clone(r.SnapIDsMarkedStale)
 	return r, nil
 }
 
@@ -12789,11 +12852,12 @@ func (m *MemStore) ReclaimStuckRunningOperatorIntents(_ context.Context, thresho
 		if r.StartedAt == nil {
 			continue
 		}
-		if r.StartedAt.After(threshold) {
+		if !r.StartedAt.Before(threshold) {
 			continue
 		}
 		r.Status = OperatorIntentPending
 		r.StartedAt = nil
+		r.ClaimToken = ""
 		m.operatorIntents[id] = r
 		n++
 	}
@@ -12810,13 +12874,17 @@ func (m *MemStore) OperatorIntentOutcomeMissingCounts(_ context.Context, thresho
 	defer m.mu.Unlock()
 	out := make(map[string]int)
 	for _, r := range m.operatorIntents {
+		if r.Status == OperatorIntentOutcomeUnknown {
+			out[string(r.Kind)]++
+			continue
+		}
 		if r.Status != OperatorIntentRunning {
 			continue
 		}
 		if r.StartedAt == nil {
 			continue
 		}
-		if r.StartedAt.After(threshold) {
+		if !r.StartedAt.Before(threshold) {
 			continue
 		}
 		out[string(r.Kind)]++
@@ -14573,6 +14641,11 @@ func (m *MemStore) CreateInstance(ctx context.Context, appID, deploymentID, stat
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if IsLive(strings.ToLower(state)) {
+		if err := m.checkNodeAdmissionLocked(ctx, nodeID); err != nil {
+			return Instance{}, err
+		}
+	}
 	if err := m.requireInstanceLayerArtifactsLocked(deploymentID, state); err != nil {
 		return Instance{}, err
 	}
@@ -14663,6 +14736,11 @@ func (m *MemStore) CreateInstanceWithMode(ctx context.Context, appID, deployment
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if IsLive(strings.ToLower(state)) {
+		if err := m.checkNodeAdmissionLocked(ctx, nodeID); err != nil {
+			return Instance{}, err
+		}
+	}
 	if err := m.requireInstanceLayerArtifactsLocked(deploymentID, state); err != nil {
 		return Instance{}, err
 	}
@@ -14720,12 +14798,17 @@ func (m *MemStore) CreateInstanceWithMode(ctx context.Context, appID, deployment
 // CreateJobInstance mirrors the PostgreSQL job-task insert. Job instances
 // have no app or deployment row: the job definition owns the OCI image and
 // the run/task coordinates live on the job task row.
-func (m *MemStore) CreateJobInstance(_ context.Context, instanceID, jobID, runID string, taskIndex int, state string, ramMB int, nodeID, wakeID string) (Instance, error) {
+func (m *MemStore) CreateJobInstance(ctx context.Context, instanceID, jobID, runID string, taskIndex int, state string, ramMB int, nodeID, wakeID string) (Instance, error) {
 	if err := validateMemStoreCreateInstanceState(state); err != nil {
 		return Instance{}, err
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if IsLive(strings.ToLower(state)) {
+		if err := m.checkNodeAdmissionLocked(ctx, nodeID); err != nil {
+			return Instance{}, err
+		}
+	}
 	if _, ok := m.jobs[jobID]; !ok {
 		return Instance{}, ErrNotFound
 	}
@@ -15533,6 +15616,9 @@ func (m *MemStore) DeleteParkedInstancesOlderThan(_ context.Context, threshold t
 func (m *MemStore) DeleteInstance(_ context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.migrationPendingLocked(id, "", false) {
+		return ErrConflict
+	}
 	if m.qualificationExecutionUnretiredLocked(id) {
 		return ErrConflict
 	}
@@ -15557,6 +15643,7 @@ func (m *MemStore) DeleteInstance(_ context.Context, id string) error {
 		return ErrNotFound
 	}
 	delete(m.instances, id)
+	delete(m.instanceSnapshotRecovery, id)
 	m.deleteNativeInstanceInputsLocked(id)
 	delete(m.instanceRuntimeConfigReceipts, id)
 	m.deleteSecretRuntimeProcessesLocked(id)
@@ -15743,6 +15830,9 @@ func (m *MemStore) TouchInstancesWithRequestDelta(_ context.Context, touches []I
 func (m *MemStore) CreateSnapshot(_ context.Context, snap Snapshot) (Snapshot, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if snap.RecoveryGeneration != 0 {
+		return Snapshot{}, ErrInvalidArgument
+	}
 	return m.createSnapshotLocked(snap)
 }
 
@@ -15785,6 +15875,11 @@ func (m *MemStore) PublishSnapshotIfRuntimeFresh(_ context.Context, snap Snapsho
 	if err := m.checkStandardSnapshotRuntimeFreshLocked(snap, sourceInstanceID, sourceStartedAt); err != nil {
 		return Snapshot{}, err
 	}
+	generation := m.snapshotRecoveryGenerations[snap.DeploymentID]
+	if generation > 0 && (sourceInstanceID == "" || !m.instanceSnapshotRecoveryFreshLocked(sourceInstanceID)) {
+		return Snapshot{}, ErrSnapshotRuntimeStale
+	}
+	snap.RecoveryGeneration = generation
 	stored, err := m.createSnapshotLocked(snap)
 	if err == nil && haveReceipt {
 		if m.snapshotRuntimeConfigReceipts == nil {
@@ -15796,6 +15891,9 @@ func (m *MemStore) PublishSnapshotIfRuntimeFresh(_ context.Context, snap Snapsho
 }
 
 func (m *MemStore) createSnapshotLocked(snap Snapshot) (Snapshot, error) {
+	if snap.RecoveryGeneration < 0 || !snap.Stale && snap.RecoveryGeneration != m.snapshotRecoveryGenerations[snap.DeploymentID] {
+		return Snapshot{}, ErrSnapshotRuntimeStale
+	}
 	// StorageKey is required on both backends (see PgStore for the
 	// rationale). The in-memory store doesn't have a DB DEFAULT to
 	// fall back on, so the contract is enforced here as well —
@@ -15845,7 +15943,7 @@ func (m *MemStore) LatestSnapshot(_ context.Context, deploymentID string) (Snaps
 	var latest Snapshot
 	found := false
 	for _, s := range m.snapshots {
-		if s.DeploymentID != deploymentID || s.Stale {
+		if s.DeploymentID != deploymentID || s.Stale || s.RecoveryGeneration != m.snapshotRecoveryGenerations[deploymentID] {
 			continue
 		}
 		if deployment, ok := m.deployments[s.DeploymentID]; !ok ||
@@ -15891,7 +15989,7 @@ func (m *MemStore) LatestSnapshotForTier(_ context.Context, deploymentID, tier s
 	var latest Snapshot
 	found := false
 	for _, s := range m.snapshots {
-		if s.DeploymentID != deploymentID || s.Stale || s.Tier != tier {
+		if s.DeploymentID != deploymentID || s.Stale || s.Tier != tier || s.RecoveryGeneration != m.snapshotRecoveryGenerations[deploymentID] {
 			continue
 		}
 		if deployment, ok := m.deployments[s.DeploymentID]; !ok ||
@@ -16213,11 +16311,12 @@ func (m *MemStore) seedDefaultLocalNodeLocked() {
 		// synthetic default-local row carries api.VCPUSlots so a
 		// single-box install sees identical behaviour to the
 		// pre-migration box-wide gate.
-		VCPUBudget:      api.VCPUSlots,
-		Active:          true,
-		Lifecycle:       NodeLifecycleActive,
-		LastHeartbeatAt: now,
-		CreatedAt:       now,
+		VCPUBudget:          api.VCPUSlots,
+		Active:              true,
+		Lifecycle:           NodeLifecycleActive,
+		LifecycleGeneration: 1,
+		LastHeartbeatAt:     now,
+		CreatedAt:           now,
 		// Phase 2 / Gate A: per-node schedd dial target. The
 		// single-box synthetic row points at the legacy
 		// /run/faas/schedd.sock so the gateway's per-node cache
@@ -16295,7 +16394,17 @@ func (m *MemStore) ComputeNodeUsedMB(_ context.Context, nodeID string) (int64, e
 		}
 		switch ins.State {
 		case "waking", "cold_booting", "running", "draining", "warm":
-			used += int64(ins.RAMMB + api.PerVMOverheadMB)
+			used += m.migrationResidentRAMLocked(ins)
+		}
+	}
+	for _, a := range m.migrationAdmissions {
+		if a.Pending() && a.DestinationNodeID == nodeID {
+			used += int64(a.RAMMB)
+		}
+	}
+	for _, r := range m.migrationSources {
+		if r.SourceNodeID == nodeID {
+			used += m.migrationSourceCostLocked(r, true).RAM
 		}
 	}
 	return used, nil
@@ -16346,6 +16455,19 @@ func (m *MemStore) ComputeNodeUsedCPUMillicoresByNode(_ context.Context, nodeIDs
 				cpu = api.DefaultAppCPUMillicores
 			}
 			used[ins.NodeID] += int64(cpu)
+			if m.migrationResidentLocked(ins) || m.originalMigrationSourceLocked(ins) {
+				used[ins.NodeID] += max(0, m.capacityInstanceResources[ins.ID].CPU-int64(cpu))
+			}
+		}
+	}
+	for _, a := range m.migrationAdmissions {
+		if _, ok := wanted[a.DestinationNodeID]; ok && a.Pending() {
+			used[a.DestinationNodeID] += int64(a.CPUMillicores)
+		}
+	}
+	for _, r := range m.migrationSources {
+		if _, ok := wanted[r.SourceNodeID]; ok {
+			used[r.SourceNodeID] += m.migrationSourceCostLocked(r, true).CPU
 		}
 	}
 	return used, nil
@@ -16377,8 +16499,8 @@ func (m *MemStore) MarkComputeNodeInactive(_ context.Context, nodeID string) err
 	}
 	n.Lifecycle = NodeLifecycleUnavailable
 	n.Active = false
-	m.computeNodes[nodeID] = n
-	return nil
+	_, err := m.storeComputeNodeLifecycleLocked(n)
+	return err
 }
 
 // SetComputeNodeRole overwrites the role column on a row by id
@@ -16445,8 +16567,7 @@ func (m *MemStore) CreateComputeNode(_ context.Context, node ComputeNode) (Compu
 		}
 	}
 	n.Active = n.Lifecycle == NodeLifecycleActive || n.Lifecycle == NodeLifecycleRecovering
-	m.computeNodes[n.ID] = n
-	return n, nil
+	return m.storeComputeNodeLifecycleLocked(n)
 }
 
 // UpsertComputeNode mirrors pgstore's INSERT ... ON CONFLICT DO UPDATE
@@ -16467,11 +16588,10 @@ func (m *MemStore) UpsertComputeNode(_ context.Context, node ComputeNode) (Compu
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var existing *ComputeNode
-	for id, current := range m.computeNodes {
+	for _, current := range m.computeNodes {
 		if current.Name == node.Name {
 			current := current
 			existing = &current
-			delete(m.computeNodes, id)
 			break
 		}
 	}
@@ -16479,6 +16599,7 @@ func (m *MemStore) UpsertComputeNode(_ context.Context, node ComputeNode) (Compu
 	if existing != nil {
 		n.ID = existing.ID
 		n.CreatedAt = existing.CreatedAt
+		n.DrainInitiatedAt, n.DrainCompletedAt, n.RecoveryInitiatedAt = existing.DrainInitiatedAt, existing.DrainCompletedAt, existing.RecoveryInitiatedAt
 		if existing.Lifecycle == NodeLifecycleRetired {
 			n.Lifecycle = NodeLifecycleRetired
 		}
@@ -16501,8 +16622,7 @@ func (m *MemStore) UpsertComputeNode(_ context.Context, node ComputeNode) (Compu
 		n.Lifecycle = NodeLifecycleActive
 	}
 	n.Active = n.Lifecycle == NodeLifecycleActive || n.Lifecycle == NodeLifecycleRecovering
-	m.computeNodes[n.ID] = n
-	return n, nil
+	return m.storeComputeNodeLifecycleLocked(n)
 }
 
 // UpsertComputeNodeFromOperator mirrors pgstore's operator-side
@@ -16560,11 +16680,10 @@ func (m *MemStore) upsertComputeNodeLocked(node ComputeNode, preserveTargetURLOn
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var existing *ComputeNode
-	for id, current := range m.computeNodes {
+	for _, current := range m.computeNodes {
 		if current.Name == node.Name {
 			current := current
 			existing = &current
-			delete(m.computeNodes, id)
 			break
 		}
 	}
@@ -16576,6 +16695,7 @@ func (m *MemStore) upsertComputeNodeLocked(node ComputeNode, preserveTargetURLOn
 		}
 		n.ID = existing.ID
 		n.CreatedAt = existing.CreatedAt
+		n.DrainInitiatedAt, n.DrainCompletedAt, n.RecoveryInitiatedAt = existing.DrainInitiatedAt, existing.DrainCompletedAt, existing.RecoveryInitiatedAt
 		if preserveTargetURLOnConflict && existing.TargetURL != "" {
 			n.TargetURL = existing.TargetURL
 		}
@@ -16609,8 +16729,7 @@ func (m *MemStore) upsertComputeNodeLocked(node ComputeNode, preserveTargetURLOn
 		n.Lifecycle = existing.Lifecycle
 	}
 	n.Active = n.Lifecycle == NodeLifecycleActive || n.Lifecycle == NodeLifecycleRecovering
-	m.computeNodes[n.ID] = n
-	return n, nil
+	return m.storeComputeNodeLifecycleLocked(n)
 }
 
 // UpsertNodeKey inserts or updates a (compute_node_id, key_id) row
@@ -16689,8 +16808,8 @@ func (m *MemStore) SetComputeNodeActive(_ context.Context, id string, active boo
 		n.Lifecycle = NodeLifecycleUnavailable
 	}
 	n.Active = active
-	m.computeNodes[id] = n
-	return nil
+	_, err := m.storeComputeNodeLifecycleLocked(n)
+	return err
 }
 
 // NodeGet returns one ComputeNode by id with lifecycle fields populated.
@@ -16769,8 +16888,8 @@ func (m *MemStore) NodeSetLifecycle(_ context.Context, id string, expected, next
 			n.DrainCompletedAt = &now
 		}
 	}
-	m.computeNodes[id] = n
-	return nil
+	_, err := m.storeComputeNodeLifecycleLocked(n)
+	return err
 }
 
 // NodeListRecoverable excludes terminally stale unavailable inventory while
@@ -16822,43 +16941,20 @@ func (m *MemStore) NodeListDrainable(_ context.Context) ([]ComputeNode, error) {
 	return out, nil
 }
 
-// NodeMarkDrainCompleted flips lifecycle 'draining' → 'maintenance' and
-// stamps drain_completed_at (CAS on a draining state).
-func (m *MemStore) NodeMarkDrainCompleted(_ context.Context, id string, completedAt time.Time) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	n, ok := m.computeNodes[id]
-	if !ok {
-		return ErrNotFound
+// NodeMarkDrainCompleted is an unfenced legacy setter. Use CompleteNodeLifecycle.
+func (m *MemStore) NodeMarkDrainCompleted(ctx context.Context, id string, _ time.Time) error {
+	if _, err := m.NodeGet(ctx, id); err != nil {
+		return err
 	}
-	if n.Lifecycle != NodeLifecycleDraining && n.Lifecycle != NodeLifecycleForceDraining {
-		return ErrConflict
-	}
-	n.Lifecycle = NodeLifecycleMaintenance
-	n.Active = false
-	n.DrainCompletedAt = &completedAt
-	m.computeNodes[id] = n
-	return nil
+	return ErrConflict
 }
 
-// NodeMarkRecovered flips lifecycle 'recovering' → 'active' and
-// stamps last_recovery_outcome='succeeded' (CAS on 'recovering').
-func (m *MemStore) NodeMarkRecovered(_ context.Context, id string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	n, ok := m.computeNodes[id]
-	if !ok {
-		return ErrNotFound
+// NodeMarkRecovered is an unfenced legacy setter. Use CompleteNodeLifecycle.
+func (m *MemStore) NodeMarkRecovered(ctx context.Context, id string) error {
+	if _, err := m.NodeGet(ctx, id); err != nil {
+		return err
 	}
-	if n.Lifecycle != NodeLifecycleRecovering {
-		return ErrConflict
-	}
-	n.Lifecycle = NodeLifecycleActive
-	n.Active = true
-	outcome := "succeeded"
-	n.LastRecoveryOutcome = &outcome
-	m.computeNodes[id] = n
-	return nil
+	return ErrConflict
 }
 
 // InstanceListByNodeForRecovery returns the live and in-flight instances on
@@ -17003,6 +17099,9 @@ func (m *MemStore) DeleteComputeNode(_ context.Context, id string) error {
 		if instance.NodeID == id {
 			return ErrConflict
 		}
+	}
+	if m.nodeMigrationPendingLocked(id) {
+		return ErrConflict
 	}
 	delete(m.computeNodes, id)
 	delete(m.computeNodeRuntimeIncarnations, id)
