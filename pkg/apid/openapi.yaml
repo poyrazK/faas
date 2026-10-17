@@ -62674,15 +62674,12 @@ components:
         strategy:
           type: string
           enum: [ordered, weighted, latency, cost]
-          description: >-
-            How a call picks its first target (ADR-1390). ordered (the default) follows route order; weighted draws by target
-            weight; latency picks the healthy target with the lowest recent mean time to first byte; cost picks the healthy
-            target with the lowest recent mean cost per call. The other targets follow as fallbacks.
+          description: The route's strategy from now on, as on creation (ADR-1390); omitted means ordered.
         max_ttfb_ms:
           type: integer
           minimum: 1
           maximum: 600000
-          description: A cost route's latency target; targets slower on average go after those within it.
+          description: The cost route's latency target from now on, as on creation; omitted means none.
     PutOutboundBindingAIGuardrailsRequest:
       type: object
       description: Replace an app's AI guardrails on one integration (ADR-991). Null fields remove that guardrail.

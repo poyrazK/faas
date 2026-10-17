@@ -28,11 +28,9 @@ class PutOutboundAIRouteTargetsRequest:
 
     targets: list[OutboundAIRouteTarget]
     strategy: PutOutboundAIRouteTargetsRequestStrategy | Unset = UNSET
-    """How a call picks its first target (ADR-1390). ordered (the default) follows route order; weighted draws by
-    target weight; latency picks the healthy target with the lowest recent mean time to first byte; cost picks the
-    healthy target with the lowest recent mean cost per call. The other targets follow as fallbacks."""
+    """The route's strategy from now on, as on creation (ADR-1390); omitted means ordered."""
     max_ttfb_ms: int | Unset = UNSET
-    """A cost route's latency target; targets slower on average go after those within it."""
+    """The cost route's latency target from now on, as on creation; omitted means none."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
