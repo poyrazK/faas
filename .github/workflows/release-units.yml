@@ -1,5 +1,5 @@
 # .github/workflows/release-units.yml — per-unit control-plane releases
-# (docs/adr/1540-per-unit-control-plane-releases.md).
+# (docs/adr/1650-per-unit-control-plane-releases.md).
 #
 # Every push to main builds and signs only the control-plane daemons whose Go
 # inputs changed since the full release production runs (the base), each

@@ -15,7 +15,7 @@ import (
 )
 
 // OverlayRequest describes a per-unit release
-// (docs/adr/1540-per-unit-control-plane-releases.md): the active release
+// (docs/adr/1650-per-unit-control-plane-releases.md): the active release
 // with a few files swapped.
 type OverlayRequest struct {
 	// ReleaseID names the new release directory. The CD planner derives it

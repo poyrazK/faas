@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Per-unit health gate for a per-unit control-plane release
-# (docs/adr/1540-per-unit-control-plane-releases.md). Runs on the control
+# (docs/adr/1650-per-unit-control-plane-releases.md). Runs on the control
 # plane after `deployctl deploy --only` and fails unless every listed service
 # is active, runs a binary from the new release, and answers its readiness
 # URL.

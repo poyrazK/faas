@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build the unsigned part of a per-unit control-plane release
-# (docs/adr/1540-per-unit-control-plane-releases.md) from an
+# (docs/adr/1650-per-unit-control-plane-releases.md) from an
 # affected_units.py report: every deployable control-plane binary, built with
 # build-release-batch's flags and stamped with its unit version, plus
 # units-manifest.json describing them. release-units.yml signs the tarball.

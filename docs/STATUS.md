@@ -410,6 +410,32 @@ lint and tagged compilation checks passed; [evidence and limits](ops/evidence/20
 record the qualification boundary. Supported native execution remains pending; this change
 does not enable production provisioning or alter Neon resources or billing.
 
+## PostgreSQL starter checkpoint drain — 2026-10-17
+
+The Node and Python PostgreSQL starters' first capture happened right after
+readiness, so every wake restored the startup check's open SQL session and
+orphaned its server backend. Both adapters now drain every session in a
+`before_checkpoint` hook (idempotent, retried after a failed drain, rotation
+refused until restore) next to the existing `after_restore` replacement.
+`secret-reload-node` bundled the restore code but never called it; it now
+serves both hooks. Declaring the checkpoint hook turns off warm captures for
+those apps (ADR-351). Unit tests and the TLS/SCRAM suites (Node and Python
+starters, concurrent functions) check that no server session survives the
+drain. Native VM capture evidence is pending.
+
+## Concurrent backend cancellation — 2026-10-16
+
+The follow-up to PR #4768 holds shared-worker slots through cancellation
+cleanup. Node receives an abort signal, Python acknowledges completed cleanup,
+and function hook handlers receive socket-derived lifecycle context (ADR-1540).
+Portable interpreter/race tests and real TLS/SCRAM PostgreSQL integration check
+bounded admission, blocked-write rollback, healthy neighbours, pool replacement
+and worker-death recovery. [Portable evidence](ops/evidence/20261016-function-backend-concurrency/REPORT.md)
+and the [acceptance procedure](ops/function-backend-concurrency-acceptance.md)
+separate these process checks from native VM qualification. Native execution is
+pending: this workspace lacks KVM. Function hooks execute in one worker; this
+does not qualify VM-wide pool draining or durable post-response `waitUntil`.
+
 ## Deployed PostgreSQL starter qualification — 2026-10-12
 
 The [native acceptance gate](ops/managed-postgres-native-acceptance.md) now requires
@@ -975,6 +1001,23 @@ daemon set, daemons at 74b9225c29 with the bridge, runner and test at
 and completed a 40 s async invocation in 40.7 s on its first attempt. Both
 40 s runs saw `X-Faas-Deadline-Ms=119999`. Before the bridge fix every
 attempt of that async invocation got a 502 about 32 s in and was retried.
+A function may set `function_concurrency` (ADR-1342): one Node or Python
+worker then serves that many requests at once, multiplexed by an id the
+adapter echoes, and an abandoned request is cancelled without restarting
+its worker. A `functions:` entry can set `ram_mb`, `request_timeout_s`,
+`min_instances`, `concurrency`, `env` and `secrets_from_env`, applied before
+the function's build, and `routes:` behind an `entry: true` function become
+`kind=route` edge rules on the entry app's hosts. Evidence, 2026-10-14 on
+`gregale-internal-test-1` (`cmd/e2e` `TestFunctionConcurrencyMetal`, full
+daemon set at f4a1972f8c): a binary function whose handler speaks the shared
+protocol, deployed with `function_concurrency=8`, answered eight concurrent
+2 s requests in 2.17 s from one worker process, and after a client abandoned
+a request the same worker reported one acknowledged cancel. The `gregale`
+CLI then deployed a two-function manifest: the new `users` function was
+reserved, configured and built with concurrency 4, its sealed
+`USERS_TOKEN` reached the guest, `/users/42` on the entry host reached
+`users` and `/about` reached the entry function, and a repeat deploy left
+exactly one managed route rule.
 `node24` and `python313` are the Tier 1 runtime
 additions — additive on top of `node22` / `python312` with the
 same envelope contract; handler paths `/app/node24.js` and

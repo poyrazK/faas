@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Plan a per-unit control-plane deploy from a signed unit release and the
-host's state (docs/adr/1540-per-unit-control-plane-releases.md).
+host's state (docs/adr/1650-per-unit-control-plane-releases.md).
 
 A unit release is cumulative: it carries every control-plane daemon whose
 inputs changed between its base full release and its commit, each stamped

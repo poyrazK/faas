@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// Per-unit control-plane releases (docs/adr/1540-per-unit-control-plane-releases.md).
+// Per-unit control-plane releases (docs/adr/1650-per-unit-control-plane-releases.md).
 
 // jobBlock returns a top-level job's text, up to the next top-level job.
 func jobBlock(t *testing.T, workflow, job string) string {

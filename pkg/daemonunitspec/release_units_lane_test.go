@@ -12,7 +12,7 @@ import (
 )
 
 // releaseUnits mirrors scripts/ci/release_units.json, the lane table the
-// per-unit release lane reads (docs/adr/1540-per-unit-control-plane-releases.md).
+// per-unit release lane reads (docs/adr/1650-per-unit-control-plane-releases.md).
 type releaseUnits struct {
 	Binaries map[string]struct {
 		Lane     string `json:"lane"`

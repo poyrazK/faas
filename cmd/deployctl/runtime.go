@@ -39,7 +39,7 @@ type hostRuntime struct {
 	waitReadyOverride func(ctx context.Context, service string) error
 	// only, when set, restricts restarts, readiness and canary-override
 	// retirement to these services: a per-unit release
-	// (docs/adr/1540-per-unit-control-plane-releases.md) replaces only
+	// (docs/adr/1650-per-unit-control-plane-releases.md) replaces only
 	// their binaries, and every other daemon keeps running untouched.
 	only map[string]struct{}
 }

@@ -54,7 +54,7 @@ func (c *Controller) Deploy(ctx context.Context, releaseID string) error {
 }
 
 // DeployOver is Deploy for a release built on top of another one: a per-unit
-// release (docs/adr/1540-per-unit-control-plane-releases.md) copies every
+// release (docs/adr/1650-per-unit-control-plane-releases.md) copies every
 // file it does not replace from the release that was active when it was
 // assembled. Activating it over any other release would silently roll that
 // release's other daemons back, so under the deploy lock the active release

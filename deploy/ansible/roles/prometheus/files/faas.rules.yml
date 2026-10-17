@@ -1006,6 +1006,61 @@ groups:
           description: "faas-postgres-connection-metrics.timer runs every 30 seconds and only refreshes its textfile after a successful query. A stale file means the database is hung, refusing connections, or the probe timer stopped."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostgresDown.md"
 
+      # ADR-1344 §8 warm standby. The primary's probe reports its slot only
+      # when the manifest declares postgresql.standby, so these stay silent
+      # on fleets without one.
+      - alert: FaasPostgresStandbyDisconnected
+        expr: faas_postgres_standby_slot_active == 0
+        for: 5m
+        labels:
+          severity: warn
+          component: postgres
+          family: database_availability
+          public_status: internal
+        annotations:
+          summary: "The warm-standby replica is not streaming from {{ $labels.instance }}"
+          description: "The faas_standby slot has had no WAL receiver for 5 minutes. The primary keeps WAL for it up to max_slot_wal_keep_size; until the standby reconnects, a failover would lose everything written since it left."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostgresStandby.md"
+
+      - alert: FaasPostgresStandbyLagHigh
+        expr: faas_postgres_standby_replay_lag_bytes > 268435456
+        for: 10m
+        labels:
+          severity: warn
+          component: postgres
+          family: database_availability
+          public_status: internal
+        annotations:
+          summary: "The warm standby is more than 256 MiB of WAL behind {{ $labels.instance }}"
+          description: "The connected standby has not replayed {{ $value | humanize1024 }}B of WAL for 10 minutes. A failover now would lose that much committed data; check the link between the providers and the standby's disk."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostgresStandby.md"
+
+      - alert: FaasPostgresStandbySlotRetentionHigh
+        expr: faas_postgres_standby_slot_retained_bytes > 0.5 * faas_postgres_standby_slot_keep_size_bytes and faas_postgres_standby_slot_keep_size_bytes > 0
+        for: 10m
+        labels:
+          severity: warn
+          component: postgres
+          family: database_availability
+          public_status: internal
+        annotations:
+          summary: "The warm standby's slot holds over half of max_slot_wal_keep_size on {{ $labels.instance }}"
+          description: "The primary keeps {{ $value | humanize1024 }}B of WAL for the standby. When it reaches max_slot_wal_keep_size the slot is invalidated and the standby must be reseeded from scratch."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostgresStandby.md"
+
+      - alert: FaasPostgresStandbySlotLost
+        expr: faas_postgres_standby_slot_wal_status{wal_status="lost"} == 1
+        for: 1m
+        labels:
+          severity: page
+          component: postgres
+          family: database_availability
+          public_status: internal
+        annotations:
+          summary: "The warm standby can no longer catch up with {{ $labels.instance }}"
+          description: "The faas_standby slot exceeded max_slot_wal_keep_size and the primary removed WAL the standby still needed. There is no usable failover target until the standby is reseeded."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostgresStandby.md"
+
   # ────────────────────────────────────────────────────────────────────
   # Off-host log pipeline health (issue #274).
   # Promtail exposes its own counters; these recording rules give the
@@ -1324,6 +1379,80 @@ groups:
           summary: "Compute metrics discovery is filtering invalid targets for {{ $labels.job }}"
           description: "apid omitted one or more active compute registry rows from the {{ $labels.job }} HTTP-SD response because the gateway target or stable node name failed validation. Metrics coverage is partial; repair the registry row and verify the next refresh."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeMetricsDiscoveryDegraded.md"
+
+  # ────────────────────────────────────────────────────────────────────
+  # ADR-1343 §5: the app edge on each compute node (gatewayd-public in
+  # compute edge mode and its Cloudflare Tunnel connector). Prometheus
+  # scrapes the two jobs only while the cell runs the edge, so these stay
+  # silent on fleets without it. One edge down is lost capacity; Cloudflare
+  # sends its share to the other connectors. All of them down is an outage.
+  # ────────────────────────────────────────────────────────────────────
+  - name: faas_compute_edge
+    rules:
+      - alert: FaasComputeEdgeUnavailable
+        expr: (sum(up{job="gatewayd-public-edge"}) == 0) or (sum(cloudflared_tunnel_ha_connections) == 0)
+        for: 2m
+        labels:
+          severity: page
+          component: gatewayd-public
+          family: compute_edge
+          public_status: internal
+        annotations:
+          summary: "No compute-node app edge is serving"
+          description: "Every compute edge is down or every Cloudflare Tunnel connector has lost its connections for 2 minutes. App requests routed through the tunnel are failing."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeEdge.md"
+
+      - alert: FaasComputeEdgeDown
+        expr: up{job="gatewayd-public-edge"} == 0
+        for: 2m
+        labels:
+          severity: warn
+          component: gatewayd-public
+          family: compute_edge
+          public_status: internal
+        annotations:
+          summary: "The app edge on {{ $labels.node }} is not answering"
+          description: "Prometheus cannot scrape gatewayd-public's compute edge on {{ $labels.node }}. Its connector may still take tunnel traffic and fail it; Cloudflare routes away only once the connector disconnects."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeEdge.md"
+
+      - alert: FaasComputeEdgeConnectorDisconnected
+        expr: (up{job="cloudflared"} == 0) or (cloudflared_tunnel_ha_connections == 0)
+        for: 2m
+        labels:
+          severity: warn
+          component: cloudflared
+          family: compute_edge
+          public_status: internal
+        annotations:
+          summary: "The Cloudflare Tunnel connector on {{ $labels.node }} is not connected"
+          description: "faas-cloudflared on {{ $labels.node }} is down or holds no tunnel connections. The node serves no app traffic until it reconnects; the other connectors carry its share."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeEdge.md"
+
+      - alert: FaasComputeEdgeLocalFallback
+        expr: rate(gatewayd_public_edge_local_fallback_total[5m]) > 0.5
+        for: 10m
+        labels:
+          severity: warn
+          component: gatewayd-public
+          family: compute_edge
+          public_status: internal
+        annotations:
+          summary: "The app edge on {{ $labels.node }} is routing around its own gateway"
+          description: "The compute edge on {{ $labels.node }} sent {{ $value | humanize }} requests/s to the compute pool for 10 minutes because its node's gatewayd-internal failed its health check or refused dials. Traffic still flows, with an extra hop; check gatewayd-internal on that node."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeEdge.md"
+
+      - alert: FaasComputeEdgeMisdirected
+        expr: rate(gatewayd_public_edge_misdirected_total[5m]) > 0.2
+        for: 15m
+        labels:
+          severity: warn
+          component: gatewayd-public
+          family: compute_edge
+          public_status: internal
+        annotations:
+          summary: "The app edge on {{ $labels.node }} is receiving non-app hosts"
+          description: "The compute edge on {{ $labels.node }} answered {{ $value | humanize }} requests/s with 421 for hosts outside the apps domain for 15 minutes. The tunnel's ingress rules likely send platform or custom-domain hosts to the compute edge."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeEdge.md"
 
   # ────────────────────────────────────────────────────────────────────
   # Dead-man's switch. FaasWatchdog fires permanently; Alertmanager routes
@@ -2349,7 +2478,7 @@ groups:
       # window; public status must show the mixed fleet while that gate runs.
       # Per-unit control-plane releases stamp unit-<commit> versions and are
       # deliberately mixed with their base release until the next full one
-      # (docs/adr/1540-per-unit-control-plane-releases.md); the unit lane
+      # (docs/adr/1650-per-unit-control-plane-releases.md); the unit lane
       # gates each restarted daemon itself, so they are left out here.
       - alert: FaasDeployVersionSkew
         expr: count(count by (version) ({__name__=~".*_faas_deploy_version", version!~"unit-.+"})) > 1

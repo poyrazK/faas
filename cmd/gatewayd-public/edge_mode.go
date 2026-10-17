@@ -93,6 +93,7 @@ type edgeMetrics struct {
 	fallbacks   prometheus.Counter
 	misdirected prometheus.Counter
 	localReady  prometheus.Gauge
+	nodeDrained prometheus.Gauge
 }
 
 func newEdgeMetrics() *edgeMetrics {
@@ -110,8 +111,12 @@ func newEdgeMetrics() *edgeMetrics {
 			Name: "gatewayd_public_edge_local_gateway_ready",
 			Help: "1 while a compute-node edge routes to its own node's gatewayd-internal, 0 while it uses the compute pool (ADR-1343).",
 		}),
+		nodeDrained: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "gatewayd_public_edge_node_drained",
+			Help: "1 while this compute node is drained in the registry and its edge sends every request to the other nodes (ADR-1343 §6).",
+		}),
 	}
-	m.registry.MustRegister(m.fallbacks, m.misdirected, m.localReady)
+	m.registry.MustRegister(m.fallbacks, m.misdirected, m.localReady, m.nodeDrained)
 	return m
 }
 
@@ -119,17 +124,42 @@ func newEdgeMetrics() *edgeMetrics {
 // and uses the compute pool only while the local gateway fails its health
 // check or refuses a dial. Every node's gatewayd-internal can reach every
 // node's vmmd, so the local hop loses nothing (ADR-1343 §2).
+//
+// It also withdraws the local path while this node is drained in the
+// registry (ADR-1343 §6): the tunnel still delivers requests to this edge,
+// but none of them adds load to the node being drained. That is a planned
+// route, not a fallback, so it does not count as one.
 type localFirstDialer struct {
 	local    gateway.InternalDialer
 	fallback gateway.InternalDialer
 	target   *url.URL
 	healthy  atomic.Bool
+	drained  atomic.Bool
 	metrics  *edgeMetrics
 	log      *slog.Logger
+
+	// nodeName and inventory enable the drain withdrawal; either empty
+	// leaves routing to the health check alone.
+	nodeName  string
+	inventory nodeInventory
+}
+
+// nodeInventory reports a compute node's registry state: whether it is
+// active, how many nodes are, and whether the registry could be read.
+type nodeInventory interface {
+	nodeStatus(ctx context.Context, name string) (active bool, activeNodes int, known bool)
 }
 
 func newLocalFirstDialer(local, fallback gateway.InternalDialer, target *url.URL, metrics *edgeMetrics, log *slog.Logger) *localFirstDialer {
 	return &localFirstDialer{local: local, fallback: fallback, target: target, metrics: metrics, log: log}
+}
+
+// withDrainWatch makes the dialer withdraw the local path while nodeName is
+// drained in inventory.
+func (d *localFirstDialer) withDrainWatch(nodeName string, inventory nodeInventory) *localFirstDialer {
+	d.nodeName = nodeName
+	d.inventory = inventory
+	return d
 }
 
 func (d *localFirstDialer) DialContext(ctx context.Context, target string) (net.Conn, error) {
@@ -142,6 +172,12 @@ func (d *localFirstDialer) DialContext(ctx context.Context, target string) (net.
 			return nil, err
 		}
 		d.log.Warn("gatewayd-public: local gatewayd-internal refused the dial; using the compute pool", "err", err)
+	} else if d.drained.Load() {
+		conn, err := d.fallback.DialContext(ctx, target)
+		if err != nil {
+			return nil, fmt.Errorf("compute edge: node drained and compute pool failed: %w", err)
+		}
+		return conn, nil
 	}
 	d.metrics.fallbacks.Inc()
 	conn, err := d.fallback.DialContext(ctx, target)
@@ -156,8 +192,21 @@ func (d *localFirstDialer) checkLocal(ctx context.Context) {
 	checkCtx, cancel := context.WithTimeout(ctx, localGatewayCheckEvery)
 	err := checkInternalGateway(checkCtx, d.local, d.target)
 	cancel()
-	ready := err == nil
-	if was := d.healthy.Swap(ready); was != ready {
+	drained := d.checkDrained(ctx)
+	if wasDrained := d.drained.Swap(drained); wasDrained != drained {
+		if drained {
+			d.log.Info("gatewayd-public: this node is drained; sending every request to the other compute nodes", "node", d.nodeName)
+		} else {
+			d.log.Info("gatewayd-public: this node is active again; routing locally when healthy", "node", d.nodeName)
+		}
+	}
+	if drained {
+		d.metrics.nodeDrained.Set(1)
+	} else {
+		d.metrics.nodeDrained.Set(0)
+	}
+	ready := err == nil && !drained
+	if was := d.healthy.Swap(ready); was != ready && !drained {
 		if ready {
 			d.log.Info("gatewayd-public: local gatewayd-internal healthy; routing locally")
 		} else {
@@ -169,6 +218,20 @@ func (d *localFirstDialer) checkLocal(ctx context.Context) {
 	} else {
 		d.metrics.localReady.Set(0)
 	}
+}
+
+// checkDrained reports whether this node is drained: known to the registry
+// as inactive while other nodes are active. A registry that cannot be read,
+// or one with no other active node, never withdraws the local path, so a
+// drain can only move traffic somewhere that can take it.
+func (d *localFirstDialer) checkDrained(ctx context.Context) bool {
+	if d.nodeName == "" || d.inventory == nil {
+		return false
+	}
+	statusCtx, cancel := context.WithTimeout(ctx, localGatewayCheckEvery)
+	defer cancel()
+	active, activeNodes, known := d.inventory.nodeStatus(statusCtx, d.nodeName)
+	return known && !active && activeNodes > 0
 }
 
 // run checks the local gateway until ctx ends. The first check runs at once,

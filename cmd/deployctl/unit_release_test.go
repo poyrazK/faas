@@ -13,7 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/releasebundle"
 )
 
-// Per-unit releases (docs/adr/1540-per-unit-control-plane-releases.md):
+// Per-unit releases (docs/adr/1650-per-unit-control-plane-releases.md):
 // `deployctl deploy --only` restarts and gates only the services whose
 // binaries the release replaced.
 

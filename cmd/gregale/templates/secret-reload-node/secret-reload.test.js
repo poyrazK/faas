@@ -31,9 +31,16 @@ async function startStarter(t, initial = envelope(""), { holdAcks = false } = {}
   await cp(new URL("runtime/", import.meta.url), path.join(dir, "runtime"), {recursive:true});
   await writeFile(path.join(dir, "package.json"), '{"type":"module"}');
   const stubs = {
+    // GET answers "ready"; registered POST routes run the real handlers.
     express: `import { createServer } from "node:http";
-      export default function () { return { get() {}, listen(port, ready) {
-        const server = createServer((_req, res) => res.end("ready"));
+      export default function () { const posts = new Map(); return { get() {}, post(path, handler) { posts.set(path, handler); }, listen(port, ready) {
+        const server = createServer((req, res) => {
+          const handler = req.method === "POST" && posts.get(req.url);
+          if (!handler) return res.end("ready");
+          req.get = (name) => req.headers[name.toLowerCase()];
+          res.sendStatus = (code) => { res.statusCode = code; res.end(); };
+          handler(req, res);
+        });
         server.listen(port, "127.0.0.1", () => { process.send({ type: "listening", port: server.address().port }); ready(); });
         return server;
       } }; }`,
@@ -169,6 +176,30 @@ test("starter stays off HTTP until the initial ACK is accepted", { timeout: 5000
   assert.equal(starter.events.some((event) => event.type === "listening"), false);
   starter.releaseAcks();
   await waitUntil(() => starter.events.some((event) => event.type === "listening"));
+  starter.child.kill("SIGTERM");
+  assert.deepEqual(await starter.exited, [0, null]);
+});
+
+test("loopback lifecycle hooks drain the pool before capture and rebuild it on restore", { timeout: 5000 }, async (t) => {
+  const starter = await startStarter(t);
+  await starter.publish(revision("a"));
+  await waitUntil(() => starter.events.some((event) => event.type === "query"));
+  starter.child.send("release");
+  await waitUntil(() => starter.events.some((event) => event.type === "listening"));
+  const {port} = starter.events.find((event) => event.type === "listening");
+  const hook = (name, marker) => fetch(`http://127.0.0.1:${port}/internal/${name}`, {method: "POST", headers: marker ? {[marker]: "1"} : {}});
+  assert.equal((await hook("before-checkpoint")).status, 403);
+  assert.equal((await hook("before-checkpoint", "X-Faas-After-Restore")).status, 403);
+  assert.equal((await hook("after-restore")).status, 403);
+  assert.equal(starter.events.some((event) => event.type === "drained"), false);
+  assert.equal((await hook("before-checkpoint", "X-Faas-Before-Checkpoint")).status, 204);
+  assert.ok(starter.events.some((event) => event.type === "drained" && event.id === 1));
+  assert.equal((await hook("before-checkpoint", "X-Faas-Before-Checkpoint")).status, 204);
+  const acks = starter.acks.length;
+  assert.equal((await hook("after-restore", "X-Faas-After-Restore")).status, 204);
+  assert.ok(starter.events.some((event) => event.type === "query" && event.id === 2));
+  assert.equal(starter.acks.length, acks + 1);
+  assert.deepEqual(starter.acks.at(-1), {revision: revision("a"), status: "applied", generation});
   starter.child.kill("SIGTERM");
   assert.deepEqual(await starter.exited, [0, null]);
 });

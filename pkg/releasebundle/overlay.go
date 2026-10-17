@@ -12,7 +12,7 @@ import (
 )
 
 // Overlay builds the manifest of a per-unit release
-// (docs/adr/1540-per-unit-control-plane-releases.md). root is a copy of
+// (docs/adr/1650-per-unit-control-plane-releases.md). root is a copy of
 // the base release in which the files named by replaced were swapped or
 // added; every other file must still be the base release's.
 //

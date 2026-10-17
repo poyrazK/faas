@@ -137,7 +137,7 @@ func Prune(releasesRoot, currentPath string, keepPrevious int) (Report, error) {
 }
 
 // overlayBase returns the full release a per-unit release was built over
-// (docs/adr/1540-per-unit-control-plane-releases.md): the git_sha its
+// (docs/adr/1650-per-unit-control-plane-releases.md): the git_sha its
 // canonical release-manifest.json names when that differs from its own id.
 // Full releases, legacy layouts and unreadable manifests have no base.
 func overlayBase(root, current string) string {

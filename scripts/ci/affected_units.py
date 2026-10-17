@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Map a commit range to the release binaries it changed, for per-unit releases.
 
-A per-unit release (docs/adr/1540-per-unit-control-plane-releases.md)
+A per-unit release (docs/adr/1650-per-unit-control-plane-releases.md)
 ships only the control-plane daemons whose code changed since the full
 release the host runs, on top of that release. This script decides which
 ones, and whether anything outside Go code changed that only a full release

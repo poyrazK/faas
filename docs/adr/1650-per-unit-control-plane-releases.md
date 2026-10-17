@@ -1,4 +1,4 @@
-# ADR-1540 · Per-unit control-plane releases
+# ADR-1650 · Per-unit control-plane releases
 
 - **Status:** proposed
 - **Date:** 2026-10-17

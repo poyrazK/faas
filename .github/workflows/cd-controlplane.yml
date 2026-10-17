@@ -26,7 +26,7 @@
 #
 # The existing ci.yml must pass first (needs: [test] from ci.yml).
 #
-# Per-unit releases (docs/adr/1540-per-unit-control-plane-releases.md):
+# Per-unit releases (docs/adr/1650-per-unit-control-plane-releases.md):
 # with units_run_id instead of release_tag, the deploy-units job deploys a
 # signed unit release built by release-units.yml over the full release the
 # host runs, and restarts only the control-plane daemons it changed.
@@ -1178,7 +1178,7 @@ jobs:
 
       # Legacy mutable upload/restart steps removed; deployment is handled by the immutable release controller above.
 
-  # Per-unit releases (docs/adr/1540-per-unit-control-plane-releases.md).
+  # Per-unit releases (docs/adr/1650-per-unit-control-plane-releases.md).
   # The unit release carries every control-plane daemon changed since its
   # base full release; the host must run exactly that base (or an earlier
   # unit release over it). The plan restarts only daemons whose unit version

@@ -542,7 +542,7 @@ func TestPgCloneConfigurationFenceMigrationRoundTripAndOwnedDownRefusal(t *testi
 	if len(parts) != 2 {
 		t.Fatal("missing configuration guard downgrade")
 	}
-	// ADR-590's protection successor refines this function. Exercise the
+	// ADR-590's protection and purge successors refine these functions. Exercise the
 	// actual ordered downgrade/upgrade chain and compare the final schema.
 	successorRaw, err := migrations.FS.ReadFile("20261007125239060_object_protection_capture_admission.sql")
 	if err != nil {

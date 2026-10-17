@@ -1,5 +1,5 @@
 {
-  "_comment": "Per-unit release lanes (docs/adr/1540-per-unit-control-plane-releases.md). Every release binary (Makefile DAEMONS + CLIS) appears here. lane: control-plane = runs only on the control plane and deploys alone through cd-controlplane's unit lane; shared = also runs on compute hosts, so a change waits for the full release; compute = compute hosts only; tool = operator/customer CLI, never restarted. pkg/daemonunitspec/release_units_lane_test.go keeps lanes, services and readiness URLs in lockstep with the daemon registry; scripts/ci/affected_units_test.py keeps the binary set in lockstep with the Makefile.",
+  "_comment": "Per-unit release lanes (docs/adr/1650-per-unit-control-plane-releases.md). Every release binary (Makefile DAEMONS + CLIS) appears here. lane: control-plane = runs only on the control plane and deploys alone through cd-controlplane's unit lane; shared = also runs on compute hosts, so a change waits for the full release; compute = compute hosts only; tool = operator/customer CLI, never restarted. pkg/daemonunitspec/release_units_lane_test.go keeps lanes, services and readiness URLs in lockstep with the daemon registry; scripts/ci/affected_units_test.py keeps the binary set in lockstep with the Makefile.",
   "binaries": {
     "apid": {
       "lane": "control-plane",

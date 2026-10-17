@@ -32,7 +32,7 @@ readlink -f /usr/local/bin/faas-<daemon>
 
 Per-unit control-plane releases report `unit-<commit>` versions and are
 excluded from this alert: they deliberately run beside their base full
-release until the next one (docs/adr/1540-per-unit-control-plane-releases.md).
+release until the next one (docs/adr/1650-per-unit-control-plane-releases.md).
 `readlink -f /opt/faas/current` on the control plane and its
 `unit-versions.json` show which daemons a unit release replaced.
 
