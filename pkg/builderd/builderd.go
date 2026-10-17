@@ -1137,6 +1137,9 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	if tail := boundedGuestBuildLogTail(out.LogTail); tail != "" {
 		b.emitBuildLog(ctx, build.ID, "[guest build output]\n"+tail+"\n")
 	}
+	if line := sharedRuntimeBuildLog(out.SharedRuntime); line != "" && out.ExitCode == 0 {
+		b.emitBuildLog(ctx, build.ID, line)
+	}
 	if out.ExitCode != 0 {
 		// Prefer the failure class the guest-init captured in build-done.json
 		// (one of: "FailureUserError", "FailureInfra", "FailureOOM",

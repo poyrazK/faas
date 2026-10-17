@@ -27,6 +27,49 @@ def _bounded(value: str, size: int) -> str:
     return value.encode("utf-8", errors="replace")[:size].decode("utf-8", errors="ignore")
 
 
+_ISSUE_TAG_KEYS = (
+    "component", "operation", "feature_flag", "feature_variant", "dependency", "region",
+    "job_type", "workflow", "state", "error_class", "release_channel", "runtime",
+)
+
+
+def _copy_operational_context(event: dict[str, Any], context: dict[str, Any]) -> None:
+    """Copy only bounded timeline fields and allowlisted operational tags."""
+    raw_dropped = context.get("breadcrumbs_dropped", 0)
+    dropped = min(2147483647, max(0, raw_dropped)) if type(raw_dropped) is int else 0
+    entries = context.get("breadcrumbs")
+    if isinstance(entries, (list, tuple)):
+        dropped = min(2147483647, dropped + max(0, len(entries) - 16))
+        copied = []
+        for entry in entries[-16:]:
+            if not isinstance(entry, dict):
+                dropped = min(2147483647, dropped + 1)
+                continue
+            stamp = entry.get("occurred_at")
+            if isinstance(stamp, datetime) and stamp.tzinfo is not None:
+                stamp = stamp.isoformat()
+            category, level, message = entry.get("category", "custom"), entry.get("level", "info"), entry.get("message")
+            if (
+                not isinstance(stamp, str) or not stamp or len(stamp) > 64 or "\0" in stamp
+                or category not in ("http", "db", "cache", "workflow", "log", "custom")
+                or level not in ("debug", "info", "warning", "error")
+                or not isinstance(message, str) or "\0" in message
+            ):
+                dropped = min(2147483647, dropped + 1)
+                continue
+            copied.append({"occurred_at": stamp, "category": category, "level": level, "message": _bounded(message, 256)})
+        if copied:
+            event["breadcrumbs"] = copied
+    if dropped:
+        event["breadcrumbs_dropped"] = dropped
+    tags = context.get("tags")
+    if isinstance(tags, dict):
+        copied_tags = {key: _bounded(tags[key], 128) for key in _ISSUE_TAG_KEYS
+                       if isinstance(tags.get(key), str) and "\0" not in tags[key]}
+        if copied_tags:
+            event["tags"] = copied_tags
+
+
 class IssueReporter:
     """Report exceptions with a deployment-bound issue token, never an owner key.
 
@@ -43,6 +86,7 @@ class IssueReporter:
         max_queue: int = 100,
         timeout: float = 2.0,
         grouping_strategy: str = "legacy",
+        symbolication_strategy: str | None = None,
     ):
         parsed = urlsplit(base_url)
         if (
@@ -58,6 +102,12 @@ class IssueReporter:
             raise ValueError("A Gregale issue ingest token is required")
         if grouping_strategy not in ("legacy", "failure-site-v1", "cause-chain-v1"):
             raise ValueError("Invalid issue grouping strategy")
+        if symbolication_strategy is not None and (
+            symbolication_strategy != "deployment-source-maps-v1"
+            or grouping_strategy not in ("failure-site-v1", "cause-chain-v1")
+        ):
+            raise ValueError("Server symbolication requires failure-site-v1 or cause-chain-v1")
+        self._symbolication_strategy = symbolication_strategy
         self._grouping_strategy = grouping_strategy
         self._url = f"{parsed.scheme}://{parsed.netloc}/v1/apps/{quote(app, safe='')}/issue-events"
         self._token = token
@@ -108,6 +158,9 @@ class IssueReporter:
                 for f in frames
             ],
         }
+        if self._symbolication_strategy is not None:
+            event["symbolication_strategy"] = self._symbolication_strategy
+        _copy_operational_context(event, context)
         if self._grouping_strategy in ("failure-site-v1", "cause-chain-v1"):
             event["grouping_strategy"] = self._grouping_strategy
             event["frame_order"] = "oldest-first"

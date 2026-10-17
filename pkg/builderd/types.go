@@ -139,6 +139,9 @@ type BuildOutcome struct {
 	RailpackVer string
 	// DevPatch is guest-init's ADR-740 source map for a successful build.
 	DevPatch *api.DevPatchSourceMap
+	// SharedRuntime is guest-init's shared-runtime classification of a
+	// successful Node app build (H10-140). Informational for now.
+	SharedRuntime *api.SharedRuntimeVerdict
 	// Dependency-cache publication is best-effort and never changes the build
 	// result. The orchestrator surfaces a warning when the next sync will be cold.
 	DependencyCacheStored     bool
