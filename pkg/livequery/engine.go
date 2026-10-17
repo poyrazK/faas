@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/livequery/liveproto"
 )
 
@@ -47,8 +48,8 @@ type Delta struct {
 	// can change them.
 	Columns []liveproto.Column
 	Ordered bool
-	Upserts  []Row
-	Removes  []string
+	Upserts []Row
+	Removes []string
 	// Order is an ordered query's row IDs in order after the delta, set when
 	// rows were added or moved.
 	Order []string
@@ -63,23 +64,27 @@ func (d Delta) Empty() bool {
 
 // Stats counts what the engine did, so tests can show which paths ran.
 type Stats struct {
-	Rounds       int
-	Applied      int // transactions applied
-	Held         int // transactions decoded before a marker but not yet visible
-	Keyed        int // keyed maintenance passes (lineage or group), per plan group
-	Incremental  int // of those, incremental aggregate passes
-	Rebuilds     int // full re-evaluations (recompute mode, truncation), per plan group
-	Verified     int // oracle comparisons
-	ExpandedKeys int // preserved-side keys added for outer joins
+	Rounds        int
+	Applied       int // transactions applied
+	Held          int // transactions decoded before a marker but not yet visible
+	Keyed         int // keyed maintenance passes (lineage or group), per plan group
+	Incremental   int // of those, incremental aggregate passes
+	Rebuilds      int // full re-evaluations (recompute mode, truncation), per plan group
+	Verified      int // oracle comparisons
+	ExpandedKeys  int // preserved-side keys added for outer joins
 	WindowRanks   int // ordered windows re-ranked
 	WindowRefills int // ordered windows read again after losing rows
 	Recompiles    int // plan groups recompiled after schema changes
 	Skipped       int // re-delivered transactions already applied before a restart
-	Statements   int // maintenance statements executed (excluding the oracle)
+	Statements    int // maintenance statements executed (excluding the oracle)
 	// StatementTime is the time spent in maintenance statements, including
 	// reading their rows.
 	StatementTime time.Duration
 }
+
+// ErrCaptureStopped means the replication stream ended: the engine must be
+// restored over a new capture.
+var ErrCaptureStopped = errors.New("livequery: capture stopped")
 
 // Engine maintains live queries from a capture stream. Subscriptions with the
 // same SQL form one plan group, compiled once and maintained by batched
@@ -118,6 +123,10 @@ type Engine struct {
 	// Checkpointed engines confirm the slot only when a checkpoint is
 	// written, so it never moves past state a crash could lose.
 	Checkpointed bool
+	// MaxResultRows closes a subscription whose result (or ordered window)
+	// grows past it with live_query_limit; zero means
+	// api.LiveQueryResultRowsMax.
+	MaxResultRows int
 
 	Stats Stats
 }
@@ -171,6 +180,14 @@ func (e *Engine) Register(ctx context.Context, id, sql string, args ...any) (*Pl
 		g.byArgs[key] = m
 	}
 	m.ids = append(m.ids, id)
+	if m.ready {
+		// The member's result is already maintained: the new subscriber
+		// gets it whole at the next round.
+		if m.joined == nil {
+			m.joined = map[string]bool{}
+		}
+		m.joined[id] = true
+	}
 	e.byID[id] = m
 	return g.plan, nil
 }
@@ -202,6 +219,58 @@ func argText(ctx context.Context, conn *pgx.Conn, types []string, args []any) ([
 	}
 	return out, rows.Err()
 }
+
+func (e *Engine) maxRows() int {
+	if e.MaxResultRows > 0 {
+		return e.MaxResultRows
+	}
+	return api.LiveQueryResultRowsMax
+}
+
+// Current returns a subscription's whole result as of the last round, as a
+// reset delta, for a subscriber that must start over (after renewing a
+// lapsed seal). ok is false before the subscription's first result.
+func (e *Engine) Current(id string) (d Delta, ok bool) {
+	m := e.byID[id]
+	if m == nil || !m.ready || e.applied == nil {
+		return Delta{}, false
+	}
+	p := m.group.plan
+	return Delta{Query: id, Snapshot: e.applied.String(), Reset: true, Rows: m.rows(),
+		Columns: p.Columns, Ordered: p.Order != nil && p.Order.Ordered}, true
+}
+
+// Pending reports whether a round has work: decoded transactions waiting
+// for a snapshot, or events the slot has delivered.
+func (e *Engine) Pending() bool {
+	return len(e.pending) > 0 || len(e.capture.Events()) > 0
+}
+
+// LastSnapshot is the last round's snapshot in pg_snapshot text form, or "".
+func (e *Engine) LastSnapshot() string {
+	if e.applied == nil {
+		return ""
+	}
+	return e.applied.String()
+}
+
+// Compiled reports whether a query's SQL is already compiled.
+func (e *Engine) Compiled(sql string) bool { return e.bySQL[sql] != nil }
+
+// SubscriptionIDs lists the registered subscriptions.
+func (e *Engine) SubscriptionIDs() []string {
+	out := make([]string, 0, len(e.byID))
+	for id := range e.byID {
+		out = append(out, id)
+	}
+	slices.Sort(out)
+	return out
+}
+
+// Subscriptions is the number of registered subscriptions; Queries the
+// number of distinct compiled queries.
+func (e *Engine) Subscriptions() int { return len(e.byID) }
+func (e *Engine) Queries() int       { return len(e.groups) }
 
 // Result returns the engine's current rows for a subscription.
 func (e *Engine) Result(id string) []Row {
@@ -237,9 +306,13 @@ func (e *Engine) Round(ctx context.Context) ([]Delta, error) {
 	// The marker follows the snapshot, so every transaction visible in it is
 	// decoded before the marker arrives. The xmax read with it bounds every
 	// xid decoded this round.
+	// The walsender sends only flushed WAL, and a non-transactional message
+	// alone waits for the WAL writer (wal_writer_delay, 200 ms by default).
+	// Taking a transaction ID makes the statement commit, which flushes the
+	// marker at once; decoding skips the empty transaction.
 	var refText string
 	if err := e.pool.QueryRow(ctx,
-		"SELECT pg_snapshot_xmax(pg_current_snapshot())::text FROM pg_logical_emit_message(false, $1, $2)",
+		"SELECT pg_snapshot_xmax(pg_current_snapshot())::text FROM pg_logical_emit_message(false, $1, $2), pg_current_xact_id()",
 		MarkerPrefix, marker).Scan(&refText); err != nil {
 		return nil, fmt.Errorf("livequery: emit round marker: %w", err)
 	}
@@ -302,18 +375,32 @@ func (e *Engine) Round(ctx context.Context) ([]Delta, error) {
 		if err != nil {
 			return nil, fmt.Errorf("livequery: query %q: %w", g.plan.SQL, err)
 		}
-		for _, m := range g.members {
+		for _, m := range slices.Clone(g.members) {
 			d, ok := perMember[m]
 			if !ok {
 				d = Delta{}
+			}
+			if n, limit := m.size(), e.maxRows(); n > limit {
+				closed := e.closeMember(m, &QueryError{Code: LimitExceeded,
+					Message: fmt.Sprintf("the result has %d rows, limit %d", n, limit), Limit: int64(limit), Observed: int64(n)})
+				for i := range closed {
+					closed[i].Snapshot, closed[i].Xids = snapText, xids
+				}
+				deltas = append(deltas, closed...)
+				continue
 			}
 			if d.Reset {
 				d.Columns, d.Ordered = g.plan.Columns, g.plan.Order != nil && g.plan.Order.Ordered
 			}
 			for _, id := range m.ids {
-				d.Query, d.Snapshot, d.Xids = id, snapText, xids
-				deltas = append(deltas, d)
+				out := d
+				if m.joined[id] && !d.Reset {
+					out = Delta{Reset: true, Rows: m.rows(), Columns: g.plan.Columns, Ordered: g.plan.Order != nil && g.plan.Order.Ordered}
+				}
+				out.Query, out.Snapshot, out.Xids = id, snapText, xids
+				deltas = append(deltas, out)
 			}
+			m.joined = nil
 		}
 	}
 	e.trace(snapText, ref, markerLSN, visible, held)
@@ -483,7 +570,10 @@ func (e *Engine) drain(ctx context.Context, marker string) (pglogrepl.LSN, error
 		select {
 		case ev, ok := <-e.capture.Events():
 			if !ok {
-				return 0, fmt.Errorf("livequery: capture stopped: %w", e.capture.Err())
+				if err := e.capture.Err(); err != nil {
+					return 0, fmt.Errorf("%w: %w", ErrCaptureStopped, err)
+				}
+				return 0, ErrCaptureStopped
 			}
 			if ev.Txn != nil {
 				e.pending = append(e.pending, ev.Txn)

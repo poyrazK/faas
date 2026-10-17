@@ -17,6 +17,7 @@ func (d Delta) Frames(database string, base uint64, expires int64) ([]any, error
 	if d.Closed != nil {
 		return []any{&liveproto.Error{
 			Type: liveproto.TypeError, Subscription: d.Query, Code: d.Closed.Code, Message: d.Closed.Message, Closed: true,
+			Limit: d.Closed.Limit, Observed: d.Closed.Observed,
 		}}, nil
 	}
 	if d.Reset {

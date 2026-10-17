@@ -82,22 +82,28 @@ func newHarness(t *testing.T, schema string) *harness {
 	t.Helper()
 	dsn, pool := openLogicalDB(t)
 	mustExec(t, pool, schema)
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	// Creating a slot waits for a consistent point, which can take until
+	// the next running-transactions record (every 15 s) on a busy server.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	if err := Install(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
 	mustExec(t, pool, `CREATE PUBLICATION gregale_live FOR ALL TABLES`)
 	h := &harness{t: t, pool: pool, dsn: dsn, slot: fmt.Sprintf("lq_%d", time.Now().UnixNano()), clients: map[string]*client{}}
+	// Registered before the slot exists, so a failed setup cannot leak it
+	// (a leaked slot holds WAL and blocks dropping the database).
+	t.Cleanup(func() {
+		if h.capture != nil {
+			_ = h.capture.Close()
+		}
+		h.dropSlot()
+	})
 	capture, err := OpenSlot(ctx, dsn, h.slot, "gregale_live")
 	if err != nil {
 		t.Fatal(err)
 	}
 	h.capture = capture
-	t.Cleanup(func() {
-		_ = h.capture.Close()
-		h.dropSlot()
-	})
 	h.engine = NewEngine(pool, capture)
 	h.engine.VerifyEachRound = true
 	if os.Getenv("LIVEQUERY_TRACE") != "" {

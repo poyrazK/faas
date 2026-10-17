@@ -38,8 +38,8 @@ type Txn struct {
 	Xid        uint32
 	EndLSN     pglogrepl.LSN
 	CommitTime time.Time
-	Changes   []Change
-	Truncated []uint32
+	Changes    []Change
+	Truncated  []uint32
 }
 
 // Event is either a committed transaction or a round marker.

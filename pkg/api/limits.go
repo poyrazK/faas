@@ -11605,6 +11605,14 @@ const (
 	LiveQueryClientFrameMaxBytes   = 80 << 10
 	LiveQueryServerFrameMaxBytes   = 256 << 10
 	LiveQueryResultRowsMax         = 10000
+	// Starting values for the operator preview, to be set per database class
+	// from measurements before general availability.
+	LiveQuerySubscriptionsPerDatabase   = 10000
+	LiveQueryCompiledQueriesPerDatabase = 1000
+	LiveQuerySubscriptionsPerConnection = 64
+	// A connection whose outbound queue holds this many frames is closed as
+	// a slow consumer.
+	LiveQueryConnectionQueueFrames = 1024
 )
 
 // Bounded backend-worker realtime consumer groups (ADR-1030).

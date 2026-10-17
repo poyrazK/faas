@@ -26,8 +26,13 @@ import (
 // progress, so the catalog a round recompiles against is the one its
 // snapshot sees.
 
-// SchemaChanged is the QueryError code for a query that no longer compiles.
-const SchemaChanged = "schema_changed"
+// QueryError codes.
+const (
+	// SchemaChanged closes a query that no longer compiles.
+	SchemaChanged = "schema_changed"
+	// LimitExceeded closes a query whose result outgrew its limit.
+	LimitExceeded = "live_query_limit"
+)
 
 const installSQL = `
 CREATE SCHEMA IF NOT EXISTS gregale_live;
@@ -43,10 +48,15 @@ LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$
 DECLARE
 	objs oid[] := '{}';
 	wide boolean := false;
+	seen boolean := false;
 	r record;
 BEGIN
+	-- Commands on the log's own schema (Install replacing this function)
+	-- change no live query.
 	IF TG_EVENT = 'sql_drop' THEN
-		FOR r IN SELECT classid, objid FROM pg_event_trigger_dropped_objects() LOOP
+		FOR r IN SELECT classid, objid, schema_name FROM pg_event_trigger_dropped_objects() LOOP
+			CONTINUE WHEN r.schema_name IS NOT DISTINCT FROM 'gregale_live';
+			seen := true;
 			IF r.classid = 'pg_class'::regclass THEN
 				objs := objs || r.objid;
 			ELSE
@@ -54,13 +64,18 @@ BEGIN
 			END IF;
 		END LOOP;
 	ELSE
-		FOR r IN SELECT classid, objid FROM pg_event_trigger_ddl_commands() LOOP
+		FOR r IN SELECT classid, objid, schema_name FROM pg_event_trigger_ddl_commands() LOOP
+			CONTINUE WHEN r.schema_name IS NOT DISTINCT FROM 'gregale_live';
+			seen := true;
 			IF r.classid = 'pg_class'::regclass THEN
 				objs := objs || r.objid;
 			ELSE
 				wide := true;
 			END IF;
 		END LOOP;
+	END IF;
+	IF NOT seen THEN
+		RETURN;
 	END IF;
 	-- The rows only need to reach the slot; old ones serve no one.
 	DELETE FROM gregale_live.ddl_log WHERE at < now() - interval '1 hour';
@@ -94,6 +109,8 @@ func Install(ctx context.Context, pool *pgxpool.Pool) error {
 type QueryError struct {
 	Code    string
 	Message string
+	// Limit and Observed describe a live_query_limit error.
+	Limit, Observed int64
 }
 
 // schemaChange is what a round's DDL touched.

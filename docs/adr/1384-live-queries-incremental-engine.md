@@ -647,6 +647,62 @@ Phase 0 did not cover:
   packages. The contract gained one rule from the SDK work: after a client
   subscribes again, a full result may start a new version sequence, since
   a restarted realtimed no longer knows the versions it sent.
+- **The live session server and livequeryd.**
+  - **`pkg/livequery/liveserver`** is realtimed's half of the frame contract,
+    built as a `Hub` per database that owns the engine and its round loop.
+    It:
+    - opens seals with the key ring and checks the database they name;
+    - tracks each client subscription's version and seal expiry, and
+      renders engine deltas as frames;
+    - turns lapsed subscriptions stale, and sends the whole current result
+      again on renewal;
+    - sends `live.progress` after every round;
+    - closes connections whose bounded outbound queue fills
+      (`slow_consumer`).
+  - **Limits** (`pkg/api/limits.go`, starting values):
+    - 10,000 subscriptions and 1,000 distinct queries per database;
+    - 64 subscriptions per connection;
+    - 10,000 rows per result or ordered window (the engine closes a larger
+      result with `live_query_limit`, carrying the limit and the observed
+      value).
+  - **Metrics:** the §7 names, plus checkpoint duration, slow consumers,
+    window refills and applied transactions.
+  - **`cmd/livequeryd`** runs a hub beside the database:
+    - installs the schema-change log and creates the publication;
+    - restores from its checkpoint and checkpoints periodically and on
+      shutdown;
+    - reports slot lag;
+    - with `-dev-listen`, serves frames over a local WebSocket until
+      realtimed carries them.
+  - **Restored subscriptions.** Subscriptions restored from a checkpoint
+    belong to connections that no longer exist. They stay registered for a
+    grace period (two minutes), so reconnecting clients join results that
+    are already maintained and receive them at once. Then they are released.
+  - **End-to-end tests:**
+    - over real PostgreSQL and a real WebSocket, with every frame checked
+      by the Go reference client;
+    - against the JavaScript SDK itself: a Go test drives a Node script
+      through changes, `awaitTxId`, three-second seals renewed across ten
+      seconds, a dropped connection, and a schema-change close.
+  - **Smoke test of the `livequeryd` binary.** A client stayed subscribed
+    across SIGTERM (checkpoint), a write while the daemon was down, and a
+    restart (restore). The client reconnected on its own and received the
+    missed row. The smoke test found two bugs:
+    - engine subscription IDs repeated those restored from the previous
+      process, so the hub now prefixes them per process;
+    - reinstalling the schema-change log at start counted as a schema change
+      and re-read every query, so the trigger now ignores commands on its own
+      schema.
+  - **Two engine fixes:**
+    - **Late subscribers.** A subscriber joining a result the engine already
+      maintained never received it whole. It now gets a reset at the next
+      round.
+    - **Round marker flush.** The walsender sends only flushed WAL, and a
+      non-transactional marker waited for the WAL writer (200 ms by
+      default), so quiet databases paid up to that per round. The marker
+      statement now takes a transaction ID, so it commits and flushes at
+      once; decoding skips the empty transaction. On the loaded laptop, idle
+      rounds went from p50 406 ms to 9 ms. Clean numbers need a quiet host.
 
 ## Consequences
 

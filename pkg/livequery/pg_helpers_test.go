@@ -26,7 +26,8 @@ func openLogicalDB(t *testing.T) (string, *pgxpool.Pool) {
 	if base == "" {
 		t.Skip("livequery: LIVEQUERY_DATABASE_URL or DATABASE_URL not set")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	// CREATE DATABASE can take a while on a loaded server.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	admin, err := pgx.Connect(ctx, base)
 	if err != nil {

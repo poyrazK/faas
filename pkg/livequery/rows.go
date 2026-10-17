@@ -62,8 +62,8 @@ type keyedRow struct {
 	values  []*string // visible values, group key values, or nil
 	aggs    []*string // group input of incremental aggregates: argument values
 	lineage []string
-	group   string // group input: encodeValues of the group key values
-	enc     string // encodeValues of values and aggs
+	group   string    // group input: encodeValues of the group key values
+	enc     string    // encodeValues of values and aggs
 	sort    []*string // ordered windows: the sort item values, tie-breakers included
 }
 

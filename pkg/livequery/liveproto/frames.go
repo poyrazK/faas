@@ -53,6 +53,8 @@ const (
 	CodeForbidden     = "forbidden"      // the endpoint may not serve that database
 	CodeRenewMismatch = "renew_mismatch" // a renewal sealed a different query
 	CodeUnsupported   = "unsupported_query"
+	CodeInvalidQuery  = "invalid_query" // PostgreSQL refused the query
+	CodeSlowConsumer  = "slow_consumer" // the connection fell too far behind
 	CodeLimit         = "live_query_limit"
 	CodeSchemaChanged = "schema_changed" // resubscribe with a fresh seal
 	CodeUnavailable   = "unavailable"    // stale until the database is back

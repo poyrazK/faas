@@ -40,11 +40,12 @@ type member struct {
 	argText []*string
 	ready   bool
 	columns []string
-	win     *window // ordered windows
+	win     *window         // ordered windows
+	joined  map[string]bool // subscribers that joined a maintained result
 
-	result *keyedSet // lineage mode: result rows; recompute mode: rows by multiset ID
-	input  *keyedSet // group mode: input rows (values = group keys)
-	join   *keyedSet // outer joins: lineage of the FROM clause
+	result *keyedSet   // lineage mode: result rows; recompute mode: rows by multiset ID
+	input  *keyedSet   // group mode: input rows (values = group keys)
+	join   *keyedSet   // outer joins: lineage of the FROM clause
 	semi   []*keyedSet // keyed subqueries: pairs of FROM rows and subquery rows
 	groups map[string]*keyedRow
 	agg    map[string]*aggGroup // incremental aggregates: state by group
@@ -587,6 +588,20 @@ func (g *planGroup) maintainGroup(ctx context.Context, tx pgx.Tx, ms []*member, 
 		extra = append(extra, v)
 	}
 	return g.readGroups(ctx, tx, g.plan.OutputRestricted, touched, extra)
+}
+
+// size is the number of rows the member holds for subscribers: its result,
+// or its whole window for an ordered query.
+func (m *member) size() int {
+	switch {
+	case m.win != nil:
+		return len(m.win.ids)
+	case m.group.plan.Mode == ModeGroup:
+		return len(m.groups)
+	case m.result != nil:
+		return len(m.result.rows)
+	}
+	return 0
 }
 
 // snapshotRows returns the member's current result by row ID.
