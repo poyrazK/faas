@@ -1818,7 +1818,11 @@ jobs:
           promtool check rules \
             deploy/ansible/roles/prometheus/files/faas.rules.yml \
             deploy/ansible/roles/prometheus/files/data_repair.rules.yml \
-            pkg/promqlrules/data_placement.yaml
+            pkg/promqlrules/data_placement.yaml \
+            examples/event-acknowledgment-monitoring/preparation.rules.yml
+          promtool check config \
+            examples/event-acknowledgment-monitoring/prometheus.yml \
+            examples/event-acknowledgment-monitoring/prometheus-python.yml
           # Every rule fixture, not a hand-picked list: an unlisted
           # fixture (slo_low_traffic) broke unnoticed when an alert changed.
           for fixture in deploy/ansible/roles/prometheus/files/*.test.yml pkg/promqlrules/testdata/*.test.yml; do

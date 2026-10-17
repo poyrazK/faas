@@ -19,7 +19,8 @@ const (
 // ObjectTrackedUploadStore owns the single provider attempt and its capacity
 // reservation. Begin returns created=false for a replay, without spending quota.
 // Dispatch must succeed before contacting the provider. Recovery never reuploads
-// a body, and only a positive provider receipt can settle a dispatched intent.
+// a body. Settlement requires an exact provider receipt: committed, or a durable
+// terminal rejection. Absence and elapsed time never establish failure.
 type ObjectTrackedUploadStore interface {
 	GetObjectUploadReceipt(context.Context, string, string, string, string, string) (ObjectUploadCompletion, error)
 	BeginTrackedObjectUpload(context.Context, ObjectUploadCompletion, api.ObjectStoragePolicy) (ObjectUploadCompletion, bool, error)
@@ -67,6 +68,9 @@ func validGatewayReceiptShape(c ObjectUploadCompletion) bool {
 	return c.RouteID == "" && c.IdempotencyKey == "" && c.RequestFingerprint == ""
 }
 func validTrackedUploadIdentity(c ObjectUploadCompletion) bool {
+	if !validNodeSettlementEnrollment(c.ID, c.QueueNodeSettlement) {
+		return false
+	}
 	for _, id := range []string{c.ID, c.AccountID, c.AppID, c.BucketID} {
 		if _, err := uuid.Parse(id); err != nil {
 			return false
@@ -93,6 +97,10 @@ func validObjectUploadETag(etag string) bool {
 }
 func validTrackedUploadRecovery(c ObjectUploadCompletion, now time.Time) bool {
 	return c.WritePhase == ObjectUploadDispatched && c.RecoveryToken != "" && c.RecoveryLeaseUntil.After(now)
+}
+
+func validTrackedUploadRecoveryOutcome(c ObjectUploadCompletion) bool {
+	return c.Status == "completed" || c.Status == "failed" && c.ErrorCode == "provider_write_rejected"
 }
 func validTrackedUploadRetry(code string) bool {
 	switch code {
