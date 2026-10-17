@@ -216,6 +216,12 @@ type Config struct {
 	// this long (default 30 s; negative leaves failover to the operator's
 	// lost-node mark).
 	AutoFailoverAfter time.Duration
+	// UpgradeTimeout bounds an in-place major upgrade from its start,
+	// across the replicas that resume it (default 2.5 h, beyond the 2 h
+	// guest-init gives pg_upgrade); UpgradeLease is how long its lease
+	// lasts unrenewed before another replica resumes it (default 2 min).
+	UpgradeTimeout time.Duration
+	UpgradeLease   time.Duration
 	// Metrics, when set, records failovers, standby drops and moves, and
 	// the idle sweep observes the catalog into it.
 	Metrics *Metrics
@@ -250,6 +256,9 @@ type Scheduler struct {
 	nodeFailing sync.Map // node id -> time.Time
 	// moveWG tracks operators' moves running in the background.
 	moveWG sync.WaitGroup
+	// upgrades are the major upgrades this process runs, by database id.
+	upgrades  sync.Map // database id -> *upgradeRun
+	upgradeWG sync.WaitGroup
 }
 
 // nodeEvents is a per-node broadcast: wait returns a channel the next
@@ -349,6 +358,12 @@ func New(store Store, vmm VMM, cfg Config, log *slog.Logger) *Scheduler {
 	}
 	if cfg.DrillTimeout <= 0 {
 		cfg.DrillTimeout = cfg.RestoreTimeout + time.Hour
+	}
+	if cfg.UpgradeTimeout <= 0 {
+		cfg.UpgradeTimeout = 150 * time.Minute
+	}
+	if cfg.UpgradeLease <= 0 {
+		cfg.UpgradeLease = 2 * time.Minute
 	}
 	if cfg.AutoFailoverAfter == 0 {
 		cfg.AutoFailoverAfter = 30 * time.Second
@@ -455,21 +470,31 @@ func (s *Scheduler) bootstrap(ctx context.Context, node Node, vm VM) (string, er
 // takeBackup runs one base backup on a running database and records it.
 // It reports whether a backup was stored.
 func (s *Scheduler) takeBackup(ctx context.Context, node Node, id string) bool {
+	at, ok := s.baseBackup(ctx, node, id)
+	if !ok {
+		return false
+	}
+	if err := s.store.RecordBackup(context.WithoutCancel(ctx), id, at); err != nil {
+		s.log.Warn("dbsched: record backup", "database_id", id, "err", err)
+	}
+	return true
+}
+
+// baseBackup runs one base backup on a running database and reports when
+// it was stored; the caller records it.
+func (s *Scheduler) baseBackup(ctx context.Context, node Node, id string) (time.Time, bool) {
 	ctx, cancel := context.WithTimeout(ctx, s.cfg.BackupTimeout)
 	defer cancel()
 	resp, err := s.vmm.Control(ctx, node, id, dbguest.Request{Op: dbguest.OpBaseBackup})
 	if err == nil && resp.Error == dbguest.ErrCodeArchiveOff {
-		return false
+		return time.Time{}, false
 	}
 	if err != nil || resp.Error != "" || resp.Backup == "" {
 		s.log.Warn("dbsched: base backup failed", "database_id", id, "err", errors.Join(err, guestError(resp)))
-		return false
-	}
-	if err := s.store.RecordBackup(context.WithoutCancel(ctx), id, s.now()); err != nil {
-		s.log.Warn("dbsched: record backup", "database_id", id, "err", err)
+		return time.Time{}, false
 	}
 	s.log.Info("dbsched: base backup stored", "database_id", id, "backup", resp.Backup)
-	return true
+	return s.now(), true
 }
 
 // BackupDue backs up, one at a time, running databases whose last base
@@ -731,7 +756,7 @@ func (s *Scheduler) Delete(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	all := []State{StateProvisioning, StateParked, StateWaking, StateRunning, StateParking, StateFailed, StateDeleting}
+	all := []State{StateProvisioning, StateParked, StateWaking, StateRunning, StateParking, StateUpgrading, StateFailed, StateDeleting}
 	if err := s.store.Transition(ctx, id, all, StateDeleting, TransitionOptions{}); err != nil {
 		return err
 	}
@@ -1046,12 +1071,16 @@ func (s *Scheduler) vmLost(ctx context.Context, vm VM) bool {
 // Recover settles transitions a previous schedd process left in flight:
 // a waking or parking database is stopped and parked. Its next wake boots
 // it again; PostgreSQL recovers from its WAL if the stop was unclean.
-// Restores resume in the background; moves whose lease lapsed are aborted.
+// Restores and upgrades whose lease lapsed resume in the background; moves
+// whose lease lapsed are aborted.
 func (s *Scheduler) Recover(ctx context.Context) error {
 	if err := s.ResumeRestores(ctx); err != nil {
 		return err
 	}
 	if _, err := s.SettleMoves(ctx); err != nil {
+		return err
+	}
+	if err := s.ResumeUpgrades(ctx); err != nil {
 		return err
 	}
 	stuck, err := s.store.List(ctx, StateWaking, StateParking)
@@ -1116,6 +1145,9 @@ func (s *Scheduler) RunIdleLoop(ctx context.Context, interval time.Duration) {
 			}
 			if _, err := s.SettleMoves(ctx); err != nil {
 				s.log.Warn("dbsched: move settle sweep failed", "err", err)
+			}
+			if err := s.ResumeUpgrades(ctx); err != nil {
+				s.log.Warn("dbsched: upgrade sweep failed", "err", err)
 			}
 			if err := s.Observe(ctx); err != nil {
 				s.log.Warn("dbsched: catalog observation failed", "err", err)

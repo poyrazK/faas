@@ -1198,8 +1198,18 @@ majors' bases.
 - **After.** Once the upgraded cluster serves, guest-init runs the
   `update_extensions.sql` pg_upgrade may write, and `vacuumdb --all
   --analyze-in-stages`, because pg_upgrade carries no planner statistics.
-- **Crashes.** A cluster that crashed is no obstacle: pg_upgrade starts it
-  on its old binaries, which recover it, before it checks.
+  A synced `upgrade_analyze` mark on the volume, cleared when the pass
+  ends, makes any later boot run it again if the database parked first.
+- **The old cluster's WAL goes to the archive first.** The new cluster
+  starts on a new `pg_wal` (and a new system identifier), so whatever the
+  old one has not archived would be lost to point-in-time restores. A
+  cluster that did not shut down cleanly is recovered on its old binaries
+  with archiving on and shut down cleanly; that shutdown switches and
+  archives its last segment. pg_upgrade would recover it too, but with
+  archiving off. Then every WAL file still `.ready` is archived. Failing
+  either refuses the upgrade. pg_resetwal starts the new cluster past
+  every segment in the old `pg_wal`, so the two clusters' file names
+  never collide in the archive.
 
 On metal (`TestMetalMajorUpgrade`), a PostgreSQL 14 database with a
 `regprocedure` column was refused and booted on 14 again with its rows.
@@ -1208,12 +1218,67 @@ Without that column, and after a crash, it upgraded in place to 17 in
 function, an index and its sequence (the next id was 2001) all came
 through, and a plain 17 boot then served it.
 
-Not yet done: schedd orchestration (an `upgrading` state that holds wakes
-off and survives a schedd restart, the database's major in
-`database_vms`, a fresh base backup, and point-in-time restores to before
-the upgrade on the old major, since the new cluster's archive starts
-anew), production databases' standbys (re-seeded on the new major), and
-the operator and customer surfaces.
+**Orchestration (schedd).** `Scheduler.StartUpgrade` parks a running
+database and marks it `upgrading` (migration
+`20261017134138512_database_vm_major_upgrades`): `upgrade_major` is the
+target, under `upgrade_lease_until`, a lease on the database's clock that
+the running replica renews. While upgrading, a database cannot wake, park,
+move, resize or restart. It can be deleted. The upgrade's VM counts
+against its node's RAM ceiling (`BeginUpgrade` admits it), but no compute
+is metered for it.
+The upgrade boots the new major with `UpgradeFrom` and waits for the guest:
+
+- **Ready.** schedd takes the first base backup on the new major before
+  any client can connect. It then records `postgres_major` = the target
+  and appends `{major, until}` to `major_history`, where `until` is when
+  that backup was stored. The database runs on when it is always-on or
+  was used within its idle timeout; otherwise it parks.
+- **`upgrade_refused`.** The database parks on its old major with that
+  `last_error`; its next wake boots the old major.
+- **`upgrade_failed`.** The database is `failed` and needs a restore.
+- **Anything else** (an unreachable node, a VM that did not boot, a guest
+  failing otherwise). The attempt ends and its lease lapses.
+  `ResumeUpgrades`, run at schedd start and on every idle sweep, takes
+  over upgrades whose lease lapsed. It boots again, and guest-init carries
+  on from wherever the volume is. A VM still running from the last
+  attempt is left alone, because stopping pg_upgrade mid-link breaks the
+  cluster. Past `UpgradeTimeout` (2.5 h from the upgrade's start, beyond
+  the 2 h guest-init gives pg_upgrade) the upgrade is failed.
+
+`schedd_database_upgrades_total{result=ok|refused|failed}` counts upgrades,
+and `FaasDatabaseUpgradeFailed` pages on a failure.
+
+**Restores across an upgrade.** `VM.MajorAt(t)` reads `major_history`: a
+restore to a point before `until` recovers on the old major, from that
+major's base backups and WAL. Restore requests must name that major, and
+the node must still offer it. That archive ended when the old cluster
+shut down for pg_upgrade, so such a restore does not flush the source (it
+could only add the new cluster's WAL). It recovers to the target or to the
+archive's end (`RestoreUntilEnd`), whichever comes first. A source that is
+`failed` (an `upgrade_failed` one included) is restored the same way,
+since it cannot run to commit past the target. A source that is upgrading
+is not restorable until the upgrade ends. Backups are picked by their stop
+time, so in the instant between the new major's first backup and `until`
+an old-major restore could meet a new-major backup and fail visibly,
+never silently. If that backup failed, restores after the upgrade fail
+the same way until the backup sweep takes one.
+
+**Standbys.** A replicated database's standby stays on the old major, so
+`StartUpgrade` clears `standby_synced` before the upgrade: no failover can
+promote it meanwhile. A standby boot that finds a cluster of another major
+than it boots is re-seeded from its primary. After the upgrade, the
+standby attaches again on the new major.
+
+On metal (`TestMetalMajorUpgradeThroughScheduler`), a PostgreSQL 14
+database was killed two seconds after a commit, upgraded through the
+scheduler to 17 in 17.4 s, and served its rows on 17. A restore to a
+point after that commit and before the upgrade came back on 14 with the
+commit (recovered to the commit's instant, to the end of the old archive).
+A restore after the upgrade came back on 17 with the rows written on 17.
+
+Not yet done: the operator intent and CLI (`gregalectl database-nodes
+upgrade`), the customer API, and keeping the customer catalog's
+`postgres_major` in step with schedd's.
 
 ### Spares
 

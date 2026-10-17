@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -47,6 +48,10 @@ func (g *databaseGuest) upgradeCluster() bool {
 			g.fail(code, "upgrade the cluster", err)
 			return false
 		}
+		if err := writeSynced(databaseUpgradeAnalyze, nil); err != nil {
+			g.fail(dbguest.ErrCodeUpgradeFailed, "record the statistics pass", err)
+			return false
+		}
 		if err := writeSynced(databaseUpgradeMarker, nil); err != nil {
 			g.fail(dbguest.ErrCodeUpgradeFailed, "record the upgrade", err)
 			return false
@@ -81,6 +86,11 @@ func (g *databaseGuest) runPgUpgrade() (string, error) {
 	if !ok {
 		return dbguest.ErrCodeUpgradeRefused, errors.New("pg_controldata: no checksum version")
 	}
+	if g.archive {
+		if err := g.archiveOldCluster(ctx, control); err != nil {
+			return dbguest.ErrCodeUpgradeRefused, fmt.Errorf("archive the old cluster's WAL: %w", err)
+		}
+	}
 	// A new cluster left by an attempt that never linked starts over.
 	if err := os.RemoveAll(databaseUpgradeData); err != nil {
 		return dbguest.ErrCodeUpgradeRefused, err
@@ -105,6 +115,78 @@ func (g *databaseGuest) runPgUpgrade() (string, error) {
 		return code, fmt.Errorf("pg_upgrade: %w: %s", err, lastLines(out, 20))
 	}
 	return "", nil
+}
+
+// archiveOldCluster puts all the old cluster's WAL in the archive: a
+// cluster that did not shut down cleanly is recovered on its own binaries
+// first, with archiving on, and whatever its archiver left waiting is
+// archived.
+func (g *databaseGuest) archiveOldCluster(ctx context.Context, control string) error {
+	if state, _ := controlDataField(control, "Database cluster state"); state != databaseCleanShutdown {
+		g.log.Info("database upgrade: recovering the old cluster first", "state", state)
+		if err := g.recoverOldCluster(ctx); err != nil {
+			return err
+		}
+	}
+	return archivePendingWAL()
+}
+
+// recoverOldCluster runs the old major's postgres on the cluster until it
+// accepts connections, its recovery done, then shuts it down cleanly: the
+// shutdown archives its last WAL file.
+func (g *databaseGuest) recoverOldCluster(ctx context.Context) error {
+	if err := g.writeHBA(); err != nil {
+		return err
+	}
+	args := recoveryServerArgs(g.upgradeFrom, g.memKiB)
+	cmd := g.asDatabaseUser(exec.CommandContext(ctx, args[0], args[1:]...))
+	cmd.Stdout, cmd.Stderr = os.Stderr, os.Stderr
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	exited := make(chan error, 1)
+	go func() { exited <- cmd.Wait() }()
+	// The crash left the old postmaster.pid: only this postmaster's counts.
+	pid := strconv.Itoa(cmd.Process.Pid)
+	for ready := false; !ready; {
+		select {
+		case err := <-exited:
+			return fmt.Errorf("postgres %d exited recovering the cluster: %w", g.upgradeFrom, err)
+		case <-time.After(100 * time.Millisecond):
+		}
+		data, err := os.ReadFile(filepath.Join(databasePGData, "postmaster.pid"))
+		ready = err == nil && strings.HasPrefix(string(data), pid+"\n") && postmasterStatus(data) == "ready"
+	}
+	if err := cmd.Process.Signal(unix.SIGINT); err != nil {
+		return err
+	}
+	if err := <-exited; err != nil {
+		return fmt.Errorf("postgres %d shut down: %w", g.upgradeFrom, err)
+	}
+	return nil
+}
+
+// archivePendingWAL archives the WAL files the old cluster's archiver
+// left waiting, marking each done as the archiver would.
+func archivePendingWAL() error {
+	status := filepath.Join(databasePGData, "pg_wal", "archive_status")
+	entries, err := os.ReadDir(status)
+	if err != nil {
+		return err
+	}
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	for _, name := range pendingWAL(names) {
+		if err := archiveWALFile(filepath.Join(databasePGData, "pg_wal", name), name); err != nil {
+			return fmt.Errorf("archive %s: %w", name, err)
+		}
+		if err := os.Rename(filepath.Join(status, name+".ready"), filepath.Join(status, name+".done")); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // switchUpgradedCluster makes the upgraded cluster the volume's cluster
@@ -135,7 +217,8 @@ func switchUpgradedCluster() error {
 
 // afterUpgrade runs, once the upgraded cluster serves, the extension
 // updates pg_upgrade asked for and a statistics pass: pg_upgrade carries
-// no planner statistics over.
+// no planner statistics over. A boot that finds the pass unfinished runs
+// it again.
 func (g *databaseGuest) afterUpgrade() {
 	deadline := time.Now().Add(10 * time.Minute)
 	for g.currentState() != dbguest.StateReady {
@@ -158,6 +241,9 @@ func (g *databaseGuest) afterUpgrade() {
 	if out, err := g.upgradeAdmin(ctx, vacuum...); err != nil {
 		g.log.Warn("database upgrade: analyze", "err", err, "output", lastLines(out, 10))
 		return
+	}
+	if err := os.Remove(databaseUpgradeAnalyze); err != nil && !errors.Is(err, os.ErrNotExist) {
+		g.log.Warn("database upgrade: clear the statistics mark", "err", err)
 	}
 	g.log.Info("database upgrade: statistics rebuilt")
 }

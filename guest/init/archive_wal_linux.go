@@ -55,6 +55,17 @@ func runArchiveWAL(args []string) int {
 	return 0
 }
 
+// archiveWALFile archives one WAL file over a stream of its own, as
+// archive_command does.
+func archiveWALFile(path, name string) error {
+	conn, err := dialHostArchive()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = conn.Close() }()
+	return archivePut(dbarchive.NewClient(conn), path, name)
+}
+
 func archivePut(client *dbarchive.Client, path, name string) error {
 	f, err := os.Open(path) //nolint:gosec,forbidigo // PostgreSQL's own pg_wal path (%p)
 	if err != nil {

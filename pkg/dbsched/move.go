@@ -151,7 +151,7 @@ func (s *Scheduler) runMove(ctx context.Context, vm VM) error {
 	if err != nil {
 		return s.abortMove(ctx, vm, vm.MoveLeaseUntil, err)
 	}
-	lease := &moveLease{held: vm.MoveLeaseUntil}
+	lease := &heldLease{held: vm.MoveLeaseUntil}
 	copyCtx, cancel := context.WithTimeout(ctx, s.cfg.MoveTimeout)
 	renewed := make(chan struct{})
 	go func() {
@@ -227,21 +227,29 @@ func (s *Scheduler) discardCopy(ctx context.Context, vm VM) {
 	}
 }
 
-// moveLease is the lease a running move holds, renewed in the background.
-type moveLease struct {
+// heldLease is the lease a running move or upgrade holds, renewed in the
+// background.
+type heldLease struct {
 	mu   sync.Mutex
 	held time.Time
 }
 
-func (l *moveLease) get() time.Time {
+func (l *heldLease) get() time.Time {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.held
 }
 
-// renewMove keeps the move's lease until ctx ends; losing it calls lost.
-func (s *Scheduler) renewMove(ctx context.Context, id string, lease *moveLease, lost func()) {
-	ticker := time.NewTicker(s.cfg.MoveLease / 3)
+func (l *heldLease) set(held time.Time) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.held = held
+}
+
+// keepLease renews lease, length long, every third of it until ctx ends;
+// a renewal failing while ctx lives calls lost.
+func keepLease(ctx context.Context, lease *heldLease, length time.Duration, renew func(context.Context, time.Time) (time.Time, error), lost func(error)) {
+	ticker := time.NewTicker(length / 3)
 	defer ticker.Stop()
 	for {
 		select {
@@ -249,18 +257,25 @@ func (s *Scheduler) renewMove(ctx context.Context, id string, lease *moveLease, 
 			return
 		case <-ticker.C:
 		}
-		next, err := s.store.RenewMove(ctx, id, lease.get(), s.cfg.MoveLease)
+		next, err := renew(ctx, lease.get())
 		if err != nil {
 			if ctx.Err() == nil {
-				s.log.Warn("dbsched: move lease lost", "database_id", id, "err", err)
-				lost()
+				lost(err)
 			}
 			return
 		}
-		lease.mu.Lock()
-		lease.held = next
-		lease.mu.Unlock()
+		lease.set(next)
 	}
+}
+
+// renewMove keeps the move's lease until ctx ends; losing it calls lost.
+func (s *Scheduler) renewMove(ctx context.Context, id string, lease *heldLease, lost func()) {
+	keepLease(ctx, lease, s.cfg.MoveLease, func(ctx context.Context, held time.Time) (time.Time, error) {
+		return s.store.RenewMove(ctx, id, held, s.cfg.MoveLease)
+	}, func(err error) {
+		s.log.Warn("dbsched: move lease lost", "database_id", id, "err", err)
+		lost()
+	})
 }
 
 // SettleMoves aborts moves whose lease lapsed, left by a schedd replica

@@ -1952,6 +1952,9 @@ type DatabaseVm struct {
 	StandbySynced        bool
 	PromotePending       bool
 	DropStandbySlot      bool
+	UpgradeMajor         pgtype.Int4
+	UpgradeLeaseUntil    pgtype.Timestamptz
+	MajorHistory         []byte
 }
 
 type DeadLetterEvent struct {

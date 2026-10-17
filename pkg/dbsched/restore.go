@@ -176,8 +176,11 @@ func (s *Scheduler) restorable(source VM, req RestoreRequest) error {
 	switch {
 	case !source.Bootstrapped || source.LastBackupAt.IsZero():
 		return fmt.Errorf("%w: source %s has no base backup", ErrInvalid, source.DatabaseID)
-	case req.Major != source.Major:
-		return fmt.Errorf("%w: postgres major %d differs from the source's %d", ErrInvalid, req.Major, source.Major)
+	case source.State == StateUpgrading:
+		// Its old major's archive is complete only once pg_upgrade ran.
+		return fmt.Errorf("%w: source %s is upgrading; restore it once the upgrade ended", ErrConflict, source.DatabaseID)
+	case req.Major != source.MajorAt(req.Target):
+		return fmt.Errorf("%w: postgres major %d differs from the %d the source ran at that point", ErrInvalid, req.Major, source.MajorAt(req.Target))
 	case req.VolumeBytes < source.VolumeBytes:
 		return fmt.Errorf("%w: volume smaller than the source's", ErrInvalid)
 	case req.Target.Before(source.CreatedAt):
@@ -300,6 +303,10 @@ func (s *Scheduler) renewRestore(ctx context.Context, id string, lease time.Time
 
 // restore recovers vm into its volume, backs it up and parks it.
 func (s *Scheduler) restore(ctx context.Context, node Node, vm VM) error {
+	source, err := s.store.Get(ctx, vm.RestoreSource)
+	if err != nil {
+		return fmt.Errorf("restore source: %w", err)
+	}
 	lost, err := s.sourceNodeLost(ctx, vm.RestoreSource)
 	if err != nil {
 		return fmt.Errorf("restore source: %w", err)
@@ -312,6 +319,14 @@ func (s *Scheduler) restore(ctx context.Context, node Node, vm VM) error {
 		// if that ends first; RestoreRecoveredTo records how far it got.
 		s.log.Warn("dbsched: restore source's node is unavailable; recovering from the bucket, at most to the target",
 			"database_id", vm.DatabaseID, "source", vm.RestoreSource, "target", vm.RestoreTarget)
+		vm.RestoreUntilEnd = true
+	case vm.Major != source.Major, source.State == StateFailed:
+		// The target precedes the source's upgrade off this major, whose
+		// cluster archived its last WAL before pg_upgrade ran; or the
+		// source cannot run to commit past the target. Either way the
+		// archive holds all there is: recover to the target or its end.
+		s.log.Info("dbsched: restore source cannot extend this archive; recovering at most to the target",
+			"database_id", vm.DatabaseID, "source", vm.RestoreSource, "target", vm.RestoreTarget, "major", vm.Major, "source_state", source.State)
 		vm.RestoreUntilEnd = true
 	default:
 		if err := s.flushSource(ctx, vm); err != nil {

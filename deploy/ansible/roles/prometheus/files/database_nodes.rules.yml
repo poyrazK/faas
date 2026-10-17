@@ -225,6 +225,17 @@ groups:
           description: "A daily restore drill could not restore a database from its node's backups in the last day. The same restore serves customers' point-in-time restores and node-loss recovery."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md"
 
+      - alert: FaasDatabaseUpgradeFailed
+        expr: sum(increase(schedd_database_upgrades_total{result="failed"}[1h])) > 0
+        labels:
+          severity: page
+          component: schedd
+          family: database_nodes
+        annotations:
+          summary: "An in-place PostgreSQL major upgrade failed"
+          description: "At least one major upgrade failed in the last hour. The database is failed with last_error upgrade_failed and stays down until it is restored to a point before the upgrade, which recovers on its old major."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md"
+
       - alert: FaasDatabaseMoveFailed
         expr: sum(increase(schedd_database_moves_total{result="failed"}[1h])) > 0
         labels:

@@ -224,6 +224,7 @@ func (g *GRPCVMM) Start(ctx context.Context, node Node, vm VM) error {
 		req.RestoreUntilEnd = vm.RestoreUntilEnd
 	}
 	req.Promote = vm.PromotePending
+	req.UpgradeFromMajor = int32(vm.UpgradeFrom) //nolint:gosec // majors are 14-18
 	_, err = c.StartDatabase(ctx, req)
 	return tolerate(err, codes.FailedPrecondition)
 }

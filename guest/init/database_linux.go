@@ -167,6 +167,9 @@ func runDatabaseGuest(log *slog.Logger, boot databaseBoot) error {
 		go g.upgradeAndStart()
 	case state == dbguest.StateStarting:
 		g.startPostgres()
+		if fileExists(databaseUpgradeAnalyze) {
+			go g.afterUpgrade()
+		}
 	}
 	<-g.done
 	_ = control.Close()
@@ -297,6 +300,12 @@ func (g *databaseGuest) decideClusterState() {
 	major, parseErr := clusterMajor(version)
 	if err != nil || parseErr != nil {
 		g.fail(dbguest.ErrCodeVolumeFailed, "read cluster version", errors.Join(err, parseErr))
+		return
+	}
+	if g.standby && major != g.major {
+		// A copy of its primary before the primary's major upgrade:
+		// copied again.
+		g.setState(dbguest.StateNeedsBootstrap)
 		return
 	}
 	if major != g.major {

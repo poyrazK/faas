@@ -18465,12 +18465,12 @@ FROM database_nodes WHERE id = sqlc.arg(id) FOR UPDATE;
 -- A moving database's volume counts on its node and on the node it is
 -- moving to; its memory only where it can run. A replicated database's
 -- standby volume counts on its standby node, and its memory there while
--- the standby runs.
+-- the standby runs. An upgrading database's VM runs pg_upgrade.
 SELECT n.id AS node_id,
     COALESCE(sum(v.volume_bytes), 0)::bigint AS volume_bytes,
-    COALESCE(sum(v.mem_mib) FILTER (WHERE (v.node_id = n.id AND v.state IN ('waking', 'running', 'parking'))
+    COALESCE(sum(v.mem_mib) FILTER (WHERE (v.node_id = n.id AND v.state IN ('waking', 'running', 'parking', 'upgrading'))
         OR (v.standby_node = n.id AND v.standby_running)), 0)::bigint AS active_mem_mib,
-    count(v.database_id) FILTER (WHERE (v.node_id = n.id AND v.state IN ('waking', 'running', 'parking'))
+    count(v.database_id) FILTER (WHERE (v.node_id = n.id AND v.state IN ('waking', 'running', 'parking', 'upgrading'))
         OR (v.standby_node = n.id AND v.standby_running))::bigint AS active_vms,
     count(v.database_id) FILTER (WHERE v.node_id = n.id AND v.state = 'waking')::bigint AS waking_vms
 FROM database_nodes n LEFT JOIN database_vms v ON v.node_id = n.id OR v.move_node = n.id OR v.standby_node = n.id
@@ -18480,14 +18480,16 @@ GROUP BY n.id ORDER BY n.id;
 SELECT database_id, node_id, postgres_major, vcpu_count, mem_mib, volume_bytes, state,
     bootstrapped, always_on, last_backup_at, restore_window_seconds, restore_source, restore_target,
     restore_recovered_to, restore_lease_until, resize_pending, last_error, last_active_at, state_changed_at, created_at,
-    move_node, move_lease_until, replicated, standby_node, standby_running, standby_synced, promote_pending, drop_standby_slot
+    move_node, move_lease_until, replicated, standby_node, standby_running, standby_synced, promote_pending, drop_standby_slot,
+    upgrade_major, upgrade_lease_until, major_history
 FROM database_vms WHERE database_id = sqlc.arg(database_id);
 
 -- name: ListDatabaseVMsByState :many
 SELECT database_id, node_id, postgres_major, vcpu_count, mem_mib, volume_bytes, state,
     bootstrapped, always_on, last_backup_at, restore_window_seconds, restore_source, restore_target,
     restore_recovered_to, restore_lease_until, resize_pending, last_error, last_active_at, state_changed_at, created_at,
-    move_node, move_lease_until, replicated, standby_node, standby_running, standby_synced, promote_pending, drop_standby_slot
+    move_node, move_lease_until, replicated, standby_node, standby_running, standby_synced, promote_pending, drop_standby_slot,
+    upgrade_major, upgrade_lease_until, major_history
 FROM database_vms WHERE state = ANY(sqlc.arg(states)::text[]) ORDER BY database_id;
 
 -- name: InsertDatabaseVM :execrows
@@ -18642,6 +18644,48 @@ UPDATE database_vms
 SET move_node = NULL, move_lease_until = NULL, state = 'parked', state_changed_at = now(), last_error = sqlc.narg(last_error)
 WHERE database_id = sqlc.arg(database_id) AND state = 'moving'
   AND (move_lease_until = sqlc.narg(held)::timestamptz OR (sqlc.narg(held)::timestamptz IS NULL AND move_lease_until < now()));
+
+-- name: BeginDatabaseVMUpgrade :execrows
+-- Marks a parked database upgrading to upgrade_major under the caller's
+-- lease; the caller checked its node's room under the node's lock.
+UPDATE database_vms
+SET state = 'upgrading', upgrade_major = sqlc.arg(upgrade_major)::integer, state_changed_at = now(), last_error = NULL,
+    upgrade_lease_until = now() + make_interval(secs => sqlc.arg(lease_seconds)::double precision)
+WHERE database_id = sqlc.arg(database_id) AND state = 'parked' AND bootstrapped AND NOT resize_pending AND NOT promote_pending
+  AND postgres_major < sqlc.arg(upgrade_major)::integer;
+
+-- name: ClaimDatabaseVMUpgrade :one
+-- Renews the lease the caller holds on an upgrade, or takes one that
+-- lapsed (held NULL). The lease is the database clock's, so replicas'
+-- clocks do not matter.
+UPDATE database_vms
+SET upgrade_lease_until = now() + make_interval(secs => sqlc.arg(lease_seconds)::double precision)
+WHERE database_id = sqlc.arg(database_id) AND state = 'upgrading'
+  AND (upgrade_lease_until = sqlc.narg(held)::timestamptz
+       OR (sqlc.narg(held)::timestamptz IS NULL AND upgrade_lease_until < now()))
+RETURNING upgrade_lease_until;
+
+-- name: FinishDatabaseVMUpgrade :execrows
+-- Makes the upgrade's major the database's and records until when it ran
+-- the one it leaves (SET sees the old row). backup_at is its first base
+-- backup on the new major; NULL when none was taken.
+UPDATE database_vms
+SET major_history = major_history || jsonb_build_array(jsonb_build_object('major', postgres_major, 'until', sqlc.arg(until)::timestamptz)),
+    postgres_major = upgrade_major, upgrade_major = NULL, upgrade_lease_until = NULL,
+    last_backup_at = sqlc.narg(backup_at)::timestamptz,
+    state = sqlc.arg(to_state)::text, state_changed_at = now(), last_error = NULL,
+    last_active_at = CASE WHEN sqlc.arg(to_state)::text = 'running' THEN now() ELSE last_active_at END
+WHERE database_id = sqlc.arg(database_id) AND state = 'upgrading' AND upgrade_lease_until = sqlc.arg(held)::timestamptz;
+
+-- name: AbortDatabaseVMUpgrade :execrows
+-- Ends an upgrade on the major the database had: by the lease holder, or
+-- by anyone once the lease lapsed (held NULL).
+UPDATE database_vms
+SET upgrade_major = NULL, upgrade_lease_until = NULL, state = sqlc.arg(to_state)::text, state_changed_at = now(),
+    last_error = sqlc.narg(last_error)
+WHERE database_id = sqlc.arg(database_id) AND state = 'upgrading'
+  AND (upgrade_lease_until = sqlc.narg(held)::timestamptz
+       OR (sqlc.narg(held)::timestamptz IS NULL AND upgrade_lease_until < now()));
 
 -- name: TouchDatabaseVM :execrows
 UPDATE database_vms SET last_active_at = sqlc.arg(at)

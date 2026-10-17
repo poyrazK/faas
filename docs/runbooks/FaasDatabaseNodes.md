@@ -274,6 +274,38 @@ discarded. Evacuation retries the move on its next sweep. schedd's
 `dbsched: move failed` log names the failed step: copy, archive handoff or
 switch.
 
+### FaasDatabaseUpgradeFailed (page)
+
+An in-place PostgreSQL major upgrade failed. The database is `failed`, with
+`last_error = upgrade_failed`, and its clients cannot connect. The cause is
+one of two:
+
+- pg_upgrade broke the cluster after it began linking files.
+- The upgrade never finished within 2.5 h, retries included.
+
+(A refusal by pg_upgrade's check is not a failure: the database stays on
+its major, parked with `last_error = upgrade_refused`, and is counted
+`refused`.)
+
+1. `journalctl -u faas-schedd | grep 'dbsched: upgrade'` names the
+   database, the majors and each attempt's error. The VM's console on the
+   node (guest-init's `database upgrade:` lines) has pg_upgrade's last
+   output.
+2. Restore the database to a point before the upgrade began. The restore
+   recovers on the old major, from that major's backups and WAL: guest-init
+   archived the old cluster's last WAL before pg_upgrade ran. The node must
+   still have the old major's base.
+3. Retry the upgrade once the cause is fixed. There is no operator
+   command for it yet: `gregalectl database-nodes upgrade` comes with the
+   operator surface. A `refused` upgrade needs whatever pg_upgrade's check
+   reported removed first (a `reg*` column, an extension without a build
+   for the new major).
+
+An upgrade still in progress shows as `state = 'upgrading'` in
+`database_vms`, with its lease in `upgrade_lease_until`. Any schedd replica
+resumes one whose lease lapsed; do not stop its VM, which may be inside
+pg_upgrade.
+
 ## Internal mTLS leaves
 
 A database node's vmmd and pgproxyd authenticate to schedd and to each

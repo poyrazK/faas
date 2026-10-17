@@ -25,9 +25,12 @@ const (
 	StateParking      State = "parking"
 	// StateMoving: the parked database's volume is being copied to
 	// VM.MoveNode (move.go). It cannot wake, park or be deleted meanwhile.
-	StateMoving   State = "moving"
-	StateDeleting State = "deleting"
-	StateFailed   State = "failed"
+	StateMoving State = "moving"
+	// StateUpgrading: the database's VM runs pg_upgrade to VM.UpgradeMajor
+	// (upgrade.go). It cannot wake, park or move meanwhile.
+	StateUpgrading State = "upgrading"
+	StateDeleting  State = "deleting"
+	StateFailed    State = "failed"
 )
 
 // Node lifecycles (database_nodes.lifecycle).
@@ -121,6 +124,16 @@ type VM struct {
 	// RestoreUntilEnd lets a restore boot end at the end of the archive.
 	// The restore job sets it per boot; stores do not persist it.
 	RestoreUntilEnd bool
+	// UpgradeMajor is the major an upgrading database is being upgraded
+	// to, under the lease UpgradeLeaseUntil (upgrade.go). MajorHistory is
+	// the majors it ran before, oldest first.
+	UpgradeMajor      int
+	UpgradeLeaseUntil time.Time
+	MajorHistory      []MajorSpan
+	// UpgradeFrom boots the volume's cluster of that older major and
+	// upgrades it to Major. The upgrade sets it per boot; stores do not
+	// persist it.
+	UpgradeFrom int
 	LastError       string
 	LastActiveAt    time.Time
 	StateChangedAt  time.Time
@@ -128,6 +141,23 @@ type VM struct {
 	// NodeTarget is the node's vmmd dial target. The scheduler fills it on
 	// Wake and Get; stores do not persist it.
 	NodeTarget string
+}
+
+// MajorSpan is a major a database ran until an upgrade.
+type MajorSpan struct {
+	Major int       `json:"major"`
+	Until time.Time `json:"until"`
+}
+
+// MajorAt is the PostgreSQL major the database ran at t: a point-in-time
+// restore to t recovers on it.
+func (vm VM) MajorAt(t time.Time) int {
+	for _, span := range vm.MajorHistory {
+		if t.Before(span.Until) {
+			return span.Major
+		}
+	}
+	return vm.Major
 }
 
 // TransitionOptions annotate a state change.
@@ -228,6 +258,25 @@ type Store interface {
 	AbortMove(ctx context.Context, id string, held time.Time, lastError string) error
 	// Delete removes a database that is deleting.
 	Delete(ctx context.Context, id string) error
+
+	// Major upgrades (upgrade.go). BeginUpgrade marks a parked, bootstrapped
+	// database upgrading to major under the upgrade's lease if its node's
+	// RAM ceiling admits its VM (else ErrNoCapacity; an unavailable node
+	// is ErrNodeUnavailable). A database on major or a later one is
+	// ErrInvalid; one resize- or promotion-pending is ErrConflict.
+	BeginUpgrade(ctx context.Context, id string, major int, lease time.Duration) (VM, error)
+	// ClaimUpgrade renews the lease held, or takes one that lapsed (held
+	// zero), returning the new lease; otherwise ErrConflict.
+	ClaimUpgrade(ctx context.Context, id string, held time.Time, lease time.Duration) (time.Time, error)
+	// FinishUpgrade makes the upgrade's major the database's, records
+	// that it ran the old one until until, and ends the upgrade in to
+	// (parked or running). backupAt is its first base backup on the new
+	// major, zero when none was taken. Only the lease holder can.
+	FinishUpgrade(ctx context.Context, id string, held time.Time, to State, until, backupAt time.Time) error
+	// AbortUpgrade ends an upgrade on the database's old major, in to
+	// (parked or failed): by the lease holder, or by anyone once the lease
+	// lapsed (held zero).
+	AbortUpgrade(ctx context.Context, id string, held time.Time, to State, lastError string) error
 
 	// Standbys (standby.go). Place gives a replicated database a standby
 	// node besides its own, or fails with ErrNoCapacity.
@@ -330,6 +379,13 @@ func replicationChange(vm *VM, shape Shape, standby string) {
 // activeStates hold RAM on their node.
 var activeStates = []State{StateWaking, StateRunning, StateParking}
 
+// holdsMemory reports whether a database in state has its VM admitted
+// against its node's RAM ceiling: the active states, whose compute is
+// metered, and an upgrade's VM, whose is not.
+func holdsMemory(s State) bool {
+	return isActive(s) || s == StateUpgrading
+}
+
 func isActive(s State) bool {
 	for _, a := range activeStates {
 		if s == a {
@@ -405,6 +461,20 @@ func admitWakeOn(node Node, usage nodeUsage, memMiB int) error {
 		return ErrNoCapacity
 	case usage.waking >= int64(bootSlots(node)):
 		return ErrBootSlotsBusy
+	}
+	return nil
+}
+
+// admitUpgradeOn checks an upgrade of vm to major against its node's
+// lifecycle and RAM ceiling; the upgrade's VM takes no boot slot.
+func admitUpgradeOn(node Node, usage nodeUsage, vm VM, major int) error {
+	switch {
+	case major <= vm.Major:
+		return fmt.Errorf("%w: the database runs PostgreSQL %d already", ErrInvalid, vm.Major)
+	case node.Lifecycle == NodeUnavailable:
+		return ErrNodeUnavailable
+	case !admits(node, usage, vm.MemMiB):
+		return ErrNoCapacity
 	}
 	return nil
 }

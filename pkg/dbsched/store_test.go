@@ -520,3 +520,127 @@ func TestStoreRestoreDrills(t *testing.T) {
 		})
 	}
 }
+
+// TestStoreMajorUpgrade: an upgrade holds its VM's memory on the node
+// without metering compute, moves only under its lease, and on success
+// records the major left and until when it ran.
+func TestStoreMajorUpgrade(t *testing.T) {
+	for name, factory := range storeFactories(t) {
+		t.Run(name, func(t *testing.T) {
+			s, ctx := factory(t), context.Background()
+			seedNodes(t, s, Node{ID: "db-a", TargetURL: "unix:///a", AdmissionCeilingMB: 700, VolumeCapacityBytes: 10 << 30, Lifecycle: NodeActive})
+			parked := func(major int) VM {
+				t.Helper()
+				vm := newVM(1<<30, 384)
+				vm.Major = major
+				vm, err := s.Place(ctx, vm)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := s.Transition(ctx, vm.DatabaseID, []State{StateProvisioning}, StateParked, TransitionOptions{Bootstrapped: true}); err != nil {
+					t.Fatal(err)
+				}
+				return vm
+			}
+			vm, other := parked(14), parked(14)
+			if _, err := s.BeginUpgrade(ctx, vm.DatabaseID, 14, time.Minute); !errors.Is(err, ErrInvalid) {
+				t.Fatalf("upgrade to the same major = %v, want ErrInvalid", err)
+			}
+			// The other database's VM fills the node's RAM.
+			if _, err := s.AdmitWake(ctx, other.DatabaseID); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.BeginUpgrade(ctx, vm.DatabaseID, 17, time.Minute); !errors.Is(err, ErrNoCapacity) {
+				t.Fatalf("upgrade on a full node = %v, want ErrNoCapacity", err)
+			}
+			if err := s.Transition(ctx, other.DatabaseID, []State{StateWaking}, StateParked, TransitionOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			started := time.Now()
+			upgrading, err := s.BeginUpgrade(ctx, vm.DatabaseID, 17, time.Minute)
+			if err != nil || upgrading.State != StateUpgrading || upgrading.UpgradeMajor != 17 || upgrading.Major != 14 || upgrading.UpgradeLeaseUntil.IsZero() {
+				t.Fatalf("begin = %+v, %v", upgrading, err)
+			}
+			if loads, _ := s.Loads(ctx); loads["db-a"].ActiveMB != billableMB(384) {
+				t.Fatalf("an upgrading VM's memory = %d MB on the node, want %d", loads["db-a"].ActiveMB, billableMB(384))
+			}
+			if _, err := s.AdmitWake(ctx, other.DatabaseID); !errors.Is(err, ErrNoCapacity) {
+				t.Fatalf("wake beside an upgrade on a full node = %v, want ErrNoCapacity", err)
+			}
+			if _, err := s.AdmitWake(ctx, vm.DatabaseID); !errors.Is(err, ErrConflict) {
+				t.Fatalf("wake of an upgrading database = %v, want ErrConflict", err)
+			}
+			if _, err := s.BeginUpgrade(ctx, vm.DatabaseID, 17, time.Minute); !errors.Is(err, ErrConflict) {
+				t.Fatalf("second begin = %v, want ErrConflict", err)
+			}
+
+			lease := upgrading.UpgradeLeaseUntil
+			if _, err := s.ClaimUpgrade(ctx, vm.DatabaseID, time.Time{}, time.Minute); !errors.Is(err, ErrConflict) {
+				t.Fatalf("taking a live lease = %v, want ErrConflict", err)
+			}
+			renewed, err := s.ClaimUpgrade(ctx, vm.DatabaseID, lease, time.Minute)
+			if err != nil || renewed.Before(lease) {
+				t.Fatalf("renew = %v, %v", renewed, err)
+			}
+			if _, err := s.ClaimUpgrade(ctx, vm.DatabaseID, lease, time.Minute); !errors.Is(err, ErrConflict) {
+				t.Fatalf("renew with a stale lease = %v, want ErrConflict", err)
+			}
+			if err := s.AbortUpgrade(ctx, vm.DatabaseID, time.Time{}, StateParked, "upgrade_refused"); !errors.Is(err, ErrConflict) {
+				t.Fatalf("abort under a live lease = %v, want ErrConflict", err)
+			}
+			until := time.Now().UTC().Truncate(time.Microsecond)
+			backup := until.Add(-time.Second)
+			if err := s.FinishUpgrade(ctx, vm.DatabaseID, lease, StateParked, until, backup); !errors.Is(err, ErrConflict) {
+				t.Fatalf("finish with a stale lease = %v, want ErrConflict", err)
+			}
+			if err := s.FinishUpgrade(ctx, vm.DatabaseID, renewed, StateParked, until, backup); err != nil {
+				t.Fatal(err)
+			}
+			got, err := s.Get(ctx, vm.DatabaseID)
+			if err != nil || got.State != StateParked || got.Major != 17 || got.UpgradeMajor != 0 || !got.UpgradeLeaseUntil.IsZero() ||
+				!got.LastBackupAt.Equal(backup) || len(got.MajorHistory) != 1 || got.MajorHistory[0].Major != 14 || !got.MajorHistory[0].Until.Equal(until) {
+				t.Fatalf("after the upgrade = %+v, %v", got, err)
+			}
+			if got.MajorAt(until.Add(-time.Microsecond)) != 14 || got.MajorAt(until) != 17 || got.MajorAt(started.Add(-time.Hour)) != 14 {
+				t.Fatalf("majors at the boundary: %d, %d", got.MajorAt(until.Add(-time.Microsecond)), got.MajorAt(until))
+			}
+			if u, err := s.Usage(ctx, vm.DatabaseID, started.Add(-time.Minute), time.Now().Add(time.Minute)); err != nil || u.ActiveSeconds != 0 {
+				t.Fatalf("an upgrade metered compute: %+v, %v", u, err)
+			}
+
+			// A lapsed lease ends the next upgrade by anyone; a failed
+			// database is not upgraded.
+			if _, err := s.BeginUpgrade(ctx, vm.DatabaseID, 18, time.Millisecond); err != nil {
+				t.Fatal(err)
+			}
+			time.Sleep(20 * time.Millisecond)
+			if err := s.AbortUpgrade(ctx, vm.DatabaseID, time.Time{}, StateFailed, "upgrade_failed"); err != nil {
+				t.Fatal(err)
+			}
+			if got, _ := s.Get(ctx, vm.DatabaseID); got.State != StateFailed || got.Major != 17 || got.LastError != "upgrade_failed" || got.UpgradeMajor != 0 {
+				t.Fatalf("after the abort = %+v", got)
+			}
+			if _, err := s.BeginUpgrade(ctx, vm.DatabaseID, 18, time.Minute); !errors.Is(err, ErrConflict) {
+				t.Fatalf("upgrade of a failed database = %v, want ErrConflict", err)
+			}
+
+			// Finishing running opens compute and records no backup when
+			// none was taken.
+			second, err := s.BeginUpgrade(ctx, other.DatabaseID, 16, time.Minute)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := s.FinishUpgrade(ctx, other.DatabaseID, second.UpgradeLeaseUntil, StateRunning, time.Now(), time.Time{}); err != nil {
+				t.Fatal(err)
+			}
+			running, _ := s.Get(ctx, other.DatabaseID)
+			if running.State != StateRunning || running.Major != 16 || !running.LastBackupAt.IsZero() || running.LastActiveAt.IsZero() {
+				t.Fatalf("finished running = %+v", running)
+			}
+			time.Sleep(1100 * time.Millisecond)
+			if u, _ := s.Usage(ctx, other.DatabaseID, started, time.Now().Add(time.Minute)); u.ActiveSeconds < 1 {
+				t.Fatalf("a database left running after its upgrade meters no compute: %+v", u)
+			}
+		})
+	}
+}

@@ -2,6 +2,7 @@ package dbsched
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -80,7 +81,7 @@ func (s *PgStore) Loads(ctx context.Context) (map[string]NodeLoad, error) {
 	return loads(usage), nil
 }
 
-func vmFromRow(r sqlc.DatabaseVm) VM {
+func vmFromRow(r sqlc.DatabaseVm) (VM, error) {
 	vm := VM{
 		DatabaseID: uuid.UUID(r.DatabaseID.Bytes).String(), NodeID: r.NodeID, Major: int(r.PostgresMajor),
 		VcpuCount: int(r.VcpuCount), MemMiB: int(r.MemMib), VolumeBytes: r.VolumeBytes, State: State(r.State),
@@ -90,11 +91,18 @@ func vmFromRow(r sqlc.DatabaseVm) VM {
 		ResizePending: r.ResizePending, MoveNode: r.MoveNode.String, MoveLeaseUntil: r.MoveLeaseUntil.Time,
 		Replicated: r.Replicated, StandbyNode: r.StandbyNode.String, StandbyRunning: r.StandbyRunning, StandbySynced: r.StandbySynced,
 		PromotePending: r.PromotePending, DropStandbySlot: r.DropStandbySlot,
+		UpgradeMajor: int(r.UpgradeMajor.Int32), UpgradeLeaseUntil: r.UpgradeLeaseUntil.Time,
 	}
 	if r.RestoreSource.Valid {
 		vm.RestoreSource = uuid.UUID(r.RestoreSource.Bytes).String()
 	}
-	return vm
+	if err := json.Unmarshal(r.MajorHistory, &vm.MajorHistory); err != nil {
+		return VM{}, fmt.Errorf("dbsched: major history of %s: %w", vm.DatabaseID, err)
+	}
+	if len(vm.MajorHistory) == 0 {
+		vm.MajorHistory = nil
+	}
+	return vm, nil
 }
 
 func (s *PgStore) Get(ctx context.Context, id string) (VM, error) {
@@ -113,7 +121,7 @@ func (s *PgStore) get(ctx context.Context, db sqlc.DBTX, id string) (VM, error) 
 	if err != nil {
 		return VM{}, fmt.Errorf("dbsched: get %s: %w", id, err)
 	}
-	return vmFromRow(row), nil
+	return vmFromRow(row)
 }
 
 func (s *PgStore) List(ctx context.Context, states ...State) ([]VM, error) {
@@ -123,7 +131,9 @@ func (s *PgStore) List(ctx context.Context, states ...State) ([]VM, error) {
 	}
 	out := make([]VM, len(rows))
 	for i, r := range rows {
-		out[i] = vmFromRow(r)
+		if out[i], err = vmFromRow(r); err != nil {
+			return nil, err
+		}
 	}
 	return out, nil
 }
@@ -735,6 +745,110 @@ func (s *PgStore) AbortMove(ctx context.Context, id string, held time.Time, last
 	})
 	if err != nil {
 		return fmt.Errorf("dbsched: abort move of %s: %w", id, err)
+	}
+	if n == 0 {
+		return ErrConflict
+	}
+	return nil
+}
+
+func (s *PgStore) BeginUpgrade(ctx context.Context, id string, major int, lease time.Duration) (VM, error) {
+	key, err := pgUUID(id)
+	if err != nil {
+		return VM{}, err
+	}
+	return inTx(ctx, s.pool, func(tx pgx.Tx) (VM, error) {
+		vm, err := s.get(ctx, tx, id)
+		if err != nil {
+			return VM{}, err
+		}
+		if vm.State != StateParked || !vm.Bootstrapped || vm.ResizePending || vm.PromotePending {
+			return VM{}, ErrConflict
+		}
+		row, err := s.q.LockDatabaseNode(ctx, tx, vm.NodeID)
+		if err != nil {
+			return VM{}, fmt.Errorf("dbsched: lock node %s: %w", vm.NodeID, err)
+		}
+		usage, err := s.usage(ctx, tx)
+		if err != nil {
+			return VM{}, err
+		}
+		node := Node{ID: row.ID, AdmissionCeilingMB: int(row.AdmissionCeilingMb), Lifecycle: row.Lifecycle}
+		if err := admitUpgradeOn(node, usage[node.ID], vm, major); err != nil {
+			return VM{}, err
+		}
+		n, err := s.q.BeginDatabaseVMUpgrade(ctx, tx, sqlc.BeginDatabaseVMUpgradeParams{
+			DatabaseID: key, UpgradeMajor: int32(major), LeaseSeconds: lease.Seconds(), //nolint:gosec // majors are 14-18
+		})
+		if err := s.changed(ctx, tx, id, n, err); err != nil {
+			return VM{}, err
+		}
+		return s.get(ctx, tx, id)
+	})
+}
+
+func (s *PgStore) ClaimUpgrade(ctx context.Context, id string, held time.Time, lease time.Duration) (time.Time, error) {
+	key, err := pgUUID(id)
+	if err != nil {
+		return time.Time{}, err
+	}
+	next, err := s.q.ClaimDatabaseVMUpgrade(ctx, s.pool, sqlc.ClaimDatabaseVMUpgradeParams{
+		DatabaseID: key, Held: pgtype.Timestamptz{Time: held, Valid: !held.IsZero()}, LeaseSeconds: lease.Seconds(),
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return time.Time{}, ErrConflict
+	}
+	if err != nil {
+		return time.Time{}, fmt.Errorf("dbsched: claim upgrade of %s: %w", id, err)
+	}
+	return next.Time, nil
+}
+
+func (s *PgStore) FinishUpgrade(ctx context.Context, id string, held time.Time, to State, until, backupAt time.Time) error {
+	key, err := pgUUID(id)
+	if err != nil {
+		return err
+	}
+	if held.IsZero() || (to != StateParked && to != StateRunning) {
+		return ErrConflict
+	}
+	_, err = inTx(ctx, s.pool, func(tx pgx.Tx) (VM, error) {
+		n, err := s.q.FinishDatabaseVMUpgrade(ctx, tx, sqlc.FinishDatabaseVMUpgradeParams{
+			DatabaseID: key, Held: pgtype.Timestamptz{Time: held, Valid: true}, ToState: string(to),
+			Until: pgtype.Timestamptz{Time: until, Valid: true}, BackupAt: pgtype.Timestamptz{Time: backupAt, Valid: !backupAt.IsZero()},
+		})
+		if err != nil {
+			return VM{}, fmt.Errorf("dbsched: finish upgrade of %s: %w", id, err)
+		}
+		if n == 0 {
+			return VM{}, ErrConflict
+		}
+		if to != StateRunning {
+			return VM{}, nil
+		}
+		vm, err := s.get(ctx, tx, id)
+		if err != nil {
+			return VM{}, err
+		}
+		return VM{}, s.open(ctx, tx, key, MeterCompute, computeRate(vm), time.Now())
+	})
+	return err
+}
+
+func (s *PgStore) AbortUpgrade(ctx context.Context, id string, held time.Time, to State, lastError string) error {
+	key, err := pgUUID(id)
+	if err != nil {
+		return err
+	}
+	if to != StateParked && to != StateFailed {
+		return ErrConflict
+	}
+	n, err := s.q.AbortDatabaseVMUpgrade(ctx, s.pool, sqlc.AbortDatabaseVMUpgradeParams{
+		DatabaseID: key, Held: pgtype.Timestamptz{Time: held, Valid: !held.IsZero()}, ToState: string(to),
+		LastError: pgtype.Text{String: lastError, Valid: lastError != ""},
+	})
+	if err != nil {
+		return fmt.Errorf("dbsched: abort upgrade of %s: %w", id, err)
 	}
 	if n == 0 {
 		return ErrConflict

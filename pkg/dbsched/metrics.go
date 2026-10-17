@@ -21,6 +21,7 @@ type Metrics struct {
 	staleRestart *prometheus.CounterVec
 	drills       *prometheus.CounterVec
 	drillLastOK  *prometheus.GaugeVec
+	upgrades     *prometheus.CounterVec
 	catalog      *catalogCollector
 }
 
@@ -76,9 +77,13 @@ func NewMetrics(reg prometheus.Registerer, prefix string) *Metrics {
 			Name: prefix + "_database_restore_drill_last_ok_timestamp_seconds",
 			Help: "When a database node's last restore drill passed (0: none since its drills began). Only nodes with drills report.",
 		}, []string{"node"}),
+		upgrades: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: prefix + "_database_upgrades_total",
+			Help: "In-place major upgrades by result: ok, refused (pg_upgrade's check refused the cluster, which stays on its major), failed (the database needs a restore).",
+		}, []string{"result"}),
 		catalog: newCatalogCollector(prefix),
 	}
-	reg.MustRegister(m.failovers, m.standbyDrops, m.moves, m.storage, m.stale, m.staleRestart, m.drills, m.drillLastOK, m.catalog)
+	reg.MustRegister(m.failovers, m.standbyDrops, m.moves, m.storage, m.stale, m.staleRestart, m.drills, m.drillLastOK, m.upgrades, m.catalog)
 	return m
 }
 
@@ -139,6 +144,12 @@ func (m *Metrics) restartedStale(err error) {
 	m.staleRestart.WithLabelValues(result).Inc()
 }
 
+func (m *Metrics) upgraded(result string) {
+	if m != nil {
+		m.upgrades.WithLabelValues(result).Inc()
+	}
+}
+
 func (m *Metrics) moved(err error) {
 	if m == nil {
 		return
@@ -178,7 +189,7 @@ func standbyStatus(vm VM) string {
 }
 
 // allStates are every database state, so each is reported, zero or not.
-var allStates = []State{StateProvisioning, StateParked, StateWaking, StateRunning, StateParking, StateMoving, StateDeleting, StateFailed}
+var allStates = []State{StateProvisioning, StateParked, StateWaking, StateRunning, StateParking, StateMoving, StateUpgrading, StateDeleting, StateFailed}
 
 // Observe refreshes the catalog gauges from the store. The idle sweep calls
 // it; without metrics it does nothing.

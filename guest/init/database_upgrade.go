@@ -2,8 +2,11 @@ package main
 
 import (
 	"bufio"
+	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/onebox-faas/faas/pkg/dbarchive"
 )
 
 // In-place major upgrades (ADR-1027). The VM boots the new major's base
@@ -22,6 +25,14 @@ import (
 //     or was interrupted after linking: the database needs a restore;
 //   - the done marker, written after pg_upgrade succeeded, finishes the
 //     switch to the new cluster on any later boot, idempotently.
+//
+// The new cluster starts on a new pg_wal, so before pg_upgrade the old
+// cluster's WAL must all be in the archive: a point-in-time restore to
+// before the upgrade replays it on the old major. A cluster that did not
+// shut down cleanly is first recovered on its old binaries with archiving
+// on (pg_upgrade would recover it with archiving off), and any WAL file
+// still waiting for the archiver is archived; failing that refuses the
+// upgrade.
 const (
 	// databaseUpgradeBaseDevice is the old major's base: the VM's third
 	// drive.
@@ -38,6 +49,13 @@ const (
 	// databaseUpgradeExtensions is the script pg_upgrade writes when an
 	// extension needs ALTER EXTENSION ... UPDATE in the new major.
 	databaseUpgradeExtensions = databaseMountPoint + "/update_extensions.sql"
+	// databaseUpgradeAnalyze marks an upgraded cluster whose statistics
+	// are still to rebuild: pg_upgrade carries none over, and the database
+	// may park before the pass ends, so every boot resumes it.
+	databaseUpgradeAnalyze = databaseMountPoint + "/upgrade_analyze"
+	// databaseCleanShutdown is pg_controldata's state of a cluster shut
+	// down cleanly.
+	databaseCleanShutdown = "shut down"
 )
 
 // upgradeOldBinDir is the old major's binaries, on the mounted old base.
@@ -90,11 +108,38 @@ func pgUpgradeArgs(from, to, jobs int, check bool) []string {
 // controlDataChecksums reports from pg_controldata's output whether the
 // cluster has data checksums.
 func controlDataChecksums(out string) (bool, bool) {
+	value, ok := controlDataField(out, "Data page checksum version")
+	return ok && value != "0", ok
+}
+
+// controlDataField reads one field of pg_controldata's output.
+func controlDataField(out, field string) (string, bool) {
 	scanner := bufio.NewScanner(strings.NewReader(out))
 	for scanner.Scan() {
-		if value, ok := strings.CutPrefix(scanner.Text(), "Data page checksum version:"); ok {
-			return strings.TrimSpace(value) != "0", true
+		if value, ok := strings.CutPrefix(scanner.Text(), field+":"); ok {
+			return strings.TrimSpace(value), true
 		}
 	}
-	return false, false
+	return "", false
+}
+
+// recoveryServerArgs runs the old major's postgres on the old cluster, as
+// a primary that archives, for a crashed cluster's recovery.
+func recoveryServerArgs(from int, memTotalKiB int64) []string {
+	args := databaseServerArgs(from, memTotalKiB, true)
+	args[0] = upgradeOldBinDir(from) + "/postgres"
+	return args
+}
+
+// pendingWAL lists the WAL files an archive_status directory still has
+// waiting for the archiver, in name order.
+func pendingWAL(status []string) []string {
+	var names []string
+	for _, entry := range status {
+		if name, ok := strings.CutSuffix(entry, ".ready"); ok && dbarchive.ValidWALName(name) {
+			names = append(names, name)
+		}
+	}
+	slices.Sort(names)
+	return names
 }

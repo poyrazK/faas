@@ -79,6 +79,17 @@ type fakeVMM struct {
 	down map[string]bool
 	// holds are archive holds by id/name, as a shared bucket keeps them.
 	holds map[string]ArchiveHold
+	// Majors: majors is each bootstrapped volume's cluster major and
+	// runMajor the major each running VM booted. upgrading are upgrade
+	// boots in flight (id -> major). Their guest upgrades unless
+	// upgradeCode fails it, and upgradeHold keeps it upgrading until
+	// closed. upgradeFroms records each boot's UpgradeFrom.
+	majors       map[string]int
+	runMajor     map[string]int
+	upgrading    map[string]int
+	upgradeCode  string
+	upgradeHold  chan struct{}
+	upgradeFroms []int
 }
 
 func (f *fakeVMM) PutHold(_ context.Context, node Node, id, name string, point time.Time) (ArchiveHold, error) {
@@ -129,7 +140,8 @@ func (f *fakeVMM) DeleteHold(_ context.Context, node Node, id, name string) erro
 func newFakeVMM() *fakeVMM {
 	return &fakeVMM{volumes: map[string]bool{}, running: map[string]bool{}, restoring: map[string]bool{}, flushes: map[string]time.Time{}, volNode: map[string]string{}, storage: map[string]*dbguest.StorageStatus{}, stale: map[string]bool{},
 		primaryOn: map[string]string{}, standbyOn: map[string]string{}, standbyVol: map[string]string{}, replMode: map[string]dbguest.ReplicationMode{},
-		unsynced: map[string]bool{}, promoted: map[string]string{}, imports: map[string]dbguest.ImportStatus{}, down: map[string]bool{}}
+		unsynced: map[string]bool{}, promoted: map[string]string{}, imports: map[string]dbguest.ImportStatus{}, down: map[string]bool{},
+		majors: map[string]int{}, runMajor: map[string]int{}, upgrading: map[string]int{}}
 }
 
 func (f *fakeVMM) record(call string) {
@@ -176,7 +188,12 @@ func (f *fakeVMM) Start(_ context.Context, node Node, vm VM) error {
 	if _, ok := f.volumes[vm.DatabaseID]; !ok {
 		return errors.New("no volume")
 	}
+	if vm.UpgradeFrom != 0 && !f.running[vm.DatabaseID] {
+		f.upgrading[vm.DatabaseID] = vm.Major
+	}
+	f.upgradeFroms = append(f.upgradeFroms, vm.UpgradeFrom)
 	f.running[vm.DatabaseID] = true
+	f.runMajor[vm.DatabaseID] = vm.Major
 	f.primaryOn[vm.DatabaseID] = node.ID
 	if vm.RestoreSource != "" && !vm.Bootstrapped {
 		f.restoreBoots = append(f.restoreBoots, vm.RestoreTarget)
@@ -266,6 +283,7 @@ func (f *fakeVMM) Stop(_ context.Context, node Node, id string) error {
 	}
 	delete(f.running, id)
 	delete(f.restoring, id)
+	delete(f.upgrading, id)
 	return nil
 }
 
@@ -290,6 +308,7 @@ func (f *fakeVMM) Control(_ context.Context, node Node, id string, req dbguest.R
 	case dbguest.OpBootstrap:
 		f.record("bootstrap")
 		f.volumes[id] = true
+		f.majors[id] = f.runMajor[id]
 		return dbguest.Response{State: dbguest.StateReady}, nil
 	case dbguest.OpBaseBackup:
 		if !f.archive {
@@ -331,6 +350,24 @@ func (f *fakeVMM) Control(_ context.Context, node Node, id string, req dbguest.R
 	}
 	if !f.volumes[id] {
 		return dbguest.Response{State: dbguest.StateNeedsBootstrap}, nil
+	}
+	if to, ok := f.upgrading[id]; ok {
+		if f.upgradeHold != nil {
+			select {
+			case <-f.upgradeHold:
+			default:
+				return dbguest.Response{State: dbguest.StateStarting}, nil
+			}
+		}
+		if f.upgradeCode != "" {
+			return dbguest.Response{State: dbguest.StateFailed, Error: f.upgradeCode}, nil
+		}
+		f.record("upgraded")
+		f.majors[id] = to
+		delete(f.upgrading, id)
+	}
+	if major, ok := f.majors[id]; ok && major != f.runMajor[id] {
+		return dbguest.Response{State: dbguest.StateFailed, Error: dbguest.ErrCodeMajorMismatch}, nil
 	}
 	return dbguest.Response{State: dbguest.StateReady, Storage: f.storage[id], Stale: f.stale[node.ID+"/"+id]}, nil
 }

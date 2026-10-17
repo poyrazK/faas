@@ -87,7 +87,7 @@ func (m *MemStore) usageLocked() map[string]nodeUsage {
 			m.volumeBytes += vm.VolumeBytes
 			usage[vm.MoveNode] = m
 		}
-		if isActive(vm.State) {
+		if holdsMemory(vm.State) {
 			u.activeMB += billableMB(vm.MemMiB)
 		}
 		if vm.State == StateWaking {
@@ -514,6 +514,83 @@ func (m *MemStore) AbortMove(_ context.Context, id string, held time.Time, lastE
 	vm.State, vm.StateChangedAt, vm.LastError = StateParked, m.now(), lastError
 	m.vms[id] = vm
 	return nil
+}
+
+func (m *MemStore) BeginUpgrade(_ context.Context, id string, major int, lease time.Duration) (VM, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	vm, ok := m.vms[id]
+	if !ok {
+		return VM{}, ErrNotFound
+	}
+	if vm.State != StateParked || !vm.Bootstrapped || vm.ResizePending || vm.PromotePending {
+		return VM{}, ErrConflict
+	}
+	node, ok := m.nodes[vm.NodeID]
+	if !ok {
+		return VM{}, ErrNodeUnavailable
+	}
+	if err := admitUpgradeOn(node, m.usageLocked()[node.ID], vm, major); err != nil {
+		return VM{}, err
+	}
+	now := m.now()
+	vm.State, vm.StateChangedAt, vm.LastError = StateUpgrading, now, ""
+	vm.UpgradeMajor, vm.UpgradeLeaseUntil = major, now.Add(lease)
+	m.vms[id] = vm
+	return vm, nil
+}
+
+func (m *MemStore) ClaimUpgrade(_ context.Context, id string, held time.Time, lease time.Duration) (time.Time, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	vm, ok := m.vms[id]
+	if !ok || vm.State != StateUpgrading || !m.leaseHeldLocked(vm.UpgradeLeaseUntil, held) {
+		return time.Time{}, ErrConflict
+	}
+	vm.UpgradeLeaseUntil = m.now().Add(lease)
+	m.vms[id] = vm
+	return vm.UpgradeLeaseUntil, nil
+}
+
+func (m *MemStore) FinishUpgrade(_ context.Context, id string, held time.Time, to State, until, backupAt time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	vm, ok := m.vms[id]
+	if !ok || vm.State != StateUpgrading || held.IsZero() || !vm.UpgradeLeaseUntil.Equal(held) || (to != StateParked && to != StateRunning) {
+		return ErrConflict
+	}
+	now := m.now()
+	vm.MajorHistory = append(slices.Clone(vm.MajorHistory), MajorSpan{Major: vm.Major, Until: until})
+	vm.Major, vm.UpgradeMajor, vm.UpgradeLeaseUntil, vm.LastBackupAt = vm.UpgradeMajor, 0, time.Time{}, backupAt
+	vm.State, vm.StateChangedAt, vm.LastError = to, now, ""
+	if to == StateRunning {
+		vm.LastActiveAt = now
+		m.openLocked(id, MeterCompute, computeRate(vm), now)
+	}
+	m.vms[id] = vm
+	return nil
+}
+
+func (m *MemStore) AbortUpgrade(_ context.Context, id string, held time.Time, to State, lastError string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	vm, ok := m.vms[id]
+	if !ok || vm.State != StateUpgrading || !m.leaseHeldLocked(vm.UpgradeLeaseUntil, held) || (to != StateParked && to != StateFailed) {
+		return ErrConflict
+	}
+	vm.UpgradeMajor, vm.UpgradeLeaseUntil = 0, time.Time{}
+	vm.State, vm.StateChangedAt, vm.LastError = to, m.now(), lastError
+	m.vms[id] = vm
+	return nil
+}
+
+// leaseHeldLocked reports whether held is the lease until, or is zero
+// and until has lapsed.
+func (m *MemStore) leaseHeldLocked(until, held time.Time) bool {
+	if held.IsZero() {
+		return until.Before(m.now())
+	}
+	return until.Equal(held)
 }
 
 func (m *MemStore) ClaimStandby(_ context.Context, id string) (VM, error) {

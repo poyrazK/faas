@@ -210,7 +210,7 @@ func (s *Scheduler) startDrills(ctx context.Context, busy, drills map[string]boo
 			continue
 		}
 		_, err = s.Restore(ctx, RestoreRequest{
-			ProvisionRequest: ProvisionRequest{DatabaseID: drill.ID, Major: source.Major, VcpuCount: 1, MemMiB: min(source.MemMiB, drillMemMiB),
+			ProvisionRequest: ProvisionRequest{DatabaseID: drill.ID, Major: source.MajorAt(drill.TargetAt), VcpuCount: 1, MemMiB: min(source.MemMiB, drillMemMiB),
 				VolumeBytes: source.VolumeBytes, RestoreWindowSeconds: drillRestoreWindowSeconds},
 			Source: source.DatabaseID, Target: drill.TargetAt,
 		})
