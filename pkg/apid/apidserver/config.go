@@ -38,6 +38,8 @@ import (
 // many tools; pinning it here makes the daemon's config story
 // explicit).
 type Config struct {
+	// Empty keeps managed selective repair admission closed.
+	DataRepairBindingsPath string `toml:"data_repair_bindings_path"`
 	// Empty preview policy path keeps admission closed. No boolean/env override.
 	OperationsPreviewPolicyPath string `toml:"operations_preview_policy_path"`
 	// Runtime trust remains available independently of new admission.

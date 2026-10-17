@@ -62,7 +62,9 @@ type Operation struct {
 	MilestoneCount            int                                         `json:"milestone_count,omitempty"`
 	// LimitExceeded is set by the deadline sweeper before it stops a
 	// workflow run, so the projection settles failed rather than cancelled.
-	LimitExceeded string `json:"limit_exceeded,omitempty"`
+	LimitExceeded     string `json:"limit_exceeded,omitempty"`
+	DataRepairID      string `json:"data_repair_id,omitempty"`
+	DataRepairBinding string `json:"data_repair_binding,omitempty"`
 }
 
 // operationRecordJSON adds the normalized backend identity consumed by the
@@ -71,6 +73,8 @@ type Operation struct {
 func operationRecordJSON(op Operation) ([]byte, error) {
 	var executionID, executionKind string
 	switch {
+	case op.DataRepairID != "" && op.CurrentInvocationID == "" && op.WorkflowRunID == "" && op.JobRunID == "":
+		executionID, executionKind = op.DataRepairID, "data_repair"
 	case op.CurrentInvocationID != "" && op.WorkflowRunID == "" && op.JobRunID == "":
 		executionID, executionKind = op.CurrentInvocationID, "http"
 	case op.CurrentInvocationID == "" && op.WorkflowRunID != "" && op.JobRunID == "":

@@ -2,7 +2,7 @@
 import { createHash } from 'node:crypto';
 import { OPERATION_REQUEST_BYTES, OPERATION_IDENTITY_BYTES, OPERATION_RESPONSE_BYTES, OPERATION_WORKFLOW_STATE_BATCH_BYTES } from './operation-contract.js';
 import { operationHeaders, operationExecutionContext, type OperationRequestHeaders } from './operation-execution-context.js';
-import { operationReceiptTransaction, type OperationPool, type OperationTransactionResult } from './operation-receipt.js';
+import { operationReceiptTransaction, type OperationPool, type OperationTransactionResult, type OperationReceiptGuard } from './operation-receipt.js';
 
 import { milestoneTransaction, saveCustomerMilestones, type CustomerOperationTransaction } from './customer-operation-milestones.js';
 import { saveCustomerWorkflowStates, type OperationWorkflowStateReport } from './customer-operation-workflow-states.js';
@@ -82,6 +82,16 @@ export async function withCustomerOperationTransaction(
   validateMilestones?: (reports: OperationMilestoneReport[]) => Promise<unknown>,
   validateWorkflowStates?: (reports: OperationWorkflowStateReport[], milestones: OperationMilestoneReport[]) => Promise<unknown>,
 ): Promise<OperationTransactionResult> {
+  return customerOperationTransactionWithGuard(pool, input, handler, undefined, validateMilestones, validateWorkflowStates);
+}
+
+// Internal SDK composition point, preserving milestone/workflow validation.
+export async function customerOperationTransactionWithGuard(
+  pool: OperationPool, input: CustomerOperationTransactionRequest,
+  handler: (transaction: CustomerOperationTransaction) => Promise<unknown>, guard?: OperationReceiptGuard,
+  validateMilestones?: (reports: OperationMilestoneReport[]) => Promise<unknown>,
+  validateWorkflowStates?: (reports: OperationWorkflowStateReport[], milestones: OperationMilestoneReport[]) => Promise<unknown>,
+): Promise<OperationTransactionResult> {
   const request = normalize(input);
   const digest = Buffer.from(customerOperationRequestDigest(request));
   return operationReceiptTransaction(pool, request, digest, 'customer', async tx => {
@@ -127,5 +137,5 @@ export async function withCustomerOperationTransaction(
       await validateWorkflowStates(saved, reports);
     }
     return body;
-  }, body => validate(body, request.resultMaxBytes));
+  }, body => validate(body, request.resultMaxBytes), guard);
 }
