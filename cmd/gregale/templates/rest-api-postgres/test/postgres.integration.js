@@ -146,6 +146,20 @@ test("generated PostgreSQL starter survives real TLS/SCRAM connection failures",
     await admin.query("ALTER TABLE notes_saved RENAME TO notes");
     assert.equal((await hook()).status, 204); assert.equal(db.generation, 2);
   });
+  await t.test("before_checkpoint closes every server session; restore reconnects", async () => {
+    const sessions = async () => (await admin.query("SELECT count(*)::int AS count FROM pg_stat_activity WHERE usename=$1", [role])).rows[0].count;
+    const checkpoint = () => fetch(`${base}/internal/before-checkpoint`, { method: "POST", headers: { "X-Faas-Before-Checkpoint": "1" } });
+    assert.equal((await fetch(`${base}/healthz`)).status, 200);
+    assert.ok(await sessions() > 0, "the pool keeps an idle session after a request");
+    assert.equal((await checkpoint()).status, 204);
+    await waitFor(async () => await sessions() === 0);
+    assert.equal((await fetch(`${base}/healthz`)).status, 503);
+    assert.equal((await checkpoint()).status, 204); // A retried capture finds it drained.
+    assert.equal(await sessions(), 0);
+    assert.equal((await hook()).status, 204); assert.equal(db.generation, 3);
+    assert.equal((await fetch(`${base}/healthz`)).status, 200);
+    const result = await (await fetch(`${base}/notes`)).json(); assert.ok(result.notes.some(note => note.body === "preserved"));
+  });
   await t.test("atomic rotation drains an open write, rejects stale SCRAM credentials, and fences restore races", async () => {
     const directory = await mkdtemp(join(tmpdir(), 'gregale-postgres-rotation-'));
     const receipts = [], pools = [];
@@ -236,8 +250,10 @@ test("generated PostgreSQL starter survives real TLS/SCRAM connection failures",
     assert.equal((await fetch(`${nextBase}/healthz`)).status, 200);
     assert.ok((await (await fetch(`${nextBase}/notes`)).json()).notes.some(note => note.body === "preserved"));
   });
-  await t.test("public restore attempts cannot reset a pool", async () => {
-    const result = await fetch(`${base}/internal/after-restore`, { method: "POST" });
-    assert.equal(result.status, 403);
+  await t.test("public lifecycle attempts cannot reset or drain a pool", async () => {
+    for (const path of ["after-restore", "before-checkpoint"]) {
+      const result = await fetch(`${base}/internal/${path}`, { method: "POST" });
+      assert.equal(result.status, 403);
+    }
   });
 });
