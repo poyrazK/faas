@@ -33,10 +33,13 @@ func (m *MemStore) appTaskExclusiveCurrentLocked(task AppTask, at time.Time) boo
 	return operation.LeaseExpiresAt.After(at) && operation.AttemptDeadline.After(at)
 }
 
-func (m *MemStore) CreateAppTask(_ context.Context, params CreateAppTaskParams) (AppTask, error) {
+func (m *MemStore) CreateAppTask(ctx context.Context, params CreateAppTaskParams) (AppTask, error) {
 	resolved, err := resolveCreateAppTask(params)
 	if err != nil {
 		return AppTask{}, err
+	}
+	if resolved.BindingVerification != nil && resolved.BindingVerification.ManagedService != nil && ManagedServiceProbeCurrent(ctx, m, AppTask{AppID: resolved.AppID, DeploymentID: resolved.DeploymentID, BindingVerification: resolved.BindingVerification}) != nil {
+		return AppTask{}, ErrAppTaskDeploymentUnavailable
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -50,7 +53,15 @@ func (m *MemStore) createAppTaskLocked(resolved CreateAppTaskParams) (AppTask, e
 		return AppTask{}, ErrAppTaskDeploymentUnavailable
 	}
 	deployment, ok := m.deployments[resolved.DeploymentID]
-	if !ok || !validAppTaskDeployment(deployment, app.ID) || resolved.RequireLiveDeployment && deployment.Status != DeployLive {
+	valid := validAppTaskDeployment(deployment, app.ID)
+	if resolved.BindingVerification != nil && resolved.BindingVerification.ManagedService != nil {
+		_, err := managedProbeRuntime(app, deployment)
+		valid = err == nil
+	}
+	if !ok || !valid || resolved.RequireLiveDeployment && deployment.Status != DeployLive {
+		return AppTask{}, ErrAppTaskDeploymentUnavailable
+	}
+	if resolved.BindingVerification != nil && resolved.BindingVerification.ManagedService != nil && !m.managedProbeAdmissionCurrentLocked(app, deployment, *resolved.BindingVerification.ManagedService) {
 		return AppTask{}, ErrAppTaskDeploymentUnavailable
 	}
 	if resolved.ExclusiveOperationID != "" {

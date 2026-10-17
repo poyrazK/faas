@@ -7,6 +7,144 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Checked binding retirement — 2026-10-17
+
+Complete reviewed GitOps graph removal can publish an empty release with binding
+policies still enforced. The private grant consumes reservation-time policy
+revisions and exact current source/lease/inventory authority. Surviving project
+workloads remain blocked by this path. Existing route withdrawal, consumer pause,
+gateway acknowledgements and execution drain still govern completion; accepted
+queue backlog and retained identities survive. See [ADR-1548](adr/1548-checked-binding-retirement.md).
+Portable owner/state fixtures cover this handoff; real native KVM retirement and
+independent leak qualification remain pending.
+
+## Candidate binding qualification — 2026-10-17
+
+Managed GitOps graphs can qualify supported HTTPS and push-worker bindings
+before candidates receive serving authority, with binding policies kept enforced.
+Private restored-candidate HTTPS exchanges and explicitly reviewed isolated queue
+smoke bind evidence to exact artifacts, policies, source generation and cohort.
+Graph publication rechecks that context atomically; serving cutover consumes the
+same bounded proof. Missing, stale, partial and unsupported evidence stays blocked.
+Ordinary active-release CLI receipts remain separate. Native execution and host
+leak qualification remain pending on a dedicated KVM host.
+See [ADR-1547](adr/1547-candidate-binding-qualification.md).
+
+## Reviewed source binding verification — 2026-10-17
+
+Managed HTTPS probes, push-worker canaries and single-app durable verification
+runs now share a validated immutable artifact revision covering OCI images and
+reviewed source builds. Frozen archive/build provenance and materialized rootfs
+identity replace the image-only assumption; source builds keep an empty OCI
+digest. Task admission and scheduler restore allow that shape only for current
+managed service probes. Rebuilds and existing release/policy/source fences revoke
+prior authority and evidence. An append-only task constraint migration retains
+ordinary-task eligibility and refuses downgrade while source history exists.
+Managed-service native contract version 4 adds a real Dockerfile-built worker
+and retains its source archive, build provenance and rootfs evidence. Native
+execution and host leak qualification remain pending on a dedicated KVM host.
+See [ADR-1546](adr/1546-reviewed-source-binding-verification.md).
+
+## Managed worker queue verification — 2026-10-17
+
+Active reviewed push workers can admit bounded queue canaries using their exact
+release, environment and frozen consumer contract, without HTTP traffic or
+revision pins. Frozen reviewed capability declarations and explicit publication
+consent remain required. Inventory and dry-run share admission eligibility;
+release, source, policy and consumer changes revoke completion evidence.
+Strict batch verification can now complete both HTTPS and queue checks.
+The managed-service native contract is version 3 and requires real handler
+completion plus release/policy invalidation and preservation of unrelated queue
+work. Native execution and host leak qualification remain pending on a dedicated
+KVM host. See [ADR-1545](adr/1545-managed-worker-queue-canaries.md).
+
+## Managed worker service verification — 2026-10-17
+
+Active managed worker callers can verify frozen HTTPS dependencies on
+request/service targets through the existing isolated task path. Eligibility
+uses the frozen class and effective execution mode. Tasks retain exact release,
+deployment, scope and policy fences without starting the worker entrypoint or
+listener. Single-service verification leaves queues untouched; strict batch
+verification retains blockers for unsupported queues. Managed zero-traffic worker
+queue-canary admission was a separate gap, subsequently addressed by ADR-1545. Reviewed graphs can
+qualify service-bound workers with a distinct policy that hashes
+their dependencies and effective transport, retaining atomic graph route checks.
+This change introduced managed-service native contract version 2 and requires worker
+coverage, separate release
+and policy invalidation, pending-message preservation and three-workload
+retirement. Real native execution and host leak qualification remain pending
+on a dedicated KVM host. See [ADR-1544](adr/1544-managed-worker-service-probes.md).
+
+## Managed HTTPS service verification — 2026-10-17
+
+Active managed request/service workloads with resolved frozen HTTPS bindings
+publish `managed-https-v1`. Server-selected context travels through the existing
+target-pinned task ledger to a distinct guest operation. The guest checks the
+custom environment key, caller identity, private TLS and exact gateway target
+and release confirmations. Inventory segregates ordinary and managed receipts;
+checks, planning and single/all CLI verification require current matching
+context, and the CLI refreshes evidence after completion. Named guest listeners
+authenticate task source addresses through vmmd's fresh live map and require a
+running task lease; old nodes reject managed probes before boot. Unsupported contexts
+and managed application smoke remain blocked. No production qualification or
+activation authority is established. Native acceptance requires a dedicated
+KVM host and host leak checks; this cloud workspace has no `/dev/kvm`.
+The self-contained [native journey](ops/managed-service-binding-native-acceptance.md)
+now owns its reviewed graph, private TLS, CLI checks, invalidation and retirement.
+It is the fourth required binding-native suite; the aggregate is version 2.
+Portable contracts and tagged compilation do not establish native qualification.
+See [ADR-1543](adr/1543-managed-https-service-probes.md).
+
+## Managed service gateway probe pins — 2026-10-17
+
+Marked gateway probes require a healthy replica of the exact deployment selected
+by the active reviewed environment graph. Malformed or conflicting deployment
+and release selectors fail before replica lookup; successful responses confirm
+both selected identities. Old or unattributed replicas cannot satisfy the probe,
+including after the active release changes while registry data is cached.
+Probes retain their no-wake, no-application-call behavior. This corrects route
+observation; managed task probes and binding receipt qualification remain
+unsupported. Focused gateway and daemon race regressions, gateway lint and
+documentation link checks pass. See
+[ADR-275](adr/275-https-service-binding-canary.md).
+
+## Frozen deployment service inventory — 2026-10-17
+
+Binding inventory uses the selected deployment's frozen service namespace for
+managed environments and reports logical names, physical target apps, exact
+reviewed routes and context revisions. App-level discovery cannot replace an
+empty or invalid frozen map. `gregale bindings APP --deployment ID|vN` selects
+that view. Context revisions participate in review digests; ordinary app probe
+receipts are excluded and managed service task probes remain unsupported.
+Checks, release-policy reviews and strict batch coverage block that gap without
+claiming environment qualification. See
+[ADR-1542](adr/1542-frozen-service-binding-inventory.md).
+
+## Deployment service binding explanations — 2026-10-17
+
+`gregale bindings service explain --deployment ID` observes app authorization
+and effective deployment routing through a read-only API. Managed callers use
+their frozen workload policy and active reviewed release, with no global app
+fallback on missing bindings. Optional scope assertions detect environment
+mismatches; explanations identify selected target deployments and releases when
+pinned, and preserve indeterminate results for unsupported or unreadable context.
+The gateway and API share app and alias authorization helpers. These metadata
+observations do not establish runtime adoption, connectivity or native acceptance.
+See [service binding configuration](service-binding-configuration.md) and
+[ADR-1541](adr/1541-deployment-service-binding-explanations.md).
+
+## Native binding CI orchestration — 2026-10-17
+
+The [binding-native lane](ops/binding-native-ci.md) runs PostgreSQL,
+storage, queue and managed HTTPS service guest acceptance runners serially, with clean exact-source
+Git/VCS provenance and a retained aggregate of validated non-secret reports.
+Go build constraints replace prefix-based test discovery. A portable actual-tree
+inventory gate rejects native tests missing from platform phases or specialized
+runner contracts. Native host classification, service isolation, per-runner
+locks, leak checks and independent provider/artifact approval remain required.
+Portable verification is separate from supported native execution. No native
+qualification or production admission is established by this implementation.
+
 ## Read-only all-binding verification preview — 2026-10-16
 
 `gregale bindings verify APP --all --dry-run` shares preparation and selection

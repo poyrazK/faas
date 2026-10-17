@@ -13048,11 +13048,11 @@ WHERE id=sqlc.arg(id)::uuid AND phase<>'failed'
 RETURNING *;
 
 -- name: CreateEnvironmentWorkloadQualification :execrows
-INSERT INTO environment_workload_qualification_requests(graph_id,deployment_id,app_id,resource,artifact,frozen_inputs,execution_mode)
+INSERT INTO environment_workload_qualification_requests(graph_id,deployment_id,app_id,resource,artifact,frozen_inputs,execution_mode,binding_context)
 SELECT sqlc.arg(graph_id)::uuid,d.id,d.app_id,sqlc.arg(resource)::text,environment_workload_artifact(d),d.environment_workload_runtime,
  CASE WHEN d.environment_workload_runtime->'runtime' ? 'execution_mode'
  THEN coalesce(nullif(d.environment_workload_runtime->'runtime'->>'execution_mode',''),'request')
- ELSE coalesce(nullif(d.environment_workload_runtime->'baseline'->>'execution_mode',''),'request') END
+ ELSE coalesce(nullif(d.environment_workload_runtime->'baseline'->>'execution_mode',''),'request') END, sqlc.narg(binding_context)::jsonb
 FROM deployments d WHERE d.id=sqlc.arg(deployment_id)::uuid
 ON CONFLICT(graph_id,resource) DO NOTHING;
 
@@ -14687,9 +14687,28 @@ SELECT a.account_id, a.id, d.id, 'manual', sqlc.arg(command)::text[], false,
 FROM apps a JOIN deployments d ON d.app_id = a.id
 WHERE a.id = sqlc.arg(app_id) AND a.account_id = sqlc.arg(account_id)
  AND a.status <> 'deleted' AND d.id = sqlc.arg(deployment_id)
- AND d.rootfs_key IS NOT NULL AND d.rootfs_key <> '' AND d.image_digest <> ''
+ AND d.rootfs_key IS NOT NULL AND d.rootfs_key <> ''
+ AND (d.image_digest <> '' OR (
+  sqlc.arg(binding_verification)::jsonb ? 'managed_service' AND d.kind='github'
+  AND d.environment_workload_runtime->'source_archive' IS NOT NULL
+  AND NOT d.environment_workload_held AND d.rootfs_bytes>0
+ ))
  AND d.status IN ('imaging', 'snapshotting', 'live', 'superseded')
  AND (NOT sqlc.arg(require_live_deployment)::boolean OR d.status = 'live')
+ AND (NOT (sqlc.arg(binding_verification)::jsonb ? 'managed_service') OR EXISTS (
+  SELECT 1 FROM project_release_sets release
+  JOIN project_release_members caller_member ON caller_member.release_id=release.id AND caller_member.app_id=a.id AND caller_member.deployment_id=d.id
+  JOIN project_release_members target_member ON target_member.release_id=release.id
+  JOIN active_environment_git_sources source ON source.id::text=d.environment_workload_runtime->>'source_id'
+  WHERE release.id::text=sqlc.arg(binding_verification)::jsonb->'managed_service'->>'release_id'
+   AND release.active AND release.account_id=a.account_id AND release.project_id=a.project_id
+   AND release.environment_slug=COALESCE(NULLIF(d.scope,''),'default')
+   AND source.account_id=a.account_id AND source.project_id=a.project_id AND source.mode='enforce' AND NOT source.suspended
+   AND NOT d.environment_workload_held
+   AND target_member.app_id::text=sqlc.arg(binding_verification)::jsonb->'managed_service'->>'target_app_id'
+   AND target_member.deployment_id::text=sqlc.arg(binding_verification)::jsonb->>'target_deployment_id'
+  FOR SHARE OF release, source
+ ))
 FOR SHARE OF d
 RETURNING id;
 -- name: ListBindingVerificationTasks :many
@@ -14702,6 +14721,7 @@ FROM app_tasks
 WHERE account_id = sqlc.arg(account_id) AND app_id = sqlc.arg(app_id)
  AND binding_verification IS NOT NULL
  AND binding_verification->>'type' = ANY(sqlc.arg(kinds)::text[])
+ AND (binding_verification->>'type' <> 'service' OR (binding_verification->'managed_service' IS NOT NULL) = sqlc.arg(managed_service)::boolean)
  AND (binding_verification->>'type' <> 'service' OR coalesce(binding_verification->>'target_deployment_id','') = coalesce(sqlc.arg(service_targets)::jsonb->>(binding_verification->>'binding'),''))
  AND (NOT sqlc.arg(exact_deployment)::boolean OR deployment_id = sqlc.narg(selected_deployment_id)::uuid)
 ORDER BY binding_verification->>'type', binding_verification->>'binding', deployment_scope,
@@ -21609,3 +21629,31 @@ WHERE j.account_id = sqlc.arg(account_id)::uuid
   AND j.status <> 'deleted'
   AND r.id = sqlc.arg(run_id)::uuid
   AND t.task_index = sqlc.arg(task_index)::int;
+
+-- name: EnvironmentBindingCandidate :one
+SELECT to_jsonb(d)::jsonb AS deployment, a.account_id, environment_binding_catalog_supported(d.app_id,d.scope)::boolean AS catalog_supported
+FROM deployments d JOIN apps a ON a.id=d.app_id WHERE d.id=sqlc.arg(deployment_id)::uuid;
+
+-- name: EnvironmentBindingReleaseRequired :one
+SELECT EXISTS(SELECT 1 FROM apps a JOIN app_binding_release_policies p ON p.app_id=a.id
+ WHERE a.project_id=sqlc.arg(project_id)::uuid AND p.scope=sqlc.arg(scope)::text AND p.mode='enforce');
+
+-- name: RecordEnvironmentQualificationServiceExchange :exec
+INSERT INTO environment_qualification_service_receipts(request_id,attempt,binding,route)
+VALUES(sqlc.arg(request_id)::uuid,sqlc.arg(attempt)::bigint,sqlc.arg(binding)::text,sqlc.arg(route)::jsonb)
+ON CONFLICT(request_id,attempt,binding) DO NOTHING;
+
+-- name: EnvironmentQualificationServiceExchanges :many
+SELECT request_id,attempt,binding,route,recorded_at FROM environment_qualification_service_receipts
+WHERE request_id IN (SELECT id FROM environment_workload_qualification_requests WHERE graph_id=sqlc.arg(graph_id)::uuid);
+
+-- name: AuthorizeEnvironmentBindingRelease :one
+SELECT authorize_environment_binding_release(sqlc.arg(graph_id)::uuid,sqlc.arg(release_id)::uuid,sqlc.arg(prior_release)::text,sqlc.arg(members)::jsonb)::boolean;
+
+-- name: InsertEnvironmentBindingRelease :one
+INSERT INTO project_release_sets(id,account_id,project_id,environment_slug,active,ttl_seconds)
+VALUES(sqlc.arg(id)::uuid,sqlc.arg(account_id)::uuid,sqlc.arg(project_id)::uuid,sqlc.arg(environment)::text,true,sqlc.arg(ttl)::integer)
+RETURNING created_at;
+
+-- name: AuthorizeEnvironmentBindingTraffic :one
+SELECT authorize_environment_binding_traffic(sqlc.arg(graph_id)::uuid,sqlc.arg(release_id)::uuid)::boolean;

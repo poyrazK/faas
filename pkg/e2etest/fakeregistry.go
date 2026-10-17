@@ -92,6 +92,12 @@ func HelloGitOpsWorkerImage(repo string) (fakeImage, string) {
 	return layeredHelloImageOnPortWithCmd(repo, "queue worker", false, 8080, []string{"/hello-server", "-queue-ack", "-gitops-resilience"})
 }
 
+// HelloManagedServiceWorkerImage adds a private startup marker and an explicit
+// task-only assertion mode to the normal qualification-capable worker image.
+func HelloManagedServiceWorkerImage(repo string) (fakeImage, string) {
+	return layeredHelloImageOnPortWithCmd(repo, "service-bound worker", false, 8080, []string{"/hello-server", "-queue-ack", "-gitops-resilience", "-worker-startup-marker"})
+}
+
 // ImageOnlyBuilderBaseImage is a startup fixture for metal tests that deploy
 // full-rootfs OCI images and never launch a source builder. imaged still stages
 // and validates its builder base before subscribing, so this image carries the

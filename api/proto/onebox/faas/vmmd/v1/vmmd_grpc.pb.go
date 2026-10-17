@@ -86,6 +86,8 @@ const (
 	Vmmd_AcknowledgeMigration_FullMethodName                    = "/onebox.faas.vmmd.v1.Vmmd/AcknowledgeMigration"
 	Vmmd_CancelLiveMigration_FullMethodName                     = "/onebox.faas.vmmd.v1.Vmmd/CancelLiveMigration"
 	Vmmd_RetireManagedPostgresDrain_FullMethodName              = "/onebox.faas.vmmd.v1.Vmmd/RetireManagedPostgresDrain"
+	Vmmd_ResolveServiceCaller_FullMethodName                    = "/onebox.faas.vmmd.v1.Vmmd/ResolveServiceCaller"
+	Vmmd_RestoreManagedServiceProbe_FullMethodName              = "/onebox.faas.vmmd.v1.Vmmd/RestoreManagedServiceProbe"
 )
 
 // VmmdClient is the client API for Vmmd service.
@@ -579,6 +581,13 @@ type VmmdClient interface {
 	// Internal, fenced retirement of one PostgreSQL cutover incarnation.
 	// Generic Destroy and process inventory cannot acknowledge this contract.
 	RetireManagedPostgresDrain(ctx context.Context, in *RetireManagedPostgresDrainRequest, opts ...grpc.CallOption) (*RetireManagedPostgresDrainResponse, error)
+	// Fresh host-owned identity for the tenant service listener. App-task VMs
+	// are deliberately absent from serving instances. No guest assertion or
+	// cached address mapping may substitute for this lookup.
+	ResolveServiceCaller(ctx context.Context, in *ResolveServiceCallerRequest, opts ...grpc.CallOption) (*ResolveServiceCallerResponse, error)
+	// Command-free managed probe boot. A distinct method rejects older nodes
+	// before allocating resources or starting a guest.
+	RestoreManagedServiceProbe(ctx context.Context, in *RestoreAppTaskRequest, opts ...grpc.CallOption) (*RestoreAppTaskResponse, error)
 }
 
 type vmmdClient struct {
@@ -1274,6 +1283,26 @@ func (c *vmmdClient) RetireManagedPostgresDrain(ctx context.Context, in *RetireM
 	return out, nil
 }
 
+func (c *vmmdClient) ResolveServiceCaller(ctx context.Context, in *ResolveServiceCallerRequest, opts ...grpc.CallOption) (*ResolveServiceCallerResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ResolveServiceCallerResponse)
+	err := c.cc.Invoke(ctx, Vmmd_ResolveServiceCaller_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *vmmdClient) RestoreManagedServiceProbe(ctx context.Context, in *RestoreAppTaskRequest, opts ...grpc.CallOption) (*RestoreAppTaskResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RestoreAppTaskResponse)
+	err := c.cc.Invoke(ctx, Vmmd_RestoreManagedServiceProbe_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // VmmdServer is the server API for Vmmd service.
 // All implementations must embed UnimplementedVmmdServer
 // for forward compatibility.
@@ -1765,6 +1794,13 @@ type VmmdServer interface {
 	// Internal, fenced retirement of one PostgreSQL cutover incarnation.
 	// Generic Destroy and process inventory cannot acknowledge this contract.
 	RetireManagedPostgresDrain(context.Context, *RetireManagedPostgresDrainRequest) (*RetireManagedPostgresDrainResponse, error)
+	// Fresh host-owned identity for the tenant service listener. App-task VMs
+	// are deliberately absent from serving instances. No guest assertion or
+	// cached address mapping may substitute for this lookup.
+	ResolveServiceCaller(context.Context, *ResolveServiceCallerRequest) (*ResolveServiceCallerResponse, error)
+	// Command-free managed probe boot. A distinct method rejects older nodes
+	// before allocating resources or starting a guest.
+	RestoreManagedServiceProbe(context.Context, *RestoreAppTaskRequest) (*RestoreAppTaskResponse, error)
 	mustEmbedUnimplementedVmmdServer()
 }
 
@@ -1966,6 +2002,12 @@ func (UnimplementedVmmdServer) CancelLiveMigration(context.Context, *CancelLiveM
 }
 func (UnimplementedVmmdServer) RetireManagedPostgresDrain(context.Context, *RetireManagedPostgresDrainRequest) (*RetireManagedPostgresDrainResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RetireManagedPostgresDrain not implemented")
+}
+func (UnimplementedVmmdServer) ResolveServiceCaller(context.Context, *ResolveServiceCallerRequest) (*ResolveServiceCallerResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ResolveServiceCaller not implemented")
+}
+func (UnimplementedVmmdServer) RestoreManagedServiceProbe(context.Context, *RestoreAppTaskRequest) (*RestoreAppTaskResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RestoreManagedServiceProbe not implemented")
 }
 func (UnimplementedVmmdServer) mustEmbedUnimplementedVmmdServer() {}
 func (UnimplementedVmmdServer) testEmbeddedByValue()              {}
@@ -3053,6 +3095,42 @@ func _Vmmd_RetireManagedPostgresDrain_Handler(srv interface{}, ctx context.Conte
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Vmmd_ResolveServiceCaller_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ResolveServiceCallerRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).ResolveServiceCaller(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_ResolveServiceCaller_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).ResolveServiceCaller(ctx, req.(*ResolveServiceCallerRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Vmmd_RestoreManagedServiceProbe_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RestoreAppTaskRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).RestoreManagedServiceProbe(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_RestoreManagedServiceProbe_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).RestoreManagedServiceProbe(ctx, req.(*RestoreAppTaskRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Vmmd_ServiceDesc is the grpc.ServiceDesc for Vmmd service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -3279,6 +3357,14 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RetireManagedPostgresDrain",
 			Handler:    _Vmmd_RetireManagedPostgresDrain_Handler,
+		},
+		{
+			MethodName: "ResolveServiceCaller",
+			Handler:    _Vmmd_ResolveServiceCaller_Handler,
+		},
+		{
+			MethodName: "RestoreManagedServiceProbe",
+			Handler:    _Vmmd_RestoreManagedServiceProbe_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

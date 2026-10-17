@@ -52,7 +52,7 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 		return ResolvedAppTaskRuntime{}, fmt.Errorf("sched: resolve app task deployment: %w", err)
 	}
 	if dep.AppID != app.ID || dep.RootfsKey == "" || dep.RootfsKey != request.ArtifactKey ||
-		dep.ImageDigest == "" || dep.ImageDigest != request.ImageDigest ||
+		dep.ImageDigest != request.ImageDigest ||
 		normalizedDeploymentScope(dep.Scope) != normalizedDeploymentScope(request.DeploymentScope) {
 		return ResolvedAppTaskRuntime{}, state.ErrAppTaskDeploymentUnavailable
 	}
@@ -90,6 +90,17 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 	task, err := e.store.AppTaskByID(ctx, request.AccountID, request.AppID, request.ID)
 	if err != nil || task.DeploymentID != dep.ID || task.Kind != request.Kind {
 		return ResolvedAppTaskRuntime{}, state.ErrAppTaskDeploymentUnavailable
+	}
+	// Only a current managed probe can restore a reviewed source build without
+	// an OCI digest. Ordinary tasks retain their image-only admission contract.
+	if dep.ImageDigest == "" && (task.BindingVerification == nil || task.BindingVerification.ManagedService == nil) {
+		return ResolvedAppTaskRuntime{}, state.ErrAppTaskDeploymentUnavailable
+	}
+	if task.BindingVerification != nil && task.BindingVerification.ManagedService != nil {
+		store, ok := e.store.(state.ManagedServiceProbeStore)
+		if !ok || state.ManagedServiceProbeCurrent(ctx, store, task) != nil {
+			return ResolvedAppTaskRuntime{}, state.ErrAppTaskDeploymentUnavailable
+		}
 	}
 	runtimeValues, err := e.loadRuntimeDeploymentValuesForTask(ctx, app, dep, task.Kind == state.AppTaskKindRelease)
 	if err != nil {
@@ -138,7 +149,8 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 	}
 	return ResolvedAppTaskRuntime{
 		NodeID: placement.NodeID,
-		Spec:   AppTaskRestoreSpec{Instance: request.ID, DeploymentID: dep.ID, App: spec},
+		Spec: AppTaskRestoreSpec{Instance: request.ID, DeploymentID: dep.ID, App: spec,
+			RequireServiceCallerIdentity: task.BindingVerification != nil && task.BindingVerification.ManagedService != nil},
 		release: func() {
 			e.ledger.Release(request.ID)
 		},

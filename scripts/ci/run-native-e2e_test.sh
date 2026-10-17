@@ -383,10 +383,36 @@ for required in "${NATIVE_E2E_REQUIRED_TESTS[@]}"; do
     fail "required test ${required} is not in the metal-tagged set (lost its //go:build metal tag?)"
 done
 
-# The derivation must actually key on the build tag, not on a filename pattern:
-# metal tests live in files both with and without a _metal_ infix.
-grep -Fq "grep -l '^//go:build metal'" "${repo_root}/scripts/ci/native-e2e-verdict.sh" ||
-  fail "the run set is no longer derived from the //go:build metal tag"
+# Execute discovery against owned sources: Go constraints, not filenames,
+# header text ordering or commented-out functions, determine the run set.
+discovery_probe="${work}/discovery"
+mkdir -p "$discovery_probe/cmd/e2e"
+cat > "$discovery_probe/cmd/e2e/plain_test.go" <<'GO'
+//go:build linux && metal
+
+package e2e_test
+// func TestCommented(t *testing.T) {}
+func TestSemantic(t *testing.T) {}
+func TestMultiline(
+  t *testing.T,
+) {}
+GO
+cat > "$discovery_probe/cmd/e2e/specialized_test.go" <<'GO'
+//go:build object_storage_native && metal
+
+package e2e_test
+func TestSpecialized(t *testing.T) {}
+GO
+cat > "$discovery_probe/cmd/e2e/ordinary_test.go" <<'GO'
+//go:build !metal
+
+package e2e_test
+func TestOrdinary(t *testing.T) {}
+GO
+[[ "$(native_e2e_metal_tests "$discovery_probe")" == $'TestMultiline\nTestSemantic' ]] ||
+  fail "native discovery does not follow the plain-metal Go build constraints and AST"
+native_e2e_inventory "$discovery_probe" --tags metal,object_storage_native | grep -qx TestSpecialized ||
+  fail "native discovery lost the reordered specialized build constraint"
 
 # The runner must build its filter from that derivation and refuse an empty set.
 grep -Fq 'native_e2e_metal_tests "${repo_root}"' "${runner}" ||

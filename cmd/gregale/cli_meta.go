@@ -654,6 +654,7 @@ var cliCommands = []cliCommand{
 		Short:       "Inspect app bindings, verification, runtime freshness, and rotation progress",
 		Positionals: []string{"<app>"},
 		Flags: []cliFlag{
+			{Name: "deployment", Value: "ID|vN", Short: "inspect exact deployment service bindings, including frozen environment routes"},
 			{Name: "require-complete", Short: "fail if binding metadata, verification, runtime freshness or refresh progress is incomplete"},
 			{Name: "scope", Value: "SCOPE", Short: "filter resource bindings by environment scope; app-wide bindings remain included"},
 		},
@@ -675,7 +676,7 @@ var cliCommands = []cliCommand{
 				}, Examples: []string{"gregale bindings release-policy set public-api --scope production --require-verification --max-age 10m --expected-revision 0"}},
 			}},
 			{Name: "service", Short: "Configure standalone service bindings", Subcommands: []cliSub{
-				{Name: "explain", Short: "Explain app-level service authorization; exits 0 allowed, 1 denied, 2 indeterminate/error", Positionals: []string{"<caller>", "<target>"}, Flags: []cliFlag{{Name: "method", Value: "METHOD", Short: "HTTP method (default GET)"}, {Name: "path", Value: "PATH", Short: "origin-form request path (default /)"}}},
+				{Name: "explain", Short: "Explain service authorization, optionally for an exact deployment; exits 0 allowed, 1 denied, 2 indeterminate/error", Positionals: []string{"<caller>", "<target>"}, Flags: []cliFlag{{Name: "deployment", Value: "ID", Short: "exact caller deployment UUID; use server routing and effective policy"}, {Name: "scope", Value: "ENV", Short: "assert deployment environment; requires --deployment"}, {Name: "method", Value: "METHOD", Short: "HTTP method (default GET)"}, {Name: "path", Value: "PATH", Short: "origin-form request path (default /)"}}},
 				{Name: "export", Short: "Export live service settings as a reusable policy", Positionals: []string{"<app>"}, Flags: []cliFlag{{Name: "out", Value: "PATH", Short: "write to a new private file (default stdout)"}}},
 				{Name: "check", Short: "Compare live settings with a policy; exits 0 match, 1 drift, 2 error", Positionals: []string{"<app>"}, Flags: []cliFlag{{Name: "file", Value: "PATH", Req: true, Short: "JSON service binding settings policy"}}},
 				{Name: "configure", Short: "Patch service targets, permissions, reliability and URL transport", Positionals: []string{"<app>"}, Flags: []cliFlag{{Name: "plan-out", Value: "PATH", Short: "save a reviewed plan without changes; destination must be new"}, {Name: "file", Value: "PATH", Req: true, Short: "JSON service binding settings patch"}, {Name: "dry-run", Bool: true, Short: "show current and proposed binding settings without changes"}}, Examples: []string{"gregale bindings service configure public-api --file policy.json --dry-run"}},

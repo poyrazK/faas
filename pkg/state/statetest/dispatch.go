@@ -24,6 +24,9 @@ import (
 
 // memDispatched lists the methods Mem forwards to its override.
 var memDispatched = map[string]bool{
+	"AppTaskByID":                                             true,
+	"LiveDeployment":                                          true,
+	"ResolveEnvironmentGitOpsServiceBinding":                  true,
 	"ProcessNextWorkflowInitialManualCompletion":              true,
 	"AcceptEntityOutboxDelivery":                              true,
 	"AccountPasswordByAccountID":                              true,
@@ -122,6 +125,31 @@ var memDispatched = map[string]bool{
 	"StampOperationExecutionAttempt":                          true,
 	"UpdateAccountProviderCustomerID":                         true,
 	"WarmPoolReconciliationAppIDs":                            true,
+}
+
+func (s *Mem) AppTaskByID(ctx context.Context, account, app, id string) (state.AppTask, error) {
+	if over, ok := s.over.(interface {
+		AppTaskByID(context.Context, string, string, string) (state.AppTask, error)
+	}); ok {
+		return over.AppTaskByID(ctx, account, app, id)
+	}
+	return s.MemStore.AppTaskByID(ctx, account, app, id)
+}
+
+func (s *Mem) LiveDeployment(ctx context.Context, appID string) (state.Deployment, error) {
+	if o, ok := s.over.(interface {
+		LiveDeployment(context.Context, string) (state.Deployment, error)
+	}); ok {
+		return o.LiveDeployment(ctx, appID)
+	}
+	return s.MemStore.LiveDeployment(ctx, appID)
+}
+
+func (s *Mem) ResolveEnvironmentGitOpsServiceBinding(ctx context.Context, appID, deploymentID, service string) (state.EnvironmentGitOpsServiceBindingRoute, bool, bool, error) {
+	if o, ok := s.over.(state.EnvironmentGitOpsServiceBindingStore); ok {
+		return o.ResolveEnvironmentGitOpsServiceBinding(ctx, appID, deploymentID, service)
+	}
+	return s.MemStore.ResolveEnvironmentGitOpsServiceBinding(ctx, appID, deploymentID, service)
 }
 
 func (s *Mem) AcceptEntityOutboxDelivery(p0 context.Context, p1 state.AppWebhookDelivery) (string, error) {

@@ -3,6 +3,7 @@ package sched
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
@@ -14,9 +15,10 @@ import (
 // AppTaskRestoreSpec contains the command-free immutable runtime selected by
 // schedd for one durable task.
 type AppTaskRestoreSpec struct {
-	Instance     string
-	DeploymentID string
-	App          AppSpec
+	Instance                     string
+	DeploymentID                 string
+	App                          AppSpec
+	RequireServiceCallerIdentity bool
 }
 
 type AppTaskRestoreOutcome struct {
@@ -34,12 +36,19 @@ func (c *VMMClient) RestoreAppTask(ctx context.Context, spec AppTaskRestoreSpec)
 	}
 	fields, _ := wire.FromContext(ctx)
 	ctx = wire.WithCorrelationOutgoing(ctx, fields)
-	resp, err := c.cli.RestoreAppTask(ctx, &vmmdpb.RestoreAppTaskRequest{
+	req := &vmmdpb.RestoreAppTaskRequest{
 		Instance: spec.Instance, App: spec.App.toProto(), Plan: string(spec.App.Plan),
 		AccountId: spec.App.AccountID, DeploymentId: spec.DeploymentID,
-	})
+	}
+	var resp *vmmdpb.RestoreAppTaskResponse
+	var err error
+	if spec.RequireServiceCallerIdentity {
+		resp, err = c.cli.RestoreManagedServiceProbe(ctx, req)
+	} else {
+		resp, err = c.cli.RestoreAppTask(ctx, req)
+	}
 	if err != nil {
-		return nil, liftErr(err)
+		return nil, fmt.Errorf("sched: restore app task: %w", liftErr(err))
 	}
 	if err := c.confirmSecretAliasSupport(ctx, spec.App, spec.Instance, resp.GetSupportsSecretAliases()); err != nil {
 		return nil, err

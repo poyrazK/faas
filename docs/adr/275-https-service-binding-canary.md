@@ -4,3 +4,15 @@
 - **Context:** The additive HTTPS endpoint inventory advertises `https://<service>.internal`, but a listed binding does not prove that the caller can resolve the alias, trust the private gateway certificate, or pass the live service authorization and routing checks.
 - **Decision:** Add `gregale bindings verify <app> <service>`. The CLI admits a bounded app task whose reserved platform operation runs inside a fresh task guest attached to the caller deployment. The task uses the workload's service CA bundle, resolves the `.internal` name through the workload resolver, and performs a TLS 1.3 `HEAD` request with certificate verification enabled and ambient HTTP proxies disabled. The gateway recognizes the marked probe only on a bound `.internal` alias, executes its normal caller identity, binding, target discovery, and target authorization checks, then reports success only when a healthy endpoint is currently registered. It does not forward to customer code or wake a parked target. There is no HTTP fallback.
 - **Consequences:** DNS, TLS, authorization, and routing results are reported separately. A parked target is reported as not currently routable, even if an ordinary request could wake it; the canary is intentionally side-effect-light and does not claim handler readiness. The probe path is intercepted only for a marked `HEAD` request, so an ordinary application request to that path is forwarded unchanged.
+
+## Managed route pinning correction — 2026-10-17
+
+For a caller resolved through the active reviewed environment graph, the gateway
+probe requires a healthy replica of that graph's exact target deployment.
+Deployment and release headers are assertions: malformed or ambiguous values
+fail, and values that conflict with the resolved graph cannot select another
+replica or release. Successful responses confirm the platform-selected target
+deployment and release; failures confirm neither. The probe never wakes the
+target or invokes application code. Ordinary app probes retain their existing
+behavior. The subsequent managed guest contract and evidence boundary are
+defined in [ADR-1543](1543-managed-https-service-probes.md).

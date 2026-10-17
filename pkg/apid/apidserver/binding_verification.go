@@ -55,6 +55,12 @@ func (s *server) serviceBindingRevisions(ctx context.Context, app state.App) (ma
 }
 
 func (s *server) captureBindingVerificationPin(r *http.Request, acct state.Account, app state.App, dep state.Deployment, request api.ResolvedCreateAppTaskRequest) (*state.BindingVerificationPin, error) {
+	if dep.EnvironmentWorkloadManaged() && !request.CommandShell && len(request.Command) >= 2 && (request.Command[0] == api.AppTaskServiceBindingProbeCommand || request.Command[0] == api.AppTaskServiceBindingTargetProbeCommand) {
+		return bindings.CaptureManagedServiceProbe(r.Context(), s.store, app, dep, request.Command)
+	}
+	if problem := managedServiceProbeProblem(dep, request.Command, request.CommandShell); problem != nil {
+		return nil, problem
+	}
 	targetProbe := api.IsServiceBindingTargetProbeCommand(request.Command, request.CommandShell)
 	write := api.IsObjectStorageWriteProbeCommand(request.Command, request.CommandShell)
 	if !write && !targetProbe && (request.CommandShell || len(request.Command) != 2) {
@@ -144,24 +150,13 @@ func (s *server) captureBindingVerificationPin(r *http.Request, acct state.Accou
 	return nil, nil // A generic task can probe an unmanaged env key; it supplies no binding evidence.
 }
 
-func (s *server) applyBindingVerification(parent context.Context, r *http.Request, acct state.Account, app state.App, inventory *api.AppBindingInventory, revisions, privateBindingIDs map[string]string) {
+func (s *server) applyBindingVerification(parent context.Context, r *http.Request, acct state.Account, app state.App, dep state.Deployment, selectionErr error, inventory *api.AppBindingInventory, revisions, privateBindingIDs map[string]string) {
 	ctx, cancel := context.WithTimeout(parent, bindingInventoryReadTimeout)
 	defer cancel()
-	var dep state.Deployment
-	var err error
-	if inventory.RequestedDeploymentID != "" {
-		dep, err = s.store.DeploymentByID(ctx, inventory.RequestedDeploymentID)
-		if err == nil && (dep.AppID != app.ID || dep.Status != state.DeployLive || dep.RootfsKey == "" || dep.ImageDigest == "") {
-			bindings.AppendVerificationIssue(inventory)
-			return
-		}
-	} else {
-		dep, err = s.store.LiveDeployment(ctx, app.ID)
-	}
-	if errors.Is(err, state.ErrNotFound) && inventory.RequestedDeploymentID == "" {
+	if errors.Is(selectionErr, state.ErrNotFound) && inventory.RequestedDeploymentID == "" {
 		return
 	}
-	if err != nil {
+	if selectionErr != nil {
 		bindings.AppendVerificationIssue(inventory)
 		return
 	}
@@ -179,7 +174,18 @@ func (s *server) applyBindingVerification(parent context.Context, r *http.Reques
 		bindings.AppendVerificationIssue(inventory)
 		return
 	}
-	kinds := []string{api.BindingTypeService}
+	kinds := []string{}
+	managedService := inventory.ServiceBindingSource == "environment_release"
+	if !managedService {
+		kinds = append(kinds, api.BindingTypeService)
+	} else {
+		for _, item := range inventory.Bindings {
+			if _, ok := api.ManagedServiceProbeForItem(item); ok {
+				kinds = append(kinds, api.BindingTypeService)
+				break
+			}
+		}
+	}
 	workerRead, _ := r.Context().Value(bindingReleaseWorkerReadsKey{}).(bool)
 	if workerRead || middleware.HasScope(r, api.ScopesManagedPostgresReadSurface...) {
 		kinds = append(kinds, api.BindingTypePostgres)
@@ -191,12 +197,21 @@ func (s *server) applyBindingVerification(parent context.Context, r *http.Reques
 		kinds = append(kinds, api.BindingTypeOutbound)
 	}
 	inventory.ServiceTargets = bindingServiceTargets(r)
+	serviceTargets := inventory.ServiceTargets
+	if managedService {
+		serviceTargets = map[string]string{}
+		for _, item := range inventory.Bindings {
+			if item.Type == api.BindingTypeService {
+				serviceTargets[item.Name] = item.ServiceTargetDeploymentID
+			}
+		}
+	}
 	for i := range inventory.Bindings {
-		if inventory.Bindings[i].Type == api.BindingTypeService {
+		if inventory.Bindings[i].Type == api.BindingTypeService && inventory.Bindings[i].ServiceContext == nil {
 			inventory.Bindings[i].ServiceTargetDeploymentID = inventory.ServiceTargets[inventory.Bindings[i].Name]
 		}
 	}
-	tasks, err := store.ListBindingVerificationTasks(ctx, acct.ID, app.ID, kinds, state.BindingVerificationSelection{ServiceTargets: inventory.ServiceTargets, DeploymentID: dep.ID, AllowFallback: inventory.RequestedDeploymentID == ""})
+	tasks, err := store.ListBindingVerificationTasks(ctx, acct.ID, app.ID, kinds, state.BindingVerificationSelection{ManagedService: managedService, ServiceTargets: serviceTargets, DeploymentID: dep.ID, AllowFallback: !managedService && inventory.RequestedDeploymentID == ""})
 	if err != nil {
 		bindings.AppendVerificationIssue(inventory)
 		return
@@ -207,6 +222,9 @@ func (s *server) applyBindingVerification(parent context.Context, r *http.Reques
 	}
 	for index := range inventory.Bindings {
 		item := &inventory.Bindings[index]
+		if api.ServiceBindingVerificationUnsupported(*item) {
+			continue // App-scoped receipts never qualify a frozen environment edge.
+		}
 		if item.Type == api.BindingTypePostgres && item.Access == "migration" {
 			continue
 		}
@@ -224,6 +242,17 @@ func (s *server) applyBindingVerification(parent context.Context, r *http.Reques
 		}
 		task, found := byBinding[bindingVerificationKey(item.Type, selection, scope)]
 		if !found {
+			continue
+		}
+		if spec, managed := api.ManagedServiceProbeForItem(*item); managed {
+			if task.Pin.ManagedService == nil {
+				continue
+			}
+			item.Verification = normalizeBindingVerification(task)
+			item.VerificationStatus = item.Verification.Result
+			if *task.Pin.ManagedService != spec || task.Pin.Revision != spec.ContextRevision || task.DeploymentID != dep.ID {
+				item.VerificationStatus, item.Verification.Reason = "stale", "managed_service_context_changed"
+			}
 			continue
 		}
 		revisionBinding := item.Binding

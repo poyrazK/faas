@@ -11,51 +11,17 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-type serviceAuthorizationCheck struct {
-	Rule    string `json:"rule"`
-	Result  string `json:"result"`
-	Reason  string `json:"reason"`
-	Setting string `json:"setting,omitempty"`
-	Hint    string `json:"hint,omitempty"`
-}
+type serviceAuthorizationCheck = api.ServiceAuthorizationCheck
 
-type serviceAuthorizationExplanation struct {
-	Caller            string                      `json:"caller"`
-	Target            string                      `json:"target"`
-	Method            string                      `json:"method"`
-	Path              string                      `json:"path"`
-	Result            string                      `json:"result"`
-	Scope             string                      `json:"scope"`
-	CheckedAt         time.Time                   `json:"checked_at"`
-	CallerFingerprint string                      `json:"caller_fingerprint,omitempty"`
-	TargetFingerprint string                      `json:"target_fingerprint,omitempty"`
-	Transport         api.ServiceBindingTransport `json:"canonical_transport,omitempty"`
-	Checks            []serviceAuthorizationCheck `json:"checks"`
-	Limitations       string                      `json:"limitations"`
-}
+type serviceAuthorizationExplanation api.ServiceBindingExplanation
 
 func serviceExplainRequest(method, path string) (string, string, error) {
-	method = strings.ToUpper(strings.TrimSpace(method))
-	_, err := api.NormalizeServiceCallerScopes(api.ServiceCallerScopes{"caller": {Methods: []string{method}, PathPrefixes: []string{"/"}}})
-	if err != nil {
-		return "", "", fmt.Errorf("invalid HTTP method: %w", err)
-	}
-	requestURI, err := api.NormalizeServiceBindingSmokePath(path)
-	if err != nil {
-		return "", "", err
-	}
-	parsed, err := url.ParseRequestURI(requestURI)
-	if err != nil {
-		return "", "", err
-	}
-	// Reuse the gateway matcher to reject ambiguous decoded request paths.
-	if !(api.ServiceCallScope{Methods: []string{"*"}, PathPrefixes: []string{"/"}}).Allows(method, parsed.Path) {
-		return "", "", errors.New("path must be unambiguous, without dot segments, repeated separators, or backslashes")
-	}
-	return method, parsed.Path, nil
+	return api.NormalizeServiceExplanationRequest(method, path)
 }
 
 func newServiceExplanation(caller, target, method, path string) serviceAuthorizationExplanation {
@@ -170,7 +136,7 @@ func explainServiceAuthorization(r *serviceAuthorizationExplanation, caller, tar
 
 func cmdBindingsServiceExplain(args []string) int {
 	usageError := func() int {
-		return servicePolicyCommandError("Invalid service explanation", errors.New("usage: gregale bindings service explain CALLER TARGET [--method GET] [--path /path]"))
+		return servicePolicyCommandError("Invalid service explanation", errors.New("usage: gregale bindings service explain CALLER TARGET [--deployment ID] [--scope ENV] [--method GET] [--path /path]"))
 	}
 	flags, pos := splitArgsForFlags(args)
 	if len(pos) != 2 || !api.ValidAppSlug(pos[0]) || !api.ValidAppSlug(pos[1]) {
@@ -180,8 +146,29 @@ func cmdBindingsServiceExplain(args []string) int {
 	fs.SetOutput(io.Discard)
 	method := fs.String("method", "GET", "HTTP method to explain")
 	path := fs.String("path", "/", "origin-form request path to explain")
+	deployment := fs.String("deployment", "", "exact caller deployment UUID")
+	scope := fs.String("scope", "", "assert the selected deployment environment; requires --deployment")
 	if fs.Parse(flags) != nil || fs.NArg() != 0 {
 		return usageError()
+	}
+	deploymentSelected, scopeSelected := false, false
+	fs.Visit(func(f *flag.Flag) {
+		deploymentSelected = deploymentSelected || f.Name == "deployment"
+		scopeSelected = scopeSelected || f.Name == "scope"
+	})
+	if scopeSelected && !deploymentSelected {
+		return usageError()
+	}
+	if deploymentSelected {
+		id, err := uuid.Parse(*deployment)
+		if err != nil || id == uuid.Nil {
+			return servicePolicyCommandError("Invalid deployment", errors.New("--deployment requires a nonzero deployment UUID"))
+		}
+		if *scope != "" {
+			if problem := api.ValidateScope(*scope); problem != nil {
+				return servicePolicyCommandError("Invalid scope", problem)
+			}
+		}
 	}
 	normalizedMethod, normalizedPath, err := serviceExplainRequest(*method, *path)
 	if err != nil {
@@ -192,27 +179,55 @@ func cmdBindingsServiceExplain(args []string) int {
 	if err != nil {
 		return servicePolicyCommandError("Not logged in", err)
 	}
-	// Both reads are authorized in the selected account by the API. A denied or
-	// missing read cannot establish service authorization and never means allowed.
-	caller, callerErr := client.GetApp(context.Background(), pos[0])
-	target, targetErr := client.GetApp(context.Background(), pos[1])
-	report.CheckedAt = time.Now().UTC()
-	if callerErr != nil || targetErr != nil {
-		if callerErr != nil {
-			report.add("caller_read", "indeterminate", "caller_unreadable", "", "Check the caller name and selected account permissions.")
-		}
-		if targetErr != nil {
-			report.add("target_read", "indeterminate", "target_unreadable", "", "Check the target name and selected account permissions.")
+	if deploymentSelected {
+		report.Scope = "unknown"
+		report.CallerDeploymentID = *deployment
+		report.Limitations = "Deployment policy and routing context could not be confirmed."
+		remote, readErr := client.ExplainAppServiceBinding(context.Background(), pos[0], pos[1], api.ExplainServiceBindingOptions{DeploymentID: *deployment, Scope: *scope, Method: normalizedMethod, Path: (&url.URL{Path: normalizedPath}).EscapedPath()})
+		if readErr != nil {
+			report.Limitations = "Deployment explanation unavailable; no app-level fallback was performed."
+			report.add("context", "indeterminate", "deployment_explanation_unavailable", "", "Check server support, selected account permissions and deployment identity.")
+		} else if !validDeploymentServiceExplanation(remote, pos[0], pos[1], *deployment, *scope, normalizedMethod, normalizedPath) {
+			report.add("context", "indeterminate", "deployment_explanation_invalid", "", "Update the server and CLI to compatible explanation contracts.")
+		} else {
+			report = serviceAuthorizationExplanation(remote)
 		}
 	} else {
-		explainServiceAuthorization(&report, caller, target)
+		// Both reads are authorized in the selected account by the API. A denied or
+		// missing read cannot establish service authorization and never means allowed.
+		caller, callerErr := client.GetApp(context.Background(), pos[0])
+		target, targetErr := client.GetApp(context.Background(), pos[1])
+		report.CheckedAt = time.Now().UTC()
+		if callerErr != nil || targetErr != nil {
+			if callerErr != nil {
+				report.add("caller_read", "indeterminate", "caller_unreadable", "", "Check the caller name and selected account permissions.")
+			}
+			if targetErr != nil {
+				report.add("target_read", "indeterminate", "target_unreadable", "", "Check the target name and selected account permissions.")
+			}
+		} else {
+			explainServiceAuthorization(&report, caller, target)
+		}
 	}
+
 	if jsonOutput {
 		if err := writeJSON(report); err != nil {
 			return servicePolicyCommandError("Could not write service explanation", err)
 		}
 	} else {
 		_, _ = fmt.Fprintf(osStdout, "Service policy: %s -> %s %s %s: %s\n", report.Caller, report.Target, report.Method, report.Path, report.Result)
+		if report.CallerDeploymentID != "" {
+			_, _ = fmt.Fprintf(osStdout, "  Deployment: %s (scope %s)\n", report.CallerDeploymentID, report.Scope)
+			if report.PolicySource != "" {
+				_, _ = fmt.Fprintf(osStdout, "  Policy source: %s\n", report.PolicySource)
+			}
+			if report.Transport != "" {
+				_, _ = fmt.Fprintf(osStdout, "  Canonical transport: %s\n", report.Transport)
+			}
+			if report.TargetDeploymentID != "" {
+				_, _ = fmt.Fprintf(osStdout, "  Target deployment: %s (release %s)\n", report.TargetDeploymentID, report.ReleaseID)
+			}
+		}
 		for _, check := range report.Checks {
 			_, _ = fmt.Fprintf(osStdout, "  %s: %s (%s)\n", check.Rule, check.Result, check.Reason)
 			if check.Setting != "" {
@@ -232,4 +247,52 @@ func cmdBindingsServiceExplain(args []string) int {
 	default:
 		return 2
 	}
+}
+
+// Do not turn an old, incomplete or mismatched server response into permission.
+func validDeploymentServiceExplanation(r api.ServiceBindingExplanation, caller, service, deployment, scope, method, path string) bool {
+	requested, err := uuid.Parse(deployment)
+	selected, selectedErr := uuid.Parse(r.CallerDeploymentID)
+	if err != nil || selectedErr != nil || requested != selected || r.Caller != caller || r.Target != service || r.Method != method || r.Path != path || r.Scope == "" || r.CheckedAt.IsZero() || r.Limitations == "" || len(r.Checks) == 0 {
+		return false
+	}
+	if r.Result != "allowed" && r.Result != "denied" && r.Result != "indeterminate" {
+		return false
+	}
+	if scope != "" && r.Scope != scope && r.Result != "denied" {
+		return false
+	}
+	if r.Result == "allowed" {
+		if api.ValidateScope(r.Scope) != nil {
+			return false
+		}
+		for _, fingerprint := range []string{r.CallerFingerprint, r.TargetFingerprint} {
+			decoded, err := hex.DecodeString(fingerprint)
+			if err != nil || len(decoded) != 32 {
+				return false
+			}
+		}
+		ids := []string{r.TargetAppID}
+		if r.ReleaseID != "" || r.TargetDeploymentID != "" {
+			ids = append(ids, r.ReleaseID, r.TargetDeploymentID)
+		}
+		for _, id := range ids {
+			parsed, err := uuid.Parse(id)
+			if err != nil || parsed == uuid.Nil {
+				return false
+			}
+		}
+		for _, check := range r.Checks {
+			if check.Result != "allowed" || check.Rule == "" || check.Reason == "" {
+				return false
+			}
+		}
+		if r.TargetAppID == "" || (r.PolicySource != "app" && r.PolicySource != "environment_release") || (r.Transport != api.ServiceBindingTransportHTTP && r.Transport != api.ServiceBindingTransportHTTPS) {
+			return false
+		}
+		if r.PolicySource == "environment_release" && (r.ReleaseID == "" || r.TargetDeploymentID == "") {
+			return false
+		}
+	}
+	return true
 }
