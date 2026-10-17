@@ -252,13 +252,17 @@ The existing strict native target qualifies source cancellation/recovery; it is
 not a two-host destination acceptance result. Do not count its source-only cases
 as completion of this matrix.
 
-The successful-migration and controlled reply-boundary portion has a guarded entry point,
+The successful-migration, controlled reply and coordinator process-loss portion
+has a guarded entry point,
 `make test-function-migration-native`. Follow the
 [prepared two-host fixture procedure](function-migration-native-acceptance.md).
-Its version 2 verdict requires baseline, readiness/commit reply-discard and
-duplicate-adoption cases for both Node runtimes. These deterministic after-effect
-errors do not qualify actual transport loss. The complete failure/restart matrix below and
-production activation remain separate gates. Local compilation and portable
+Its version 3 verdict requires baseline, readiness/commit reply-discard,
+duplicate-adoption and coordinator SIGKILL/replacement cases before and after
+ownership commit for both Node runtimes. Startup recovery follows
+[ADR-1353](../adr/1353-function-migration-scheduler-restart.md). These tests do not
+qualify actual transport loss, systemd service restart or vmmd/host restart. The
+complete failure/restart matrix below and production activation remain separate
+gates. Local compilation and portable
 witness tests supply no native verdict.
 
 Use two designated native x86_64 KVM hosts, their independently built qualified

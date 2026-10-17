@@ -87,6 +87,51 @@ func (q *Queries) InsertFunctionMigrationDestination(ctx context.Context, db DBT
 	return err
 }
 
+const listRestartFunctionMigrationDestinations = `-- name: ListRestartFunctionMigrationDestinations :many
+SELECT d.token, d.instance_id, d.lease_token, d.node_id, d.wake_id, d.phase, d.grant_data, d.receipt FROM function_migration_destinations d
+JOIN migration_leases m ON m.instance_id=d.instance_id AND m.lease_token=d.lease_token
+WHERE d.node_id=$1::uuid
+ AND ($2::uuid IS NULL OR d.instance_id>$2::uuid)
+ AND (d.phase='committed' OR (d.phase='ready' AND m.lease_expires_at>clock_timestamp()))
+ORDER BY d.instance_id LIMIT $3::bigint
+`
+
+type ListRestartFunctionMigrationDestinationsParams struct {
+	NodeID  pgtype.UUID
+	AfterID pgtype.UUID
+	MaxRows int64
+}
+
+// adr: 1353
+func (q *Queries) ListRestartFunctionMigrationDestinations(ctx context.Context, db DBTX, arg ListRestartFunctionMigrationDestinationsParams) ([]FunctionMigrationDestination, error) {
+	rows, err := db.Query(ctx, listRestartFunctionMigrationDestinations, arg.NodeID, arg.AfterID, arg.MaxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []FunctionMigrationDestination{}
+	for rows.Next() {
+		var i FunctionMigrationDestination
+		if err := rows.Scan(
+			&i.Token,
+			&i.InstanceID,
+			&i.LeaseToken,
+			&i.NodeID,
+			&i.WakeID,
+			&i.Phase,
+			&i.GrantData,
+			&i.Receipt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockFunctionMigrationDestination = `-- name: LockFunctionMigrationDestination :one
 SELECT token, instance_id, lease_token, node_id, wake_id, phase, grant_data, receipt FROM function_migration_destinations WHERE instance_id=$1::uuid AND lease_token=$2::text FOR UPDATE
 `

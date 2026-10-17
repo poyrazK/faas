@@ -111,8 +111,9 @@ conservatively rolls back an adoption error.
 The suite uses actual VM RPCs and the production scheduler migration coordinator,
 with independent PostgreSQL, persistent all-worker callback counts and physical
 host witnesses. These after-effect error injections do not establish real
-network packet loss, PostgreSQL failover or guest vsock loss. Version 2 reports
-require all eight runtime/scenario pairs and reject old two-case evidence,
+network packet loss, PostgreSQL failover or guest vsock loss. Version 3 reports
+retain all eight reply/baseline pairs and add four coordinator process-loss
+cases under [ADR-1353](1353-function-migration-scheduler-restart.md). They reject older scopes,
 changed native epochs, replaced SQL sessions or callback replay. The suite
 rejects skipped cases and incomplete cleanup, and always reports the complete
 failure matrix and production readiness as unqualified. The fixture and

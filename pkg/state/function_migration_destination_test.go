@@ -27,6 +27,10 @@ type functionDestinationTestStore interface {
 func functionDestinationFixture(t *testing.T, s functionDestinationTestStore) (Instance, runtimeadmission.FunctionMigrationDestinationGrant, runtimeadmission.Receipt, RuntimeConfigMigration) {
 	t.Helper()
 	ins, req := functionMigrationAdmissionFixture(t, s)
+	inputs := RuntimeConfigInputs{Scope: DefaultEnvScope, Boundary: time.Now().UTC().Truncate(time.Microsecond)}
+	if err := s.RecordInstanceRuntimeConfigReceipt(t.Context(), ins.ID, ins.WakeID, inputs); err != nil {
+		t.Fatal("record source configuration before capture", err)
+	}
 	g, err := s.IssueFunctionMigrationCapture(t.Context(), req)
 	if err != nil {
 		t.Fatal(err)
@@ -72,7 +76,7 @@ func functionDestinationFixture(t *testing.T, s functionDestinationTestStore) (I
 		Method: vmmdpb.WakeMethod_WAKE_RESTORE, CompletedAtUnixNano: time.Now().UnixNano(), ArtifactConsumption: drives,
 		SnapshotConsumption: runtimeadmission.SnapshotConsumption{Version: runtimeadmission.SnapshotRestoreVersion, CaptureToken: g.CaptureToken, EvidenceHash: dest.Binding.SnapshotEvidenceHash,
 			Memory: c.Memory, VMState: c.VMState, PrivateDrive: c.PrivateDrive, MappedMemoryBytes: c.Memory.Bytes}}
-	input := RuntimeConfigMigration{ExpectedWakeID: ins.WakeID, WakeID: dest.WakeID, Netns: r.Netns, HostIP: r.HostIP, GuestUID: int(r.LeaseUID), Inputs: &RuntimeConfigInputs{Scope: DefaultEnvScope, Boundary: time.Now().UTC().Truncate(time.Microsecond)}}
+	input := RuntimeConfigMigration{ExpectedWakeID: ins.WakeID, WakeID: dest.WakeID, Netns: r.Netns, HostIP: r.HostIP, GuestUID: int(r.LeaseUID), Inputs: &inputs}
 	return ins, dest, r, input
 }
 func functionDestinationLifecycle(t *testing.T, s functionDestinationTestStore) {
@@ -258,7 +262,7 @@ func functionDestinationDrift(t *testing.T, s functionDestinationTestStore, scen
 	}
 }
 
-func functionDestinationCapacity(t *testing.T, s functionDestinationTestStore) {
+func functionDestinationCapacity(t *testing.T, s functionDestinationTestStore, reopen ...func() functionDestinationTestStore) {
 	ins, g, _, _ := functionDestinationFixture(t, s)
 	ctx := t.Context()
 	node, err := s.ComputeNodeByID(ctx, g.Binding.NodeID)
@@ -268,6 +272,9 @@ func functionDestinationCapacity(t *testing.T, s functionDestinationTestStore) {
 	node.AdmissionCeilingMB = ins.RAMMB + api.PerVMOverheadMB
 	if _, err := s.UpsertComputeNode(ctx, node); err != nil {
 		t.Fatal(err)
+	}
+	if len(reopen) != 0 {
+		s = reopen[0]()
 	}
 	if _, err := s.CreateInstance(ctx, ins.AppID, ins.DeploymentID, string(StateWaking), ins.RAMMB, node.ID, uuid.NewString()); !errors.Is(err, ErrNodeCapacity) {
 		t.Fatal("pending destination lost durable capacity", err)

@@ -481,7 +481,7 @@ test-function-background-native: ## Strict Node execution lifetime/capture/thaw 
 	$(MAKE) leakcheck
 
 .PHONY: test-function-migration-native
-test-function-migration-native: ## Guarded Node22/24 migration and reply-boundary faults on two native KVM hosts (ADR-1352)
+test-function-migration-native: ## Guarded Node22/24 migration, replies and coordinator restart on native KVM hosts (ADR-1353)
 	@test -n "$${FAAS_FUNCTION_MIGRATION_NATIVE_CONFIG:-}" || (echo "FAAS_FUNCTION_MIGRATION_NATIVE_CONFIG must name the isolated two-host fixture" >&2; exit 1)
 	@test -n "$${FAAS_FUNCTION_MIGRATION_NATIVE_EVIDENCE:-}" || (echo "FAAS_FUNCTION_MIGRATION_NATIVE_EVIDENCE must name a new private directory outside this checkout" >&2; exit 1)
 	python3 scripts/ci/function-migration-native.py --config "$$FAAS_FUNCTION_MIGRATION_NATIVE_CONFIG" --out "$$FAAS_FUNCTION_MIGRATION_NATIVE_EVIDENCE"

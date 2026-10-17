@@ -1,8 +1,9 @@
-# Function migration and controlled reply faults on two native hosts
+# Function migration, replies and coordinator restart on native hosts
 
 Status: harness implemented; native execution pending; production off.
-This is the successful-migration and reply-boundary slice of
-[ADR-1352](../adr/1352-function-migration-destination.md), for Node 22 and Node 24. The complete
+This is the successful-migration, reply-boundary and coordinator process-loss
+slice of [ADR-1352](../adr/1352-function-migration-destination.md) and
+[ADR-1353](../adr/1353-function-migration-scheduler-restart.md), for Node 22 and Node 24. The complete
 [destination qualification matrix](function-backend-concurrency-acceptance.md#measured-migration-destination-qualification)
 still applies before release.
 
@@ -158,10 +159,10 @@ hashes, verifies distinct physical machine/boot identities and runs both native
 leak checks before mutations. It opens private temporary SSH socket forwards and
 compiles the complete native test executable with the race detector. Only
 `TestFunctionMigrationDestinationPostgresMetal` runs. Each runtime must execute
-four separately deployed cases: `success`, `lost-readiness-reply`,
-`lost-commit-reply` and `duplicate-adoption`. The timeout is 120 minutes for the
-complete eight-case matrix. Fixture input remains version 1; output reports
-use version 2.
+six separately deployed cases: `success`, `lost-readiness-reply`,
+`lost-commit-reply`, `duplicate-adoption`, `scheduler-restart-before-commit` and
+`scheduler-restart-after-commit`. The timeout is 180 minutes for the complete
+twelve-case matrix. Fixture input remains version 1; output reports use version 3.
 
 For each runtime the test observes four interpreter PIDs, two TLS pools per
 interpreter and three independently committed SQL rows. Checkpoint ACKs stay held
@@ -212,13 +213,54 @@ These are deterministic after-effect errors at client/store boundaries. They do
 not cut a network socket, interrupt PostgreSQL COMMIT on the wire or drop guest
 vsock packets. The fixture's explicit adoption retry tests vmmd idempotency;
 production scheduling still rolls back adoption errors. An automatic adoption
-retry policy is outside this increment. Host/daemon restart and actual transport
+retry policy is outside this increment. Host/vmmd restart and actual transport
 loss remain separate qualification work.
+
+## Coordinator process loss and startup recovery
+
+For `scheduler-restart-before-commit` and `scheduler-restart-after-commit`, the
+fixture starts a separate child of the freshly compiled native test executable.
+That process owns the production migration coordinator, its PostgreSQL pool,
+ledger and VM RPC clients. Its event pipe identifies the completed readiness
+boundary; only the post-commit case then releases readiness. A named-field store
+adapter delegates the real ownership transaction and holds its completed reply
+before activation or source acknowledgement.
+
+The parent sends SIGKILL to its own child and verifies the actual signal exit.
+No cancellation return or deferred migration rollback substitutes for process
+loss. The catalog must retain the exact ready or committed epoch and the source
+cleanup lease. In the uncommitted case it must still name the source and retain
+the pending destination claim. Direct destination execution must remain closed;
+SSH must still witness the original paused source process.
+
+A replacement child receives only its role and destination node, without the
+instance, lease, wake or original AppSpec. It opens a new catalog pool and RPC
+clients, discovers the attempt from PostgreSQL, runs
+`Engine.RecoverFunctionMigrations`, then `Engine.SeedLedger`. Real schedd startup
+uses this same ordering before admission begins. Discovery must identify the
+expected phase and finish exactly one attempt. The parent observes both process
+IDs/start generations and executable hashes through procfs; the replacement must
+use the same qualified binary in a distinct process.
+
+The destination must retain its original Firecracker generation, receipt and
+eight TLS SQL sessions. Callback counters must stay unchanged from readiness,
+all original SQL rows must remain, and source retirement and final native cleanup
+must pass. Rejection tests and portable subprocess tests qualify fixture wiring
+only. A separate real-PostgreSQL test checks that a new pool/store cannot spend
+pending destination capacity before confirmed retirement.
+
+These cases kill the fixture migration coordinator; prepared systemd schedd and
+vmmd services remain running. They do not qualify an actual service restart,
+startup after a host reboot, vmmd process recovery, HA or database failover.
+Issued restores and expired/stale ready attempts remain on the existing fenced
+expiry path rather than being restarted or granted a new wake.
 
 ## Evidence and remaining gates
 
-`tests.raw`, `tests.jsonl`, `tests.stderr`, `build.log`, `migration-replies.json` and
-`verdict.json` stay in the private evidence directory. Reports include source and
+`tests.raw`, `tests.jsonl`, `tests.stderr`, `build.log`, `migration-recovery.json` and
+`verdict.json` stay in the private evidence directory. Private
+`coordinator-*.log` files retain each fixture child's output for failure diagnosis.
+Reports include source and
 binary hashes, host/daemon identities, receipt hashes, SQL backend generations,
 worker pool generations, callback counts, request/reply fingerprints and observed cleanup. They contain no SQL DSN, private
 key, secret value or sealed payload. Any failed/skipped/missing runtime, changed
@@ -231,11 +273,13 @@ databases are still revoked/removed. Inspect the named native fixture hosts and
 resolve quarantine through the existing owner/recovery procedures before retrying;
 do not delete migration history to force a green run. No retry is automatic.
 
-A successful run has report version 2 and scope
-`native-migration-reply-boundaries-v1`. The driver sets
-`reply_boundaries_qualified` only after all eight cases and both final host leak
-checks pass. Old baseline-only reports cannot qualify this scope. Reports always
+A successful run has report version 3 and scope
+`native-migration-coordinator-restart-v1`. The driver sets
+`reply_boundaries_qualified` and `coordinator_restart_qualified` only after all
+twelve cases and both final host leak checks pass. Old baseline-only or reply-only
+reports cannot qualify this scope. Reports always
 have `failure_matrix_qualified: false` and `production_ready: false`. Real lost ACKs,
-failed probes, cancellation/expiry/commit races, capacity pressure, source or
-destination death/restart and private-environment authority remain future native
+failed probes, cancellation/expiry/commit races, native capacity pressure,
+systemd schedd service restart, source/destination vmmd or host death/restart and
+private-environment authority remain future native
 cases. No native result has been obtained from the managed development workspace.

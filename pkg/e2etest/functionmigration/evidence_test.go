@@ -61,6 +61,15 @@ func witnessReport() Report {
 			if scenario == LostCommit {
 				run.Fault = &ReplyFault{Mode: "post-commit-error", CommitDiscards: 1, RecoveredDecisions: 1}
 			}
+			if RestartScenario(scenario) {
+				phase := "ready"
+				if scenario == RestartCommitted {
+					phase = "committed"
+				}
+				run.Restart = &RestartEvidence{Before: CoordinatorIdentity{PID: 20, Start: "30", BinarySHA: c.TestBinarySHA}, After: CoordinatorIdentity{PID: 21, Start: "31", BinarySHA: c.TestBinarySHA},
+					SIGKILLVerified: true, LeaseRetained: true, PendingRetained: scenario == RestartReady, CommittedAtCrash: scenario == RestartCommitted, ExecutionClosed: true,
+					SourceAtCrash: run.Source, DestinationAfter: run.Destination, SQLAfter: append([]Session{}, run.DestinationSQL...), Startup: CoordinatorEvent{Phase: "recovered", Completed: 1, Seeded: true, DiscoveredPhase: phase}}
+			}
 			if scenario == LostReadiness || scenario == Duplicate {
 				copies := 3
 				fault := &ReplyFault{Mode: "explicit-concurrent-retry", OwnerAfterReplays: run.Destination, SQLAfterReplays: append([]Session{}, run.DestinationSQL...),
@@ -90,7 +99,7 @@ func TestReportRejectsIncompleteOrReplayedEvidence(t *testing.T) {
 	}{
 		{"empty", func(r *Report) { *r = Report{} }},
 		{"runtime skipped", func(r *Report) { r.Runs = r.Runs[:1] }},
-		{"duplicate runtime", func(r *Report) { r.Runs[4].Runtime = "node22" }},
+		{"duplicate runtime", func(r *Report) { r.Runs[len(Scenarios())].Runtime = "node22" }},
 		{"legacy two-case scope", func(r *Report) { r.Version, r.Scope = 1, "native-successful-migration-v1" }},
 		{"relabelled duplicate instance", func(r *Report) { r.Runs[1].InstanceID = r.Runs[0].InstanceID }},
 		{"baseline claims a fault", func(r *Report) { r.Runs[0].Fault = r.Runs[1].Fault }},
@@ -105,6 +114,18 @@ func TestReportRejectsIncompleteOrReplayedEvidence(t *testing.T) {
 		{"commit not discarded", func(r *Report) { r.Runs[2].Fault.CommitDiscards = 0 }},
 		{"commit decision not read", func(r *Report) { r.Runs[2].Fault.RecoveredDecisions = 0 }},
 		{"duplicate adoption omitted", func(r *Report) { r.Runs[3].Fault.Replays.Requests = r.Runs[3].Fault.Replays.Requests[:1] }},
+		{"previous reply-only scope", func(r *Report) { r.Version, r.Scope = 2, "native-migration-reply-boundaries-v1" }},
+		{"restart omitted", func(r *Report) { r.Runs[4].Restart = nil }},
+		{"same coordinator process", func(r *Report) { r.Runs[4].Restart.After = r.Runs[4].Restart.Before }},
+		{"different coordinator binary", func(r *Report) { r.Runs[4].Restart.After.BinarySHA = strings.Repeat("f", 64) }},
+		{"unconfirmed crash", func(r *Report) { r.Runs[4].Restart.SIGKILLVerified = false }},
+		{"lost pending destination", func(r *Report) { r.Runs[4].Restart.PendingRetained = false }},
+		{"wrong crash boundary", func(r *Report) { r.Runs[5].Restart.CommittedAtCrash = false }},
+		{"crash opens execution", func(r *Report) { r.Runs[5].Restart.ExecutionClosed = false }},
+		{"startup not discovered", func(r *Report) { r.Runs[4].Restart.Startup.Completed = 0 }},
+		{"startup skipped ledger", func(r *Report) { r.Runs[4].Restart.Startup.Seeded = false }},
+		{"startup changes physical owner", func(r *Report) { r.Runs[4].Restart.DestinationAfter.PID++ }},
+		{"startup replaces pools", func(r *Report) { r.Runs[5].Restart.SQLAfter[0].PID++ }},
 		{"callback replay after ACK", func(r *Report) { r.Runs[3].CallsAfter[0].Recoveries++ }},
 		{"callback replay before ready", func(r *Report) { r.Runs[1].CallsAtReady[0].Recoveries++ }},
 		{"unsupported production claim", func(r *Report) { r.ProductionReady = true }},

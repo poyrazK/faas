@@ -12,6 +12,15 @@ func (r Run) checkReplyEvidence() error {
 	if err := r.checkCalls(); err != nil {
 		return err
 	}
+	if RestartScenario(r.Scenario) {
+		if r.Fault != nil {
+			return errors.New("restart case cannot substitute a reply fault")
+		}
+		return r.checkRestartEvidence()
+	}
+	if r.Restart != nil {
+		return errors.New("reply case cannot claim a coordinator restart")
+	}
 	if r.Scenario == Success {
 		if r.Fault != nil {
 			return errors.New("baseline cannot claim an injected fault")

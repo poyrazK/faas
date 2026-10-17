@@ -23,3 +23,12 @@ VALUES(sqlc.arg(token)::uuid,sqlc.arg(instance_id)::uuid,sqlc.arg(lease_token)::
 -- name: SetFunctionMigrationDestination :execrows
 UPDATE function_migration_destinations SET phase=sqlc.arg(phase)::text,receipt=sqlc.narg(receipt)::jsonb
 WHERE token=sqlc.arg(token)::uuid AND phase=sqlc.arg(expected_phase)::text;
+
+-- adr: 1353
+-- name: ListRestartFunctionMigrationDestinations :many
+SELECT d.* FROM function_migration_destinations d
+JOIN migration_leases m ON m.instance_id=d.instance_id AND m.lease_token=d.lease_token
+WHERE d.node_id=sqlc.arg(node_id)::uuid
+ AND (sqlc.narg(after_id)::uuid IS NULL OR d.instance_id>sqlc.narg(after_id)::uuid)
+ AND (d.phase='committed' OR (d.phase='ready' AND m.lease_expires_at>clock_timestamp()))
+ORDER BY d.instance_id LIMIT sqlc.arg(max_rows)::bigint;

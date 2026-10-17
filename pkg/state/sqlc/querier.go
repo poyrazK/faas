@@ -2311,6 +2311,8 @@ type Querier interface {
 	// partition, then interleaved so one high-volume revision cannot crowd all
 	// prior deployments out of the bounded comparison window.
 	ListRequestTelemetryDependencySpans(ctx context.Context, db DBTX, arg ListRequestTelemetryDependencySpansParams) ([]ListRequestTelemetryDependencySpansRow, error)
+	// adr: 1353
+	ListRestartFunctionMigrationDestinations(ctx context.Context, db DBTX, arg ListRestartFunctionMigrationDestinationsParams) ([]FunctionMigrationDestination, error)
 	ListResumableImagePreparations(ctx context.Context, db DBTX, arg ListResumableImagePreparationsParams) ([]ListResumableImagePreparationsRow, error)
 	ListRetainedServiceReleases(ctx context.Context, db DBTX, arg ListRetainedServiceReleasesParams) ([]ListRetainedServiceReleasesRow, error)
 	// ADR-625: completed live releases that opted into first-wake 5xx

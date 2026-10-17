@@ -33,36 +33,37 @@ type Owner struct {
 }
 
 type Run struct {
-	Runtime              string         `json:"runtime"`
-	Scenario             string         `json:"scenario"`
-	InstanceID           string         `json:"instance_id"`
-	SourceNode           string         `json:"source_node"`
-	DestinationNode      string         `json:"destination_node"`
-	SourceWake           string         `json:"source_wake"`
-	DestinationWake      string         `json:"destination_wake"`
-	RootfsInputSHA       string         `json:"rootfs_input_sha256"`
-	BaseInputSHA         string         `json:"base_input_sha256"`
-	Source               Owner          `json:"source"`
-	Destination          Owner          `json:"destination"`
-	SourceSQL            []Session      `json:"source_sql"`
-	DestinationSQL       []Session      `json:"destination_sql"`
-	CheckpointWorkers    []Worker       `json:"checkpoint_workers"`
-	RecoveryWorkers      []Worker       `json:"recovery_workers"`
-	CallsBefore          []Calls        `json:"calls_before"`
-	CallsAtReady         []Calls        `json:"calls_at_ready"`
-	CallsAfter           []Calls        `json:"calls_after"`
-	Fault                *ReplyFault    `json:"fault,omitempty"`
-	RowsBefore           map[string]int `json:"rows_before"`
-	RowsAfter            map[string]int `json:"rows_after"`
-	CaptureHeld          bool           `json:"capture_held"`
-	DrainedBeforeCapture bool           `json:"drained_before_capture"`
-	RecoveryHeld         bool           `json:"recovery_held"`
-	ReadyKeptSource      bool           `json:"ready_kept_source"`
-	ExecutionRefused     bool           `json:"execution_refused_before_commit"`
-	CommitVerified       bool           `json:"commit_verified"`
-	SourceRetired        bool           `json:"source_retired"`
-	SourceLeaseRemoved   bool           `json:"source_lease_removed"`
-	FinalAppRetired      bool           `json:"final_app_retired"`
+	Runtime              string           `json:"runtime"`
+	Scenario             string           `json:"scenario"`
+	InstanceID           string           `json:"instance_id"`
+	SourceNode           string           `json:"source_node"`
+	DestinationNode      string           `json:"destination_node"`
+	SourceWake           string           `json:"source_wake"`
+	DestinationWake      string           `json:"destination_wake"`
+	RootfsInputSHA       string           `json:"rootfs_input_sha256"`
+	BaseInputSHA         string           `json:"base_input_sha256"`
+	Source               Owner            `json:"source"`
+	Destination          Owner            `json:"destination"`
+	SourceSQL            []Session        `json:"source_sql"`
+	DestinationSQL       []Session        `json:"destination_sql"`
+	CheckpointWorkers    []Worker         `json:"checkpoint_workers"`
+	RecoveryWorkers      []Worker         `json:"recovery_workers"`
+	CallsBefore          []Calls          `json:"calls_before"`
+	CallsAtReady         []Calls          `json:"calls_at_ready"`
+	CallsAfter           []Calls          `json:"calls_after"`
+	Fault                *ReplyFault      `json:"fault,omitempty"`
+	Restart              *RestartEvidence `json:"restart,omitempty"`
+	RowsBefore           map[string]int   `json:"rows_before"`
+	RowsAfter            map[string]int   `json:"rows_after"`
+	CaptureHeld          bool             `json:"capture_held"`
+	DrainedBeforeCapture bool             `json:"drained_before_capture"`
+	RecoveryHeld         bool             `json:"recovery_held"`
+	ReadyKeptSource      bool             `json:"ready_kept_source"`
+	ExecutionRefused     bool             `json:"execution_refused_before_commit"`
+	CommitVerified       bool             `json:"commit_verified"`
+	SourceRetired        bool             `json:"source_retired"`
+	SourceLeaseRemoved   bool             `json:"source_lease_removed"`
+	FinalAppRetired      bool             `json:"final_app_retired"`
 }
 
 type Report struct {
@@ -91,7 +92,7 @@ func (r Report) Check() error {
 	for _, runtime := range []string{"node22", "node24"} {
 		for _, scenario := range Scenarios() {
 			if !seen[runtime+"/"+scenario] {
-				return errors.New("both Node runtimes must execute every reply-boundary case")
+				return errors.New("both Node runtimes must execute every reply and coordinator restart case")
 			}
 		}
 	}
@@ -101,6 +102,9 @@ func (r Report) Check() error {
 func (r Run) Check(c Config) error {
 	if c.Validate() != nil {
 		return errors.New("native migration fixture is invalid")
+	}
+	if r.Restart != nil && (r.Restart.Before.BinarySHA != c.TestBinarySHA || r.Restart.After.BinarySHA != c.TestBinarySHA) {
+		return errors.New("coordinator process did not use this fixture's executable")
 	}
 	nodes := []string{c.Hosts[0].NodeID, c.Hosts[1].NodeID}
 	if (r.Runtime != "node22" && r.Runtime != "node24") || !validUUID(r.InstanceID) || !validUUID(r.SourceWake) || !validUUID(r.DestinationWake) || r.SourceWake == r.DestinationWake ||

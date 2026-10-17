@@ -74,7 +74,7 @@ type nativeMigrationMetrics struct{ counter prometheus.Counter }
 
 func (m nativeMigrationMetrics) LiveMigrationDecisions(string) prometheus.Counter { return m.counter }
 
-func nativeMigrationRouter(t *testing.T, ctx context.Context, c functionmigration.Config, gate *nativeDestinationGate) (*sched.VMMRouter, map[string]*sched.VMMClient, map[string]*grpc.ClientConn) {
+func nativeMigrationRouter(t *testing.T, ctx context.Context, c functionmigration.Config, gate *nativeDestinationGate, requireEmpty bool) (*sched.VMMRouter, map[string]*sched.VMMClient, map[string]*grpc.ClientConn) {
 	t.Helper()
 	var nodes []sched.ComputeNodeInfo
 	for _, host := range c.Hosts {
@@ -85,7 +85,11 @@ func nativeMigrationRouter(t *testing.T, ctx context.Context, c functionmigratio
 	}, nil)
 	clients, connections := map[string]*sched.VMMClient{}, map[string]*grpc.ClientConn{}
 	for _, node := range nodes {
-		conn, err := wire.DialContext(ctx, node.TargetURL, nil, grpc.WithChainUnaryInterceptor(gate.intercept))
+		var options []grpc.DialOption
+		if gate != nil {
+			options = append(options, grpc.WithChainUnaryInterceptor(gate.intercept))
+		}
+		conn, err := wire.DialContext(ctx, node.TargetURL, nil, options...)
 		if err != nil {
 			t.Fatal("dial native fixture VM owner")
 		}
@@ -98,7 +102,7 @@ func nativeMigrationRouter(t *testing.T, ctx context.Context, c functionmigratio
 			t.Fatal("native fixture Firecracker version differs")
 		}
 		stats, err := client.Stats(ctx)
-		if err != nil || stats.LiveCount != 0 || stats.LeasedCount != 0 || len(stats.Instances) != 0 {
+		if err != nil || requireEmpty && (stats.LiveCount != 0 || stats.LeasedCount != 0 || len(stats.Instances) != 0) {
 			t.Fatal("native migration requires otherwise empty compute hosts")
 		}
 	}
@@ -111,7 +115,7 @@ func runNativeDestinationSQL(t *testing.T, c functionmigration.Config, catalog *
 	ctx, cancel := context.WithTimeout(t.Context(), sourceDeployCtxTimeout())
 	defer cancel()
 	gate := &nativeDestinationGate{store: f.store, ready: make(chan state.FunctionMigrationDestination, 1), release: make(chan struct{})}
-	router, clients, connections := nativeMigrationRouter(t, ctx, c, gate)
+	router, clients, connections := nativeMigrationRouter(t, ctx, c, gate, true)
 	f.deploy(t, runtime)
 	f.get(t, ctx, "state", 200)
 	instances, err := f.store.ListInstancesForApp(ctx, f.appID)
@@ -158,9 +162,16 @@ func runNativeDestinationSQL(t *testing.T, c functionmigration.Config, catalog *
 		})
 	f.control.Arm()
 	f.control.ArmRecovery()
-	done := make(chan struct{})
+	finished := make(chan struct{})
+	var done <-chan struct{} = finished
 	var migrationErr error
-	go func() { migrationErr = handoff.MigrateOne(ctx, ins.ID, ins.NodeID); close(done) }()
+	var child *functionmigration.Coordinator
+	if functionmigration.RestartScenario(scenario) {
+		child = startNativeCoordinator(t, ctx, c, nativeCoordinatorMode{Role: "migrate", InstanceID: ins.ID, SourceNode: ins.NodeID, DestinationNode: to, Scenario: scenario})
+		done = child.Done()
+	} else {
+		go func() { migrationErr = handoff.MigrateOne(ctx, ins.ID, ins.NodeID); close(finished) }()
+	}
 	t.Cleanup(func() {
 		f.control.Release()
 		gate.open()
@@ -212,15 +223,29 @@ func runNativeDestinationSQL(t *testing.T, c functionmigration.Config, catalog *
 	r.RecoveryWorkers, r.DestinationSQL = nativeMigrationWorkers(f.control.RecoveryWorkers()), f.sql.Sessions(ctx, t)
 	f.control.Release()
 	var destination state.FunctionMigrationDestination
-	select {
-	case destination = <-gate.ready:
-	case <-done:
-		t.Fatal("migration failed before readiness", migrationErr)
-	case <-ctx.Done():
-		t.Fatal("destination never returned measured readiness")
+	if child != nil {
+		if _, err := child.Event(ctx, "ready"); err != nil {
+			t.Fatal(err)
+		}
+		destination, err = f.store.GetFunctionMigrationDestination(ctx, ins.ID, sourcePermission.LeaseToken)
+		if err != nil {
+			t.Fatal("crashed coordinator omitted durable readiness")
+		}
+	} else {
+		select {
+		case destination = <-gate.ready:
+		case <-done:
+			t.Fatal("migration failed before readiness", migrationErr)
+		case <-ctx.Done():
+			t.Fatal("destination never returned measured readiness")
+		}
 	}
 	verifyNativeReadyDestination(t, ctx, f, ins, destination, connections[to])
 	r.CallsAtReady = f.control.Calls()
+	if child != nil {
+		finishNativeCoordinatorRestart(t, ctx, f, child, ins, destination, clients[ins.NodeID], connections[to])
+		return r
+	}
 	if scenario == functionmigration.LostReadiness || scenario == functionmigration.Duplicate {
 		exerciseNativeAdoptionReplies(t, ctx, f, gate.call, ins, destination, connections[to])
 	}

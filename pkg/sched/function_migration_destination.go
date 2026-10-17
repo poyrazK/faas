@@ -26,6 +26,12 @@ func activateCommittedFunctionDestination(ctx context.Context, store state.Store
 	if !ok {
 		return state.ErrMigrationCommitUnresolved
 	}
+	return activateRecordedFunctionDestination(ctx, s, vmm, id, lease)
+}
+
+func activateRecordedFunctionDestination(ctx context.Context, s interface {
+	GetFunctionMigrationDestination(context.Context, string, string) (state.FunctionMigrationDestination, error)
+}, vmm RoutedVMM, id, lease string) error {
 	d, err := s.GetFunctionMigrationDestination(ctx, id, lease)
 	if err != nil {
 		return err

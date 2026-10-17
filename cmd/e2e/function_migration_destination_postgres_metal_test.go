@@ -3,8 +3,8 @@
 package e2e_test
 
 // adr: 1352
-// Successful migrations and controlled reply-boundary faults. Packet loss,
-// restart and production activation remain separate gates.
+// Successful migrations, controlled replies and coordinator process loss.
+// Native service/host restart and production activation remain separate gates.
 
 import (
 	"context"
@@ -46,6 +46,10 @@ func TestFunctionMigrationDestinationPostgresMetal(t *testing.T) {
 	defer pool.Close()
 	if err := pool.Ping(t.Context()); err != nil {
 		t.Fatal("native fixture catalog is unavailable")
+	}
+	if os.Getenv("FAAS_FUNCTION_MIGRATION_COORDINATOR") != "" {
+		runNativeCoordinatorChild(t, c, pool)
+		return
 	}
 	report := functionmigration.Report{Version: functionmigration.ReportVersion, Scope: functionmigration.ReportScope, Config: c}
 	for _, runtime := range []string{"node22", "node24"} {

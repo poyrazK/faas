@@ -93,6 +93,7 @@ class GuardTests(unittest.TestCase):
             DRIVER.check_report(path, c)
             for field, value in (("config", {}), ("production_ready", True), ("failure_matrix_qualified", True),
                                  ("both_hosts_leak_checked", False), ("version", 1), ("scope", "native-successful-migration-v1"),
+                                 ("version", 2), ("scope", "native-migration-reply-boundaries-v1"),
                                  ("runs", report["runs"][:-1]), ("runs", [report["runs"][0]] * len(report["runs"]))):
                 bad = copy.deepcopy(report)
                 bad[field] = value

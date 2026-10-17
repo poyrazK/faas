@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run successful migrations and controlled reply-boundary faults on two native hosts."""
+"""Run migrations, controlled replies and coordinator process loss on native hosts."""
 
 import argparse
 import hashlib
@@ -21,9 +21,10 @@ ASSETS = ("vmmd", "schedd", "guest_init", "node22", "node24", "kernel",
           "builder_base", "firecracker", "leakcheck", "leakcheck_native_loops")
 AGENT = pathlib.Path(__file__).with_name("function-migration-native-host.py")
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-REPORT_VERSION = 2
-REPORT_SCOPE = "native-migration-reply-boundaries-v1"
-SCENARIOS = ("success", "lost-readiness-reply", "lost-commit-reply", "duplicate-adoption")
+REPORT_VERSION = 3
+REPORT_SCOPE = "native-migration-coordinator-restart-v1"
+SCENARIOS = ("success", "lost-readiness-reply", "lost-commit-reply", "duplicate-adoption",
+             "scheduler-restart-before-commit", "scheduler-restart-after-commit")
 
 
 def require(condition, message):
@@ -108,7 +109,7 @@ def check_test_results(path):
     required = cases | {root, root + "/node22", root + "/node24", "package"}
     observed = {name for name in conclusions if name.startswith(root + "/") and name.count("/") == 2}
     require(all(conclusions.get(name) == "pass" for name in required) and observed == cases,
-            "native gate did not execute every runtime and reply-boundary case")
+            "native gate did not execute every runtime, reply and coordinator restart case")
 
 
 def check_report(path, config):
@@ -119,7 +120,7 @@ def check_report(path, config):
             "native test evidence has a different fixture, source, binary or qualification scope")
     expected = sorted((runtime, scenario) for runtime in ("node22", "node24") for scenario in SCENARIOS)
     require(sorted((r.get("runtime", ""), r.get("scenario", "")) for r in report.get("runs", [])) == expected,
-            "native report omitted or duplicated a reply-boundary case")
+            "native report omitted or duplicated a reply or coordinator restart case")
 
 
 def run(config_path, output):
@@ -182,9 +183,9 @@ def run(config_path, output):
             case_env = os.environ.copy()
             case_env.update({"FAAS_REQUIRE_FUNCTION_MIGRATION_NATIVE": "1", "FAAS_FUNCTION_MIGRATION_CONFIG": str(config),
                              "FAAS_FUNCTION_MIGRATION_DRIVER": str(pathlib.Path(__file__).resolve()),
-                             "FAAS_FUNCTION_MIGRATION_REPORT": str(out / "migration-replies.json")})
+                             "FAAS_FUNCTION_MIGRATION_REPORT": str(out / "migration-recovery.json")})
             with (out / "tests.raw").open("wb") as log, (out / "tests.stderr").open("wb") as err:
-                completed = subprocess.run([str(binary), "-test.v=test2json", "-test.run=^TestFunctionMigrationDestinationPostgresMetal$", "-test.count=1", "-test.timeout=120m"],
+                completed = subprocess.run([str(binary), "-test.v=test2json", "-test.run=^TestFunctionMigrationDestinationPostgresMetal$", "-test.count=1", "-test.timeout=180m"],
                                            cwd=ROOT, env=case_env, stdout=log, stderr=err)
             # The compiled binary emits test2json protocol text. Convert it
             # through the tool that Go uses, rather than accepting PASS text.
@@ -194,7 +195,7 @@ def run(config_path, output):
             events.write_bytes(converted.stdout)
             require(completed.returncode == 0, "native suite failed; inspect private test evidence")
             check_test_results(events)
-            check_report(out / "migration-replies.json", c)
+            check_report(out / "migration-recovery.json", c)
             require(clean_revision() == revision, "source changed during native execution")
         except Exception as error:
             failure = error
@@ -215,6 +216,7 @@ def run(config_path, output):
                     process.wait()
     removed = not work.exists() and all(process.poll() is not None for process in processes)
     verdict = {"source_revision": revision, "scope": REPORT_SCOPE, "reply_boundaries_qualified": failure is None and leaks == [True, True] and removed,
+               "coordinator_restart_qualified": failure is None and leaks == [True, True] and removed,
                "failure_matrix_qualified": False, "production_ready": False, "host_leakchecks": leaks,
                "native_test_binary_sha256": c.get("test_binary_sha256"), "temporary_binaries_removed": removed}
     (out / "verdict.json").write_text(json.dumps(verdict, indent=2) + "\n")

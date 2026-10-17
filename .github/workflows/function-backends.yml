@@ -26,6 +26,7 @@ on:
       - 'scripts/ci/test_function_migration_native.py'
       - 'pkg/api/limits.go'
       - 'cmd/vmmd/**'
+      - 'cmd/schedd/**'
       - 'pkg/rootfs/**'
       - 'sdk/node/src/postgres-pool-runtime.ts'
       - 'sdk/node/test/postgres-pool*'

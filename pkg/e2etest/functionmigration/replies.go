@@ -14,15 +14,21 @@ import (
 )
 
 const (
-	ReportVersion = 2
-	ReportScope   = "native-migration-reply-boundaries-v1"
-	Success       = "success"
-	LostReadiness = "lost-readiness-reply"
-	LostCommit    = "lost-commit-reply"
-	Duplicate     = "duplicate-adoption"
+	ReportVersion    = 3
+	ReportScope      = "native-migration-coordinator-restart-v1"
+	Success          = "success"
+	LostReadiness    = "lost-readiness-reply"
+	LostCommit       = "lost-commit-reply"
+	Duplicate        = "duplicate-adoption"
+	RestartReady     = "scheduler-restart-before-commit"
+	RestartCommitted = "scheduler-restart-after-commit"
 )
 
-func Scenarios() []string { return []string{Success, LostReadiness, LostCommit, Duplicate} }
+func Scenarios() []string {
+	return []string{Success, LostReadiness, LostCommit, Duplicate, RestartReady, RestartCommitted}
+}
+
+func RestartScenario(s string) bool { return s == RestartReady || s == RestartCommitted }
 
 // ErrReplyDiscarded models an error after the peer completed its effect. It is
 // used only by the acceptance fixture, never by production retry policy.
