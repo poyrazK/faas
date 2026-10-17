@@ -29,20 +29,27 @@ func (s *Server) prepareAdmittedFunctionSource(ctx context.Context, m *activeMig
 		return false, err
 	}
 	registrationAttempted := false
-	_, err := vmm.PrepareAdmittedFunctionMigrationSource(ctx, functionSourceBinding(source), spec,
+	var permission runtimeadmission.FunctionMigrationGrant
+	info, err := vmm.PrepareAdmittedFunctionMigrationSource(ctx, functionSourceBinding(source), spec,
 		func(ctx context.Context, parent runtimeadmission.Receipt) (runtimeadmission.FunctionMigrationGrant, error) {
 			if parent.Binding.NodeID != s.nodeID || parent.Binding.InstanceID != m.instanceID {
 				return runtimeadmission.FunctionMigrationGrant{}, runtimeadmission.ErrStale
 			}
 			registrationAttempted = true
-			return store.IssueFunctionMigrationCapture(ctx, state.FunctionMigrationCaptureRequest{
+			grant, err := store.IssueFunctionMigrationCapture(ctx, state.FunctionMigrationCaptureRequest{
 				Source: source, Parent: parent, MemoryKey: spec.StorageKey, VMStateKey: spec.VMStateStorageKey, FCVersion: s.fcVer,
 			})
+			permission = grant.Clone()
+			return grant, err
 		}, store.CheckFunctionMigrationCapture)
 	if err != nil {
 		return registrationAttempted, err
 	}
-	return true, s.migrationStore.(state.FunctionMigrationSourceStore).PrepareFunctionMigrationSource(ctx, m.instanceID, m.leaseToken)
+	destinations, ok := s.migrationStore.(state.FunctionMigrationDestinationStore)
+	if !ok {
+		return true, runtimeadmission.ErrUnavailable
+	}
+	return true, destinations.RecordFunctionMigrationCapture(ctx, permission, info.Capture)
 }
 
 func (s *Server) recoverAdmittedFunctionSource(ctx context.Context, source state.FunctionMigrationSource) (bool, error) {

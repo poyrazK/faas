@@ -7,6 +7,17 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Measured Node function migration destinations — 2026-10-17
+
+[ADR-1352](adr/1352-function-migration-destination.md) adds qualification-only
+measured destination restore, durable readiness and ownership epochs, a separate
+execution activation fence, and confirmed destination retirement before source
+recovery. Current configuration and artifact approval are rechecked at commit;
+pending destination RAM/CPU/vCPU claims survive scheduler restart in the database.
+Original native admission history remains immutable. Production activation and
+two-host Node 22/24 KVM/TLS SQL qualification remain pending. See the
+[evidence](ops/evidence/20261017-function-migration-destination/REPORT.md).
+
 ## Measured Node function migration source permissions — 2026-10-17
 
 [ADR-1351](adr/1351-function-migration-admission.md) adds separate capture and

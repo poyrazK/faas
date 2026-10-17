@@ -243,3 +243,48 @@ in the backend CI lane. They cover current-input drift, purpose/parent/keys,
 atomic registration, expired-lease recovery and permission renewal. Actual KVM,
 vsock loss/duplication, restart, private-environment and leak acceptance remain
 required. See [ADR-1351 evidence](evidence/20261017-function-migration-admission/REPORT.md).
+
+## Measured migration destination qualification
+
+ADR-1352 adds a dedicated destination restore capability in
+`metal,function_background_native` builds. Normal builds continue to refuse it.
+The existing strict native target qualifies source cancellation/recovery; it is
+not a two-host destination acceptance result. Do not count its source-only cases
+as completion of this matrix.
+
+Use two designated native x86_64 KVM hosts, their independently built qualified
+vmmd/guest/runners, shared disposable capture storage/catalog, current artifact
+approvals and a restricted TLS/SCRAM PostgreSQL fixture. Run Node 22 and Node 24
+independently. Record original source node/wake and measured receipt, four worker
+identities, all eight pool sessions and committed SQL rows before migration.
+
+1. Hold the checkpoint witness until all eight SQL and proxy sessions close.
+   Require the durable measured capture result before Phase 2. Hold destination
+   recovery ACK until four interpreters have eight fresh, successfully probed
+   sessions. While the destination is `issued` or `ready`, require the instance
+   row to remain MIGRATING on the source and execution requests to stay closed.
+2. Commit the exact destination receipt, wake and network identity through
+   schedd. Verify native/configuration receipts change atomically. Activate the
+   recorded destination, then acknowledge and confirm original-source retirement.
+   Require the original committed rows, healthy SQL reads and new physical
+   process/network identity; do not replay the interrupted customer invocation.
+3. Inject duplicate adoption and lost readiness/commit/activation ACKs. Require
+   one load and one recovery callback attempt per destination. A committed
+   attempt must resolve to its exact epoch; another target/wake cannot replace it.
+4. Race expiry/cancellation against restore and commit, fail a pool probe, and
+   fail physical cleanup. A rollback must fence destination permission and
+   confirm destination retirement before recovering the original source. Keep
+   allocator and durable capacity ownership while cleanup is uncertain.
+5. Restart each scheduler and vmmd before readiness, after readiness and around
+   commit. Pending destinations must continue to consume database RAM/CPU/vCPU
+   headroom. A vmmd without the original in-memory physical owner must refuse
+   fabricated teardown/readiness and retain quarantine. Include private
+   environments and current-input/artifact/incarnation drift.
+6. Run `make leakcheck` after confirmed retirement, save the complete native
+   evidence and only then consider activation. A compiled suite, simulated
+   process receipt, held portable callback or successful schema replay supplies
+   no native cross-host, vsock or leak verdict.
+
+Portable CI selects `^TestFunctionDestination` in addition to the existing
+migration/source suites. Its PostgreSQL ownership and capacity races remain
+separate from the native matrix. See [ADR-1352](../adr/1352-function-migration-destination.md).

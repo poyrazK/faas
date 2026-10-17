@@ -127,6 +127,9 @@ func (s *Server) cancelFunctionSource(ctx context.Context, m *activeMigration, s
 		})
 	}
 	if err != nil {
+		if source.CaptureToken != "" && refusedFunctionSourceRecovery(err) {
+			return s.retireRefusedFunctionSource(ctx, source, vmm)
+		}
 		return nil, err
 	}
 	// Keep the lease and capture until schedd commits RUNNING or STOPPED.

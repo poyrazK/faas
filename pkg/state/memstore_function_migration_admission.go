@@ -78,6 +78,9 @@ func (m *MemStore) checkFunctionMigrationGrantLocked(ctx context.Context, grant 
 	if err := functionMigrationPermissionOwner(ins, source, lease, recovering); err != nil {
 		return err
 	}
+	if recovering && !m.functionDestinationRetiredLocked(grant.LeaseToken) {
+		return ErrConflict
+	}
 	stored := permissions.capture
 	if recovering {
 		if permissions.recovery == nil {
@@ -132,6 +135,9 @@ func (m *MemStore) IssueFunctionMigrationRecovery(ctx context.Context, id, token
 	}
 	if err := functionMigrationPermissionOwner(ins, source, lease, true); err != nil {
 		return runtimeadmission.FunctionMigrationGrant{}, err
+	}
+	if !m.functionDestinationRetiredLocked(token) {
+		return runtimeadmission.FunctionMigrationGrant{}, ErrConflict
 	}
 	capture := permissions.capture
 	if !capture.Parent.Equal(parent) || capture.SourceStartedAtUnixNano != ins.StartedAt.UnixNano() ||

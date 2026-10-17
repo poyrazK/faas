@@ -320,9 +320,12 @@ all-worker recovery pass before the original VM continues serving. Failed or
 cancelled capture also recovers; an unconfirmed recovery retires that VM.
 The qualification path also supports measured migration-source capture and fenced
 rollback after cancellation or lease expiry, using separate short-lived capture
-and recovery permissions checked against current admission inputs. Destination
-adoption remains gated. Automatic registration is off in normal
-production adapters; native VM/SQL qualification remains pending.
+and recovery permissions checked against current admission inputs. The destination
+qualification path verifies captured bytes and fresh SQL resource recovery, keeps
+execution closed until ownership commits, and retires the destination before a
+source rollback can resume. Automatic registration and destination activation
+remain off in normal production adapters; two-host native VM/SQL qualification
+remains pending.
 Automatic ownership requires the updated SDK runtime or regenerated bundled
 helper. Direct `pg.Pool` instances and older helper versions are not registered
 automatically.
@@ -343,5 +346,7 @@ See [ADR-1345](adr/1345-function-cancellation-cleanup-and-lifecycle-context.md),
 [ADR-1347](adr/1347-function-vm-execution-lifetime.md),
 [ADR-1348](adr/1348-function-postgres-resource-lifecycle.md),
 [ADR-1349](adr/1349-function-warm-snapshot-resource-recovery.md),
-[ADR-1350](adr/1350-function-migration-source-rollback.md)
+[ADR-1350](adr/1350-function-migration-source-rollback.md),
+[ADR-1351](adr/1351-function-migration-admission.md),
+[ADR-1352](adr/1352-function-migration-destination.md)
 and [backend concurrency acceptance](ops/function-backend-concurrency-acceptance.md).

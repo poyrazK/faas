@@ -514,9 +514,10 @@ type MemStore struct {
 	// migrationLeases mirrors the durable source-side migration lease table.
 	// It lets vmmd migration tests exercise restart-safe lease semantics without
 	// requiring Postgres.
-	migrationLeases              map[string]MigrationLease
-	functionMigrationSources     map[string]FunctionMigrationSource      // instance_id → source
-	functionMigrationPermissions map[string]functionMigrationPermissions // lease_token → permissions
+	migrationLeases               map[string]MigrationLease
+	functionMigrationSources      map[string]FunctionMigrationSource      // instance_id → source
+	functionMigrationPermissions  map[string]functionMigrationPermissions // lease_token → permissions
+	functionMigrationDestinations map[string]FunctionMigrationDestination // lease_token → immutable destination epoch
 
 	// workflows / workflowSteps / workflowEvents mirror ADR-081 (the
 	// timestamped workflow schema migration).

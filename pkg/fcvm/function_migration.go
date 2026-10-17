@@ -28,7 +28,7 @@ type functionMigrationSource struct {
 }
 
 func functionMigrationActive(inst *Instance) bool {
-	return inst != nil && inst.functionMigration != nil && !inst.functionMigration.recovered
+	return inst != nil && (inst.functionMigration != nil && !inst.functionMigration.recovered || inst.functionDestination != nil && !inst.functionDestination.published)
 }
 
 func (m *Manager) FunctionMigrationSourceRequired(instance string) bool {

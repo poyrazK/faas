@@ -25775,6 +25775,9 @@ func mapErr(err error) error {
 			if pgErr.ConstraintName == "managed_postgres_cutover_admission_fenced" {
 				return ErrManagedPostgresAdmissionFenced
 			}
+			if pgErr.ConstraintName == "function_migration_destination_capacity" {
+				return ErrNodeCapacity
+			}
 			if pgErr.ConstraintName == "service_capacity_protection" {
 				return &ServiceCapacityError{}
 			}

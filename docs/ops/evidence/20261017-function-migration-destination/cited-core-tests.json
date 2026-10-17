@@ -1,0 +1,7 @@
+{
+  "check": "local staged-content counterpart of scripts/ci/check_spec_cited_tests.sh",
+  "result": "pass",
+  "cited_core_tests": [
+    "pkg/fcvm/function_migration_destination_test.go"
+  ]
+}

@@ -56,6 +56,14 @@ WHERE id = sqlc.arg(instance_id)::uuid AND node_id::text = sqlc.arg(source_node_
     AND wake_id = sqlc.arg(source_wake_id)::uuid AND state = 'migrating'
     AND lease_token = sqlc.arg(rollback_token)::text;
 
+-- Ownership fencing of an already-MIGRATING source has no new runtime effect.
+-- Do not re-admit its stale native inputs merely to prohibit a late commit.
+-- name: FencePreparedFunctionMigrationSource :execrows
+UPDATE instances SET lease_token=sqlc.arg(rollback_token)::text
+WHERE id=sqlc.arg(instance_id)::uuid AND node_id::text=sqlc.arg(source_node_id)::text
+ AND wake_id=sqlc.arg(source_wake_id)::uuid AND state='migrating'
+ AND coalesce(lease_token,'')=sqlc.arg(expected_token)::text;
+
 -- name: ListExpiredFunctionMigrationSources :many
 SELECT s.* FROM function_migration_sources s JOIN migration_leases m
     ON m.instance_id = s.instance_id AND m.lease_token = s.lease_token

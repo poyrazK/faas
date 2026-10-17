@@ -2182,7 +2182,12 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		// startJailer), so the UDS is live by the time /snapshot/load
 		// completes. Trigger the resume hook now to re-seed entropy and step
 		// the clock before the app can bind :8080 (spec §11 V6).
-		if err = v.TriggerResumeHook(ctx, l, time.Now().UnixNano()); err != nil {
+		if spec.verifiedSnapshot != nil && spec.verifiedSnapshot.request.FunctionMigration != nil {
+			err = v.triggerResumeHookOnce(ctx, l, time.Now().UnixNano(), nil)
+		} else {
+			err = v.TriggerResumeHook(ctx, l, time.Now().UnixNano())
+		}
+		if err != nil {
 			return fmt.Errorf("vmm: resume hook: %w", err)
 		}
 	}

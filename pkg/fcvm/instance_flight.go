@@ -127,7 +127,7 @@ func (m *Manager) registerLiveInstanceFlightForMigration(ctx context.Context, in
 		flight.cancel()
 		return nil, nil, nil, fmt.Errorf("instance is not live")
 	}
-	if functionMigrationActive(inst) && inst.functionMigration != source || source != nil && (inst != source.inst || inst.functionMigration != source) {
+	if functionMigrationActive(inst) && (inst.functionDestination != nil && !inst.functionDestination.published || inst.functionMigration != source) || source != nil && (inst != source.inst || inst.functionMigration != source) {
 		flight.cancel()
 		return nil, nil, nil, ErrInstanceBusy
 	}

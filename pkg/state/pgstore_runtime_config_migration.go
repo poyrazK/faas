@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -17,6 +18,9 @@ func (s *PgStore) MigrateInstanceOwnerWithRuntimeConfig(ctx context.Context, id,
 	}
 	if id == "" || from == "" || to == "" || leaseToken == "" {
 		return ErrInvalidArgument
+	}
+	if strings.HasPrefix(leaseToken, FunctionMigrationTokenPrefix) {
+		return s.migrateFunctionDestination(ctx, id, from, to, leaseToken, input)
 	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {

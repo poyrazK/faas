@@ -162,6 +162,9 @@ func (s *PgStore) checkFunctionMigrationGrant(ctx context.Context, grant runtime
 		if err == nil {
 			err = checkLockedFunctionMigrationGrant(locked, grant, recovering)
 		}
+		if err == nil && recovering {
+			err = functionDestinationRetiredTx(ctx, tx, grant.Parent.Binding.InstanceID, grant.LeaseToken)
+		}
 		return struct{}{}, err
 	})
 	return err
@@ -199,6 +202,9 @@ func issueFunctionMigrationRecoveryTx(ctx context.Context, tx pgx.Tx, id, token 
 		return runtimeadmission.FunctionMigrationGrant{}, err
 	}
 	if err := functionMigrationPermissionOwner(locked.owner, locked.source, locked.lease, true); err != nil {
+		return runtimeadmission.FunctionMigrationGrant{}, err
+	}
+	if err := functionDestinationRetiredTx(ctx, tx, id, token); err != nil {
 		return runtimeadmission.FunctionMigrationGrant{}, err
 	}
 	capture, err := decodeFunctionMigrationGrant(locked.row.CaptureGrant, runtimeadmission.FunctionMigrationCapture)

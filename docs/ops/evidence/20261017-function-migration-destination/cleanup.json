@@ -1,0 +1,10 @@
+{
+  "task_label": "faas.task=function-migration-destination",
+  "container": "faas-function-migration-destination-20261017",
+  "volume": "faas-function-migration-destination-20261017-data",
+  "task_container_remaining": false,
+  "task_volume_remaining": false,
+  "private_credential_directory_remaining": false,
+  "native_test_executable_remaining": false,
+  "native_execution_qualified": false
+}

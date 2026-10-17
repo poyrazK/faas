@@ -32,6 +32,7 @@ type FunctionMigrationAdmissionStore interface {
 type functionMigrationPermissions struct {
 	capture  runtimeadmission.FunctionMigrationGrant
 	recovery *runtimeadmission.FunctionMigrationGrant
+	result   *runtimeadmission.SnapshotCapture
 }
 
 func decodeFunctionMigrationGrant(raw []byte, purpose string) (runtimeadmission.FunctionMigrationGrant, error) {

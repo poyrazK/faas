@@ -367,6 +367,9 @@ func (m *MemStore) checkServiceCapacityAppLocked(app App) error {
 }
 
 func (m *MemStore) checkServiceCapacityInstanceLocked(ins Instance) error {
+	if err := m.functionDestinationInstanceCapacityLocked(ins); err != nil {
+		return err
+	}
 	if !m.serviceCapacityProtection {
 		return nil
 	}

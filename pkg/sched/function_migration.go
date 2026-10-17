@@ -43,6 +43,20 @@ func rollbackFunctionMigrationSource(ctx context.Context, store state.Store, vmm
 		return true, false, err
 	}
 	if resolution == state.MigrationCommitObsolete {
+		if destinations, ok := store.(state.FunctionMigrationDestinationStore); ok {
+			d, err := destinations.GetFunctionMigrationDestination(ctx, id, token)
+			if err == nil && d.Phase == state.FunctionDestinationCommitted {
+				if err := activateCommittedFunctionDestination(ctx, store, vmm, id, token); err != nil {
+					return true, false, err
+				}
+			} else if err == nil && d.Phase != state.FunctionDestinationRetired {
+				if err := retireFunctionMigrationDestination(ctx, store, vmm, id, token); err != nil {
+					return true, false, err
+				}
+			} else if err != nil && !errors.Is(err, state.ErrNotFound) {
+				return true, false, err
+			}
+		}
 		// The owner already moved or became terminal. Only the lease-bound
 		// source acknowledgement may retire that original physical process.
 		err := vmm.AcknowledgeMigration(ctx, source.SourceNodeID, id, token)
@@ -50,6 +64,9 @@ func rollbackFunctionMigrationSource(ctx context.Context, store state.Store, vmm
 	}
 	if resolution != state.MigrationCommitAborted {
 		return true, false, state.ErrMigrationCommitUnresolved
+	}
+	if err := retireFunctionMigrationDestination(ctx, store, vmm, id, token); err != nil {
+		return true, false, err
 	}
 	source, err = sources.GetFunctionMigrationSource(ctx, id, token)
 	if err != nil {
@@ -72,6 +89,37 @@ func rollbackFunctionMigrationSource(ctx context.Context, store state.Store, vmm
 	return true, retired, err
 }
 
+func retireFunctionMigrationDestination(ctx context.Context, store state.Store, vmm RoutedVMM, id, token string) error {
+	destinations, ok := store.(state.FunctionMigrationDestinationStore)
+	if !ok {
+		return nil
+	}
+	d, err := destinations.GetFunctionMigrationDestination(ctx, id, token)
+	if errors.Is(err, state.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if d.Phase == state.FunctionDestinationRetired {
+		return nil
+	}
+	if d.Phase == state.FunctionDestinationCommitted {
+		return state.ErrMigrationCommitUnresolved
+	}
+	if err := vmm.CancelLiveMigration(ctx, d.Grant.Binding.NodeID, id, token); err != nil {
+		return err
+	}
+	d, err = destinations.GetFunctionMigrationDestination(ctx, id, token)
+	if err != nil {
+		return err
+	}
+	if d.Phase != state.FunctionDestinationRetired {
+		return state.ErrMigrationCommitUnresolved
+	}
+	return nil
+}
+
 func (e *Engine) reconcileExpiredFunctionMigrationSources(ctx context.Context, limit int) (attempted, completed int, retErr error) {
 	sources, ok := e.store.(state.FunctionMigrationSourceStore)
 	if !ok {
@@ -86,6 +134,11 @@ func (e *Engine) reconcileExpiredFunctionMigrationSources(ctx context.Context, l
 		recoveryCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), api.MigrateLiveCommitRecoveryTimeout)
 		_, retired, err := rollbackFunctionMigrationSource(recoveryCtx, e.store, e.vmm, source.InstanceID, source.LeaseToken)
 		cancel()
+		if d, ok := e.store.(state.FunctionMigrationDestinationStore); ok {
+			if destination, readErr := d.GetFunctionMigrationDestination(ctx, source.InstanceID, source.LeaseToken); readErr == nil && destination.Phase == state.FunctionDestinationRetired && destination.Grant.Binding.NodeID == e.ownerNodeID {
+				e.ledger.Release(source.InstanceID)
+			}
+		}
 		if err != nil {
 			e.log.Warn("sched: function migration source recovery retained", "instance_id", source.InstanceID, "err", err)
 			continue

@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/functionlifetime"
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 )
 
@@ -23,6 +24,8 @@ type AdmittedWakeRequest struct {
 	Request         WakeRequest
 	Binding         runtimeadmission.Binding
 	NativeInputHash string
+	Migration       *runtimeadmission.FunctionMigrationDestinationGrant
+	migrationOwner  *functionMigrationDestination
 }
 
 type runtimeAdmissionFlight struct {
@@ -130,7 +133,7 @@ func (m *Manager) WakeAdmitted(ctx context.Context, request AdmittedWakeRequest,
 func (m *Manager) prepareAdmittedInputs(request AdmittedWakeRequest, identity runtimeadmission.Identity) (WakeRequest, string, error) {
 	binding := request.Binding
 	// Restore requires explicit measured backend support before consuming authority.
-	if binding.SnapshotCaptureToken != "" && identity.SnapshotRestoreVersion != runtimeadmission.SnapshotRestoreVersion {
+	if binding.SnapshotCaptureToken != "" && identity.SnapshotRestoreVersion != runtimeadmission.SnapshotRestoreVersion && (request.Migration == nil || m.FunctionMigrationDestinationVersion() != 1) {
 		return WakeRequest{}, "", runtimeadmission.ErrUnavailable
 	}
 	if binding.NodeID != identity.NodeID || binding.Incarnation != identity.Incarnation {
@@ -142,6 +145,20 @@ func (m *Manager) prepareAdmittedInputs(request AdmittedWakeRequest, identity ru
 	req, err := cloneAdmittedWake(request.Request)
 	if err != nil {
 		return WakeRequest{}, "", err
+	}
+	if request.Migration != nil {
+		g := request.Migration.Clone()
+		m.mu.Lock()
+		owner := m.functionMigrationDestinations[req.Instance]
+		owned := owner != nil && owner == request.migrationOwner && owner.grant.Equal(g) && !owner.retired && !owner.published && owner.err == nil
+		m.mu.Unlock()
+		if !owned {
+			return WakeRequest{}, "", runtimeadmission.ErrUnavailable
+		}
+		if !functionlifetime.NativeQualificationBuild || g.Binding != binding || g.Validate(time.Now()) != nil || request.NativeInputHash != binding.PayloadHash || req.KeepPaused {
+			return WakeRequest{}, "", runtimeadmission.ErrUnavailable
+		}
+		req.functionMigrationDestination = &g
 	}
 	hash, err := NativeWakeInputHash(req)
 	if err != nil || hash != request.NativeInputHash || req.Instance != binding.InstanceID || req.AppID != binding.AppID || req.DeploymentID != binding.DeploymentID || req.AccountID != binding.AccountID || req.ExecutionOnly || req.AppTaskOnly || req.ExportDir != "" || req.BuildTimeoutSec != 0 || req.KeepPaused && req.Snapshot == nil {

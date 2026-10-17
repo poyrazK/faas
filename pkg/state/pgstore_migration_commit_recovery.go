@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -12,6 +13,9 @@ import (
 var _ MigrationCommitRecoveryStore = (*PgStore)(nil)
 
 func (s *PgStore) ResolveInstanceMigrationCommit(ctx context.Context, attempt MigrationCommitAttempt) (MigrationCommitResolution, error) {
+	if strings.HasPrefix(attempt.LeaseToken, FunctionMigrationTokenPrefix) {
+		return resolveFunctionDestinationCommit(ctx, s, attempt)
+	}
 	if err := validateMigrationCommitAttempt(attempt); err != nil {
 		return MigrationCommitRetained, err
 	}

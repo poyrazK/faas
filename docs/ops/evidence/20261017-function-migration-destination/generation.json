@@ -1,0 +1,8 @@
+{
+  "tool": "sqlc v1.31.1",
+  "command": "make sqlc-check SQLC=/workspace/faas-env/task-tools/sqlc",
+  "exit_code": 0,
+  "generated_go_files": 88,
+  "log_sha256": "1175d7bbb92d8df7bf5aba98f1372028e88e4395ff62071b1297e5d5502e7855",
+  "fresh_catalog_dump_matches": true
+}

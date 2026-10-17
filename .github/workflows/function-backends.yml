@@ -129,8 +129,8 @@ jobs:
         run: |
           umask 022
           go test -p 1 -race ./pkg/functionlifetime ./pkg/fcvm/activity ./guest/init -count=1 -timeout=3m
-          go test -p 1 -race ./pkg/state ./pkg/fcvm ./pkg/sched ./pkg/vmmdgrpc -run '^Test(Function(Migration|Resource|Execution)|PgStoreFunctionMigrationSource)' -count=1 -timeout=3m
-          go test -p 1 -race -tags metal,function_background_native ./pkg/fcvm ./pkg/sched ./pkg/vmmdgrpc ./pkg/runtimeadmission -run '^Test(Function(Migration|Resource|Execution)|SnapshotGrant|SnapshotAcknowledgment)' -count=1 -timeout=3m
+          go test -p 1 -race ./pkg/state ./pkg/fcvm ./pkg/sched ./pkg/vmmdgrpc -run '^Test(Function(Migration|Destination|Resource|Execution)|PgStoreFunctionMigrationSource)' -count=1 -timeout=3m
+          go test -p 1 -race -tags metal,function_background_native ./pkg/fcvm ./pkg/sched ./pkg/vmmdgrpc ./pkg/runtimeadmission -run '^Test(Function(Migration|Destination|Resource|Execution)|SnapshotGrant|SnapshotAcknowledgment)' -count=1 -timeout=3m
           go test -p 1 ./pkg/imaged -run '^TestApplyAppLifecycle' -count=1 -timeout=3m
       - name: remove fixture private key
         if: always()

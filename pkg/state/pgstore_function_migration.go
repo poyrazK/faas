@@ -203,10 +203,17 @@ func (s *PgStore) FenceFunctionMigrationSource(ctx context.Context, id, token st
 	if source.Phase == FunctionMigrationRecovered || source.Phase == FunctionMigrationRetired {
 		return resolution, nil // Completion ACK was lost; never create a new fence.
 	}
-	count, err := q.FenceFunctionMigrationSource(ctx, tx, sqlc.FenceFunctionMigrationSourceParams{
-		InstanceID: row.ID, SourceNodeID: source.SourceNodeID, SourceWakeID: row.WakeID,
-		ExpectedState: row.State, ExpectedToken: row.LeaseToken.String, RollbackToken: FunctionMigrationRollbackToken(token),
-	})
+	var count int64
+	if row.State == string(StateMigrating) {
+		count, err = q.FencePreparedFunctionMigrationSource(ctx, tx, sqlc.FencePreparedFunctionMigrationSourceParams{
+			InstanceID: row.ID, SourceNodeID: source.SourceNodeID, SourceWakeID: row.WakeID, ExpectedToken: row.LeaseToken.String, RollbackToken: FunctionMigrationRollbackToken(token),
+		})
+	} else {
+		count, err = q.FenceFunctionMigrationSource(ctx, tx, sqlc.FenceFunctionMigrationSourceParams{
+			InstanceID: row.ID, SourceNodeID: source.SourceNodeID, SourceWakeID: row.WakeID,
+			ExpectedState: row.State, ExpectedToken: row.LeaseToken.String, RollbackToken: FunctionMigrationRollbackToken(token),
+		})
+	}
 	if err != nil {
 		return MigrationCommitRetained, mapErr(err)
 	}
@@ -244,6 +251,9 @@ func (s *PgStore) CompleteFunctionMigrationSource(ctx context.Context, id, token
 			return err
 		}
 		if snapshot.CaptureToken != "" && snapshot.Phase == FunctionMigrationRecovering {
+			if err := functionDestinationRetiredTx(ctx, tx, id, token); err != nil {
+				return err
+			}
 			// Lock the current native inputs before the instance, lease and
 			// source. Keep these locks through RUNNING publication.
 			locked, err := lockFunctionMigrationAdmission(ctx, tx, id, token, string(StateMigrating))

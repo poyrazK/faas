@@ -1078,6 +1078,9 @@ type Querier interface {
 	FeatureFlagRequestOutcomes(ctx context.Context, db DBTX, arg FeatureFlagRequestOutcomesParams) ([]FeatureFlagRequestOutcomesRow, error)
 	FenceFunctionMigrationSource(ctx context.Context, db DBTX, arg FenceFunctionMigrationSourceParams) (int64, error)
 	FenceManagedPostgresCutoverAdmission(ctx context.Context, db DBTX, arg FenceManagedPostgresCutoverAdmissionParams) (pgtype.Timestamptz, error)
+	// Ownership fencing of an already-MIGRATING source has no new runtime effect.
+	// Do not re-admit its stale native inputs merely to prohibit a late commit.
+	FencePreparedFunctionMigrationSource(ctx context.Context, db DBTX, arg FencePreparedFunctionMigrationSourceParams) (int64, error)
 	FinalizeRetainedServiceRolloutAbortTarget(ctx context.Context, db DBTX, arg FinalizeRetainedServiceRolloutAbortTargetParams) (string, error)
 	FinancialAdjustmentInsert(ctx context.Context, db DBTX, arg FinancialAdjustmentInsertParams) error
 	// ADR-566. Policy mutations serialize per account and publish an atomic audit.
@@ -1264,6 +1267,8 @@ type Querier interface {
 	GetFeatureFlagVersion(ctx context.Context, db DBTX, arg GetFeatureFlagVersionParams) (FeatureFlagVersion, error)
 	GetFirstBuildExportPublicationForClaim(ctx context.Context, db DBTX, arg GetFirstBuildExportPublicationForClaimParams) (BuildExportPublication, error)
 	GetFreshBaseImageScan(ctx context.Context, db DBTX, arg GetFreshBaseImageScanParams) (BaseImageScan, error)
+	GetFunctionMigrationDestination(ctx context.Context, db DBTX, arg GetFunctionMigrationDestinationParams) (FunctionMigrationDestination, error)
+	GetFunctionMigrationDestinationIdentity(ctx context.Context, db DBTX, arg GetFunctionMigrationDestinationIdentityParams) (GetFunctionMigrationDestinationIdentityRow, error)
 	GetFunctionMigrationSource(ctx context.Context, db DBTX, arg GetFunctionMigrationSourceParams) (FunctionMigrationSource, error)
 	GetFunctionMigrationSourceByInstance(ctx context.Context, db DBTX, instanceID pgtype.UUID) (FunctionMigrationSource, error)
 	GetGitLabOAuthConnection(ctx context.Context, db DBTX, accountID pgtype.UUID) (GitlabOauthConnection, error)
@@ -1586,6 +1591,7 @@ type Querier interface {
 	InsertExclusiveWorkEffect(ctx context.Context, db DBTX, arg InsertExclusiveWorkEffectParams) error
 	InsertExclusiveWorkOperation(ctx context.Context, db DBTX, arg InsertExclusiveWorkOperationParams) (ExclusiveWorkOperation, error)
 	InsertFeatureFlagVersion(ctx context.Context, db DBTX, arg InsertFeatureFlagVersionParams) (FeatureFlagVersion, error)
+	InsertFunctionMigrationDestination(ctx context.Context, db DBTX, arg InsertFunctionMigrationDestinationParams) error
 	InsertInstanceApplicationStandardBoot(ctx context.Context, db DBTX, arg InsertInstanceApplicationStandardBootParams) error
 	InsertInstanceApplicationStandardPromotion(ctx context.Context, db DBTX, arg InsertInstanceApplicationStandardPromotionParams) error
 	InsertInvoiceHistorySnapshot(ctx context.Context, db DBTX, arg InsertInvoiceHistorySnapshotParams) (InsertInvoiceHistorySnapshotRow, error)
@@ -2489,6 +2495,7 @@ type Querier interface {
 	LockFeatureFlagProject(ctx context.Context, db DBTX, arg LockFeatureFlagProjectParams) (pgtype.UUID, error)
 	// ADR-1351: lock current native inputs/instance first, then the parent lease and source.
 	LockFunctionMigrationAdmissionLease(ctx context.Context, db DBTX, arg LockFunctionMigrationAdmissionLeaseParams) (MigrationLease, error)
+	LockFunctionMigrationDestination(ctx context.Context, db DBTX, arg LockFunctionMigrationDestinationParams) (FunctionMigrationDestination, error)
 	LockFunctionMigrationSource(ctx context.Context, db DBTX, arg LockFunctionMigrationSourceParams) (FunctionMigrationSource, error)
 	LockFunctionMigrationSourceLease(ctx context.Context, db DBTX, arg LockFunctionMigrationSourceLeaseParams) (LockFunctionMigrationSourceLeaseRow, error)
 	LockFunctionMigrationSourceNode(ctx context.Context, db DBTX, arg LockFunctionMigrationSourceNodeParams) error
@@ -3612,6 +3619,8 @@ type Querier interface {
 	RecordEnvironmentQualificationSnapshot(ctx context.Context, db DBTX, arg RecordEnvironmentQualificationSnapshotParams) error
 	RecordEventExecutionLineageCase(ctx context.Context, db DBTX, arg RecordEventExecutionLineageCaseParams) (int64, error)
 	RecordEventExecutionLineageRetryControlReceipt(ctx context.Context, db DBTX, arg RecordEventExecutionLineageRetryControlReceiptParams) error
+	// adr: 1352
+	RecordFunctionMigrationCapture(ctx context.Context, db DBTX, arg RecordFunctionMigrationCaptureParams) (int64, error)
 	RecordInstanceApplicationStandardPromotionReceipt(ctx context.Context, db DBTX, arg RecordInstanceApplicationStandardPromotionReceiptParams) (int64, error)
 	RecordInstanceApplicationStandardReceipt(ctx context.Context, db DBTX, arg RecordInstanceApplicationStandardReceiptParams) (int64, error)
 	RecordInstanceRuntimeConfigReceipt(ctx context.Context, db DBTX, arg RecordInstanceRuntimeConfigReceiptParams) (int64, error)
@@ -4053,6 +4062,7 @@ type Querier interface {
 	SetEnvironmentWorkloadServingTraffic(ctx context.Context, db DBTX, arg SetEnvironmentWorkloadServingTrafficParams) (int64, error)
 	SetExclusiveCaptureBarrier(ctx context.Context, db DBTX, arg SetExclusiveCaptureBarrierParams) error
 	SetFunctionMigrationCapturePermission(ctx context.Context, db DBTX, arg SetFunctionMigrationCapturePermissionParams) (int64, error)
+	SetFunctionMigrationDestination(ctx context.Context, db DBTX, arg SetFunctionMigrationDestinationParams) (int64, error)
 	SetFunctionMigrationRecoveryPermission(ctx context.Context, db DBTX, arg SetFunctionMigrationRecoveryPermissionParams) (int64, error)
 	SetFunctionMigrationSourcePhase(ctx context.Context, db DBTX, arg SetFunctionMigrationSourcePhaseParams) (int64, error)
 	// The caller retains the natural-key upsert's row lock in the same transaction.

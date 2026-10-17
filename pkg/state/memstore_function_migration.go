@@ -146,8 +146,10 @@ func (m *MemStore) FenceFunctionMigrationSource(ctx context.Context, id, token s
 		now := time.Now().UTC()
 		ins.MigrationStartedAt = &now
 	}
-	if err := m.guardInstanceRuntimeTransitionLocked(ctx, previous, ins); err != nil {
-		return MigrationCommitRetained, err
+	if previous.State != string(StateMigrating) {
+		if err := m.guardInstanceRuntimeTransitionLocked(ctx, previous, ins); err != nil {
+			return MigrationCommitRetained, err
+		}
 	}
 	source.Phase = FunctionMigrationRecovering
 	m.instances[id], m.functionMigrationSources[id] = ins, source

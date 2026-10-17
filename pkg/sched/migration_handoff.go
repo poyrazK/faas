@@ -71,6 +71,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -444,8 +445,15 @@ func (h *MigrationHarness) MigrateOne(ctx context.Context, instanceID, fromNodeI
 		// Adopt may have registered a destination VM before returning an
 		// error. Destroy is idempotent and prevents a partial destination
 		// from leaking RAM/netns resources while the source is resumed.
-		h.cleanupAdopted(leaseCtx, instanceID)
-		h.ledger.Release(instanceID)
+		if strings.HasPrefix(prepared.LeaseToken, state.FunctionMigrationTokenPrefix) {
+			h.cancelSource(leaseCtx, fromNodeID, instanceID, prepared.LeaseToken)
+			if functionDestinationCleanupConfirmed(context.WithoutCancel(leaseCtx), h.store, instanceID, prepared.LeaseToken) {
+				h.ledger.Release(instanceID)
+			}
+		} else {
+			h.cleanupAdopted(leaseCtx, instanceID)
+			h.ledger.Release(instanceID)
+		}
 		h.metrics.LiveMigrationDecisions("peer_failure").Inc()
 		h.log.Warn("sched: migrate one: Phase 3 adopt failed",
 			"instance_id", instanceID,
@@ -476,6 +484,11 @@ func (h *MigrationHarness) MigrateOne(ctx context.Context, instanceID, fromNodeI
 			"instance_id", instanceID, "to_node_id", h.newOwnerNodeID)
 	}
 
+	if strings.HasPrefix(prepared.LeaseToken, state.FunctionMigrationTokenPrefix) {
+		if err := activateCommittedFunctionDestination(ctx, h.store, h.vmm, instanceID, prepared.LeaseToken); err != nil {
+			return fmt.Errorf("sched: migration activation retained: %w", err)
+		}
+	}
 	// Phase 5 is lease-bound and detached from an expired request. A failed
 	// acknowledgement leaves the durable source lease for vmmd's expiry loop.
 	h.acknowledgeSource(ctx, fromNodeID, instanceID, prepared.LeaseToken)

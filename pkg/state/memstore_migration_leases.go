@@ -82,6 +82,9 @@ func (m *MemStore) DeleteMigrationLease(_ context.Context, leaseToken string) er
 	if _, ok := m.migrationLeases[leaseToken]; !ok {
 		return ErrNotFound
 	}
+	if d, ok := m.functionMigrationDestinations[leaseToken]; ok && d.Phase != FunctionDestinationRetired && d.Phase != FunctionDestinationCommitted {
+		return ErrConflict
+	}
 	lease := m.migrationLeases[leaseToken]
 	delete(m.functionMigrationSources, lease.InstanceID)
 	delete(m.functionMigrationPermissions, leaseToken)

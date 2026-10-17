@@ -419,12 +419,13 @@ func (w *wakePhases) attrs() []any {
 
 type Instance struct {
 	// Immutable launch identity; late network work cannot acquire a replacement VM.
-	nativeGeneration  string
-	wakeID            string                   // original scheduler wake; source migration authority
-	functionMigration *functionMigrationSource // guarded by Manager.mu
-	Lease             Lease
-	Net               netns.Config
-	Method            WakeMethod // how it came up; a restore that fell back reads WakeColdBoot
+	nativeGeneration    string
+	wakeID              string                        // original scheduler wake; source migration authority
+	functionMigration   *functionMigrationSource      // guarded by Manager.mu
+	functionDestination *functionMigrationDestination // guarded by Manager.mu
+	Lease               Lease
+	Net                 netns.Config
+	Method              WakeMethod // how it came up; a restore that fell back reads WakeColdBoot
 
 	runtimeAdmissionReceipt runtimeadmission.Receipt
 	runtimeAdmissionEgress  WakeRequest
@@ -1213,11 +1214,12 @@ type Manager struct {
 
 	// Frozen tier (ADR-1151; freeze.go). freezeActivity is vmmd's forward
 	// activity tracker; without it Freeze cannot see forwards in flight.
-	freezeActivity           QuietActivity
-	freezeMetrics            *FreezeMetrics
-	functionActivity         *activity.ActivityTracker
-	functionMigrationSources map[string]*functionMigrationSource
-	functionStarting         map[string]*Instance
+	freezeActivity                QuietActivity
+	freezeMetrics                 *FreezeMetrics
+	functionActivity              *activity.ActivityTracker
+	functionMigrationSources      map[string]*functionMigrationSource
+	functionMigrationDestinations map[string]*functionMigrationDestination
+	functionStarting              map[string]*Instance
 }
 
 type appCPUPolicy struct {
@@ -3378,8 +3380,9 @@ type WakeRequest struct {
 	// Set only by WakeAdmitted after validating and consuming its grant.
 	admission *runtimeadmission.Binding
 	// Complete approved source identities; only WakeAdmitted accepts them.
-	ArtifactSources []runtimeadmission.ArtifactSource         `json:"artifact_sources,omitempty"`
-	SnapshotRestore *runtimeadmission.SnapshotRestoreEvidence `json:"snapshot_restore,omitempty"`
+	ArtifactSources              []runtimeadmission.ArtifactSource         `json:"artifact_sources,omitempty"`
+	SnapshotRestore              *runtimeadmission.SnapshotRestoreEvidence `json:"snapshot_restore,omitempty"`
+	functionMigrationDestination *runtimeadmission.FunctionMigrationDestinationGrant
 	// ExecutionOnly is an internal vmmd/schedd fence for the disposable
 	// one-shot path. Ordinary app wakes leave it false and can never be used by
 	// ExecuteExecution. It is not accepted from the public app wake proto.
@@ -4153,6 +4156,13 @@ func (m *Manager) WakeWithNetworkReady(ctx context.Context, req WakeRequest, hoo
 }
 
 func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNetworkReadyHook) (_ *Instance, err error) {
+	m.mu.Lock()
+	destination := m.functionMigrationDestinations[req.Instance]
+	blockedDestination := destination != nil && !destination.published && (req.functionMigrationDestination == nil || !destination.grant.Equal(*req.functionMigrationDestination))
+	m.mu.Unlock()
+	if blockedDestination {
+		return nil, runtimeadmission.ErrReplay
+	}
 	qualificationOnly := false
 	if permit, authorized := ctx.Value(nativeQualificationContextKey{}).(nativeQualificationRecord); authorized {
 		if permit.Execution.InstanceID != req.Instance {
@@ -4869,7 +4879,8 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		executionID = req.Instance
 	}
 	inst := &Instance{
-		Lease: lease, Net: nc, Method: method, wakeID: wakeID,
+		functionDestination: m.functionDestinationForWake(req),
+		Lease:               lease, Net: nc, Method: method, wakeID: wakeID,
 		ExecutionOnly: req.ExecutionOnly, AppTaskOnly: req.AppTaskOnly, QualificationOnly: qualificationOnly, Paused: req.KeepPaused,
 		ExecutionID:                     executionID,
 		ExecutionLeaseToken:             req.ExecutionLeaseToken,
@@ -5058,7 +5069,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	// The Manager selects its daemon lifecycle context so the loop
 	// survives the short-lived Wake RPC and exits with vmmd shutdown
 	// or explicit instance teardown.
-	if !req.ExecutionOnly && !req.AppTaskOnly && !lease.IsBuilder && !req.KeepPaused {
+	if !req.ExecutionOnly && !req.AppTaskOnly && !lease.IsBuilder && !req.KeepPaused && req.functionMigrationDestination == nil {
 		m.startLivenessLoop(ctx, req.Instance, lease.Slot, req.LivenessProbe)
 		m.startReadinessLoop(ctx, req.Instance, lease.Slot, req.ReadinessProbe)
 		m.startFrameworkReadyLoop(ctx, req.Instance)
@@ -5108,7 +5119,7 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 	// running VM and violate the caller's explicit paused-state requirement.
 	// Refuse before either VMM path starts; callers can reconcile or retry with
 	// a compatible captured snapshot.
-	if req.KeepPaused && !restorable {
+	if (req.KeepPaused || req.functionMigrationDestination != nil) && !restorable {
 		return WakeRestore, fmt.Errorf("warm-pool paused restore requires a usable snapshot matching the requested memory shape")
 	}
 	if restorable {
@@ -5117,7 +5128,7 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 		// VM process starts, so there is nothing to kill; the wake cold-boots
 		// and schedd marks the snapshot stale.
 		if refusal := m.verifySnapshotBacking(ctx, req.Snapshot, req.BaseKey); refusal != nil {
-			if req.KeepPaused {
+			if req.KeepPaused || req.functionMigrationDestination != nil {
 				return WakeRestore, fmt.Errorf("warm-pool paused restore: %w", refusal)
 			}
 			m.log.Warn("snapshot backing images not verified, cold booting instead of restoring",
@@ -5202,7 +5213,7 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 			m.rememberInstanceBacking(req.Instance, req.BaseKey)
 			return WakeRestore, nil
 		} else {
-			if req.KeepPaused {
+			if req.KeepPaused || req.functionMigrationDestination != nil {
 				// A paused warm-pool entry must never silently turn into a
 				// running cold boot. The scheduler can retry reconciliation;
 				// returning the restore error preserves the paused-state

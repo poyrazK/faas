@@ -576,8 +576,12 @@ func (s *Server) AdoptMigratedInstance(ctx context.Context, req *vmmdpb.AdoptMig
 	}
 	if _, qualified, err := s.functionSource(ctx, req.GetInstanceId(), req.GetLeaseToken()); err != nil {
 		return nil, grpcerr.ToStatus(toProblem(err))
-	} else if qualified {
-		return nil, grpcerr.ToStatus(toProblem(runtimeadmission.ErrUnavailable))
+	} else if qualified || strings.HasPrefix(req.GetLeaseToken(), state.FunctionMigrationTokenPrefix) {
+		response, err := s.adoptFunctionDestination(ctx, req)
+		if err != nil {
+			return nil, admissionStatus(err)
+		}
+		return response, nil
 	}
 	if functionlifetime.NativeNode(req.GetAppSpec().GetRuntime()) {
 		return nil, grpcerr.ToStatus(toProblem(runtimeadmission.ErrUnavailable))
@@ -739,6 +743,12 @@ func (s *Server) CancelLiveMigration(ctx context.Context, req *vmmdpb.CancelLive
 			"instance_id and lease_token are required").WithDocs(wire.DocsBaseURL + "/vmmd#cancel")
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
+	}
+	if handled, err := s.cancelFunctionDestination(ctx, req); handled {
+		if err != nil {
+			return nil, admissionStatus(err)
+		}
+		return &vmmdpb.CancelLiveMigrationResponse{}, nil
 	}
 	finishPhase, phaseErr := s.migrations.beginPhase(ctx, req.GetInstanceId())
 	if phaseErr != nil {
