@@ -224,6 +224,9 @@ WRAPPER_MODULES = (
     "operations.py",
     "event_consumer_transactions.py",
     "event_consumer_delivery_context.py",
+    "event_acknowledgment_worker.py",
+    "_event_acknowledgment_protocol.py",
+    "_event_acknowledgment_callbacks.py",
     "_event_deadline_policy.py",
     "event_deadline_checkpoint.py",
     "event_deadline_watch.py",
@@ -1362,6 +1365,22 @@ from .event_deadline_investigation import (
 
 __all__ += (
     "EventDeadlineInvestigationOptions", "EventDeadlineInvestigationReadError", "ainvestigate_event_deadline_alert",
+)
+
+from ._event_acknowledgment_protocol import (
+    EventAcknowledgmentWorkerCancellation,
+    EventAcknowledgmentWorkerCancelled,
+    EventAcknowledgmentWorkerError,
+    EventAcknowledgmentWorkerOptions,
+    EventAcknowledgmentWorkerResult,
+    EventAcknowledgmentWorkerStatus,
+)
+from .event_acknowledgment_worker import AsyncEventAcknowledgmentWorker
+
+__all__ += (
+    "AsyncEventAcknowledgmentWorker", "EventAcknowledgmentWorkerOptions", "EventAcknowledgmentWorkerResult",
+    "EventAcknowledgmentWorkerStatus", "EventAcknowledgmentWorkerError", "EventAcknowledgmentWorkerCancelled",
+    "EventAcknowledgmentWorkerCancellation",
 )
 '''
 

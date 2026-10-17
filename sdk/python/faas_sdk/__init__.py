@@ -635,3 +635,19 @@ from .event_deadline_investigation import (
 __all__ += (
     "EventDeadlineInvestigationOptions", "EventDeadlineInvestigationReadError", "ainvestigate_event_deadline_alert",
 )
+
+from ._event_acknowledgment_protocol import (
+    EventAcknowledgmentWorkerCancellation,
+    EventAcknowledgmentWorkerCancelled,
+    EventAcknowledgmentWorkerError,
+    EventAcknowledgmentWorkerOptions,
+    EventAcknowledgmentWorkerResult,
+    EventAcknowledgmentWorkerStatus,
+)
+from .event_acknowledgment_worker import AsyncEventAcknowledgmentWorker
+
+__all__ += (
+    "AsyncEventAcknowledgmentWorker", "EventAcknowledgmentWorkerOptions", "EventAcknowledgmentWorkerResult",
+    "EventAcknowledgmentWorkerStatus", "EventAcknowledgmentWorkerError", "EventAcknowledgmentWorkerCancelled",
+    "EventAcknowledgmentWorkerCancellation",
+)

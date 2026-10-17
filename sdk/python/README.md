@@ -2709,3 +2709,20 @@ page. `EventDeadlineInvestigationOptions` controls page size, opaque continuatio
 and a cancellable read budget up to five seconds. Saved notification timestamps and
 ratio samples remain separate from current observations. See
 [investigation, validation and pagination](../../docs/event-deadline-python-investigation.md).
+
+### Async deferred event acknowledgment worker
+
+`AsyncEventAcknowledgmentWorker.from_headers(client.inner, app, headers, body,
+account_id, app_id, options)` coordinates confirmed platform renewal, atomic
+business SQL/consumer receipts and exact saved completion bytes. `run` invokes
+the async handler with its cursor and read-only cancellation view; `complete_receipt`
+recovers callbacks without business work. Explicit `retry`/`dead_letter` decisions
+check receipts first and require known rollback, stopped work and exclusive job
+ownership. Use an idle autocommit psycopg async connection and bounded driver calls.
+
+Owner/native cancellation signals cooperative work, joins active SQL/renewal and
+preserves confirmed receipt progress. Unknown COMMIT remains unknown. Configure
+bounded callback retries and retain the protected ingestion job until terminal
+confirmation. No schema, queue or host starts automatically. See the
+[worker protocol](../../docs/event-acknowledgment-python-worker.md) and
+[protected-job integration](../../examples/event-acknowledgment-python/README.md).
