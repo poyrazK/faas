@@ -99363,7 +99363,7 @@ components:
         channels:
           type: array
           items: { $ref: '#/components/schemas/ManagedRealtimeChannelOccupancy' }
-        partial: { type: boolean, description: True when one or more active realtime nodes did not answer. }
+        partial: { type: boolean, description: True when some active realtime nodes did not answer, so counts may be low. }
         nodes_queried: { type: integer, minimum: 0 }
         nodes_unavailable: { type: integer, minimum: 0 }
 
