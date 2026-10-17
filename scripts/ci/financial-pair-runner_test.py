@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import importlib.util
 from pathlib import Path
+import re
 import shlex
 import sys
 import tempfile
@@ -13,6 +14,18 @@ spec.loader.exec_module(runner)
 
 
 class RunnerTest(unittest.TestCase):
+    def test_ci_budget_covers_serial_commands_and_restoration(self):
+        workflow = (runner.ROOT / ".github/workflows/financial-pair-native.yml").read_text()
+        match = re.search(r"timeout-minutes:\s*(\d+)", workflow)
+        self.assertIsNotNone(match)
+        budget = int(match[1]) * 60
+        commands = 3 * runner.BUILD_TIMEOUT + 4 * runner.FILESYSTEM_TIMEOUT + runner.SINGLE_HOST_TIMEOUT + runner.PEER_NETWORK_TIMEOUT + runner.NATIVE_TIMEOUT
+        # Setup/upload, both host joins, retirement, eight evidence reads,
+        # both readiness waits, and fixture transfer must fit as well.
+        overhead = 20 * 60 + 2 * 180 + 2 * 120 + 8 * 20 + 2 * 90 + 180
+        self.assertGreaterEqual(budget, commands + overhead)
+        self.assertLessEqual(budget, 360 * 60)
+
     def test_jail_namespace_leaves_room_for_native_sockets(self):
         first = runner.jail_root("a" * 40, "long-reviewed-run-identifier")
         self.assertRegex(first, r"^/srv/f[a-f0-9]{6}$")

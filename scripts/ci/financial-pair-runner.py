@@ -16,6 +16,11 @@ import threading
 import time
 
 ROOT = Path(__file__).resolve().parents[2]
+BUILD_TIMEOUT = 30 * 60
+FILESYSTEM_TIMEOUT = 5 * 60
+SINGLE_HOST_TIMEOUT = 79 * 60
+PEER_NETWORK_TIMEOUT = 5 * 60
+NATIVE_TIMEOUT = 68 * 60
 spec = importlib.util.spec_from_file_location("financial_pair_evidence", ROOT / "scripts/ci/financial-pair-evidence.py")
 evidence = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(evidence)
@@ -37,7 +42,7 @@ def jail_root(source_sha, run_id):
     return "/srv/f" + hashlib.sha256((source_sha + "-" + run_id).encode()).hexdigest()[:6]
 
 
-def run(args, log, env=None, timeout=1800):
+def run(args, log, env=None, timeout=BUILD_TIMEOUT):
     print("financial pair: " + log.name, flush=True)
     with log.open("wb") as output:
         try:
@@ -139,8 +144,8 @@ def build_fixture(bundle, go, env, output):
         image = bundle / (name + ".ext4")
         with image.open("wb") as stream:
             stream.truncate(size)
-        require(run(["mkfs.ext4", "-q", "-O", "^has_journal", "-d", str(source), "-F", str(image)], output / f"mkfs-{name}.log", env) == 0, "fixture mkfs failed")
-        require(run(["e2fsck", "-fn", str(image)], output / f"e2fsck-{name}.log", env) == 0, "fixture filesystem check failed")
+        require(run(["mkfs.ext4", "-q", "-O", "^has_journal", "-d", str(source), "-F", str(image)], output / f"mkfs-{name}.log", env, timeout=FILESYSTEM_TIMEOUT) == 0, "fixture mkfs failed")
+        require(run(["e2fsck", "-fn", str(image)], output / f"e2fsck-{name}.log", env, timeout=FILESYSTEM_TIMEOUT) == 0, "fixture filesystem check failed")
     shutil.rmtree(base)
     shutil.rmtree(layer)
 
@@ -181,7 +186,7 @@ def main():
             "systemd-run", "--quiet", "--pipe", "--wait", "--collect",
             "--unit=faas-financial-" + run_id + "-single-host", "--property=RuntimeMaxSec=75m",
             "--property=TimeoutStopSec=120s", "--working-directory=" + str(ROOT), "bash", str(single_script),
-        ], output / "single-host.log", env, timeout=79 * 60)
+        ], output / "single-host.log", env, timeout=SINGLE_HOST_TIMEOUT)
         single_path = transfer / f"financial-system-verdict-{run_id}.json"
         if single_path.is_file():
             shutil.copyfile(single_path, output / "single-host.json")
@@ -242,7 +247,7 @@ def main():
         component, _ = evidence.source_tests(ROOT)
         pair, _ = evidence.source_tests(ROOT, pair=True)
         pattern = "^(" + "|".join(sorted({**component, **pair})) + ")$"
-        statuses["peer_network"] = run(remote(target, ["sudo", "-n", "bash", str(bundle / "financial-pair-host.sh"), "network", str(bundle)]), output / "peer-network.log", timeout=5 * 60)
+        statuses["peer_network"] = run(remote(target, ["sudo", "-n", "bash", str(bundle / "financial-pair-host.sh"), "network", str(bundle)]), output / "peer-network.log", timeout=PEER_NETWORK_TIMEOUT)
         # Run the controller test in an owned unit too. A Go alarm or a lost
         # SSH channel must not leave its producer children running into host
         # restoration. Credentials are sourced on-host, never argv values.
@@ -258,7 +263,7 @@ def main():
             "systemd-run", "--quiet", "--pipe", "--wait", "--collect",
             "--unit=faas-financial-" + run_id + "-controller", "--property=RuntimeMaxSec=65m",
             "--property=KillMode=mixed", "--property=TimeoutStopSec=15s", "bash", str(local_script),
-        ], output / "native.log", native_env, timeout=68 * 60)
+        ], output / "native.log", native_env, timeout=NATIVE_TIMEOUT)
     except (RuntimeError, OSError, ValueError, KeyError, subprocess.SubprocessError) as error:
         # Exception messages must never include SQL DSNs or full environments.
         (output / "failure.txt").write_text(type(error).__name__ + ": " + str(error) + "\n")

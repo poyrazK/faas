@@ -96,8 +96,8 @@ The SSH hold receives controller heartbeats. A lost controller, timeout or
 closed channel triggers owner shutdown, leak inspection and service restoration.
 A repaired leak remains a failure. Both hosts keep failed ownership evidence
 for repair. Successful runs remove native fixture staging after copying its
-evidence. The CI transfer directory retains logs/source/toolchain until the
-operator's ordinary acceptance-artifact retention removes it.
+evidence. Successful CI runs remove controller staging after artifact upload.
+Failed runs retain their logs/source/toolchain for operator repair and removal.
 
 The report's `qualified` field covers physical native financial components
 plus the separate full-daemon/provider lane. **`promotion_ready` remains false.**

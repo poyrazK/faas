@@ -16,7 +16,8 @@ jobs:
   qualify:
     if: github.ref == 'refs/heads/main'
     runs-on: [self-hosted, linux, x64, gregale-financial-pair]
-    timeout-minutes: 210
+    # Covers serial build/test caps plus host restoration and evidence upload.
+    timeout-minutes: 330
     steps:
       - uses: actions/checkout@v7
         with:
@@ -64,3 +65,9 @@ jobs:
           path: ${{ runner.temp }}/financial-pair-evidence/
           if-no-files-found: error
           retention-days: 14
+      - name: Remove successful controller staging after upload
+        if: success()
+        run: |
+          root="/var/tmp/faas-native-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-pair"
+          [[ "$root" =~ ^/var/tmp/faas-native-e2e-[0-9]+-[0-9]+-pair$ ]]
+          sudo rm -rf -- "$root"
