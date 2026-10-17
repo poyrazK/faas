@@ -1297,6 +1297,8 @@ func (l *Loop) Run(ctx context.Context) error {
 			// table (42P01) for fresh clusters pre-migration.
 			l.runOperatorIntentCompletenessTick(ctx)
 		case <-triggerT.C:
+			l.dispatchScenarioWorkerFaults(ctx)
+			l.dispatchScenarioSuspendResumes(ctx)
 			// Issue #757 / ADR-100: trigger dispatch tick. 1s
 			// safety cadence; WakeupTriggers advances the
 			// effective interval when a broker ack/nack wakes the

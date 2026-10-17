@@ -603,6 +603,16 @@ func (h *Handler) buildLocalOCIAppLayer(ctx context.Context, app state.App, dep 
 		return fmt.Errorf("imaged: build local OCI app layer: %w", err)
 	}
 	h.updateBuildProvenanceSBOM(ctx, dep.ID, result.SBOMKey)
+	if runtime != "" {
+		// schedd boots the runner base as drive0, so stage it before the
+		// deployment is recorded against it. The caller's own staging pass
+		// reads the deployment from before this stamp and stages minimal.
+		selected := app
+		selected.Runtime = runtime
+		if err := h.ensureDeploymentRuntimeBase(ctx, selected); err != nil {
+			return err
+		}
+	}
 	if source == nil && runtime != "" {
 		// A signed build stamps the runner base with its source rootfs
 		// record; an unsigned one stamps it before the rootfs it boots under.

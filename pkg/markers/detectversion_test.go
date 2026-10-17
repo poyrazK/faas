@@ -122,6 +122,32 @@ func TestVersionFromTarballAtRoot_WorkspaceMember(t *testing.T) {
 	}
 }
 
+// H10-140: a bare major is the most common engines.node spelling, and the
+// parsed version drops it. The shared runtime choice reads the spec as written.
+func TestNodeVersionSpecAtRoot(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		files map[string]string
+		root  string
+		want  string
+	}{
+		{"bare engines major", map[string]string{"package.json": `{"engines":{"node":"22"}}`}, "", "22"},
+		{"nvmrc wins", map[string]string{".nvmrc": "# pinned\nlts/jod\n", "package.json": `{"engines":{"node":"24"}}`}, "", "lts/jod"},
+		{"range kept", map[string]string{"package.json": `{"engines":{"node":">=20 <23"}}`}, "", ">=20 <23"},
+		{"no declaration", map[string]string{"package.json": `{"name":"x"}`}, "", ""},
+		{"non-string engines", map[string]string{"package.json": `{"engines":{"node":22}}`}, "", ""},
+		{"workspace member", map[string]string{"package.json": `{"engines":{"node":"18"}}`, "apps/api/package.json": `{"engines":{"node":"22.x"}}`}, "apps/api", "22.x"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := tempTarball(t)
+			writeTarGz(t, path, tc.files)
+			if got := NodeVersionSpecAtRoot(path, tc.root); got != tc.want {
+				t.Fatalf("NodeVersionSpecAtRoot = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 // seedDirFSWithFiles creates a tempdir + writes the given
 // name→content map (forward-slash names) + returns an os.DirFS
 // over the root. Used by the VersionFromFS tests.

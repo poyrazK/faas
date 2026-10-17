@@ -37,6 +37,12 @@ func validateLocalTestURL(raw string) (string, error) {
 }
 
 func validateLocalTestScenario(scenario testScenario) error {
+	if err := validateTestCommandExecution(scenario, "local", "local"); err != nil {
+		return err
+	}
+	if scenario.Actions != nil {
+		return errors.New("webhook action capture requires the real-vm engine")
+	}
 	if scenario.WaitFor.QueueIdle || len(scenario.WaitFor.Invocations) > 0 || len(scenario.WaitFor.Objects) > 0 || len(scenario.WaitFor.Deliveries) > 0 {
 		return errors.New("--engine local cannot evaluate platform wait_for conditions; use real-vm for those checks")
 	}
@@ -71,7 +77,7 @@ func runLocalTest(parent context.Context, name string, scenario testScenario, ma
 }
 
 func runLocalTestWithLoad(parent context.Context, name string, scenario testScenario, manifestDir, baseURL string, data testDataCase, load *testLoadConfig) (receipt testRunReceipt) {
-	receipt = testRunReceipt{Scenario: name, Profile: "local", Engine: "local", Case: data.Name, Status: "failed", StartedAt: time.Now().UTC()}
+	receipt = testRunReceipt{Behavior: newTestBehaviorEvidence(scenario.Behavior), Scenario: name, Profile: "local", Engine: "local", Case: data.Name, Status: "failed", StartedAt: time.Now().UTC()}
 	if load != nil {
 		receipt.Load = newTestLoadEvidence(load)
 	}
@@ -118,6 +124,12 @@ func runLocalTestWithLoad(parent context.Context, name string, scenario testScen
 		receipt.Error = fmt.Sprintf("local source directory: %v", err)
 		return
 	}
+	behavior, err := prepareTestBehavior(sourceDir, scenario, &receipt)
+	if err != nil {
+		receipt.Error = fmt.Sprintf("prepare behavior evidence: %v", err)
+		return
+	}
+	defer behavior.finish(&receipt)
 	timeout := 15 * time.Minute
 	if scenario.Timeout != "" {
 		timeout, _ = time.ParseDuration(scenario.Timeout)
@@ -135,6 +147,7 @@ func runLocalTestWithLoad(parent context.Context, name string, scenario testScen
 		receipt.Error = fmt.Sprintf("encode case data: %v", err)
 		return
 	}
+	behavior.bindCaseData(dataJSON)
 	var reservation net.Listener
 	var host, port string
 	if scenario.Local != nil {
@@ -155,6 +168,7 @@ func runLocalTestWithLoad(parent context.Context, name string, scenario testScen
 		"GREGALE_TEST_CASE="+data.Name,
 		"GREGALE_TEST_DATA_JSON="+string(dataJSON),
 	)
+	env = behavior.commandEnv(env)
 	if load != nil {
 		env = append(env,
 			"GREGALE_TEST_LOAD=1",
@@ -172,6 +186,7 @@ func runLocalTestWithLoad(parent context.Context, name string, scenario testScen
 	}
 	var app *managedLocalApp
 	defer func() {
+		behavior.finish(&receipt)
 		if app != nil {
 			if err := app.failure(); err != nil {
 				receipt.Error, receipt.Status = err.Error(), "failed"
