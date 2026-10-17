@@ -1,5 +1,22 @@
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
+-- A missing ledger row may leave this migration's complete schema behind.
+-- Preserve later fences only when every owned object and a known function
+-- definition are present; refuse partial or unrecognized schema.
+-- +goose StatementBegin
+DO $rehearsal_replay$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_class WHERE oid=to_regclass('scenario_postgres_fixtures') AND relkind IN ('r','p'))
+    AND EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('scenario_postgres_fixtures') AND tgname='scenario_postgres_fixture_immutable' AND NOT tgisinternal)
+    AND EXISTS (SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('scenario_postgres_fixture_immutable()') AND md5(prosrc)=ANY(ARRAY['193290971d3e6f060b5e94381ad1fbbd'])) THEN
+    RETURN;
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_class WHERE oid=to_regclass('scenario_postgres_fixtures') AND relkind IN ('r','p'))
+    OR EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('scenario_postgres_fixtures') AND tgname='scenario_postgres_fixture_immutable' AND NOT tgisinternal)
+    OR EXISTS (SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('scenario_postgres_fixture_immutable()') AND md5(prosrc)=ANY(ARRAY['193290971d3e6f060b5e94381ad1fbbd'])) THEN
+    RAISE EXCEPTION 'partial or unrecognized schema for rehearsal migration 14; inspect recovery before continuing';
+  END IF;
+
 CREATE TABLE scenario_postgres_fixtures (
  id uuid PRIMARY KEY,
  account_id uuid NOT NULL REFERENCES accounts(id),
@@ -15,7 +32,6 @@ CREATE TABLE scenario_postgres_fixtures (
  expires_at timestamptz NOT NULL,
  UNIQUE(account_id,run_id)
 );
--- +goose StatementBegin
 CREATE FUNCTION scenario_postgres_fixture_immutable() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF (NEW.id,NEW.account_id,NEW.run_id,NEW.app_id,NEW.owner_id,NEW.database_name,NEW.role_name,NEW.spec,NEW.expires_at)
@@ -30,9 +46,11 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
--- +goose StatementEnd
 CREATE TRIGGER scenario_postgres_fixture_immutable BEFORE UPDATE ON scenario_postgres_fixtures
  FOR EACH ROW EXECUTE FUNCTION scenario_postgres_fixture_immutable();
+END
+$rehearsal_replay$;
+-- +goose StatementEnd
 
 -- +goose Down
 SET LOCAL lock_timeout = '5s';

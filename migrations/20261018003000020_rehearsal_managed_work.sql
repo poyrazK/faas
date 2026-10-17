@@ -1,5 +1,40 @@
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
+-- A missing ledger row may leave this migration's complete schema behind.
+-- Preserve later fences only when every owned object and a known function
+-- definition are present; refuse partial or unrecognized schema.
+-- +goose StatementBegin
+DO $rehearsal_replay$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_class WHERE oid=to_regclass('scenario_managed_work') AND relkind IN ('r','p'))
+    AND EXISTS (SELECT 1 FROM pg_class WHERE oid=to_regclass('scenario_managed_work_run') AND relkind IN ('i','I'))
+    AND EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('scenario_test_action_policies') AND tgname='scenario_managed_work_policy_fence' AND NOT tgisinternal)
+    AND EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('invocations') AND tgname='scenario_managed_work_capture' AND NOT tgisinternal)
+    AND EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('scenario_managed_work') AND tgname='scenario_managed_work_journal_fence' AND NOT tgisinternal)
+    AND EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('scenario_test_action_policies') AND attname='managed_work_plan' AND attnum>0 AND NOT attisdropped)
+    AND EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('scenario_test_action_policies') AND attname='managed_work_closing' AND attnum>0 AND NOT attisdropped)
+    AND EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('scenario_test_action_policies') AND attname='managed_work_failed' AND attnum>0 AND NOT attisdropped)
+    AND EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid=to_regclass('scenario_test_action_policies') AND conname='scenario_managed_work_plan_check')
+    AND EXISTS (SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('scenario_managed_work_policy_fence()') AND md5(prosrc)=ANY(ARRAY['6f715edbad8623777719e03d25aa3aeb']))
+    AND EXISTS (SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('scenario_managed_work_capture()') AND md5(prosrc)=ANY(ARRAY['c7012f901dd9db795461860a35bbba1a','75c916d3789a6685eab2331bc3d37a98']))
+    AND EXISTS (SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('scenario_managed_work_journal_fence()') AND md5(prosrc)=ANY(ARRAY['77c61e365507f4e3ce142409d837505a'])) THEN
+    RETURN;
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_class WHERE oid=to_regclass('scenario_managed_work') AND relkind IN ('r','p'))
+    OR EXISTS (SELECT 1 FROM pg_class WHERE oid=to_regclass('scenario_managed_work_run') AND relkind IN ('i','I'))
+    OR EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('scenario_test_action_policies') AND tgname='scenario_managed_work_policy_fence' AND NOT tgisinternal)
+    OR EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('invocations') AND tgname='scenario_managed_work_capture' AND NOT tgisinternal)
+    OR EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('scenario_managed_work') AND tgname='scenario_managed_work_journal_fence' AND NOT tgisinternal)
+    OR EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('scenario_test_action_policies') AND attname='managed_work_plan' AND attnum>0 AND NOT attisdropped)
+    OR EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('scenario_test_action_policies') AND attname='managed_work_closing' AND attnum>0 AND NOT attisdropped)
+    OR EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('scenario_test_action_policies') AND attname='managed_work_failed' AND attnum>0 AND NOT attisdropped)
+    OR EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid=to_regclass('scenario_test_action_policies') AND conname='scenario_managed_work_plan_check')
+    OR EXISTS (SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('scenario_managed_work_policy_fence()') AND md5(prosrc)=ANY(ARRAY['6f715edbad8623777719e03d25aa3aeb']))
+    OR EXISTS (SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('scenario_managed_work_capture()') AND md5(prosrc)=ANY(ARRAY['c7012f901dd9db795461860a35bbba1a','75c916d3789a6685eab2331bc3d37a98']))
+    OR EXISTS (SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('scenario_managed_work_journal_fence()') AND md5(prosrc)=ANY(ARRAY['77c61e365507f4e3ce142409d837505a'])) THEN
+    RAISE EXCEPTION 'partial or unrecognized schema for rehearsal migration 20; inspect recovery before continuing';
+  END IF;
+
 ALTER TABLE scenario_test_action_policies
  ADD COLUMN managed_work_plan jsonb,
  ADD COLUMN managed_work_closing boolean NOT NULL DEFAULT false,
@@ -18,7 +53,6 @@ CREATE TABLE scenario_managed_work (
 );
 CREATE INDEX scenario_managed_work_run ON scenario_managed_work(account_id,run_id);
 
--- +goose StatementBegin
 CREATE FUNCTION scenario_managed_work_policy_fence() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF NEW.managed_work_plan IS DISTINCT FROM OLD.managed_work_plan
@@ -28,11 +62,9 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
--- +goose StatementEnd
 CREATE TRIGGER scenario_managed_work_policy_fence BEFORE UPDATE ON scenario_test_action_policies
  FOR EACH ROW EXECUTE FUNCTION scenario_managed_work_policy_fence();
 
--- +goose StatementBegin
 CREATE FUNCTION scenario_managed_work_capture() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE p scenario_test_action_policies%ROWTYPE; participant jsonb; dep uuid; deployment_count integer;
  doc jsonb; attempts jsonb; item jsonb; outcome text; invalid boolean:=false;
@@ -99,11 +131,9 @@ BEGIN
  IF invalid THEN UPDATE scenario_test_action_policies SET managed_work_failed=true WHERE account_id=p.account_id AND run_id=p.run_id; END IF;
  RETURN NEW;
 END $$;
--- +goose StatementEnd
 CREATE TRIGGER scenario_managed_work_capture BEFORE INSERT OR UPDATE OR DELETE ON invocations
  FOR EACH ROW EXECUTE FUNCTION scenario_managed_work_capture();
 
--- +goose StatementBegin
 CREATE FUNCTION scenario_managed_work_journal_fence() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF pg_trigger_depth()<2 THEN
@@ -116,9 +146,11 @@ BEGIN
  END IF;
  RETURN COALESCE(NEW,OLD);
 END $$;
--- +goose StatementEnd
 CREATE TRIGGER scenario_managed_work_journal_fence BEFORE INSERT OR UPDATE OR DELETE ON scenario_managed_work
  FOR EACH ROW EXECUTE FUNCTION scenario_managed_work_journal_fence();
+END
+$rehearsal_replay$;
+-- +goose StatementEnd
 
 -- +goose Down
 SET LOCAL lock_timeout = '5s';

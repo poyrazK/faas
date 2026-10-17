@@ -1,10 +1,27 @@
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
+-- A missing ledger row may leave this migration's complete schema behind.
+-- Preserve later fences only when every owned object and a known function
+-- definition are present; refuse partial or unrecognized schema.
+-- +goose StatementBegin
+DO $rehearsal_replay$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid=to_regclass('scenario_simulation_attempts') AND conname='scenario_simulation_evidence_identity')
+    AND EXISTS (SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('scenario_simulation_sealed_fence()') AND md5(prosrc)=ANY(ARRAY['de16aee16810ee904caa48a18d1b9d57'])) THEN
+    RETURN;
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid=to_regclass('scenario_simulation_attempts') AND conname='scenario_simulation_evidence_identity')
+    OR EXISTS (SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('scenario_simulation_sealed_fence()') AND md5(prosrc)=ANY(ARRAY['de16aee16810ee904caa48a18d1b9d57'])) THEN
+    RAISE EXCEPTION 'partial or unrecognized schema for rehearsal migration 6; inspect recovery before continuing';
+  END IF;
+  IF to_regprocedure('scenario_simulation_sealed_fence()') IS NOT NULL AND NOT (EXISTS (SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('scenario_simulation_sealed_fence()') AND md5(prosrc)=ANY(ARRAY['1d578c2dfbdcca616108a4620aa6a17e','de16aee16810ee904caa48a18d1b9d57']))) THEN
+    RAISE EXCEPTION 'unexpected predecessor fence scenario_simulation_sealed_fence';
+  END IF;
+
 ALTER TABLE scenario_simulation_attempts ADD CONSTRAINT scenario_simulation_evidence_identity
  CHECK (coalesce(evidence->>'id'=id::text,false) AND
         coalesce(evidence->>'status' IN ('pending','completed','interrupted','unsupported'),false));
 
--- +goose StatementBegin
 CREATE OR REPLACE FUNCTION scenario_simulation_sealed_fence() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF TG_OP='UPDATE' THEN
@@ -21,6 +38,8 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
+END
+$rehearsal_replay$;
 -- +goose StatementEnd
 
 -- +goose Down

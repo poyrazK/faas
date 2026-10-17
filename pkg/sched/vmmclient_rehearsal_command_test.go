@@ -1,3 +1,4 @@
+// adr: 20261017201008
 package sched_test
 
 import (

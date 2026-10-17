@@ -1,5 +1,28 @@
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
+-- A missing ledger row may leave this migration's complete schema behind.
+-- Preserve later fences only when every owned object and a known function
+-- definition are present; refuse partial or unrecognized schema.
+-- +goose StatementBegin
+DO $rehearsal_replay$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_class WHERE oid=to_regclass('scenario_test_action_policies') AND relkind IN ('r','p'))
+    AND EXISTS (SELECT 1 FROM pg_class WHERE oid=to_regclass('scenario_test_action_policies_run_idx') AND relkind IN ('i','I'))
+    AND EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('app_webhook_deliveries') AND tgname='scenario_webhook_delivery_fence' AND NOT tgisinternal)
+    AND EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('exclusive_work_effects') AND attname='rehearsal_run_id' AND attnum>0 AND NOT attisdropped)
+    AND EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('workflow_operation_effects') AND attname='rehearsal_run_id' AND attnum>0 AND NOT attisdropped)
+    AND EXISTS (SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('scenario_webhook_delivery_fence()') AND md5(prosrc)=ANY(ARRAY['53e339f5ad976a87256eec38042916a5'])) THEN
+    RETURN;
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_class WHERE oid=to_regclass('scenario_test_action_policies') AND relkind IN ('r','p'))
+    OR EXISTS (SELECT 1 FROM pg_class WHERE oid=to_regclass('scenario_test_action_policies_run_idx') AND relkind IN ('i','I'))
+    OR EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('app_webhook_deliveries') AND tgname='scenario_webhook_delivery_fence' AND NOT tgisinternal)
+    OR EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('exclusive_work_effects') AND attname='rehearsal_run_id' AND attnum>0 AND NOT attisdropped)
+    OR EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('workflow_operation_effects') AND attname='rehearsal_run_id' AND attnum>0 AND NOT attisdropped)
+    OR EXISTS (SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('scenario_webhook_delivery_fence()') AND md5(prosrc)=ANY(ARRAY['53e339f5ad976a87256eec38042916a5'])) THEN
+    RAISE EXCEPTION 'partial or unrecognized schema for rehearsal migration 2; inspect recovery before continuing';
+  END IF;
+
 CREATE TABLE scenario_test_action_policies (
     app_id uuid PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE,
     account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
@@ -17,7 +40,6 @@ ALTER TABLE workflow_operation_effects ADD COLUMN rehearsal_run_id text NOT NULL
 -- This fence also protects mixed-version dispatchers: ordinary events and
 -- manual retries cannot create a runnable row for an enrolled app. Policies
 -- outlive namespace deletion and are removed only with the app/account.
--- +goose StatementBegin
 CREATE FUNCTION scenario_webhook_delivery_fence() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     -- Serialize new deliveries with the registration transaction. A registration
@@ -36,10 +58,12 @@ BEGIN
     END IF;
     RETURN NEW;
 END $$;
--- +goose StatementEnd
 CREATE TRIGGER scenario_webhook_delivery_fence
 BEFORE INSERT OR UPDATE ON app_webhook_deliveries
 FOR EACH ROW EXECUTE FUNCTION scenario_webhook_delivery_fence();
+END
+$rehearsal_replay$;
+-- +goose StatementEnd
 
 -- +goose Down
 SET LOCAL lock_timeout = '5s';

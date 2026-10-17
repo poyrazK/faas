@@ -1,8 +1,20 @@
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
+-- A missing ledger row may leave this migration's complete schema behind.
+-- Preserve later fences only when every owned object and a known function
+-- definition are present; refuse partial or unrecognized schema.
+-- +goose StatementBegin
+DO $rehearsal_replay$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('scenario_object_fixture_immutable()') AND md5(prosrc)=ANY(ARRAY['63d78f6fce7de58b03cca77053b0f510'])) THEN
+    RETURN;
+  END IF;
+  IF NOT (EXISTS (SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('scenario_object_fixture_immutable()') AND md5(prosrc)=ANY(ARRAY['d20bd53aba663d5c80bc949237d9b0a0']))) THEN
+    RAISE EXCEPTION 'unexpected predecessor fence for rehearsal migration 19';
+  END IF;
+
 -- Old unqualified windows have no collector acknowledgement and cannot be adopted.
 UPDATE scenario_object_fixtures SET document=jsonb_set(document,'{Failed}','true') WHERE status IN ('ready','sealing');
--- +goose StatementBegin
 CREATE OR REPLACE FUNCTION scenario_object_fixture_immutable() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE old_collector text; new_collector text; old_closed boolean; new_closed boolean;
 BEGIN
@@ -34,7 +46,10 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
+END
+$rehearsal_replay$;
 -- +goose StatementEnd
+
 -- +goose Down
 SET LOCAL lock_timeout = '5s';
 -- Collector proof is a safety boundary; dropping it requires rolling back the adapter.

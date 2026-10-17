@@ -1,6 +1,34 @@
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
+-- A missing ledger row may leave this migration's complete schema behind.
+-- Preserve later fences only when every owned object and a known function
+-- definition are present; refuse partial or unrecognized schema.
 -- +goose StatementBegin
+DO $rehearsal_replay$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('app_tasks') AND tgname='scenario_rehearsal_command_admission' AND NOT tgisinternal)
+    AND EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('scenario_recorder_sessions') AND attname='command_result' AND attnum>0 AND NOT attisdropped)
+    AND EXISTS (SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('scenario_rehearsal_command_spec(text[])') AND md5(prosrc)=ANY(ARRAY['882118ec39600349abdc21a684b263dd']))
+    AND EXISTS (SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('scenario_rehearsal_execution_active(uuid,uuid,uuid)') AND md5(prosrc)=ANY(ARRAY['0dd3ae13aa0c5e0a6a2eab91961f27a7','b8810e6de73ef5c1c55a3a009e64d2b1','71d203b16ce1559d2e9ad7c283ba47fa','39ee8ff29a974999ce836e3d3d7b55c2']))
+    AND EXISTS (SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('scenario_rehearsal_command_admission()') AND md5(prosrc)=ANY(ARRAY['bbc589bdb60a5391c19034da8e5a2dd9']))
+    AND EXISTS (SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('scenario_recorder_fence()') AND md5(prosrc)=ANY(ARRAY['63acbe9923cf5e86a31d3853032568b6','f3638ec3d4147fff208772c6a104d663','1723aaeb805fb945bed86404d881b0c7'])) THEN
+    RETURN;
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('app_tasks') AND tgname='scenario_rehearsal_command_admission' AND NOT tgisinternal)
+    OR EXISTS (SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('scenario_rehearsal_command_admission()') AND md5(prosrc)=ANY(ARRAY['bbc589bdb60a5391c19034da8e5a2dd9'])) THEN
+    RAISE EXCEPTION 'partial or unrecognized schema for rehearsal migration 10; inspect recovery before continuing';
+  END IF;
+  IF to_regprocedure('scenario_recorder_fence()') IS NOT NULL AND NOT (EXISTS (SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('scenario_recorder_fence()') AND md5(prosrc)=ANY(ARRAY['fea9d2738dcb6849294acd8fc0329c6a','f6368b62b0f1062b37392c3a790a1eec','63acbe9923cf5e86a31d3853032568b6','f3638ec3d4147fff208772c6a104d663','1723aaeb805fb945bed86404d881b0c7']))) THEN
+    RAISE EXCEPTION 'unexpected predecessor fence scenario_recorder_fence';
+  END IF;
+  IF to_regprocedure('scenario_rehearsal_command_spec(text[])') IS NOT NULL AND NOT (EXISTS (SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('scenario_rehearsal_command_spec(text[])') AND md5(prosrc)=ANY(ARRAY['882118ec39600349abdc21a684b263dd']))) THEN
+    RAISE EXCEPTION 'unexpected retained command helper scenario_rehearsal_command_spec';
+  END IF;
+  IF to_regprocedure('scenario_rehearsal_execution_active(uuid,uuid,uuid)') IS NOT NULL AND NOT (EXISTS (SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('scenario_rehearsal_execution_active(uuid,uuid,uuid)') AND md5(prosrc)=ANY(ARRAY['0dd3ae13aa0c5e0a6a2eab91961f27a7','b8810e6de73ef5c1c55a3a009e64d2b1','71d203b16ce1559d2e9ad7c283ba47fa','39ee8ff29a974999ce836e3d3d7b55c2']))) THEN
+    RAISE EXCEPTION 'unexpected retained command helper scenario_rehearsal_execution_active';
+  END IF;
+
+IF to_regprocedure('scenario_rehearsal_command_spec(text[])') IS NULL THEN
 CREATE FUNCTION scenario_rehearsal_command_spec(argv text[]) RETURNS jsonb LANGUAGE plpgsql IMMUTABLE AS $$
 DECLARE spec jsonb;
 BEGIN
@@ -12,9 +40,9 @@ BEGIN
   OR coalesce(spec->>'deployment_id','')!~'^[0-9a-f-]{36}$' THEN RETURN NULL; END IF;
  RETURN spec;
 END $$;
--- +goose StatementEnd
+END IF;
 
--- +goose StatementBegin
+IF to_regprocedure('scenario_rehearsal_execution_active(uuid,uuid,uuid)') IS NULL THEN
 CREATE FUNCTION scenario_rehearsal_execution_active(target_app uuid, execution_id uuid, deployment uuid DEFAULT NULL) RETURNS boolean LANGUAGE sql STABLE AS $$
  SELECT EXISTS(SELECT 1 FROM instances i WHERE i.id=execution_id AND i.app_id=target_app
   AND (deployment IS NULL OR i.deployment_id=deployment) AND i.state IN ('waking','cold_booting','running','draining'))
@@ -26,9 +54,8 @@ CREATE FUNCTION scenario_rehearsal_execution_active(target_app uuid, execution_i
   AND scenario_rehearsal_command_spec(t.command)->>'deployment_id'=t.deployment_id::text
   AND p.network_mode='contained' AND p.simulation_plan IS NOT NULL AND p.sealed_at IS NULL);
 $$;
--- +goose StatementEnd
+END IF;
 
--- +goose StatementBegin
 CREATE FUNCTION scenario_rehearsal_command_admission() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE policy scenario_test_action_policies%ROWTYPE; spec jsonb;
 BEGIN
@@ -53,13 +80,12 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
--- +goose StatementEnd
 CREATE TRIGGER scenario_rehearsal_command_admission BEFORE INSERT ON app_tasks FOR EACH ROW EXECUTE FUNCTION scenario_rehearsal_command_admission();
 
-ALTER TABLE scenario_recorder_sessions ADD COLUMN command_result text
+ALTER TABLE scenario_recorder_sessions ADD COLUMN IF NOT EXISTS command_result text
  CHECK (command_result IS NULL OR (status='closed' AND octet_length(command_result) BETWEEN 1 AND 65536));
 
--- +goose StatementBegin
+IF to_regclass('scenario_worker_faults') IS NULL THEN
 CREATE OR REPLACE FUNCTION scenario_recorder_fence() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE target_app uuid; policy scenario_test_action_policies%ROWTYPE; parent scenario_recorder_sessions%ROWTYPE;
 BEGIN
@@ -119,8 +145,10 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
+END IF;
+END
+$rehearsal_replay$;
 -- +goose StatementEnd
-
 
 -- +goose Down
 SET LOCAL lock_timeout = '5s';

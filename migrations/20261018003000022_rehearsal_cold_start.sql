@@ -1,13 +1,44 @@
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
+-- A missing ledger row may leave this migration's complete schema behind.
+-- Preserve later fences only when every owned object and a known function
+-- definition are present; refuse partial or unrecognized schema.
+-- +goose StatementBegin
+DO $rehearsal_replay$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_class WHERE oid=to_regclass('scenario_cold_preparations') AND relkind IN ('r','p'))
+    AND EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('scenario_test_action_policies') AND tgname='scenario_cold_policy_immutable' AND NOT tgisinternal)
+    AND EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('scenario_cold_preparations') AND tgname='scenario_cold_guard' AND NOT tgisinternal)
+    AND EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('scenario_test_action_policies') AND attname='cold_start_spec' AND attnum>0 AND NOT attisdropped)
+    AND EXISTS (SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('scenario_cold_policy_immutable()') AND md5(prosrc)=ANY(ARRAY['5260d2d6d305937d6792c5d449ca63ea']))
+    AND EXISTS (SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('scenario_cold_guard()') AND md5(prosrc)=ANY(ARRAY['1d762426234838b634a8d1cc5944d6f7']))
+    AND EXISTS (SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('scenario_rehearsal_execution_active(uuid,uuid,uuid)') AND md5(prosrc)=ANY(ARRAY['71d203b16ce1559d2e9ad7c283ba47fa','39ee8ff29a974999ce836e3d3d7b55c2']))
+    AND EXISTS (SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('scenario_recorder_fence()') AND md5(prosrc)=ANY(ARRAY['1723aaeb805fb945bed86404d881b0c7'])) THEN
+    RETURN;
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_class WHERE oid=to_regclass('scenario_cold_preparations') AND relkind IN ('r','p'))
+    OR EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('scenario_test_action_policies') AND tgname='scenario_cold_policy_immutable' AND NOT tgisinternal)
+    OR EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('scenario_cold_preparations') AND tgname='scenario_cold_guard' AND NOT tgisinternal)
+    OR EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('scenario_test_action_policies') AND attname='cold_start_spec' AND attnum>0 AND NOT attisdropped)
+    OR EXISTS (SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('scenario_cold_policy_immutable()') AND md5(prosrc)=ANY(ARRAY['5260d2d6d305937d6792c5d449ca63ea']))
+    OR EXISTS (SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('scenario_cold_guard()') AND md5(prosrc)=ANY(ARRAY['1d762426234838b634a8d1cc5944d6f7']))
+    OR EXISTS (SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('scenario_rehearsal_execution_active(uuid,uuid,uuid)') AND md5(prosrc)=ANY(ARRAY['71d203b16ce1559d2e9ad7c283ba47fa','39ee8ff29a974999ce836e3d3d7b55c2']))
+    OR EXISTS (SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('scenario_recorder_fence()') AND md5(prosrc)=ANY(ARRAY['1723aaeb805fb945bed86404d881b0c7'])) THEN
+    RAISE EXCEPTION 'partial or unrecognized schema for rehearsal migration 22; inspect recovery before continuing';
+  END IF;
+  IF to_regprocedure('scenario_rehearsal_execution_active(uuid,uuid,uuid)') IS NOT NULL AND NOT (EXISTS (SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('scenario_rehearsal_execution_active(uuid,uuid,uuid)') AND md5(prosrc)=ANY(ARRAY['0dd3ae13aa0c5e0a6a2eab91961f27a7','b8810e6de73ef5c1c55a3a009e64d2b1','71d203b16ce1559d2e9ad7c283ba47fa','39ee8ff29a974999ce836e3d3d7b55c2']))) THEN
+    RAISE EXCEPTION 'unexpected predecessor fence scenario_rehearsal_execution_active';
+  END IF;
+  IF to_regprocedure('scenario_recorder_fence()') IS NOT NULL AND NOT (EXISTS (SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('scenario_recorder_fence()') AND md5(prosrc)=ANY(ARRAY['fea9d2738dcb6849294acd8fc0329c6a','f6368b62b0f1062b37392c3a790a1eec','63acbe9923cf5e86a31d3853032568b6','f3638ec3d4147fff208772c6a104d663','1723aaeb805fb945bed86404d881b0c7']))) THEN
+    RAISE EXCEPTION 'unexpected predecessor fence scenario_recorder_fence';
+  END IF;
+
 ALTER TABLE scenario_test_action_policies ADD COLUMN cold_start_spec jsonb
  CHECK(cold_start_spec IS NULL OR (jsonb_typeof(cold_start_spec)='object' AND cold_start_spec->>'version'='1'
   AND (cold_start_spec->>'within_ms')::bigint BETWEEN 1 AND 120000 AND simulation_plan IS NOT NULL AND network_mode='contained'));
--- +goose StatementBegin
 CREATE FUNCTION scenario_cold_policy_immutable() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN IF NEW.cold_start_spec IS DISTINCT FROM OLD.cold_start_spec THEN
  RAISE EXCEPTION 'cold-start plan is immutable' USING ERRCODE='23514'; END IF; RETURN NEW; END $$;
--- +goose StatementEnd
 CREATE TRIGGER scenario_cold_policy_immutable BEFORE UPDATE ON scenario_test_action_policies FOR EACH ROW EXECUTE FUNCTION scenario_cold_policy_immutable();
 CREATE TABLE scenario_cold_preparations (
  id uuid PRIMARY KEY,
@@ -29,7 +60,6 @@ CREATE TABLE scenario_cold_preparations (
  CHECK((boot_instance_id IS NULL)=(boot_recorder_session_id IS NULL)),
  CHECK(boot_instance_id IS NULL OR (boot_instance_id IS DISTINCT FROM instance_id AND method='cold_boot' AND wake_id IS NOT NULL))
 );
--- +goose StatementBegin
 CREATE FUNCTION scenario_cold_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE p scenario_test_action_policies%ROWTYPE;
 BEGIN
@@ -70,10 +100,8 @@ BEGIN
   RAISE EXCEPTION 'cold-start boot requires its original live recorder and new instance' USING ERRCODE='23514'; END IF;
  RETURN NEW;
 END $$;
--- +goose StatementEnd
 CREATE TRIGGER scenario_cold_guard BEFORE INSERT OR UPDATE OR DELETE ON scenario_cold_preparations FOR EACH ROW EXECUTE FUNCTION scenario_cold_guard();
 
--- +goose StatementBegin
 CREATE OR REPLACE FUNCTION scenario_rehearsal_execution_active(target_app uuid, execution_id uuid, deployment uuid DEFAULT NULL) RETURNS boolean LANGUAGE sql STABLE AS $$
  SELECT NOT EXISTS(SELECT 1 FROM scenario_worker_faults f WHERE f.app_id=target_app AND f.instance_id=execution_id AND f.state IN ('fenced','terminated','failed')) AND
  (EXISTS(SELECT 1 FROM instances i WHERE i.id=execution_id AND i.app_id=target_app
@@ -91,9 +119,7 @@ CREATE OR REPLACE FUNCTION scenario_rehearsal_execution_active(target_app uuid, 
   AND scenario_rehearsal_command_spec(t.command)->>'deployment_id'=t.deployment_id::text
   AND p.network_mode='contained' AND p.simulation_plan IS NOT NULL AND p.sealed_at IS NULL));
 $$;
--- +goose StatementEnd
 
--- +goose StatementBegin
 CREATE OR REPLACE FUNCTION scenario_recorder_fence() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE target_app uuid; policy scenario_test_action_policies%ROWTYPE; parent scenario_recorder_sessions%ROWTYPE;
 BEGIN
@@ -159,6 +185,8 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
+END
+$rehearsal_replay$;
 -- +goose StatementEnd
 
 -- +goose Down

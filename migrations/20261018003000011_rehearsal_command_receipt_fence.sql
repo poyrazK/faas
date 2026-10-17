@@ -1,6 +1,24 @@
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
+-- A missing ledger row may leave this migration's complete schema behind.
+-- Preserve later fences only when every owned object and a known function
+-- definition are present; refuse partial or unrecognized schema.
 -- +goose StatementBegin
+DO $rehearsal_replay$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('app_tasks') AND tgname='scenario_rehearsal_command_update_fence' AND NOT tgisinternal)
+    AND EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('app_task_attach_sessions') AND tgname='scenario_rehearsal_command_attach_fence' AND NOT tgisinternal)
+    AND EXISTS (SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('scenario_rehearsal_command_update_fence()') AND md5(prosrc)=ANY(ARRAY['c625a8f2ffc6850005bc96a7741d121a']))
+    AND EXISTS (SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('scenario_rehearsal_command_attach_fence()') AND md5(prosrc)=ANY(ARRAY['595fe2fa5a14bfcc9c12403057d04d69'])) THEN
+    RETURN;
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('app_tasks') AND tgname='scenario_rehearsal_command_update_fence' AND NOT tgisinternal)
+    OR EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('app_task_attach_sessions') AND tgname='scenario_rehearsal_command_attach_fence' AND NOT tgisinternal)
+    OR EXISTS (SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('scenario_rehearsal_command_update_fence()') AND md5(prosrc)=ANY(ARRAY['c625a8f2ffc6850005bc96a7741d121a']))
+    OR EXISTS (SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('scenario_rehearsal_command_attach_fence()') AND md5(prosrc)=ANY(ARRAY['595fe2fa5a14bfcc9c12403057d04d69'])) THEN
+    RAISE EXCEPTION 'partial or unrecognized schema for rehearsal migration 11; inspect recovery before continuing';
+  END IF;
+
 CREATE FUNCTION scenario_rehearsal_command_update_fence() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF OLD.command[1] IS DISTINCT FROM '__gregale_rehearsal_command_v1__'
@@ -20,10 +38,8 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
--- +goose StatementEnd
 CREATE TRIGGER scenario_rehearsal_command_update_fence BEFORE UPDATE ON app_tasks FOR EACH ROW EXECUTE FUNCTION scenario_rehearsal_command_update_fence();
 
--- +goose StatementBegin
 CREATE FUNCTION scenario_rehearsal_command_attach_fence() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF EXISTS(SELECT 1 FROM app_tasks t WHERE t.id=NEW.task_id AND
@@ -32,8 +48,10 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
--- +goose StatementEnd
 CREATE TRIGGER scenario_rehearsal_command_attach_fence BEFORE INSERT ON app_task_attach_sessions FOR EACH ROW EXECUTE FUNCTION scenario_rehearsal_command_attach_fence();
+END
+$rehearsal_replay$;
+-- +goose StatementEnd
 
 -- +goose Down
 SET LOCAL lock_timeout = '5s';

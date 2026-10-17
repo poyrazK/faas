@@ -1,5 +1,24 @@
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
+-- A missing ledger row may leave this migration's complete schema behind.
+-- Preserve later fences only when every owned object and a known function
+-- definition are present; refuse partial or unrecognized schema.
+-- +goose StatementBegin
+DO $rehearsal_replay$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_class WHERE oid=to_regclass('scenario_object_fixtures') AND relkind IN ('r','p'))
+    AND EXISTS (SELECT 1 FROM pg_class WHERE oid=to_regclass('scenario_object_fixtures_expiry') AND relkind IN ('i','I'))
+    AND EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('scenario_object_fixtures') AND tgname='scenario_object_fixture_immutable' AND NOT tgisinternal)
+    AND EXISTS (SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('scenario_object_fixture_immutable()') AND md5(prosrc)=ANY(ARRAY['d20bd53aba663d5c80bc949237d9b0a0','63d78f6fce7de58b03cca77053b0f510'])) THEN
+    RETURN;
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_class WHERE oid=to_regclass('scenario_object_fixtures') AND relkind IN ('r','p'))
+    OR EXISTS (SELECT 1 FROM pg_class WHERE oid=to_regclass('scenario_object_fixtures_expiry') AND relkind IN ('i','I'))
+    OR EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('scenario_object_fixtures') AND tgname='scenario_object_fixture_immutable' AND NOT tgisinternal)
+    OR EXISTS (SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('scenario_object_fixture_immutable()') AND md5(prosrc)=ANY(ARRAY['d20bd53aba663d5c80bc949237d9b0a0','63d78f6fce7de58b03cca77053b0f510'])) THEN
+    RAISE EXCEPTION 'partial or unrecognized schema for rehearsal migration 17; inspect recovery before continuing';
+  END IF;
+
 CREATE TABLE scenario_object_fixtures (
  id uuid PRIMARY KEY,
  account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
@@ -15,7 +34,6 @@ CREATE TABLE scenario_object_fixtures (
 );
 CREATE INDEX scenario_object_fixtures_expiry ON scenario_object_fixtures(expires_at)
  WHERE status IN ('ready','sealing');
--- +goose StatementBegin
 CREATE FUNCTION scenario_object_fixture_immutable() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF TG_OP='DELETE' THEN
@@ -36,9 +54,12 @@ BEGIN
  THEN RAISE EXCEPTION 'object fixture journal is immutable' USING ERRCODE='23514'; END IF;
  RETURN NEW;
 END $$;
--- +goose StatementEnd
 CREATE TRIGGER scenario_object_fixture_immutable BEFORE UPDATE OR DELETE ON scenario_object_fixtures
  FOR EACH ROW EXECUTE FUNCTION scenario_object_fixture_immutable();
+END
+$rehearsal_replay$;
+-- +goose StatementEnd
+
 -- +goose Down
 SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin

@@ -1,5 +1,37 @@
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
+-- A missing ledger row may leave this migration's complete schema behind.
+-- Preserve later fences only when every owned object and a known function
+-- definition are present; refuse partial or unrecognized schema.
+-- +goose StatementBegin
+DO $rehearsal_replay$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_class WHERE oid=to_regclass('scenario_worker_faults') AND relkind IN ('r','p'))
+    AND EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('scenario_worker_faults') AND tgname='scenario_worker_fault_guard' AND NOT tgisinternal)
+    AND EXISTS (SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('scenario_worker_fault_guard()') AND md5(prosrc)=ANY(ARRAY['05ed5d917d0a67c0fcf5708b0003ef9a']))
+    AND EXISTS (SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('scenario_rehearsal_execution_active(uuid,uuid,uuid)') AND md5(prosrc)=ANY(ARRAY['b8810e6de73ef5c1c55a3a009e64d2b1','71d203b16ce1559d2e9ad7c283ba47fa','39ee8ff29a974999ce836e3d3d7b55c2']))
+    AND EXISTS (SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('scenario_managed_work_capture()') AND md5(prosrc)=ANY(ARRAY['75c916d3789a6685eab2331bc3d37a98']))
+    AND EXISTS (SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('scenario_recorder_fence()') AND md5(prosrc)=ANY(ARRAY['f3638ec3d4147fff208772c6a104d663','1723aaeb805fb945bed86404d881b0c7'])) THEN
+    RETURN;
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_class WHERE oid=to_regclass('scenario_worker_faults') AND relkind IN ('r','p'))
+    OR EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('scenario_worker_faults') AND tgname='scenario_worker_fault_guard' AND NOT tgisinternal)
+    OR EXISTS (SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('scenario_worker_fault_guard()') AND md5(prosrc)=ANY(ARRAY['05ed5d917d0a67c0fcf5708b0003ef9a']))
+    OR EXISTS (SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('scenario_rehearsal_execution_active(uuid,uuid,uuid)') AND md5(prosrc)=ANY(ARRAY['b8810e6de73ef5c1c55a3a009e64d2b1','71d203b16ce1559d2e9ad7c283ba47fa','39ee8ff29a974999ce836e3d3d7b55c2']))
+    OR EXISTS (SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('scenario_managed_work_capture()') AND md5(prosrc)=ANY(ARRAY['75c916d3789a6685eab2331bc3d37a98']))
+    OR EXISTS (SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('scenario_recorder_fence()') AND md5(prosrc)=ANY(ARRAY['f3638ec3d4147fff208772c6a104d663','1723aaeb805fb945bed86404d881b0c7'])) THEN
+    RAISE EXCEPTION 'partial or unrecognized schema for rehearsal migration 21; inspect recovery before continuing';
+  END IF;
+  IF to_regprocedure('scenario_rehearsal_execution_active(uuid,uuid,uuid)') IS NOT NULL AND NOT (EXISTS (SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('scenario_rehearsal_execution_active(uuid,uuid,uuid)') AND md5(prosrc)=ANY(ARRAY['0dd3ae13aa0c5e0a6a2eab91961f27a7','b8810e6de73ef5c1c55a3a009e64d2b1','71d203b16ce1559d2e9ad7c283ba47fa','39ee8ff29a974999ce836e3d3d7b55c2']))) THEN
+    RAISE EXCEPTION 'unexpected predecessor fence scenario_rehearsal_execution_active';
+  END IF;
+  IF to_regprocedure('scenario_managed_work_capture()') IS NOT NULL AND NOT (EXISTS (SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('scenario_managed_work_capture()') AND md5(prosrc)=ANY(ARRAY['c7012f901dd9db795461860a35bbba1a','75c916d3789a6685eab2331bc3d37a98']))) THEN
+    RAISE EXCEPTION 'unexpected predecessor fence scenario_managed_work_capture';
+  END IF;
+  IF to_regprocedure('scenario_recorder_fence()') IS NOT NULL AND NOT (EXISTS (SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('scenario_recorder_fence()') AND md5(prosrc)=ANY(ARRAY['fea9d2738dcb6849294acd8fc0329c6a','f6368b62b0f1062b37392c3a790a1eec','63acbe9923cf5e86a31d3853032568b6','f3638ec3d4147fff208772c6a104d663','1723aaeb805fb945bed86404d881b0c7']))) THEN
+    RAISE EXCEPTION 'unexpected predecessor fence scenario_recorder_fence';
+  END IF;
+
 CREATE TABLE scenario_worker_faults (
  id uuid PRIMARY KEY,
  account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
@@ -15,7 +47,6 @@ CREATE TABLE scenario_worker_faults (
  UNIQUE(account_id,run_id), UNIQUE(app_id)
 );
 
--- +goose StatementBegin
 CREATE FUNCTION scenario_worker_fault_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF TG_OP='DELETE' THEN
@@ -31,10 +62,8 @@ BEGIN
  THEN RAISE EXCEPTION 'worker fault identity or lifecycle is immutable' USING ERRCODE='23514'; END IF;
  RETURN NEW;
 END $$;
--- +goose StatementEnd
 CREATE TRIGGER scenario_worker_fault_guard BEFORE UPDATE OR DELETE ON scenario_worker_faults FOR EACH ROW EXECUTE FUNCTION scenario_worker_fault_guard();
 
--- +goose StatementBegin
 CREATE OR REPLACE FUNCTION scenario_rehearsal_execution_active(target_app uuid, execution_id uuid, deployment uuid DEFAULT NULL) RETURNS boolean LANGUAGE sql STABLE AS $$
  SELECT NOT EXISTS(SELECT 1 FROM scenario_worker_faults f WHERE f.app_id=target_app AND f.instance_id=execution_id AND f.state IN ('fenced','terminated','failed')) AND
  (EXISTS(SELECT 1 FROM instances i WHERE i.id=execution_id AND i.app_id=target_app
@@ -47,9 +76,7 @@ CREATE OR REPLACE FUNCTION scenario_rehearsal_execution_active(target_app uuid, 
   AND scenario_rehearsal_command_spec(t.command)->>'deployment_id'=t.deployment_id::text
   AND p.network_mode='contained' AND p.simulation_plan IS NOT NULL AND p.sealed_at IS NULL));
 $$;
--- +goose StatementEnd
 
--- +goose StatementBegin
 CREATE OR REPLACE FUNCTION scenario_managed_work_capture() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE p scenario_test_action_policies%ROWTYPE; participant jsonb; dep uuid; deployment_count integer;
  doc jsonb; attempts jsonb; item jsonb; outcome text; invalid boolean:=false;
@@ -122,9 +149,7 @@ BEGIN
  IF invalid THEN UPDATE scenario_test_action_policies SET managed_work_failed=true WHERE account_id=p.account_id AND run_id=p.run_id; END IF;
  RETURN NEW;
 END $$;
--- +goose StatementEnd
 
--- +goose StatementBegin
 CREATE OR REPLACE FUNCTION scenario_recorder_fence() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE target_app uuid; policy scenario_test_action_policies%ROWTYPE; parent scenario_recorder_sessions%ROWTYPE;
 BEGIN
@@ -187,6 +212,8 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
+END
+$rehearsal_replay$;
 -- +goose StatementEnd
 
 -- +goose Down

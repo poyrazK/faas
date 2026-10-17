@@ -1,5 +1,32 @@
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
+-- A missing ledger row may leave this migration's complete schema behind.
+-- Preserve later fences only when every owned object and a known function
+-- definition are present; refuse partial or unrecognized schema.
+-- +goose StatementBegin
+DO $rehearsal_replay$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_class WHERE oid=to_regclass('scenario_recorder_sessions') AND relkind IN ('r','p'))
+    AND EXISTS (SELECT 1 FROM pg_class WHERE oid=to_regclass('scenario_recorder_requests') AND relkind IN ('r','p'))
+    AND EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('scenario_recorder_sessions') AND tgname='scenario_recorder_session_fence' AND NOT tgisinternal)
+    AND EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('scenario_recorder_requests') AND tgname='scenario_recorder_request_fence' AND NOT tgisinternal)
+    AND EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('scenario_test_action_policies') AND tgname='scenario_recorder_closing_fence' AND NOT tgisinternal)
+    AND EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('scenario_test_action_policies') AND attname='recorder_closing' AND attnum>0 AND NOT attisdropped)
+    AND EXISTS (SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('scenario_recorder_fence()') AND md5(prosrc)=ANY(ARRAY['fea9d2738dcb6849294acd8fc0329c6a','f6368b62b0f1062b37392c3a790a1eec','63acbe9923cf5e86a31d3853032568b6','f3638ec3d4147fff208772c6a104d663','1723aaeb805fb945bed86404d881b0c7']))
+    AND EXISTS (SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('scenario_recorder_closing_fence()') AND md5(prosrc)=ANY(ARRAY['9784e5b435d184cbc706a50f2f37542a'])) THEN
+    RETURN;
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_class WHERE oid=to_regclass('scenario_recorder_sessions') AND relkind IN ('r','p'))
+    OR EXISTS (SELECT 1 FROM pg_class WHERE oid=to_regclass('scenario_recorder_requests') AND relkind IN ('r','p'))
+    OR EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('scenario_recorder_sessions') AND tgname='scenario_recorder_session_fence' AND NOT tgisinternal)
+    OR EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('scenario_recorder_requests') AND tgname='scenario_recorder_request_fence' AND NOT tgisinternal)
+    OR EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('scenario_test_action_policies') AND tgname='scenario_recorder_closing_fence' AND NOT tgisinternal)
+    OR EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('scenario_test_action_policies') AND attname='recorder_closing' AND attnum>0 AND NOT attisdropped)
+    OR EXISTS (SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('scenario_recorder_fence()') AND md5(prosrc)=ANY(ARRAY['fea9d2738dcb6849294acd8fc0329c6a','f6368b62b0f1062b37392c3a790a1eec','63acbe9923cf5e86a31d3853032568b6','f3638ec3d4147fff208772c6a104d663','1723aaeb805fb945bed86404d881b0c7']))
+    OR EXISTS (SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('scenario_recorder_closing_fence()') AND md5(prosrc)=ANY(ARRAY['9784e5b435d184cbc706a50f2f37542a'])) THEN
+    RAISE EXCEPTION 'partial or unrecognized schema for rehearsal migration 7; inspect recovery before continuing';
+  END IF;
+
 ALTER TABLE scenario_test_action_policies ADD COLUMN recorder_closing boolean NOT NULL DEFAULT false;
 
 CREATE TABLE scenario_recorder_sessions (
@@ -19,7 +46,6 @@ CREATE TABLE scenario_recorder_requests (
  CHECK ((status='pending')=(attempt_id IS NULL))
 );
 
--- +goose StatementBegin
 CREATE FUNCTION scenario_recorder_fence() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE target_app uuid;
 BEGIN
@@ -46,11 +72,9 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
--- +goose StatementEnd
 CREATE TRIGGER scenario_recorder_session_fence BEFORE INSERT OR UPDATE ON scenario_recorder_sessions FOR EACH ROW EXECUTE FUNCTION scenario_recorder_fence();
 CREATE TRIGGER scenario_recorder_request_fence BEFORE INSERT OR UPDATE ON scenario_recorder_requests FOR EACH ROW EXECUTE FUNCTION scenario_recorder_fence();
 
--- +goose StatementBegin
 CREATE FUNCTION scenario_recorder_closing_fence() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF OLD.recorder_closing AND NOT NEW.recorder_closing THEN
@@ -58,8 +82,10 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
--- +goose StatementEnd
 CREATE TRIGGER scenario_recorder_closing_fence BEFORE UPDATE ON scenario_test_action_policies FOR EACH ROW EXECUTE FUNCTION scenario_recorder_closing_fence();
+END
+$rehearsal_replay$;
+-- +goose StatementEnd
 
 -- +goose Down
 SET LOCAL lock_timeout = '5s';
@@ -75,4 +101,7 @@ DROP FUNCTION scenario_recorder_closing_fence();
 DROP TABLE scenario_recorder_requests;
 DROP TABLE scenario_recorder_sessions;
 DROP FUNCTION scenario_recorder_fence();
+-- Command helpers remain while their stronger recorder fence can reference them.
+DROP FUNCTION IF EXISTS scenario_rehearsal_execution_active(uuid,uuid,uuid);
+DROP FUNCTION IF EXISTS scenario_rehearsal_command_spec(text[]);
 ALTER TABLE scenario_test_action_policies DROP COLUMN recorder_closing;

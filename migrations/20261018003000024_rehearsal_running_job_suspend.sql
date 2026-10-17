@@ -1,5 +1,42 @@
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
+-- A missing ledger row may leave this migration's complete schema behind.
+-- Preserve later fences only when every owned object and a known function
+-- definition are present; refuse partial or unrecognized schema.
+-- +goose StatementBegin
+DO $rehearsal_replay$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('invocations') AND tgname='scenario_suspend_dispatch_guard' AND NOT tgisinternal)
+    AND EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('scenario_suspend_resumes') AND attname='invocation_id' AND attnum>0 AND NOT attisdropped)
+    AND EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('scenario_suspend_resumes') AND attname='invocation_attempt' AND attnum>0 AND NOT attisdropped)
+    AND EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('scenario_suspend_resumes') AND attname='checkpoint_attempt_id' AND attnum>0 AND NOT attisdropped)
+    AND EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid=to_regclass('scenario_test_action_policies') AND conname='scenario_suspend_plan_check')
+    AND EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid=to_regclass('scenario_suspend_resumes') AND conname='scenario_suspend_dispatch_identity')
+    AND EXISTS (SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('scenario_suspend_job_active(scenario_suspend_resumes)') AND md5(prosrc)=ANY(ARRAY['c67816f38c03575d4216e2383d960c8e']))
+    AND EXISTS (SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('scenario_suspend_guard()') AND md5(prosrc)=ANY(ARRAY['a86a2a5ae9a74ab4a610ac7d3d8bfb9c']))
+    AND EXISTS (SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('scenario_suspend_work_guard()') AND md5(prosrc)=ANY(ARRAY['2301e0932dcdfc70ee80c33e33a157ed']))
+    AND EXISTS (SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('scenario_suspend_dispatch_guard()') AND md5(prosrc)=ANY(ARRAY['d7b7fe51b3cdd2783c834f2387956faf'])) THEN
+    RETURN;
+  END IF;
+  IF EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('invocations') AND tgname='scenario_suspend_dispatch_guard' AND NOT tgisinternal)
+    OR EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('scenario_suspend_resumes') AND attname='invocation_id' AND attnum>0 AND NOT attisdropped)
+    OR EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('scenario_suspend_resumes') AND attname='invocation_attempt' AND attnum>0 AND NOT attisdropped)
+    OR EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid=to_regclass('scenario_suspend_resumes') AND attname='checkpoint_attempt_id' AND attnum>0 AND NOT attisdropped)
+    OR EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid=to_regclass('scenario_test_action_policies') AND conname='scenario_suspend_plan_check')
+    OR EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid=to_regclass('scenario_suspend_resumes') AND conname='scenario_suspend_dispatch_identity')
+    OR EXISTS (SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('scenario_suspend_job_active(scenario_suspend_resumes)') AND md5(prosrc)=ANY(ARRAY['c67816f38c03575d4216e2383d960c8e']))
+    OR EXISTS (SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('scenario_suspend_guard()') AND md5(prosrc)=ANY(ARRAY['a86a2a5ae9a74ab4a610ac7d3d8bfb9c']))
+    OR EXISTS (SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('scenario_suspend_work_guard()') AND md5(prosrc)=ANY(ARRAY['2301e0932dcdfc70ee80c33e33a157ed']))
+    OR EXISTS (SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('scenario_suspend_dispatch_guard()') AND md5(prosrc)=ANY(ARRAY['d7b7fe51b3cdd2783c834f2387956faf'])) THEN
+    RAISE EXCEPTION 'partial or unrecognized schema for rehearsal migration 24; inspect recovery before continuing';
+  END IF;
+  IF to_regprocedure('scenario_suspend_guard()') IS NOT NULL AND NOT (EXISTS (SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('scenario_suspend_guard()') AND md5(prosrc)=ANY(ARRAY['623015844772cd1ebb08e66e9d42d51c','a86a2a5ae9a74ab4a610ac7d3d8bfb9c']))) THEN
+    RAISE EXCEPTION 'unexpected predecessor fence scenario_suspend_guard';
+  END IF;
+  IF to_regprocedure('scenario_suspend_work_guard()') IS NOT NULL AND NOT (EXISTS (SELECT 1 FROM pg_proc WHERE oid=to_regprocedure('scenario_suspend_work_guard()') AND md5(prosrc)=ANY(ARRAY['96e2ead09eb6fa137c0e3e1d50f4ed1f','2301e0932dcdfc70ee80c33e33a157ed']))) THEN
+    RAISE EXCEPTION 'unexpected predecessor fence scenario_suspend_work_guard';
+  END IF;
+
 -- ADR-20261017201015: retained first-dispatch and broker checkpoint identity.
 ALTER TABLE scenario_test_action_policies DROP CONSTRAINT scenario_test_action_policies_check3;
 ALTER TABLE scenario_test_action_policies ADD CONSTRAINT scenario_suspend_plan_check CHECK(suspend_resume_spec IS NULL OR ((jsonb_typeof(suspend_resume_spec)='object'
@@ -22,7 +59,6 @@ ALTER TABLE scenario_suspend_resumes
 ALTER TABLE scenario_suspend_resumes DROP CONSTRAINT scenario_suspend_resumes_state_check;
 ALTER TABLE scenario_suspend_resumes ADD CONSTRAINT scenario_suspend_resumes_state_check
  CHECK(state IN ('waiting','armed','claimed','fenced','paused','resuming','resumed','complete','failed'));
--- +goose StatementBegin
 CREATE FUNCTION scenario_suspend_job_active(r scenario_suspend_resumes) RETURNS boolean LANGUAGE sql STABLE AS $$
  SELECT EXISTS(SELECT 1 FROM invocations v WHERE v.id=r.invocation_id AND v.app_id=r.app_id
   AND nullif(v.instance_id,'')::uuid=r.instance_id AND v.state='dispatching' AND v.source='async_invoke'
@@ -31,8 +67,6 @@ CREATE FUNCTION scenario_suspend_job_active(r scenario_suspend_resumes) RETURNS 
  AND (SELECT count(*) FROM invocations v JOIN scenario_test_action_policies p ON p.app_id=v.app_id
   WHERE p.account_id=r.account_id AND p.run_id=r.run_id)=1;
 $$;
--- +goose StatementEnd
--- +goose StatementBegin
 CREATE OR REPLACE FUNCTION scenario_suspend_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE p scenario_test_action_policies%ROWTYPE;
 BEGIN
@@ -94,8 +128,6 @@ BEGIN
   RAISE EXCEPTION 'suspend/resume pause proof is missing' USING ERRCODE='23514'; END IF;
  RETURN NEW;
 END $$;
--- +goose StatementEnd
--- +goose StatementBegin
 CREATE OR REPLACE FUNCTION scenario_suspend_work_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE p scenario_test_action_policies%ROWTYPE;
 BEGIN
@@ -112,11 +144,9 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
--- +goose StatementEnd
 
 -- A lease loss remains journaled, but an uncertain pause cannot dispatch a new
 -- attempt while the original response/VM may still be held. Renewal is allowed.
--- +goose StatementBegin
 CREATE FUNCTION scenario_suspend_dispatch_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF NEW.state='dispatching' AND (NEW.state,NEW.attempts,NEW.instance_id) IS DISTINCT FROM (OLD.state,OLD.attempts,OLD.instance_id)
@@ -124,8 +154,10 @@ BEGIN
   RAISE EXCEPTION 'managed dispatch must wait for the original suspend/resume checkpoint' USING ERRCODE='23514'; END IF;
  RETURN NEW;
 END $$;
--- +goose StatementEnd
 CREATE TRIGGER scenario_suspend_dispatch_guard BEFORE UPDATE OF state,attempts,instance_id ON invocations FOR EACH ROW EXECUTE FUNCTION scenario_suspend_dispatch_guard();
+END
+$rehearsal_replay$;
+-- +goose StatementEnd
 
 -- +goose Down
 SET LOCAL lock_timeout = '5s';

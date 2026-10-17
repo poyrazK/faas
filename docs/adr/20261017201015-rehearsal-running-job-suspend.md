@@ -60,3 +60,21 @@ Validation covers both stores, same-attempt continuity, actual retry and duplica
 effects, original relay and forward ownership, early disconnect, lost replies,
 configuration changes, cancellation and destruction. Native x86 KVM lifecycle,
 containment, credential delivery and leak acceptance remain rollout requirements.
+
+## Release compatibility and migration replay
+
+The rehearsal migrations bound DDL lock acquisition and recognize an already
+applied schema when its Goose ledger rows are missing. A replay checks every
+owned object and known function-body fingerprint before skipping an existing
+stage. The accepted bodies include the stronger fences from subsequent
+rehearsal migrations in this release. Earlier stages must not overwrite those
+fences or invalidate an active object collector during replay. Partial or
+unrecognized state stops migration for inspection rather than relaxing a guard.
+Issued SQL remains append-only; a later, unknown fence requires a separately
+verified recovery path. The replay gate compares function and trigger definitions
+and enabled state in addition to constraints.
+
+Command helpers retained during a downgrade are removed when their parent
+recorder migration is removed. Rollback continues to refuse retained enrollment
+or pending evidence. Migration recovery does not restore application data or
+enable any rehearsal enrollment gate.
