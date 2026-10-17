@@ -26,6 +26,7 @@ func computePolicyMoney(b financial.ComputeBook, p financial.BudgetSpec) (int64,
 
 func computeEgressTerms(prices []FinancialPriceSnapshot, month, now time.Time, b financial.EgressBook) (financial.EgressBook, error) {
 	found := false
+	grantFound := false
 	for _, row := range prices {
 		p := row.Price
 		if p.Meter != "egress" || !row.PeriodStart.Equal(month) {
@@ -35,16 +36,21 @@ func computeEgressTerms(prices []FinancialPriceSnapshot, month, now time.Time, b
 			return b, financial.ErrComputeUnavailable
 		}
 		if b.Initialized {
-			if !financial.EgressContractFits(p, b) {
+			if !financial.EgressContractFits(p, b) || p.IncludedQuantity < b.AllowanceGranted {
 				return b, financial.ErrComputeUnavailable
 			}
 		} else if b.RateQuantity == 0 || !financial.EgressContractFits(p, b) {
 			b.RateMillicents = p.MillicentsPerUnit
 			b.RateQuantity = p.UnitQuantity
 		}
+		if !b.Initialized {
+			if !grantFound || p.IncludedQuantity < b.AllowanceGranted {
+				b.AllowanceGranted = p.IncludedQuantity
+			}
+			grantFound = true
+		}
 		if !row.EffectiveFrom.After(now) {
 			found = true
-			b.AllowanceGranted = max(b.AllowanceGranted, p.IncludedQuantity)
 		}
 	}
 	if !found {
@@ -85,13 +91,10 @@ func computeFundEgress(tx financialComputeTxn, b *financial.ComputeBook, l *fina
 	if err != nil {
 		return err
 	}
-	// Removing the policy never resets already issued credits; a continuing
-	// lease may keep its remaining quota, but cannot buy unbounded new credit.
-	combined := false
-	for _, p := range policies {
-		combined = combined || financial.StrictAccountEgress(p.Spec)
-	}
-	if !refill || !combined {
+	// Existing funded attempts keep their byte gate after a policy is removed.
+	// Record uncapped additional credits so disable can resume traffic while
+	// the original quota and retirement receipts remain intact.
+	if !refill {
 		return nil
 	}
 	candidate := func(q int64) (financial.ComputeBook, error) {

@@ -201,7 +201,7 @@ func (m *MemStore) PutFinancialPriceSnapshot(_ context.Context, p FinancialPrice
 		return old, nil
 	}
 	if p.Price.Meter == "egress" {
-		if b, ok := m.financialComputeBooks[computeBookKey(p.AccountID, "", p.PeriodStart)]; ok && b.Egress.Initialized && !financial.EgressContractFits(p.Price, b.Egress) {
+		if b, ok := m.financialComputeBooks[computeBookKey(p.AccountID, "", p.PeriodStart)]; ok && b.Egress.Initialized && (!financial.EgressContractFits(p.Price, b.Egress) || p.Price.IncludedQuantity < b.Egress.AllowanceGranted) {
 			return FinancialPriceSnapshot{}, financial.ErrComputeUnavailable
 		}
 	}

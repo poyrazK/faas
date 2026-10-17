@@ -10509,7 +10509,7 @@ BEGIN
   AND (new_egress->>'quantity_committed')::numeric>=(old_egress->>'quantity_committed')::numeric
   AND (new_egress->>'quantity_committed')::numeric+(new_egress->>'quantity_reserved')::numeric
    >=(old_egress->>'quantity_committed')::numeric+(old_egress->>'quantity_reserved')::numeric
-  AND (new_egress->>'allowance_granted')::numeric>=(old_egress->>'allowance_granted')::numeric
+  AND new_egress->'allowance_granted'=old_egress->'allowance_granted'
   AND (new_egress->>'committed')::numeric>=(old_egress->>'committed')::numeric
   AND new_egress->'rate_millicents'=old_egress->'rate_millicents'
   AND new_egress->'rate_quantity'=old_egress->'rate_quantity',false) THEN
@@ -10552,10 +10552,11 @@ BEGIN
  WHERE account_id=NEW.account_id AND period_start=NEW.period_start;
  IF COALESCE((b->>'initialized')::boolean,false) AND
   (NEW.price->>'currency' IS DISTINCT FROM 'EUR' OR NEW.price->>'unit' IS DISTINCT FROM 'interface_bytes'
+   OR NOT COALESCE((NEW.price->>'included_quantity')::numeric>=(b->>'allowance_granted')::numeric,false)
    OR NOT COALESCE((NEW.price->>'unit_quantity')::numeric>0 AND (NEW.price->>'millicents_per_unit')::numeric>=0
     AND (NEW.price->>'millicents_per_unit')::numeric*(b->>'rate_quantity')::numeric
      <=(b->>'rate_millicents')::numeric*(NEW.price->>'unit_quantity')::numeric,false)) THEN
-  RAISE EXCEPTION 'egress price exceeds funded period ceiling' USING ERRCODE='23514',CONSTRAINT='financial_egress_price_ceiling';
+  RAISE EXCEPTION 'egress price or allowance exceeds funded period terms' USING ERRCODE='23514',CONSTRAINT='financial_egress_price_ceiling';
  END IF;
  RETURN NEW;
 END $$;

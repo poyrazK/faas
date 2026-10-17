@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Egress contribution to a shared account compute and egress budget. Funded interface bytes include framing margin. Unused or uncertain credits commit conservatively after physical absence; invoice usage remains measured bytes.
+ * Egress contribution to a shared account compute and egress budget. Its funding allowance is pinned to the lowest recorded grant for the UTC month; increases benefit funding in a new month. Funded interface bytes include framing margin. Unused or uncertain credits commit conservatively after physical absence; invoice usage remains measured bytes.
  */
 export type FinancialEgressBalance = {
   initialized: boolean;

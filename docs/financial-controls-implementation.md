@@ -58,7 +58,10 @@ app/job net reservations, scoped egress-only reservations and full-invoice hard
 ceilings. Byte credits include a framing margin; unused or uncertain credits
 commit in full after physical retirement. Budget commitments can exceed invoice
 usage, which continues to use measured bytes. A funded period pins its recorded
-egress rate ceiling; incompatible pricing changes must wait for a new period.
+egress rate ceiling; incompatible pricing changes must wait for a new period. Egress funding also
+pins its lowest recorded allowance; increases benefit funding in a new month.
+Provider events are held if pricing, allowances or sampled quantities exceed
+the funded contract.
 See [shared egress funding](adr/1363-account-strict-egress.md). A monitored preview budget can be exceeded during
 evidence ingestion, scheduler sweeps, the configured drain interval, and bounded
 VM teardown. Broad scopes leave production spending explicitly continuing.

@@ -189,15 +189,18 @@ command, execution, sidecar and independent-job traffic crossing the public
 veth is covered. The separate private side-link is outside this interface meter.
 Builds, object-storage delivery, subscriptions, storage and tax remain excluded.
 
-The opt-in lane now discovers the egress financial tests and three additional
+The opt-in lane now discovers the egress financial tests and four additional
 native tests from source: packet-credit exhaustion, PostgreSQL app/job byte
 contention, and native restart with failed settlement. Missing, skipped or failed
 cases cannot qualify the lane. Packet tests exercise concurrent IPv4, IPv6, ARP,
 small frames and unsupported protocols against the root veth RX byte bound.
+A separate UDP GSO fixture forces tiny segments and verifies the same bound
+through the IFB segmentation path. Repeat with TCP GSO, IPv6 extensions and
+peer offload settings on the dedicated host.
 The native images, daemon binary, PostgreSQL and final leakcheck remain required.
 
 Require Linux kernel and nftables support for `netdev` egress quotas and `meta
-time`. An unsupported host must refuse boot, with no guest execution. Native
+time`, IFB and TC mirred, plus ethtool offload control. An unsupported host must refuse boot, with no guest execution. Native
 clocks must stay synchronized to UTC: test a skew beyond the authority timeout
 and confirm refusal before boot, and verify early kernel expiry through the UTC
 month boundary. Time-only renewals must retain the remaining byte quota.
@@ -226,3 +229,12 @@ physical two-host and matching full-daemon fixtures; compilation is preparation.
 The managed cloud environment used for this candidate lacks KVM and rejects
 `nft add table netdev` with `Operation not supported`, including in an isolated
 privileged container. It provides no packet-enforcement or native lifecycle pass.
+
+Provider delivery must use matching meterd code with the funded-contract guard.
+Run provider shadow/live fixtures with higher prices, lower allowances, excess
+cumulative counters and a deleted policy; no incompatible provider event or
+receipt may be emitted. Compatible measured usage still delivers normally.
+Egress funding pins its lowest recorded allowance for the UTC month; allowance
+increases do not release prior invoice authority. Test plan changes before and
+after hourly delivery, lost provider responses and receipt recovery. Provider
+configuration and actual external meter pricing must agree before promotion.

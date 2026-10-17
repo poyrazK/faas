@@ -61450,7 +61450,7 @@ components:
         targets: { type: array, maxItems: 10000, items: { $ref: '#/components/schemas/FinancialBudgetStopTarget' } }
     FinancialEgressBalance:
       type: object
-      description: Egress contribution to a shared account compute and egress budget. Funded interface bytes include framing margin. Unused or uncertain credits commit conservatively after physical absence; invoice usage remains measured bytes.
+      description: Egress contribution to a shared account compute and egress budget. Its funding allowance is pinned to the lowest recorded grant for the UTC month; increases benefit funding in a new month. Funded interface bytes include framing margin. Unused or uncertain credits commit conservatively after physical absence; invoice usage remains measured bytes.
       required: [initialized, committed_bytes, reserved_bytes, allowance_granted_bytes, allowance_committed_bytes, allowance_reserved_bytes, allowance_remaining_bytes, committed_millicents, reserved_millicents]
       properties:
         initialized: { type: boolean }
