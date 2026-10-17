@@ -10376,6 +10376,72 @@ const (
 // RouteHealth watched status comparisons are advisory (ADR-495).
 const RouteHealthMaxWatchedStatuses = 5
 
+// Management MCP exports a small projection of native request diagnostics.
+// These transport budgets do not widen native debugger plan or retention limits.
+const (
+	MCPRequestIdentifierMaxBytes                  = 128
+	MCPRequestFieldMaxBytes                       = 256
+	MCPRequestTimelineMax                         = 32
+	MCPRequestCorrelationMax                      = 16
+	MCPRequestDependenciesMax                     = 16
+	MCPRequestExplanationFindingsMax              = 8
+	MCPRequestExplanationRecommendationsMax       = 5
+	MCPRequestExplanationRefsMax                  = 1
+	MCPRequestPathSegmentsMax                     = 16
+	MCPRequestGuestDurationMaxMS                  = 86_400_000
+	MCPRequestDependencyComparisonMax             = 10
+	MCPRequestListDefault                         = 20
+	MCPRequestListMax                             = 50
+	MCPRequestCursorMaxBytes                      = 8192
+	MCPRequestSinceMaxBytes                       = 64
+	MCPRequestMinLatencyMaxMS                     = 86_400_000
+	MCPPerformanceDependenciesMax                 = 20
+	MCPDependencyImpactEdgesMax                   = 20
+	MCPDependencyImpactExemplarsMax               = 3
+	MCPAnalyticsRoutesDefault                     = 20
+	MCPAnalyticsRoutesMax                         = 50
+	MCPAnalyticsTimeMaxBytes                      = 64
+	MCPAnalyticsPointsDefault                     = 48
+	MCPAnalyticsPointsMax                         = 168
+	MCPErrorPageDefault                           = 20
+	MCPErrorPageMax                               = 50
+	MCPErrorCursorMaxBytes                        = 8192
+	MCPErrorTimeMaxBytes                          = 64
+	MCPWakeHistoryDefault                         = 20
+	MCPWakeHistoryMax                             = 50
+	MCPWakeHistoryNativeCandidatesMax             = 100
+	MCPWakeHistoryTimeMaxBytes                    = 64
+	WakeHistoryPageDefault                        = 20
+	WakeHistoryPageMax                            = 100
+	WakeHistoryCursorMaxBytes                     = 2048
+	MCPWakeHistoryCursorMaxBytes                  = 8192
+	MCPProfileFunctionsDefault                    = 10
+	MCPProfileFunctionsMax                        = 50
+	MCPProfileTimeMaxBytes                        = 64
+	MCPWakeTimelineDefault                        = 50
+	MCPWakeTimelineMax                            = 100
+	MCPWakeTimelineTimeMaxBytes                   = 64
+	MCPWakeTimelineIntegerMax               int64 = 1<<53 - 1
+	WakeTimelinePageDefault                       = 200
+	WakeTimelinePageMax                           = 1000
+	WakeTimelineCursorMaxBytes                    = 2048
+	WakeTimelineTimeMaxBytes                      = 64
+	WakeTimelineIDMaxBytes                        = 128
+	MCPWakeTimelineCursorMaxBytes                 = 8192
+	MCPCriticalPathsDefault                       = 5
+	MCPCriticalPathsMax                           = 10
+	MCPCriticalPathSegmentsMax                    = 16
+	MCPCriticalPathExemplarsMax                   = 3
+	MCPCompareRoutesDefault                       = 20
+	MCPCompareRoutesMax                           = 50
+	MCPCompareUntilMaxBytes                       = 64
+	MCPRegressionsDefault                         = 20
+	MCPRegressionsMax                             = 50
+	MCPResidencyHistoryDefault                    = 10
+	MCPResidencyHistoryMax                        = 20
+	MCPResidencyCausesMax                         = 16
+)
+
 // Bounded diagnostic rows per deployment/window, independent of publisher weights.
 const RouteHealthInvestigationExamplesLimit = 3
 
