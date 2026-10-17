@@ -131,6 +131,10 @@ func TestGetManagedRealtimeOccupancy(t *testing.T) {
 		return rec
 	}
 
+	if rec := get("?channel=lobby"); rec.Code != http.StatusNotFound {
+		t.Fatalf("occupancy without the preview = %d %s, want 404", rec.Code, rec.Body)
+	}
+	svc.OccupancyPreviewEnabled = true
 	rec := get("?channel=lobby&channel=game&channel=lobby")
 	var out api.ManagedRealtimeOccupancyResponse
 	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &out) != nil {

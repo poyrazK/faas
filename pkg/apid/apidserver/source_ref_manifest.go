@@ -506,7 +506,7 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 		if problem := applyTriggerRetryPolicy(&createReq); problem != nil {
 			return staged, problem
 		}
-		delivery, deliveryProblem := requestedTriggerDelivery(kind, nonEmptyStringPointer(declaration.Delivery))
+		delivery, deliveryProblem := s.requestedTriggerDelivery(kind, nonEmptyStringPointer(declaration.Delivery))
 		if deliveryProblem != nil {
 			return staged, deliveryProblem
 		}

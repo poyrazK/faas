@@ -57,7 +57,7 @@ func TestChannelOccupancyIndex(t *testing.T) {
 }
 
 func TestChannelOccupancyInternalEndpoint(t *testing.T) {
-	m := NewManager(Config{}, nil)
+	m := NewManager(Config{OccupancyPreview: true}, nil)
 	defer func() { _ = m.Close() }()
 	if err := m.RegisterEndpoint(Endpoint{ID: "e", MaxMessageBytes: 1 << 10}); err != nil {
 		t.Fatal(err)
@@ -84,5 +84,28 @@ func TestChannelOccupancyInternalEndpoint(t *testing.T) {
 		if rec := get(query); rec.Code != http.StatusBadRequest {
 			t.Fatalf("occupancy %q = %d, want 400", query, rec.Code)
 		}
+	}
+}
+
+// adr: 1324 — without the preview the internal read is not served and a
+// subscribe frame's occupancy request is ignored, as before occupancy existed.
+func TestChannelOccupancyPreviewOff(t *testing.T) {
+	m := NewManager(Config{}, nil)
+	defer func() { _ = m.Close() }()
+	if err := m.RegisterEndpoint(Endpoint{ID: "e", MaxMessageBytes: 1 << 10}); err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	m.internalHandler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/internal/endpoints/e/occupancy?channel=lobby", nil))
+	if rec.Code == http.StatusOK {
+		t.Fatalf("occupancy without the preview = %d %s, want it unserved", rec.Code, rec.Body)
+	}
+	c, _ := outboundTestConnection(t, m, "e")
+	m.watchSubscriptionOccupancy(t.Context(), c, resumeClientFrame{Type: "subscribe", Channel: "lobby", Occupancy: true})
+	m.occupancyLive.mu.Lock()
+	watched := len(m.occupancyLive.watchers)
+	m.occupancyLive.mu.Unlock()
+	if watched != 0 {
+		t.Fatalf("watched channels without the preview = %d, want 0", watched)
 	}
 }

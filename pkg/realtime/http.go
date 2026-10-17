@@ -715,7 +715,7 @@ func (m *Manager) handleEndpointRoute(w http.ResponseWriter, r *http.Request, pa
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	if len(parts) == 2 && parts[1] == "occupancy" && r.Method == http.MethodGet {
+	if len(parts) == 2 && parts[1] == "occupancy" && r.Method == http.MethodGet && m.cfg.OccupancyPreview {
 		channels := r.URL.Query()["channel"]
 		if len(channels) == 0 || len(channels) > api.RealtimeOccupancyChannelsMax {
 			http.Error(w, "invalid occupancy channels", http.StatusBadRequest)

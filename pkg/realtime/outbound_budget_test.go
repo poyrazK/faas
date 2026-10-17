@@ -71,6 +71,27 @@ func TestNodeOutboundReservation(t *testing.T) {
 	}
 }
 
+// adr: 1323 — a zero budget, the default until the budget is enabled, never
+// refuses a frame and never starts the shedder.
+func TestNodeOutboundBudgetDisabled(t *testing.T) {
+	m := NewManager(Config{}, nil)
+	defer m.cancel()
+	if !m.reserveNodeOutbound(1<<40) || m.outboundPendingBytes.Load() != 1<<40 {
+		t.Fatalf("disabled budget refused or lost bytes: %d pending", m.outboundPendingBytes.Load())
+	}
+	if !m.reserveNodeOutbound(-(1 << 40)) || m.outboundPendingBytes.Load() != 0 {
+		t.Fatalf("release left %d pending", m.outboundPendingBytes.Load())
+	}
+	select {
+	case <-m.outboundShed:
+		t.Fatal("disabled budget woke the shedder")
+	default:
+	}
+	if got := m.Stats().OutboundNodeBytesLimit; got != 0 {
+		t.Fatalf("limit = %d, want 0 when disabled", got)
+	}
+}
+
 func TestNodeOutboundBudgetShedsLargestBacklog(t *testing.T) {
 	const kib = 1 << 10
 	m := NewManager(Config{OutboundQueueBytes: 512 * kib, OutboundNodeBytes: 1 << 20}, nil)

@@ -63,7 +63,7 @@ func occupancyFrames(t *testing.T, c *connection) []int {
 
 func newOccupancyTestManager(t *testing.T, client ManagedRealtimeOccupancyClient) *Manager {
 	t.Helper()
-	m := NewManager(Config{OccupancyClient: client, occupancyManual: true}, nil)
+	m := NewManager(Config{OccupancyPreview: true, OccupancyClient: client, occupancyManual: true}, nil)
 	t.Cleanup(func() { _ = m.Close() })
 	if err := m.RegisterEndpoint(Endpoint{ID: "e", MaxMessageBytes: 1 << 10}); err != nil {
 		t.Fatal(err)

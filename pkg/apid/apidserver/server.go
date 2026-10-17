@@ -401,6 +401,9 @@ type server struct {
 	// interactiveImageRunsEnabled admits `interactive: true` image runs
 	// (ADR-1330, FAAS_INTERACTIVE_IMAGE_RUNS).
 	interactiveImageRunsEnabled bool
+	// triggerBatchDeliveryEnabled admits `delivery: batch` on triggers
+	// (ADR-1321, FAAS_TRIGGER_BATCH_DELIVERY_PREVIEW_ENABLED).
+	triggerBatchDeliveryEnabled bool
 	outboundProbeGatewayURL     string
 	// runtimeConfig is the durable operator configuration snapshot. It is
 	// deliberately in-memory for request hot paths; the admin handler writes
@@ -819,6 +822,31 @@ func (s *server) WithInteractiveImageRunsEnabled(enabled bool) *server {
 
 func (s *server) WithRealtimeHistoryPreviewEnabled(enabled bool) *server {
 	s.realtime.HistoryPreviewEnabled = enabled
+	return s
+}
+
+// WithRealtimeOccupancyPreviewEnabled serves channel occupancy (ADR-1324).
+func (s *server) WithRealtimeOccupancyPreviewEnabled(enabled bool) *server {
+	s.realtime.OccupancyPreviewEnabled = enabled
+	return s
+}
+
+// WithRealtimeUsageEnabled serves GET /v1/usage/realtime (ADR-1323).
+func (s *server) WithRealtimeUsageEnabled(enabled bool) *server {
+	s.realtime.UsageEnabled = enabled
+	return s
+}
+
+// WithRealtimeFairUseEnabled sends each endpoint's account connection limit
+// to realtimed (ADR-1323).
+func (s *server) WithRealtimeFairUseEnabled(enabled bool) *server {
+	s.realtime.FairUseEnabled = enabled
+	return s
+}
+
+// WithTriggerBatchDeliveryEnabled admits `delivery: batch` (ADR-1321).
+func (s *server) WithTriggerBatchDeliveryEnabled(enabled bool) *server {
+	s.triggerBatchDeliveryEnabled = enabled
 	return s
 }
 

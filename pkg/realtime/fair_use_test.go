@@ -38,6 +38,7 @@ type fairUseNode struct {
 
 func newFairUseNode(t *testing.T, cfg Config) *fairUseNode {
 	t.Helper()
+	cfg.FairUse = true
 	m := NewManager(cfg, NopHooks{})
 	server := httptest.NewServer(m.Handler())
 	t.Cleanup(func() { _ = m.Close(); server.Close() })
@@ -166,6 +167,38 @@ func TestAccountNodeShareLimit(t *testing.T) {
 	}
 	if _, status, problem := node.dial(t, unlimited); status != http.StatusTooManyRequests || problem.Code != "" {
 		t.Fatalf("node-full refusal = %d %+v, want the plain node limit", status, problem)
+	}
+}
+
+// adr: 1323 — without FairUse an account limit is carried and counts are
+// synced, but nothing is refused, and the node keeps its earlier connection
+// default.
+func TestFairUseOff(t *testing.T) {
+	account := uuid.NewString()
+	syncer := &fakeConnectionSyncer{remote: []state.RealtimeAccountConnections{{AccountID: account, Connections: 50}}}
+	m := NewManager(Config{MaxConnections: 2, ConnectionSync: syncer, ConnectionSyncInterval: time.Hour}, NopHooks{})
+	server := httptest.NewServer(m.Handler())
+	t.Cleanup(func() { _ = m.Close(); server.Close() })
+	node := &fairUseNode{m: m, server: server}
+	ep := node.endpoint(t, account, 1)
+	m.syncConnections(t.Context())
+	for range 2 { // past the account limit, the remote count and the node share
+		if _, status, _ := node.dial(t, ep); status != http.StatusSwitchingProtocols {
+			t.Fatalf("connection past an unenforced account limit refused with %d", status)
+		}
+	}
+	node.waitOpen(t, 2)
+	m.syncConnections(t.Context())
+	syncer.mu.Lock()
+	last := syncer.sent[len(syncer.sent)-1]
+	syncer.mu.Unlock()
+	if len(last) != 1 || last[0].Connections != 2 || m.Stats().AccountLimitRefusals+m.Stats().AccountNodeLimitRefusals != 0 {
+		t.Fatalf("reported %+v with stats %+v, want 2 synced and no refusals", last, m.Stats())
+	}
+	for fairUse, want := range map[bool]int{false: api.RealtimeNodeConnectionsWithoutFairUse, true: api.RealtimeNodeConnectionsDefault} {
+		if got := (Config{FairUse: fairUse}).withDefaults().MaxConnections; got != want {
+			t.Fatalf("node default with FairUse=%v = %d, want %d", fairUse, got, want)
+		}
 	}
 }
 

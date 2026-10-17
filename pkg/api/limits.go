@@ -1600,7 +1600,9 @@ var realtimeLimits = map[Plan]RealtimeLimits{
 
 // Platform side of realtime fair use (ADR-1323). realtimed runs with
 // MemoryMax=512M; at ~52 KB per idle connection, RealtimeNodeConnectionsDefault
-// leaves room for queued frames and subscription pumps. One account may hold at
+// leaves room for queued frames and subscription pumps. Until fair use is
+// enabled (FAAS_REALTIME_FAIR_USE_ENABLED=1) a node keeps the earlier
+// RealtimeNodeConnectionsWithoutFairUse default. One account may hold at
 // most RealtimeAccountNodeSharePercent of a node's connections, so a single
 // account cannot fill a node even within its plan allowance.
 //
@@ -1612,15 +1614,19 @@ var realtimeLimits = map[Plan]RealtimeLimits{
 // RealtimeNodeOutboundBytesDefault bounds the payload bytes queued for clients
 // across a whole node. Each connection may queue up to 4 MiB, so without it
 // 6,000 connections could buffer ~24 GiB; 64 MiB fits beside a full node of
-// idle connections under the unit's 384 MiB GOMEMLIMIT. realtimed disconnects
-// the largest backlogs before the budget is reached.
+// idle connections under RealtimeMemoryLimitBytes, the soft memory limit
+// realtimed sets with the budget. realtimed disconnects the largest backlogs
+// before the budget is reached. Both apply only with
+// FAAS_REALTIME_OUTBOUND_BUDGET_ENABLED=1.
 const (
-	RealtimeNodeConnectionsDefault    = 6_000
-	RealtimeNodeOutboundBytesDefault  = 64 << 20
-	RealtimeAccountNodeSharePercent   = 50
-	RealtimeConnectionSyncInterval    = 5 * time.Second
-	RealtimeConnectionSyncStaleAfter  = 30 * time.Second
-	RealtimeConnectionSyncMaxAccounts = 10_000
+	RealtimeNodeConnectionsDefault        = 6_000
+	RealtimeNodeConnectionsWithoutFairUse = 10_000
+	RealtimeNodeOutboundBytesDefault      = 64 << 20
+	RealtimeMemoryLimitBytes              = 384 << 20
+	RealtimeAccountNodeSharePercent       = 50
+	RealtimeConnectionSyncInterval        = 5 * time.Second
+	RealtimeConnectionSyncStaleAfter      = 30 * time.Second
+	RealtimeConnectionSyncMaxAccounts     = 10_000
 )
 
 // Channel occupancy (ADR-1324). One read covers at most

@@ -13,7 +13,6 @@ Restart=on-failure
 RestartSec=2s
 Slice=faas-cp.slice
 MemoryMax=512M
-Environment=GOMEMLIMIT=384MiB
 Environment=FAAS_REALTIME_SOCKET=/run/faas/realtimed.sock
 EnvironmentFile=-/etc/faas/secrets/realtimed/realtimed.env
 EnvironmentFile=-/etc/faas/otel.env

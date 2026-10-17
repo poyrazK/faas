@@ -59,10 +59,14 @@ func (m *Manager) remoteConnections(account *accountConnections) int64 {
 
 // reserveAccount admits one more connection for the endpoint's account, or
 // explains why not. Accounts are always counted so syncs report them; only an
-// endpoint registered with an account limit enforces one.
+// endpoint registered with an account limit enforces one, and only with
+// Config.FairUse.
 func (m *Manager) reserveAccount(state *endpointState) (connectionRefusal, bool) {
 	account := state.account
 	limit := int64(state.config.Load().AccountMaxConnections)
+	if !m.cfg.FairUse {
+		limit = 0
+	}
 	share := int64(m.cfg.MaxConnections) * api.RealtimeAccountNodeSharePercent / 100
 	for {
 		local := account.local.Load()

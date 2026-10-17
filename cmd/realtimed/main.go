@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
@@ -88,6 +89,20 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// ADR-1323: record per-endpoint usage with apid. Recorded only; nothing
 	// bills or limits from it yet.
 	usageEnabled := os.Getenv("FAAS_REALTIME_USAGE_ENABLED") == "1"
+	// ADR-1323 fair use and node outbound budget, and ADR-1324 occupancy, stay
+	// off until realtime has been tested end to end.
+	fairUse := os.Getenv("FAAS_REALTIME_FAIR_USE_ENABLED") == "1"
+	outboundBudget := os.Getenv("FAAS_REALTIME_OUTBOUND_BUDGET_ENABLED") == "1"
+	occupancyPreview := os.Getenv("FAAS_REALTIME_OCCUPANCY_PREVIEW_ENABLED") == "1"
+	var outboundNodeBytes int64
+	if outboundBudget {
+		outboundNodeBytes = int64(envInt("FAAS_REALTIME_OUTBOUND_NODE_BYTES", api.RealtimeNodeOutboundBytesDefault))
+		// The budget is sized against this soft limit; an explicit
+		// GOMEMLIMIT wins.
+		if strings.TrimSpace(os.Getenv("GOMEMLIMIT")) == "" {
+			debug.SetMemoryLimit(api.RealtimeMemoryLimitBytes)
+		}
+	}
 	var ticketReader realtime.SubscriptionTicketReader
 	var accessReader realtime.ManagedRealtimeAccessReader
 	var historyReader realtime.ManagedRealtimeHistoryReader
@@ -96,7 +111,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	var usageReporter realtime.UsageReporter
 	var connectionSync realtime.ConnectionSyncer
 	var occupancyClient realtime.ManagedRealtimeOccupancyClient
-	if resumePreview || accessPreview || ticketPreview || usageEnabled {
+	if resumePreview || accessPreview || ticketPreview || usageEnabled || fairUse || occupancyPreview {
 		historyTLS, tlsErr := wire.LoadClientTLSConfigWithPrefix("realtime_history_",
 			os.Getenv("FAAS_REALTIME_HISTORY_TLS_CERT_PATH"),
 			os.Getenv("FAAS_REALTIME_HISTORY_TLS_KEY_PATH"),
@@ -122,19 +137,23 @@ func run(ctx context.Context, log *slog.Logger) error {
 		if usageEnabled {
 			usageReporter = reader
 		}
-		connectionSync = reader
+		// Counts feed fair use and the customer usage API's open connections.
+		if fairUse || usageEnabled {
+			connectionSync = reader
+		}
 		// A single box has one realtime node, whose own counts are exact
 		// (ADR-1324); only split nodes ask apid for the others.
-		if observedRole == role.RoleComputeOnly {
+		if occupancyPreview && observedRole == role.RoleComputeOnly {
 			occupancyClient = reader
 		}
 	}
 	manager := realtime.NewManager(realtime.Config{
-		MaxConnections:       envInt("FAAS_REALTIME_MAX_CONNECTIONS", api.RealtimeNodeConnectionsDefault),
+		// Zero selects the package default, which depends on FairUse.
+		MaxConnections:       envInt("FAAS_REALTIME_MAX_CONNECTIONS", 0),
 		MaxMessageBytes:      int64(envInt("FAAS_REALTIME_MAX_MESSAGE_BYTES", 1<<20)),
 		OutboundQueue:        envInt("FAAS_REALTIME_OUTBOUND_QUEUE", 64),
 		OutboundQueueBytes:   int64(envInt("FAAS_REALTIME_OUTBOUND_QUEUE_BYTES", 4<<20)),
-		OutboundNodeBytes:    int64(envInt("FAAS_REALTIME_OUTBOUND_NODE_BYTES", api.RealtimeNodeOutboundBytesDefault)),
+		OutboundNodeBytes:    outboundNodeBytes,
 		Heartbeat:            envDuration("FAAS_REALTIME_HEARTBEAT", 30*time.Second),
 		PongWait:             envDuration("FAAS_REALTIME_PONG_WAIT", 10*time.Second),
 		WriteWait:            envDuration("FAAS_REALTIME_WRITE_WAIT", 5*time.Second),
@@ -148,6 +167,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		AccessReader:         accessReader,
 		HistoryReader:        historyReader,
 		ChannelRouteReporter: routeReporter,
+		OccupancyPreview:     occupancyPreview,
 		OccupancyClient:      occupancyClient,
 		FleetClient:          fleetClient,
 		FleetReportFailure: func(err error) {
@@ -157,6 +177,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 			log.Warn("realtimed: channel route report failed; apid reconciliation will repair it", "err", err)
 		},
 		UsageReporter: usageReporter,
+		FairUse:       fairUse,
 		// Plan connection limits hold fleet-wide whenever apid is reachable;
 		// without it they hold per node (ADR-1323).
 		ConnectionSync: connectionSync,

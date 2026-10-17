@@ -84,6 +84,7 @@ func startPGConnectionsNode(t *testing.T) *pgConnectionsNode {
 		JWTAuthorizer: &recordingJWTAuthorizer{}, ResumePreview: true, ResumePollInterval: 15 * time.Millisecond,
 		HistoryReader: pgResumeHistoryReader{store: store},
 		TicketPreview: true, TicketReader: pgTicketReader{store: store},
+		OccupancyPreview: true,
 	}, hooks)
 	if err := m.RegisterEndpoint(Endpoint{
 		ID: endpoint.ID, AppID: app.ID, AccountID: account.ID, CallbackURL: "https://app.example",

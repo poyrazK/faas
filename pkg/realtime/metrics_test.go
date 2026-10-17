@@ -19,7 +19,7 @@ import (
 // observability contract: manager counters are exported without endpoint,
 // app, principal, or connection labels.
 func TestStatsCollectorExposesFixedCardinalityMetrics(t *testing.T) {
-	manager := NewManager(Config{}, NopHooks{})
+	manager := NewManager(Config{OutboundNodeBytes: 64 << 20}, NopHooks{})
 	defer func() { _ = manager.Close() }()
 	manager.acceptedConnections.Store(3)
 	manager.receivedBytes.Store(128)

@@ -66,6 +66,21 @@ Kept from the earlier draft: realtimed records per-endpoint usage per hour (per-
 
 - Customers pay nothing extra for realtime and see clear limits on the plans page, with precise 429 errors at the limit.
 - realtimed no longer risks OOM at its default node cap.
-- Multi-node deployments must let realtimed reach apid (any realtime preview flag or `FAAS_REALTIME_USAGE_ENABLED=1`); otherwise the allowance holds per node.
+- Multi-node deployments must let realtimed exchange counts with apid (`FAAS_REALTIME_FAIR_USE_ENABLED=1` or `FAAS_REALTIME_USAGE_ENABLED=1`); otherwise the allowance holds per node.
 - apid writes per-account connection counts only when they change, plus one heartbeat row per node every 5 s.
 - Future: review the allowances after a few weeks of recorded usage; a node-wide budget for queued outbound bytes is a separate follow-up if slow consumers ever threaten realtimed memory.
+
+## Rollout
+
+Each part ships off and is enabled separately once realtime has been tested
+end to end; with every flag off, realtimed and apid behave as before this ADR.
+
+- `FAAS_REALTIME_FAIR_USE_ENABLED` (apid and realtimed): plan allowances, the
+  per-node account share and the 6,000 node default. Off, apid registers
+  endpoints without an allowance, realtimed counts accounts but refuses only at
+  the node and endpoint caps, and the node default stays 10,000.
+- `FAAS_REALTIME_OUTBOUND_BUDGET_ENABLED` (realtimed): the node outbound budget,
+  shedding and the 384 MiB soft memory limit (unless `GOMEMLIMIT` is set). Off,
+  only the per-connection queue limits apply.
+- `FAAS_REALTIME_USAGE_ENABLED` (apid and realtimed): usage recording, and
+  `GET /v1/usage/realtime`, which answers 404 while off.

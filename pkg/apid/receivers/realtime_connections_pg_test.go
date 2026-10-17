@@ -56,7 +56,7 @@ func TestAccountConnectionLimitHoldsAcrossNodes(t *testing.T) {
 
 	account, endpoint := uuid.NewString(), uuid.NewString()
 	startNode := func(name string) (*realtime.Manager, string) {
-		m := realtime.NewManager(realtime.Config{MaxConnections: 100, ConnectionSync: apidgrpc.NewRealtimeHistoryClientForNode(conn, name),
+		m := realtime.NewManager(realtime.Config{MaxConnections: 100, FairUse: true, ConnectionSync: apidgrpc.NewRealtimeHistoryClientForNode(conn, name),
 			ConnectionSyncInterval: 20 * time.Millisecond}, realtime.NopHooks{})
 		t.Cleanup(func() { _ = m.Close() })
 		if err := m.RegisterEndpoint(realtime.Endpoint{ID: endpoint, AppID: "app", AccountID: account, AccountMaxConnections: 3,

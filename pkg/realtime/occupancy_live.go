@@ -156,7 +156,7 @@ func (l *occupancyLive) unwatchLocked(key channelKey, w occupancyWatcher) {
 }
 
 func (m *Manager) startOccupancyFrames() {
-	if m.cfg.occupancyManual {
+	if m.cfg.occupancyManual || !m.cfg.OccupancyPreview {
 		return
 	}
 	go m.runOccupancyTicker(m.ctx, api.RealtimeOccupancyFrameInterval, m.flushOccupancy) //nolint:contextcheck // the Manager owns the loop's lifecycle; Close cancels it.

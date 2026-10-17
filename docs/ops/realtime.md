@@ -12,6 +12,27 @@ The service is intentionally separate from the raw application WebSocket
 bridge. Restarting it closes managed connections and emits disconnect events;
 application-owned raw Upgrade sessions are unaffected.
 
+## Rollout flags
+
+These features stay off until realtime has been tested end to end. Each flag
+defaults to `0`; with all of them off, realtimed, apid and schedd behave as
+they did before the features existed.
+
+| Flag | Daemons | Turns on |
+|---|---|---|
+| `FAAS_REALTIME_FAIR_USE_ENABLED` | apid, realtimed | plan connection limits per account, the 50% per-node account share, and the 6,000 node connection default (otherwise 10,000) (ADR-1323) |
+| `FAAS_REALTIME_OUTBOUND_BUDGET_ENABLED` | realtimed | the node outbound budget, slow-consumer shedding, and a 384 MiB soft memory limit unless `GOMEMLIMIT` is set (ADR-1323) |
+| `FAAS_REALTIME_USAGE_ENABLED` | apid, realtimed | usage recording on realtimed and `GET /v1/usage/realtime` on apid (ADR-1323) |
+| `FAAS_REALTIME_OCCUPANCY_PREVIEW_ENABLED` | apid, realtimed | `GET …/occupancy` on apid, live occupancy frames and SSE events on realtimed (ADR-1324) |
+| `FAAS_TRIGGER_BATCH_DELIVERY_PREVIEW_ENABLED` | apid | `delivery: batch` on triggers; off, apid refuses it with 422 (ADR-1321) |
+| `FAAS_TRIGGER_LEDGER_RETENTION_ENABLED` | schedd | the `trigger_records` reaper (default ages 7 days, 30 for dead letters) |
+
+Set a two-daemon flag on apid and on every realtime node. Realtime function
+triggers (ADR-1322) stay behind `FAAS_REALTIME_RETAINED_PREVIEW_ENABLED`, and
+the v2 protocol behind `FAAS_REALTIME_RESUME_PREVIEW_ENABLED`.
+
+## Endpoints
+
 Disabling or deleting an endpoint stops new handshakes and closes its existing
 managed sockets on every node reached by the control-plane operation. The
 control plane compares the credential-free registration inventory on active
@@ -522,8 +543,9 @@ repairs presence event delivery after a transient relay failure. These frames
 remain behind the v2 preview flags and the endpoint's channel authorization
 callback.
 
-Add `"occupancy": true` to a subscribe frame to receive the channel's
-fleet-wide subscriber count (ADR-1324):
+With `FAAS_REALTIME_OCCUPANCY_PREVIEW_ENABLED=1` on realtimed, add
+`"occupancy": true` to a subscribe frame to receive the channel's fleet-wide
+subscriber count (ADR-1324); without it the field is ignored:
 
 ```json
 {"type":"subscribe","channel":"room-a","after":0,"occupancy":true}
@@ -537,7 +559,7 @@ nodes' counts from apid over `RealtimeFleet/OccupancyOperation` every 5 seconds
 (apid caches each channel for 2 seconds); single-box realtimed counts locally.
 A node follows at most 1,000 live-count channels; past that, subscribers get an
 `occupancy_limit` error frame and no counts. `GET …/occupancy` answers the same
-question for backends.
+question for backends once apid has the same flag; until then it returns 404.
 
 To let Gregale keep the checkpoint, add a stable name for each logical
 consumer. Optionally send `after` as that name's first-use baseline:
@@ -703,7 +725,10 @@ bounded queue limit rejected a frame.
 
 The node outbound budget (ADR-1323, `FAAS_REALTIME_OUTBOUND_NODE_BYTES`,
 default 64 MiB) bounds queued bytes across every connection on the node, shown
-by `realtimed_outbound_node_bytes_limit`. Above 75% of it, realtimed closes the
+by `realtimed_outbound_node_bytes_limit`. It applies only with
+`FAAS_REALTIME_OUTBOUND_BUDGET_ENABLED=1`, which also sets a 384 MiB soft memory
+limit unless `GOMEMLIMIT` is set; without it the limit metric is 0 and nothing
+is shed. Above 75% of it, realtimed closes the
 connections holding the largest backlogs (at least 1/16 of the per-connection
 byte limit) with close code 1013 until queued bytes fall to 50%, counted by
 `realtimed_outbound_shed_disconnects_total`. A frame that would exceed the
@@ -3616,8 +3641,9 @@ invocation plus wake), and that no other trigger consumes it. The trigger is
 created disabled, bound, then enabled; a failed binding deletes it again.
 `batch_window_ms`, `max_attempts`, `retry_policy`, `broker_poison_strategy`
 and `filter_criteria` are rejected (configure them on the group).
-`batch_size_max` is 1 unless the trigger uses `delivery: batch` (ADR-1321), which
-allows up to 16 (default 10). The binding is immutable; PATCH may change
+`batch_size_max` is 1 unless the trigger uses `delivery: batch` (ADR-1321,
+`FAAS_TRIGGER_BATCH_DELIVERY_PREVIEW_ENABLED=1` on apid), which allows up to 16
+(default 10). The binding is immutable; PATCH may change
 `max_concurrency`, `delivery` and `batch_size_max`.
 
 With `delivery: batch`, one invocation receives `{"records": [...]}` with up to
@@ -3660,8 +3686,10 @@ which refuses while any exist.
 
 ## Fair-use connection limits
 
-Realtime is free (ADR-1323); plans cap the resource it holds. apid sends each
-endpoint's account allowance (`ConnectionsPerAccount` in `pkg/api/limits.go`:
+Realtime is free (ADR-1323); plans cap the resource it holds. Enforcement
+needs `FAAS_REALTIME_FAIR_USE_ENABLED=1` on apid and every realtime node;
+without it apid sends no allowance and realtimed refuses only at the node and
+endpoint caps. apid sends each endpoint's account allowance (`ConnectionsPerAccount` in `pkg/api/limits.go`:
 Hobby 200, Pro 1,000, Scale 5,000) to realtimed with the endpoint, so plan
 changes apply at the next endpoint reconcile (30 s). realtimed refuses a
 connection with HTTP 429 `realtime_connection_limit` when:
@@ -3673,14 +3701,15 @@ connection with HTTP 429 `realtime_connection_limit` when:
 
 Each realtimed exchanges per-account counts with apid every 5 s over the
 private `RealtimeFleet` service, using the same target and TLS settings as the
-resume preview; the exchange runs whenever realtimed dials apid (any preview
-flag or `FAAS_REALTIME_USAGE_ENABLED=1`). Without a fresh exchange (none in the
+resume preview; the exchange runs with `FAAS_REALTIME_FAIR_USE_ENABLED=1` or
+`FAAS_REALTIME_USAGE_ENABLED=1`. Without a fresh exchange (none in the
 last 30 s), a node enforces the allowance against its own connections only, so
 an apid outage never refuses connections a node could hold; the allowance then
 holds per node rather than per fleet. Multi-node deployments should therefore
 enable the exchange.
 
-The node cap defaults to 6,000 connections (`FAAS_REALTIME_MAX_CONNECTIONS`).
+With fair use on, the node cap defaults to 6,000 connections
+(`FAAS_REALTIME_MAX_CONNECTIONS`; 10,000 without it).
 An idle connection measured about 52 KB of realtimed memory on 2026-10-14, so
 6,000 idle connections use about 310 MB of the unit's 512 MB `MemoryMax`, leaving
 room for queued frames and subscription pumps. Raise the cap only with
@@ -3729,8 +3758,8 @@ FROM m GROUP BY endpoint_id, hour ORDER BY hour;
 ```
 
 Customers read the same data, plus their open connections and plan limit,
-through `GET /v1/usage/realtime` and `gregale realtime usage`; without recording
-they still see open connections, but no hourly history.
+through `GET /v1/usage/realtime` and `gregale realtime usage`, served once apid
+also has `FAAS_REALTIME_USAGE_ENABLED=1` (404 until then).
 
 Watch `realtimed_usage_report_failures_total` (apid unreachable or rejecting
 reports), `realtimed_usage_held_hours` (above 1 means completed hours are

@@ -109,4 +109,4 @@ Four small PRs, each behind the retained-realtime preview:
 - Customers get serverless consumers for realtime channels, with ordering, retries and replay they already know from consumer groups.
 - Throughput per trigger is bounded by the plan's concurrency and one message per invocation. High-volume channels may need multi-message invocations later.
 - A long-running handler must finish within the 30 s invocation limit, as for every other trigger.
-- Trigger ledger rows have no default retention for any kind; only rows with an explicit `result_retention_until` are reaped. Realtime adds one row per delivery, as other kinds add one per broker record. A default ledger retention is a separate follow-up.
+- Realtime adds one ledger row per delivery, as other kinds add one per broker record. schedd reaps the ledger only with `FAAS_TRIGGER_LEDGER_RETENTION_ENABLED=1`: terminal rows past their explicit `result_retention_until`, or past the default ages (`TriggerRecordRetention` 7 days, `TriggerDeadLetterRetention` 30 days). Off, the default, ledger rows are kept as before.

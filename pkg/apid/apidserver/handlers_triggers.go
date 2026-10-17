@@ -228,7 +228,7 @@ func (s *server) createTrigger(w http.ResponseWriter, r *http.Request, acct stat
 		api.WriteProblem(w, p)
 		return
 	}
-	delivery, p := requestedTriggerDelivery(req.Kind, req.Delivery)
+	delivery, p := s.requestedTriggerDelivery(req.Kind, req.Delivery)
 	if p != nil {
 		api.WriteProblem(w, p)
 		return
@@ -792,7 +792,7 @@ func (s *server) updateTrigger(w http.ResponseWriter, r *http.Request, acct stat
 		}
 	}
 	if req.Delivery != nil {
-		if _, p := requestedTriggerDelivery(api.TriggerKind(t.Kind), req.Delivery); p != nil {
+		if _, p := s.requestedTriggerDelivery(api.TriggerKind(t.Kind), req.Delivery); p != nil {
 			api.WriteProblem(w, p)
 			return
 		}
@@ -1289,7 +1289,7 @@ func (s *server) batchCreateTrigger(w http.ResponseWriter, r *http.Request, acct
 			errs = append(errs, batchError{Slug: t.Slug, Message: problem.Detail})
 			continue
 		}
-		delivery, problem := requestedTriggerDelivery(kind, createReq.Delivery)
+		delivery, problem := s.requestedTriggerDelivery(kind, createReq.Delivery)
 		if problem != nil {
 			errs = append(errs, batchError{Slug: t.Slug, Message: problem.Detail})
 			continue

@@ -24,10 +24,6 @@ func UnitRealtimed() daemonunit.Unit {
 
 		EnvironmentFile: "-/etc/faas/secrets/realtimed/realtimed.env -/etc/faas/otel.env",
 		Environment: []daemonunit.KV{
-			// Leave 128 MiB outside Go's soft limit for cgroup-charged stacks,
-			// socket buffers and runtime overhead. Queued payloads are bounded
-			// by FAAS_REALTIME_OUTBOUND_NODE_BYTES (ADR-1323).
-			{Key: "GOMEMLIMIT", Value: "384MiB"},
 			{Key: "FAAS_REALTIME_SOCKET", Value: "/run/faas/realtimed.sock"},
 		},
 

@@ -48,10 +48,10 @@ where realtime holds real capacity on our servers:
 An endpoint's `max_connections` still caps that endpoint; the account limit
 applies on top of it.
 
-See where you stand with `gregale realtime usage` (or `GET /v1/usage/realtime`):
-connections open now against your limit, and, where usage recording is on, the
-peak connections, connection-hours and messages for each recent hour, per
-account and per endpoint.
+See where you stand with `gregale realtime usage` (or `GET /v1/usage/realtime`,
+a preview that answers 404 until the operator enables it): connections open
+now against your limit, and the peak connections, connection-hours and messages
+for each recent hour, per account and per endpoint.
 
 ## Subscription tickets
 
@@ -95,8 +95,9 @@ signal frames in full, including transient signals such as typing indicators.
 ## Channel occupancy
 
 Occupancy tells you how many clients are on a channel right now, for "23
-watching" badges, room sizes or dashboards (ADR-1324). Ask for up to 20
-channels at once:
+watching" badges, room sizes or dashboards (ADR-1324). It is a preview: until
+the operator enables it, the occupancy API answers 404 and subscriptions get
+no counts. Ask for up to 20 channels at once:
 
 ```bash
 gregale realtime occupancy my-app EP_ID lobby game-42
@@ -237,7 +238,8 @@ change back if the deploy fails. See the
 
 On a busy channel, set `delivery: batch` (with an optional `batch_size_max` up
 to 16, default 10) so one invocation handles several messages, which costs
-less compute than one invocation each (ADR-1321). The same option works for
+less compute than one invocation each (ADR-1321). Batch delivery is a preview:
+until the operator enables it, requests for it get HTTP 422. The same option works for
 Kafka, NATS, Redis Streams and SQS-compatible triggers; it is not available for
 cron or queue triggers. Your function receives:
 

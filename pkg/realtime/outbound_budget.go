@@ -33,13 +33,14 @@ const (
 )
 
 // reserveNodeOutbound accounts n queued bytes against the node budget, or
-// reports that they do not fit. Releasing bytes (n <= 0) always succeeds.
+// reports that they do not fit. Releasing bytes (n <= 0) always succeeds, and
+// so does everything when the budget is disabled.
 func (m *Manager) reserveNodeOutbound(n int64) bool {
-	if n <= 0 {
+	limit := m.cfg.OutboundNodeBytes
+	if n <= 0 || limit <= 0 {
 		m.outboundPendingBytes.Add(n)
 		return true
 	}
-	limit := m.cfg.OutboundNodeBytes
 	for {
 		current := m.outboundPendingBytes.Load()
 		if current > limit-n {
@@ -63,6 +64,9 @@ func (m *Manager) wakeOutboundShed() {
 }
 
 func (m *Manager) startOutboundShed() {
+	if m.cfg.OutboundNodeBytes <= 0 {
+		return
+	}
 	go m.runOutboundShed(m.ctx) //nolint:contextcheck // the Manager owns the shedder's lifecycle; Close cancels it.
 }
 

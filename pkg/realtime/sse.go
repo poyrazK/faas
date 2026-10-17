@@ -207,7 +207,7 @@ func (m *Manager) serveSSE(w http.ResponseWriter, r *http.Request) {
 	// ?occupancy=1 adds live occupancy events (ADR-1324), written while the
 	// stream waits for new history.
 	var occupancy <-chan int
-	if value := r.URL.Query().Get("occupancy"); value == "1" || value == "true" {
+	if value := r.URL.Query().Get("occupancy"); m.cfg.OccupancyPreview && (value == "1" || value == "true") {
 		watcher := newSSEOccupancyWatcher()
 		if m.watchOccupancy(id, channel, watcher) {
 			defer m.unwatchOccupancy(id, channel, watcher)

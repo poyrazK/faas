@@ -35,7 +35,6 @@ const (
 	// admission, so an open managed connection never pins an application VM.
 	ManagedPathPrefix = "/__gregale/realtime/"
 
-	defaultMaxConnections     = api.RealtimeNodeConnectionsDefault
 	defaultMaxMessageSize     = 1 << 20 // 1 MiB
 	defaultOutboundQueue      = 64
 	defaultOutboundQueueBytes = 4 << 20 // 4 MiB per connection, including an in-flight write
@@ -236,7 +235,7 @@ type Config struct {
 	// written. Zero selects the conservative default.
 	OutboundQueueBytes int64
 	// Maximum outbound payload bytes queued across every connection on the
-	// node (ADR-1323). Zero selects api.RealtimeNodeOutboundBytesDefault.
+	// node (ADR-1323). Zero disables the node budget and its shedder.
 	OutboundNodeBytes int64
 	Heartbeat         time.Duration
 	PongWait          time.Duration
@@ -274,12 +273,19 @@ type Config struct {
 	UsageReportFailure  func(error)
 	// usageClock replaces time.Now in usage tests.
 	usageClock func() time.Time
+	// FairUse enforces endpoints' account connection limits and the per-node
+	// account share (ADR-1323). Off, accounts are counted, and synced when
+	// ConnectionSync is set, but never refused.
+	FairUse bool
 	// ConnectionSync shares per-account connection counts with the other
 	// nodes so plan connection limits hold fleet-wide (ADR-1323). Nil
 	// enforces them against this node's connections only.
 	ConnectionSync         ConnectionSyncer
 	ConnectionSyncInterval time.Duration
 	ConnectionSyncFailure  func(error)
+	// OccupancyPreview enables the internal occupancy read and live occupancy
+	// frames (ADR-1324). Off, subscribe requests for occupancy are ignored.
+	OccupancyPreview bool
 	// OccupancyClient reads the other nodes' channel occupancy for live
 	// occupancy frames (ADR-1324). Nil counts this node only, which is exact
 	// when it is the only realtime node.
@@ -291,7 +297,10 @@ type Config struct {
 
 func (c Config) withDefaults() Config {
 	if c.MaxConnections <= 0 {
-		c.MaxConnections = defaultMaxConnections
+		c.MaxConnections = api.RealtimeNodeConnectionsWithoutFairUse
+		if c.FairUse {
+			c.MaxConnections = api.RealtimeNodeConnectionsDefault
+		}
 	}
 	if c.MaxMessageBytes <= 0 {
 		c.MaxMessageBytes = defaultMaxMessageSize
@@ -302,8 +311,8 @@ func (c Config) withDefaults() Config {
 	if c.OutboundQueueBytes <= 0 {
 		c.OutboundQueueBytes = defaultOutboundQueueBytes
 	}
-	if c.OutboundNodeBytes <= 0 {
-		c.OutboundNodeBytes = api.RealtimeNodeOutboundBytesDefault
+	if c.OutboundNodeBytes < 0 {
+		c.OutboundNodeBytes = 0
 	}
 	if c.Heartbeat <= 0 {
 		c.Heartbeat = defaultHeartbeat

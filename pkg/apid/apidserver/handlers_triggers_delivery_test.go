@@ -21,7 +21,14 @@ func TestTriggerBatchDelivery(t *testing.T) {
 	batch, record, bogus := api.TriggerDeliveryBatch, api.TriggerDeliveryRecord, "stream"
 	kafka := json.RawMessage(`{"brokers":["b:9092"],"topic":"orders","group":"g"}`)
 
+	// Batch delivery is refused until the preview is enabled.
 	rec := e.Do(t, http.MethodPost, "/v1/triggers", api.CreateTriggerRequest{AppID: app.ID, Kind: api.TriggerKindKafka, Slug: "orders", Config: kafka, Delivery: &batch}, nil)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("batch delivery without the preview = %d %s, want 422", rec.Code, rec.Body)
+	}
+	(*e.S()).WithTriggerBatchDeliveryEnabled(true)
+
+	rec = e.Do(t, http.MethodPost, "/v1/triggers", api.CreateTriggerRequest{AppID: app.ID, Kind: api.TriggerKindKafka, Slug: "orders", Config: kafka, Delivery: &batch}, nil)
 	var created api.Trigger
 	if rec.Code != http.StatusCreated || json.Unmarshal(rec.Body.Bytes(), &created) != nil {
 		t.Fatalf("create = %d %s", rec.Code, rec.Body)

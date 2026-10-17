@@ -53,3 +53,12 @@ One invocation gets the same per-invocation limit a single record gets today (30
 
 - A function with `delivery: batch` must accept the batch envelope and report partial failures by item identifier. The Node (`@gregale/sdk-node/triggers/runtime`) and Python (`faas_sdk.trigger_batch`) SDKs parse the envelope, run a handler per record and build `batchItemFailures`; the shape stays plain JSON for other languages.
 - Fewer, longer invocations for busy triggers; per-record retry and dead-letter accounting is unchanged.
+
+## Rollout
+
+apid admits `delivery: batch` only with
+`FAAS_TRIGGER_BATCH_DELIVERY_PREVIEW_ENABLED=1`; off, the default, create,
+update and manifest deploys that ask for it get 422, and every trigger keeps
+record delivery. Turning the flag off again stops new batch triggers but leaves
+existing ones delivering batches; switch them to `delivery: record` first. The
+flag stays off until batch delivery has been tested end to end.

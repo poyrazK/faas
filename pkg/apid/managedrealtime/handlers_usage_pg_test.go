@@ -61,6 +61,10 @@ func TestRealtimeUsageHandler(t *testing.T) {
 		svc.RealtimeUsage(rec, httptest.NewRequest(http.MethodGet, "/v1/usage/realtime"+query, nil), acct)
 		return rec
 	}
+	if rec := get(""); rec.Code != http.StatusNotFound {
+		t.Fatalf("usage without FAAS_REALTIME_USAGE_ENABLED = %d %s, want 404", rec.Code, rec.Body)
+	}
+	svc.UsageEnabled = true
 	rec := get("")
 	var out api.RealtimeUsageResponse
 	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &out) != nil {

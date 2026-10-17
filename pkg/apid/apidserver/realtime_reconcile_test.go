@@ -75,6 +75,7 @@ func TestReconcileManagedRealtimeEndpointsRepairsAllRows(t *testing.T) {
 	registrar := &reconcileRealtimeRegistrar{fail: map[string]error{"enabled-endpoint": registrarErr}}
 	srv := apidserver.NewServer(store, apidserver.DiscardLogger(), "gregale.dev", apidserver.NoopNotifier{})
 	(*srv.Realtime()).Registrar = registrar
+	(*srv.Realtime()).FairUseEnabled = true
 
 	err = (*srv.Realtime()).ReconcileManagedRealtimeEndpoints(ctx)
 	if !errors.Is(err, registrarErr) || !strings.Contains(err.Error(), "enabled-endpoint") {
@@ -89,6 +90,13 @@ func TestReconcileManagedRealtimeEndpointsRepairsAllRows(t *testing.T) {
 	}
 	if len(registrar.removed) != 1 || registrar.removed[0] != "disabled-endpoint" {
 		t.Fatalf("removed = %v, want disabled endpoint", registrar.removed)
+	}
+	// Without fair use, endpoints register without an account limit.
+	(*srv.Realtime()).FairUseEnabled = false
+	registrar.registered = nil
+	_ = (*srv.Realtime()).ReconcileManagedRealtimeEndpoints(ctx)
+	if len(registrar.registered) != 1 || registrar.registered[0].AccountMaxConnections != 0 {
+		t.Fatalf("registered without fair use = %+v, want no account limit", registrar.registered)
 	}
 }
 

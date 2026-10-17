@@ -454,10 +454,10 @@ pick up the job's current configuration at fire time.
 
 Handlers receive an event id and delivery attempt. Persist that id before applying side effects so retries are idempotent. Set explicit payload limits, timeouts, retry counts, and retention; route poison messages to a dead-letter destination for inspection and replay.
 
-Trigger delivery records (`gregale triggers records`) are kept 7 days after
-their last dispatch, and trigger dead letters (`gregale triggers dlq`) 30 days,
-unless a record carries its own retention. Retry or export dead letters you
-still need before then.
+Trigger delivery records (`gregale triggers records`) are kept at least 7 days
+after their last dispatch, and trigger dead letters (`gregale triggers dlq`) at
+least 30 days, unless a record carries its own retention; after that they may
+be deleted. Retry or export dead letters you still need before then.
 
 Keep synchronous endpoints small and return an acknowledgement only after the event is durably accepted. Verify webhook signatures and record the source, schema version, and correlation id in application logs.
 

@@ -21,13 +21,18 @@ func triggerDeliveryOrDefault(delivery string) string {
 }
 
 // requestedTriggerDelivery validates a requested delivery mode for the kind;
-// nil means record delivery.
-func requestedTriggerDelivery(kind api.TriggerKind, requested *string) (string, *api.Problem) {
+// nil means record delivery. Batch delivery is a preview until
+// FAAS_TRIGGER_BATCH_DELIVERY_PREVIEW_ENABLED=1.
+func (s *server) requestedTriggerDelivery(kind api.TriggerKind, requested *string) (string, *api.Problem) {
 	if requested == nil {
 		return api.TriggerDeliveryRecord, nil
 	}
 	if err := api.ValidateTriggerDelivery(kind, *requested); err != nil {
 		return "", api.NewProblem(http.StatusUnprocessableEntity, "trigger_invalid_config", "Invalid trigger delivery", err.Error())
+	}
+	if *requested == api.TriggerDeliveryBatch && !s.triggerBatchDeliveryEnabled {
+		return "", api.NewProblem(http.StatusUnprocessableEntity, "trigger_invalid_config", "Invalid trigger delivery",
+			"delivery: batch is a preview that is not enabled on this platform; use delivery: record")
 	}
 	return *requested, nil
 }

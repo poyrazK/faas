@@ -49,3 +49,12 @@ One request reads 1 to `RealtimeOccupancyChannelsMax` (20) channels.
 
 - Occupancy is a point-in-time snapshot. A count read during a node restart can be partial, and says so.
 - Ticket subscriptions and SSE streams are now visible in counts, so dashboards built on the connection inventory and on occupancy may differ while a connection is closing.
+
+## Rollout
+
+`FAAS_REALTIME_OCCUPANCY_PREVIEW_ENABLED` gates occupancy on apid (the REST
+read, 404 while off) and on realtimed (the internal read, live frames and SSE
+events; a subscribe frame's `occupancy` field is ignored while off). It stays
+off until realtime has been tested end to end. The per-node index is always
+kept, since it costs one map update per subscription change and is not exposed
+while the flag is off.
