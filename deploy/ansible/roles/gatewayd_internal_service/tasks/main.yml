@@ -27,6 +27,44 @@
     mode: "0644"
   register: realtimed_unit
 
+# Durable listeners (docs/adr/20261017-zero-downtime-daemon-restarts.md).
+# The sockets are only enabled here, never started: a pre-activation daemon
+# unlinks its socket path when it exits, so the socket must first bind inside
+# the notified service restart, after the old process is gone. Requires= in
+# each service unit starts it in that transaction.
+- name: gatewayd_internal_service — install durable listener sockets
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - faas-gatewayd-internal.socket
+    - faas-realtimed.socket
+  register: gatewayd_internal_sockets
+  notify:
+    - restart faas-gatewayd-internal sockets
+
+- name: gatewayd_internal_service — create durable listener drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-gatewayd-internal.socket.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: gatewayd_internal_service — install split-box data listener socket drop-in
+  ansible.builtin.template:
+    src: 99-faas-data-listen.conf.j2
+    dest: /etc/systemd/system/faas-gatewayd-internal.socket.d/99-faas-data-listen.conf
+    owner: root
+    group: root
+    mode: "0644"
+  register: gatewayd_internal_data_socket
+  notify:
+    - restart faas-gatewayd-internal sockets
+
 - name: gatewayd_internal_service — create development routing drop-in directory
   ansible.builtin.file:
     path: /etc/systemd/system/faas-gatewayd-internal.service.d
@@ -236,7 +274,7 @@
 - name: gatewayd_internal_service — systemctl daemon-reload (idempotent, after new unit file)  # noqa: no-handler (handlers only fire at play end; later tasks in this role query the unit)
   ansible.builtin.systemd:
     daemon_reload: true
-  when: gatewayd_internal_unit.changed or realtimed_unit.changed
+  when: gatewayd_internal_unit.changed or realtimed_unit.changed or gatewayd_internal_sockets.changed or gatewayd_internal_data_socket.changed
 
 - name: gatewayd_internal_service — create systemd drop-in directory
   ansible.builtin.file:
@@ -340,6 +378,14 @@
     group: root
     mode: "0644"
   notify: restart faas-gatewayd-internal
+
+- name: gatewayd_internal_service — keep the durable listener sockets enabled
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    enabled: true
+  loop:
+    - faas-gatewayd-internal.socket
+    - faas-realtimed.socket
 
 - name: gatewayd_internal_service — install split-box public listener drop-in
   ansible.builtin.template:

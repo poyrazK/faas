@@ -15,6 +15,16 @@
     daemon_reload: true
   listen:
     - restart faas-gatewayd-internal
+    - restart faas-gatewayd-internal sockets
+
+# A changed ListenStream= takes effect only when its socket restarts, and a
+# socket restart restarts the services that Require it in the same job. An
+# inactive socket (first conversion) is left to the services' own restart.
+- name: gatewayd_internal_service — try-restart changed durable listener sockets
+  ansible.builtin.command: systemctl try-restart faas-gatewayd-internal.socket faas-realtimed.socket  # noqa: command-instead-of-module (systemd module has no try-restart)
+  changed_when: true
+  listen: restart faas-gatewayd-internal sockets
+  when: not (faas_join_defer_service_handlers | default(false) | bool)
 
 - name: gatewayd_internal_service — try-restart faas-gatewayd-internal
   ansible.builtin.command: systemctl try-restart faas-gatewayd-internal.service  # noqa: command-instead-of-module (systemd module has no try-restart)

@@ -30,6 +30,19 @@ plays intentionally install different daemon sets and mask the opposite role.
 See [`deploy/ansible/README.md`](../ansible/README.md) for the supported
 bootstrap and verification flow.
 
+## Durable listeners
+
+`faas-apid.socket`, `faas-gatewayd-public.socket`, `faas-gatewayd-internal.socket`,
+`faas-realtimed.socket` and `faas-schedd.socket` hold their daemon's listening
+socket while the service restarts, so callers' connections wait in the backlog
+for the replacement instead of being refused
+(`docs/adr/20261017-zero-downtime-daemon-restarts.md`). Each service
+`Requires=` its socket, which therefore starts inside the service restart,
+after any pre-activation process has released the address. Do not start these
+sockets by hand while an older daemon that binds the address itself is
+running: it unlinks the unix socket path when it exits. A daemon refuses to
+start when its socket unit passes an address it does not serve.
+
 ## Manual inspection
 
 To inspect the generated units on a host:

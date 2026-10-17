@@ -54,12 +54,6 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return err
 	}
 	socketPath := getenv("FAAS_REALTIME_SOCKET", defaultSocket)
-	if err := os.MkdirAll(filepath.Dir(socketPath), 0o750); err != nil {
-		return err
-	}
-	if err := os.Remove(socketPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return err
-	}
 
 	callbackTimeout := envDuration("FAAS_REALTIME_CALLBACK_TIMEOUT", 30*time.Second)
 	outboxRoot := getenv("FAAS_REALTIME_CALLBACK_OUTBOX", realtime.DefaultCallbackOutboxRoot)
@@ -152,17 +146,19 @@ func run(ctx context.Context, log *slog.Logger) error {
 	})
 	defer readyProbe.Drain("realtimed", log)
 
-	listener, err := net.Listen("unix", socketPath)
+	listener, err := listenRealtimeSocket(socketPath)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = listener.Close() }()
-	if err := os.Chmod(socketPath, 0o660); err != nil {
-		return err
-	}
 	healthListener, err := net.Listen("tcp", getenv("FAAS_REALTIME_HEALTH_LISTEN", defaultHealthListen))
 	if err != nil {
 		_ = listener.Close()
+		return err
+	}
+	if err := wire.RequireInheritedListenersClaimed("realtimed"); err != nil {
+		_ = listener.Close()
+		_ = healthListener.Close()
 		return err
 	}
 
@@ -219,6 +215,32 @@ func run(ctx context.Context, log *slog.Logger) error {
 		_ = healthServer.Shutdown(shutdownCtx)
 		return server.Shutdown(shutdownCtx)
 	}
+}
+
+// listenRealtimeSocket prefers the socket faas-realtimed.socket keeps open
+// across restarts: gatewayd-internal's realtime connects and management
+// calls then wait for the replacement instead of failing.
+func listenRealtimeSocket(path string) (net.Listener, error) {
+	if l, ok, err := wire.InheritedListener("unix", path); err != nil {
+		return nil, err
+	} else if ok {
+		return l, nil
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		return nil, err
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	l, err := net.Listen("unix", path)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.Chmod(path, 0o660); err != nil {
+		_ = l.Close()
+		return nil, err
+	}
+	return l, nil
 }
 
 func getenv(key, fallback string) string {

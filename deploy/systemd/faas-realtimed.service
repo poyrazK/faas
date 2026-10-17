@@ -1,8 +1,9 @@
 [Unit]
 Description=onebox-faas realtimed — managed realtime connection owner
 Documentation=https://gregale.dev/docs/ops/realtime
-After=faas-cp.slice faas-vmmd.service
+After=faas-cp.slice faas-vmmd.service faas-realtimed.socket
 Wants=faas-cp.slice faas-vmmd.service
+Requires=faas-realtimed.socket
 
 [Service]
 Type=simple

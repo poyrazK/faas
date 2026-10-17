@@ -1029,6 +1029,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err != nil {
 		return fmt.Errorf("schedd: listen %s: %w", listenTarget, err)
 	}
+	// faas-schedd.socket keeps the listener open across restarts; it must
+	// carry only the address schedd serves (listen_addr / socket_path).
+	if err := wire.RequireInheritedListenersClaimed("schedd"); err != nil {
+		_ = lis.Close()
+		return err
+	}
 	// Issue #571 PR-A2: /readyz probe (PG ping + gRPC bound).
 	// Probe construction is platform-portable — pool may be nil
 	// in unit tests that don't wire a real pgxpool; the probe
