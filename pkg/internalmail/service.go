@@ -22,53 +22,54 @@ import (
 )
 
 type Service struct {
-	Store                         Store
-	Codec                         Codec
-	Resolver                      TXTResolver
-	SendingIP                     netip.Addr
-	Enabled                       func() bool
-	DeliveryEnabled               func() bool
-	ReportsEnabled                func() bool
-	ReportToken                   string
-	FeedbackEnabled               func() bool
-	FeedbackSources               map[string]FeedbackSource
-	RetentionEnabled              func() bool
-	RetentionPolicy               RetentionPolicy
-	OperationsEnabled             func() bool
-	OperationsToken               string
-	RotationEnabled               func() bool
-	ReverificationEnabled         func() bool
-	DeliveryControlsEnabled       func() bool
-	ProducersEnabled              func() bool
-	Producers                     map[string]Producer
-	SchedulingEnabled             func() bool
-	PacingEnabled                 func() bool
-	PacingPolicy                  PacingPolicy
-	BackpressureEnabled           func() bool
-	ReputationEnabled             func() bool
-	EventFeedEnabled              func() bool
-	ProducerSchedulingEnabled     func() bool
-	ProducerLifecycleEnabled      func() bool
-	EncryptionRotationEnabled     func() bool
-	SuppressionControlsEnabled    func() bool
-	RecoveryEnabled               func() bool
-	ProducerOutboxEnabled         func() bool
-	OutboxReconciliationEnabled   func() bool
-	VerificationOutboxEnabled     func() bool
-	PasswordResetOutboxEnabled    func() bool
-	MagicLinkOutboxEnabled        func() bool
-	MFARecoveryAlertOutboxEnabled func() bool
-	MFADisabledAlertOutboxEnabled func() bool
-	MFADisableOutboxEnabled       func() bool
-	OnDomainCheck                 func(error)
-	OnRetention                   func(RetentionResult, error)
-	RecipientAllowed              func(string) bool
-	Transport                     Transport
-	Now                           func() time.Time
-	Ready                         func(context.Context) error
-	Metrics                       http.Handler
-	Monitoring                    http.Handler
-	OnTick                        func()
+	Store                             Store
+	Codec                             Codec
+	Resolver                          TXTResolver
+	SendingIP                         netip.Addr
+	Enabled                           func() bool
+	DeliveryEnabled                   func() bool
+	ReportsEnabled                    func() bool
+	ReportToken                       string
+	FeedbackEnabled                   func() bool
+	FeedbackSources                   map[string]FeedbackSource
+	RetentionEnabled                  func() bool
+	RetentionPolicy                   RetentionPolicy
+	OperationsEnabled                 func() bool
+	OperationsToken                   string
+	RotationEnabled                   func() bool
+	ReverificationEnabled             func() bool
+	DeliveryControlsEnabled           func() bool
+	ProducersEnabled                  func() bool
+	Producers                         map[string]Producer
+	SchedulingEnabled                 func() bool
+	PacingEnabled                     func() bool
+	PacingPolicy                      PacingPolicy
+	BackpressureEnabled               func() bool
+	ReputationEnabled                 func() bool
+	EventFeedEnabled                  func() bool
+	ProducerSchedulingEnabled         func() bool
+	ProducerLifecycleEnabled          func() bool
+	EncryptionRotationEnabled         func() bool
+	SuppressionControlsEnabled        func() bool
+	RecoveryEnabled                   func() bool
+	ProducerOutboxEnabled             func() bool
+	OutboxReconciliationEnabled       func() bool
+	VerificationOutboxEnabled         func() bool
+	PasswordResetOutboxEnabled        func() bool
+	MagicLinkOutboxEnabled            func() bool
+	MFARecoveryAlertOutboxEnabled     func() bool
+	MFADisabledAlertOutboxEnabled     func() bool
+	PasswordChangedAlertOutboxEnabled func() bool
+	MFADisableOutboxEnabled           func() bool
+	OnDomainCheck                     func(error)
+	OnRetention                       func(RetentionResult, error)
+	RecipientAllowed                  func(string) bool
+	Transport                         Transport
+	Now                               func() time.Time
+	Ready                             func(context.Context) error
+	Metrics                           http.Handler
+	Monitoring                        http.Handler
+	OnTick                            func()
 }
 
 func (s *Service) enabled() bool { return s != nil && s.Enabled != nil && s.Enabled() }

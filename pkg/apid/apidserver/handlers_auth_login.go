@@ -440,14 +440,25 @@ func (s *server) finishPasswordReset(w http.ResponseWriter, r *http.Request, acc
 //     the session is the only proof there is, and this opt-in is the
 //     reason the route exists. The audit row records `proof=session`.
 func (s *server) postSetPassword(w http.ResponseWriter, r *http.Request) {
+	acct, plain, ok := s.setPasswordInput(w, r)
+	if !ok {
+		return
+	}
+	if s.tryPasswordChangedAlert(w, r, acct, plain) {
+		return
+	}
+	s.setInlinePassword(w, r, acct, plain)
+}
+
+func (s *server) setPasswordInput(w http.ResponseWriter, r *http.Request) (state.Account, string, bool) {
 	acct, ok := AccountFrom(r.Context())
 	if !ok {
 		writeDashboardUnauthorized(w, r)
-		return
+		return state.Account{}, "", false
 	}
 	if err := r.ParseForm(); err != nil {
 		api.WriteProblem(w, api.ErrValidation("could not parse form body"))
-		return
+		return state.Account{}, "", false
 	}
 	// Same-site form POST: a function at *.gregale.dev is same-site
 	// with api.gregale.dev, so SameSite=Lax still sends faas_sid with a
@@ -457,7 +468,7 @@ func (s *server) postSetPassword(w http.ResponseWriter, r *http.Request) {
 	if err := middleware.VerifyAuthenticated(s.sessions, r, csrfActionSetPassword, acct.ID); err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 			"Invalid CSRF token", "please reload the page and try again"))
-		return
+		return state.Account{}, "", false
 	}
 	// The length rule is free and inspects only the new password, so it
 	// runs before the proof: no DB read and no Argon2id verify for a
@@ -466,8 +477,12 @@ func (s *server) postSetPassword(w http.ResponseWriter, r *http.Request) {
 	plain := r.FormValue("password")
 	if err := auth.Validate(plain); err != nil {
 		api.WriteProblem(w, api.ErrPasswordTooWeak(err.Error()))
-		return
+		return state.Account{}, "", false
 	}
+	return acct, plain, true
+}
+
+func (s *server) setInlinePassword(w http.ResponseWriter, r *http.Request, acct state.Account, plain string) {
 	proof, replacing, ok := s.setPasswordProof(w, r, acct)
 	if !ok {
 		return
@@ -485,6 +500,10 @@ func (s *server) postSetPassword(w http.ResponseWriter, r *http.Request) {
 			"internal_error", "Internal Error", "failed to set password"))
 		return
 	}
+	s.finishSetPassword(w, r, acct, proof, replacing)
+}
+
+func (s *server) finishSetPassword(w http.ResponseWriter, r *http.Request, acct state.Account, proof string, replacing bool) {
 	// Changing the password signs out every other session; this one,
 	// which just proved the change, stays.
 	if replacing {

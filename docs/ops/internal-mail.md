@@ -2835,3 +2835,63 @@ withdrawal. Base maintenance can expire and erase payloads with this child off.
 Terminal settlement and reconciliation erase recipient and ciphertext. Hard
 account deletion cascades intent while opaque audit survives. Migration Down
 refuses remaining alert intent or audit. No forced replay is provided.
+
+## Durable password-change security alerts
+
+`FAAS_INTERNAL_MAIL_PASSWORD_CHANGED_ALERT_OUTBOX_ENABLED=0` independently gates
+password-update alerts in apid, maild and private reconciliation. Units and
+private examples keep it off. Apply
+[`20261017101020256_platform_mail_password_changed_alert_outbox.sql`](../../migrations/20261017101020256_platform_mail_password_changed_alert_outbox.sql)
+before enabling the capability. Enabled startup checks the migrated alert
+constraint and every live pending reader. See
+[ADR-20261017101020](../adr/20261017101020-mail-password-changed-alerts.md).
+
+It requires the existing master, producer, scheduling and producer-outbox gates,
+scoped `internal-producer` transport and dedicated apid credential readers under
+`FAAS_INTERNAL_MAIL_VERIFICATION_IDENTITY_PATH` and
+`FAAS_INTERNAL_MAIL_VERIFICATION_PREVIOUS_IDENTITY_PATH`. No origin is required.
+Retain current/previous readers needed by every enabled family's live pending
+payloads. No apid identity is supplied to maild or mailctl.
+
+Enabled dashboard additions/replacements and both durable/legacy reset completion
+formats save the password update, revision, encrypted alert and any token use
+atomically. A failed alert save, saturated outbox, recovery hold, or late gate
+withdrawal leaves the password and token unchanged. The selected enabled path
+never falls back to an unalerted update. Reset-link issuance has its own flag;
+turning that off does not block alert-coupled redemption of saved credentials.
+
+Dashboard authentication, CSRF, current-password/MFA proof policy, rate limits,
+redirects and audit fields remain. Password verification/hash generation happen
+outside owner locks; the locked password/MFA revisions fence the checked proof.
+Existing session behavior remains: replacement in settings revokes other
+sessions, first password addition preserves its existing behavior, and reset
+revokes old sessions before the normal new-session/MFA flow. Those post-commit
+steps retain their best-effort contracts; the alert records the committed change.
+
+Durable reset links retain their saved bindings after issuance rollback. The
+alert's namespace must match the credential. Legacy links share `login_tokens`
+and have no saved purpose/address/revision/generation; this change cannot infer
+those retrospectively. Enabled legacy reset requires a currently active account
+with verified email, an unused hash and its original database deadline. For both
+formats, the final expiry CAS runs after password and alert writes, so a blocked
+save cannot extend the token's lifetime.
+
+The encrypted event contains only database change time and method. No password,
+PHC, reset token/hash or reset URL enters the alert payload, email or logs.
+Retries retain the original time/method, frozen V1 body, 24-hour delivery deadline
+and `password-changed:<intent UUID>` key. Later credential changes, suspension or
+abuse holds do not rewrite that history. Address changes or account deletion
+stop delivery. Existing suppression, producer budgets, lease fencing and
+recovery-generation quarantine still apply.
+
+Private inspection exposes existing bounded metadata only. Receipt
+acknowledgement and exact audit replay require the own alert flag and existing
+reconciliation/operator gates; acknowledgement cannot send mail or reset a
+deadline. Maild admission is separate from destination delivery evidence. Live
+qualification remains separate.
+
+Flag rollback restores previous password flows for later calls and pauses
+pending alerts. Base maintenance can still expire and erase them. Terminal
+settlement and reconciliation erase recipient and ciphertext; account erasure
+cascades intent while opaque audit survives. Migration Down refuses intent or
+audit history. No resend override or deadline extension is provided.

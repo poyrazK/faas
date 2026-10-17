@@ -204,9 +204,6 @@ func TestPGMagicLinkOutboxStableRetryAndPurposeIsolation(t *testing.T) {
 	if _, err := NewResetCredentials(f.pool).Redeem(t.Context(), r.VerificationTokenHash, "wrong-purpose-phc"); !errors.Is(err, ErrPasswordResetUnknown) {
 		t.Fatal("sign-in token changed a password", err)
 	}
-	if _, err := f.pool.Exec(t.Context(), "CREATE TABLE login_tokens(token_hash bytea PRIMARY KEY,account_id uuid,expires_at timestamptz,consumed_at timestamptz)"); err != nil {
-		t.Fatal(err)
-	}
 	if _, err := state.NewPgStore(f.pool).ConsumeLoginToken(t.Context(), r.VerificationTokenHash); !errors.Is(err, state.ErrNotFound) {
 		t.Fatal("durable token entered the legacy shared-purpose table", err)
 	}

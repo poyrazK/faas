@@ -82,6 +82,10 @@ func (s *Service) ProducerOutboxAdmission(ctx context.Context, id string) (Produ
 		review.CanAcknowledge = false
 		review.BlockReason = "mfa_disabled_alert_disabled"
 	}
+	if review.Template == ProducerOutboxPasswordChangedAlertTemplate && !s.passwordChangedAlertOutboxEnabled() {
+		review.CanAcknowledge = false
+		review.BlockReason = "password_changed_alert_disabled"
+	}
 	return review, err
 }
 

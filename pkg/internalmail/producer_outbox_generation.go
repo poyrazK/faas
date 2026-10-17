@@ -15,6 +15,7 @@ const ProducerOutboxPasswordResetTemplate = "password_reset"
 const ProducerOutboxMagicLinkTemplate = "magic_link"
 const ProducerOutboxMFADisableTemplate = "mfa_disable_request"
 const ProducerOutboxMFADisabledAlertTemplate = "mfa_disabled"
+const ProducerOutboxPasswordChangedAlertTemplate = "password_changed"
 const ProducerOutboxMFARecoveryAlertTemplate = "mfa_recovery_used"
 
 func (s *Service) verificationOutboxEnabled() bool {
@@ -35,6 +36,10 @@ func (s *Service) mfaRecoveryAlertOutboxEnabled() bool {
 
 func (s *Service) mfaDisableOutboxEnabled() bool {
 	return s.producerOutboxEnabled() && s.MFADisableOutboxEnabled != nil && s.MFADisableOutboxEnabled()
+}
+
+func (s *Service) passwordChangedAlertOutboxEnabled() bool {
+	return s.producerOutboxEnabled() && s.PasswordChangedAlertOutboxEnabled != nil && s.PasswordChangedAlertOutboxEnabled()
 }
 
 func (s *Service) mfaDisabledAlertOutboxEnabled() bool {
@@ -68,12 +73,14 @@ func (s *Service) producerOutboxContext(ctx context.Context, header http.Header)
 			gate = s.magicLinkOutboxEnabled
 		case ProducerOutboxMFADisableTemplate:
 			gate = s.mfaDisableOutboxEnabled
+		case ProducerOutboxPasswordChangedAlertTemplate:
+			gate = s.passwordChangedAlertOutboxEnabled
 		case ProducerOutboxMFADisabledAlertTemplate:
 			gate = s.mfaDisabledAlertOutboxEnabled
 		case ProducerOutboxMFARecoveryAlertTemplate:
 			gate = s.mfaRecoveryAlertOutboxEnabled
 		default:
-			if !s.verificationOutboxEnabled() && !s.passwordResetOutboxEnabled() && !s.magicLinkOutboxEnabled() && !s.mfaRecoveryAlertOutboxEnabled() && !s.mfaDisableOutboxEnabled() && !s.mfaDisabledAlertOutboxEnabled() {
+			if !s.verificationOutboxEnabled() && !s.passwordResetOutboxEnabled() && !s.magicLinkOutboxEnabled() && !s.mfaRecoveryAlertOutboxEnabled() && !s.mfaDisableOutboxEnabled() && !s.mfaDisabledAlertOutboxEnabled() && !s.passwordChangedAlertOutboxEnabled() {
 				return ctx, ErrDisabled
 			}
 			return ctx, ErrInvalid

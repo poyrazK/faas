@@ -138,6 +138,8 @@ const (
 )
 
 const (
-	InternalMailMFADisabledAlertTTL      = 24 * time.Hour
-	InternalMailMFADisabledAlertMaxBytes = 512
+	InternalMailPasswordChangedAlertTTL      = 24 * time.Hour
+	InternalMailPasswordChangedAlertMaxBytes = 512
+	InternalMailMFADisabledAlertTTL          = 24 * time.Hour
+	InternalMailMFADisabledAlertMaxBytes     = 512
 )

@@ -166,9 +166,6 @@ func TestPGPasswordResetOutboxStableRetryPurposeAndAtomicRedemption(t *testing.T
 	if err := f.pool.QueryRow(t.Context(), "SELECT expires_at,created_at,password_revision FROM password_reset_tokens WHERE token_hash=$1", api.HashToken(raw)).Scan(&expires, &created, &revision); err != nil || !expires.Equal(r.ExpiresAt.Time) || expires.Sub(created) > api.PasswordResetTTL || expires.Sub(created) < api.PasswordResetTTL-time.Second {
 		t.Fatal("reset lost original fifteen-minute deadline", err)
 	}
-	if _, err := f.pool.Exec(t.Context(), "CREATE TABLE login_tokens(token_hash bytea PRIMARY KEY,account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,expires_at timestamptz NOT NULL,consumed_at timestamptz)"); err != nil {
-		t.Fatal(err)
-	}
 	if _, err := state.NewPgStore(f.pool).ConsumeLoginToken(t.Context(), api.HashToken(raw)); !errors.Is(err, state.ErrNotFound) {
 		t.Fatal("reset token authenticated as a login", err)
 	}

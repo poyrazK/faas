@@ -66,6 +66,13 @@ type InternalMailRecoveryState struct {
 	Held       bool
 }
 
+type LoginToken struct {
+	TokenHash  []byte
+	AccountID  pgtype.UUID
+	ExpiresAt  pgtype.Timestamptz
+	ConsumedAt pgtype.Timestamptz
+}
+
 type MagicLinkToken struct {
 	TokenHash        []byte
 	AccountID        pgtype.UUID

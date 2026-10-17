@@ -30,6 +30,7 @@ func (s *InternalSender) WithVerificationOutbox(enabled func() bool) *InternalSe
 	copy := *s
 	copy.verificationEnabled = enabled
 	copy.mfaDisableEnabled = nil
+	copy.passwordChangedAlertEnabled = nil
 	copy.mfaDisabledAlertEnabled = nil
 	copy.mfaRecoveryAlertEnabled = nil
 	copy.passwordResetEnabled = nil
@@ -41,6 +42,7 @@ func (s *InternalSender) WithPasswordResetOutbox(enabled func() bool) *InternalS
 	copy := *s
 	copy.passwordResetEnabled = enabled
 	copy.mfaDisableEnabled = nil
+	copy.passwordChangedAlertEnabled = nil
 	copy.mfaDisabledAlertEnabled = nil
 	copy.mfaRecoveryAlertEnabled = nil
 	copy.magicLinkEnabled = nil
@@ -52,6 +54,7 @@ func (s *InternalSender) WithMagicLinkOutbox(enabled func() bool) *InternalSende
 	copy := *s
 	copy.magicLinkEnabled = enabled
 	copy.mfaDisableEnabled = nil
+	copy.passwordChangedAlertEnabled = nil
 	copy.mfaDisabledAlertEnabled = nil
 	copy.mfaRecoveryAlertEnabled = nil
 	copy.verificationEnabled = nil
@@ -62,6 +65,7 @@ func (s *InternalSender) WithMagicLinkOutbox(enabled func() bool) *InternalSende
 func (s *InternalSender) WithMFARecoveryAlertOutbox(enabled func() bool) *InternalSender {
 	copy := *s
 	copy.mfaDisableEnabled = nil
+	copy.passwordChangedAlertEnabled = nil
 	copy.mfaDisabledAlertEnabled = nil
 	copy.mfaRecoveryAlertEnabled = enabled
 	copy.verificationEnabled = nil
@@ -73,6 +77,7 @@ func (s *InternalSender) WithMFARecoveryAlertOutbox(enabled func() bool) *Intern
 func (s *InternalSender) WithMFADisableOutbox(enabled func() bool) *InternalSender {
 	copy := *s
 	copy.mfaDisableEnabled = enabled
+	copy.passwordChangedAlertEnabled = nil
 	copy.mfaDisabledAlertEnabled = nil
 	copy.mfaRecoveryAlertEnabled = nil
 	copy.verificationEnabled = nil
@@ -83,7 +88,20 @@ func (s *InternalSender) WithMFADisableOutbox(enabled func() bool) *InternalSend
 
 func (s *InternalSender) WithMFADisabledAlertOutbox(enabled func() bool) *InternalSender {
 	copy := *s
+	copy.passwordChangedAlertEnabled = nil
 	copy.mfaDisabledAlertEnabled = enabled
+	copy.mfaDisableEnabled = nil
+	copy.mfaRecoveryAlertEnabled = nil
+	copy.verificationEnabled = nil
+	copy.passwordResetEnabled = nil
+	copy.magicLinkEnabled = nil
+	return &copy
+}
+
+func (s *InternalSender) WithPasswordChangedAlertOutbox(enabled func() bool) *InternalSender {
+	copy := *s
+	copy.passwordChangedAlertEnabled = enabled
+	copy.mfaDisabledAlertEnabled = nil
 	copy.mfaDisableEnabled = nil
 	copy.mfaRecoveryAlertEnabled = nil
 	copy.verificationEnabled = nil
@@ -95,6 +113,9 @@ func (s *InternalSender) WithMFADisabledAlertOutbox(enabled func() bool) *Intern
 func (s *InternalSender) credentialOutboxGate() (string, func() bool) {
 	if s.mfaDisableEnabled != nil {
 		return internalmail.ProducerOutboxMFADisableTemplate, s.mfaDisableEnabled
+	}
+	if s.passwordChangedAlertEnabled != nil {
+		return internalmail.ProducerOutboxPasswordChangedAlertTemplate, s.passwordChangedAlertEnabled
 	}
 	if s.mfaDisabledAlertEnabled != nil {
 		return internalmail.ProducerOutboxMFADisabledAlertTemplate, s.mfaDisabledAlertEnabled

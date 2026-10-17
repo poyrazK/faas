@@ -30,6 +30,10 @@ func NewResetCredentials(pool *pgxpool.Pool) *ResetCredentials {
 // owner transaction. New reset hashes are never inserted into login_tokens.
 // Account-first locking also makes two sibling links produce at most one winner.
 func (c *ResetCredentials) Redeem(ctx context.Context, hash []byte, phc string) (string, error) {
+	return c.redeem(ctx, hash, phc, nil)
+}
+
+func (c *ResetCredentials) redeem(ctx context.Context, hash []byte, phc string, alert *Service) (string, error) {
 	if c == nil || len(hash) != api.PasswordResetTokenBytes || phc == "" {
 		return "", internalmail.ErrInvalid
 	}
@@ -39,6 +43,14 @@ func (c *ResetCredentials) Redeem(ctx context.Context, hash []byte, phc string) 
 	}
 	defer rollback(ctx, tx)
 	queries := q.New()
+	if alert != nil {
+		if !alert.passwordChangedAlertEnabled() {
+			return "", internalmail.ErrDisabled
+		}
+		if err := queries.LockAdmission(ctx, tx, alert.namespace); err != nil {
+			return "", err
+		}
+	}
 	account, err := queries.LockPasswordResetCredentialAccount(ctx, tx, hash)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", ErrPasswordResetUnknown
@@ -52,6 +64,9 @@ func (c *ResetCredentials) Redeem(ctx context.Context, hash []byte, phc string) 
 	}
 	if err != nil {
 		return "", err
+	}
+	if alert != nil && token.Namespace != alert.namespace {
+		return "", ErrPasswordResetInvalid
 	}
 	if err := queries.ShareRecovery(ctx, tx, token.Namespace); err != nil {
 		return "", err
@@ -77,7 +92,16 @@ func (c *ResetCredentials) Redeem(ctx context.Context, hash []byte, phc string) 
 	if n != 1 {
 		return "", ErrPasswordResetInvalid
 	}
-	// Recheck the absolute database deadline after any password-row wait. A
+	if alert != nil {
+		now, err := queries.VerificationClock(ctx, tx)
+		if err != nil {
+			return "", err
+		}
+		if err := alert.savePasswordChangedAlert(ctx, tx, account.ID, account.Email, recovery.RecoveryID, now.Time, "password_reset"); err != nil {
+			return "", err
+		}
+	}
+	// Recheck the absolute database deadline after password-row and alert waits. A
 	// late expiry rolls back both the credential update and token consumption.
 	n, err = queries.ConsumePasswordResetToken(ctx, tx, q.ConsumePasswordResetTokenParams{TokenHash: hash, AccountID: account.ID})
 	if err != nil {
@@ -85,6 +109,9 @@ func (c *ResetCredentials) Redeem(ctx context.Context, hash []byte, phc string) 
 	}
 	if n != 1 {
 		return "", ErrPasswordResetInvalid
+	}
+	if alert != nil && !alert.passwordChangedAlertEnabled() {
+		return "", internalmail.ErrDisabled
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return "", err

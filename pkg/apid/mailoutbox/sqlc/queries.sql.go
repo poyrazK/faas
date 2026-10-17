@@ -45,7 +45,7 @@ SELECT o.id,o.revision,o.state,o.template,o.from_address,o.expires_at,o.recovery
     coalesce(m.sender_address,'')::text AS sender_address
 FROM platform_mail_producer_outbox o
 LEFT JOIN internal_mail_messages m ON m.namespace=o.namespace AND m.producer_id=o.producer_id
-    AND m.idempotency_key=(CASE o.template WHEN 'email_verification' THEN 'verify-email:' WHEN 'password_reset' THEN 'password-reset:' WHEN 'magic_link' THEN 'magic-link:' WHEN 'mfa_recovery_used' THEN 'mfa-recovery-alert:' WHEN 'mfa_disabled' THEN 'mfa-disabled:' WHEN 'mfa_disable_request' THEN 'mfa-disable:' ELSE 'account-delete:' END)||o.id::text
+    AND m.idempotency_key=(CASE o.template WHEN 'email_verification' THEN 'verify-email:' WHEN 'password_reset' THEN 'password-reset:' WHEN 'magic_link' THEN 'magic-link:' WHEN 'mfa_recovery_used' THEN 'mfa-recovery-alert:' WHEN 'password_changed' THEN 'password-changed:' WHEN 'mfa_disabled' THEN 'mfa-disabled:' WHEN 'mfa_disable_request' THEN 'mfa-disable:' ELSE 'account-delete:' END)||o.id::text
 WHERE o.namespace=$1 AND o.id=$2
 `
 
@@ -107,11 +107,13 @@ WITH candidate AS (
           AND o.verification_key_id=ANY($14::text[]))
         OR (o.template='mfa_disable_request' AND $15::boolean AND o.verification_origin=$16::text
           AND o.verification_key_id=ANY($17::text[]))
-        OR (o.template='mfa_disabled' AND $18::boolean
+        OR (o.template='password_changed' AND $18::boolean
           AND o.security_alert_key_id=ANY($19::text[]))
-        OR (o.template='mfa_recovery_used' AND $20::boolean
-          AND o.security_alert_key_id=ANY($21::text[])))
-      AND o.attempts<$22 AND o.expires_at>clock_timestamp()
+        OR (o.template='mfa_disabled' AND $20::boolean
+          AND o.security_alert_key_id=ANY($21::text[]))
+        OR (o.template='mfa_recovery_used' AND $22::boolean
+          AND o.security_alert_key_id=ANY($23::text[])))
+      AND o.attempts<$24 AND o.expires_at>clock_timestamp()
       AND ((o.state='queued' AND o.next_attempt_at<=clock_timestamp()) OR (o.state='claimed' AND o.lease_until<=clock_timestamp()))
       AND NOT EXISTS(SELECT 1 FROM internal_mail_recovery_state s WHERE s.namespace=o.namespace AND (s.held OR s.recovery_id<>o.recovery_id))
     ORDER BY next_attempt_at,id LIMIT 1 FOR UPDATE SKIP LOCKED
@@ -122,28 +124,30 @@ FROM candidate c WHERE o.id=c.id RETURNING o.id, o.account_id, o.namespace, o.pr
 `
 
 type ClaimParams struct {
-	LeaseID                 pgtype.UUID
-	LeaseSeconds            int32
-	Namespace               string
-	ProducerID              string
-	FromAddress             string
-	VerificationEnabled     bool
-	VerificationOrigin      string
-	VerificationKeys        []string
-	PasswordResetEnabled    bool
-	PasswordResetOrigin     string
-	PasswordResetKeys       []string
-	MagicLinkEnabled        bool
-	MagicLinkOrigin         string
-	MagicLinkKeys           []string
-	MfaDisableEnabled       bool
-	MfaDisableOrigin        string
-	MfaDisableKeys          []string
-	MfaDisabledAlertEnabled bool
-	MfaDisabledAlertKeys    []string
-	MfaRecoveryAlertEnabled bool
-	MfaRecoveryAlertKeys    []string
-	MaxAttempts             int32
+	LeaseID                     pgtype.UUID
+	LeaseSeconds                int32
+	Namespace                   string
+	ProducerID                  string
+	FromAddress                 string
+	VerificationEnabled         bool
+	VerificationOrigin          string
+	VerificationKeys            []string
+	PasswordResetEnabled        bool
+	PasswordResetOrigin         string
+	PasswordResetKeys           []string
+	MagicLinkEnabled            bool
+	MagicLinkOrigin             string
+	MagicLinkKeys               []string
+	MfaDisableEnabled           bool
+	MfaDisableOrigin            string
+	MfaDisableKeys              []string
+	PasswordChangedAlertEnabled bool
+	PasswordChangedAlertKeys    []string
+	MfaDisabledAlertEnabled     bool
+	MfaDisabledAlertKeys        []string
+	MfaRecoveryAlertEnabled     bool
+	MfaRecoveryAlertKeys        []string
+	MaxAttempts                 int32
 }
 
 func (q *Queries) Claim(ctx context.Context, db DBTX, arg ClaimParams) (PlatformMailProducerOutbox, error) {
@@ -165,6 +169,8 @@ func (q *Queries) Claim(ctx context.Context, db DBTX, arg ClaimParams) (Platform
 		arg.MfaDisableEnabled,
 		arg.MfaDisableOrigin,
 		arg.MfaDisableKeys,
+		arg.PasswordChangedAlertEnabled,
+		arg.PasswordChangedAlertKeys,
 		arg.MfaDisabledAlertEnabled,
 		arg.MfaDisabledAlertKeys,
 		arg.MfaRecoveryAlertEnabled,
@@ -236,6 +242,24 @@ type ConsumeLegacyMFADisableRequestParams struct {
 
 func (q *Queries) ConsumeLegacyMFADisableRequest(ctx context.Context, db DBTX, arg ConsumeLegacyMFADisableRequestParams) (int64, error) {
 	result, err := db.Exec(ctx, consumeLegacyMFADisableRequest, arg.TokenHash, arg.AccountID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const consumeLegacyPasswordResetToken = `-- name: ConsumeLegacyPasswordResetToken :execrows
+UPDATE login_tokens SET consumed_at=clock_timestamp()
+WHERE token_hash=$1 AND account_id=$2 AND consumed_at IS NULL AND expires_at>clock_timestamp()
+`
+
+type ConsumeLegacyPasswordResetTokenParams struct {
+	TokenHash []byte
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) ConsumeLegacyPasswordResetToken(ctx context.Context, db DBTX, arg ConsumeLegacyPasswordResetTokenParams) (int64, error) {
+	result, err := db.Exec(ctx, consumeLegacyPasswordResetToken, arg.TokenHash, arg.AccountID)
 	if err != nil {
 		return 0, err
 	}
@@ -557,6 +581,41 @@ func (q *Queries) CreateMagicLinkToken(ctx context.Context, db DBTX, arg CreateM
 		arg.ExpiresAt,
 		arg.Namespace,
 		arg.RecoveryID,
+	)
+	return err
+}
+
+const createPasswordChangedAlertIntent = `-- name: CreatePasswordChangedAlertIntent :exec
+INSERT INTO platform_mail_producer_outbox(id,account_id,namespace,producer_id,from_address,recipient_address,
+    template,template_version,expires_at,recovery_id,sealed_security_alert,security_alert_key_id)
+VALUES($1,$2,$3,$4,$5,$6,'password_changed',1,$7,$8,$9,$10)
+`
+
+type CreatePasswordChangedAlertIntentParams struct {
+	ID                  pgtype.UUID
+	AccountID           pgtype.UUID
+	Namespace           string
+	ProducerID          string
+	FromAddress         string
+	RecipientAddress    string
+	ExpiresAt           pgtype.Timestamptz
+	RecoveryID          pgtype.UUID
+	SealedSecurityAlert []byte
+	SecurityAlertKeyID  string
+}
+
+func (q *Queries) CreatePasswordChangedAlertIntent(ctx context.Context, db DBTX, arg CreatePasswordChangedAlertIntentParams) error {
+	_, err := db.Exec(ctx, createPasswordChangedAlertIntent,
+		arg.ID,
+		arg.AccountID,
+		arg.Namespace,
+		arg.ProducerID,
+		arg.FromAddress,
+		arg.RecipientAddress,
+		arg.ExpiresAt,
+		arg.RecoveryID,
+		arg.SealedSecurityAlert,
+		arg.SecurityAlertKeyID,
 	)
 	return err
 }
@@ -965,6 +1024,56 @@ func (q *Queries) LockLegacyMFADisableRequest(ctx context.Context, db DBTX, arg 
 	return i, err
 }
 
+const lockLegacyPasswordResetAccount = `-- name: LockLegacyPasswordResetAccount :one
+SELECT a.id,a.email,a.status,a.email_verified_at,a.password_reset_revision
+FROM accounts a JOIN login_tokens t ON t.account_id=a.id WHERE t.token_hash=$1 FOR UPDATE OF a
+`
+
+type LockLegacyPasswordResetAccountRow struct {
+	ID                    pgtype.UUID
+	Email                 string
+	Status                string
+	EmailVerifiedAt       pgtype.Timestamptz
+	PasswordResetRevision int64
+}
+
+// Legacy reset links share login_tokens. They have no saved address, namespace
+// or password revision; preserve that format while making use/password/alert atomic.
+func (q *Queries) LockLegacyPasswordResetAccount(ctx context.Context, db DBTX, tokenHash []byte) (LockLegacyPasswordResetAccountRow, error) {
+	row := db.QueryRow(ctx, lockLegacyPasswordResetAccount, tokenHash)
+	var i LockLegacyPasswordResetAccountRow
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.Status,
+		&i.EmailVerifiedAt,
+		&i.PasswordResetRevision,
+	)
+	return i, err
+}
+
+const lockLegacyPasswordResetToken = `-- name: LockLegacyPasswordResetToken :one
+SELECT token_hash,expires_at,consumed_at FROM login_tokens WHERE token_hash=$1 AND account_id=$2 FOR UPDATE
+`
+
+type LockLegacyPasswordResetTokenParams struct {
+	TokenHash []byte
+	AccountID pgtype.UUID
+}
+
+type LockLegacyPasswordResetTokenRow struct {
+	TokenHash  []byte
+	ExpiresAt  pgtype.Timestamptz
+	ConsumedAt pgtype.Timestamptz
+}
+
+func (q *Queries) LockLegacyPasswordResetToken(ctx context.Context, db DBTX, arg LockLegacyPasswordResetTokenParams) (LockLegacyPasswordResetTokenRow, error) {
+	row := db.QueryRow(ctx, lockLegacyPasswordResetToken, arg.TokenHash, arg.AccountID)
+	var i LockLegacyPasswordResetTokenRow
+	err := row.Scan(&i.TokenHash, &i.ExpiresAt, &i.ConsumedAt)
+	return i, err
+}
+
 const lockMFADisableAccount = `-- name: LockMFADisableAccount :one
 SELECT id,email,status,abuse_hold_at,password_reset_revision,mfa_revision,mfa_enrolled_at FROM accounts WHERE id=$1 FOR UPDATE
 `
@@ -1193,6 +1302,33 @@ func (q *Queries) LockMagicLinkToken(ctx context.Context, db DBTX, arg LockMagic
 		&i.ExpiresAt,
 		&i.ConsumedAt,
 		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const lockPasswordChangeAccount = `-- name: LockPasswordChangeAccount :one
+SELECT id,email,status,abuse_hold_at,password_reset_revision,mfa_revision FROM accounts WHERE id=$1 FOR UPDATE
+`
+
+type LockPasswordChangeAccountRow struct {
+	ID                    pgtype.UUID
+	Email                 string
+	Status                string
+	AbuseHoldAt           pgtype.Timestamptz
+	PasswordResetRevision int64
+	MfaRevision           int64
+}
+
+func (q *Queries) LockPasswordChangeAccount(ctx context.Context, db DBTX, id pgtype.UUID) (LockPasswordChangeAccountRow, error) {
+	row := db.QueryRow(ctx, lockPasswordChangeAccount, id)
+	var i LockPasswordChangeAccountRow
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.Status,
+		&i.AbuseHoldAt,
+		&i.PasswordResetRevision,
+		&i.MfaRevision,
 	)
 	return i, err
 }
@@ -1654,6 +1790,91 @@ func (q *Queries) OperatorSummary(ctx context.Context, db DBTX, namespace string
 		return nil, err
 	}
 	return items, nil
+}
+
+const passwordChangeProof = `-- name: PasswordChangeProof :one
+SELECT a.id,a.email,a.status,a.abuse_hold_at,a.mfa_enrolled_at,a.mfa_required,
+    a.password_reset_revision,a.mfa_revision,coalesce(p.hash,'')::text AS hash,
+    (p.account_id IS NOT NULL)::boolean AS has_password
+FROM accounts a LEFT JOIN account_passwords p ON p.account_id=a.id WHERE a.id=$1
+`
+
+type PasswordChangeProofRow struct {
+	ID                    pgtype.UUID
+	Email                 string
+	Status                string
+	AbuseHoldAt           pgtype.Timestamptz
+	MfaEnrolledAt         pgtype.Timestamptz
+	MfaRequired           bool
+	PasswordResetRevision int64
+	MfaRevision           int64
+	Hash                  string
+	HasPassword           bool
+}
+
+// Snapshot proof state in one statement; expensive password verification and
+// hashing run without namespace/account locks. Locked revisions fence the result.
+func (q *Queries) PasswordChangeProof(ctx context.Context, db DBTX, id pgtype.UUID) (PasswordChangeProofRow, error) {
+	row := db.QueryRow(ctx, passwordChangeProof, id)
+	var i PasswordChangeProofRow
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.Status,
+		&i.AbuseHoldAt,
+		&i.MfaEnrolledAt,
+		&i.MfaRequired,
+		&i.PasswordResetRevision,
+		&i.MfaRevision,
+		&i.Hash,
+		&i.HasPassword,
+	)
+	return i, err
+}
+
+const passwordChangedAlertKeyReferences = `-- name: PasswordChangedAlertKeyReferences :many
+SELECT DISTINCT security_alert_key_id FROM platform_mail_producer_outbox
+WHERE namespace=$1 AND producer_id=$2 AND template='password_changed' AND state IN ('queued','claimed') AND expires_at>clock_timestamp()
+`
+
+type PasswordChangedAlertKeyReferencesParams struct {
+	Namespace  string
+	ProducerID string
+}
+
+func (q *Queries) PasswordChangedAlertKeyReferences(ctx context.Context, db DBTX, arg PasswordChangedAlertKeyReferencesParams) ([]string, error) {
+	rows, err := db.Query(ctx, passwordChangedAlertKeyReferences, arg.Namespace, arg.ProducerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var security_alert_key_id string
+		if err := rows.Scan(&security_alert_key_id); err != nil {
+			return nil, err
+		}
+		items = append(items, security_alert_key_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const passwordChangedAlertReady = `-- name: PasswordChangedAlertReady :one
+SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_constraint c
+    JOIN pg_catalog.pg_class t ON t.oid=c.conrelid JOIN pg_catalog.pg_namespace n ON n.oid=t.relnamespace
+    WHERE n.nspname=current_schema() AND t.relname='platform_mail_producer_outbox'
+      AND c.conname='platform_mail_producer_outbox_security_alert_check'
+      AND position('password_changed' in pg_catalog.pg_get_constraintdef(c.oid))>0)::boolean AS ready
+`
+
+func (q *Queries) PasswordChangedAlertReady(ctx context.Context, db DBTX) (bool, error) {
+	row := db.QueryRow(ctx, passwordChangedAlertReady)
+	var ready bool
+	err := row.Scan(&ready)
+	return ready, err
 }
 
 const passwordResetKeyReferences = `-- name: PasswordResetKeyReferences :many

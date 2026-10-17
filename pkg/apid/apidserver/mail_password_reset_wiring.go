@@ -26,6 +26,9 @@ func (s *server) queuePasswordReset(ctx context.Context, account state.Account, 
 }
 
 func (s *server) applyPasswordReset(ctx context.Context, hash []byte, phc string) (string, *api.Problem) {
+	if s.passwordChangedAlertRequested() {
+		return s.applyPasswordResetWithAlert(ctx, hash, phc)
+	}
 	if s.passwordResetCredentials != nil {
 		id, err := s.passwordResetCredentials.Redeem(ctx, hash, phc)
 		if err == nil {

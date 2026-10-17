@@ -57,15 +57,16 @@ type ReconciliationRecord struct {
 // Reconciler is an apid-owned, local operator capability. It has no sender,
 // listener, key material, admission writes, or route in the customer API.
 type Reconciler struct {
-	pool                    *pgxpool.Pool
-	namespace               string
-	enabled                 func() bool
-	verificationEnabled     func() bool
-	passwordResetEnabled    func() bool
-	magicLinkEnabled        func() bool
-	mfaRecoveryAlertEnabled func() bool
-	mfaDisabledAlertEnabled func() bool
-	mfaDisableEnabled       func() bool
+	pool                        *pgxpool.Pool
+	namespace                   string
+	enabled                     func() bool
+	verificationEnabled         func() bool
+	passwordResetEnabled        func() bool
+	magicLinkEnabled            func() bool
+	mfaRecoveryAlertEnabled     func() bool
+	mfaDisabledAlertEnabled     func() bool
+	passwordChangedAlertEnabled func() bool
+	mfaDisableEnabled           func() bool
 }
 
 func (s *Reconciler) WithVerification(enabled func() bool) *Reconciler {
@@ -89,6 +90,8 @@ func (s *Reconciler) templateEnabled(template string) bool {
 		return s.magicLinkEnabled != nil && s.magicLinkEnabled()
 	case MFADisableTemplate:
 		return s.mfaDisableEnabled != nil && s.mfaDisableEnabled()
+	case PasswordChangedAlertTemplate:
+		return s.passwordChangedAlertEnabled != nil && s.passwordChangedAlertEnabled()
 	case MFADisabledAlertTemplate:
 		return s.mfaDisabledAlertEnabled != nil && s.mfaDisabledAlertEnabled()
 	case MFARecoveryAlertTemplate:
@@ -253,4 +256,10 @@ func reconciliationError(err error) error {
 		return internalmail.ErrNotFound
 	}
 	return err
+}
+
+func (s *Reconciler) WithPasswordChangedAlert(enabled func() bool) *Reconciler {
+	copy := *s
+	copy.passwordChangedAlertEnabled = enabled
+	return &copy
 }

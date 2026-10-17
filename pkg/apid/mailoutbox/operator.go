@@ -26,6 +26,7 @@ Verification intents also require FAAS_INTERNAL_MAIL_VERIFICATION_OUTBOX_ENABLED
 Password-reset intents also require FAAS_INTERNAL_MAIL_PASSWORD_RESET_OUTBOX_ENABLED=1.
 Magic-link intents also require FAAS_INTERNAL_MAIL_MAGIC_LINK_OUTBOX_ENABLED=1.
 MFA disable requests also require FAAS_INTERNAL_MAIL_MFA_DISABLE_OUTBOX_ENABLED=1.
+Password changed alerts also require FAAS_INTERNAL_MAIL_PASSWORD_CHANGED_ALERT_OUTBOX_ENABLED=1.
 MFA disabled alerts also require FAAS_INTERNAL_MAIL_MFA_DISABLED_ALERT_OUTBOX_ENABLED=1.
 MFA recovery alerts also require FAAS_INTERNAL_MAIL_MFA_RECOVERY_ALERT_OUTBOX_ENABLED=1.
 First inspect mailctl outbox admission --id UUID on maild's private operator socket.
@@ -114,6 +115,7 @@ func RunOperator(ctx context.Context, args []string, getenv func(string) string,
 	reconciler = reconciler.WithPasswordReset(func() bool { return internalmail.PasswordResetOutboxEnabled(getenv) })
 	reconciler = reconciler.WithMagicLink(func() bool { return internalmail.MagicLinkOutboxEnabled(getenv) })
 	reconciler = reconciler.WithMFADisable(func() bool { return internalmail.MFADisableOutboxEnabled(getenv) })
+	reconciler = reconciler.WithPasswordChangedAlert(func() bool { return internalmail.PasswordChangedAlertOutboxEnabled(getenv) })
 	reconciler = reconciler.WithMFADisabledAlert(func() bool { return internalmail.MFADisabledAlertOutboxEnabled(getenv) })
 	reconciler = reconciler.WithMFARecoveryAlert(func() bool { return internalmail.MFARecoveryAlertOutboxEnabled(getenv) })
 	var record ReconciliationRecord
