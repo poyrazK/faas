@@ -32,6 +32,7 @@ on:
       - 'sdk/node/src/binding-client-runtime.ts'
       - 'sdk/node/src/secret-reload-runtime.ts'
       - 'sdk/node/test/postgres-pool*'
+      - 'sdk/node/test/restore-aware-postgres-pool.test.ts'
       - 'sdk/node/scripts/sync-binding-starters.mjs'
       - 'sdk/node/package*.json'
       - 'cmd/gregale/templates/rest-api-postgres/**'
