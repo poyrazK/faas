@@ -22,7 +22,8 @@ async function until(check, timeout = 10000) {
   }
 }
 
-test('real engine pool observations survive SQL saturation, counter resets and engine recovery', { skip: !enabled, timeout: 45000 }, async t => {
+for (const stallAdminProbe of [false, true]) {
+test('real engine pool observations survive SQL saturation, counter resets and engine recovery' + (stallAdminProbe ? ' with a stalled admin probe' : ''), { skip: !enabled, timeout: 45000 }, async t => {
   const runtime = pathToFileURL(process.env.DATA_API_RUNTIME_DIR + '/')
   const require = createRequire(new URL('package.json', runtime)), pg = require('pg')
   const { runtimeConfig, limits } = await import(new URL('config.mjs', runtime))
@@ -35,8 +36,10 @@ test('real engine pool observations survive SQL saturation, counter resets and e
   let owner, child, gateway
   t.after(async () => {
     if (gateway) { gateway.closeAllConnections(); await new Promise(resolve => gateway.close(resolve)) }
+    // Release blocked engine work before waiting for its process to exit.
+    if (owner) await owner.query('ROLLBACK')
     if (child && child.exitCode === null && child.signalCode === null) { child.kill(); await once(child, 'exit') }
-    if (owner) { await owner.query('ROLLBACK'); await owner.end() }
+    if (owner) await owner.end()
     await admin.query(`DROP DATABASE IF EXISTS "${database}" WITH (FORCE)`)
     await admin.query(`DROP ROLE IF EXISTS "${role}"`)
     await admin.end()
@@ -66,6 +69,7 @@ test('real engine pool observations survive SQL saturation, counter resets and e
     })
   }
   await startEngine()
+  t.diagnostic('pool fixture: engine ready')
   const records = []
   gateway = createServer(config, async token => ({ sub: token, exp: 9999999999 }), upstreamPort, readyPort, record => records.push(record))
   await new Promise(resolve => gateway.listen(0, '127.0.0.1', resolve))
@@ -80,18 +84,45 @@ test('real engine pool observations survive SQL saturation, counter resets and e
   const writes = ['first', 'second'].map(id => fetch(base + '/rest/v1/notes', { method: 'POST', headers: { Authorization: 'Bearer alice', 'Content-Type': 'application/json' }, body: JSON.stringify({ id, subject: 'alice' }) }))
   await until(async () => Number((await admin.query("SELECT count(*) FROM pg_stat_activity WHERE usename=$1 AND wait_event_type='Lock'", [role])).rows[0].count) === limits.pool)
   // The pinned admin handler checks SQL twice before serving every endpoint.
-  // Full saturation must therefore remain unknown within the caller's budget.
-  const waiter = fetch(engineAdmin + '/ready')
+  // Readiness fails under full saturation; metrics may finish or time out.
+  // The admin handler itself needs a SQL slot. Never await it indefinitely
+  // while this fixture owns the lock that prevents the slot from draining.
+  if (stallAdminProbe) {
+    const fetchNormally = globalThis.fetch
+    let stalled = false
+    t.mock.method(globalThis, 'fetch', (input, options) => {
+      if (input === engineAdmin + '/ready' && !stalled) {
+        stalled = true
+        return new Promise((resolve, reject) => {
+          options.signal.addEventListener('abort', () => reject(options.signal.reason), { once: true })
+        })
+      }
+      return fetchNormally(input, options)
+    })
+  }
+  const waiter = fetch(engineAdmin + '/ready', { signal: AbortSignal.timeout(limits.healthProbeMs) })
+    .then(async response => { await response.body?.cancel(); return response.status })
+    .catch(error => { if (error.name === 'TimeoutError') return null; throw error })
   const response = await fetch(base + '/healthz'), saturated = await response.json()
   assert.equal(response.status, 503)
   assert.equal(saturated.checks.engine, 'reachable')
   assert.equal(saturated.checks.database, 'unknown')
-  assert.equal(saturated.pool.state, 'unknown')
-  assert.equal(saturated.pool.reason, 'timeout')
-  assert.equal(saturated.pool.available, undefined)
+  // Acquisition failures may let the metrics handler finish just before the
+  // caller's deadline. Trust actual counters when present; never guess them
+  // when that handler remains blocked.
+  if (saturated.pool.state === 'observed') {
+    assert.equal(saturated.pool.capacity, limits.pool)
+    assert.equal(saturated.pool.available, 0)
+    assert.ok(Number.isSafeInteger(saturated.pool.waiting) && saturated.pool.waiting >= 0)
+  } else {
+    assert.equal(saturated.pool.state, 'unknown')
+    assert.equal(saturated.pool.reason, 'timeout')
+    assert.equal(saturated.pool.available, undefined)
+  }
   assert.ok(Number.isFinite(Date.parse(saturated.pool.checked_at)))
-  assert.notEqual((await waiter).status, 200)
+  assert.notEqual(await waiter, 200)
   assert.equal(Number((await admin.query('SELECT count(*) FROM pg_stat_activity WHERE usename=$1', [role])).rows[0].count), limits.pool, 'diagnostics did not open a SQL connection pool')
+  t.diagnostic('pool fixture: saturated probes finished; releasing SQL lock')
   await owner.query('COMMIT')
   for (const result of await Promise.all(writes)) { assert.equal(result.status, 201); await result.text() }
   // Health probes run readiness and metrics concurrently and can themselves
@@ -105,6 +136,7 @@ test('real engine pool observations survive SQL saturation, counter resets and e
   }, limits.queryMs + limits.healthProbeMs)
   assert.equal(drained.waiting, 0)
   assert.ok(drained.timeouts_total > 0)
+  t.diagnostic('pool fixture: SQL queue drained')
   let recoveredResponse, recovered
   await until(async () => {
     recoveredResponse = await fetch(base + '/healthz')
@@ -116,6 +148,7 @@ test('real engine pool observations survive SQL saturation, counter resets and e
   assert.deepEqual(await bob.json(), [])
   assert.equal((await owner.query('SELECT count(*) FROM api.notes')).rows[0].count, '2')
 
+  t.diagnostic('pool fixture: restarting engine')
   child.kill(); await once(child, 'exit')
   const stopped = await (await fetch(base + '/healthz')).json()
   assert.equal(stopped.pool.state, 'unknown')
@@ -129,3 +162,4 @@ test('real engine pool observations survive SQL saturation, counter resets and e
   assert.equal(restarted.pool.timeouts_total, 0)
   assert.doesNotMatch(JSON.stringify([healthy, saturated, drained, recovered, stopped, restarted, records]), /test-only|alice|bob|postgres:/)
 })
+}
