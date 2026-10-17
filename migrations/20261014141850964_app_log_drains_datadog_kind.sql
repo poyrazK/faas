@@ -1,6 +1,7 @@
 -- filename: 20261014141850964_app_log_drains_datadog_kind.sql
 
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 -- ADR-752: allow the datadog log-drain kind. apid and logdrain.New restrict
 -- its target to the supported Datadog logs intakes.

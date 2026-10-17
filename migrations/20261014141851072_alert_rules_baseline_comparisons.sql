@@ -1,6 +1,7 @@
 -- filename: 20261014141851072_alert_rules_baseline_comparisons.sql
 
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 -- ADR-744: baseline comparisons, where threshold is a multiplier of the app's
 -- usual value. apid restricts them to app-scoped request-metric rules.

@@ -1,4 +1,5 @@
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 -- ADR-745 slice 4: a custom_metric alert names one pushed metric
 -- (app_custom_metrics.name) and is app-scoped, webhook-only, and limited
 -- to windows the metric's Prometheus history can answer meaningfully.

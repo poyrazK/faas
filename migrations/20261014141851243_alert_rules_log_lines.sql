@@ -1,4 +1,5 @@
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 -- ADR-746: alert on guest log lines vmmd classified as error or warn.
 -- +goose StatementBegin
 DO $$

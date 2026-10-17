@@ -1,6 +1,7 @@
 -- filename: 20261014141851117_app_custom_metrics_kind.sql
 
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 -- ADR-745: OTLP ingestion stores cumulative counters alongside ADR-202 gauges.
 -- Existing rows are gauges. Counters are charted with rate() and never used

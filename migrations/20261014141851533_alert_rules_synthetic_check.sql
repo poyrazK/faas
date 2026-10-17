@@ -1,10 +1,10 @@
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 -- ADR-748 slice 3: alert rules on a synthetic check. synthetic_check_id is
 -- set exactly for the two check metrics, which are app-scoped; deleting
 -- the check deletes its rules.
 -- +goose StatementBegin
 ALTER TABLE alert_rules ADD COLUMN IF NOT EXISTS synthetic_check_id uuid REFERENCES synthetic_checks(id) ON DELETE CASCADE;
-CREATE INDEX IF NOT EXISTS alert_rules_synthetic_check_id_idx ON alert_rules (synthetic_check_id) WHERE synthetic_check_id IS NOT NULL;
 DO $$
 BEGIN
     -- Preserve a later migration's broader contract when replaying this one.

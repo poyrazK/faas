@@ -1,6 +1,7 @@
 -- filename: 20261014141851028_app_webhooks_datadog_delivery_format.sql
 
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 -- ADR-752: allow the datadog delivery format. apid and the webhook dispatcher
 -- restrict its target to the supported Datadog Events API endpoints.

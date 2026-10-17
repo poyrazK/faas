@@ -1,9 +1,9 @@
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 -- ADR-747 slice 3: alert rules on a customer SLO. slo_id is set exactly for
 -- the two SLO metrics, which are app-scoped; deleting the SLO deletes them.
 -- +goose StatementBegin
 ALTER TABLE alert_rules ADD COLUMN IF NOT EXISTS slo_id uuid REFERENCES app_slos(id) ON DELETE CASCADE;
-CREATE INDEX IF NOT EXISTS alert_rules_slo_id_idx ON alert_rules (slo_id) WHERE slo_id IS NOT NULL;
 DO $$
 BEGIN
     -- Preserve a later migration's broader contract when replaying this one.
