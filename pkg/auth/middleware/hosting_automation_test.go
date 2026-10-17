@@ -34,7 +34,7 @@ func TestHostingAutomationExactPathsAndOperations(t *testing.T) {
 			t.Fatal("denied", r)
 		}
 	}
-	denied := []struct{ method, path string }{{"GET", "/v1/account"}, {"GET", "/v1/apps"}, {"POST", root + "/promotions"}, {"PUT", root + "/suspension"}, {"DELETE", root}, {"DELETE", root + "/releases/" + id}, {"DELETE", root + "/previews/" + id}, {"POST", root + "/domains"}, {"POST", root + "/automation-credentials"}, {"GET", root + "/oidc-trusts"}, {"POST", root + "/oidc-trusts"}, {"DELETE", root + "/oidc-trusts/" + id}, {"POST", "/v1/internal/hosting/oidc/exchange"}, {"GET", root + "/history"}, {"GET", "/v1/internal/hosting/sites/" + id}, {"GET", root + "/releases/" + id}, {"GET", root + "/status/extra"}, {"POST", root + "/ci/" + id + "/preview/extra"}, {"GET", root + "/../" + id + "/status"}, {"GET", root + "/status%2fextra"}}
+	denied := []struct{ method, path string }{{"POST", root + "/ci-setup"}, {"GET", "/v1/account"}, {"GET", "/v1/apps"}, {"POST", root + "/promotions"}, {"PUT", root + "/suspension"}, {"DELETE", root}, {"DELETE", root + "/releases/" + id}, {"DELETE", root + "/previews/" + id}, {"POST", root + "/domains"}, {"POST", root + "/automation-credentials"}, {"GET", root + "/oidc-trusts"}, {"POST", root + "/oidc-trusts"}, {"DELETE", root + "/oidc-trusts/" + id}, {"POST", "/v1/internal/hosting/oidc/exchange"}, {"GET", root + "/history"}, {"GET", "/v1/internal/hosting/sites/" + id}, {"GET", root + "/releases/" + id}, {"GET", root + "/status/extra"}, {"POST", root + "/ci/" + id + "/preview/extra"}, {"GET", root + "/../" + id + "/status"}, {"GET", root + "/status%2fextra"}}
 	for _, r := range denied {
 		if HostingAutomationRequestAllowed(httptest.NewRequest(r.method, r.path, nil), key) {
 			t.Fatal("escaped scope", r)

@@ -433,3 +433,7 @@ The [retention guide](internal-frontend-hosting-retention.md) covers default-off
 GitHub jobs can optionally use [explicit site OIDC trust](internal-frontend-hosting-oidc.md) instead of a stored Gregale CI secret. This requires its own default-off flag.
 
 Read-only [deployment diagnostics](internal-frontend-hosting-diagnostics.md) explains retained site and CI intent, with explicit recovery guidance and a separate default-off flag.
+
+Guided internal GitHub setup is independently default-off. See
+[workflow generation and local preflight](internal-frontend-hosting-ci-setup.md)
+for reviewable downloads based on an existing immutable site trust.

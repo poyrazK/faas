@@ -19,6 +19,8 @@ import (
 )
 
 type testHost struct {
+	ciSetup                   bool
+	oidcStore                 state.HostingOIDCStore
 	diagnostics               bool
 	diagnosticReader          DiagnosticReader
 	oidc                      bool

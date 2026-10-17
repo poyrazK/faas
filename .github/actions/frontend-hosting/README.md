@@ -56,3 +56,7 @@ both. The job's repository IDs, branch, workflow, event and optional environment
 must match the binding. Pull request events are excluded. The CLI exchanges and
 renews short-lived stage/preview credentials before API calls while preserving
 the same run ID and original preview expiry. No credentials are printed or saved.
+
+For operator-generated workflows matching an existing trust, see
+[guided setup and local preflight](../../../docs/internal-frontend-hosting-ci-setup.md).
+Setup is independently default-off and does not install the CLI or perform GitHub writes.

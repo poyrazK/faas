@@ -269,3 +269,11 @@ run "diagnostics_api_default_off" {
     error_message = "Provider wiring must leave stored deployment diagnostics disabled."
   }
 }
+
+run "ci_setup_default_off" {
+  command = plan
+  assert {
+    condition     = output.apid_environment.FAAS_FRONTEND_HOSTING_CI_SETUP_ENABLED == "0"
+    error_message = "Guided GitHub setup must default off independently of serving and deployment."
+  }
+}

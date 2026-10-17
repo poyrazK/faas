@@ -36,6 +36,12 @@ func (s Service) Capabilities(w http.ResponseWriter, r *http.Request, acct state
 }
 
 func (s Service) extendCapabilities(r *http.Request, out *api.HostingCapabilities) {
+	if h, ok := s.Host.(CISetupHost); ok && h.HostingCISetupEnabled() {
+		if o, ok := s.Host.(OIDCHost); ok && o.HostingOIDCStore() != nil {
+			out.CISetupEnabled = true
+		}
+	}
+
 	if h, ok := s.Host.(OIDCHost); ok && h.HostingOIDCEnabled() && h.HostingOIDCStore() != nil && s.OIDCVerifier != nil {
 		if a, ok := s.Host.(AutomationHost); ok && a.HostingAutomationEnabled() && s.Host.HostingDurableRoutingEnabled() {
 			out.OIDCEnabled = true

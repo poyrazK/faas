@@ -11370,6 +11370,18 @@ const HostingCIWorkflowTimeout = 20 * time.Minute
 
 const HostingDiagnosticsTimeout = 15 * time.Second
 
+const (
+	HostingCISetupCronMaxBytes      = 100
+	HostingCISetupTimeout           = 15 * time.Second
+	HostingCISetupRequestMaxBytes   = 128 << 10
+	HostingCISetupWorkflowMaxBytes  = 64 << 10
+	HostingCISetupPathMaxBytes      = 256
+	HostingCISetupCLIMaxBytes       = 256 << 20
+	HostingCISetupJobTimeoutMinutes = 30
+	HostingCISetupYAMLMaxNodes      = 4096
+	HostingCISetupYAMLMaxDepth      = 32
+)
+
 // Automatic retirement is an internal opt-in, separate from physical cleanup.
 const (
 	HostingRetentionAgeDefault   = 24 * time.Hour

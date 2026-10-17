@@ -102,3 +102,16 @@ func TestHostingDiagnosticsNeedsIsolatedProviderConfiguration(t *testing.T) {
 		}
 	}
 }
+
+func TestHostingCISetupNeedsIsolatedProviderConfiguration(t *testing.T) {
+	for _, value := range []string{"1", "true"} {
+		if _, err := Load(func(key string) string {
+			if key == "FAAS_FRONTEND_HOSTING_CI_SETUP_ENABLED" {
+				return value
+			}
+			return ""
+		}, "gregale.dev"); err == nil {
+			t.Fatal("setup without configured internal hosting")
+		}
+	}
+}

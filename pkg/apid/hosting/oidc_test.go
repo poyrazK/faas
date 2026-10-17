@@ -21,8 +21,13 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func (h *testHost) HostingOIDCEnabled() bool                 { return h.oidc }
-func (h *testHost) HostingOIDCStore() state.HostingOIDCStore { return h.store }
+func (h *testHost) HostingOIDCEnabled() bool { return h.oidc }
+func (h *testHost) HostingOIDCStore() state.HostingOIDCStore {
+	if h.oidcStore != nil {
+		return h.oidcStore
+	}
+	return h.store
+}
 func (h *testHost) HostingOIDCAccount(ctx context.Context, id string) (state.Account, error) {
 	return h.store.AccountByID(ctx, id)
 }
