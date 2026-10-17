@@ -705,7 +705,9 @@ func TestTemplateDocsMatchTemplatePurpose(t *testing.T) {
 		"secret-reload-node": secretsDocsURL,
 		"customer-platform":  deployFromSourceDocsURL,
 	}
-	for _, name := range templates.Names {
+	// Unlisted templates (operator previews, dark launches such as auth) have
+	// no customer guide to point at.
+	for _, name := range templates.ListedNames() {
 		got := docsURLForTemplate(name)
 		if got == "" || got == cliDocsURL {
 			t.Errorf("docsURLForTemplate(%q) = %q, want a template-specific guide", name, got)

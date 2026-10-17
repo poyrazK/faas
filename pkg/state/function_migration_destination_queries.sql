@@ -1,4 +1,4 @@
--- adr: 1577
+-- adr: 1664
 -- name: RecordFunctionMigrationCapture :execrows
 UPDATE function_migration_sources SET capture_result=sqlc.arg(capture)::jsonb,phase='prepared'
 WHERE instance_id=sqlc.arg(instance_id)::uuid AND lease_token=sqlc.arg(lease_token)::text
@@ -24,7 +24,7 @@ VALUES(sqlc.arg(token)::uuid,sqlc.arg(instance_id)::uuid,sqlc.arg(lease_token)::
 UPDATE function_migration_destinations SET phase=sqlc.arg(phase)::text,receipt=sqlc.narg(receipt)::jsonb
 WHERE token=sqlc.arg(token)::uuid AND phase=sqlc.arg(expected_phase)::text;
 
--- adr: 1578
+-- adr: 1665
 -- name: ListRestartFunctionMigrationDestinations :many
 SELECT d.* FROM function_migration_destinations d
 JOIN migration_leases m ON m.instance_id=d.instance_id AND m.lease_token=d.lease_token

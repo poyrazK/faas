@@ -2,12 +2,14 @@ package fcvm
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
 
 	"github.com/onebox-faas/faas/pkg/netns"
+	"github.com/onebox-faas/faas/pkg/rehearsalrecorder"
 )
 
 // A stop reservation closes the gap between joining an operation and finding
@@ -46,11 +48,12 @@ func (m *Manager) finishInstanceStop(instance string, stop *instanceStop) {
 // Failed boot cleanup has no live Instance. Retain the full resource identity
 // independently, so Destroy can retry and the allocator cannot recycle its slot.
 type instanceCleanup struct {
-	mu            sync.Mutex
-	lease         Lease
-	net           netns.Config
-	workloadNames []string
-	complete      bool
+	commandIdentity *rehearsalrecorder.Identity
+	mu              sync.Mutex
+	lease           Lease
+	net             netns.Config
+	workloadNames   []string
+	complete        bool
 	// failed is set when a cleanup attempt returned an error. An entry is
 	// also present while a teardown is still running (DestroyWithExport
 	// retains it before waiting for the guest and exporting), and only
@@ -69,12 +72,20 @@ func (m *Manager) retainCleanup(lease Lease, nc netns.Config, workloadNames []st
 		m.pendingCleanup = make(map[string]*instanceCleanup)
 	}
 	retained := &instanceCleanup{lease: lease, net: nc, workloadNames: append([]string(nil), workloadNames...)}
+	if session := m.rehearsalRecorders[lease.Instance]; session != nil {
+		if identity, command := session.CommandIdentity(); command {
+			retained.commandIdentity = &identity
+		}
+	}
 	m.pendingCleanup[lease.Instance] = retained
 	return retained
 }
 
 func (m *Manager) cleanup(ctx context.Context, lease Lease, nc netns.Config, workloadNames []string) error {
 	retained := m.retainCleanup(lease, nc, workloadNames)
+	if !m.rehearsalRecorderRetiring(lease.Instance) {
+		m.stopRehearsalRecorder(lease.Instance)
+	}
 	retained.mu.Lock()
 	defer retained.mu.Unlock()
 	if retained.complete {
@@ -152,6 +163,15 @@ func (m *Manager) cleanupOwned(ctx context.Context, retained *instanceCleanup) e
 	// also removes the jail, image mounts, materialised files and cgroup scope.
 	if err := m.vmm.Kill(ctx, lease); err != nil {
 		return fmt.Errorf("cleanup %s: kill vm: %w", lease.Instance, err)
+	}
+	if retained.commandIdentity != nil {
+		store, ok := m.rehearsalNetworkPolicies.(rehearsalrecorder.CommandStore)
+		if !ok {
+			return errors.New("contained command network revocation unavailable")
+		}
+		if err := store.FenceScenarioCommandNetwork(ctx, *retained.commandIdentity); err != nil {
+			return fmt.Errorf("revoke command network before lease release: %w", err)
+		}
 	}
 	if len(retained.workloadNames) > 0 {
 		parent := ParentCgroupFor(lease.Plan)

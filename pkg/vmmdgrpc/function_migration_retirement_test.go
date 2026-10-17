@@ -1,6 +1,6 @@
 package vmmdgrpc
 
-// adr: 1577
+// adr: 1664
 // Current rollback authority permits only pinned physical retirement.
 
 import (

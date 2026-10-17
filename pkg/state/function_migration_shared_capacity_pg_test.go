@@ -2,7 +2,7 @@
 
 package state
 
-// adr: 1577. PostgreSQL retains both protocols' physical claims independently of ledgers.
+// adr: 1664. PostgreSQL retains both protocols' physical claims independently of ledgers.
 
 import "testing"
 

@@ -136,3 +136,54 @@ func TestAuthConfigSSOKeepsAnExistingSAMLKey(t *testing.T) {
 		t.Fatal("an existing SAML key was replaced, which breaks every identity provider's trust")
 	}
 }
+
+func TestAuthSSOSCIMToken(t *testing.T) {
+	resetJSONEnv(t)
+	authIssuerServer(t, func(http.ResponseWriter, *http.Request) bool { return false })
+	key := "gaak_" + strings.Repeat("k", 43)
+	var seen []string
+	old := authAdminHTTPClient
+	authAdminHTTPClient = &http.Client{Transport: authRoundTrip(func(r *http.Request) (*http.Response, error) {
+		seen = append(seen, r.Method+" "+r.URL.Path)
+		recorder := httptest.NewRecorder()
+		if r.Method == http.MethodPost {
+			recorder.WriteHeader(http.StatusCreated)
+			writeJSONTest(recorder, map[string]any{"token": "gscim_secret", "scim_url": "https://shop-auth.gregale.app/scim/v2"})
+		} else {
+			writeJSONTest(recorder, map[string]any{"revoked": true})
+		}
+		return recorder.Result(), nil
+	})}
+	t.Cleanup(func() { authAdminHTTPClient = old })
+	oldIn := osStdin
+	t.Cleanup(func() { osStdin = oldIn })
+	out := captureAuthStdout(t)
+	provider := "6a1b2c3d-0000-4000-8000-000000000001"
+	osStdin = strings.NewReader(key + "\n")
+	if code := cmdAuth([]string{"sso", "scim-token", "shop-auth", provider, "--admin-key-stdin"}); code != 0 {
+		t.Fatalf("scim-token = %d", code)
+	}
+	osStdin = strings.NewReader(key + "\n")
+	if code := cmdAuth([]string{"sso", "scim-token", "shop-auth", provider, "--revoke", "--admin-key-stdin"}); code != 0 {
+		t.Fatalf("revoke = %d", code)
+	}
+	want := []string{"POST /admin/v1/sso/" + provider + "/scim-token", "DELETE /admin/v1/sso/" + provider + "/scim-token"}
+	if strings.Join(seen, ",") != strings.Join(want, ",") || !strings.Contains(out.String(), "gscim_secret") || !strings.Contains(out.String(), "/scim/v2") {
+		t.Fatalf("requests %v output %s", seen, out)
+	}
+	if code := cmdAuth([]string{"sso", "scim-token", "shop-auth", provider, "--domains", "acme.com"}); code == 0 {
+		t.Fatal("scim-token accepted provider settings")
+	}
+}
+
+func TestAuthConfigOrganizationSSO(t *testing.T) {
+	resetJSONEnv(t)
+	sealed, _, _ := authSettingsWorld(t, []string{"AUTH_SAML_PRIVATE_KEY"}, nil)
+	captureAuthStdout(t)
+	if code := cmdAuth([]string{"config", "shop-auth", "--sso", "on", "--org-sso", "on"}); code != 0 || sealed["AUTH_SSO"] != "1" || sealed["AUTH_ORG_SSO"] != "1" {
+		t.Fatalf("config = %d, sealed %v", code, sortedKeys(sealed))
+	}
+	if code := cmdAuth([]string{"config", "shop-auth", "--org-sso", "off"}); code != 0 || sealed["AUTH_ORG_SSO"] != "0" {
+		t.Fatalf("off = %d, sealed %v", code, sortedKeys(sealed))
+	}
+}

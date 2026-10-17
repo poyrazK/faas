@@ -317,7 +317,10 @@ func (m *Manager) QuietResume(ctx context.Context, instance string) error {
 	}
 	started := time.Now()
 	resumeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), quietVMMTimeout)
-	err := m.vmm.ResumeVM(resumeCtx, lease)
+	err := m.ensureRehearsalNetwork(resumeCtx, inst)
+	if err == nil {
+		err = m.vmm.ResumeVM(resumeCtx, lease)
+	}
 	cancel()
 	if err != nil {
 		m.quietMetrics.observeResumeError()

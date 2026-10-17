@@ -1,6 +1,6 @@
 package fcvm
 
-// adr: 1577
+// adr: 1664
 // Injected process/load witnesses are portable, not native acceptance.
 
 import (
@@ -98,6 +98,22 @@ func TestFunctionDestinationHostReadyCommitAndDuplicate(t *testing.T) {
 		t.Fatal("rollback destroyed committed destination")
 	}
 }
+
+func TestFunctionDestinationRejectsRehearsalWakeBeforeNetworkSetup(t *testing.T) {
+	m, v, req, _ := functionDestinationHostFixture(t)
+	if _, _, err := m.AdoptFunctionMigrationDestination(t.Context(), req, allowFunctionDestination); err != nil {
+		t.Fatal(err)
+	}
+	bypass := req.Request
+	bypass.RehearsalRunID = uuid.NewString()
+	if _, err := m.Wake(t.Context(), bypass); !errors.Is(err, runtimeadmission.ErrReplay) {
+		t.Fatalf("unpublished destination reached rehearsal setup: %v", err)
+	}
+	if v.loads != 1 || v.bootCount != 0 {
+		t.Fatal("rejected rehearsal wake replayed physical work")
+	}
+}
+
 func TestFunctionDestinationHostFailuresNeverFallbackOrReplay(t *testing.T) {
 	for _, scenario := range []string{"load", "probe-or-ACK", "post-restore-policy", "cleanup"} {
 		t.Run(scenario, func(t *testing.T) {

@@ -1,6 +1,6 @@
 package state
 
-// adr: 1578
+// adr: 1665
 // Native consumption is simulated; PostgreSQL transactions are real in Pg.
 
 import (

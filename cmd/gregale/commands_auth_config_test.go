@@ -362,3 +362,38 @@ func TestAuthConfigPhoneSignIn(t *testing.T) {
 		}
 	}
 }
+
+func TestAuthConfigSMSCountries(t *testing.T) {
+	resetJSONEnv(t)
+	sealed, removed, _ := authSettingsWorld(t, nil, nil)
+	captureAuthStdout(t)
+	if code := cmdAuth([]string{"config", "shop-auth", "--sms-countries", "+44,1"}); code != 0 || sealed["AUTH_SMS_COUNTRIES"] != "44,1" {
+		t.Fatalf("countries = %d, sealed %v", code, sealed)
+	}
+	if code := cmdAuth([]string{"config", "shop-auth", "--sms-countries", "all"}); code != 0 || !slices.Contains(*removed, "AUTH_SMS_COUNTRIES") {
+		t.Fatalf("all = %d, removed %v", code, *removed)
+	}
+	if code := cmdAuth([]string{"config", "shop-auth", "--sms-countries", "uk"}); code == 0 {
+		t.Fatal("accepted a country name")
+	}
+}
+
+func TestAuthConfigMoreMFA(t *testing.T) {
+	resetJSONEnv(t)
+	sealed, _, _ := authSettingsWorld(t, nil, nil)
+	captureAuthStdout(t)
+	if code := cmdAuth([]string{"config", "shop-auth", "--mfa-phone", "on", "--recovery-codes", "on"}); code != 0 {
+		t.Fatalf("config = %d", code)
+	}
+	for _, key := range []string{"GOTRUE_MFA_PHONE_ENROLL_ENABLED", "GOTRUE_MFA_PHONE_VERIFY_ENABLED", "GOTRUE_MFA_RECOVERY_CODES_ENROLL_ENABLED", "GOTRUE_MFA_RECOVERY_CODES_VERIFY_ENABLED"} {
+		if sealed[key] != "true" {
+			t.Fatalf("%s = %q", key, sealed[key])
+		}
+	}
+	if code := cmdAuth([]string{"config", "shop-auth", "--mfa-phone", "maybe"}); code == 0 {
+		t.Fatal("accepted a value other than on or off")
+	}
+	if got := authMFASummary(authPublicSettings{}); got != "off (enrolled users keep verifying)" {
+		t.Fatalf("summary = %q", got)
+	}
+}

@@ -10,7 +10,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// adr: 1577
+// adr: 1664
 func TestFunctionDestinationPg(t *testing.T) {
 	t.Run("first claim serialization", functionDestinationFirstClaimSerialization)
 	t.Run("capacity", func(t *testing.T) {

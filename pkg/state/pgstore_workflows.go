@@ -955,7 +955,7 @@ func (s *PgStore) GetWorkflowStepAttempts(ctx context.Context, runID, stepName s
 		attempt.Effects = append(attempt.Effects, api.OperationEffectRecord{
 			ID: effect.ID, Name: effect.Name, Generation: effect.Generation,
 			WebhookID: effect.WebhookID, DeliveryID: effect.DeliveryID, Type: effect.Type,
-			Status: effect.Status, Attempt: int(effect.Attempt), LastError: effect.LastError,
+			Status: effect.Status, Attempt: int(effect.Attempt), LastError: effect.LastError, RehearsalRunID: effect.RehearsalRunID,
 		})
 	}
 	return attempts, nil
