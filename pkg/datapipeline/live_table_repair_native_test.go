@@ -27,11 +27,21 @@ func assertNativeLiveTableRepair(t *testing.T, ctx context.Context, store *Postg
 	}
 	wait := func(condition func(Pipeline) bool) {
 		t.Helper()
+		var verifiedRows int64
 		for until := time.Now().Add(time.Minute); ; {
 			p = tick()
 			v := get()
 			if condition(v) {
 				return
+			}
+			// A 100k-row proof spans bounded ranges and native replication
+			// acknowledgements. Bound inactivity, rather than total scan time,
+			// so a slower runner can finish while rows keep advancing. The
+			// enclosing native test context still bounds the whole journey.
+			if progress := v.VerificationProgress; progress != nil && progress.State == "running" && progress.Rows > verifiedRows {
+				verifiedRows = progress.Rows
+				until = time.Now().Add(time.Minute)
+				t.Logf("live repair verification advanced: rows=%d phase=%s", progress.Rows, progress.Phase)
 			}
 			if p.State == "resync_required" || time.Now().After(until) {
 				t.Fatalf("live repair stalled: %+v plan=%+v verification=%+v", p, v.SchemaChange, v.VerificationProgress)
