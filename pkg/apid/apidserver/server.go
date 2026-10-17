@@ -20,6 +20,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/appevents"
 	"github.com/onebox-faas/faas/pkg/apid/automationconsole"
 	"github.com/onebox-faas/faas/pkg/apid/billingruns"
+	"github.com/onebox-faas/faas/pkg/apid/ciapi"
 	"github.com/onebox-faas/faas/pkg/apid/consumerbilling"
 	"github.com/onebox-faas/faas/pkg/apid/consumercontrols"
 	"github.com/onebox-faas/faas/pkg/apid/consumercredits"
@@ -44,6 +45,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/authz"
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/bindinghash"
+	"github.com/onebox-faas/faas/pkg/ci"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/devbridge"
 	"github.com/onebox-faas/faas/pkg/events"
@@ -82,6 +84,10 @@ import (
 // live socket-dialed client.
 type server struct {
 	dataRepair                             repairapi.Managed
+	ciConfig                               ci.Config
+	ciBlobs                                *ci.ManagedBlobs
+	ciRuntimeOrigin                        string
+	ciHealthMetrics                        *ci.HealthMetrics
 	hostingConfig                          *hosting.Config
 	hostingMetrics                         *hostingapi.Metrics
 	hosting                                hostingapi.Service
@@ -553,6 +559,7 @@ const anonymousAccountLabel = "anonymous"
 // through drainFlusher/flushOne).
 func (s *server) WithOpsMetrics(ctx context.Context, ops *wire.OpsMetrics) *server {
 	s.ops = ops
+	s.configureInternalCIHealthMetrics(ctx)
 	if ops == nil {
 		s.domainVerificationMetrics = nil
 		s.metricsDiscoveryMetrics = nil
@@ -1362,6 +1369,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/apps/{slug}/data-repair/operations/{id}/replace", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireSameOrigin(s.dataRepair.Replace)))))
 	mux.HandleFunc("POST /v1/apps/{slug}/data-repair/operations/{id}/resolve", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireSameOrigin(s.dataRepair.Resolve)))))
 	mux.HandleFunc("POST /v1/apps/{slug}/data-repair/operations/{id}/{action}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireSameOrigin(s.dataRepair.Action)))))
+	s.registerInternalCI(mux)
+	s.registerInternalCIRuntime(mux)
 	mux.HandleFunc("POST /integrations/slack/issues/{app_id}", s.issueSlackInteractionHandler)
 	mux.HandleFunc("POST /integrations/slack/actions", s.issueSlackManagedActions)
 	mux.HandleFunc("POST /integrations/slack/events", s.issueSlackManagedEvents)
@@ -4645,7 +4654,9 @@ func (s *server) handler() http.Handler {
 	// + JSON so the gate is unconditionally true.
 	return middleware.RequestID(httpsec.Static(httpsec.Nonce(
 		func(*http.Request) bool { return true },
-		s.observeWrap(s.hosting.HideDisabled(operation.OperationCustomerCORS(apiContractHandler(mux, s.durable.Hidden)))),
+		s.observeWrap(s.hosting.HideDisabled(operation.OperationCustomerCORS(ciapi.HideDisabledRoutes(
+			func() ci.Config { return s.ciConfig }, apiContractHandler(mux, s.durable.Hidden),
+		)))),
 	)))
 }
 

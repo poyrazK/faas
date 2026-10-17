@@ -305,6 +305,10 @@ from .app_task_response_status import AppTaskResponseStatus
 from .app_trusted_signer_list_response import AppTrustedSignerListResponse
 from .app_usage_summary_response import AppUsageSummaryResponse
 from .app_usage_summary_response_source import AppUsageSummaryResponseSource
+from .app_wake_history_page import AppWakeHistoryPage
+from .app_wake_history_page_count_scope import AppWakeHistoryPageCountScope
+from .app_wake_history_page_mode import AppWakeHistoryPageMode
+from .app_wake_history_page_source_status import AppWakeHistoryPageSourceStatus
 from .app_wake_response import AppWakeResponse
 from .app_wake_timeline_response import AppWakeTimelineResponse
 from .app_wake_timeline_response_trigger_class_histogram import AppWakeTimelineResponseTriggerClassHistogram
@@ -1843,6 +1847,7 @@ from .get_app_request_analytics_timeseries_group_by import GetAppRequestAnalytic
 from .get_app_request_analytics_timeseries_method import GetAppRequestAnalyticsTimeseriesMethod
 from .get_app_routes_scope import GetAppRoutesScope
 from .get_app_slo_window import GetAppSLOWindow
+from .get_app_wake_timeline_pagination import GetAppWakeTimelinePagination
 from .get_apps_metrics_range import GetAppsMetricsRange
 from .get_build_sbom_response_200 import GetBuildSbomResponse200
 from .get_builds_status import GetBuildsStatus
@@ -2228,6 +2233,7 @@ from .list_tenant_surfaces_response import ListTenantSurfacesResponse
 from .list_tenant_workflow_schedules_response import ListTenantWorkflowSchedulesResponse
 from .list_trigger_dead_letter_response import ListTriggerDeadLetterResponse
 from .list_trigger_records_response import ListTriggerRecordsResponse
+from .list_wake_timeline_pagination import ListWakeTimelinePagination
 from .list_workflow_callbacks_response import ListWorkflowCallbacksResponse
 from .list_workflow_resumes_response import ListWorkflowResumesResponse
 from .list_workflow_runs_response import ListWorkflowRunsResponse
@@ -4898,6 +4904,8 @@ from .wake_timeline_json_row import WakeTimelineJSONRow
 from .wake_timeline_json_row_kind import WakeTimelineJSONRowKind
 from .wake_timeline_json_row_tier import WakeTimelineJSONRowTier
 from .wake_timeline_json_row_trigger_class import WakeTimelineJSONRowTriggerClass
+from .wake_timeline_page import WakeTimelinePage
+from .wake_timeline_page_mode import WakeTimelinePageMode
 from .wake_timeline_response import WakeTimelineResponse
 from .webhook_automation_binding_response import WebhookAutomationBindingResponse
 from .webhook_automation_binding_response_filter import WebhookAutomationBindingResponseFilter
@@ -5556,6 +5564,10 @@ __all__ = (
     "AppTrustedSignerListResponse",
     "AppUsageSummaryResponse",
     "AppUsageSummaryResponseSource",
+    "AppWakeHistoryPage",
+    "AppWakeHistoryPageCountScope",
+    "AppWakeHistoryPageMode",
+    "AppWakeHistoryPageSourceStatus",
     "AppWakeResponse",
     "AppWakeTimelineResponse",
     "AppWakeTimelineResponseTriggerClassHistogram",
@@ -6920,6 +6932,7 @@ __all__ = (
     "GetAppRoutesScope",
     "GetAppSLOWindow",
     "GetAppsMetricsRange",
+    "GetAppWakeTimelinePagination",
     "GetBuildSbomResponse200",
     "GetBuildsStatus",
     "GetDeploymentOpenAPIDocResponse200",
@@ -7262,6 +7275,7 @@ __all__ = (
     "ListTenantWorkflowSchedulesResponse",
     "ListTriggerDeadLetterResponse",
     "ListTriggerRecordsResponse",
+    "ListWakeTimelinePagination",
     "ListWorkflowCallbacksResponse",
     "ListWorkflowResumesResponse",
     "ListWorkflowRunsResponse",
@@ -9712,6 +9726,8 @@ __all__ = (
     "WakeTimelineJSONRowKind",
     "WakeTimelineJSONRowTier",
     "WakeTimelineJSONRowTriggerClass",
+    "WakeTimelinePage",
+    "WakeTimelinePageMode",
     "WakeTimelineResponse",
     "WebhookAutomationBindingResponse",
     "WebhookAutomationBindingResponseFilter",
