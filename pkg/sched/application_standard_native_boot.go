@@ -71,22 +71,20 @@ func (e *Engine) createRuntimeWithStandards(ctx context.Context, nodeID, instanc
 			ctx = wire.WithContext(ctx, fields)
 		}
 	}
+	runID, err := e.rehearsalNetworkRun(ctx, spec.AppID)
+	if err != nil {
+		return nil, err
+	}
+	spec.RehearsalRunID = runID
 	capture, err := e.capturedStandardRuntime(ctx, spec.AppID, instanceID)
 	if err != nil {
 		return nil, applicationStandardRuntimeProblem(err)
 	}
+	if capture.Managed && runID != "" {
+		return nil, errors.New("rehearsal containment does not yet support managed native admission")
+	}
 	if !capture.Managed {
-		if snap == nil {
-			return e.vmm.CreateColdBoot(ctx, nodeID, instanceID, spec)
-		}
-		if !paused {
-			return e.vmm.CreateFromSnapshot(ctx, nodeID, instanceID, spec, *snap)
-		}
-		vmm, ok := e.vmm.(PausedRestoreVMM)
-		if !ok {
-			return nil, runtimeadmission.ErrUnavailable
-		}
-		return vmm.CreatePausedFromSnapshot(ctx, nodeID, instanceID, spec, *snap)
+		return e.createRehearsalCheckedRuntime(ctx, nodeID, instanceID, spec, snap, paused)
 	}
 	native, ok := e.vmm.(standardNativeRuntimeVMM)
 	if !ok {

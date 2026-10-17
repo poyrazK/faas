@@ -100,6 +100,9 @@ func (m *Manager) BootEnvironmentQualificationJob(ctx context.Context, frame sta
 	if err := m.checkFinancialComputeBypass(ctx, frame.AppID); err != nil {
 		return nil, err
 	}
+	if err := m.rejectRehearsalExecution(ctx, frame.AppID); err != nil {
+		return nil, err
+	}
 	j, err := m.qualificationJournal(frame)
 	if err != nil {
 		return nil, err
@@ -159,6 +162,9 @@ type nativeQualificationRestoreVMM interface {
 // which may cold-boot on a miss and publishes through serving indexes.
 func (m *Manager) RestoreEnvironmentQualification(ctx context.Context, frame state.EnvironmentQualificationExecution, req WakeRequest) (_ *Instance, err error) {
 	if err := m.checkFinancialComputeBypass(ctx, req.AppID); err != nil {
+		return nil, err
+	}
+	if err := m.rejectRehearsalExecution(ctx, frame.AppID); err != nil {
 		return nil, err
 	}
 	j, err := m.qualificationRestoreJournal(frame)
@@ -348,6 +354,9 @@ func isolateQualificationJobNetwork(nc netns.Config) netns.Config {
 // physical generation. Schedd supplies the frozen workload payload; vmmd
 // verifies its placement, artifact and guest reservation at this boundary.
 func (m *Manager) WakeEnvironmentQualification(ctx context.Context, frame state.EnvironmentQualificationExecution, req WakeRequest) (*Instance, error) {
+	if err := m.rejectRehearsalExecution(ctx, frame.AppID); err != nil {
+		return nil, err
+	}
 	j, err := m.qualificationJournal(frame)
 	if err != nil {
 		return nil, err

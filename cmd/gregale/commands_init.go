@@ -157,7 +157,7 @@ func runCmdInitWithSecrets(tpl, dest string, deploy bool, name, secretsFile stri
 	// We use Exists (which wraps NameIsValid + Names membership) so a
 	// bad flag like "--template ../../etc/passwd" is rejected before we
 	// touch the embed FS.
-	if !templates.Exists(tpl) {
+	if !templateAvailable(tpl) {
 		PrintFail(stderr, "unknown --template %q (known: %s)",
 			tpl, strings.Join(templates.ListedNames(), ", "))
 		return 1
@@ -277,8 +277,6 @@ func docsURLForTemplate(name string) string {
 		return "https://gregale.dev/docs/durable-entity-development"
 	case "data-api", "data-api-starter", "data-api-teams", "data-api-support-console":
 		return "https://gregale.dev/docs/data-api"
-	case "auth":
-		return "https://gregale.dev/docs/application-auth"
 	case "mcp-node", "mcp-go", "mcp-python":
 		return "https://gregale.dev/docs/mcp"
 	case "customer-operation-export", "customer-operation-job-export", "customer-operation-workflow-export":

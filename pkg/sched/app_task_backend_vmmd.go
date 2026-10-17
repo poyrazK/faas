@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/onebox-faas/faas/pkg/apptaskproto"
+	"github.com/onebox-faas/faas/pkg/rehearsalcommand"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -18,6 +19,7 @@ type ResolvedAppTaskRuntime struct {
 	Spec    AppTaskRestoreSpec
 	release func()
 	ready   func(context.Context) error
+	publish func(context.Context, *AppTaskRestoreOutcome) error
 }
 
 type AppTaskRuntimeResolver func(context.Context, AppTaskRestoreRequest) (ResolvedAppTaskRuntime, error)
@@ -89,6 +91,21 @@ func (b *RoutedVmmdAppTaskBackend) Restore(ctx context.Context, request AppTaskR
 			return nil, errors.Join(err, cleanupErr)
 		}
 	}
+	if resolved.Spec.App.RehearsalRunID != "" {
+		var publishErr error
+		if resolved.publish == nil {
+			publishErr = errors.New("contained command network publisher unavailable")
+		} else {
+			publishErr = resolved.publish(ctx, outcome)
+		}
+		if publishErr != nil {
+			cleanupErr := destroyRestoredAppTask(ctx, b.router, resolved.NodeID, request.ID)
+			if cleanupErr == nil && resolved.release != nil {
+				resolved.release()
+			}
+			return nil, errors.Join(publishErr, cleanupErr)
+		}
+	}
 	return &routedVmmdAppTaskSession{
 		router: b.router, nodeID: resolved.NodeID, instance: outcome.Instance, release: resolved.release,
 	}, nil
@@ -114,6 +131,9 @@ func (s *routedVmmdAppTaskSession) Execute(ctx context.Context, request AppTaskE
 		Version: apptaskproto.Version, TaskID: s.instance,
 		Command: append([]string(nil), request.Command...), CommandShell: request.CommandShell,
 		TimeoutSeconds: timeoutSeconds, MaxOutputBytes: request.MaxOutputBytes,
+	}
+	if rehearsalcommand.IsCommand(wireReq.Command) {
+		wireReq.Version = apptaskproto.RehearsalVersion
 	}
 	if err := wireReq.Validate(); err != nil {
 		return AppTaskOutcome{}, err

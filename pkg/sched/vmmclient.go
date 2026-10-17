@@ -431,6 +431,7 @@ type VMInstanceStat struct {
 // Empty slice = no allowlist rule emitted in the per-netns forward chain
 // (current behaviour preserved).
 type AppSpec struct {
+	RehearsalRunID string
 	// Migration evidence stays in schedd; no receipt values enter the protobuf
 	// envelope. The flat APIEnv/sealed inputs already carry the boot payload.
 	migrationRuntime     *migrationRuntimeInputs
@@ -609,6 +610,7 @@ type SnapshotBytes struct {
 // side; we keep the wire shape as a structpb.Struct here so the
 // proto side stays narrow.
 type WakeOutcome struct {
+	RehearsalRunID string
 	// Populated only by CreateAdmittedRuntime after exact receipt validation.
 	RuntimeAdmissionReceipt *runtimeadmission.Receipt
 
@@ -712,7 +714,11 @@ func (c *VMMClient) CreateColdBoot(ctx context.Context, instance string, app App
 	// proto field is the documentation seam.
 	fields, _ := wire.FromContext(ctx)
 	ctx = wire.WithCorrelationOutgoing(ctx, fields)
-	resp, err := c.cli.CreateColdBoot(ctx, &vmmdpb.CreateColdBootRequest{
+	boot := c.cli.CreateColdBoot
+	if app.RehearsalRunID != "" {
+		boot = c.cli.CreateRehearsalColdBoot
+	}
+	resp, err := boot(ctx, &vmmdpb.CreateColdBootRequest{
 		Instance:  instance,
 		App:       app.toProto(),
 		Plan:      string(app.Plan),
@@ -721,6 +727,9 @@ func (c *VMMClient) CreateColdBoot(ctx context.Context, instance string, app App
 	})
 	if err != nil {
 		return nil, liftErr(err)
+	}
+	if err := c.confirmRehearsalNetwork(ctx, app, instance, resp); err != nil {
+		return nil, err
 	}
 	if err := c.confirmSecretAliasSupport(ctx, app, instance, resp.GetSupportsSecretAliases()); err != nil {
 		return nil, err
@@ -1088,7 +1097,11 @@ func (c *VMMClient) createFromSnapshot(ctx context.Context, instance string, app
 	// issue #517: see CreateColdBoot above for the rationale.
 	fields, _ := wire.FromContext(ctx)
 	ctx = wire.WithCorrelationOutgoing(ctx, fields)
-	resp, err := c.cli.CreateFromSnapshot(ctx, &vmmdpb.CreateFromSnapshotRequest{
+	boot := c.cli.CreateFromSnapshot
+	if app.RehearsalRunID != "" {
+		boot = c.cli.CreateRehearsalFromSnapshot
+	}
+	resp, err := boot(ctx, &vmmdpb.CreateFromSnapshotRequest{
 		Instance:  instance,
 		App:       app.toProto(),
 		Plan:      string(app.Plan),
@@ -1107,6 +1120,9 @@ func (c *VMMClient) createFromSnapshot(ctx context.Context, instance string, app
 	})
 	if err != nil {
 		return nil, liftErr(err)
+	}
+	if err := c.confirmRehearsalNetwork(ctx, app, instance, resp); err != nil {
+		return nil, err
 	}
 	if err := c.confirmSecretAliasSupport(ctx, app, instance, resp.GetSupportsSecretAliases()); err != nil {
 		return nil, err
@@ -1850,6 +1866,7 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 		})
 	}
 	out := &vmmdpb.AppSpec{
+		RehearsalRunId:  a.RehearsalRunID,
 		BaseKey:         a.BaseKey,
 		LayerKey:        a.LayerKey,
 		VcpuCount:       a.VCPUCount,
@@ -1948,6 +1965,7 @@ func sidecarProbeToProto(in *api.SidecarProbe) *vmmdpb.SidecarProbeSpec {
 
 func outcomeFromProto(r *vmmdpb.WakeResponse) *WakeOutcome {
 	o := &WakeOutcome{
+		RehearsalRunID:        r.GetRehearsalRunId(),
 		Instance:              r.GetInstance(),
 		LeaseUID:              r.GetLeaseUid(),
 		HostIP:                r.GetHostIp(),

@@ -130,7 +130,9 @@ type ServiceProxyResolver func(ctx context.Context, callerAppID, service string)
 // while checking the tenant boundary. It is returned rather than discarded so
 // the hop does not need a third store read for facts already in hand.
 type ServiceCaller struct {
-	AppID string
+	// Retained, platform-authorized containment identity; never a guest header.
+	RehearsalRunID string
+	AppID          string
 	// PreviewOfSlug is non-empty when the caller is a PR preview app, naming
 	// the production app it previews.
 	//
@@ -266,6 +268,7 @@ type ServiceProxyRequestAttemptObserver func(runID, callerAppID, generation stri
 type ServiceProxyConfig struct {
 	// AdmitRuntime checks current budget holds after selecting the runtime.
 	AdmitRuntime              func(context.Context, string, string) error
+	AdmitManagedAsync         ServiceProxyAsyncAdmitter
 	Provider                  ServiceEndpointProvider
 	Resolve                   ServiceProxyResolver
 	Authorize                 ServiceProxyAuthorizer
@@ -342,6 +345,7 @@ type ServiceProxyConfig struct {
 // for safe idempotent requests.
 type ServiceProxy struct {
 	admitRuntime              func(context.Context, string, string) error
+	admitManagedAsync         ServiceProxyAsyncAdmitter
 	mintAssertion             ServiceCallerMinter
 	localNodeID               string
 	provider                  ServiceEndpointProvider
@@ -454,6 +458,7 @@ func NewServiceProxy(cfg ServiceProxyConfig) *ServiceProxy {
 		provider:                  cfg.Provider,
 		resolve:                   cfg.Resolve,
 		authorize:                 cfg.Authorize,
+		admitManagedAsync:         cfg.AdmitManagedAsync,
 		allowAlias:                cfg.AllowAlias,
 		resolveCaller:             cfg.ResolveCaller,
 		resolveCallerIdentity:     cfg.ResolveCallerIdentity,
@@ -764,6 +769,10 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	setProbeStage("routing")
 	if r.Header.Get(devbridge.ContextHeader) != "" || r.Header.Get(devbridge.SessionHeader) != "" || r.Header.Get(devbridge.TokenHeader) != "" {
+		if callerInfo.RehearsalRunID != "" {
+			serviceProxyProblem(dispatchWriter, http.StatusForbidden, "rehearsal apps cannot use development tunnels")
+			return
+		}
 		if p.devBridge == nil || p.resolveCallerIdentity == nil {
 			serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "development service routing is unavailable")
 			return
@@ -822,6 +831,9 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		dispatchWriter.Header().Set(api.ServiceBindingProbeStageHeader, "complete")
 		dispatchWriter.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if p.admitManagedAsync != nil && p.admitManagedAsync(dispatchWriter, r, callerInfo, target, targetPath) {
 		return
 	}
 	if p.provider == nil || p.forward == nil {

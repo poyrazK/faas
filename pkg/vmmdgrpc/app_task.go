@@ -19,6 +19,20 @@ import (
 // data. The ordinary AppSpec wake envelope keeps secrets, env, and network
 // policy identical to the pinned deployment.
 func (s *Server) RestoreAppTask(ctx context.Context, req *vmmdpb.RestoreAppTaskRequest) (*vmmdpb.RestoreAppTaskResponse, error) {
+	if req.GetApp().GetRehearsalRunId() != "" {
+		return nil, status.Error(codes.FailedPrecondition, "contained commands require RestoreRehearsalAppTask")
+	}
+	return s.restoreAppTask(ctx, req)
+}
+
+func (s *Server) RestoreRehearsalAppTask(ctx context.Context, req *vmmdpb.RestoreAppTaskRequest) (*vmmdpb.RestoreAppTaskResponse, error) {
+	if req.GetApp().GetRehearsalRunId() == "" {
+		return nil, status.Error(codes.InvalidArgument, "contained command run identity is required")
+	}
+	return s.restoreAppTask(ctx, req)
+}
+
+func (s *Server) restoreAppTask(ctx context.Context, req *vmmdpb.RestoreAppTaskRequest) (*vmmdpb.RestoreAppTaskResponse, error) {
 	const op = "RestoreAppTask"
 	ctx = withIncomingCorrelation(ctx)
 	start := time.Now()
@@ -44,9 +58,17 @@ func (s *Server) RestoreAppTask(ctx context.Context, req *vmmdpb.RestoreAppTaskR
 			"App task restore failed", "vmmd returned an empty instance"))
 	}
 	return &vmmdpb.RestoreAppTaskResponse{
+		HostIp: inst.Net.HostIP.String(), RehearsalRunId: inst.Net.RehearsalRunID, Netns: inst.Net.Netns, CommandVersion: rehearsalCommandVersion(inst.Net.RehearsalRunID),
 		SupportsSecretAliases: true,
 		Instance:              inst.Lease.Instance, LeaseUid: int32(inst.Lease.UID), Method: wakeMethodFrom(inst.Method),
 	}, nil
+}
+
+func rehearsalCommandVersion(run string) uint32 {
+	if run != "" {
+		return 1
+	}
+	return 0
 }
 
 // ExecuteAppTask dispatches one validated command to an app-task-only guest.

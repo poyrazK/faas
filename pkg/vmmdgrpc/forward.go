@@ -219,8 +219,8 @@ func (s *Server) ForwardHTTPStream(stream grpc.BidiStreamingServer[vmmdpb.Forwar
 	// concurrency; a stricter per-chunk accounting would
 	// re-enter Begin/End inside the body goroutine and add
 	// lock contention for marginal signal value.
-	s.beginActivity(reqInit.GetInstance())
-	defer s.endActivity(reqInit.GetInstance())
+	finishActivity := s.beginDispatchActivity(reqInit)
+	defer finishActivity()
 	if err := s.prepareGuest(stream.Context(), reqInit.GetInstance()); err != nil {
 		return err
 	}

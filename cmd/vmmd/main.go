@@ -963,6 +963,20 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Wake RPC contexts are canceled when the request returns and
 	// must not own either background activity.
 	mgr.WithLifecycleContext(ctx)
+	if store != nil {
+		policies, ok := store.(state.ScenarioNetworkPolicyStore)
+		if !ok {
+			return errors.New("vmmd: rehearsal network policy storage is unavailable")
+		}
+		mgr.WithRehearsalNetworkPolicies(policies)
+		if fencer, ok := store.(interface {
+			RevokeScenarioCommandNetworksForNode(context.Context, string) error
+		}); ok {
+			if err := fencer.RevokeScenarioCommandNetworksForNode(ctx, nodeID); err != nil {
+				return fmt.Errorf("vmmd: revoke prior command network identities: %w", err)
+			}
+		}
+	}
 	// Native recovery owns the physical inventory, but must also exclude a
 	// concurrent legacy daemon and refuse any outstanding legacy leases. Hold
 	// the legacy journal lock for this daemon's entire lifetime before native
@@ -1349,7 +1363,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			if store == nil || pool == nil {
 				return errors.New("event publish persistence is not configured")
 			}
-			_, accountID, identityErr := mgr.InstanceIdentity(instance)
+			_, accountID, identityErr := mgr.InstanceExternalActionIdentity(publishCtx, instance)
 			if identityErr != nil {
 				return identityErr
 			}

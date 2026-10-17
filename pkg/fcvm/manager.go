@@ -33,6 +33,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/netns"
 	"github.com/onebox-faas/faas/pkg/privatenetwork"
+	"github.com/onebox-faas/faas/pkg/rehearsalrecorder"
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/storage"
@@ -576,6 +577,7 @@ type Instance struct {
 	// TCP readiness. Stamped on Instance for readers that resolve it
 	// without a second request lookup (PR-C mirror).
 	HealthcheckPath          string
+	HealthcheckGRPC          bool
 	ImageHealthcheckRequired bool
 	// StartupDeadlineS is the per-app readiness budget from the lifecycle
 	// contract. 0 preserves the vmmd default for legacy callers.
@@ -776,6 +778,8 @@ type Manager struct {
 	computeLeases                   map[string]*localComputeLease
 	computeRecoveryMu               sync.Mutex // serializes reconstruction of missing local receipts
 	computeBypassGuard              func(context.Context, string) error
+	rehearsalNetworkPolicies        RehearsalNetworkPolicyStore
+	rehearsalRecorders              map[string]*rehearsalrecorder.Session
 	// outboundRelayEnabled advertises vmmd's streaming relay to
 	// outbound-enabled Runs (ADR-990).
 	outboundRelayEnabled      atomic.Bool
@@ -1868,6 +1872,7 @@ func (m *Manager) processExited(instance string, exitCode int, generation *uint6
 		return
 	}
 
+	m.failRehearsalRecorder(instance)
 	// Stop the health loop before notifying schedd. Otherwise the
 	// dead process can produce a second, slower liveness failure while
 	// the first destroy is still in flight.
@@ -3375,7 +3380,8 @@ func (m *Manager) preparesWakeStateBeforeBoot() bool {
 // *Path fields used, so single-box behaviour is preserved. Field
 // names changed from *Path → *Key to match the new semantics.
 type WakeRequest struct {
-	Instance string
+	RehearsalRunID string // exact durable containment run; ordinary legacy callers may omit it
+	Instance       string
 	// Set only by WakeAdmitted after validating and consuming its grant.
 	admission *runtimeadmission.Binding
 	// Complete approved source identities; only WakeAdmitted accepts them.
@@ -3723,7 +3729,9 @@ type APIEnvEntry struct {
 // StorageBackend keys schedd sends on the wake wire (not host paths).
 // Same semantics as WakeRequest.
 type ColdBootRequest struct {
-	Instance string
+	AppID          string
+	RehearsalRunID string
+	Instance       string
 	// AccountID is the apps row's owning account id (issue #301,
 	// ADR-044). Forwarded to WakeRequest.AccountID — see
 	// WakeRequest for the contract.
@@ -3819,6 +3827,7 @@ type ColdBootRequest struct {
 // snapshot.
 func (m *Manager) ColdBoot(ctx context.Context, req ColdBootRequest) (*Instance, error) {
 	return m.Wake(ctx, WakeRequest{
+		AppID: req.AppID, RehearsalRunID: req.RehearsalRunID,
 		Instance: req.Instance, AccountID: req.AccountID,
 		BaseKey: req.BaseKey, LayerKey: req.LayerKey,
 		VcpuCount: req.VcpuCount, MemSizeMiB: req.MemSizeMiB, CPUMillicores: req.CPUMillicores,
@@ -4184,8 +4193,15 @@ func (m *Manager) WakeWithNetworkReady(ctx context.Context, req WakeRequest, hoo
 }
 
 func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNetworkReadyHook) (_ *Instance, err error) {
+	coldStartupStarted := time.Now()
+	if err := m.applyRehearsalNetwork(ctx, &req); err != nil {
+		return nil, err
+	}
 	qualificationOnly := false
 	if permit, authorized := ctx.Value(nativeQualificationContextKey{}).(nativeQualificationRecord); authorized {
+		if req.RehearsalRunID != "" {
+			return nil, errors.New("rehearsal containment does not support qualification execution")
+		}
 		if permit.Execution.InstanceID != req.Instance {
 			return nil, fmt.Errorf("wake %s: qualification execution identity differs", req.Instance)
 		}
@@ -4209,6 +4225,16 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		m.finishInstanceFlight(req.Instance, flight)
 		m.finishFinancialComputeBoot(ctx, req.Instance, computeLease, err != nil)
 	}()
+	recorder, err := m.startRehearsalRecorder(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if err != nil && recorder != nil {
+			m.stopRehearsalRecorder(req.Instance)
+		}
+	}()
+
 	if req.admission == nil && (len(req.ArtifactSources) != 0 || req.SnapshotRestore != nil) {
 		return nil, runtimeadmission.ErrInvalid
 	}
@@ -4437,6 +4463,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	// same value (the failure mode is host-table exhaustion, shared).
 	// netns.Config omits the rule when ConntrackCap <= 0 so a vmmd that
 	// hasn't been rebuilt still wakes cleanly.
+	nc.RehearsalRunID = req.RehearsalRunID
 	nc.ConntrackCap = m.conntrackCap
 	// ADR-361: default-deny guest egress (base ports + per-plan rate).
 	if !req.ExecutionOnly {
@@ -4923,6 +4950,11 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	if req.ExecutionOnly {
 		executionID = req.Instance
 	}
+	if recorder != nil {
+		if err = recorder.RecordBoot(ctx, method.String(), time.Since(coldStartupStarted).Milliseconds()); err != nil {
+			return nil, fmt.Errorf("cold-start boot receipt: %w", err)
+		}
+	}
 	inst := &Instance{
 		publicForwardTarget: publicTarget,
 		Lease:               lease, Net: nc, Method: method,
@@ -4931,7 +4963,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		ExecutionLeaseToken:             req.ExecutionLeaseToken,
 		ExecutionOutboundIntegrationIDs: append([]string(nil), req.ExecutionOutboundIntegrationIDs...),
 		AppID:                           req.AppID, AccountID: req.AccountID, DeploymentID: req.DeploymentID,
-		Plan: req.Plan, Port: req.Port, HealthcheckPath: req.HealthcheckPath,
+		Plan: req.Plan, Port: req.Port, HealthcheckPath: req.HealthcheckPath, HealthcheckGRPC: req.HealthcheckGRPC,
 		ImageHealthcheckRequired: req.ImageHealthcheckRequired,
 		LivenessProbe:            append(json.RawMessage(nil), req.LivenessProbe...),
 		ReadinessProbe:           append(json.RawMessage(nil), req.ReadinessProbe...),
@@ -5114,6 +5146,9 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		m.startLivenessLoop(ctx, req.Instance, lease.Slot, req.LivenessProbe)
 		m.startReadinessLoop(ctx, req.Instance, lease.Slot, req.ReadinessProbe)
 		m.startFrameworkReadyLoop(ctx, req.Instance)
+	}
+	if recorder != nil {
+		recorder.Activate()
 	}
 	return inst, nil
 }
@@ -5694,7 +5729,7 @@ func (m *Manager) warmSnapshotInstance(ctx context.Context, inst *Instance, spec
 		if cancelled := ctx.Err(); cancelled != nil {
 			return SnapshotInfo{}, errors.Join(err, cancelled)
 		}
-		if rerr := m.vmm.ResumeVM(ctx, inst.Lease); rerr != nil {
+		if rerr := m.resumeWithRehearsalNetwork(ctx, inst); rerr != nil {
 			return SnapshotInfo{}, fmt.Errorf("warm_snapshot %s: %w", instance, errors.Join(err, fmt.Errorf("resume after snapshot failure: %w", rerr)))
 		}
 		resumed = true
@@ -5703,7 +5738,7 @@ func (m *Manager) warmSnapshotInstance(ctx context.Context, inst *Instance, spec
 	if err := ctx.Err(); err != nil {
 		return SnapshotInfo{}, err
 	}
-	if err := m.vmm.ResumeVM(ctx, inst.Lease); err != nil {
+	if err := m.resumeWithRehearsalNetwork(ctx, inst); err != nil {
 		return SnapshotInfo{}, fmt.Errorf("warm_snapshot %s: resume: %w", instance, err)
 	}
 	if err := ctx.Err(); err != nil {
@@ -5793,7 +5828,7 @@ func (m *Manager) SnapshotKeepAlive(ctx context.Context, instance string, spec S
 	if cancelled := resumeCtx.Err(); cancelled != nil {
 		return SnapshotInfo{}, errors.Join(err, cancelled)
 	}
-	resumeErr := m.vmm.ResumeVM(resumeCtx, inst.Lease) //nolint:contextcheck // The registered flight recovery context outlives the RPC and is cancelled and joined by Destroy.
+	resumeErr := m.resumeWithRehearsalNetwork(resumeCtx, inst) //nolint:contextcheck // The registered flight recovery context outlives the RPC and is cancelled and joined by Destroy.
 	if resumeErr != nil {
 		return SnapshotInfo{}, fmt.Errorf("snapshot_keep_alive %s: %w", instance,
 			errors.Join(err, fmt.Errorf("resume after snapshot failure: %w", resumeErr)))
@@ -5872,7 +5907,7 @@ func (m *Manager) ResumeVM(ctx context.Context, instance string) error {
 // is no longer frozen (ADR-1151). The caller holds the instance flight.
 func (m *Manager) resumeAndProbe(ctx context.Context, op string, inst *Instance, runResumeHook bool) error {
 	instance := inst.Lease.Instance
-	if err := m.vmm.ResumeVM(ctx, inst.Lease); err != nil {
+	if err := m.resumeWithRehearsalNetwork(ctx, inst); err != nil {
 		return fmt.Errorf("%s %s: %w", op, instance, err)
 	}
 	m.clearFrozen(inst)
