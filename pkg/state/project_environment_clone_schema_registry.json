@@ -4684,6 +4684,8 @@
       "name",
       "operation_id",
       "payload",
+      "receiver_sha256",
+      "rehearsal_run_id",
       "webhook_id"
     ],
     "kind": "operational"
@@ -12186,6 +12188,8 @@
       "name",
       "operation_id",
       "payload",
+      "receiver_sha256",
+      "rehearsal_run_id",
       "run_id",
       "step_name",
       "webhook_id"
@@ -13891,6 +13895,177 @@
       "id",
       "key_digest",
       "requested_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "scenario_cold_preparations",
+    "columns": [
+      "account_id",
+      "app_id",
+      "boot_instance_id",
+      "boot_recorder_session_id",
+      "created_at",
+      "deployment_id",
+      "id",
+      "instance_id",
+      "method",
+      "ready_at",
+      "recorder_session_id",
+      "run_id",
+      "startup_ms",
+      "state",
+      "wake_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "scenario_command_networks",
+    "columns": [
+      "active",
+      "host_ip",
+      "lease_token",
+      "node_id",
+      "task_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "scenario_managed_work",
+    "columns": [
+      "account_id",
+      "app_id",
+      "document",
+      "invocation_id",
+      "payload",
+      "run_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "scenario_object_fixtures",
+    "columns": [
+      "account_id",
+      "app_id",
+      "document",
+      "expires_at",
+      "id",
+      "run_id",
+      "status"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "scenario_postgres_fixtures",
+    "columns": [
+      "account_id",
+      "app_id",
+      "backend_sha256",
+      "database_name",
+      "evidence",
+      "expires_at",
+      "id",
+      "initial_snapshot",
+      "owner_id",
+      "role_name",
+      "run_id",
+      "spec",
+      "status"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "scenario_recorder_requests",
+    "columns": [
+      "attempt_id",
+      "id",
+      "session_id",
+      "status"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "scenario_recorder_sessions",
+    "columns": [
+      "app_id",
+      "command_result",
+      "created_at",
+      "deployment_id",
+      "id",
+      "instance_id",
+      "status"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "scenario_simulation_attempts",
+    "columns": [
+      "app_id",
+      "created_at",
+      "evidence",
+      "id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "scenario_suspend_resumes",
+    "columns": [
+      "account_id",
+      "app_id",
+      "checkpoint_attempt_id",
+      "created_at",
+      "deployment_id",
+      "id",
+      "instance_id",
+      "invocation_attempt",
+      "invocation_id",
+      "method",
+      "pause_ms",
+      "paused_at",
+      "recorder_session_id",
+      "resume_ms",
+      "run_id",
+      "state"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "scenario_test_action_policies",
+    "columns": [
+      "account_id",
+      "app_id",
+      "cold_start_spec",
+      "created_at",
+      "managed_work_closing",
+      "managed_work_failed",
+      "managed_work_plan",
+      "network_mode",
+      "recorder_closing",
+      "run_id",
+      "sealed_at",
+      "sealed_snapshot",
+      "simulation_failed",
+      "simulation_plan",
+      "suspend_resume_spec",
+      "webhook_mode",
+      "workload_name"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "scenario_worker_faults",
+    "columns": [
+      "account_id",
+      "app_id",
+      "checkpoint_attempt_id",
+      "created_at",
+      "deployment_id",
+      "id",
+      "instance_id",
+      "invocation_id",
+      "recorder_session_id",
+      "run_id",
+      "state"
     ],
     "kind": "operational"
   }

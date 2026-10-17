@@ -50,6 +50,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/profiling"
 	"github.com/onebox-faas/faas/pkg/promql"
+	objruntime "github.com/onebox-faas/faas/pkg/rehearsalobj/runtime"
+	pgruntime "github.com/onebox-faas/faas/pkg/rehearsalpg/runtime"
 	"github.com/onebox-faas/faas/pkg/session"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -1424,6 +1426,25 @@ func (r *server) ProductControl() *product.Service { return &r.productControl }
 func (r *server) ConfigureProductEmail(getenv func(string) string) error {
 	return r.configureProductEmail(getenv)
 }
+
+func (s *server) RehearsalNetworkEnabled() *bool { return &s.rehearsalNetworkEnabled }
+
+func (s *server) RehearsalSimulationEnabled() *bool { return &s.rehearsalSimulationEnabled }
+func (s *server) RehearsalCommandsEnabled() *bool   { return &s.rehearsalCommandsEnabled }
+
+func (s *server) SetRehearsalPostgresForTest(service *pgruntime.Service, enabled bool) {
+	s.rehearsalPostgres, s.rehearsalPostgresEnabled = service, enabled
+}
+
+func (s *server) SetRehearsalObjectsForTest(service *objruntime.Service, enabled bool) {
+	s.rehearsalObjects, s.rehearsalObjectsEnabled = service, enabled
+}
+
+func (s *server) RehearsalWorkersEnabled() *bool        { return &s.rehearsalWorkersEnabled }
+func (s *server) RehearsalSuspendResumeEnabled() *bool  { return &s.rehearsalSuspendResumeEnabled }
+func (s *server) RehearsalRunningSuspendEnabled() *bool { return &s.rehearsalRunningSuspendEnabled }
+func (s *server) RehearsalColdStartEnabled() *bool      { return &s.rehearsalColdStartEnabled }
+func (s *server) RehearsalWorkerFaultsEnabled() *bool   { return &s.rehearsalWorkerFaultsEnabled }
 
 func (s *server) StartInternalCIWorker(ctx context.Context, log *slog.Logger) func() {
 	return s.startInternalCIWorker(ctx, log)
