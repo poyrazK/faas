@@ -24,8 +24,8 @@ func (m *Manager) financialEgressLow(local *localComputeLease) (bool, error) {
 	m.mu.Lock()
 	inst := m.live[local.lease.InstanceID]
 	var peer string
-	if inst != nil {
-		peer = inst.Lease.VethHost
+	if inst != nil && inst.Net.VethPeer != "" {
+		peer = inst.Net.VethHost
 	}
 	m.mu.Unlock()
 	if peer == "" {

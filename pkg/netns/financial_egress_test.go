@@ -49,3 +49,28 @@ func TestFinancialEgressTimeRenewalCannotResetByteQuota(t *testing.T) {
 		t.Fatal("refill lost paid bound or kernel expiry")
 	}
 }
+
+func TestFinancialEgressSegmentsBeforeRaisingGuestTAP(t *testing.T) {
+	c := testConfig()
+	c.EgressBudgetBytes = api.FinancialEgressCreditBytes
+	commands := c.SetupCommands()
+	redirect, tapUp := -1, -1
+	for i, argv := range commands {
+		line := strings.Join(argv, " ")
+		if strings.Contains(line, "redirect dev fb-egress") {
+			redirect = i
+		}
+		if strings.Contains(line, "link set "+c.Tap+" up") {
+			tapUp = i
+		}
+	}
+	if redirect < 0 || tapUp <= redirect {
+		t.Fatalf("guest can emit GSO before segmentation: %v", commands)
+	}
+	text := flatten(c.EgressBudgetSegmentationCommands())
+	for _, want := range []string{"type ifb", "sg off tso off gso off gro off", "tx-udp-segmentation off", "tx-gso-list off", "protocol all matchall", "redirect dev fb-egress"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("missing offload boundary %q", want)
+		}
+	}
+}

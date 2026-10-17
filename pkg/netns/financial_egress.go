@@ -54,3 +54,22 @@ func (c Config) EgressBudgetDeadlineCommands() [][]string {
 		nft("add", "rule", "netdev", EgressBudgetTable, "lifetime", "meta", "time", ">=", strconv.FormatInt(c.EgressBudgetUntil.Unix(), 10), "drop"),
 	}
 }
+
+// Segment guest GSO/GRO traffic before it can reach the public-peer quota.
+// Otherwise one small GSO aggregate could expand into many billed Ethernet
+// frames AFTER quota accounting. The IFB redirects back into TAP ingress after
+// transmit validation, with segmentation/aggregation offloads disabled.
+func (c Config) EgressBudgetSegmentationCommands() [][]string {
+	if c.EgressBudgetBytes <= 0 {
+		return nil
+	}
+	prefix := []string{"ip", "netns", "exec", c.Netns}
+	in := func(args ...string) []string { return append(append([]string{}, prefix...), args...) }
+	return [][]string{
+		in("ip", "link", "add", "fb-egress", "type", "ifb"),
+		in("ethtool", "-K", "fb-egress", "sg", "off", "tso", "off", "gso", "off", "gro", "off", "tx-udp-segmentation", "off", "tx-gso-list", "off"),
+		in("ip", "link", "set", "fb-egress", "up"),
+		in("tc", "qdisc", "add", "dev", c.Tap, "handle", "ffff:", "ingress"),
+		in("tc", "filter", "add", "dev", c.Tap, "parent", "ffff:", "protocol", "all", "matchall", "action", "mirred", "egress", "redirect", "dev", "fb-egress"),
+	}
+}

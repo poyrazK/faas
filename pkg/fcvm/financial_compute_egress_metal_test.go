@@ -4,6 +4,7 @@ package fcvm
 
 import (
 	"context"
+	"net"
 	"os"
 	"os/exec"
 	"strconv"
@@ -217,3 +218,95 @@ func TestMetalFinancialEgressPostgresRecovery(t *testing.T) {
 		t.Fatalf("old native attempt revived: %+v", out)
 	}
 }
+
+// Force segmentation at the public peer to test the dangerous offload order:
+// the IFB must split guest GSO BEFORE quota accounting, even with tiny segments.
+func TestMetalFinancialEgressOffloadCredits(t *testing.T) {
+	if os.Getenv("FAAS_FINANCIAL_COMPUTE_ACCEPTANCE") != "1" {
+		t.Skip("opt-in financial native acceptance")
+	}
+	if os.Geteuid() != 0 {
+		t.Fatal("financial offload acceptance requires root")
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	suffix := uuid.NewString()[:8]
+	guest := "fc-egso-g-" + suffix
+	nc := netns.Config{Netns: "fc-egso-" + suffix, Tap: "tap0", VethHost: "vhs" + suffix, VethPeer: "vps" + suffix, EgressBudgetBytes: 8192, EgressBudgetUntil: time.Now().Add(20 * time.Second)}
+	run := func(argv ...string) string {
+		t.Helper()
+		out, err := exec.CommandContext(ctx, argv[0], argv[1:]...).CombinedOutput()
+		if err != nil {
+			t.Fatalf("offload fixture %v: %v: %s", argv, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	run("ip", "netns", "add", nc.Netns)
+	run("ip", "netns", "add", guest)
+	t.Cleanup(func() {
+		for _, name := range []string{guest, nc.Netns} {
+			if out, err := exec.Command("ip", "netns", "del", name).CombinedOutput(); err != nil {
+				t.Errorf("offload namespace cleanup: %v %s", err, out)
+			}
+		}
+		if out, err := exec.Command("ip", "link", "show", nc.VethHost).CombinedOutput(); err == nil {
+			t.Errorf("offload public veth leaked: %s", out)
+		}
+	})
+	run("ip", "link", "add", nc.VethHost, "type", "veth", "peer", "name", nc.VethPeer)
+	run("ip", "link", "set", nc.VethPeer, "netns", nc.Netns)
+	for _, argv := range nc.EgressBudgetSetupCommands() {
+		run(argv...)
+	}
+	run("ip", "addr", "add", "198.18.239.1/30", "dev", nc.VethHost)
+	run("ip", "link", "set", nc.VethHost, "up")
+	run("ip", "netns", "exec", nc.Netns, "ip", "addr", "add", "198.18.239.2/30", "dev", nc.VethPeer)
+	run("ip", "netns", "exec", nc.Netns, "ip", "link", "set", nc.VethPeer, "up")
+	run("ip", "netns", "exec", nc.Netns, "ethtool", "-K", nc.VethPeer, "sg", "off", "tso", "off", "gso", "off", "gro", "off", "tx-udp-segmentation", "off", "tx-gso-list", "off")
+	run("ip", "netns", "exec", nc.Netns, "ip", "link", "add", nc.Tap, "type", "veth", "peer", "name", "g0")
+	run("ip", "netns", "exec", nc.Netns, "ip", "link", "set", "g0", "netns", guest)
+	for _, argv := range nc.EgressBudgetSegmentationCommands() {
+		run(argv...)
+	}
+	run("ip", "netns", "exec", nc.Netns, "ip", "addr", "add", "10.0.0.1/30", "dev", nc.Tap)
+	run("ip", "netns", "exec", nc.Netns, "ip", "link", "set", nc.Tap, "up")
+	run("ip", "netns", "exec", nc.Netns, "sysctl", "-w", "net.ipv4.ip_forward=1")
+	run("ip", "netns", "exec", guest, "ip", "addr", "add", "10.0.0.2/30", "dev", "g0")
+	run("ip", "netns", "exec", guest, "ip", "link", "set", "g0", "up")
+	run("ip", "netns", "exec", guest, "ip", "route", "add", "default", "via", "10.0.0.1")
+	listener, err := net.ListenPacket("udp4", "198.18.239.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	go func() {
+		buffer := make([]byte, 2048)
+		for {
+			if _, _, err := listener.ReadFrom(buffer); err != nil {
+				return
+			}
+		}
+	}()
+	port := listener.LocalAddr().(*net.UDPAddr).Port
+	before, err := netns.ReadVethRXBytes(nc.VethHost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run("ip", "netns", "exec", guest, "python3", "-c", financialUDPSegmentedBurst, "198.18.239.1", strconv.Itoa(port))
+	time.Sleep(20 * time.Millisecond)
+	after, err := netns.ReadVethRXBytes(nc.VethHost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after <= before || after > uint64(nc.EgressBudgetBytes) {
+		t.Fatalf("offload expanded beyond funded interface bytes: before=%d after=%d funded=%d", before, after, nc.EgressBudgetBytes)
+	}
+}
+
+const financialUDPSegmentedBurst = `
+import socket,struct,sys
+s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
+for _ in range(100):
+    s.sendmsg([b'x'*(8*64)],[(17,103,struct.pack('H',8))],0,(sys.argv[1],int(sys.argv[2])))
+s.close()
+`

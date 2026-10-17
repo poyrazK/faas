@@ -77,3 +77,19 @@ func TestFinancialEgressClockMustFitFundedWindow(t *testing.T) {
 		t.Fatal("synchronized authority rejected")
 	}
 }
+
+func TestFinancialEgressNetworklessExecutionKeepsTimeRenewal(t *testing.T) {
+	m, _, local := egressLocalFixture(t)
+	m.live["funded"].Net = netns.Config{Instance: "funded"}
+	m.financialEgressRead = func(string) (uint64, error) {
+		t.Fatal("networkless execution attempted to read a nonexistent veth")
+		return 0, nil
+	}
+	refill, err := m.financialEgressLow(local)
+	if err != nil || refill || local.egressBroken {
+		t.Fatalf("networkless execution lost time funding: %v %v", refill, err)
+	}
+	if !m.syncFinancialEgress(t.Context(), local, local.lease, false) {
+		t.Fatal("networkless time renewal was blocked")
+	}
+}

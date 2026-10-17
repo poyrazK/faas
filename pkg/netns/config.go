@@ -361,6 +361,11 @@ func (c Config) SetupCommands() [][]string {
 	// Install the monetary gate before raising the peer: even ARP and IPv6
 	// autoconfiguration must fit its financed interface-byte bound.
 	if c.EgressBudgetBytes > 0 {
+		// Build the no-offload ingress path while TAP is still down. The
+		// last original setup command raises TAP, after this path is ready.
+		tapUp := cmds[len(cmds)-1]
+		cmds = append(cmds[:len(cmds)-1], c.EgressBudgetSegmentationCommands()...)
+		cmds = append(cmds, tapUp)
 		gate := c.EgressBudgetSetupCommands()
 		cmds = append(cmds[:6], append(gate, cmds[6:]...)...)
 	}

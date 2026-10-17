@@ -26,6 +26,7 @@ nah_required_tools:
   - debugfs
   - ip
   - tc
+  - ethtool
   - nft
   - iptables
   - flock
@@ -35,6 +36,7 @@ nah_required_tools:
 nah_packages:
   - build-essential
   - e2fsprogs          # mkfs.ext4, e2fsck, debugfs
+  - ethtool            # strict egress IFB offload control
   - iproute2           # ip, tc
   - iptables
   - nftables           # nft
