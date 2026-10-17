@@ -7,12 +7,20 @@
 -- +goose StatementBegin
 ALTER TABLE api_consumer_rate_cards ADD COLUMN IF NOT EXISTS base_fee_millicents_per_month bigint NOT NULL DEFAULT 0;
 ALTER TABLE api_consumer_rate_cards ADD COLUMN IF NOT EXISTS minimum_millicents_per_month bigint NOT NULL DEFAULT 0;
-ALTER TABLE api_consumer_rate_cards ADD CONSTRAINT api_consumer_rate_cards_monthly_fees_chk
-  CHECK (base_fee_millicents_per_month >= 0 AND minimum_millicents_per_month >= 0);
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'api_consumer_rate_cards_monthly_fees_chk') THEN
+    ALTER TABLE api_consumer_rate_cards ADD CONSTRAINT api_consumer_rate_cards_monthly_fees_chk
+      CHECK (base_fee_millicents_per_month >= 0 AND minimum_millicents_per_month >= 0);
+  END IF;
+END $$;
 
 ALTER TABLE api_consumer_usage_statements ADD COLUMN IF NOT EXISTS fees jsonb NOT NULL DEFAULT '[]'::jsonb;
-ALTER TABLE api_consumer_usage_statements ADD CONSTRAINT api_consumer_usage_statements_fees_chk
-  CHECK (jsonb_typeof(fees) = 'array' AND jsonb_array_length(fees) <= 64);
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'api_consumer_usage_statements_fees_chk') THEN
+    ALTER TABLE api_consumer_usage_statements ADD CONSTRAINT api_consumer_usage_statements_fees_chk
+      CHECK (jsonb_typeof(fees) = 'array' AND jsonb_array_length(fees) <= 64);
+  END IF;
+END $$;
 -- +goose StatementEnd
 
 -- +goose Down

@@ -8,16 +8,28 @@
 -- +goose Up
 -- +goose StatementBegin
 ALTER TABLE api_consumer_rate_cards ADD COLUMN IF NOT EXISTS tier_mode text NOT NULL DEFAULT 'graduated';
-ALTER TABLE api_consumer_rate_cards ADD CONSTRAINT api_consumer_rate_cards_tier_mode_chk
-  CHECK (tier_mode = 'graduated' OR (tier_mode = 'volume' AND jsonb_array_length(tiers) > 0));
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'api_consumer_rate_cards_tier_mode_chk') THEN
+    ALTER TABLE api_consumer_rate_cards ADD CONSTRAINT api_consumer_rate_cards_tier_mode_chk
+      CHECK (tier_mode = 'graduated' OR (tier_mode = 'volume' AND jsonb_array_length(tiers) > 0));
+  END IF;
+END $$;
 
 ALTER TABLE platform_tenant_rate_cards ADD COLUMN IF NOT EXISTS tier_mode text NOT NULL DEFAULT 'graduated';
-ALTER TABLE platform_tenant_rate_cards ADD CONSTRAINT platform_tenant_rate_cards_tier_mode_chk
-  CHECK (tier_mode = 'graduated' OR (tier_mode = 'volume' AND jsonb_array_length(tiers) > 0));
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'platform_tenant_rate_cards_tier_mode_chk') THEN
+    ALTER TABLE platform_tenant_rate_cards ADD CONSTRAINT platform_tenant_rate_cards_tier_mode_chk
+      CHECK (tier_mode = 'graduated' OR (tier_mode = 'volume' AND jsonb_array_length(tiers) > 0));
+  END IF;
+END $$;
 
 ALTER TABLE platform_tenant_plans ADD COLUMN IF NOT EXISTS tier_mode text NOT NULL DEFAULT 'graduated';
-ALTER TABLE platform_tenant_plans ADD CONSTRAINT platform_tenant_plans_tier_mode_chk
-  CHECK (tier_mode = 'graduated' OR (tier_mode = 'volume' AND jsonb_array_length(tiers) > 0));
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'platform_tenant_plans_tier_mode_chk') THEN
+    ALTER TABLE platform_tenant_plans ADD CONSTRAINT platform_tenant_plans_tier_mode_chk
+      CHECK (tier_mode = 'graduated' OR (tier_mode = 'volume' AND jsonb_array_length(tiers) > 0));
+  END IF;
+END $$;
 -- +goose StatementEnd
 
 -- +goose Down

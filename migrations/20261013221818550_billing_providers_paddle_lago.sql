@@ -9,8 +9,12 @@ ALTER TABLE account_billing_connections ADD COLUMN IF NOT EXISTS api_url text;
 ALTER TABLE account_billing_connections DROP CONSTRAINT IF EXISTS account_billing_connections_provider_chk;
 ALTER TABLE account_billing_connections ADD CONSTRAINT account_billing_connections_provider_chk
   CHECK (provider IN ('stripe', 'paddle', 'lago'));
-ALTER TABLE account_billing_connections ADD CONSTRAINT account_billing_connections_api_url_chk
-  CHECK (api_url IS NULL OR (char_length(api_url) <= 512 AND api_url LIKE 'https://%'));
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'account_billing_connections_api_url_chk') THEN
+    ALTER TABLE account_billing_connections ADD CONSTRAINT account_billing_connections_api_url_chk
+      CHECK (api_url IS NULL OR (char_length(api_url) <= 512 AND api_url LIKE 'https://%'));
+  END IF;
+END $$;
 
 ALTER TABLE usage_statement_invoice_exports DROP CONSTRAINT IF EXISTS usage_statement_invoice_exports_provider_chk;
 ALTER TABLE usage_statement_invoice_exports ADD CONSTRAINT usage_statement_invoice_exports_provider_chk

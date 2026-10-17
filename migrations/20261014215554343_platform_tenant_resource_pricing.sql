@@ -9,16 +9,24 @@
 -- +goose StatementBegin
 ALTER TABLE platform_tenant_usage_minutes ADD COLUMN IF NOT EXISTS compute_ms bigint NOT NULL DEFAULT 0;
 ALTER TABLE platform_tenant_usage_minutes ADD COLUMN IF NOT EXISTS response_bytes bigint NOT NULL DEFAULT 0;
-ALTER TABLE platform_tenant_usage_minutes ADD CONSTRAINT platform_tenant_usage_minutes_resources_chk
-  CHECK (compute_ms >= 0 AND response_bytes >= 0);
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'platform_tenant_usage_minutes_resources_chk') THEN
+    ALTER TABLE platform_tenant_usage_minutes ADD CONSTRAINT platform_tenant_usage_minutes_resources_chk
+      CHECK (compute_ms >= 0 AND response_bytes >= 0);
+  END IF;
+END $$;
 
 ALTER TABLE platform_tenant_rate_cards DROP CONSTRAINT IF EXISTS platform_tenant_rate_cards_unit_check;
 ALTER TABLE platform_tenant_rate_cards ADD CONSTRAINT platform_tenant_rate_cards_unit_check
   CHECK (unit IN ('request', 'compute_second', 'response_megabyte'));
 
 ALTER TABLE platform_tenant_plans ADD COLUMN IF NOT EXISTS unit text NOT NULL DEFAULT 'request';
-ALTER TABLE platform_tenant_plans ADD CONSTRAINT platform_tenant_plans_unit_chk
-  CHECK (unit IN ('request', 'compute_second', 'response_megabyte'));
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'platform_tenant_plans_unit_chk') THEN
+    ALTER TABLE platform_tenant_plans ADD CONSTRAINT platform_tenant_plans_unit_chk
+      CHECK (unit IN ('request', 'compute_second', 'response_megabyte'));
+  END IF;
+END $$;
 
 CREATE TABLE IF NOT EXISTS platform_tenant_source_route_usage_minutes (
     account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,

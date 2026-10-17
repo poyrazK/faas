@@ -7,8 +7,12 @@
 -- +goose StatementBegin
 ALTER TABLE api_consumer_usage_minutes ADD COLUMN IF NOT EXISTS compute_ms bigint NOT NULL DEFAULT 0;
 ALTER TABLE api_consumer_usage_minutes ADD COLUMN IF NOT EXISTS response_bytes bigint NOT NULL DEFAULT 0;
-ALTER TABLE api_consumer_usage_minutes ADD CONSTRAINT api_consumer_usage_minutes_resources_chk
-  CHECK (compute_ms >= 0 AND response_bytes >= 0);
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'api_consumer_usage_minutes_resources_chk') THEN
+    ALTER TABLE api_consumer_usage_minutes ADD CONSTRAINT api_consumer_usage_minutes_resources_chk
+      CHECK (compute_ms >= 0 AND response_bytes >= 0);
+  END IF;
+END $$;
 
 ALTER TABLE api_consumer_rate_cards DROP CONSTRAINT IF EXISTS api_consumer_rate_cards_unit_chk;
 ALTER TABLE api_consumer_rate_cards ADD CONSTRAINT api_consumer_rate_cards_unit_chk

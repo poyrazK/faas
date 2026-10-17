@@ -41,8 +41,12 @@ CREATE INDEX IF NOT EXISTS api_consumer_credit_applications_statement_idx
   ON api_consumer_credit_applications (statement_id);
 
 ALTER TABLE api_consumer_usage_statements ADD COLUMN IF NOT EXISTS credit_applied_millicents bigint NOT NULL DEFAULT 0;
-ALTER TABLE api_consumer_usage_statements ADD CONSTRAINT api_consumer_usage_statements_credit_chk
-  CHECK (credit_applied_millicents >= 0 AND credit_applied_millicents <= amount_millicents);
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'api_consumer_usage_statements_credit_chk') THEN
+    ALTER TABLE api_consumer_usage_statements ADD CONSTRAINT api_consumer_usage_statements_credit_chk
+      CHECK (credit_applied_millicents >= 0 AND credit_applied_millicents <= amount_millicents);
+  END IF;
+END $$;
 
 CREATE TABLE IF NOT EXISTS api_consumer_spend_caps (
   consumer_id            uuid PRIMARY KEY REFERENCES api_consumers(id) ON DELETE CASCADE,

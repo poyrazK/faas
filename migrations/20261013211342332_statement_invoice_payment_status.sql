@@ -16,13 +16,27 @@ ALTER TABLE usage_statement_invoice_exports
   ADD COLUMN IF NOT EXISTS status_synced_at       timestamptz,
   ADD COLUMN IF NOT EXISTS next_status_sync_at    timestamptz,
   ADD COLUMN IF NOT EXISTS overdue_notified_at    timestamptz;
-ALTER TABLE usage_statement_invoice_exports
-  ADD CONSTRAINT usage_statement_invoice_exports_payment_status_chk CHECK (payment_status IS NULL OR payment_status IN
-    ('draft', 'open', 'paid', 'void', 'uncollectible', 'deleted')),
-  ADD CONSTRAINT usage_statement_invoice_exports_payment_amounts_chk CHECK (
-    (amount_paid_minor IS NULL OR amount_paid_minor >= 0) AND (amount_remaining_minor IS NULL OR amount_remaining_minor >= 0)),
-  ADD CONSTRAINT usage_statement_invoice_exports_hosted_url_chk CHECK (
-    hosted_invoice_url IS NULL OR (char_length(hosted_invoice_url) <= 2048 AND hosted_invoice_url LIKE 'https://%'));
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'usage_statement_invoice_exports_payment_status_chk') THEN
+    ALTER TABLE usage_statement_invoice_exports ADD CONSTRAINT usage_statement_invoice_exports_payment_status_chk
+      CHECK (payment_status IS NULL OR payment_status IN
+      ('draft', 'open', 'paid', 'void', 'uncollectible', 'deleted'));
+  END IF;
+END $$;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'usage_statement_invoice_exports_payment_amounts_chk') THEN
+    ALTER TABLE usage_statement_invoice_exports ADD CONSTRAINT usage_statement_invoice_exports_payment_amounts_chk
+      CHECK (
+      (amount_paid_minor IS NULL OR amount_paid_minor >= 0) AND (amount_remaining_minor IS NULL OR amount_remaining_minor >= 0));
+  END IF;
+END $$;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'usage_statement_invoice_exports_hosted_url_chk') THEN
+    ALTER TABLE usage_statement_invoice_exports ADD CONSTRAINT usage_statement_invoice_exports_hosted_url_chk
+      CHECK (
+      hosted_invoice_url IS NULL OR (char_length(hosted_invoice_url) <= 2048 AND hosted_invoice_url LIKE 'https://%'));
+  END IF;
+END $$;
 CREATE INDEX IF NOT EXISTS usage_statement_invoice_exports_sync_idx
   ON usage_statement_invoice_exports (next_status_sync_at) WHERE next_status_sync_at IS NOT NULL;
 CREATE INDEX IF NOT EXISTS usage_statement_invoice_exports_overdue_idx

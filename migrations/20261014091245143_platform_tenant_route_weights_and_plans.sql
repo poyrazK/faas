@@ -6,8 +6,12 @@
 -- +goose Up
 -- +goose StatementBegin
 ALTER TABLE platform_tenant_rate_cards ADD COLUMN IF NOT EXISTS route_weights jsonb NOT NULL DEFAULT '{}'::jsonb;
-ALTER TABLE platform_tenant_rate_cards ADD CONSTRAINT platform_tenant_rate_cards_route_weights_chk
-  CHECK (jsonb_typeof(route_weights) = 'object');
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'platform_tenant_rate_cards_route_weights_chk') THEN
+    ALTER TABLE platform_tenant_rate_cards ADD CONSTRAINT platform_tenant_rate_cards_route_weights_chk
+      CHECK (jsonb_typeof(route_weights) = 'object');
+  END IF;
+END $$;
 COMMENT ON COLUMN platform_tenant_rate_cards.route_weights IS 'Units charged per consumer request on a route label ("METHOD /template" -> weight); unlisted routes and non-consumer subjects count 1.';
 
 CREATE TABLE IF NOT EXISTS platform_tenant_plans (
