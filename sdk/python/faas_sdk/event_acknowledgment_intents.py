@@ -12,16 +12,20 @@ from typing import Any, TypeVar
 
 from ._event_acknowledgment_protocol import (
     Control,
+    DeliveryFence,
     EventAcknowledgmentWorkerCancelled,
     EventAcknowledgmentWorkerError,
+    EventAcknowledgmentWorkerResult,
     owned_operation,
     reason_code,
 )
 from .event_consumer_transactions import (
     EventConsumerCommitUnknownError,
+    EventConsumerConflictError,
     EventConsumerRequest,
     EventConsumerTransactionResult,
     _digests,
+    _prepare,
     _tuple_row,
     _uuid,
 )
@@ -185,7 +189,15 @@ async def _transaction(connection: Any, operation: Callable[[Any], Awaitable[_T]
     except BaseException as error:
         if completed:
             unknown = True
-        elif isinstance(error, (EventAcknowledgmentIntentError, EventAcknowledgmentWorkerError, _CallbackOptionsError)):
+        elif isinstance(
+            error,
+            (
+                EventAcknowledgmentIntentError,
+                EventAcknowledgmentWorkerError,
+                EventConsumerConflictError,
+                _CallbackOptionsError,
+            ),
+        ):
             failure = error
         elif isinstance(error, asyncio.CancelledError):
             failure = EventAcknowledgmentWorkerCancelled(control.result)
@@ -216,9 +228,39 @@ async def _save_completion(
     receipt: EventConsumerTransactionResult,
     control: Control,
 ) -> EventAcknowledgmentIntentStatus:
+    return await _save_intent(
+        cursor,
+        request,
+        invocation,
+        generation,
+        attempt,
+        slug,
+        seconds,
+        token,
+        "complete",
+        "",
+        receipt.body.decode("utf-8"),
+        control,
+    )
+
+
+async def _save_intent(
+    cursor: Any,
+    request: EventConsumerRequest,
+    invocation: str,
+    generation: int,
+    attempt: int,
+    slug: str,
+    seconds: int,
+    token: str,
+    action: str,
+    reason: str,
+    body: str | None,
+    control: Control,
+) -> EventAcknowledgmentIntentStatus:
     identity, digest = _digests(request)
     key = (request.account_id, request.app_id, invocation)
-    capability, payload = _hash(token), _hash("complete\n\n" + receipt.body.decode("utf-8"))
+    capability, payload = _hash(token), _hash(action + "\n" + reason + "\n" + (body or ""))
     await _query(
         cursor,
         "SELECT pg_advisory_xact_lock(hashtextextended(%s,0))",
@@ -262,7 +304,7 @@ async def _save_completion(
     return _status(
         await _query(
             cursor,
-            f"INSERT INTO {_TABLE}(account_id,app_id,invocation_id,replay_generation,attempt,identity_digest,request_digest,capability_digest,action_digest,app_slug,lease_seconds,action,reason,token,result_body,state) VALUES(%s::uuid,%s::uuid,%s::uuid,%s::bigint,%s,%s,%s,%s,%s,%s,%s,'complete','',%s,%s,'pending') RETURNING {_COLUMNS}",
+            f"INSERT INTO {_TABLE}(account_id,app_id,invocation_id,replay_generation,attempt,identity_digest,request_digest,capability_digest,action_digest,app_slug,lease_seconds,action,reason,token,result_body,state) VALUES(%s::uuid,%s::uuid,%s::uuid,%s::bigint,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'pending') RETURNING {_COLUMNS}",
             (
                 *key,
                 generation,
@@ -273,12 +315,79 @@ async def _save_completion(
                 payload,
                 slug,
                 seconds,
+                action,
+                reason,
                 token,
-                receipt.body.decode("utf-8"),
+                body,
             ),
             control,
         )
     )
+
+
+async def _save_negative(
+    connection: Any,
+    input: EventConsumerRequest,
+    delivery: DeliveryFence,
+    slug: str,
+    seconds: int,
+    token: str,
+    action: str,
+    reason: str,
+    control: Control,
+) -> EventAcknowledgmentIntentStatus:
+    """Known rollback/stopped work/exclusive ownership are caller preconditions."""
+    if action not in ("retry", "dead-letter") or not reason_code(reason):
+        raise ValueError("invalid event acknowledgment failure decision")
+    control.check()
+    request, identity, digest = _prepare(connection, input, lambda _cursor: None)
+
+    async def save(cursor: Any) -> EventAcknowledgmentIntentStatus:
+        await _query(
+            cursor,
+            "SELECT pg_advisory_xact_lock(hashtextextended(%s,0))",
+            ("gregale.event-consumer-inbox.v1:" + identity.hex(),),
+            control,
+            fetch="none",
+        )
+        row = await _query(
+            cursor,
+            "SELECT account_id::text,app_id::text,subscription_id::text,acceptance_id::text,event_source,event_id,request_digest FROM public.gregale_event_consumer_inbox WHERE identity_digest=%s",
+            (identity,),
+            control,
+        )
+        if row is not None:
+            if (
+                tuple(row[:6])
+                != (
+                    request.account_id,
+                    request.app_id,
+                    request.subscription_id,
+                    str(request.acceptance_id),
+                    request.source,
+                    request.event_id,
+                )
+                or _bytes(row[6]) != digest
+            ):
+                raise EventConsumerConflictError("event consumer receipt scope or content differs")
+            control.result = EventAcknowledgmentWorkerResult(receipt_confirmed=True)
+            raise EventAcknowledgmentWorkerError("event_consumer_receipt_committed", control.result)
+        return await _save_intent(
+            cursor,
+            request,
+            delivery.invocation_id,
+            delivery.replay_generation,
+            delivery.attempt,
+            slug,
+            seconds,
+            token,
+            action,
+            reason,
+            None,
+            control,
+        )
+
+    return await _transaction(connection, save, control)
 
 
 async def alist_event_acknowledgment_intents(

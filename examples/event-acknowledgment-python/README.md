@@ -153,3 +153,59 @@ supersession and scheduled uncertainty. Database/HTTP are not atomic together;
 unknown settlement can repeat the same callback safely through server idempotency.
 Keep intent tokens/results and backups protected and retain newest metadata across
 the stale-job/restore horizon. See the [durable protocol and claim fences](../../docs/event-acknowledgment-python-intents.md).
+
+## Persist a failure decision
+
+After business work has stopped and its transaction is known to have rolled back,
+an exclusive owner can explicitly select a retry or dead-letter action. The
+example persists this choice in the protected queue before touching the intent
+store. It never selects an action from an exception or an unknown COMMIT.
+
+```python
+from durable_consumer import persist_owned_failure_decision, save_owned_failure_intent
+
+# Known rollback, stopped work, exclusive ownership, explicit owner policy:
+await persist_owned_failure_decision(
+    client.inner, job, scope, "retry", "dependency_unavailable",
+)
+# Or "dead-letter", "invalid_business_input".
+
+# Resume here with the persisted/reloaded owned failure record after a restart:
+status = await save_owned_failure_intent(client.inner, job, scope, connection)
+# Its fenced job ack follows a confirmed negative-intent COMMIT.
+# The independent recovery host sends the stored callback.
+```
+
+The additional adapter method `job.save_failure_decision(replacement)` must:
+
+- Atomically persist the protected replacement under current ownership/fence.
+- Preserve the original job ID, owner, headers and original body unchanged.
+- Transition version-2 `python-durable` to version-3 `python-durable-failure`
+  containing exactly one immutable `failure_decision` action/reason pair. Repeat
+  identical transitions succeed; different decisions conflict.
+- Refresh `job.record` with a detached committed snapshot before returning.
+- Reject stale ownership and honor bounded persistence/cleanup deadlines.
+
+The helper validates the original delivery and the reason code before persistence,
+checks the refreshed record, and sends no callback or intent SQL in this phase.
+If persistence fails, is cancelled, has an unknown outcome or leaves a stale view,
+retire that handle and reload the protected record under ownership. Never assume
+the phase stayed unchanged or reconstruct the choice from an error. A persisted
+failure record must go only to `save_owned_failure_intent`; it reads the saved
+choice and invokes no business handler. The version-2 business/receipt processors
+reject version-3 failure records and any record carrying a failure decision.
+Existing immediate records and ordinary version-2 completion jobs retain their
+formats and behavior.
+
+Failure-decision persistence alone does not permit queue deletion. Ack only after
+negative-intent COMMIT, with the adapter's independent ownership fence. Unknown
+intent COMMIT closes the connection; acquire a fresh idle autocommit connection
+and repeat the same persisted decision. A committed receipt blocks failure staging
+and needs explicit receipt-only owner recovery; never erase/change the saved
+decision or force a negative callback. Missing receipts alone do not prove rollback.
+
+After confirmed staging, failed queue ack or a restart can repeat the same save
+without resetting its recovery claim, counters or due time. Callback delivery
+uses the existing recovery host and rechecks receipts. No schema change, platform
+endpoint, automatic polling or external exactly-once guarantee is added. See the
+[failure-intent contract](../../docs/event-acknowledgment-python-intents.md#persist-explicit-failure-decisions).

@@ -1,7 +1,9 @@
-"""Explicit version-2 durable mode. Importing this module starts no queue or recovery loop."""
+"""Version-2 durable work and version-3 failure decisions. No queue/recovery loop starts on import."""
 
 from __future__ import annotations
 
+import copy
+import re
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -27,10 +29,12 @@ async def accept_authenticated_durable_delivery(
     )
 
 
-async def _ack(job: Any, result: Any) -> None:
+async def _ack(job: Any, result: Any = None) -> None:
     if job.stop_event.is_set():
         raise EventAcknowledgmentWorkerCancelled(
-            EventAcknowledgmentWorkerResult(True, result.receipt)
+            EventAcknowledgmentWorkerResult()
+            if result is None
+            else EventAcknowledgmentWorkerResult(True, result.receipt)
         )
     await job.ack()  # Must independently fence ownership and durable deletion.
 
@@ -39,7 +43,7 @@ async def process_owned_durable_delivery(
     client: Any, job: Any, scope: Mapping[str, str], connection: Any, handler: Any
 ) -> Any:
     """Commit SQL/receipt/intent together, then transfer callback responsibility to recovery."""
-    worker, body = _owned_delivery(client, job, scope, version=2, mode="python-durable")
+    worker, body = _processing_delivery(client, job, scope)
     result = await worker.run_durable(
         connection,
         lambda cursor, cancel: handler(cursor, cancel, body),
@@ -53,12 +57,78 @@ async def save_owned_completion_intent(
     client: Any, job: Any, scope: Mapping[str, str], connection: Any
 ) -> Any:
     """Explicit receipt-only recovery on a fresh connection after an uncertain COMMIT."""
-    worker, _body = _owned_delivery(
-        client, job, scope, version=2, mode="python-durable"
-    )
+    worker, _body = _processing_delivery(client, job, scope)
     result = await worker.save_completion_intent(connection, stop_event=job.stop_event)
     await _ack(job, result)
     return result
+
+
+def _processing_delivery(client: Any, job: Any, scope: Mapping[str, str]) -> Any:
+    if isinstance(job.record, Mapping) and "failure_decision" in job.record:
+        raise ValueError("failure decisions require the failure-intent processor")
+    return _owned_delivery(client, job, scope, version=2, mode="python-durable")
+
+
+def _failure_decision(action: Any, reason: Any) -> dict[str, str]:
+    if (
+        action not in ("retry", "dead-letter")
+        or not isinstance(reason, str)
+        or re.fullmatch(r"[a-z0-9_.-]{1,128}", reason) is None
+    ):
+        raise ValueError("invalid protected failure decision")
+    return {"action": action, "reason": reason}
+
+
+def _saved_failure(record: Mapping[str, Any]) -> dict[str, str]:
+    decision = record.get("failure_decision")
+    if not isinstance(decision, Mapping) or set(decision) != {"action", "reason"}:
+        raise ValueError("missing protected failure decision")
+    return _failure_decision(decision["action"], decision["reason"])
+
+
+async def persist_owned_failure_decision(
+    client: Any, job: Any, scope: Mapping[str, str], action: str, reason: str
+) -> None:
+    """Only after known rollback/stopped work. Fenced adapter must commit and refresh job.record."""
+    decision = _failure_decision(action, reason)
+    if (
+        isinstance(job.record, Mapping)
+        and type(job.record.get("version")) is int
+        and job.record["version"] == 3
+    ):
+        _owned_delivery(client, job, scope, version=3, mode="python-durable-failure")
+        if _saved_failure(job.record) != decision:
+            raise ValueError("protected failure decision is immutable")
+        return
+    _owned_delivery(client, job, scope, version=2, mode="python-durable")
+    if "failure_decision" in job.record:
+        raise ValueError("invalid protected processing record")
+    replacement = copy.deepcopy(dict(job.record))
+    replacement.update(
+        version=3, mode="python-durable-failure", failure_decision=decision
+    )
+    await job.save_failure_decision(replacement)
+    # A stale view could admit business work again. Never proceed with that handle.
+    if job.record != replacement:
+        raise ValueError("reload the owned protected job after decision persistence")
+
+
+async def save_owned_failure_intent(
+    client: Any, job: Any, scope: Mapping[str, str], connection: Any
+) -> Any:
+    """Recover only the durable decision, never business processing or a newly inferred action."""
+    worker, _body = _owned_delivery(
+        client, job, scope, version=3, mode="python-durable-failure"
+    )
+    decision = _saved_failure(job.record)
+    save = (
+        worker.save_retry_intent
+        if decision["action"] == "retry"
+        else worker.save_dead_letter_intent
+    )
+    status = await save(connection, decision["reason"], stop_event=job.stop_event)
+    await _ack(job)  # Local negative-intent COMMIT transfers callback responsibility.
+    return status
 
 
 async def recover_one_saved_callback(

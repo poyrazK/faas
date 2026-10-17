@@ -25,7 +25,12 @@ from ._event_acknowledgment_protocol import (
     settings,
 )
 from .client import AuthenticatedClient
-from .event_acknowledgment_intents import EventAcknowledgmentIntentResult, _save_completion
+from .event_acknowledgment_intents import (
+    EventAcknowledgmentIntentResult,
+    EventAcknowledgmentIntentStatus,
+    _save_completion,
+    _save_negative,
+)
 from .event_consumer_delivery_context import event_consumer_delivery_context_from_headers
 from .event_consumer_transactions import (
     EventConsumerCommitUnknownError,
@@ -246,6 +251,30 @@ class AsyncEventAcknowledgmentWorker:
     ) -> EventAcknowledgmentWorkerResult:
         """Persist this decision first; requires stopped work, known rollback and exclusive job ownership."""
         return await self._reject(connection, "retry", reason, stop_event)
+
+    async def save_retry_intent(
+        self, connection: Any, reason: str, *, stop_event: asyncio.Event | None = None
+    ) -> EventAcknowledgmentIntentStatus:
+        """Persist an explicit decision after known rollback, stopped work and exclusive ownership."""
+        return await self._save_rejection(connection, "retry", reason, stop_event)
+
+    async def save_dead_letter_intent(
+        self, connection: Any, reason: str, *, stop_event: asyncio.Event | None = None
+    ) -> EventAcknowledgmentIntentStatus:
+        """Same preconditions as save_retry_intent. Sends no callback or platform renewal."""
+        return await self._save_rejection(connection, "dead-letter", reason, stop_event)
+
+    async def _save_rejection(
+        self, connection: Any, action: str, reason: str, stop_event: asyncio.Event | None
+    ) -> EventAcknowledgmentIntentStatus:
+        if not reason_code(reason):
+            raise ValueError("invalid event acknowledgment failure reason")
+        return await self._operate(
+            lambda control: _save_negative(
+                connection, self._input, self._delivery, self._slug, self._seconds, self._token, action, reason, control
+            ),
+            stop_event,
+        )
 
     async def dead_letter(
         self, connection: Any, reason: str, *, stop_event: asyncio.Event | None = None

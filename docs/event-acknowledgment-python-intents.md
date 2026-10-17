@@ -86,12 +86,51 @@ immutable inputs conflict. Newer generation/attempt pairs supersede unfinished
 older intents, clear their secrets and invalidate claims. Stale stages cannot
 replace newer ones; confirmed history remains confirmed.
 
-Python staging in this increment creates completion intents. Existing immediate
-`retry`/`dead_letter` methods retain their known-rollback/stopped-work requirements
-and do not create intents. Recovery understands Go/Node negative intents and
-rechecks for a receipt before sending one. A present receipt supersedes the
-negative intent with `receipt_committed`. This absence check does not fence
-unrelated legacy processing; use consistent modes and exclusive owners.
+## Persist explicit failure decisions
+
+After the owner establishes known rollback, stopped work and exclusive durable-job
+ownership, persist the selected action/reason with that job, then stage it:
+
+```python
+intent = await worker.save_retry_intent(
+    connection, "dependency_unavailable", stop_event=job.stop_event,
+)
+# Or worker.save_dead_letter_intent(connection, "invalid_business_input", ...).
+# Confirmed local intent COMMIT transfers callback responsibility to recovery.
+```
+
+These methods send no HTTP callback or platform renewal and invoke no business
+handler. They return committed `EventAcknowledgmentIntentStatus` metadata. Reasons
+must match `[a-z0-9_.-]{1,128}`; use stable codes, never exception text or secrets.
+No exception automatically selects a failure action. Unknown business COMMIT is
+an explicit receipt-only reconciliation case, not permission to reject delivery.
+
+Staging holds the same advisory transaction lock as receipt processing, checks
+receipt owner/consumer/acceptance/source/event and request digest, then saves the
+intent under the existing invocation lock in that transaction. A matching receipt
+blocks rejection with `event_consumer_receipt_committed` and
+`error.result.receipt_confirmed=True`. The probe does not load the saved result;
+`error.result.receipt` is `None`. Use receipt-only completion. Mismatched receipt
+scope/input raises `EventConsumerConflictError` without changing either table.
+
+An absent receipt is only an observation; the application must establish rollback
+and stopped work independently. Receipt/intent locks do not grant durable-job
+ownership or stop unrelated external effects. Keep modes and owners consistent.
+Existing immediate `retry`/`dead_letter` retain their original callback behavior.
+
+Repeat uncertain saves with the same original delivery and chosen action/reason.
+The shared action digest includes both; changing either conflicts, while identical
+saves retain claims, counters, due times and confirmation. Newer attempts use the
+existing supersession/secret-erasure rules. Unknown negative-intent COMMIT returns
+no confirmed status, closes the connection and preserves
+`EventConsumerCommitUnknownError`; reconcile on a fresh idle autocommit connection.
+Cancellation shields active SQL/cleanup, checks before commit, and preserves a
+known successful COMMIT even if cancellation arrives late.
+
+Recovery handles Python/Go/Node negative intents and checks for a receipt again
+before sending one. A present receipt supersedes the intent with
+`receipt_committed`. This check does not fence unrelated legacy processing.
+See the [persisted failure-decision example](../examples/event-acknowledgment-python/README.md#persist-a-failure-decision).
 
 ## Recover one saved callback
 

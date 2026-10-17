@@ -1,5 +1,7 @@
 # Architecture Decision Records
 
+- [Python durable retry and dead-letter intents](20261017142209-python-durable-negative-acknowledgments.md)
+
 - [Python durable acknowledgment intents](20261017140016-python-durable-acknowledgment-intents.md)
 
 - [Python async event acknowledgment worker](20261017131506-python-async-event-acknowledgment-worker.md)

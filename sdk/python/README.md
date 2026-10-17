@@ -2740,3 +2740,10 @@ app_id, ...)` claims one due intent and sends only its saved callback. Separate
 `alist_event_acknowledgment_intents` diagnostics are also available. Applications
 own polling, protected storage, driver timeouts and retention. See the
 [durable Python protocol](../../docs/event-acknowledgment-python-intents.md).
+
+`save_retry_intent(connection, reason)` and `save_dead_letter_intent(connection,
+reason)` stage explicit failure decisions for the same recovery host. Establish
+known rollback, stopped work and exclusive ownership first, and persist the chosen
+action/reason before staging. Receipt presence blocks rejection; identical saves
+retain their claims/counters, and unknown COMMIT requires fresh-connection
+reconciliation. See [failure decisions](../../docs/event-acknowledgment-python-intents.md#persist-explicit-failure-decisions).
