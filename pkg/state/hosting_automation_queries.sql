@@ -21,8 +21,9 @@ SELECT r.* FROM hosting_ci_runs r JOIN hosting_sites s ON s.id=r.site_id WHERE s
 UPDATE hosting_ci_runs SET preview_created=true WHERE site_id=$1 AND id=$2;
 
 -- name: HostingActivityList :many
-SELECT r.site_id,r.id,r.release_id,r.preview_id,r.preview_created,r.created_at,r.preview_expires_at,
- rel.id AS release_record_id,rel.state AS release_state,rel.provenance AS release_provenance,
+SELECT r.site_id,r.id,r.release_id,r.preview_id,r.preview_created,r.canceled,r.created_at,r.preview_expires_at,
+ rel.id AS release_record_id,rel.state AS release_state,rel.provenance AS release_provenance,rel.first_promoted_at AS release_first_promoted_at,
+ EXISTS(SELECT 1 FROM hosting_previews other WHERE other.site_id=r.site_id AND other.release_id=r.release_id AND other.id<>r.preview_id) AS other_previews,
  p.id AS preview_record_id,p.release_id AS preview_release_id,p.origin_id AS preview_origin_id,
  p.expires_at AS preview_expiry,p.revoked AS preview_revoked,p.generation AS preview_generation,
  p.published_generation AS preview_published_generation,p.published_at AS preview_published_at,
@@ -39,7 +40,18 @@ ORDER BY r.created_at DESC,r.id DESC LIMIT sqlc.arg(page_size);
 SELECT s.id,
  (SELECT count(*)::bigint FROM hosting_previews p WHERE p.site_id=s.id) AS previews,
  (SELECT count(*)::bigint FROM hosting_ci_runs r JOIN hosting_releases rel ON rel.id=r.release_id AND rel.site_id=r.site_id
-  WHERE r.site_id=s.id AND r.preview_reserved AND NOT r.preview_created
+  WHERE r.site_id=s.id AND r.preview_reserved AND NOT r.canceled AND NOT r.preview_created
    AND (NOT sqlc.arg(has_excluded_run)::boolean OR r.id<>sqlc.arg(exclude_run_id)::uuid) AND r.preview_expires_at>sqlc.arg(observed_at)::timestamptz
    AND rel.state IN ('pending','ready')) AS reservations
 FROM hosting_sites s WHERE s.account_id=sqlc.arg(account_id) AND s.id=sqlc.arg(site_id);
+
+-- name: HostingCIRunCancel :one
+UPDATE hosting_ci_runs SET canceled=true WHERE site_id=$1 AND id=$2 RETURNING *;
+
+-- name: HostingCICancelRetire :execrows
+UPDATE hosting_releases SET state='retiring',retired_at=clock_timestamp(),retirement_generation=sqlc.arg(generation)::bigint
+WHERE site_id=sqlc.arg(site_id)::uuid AND id=sqlc.arg(release_id)::uuid AND state IN ('pending','ready') AND first_promoted_at IS NULL;
+
+-- name: HostingCICancelPreview :exec
+UPDATE hosting_previews SET revoked=true,generation=2,next_attempt_at=clock_timestamp(),last_error_code=''
+WHERE site_id=$1 AND id=$2 AND NOT revoked;

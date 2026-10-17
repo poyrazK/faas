@@ -1379,6 +1379,9 @@ type Querier interface {
 	HostingAccountLock(ctx context.Context, db DBTX, accountID pgtype.UUID) (pgtype.UUID, error)
 	HostingAccountUsage(ctx context.Context, db DBTX, arg HostingAccountUsageParams) (HostingAccountUsageRow, error)
 	HostingActivityList(ctx context.Context, db DBTX, arg HostingActivityListParams) ([]HostingActivityListRow, error)
+	HostingCICancelPreview(ctx context.Context, db DBTX, arg HostingCICancelPreviewParams) error
+	HostingCICancelRetire(ctx context.Context, db DBTX, arg HostingCICancelRetireParams) (int64, error)
+	HostingCIRunCancel(ctx context.Context, db DBTX, arg HostingCIRunCancelParams) (HostingCiRun, error)
 	HostingCIRunCount(ctx context.Context, db DBTX, siteID pgtype.UUID) (int64, error)
 	HostingCIRunCreate(ctx context.Context, db DBTX, arg HostingCIRunCreateParams) (HostingCiRun, error)
 	HostingCIRunGet(ctx context.Context, db DBTX, arg HostingCIRunGetParams) (HostingCiRun, error)

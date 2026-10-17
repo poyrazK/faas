@@ -4085,6 +4085,7 @@ type HostingCiRun struct {
 	CreatedAt        pgtype.Timestamptz
 	PreviewExpiresAt pgtype.Timestamptz
 	PreviewReserved  bool
+	Canceled         bool
 }
 
 type HostingDomain struct {

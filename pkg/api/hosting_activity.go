@@ -15,6 +15,8 @@ type HostingActivityEntry struct {
 	PreviewID        string                    `json:"preview_id"`
 	CreatedAt        time.Time                 `json:"created_at"`
 	PreviewExpiresAt time.Time                 `json:"preview_expires_at"`
+	Canceled         bool                      `json:"canceled,omitempty"`
+	CanCancel        bool                      `json:"can_cancel,omitempty"`
 	State            string                    `json:"state"`
 	Provenance       *HostingReleaseProvenance `json:"provenance,omitempty"`
 	Checks           []HostingDiagnosticCheck  `json:"checks"`

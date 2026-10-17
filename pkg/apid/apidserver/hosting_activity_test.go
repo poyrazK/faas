@@ -72,6 +72,12 @@ func TestHostingActivityFlagsRoutesAndCICredentialDenial(t *testing.T) {
 	if got.Code != 200 || json.Unmarshal(got.Body.Bytes(), &page) != nil || page.SiteID != site.ID || len(page.Entries) != 1 || page.Entries[0].RunID != run.ID || page.ServingHealth != "not_checked" || got.Header().Get("Cache-Control") != "no-store" {
 		t.Fatal(got.Code, got.Body)
 	}
+	if got := env.Do(t, "POST", root+"/ci/"+run.ID+"/cancel", nil, nil); got.Code != 503 {
+		t.Fatal("cancellation default off", got.Code, got.Body)
+	}
+	if err := manager.Apply("frontend_hosting_cancellation_enabled", []byte("true")); err != nil {
+		t.Fatal(err)
+	}
 	for _, ops := range [][]string{{"stage"}, {"preview"}, {"stage", "preview"}} {
 		minted := env.Do(t, "POST", root+"/automation-credentials", api.CreateHostingAutomationCredentialRequest{Label: "activity", Operations: ops}, nil)
 		var credential api.HostingAutomationCredentialResponse
@@ -81,14 +87,42 @@ func TestHostingActivityFlagsRoutesAndCICredentialDenial(t *testing.T) {
 		if got := env.Do(t, "GET", root+"/preview-capacity", nil, map[string]string{"Authorization": "Bearer " + credential.Token}); got.Code != 403 {
 			t.Fatal("CI gained capacity inventory authority", got.Code, got.Body)
 		}
+		if got := env.Do(t, "POST", root+"/ci/"+run.ID+"/cancel", nil, map[string]string{"Authorization": "Bearer " + credential.Token}); got.Code != 403 {
+			t.Fatal("CI gained cancellation authority", got.Code, got.Body)
+		}
 		if got := env.Do(t, "GET", root+"/runs", nil, map[string]string{"Authorization": "Bearer " + credential.Token}); got.Code != 403 {
 			t.Fatal("CI gained listing authority", got.Code, got.Body)
 		}
+	}
+	got = env.Do(t, "POST", root+"/ci/"+run.ID+"/cancel", nil, nil)
+	var canceled api.HostingCIRun
+	if got.Code != 200 || json.Unmarshal(got.Body.Bytes(), &canceled) != nil || !canceled.Canceled {
+		t.Fatal("cancel route", got.Code, got.Body)
+	}
+	if err := manager.Apply("frontend_hosting_cancellation_enabled", []byte("false")); err != nil {
+		t.Fatal(err)
+	}
+	if got := env.Do(t, "POST", root+"/ci/"+run.ID+"/cancel", nil, nil); got.Code != 503 {
+		t.Fatal("hot-off cancellation replay", got.Code, got.Body)
 	}
 	if err := manager.Apply("frontend_hosting_activity_enabled", []byte("false")); err != nil {
 		t.Fatal(err)
 	}
 	if got := env.Do(t, "GET", root+"/runs", nil, nil); got.Code != 503 {
 		t.Fatal("hot disable", got.Code, got.Body)
+	}
+}
+
+func TestHostingCancellationRuntimeSeed(t *testing.T) {
+	for _, v := range []string{"", "false", "1", "true"} {
+		m := apidserver.NewRuntimeConfigManager(func(k string) string {
+			if k == "FAAS_FRONTEND_HOSTING_CANCELLATION_ENABLED" {
+				return v
+			}
+			return ""
+		})
+		if m.Bool("frontend_hosting_cancellation_enabled", false) != (v == "1" || v == "true") {
+			t.Fatal(v)
+		}
 	}
 }

@@ -62,3 +62,5 @@ For operator-generated workflows matching an existing trust, see
 Setup is independently default-off and does not install the CLI or perform GitHub writes.
 
 Optional `reserve-preview: 'true'` requests atomic preview capacity admission before uploads. It defaults off and requires the separate API preview-reservations flag and a compatible pinned CLI/Action. Keep this value unchanged on retries. See [capacity reservations](../../../docs/internal-frontend-hosting-preview-reservations.md).
+
+A permanently canceled intent reports `publication-state=canceled` and exits unsuccessfully. Inspect it before explicitly starting another intent; retrying does not revive canceled resources.

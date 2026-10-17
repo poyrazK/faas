@@ -166,6 +166,9 @@ func (m *MemStore) CreateHostingCIPreview(_ context.Context, account, site, id s
 	if !ok {
 		return api.HostingPreview{}, ErrNotFound
 	}
+	if run.Canceled {
+		return api.HostingPreview{}, ErrConflict
+	}
 	if run.PreviewCreated {
 		if p, ok := m.hostingPreviews[run.PreviewID]; ok {
 			return cloneHostingPreview(p), nil

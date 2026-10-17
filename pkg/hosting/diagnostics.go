@@ -81,7 +81,9 @@ func diagnoseRun(out *api.HostingDiagnostics, e DiagnosticEvidence, now time.Tim
 		check.State, check.Code, check.Summary, check.Action = "unknown", "run_inconsistent", "The retained intent does not match this diagnostic request.", "Refresh and ask an operator to inspect the retained intent."
 	default:
 		out.ReleaseID, out.PreviewID = e.Run.ReleaseID, e.Run.PreviewID
-		if !e.Run.PreviewExpiresAt.After(now) {
+		if e.Run.Canceled {
+			check.State, check.Code, check.Summary, check.Action = "blocked", "run_canceled", "This CI run was permanently canceled.", "Do not retry this intent. Preview revocation and safe artifact cleanup may still be pending."
+		} else if !e.Run.PreviewExpiresAt.After(now) {
 			check.State, check.Code, check.Summary, check.Action = "blocked", "run_expired", "The original CI preview window has expired.", "This run cannot extend or recreate its preview. Review retained resources before explicitly starting a new intent."
 		}
 	}

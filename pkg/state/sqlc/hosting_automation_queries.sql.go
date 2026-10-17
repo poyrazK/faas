@@ -12,8 +12,9 @@ import (
 )
 
 const hostingActivityList = `-- name: HostingActivityList :many
-SELECT r.site_id,r.id,r.release_id,r.preview_id,r.preview_created,r.created_at,r.preview_expires_at,
- rel.id AS release_record_id,rel.state AS release_state,rel.provenance AS release_provenance,
+SELECT r.site_id,r.id,r.release_id,r.preview_id,r.preview_created,r.canceled,r.created_at,r.preview_expires_at,
+ rel.id AS release_record_id,rel.state AS release_state,rel.provenance AS release_provenance,rel.first_promoted_at AS release_first_promoted_at,
+ EXISTS(SELECT 1 FROM hosting_previews other WHERE other.site_id=r.site_id AND other.release_id=r.release_id AND other.id<>r.preview_id) AS other_previews,
  p.id AS preview_record_id,p.release_id AS preview_release_id,p.origin_id AS preview_origin_id,
  p.expires_at AS preview_expiry,p.revoked AS preview_revoked,p.generation AS preview_generation,
  p.published_generation AS preview_published_generation,p.published_at AS preview_published_at,
@@ -42,11 +43,14 @@ type HostingActivityListRow struct {
 	ReleaseID                  pgtype.UUID
 	PreviewID                  pgtype.UUID
 	PreviewCreated             bool
+	Canceled                   bool
 	CreatedAt                  pgtype.Timestamptz
 	PreviewExpiresAt           pgtype.Timestamptz
 	ReleaseRecordID            pgtype.UUID
 	ReleaseState               pgtype.Text
 	ReleaseProvenance          []byte
+	ReleaseFirstPromotedAt     pgtype.Timestamptz
+	OtherPreviews              bool
 	PreviewRecordID            pgtype.UUID
 	PreviewReleaseID           pgtype.UUID
 	PreviewOriginID            pgtype.Text
@@ -81,11 +85,14 @@ func (q *Queries) HostingActivityList(ctx context.Context, db DBTX, arg HostingA
 			&i.ReleaseID,
 			&i.PreviewID,
 			&i.PreviewCreated,
+			&i.Canceled,
 			&i.CreatedAt,
 			&i.PreviewExpiresAt,
 			&i.ReleaseRecordID,
 			&i.ReleaseState,
 			&i.ReleaseProvenance,
+			&i.ReleaseFirstPromotedAt,
+			&i.OtherPreviews,
 			&i.PreviewRecordID,
 			&i.PreviewReleaseID,
 			&i.PreviewOriginID,
@@ -107,6 +114,67 @@ func (q *Queries) HostingActivityList(ctx context.Context, db DBTX, arg HostingA
 	return items, nil
 }
 
+const hostingCICancelPreview = `-- name: HostingCICancelPreview :exec
+UPDATE hosting_previews SET revoked=true,generation=2,next_attempt_at=clock_timestamp(),last_error_code=''
+WHERE site_id=$1 AND id=$2 AND NOT revoked
+`
+
+type HostingCICancelPreviewParams struct {
+	SiteID pgtype.UUID
+	ID     pgtype.UUID
+}
+
+func (q *Queries) HostingCICancelPreview(ctx context.Context, db DBTX, arg HostingCICancelPreviewParams) error {
+	_, err := db.Exec(ctx, hostingCICancelPreview, arg.SiteID, arg.ID)
+	return err
+}
+
+const hostingCICancelRetire = `-- name: HostingCICancelRetire :execrows
+UPDATE hosting_releases SET state='retiring',retired_at=clock_timestamp(),retirement_generation=$1::bigint
+WHERE site_id=$2::uuid AND id=$3::uuid AND state IN ('pending','ready') AND first_promoted_at IS NULL
+`
+
+type HostingCICancelRetireParams struct {
+	Generation int64
+	SiteID     pgtype.UUID
+	ReleaseID  pgtype.UUID
+}
+
+func (q *Queries) HostingCICancelRetire(ctx context.Context, db DBTX, arg HostingCICancelRetireParams) (int64, error) {
+	result, err := db.Exec(ctx, hostingCICancelRetire, arg.Generation, arg.SiteID, arg.ReleaseID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const hostingCIRunCancel = `-- name: HostingCIRunCancel :one
+UPDATE hosting_ci_runs SET canceled=true WHERE site_id=$1 AND id=$2 RETURNING site_id, id, release_id, preview_id, preview_created, fingerprint, created_at, preview_expires_at, preview_reserved, canceled
+`
+
+type HostingCIRunCancelParams struct {
+	SiteID pgtype.UUID
+	ID     pgtype.UUID
+}
+
+func (q *Queries) HostingCIRunCancel(ctx context.Context, db DBTX, arg HostingCIRunCancelParams) (HostingCiRun, error) {
+	row := db.QueryRow(ctx, hostingCIRunCancel, arg.SiteID, arg.ID)
+	var i HostingCiRun
+	err := row.Scan(
+		&i.SiteID,
+		&i.ID,
+		&i.ReleaseID,
+		&i.PreviewID,
+		&i.PreviewCreated,
+		&i.Fingerprint,
+		&i.CreatedAt,
+		&i.PreviewExpiresAt,
+		&i.PreviewReserved,
+		&i.Canceled,
+	)
+	return i, err
+}
+
 const hostingCIRunCount = `-- name: HostingCIRunCount :one
 SELECT count(*)::bigint FROM hosting_ci_runs WHERE site_id=$1
 `
@@ -119,7 +187,7 @@ func (q *Queries) HostingCIRunCount(ctx context.Context, db DBTX, siteID pgtype.
 }
 
 const hostingCIRunCreate = `-- name: HostingCIRunCreate :one
-INSERT INTO hosting_ci_runs(site_id,id,release_id,preview_id,fingerprint,created_at,preview_expires_at,preview_reserved) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING site_id, id, release_id, preview_id, preview_created, fingerprint, created_at, preview_expires_at, preview_reserved
+INSERT INTO hosting_ci_runs(site_id,id,release_id,preview_id,fingerprint,created_at,preview_expires_at,preview_reserved) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING site_id, id, release_id, preview_id, preview_created, fingerprint, created_at, preview_expires_at, preview_reserved, canceled
 `
 
 type HostingCIRunCreateParams struct {
@@ -155,12 +223,13 @@ func (q *Queries) HostingCIRunCreate(ctx context.Context, db DBTX, arg HostingCI
 		&i.CreatedAt,
 		&i.PreviewExpiresAt,
 		&i.PreviewReserved,
+		&i.Canceled,
 	)
 	return i, err
 }
 
 const hostingCIRunGet = `-- name: HostingCIRunGet :one
-SELECT r.site_id, r.id, r.release_id, r.preview_id, r.preview_created, r.fingerprint, r.created_at, r.preview_expires_at, r.preview_reserved FROM hosting_ci_runs r JOIN hosting_sites s ON s.id=r.site_id WHERE s.account_id=$1 AND r.site_id=$2 AND r.id=$3
+SELECT r.site_id, r.id, r.release_id, r.preview_id, r.preview_created, r.fingerprint, r.created_at, r.preview_expires_at, r.preview_reserved, r.canceled FROM hosting_ci_runs r JOIN hosting_sites s ON s.id=r.site_id WHERE s.account_id=$1 AND r.site_id=$2 AND r.id=$3
 `
 
 type HostingCIRunGetParams struct {
@@ -182,6 +251,7 @@ func (q *Queries) HostingCIRunGet(ctx context.Context, db DBTX, arg HostingCIRun
 		&i.CreatedAt,
 		&i.PreviewExpiresAt,
 		&i.PreviewReserved,
+		&i.Canceled,
 	)
 	return i, err
 }
@@ -344,7 +414,7 @@ const hostingPreviewCapacity = `-- name: HostingPreviewCapacity :one
 SELECT s.id,
  (SELECT count(*)::bigint FROM hosting_previews p WHERE p.site_id=s.id) AS previews,
  (SELECT count(*)::bigint FROM hosting_ci_runs r JOIN hosting_releases rel ON rel.id=r.release_id AND rel.site_id=r.site_id
-  WHERE r.site_id=s.id AND r.preview_reserved AND NOT r.preview_created
+  WHERE r.site_id=s.id AND r.preview_reserved AND NOT r.canceled AND NOT r.preview_created
    AND (NOT $1::boolean OR r.id<>$2::uuid) AND r.preview_expires_at>$3::timestamptz
    AND rel.state IN ('pending','ready')) AS reservations
 FROM hosting_sites s WHERE s.account_id=$4 AND s.id=$5

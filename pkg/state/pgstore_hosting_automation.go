@@ -21,7 +21,7 @@ func hostingCredentialRow(r sqlc.HostingAutomationCredential) api.HostingAutomat
 	return c
 }
 func hostingCIRunRow(r sqlc.HostingCiRun) api.HostingCIRun {
-	return api.HostingCIRun{ID: uuidString(r.ID), SiteID: uuidString(r.SiteID), ReleaseID: uuidString(r.ReleaseID), PreviewID: uuidString(r.PreviewID), PreviewCreated: r.PreviewCreated, PreviewReserved: r.PreviewReserved, PreviewExpiresAt: r.PreviewExpiresAt.Time, Fingerprint: r.Fingerprint, CreatedAt: r.CreatedAt.Time}
+	return api.HostingCIRun{ID: uuidString(r.ID), SiteID: uuidString(r.SiteID), ReleaseID: uuidString(r.ReleaseID), PreviewID: uuidString(r.PreviewID), Canceled: r.Canceled, PreviewCreated: r.PreviewCreated, PreviewReserved: r.PreviewReserved, PreviewExpiresAt: r.PreviewExpiresAt.Time, Fingerprint: r.Fingerprint, CreatedAt: r.CreatedAt.Time}
 }
 func (s *PgStore) CreateHostingAutomationCredential(ctx context.Context, c api.HostingAutomationCredential) (api.HostingAutomationCredential, error) {
 	if c.OIDCTrustID != "" || !validHostingCredential(c) {
@@ -201,6 +201,9 @@ func (s *PgStore) CreateHostingCIPreview(ctx context.Context, account, site, id 
 		return api.HostingPreview{}, hostingStoreError(err)
 	}
 	run := hostingCIRunRow(row)
+	if run.Canceled {
+		return api.HostingPreview{}, ErrConflict
+	}
 	if run.PreviewCreated {
 		rows, listErr := q.HostingPreviewList(ctx, tx, sqlc.HostingPreviewListParams{AccountID: a, SiteID: si})
 		if listErr != nil {

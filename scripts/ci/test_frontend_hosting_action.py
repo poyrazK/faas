@@ -42,6 +42,10 @@ class ActionContracts(unittest.TestCase):
   self.assertEqual(reserved[3].kwargs['env']['FAAS_FRONTEND_HOSTING_PREVIEW_RESERVATIONS_ENABLED'],'1')
   self.assertEqual(reserved[2],self.invoke({'HOSTING_RESERVE_PREVIEW':'true','GITHUB_RUN_ATTEMPT':'2'})[2])
   self.assertEqual(self.invoke({'HOSTING_RESERVE_PREVIEW':'TRUE'})[4],0)
+ def test_canceled_intent_never_suggests_retry(self):
+  run=str(uuid.uuid5(uuid.NAMESPACE_URL,'gregale-hosting:https://api.example.com/'+SITE+':org/site:12345'))
+  code,text,output,args,calls=self.invoke(result={'run':{'id':run,'site_id':SITE,'release_id':RELEASE,'preview_id':PREVIEW},'state':'canceled','published':False},returncode=1)
+  self.assertEqual(code,1);self.assertIn('permanently canceled',text);self.assertNotIn('Retry unchanged',text);self.assertIn('publication-state=canceled',output)
  def test_default_off_and_generic_credentials_never_execute_cli(self):
   for overrides in [{'HOSTING_ENABLED':'false'},{'FAAS_TOKEN':'fp_live_'+'a'*48},{'FAAS_API':'http://api.example.com'},{'FAAS_API':'https://user:password@api.example.com'},{'FAAS_API':'https://api.example.com/path'},{'HOSTING_RUN_ID':'bad'}]:
    code,text,output,args,calls=self.invoke(overrides);self.assertEqual(code,1);self.assertEqual(calls,0);self.assertEqual(output,'');self.assertNotIn(TOKEN,text)

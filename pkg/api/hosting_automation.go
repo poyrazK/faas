@@ -64,6 +64,7 @@ type HostingCIRun struct {
 	SiteID           string    `json:"site_id"`
 	ReleaseID        string    `json:"release_id"`
 	PreviewID        string    `json:"preview_id"`
+	Canceled         bool      `json:"canceled,omitempty"`
 	PreviewCreated   bool      `json:"preview_created"`
 	PreviewReserved  bool      `json:"preview_reserved,omitempty"`
 	PreviewExpiresAt time.Time `json:"preview_expires_at"`

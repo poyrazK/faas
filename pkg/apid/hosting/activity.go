@@ -90,7 +90,9 @@ func (s Service) collectActivity(r *http.Request, account state.Account, site ap
 		if row.Run.SiteID != site.ID {
 			return api.HostingActivityPage{}, state.ErrConflict
 		}
-		result.Entries = append(result.Entries, activity.Summarize(site, row.Run, row.Release, row.Preview, caps.PreviewsEnabled && site.DurableRouting, caps.HistoryEnabled, now))
+		entry := activity.Summarize(site, row.Run, row.Release, row.Preview, caps.PreviewsEnabled && site.DurableRouting, caps.HistoryEnabled, now)
+		entry.CanCancel = caps.CancellationEnabled && site.Status == "active" && site.DurableRouting && !row.Run.Canceled && site.ActiveReleaseID != row.Run.ReleaseID && !row.OtherPreviews && (row.Release == nil || row.Release.FirstPromotedAt == nil)
+		result.Entries = append(result.Entries, entry)
 	}
 	current, err := s.Host.HostingStore().GetHostingSite(r.Context(), account.ID, site.ID)
 	if err != nil {
@@ -101,7 +103,7 @@ func (s Service) collectActivity(r *http.Request, account state.Account, site ap
 	}
 	var latest api.HostingCapabilities
 	s.extendCapabilities(r, &latest)
-	if caps.HistoryEnabled != latest.HistoryEnabled || caps.PreviewsEnabled != latest.PreviewsEnabled {
+	if caps.CancellationEnabled != latest.CancellationEnabled || caps.HistoryEnabled != latest.HistoryEnabled || caps.PreviewsEnabled != latest.PreviewsEnabled {
 		return api.HostingActivityPage{}, state.ErrConflict
 	}
 	return result, nil

@@ -29,11 +29,20 @@ func (m *MemStore) ListHostingActivityRecords(_ context.Context, account, site, 
 		row := HostingActivityRecord{Run: run}
 		if release, ok := m.hostingReleases[run.ReleaseID]; ok && release.SiteID == site {
 			row.Release = &api.HostingRelease{ID: release.ID, SiteID: release.SiteID, State: release.State, Provenance: cloneHostingProvenance(release.Provenance)}
+			if release.FirstPromotedAt != nil {
+				at := *release.FirstPromotedAt
+				row.Release.FirstPromotedAt = &at
+			}
 		}
 		if preview, ok := m.hostingPreviews[run.PreviewID]; ok && preview.SiteID == site && preview.AccountID == account {
 			p := cloneHostingPreview(preview)
 			p.Hostname = ""
 			row.Preview = &p
+		}
+		for _, p := range m.hostingPreviews {
+			if p.SiteID == site && p.ReleaseID == run.ReleaseID && p.ID != run.PreviewID {
+				row.OtherPreviews = true
+			}
 		}
 		rows = append(rows, row)
 	}

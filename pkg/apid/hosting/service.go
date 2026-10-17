@@ -64,6 +64,8 @@ func failure(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, state.ErrNotFound):
 		p = api.NewProblem(http.StatusNotFound, "not_found", "Not found", "no such hosting resource")
+	case errors.Is(err, state.ErrHostingCancellationProtected):
+		p = api.NewProblem(409, "hosting_ci_cancel_protected", "CI run is protected", "production releases, previously promoted releases and other preview references cannot be canceled; inspect the run and release before acting")
 	case errors.Is(err, state.ErrConflict):
 		p = api.NewProblem(http.StatusConflict, "hosting_release_conflict", "Hosting state changed", "refresh the site revision; only ready releases can be promoted and active or preview-referenced releases cannot be retired")
 	case errors.Is(err, state.ErrInvalidArgument), errors.Is(err, artifacts.ErrInvalidArtifact):

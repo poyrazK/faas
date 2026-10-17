@@ -10,9 +10,10 @@ import (
 // Projection excludes manifests, hostnames, fingerprints and credentials. Records
 // are observed together under one memory lock or one SQL statement snapshot.
 type HostingActivityRecord struct {
-	Run     api.HostingCIRun
-	Release *api.HostingRelease
-	Preview *api.HostingPreview
+	OtherPreviews bool
+	Run           api.HostingCIRun
+	Release       *api.HostingRelease
+	Preview       *api.HostingPreview
 }
 type HostingActivityRecords struct {
 	Records    []HostingActivityRecord

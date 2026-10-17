@@ -33,7 +33,7 @@ func (m *MemStore) hostingPreviewCapacityLocked(site, exclude string, now time.T
 	}
 	for _, r := range m.hostingCIRuns {
 		release := m.hostingReleases[r.ReleaseID]
-		if r.SiteID == site && r.ID != exclude && r.PreviewReserved && !r.PreviewCreated && r.PreviewExpiresAt.After(now) && release.SiteID == site && (release.State == "pending" || release.State == "ready") {
+		if r.SiteID == site && r.ID != exclude && r.PreviewReserved && !r.Canceled && !r.PreviewCreated && r.PreviewExpiresAt.After(now) && release.SiteID == site && (release.State == "pending" || release.State == "ready") {
 			reservations++
 		}
 	}

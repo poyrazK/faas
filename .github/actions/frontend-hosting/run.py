@@ -105,7 +105,7 @@ def main():
         if not valid_preview:
             return fail('CI result contains an invalid private preview URL.')
         outputs['preview-url'] = preview_url
-    if outputs['publication-state'] not in ('incomplete', 'publication_pending', 'publication_acknowledged'):
+    if outputs['publication-state'] not in ('incomplete', 'canceled', 'publication_pending', 'publication_acknowledged'):
         return fail('CI result contains an unknown publication state.')
     if completed.returncode == 0 and (result.get('published') is not True or not preview_url or outputs['publication-state'] != 'publication_acknowledged'):
         return fail('The CLI returned success without publication acknowledgment.')
@@ -115,6 +115,8 @@ def main():
             for key, value in outputs.items():
                 output.write(key + '=' + value + '\n')
     # CLI stderr may contain private data. Emit only fixed text and bounded IDs.
+    if outputs['publication-state'] == 'canceled':
+        return fail('This CI intent was permanently canceled and cannot resume. Inspect run ' + run + ' before explicitly starting another intent.')
     if completed.returncode:
         return fail('CI intent is retained but incomplete. Retry unchanged files with run ID ' + run + '; inspect site state if resources expired or were removed.')
     print('Private preview publication acknowledged for run ' + run + '. Edge refresh and Access sign-in still apply.')

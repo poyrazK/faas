@@ -27399,6 +27399,8 @@ CREATE TABLE public.hosting_ci_runs (
     created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
     preview_expires_at timestamp with time zone NOT NULL,
     preview_reserved boolean DEFAULT false NOT NULL,
+    canceled boolean DEFAULT false NOT NULL,
+    CONSTRAINT hosting_ci_runs_canceled_check CHECK ((canceled IN (true, false))),
     CONSTRAINT hosting_ci_runs_preview_reserved_check CHECK ((preview_reserved IN (true, false))),
     CONSTRAINT hosting_ci_runs_check CHECK ((isfinite(preview_expires_at) AND (preview_expires_at > created_at))),
     CONSTRAINT hosting_ci_runs_created_at_check CHECK (isfinite(created_at)),

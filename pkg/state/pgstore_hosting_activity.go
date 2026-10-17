@@ -36,9 +36,9 @@ func (s *PgStore) ListHostingActivityRecords(ctx context.Context, account, site,
 	}
 	out := make([]HostingActivityRecord, 0, len(rows))
 	for _, r := range rows {
-		row := HostingActivityRecord{Run: api.HostingCIRun{ID: uuidString(r.ID), SiteID: uuidString(r.SiteID), ReleaseID: uuidString(r.ReleaseID), PreviewID: uuidString(r.PreviewID), PreviewCreated: r.PreviewCreated, CreatedAt: r.CreatedAt.Time, PreviewExpiresAt: r.PreviewExpiresAt.Time}}
+		row := HostingActivityRecord{OtherPreviews: r.OtherPreviews, Run: api.HostingCIRun{ID: uuidString(r.ID), SiteID: uuidString(r.SiteID), ReleaseID: uuidString(r.ReleaseID), PreviewID: uuidString(r.PreviewID), Canceled: r.Canceled, PreviewCreated: r.PreviewCreated, CreatedAt: r.CreatedAt.Time, PreviewExpiresAt: r.PreviewExpiresAt.Time}}
 		if r.ReleaseRecordID.Valid {
-			row.Release = &api.HostingRelease{ID: uuidString(r.ReleaseRecordID), SiteID: site, State: r.ReleaseState.String}
+			row.Release = &api.HostingRelease{ID: uuidString(r.ReleaseRecordID), SiteID: site, State: r.ReleaseState.String, FirstPromotedAt: hostingTimePointer(r.ReleaseFirstPromotedAt)}
 			if len(r.ReleaseProvenance) > 0 {
 				if err = json.Unmarshal(r.ReleaseProvenance, &row.Release.Provenance); err != nil {
 					return HostingActivityRecords{}, fmt.Errorf("decode hosting activity source: %w", err)

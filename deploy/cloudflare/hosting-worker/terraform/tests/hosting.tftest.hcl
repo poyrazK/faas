@@ -285,3 +285,12 @@ run "activity_default_off" {
     error_message = "Deployment activity must default off independently of serving and automation."
   }
 }
+
+run "cancellation_default_off" {
+  command = plan
+
+  assert {
+    condition     = output.apid_environment.FAAS_FRONTEND_HOSTING_CANCELLATION_ENABLED == "0"
+    error_message = "CI cancellation must require its independent operator opt-in."
+  }
+}

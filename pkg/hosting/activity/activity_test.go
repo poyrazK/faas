@@ -97,3 +97,22 @@ func TestActivitySummariesDescribeStoredEvidenceOnly(t *testing.T) {
 		t.Fatal("raw provider error", out)
 	}
 }
+
+func TestCanceledIntentRemainsTerminalInActivity(t *testing.T) {
+	// adr: 202610171242 — canceled identities remain distinguishable after release and preview GC.
+	site := api.HostingSite{ID: "site", Status: "active"}
+	run := api.HostingCIRun{ID: "run", SiteID: site.ID, ReleaseID: "release", PreviewID: "preview", Canceled: true, CreatedAt: time.Now(), PreviewExpiresAt: time.Now().Add(time.Hour)}
+	got := Summarize(site, run, nil, nil, true, false, time.Now())
+	if got.State != "canceled" || !got.Canceled {
+		t.Fatal(got)
+	}
+	found := false
+	for _, c := range got.Checks {
+		if c.Code == "run_canceled" && c.State == "blocked" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("cancellation diagnostic missing", got)
+	}
+}

@@ -27,7 +27,7 @@ func TestHostingPreviewReservationsMigrationAndExpiry(t *testing.T) {
 	_, err = pool.Exec(ctx, `CREATE TABLE hosting_sites(id uuid PRIMARY KEY,account_id uuid);
  CREATE TABLE hosting_releases(id uuid PRIMARY KEY,site_id uuid,state text);
  CREATE TABLE hosting_previews(id uuid PRIMARY KEY,site_id uuid);
- CREATE TABLE hosting_ci_runs(id uuid PRIMARY KEY,site_id uuid,release_id uuid,preview_created boolean DEFAULT false,preview_expires_at timestamptz);
+ CREATE TABLE hosting_ci_runs(id uuid PRIMARY KEY,site_id uuid,release_id uuid,canceled boolean DEFAULT false,preview_created boolean DEFAULT false,preview_expires_at timestamptz);
  INSERT INTO hosting_sites VALUES('11111111-1111-4111-8111-111111111111','11111111-1111-4111-8111-111111111111');
  INSERT INTO hosting_releases SELECT id,id,'pending' FROM hosting_sites;
  INSERT INTO hosting_ci_runs(id,site_id,release_id,preview_expires_at) SELECT id,id,id,clock_timestamp()+interval '1 hour' FROM hosting_sites;`)

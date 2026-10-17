@@ -19,6 +19,7 @@ import (
 )
 
 type testHost struct {
+	cancellation              bool
 	reservations              bool
 	activity                  bool
 	activityReader            state.HostingActivityReader
@@ -232,3 +233,6 @@ func (h *testHost) HostingPreviewStore() state.HostingPreviewStore { return h.st
 
 func (h *testHost) HostingPreviewReservationsEnabled() bool                          { return h.reservations }
 func (h *testHost) HostingPreviewCapacityReader() state.HostingPreviewCapacityReader { return h.store }
+
+func (h *testHost) HostingCancellationEnabled() bool                         { return h.cancellation }
+func (h *testHost) HostingCancellationStore() state.HostingCancellationStore { return h.store }

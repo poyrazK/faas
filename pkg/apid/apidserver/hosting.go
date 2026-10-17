@@ -276,3 +276,11 @@ func (h hostingHost) HostingPreviewCapacityReader() state.HostingPreviewCapacity
 	reader, _ := h.s.store.(state.HostingPreviewCapacityReader)
 	return reader
 }
+
+func (h hostingHost) HostingCancellationEnabled() bool {
+	return h.s.runtimeBool(runtimeConfigFrontendHostingCancellation, false)
+}
+func (h hostingHost) HostingCancellationStore() state.HostingCancellationStore {
+	store, _ := h.s.store.(state.HostingCancellationStore)
+	return store
+}
