@@ -52,6 +52,10 @@ func (s *server) verifyAppEventPublication(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, api.ErrValidation(err.Error()))
 		return
 	}
+	if req.ExpectedAppID != "" && req.ExpectedAppID != app.ID {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "app_event_identity_mismatch", "Application changed", "expected_app_id does not match the resolved application"))
+		return
+	}
 	appID, source, id, err := appProducerEventIdentity(app.ID, req.Key)
 	if err != nil {
 		api.WriteProblem(w, api.ErrInternal("application identity"))

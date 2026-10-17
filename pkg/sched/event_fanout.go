@@ -292,6 +292,9 @@ func (l *Loop) routeSubscription(ctx context.Context, envelope events.Envelope, 
 		"x-gregale-event-subscription-id": row.ID,
 	}
 	if acceptanceID > 0 {
+		if row.AcknowledgmentLeaseSeconds > 0 {
+			eventHeaders["x-gregale-event-acknowledgment-lease-seconds"] = strconv.Itoa(row.AcknowledgmentLeaseSeconds)
+		}
 		eventHeaders["x-gregale-event-acceptance-id"] = strconv.FormatInt(acceptanceID, 10)
 	}
 	headers, err := json.Marshal(pkgtrace.MergeHeaderMap(

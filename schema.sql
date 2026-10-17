@@ -6526,6 +6526,7 @@ BEGIN
             'id', s.id, 'account_id', s.account_id, 'app_id', s.app_id,
             'source', s.source, 'type', s.type, 'filter', s.filter,
             'routing_retry_policy', s.routing_retry_policy,
+            'acknowledgment_lease_seconds', s.acknowledgment_lease_seconds,
             'schema_versions', s.schema_versions,
             'work_snapshot_captured', true,
             'work', CASE WHEN b.subscription_id IS NULL THEN NULL
@@ -8889,6 +8890,7 @@ SELECT coalesce((SELECT CASE WHEN c.paused THEN 'subscription_paused'
  WHEN b.state_data->>'state'='draining' AND (b.state_data->>'recovery_window')::timestamptz+interval '1 second'>observed_at
  AND (b.state_data->>'recovery_count')::integer>=least((b.policy->>'recovery_max_rate_per_second')::integer,
  power(2,least(7,greatest(0,floor(extract(epoch FROM observed_at-(b.state_data->>'changed_at')::timestamptz)/10))))::integer) THEN 'circuit_recovery_rate_limited'
+ WHEN c.rate_enabled AND (c.rate_refilled_at>observed_at OR c.rate_credit_ms+greatest(0,floor(extract(epoch FROM observed_at-c.rate_refilled_at)*1000))<c.rate_interval_ms) THEN 'subscription_rate_limited'
  WHEN c.rate_per_second>0 AND c.window_count>=c.rate_per_second AND c.window_started_at+interval '1 second'>observed_at THEN 'subscription_rate_limited' ELSE '' END
  FROM event_subscription_delivery_controls c JOIN apps a ON a.id=c.app_id AND a.account_id=c.account_id AND a.status<>'deleted'
  LEFT JOIN event_subscription_circuit_breakers b ON b.subscription_id=c.subscription_id AND b.account_id=c.account_id AND b.app_id=c.app_id
@@ -26863,6 +26865,118 @@ CREATE TABLE public.environment_workload_serving_routes (
 
 
 --
+-- Name: event_acknowledgment_metric_buckets; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.event_acknowledgment_metric_buckets (
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    subscription_id uuid NOT NULL,
+    bucket_start timestamp with time zone NOT NULL,
+    kind text NOT NULL,
+    occurrences bigint NOT NULL,
+    saturated boolean DEFAULT false NOT NULL,
+    retain_until timestamp with time zone NOT NULL,
+    CONSTRAINT event_acknowledgment_metric_buckets_bucket_start_check CHECK ((isfinite(bucket_start) AND (bucket_start = date_trunc('minute'::text, bucket_start, 'UTC'::text)))),
+    CONSTRAINT event_acknowledgment_metric_buckets_check CHECK ((isfinite(retain_until) AND (retain_until > bucket_start))),
+    CONSTRAINT event_acknowledgment_metric_buckets_kind_check CHECK ((kind = ANY (ARRAY['renewed'::text, 'renewal_rejected'::text, 'expired'::text]))),
+    CONSTRAINT event_acknowledgment_metric_buckets_occurrences_check CHECK (((occurrences >= 1) AND (occurrences <= 2147483647)))
+);
+
+
+--
+-- Name: event_acknowledgment_outcomes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.event_acknowledgment_outcomes (
+    invocation_id uuid NOT NULL,
+    attempt integer NOT NULL,
+    replay_generation bigint NOT NULL,
+    kind text NOT NULL,
+    first_at timestamp with time zone NOT NULL,
+    last_at timestamp with time zone NOT NULL,
+    occurrences bigint NOT NULL,
+    retain_until timestamp with time zone NOT NULL,
+    CONSTRAINT event_acknowledgment_outcomes_attempt_check CHECK ((attempt > 0)),
+    CONSTRAINT event_acknowledgment_outcomes_check CHECK ((last_at >= first_at)),
+    CONSTRAINT event_acknowledgment_outcomes_kind_check CHECK ((kind = ANY (ARRAY['accepted'::text, 'renewed'::text, 'renewal_rejected'::text, 'completed'::text, 'expired'::text, 'retry_requested'::text, 'dead_letter_requested'::text]))),
+    CONSTRAINT event_acknowledgment_outcomes_occurrences_check CHECK (((occurrences >= 1) AND (occurrences <= 2147483647))),
+    CONSTRAINT event_acknowledgment_outcomes_replay_generation_check CHECK ((replay_generation >= 0))
+);
+
+
+--
+-- Name: event_acknowledgment_recording_coverage; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.event_acknowledgment_recording_coverage (
+    singleton boolean NOT NULL,
+    inventory_revision text NOT NULL,
+    continuous_since timestamp with time zone,
+    verified_through timestamp with time zone,
+    updated_at timestamp with time zone NOT NULL,
+    CONSTRAINT event_acknowledgment_recording_coverag_inventory_revision_check CHECK (((inventory_revision = ''::text) OR (inventory_revision ~ '^[0-9a-f]{64}$'::text))),
+    CONSTRAINT event_acknowledgment_recording_coverage_check CHECK (((continuous_since IS NULL) = (verified_through IS NULL))),
+    CONSTRAINT event_acknowledgment_recording_coverage_singleton_check CHECK (singleton)
+);
+
+
+--
+-- Name: event_acknowledgment_writers; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.event_acknowledgment_writers (
+    session_id uuid NOT NULL,
+    role text NOT NULL,
+    slot text NOT NULL,
+    capability_version integer NOT NULL,
+    inventory jsonb NOT NULL,
+    inventory_revision text NOT NULL,
+    started_at timestamp with time zone NOT NULL,
+    seen_at timestamp with time zone NOT NULL,
+    continuous_since timestamp with time zone NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT event_acknowledgment_writers_capability_version_check CHECK ((capability_version >= 0)),
+    CONSTRAINT event_acknowledgment_writers_check CHECK ((seen_at >= started_at)),
+    CONSTRAINT event_acknowledgment_writers_check1 CHECK (((continuous_since >= started_at) AND (continuous_since <= seen_at))),
+    CONSTRAINT event_acknowledgment_writers_check2 CHECK ((expires_at > seen_at)),
+    CONSTRAINT event_acknowledgment_writers_inventory_check CHECK (((jsonb_typeof(inventory) = 'array'::text) AND (jsonb_array_length(inventory) <= 128))),
+    CONSTRAINT event_acknowledgment_writers_inventory_revision_check CHECK (((inventory_revision = ''::text) OR (inventory_revision ~ '^[0-9a-f]{64}$'::text))),
+    CONSTRAINT event_acknowledgment_writers_role_check CHECK ((role = ANY (ARRAY['apid'::text, 'schedd'::text]))),
+    CONSTRAINT event_acknowledgment_writers_slot_check CHECK ((slot ~ '^[A-Za-z0-9_.:-]{1,128}$'::text))
+);
+
+
+--
+-- Name: event_delivery_acknowledgments; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.event_delivery_acknowledgments (
+    invocation_id uuid NOT NULL,
+    attempt integer NOT NULL,
+    replay_generation bigint NOT NULL,
+    token_digest bytea NOT NULL,
+    phase text NOT NULL,
+    completion_digest bytea,
+    lease_seconds integer NOT NULL,
+    deadline_at timestamp with time zone NOT NULL,
+    max_attempts integer NOT NULL,
+    retry_delay_ms bigint NOT NULL,
+    rejection_status jsonb,
+    CONSTRAINT event_delivery_acknowledgments_attempt_check CHECK ((attempt > 0)),
+    CONSTRAINT event_delivery_acknowledgments_check CHECK (((phase = ANY (ARRAY['completed'::text, 'rejected'::text])) = (completion_digest IS NOT NULL))),
+    CONSTRAINT event_delivery_acknowledgments_completion_digest_check CHECK (((completion_digest IS NULL) OR (octet_length(completion_digest) = 32))),
+    CONSTRAINT event_delivery_acknowledgments_lease_seconds_check CHECK (((lease_seconds >= 1) AND (lease_seconds <= 300))),
+    CONSTRAINT event_delivery_acknowledgments_max_attempts_check CHECK ((max_attempts > 0)),
+    CONSTRAINT event_delivery_acknowledgments_phase_check CHECK ((phase = ANY (ARRAY['offered'::text, 'awaiting'::text, 'completed'::text, 'rejected'::text]))),
+    CONSTRAINT event_delivery_acknowledgments_rejection_check CHECK (((phase = 'rejected'::text) = (rejection_status IS NOT NULL))),
+    CONSTRAINT event_delivery_acknowledgments_replay_generation_check CHECK ((replay_generation >= 0)),
+    CONSTRAINT event_delivery_acknowledgments_retry_delay_ms_check CHECK ((retry_delay_ms > 0)),
+    CONSTRAINT event_delivery_acknowledgments_token_digest_check CHECK ((octet_length(token_digest) = 32))
+);
+
+
+--
 -- Name: event_delivery_capacity; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -27663,9 +27777,44 @@ CREATE TABLE public.event_subscription_delivery_controls (
     updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
     paused_at timestamp with time zone,
     max_pending_deliveries integer DEFAULT 0 NOT NULL,
+    rate_enabled boolean DEFAULT false NOT NULL,
+    rate_interval_ms bigint DEFAULT 1000 NOT NULL,
+    rate_burst bigint DEFAULT 1 NOT NULL,
+    rate_credit_ms bigint DEFAULT 1000 NOT NULL,
+    rate_refilled_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    rate_revision bigint DEFAULT 0 NOT NULL,
+    rate_sequence bigint DEFAULT 0 NOT NULL,
     CONSTRAINT event_subscription_delivery_contro_max_pending_deliveries_check CHECK ((max_pending_deliveries >= 0)),
+    CONSTRAINT event_subscription_delivery_controls_check CHECK (((rate_credit_ms >= 0) AND (rate_credit_ms <= (rate_interval_ms * rate_burst)))),
+    CONSTRAINT event_subscription_delivery_controls_rate_burst_check CHECK (((rate_burst >= 1) AND (rate_burst <= 100))),
+    CONSTRAINT event_subscription_delivery_controls_rate_interval_ms_check CHECK (((rate_interval_ms >= 10) AND (rate_interval_ms <= 3600000))),
     CONSTRAINT event_subscription_delivery_controls_rate_per_second_check CHECK (((rate_per_second >= 0) AND (rate_per_second <= 100))),
+    CONSTRAINT event_subscription_delivery_controls_rate_refilled_at_check CHECK (isfinite(rate_refilled_at)),
+    CONSTRAINT event_subscription_delivery_controls_rate_revision_check CHECK ((rate_revision >= 0)),
+    CONSTRAINT event_subscription_delivery_controls_rate_sequence_check CHECK ((rate_sequence >= 0)),
     CONSTRAINT event_subscription_delivery_controls_window_count_check CHECK ((window_count >= 0))
+);
+
+
+--
+-- Name: event_subscription_rate_commands; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.event_subscription_rate_commands (
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    subscription_id uuid NOT NULL,
+    command_id uuid NOT NULL,
+    sequence bigint NOT NULL,
+    request jsonb NOT NULL,
+    receipt jsonb NOT NULL,
+    recorded_at timestamp with time zone NOT NULL,
+    retain_until timestamp with time zone NOT NULL,
+    CONSTRAINT event_subscription_rate_commands_check CHECK ((isfinite(retain_until) AND (retain_until > recorded_at))),
+    CONSTRAINT event_subscription_rate_commands_receipt_check CHECK ((jsonb_typeof(receipt) = 'object'::text)),
+    CONSTRAINT event_subscription_rate_commands_recorded_at_check CHECK (isfinite(recorded_at)),
+    CONSTRAINT event_subscription_rate_commands_request_check CHECK ((jsonb_typeof(request) = 'object'::text)),
+    CONSTRAINT event_subscription_rate_commands_sequence_check CHECK ((sequence > 0))
 );
 
 
@@ -27702,6 +27851,8 @@ CREATE TABLE public.event_subscriptions (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     routing_retry_policy jsonb,
     schema_versions text[] DEFAULT '{}'::text[] NOT NULL,
+    acknowledgment_lease_seconds integer DEFAULT 0 NOT NULL,
+    CONSTRAINT event_subscriptions_acknowledgment_lease_seconds_check CHECK (((acknowledgment_lease_seconds >= 0) AND (acknowledgment_lease_seconds <= 300))),
     CONSTRAINT event_subscriptions_filter_object_chk CHECK ((jsonb_typeof(filter) = 'object'::text)),
     CONSTRAINT event_subscriptions_routing_retry_policy_check CHECK (public.valid_event_routing_retry_policy(routing_retry_policy)),
     CONSTRAINT event_subscriptions_schema_versions_check CHECK (public.valid_event_subscription_schema_versions(schema_versions)),
@@ -42227,6 +42378,46 @@ ALTER TABLE ONLY public.environment_workload_serving_routes
 
 
 --
+-- Name: event_acknowledgment_metric_buckets event_acknowledgment_metric_buckets_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_acknowledgment_metric_buckets
+    ADD CONSTRAINT event_acknowledgment_metric_buckets_pkey PRIMARY KEY (account_id, app_id, subscription_id, bucket_start, kind);
+
+
+--
+-- Name: event_acknowledgment_outcomes event_acknowledgment_outcomes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_acknowledgment_outcomes
+    ADD CONSTRAINT event_acknowledgment_outcomes_pkey PRIMARY KEY (invocation_id, attempt, replay_generation, kind);
+
+
+--
+-- Name: event_acknowledgment_recording_coverage event_acknowledgment_recording_coverage_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_acknowledgment_recording_coverage
+    ADD CONSTRAINT event_acknowledgment_recording_coverage_pkey PRIMARY KEY (singleton);
+
+
+--
+-- Name: event_acknowledgment_writers event_acknowledgment_writers_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_acknowledgment_writers
+    ADD CONSTRAINT event_acknowledgment_writers_pkey PRIMARY KEY (session_id);
+
+
+--
+-- Name: event_delivery_acknowledgments event_delivery_acknowledgments_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_delivery_acknowledgments
+    ADD CONSTRAINT event_delivery_acknowledgments_pkey PRIMARY KEY (invocation_id);
+
+
+--
 -- Name: event_delivery_capacity event_delivery_capacity_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -42464,6 +42655,22 @@ ALTER TABLE ONLY public.event_subscription_circuit_breakers
 
 ALTER TABLE ONLY public.event_subscription_delivery_controls
     ADD CONSTRAINT event_subscription_delivery_controls_pkey PRIMARY KEY (subscription_id);
+
+
+--
+-- Name: event_subscription_rate_commands event_subscription_rate_commands_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_subscription_rate_commands
+    ADD CONSTRAINT event_subscription_rate_commands_pkey PRIMARY KEY (subscription_id, command_id);
+
+
+--
+-- Name: event_subscription_rate_commands event_subscription_rate_commands_subscription_id_sequence_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_subscription_rate_commands
+    ADD CONSTRAINT event_subscription_rate_commands_subscription_id_sequence_key UNIQUE (subscription_id, sequence);
 
 
 --
@@ -50183,6 +50390,41 @@ CREATE INDEX environment_workload_retirements_source ON public.environment_workl
 
 
 --
+-- Name: event_acknowledgment_metric_buckets_app; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_acknowledgment_metric_buckets_app ON public.event_acknowledgment_metric_buckets USING btree (app_id);
+
+
+--
+-- Name: event_acknowledgment_metric_buckets_retention; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_acknowledgment_metric_buckets_retention ON public.event_acknowledgment_metric_buckets USING btree (retain_until);
+
+
+--
+-- Name: event_acknowledgment_outcomes_retention; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_acknowledgment_outcomes_retention ON public.event_acknowledgment_outcomes USING btree (retain_until);
+
+
+--
+-- Name: event_acknowledgment_writers_expiry; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_acknowledgment_writers_expiry ON public.event_acknowledgment_writers USING btree (expires_at);
+
+
+--
+-- Name: event_acknowledgment_writers_seen; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_acknowledgment_writers_seen ON public.event_acknowledgment_writers USING btree (seen_at);
+
+
+--
 -- Name: event_delivery_slots_consumer; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -50600,6 +50842,13 @@ CREATE INDEX event_subscription_circuit_breakers_app_idx ON public.event_subscri
 --
 
 CREATE INDEX event_subscription_delivery_controls_app_idx ON public.event_subscription_delivery_controls USING btree (app_id);
+
+
+--
+-- Name: event_subscription_rate_commands_expiry_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_subscription_rate_commands_expiry_idx ON public.event_subscription_rate_commands USING btree (retain_until);
 
 
 --
@@ -63919,6 +64168,38 @@ ALTER TABLE ONLY public.environment_workload_serving_routes
 
 
 --
+-- Name: event_acknowledgment_metric_buckets event_acknowledgment_metric_buckets_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_acknowledgment_metric_buckets
+    ADD CONSTRAINT event_acknowledgment_metric_buckets_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: event_acknowledgment_metric_buckets event_acknowledgment_metric_buckets_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_acknowledgment_metric_buckets
+    ADD CONSTRAINT event_acknowledgment_metric_buckets_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: event_acknowledgment_outcomes event_acknowledgment_outcomes_invocation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_acknowledgment_outcomes
+    ADD CONSTRAINT event_acknowledgment_outcomes_invocation_id_fkey FOREIGN KEY (invocation_id) REFERENCES public.invocations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: event_delivery_acknowledgments event_delivery_acknowledgments_invocation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_delivery_acknowledgments
+    ADD CONSTRAINT event_delivery_acknowledgments_invocation_id_fkey FOREIGN KEY (invocation_id) REFERENCES public.invocations(id) ON DELETE CASCADE;
+
+
+--
 -- Name: event_delivery_capacity event_delivery_capacity_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -64204,6 +64485,30 @@ ALTER TABLE ONLY public.event_subscription_delivery_controls
 
 ALTER TABLE ONLY public.event_subscription_delivery_controls
     ADD CONSTRAINT event_subscription_delivery_controls_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: event_subscription_rate_commands event_subscription_rate_commands_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_subscription_rate_commands
+    ADD CONSTRAINT event_subscription_rate_commands_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: event_subscription_rate_commands event_subscription_rate_commands_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_subscription_rate_commands
+    ADD CONSTRAINT event_subscription_rate_commands_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: event_subscription_rate_commands event_subscription_rate_commands_subscription_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_subscription_rate_commands
+    ADD CONSTRAINT event_subscription_rate_commands_subscription_id_fkey FOREIGN KEY (subscription_id) REFERENCES public.event_subscription_delivery_controls(subscription_id) ON DELETE CASCADE;
 
 
 --

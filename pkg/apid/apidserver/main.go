@@ -58,6 +58,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/daemonunitspec"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/eventrecording"
 	"github.com/onebox-faas/faas/pkg/eventretention"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/grace"
@@ -710,6 +711,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// back listener confuses operators reading the headers.
 	httpsec.SetHSTSEnabled(httpsec.HSTSEnabledFromEnv(os.Getenv))
 
+	stopEventWriter, err := eventrecording.Start(ctx, state.NewPgStore(pool), "apid", cfg.EventAcknowledgmentWriterSlot, cfg.EventAcknowledgmentWriterRoster, log)
+	if err != nil {
+		return err
+	}
+	defer stopEventWriter()
 	deps.store = func() state.Store { return state.NewPgStore(pool) }
 	// Wire the canonical OpenAPI projector before any deployment can be
 	// promoted. state.MarkDeploymentLive invokes it inside the same Postgres
