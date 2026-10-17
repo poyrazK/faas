@@ -10,7 +10,6 @@ import traceback
 from pathlib import Path
 
 import pytest
-
 from faas_sdk.async_object_storage_runtime import AsyncObjectStorageBinding
 from faas_sdk.async_postgres_pool_runtime import AsyncPostgresPoolBinding
 from faas_sdk.async_secret_reload_runtime import AsyncSecretReloadCoordinator, AsyncSecretReloadIO

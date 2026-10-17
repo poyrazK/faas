@@ -4684,6 +4684,8 @@
       "name",
       "operation_id",
       "payload",
+      "receiver_sha256",
+      "rehearsal_run_id",
       "webhook_id"
     ],
     "kind": "operational"
@@ -12186,6 +12188,8 @@
       "name",
       "operation_id",
       "payload",
+      "receiver_sha256",
+      "rehearsal_run_id",
       "run_id",
       "step_name",
       "webhook_id"
@@ -13617,6 +13621,357 @@
       "physical_name",
       "ready_at",
       "retry_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "financial_budget_alerts",
+    "columns": [
+      "account_id",
+      "attempts",
+      "delivered_at",
+      "id",
+      "last_error",
+      "lease_token",
+      "next_attempt_at",
+      "payload",
+      "period_start",
+      "policy_id",
+      "revision",
+      "state",
+      "threshold_millicents"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "financial_budget_evaluations",
+    "columns": [
+      "account_id",
+      "evaluated_at",
+      "evidence_through_id",
+      "observation",
+      "period_start",
+      "policy_id",
+      "revision"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "financial_budget_stop_targets",
+    "columns": [
+      "app_id",
+      "environment_id",
+      "last_error",
+      "observed_at",
+      "resident_count",
+      "state",
+      "stop_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "financial_budget_stops",
+    "columns": [
+      "account_id",
+      "drain_deadline",
+      "id",
+      "payload",
+      "period_end",
+      "period_start",
+      "policy_id",
+      "requested_at",
+      "resume_rule",
+      "revision"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "financial_compute_account_books",
+    "columns": [
+      "account_id",
+      "payload",
+      "period_end",
+      "period_start"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "financial_compute_books",
+    "columns": [
+      "account_id",
+      "app_id",
+      "payload",
+      "period_end",
+      "period_start"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "financial_compute_holds",
+    "columns": [
+      "account_id",
+      "period_start",
+      "policy_id",
+      "revision"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "financial_compute_job_attempts",
+    "columns": [
+      "account_id",
+      "claimed_at",
+      "incarnation",
+      "instance_id",
+      "job_id",
+      "lease_token",
+      "node_id",
+      "ram_mb",
+      "run_id",
+      "task_index"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "financial_compute_job_books",
+    "columns": [
+      "account_id",
+      "job_id",
+      "payload",
+      "period_end",
+      "period_start"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "financial_compute_leases",
+    "columns": [
+      "account_id",
+      "app_id",
+      "funded_until",
+      "id",
+      "incarnation",
+      "instance_id",
+      "job_id",
+      "job_run_id",
+      "job_task_index",
+      "node_id",
+      "payload",
+      "period_start",
+      "settled_at",
+      "started_at",
+      "strict"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "financial_compute_owners",
+    "columns": [
+      "account_compute_incarnation",
+      "egress_budget_incarnation",
+      "incarnation",
+      "job_compute_incarnation",
+      "node_id",
+      "observed_at",
+      "protocol"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "financial_funding_currency",
+    "columns": [
+      "currency",
+      "singleton"
+    ],
+    "kind": "platform_configuration"
+  },
+  {
+    "table": "financial_preview_command_runtimes",
+    "columns": [
+      "account_id",
+      "app_id",
+      "cpu_millicores",
+      "deployment_id",
+      "environment_id",
+      "lease_token",
+      "node_id",
+      "phase",
+      "prepare_until",
+      "ram_mb",
+      "recorded_at",
+      "retired_at",
+      "task_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "scenario_cold_preparations",
+    "columns": [
+      "account_id",
+      "app_id",
+      "boot_instance_id",
+      "boot_recorder_session_id",
+      "created_at",
+      "deployment_id",
+      "id",
+      "instance_id",
+      "method",
+      "ready_at",
+      "recorder_session_id",
+      "run_id",
+      "startup_ms",
+      "state",
+      "wake_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "scenario_command_networks",
+    "columns": [
+      "active",
+      "host_ip",
+      "lease_token",
+      "node_id",
+      "task_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "scenario_managed_work",
+    "columns": [
+      "account_id",
+      "app_id",
+      "document",
+      "invocation_id",
+      "payload",
+      "run_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "scenario_object_fixtures",
+    "columns": [
+      "account_id",
+      "app_id",
+      "document",
+      "expires_at",
+      "id",
+      "run_id",
+      "status"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "scenario_postgres_fixtures",
+    "columns": [
+      "account_id",
+      "app_id",
+      "backend_sha256",
+      "database_name",
+      "evidence",
+      "expires_at",
+      "id",
+      "initial_snapshot",
+      "owner_id",
+      "role_name",
+      "run_id",
+      "spec",
+      "status"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "scenario_recorder_requests",
+    "columns": [
+      "attempt_id",
+      "id",
+      "session_id",
+      "status"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "scenario_recorder_sessions",
+    "columns": [
+      "app_id",
+      "command_result",
+      "created_at",
+      "deployment_id",
+      "id",
+      "instance_id",
+      "status"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "scenario_simulation_attempts",
+    "columns": [
+      "app_id",
+      "created_at",
+      "evidence",
+      "id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "scenario_suspend_resumes",
+    "columns": [
+      "account_id",
+      "app_id",
+      "checkpoint_attempt_id",
+      "created_at",
+      "deployment_id",
+      "id",
+      "instance_id",
+      "invocation_attempt",
+      "invocation_id",
+      "method",
+      "pause_ms",
+      "paused_at",
+      "recorder_session_id",
+      "resume_ms",
+      "run_id",
+      "state"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "scenario_test_action_policies",
+    "columns": [
+      "account_id",
+      "app_id",
+      "cold_start_spec",
+      "created_at",
+      "managed_work_closing",
+      "managed_work_failed",
+      "managed_work_plan",
+      "network_mode",
+      "recorder_closing",
+      "run_id",
+      "sealed_at",
+      "sealed_snapshot",
+      "simulation_failed",
+      "simulation_plan",
+      "suspend_resume_spec",
+      "webhook_mode",
+      "workload_name"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "scenario_worker_faults",
+    "columns": [
+      "account_id",
+      "app_id",
+      "checkpoint_attempt_id",
+      "created_at",
+      "deployment_id",
+      "id",
+      "instance_id",
+      "invocation_id",
+      "recorder_session_id",
+      "run_id",
+      "state"
     ],
     "kind": "operational"
   }

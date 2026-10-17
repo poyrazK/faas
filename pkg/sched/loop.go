@@ -2398,6 +2398,9 @@ func (l *Loop) runReaper(ctx context.Context) {
 	// lifecycle notification cannot leave unbillable VMs live. This runs
 	// before the normal idle snapshot.
 	for _, app := range apps {
+		if err := l.engine.ReconcileFinancialBudgetStops(ctx, app.ID); err != nil {
+			l.log.Warn("reaper: preview budget stop", "app", app.ID, "err", err)
+		}
 		mustPark := app.Status == state.AppEvictedCold
 		if !mustPark {
 			if account, accountErr := store.AccountByID(ctx, app.AccountID); accountErr == nil {

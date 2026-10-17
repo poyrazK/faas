@@ -9,11 +9,24 @@
 ## Preview release scope
 
 The first release includes retained compute/interface-egress evidence, cost and
-forecast reads, and disabled budget drafts with previews and revision history.
-Activation is rejected with `financial_budget_activation_unavailable`, and
-previews always report `enforcement_ready: false`. Runtime enforcement, durable
-notifications, holds, strict reservations, and lifecycle changes described below
-remain future work. See [release scope](../financial-controls-implementation.md).
+forecast reads, budget drafts and active monitored notification policies.
+`mode=monitored` can activate `action=notify`, or compute-only
+`action=stop_previews`; other enabled responses are
+rejected with `financial_budget_activation_unavailable`. Notifications use
+atomic retained observations/outbox events, fenced claims, retries and stable
+mail IDs. Events deduplicate per policy revision, UTC month and threshold. A
+new revision re-evaluates existing spending. Fresh partial subtotals may warn
+with explicit coverage; stale observations cannot generate events. Delivery
+is at least once because external mail acceptance and local settlement cannot
+commit atomically. Preview/runtime fields never claim workload stopping from
+notification readiness. Preview stopping uses independent latched decisions,
+authoritative preview identity, warm/cold admission guards, retained command VM
+ownership and per-target scheduler teardown acknowledgements. Publication and
+native lifecycle acceptance remain required. A local strict app compute candidate
+now implements [reservations and funded billing](1644-strict-app-compute-reservations.md);
+the [account compute extension](1640-account-strict-compute.md) shares one
+quantity allowance and paid ceiling across all apps, with independent jobs fenced.
+Other strict scopes and stopping actions remain future work. See [release scope](../financial-controls-implementation.md).
 
 ## Accounting contract
 

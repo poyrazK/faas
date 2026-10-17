@@ -27,6 +27,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/fcvm/logbuf"
+	"github.com/onebox-faas/faas/pkg/financial"
 	"github.com/onebox-faas/faas/pkg/frameworkready"
 	"github.com/onebox-faas/faas/pkg/imagechain"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
@@ -418,6 +419,7 @@ func (w *wakePhases) attrs() []any {
 }
 
 type Instance struct {
+	publicForwardTarget *netns.PublicForwardTarget
 	// Immutable launch identity; late network work cannot acquire a replacement VM.
 	nativeGeneration          string
 	operatorRestartGeneration string
@@ -770,8 +772,14 @@ func ClassifyDiskPressure(used, capacity int64) DiskPressure {
 // Manager tracks live instances and serialises nothing on the hot path beyond a
 // short-held map lock. Safe for concurrent Wake/Destroy.
 type Manager struct {
-	rehearsalNetworkPolicies RehearsalNetworkPolicyStore
-	rehearsalRecorders       map[string]*rehearsalrecorder.Session
+	financialEgressRead             func(string) (uint64, error)
+	computeAuthority                FinancialComputeAuthority
+	computeNode, computeIncarnation string
+	computeLeases                   map[string]*localComputeLease
+	computeRecoveryMu               sync.Mutex // serializes reconstruction of missing local receipts
+	computeBypassGuard              func(context.Context, string) error
+	rehearsalNetworkPolicies        RehearsalNetworkPolicyStore
+	rehearsalRecorders              map[string]*rehearsalrecorder.Session
 	// outboundRelayEnabled advertises vmmd's streaming relay to
 	// outbound-enabled Runs (ADR-990).
 	outboundRelayEnabled      atomic.Bool
@@ -793,11 +801,12 @@ type Manager struct {
 	// list). Production wires the metal runner that wraps
 	// exec.CommandContext with CombinedOutput; unit tests can
 	// stub via WithCaptureRunner.
-	captureRunner CaptureRunner
-	vmm           VMM
-	paths         Paths
-	fcVersion     string // the running Firecracker version; snapshots load only on a match
-	log           *slog.Logger
+	captureRunner      CaptureRunner
+	publicForwardProbe publicForwardHostProbe // startup-only; zero uses native host observations
+	vmm                VMM
+	paths              Paths
+	fcVersion          string // the running Firecracker version; snapshots load only on a match
+	log                *slog.Logger
 
 	mu   sync.Mutex
 	live map[string]*Instance
@@ -3664,8 +3673,9 @@ func (m *Manager) WakeAppTask(ctx context.Context, req AppTaskWakeRequest) (*Ins
 // Firecracker restore or cold boot begins, which lets host-side helpers start
 // in parallel without weakening guest readiness or isolation gates.
 type WakeNetworkReady struct {
-	Instance string
-	Netns    string
+	Instance     string
+	Netns        string
+	PublicTarget *netns.PublicForwardTarget
 }
 
 // WakeNetworkReadyHook must return promptly. Manager invokes it synchronously
@@ -3907,9 +3917,23 @@ func (m *Manager) BootJob(ctx context.Context, req JobBootRequest) (_ *Instance,
 	if err != nil {
 		return nil, err
 	}
-	defer m.finishInstanceFlight(req.Instance, flight)
+	var computeLease *localComputeLease
+	defer func() {
+		m.finishInstanceFlight(req.Instance, flight)
+		m.finishFinancialComputeBoot(bootCtx, req.Instance, computeLease, err != nil)
+	}()
 	if err = bootCtx.Err(); err != nil {
 		return nil, fmt.Errorf("manager: BootJob %s: cancelled before lease: %w", req.Instance, err)
+	}
+	if !qualificationOnly && m.computeAuthority != nil {
+		r := financial.ComputeRequest{AccountID: req.AccountID, JobRunID: req.RunID, JobTaskIndex: req.TaskIndex,
+			InstanceID: req.Instance, NodeID: m.computeNode, Incarnation: m.computeIncarnation,
+			AttemptID: financial.ComputeJobAttemptID(req.RunID, req.TaskIndex, req.LeaseToken),
+			Fenced:    req.LeaseToken != "", BillableMB: api.BillableRAMMBWithSidecars(req.MemSizeMiB, nil)}
+		computeLease, err = m.beginComputeRequest(bootCtx, r, flight)
+		if err != nil {
+			return nil, err
+		}
 	}
 	lease, err := m.alloc.Acquire(req.Instance)
 	if err != nil {
@@ -3962,6 +3986,16 @@ func (m *Manager) BootJob(ctx context.Context, req JobBootRequest) (_ *Instance,
 	// Same shape as Wake's netns setup — every VM gets one
 	// (ADR-009, identical inner network world).
 	nc := netns.NewConfig(lease.Instance, lease.Netns, lease.VethHost, lease.VethPeer, lease.HostIP)
+	nc.PublicForwarding = m.nativeVMM() != nil
+	if computeLease != nil {
+		computeLease.mu.Lock()
+		if computeLease.lease.EgressFunded {
+			nc.EgressBudgetBytes = computeLease.lease.EgressGrant
+			nc.EgressBudgetUntil = computeLease.lease.RunUntil.Add(-2 * api.FinancialComputeAuthorityTimeout)
+			computeLease.egressApplied = computeLease.lease.EgressSequence
+		}
+		computeLease.mu.Unlock()
+	}
 	nc.TapUID = lease.UID
 	// Job VMs run tenant code with the same network policy as app
 	// instances: the plan's bandwidth cap, the conntrack cap and the
@@ -3980,6 +4014,10 @@ func (m *Manager) BootJob(ctx context.Context, req JobBootRequest) (_ *Instance,
 	}
 	if err = m.setupNetwork(bootCtx, nc); err != nil {
 		return nil, fmt.Errorf("manager: BootJob %s: network setup: %w", req.Instance, err)
+	}
+	publicTarget, err := m.capturePublicForwardTarget(bootCtx, nc)
+	if err != nil {
+		return nil, err
 	}
 	if err = bootCtx.Err(); err != nil {
 		return nil, fmt.Errorf("manager: BootJob %s: cancelled before VMM boot: %w", req.Instance, err)
@@ -4017,6 +4055,7 @@ func (m *Manager) BootJob(ctx context.Context, req JobBootRequest) (_ *Instance,
 	// stream arrival. Mirrors the Wake path's struct literal at
 	// vmm.go:3003.
 	inst := &Instance{
+		publicForwardTarget: publicTarget,
 		Lease:               lease,
 		Net:                 nc,
 		Method:              WakeColdBoot, // jobs are always cold-boot
@@ -4181,7 +4220,11 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	}
 	// Registered before all effect/cleanup defers, so stop joins the complete
 	// unwind and cannot acknowledge absence before resources are released.
-	defer m.finishInstanceFlight(req.Instance, flight)
+	var computeLease *localComputeLease
+	defer func() {
+		m.finishInstanceFlight(req.Instance, flight)
+		m.finishFinancialComputeBoot(ctx, req.Instance, computeLease, err != nil)
+	}()
 	recorder, err := m.startRehearsalRecorder(ctx, req)
 	if err != nil {
 		return nil, err
@@ -4248,6 +4291,10 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	}
 	if err := m.checkWakeAdmission(ctx, req); err != nil {
 		return nil, fmt.Errorf("wake %s: %w", req.Instance, err)
+	}
+	computeLease, err = m.beginFinancialCompute(ctx, req, flight)
+	if err != nil {
+		return nil, err
 	}
 	var wakeID string
 	if fields, ok := wire.FromContext(ctx); ok {
@@ -4331,6 +4378,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		return nil, fmt.Errorf("manager: prepare native wake ownership: %w", err)
 	}
 	nc := netns.NewConfig(lease.Instance, lease.Netns, lease.VethHost, lease.VethPeer, lease.HostIP)
+	nc.PublicForwarding = m.nativeVMM() != nil
 	if qualificationOnly {
 		nc.QualificationOnly = true
 		if err := validateQualificationHostBridge(nc.HostBridgeIP); err != nil {
@@ -4341,6 +4389,15 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		// Keep the allocator-derived identity on Instance for diagnostics, but
 		// never pass a tenant network plan to setup/teardown or host policy.
 		nc = netns.Config{Instance: lease.Instance}
+	}
+	if computeLease != nil {
+		computeLease.mu.Lock()
+		if computeLease.lease.EgressFunded {
+			nc.EgressBudgetBytes = computeLease.lease.EgressGrant
+			nc.EgressBudgetUntil = computeLease.lease.RunUntil.Add(-2 * api.FinancialComputeAuthorityTimeout)
+			computeLease.egressApplied = computeLease.lease.EgressSequence
+		}
+		computeLease.mu.Unlock()
 	}
 	nc.TapUID = lease.UID
 	nc.EgressMbit = req.EgressMbit
@@ -4586,6 +4643,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	// goroutine boundary. Restored onto inst immediately below.
 	var timings bringUpTimings
 	var method WakeMethod
+	var publicTarget *netns.PublicForwardTarget
 
 	// ADR-098 C11: capture the netns+TAP timing at the boundary
 	// (issue #574). setupNetwork wraps netns creation + TAP setup
@@ -4654,8 +4712,14 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 			return nil, fmt.Errorf("wake %s: network setup: %w", req.Instance, err)
 		}
 		timings.netnsTapMs = time.Since(netnsStart).Milliseconds()
+		if !req.ExecutionOnly {
+			publicTarget, err = m.capturePublicForwardTarget(ctx, nc)
+			if err != nil {
+				return nil, err
+			}
+		}
 		if networkReady != nil && !req.ExecutionOnly {
-			networkReady(WakeNetworkReady{Instance: req.Instance, Netns: nc.Netns})
+			networkReady(WakeNetworkReady{Instance: req.Instance, Netns: nc.Netns, PublicTarget: publicTarget})
 		}
 		if m.preparedNetworks != nil && !req.ExecutionOnly {
 			m.log.Info("wake network cache", "instance", req.Instance, "hit", preparedHit)
@@ -4892,7 +4956,8 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		}
 	}
 	inst := &Instance{
-		Lease: lease, Net: nc, Method: method,
+		publicForwardTarget: publicTarget,
+		Lease:               lease, Net: nc, Method: method,
 		ExecutionOnly: req.ExecutionOnly, AppTaskOnly: req.AppTaskOnly, QualificationOnly: qualificationOnly, Paused: req.KeepPaused,
 		ExecutionID:                     executionID,
 		ExecutionLeaseToken:             req.ExecutionLeaseToken,
@@ -5731,6 +5796,9 @@ func (m *Manager) SnapshotKeepAlive(ctx context.Context, instance string, spec S
 		return SnapshotInfo{}, fmt.Errorf("snapshot_keep_alive %s: %w", instance, err)
 	}
 	defer m.finishInstanceFlight(instance, flight)
+	if err := m.checkFinancialComputeBypass(ctx, inst.AppID); err != nil {
+		return SnapshotInfo{}, err
+	}
 	if inst.AppTaskOnly {
 		return SnapshotInfo{}, fmt.Errorf("snapshot_keep_alive %s: app task instances cannot be snapshotted", instance)
 	}
@@ -7569,6 +7637,12 @@ func (m *Manager) setupNetwork(ctx context.Context, nc netns.Config) error {
 	if err := m.validateNativeNetworkConfig(ctx, nc); err != nil {
 		return err
 	}
+	if nc.PublicForwarding {
+		m.retainPublicForwardHostPolicy()
+		if err := m.runNftCommands(ctx, "", netns.PublicForwardPolicyCommands()); err != nil {
+			return fmt.Errorf("public forward host generation guard: %w", err)
+		}
+	}
 	if m.resourceJournal != nil {
 		return m.setupJournalNetwork(ctx, nc)
 	}
@@ -7630,10 +7704,16 @@ func (m *Manager) runNftCommands(ctx context.Context, netnsName string, cmds [][
 		return err
 	}
 	inputRunner, ok := runner.(InputRunner)
+	if !ok && netnsName == "" {
+		return errors.New("public forward host guard requires an atomic nft transaction")
+	}
 	if !ok || len(cmds) == 0 {
 		return m.runCommands(ctx, cmds)
 	}
 	prefix := []string{"ip", "netns", "exec", netnsName, "nft"}
+	if netnsName == "" {
+		prefix = []string{"nft"}
+	}
 	var script strings.Builder
 	for _, argv := range cmds {
 		if len(argv) <= len(prefix) || !slices.Equal(argv[:len(prefix)], prefix) {

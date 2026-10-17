@@ -314,7 +314,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 567 | [Runtime base convergence](567-runtime-base-convergence.md) | proposed | Keep each node's cached runtime base byte-identical to its shared publication so ADR-510 snapshots restore on any node |
 | 510 | [Snapshot backing image identity](510-snapshot-backing-image-identity.md) | proposed | Restore only onto the kernel and read-only base a capture was taken with; refuse and cold-boot otherwise |
 | 516 | [Replay recent managed PostgreSQL usage corrections](516-managed-postgres-usage-correction-replay.md) | accepted | Recover missing windows first, bound recent revision replay, and reject unsafe collection windows |
-| 566 | [Financial visibility and scoped spending controls](566-financial-visibility-and-scoped-budgets.md) | visibility preview; enforcement pending | Retained compute/egress costs, forecasts and disabled budget drafts; runtime enforcement has separate acceptance gates |
+| 566 | [Financial visibility and scoped spending controls](566-financial-visibility-and-scoped-budgets.md) | monitored notifications preview; stopping pending | Retained costs, forecasts, revisioned budgets and durable spending alerts; stopping and strict limits have separate acceptance gates |
 | 565 | [Managed PostgreSQL fleet usage recovery](565-managed-postgres-fleet-usage-recovery.md) | accepted | Recover one window per database per round across the fleet before correction replay, using durable observation order |
 | 569 | [Managed PostgreSQL terminal usage coverage](569-managed-postgres-terminal-usage-coverage.md) | accepted | Retain known resources through shutdown, recover finite final windows, and require every final correction before completing automatic accounting |
 - [ADR-581: Managed PostgreSQL uncertain accounting intent](581-managed-postgres-uncertain-accounting-intent.md) — durable provider-attempt ownership and identity recovery before deletion
@@ -1472,4 +1472,9 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-1501: Reconcile worker pools once at scheduler start](1501-worker-startup-reconcile.md)
 - [ADR 202610171900: Release compatibility gates (N±1, deploy order, skew and migration checks, SLO gate)](202610171900-release-compatibility-gates.md)
 
+- [Strict app compute reservations](1644-strict-app-compute-reservations.md)
+- [ADR-1640: Shared account compute funding](1640-account-strict-compute.md)
+- [ADR-1641: Independent job compute funding](1641-job-strict-compute.md)
+- [ADR-1642: Shared account compute and egress funding](1642-account-strict-egress.md)
+- [ADR-1643: Funded public forwarding](1643-public-forwarding-egress.md)
 - [ADR-1650: Per-unit control-plane releases](1650-per-unit-control-plane-releases.md)

@@ -1205,6 +1205,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	jobMetrics := meter.NewJobMetrics()
 	loop := meter.NewLoop(store, cpu, parker, pusher, pn, mailer, dunning, residency, evaluator, deps.now, log, mc, ops).
 		WithBillingEnabled(billingMode.Enabled()).
+		WithFinancialBudgets().
 		WithEgress(egress).
 		WithProbe(probe).
 		WithPartitionCreate(gatedPartitionCreate).

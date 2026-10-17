@@ -801,6 +801,15 @@ const (
 	FinancialBudgetHistoryMax        = 100
 	FinancialBudgetSpecBytes         = 16384
 	FinancialBudgetOperationKeyBytes = 255
+	FinancialBudgetAlertBatch        = 32
+	FinancialBudgetAlertLease        = time.Minute
+	FinancialBudgetDeliveryInterval  = 30 * time.Second
+	FinancialBudgetAlertSendTimeout  = 20 * time.Second
+	FinancialBudgetAlertRetryBase    = time.Minute
+	FinancialBudgetAlertRetryMax     = time.Hour
+	FinancialBudgetAlertAttemptsMax  = 2147483647
+	FinancialBudgetResidentCountMax  = 2147483647
+	FinancialBudgetCommandClockGrace = 5 * time.Second
 	FinancialSourceIDBytes           = 512
 	FinancialAdjustmentActorBytes    = 256
 	FinancialAdjustmentReasonBytes   = 512
@@ -5238,6 +5247,27 @@ const (
 
 	// Metering (spec §1, §10).
 	OverageMillicentsPerGBHour = 1_000 // $0.01 per GB-RAM-hour (ADR-1430)
+	// ADR-566: strict compute reserves startup, execution, and bounded teardown.
+	// Strict egress credits are conservative interface-byte bounds, not invoice usage.
+	FinancialEgressMinimumCreditBytes = int64(4096)
+	FinancialEgressCreditBytes        = int64(8 * 1024 * 1024)
+	FinancialEgressPollInterval       = 250 * time.Millisecond
+	FinancialEgressFramingFactor      = int64(2)
+	FinancialEgressMinimumPacketBytes = 20
+	// Root bridge sockets reserve this mark bit; remaining bits identify the
+	// original output ifindex. Host policy rejects every other output device.
+	PublicForwardMarkFlag            = uint32(0x80000000)
+	PublicForwardIfIndexMax          = int(0x7fffffff)
+	FinancialComputeLeaseDuration    = 2 * time.Minute
+	FinancialComputeTeardownReserve  = 30 * time.Second
+	FinancialComputeRenewInterval    = 20 * time.Second
+	FinancialComputeRenewMargin      = 5 * time.Second
+	FinancialComputeAuthorityTimeout = 3 * time.Second
+	FinancialComputeOwnerHeartbeat   = 10 * time.Second
+	FinancialComputeInstanceBytes    = 128
+	FinancialComputeRAMMaxMB         = 131_072
+	FinancialComputeActiveMax        = 10_000
+	FinancialComputeQuantityMax      = int64(9007199254740991)
 
 	// PreflightRateLimitPerHour bounds anonymous "would this run here" checks per
 	// client IP. The check is unauthenticated, so the ceiling exists to protect

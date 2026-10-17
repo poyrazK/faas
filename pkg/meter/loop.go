@@ -41,8 +41,9 @@ type Loop struct {
 	pusher billing.Provider
 	// billingDisabled keeps sampling, quota enforcement, and the billing
 	// health heartbeat active while provider delivery is intentionally paused.
-	billingDisabled bool
-	notif           Notifier
+	billingDisabled  bool
+	financialBudgets bool
+	notif            Notifier
 	// mailer is the customer-facing email sender (spec §171 "dunning +
 	// quota mails reference email"). Shared with the dunning timer —
 	// both loops hand off the same Sender via DunningSender's local
@@ -178,6 +179,13 @@ func (l *Loop) WithBillingEnabled(enabled bool) *Loop {
 	return l
 }
 
+// WithFinancialBudgets enables the independently observed monitoring and
+// notification workers. It never enables workload stopping.
+func (l *Loop) WithFinancialBudgets() *Loop {
+	l.financialBudgets = true
+	return l
+}
+
 func (l *Loop) pushBillingOnce(ctx context.Context, pusher *Pusher) error {
 	if l.billingDisabled {
 		return nil
@@ -274,7 +282,9 @@ func (l *Loop) Run(ctx context.Context) error {
 		sampler = NewSampler(l.store, l.cpu, l.now)
 	}
 	pusher := NewPusher(l.store, l.pusher, l.log, l.now, l.ops)
-	errc := make(chan error, 6)
+	// One result slot per possible worker, including monitoring and delivery;
+	// a cancelled Run must not strand workers trying to report their exit.
+	errc := make(chan error, 12)
 	go func() {
 		errc <- l.runTicksImmediately(ctx, l.cfg.SampleInterval, func(c context.Context) error {
 			// PR-A (ADR-060, issue #515): capture the
@@ -312,6 +322,14 @@ func (l *Loop) Run(ctx context.Context) error {
 		}, "sample")
 	}()
 	go func() { errc <- l.runQuotaTicks(ctx) }()
+	if l.financialBudgets {
+		go func() {
+			errc <- l.runTicksImmediately(ctx, l.cfg.SampleInterval, l.RunFinancialBudgetsOnce, "financial_budget_evaluation")
+		}()
+		go func() {
+			errc <- l.runTicksImmediately(ctx, api.FinancialBudgetDeliveryInterval, l.RunFinancialBudgetDeliveriesOnce, "financial_budget_delivery")
+		}()
+	}
 	go func() {
 		errc <- l.runTicks(ctx, l.cfg.StripeInterval, func(c context.Context) error {
 			return l.pushBillingOnce(c, pusher)

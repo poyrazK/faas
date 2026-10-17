@@ -401,6 +401,11 @@ func (m *Manager) acquireWakeNetwork(req WakeRequest) (Lease, *preparedNetworkEn
 }
 
 func (m *Manager) setupWakeNetwork(ctx context.Context, nc netns.Config, prepared *preparedNetworkEntry) (bool, error) {
+	if nc.EgressBudgetBytes > 0 && prepared != nil {
+		// A prewarmed namespace has already sent unfinanced control traffic.
+		// Retire it rather than adopting it into a strict byte-funded attempt.
+		return false, errors.New("strict egress cannot adopt a prepared namespace")
+	}
 	if prepared != nil {
 		if err := m.checkpointPreparedNamespace(nc); err != nil {
 			return false, err

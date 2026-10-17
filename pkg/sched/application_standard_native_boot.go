@@ -13,6 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 type standardNativeRuntimeVMM interface {
@@ -61,6 +62,15 @@ func (e *Engine) capturedStandardRuntimeForApp(ctx context.Context, app state.Ap
 }
 
 func (e *Engine) createRuntimeWithStandards(ctx context.Context, nodeID, instanceID, expectedState string, spec AppSpec, snap *SnapshotRef, paused bool) (*WakeOutcome, error) {
+	fields, _ := wire.FromContext(ctx)
+	if uuid.Validate(fields.WakeID) != nil || fields.InstanceID != instanceID {
+		if ins, err := e.store.InstanceByID(ctx, instanceID); err == nil {
+			fields.AppID = ins.AppID
+			fields.InstanceID = ins.ID
+			fields.WakeID = ins.WakeID
+			ctx = wire.WithContext(ctx, fields)
+		}
+	}
 	runID, err := e.rehearsalNetworkRun(ctx, spec.AppID)
 	if err != nil {
 		return nil, err

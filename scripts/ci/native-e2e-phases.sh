@@ -34,6 +34,7 @@ NATIVE_E2E_PHASES=(
   logs
   security
   twonode
+  financial
   jobs
 )
 
@@ -65,6 +66,7 @@ native_e2e_phase_files() {
       guest_tracing_metal_test.go \
       image_process_identity_metal_test.go \
       workload_identity_metal_test.go \
+      image_process_identity_metal_test.go \
       source_deploy_wake_metal_test.go \
       secrets_image_deploy_e2e_test.go \
       queue_push_parallel_metal_test.go \
@@ -101,6 +103,7 @@ native_e2e_phase_files() {
     security) printf '%s\n' sec11_memory_max_e2e_test.go sec11_seccomp_e2e_test.go ;;
     # Multi-node control plane: recovery arbiter, drain, heartbeat drills.
     twonode) printf '%s\n' twonode_failure_safe_metal_test.go twonode_runbook_test.go ;;
+    financial) printf '%s\n' financial_system_metal_test.go financial_budget_preview_stops_metal_test.go ;;
     # Real jobs harness and scratch-image workload. This phase remains
     # non-blocking until it passes on the dedicated KVM runner.
     jobs) printf '%s\n' jobs_metal_test.go customer_job_operations_metal_test.go \
@@ -205,7 +208,7 @@ native_e2e_assert_phase_partition() {
 # Missing or skipped scenarios fail its dedicated blocking verdict.
 # customer-workflow-operations-only derives every native workflow scenario;
 # its selected tests are blocking independently of the full matrix's phases.
-NATIVE_E2E_LANES=(smoke containers exclusive-operations-only managed-operation-only customer-job-operations-only customer-workflow-operations-only)
+NATIVE_E2E_LANES=(smoke containers exclusive-operations-only managed-operation-only customer-job-operations-only customer-workflow-operations-only financial-system)
 
 # NATIVE_E2E_SMOKE_TESTS lists the smoke lane by NAME. Hand-picked on purpose
 # (see above); native_e2e_assert_lanes below fails if any name is not a real
@@ -246,6 +249,10 @@ native_e2e_lane_tests() {
         sec11_memory_max_e2e_test.go sec11_seccomp_e2e_test.go; do
         grep -hoE '^func Test[A-Za-z0-9_]+\(' "${root}/cmd/e2e/${file}" || return 1
       done | sed -E 's/^func //; s/\($//' | sort -u
+      ;;
+    financial-system)
+      grep -hoE '^func Test[A-Za-z0-9_]+\(' "${root}/cmd/e2e/financial_system_metal_test.go" |
+        sed -E 's/^func //; s/\($//' | sort -u
       ;;
     exclusive-operations-only)
       printf '%s\n' "${NATIVE_E2E_EXCLUSIVE_OPERATIONS_TESTS[@]}"

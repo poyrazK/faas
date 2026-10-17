@@ -1635,6 +1635,19 @@ func (m *MemStore) JobTaskMarkClaimed(_ context.Context, runID string, taskIndex
 	if !m.exclusiveJobRunCurrentLocked(m.jobRuns[runID]) {
 		return ErrOperationStaleAttempt
 	}
+	run := m.jobRuns[runID]
+	if ins, ok := m.instances[instanceID]; ok {
+		if err := m.recordFinancialJobClaimLocked(financialComputeJobAttempt{AccountID: run.AccountID, JobID: run.JobID, RunID: runID, TaskIndex: taskIndex, InstanceID: instanceID, NodeID: ins.NodeID, RAMMB: ins.RAMMB, LeaseToken: leaseToken}); err != nil {
+			return err
+		}
+	} else {
+		// Preserve projection-only claims used by legacy memory test adapters.
+		// Strict claims and all native funding require a real instance binding.
+		policies, _ := newMemComputeTxn(m, run.AccountID).policies("job:" + run.JobID)
+		if len(strictComputePolicies(policies, "job:"+run.JobID)) > 0 {
+			return ErrNotFound
+		}
+	}
 	t.Status = "claimed"
 	t.InstanceID = &instanceID
 	t.LeaseToken = &leaseToken
@@ -1721,6 +1734,9 @@ func (m *MemStore) CreateAndClaimJobInstance(ctx context.Context, instanceID, jo
 		ins.WakeID = wakeID
 	} else {
 		ins.WakeID = newID()
+	}
+	if err := m.recordFinancialJobClaimLocked(financialComputeJobAttempt{AccountID: run.AccountID, JobID: jobID, RunID: runID, TaskIndex: taskIndex, InstanceID: instanceID, NodeID: computeNodeID, RAMMB: ramMB, LeaseToken: leaseToken}); err != nil {
+		return Instance{}, err
 	}
 	task.Status = "claimed"
 	task.InstanceID = &instanceID

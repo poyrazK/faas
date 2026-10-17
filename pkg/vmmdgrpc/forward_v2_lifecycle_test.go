@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -50,7 +51,11 @@ func TestForwardHTTPStreamV2_CanceledRPCPreservesConcurrentRequest(t *testing.T)
 	testForwardV2BridgeLifecycle(t, true)
 }
 
-func testForwardV2BridgeLifecycle(t *testing.T, cancelConcurrent bool) {
+func TestPublicForwardStreamV2RoutesCapturedOwner(t *testing.T) {
+	testForwardV2BridgeLifecycle(t, false, true)
+}
+
+func testForwardV2BridgeLifecycle(t *testing.T, cancelConcurrent bool, public ...bool) {
 	t.Helper()
 	cancelStarted := make(chan struct{})
 	siblingStarted := make(chan struct{})
@@ -69,7 +74,10 @@ func testForwardV2BridgeLifecycle(t *testing.T, cancelConcurrent bool) {
 	var starts atomic.Int32
 	bridgeContextDone := make(chan struct{})
 	var bridgeContextOnce sync.Once
-	streamBridgeSpawn = func(ctx context.Context, _, _, _, _ string, _ uint32, _ string, _ []string) (*exec.Cmd, *bytes.Buffer, error) {
+	streamBridgeSpawn = func(ctx context.Context, _, namespace, _, guestIP string, _ uint32, _ string, env []string) (*exec.Cmd, *bytes.Buffer, error) {
+		if len(public) > 0 && public[0] && (namespace != "" || guestIP != "127.0.0.1" || !strings.Contains(strings.Join(env, "\n"), "FAAS_PUBLIC_FORWARD_TARGET=")) {
+			return nil, nil, errors.New("public RPC lost captured owner routing authority")
+		}
 		go func() {
 			<-ctx.Done()
 			bridgeContextOnce.Do(func() { close(bridgeContextDone) })
@@ -83,7 +91,11 @@ func testForwardV2BridgeLifecycle(t *testing.T, cancelConcurrent bool) {
 	}
 	t.Cleanup(func() { streamBridgeSpawn = savedSpawn })
 
-	server := New(forwardV2IntegrationVMM{}, nil, "test", nil)
+	var vmm VmmdAPI = forwardV2IntegrationVMM{}
+	if len(public) > 0 && public[0] {
+		vmm = publicForwardFakeVMM{target: testPublicForwardTarget(t)}
+	}
+	server := New(vmm, nil, "test", nil)
 	server.streamBridges.waitSocket = func(string, time.Duration) error { return nil }
 	server.streamBridges.reapInterval = time.Hour
 

@@ -1243,6 +1243,8 @@ func (c *VMMClient) FrameworkReady(ctx context.Context, instance string, warmupM
 }
 
 func (c *VMMClient) Destroy(ctx context.Context, instance string) error {
+	fields, _ := wire.FromContext(ctx)
+	ctx = wire.WithCorrelationOutgoing(ctx, fields)
 	if _, err := c.cli.Destroy(ctx, &vmmdpb.DestroyRequest{Instance: instance}); err != nil {
 		return liftErr(err)
 	}

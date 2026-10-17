@@ -33,6 +33,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/ci"
 	"github.com/onebox-faas/faas/pkg/fcvm"
+	"github.com/onebox-faas/faas/pkg/financial"
 	"github.com/onebox-faas/faas/pkg/jobresult"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
@@ -172,6 +173,11 @@ func (e *Engine) wakeJobOnce(ctx context.Context, accountID, runID string, taskI
 	}
 	if !account.Active() {
 		return JobWakeResult{}, errors.Join(ErrPermanentWake, account.InactiveProblem())
+	}
+	if compute, ok := e.store.(state.FinancialComputeStore); ok {
+		if err := compute.PrepareFinancialJobCompute(ctx, accountID, job.ID); err != nil {
+			return JobWakeResult{}, err
+		}
 	}
 	plan := account.Plan
 	if operationOwned && !plan.JobsAllowed() {
@@ -450,6 +456,7 @@ func (e *Engine) wakeJobOnce(ctx context.Context, accountID, runID string, taskI
 		return JobWakeResult{}, fmt.Errorf("sched: WakeJob interactive session: %w", err)
 	}
 	out, err := e.jobVmmClient.JobColdBoot(ctx, JobVmmSpec{
+		JobID:      job.ID,
 		AccountID:  accountID,
 		RunID:      runID,
 		TaskIndex:  taskIndex,
@@ -472,6 +479,14 @@ func (e *Engine) wakeJobOnce(ctx context.Context, accountID, runID string, taskI
 		Interactive:      interactive,
 	})
 	if err != nil {
+		if financialJobBudgetDenied(err) || financialJobAuthorityUnavailable(err) {
+			reason := financial.ErrComputeBudget
+			if financialJobAuthorityUnavailable(err) {
+				reason = financial.ErrComputeUnavailable
+			}
+			deferErr := e.deferFinancialJobClaim(ctx, runID, taskIndex, instanceID, nodeID, tok)
+			return JobWakeResult{}, errors.Join(reason, deferErr)
+		}
 		e.rollbackJobAdmission(ctx, runID, taskIndex, instanceID, tok, task.Attempt, effectiveJobRetryMax(job, run), "job_vmm_cold_boot_failed", "job VM failed to boot before execution; verify the image artifact exists and is readable")
 		return JobWakeResult{}, fmt.Errorf("sched: WakeJob vmmd cold boot: %w", err)
 	}
@@ -653,6 +668,16 @@ func (e *Engine) rollbackJobAdmission(ctx context.Context, runID string, taskInd
 		if owned {
 			e.rollbackCIJobAdmission(ctx, runID, taskIndex, instanceID, tok, errorMessage)
 			return
+		}
+	}
+	if e.vmm != nil {
+		ins, err := e.store.InstanceByID(cleanupCtx, instanceID)
+		if err != nil {
+			return
+		}
+		if err := e.vmm.Destroy(cleanupCtx, e.nodeForRoute(ins.NodeID), instanceID); err != nil {
+			e.log.Warn("sched: job boot cleanup still pending", "instance", instanceID, "err", err)
+			return // retain task, RAM and funding while a late boot may exist
 		}
 	}
 	if retryMax < 0 {
@@ -1252,10 +1277,15 @@ func (e *Engine) DispatchJobsTick(ctx context.Context) error {
 			if run.ExecutionClass == "flexible" {
 				e.jobFlexibleMetrics.DeferredTask("wake_error")
 			}
-			if errors.Is(err, state.ErrJobQuotaExceeded) {
-				// The transactional claim saw a concurrent schedd win the
-				// final account or per-run slot after the read-only fast path.
-				if err := e.store.JobTaskDeferQueued(ctx, t.RunID, t.TaskIndex, t.Attempt, time.Now().Add(2*time.Second)); err != nil && !errors.Is(err, state.ErrNotFound) {
+			if errors.Is(err, state.ErrJobQuotaExceeded) || financialJobBudgetDenied(err) || errors.Is(err, financial.ErrComputeUnavailable) {
+				// Recheck capacity shortly; monetary holds use the same bounded
+				// backoff as the account spend cap. Never shorten a budget defer
+				// already recorded after an unfunded boot was physically joined.
+				backoff := 2 * time.Second
+				if financialJobBudgetDenied(err) || errors.Is(err, financial.ErrComputeUnavailable) {
+					backoff = api.SpendCapJobDeferInterval
+				}
+				if err := e.store.JobTaskDeferQueued(ctx, t.RunID, t.TaskIndex, t.Attempt, time.Now().Add(backoff)); err != nil && !errors.Is(err, state.ErrNotFound) {
 					return fmt.Errorf("sched: defer claim-capacity job task: %w", err)
 				}
 				continue
@@ -1285,6 +1315,7 @@ type jobVmmClient interface {
 // JobVmmSpec is the vmmd-side job boot payload. Mirrors the shape
 // pkg/fcvm.BootMode=ModeJobColdBoot will accept (M7).
 type JobVmmSpec struct {
+	JobID string
 	// QualificationExecution selects the isolated GitOps candidate path. It is
 	// nil for customer JobRuns, which keep their existing stateless lifecycle.
 	QualificationExecution *state.EnvironmentQualificationExecution

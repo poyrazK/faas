@@ -46548,13 +46548,13 @@ paths:
     post:
       tags: [billing]
       operationId: createFinancialBudget
-      summary: Save an account-owned budget draft with atomic revision audit.
+      summary: Save a budget policy with atomic revision audit and supported activation checks.
       description: |
         Requires admin scope and session MFA. Idempotency-Key is required (1..255 bytes).
         It fixes creation identity beyond replay-cache retention. Reusing an operation
-        identity cannot overwrite a changed or deleted policy. Set enabled=false:
-        activation currently returns 422 financial_budget_activation_unavailable.
-        Saving a draft creates no holds, decisions, notifications or workload changes.
+        identity cannot overwrite a changed or deleted policy. Disabled policies are drafts.
+        Activation supports monitored notify, monitored compute-only stop_previews, and strict app/job gross compute or account net compute (optionally combined with egress) suspend_workloads with zero drain and no alert thresholds. Other enabled responses return 422 financial_budget_activation_unavailable. Strict activation requires quiet covered workloads, complete accounting and capable native owners; unavailable authority returns 422 financial_compute_not_ready.
+        Disabled drafts create no notifications or workload changes. Active notification policies never stop workloads.
       parameters:
         - name: Idempotency-Key
           in: header
@@ -46609,12 +46609,12 @@ paths:
     put:
       tags: [billing]
       operationId: updateFinancialBudget
-      summary: Replace a budget draft at its expected revision.
+      summary: Replace a budget policy at its expected revision.
       description: |
         Requires admin scope, session MFA and Idempotency-Key. expected_revision
-        must match the current policy; stale edits return 409. Set enabled=false:
-        activation remains unavailable. Scope ownership and action eligibility are
-        revalidated. Payment, security and user holds are independent of this intent.
+        must match the current policy; stale edits return 409. Monitored notify and compute-only stop_previews
+        policies can activate, along with strict app/job gross compute or account net compute (optionally combined with egress) suspend_workloads with zero drain and no alert thresholds. A limit below committed and reserved funding returns 422 financial_compute_budget_too_low. Other policies remain disabled drafts.
+        Scope ownership and action eligibility are revalidated. Payment, security and user holds are independent of this intent.
       parameters:
         - name: Idempotency-Key
           in: header
@@ -66292,7 +66292,7 @@ components:
         completed_at: { type: string, format: date-time }
     FinancialBudgetResponse:
       type: object
-      description: Saved policy intent; draft and unavailable policies do not protect workloads.
+      description: Saved policy intent with current-revision monitoring, alert delivery and preview stop acknowledgements. Notifications alone never establish workload stopping.
       required: [id, account_id, revision, spec, created_at, updated_at, status, enforcement_ready, reasons]
       properties:
         id: { type: string, format: uuid }
@@ -66302,9 +66302,112 @@ components:
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
         deleted_at: { type: string, format: date-time }
-        status: { type: string, enum: [draft, unavailable, deleted] }
-        enforcement_ready: { type: boolean, description: False until runtime integrations and acceptance are complete. }
+        status: { type: string, enum: [draft, unavailable, active, deleted] }
+        enforcement_ready: { type: boolean, description: True when the selected stopping integration is available; actual per-target teardown is reported in runtime.stops. Strict compute balances are reported in runtime.compute. }
+        notification_ready: { type: boolean, description: True for an enabled supported monitored policy; inspect runtime for evaluation freshness and delivery status. }
+        runtime: { $ref: '#/components/schemas/FinancialBudgetRuntime' }
         reasons: { type: array, items: { type: string } }
+    FinancialBudgetEvaluation:
+      type: object
+      description: Retained evidence boundary; an absent known_millicents means evaluation unavailable, never zero. Partial known costs can trigger labelled notifications; stale observations cannot create new alerts.
+      required: [period_start, period_end, as_of, evaluated_at, evidence_through_id, coverage_complete, fresh, reasons]
+      properties:
+        period_start: { type: string, format: date-time }
+        period_end: { type: string, format: date-time }
+        as_of: { type: string, format: date-time }
+        evaluated_at: { type: string, format: date-time }
+        evidence_through_id: { type: integer, format: int64, minimum: 0 }
+        known_millicents: { type: integer, format: int64, minimum: 0 }
+        coverage_complete: { type: boolean }
+        fresh: { type: boolean }
+        reasons: { type: array, items: { type: string } }
+    FinancialBudgetAlert:
+      type: object
+      description: One threshold event per policy revision and UTC month. Edits re-evaluate monthly spending. Delivery is at least once with a stable transport idempotency key; delivered means accepted by the configured transport, not confirmed inbox receipt.
+      required: [id, policy_revision, threshold_millicents, evaluation, state, attempts, next_attempt_at]
+      properties:
+        id: { type: string, format: uuid }
+        policy_revision: { type: integer, format: int64, minimum: 1 }
+        threshold_millicents: { type: integer, format: int64, minimum: 0 }
+        evaluation: { $ref: '#/components/schemas/FinancialBudgetEvaluation' }
+        state: { type: string, enum: [pending, sending, retrying, delivered] }
+        attempts: { type: integer, minimum: 0, maximum: 2147483647 }
+        next_attempt_at: { type: string, format: date-time }
+        delivered_at: { type: string, format: date-time }
+        last_error: { type: string, enum: [mail_delivery_failed] }
+    FinancialBudgetStopTarget:
+      type: object
+      description: Scheduler observation for one preview target. Enforced means teardown was confirmed and no resident instance remains. Old observations are reported as unavailable.
+      required: [app_id, state, observed_at, resident_count]
+      properties:
+        app_id: { type: string, format: uuid }
+        environment_id: { type: string, format: uuid }
+        state: { type: string, enum: [requested, draining, enforced, failed, unavailable] }
+        observed_at: { type: string, format: date-time }
+        resident_count: { type: integer, minimum: 0, maximum: 2147483647 }
+        last_error: { type: string, enum: [runtime_identity_unavailable, vm_teardown_failed, instance_settlement_failed, scheduler_observation_stale] }
+    FinancialBudgetStop:
+      type: object
+      description: Latched monitored compute threshold decision. Corrections cannot resume work. Policy revisions release only their own hold; in-flight teardown may finish. New matching previews are held too. Metering, scheduler and teardown delay can exceed the limit.
+      required: [id, policy_id, revision, period_start, period_end, requested_at, drain_deadline, resume_rule, evaluation, targets]
+      properties:
+        id: { type: string, format: uuid }
+        policy_id: { type: string, format: uuid }
+        revision: { type: integer, format: int64, minimum: 1 }
+        period_start: { type: string, format: date-time }
+        period_end: { type: string, format: date-time }
+        requested_at: { type: string, format: date-time }
+        drain_deadline: { type: string, format: date-time }
+        resume_rule: { type: string, enum: [manual, next_period] }
+        evaluation: { $ref: '#/components/schemas/FinancialBudgetEvaluation' }
+        targets: { type: array, maxItems: 10000, items: { $ref: '#/components/schemas/FinancialBudgetStopTarget' } }
+    FinancialEgressBalance:
+      type: object
+      description: Egress contribution to a shared account compute and egress budget. Its funding allowance is pinned to the lowest recorded grant for the UTC month; increases benefit funding in a new month. Funded interface bytes include framing margin. Unused or uncertain credits commit conservatively after physical absence; invoice usage remains measured bytes.
+      required: [initialized, committed_bytes, reserved_bytes, allowance_granted_bytes, allowance_committed_bytes, allowance_reserved_bytes, allowance_remaining_bytes, committed_millicents, reserved_millicents]
+      properties:
+        initialized: { type: boolean }
+        committed_bytes: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        reserved_bytes: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        allowance_granted_bytes: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        allowance_committed_bytes: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        allowance_reserved_bytes: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        allowance_remaining_bytes: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        committed_millicents: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        reserved_millicents: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+    FinancialComputeBalance:
+      type: object
+      description: Conservative admission ledger. App/job budgets cap gross compute. Account budgets share included quantities; with meters compute and egress the monetary totals sum both meters under one paid limit and egress shows its contribution. Byte credits include framing and unused credits commit after physical retirement; these upper bounds can exceed invoice charges. Expired funding stays reserved until physical retirement. Subscriptions, storage, builds, object-storage delivery and taxes are excluded. Independent job attempts share account funding with apps.
+      required: [initialized, period_start, period_end, committed_millicents, reserved_millicents, remaining_millicents, unconfirmed_leases, held, observed_at]
+      properties:
+        egress: { $ref: '#/components/schemas/FinancialEgressBalance' }
+        initialized: { type: boolean }
+        app_id: { type: string, format: uuid }
+        job_id: { type: string, format: uuid }
+        account_id: { type: string, format: uuid }
+        scope_kind: { type: string, enum: [account, app, job] }
+        basis: { type: string, enum: [net_usage, gross_usage] }
+        allowance_granted_mb_seconds: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        allowance_committed_mb_seconds: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        allowance_reserved_mb_seconds: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        allowance_remaining_mb_seconds: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        period_start: { type: string, format: date-time }
+        period_end: { type: string, format: date-time }
+        committed_millicents: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        reserved_millicents: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        remaining_millicents: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        unconfirmed_leases: { type: integer, minimum: 0, maximum: 10000 }
+        held: { type: boolean }
+        observed_at: { type: string, format: date-time }
+    FinancialBudgetRuntime:
+      type: object
+      description: Evaluation and alerts cover the current revision and UTC month. Active manual stop decisions can carry over from earlier months until a policy mutation releases that revision.
+      required: [alerts]
+      properties:
+        compute: { $ref: '#/components/schemas/FinancialComputeBalance' }
+        evaluation: { $ref: '#/components/schemas/FinancialBudgetEvaluation' }
+        alerts: { type: array, maxItems: 9, items: { $ref: '#/components/schemas/FinancialBudgetAlert' } }
+        stops: { type: array, maxItems: 1, items: { $ref: '#/components/schemas/FinancialBudgetStop' } }
     FinancialBudgetListResponse:
       type: object
       description: Nondeleted account-owned policy intents with separately reported readiness.
@@ -66313,7 +66416,7 @@ components:
         budgets: { type: array, maxItems: 128, items: { $ref: '#/components/schemas/FinancialBudgetResponse' } }
     CreateFinancialBudgetRequest:
       type: object
-      description: New budget intent; this deployment accepts disabled drafts only.
+      description: New budget intent; activation supports monitored notify, monitored compute-only stop_previews, and strict suspend_workloads (app/job gross compute or account net compute optionally combined with egress) with zero drain and no alert thresholds. Strict activation requires quiet covered workloads, complete accounting, and native owners. Account strict activation also requires recorded allowances and native owners capable of funded jobs. Combining compute and egress additionally requires complete egress accounting and byte-capable native owners.
       required: [spec]
       properties:
         spec: { $ref: '#/components/schemas/FinancialBudgetSpec' }
@@ -66362,14 +66465,14 @@ components:
       properties:
         name: { type: string, minLength: 1, maxLength: 128, description: Nonblank name bounded to 128 UTF-8 bytes. }
         scope: { $ref: '#/components/schemas/FinancialBudgetScope' }
-        currency: { type: string, enum: [EUR] }
-        meters: { type: array, minItems: 1, maxItems: 2, uniqueItems: true, description: Sorted meter names; strict mode covers compute only., items: { type: string, enum: [compute, egress] } }
+        currency: { type: string, enum: [USD, EUR], description: New writes require USD; EUR is retained only for historical policy responses. }
+        meters: { type: array, minItems: 1, maxItems: 2, uniqueItems: true, description: Sorted meter names; strict account net_usage may combine compute and egress under one paid limit; app/job strict covers compute only., items: { type: string, enum: [compute, egress] } }
         basis: { type: string, enum: [net_usage, gross_usage], description: Net usage after the shared account allowance or gross usage before it; strict resource scopes require gross usage. }
         limit_millicents: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
-        notify_millicents: { type: array, maxItems: 8, uniqueItems: true, description: Increasing nonnegative thresholds at or below the limit., items: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 } }
+        notify_millicents: { type: array, maxItems: 8, uniqueItems: true, description: Increasing nonnegative thresholds at or below the limit. Strict compute requires an empty array; configure a separate monitored policy for alerts., items: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 } }
         mode: { type: string, enum: [monitored, strict] }
         action: { type: string, enum: [notify, reject_traffic, suspend_background, stop_previews, suspend_workloads] }
-        drain_seconds: { type: integer, minimum: 0, maximum: 300, description: Notify uses zero; stopping targets drain before the deadline. }
+        drain_seconds: { type: integer, minimum: 0, maximum: 300, description: Notify and strict app compute use zero; monitored stopping targets drain before the deadline. }
         resume_rule: { type: string, enum: [manual, next_period] }
         enabled: { type: boolean }
     FinancialBudgetPreviewRequest:
@@ -66414,7 +66517,7 @@ components:
       properties:
         version: { type: string }
         meter: { type: string }
-        currency: { type: string, enum: [EUR] }
+        currency: { type: string, enum: [USD, EUR] }
         unit: { type: string }
         unit_quantity: { type: integer, format: int64, minimum: 1 }
         millicents_per_unit: { type: integer, format: int64, minimum: 0 }
@@ -66486,7 +66589,7 @@ components:
         complete_through: { type: string, format: date-time }
         price_version: { type: string }
         meter: { type: string }
-        currency: { type: string, enum: [EUR] }
+        currency: { type: string, enum: [USD] }
         projected_quantity: { type: integer, format: int64 }
         projected_net_millicents: { type: integer, format: int64 }
     FinancialMeterCoverage:
@@ -66538,7 +66641,7 @@ components:
       properties:
         app_id: { type: string }
         app_slug: { type: string }
-        currency: { type: string, enum: [EUR] }
+        currency: { type: string, enum: [USD] }
         period_start: { type: string, format: date-time }
         period_end: { type: string, format: date-time }
         as_of: { type: string, format: date-time }
@@ -66554,7 +66657,7 @@ components:
       required: [account_id, currency, period_start, period_end, as_of, retained_from, evidence_through_id, known_usage_millicents, meters, scope, invoices, invoice_reconciliation, missing_bill_components]
       properties:
         account_id: { type: string }
-        currency: { type: string, enum: [EUR] }
+        currency: { type: string, enum: [USD] }
         period_start: { type: string, format: date-time }
         period_end: { type: string, format: date-time }
         as_of: { type: string, format: date-time }
@@ -66574,7 +66677,7 @@ components:
         period_start: { type: string, format: date-time }
         period_end: { type: string, format: date-time }
         as_of: { type: string, format: date-time }
-        currency: { type: string, enum: [EUR] }
+        currency: { type: string, enum: [USD] }
         meters: { type: array, items: { $ref: '#/components/schemas/FinancialMeterCosts' } }
         bill_estimate_available: { type: boolean }
         missing_bill_components: { type: array, items: { type: string } }
@@ -68109,7 +68212,7 @@ components:
         postgres_majors: { type: array, items: { type: integer, minimum: 12, maximum: 99 } }
         service_classes: { type: array, items: { type: string, enum: [development, burstable, production] } }
         availability: { type: array, items: { type: string, enum: [single_zone, high_availability] } }
-        credential_access: { type: array, items: { type: string, enum: [read_write, read_only, migration, data_api] } }
+        credential_access: { type: array, items: { type: string, enum: [read_write, read_only, migration, data_api, auth] } }
         scale_to_zero: { type: boolean }
         always_on: { type: boolean }
         pooled_connections: { type: boolean }
@@ -68416,7 +68519,7 @@ components:
         app_id: { type: string, minLength: 1, maxLength: 128 }
         scope: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$' }
         environment_key: { type: string, pattern: '^[A-Z][A-Z0-9_]*$' }
-        access: { type: string, enum: [read_write, read_only, migration, data_api] }
+        access: { type: string, enum: [read_write, read_only, migration, data_api, auth] }
         credential_generation: { type: integer, format: int64, minimum: 1 }
         rotation_pending: { type: boolean, description: The previous provider credential remains valid until the rolling app runtime refresh completes. }
         state: { type: string, enum: [provisioning, ready, deleting, retiring, failed, deleted] }
@@ -68500,7 +68603,7 @@ components:
         app_id: { type: string, minLength: 1, maxLength: 128 }
         scope: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$' }
         environment_key: { type: string, pattern: '^[A-Z][A-Z0-9_]*$' }
-        access: { type: string, enum: [read_write, read_only, migration, data_api], description: Portable credential mode. Unsupported modes are rejected before a binding is reserved. }
+        access: { type: string, enum: [read_write, read_only, migration, data_api, auth], description: Portable credential mode. Unsupported modes are rejected before a binding is reserved. }
 
     PrepareManagedPostgresCutoverRequest:
       description: Stage source bindings for one app and scope on a ready database restored from that source.
@@ -68622,7 +68725,7 @@ components:
       properties:
         source_binding_id: { type: string, format: uuid }
         environment_key: { type: string, pattern: '^[A-Z][A-Z0-9_]*$' }
-        access: { type: string, enum: [read_write, read_only, migration, data_api] }
+        access: { type: string, enum: [read_write, read_only, migration, data_api, auth] }
         state: { type: string, enum: [pending, sealed, revoked] }
         verified_at: { type: string, format: date-time }
 

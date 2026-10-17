@@ -739,6 +739,7 @@ func (m *MemStore) ClaimNextAppTask(_ context.Context, owner string, claimedAt t
 	var selectedPriority time.Time
 	for id, candidate := range m.appTasks {
 		if candidate.Status != AppTaskQueued || candidate.CancelRequested != nil || candidate.CreatedAt.After(claimedAt) ||
+			m.financialPreviewCommandHeldLocked(candidate, claimedAt) ||
 			(candidate.RetryAt != nil && candidate.RetryAt.After(claimedAt)) ||
 			!m.appTaskExclusiveCurrentLocked(candidate, claimedAt) {
 			continue
@@ -797,6 +798,7 @@ func (m *MemStore) MarkAppTaskRunning(_ context.Context, taskID, leaseToken stri
 	defer m.mu.Unlock()
 	task, ok := m.appTasks[taskID]
 	if !ok || task.Status != AppTaskRestoring || task.LeaseToken == nil ||
+		m.financialPreviewCommandHeldLocked(task, startedAt) ||
 		*task.LeaseToken != leaseToken || task.CancelRequested != nil || task.LeaseExpiresAt == nil || !task.LeaseExpiresAt.After(startedAt) ||
 		!m.appTaskExclusiveCurrentLocked(task, startedAt) {
 		return AppTask{}, ErrAppTaskLeaseLost

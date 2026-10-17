@@ -100,6 +100,10 @@ func (m *Manager) cleanup(ctx context.Context, lease Lease, nc netns.Config, wor
 		if err := v.confirmNativeCleanup(ctx, lease, nativeLeaseNetwork(lease)); err != nil {
 			return err
 		}
+		if err := m.settleFinancialCompute(ctx, lease.Instance); err != nil {
+			retained.failed = true
+			return err
+		}
 		if released, err := m.releaseNativeRecovered(lease.Instance); released || err != nil {
 			if err != nil {
 				return err
@@ -115,6 +119,10 @@ func (m *Manager) cleanup(ctx context.Context, lease Lease, nc netns.Config, wor
 		if err := m.resourceJournal.forget(lease); err != nil {
 			return fmt.Errorf("cleanup %s: retire resource journal before release: %w", lease.Instance, err)
 		}
+	}
+	if err := m.settleFinancialCompute(ctx, lease.Instance); err != nil {
+		retained.failed = true
+		return err
 	}
 	m.mu.Lock()
 	// A duplicate native stop is still audited against its durable receipt,

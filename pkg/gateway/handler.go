@@ -914,13 +914,14 @@ type warmEnsurer interface {
 // Handler is gatewayd-internal's HTTP entrypoint: route → rate-limit → (wake-block if
 // parked) → proxy (spec §4.1, §2). It is the only public listener on the box.
 type Handler struct {
-	devBridgeAuthorize func(*http.Request) *api.Problem
-	devBridgeForward   func(http.ResponseWriter, *http.Request, App) bool
-	backend            Backend
-	declaredRoutes     DeclaredRouteMatcher
-	limiter            *Limiter
-	preAuthLimiter     *preAuthSourceLimiter
-	preAuthCentral     CentralBackend
+	financialBudgetAdmission func(context.Context, App) error
+	devBridgeAuthorize       func(*http.Request) *api.Problem
+	devBridgeForward         func(http.ResponseWriter, *http.Request, App) bool
+	backend                  Backend
+	declaredRoutes           DeclaredRouteMatcher
+	limiter                  *Limiter
+	preAuthLimiter           *preAuthSourceLimiter
+	preAuthCentral           CentralBackend
 	// routeLimiter is the per-rule token-bucket throttle (ADR-091
 	// D20.5 amendment, issue #881). Same underlying *Limiter type as
 	// limiter + accountLimiter but constructed with NewLimiterWithLRU
@@ -5860,6 +5861,17 @@ haveApp:
 		api.WriteProblem(w, api.ErrAccountSuspended())
 		h.observe(r, rec.status, app.ID, "", false, Target{})
 		return
+	}
+	if h.financialBudgetAdmission != nil {
+		if err := h.financialBudgetAdmission(r.Context(), app); err != nil {
+			var problem *api.Problem
+			if !errors.As(err, &problem) {
+				problem = api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity, "Budget admission unavailable", "Retry shortly.")
+			}
+			api.WriteProblem(w, problem)
+			h.observe(r, rec.status, app.ID, "", false, Target{})
+			return
+		}
 	}
 	if api.MustLimitsFor(app.Plan).DebugTelemetryEnabled {
 		// ADR-634: the request-ID journal is a debugging index; a write it
