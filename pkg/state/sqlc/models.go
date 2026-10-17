@@ -2617,6 +2617,7 @@ type Deployment struct {
 	ServingEndedAt             pgtype.Timestamptz
 	RuntimeUpgradeRoutingToken pgtype.UUID
 	EnvironmentWorkloadHeld    bool
+	RuntimeBase                string
 }
 
 type DeploymentAlias struct {

@@ -6064,7 +6064,8 @@ WHERE deployment_id = sqlc.arg(deployment_id)::uuid ORDER BY sidecar_name;
 -- name: SetProjectEnvironmentCloneDeploymentArtifact :exec
 UPDATE deployments SET rootfs_path = nullif(sqlc.arg(rootfs_path)::text, ''), rootfs_key = nullif(sqlc.arg(rootfs_key)::text, ''),
        rootfs_bytes = sqlc.arg(rootfs_bytes)::bigint,
-       secret_reload_signal = CASE WHEN sqlc.arg(signal_known)::boolean THEN sqlc.arg(signal)::text ELSE NULL END
+       secret_reload_signal = CASE WHEN sqlc.arg(signal_known)::boolean THEN sqlc.arg(signal)::text ELSE NULL END,
+       runtime_base = sqlc.arg(runtime_base)::text
 WHERE id = sqlc.arg(deployment_id)::uuid;
 
 -- name: InsertProjectEnvironmentCloneSidecarLayer :exec
@@ -10021,9 +10022,13 @@ WHERE a.account_id=sqlc.arg(account_id)::uuid AND a.id=sqlc.arg(app_id)::uuid AN
  AND f.input_snapshot->>'publication_hash'=p.input_hash AND p.input_snapshot->'claims'->>'org_id'=coalesce(a.org_id::text,'')
  AND d.kind IN ('tarball','dockerfile','github','preview')
  AND (coalesce(d.source_sha256,'')='' OR p.input_snapshot->'claims'->>'source_sha256'=d.source_sha256)
- AND p.input_snapshot->'claims'->>'runtime'=coalesce(a.runtime,'')
+ AND (p.input_snapshot->'claims'->>'runtime'=coalesce(a.runtime,'')
+  OR (a.type<>'function' AND coalesce(a.runtime,'')='' AND f.input_snapshot->>'kind'='source-app-layer'
+   AND p.input_snapshot->'claims'->>'runtime' IN ('node22','node24')
+   AND f.input_snapshot->>'runtime'=p.input_snapshot->'claims'->>'runtime'))
  AND f.input_snapshot->>'storage_key'=d.rootfs_key AND f.input_snapshot->>'rootfs_path'=d.rootfs_path
- AND (f.input_snapshot->>'content_bytes')::bigint=d.rootfs_bytes;
+ AND (f.input_snapshot->>'content_bytes')::bigint=d.rootfs_bytes
+ AND d.runtime_base=CASE WHEN f.input_snapshot->>'kind'='source-app-layer' THEN f.input_snapshot->>'runtime' ELSE '' END;
 
 -- name: AuthorizeDeploymentRegistryVerificationInsert :exec
 SELECT set_config('gregale.registry_verification_insert',sqlc.arg(id)::uuid::text,true);
@@ -10086,6 +10091,10 @@ ON CONFLICT(deployment_id,workload_name) DO UPDATE SET artifact_id=EXCLUDED.arti
 
 -- name: PublishDeploymentRegistryMainRootfs :execrows
 UPDATE deployments SET rootfs_path=sqlc.arg(rootfs_path)::text,rootfs_key=sqlc.arg(storage_key)::text,rootfs_bytes=sqlc.arg(content_bytes)::bigint
+WHERE id=sqlc.arg(deployment_id)::uuid AND status IN ('pending','building','imaging','snapshotting');
+
+-- name: StampDeploymentRuntimeBase :exec
+UPDATE deployments SET runtime_base=sqlc.arg(runtime_base)::text
 WHERE id=sqlc.arg(deployment_id)::uuid AND status IN ('pending','building','imaging','snapshotting');
 
 -- name: PublishDeploymentRegistrySidecarRootfs :exec
