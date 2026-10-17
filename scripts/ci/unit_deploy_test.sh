@@ -42,7 +42,7 @@ if [[ "\${1:-}" == */slo_gate.py ]]; then
   shift
   while [[ \$# -gt 0 ]]; do
     if [[ "\$1" == --unit ]]; then unit="\${2//-/_}"; fi
-    if [[ "\$1" == --deployed-at ]]; then echo "deployed-at \$2" >> "\$STUB_LOG"; fi
+    if [[ "\$1" == --deployed-at || "\$1" == --duration || "\$1" == --max-hold ]]; then echo "\$1 \$2" >> "\$STUB_LOG"; fi
     shift
   done
   var="STUB_GATE_\${unit}"
@@ -99,9 +99,24 @@ if bash "$helper" script "$plan" "/tmp/elsewhere" "$test_root/x.sh" 2>/dev/null;
 # 4. The SLO gate: one process per unit, worst result wins.
 gate_dirs() { find /var/tmp -maxdepth 1 -name 'gregale-slo.*' 2>/dev/null | sort; }
 gate_dirs_before="$(gate_dirs)"
-gate() { env "$@" bash "$helper" gate "$plan" 1700000000 10s >/dev/null 2>&1; }
+gate() { env "$@" bash "$helper" gate "$plan" 1700000000 follower >/dev/null 2>&1; }
 gate STUB_GATE_apid=0 STUB_GATE_meterd=0 || fail "passing gates did not promote"
-grep -q "deployed-at 1700000000" "$STUB_LOG" || fail "gate did not pass --deployed-at"
+grep -q -- "--deployed-at 1700000000" "$STUB_LOG" || fail "gate did not pass --deployed-at"
+
+# 4a. Canary and follower gates take their durations from the one config.
+read -r canary_duration canary_hold follower_duration follower_hold < <(jq -r \
+  '[.gates.canary.duration, .gates.canary.max_hold, .gates.follower.duration, .gates.follower.max_hold] | join(" ")' \
+  "$repo_root/scripts/ci/release_units.json")
+for kind in canary follower; do
+  : > "$STUB_LOG"
+  bash "$helper" gate "$plan" 1700000000 "$kind" >/dev/null 2>&1 || fail "$kind gate failed"
+  if [[ "$kind" == canary ]]; then want_duration="$canary_duration" want_hold="$canary_hold"
+  else want_duration="$follower_duration" want_hold="$follower_hold"; fi
+  [[ "$(grep -c -- "--duration $want_duration" "$STUB_LOG")" == 2 ]] || fail "$kind gate did not run --duration $want_duration per unit"
+  [[ "$(grep -c -- "--max-hold $want_hold" "$STUB_LOG")" == 2 ]] || fail "$kind gate did not run --max-hold $want_hold per unit"
+done
+[[ "$canary_duration" != "$follower_duration" ]] || fail "canary and follower gates are the same"
+if bash "$helper" gate "$plan" 1700000000 10m >/dev/null 2>&1; then fail "a raw duration was accepted as a gate kind"; fi
 for case in "1 0 1" "0 3 3" "2 0 3" "1 3 1"; do
   read -r apid meterd want <<<"$case"
   status=0
@@ -109,10 +124,10 @@ for case in "1 0 1" "0 3 3" "2 0 3" "1 3 1"; do
   [[ "$status" == "$want" ]] || fail "gate apid=$apid meterd=$meterd exited $status, want $want"
 done
 jq '.gate = []' "$plan" > "$test_root/nogate.json"
-bash "$helper" gate "$test_root/nogate.json" 1700000000 10s >/dev/null || fail "an empty gate did not pass"
+bash "$helper" gate "$test_root/nogate.json" 1700000000 canary >/dev/null || fail "an empty gate did not pass"
 jq '.gate = [["--unit", "apid; rm -rf /"]]' "$plan" > "$test_root/evil.json"
 status=0
-bash "$helper" gate "$test_root/evil.json" 1700000000 10s >/dev/null 2>&1 || status=$?
+bash "$helper" gate "$test_root/evil.json" 1700000000 canary >/dev/null 2>&1 || status=$?
 [[ "$status" == 2 ]] || fail "an unsafe gate argument was not refused (exit $status)"
 [[ "$(gate_dirs)" == "$gate_dirs_before" ]] \
   || fail "the gate left its directory on the host"

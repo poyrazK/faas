@@ -28,19 +28,20 @@ func jobBlock(t *testing.T, workflow, job string) string {
 	return rest[:end]
 }
 
-// orderedIn fails unless every needle occurs in text, in order.
+// orderedIn fails unless the needles occur in text in order, each after the
+// previous one.
 func orderedIn(t *testing.T, where, text string, needles ...string) {
 	t.Helper()
-	last := -1
+	from := 0
 	for _, needle := range needles {
-		at := strings.Index(text, needle)
+		at := strings.Index(text[from:], needle)
 		if at < 0 {
+			if strings.Contains(text, needle) {
+				t.Fatalf("%s runs %q out of order", where, needle)
+			}
 			t.Fatalf("%s is missing %q", where, needle)
 		}
-		if at < last {
-			t.Fatalf("%s runs %q out of order", where, needle)
-		}
-		last = at
+		from += at + len(needle)
 	}
 }
 
@@ -81,7 +82,7 @@ func TestUnitReleaseIsSignedOnlyByMainAndVerifiedBeforeUse(t *testing.T) {
 	for _, job := range []struct{ file, name string }{
 		{"cd-controlplane.yml", "deploy-units"},
 		{"cd-edge-units.yml", "plan"},
-		{"cd-edge-units.yml", "nodes"},
+		{"cd-edge-node.yml", "deploy"},
 	} {
 		block := jobBlock(t, readWorkflow(t, job.file), job.name)
 		orderedIn(t, job.file+" "+job.name, block,
@@ -119,17 +120,25 @@ func TestUnitLaneRestartsOnlyPlannedServicesOverTheExpectedRelease(t *testing.T)
 func TestUnitLanesGateEveryHostAndRollBack(t *testing.T) {
 	for _, job := range []struct{ file, name, activate string }{
 		{"cd-controlplane.yml", "deploy-units", "scripts/ci/observe_remote_rollout.sh"},
-		{"cd-edge-units.yml", "nodes", `scripts/ci/unit_deploy.sh run "$activation_script"`},
+		{"cd-edge-node.yml", "deploy", `scripts/ci/unit_deploy.sh run "$activation_script"`},
 	} {
 		block := jobBlock(t, readWorkflow(t, job.file), job.name)
+		// Deploy jobs run the signed deployctl from the unit release and
+		// build nothing.
+		for _, forbidden := range []string{"actions/setup-go", "go build"} {
+			if strings.Contains(block, forbidden) {
+				t.Errorf("%s %s must not build: found %q", job.file, job.name, forbidden)
+			}
+		}
 		orderedIn(t, job.file+" "+job.name, block,
+			`[[ "$SLO_GATE" == canary || "$SLO_GATE" == follower ]]`,
 			"scripts/ci/plan_unit_deploy.py",
 			`--previous-release "$`,
-			"scripts/ci/unit_deploy.sh stage",
+			`scripts/ci/unit_deploy.sh stage "$UNIT_PLAN" "$UNITS_DIR" "$UNITS_DIR/tools/deployctl"`,
 			"scripts/ci/unit_deploy.sh script",
 			`echo "DEPLOYED_AT=$(scripts/ci/unit_deploy.sh now)"`,
 			job.activate,
-			`scripts/ci/unit_deploy.sh gate "$UNIT_PLAN" "$DEPLOYED_AT" "$SLO_GATE_DURATION" || status=$?`,
+			`scripts/ci/unit_deploy.sh gate "$UNIT_PLAN" "$DEPLOYED_AT" "$SLO_GATE" || status=$?`,
 			`scripts/ci/unit_deploy.sh rollback "$UNIT_PLAN" "$REMOTE_STAGE"`,
 			"back after the SLO gate (exit $status)",
 		)
@@ -137,7 +146,9 @@ func TestUnitLanesGateEveryHostAndRollBack(t *testing.T) {
 	helper := readRepoFile(t, "scripts", "ci", "unit_deploy.sh")
 	for _, required := range []string{
 		`PROMETHEUS_URL:-http://127.0.0.1:9095`,
-		`python3 "$dir/slo_gate.py" "$@" --deployed-at "$deployed_at"`,
+		`python3 "$dir/slo_gate.py" "$@" --deployed-at "$deployed_at" --duration "$duration"`,
+		`--max-hold "$max_hold"`,
+		`'.gates[$k].duration'`,
 		"1) worst=1 ;;",
 		`*) [[ "$worst" == 1 ]] || worst=3 ;;`,
 	} {
@@ -149,9 +160,8 @@ func TestUnitLanesGateEveryHostAndRollBack(t *testing.T) {
 
 // TestEdgeLaneFollowsTheControlPlaneOneHostAtATime: the edge lane deploys
 // only after the control-plane lane of the same unit release is on the
-// control plane (deploy order), the control plane's gateway first, then one
-// compute node at a time, stopping at the first failure, never alongside a
-// full compute rollout of the same node.
+// control plane (deploy order), canary first, one host at a time, stopping
+// at the first failure, never alongside a full compute rollout of the node.
 func TestEdgeLaneFollowsTheControlPlaneOneHostAtATime(t *testing.T) {
 	release := readWorkflow(t, "release-units.yml")
 	edgeCall := jobBlock(t, release, "deploy-edge")
@@ -169,29 +179,86 @@ func TestEdgeLaneFollowsTheControlPlaneOneHostAtATime(t *testing.T) {
 		"--lane control-plane --host-role control-plane",
 		`if [[ "$action" == deploy ]]; then`,
 		"deploy order: the control-plane lane of this unit release",
+		"scripts/ci/plan_edge_rollout.py",
+		`--canary "${EDGE_CANARY:-}"`,
 	)
-	cp := jobBlock(t, edge, "control-plane")
-	for _, required := range []string{"needs: [plan]", "uses: ./.github/workflows/cd-controlplane.yml", "units_lane: edge"} {
-		if !strings.Contains(cp, required) {
-			t.Errorf("cd-edge-units control-plane is missing %q", required)
+	if !strings.Contains(edge, "EDGE_CANARY: ${{ inputs.edge_canary || vars.UNIT_RELEASE_EDGE_CANARY }}") {
+		t.Error("the edge canary must be configurable by input or environment variable")
+	}
+	node := readWorkflow(t, "cd-edge-node.yml")
+	for _, required := range []string{
+		"group: cd-compute-${{ inputs.deploy_environment }}-${{ fromJSON(inputs.target).node }}",
+		"--lane edge --host-role compute-only",
+		`[[ "$fingerprint" != "$SSH_HOST_KEY_SHA256" ]]`,
+		"the edge lane stops",
+	} {
+		if !strings.Contains(node, required) {
+			t.Errorf("cd-edge-node is missing %q", required)
 		}
 	}
-	nodes := jobBlock(t, edge, "nodes")
+	for _, file := range []string{"cd-edge-units.yml", "cd-edge-node.yml"} {
+		if strings.Contains(readWorkflow(t, file), "StrictHostKeyChecking=no") {
+			t.Errorf("%s must never disable host-key checking", file)
+		}
+	}
+}
+
+// TestEdgeLaneRunsCanaryFirstWithTheFullGate: the canary node deploys first
+// with the full gate; the control plane's gateway and every later node
+// follow with the short gate, the control plane only after the canary
+// succeeded, the followers one at a time after both, stopping at the first
+// failure. A failed follower rolls itself back (cd-edge-node.yml's gate).
+func TestEdgeLaneRunsCanaryFirstWithTheFullGate(t *testing.T) {
+	edge := readWorkflow(t, "cd-edge-units.yml")
+	canary := jobBlock(t, edge, "canary-node")
 	for _, required := range []string{
-		"needs: [plan, control-plane]",
+		"needs: [plan]",
+		"uses: ./.github/workflows/cd-edge-node.yml",
+		"target: ${{ needs.plan.outputs.canary }}",
+		"slo_gate: canary",
+	} {
+		if !strings.Contains(canary, required) {
+			t.Errorf("canary-node is missing %q", required)
+		}
+	}
+	cp := jobBlock(t, edge, "control-plane")
+	for _, required := range []string{
+		"needs: [plan, canary-node]",
+		"needs.canary-node.result == 'success' || needs.canary-node.result == 'skipped'",
+		"uses: ./.github/workflows/cd-controlplane.yml",
+		"units_lane: edge",
+		"slo_gate: ${{ needs.plan.outputs.control_plane_gate }}",
+	} {
+		if !strings.Contains(cp, required) {
+			t.Errorf("control-plane is missing %q", required)
+		}
+	}
+	followers := jobBlock(t, edge, "nodes")
+	for _, required := range []string{
+		"needs: [plan, canary-node, control-plane]",
+		"needs.canary-node.result == 'success' || needs.canary-node.result == 'skipped'",
 		"needs.control-plane.result == 'success' || needs.control-plane.result == 'skipped'",
 		"max-parallel: 1",
 		"fail-fast: true",
-		"group: cd-compute-${{ inputs.deploy_environment }}-${{ matrix.target.node }}",
-		"--lane edge --host-role compute-only",
-		`[[ "$fingerprint" != "$SSH_HOST_KEY_SHA256" ]]`,
+		"target: ${{ fromJSON(needs.plan.outputs.followers || '[]') }}",
+		"uses: ./.github/workflows/cd-edge-node.yml",
+		"slo_gate: follower",
 	} {
-		if !strings.Contains(nodes, required) {
-			t.Errorf("cd-edge-units nodes is missing %q", required)
+		if !strings.Contains(followers, required) {
+			t.Errorf("nodes is missing %q", required)
 		}
 	}
-	if strings.Contains(nodes, "StrictHostKeyChecking=no") || strings.Contains(edge, "StrictHostKeyChecking=no") {
-		t.Error("the edge lane must never disable host-key checking")
+	// A follower failing its gate rolls itself back and fails the job, which
+	// fail-fast turns into the end of the lane.
+	orderedIn(t, "cd-edge-node deploy", jobBlock(t, readWorkflow(t, "cd-edge-node.yml"), "deploy"),
+		`scripts/ci/unit_deploy.sh gate "$UNIT_PLAN" "$DEPLOYED_AT" "$SLO_GATE" || status=$?`,
+		`scripts/ci/unit_deploy.sh rollback "$UNIT_PLAN" "$REMOTE_STAGE"`,
+		"the edge lane stops",
+		"exit 1",
+	)
+	// The control-plane lane's single host is its canary.
+	if !strings.Contains(readWorkflow(t, "cd-controlplane.yml"), "        default: canary\n") {
+		t.Error("cd-controlplane.yml must default to the canary gate")
 	}
 }
 

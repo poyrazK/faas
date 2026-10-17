@@ -126,9 +126,9 @@ lane's critical path.
 **SLO gate.** After a unit lane activates a host, `scripts/ci/unit_deploy.sh
 gate` runs `scripts/ci/slo_gate.py` (ADR 202610171900) for each restarted
 unit, in parallel on the control plane, where Prometheus listens at
-`127.0.0.1:9095`. Each gate watches for `slo_gate_duration`: 10 min on the
-control-plane lane, 5 min per host on the edge lane. `--deployed-at` is the
-control plane's clock right before activation. A pass (0) promotes the
+`127.0.0.1:9095`. The gate length depends on the host's place in its lane
+(canary first, below). `--deployed-at` is the control plane's clock right
+before activation. A pass (0) promotes the
 units. A breach (1), an inconclusive result (3) or a misconfigured gate (2)
 runs `deployctl rollback --only` on the plan's services, which restores the
 release that was active before them, and fails the run. A converge run (a
@@ -145,15 +145,44 @@ hosts without converging their roles. `cd-edge-units.yml` runs it:
 
 1. Verify the artifact. Refuse unless the control plane already runs the
    unit release's control-plane units.
-2. Deploy the control plane's gatewayd-public, through cd-controlplane.yml
-   with `units_lane=edge`, and gate it.
-3. Deploy each compute node in turn (`max-parallel: 1`, `fail-fast`). A
-   node's run shares cd-compute.yml's per-node concurrency group, so a full
-   release never changes the same node at the same time.
-4. On each node: plan, assemble a hard-linked overlay, `deployctl deploy
-   --only gatewayd-internal`, check every unit, restart an enabled
-   gatewayd-public-edge onto the new binary, and gate the node. A failed
-   node is rolled back and the remaining nodes are left as they were.
+2. Deploy the canary node (cd-edge-node.yml), with the full gate.
+3. Deploy the control plane's gatewayd-public, through cd-controlplane.yml
+   with `units_lane=edge`.
+4. Deploy each remaining compute node in turn (`max-parallel: 1`,
+   `fail-fast`), with the follower gate. A node's run shares cd-compute.yml's
+   per-node concurrency group, so a full release never changes the same node
+   at the same time.
+
+On each node the job plans the deploy, assembles a hard-linked overlay, runs
+`deployctl deploy --only gatewayd-internal`, checks every unit, restarts an
+enabled gatewayd-public-edge onto the new binary, and gates the node. A
+failed node, canary or follower, is rolled back. The lane stops there and
+the remaining nodes are left as they were.
+
+**Canary first.** Each lane's first host is its canary and gets the full
+gate. Every later host gets the follower gate, which is long enough to catch
+a crash loop or an immediate error spike. The gate lengths live in
+`scripts/ci/release_units.json` under `gates`:
+
+| gate | duration | max hold | why |
+|---|---|---|---|
+| canary | 4 min | 2 min | the first host to run the new code |
+| follower | 90 s | 30 s | 15 s rule evaluation + 30 s hold leaves a margin |
+
+`scripts/ci/plan_edge_rollout.py` picks the canary:
+
+- *Control-plane lane:* the control plane, its only host.
+- *Edge lane:* the designated compute node (`edge_canary`, or the
+  environment variable `UNIT_RELEASE_EDGE_CANARY`; default the first edge
+  target). The control plane's gatewayd-public follows it.
+- *gatewayd-public-only release:* no compute node restarts a gateway
+  (gatewayd-public-edge is optional), so the control plane is the edge
+  lane's canary and every node follows.
+
+**Signed deployctl.** The unit release now carries `tools/deployctl`, built
+in release-units.yml from the release commit and covered by its signature.
+Deploy jobs run it instead of building their own, so they need no Go
+toolchain and save about half a minute each.
 
 Compute nodes run releases installed by `gregalectl release install`, which
 ship no deployment manifest and no systemd units. Two changes cover that:
@@ -184,6 +213,28 @@ deploy --only` and inherit that choice.
 The `base` dispatch input can no longer move a unit release onto an older
 production release. That combination is exactly what N±1 forbids.
 
+## Time budget
+
+The target is a release that changes both lanes, deployed to the control
+plane and three compute nodes, promoted within 30 minutes of the merge,
+gates included. Minutes per phase:
+
+| phase | min | basis |
+|---|---|---|
+| release-units build (hosted runner, main-branch cache) | 4.5 | checkout, cache restore, detector (3 s locally), build (22.5 s warm locally for apid, both gateways and deployctl), sign and upload |
+| control-plane lane: deploy + canary gate | 2 + 4 | per-host deploy job: artifact download and verification, checkout, plan, stage, overlay, restart and readiness |
+| edge plan job | 1 | artifact verification, control-plane order check, canary choice |
+| edge canary node: deploy + canary gate | 2 + 4 | |
+| control plane gatewayd-public: deploy + follower gate | 2 + 1.5 | |
+| two more nodes: deploy + follower gate each | 2 × (2 + 1.5) | |
+| **total** | **28** | |
+
+`scripts/ci/plan_edge_rollout.py --budget` computes this from the gate
+config, and a test fails if it exceeds 30 minutes. The per-host costs are
+estimates from the steps' local and slice-1 timings, not production
+measurements. A queued hosted build runner (0-14 min on busy CI days) comes
+on top. Each extra compute node adds 3.5 minutes.
+
 ## Still needed
 
 - **Migrations.** Most blocked ranges contain a migration. Allowing the lane to
@@ -196,10 +247,9 @@ production release. That combination is exactly what N±1 forbids.
   `UNIT_RELEASE_EDGE_TARGETS` to list the compute nodes. A node left out stays
   on its current gateways, which N±1 allows. Reading the node list from the
   compute registry would make the lane complete by construction.
-- **Gate time.** With 10 min on the control plane and 5 min per node, a
-  release that changes both lanes on three nodes takes about 45 min. Canary
-  the first node with a full gate and shorten it for later nodes, or gate
-  waves of nodes, to stay inside 30 min.
+- **Measure the budget.** Replace the per-host estimates with production
+  timings from the first runs. Past about five nodes, gate waves of nodes
+  instead of one node at a time.
 - **Build runner.** release-units.yml builds on a GitHub-hosted runner, so on
   a busy CI day its job can queue 8-14 min before it starts. Building on the
   dedicated fleet runner (warm Go cache, no queue) keeps merge-to-prod near 10

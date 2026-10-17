@@ -31,9 +31,16 @@ jq -e '.kind == "gregale-unit-release" and .format_version == 2 and .target == "
   echo "verify_unit_release: not a format 2 linux/amd64 unit release" >&2
   exit 1
 }
-# The tarball holds exactly the binaries the signed manifest names.
-jq -r '.units | to_entries[] | "\(.value.sha256)  bin/\(.key)"' "$manifest" | (cd "$dir/unpacked" && sha256sum -c --quiet -) >&2
-if [[ "$(find "$dir/unpacked/bin" -type f | wc -l | tr -d ' ')" -ne "$(jq '.units | length' "$manifest")" ]]; then
+# The tarball holds exactly the binaries and tools the signed manifest
+# names, deployctl among them.
+jq -e '.tools.deployctl.sha256' "$manifest" >/dev/null || {
+  echo "verify_unit_release: the release carries no deployctl" >&2
+  exit 1
+}
+jq -r '(.units | to_entries[] | "\(.value.sha256)  bin/\(.key)"), (.tools | to_entries[] | "\(.value.sha256)  tools/\(.key)")' "$manifest" \
+  | (cd "$dir/unpacked" && sha256sum -c --quiet -) >&2
+if [[ "$(find "$dir/unpacked/bin" -type f | wc -l | tr -d ' ')" -ne "$(jq '.units | length' "$manifest")" ||
+      "$(find "$dir/unpacked/tools" -type f | wc -l | tr -d ' ')" -ne "$(jq '.tools | length' "$manifest")" ]]; then
   echo "verify_unit_release: the tarball carries binaries its manifest does not name" >&2
   exit 1
 fi

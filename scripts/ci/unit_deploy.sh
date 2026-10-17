@@ -8,7 +8,8 @@
 #   unit_deploy.sh script PLAN STAGE OUT         write the activation script (runs on the host)
 #   unit_deploy.sh run SCRIPT                    run a script on the host as root
 #   unit_deploy.sh now                           print the gate host's clock (unix seconds)
-#   unit_deploy.sh gate PLAN DEPLOYED_AT DURATION  run the SLO gate for the plan's units
+#   unit_deploy.sh gate PLAN DEPLOYED_AT KIND    run the SLO gate for the plan's units; KIND is
+#                                                canary or follower (scripts/ci/release_units.json "gates")
 #   unit_deploy.sh rollback PLAN STAGE           put the plan's services back on the previous release
 #   unit_deploy.sh cleanup STAGE                 remove the stage dir
 #
@@ -156,9 +157,14 @@ cmd_run() {
 cmd_now() { remote UNIT_GATE "$(gate_target)" 'date +%s'; }
 
 cmd_gate() {
-  local plan="$1" deployed_at="$2" duration="$3" target gate_dir args=""
+  local plan="$1" deployed_at="$2" kind="$3" target gate_dir args="" duration max_hold
   target="$(gate_target)"
-  [[ "$deployed_at" =~ ^[0-9]+$ && "$duration" =~ ^[0-9]+[smh]?$ ]] || die "bad gate time or duration: $deployed_at $duration"
+  [[ "$kind" == canary || "$kind" == follower ]] || die "gate kind must be canary or follower: $kind"
+  duration="$(jq -er --arg k "$kind" '.gates[$k].duration' "$repo_root/scripts/ci/release_units.json")"
+  max_hold="$(jq -er --arg k "$kind" '.gates[$k].max_hold' "$repo_root/scripts/ci/release_units.json")"
+  [[ "$deployed_at" =~ ^[0-9]+$ && "$duration" =~ ^[0-9]+[smh]?$ && "$max_hold" =~ ^[0-9]+[smh]?$ ]] \
+    || die "bad gate time or durations: $deployed_at $duration $max_hold"
+  echo "slo-gate: $kind gate, ${duration} holding alerts for ${max_hold}"
   local prometheus="${PROMETHEUS_URL:-http://127.0.0.1:9095}"
   [[ "$prometheus" =~ ^http://127\.0\.0\.1:[0-9]+$ ]] || die "PROMETHEUS_URL must be a loopback http URL: $prometheus"
   # The remote runner evaluates each unit's argument list: allow only flags
@@ -179,15 +185,15 @@ cmd_gate() {
   copy UNIT_GATE "$repo_root/scripts/ci/slo_gate.py" "$target:$gate_dir/slo_gate.py"
   local status=0
   # One gate per unit, in parallel: each keeps its own scrape check.
-  remote UNIT_GATE "$target" "bash -s -- '$gate_dir' '$deployed_at' '$duration' '$prometheus'$args" <<'REMOTE' || status=$?
+  remote UNIT_GATE "$target" "bash -s -- '$gate_dir' '$deployed_at' '$duration' '$max_hold' '$prometheus'$args" <<'REMOTE' || status=$?
 set -uo pipefail
-dir="$1" deployed_at="$2" duration="$3" prometheus="$4"
-shift 4
+dir="$1" deployed_at="$2" duration="$3" max_hold="$4" prometheus="$5"
+shift 5
 pids=()
 for unit_args in "$@"; do
   eval "set -- $unit_args"
   python3 "$dir/slo_gate.py" "$@" --deployed-at "$deployed_at" --duration "$duration" \
-    --prometheus-url "$prometheus" &
+    --max-hold "$max_hold" --prometheus-url "$prometheus" &
   pids+=("$!")
 done
 worst=0

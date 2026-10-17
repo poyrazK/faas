@@ -69,10 +69,10 @@ on:
         required: false
         default: control-plane
         type: string
-      slo_gate_duration:
-        description: "How long the SLO gate holds the restarted units before promoting them (scripts/ci/slo_gate.py --duration)"
+      slo_gate:
+        description: "SLO gate for this host: canary (full) or follower (short); durations in scripts/ci/release_units.json"
         required: false
-        default: 10m
+        default: canary
         type: string
       hosted_runner:
         description: >-
@@ -119,10 +119,10 @@ on:
         required: false
         default: control-plane
         type: string
-      slo_gate_duration:
-        description: "How long the SLO gate holds the restarted units before promoting them (scripts/ci/slo_gate.py --duration)"
+      slo_gate:
+        description: "SLO gate for this host: canary (full) or follower (short); durations in scripts/ci/release_units.json"
         required: false
-        default: 10m
+        default: canary
         type: string
       hosted_runner:
         description: >-
@@ -1203,7 +1203,9 @@ jobs:
   # its base full release, which must be the previous full release (N±1) and
   # what the host runs (or earlier unit releases over it). The plan restarts
   # only daemons of units_lane whose unit version moved, then holds them on
-  # the SLO gate and rolls them back to the previous binaries on a breach.
+  # the SLO gate (canary, the full gate, unless the edge lane passes
+  # slo_gate=follower because a compute node went first) and rolls them back
+  # to the previous binaries on a breach.
   # Everything else, including migrations, units, roles and compute daemons,
   # stays as the base release left it. cd-edge-units.yml calls this job with
   # units_lane=edge for the control plane's own gateway.
@@ -1225,7 +1227,7 @@ jobs:
       CP_SSH_KEY: ${{ secrets.CP_SSH_KEY || secrets.DO_SSH_KEY }}
       EXPECT_UNITS: ${{ inputs.units }}
       UNITS_LANE: ${{ inputs.units_lane }}
-      SLO_GATE_DURATION: ${{ inputs.slo_gate_duration }}
+      SLO_GATE: ${{ inputs.slo_gate }}
     steps:
       - name: Require a unit release, not a tag
         env:
@@ -1237,6 +1239,10 @@ jobs:
           }
           [[ "$UNITS_LANE" == control-plane || "$UNITS_LANE" == edge ]] || {
             echo "::error::units_lane must be control-plane or edge" >&2
+            exit 1
+          }
+          [[ "$SLO_GATE" == canary || "$SLO_GATE" == follower ]] || {
+            echo "::error::slo_gate must be canary or follower" >&2
             exit 1
           }
 
@@ -1287,11 +1293,6 @@ jobs:
           # the planner's ancestry and N±1 checks need history and tags.
           ref: ${{ steps.verify.outputs.git_sha }}
           fetch-depth: 0
-
-      - uses: actions/setup-go@v7
-        with:
-          go-version-file: go.mod
-          cache: ${{ inputs.hosted_runner }}
 
       - name: Set up SSH
         env:
@@ -1360,12 +1361,8 @@ jobs:
         if: steps.plan.outputs.action == 'deploy' || steps.plan.outputs.action == 'converge'
         run: |
           set -euo pipefail
-          # deployctl is a controller tool built from the unit release's
-          # commit, exactly as the full lane builds it from the tag.
-          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath \
-            -ldflags "-s -w -X github.com/onebox-faas/faas/pkg/wire.Version=${UNITS_SHA}" \
-            -o "$RUNNER_TEMP/deployctl" ./cmd/deployctl
-          remote="$(scripts/ci/unit_deploy.sh stage "$UNIT_PLAN" "$UNITS_DIR" "$RUNNER_TEMP/deployctl")"
+          # deployctl rides in the signed unit release (tools/deployctl).
+          remote="$(scripts/ci/unit_deploy.sh stage "$UNIT_PLAN" "$UNITS_DIR" "$UNITS_DIR/tools/deployctl")"
           echo "REMOTE_STAGE=$remote" >> "$GITHUB_ENV"
 
       - name: Activate the unit release
@@ -1389,7 +1386,7 @@ jobs:
           # 0 promotes. 1 (an SLO breached) and 3 (no evidence) roll the
           # units back to the release that was active before them.
           status=0
-          scripts/ci/unit_deploy.sh gate "$UNIT_PLAN" "$DEPLOYED_AT" "$SLO_GATE_DURATION" || status=$?
+          scripts/ci/unit_deploy.sh gate "$UNIT_PLAN" "$DEPLOYED_AT" "$SLO_GATE" || status=$?
           if (( status != 0 )); then
             scripts/ci/unit_deploy.sh rollback "$UNIT_PLAN" "$REMOTE_STAGE"
             echo "::error::rolled $(jq -r '.units | join(", ")' "$UNIT_PLAN") back after the SLO gate (exit $status)" >&2

@@ -179,7 +179,9 @@ How it works:
 The per-unit release lanes
 ([ADR-1650](adr/1650-per-unit-control-plane-releases.md)) call this gate after
 every host's deploy: once for the control-plane lane, then once per host in
-the edge lane before the next host starts. They run one gate per restarted
+the edge lane before the next host starts. Each lane's first host, its
+canary, gets the full gate. Later hosts get a short follower gate. Both are
+set in `scripts/ci/release_units.json` under `gates`. They run one gate per restarted
 unit, in parallel on the control plane (Prometheus at `127.0.0.1:9095`),
 through `scripts/ci/unit_deploy.sh gate`. Exit 1 or 3 from any of them rolls
 the host's units back to the release that was active before

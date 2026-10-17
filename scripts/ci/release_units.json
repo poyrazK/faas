@@ -54,6 +54,11 @@
     "gregale": {"lane": "tool"},
     "gregalectl": {"lane": "tool"}
   },
+  "gates": {
+    "_comment": "SLO gate per host (scripts/ci/slo_gate.py --duration/--max-hold). The canary is the first host of a lane: the control plane in the control-plane lane, the designated compute node in the edge lane (the control plane when no compute node restarts a gateway). Every later host gets the follower gate, long enough to catch crash loops and immediate error spikes. scripts/ci/plan_edge_rollout.py checks these against the 30-minute budget (ADR-1650).",
+    "canary": {"duration": "4m", "max_hold": "2m"},
+    "follower": {"duration": "90s", "max_hold": "30s"}
+  },
   "global_inputs": ["go.mod", "go.sum"],
   "blocking_paths": {
     "go_modules": ["go.mod", "go.sum"],
