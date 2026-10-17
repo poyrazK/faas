@@ -1,9 +1,24 @@
 // Mirrors pkg/api/limits.go; TestAuthTemplateRuntimeBounds checks this contract.
-export const limits = Object.freeze({ accessTokenSeconds: 600, pool: 4, frontPool: 2, bodyBytes: 1048576, authzBodyBytes: 65536, authzConfigBytes: 65536, redirectURLs: 50, migrationStatementMs: 600000, invitationSeconds: 604800, emailTimeoutMs: 10000, hookBodyBytes: 262144, storageURLSeconds: 60, adminBodyBytes: 1048576, importBatch: 100, signingKeys: 4, uiNameChars: 60, auditRetentionMaxDays: 3650, auditPruneBatch: 5000, auditPruneBatches: 20, auditPruneIntervalSeconds: 21600, eventBatch: 50, eventLeaseSeconds: 120, eventMaxBackoffSeconds: 3600, eventRetentionSeconds: 259200, smsCodeSeconds: 300, ssoMetadataBytes: 524288, ssoDomains: 50 })
+export const limits = Object.freeze({ accessTokenSeconds: 600, pool: 4, frontPool: 2, bodyBytes: 1048576, authzBodyBytes: 65536, authzConfigBytes: 65536, redirectURLs: 50, migrationStatementMs: 600000, invitationSeconds: 604800, emailTimeoutMs: 10000, hookBodyBytes: 262144, storageURLSeconds: 60, adminBodyBytes: 1048576, importBatch: 100, signingKeys: 4, uiNameChars: 60, auditRetentionMaxDays: 3650, auditPruneBatch: 5000, auditPruneBatches: 20, auditPruneIntervalSeconds: 21600, eventBatch: 50, eventLeaseSeconds: 120, eventMaxBackoffSeconds: 3600, eventRetentionSeconds: 259200, smsCodeSeconds: 300, ssoMetadataBytes: 524288, ssoDomains: 50, goTrueMemoryDivisor: 3, goTrueMemoryMinMiB: 32 })
 
 import { createECDH, createPrivateKey } from 'node:crypto'
+import { totalmem } from 'node:os'
 
 export const gotrue = Object.freeze({ binary: '/usr/local/bin/gotrue-auth', migrations: '/app/gotrue-migrations', host: '127.0.0.1', port: 9999 })
+
+// goMemoryLimit is GoTrue's GOMEMLIMIT: a third of the instance's memory, at
+// least 32 MiB. GoTrue hashes each recovery code with argon2id (19 MiB), and
+// unbounded its heap grew by about 60 MiB while checking one, more than a
+// Free instance can spare beside Node.
+export function goMemoryLimit(bytes = instanceMemory()) {
+  return `${Math.max(limits.goTrueMemoryMinMiB, Math.floor(bytes / 1048576 / limits.goTrueMemoryDivisor))}MiB`
+}
+
+// instanceMemory is the smaller of the cgroup limit and physical memory.
+function instanceMemory() {
+  const constrained = process.constrainedMemory?.() ?? 0
+  return constrained > 0 ? Math.min(constrained, totalmem()) : totalmem()
+}
 
 // Customers configure sign-in providers, MFA, password rules, CAPTCHA and
 // SMS by setting these GoTrue variables as app secrets. Everything else is

@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { generateKeyPairSync } from 'node:crypto'
-import { authzConfig, characterClasses, databaseURL, migrationEnv, runtimeConfig, signingKeys } from '../config.mjs'
+import { authzConfig, characterClasses, databaseURL, goMemoryLimit, migrationEnv, runtimeConfig, signingKeys } from '../config.mjs'
 
 // keySecret is one AUTH_JWT_KEY_<ID> secret as `gregale auth` writes it.
 function keySecret(id) {
@@ -39,6 +39,13 @@ test('builds the GoTrue environment from sealed settings', () => {
   // The child gets an explicit environment, never the whole process env.
   assert.equal(g.AUTH_JWT_SECRET, undefined)
   assert.equal(g.PATH, undefined)
+})
+
+test('GoTrue collects garbage within a third of the instance memory', () => {
+  assert.equal(goMemoryLimit(136 * 1048576), '45MiB')
+  assert.equal(goMemoryLimit(64 * 1048576), '32MiB')
+  assert.equal(goMemoryLimit(1032 * 1048576), '344MiB')
+  assert.match(goMemoryLimit(), /^\d+MiB$/)
 })
 
 test('passes provider settings through but rejects platform-owned GoTrue keys', () => {

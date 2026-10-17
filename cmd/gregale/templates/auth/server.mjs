@@ -12,7 +12,7 @@ import { storageBindings } from './storage.mjs'
 import { createWorkflowStarter, workflowsConfig } from './workflows.mjs'
 import { createEventPublisher, lifecycleConfig, publishesAfter, setLifecycleEvents } from './events.mjs'
 import { createAuditPruner } from './retention.mjs'
-import { gotrue, limits, pagePolicy, runtimeConfig } from './config.mjs'
+import { goMemoryLimit, gotrue, limits, pagePolicy, runtimeConfig } from './config.mjs'
 
 const prefix = '/auth/v1'
 const authzPrefix = '/authz/v1/'
@@ -148,7 +148,7 @@ export function start(env = process.env) {
   const mailer = createMailer(config.email)
   const hooks = createHookServer({ secret, mailer, api: config.api, app: config.app })
   hooks.listen(hookAddress.port, hookAddress.host)
-  const child = spawn(gotrue.binary, ['serve'], { env: { ...config.gotrueEnv, ...hookEnv(secret) }, stdio: ['ignore', 'pipe', 'pipe'] })
+  const child = spawn(gotrue.binary, ['serve'], { env: { ...config.gotrueEnv, ...hookEnv(secret), GOMEMLIMIT: goMemoryLimit() }, stdio: ['ignore', 'pipe', 'pipe'] })
   filterLogs(child.stdout, process.stdout)
   filterLogs(child.stderr, process.stderr)
   // Short idle lifetime: a parked or restored instance must not reuse a

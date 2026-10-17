@@ -381,7 +381,9 @@ no code can reach. The hosted pages complete a verified second factor after
 every first-factor sign-in they perform, so they never hand an application an
 `aal1` session for a user who has one; `@gregale/auth` exposes enrolment,
 challenge, verification, recovery codes and the assurance level. Applications
-enforce `aal2` themselves, through the `aal` claim.
+enforce `aal2` themselves, through the `aal` claim. GoTrue texts a phone
+factor's challenge through the SMS provider even for numbers in
+`GOTRUE_SMS_TEST_OTP`, which covers sign-in codes only.
 
 ### Phone sign-in
 
@@ -492,8 +494,15 @@ migration, sign-up issued an ES256 token that verifies against the published
 JWKS with the expected issuer, audience and 600-second lifetime, refresh
 tokens rotated, and sign-out ended refresh. Under amd64 emulation the instance
 used about 131 MiB (Node ~62 MB, GoTrue ~84 MB RSS), above the Free plan's
-128 MB. Native x86_64 measurement decides whether the front must move from
-Node to a small Go process before Free-plan availability. With phase 3 the release
+128 MB. Measured natively on x86_64 (fsn-4, 2026-10-17), the instance idles
+at 98 MiB RSS (Node 64, GoTrue 33; 33 MiB of it anonymous) and ran every SMS,
+second-factor, SAML, SCIM and organization-SSO check inside the Free plan's
+136 MiB container cgroup without an OOM kill, so the front stays in Node.
+GoTrue hashes each recovery code with argon2id (19 MiB), which grew its RSS to
+98 MiB unbounded; the front starts it with `GOMEMLIMIT` at a third of the
+instance's memory, which cut the cgroup's `memory.max` events over the same
+run from 1004 to 308. The microVM measurement on a Free instance stays part of
+the staging canary. With phase 3 the release
 task also applied the `gregale_auth` SQL and an `AUTH_AUTHZ` document, twice
 idempotently; read-only issuance still verified next to the real schema; and
 two real users created an organization, invited, accepted, were authorized by a
