@@ -6875,6 +6875,21 @@ type AppWakeTimelineResponse struct {
 	TriggerClassHistogram map[string]int        `json:"trigger_class_histogram"` // empty map, not nil
 	Rows                  []WakeTimelineJSONRow `json:"rows"`
 	AsOf                  string                `json:"as_of"` // RFC3339Nano UTC
+	Page                  *AppWakeHistoryPage   `json:"page,omitempty"`
+}
+
+// AppWakeHistoryPage describes one live page of retained instance records.
+// Counts and histograms describe this page, not the complete requested range.
+type AppWakeHistoryPage struct {
+	Mode         string `json:"mode"`
+	Since        string `json:"since"`
+	Until        string `json:"until"`
+	Limit        int    `json:"limit"`
+	Cursor       string `json:"cursor,omitempty"`
+	NextCursor   string `json:"next_cursor,omitempty"`
+	Complete     bool   `json:"complete"`
+	SourceStatus string `json:"source_status"`
+	CountScope   string `json:"count_scope"`
 }
 
 // WakeTimelineApp is the slim per-app DTO embedded inside
@@ -12080,9 +12095,17 @@ type DebugCompareRouteStats struct {
 // endpoint. Routes is empty when both deployments had no traffic
 // in the window.
 type DebugCompareResponse struct {
-	Source string                   `json:"source"`
-	Mirror string                   `json:"mirror"`
-	Routes []DebugCompareRouteStats `json:"routes"`
+	// Optional on older servers; diagnostic clients must require these fields
+	// before claiming an effective retained window (ADR-1623).
+	AppID            string                   `json:"app_id,omitempty"`
+	Since            string                   `json:"since,omitempty"`
+	WindowStart      string                   `json:"window_start,omitempty"`
+	WindowEnd        string                   `json:"window_end,omitempty"`
+	RetentionClamped *bool                    `json:"retention_clamped,omitempty"`
+	RouteFilter      string                   `json:"route_filter,omitempty"`
+	Source           string                   `json:"source"`
+	Mirror           string                   `json:"mirror"`
+	Routes           []DebugCompareRouteStats `json:"routes"`
 }
 
 // DebugReplayRequest is the optional body for POST

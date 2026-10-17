@@ -55,6 +55,7 @@ import (
 	billingloader "github.com/onebox-faas/faas/pkg/billing/loader"
 	"github.com/onebox-faas/faas/pkg/billing/stripe"
 	"github.com/onebox-faas/faas/pkg/capdecl/runtimecheck"
+	"github.com/onebox-faas/faas/pkg/ci"
 	"github.com/onebox-faas/faas/pkg/cosign"
 	"github.com/onebox-faas/faas/pkg/daemonenv"
 	"github.com/onebox-faas/faas/pkg/daemonunit"
@@ -1471,6 +1472,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithAppTaskAPIEnabled(appTaskAPIEnabledFromEnv(deps.getenv)).
 		WithInteractiveAppTasksEnabled(apptaskattach.EnabledFromEnv(deps.getenv)).
 		WithImageRunsEnabled(imagerun.EnabledFromEnv(deps.getenv)).
+		WithInternalCIConfig(ci.ConfigFromEnv(deps.getenv)).
 		WithInteractiveImageRunsEnabled(imagerun.InteractiveEnabledFromEnv(deps.getenv)).
 		WithRealtimeHistoryPreviewEnabled(deps.getenv("FAAS_REALTIME_RETAINED_PREVIEW_ENABLED") == "1").
 		WithRealtimeTicketsPreviewEnabled(deps.getenv("FAAS_REALTIME_TICKETS_PREVIEW_ENABLED") == "1").
@@ -1490,6 +1492,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err := srv.configureRehearsalPostgres(ctx, deps.getenv); err != nil {
 		return err
 	}
+	closeCIStorage, err := srv.configureInternalCIStorage(ctx, deps.getenv)
+	if err != nil {
+		return fmt.Errorf("apid internal CI storage: %w", err)
+	}
+	defer closeCIStorage()
 	srv.linearOAuthConfig = linearOAuthCfg
 	srv.issueSlackOAuthConfig = slackOAuthCfg
 	srv.guestTracingEnabled = deps.getenv("FAAS_GUEST_TRACING_ENABLED") == "1"
@@ -2480,6 +2487,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// reaching this point means the HTTP listener and its dependencies are
 	// fully constructed.
 	srv.startEnvironmentGitSourcePolling(ctx, deps.getenv)
+	defer srv.startInternalCIWorker(ctx, log)()
 	defer srv.startEnvironmentGitDriftReporting(ctx, deps.getenv)()
 	defer srv.startEnvironmentGitAcceptanceEnforcement(ctx, deps.getenv)()
 	notifyStop := daemonunit.NotifyReadyWhen(ctx, apidProbe.ReadyFunc())

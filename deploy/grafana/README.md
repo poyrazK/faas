@@ -336,3 +336,22 @@ provisioning does not install it.
 `docs/faas_implementation_spec.md` §12 lists every dashboard row.
 Renames must update the spec first, then the metric, then this
 dashboard — never the other way around.
+
+## `internal-ci.json` (ADR-1575)
+
+Internal CI operations dashboard, UID `faas-internal-ci`. The existing Grafana
+role provisions its byte-identical mirror. Panels use `faas_ci:*` recording
+rules from the `faas_internal_ci` group in `faas.rules.yml`, which deduplicate
+readable apid/githubd fleet snapshots. Status/count tables query current data;
+missing evidence is Unknown and historical charts preserve gaps.
+
+The dashboard covers read status, configured/observed workers, queues, Check
+and retry backlog, expired leases, global usage/headroom, managed storage bytes
+and bounded worker observations. A fresh disabled path stays quiet even with
+retained work. These are private operational observations; all CI flags ship
+off, and native compute qualification remains a separate gate.
+
+Five internal warning alerts share the
+[CI operations runbook](../../docs/runbooks/FaasInternalCIOperations.md).
+Validate rules, dashboard JSON/mirror and configuration metrics with
+`make test-ci-observability` (`PROMTOOL` can select the pinned local binary).

@@ -1435,3 +1435,7 @@ func (s *server) RehearsalSuspendResumeEnabled() *bool  { return &s.rehearsalSus
 func (s *server) RehearsalRunningSuspendEnabled() *bool { return &s.rehearsalRunningSuspendEnabled }
 func (s *server) RehearsalColdStartEnabled() *bool      { return &s.rehearsalColdStartEnabled }
 func (s *server) RehearsalWorkerFaultsEnabled() *bool   { return &s.rehearsalWorkerFaultsEnabled }
+
+func (s *server) StartInternalCIWorker(ctx context.Context, log *slog.Logger) func() {
+	return s.startInternalCIWorker(ctx, log)
+}

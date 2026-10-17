@@ -26,6 +26,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/appstandards"
 	"github.com/onebox-faas/faas/pkg/chaos"
+	"github.com/onebox-faas/faas/pkg/ci"
 	"github.com/onebox-faas/faas/pkg/cursor"
 	"github.com/onebox-faas/faas/pkg/devbridge"
 	"github.com/onebox-faas/faas/pkg/frameworkprofile"
@@ -149,6 +150,7 @@ type MemStore struct {
 	scenarioWorkerFaults                       map[string]rehearsalwork.WorkerFault
 	scenarioColdPreparations                   map[string]rehearsalcold.Preparation
 	scenarioSuspendResumes                     map[string]rehearsalresume.Receipt
+	internalCI                                 *ci.MemoryStore
 	hostingOIDCTrusts                          map[string]api.HostingOIDCTrust
 	hostingCredentials                         map[string]api.HostingAutomationCredential
 	hostingRetentionPolicies                   map[string]api.HostingRetentionPolicy
@@ -22596,6 +22598,9 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 		}
 	}
 	delete(m.accounts, id)
+	if m.internalCI != nil {
+		m.internalCI.RemoveAccount(id)
+	}
 	delete(m.serviceAddressCursors, id)
 	return nil
 }
