@@ -9678,7 +9678,7 @@ const (
 	IssueMaxFrameBytes    = 512
 	IssueMaxTypeBytes     = 256
 	IssuePageSize         = 50
-	IssueCursorMaxBytes   = 512
+	IssueCursorMaxBytes   = 2048
 	IssueMaxTokenLifetime = 90 * 24 * time.Hour
 	IssueMaxClockSkew     = 5 * time.Minute
 )
@@ -9686,11 +9686,20 @@ const (
 // Deployment-local Node source-map registration (ADR-1113). SDK mirrors these
 // bounds; map artifacts and source content never enter ingestion.
 const (
-	IssueSourceMapsMax       = 32
-	IssueSourceMapMaxBytes   = 512 << 10
-	IssueSourceMapsMaxBytes  = 4 << 20
-	IssueSourceMapEntriesMax = 100000
-	IssueSourceMapSymbolsMax = 8192
+	IssueSourceMapsMax             = 32
+	IssueSourceMapMaxBytes         = 512 << 10
+	IssueSourceMapsMaxBytes        = 4 << 20
+	IssueSourceMapEntriesMax       = 100000
+	IssueSourceMapSymbolsMax       = 8192
+	IssueSourceMapsUploadMaxBytes  = IssueSourceMapsMaxBytes + (64 << 10)
+	IssueSourceMapDeploymentsMax   = 32
+	IssueFrameCoordinateMax        = 1<<31 - 1
+	IssueBreadcrumbsMax            = 16
+	IssueBreadcrumbMessageMaxBytes = 256
+	IssueBreadcrumbMaxAge          = time.Hour
+	IssueTagsMax                   = 16
+	IssueTagKeyMaxBytes            = 64
+	IssueTagValueMaxBytes          = 128
 )
 
 // IssueGroupMembersMax bounds reversible manual group links (ADR-1114).
@@ -11253,6 +11262,190 @@ const (
 
 // Review decisions retain a bounded journal independent of item reviews.
 const OperationWorkflowPlaybookReviewsMax = 32
+
+// IssueBulkActionMax bounds one atomic triage transaction.
+const IssueBulkActionMax = 50
+
+// Shared inbox preferences are bounded independently from issue history.
+const (
+	IssueSavedViewsMax            = 20
+	IssueSavedViewKeyMaxBytes     = 48
+	IssueSavedViewNameMaxBytes    = 64
+	IssueSavedViewFiltersMaxBytes = 2048
+)
+
+const (
+	IssueCodeownersMaxBytes    = 256 << 10
+	IssueCodeownersMaxLines    = 4096
+	IssueCodeownersMaxBindings = 256
+)
+
+// App-scoped Issues collaboration bounds.
+const (
+	IssueTeamsMax       = 20
+	IssueTeamMembersMax = 50
+)
+
+// Explicit tracker references on a canonical Issues group. Existing merged
+// references are retained even if merging exceeds the new-reference quota.
+const (
+	IssueTrackerLinksMax          = 20
+	IssueTrackerNativeRequestsMax = 100 // retained recovery receipts per original issue
+	IssueTrackerLinkURLMaxBytes   = 512
+	IssueTrackerLinkTitleMaxBytes = 256
+)
+
+// Provider ticket creation bounds apply before external dispatch.
+const (
+	IssueTrackerTicketBodyMaxBytes    = 16 << 10
+	IssueTrackerCredentialMaxBytes    = 4 << 10
+	IssueTrackerResponseMaxBytes      = 1 << 20
+	IssueTrackerRequestTimeoutSeconds = 15
+)
+
+// Linear workflow discovery never returns a partial catalog at these bounds.
+const (
+	IssueTrackerLinearWorkflowMax            = 200
+	IssueTrackerLinearWorkflowPageSize       = 50
+	IssueTrackerLinearWorkflowNameMaxBytes   = 256
+	IssueTrackerLinearWorkflowCursorMaxBytes = 512
+)
+
+// Automatic native tracker reconciliation is bounded independently of issue ingestion.
+const (
+	IssueTrackerEscalationDelayDefaultMinutes   = 1440
+	IssueTrackerEscalationDelayMinMinutes       = 15
+	IssueTrackerEscalationDelayMaxMinutes       = 10080
+	IssueTrackerReminderIntervalDefaultMinutes  = 1440
+	IssueTrackerReminderIntervalMinMinutes      = 15
+	IssueTrackerReminderIntervalMaxMinutes      = 10080
+	IssueTrackerRemindersMax                    = 3
+	IssueTrackerReminderBatch                   = 10
+	IssueTrackerSyncNotificationFailuresDefault = 3
+	IssueTrackerSyncNotificationFailuresMax     = 20
+	IssueTrackerSyncSnoozeMax                   = 7 * 24 * time.Hour
+	IssueTrackerSyncSnoozeReasonMaxBytes        = 512
+	IssueTrackerSyncTriageHistoryMax            = 20
+	IssueTrackerSyncNotificationsMax            = 50
+	IssueTrackerSyncHistoryMax                  = 50 // Recent receipts retained per linked ticket (ADR-1483).
+	IssueTrackerAutoSyncBatch                   = 5
+	IssueTrackerAutoSyncCheckInterval           = 5 * time.Minute
+	IssueTrackerAutoSyncLease                   = 2 * IssueTrackerRequestTimeoutSeconds * time.Second
+)
+
+// Provider callbacks carry bounded refresh hints, never lifecycle authority.
+const (
+	IssueTrackerCallbackBodyMaxBytes       = 1 << 20
+	IssueTrackerCallbackDeliveryMaxBytes   = 128
+	IssueTrackerCallbackSecretMinBytes     = 32
+	IssueTrackerCallbackTimestampSkew      = time.Minute
+	IssueTrackerCallbackVerificationMaxAge = 24 * time.Hour
+	IssueTrackerCallbackBatch              = 100
+	IssueTrackerCallbackReceiptsMax        = 10000
+	IssueTrackerCallbackRetention          = 7 * 24 * time.Hour
+	IssueTrackerCallbackRequestTimeout     = 4 * time.Second
+)
+
+// Linear OAuth grants and browser handshakes are bounded independently of polling.
+const (
+	IssueTrackerLinearOAuthCommitTimeout = 4 * time.Second
+	IssueTrackerLinearOAuthFlowTTL       = 10 * time.Minute
+	IssueTrackerLinearOAuthRefreshSkew   = time.Minute
+	IssueTrackerLinearOAuthTokenMaxTTL   = 24 * time.Hour
+	IssueTrackerLinearOAuthRefreshGrace  = 30 * time.Minute
+	IssueTrackerLinearOAuthLease         = 30 * time.Second
+	IssueTrackerLinearOAuthTeamsMax      = 200
+	IssueTrackerLinearOAuthTeamsPage     = 50
+	IssueTrackerLinearOAuthCleanupBatch  = 100
+)
+
+// Team Slack incident notifications (ADR-1489) use the existing webhook retry ladder.
+const (
+	IssueSlackTokenMaxBytes    = 4096
+	IssueSlackResponseMaxBytes = 64 << 10
+	IssueSlackBatch            = 10
+	IssueSlackDeliveryPageSize = 50
+	IssueSlackMaxAttempts      = 7
+	IssueSlackAttemptTimeout   = 10 * time.Second
+	IssueSlackLease            = time.Minute
+	IssueSlackDeliveryTTL      = 24 * time.Hour
+	IssueSlackSendInterval     = time.Second
+	IssueSlackTick             = 5 * time.Second
+)
+
+// Issue frequency alert bounds cap configuration and per-capture evaluation work.
+const (
+	IssueFrequencyAlertMaxRules           = 10
+	IssueFrequencyAlertMaxEvents          = 100000
+	IssueFrequencyAlertMinWindowSeconds   = 60
+	IssueFrequencyAlertMaxWindowSeconds   = 86400
+	IssueFrequencyAlertMinCooldownSeconds = 60
+	IssueFrequencyAlertMaxCooldownSeconds = 604800
+)
+
+// Application Slack delivery history and admission are bounded independently of telemetry.
+const (
+	IssueApplicationSlackMaxDeliveries    = 1000
+	IssueApplicationSlackHistoryRetention = 7 * 24 * time.Hour
+	IssueApplicationSlackCleanupBatch     = 1000
+)
+
+// Native issue response controls retain bounded history independently of capture.
+const (
+	IssueApplicationTriageHistoryMax     = 100
+	IssueApplicationSnoozeReasonMaxBytes = 1024
+	IssueApplicationSnoozeMax            = 30 * 24 * time.Hour
+)
+
+// Native response reminders share Slack delivery storage and transport limits.
+const (
+	IssueApplicationReminderMinMinutes     = 5
+	IssueApplicationReminderMaxMinutes     = 1440
+	IssueApplicationReminderDefaultMinutes = 60
+	IssueApplicationRemindersMax           = 3
+	IssueApplicationReminderHistoryMax     = 100
+	IssueApplicationReminderBatch          = 100
+)
+
+const (
+	IssueApplicationEscalationDefaultMinutes = 1440
+	IssueApplicationEscalationMinMinutes     = 15
+	IssueApplicationEscalationMaxMinutes     = 10080
+	IssueApplicationEscalationBatch          = 100
+)
+
+// Native Slack action verification and account-link bounds (ADR-1496).
+const (
+	IssueSlackInteractionMaxBytes = 64 << 10
+	// ADR-1497: owner-bound Slack OAuth and bounded channel discovery.
+	IssueSlackOAuthFlowTTL          = 10 * time.Minute
+	IssueSlackOAuthTimeout          = 10 * time.Second
+	IssueSlackOAuthSealedMaxBytes   = 16 << 10
+	IssueSlackOAuthResponseMaxBytes = 256 << 10
+	IssueSlackOAuthChannelPageSize  = 200
+	IssueSlackOAuthChannelPages     = 5
+	IssueSlackOAuthCodeMaxBytes     = 4096
+	IssueSlackOAuthNameMaxBytes     = 256
+	IssueSlackOAuthRedirectMaxBytes = 2048
+	IssueSlackResponseURLMaxBytes   = 512
+	IssueSlackSignatureMaxAge       = 5 * time.Minute
+	IssueSlackInteractionTimeout    = 2 * time.Second
+	IssueSlackLinkTTL               = 10 * time.Minute
+	IssueSlackIdentityTTL           = 30 * 24 * time.Hour
+	IssueSlackLinkChallengesMax     = 100
+	IssueSlackIdentitiesMax         = 200
+	IssueSlackSigningSecretBytes    = 32
+	IssueSlackLinkNonceBytes        = 32
+	IssueSlackSnoozeShort           = time.Hour
+	IssueSlackSnoozeLong            = 24 * time.Hour
+)
+
+// Native Slack channel routing bounds (ADR-1498).
+const (
+	IssueSlackRoutingMaxRules            = 20
+	IssueSlackRoutingKeyMaxBytes         = 48
+	IssueSlackRoutingEnvironmentMaxBytes = 63
+)
 
 // ProjectReleaseStageMaxTTLSeconds bounds temporary, billable candidate service capacity.
 const ProjectReleaseStageMaxTTLSeconds = 1800

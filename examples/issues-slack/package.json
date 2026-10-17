@@ -1,0 +1,8 @@
+{
+  "name": "gregale-issues-slack-bridge",
+  "private": true,
+  "type": "module",
+  "engines": {"node": ">=22.10.0"},
+  "scripts": {"start": "node server.mjs", "setup": "node setup.mjs", "bundle": "node bundle.mjs", "test": "node --test bridge.test.mjs bundle.test.mjs"},
+  "dependencies": {"pg": "8.16.3"}
+}

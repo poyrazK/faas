@@ -47,27 +47,44 @@ const (
 // Mirror logic in cmd/apid/spec_compliance_test.go::routeExclude;
 // keep both in sync.
 var routeExclude = map[string]bool{
+	"POST /integrations/slack/actions":                                                  true, // ADR-1497 signed managed Slack actions.
+	"POST /integrations/slack/events":                                                   true, // ADR-1497 signed Slack uninstall/revocation callbacks.
+	"POST /integrations/slack/issues/{app_id}":                                          true, // ADR-1496 Slack-signed provider callback.
+	"GET /dashboard/apps/{slug}/issues/tracker-notifications":                           true, // authenticated browser-only tracker review/notification surface
+	"POST /dashboard/apps/{slug}/issues/tracker-notifications":                          true, // authenticated browser-only tracker review/notification surface
+	"GET /dashboard/apps/{slug}/issues/tracker-notifications/triage/{notification_id}":  true, // authenticated browser-only tracker review/notification surface
+	"POST /dashboard/apps/{slug}/issues/tracker-notifications/triage/{notification_id}": true, // authenticated browser-only tracker review/notification surface
+	"GET /dashboard/apps/{slug}/issues/tracker-review":                                  true, // authenticated browser-only tracker review/notification surface
+	"GET /dashboard/apps/{slug}/issues/{issue_id}/tracker-sync/{link_id}":               true, // authenticated browser-only tracker review/notification surface
+	"POST /dashboard/apps/{slug}/issues/frequency-alerts":                               true, // authenticated browser-only frequency alert form
+
 	"GET /v1/apps/{slug}/entities/connect":         true, // WebSocket frames require the durable-session transport, not Client.do.
 	"GET /v1/apps/{slug}/entities/session-connect": true, // Browser grant subprotocol and Origin authentication, not Bearer HTTP.
 
-	"GET /v1/account/dpa":                                 true, // public markdown (no Bearer; SDK consumers don't render HTML)
-	"GET /v1/apps/{slug}/tasks/{id}/attach":               true, // ADR-1037 WebSocket attach; the CLI drives it directly
-	"GET /v1/jobs/{name}/runs/{id}/tasks/{idx}/attach":    true, // ADR-1330 WebSocket attach; the CLI drives it directly
-	"POST /v1/webhooks/stripe":                            true, // HMAC-signed webhook; outside the Bearer-auth surface
-	"POST /v1/webhooks/resend":                            true, // Svix-signed webhook (issue #246 / ADR-115); outside the Bearer-auth surface
-	"POST /v1/hooks/{token}":                              true, // ADR-212 provider-signed ingress; outside the Bearer-auth SDK
-	"GET /v1/openapi.yaml":                                true, // metadata
-	"GET /v1/openapi.json":                                true, // metadata
-	"GET /docs":                                           true, // anonymous Swagger UI metadata page
-	"GET /v1/internal/metrics/targets":                    true, // issue #1219 — loopback Prometheus HTTP-SD endpoint
-	"GET /v1/internal/metrics/promtail-targets":           true, // issue #274 — loopback Promtail HTTP-SD endpoint
-	"POST /v1/cli-auth/code":                              true, // anonymous device-code (CLI uses wrapper)
-	"POST /v1/cli-auth/exchange":                          true,
-	"GET /status/slo.json":                                true,
-	"GET /status":                                         true,
-	"POST /dashboard/apps/{slug}/crons/{id}/policy":       true, // HTML form, scheduled-work policy editor (ADR-385)
-	"POST /dashboard/jobs/{name}/policy":                  true, // HTML form, scheduled-work policy editor (ADR-385)
-	"POST /dashboard/jobs/{name}/runs/{id}/replay-failed": true, // HTML form, failed job partition replay (ADR-385)
+	"GET /v1/account/dpa":                                             true, // public markdown (no Bearer; SDK consumers don't render HTML)
+	"GET /v1/apps/{slug}/tasks/{id}/attach":                           true, // ADR-1037 WebSocket attach; the CLI drives it directly
+	"GET /v1/jobs/{name}/runs/{id}/tasks/{idx}/attach":                true, // ADR-1330 WebSocket attach; the CLI drives it directly
+	"POST /v1/webhooks/stripe":                                        true, // HMAC-signed webhook; outside the Bearer-auth surface
+	"POST /v1/webhooks/resend":                                        true, // Svix-signed webhook (issue #246 / ADR-115); outside the Bearer-auth surface
+	"POST /v1/hooks/{token}":                                          true, // ADR-212 provider-signed ingress; outside the Bearer-auth SDK
+	"GET /v1/openapi.yaml":                                            true, // metadata
+	"GET /v1/openapi.json":                                            true, // metadata
+	"GET /docs":                                                       true, // anonymous Swagger UI metadata page
+	"GET /v1/internal/metrics/targets":                                true, // issue #1219 — loopback Prometheus HTTP-SD endpoint
+	"GET /v1/internal/metrics/promtail-targets":                       true, // issue #274 — loopback Promtail HTTP-SD endpoint
+	"POST /v1/cli-auth/code":                                          true, // anonymous device-code (CLI uses wrapper)
+	"POST /v1/cli-auth/exchange":                                      true,
+	"GET /status/slo.json":                                            true,
+	"GET /status":                                                     true,
+	"POST /dashboard/apps/{slug}/crons/{id}/policy":                   true, // HTML form, scheduled-work policy editor (ADR-385)
+	"POST /dashboard/jobs/{name}/policy":                              true, // HTML form, scheduled-work policy editor (ADR-385)
+	"POST /dashboard/jobs/{name}/runs/{id}/replay-failed":             true, // HTML form, failed job partition replay (ADR-385)
+	"POST /dashboard/apps/{slug}/issues/{issue_id}/tracker-sync":      true, // ADR-1474: authenticated HTML review/recovery form with named CSRF.
+	"POST /dashboard/apps/{slug}/issues/{issue_id}/linear-connection": true, // ADR-1474: owner HTML credential form with session MFA and CSRF.
+	"POST /hooks/issue-trackers/linear/{app_id}":                      true, // ADR-1476: raw-body HMAC provider protocol, outside the Bearer-auth DTO/SDK surface.
+	"GET /dashboard/apps/{slug}/issues/slack-routing":                 true, // ADR-1498 owner-only Slack routing editor.
+	"GET /oauth/slack/callback":                                       true, // ADR-1497 owner session and one-use state confirmation.
+	"GET /oauth/linear/callback":                                      true, // ADR-1478: owner session OAuth callback and HTML team picker with PKCE and one-use state.
 
 	// Issue #555 trace endpoint. Operator-only surface (X-Faas-Trace-Auth
 	// header), not a customer-Bearer-auth endpoint. The SDK does not
@@ -440,7 +457,25 @@ var methodRouteMap = map[string]string{
 	"DELETE /v1/execution-artifact-grants/{id}":                                "RevokeExecutionArtifactGrant",
 	"POST /v1/apps/{slug}/issue-events":                                        "IngestIssueEvent",
 	"POST /v1/apps/{slug}/issue-events/otlp/{signal}":                          "IngestIssueOTLP",
+	"GET /v1/apps/{slug}/issues/{issue_id}/tracker-links":                      "ListIssueTrackerLinks",
+	"POST /v1/apps/{slug}/issues/{issue_id}/tracker-links":                     "PutIssueTrackerLink",
+	"DELETE /v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}":         "DeleteIssueTrackerLink",
+	"GET /v1/apps/{slug}/issue-teams":                                          "ListIssueTeams",
+	"GET /v1/apps/{slug}/issue-teams/{team_key}":                               "GetIssueTeam",
+	"PUT /v1/apps/{slug}/issue-teams/{team_key}":                               "PutIssueTeam",
+	"DELETE /v1/apps/{slug}/issue-teams/{team_key}":                            "DeleteIssueTeam",
+	"GET /v1/apps/{slug}/issue-saved-views":                                    "ListIssueSavedViews",
+	"GET /v1/apps/{slug}/issue-saved-views/{view_key}":                         "GetIssueSavedView",
+	"PUT /v1/apps/{slug}/issue-saved-views/{view_key}":                         "PutIssueSavedView",
+	"DELETE /v1/apps/{slug}/issue-saved-views/{view_key}":                      "DeleteIssueSavedView",
+	"GET /v1/apps/{slug}/issue-release-comparison":                             "CompareIssueReleases",
+	"POST /v1/apps/{slug}/issues/bulk-actions":                                 "BulkActOnIssues",
+	"PUT /v1/apps/{slug}/deployments/{deployment_id}/issue-source-maps":        "PublishIssueSourceMaps",
+	"GET /v1/apps/{slug}/deployments/{deployment_id}/issue-source-maps":        "GetIssueSourceMaps",
+	"DELETE /v1/apps/{slug}/deployments/{deployment_id}/issue-source-maps":     "RetireIssueSourceMaps",
 	"GET /v1/apps/{slug}/issues":                                               "ListIssues",
+	"GET /v1/apps/{slug}/issue-frequency-alert-policy":                         "GetIssueFrequencyAlertPolicy",
+	"PUT /v1/apps/{slug}/issue-frequency-alert-policy":                         "SetIssueFrequencyAlertPolicy",
 	"GET /v1/apps/{slug}/issue-impact-alert-policy":                            "GetIssueImpactAlertPolicy",
 	"PUT /v1/apps/{slug}/issue-impact-alert-policy":                            "SetIssueImpactAlertPolicy",
 	"GET /v1/apps/{slug}/issue-ownership-rules":                                "GetIssueOwnershipRules",
@@ -2040,6 +2075,17 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/workflow-readiness/subscriptions/{id}/notifications/{sequence}":            "CheckAccountWorkflowReadinessNotification",
 	"PATCH /v1/platform-tenant-self/workflow-readiness/subscriptions/{id}/notifications/{sequence}": "UpdatePlatformTenantSelfWorkflowReadinessNotification",
 	"GET /v1/platform-tenant-self/workflow-readiness/subscriptions/{id}/notifications/{sequence}":   "CheckPlatformTenantSelfWorkflowReadinessNotification",
+
+	"GET /v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/native-status":         "GetNativeIssueTrackerStatus",
+	"POST /v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/native-status":        "UpdateNativeIssueTrackerStatus",
+	"GET /v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/native-linear-status":  "GetNativeLinearIssueTrackerStatus",
+	"POST /v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/native-linear-status": "UpdateNativeLinearIssueTrackerStatus",
+	"POST /v1/apps/{slug}/issues/{issue_id}/native-linear-tickets":                        "CreateNativeLinearIssueTicket",
+	"GET /v1/apps/{slug}/issue-tracker-linear-connection":                                 "GetIssueTrackerLinearConnection",
+	"PUT /v1/apps/{slug}/issue-tracker-linear-connection":                                 "UpdateIssueTrackerLinearConnection",
+	"GET /v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/auto-sync":             "GetIssueTrackerAutoSync",
+	"PUT /v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/auto-sync":             "UpdateIssueTrackerAutoSync",
+	"POST /v1/apps/{slug}/issues/{issue_id}/native-tickets":                               "CreateNativeIssueTicket",
 }
 
 func main() {

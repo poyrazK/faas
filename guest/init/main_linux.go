@@ -2031,6 +2031,7 @@ func writeBuildDone(m api.BuildManifest, runErr error, logTail string) {
 		done.DependencyCacheUnchanged = m.DependencyCache && dependencyCacheKept(m.OutDir)
 		sourceMap, watchErr := devWatchSourceMap(m, buildDevPatchSourceMap(m, readBuildPlan))
 		done.DevPatch = sourceMap
+		done.SharedRuntime = buildSharedRuntimeVerdict(m, readBuildPlan)
 		if watchErr != nil {
 			done.ExitCode, done.FailureClass = buildExitStatus(watchErr)
 			done.LogTail = tailOf([]byte(logTail+"\n"+watchErr.Error()+"\n"), m.LogTailBytes)
