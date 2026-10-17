@@ -77,6 +77,7 @@ func UnitApid() daemonunit.Unit {
 			{Key: "FAAS_INTERNAL_MAIL_PRODUCER_OUTBOX_ENABLED", Value: "0"},
 			{Key: "FAAS_INTERNAL_MAIL_OUTBOX_RECONCILIATION_ENABLED", Value: "0"},
 			{Key: "FAAS_INTERNAL_MAIL_VERIFICATION_OUTBOX_ENABLED", Value: "0"},
+			{Key: "FAAS_INTERNAL_MAIL_PASSWORD_RESET_OUTBOX_ENABLED", Value: "0"},
 			{Key: "FAAS_INTERNAL_MAIL_VERIFICATION_IDENTITY_PATH", Value: "%d/faas_mail_verification_identity"},
 			{Key: "FAAS_INTERNAL_MAIL_VERIFICATION_PREVIOUS_IDENTITY_PATH", Value: "%d/faas_mail_verification_identity_previous"},
 			{Key: "FAAS_BILLING_MODE", Value: "live"},

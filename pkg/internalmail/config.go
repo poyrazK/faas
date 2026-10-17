@@ -34,6 +34,7 @@ const (
 	ProducerOutboxEnableEnv       = "FAAS_INTERNAL_MAIL_PRODUCER_OUTBOX_ENABLED"
 	OutboxReconciliationEnableEnv = "FAAS_INTERNAL_MAIL_OUTBOX_RECONCILIATION_ENABLED"
 	VerificationOutboxEnableEnv   = "FAAS_INTERNAL_MAIL_VERIFICATION_OUTBOX_ENABLED"
+	PasswordResetOutboxEnableEnv  = "FAAS_INTERNAL_MAIL_PASSWORD_RESET_OUTBOX_ENABLED"
 	RecoveryEnableEnv             = "FAAS_INTERNAL_MAIL_RECOVERY_ENABLED"
 	RecoveryIDEnv                 = "FAAS_INTERNAL_MAIL_RECOVERY_ID"
 	DefaultSocket                 = "/run/faas/maild.sock"
@@ -121,6 +122,10 @@ func OutboxReconciliationEnabled(getenv func(string) string) bool {
 
 func VerificationOutboxEnabled(getenv func(string) string) bool {
 	return getenv(VerificationOutboxEnableEnv) == "1" && ProducerOutboxEnabled(getenv)
+}
+
+func PasswordResetOutboxEnabled(getenv func(string) string) bool {
+	return getenv(PasswordResetOutboxEnableEnv) == "1" && ProducerOutboxEnabled(getenv)
 }
 
 func RecoveryEnabled(getenv func(string) string) bool {

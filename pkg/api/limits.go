@@ -25,6 +25,8 @@ import (
 const (
 	EmailVerificationTTL        = 24 * time.Hour
 	EmailVerificationTokenBytes = 32
+	PasswordResetTTL            = 15 * time.Minute
+	PasswordResetTokenBytes     = 32
 )
 
 // Application standards preview safeguards, independent of billing quotas.

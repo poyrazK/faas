@@ -76,7 +76,7 @@ const (
 	// matches industry convention (NIST SP 800-63B password recovery
 	// guidance) and is short enough that a leaked email doesn't
 	// outlive the customer's session window.
-	passwordResetTTL = 15 * time.Minute
+	passwordResetTTL = api.PasswordResetTTL
 	// emailVerificationTTL is deliberately longer than a login/reset link:
 	// it proves address ownership and does not authenticate the browser.
 	emailVerificationTTL = api.EmailVerificationTTL
@@ -296,7 +296,11 @@ func (s *server) postForgotPassword(w http.ResponseWriter, r *http.Request) {
 // at any step are logged but never surface — the calling public
 // endpoint remains a constant 200.
 func (s *server) sendPasswordResetEmail(ctx context.Context, r *http.Request, acct state.Account, email string) {
-	raw := make([]byte, 32)
+	if s.queuePasswordReset(ctx, acct, email) {
+		return
+	}
+	raw := make([]byte, api.PasswordResetTokenBytes)
+	defer clear(raw)
 	if _, err := rand.Read(raw); err != nil {
 		s.log.Error("forgot_password.rand", "err", err)
 		return
@@ -320,8 +324,7 @@ func (s *server) sendPasswordResetEmail(ctx context.Context, r *http.Request, ac
 		scheme = schemeHTTPS
 	}
 	link := fmt.Sprintf("%s://%s%s?token=%s", scheme, host, resetTokenPath, base64.RawURLEncoding.EncodeToString(raw))
-	body := "Hi,\n\nReset your Gregale password by clicking the link below (valid for 15 minutes):\n\n  " + link + "\n\nIf you did not request this, you can ignore this email.\n"
-	subject := "Reset your Gregale password"
+	subject, body := mailpkg.PasswordResetBodyV1(link)
 	if err := s.mailer.Send(ctx, Message{
 		To:       []string{email},
 		Subject:  subject,
@@ -361,65 +364,53 @@ func (s *server) renderResetForm(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// postReset handles POST /auth/reset. Consumes the token atomically
-// (state.ConsumeLoginToken marks it consumed in one transaction so
-// a replay returns 410), Argon2id-encodes the new password, calls
-// SetAccountPassword, and signs the caller in.
+// postReset hashes the replacement password before redeeming a credential.
+// Durable reset consumption and password update commit together; legacy inline
+// links retain their existing compatibility path.
 func (s *server) postReset(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseForm(); err != nil {
-		api.WriteProblem(w, api.ErrValidation("could not parse form body"))
+	raw, plain, problem := passwordResetForm(r)
+	if problem != nil {
+		api.WriteProblem(w, problem)
 		return
 	}
-	tok := strings.TrimSpace(r.FormValue("token"))
-	plain := r.FormValue("password")
-	if tok == "" {
-		api.WriteProblem(w, api.ErrResetTokenInvalid())
-		return
-	}
-	raw, err := base64.RawURLEncoding.DecodeString(tok)
-	if err != nil || len(raw) != 32 {
-		api.WriteProblem(w, api.ErrResetTokenInvalid())
-		return
-	}
-	if err := auth.Validate(plain); err != nil {
-		api.WriteProblem(w, api.ErrPasswordTooWeak(err.Error()))
-		return
-	}
-	hash := api.HashToken(raw)
-	accountID, err := s.store.ConsumeLoginToken(r.Context(), hash)
-	if err != nil {
-		// Either unknown (already consumed / typo'd) or expired.
-		// MemStore + PgStore both map past-TTL consume to
-		// ErrNotFound today; the dashboard renders "invalid or
-		// expired" copy that covers both. A future split into
-		// ErrResetTokenInvalid vs ErrResetTokenExpired is a small
-		// pgstore change.
-		api.WriteProblem(w, api.ErrResetTokenInvalid())
-		return
-	}
+	defer clear(raw)
 	phc, err := auth.Encode(plain)
 	if err != nil {
-		s.log.Error("reset.argon2id_encode", "err", err)
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError,
-			"internal_error", "Internal Error", "failed to hash password"))
+		s.log.Error("reset.argon2id_encode")
+		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal_error", "Internal Error", "failed to hash password"))
 		return
 	}
-	if err := s.store.SetAccountPassword(r.Context(), accountID, phc); err != nil {
-		s.log.Error("reset.set_password", "err", err)
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError,
-			"internal_error", "Internal Error", "failed to set password"))
+	accountID, problem := s.applyPasswordReset(r.Context(), api.HashToken(raw), phc)
+	if problem != nil {
+		api.WriteProblem(w, problem)
 		return
 	}
-	// A reset is the recovery path for a compromised account: every
-	// session signed in with the old password must end here, or an
-	// attacker's session outlives the reset that was meant to lock
-	// them out.
+	s.finishPasswordReset(w, r, accountID)
+}
+
+func passwordResetForm(r *http.Request) ([]byte, string, *api.Problem) {
+	if err := r.ParseForm(); err != nil {
+		return nil, "", api.ErrValidation("could not parse form body")
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(strings.TrimSpace(r.FormValue("token")))
+	if err != nil || len(raw) != api.PasswordResetTokenBytes {
+		return nil, "", api.ErrResetTokenInvalid()
+	}
+	plain := r.FormValue("password")
+	if err := auth.Validate(plain); err != nil {
+		clear(raw)
+		return nil, "", api.ErrPasswordTooWeak(err.Error())
+	}
+	return raw, plain, nil
+}
+
+func (s *server) finishPasswordReset(w http.ResponseWriter, r *http.Request, accountID string) {
+	// Recovery ends every session using the old password before signing in.
 	s.revokeSessionsAfterPasswordChange(r.Context(), accountID, "")
 	acct, err := s.store.AccountByID(r.Context(), accountID)
 	if err != nil {
-		s.log.Error("reset.account_lookup", "err", err)
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError,
-			"internal_error", "Internal Error", "account lookup failed"))
+		s.log.Error("reset.account_lookup")
+		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal_error", "Internal Error", "account lookup failed"))
 		return
 	}
 	s.issueSessionCookie(w, r, acct)

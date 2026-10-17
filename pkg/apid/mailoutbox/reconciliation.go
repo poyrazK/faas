@@ -57,10 +57,11 @@ type ReconciliationRecord struct {
 // Reconciler is an apid-owned, local operator capability. It has no sender,
 // listener, key material, admission writes, or route in the customer API.
 type Reconciler struct {
-	pool                *pgxpool.Pool
-	namespace           string
-	enabled             func() bool
-	verificationEnabled func() bool
+	pool                 *pgxpool.Pool
+	namespace            string
+	enabled              func() bool
+	verificationEnabled  func() bool
+	passwordResetEnabled func() bool
 }
 
 func (s *Reconciler) WithVerification(enabled func() bool) *Reconciler {
@@ -70,7 +71,25 @@ func (s *Reconciler) WithVerification(enabled func() bool) *Reconciler {
 }
 
 func (s *Reconciler) templateEnabled(template string) bool {
-	return s.on() && (template != VerificationTemplate || s.verificationEnabled != nil && s.verificationEnabled())
+	if !s.on() {
+		return false
+	}
+	switch template {
+	case "account_deletion_pending":
+		return true
+	case VerificationTemplate:
+		return s.verificationEnabled != nil && s.verificationEnabled()
+	case PasswordResetTemplate:
+		return s.passwordResetEnabled != nil && s.passwordResetEnabled()
+	default:
+		return false
+	}
+}
+
+func (s *Reconciler) WithPasswordReset(enabled func() bool) *Reconciler {
+	copy := *s
+	copy.passwordResetEnabled = enabled
+	return &copy
 }
 
 func NewReconciler(pool *pgxpool.Pool, namespace string, enabled func() bool) (*Reconciler, error) {

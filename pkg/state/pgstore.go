@@ -26155,20 +26155,24 @@ func (s *PgStore) DeleteOldEvents(ctx context.Context, before time.Time) (int64,
 // the MemStore overwrite-under-lock).
 //
 // phc is the PHC wire format from pkg/auth.Encode. UpdatedAt is
-// stamped by `now()` so the "rotate hash on login" PR #2.5
-// hardening has a stable reference.
+// stamped by the database clock. Every write locks the account first and
+// advances its reset revision in the same statement, invalidating older links.
 func (s *PgStore) SetAccountPassword(ctx context.Context, accountID, phc string) error {
 	if accountID == "" || phc == "" {
 		return ErrInvalidArgument
 	}
-	_, err := s.pool.Exec(ctx,
-		`insert into account_passwords (account_id, hash, updated_at)
-		 values ($1, $2, now())
-		 on conflict (account_id) do update
-		   set hash = excluded.hash,
-		       updated_at = excluded.updated_at`,
-		accountID, phc)
-	return mapErr(err)
+	account, err := parsePgUUID(accountID)
+	if err != nil {
+		return err
+	}
+	n, err := sqlc.New().SetAccountPassword(ctx, s.pool, sqlc.SetAccountPasswordParams{ID: account, Hash: phc})
+	if err != nil {
+		return mapErr(err)
+	}
+	if n != 1 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // AccountPasswordByAccountID returns the stored Argon2id PHC hash
@@ -26193,9 +26197,11 @@ func (s *PgStore) DeleteAccountPassword(ctx context.Context, accountID string) e
 	if accountID == "" {
 		return ErrInvalidArgument
 	}
-	_, err := s.pool.Exec(ctx,
-		`delete from account_passwords where account_id = $1`, accountID)
-	return mapErr(err)
+	account, err := parsePgUUID(accountID)
+	if err != nil {
+		return err
+	}
+	return mapErr(sqlc.New().DeleteAccountPassword(ctx, s.pool, account))
 }
 
 // UpsertOAuthLink writes the (provider, provider_subject) → account

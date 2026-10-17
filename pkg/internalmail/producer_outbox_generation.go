@@ -11,9 +11,14 @@ import (
 const ProducerOutboxGenerationHeader = "X-Gregale-Mail-Recovery-ID"
 const ProducerOutboxTemplateHeader = "X-Gregale-Mail-Outbox-Template"
 const ProducerOutboxVerificationTemplate = "email_verification"
+const ProducerOutboxPasswordResetTemplate = "password_reset"
 
 func (s *Service) verificationOutboxEnabled() bool {
 	return s.producerOutboxEnabled() && s.VerificationOutboxEnabled != nil && s.VerificationOutboxEnabled()
+}
+
+func (s *Service) passwordResetOutboxEnabled() bool {
+	return s.producerOutboxEnabled() && s.PasswordResetOutboxEnabled != nil && s.PasswordResetOutboxEnabled()
 }
 
 type producerOutboxGenerationKey struct{}
@@ -34,13 +39,23 @@ func (s *Service) producerOutboxContext(ctx context.Context, header http.Header)
 	templates := header.Values(ProducerOutboxTemplateHeader)
 	gate := s.producerOutboxEnabled
 	if len(templates) > 0 {
-		if !s.verificationOutboxEnabled() {
-			return ctx, ErrDisabled
-		}
-		if len(templates) != 1 || templates[0] != ProducerOutboxVerificationTemplate {
+		switch templates[0] {
+		case ProducerOutboxVerificationTemplate:
+			gate = s.verificationOutboxEnabled
+		case ProducerOutboxPasswordResetTemplate:
+			gate = s.passwordResetOutboxEnabled
+		default:
+			if !s.verificationOutboxEnabled() && !s.passwordResetOutboxEnabled() {
+				return ctx, ErrDisabled
+			}
 			return ctx, ErrInvalid
 		}
-		gate = s.verificationOutboxEnabled
+		if !gate() {
+			return ctx, ErrDisabled
+		}
+		if len(templates) != 1 {
+			return ctx, ErrInvalid
+		}
 	}
 	if len(values) == 0 && len(templates) == 0 {
 		return ctx, nil

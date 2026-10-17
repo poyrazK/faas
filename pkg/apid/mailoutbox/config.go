@@ -25,7 +25,8 @@ type Service struct {
 	namespace, producer, from string
 	sender                    recoverySender
 	transport                 *platformmail.InternalSender
-	verification              *verificationConfig
+	verification              *credentialConfig
+	passwordReset             *credentialConfig
 	requested, enabled        func() bool
 }
 

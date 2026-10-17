@@ -124,16 +124,25 @@ func (s *Service) verificationMessage(ctx context.Context, tx pgx.Tx, r q.Platfo
 	if token.ConsumedAt.Valid || !token.ExpiresAt.Time.After(time.Now()) || !token.ExpiresAt.Time.Equal(r.ExpiresAt.Time) || token.EmailAddress != r.RecipientAddress {
 		return mail.Message{}, errVerificationTokenUnavailable
 	}
-	reader := s.verification.readers[r.VerificationKeyID]
-	if reader == nil || len(r.SealedVerification) > api.InternalMailVerificationCipherMaxBytes {
-		return mail.Message{}, errVerificationPayloadUnavailable
+	raw, err := credentialPayload(s.verification, r)
+	if err != nil {
+		return mail.Message{}, err
 	}
-	binding, raw, err := secretbox.OpenBytes(reader, r.SealedVerification)
 	defer clear(raw)
-	if err != nil || binding != verificationBinding(r) || len(raw) != api.EmailVerificationTokenBytes || subtle.ConstantTimeCompare(api.HashToken(raw), r.VerificationTokenHash) != 1 {
-		return mail.Message{}, errVerificationPayloadUnavailable
-	}
 	link := r.VerificationOrigin + verificationPathV1 + "?token=" + base64.RawURLEncoding.EncodeToString(raw)
 	subject, body := mail.EmailVerificationBodyV1(r.RecipientAddress, link, r.ExpiresAt.Time)
 	return mail.Message{To: []string{r.RecipientAddress}, Subject: subject, TextBody: body, MessageID: "verify-email:" + uuidString(r.ID.Bytes)}, nil
+}
+
+func credentialPayload(config *credentialConfig, r q.PlatformMailProducerOutbox) ([]byte, error) {
+	reader := config.readers[r.VerificationKeyID]
+	if reader == nil || len(r.SealedVerification) > api.InternalMailVerificationCipherMaxBytes {
+		return nil, errVerificationPayloadUnavailable
+	}
+	binding, raw, err := secretbox.OpenBytes(reader, r.SealedVerification)
+	if err != nil || binding != verificationBinding(r) || len(raw) != api.EmailVerificationTokenBytes || subtle.ConstantTimeCompare(api.HashToken(raw), r.VerificationTokenHash) != 1 {
+		clear(raw)
+		return nil, errVerificationPayloadUnavailable
+	}
+	return raw, nil
 }

@@ -25,7 +25,7 @@ const (
 	VerificationTemplate            = "email_verification"
 )
 
-type verificationConfig struct {
+type credentialConfig struct {
 	origin, keyID string
 	writer        *age.X25519Identity
 	readers       map[string]*age.X25519Identity
@@ -50,24 +50,9 @@ func (s *Service) ConfigureVerification(ctx context.Context, getenv func(string)
 	if err != nil {
 		return err
 	}
-	writer, err := readVerificationIdentity(getenv(VerificationIdentityEnv))
+	keyID, writer, readers, err := credentialReaders(getenv)
 	if err != nil {
-		return errors.New("verification outbox current encryption identity unavailable")
-	}
-	keyID := verificationKeyID(writer)
-	readers := map[string]*age.X25519Identity{keyID: writer}
-	if path := getenv(VerificationPreviousIdentityEnv); path != "" {
-		previous, err := readVerificationIdentity(path)
-		if err != nil && !errors.Is(err, os.ErrNotExist) {
-			return errors.New("verification outbox previous encryption identity unavailable")
-		}
-		if previous != nil {
-			id := verificationKeyID(previous)
-			if id == keyID {
-				return errors.New("verification outbox reader identities must be distinct")
-			}
-			readers[id] = previous
-		}
+		return err
 	}
 	on := func() bool { return s.Enabled() && internalmail.VerificationOutboxEnabled(getenv) }
 	keys, err := s.queries.VerificationKeyReferences(ctx, s.pool, q.VerificationKeyReferencesParams{Namespace: s.namespace, ProducerID: s.producer})
@@ -82,9 +67,32 @@ func (s *Service) ConfigureVerification(ctx context.Context, getenv func(string)
 	if !on() {
 		return internalmail.ErrDisabled
 	}
-	s.verification = &verificationConfig{origin: origin, keyID: keyID, writer: writer, readers: readers,
+	s.verification = &credentialConfig{origin: origin, keyID: keyID, writer: writer, readers: readers,
 		sender: s.transport.WithScheduling(on).WithOutbox(on).WithVerificationOutbox(on), enabled: on}
 	return nil
+}
+
+func credentialReaders(getenv func(string) string) (string, *age.X25519Identity, map[string]*age.X25519Identity, error) {
+	writer, err := readVerificationIdentity(getenv(VerificationIdentityEnv))
+	if err != nil {
+		return "", nil, nil, errors.New("verification outbox current encryption identity unavailable")
+	}
+	keyID := verificationKeyID(writer)
+	readers := map[string]*age.X25519Identity{keyID: writer}
+	if path := getenv(VerificationPreviousIdentityEnv); path != "" {
+		previous, err := readVerificationIdentity(path)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return "", nil, nil, errors.New("verification outbox previous encryption identity unavailable")
+		}
+		if previous != nil {
+			id := verificationKeyID(previous)
+			if id == keyID {
+				return "", nil, nil, errors.New("verification outbox reader identities must be distinct")
+			}
+			readers[id] = previous
+		}
+	}
+	return keyID, writer, readers, nil
 }
 
 func verificationOrigin(raw string) (string, error) {

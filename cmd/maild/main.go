@@ -106,6 +106,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		ProducerOutboxEnabled:       func() bool { return internalmail.ProducerOutboxEnabled(os.Getenv) },
 		OutboxReconciliationEnabled: func() bool { return internalmail.OutboxReconciliationEnabled(os.Getenv) },
 		VerificationOutboxEnabled:   func() bool { return internalmail.VerificationOutboxEnabled(os.Getenv) },
+		PasswordResetOutboxEnabled:  func() bool { return internalmail.PasswordResetOutboxEnabled(os.Getenv) },
 		RecoveryEnabled:             func() bool { return internalmail.RecoveryEnabled(os.Getenv) },
 		SuppressionControlsEnabled:  func() bool { return internalmail.SuppressionControlsEnabled(os.Getenv) },
 		RecipientAllowed:            cfg.RecipientAllowed,

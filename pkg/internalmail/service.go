@@ -55,6 +55,7 @@ type Service struct {
 	ProducerOutboxEnabled       func() bool
 	OutboxReconciliationEnabled func() bool
 	VerificationOutboxEnabled   func() bool
+	PasswordResetOutboxEnabled  func() bool
 	OnDomainCheck               func(error)
 	OnRetention                 func(RetentionResult, error)
 	RecipientAllowed            func(string) bool

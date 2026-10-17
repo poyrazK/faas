@@ -2497,3 +2497,67 @@ verification response, restarts and proves one original maild message and one
 fake SMTP handoff.
 They change no deployed flags or DNS and perform no external delivery. Live
 qualification remains separate.
+## Durable password-reset handoff
+
+`FAAS_INTERNAL_MAIL_PASSWORD_RESET_OUTBOX_ENABLED=0` separately gates internal
+password-reset issuance/handoff in apid and admission in maild. It defaults off in
+both units and all private examples. Existing inline forgot-password behavior
+continues with this flag off. This adds no customer email capability or listener.
+
+Apply
+[`20261017073748949_platform_mail_password_reset_outbox.sql`](../../migrations/20261017073748949_platform_mail_password_reset_outbox.sql)
+through the migration owner before starting the new binary. The base outbox's
+readiness now checks its reset dependencies. The decision is recorded in
+[ADR-20261017073748](../adr/20261017073748-mail-password-reset-outbox.md).
+
+An opted-in apid needs the existing master, producer, scheduling and producer
+outbox gates and the scoped `internal-producer` transport. Set the separate
+`FAAS_INTERNAL_MAIL_PASSWORD_RESET_ORIGIN` in apid's `/etc/faas/sealed.env` to the
+trusted canonical HTTPS dashboard origin. No path, query, fragment or credentials
+are allowed. The saved link uses `/auth/reset`; request Host and forwarding
+headers cannot choose its destination. Verification and reset origins/gates are
+independent.
+
+Reset encryption reuses the dedicated apid credential readers already selected
+by `FAAS_INTERNAL_MAIL_VERIFICATION_IDENTITY_PATH` and its optional previous path.
+These historical names also serve reset handoff. No apid key is delivered to
+maild or mailctl. Keep the existing current/previous reader overlap procedure;
+enabled startup refuses missing readers for its pending reset payloads. Workers
+skip origins and keys they cannot read. Retain readers for the longest pending
+credential lifetime plus its handoff lease; verification's 24-hour lifetime is
+longer than reset's 15 minutes.
+
+Token hash and encrypted intent commit together. A retry preserves the original
+link, body, producer, origin, absolute 15-minute expiry and
+`password-reset:<intent UUID>` admission key. No plaintext link or token is saved
+in PostgreSQL. Queue failure keeps the public forgot-password response identical,
+without inline fallback or orphan credentials. Existing shared pending caps,
+platform/maild suppressions and recovery generation quarantine remain enforced.
+
+The reset token is a separate family and cannot sign in through a magic link.
+It is bound to the active verified account, current address and password revision.
+Password set/change/delete, account/address change, expiry or prior use stops a
+pending handoff. Password mutation and token consumption are atomic; concurrent
+sibling links have at most one winner. The authenticated account/password write
+paths advance the revision even with mail flags off. Binding and single-use
+checks also remain enforced after delivery or an issuance/delivery flag rollback,
+without reading any mail encryption keys. Reset credentials also retain their
+namespace and recovery generation. Redemption checks that generation under the
+shared recovery fence; a restored token cannot revive after a new recovery
+generation is installed, even after global release or flag rollback. Legacy
+inline tokens retain their
+existing shared-family compatibility.
+
+Use the existing private outbox inspection commands for metadata and safe result
+codes. Reset admission reconciliation requires the reset gate in addition to
+the existing reconciliation gates, including exact audit replay. It acknowledges
+an existing maild receipt and never resends or extends a credential's deadline.
+Maild admission does not prove final delivery. Once admitted, a notice can arrive
+after account changes; its stale credential still fails redemption.
+
+Expired token hashes/address bindings are deleted by bounded apid outbox
+maintenance independently of the child flag. Account erasure cascades both token
+and intent. The migration's Down refuses reset intents, tokens or audit history.
+An expired or stale link needs a fresh user request; no force replay is added.
+Keep live qualification, DNS, operational enrollment and flag activation in the
+separate qualification workflow.

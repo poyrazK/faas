@@ -1,5 +1,7 @@
 -- name: Ready :exec
-SELECT id,recovery_id,template_version,recipient_address,revision FROM platform_mail_producer_outbox LIMIT 0;
+SELECT o.id,o.recovery_id,o.template_version,o.recipient_address,o.revision,a.password_reset_revision,t.password_revision
+FROM platform_mail_producer_outbox o LEFT JOIN accounts a ON a.id=o.account_id
+LEFT JOIN password_reset_tokens t ON t.account_id=a.id LIMIT 0;
 
 -- Match maild's recovery fence without retaining it across HTTP. Claims take
 -- this before outbox rows; scheduling takes admission/account locks first so
@@ -23,7 +25,7 @@ SELECT count(*)::bigint FROM platform_mail_producer_outbox WHERE namespace=$1 AN
 SELECT id,email,status,deletion_requested_at FROM accounts WHERE id=$1 FOR UPDATE;
 
 -- name: ShareAccount :one
-SELECT id,email,status,deletion_requested_at,email_verified_at FROM accounts WHERE id=$1 FOR SHARE;
+SELECT id,email,status,deletion_requested_at,email_verified_at,password_reset_revision FROM accounts WHERE id=$1 FOR SHARE;
 
 -- name: ScheduleDeletion :one
 UPDATE accounts SET status='deleted_pending',deletion_requested_at=coalesce(deletion_requested_at,clock_timestamp())
@@ -57,8 +59,10 @@ FROM candidates c WHERE o.id=c.id;
 WITH candidate AS (
     SELECT id FROM platform_mail_producer_outbox o WHERE o.namespace=sqlc.arg(namespace)
       AND o.producer_id=sqlc.arg(producer_id) AND o.from_address=sqlc.arg(from_address)
-      AND (o.template='account_deletion_pending' OR (sqlc.arg(verification_enabled)::boolean AND o.verification_origin=sqlc.arg(verification_origin)::text
-          AND o.verification_key_id=ANY(sqlc.arg(verification_keys)::text[])))
+      AND (o.template='account_deletion_pending' OR (o.template='email_verification' AND sqlc.arg(verification_enabled)::boolean AND o.verification_origin=sqlc.arg(verification_origin)::text
+          AND o.verification_key_id=ANY(sqlc.arg(verification_keys)::text[]))
+        OR (o.template='password_reset' AND sqlc.arg(password_reset_enabled)::boolean AND o.verification_origin=sqlc.arg(password_reset_origin)::text
+          AND o.verification_key_id=ANY(sqlc.arg(password_reset_keys)::text[])))
       AND o.attempts<sqlc.arg(max_attempts) AND o.expires_at>clock_timestamp()
       AND ((o.state='queued' AND o.next_attempt_at<=clock_timestamp()) OR (o.state='claimed' AND o.lease_until<=clock_timestamp()))
       AND NOT EXISTS(SELECT 1 FROM internal_mail_recovery_state s WHERE s.namespace=o.namespace AND (s.held OR s.recovery_id<>o.recovery_id))
@@ -126,7 +130,7 @@ SELECT o.id,o.revision,o.state,o.template,o.from_address,o.expires_at,o.recovery
     coalesce(m.sender_address,'')::text AS sender_address
 FROM platform_mail_producer_outbox o
 LEFT JOIN internal_mail_messages m ON m.namespace=o.namespace AND m.producer_id=o.producer_id
-    AND m.idempotency_key=(CASE WHEN o.template='email_verification' THEN 'verify-email:' ELSE 'account-delete:' END)||o.id::text
+    AND m.idempotency_key=(CASE o.template WHEN 'email_verification' THEN 'verify-email:' WHEN 'password_reset' THEN 'password-reset:' ELSE 'account-delete:' END)||o.id::text
 WHERE o.namespace=$1 AND o.id=$2;
 
 -- name: ReconciliationReady :exec
@@ -176,3 +180,52 @@ WHERE token_hash=$1 AND account_id=$2 FOR SHARE;
 -- name: VerificationKeyReferences :many
 SELECT DISTINCT verification_key_id FROM platform_mail_producer_outbox
 WHERE namespace=$1 AND producer_id=$2 AND template='email_verification' AND state IN ('queued','claimed') AND expires_at>clock_timestamp();
+
+-- name: LockPasswordResetAccount :one
+SELECT id,email,status,email_verified_at,password_reset_revision FROM accounts WHERE id=$1 FOR UPDATE;
+
+-- name: CreatePasswordResetToken :exec
+INSERT INTO password_reset_tokens(token_hash,account_id,email_address,password_revision,expires_at,namespace,recovery_id) VALUES($1,$2,$3,$4,$5,$6,$7);
+
+-- name: CreatePasswordResetIntent :exec
+INSERT INTO platform_mail_producer_outbox(id,account_id,namespace,producer_id,from_address,recipient_address,
+    template,template_version,expires_at,recovery_id,verification_token_hash,sealed_verification,verification_key_id,verification_origin)
+VALUES($1,$2,$3,$4,$5,$6,'password_reset',1,$7,$8,$9,$10,$11,$12);
+
+-- name: SharePasswordResetToken :one
+SELECT * FROM password_reset_tokens WHERE token_hash=$1 AND account_id=$2 FOR SHARE;
+
+-- name: PasswordResetKeyReferences :many
+SELECT DISTINCT verification_key_id FROM platform_mail_producer_outbox
+WHERE namespace=$1 AND producer_id=$2 AND template='password_reset' AND state IN ('queued','claimed') AND expires_at>clock_timestamp();
+
+-- The account is the first row locked even when two different reset links race.
+-- name: LockPasswordResetCredentialAccount :one
+SELECT a.id,a.email,a.status,a.email_verified_at,a.password_reset_revision
+FROM accounts a JOIN password_reset_tokens t ON t.account_id=a.id
+WHERE t.token_hash=$1 FOR UPDATE OF a;
+
+-- name: LockPasswordResetToken :one
+SELECT * FROM password_reset_tokens WHERE token_hash=$1 AND account_id=$2 FOR UPDATE;
+
+-- name: ReplaceResetPassword :execrows
+WITH changed AS (
+    UPDATE accounts SET password_reset_revision=password_reset_revision+1
+    WHERE id=$1 AND password_reset_revision=$2 RETURNING id
+)
+INSERT INTO account_passwords(account_id,hash,updated_at)
+SELECT id,$3,clock_timestamp() FROM changed
+ON CONFLICT(account_id) DO UPDATE SET hash=excluded.hash,updated_at=excluded.updated_at;
+
+-- name: ConsumePasswordResetToken :execrows
+UPDATE password_reset_tokens SET consumed_at=clock_timestamp()
+WHERE token_hash=$1 AND account_id=$2 AND consumed_at IS NULL AND expires_at>clock_timestamp();
+
+-- Hashes and address bindings have no purpose after expiry. Maintenance is
+-- bounded and independent of the child gate; it never reissues credentials.
+-- name: PurgeExpiredPasswordResetTokens :exec
+WITH expired AS (
+    SELECT token_hash FROM password_reset_tokens WHERE expires_at<=clock_timestamp()
+    ORDER BY expires_at,token_hash LIMIT $1 FOR UPDATE SKIP LOCKED
+)
+DELETE FROM password_reset_tokens t USING expired e WHERE t.token_hash=e.token_hash;

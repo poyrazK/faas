@@ -9,11 +9,18 @@ import (
 )
 
 type Account struct {
-	ID                  pgtype.UUID
-	Email               string
-	Status              string
-	DeletionRequestedAt pgtype.Timestamptz
-	EmailVerifiedAt     pgtype.Timestamptz
+	ID                    pgtype.UUID
+	Email                 string
+	Status                string
+	DeletionRequestedAt   pgtype.Timestamptz
+	EmailVerifiedAt       pgtype.Timestamptz
+	PasswordResetRevision int64
+}
+
+type AccountPassword struct {
+	AccountID pgtype.UUID
+	Hash      string
+	UpdatedAt pgtype.Timestamptz
 }
 
 type EmailVerificationToken struct {
@@ -51,6 +58,18 @@ type InternalMailRecoveryState struct {
 type MailSuppression struct {
 	Email     string
 	ExpiresAt pgtype.Timestamptz
+}
+
+type PasswordResetToken struct {
+	TokenHash        []byte
+	AccountID        pgtype.UUID
+	EmailAddress     string
+	PasswordRevision int64
+	Namespace        string
+	RecoveryID       pgtype.UUID
+	ExpiresAt        pgtype.Timestamptz
+	ConsumedAt       pgtype.Timestamptz
+	CreatedAt        pgtype.Timestamptz
 }
 
 type PlatformMailOutboxReconciliation struct {

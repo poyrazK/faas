@@ -27,6 +27,9 @@ func admitFixture(t *testing.T, f *fixture, intent q.PlatformMailProducerOutbox)
 	if intent.Template == VerificationTemplate {
 		keyPrefix = "verify-email:"
 	}
+	if intent.Template == PasswordResetTemplate {
+		keyPrefix = "password-reset:"
+	}
 	if _, err := f.pool.Exec(t.Context(), `INSERT INTO internal_mail_messages(id,namespace,producer_id,idempotency_key,sender_address,created_at,expires_at)
         VALUES($1,$2,$3,$4,'notify@example.test',clock_timestamp(),$5)`, id, intent.Namespace, intent.ProducerID, keyPrefix+uuidString(intent.ID.Bytes), intent.ExpiresAt); err != nil {
 		t.Fatal(err)

@@ -12,12 +12,19 @@ import (
 )
 
 func (s *server) configureMailOutbox(ctx context.Context, pool *pgxpool.Pool, getenv func(string) string) error {
+	// Saved reset bindings remain enforced after an issuance/delivery rollback.
+	// Construction is pure and needs neither a feature flag nor encryption keys.
+	s.passwordResetCredentials = mailoutbox.NewResetCredentials(pool)
+	s.passwordResetMailOutboxRequested = func() bool { return getenv(internalmail.PasswordResetOutboxEnableEnv) == "1" }
 	outbox, err := mailoutbox.NewFromEnv(pool, getenv)
 	if err != nil {
 		return err
 	}
 	s.verificationMailOutboxRequested = func() bool { return getenv(internalmail.VerificationOutboxEnableEnv) == "1" }
 	if err := outbox.ConfigureVerification(ctx, getenv); err != nil {
+		return err
+	}
+	if err := outbox.ConfigurePasswordReset(ctx, getenv); err != nil {
 		return err
 	}
 	if outbox != nil {

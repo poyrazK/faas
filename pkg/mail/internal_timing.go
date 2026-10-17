@@ -29,7 +29,25 @@ func (s *InternalSender) WithOutbox(enabled func() bool) *InternalSender {
 func (s *InternalSender) WithVerificationOutbox(enabled func() bool) *InternalSender {
 	copy := *s
 	copy.verificationEnabled = enabled
+	copy.passwordResetEnabled = nil
 	return &copy
+}
+
+func (s *InternalSender) WithPasswordResetOutbox(enabled func() bool) *InternalSender {
+	copy := *s
+	copy.passwordResetEnabled = enabled
+	copy.verificationEnabled = nil
+	return &copy
+}
+
+func (s *InternalSender) credentialOutboxGate() (string, func() bool) {
+	if s.passwordResetEnabled != nil {
+		return internalmail.ProducerOutboxPasswordResetTemplate, s.passwordResetEnabled
+	}
+	if s.verificationEnabled != nil {
+		return internalmail.ProducerOutboxVerificationTemplate, s.verificationEnabled
+	}
+	return "", nil
 }
 
 func (s *InternalSender) SendTimedWithRecovery(ctx context.Context, msg Message, timing internalmail.MessageTiming, generation string) error {

@@ -45,7 +45,7 @@ SELECT o.id,o.revision,o.state,o.template,o.from_address,o.expires_at,o.recovery
     coalesce(m.sender_address,'')::text AS sender_address
 FROM platform_mail_producer_outbox o
 LEFT JOIN internal_mail_messages m ON m.namespace=o.namespace AND m.producer_id=o.producer_id
-    AND m.idempotency_key=(CASE WHEN o.template='email_verification' THEN 'verify-email:' ELSE 'account-delete:' END)||o.id::text
+    AND m.idempotency_key=(CASE o.template WHEN 'email_verification' THEN 'verify-email:' WHEN 'password_reset' THEN 'password-reset:' ELSE 'account-delete:' END)||o.id::text
 WHERE o.namespace=$1 AND o.id=$2
 `
 
@@ -99,9 +99,11 @@ const claim = `-- name: Claim :one
 WITH candidate AS (
     SELECT id FROM platform_mail_producer_outbox o WHERE o.namespace=$3
       AND o.producer_id=$4 AND o.from_address=$5
-      AND (o.template='account_deletion_pending' OR ($6::boolean AND o.verification_origin=$7::text
-          AND o.verification_key_id=ANY($8::text[])))
-      AND o.attempts<$9 AND o.expires_at>clock_timestamp()
+      AND (o.template='account_deletion_pending' OR (o.template='email_verification' AND $6::boolean AND o.verification_origin=$7::text
+          AND o.verification_key_id=ANY($8::text[]))
+        OR (o.template='password_reset' AND $9::boolean AND o.verification_origin=$10::text
+          AND o.verification_key_id=ANY($11::text[])))
+      AND o.attempts<$12 AND o.expires_at>clock_timestamp()
       AND ((o.state='queued' AND o.next_attempt_at<=clock_timestamp()) OR (o.state='claimed' AND o.lease_until<=clock_timestamp()))
       AND NOT EXISTS(SELECT 1 FROM internal_mail_recovery_state s WHERE s.namespace=o.namespace AND (s.held OR s.recovery_id<>o.recovery_id))
     ORDER BY next_attempt_at,id LIMIT 1 FOR UPDATE SKIP LOCKED
@@ -112,15 +114,18 @@ FROM candidate c WHERE o.id=c.id RETURNING o.id, o.account_id, o.namespace, o.pr
 `
 
 type ClaimParams struct {
-	LeaseID             pgtype.UUID
-	LeaseSeconds        int32
-	Namespace           string
-	ProducerID          string
-	FromAddress         string
-	VerificationEnabled bool
-	VerificationOrigin  string
-	VerificationKeys    []string
-	MaxAttempts         int32
+	LeaseID              pgtype.UUID
+	LeaseSeconds         int32
+	Namespace            string
+	ProducerID           string
+	FromAddress          string
+	VerificationEnabled  bool
+	VerificationOrigin   string
+	VerificationKeys     []string
+	PasswordResetEnabled bool
+	PasswordResetOrigin  string
+	PasswordResetKeys    []string
+	MaxAttempts          int32
 }
 
 func (q *Queries) Claim(ctx context.Context, db DBTX, arg ClaimParams) (PlatformMailProducerOutbox, error) {
@@ -133,6 +138,9 @@ func (q *Queries) Claim(ctx context.Context, db DBTX, arg ClaimParams) (Platform
 		arg.VerificationEnabled,
 		arg.VerificationOrigin,
 		arg.VerificationKeys,
+		arg.PasswordResetEnabled,
+		arg.PasswordResetOrigin,
+		arg.PasswordResetKeys,
 		arg.MaxAttempts,
 	)
 	var i PlatformMailProducerOutbox
@@ -164,6 +172,24 @@ func (q *Queries) Claim(ctx context.Context, db DBTX, arg ClaimParams) (Platform
 		&i.VerificationOrigin,
 	)
 	return i, err
+}
+
+const consumePasswordResetToken = `-- name: ConsumePasswordResetToken :execrows
+UPDATE password_reset_tokens SET consumed_at=clock_timestamp()
+WHERE token_hash=$1 AND account_id=$2 AND consumed_at IS NULL AND expires_at>clock_timestamp()
+`
+
+type ConsumePasswordResetTokenParams struct {
+	TokenHash []byte
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) ConsumePasswordResetToken(ctx context.Context, db DBTX, arg ConsumePasswordResetTokenParams) (int64, error) {
+	result, err := db.Exec(ctx, consumePasswordResetToken, arg.TokenHash, arg.AccountID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const createIntent = `-- name: CreateIntent :exec
@@ -199,6 +225,72 @@ func (q *Queries) CreateIntent(ctx context.Context, db DBTX, arg CreateIntentPar
 		arg.RecoveryID,
 		arg.GraceSeconds,
 		arg.TtlSeconds,
+	)
+	return err
+}
+
+const createPasswordResetIntent = `-- name: CreatePasswordResetIntent :exec
+INSERT INTO platform_mail_producer_outbox(id,account_id,namespace,producer_id,from_address,recipient_address,
+    template,template_version,expires_at,recovery_id,verification_token_hash,sealed_verification,verification_key_id,verification_origin)
+VALUES($1,$2,$3,$4,$5,$6,'password_reset',1,$7,$8,$9,$10,$11,$12)
+`
+
+type CreatePasswordResetIntentParams struct {
+	ID                    pgtype.UUID
+	AccountID             pgtype.UUID
+	Namespace             string
+	ProducerID            string
+	FromAddress           string
+	RecipientAddress      string
+	ExpiresAt             pgtype.Timestamptz
+	RecoveryID            pgtype.UUID
+	VerificationTokenHash []byte
+	SealedVerification    []byte
+	VerificationKeyID     string
+	VerificationOrigin    string
+}
+
+func (q *Queries) CreatePasswordResetIntent(ctx context.Context, db DBTX, arg CreatePasswordResetIntentParams) error {
+	_, err := db.Exec(ctx, createPasswordResetIntent,
+		arg.ID,
+		arg.AccountID,
+		arg.Namespace,
+		arg.ProducerID,
+		arg.FromAddress,
+		arg.RecipientAddress,
+		arg.ExpiresAt,
+		arg.RecoveryID,
+		arg.VerificationTokenHash,
+		arg.SealedVerification,
+		arg.VerificationKeyID,
+		arg.VerificationOrigin,
+	)
+	return err
+}
+
+const createPasswordResetToken = `-- name: CreatePasswordResetToken :exec
+INSERT INTO password_reset_tokens(token_hash,account_id,email_address,password_revision,expires_at,namespace,recovery_id) VALUES($1,$2,$3,$4,$5,$6,$7)
+`
+
+type CreatePasswordResetTokenParams struct {
+	TokenHash        []byte
+	AccountID        pgtype.UUID
+	EmailAddress     string
+	PasswordRevision int64
+	ExpiresAt        pgtype.Timestamptz
+	Namespace        string
+	RecoveryID       pgtype.UUID
+}
+
+func (q *Queries) CreatePasswordResetToken(ctx context.Context, db DBTX, arg CreatePasswordResetTokenParams) error {
+	_, err := db.Exec(ctx, createPasswordResetToken,
+		arg.TokenHash,
+		arg.AccountID,
+		arg.EmailAddress,
+		arg.PasswordRevision,
+		arg.ExpiresAt,
+		arg.Namespace,
+		arg.RecoveryID,
 	)
 	return err
 }
@@ -471,6 +563,85 @@ func (q *Queries) LockIntent(ctx context.Context, db DBTX, arg LockIntentParams)
 	return i, err
 }
 
+const lockPasswordResetAccount = `-- name: LockPasswordResetAccount :one
+SELECT id,email,status,email_verified_at,password_reset_revision FROM accounts WHERE id=$1 FOR UPDATE
+`
+
+type LockPasswordResetAccountRow struct {
+	ID                    pgtype.UUID
+	Email                 string
+	Status                string
+	EmailVerifiedAt       pgtype.Timestamptz
+	PasswordResetRevision int64
+}
+
+func (q *Queries) LockPasswordResetAccount(ctx context.Context, db DBTX, id pgtype.UUID) (LockPasswordResetAccountRow, error) {
+	row := db.QueryRow(ctx, lockPasswordResetAccount, id)
+	var i LockPasswordResetAccountRow
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.Status,
+		&i.EmailVerifiedAt,
+		&i.PasswordResetRevision,
+	)
+	return i, err
+}
+
+const lockPasswordResetCredentialAccount = `-- name: LockPasswordResetCredentialAccount :one
+SELECT a.id,a.email,a.status,a.email_verified_at,a.password_reset_revision
+FROM accounts a JOIN password_reset_tokens t ON t.account_id=a.id
+WHERE t.token_hash=$1 FOR UPDATE OF a
+`
+
+type LockPasswordResetCredentialAccountRow struct {
+	ID                    pgtype.UUID
+	Email                 string
+	Status                string
+	EmailVerifiedAt       pgtype.Timestamptz
+	PasswordResetRevision int64
+}
+
+// The account is the first row locked even when two different reset links race.
+func (q *Queries) LockPasswordResetCredentialAccount(ctx context.Context, db DBTX, tokenHash []byte) (LockPasswordResetCredentialAccountRow, error) {
+	row := db.QueryRow(ctx, lockPasswordResetCredentialAccount, tokenHash)
+	var i LockPasswordResetCredentialAccountRow
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.Status,
+		&i.EmailVerifiedAt,
+		&i.PasswordResetRevision,
+	)
+	return i, err
+}
+
+const lockPasswordResetToken = `-- name: LockPasswordResetToken :one
+SELECT token_hash, account_id, email_address, password_revision, namespace, recovery_id, expires_at, consumed_at, created_at FROM password_reset_tokens WHERE token_hash=$1 AND account_id=$2 FOR UPDATE
+`
+
+type LockPasswordResetTokenParams struct {
+	TokenHash []byte
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) LockPasswordResetToken(ctx context.Context, db DBTX, arg LockPasswordResetTokenParams) (PasswordResetToken, error) {
+	row := db.QueryRow(ctx, lockPasswordResetToken, arg.TokenHash, arg.AccountID)
+	var i PasswordResetToken
+	err := row.Scan(
+		&i.TokenHash,
+		&i.AccountID,
+		&i.EmailAddress,
+		&i.PasswordRevision,
+		&i.Namespace,
+		&i.RecoveryID,
+		&i.ExpiresAt,
+		&i.ConsumedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const lockReconciliation = `-- name: LockReconciliation :exec
 SELECT pg_advisory_xact_lock(hashtextextended($1::text||':'||$2::text,871741))
 `
@@ -697,6 +868,36 @@ func (q *Queries) OperatorSummary(ctx context.Context, db DBTX, namespace string
 	return items, nil
 }
 
+const passwordResetKeyReferences = `-- name: PasswordResetKeyReferences :many
+SELECT DISTINCT verification_key_id FROM platform_mail_producer_outbox
+WHERE namespace=$1 AND producer_id=$2 AND template='password_reset' AND state IN ('queued','claimed') AND expires_at>clock_timestamp()
+`
+
+type PasswordResetKeyReferencesParams struct {
+	Namespace  string
+	ProducerID string
+}
+
+func (q *Queries) PasswordResetKeyReferences(ctx context.Context, db DBTX, arg PasswordResetKeyReferencesParams) ([]string, error) {
+	rows, err := db.Query(ctx, passwordResetKeyReferences, arg.Namespace, arg.ProducerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var verification_key_id string
+		if err := rows.Scan(&verification_key_id); err != nil {
+			return nil, err
+		}
+		items = append(items, verification_key_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const pending = `-- name: Pending :one
 SELECT count(*)::bigint FROM platform_mail_producer_outbox WHERE namespace=$1 AND state IN ('queued','claimed')
 `
@@ -708,8 +909,25 @@ func (q *Queries) Pending(ctx context.Context, db DBTX, namespace string) (int64
 	return column_1, err
 }
 
+const purgeExpiredPasswordResetTokens = `-- name: PurgeExpiredPasswordResetTokens :exec
+WITH expired AS (
+    SELECT token_hash FROM password_reset_tokens WHERE expires_at<=clock_timestamp()
+    ORDER BY expires_at,token_hash LIMIT $1 FOR UPDATE SKIP LOCKED
+)
+DELETE FROM password_reset_tokens t USING expired e WHERE t.token_hash=e.token_hash
+`
+
+// Hashes and address bindings have no purpose after expiry. Maintenance is
+// bounded and independent of the child gate; it never reissues credentials.
+func (q *Queries) PurgeExpiredPasswordResetTokens(ctx context.Context, db DBTX, limit int32) error {
+	_, err := db.Exec(ctx, purgeExpiredPasswordResetTokens, limit)
+	return err
+}
+
 const ready = `-- name: Ready :exec
-SELECT id,recovery_id,template_version,recipient_address,revision FROM platform_mail_producer_outbox LIMIT 0
+SELECT o.id,o.recovery_id,o.template_version,o.recipient_address,o.revision,a.password_reset_revision,t.password_revision
+FROM platform_mail_producer_outbox o LEFT JOIN accounts a ON a.id=o.account_id
+LEFT JOIN password_reset_tokens t ON t.account_id=a.id LIMIT 0
 `
 
 func (q *Queries) Ready(ctx context.Context, db DBTX) error {
@@ -775,6 +993,30 @@ func (q *Queries) Recovery(ctx context.Context, db DBTX, namespace string) (Reco
 	return i, err
 }
 
+const replaceResetPassword = `-- name: ReplaceResetPassword :execrows
+WITH changed AS (
+    UPDATE accounts SET password_reset_revision=password_reset_revision+1
+    WHERE id=$1 AND password_reset_revision=$2 RETURNING id
+)
+INSERT INTO account_passwords(account_id,hash,updated_at)
+SELECT id,$3,clock_timestamp() FROM changed
+ON CONFLICT(account_id) DO UPDATE SET hash=excluded.hash,updated_at=excluded.updated_at
+`
+
+type ReplaceResetPasswordParams struct {
+	ID                    pgtype.UUID
+	PasswordResetRevision int64
+	Hash                  string
+}
+
+func (q *Queries) ReplaceResetPassword(ctx context.Context, db DBTX, arg ReplaceResetPasswordParams) (int64, error) {
+	result, err := db.Exec(ctx, replaceResetPassword, arg.ID, arg.PasswordResetRevision, arg.Hash)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const scheduleDeletion = `-- name: ScheduleDeletion :one
 UPDATE accounts SET status='deleted_pending',deletion_requested_at=coalesce(deletion_requested_at,clock_timestamp())
 WHERE id=$1 AND status IN ('active','deleted_pending') RETURNING id,email,deletion_requested_at
@@ -832,7 +1074,7 @@ func (q *Queries) Settle(ctx context.Context, db DBTX, arg SettleParams) (int64,
 }
 
 const shareAccount = `-- name: ShareAccount :one
-SELECT id,email,status,deletion_requested_at,email_verified_at FROM accounts WHERE id=$1 FOR SHARE
+SELECT id,email,status,deletion_requested_at,email_verified_at,password_reset_revision FROM accounts WHERE id=$1 FOR SHARE
 `
 
 func (q *Queries) ShareAccount(ctx context.Context, db DBTX, id pgtype.UUID) (Account, error) {
@@ -844,6 +1086,33 @@ func (q *Queries) ShareAccount(ctx context.Context, db DBTX, id pgtype.UUID) (Ac
 		&i.Status,
 		&i.DeletionRequestedAt,
 		&i.EmailVerifiedAt,
+		&i.PasswordResetRevision,
+	)
+	return i, err
+}
+
+const sharePasswordResetToken = `-- name: SharePasswordResetToken :one
+SELECT token_hash, account_id, email_address, password_revision, namespace, recovery_id, expires_at, consumed_at, created_at FROM password_reset_tokens WHERE token_hash=$1 AND account_id=$2 FOR SHARE
+`
+
+type SharePasswordResetTokenParams struct {
+	TokenHash []byte
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) SharePasswordResetToken(ctx context.Context, db DBTX, arg SharePasswordResetTokenParams) (PasswordResetToken, error) {
+	row := db.QueryRow(ctx, sharePasswordResetToken, arg.TokenHash, arg.AccountID)
+	var i PasswordResetToken
+	err := row.Scan(
+		&i.TokenHash,
+		&i.AccountID,
+		&i.EmailAddress,
+		&i.PasswordRevision,
+		&i.Namespace,
+		&i.RecoveryID,
+		&i.ExpiresAt,
+		&i.ConsumedAt,
+		&i.CreatedAt,
 	)
 	return i, err
 }

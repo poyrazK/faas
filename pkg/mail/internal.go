@@ -21,15 +21,16 @@ import (
 // InternalSender is an explicit opt-in for platform notifications. It speaks
 // only HTTP over the maild Unix socket and never changes the default transport.
 type InternalSender struct {
-	token               string
-	from                string
-	route               string
-	enabled             func() bool
-	client              *http.Client
-	schedulingEnabled   func() bool
-	outboxEnabled       func() bool
-	recoveryGeneration  string
-	verificationEnabled func() bool
+	token                string
+	from                 string
+	route                string
+	enabled              func() bool
+	client               *http.Client
+	schedulingEnabled    func() bool
+	outboxEnabled        func() bool
+	recoveryGeneration   string
+	verificationEnabled  func() bool
+	passwordResetEnabled func() bool
 }
 
 func NewInternalSender(socket, token, from string, enabled func() bool) (*InternalSender, error) {
@@ -67,7 +68,8 @@ func (s *InternalSender) Send(ctx context.Context, msg Message) error {
 }
 
 func (s *InternalSender) send(ctx context.Context, msg Message, timing internalmail.MessageTiming) error {
-	if s.verificationEnabled != nil && (!s.verificationEnabled() || s.recoveryGeneration == "") {
+	template, templateEnabled := s.credentialOutboxGate()
+	if templateEnabled != nil && (!templateEnabled() || s.recoveryGeneration == "") {
 		return internalmail.ErrDisabled
 	}
 	if s.recoveryGeneration != "" && (s.outboxEnabled == nil || !s.outboxEnabled()) {
@@ -95,9 +97,9 @@ func (s *InternalSender) send(ctx context.Context, msg Message, timing internalm
 	if s.recoveryGeneration != "" {
 		req.Header.Set(internalmail.ProducerOutboxGenerationHeader, s.recoveryGeneration)
 	}
-	if s.verificationEnabled != nil {
-		req.Header.Set(internalmail.ProducerOutboxTemplateHeader, internalmail.ProducerOutboxVerificationTemplate)
-		if !s.verificationEnabled() {
+	if templateEnabled != nil {
+		req.Header.Set(internalmail.ProducerOutboxTemplateHeader, template)
+		if !templateEnabled() {
 			return internalmail.ErrDisabled
 		}
 	}

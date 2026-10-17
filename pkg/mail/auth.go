@@ -5,6 +5,12 @@ import (
 	"time"
 )
 
+// PasswordResetBodyV1 is frozen for durable handoff. The same link always has
+// its original 15-minute validity; retrying delivery does not renew it.
+func PasswordResetBodyV1(link string) (subject, body string) {
+	return "Reset your Gregale password", "Hi,\n\nReset your Gregale password by clicking the link below (valid for 15 minutes):\n\n  " + link + "\n\nIf you did not request this, you can ignore this email.\n"
+}
+
 // EmailVerificationBody renders the one-shot address-verification email sent
 // after password signup. The deadline is explicit so an old message is not
 // mistaken for a live credential.

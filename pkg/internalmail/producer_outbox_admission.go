@@ -62,6 +62,10 @@ func (s *Service) ProducerOutboxAdmission(ctx context.Context, id string) (Produ
 		review.CanAcknowledge = false
 		review.BlockReason = "verification_disabled"
 	}
+	if review.Template == ProducerOutboxPasswordResetTemplate && !s.passwordResetOutboxEnabled() {
+		review.CanAcknowledge = false
+		review.BlockReason = "password_reset_disabled"
+	}
 	return review, err
 }
 

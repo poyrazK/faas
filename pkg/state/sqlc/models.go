@@ -84,6 +84,7 @@ type Account struct {
 	SuspendedReason        pgtype.Text
 	AbuseHoldAt            pgtype.Timestamptz
 	AbuseHoldReason        pgtype.Text
+	PasswordResetRevision  int64
 }
 
 type AccountAsyncQuotum struct {
@@ -7249,6 +7250,18 @@ type PaddleOverageDedupe struct {
 	ClaimedBy       pgtype.Text
 	OrgID           pgtype.UUID
 	PushedMbSeconds pgtype.Int8
+}
+
+type PasswordResetToken struct {
+	TokenHash        []byte
+	AccountID        pgtype.UUID
+	EmailAddress     string
+	PasswordRevision int64
+	Namespace        string
+	RecoveryID       pgtype.UUID
+	ExpiresAt        pgtype.Timestamptz
+	ConsumedAt       pgtype.Timestamptz
+	CreatedAt        pgtype.Timestamptz
 }
 
 type PgPreauthFailureCounter struct {

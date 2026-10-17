@@ -23,6 +23,7 @@ Local operator mode: requires an explicit DATABASE_URL (or FAAS_DATABASE_URL)
 for apid's owner database and matching FAAS_INTERNAL_MAIL_NAMESPACE (default platform).
 Master, operations, producer-outbox and outbox-reconciliation flags must be exact 1.
 Verification intents also require FAAS_INTERNAL_MAIL_VERIFICATION_OUTBOX_ENABLED=1.
+Password-reset intents also require FAAS_INTERNAL_MAIL_PASSWORD_RESET_OUTBOX_ENABLED=1.
 First inspect mailctl outbox admission --id UUID on maild's private operator socket.
 Save the request UUID before writing; reuse identical arguments after a lost response.
 This command opens no listener and never admits or resends mail.
@@ -106,6 +107,7 @@ func RunOperator(ctx context.Context, args []string, getenv func(string) string,
 		return writeOperatorError(diagnostics, err)
 	}
 	reconciler = reconciler.WithVerification(func() bool { return internalmail.VerificationOutboxEnabled(getenv) })
+	reconciler = reconciler.WithPasswordReset(func() bool { return internalmail.PasswordResetOutboxEnabled(getenv) })
 	var record ReconciliationRecord
 	if cmd.audit {
 		record, err = reconciler.Audit(pass, cmd.input.RequestID)

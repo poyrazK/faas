@@ -138,9 +138,11 @@ type server struct {
 	resendWebhookSecret string
 	// mailer emits the dunning + quota-warning emails. nil falls back
 	// to the noop sender so callers never need to nil-check.
-	deletionMailOutbox              *mailoutbox.Service
-	verificationMailOutboxRequested func() bool
-	mailer                          Mailer
+	deletionMailOutbox               *mailoutbox.Service
+	verificationMailOutboxRequested  func() bool
+	passwordResetMailOutboxRequested func() bool
+	passwordResetCredentials         *mailoutbox.ResetCredentials
+	mailer                           Mailer
 	// mailBounce dispatches Resend bounce / complaint events into
 	// the suppression + dunning pipeline (issue #246 acceptance
 	// item 8). Wired via WithMailBounce from cmd/apid/main.go
