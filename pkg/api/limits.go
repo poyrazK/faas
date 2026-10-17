@@ -10626,6 +10626,10 @@ const (
 	// and AuthSSOMaxDomains the email domains one provider serves.
 	AuthSSOMetadataBytes = 512 << 10
 	AuthSSOMaxDomains    = 50
+	// AuthSCIMPageSize bounds one SCIM list page, and AuthSCIMBodyBytes a
+	// SCIM request body.
+	AuthSCIMPageSize  = 100
+	AuthSCIMBodyBytes = 64 << 10
 	// AuthUINameMaxChars bounds the hosted pages' display name.
 	AuthUINameMaxChars = 60
 	// AuthAuditRetentionMaxDays bounds activity retention. The Auth app

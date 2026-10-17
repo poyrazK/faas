@@ -12,6 +12,7 @@ import { storageBindings } from './storage.mjs'
 import { createWorkflowStarter, workflowsConfig } from './workflows.mjs'
 import { createEventPublisher, lifecycleConfig, publishesAfter, setLifecycleEvents } from './events.mjs'
 import { createAuditPruner } from './retention.mjs'
+import { createScimHandler } from './scim.mjs'
 import { gotrue, limits, pagePolicy, runtimeConfig } from './config.mjs'
 
 const prefix = '/auth/v1'
@@ -98,11 +99,12 @@ function serveSettings(req, res, settings) {
   res.end(JSON.stringify(settings))
 }
 
-export function createServer({ upstreamPort = gotrue.port, bodyBytes = limits.bodyBytes, authz, ui, realtime, admin, settings } = {}) {
+export function createServer({ upstreamPort = gotrue.port, bodyBytes = limits.bodyBytes, authz, ui, realtime, admin, settings, scim } = {}) {
   return http.createServer((req, res) => {
     if (settings && req.url.split('?')[0] === '/settings/v1') return serveSettings(req, res, settings)
     if (realtime && req.url === '/realtime/authorize-channel') return realtime(req, res)
     if (admin && /^\/admin\/v1([/?]|$)/.test(req.url)) return admin(req, res)
+    if (scim && /^\/scim\/v2([/?]|$)/.test(req.url)) return scim(req, res)
     if (authz && req.url.startsWith(authzPrefix)) return authz(req, res, '/' + req.url.slice(authzPrefix.length).split('?')[0])
     if (ui && serveUI(req, res, ui)) return
     if (req.url === '/healthz') {
@@ -163,8 +165,10 @@ export function start(env = process.env) {
   // The dashboard is served from the Gregale API origin.
   let dashboard = []
   try { dashboard = [new URL(env.AUTH_GREGALE_API_URL).origin] } catch { /* no dashboard origin sealed */ }
-  const admin = createAdminHandler({ pool, admin: goTrueAdmin(signingKey(config.gotrueEnv.GOTRUE_JWT_KEYS)), keys: adminKeyHashes(env), origins: dashboard })
-  const server = createServer({ authz, ui, realtime, admin, settings: config.settings })
+  const goTrue = goTrueAdmin(signingKey(config.gotrueEnv.GOTRUE_JWT_KEYS))
+  const admin = createAdminHandler({ pool, admin: goTrue, keys: adminKeyHashes(env), origins: dashboard, external: config.external })
+  const scim = createScimHandler({ pool, admin: goTrue, base: config.external })
+  const server = createServer({ authz, ui, realtime, admin, settings: config.settings, scim })
   // Lifecycle events publish after requests that may change users, and
   // once at startup for anything recorded while the app was parked.
   const lifecycle = lifecycleConfig(env)

@@ -116,7 +116,7 @@ export function createEventPublisher({ pool, config, fetchImpl = fetch, log = co
 // JWKS, settings and static pages never do.
 export function publishesAfter(req) {
   const path = (req.url ?? '').split('?')[0]
-  if (path.startsWith('/admin/v1/')) return req.method !== 'GET'
+  if (path.startsWith('/admin/v1/') || path.startsWith('/scim/v2/')) return req.method !== 'GET'
   if (!path.startsWith('/auth/v1/')) return false
   return !(req.method === 'GET' && ['/auth/v1/.well-known/jwks.json', '/auth/v1/settings', '/auth/v1/health', '/auth/v1/user'].includes(path))
 }

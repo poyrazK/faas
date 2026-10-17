@@ -13458,6 +13458,17 @@ Remove an identity provider; its users keep their memberships
 |---|---|---|
 | `--admin-key-stdin` | read the admin key from stdin (prompted on a terminal) |  |
 
+#### auth sso scim-token
+
+Create the token an identity provider uses to provision people through SCIM, or revoke it
+
+`gregale auth sso scim-token [--revoke] [--admin-key-stdin] <name> <provider-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--revoke` | revoke the token instead of creating one |  |
+| `--admin-key-stdin` | read the admin key from stdin (prompted on a terminal) |  |
+
 
 ## data-api
 
