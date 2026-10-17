@@ -66,10 +66,14 @@ func templateDescription(name string) string {
 		return "S3-compatible PUT/GET adapter — bring your own bucket"
 	case "object-storage-node":
 		return "Node.js app with managed object storage, scoped compute credentials and safe secret reload"
+	case "object-storage-python":
+		return "Python app with managed object storage, private file transfers and safe credential reload"
 	case "slack-bot":
 		return "Slack slash-command handler — bring your own tokens"
 	case "rest-api-postgres":
 		return "Postgres-backed REST API — bring your own connection string"
+	case "rest-api-postgres-python":
+		return "Python REST API with managed Postgres, separate migration credentials and verified TLS"
 	case "data-api":
 		return "Schema-generated Postgres REST API with JWT authentication and row-level security"
 	case "data-api-starter":

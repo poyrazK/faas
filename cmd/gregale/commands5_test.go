@@ -2060,19 +2060,22 @@ func TestMCPGoTarGzContainsMaterializedSourcesAndModule(t *testing.T) {
 
 func TestTemplates_MaterializeContainsExpectedFiles(t *testing.T) {
 	cases := map[string][]string{
-		"hello-node":         {"handler.js", "package.json", "README.md"},
-		"hello-python":       {"handler.py", "requirements.txt", "README.md"},
-		"hello-go":           {"main.go", "README.md"},
-		"cron-example":       {"handler.js", "package.json", "README.md"},
-		"function-node":      {"handler.js", "package.json", "README.md"},
-		"function-python":    {"handler.py", "requirements.txt", "README.md"},
-		"function-go":        {"handler.go", "README.md"},
-		"function-node24":    {"handler.js", "package.json", "README.md"},
-		"function-python313": {"handler.py", "requirements.txt", "README.md"},
-		"function-rust":      {"Dockerfile", "Cargo.toml", "Cargo.lock", "src/main.rs", "gregale.yaml", "README.md"},
-		"mcp-go":             {"main.go", "auth.go", "tasks.go", "go.mod", "go.sum", "gregale-mcp.json", "gregale.yaml", "README.md"},
-		"mcp-python":         {"server.py", "auth.py", "tasks.py", "requirements.txt", "test_server.py", "gregale-mcp.json", "gregale.yaml", "README.md"},
-		"secret-reload-node": {"handler.js", "secret-reload.js", "secret-reload.test.js", "package.json", "package-lock.json", "Dockerfile", "README.md"},
+		"hello-node":               {"handler.js", "package.json", "README.md"},
+		"hello-python":             {"handler.py", "requirements.txt", "README.md"},
+		"hello-go":                 {"main.go", "README.md"},
+		"cron-example":             {"handler.js", "package.json", "README.md"},
+		"function-node":            {"handler.js", "package.json", "README.md"},
+		"function-python":          {"handler.py", "requirements.txt", "README.md"},
+		"function-go":              {"handler.go", "README.md"},
+		"function-node24":          {"handler.js", "package.json", "README.md"},
+		"function-python313":       {"handler.py", "requirements.txt", "README.md"},
+		"function-rust":            {"Dockerfile", "Cargo.toml", "Cargo.lock", "src/main.rs", "gregale.yaml", "README.md"},
+		"mcp-go":                   {"main.go", "auth.go", "tasks.go", "go.mod", "go.sum", "gregale-mcp.json", "gregale.yaml", "README.md"},
+		"mcp-python":               {"server.py", "auth.py", "tasks.py", "requirements.txt", "test_server.py", "gregale-mcp.json", "gregale.yaml", "README.md"},
+		"rest-api-postgres-python": {"handler.py", "database.py", "app.py", "migrate.py", "schema.sql", "gregale.yaml", "Dockerfile", "requirements.txt", "runtime/__init__.py", "runtime/_binding_client_runtime.py", "runtime/async_secret_reload_runtime.py", "runtime/async_postgres_pool_runtime.py", "README.md"},
+		"object-storage-python":    {"handler.py", "storage.py", "app.py", "gregale.yaml", "Dockerfile", "requirements.txt", "runtime/__init__.py", "runtime/_binding_client_runtime.py", "runtime/_async_binding_client_runtime.py", "runtime/async_secret_reload_runtime.py", "runtime/async_object_storage_runtime.py", "README.md"},
+		"object-storage-node":      {"app.mjs", "server.mjs", "gregale.yaml", "Dockerfile", "package.json", "package-lock.json", "runtime/binding-client-runtime.js", "runtime/object-storage-runtime.js", "runtime/secret-reload-runtime.js", "README.md"},
+		"secret-reload-node":       {"handler.js", "database.js", "runtime/postgres-pool-runtime.js", "runtime/binding-client-runtime.js", "runtime/secret-reload-runtime.js", "secret-reload.test.js", "package.json", "package-lock.json", "Dockerfile", "README.md"},
 	}
 	for name, want := range cases {
 		t.Run(name, func(t *testing.T) {

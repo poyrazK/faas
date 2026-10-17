@@ -74,6 +74,9 @@ type AppManifest struct {
 	HealthPathWakes bool `json:"health_path_wakes,omitempty"`
 	// SessionAffinity enables best-effort routing to the same healthy instance.
 	SessionAffinity bool `json:"session_affinity,omitempty"`
+	// ServiceBindingTransport selects the injected service URL scheme. Empty
+	// preserves the legacy HTTP behavior.
+	ServiceBindingTransport ServiceBindingTransport `json:"service_binding_transport,omitempty"`
 	// User is the unix user to exec as; empty means DefaultAppUser.
 	User string `json:"user,omitempty"`
 	// SecretReloadSignal opts this workload into live secret projection refresh.

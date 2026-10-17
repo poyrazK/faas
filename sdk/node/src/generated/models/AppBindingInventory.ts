@@ -9,6 +9,10 @@ import type { BindingRuntimeFreshness } from './BindingRuntimeFreshness.js';
  * Best-effort app binding metadata with explicit completeness and sanitized section issues.
  */
 export type AppBindingInventory = {
+  /**
+   * Applied exact service target selectors; absent for ordinary evidence selection.
+   */
+  service_targets?: Record<string, string>;
   app: string;
   /**
    * Resource scope filter. Absent means all scopes.

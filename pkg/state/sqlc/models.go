@@ -566,6 +566,7 @@ type AppBindingReleasePolicy struct {
 	Reason                    string
 	UpdatedAt                 pgtype.Timestamptz
 	ObjectStorageRequirements []byte
+	QueueRequirements         []byte
 }
 
 type AppBindingReleasePolicyHistory struct {
@@ -1575,6 +1576,26 @@ type BillingUsageDelivery struct {
 	WindowStart pgtype.Timestamptz
 	MbSeconds   int64
 	DeliveredAt pgtype.Timestamptz
+}
+
+type BindingVerificationRun struct {
+	ID           pgtype.UUID
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+	Scope        string
+	Status       string
+	Snapshot     []byte
+	CreatedAt    pgtype.Timestamptz
+	ExpiresAt    pgtype.Timestamptz
+	GraphRunID   pgtype.UUID
+}
+
+type BindingVerificationRunStep struct {
+	RunID        pgtype.UUID
+	StepIndex    int32
+	ResourceID   pgtype.UUID
+	ResourceKind string
 }
 
 type Build struct {
@@ -7914,6 +7935,17 @@ type Project struct {
 	OrgID            pgtype.UUID
 }
 
+type ProjectBindingVerificationRun struct {
+	ID              pgtype.UUID
+	AccountID       pgtype.UUID
+	ProjectID       pgtype.UUID
+	EnvironmentSlug string
+	Status          string
+	Snapshot        []byte
+	CreatedAt       pgtype.Timestamptz
+	ExpiresAt       pgtype.Timestamptz
+}
+
 type ProjectEnvironment struct {
 	ID        pgtype.UUID
 	AccountID pgtype.UUID
@@ -8983,14 +9015,29 @@ type ProjectReleaseMember struct {
 }
 
 type ProjectReleaseSet struct {
+	ID                        pgtype.UUID
+	AccountID                 pgtype.UUID
+	ProjectID                 pgtype.UUID
+	EnvironmentSlug           string
+	Active                    bool
+	TtlSeconds                int32
+	ExpiresAt                 pgtype.Timestamptz
+	CreatedAt                 pgtype.Timestamptz
+	RollbackSourceReleaseID   pgtype.UUID
+	RollbackPreviousReleaseID pgtype.UUID
+	Deactivation              []byte
+}
+
+type ProjectReleaseStage struct {
 	ID              pgtype.UUID
 	AccountID       pgtype.UUID
 	ProjectID       pgtype.UUID
 	EnvironmentSlug string
-	Active          bool
-	TtlSeconds      int32
-	ExpiresAt       pgtype.Timestamptz
+	Manifest        []byte
+	Targets         []byte
 	CreatedAt       pgtype.Timestamptz
+	ExpiresAt       pgtype.Timestamptz
+	Cancelled       bool
 }
 
 type ProvisionedStaticEgressIp struct {
@@ -9015,6 +9062,22 @@ type QueueBinding struct {
 	RetiredAt       pgtype.Timestamptz
 	DeploymentScope string
 	EnvironmentID   pgtype.UUID
+}
+
+type QueueBindingCanary struct {
+	ID                    pgtype.UUID
+	AccountID             pgtype.UUID
+	AppID                 pgtype.UUID
+	BindingID             pgtype.UUID
+	TriggerID             pgtype.UUID
+	DeploymentID          pgtype.UUID
+	Snapshot              []byte
+	PublishedAt           pgtype.Timestamptz
+	ExpiresAt             pgtype.Timestamptz
+	Cancelled             bool
+	CompletedDeploymentID pgtype.UUID
+	CompletedAttempt      pgtype.Int4
+	CompletedGeneration   pgtype.Int8
 }
 
 type RecentBuildClaim struct {

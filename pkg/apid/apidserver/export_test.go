@@ -518,6 +518,7 @@ var ProjectRequest = projectRequest
 var ProjectWorkloadCrons = projectWorkloadCrons
 var ProjectedAppCount = projectedAppCount
 var PromotionFixture = promotionFixture
+var BindingPromotionDeadline = bindingPromotionDeadline
 var PromtailMetricsTarget = promtailMetricsTarget
 var PtrInt64 = ptrInt64
 var QualifyObjectAccounting = qualifyObjectAccounting
@@ -1355,6 +1356,10 @@ func (r *server) IssueSlackResponses() **issueslack.Client { return &r.issueSlac
 func IssueSetSlackOAuth(e pgHandlerEnv, cfg issueslack.OAuthConfig, client *issueslack.Client) {
 	e.s.issueSlackOAuthConfig = cfg
 	e.s.issueSlackOAuthClient = client
+}
+
+func (s *server) ConfigureCheckedReleaseCatalog(t *testing.T, accountID string) {
+	configureSourceRefManagedPostgres(t, sourceRefTestEnv{acctID: accountID, srv: s})
 }
 
 // AddAuthBindingForTest gives appID an `auth` managed PostgreSQL binding,

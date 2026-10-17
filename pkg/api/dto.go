@@ -938,6 +938,8 @@ type ScenarioTestChaosMatch struct {
 // All fields are pointers so the wire form can distinguish "not set" from
 // "set to zero".
 type UpdateAppRequest struct {
+	// ExpectedServiceBindingFingerprint guards service-only updates atomically.
+	ExpectedServiceBindingFingerprint *string `json:"expected_service_binding_fingerprint,omitempty"`
 	// Visibility changes the app's edge exposure. Nil leaves it unchanged;
 	// values are public or internal. Internal is available on every plan.
 	Visibility *string `json:"visibility,omitempty"`
@@ -1784,9 +1786,10 @@ const (
 
 // AppResponse is an app as returned by the API.
 type AppResponse struct {
-	ID   string `json:"id"`
-	Slug string `json:"slug"`
-	Type string `json:"type"`
+	ServiceBindingFingerprint string `json:"service_binding_fingerprint,omitempty"`
+	ID                        string `json:"id"`
+	Slug                      string `json:"slug"`
+	Type                      string `json:"type"`
 	// Visibility is public unless the app is explicitly configured for
 	// authenticated service-to-service ingress only.
 	Visibility string `json:"visibility"`

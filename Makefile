@@ -63,6 +63,14 @@ test-managed-operation-native: ## Run native Firecracker managed workflow recove
 test-managed-postgres-native: ## Run strict deployed PostgreSQL SQL, rotation and snapshot acceptance
 	@GO="$(GO)" sh scripts/test-managed-postgres-native.sh
 
+.PHONY: test-object-storage-native
+test-object-storage-native: ## Run strict shipped storage starter rotation, snapshot and cold-boot acceptance
+	@GO="$(GO)" sh scripts/test-object-storage-native.sh
+
+.PHONY: test-queue-bindings-native
+test-queue-bindings-native: ## Run strict shipped queue worker completion, recovery and release acceptance
+	@GO="$(GO)" sh scripts/test-queue-bindings-native.sh
+
 test-customer-platform: ## Run the two-customer starter acceptance with disposable PostgreSQL databases (no KVM)
 	@GO="$(GO)" sh scripts/test-customer-platform.sh
 
@@ -728,7 +736,7 @@ ha-write-redirect-drill: ## Tier A9 / ADR-089: standby write-redirect drill on t
 	  exit 0'
 
 .PHONY: lint
-lint: egress-check lint-incompatible-mods image-validate sealed-env-scope-check runbook-sql-check text-encoding-check shell-quoting-check adr-number-uniqueness-check check-durable-entity-sdk-contract ## golangci-lint via go tool (matches CI version v2.14.0) + repository policy gates
+lint: egress-check lint-incompatible-mods image-validate sealed-env-scope-check runbook-sql-check text-encoding-check shell-quoting-check adr-number-uniqueness-check check-durable-entity-sdk-contract check-binding-runner-sync ## golangci-lint via go tool (matches CI version v2.14.0) + repository policy gates
 	@python3 scripts/ci/check_gosec_baseline.py
 	@GO="$(GO)" python3 scripts/ci/lint_go_shard.py --shard 1 --shards 1 -- $(GO) tool golangci-lint
 
@@ -1086,6 +1094,7 @@ sqlc-check: sqlc ## CI gate: verify checked-in sqlc output matches what would be
 	  done; \
 	  cp pkg/state/*queries.sql "$$tmp/pkg/state/"; \
 	  cp pkg/state/event*_queries.sql pkg/state/entity_outbox_delivery_queries.sql "$$tmp/pkg/state/"; \
+	  cp pkg/state/binding_verification_run_queries.sql pkg/state/project_binding_verification_run_queries.sql pkg/state/queue_binding_canary_queries.sql pkg/state/project_release_staging_queries.sql "$$tmp/pkg/state/"; \
 	  cp pkg/db/migration_recovery_queries.sql "$$tmp/pkg/db/"; \
 	  cp pkg/managedpostgres/connectionfence/queries.sql pkg/managedpostgres/connectionfence/bootstrap.sql pkg/managedpostgres/connectionfence/schema.sql "$$tmp/pkg/managedpostgres/connectionfence/"; \
 	  cp pkg/managedpostgres/copyinventory/queries.sql pkg/managedpostgres/copyinventory/schema.sql "$$tmp/pkg/managedpostgres/copyinventory/"; \
@@ -1591,3 +1600,7 @@ check-durable-entity-sdk-contract:
 .PHONY: issues-grouping-eval
 issues-grouping-eval: ## Compare grouping strategies against the labeled offline corpus
 	$(GO) run ./cmd/issues-grouping-eval
+
+.PHONY: check-binding-runner-sync
+check-binding-runner-sync:
+	python3 scripts/sync_binding_runner.py --check
