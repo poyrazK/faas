@@ -291,6 +291,9 @@ all relevant replay paths.
 
 The Go SDK offers [application-owned processing leases](event-consumer-processing.md)
 for durable claims, renewal and fenced transactional completion before HTTP success.
+The [Node](event-consumer-processing-node.md) and
+[Python](event-consumer-processing-python.md) SDKs use the same application-owned
+schema and compose independently acquired claims with their acknowledgment workers.
 
 ## Deferred acknowledgment worker (Go)
 

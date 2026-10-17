@@ -1,5 +1,7 @@
 # Architecture Decision Records
 
+- [Python consumer processing leases](20261017152929-python-consumer-processing-leases.md)
+
 - [Python recovery alert checkpoints](20261017145402-python-recovery-alert-checkpoints.md)
 
 - [Python sustained acknowledgment recovery alerts](20261017144446-python-sustained-acknowledgment-recovery-alerts.md)

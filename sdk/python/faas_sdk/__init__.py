@@ -713,3 +713,15 @@ __all__ += (
     "EventAcknowledgmentIntentCheckpointWatchCancelled", "EventAcknowledgmentIntentCheckpointWatchOptions",
     "awatch_event_acknowledgment_intent_health_with_checkpoint",
 )
+
+from .event_consumer_processing import (
+    EventConsumerProcessingError,
+    EventConsumerProcessingLease,
+    aclaim_event_consumer_processing,
+    event_consumer_processing_schema,
+)
+
+__all__ += (
+    "EventConsumerProcessingError", "EventConsumerProcessingLease",
+    "aclaim_event_consumer_processing", "event_consumer_processing_schema",
+)

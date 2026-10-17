@@ -65,6 +65,7 @@ def outputs():
         "sdk/go/operation_schema.sql": schema,
         "sdk/go/event_consumer_schema.sql": event_schema,
         "sdk/python/faas_sdk/event_consumer_schema.sql": event_schema,
+        "sdk/python/faas_sdk/event_consumer_processing_schema.sql": processing_schema,
         "sdk/python/faas_sdk/event_acknowledgment_intent_schema.sql": intent_schema,
         "sdk/python/faas_sdk/_event_consumer_contract.py": f"# {header}\n"
         + "".join(f"{re.sub(r'(?<!^)(?=[A-Z])', '_', name).upper()} = {value}\n" for name, value in event_values.items()),

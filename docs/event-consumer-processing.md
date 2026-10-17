@@ -82,3 +82,7 @@ boundaries; neither replaces the transactional business receipt.
 
 The [Node processing-lease SDK](event-consumer-processing-node.md) now shares this
 application-owned schema and adds immediate/durable acknowledgment-worker integration.
+
+The [Python processing-lease SDK](event-consumer-processing-python.md) shares the
+same schema, digests and completion fences, with async psycopg capabilities and
+immediate/durable acknowledgment-worker composition.

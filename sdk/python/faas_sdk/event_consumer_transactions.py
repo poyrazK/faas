@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import re
@@ -50,6 +51,13 @@ class EventConsumerTransactionResult:
 
     body: bytes
     replayed: bool
+
+
+@dataclass(frozen=True)
+class _EventConsumerTransactionHooks:
+    storage_error: Callable[[], Exception]
+    before_handler: Callable[[Any], Awaitable[None]] | None = None
+    after_receipt: Callable[[Any], Awaitable[None]] | None = None
 
 
 def _uuid(value: str) -> str:
@@ -260,42 +268,92 @@ async def _awith_event_consumer_transaction(
     handler: Callable[[Any], Awaitable[bytes | str]],
     check: Callable[[], None] = lambda: None,
     before_commit: Callable[[Any, EventConsumerTransactionResult], Awaitable[None]] | None = None,
+    hooks: _EventConsumerTransactionHooks | None = None,
 ) -> EventConsumerTransactionResult:
     """Internal cooperative checkpoints; the worker shields active SQL from task cancellation."""
-    check()
+    application_failure: BaseException | None = None
+
+    def checkpoint() -> None:
+        nonlocal application_failure
+        try:
+            check()
+        except BaseException as error:
+            application_failure = error
+            raise
+
+    async def invoke(operation: Callable[..., Awaitable[Any]], *args: Any) -> Any:
+        nonlocal application_failure
+        try:
+            return await operation(*args)
+        except BaseException as error:
+            application_failure = error
+            raise
+
+    checkpoint()
     request, identity, digest = _prepare(connection, input, handler)
     completed = False
+    failure: BaseException | None = None
+    unknown = discard = False
     try:
         async with connection.transaction():
-            check()
+            checkpoint()
             async with connection.cursor(row_factory=_tuple_row) as cursor:
-                check()
+                checkpoint()
                 await cursor.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
-                check()
+                checkpoint()
                 await cursor.execute(_LOCK, ("gregale.event-consumer-inbox.v1:" + identity.hex(),))
-                check()
+                checkpoint()
                 await cursor.execute(_READ, (identity,))
-                check()
+                checkpoint()
                 row = await cursor.fetchone()
-                check()
+                checkpoint()
                 if row is not None:
                     body = _replay(row, request, digest)
                 else:
+                    if hooks is not None and hooks.before_handler is not None:
+                        await invoke(hooks.before_handler, cursor)
+                        checkpoint()
                     async with connection.cursor() as business_cursor:
-                        check()
-                        body = _result(await handler(business_cursor))
-                    check()
+                        checkpoint()
+
+                        # Invalid callback JSON belongs to the application too.
+                        async def apply() -> bytes:
+                            return _result(await handler(business_cursor))
+
+                        body = await invoke(apply)
+                    checkpoint()
                     await cursor.execute(_INSERT, _params(request, identity, digest, body))
-                check()
+                    if hooks is not None and hooks.after_receipt is not None:
+                        checkpoint()
+                        await invoke(hooks.after_receipt, cursor)
+                checkpoint()
                 if before_commit is not None:
-                    await before_commit(cursor, EventConsumerTransactionResult(body, row is not None))
-                    check()
-            check()
+                    await invoke(before_commit, cursor, EventConsumerTransactionResult(body, row is not None))
+                    checkpoint()
+            checkpoint()
             completed = True
     except BaseException as error:
+        if hooks is None:
+            if completed:
+                raise EventConsumerCommitUnknownError(
+                    "event consumer commit outcome unknown; retry the same identity"
+                ) from error
+            raise
         if completed:
-            raise EventConsumerCommitUnknownError(
-                "event consumer commit outcome unknown; retry the same identity"
-            ) from error
-        raise
+            unknown = discard = True
+        elif error is application_failure or isinstance(error, (EventConsumerConflictError, asyncio.CancelledError)):
+            failure = error
+        else:
+            discard = True
+            failure = hooks.storage_error()
+    if discard:
+        try:
+            await connection.close()
+        except BaseException:
+            pass
+    # Raise outside the driver exception context: capabilities/SQL rows are private.
+    if unknown:
+        raise EventConsumerCommitUnknownError("event consumer commit outcome unknown; reconcile on a fresh connection")
+    if failure is not None:
+        raise failure
     return EventConsumerTransactionResult(body, row is not None)

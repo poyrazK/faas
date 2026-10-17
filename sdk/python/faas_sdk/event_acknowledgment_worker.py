@@ -32,10 +32,12 @@ from .event_acknowledgment_intents import (
     _save_negative,
 )
 from .event_consumer_delivery_context import event_consumer_delivery_context_from_headers
+from .event_consumer_processing import EventConsumerProcessingLease
 from .event_consumer_transactions import (
     EventConsumerCommitUnknownError,
     EventConsumerTransactionResult,
     _awith_event_consumer_transaction,
+    _EventConsumerTransactionHooks,
     event_consumer_request_from_headers,
 )
 
@@ -135,30 +137,57 @@ class AsyncEventAcknowledgmentWorker:
             raise ValueError("invalid event consumer handler")
 
         async def process(control: Control) -> EventAcknowledgmentWorkerResult:
-            try:
-                receipt = await self._receipt(connection, control)
-            except EventAcknowledgmentWorkerError as error:
-                if error.code != "event_consumer_receipt_missing":
-                    raise
-                await self._start(control)
-                monitor = asyncio.create_task(self._monitor(control))
-                try:
-                    receipt = await self._transaction(
-                        connection,
-                        lambda cursor: handler(cursor, EventAcknowledgmentWorkerCancellation(control)),
-                        control,
-                    )
-                    control.result = EventAcknowledgmentWorkerResult(True, receipt)
-                except EventConsumerCommitUnknownError:
-                    raise
-                except BaseException:
-                    control.check()
-                    raise
-                finally:
-                    monitor.cancel()
-                    await asyncio.gather(monitor, return_exceptions=True)
+            receipt = await self._process(connection, handler, control)
             control.result = EventAcknowledgmentWorkerResult(True, receipt)
             return await self._terminal("complete", receipt.body, control)
+
+        return await self._operate(process, stop_event)
+
+    async def _process(
+        self, connection: Any, handler: Handler, control: Control, hooks: _EventConsumerTransactionHooks | None = None
+    ) -> EventConsumerTransactionResult:
+        try:
+            return await self._receipt(connection, control, hooks)
+        except EventAcknowledgmentWorkerError as error:
+            if error.code != "event_consumer_receipt_missing":
+                raise
+        await self._start(control)
+        monitor = asyncio.create_task(self._monitor(control))
+        try:
+            receipt = await self._transaction(
+                connection,
+                lambda cursor: handler(cursor, EventAcknowledgmentWorkerCancellation(control)),
+                control,
+                hooks=hooks,
+            )
+            control.result = EventAcknowledgmentWorkerResult(True, receipt)
+            return receipt
+        except EventConsumerCommitUnknownError:
+            raise
+        except BaseException:
+            control.check()
+            raise
+        finally:
+            monitor.cancel()
+            await asyncio.gather(monitor, return_exceptions=True)
+
+    async def run_with_processing_lease(
+        self,
+        connection: Any,
+        lease: EventConsumerProcessingLease,
+        handler: Handler,
+        *,
+        stop_event: asyncio.Event | None = None,
+    ) -> EventAcknowledgmentWorkerResult:
+        """Stop/join local renewal first. Fence new writes and send exact committed completion."""
+        if not isinstance(lease, EventConsumerProcessingLease) or not callable(handler):
+            raise ValueError("invalid processing lease or event consumer handler")
+
+        async def process(control: Control) -> EventAcknowledgmentWorkerResult:
+            async with lease._use(self._input, control) as hooks:
+                receipt = await self._process(connection, handler, control, hooks)
+                control.result = EventAcknowledgmentWorkerResult(True, receipt)
+                return await self._terminal("complete", receipt.body, control)
 
         return await self._operate(process, stop_event)
 
@@ -181,26 +210,49 @@ class AsyncEventAcknowledgmentWorker:
         if not callable(handler):
             raise ValueError("invalid event consumer handler")
 
+        return await self._operate(lambda control: self._durable(connection, handler, control), stop_event)
+
+    async def _durable(
+        self, connection: Any, handler: Handler, control: Control, hooks: _EventConsumerTransactionHooks | None = None
+    ) -> EventAcknowledgmentIntentResult:
+        try:
+            return await self._stage(connection, None, control, hooks)
+        except EventAcknowledgmentWorkerError as error:
+            if error.code != "event_consumer_receipt_missing":
+                raise
+        await self._start(control)
+        monitor = asyncio.create_task(self._monitor(control))
+        try:
+            return await self._stage(
+                connection,
+                lambda cursor: handler(cursor, EventAcknowledgmentWorkerCancellation(control)),
+                control,
+                hooks,
+            )
+        except EventConsumerCommitUnknownError:
+            raise
+        except BaseException:
+            control.check()
+            raise
+        finally:
+            monitor.cancel()
+            await asyncio.gather(monitor, return_exceptions=True)
+
+    async def run_durable_with_processing_lease(
+        self,
+        connection: Any,
+        lease: EventConsumerProcessingLease,
+        handler: Handler,
+        *,
+        stop_event: asyncio.Event | None = None,
+    ) -> EventAcknowledgmentIntentResult:
+        """Commit writes, receipt, unexpired claim removal and completion intent together."""
+        if not isinstance(lease, EventConsumerProcessingLease) or not callable(handler):
+            raise ValueError("invalid processing lease or event consumer handler")
+
         async def process(control: Control) -> EventAcknowledgmentIntentResult:
-            try:
-                return await self._stage(connection, None, control)
-            except EventAcknowledgmentWorkerError as error:
-                if error.code != "event_consumer_receipt_missing":
-                    raise
-            await self._start(control)
-            monitor = asyncio.create_task(self._monitor(control))
-            try:
-                return await self._stage(
-                    connection, lambda cursor: handler(cursor, EventAcknowledgmentWorkerCancellation(control)), control
-                )
-            except EventConsumerCommitUnknownError:
-                raise
-            except BaseException:
-                control.check()
-                raise
-            finally:
-                monitor.cancel()
-                await asyncio.gather(monitor, return_exceptions=True)
+            async with lease._use(self._input, control) as hooks:
+                return await self._durable(connection, handler, control, hooks)
 
         return await self._operate(process, stop_event)
 
@@ -211,7 +263,11 @@ class AsyncEventAcknowledgmentWorker:
         return await self._operate(lambda control: self._stage(connection, None, control), stop_event)
 
     async def _stage(
-        self, connection: Any, handler: Callable[[Any], Awaitable[bytes | str]] | None, control: Control
+        self,
+        connection: Any,
+        handler: Callable[[Any], Awaitable[bytes | str]] | None,
+        control: Control,
+        hooks: _EventConsumerTransactionHooks | None = None,
     ) -> EventAcknowledgmentIntentResult:
         intent = None
 
@@ -235,7 +291,13 @@ class AsyncEventAcknowledgmentWorker:
 
         unknown = False
         try:
-            receipt = await self._transaction(connection, missing if handler is None else handler, control, save)
+            # A receipt-only probe must report missing without consulting a local claim.
+            selected_hooks = (
+                _EventConsumerTransactionHooks(hooks.storage_error) if hooks is not None and handler is None else hooks
+            )
+            receipt = await self._transaction(
+                connection, missing if handler is None else handler, control, save, selected_hooks
+            )
         except EventConsumerCommitUnknownError:
             unknown = True
         if unknown:
@@ -302,11 +364,14 @@ class AsyncEventAcknowledgmentWorker:
 
         return await self._operate(reject, stop_event)
 
-    async def _receipt(self, connection: Any, control: Control) -> EventConsumerTransactionResult:
+    async def _receipt(
+        self, connection: Any, control: Control, hooks: _EventConsumerTransactionHooks | None = None
+    ) -> EventConsumerTransactionResult:
         async def missing(_cursor: Any) -> bytes:
             raise EventAcknowledgmentWorkerError("event_consumer_receipt_missing")
 
-        return await self._transaction(connection, missing, control)
+        probe_hooks = _EventConsumerTransactionHooks(hooks.storage_error) if hooks is not None else None
+        return await self._transaction(connection, missing, control, hooks=probe_hooks)
 
     async def _transaction(
         self,
@@ -314,10 +379,11 @@ class AsyncEventAcknowledgmentWorker:
         handler: Callable[[Any], Awaitable[bytes | str]],
         control: Control,
         before_commit: Callable[[Any, EventConsumerTransactionResult], Awaitable[None]] | None = None,
+        hooks: _EventConsumerTransactionHooks | None = None,
     ) -> EventConsumerTransactionResult:
         try:
             return await _awith_event_consumer_transaction(
-                connection, self._input, handler, control.check, before_commit
+                connection, self._input, handler, control.check, before_commit, hooks
             )
         except EventConsumerCommitUnknownError:
             # Discard this exclusively leased connection before owner reconciliation.

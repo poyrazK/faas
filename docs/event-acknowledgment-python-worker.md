@@ -5,6 +5,12 @@ consumer receipts and immediate terminal callbacks. It uses the existing
 [deferred acknowledgment protocol](event-deferred-acknowledgments.md) and
 [application-owned consumer receipt table](event-consumer-transactions.md).
 
+For independently claimed local preparation fences, use
+[`run_with_processing_lease`](event-consumer-processing-python.md#compose-with-acknowledgment-workers)
+or its durable counterpart. Receipt replay skips the local claim; new transactional
+work requires its current unexpired fence. Applications own preparation and local
+renewal separately from the worker's platform acknowledgment lease.
+
 For atomic transfer of callback responsibility to an independent recovery host,
 use [durable completion intents](event-acknowledgment-python-intents.md). The
 immediate mode documented here retains its original ingestion-job contract.

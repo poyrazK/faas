@@ -223,6 +223,8 @@ WRAPPER_MODULES = (
     "queue_consumer.py",
     "operations.py",
     "event_consumer_transactions.py",
+    "event_consumer_processing.py",
+    "_event_consumer_processing_store.py",
     "event_consumer_delivery_context.py",
     "event_acknowledgment_worker.py",
     "event_acknowledgment_intents.py",
@@ -247,6 +249,7 @@ WRAPPER_MODULES = (
     "commit_recovery_status.py",
     "_event_consumer_contract.py",
     "event_consumer_schema.sql",
+    "event_consumer_processing_schema.sql",
     "_operation_contract.py",
     "customer_operation_schema.sql",
     "operation_schema.sql",
@@ -1452,6 +1455,18 @@ __all__ += (
     "validate_event_acknowledgment_intent_checkpoint", "EventAcknowledgmentIntentCheckpointWatchCallbackError",
     "EventAcknowledgmentIntentCheckpointWatchCancelled", "EventAcknowledgmentIntentCheckpointWatchOptions",
     "awatch_event_acknowledgment_intent_health_with_checkpoint",
+)
+
+from .event_consumer_processing import (
+    EventConsumerProcessingError,
+    EventConsumerProcessingLease,
+    aclaim_event_consumer_processing,
+    event_consumer_processing_schema,
+)
+
+__all__ += (
+    "EventConsumerProcessingError", "EventConsumerProcessingLease",
+    "aclaim_event_consumer_processing", "event_consumer_processing_schema",
 )
 '''
 

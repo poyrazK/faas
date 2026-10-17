@@ -2729,6 +2729,16 @@ confirmation. No schema, queue or host starts automatically. See the
 
 ### Durable acknowledgment handoff
 
+For side-effect-free preparation outside the final short SQL transaction,
+`aclaim_event_consumer_processing(connection, request, duration_ms)` returns a
+process-local lease with `renew` and `complete`. Explicitly install
+`event_consumer_processing_schema` beside the receipt table. Use
+`run_with_processing_lease` or `run_durable_with_processing_lease` for worker
+composition. Existing receipts replay without the old lease; new writes require
+its unexpired token/input fence. The host owns renewal during preparation and
+must stop/join local renewal before final completion. See the
+[Python processing protocol](../../docs/event-consumer-processing-python.md).
+
 `run_durable` commits business SQL, the receipt and a completion intent together;
 `save_completion_intent` stages a saved receipt without business work. Explicitly
 install `event_acknowledgment_intent_schema` beside the inbox. A confirmed local

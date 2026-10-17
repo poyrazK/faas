@@ -1,5 +1,7 @@
 # Durable Python ingestion with immediate event acknowledgment
 
+For leased completion, see [the explicit processing mode](#complete-with-a-processing-lease).
+
 `consumer.py` integrates the [async acknowledgment worker](../../docs/event-acknowledgment-python-worker.md)
 with an application-owned protected queue. It starts no server or worker loop
 and installs no schema or driver. Configure a long-lived authenticated SDK client,
@@ -337,3 +339,61 @@ The bounded outbox reserves closing capacity for unresolved incidents and blocks
 new openings when full. No alert table, file, transport or polling service is
 installed. Ordinary monitoring and callback recovery behavior remain unchanged.
 See [validation, exact acknowledgments and resume semantics](../../docs/event-acknowledgment-python-checkpoints.md).
+
+## Complete with a processing lease
+
+`processing_consumer.py` adds explicit version-4 `python-durable-processing` jobs.
+Configure separate authenticated ingress with
+`accept_authenticated_processing_delivery` and explicitly install the receipt,
+processing and intent schemas. Preserve the same protected queue, exclusive fenced
+ownership and bounded idle autocommit connection contract. Earlier immediate,
+durable and failure-decision records are rejected; never relabel them as leased.
+
+```python
+from processing_consumer import (
+    claim_owned_processing_delivery,
+    complete_owned_processing_delivery,
+    save_owned_processing_completion_intent,
+)
+
+async with application_pool.connection() as connection:
+    lease = await claim_owned_processing_delivery(
+        client.inner, job, scope, connection, 30_000,
+    )
+# The host may now perform bounded side-effect-free preparation when
+# lease.completed is false. It owns local renewal and the platform lease/budget.
+# Stop and join local renewal before the short completion below.
+
+async def apply(cursor, cancel, original_body):
+    cancel.check()
+    await cursor.execute("UPDATE invoices SET paid=true WHERE id=%s", (invoice_id,))
+    cancel.check()
+    return b'{"applied":true}'
+
+async with application_pool.connection() as connection:
+    queued = await complete_owned_processing_delivery(
+        client.inner, job, scope, connection, lease, apply,
+    )
+# The helper fences job.ack after confirmed writes/receipt/claim-removal/intent COMMIT.
+```
+
+Claiming/renewing the local lease does not renew the platform acknowledgment lease.
+Neither helper coordinates preparation or keeps a VM awake. If the attempt expires
+during preparation, new business work must fail platform confirmation and wait for
+valid redelivery. Serialized local renewal uses `lease.renew` with separately leased
+connections; stop on any failure/uncertainty. The per-object guard is not queue
+ownership, and an expired process can remain physically running.
+
+The read-only `lease.completed` snapshot lets the host skip preparation. Completion
+still validates/replays the receipt, skips business code and stages the immutable
+saved callback. Incomplete claims fence the final SQL writes, not external effects;
+those require an outbox/idempotency. Failed preparation leaves the claim to expire
+without automatically choosing a negative action.
+
+After unknown COMMIT, retain the job, discard the closed connection and explicitly
+select receipt-only recovery with `save_owned_processing_completion_intent` on a
+fresh connection. It never claims/renews or prepares. A missing receipt needs the
+owner's explicit policy; it proves neither rollback nor ownership. Repeating normal
+completion is also safe only under the original input and a still-valid local
+fence when no receipt exists. Recovery sends saved callbacks without business work.
+See [the full Python lease contract](../../docs/event-consumer-processing-python.md).
