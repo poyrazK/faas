@@ -36,3 +36,10 @@ Access-protected internal pilot. Bootstrap environment values do not override a
 persisted runtime setting. Deployed settings and provider behavior require live
 operator evidence, which remains deferred. Source/docs in public repositories
 remain discoverable independently of product flags.
+
+The public OpenAPI and generated SDK inventories explicitly exclude the internal
+hosting routes. Route parity must not be satisfied by advertising pilot endpoints.
+Register hosting tables in environment-clone schema inventory with their existing
+configuration/data, account-identity and operational boundaries. Known schema is
+not a qualified hosting-copy strategy: preserve the configuration and artifact
+strategy blockers, and do not clone credentials, domain claims or serving receipts.

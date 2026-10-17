@@ -326,6 +326,7 @@ func TestReviewedSnapshotRejectsChangedConfiguration(t *testing.T) {
 }
 
 func TestPlannedStageHelpDescribesSavedPlan(t *testing.T) {
+	t.Setenv("FAAS_FRONTEND_HOSTING_ENABLED", "1")
 	out := planCLIOutput(t)
 	if code := run([]string{"help", "sites", "deploy"}); code != 0 || !strings.Contains(out.String(), "--plan") || !strings.Contains(out.String(), "--no-promote") || !strings.Contains(out.String(), "--resume-release") {
 		t.Fatal(fmt.Sprintf("help exit=%d: %s", code, out))
