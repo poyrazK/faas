@@ -120,6 +120,12 @@ restart deduplication. Use the retained receipt/intent protocols and
 recovery. The [protected-job example](../examples/event-acknowledgment-node/README.md#observe-coordinated-preparation)
 forwards the option without changing job versions or ownership signals.
 
+For fixed counters and cumulative duration histograms, attach the bound
+[`EventAcknowledgmentPreparationMetrics.record`](event-acknowledgment-node-metrics.md)
+observer. It retains no event identities or payloads and provides recursively
+frozen snapshots for application-owned exporters. Shutdown outcome counts remain
+separate from receipt replay and renewal-failure observations.
+
 No schema, migration, route, generated API or registry change is needed. Local
 validation covers build, generation, packaging and static checks; no tests or
 assertions were added or changed and no local tests were run. Hosted acceptance

@@ -637,3 +637,5 @@ export { inspectEventConsumerProcessing, type EventConsumerProcessingInspection,
   type EventConsumerProcessingInspectionState } from './event-consumer-processing-inspection.js';
 export type { EventAcknowledgmentPreparationEvent, EventAcknowledgmentPreparationStage,
   EventAcknowledgmentPreparationOutcome, EventAcknowledgmentPreparationReason } from './event-acknowledgment-preparation-events.js';
+export { EventAcknowledgmentPreparationMetrics, EVENT_ACKNOWLEDGMENT_PREPARATION_DURATION_BUCKETS_MS,
+  type EventAcknowledgmentPreparationMetricsSnapshot, type EventAcknowledgmentPreparationHistogram } from './event-acknowledgment-preparation-metrics.js';

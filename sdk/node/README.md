@@ -3657,3 +3657,9 @@ renewal-failure and commit-outcome telemetry. Events exclude identities, tokens,
 payloads, prepared data, results and raw errors. Use a passive synchronous adapter;
 throws and accidental async rejections are ignored without changing processing
 outcomes. See [event ordering and observer limits](../../docs/event-acknowledgment-node-telemetry.md).
+
+`EventAcknowledgmentPreparationMetrics` supplies a bound `record` observer for
+`onEvent` and immutable `snapshot()` counters/histograms. Labels and duration
+buckets are fixed, memory stays bounded, and saturation is explicit. Counts are
+process-local observations; duplicate records count again and callback delivery
+remains separate. No exporter dependency is installed. See [counting and exporter semantics](../../docs/event-acknowledgment-node-metrics.md).

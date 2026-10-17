@@ -1,5 +1,7 @@
 # Architecture Decision Records
 
+- [Bounded Node preparation metrics](20261017122416-node-preparation-metrics.md)
+
 - [Node preparation lifecycle telemetry](20261017121310-node-preparation-lifecycle-telemetry.md)
 
 - [Node processing recovery inspection](20261017115623-node-processing-recovery-inspection.md)

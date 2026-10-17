@@ -335,3 +335,36 @@ never awaited or retried. A confirmed receipt/intent commit remains confirmed
 after late cancellation or platform renewal loss. `shutdown` means internal
 renewal work joined, not that observer promises or the platform callback finished.
 Use retained receipt/intent evidence for recovery. See [the lifecycle contract](../../docs/event-acknowledgment-node-telemetry.md).
+
+## Collect preparation metrics
+
+Create a long-lived collector at worker-host initialization and pass its bound
+observer directly to the existing coordinated-job wrapper:
+
+```js
+import { EventAcknowledgmentPreparationMetrics } from '@gregale/sdk-node';
+import { processOwnedCoordinatedDelivery } from './processing.mjs';
+
+const preparationMetrics = new EventAcknowledgmentPreparationMetrics();
+
+await processOwnedCoordinatedDelivery(job, scope, pool, prepare, handler, {
+  preparationTimeoutMs: 60000,
+  processingLeaseMs: 30000,
+  onEvent: preparationMetrics.record,
+});
+
+// Read from an independent scrape/export path; export outside processing callbacks.
+const snapshot = preparationMetrics.snapshot();
+```
+
+Snapshots contain fixed counters and cumulative duration buckets, with detached,
+recursively frozen data. Operation outcomes count shutdown events; local commit
+and receipt replay observations stay separate from platform callback delivery.
+Use the same collector across concurrent jobs only when that aggregation scope
+is intended. Existing version 4 records and ownership signals need no change.
+
+The collector retains no jobs, event IDs, tokens, prepared values, results or
+errors. Recording duplicate events counts again. New instances start at zero,
+and saturation flags indicate safe-integer clipping. The application owns exporter
+temporality, units and process reset detection; no network/export loop is added.
+See [histograms, saturation and observation coverage](../../docs/event-acknowledgment-node-metrics.md).
