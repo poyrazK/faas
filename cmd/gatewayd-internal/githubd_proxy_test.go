@@ -633,3 +633,36 @@ func TestGithubdProxy_AuditEmit_SanitizesDeliveryID(t *testing.T) {
 // (and the production wiring relies on it via the constant).
 var _ = webhookdedupe.TTL
 var _ = time.Now
+
+func TestGithubdProxy_IssueRetryReachesDurableInboxAfterUpstreamFailure(t *testing.T) {
+	secret := []byte("secret")
+	attempts := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts == 1 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+		} else {
+			w.WriteHeader(http.StatusAccepted)
+		}
+	}))
+	defer upstream.Close()
+	proxy := newGithubdProxy(upstream.URL, secret, "", http.NewServeMux(), slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	body := []byte(`{"action":"closed","installation":{"id":42},"repository":{"id":100,"full_name":"owner/repo"},"issue":{"number":42,"html_url":"https://github.com/owner/repo/issues/42"}}`)
+	for i := 0; i < 2; i++ {
+		req := httptest.NewRequest("POST", "/webhooks/github", bytes.NewReader(body))
+		req.Header.Set("X-GitHub-Event", "issues")
+		req.Header.Set("X-GitHub-Delivery", "same-issue-delivery")
+		req.Header.Set("X-Hub-Signature-256", sign(body, secret))
+		out := httptest.NewRecorder()
+		proxy.ServeHTTP(out, req)
+		if i == 0 && out.Code != 503 {
+			t.Fatal(out.Code)
+		}
+		if i == 1 && out.Code != 202 {
+			t.Fatal("retry was acknowledged before reaching inbox", out.Code)
+		}
+	}
+	if attempts != 2 {
+		t.Fatal("edge swallowed retry", attempts)
+	}
+}

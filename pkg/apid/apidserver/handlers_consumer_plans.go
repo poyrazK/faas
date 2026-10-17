@@ -1,6 +1,7 @@
 package apidserver
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
@@ -237,12 +238,12 @@ func (s *server) writePlanAssignment(w http.ResponseWriter, r *http.Request, acc
 // consumerPriceHistory returns the cards that priced one consumer: the app
 // default cards and plan cards, resolved through the consumer's plan
 // assignments (ADR-953).
-func (s *server) consumerPriceHistory(r *http.Request, cards []state.APIConsumerRateCard, accountID, appID, consumerID string) ([]state.APIConsumerRateCard, error) {
+func (s *server) consumerPriceHistory(ctx context.Context, cards []state.APIConsumerRateCard, accountID, appID, consumerID string) ([]state.APIConsumerRateCard, error) {
 	store, ok := s.store.(state.APIConsumerPlanStore)
 	if !ok {
 		return billing.PlanCardTimeline(cards, nil), nil
 	}
-	assignments, err := store.ListAPIConsumerPlanAssignments(r.Context(), accountID, appID, consumerID)
+	assignments, err := store.ListAPIConsumerPlanAssignments(ctx, accountID, appID, consumerID)
 	if err != nil {
 		return nil, err
 	}

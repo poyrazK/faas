@@ -65,8 +65,11 @@ async function fixture(t, { coordinated = false, verify } = {}) {
 
 test('bursts use bounded FIFO admission, reject excess before verification and keep health responsive', { timeout: 12000 }, async t => {
   const { state, start, arrive } = await fixture(t)
-  const requests = [start('/rest/v1/notes?id=eq.0'), start('/rest/v1/notes?id=eq.1')]
-  await until(() => state.calls.length === limits.pool)
+  const requests = []
+  for (let i = 0; i < limits.pool; i++) {
+    requests.push(start(`/rest/v1/notes?id=eq.${i}`))
+    await until(() => state.calls.length === i + 1)
+  }
   for (let i = 0; i < limits.queuedRequests; i++) requests.push(await arrive(`/rest/v1/notes?id=eq.${i + 2}`))
   for (let i = 0; i < 3; i++) {
     const rejected = await start('/rest/v1/rpc/save_note', 'POST').result
@@ -103,6 +106,10 @@ test('bursts use bounded FIFO admission, reject excess before verification and k
     assert.equal(state.calls[i].path, `/notes?id=eq.${i}`)
     state.calls[i].res.end('[]')
     assert.equal((await requests[i].result).status, 200)
+    // Observe this promotion before releasing another slot: separate upstream
+    // connections need not arrive in order when two promotions overlap.
+    const dispatched = Math.min(requests.length, limits.pool + i + 1)
+    await until(() => state.calls.length === dispatched)
   }
   state.auto = true
   assert.equal((await start().result).status, 200, 'capacity recovers after the burst')

@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/onebox-faas/faas/cmd/gregale/automationtemplates"
+	"github.com/onebox-faas/faas/pkg/automationtemplates"
 )
 
 func cmdAutomationsInit(args []string) int {

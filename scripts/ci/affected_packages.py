@@ -15,10 +15,12 @@ package lists derived from `go list`:
            scripts/ci/select_package_tests.py); the mega tier runs it in full
   pinned   the large package a shard owns, whether or not it changed
 
-Global inputs (go.mod, go.sum, this selector and the light workflow) vet
-every package; tests still cover changed packages only. The light tier
-compile-checks importers instead of testing them; the mega tier (ci.yml)
-runs every package's -race tests nightly and before every release.
+A global input (go.mod, go.sum, this selector or the light workflow) puts
+every package in the vet set; tests still cover changed packages only. The
+light tier compile-checks only the importers that use a changed exported
+name (scripts/ci/select_importers.py); the mega tier (ci.yml) vets every
+package and runs every package's -race tests nightly and before every
+release.
 
 Usage:
   git diff --name-only BASE HEAD | scripts/ci/affected_packages.py changed

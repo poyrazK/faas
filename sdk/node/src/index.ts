@@ -202,6 +202,8 @@ export {
 export { preAuthTargetDigest, PRE_AUTH_TARGET_HEADER } from './pre-auth-target.js';
 
 export { createIssueReporter, type IssueContext, type IssueReporterOptions, type IssueSourceMap } from './issues.js';
+export { buildIssueSourceMapManifest, loadIssueSourceMapManifest, type IssueSourceMapManifestOptions } from './issue-source-map-manifest.js';
+export { createIssueContext, type IssueBreadcrumbEntry, type IssueContextSnapshot } from './issue-context.js';
 
 export { GregaleFlags, evaluateFlag, evaluateVariant, flagBucket, flagVariantBucket, flagSubjectBucket, flagSubjectVariantBucket, validFlagSubjectID, GREGALE_FLAG_EVIDENCE_HEADER, GREGALE_FLAG_CONTEXT_HEADER, GREGALE_FLAG_PROPAGATION_HEADER } from './flags.js';
 export type { FlagsBundle, FlagRule, VariantFlagRule, ProgressiveRollout, FeatureFlag, FlagDefinition, BooleanFeatureFlag, VariantFeatureFlag, WeightedVariant, BooleanFlagDecision, VariantFlagDecision, AnyFlagDecision, FlagDecision, FlagEvidence, VariantFlagEvidence, AnyFlagEvidence, FlagRequestHeaders, FlagDecisionOrigin, GregaleFlagsOptions } from './flags.js';
@@ -512,6 +514,12 @@ export { defineDurableEntityClientContract, durableEntityClient, type DurableEnt
 export { DurableSessionAcknowledgementError, decodeDurableSessionAcknowledgement, defineDurableSessionEntity, durableSessionFrame, durableSessionRequestID, decodeDurableSessionCommand, DURABLE_ENTITY_MAX_SESSIONS, type DurableSessionCommand, type DurableSessionFrame, type DurableSessionState } from './durable-entity-session.js';
 export {defineRecoverableDurableSessionEntity, decodeDurableSessionLifecycleCommand, decodeDurableSessionLifecycleState, durableSessionLifecycleRequestID, durableSessionLifecycleFrame, decodeDurableSessionStatus, decodeDurableSessionLifecycleAcknowledgement, type DurableSessionLifecycleCommand, type DurableSessionLifecycleState, type DurableSessionLifecycleFrame} from './durable-entity-session-lifecycle.js';
 
+// Node-only adapters for verified Issues webhook receivers.
+export {
+  ISSUE_SLACK_DEFAULT_EVENTS, ISSUE_SLACK_EVENTS,
+  formatIssueSlackMessage, issueSlackMessageFromWebhook,
+  type IssueSlackEvent, type IssueSlackOptions, type IssueSlackMessage, type VerifiedIssueSlackMessage,
+} from './issue-slack.js';
 export type { CheckedProjectReleaseManifest } from './generated/models/CheckedProjectReleaseManifest.js';
 export type { CheckedProjectReleaseResponse } from './generated/models/CheckedProjectReleaseResponse.js';
 

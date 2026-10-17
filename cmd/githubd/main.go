@@ -261,6 +261,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// dashboard reflects reality on every box.
 	webhookSvc.Ops = ops
 	webhookSvc.Bindings = storeAdapter
+	webhookSvc.IssueCallbacks = storeAdapter.store
 	webhookSvc.Installs = installsAdapter
 	webhookSvc.Source = source
 	webhookSvc.Reconcile = ghReconcile

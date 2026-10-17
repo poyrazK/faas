@@ -47,27 +47,88 @@ const (
 // Mirror logic in cmd/apid/spec_compliance_test.go::routeExclude;
 // keep both in sync.
 var routeExclude = map[string]bool{
+	// ADR-202610171453: default-off internal hosting is absent from public OpenAPI/SDK discovery.
+	"DELETE /v1/internal/hosting/sites/{site}":                                     true,
+	"DELETE /v1/internal/hosting/sites/{site}/automation-credentials/{credential}": true,
+	"DELETE /v1/internal/hosting/sites/{site}/domains/{domain}":                    true,
+	"DELETE /v1/internal/hosting/sites/{site}/oidc-trusts/{trust}":                 true,
+	"DELETE /v1/internal/hosting/sites/{site}/previews/{preview}":                  true,
+	"DELETE /v1/internal/hosting/sites/{site}/releases/{release}":                  true,
+	"GET /v1/internal/hosting/capabilities":                                        true,
+	"GET /v1/internal/hosting/sites":                                               true,
+	"GET /v1/internal/hosting/sites/{site}":                                        true,
+	"GET /v1/internal/hosting/sites/{site}/automation-credentials":                 true,
+	"GET /v1/internal/hosting/sites/{site}/ci/{run}":                               true,
+	"GET /v1/internal/hosting/sites/{site}/cleanup":                                true,
+	"GET /v1/internal/hosting/sites/{site}/diagnostics":                            true,
+	"GET /v1/internal/hosting/sites/{site}/domains":                                true,
+	"GET /v1/internal/hosting/sites/{site}/history":                                true,
+	"GET /v1/internal/hosting/sites/{site}/oidc-trusts":                            true,
+	"GET /v1/internal/hosting/sites/{site}/preview-capacity":                       true,
+	"GET /v1/internal/hosting/sites/{site}/previews":                               true,
+	"GET /v1/internal/hosting/sites/{site}/releases":                               true,
+	"GET /v1/internal/hosting/sites/{site}/runs":                                   true,
+	"GET /v1/internal/hosting/sites/{site}/status":                                 true,
+	"GET /v1/internal/hosting/sites/{site}/traffic":                                true,
+	"GET /v1/internal/hosting/usage":                                               true,
+	"POST /v1/internal/hosting/oidc/exchange":                                      true,
+	"POST /v1/internal/hosting/sites":                                              true,
+	"POST /v1/internal/hosting/sites/{site}/automation-credentials":                true,
+	"POST /v1/internal/hosting/sites/{site}/ci-setup":                              true,
+	"POST /v1/internal/hosting/sites/{site}/ci/{run}/cancel":                       true,
+	"POST /v1/internal/hosting/sites/{site}/ci/{run}/preview":                      true,
+	"POST /v1/internal/hosting/sites/{site}/domains":                               true,
+	"POST /v1/internal/hosting/sites/{site}/domains/{domain}/recover":              true,
+	"POST /v1/internal/hosting/sites/{site}/oidc-trusts":                           true,
+	"POST /v1/internal/hosting/sites/{site}/previews":                              true,
+	"POST /v1/internal/hosting/sites/{site}/promotions":                            true,
+	"POST /v1/internal/hosting/sites/{site}/releases":                              true,
+	"POST /v1/internal/hosting/sites/{site}/releases/{release}/finalize":           true,
+	"POST /v1/internal/hosting/sites/{site}/releases/{release}/uploads":            true,
+	"PUT /v1/internal/hosting/sites/{site}/ci/{run}":                               true,
+	"PUT /v1/internal/hosting/sites/{site}/retention":                              true,
+	"PUT /v1/internal/hosting/sites/{site}/suspension":                             true,
+
+	"POST /integrations/slack/actions":                                                  true, // ADR-1497 signed managed Slack actions.
+	"POST /integrations/slack/events":                                                   true, // ADR-1497 signed Slack uninstall/revocation callbacks.
+	"POST /integrations/slack/issues/{app_id}":                                          true, // ADR-1496 Slack-signed provider callback.
+	"GET /dashboard/apps/{slug}/issues/tracker-notifications":                           true, // authenticated browser-only tracker review/notification surface
+	"POST /dashboard/apps/{slug}/issues/tracker-notifications":                          true, // authenticated browser-only tracker review/notification surface
+	"GET /dashboard/apps/{slug}/issues/tracker-notifications/triage/{notification_id}":  true, // authenticated browser-only tracker review/notification surface
+	"POST /dashboard/apps/{slug}/issues/tracker-notifications/triage/{notification_id}": true, // authenticated browser-only tracker review/notification surface
+	"GET /dashboard/apps/{slug}/issues/tracker-review":                                  true, // authenticated browser-only tracker review/notification surface
+	"GET /dashboard/apps/{slug}/issues/{issue_id}/tracker-sync/{link_id}":               true, // authenticated browser-only tracker review/notification surface
+	"POST /dashboard/apps/{slug}/issues/frequency-alerts":                               true, // authenticated browser-only frequency alert form
+
 	"GET /v1/apps/{slug}/entities/connect":         true, // WebSocket frames require the durable-session transport, not Client.do.
 	"GET /v1/apps/{slug}/entities/session-connect": true, // Browser grant subprotocol and Origin authentication, not Bearer HTTP.
 
-	"GET /v1/account/dpa":                                 true, // public markdown (no Bearer; SDK consumers don't render HTML)
-	"GET /v1/apps/{slug}/tasks/{id}/attach":               true, // ADR-1037 WebSocket attach; the CLI drives it directly
-	"GET /v1/jobs/{name}/runs/{id}/tasks/{idx}/attach":    true, // ADR-1330 WebSocket attach; the CLI drives it directly
-	"POST /v1/webhooks/stripe":                            true, // HMAC-signed webhook; outside the Bearer-auth surface
-	"POST /v1/webhooks/resend":                            true, // Svix-signed webhook (issue #246 / ADR-115); outside the Bearer-auth surface
-	"POST /v1/hooks/{token}":                              true, // ADR-212 provider-signed ingress; outside the Bearer-auth SDK
-	"GET /v1/openapi.yaml":                                true, // metadata
-	"GET /v1/openapi.json":                                true, // metadata
-	"GET /docs":                                           true, // anonymous Swagger UI metadata page
-	"GET /v1/internal/metrics/targets":                    true, // issue #1219 — loopback Prometheus HTTP-SD endpoint
-	"GET /v1/internal/metrics/promtail-targets":           true, // issue #274 — loopback Promtail HTTP-SD endpoint
-	"POST /v1/cli-auth/code":                              true, // anonymous device-code (CLI uses wrapper)
-	"POST /v1/cli-auth/exchange":                          true,
-	"GET /status/slo.json":                                true,
-	"GET /status":                                         true,
-	"POST /dashboard/apps/{slug}/crons/{id}/policy":       true, // HTML form, scheduled-work policy editor (ADR-385)
-	"POST /dashboard/jobs/{name}/policy":                  true, // HTML form, scheduled-work policy editor (ADR-385)
-	"POST /dashboard/jobs/{name}/runs/{id}/replay-failed": true, // HTML form, failed job partition replay (ADR-385)
+	"GET /v1/account/dpa":                                             true, // public markdown (no Bearer; SDK consumers don't render HTML)
+	"GET /v1/apps/{slug}/tasks/{id}/attach":                           true, // ADR-1037 WebSocket attach; the CLI drives it directly
+	"GET /v1/jobs/{name}/runs/{id}/tasks/{idx}/attach":                true, // ADR-1330 WebSocket attach; the CLI drives it directly
+	"POST /v1/webhooks/stripe":                                        true, // HMAC-signed webhook; outside the Bearer-auth surface
+	"POST /v1/webhooks/resend":                                        true, // Svix-signed webhook (issue #246 / ADR-115); outside the Bearer-auth surface
+	"POST /v1/hooks/{token}":                                          true, // ADR-212 provider-signed ingress; outside the Bearer-auth SDK
+	"GET /v1/openapi.yaml":                                            true, // metadata
+	"GET /v1/openapi.json":                                            true, // metadata
+	"GET /docs":                                                       true, // anonymous Swagger UI metadata page
+	"GET /v1/internal/metrics/targets":                                true, // issue #1219 — loopback Prometheus HTTP-SD endpoint
+	"GET /v1/internal/metrics/promtail-targets":                       true, // issue #274 — loopback Promtail HTTP-SD endpoint
+	"POST /v1/cli-auth/code":                                          true, // anonymous device-code (CLI uses wrapper)
+	"POST /v1/cli-auth/exchange":                                      true,
+	"GET /status/slo.json":                                            true,
+	"GET /status":                                                     true,
+	"POST /dashboard/apps/{slug}/crons/{id}/policy":                   true, // HTML form, scheduled-work policy editor (ADR-385)
+	"POST /dashboard/jobs/{name}/policy":                              true, // HTML form, scheduled-work policy editor (ADR-385)
+	"POST /dashboard/jobs/{name}/runs/{id}/replay-failed":             true, // HTML form, failed job partition replay (ADR-385)
+	"POST /dashboard/apps/{slug}/issues/{issue_id}/tracker-sync":      true, // ADR-1474: authenticated HTML review/recovery form with named CSRF.
+	"POST /dashboard/apps/{slug}/issues/{issue_id}/linear-connection": true, // ADR-1474: owner HTML credential form with session MFA and CSRF.
+	"POST /hooks/issue-trackers/linear/{app_id}":                      true, // ADR-1476: raw-body HMAC provider protocol, outside the Bearer-auth DTO/SDK surface.
+	"GET /dashboard/apps/{slug}/issues/lifecycle-alerts":              true, // ADR-1499: authenticated HTML policy editor; JSON API remains checked.
+	"POST /dashboard/apps/{slug}/issues/lifecycle-alerts":             true, // ADR-1499: session/MFA/CSRF HTML adapter for public update/preview APIs.
+	"GET /dashboard/apps/{slug}/issues/slack-routing":                 true, // ADR-1498 owner-only Slack routing editor.
+	"GET /oauth/slack/callback":                                       true, // ADR-1497 owner session and one-use state confirmation.
+	"GET /oauth/linear/callback":                                      true, // ADR-1478: owner session OAuth callback and HTML team picker with PKCE and one-use state.
 
 	// Issue #555 trace endpoint. Operator-only surface (X-Faas-Trace-Auth
 	// header), not a customer-Bearer-auth endpoint. The SDK does not
@@ -440,7 +501,28 @@ var methodRouteMap = map[string]string{
 	"DELETE /v1/execution-artifact-grants/{id}":                                "RevokeExecutionArtifactGrant",
 	"POST /v1/apps/{slug}/issue-events":                                        "IngestIssueEvent",
 	"POST /v1/apps/{slug}/issue-events/otlp/{signal}":                          "IngestIssueOTLP",
+	"GET /v1/apps/{slug}/issues/{issue_id}/tracker-links":                      "ListIssueTrackerLinks",
+	"POST /v1/apps/{slug}/issues/{issue_id}/tracker-links":                     "PutIssueTrackerLink",
+	"DELETE /v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}":         "DeleteIssueTrackerLink",
+	"GET /v1/apps/{slug}/issue-teams":                                          "ListIssueTeams",
+	"GET /v1/apps/{slug}/issue-teams/{team_key}":                               "GetIssueTeam",
+	"PUT /v1/apps/{slug}/issue-teams/{team_key}":                               "PutIssueTeam",
+	"DELETE /v1/apps/{slug}/issue-teams/{team_key}":                            "DeleteIssueTeam",
+	"GET /v1/apps/{slug}/issue-saved-views":                                    "ListIssueSavedViews",
+	"GET /v1/apps/{slug}/issue-saved-views/{view_key}":                         "GetIssueSavedView",
+	"PUT /v1/apps/{slug}/issue-saved-views/{view_key}":                         "PutIssueSavedView",
+	"DELETE /v1/apps/{slug}/issue-saved-views/{view_key}":                      "DeleteIssueSavedView",
+	"GET /v1/apps/{slug}/issue-release-comparison":                             "CompareIssueReleases",
+	"POST /v1/apps/{slug}/issues/bulk-actions":                                 "BulkActOnIssues",
+	"PUT /v1/apps/{slug}/deployments/{deployment_id}/issue-source-maps":        "PublishIssueSourceMaps",
+	"GET /v1/apps/{slug}/deployments/{deployment_id}/issue-source-maps":        "GetIssueSourceMaps",
+	"DELETE /v1/apps/{slug}/deployments/{deployment_id}/issue-source-maps":     "RetireIssueSourceMaps",
 	"GET /v1/apps/{slug}/issues":                                               "ListIssues",
+	"GET /v1/apps/{slug}/issue-lifecycle-alert-policy":                         "GetIssueLifecycleAlertPolicy",
+	"PUT /v1/apps/{slug}/issue-lifecycle-alert-policy":                         "SetIssueLifecycleAlertPolicy",
+	"POST /v1/apps/{slug}/issue-lifecycle-alert-policy/preview":                "PreviewIssueLifecycleAlert",
+	"GET /v1/apps/{slug}/issue-frequency-alert-policy":                         "GetIssueFrequencyAlertPolicy",
+	"PUT /v1/apps/{slug}/issue-frequency-alert-policy":                         "SetIssueFrequencyAlertPolicy",
 	"GET /v1/apps/{slug}/issue-impact-alert-policy":                            "GetIssueImpactAlertPolicy",
 	"PUT /v1/apps/{slug}/issue-impact-alert-policy":                            "SetIssueImpactAlertPolicy",
 	"GET /v1/apps/{slug}/issue-ownership-rules":                                "GetIssueOwnershipRules",
@@ -972,6 +1054,19 @@ var methodRouteMap = map[string]string{
 	"PUT /v1/apps/{slug}/consumer-plans/{plan_id}":                                          "UpdateAPIConsumerPlanLimits",
 	"GET /v1/apps/{slug}/consumers/{consumer_id}/plan-assignments":                          "ListAPIConsumerPlanAssignments",
 	"POST /v1/apps/{slug}/consumers/{consumer_id}/plan-assignments":                         "AssignAPIConsumerPlan",
+	"GET /v1/apps/{slug}/consumers/{consumer_id}/credits":                                   "ListAPIConsumerCredits",
+	"POST /v1/apps/{slug}/consumers/{consumer_id}/credits":                                  "CreateAPIConsumerCredit",
+	"DELETE /v1/apps/{slug}/consumers/{consumer_id}/credits/{credit_id}":                    "VoidAPIConsumerCredit",
+	"GET /v1/apps/{slug}/consumers/{consumer_id}/spend-cap":                                 "GetAPIConsumerSpendCap",
+	"PUT /v1/apps/{slug}/consumers/{consumer_id}/spend-cap":                                 "PutAPIConsumerSpendCap",
+	"DELETE /v1/apps/{slug}/consumers/{consumer_id}/spend-cap":                              "DeleteAPIConsumerSpendCap",
+	"GET /v1/apps/{slug}/consumers/{consumer_id}/trial":                                     "GetAPIConsumerTrial",
+	"PUT /v1/apps/{slug}/consumers/{consumer_id}/trial":                                     "PutAPIConsumerTrial",
+	"DELETE /v1/apps/{slug}/consumers/{consumer_id}/trial":                                  "EndAPIConsumerTrial",
+	"GET /v1/apps/{slug}/consumer-billing-policy":                                           "GetAPIConsumerBillingPolicy",
+	"PUT /v1/apps/{slug}/consumer-billing-policy":                                           "PutAPIConsumerBillingPolicy",
+	"DELETE /v1/apps/{slug}/consumer-billing-policy":                                        "DeleteAPIConsumerBillingPolicy",
+	"GET /v1/apps/{slug}/consumer-overdue-holds":                                            "ListAPIConsumerOverdueHolds",
 	"GET /v1/apps/{slug}/consumers/{consumer_id}/usage-alerts":                              "ListAPIConsumerUsageAlerts",
 	"GET /v1/apps/{slug}/consumers/{consumer_id}/usage-statements":                          "ListAPIConsumerUsageStatements",
 	"POST /v1/apps/{slug}/consumers/{consumer_id}/usage-statements":                         "CreateAPIConsumerUsageStatement",
@@ -979,6 +1074,8 @@ var methodRouteMap = map[string]string{
 	"POST /v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}/finalize": "FinalizeAPIConsumerUsageStatement",
 	"GET /v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}/handoff":   "GetAPIConsumerUsageStatementHandoff",
 	"POST /v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}/handoff":  "ClaimAPIConsumerUsageStatement",
+	"GET /v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}/invoice":   "GetAPIConsumerUsageStatementInvoice",
+	"POST /v1/apps/{slug}/consumers/{consumer_id}/usage-statements/{statement_id}/invoice":  "ExportAPIConsumerUsageStatementInvoice",
 	"DELETE /v1/apps/{slug}/consumers/{consumer_id}":                                        "RevokeAPIConsumer",
 	"GET /v1/apps/{slug}/consumers/{consumer_id}/keys":                                      "ListConsumerKeys",
 	"POST /v1/apps/{slug}/consumers/{consumer_id}/keys":                                     "CreateConsumerKey",
@@ -1020,67 +1117,85 @@ var methodRouteMap = map[string]string{
 	"GET /v1/jobs/{name}/runs/{id}/tasks/{idx}/logs/stream":                   "StreamJobTaskLogs",
 	// ADR-081 durable workflows. The SDK uses resource verbs while the
 	// paths include app and run placeholders, so keep the mapping explicit.
-	"POST /v1/apps/{slug}/workflows/{name}/runs":                             "RunWorkflow",
-	"GET /v1/apps/{slug}/workflows/runs":                                     "ListWorkflowRuns",
-	"POST /v1/apps/{slug}/workflows/runs:cancel-preview":                     "PreviewUnstartedWorkflowRunCancellations",
-	"POST /v1/apps/{slug}/workflows/runs:cancel-queued":                      "CancelUnstartedWorkflowRuns",
-	"GET /v1/apps/{slug}/automations:publish-policy":                         "GetAutomationPublishPolicy",
-	"PUT /v1/apps/{slug}/automations:publish-policy":                         "SetAutomationPublishPolicy",
-	"POST /v1/apps/{slug}/automations/{name}/publish-check":                  "CheckAutomationPublication",
-	"GET /v1/apps/{slug}/automations/{name}/failure-policy":                  "GetAutomationFailurePolicy",
-	"PUT /v1/apps/{slug}/automations/{name}/failure-policy":                  "SetAutomationFailurePolicy",
-	"POST /v1/apps/{slug}/automations/{name}/failure-policy/resume":          "ResumeAutomationFailurePause",
-	"GET /v1/apps/{slug}/automations":                                        "ListAutomations",
-	"GET /v1/apps/{slug}/automations/{name}":                                 "GetAutomation",
-	"GET /v1/apps/{slug}/automations/{name}/health":                          "GetAutomationHealth",
-	"GET /v1/apps/{slug}/automations/{name}/revisions":                       "ListAutomationRevisions",
-	"GET /v1/apps/{slug}/automations/{name}/revisions/{version}":             "GetAutomationRevision",
-	"POST /v1/apps/{slug}/automations/{name}/revisions/{version}/restore":    "RestoreAutomationRevision",
-	"PUT /v1/apps/{slug}/automations/{name}":                                 "SaveAutomationDraft",
-	"DELETE /v1/apps/{slug}/automations/{name}":                              "DeleteAutomation",
-	"POST /v1/apps/{slug}/automations:simulate":                              "SimulateAutomation",
-	"POST /v1/apps/{slug}/automations:validate":                              "ValidateAutomation",
-	"POST /v1/apps/{slug}/automations/{name}/publish":                        "PublishAutomation",
-	"PUT /v1/apps/{slug}/automations/{name}/enabled":                         "SetAutomationEnabled",
-	"GET /v1/apps/{slug}/workflows/schedules":                                "ListWorkflowSchedules",
-	"GET /v1/apps/{slug}/workflows/schedules/{name}/preview":                 "GetWorkflowSchedulePreview",
-	"GET /v1/apps/{slug}/workflows/schedules/occurrences":                    "ListWorkflowScheduleOccurrences",
-	"POST /v1/apps/{slug}/workflows/schedules/occurrences:replay-preview":    "PreviewWorkflowScheduleReplays",
-	"POST /v1/apps/{slug}/workflows/schedules/occurrences:replay":            "ReplayWorkflowScheduleOccurrences",
-	"POST /v1/workflows/runs/{id}/resume":                                    "ResumeWorkflowRun",
-	"GET /v1/workflows/runs/{id}/resumes":                                    "ListWorkflowResumes",
-	"GET /v1/workflows/runs/{id}":                                            "GetWorkflowRun",
-	"GET /v1/workflows/runs/{id}/diagnostics":                                "GetWorkflowRunDiagnostics",
-	"GET /v1/workflows/runs/{id}/steps":                                      "ListWorkflowSteps",
-	"GET /v1/workflows/runs/{id}/steps/{step}/attempts":                      "ListWorkflowStepAttempts",
-	"POST /v1/workflows/runs/{id}/steps/{step}/retry":                        "RetryWorkflowStep",
-	"GET /v1/workflows/runs/{id}/callbacks":                                  "ListWorkflowCallbacks",
-	"POST /v1/workflows/runs/{id}/callbacks/{callback_id}":                   "CompleteWorkflowCallback",
-	"PUT /v1/workflows/runs/{id}/callbacks/{callback_id}/webhook-binding":    "PutWorkflowCallbackWebhookBinding",
-	"GET /v1/workflows/runs/{id}/callbacks/{callback_id}/webhook-binding":    "GetWorkflowCallbackWebhookBinding",
-	"DELETE /v1/workflows/runs/{id}/callbacks/{callback_id}/webhook-binding": "DeleteWorkflowCallbackWebhookBinding",
-	"POST /v1/workflows/runs/{id}/events":                                    "SendWorkflowEvent",
-	"POST /v1/workflows/runs/{id}/cancel":                                    "CancelWorkflowRun",
-	"POST /v1/apps/{slug}/events/verify-publication":                         "VerifyAppEventPublication",
-	"GET /v1/apps/{slug}/events/publish-status":                              "GetAppEventPublishStatus",
-	"POST /v1/apps/{slug}/events:publish":                                    "PublishAppEvent",
-	"POST /v1/events:publish-batch":                                          "PublishEventBatch",
-	"POST /v1/events:publish":                                                "PublishEvent",
-	"POST /v1/events:preview":                                                "PreviewEvent",
-	"POST /v1/event-schemas":                                                 "RegisterEventSchema",
-	"GET /v1/event-schemas":                                                  "ListEventSchemas",
-	"GET /v1/usage/summary":                                                  "UsageSummary",
-	"GET /v1/usage":                                                          "GetUsage",
-	"GET /v1/usage/daily":                                                    "UsageDaily",
-	"GET /v1/usage/storage":                                                  "StorageUsage",
-	"GET /v1/invoices":                                                       "ListInvoices",
-	"GET /v1/billing/focus":                                                  "ExportFOCUSInvoices",
-	"POST /v1/invoices/{id}/refresh":                                         "RefreshInvoiceFacts",
-	"POST /v1/invoices/backfill":                                             "BackfillInvoiceHistory",
-	"POST /v1/invocations/{id}/replay":                                       "ReplayInvocation", // issue #315 — re-issue a failed/dead_letter invocation
-	"GET /v1/apps/{slug}/secrets":                                            "ListSecrets",
-	"GET /v1/domains":                                                        "ListDomains",
-	"POST /v1/domains":                                                       "CreateDomain",
+	"GET /v1/apps/{slug}/automations/{name}/live-baselines":                                        "ListAutomationLiveBaselines",
+	"GET /v1/apps/{slug}/automations/{name}/live-baselines/{baseline}":                             "GetAutomationLiveBaseline",
+	"GET /v1/apps/{slug}/automations/{name}/live-baselines/{baseline}/history":                     "GetAutomationLiveBaselineHistory",
+	"PUT /v1/apps/{slug}/automations/{name}/live-baselines/{baseline}/promotions/{promotion_id}":   "PromoteAutomationLiveBaseline",
+	"PUT /v1/apps/{slug}/automations/{name}/live-baselines/{baseline}/retirements/{retirement_id}": "RetireAutomationLiveBaseline",
+	"GET /v1/apps/{slug}/automations/{name}/live-suites/{suite_id}/compare/{baseline_id}":          "CompareAutomationLiveSuites",
+
+	"POST /v1/apps/{slug}/workflows/{name}/runs":                                "RunWorkflow",
+	"GET /v1/apps/{slug}/workflows/runs":                                        "ListWorkflowRuns",
+	"POST /v1/apps/{slug}/workflows/runs:cancel-preview":                        "PreviewUnstartedWorkflowRunCancellations",
+	"POST /v1/apps/{slug}/workflows/runs:cancel-queued":                         "CancelUnstartedWorkflowRuns",
+	"GET /v1/apps/{slug}/automations:publish-policy":                            "GetAutomationPublishPolicy",
+	"PUT /v1/apps/{slug}/automations:publish-policy":                            "SetAutomationPublishPolicy",
+	"GET /v1/apps/{slug}/automations/{name}/live-verifications":                 "ListAutomationLiveVerifications",
+	"GET /v1/apps/{slug}/automations/{name}/live-suites":                        "ListAutomationLiveSuites",
+	"GET /v1/apps/{slug}/automations/{name}/live-suites/{suite_id}":             "GetAutomationLiveSuite",
+	"PUT /v1/apps/{slug}/automations/{name}/live-suites/{suite_id}":             "SaveAutomationLiveSuite",
+	"POST /v1/apps/{slug}/automations/{name}/live-suites/{suite_id}/start":      "StartAutomationLiveSuite",
+	"POST /v1/apps/{slug}/automations/{name}/live-suites/{suite_id}/advance":    "AdvanceAutomationLiveSuite",
+	"POST /v1/apps/{slug}/automations/{name}/live-verifications":                "StartAutomationLiveVerification",
+	"GET /v1/apps/{slug}/automations/{name}/live-verifications/{run_id}":        "GetAutomationLiveVerification",
+	"POST /v1/apps/{slug}/automations/{name}/live-verifications/{run_id}/check": "CheckAutomationLiveVerification",
+	"PUT /v1/apps/{slug}/automations/{name}/tests":                              "SaveAutomationTestSuite",
+	"POST /v1/apps/{slug}/automations/{name}/tests/run":                         "RunAutomationTests",
+	"POST /v1/apps/{slug}/automations/{name}/publish-check":                     "CheckAutomationPublication",
+	"GET /v1/apps/{slug}/automations/{name}/failure-policy":                     "GetAutomationFailurePolicy",
+	"PUT /v1/apps/{slug}/automations/{name}/failure-policy":                     "SetAutomationFailurePolicy",
+	"POST /v1/apps/{slug}/automations/{name}/failure-policy/resume":             "ResumeAutomationFailurePause",
+	"GET /v1/apps/{slug}/automations":                                           "ListAutomations",
+	"GET /v1/apps/{slug}/automations/{name}":                                    "GetAutomation",
+	"GET /v1/apps/{slug}/automations/{name}/health":                             "GetAutomationHealth",
+	"GET /v1/apps/{slug}/automations/{name}/revisions":                          "ListAutomationRevisions",
+	"GET /v1/apps/{slug}/automations/{name}/revisions/{version}":                "GetAutomationRevision",
+	"POST /v1/apps/{slug}/automations/{name}/revisions/{version}/restore":       "RestoreAutomationRevision",
+	"PUT /v1/apps/{slug}/automations/{name}":                                    "SaveAutomationDraft",
+	"DELETE /v1/apps/{slug}/automations/{name}":                                 "DeleteAutomation",
+	"POST /v1/apps/{slug}/automations:simulate":                                 "SimulateAutomation",
+	"POST /v1/apps/{slug}/automations:validate":                                 "ValidateAutomation",
+	"POST /v1/apps/{slug}/automations/{name}/publish":                           "PublishAutomation",
+	"PUT /v1/apps/{slug}/automations/{name}/enabled":                            "SetAutomationEnabled",
+	"GET /v1/apps/{slug}/workflows/schedules":                                   "ListWorkflowSchedules",
+	"GET /v1/apps/{slug}/workflows/schedules/{name}/preview":                    "GetWorkflowSchedulePreview",
+	"GET /v1/apps/{slug}/workflows/schedules/occurrences":                       "ListWorkflowScheduleOccurrences",
+	"POST /v1/apps/{slug}/workflows/schedules/occurrences:replay-preview":       "PreviewWorkflowScheduleReplays",
+	"POST /v1/apps/{slug}/workflows/schedules/occurrences:replay":               "ReplayWorkflowScheduleOccurrences",
+	"POST /v1/workflows/runs/{id}/resume":                                       "ResumeWorkflowRun",
+	"GET /v1/workflows/runs/{id}/resumes":                                       "ListWorkflowResumes",
+	"GET /v1/workflows/runs/{id}":                                               "GetWorkflowRun",
+	"GET /v1/workflows/runs/{id}/diagnostics":                                   "GetWorkflowRunDiagnostics",
+	"GET /v1/workflows/runs/{id}/steps":                                         "ListWorkflowSteps",
+	"GET /v1/workflows/runs/{id}/steps/{step}/attempts":                         "ListWorkflowStepAttempts",
+	"POST /v1/workflows/runs/{id}/steps/{step}/retry":                           "RetryWorkflowStep",
+	"GET /v1/workflows/runs/{id}/callbacks":                                     "ListWorkflowCallbacks",
+	"POST /v1/workflows/runs/{id}/callbacks/{callback_id}":                      "CompleteWorkflowCallback",
+	"PUT /v1/workflows/runs/{id}/callbacks/{callback_id}/webhook-binding":       "PutWorkflowCallbackWebhookBinding",
+	"GET /v1/workflows/runs/{id}/callbacks/{callback_id}/webhook-binding":       "GetWorkflowCallbackWebhookBinding",
+	"DELETE /v1/workflows/runs/{id}/callbacks/{callback_id}/webhook-binding":    "DeleteWorkflowCallbackWebhookBinding",
+	"POST /v1/workflows/runs/{id}/events":                                       "SendWorkflowEvent",
+	"POST /v1/workflows/runs/{id}/cancel":                                       "CancelWorkflowRun",
+	"POST /v1/apps/{slug}/events/verify-publication":                            "VerifyAppEventPublication",
+	"GET /v1/apps/{slug}/events/publish-status":                                 "GetAppEventPublishStatus",
+	"POST /v1/apps/{slug}/events:publish":                                       "PublishAppEvent",
+	"POST /v1/events:publish-batch":                                             "PublishEventBatch",
+	"POST /v1/events:publish":                                                   "PublishEvent",
+	"POST /v1/events:preview":                                                   "PreviewEvent",
+	"POST /v1/event-schemas":                                                    "RegisterEventSchema",
+	"GET /v1/event-schemas":                                                     "ListEventSchemas",
+	"GET /v1/usage/summary":                                                     "UsageSummary",
+	"GET /v1/usage":                                                             "GetUsage",
+	"GET /v1/usage/daily":                                                       "UsageDaily",
+	"GET /v1/usage/storage":                                                     "StorageUsage",
+	"GET /v1/invoices":                                                          "ListInvoices",
+	"GET /v1/billing/focus":                                                     "ExportFOCUSInvoices",
+	"POST /v1/invoices/{id}/refresh":                                            "RefreshInvoiceFacts",
+	"POST /v1/invoices/backfill":                                                "BackfillInvoiceHistory",
+	"POST /v1/invocations/{id}/replay":                                          "ReplayInvocation", // issue #315 — re-issue a failed/dead_letter invocation
+	"GET /v1/apps/{slug}/secrets":                                               "ListSecrets",
+	"GET /v1/domains":                                                           "ListDomains",
+	"POST /v1/domains":                                                          "CreateDomain",
 
 	// Issue #396 / ADR-045 PR 3 — alert rules. The auto-derivation
 	// would produce names with literal hyphens for the rotate-secret
@@ -1199,6 +1314,12 @@ var methodRouteMap = map[string]string{
 	"GET /v1/account/platform-tenants/{id}/activity":                                      "ListPlatformTenantActivity",
 	"GET /v1/account/platform-tenants/{id}/rate-cards":                                    "ListPlatformTenantRateCards",
 	"POST /v1/account/platform-tenants/{id}/rate-cards":                                   "CreatePlatformTenantRateCard",
+	"GET /v1/account/platform-tenant-plans":                                               "ListPlatformTenantPlans",
+	"POST /v1/account/platform-tenant-plans":                                              "CreatePlatformTenantPlan",
+	"GET /v1/account/platform-tenant-plans/{plan_id}":                                     "GetPlatformTenantPlan",
+	"PUT /v1/account/platform-tenant-plans/{plan_id}":                                     "UpdatePlatformTenantPlan",
+	"GET /v1/account/platform-tenants/{id}/plan-assignments":                              "ListPlatformTenantPlanAssignments",
+	"POST /v1/account/platform-tenants/{id}/plan-assignments":                             "AssignPlatformTenantPlan",
 	"GET /v1/account/platform-tenants/{id}/credentials":                                   "ListPlatformTenantCredentials",
 	"POST /v1/account/platform-tenants/{id}/credentials/apply":                            "ApplyPlatformTenantCredentials",
 	"GET /v1/account/platform-tenants/{id}/credential-policy":                             "GetPlatformTenantCredentialPolicy",
@@ -1247,6 +1368,22 @@ var methodRouteMap = map[string]string{
 	"POST /v1/account/platform-tenants/{id}/usage-statements/{statement_id}/finalize":     "FinalizePlatformTenantStatement",
 	"GET /v1/account/platform-tenants/{id}/usage-statements/{statement_id}/handoff":       "GetPlatformTenantStatementHandoff",
 	"POST /v1/account/platform-tenants/{id}/usage-statements/{statement_id}/handoff":      "ClaimPlatformTenantStatement",
+	"GET /v1/account/platform-tenants/{id}/usage-statements/{statement_id}/invoice":       "GetPlatformTenantStatementInvoice",
+	"POST /v1/account/platform-tenants/{id}/usage-statements/{statement_id}/invoice":      "ExportPlatformTenantStatementInvoice",
+	"GET /v1/account/billing-connections/{provider}":                                      "GetBillingConnection",
+	"PUT /v1/account/billing-connections/{provider}":                                      "PutBillingConnection",
+	"DELETE /v1/account/billing-connections/{provider}":                                   "DeleteBillingConnection",
+	"POST /v1/account/billing-runs":                                                       "CreateBillingRun",
+	"GET /v1/account/billing-runs":                                                        "ListBillingRuns",
+	"GET /v1/account/billing-runs/{id}":                                                   "GetBillingRun",
+	"GET /v1/account/billing-runs/{id}/items":                                             "ListBillingRunItems",
+	"GET /v1/account/billing-run-schedule":                                                "GetBillingRunSchedule",
+	"PUT /v1/account/billing-run-schedule":                                                "PutBillingRunSchedule",
+	"DELETE /v1/account/billing-run-schedule":                                             "DeleteBillingRunSchedule",
+	"GET /v1/account/statement-invoices":                                                  "ListStatementInvoices",
+	"GET /v1/consumer-billing/{slug}":                                                     "GetConsumerBillingSummary",
+	"GET /v1/consumer-billing/{slug}/usage":                                               "GetConsumerBillingUsage",
+	"GET /v1/consumer-billing/{slug}/statements":                                          "ListConsumerBillingStatements",
 	"GET /v1/account/platform-tenants/{id}/webhooks":                                      "ListPlatformTenantWebhooks",
 	"POST /v1/account/platform-tenants/{id}/webhooks":                                     "CreatePlatformTenantWebhook",
 	"GET /v1/account/platform-tenants/{id}/webhooks/{webhook_id}":                         "GetPlatformTenantWebhook",
@@ -2022,6 +2159,17 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/workflow-readiness/subscriptions/{id}/notifications/{sequence}":            "CheckAccountWorkflowReadinessNotification",
 	"PATCH /v1/platform-tenant-self/workflow-readiness/subscriptions/{id}/notifications/{sequence}": "UpdatePlatformTenantSelfWorkflowReadinessNotification",
 	"GET /v1/platform-tenant-self/workflow-readiness/subscriptions/{id}/notifications/{sequence}":   "CheckPlatformTenantSelfWorkflowReadinessNotification",
+
+	"GET /v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/native-status":         "GetNativeIssueTrackerStatus",
+	"POST /v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/native-status":        "UpdateNativeIssueTrackerStatus",
+	"GET /v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/native-linear-status":  "GetNativeLinearIssueTrackerStatus",
+	"POST /v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/native-linear-status": "UpdateNativeLinearIssueTrackerStatus",
+	"POST /v1/apps/{slug}/issues/{issue_id}/native-linear-tickets":                        "CreateNativeLinearIssueTicket",
+	"GET /v1/apps/{slug}/issue-tracker-linear-connection":                                 "GetIssueTrackerLinearConnection",
+	"PUT /v1/apps/{slug}/issue-tracker-linear-connection":                                 "UpdateIssueTrackerLinearConnection",
+	"GET /v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/auto-sync":             "GetIssueTrackerAutoSync",
+	"PUT /v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/auto-sync":             "UpdateIssueTrackerAutoSync",
+	"POST /v1/apps/{slug}/issues/{issue_id}/native-tickets":                               "CreateNativeIssueTicket",
 }
 
 func main() {

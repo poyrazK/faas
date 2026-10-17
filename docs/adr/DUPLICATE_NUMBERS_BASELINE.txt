@@ -212,6 +212,3 @@
 1258
 1259
 1260
-# Date-prefixed ADRs already merged on main at 4de4828ae.
-20261015
-20261016

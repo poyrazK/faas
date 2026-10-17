@@ -531,6 +531,54 @@ func EvaluateEventConsumerDeliverySLO(h EventConsumerDeliveryHealth, options Eve
 	return api.EvaluateEventConsumerDeliverySLO(h, options)
 }
 
+// Deployment-bound source-map artifact publication and verified occurrence metadata.
+type IssueSourceMapArtifact = api.IssueSourceMapArtifact
+type IssueSourceMapManifest = api.IssueSourceMapManifest
+type PublishIssueSourceMapsRequest = api.PublishIssueSourceMapsRequest
+type IssueSourceMapsMetadata = api.IssueSourceMapsMetadata
+type IssueSymbolicationResult = api.IssueSymbolicationResult
+
+// IssueBreadcrumb is bounded reported operational context.
+type IssueBreadcrumb = api.IssueBreadcrumb
+
+type IssueReleaseHealth = api.IssueReleaseHealth
+type IssueReleaseComparison = api.IssueReleaseComparison
+type BulkIssueActionRequest = api.BulkIssueActionRequest
+type BulkIssueActionResponse = api.BulkIssueActionResponse
+
+type BulkIssueLifecycleAction = api.BulkIssueLifecycleAction
+
+type IssueSavedViewFilters = api.IssueSavedViewFilters
+type IssueSavedView = api.IssueSavedView
+type PutIssueSavedViewRequest = api.PutIssueSavedViewRequest
+type ListIssueSavedViewsResponse = api.ListIssueSavedViewsResponse
+
+type IssueTeam = api.IssueTeam
+type PutIssueTeamRequest = api.PutIssueTeamRequest
+type ListIssueTeamsResponse = api.ListIssueTeamsResponse
+
+type PutIssueTrackerLinkRequest = api.PutIssueTrackerLinkRequest
+type IssueTrackerLink = api.IssueTrackerLink
+type ListIssueTrackerLinksResponse = api.ListIssueTrackerLinksResponse
+
+type IssueTrackerProviderStatus = api.IssueTrackerProviderStatus
+type NativeIssueTrackerStatus = api.NativeIssueTrackerStatus
+type UpdateNativeIssueTrackerStatusRequest = api.UpdateNativeIssueTrackerStatusRequest
+
+type CreateNativeIssueTicketRequest = api.CreateNativeIssueTicketRequest
+type NativeIssueTicketResult = api.NativeIssueTicketResult
+
+type IssueTrackerAutoSync = api.IssueTrackerAutoSync
+type UpdateIssueTrackerAutoSyncRequest = api.UpdateIssueTrackerAutoSyncRequest
+
+type IssueTrackerLinearConnection = api.IssueTrackerLinearConnection
+type UpdateIssueTrackerLinearConnectionRequest = api.UpdateIssueTrackerLinearConnectionRequest
+
+type CreateNativeLinearIssueTicketRequest = api.CreateNativeLinearIssueTicketRequest
+
+type NativeLinearIssueTrackerStatus = api.NativeLinearIssueTrackerStatus
+type UpdateNativeLinearIssueTrackerStatusRequest = api.UpdateNativeLinearIssueTrackerStatusRequest
+
 type EventExecutionReconciliation = api.EventExecutionReconciliation
 
 type EventExecutionLineageCase = api.EventExecutionLineageCase
@@ -624,4 +672,12 @@ type (
 	EventDeadlineExplanation          = api.EventDeadlineExplanation
 	EventDeadlineRoutingExplanation   = api.EventDeadlineRoutingExplanation
 	EventDeadlineOrderingExplanation  = api.EventDeadlineOrderingExplanation
+)
+
+// Lifecycle alert policy and draft preview types.
+type (
+	IssueLifecycleAlertPolicy              = api.IssueLifecycleAlertPolicy
+	UpdateIssueLifecycleAlertPolicyRequest = api.UpdateIssueLifecycleAlertPolicyRequest
+	PreviewIssueLifecycleAlertRequest      = api.PreviewIssueLifecycleAlertRequest
+	IssueLifecycleAlertPreview             = api.IssueLifecycleAlertPreview
 )

@@ -3538,27 +3538,6 @@ release, and invalidate before waiting for retirement at shutdown. See the
 [pool lifecycle and SDK examples](../../docs/postgres-pool-runtime.md) and the
 [runnable Node pg.Pool service](../../examples/postgres-pool-rotation/README.md).
 
-## Issue source maps
-
-Node issue reporters using `groupingStrategy: 'failure-site-v1'` accept
-`sourceMaps: [{ generatedFile, payload }]`. `generatedFile` is the exact absolute
-bundle path or file URL, and `payload` is its flat Source Map v3 JSON text.
-Ship matching maps with the deployment and load them before creating the reporter.
-Original frames determine grouping, and raw bundle stacks remain available.
-Check `stats().mappedFrames` and `unmappedFrames` for mapping coverage. See
-[registration, bounds, and rollout](../../docs/issues.md#deployment-local-node-source-maps).
-
-## Reversible issue grouping
-
-Issue actions support `merge` with `target_issue_id` and `split` with
-`member_issue_id`. Canonical details expose `group_members`; occurrences and
-activity retain `original_issue_id`. See [manual grouping and retained history](../../docs/issues.md#reversible-manual-grouping).
-
-Use `cause-chain-v1` to group wrapped exceptions by the deepest complete reported
-cause. The dashboard preserves the outer exception and cause chain. See
-[Issues cause-aware grouping](../../docs/issues.md#cause-aware-grouping) for
-language semantics, incomplete chains, and compatibility.
-
 ### Deadline count alerts
 
 `watchEventSubscriptionDeadlines(target, options)` provides sustained upcoming,
@@ -3683,3 +3662,45 @@ transaction fences remain authoritative and all worker promises join. Frozen
 `.result` progress accompanies ordinary failure, AbortError and uncertain-COMMIT
 exceptions. The host schedules later passes and owns pool/client lifetime. See
 [budgets, pool release and recovery progress](../../docs/event-acknowledgment-node-recovery-pass.md).
+
+## Issue source maps
+
+Node issue reporters using `groupingStrategy: 'failure-site-v1'` or `'cause-chain-v1'` accept
+`sourceMaps: [{ generatedFile, payload }]`. `generatedFile` is the exact absolute
+bundle path or file URL, and `payload` is its flat Source Map v3 JSON text.
+Ship matching maps with the deployment and load them before creating the reporter.
+Original frames determine grouping, and raw bundle stacks remain available.
+Check `stats().mappedFrames` and `unmappedFrames` for mapping coverage. See
+[registration, bounds, and rollout](../../docs/issues.md#deployment-local-node-source-maps).
+
+To discover maps automatically after a build, run
+`gregale-issue-source-maps dist dist/.gregale-issue-maps.json --replace` and ship
+the manifest with the bundles. Set
+`sourceMapManifest: { file: '/app/dist/.gregale-issue-maps.json', directory: '/app/dist' }`
+instead of `sourceMaps`. Initialization checks bundle hashes and resolves paths
+against the running deployment; capture never reads files. Build-time discovery
+removes embedded source content, supports local annotations and adjacent hidden
+maps, and rejects remote/inline references and mismatched artifacts. See
+[automatic discovery](../../docs/issues.md#discover-source-maps-during-node-builds).
+
+## Reversible issue grouping
+
+Issue actions support `merge` with `target_issue_id` and `split` with
+`member_issue_id`. Canonical details expose `group_members`; occurrences and
+activity retain `original_issue_id`. See [manual grouping and retained history](../../docs/issues.md#reversible-manual-grouping).
+
+Use `cause-chain-v1` to group wrapped exceptions by the deepest complete reported
+cause. The dashboard preserves the outer exception and cause chain. See
+[Issues cause-aware grouping](../../docs/issues.md#cause-aware-grouping) for
+language semantics, incomplete chains, and compatibility.
+
+Issue reporters accept explicitly reported operational context. Create a separate collector for each request or job:
+
+```ts
+const context = createIssueContext();
+context.setTag('component', 'payments');
+context.addBreadcrumb({ category: 'workflow', message: 'starting charge' });
+reporter.captureException(error, context.snapshot());
+```
+
+Import `createIssueContext` from `@gregale/sdk-node`. The collector retains at most 16 entries and immutable snapshots; it does not collect data automatically. Only the operational tag allowlist is accepted. See [the Issues guide](../../docs/issues.md) for server sanitation, retention, tag search, and deployment source-map publication.

@@ -59,6 +59,8 @@ const (
 	workQueuePushDispatch    workKind = "queue_push_dispatch"
 	workEventFanout          workKind = "event_fanout"
 	workReaper               workKind = "reaper"
+	// workWorkerStartupReconcile runs once per schedd start (H10-136).
+	workWorkerStartupReconcile workKind = "worker_startup_reconcile"
 )
 
 // workKinds is the iteration order for metric pre-instantiation.
@@ -66,7 +68,7 @@ var workKinds = []workKind{
 	workServiceRecovery, workServiceRecoverySweep,
 	workPrime, workRestart, workAppReconcile, workDeploymentReconcile, workJobCancel, workJobDispatch, workPrimeRecovery,
 	workWorkflowDispatch, workWorkflowSchedules, workTriggerDispatch, workQueuePushDispatch, workEventFanout,
-	workReaper,
+	workReaper, workWorkerStartupReconcile,
 }
 
 // overflowPolicy decides what submit does when a kind has no free slot.
@@ -106,16 +108,18 @@ type workSpec struct {
 var workSpecs = map[workKind]workSpec{
 	workServiceRecovery:      {slots: api.ServiceRecoveryConcurrentApps, overflow: overflowDrop},
 	workServiceRecoverySweep: {slots: 1, overflow: overflowDrop},
-	workPrime:                {slots: maxConcurrentPrimes, overflow: overflowInline},
-	workRestart:              {slots: 8, overflow: overflowDrop},
-	workAppReconcile:         {slots: 8, overflow: overflowDrop},
-	workDeploymentReconcile:  {slots: 8, overflow: overflowDrop},
-	workJobCancel:            {slots: 8, overflow: overflowDrop},
-	workJobDispatch:          {slots: 1, overflow: overflowDrop},
-	workPrimeRecovery:        {slots: 1, overflow: overflowDrop},
-	workWorkflowDispatch:     {slots: api.WorkflowDispatchSlots, overflow: overflowDrop},
-	workWorkflowSchedules:    {slots: 1, overflow: overflowDrop},
-	workTriggerDispatch:      {slots: 1, overflow: overflowDrop},
+	// Dispatched once per start, so its single slot is always free.
+	workWorkerStartupReconcile: {slots: 1, overflow: overflowDrop},
+	workPrime:                  {slots: maxConcurrentPrimes, overflow: overflowInline},
+	workRestart:                {slots: 8, overflow: overflowDrop},
+	workAppReconcile:           {slots: 8, overflow: overflowDrop},
+	workDeploymentReconcile:    {slots: 8, overflow: overflowDrop},
+	workJobCancel:              {slots: 8, overflow: overflowDrop},
+	workJobDispatch:            {slots: 1, overflow: overflowDrop},
+	workPrimeRecovery:          {slots: 1, overflow: overflowDrop},
+	workWorkflowDispatch:       {slots: api.WorkflowDispatchSlots, overflow: overflowDrop},
+	workWorkflowSchedules:      {slots: 1, overflow: overflowDrop},
+	workTriggerDispatch:        {slots: 1, overflow: overflowDrop},
 	// Push-queue lanes (ADR-972) claim durable leases; a dropped lane is
 	// retried by the next trigger tick.
 	workQueuePushDispatch: {slots: api.QueuePushDispatchSlotsPerNode, overflow: overflowDrop},

@@ -68,6 +68,7 @@ from .admin_status_update_edit_request import AdminStatusUpdateEditRequest
 from .adopt_environment_git_ops_request import AdoptEnvironmentGitOpsRequest
 from .adopt_environment_git_ops_response import AdoptEnvironmentGitOpsResponse
 from .adopt_environment_git_ops_response_status import AdoptEnvironmentGitOpsResponseStatus
+from .advance_automation_live_suite_request import AdvanceAutomationLiveSuiteRequest
 from .advance_canary_request import AdvanceCanaryRequest
 from .after_restore_hook import AfterRestoreHook
 from .alert_delivery_response import AlertDeliveryResponse
@@ -91,7 +92,14 @@ from .alert_rule_response_failure_source import AlertRuleResponseFailureSource
 from .alert_rule_response_metric import AlertRuleResponseMetric
 from .alert_rule_response_state import AlertRuleResponseState
 from .alert_rule_response_window_spec import AlertRuleResponseWindowSpec
+from .api_consumer_billing_policy_response import APIConsumerBillingPolicyResponse
+from .api_consumer_credit_balance import APIConsumerCreditBalance
+from .api_consumer_credit_list_response import APIConsumerCreditListResponse
+from .api_consumer_credit_response import APIConsumerCreditResponse
+from .api_consumer_credit_response_status import APIConsumerCreditResponseStatus
 from .api_consumer_list_response import APIConsumerListResponse
+from .api_consumer_overdue_hold_list_response import APIConsumerOverdueHoldListResponse
+from .api_consumer_overdue_hold_response import APIConsumerOverdueHoldResponse
 from .api_consumer_plan_assignment_list_response import APIConsumerPlanAssignmentListResponse
 from .api_consumer_plan_assignment_response import APIConsumerPlanAssignmentResponse
 from .api_consumer_plan_list_response import APIConsumerPlanListResponse
@@ -99,10 +107,14 @@ from .api_consumer_plan_response import APIConsumerPlanResponse
 from .api_consumer_rate_card_list_response import APIConsumerRateCardListResponse
 from .api_consumer_rate_card_response import APIConsumerRateCardResponse
 from .api_consumer_rate_card_response_route_weights import APIConsumerRateCardResponseRouteWeights
-from .api_consumer_rate_card_response_unit import APIConsumerRateCardResponseUnit
+from .api_consumer_rate_card_response_tier_mode import APIConsumerRateCardResponseTierMode
 from .api_consumer_rate_card_tier import APIConsumerRateCardTier
 from .api_consumer_response import APIConsumerResponse
 from .api_consumer_response_status import APIConsumerResponseStatus
+from .api_consumer_spend_cap_response import APIConsumerSpendCapResponse
+from .api_consumer_statement_fee_response import APIConsumerStatementFeeResponse
+from .api_consumer_statement_fee_response_kind import APIConsumerStatementFeeResponseKind
+from .api_consumer_trial_response import APIConsumerTrialResponse
 from .api_consumer_usage_alert_list_response import APIConsumerUsageAlertListResponse
 from .api_consumer_usage_alert_response import APIConsumerUsageAlertResponse
 from .api_consumer_usage_bucket_response import APIConsumerUsageBucketResponse
@@ -420,6 +432,7 @@ from .apps_metrics_response import AppsMetricsResponse
 from .apps_metrics_response_apps_type_0 import AppsMetricsResponseAppsType0
 from .apps_metrics_response_range import AppsMetricsResponseRange
 from .assign_api_consumer_plan_request import AssignAPIConsumerPlanRequest
+from .assign_platform_tenant_plan_request import AssignPlatformTenantPlanRequest
 from .async_invoke_response import AsyncInvokeResponse
 from .audit_event_response import AuditEventResponse
 from .audit_event_response_data import AuditEventResponseData
@@ -451,6 +464,35 @@ from .automation_health_response_status_counts import AutomationHealthResponseSt
 from .automation_health_run import AutomationHealthRun
 from .automation_health_run_status import AutomationHealthRunStatus
 from .automation_health_step_failure import AutomationHealthStepFailure
+from .automation_live_baseline import AutomationLiveBaseline
+from .automation_live_baseline_case_health import AutomationLiveBaselineCaseHealth
+from .automation_live_baseline_case_health_status import AutomationLiveBaselineCaseHealthStatus
+from .automation_live_baseline_health import AutomationLiveBaselineHealth
+from .automation_live_baseline_health_evidence_status import AutomationLiveBaselineHealthEvidenceStatus
+from .automation_live_baseline_health_renewal_status import AutomationLiveBaselineHealthRenewalStatus
+from .automation_live_baseline_history import AutomationLiveBaselineHistory
+from .automation_live_baseline_policy import AutomationLiveBaselinePolicy
+from .automation_live_baseline_policy_version import AutomationLiveBaselinePolicyVersion
+from .automation_live_baseline_retirement import AutomationLiveBaselineRetirement
+from .automation_live_expectation import AutomationLiveExpectation
+from .automation_live_expectation_state import AutomationLiveExpectationState
+from .automation_live_report import AutomationLiveReport
+from .automation_live_suite import AutomationLiveSuite
+from .automation_live_suite_case import AutomationLiveSuiteCase
+from .automation_live_suite_case_comparison import AutomationLiveSuiteCaseComparison
+from .automation_live_suite_case_comparison_change import AutomationLiveSuiteCaseComparisonChange
+from .automation_live_suite_case_outcome import AutomationLiveSuiteCaseOutcome
+from .automation_live_suite_comparison import AutomationLiveSuiteComparison
+from .automation_live_suite_comparison_counts import AutomationLiveSuiteComparisonCounts
+from .automation_live_suite_counts import AutomationLiveSuiteCounts
+from .automation_live_suite_member import AutomationLiveSuiteMember
+from .automation_live_suite_observation import AutomationLiveSuiteObservation
+from .automation_live_suite_observation_result import AutomationLiveSuiteObservationResult
+from .automation_live_suite_outcome import AutomationLiveSuiteOutcome
+from .automation_live_suite_summary import AutomationLiveSuiteSummary
+from .automation_live_test import AutomationLiveTest
+from .automation_live_test_expected_run_status import AutomationLiveTestExpectedRunStatus
+from .automation_live_verification import AutomationLiveVerification
 from .automation_publish_check_scenario import AutomationPublishCheckScenario
 from .automation_publish_policy import AutomationPublishPolicy
 from .automation_publish_policy_mode import AutomationPublishPolicyMode
@@ -466,16 +508,48 @@ from .automation_simulation_mock_attempt_outcome import AutomationSimulationMock
 from .automation_simulation_step import AutomationSimulationStep
 from .automation_simulation_step_kind import AutomationSimulationStepKind
 from .automation_simulation_step_state import AutomationSimulationStepState
+from .automation_test_case import AutomationTestCase
+from .automation_test_case_result import AutomationTestCaseResult
+from .automation_test_case_result_issue import AutomationTestCaseResultIssue
+from .automation_test_inputs import AutomationTestInputs
+from .automation_test_inputs_mock_attempts import AutomationTestInputsMockAttempts
+from .automation_test_inputs_mock_item_attempts import AutomationTestInputsMockItemAttempts
+from .automation_test_inputs_mock_item_attempts_additional_property import (
+    AutomationTestInputsMockItemAttemptsAdditionalProperty,
+)
+from .automation_test_inputs_mock_item_outputs import AutomationTestInputsMockItemOutputs
+from .automation_test_inputs_mock_outputs import AutomationTestInputsMockOutputs
+from .automation_test_report import AutomationTestReport
+from .automation_test_step_result import AutomationTestStepResult
+from .automation_test_step_result_mismatches_item import AutomationTestStepResultMismatchesItem
+from .automation_test_suite import AutomationTestSuite
 from .before_checkpoint_hook import BeforeCheckpointHook
 from .billing_cancel_response import BillingCancelResponse
 from .billing_catalog_entry import BillingCatalogEntry
 from .billing_catalog_entry_kind import BillingCatalogEntryKind
 from .billing_catalog_entry_plan import BillingCatalogEntryPlan
 from .billing_catalog_response import BillingCatalogResponse
+from .billing_connection_response import BillingConnectionResponse
+from .billing_connection_response_collection import BillingConnectionResponseCollection
 from .billing_paddle_overage_preflight_response import BillingPaddleOveragePreflightResponse
 from .billing_portal_response import BillingPortalResponse
+from .billing_provider import BillingProvider
 from .billing_reconcile_response import BillingReconcileResponse
 from .billing_retry_response import BillingRetryResponse
+from .billing_run_counts import BillingRunCounts
+from .billing_run_export import BillingRunExport
+from .billing_run_item_list_response import BillingRunItemListResponse
+from .billing_run_item_response import BillingRunItemResponse
+from .billing_run_item_response_completeness import BillingRunItemResponseCompleteness
+from .billing_run_item_response_outcome import BillingRunItemResponseOutcome
+from .billing_run_item_response_payment_status import BillingRunItemResponsePaymentStatus
+from .billing_run_item_response_source_kind import BillingRunItemResponseSourceKind
+from .billing_run_list_response import BillingRunListResponse
+from .billing_run_response import BillingRunResponse
+from .billing_run_response_status import BillingRunResponseStatus
+from .billing_run_response_trigger import BillingRunResponseTrigger
+from .billing_run_schedule_response import BillingRunScheduleResponse
+from .billing_run_sources_item import BillingRunSourcesItem
 from .billing_status_response import BillingStatusResponse
 from .billing_status_response_account_status import BillingStatusResponseAccountStatus
 from .billing_status_response_mode import BillingStatusResponseMode
@@ -556,6 +630,10 @@ from .build_response_cache_status import BuildResponseCacheStatus
 from .build_response_failure_class import BuildResponseFailureClass
 from .build_response_kind import BuildResponseKind
 from .build_response_status import BuildResponseStatus
+from .bulk_issue_action_request import BulkIssueActionRequest
+from .bulk_issue_action_response import BulkIssueActionResponse
+from .bulk_issue_lifecycle_action import BulkIssueLifecycleAction
+from .bulk_issue_lifecycle_action_action import BulkIssueLifecycleActionAction
 from .canary_advance_response import CanaryAdvanceResponse
 from .canary_preset_spec import CanaryPresetSpec
 from .canary_preset_spec_preset import CanaryPresetSpecPreset
@@ -635,6 +713,15 @@ from .connection_budget_demand import ConnectionBudgetDemand
 from .connection_budget_inventory import ConnectionBudgetInventory
 from .consume_invoice_response import ConsumeInvoiceResponse
 from .consumed_credit_row import ConsumedCreditRow
+from .consumer_billing_day import ConsumerBillingDay
+from .consumer_billing_invoice import ConsumerBillingInvoice
+from .consumer_billing_invoice_payment_status import ConsumerBillingInvoicePaymentStatus
+from .consumer_billing_plan import ConsumerBillingPlan
+from .consumer_billing_spend_cap import ConsumerBillingSpendCap
+from .consumer_billing_statement import ConsumerBillingStatement
+from .consumer_billing_statements_response import ConsumerBillingStatementsResponse
+from .consumer_billing_summary_response import ConsumerBillingSummaryResponse
+from .consumer_billing_usage_response import ConsumerBillingUsageResponse
 from .consumer_key_list_response import ConsumerKeyListResponse
 from .consumer_key_response import ConsumerKeyResponse
 from .consumer_key_response_scopes_item import ConsumerKeyResponseScopesItem
@@ -656,9 +743,11 @@ from .create_alert_rule_request_comparison import CreateAlertRuleRequestComparis
 from .create_alert_rule_request_failure_source import CreateAlertRuleRequestFailureSource
 from .create_alert_rule_request_metric import CreateAlertRuleRequestMetric
 from .create_alert_rule_request_window_spec import CreateAlertRuleRequestWindowSpec
+from .create_api_consumer_credit_request import CreateAPIConsumerCreditRequest
 from .create_api_consumer_plan_request import CreateAPIConsumerPlanRequest
 from .create_api_consumer_rate_card_request import CreateAPIConsumerRateCardRequest
 from .create_api_consumer_rate_card_request_route_weights import CreateAPIConsumerRateCardRequestRouteWeights
+from .create_api_consumer_rate_card_request_tier_mode import CreateAPIConsumerRateCardRequestTierMode
 from .create_api_consumer_request import CreateAPIConsumerRequest
 from .create_api_consumer_usage_statement_request import CreateAPIConsumerUsageStatementRequest
 from .create_app_log_drain_request import CreateAppLogDrainRequest
@@ -684,6 +773,7 @@ from .create_application_standard_log_destination_request import CreateApplicati
 from .create_application_standard_log_destination_request_kind import CreateApplicationStandardLogDestinationRequestKind
 from .create_application_standard_publisher_request import CreateApplicationStandardPublisherRequest
 from .create_application_standard_version_request import CreateApplicationStandardVersionRequest
+from .create_billing_run_request import CreateBillingRunRequest
 from .create_binding_verification_run_request import CreateBindingVerificationRunRequest
 from .create_binding_verification_run_request_service_targets import CreateBindingVerificationRunRequestServiceTargets
 from .create_commit_source_body import CreateCommitSourceBody
@@ -759,6 +849,8 @@ from .create_managed_realtime_endpoint_request_auth_required_claims import (
     CreateManagedRealtimeEndpointRequestAuthRequiredClaims,
 )
 from .create_mirror_rule_request import CreateMirrorRuleRequest
+from .create_native_issue_ticket_request import CreateNativeIssueTicketRequest
+from .create_native_linear_issue_ticket_request import CreateNativeLinearIssueTicketRequest
 from .create_object_bucket_body import CreateObjectBucketBody
 from .create_object_multipart_upload_request import CreateObjectMultipartUploadRequest
 from .create_object_s3_credential_request import CreateObjectS3CredentialRequest
@@ -781,6 +873,9 @@ from .create_platform_tenant_access_token_request_scopes_item import CreatePlatf
 from .create_platform_tenant_access_token_response import CreatePlatformTenantAccessTokenResponse
 from .create_platform_tenant_access_token_response_scopes_item import CreatePlatformTenantAccessTokenResponseScopesItem
 from .create_platform_tenant_rate_card_request import CreatePlatformTenantRateCardRequest
+from .create_platform_tenant_rate_card_request_route_weights import CreatePlatformTenantRateCardRequestRouteWeights
+from .create_platform_tenant_rate_card_request_tier_mode import CreatePlatformTenantRateCardRequestTierMode
+from .create_platform_tenant_rate_card_request_unit import CreatePlatformTenantRateCardRequestUnit
 from .create_platform_tenant_request import CreatePlatformTenantRequest
 from .create_platform_tenant_self_consumer_request import CreatePlatformTenantSelfConsumerRequest
 from .create_platform_tenant_self_hostname_request import CreatePlatformTenantSelfHostnameRequest
@@ -811,6 +906,7 @@ from .create_queue_binding_canary_request import CreateQueueBindingCanaryRequest
 from .create_queue_binding_request import CreateQueueBindingRequest
 from .create_queue_binding_request_mode import CreateQueueBindingRequestMode
 from .create_queue_binding_request_workload_class import CreateQueueBindingRequestWorkloadClass
+from .create_statement_invoice_request import CreateStatementInvoiceRequest
 from .create_tcp_listener_request import CreateTCPListenerRequest
 from .create_tenant_surface_request import CreateTenantSurfaceRequest
 from .create_tenant_surface_request_cert_kind import CreateTenantSurfaceRequestCertKind
@@ -1876,6 +1972,9 @@ from .issue_action_request import IssueActionRequest
 from .issue_action_request_action import IssueActionRequestAction
 from .issue_activity import IssueActivity
 from .issue_activity_details import IssueActivityDetails
+from .issue_breadcrumb import IssueBreadcrumb
+from .issue_breadcrumb_category import IssueBreadcrumbCategory
+from .issue_breadcrumb_level import IssueBreadcrumbLevel
 from .issue_browser_csrf_token_action import IssueBrowserCSRFTokenAction
 from .issue_cause import IssueCause
 from .issue_cause_frame_order import IssueCauseFrameOrder
@@ -1884,7 +1983,11 @@ from .issue_event import IssueEvent
 from .issue_event_frame_order import IssueEventFrameOrder
 from .issue_event_grouping_strategy import IssueEventGroupingStrategy
 from .issue_event_response import IssueEventResponse
+from .issue_event_symbolication_strategy import IssueEventSymbolicationStrategy
+from .issue_event_tags import IssueEventTags
 from .issue_frame import IssueFrame
+from .issue_frequency_alert_policy import IssueFrequencyAlertPolicy
+from .issue_frequency_alert_rule import IssueFrequencyAlertRule
 from .issue_grouping_explanation import IssueGroupingExplanation
 from .issue_grouping_explanation_basis import IssueGroupingExplanationBasis
 from .issue_grouping_explanation_discriminator_kind import IssueGroupingExplanationDiscriminatorKind
@@ -1894,11 +1997,26 @@ from .issue_impact import IssueImpact
 from .issue_impact_alert_policy import IssueImpactAlertPolicy
 from .issue_impact_summary import IssueImpactSummary
 from .issue_ingest_token import IssueIngestToken
+from .issue_lifecycle_alert_policy import IssueLifecycleAlertPolicy
+from .issue_lifecycle_alert_preview import IssueLifecycleAlertPreview
+from .issue_lifecycle_alert_preview_event import IssueLifecycleAlertPreviewEvent
+from .issue_lifecycle_alert_preview_reason import IssueLifecycleAlertPreviewReason
 from .issue_occurrence import IssueOccurrence
 from .issue_ownership_rule import IssueOwnershipRule
 from .issue_ownership_rule_source_kind import IssueOwnershipRuleSourceKind
 from .issue_ownership_rules import IssueOwnershipRules
 from .issue_release import IssueRelease
+from .issue_release_comparison import IssueReleaseComparison
+from .issue_release_health import IssueReleaseHealth
+from .issue_release_health_request_coverage import IssueReleaseHealthRequestCoverage
+from .issue_saved_view import IssueSavedView
+from .issue_saved_view_filters import IssueSavedViewFilters
+from .issue_saved_view_filters_sort import IssueSavedViewFiltersSort
+from .issue_saved_view_filters_state import IssueSavedViewFiltersState
+from .issue_source_map_artifact import IssueSourceMapArtifact
+from .issue_source_map_manifest import IssueSourceMapManifest
+from .issue_source_map_manifest_version import IssueSourceMapManifestVersion
+from .issue_source_maps_metadata import IssueSourceMapsMetadata
 from .issue_split_matcher import IssueSplitMatcher
 from .issue_split_matcher_source_kind import IssueSplitMatcherSourceKind
 from .issue_split_preview import IssueSplitPreview
@@ -1907,6 +2025,21 @@ from .issue_split_rule import IssueSplitRule
 from .issue_split_rule_undo_request import IssueSplitRuleUndoRequest
 from .issue_split_rule_update import IssueSplitRuleUpdate
 from .issue_state import IssueState
+from .issue_symbolication_result import IssueSymbolicationResult
+from .issue_team import IssueTeam
+from .issue_tracker_auto_sync import IssueTrackerAutoSync
+from .issue_tracker_auto_sync_direction import IssueTrackerAutoSyncDirection
+from .issue_tracker_auto_sync_observed_state import IssueTrackerAutoSyncObservedState
+from .issue_tracker_auto_sync_outcome import IssueTrackerAutoSyncOutcome
+from .issue_tracker_auto_sync_pending_state import IssueTrackerAutoSyncPendingState
+from .issue_tracker_auto_sync_provider_state import IssueTrackerAutoSyncProviderState
+from .issue_tracker_auto_sync_source_state import IssueTrackerAutoSyncSourceState
+from .issue_tracker_linear_connection import IssueTrackerLinearConnection
+from .issue_tracker_link import IssueTrackerLink
+from .issue_tracker_link_provider import IssueTrackerLinkProvider
+from .issue_tracker_provider_status import IssueTrackerProviderStatus
+from .issue_tracker_provider_status_provider import IssueTrackerProviderStatusProvider
+from .issue_tracker_provider_status_state import IssueTrackerProviderStatusState
 from .job_artifact_download_response import JobArtifactDownloadResponse
 from .job_deleted_response import JobDeletedResponse
 from .job_finished_webhook_payload import JobFinishedWebhookPayload
@@ -1975,8 +2108,12 @@ from .list_account_workflow_readiness_queue_requirement import ListAccountWorkfl
 from .list_admin_status_events_kind import ListAdminStatusEventsKind
 from .list_audit_events_response import ListAuditEventsResponse
 from .list_audit_log_response import ListAuditLogResponse
+from .list_automation_live_baselines_response import ListAutomationLiveBaselinesResponse
+from .list_automation_live_suites_response import ListAutomationLiveSuitesResponse
+from .list_automation_live_verifications_response import ListAutomationLiveVerificationsResponse
 from .list_automation_revisions_response import ListAutomationRevisionsResponse
 from .list_automations_response import ListAutomationsResponse
+from .list_billing_run_items_outcome import ListBillingRunItemsOutcome
 from .list_binding_verification_runs_status import ListBindingVerificationRunsStatus
 from .list_bucket_objects_response_200 import ListBucketObjectsResponse200
 from .list_bucket_objects_response_200_items_item import ListBucketObjectsResponse200ItemsItem
@@ -2006,6 +2143,9 @@ from .list_executions_status import ListExecutionsStatus
 from .list_instances_response import ListInstancesResponse
 from .list_invocations_response import ListInvocationsResponse
 from .list_issue_ingest_tokens_response import ListIssueIngestTokensResponse
+from .list_issue_saved_views_response import ListIssueSavedViewsResponse
+from .list_issue_teams_response import ListIssueTeamsResponse
+from .list_issue_tracker_links_response import ListIssueTrackerLinksResponse
 from .list_issues_response import ListIssuesResponse
 from .list_issues_sort import ListIssuesSort
 from .list_job_runs_response import ListJobRunsResponse
@@ -2077,6 +2217,7 @@ from .list_project_binding_verification_runs_status import ListProjectBindingVer
 from .list_project_environment_promotions_status import ListProjectEnvironmentPromotionsStatus
 from .list_schedule_occurrences_response import ListScheduleOccurrencesResponse
 from .list_secrets_for_account_response import ListSecretsForAccountResponse
+from .list_statement_invoices_status import ListStatementInvoicesStatus
 from .list_tenant_surfaces_response import ListTenantSurfacesResponse
 from .list_tenant_workflow_schedules_response import ListTenantWorkflowSchedulesResponse
 from .list_trigger_dead_letter_response import ListTriggerDeadLetterResponse
@@ -2384,6 +2525,10 @@ from .mirror_replay_request_item_method import MirrorReplayRequestItemMethod
 from .mirror_rule_list_response import MirrorRuleListResponse
 from .mirror_rule_response import MirrorRuleResponse
 from .mirror_summary_response import MirrorSummaryResponse
+from .native_issue_ticket_result import NativeIssueTicketResult
+from .native_issue_ticket_result_state import NativeIssueTicketResultState
+from .native_issue_tracker_status import NativeIssueTrackerStatus
+from .native_linear_issue_tracker_status import NativeLinearIssueTrackerStatus
 from .o_auth_provider_capability import OAuthProviderCapability
 from .o_auth_token_exchange_error import OAuthTokenExchangeError
 from .o_auth_token_exchange_error_error import OAuthTokenExchangeErrorError
@@ -3191,6 +3336,12 @@ from .operator_intent_response import OperatorIntentResponse
 from .operator_intent_response_kind import OperatorIntentResponseKind
 from .operator_intent_response_metadata import OperatorIntentResponseMetadata
 from .operator_intent_response_status import OperatorIntentResponseStatus
+from .operator_park_execution_response import OperatorParkExecutionResponse
+from .operator_park_execution_response_action import OperatorParkExecutionResponseAction
+from .operator_park_execution_response_phase import OperatorParkExecutionResponsePhase
+from .operator_park_execution_response_terminal_state import OperatorParkExecutionResponseTerminalState
+from .operator_restart_execution_response import OperatorRestartExecutionResponse
+from .operator_restart_execution_response_phase import OperatorRestartExecutionResponsePhase
 from .operator_runtime_config import OperatorRuntimeConfig
 from .operator_runtime_config_apply_mode import OperatorRuntimeConfigApplyMode
 from .operator_runtime_config_kind import OperatorRuntimeConfigKind
@@ -3349,9 +3500,23 @@ from .platform_tenant_offboarding_plan_response_status import PlatformTenantOffb
 from .platform_tenant_offboarding_receipt_list_response import PlatformTenantOffboardingReceiptListResponse
 from .platform_tenant_offboarding_receipt_response import PlatformTenantOffboardingReceiptResponse
 from .platform_tenant_offboarding_receipt_summary import PlatformTenantOffboardingReceiptSummary
+from .platform_tenant_plan_assignment_list_response import PlatformTenantPlanAssignmentListResponse
+from .platform_tenant_plan_assignment_response import PlatformTenantPlanAssignmentResponse
+from .platform_tenant_plan_budget import PlatformTenantPlanBudget
+from .platform_tenant_plan_list_response import PlatformTenantPlanListResponse
+from .platform_tenant_plan_request import PlatformTenantPlanRequest
+from .platform_tenant_plan_request_route_weights import PlatformTenantPlanRequestRouteWeights
+from .platform_tenant_plan_request_tier_mode import PlatformTenantPlanRequestTierMode
+from .platform_tenant_plan_request_unit import PlatformTenantPlanRequestUnit
+from .platform_tenant_plan_response import PlatformTenantPlanResponse
+from .platform_tenant_plan_response_route_weights import PlatformTenantPlanResponseRouteWeights
+from .platform_tenant_plan_response_tier_mode import PlatformTenantPlanResponseTierMode
+from .platform_tenant_plan_response_unit import PlatformTenantPlanResponseUnit
 from .platform_tenant_publish_event_response import PlatformTenantPublishEventResponse
 from .platform_tenant_rate_card_list_response import PlatformTenantRateCardListResponse
 from .platform_tenant_rate_card_response import PlatformTenantRateCardResponse
+from .platform_tenant_rate_card_response_route_weights import PlatformTenantRateCardResponseRouteWeights
+from .platform_tenant_rate_card_response_tier_mode import PlatformTenantRateCardResponseTierMode
 from .platform_tenant_rate_card_response_unit import PlatformTenantRateCardResponseUnit
 from .platform_tenant_reconciliation_applied_webhook_payload import PlatformTenantReconciliationAppliedWebhookPayload
 from .platform_tenant_reconciliation_apply_response import PlatformTenantReconciliationApplyResponse
@@ -3468,6 +3633,8 @@ from .preview_event_request import PreviewEventRequest
 from .preview_event_request_data_content_type import PreviewEventRequestDataContentType
 from .preview_event_request_datacontenttype import PreviewEventRequestDatacontenttype
 from .preview_event_response import PreviewEventResponse
+from .preview_issue_lifecycle_alert_request import PreviewIssueLifecycleAlertRequest
+from .preview_issue_lifecycle_alert_request_event import PreviewIssueLifecycleAlertRequestEvent
 from .preview_platform_tenant_self_workflow_actions_body import PreviewPlatformTenantSelfWorkflowActionsBody
 from .preview_production_changes_response import PreviewProductionChangesResponse
 from .preview_production_changes_response_configuration_changed_groups_item import (
@@ -3711,6 +3878,7 @@ from .project_scan_request import ProjectScanRequest
 from .project_source_ref_scan_request import ProjectSourceRefScanRequest
 from .project_summary_response import ProjectSummaryResponse
 from .project_workload_response import ProjectWorkloadResponse
+from .promote_automation_live_baseline_request import PromoteAutomationLiveBaselineRequest
 from .promote_project_environment_request import PromoteProjectEnvironmentRequest
 from .public_auth_block import PublicAuthBlock
 from .public_auth_block_mode import PublicAuthBlockMode
@@ -3746,17 +3914,27 @@ from .publish_event_request import PublishEventRequest
 from .publish_event_request_data_content_type import PublishEventRequestDataContentType
 from .publish_event_request_datacontenttype import PublishEventRequestDatacontenttype
 from .publish_event_response import PublishEventResponse
+from .publish_issue_source_maps_request import PublishIssueSourceMapsRequest
 from .publish_managed_realtime_channel_delivery import PublishManagedRealtimeChannelDelivery
 from .publish_project_release_set_request import PublishProjectReleaseSetRequest
 from .publish_project_release_set_request_deployments import PublishProjectReleaseSetRequestDeployments
+from .put_api_consumer_billing_policy_request import PutAPIConsumerBillingPolicyRequest
+from .put_api_consumer_spend_cap_request import PutAPIConsumerSpendCapRequest
+from .put_api_consumer_trial_request import PutAPIConsumerTrialRequest
 from .put_app_env_request import PutAppEnvRequest
 from .put_app_registry_credential_request import PutAppRegistryCredentialRequest
 from .put_app_secret_reference_request import PutAppSecretReferenceRequest
 from .put_app_secret_request import PutAppSecretRequest
 from .put_app_secret_request_secret_class import PutAppSecretRequestSecretClass
+from .put_billing_connection_request import PutBillingConnectionRequest
+from .put_billing_connection_request_collection import PutBillingConnectionRequestCollection
+from .put_billing_run_schedule_request import PutBillingRunScheduleRequest
 from .put_commit_source_connection_body import PutCommitSourceConnectionBody
 from .put_data_upstream_request import PutDataUpstreamRequest
 from .put_data_upstream_request_kind import PutDataUpstreamRequestKind
+from .put_issue_saved_view_request import PutIssueSavedViewRequest
+from .put_issue_team_request import PutIssueTeamRequest
+from .put_issue_tracker_link_request import PutIssueTrackerLinkRequest
 from .put_job_registry_credential_request import PutJobRegistryCredentialRequest
 from .put_operation_webhook_binding_request import PutOperationWebhookBindingRequest
 from .put_outbound_ai_policy_request import PutOutboundAIPolicyRequest
@@ -3975,6 +4153,7 @@ from .restore_automation_revision_request import RestoreAutomationRevisionReques
 from .restore_managed_postgres_database_request import RestoreManagedPostgresDatabaseRequest
 from .resume_automation_failure_pause_request import ResumeAutomationFailurePauseRequest
 from .resume_workflow_run_request import ResumeWorkflowRunRequest
+from .retire_automation_live_baseline_request import RetireAutomationLiveBaselineRequest
 from .retry_deployment_request import RetryDeploymentRequest
 from .retry_deployment_request_from_stage import RetryDeploymentRequestFromStage
 from .retry_event_execution_lineage_case_request import RetryEventExecutionLineageCaseRequest
@@ -4253,6 +4432,7 @@ from .route_row import RouteRow
 from .route_throttle_requirement import RouteThrottleRequirement
 from .route_throttle_requirement_key_by import RouteThrottleRequirementKeyBy
 from .route_throttle_requirement_missing_key_policy import RouteThrottleRequirementMissingKeyPolicy
+from .run_automation_tests_request import RunAutomationTestsRequest
 from .runtime_config_restart_status_response import RuntimeConfigRestartStatusResponse
 from .runtime_config_restart_status_response_failure_reason import RuntimeConfigRestartStatusResponseFailureReason
 from .runtime_config_restart_status_response_status import RuntimeConfigRestartStatusResponseStatus
@@ -4275,6 +4455,8 @@ from .runtime_upgrade_preview_response import RuntimeUpgradePreviewResponse
 from .runtime_upgrade_preview_response_changes_item import RuntimeUpgradePreviewResponseChangesItem
 from .runtime_upgrade_preview_response_disposition import RuntimeUpgradePreviewResponseDisposition
 from .save_automation_draft_request import SaveAutomationDraftRequest
+from .save_automation_live_suite_request import SaveAutomationLiveSuiteRequest
+from .save_automation_test_suite_request import SaveAutomationTestSuiteRequest
 from .save_profile_deployment_policy_request import SaveProfileDeploymentPolicyRequest
 from .save_profile_investigation_request import SaveProfileInvestigationRequest
 from .save_route_requirements_request import SaveRouteRequirementsRequest
@@ -4446,12 +4628,20 @@ from .source_review_response import SourceReviewResponse
 from .source_tarball_deploy_request import SourceTarballDeployRequest
 from .source_tarball_deploy_request_tag import SourceTarballDeployRequestTag
 from .stage_project_release_request import StageProjectReleaseRequest
+from .start_automation_live_suite_request import StartAutomationLiveSuiteRequest
+from .start_automation_live_verification_request import StartAutomationLiveVerificationRequest
 from .start_durable_entity_quota_migration_body import StartDurableEntityQuotaMigrationBody
 from .start_durable_entity_quota_migration_response_200 import StartDurableEntityQuotaMigrationResponse200
 from .start_durable_entity_registry_cleanup_body import StartDurableEntityRegistryCleanupBody
 from .start_durable_entity_registry_cleanup_response_200 import StartDurableEntityRegistryCleanupResponse200
 from .start_durable_entity_retirement_body import StartDurableEntityRetirementBody
 from .start_durable_entity_retirement_response_200 import StartDurableEntityRetirementResponse200
+from .statement_invoice_export_response import StatementInvoiceExportResponse
+from .statement_invoice_export_response_collection import StatementInvoiceExportResponseCollection
+from .statement_invoice_export_response_payment_status import StatementInvoiceExportResponsePaymentStatus
+from .statement_invoice_export_response_source_kind import StatementInvoiceExportResponseSourceKind
+from .statement_invoice_export_response_status import StatementInvoiceExportResponseStatus
+from .statement_invoice_list_response import StatementInvoiceListResponse
 from .status_incident import StatusIncident
 from .status_incident_severity import StatusIncidentSeverity
 from .status_page import StatusPage
@@ -4609,7 +4799,15 @@ from .update_edge_rule_request_validate_mode import UpdateEdgeRuleRequestValidat
 from .update_feature_flags_request import UpdateFeatureFlagsRequest
 from .update_financial_budget_request import UpdateFinancialBudgetRequest
 from .update_inbound_webhook_endpoint_request import UpdateInboundWebhookEndpointRequest
+from .update_issue_frequency_alert_policy_request import UpdateIssueFrequencyAlertPolicyRequest
 from .update_issue_impact_alert_policy_request import UpdateIssueImpactAlertPolicyRequest
+from .update_issue_lifecycle_alert_policy_request import UpdateIssueLifecycleAlertPolicyRequest
+from .update_issue_tracker_auto_sync_request import UpdateIssueTrackerAutoSyncRequest
+from .update_issue_tracker_auto_sync_request_direction import UpdateIssueTrackerAutoSyncRequestDirection
+from .update_issue_tracker_auto_sync_request_expected_issue_state import (
+    UpdateIssueTrackerAutoSyncRequestExpectedIssueState,
+)
+from .update_issue_tracker_linear_connection_request import UpdateIssueTrackerLinearConnectionRequest
 from .update_job_request import UpdateJobRequest
 from .update_job_request_env_overrides import UpdateJobRequestEnvOverrides
 from .update_job_request_status import UpdateJobRequestStatus
@@ -4622,6 +4820,12 @@ from .update_managed_realtime_endpoint_request_auth_required_claims import (
     UpdateManagedRealtimeEndpointRequestAuthRequiredClaims,
 )
 from .update_mirror_rule_request import UpdateMirrorRuleRequest
+from .update_native_issue_tracker_status_request import UpdateNativeIssueTrackerStatusRequest
+from .update_native_issue_tracker_status_request_desired_state import UpdateNativeIssueTrackerStatusRequestDesiredState
+from .update_native_linear_issue_tracker_status_request import UpdateNativeLinearIssueTrackerStatusRequest
+from .update_native_linear_issue_tracker_status_request_desired_state import (
+    UpdateNativeLinearIssueTrackerStatusRequestDesiredState,
+)
 from .update_operator_runtime_config_body import UpdateOperatorRuntimeConfigBody
 from .update_outbound_binding_policy_request import UpdateOutboundBindingPolicyRequest
 from .update_platform_tenant_webhook_request import UpdatePlatformTenantWebhookRequest
@@ -4999,6 +5203,7 @@ __all__ = (
     "AdoptEnvironmentGitOpsRequest",
     "AdoptEnvironmentGitOpsResponse",
     "AdoptEnvironmentGitOpsResponseStatus",
+    "AdvanceAutomationLiveSuiteRequest",
     "AdvanceCanaryRequest",
     "AfterRestoreHook",
     "AlertDeliveryResponse",
@@ -5022,7 +5227,14 @@ __all__ = (
     "AlertRuleResponseMetric",
     "AlertRuleResponseState",
     "AlertRuleResponseWindowSpec",
+    "APIConsumerBillingPolicyResponse",
+    "APIConsumerCreditBalance",
+    "APIConsumerCreditListResponse",
+    "APIConsumerCreditResponse",
+    "APIConsumerCreditResponseStatus",
     "APIConsumerListResponse",
+    "APIConsumerOverdueHoldListResponse",
+    "APIConsumerOverdueHoldResponse",
     "APIConsumerPlanAssignmentListResponse",
     "APIConsumerPlanAssignmentResponse",
     "APIConsumerPlanListResponse",
@@ -5030,10 +5242,14 @@ __all__ = (
     "APIConsumerRateCardListResponse",
     "APIConsumerRateCardResponse",
     "APIConsumerRateCardResponseRouteWeights",
-    "APIConsumerRateCardResponseUnit",
+    "APIConsumerRateCardResponseTierMode",
     "APIConsumerRateCardTier",
     "APIConsumerResponse",
     "APIConsumerResponseStatus",
+    "APIConsumerSpendCapResponse",
+    "APIConsumerStatementFeeResponse",
+    "APIConsumerStatementFeeResponseKind",
+    "APIConsumerTrialResponse",
     "APIConsumerUsageAlertListResponse",
     "APIConsumerUsageAlertResponse",
     "APIConsumerUsageBucketResponse",
@@ -5347,6 +5563,7 @@ __all__ = (
     "AppWebhookResponseWebhookSecretSealedMasked",
     "AppWebhookRetryDeliveryResponse",
     "AssignAPIConsumerPlanRequest",
+    "AssignPlatformTenantPlanRequest",
     "AsyncInvokeResponse",
     "AuditEventResponse",
     "AuditEventResponseData",
@@ -5378,6 +5595,35 @@ __all__ = (
     "AutomationHealthRun",
     "AutomationHealthRunStatus",
     "AutomationHealthStepFailure",
+    "AutomationLiveBaseline",
+    "AutomationLiveBaselineCaseHealth",
+    "AutomationLiveBaselineCaseHealthStatus",
+    "AutomationLiveBaselineHealth",
+    "AutomationLiveBaselineHealthEvidenceStatus",
+    "AutomationLiveBaselineHealthRenewalStatus",
+    "AutomationLiveBaselineHistory",
+    "AutomationLiveBaselinePolicy",
+    "AutomationLiveBaselinePolicyVersion",
+    "AutomationLiveBaselineRetirement",
+    "AutomationLiveExpectation",
+    "AutomationLiveExpectationState",
+    "AutomationLiveReport",
+    "AutomationLiveSuite",
+    "AutomationLiveSuiteCase",
+    "AutomationLiveSuiteCaseComparison",
+    "AutomationLiveSuiteCaseComparisonChange",
+    "AutomationLiveSuiteCaseOutcome",
+    "AutomationLiveSuiteComparison",
+    "AutomationLiveSuiteComparisonCounts",
+    "AutomationLiveSuiteCounts",
+    "AutomationLiveSuiteMember",
+    "AutomationLiveSuiteObservation",
+    "AutomationLiveSuiteObservationResult",
+    "AutomationLiveSuiteOutcome",
+    "AutomationLiveSuiteSummary",
+    "AutomationLiveTest",
+    "AutomationLiveTestExpectedRunStatus",
+    "AutomationLiveVerification",
     "AutomationPublishCheckScenario",
     "AutomationPublishPolicy",
     "AutomationPublishPolicyMode",
@@ -5393,16 +5639,46 @@ __all__ = (
     "AutomationSimulationStep",
     "AutomationSimulationStepKind",
     "AutomationSimulationStepState",
+    "AutomationTestCase",
+    "AutomationTestCaseResult",
+    "AutomationTestCaseResultIssue",
+    "AutomationTestInputs",
+    "AutomationTestInputsMockAttempts",
+    "AutomationTestInputsMockItemAttempts",
+    "AutomationTestInputsMockItemAttemptsAdditionalProperty",
+    "AutomationTestInputsMockItemOutputs",
+    "AutomationTestInputsMockOutputs",
+    "AutomationTestReport",
+    "AutomationTestStepResult",
+    "AutomationTestStepResultMismatchesItem",
+    "AutomationTestSuite",
     "BeforeCheckpointHook",
     "BillingCancelResponse",
     "BillingCatalogEntry",
     "BillingCatalogEntryKind",
     "BillingCatalogEntryPlan",
     "BillingCatalogResponse",
+    "BillingConnectionResponse",
+    "BillingConnectionResponseCollection",
     "BillingPaddleOveragePreflightResponse",
     "BillingPortalResponse",
+    "BillingProvider",
     "BillingReconcileResponse",
     "BillingRetryResponse",
+    "BillingRunCounts",
+    "BillingRunExport",
+    "BillingRunItemListResponse",
+    "BillingRunItemResponse",
+    "BillingRunItemResponseCompleteness",
+    "BillingRunItemResponseOutcome",
+    "BillingRunItemResponsePaymentStatus",
+    "BillingRunItemResponseSourceKind",
+    "BillingRunListResponse",
+    "BillingRunResponse",
+    "BillingRunResponseStatus",
+    "BillingRunResponseTrigger",
+    "BillingRunScheduleResponse",
+    "BillingRunSourcesItem",
     "BillingStatusResponse",
     "BillingStatusResponseAccountStatus",
     "BillingStatusResponseMode",
@@ -5481,6 +5757,10 @@ __all__ = (
     "BuildResponseFailureClass",
     "BuildResponseKind",
     "BuildResponseStatus",
+    "BulkIssueActionRequest",
+    "BulkIssueActionResponse",
+    "BulkIssueLifecycleAction",
+    "BulkIssueLifecycleActionAction",
     "CanaryAdvanceResponse",
     "CanaryPresetSpec",
     "CanaryPresetSpecPreset",
@@ -5552,6 +5832,15 @@ __all__ = (
     "ConnectionBudgetInventory",
     "ConsumedCreditRow",
     "ConsumeInvoiceResponse",
+    "ConsumerBillingDay",
+    "ConsumerBillingInvoice",
+    "ConsumerBillingInvoicePaymentStatus",
+    "ConsumerBillingPlan",
+    "ConsumerBillingSpendCap",
+    "ConsumerBillingStatement",
+    "ConsumerBillingStatementsResponse",
+    "ConsumerBillingSummaryResponse",
+    "ConsumerBillingUsageResponse",
     "ConsumerKeyListResponse",
     "ConsumerKeyResponse",
     "ConsumerKeyResponseScopesItem",
@@ -5573,9 +5862,11 @@ __all__ = (
     "CreateAlertRuleRequestFailureSource",
     "CreateAlertRuleRequestMetric",
     "CreateAlertRuleRequestWindowSpec",
+    "CreateAPIConsumerCreditRequest",
     "CreateAPIConsumerPlanRequest",
     "CreateAPIConsumerRateCardRequest",
     "CreateAPIConsumerRateCardRequestRouteWeights",
+    "CreateAPIConsumerRateCardRequestTierMode",
     "CreateAPIConsumerRequest",
     "CreateAPIConsumerUsageStatementRequest",
     "CreateApplicationStandardLogDestinationRequest",
@@ -5601,6 +5892,7 @@ __all__ = (
     "CreateAppWebhookRequestDeliveryFormat",
     "CreateAppWebhookRequestEventFilterItem",
     "CreateAppWebhookRequestRetryPolicy",
+    "CreateBillingRunRequest",
     "CreateBindingVerificationRunRequest",
     "CreateBindingVerificationRunRequestServiceTargets",
     "CreateCommitSourceBody",
@@ -5670,6 +5962,8 @@ __all__ = (
     "CreateManagedRealtimeEndpointRequestAuthMode",
     "CreateManagedRealtimeEndpointRequestAuthRequiredClaims",
     "CreateMirrorRuleRequest",
+    "CreateNativeIssueTicketRequest",
+    "CreateNativeLinearIssueTicketRequest",
     "CreateObjectBucketBody",
     "CreateObjectMultipartUploadRequest",
     "CreateObjectS3CredentialRequest",
@@ -5692,6 +5986,9 @@ __all__ = (
     "CreatePlatformTenantAccessTokenResponse",
     "CreatePlatformTenantAccessTokenResponseScopesItem",
     "CreatePlatformTenantRateCardRequest",
+    "CreatePlatformTenantRateCardRequestRouteWeights",
+    "CreatePlatformTenantRateCardRequestTierMode",
+    "CreatePlatformTenantRateCardRequestUnit",
     "CreatePlatformTenantRequest",
     "CreatePlatformTenantSelfConsumerRequest",
     "CreatePlatformTenantSelfHostnameRequest",
@@ -5714,6 +6011,7 @@ __all__ = (
     "CreateQueueBindingRequest",
     "CreateQueueBindingRequestMode",
     "CreateQueueBindingRequestWorkloadClass",
+    "CreateStatementInvoiceRequest",
     "CreateTCPListenerRequest",
     "CreateTenantSurfaceRequest",
     "CreateTenantSurfaceRequestCertKind",
@@ -6735,6 +7033,9 @@ __all__ = (
     "IssueActionRequestAction",
     "IssueActivity",
     "IssueActivityDetails",
+    "IssueBreadcrumb",
+    "IssueBreadcrumbCategory",
+    "IssueBreadcrumbLevel",
     "IssueBrowserCSRFTokenAction",
     "IssueCause",
     "IssueCauseFrameOrder",
@@ -6743,7 +7044,11 @@ __all__ = (
     "IssueEventFrameOrder",
     "IssueEventGroupingStrategy",
     "IssueEventResponse",
+    "IssueEventSymbolicationStrategy",
+    "IssueEventTags",
     "IssueFrame",
+    "IssueFrequencyAlertPolicy",
+    "IssueFrequencyAlertRule",
     "IssueGroupingExplanation",
     "IssueGroupingExplanationBasis",
     "IssueGroupingExplanationDiscriminatorKind",
@@ -6753,11 +7058,26 @@ __all__ = (
     "IssueImpactAlertPolicy",
     "IssueImpactSummary",
     "IssueIngestToken",
+    "IssueLifecycleAlertPolicy",
+    "IssueLifecycleAlertPreview",
+    "IssueLifecycleAlertPreviewEvent",
+    "IssueLifecycleAlertPreviewReason",
     "IssueOccurrence",
     "IssueOwnershipRule",
     "IssueOwnershipRules",
     "IssueOwnershipRuleSourceKind",
     "IssueRelease",
+    "IssueReleaseComparison",
+    "IssueReleaseHealth",
+    "IssueReleaseHealthRequestCoverage",
+    "IssueSavedView",
+    "IssueSavedViewFilters",
+    "IssueSavedViewFiltersSort",
+    "IssueSavedViewFiltersState",
+    "IssueSourceMapArtifact",
+    "IssueSourceMapManifest",
+    "IssueSourceMapManifestVersion",
+    "IssueSourceMapsMetadata",
     "IssueSplitMatcher",
     "IssueSplitMatcherSourceKind",
     "IssueSplitPreview",
@@ -6766,6 +7086,21 @@ __all__ = (
     "IssueSplitRuleUndoRequest",
     "IssueSplitRuleUpdate",
     "IssueState",
+    "IssueSymbolicationResult",
+    "IssueTeam",
+    "IssueTrackerAutoSync",
+    "IssueTrackerAutoSyncDirection",
+    "IssueTrackerAutoSyncObservedState",
+    "IssueTrackerAutoSyncOutcome",
+    "IssueTrackerAutoSyncPendingState",
+    "IssueTrackerAutoSyncProviderState",
+    "IssueTrackerAutoSyncSourceState",
+    "IssueTrackerLinearConnection",
+    "IssueTrackerLink",
+    "IssueTrackerLinkProvider",
+    "IssueTrackerProviderStatus",
+    "IssueTrackerProviderStatusProvider",
+    "IssueTrackerProviderStatusState",
     "JobArtifactDownloadResponse",
     "JobDeletedResponse",
     "JobFinishedWebhookPayload",
@@ -6826,8 +7161,12 @@ __all__ = (
     "ListAdminStatusEventsKind",
     "ListAuditEventsResponse",
     "ListAuditLogResponse",
+    "ListAutomationLiveBaselinesResponse",
+    "ListAutomationLiveSuitesResponse",
+    "ListAutomationLiveVerificationsResponse",
     "ListAutomationRevisionsResponse",
     "ListAutomationsResponse",
+    "ListBillingRunItemsOutcome",
     "ListBindingVerificationRunsStatus",
     "ListBucketObjectsResponse200",
     "ListBucketObjectsResponse200ItemsItem",
@@ -6855,8 +7194,11 @@ __all__ = (
     "ListInstancesResponse",
     "ListInvocationsResponse",
     "ListIssueIngestTokensResponse",
+    "ListIssueSavedViewsResponse",
     "ListIssuesResponse",
     "ListIssuesSort",
+    "ListIssueTeamsResponse",
+    "ListIssueTrackerLinksResponse",
     "ListJobRunsResponse",
     "ListJobsResponse",
     "ListJobTaskAttemptsResponse",
@@ -6896,6 +7238,7 @@ __all__ = (
     "ListProjectEnvironmentPromotionsStatus",
     "ListScheduleOccurrencesResponse",
     "ListSecretsForAccountResponse",
+    "ListStatementInvoicesStatus",
     "ListTenantSurfacesResponse",
     "ListTenantWorkflowSchedulesResponse",
     "ListTriggerDeadLetterResponse",
@@ -7187,6 +7530,10 @@ __all__ = (
     "MirrorRuleListResponse",
     "MirrorRuleResponse",
     "MirrorSummaryResponse",
+    "NativeIssueTicketResult",
+    "NativeIssueTicketResultState",
+    "NativeIssueTrackerStatus",
+    "NativeLinearIssueTrackerStatus",
     "OAuthProviderCapability",
     "OAuthTokenExchangeError",
     "OAuthTokenExchangeErrorError",
@@ -7886,6 +8233,12 @@ __all__ = (
     "OperatorIntentResponseKind",
     "OperatorIntentResponseMetadata",
     "OperatorIntentResponseStatus",
+    "OperatorParkExecutionResponse",
+    "OperatorParkExecutionResponseAction",
+    "OperatorParkExecutionResponsePhase",
+    "OperatorParkExecutionResponseTerminalState",
+    "OperatorRestartExecutionResponse",
+    "OperatorRestartExecutionResponsePhase",
     "OperatorRuntimeConfig",
     "OperatorRuntimeConfigApplyMode",
     "OperatorRuntimeConfigKind",
@@ -8038,9 +8391,23 @@ __all__ = (
     "PlatformTenantOffboardingReceiptListResponse",
     "PlatformTenantOffboardingReceiptResponse",
     "PlatformTenantOffboardingReceiptSummary",
+    "PlatformTenantPlanAssignmentListResponse",
+    "PlatformTenantPlanAssignmentResponse",
+    "PlatformTenantPlanBudget",
+    "PlatformTenantPlanListResponse",
+    "PlatformTenantPlanRequest",
+    "PlatformTenantPlanRequestRouteWeights",
+    "PlatformTenantPlanRequestTierMode",
+    "PlatformTenantPlanRequestUnit",
+    "PlatformTenantPlanResponse",
+    "PlatformTenantPlanResponseRouteWeights",
+    "PlatformTenantPlanResponseTierMode",
+    "PlatformTenantPlanResponseUnit",
     "PlatformTenantPublishEventResponse",
     "PlatformTenantRateCardListResponse",
     "PlatformTenantRateCardResponse",
+    "PlatformTenantRateCardResponseRouteWeights",
+    "PlatformTenantRateCardResponseTierMode",
     "PlatformTenantRateCardResponseUnit",
     "PlatformTenantReconciliationAppliedWebhookPayload",
     "PlatformTenantReconciliationApplyResponse",
@@ -8141,6 +8508,8 @@ __all__ = (
     "PreviewEventRequestDatacontenttype",
     "PreviewEventRequestDataContentType",
     "PreviewEventResponse",
+    "PreviewIssueLifecycleAlertRequest",
+    "PreviewIssueLifecycleAlertRequestEvent",
     "PreviewPlatformTenantSelfWorkflowActionsBody",
     "PreviewProductionChangesResponse",
     "PreviewProductionChangesResponseConfigurationChangedGroupsItem",
@@ -8358,6 +8727,7 @@ __all__ = (
     "ProjectSourceRefScanRequest",
     "ProjectSummaryResponse",
     "ProjectWorkloadResponse",
+    "PromoteAutomationLiveBaselineRequest",
     "PromoteProjectEnvironmentRequest",
     "PublicAuthBlock",
     "PublicAuthBlockMode",
@@ -8393,17 +8763,27 @@ __all__ = (
     "PublishEventRequestDatacontenttype",
     "PublishEventRequestDataContentType",
     "PublishEventResponse",
+    "PublishIssueSourceMapsRequest",
     "PublishManagedRealtimeChannelDelivery",
     "PublishProjectReleaseSetRequest",
     "PublishProjectReleaseSetRequestDeployments",
+    "PutAPIConsumerBillingPolicyRequest",
+    "PutAPIConsumerSpendCapRequest",
+    "PutAPIConsumerTrialRequest",
     "PutAppEnvRequest",
     "PutAppRegistryCredentialRequest",
     "PutAppSecretReferenceRequest",
     "PutAppSecretRequest",
     "PutAppSecretRequestSecretClass",
+    "PutBillingConnectionRequest",
+    "PutBillingConnectionRequestCollection",
+    "PutBillingRunScheduleRequest",
     "PutCommitSourceConnectionBody",
     "PutDataUpstreamRequest",
     "PutDataUpstreamRequestKind",
+    "PutIssueSavedViewRequest",
+    "PutIssueTeamRequest",
+    "PutIssueTrackerLinkRequest",
     "PutJobRegistryCredentialRequest",
     "PutOperationWebhookBindingRequest",
     "PutOutboundAIPolicyRequest",
@@ -8616,6 +8996,7 @@ __all__ = (
     "RestoreManagedPostgresDatabaseRequest",
     "ResumeAutomationFailurePauseRequest",
     "ResumeWorkflowRunRequest",
+    "RetireAutomationLiveBaselineRequest",
     "RetryDeploymentRequest",
     "RetryDeploymentRequestFromStage",
     "RetryEventExecutionLineageCaseRequest",
@@ -8888,6 +9269,7 @@ __all__ = (
     "RouteThrottleRequirement",
     "RouteThrottleRequirementKeyBy",
     "RouteThrottleRequirementMissingKeyPolicy",
+    "RunAutomationTestsRequest",
     "RuntimeConfigRestartStatusResponse",
     "RuntimeConfigRestartStatusResponseFailureReason",
     "RuntimeConfigRestartStatusResponseStatus",
@@ -8910,6 +9292,8 @@ __all__ = (
     "RuntimeUpgradePreviewResponseChangesItem",
     "RuntimeUpgradePreviewResponseDisposition",
     "SaveAutomationDraftRequest",
+    "SaveAutomationLiveSuiteRequest",
+    "SaveAutomationTestSuiteRequest",
     "SavedRouteRequirements",
     "SaveProfileDeploymentPolicyRequest",
     "SaveProfileInvestigationRequest",
@@ -9073,12 +9457,20 @@ __all__ = (
     "SourceTarballDeployRequest",
     "SourceTarballDeployRequestTag",
     "StageProjectReleaseRequest",
+    "StartAutomationLiveSuiteRequest",
+    "StartAutomationLiveVerificationRequest",
     "StartDurableEntityQuotaMigrationBody",
     "StartDurableEntityQuotaMigrationResponse200",
     "StartDurableEntityRegistryCleanupBody",
     "StartDurableEntityRegistryCleanupResponse200",
     "StartDurableEntityRetirementBody",
     "StartDurableEntityRetirementResponse200",
+    "StatementInvoiceExportResponse",
+    "StatementInvoiceExportResponseCollection",
+    "StatementInvoiceExportResponsePaymentStatus",
+    "StatementInvoiceExportResponseSourceKind",
+    "StatementInvoiceExportResponseStatus",
+    "StatementInvoiceListResponse",
     "StatusIncident",
     "StatusIncidentSeverity",
     "StatusPage",
@@ -9222,7 +9614,13 @@ __all__ = (
     "UpdateFeatureFlagsRequest",
     "UpdateFinancialBudgetRequest",
     "UpdateInboundWebhookEndpointRequest",
+    "UpdateIssueFrequencyAlertPolicyRequest",
     "UpdateIssueImpactAlertPolicyRequest",
+    "UpdateIssueLifecycleAlertPolicyRequest",
+    "UpdateIssueTrackerAutoSyncRequest",
+    "UpdateIssueTrackerAutoSyncRequestDirection",
+    "UpdateIssueTrackerAutoSyncRequestExpectedIssueState",
+    "UpdateIssueTrackerLinearConnectionRequest",
     "UpdateJobRequest",
     "UpdateJobRequestEnvOverrides",
     "UpdateJobRequestStatus",
@@ -9231,6 +9629,10 @@ __all__ = (
     "UpdateManagedRealtimeEndpointRequestAuthMode",
     "UpdateManagedRealtimeEndpointRequestAuthRequiredClaims",
     "UpdateMirrorRuleRequest",
+    "UpdateNativeIssueTrackerStatusRequest",
+    "UpdateNativeIssueTrackerStatusRequestDesiredState",
+    "UpdateNativeLinearIssueTrackerStatusRequest",
+    "UpdateNativeLinearIssueTrackerStatusRequestDesiredState",
     "UpdateOperatorRuntimeConfigBody",
     "UpdateOutboundBindingPolicyRequest",
     "UpdatePlatformTenantWebhookRequest",

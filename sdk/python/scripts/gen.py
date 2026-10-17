@@ -21,6 +21,7 @@ for the Makefile and CI invocations.
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import subprocess
 import sys
@@ -1550,6 +1551,39 @@ def _rewrite_init_py(init_path: Path) -> None:
     init_path.write_text(_INIT_PY_TEMPLATE)
 
 
+def _git_blob_hashes(paths: list[Path], repo_root: Path) -> list[str]:
+    """Hash raw files in one Git invocation, including Git's blob header.
+
+    --no-filters preserves the old --stdin byte semantics. Git's stdin path
+    protocol accepts C-quoted bytes, so spaces, controls and Unicode paths
+    remain unambiguous without launching a process for every generated file.
+    """
+    if not paths:
+        return []
+    quoted = []
+    for path in paths:
+        pieces = []
+        for value in os.fsencode(path):
+            if value in (34, 92):
+                pieces.append(b"\\" + bytes([value]))
+            elif value < 32 or value >= 127:
+                pieces.append(f"\\{value:03o}".encode("ascii"))
+            else:
+                pieces.append(bytes([value]))
+        quoted.append(b'"' + b"".join(pieces) + b'"')
+    proc = subprocess.run(
+        ["git", "hash-object", "--no-filters", "--stdin-paths"],
+        cwd=repo_root,
+        input=b"\n".join(quoted) + b"\n",
+        check=True,
+        capture_output=True,
+    )
+    hashes = proc.stdout.decode("ascii").splitlines()
+    if len(hashes) != len(paths):
+        raise RuntimeError("git returned an incomplete generated-file hash batch")
+    return hashes
+
+
 def _canonicalise_to_head(
     sdk_root: Path,
     repo_root: Path,
@@ -1617,22 +1651,16 @@ def _canonicalise_to_head(
     #    NOT apply that header and would never match — we use git's
     #    hashing primitives so the comparison is apples-to-apples.
     mismatches: list[tuple[Path, bytes, str]] = []
+    candidates = []
     for regen_path in sdk_root.rglob("*.py"):
         rel = regen_path.relative_to(repo_root).as_posix()
         head_sha = head_blobs.get(rel)
-        if head_sha is None:
-            continue  # untracked (e.g. wrapper) — leave alone
-        regen_bytes = regen_path.read_bytes()
-        regen_sha_proc = subprocess.run(
-            ["git", "hash-object", "--stdin"],
-            cwd=repo_root,
-            input=regen_bytes,
-            check=True,
-            capture_output=True,
-        )
-        if regen_sha_proc.stdout.decode("ascii").strip() == head_sha:
-            continue  # regen equals HEAD — no reconciliation needed
-        mismatches.append((regen_path, regen_bytes, head_sha))
+        if head_sha is not None:
+            candidates.append((regen_path, head_sha))
+    hashes = _git_blob_hashes([path for path, _ in candidates], repo_root)
+    for (regen_path, head_sha), regen_sha in zip(candidates, hashes, strict=True):
+        if regen_sha != head_sha:
+            mismatches.append((regen_path, regen_path.read_bytes(), head_sha))
 
     # 3. Pass B — batch-fetch HEAD bytes for all mismatched SHAs in
     #    one `git cat-file --batch` invocation. The output format

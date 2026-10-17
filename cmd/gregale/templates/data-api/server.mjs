@@ -167,7 +167,9 @@ function proxy(req, res, token, port, config, restBasePath, deadline) {
   for (const name of ['accept', 'content-type', 'prefer', 'range', 'range-unit', 'accept-profile', 'content-profile']) if (req.headers[name]) headers[name] = req.headers[name]
   const path = req.url === '/openapi.json' ? '/' : req.url.slice('/rest/v1'.length)
   if (!deadline.enter('upstream') || !deadline.dispatch()) return
-  const upstream = http.request({ hostname: '127.0.0.1', port, path, method: req.method, headers, timeout: limits.queryMs, signal: deadline.signal }, response => {
+  // The total deadline owns expiry and aborts this request. A second socket
+  // timer can fire early and preempt its stable response and deadline evidence.
+  const upstream = http.request({ hostname: '127.0.0.1', port, path, method: req.method, headers, signal: deadline.signal }, response => {
     if (!deadline.enter('streaming')) { response.destroy(); return }
     response.on('data', () => deadline.check())
     if (req.method === 'GET' && path.split('?')[0] === '/' && response.statusCode === 200) return openAPISpec(response, res, config, restBasePath, deadline)
@@ -181,7 +183,6 @@ function proxy(req, res, token, port, config, restBasePath, deadline) {
   })
   req.on('aborted', () => upstream.destroy())
   res.on('close', () => { if (!res.writableEnded) upstream.destroy() })
-  upstream.on('timeout', () => { if (deadline.check()) problem(res, 504, 'query_timeout'); upstream.destroy() })
   upstream.on('error', () => { if (deadline.check()) problem(res, 503, 'data_api_unavailable') })
   req.pipe(upstream)
 }
