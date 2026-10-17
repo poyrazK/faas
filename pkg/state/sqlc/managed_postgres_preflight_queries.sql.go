@@ -167,7 +167,7 @@ func (q *Queries) PendingManagedPostgresCutoverPreflights(ctx context.Context, d
 }
 
 const readManagedPostgresPreflightBindings = `-- name: ReadManagedPostgresPreflightBindings :many
-SELECT id, account_id, database_id, app_id, scope, environment_key, provider_identity_id, credential_ref, credential_generation, state, created_at, updated_at, deleted_at, access, last_error_code, lease_token, lease_until, attempt_count, retry_at, rotation_previous_generation, rotation_wake_id, rotation_cleanup_ready, cutover_id FROM managed_postgres_bindings WHERE database_id=$1::text::uuid
+SELECT id, account_id, database_id, app_id, scope, environment_key, provider_identity_id, credential_ref, credential_generation, state, created_at, updated_at, deleted_at, access, last_error_code, lease_token, lease_until, attempt_count, retry_at, rotation_previous_generation, rotation_wake_id, rotation_cleanup_ready, cutover_id, connection_limit FROM managed_postgres_bindings WHERE database_id=$1::text::uuid
  AND app_id=$2::text::uuid AND scope=$3::text AND state<>'deleted' ORDER BY id
 `
 
@@ -210,6 +210,7 @@ func (q *Queries) ReadManagedPostgresPreflightBindings(ctx context.Context, db D
 			&i.RotationWakeID,
 			&i.RotationCleanupReady,
 			&i.CutoverID,
+			&i.ConnectionLimit,
 		); err != nil {
 			return nil, err
 		}

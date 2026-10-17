@@ -11099,7 +11099,7 @@ RETURNING id::text AS id, account_id::text AS account_id, database_id::text AS d
  coalesce(rotation_wake_id::text, '')::text AS rotation_wake_id, rotation_cleanup_ready,
  state, coalesce(last_error_code, '')::text AS last_error_code,
  coalesce(lease_token, '')::text AS lease_token, lease_until,
- attempt_count, retry_at, created_at, updated_at, deleted_at;
+ attempt_count, retry_at, created_at, updated_at, deleted_at, connection_limit;
 
 -- name: ClaimManagedPostgresBindingRetirement :one
 UPDATE managed_postgres_bindings AS binding SET state = 'retiring',
@@ -11122,7 +11122,7 @@ RETURNING id::text AS id, account_id::text AS account_id, database_id::text AS d
  coalesce(rotation_wake_id::text, '')::text AS rotation_wake_id, rotation_cleanup_ready,
  state, coalesce(last_error_code, '')::text AS last_error_code,
  coalesce(lease_token, '')::text AS lease_token, lease_until,
- attempt_count, retry_at, created_at, updated_at, deleted_at;
+ attempt_count, retry_at, created_at, updated_at, deleted_at, connection_limit;
 
 -- name: ListDueManagedPostgresBindings :many
 SELECT id::text AS id, account_id::text AS account_id, database_id::text AS database_id,

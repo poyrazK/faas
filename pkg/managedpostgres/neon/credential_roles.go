@@ -17,6 +17,7 @@ import (
 const ownerLogin = "gregale_owner"
 
 type credentialRole struct {
+	connectionLimit                                               int64
 	name, schemaOwner, authOwner, marker, scope, database, legacy string
 	access                                                        managedpostgres.CredentialAccess
 }
@@ -49,7 +50,8 @@ func (p *Provider) credentialRole(request managedpostgres.CredentialRequest) cre
 		prefix = "gregale_auth_"
 	}
 	return credentialRole{name: prefix + hex.EncodeToString(identity[:20]), schemaOwner: "gregale_schema_" + hex.EncodeToString(owner[:16]),
-		authOwner: "gregale_authowner_" + hex.EncodeToString(owner[:16]), scope: hex.EncodeToString(scope[:20]),
+		connectionLimit: request.ConnectionLimit,
+		authOwner:       "gregale_authowner_" + hex.EncodeToString(owner[:16]), scope: hex.EncodeToString(scope[:20]),
 		marker:   "gregale:credential:v1:" + hex.EncodeToString(scope[:20]) + ":" + string(request.Access),
 		database: p.databaseName, access: request.Access, legacy: p.roleName(request.ProviderResourceID, request.IdentityKey)}
 }
@@ -121,7 +123,11 @@ func (m *sqlCredentialRoles) Ensure(ctx context.Context, material managedpostgre
 			return err
 		}
 		password := "Ga!" + hex.EncodeToString(entropy[:])
-		if _, err := tx.Exec(ctx, "CREATE ROLE "+roleIdentifier(role.name)+" LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD '"+password+"'"); err != nil {
+		limit := int64(-1)
+		if role.connectionLimit > 0 {
+			limit = role.connectionLimit
+		}
+		if _, err := tx.Exec(ctx, "CREATE ROLE "+roleIdentifier(role.name)+" LOGIN NOINHERIT NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS CONNECTION LIMIT "+strconv.FormatInt(limit, 10)+" PASSWORD '"+password+"'"); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(ctx, "COMMENT ON ROLE "+roleIdentifier(role.name)+" IS '"+role.marker+"'"); err != nil {
@@ -152,6 +158,15 @@ func (m *sqlCredentialRoles) Ensure(ctx context.Context, material managedpostgre
 	}
 	if !info.matches(role) {
 		return managedpostgres.ErrConflict
+	}
+	if role.connectionLimit > 0 {
+		var limit int64
+		if err := tx.QueryRow(ctx, `SELECT rolconnlimit::bigint FROM pg_roles WHERE rolname=$1`, role.name).Scan(&limit); err != nil {
+			return err
+		}
+		if limit != role.connectionLimit {
+			return managedpostgres.ErrConflict
+		}
 	}
 	if role.access == managedpostgres.CredentialReadWrite || role.access == managedpostgres.CredentialReadOnly {
 		var unsafePrivileges bool

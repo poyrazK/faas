@@ -4412,6 +4412,30 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
+		Name: "pipeline", DocSlug: "data-pipelines", Short: "Connect PostgreSQL sources and operate synchronized read-only mirrors",
+		Subcommands: []cliSub{
+			{Name: "connection", Short: "Register and manage encrypted source connections", Subcommands: []cliSub{
+				{Name: "add", Short: "Register a PostgreSQL source", Positionals: []string{"<name>"}, Flags: []cliFlag{{Name: "url-file", Value: "FILE", Req: true, Short: "private file containing a verified-TLS source URL"}}},
+				{Name: "list", Short: "List sources without credentials"},
+				{Name: "check", Short: "Check source compatibility and discover public tables", Positionals: []string{"<id>"}, Flags: []cliFlag{{Name: "database", Value: "ID", Short: "also check an existing empty managed mirror"}, {Name: "wait", Short: "wait for a fresh result (default true; use --wait=false to queue only)"}, {Name: "timeout", Value: "DURATION", Short: "maximum wait (default 2m; maximum 1h)"}}},
+				{Name: "tables", Short: "Read the latest checked source schema and compatibility issues", Positionals: []string{"<id>"}, Flags: []cliFlag{{Name: "wait", Short: "wait for a fresh result (default true)"}, {Name: "timeout", Value: "DURATION", Short: "maximum wait (default 2m; maximum 1h)"}}},
+				{Name: "rotate", Short: "Rotate a source credential without changing its database identity", Positionals: []string{"<id>"}, Flags: []cliFlag{{Name: "url-file", Value: "FILE", Req: true, Short: "private file containing the new source URL"}}},
+				{Name: "delete", Short: "Delete an unused source credential", Positionals: []string{"<id>"}},
+			}},
+			{Name: "create", Short: "Create a managed mirror and begin initial copying", Positionals: []string{"<name>"}, Flags: []cliFlag{
+				{Name: "connection", Value: "ID", Short: "registered source connection (or use --url-file)"}, {Name: "url-file", Value: "FILE", Short: "register a source from a private URL file"}, {Name: "database", Value: "DATABASE", Short: "existing empty managed database; otherwise create NAME-mirror"}, {Name: "region", Value: "REGION", Short: "placement of an automatically created mirror"}, {Name: "tables", Value: "TABLES", Req: true, Short: "comma-separated public table names"}, {Name: "read-subjects", Value: "SUBJECTS", Req: true, Short: "application identities allowed to read the mirror"}, {Name: "wait", Short: "wait for initial copying and catch-up"}, {Name: "timeout", Value: "DURATION", Short: "maximum wait (default 10m; maximum 1h)"}, {Name: "api", Value: "NAME", Short: "deploy a read-only Data API after initial sync"}, {Name: "auth", Value: "AUTH_APP", Short: "Auth app used by --api"},
+			}},
+			{Name: "list", Short: "List pipeline intent and observations"},
+			{Name: "status", Short: "Read pipeline intent and observed progress", Positionals: []string{"<id>"}, Flags: []cliFlag{{Name: "wait", Short: "wait for the requested observation"}, {Name: "timeout", Value: "DURATION", Short: "maximum wait (default 10m; maximum 1h)"}}},
+			{Name: "wait", Short: "Wait for the pipeline to become live", Positionals: []string{"<id>"}, Flags: []cliFlag{{Name: "wait", Short: "wait for the requested observation"}, {Name: "timeout", Value: "DURATION", Short: "maximum wait (default 10m; maximum 1h)"}}},
+			{Name: "pause", Short: "Request a pause", Positionals: []string{"<id>"}, Flags: []cliFlag{{Name: "wait", Short: "wait for the requested observation"}, {Name: "timeout", Value: "DURATION", Short: "maximum wait (default 10m; maximum 1h)"}}},
+			{Name: "resume", Short: "Resume replication", Positionals: []string{"<id>"}, Flags: []cliFlag{{Name: "wait", Short: "wait for the requested observation"}, {Name: "timeout", Value: "DURATION", Short: "maximum wait (default 10m; maximum 1h)"}}},
+			{Name: "resync", Short: "Replace the owned mirror with a fresh copy", Positionals: []string{"<id>"}, Flags: []cliFlag{{Name: "wait", Short: "wait for the requested observation"}, {Name: "timeout", Value: "DURATION", Short: "maximum wait (default 10m; maximum 1h)"}}},
+			{Name: "verify", Short: "Request a bounded consistency check", Positionals: []string{"<id>"}, Flags: []cliFlag{{Name: "wait", Short: "wait for the requested observation"}, {Name: "timeout", Value: "DURATION", Short: "maximum wait (default 10m; maximum 1h)"}}},
+			{Name: "delete", Short: "Clean up replication while retaining mirror data", Positionals: []string{"<id>"}, Flags: []cliFlag{{Name: "wait", Short: "wait for the requested observation"}, {Name: "timeout", Value: "DURATION", Short: "maximum wait (default 10m; maximum 1h)"}}},
+		},
+	},
+	{
 		Name: "data-api", DocSlug: "data-api", Short: "Create schema-generated PostgreSQL APIs and export application types",
 		Subcommands: []cliSub{
 			{Name: "transaction", Short: "Build a typed atomic business-operation starter", Subcommands: []cliSub{{Name: "init", Short: "Generate an editable tenant-scoped order/inventory RPC package", Flags: []cliFlag{{Name: "name", Value: "NAME", Req: true, Short: "new function/table prefix"}, {Name: "output", Value: "DIR", Req: true, Short: "new transaction package directory"}}}}},
@@ -4506,7 +4530,8 @@ var cliCommands = []cliCommand{
 			}, Examples: []string{"gregale data-api dev --check", "gregale data-api dev --port 0 --check --once"}},
 			{Name: "create", Short: "Deploy a managed PostgREST Data API", Positionals: []string{"<name>"}, Flags: []cliFlag{
 				{Name: "database", Value: "DATABASE", Req: true, Short: "ready managed database name or ID"},
-				{Name: "schema", Value: "SCHEMA", Short: "exposed schema (api)"},
+				{Name: "schema", Value: "SCHEMA", Short: "exposed schema (api, or public with --read-only)"},
+				{Name: "read-only", Short: "use a SELECT-only public-schema binding and reject mutations"},
 				{Name: "scope", Value: "SCOPE", Short: "environment scope"},
 				{Name: "auth", Value: "AUTH_APP", Short: "Auth app whose tokens to verify (replaces --issuer, --jwks-url and --audience)"},
 				{Name: "issuer", Value: "HTTPS_URL", Short: "application JWT issuer"},

@@ -2779,6 +2779,49 @@
     "kind": "operational"
   },
   {
+    "table": "data_pipeline_connections",
+    "columns": [
+      "account_id",
+      "ciphertext",
+      "created_at",
+      "id",
+      "identity",
+      "name",
+      "revision"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "data_pipelines",
+    "columns": [
+      "account_id",
+      "created_at",
+      "database_id",
+      "desired_state",
+      "generation",
+      "id",
+      "initialized",
+      "lease_token",
+      "lease_until",
+      "name",
+      "observed_at",
+      "observed_revision",
+      "read_subjects",
+      "reason",
+      "retained_wal_bytes",
+      "retry_at",
+      "revision",
+      "source_connection_id",
+      "state",
+      "tables",
+      "tables_ready",
+      "verification",
+      "verified_at",
+      "verify_requested"
+    ],
+    "kind": "configuration"
+  },
+  {
     "table": "data_upstream_probes",
     "columns": [
       "error_class",

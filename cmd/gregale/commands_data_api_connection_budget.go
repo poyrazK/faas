@@ -53,7 +53,8 @@ func validDataAPIConnectionBudget(b api.ManagedPostgresConnectionBudget, now tim
 	}
 	checked, first := time.Parse(time.RFC3339Nano, b.CheckedAt)
 	expires, second := time.Parse(time.RFC3339Nano, b.ExpiresAt)
-	if b.Version != 1 || !api.ValidAppSlug(b.DatabaseName) || b.Model != "canonical_runtime_pools" || b.Enforced || first != nil || second != nil ||
+	bounded := b.Model == "qualified_shared_connection_limits" && b.Enforced
+	if b.Version != 1 || !api.ValidAppSlug(b.DatabaseName) || (!bounded && (b.Model != "canonical_runtime_pools" || b.Enforced)) || first != nil || second != nil ||
 		now.Before(checked) || !now.Before(expires) || expires.Sub(checked) > api.DataAPIConnectionBudgetMaxAge {
 		return false
 	}
@@ -69,7 +70,7 @@ func validDataAPIConnectionBudget(b api.ManagedPostgresConnectionBudget, now tim
 			return false
 		}
 	}
-	if d.ModeledPeakConnections != d.DataAPIWakeEstimate+d.AuthWakeEstimate+d.ControlHeadroom+d.MigrationHeadroom {
+	if !bounded && d.ModeledPeakConnections != d.DataAPIWakeEstimate+d.AuthWakeEstimate+d.ControlHeadroom+d.MigrationHeadroom {
 		return false
 	}
 	if b.Capacity.State == "unknown" {
@@ -81,6 +82,9 @@ func validDataAPIConnectionBudget(b api.ManagedPostgresConnectionBudget, now tim
 	if b.State == "unknown" {
 		return len(b.Reasons) > 0
 	}
+	if bounded && b.State == "over_budget" {
+		return slices.Equal(b.Reasons, []string{"reserved_capacity_exceeds_allocation"})
+	}
 	if len(b.Reasons) > 0 {
 		return false
 	}
@@ -89,7 +93,7 @@ func validDataAPIConnectionBudget(b api.ManagedPostgresConnectionBudget, now tim
 
 func validConnectionBudgetReason(reason string) bool {
 	return slices.Contains([]string{"inventory_stale", "database_not_ready", "inventory_truncated", "runtime_inventory_unavailable", "runtime_pool_configuration_unverified", "external_consumers_unobserved",
-		"migration_demand_unbounded", "client_pool_sizes_unknown", "capacity_unverified", "binding_transition", "inventory_invalid", "node_observations_stale", "auxiliary_connections_unmodeled", "multiple_runtime_bindings", "concurrency_policy_unverified"}, reason)
+		"migration_demand_unbounded", "client_pool_sizes_unknown", "capacity_unverified", "binding_transition", "inventory_invalid", "node_observations_stale", "auxiliary_connections_unmodeled", "multiple_runtime_bindings", "concurrency_policy_unverified", "native_replication_connections_unmodeled", "reserved_capacity_exceeds_allocation"}, reason)
 }
 
 func attachDataAPIConnectionBudget(report *dataAPIHealthReport, budget api.DataAPIConnectionBudgets) {
@@ -110,7 +114,14 @@ func writeDataAPIConnectionBudget(budget *api.DataAPIConnectionBudgets) error {
 	if budget == nil {
 		return nil
 	}
-	_, err := fmt.Fprintf(osStdout, "Database connection budget: %s (planning only)\n", budget.State)
+	mode := "planning only"
+	for _, database := range budget.Databases {
+		if database.Enforced {
+			mode = "includes enforced reservations"
+			break
+		}
+	}
+	_, err := fmt.Fprintf(osStdout, "Database connection budget: %s (%s)\n", budget.State, mode)
 	if err != nil {
 		return err
 	}

@@ -123,3 +123,22 @@ func TestDataAPIConnectionBudgetHumanOutputShowsPlanningAndUnknownCapacity(t *te
 		t.Fatal(fmt.Sprint(stdout))
 	}
 }
+
+func TestConnectionBudgetAcceptsEnforcedSharedCeilings(t *testing.T) {
+	budget := connectionBudgetFixture().Databases[0]
+	budget.Model = "qualified_shared_connection_limits"
+	budget.Enforced = true
+	budget.Demand = api.ConnectionBudgetDemand{ModeledPeakConnections: 15}
+	if !validDataAPIConnectionBudget(budget, time.Now()) {
+		t.Fatal("valid enforced budget rejected", budget)
+	}
+	budget.State = "over_budget"
+	budget.Reasons = []string{"reserved_capacity_exceeds_allocation"}
+	if !validDataAPIConnectionBudget(budget, time.Now()) {
+		t.Fatal("replication worker overage was hidden", budget)
+	}
+	budget.Enforced = false
+	if validDataAPIConnectionBudget(budget, time.Now()) {
+		t.Fatal("unbound planning was labeled enforced")
+	}
+}

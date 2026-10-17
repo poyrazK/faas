@@ -87,6 +87,7 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`park`](#park) | Park an app cold (kill all live instances); a min-instances floor stays off, and unbilled, until the next request |
 | [`plan`](#plan) | Change plan (free\|hobby\|pro\|scale); paid upgrades open the provider checkout |
 | [`auth`](#auth) | Add sign-up, sessions and users to your application (application Auth, not your Gregale login) |
+| [`pipeline`](#pipeline) | Connect PostgreSQL sources and operate synchronized read-only mirrors |
 | [`data-api`](#data-api) | Create schema-generated PostgreSQL APIs and export application types |
 | [`ps`](#ps) | Show live instances + state for an app (slug defaults to linked context) |
 | [`queue`](#queue) | Inspect queues and manage first-class queue bindings |
@@ -14216,6 +14217,172 @@ Remove an identity provider; its users keep their memberships
 | `--admin-key-stdin` | read the admin key from stdin (prompted on a terminal) |  |
 
 
+## pipeline
+
+Connect PostgreSQL sources and operate synchronized read-only mirrors
+
+`gregale pipeline [<subcommand>]`
+
+### pipeline connection
+
+Register and manage encrypted source connections
+
+#### pipeline connection add
+
+Register a PostgreSQL source
+
+`gregale pipeline connection add --url-file <FILE> <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--url-file <FILE>` | private file containing a verified-TLS source URL | required |
+
+#### pipeline connection list
+
+List sources without credentials
+
+`gregale pipeline connection list`
+
+#### pipeline connection check
+
+Check source compatibility and discover public tables
+
+`gregale pipeline connection check [--database <ID>] [--wait] [--timeout <DURATION>] <id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--database <ID>` | also check an existing empty managed mirror |  |
+| `--wait` | wait for a fresh result (default true; use --wait=false to queue only) |  |
+| `--timeout <DURATION>` | maximum wait (default 2m; maximum 1h) |  |
+
+#### pipeline connection tables
+
+Read the latest checked source schema and compatibility issues
+
+`gregale pipeline connection tables [--wait] [--timeout <DURATION>] <id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--wait` | wait for a fresh result (default true) |  |
+| `--timeout <DURATION>` | maximum wait (default 2m; maximum 1h) |  |
+
+#### pipeline connection rotate
+
+Rotate a source credential without changing its database identity
+
+`gregale pipeline connection rotate --url-file <FILE> <id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--url-file <FILE>` | private file containing the new source URL | required |
+
+#### pipeline connection delete
+
+Delete an unused source credential
+
+`gregale pipeline connection delete <id>`
+
+### pipeline create
+
+Create a managed mirror and begin initial copying
+
+`gregale pipeline create [--connection <ID>] [--url-file <FILE>] [--database <DATABASE>] [--region <REGION>] --tables <TABLES> --read-subjects <SUBJECTS> [--wait] [--timeout <DURATION>] [--api <NAME>] [--auth <AUTH_APP>] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--connection <ID>` | registered source connection (or use --url-file) |  |
+| `--url-file <FILE>` | register a source from a private URL file |  |
+| `--database <DATABASE>` | existing empty managed database; otherwise create NAME-mirror |  |
+| `--region <REGION>` | placement of an automatically created mirror |  |
+| `--tables <TABLES>` | comma-separated public table names | required |
+| `--read-subjects <SUBJECTS>` | application identities allowed to read the mirror | required |
+| `--wait` | wait for initial copying and catch-up |  |
+| `--timeout <DURATION>` | maximum wait (default 10m; maximum 1h) |  |
+| `--api <NAME>` | deploy a read-only Data API after initial sync |  |
+| `--auth <AUTH_APP>` | Auth app used by --api |  |
+
+### pipeline list
+
+List pipeline intent and observations
+
+### pipeline status
+
+Read pipeline intent and observed progress
+
+`gregale pipeline status [--wait] [--timeout <DURATION>] <id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--wait` | wait for the requested observation |  |
+| `--timeout <DURATION>` | maximum wait (default 10m; maximum 1h) |  |
+
+### pipeline wait
+
+Wait for the pipeline to become live
+
+`gregale pipeline wait [--wait] [--timeout <DURATION>] <id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--wait` | wait for the requested observation |  |
+| `--timeout <DURATION>` | maximum wait (default 10m; maximum 1h) |  |
+
+### pipeline pause
+
+Request a pause
+
+`gregale pipeline pause [--wait] [--timeout <DURATION>] <id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--wait` | wait for the requested observation |  |
+| `--timeout <DURATION>` | maximum wait (default 10m; maximum 1h) |  |
+
+### pipeline resume
+
+Resume replication
+
+`gregale pipeline resume [--wait] [--timeout <DURATION>] <id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--wait` | wait for the requested observation |  |
+| `--timeout <DURATION>` | maximum wait (default 10m; maximum 1h) |  |
+
+### pipeline resync
+
+Replace the owned mirror with a fresh copy
+
+`gregale pipeline resync [--wait] [--timeout <DURATION>] <id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--wait` | wait for the requested observation |  |
+| `--timeout <DURATION>` | maximum wait (default 10m; maximum 1h) |  |
+
+### pipeline verify
+
+Request a bounded consistency check
+
+`gregale pipeline verify [--wait] [--timeout <DURATION>] <id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--wait` | wait for the requested observation |  |
+| `--timeout <DURATION>` | maximum wait (default 10m; maximum 1h) |  |
+
+### pipeline delete
+
+Clean up replication while retaining mirror data
+
+`gregale pipeline delete [--wait] [--timeout <DURATION>] <id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--wait` | wait for the requested observation |  |
+| `--timeout <DURATION>` | maximum wait (default 10m; maximum 1h) |  |
+
+
 ## data-api
 
 Create schema-generated PostgreSQL APIs and export application types
@@ -14460,12 +14627,13 @@ gregale data-api dev --port 0 --check --once
 
 Deploy a managed PostgREST Data API
 
-`gregale data-api create --database <DATABASE> [--schema <SCHEMA>] [--scope <SCOPE>] [--auth <AUTH_APP>] [--issuer <HTTPS_URL>] [--jwks-url <HTTPS_URL>] [--audience <AUDIENCE>] [--origins <ORIGINS>] [--resume] <name>`
+`gregale data-api create --database <DATABASE> [--schema <SCHEMA>] [--read-only] [--scope <SCOPE>] [--auth <AUTH_APP>] [--issuer <HTTPS_URL>] [--jwks-url <HTTPS_URL>] [--audience <AUDIENCE>] [--origins <ORIGINS>] [--resume] <name>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--database <DATABASE>` | ready managed database name or ID | required |
-| `--schema <SCHEMA>` | exposed schema (api) |  |
+| `--schema <SCHEMA>` | exposed schema (api, or public with --read-only) |  |
+| `--read-only` | use a SELECT-only public-schema binding and reject mutations |  |
 | `--scope <SCOPE>` | environment scope |  |
 | `--auth <AUTH_APP>` | Auth app whose tokens to verify (replaces --issuer, --jwks-url and --audience) |  |
 | `--issuer <HTTPS_URL>` | application JWT issuer |  |

@@ -414,6 +414,8 @@ func (c CredentialMaterial) Validate() error {
 
 type CredentialRequest struct {
 	ProviderResourceID string
+	// Nonzero only when a durable capacity reservation bounds this login.
+	ConnectionLimit int64
 	// IdentityKey is a stable, non-secret identity for one credential
 	// generation. Rotation uses a new key; revocation repeats the key that
 	// created the credential.
@@ -919,6 +921,7 @@ const (
 )
 
 type Binding struct {
+	ConnectionLimit      int64
 	ID                   string
 	AccountID            string
 	DatabaseID           string

@@ -149,6 +149,20 @@ func (s *Service) reservationLimit(ctx context.Context, accountID string) (int, 
 }
 
 func (s *Service) Create(ctx context.Context, request CreateRequest) (Database, error) {
+	return s.create(ctx, request, "")
+}
+
+// CreateWithID is for durable, apid-owned workflows which reserve their resource
+// identity before calling the provider. A name collision must never adopt a
+// different database, even when its configuration happens to match.
+func (s *Service) CreateWithID(ctx context.Context, request CreateRequest, id string) (Database, error) {
+	if _, err := uuid.Parse(id); err != nil {
+		return Database{}, ErrInvalid
+	}
+	return s.create(ctx, request, id)
+}
+
+func (s *Service) create(ctx context.Context, request CreateRequest, reservedID string) (Database, error) {
 	if !s.provisioningEnabled() {
 		return Database{}, ErrProvisioningClosed
 	}
@@ -166,6 +180,9 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (Database, 
 	}
 	existing, err := s.store.FindByName(ctx, request.AccountID, request.Name)
 	if err == nil {
+		if reservedID != "" && existing.ID != reservedID {
+			return Database{}, ErrConflict
+		}
 		if _, err := s.Get(ctx, request.AccountID, existing.ID); err != nil {
 			return Database{}, err
 		}
@@ -200,8 +217,12 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (Database, 
 	if err != nil {
 		return Database{}, err
 	}
+	resourceID := reservedID
+	if resourceID == "" {
+		resourceID = s.newID()
+	}
 	database, _, err := s.store.Reserve(ctx, Database{
-		ID:                 s.newID(),
+		ID:                 resourceID,
 		AccountID:          request.AccountID,
 		Name:               request.Name,
 		Spec:               request.Spec,
@@ -215,7 +236,7 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (Database, 
 	if err != nil {
 		return Database{}, quotaDetail(err, reservationLimit)
 	}
-	if database.Spec != request.Spec {
+	if database.Spec != request.Spec || (reservedID != "" && database.ID != reservedID) {
 		return Database{}, ErrConflict
 	}
 	if database.State == StateReady {

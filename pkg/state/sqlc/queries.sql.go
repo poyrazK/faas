@@ -4941,7 +4941,7 @@ RETURNING id::text AS id, account_id::text AS account_id, database_id::text AS d
  coalesce(rotation_wake_id::text, '')::text AS rotation_wake_id, rotation_cleanup_ready,
  state, coalesce(last_error_code, '')::text AS last_error_code,
  coalesce(lease_token, '')::text AS lease_token, lease_until,
- attempt_count, retry_at, created_at, updated_at, deleted_at
+ attempt_count, retry_at, created_at, updated_at, deleted_at, connection_limit
 `
 
 type ClaimManagedPostgresBindingRetirementParams struct {
@@ -4975,6 +4975,7 @@ type ClaimManagedPostgresBindingRetirementRow struct {
 	CreatedAt                  pgtype.Timestamptz
 	UpdatedAt                  pgtype.Timestamptz
 	DeletedAt                  pgtype.Timestamptz
+	ConnectionLimit            int64
 }
 
 func (q *Queries) ClaimManagedPostgresBindingRetirement(ctx context.Context, db DBTX, arg ClaimManagedPostgresBindingRetirementParams) (ClaimManagedPostgresBindingRetirementRow, error) {
@@ -5009,6 +5010,7 @@ func (q *Queries) ClaimManagedPostgresBindingRetirement(ctx context.Context, db 
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.ConnectionLimit,
 	)
 	return i, err
 }
@@ -18978,7 +18980,7 @@ RETURNING id::text AS id, account_id::text AS account_id, database_id::text AS d
  coalesce(rotation_wake_id::text, '')::text AS rotation_wake_id, rotation_cleanup_ready,
  state, coalesce(last_error_code, '')::text AS last_error_code,
  coalesce(lease_token, '')::text AS lease_token, lease_until,
- attempt_count, retry_at, created_at, updated_at, deleted_at
+ attempt_count, retry_at, created_at, updated_at, deleted_at, connection_limit
 `
 
 type FinishManagedPostgresBindingProvisionParams struct {
@@ -19012,6 +19014,7 @@ type FinishManagedPostgresBindingProvisionRow struct {
 	CreatedAt                  pgtype.Timestamptz
 	UpdatedAt                  pgtype.Timestamptz
 	DeletedAt                  pgtype.Timestamptz
+	ConnectionLimit            int64
 }
 
 func (q *Queries) FinishManagedPostgresBindingProvision(ctx context.Context, db DBTX, arg FinishManagedPostgresBindingProvisionParams) (FinishManagedPostgresBindingProvisionRow, error) {
@@ -19046,6 +19049,7 @@ func (q *Queries) FinishManagedPostgresBindingProvision(ctx context.Context, db 
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.ConnectionLimit,
 	)
 	return i, err
 }
@@ -28728,7 +28732,7 @@ func (q *Queries) InsertManagedPostgresCutover(ctx context.Context, db DBTX, arg
 
 const insertManagedPostgresCutoverCredential = `-- name: InsertManagedPostgresCutoverCredential :execrows
 WITH pinned AS (UPDATE managed_postgres_bindings SET cutover_id=$2::text::uuid
-WHERE id=$3::text::uuid AND cutover_id IS NULL AND state='ready' AND coalesce(rotation_previous_generation,0)=0 RETURNING id, account_id, database_id, app_id, scope, environment_key, provider_identity_id, credential_ref, credential_generation, state, created_at, updated_at, deleted_at, access, last_error_code, lease_token, lease_until, attempt_count, retry_at, rotation_previous_generation, rotation_wake_id, rotation_cleanup_ready, cutover_id)
+WHERE id=$3::text::uuid AND cutover_id IS NULL AND state='ready' AND coalesce(rotation_previous_generation,0)=0 RETURNING id, account_id, database_id, app_id, scope, environment_key, provider_identity_id, credential_ref, credential_generation, state, created_at, updated_at, deleted_at, access, last_error_code, lease_token, lease_until, attempt_count, retry_at, rotation_previous_generation, rotation_wake_id, rotation_cleanup_ready, cutover_id, connection_limit)
 INSERT INTO managed_postgres_cutover_credentials(id,cutover_id,source_binding_id,source_credential_generation,environment_key,access)
 SELECT $1::text::uuid,cutover_id,id,credential_generation,environment_key,access FROM pinned
 `
@@ -29506,7 +29510,7 @@ func (q *Queries) InsertProjectEnvironmentClonePostgresArchive(ctx context.Conte
 
 const insertProjectEnvironmentClonePostgresBinding = `-- name: InsertProjectEnvironmentClonePostgresBinding :one
 INSERT INTO managed_postgres_bindings(id,account_id,database_id,app_id,scope,environment_key,access,credential_generation,state)
-VALUES($1,$2,$3,$4,$5,$6,$7,1,'provisioning') RETURNING id, account_id, database_id, app_id, scope, environment_key, provider_identity_id, credential_ref, credential_generation, state, created_at, updated_at, deleted_at, access, last_error_code, lease_token, lease_until, attempt_count, retry_at, rotation_previous_generation, rotation_wake_id, rotation_cleanup_ready, cutover_id
+VALUES($1,$2,$3,$4,$5,$6,$7,1,'provisioning') RETURNING id, account_id, database_id, app_id, scope, environment_key, provider_identity_id, credential_ref, credential_generation, state, created_at, updated_at, deleted_at, access, last_error_code, lease_token, lease_until, attempt_count, retry_at, rotation_previous_generation, rotation_wake_id, rotation_cleanup_ready, cutover_id, connection_limit
 `
 
 type InsertProjectEnvironmentClonePostgresBindingParams struct {
@@ -29554,6 +29558,7 @@ func (q *Queries) InsertProjectEnvironmentClonePostgresBinding(ctx context.Conte
 		&i.RotationWakeID,
 		&i.RotationCleanupReady,
 		&i.CutoverID,
+		&i.ConnectionLimit,
 	)
 	return i, err
 }
@@ -48585,7 +48590,7 @@ func (q *Queries) LockManagedPostgresCutoverApp(ctx context.Context, db DBTX, ap
 }
 
 const lockManagedPostgresCutoverBindings = `-- name: LockManagedPostgresCutoverBindings :many
-SELECT id, account_id, database_id, app_id, scope, environment_key, provider_identity_id, credential_ref, credential_generation, state, created_at, updated_at, deleted_at, access, last_error_code, lease_token, lease_until, attempt_count, retry_at, rotation_previous_generation, rotation_wake_id, rotation_cleanup_ready, cutover_id FROM managed_postgres_bindings WHERE account_id=$1::text::uuid
+SELECT id, account_id, database_id, app_id, scope, environment_key, provider_identity_id, credential_ref, credential_generation, state, created_at, updated_at, deleted_at, access, last_error_code, lease_token, lease_until, attempt_count, retry_at, rotation_previous_generation, rotation_wake_id, rotation_cleanup_ready, cutover_id, connection_limit FROM managed_postgres_bindings WHERE account_id=$1::text::uuid
 AND database_id=$2::text::uuid AND app_id=$3::text::uuid
 AND scope=$4::text AND state<>'deleted' ORDER BY id FOR UPDATE
 `
@@ -48635,6 +48640,7 @@ func (q *Queries) LockManagedPostgresCutoverBindings(ctx context.Context, db DBT
 			&i.RotationWakeID,
 			&i.RotationCleanupReady,
 			&i.CutoverID,
+			&i.ConnectionLimit,
 		); err != nil {
 			return nil, err
 		}
@@ -49438,7 +49444,7 @@ func (q *Queries) LockProjectEnvironmentCloneMaterializedEnvironment(ctx context
 }
 
 const lockProjectEnvironmentClonePostgresBinding = `-- name: LockProjectEnvironmentClonePostgresBinding :one
-SELECT id, account_id, database_id, app_id, scope, environment_key, provider_identity_id, credential_ref, credential_generation, state, created_at, updated_at, deleted_at, access, last_error_code, lease_token, lease_until, attempt_count, retry_at, rotation_previous_generation, rotation_wake_id, rotation_cleanup_ready, cutover_id FROM managed_postgres_bindings WHERE id=$1 AND account_id=$2 FOR UPDATE
+SELECT id, account_id, database_id, app_id, scope, environment_key, provider_identity_id, credential_ref, credential_generation, state, created_at, updated_at, deleted_at, access, last_error_code, lease_token, lease_until, attempt_count, retry_at, rotation_previous_generation, rotation_wake_id, rotation_cleanup_ready, cutover_id, connection_limit FROM managed_postgres_bindings WHERE id=$1 AND account_id=$2 FOR UPDATE
 `
 
 type LockProjectEnvironmentClonePostgresBindingParams struct {
@@ -49473,6 +49479,7 @@ func (q *Queries) LockProjectEnvironmentClonePostgresBinding(ctx context.Context
 		&i.RotationWakeID,
 		&i.RotationCleanupReady,
 		&i.CutoverID,
+		&i.ConnectionLimit,
 	)
 	return i, err
 }
@@ -51455,7 +51462,7 @@ func (q *Queries) ManagedPostgresBindingDatabaseID(ctx context.Context, db DBTX,
 }
 
 const managedPostgresDueBindings = `-- name: ManagedPostgresDueBindings :many
-SELECT b.id, b.account_id, b.database_id, b.app_id, b.scope, b.environment_key, b.provider_identity_id, b.credential_ref, b.credential_generation, b.state, b.created_at, b.updated_at, b.deleted_at, b.access, b.last_error_code, b.lease_token, b.lease_until, b.attempt_count, b.retry_at, b.rotation_previous_generation, b.rotation_wake_id, b.rotation_cleanup_ready, b.cutover_id FROM managed_postgres_bindings b JOIN managed_postgres_databases d ON d.id=b.database_id
+SELECT b.id, b.account_id, b.database_id, b.app_id, b.scope, b.environment_key, b.provider_identity_id, b.credential_ref, b.credential_generation, b.state, b.created_at, b.updated_at, b.deleted_at, b.access, b.last_error_code, b.lease_token, b.lease_until, b.attempt_count, b.retry_at, b.rotation_previous_generation, b.rotation_wake_id, b.rotation_cleanup_ready, b.cutover_id, b.connection_limit FROM managed_postgres_bindings b JOIN managed_postgres_databases d ON d.id=b.database_id
 WHERE (b.state='deleting' OR ($1::boolean AND b.state IN ('provisioning','failed'))
     OR (b.rotation_cleanup_ready AND b.state IN ('ready','retiring')
       AND (b.access <> 'migration' OR NOT EXISTS (SELECT 1 FROM app_tasks task
@@ -51510,6 +51517,7 @@ func (q *Queries) ManagedPostgresDueBindings(ctx context.Context, db DBTX, arg M
 			&i.RotationWakeID,
 			&i.RotationCleanupReady,
 			&i.CutoverID,
+			&i.ConnectionLimit,
 		); err != nil {
 			return nil, err
 		}

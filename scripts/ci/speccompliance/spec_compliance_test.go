@@ -271,6 +271,8 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/apps/{slug}/github/disconnect":                 true, // GitHub connection disconnect form; session-cookie + CSRF-only
 	"POST /dashboard/apps/{slug}/github/activity/retry":             true, // GitHub activity recovery form; session-cookie + CSRF-only
 	"GET /dashboard/apps/{slug}/data-api":                           true, // ADR-968 session-auth owner HTML workspace
+	"GET /dashboard/data":                                           true, // ADR-1591 session-auth connection onboarding HTML
+	"POST /dashboard/data":                                          true, // ADR-1591 account-bound CSRF form adapter
 	"GET /dashboard/apps/{slug}/auth":                               true, // ADR-1190 session-auth owner page; the browser calls the Auth app
 	"POST /dashboard/apps/{slug}/auth/settings":                     true, // ADR-1190 session + CSRF typed Auth settings form
 	"POST /dashboard/apps/{slug}/auth/providers":                    true, // ADR-1190 session + CSRF OAuth provider form
@@ -1422,6 +1424,8 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", canaryCustomStageFile),
 		filepath.Join(root, "pkg", "api", uploadSessionFile),
 		filepath.Join(root, "pkg", "api", managedPostgresFile),
+		filepath.Join(root, "pkg", "api", "data_pipelines.go"),
+		filepath.Join(root, "pkg", "api", "data_connection_checks.go"),
 		filepath.Join(root, "pkg", "api", "managed_postgres_diagnostics.go"),
 		filepath.Join(root, "pkg", "api", "managed_postgres_capabilities.go"),
 		filepath.Join(root, "pkg", "api", "managed_postgres_resize.go"),

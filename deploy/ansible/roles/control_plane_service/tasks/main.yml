@@ -145,6 +145,24 @@
     - { src: "faas-meterd.service", dest: "/etc/systemd/system/faas-meterd.service" }
   register: cp_units
 
+# ADR-1591: install without enabling; staging pilot and keys are configured explicitly.
+- name: control_plane_service — install private data pipeline worker unit
+  ansible.builtin.copy:
+    src: faas-apid-data-pipeline-worker.service
+    dest: /etc/systemd/system/faas-apid-data-pipeline-worker.service
+    owner: root
+    group: root
+    mode: "0644"
+
+# ADR-1591: independent catalog health monitor; install without enabling.
+- name: control_plane_service — install private pipeline alert worker unit
+  ansible.builtin.copy:
+    src: faas-apid-data-pipeline-alert-worker.service
+    dest: /etc/systemd/system/faas-apid-data-pipeline-alert-worker.service
+    owner: root
+    group: root
+    mode: "0644"
+
 # ADR-531: ship the private worker without enabling it. The same APID user owns
 # customer-intent writes; data capture remains gated in the coordinator.
 - name: control_plane_service — install private clone worker unit
@@ -502,6 +520,7 @@
   loop:
     - { path: "/var/log/faas", user: "faas-apid" }
     - { path: "/var/spool/faas", user: "faas-apid" }
+    - { path: "/var/spool/faas/builds", user: "faas-apid" }
     - { path: "/etc/faas/statuspage", user: "faas-apid" }
   # imaged-owned dirs (/srv/fc/snap, /srv/fc/sigs) moved to
   # compute_only_service — those travel with the imaged unit and its

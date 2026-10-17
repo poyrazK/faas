@@ -151,6 +151,9 @@ type HostingPhaseObserver interface {
 // bridge stamps it from req.Pusher.Login; the apid paths leave
 // it empty.
 type EnqueueParams struct {
+	// IntentID gives durable non-webhook orchestration the same recovery
+	// guarantees as DeliveryID. The two namespaces cannot collide.
+	IntentID            string
 	ReviewedRolloutMode string
 	ExpectedReview      *api.AppReleaseReview
 	ReviewedSettings    *state.ProjectEnvironmentWorkloadSettings
@@ -377,6 +380,12 @@ func hashSourceFile(path string) (string, error) {
 // <FAAS_SPOOL_ROOT>/projects/<acct>/<project>/<appID>.tar.gz (see
 // cmd/apid/scan_service.go + apply helper).
 func Enqueue(ctx context.Context, store Store, notif Notifier, p EnqueueParams) (EnqueueResult, error) {
+	if p.IntentID != "" {
+		if p.DeliveryID != "" {
+			return EnqueueResult{}, fmt.Errorf("apidsource.Enqueue: choose intent or delivery identity")
+		}
+		p.DeliveryID = "intent:" + p.IntentID
+	}
 	if len(p.OperationDefinitions) > 0 && !p.OperationAdmissionEnabled {
 		return EnqueueResult{}, api.ErrCapacity("new operation admission is disabled")
 	}
@@ -776,6 +785,12 @@ func githubDeliveryIDs(deliveryID, appID string) (deploymentID, buildID string) 
 	key := deliveryID + "\x00" + appID
 	return uuid.NewSHA1(githubDeliveryNamespace, []byte(key+"\x00deployment")).String(),
 		uuid.NewSHA1(githubDeliveryNamespace, []byte(key+"\x00build")).String()
+}
+
+// IntentIDs lets an orchestrator recover the exact deployment/build before
+// re-enqueuing a request whose reply was lost.
+func IntentIDs(intentID, appID string) (string, string) {
+	return githubDeliveryIDs("intent:"+intentID, appID)
 }
 
 func createDeployment(ctx context.Context, store Store, p EnqueueParams, input state.Deployment) (state.Deployment, error) {
