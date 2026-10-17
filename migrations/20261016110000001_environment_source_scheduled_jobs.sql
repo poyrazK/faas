@@ -1,6 +1,7 @@
 -- Source-backed schedules reuse a qualified deployment layer; they never
 -- ask imaged to pull the internal source reference or rebuild per occurrence.
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 -- Preserve historical v2 receipts; only the current v3 policy can qualify a
 -- candidate in the Go/runtime guards. Source secret-reference evidence uses v3.
 ALTER TABLE environment_qualification_job_smoke_receipts DROP CONSTRAINT environment_qualification_job_smoke_receipts_policy_id_check;

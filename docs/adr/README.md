@@ -1358,3 +1358,5 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-1552: Wait for a GitOps commit's recorded serving evidence](1552-gitops-wait-for-serving-commit.md)
 
 - [ADR-1553: Durable GitOps rollout outcome notifications](1553-gitops-rollout-outcome-notifications.md)
+
+- [ADR 202610171900: Release compatibility gates (N±1, deploy order, skew and migration checks, SLO gate)](202610171900-release-compatibility-gates.md)

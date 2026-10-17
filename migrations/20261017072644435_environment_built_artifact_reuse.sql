@@ -2,6 +2,7 @@
 -- ADR-1544: Immutable code reuse with independent target authority.
 
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 DO $reuse_migration$
 BEGIN

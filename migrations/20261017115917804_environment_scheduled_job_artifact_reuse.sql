@@ -1,6 +1,7 @@
 -- filename: 20261017115917804_environment_scheduled_job_artifact_reuse.sql
 -- adr: 1548. Signed artifacts supply future scheduled runs; no execution is replayed.
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 DO $migration$
 BEGIN

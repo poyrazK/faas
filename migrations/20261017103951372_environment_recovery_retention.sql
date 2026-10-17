@@ -1,5 +1,6 @@
 -- ADR-1547: bounded artifact recovery protection from reviewed Git intent.
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 DO $migration$
 BEGIN

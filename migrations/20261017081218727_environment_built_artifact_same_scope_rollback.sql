@@ -1,6 +1,7 @@
 -- filename: 20261017081218727_environment_built_artifact_same_scope_rollback.sql
 -- adr: 1545
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 CREATE OR REPLACE FUNCTION environment_build_artifact_valid(d deployments, materialized boolean) RETURNS boolean LANGUAGE plpgsql AS $$
 DECLARE b jsonb:=d.environment_workload_runtime->'built_artifact'; f source_build_rootfs%ROWTYPE; origin deployments%ROWTYPE; a apps%ROWTYPE; src environment_git_sources%ROWTYPE;

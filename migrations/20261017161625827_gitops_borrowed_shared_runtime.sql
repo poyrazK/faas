@@ -2,6 +2,7 @@
 -- ADR-1544 and ADR-1500: preserve borrowed artifact validation alongside shared runner claims.
 
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 CREATE OR REPLACE FUNCTION application_standard_source_runtime_producer(a apps, d deployments) RETURNS jsonb
 LANGUAGE plpgsql AS $$

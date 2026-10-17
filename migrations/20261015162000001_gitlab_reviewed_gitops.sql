@@ -1,5 +1,6 @@
 -- Provider-bound reviewed GitLab evidence; production enforcement remains gated.
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 DO $gitlab_trust$
 BEGIN
