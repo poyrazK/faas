@@ -15050,6 +15050,26 @@ END $$;
 
 
 --
+-- Name: image_preparation_phase_timing(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.image_preparation_phase_timing() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF TG_OP = 'INSERT' THEN
+        NEW.phase_started_at := clock_timestamp();
+    ELSIF NEW.phase IS DISTINCT FROM OLD.phase THEN
+        NEW.phase_started_at := clock_timestamp();
+    ELSE
+        NEW.phase_started_at := OLD.phase_started_at;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: initialize_clone_configuration_guard(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -46546,19 +46566,19 @@ ALTER TABLE ONLY public.oidc_trust_policies
 
 
 --
--- Name: operator_alert_collection operator_alert_collection_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.operator_alert_collection
-    ADD CONSTRAINT operator_alert_collection_pkey PRIMARY KEY (singleton);
-
-
---
 -- Name: operator_alert_collection_outcomes operator_alert_collection_outcomes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.operator_alert_collection_outcomes
     ADD CONSTRAINT operator_alert_collection_outcomes_pkey PRIMARY KEY (attempted_at);
+
+
+--
+-- Name: operator_alert_collection operator_alert_collection_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.operator_alert_collection
+    ADD CONSTRAINT operator_alert_collection_pkey PRIMARY KEY (singleton);
 
 
 --
@@ -50857,7 +50877,6 @@ CASE
     WHEN ((jsonb_typeof((data #> '{triage,revision}'::text[])) = 'number'::text) AND ((data #>> '{triage,revision}'::text[]) ~ '^[1-9][0-9]{0,15}$'::text)) THEN ((data #>> '{triage,revision}'::text[]))::bigint
     ELSE NULL::bigint
 END) DESC, id DESC) WHERE (kind = 'operator.action.alert_triage'::text);
-
 
 
 --
@@ -60182,6 +60201,13 @@ CREATE TRIGGER guard_environment_workload_retirement BEFORE INSERT OR DELETE OR 
 --
 
 CREATE TRIGGER guard_managed_postgres_accounting_intent BEFORE UPDATE OF accounting_required ON public.managed_postgres_databases FOR EACH ROW EXECUTE FUNCTION public.guard_managed_postgres_accounting_intent();
+
+
+--
+-- Name: deployment_image_preparations image_preparation_phase_timing; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER image_preparation_phase_timing BEFORE INSERT OR UPDATE ON public.deployment_image_preparations FOR EACH ROW EXECUTE FUNCTION public.image_preparation_phase_timing();
 
 
 --
@@ -73796,27 +73822,3 @@ ALTER TABLE ONLY public.workflow_webhook_receipts
 
 --
 --
---
--- Name: image_preparation_phase_timing(); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE FUNCTION public.image_preparation_phase_timing() RETURNS trigger
-    LANGUAGE plpgsql
-    AS $$
-BEGIN
-    IF TG_OP = 'INSERT' THEN
-        NEW.phase_started_at := clock_timestamp();
-    ELSIF NEW.phase IS DISTINCT FROM OLD.phase THEN
-        NEW.phase_started_at := clock_timestamp();
-    ELSE
-        NEW.phase_started_at := OLD.phase_started_at;
-    END IF;
-    RETURN NEW;
-END;
-$$;
-
---
--- Name: deployment_image_preparations image_preparation_phase_timing; Type: TRIGGER; Schema: public; Owner: -
---
-
-CREATE TRIGGER image_preparation_phase_timing BEFORE INSERT OR UPDATE ON public.deployment_image_preparations FOR EACH ROW EXECUTE FUNCTION public.image_preparation_phase_timing();

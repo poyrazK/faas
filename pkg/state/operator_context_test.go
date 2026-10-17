@@ -64,7 +64,6 @@ func TestOperatorContextNodeRelationshipsAndTimeline(t *testing.T) {
 			for _, app := range []App{appB, warm, terminal, other, deleted} {
 				contextMoveApp(t, f, app, remote.ID)
 			}
-			f.deleteApp(t, deleted)
 			for _, v := range []struct {
 				app   App
 				dep   Deployment
@@ -74,6 +73,9 @@ func TestOperatorContextNodeRelationshipsAndTimeline(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
+			// Model an existing instance surviving app deletion. Runtime admission
+			// correctly refuses new instances after the app has been deleted.
+			f.deleteApp(t, deleted)
 			if err := f.store.UpdateDeploymentStatus(f.ctx, depB.ID, DeployFailed, "private-error"); err != nil {
 				t.Fatal(err)
 			}

@@ -10,6 +10,8 @@ from attrs import field as _attrs_field
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.obs_alert_collection_health import ObsAlertCollectionHealth
+    from ..models.obs_alert_retention_health import ObsAlertRetentionHealth
     from ..models.obs_health_response_operator_intent_outcome_missing_total import (
         ObsHealthResponseOperatorIntentOutcomeMissingTotal,
     )
@@ -82,6 +84,10 @@ class ObsHealthResponse:
     required for the matching signal to be healthy, including when
     no alerts fire. This describes source freshness, not alert severity.
     """
+    alert_history: ObsAlertCollectionHealth | Unset = UNSET
+    """Durable collection receipt and explicit producer configuration or health state."""
+    alert_retention: ObsAlertRetentionHealth | Unset = UNSET
+    """Independent retention receipt and exact expired-episode backlog at the snapshot cutoff."""
     signals: ObsHealthResponseSignals | Unset = UNSET
     """Independent evidence for audit_log_write_total_5m,
     audit_log_write_failures_5m, and alerts_firing. Present on new
@@ -108,6 +114,14 @@ class ObsHealthResponse:
 
         alerts_firing = self.alerts_firing
 
+        alert_history: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.alert_history, Unset):
+            alert_history = self.alert_history.to_dict()
+
+        alert_retention: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.alert_retention, Unset):
+            alert_retention = self.alert_retention.to_dict()
+
         signals: dict[str, Any] | Unset = UNSET
         if not isinstance(self.signals, Unset):
             signals = self.signals.to_dict()
@@ -126,6 +140,10 @@ class ObsHealthResponse:
                 "alerts_firing": alerts_firing,
             }
         )
+        if alert_history is not UNSET:
+            field_dict["alert_history"] = alert_history
+        if alert_retention is not UNSET:
+            field_dict["alert_retention"] = alert_retention
         if signals is not UNSET:
             field_dict["signals"] = signals
 
@@ -133,6 +151,8 @@ class ObsHealthResponse:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.obs_alert_collection_health import ObsAlertCollectionHealth
+        from ..models.obs_alert_retention_health import ObsAlertRetentionHealth
         from ..models.obs_health_response_operator_intent_outcome_missing_total import (
             ObsHealthResponseOperatorIntentOutcomeMissingTotal,
         )
@@ -160,6 +180,20 @@ class ObsHealthResponse:
 
         alerts_firing = d.pop("alerts_firing")
 
+        _alert_history = d.pop("alert_history", UNSET)
+        alert_history: ObsAlertCollectionHealth | Unset
+        if isinstance(_alert_history, Unset):
+            alert_history = UNSET
+        else:
+            alert_history = ObsAlertCollectionHealth.from_dict(_alert_history)
+
+        _alert_retention = d.pop("alert_retention", UNSET)
+        alert_retention: ObsAlertRetentionHealth | Unset
+        if isinstance(_alert_retention, Unset):
+            alert_retention = UNSET
+        else:
+            alert_retention = ObsAlertRetentionHealth.from_dict(_alert_retention)
+
         _signals = d.pop("signals", UNSET)
         signals: ObsHealthResponseSignals | Unset
         if isinstance(_signals, Unset):
@@ -176,6 +210,8 @@ class ObsHealthResponse:
             operator_intent_outcome_missing_total=operator_intent_outcome_missing_total,
             trace_id_completeness_ratio=trace_id_completeness_ratio,
             alerts_firing=alerts_firing,
+            alert_history=alert_history,
+            alert_retention=alert_retention,
             signals=signals,
         )
 

@@ -53,6 +53,10 @@ def test_tcp_patch_normalization_preserves_authoritative_spec(tmp_path):
     shape = {
         "components": {
             "schemas": {
+                "ManagedPostgresCutoverPreflight": {
+                    "type": "object",
+                    "properties": {"activation_allowed": {"type": "boolean", "enum": [False]}},
+                },
                 "UpdateTCPListenerRequest": {
                     "type": "object",
                     "additionalProperties": False,
@@ -66,7 +70,9 @@ def test_tcp_patch_normalization_preserves_authoritative_spec(tmp_path):
     before = source.read_bytes()
     normalized = generator.pre_normalize_spec(source)
     try:
-        request = json.loads(normalized.read_text())["components"]["schemas"]["UpdateTCPListenerRequest"]
+        schemas = json.loads(normalized.read_text())["components"]["schemas"]
+        assert schemas["ManagedPostgresCutoverPreflight"]["properties"]["activation_allowed"] == {"type": "boolean"}
+        request = schemas["UpdateTCPListenerRequest"]
         assert "oneOf" not in request
         assert request["properties"] == shape["components"]["schemas"]["UpdateTCPListenerRequest"]["properties"]
         assert request["additionalProperties"] is False
