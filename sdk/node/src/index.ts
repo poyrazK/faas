@@ -639,3 +639,5 @@ export type { EventAcknowledgmentPreparationEvent, EventAcknowledgmentPreparatio
   EventAcknowledgmentPreparationOutcome, EventAcknowledgmentPreparationReason } from './event-acknowledgment-preparation-events.js';
 export { EventAcknowledgmentPreparationMetrics, EVENT_ACKNOWLEDGMENT_PREPARATION_DURATION_BUCKETS_MS,
   type EventAcknowledgmentPreparationMetricsSnapshot, type EventAcknowledgmentPreparationHistogram } from './event-acknowledgment-preparation-metrics.js';
+export { formatEventAcknowledgmentPreparationMetrics, EVENT_ACKNOWLEDGMENT_PREPARATION_PROMETHEUS_CONTENT_TYPE,
+  type EventAcknowledgmentPreparationPrometheusOptions } from './event-acknowledgment-preparation-prometheus.js';

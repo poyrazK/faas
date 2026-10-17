@@ -24,7 +24,9 @@ const snapshot = metrics.snapshot(); // Read later from your scrape/export path.
 network call, timer, logging, callback delivery or recovery action. Counters have
 fixed labels and histograms have fixed buckets. No event, identity, token, payload,
 prepared value, result or error object is retained. No metrics dependency,
-exporter, route, platform schema or background service is installed.
+route, platform schema or background service is installed. A separate
+[pure Prometheus formatter](event-acknowledgment-node-prometheus.md) can expose
+snapshots from an application-owned scrape path.
 
 ## Snapshot fields and counting
 
@@ -83,6 +85,11 @@ arithmetic has not clipped, not that the observation stream is complete.
 
 ## Export outside the observer
 
+For Prometheus text 0.0.4, use
+[`formatEventAcknowledgmentPreparationMetrics`](event-acknowledgment-node-prometheus.md).
+It handles cumulative buckets, seconds, fixed labels and saturation gauges
+without registering metrics or opening a listener.
+
 Read snapshots on an application-owned scrape/export path. For Prometheus-style
 histograms, publish cumulative bucket counts, `count` and `sumMs` as absolute
 observations. Map `null` to the `+Inf` label; convert finite bounds and `sumMs` by
@@ -94,8 +101,8 @@ An OpenTelemetry adapter must support the appropriate explicit histogram
 aggregation/temporality. Convert cumulative bucket counts to per-bucket counts
 when required and handle exporter deltas/resets explicitly. Do not feed a whole
 snapshot back as new `record` events or fabricate individual duration samples
-from its mean. No adapter, network publication or automatic delta conversion is
-provided by this helper.
+from its mean. No OpenTelemetry adapter, network publication or automatic delta
+conversion is provided by this helper.
 
 ## Validation and observation limits
 

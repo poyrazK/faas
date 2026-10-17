@@ -1,5 +1,7 @@
 # Architecture Decision Records
 
+- [Node preparation Prometheus exposition](20261017124511-node-preparation-prometheus.md)
+
 - [Bounded Node preparation metrics](20261017122416-node-preparation-metrics.md)
 
 - [Node preparation lifecycle telemetry](20261017121310-node-preparation-lifecycle-telemetry.md)

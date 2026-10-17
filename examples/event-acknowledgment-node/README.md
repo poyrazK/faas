@@ -368,3 +368,33 @@ errors. Recording duplicate events counts again. New instances start at zero,
 and saturation flags indicate safe-integer clipping. The application owns exporter
 temporality, units and process reset detection; no network/export loop is added.
 See [histograms, saturation and observation coverage](../../docs/event-acknowledgment-node-metrics.md).
+
+## Expose preparation metrics to Prometheus
+
+`metrics.mjs` exports an explicit server factory. Use the same long-lived
+`preparationMetrics` collector passed to `onEvent` above, and bind the scrape
+listener on loopback in the worker host:
+
+```js
+import { createPreparationMetricsServer } from './metrics.mjs';
+
+const metricsServer = createPreparationMetricsServer(preparationMetrics);
+metricsServer.on('error', reportListenerFailure); // Your host's listener error handler.
+metricsServer.listen({ host: '127.0.0.1', port: 9464 });
+// During host shutdown, close the listener using metricsServer.close(...).
+```
+
+Nothing starts on module import. This server serves only `GET /metrics`, returns
+404 for other paths and 405 for other methods on that path, and generates a full
+snapshot body before sending 200. Collection/format failures return a generic 503
+without raw error details. Successful scrapes use Prometheus text 0.0.4; all
+responses disable caching.
+
+Configure a same-host Prometheus scrape target at `127.0.0.1:9464` or use your
+existing authenticated proxy/protected transport for remote collection. Keep this
+listener separate from delivery ingress; no authentication middleware is supplied.
+Each host/collector has its own cumulative observation stream and reset boundary.
+Do not construct a collector per scrape or record the same snapshot as new events.
+
+The formatter has no dependency on a metrics library and performs no processing,
+renewal or callback action. See [metric families, seconds, saturation and validation](../../docs/event-acknowledgment-node-prometheus.md).

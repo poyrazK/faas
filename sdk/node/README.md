@@ -3663,3 +3663,10 @@ outcomes. See [event ordering and observer limits](../../docs/event-acknowledgme
 buckets are fixed, memory stays bounded, and saturation is explicit. Counts are
 process-local observations; duplicate records count again and callback delivery
 remains separate. No exporter dependency is installed. See [counting and exporter semantics](../../docs/event-acknowledgment-node-metrics.md).
+
+`formatEventAcknowledgmentPreparationMetrics(metrics.snapshot(), { prefix? })`
+renders cumulative Prometheus text 0.0.4 with fixed labels, durations in seconds
+and saturation gauges. Serve with
+`EVENT_ACKNOWLEDGMENT_PREPARATION_PROMETHEUS_CONTENT_TYPE` on an application-owned
+scrape path. No registry, listener or network publication is added. See the
+[metric names and private scrape example](../../docs/event-acknowledgment-node-prometheus.md).
