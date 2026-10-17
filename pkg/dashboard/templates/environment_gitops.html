@@ -40,7 +40,7 @@
           {{if .Workloads}}<table><thead><tr><th>Workload</th><th>Artifact/build</th><th>Qualification</th><th>Activation</th><th>Serving</th></tr></thead><tbody>
           {{range .Workloads}}<tr><td><code>{{.Resource}}</code></td><td>{{.Preparation}}{{if .BuildStatus}} · build {{.BuildStatus}}{{end}}{{if .BuildCacheStatus}} · cache {{.BuildCacheStatus}}{{end}}</td><td>{{.Qualification}}</td><td>{{.Activation}}</td><td>{{.Serving}}</td></tr>{{end}}
           </tbody></table>{{end}}
-          {{range .Issues}}<p>{{if .Resource}}<code>{{.Resource}}</code> · {{end}}<code>{{.Code}}</code>: {{.Message}}<br><strong>{{.Actor}}</strong>: {{.Action}}</p>{{end}}
+          {{range .Issues}}<p>{{if .Resource}}<code>{{.Resource}}</code> · {{end}}{{.Message}}<br><strong>{{.Actor}}</strong>: {{.Action}}</p>{{end}}
           <p class="muted">Read-only assessment at {{.AssessedAt.Format "2006-01-02 15:04:05 MST"}}. Unknown or missing evidence does not establish readiness. Execution gates remain separate.</p>
         </section>
         {{end}}

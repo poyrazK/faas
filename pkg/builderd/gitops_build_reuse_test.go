@@ -44,7 +44,7 @@ func TestGitOpsUnchangedBuildReuseAndTrustFallback(t *testing.T) {
 			if result, err := b.ProcessOne(t.Context(), origin.BuildID); err != nil || result.CacheHit {
 				t.Fatalf("first build: %+v %v", result, err)
 			}
-			publishUnchangedOrigin(t, store, app, origin)
+			root := publishUnchangedOrigin(t, store, app, origin)
 			target := nextUnchangedCandidate(t, store, app, origin, scenario == "recipe changed")
 			b.cfg.SourceSpoolDir = filepath.Dir(target.SourcePath)
 			if scenario == "revoked" {
@@ -80,7 +80,7 @@ func TestGitOpsUnchangedBuildReuseAndTrustFallback(t *testing.T) {
 				}
 			}
 			if scenario == "base replaced" {
-				if _, err := store.PublishBaseImageProducer(t.Context(), unchangedBaseFixture(t, "new base")); err != nil {
+				if _, err := store.PublishBaseImageProducer(t.Context(), unchangedBaseFixtureForRuntime(t, "new base", root.Input.Runtime)); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -187,13 +187,18 @@ func nextUnchangedCandidate(t *testing.T, store *state.MemStore, app state.App, 
 	return target
 }
 
-func publishUnchangedOrigin(t *testing.T, store *state.MemStore, app state.App, origin state.Deployment) {
+func publishUnchangedOrigin(t *testing.T, store *state.MemStore, app state.App, origin state.Deployment) state.SourceBuildRootfs {
 	t.Helper()
 	proof, err := store.GetFreshBuildExportPublication(t.Context(), app.AccountID, app.ID, origin.ID, origin.BuildID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	base, err := store.PublishBaseImageProducer(t.Context(), unchangedBaseFixture(t, "base"))
+	effective, err := state.AppForDeploymentRuntime(app, origin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kind, runtime := state.SourceBuildRootfsKindForClaim(effective, origin, proof.Input.Claims.Runtime)
+	base, err := store.PublishBaseImageProducer(t.Context(), unchangedBaseFixtureForRuntime(t, "base", runtime))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,16 +206,21 @@ func publishUnchangedOrigin(t *testing.T, store *state.MemStore, app state.App, 
 	if err != nil {
 		t.Fatal(err)
 	}
-	input := state.SourceBuildRootfsInput{ID: uuid.NewString(), PublicationID: proof.ID, PublicationHash: proof.InputHash, AccountID: app.AccountID, OrgID: app.OrgID, AppID: app.ID, DeploymentID: origin.ID, Scope: origin.Scope, Kind: "function-layer", Runtime: "node22", RunnerDigest: imagechain.Digest([]byte("runner")), IntentHash: hash, StorageKey: "apps/source/converted.ext4", RootfsPath: "/srv/source/converted.ext4", ContentBytes: 24, ArtifactDigest: imagechain.Digest([]byte("converted fixture")), ArtifactBytes: 24, BaseProducerID: base.ID, BaseInputHash: base.InputHash, GuestInitDigest: base.Input.GuestInitDigest, LayoutVersion: state.SourceBuildRootfsLayout}
-	if _, err := store.PublishSourceBuildRootfs(t.Context(), input); err != nil {
+	input := state.SourceBuildRootfsInput{ID: uuid.NewString(), PublicationID: proof.ID, PublicationHash: proof.InputHash, AccountID: app.AccountID, OrgID: app.OrgID, AppID: app.ID, DeploymentID: origin.ID, Scope: origin.Scope, Kind: kind, Runtime: runtime, IntentHash: hash, StorageKey: "apps/source/converted.ext4", RootfsPath: "/srv/source/converted.ext4", ContentBytes: 24, ArtifactDigest: imagechain.Digest([]byte("converted fixture")), ArtifactBytes: 24, BaseProducerID: base.ID, BaseInputHash: base.InputHash, GuestInitDigest: base.Input.GuestInitDigest, LayoutVersion: state.SourceBuildRootfsLayout}
+	if kind == "function-layer" {
+		input.RunnerDigest = imagechain.Digest([]byte("runner"))
+	}
+	root, err := store.PublishSourceBuildRootfs(t.Context(), input)
+	if err != nil {
 		t.Fatal(err)
 	}
 	if err := store.UpdateDeploymentStatus(t.Context(), origin.ID, state.DeploySnapshotting, ""); err != nil {
 		t.Fatal(err)
 	}
+	return root
 }
 
-func unchangedBaseFixture(t *testing.T, label string) state.BaseImageProducerInput {
+func unchangedBaseFixtureForRuntime(t *testing.T, label, runtime string) state.BaseImageProducerInput {
 	t.Helper()
 	var compressed bytes.Buffer
 	z := gzip.NewWriter(&compressed)
@@ -249,5 +259,5 @@ func unchangedBaseFixture(t *testing.T, label string) state.BaseImageProducerInp
 	config, _ := json.Marshal(map[string]any{"os": "linux", "architecture": "amd64", "rootfs": map[string]any{"type": "layers", "diff_ids": []string{diff}}})
 	manifest, _ := json.Marshal(map[string]any{"schemaVersion": 2, "mediaType": "application/vnd.oci.image.manifest.v1+json", "config": imagechain.Descriptor{Digest: imagechain.Digest(config), Size: int64(len(config))}, "layers": []imagechain.Descriptor{layer}})
 	digest := imagechain.Digest(manifest)
-	return state.BaseImageProducerInput{ID: uuid.NewString(), Artifact: imagechain.BaseArtifact{StorageKey: state.RuntimeBaseKeyForArch("node22", "amd64"), Digest: imagechain.Digest([]byte(label)), Bytes: int64(len(label))}, SourceReference: "registry.example/base@" + digest, SourceDigest: digest, SelectedDigest: digest, ImageChain: &imagechain.Evidence{SourceManifest: manifest, Config: config}, LayoutVersion: imagechain.BaseLayoutVersion, GuestInitDigest: imagechain.Digest([]byte("init")), ContentBytes: 8, Layers: []imagechain.LayerConsumption{consumed}}
+	return state.BaseImageProducerInput{ID: uuid.NewString(), Artifact: imagechain.BaseArtifact{StorageKey: state.RuntimeBaseKeyForArch(runtime, "amd64"), Digest: imagechain.Digest([]byte(label)), Bytes: int64(len(label))}, SourceReference: "registry.example/base@" + digest, SourceDigest: digest, SelectedDigest: digest, ImageChain: &imagechain.Evidence{SourceManifest: manifest, Config: config}, LayoutVersion: imagechain.BaseLayoutVersion, GuestInitDigest: imagechain.Digest([]byte("init")), ContentBytes: 8, Layers: []imagechain.LayerConsumption{consumed}}
 }

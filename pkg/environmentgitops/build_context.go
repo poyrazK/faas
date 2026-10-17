@@ -3,6 +3,7 @@ package environmentgitops
 import (
 	"archive/tar"
 	"compress/gzip"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -47,7 +48,7 @@ func CanonicalBuildContext(reader io.Reader, writer io.Writer, context string, m
 	defer func() { _ = spool.Close(); _ = os.Remove(spool.Name()) }()
 	n, err := io.Copy(spool, io.LimitReader(gz, api.EnvironmentGitOpsMaxExpandedArchiveBytes+1))
 	if err != nil || n > api.EnvironmentGitOpsMaxExpandedArchiveBytes || compressed.N <= 0 {
-		return fmt.Errorf("Git build context exceeds limits or is truncated")
+		return fmt.Errorf("git build context exceeds limits or is truncated")
 	}
 	counted := &contextCounter{Reader: io.NewSectionReader(spool, 0, n)}
 	archive := tar.NewReader(counted)
@@ -56,7 +57,7 @@ func CanonicalBuildContext(reader io.Reader, writer io.Writer, context string, m
 	files := 0
 	for count := 0; ; count++ {
 		h, err := archive.Next()
-		if err == io.EOF {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil || count >= api.SourceArchiveMaxEntries {
@@ -76,7 +77,7 @@ func CanonicalBuildContext(reader io.Reader, writer io.Writer, context string, m
 		seen[name] = true
 		if len(parts) == 1 {
 			if h.Typeflag != tar.TypeDir {
-				return fmt.Errorf("Git build context requires a directory wrapper")
+				return fmt.Errorf("git build context requires a directory wrapper")
 			}
 			continue
 		}

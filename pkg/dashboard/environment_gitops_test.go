@@ -67,3 +67,27 @@ func TestGitOpsDashboardCandidatePlanDisplaysPinnedObservation(t *testing.T) {
 		}
 	}
 }
+
+// adr: 1155 — browser guidance stays readable while API diagnostics retain stable codes.
+func TestGitOpsDashboardSourceOutageShowsGuidanceWithoutWireCodes(t *testing.T) {
+	now := time.Now().UTC()
+	status := api.EnvironmentGitOpsStatusResponse{Source: api.EnvironmentGitSource{
+		Spec:            api.EnvironmentGitSourceSpec{Provider: "github", Mode: "report", ApprovalPolicy: "manual"},
+		SourceCheckedAt: &now, SourceErrorCode: "environment_git_source_unavailable",
+	}}
+	explanation := diagnostics.Assess(status, now)
+	status.Explanation = &explanation
+	rec := httptest.NewRecorder()
+	if err := Render(rec, slog.Default(), "", Page{Title: "GitOps", Body: "environment_gitops", Data: EnvironmentGitOpsData{Project: "shop", Environment: "production", Status: &status}}); err != nil {
+		t.Fatal(err)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{"Git source or merge evidence could not be verified.", "Check provider connectivity and the account connection", "The last approved definition remains authoritative"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("source outage guidance missing %q", want)
+		}
+	}
+	if strings.Contains(body, status.Source.SourceErrorCode) {
+		t.Fatal("dashboard rendered the source error wire code")
+	}
+}

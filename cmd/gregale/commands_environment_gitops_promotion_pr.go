@@ -12,14 +12,14 @@ import (
 )
 
 func cmdProjectsEnvironmentGitOpsPromotionPR(args []string) int {
-	flags, target := splitArgsForFlags(args, "yes", "json")
+	flags, positional := splitArgsForFlags(args, "yes", "json")
 	fs := newFlagSet("environment-gitops-promotion-pr", flag.ContinueOnError)
 	from := fs.String("from", "", "source environment with a proven serving release")
 	commit := fs.String("target-commit", "", "reviewed current target branch commit")
 	expected := fs.String("expected-plan-hash", "", "reviewed promotion observation hash")
 	yes := fs.Bool("yes", false, "create the draft proposal; default is a read-only preview")
 	asJSON := fs.Bool("json", false, "emit the proposal receipt as JSON")
-	if fs.Parse(flags) != nil || !validEnvironmentGitOpsTarget(target) || !api.ValidProjectEnvironmentSlug(*from) || *from == target[1] || !validGitOpsPlanCommit(*commit) || !validGitOpsPlanCommitHash(*expected) {
+	if fs.Parse(flags) != nil || len(positional) != 2 || !validEnvironmentGitOpsTarget(positional) || !api.ValidProjectEnvironmentSlug(*from) || *from == positional[1] || !validGitOpsPlanCommit(*commit) || !validGitOpsPlanCommitHash(*expected) {
 		PrintUsage(os.Stderr, environmentGitOpsUsage+" --from ENV --target-commit SHA --expected-plan-hash HASH [--yes] [--json]", "projects environments")
 		return 1
 	}
@@ -31,14 +31,14 @@ func cmdProjectsEnvironmentGitOpsPromotionPR(args []string) int {
 	defer cancel()
 	request := api.PreviewEnvironmentGitPromotionRequest{FromEnvironment: *from, TargetCommitSHA: *commit, ExpectedPlanHash: *expected}
 	fetch := func(ctx context.Context) (proposal.Request, error) {
-		plan, err := client.PreviewEnvironmentGitPromotion(ctx, target[0], target[1], request)
+		plan, err := client.PreviewEnvironmentGitPromotion(ctx, positional[0], positional[1], request)
 		if err != nil {
 			return proposal.Request{}, err
 		}
-		if plan.Project != target[0] || plan.FromEnvironment != *from || plan.ToEnvironment != target[1] || plan.Target.CommitSHA != *commit {
+		if plan.Project != positional[0] || plan.FromEnvironment != *from || plan.ToEnvironment != positional[1] || plan.Target.CommitSHA != *commit {
 			return proposal.Request{}, fmt.Errorf("promotion response scope mismatch")
 		}
-		status, err := client.GetEnvironmentGitOps(ctx, target[0], target[1])
+		status, err := client.GetEnvironmentGitOps(ctx, positional[0], positional[1])
 		return proposal.Request{Plan: plan, Source: status.Source, ExpectedPlanHash: *expected}, err
 	}
 	input, err := fetch(ctx)
@@ -64,7 +64,7 @@ func cmdProjectsEnvironmentGitOpsPromotionPR(args []string) int {
 		return environmentGitOpsOutput(out, nil)
 	}
 	if out.Status == "preview" {
-		_, err = fmt.Fprintf(osStdout, "Preview: draft %s proposal for %s / %s → %s\nRepository: %s\nBase: %s @ %s\nBranch: %s\nPlan: %s\nUse --yes to create the proposal. Normal review and fresh target qualification remain required.\n", out.Provider, target[0], *from, target[1], out.Repository, out.Base, out.BaseCommit, out.Branch, out.PlanHash)
+		_, err = fmt.Fprintf(osStdout, "Preview: draft %s proposal for %s / %s → %s\nRepository: %s\nBase: %s @ %s\nBranch: %s\nPlan: %s\nUse --yes to create the proposal. Normal review and fresh target qualification remain required.\n", out.Provider, positional[0], *from, positional[1], out.Repository, out.Base, out.BaseCommit, out.Branch, out.PlanHash)
 	} else {
 		_, err = fmt.Fprintf(osStdout, "%s: %s\nPlan: %s\nNormal review and fresh target qualification remain required.\n", out.Status, out.URL, out.PlanHash)
 	}

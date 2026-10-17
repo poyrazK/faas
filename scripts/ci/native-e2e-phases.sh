@@ -68,6 +68,8 @@ native_e2e_phase_files() {
       workload_identity_metal_test.go \
       source_deploy_wake_metal_test.go \
       secrets_image_deploy_e2e_test.go \
+      object_storage_native_metal_test.go \
+      queue_binding_native_metal_test.go \
       queue_push_parallel_metal_test.go \
       private_service_tcp_metal_test.go \
       scenario_tcp_chaos_metal_test.go \

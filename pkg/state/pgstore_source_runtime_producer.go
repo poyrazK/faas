@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -60,7 +61,13 @@ func readSourceRuntimeRootfs(ctx context.Context, tx pgx.Tx, accountID, appID, d
 	if err == nil {
 		depID = origin
 	} else if !errors.Is(err, pgx.ErrNoRows) {
-		return SourceBuildRootfs{}, err
+		// Borrower validation takes NOWAIT owner/producer locks before the
+		// ordinary source selection. Preserve the same retryable fence error.
+		var busy *pgconn.PgError
+		if errors.As(err, &busy) && busy.Code == "55P03" {
+			return SourceBuildRootfs{}, ErrApplicationStandardRuntimeBusy
+		}
+		return SourceBuildRootfs{}, mapErr(err)
 	}
 	row, err := sqlc.New().GetCurrentSourceBuildRootfs(ctx, tx, sourceBuildRootfsScope(accountID, appID, depID))
 	if errors.Is(err, pgx.ErrNoRows) {

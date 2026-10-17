@@ -96,7 +96,13 @@ func sourceScheduledJobFixture(t *testing.T, basic gitOpsTestStore, provider, ki
 func qualifyScheduledSourceJob(t *testing.T, basic gitOpsTestStore, request state.EnvironmentWorkloadQualificationRequest) {
 	t.Helper()
 	ctx := t.Context()
+	app, err := basic.AppByID(ctx, request.AppID)
+	if err != nil {
+		t.Fatal(err)
+	}
 	placement := qualificationPlacement(t, basic, 4096)
+	// Qualification admission must match the workload's actual plan/runtime RAM.
+	placement.RAMMB = app.RAMMB
 	claims, err := basic.(state.EnvironmentGitOpsQualificationGraphDispatchStore).ClaimEnvironmentWorkloadQualificationGraphForNode(ctx, request.GraphID, placement.NodeID, "source-job-qualifier", time.Minute)
 	if err != nil || len(claims) != 1 {
 		t.Fatalf("claim graph: %d %v", len(claims), err)

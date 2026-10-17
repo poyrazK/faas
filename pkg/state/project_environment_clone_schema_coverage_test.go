@@ -18,6 +18,10 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		t.Fatal(err)
 	}
 	wanted := map[string]string{
+		// adr: 1525, 1528 — clone neither artifact pins nor original serving authority.
+		"environment_build_artifact_pins":      CloneSchemaOperational,
+		"environment_recovery_serving_history": CloneSchemaOperational,
+
 		"app_issue_lifecycle_alert_policies":            CloneSchemaConfiguration,
 		"issue_lifecycle_alert_receipts":                CloneSchemaOperational,
 		"workflow_automation_live_baseline_promotions":  CloneSchemaOperational,

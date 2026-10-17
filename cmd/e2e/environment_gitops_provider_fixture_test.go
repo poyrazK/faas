@@ -65,12 +65,3 @@ func gitOpsProviderProject(provider, slug, accountID string) state.Project {
 	}
 	return project
 }
-
-func gitOpsProviderSource(provider, mode string) state.EnvironmentGitSourceSpec {
-	spec := state.EnvironmentGitSourceSpec{Provider: provider, RepositoryID: 123, Repository: "example/shop",
-		Ref: "refs/heads/main", ManifestPath: "environments/production.yaml", Mode: mode, ApprovalPolicy: "manual"}
-	if provider == "github" {
-		spec.InstallationID = 42
-	}
-	return spec
-}

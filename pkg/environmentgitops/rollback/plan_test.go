@@ -25,7 +25,6 @@ func fixture(t *testing.T) Input {
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, _ := json.Marshal(approved.Definition)
 	definition.Environment = "production"
 	w := definition.Workloads["api"]
 	w.Source = &api.EnvironmentWorkloadSource{Kind: "image", Image: "registry.example/api@sha256:" + strings.Repeat("b", 64)}
@@ -46,7 +45,10 @@ func fixture(t *testing.T) Input {
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, _ = json.Marshal(approved.Definition)
+	raw, err := json.Marshal(approved.Definition)
+	if err != nil {
+		t.Fatal(err)
+	}
 	from.ApprovedRevisionID = "new-revision"
 	return Input{Source: from, Revision: api.EnvironmentDesiredRevision{ID: "revision", SourceID: from.ID, CommitSHA: strings.Repeat("c", 40), Digest: approved.Digest, Definition: raw},
 		Origin: api.EnvironmentGitPromotionOrigin{SourceID: from.ID, RevisionID: "revision", CommitSHA: strings.Repeat("c", 40), DefinitionDigest: approved.Digest, Generation: 1, IntentVersion: 1, GraphID: "graph", ReleaseSetID: "2ba0aa40-2362-4c0e-aeb1-6381666bb514"}, ServedAt: &now, Proven: true, CurrentReleaseSetID: "new-release",

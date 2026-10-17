@@ -3599,6 +3599,15 @@
     "kind": "operational"
   },
   {
+    "table": "environment_build_artifact_pins",
+    "columns": [
+      "artifact_id",
+      "candidate_id",
+      "source_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "environment_desired_revisions",
     "columns": [
       "approved_at",
@@ -3915,6 +3924,16 @@
       "instance_id",
       "recorded_at",
       "snapshot"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "environment_recovery_serving_history",
+    "columns": [
+      "graph_id",
+      "release_set_id",
+      "served_at",
+      "source_id"
     ],
     "kind": "operational"
   },

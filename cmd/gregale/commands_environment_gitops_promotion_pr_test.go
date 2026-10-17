@@ -193,6 +193,28 @@ func TestProjectsGitOpsPromotionPRRejectsInvalidFlagsBeforeRequests(t *testing.T
 	}
 }
 
+// adr: 1531, 1532 — review commands consume exactly one project/environment pair.
+func TestGitOpsReviewPRRejectsUnexpectedPositionalsBeforeRequests(t *testing.T) {
+	for _, command := range []string{"promotion-pr", "rollback-pr"} {
+		for _, positional := range [][]string{nil, {"shop"}, {"shop", "production", "unexpected"}} {
+			t.Run(command+fmt.Sprint(positional), func(t *testing.T) {
+				resetJSONOut(t)
+				fake := authedFakeAPI(t, `{}`, 200)
+				args := append([]string{"environments", "gitops", command}, positional...)
+				args = append(args, "--target-commit", strings.Repeat("a", 40), "--expected-plan-hash", strings.Repeat("b", 64), "--yes")
+				if command == "promotion-pr" {
+					args = append(args, "--from", "staging")
+				} else {
+					args = append(args, "--to-release", "2ba0aa40-2362-4c0e-aeb1-6381666bb514")
+				}
+				if code := cmdProjects(args); code == 0 || fake.sawMethod != "" {
+					t.Fatal("invalid positional count reached platform API", code, fake.sawMethod)
+				}
+			})
+		}
+	}
+}
+
 // Kept separate from the adapter to ensure provider content identity is checked.
 func promotionTestBlob(raw []byte) string {
 	return fmt.Sprintf("%x", sha1.Sum(append([]byte(fmt.Sprintf("blob %d\x00", len(raw))), raw...))) //nolint:gosec // Git object identity.
