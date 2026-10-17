@@ -4,7 +4,7 @@
   "sets": [
     {
       "id": "gregale-core-v1",
-      "revision": "b0ad54c16102e8e12d3077334bbf46ab066cd86319029a93a0d2803aeb4fca6c",
+      "revision": "a4f6fbfe5936638493258cf72e3ba029f1b6306e4ac8bc0e3362edb7af90b18c",
       "files": [
         "faas.rules.yml"
       ],
@@ -1869,6 +1869,19 @@
           }
         },
         {
+          "id": "77a85a738729cd396070835ab1b09bc677d796099ebcca2a100d509131bb7766",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_billing",
+          "rule_name": "FaasBuilderNotificationTelemetryUnavailable",
+          "definition": {
+            "expression_hash": "1a149e15f33d9af567267d4e9ab09838086177b63039cdadb9d5f78f87468255",
+            "labels_hash": "71699e8f2bfa0a5041f861d447860a9eae216e02a8a80840e726d39275ef0868",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "4388e0018bdd2df9a98ff4c84280093a59f01ef8ee5b08f9154ab8dbe3f60563"
+          }
+        },
+        {
           "id": "7b68a2c0ed3511a7e9468dfac83287f071721c34a9dc38613125e28194a79d38",
           "file_name": "faas.rules.yml",
           "group_name": "faas_stale_deployments",
@@ -2844,6 +2857,19 @@
           }
         },
         {
+          "id": "c1720b69388213264cd4419e139c4153c7114fffc507fb9229d0a4e71aa6f310",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_billing",
+          "rule_name": "FaasBuilderNotificationWaitHigh",
+          "definition": {
+            "expression_hash": "deccddf64c8f53a1223156618267929135a313d4722be021e31ee937140bbf87",
+            "labels_hash": "be65739b817d4c0f95e74a1e873c4f26cc59642b0fd57fd864b80b8d5cf84057",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "bb47d4cde7f28bae0548b67cbf81a1cc1d96be009cbade71436f2cb6dacef785"
+          }
+        },
+        {
           "id": "c20862e736bd10cc68cdea6786775d3679fd8d7753a74fc13dce06c42a60f56a",
           "file_name": "faas.rules.yml",
           "group_name": "faas_canary_artifacts",
@@ -3572,6 +3598,19 @@
           }
         },
         {
+          "id": "f3fad491d092575ffdb19a5b74cab184a84d52a15ab04eebdcc681a1c84f3c2a",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_billing",
+          "rule_name": "FaasBuilderNotificationDropsHigh",
+          "definition": {
+            "expression_hash": "f9de6674a8986aebeebb262d2c052d1b1e9e4645bf1b70cdc00a6ee45f126073",
+            "labels_hash": "be65739b817d4c0f95e74a1e873c4f26cc59642b0fd57fd864b80b8d5cf84057",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "adec1605e470f42363383a258d57ae187dbacf85dfb98d6e5f1eca065b741cc3"
+          }
+        },
+        {
           "id": "f42a9d19edd7cdcb7aee9d88c11393f619501dfce54577eb3dc60596b1d52e54",
           "file_name": "faas.rules.yml",
           "group_name": "outbound_webhook_delivery",
@@ -3796,7 +3835,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "b2f8ac0fb081342b57b5357721917d1cb5f6a11ebf23baa839ef656339b78f5c",
+      "revision": "1964ebe132b9d65a9070f86f30fa089d2beeb01f5af86e6fa726216381685194",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -5742,6 +5781,19 @@
           }
         },
         {
+          "id": "77a85a738729cd396070835ab1b09bc677d796099ebcca2a100d509131bb7766",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_billing",
+          "rule_name": "FaasBuilderNotificationTelemetryUnavailable",
+          "definition": {
+            "expression_hash": "1a149e15f33d9af567267d4e9ab09838086177b63039cdadb9d5f78f87468255",
+            "labels_hash": "71699e8f2bfa0a5041f861d447860a9eae216e02a8a80840e726d39275ef0868",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "4388e0018bdd2df9a98ff4c84280093a59f01ef8ee5b08f9154ab8dbe3f60563"
+          }
+        },
+        {
           "id": "7a6280853582bf5c3ad9bb16e2cad9046c3920ce5442b7e37660499c87379e2a",
           "file_name": "data_placement.yaml",
           "group_name": "faas_data_placement",
@@ -6769,6 +6821,19 @@
           }
         },
         {
+          "id": "c1720b69388213264cd4419e139c4153c7114fffc507fb9229d0a4e71aa6f310",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_billing",
+          "rule_name": "FaasBuilderNotificationWaitHigh",
+          "definition": {
+            "expression_hash": "deccddf64c8f53a1223156618267929135a313d4722be021e31ee937140bbf87",
+            "labels_hash": "be65739b817d4c0f95e74a1e873c4f26cc59642b0fd57fd864b80b8d5cf84057",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "bb47d4cde7f28bae0548b67cbf81a1cc1d96be009cbade71436f2cb6dacef785"
+          }
+        },
+        {
           "id": "c20862e736bd10cc68cdea6786775d3679fd8d7753a74fc13dce06c42a60f56a",
           "file_name": "faas.rules.yml",
           "group_name": "faas_canary_artifacts",
@@ -7520,6 +7585,19 @@
             "for_seconds": 120,
             "keep_firing_for_seconds": 0,
             "fingerprint": "63e1f2d8228a33bafda729a938b27245196cf9d4e6f807e6c2be16da684b1c10"
+          }
+        },
+        {
+          "id": "f3fad491d092575ffdb19a5b74cab184a84d52a15ab04eebdcc681a1c84f3c2a",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_billing",
+          "rule_name": "FaasBuilderNotificationDropsHigh",
+          "definition": {
+            "expression_hash": "f9de6674a8986aebeebb262d2c052d1b1e9e4645bf1b70cdc00a6ee45f126073",
+            "labels_hash": "be65739b817d4c0f95e74a1e873c4f26cc59642b0fd57fd864b80b8d5cf84057",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "adec1605e470f42363383a258d57ae187dbacf85dfb98d6e5f1eca065b741cc3"
           }
         },
         {

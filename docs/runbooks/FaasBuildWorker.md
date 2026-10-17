@@ -4,6 +4,10 @@ Applies to `FaasBuilderClaimsFailing`, `FaasBuilderRequeuesFailing`,
 `FaasBuilderWorkerStalled` and `FaasBuilderQueueTelemetryUnavailable`.
 All four warnings are operator-internal.
 
+For delayed or dropped fast-path hints, inspect the separate bounded build/cancel
+queues in [FaasBuildNotifications.md](FaasBuildNotifications.md). Notification
+dispatch and durable polling have independent progress and recovery evidence.
+
 ## Establish usable evidence
 
 ```promql

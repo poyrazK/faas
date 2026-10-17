@@ -345,6 +345,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	cancelQueue := newIDWorkQueue(notificationCtx, buildNotificationQueueCapacity, buildNotificationWorkers, func(workCtx context.Context, buildID string) {
 		cancelBuild(workCtx, driver, ops, buildID, log)
 	})
+	registerIDWorkQueueMetrics(ops.Registry(), buildQueue, cancelQueue)
 
 	// PR-B: durable worker. LISTEN/NOTIFY above is the fast path
 	// (apid emits on build_queued immediately after CreateBuild); this

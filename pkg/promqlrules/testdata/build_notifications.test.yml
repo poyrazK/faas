@@ -1,0 +1,2846 @@
+# Bounded fast-path queues: waiting excludes active handlers; loss excludes coalescing.
+rule_files:
+- ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+evaluation_interval: 1m
+tests:
+- name: idle queues initialize all outcomes and report known zero age
+  interval: 1m
+  input_series:
+  - series: up{job="builderd",instance="b"}
+    values: 1x40
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="build"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="b",queue="build"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="build"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="accepted"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="coalesced"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="full"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="invalid"}
+    values: '0x40'
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="cancel"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="b",queue="cancel"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="cancel"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="accepted"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="coalesced"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="full"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="invalid"}
+    values: '0x40'
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationDropsHigh
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationWaitHigh
+    exp_alerts: []
+  promql_expr_test:
+  - expr: builderd_notification_queue_oldest_wait_seconds{instance="b",queue="build"}
+    eval_time: 20m
+    exp_samples:
+    - labels: builderd_notification_queue_oldest_wait_seconds{job="builderd",instance="b",queue="build"}
+      value: 0
+  - expr: builderd_notification_queue_oldest_wait_seconds{instance="b",queue="cancel"}
+    eval_time: 20m
+    exp_samples:
+    - labels: builderd_notification_queue_oldest_wait_seconds{job="builderd",instance="b",queue="cancel"}
+      value: 0
+- name: long active builds alone never acquire a waiting age
+  interval: 1m
+  input_series:
+  - series: up{job="builderd",instance="b"}
+    values: 1x40
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="build"}
+    values: 1x40
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="build"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="b",queue="build"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="build"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="accepted"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="coalesced"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="full"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="invalid"}
+    values: '0x40'
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="cancel"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="b",queue="cancel"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="cancel"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="accepted"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="coalesced"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="full"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="invalid"}
+    values: '0x40'
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationDropsHigh
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationWaitHigh
+    exp_alerts: []
+  promql_expr_test:
+  - expr: builderd_notification_queue_oldest_wait_seconds{instance="b",queue="build"}
+    eval_time: 20m
+    exp_samples:
+    - labels: builderd_notification_queue_oldest_wait_seconds{job="builderd",instance="b",queue="build"}
+      value: 0
+- name: duplicate hints are harmless even at high volume
+  interval: 1m
+  input_series:
+  - series: up{job="builderd",instance="b"}
+    values: 1x40
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="build"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="b",queue="build"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="build"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="accepted"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="coalesced"}
+    values: 0+1000x40
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="full"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="invalid"}
+    values: '0x40'
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="cancel"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="b",queue="cancel"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="cancel"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="accepted"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="coalesced"}
+    values: 0+2000x40
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="full"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="invalid"}
+    values: '0x40'
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationDropsHigh
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationWaitHigh
+    exp_alerts: []
+- name: invalid and stopping outcomes do not count as lost hints
+  interval: 1m
+  input_series:
+  - series: up{job="builderd",instance="b"}
+    values: 1x40
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="build"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="b",queue="build"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="build"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="accepted"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="coalesced"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="full"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="stopping"}
+    values: 0+1000x40
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="invalid"}
+    values: 0+1000x40
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="cancel"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="b",queue="cancel"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="cancel"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="accepted"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="coalesced"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="full"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="stopping"}
+    values: 0+1000x40
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="invalid"}
+    values: 0+1000x40
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationDropsHigh
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationWaitHigh
+    exp_alerts: []
+- name: sustained build drops cross five minute hold and retain queue identity
+  interval: 1m
+  input_series:
+  - series: up{job="builderd",instance="b"}
+    values: 1x40
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="build"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="b",queue="build"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="build"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="accepted"}
+    values: 0+1x40
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="coalesced"}
+    values: 0+10000x40
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="full"}
+    values: 0+10x40
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="invalid"}
+    values: '0x40'
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="cancel"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="b",queue="cancel"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="cancel"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="accepted"}
+    values: 0+10000x40
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="coalesced"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="full"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="invalid"}
+    values: '0x40'
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: FaasBuilderNotificationDropsHigh
+    exp_alerts: []
+  - eval_time: 6m
+    alertname: FaasBuilderNotificationDropsHigh
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_notification_queue
+        public_status: internal
+        job: builderd
+        instance: b
+        queue: build
+      exp_annotations:
+        summary: Builder notification queue is persistently dropping hints
+        description: Full-queue drops exceed 10% of accepted/full enqueue attempts for the build queue, with at
+          least three drops in each rolling 5m window, sustained for 5m. Duplicate coalescing and shutdown are excluded.
+          Verify durable build polling or cancellation cleanup is progressing before intervening.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildNotifications.md
+  - eval_time: 15m
+    alertname: FaasBuilderNotificationDropsHigh
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_notification_queue
+        public_status: internal
+        job: builderd
+        instance: b
+        queue: build
+      exp_annotations:
+        summary: Builder notification queue is persistently dropping hints
+        description: Full-queue drops exceed 10% of accepted/full enqueue attempts for the build queue, with at
+          least three drops in each rolling 5m window, sustained for 5m. Duplicate coalescing and shutdown are excluded.
+          Verify durable build polling or cancellation cleanup is progressing before intervening.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildNotifications.md
+  - eval_time: 15m
+    alertname: FaasBuilderNotificationTelemetryUnavailable
+    exp_alerts: []
+- name: sustained cancel drops cross five minute hold and retain queue identity
+  interval: 1m
+  input_series:
+  - series: up{job="builderd",instance="b"}
+    values: 1x40
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="build"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="b",queue="build"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="build"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="accepted"}
+    values: 0+10000x40
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="coalesced"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="full"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="invalid"}
+    values: '0x40'
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="cancel"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="b",queue="cancel"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="cancel"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="accepted"}
+    values: 0+1x40
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="coalesced"}
+    values: 0+10000x40
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="full"}
+    values: 0+10x40
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="invalid"}
+    values: '0x40'
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: FaasBuilderNotificationDropsHigh
+    exp_alerts: []
+  - eval_time: 6m
+    alertname: FaasBuilderNotificationDropsHigh
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_notification_queue
+        public_status: internal
+        job: builderd
+        instance: b
+        queue: cancel
+      exp_annotations:
+        summary: Builder notification queue is persistently dropping hints
+        description: Full-queue drops exceed 10% of accepted/full enqueue attempts for the cancel queue, with at
+          least three drops in each rolling 5m window, sustained for 5m. Duplicate coalescing and shutdown are excluded.
+          Verify durable build polling or cancellation cleanup is progressing before intervening.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildNotifications.md
+  - eval_time: 15m
+    alertname: FaasBuilderNotificationDropsHigh
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_notification_queue
+        public_status: internal
+        job: builderd
+        instance: b
+        queue: cancel
+      exp_annotations:
+        summary: Builder notification queue is persistently dropping hints
+        description: Full-queue drops exceed 10% of accepted/full enqueue attempts for the cancel queue, with at
+          least three drops in each rolling 5m window, sustained for 5m. Duplicate coalescing and shutdown are excluded.
+          Verify durable build polling or cancellation cleanup is progressing before intervening.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildNotifications.md
+  - eval_time: 15m
+    alertname: FaasBuilderNotificationTelemetryUnavailable
+    exp_alerts: []
+- name: one transient full burst does not survive the sustained hold
+  interval: 1m
+  input_series:
+  - series: up{job="builderd",instance="b"}
+    values: 1x40
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="build"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="b",queue="build"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="build"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="accepted"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="coalesced"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="full"}
+    values: 0 10x39
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="invalid"}
+    values: '0x40'
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="cancel"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="b",queue="cancel"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="cancel"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="accepted"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="coalesced"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="full"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="invalid"}
+    values: '0x40'
+  alert_rule_test:
+  - eval_time: 6m
+    alertname: FaasBuilderNotificationDropsHigh
+    exp_alerts: []
+  - eval_time: 15m
+    alertname: FaasBuilderNotificationDropsHigh
+    exp_alerts: []
+- name: full drops below ratio threshold stay quiet
+  interval: 1m
+  input_series:
+  - series: up{job="builderd",instance="b"}
+    values: 1x40
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="build"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="b",queue="build"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="build"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="accepted"}
+    values: 0+100x40
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="coalesced"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="full"}
+    values: 0+1x40
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="invalid"}
+    values: '0x40'
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="cancel"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="b",queue="cancel"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="cancel"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="accepted"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="coalesced"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="full"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="invalid"}
+    values: '0x40'
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationDropsHigh
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationWaitHigh
+    exp_alerts: []
+- name: full drops exactly at ten percent stay quiet
+  interval: 1m
+  input_series:
+  - series: up{job="builderd",instance="b"}
+    values: 1x40
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="build"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="b",queue="build"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="build"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="accepted"}
+    values: 0+9x40
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="coalesced"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="full"}
+    values: 0+1x40
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="invalid"}
+    values: '0x40'
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="cancel"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="b",queue="cancel"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="cancel"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="accepted"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="coalesced"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="full"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="invalid"}
+    values: '0x40'
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationDropsHigh
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationWaitHigh
+    exp_alerts: []
+- name: low drop volume cannot trigger even at one hundred percent
+  interval: 1m
+  input_series:
+  - series: up{job="builderd",instance="b"}
+    values: 1x40
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="build"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="b",queue="build"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="build"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="accepted"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="coalesced"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="full"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="invalid"}
+    values: '0x40'
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="cancel"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="b",queue="cancel"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="cancel"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="accepted"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="coalesced"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="full"}
+    values: 0+0.1x40
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="invalid"}
+    values: '0x40'
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationDropsHigh
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationWaitHigh
+    exp_alerts: []
+- name: counter reset cannot manufacture a sustained drop warning
+  interval: 1m
+  input_series:
+  - series: up{job="builderd",instance="b"}
+    values: 1x40
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="build"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="b",queue="build"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="build"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="accepted"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="coalesced"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="full"}
+    values: 0x3 10x3 0x32
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="invalid"}
+    values: '0x40'
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="cancel"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="b",queue="cancel"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="cancel"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="accepted"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="coalesced"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="full"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="invalid"}
+    values: '0x40'
+  alert_rule_test:
+  - eval_time: 8m
+    alertname: FaasBuilderNotificationDropsHigh
+    exp_alerts: []
+  - eval_time: 15m
+    alertname: FaasBuilderNotificationDropsHigh
+    exp_alerts: []
+- name: build wait threshold and five minute hold with no fresh arrivals
+  interval: 1m
+  input_series:
+  - series: up{job="builderd",instance="b"}
+    values: 1x40
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="build"}
+    values: 1x40
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="build"}
+    values: 1x40
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="build"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="b",queue="build"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="build"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="build"}
+    values: 60x40
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="accepted"}
+    values: 2x40
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="coalesced"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="full"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="invalid"}
+    values: '0x40'
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="cancel"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="b",queue="cancel"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="cancel"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="accepted"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="coalesced"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="full"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="invalid"}
+    values: '0x40'
+  alert_rule_test:
+  - eval_time: 11m
+    alertname: FaasBuilderNotificationWaitHigh
+    exp_alerts: []
+  - eval_time: 12m
+    alertname: FaasBuilderNotificationWaitHigh
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_notification_queue
+        public_status: internal
+        job: builderd
+        instance: b
+        queue: build
+      exp_annotations:
+        summary: Builder notifications are waiting too long for dispatch
+        description: The oldest waiting build hint exceeded its dispatch-age threshold for 5m; thresholds are 5m
+          for builds and 1m for cancellation. Active handlers are excluded. This measures fast-path delay and does
+          not establish a lost durable build, a stalled worker or a VM that is still alive.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildNotifications.md
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationTelemetryUnavailable
+    exp_alerts: []
+  promql_expr_test:
+  - expr: builderd_notification_queue_oldest_wait_seconds{instance="b",queue="build"}
+    eval_time: 2m
+    exp_samples:
+    - labels: builderd_notification_queue_oldest_wait_seconds{job="builderd",instance="b",queue="build"}
+      value: 60
+  - expr: builderd_notification_queue_oldest_wait_seconds{instance="b",queue="build"}
+    eval_time: 10m
+    exp_samples:
+    - labels: builderd_notification_queue_oldest_wait_seconds{job="builderd",instance="b",queue="build"}
+      value: 540
+- name: cancel wait threshold and five minute hold with no fresh arrivals
+  interval: 1m
+  input_series:
+  - series: up{job="builderd",instance="b"}
+    values: 1x40
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="build"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="b",queue="build"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="build"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="accepted"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="coalesced"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="full"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="invalid"}
+    values: '0x40'
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="cancel"}
+    values: 1x40
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="cancel"}
+    values: 1x40
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="cancel"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="b",queue="cancel"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="cancel"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="cancel"}
+    values: 60x40
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="accepted"}
+    values: 2x40
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="coalesced"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="full"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="invalid"}
+    values: '0x40'
+  alert_rule_test:
+  - eval_time: 7m
+    alertname: FaasBuilderNotificationWaitHigh
+    exp_alerts: []
+  - eval_time: 8m
+    alertname: FaasBuilderNotificationWaitHigh
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_notification_queue
+        public_status: internal
+        job: builderd
+        instance: b
+        queue: cancel
+      exp_annotations:
+        summary: Builder notifications are waiting too long for dispatch
+        description: The oldest waiting cancel hint exceeded its dispatch-age threshold for 5m; thresholds are 5m
+          for builds and 1m for cancellation. Active handlers are excluded. This measures fast-path delay and does
+          not establish a lost durable build, a stalled worker or a VM that is still alive.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildNotifications.md
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationTelemetryUnavailable
+    exp_alerts: []
+  promql_expr_test:
+  - expr: builderd_notification_queue_oldest_wait_seconds{instance="b",queue="cancel"}
+    eval_time: 2m
+    exp_samples:
+    - labels: builderd_notification_queue_oldest_wait_seconds{job="builderd",instance="b",queue="cancel"}
+      value: 60
+  - expr: builderd_notification_queue_oldest_wait_seconds{instance="b",queue="cancel"}
+    eval_time: 10m
+    exp_samples:
+    - labels: builderd_notification_queue_oldest_wait_seconds{job="builderd",instance="b",queue="cancel"}
+      value: 540
+- name: waiting clears after a warning fires
+  interval: 1m
+  input_series:
+  - series: up{job="builderd",instance="b"}
+    values: 1x40
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="build"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="b",queue="build"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="build"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="accepted"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="coalesced"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="full"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="invalid"}
+    values: '0x40'
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="cancel"}
+    values: 1x9 0x30
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="cancel"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="b",queue="cancel"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="cancel"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="cancel"}
+    values: 60x9 0x30
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="accepted"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="coalesced"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="full"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="invalid"}
+    values: '0x40'
+  alert_rule_test:
+  - eval_time: 8m
+    alertname: FaasBuilderNotificationWaitHigh
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_notification_queue
+        public_status: internal
+        job: builderd
+        instance: b
+        queue: cancel
+      exp_annotations:
+        summary: Builder notifications are waiting too long for dispatch
+        description: The oldest waiting cancel hint exceeded its dispatch-age threshold for 5m; thresholds are 5m
+          for builds and 1m for cancellation. Active handlers are excluded. This measures fast-path delay and does
+          not establish a lost durable build, a stalled worker or a VM that is still alive.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildNotifications.md
+  - eval_time: 10m
+    alertname: FaasBuilderNotificationWaitHigh
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationTelemetryUnavailable
+    exp_alerts: []
+  promql_expr_test:
+  - expr: builderd_notification_queue_oldest_wait_seconds{instance="b",queue="cancel"}
+    eval_time: 10m
+    exp_samples:
+    - labels: builderd_notification_queue_oldest_wait_seconds{job="builderd",instance="b",queue="cancel"}
+      value: 0
+- name: queue recovery before the hold clears pending delay
+  interval: 1m
+  input_series:
+  - series: up{job="builderd",instance="b"}
+    values: 1x40
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="build"}
+    values: 1x7 0x32
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="build"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="b",queue="build"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="build"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="build"}
+    values: 60x7 0x32
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="accepted"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="coalesced"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="full"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="invalid"}
+    values: '0x40'
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="cancel"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="b",queue="cancel"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="cancel"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="accepted"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="coalesced"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="full"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="invalid"}
+    values: '0x40'
+  alert_rule_test:
+  - eval_time: 12m
+    alertname: FaasBuilderNotificationWaitHigh
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationWaitHigh
+    exp_alerts: []
+- name: shutdown retains waiting evidence but suppresses delay and drops
+  interval: 1m
+  input_series:
+  - series: up{job="builderd",instance="b"}
+    values: 1x40
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="build"}
+    values: 64x40
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="build"}
+    values: 2x40
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="build"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="b",queue="build"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="build"}
+    values: 60x40
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="accepted"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="coalesced"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="full"}
+    values: 0+10x40
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="invalid"}
+    values: '0x40'
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="cancel"}
+    values: 64x40
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="cancel"}
+    values: 2x40
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="cancel"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="b",queue="cancel"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="cancel"}
+    values: 60x40
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="accepted"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="coalesced"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="full"}
+    values: 0+10x40
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="invalid"}
+    values: '0x40'
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationDropsHigh
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationWaitHigh
+    exp_alerts: []
+  promql_expr_test:
+  - expr: builderd_notification_queue_observation_healthy{instance="b",queue="cancel"}
+    eval_time: 20m
+    exp_samples:
+    - labels: builderd_notification_queue_observation_healthy{job="builderd",instance="b",queue="cancel"}
+      value: 1
+  - expr: builderd_notification_queue_oldest_wait_seconds{instance="b",queue="cancel"}
+    eval_time: 20m
+    exp_samples:
+    - labels: builderd_notification_queue_oldest_wait_seconds{job="builderd",instance="b",queue="cancel"}
+      value: 1140
+- name: queue shutdown clears previously firing warnings
+  interval: 1m
+  input_series:
+  - series: up{job="builderd",instance="b"}
+    values: 1x40
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="build"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="b",queue="build"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="build"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="accepted"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="coalesced"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="full"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="invalid"}
+    values: '0x40'
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="cancel"}
+    values: 64x40
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="cancel"}
+    values: 2x40
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="cancel"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="b",queue="cancel"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="cancel"}
+    values: 1x9 0x30
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="cancel"}
+    values: 60x40
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="accepted"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="coalesced"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="full"}
+    values: 0+10x40
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="invalid"}
+    values: '0x40'
+  alert_rule_test:
+  - eval_time: 8m
+    alertname: FaasBuilderNotificationWaitHigh
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_notification_queue
+        public_status: internal
+        job: builderd
+        instance: b
+        queue: cancel
+      exp_annotations:
+        summary: Builder notifications are waiting too long for dispatch
+        description: The oldest waiting cancel hint exceeded its dispatch-age threshold for 5m; thresholds are 5m
+          for builds and 1m for cancellation. Active handlers are excluded. This measures fast-path delay and does
+          not establish a lost durable build, a stalled worker or a VM that is still alive.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildNotifications.md
+  - eval_time: 8m
+    alertname: FaasBuilderNotificationDropsHigh
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_notification_queue
+        public_status: internal
+        job: builderd
+        instance: b
+        queue: cancel
+      exp_annotations:
+        summary: Builder notification queue is persistently dropping hints
+        description: Full-queue drops exceed 10% of accepted/full enqueue attempts for the cancel queue, with at
+          least three drops in each rolling 5m window, sustained for 5m. Duplicate coalescing and shutdown are excluded.
+          Verify durable build polling or cancellation cleanup is progressing before intervening.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildNotifications.md
+  - eval_time: 10m
+    alertname: FaasBuilderNotificationWaitHigh
+    exp_alerts: []
+  - eval_time: 10m
+    alertname: FaasBuilderNotificationDropsHigh
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationTelemetryUnavailable
+    exp_alerts: []
+- name: completely missing build queue remains an expected telemetry target
+  interval: 1m
+  input_series:
+  - series: up{job="builderd",instance="b"}
+    values: 1x40
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="cancel"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="b",queue="cancel"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="cancel"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="accepted"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="coalesced"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="full"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="invalid"}
+    values: '0x40'
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasBuilderNotificationTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasBuilderNotificationTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_notification_telemetry
+        public_status: internal
+        job: builderd
+        instance: b
+        queue: build
+      exp_annotations:
+        summary: Builder notification queue diagnostics are unavailable
+        description: The builder is scraped but its build notification queue state or initialized enqueue counters
+          are missing or inconsistent. Fast-path health is unknown; inspect instrumentation, clocks and scrape configuration.
+          The durable worker and cleanup reaper are independent recovery paths.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildNotifications.md
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationWaitHigh
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationDropsHigh
+    exp_alerts: []
+  promql_expr_test:
+  - expr: builderd_notification_queue_oldest_wait_seconds{instance="b",queue="build"}
+    eval_time: 20m
+    exp_samples: []
+- name: completely missing cancel queue remains an expected telemetry target
+  interval: 1m
+  input_series:
+  - series: up{job="builderd",instance="b"}
+    values: 1x40
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="build"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="b",queue="build"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="build"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="accepted"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="coalesced"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="full"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="invalid"}
+    values: '0x40'
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasBuilderNotificationTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasBuilderNotificationTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_notification_telemetry
+        public_status: internal
+        job: builderd
+        instance: b
+        queue: cancel
+      exp_annotations:
+        summary: Builder notification queue diagnostics are unavailable
+        description: The builder is scraped but its cancel notification queue state or initialized enqueue counters
+          are missing or inconsistent. Fast-path health is unknown; inspect instrumentation, clocks and scrape configuration.
+          The durable worker and cleanup reaper are independent recovery paths.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildNotifications.md
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationWaitHigh
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationDropsHigh
+    exp_alerts: []
+  promql_expr_test:
+  - expr: builderd_notification_queue_oldest_wait_seconds{instance="b",queue="cancel"}
+    eval_time: 20m
+    exp_samples: []
+- name: both queues missing cannot produce green empty state
+  interval: 1m
+  input_series:
+  - series: up{job="builderd",instance="b"}
+    values: 1x40
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: FaasBuilderNotificationTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_notification_telemetry
+        public_status: internal
+        job: builderd
+        instance: b
+        queue: build
+      exp_annotations:
+        summary: Builder notification queue diagnostics are unavailable
+        description: The builder is scraped but its build notification queue state or initialized enqueue counters
+          are missing or inconsistent. Fast-path health is unknown; inspect instrumentation, clocks and scrape configuration.
+          The durable worker and cleanup reaper are independent recovery paths.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildNotifications.md
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_notification_telemetry
+        public_status: internal
+        job: builderd
+        instance: b
+        queue: cancel
+      exp_annotations:
+        summary: Builder notification queue diagnostics are unavailable
+        description: The builder is scraped but its cancel notification queue state or initialized enqueue counters
+          are missing or inconsistent. Fast-path health is unknown; inspect instrumentation, clocks and scrape configuration.
+          The durable worker and cleanup reaper are independent recovery paths.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildNotifications.md
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationWaitHigh
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationDropsHigh
+    exp_alerts: []
+- name: missing counter outcome suppresses otherwise high drop and wait warnings
+  interval: 1m
+  input_series:
+  - series: up{job="builderd",instance="b"}
+    values: 1x40
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="build"}
+    values: 1x40
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="build"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="b",queue="build"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="build"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="build"}
+    values: 60x40
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="accepted"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="full"}
+    values: 0+10x40
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="invalid"}
+    values: '0x40'
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="cancel"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="b",queue="cancel"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="cancel"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="accepted"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="coalesced"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="full"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="invalid"}
+    values: '0x40'
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: FaasBuilderNotificationTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_notification_telemetry
+        public_status: internal
+        job: builderd
+        instance: b
+        queue: build
+      exp_annotations:
+        summary: Builder notification queue diagnostics are unavailable
+        description: The builder is scraped but its build notification queue state or initialized enqueue counters
+          are missing or inconsistent. Fast-path health is unknown; inspect instrumentation, clocks and scrape configuration.
+          The durable worker and cleanup reaper are independent recovery paths.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildNotifications.md
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationDropsHigh
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationWaitHigh
+    exp_alerts: []
+  promql_expr_test:
+  - expr: builderd_notification_queue_oldest_wait_seconds{instance="b",queue="build"}
+    eval_time: 20m
+    exp_samples: []
+- name: negative enqueue counter is incomplete telemetry
+  interval: 1m
+  input_series:
+  - series: up{job="builderd",instance="b"}
+    values: 1x40
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="build"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="b",queue="build"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="build"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="accepted"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="coalesced"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="full"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="invalid"}
+    values: '0x40'
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="cancel"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="b",queue="cancel"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="cancel"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="accepted"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="coalesced"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="full"}
+    values: -1x40
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="invalid"}
+    values: '0x40'
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_notification_telemetry
+        public_status: internal
+        job: builderd
+        instance: b
+        queue: cancel
+      exp_annotations:
+        summary: Builder notification queue diagnostics are unavailable
+        description: The builder is scraped but its cancel notification queue state or initialized enqueue counters
+          are missing or inconsistent. Fast-path health is unknown; inspect instrumentation, clocks and scrape configuration.
+          The durable worker and cleanup reaper are independent recovery paths.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildNotifications.md
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationDropsHigh
+    exp_alerts: []
+- name: zero workers is unknown rather than healthy zero
+  interval: 1m
+  input_series:
+  - series: up{job="builderd",instance="b"}
+    values: 1x40
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="build"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="b",queue="build"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="build"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="accepted"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="coalesced"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="full"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="invalid"}
+    values: '0x40'
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="cancel"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="cancel"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="accepted"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="coalesced"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="full"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="invalid"}
+    values: '0x40'
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_notification_telemetry
+        public_status: internal
+        job: builderd
+        instance: b
+        queue: cancel
+      exp_annotations:
+        summary: Builder notification queue diagnostics are unavailable
+        description: The builder is scraped but its cancel notification queue state or initialized enqueue counters
+          are missing or inconsistent. Fast-path health is unknown; inspect instrumentation, clocks and scrape configuration.
+          The durable worker and cleanup reaper are independent recovery paths.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildNotifications.md
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationWaitHigh
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationDropsHigh
+    exp_alerts: []
+  promql_expr_test:
+  - expr: builderd_notification_queue_oldest_wait_seconds{instance="b",queue="cancel"}
+    eval_time: 20m
+    exp_samples: []
+- name: zero capacity is unknown rather than healthy zero
+  interval: 1m
+  input_series:
+  - series: up{job="builderd",instance="b"}
+    values: 1x40
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="build"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="b",queue="build"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="build"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="accepted"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="coalesced"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="full"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="invalid"}
+    values: '0x40'
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_workers{job="builderd",instance="b",queue="cancel"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="cancel"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="accepted"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="coalesced"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="full"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="invalid"}
+    values: '0x40'
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_notification_telemetry
+        public_status: internal
+        job: builderd
+        instance: b
+        queue: cancel
+      exp_annotations:
+        summary: Builder notification queue diagnostics are unavailable
+        description: The builder is scraped but its cancel notification queue state or initialized enqueue counters
+          are missing or inconsistent. Fast-path health is unknown; inspect instrumentation, clocks and scrape configuration.
+          The durable worker and cleanup reaper are independent recovery paths.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildNotifications.md
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationWaitHigh
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationDropsHigh
+    exp_alerts: []
+  promql_expr_test:
+  - expr: builderd_notification_queue_oldest_wait_seconds{instance="b",queue="cancel"}
+    eval_time: 20m
+    exp_samples: []
+- name: nonbinary expectation is unknown rather than healthy zero
+  interval: 1m
+  input_series:
+  - series: up{job="builderd",instance="b"}
+    values: 1x40
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="build"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="b",queue="build"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="build"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="accepted"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="coalesced"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="full"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="invalid"}
+    values: '0x40'
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="cancel"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="b",queue="cancel"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="cancel"}
+    values: 0.5x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="accepted"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="coalesced"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="full"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="invalid"}
+    values: '0x40'
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_notification_telemetry
+        public_status: internal
+        job: builderd
+        instance: b
+        queue: cancel
+      exp_annotations:
+        summary: Builder notification queue diagnostics are unavailable
+        description: The builder is scraped but its cancel notification queue state or initialized enqueue counters
+          are missing or inconsistent. Fast-path health is unknown; inspect instrumentation, clocks and scrape configuration.
+          The durable worker and cleanup reaper are independent recovery paths.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildNotifications.md
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationWaitHigh
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationDropsHigh
+    exp_alerts: []
+  promql_expr_test:
+  - expr: builderd_notification_queue_oldest_wait_seconds{instance="b",queue="cancel"}
+    eval_time: 20m
+    exp_samples: []
+- name: too many active workers is unknown rather than healthy zero
+  interval: 1m
+  input_series:
+  - series: up{job="builderd",instance="b"}
+    values: 1x40
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="build"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="b",queue="build"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="build"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="accepted"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="coalesced"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="full"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="invalid"}
+    values: '0x40'
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="cancel"}
+    values: 3x40
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="cancel"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="b",queue="cancel"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="cancel"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="accepted"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="coalesced"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="full"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="invalid"}
+    values: '0x40'
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_notification_telemetry
+        public_status: internal
+        job: builderd
+        instance: b
+        queue: cancel
+      exp_annotations:
+        summary: Builder notification queue diagnostics are unavailable
+        description: The builder is scraped but its cancel notification queue state or initialized enqueue counters
+          are missing or inconsistent. Fast-path health is unknown; inspect instrumentation, clocks and scrape configuration.
+          The durable worker and cleanup reaper are independent recovery paths.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildNotifications.md
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationWaitHigh
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationDropsHigh
+    exp_alerts: []
+  promql_expr_test:
+  - expr: builderd_notification_queue_oldest_wait_seconds{instance="b",queue="cancel"}
+    eval_time: 20m
+    exp_samples: []
+- name: fractional active workers is unknown rather than healthy zero
+  interval: 1m
+  input_series:
+  - series: up{job="builderd",instance="b"}
+    values: 1x40
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="build"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="b",queue="build"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="build"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="accepted"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="coalesced"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="full"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="invalid"}
+    values: '0x40'
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="cancel"}
+    values: 0.5x40
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="cancel"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="b",queue="cancel"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="cancel"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="accepted"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="coalesced"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="full"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="invalid"}
+    values: '0x40'
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_notification_telemetry
+        public_status: internal
+        job: builderd
+        instance: b
+        queue: cancel
+      exp_annotations:
+        summary: Builder notification queue diagnostics are unavailable
+        description: The builder is scraped but its cancel notification queue state or initialized enqueue counters
+          are missing or inconsistent. Fast-path health is unknown; inspect instrumentation, clocks and scrape configuration.
+          The durable worker and cleanup reaper are independent recovery paths.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildNotifications.md
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationWaitHigh
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationDropsHigh
+    exp_alerts: []
+  promql_expr_test:
+  - expr: builderd_notification_queue_oldest_wait_seconds{instance="b",queue="cancel"}
+    eval_time: 20m
+    exp_samples: []
+- name: fractional capacity is unknown rather than healthy zero
+  interval: 1m
+  input_series:
+  - series: up{job="builderd",instance="b"}
+    values: 1x40
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="build"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="b",queue="build"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="build"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="accepted"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="coalesced"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="full"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="invalid"}
+    values: '0x40'
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="cancel"}
+    values: 64.5x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="b",queue="cancel"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="cancel"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="accepted"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="coalesced"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="full"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="invalid"}
+    values: '0x40'
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_notification_telemetry
+        public_status: internal
+        job: builderd
+        instance: b
+        queue: cancel
+      exp_annotations:
+        summary: Builder notification queue diagnostics are unavailable
+        description: The builder is scraped but its cancel notification queue state or initialized enqueue counters
+          are missing or inconsistent. Fast-path health is unknown; inspect instrumentation, clocks and scrape configuration.
+          The durable worker and cleanup reaper are independent recovery paths.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildNotifications.md
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationWaitHigh
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationDropsHigh
+    exp_alerts: []
+  promql_expr_test:
+  - expr: builderd_notification_queue_oldest_wait_seconds{instance="b",queue="cancel"}
+    eval_time: 20m
+    exp_samples: []
+- name: fractional worker budget is unknown rather than healthy zero
+  interval: 1m
+  input_series:
+  - series: up{job="builderd",instance="b"}
+    values: 1x40
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="build"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="b",queue="build"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="build"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="accepted"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="coalesced"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="full"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="invalid"}
+    values: '0x40'
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="cancel"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="b",queue="cancel"}
+    values: 2.5x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="cancel"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="accepted"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="coalesced"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="full"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="invalid"}
+    values: '0x40'
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_notification_telemetry
+        public_status: internal
+        job: builderd
+        instance: b
+        queue: cancel
+      exp_annotations:
+        summary: Builder notification queue diagnostics are unavailable
+        description: The builder is scraped but its cancel notification queue state or initialized enqueue counters
+          are missing or inconsistent. Fast-path health is unknown; inspect instrumentation, clocks and scrape configuration.
+          The durable worker and cleanup reaper are independent recovery paths.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildNotifications.md
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationWaitHigh
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationDropsHigh
+    exp_alerts: []
+  promql_expr_test:
+  - expr: builderd_notification_queue_oldest_wait_seconds{instance="b",queue="cancel"}
+    eval_time: 20m
+    exp_samples: []
+- name: fractional waiting IDs is unknown rather than healthy zero
+  interval: 1m
+  input_series:
+  - series: up{job="builderd",instance="b"}
+    values: 1x40
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="build"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="b",queue="build"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="build"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="accepted"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="coalesced"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="full"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="invalid"}
+    values: '0x40'
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="cancel"}
+    values: 0.5x40
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="cancel"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="b",queue="cancel"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="cancel"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="accepted"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="coalesced"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="full"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="invalid"}
+    values: '0x40'
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_notification_telemetry
+        public_status: internal
+        job: builderd
+        instance: b
+        queue: cancel
+      exp_annotations:
+        summary: Builder notification queue diagnostics are unavailable
+        description: The builder is scraped but its cancel notification queue state or initialized enqueue counters
+          are missing or inconsistent. Fast-path health is unknown; inspect instrumentation, clocks and scrape configuration.
+          The durable worker and cleanup reaper are independent recovery paths.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildNotifications.md
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationWaitHigh
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationDropsHigh
+    exp_alerts: []
+  promql_expr_test:
+  - expr: builderd_notification_queue_oldest_wait_seconds{instance="b",queue="cancel"}
+    eval_time: 20m
+    exp_samples: []
+- name: negative waiting count is unknown rather than healthy zero
+  interval: 1m
+  input_series:
+  - series: up{job="builderd",instance="b"}
+    values: 1x40
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="build"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="b",queue="build"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="build"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="accepted"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="coalesced"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="full"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="invalid"}
+    values: '0x40'
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="cancel"}
+    values: -1x40
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="cancel"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="b",queue="cancel"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="cancel"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="accepted"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="coalesced"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="full"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="invalid"}
+    values: '0x40'
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_notification_telemetry
+        public_status: internal
+        job: builderd
+        instance: b
+        queue: cancel
+      exp_annotations:
+        summary: Builder notification queue diagnostics are unavailable
+        description: The builder is scraped but its cancel notification queue state or initialized enqueue counters
+          are missing or inconsistent. Fast-path health is unknown; inspect instrumentation, clocks and scrape configuration.
+          The durable worker and cleanup reaper are independent recovery paths.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildNotifications.md
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationWaitHigh
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationDropsHigh
+    exp_alerts: []
+  promql_expr_test:
+  - expr: builderd_notification_queue_oldest_wait_seconds{instance="b",queue="cancel"}
+    eval_time: 20m
+    exp_samples: []
+- name: nonzero timestamp for empty queue is unknown rather than healthy zero
+  interval: 1m
+  input_series:
+  - series: up{job="builderd",instance="b"}
+    values: 1x40
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="build"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="b",queue="build"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="build"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="accepted"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="coalesced"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="full"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="invalid"}
+    values: '0x40'
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="cancel"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="b",queue="cancel"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="cancel"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="cancel"}
+    values: 60x40
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="accepted"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="coalesced"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="full"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="invalid"}
+    values: '0x40'
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_notification_telemetry
+        public_status: internal
+        job: builderd
+        instance: b
+        queue: cancel
+      exp_annotations:
+        summary: Builder notification queue diagnostics are unavailable
+        description: The builder is scraped but its cancel notification queue state or initialized enqueue counters
+          are missing or inconsistent. Fast-path health is unknown; inspect instrumentation, clocks and scrape configuration.
+          The durable worker and cleanup reaper are independent recovery paths.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildNotifications.md
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationWaitHigh
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationDropsHigh
+    exp_alerts: []
+  promql_expr_test:
+  - expr: builderd_notification_queue_oldest_wait_seconds{instance="b",queue="cancel"}
+    eval_time: 20m
+    exp_samples: []
+- name: future waiting timestamp is unknown
+  interval: 1m
+  input_series:
+  - series: up{job="builderd",instance="b"}
+    values: 1x40
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="build"}
+    values: 1x40
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="build"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="b",queue="build"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="build"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="build"}
+    values: 5000x40
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="accepted"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="coalesced"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="full"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="invalid"}
+    values: '0x40'
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="cancel"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="b",queue="cancel"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="cancel"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="accepted"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="coalesced"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="full"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="invalid"}
+    values: '0x40'
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: FaasBuilderNotificationTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_notification_telemetry
+        public_status: internal
+        job: builderd
+        instance: b
+        queue: build
+      exp_annotations:
+        summary: Builder notification queue diagnostics are unavailable
+        description: The builder is scraped but its build notification queue state or initialized enqueue counters
+          are missing or inconsistent. Fast-path health is unknown; inspect instrumentation, clocks and scrape configuration.
+          The durable worker and cleanup reaper are independent recovery paths.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildNotifications.md
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationWaitHigh
+    exp_alerts: []
+  promql_expr_test:
+  - expr: builderd_notification_queue_oldest_wait_seconds{instance="b",queue="build"}
+    eval_time: 20m
+    exp_samples: []
+- name: positive waiting count requires a positive timestamp
+  interval: 1m
+  input_series:
+  - series: up{job="builderd",instance="b"}
+    values: 1x40
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="build"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="b",queue="build"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="build"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="accepted"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="coalesced"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="full"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="invalid"}
+    values: '0x40'
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="cancel"}
+    values: 1x40
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="cancel"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="b",queue="cancel"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="cancel"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="accepted"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="coalesced"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="full"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="invalid"}
+    values: '0x40'
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: FaasBuilderNotificationTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_notification_telemetry
+        public_status: internal
+        job: builderd
+        instance: b
+        queue: cancel
+      exp_annotations:
+        summary: Builder notification queue diagnostics are unavailable
+        description: The builder is scraped but its cancel notification queue state or initialized enqueue counters
+          are missing or inconsistent. Fast-path health is unknown; inspect instrumentation, clocks and scrape configuration.
+          The durable worker and cleanup reaper are independent recovery paths.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildNotifications.md
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationWaitHigh
+    exp_alerts: []
+- name: impossible total occupancy is unknown
+  interval: 1m
+  input_series:
+  - series: up{job="builderd",instance="b"}
+    values: 1x40
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="build"}
+    values: 65x40
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="build"}
+    values: 2x40
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="build"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="b",queue="build"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="build"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="build"}
+    values: 60x40
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="accepted"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="coalesced"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="full"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="invalid"}
+    values: '0x40'
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="cancel"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="b",queue="cancel"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="cancel"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="accepted"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="coalesced"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="full"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="invalid"}
+    values: '0x40'
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_notification_telemetry
+        public_status: internal
+        job: builderd
+        instance: b
+        queue: build
+      exp_annotations:
+        summary: Builder notification queue diagnostics are unavailable
+        description: The builder is scraped but its build notification queue state or initialized enqueue counters
+          are missing or inconsistent. Fast-path health is unknown; inspect instrumentation, clocks and scrape configuration.
+          The durable worker and cleanup reaper are independent recovery paths.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildNotifications.md
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationWaitHigh
+    exp_alerts: []
+- name: bounded dispatch handoff outside the buffer remains healthy
+  interval: 1m
+  input_series:
+  - series: up{job="builderd",instance="b"}
+    values: 1x40
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="build"}
+    values: 65x40
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="build"}
+    values: 1x40
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="build"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="b",queue="build"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="build"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="build"}
+    values: 60x40
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="accepted"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="coalesced"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="full"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="invalid"}
+    values: '0x40'
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="cancel"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="b",queue="cancel"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="cancel"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="accepted"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="coalesced"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="full"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="invalid"}
+    values: '0x40'
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationTelemetryUnavailable
+    exp_alerts: []
+  promql_expr_test:
+  - expr: builderd_notification_queue_observation_healthy{instance="b",queue="build"}
+    eval_time: 20m
+    exp_samples:
+    - labels: builderd_notification_queue_observation_healthy{job="builderd",instance="b",queue="build"}
+      value: 1
+- name: healthy sibling cannot repair missing worker count on this instance
+  interval: 1m
+  input_series:
+  - series: up{job="builderd",instance="b"}
+    values: 1x40
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="build"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="b",queue="build"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="build"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="accepted"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="coalesced"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="full"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="invalid"}
+    values: '0x40'
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="cancel"}
+    values: 64x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="cancel"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="accepted"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="coalesced"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="full"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="invalid"}
+    values: '0x40'
+  - series: up{job="builderd",instance="healthy-sibling"}
+    values: 1x40
+  - series: builderd_notification_queue_waiting{job="builderd",instance="healthy-sibling",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_active{job="builderd",instance="healthy-sibling",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_capacity{job="builderd",instance="healthy-sibling",queue="build"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="healthy-sibling",queue="build"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="healthy-sibling",queue="build"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="healthy-sibling",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="healthy-sibling",queue="build",outcome="accepted"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="healthy-sibling",queue="build",outcome="coalesced"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="healthy-sibling",queue="build",outcome="full"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="healthy-sibling",queue="build",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="healthy-sibling",queue="build",outcome="invalid"}
+    values: '0x40'
+  - series: builderd_notification_queue_waiting{job="builderd",instance="healthy-sibling",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_active{job="builderd",instance="healthy-sibling",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_capacity{job="builderd",instance="healthy-sibling",queue="cancel"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="healthy-sibling",queue="cancel"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="healthy-sibling",queue="cancel"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="healthy-sibling",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="healthy-sibling",queue="cancel",outcome="accepted"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="healthy-sibling",queue="cancel",outcome="coalesced"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="healthy-sibling",queue="cancel",outcome="full"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="healthy-sibling",queue="cancel",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="healthy-sibling",queue="cancel",outcome="invalid"}
+    values: '0x40'
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: FaasBuilderNotificationTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_notification_telemetry
+        public_status: internal
+        job: builderd
+        instance: b
+        queue: cancel
+      exp_annotations:
+        summary: Builder notification queue diagnostics are unavailable
+        description: The builder is scraped but its cancel notification queue state or initialized enqueue counters
+          are missing or inconsistent. Fast-path health is unknown; inspect instrumentation, clocks and scrape configuration.
+          The durable worker and cleanup reaper are independent recovery paths.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildNotifications.md
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationWaitHigh
+    exp_alerts: []
+- name: high throughput sibling cannot dilute local drop ratio
+  interval: 1m
+  input_series:
+  - series: up{job="builderd",instance="b"}
+    values: 1x40
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="build"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="b",queue="build"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="build"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="accepted"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="coalesced"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="full"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="invalid"}
+    values: '0x40'
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="cancel"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="b",queue="cancel"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="cancel"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="accepted"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="coalesced"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="full"}
+    values: 0+10x40
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="invalid"}
+    values: '0x40'
+  - series: up{job="builderd",instance="healthy-sibling"}
+    values: 1x40
+  - series: builderd_notification_queue_waiting{job="builderd",instance="healthy-sibling",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_active{job="builderd",instance="healthy-sibling",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_capacity{job="builderd",instance="healthy-sibling",queue="build"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="healthy-sibling",queue="build"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="healthy-sibling",queue="build"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="healthy-sibling",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="healthy-sibling",queue="build",outcome="accepted"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="healthy-sibling",queue="build",outcome="coalesced"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="healthy-sibling",queue="build",outcome="full"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="healthy-sibling",queue="build",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="healthy-sibling",queue="build",outcome="invalid"}
+    values: '0x40'
+  - series: builderd_notification_queue_waiting{job="builderd",instance="healthy-sibling",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_active{job="builderd",instance="healthy-sibling",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_capacity{job="builderd",instance="healthy-sibling",queue="cancel"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="healthy-sibling",queue="cancel"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="healthy-sibling",queue="cancel"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="healthy-sibling",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="healthy-sibling",queue="cancel",outcome="accepted"}
+    values: 0+10000x40
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="healthy-sibling",queue="cancel",outcome="coalesced"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="healthy-sibling",queue="cancel",outcome="full"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="healthy-sibling",queue="cancel",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="healthy-sibling",queue="cancel",outcome="invalid"}
+    values: '0x40'
+  alert_rule_test:
+  - eval_time: 6m
+    alertname: FaasBuilderNotificationDropsHigh
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: builderd
+        family: build_notification_queue
+        public_status: internal
+        job: builderd
+        instance: b
+        queue: cancel
+      exp_annotations:
+        summary: Builder notification queue is persistently dropping hints
+        description: Full-queue drops exceed 10% of accepted/full enqueue attempts for the cancel queue, with at
+          least three drops in each rolling 5m window, sustained for 5m. Duplicate coalescing and shutdown are excluded.
+          Verify durable build polling or cancellation cleanup is progressing before intervening.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildNotifications.md
+- name: failed scrape is handled by target health and supplies no queue health
+  interval: 1m
+  input_series:
+  - series: up{job="builderd",instance="b"}
+    values: '0x40'
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="build"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="b",queue="build"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="build"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="build"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="accepted"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="coalesced"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="full"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="build",outcome="invalid"}
+    values: '0x40'
+  - series: builderd_notification_queue_waiting{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_active{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_capacity{job="builderd",instance="b",queue="cancel"}
+    values: 64x40
+  - series: builderd_notification_queue_workers{job="builderd",instance="b",queue="cancel"}
+    values: 2x40
+  - series: builderd_notification_queue_enabled{job="builderd",instance="b",queue="cancel"}
+    values: 1x40
+  - series: builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd",instance="b",queue="cancel"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="accepted"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="coalesced"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="full"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="stopping"}
+    values: '0x40'
+  - series: builderd_notification_queue_enqueues_total{job="builderd",instance="b",queue="cancel",outcome="invalid"}
+    values: '0x40'
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationDropsHigh
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationWaitHigh
+    exp_alerts: []
+  promql_expr_test:
+  - expr: builderd_notification_queue_observation_healthy{instance="b",queue="build"}
+    eval_time: 20m
+    exp_samples: []
+  - expr: builderd_notification_queue_oldest_wait_seconds{instance="b",queue="cancel"}
+    eval_time: 20m
+    exp_samples: []
+- name: no builder installation creates no synthetic queue alerts
+  interval: 1m
+  input_series: []
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationDropsHigh
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasBuilderNotificationWaitHigh
+    exp_alerts: []

@@ -3709,6 +3709,95 @@ groups:
             build state and recovery. Fenced stale claims and cancellation are excluded.
           runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildWorker.md
 
+      # Bounded LISTEN/NOTIFY queues are separate from durable queue state
+      # and DB hub delivery. Dispatch handoff can briefly occupy one ID per
+      # worker outside the buffered channel. Active handlers have no wait age.
+      - record: builderd_notification_queue_observation_healthy
+        expr: |
+          (((builderd_notification_queue_enabled{job="builderd",queue=~"build|cancel"} == 0)
+            or (builderd_notification_queue_enabled{job="builderd",queue=~"build|cancel"} == 1)) * 0 + 1)
+          and on (job, instance) (up{job="builderd"} == 1)
+          and on (job, instance, queue) (builderd_notification_queue_capacity{job="builderd"} > 0)
+          and on (job, instance, queue) (builderd_notification_queue_capacity{job="builderd"} == floor(builderd_notification_queue_capacity{job="builderd"}))
+          and on (job, instance, queue) (builderd_notification_queue_workers{job="builderd"} > 0)
+          and on (job, instance, queue) (builderd_notification_queue_workers{job="builderd"} == floor(builderd_notification_queue_workers{job="builderd"}))
+          and on (job, instance, queue) (builderd_notification_queue_active{job="builderd"} >= 0)
+          and on (job, instance, queue) (builderd_notification_queue_active{job="builderd"} == floor(builderd_notification_queue_active{job="builderd"}))
+          and on (job, instance, queue) (builderd_notification_queue_active{job="builderd"} <= builderd_notification_queue_workers{job="builderd"})
+          and on (job, instance, queue) (builderd_notification_queue_waiting{job="builderd"} >= 0)
+          and on (job, instance, queue) (builderd_notification_queue_waiting{job="builderd"} == floor(builderd_notification_queue_waiting{job="builderd"}))
+          and on (job, instance, queue)
+            ((builderd_notification_queue_waiting{job="builderd"} + builderd_notification_queue_active{job="builderd"})
+             <= (builderd_notification_queue_capacity{job="builderd"} + builderd_notification_queue_workers{job="builderd"}))
+          and on (job, instance, queue) (builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd"} <= time())
+          and on (job, instance, queue)
+            (((builderd_notification_queue_waiting{job="builderd"} == 0)
+              and on (job, instance, queue) (builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd"} == 0))
+             or ((builderd_notification_queue_waiting{job="builderd"} > 0)
+                 and on (job, instance, queue) (builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd"} > 0)))
+          and on (job, instance, queue)
+            (count by (job, instance, queue) (builderd_notification_queue_enqueues_total{job="builderd",outcome=~"accepted|coalesced|full|stopping|invalid"} >= 0) == 5)
+      - record: builderd_notification_queue_oldest_wait_seconds
+        expr: |
+          (((time() - builderd_notification_queue_oldest_enqueued_timestamp_seconds{job="builderd"})
+             and on (job, instance, queue) (builderd_notification_queue_waiting{job="builderd"} > 0))
+           or ((builderd_notification_queue_waiting{job="builderd"} == 0) * 0))
+          and on (job, instance, queue) (builderd_notification_queue_observation_healthy == 1)
+      - alert: FaasBuilderNotificationTelemetryUnavailable
+        expr: |
+          (label_replace(up{job="builderd"} == 1, "queue", "build", "job", ".*")
+           or label_replace(up{job="builderd"} == 1, "queue", "cancel", "job", ".*"))
+          unless on (job, instance, queue) (builderd_notification_queue_observation_healthy == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: builderd
+          family: build_notification_telemetry
+          public_status: internal
+        annotations:
+          summary: Builder notification queue diagnostics are unavailable
+          description: The builder is scraped but its {{ $labels.queue }} notification queue state or initialized enqueue
+            counters are missing or inconsistent. Fast-path health is unknown; inspect instrumentation, clocks and scrape
+            configuration. The durable worker and cleanup reaper are independent recovery paths.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildNotifications.md
+      - alert: FaasBuilderNotificationDropsHigh
+        expr: |
+          (sum by (job, instance, queue) (rate(builderd_notification_queue_enqueues_total{job="builderd",queue=~"build|cancel",outcome="full"}[5m]))
+           / sum by (job, instance, queue) (rate(builderd_notification_queue_enqueues_total{job="builderd",queue=~"build|cancel",outcome=~"accepted|full"}[5m])) > 0.1)
+          and on (job, instance, queue)
+            (sum by (job, instance, queue) (increase(builderd_notification_queue_enqueues_total{job="builderd",outcome="full"}[5m])) >= 3)
+          and on (job, instance, queue) (builderd_notification_queue_observation_healthy == 1)
+          and on (job, instance, queue) (builderd_notification_queue_enabled{job="builderd"} == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: builderd
+          family: build_notification_queue
+          public_status: internal
+        annotations:
+          summary: Builder notification queue is persistently dropping hints
+          description: Full-queue drops exceed 10% of accepted/full enqueue attempts for the {{ $labels.queue }} queue,
+            with at least three drops in each rolling 5m window, sustained for 5m. Duplicate coalescing and shutdown
+            are excluded. Verify durable build polling or cancellation cleanup is progressing before intervening.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildNotifications.md
+      - alert: FaasBuilderNotificationWaitHigh
+        expr: |
+          ((builderd_notification_queue_oldest_wait_seconds{queue="build"} > 300)
+           or (builderd_notification_queue_oldest_wait_seconds{queue="cancel"} > 60))
+          and on (job, instance, queue) (builderd_notification_queue_enabled{job="builderd"} == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: builderd
+          family: build_notification_queue
+          public_status: internal
+        annotations:
+          summary: Builder notifications are waiting too long for dispatch
+          description: The oldest waiting {{ $labels.queue }} hint exceeded its dispatch-age threshold for 5m; thresholds
+            are 5m for builds and 1m for cancellation. Active handlers are excluded. This measures fast-path delay and
+            does not establish a lost durable build, a stalled worker or a VM that is still alive.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildNotifications.md
+
       # Recovery is observed separately from queue wait. Fleet gauges are
       # coherent per apid; never sum replicas. Timing uses effective config
       # from every discovered builder. Age warnings measure overdue work;
