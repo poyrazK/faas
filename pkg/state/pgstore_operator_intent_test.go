@@ -9,9 +9,9 @@
 //  3. SKIP LOCKED semantics: a second Claim while the first
 //     row is `running` returns ErrOperatorIntentNotFound
 //     (the running row is invisible to the next claim).
-//  4. MarkOperatorIntentSucceeded → status='succeeded' +
-//     finished_at + snap_ids_marked_stale stamped.
-//  5. MarkOperatorIntentFailed → status='failed' + error +
+//  4. ExecuteOperatorNode → status='succeeded' +
+//     finished_at and durable execution/audit receipts.
+//  5. Missing node execution → status='failed' + error +
 //     finished_at stamped.
 //  6. GetOperatorIntent returns the row by id;
 //     ErrOperatorIntentNotFound for missing id.
@@ -41,42 +41,7 @@ import (
 func pgStoreOperatorIntent(t *testing.T) (*state.PgStore, *pgxpool.Pool, context.Context) {
 	t.Helper()
 	ctx := context.Background()
-	pool := pgtest.Open(t)
-	// These tests exercise the PgStore CRUD contract, while the migration
-	// package pins the production schema. Installing only the table keeps each
-	// isolated fixture cheap; replaying all migrations for every test pushes
-	// the PostgreSQL shard over its wall-clock budget.
-	if _, err := pool.Exec(ctx, `
-		CREATE TABLE operator_intents (
-			id uuid PRIMARY KEY,
-			kind text NOT NULL CHECK (kind IN
-				('force_park', 'force_cold_boot', 'force_restart')),
-			target_id text NOT NULL,
-			account_id uuid NULL,
-			actor_id uuid NOT NULL,
-			reason text NULL,
-			metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
-			status text NOT NULL DEFAULT 'pending' CHECK (status IN
-				('pending', 'running', 'succeeded', 'failed', 'cancelled')),
-			requested_at timestamptz NOT NULL DEFAULT now(),
-			started_at timestamptz NULL,
-			finished_at timestamptz NULL,
-			error text NULL,
-			snap_ids_marked_stale text[] NULL,
-			trace_id text NULL
-				CHECK (trace_id IS NULL OR trace_id ~ '^[0-9a-f]{32}$')
-		);
-		CREATE INDEX operator_intents_pending_idx
-			ON operator_intents (status, requested_at)
-			WHERE status = 'pending';
-		CREATE INDEX operator_intents_target_idx
-			ON operator_intents (target_id, requested_at DESC);
-		CREATE INDEX operator_intents_trace_idx
-			ON operator_intents (trace_id)
-			WHERE trace_id IS NOT NULL;
-	`); err != nil {
-		t.Fatalf("create operator_intents fixture: %v", err)
-	}
+	pool := pgtest.OpenMigrated(t)
 	return state.NewPgStore(pool), pool, ctx
 }
 
@@ -103,11 +68,16 @@ func TestPgStore_OperatorIntent_FullLifecycle(t *testing.T) {
 	store, _, ctx := pgStoreOperatorIntent(t)
 
 	// 1. Insert.
+	node, err := store.ComputeNodeByName(ctx, state.DefaultLocalNodeName)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	acct := "11111111-1111-1111-1111-111111111111"
 	actor := "22222222-2222-2222-2222-222222222222"
 	id, err := store.InsertOperatorIntent(
-		ctx, state.OperatorIntentKindForcePark,
-		"33333333-3333-3333-3333-333333333333",
+		ctx, state.OperatorIntentKindNodeDrain,
+		node.ID,
 		&acct, actor, "wedged instance", json.RawMessage(`{}`), nil,
 	)
 	if err != nil {
@@ -139,9 +109,9 @@ func TestPgStore_OperatorIntent_FullLifecycle(t *testing.T) {
 		t.Errorf("second claim while running: got %v, want ErrOperatorIntentNotFound", err)
 	}
 
-	// 4. Mark succeeded.
-	if err := store.MarkOperatorIntentSucceeded(ctx, id, []string{"snap-1", "snap-2"}); err != nil {
-		t.Fatalf("MarkOperatorIntentSucceeded: %v", err)
+	// 4. Atomically execute and record success.
+	if err := finishOperatorNodeCRUD(t, store, ctx, id); err != nil {
+		t.Fatalf("ExecuteOperatorNode: %v", err)
 	}
 
 	// 5. Get returns terminal state.
@@ -155,8 +125,8 @@ func TestPgStore_OperatorIntent_FullLifecycle(t *testing.T) {
 	if got2.FinishedAt == nil {
 		t.Errorf("Get did not stamp finished_at")
 	}
-	if len(got2.SnapIDsMarkedStale) != 2 || got2.SnapIDsMarkedStale[0] != "snap-1" {
-		t.Errorf("Get snap_ids=%v, want [snap-1 snap-2]", got2.SnapIDsMarkedStale)
+	if len(got2.SnapIDsMarkedStale) != 0 {
+		t.Fatalf("node operation invalidated snapshots: %v", got2.SnapIDsMarkedStale)
 	}
 
 	// 6. Replay-safe: third claim returns
@@ -173,7 +143,7 @@ func TestPgStore_OperatorIntent_FailurePath(t *testing.T) {
 	acct := "11111111-1111-1111-1111-111111111111"
 	actor := "22222222-2222-2222-2222-222222222222"
 	id, err := store.InsertOperatorIntent(
-		ctx, state.OperatorIntentKindForceColdBoot,
+		ctx, state.OperatorIntentKindNodeDrain,
 		"44444444-4444-4444-4444-444444444444",
 		&acct, actor, "stale snap", nil, nil,
 	)
@@ -185,8 +155,8 @@ func TestPgStore_OperatorIntent_FailurePath(t *testing.T) {
 		t.Fatalf("Claim: %v", err)
 	}
 
-	if err := store.MarkOperatorIntentFailed(ctx, id, "deployment not found", nil); err != nil {
-		t.Fatalf("MarkOperatorIntentFailed: %v", err)
+	if err := finishOperatorNodeCRUD(t, store, ctx, id); err != nil {
+		t.Fatalf("ExecuteOperatorNode failed outcome: %v", err)
 	}
 
 	got, err := store.GetOperatorIntent(ctx, id)
@@ -196,8 +166,8 @@ func TestPgStore_OperatorIntent_FailurePath(t *testing.T) {
 	if got.Status != state.OperatorIntentFailed {
 		t.Errorf("status=%q, want failed", got.Status)
 	}
-	if got.Error != "deployment not found" {
-		t.Errorf("error=%q, want %q", got.Error, "deployment not found")
+	if got.Error != "Compute node is unavailable." {
+		t.Errorf("error=%q, want %q", got.Error, "Compute node is unavailable.")
 	}
 }
 
@@ -248,6 +218,11 @@ func TestPgStore_OperatorIntent_NilAccountID(t *testing.T) {
 func TestPgStore_OperatorIntent_ReclaimStuckRunning(t *testing.T) {
 	store, pool, ctx := pgStoreOperatorIntent(t)
 
+	node, err := store.ComputeNodeByName(ctx, state.DefaultLocalNodeName)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	actor := "33333333-3333-3333-3333-333333333333"
 	accountID := "44444444-4444-4444-4444-444444444444"
 
@@ -259,7 +234,7 @@ func TestPgStore_OperatorIntent_ReclaimStuckRunning(t *testing.T) {
 	// Mark{Success,Failed}, both of which transition to a
 	// terminal state and would defeat the test.
 	stuckID, err := store.InsertOperatorIntent(
-		ctx, state.OperatorIntentKindForcePark,
+		ctx, state.OperatorIntentKindNodeDrain,
 		"66666666-6666-6666-6666-666666666666",
 		&accountID, actor, "stuck", json.RawMessage(`{}`), nil,
 	)
@@ -275,12 +250,12 @@ func TestPgStore_OperatorIntent_ReclaimStuckRunning(t *testing.T) {
 		t.Fatalf("back-date started_at: %v", err)
 	}
 
-	// Terminal row: insert + claim + MarkSucceeded. The
+	// Terminal row: insert + claim + atomic completion. The
 	// reclaim must leave this row alone (the WHERE clause
 	// filters on status='running').
 	terminalID, err := store.InsertOperatorIntent(
-		ctx, state.OperatorIntentKindForceColdBoot,
-		"77777777-7777-7777-7777-777777777777",
+		ctx, state.OperatorIntentKindNodeDrain,
+		node.ID,
 		&accountID, actor, "terminal", json.RawMessage(`{}`), nil,
 	)
 	if err != nil {
@@ -289,8 +264,8 @@ func TestPgStore_OperatorIntent_ReclaimStuckRunning(t *testing.T) {
 	if _, err := store.ClaimPendingOperatorIntent(ctx); err != nil {
 		t.Fatalf("ClaimPendingOperatorIntent(terminal): %v", err)
 	}
-	if err := store.MarkOperatorIntentSucceeded(ctx, terminalID, []string{"s1"}); err != nil {
-		t.Fatalf("MarkOperatorIntentSucceeded(terminal): %v", err)
+	if err := finishOperatorNodeCRUD(t, store, ctx, terminalID); err != nil {
+		t.Fatalf("ExecuteOperatorNode(terminal): %v", err)
 	}
 
 	// Reclaim with a 5-min cutoff — the stuck row's started_at

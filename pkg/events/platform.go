@@ -347,6 +347,16 @@ func invalidWakeIdentity(kind string, payload map[string]any) string {
 // the wake timeline's TopicWake subscriber shouldn't see node.drained
 // rows and vice versa.
 func (p *Platform) EmitRecovery(ctx context.Context, ev RecoveryEvent) {
+	p.emitRecovery(ctx, ev, true)
+}
+
+// PublishCommittedRecovery publishes a completion whose audit outbox row was
+// already delivered. The caller owns deduplication; this never appends an event.
+func (p *Platform) PublishCommittedRecovery(ctx context.Context, ev RecoveryEvent) {
+	p.emitRecovery(ctx, ev, false)
+}
+
+func (p *Platform) emitRecovery(ctx context.Context, ev RecoveryEvent, persist bool) {
 	if ev == nil {
 		return
 	}
@@ -368,7 +378,9 @@ func (p *Platform) EmitRecovery(ctx context.Context, ev RecoveryEvent) {
 		return
 	}
 	start := time.Now()
-	err = p.store.AppendEvent(ctx, p.actor, kind, subject, body)
+	if persist {
+		err = p.store.AppendEvent(ctx, p.actor, kind, subject, body)
+	}
 	dur := time.Since(start)
 	result := "ok"
 	if err != nil {
