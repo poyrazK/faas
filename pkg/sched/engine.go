@@ -2889,7 +2889,14 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 	// The barrier is read while the app is resolved below, and checked
 	// before anything resolved is used.
 	barrier := make(chan error, 1)
-	go func(ctx context.Context) { barrier <- e.checkManagedPostgresAdmission(ctx, appID) }(ctx)
+	// ADR-1345: an owner cache entry exists only while the barrier is clear
+	// at its generation, and the admission insert rechecks that generation.
+	cached, useCache := e.ownerEntryForAdmission(ctx, appID, deploymentID)
+	if useCache {
+		barrier <- nil
+	} else {
+		go func(ctx context.Context) { barrier <- e.checkManagedPostgresAdmission(ctx, appID) }(ctx)
+	}
 	var releaseRestorePressure func()
 	defer func() {
 		if releaseRestorePressure != nil {
@@ -2907,10 +2914,6 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		err    error
 	)
 	deploymentSmoke := deploymentID != "" && trigger == TriggerDeploymentSmoke
-	var (
-		cached   ownerEntry
-		useCache bool
-	)
 	// A coordinated wake resolved app, account and owner moments ago; only the
 	// live deployment is re-read here, so a cutover still fails closed below.
 	selected, reuseSelection := wakeEnvironmentFrom(ctx)
@@ -2927,13 +2930,12 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		// Load only the app/account envelope here; the explicit candidate below
 		// is the deployment this private verification request may wake.
 		app, acct, limits, err = e.resolveAppAccount(ctx, appID)
-	} else if entry, ok := e.ownerEntryForAdmission(ctx, appID, deploymentID); ok {
+	} else if useCache {
 		// ADR-1345: the owner cache serves the production reads; the
 		// admission insert commits only while their generation holds.
-		cached, useCache = entry, true
 		markOwnerCacheUse(ctx)
-		app, acct, limits, dep = entry.resolved, entry.acct, entry.limits, entry.dep
-		ctx = state.WithRuntimeGenerationGuard(ctx, appID, entry.generation)
+		app, acct, limits, dep = cached.resolved, cached.acct, cached.limits, cached.dep
+		ctx = state.WithRuntimeGenerationGuard(ctx, appID, cached.generation)
 	} else {
 		app, acct, limits, dep, err = e.resolveApp(ctx, appID)
 	}
@@ -3215,7 +3217,14 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 	// The snapshot policy and boot payload use the same owned value snapshot.
 	// A separate secret-policy read could allow restore and subsequently load
 	// an ephemeral secret into an older persistent capture.
-	runtimeValues, err := e.loadRuntimeDeploymentValues(ctx, app, dep)
+	var runtimeValues runtimeDeploymentValues
+	if useCache && dep.ID == cached.dep.ID {
+		// ADR-1345: built from the entry's reads; the admission insert
+		// below commits only while their generation holds.
+		runtimeValues, err = buildRuntimeDeploymentValues(app, dep, cached.valueReads, false)
+	} else {
+		runtimeValues, err = e.loadRuntimeDeploymentValues(ctx, app, dep)
+	}
 	if err != nil {
 		release()
 		return WakeResult{}, fmt.Errorf("sched: wake: load runtime values: %w", err)

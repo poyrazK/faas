@@ -175,9 +175,11 @@ rides in those two statements.
 
 Done on branch `perf/schedd-owner-cache`: steps 1 to 4, and step 5's
 admission guard. Measured on real Postgres (`TestPostgresBootStatements`): a
-cold boot with the entry cached runs 46 statements in about 41 round trips,
-against 54 in about 46 without the cache. What remains is step 5: the
-runtime values, the cutover barrier and the snapshot choice are still read,
+cold boot with the entry cached runs 42 statements in about 39 round trips,
+against 54 in about 46 without the cache. The entry also keeps the runtime
+values' three reads (each wake builds its own values from them) and exists
+only while the cutover barrier is clear at its generation. What remains is
+step 5: the snapshot choice and node usage are still read,
 and the boot's bookkeeping (standards capture, a 14-statement scaling-state
 transaction) and its 9-statement publication still run as their own
 transactions.

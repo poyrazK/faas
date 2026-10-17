@@ -26,6 +26,11 @@ type ownerEntry struct {
 	dep        state.Deployment // the production selection
 	resolved   state.App        // app resolved for dep
 	scaling    state.RuntimeScalingState
+	// valueReads are the runtime values' three reads (config boundary,
+	// values, secret intent); each wake builds its own values from them.
+	valueReads runtimeDeploymentInputs
+	// An entry exists only for an app whose database cutover barrier was
+	// clear at its generation; raising the barrier moves the generation.
 }
 
 // ownerCache holds one entry per app this schedd woke, dropped when the app's
@@ -120,12 +125,8 @@ func (e *Engine) HandleOwnerCacheNotification(n db.Notification) {
 var errNoOwnerEntry = errors.New("sched: app has no owner cache entry")
 
 // ownerEntryForPhaseOne returns the app's entry for wake phase 1 under the
-// same conditions as admission, and only when no coordinated wake selection
-// is in ctx.
+// same conditions as admission.
 func (e *Engine) ownerEntryForPhaseOne(ctx context.Context, appID, deploymentID string) (ownerEntry, bool) {
-	if _, selected := wakeEnvironmentFrom(ctx); selected {
-		return ownerEntry{}, false
-	}
 	return e.ownerEntryForAdmission(ctx, appID, deploymentID)
 }
 
@@ -170,11 +171,14 @@ func withoutOwnerCache(ctx context.Context) context.Context {
 }
 
 // ownerEntryForAdmission returns the app's entry for an ordinary production
-// admission: no explicit deployment, no scope, cache on and not bypassed. A
-// failed load falls back to the ordinary reads, which report the error the
-// wake path always reported.
+// admission: no explicit deployment, no scope, no coordinated wake
+// selection, cache on and not bypassed. A failed load falls back to the
+// ordinary reads, which report the error the wake path always reported.
 func (e *Engine) ownerEntryForAdmission(ctx context.Context, appID, deploymentID string) (ownerEntry, bool) {
 	if deploymentID != "" || ScopeFrom(ctx) != "" || ctx.Value(ownerCacheBypassKey{}) != nil {
+		return ownerEntry{}, false
+	}
+	if _, selected := wakeEnvironmentFrom(ctx); selected {
 		return ownerEntry{}, false
 	}
 	entry, err := e.ownerEntryFor(ctx, appID)
@@ -241,5 +245,14 @@ func (e *Engine) loadOwnerEntry(ctx context.Context, appID string) (ownerEntry, 
 	if err != nil {
 		return ownerEntry{}, err
 	}
-	return ownerEntry{generation: generation, app: app, acct: acct, limits: limits, dep: dep, resolved: resolved, scaling: scaling}, nil
+	// A fenced app gets no entry; the ordinary path reports the barrier.
+	if err := e.checkManagedPostgresAdmission(ctx, appID); err != nil {
+		return ownerEntry{}, err
+	}
+	valueReads := e.readRuntimeDeploymentInputs(ctx, app.AccountID, dep)
+	if _, err := buildRuntimeDeploymentValues(resolved, dep, valueReads, false); err != nil {
+		return ownerEntry{}, err
+	}
+	return ownerEntry{generation: generation, app: app, acct: acct, limits: limits, dep: dep, resolved: resolved, scaling: scaling,
+		valueReads: valueReads}, nil
 }

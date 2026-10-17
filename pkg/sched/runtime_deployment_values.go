@@ -36,8 +36,14 @@ func (e *Engine) loadRuntimeDeploymentValues(ctx context.Context, app state.App,
 }
 
 func (e *Engine) loadRuntimeDeploymentValuesForTask(ctx context.Context, app state.App, dep state.Deployment, release bool) (runtimeDeploymentValues, error) {
+	return buildRuntimeDeploymentValues(app, dep, e.readRuntimeDeploymentInputs(ctx, app.AccountID, dep), release)
+}
+
+// buildRuntimeDeploymentValues checks and assembles the values from their
+// three reads. It reads nothing, so the owner cache can keep the reads and
+// build fresh values, with their own maps and slices, for every wake.
+func buildRuntimeDeploymentValues(app state.App, dep state.Deployment, reads runtimeDeploymentInputs, release bool) (runtimeDeploymentValues, error) {
 	accountID := app.AccountID
-	reads := e.readRuntimeDeploymentInputs(ctx, accountID, dep)
 	if reads.boundaryErr != nil {
 		return runtimeDeploymentValues{}, reads.boundaryErr
 	}
