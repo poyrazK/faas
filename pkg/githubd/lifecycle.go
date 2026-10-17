@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"strings"
+
+	"github.com/onebox-faas/faas/pkg/logsanitize"
 )
 
 // InstallationLifecycleStore is the persistence seam for GitHub App access
@@ -27,7 +29,7 @@ func (s *Service) HandleInstallationLifecycle(ctx context.Context, eventType str
 			return err
 		}
 		if s.Lifecycle == nil {
-			s.Log.Warn("githubd: lifecycle event received without lifecycle store", "event_type", eventType)
+			s.Log.Warn("githubd: lifecycle event received without lifecycle store", "event_type", logsanitize.Field(eventType))
 			return nil
 		}
 		switch strings.ToLower(ev.Action) {
@@ -41,9 +43,9 @@ func (s *Service) HandleInstallationLifecycle(ctx context.Context, eventType str
 			if s.InvalidateInstallationSecrets != nil {
 				s.InvalidateInstallationSecrets(ev.Installation.ID)
 			}
-			s.Log.Info("githubd: revoked GitHub installation", "installation_id", ev.Installation.ID, "action", ev.Action, "sender", ev.Sender.Login)
+			s.Log.Info("githubd: revoked GitHub installation", "installation_id", ev.Installation.ID, "action", logsanitize.Field(ev.Action), "sender", logsanitize.Field(ev.Sender.Login))
 		default:
-			s.Log.Debug("githubd: acknowledged installation action", "installation_id", ev.Installation.ID, "action", ev.Action)
+			s.Log.Debug("githubd: acknowledged installation action", "installation_id", ev.Installation.ID, "action", logsanitize.Field(ev.Action))
 		}
 		return nil
 
@@ -53,7 +55,7 @@ func (s *Service) HandleInstallationLifecycle(ctx context.Context, eventType str
 			return err
 		}
 		if s.Lifecycle == nil {
-			s.Log.Warn("githubd: lifecycle event received without lifecycle store", "event_type", eventType)
+			s.Log.Warn("githubd: lifecycle event received without lifecycle store", "event_type", logsanitize.Field(eventType))
 			return nil
 		}
 		if strings.EqualFold(ev.Action, "removed") {
@@ -75,7 +77,7 @@ func (s *Service) HandleInstallationLifecycle(ctx context.Context, eventType str
 			return err
 		}
 		if s.Lifecycle == nil {
-			s.Log.Warn("githubd: lifecycle event received without lifecycle store", "event_type", eventType)
+			s.Log.Warn("githubd: lifecycle event received without lifecycle store", "event_type", logsanitize.Field(eventType))
 			return nil
 		}
 		switch strings.ToLower(ev.Action) {
@@ -94,7 +96,7 @@ func (s *Service) HandleInstallationLifecycle(ctx context.Context, eventType str
 			if oldName == "" {
 				// GitHub normally includes changes.repository.name.from;
 				// acknowledge a partial retry without guessing an owner.
-				s.Log.Warn("githubd: repository rename missing old name", "installation_id", ev.Installation.ID, "repo", ev.Repository.FullName)
+				s.Log.Warn("githubd: repository rename missing old name", "installation_id", ev.Installation.ID, "repo", logsanitize.Field(ev.Repository.FullName))
 				return nil
 			}
 			if !strings.Contains(oldName, "/") {

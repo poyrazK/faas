@@ -264,5 +264,9 @@ export type UpdateAppRequest = {
   overflow_node?: string | null;
   cors_default_enabled?: boolean | null;
   cors_default_origins?: Array<string>;
+  /**
+   * Apply only if the locked app service settings still match this fingerprint. Supported only for app-level service-only updates; returns 409 on conflict. Omit for the existing unguarded behavior.
+   */
+  expected_service_binding_fingerprint?: string;
 };
 

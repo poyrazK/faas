@@ -248,7 +248,7 @@ func TestDataAPIDiagnosticsTransportFailureDoesNotBecomeCleanEOF(t *testing.T) {
 }
 
 func TestDataAPIDiagnosticsCLI(t *testing.T) {
-	for _, scenario := range []string{"hosted", "file", "lookup", "no-match", "human", "gap", "deadline", "invalid-id", "bad-since", "ambiguous", "offline-deployment"} {
+	for _, scenario := range []string{"hosted", "file", "lookup", "no-match", "human", "gap", "deadline", "invalid-id", "bad-since", "ambiguous", "offline-deployment", "sort-p95", "sort-errors", "invalid-sort"} {
 		t.Run(scenario, func(t *testing.T) {
 			line := dataAPIDiagnosticFixture(t, 1, "rest", "query_timeout", 504, 15000, "query_timeout")
 			line = strings.Replace(line, "}", `,"authorization":"owner-secret","body":"private-body","sql":"private-sql"}`, 1)
@@ -293,6 +293,12 @@ func TestDataAPIDiagnosticsCLI(t *testing.T) {
 				args = []string{"--json", "data-api", "diagnostics", "--file", file, "--since", "2026-10-11T09:00:00Z"}
 			}
 			switch scenario {
+			case "sort-p95":
+				args = append(args, "--sort", "p95")
+			case "sort-errors":
+				args = append(args, "--sort", "errors")
+			case "invalid-sort":
+				args = append(args, "--sort", "private-secret")
 			case "lookup":
 				args = append(args, "--request-id", "00000000-0000-4000-8000-000000000001")
 			case "no-match":
@@ -312,7 +318,7 @@ func TestDataAPIDiagnosticsCLI(t *testing.T) {
 				args = append(args, "--deployment", "revision")
 			}
 			code := run(args)
-			invalid := scenario == "invalid-id" || scenario == "bad-since" || scenario == "ambiguous" || scenario == "offline-deployment"
+			invalid := scenario == "invalid-id" || scenario == "bad-since" || scenario == "ambiguous" || scenario == "offline-deployment" || scenario == "invalid-sort"
 			if (code != 0) != (invalid || scenario == "gap" || scenario == "deadline") {
 				t.Fatalf("exit=%d %s err=%s", code, stdout.String(), stderr())
 			}
@@ -334,6 +340,13 @@ func TestDataAPIDiagnosticsCLI(t *testing.T) {
 				}
 				if report.Summary.Requests != expected || report.Version != 1 {
 					t.Fatalf("report %+v", report)
+				}
+				wantSort := "requests"
+				if strings.HasPrefix(scenario, "sort-") {
+					wantSort = strings.TrimPrefix(scenario, "sort-")
+				}
+				if report.QueryShapeSort != wantSort {
+					t.Fatalf("wrong shape ranking: %q", report.QueryShapeSort)
 				}
 				if report.Partial != (scenario == "gap" || scenario == "deadline") {
 					t.Fatal("incorrect completeness")
@@ -424,7 +437,7 @@ func TestDataAPIDiagnosticsRefreshAdmission(t *testing.T) {
 	c.observe(dataAPIDiagnosticFixture(t, 1, "rest", "rejected", 503, 1, "data_api_refresh_paused"))
 	c.observe(dataAPIDiagnosticFixture(t, 2, "rest", "unavailable", 503, 2, "data_api_refresh_unavailable"))
 	c.finish()
-	if c.report.Partial || c.report.Invalid != 0 || c.report.Summary.Requests != 2 || c.report.Failures.Unavailable != 2 {
+	if c.report.Partial || c.report.Invalid != 0 || c.report.Summary.Requests != 2 || c.report.Failures.Unavailable != 2 || c.report.Failures.RefreshPaused != 1 || c.report.Failures.RefreshUnavailable != 1 {
 		t.Fatalf("refresh admission diagnostics lost: %+v", c.report)
 	}
 }

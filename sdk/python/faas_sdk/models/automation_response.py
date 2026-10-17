@@ -10,6 +10,8 @@ from ..models.automation_response_source import AutomationResponseSource, check_
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.automation_test_report import AutomationTestReport
+    from ..models.automation_test_suite import AutomationTestSuite
     from ..models.workflow_spec import WorkflowSpec
 
 
@@ -31,6 +33,12 @@ class AutomationResponse:
     max_concurrent_actions caps active executor steps across runs of this workflow; steps wait in the scheduler
     queue while all action slots are occupied."""
     enabled: bool
+    test_suite: AutomationTestSuite | Unset = UNSET
+    """At most 32 uniquely named cases; sample up to 3 MiB, cases up to 24 MiB combined, suite up to 27 MiB. Data
+    is explicitly persisted, never captured from real runs."""
+    test_report: AutomationTestReport | Unset = UNSET
+    """Retained observation, not a publishing receipt. Freshness compares definition and suite content; running
+    does not advance the draft version or perform real actions."""
     failure_paused: bool | Unset = UNSET
     """Runtime failure guard blocks automatic admissions independently of configured enabled intent."""
     published: WorkflowSpec | Unset = UNSET
@@ -51,6 +59,14 @@ class AutomationResponse:
         draft = self.draft.to_dict()
 
         enabled = self.enabled
+
+        test_suite: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.test_suite, Unset):
+            test_suite = self.test_suite.to_dict()
+
+        test_report: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.test_report, Unset):
+            test_report = self.test_report.to_dict()
 
         failure_paused = self.failure_paused
 
@@ -75,6 +91,10 @@ class AutomationResponse:
                 "enabled": enabled,
             }
         )
+        if test_suite is not UNSET:
+            field_dict["test_suite"] = test_suite
+        if test_report is not UNSET:
+            field_dict["test_report"] = test_report
         if failure_paused is not UNSET:
             field_dict["failure_paused"] = failure_paused
         if published is not UNSET:
@@ -88,6 +108,8 @@ class AutomationResponse:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.automation_test_report import AutomationTestReport
+        from ..models.automation_test_suite import AutomationTestSuite
         from ..models.workflow_spec import WorkflowSpec
 
         d = dict(src_dict)
@@ -100,6 +122,20 @@ class AutomationResponse:
         draft = WorkflowSpec.from_dict(d.pop("draft"))
 
         enabled = d.pop("enabled")
+
+        _test_suite = d.pop("test_suite", UNSET)
+        test_suite: AutomationTestSuite | Unset
+        if isinstance(_test_suite, Unset):
+            test_suite = UNSET
+        else:
+            test_suite = AutomationTestSuite.from_dict(_test_suite)
+
+        _test_report = d.pop("test_report", UNSET)
+        test_report: AutomationTestReport | Unset
+        if isinstance(_test_report, Unset):
+            test_report = UNSET
+        else:
+            test_report = AutomationTestReport.from_dict(_test_report)
 
         failure_paused = d.pop("failure_paused", UNSET)
 
@@ -125,6 +161,8 @@ class AutomationResponse:
             source=source,
             draft=draft,
             enabled=enabled,
+            test_suite=test_suite,
+            test_report=test_report,
             failure_paused=failure_paused,
             published=published,
             published_version=published_version,

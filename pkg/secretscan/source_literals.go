@@ -58,6 +58,11 @@ func sourceEntropyToken(value []byte) bool {
 	if len(value) < entropyMinLen {
 		return false
 	}
+	// A shell-expanded base followed by a path is an expression, such as
+	// "$BASE/process/thumbnail?max=64", rather than a credential literal.
+	if slash := bytes.IndexByte(value, '/'); slash > 1 && value[0] == '$' && isKeyShaped(value[1:slash]) {
+		return false
+	}
 	for _, c := range value {
 		if c <= ' ' || c >= 127 {
 			return false

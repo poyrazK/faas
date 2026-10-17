@@ -26,23 +26,13 @@ func TestOperationWireContractMatchesPlatform(t *testing.T) {
 	}
 	want := operationDeclarations(t, platform)
 	got := operationDeclarations(t, "operations.go")
-	for name, declaration := range operationDeclarations(t, filepath.Join(root, "operation_subject.go")) {
-		want[name] = declaration
-	}
-	for name, declaration := range operationDeclarations(t, "operation_subject.go") {
-		got[name] = declaration
-	}
-	for name, declaration := range operationDeclarations(t, filepath.Join(root, "operation_milestones.go")) {
-		want[name] = declaration
-	}
-	for name, declaration := range operationDeclarations(t, "operation_milestones.go") {
-		got[name] = declaration
-	}
-	for name, declaration := range operationDeclarations(t, filepath.Join(root, "operation_workflows.go")) {
-		want[name] = declaration
-	}
-	for name, declaration := range operationDeclarations(t, "operation_workflows.go") {
-		got[name] = declaration
+	for _, file := range []string{"operation_subject.go", "operation_milestones.go", "operation_workflows.go", "operation_waits.go", "operation_limits.go"} {
+		for name, declaration := range operationDeclarations(t, filepath.Join(root, file)) {
+			want[name] = declaration
+		}
+		for name, declaration := range operationDeclarations(t, file) {
+			got[name] = declaration
+		}
 	}
 	for name, declaration := range want {
 		if got[name] != declaration {

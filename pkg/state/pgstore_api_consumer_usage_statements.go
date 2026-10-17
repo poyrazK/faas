@@ -14,21 +14,28 @@ import (
 const apiConsumerUsageStatementSelectCols = `id, account_id, app_id, consumer_id,
        period_start, period_end, revision, status, currency, billable_units,
        unpriced_units, amount_millicents, priced, buckets, as_of,
-       created_at, finalized_at`
+       created_at, finalized_at, credit_applied_millicents, fees`
 
 type apiConsumerUsageStatementRowScanner interface{ Scan(dest ...any) error }
 
 func scanAPIConsumerUsageStatementRow(row apiConsumerUsageStatementRowScanner) (APIConsumerUsageStatement, error) {
 	var statement APIConsumerUsageStatement
 	var status string
-	var buckets []byte
+	var buckets, fees []byte
 	if err := row.Scan(
 		&statement.ID, &statement.AccountID, &statement.AppID, &statement.ConsumerID,
 		&statement.PeriodStart, &statement.PeriodEnd, &statement.Revision, &status, &statement.Currency,
 		&statement.BillableUnits, &statement.UnpricedUnits, &statement.AmountMillicents,
-		&statement.Priced, &buckets, &statement.AsOf, &statement.CreatedAt, &statement.FinalizedAt,
+		&statement.Priced, &buckets, &statement.AsOf, &statement.CreatedAt, &statement.FinalizedAt, &statement.CreditAppliedMillicents,
+		&fees,
 	); err != nil {
 		return APIConsumerUsageStatement{}, err
+	}
+	if err := json.Unmarshal(fees, &statement.Fees); err != nil {
+		return APIConsumerUsageStatement{}, err
+	}
+	if len(statement.Fees) == 0 {
+		statement.Fees = nil
 	}
 	statement.Status = APIConsumerUsageStatementStatus(status)
 	if len(buckets) == 0 {
@@ -63,6 +70,14 @@ func (s *PgStore) CreateAPIConsumerUsageStatement(ctx context.Context, input API
 		bucketValues = []APIConsumerUsageStatementBucket{}
 	}
 	buckets, err := json.Marshal(bucketValues)
+	if err != nil {
+		return APIConsumerUsageStatement{}, false, err
+	}
+	feeValues := input.Fees
+	if feeValues == nil {
+		feeValues = []APIConsumerStatementFee{}
+	}
+	fees, err := json.Marshal(feeValues)
 	if err != nil {
 		return APIConsumerUsageStatement{}, false, err
 	}
@@ -129,13 +144,13 @@ func (s *PgStore) CreateAPIConsumerUsageStatement(ctx context.Context, input API
 		`insert into api_consumer_usage_statements
 		       (account_id, app_id, consumer_id, period_start, period_end, revision, status,
 		        currency, billable_units, unpriced_units, amount_millicents,
-		        priced, buckets, as_of)
+		        priced, buckets, as_of, fees)
 		 values ($1::uuid, $2::uuid, $3::uuid, $4, $5, $6, 'draft', $7,
-		         $8, $9, $10, $11, $12::jsonb, $13)
+		         $8, $9, $10, $11, $12::jsonb, $13, $14::jsonb)
 		 returning `+apiConsumerUsageStatementSelectCols,
 		input.AccountID, input.AppID, input.ConsumerID, input.PeriodStart, input.PeriodEnd, input.Revision,
 		input.Currency, input.BillableUnits, input.UnpricedUnits, input.AmountMillicents,
-		input.Priced, buckets, input.AsOf))
+		input.Priced, buckets, input.AsOf, fees))
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
@@ -238,6 +253,9 @@ func (s *PgStore) FinalizeAPIConsumerUsageStatement(ctx context.Context, account
 		statementID, accountID, appID, consumerID)
 	statement, err := scanAPIConsumerUsageStatementRow(row)
 	if err == nil {
+		if statement, err = applyAPIConsumerCredits(ctx, tx, statement); err != nil {
+			return APIConsumerUsageStatement{}, false, err
+		}
 		payload, payloadErr := usageStatementFinalizedWebhookPayload(statement)
 		if payloadErr != nil {
 			return APIConsumerUsageStatement{}, false, payloadErr

@@ -11,7 +11,7 @@ import (
 func TestForecastMeterPricesProjectedQuantity(t *testing.T) {
 	start := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
 	end := start.AddDate(0, 1, 0)
-	p := Price{Version: "v1", Meter: "compute", Currency: "EUR", Unit: "unit", UnitQuantity: 1, MillicentsPerUnit: 2, IncludedQuantity: 100}
+	p := Price{Version: "v1", Meter: "compute", Currency: BillingCurrency, Unit: "unit", UnitQuantity: 1, MillicentsPerUnit: 2, IncludedQuantity: 100}
 	got, err := ForecastMeter("account", start, end, start.Add(2*24*time.Hour), 10, p, true, true)
 	if err != nil || !got.Available || *got.ProjectedQuantity != 155 || *got.ProjectedNetMillicents != 110 {
 		t.Fatalf("forecast=%+v %v", got, err)
@@ -26,7 +26,7 @@ func TestForecastMeterPricesProjectedQuantity(t *testing.T) {
 func TestForecastMeterUnavailable(t *testing.T) {
 	start := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
 	end := start.AddDate(0, 1, 0)
-	p := Price{Version: "v1", Meter: "compute", Currency: "EUR", Unit: "unit", UnitQuantity: 1, MillicentsPerUnit: 1}
+	p := Price{Version: "v1", Meter: "compute", Currency: BillingCurrency, Unit: "unit", UnitQuantity: 1, MillicentsPerUnit: 1}
 	for _, tc := range []struct {
 		name            string
 		through         time.Time

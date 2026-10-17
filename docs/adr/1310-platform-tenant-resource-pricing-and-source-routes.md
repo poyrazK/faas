@@ -1,0 +1,28 @@
+# ADR-1310: Platform tenant compute pricing and surface route weights
+
+- **Status:** accepted
+- **Date:** 2026-10-14
+- **Decision:** Customer-wide (platform tenant) rate cards can price compute seconds or response megabytes, and tenant route weights apply to requests through a tenant surface or JWT authorization rule.
+  - **Units.** A tenant card or plan takes `unit`: `request` (the default), `compute_second` or `response_megabyte`, as app cards do (ADR-1308).
+    - Compute and response-size cards take no route weights and cannot be backdated.
+    - A card that changes the unit must start at 00:00 UTC on the 1st. Assigning a plan whose unit differs from the tenant's current card starts its card at the next month boundary instead of the next minute.
+  - **Measurement.**
+    - The gateway measures billable surface and JWT-rule requests the way it measures consumer requests: runtime-reported execution time, else forward-to-commit time, and response body bytes.
+    - The usage event carries both. apid adds them to the tenant's usage minute (`platform_tenant_usage_minutes.compute_ms`, `response_bytes`).
+  - **Pricing.** A card with a compute or response-size unit is month-priced (ADR-975, ADR-1307).
+    - Each subject minute (a consumer, surface or JWT rule in one app) rounds to the nearest whole second or megabyte, halves up. Allowances, tiers and volume steps (ADR-1309) then count those units across the tenant.
+    - Lines count those units, and coverage stays in raw requests, as for weighted cards.
+  - **Surface and JWT-rule routes.**
+    - The gateway gives surface-attributed requests a bounded billing route, as it does consumer requests. JWT authorization happens after edge rewrites, so the label of the original path waits on the request until a JWT rule attributes the tenant.
+    - apid keeps per-route billable units in `platform_tenant_source_route_usage_minutes`. A month draft weights each surface or rule by its own routes. Requests without a recorded route still count 1.
+- **Why:** Platforms that bill a customer across apps wanted the compute and egress pricing apps have. Customers who reach apps through their own hostname or a verified token were billed per request whatever route they called, unlike consumers.
+- **Consequences:**
+  - **Rollout.** apid must be upgraded before gateways.
+    - Surface and JWT-rule events that carry compute or response size wait for an apid that acknowledges storing them (ADR-1308's receipt flag).
+    - An older apid drops their route, so those requests count 1.
+  - **Earlier usage.** Usage recorded before this change has no compute, size or route counts for surfaces and JWT rules. A compute card prices those minutes at zero, and weights count them at 1. New cards cannot be backdated over them.
+  - **Route resolution.** With tenant JWT resolution armed, the gateway resolves a route label for every request it might attribute, not only consumer requests.
+  - **Flat delta statements.** A tenant statement for a period a compute or response-size card prices must cover a calendar month, as for weighted cards.
+- **Rejected alternatives:**
+  - Storing surface and rule routes in the consumer route ledger under their IDs would mix subject kinds in a table keyed and checked as consumers.
+  - Resolving the JWT-rule route from the rewritten path would key the same public endpoint differently for surfaces, consumers and JWT rules.

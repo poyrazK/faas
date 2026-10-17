@@ -6,6 +6,8 @@ from typing import Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..types import UNSET, Unset
+
 T = TypeVar("T", bound="CreateAPIConsumerRequest")
 
 
@@ -15,12 +17,16 @@ class CreateAPIConsumerRequest:
 
     external_ref: str
     name: str
+    trial_days: int | Unset = UNSET
+    """Starts the consumer's one free trial at the next UTC minute for this many days (ADR-1314)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         external_ref = self.external_ref
 
         name = self.name
+
+        trial_days = self.trial_days
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -30,6 +36,8 @@ class CreateAPIConsumerRequest:
                 "name": name,
             }
         )
+        if trial_days is not UNSET:
+            field_dict["trial_days"] = trial_days
 
         return field_dict
 
@@ -40,9 +48,12 @@ class CreateAPIConsumerRequest:
 
         name = d.pop("name")
 
+        trial_days = d.pop("trial_days", UNSET)
+
         create_api_consumer_request = cls(
             external_ref=external_ref,
             name=name,
+            trial_days=trial_days,
         )
 
         create_api_consumer_request.additional_properties = d

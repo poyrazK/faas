@@ -1,5 +1,5 @@
 // Package rollout waits for recorded serving proof without performing work.
-// adr: 1354
+// adr: 1533
 package rollout
 
 import (

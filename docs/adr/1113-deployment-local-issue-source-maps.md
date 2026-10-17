@@ -23,8 +23,8 @@
   and redaction. The dashboard presents reported frame locations alongside raw
   stack evidence. Existing grouping versions and saved history are unchanged;
   enabling mapping can create new groups because evidence changes. Roll out the
-  same map configuration with each deployment's reporting token. Automatic
-  build discovery, server artifact upload, indexed maps, OTLP symbolication,
+  same map configuration with each deployment's reporting token.
+  Server artifact upload, indexed maps, OTLP symbolication,
   and history-preserving migration remain follow-up work.
 - **Rejected alternatives:** Fetching sourceMappingURL during capture adds
   network work and permits unrelated map content to determine identity. Matching
@@ -32,3 +32,25 @@
   when a map omits names preserves false splits across builds. Applying maps to
   legacy reporters silently changes default grouping evidence. Node's nearest
   entry API alone can carry a prior mapping into unmapped regions or lines.
+
+## 2026-10-13 extension: automatic discovery and deployment verification
+
+The Node SDK discovers local JS bundle annotations and adjacent hidden maps
+during a build, then emits a portable versioned manifest containing only mapping
+metadata and exact bundle SHA-256 digests. Source content and producer extensions
+are excluded. The startup loader verifies the deployed bundle bytes, relocates
+relative bundle paths, rebases map-relative sources, and registers maps before
+capture. Both failure-site and cause-chain grouping support this configuration;
+manual maps and manifest loading are mutually exclusive. Legacy grouping remains
+unchanged. This is deployment-local symbolication; it does not add centralized
+artifact storage or server-side OTLP processing.
+
+Discovery is bounded to 4,096 tree entries, 16 MiB per bundle, and 64 MiB of
+bundle bytes, in addition to existing map limits. Manifest JSON is bounded to
+4 MiB plus 64 KiB. Symlinks and dependency directories are excluded; referenced
+maps cannot escape the build tree. Remote and inline maps are rejected without
+fetching, and no customer code executes. Portable maps use relative or virtual
+original paths rather than absolute build-machine paths. Build/runtime trees
+must be immutable during reading. Digest verification detects stale or different
+bundle bytes, not a malicious manifest producer. The build CLI requires explicit
+`--replace` to replace an existing output, and failed discovery keeps it intact.

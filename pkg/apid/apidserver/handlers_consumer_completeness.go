@@ -1,6 +1,7 @@
 package apidserver
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"time"
@@ -75,7 +76,7 @@ func (s *server) getAPIConsumerUsageCompleteness(w http.ResponseWriter, r *http.
 	from, end, checkable := completenessWindow(since, until, time.Now())
 	result := billing.APIConsumerUsageCompleteness{Status: billing.CompletenessUnverifiable, CheckedFrom: from, CheckedUntil: from}
 	if checkable {
-		if result, err = s.consumerUsageCompleteness(r, acct.ID, app.ID, consumer.ID, from, end); err != nil {
+		if result, err = s.consumerUsageCompleteness(r.Context(), acct.ID, app.ID, consumer.ID, from, end); err != nil {
 			api.WriteProblem(w, api.ErrInternal("could not compare consumer usage with request telemetry"))
 			return
 		}
@@ -87,17 +88,17 @@ func (s *server) getAPIConsumerUsageCompleteness(w http.ResponseWriter, r *http.
 		HoursChecked: result.HoursChecked, HoursWithoutTelemetry: result.HoursWithoutTelemetry})
 }
 
-func (s *server) consumerUsageCompleteness(r *http.Request, accountID, appID, consumerID string, from, until time.Time) (billing.APIConsumerUsageCompleteness, error) {
+func (s *server) consumerUsageCompleteness(ctx context.Context, accountID, appID, consumerID string, from, until time.Time) (billing.APIConsumerUsageCompleteness, error) {
 	usageStore, okUsage := s.store.(state.ConsumerUsageStore)
 	telemetryStore, okTelemetry := s.store.(state.ConsumerUsageTelemetryStore)
 	if !okUsage || !okTelemetry {
 		return billing.APIConsumerUsageCompleteness{}, fmt.Errorf("consumer usage completeness: store lacks usage or telemetry")
 	}
-	usage, err := usageStore.ListAPIConsumerUsage(r.Context(), accountID, appID, consumerID, from, until)
+	usage, err := usageStore.ListAPIConsumerUsage(ctx, accountID, appID, consumerID, from, until)
 	if err != nil {
 		return billing.APIConsumerUsageCompleteness{}, fmt.Errorf("list consumer usage: %w", err)
 	}
-	hours, err := telemetryStore.ListAPIConsumerTelemetryHours(r.Context(), accountID, appID, consumerID, from, until)
+	hours, err := telemetryStore.ListAPIConsumerTelemetryHours(ctx, accountID, appID, consumerID, from, until)
 	if err != nil {
 		return billing.APIConsumerUsageCompleteness{}, fmt.Errorf("list consumer telemetry: %w", err)
 	}

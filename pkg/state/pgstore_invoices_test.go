@@ -57,7 +57,7 @@ func seedInvoiceFixture(t *testing.T, pool *pgxpool.Pool, ctx context.Context,
 		PeriodStart:       periodStart,
 		PeriodEnd:         periodEnd,
 		TotalCents:        totalCents,
-		Currency:          "eur",
+		Currency:          "usd",
 		PDFAvailable:      true,
 	}
 }

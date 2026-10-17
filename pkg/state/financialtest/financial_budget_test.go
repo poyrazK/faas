@@ -34,7 +34,7 @@ func TestFinancialBudgetStores(t *testing.T) {
 }
 
 func financialBudgetSpec() financial.BudgetSpec {
-	return financial.BudgetSpec{Name: "monthly usage", Scope: financial.BudgetScope{Kind: "account"}, Currency: "EUR", Meters: []string{"compute"}, Basis: "net_usage", LimitMillicents: 1000, NotifyMillicents: []int64{500}, Mode: "monitored", Action: "notify", ResumeRule: "manual", Enabled: true}
+	return financial.BudgetSpec{Name: "monthly usage", Scope: financial.BudgetScope{Kind: "account"}, Currency: "USD", Meters: []string{"compute"}, Basis: "net_usage", LimitMillicents: 1000, NotifyMillicents: []int64{500}, Mode: "monitored", Action: "notify", ResumeRule: "manual", Enabled: true}
 }
 
 func financialBudgetRevisionSuite(t *testing.T, store financialBudgetTestStore) {

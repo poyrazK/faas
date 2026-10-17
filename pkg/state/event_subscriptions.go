@@ -18,17 +18,18 @@ import (
 // EventSubscription is the durable, tenant-scoped representation of an
 // internal event subscription declared by an application manifest.
 type EventSubscription struct {
-	SchemaVersions     []string
-	RoutingRetryPolicy *api.EventRoutingRetryPolicy
-	ID                 string
-	AccountID          string
-	AppID              string
-	Source             string
-	Type               string
-	Filter             json.RawMessage
-	Enabled            bool
-	CreatedAt          time.Time
-	UpdatedAt          time.Time
+	AcknowledgmentLeaseSeconds int
+	SchemaVersions             []string
+	RoutingRetryPolicy         *api.EventRoutingRetryPolicy
+	ID                         string
+	AccountID                  string
+	AppID                      string
+	Source                     string
+	Type                       string
+	Filter                     json.RawMessage
+	Enabled                    bool
+	CreatedAt                  time.Time
+	UpdatedAt                  time.Time
 }
 
 // EventSubscriptionStore is optional on Store implementations so existing
@@ -81,7 +82,7 @@ func normalizeEventSubscriptionFilter(filter json.RawMessage) ([]byte, error) {
 
 func eventSubscriptionFromSQL(row sqlc.EventSubscription) EventSubscription {
 	return EventSubscription{
-		SchemaVersions: append([]string(nil), row.SchemaVersions...), RoutingRetryPolicy: decodeEventRoutingRetryPolicy(row.RoutingRetryPolicy),
+		AcknowledgmentLeaseSeconds: int(row.AcknowledgmentLeaseSeconds), SchemaVersions: append([]string(nil), row.SchemaVersions...), RoutingRetryPolicy: decodeEventRoutingRetryPolicy(row.RoutingRetryPolicy),
 		ID:        uuidFromPgtype(row.ID).String(),
 		AccountID: uuidFromPgtype(row.AccountID).String(),
 		AppID:     uuidFromPgtype(row.AppID).String(),
@@ -96,7 +97,7 @@ func eventSubscriptionFromSQL(row sqlc.EventSubscription) EventSubscription {
 
 func eventSubscriptionFromUpsert(row sqlc.UpsertEventSubscriptionRow) EventSubscription {
 	return EventSubscription{
-		SchemaVersions: append([]string(nil), row.SchemaVersions...), RoutingRetryPolicy: decodeEventRoutingRetryPolicy(row.RoutingRetryPolicy),
+		AcknowledgmentLeaseSeconds: int(row.AcknowledgmentLeaseSeconds), SchemaVersions: append([]string(nil), row.SchemaVersions...), RoutingRetryPolicy: decodeEventRoutingRetryPolicy(row.RoutingRetryPolicy),
 		ID:        uuidFromPgtype(row.ID).String(),
 		AccountID: uuidFromPgtype(row.AccountID).String(),
 		AppID:     uuidFromPgtype(row.AppID).String(),

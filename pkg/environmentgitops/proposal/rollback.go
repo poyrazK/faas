@@ -1,6 +1,6 @@
 package proposal
 
-// adr: 1353
+// adr: 1532
 import (
 	"context"
 	"fmt"

@@ -35,6 +35,8 @@ type bindingInventoryProbeClient interface {
 }
 
 type serviceBindingProbeBatchItem struct {
+	QueueReport         *api.QueueBindingCanary              `json:"queue_report,omitempty"`
+	Error               string                               `json:"error,omitempty"`
 	Service             string                               `json:"service,omitempty"`
 	Type                string                               `json:"type"`
 	Name                string                               `json:"name,omitempty"`
@@ -49,6 +51,7 @@ type serviceBindingProbeBatchItem struct {
 }
 
 type serviceBindingProbeBatchReport struct {
+	Gate         *allBindingCoverageGate        `json:"gate,omitempty"`
 	DeploymentID string                         `json:"deployment_id,omitempty"`
 	App          string                         `json:"app"`
 	Scope        string                         `json:"scope"`
@@ -66,26 +69,62 @@ type serviceBindingProbeBatchReport struct {
 
 func cmdBindingsVerify(args []string) int {
 	fs := newFlagSet("bindings-verify", flag.ContinueOnError)
-	all := fs.Bool("all", false, "verify services, managed PostgreSQL, object storage and configured outbound bindings")
-	releasePolicy := fs.Bool("release-policy", false, "run the stored policy's required storage canaries and finish with policy-aware preflight")
-	dryRun := fs.Bool("dry-run", false, "preview --release-policy storage operations without creating tasks")
+	durable := fs.Bool("durable", false, "persist a fixed-deadline single-app verification run")
+	runID := fs.String("run-id", "", "caller-selected run UUID for durable create recovery")
+	progressMode := fs.String("progress", "auto", "durable progress on stderr: auto, plain, ndjson or off")
+	statusRetries := fs.Int("status-read-retries", api.BindingVerificationRunnerDefaultStatusReadRetries, "transient durable status GET retries (0–8)")
+	concurrency := fs.Int("concurrency", bindingVerificationConcurrencyDefault, "maximum concurrent release-policy probes (1–8)")
+	all := fs.Bool("all", false, "verify services, PostgreSQL, storage, outbound and eligible queues (publication opt-in)")
+	requireComplete := fs.Bool("require-complete", false, "fail --all unless every eligible binding is checked and passes")
+	queue := fs.String("queue", "", "verify one push queue binding with a safe message")
+	queuePublish := fs.Bool("queue-publish", false, "consent to publishing a bounded safe queue canary")
+	releasePolicy := fs.Bool("release-policy", false, "reuse current evidence, verify required bindings and wait for policy-aware preflight")
+	dryRun := fs.Bool("dry-run", false, "preview --all or --release-policy probes and required consent without creating tasks or messages")
 	postgresKey := fs.String("postgres", "", "verify a managed PostgreSQL binding by environment key")
 	objectStoragePrefix := fs.String("object-storage", "", "verify an object-storage binding by environment prefix (read access only)")
-	objectStorageWrite := fs.Bool("object-storage-write", false, "opt into a tiny upload and cleanup; also verify download for read/write bindings")
+	objectStorageWrite := fs.Bool("object-storage-write", false, "opt into storage upload and cleanup (plus download for read/write); --all requires --deployment")
 	outboundID := fs.String("outbound", "", "verify a configured outbound integration by UUID")
 	deployment := fs.String("deployment", "", "exact live deployment id or vN revision to verify, including zero-traffic candidates")
 	pollInterval := fs.Duration("poll-interval", executionPollIntervalDefault, "status polling interval while the canary runs")
 	waitTimeout := fs.Duration("wait-timeout", bindingProbeWaitTimeoutDefault, "maximum time for the CLI to wait for canary task(s)")
-	flagArgs, positionals := splitArgsForFlags(args, "all", "object-storage-write", "release-policy", "dry-run")
+	flagArgs, positionals := splitArgsForFlags(args, "all", "require-complete", "object-storage-write", "release-policy", "dry-run", "queue-publish", "durable")
 	if err := fs.Parse(flagArgs); err != nil || fs.NArg() != 0 {
 		printBindingsVerifyUsage()
 		return 1
+	}
+	explicitProgress := false
+	fs.Visit(func(f *flag.Flag) { explicitProgress = explicitProgress || f.Name == "progress" })
+	if !validBindingProgress(*progressMode) || explicitProgress && (!*durable || *dryRun) {
+		return printErr("Invalid progress option", errors.New("--progress auto|plain|ndjson|off requires durable execution"))
+	}
+	explicitConcurrency := false
+	fs.Visit(func(f *flag.Flag) { explicitConcurrency = explicitConcurrency || f.Name == "concurrency" })
+	explicitRetries := false
+	fs.Visit(func(f *flag.Flag) { explicitRetries = explicitRetries || f.Name == "status-read-retries" })
+	if *statusRetries < 0 || *statusRetries > api.BindingVerificationRunnerMaxStatusReadRetries || explicitRetries && !*durable {
+		return printErr("Invalid status read retries", errors.New("--status-read-retries (0–8) requires --durable"))
+	}
+	if *concurrency < 1 || *concurrency > bindingVerificationConcurrencyMax || explicitConcurrency && !*releasePolicy {
+		printBindingsVerifyUsage()
+		return 1
+	}
+	if *durable && (!*releasePolicy || *waitTimeout < time.Second) || *runID != "" && !*durable {
+		printBindingsVerifyUsage()
+		return 1
+	}
+	if *runID != "" {
+		id, err := uuid.Parse(*runID)
+		if err != nil || id == uuid.Nil {
+			printBindingsVerifyUsage()
+			return 1
+		}
+		*runID = id.String()
 	}
 	postgresKeyValue := strings.TrimSpace(*postgresKey)
 	objectStoragePrefixValue := strings.TrimSpace(*objectStoragePrefix)
 	outboundValue := strings.TrimSpace(*outboundID)
 	selections := 0
-	for _, selected := range []bool{*all, *releasePolicy, postgresKeyValue != "", objectStoragePrefixValue != "", outboundValue != ""} {
+	for _, selected := range []bool{*all, *releasePolicy, postgresKeyValue != "", objectStoragePrefixValue != "", outboundValue != "", *queue != ""} {
 		if selected {
 			selections++
 		}
@@ -98,7 +137,7 @@ func cmdBindingsVerify(args []string) int {
 		}
 		outboundValue = id.String()
 	}
-	invalidSelection := selections > 1 || *objectStorageWrite && objectStoragePrefixValue == "" && !*releasePolicy || *dryRun && !*releasePolicy
+	invalidSelection := *requireComplete && !*all || *queuePublish && *queue == "" && !*releasePolicy && !*all || *queuePublish && *all && *deployment == "" || *queue != "" && (!api.ValidQueueBindingName(*queue) || *deployment == "") || selections > 1 || *objectStorageWrite && objectStoragePrefixValue == "" && !*releasePolicy && !*all || *objectStorageWrite && *all && *deployment == "" || *dryRun && !*releasePolicy && !*all
 	if selections > 0 {
 		invalidSelection = invalidSelection || len(positionals) != 1
 	} else {
@@ -128,15 +167,21 @@ func cmdBindingsVerify(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
+	if *durable {
+		return runDurableBindingVerification(withBindingProgress(withBindingStatusReadRetries(withBindingVerificationBudget(context.Background(), *concurrency), statusRetries), *progressMode), client, slug, *deployment, *runID, *dryRun, *objectStorageWrite, *queuePublish, *pollInterval, *waitTimeout)
+	}
 	if *releasePolicy {
-		return runStoragePolicyVerification(context.Background(), client, slug, *deployment, *dryRun, *objectStorageWrite, *pollInterval, *waitTimeout)
+		return runBindingPolicyVerification(withBindingVerificationBudget(context.WithValue(context.Background(), queueCanaryConsentKey{}, *queuePublish), *concurrency), client, slug, *deployment, *dryRun, *objectStorageWrite, *pollInterval, *waitTimeout)
+	}
+	if *queue != "" {
+		return runQueueBindingCanary(context.Background(), client, slug, *queue, *deployment, *queuePublish, *pollInterval, *waitTimeout)
 	}
 	probeClient, err := selectBindingProbeClient(context.Background(), client, slug, *deployment)
 	if err != nil {
 		return printErr("Could not select binding verification deployment", err)
 	}
 	if *all {
-		return runAllBindingProbes(context.Background(), probeClient, slug, *pollInterval, *waitTimeout)
+		return runAllBindingProbes(context.Background(), probeClient, slug, *pollInterval, *waitTimeout, allBindingProbeOptions{client: client, publish: *queuePublish, requireComplete: *requireComplete, objectStorageWrite: *objectStorageWrite, dryRun: *dryRun})
 	}
 	if postgresKeyValue != "" {
 		return runPostgresBindingProbe(context.Background(), probeClient, slug, postgresKeyValue, *pollInterval, *waitTimeout)
@@ -151,7 +196,7 @@ func cmdBindingsVerify(args []string) int {
 }
 
 func printBindingsVerifyUsage() {
-	PrintUsage(osStderr, "usage: gregale bindings verify <app> <service> [--deployment ID|vN] [flags] | gregale bindings verify <app> --all [flags] | gregale bindings verify <app> --release-policy [--dry-run] [--object-storage-write] [flags] | gregale bindings verify <app> --postgres <ENVIRONMENT_KEY> [flags] | gregale bindings verify <app> --object-storage <PREFIX> [flags] | gregale bindings verify <app> --outbound <INTEGRATION_ID> [flags]", "bindings")
+	PrintUsage(osStderr, "usage: gregale bindings verify <app> <service> [--deployment ID|vN] [flags] | gregale bindings verify <app> --all [--dry-run] [--require-complete] [--deployment ID|vN] [--queue-publish] [--object-storage-write] [flags] | gregale bindings verify <app> --release-policy [--dry-run] [--object-storage-write] [flags] | gregale bindings verify <app> --postgres <ENVIRONMENT_KEY> [flags] | gregale bindings verify <app> --object-storage <PREFIX> [flags] | gregale bindings verify <app> --outbound <INTEGRATION_ID> [flags]", "bindings")
 }
 
 func runPostgresBindingProbe(ctx context.Context, client bindingInventoryProbeClient, slug, environmentKey string, pollInterval, waitTimeout time.Duration) int {
@@ -214,7 +259,7 @@ func executePostgresBindingProbe(ctx context.Context, client serviceBindingProbe
 	for !task.Status.Terminal() {
 		select {
 		case <-waitContext.Done():
-			if errors.Is(interruptContext.Err(), context.Canceled) {
+			if bindingProbeAutoCancel(ctx) && errors.Is(interruptContext.Err(), context.Canceled) {
 				cancelContext, cancelRequest := context.WithTimeout(context.WithoutCancel(ctx), bindingProbeCancelTimeout)
 				defer cancelRequest()
 				cancelled, cancelErr := client.CancelAppTask(cancelContext, slug, task.ID)
@@ -372,7 +417,7 @@ func executeServiceBindingProbe(ctx context.Context, client serviceBindingProbeC
 	for !task.Status.Terminal() {
 		select {
 		case <-waitContext.Done():
-			if errors.Is(interruptContext.Err(), context.Canceled) {
+			if bindingProbeAutoCancel(ctx) && errors.Is(interruptContext.Err(), context.Canceled) {
 				cancelContext, cancelRequest := context.WithTimeout(context.WithoutCancel(ctx), bindingProbeCancelTimeout)
 				defer cancelRequest()
 				cancelled, cancelErr := client.CancelAppTask(cancelContext, slug, task.ID)
@@ -454,11 +499,19 @@ func newServiceBindingProbeReport(app, service string) api.ServiceBindingProbeRe
 }
 
 func renderServiceBindingProbeBatch(batch serviceBindingProbeBatchReport) {
+	if batch.Gate != nil {
+		renderAllBindingCoverageGate(batch.Gate)
+	}
 	_, _ = fmt.Fprintf(osStdout, "Binding verification: %s scope=%s coverage=%s (%d/%d passed, %d failed, %d unsupported, %d skipped, %d not checked)\n", batch.App, batch.Scope, batch.Coverage, batch.Passed, batch.Total, batch.Failed, batch.Unsupported, batch.Skipped, batch.NotChecked)
 	for _, item := range batch.Bindings {
 		_, _ = fmt.Fprintln(osStdout)
 		if item.Report != nil {
 			renderServiceBindingProbeReport(batch.App, *item.Report, api.AppTaskResponse{ID: item.Report.TaskID, DeploymentID: item.Report.DeploymentID})
+		} else if item.QueueReport != nil {
+			_, _ = fmt.Fprintf(osStdout, "Queue binding %s scope=%s: %s (deployment=%s, canary=%s, receipt=%s)\n", item.Binding, item.Scope, item.Status, item.QueueReport.DeploymentID, item.QueueReport.ID, item.QueueReport.Status)
+			if item.Error != "" {
+				_, _ = fmt.Fprintln(osStdout, item.Error)
+			}
 		} else if item.OutboundReport != nil {
 			report := *item.OutboundReport
 			renderOutboundBindingProbeReport(batch.App, report, api.AppTaskResponse{ID: report.TaskID, DeploymentID: report.DeploymentID})

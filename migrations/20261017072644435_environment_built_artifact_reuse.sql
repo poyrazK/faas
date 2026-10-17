@@ -1,5 +1,5 @@
 -- filename: 20261017072644435_environment_built_artifact_reuse.sql
--- ADR-1346: Immutable code reuse with independent target authority.
+-- ADR-1525: Immutable code reuse with independent target authority.
 
 -- +goose Up
 -- +goose StatementBegin

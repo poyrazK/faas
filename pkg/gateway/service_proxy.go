@@ -776,16 +776,44 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service endpoint registry is unavailable")
 			return
 		}
+		overrideID, present, valid := serviceDeploymentOverrideFromRequest(r)
+		if present {
+			if !valid {
+				serviceProxyProblem(dispatchWriter, http.StatusBadRequest, "invalid service probe target deployment")
+				return
+			}
+			if p.validateDeployment == nil {
+				serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service deployment validation is unavailable")
+				return
+			}
+			live, err := p.validateDeployment(dependencyCtx, target.AppID, overrideID)
+			if err != nil || !live {
+				serviceProxyProblem(dispatchWriter, http.StatusUnprocessableEntity, "service probe target deployment is unavailable")
+				return
+			}
+		}
 		endpoints, err := p.endpoints(dependencyCtx, target.AppID)
 		if err != nil {
 			p.metrics.IncServiceCall(ServiceCallRegistryUnavailable)
 			serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service endpoint registry is unavailable")
 			return
 		}
+		if present {
+			selected := make([]ServiceEndpoint, 0, len(endpoints))
+			for _, endpoint := range endpoints {
+				if endpoint.DeploymentID == overrideID {
+					selected = append(selected, endpoint)
+				}
+			}
+			endpoints = selected
+		}
 		if len(endpoints) == 0 {
 			p.metrics.IncServiceCall(ServiceCallNoReplica)
 			serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service has no healthy replicas; probe did not wake the target")
 			return
+		}
+		if present {
+			dispatchWriter.Header().Set(api.TargetDeploymentHeader, overrideID)
 		}
 		dispatchWriter.Header().Set(api.ServiceBindingProbeStageHeader, "complete")
 		dispatchWriter.WriteHeader(http.StatusNoContent)

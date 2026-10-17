@@ -29,15 +29,20 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
+// adr: 1525, 1500 — shared runner claims and borrowed identity survive migration ordering.
 // Signed byte fixtures prove state and SQL contracts, not native ext4 mounting.
 func TestGitOpsBuildArtifactReuseKeepsTargetConfigAndNeverQueuesBuild(t *testing.T) {
-	for _, kind := range []string{"source", "dockerfile", "function"} {
+	for _, kind := range []string{"source", "source-node24", "dockerfile", "function"} {
 		t.Run(kind, func(t *testing.T) {
 			for _, targetEnvironment := range []string{"staging", "production"} {
 				t.Run(targetEnvironment, func(t *testing.T) {
 					buildArtifactStores(t, func(t *testing.T, basic gitOpsTestStore, pool *pgxpool.Pool) {
 						ctx := t.Context()
-						store, originLease, app, _, plan := appliedSourceCandidateFixture(t, basic, kind)
+						fixtureKind, claimedRuntime := kind, ""
+						if kind == "source-node24" {
+							fixtureKind, claimedRuntime = "source", "node24"
+						}
+						store, originLease, app, _, plan := appliedSourceCandidateFixture(t, basic, fixtureKind)
 						prepare := basic.(state.EnvironmentGitOpsPreparationStore)
 						requests, err := prepare.EnvironmentGitOpsSourceRequests(ctx, originLease, plan)
 						if err != nil || len(requests) != 1 {
@@ -52,7 +57,7 @@ func TestGitOpsBuildArtifactReuseKeepsTargetConfigAndNeverQueuesBuild(t *testing
 						if err != nil {
 							t.Fatal(err)
 						}
-						root, publication := publishReuseSourceArtifact(t, basic, origin)
+						root, publication := publishReuseSourceArtifact(t, basic, origin, claimedRuntime)
 						origin, err = store.DeploymentByID(ctx, origin.ID)
 						if err != nil {
 							t.Fatal(err)
@@ -178,13 +183,25 @@ func TestGitOpsBuildArtifactReuseKeepsTargetConfigAndNeverQueuesBuild(t *testing
 								t.Fatal("native publisher deadline lost origin scope", err)
 							}
 							// Approval and candidates retain the same producer through ledger replay.
-							migration, err := migrations.FS.ReadFile("20261017072644435_environment_built_artifact_reuse.sql")
-							if err != nil {
-								t.Fatal(err)
+							for _, name := range []string{
+								"20261017072644435_environment_built_artifact_reuse.sql",
+								"20261017161625827_gitops_borrowed_shared_runtime.sql",
+								"20261017161625827_gitops_borrowed_shared_runtime.sql",
+							} {
+								migration, err := migrations.FS.ReadFile(name)
+								if err != nil {
+									t.Fatal(err)
+								}
+								up := strings.Split(string(migration), "-- +goose Down")[0]
+								if _, err = pool.Exec(ctx, up); err != nil {
+									t.Fatal("migration replay", name, err)
+								}
 							}
-							up := strings.Split(string(migration), "-- +goose Down")[0]
-							if _, err = pool.Exec(ctx, up); err != nil {
-								t.Fatal("migration replay", err)
+							if err := pool.QueryRow(ctx, `SELECT application_standard_runtime_producers(a,d) FROM apps a JOIN deployments d ON d.app_id=a.id WHERE d.id=$1`, target.ID).Scan(&raw); err != nil {
+								t.Fatal("SQL borrower projection after replay", err)
+							}
+							if json.Unmarshal(raw, &projection) != nil || projection.DeploymentID != target.ID || projection.Scope != target.Scope || !reflect.DeepEqual(projection.Artifacts, inputs.Artifacts) {
+								t.Fatal("replay changed SQL and Go producer identity")
 							}
 							var pins int
 							if err = pool.QueryRow(ctx, `SELECT count(*) FROM environment_build_artifact_pins WHERE artifact_id=$1`, root.ID).Scan(&pins); err != nil || pins != 2 {
@@ -346,7 +363,7 @@ func buildArtifactStores(t *testing.T, run func(*testing.T, gitOpsTestStore, *pg
 	})
 }
 
-func publishReuseSourceArtifact(t *testing.T, basic gitOpsTestStore, origin state.Deployment) (state.SourceBuildRootfs, state.BuildExportPublication) {
+func publishReuseSourceArtifact(t *testing.T, basic gitOpsTestStore, origin state.Deployment, claimedRuntime ...string) (state.SourceBuildRootfs, state.BuildExportPublication) {
 	t.Helper()
 	ctx, store := t.Context(), basic
 	app, err := store.AppByID(ctx, origin.AppID)
@@ -368,7 +385,11 @@ func publishReuseSourceArtifact(t *testing.T, basic gitOpsTestStore, origin stat
 	if _, _, err = store.UpsertAppTrustedSigner(ctx, app.AccountID, app.ID, "company", der, app.AccountID); err != nil {
 		t.Fatal(err)
 	}
-	claims := buildpublisher.Claims{Format: buildpublisher.Format, AccountID: uuid.MustParse(app.AccountID).String(), OrgID: app.OrgID, AppID: uuid.MustParse(app.ID).String(), DeploymentID: uuid.MustParse(origin.ID).String(), BuildID: uuid.MustParse(build.ID).String(), ClaimStartedAt: build.StartedAt.UTC().Format(time.RFC3339Nano), SourceSHA256: origin.SourceSHA256, ExportDigest: imagechain.Digest([]byte("export")), ExportBytes: 6, Runtime: app.Runtime, BuilderNodeID: "builder-one"}
+	runtime := app.Runtime
+	if len(claimedRuntime) != 0 && claimedRuntime[0] != "" {
+		runtime = claimedRuntime[0]
+	}
+	claims := buildpublisher.Claims{Format: buildpublisher.Format, AccountID: uuid.MustParse(app.AccountID).String(), OrgID: app.OrgID, AppID: uuid.MustParse(app.ID).String(), DeploymentID: uuid.MustParse(origin.ID).String(), BuildID: uuid.MustParse(build.ID).String(), ClaimStartedAt: build.StartedAt.UTC().Format(time.RFC3339Nano), SourceSHA256: origin.SourceSHA256, ExportDigest: imagechain.Digest([]byte("export")), ExportBytes: 6, Runtime: runtime, BuilderNodeID: "builder-one"}
 	proof, err := buildpublisher.Sign(ctx, claims, "company", key)
 	if err != nil {
 		t.Fatal(err)
@@ -384,7 +405,7 @@ func publishReuseSourceArtifact(t *testing.T, basic gitOpsTestStore, origin stat
 	if err != nil {
 		t.Fatal(err)
 	}
-	base, err := basic.(state.BaseImageProducerStore).PublishBaseImageProducer(ctx, reuseBaseProducerFixture(t, state.RuntimeBaseKeyForArch(app.Runtime, "amd64"), "base"))
+	base, err := basic.(state.BaseImageProducerStore).PublishBaseImageProducer(ctx, reuseBaseProducerFixture(t, state.RuntimeBaseKeyForArch(runtime, "amd64"), "base"))
 	if err != nil {
 		t.Fatal("base", err)
 	}
@@ -392,9 +413,9 @@ func publishReuseSourceArtifact(t *testing.T, basic gitOpsTestStore, origin stat
 	if err != nil {
 		t.Fatal(err)
 	}
-	rootKind, runner := state.SourceBuildRootfsKind(app, origin)
+	rootKind, runner := state.SourceBuildRootfsKindForClaim(app, origin, runtime)
 	rootInput := state.SourceBuildRootfsInput{ID: uuid.NewString(), PublicationID: publication.ID, PublicationHash: publication.InputHash, AccountID: app.AccountID, OrgID: app.OrgID, AppID: app.ID, DeploymentID: origin.ID, Scope: origin.Scope, Kind: rootKind, Runtime: runner, IntentHash: intentHash, StorageKey: "apps/source/converted.ext4", RootfsPath: "/srv/apps/source/converted.ext4", ContentBytes: 24, ArtifactDigest: imagechain.Digest([]byte("converted ext4")), ArtifactBytes: 24, BaseProducerID: base.ID, BaseInputHash: base.InputHash, GuestInitDigest: base.Input.GuestInitDigest, LayoutVersion: state.SourceBuildRootfsLayout}
-	if runner != "" {
+	if rootKind == "function-layer" {
 		rootInput.RunnerDigest = imagechain.Digest([]byte("runner"))
 	}
 	root, err := basic.(state.SourceBuildRootfsStore).PublishSourceBuildRootfs(ctx, rootInput)

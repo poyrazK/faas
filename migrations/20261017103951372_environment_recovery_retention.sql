@@ -1,4 +1,4 @@
--- ADR-1349: bounded artifact recovery protection from reviewed Git intent.
+-- ADR-1528: bounded artifact recovery protection from reviewed Git intent.
 -- +goose Up
 -- +goose StatementBegin
 DO $migration$
