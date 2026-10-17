@@ -429,9 +429,13 @@ func (e *Engine) WakeJob(ctx context.Context, accountID, runID string, taskIndex
 		Interactive:      interactive,
 	})
 	if err != nil {
-		if financialJobBudgetDenied(err) {
+		if financialJobBudgetDenied(err) || financialJobAuthorityUnavailable(err) {
+			reason := financial.ErrComputeBudget
+			if financialJobAuthorityUnavailable(err) {
+				reason = financial.ErrComputeUnavailable
+			}
 			deferErr := e.deferFinancialJobClaim(ctx, runID, taskIndex, instanceID, nodeID, tok)
-			return JobWakeResult{}, errors.Join(financial.ErrComputeBudget, deferErr)
+			return JobWakeResult{}, errors.Join(reason, deferErr)
 		}
 		e.rollbackJobAdmission(ctx, runID, taskIndex, instanceID, tok, task.Attempt, effectiveJobRetryMax(job, run), "job_vmm_cold_boot_failed", "job VM failed to boot before execution; verify the image artifact exists and is readable")
 		return JobWakeResult{}, fmt.Errorf("sched: WakeJob vmmd cold boot: %w", err)

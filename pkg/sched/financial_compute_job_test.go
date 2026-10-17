@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/financial"
+	"github.com/onebox-faas/faas/pkg/grpcerr"
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -102,5 +103,23 @@ func TestFinancialComputeJobBudgetDeferral(t *testing.T) {
 				t.Fatalf("denial accounting: %+v %v", b, err)
 			}
 		})
+	}
+}
+
+func TestFinancialJobAuthorityUnavailablePreservesDeferralClassification(t *testing.T) {
+	for _, err := range []error{
+		financial.ErrComputeUnavailable,
+		financial.ErrComputeFence,
+		api.NewProblem(503, "financial_compute_unavailable", "unavailable", "funding could not be checked"),
+		grpcerr.ToStatus(api.NewProblem(503, "financial_compute_unavailable", "unavailable", "funding could not be checked")),
+	} {
+		if !financialJobAuthorityUnavailable(err) {
+			t.Fatalf("financial infrastructure error consumed execution retry: %v", err)
+		}
+	}
+	for _, err := range []error{errors.New("guest command failed"), api.NewProblem(503, "capacity", "capacity", "RAM exhausted")} {
+		if financialJobAuthorityUnavailable(err) {
+			t.Fatalf("unrelated execution failure was deferred as financial: %v", err)
+		}
 	}
 }

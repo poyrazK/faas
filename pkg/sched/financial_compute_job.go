@@ -24,6 +24,20 @@ func financialJobBudgetDenied(err error) bool {
 	return ok && p.Code == "financial_budget_held"
 }
 
+// A verified pre-boot financial refusal is infrastructure availability, not
+// customer execution. Both the local and gRPC forms must preserve the task.
+func financialJobAuthorityUnavailable(err error) bool {
+	if errors.Is(err, financial.ErrComputeUnavailable) || errors.Is(err, financial.ErrComputeFence) {
+		return true
+	}
+	var p *api.Problem
+	if errors.As(err, &p) {
+		return p.Code == "financial_compute_unavailable"
+	}
+	p, ok := grpcerr.FromStatus(err)
+	return ok && p.Code == "financial_compute_unavailable"
+}
+
 func (e *Engine) deferFinancialJobClaim(ctx context.Context, run string, index int, instance, node string, token LeaseToken) error {
 	compute, ok := e.store.(state.FinancialComputeStore)
 	if !ok {
