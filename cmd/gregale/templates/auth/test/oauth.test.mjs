@@ -82,6 +82,7 @@ test('a client token takes the audience of its resource, and keeps it on refresh
   const base = { sub: user, session_id: session, aud: 'authenticated', role: 'authenticated' }
   const first = fakePool()
   assert.deepEqual(await accessTokenClaims(first, { claims: base }), { claims: base }, 'the app\'s own tokens pass unchanged')
+  assert.deepEqual(await accessTokenClaims(first, { claims: { ...base, aud: ['authenticated'] } }), { claims: base }, 'as GoTrue would write them')
   assert.equal(first.calls.length, 0)
   const pool = fakePool({ pending: [{ resource: 'https://mcp.shop.example.com/mcp' }] })
   const exchange = await accessTokenClaims(pool, { claims: { ...base, client_id: client, scope: 'openid' } })

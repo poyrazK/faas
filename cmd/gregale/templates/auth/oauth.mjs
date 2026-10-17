@@ -57,7 +57,10 @@ export function wellKnownPath(url) {
 export async function accessTokenClaims(pool, payload) {
   const claims = payload?.claims
   if (!claims || typeof claims !== 'object' || Array.isArray(claims)) throw new HTTPError(400, 'invalid_hook_payload')
-  if (!isClientToken(claims)) return { claims }
+  // GoTrue writes a single audience as a string, but only from its first
+  // signature on: the first hook call after every start sends an array.
+  const aud = Array.isArray(claims.aud) && claims.aud.length === 1 ? claims.aud[0] : claims.aud
+  if (!isClientToken(claims)) return { claims: { ...claims, aud } }
   return { claims: { ...claims, aud: (await sessionResource(pool, claims)) ?? oauthAudience } }
 }
 
