@@ -119,6 +119,30 @@ jobs:
     permissions:
       contents: read
 
+  # Integration suites that pull requests run only when their own code
+  # changes (see each workflow's pull_request paths). Here they run in full
+  # nightly and in the release gate (release.yml calls this workflow).
+  mcp-contract:
+    uses: ./.github/workflows/mcp-contract.yml
+    permissions:
+      contents: read
+  customer-platform-starter:
+    uses: ./.github/workflows/customer-platform-starter.yml
+    permissions:
+      contents: read
+  data-api:
+    uses: ./.github/workflows/data-api.yml
+    permissions:
+      contents: read
+  durable-entity-developer-workflow:
+    uses: ./.github/workflows/durable-entity-developer-workflow.yml
+    permissions:
+      contents: read
+  s3-multipart-integrity:
+    uses: ./.github/workflows/s3-multipart-integrity.yml
+    permissions:
+      contents: read
+
   # Three parallel jobs (PR #167) so the long poles — unit tests (~4:20)
   # and spec-check (~3:54) — run in parallel instead of in series. Wall
   # time drops from 10:44 to ~max(test, unit-tests, spec-check) ≈ ~4:40.
