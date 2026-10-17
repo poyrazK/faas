@@ -374,5 +374,29 @@
         }
       }
     }
+  },
+  "explicit_starter_sql_gate": {
+    "initial_ci_head": "8d931418baf5d44fd79b9e3d7501fc43d33a8276",
+    "initial_ci_run": 39070668836,
+    "initial_ci_job": 117507421858,
+    "enable_flag": "GREGALE_POSTGRES_STARTER_TEST=1",
+    "fixture_sha256": "cca436d6f5baed72c35aad219aa813821188133b2735af3761f9910f5318aa48",
+    "native_execution_qualified": false,
+    "runs": {
+      "node24": {
+        "passed_tests": 15,
+        "sql_scenarios": 14,
+        "skipped_tests": [],
+        "failed_tests": [],
+        "log_sha256": "09ce3be0da3c26757d70dc06f72d38be42f2990055ff692a39df519d9f7047bc"
+      },
+      "node22": {
+        "passed_tests": 15,
+        "sql_scenarios": 14,
+        "skipped_tests": [],
+        "failed_tests": [],
+        "log_sha256": "35cca5e67feccbb0f432d845f2a458ea0cc4b1c5808cab02466fc7d1ad8558ea"
+      }
+    }
   }
 }

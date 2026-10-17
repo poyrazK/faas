@@ -98,6 +98,22 @@ run passed 104 and 72 tests/subtests respectively, with no skips or failures. It
 includes both function handoff/capacity coverage and the internal-CI scheduler
 boundary and snapshot-drift regressions.
 
+## Explicit starter SQL gate
+
+The hosted shard-1 starter gate exposed fixture calls left over from the earlier
+pool adapter: two asynchronous runtime creations lacked `await`, restore options
+were dropped, and a diagnostic assertion used an old field. The fixture now
+awaits startup, forwards its deadline, checks the shipped checkpointed state and
+zero active requests, and verifies that both a retained runtime and a fresh
+restore reject a retired SQL login. It still observes zero server-side sessions
+before capture and an exact generation increment on restore.
+
+The full `TestPostgresStarterSQLRecovery` gate, explicitly enabled with
+`GREGALE_POSTGRES_STARTER_TEST=1`, passed against owned TLS/SCRAM PostgreSQL on
+Node 22 and Node 24. Each run executed fourteen SQL scenarios plus the parent
+test: fifteen passes, zero skips and zero failures. These are portable SQL
+lifecycle results; no native VM capture or restore is qualified by them.
+
 ## Qualification boundary
 
 Production activation remains disabled. This managed container has no supported
