@@ -19,6 +19,7 @@ type AuthorizationStore interface {
 	AppByID(context.Context, string) (state.App, error)
 	AppBySlug(context.Context, string) (state.App, error)
 	ScenarioTestMemberByApp(context.Context, string) (state.ScenarioTestMember, error)
+	ScenarioRehearsalNetworkRun(context.Context, string) (string, error)
 }
 
 // NewAuthorizer enforces the same-account boundary between a
@@ -60,6 +61,10 @@ func NewAuthorizer(store AuthorizationStore) gateway.ServiceProxyAuthorizer {
 		}
 		if caller.Status == state.AppDeleted || target.Status == state.AppDeleted {
 			return gateway.ServiceCaller{}, gateway.ErrServiceProxyDenied
+		}
+		rehearsalRun, err := AuthorizeRehearsalService(ctx, store, caller, target)
+		if err != nil {
+			return gateway.ServiceCaller{}, err
 		}
 		var callerTest, targetTest state.ScenarioTestMember
 		var callerTestErr, targetTestErr = state.ErrNotFound, state.ErrNotFound
@@ -191,12 +196,13 @@ func NewAuthorizer(store AuthorizationStore) gateway.ServiceProxyAuthorizer {
 		// The caller row is already loaded; carrying its preview identity out
 		// saves the hop a third store read for a fact we have in hand.
 		return gateway.ServiceCaller{
-			AppID:         caller.ID,
-			PreviewOfSlug: caller.PreviewOfSlug,
-			AccountID:     caller.AccountID,
-			RequireHTTPS:  caller.Manifest.EffectiveServiceBindingTransport() == api.ServiceBindingTransportHTTPS,
-			CallScope:     callScope,
-			Reliability:   reliability,
+			RehearsalRunID: rehearsalRun,
+			AppID:          caller.ID,
+			PreviewOfSlug:  caller.PreviewOfSlug,
+			AccountID:      caller.AccountID,
+			RequireHTTPS:   caller.Manifest.EffectiveServiceBindingTransport() == api.ServiceBindingTransportHTTPS,
+			CallScope:      callScope,
+			Reliability:    reliability,
 		}, nil
 	}
 }

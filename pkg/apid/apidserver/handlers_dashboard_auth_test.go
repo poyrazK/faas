@@ -13,6 +13,7 @@ import (
 )
 
 func TestDashboardAuthPageIsOwnerScopedAndAllowsOnlyTheAuthOrigin(t *testing.T) {
+	t.Setenv("FAAS_APPLICATION_AUTH_ENABLED", "1")
 	e := apidserver.Setup(t, api.PlanPro)
 	app, _ := apidserver.SeedAppTaskDeployment(t, e, "shop-auth")
 	cookie := apidserver.RestartProgressDashboardCookie(t, e, (*e.Acct()).ID, false)

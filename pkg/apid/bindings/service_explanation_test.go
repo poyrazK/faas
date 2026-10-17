@@ -50,6 +50,9 @@ func (c *explanationCatalog) AppBySlug(_ context.Context, slug string) (state.Ap
 func (c *explanationCatalog) ScenarioTestMemberByApp(context.Context, string) (state.ScenarioTestMember, error) {
 	return state.ScenarioTestMember{}, state.ErrNotFound
 }
+func (c *explanationCatalog) ScenarioRehearsalNetworkRun(context.Context, string) (string, error) {
+	return "", nil // These ordinary deployment fixtures have no retained rehearsal enrollment.
+}
 func (c *explanationCatalog) DeploymentByID(_ context.Context, id string) (state.Deployment, error) {
 	if id != c.deployment.ID {
 		return state.Deployment{}, state.ErrNotFound

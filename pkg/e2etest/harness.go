@@ -396,6 +396,9 @@ failure_report_dir = %q
 		// pg_stat_activity for a session holding LISTEN build_queued in this
 		// schema — the only consumer of that channel is builderd.
 		if err := h.waitBuilderdListens(10 * time.Second); err != nil {
+			// As for imaged: keep builderd's last words, or a slow or
+			// crashed builderd reads only as "never subscribed".
+			dumpProcs(t)
 			t.Fatalf("e2etest: builderd did not subscribe to build_queued: %v", err)
 		}
 	}
@@ -2380,6 +2383,7 @@ func waitReadyz(t *testing.T, controlAddr string, d time.Duration) {
 	waitTCP(t, controlAddr, d)
 	url := "http://" + controlAddr + "/readyz"
 	client := &http.Client{Timeout: time.Second}
+	d = readyTimeout(d)
 	deadline := time.Now().Add(d)
 	lastStatus := 0
 	for time.Now().Before(deadline) {
@@ -2400,6 +2404,7 @@ func waitReadyz(t *testing.T, controlAddr string, d time.Duration) {
 
 func waitTCP(t *testing.T, addr string, d time.Duration) {
 	t.Helper()
+	d = readyTimeout(d)
 	deadline := time.Now().Add(d)
 	for time.Now().Before(deadline) {
 		c, err := net.DialTimeout("tcp", addr, 100*time.Millisecond)
@@ -2468,6 +2473,7 @@ func setDefaultLocalScheddTarget(t *testing.T, pool *pgxpool.Pool, sockPath, vmm
 // creates the file before binding, so file-existence is a strong signal.
 func waitUnix(t *testing.T, path string, d time.Duration) {
 	t.Helper()
+	d = readyTimeout(d)
 	deadline := time.Now().Add(d)
 	for time.Now().Before(deadline) {
 		if c, err := net.DialTimeout("unix", path, 100*time.Millisecond); err == nil {
@@ -2528,6 +2534,7 @@ func envBuilderBase(t *testing.T) string {
 // exclusively).
 func (h *Harness) waitBuilderdListens(d time.Duration) error {
 	h.T.Helper()
+	d = readyTimeout(d)
 	deadline := time.Now().Add(d)
 	for time.Now().Before(deadline) {
 		var ready bool
@@ -2558,6 +2565,7 @@ func (h *Harness) waitBuilderdListens(d time.Duration) error {
 // itself, and proves imaged keeps that session off its ordinary query pool.
 func (h *Harness) waitImagedListens(d time.Duration) error {
 	h.T.Helper()
+	d = readyTimeout(d)
 	deadline := time.Now().Add(d)
 	for time.Now().Before(deadline) {
 		ok, err := sessionListens(context.Background(), h.Pool, "faas-imaged-direct")

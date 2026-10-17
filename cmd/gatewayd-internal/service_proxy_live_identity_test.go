@@ -1,3 +1,4 @@
+// adr: 1642, 20261017201008
 package main
 
 import (
@@ -32,7 +33,7 @@ func (f *liveCallerFixture) AppTaskByID(context.Context, string, string, string)
 	return f.task, nil
 }
 
-func (f *liveCallerFixture) LiveInstancesByHostIP(context.Context, string, string) ([]state.Instance, error) {
+func (f *liveCallerFixture) LiveServiceCallersByHostIP(context.Context, string, string) ([]state.Instance, error) {
 	f.ordinaryReads++
 	return f.rows, nil
 }
@@ -116,6 +117,33 @@ func TestServiceCallerLiveLookupRollingUpgradeAndReusedAddress(t *testing.T) {
 	rows, err = serviceProxyLiveIdentity(t.Context(), f, f, "node", "10.100.0.7")
 	if err != nil || len(rows) != 1 {
 		t.Fatalf("managed Job lookup was not preserved: %+v, %v", rows, err)
+	}
+}
+
+func TestContainedCommandCallerRequiresExactLiveTaskAndRecorderSource(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		edit func(*liveCallerFixture)
+		want bool
+	}{
+		{"enrolled command", func(*liveCallerFixture) {}, true},
+		{"not enrolled", func(f *liveCallerFixture) { f.rows = nil }, false},
+		{"reused address", func(f *liveCallerFixture) { f.rows[0].ID = "old-task" }, false},
+		{"different app", func(f *liveCallerFixture) { f.rows[0].AppID = "other" }, false},
+		{"different deployment", func(f *liveCallerFixture) { f.rows[0].DeploymentID = "other" }, false},
+		{"ambiguous", func(f *liveCallerFixture) { f.rows = append(f.rows, f.rows[0]) }, false},
+		{"expired task", func(f *liveCallerFixture) { expired := time.Now().Add(-time.Second); f.task.LeaseExpiresAt = &expired }, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			f := managedLiveCallerFixture()
+			f.task.BindingVerification = nil
+			f.rows = []state.Instance{{ID: f.task.ID, AppID: f.task.AppID, DeploymentID: f.task.DeploymentID}}
+			test.edit(f)
+			rows, err := serviceProxyLiveIdentity(t.Context(), f, f, "node", "10.100.0.7")
+			if err != nil || (len(rows) == 1) != test.want {
+				t.Fatalf("contained caller = %+v, %v", rows, err)
+			}
+		})
 	}
 }
 

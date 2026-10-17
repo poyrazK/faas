@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"time"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/apptaskproto"
@@ -22,6 +23,7 @@ type AppTaskRestoreSpec struct {
 }
 
 type AppTaskRestoreOutcome struct {
+	HostIP   string
 	Instance string
 	LeaseUID int
 	Method   fcvm.WakeMethod
@@ -34,6 +36,9 @@ func (c *VMMClient) RestoreAppTask(ctx context.Context, spec AppTaskRestoreSpec)
 	if err := c.requireSecretAliasSupport(ctx, spec.App); err != nil {
 		return nil, err
 	}
+	if spec.RequireServiceCallerIdentity && spec.App.RehearsalRunID != "" {
+		return nil, errors.New("sched: managed service probes cannot use contained command restore")
+	}
 	fields, _ := wire.FromContext(ctx)
 	ctx = wire.WithCorrelationOutgoing(ctx, fields)
 	req := &vmmdpb.RestoreAppTaskRequest{
@@ -44,17 +49,25 @@ func (c *VMMClient) RestoreAppTask(ctx context.Context, spec AppTaskRestoreSpec)
 	var err error
 	if spec.RequireServiceCallerIdentity {
 		resp, err = c.cli.RestoreManagedServiceProbe(ctx, req)
+	} else if spec.App.RehearsalRunID != "" {
+		resp, err = c.cli.RestoreRehearsalAppTask(ctx, req)
 	} else {
 		resp, err = c.cli.RestoreAppTask(ctx, req)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("sched: restore app task: %w", liftErr(err))
 	}
+	if spec.App.RehearsalRunID != "" && (resp.GetRehearsalRunId() != spec.App.RehearsalRunID || resp.GetInstance() != spec.Instance || resp.GetNetns() == "" || resp.GetCommandVersion() != 1) {
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		_ = c.Destroy(cleanupCtx, spec.Instance)
+		return nil, errors.New("runtime did not acknowledge contained command support")
+	}
 	if err := c.confirmSecretAliasSupport(ctx, spec.App, spec.Instance, resp.GetSupportsSecretAliases()); err != nil {
 		return nil, err
 	}
 	return &AppTaskRestoreOutcome{
-		Instance: resp.GetInstance(), LeaseUID: int(resp.GetLeaseUid()), Method: fcvm.WakeMethod(resp.GetMethod()),
+		HostIP: resp.GetHostIp(), Instance: resp.GetInstance(), LeaseUID: int(resp.GetLeaseUid()), Method: fcvm.WakeMethod(resp.GetMethod()),
 	}, nil
 }
 

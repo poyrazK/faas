@@ -7,7 +7,7 @@ import { limits } from './config.mjs'
 // through the customer's provider over HTTPS. Links and codes never reach
 // a log line.
 
-export const hookAddress = Object.freeze({ host: '127.0.0.1', port: 9998, path: '/send-email' })
+export const hookAddress = Object.freeze({ host: '127.0.0.1', port: 9998, path: '/send-email', accessTokenPath: '/custom-access-token' })
 
 // A fresh secret per boot: GoTrue and the front start together, so nothing
 // needs sealing, and a snapshot restores both halves of the pair.
@@ -15,11 +15,18 @@ export function newHookSecret() {
   return `v1,whsec_${randomBytes(32).toString('base64')}`
 }
 
-export function hookEnv(secret) {
+// The custom access token hook runs on every token GoTrue issues, so it is
+// on only with the OAuth server, whose client tokens it changes (oauth.mjs).
+export function hookEnv(secret, { accessToken = false } = {}) {
   return {
     GOTRUE_HOOK_SEND_EMAIL_ENABLED: 'true',
     GOTRUE_HOOK_SEND_EMAIL_URI: `http://${hookAddress.host}:${hookAddress.port}${hookAddress.path}`,
     GOTRUE_HOOK_SEND_EMAIL_SECRETS: secret,
+    ...(accessToken ? {
+      GOTRUE_HOOK_CUSTOM_ACCESS_TOKEN_ENABLED: 'true',
+      GOTRUE_HOOK_CUSTOM_ACCESS_TOKEN_URI: `http://${hookAddress.host}:${hookAddress.port}${hookAddress.accessTokenPath}`,
+      GOTRUE_HOOK_CUSTOM_ACCESS_TOKEN_SECRETS: secret,
+    } : {}),
   }
 }
 
@@ -153,9 +160,10 @@ function hookReply(res, error) {
 
 // createHookServer serves only GoTrue on loopback. It is a separate listener
 // from the public front, so the gateway can never route to it.
-export function createHookServer({ secret, mailer, api, app }) {
+export function createHookServer({ secret, mailer, api, app, accessToken = null }) {
   return http.createServer((req, res) => {
-    if (req.method !== 'POST' || req.url !== hookAddress.path) { res.writeHead(404); return res.end() }
+    const tokenHook = accessToken && req.url === hookAddress.accessTokenPath
+    if (req.method !== 'POST' || (req.url !== hookAddress.path && !tokenHook)) { res.writeHead(404); return res.end() }
     const chunks = []
     let size = 0
     req.on('data', chunk => {
@@ -166,6 +174,7 @@ export function createHookServer({ secret, mailer, api, app }) {
       if (res.writableEnded) return
       const body = Buffer.concat(chunks)
       if (!verifyWebhook(secret, req.headers, body)) { res.writeHead(401); return res.end() }
+      if (tokenHook) return answerTokenHook(res, accessToken, body)
       try {
         if (!mailer) throw new EmailError(503, 'email_provider_unconfigured')
         const messages = messagesFor(JSON.parse(body.toString('utf8')), { api, app })
@@ -179,6 +188,21 @@ export function createHookServer({ secret, mailer, api, app }) {
       }
     })
   })
+}
+
+// answerTokenHook replies to the custom access token hook. A failure fails
+// the token request, which the client retries.
+async function answerTokenHook(res, accessToken, body) {
+  try {
+    const reply = await accessToken(JSON.parse(body.toString('utf8')))
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify(reply))
+  } catch (err) {
+    const status = Number.isInteger(err?.status) ? err.status : 500
+    const code = typeof err?.code === 'string' && /^[a-z_]+$/.test(err.code) ? err.code : 'access_token_hook_failed'
+    console.error(JSON.stringify({ level: 'error', event: 'auth_token_hook_failed', code }))
+    hookReply(res, { status, code })
+  }
 }
 
 export function invitationMessage(to, { external, app, orgName, token }) {

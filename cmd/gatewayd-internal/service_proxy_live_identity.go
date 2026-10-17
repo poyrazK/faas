@@ -16,7 +16,7 @@ import (
 )
 
 type serviceProxyLiveIdentityStore interface {
-	LiveInstancesByHostIP(context.Context, string, string) ([]state.Instance, error)
+	LiveServiceCallersByHostIP(context.Context, string, string) ([]state.Instance, error)
 	AppTaskByID(context.Context, string, string, string) (state.AppTask, error)
 }
 
@@ -47,7 +47,7 @@ func serviceProxyLiveIdentity(ctx context.Context, store serviceProxyLiveIdentit
 	if status.Code(err) == codes.Unimplemented {
 		// Preserve ordinary routing during rolling upgrades. App tasks have no
 		// serving row, so an old node cannot authenticate a managed probe.
-		return store.LiveInstancesByHostIP(ctx, nodeName, hostIP)
+		return store.LiveServiceCallersByHostIP(ctx, nodeName, hostIP)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("resolve live service caller: %w", err)
@@ -61,7 +61,7 @@ func serviceProxyLiveIdentity(ctx context.Context, store serviceProxyLiveIdentit
 	if !live.GetJobTask() && (live.GetAppId() == "" || live.GetDeploymentId() == "") {
 		return nil, nil
 	}
-	instances, err := store.LiveInstancesByHostIP(ctx, nodeName, hostIP)
+	instances, err := store.LiveServiceCallersByHostIP(ctx, nodeName, hostIP)
 	if err != nil || live.GetJobTask() {
 		return instances, err // The existing claimed managed-Job graph check applies.
 	}
@@ -87,8 +87,23 @@ func managedProbeCaller(ctx context.Context, store serviceProxyLiveIdentityStore
 	pin := task.BindingVerification
 	if task.ID != live.GetInstanceId() || task.AccountID != live.GetAccountId() || task.AppID != live.GetAppId() ||
 		task.DeploymentID != live.GetDeploymentId() || task.Status != state.AppTaskRunning || task.CancelRequested != nil ||
-		task.LeaseToken == nil || *task.LeaseToken == "" || task.LeaseExpiresAt == nil || !task.LeaseExpiresAt.After(time.Now()) ||
-		pin == nil || pin.Type != api.BindingTypeService || pin.ManagedService == nil || !pin.ManagedService.Valid() ||
+		task.LeaseToken == nil || *task.LeaseToken == "" || task.LeaseExpiresAt == nil || !task.LeaseExpiresAt.After(time.Now()) {
+		return nil, nil
+	}
+	if pin == nil {
+		// ADR-20261017201008: the source lookup also admits contained commands,
+		// with their recorder, run, network and lease fences checked in SQL.
+		// Require the exact task ID so a stale serving row cannot authenticate it.
+		callers, err := store.LiveServiceCallersByHostIP(ctx, nodeName, hostIP)
+		if err != nil {
+			return nil, err
+		}
+		if len(callers) != 1 || callers[0].ID != task.ID || callers[0].AppID != task.AppID || callers[0].DeploymentID != task.DeploymentID {
+			return nil, nil
+		}
+		return callers, nil
+	}
+	if pin.Type != api.BindingTypeService || pin.ManagedService == nil || !pin.ManagedService.Valid() ||
 		pin.ManagedService.CallerDeploymentID != task.DeploymentID || pin.ManagedService.Scope != task.DeploymentScope ||
 		pin.Binding != pin.ManagedService.Service || pin.Revision != pin.ManagedService.ContextRevision {
 		return nil, nil

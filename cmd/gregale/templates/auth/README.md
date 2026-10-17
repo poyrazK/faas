@@ -1,7 +1,7 @@
 # Application Auth
 
 This template runs a pinned GoTrue (Supabase Auth) v2.197.0 server for your
-application's own users ([ADR-1190](https://gregale.dev/docs/application-auth)).
+application's own users (ADR-1190).
 It is not your Gregale account login. Create and configure it with
 `gregale auth create NAME --database DATABASE --site-url URL`.
 
@@ -56,3 +56,21 @@ Email goes through GoTrue's send-email hook to a loopback-only listener in the
 front, which delivers through Resend or Postmark over HTTPS (`AUTH_EMAIL_*`);
 tenant egress blocks SMTP. Hosted pages are served under `/ui`. The front drops
 GoTrue's info-level logs and redacts email addresses from the rest.
+
+With `AUTH_OAUTH_SERVER=1` (`gregale auth config NAME --oauth-server on`) GoTrue
+is also an OAuth 2.1 authorization server for third-party apps and MCP
+clients: issuer `<host>/auth/v1`, metadata at
+`/.well-known/oauth-authorization-server/auth/v1`, consent at `/ui/consent`.
+`AUTH_OAUTH_REGISTRATION=1` lets clients register themselves; owners manage
+clients with `gregale auth oauth-clients`. A client's access token carries
+`client_id`, `scope` and, as its audience, the RFC 8707 resource it asked for
+(or `oauth-client`), so verifiers of `aud=authenticated` refuse it. On this
+host it reaches only `/auth/v1/oauth/userinfo`, `POST /auth/v1/logout?scope=local`
+and `POST /authz/v1/authorize`.
+
+`gregale auth config NAME --anonymous on` lets people start without an
+account (`signInAnonymously`); their tokens carry `is_anonymous`, they cannot
+create organizations, and `--anonymous-retention DAYS` deletes those idle
+that long (`AUTH_ANONYMOUS_RETENTION_DAYS`). `--identity-linking on`
+(`AUTH_IDENTITY_LINKING`) lets users link a provider account, which also
+makes an anonymous user permanent, and unlink sign-in methods.
