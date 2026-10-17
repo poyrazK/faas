@@ -284,6 +284,11 @@ func TestPgCloneEnvironmentHostingBorrowers(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
+			// A trust's environment is a GitHub claim, independent of the
+			// site's Gregale environment. Matching its text grants no ownership.
+			if _, err = pool.Exec(t.Context(), `INSERT INTO hosting_oidc_trusts(id,account_id,site_id,repository_owner_id,repository_id,repository,ref,workflow_ref,event_name,environment) VALUES(gen_random_uuid(),$1,$2,'1','1','test/repository','refs/heads/main','test/repository/.github/workflows/ci.yml@refs/heads/main','workflow_dispatch',$3)`, l.Operation.AccountID, sourceID, l.Operation.TargetEnvironment); err != nil {
+				t.Fatal(err)
+			}
 			report, err := s.ProjectEnvironmentCloneEnvironmentBorrowersForLease(t.Context(), l)
 			if err != nil || report.References["hosting_sites"] != 1 {
 				t.Fatal("hosting inventory lost a retained site or included another environment", report, err)
@@ -303,8 +308,8 @@ func TestPgCloneEnvironmentHostingBorrowers(t *testing.T) {
 			if err = s.CleanupProjectEnvironmentCloneEnvironmentForLease(t.Context(), l); err != nil {
 				t.Fatal("cleanup after hosting retirement", err)
 			}
-			if err = pool.QueryRow(t.Context(), "SELECT EXISTS(SELECT 1 FROM hosting_sites WHERE id=$1)", sourceID).Scan(&retained); err != nil || !retained {
-				t.Fatal("source hosting site was removed", err)
+			if err = pool.QueryRow(t.Context(), "SELECT EXISTS(SELECT 1 FROM hosting_sites WHERE id=$1) AND EXISTS(SELECT 1 FROM hosting_oidc_trusts WHERE site_id=$1)", sourceID).Scan(&retained); err != nil || !retained {
+				t.Fatal("source hosting site or external trust was removed", err)
 			}
 		})
 	}

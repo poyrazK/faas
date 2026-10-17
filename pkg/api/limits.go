@@ -21,6 +21,60 @@ import (
 	"time"
 )
 
+// Operator restart execution and persistence budgets (ADR-1522).
+const (
+	OperatorRestartGenerationMaxBytes    = 128
+	OperatorRestartRPCTimeout            = 10 * time.Second
+	OperatorRestartPersistenceTimeout    = 10 * time.Second
+	OperatorRestartPersistenceAttempts   = 3
+	OperatorRestartPersistenceRetryDelay = 100 * time.Millisecond
+	OperatorParkMaxGraceSeconds          = int32(MaxAppManifestStopGracePeriod / time.Second)
+	OperatorParkCleanupTimeout           = 10 * time.Second
+	OperatorParkRPCTimeout               = 90 * time.Second
+)
+
+// Database-only operator cold-boot execution and replay (ADR-1523).
+const (
+	OperatorColdBootPersistenceTimeout    = 10 * time.Second
+	OperatorColdBootPersistenceAttempts   = 3
+	OperatorColdBootPersistenceRetryDelay = 100 * time.Millisecond
+)
+
+// Database-only node maintenance execution and receipt replay (ADR-1526).
+const (
+	OperatorNodePersistenceTimeout    = 10 * time.Second
+	OperatorNodePersistenceAttempts   = 3
+	OperatorNodePersistenceRetryDelay = 100 * time.Millisecond
+)
+
+// Stale node placement retries before VM dispatch (ADR-1528).
+const NodeAdmissionPlacementAttempts = 3
+
+// Durable migration evidence is bounded, never expired into cleanup proof.
+const (
+	MigrationAdmissionRecoveryBatchMax = 128
+	MigrationAdoptionReceiptMaxBytes   = 65536
+	MigrationCleanupProofMaxBytes      = 1024
+	MigrationSourceLeaseTokenMaxBytes  = 128
+)
+
+// Database-only node lifecycle completion and receipt replay (ADR-1527).
+const (
+	NodeLifecycleCompletionTimeout    = 10 * time.Second
+	NodeLifecycleCompletionAttempts   = 3
+	NodeLifecycleCompletionRetryDelay = 100 * time.Millisecond
+)
+
+// Durable operator recovery acceptance (ADR-1524). Receipts do not expire;
+// PollHorizon is only guidance for one polling session.
+const (
+	OperatorRecoveryRequestKeyMaxBytes = 255
+	OperatorRecoveryReasonMaxBytes     = 64
+	OperatorRecoveryTargetMaxBytes     = 255
+	OperatorRecoverySubmissionTimeout  = 10 * time.Second
+	OperatorRecoveryPollHorizon        = 5 * time.Minute
+)
+
 // Application standards preview safeguards, independent of billing quotas.
 const (
 	ApplicationStandardMaxDefinitionBytes             = 64 << 10
@@ -9497,6 +9551,12 @@ func AsyncInvocationLease(timeout time.Duration) time.Duration {
 // one guest. This is a runtime safety bound, not the plan's HTTP concurrency.
 const FunctionInterpreterMaxWorkers = 4
 
+// FunctionConcurrencyEnv carries an app's function_concurrency to its
+// generated adapter (ADR-1342). imaged stamps it on function deployments
+// whose setting is above one; the adapter then advertises that many slots
+// per worker.
+const FunctionConcurrencyEnv = "FAAS_FUNCTION_CONCURRENCY"
+
 // The layer attestation warm verifies the owned live layers in the
 // background at schedd start and again every AttestationWarmInterval, so a
 // wake rarely hashes a layer itself. A layer that failed is retried after
@@ -9533,6 +9593,10 @@ type NodeSizing struct {
 	// CPUOvercommit, so storing an already-overcommitted count there would
 	// apply the factor twice.
 	HostCPUs int
+	// TenantCPUs is the CPU count registered for tenant admission
+	// (compute_nodes.vpcpus): HostCPUs, less the app-edge hold-back on a
+	// node that runs the edge (ADR-1343 §4). VCPUSlots derive from it.
+	TenantCPUs int
 }
 
 // NodeRoleShape selects which non-tenant workloads share the host, and so
@@ -9548,14 +9612,33 @@ const (
 	// gatewayd-internal, builderd, imaged, and schedd, but NOT Postgres,
 	// apid, meterd, githubd, or gatewayd-public. See pkg/role.
 	NodeShapeComputeOnly
+	// NodeShapeComputeEdge is a compute-only host that also runs the app
+	// edge (ADR-1343): gatewayd-public in compute edge mode and the
+	// Cloudflare Tunnel connector. It holds back ComputeEdgeDaemonReserveMB
+	// more RAM and ComputeEdgeCPUHoldbackMillicores of CPU from tenants.
+	NodeShapeComputeEdge
 )
 
 // nonTenantReserveMB is the RAM held back from tenants for a box shape.
 func nonTenantReserveMB(shape NodeRoleShape) int {
-	if shape == NodeShapeComputeOnly {
+	switch shape {
+	case NodeShapeComputeOnly:
 		return ComputeNodeDaemonReserveMB + BuilderSlotReserveMB
+	case NodeShapeComputeEdge:
+		return ComputeNodeDaemonReserveMB + BuilderSlotReserveMB + ComputeEdgeDaemonReserveMB
 	}
 	return ControlPlaneReserveMB
+}
+
+// tenantCPUs is the CPU count a host registers for tenant admission. The
+// edge hold-back is rounded up to whole CPUs, because compute_nodes.vpcpus
+// counts whole CPUs; at least one CPU is always registered.
+func tenantCPUs(hostCPUs int, shape NodeRoleShape) int {
+	if shape != NodeShapeComputeEdge {
+		return hostCPUs
+	}
+	holdback := (ComputeEdgeCPUHoldbackMillicores + 999) / 1000
+	return max(1, hostCPUs-holdback)
 }
 
 // DeriveNodeSizing generalises the spec §13 RAM budget to an arbitrary host.
@@ -9628,7 +9711,8 @@ func DeriveNodeSizingForRole(memTotalMB, hostCPUs int, shape NodeRoleShape) Node
 	}
 	if hostCPUs > 0 {
 		out.HostCPUs = hostCPUs
-		out.VCPUSlots = hostCPUs * CPUOvercommit
+		out.TenantCPUs = tenantCPUs(hostCPUs, shape)
+		out.VCPUSlots = out.TenantCPUs * CPUOvercommit
 	}
 	return out
 }
@@ -9653,6 +9737,14 @@ const (
 	// node that runs builderd. A build must never be paid for out of the
 	// tenant slice, so it is reserved rather than admitted.
 	BuilderSlotReserveMB = 2_048
+	// ComputeEdgeDaemonReserveMB is the extra RAM held back on a compute node
+	// that runs the app edge, for gatewayd-public and cloudflared
+	// (ADR-1343 §4).
+	ComputeEdgeDaemonReserveMB = 256
+	// ComputeEdgeCPUHoldbackMillicores is the CPU a compute node that runs
+	// the app edge keeps out of tenant admission for the same two daemons
+	// (ADR-1343 §4). Size it from the cutover load test.
+	ComputeEdgeCPUHoldbackMillicores = 1_000
 )
 
 // TenantEgressBasePorts are the TCP destination ports every guest may open

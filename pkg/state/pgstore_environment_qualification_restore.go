@@ -79,6 +79,9 @@ func (s *PgStore) CreateEnvironmentQualificationRestore(ctx context.Context, cla
 	if placement.WakeID == capture.Execution.WakeID {
 		return EnvironmentQualificationRestoreAdmission{}, ErrConflict
 	}
+	if err := checkNodeAdmissionDB(ctx, tx, placement.NodeID); err != nil {
+		return EnvironmentQualificationRestoreAdmission{}, err
+	}
 	q := sqlc.New()
 	// Match ordinary admission's node -> account reservation order after the
 	// reviewed source/app authority locks, including an idempotent retry.

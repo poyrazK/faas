@@ -3359,6 +3359,12 @@ from .operator_intent_response import OperatorIntentResponse
 from .operator_intent_response_kind import OperatorIntentResponseKind
 from .operator_intent_response_metadata import OperatorIntentResponseMetadata
 from .operator_intent_response_status import OperatorIntentResponseStatus
+from .operator_park_execution_response import OperatorParkExecutionResponse
+from .operator_park_execution_response_action import OperatorParkExecutionResponseAction
+from .operator_park_execution_response_phase import OperatorParkExecutionResponsePhase
+from .operator_park_execution_response_terminal_state import OperatorParkExecutionResponseTerminalState
+from .operator_restart_execution_response import OperatorRestartExecutionResponse
+from .operator_restart_execution_response_phase import OperatorRestartExecutionResponsePhase
 from .operator_runtime_config import OperatorRuntimeConfig
 from .operator_runtime_config_apply_mode import OperatorRuntimeConfigApplyMode
 from .operator_runtime_config_kind import OperatorRuntimeConfigKind
@@ -8277,6 +8283,12 @@ __all__ = (
     "OperatorIntentResponseKind",
     "OperatorIntentResponseMetadata",
     "OperatorIntentResponseStatus",
+    "OperatorParkExecutionResponse",
+    "OperatorParkExecutionResponseAction",
+    "OperatorParkExecutionResponsePhase",
+    "OperatorParkExecutionResponseTerminalState",
+    "OperatorRestartExecutionResponse",
+    "OperatorRestartExecutionResponsePhase",
     "OperatorRuntimeConfig",
     "OperatorRuntimeConfigApplyMode",
     "OperatorRuntimeConfigKind",

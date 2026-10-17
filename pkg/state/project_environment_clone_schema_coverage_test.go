@@ -18,9 +18,20 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		t.Fatal(err)
 	}
 	wanted := map[string]string{
-		// adr: 1544, 1528 — clone neither artifact pins nor original serving authority.
+		// adr: 1544, 1547 — clone neither artifact pins nor original serving authority.
 		"environment_build_artifact_pins":      CloneSchemaOperational,
 		"environment_recovery_serving_history": CloneSchemaOperational,
+
+		// ADR-1522–1530: recovery claims, physical bindings and completion
+		// receipts belong to their original runtime owner, never to a clone.
+		"instance_snapshot_recovery":    CloneSchemaOperational,
+		"migration_admissions":          CloneSchemaOperational,
+		"migration_sources":             CloneSchemaOperational,
+		"node_lifecycle_completions":    CloneSchemaOperational,
+		"operator_node_executions":      CloneSchemaOperational,
+		"operator_park_executions":      CloneSchemaOperational,
+		"operator_recovery_submissions": CloneSchemaOperational,
+		"operator_restart_executions":   CloneSchemaOperational,
 
 		// ADR-202610171453: inventory internal hosting without copying identity or serving state.
 		"hosting_sites":                                 CloneSchemaConfiguration,

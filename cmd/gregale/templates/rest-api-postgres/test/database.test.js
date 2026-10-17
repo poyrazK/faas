@@ -150,6 +150,47 @@ test("shutdown aborts an already running readiness probe", async () => {
   assert.deepEqual(pools[1].clients[0].releases, [true]);
 });
 
+test("checkpoint drains every session, refuses SQL until restore and is idempotent", async () => {
+  const { db, pools } = await fixture(); const blocked = deferred();
+  await db.query("SELECT 1"); assert.equal(db.diagnostics.state, "ready");
+  pools[0].execute = (sql) => sql === "SELECT pg_sleep" ? blocked.promise : { rows: [] };
+  const work = assert.rejects(db.query("SELECT pg_sleep"), /database_cancelled/);
+  await tick(); assert.equal(db.diagnostics.activeRequests, 1);
+  const first = db.checkpoint(), second = db.checkpoint();
+  assert.equal(first, second); assert.equal(db.diagnostics.state, "checkpointing");
+  await assert.rejects(db.query("SELECT 1"), /database_unavailable/);
+  await first; await work; blocked.resolve({ rows: [] });
+  assert.equal(pools[0].ended, 1); assert.equal(pools.length, 1);
+  assert.deepEqual(db.diagnostics, { state: "checkpointed", generation: 0, activeRequests: 0 });
+  await db.checkpoint(); assert.equal(pools[0].ended, 1); // A retried capture finds it drained.
+  await assert.rejects(db.reload(), /database_unavailable/); assert.equal(pools.length, 1);
+  await db.restore();
+  assert.deepEqual(db.diagnostics, { state: "ready", generation: 1, activeRequests: 0 });
+  await db.query("SELECT 1"); assert.equal(pools.length, 2);
+  await db.close(); assert.equal(db.diagnostics.state, "closed");
+});
+
+test("a failed checkpoint drain stays closed and drains again when retried", { timeout: 3000 }, async () => {
+  const ended = deferred();
+  const { db, pools, logs } = await fixture({ restoreTimeoutMS: 30 });
+  pools[0].end = () => ended.promise;
+  await assert.rejects(db.checkpoint(), /database_unavailable/);
+  assert.deepEqual(logs, ["database_checkpoint_drain_failed"]);
+  assert.equal(db.diagnostics.state, "unavailable");
+  await assert.rejects(db.query("SELECT 1"), /database_unavailable/);
+  const retry = db.checkpoint();
+  await assert.rejects(db.restore(), /database_busy/);
+  ended.resolve(); await retry; assert.equal(db.diagnostics.state, "checkpointed");
+  await db.restore(); await db.query("SELECT 1"); await db.close();
+});
+
+test("maxInFlight bounds admission", async () => {
+  const { db, pools } = await fixture({ maxInFlight: 1, timeoutMS: 30 }); pools[0].execute = () => new Promise(() => {});
+  const held = assert.rejects(db.query("SELECT 1"), /database_cancelled/);
+  await assert.rejects(db.query("SELECT 1"), /database_busy/);
+  await held; await db.close();
+});
+
 const managedURI = password => `postgres://worker:${password}@db:5432/app?sslmode=require`;
 async function managedFixture(t, options = {}) {
   let raw = JSON.stringify({revision:'a'.repeat(64),secrets:{DATABASE_URL:managedURI('private-first')}});
@@ -260,6 +301,17 @@ test('restore timeout cancels active validation without a late publication or AC
   assert.equal(f.db.generation,0);assert.equal(f.pools[1].ended,1);assert.equal(f.receipts.length,1);
   await assert.rejects(f.db.query('SELECT 1'),/database_unavailable/);
   await f.db.restore();assert.equal(f.db.generation,1);
+});
+
+test('a rotation cannot build a pool while checkpointed; restore adopts the latest snapshot', async t => {
+  const f=await managedFixture(t);
+  await f.db.checkpoint();assert.equal(f.pools[0].ended,1);
+  f.publish('b');await assert.rejects(f.db.reload(),/database_unavailable/);
+  assert.equal(f.pools.length,1);
+  await f.db.restore();
+  assert.equal(f.pools.length,2);assert.equal(f.pools[1].dsn,managedURI('private-second'));
+  assert.equal(f.receipts.at(-1).status,'applied');assert.equal(f.receipts.at(-1).revision,'b'.repeat(64));
+  await f.db.query('SELECT 1');
 });
 
 test('partial guest contracts and serving migration credentials never downgrade to environment loading', async () => {

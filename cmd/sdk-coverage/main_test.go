@@ -44,7 +44,7 @@ func TestDevSessionAliasRetainsWireCoverage(t *testing.T) {
 	}
 }
 
-// adr: 1543, 1526, 1527 — named GitOps clients remain mandatory for all three routes.
+// adr: 1543, 1545, 1546 — named GitOps clients remain mandatory for all three routes.
 func TestGitOpsRecoveryRoutesRequireTheirTypedClients(t *testing.T) {
 	root, err := findRepoRoot()
 	if err != nil {

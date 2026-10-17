@@ -57,6 +57,7 @@ native_e2e_phase_files() {
       dev_watch_metal_test.go \
       environment_gitops_native_metal_test.go \
       environment_gitops_source_jobs_native_metal_test.go \
+      function_concurrency_metal_test.go \
       deploy_override_port_metal_test.go \
       deploy_wake_metal_test.go \
       dev_loop_metal_test.go \

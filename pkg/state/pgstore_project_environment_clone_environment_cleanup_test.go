@@ -297,7 +297,8 @@ func TestPgCloneEnvironmentCleanupScopeColumnInventory(t *testing.T) {
 		"exclusive_work_keys.environment_id",
 		"feature_flag_versions.environment_id",
 		"github_deploy_branches.scope",
-		"hosting_sites.environment", // Composite environment FK blocks cleanup until hosting retirement.
+		"hosting_oidc_trusts.environment", // External GitHub claim; its site FK retains the actual Gregale environment.
+		"hosting_sites.environment",       // Composite environment FK blocks cleanup until hosting retirement.
 		"instance_runtime_config_receipts.scope",
 		"invocation_environment_queue_admissions.environment_id",
 		"invocation_work_environment_admissions.environment_id",
