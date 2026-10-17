@@ -21,7 +21,7 @@ GOMEMLIMIT="${GOMEMLIMIT:-6GiB}" "${GO:-go}" test -race -gcflags=github.com/oneb
 GREGALE_DATA_REPAIR_DOCKER_TEST=1 make test-apid GO="${GO:-go}" RUN='^Test(ManagedDataRepair(Named|Validation|Replacement)?(Scheduled)?HTTPJourney|ManagedDataRepairHistoryRequiresMFA|OperatorDataRepairHealth.*|DashboardAdmin_TLSCutoverBannerPersistsAfterRollback)$' RACE=1
 "${GO:-go}" test -count=1 -run '^Test(DataRepairHealthRules|AlertMetricsAreEmitted)$' ./pkg/promqlrules
 bash scripts/ci/check_prometheus_alert_metadata.sh "$repair_root"
-"${GO:-go}" test -run 'Test(DataRepair|HelpDocsLinks|MarkdownReferenceFresh)' ./cmd/gregale
+"${GO:-go}" test -run 'Test(DataRepair|HelpDocsLinks|MarkdownReferenceFresh|RequiredFlagsWithoutValueAreMarkedBool)' ./cmd/gregale
 (cd sdk/commit-tests/go && "${GO:-go}" test -count=1 -run '^TestDataRepair' .)
 (cd sdk/node && npm run build && node --test test/data-repair-postgres.test.mjs)
 PYTHONPATH="$repair_root/sdk/python" "${PYTHON:-python3}" -m unittest discover -s sdk/python/tests -p test_data_repair_postgres.py -v
