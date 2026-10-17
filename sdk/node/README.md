@@ -3636,3 +3636,11 @@ opaque local preparation lease with `completed`, `renew` and `complete`. Install
 `runWithProcessingLease` / `runDurableWithProcessingLease` compose the same local
 fence with platform acknowledgment and optional atomic intent staging. Stop local
 renewal before the short final transaction. See [takeover, failure and lease boundaries](../../docs/event-consumer-processing-node.md).
+
+`worker.runPreparedDurable(pool, prepare, handler, { preparationTimeoutMs,
+processingLeaseMs, signal })` coordinates both local and platform lease renewal
+during side-effect-free preparation. Existing receipts skip both callbacks. Local
+renewal stops and joins before the fenced business-write/receipt/intent commit;
+platform renewal continues through it. The preparation timeout is required and
+does not bound the final transaction; supply a parent deadline and driver timeouts.
+See [coordinated preparation and recovery](../../docs/event-acknowledgment-node-preparation.md).

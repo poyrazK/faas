@@ -106,13 +106,20 @@ The initial receipt-only probe never checks an absent processing row or runs
 business code. Durable recovery sends the intent without repeating preparation.
 
 The local processing lease and platform acknowledgment lease protect separate
-boundaries. Local renewal does not renew the platform claim, and the worker methods
-do not renew either lease while application preparation runs outside them. Bound
+boundaries. Local renewal does not renew the platform claim, and the two
+`WithProcessingLease` worker methods do not renew either lease while application
+preparation runs outside them. Bound
 preparation to the remaining platform budget, or separately maintain its platform
 lease using the existing protocol and trusted host ownership. If that attempt
 expires, final new business work must fail platform renewal and wait for a valid
-redelivery. HTTP 202 and these helpers do not keep a parked VM awake. This change
-adds no automatic preparation coordinator, platform route or migration.
+redelivery. HTTP 202 and these helpers do not keep a parked VM awake.
+
+For coordinated renewal during preparation, use the separate
+[`runPreparedDurable` lifecycle](event-acknowledgment-node-preparation.md). It
+reconciles receipts first, confirms the platform capability, claims the local
+lease and maintains both during bounded side-effect-free preparation. It joins
+local renewal before the same atomic receipt/intent completion while platform
+renewal continues. The low-level lease helpers retain their manual lifecycle.
 
 Use leased processing consistently for a consumer; the unleased receipt and
 worker methods do not consult this optional table. The

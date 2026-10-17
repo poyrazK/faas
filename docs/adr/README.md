@@ -1,5 +1,7 @@
 # Architecture Decision Records
 
+- [Coordinated Node event preparation](20261017114800-coordinated-node-event-preparation.md)
+
 - [Node consumer processing leases](20261017114009-node-consumer-processing-leases.md)
 
 - [Restart-safe Node recovery alert checkpoints](20261017112428-node-recovery-alert-checkpoints.md)

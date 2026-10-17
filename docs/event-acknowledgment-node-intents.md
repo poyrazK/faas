@@ -69,6 +69,9 @@ For preparation outside the transaction, `runDurableWithProcessingLease` compose
 the [Node local processing fence](event-consumer-processing-node.md) with atomic
 receipt/intent staging. It does not renew a local lease during the locked final
 transaction or maintain the platform lease during external preparation.
+[`runPreparedDurable`](event-acknowledgment-node-preparation.md) manages both
+renewal loops during bounded preparation and joins local renewal before the same
+atomic completion. It stages an intent without sending a terminal callback.
 
 ## Persist explicit negative decisions
 

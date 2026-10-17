@@ -248,3 +248,39 @@ to its remaining budget or maintain that platform lease separately under trusted
 host ownership. The worker confirms/renews the platform lease only during final
 transactional work. Configure driver/query/statement timeouts and job cancellation;
 this module installs no renewal loop or worker service. See [processing lease semantics and unknown commits](../../docs/event-consumer-processing-node.md).
+
+## Coordinate both leases during preparation
+
+For new jobs whose preparation needs local and platform renewal, explicitly use
+`acceptAuthenticatedDeliveryForCoordinatedPreparation` from `processing.mjs`
+after authentication/authorization. It persists version 4 records with mode
+`durable-intent-prepared`. Keep version 2 unleased jobs and version 3 manual lease
+jobs on their existing paths; do not relabel records or run multiple modes for
+the same owned job.
+
+```js
+import { processOwnedCoordinatedDelivery } from './processing.mjs';
+
+await processOwnedCoordinatedDelivery(job, { app: appSlug, accountId, appId }, pool,
+  async (originalBody, { signal }) => {
+    signal.throwIfAborted();
+    const event = JSON.parse(originalBody.toString('utf8'));
+    return await readAndValidateWithoutEffects(event, signal);
+  }, async (tx, signal, _originalBody, prepared) => {
+    signal.throwIfAborted();
+    await tx.query('UPDATE invoices SET paid=true WHERE id=$1', [prepared.invoiceId]);
+    return '{"applied":true}';
+  }, { preparationTimeoutMs: 60000, processingLeaseMs: 30000 });
+```
+
+`runPreparedDurable` owns both renewal loops and joins local renewal before the
+short final transaction. Do not start manual renewal or detached preparation
+work. The wrapper uses the job's ownership signal for the entire operation and
+acks the job only after confirmed local receipt/intent commit. Existing receipts
+skip preparation and business code; the independent intent host handles callbacks.
+Retain the job after failures or uncertainty and follow explicit owner recovery.
+
+The required preparation budget covers startup, claim, preparation and the local
+renewal handoff. It does not bound the final transaction. Configure job deadlines,
+pool/query/statement timeouts and a host that remains available; neither HTTP 202
+nor timers keep a parked VM awake. See [lease loss, cancellation and uncertain commits](../../docs/event-acknowledgment-node-preparation.md).

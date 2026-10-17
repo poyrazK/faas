@@ -632,3 +632,4 @@ export type { EventAcknowledgmentIntentConfirmation } from './event-acknowledgme
 
 export { eventConsumerProcessingSchema, claimEventConsumerProcessing, EventConsumerProcessingLease,
   EventConsumerProcessingError, type EventConsumerProcessingErrorCode } from './event-consumer-processing.js';
+export type { EventAcknowledgmentPreparedOptions } from './event-acknowledgment-preparation.js';

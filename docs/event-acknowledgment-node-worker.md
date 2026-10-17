@@ -137,3 +137,10 @@ schemas or background services. For a local preparation fence, use the separate
 `runWithProcessingLease` / `runDurableWithProcessingLease` methods. See the
 [Go worker](event-acknowledgment-worker.md) and [platform protocol](event-deferred-acknowledgments.md)
 for shared boundaries.
+
+For preparation that needs both leases maintained, use
+[`runPreparedDurable`](event-acknowledgment-node-preparation.md) with an explicit
+preparation timeout. It manages receipt-first recovery, local claim and dual
+renewal, then joins local renewal before the fenced atomic receipt/intent commit.
+Preparation remains side-effect-free and cooperative; use a parent deadline and
+bounded driver calls for the final transaction and shutdown.

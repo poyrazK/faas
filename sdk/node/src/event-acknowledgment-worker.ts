@@ -11,6 +11,9 @@ import { acknowledgmentCall, acknowledgmentWait, AcknowledgmentCallbackFailure,
   type AcknowledgmentWorkerSettings, type AcknowledgmentWorkerScope } from './event-acknowledgment-callbacks.js';
 
 import { withEventConsumerProcessingLease, processingStoreError, type EventConsumerProcessingLease } from './event-consumer-processing.js';
+import { coordinateEventAcknowledgmentPreparation, preparationSettings,
+  type EventAcknowledgmentPreparedOptions } from './event-acknowledgment-preparation.js';
+export type { EventAcknowledgmentPreparedOptions } from './event-acknowledgment-preparation.js';
 import { saveIntent, saveNegativeIntent, intentStoreError, type EventAcknowledgmentIntentResult,
   type EventAcknowledgmentIntentStatus, type IntentInput } from './event-acknowledgment-intent-store.js';
 
@@ -88,6 +91,24 @@ export class EventAcknowledgmentWorker {
     return this.#operate(pool, options, signal => withEventConsumerProcessingLease(lease, this.#input,
       hooks => this.#durable(pool, signal, handler, hooks)));
   }
+  /** Own both renewal loops during side-effect-free preparation, then atomically save writes/receipt/intent. */
+  async runPreparedDurable<T>(pool: EventConsumerPool, prepare: (signal: AbortSignal) => Promise<T>,
+    handler: (transaction: EventConsumerTransaction, signal: AbortSignal, prepared: T) => Promise<string>,
+    options: EventAcknowledgmentPreparedOptions): Promise<EventAcknowledgmentIntentResult> {
+    const preparation = preparationSettings(options);
+    if (typeof prepare !== 'function' || typeof handler !== 'function') throw new TypeError('invalid event preparation callbacks');
+    return this.#operate(pool, options, async signal => {
+      try { return await this.#durable(pool, signal); }
+      catch (error) { if (!missing(error)) throw error; }
+      return coordinateEventAcknowledgmentPreparation(pool, this.#input, signal, preparation, prepare, {
+        start: async work => { await this.#startLease(work.signal); return this.#monitor(work); },
+        replay: workSignal => this.#durable(pool, workSignal),
+        complete: (lease, prepared, workSignal) => withEventConsumerProcessingLease(lease, this.#input,
+          processingHooks => this.#withIntent(hooks => eventConsumerTransaction(pool, this.#input,
+            tx => handler(tx, workSignal, prepared), { signal: workSignal }, hooks), processingHooks)),
+      });
+    });
+  }
   /** Receipt-only staging after uncertain COMMIT. Never invokes business code. */
   async saveCompletionIntent(pool: EventConsumerPool, options: EventAcknowledgmentWorkerOperationOptions = {}): Promise<EventAcknowledgmentIntentResult> {
     return this.#operate(pool, options, signal => this.#durable(pool, signal));
@@ -106,11 +127,15 @@ export class EventAcknowledgmentWorker {
   async #durable(pool: EventConsumerPool, signal?: AbortSignal,
     handler?: (transaction: EventConsumerTransaction, signal: AbortSignal) => Promise<string>,
     processingHooks: EventConsumerTransactionHooks = {}): Promise<EventAcknowledgmentIntentResult> {
+    return this.#withIntent(hooks => handler === undefined ? this.#receipt(pool, signal, hooks) : this.#process(pool, handler, signal, hooks), processingHooks);
+  }
+  async #withIntent(operation: (hooks: EventConsumerTransactionHooks) => Promise<EventConsumerTransactionResult>,
+    processingHooks: EventConsumerTransactionHooks = {}): Promise<EventAcknowledgmentIntentResult> {
     let intent: EventAcknowledgmentIntentStatus | undefined;
     const input = this.#intentInput();
     const hooks: EventConsumerTransactionHooks = { ...processingHooks, storageError: intentStoreError,
       beforeCommit: async (tx, receipt) => { intent = await saveIntent(tx, input, 'complete', '', receipt.body); } };
-    const receipt = handler === undefined ? await this.#receipt(pool, signal, hooks) : await this.#process(pool, handler, signal, hooks);
+    const receipt = await operation(hooks);
     return Object.freeze({ receiptConfirmed: true, receipt: Object.freeze(receipt), intent: intent! });
   }
   async #process(pool: EventConsumerPool, handler: (transaction: EventConsumerTransaction, signal: AbortSignal) => Promise<string>,

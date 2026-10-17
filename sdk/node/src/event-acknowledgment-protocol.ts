@@ -22,13 +22,15 @@ export interface EventAcknowledgmentWorkerResult {
   readonly acknowledgment?: Readonly<EventAcknowledgmentStatus>;
 }
 export type EventAcknowledgmentWorkerErrorCode = 'event_acknowledgment_lease_lost' | 'event_acknowledgment_unconfirmed'
-  | 'event_acknowledgment_worker_busy' | 'event_consumer_receipt_missing' | 'event_consumer_receipt_committed';
+  | 'event_acknowledgment_worker_busy' | 'event_consumer_receipt_missing' | 'event_consumer_receipt_committed'
+  | 'event_consumer_preparation_timeout';
 const messages: Record<EventAcknowledgmentWorkerErrorCode, string> = {
   event_acknowledgment_lease_lost: 'event acknowledgment lease expired, replaced or unavailable',
   event_acknowledgment_unconfirmed: 'event acknowledgment callback outcome unconfirmed',
   event_acknowledgment_worker_busy: 'event acknowledgment worker operation already running',
   event_consumer_receipt_missing: 'no committed event consumer receipt',
   event_consumer_receipt_committed: 'event consumer receipt already committed; complete instead of rejecting',
+  event_consumer_preparation_timeout: 'event consumer preparation budget expired',
 };
 export const emptyResult: EventAcknowledgmentWorkerResult = Object.freeze({ receiptConfirmed: false });
 
