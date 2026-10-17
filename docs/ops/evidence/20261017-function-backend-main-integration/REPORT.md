@@ -133,6 +133,20 @@ qualification-tagged simulated-host race run and native-binary compilation were
 still pending when this increment was recorded; the PR tracks completion before
 merge. Function native activation remains disabled.
 
+## Completed local checks and management SDK contract
+
+The combined qualification-tagged simulated-host race run subsequently passed
+481 tests/subtests with zero skips or failures. The native E2E binary compiled
+from the integrated source, with SHA-256
+`59a0c6b6764b6dd7d0d77225ef3f51db9269f5b877948f6fcf42e33bdcd072ef`.
+No native test body was executed.
+
+Hosted management-client regeneration also found stale PostgreSQL access enums
+in the Node and Python generated SDKs. The published Auth dark-launch change
+deliberately removed `auth` from the public binding schema. Regeneration now
+matches that schema's four access modes. The published spec and feature flags
+retain their existing behavior. The Node SDK build and Python compilation pass.
+
 ## Qualification boundary
 
 Production activation remains disabled. This managed container has no supported

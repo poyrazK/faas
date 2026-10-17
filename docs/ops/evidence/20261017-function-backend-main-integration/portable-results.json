@@ -442,5 +442,69 @@
     "native_compile_pending_at_record_creation": true,
     "native_execution_qualified": false,
     "production_ready": false
+  },
+  "completed_rehearsal_validation": {
+    "code_commit": "f4ee8ef514b7396475cb5e7760271c011c92279e",
+    "published_head_at_validation": "bb2dec11b01c8494515a6bcf75b0fac8cbeb281a",
+    "race": {
+      "packages": {
+        "github.com/onebox-faas/faas/pkg/fcvm/activity": {
+          "passed_tests": 2,
+          "skipped_tests": [],
+          "failed_tests": []
+        },
+        "github.com/onebox-faas/faas/pkg/state": {
+          "passed_tests": 109,
+          "skipped_tests": [],
+          "failed_tests": []
+        },
+        "github.com/onebox-faas/faas/pkg/fcvm": {
+          "passed_tests": 190,
+          "skipped_tests": [],
+          "failed_tests": []
+        },
+        "github.com/onebox-faas/faas/pkg/sched": {
+          "passed_tests": 93,
+          "skipped_tests": [],
+          "failed_tests": []
+        },
+        "github.com/onebox-faas/faas/pkg/vmmdgrpc": {
+          "passed_tests": 41,
+          "skipped_tests": [],
+          "failed_tests": []
+        },
+        "github.com/onebox-faas/faas/pkg/runtimeadmission": {
+          "passed_tests": 46,
+          "skipped_tests": [],
+          "failed_tests": []
+        }
+      },
+      "log_sha256": "3649f6948ba791e709d7d362fdeb39038456e32323f0a146be1db7a3b7e4b591"
+    },
+    "native_compile": {
+      "passed": true,
+      "binary_sha256": "59a0c6b6764b6dd7d0d77225ef3f51db9269f5b877948f6fcf42e33bdcd072ef",
+      "native_execution_qualified": false
+    }
+  },
+  "management_sdk_contract_correction": {
+    "initial_ci_run": 39078571528,
+    "initial_ci_job": 117530700818,
+    "public_credential_access": [
+      "read_write",
+      "read_only",
+      "migration",
+      "data_api"
+    ],
+    "published_spec_changed": false,
+    "feature_flags_changed": false,
+    "node_generator": "0.31.0",
+    "python_generator": "0.29.0",
+    "node_build_passed": true,
+    "python_compile_passed": true,
+    "generation_logs": {
+      "node": "15392908ce19418594df4eb24e884f3b432fb178ab7750f356dd0a388e4bb95e",
+      "python": "7e688397f920a4fa5a6fa76de15aa7c88612e9ee2d961ee5eaff0de6be3a9c2a"
+    }
   }
 }
