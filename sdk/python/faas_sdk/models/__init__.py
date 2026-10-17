@@ -1197,6 +1197,7 @@ from .environment_workload import EnvironmentWorkload
 from .environment_workload_activation_evidence import EnvironmentWorkloadActivationEvidence
 from .environment_workload_progress import EnvironmentWorkloadProgress
 from .environment_workload_progress_activation import EnvironmentWorkloadProgressActivation
+from .environment_workload_progress_build_cache_status import EnvironmentWorkloadProgressBuildCacheStatus
 from .environment_workload_progress_preparation import EnvironmentWorkloadProgressPreparation
 from .environment_workload_progress_qualification import EnvironmentWorkloadProgressQualification
 from .environment_workload_progress_serving import EnvironmentWorkloadProgressServing
@@ -5974,6 +5975,7 @@ __all__ = (
     "EnvironmentWorkloadActivationEvidence",
     "EnvironmentWorkloadProgress",
     "EnvironmentWorkloadProgressActivation",
+    "EnvironmentWorkloadProgressBuildCacheStatus",
     "EnvironmentWorkloadProgressPreparation",
     "EnvironmentWorkloadProgressQualification",
     "EnvironmentWorkloadProgressServing",

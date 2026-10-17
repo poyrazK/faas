@@ -50,6 +50,16 @@ func (s *server) prepareEnvironmentGitArchive(ctx context.Context, lease state.E
 	if err := verifyEnvironmentGitBuildArchive(archivePath, maxBytes, lease, request.Source); err != nil {
 		return artifact, err
 	}
+	contextFormat := ""
+	if request.Source.ReuseUnchangedBuild {
+		canonicalPath, canonicalBytes, err := canonicalEnvironmentBuildContext(archivePath, request.Source.BuildContext, maxBytes)
+		if err != nil {
+			return artifact, err
+		}
+		_ = os.Remove(archivePath)
+		archivePath, bytes = canonicalPath, canonicalBytes
+		contextFormat = environmentgitops.BuildContextFormat
+	}
 	if problem := scanSourceTarballSecrets(archivePath, limits); problem != nil {
 		return artifact, fmt.Errorf("git build source validation rejected the archive")
 	}
@@ -70,7 +80,7 @@ func (s *server) prepareEnvironmentGitArchive(ctx context.Context, lease state.E
 	if err := apidsource.PublishReviewedSource(ctx, request.BuildID, archivePath, checksum); err != nil {
 		return artifact, err
 	}
-	artifact = state.EnvironmentWorkloadSourceArtifact{RevisionID: lease.Revision.ID, CommitSHA: lease.Revision.CommitSHA, DefinitionDigest: lease.Revision.Digest, BuildID: request.BuildID, Path: archivePath, SHA256: checksum, Bytes: bytes,
+	artifact = state.EnvironmentWorkloadSourceArtifact{ContextFormat: contextFormat, RevisionID: lease.Revision.ID, CommitSHA: lease.Revision.CommitSHA, DefinitionDigest: lease.Revision.Digest, BuildID: request.BuildID, Path: archivePath, SHA256: checksum, Bytes: bytes,
 		LogPath: filepath.Join(spoolRoot(), request.BuildID, "build.log")}
 	return artifact, nil
 }
@@ -109,4 +119,15 @@ func (s *server) environmentGitBuildStream(ctx context.Context, lease state.Envi
 	return stream.Body, func(bytes int64) bool {
 		return stream.Stats != nil && stream.Stats.Err == nil && !stream.Stats.Truncated && stream.Stats.ResolvedCommitSHA == lease.Revision.CommitSHA && stream.Stats.BytesStreamed == bytes
 	}, nil
+}
+
+// The approved provider archive was already checked above. Canonicalization
+// changes the actual delivered context, never just its cache fingerprint.
+func canonicalEnvironmentBuildContext(archivePath, buildContext string, maxBytes int64) (string, int64, error) {
+	input, err := openSpoolFile(archivePath)
+	if err != nil {
+		return "", 0, err
+	}
+	defer func() { _ = input.Close() }()
+	return apidsource.CanonicalGitBuildContext(input, spoolRoot(), buildContext, maxBytes)
 }

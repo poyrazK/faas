@@ -61,3 +61,11 @@ func TestEnvironmentGitOpsExplainEscapesTerminalControlCharacters(t *testing.T) 
 		t.Fatalf("terminal control leaked: %q", out.String())
 	}
 }
+
+func TestEnvironmentGitOpsExplainCacheHitKeepsQualificationPending(t *testing.T) {
+	var out bytes.Buffer
+	err := writeEnvironmentGitOpsExplanation(&out, api.EnvironmentGitOpsExplanation{Workloads: []api.EnvironmentWorkloadProgress{{Resource: "workload/api", BuildStatus: "succeeded", BuildCacheStatus: "hit", Preparation: "complete", Qualification: "pending", Activation: "pending", Serving: "unknown"}}})
+	if err != nil || !strings.Contains(out.String(), "Build cache: hit (fresh qualification remains required)") || !strings.Contains(out.String(), "qualification pending; activation pending; serving unknown") {
+		t.Fatalf("cache status changed qualification: %s %v", out.String(), err)
+	}
+}

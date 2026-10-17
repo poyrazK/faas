@@ -12,6 +12,11 @@ export type EnvironmentWorkloadProgress = {
   job_id?: string;
   execution_mode: string;
   build_status?: string;
+  /**
+   * Recorded builder cache decision; does not grant qualification, activation or serving authority.
+   */
+  build_cache_status?: 'hit' | 'miss' | 'invalidated';
+  build_cache_key_sha256?: string;
   preparation: 'complete' | 'pending' | 'failed' | 'unknown';
   qualification: 'complete' | 'pending' | 'failed' | 'unknown';
   activation: 'complete' | 'pending' | 'failed' | 'unknown';

@@ -58938,6 +58938,13 @@ components:
           type: string
         build_status:
           type: string
+        build_cache_status:
+          type: string
+          enum: [hit, miss, invalidated]
+          description: Recorded builder cache decision; does not grant qualification, activation or serving authority.
+        build_cache_key_sha256:
+          type: string
+          pattern: '^[a-f0-9]{64}$'
         preparation:
           type: string
           enum:
@@ -59754,6 +59761,13 @@ components:
       type: object
       description: Build source within the approved Git tree, a function runner, or an immutable OCI digest. Function sources require runtime and exclude dockerfile. An immutable image may explicitly opt into full-rootfs dispatch. The gated internal executor reserves new private workloads when app is omitted. Preparation does not grant serving authority.
       properties:
+        reuse_unchanged_build:
+          type: boolean
+          default: false
+          description: Opt into isolated canonical Git context and same-app signed build reuse. A fresh target candidate and qualification are always required. An explicit build_artifact_id takes precedence. Link entries in the context are unsupported.
+        build_context:
+          type: string
+          description: Repository-relative context directory; defaults to the entire repository when reuse is enabled. Must contain source.directory and all shared build inputs. Files outside this directory are not delivered to the builder. Requires reuse_unchanged_build.
         kind:
           type: string
           enum:

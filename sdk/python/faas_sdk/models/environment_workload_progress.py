@@ -10,6 +10,10 @@ from ..models.environment_workload_progress_activation import (
     EnvironmentWorkloadProgressActivation,
     check_environment_workload_progress_activation,
 )
+from ..models.environment_workload_progress_build_cache_status import (
+    EnvironmentWorkloadProgressBuildCacheStatus,
+    check_environment_workload_progress_build_cache_status,
+)
 from ..models.environment_workload_progress_preparation import (
     EnvironmentWorkloadProgressPreparation,
     check_environment_workload_progress_preparation,
@@ -45,6 +49,9 @@ class EnvironmentWorkloadProgress:
     deployment_id: str | Unset = UNSET
     job_id: str | Unset = UNSET
     build_status: str | Unset = UNSET
+    build_cache_status: EnvironmentWorkloadProgressBuildCacheStatus | Unset = UNSET
+    """Recorded builder cache decision; does not grant qualification, activation or serving authority."""
+    build_cache_key_sha256: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -70,6 +77,12 @@ class EnvironmentWorkloadProgress:
 
         build_status = self.build_status
 
+        build_cache_status: str | Unset = UNSET
+        if not isinstance(self.build_cache_status, Unset):
+            build_cache_status = self.build_cache_status
+
+        build_cache_key_sha256 = self.build_cache_key_sha256
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -90,6 +103,10 @@ class EnvironmentWorkloadProgress:
             field_dict["job_id"] = job_id
         if build_status is not UNSET:
             field_dict["build_status"] = build_status
+        if build_cache_status is not UNSET:
+            field_dict["build_cache_status"] = build_cache_status
+        if build_cache_key_sha256 is not UNSET:
+            field_dict["build_cache_key_sha256"] = build_cache_key_sha256
 
         return field_dict
 
@@ -118,6 +135,15 @@ class EnvironmentWorkloadProgress:
 
         build_status = d.pop("build_status", UNSET)
 
+        _build_cache_status = d.pop("build_cache_status", UNSET)
+        build_cache_status: EnvironmentWorkloadProgressBuildCacheStatus | Unset
+        if isinstance(_build_cache_status, Unset):
+            build_cache_status = UNSET
+        else:
+            build_cache_status = check_environment_workload_progress_build_cache_status(_build_cache_status)
+
+        build_cache_key_sha256 = d.pop("build_cache_key_sha256", UNSET)
+
         environment_workload_progress = cls(
             resource=resource,
             app_id=app_id,
@@ -130,6 +156,8 @@ class EnvironmentWorkloadProgress:
             deployment_id=deployment_id,
             job_id=job_id,
             build_status=build_status,
+            build_cache_status=build_cache_status,
+            build_cache_key_sha256=build_cache_key_sha256,
         )
 
         environment_workload_progress.additional_properties = d

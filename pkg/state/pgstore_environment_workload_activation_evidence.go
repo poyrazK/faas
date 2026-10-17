@@ -278,6 +278,33 @@ func environmentWorkloadActivationEvidenceTx(ctx context.Context, tx sqlc.DBTX, 
 		if err != nil {
 			return zero, err
 		}
+		for i := range evidence.Workloads {
+			progress := &evidence.Workloads[i]
+			if progress.DeploymentID == "" {
+				continue
+			}
+			dep, err := q.DeploymentByID(ctx, tx, mustPgUUID(progress.DeploymentID))
+			if errors.Is(err, pgx.ErrNoRows) {
+				continue
+			}
+			if err != nil {
+				return zero, mapErr(err)
+			}
+			buildID, _ := dep.Coalesce.(string)
+			if buildID == "" || pgUUIDString(dep.AppID) != progress.AppID {
+				continue
+			}
+			build, err := q.BuildByID(ctx, tx, mustPgUUID(buildID))
+			if errors.Is(err, pgx.ErrNoRows) {
+				continue
+			}
+			if err != nil {
+				return zero, mapErr(err)
+			}
+			if pgUUIDString(build.DeploymentID) == progress.DeploymentID {
+				environmentBuildCacheProgress(progress, Build{CacheStatus: build.CacheStatus.String, CacheKeySHA256: build.CacheKeySha256.String})
+			}
+		}
 	}
 	return evidence, nil
 }

@@ -1,6 +1,7 @@
 package builderd
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/environmentgitops"
 	"github.com/onebox-faas/faas/pkg/environmentsync"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -76,7 +78,7 @@ func TestEnvironmentWorkloadSourceBuildCompletionRetainsRecoverableHold(t *testi
 	}
 }
 
-func heldSourceBuild(t *testing.T, kind string) (*state.MemStore, state.Deployment, state.App) {
+func heldSourceBuild(t *testing.T, kind string, reuse ...bool) (*state.MemStore, state.Deployment, state.App) {
 	t.Helper()
 	appType := state.AppTypeApp
 	if kind == "function" {
@@ -101,6 +103,9 @@ func heldSourceBuild(t *testing.T, kind string) (*state.MemStore, state.Deployme
 		t.Fatal(err)
 	}
 	buildSource := &api.EnvironmentWorkloadSource{Kind: kind, Directory: "."}
+	if len(reuse) > 0 && reuse[0] {
+		buildSource.ReuseUnchangedBuild, buildSource.BuildContext, buildSource.Directory = true, "src", "src"
+	}
 	if kind == "function" {
 		buildSource.Runtime = "node22"
 	}
@@ -151,8 +156,40 @@ func heldSourceBuild(t *testing.T, kind string) (*state.MemStore, state.Deployme
 	if err != nil {
 		t.Fatal(err)
 	}
+	contextFormat := ""
+	if buildSource.ReuseUnchangedBuild {
+		makeTarballWithName(t, path, []string{"repo/src/package.json", "repo/src/deploy/Dockerfile"})
+		data, err = os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var canonical bytes.Buffer
+		if err := environmentgitops.CanonicalBuildContext(bytes.NewReader(data), &canonical, "src", 1<<20); err != nil {
+			t.Fatal(err)
+		}
+		data = canonical.Bytes()
+		if err := os.WriteFile(path, data, 0o640); err != nil {
+			t.Fatal(err)
+		}
+		contextFormat = api.EnvironmentGitBuildContextFormat
+	}
 	hash := sha256.Sum256(data)
-	artifact := state.EnvironmentWorkloadSourceArtifact{RevisionID: requests[0].RevisionID, CommitSHA: requests[0].CommitSHA, DefinitionDigest: requests[0].DefinitionDigest, BuildID: requests[0].BuildID, Path: path, SHA256: hex.EncodeToString(hash[:]), Bytes: int64(len(data)), LogPath: filepath.Join(filepath.Dir(path), "build.log")}
+	artifact := state.EnvironmentWorkloadSourceArtifact{ContextFormat: contextFormat, RevisionID: requests[0].RevisionID, CommitSHA: requests[0].CommitSHA, DefinitionDigest: requests[0].DefinitionDigest, BuildID: requests[0].BuildID, Path: path, SHA256: hex.EncodeToString(hash[:]), Bytes: int64(len(data)), LogPath: filepath.Join(filepath.Dir(path), "build.log")}
+	// Neither unreviewed normalization nor a claimed opt-in with an
+	// unnormalized archive may publish a candidate through the store boundary.
+	wrongContext := artifact
+	wrongContext.ContextFormat = api.EnvironmentGitBuildContextFormat
+	if buildSource.ReuseUnchangedBuild {
+		wrongContext.ContextFormat = ""
+	}
+	if _, err := store.PrepareEnvironmentGitOpsCandidates(t.Context(), lease, plan, map[string]state.EnvironmentWorkloadSourceArtifact{requests[0].Resource: wrongContext}); !errors.Is(err, state.ErrInvalidArgument) {
+		t.Fatalf("mismatched context published a candidate: %v", err)
+	}
+	unknownContext := artifact
+	unknownContext.ContextFormat = "unknown-context-format"
+	if _, err := store.PrepareEnvironmentGitOpsCandidates(t.Context(), lease, plan, map[string]state.EnvironmentWorkloadSourceArtifact{requests[0].Resource: unknownContext}); !errors.Is(err, state.ErrInvalidArgument) {
+		t.Fatalf("unknown context format published a candidate: %v", err)
+	}
 	candidates, err := store.PrepareEnvironmentGitOpsCandidates(t.Context(), lease, plan, map[string]state.EnvironmentWorkloadSourceArtifact{requests[0].Resource: artifact})
 	if err != nil || len(candidates) != 1 {
 		t.Fatalf("prepare: %+v %v", candidates, err)

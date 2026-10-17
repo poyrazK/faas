@@ -217,3 +217,19 @@ test('recovery catalog binds the immutable target and source-scoped cursor using
     assert.deepEqual(result, body);
   } finally { client.uninstall(); }
 });
+
+
+test('unchanged source build reuse preserves pending target qualification', () => {
+  const source: import('../src/index.js').EnvironmentWorkloadSource = {
+    kind: 'source', directory: 'workspace/apps/api', reuse_unchanged_build: true, build_context: 'workspace',
+  };
+  assert.deepEqual(JSON.parse(JSON.stringify(source)), source);
+  const progress: import('../src/index.js').EnvironmentWorkloadProgress = {
+    resource: 'workload/api', app_id: 'app', execution_mode: 'http', build_status: 'succeeded',
+    build_cache_status: 'hit', build_cache_key_sha256: 'a'.repeat(64), preparation: 'complete',
+    qualification: 'pending', activation: 'pending', serving: 'unknown', blocking_reasons: [],
+  };
+  assert.deepEqual(JSON.parse(JSON.stringify(progress)), progress);
+  assert.equal(progress.qualification, 'pending');
+  assert.equal(progress.serving, 'unknown');
+});

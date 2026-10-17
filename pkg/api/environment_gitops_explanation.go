@@ -33,15 +33,17 @@ type EnvironmentGitOpsDiagnostic struct {
 // Stages are complete, pending, failed or unknown. BuildStatus is a recorded
 // builder state, not proof of qualification, activation or serving.
 type EnvironmentWorkloadProgress struct {
-	Resource        string   `json:"resource"`
-	AppID           string   `json:"app_id"`
-	DeploymentID    string   `json:"deployment_id,omitempty"`
-	JobID           string   `json:"job_id,omitempty"`
-	ExecutionMode   string   `json:"execution_mode"`
-	BuildStatus     string   `json:"build_status,omitempty"`
-	Preparation     string   `json:"preparation"`
-	Qualification   string   `json:"qualification"`
-	Activation      string   `json:"activation"`
-	Serving         string   `json:"serving"`
-	BlockingReasons []string `json:"blocking_reasons"`
+	Resource            string   `json:"resource"`
+	AppID               string   `json:"app_id"`
+	DeploymentID        string   `json:"deployment_id,omitempty"`
+	JobID               string   `json:"job_id,omitempty"`
+	ExecutionMode       string   `json:"execution_mode"`
+	BuildStatus         string   `json:"build_status,omitempty"`
+	BuildCacheStatus    string   `json:"build_cache_status,omitempty"`
+	BuildCacheKeySHA256 string   `json:"build_cache_key_sha256,omitempty"`
+	Preparation         string   `json:"preparation"`
+	Qualification       string   `json:"qualification"`
+	Activation          string   `json:"activation"`
+	Serving             string   `json:"serving"`
+	BlockingReasons     []string `json:"blocking_reasons"`
 }

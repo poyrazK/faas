@@ -65,6 +65,9 @@ func writeEnvironmentGitOpsExplanation(w io.Writer, explanation api.EnvironmentG
 		known(explanation.ObservedCommitSHA), clean(explanation.SourceFreshness), known(explanation.ApprovedRevisionID), known(explanation.AppliedRevisionID), known(explanation.ServingRevisionID))
 	for _, workload := range explanation.Workloads {
 		fmt.Fprintf(&out, "%s: artifact/build %s; qualification %s; activation %s; serving %s\n", clean(workload.Resource), known(workload.Preparation), known(workload.Qualification), known(workload.Activation), known(workload.Serving))
+		if workload.BuildCacheStatus != "" {
+			fmt.Fprintf(&out, "  Build cache: %s (fresh qualification remains required)\n", clean(workload.BuildCacheStatus))
+		}
 		if workload.BuildStatus != "" {
 			fmt.Fprintf(&out, "  Recorded build: %s\n", clean(workload.BuildStatus))
 		}

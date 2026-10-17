@@ -302,3 +302,29 @@ def test_gitlab_review_policy_has_no_github_installation_identity():
     evidence = EnvironmentGitProtectedBranchEvidence.from_dict(body)
     assert evidence.repository_id == 41
     assert "installation_id" not in evidence.to_dict()
+
+
+def test_unchanged_build_context_and_cache_progress_round_trip() -> None:
+    from faas_sdk.models import EnvironmentWorkloadProgress, EnvironmentWorkloadSource
+
+    source = {
+        "kind": "source",
+        "directory": "workspace/apps/api",
+        "reuse_unchanged_build": True,
+        "build_context": "workspace",
+    }
+    assert EnvironmentWorkloadSource.from_dict(source).to_dict() == source
+    progress = {
+        "resource": "workload/api",
+        "app_id": "app",
+        "execution_mode": "http",
+        "build_status": "succeeded",
+        "build_cache_status": "hit",
+        "build_cache_key_sha256": "a" * 64,
+        "preparation": "complete",
+        "qualification": "pending",
+        "activation": "pending",
+        "serving": "unknown",
+        "blocking_reasons": [],
+    }
+    assert EnvironmentWorkloadProgress.from_dict(progress).to_dict() == progress

@@ -342,6 +342,32 @@ Pins retain code and provenance; they do not copy snapshots or grant serving
 permission. Fresh target qualification and activation are still required. Full
 native VM/leak acceptance remains pending on an exclusive physical x86_64 host.
 
+For automatic reuse across approved commits, opt into an isolated build context:
+
+```yaml
+source:
+  kind: source
+  directory: workspace/apps/api
+  reuse_unchanged_build: true
+  build_context: workspace
+```
+
+The builder receives only `workspace`, with repository-relative paths preserved.
+Put all shared libraries and lockfiles inside that context. Configuration in
+`environments/` can change without changing the build bytes. Omitting
+`build_context` selects the entire repository, including the manifest. Contexts
+currently support regular files and directories; links and special files inside
+them are rejected. Opting in accepts reuse of the previous dependency resolution
+for unchanged inputs; a hit does not prove network dependency freshness.
+
+Reuse requires an exact context and recipe match, the current builder/base, and
+an approved signed export from the same mapped app. Missing, revoked, corrupt or
+stale evidence causes a normal build. Each commit still gets its own held
+candidate, current provenance and signature, target conversion and fresh
+qualification. `gitops explain` reports the recorded cache decision; it does not
+turn a cache hit into serving proof. This optimization uses the node-local cache.
+An explicit artifact pin takes precedence. See [ADR-1351](adr/1351-gitops-unchanged-build-context-reuse.md).
+
 Review the plan and reuse its `plan_hash` in a fresh request before exporting:
 
 ```sh

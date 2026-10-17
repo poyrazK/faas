@@ -89,6 +89,9 @@ type EnvironmentWorkloadSourceRequest struct {
 }
 
 type EnvironmentWorkloadSourceArtifact struct {
+	// ContextFormat records that the published bytes are the canonical, isolated
+	// context. Older/full-provider archives never qualify for unchanged reuse.
+	ContextFormat    string `json:"context_format,omitempty"`
 	RevisionID       string `json:"revision_id"`
 	CommitSHA        string `json:"commit_sha"`
 	DefinitionDigest string `json:"definition_digest"`
@@ -194,6 +197,7 @@ func (d Deployment) ScopedWorkloadRuntime() (*EnvironmentWorkloadRuntime, error)
 		}
 	} else if frozen.SourceArchive != nil {
 		if err := validateEnvironmentSourceArtifact(*frozen.SourceArchive); err != nil || frozen.Source == nil ||
+			(frozen.Source.ReuseUnchangedBuild != (frozen.SourceArchive.ContextFormat == api.EnvironmentGitBuildContextFormat)) ||
 			(frozen.Source.Kind != "source" && frozen.Source.Kind != "dockerfile" && frozen.Source.Kind != "function") || frozen.Source.BuildArtifactID != "" || frozen.Source.BuildArtifactHash != "" || !validEnvironmentGitCandidateProvenance(d, frozen) ||
 			d.ImageDigest != "" ||
 			d.SourcePath != frozen.SourceArchive.Path || d.SourceSHA256 != frozen.SourceArchive.SHA256 || d.SourceBytes != frozen.SourceArchive.Bytes ||

@@ -511,3 +511,33 @@ func TestCompileRejectsIncompleteJobScheduleContract(t *testing.T) {
 		})
 	}
 }
+
+func TestCompileUnchangedBuildReuseRequiresIsolatedReviewedContext(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		source api.EnvironmentWorkloadSource
+		valid  bool
+	}{
+		{"whole repository", api.EnvironmentWorkloadSource{Kind: "source", Directory: "apps/api", ReuseUnchangedBuild: true}, true},
+		{"shared context", api.EnvironmentWorkloadSource{Kind: "dockerfile", Directory: "workspace/api", BuildContext: "workspace", ReuseUnchangedBuild: true}, true},
+		{"context without opt in", api.EnvironmentWorkloadSource{Kind: "source", BuildContext: "workspace"}, false},
+		{"outside context", api.EnvironmentWorkloadSource{Kind: "source", Directory: "workspace-other/api", BuildContext: "workspace", ReuseUnchangedBuild: true}, false},
+		{"traversal", api.EnvironmentWorkloadSource{Kind: "source", BuildContext: "../workspace", ReuseUnchangedBuild: true}, false},
+		{"image", api.EnvironmentWorkloadSource{Kind: "image", Image: "repo/api@sha256:" + strings.Repeat("a", 64), ReuseUnchangedBuild: true}, false},
+		{"explicit pin", api.EnvironmentWorkloadSource{Kind: "source", BuildArtifactID: "11111111-2222-4333-8444-555555555555", BuildArtifactHash: strings.Repeat("a", 64), ReuseUnchangedBuild: true}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := definition()
+			w := d.Workloads["api"]
+			w.Source = &tc.source
+			d.Workloads["api"] = w
+			got, err := Compile(d)
+			if (err == nil) != tc.valid {
+				t.Fatalf("valid=%v error=%v", tc.valid, err)
+			}
+			if err == nil && got.Definition.Workloads["api"].Source.BuildContext == "" {
+				t.Fatal("context default not reviewed")
+			}
+		})
+	}
+}

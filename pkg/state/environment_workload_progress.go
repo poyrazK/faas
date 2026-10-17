@@ -69,3 +69,14 @@ func environmentWorkloadProgress(graph EnvironmentWorkloadGraph,
 	slices.SortFunc(result, func(a, b api.EnvironmentWorkloadProgress) int { return strings.Compare(a.Resource, b.Resource) })
 	return result, nil
 }
+
+// Cache progress is advisory. A hit cannot complete any qualification stage.
+func environmentBuildCacheProgress(progress *api.EnvironmentWorkloadProgress, build Build) {
+	switch build.CacheStatus {
+	case "hit", "miss", "invalidated":
+		progress.BuildCacheStatus = build.CacheStatus
+		if len(build.CacheKeySHA256) == 64 {
+			progress.BuildCacheKeySHA256 = build.CacheKeySHA256
+		}
+	}
+}

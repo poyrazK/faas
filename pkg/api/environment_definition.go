@@ -60,8 +60,14 @@ type EnvironmentWorkload struct {
 	ServiceBindings map[string]EnvironmentServiceBinding `json:"service_bindings,omitempty"`
 }
 
+const EnvironmentGitBuildContextFormat = "gregale.git-build-context.v1"
+
 type EnvironmentWorkloadSource struct {
-	Kind string `json:"kind"`
+	// ReuseUnchangedBuild opts into a canonical, bounded Git build context and
+	// same-app signed build reuse. BuildContext defaults to the whole repository.
+	ReuseUnchangedBuild bool   `json:"reuse_unchanged_build,omitempty"`
+	BuildContext        string `json:"build_context,omitempty"`
+	Kind                string `json:"kind"`
 	// BuildArtifactID and BuildArtifactHash pin an existing signed source build.
 	// They never carry configuration, snapshot state or execution authority.
 	BuildArtifactID   string `json:"build_artifact_id,omitempty"`

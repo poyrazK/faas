@@ -212,6 +212,14 @@ func (m *MemStore) environmentWorkloadActivationEvidenceLocked(memory *environme
 				}
 				return string(deployment.Status), string(build.Status), nil
 			})
+		for i := range evidence.Workloads {
+			progress := &evidence.Workloads[i]
+			dep := m.deployments[progress.DeploymentID]
+			build := m.builds[dep.BuildID]
+			if dep.AppID == progress.AppID && build.DeploymentID == dep.ID {
+				environmentBuildCacheProgress(progress, build)
+			}
+		}
 	}
 	return evidence
 }
