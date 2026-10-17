@@ -76,3 +76,6 @@ evidence and use stages/logs.
 See [build handoffs](FaasBuildImageHandoff.md) for succeeded builds without a
 checkpoint, and [export retention](FaasBuildExportRetention.md) for input lifetime.
 Existing two-hour stale-deployment recovery remains independent.
+
+After handed_off, use [scheduler snapshot-prime diagnostics](FaasSnapshotPrime.md)
+to distinguish release gates, waiting work, active capture and publication.

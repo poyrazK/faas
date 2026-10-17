@@ -8914,6 +8914,12 @@ const (
 	ObsImagePreparationCollectionBudget   = 3 * time.Second
 	ObsImagePreparationFreshnessMaxAge    = 2 * time.Minute
 
+	ObsSnapshotPrimeCollectionInterval = 30 * time.Second
+	ObsSnapshotPrimeCollectionBudget   = 3 * time.Second
+	ObsSnapshotPrimeFreshnessMaxAge    = 2 * time.Minute
+	// Matches the existing prime recovery instance lookback, not a fleet cap.
+	ObsSnapshotPrimeInstanceLookback = 64
+
 	// Evidence reads over-fetch one row to make history truncation explicit.
 	ObsIncidentEvidenceLimitDefault = 25
 	ObsIncidentEvidenceLimitMax     = 100

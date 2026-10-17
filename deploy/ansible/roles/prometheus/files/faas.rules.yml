@@ -3984,6 +3984,111 @@ groups:
             work and recovery outcomes without inventing timestamps or forcing a transition.
           runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasImagePreparation.md
 
+      - record: schedd_snapshot_prime_class_observation_healthy
+        expr: |
+          ((schedd_snapshot_prime_pending{job="schedd",class=~"waiting|release_blocked|active|publication_pending|snapshot_recorded|unknown"} >= 0) * 0 + 1)
+          and on (job, instance, class) (schedd_snapshot_prime_pending{job="schedd"} < +Inf)
+          and on (job, instance, class) (schedd_snapshot_prime_pending{job="schedd"} == floor(schedd_snapshot_prime_pending{job="schedd"}))
+          and on (job, instance, class) (schedd_snapshot_prime_age_unknown{job="schedd"} >= 0)
+          and on (job, instance, class) (schedd_snapshot_prime_age_unknown{job="schedd"} == floor(schedd_snapshot_prime_age_unknown{job="schedd"}))
+          and on (job, instance, class) (schedd_snapshot_prime_age_unknown{job="schedd"} <= schedd_snapshot_prime_pending{job="schedd"})
+          and on (job, instance, class) (schedd_snapshot_prime_oldest_attempt_timestamp_seconds{job="schedd"} <= time())
+          and on (job, instance, class)
+            (((schedd_snapshot_prime_pending{job="schedd"} > schedd_snapshot_prime_age_unknown{job="schedd"})
+              and on (job, instance, class) (schedd_snapshot_prime_oldest_attempt_timestamp_seconds{job="schedd"} > 0))
+             or ((schedd_snapshot_prime_pending{job="schedd"} == schedd_snapshot_prime_age_unknown{job="schedd"})
+                 and on (job, instance, class) (schedd_snapshot_prime_oldest_attempt_timestamp_seconds{job="schedd"} == 0)))
+          and on (job, instance) (up{job="schedd"} == 1)
+          and on (job, instance) (schedd_snapshot_prime_collection_success{job="schedd"} == 1)
+          and on (job, instance) (schedd_snapshot_prime_collection_last_success_timestamp_seconds{job="schedd"} > 0)
+          and on (job, instance) (time() - schedd_snapshot_prime_collection_last_success_timestamp_seconds{job="schedd"} >= 0)
+          and on (job, instance) (time() - schedd_snapshot_prime_collection_last_success_timestamp_seconds{job="schedd"} <= 120)
+          and on (job, instance) ((schedd_snapshot_prime_observation_enabled{job="schedd"} == 0) or (schedd_snapshot_prime_observation_enabled{job="schedd"} == 1))
+          unless on (job, instance, class) (schedd_snapshot_prime_pending{job="schedd",class="unknown"} != schedd_snapshot_prime_age_unknown{job="schedd",class="unknown"})
+      - record: schedd_snapshot_prime_observation_healthy
+        expr: |
+          (count by (job, instance) (schedd_snapshot_prime_class_observation_healthy == 1) == 6) / 6
+          and on (job, instance) (count by (job, instance) (schedd_snapshot_prime_recovery_queries_total{job="schedd",outcome=~"success|error|canceled"} >= 0) == 3)
+          and on (job, instance) (count by (job, instance) (schedd_snapshot_prime_recovery_candidates_total{job="schedd",outcome=~"not_found|ineligible|release_blocked|grace|not_owned|snapshot_recorded|active|publication_pending|dispatch_requested|error|canceled"} >= 0) == 11)
+      - record: schedd_snapshot_prime_oldest_known_attempt_age_seconds
+        expr: |
+          (((time() - schedd_snapshot_prime_oldest_attempt_timestamp_seconds{job="schedd"})
+             and on (job, instance, class) (schedd_snapshot_prime_pending{job="schedd"} > schedd_snapshot_prime_age_unknown{job="schedd"}))
+           or ((schedd_snapshot_prime_pending{job="schedd"} == 0) * 0))
+          and on (job, instance) (schedd_snapshot_prime_observation_healthy == 1)
+      - alert: FaasSnapshotPrimeTelemetryUnavailable
+        expr: |
+          (up{job="schedd"} == 1)
+          unless on (job, instance)
+            ((schedd_snapshot_prime_observation_healthy == 1)
+             or (schedd_snapshot_prime_observation_enabled{job="schedd"} == 0))
+        for: 5m
+        labels:
+          severity: warn
+          component: schedd
+          family: snapshot_prime_telemetry
+          public_status: internal
+        annotations:
+          summary: Snapshot-prime handoff diagnostics are unavailable
+          description: Schedd is scraped but its handoff snapshot is failed, missing, inconsistent or older than two
+            minutes, or initialized recovery counters are incomplete. Work counts and ages are unknown. Check the
+            observer, database, clocks and binary. Intentional observer shutdown is excluded.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSnapshotPrime.md
+      - alert: FaasSnapshotPrimeWaiting
+        expr: |
+          (schedd_snapshot_prime_oldest_known_attempt_age_seconds{class="waiting"} > 300)
+          and on (job, instance) (schedd_snapshot_prime_observation_enabled{job="schedd"} == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: schedd
+          family: snapshot_prime
+          public_status: internal
+        annotations:
+          summary: Snapshot preparation is eligible but has not advanced
+          description: An attempt currently classified waiting has a known boundary older than five minutes,
+            sustained for five minutes. The boundary is no earlier than stage start, release success, runtime
+            invalidation and known instance activity. Release gates, active captures, fresh parked captures and
+            recorded snapshots are separate. This does not prove continuous idle time, a stopped scheduler or readiness failure.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSnapshotPrime.md
+      - alert: FaasSnapshotPrimeEvidenceUnknown
+        expr: |
+          ((schedd_snapshot_prime_pending{job="schedd",class="unknown"} > 0)
+           or (schedd_snapshot_prime_age_unknown{job="schedd",class="waiting"} > 0))
+          and on (job, instance) (schedd_snapshot_prime_observation_healthy == 1)
+          and on (job, instance) (schedd_snapshot_prime_observation_enabled{job="schedd"} == 1)
+        for: 15m
+        labels:
+          severity: warn
+          component: schedd
+          family: snapshot_prime_telemetry
+          public_status: internal
+        annotations:
+          summary: Snapshot-prime eligibility or timing evidence is incomplete
+          description: Fresh observations have contained {{ $labels.class }} attempts with incomplete eligibility or
+            timing evidence for 15m. Missing, invalid or future stage/activity times cannot establish a wait age.
+            Inspect durable stages, artifacts and release/runtime evidence without rewriting timestamps or bypassing gates.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSnapshotPrime.md
+      - alert: FaasSnapshotPrimeRecoveryQueriesFailing
+        expr: |
+          (sum by (job, instance) (rate(schedd_snapshot_prime_recovery_queries_total{job="schedd",outcome="error"}[5m]))
+           / sum by (job, instance) (rate(schedd_snapshot_prime_recovery_queries_total{job="schedd",outcome=~"success|error"}[5m])) > 0.1)
+          and on (job, instance) (sum by (job, instance) (increase(schedd_snapshot_prime_recovery_queries_total{job="schedd",outcome="error"}[5m])) >= 3)
+          and on (job, instance) (schedd_snapshot_prime_observation_healthy == 1)
+          and on (job, instance) (schedd_snapshot_prime_observation_enabled{job="schedd"} == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: schedd
+          family: snapshot_prime
+          public_status: internal
+        annotations:
+          summary: Snapshot-prime recovery listings are persistently failing
+          description: Recovery list errors exceed 10% of non-canceled calls with at least three errors per rolling
+            five-minute window, sustained for five minutes. A healthy observation reader does not prove recovery
+            listings succeed. Candidate gates and active captures are separate decisions.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSnapshotPrime.md
+
       # Recovery is observed separately from queue wait. Fleet gauges are
       # coherent per apid; never sum replicas. Timing uses effective config
       # from every discovered builder. Age warnings measure overdue work;

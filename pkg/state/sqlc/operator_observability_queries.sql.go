@@ -1684,6 +1684,114 @@ func (q *Queries) OperatorRecentFailureCounts(ctx context.Context, db DBTX, sinc
 	return items, nil
 }
 
+const operatorSnapshotPrimeSnapshot = `-- name: OperatorSnapshotPrimeSnapshot :many
+WITH scoped AS MATERIALIZED (
+ SELECT d.id, d.app_id, d.build_id, d.image_digest, d.rootfs_path, d.rootfs_bytes, d.status, d.error, d.created_at, d.kind, d.source_path, d.source_bytes, d.handler, d.log_path, d.error_code, d.rootfs_key, d.source_url, d.commit_sha, d.override_entrypoint, d.override_cmd, d.override_env, d.override_env_secrets, d.override_port, d.override_healthcheck, d.sidecars, d.min_instances, d.scan_result, d.scan_status, d.scanned_at, d.override_liveness_probe, d.parked_reason, d.parked_at, d.traffic_percent, d.scope, d.secret_findings, d.secret_scanned_at, d.error_hint, d.error_why, d.error_fix, d.error_relevant_logs, d.stage_state, d.deployed_by_user_id, d.deployed_via, d.deployed_from_ip, d.pusher_login, d.reason, d.tag, d.deployed_by, d.pr_number, d.rollback_on_5xx, d.first_wake_at, d.first_5xx_window_ends_at, d.first_5xx_count, d.last_auto_rollback_at, d.last_auto_rollback_reason, d.liveness_restart_count, d.canary_preset, d.canary_step, d.canary_total_steps, d.canary_step_started_at, d.rollout_state, d.rollout_started_at, d.rollout_completed_at, d.rollout_aborted_at, d.rollout_aborted_reason, d.cancelled_at, d.cancelled_by_principal, d.cancel_reason, d.deleted_at, d.deleted_by_principal, d.priority, d.reordered_at, d.reordered_by_principal, d.canary_stages, d.snapshot_miss_count, d.snapshot_miss_last_at, d.snapshot_miss_backoff_until, d.workflows, d.source_root, d.full_rootfs_allow_auto, d.full_rootfs_override, d.source_sha256, d.api_hosting_receipt, d.inferred_profile, d.traffic_percent_explicit, d.revision, d.service_rollout_handoff, d.release_command, d.release_command_shell, d.disable_startup_cpu_boost, d.override_main_depends_on, d.override_readiness_probe, d.secret_reload_signal, d.github_source_ref, d.github_installation_id, d.environment_workload_runtime, d.serving_ended_at, d.runtime_upgrade_routing_token, d.environment_workload_held FROM deployments d JOIN apps a ON a.id=d.app_id
+ WHERE d.status='snapshotting' AND a.status<>'deleted' AND NOT d.environment_workload_held
+  AND ($1::text='' OR a.node_id IS NULL OR a.node_id::text=$1::text)
+  AND coalesce(d.stage_state->>'current','')<>'readiness'
+), timed AS MATERIALIZED (
+ SELECT d.id, d.app_id, d.build_id, d.image_digest, d.rootfs_path, d.rootfs_bytes, d.status, d.error, d.created_at, d.kind, d.source_path, d.source_bytes, d.handler, d.log_path, d.error_code, d.rootfs_key, d.source_url, d.commit_sha, d.override_entrypoint, d.override_cmd, d.override_env, d.override_env_secrets, d.override_port, d.override_healthcheck, d.sidecars, d.min_instances, d.scan_result, d.scan_status, d.scanned_at, d.override_liveness_probe, d.parked_reason, d.parked_at, d.traffic_percent, d.scope, d.secret_findings, d.secret_scanned_at, d.error_hint, d.error_why, d.error_fix, d.error_relevant_logs, d.stage_state, d.deployed_by_user_id, d.deployed_via, d.deployed_from_ip, d.pusher_login, d.reason, d.tag, d.deployed_by, d.pr_number, d.rollback_on_5xx, d.first_wake_at, d.first_5xx_window_ends_at, d.first_5xx_count, d.last_auto_rollback_at, d.last_auto_rollback_reason, d.liveness_restart_count, d.canary_preset, d.canary_step, d.canary_total_steps, d.canary_step_started_at, d.rollout_state, d.rollout_started_at, d.rollout_completed_at, d.rollout_aborted_at, d.rollout_aborted_reason, d.cancelled_at, d.cancelled_by_principal, d.cancel_reason, d.deleted_at, d.deleted_by_principal, d.priority, d.reordered_at, d.reordered_by_principal, d.canary_stages, d.snapshot_miss_count, d.snapshot_miss_last_at, d.snapshot_miss_backoff_until, d.workflows, d.source_root, d.full_rootfs_allow_auto, d.full_rootfs_override, d.source_sha256, d.api_hosting_receipt, d.inferred_profile, d.traffic_percent_explicit, d.revision, d.service_rollout_handoff, d.release_command, d.release_command_shell, d.disable_startup_cpu_boost, d.override_main_depends_on, d.override_readiness_probe, d.secret_reload_signal, d.github_source_ref, d.github_installation_id, d.environment_workload_runtime, d.serving_ended_at, d.runtime_upgrade_routing_token, d.environment_workload_held,
+  CASE WHEN d.stage_state->>'current'='snapshot_prepare'
+   AND (d.stage_state->>'current_started_at') ~ '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?(Z|[+-]\d{2}:\d{2})$'
+   AND pg_input_is_valid(d.stage_state->>'current_started_at','timestamp with time zone')
+   THEN (d.stage_state->>'current_started_at')::timestamptz END AS stage_at
+ FROM scoped d
+), facts AS (
+ SELECT d.id,d.stage_at,d.rootfs_key,
+  (cardinality(d.release_command)=0 OR coalesce(t.status='succeeded' AND t.app_id=d.app_id
+   AND t.artifact_key=d.rootfs_key AND t.image_digest=d.image_digest AND t.deployment_scope=d.scope
+   AND t.command_shell=d.release_command_shell AND t.command=d.release_command,false)) AS release_allowed,
+  cardinality(d.release_command)>0 AS release_required,t.finished_at AS release_at,
+  sn.created_at AS snapshot_at,c.changed_at,
+  coalesce(ins.active,false) AS active,coalesce(ins.parked,false) AS parked,
+  coalesce(ins.bad_time,false) AS bad_time,coalesce(ins.unknown_activity,false) AS unknown_activity,
+  ins.activity_at
+ FROM timed d
+ LEFT JOIN app_tasks t ON t.deployment_id=d.id AND t.kind='release'
+ LEFT JOIN LATERAL (SELECT s.created_at FROM snapshots s WHERE s.deployment_id=d.id AND NOT s.stale
+  ORDER BY (s.tier='warm') DESC,s.created_at DESC LIMIT 1) sn ON true
+ LEFT JOIN LATERAL (SELECT max(b.changed_at) AS changed_at FROM (
+  SELECT changed_at FROM app_runtime_config_changes WHERE app_id=d.app_id
+  UNION ALL SELECT changed_at FROM app_runtime_config_scope_changes WHERE app_id=d.app_id AND scope IN ('default',d.scope)
+ ) b) c ON true
+ LEFT JOIN LATERAL (
+  SELECT bool_or(i.state IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm','frozen')) AS active,
+   bool_or(i.state='parked' AND CASE WHEN r.instance_id IS NOT NULL THEN
+     r.scope=d.scope AND r.boundary_at>=coalesce(c.changed_at,'epoch'::timestamptz)
+     AND environment_runtime_inputs_fresh(d.app_id,r.scope,r.boundary_at,r.variables,r.secret_versions,r.all_secrets,r.secret_refs,r.sidecar_secret_versions)
+    ELSE NOT environment_runtime_receipt_required(d.app_id,d.scope)
+     AND least(i.started_at,CASE WHEN substr(i.wake_id::text,15,1)='7' THEN
+       to_timestamp(('x'||substr(replace(i.wake_id::text,'-',''),1,12))::bit(48)::bigint::double precision/1000)
+       ELSE i.started_at END)>coalesce(c.changed_at,'epoch'::timestamptz) END) AS parked,
+   bool_or(i.started_at IS NULL OR NOT isfinite(i.started_at) OR i.started_at>statement_timestamp()
+    OR (i.terminal_at IS NOT NULL AND (NOT isfinite(i.terminal_at) OR i.terminal_at>statement_timestamp()))
+    OR (i.parked_at IS NOT NULL AND (NOT isfinite(i.parked_at) OR i.parked_at>statement_timestamp()))) AS bad_time,
+   bool_or(CASE WHEN i.state='parked' THEN i.parked_at IS NULL
+    WHEN i.state NOT IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm','frozen') THEN i.terminal_at IS NULL ELSE false END) AS unknown_activity,
+   max(greatest(i.terminal_at,i.parked_at)) AS activity_at
+  FROM (SELECT id, app_id, deployment_id, state, netns, guest_uid, host_ip, ram_mb, started_at, last_request_at, parked_at, terminal_at, node_id, wake_id, org_id, migrated_from_node_id, migrated_at, lease_token, framework_ready_at, tail_count, request_count, kind, job_id, mode, migration_started_at, startup_cpu_boost_until, exclusive_capture_blocked, capacity_ram_mb, capacity_cpu_millicores, capacity_vcpu FROM instances WHERE app_id=d.app_id ORDER BY started_at DESC LIMIT $2::integer) i
+  LEFT JOIN instance_runtime_config_receipts r ON r.instance_id=i.id AND r.wake_id=i.wake_id
+  WHERE i.deployment_id=d.id AND (i.started_at>d.stage_at OR i.started_at IS NULL)
+ ) ins ON true
+), classified AS (
+ SELECT CASE
+  WHEN stage_at IS NULL OR NOT isfinite(stage_at) OR stage_at<='epoch'::timestamptz OR stage_at>statement_timestamp() OR rootfs_key='' THEN 'unknown'
+  WHEN NOT release_allowed THEN 'release_blocked'
+  WHEN snapshot_at>statement_timestamp() THEN 'unknown'
+  WHEN snapshot_at>stage_at THEN 'snapshot_recorded'
+  WHEN bad_time THEN 'unknown'
+  WHEN active THEN 'active'
+  WHEN parked THEN 'publication_pending'
+  ELSE 'waiting' END::text AS class,
+  CASE WHEN NOT release_allowed OR (release_required AND (release_at IS NULL OR NOT isfinite(release_at) OR release_at<='epoch'::timestamptz OR release_at>statement_timestamp()))
+     OR (unknown_activity AND NOT coalesce(snapshot_at>stage_at,false)) OR changed_at>statement_timestamp() THEN NULL
+   ELSE greatest(stage_at,CASE WHEN release_required THEN release_at END,changed_at,CASE WHEN snapshot_at>stage_at THEN NULL ELSE activity_at END) END AS since
+ FROM facts
+)
+SELECT class,count(*)::bigint AS pending,
+ count(*) FILTER (WHERE class='unknown' OR since IS NULL)::bigint AS unknown_age,
+ min(CASE WHEN class<>'unknown' THEN since END)::timestamptz AS oldest_at
+FROM classified GROUP BY class
+`
+
+type OperatorSnapshotPrimeSnapshotParams struct {
+	NodeID           string
+	InstanceLookback int32
+}
+
+type OperatorSnapshotPrimeSnapshotRow struct {
+	Class      string
+	Pending    int64
+	UnknownAge int64
+	OldestAt   pgtype.Timestamptz
+}
+
+func (q *Queries) OperatorSnapshotPrimeSnapshot(ctx context.Context, db DBTX, arg OperatorSnapshotPrimeSnapshotParams) ([]OperatorSnapshotPrimeSnapshotRow, error) {
+	rows, err := db.Query(ctx, operatorSnapshotPrimeSnapshot, arg.NodeID, arg.InstanceLookback)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []OperatorSnapshotPrimeSnapshotRow{}
+	for rows.Next() {
+		var i OperatorSnapshotPrimeSnapshotRow
+		if err := rows.Scan(
+			&i.Class,
+			&i.Pending,
+			&i.UnknownAge,
+			&i.OldestAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const operatorTenantApps = `-- name: OperatorTenantApps :many
 SELECT a.id::text AS id, a.slug, a.status,
        count(d.id)::bigint AS deployments_live

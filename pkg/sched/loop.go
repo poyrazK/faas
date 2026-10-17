@@ -128,7 +128,8 @@ type Loop struct {
 	now                         func() time.Time
 	flowCounts                  FlowCounter
 	flowReaderUnavailable       sync.Once
-	ops                         *wire.OpsMetrics                        // issue #171 shared registry; nil safe
+	ops                         *wire.OpsMetrics // issue #171 shared registry; nil safe
+	primeMetrics                *snapshotPrimeMetrics
 	audit                       *audit.Auditor                          // cron-fired audit row writer; nil opts out (no row written)
 	watchdog                    *Watchdog                               // §6.1 watchdog; nil means "no watchdog" (tests can opt out)
 	liveness                    *wire.Liveness                          // ADR-190 main-loop progress beats; nil opts out
@@ -605,7 +606,17 @@ func (l *Loop) WithFlowCounter(fc FlowCounter) *Loop {
 // *wire.OpsMetrics to both. Nil is safe — observers no-op on a
 // nil receiver (the loop reads the field defensively too).
 func (l *Loop) WithOpsMetrics(ops *wire.OpsMetrics) *Loop {
+	if l.ops == ops {
+		return l
+	}
+	if l.primeMetrics != nil && l.ops != nil && l.ops.Registry() != nil {
+		l.ops.Registry().Unregister(l.primeMetrics)
+	}
 	l.ops = ops
+	l.primeMetrics = nil
+	if ops != nil && ops.Registry() != nil {
+		l.primeMetrics = newSnapshotPrimeMetrics(ops.Registry())
+	}
 	return l
 }
 
@@ -755,6 +766,8 @@ func (l *Loop) WithInstanceDivergence(r *DeadNodeReconciler) *Loop {
 // Run blocks until ctx is cancelled. It owns three event sources: the LISTEN
 // subscriber, the reaper tick, and the cron tick.
 func (l *Loop) Run(ctx context.Context) error {
+	stopPrimeObservation := l.startSnapshotPrimeObservation(ctx)
+	defer stopPrimeObservation()
 	// F-11: SubscribeWithReconnect wraps Subscribe with exponential backoff
 	// (100ms → 5s cap) and re-acquires the LISTEN connection across pg
 	// restarts. The outer channel never closes on conn drop — only ctx

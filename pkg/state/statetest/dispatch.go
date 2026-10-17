@@ -24,6 +24,7 @@ import (
 
 // memDispatched lists the methods Mem forwards to its override.
 var memDispatched = map[string]bool{
+	"ListDeploymentsForOperator":                              true,
 	"ListBuildsAwaitingImage":                                 true,
 	"ListResumableImagePreparations":                          true,
 	"PublishImagePreparationLayer":                            true,
@@ -126,6 +127,15 @@ var memDispatched = map[string]bool{
 	"StampOperationExecutionAttempt":                          true,
 	"UpdateAccountProviderCustomerID":                         true,
 	"WarmPoolReconciliationAppIDs":                            true,
+}
+
+func (s *Mem) ListDeploymentsForOperator(ctx context.Context, filter state.OperatorDeploymentFilter) ([]state.Deployment, error) {
+	if f, ok := s.over.(interface {
+		ListDeploymentsForOperator(context.Context, state.OperatorDeploymentFilter) ([]state.Deployment, error)
+	}); ok {
+		return f.ListDeploymentsForOperator(ctx, filter)
+	}
+	return s.MemStore.ListDeploymentsForOperator(ctx, filter)
 }
 
 func (s *Mem) ListBuildsAwaitingImage(ctx context.Context, node string, limit int) ([]state.BuildImageWork, error) {

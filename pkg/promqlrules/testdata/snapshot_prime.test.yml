@@ -1,0 +1,2800 @@
+# Durable scheduler handoff cohorts and truthful waiting evidence.
+rule_files:
+- ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+evaluation_interval: 1m
+tests:
+- name: known empty is not missing evidence
+  interval: 1m
+  input_series:
+  - &id001
+    series: up{job="schedd",instance="a"}
+    values: 1x90
+  - &id002
+    series: schedd_snapshot_prime_collection_success{job="schedd",instance="a"}
+    values: 1x90
+  - &id003
+    series: schedd_snapshot_prime_collection_last_success_timestamp_seconds{job="schedd",instance="a"}
+    values: 0+60x90
+  - &id004
+    series: schedd_snapshot_prime_observation_enabled{job="schedd",instance="a"}
+    values: 1x90
+  - &id035
+    series: schedd_snapshot_prime_pending{job="schedd",instance="a",class="waiting"}
+    values: '0x90'
+  - &id005
+    series: schedd_snapshot_prime_age_unknown{job="schedd",instance="a",class="waiting"}
+    values: '0x90'
+  - &id036
+    series: schedd_snapshot_prime_oldest_attempt_timestamp_seconds{job="schedd",instance="a",class="waiting"}
+    values: '0x90'
+  - &id006
+    series: schedd_snapshot_prime_pending{job="schedd",instance="a",class="release_blocked"}
+    values: '0x90'
+  - &id007
+    series: schedd_snapshot_prime_age_unknown{job="schedd",instance="a",class="release_blocked"}
+    values: '0x90'
+  - &id008
+    series: schedd_snapshot_prime_oldest_attempt_timestamp_seconds{job="schedd",instance="a",class="release_blocked"}
+    values: '0x90'
+  - &id009
+    series: schedd_snapshot_prime_pending{job="schedd",instance="a",class="active"}
+    values: '0x90'
+  - &id010
+    series: schedd_snapshot_prime_age_unknown{job="schedd",instance="a",class="active"}
+    values: '0x90'
+  - &id011
+    series: schedd_snapshot_prime_oldest_attempt_timestamp_seconds{job="schedd",instance="a",class="active"}
+    values: '0x90'
+  - &id012
+    series: schedd_snapshot_prime_pending{job="schedd",instance="a",class="publication_pending"}
+    values: '0x90'
+  - &id013
+    series: schedd_snapshot_prime_age_unknown{job="schedd",instance="a",class="publication_pending"}
+    values: '0x90'
+  - &id014
+    series: schedd_snapshot_prime_oldest_attempt_timestamp_seconds{job="schedd",instance="a",class="publication_pending"}
+    values: '0x90'
+  - &id015
+    series: schedd_snapshot_prime_pending{job="schedd",instance="a",class="snapshot_recorded"}
+    values: '0x90'
+  - &id016
+    series: schedd_snapshot_prime_age_unknown{job="schedd",instance="a",class="snapshot_recorded"}
+    values: '0x90'
+  - &id017
+    series: schedd_snapshot_prime_oldest_attempt_timestamp_seconds{job="schedd",instance="a",class="snapshot_recorded"}
+    values: '0x90'
+  - &id018
+    series: schedd_snapshot_prime_pending{job="schedd",instance="a",class="unknown"}
+    values: '0x90'
+  - &id019
+    series: schedd_snapshot_prime_age_unknown{job="schedd",instance="a",class="unknown"}
+    values: '0x90'
+  - &id020
+    series: schedd_snapshot_prime_oldest_attempt_timestamp_seconds{job="schedd",instance="a",class="unknown"}
+    values: '0x90'
+  - &id021
+    series: schedd_snapshot_prime_recovery_queries_total{job="schedd",instance="a",outcome="success"}
+    values: '0x90'
+  - &id022
+    series: schedd_snapshot_prime_recovery_queries_total{job="schedd",instance="a",outcome="error"}
+    values: '0x90'
+  - &id023
+    series: schedd_snapshot_prime_recovery_queries_total{job="schedd",instance="a",outcome="canceled"}
+    values: '0x90'
+  - &id024
+    series: schedd_snapshot_prime_recovery_candidates_total{job="schedd",instance="a",outcome="not_found"}
+    values: '0x90'
+  - &id025
+    series: schedd_snapshot_prime_recovery_candidates_total{job="schedd",instance="a",outcome="ineligible"}
+    values: '0x90'
+  - &id026
+    series: schedd_snapshot_prime_recovery_candidates_total{job="schedd",instance="a",outcome="release_blocked"}
+    values: '0x90'
+  - &id027
+    series: schedd_snapshot_prime_recovery_candidates_total{job="schedd",instance="a",outcome="grace"}
+    values: '0x90'
+  - &id028
+    series: schedd_snapshot_prime_recovery_candidates_total{job="schedd",instance="a",outcome="not_owned"}
+    values: '0x90'
+  - &id029
+    series: schedd_snapshot_prime_recovery_candidates_total{job="schedd",instance="a",outcome="snapshot_recorded"}
+    values: '0x90'
+  - &id030
+    series: schedd_snapshot_prime_recovery_candidates_total{job="schedd",instance="a",outcome="active"}
+    values: '0x90'
+  - &id031
+    series: schedd_snapshot_prime_recovery_candidates_total{job="schedd",instance="a",outcome="publication_pending"}
+    values: '0x90'
+  - &id032
+    series: schedd_snapshot_prime_recovery_candidates_total{job="schedd",instance="a",outcome="dispatch_requested"}
+    values: '0x90'
+  - &id033
+    series: schedd_snapshot_prime_recovery_candidates_total{job="schedd",instance="a",outcome="error"}
+    values: '0x90'
+  - &id034
+    series: schedd_snapshot_prime_recovery_candidates_total{job="schedd",instance="a",outcome="canceled"}
+    values: '0x90'
+  alert_rule_test:
+  - eval_time: 40m
+    alertname: FaasSnapshotPrimeTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasSnapshotPrimeWaiting
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasSnapshotPrimeEvidenceUnknown
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasSnapshotPrimeRecoveryQueriesFailing
+    exp_alerts: []
+  promql_expr_test:
+  - expr: schedd_snapshot_prime_oldest_known_attempt_age_seconds{class="waiting"}
+    eval_time: 6m
+    exp_samples:
+    - labels: '{__name__="schedd_snapshot_prime_oldest_known_attempt_age_seconds",job="schedd",instance="a",class="waiting"}'
+      value: 0
+  - expr: schedd_snapshot_prime_oldest_known_attempt_age_seconds{class="release_blocked"}
+    eval_time: 6m
+    exp_samples:
+    - labels: '{__name__="schedd_snapshot_prime_oldest_known_attempt_age_seconds",job="schedd",instance="a",class="release_blocked"}'
+      value: 0
+  - expr: schedd_snapshot_prime_oldest_known_attempt_age_seconds{class="active"}
+    eval_time: 6m
+    exp_samples:
+    - labels: '{__name__="schedd_snapshot_prime_oldest_known_attempt_age_seconds",job="schedd",instance="a",class="active"}'
+      value: 0
+  - expr: schedd_snapshot_prime_oldest_known_attempt_age_seconds{class="publication_pending"}
+    eval_time: 6m
+    exp_samples:
+    - labels: '{__name__="schedd_snapshot_prime_oldest_known_attempt_age_seconds",job="schedd",instance="a",class="publication_pending"}'
+      value: 0
+  - expr: schedd_snapshot_prime_oldest_known_attempt_age_seconds{class="snapshot_recorded"}
+    eval_time: 6m
+    exp_samples:
+    - labels: '{__name__="schedd_snapshot_prime_oldest_known_attempt_age_seconds",job="schedd",instance="a",class="snapshot_recorded"}'
+      value: 0
+  - expr: schedd_snapshot_prime_oldest_known_attempt_age_seconds{class="unknown"}
+    eval_time: 6m
+    exp_samples:
+    - labels: '{__name__="schedd_snapshot_prime_oldest_known_attempt_age_seconds",job="schedd",instance="a",class="unknown"}'
+      value: 0
+  - expr: schedd_snapshot_prime_observation_healthy
+    eval_time: 6m
+    exp_samples:
+    - labels: '{__name__="schedd_snapshot_prime_observation_healthy",job="schedd",instance="a"}'
+      value: 1
+- name: single waiting attempt exact threshold hold and aging without arrivals
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - series: schedd_snapshot_prime_pending{job="schedd",instance="a",class="waiting"}
+    values: 1x90
+  - *id005
+  - series: schedd_snapshot_prime_oldest_attempt_timestamp_seconds{job="schedd",instance="a",class="waiting"}
+    values: 60x90
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  alert_rule_test:
+  - eval_time: 6m
+    alertname: FaasSnapshotPrimeWaiting
+    exp_alerts: []
+  - eval_time: 7m
+    alertname: FaasSnapshotPrimeWaiting
+    exp_alerts: []
+  - eval_time: 11m
+    alertname: FaasSnapshotPrimeWaiting
+    exp_alerts: []
+  - eval_time: 12m
+    alertname: FaasSnapshotPrimeWaiting
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: snapshot_prime
+        public_status: internal
+        job: schedd
+        instance: a
+        class: waiting
+      exp_annotations:
+        summary: Snapshot preparation is eligible but has not advanced
+        description: An attempt currently classified waiting has a known boundary older than five minutes, sustained
+          for five minutes. The boundary is no earlier than stage start, release success, runtime invalidation and
+          known instance activity. Release gates, active captures, fresh parked captures and recorded snapshots
+          are separate. This does not prove continuous idle time, a stopped scheduler or readiness failure.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSnapshotPrime.md
+  - eval_time: 30m
+    alertname: FaasSnapshotPrimeTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 30m
+    alertname: FaasSnapshotPrimeEvidenceUnknown
+    exp_alerts: []
+  promql_expr_test:
+  - expr: schedd_snapshot_prime_oldest_known_attempt_age_seconds{class="waiting"}
+    eval_time: 6m
+    exp_samples:
+    - labels: '{__name__="schedd_snapshot_prime_oldest_known_attempt_age_seconds",job="schedd",instance="a",class="waiting"}'
+      value: 300
+  - expr: schedd_snapshot_prime_oldest_known_attempt_age_seconds{class="waiting"}
+    eval_time: 30m
+    exp_samples:
+    - labels: '{__name__="schedd_snapshot_prime_oldest_known_attempt_age_seconds",job="schedd",instance="a",class="waiting"}'
+      value: 1740
+- name: release_blocked never warns as waiting
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id035
+  - *id005
+  - *id036
+  - series: schedd_snapshot_prime_pending{job="schedd",instance="a",class="release_blocked"}
+    values: 1x90
+  - series: schedd_snapshot_prime_age_unknown{job="schedd",instance="a",class="release_blocked"}
+    values: 1x90
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  alert_rule_test:
+  - eval_time: 45m
+    alertname: FaasSnapshotPrimeTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 45m
+    alertname: FaasSnapshotPrimeWaiting
+    exp_alerts: []
+  - eval_time: 45m
+    alertname: FaasSnapshotPrimeEvidenceUnknown
+    exp_alerts: []
+  - eval_time: 45m
+    alertname: FaasSnapshotPrimeRecoveryQueriesFailing
+    exp_alerts: []
+- name: active never warns as waiting
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id035
+  - *id005
+  - *id036
+  - *id006
+  - *id007
+  - *id008
+  - series: schedd_snapshot_prime_pending{job="schedd",instance="a",class="active"}
+    values: 1x90
+  - *id010
+  - series: schedd_snapshot_prime_oldest_attempt_timestamp_seconds{job="schedd",instance="a",class="active"}
+    values: 60x90
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  alert_rule_test:
+  - eval_time: 45m
+    alertname: FaasSnapshotPrimeTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 45m
+    alertname: FaasSnapshotPrimeWaiting
+    exp_alerts: []
+  - eval_time: 45m
+    alertname: FaasSnapshotPrimeEvidenceUnknown
+    exp_alerts: []
+  - eval_time: 45m
+    alertname: FaasSnapshotPrimeRecoveryQueriesFailing
+    exp_alerts: []
+- name: publication_pending never warns as waiting
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id035
+  - *id005
+  - *id036
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - series: schedd_snapshot_prime_pending{job="schedd",instance="a",class="publication_pending"}
+    values: 1x90
+  - *id013
+  - series: schedd_snapshot_prime_oldest_attempt_timestamp_seconds{job="schedd",instance="a",class="publication_pending"}
+    values: 60x90
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  alert_rule_test:
+  - eval_time: 45m
+    alertname: FaasSnapshotPrimeTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 45m
+    alertname: FaasSnapshotPrimeWaiting
+    exp_alerts: []
+  - eval_time: 45m
+    alertname: FaasSnapshotPrimeEvidenceUnknown
+    exp_alerts: []
+  - eval_time: 45m
+    alertname: FaasSnapshotPrimeRecoveryQueriesFailing
+    exp_alerts: []
+- name: snapshot_recorded never warns as waiting
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id035
+  - *id005
+  - *id036
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - series: schedd_snapshot_prime_pending{job="schedd",instance="a",class="snapshot_recorded"}
+    values: 1x90
+  - *id016
+  - series: schedd_snapshot_prime_oldest_attempt_timestamp_seconds{job="schedd",instance="a",class="snapshot_recorded"}
+    values: 60x90
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  alert_rule_test:
+  - eval_time: 45m
+    alertname: FaasSnapshotPrimeTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 45m
+    alertname: FaasSnapshotPrimeWaiting
+    exp_alerts: []
+  - eval_time: 45m
+    alertname: FaasSnapshotPrimeEvidenceUnknown
+    exp_alerts: []
+  - eval_time: 45m
+    alertname: FaasSnapshotPrimeRecoveryQueriesFailing
+    exp_alerts: []
+- name: successful release rebases age instead of including command execution
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - series: schedd_snapshot_prime_pending{job="schedd",instance="a",class="waiting"}
+    values: 0x19 1x70
+  - *id005
+  - series: schedd_snapshot_prime_oldest_attempt_timestamp_seconds{job="schedd",instance="a",class="waiting"}
+    values: 0x19 1200x70
+  - series: schedd_snapshot_prime_pending{job="schedd",instance="a",class="release_blocked"}
+    values: 1x19 0x70
+  - series: schedd_snapshot_prime_age_unknown{job="schedd",instance="a",class="release_blocked"}
+    values: 1x19 0x70
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasSnapshotPrimeWaiting
+    exp_alerts: []
+  - eval_time: 30m
+    alertname: FaasSnapshotPrimeWaiting
+    exp_alerts: []
+  - eval_time: 31m
+    alertname: FaasSnapshotPrimeWaiting
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: snapshot_prime
+        public_status: internal
+        job: schedd
+        instance: a
+        class: waiting
+      exp_annotations:
+        summary: Snapshot preparation is eligible but has not advanced
+        description: An attempt currently classified waiting has a known boundary older than five minutes, sustained
+          for five minutes. The boundary is no earlier than stage start, release success, runtime invalidation and
+          known instance activity. Release gates, active captures, fresh parked captures and recorded snapshots
+          are separate. This does not prove continuous idle time, a stopped scheduler or readiness failure.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSnapshotPrime.md
+  - eval_time: 31m
+    alertname: FaasSnapshotPrimeEvidenceUnknown
+    exp_alerts: []
+  promql_expr_test:
+  - expr: schedd_snapshot_prime_oldest_known_attempt_age_seconds{class="waiting"}
+    eval_time: 20m
+    exp_samples:
+    - labels: '{__name__="schedd_snapshot_prime_oldest_known_attempt_age_seconds",job="schedd",instance="a",class="waiting"}'
+      value: 0
+- name: active evidence clears waiting warning
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - series: schedd_snapshot_prime_pending{job="schedd",instance="a",class="waiting"}
+    values: 1x19 0x70
+  - *id005
+  - series: schedd_snapshot_prime_oldest_attempt_timestamp_seconds{job="schedd",instance="a",class="waiting"}
+    values: 60x19 0x70
+  - *id006
+  - *id007
+  - *id008
+  - series: schedd_snapshot_prime_pending{job="schedd",instance="a",class="active"}
+    values: 0x19 1x70
+  - *id010
+  - series: schedd_snapshot_prime_oldest_attempt_timestamp_seconds{job="schedd",instance="a",class="active"}
+    values: 0x19 1200x70
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  alert_rule_test:
+  - eval_time: 12m
+    alertname: FaasSnapshotPrimeWaiting
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: snapshot_prime
+        public_status: internal
+        job: schedd
+        instance: a
+        class: waiting
+      exp_annotations:
+        summary: Snapshot preparation is eligible but has not advanced
+        description: An attempt currently classified waiting has a known boundary older than five minutes, sustained
+          for five minutes. The boundary is no earlier than stage start, release success, runtime invalidation and
+          known instance activity. Release gates, active captures, fresh parked captures and recorded snapshots
+          are separate. This does not prove continuous idle time, a stopped scheduler or readiness failure.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSnapshotPrime.md
+  - eval_time: 20m
+    alertname: FaasSnapshotPrimeWaiting
+    exp_alerts: []
+- name: waiting unknown evidence is not an empty backlog or zero age
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - series: schedd_snapshot_prime_pending{job="schedd",instance="a",class="waiting"}
+    values: 2x90
+  - series: schedd_snapshot_prime_age_unknown{job="schedd",instance="a",class="waiting"}
+    values: 2x90
+  - *id036
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  alert_rule_test:
+  - eval_time: 15m
+    alertname: FaasSnapshotPrimeEvidenceUnknown
+    exp_alerts: []
+  - eval_time: 16m
+    alertname: FaasSnapshotPrimeEvidenceUnknown
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: snapshot_prime_telemetry
+        public_status: internal
+        job: schedd
+        instance: a
+        class: waiting
+      exp_annotations:
+        summary: Snapshot-prime eligibility or timing evidence is incomplete
+        description: Fresh observations have contained waiting attempts with incomplete eligibility or timing evidence
+          for 15m. Missing, invalid or future stage/activity times cannot establish a wait age. Inspect durable
+          stages, artifacts and release/runtime evidence without rewriting timestamps or bypassing gates.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSnapshotPrime.md
+  - eval_time: 40m
+    alertname: FaasSnapshotPrimeWaiting
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasSnapshotPrimeTelemetryUnavailable
+    exp_alerts: []
+  promql_expr_test:
+  - expr: schedd_snapshot_prime_observation_healthy
+    eval_time: 6m
+    exp_samples:
+    - labels: '{__name__="schedd_snapshot_prime_observation_healthy",job="schedd",instance="a"}'
+      value: 1
+  - expr: schedd_snapshot_prime_oldest_known_attempt_age_seconds{class="waiting"}
+    eval_time: 6m
+    exp_samples: []
+- name: unknown unknown evidence is not an empty backlog or zero age
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id035
+  - *id005
+  - *id036
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - series: schedd_snapshot_prime_pending{job="schedd",instance="a",class="unknown"}
+    values: 2x90
+  - series: schedd_snapshot_prime_age_unknown{job="schedd",instance="a",class="unknown"}
+    values: 2x90
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  alert_rule_test:
+  - eval_time: 15m
+    alertname: FaasSnapshotPrimeEvidenceUnknown
+    exp_alerts: []
+  - eval_time: 16m
+    alertname: FaasSnapshotPrimeEvidenceUnknown
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: snapshot_prime_telemetry
+        public_status: internal
+        job: schedd
+        instance: a
+        class: unknown
+      exp_annotations:
+        summary: Snapshot-prime eligibility or timing evidence is incomplete
+        description: Fresh observations have contained unknown attempts with incomplete eligibility or timing evidence
+          for 15m. Missing, invalid or future stage/activity times cannot establish a wait age. Inspect durable
+          stages, artifacts and release/runtime evidence without rewriting timestamps or bypassing gates.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSnapshotPrime.md
+  - eval_time: 40m
+    alertname: FaasSnapshotPrimeWaiting
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasSnapshotPrimeTelemetryUnavailable
+    exp_alerts: []
+  promql_expr_test:
+  - expr: schedd_snapshot_prime_observation_healthy
+    eval_time: 6m
+    exp_samples:
+    - labels: '{__name__="schedd_snapshot_prime_observation_healthy",job="schedd",instance="a"}'
+      value: 1
+  - expr: schedd_snapshot_prime_oldest_known_attempt_age_seconds{class="unknown"}
+    eval_time: 6m
+    exp_samples: []
+- name: known waiting age survives mixed unknown history
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - series: schedd_snapshot_prime_pending{job="schedd",instance="a",class="waiting"}
+    values: 2x90
+  - series: schedd_snapshot_prime_age_unknown{job="schedd",instance="a",class="waiting"}
+    values: 1x90
+  - series: schedd_snapshot_prime_oldest_attempt_timestamp_seconds{job="schedd",instance="a",class="waiting"}
+    values: 60x90
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  alert_rule_test:
+  - eval_time: 16m
+    alertname: FaasSnapshotPrimeWaiting
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: snapshot_prime
+        public_status: internal
+        job: schedd
+        instance: a
+        class: waiting
+      exp_annotations:
+        summary: Snapshot preparation is eligible but has not advanced
+        description: An attempt currently classified waiting has a known boundary older than five minutes, sustained
+          for five minutes. The boundary is no earlier than stage start, release success, runtime invalidation and
+          known instance activity. Release gates, active captures, fresh parked captures and recorded snapshots
+          are separate. This does not prove continuous idle time, a stopped scheduler or readiness failure.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSnapshotPrime.md
+  - eval_time: 16m
+    alertname: FaasSnapshotPrimeEvidenceUnknown
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: snapshot_prime_telemetry
+        public_status: internal
+        job: schedd
+        instance: a
+        class: waiting
+      exp_annotations:
+        summary: Snapshot-prime eligibility or timing evidence is incomplete
+        description: Fresh observations have contained waiting attempts with incomplete eligibility or timing evidence
+          for 15m. Missing, invalid or future stage/activity times cannot establish a wait age. Inspect durable
+          stages, artifacts and release/runtime evidence without rewriting timestamps or bypassing gates.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSnapshotPrime.md
+  promql_expr_test:
+  - expr: schedd_snapshot_prime_oldest_known_attempt_age_seconds{class="waiting"}
+    eval_time: 16m
+    exp_samples:
+    - labels: '{__name__="schedd_snapshot_prime_oldest_known_attempt_age_seconds",job="schedd",instance="a",class="waiting"}'
+      value: 900
+- name: failed read
+  interval: 1m
+  input_series:
+  - *id001
+  - series: schedd_snapshot_prime_collection_success{job="schedd",instance="a"}
+    values: '0x90'
+  - *id003
+  - *id004
+  - *id035
+  - *id005
+  - *id036
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasSnapshotPrimeTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasSnapshotPrimeTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: snapshot_prime_telemetry
+        public_status: internal
+        job: schedd
+        instance: a
+      exp_annotations:
+        summary: Snapshot-prime handoff diagnostics are unavailable
+        description: Schedd is scraped but its handoff snapshot is failed, missing, inconsistent or older than two
+          minutes, or initialized recovery counters are incomplete. Work counts and ages are unknown. Check the
+          observer, database, clocks and binary. Intentional observer shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSnapshotPrime.md
+  - eval_time: 40m
+    alertname: FaasSnapshotPrimeWaiting
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasSnapshotPrimeEvidenceUnknown
+    exp_alerts: []
+  promql_expr_test:
+  - expr: schedd_snapshot_prime_oldest_known_attempt_age_seconds{class="waiting"}
+    eval_time: 6m
+    exp_samples: []
+- name: missing read success
+  interval: 1m
+  input_series:
+  - *id001
+  - *id003
+  - *id004
+  - *id035
+  - *id005
+  - *id036
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasSnapshotPrimeTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasSnapshotPrimeTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: snapshot_prime_telemetry
+        public_status: internal
+        job: schedd
+        instance: a
+      exp_annotations:
+        summary: Snapshot-prime handoff diagnostics are unavailable
+        description: Schedd is scraped but its handoff snapshot is failed, missing, inconsistent or older than two
+          minutes, or initialized recovery counters are incomplete. Work counts and ages are unknown. Check the
+          observer, database, clocks and binary. Intentional observer shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSnapshotPrime.md
+  - eval_time: 40m
+    alertname: FaasSnapshotPrimeWaiting
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasSnapshotPrimeEvidenceUnknown
+    exp_alerts: []
+  promql_expr_test:
+  - expr: schedd_snapshot_prime_oldest_known_attempt_age_seconds{class="waiting"}
+    eval_time: 6m
+    exp_samples: []
+- name: missing timestamp
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id004
+  - *id035
+  - *id005
+  - *id036
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasSnapshotPrimeTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasSnapshotPrimeTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: snapshot_prime_telemetry
+        public_status: internal
+        job: schedd
+        instance: a
+      exp_annotations:
+        summary: Snapshot-prime handoff diagnostics are unavailable
+        description: Schedd is scraped but its handoff snapshot is failed, missing, inconsistent or older than two
+          minutes, or initialized recovery counters are incomplete. Work counts and ages are unknown. Check the
+          observer, database, clocks and binary. Intentional observer shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSnapshotPrime.md
+  - eval_time: 40m
+    alertname: FaasSnapshotPrimeWaiting
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasSnapshotPrimeEvidenceUnknown
+    exp_alerts: []
+  promql_expr_test:
+  - expr: schedd_snapshot_prime_oldest_known_attempt_age_seconds{class="waiting"}
+    eval_time: 6m
+    exp_samples: []
+- name: missing expectation
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id035
+  - *id005
+  - *id036
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasSnapshotPrimeTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasSnapshotPrimeTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: snapshot_prime_telemetry
+        public_status: internal
+        job: schedd
+        instance: a
+      exp_annotations:
+        summary: Snapshot-prime handoff diagnostics are unavailable
+        description: Schedd is scraped but its handoff snapshot is failed, missing, inconsistent or older than two
+          minutes, or initialized recovery counters are incomplete. Work counts and ages are unknown. Check the
+          observer, database, clocks and binary. Intentional observer shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSnapshotPrime.md
+  - eval_time: 40m
+    alertname: FaasSnapshotPrimeWaiting
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasSnapshotPrimeEvidenceUnknown
+    exp_alerts: []
+  promql_expr_test:
+  - expr: schedd_snapshot_prime_oldest_known_attempt_age_seconds{class="waiting"}
+    eval_time: 6m
+    exp_samples: []
+- name: nonbinary expectation
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - series: schedd_snapshot_prime_observation_enabled{job="schedd",instance="a"}
+    values: 2x90
+  - *id035
+  - *id005
+  - *id036
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasSnapshotPrimeTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasSnapshotPrimeTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: snapshot_prime_telemetry
+        public_status: internal
+        job: schedd
+        instance: a
+      exp_annotations:
+        summary: Snapshot-prime handoff diagnostics are unavailable
+        description: Schedd is scraped but its handoff snapshot is failed, missing, inconsistent or older than two
+          minutes, or initialized recovery counters are incomplete. Work counts and ages are unknown. Check the
+          observer, database, clocks and binary. Intentional observer shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSnapshotPrime.md
+  - eval_time: 40m
+    alertname: FaasSnapshotPrimeWaiting
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasSnapshotPrimeEvidenceUnknown
+    exp_alerts: []
+  promql_expr_test:
+  - expr: schedd_snapshot_prime_oldest_known_attempt_age_seconds{class="waiting"}
+    eval_time: 6m
+    exp_samples: []
+- name: zero timestamp
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - series: schedd_snapshot_prime_collection_last_success_timestamp_seconds{job="schedd",instance="a"}
+    values: '0x90'
+  - *id004
+  - *id035
+  - *id005
+  - *id036
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasSnapshotPrimeTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasSnapshotPrimeTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: snapshot_prime_telemetry
+        public_status: internal
+        job: schedd
+        instance: a
+      exp_annotations:
+        summary: Snapshot-prime handoff diagnostics are unavailable
+        description: Schedd is scraped but its handoff snapshot is failed, missing, inconsistent or older than two
+          minutes, or initialized recovery counters are incomplete. Work counts and ages are unknown. Check the
+          observer, database, clocks and binary. Intentional observer shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSnapshotPrime.md
+  - eval_time: 40m
+    alertname: FaasSnapshotPrimeWaiting
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasSnapshotPrimeEvidenceUnknown
+    exp_alerts: []
+  promql_expr_test:
+  - expr: schedd_snapshot_prime_oldest_known_attempt_age_seconds{class="waiting"}
+    eval_time: 6m
+    exp_samples: []
+- name: future read timestamp
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - series: schedd_snapshot_prime_collection_last_success_timestamp_seconds{job="schedd",instance="a"}
+    values: 120+60x90
+  - *id004
+  - *id035
+  - *id005
+  - *id036
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasSnapshotPrimeTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasSnapshotPrimeTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: snapshot_prime_telemetry
+        public_status: internal
+        job: schedd
+        instance: a
+      exp_annotations:
+        summary: Snapshot-prime handoff diagnostics are unavailable
+        description: Schedd is scraped but its handoff snapshot is failed, missing, inconsistent or older than two
+          minutes, or initialized recovery counters are incomplete. Work counts and ages are unknown. Check the
+          observer, database, clocks and binary. Intentional observer shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSnapshotPrime.md
+  - eval_time: 40m
+    alertname: FaasSnapshotPrimeWaiting
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasSnapshotPrimeEvidenceUnknown
+    exp_alerts: []
+  promql_expr_test:
+  - expr: schedd_snapshot_prime_oldest_known_attempt_age_seconds{class="waiting"}
+    eval_time: 6m
+    exp_samples: []
+- name: missing class
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id035
+  - *id005
+  - *id036
+  - *id006
+  - *id007
+  - *id008
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasSnapshotPrimeTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasSnapshotPrimeTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: snapshot_prime_telemetry
+        public_status: internal
+        job: schedd
+        instance: a
+      exp_annotations:
+        summary: Snapshot-prime handoff diagnostics are unavailable
+        description: Schedd is scraped but its handoff snapshot is failed, missing, inconsistent or older than two
+          minutes, or initialized recovery counters are incomplete. Work counts and ages are unknown. Check the
+          observer, database, clocks and binary. Intentional observer shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSnapshotPrime.md
+  - eval_time: 40m
+    alertname: FaasSnapshotPrimeWaiting
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasSnapshotPrimeEvidenceUnknown
+    exp_alerts: []
+  promql_expr_test:
+  - expr: schedd_snapshot_prime_oldest_known_attempt_age_seconds{class="waiting"}
+    eval_time: 6m
+    exp_samples: []
+- name: missing unknown count
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id035
+  - *id036
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasSnapshotPrimeTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasSnapshotPrimeTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: snapshot_prime_telemetry
+        public_status: internal
+        job: schedd
+        instance: a
+      exp_annotations:
+        summary: Snapshot-prime handoff diagnostics are unavailable
+        description: Schedd is scraped but its handoff snapshot is failed, missing, inconsistent or older than two
+          minutes, or initialized recovery counters are incomplete. Work counts and ages are unknown. Check the
+          observer, database, clocks and binary. Intentional observer shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSnapshotPrime.md
+  - eval_time: 40m
+    alertname: FaasSnapshotPrimeWaiting
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasSnapshotPrimeEvidenceUnknown
+    exp_alerts: []
+  promql_expr_test:
+  - expr: schedd_snapshot_prime_oldest_known_attempt_age_seconds{class="waiting"}
+    eval_time: 6m
+    exp_samples: []
+- name: negative pending
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - series: schedd_snapshot_prime_pending{job="schedd",instance="a",class="waiting"}
+    values: -1x90
+  - *id005
+  - *id036
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasSnapshotPrimeTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasSnapshotPrimeTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: snapshot_prime_telemetry
+        public_status: internal
+        job: schedd
+        instance: a
+      exp_annotations:
+        summary: Snapshot-prime handoff diagnostics are unavailable
+        description: Schedd is scraped but its handoff snapshot is failed, missing, inconsistent or older than two
+          minutes, or initialized recovery counters are incomplete. Work counts and ages are unknown. Check the
+          observer, database, clocks and binary. Intentional observer shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSnapshotPrime.md
+  - eval_time: 40m
+    alertname: FaasSnapshotPrimeWaiting
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasSnapshotPrimeEvidenceUnknown
+    exp_alerts: []
+  promql_expr_test:
+  - expr: schedd_snapshot_prime_oldest_known_attempt_age_seconds{class="waiting"}
+    eval_time: 6m
+    exp_samples: []
+- name: fractional pending
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - series: schedd_snapshot_prime_pending{job="schedd",instance="a",class="waiting"}
+    values: 0.5x90
+  - *id005
+  - *id036
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasSnapshotPrimeTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasSnapshotPrimeTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: snapshot_prime_telemetry
+        public_status: internal
+        job: schedd
+        instance: a
+      exp_annotations:
+        summary: Snapshot-prime handoff diagnostics are unavailable
+        description: Schedd is scraped but its handoff snapshot is failed, missing, inconsistent or older than two
+          minutes, or initialized recovery counters are incomplete. Work counts and ages are unknown. Check the
+          observer, database, clocks and binary. Intentional observer shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSnapshotPrime.md
+  - eval_time: 40m
+    alertname: FaasSnapshotPrimeWaiting
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasSnapshotPrimeEvidenceUnknown
+    exp_alerts: []
+  promql_expr_test:
+  - expr: schedd_snapshot_prime_oldest_known_attempt_age_seconds{class="waiting"}
+    eval_time: 6m
+    exp_samples: []
+- name: infinite count
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - series: schedd_snapshot_prime_pending{job="schedd",instance="a",class="waiting"}
+    values: +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf
+      +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf
+      +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf
+      +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf +Inf
+      +Inf +Inf +Inf +Inf +Inf
+  - *id005
+  - series: schedd_snapshot_prime_oldest_attempt_timestamp_seconds{job="schedd",instance="a",class="waiting"}
+    values: 60x90
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasSnapshotPrimeTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasSnapshotPrimeTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: snapshot_prime_telemetry
+        public_status: internal
+        job: schedd
+        instance: a
+      exp_annotations:
+        summary: Snapshot-prime handoff diagnostics are unavailable
+        description: Schedd is scraped but its handoff snapshot is failed, missing, inconsistent or older than two
+          minutes, or initialized recovery counters are incomplete. Work counts and ages are unknown. Check the
+          observer, database, clocks and binary. Intentional observer shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSnapshotPrime.md
+  - eval_time: 40m
+    alertname: FaasSnapshotPrimeWaiting
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasSnapshotPrimeEvidenceUnknown
+    exp_alerts: []
+  promql_expr_test:
+  - expr: schedd_snapshot_prime_oldest_known_attempt_age_seconds{class="waiting"}
+    eval_time: 6m
+    exp_samples: []
+- name: unknown exceeds pending
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id035
+  - series: schedd_snapshot_prime_age_unknown{job="schedd",instance="a",class="waiting"}
+    values: 1x90
+  - *id036
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasSnapshotPrimeTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasSnapshotPrimeTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: snapshot_prime_telemetry
+        public_status: internal
+        job: schedd
+        instance: a
+      exp_annotations:
+        summary: Snapshot-prime handoff diagnostics are unavailable
+        description: Schedd is scraped but its handoff snapshot is failed, missing, inconsistent or older than two
+          minutes, or initialized recovery counters are incomplete. Work counts and ages are unknown. Check the
+          observer, database, clocks and binary. Intentional observer shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSnapshotPrime.md
+  - eval_time: 40m
+    alertname: FaasSnapshotPrimeWaiting
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasSnapshotPrimeEvidenceUnknown
+    exp_alerts: []
+  promql_expr_test:
+  - expr: schedd_snapshot_prime_oldest_known_attempt_age_seconds{class="waiting"}
+    eval_time: 6m
+    exp_samples: []
+- name: time without known count
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id035
+  - *id005
+  - series: schedd_snapshot_prime_oldest_attempt_timestamp_seconds{job="schedd",instance="a",class="waiting"}
+    values: 60x90
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasSnapshotPrimeTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasSnapshotPrimeTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: snapshot_prime_telemetry
+        public_status: internal
+        job: schedd
+        instance: a
+      exp_annotations:
+        summary: Snapshot-prime handoff diagnostics are unavailable
+        description: Schedd is scraped but its handoff snapshot is failed, missing, inconsistent or older than two
+          minutes, or initialized recovery counters are incomplete. Work counts and ages are unknown. Check the
+          observer, database, clocks and binary. Intentional observer shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSnapshotPrime.md
+  - eval_time: 40m
+    alertname: FaasSnapshotPrimeWaiting
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasSnapshotPrimeEvidenceUnknown
+    exp_alerts: []
+  promql_expr_test:
+  - expr: schedd_snapshot_prime_oldest_known_attempt_age_seconds{class="waiting"}
+    eval_time: 6m
+    exp_samples: []
+- name: known count without time
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - series: schedd_snapshot_prime_pending{job="schedd",instance="a",class="waiting"}
+    values: 1x90
+  - *id005
+  - *id036
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasSnapshotPrimeTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasSnapshotPrimeTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: snapshot_prime_telemetry
+        public_status: internal
+        job: schedd
+        instance: a
+      exp_annotations:
+        summary: Snapshot-prime handoff diagnostics are unavailable
+        description: Schedd is scraped but its handoff snapshot is failed, missing, inconsistent or older than two
+          minutes, or initialized recovery counters are incomplete. Work counts and ages are unknown. Check the
+          observer, database, clocks and binary. Intentional observer shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSnapshotPrime.md
+  - eval_time: 40m
+    alertname: FaasSnapshotPrimeWaiting
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasSnapshotPrimeEvidenceUnknown
+    exp_alerts: []
+  promql_expr_test:
+  - expr: schedd_snapshot_prime_oldest_known_attempt_age_seconds{class="waiting"}
+    eval_time: 6m
+    exp_samples: []
+- name: future attempt
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - series: schedd_snapshot_prime_pending{job="schedd",instance="a",class="waiting"}
+    values: 1x90
+  - *id005
+  - series: schedd_snapshot_prime_oldest_attempt_timestamp_seconds{job="schedd",instance="a",class="waiting"}
+    values: 6000x90
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasSnapshotPrimeTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasSnapshotPrimeTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: snapshot_prime_telemetry
+        public_status: internal
+        job: schedd
+        instance: a
+      exp_annotations:
+        summary: Snapshot-prime handoff diagnostics are unavailable
+        description: Schedd is scraped but its handoff snapshot is failed, missing, inconsistent or older than two
+          minutes, or initialized recovery counters are incomplete. Work counts and ages are unknown. Check the
+          observer, database, clocks and binary. Intentional observer shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSnapshotPrime.md
+  - eval_time: 40m
+    alertname: FaasSnapshotPrimeWaiting
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasSnapshotPrimeEvidenceUnknown
+    exp_alerts: []
+  promql_expr_test:
+  - expr: schedd_snapshot_prime_oldest_known_attempt_age_seconds{class="waiting"}
+    eval_time: 6m
+    exp_samples: []
+- name: unknown class cannot claim known age
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id035
+  - *id005
+  - *id036
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - series: schedd_snapshot_prime_pending{job="schedd",instance="a",class="unknown"}
+    values: 1x90
+  - *id019
+  - series: schedd_snapshot_prime_oldest_attempt_timestamp_seconds{job="schedd",instance="a",class="unknown"}
+    values: 60x90
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasSnapshotPrimeTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasSnapshotPrimeTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: snapshot_prime_telemetry
+        public_status: internal
+        job: schedd
+        instance: a
+      exp_annotations:
+        summary: Snapshot-prime handoff diagnostics are unavailable
+        description: Schedd is scraped but its handoff snapshot is failed, missing, inconsistent or older than two
+          minutes, or initialized recovery counters are incomplete. Work counts and ages are unknown. Check the
+          observer, database, clocks and binary. Intentional observer shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSnapshotPrime.md
+  - eval_time: 40m
+    alertname: FaasSnapshotPrimeWaiting
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasSnapshotPrimeEvidenceUnknown
+    exp_alerts: []
+  promql_expr_test:
+  - expr: schedd_snapshot_prime_oldest_known_attempt_age_seconds{class="waiting"}
+    eval_time: 6m
+    exp_samples: []
+- name: missing initialized query outcome
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id035
+  - *id005
+  - *id036
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasSnapshotPrimeTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasSnapshotPrimeTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: snapshot_prime_telemetry
+        public_status: internal
+        job: schedd
+        instance: a
+      exp_annotations:
+        summary: Snapshot-prime handoff diagnostics are unavailable
+        description: Schedd is scraped but its handoff snapshot is failed, missing, inconsistent or older than two
+          minutes, or initialized recovery counters are incomplete. Work counts and ages are unknown. Check the
+          observer, database, clocks and binary. Intentional observer shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSnapshotPrime.md
+  - eval_time: 40m
+    alertname: FaasSnapshotPrimeWaiting
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasSnapshotPrimeEvidenceUnknown
+    exp_alerts: []
+  promql_expr_test:
+  - expr: schedd_snapshot_prime_oldest_known_attempt_age_seconds{class="waiting"}
+    eval_time: 6m
+    exp_samples: []
+- name: exact freshness ceiling and stale hold
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - series: schedd_snapshot_prime_collection_last_success_timestamp_seconds{job="schedd",instance="a"}
+    values: 60x90
+  - *id004
+  - *id035
+  - *id005
+  - *id036
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  alert_rule_test:
+  - eval_time: 8m
+    alertname: FaasSnapshotPrimeTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 9m
+    alertname: FaasSnapshotPrimeTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: snapshot_prime_telemetry
+        public_status: internal
+        job: schedd
+        instance: a
+      exp_annotations:
+        summary: Snapshot-prime handoff diagnostics are unavailable
+        description: Schedd is scraped but its handoff snapshot is failed, missing, inconsistent or older than two
+          minutes, or initialized recovery counters are incomplete. Work counts and ages are unknown. Check the
+          observer, database, clocks and binary. Intentional observer shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSnapshotPrime.md
+  promql_expr_test:
+  - expr: schedd_snapshot_prime_observation_healthy
+    eval_time: 3m
+    exp_samples:
+    - labels: '{__name__="schedd_snapshot_prime_observation_healthy",job="schedd",instance="a"}'
+      value: 1
+  - expr: schedd_snapshot_prime_observation_healthy
+    eval_time: 4m
+    exp_samples: []
+- name: fresh recovery clears unknown telemetry
+  interval: 1m
+  input_series:
+  - *id001
+  - series: schedd_snapshot_prime_collection_success{job="schedd",instance="a"}
+    values: 0x9 1x80
+  - *id003
+  - *id004
+  - *id035
+  - *id005
+  - *id036
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  alert_rule_test:
+  - eval_time: 6m
+    alertname: FaasSnapshotPrimeTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: snapshot_prime_telemetry
+        public_status: internal
+        job: schedd
+        instance: a
+      exp_annotations:
+        summary: Snapshot-prime handoff diagnostics are unavailable
+        description: Schedd is scraped but its handoff snapshot is failed, missing, inconsistent or older than two
+          minutes, or initialized recovery counters are incomplete. Work counts and ages are unknown. Check the
+          observer, database, clocks and binary. Intentional observer shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSnapshotPrime.md
+  - eval_time: 10m
+    alertname: FaasSnapshotPrimeTelemetryUnavailable
+    exp_alerts: []
+  promql_expr_test:
+  - expr: schedd_snapshot_prime_observation_healthy
+    eval_time: 10m
+    exp_samples:
+    - labels: '{__name__="schedd_snapshot_prime_observation_healthy",job="schedd",instance="a"}'
+      value: 1
+- name: query failure ratio volume and hold
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id035
+  - *id005
+  - *id036
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - series: schedd_snapshot_prime_recovery_queries_total{job="schedd",instance="a",outcome="error"}
+    values: 0+10x90
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: FaasSnapshotPrimeRecoveryQueriesFailing
+    exp_alerts: []
+  - eval_time: 6m
+    alertname: FaasSnapshotPrimeRecoveryQueriesFailing
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: snapshot_prime
+        public_status: internal
+        job: schedd
+        instance: a
+      exp_annotations:
+        summary: Snapshot-prime recovery listings are persistently failing
+        description: Recovery list errors exceed 10% of non-canceled calls with at least three errors per rolling
+          five-minute window, sustained for five minutes. A healthy observation reader does not prove recovery listings
+          succeed. Candidate gates and active captures are separate decisions.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSnapshotPrime.md
+  - eval_time: 6m
+    alertname: FaasSnapshotPrimeTelemetryUnavailable
+    exp_alerts: []
+- name: rare query errors do not cross ratio
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id035
+  - *id005
+  - *id036
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - series: schedd_snapshot_prime_recovery_queries_total{job="schedd",instance="a",outcome="success"}
+    values: 0+1000x90
+  - series: schedd_snapshot_prime_recovery_queries_total{job="schedd",instance="a",outcome="error"}
+    values: 0+10x90
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  alert_rule_test:
+  - eval_time: 40m
+    alertname: FaasSnapshotPrimeRecoveryQueriesFailing
+    exp_alerts: []
+- name: insufficient query failure volume is quiet
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id035
+  - *id005
+  - *id036
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - series: schedd_snapshot_prime_recovery_queries_total{job="schedd",instance="a",outcome="error"}
+    values: 0+0.1x90
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  alert_rule_test:
+  - eval_time: 40m
+    alertname: FaasSnapshotPrimeRecoveryQueriesFailing
+    exp_alerts: []
+- name: caller cancellation is excluded from query failure rate
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id035
+  - *id005
+  - *id036
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - series: schedd_snapshot_prime_recovery_queries_total{job="schedd",instance="a",outcome="canceled"}
+    values: 0+100x90
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  alert_rule_test:
+  - eval_time: 40m
+    alertname: FaasSnapshotPrimeRecoveryQueriesFailing
+    exp_alerts: []
+- name: brief query failure burst does not meet hold
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id035
+  - *id005
+  - *id036
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - series: schedd_snapshot_prime_recovery_queries_total{job="schedd",instance="a",outcome="error"}
+    values: 0 10x89
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  alert_rule_test:
+  - eval_time: 6m
+    alertname: FaasSnapshotPrimeRecoveryQueriesFailing
+    exp_alerts: []
+  - eval_time: 10m
+    alertname: FaasSnapshotPrimeRecoveryQueriesFailing
+    exp_alerts: []
+- name: shutdown withdraws expectation without drain
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - series: schedd_snapshot_prime_observation_enabled{job="schedd",instance="a"}
+    values: 1x19 0x70
+  - series: schedd_snapshot_prime_pending{job="schedd",instance="a",class="waiting"}
+    values: 1x90
+  - *id005
+  - series: schedd_snapshot_prime_oldest_attempt_timestamp_seconds{job="schedd",instance="a",class="waiting"}
+    values: 60x90
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  alert_rule_test:
+  - eval_time: 19m
+    alertname: FaasSnapshotPrimeWaiting
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: snapshot_prime
+        public_status: internal
+        job: schedd
+        instance: a
+        class: waiting
+      exp_annotations:
+        summary: Snapshot preparation is eligible but has not advanced
+        description: An attempt currently classified waiting has a known boundary older than five minutes, sustained
+          for five minutes. The boundary is no earlier than stage start, release success, runtime invalidation and
+          known instance activity. Release gates, active captures, fresh parked captures and recorded snapshots
+          are separate. This does not prove continuous idle time, a stopped scheduler or readiness failure.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSnapshotPrime.md
+  - eval_time: 20m
+    alertname: FaasSnapshotPrimeWaiting
+    exp_alerts: []
+  promql_expr_test:
+  - expr: schedd_snapshot_prime_oldest_known_attempt_age_seconds{class="waiting"}
+    eval_time: 20m
+    exp_samples:
+    - labels: '{__name__="schedd_snapshot_prime_oldest_known_attempt_age_seconds",job="schedd",instance="a",class="waiting"}'
+      value: 1140
+- name: disabled observer suppresses unavailable telemetry
+  interval: 1m
+  input_series:
+  - *id001
+  - series: schedd_snapshot_prime_collection_success{job="schedd",instance="a"}
+    values: '0x90'
+  - *id003
+  - series: schedd_snapshot_prime_observation_enabled{job="schedd",instance="a"}
+    values: '0x90'
+  - *id035
+  - *id005
+  - *id036
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  alert_rule_test:
+  - eval_time: 40m
+    alertname: FaasSnapshotPrimeTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasSnapshotPrimeWaiting
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasSnapshotPrimeEvidenceUnknown
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasSnapshotPrimeRecoveryQueriesFailing
+    exp_alerts: []
+- name: down targets use existing target alerts
+  interval: 1m
+  input_series:
+  - series: up{job="schedd",instance="a"}
+    values: '0x90'
+  - *id002
+  - *id003
+  - *id004
+  - *id035
+  - *id005
+  - *id036
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  alert_rule_test:
+  - eval_time: 40m
+    alertname: FaasSnapshotPrimeTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasSnapshotPrimeWaiting
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasSnapshotPrimeEvidenceUnknown
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasSnapshotPrimeRecoveryQueriesFailing
+    exp_alerts: []
+- name: absent installation is quiet
+  interval: 1m
+  input_series: []
+  alert_rule_test:
+  - eval_time: 40m
+    alertname: FaasSnapshotPrimeTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasSnapshotPrimeWaiting
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasSnapshotPrimeEvidenceUnknown
+    exp_alerts: []
+  - eval_time: 40m
+    alertname: FaasSnapshotPrimeRecoveryQueriesFailing
+    exp_alerts: []
+- name: another replica cannot lend its missing class
+  interval: 1m
+  input_series:
+  - *id001
+  - *id002
+  - *id003
+  - *id004
+  - *id035
+  - *id005
+  - *id036
+  - *id006
+  - *id007
+  - *id008
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id030
+  - *id031
+  - *id032
+  - *id033
+  - *id034
+  - series: up{job="schedd",instance="b"}
+    values: 1x90
+  - series: schedd_snapshot_prime_collection_success{job="schedd",instance="b"}
+    values: 1x90
+  - series: schedd_snapshot_prime_collection_last_success_timestamp_seconds{job="schedd",instance="b"}
+    values: 0+60x90
+  - series: schedd_snapshot_prime_observation_enabled{job="schedd",instance="b"}
+    values: 1x90
+  - series: schedd_snapshot_prime_pending{job="schedd",instance="b",class="waiting"}
+    values: '0x90'
+  - series: schedd_snapshot_prime_age_unknown{job="schedd",instance="b",class="waiting"}
+    values: '0x90'
+  - series: schedd_snapshot_prime_oldest_attempt_timestamp_seconds{job="schedd",instance="b",class="waiting"}
+    values: '0x90'
+  - series: schedd_snapshot_prime_pending{job="schedd",instance="b",class="release_blocked"}
+    values: '0x90'
+  - series: schedd_snapshot_prime_age_unknown{job="schedd",instance="b",class="release_blocked"}
+    values: '0x90'
+  - series: schedd_snapshot_prime_oldest_attempt_timestamp_seconds{job="schedd",instance="b",class="release_blocked"}
+    values: '0x90'
+  - series: schedd_snapshot_prime_pending{job="schedd",instance="b",class="active"}
+    values: '0x90'
+  - series: schedd_snapshot_prime_age_unknown{job="schedd",instance="b",class="active"}
+    values: '0x90'
+  - series: schedd_snapshot_prime_oldest_attempt_timestamp_seconds{job="schedd",instance="b",class="active"}
+    values: '0x90'
+  - series: schedd_snapshot_prime_pending{job="schedd",instance="b",class="publication_pending"}
+    values: '0x90'
+  - series: schedd_snapshot_prime_age_unknown{job="schedd",instance="b",class="publication_pending"}
+    values: '0x90'
+  - series: schedd_snapshot_prime_oldest_attempt_timestamp_seconds{job="schedd",instance="b",class="publication_pending"}
+    values: '0x90'
+  - series: schedd_snapshot_prime_pending{job="schedd",instance="b",class="snapshot_recorded"}
+    values: '0x90'
+  - series: schedd_snapshot_prime_age_unknown{job="schedd",instance="b",class="snapshot_recorded"}
+    values: '0x90'
+  - series: schedd_snapshot_prime_oldest_attempt_timestamp_seconds{job="schedd",instance="b",class="snapshot_recorded"}
+    values: '0x90'
+  - series: schedd_snapshot_prime_pending{job="schedd",instance="b",class="unknown"}
+    values: '0x90'
+  - series: schedd_snapshot_prime_age_unknown{job="schedd",instance="b",class="unknown"}
+    values: '0x90'
+  - series: schedd_snapshot_prime_oldest_attempt_timestamp_seconds{job="schedd",instance="b",class="unknown"}
+    values: '0x90'
+  - series: schedd_snapshot_prime_recovery_queries_total{job="schedd",instance="b",outcome="success"}
+    values: '0x90'
+  - series: schedd_snapshot_prime_recovery_queries_total{job="schedd",instance="b",outcome="error"}
+    values: '0x90'
+  - series: schedd_snapshot_prime_recovery_queries_total{job="schedd",instance="b",outcome="canceled"}
+    values: '0x90'
+  - series: schedd_snapshot_prime_recovery_candidates_total{job="schedd",instance="b",outcome="not_found"}
+    values: '0x90'
+  - series: schedd_snapshot_prime_recovery_candidates_total{job="schedd",instance="b",outcome="ineligible"}
+    values: '0x90'
+  - series: schedd_snapshot_prime_recovery_candidates_total{job="schedd",instance="b",outcome="release_blocked"}
+    values: '0x90'
+  - series: schedd_snapshot_prime_recovery_candidates_total{job="schedd",instance="b",outcome="grace"}
+    values: '0x90'
+  - series: schedd_snapshot_prime_recovery_candidates_total{job="schedd",instance="b",outcome="not_owned"}
+    values: '0x90'
+  - series: schedd_snapshot_prime_recovery_candidates_total{job="schedd",instance="b",outcome="snapshot_recorded"}
+    values: '0x90'
+  - series: schedd_snapshot_prime_recovery_candidates_total{job="schedd",instance="b",outcome="active"}
+    values: '0x90'
+  - series: schedd_snapshot_prime_recovery_candidates_total{job="schedd",instance="b",outcome="publication_pending"}
+    values: '0x90'
+  - series: schedd_snapshot_prime_recovery_candidates_total{job="schedd",instance="b",outcome="dispatch_requested"}
+    values: '0x90'
+  - series: schedd_snapshot_prime_recovery_candidates_total{job="schedd",instance="b",outcome="error"}
+    values: '0x90'
+  - series: schedd_snapshot_prime_recovery_candidates_total{job="schedd",instance="b",outcome="canceled"}
+    values: '0x90'
+  alert_rule_test:
+  - eval_time: 6m
+    alertname: FaasSnapshotPrimeTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: schedd
+        family: snapshot_prime_telemetry
+        public_status: internal
+        job: schedd
+        instance: a
+      exp_annotations:
+        summary: Snapshot-prime handoff diagnostics are unavailable
+        description: Schedd is scraped but its handoff snapshot is failed, missing, inconsistent or older than two
+          minutes, or initialized recovery counters are incomplete. Work counts and ages are unknown. Check the
+          observer, database, clocks and binary. Intentional observer shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSnapshotPrime.md

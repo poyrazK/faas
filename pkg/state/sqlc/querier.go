@@ -2878,6 +2878,7 @@ type Querier interface {
 	OperatorQueuedBuildsCount(ctx context.Context, db DBTX) (int64, error)
 	OperatorQueuedBuildsSnapshot(ctx context.Context, db DBTX) (OperatorQueuedBuildsSnapshotRow, error)
 	OperatorRecentFailureCounts(ctx context.Context, db DBTX, since pgtype.Timestamptz) ([]OperatorRecentFailureCountsRow, error)
+	OperatorSnapshotPrimeSnapshot(ctx context.Context, db DBTX, arg OperatorSnapshotPrimeSnapshotParams) ([]OperatorSnapshotPrimeSnapshotRow, error)
 	OperatorTenantApps(ctx context.Context, db DBTX, targetAccountID pgtype.UUID) ([]OperatorTenantAppsRow, error)
 	OperatorTenantCounts(ctx context.Context, db DBTX, targetAccountID pgtype.UUID) (OperatorTenantCountsRow, error)
 	OrgByID(ctx context.Context, db DBTX, id pgtype.UUID) (OrgByIDRow, error)

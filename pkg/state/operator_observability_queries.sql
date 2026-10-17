@@ -485,3 +485,73 @@ FROM deployment_image_preparations p JOIN deployments d ON d.id=p.deployment_id
 WHERE p.phase <> 'handed_off' AND d.status IN ('pending','building','imaging','snapshotting')
  AND (sqlc.arg(node_id)::text='' OR p.node_name='' OR p.node_name=sqlc.arg(node_id)::text)
 GROUP BY p.phase;
+
+-- name: OperatorSnapshotPrimeSnapshot :many
+WITH scoped AS MATERIALIZED (
+ SELECT d.* FROM deployments d JOIN apps a ON a.id=d.app_id
+ WHERE d.status='snapshotting' AND a.status<>'deleted' AND NOT d.environment_workload_held
+  AND (sqlc.arg(node_id)::text='' OR a.node_id IS NULL OR a.node_id::text=sqlc.arg(node_id)::text)
+  AND coalesce(d.stage_state->>'current','')<>'readiness'
+), timed AS MATERIALIZED (
+ SELECT d.*,
+  CASE WHEN d.stage_state->>'current'='snapshot_prepare'
+   AND (d.stage_state->>'current_started_at') ~ '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?(Z|[+-]\d{2}:\d{2})$'
+   AND pg_input_is_valid(d.stage_state->>'current_started_at','timestamp with time zone')
+   THEN (d.stage_state->>'current_started_at')::timestamptz END AS stage_at
+ FROM scoped d
+), facts AS (
+ SELECT d.id,d.stage_at,d.rootfs_key,
+  (cardinality(d.release_command)=0 OR coalesce(t.status='succeeded' AND t.app_id=d.app_id
+   AND t.artifact_key=d.rootfs_key AND t.image_digest=d.image_digest AND t.deployment_scope=d.scope
+   AND t.command_shell=d.release_command_shell AND t.command=d.release_command,false)) AS release_allowed,
+  cardinality(d.release_command)>0 AS release_required,t.finished_at AS release_at,
+  sn.created_at AS snapshot_at,c.changed_at,
+  coalesce(ins.active,false) AS active,coalesce(ins.parked,false) AS parked,
+  coalesce(ins.bad_time,false) AS bad_time,coalesce(ins.unknown_activity,false) AS unknown_activity,
+  ins.activity_at
+ FROM timed d
+ LEFT JOIN app_tasks t ON t.deployment_id=d.id AND t.kind='release'
+ LEFT JOIN LATERAL (SELECT s.created_at FROM snapshots s WHERE s.deployment_id=d.id AND NOT s.stale
+  ORDER BY (s.tier='warm') DESC,s.created_at DESC LIMIT 1) sn ON true
+ LEFT JOIN LATERAL (SELECT max(b.changed_at) AS changed_at FROM (
+  SELECT changed_at FROM app_runtime_config_changes WHERE app_id=d.app_id
+  UNION ALL SELECT changed_at FROM app_runtime_config_scope_changes WHERE app_id=d.app_id AND scope IN ('default',d.scope)
+ ) b) c ON true
+ LEFT JOIN LATERAL (
+  SELECT bool_or(i.state IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm','frozen')) AS active,
+   bool_or(i.state='parked' AND CASE WHEN r.instance_id IS NOT NULL THEN
+     r.scope=d.scope AND r.boundary_at>=coalesce(c.changed_at,'epoch'::timestamptz)
+     AND environment_runtime_inputs_fresh(d.app_id,r.scope,r.boundary_at,r.variables,r.secret_versions,r.all_secrets,r.secret_refs,r.sidecar_secret_versions)
+    ELSE NOT environment_runtime_receipt_required(d.app_id,d.scope)
+     AND least(i.started_at,CASE WHEN substr(i.wake_id::text,15,1)='7' THEN
+       to_timestamp(('x'||substr(replace(i.wake_id::text,'-',''),1,12))::bit(48)::bigint::double precision/1000)
+       ELSE i.started_at END)>coalesce(c.changed_at,'epoch'::timestamptz) END) AS parked,
+   bool_or(i.started_at IS NULL OR NOT isfinite(i.started_at) OR i.started_at>statement_timestamp()
+    OR (i.terminal_at IS NOT NULL AND (NOT isfinite(i.terminal_at) OR i.terminal_at>statement_timestamp()))
+    OR (i.parked_at IS NOT NULL AND (NOT isfinite(i.parked_at) OR i.parked_at>statement_timestamp()))) AS bad_time,
+   bool_or(CASE WHEN i.state='parked' THEN i.parked_at IS NULL
+    WHEN i.state NOT IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm','frozen') THEN i.terminal_at IS NULL ELSE false END) AS unknown_activity,
+   max(greatest(i.terminal_at,i.parked_at)) AS activity_at
+  FROM (SELECT * FROM instances WHERE app_id=d.app_id ORDER BY started_at DESC LIMIT sqlc.arg(instance_lookback)::integer) i
+  LEFT JOIN instance_runtime_config_receipts r ON r.instance_id=i.id AND r.wake_id=i.wake_id
+  WHERE i.deployment_id=d.id AND (i.started_at>d.stage_at OR i.started_at IS NULL)
+ ) ins ON true
+), classified AS (
+ SELECT CASE
+  WHEN stage_at IS NULL OR NOT isfinite(stage_at) OR stage_at<='epoch'::timestamptz OR stage_at>statement_timestamp() OR rootfs_key='' THEN 'unknown'
+  WHEN NOT release_allowed THEN 'release_blocked'
+  WHEN snapshot_at>statement_timestamp() THEN 'unknown'
+  WHEN snapshot_at>stage_at THEN 'snapshot_recorded'
+  WHEN bad_time THEN 'unknown'
+  WHEN active THEN 'active'
+  WHEN parked THEN 'publication_pending'
+  ELSE 'waiting' END::text AS class,
+  CASE WHEN NOT release_allowed OR (release_required AND (release_at IS NULL OR NOT isfinite(release_at) OR release_at<='epoch'::timestamptz OR release_at>statement_timestamp()))
+     OR (unknown_activity AND NOT coalesce(snapshot_at>stage_at,false)) OR changed_at>statement_timestamp() THEN NULL
+   ELSE greatest(stage_at,CASE WHEN release_required THEN release_at END,changed_at,CASE WHEN snapshot_at>stage_at THEN NULL ELSE activity_at END) END AS since
+ FROM facts
+)
+SELECT class,count(*)::bigint AS pending,
+ count(*) FILTER (WHERE class='unknown' OR since IS NULL)::bigint AS unknown_age,
+ min(CASE WHEN class<>'unknown' THEN since END)::timestamptz AS oldest_at
+FROM classified GROUP BY class;
