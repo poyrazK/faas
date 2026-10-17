@@ -1,8 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import net from 'node:net'
+import http from 'node:http'
 import { spawn } from 'node:child_process'
-import { once } from 'node:events'
+import { once, EventEmitter } from 'node:events'
 import { createRequire } from 'node:module'
 import { pathToFileURL } from 'node:url'
 
@@ -88,6 +89,19 @@ test('real engine pool observations survive SQL saturation, counter resets and e
   // The admin handler itself needs a SQL slot. Never await it indefinitely
   // while this fixture owns the lock that prevents the slot from draining.
   if (stallAdminProbe) {
+    // Keep the gateway's own readiness probe pending through its hard cap,
+    // independently of the fixture's short-lived direct fetch below.
+    const getNormally = http.get
+    let retained = false
+    t.mock.method(http, 'get', (options, respond) => {
+      if (options.port === readyPort && options.path === '/ready' && !retained) {
+        retained = true
+        const request = new EventEmitter()
+        request.destroy = () => {}
+        return request
+      }
+      return getNormally(options, respond)
+    })
     const fetchNormally = globalThis.fetch
     let stalled = false
     t.mock.method(globalThis, 'fetch', (input, options) => {
@@ -137,12 +151,15 @@ test('real engine pool observations survive SQL saturation, counter resets and e
   assert.equal(drained.waiting, 0)
   assert.ok(drained.timeouts_total > 0)
   t.diagnostic('pool fixture: SQL queue drained')
+  // The gateway owns separate shared /ready and /metrics probes. A drained
+  // metrics observation does not imply its retained /ready request settled.
+  // Allow that request's hard cap and one fresh caller probe to recover.
   let recoveredResponse, recovered
   await until(async () => {
     recoveredResponse = await fetch(base + '/healthz')
     recovered = await recoveredResponse.json()
     return recoveredResponse.status === 200 && recovered.pool.state === 'observed'
-  })
+  }, limits.queryMs + limits.healthProbeMs)
   assert.equal(recoveredResponse.status, 200)
   const bob = await fetch(base + '/rest/v1/notes', { headers: { Authorization: 'Bearer bob' } })
   assert.deepEqual(await bob.json(), [])
