@@ -582,7 +582,7 @@ view with shared read state.
 No credentials or deployed services are needed for the local memory/PostgreSQL
 and browser fixtures. This checklist is not live pilot evidence. See the
 [customer activity runbook](../../../docs/ops/product-control.md#customer-workspace-activity)
-and [ADR-1559](../../../docs/adr/1559-product-control-workspace-activity.md).
+and [ADR-1615](../../../docs/adr/1615-product-control-workspace-activity.md).
 
 Run details in Recent work and workspace activity explain the original plan,
 consumed start and retained outcome. Members with billing access also see the

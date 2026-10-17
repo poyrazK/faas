@@ -9,7 +9,7 @@ historical.
 
 ## Product Control customer work history — 2026-10-17
 
-[ADR-1561](adr/1561-product-control-customer-work-history.md) adds a private
+[ADR-1617](adr/1617-product-control-customer-work-history.md) adds a private
 customer API and explicit portal search over independently retained receipts.
 Exact run reference, original feature, outcome and inclusive UTC start dates
 combine with AND. Removed features and old plans stay discoverable. Pages use
@@ -56,7 +56,7 @@ qualification, workload execution or deployment is introduced. See the
 
 ## Product Control customer run details — 2026-10-17
 
-[ADR-1560](adr/1560-product-control-customer-run-details.md) adds a private,
+[ADR-1616](adr/1616-product-control-customer-run-details.md) adds a private,
 read-only customer API and Run details panel to Recent work and work activity
 links. The original receipt supplies the plan, admission month, one consumed
 start and optional historical allowance before/after admission. Current plan
@@ -103,7 +103,7 @@ provider/Auth/native qualification is claimed. See the
 
 ## Product Control customer workspace activity — 2026-10-17
 
-[ADR-1559](adr/1559-product-control-workspace-activity.md) adds customer workspace
+[ADR-1615](adr/1615-product-control-workspace-activity.md) adds customer workspace
 activity to the existing Updates area. The read-only private API and portal join
 retained work outcomes, confirmed self-service plans, finalized statements,
 signed credit notes and the latest help updates. Source fields are selected
@@ -154,7 +154,7 @@ qualification is claimed. See the
 
 ## Product Control notification unsubscribe — 2026-10-17
 
-[ADR-1558](adr/1558-product-control-notification-unsubscribe.md) adds unsubscribe
+[ADR-1614](adr/1614-product-control-notification-unsubscribe.md) adds unsubscribe
 without sign-in to new personal work/help notification emails. Each retained
 delivery has a separate random capability, persisted only as a lookup hash and a
 delivery-bound age envelope. Retries reuse the original capability and message
@@ -208,7 +208,7 @@ query redaction remain deployment qualification. See the
 
 ## Product Control notification recovery — 2026-10-17
 
-[ADR-1557](adr/1557-product-control-notification-recovery.md) adds an explicit
+[ADR-1613](adr/1613-product-control-notification-recovery.md) adds an explicit
 customer action to recover a personal hard-bounce pause after verifying a
 different sign-in address and renewing consent. Sender evidence is an encrypted,
 subscription-bound address digest; plaintext addresses and digests are omitted
@@ -255,7 +255,7 @@ separate. See the [notification recovery runbook](ops/product-control.md#recover
 
 ## Product Control provider delivery feedback — 2026-10-17
 
-[ADR-1556](adr/1556-product-control-email-provider-feedback.md) adds signed Resend
+[ADR-1612](adr/1612-product-control-email-provider-feedback.md) adds signed Resend
 delivery, bounce and complaint reports above durable provider receipts. The
 portal, owner console and `gregale product email` show provider-reported states
 and report times. Receiving-server delivery does not establish inbox placement
@@ -299,7 +299,7 @@ performed. See the [feedback runbook](ops/product-control.md#provider-delivery-f
 
 ## Product Control owner notification controls — 2026-10-17
 
-[ADR-1555](adr/1555-product-control-owner-email-controls.md) adds owner console
+[ADR-1611](adr/1611-product-control-owner-email-controls.md) adds owner console
 and `gregale product email` controls for whole-window queue totals, oldest
 pending age, customer-scoped delivery history and clear failure guidance.
 Counts cover the selected rolling 30-day product/customer window across all
@@ -337,7 +337,7 @@ See the [owner email runbook](ops/product-control.md#owner-notification-email-co
 
 ## Product Control personal notification email — 2026-10-17
 
-[ADR-1554](adr/1554-product-control-personal-notification-email.md) adds personal
+[ADR-1610](adr/1610-product-control-personal-notification-email.md) adds personal
 Work outcomes and Help replies opt-ins above the workspace inbox, with a durable
 outbox, bounded retries, delivery status and a private local mail sink. Preferences
 start off, use version checks and apply only to new updates. Auth issues a narrow
@@ -368,7 +368,7 @@ See the [personal email runbook](ops/product-control.md#personal-notification-em
 
 ## Product Control customer account recovery — 2026-10-17
 
-[ADR-1553](adr/1553-product-control-customer-account-recovery.md) adds **Forgot
+[ADR-1609](adr/1609-product-control-customer-account-recovery.md) adds **Forgot
 password?** to the customer sign-in page. It opens the latest product's owned
 Application Auth recovery UI in a separate tab, without passing credentials or
 requesting email on navigation. The existing Auth flow owns recovery mail,
@@ -393,7 +393,7 @@ See the [account recovery runbook](ops/product-control.md#customer-account-recov
 
 ## Product Control complete internal pilot preparation — 2026-10-17
 
-[ADR-1552](adr/1552-product-control-complete-internal-pilot.md) adds an opt-in
+[ADR-1608](adr/1608-product-control-complete-internal-pilot.md) adds an opt-in
 version-two manifest requiring three baseline downloads, three journeys linked
 to help about those same runs, and observed customer inbox pages. Both the
 selected successful work and latest help source must match retained evidence.
@@ -416,7 +416,7 @@ downloads have been recorded during preparation.
 
 ## Product Control customer notifications — 2026-10-17
 
-[ADR-1551](adr/1551-product-control-customer-notifications.md) adds an Updates
+[ADR-1607](adr/1607-product-control-customer-notifications.md) adds an Updates
 inbox for retained work outcomes, runs needing attention and the latest owner
 help response/status. It uses a rolling thirty-day view with current workspace
 and kind-specific permissions applied before pages and unread counts. Read
@@ -441,7 +441,7 @@ Auth/browser/native-export pilot remain separate release work.
 
 ## Product Control internal release candidate — 2026-10-17
 
-[ADR-1550](adr/1550-product-control-internal-pilot-evidence.md) extends
+[ADR-1606](adr/1606-product-control-internal-pilot-evidence.md) extends
 `gregale product pilot verify` with optional scoped help expectations and
 three-customer journey records. Help snapshots must match reviewed hashes and,
 for run requests, the original admission terms. `product pilot help` inspects
@@ -467,7 +467,7 @@ during preparation.
 
 ## Product Control Customer Help — 2026-10-17
 
-[ADR-1549](adr/1549-product-control-customer-help.md) adds customer requests with
+[ADR-1605](adr/1605-product-control-customer-help.md) adds customer requests with
 server-generated diagnostic snapshots, an owner review queue and customer-visible
 status/response. Requests follow current workspace, role and Auth realm authority.
 Feature/run requests retain only permitted context; messages and responses are
@@ -491,7 +491,7 @@ separate. See the [Customer Help runbook](ops/product-control.md#customer-help).
 
 ## Local Product Control customer usage guidance — 2026-10-16
 
-[ADR-1548](adr/1548-product-control-customer-usage-guidance.md) adds customer
+[ADR-1604](adr/1604-product-control-customer-usage-guidance.md) adds customer
 usage progress, warnings from 80%, exact UTC resets and separate explanations
 for exhausted/zero allowances, paused access, permissions and unavailable
 features. The portal and private customer read API share existing accepted-start
@@ -513,7 +513,7 @@ access. See the [usage guidance runbook](ops/product-control.md#usage-and-next-s
 
 ## Local Product Control customer activity timeline — 2026-10-16
 
-[ADR-1547](adr/1547-product-control-customer-activity.md) adds an owner-only
+[ADR-1603](adr/1603-product-control-customer-activity.md) adds an owner-only
 activity timeline in the console, private read API, and `gregale product customers
 activity`. Ten event kinds combine retained setup/activation, reviewed assignment
 and self-service plan changes, original run terms and verified outcomes,
@@ -536,7 +536,7 @@ documents history coverage, source links and continuation semantics.
 
 ## Local Product Control customer readiness overview — 2026-10-16
 
-[ADR-1546](adr/1546-product-control-customer-readiness-overview.md) adds an
+[ADR-1602](adr/1602-product-control-customer-readiness-overview.md) adds an
 owner-only **Customer readiness and activation** page, private read API, and
 `gregale product customers overview`. Assigned customers combine pinned plans,
 existing feature/binding/allowance diagnostics, guided activation evidence, and
@@ -958,6 +958,32 @@ partial configuration cannot fall back to legacy approval. Portable race, verdic
 lint and tagged compilation checks passed; [evidence and limits](ops/evidence/20261012-managed-postgres-rollout-readiness/REPORT.md)
 record the qualification boundary. Supported native execution remains pending; this change
 does not enable production provisioning or alter Neon resources or billing.
+
+## PostgreSQL starter checkpoint drain — 2026-10-17
+
+The Node and Python PostgreSQL starters' first capture happened right after
+readiness, so every wake restored the startup check's open SQL session and
+orphaned its server backend. Both adapters now drain every session in a
+`before_checkpoint` hook (idempotent, retried after a failed drain, rotation
+refused until restore) next to the existing `after_restore` replacement.
+`secret-reload-node` bundled the restore code but never called it; it now
+serves both hooks. Declaring the checkpoint hook turns off warm captures for
+those apps (ADR-351). Unit tests and the TLS/SCRAM suites (Node and Python
+starters, concurrent functions) check that no server session survives the
+drain. Native VM capture evidence is pending.
+
+## Concurrent backend cancellation — 2026-10-16
+
+The follow-up to PR #4768 holds shared-worker slots through cancellation
+cleanup. Node receives an abort signal, Python acknowledges completed cleanup,
+and function hook handlers receive socket-derived lifecycle context (ADR-1540).
+Portable interpreter/race tests and real TLS/SCRAM PostgreSQL integration check
+bounded admission, blocked-write rollback, healthy neighbours, pool replacement
+and worker-death recovery. [Portable evidence](ops/evidence/20261016-function-backend-concurrency/REPORT.md)
+and the [acceptance procedure](ops/function-backend-concurrency-acceptance.md)
+separate these process checks from native VM qualification. Native execution is
+pending: this workspace lacks KVM. Function hooks execute in one worker; this
+does not qualify VM-wide pool draining or durable post-response `waitUntil`.
 
 ## Deployed PostgreSQL starter qualification — 2026-10-12
 
@@ -1524,6 +1550,23 @@ daemon set, daemons at 74b9225c29 with the bridge, runner and test at
 and completed a 40 s async invocation in 40.7 s on its first attempt. Both
 40 s runs saw `X-Faas-Deadline-Ms=119999`. Before the bridge fix every
 attempt of that async invocation got a 502 about 32 s in and was retried.
+A function may set `function_concurrency` (ADR-1342): one Node or Python
+worker then serves that many requests at once, multiplexed by an id the
+adapter echoes, and an abandoned request is cancelled without restarting
+its worker. A `functions:` entry can set `ram_mb`, `request_timeout_s`,
+`min_instances`, `concurrency`, `env` and `secrets_from_env`, applied before
+the function's build, and `routes:` behind an `entry: true` function become
+`kind=route` edge rules on the entry app's hosts. Evidence, 2026-10-14 on
+`gregale-internal-test-1` (`cmd/e2e` `TestFunctionConcurrencyMetal`, full
+daemon set at f4a1972f8c): a binary function whose handler speaks the shared
+protocol, deployed with `function_concurrency=8`, answered eight concurrent
+2 s requests in 2.17 s from one worker process, and after a client abandoned
+a request the same worker reported one acknowledged cancel. The `gregale`
+CLI then deployed a two-function manifest: the new `users` function was
+reserved, configured and built with concurrency 4, its sealed
+`USERS_TOKEN` reached the guest, `/users/42` on the entry host reached
+`users` and `/about` reached the entry function, and a repeat deploy left
+exactly one managed route rule.
 `node24` and `python313` are the Tier 1 runtime
 additions — additive on top of `node22` / `python312` with the
 same envelope contract; handler paths `/app/node24.js` and

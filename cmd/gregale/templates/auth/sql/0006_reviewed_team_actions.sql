@@ -1,4 +1,4 @@
--- ADR-1544: Auth owns membership mutations, their idempotency and audit receipt.
+-- ADR-1600: Auth owns membership mutations, their idempotency and audit receipt.
 -- Existing roles, memberships, invitations and acceptance remain authoritative.
 CREATE TABLE gregale_auth.team_actions (
   id uuid PRIMARY KEY CHECK (id <> '00000000-0000-0000-0000-000000000000'),

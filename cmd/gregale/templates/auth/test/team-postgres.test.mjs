@@ -1,4 +1,4 @@
-// ADR-1544: the membership change and its retry/audit receipt commit together.
+// ADR-1600: the membership change and its retry/audit receipt commit together.
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { randomUUID, createHash } from 'node:crypto'

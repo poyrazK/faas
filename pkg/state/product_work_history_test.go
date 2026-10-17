@@ -225,7 +225,7 @@ func TestProductControlWorkHistoryLiveMemory(t *testing.T) {
 }
 func productWorkHistoryLiveContract(t *testing.T, s productWorkHistoryTestStore, persist func(Operation, bool)) {
 	t.Helper()
-	f := helpFixture(t, s)
+	f := helpFixture(t.Context(), t, s)
 	f.admission.IdempotencyKey = uuid.NewString()
 	op, _, err := s.AdmitOperation(t.Context(), f.admission)
 	if err != nil {

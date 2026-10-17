@@ -2,7 +2,7 @@
 
 package migrations_test
 
-// adr: 1535 — replay preserves commercial evidence and later email constraints.
+// adr: 1591 — replay preserves commercial evidence and later email constraints.
 
 import (
 	"strings"

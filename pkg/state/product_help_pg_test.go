@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-// ADR-1549: PostgreSQL and memory share help authority, retry and concurrency contracts.
+// ADR-1605: PostgreSQL and memory share help authority, retry and concurrency contracts.
 package state
 
 import "testing"

@@ -25,19 +25,19 @@ func notificationTestUpdate(n api.ProductNotification, read bool) api.ProductNot
 	return api.ProductNotificationUpdate{ID: n.ID, Revision: n.Revision, ExpectedVersion: &version, Read: &read}
 }
 
-func notificationTestPage(t *testing.T, s ProductNotificationStore, scope ProductNotificationScope, filter, cursor string) api.ProductNotificationPage {
+func notificationTestPage(ctx context.Context, t *testing.T, s ProductNotificationStore, scope ProductNotificationScope, filter, cursor string) api.ProductNotificationPage {
 	t.Helper()
-	p, err := s.ListProductNotifications(t.Context(), scope, filter, cursor)
+	p, err := s.ListProductNotifications(ctx, scope, filter, cursor)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return p
 }
 
-func notificationTestReply(t *testing.T, s productNotificationTestStore, scope ProductNotificationScope, kind, feature, op string) api.ProductHelpRequest {
+func notificationTestReply(ctx context.Context, t *testing.T, s productNotificationTestStore, scope ProductNotificationScope, kind, feature, op string) api.ProductHelpRequest {
 	t.Helper()
-	r := helpCreate(t, s, ProductHelpScope(scope), kind, feature, op)
-	r, err := s.UpdateProductHelp(t.Context(), scope.AccountID, scope.AppID, r.Request.ID, api.ProductHelpUpdate{ExpectedVersion: 1, Status: "resolved", Response: "Private owner response"})
+	r := helpCreate(ctx, t, s, ProductHelpScope(scope), kind, feature, op)
+	r, err := s.UpdateProductHelp(ctx, scope.AccountID, scope.AppID, r.Request.ID, api.ProductHelpUpdate{ExpectedVersion: 1, Status: "resolved", Response: "Private owner response"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +62,7 @@ func TestProductControlNotificationBoundsMemory(t *testing.T) {
 		}
 	}
 	productNotificationBounds(t, s, seed)
-	f := helpFixture(t, s)
+	f := helpFixture(t.Context(), t, s)
 	scope := ProductNotificationScope{f.scope}
 	scope.Role = "operator"
 	f.admission.IdempotencyKey = "notification-attention"
@@ -79,11 +79,11 @@ func TestProductControlNotificationBoundsMemory(t *testing.T) {
 
 func productNotificationBounds(t *testing.T, s productNotificationTestStore, seed func(ProductNotificationScope, time.Time)) {
 	t.Helper()
-	f := helpFixture(t, s)
+	f := helpFixture(t.Context(), t, s)
 	scope := ProductNotificationScope{f.scope}
 	scope.Role = "operator"
-	notificationTestReply(t, s, scope, "workspace", "", "")
-	n := notificationTestPage(t, s, scope, "all", "").Items[0]
+	notificationTestReply(t.Context(), t, s, scope, "workspace", "", "")
+	n := notificationTestPage(t.Context(), t, s, scope, "all", "").Items[0]
 	seed(scope, time.Now().Add(time.Hour))
 	if _, err := s.UpdateProductNotification(t.Context(), scope, notificationTestUpdate(n, false)); err != nil {
 		t.Fatal("unchanged acknowledgement at capacity", err)
@@ -91,7 +91,7 @@ func productNotificationBounds(t *testing.T, s productNotificationTestStore, see
 	if _, err := s.UpdateProductNotification(t.Context(), scope, notificationTestUpdate(n, true)); !errors.Is(err, ErrOperationQuota) {
 		t.Fatal("marker capacity not enforced", err)
 	}
-	if page := notificationTestPage(t, s, scope, "all", ""); page.Items[0].Read || page.UnreadCount != 1 {
+	if page := notificationTestPage(t.Context(), t, s, scope, "all", ""); page.Items[0].Read || page.UnreadCount != 1 {
 		t.Fatal("failed acknowledgement changed read state", page)
 	}
 	seed(scope, time.Now().Add(-time.Second))
@@ -106,7 +106,7 @@ func productNotificationBounds(t *testing.T, s productNotificationTestStore, see
 
 func productNotificationAttention(t *testing.T, s ProductNotificationStore, scope ProductNotificationScope, op Operation) {
 	t.Helper()
-	p := notificationTestPage(t, s, scope, "all", "")
+	p := notificationTestPage(t.Context(), t, s, scope, "all", "")
 	if len(p.Items) != 1 || p.Items[0].Kind != "work_attention" || p.Items[0].ReferenceID != op.ID {
 		t.Fatal("attention projection", p)
 	}
@@ -120,15 +120,15 @@ func productNotificationContract(t *testing.T, s productNotificationTestStore, s
 	t.Helper()
 	ctx := t.Context()
 	t.Run("shared read state, new replies and stale acknowledgements", func(t *testing.T) {
-		f := helpFixture(t, s)
+		f := helpFixture(ctx, t, s)
 		scope := ProductNotificationScope{f.scope}
 		scope.Role = "operator"
 		before, err := s.GetProductUsage(ctx, scope.AccountID, scope.AppID, scope.TenantID, productcontrol.Period(time.Now()))
 		if err != nil {
 			t.Fatal(err)
 		}
-		r := notificationTestReply(t, s, scope, "workspace", "", "")
-		p := notificationTestPage(t, s, scope, "all", "")
+		r := notificationTestReply(ctx, t, s, scope, "workspace", "", "")
+		p := notificationTestPage(ctx, t, s, scope, "all", "")
 		if len(p.Items) != 1 || p.UnreadCount != 1 || p.ReadStateScope != "workspace" {
 			t.Fatalf("new update: %+v", p)
 		}
@@ -144,7 +144,7 @@ func productNotificationContract(t *testing.T, s productNotificationTestStore, s
 		}
 		other := scope
 		other.Role = "team"
-		p = notificationTestPage(t, s, other, "all", "")
+		p = notificationTestPage(ctx, t, s, other, "all", "")
 		if !p.Items[0].Read || p.UnreadCount != 0 {
 			t.Fatal("read state was not shared")
 		}
@@ -158,7 +158,7 @@ func productNotificationContract(t *testing.T, s productNotificationTestStore, s
 		if _, err = s.UpdateProductHelp(ctx, scope.AccountID, scope.AppID, r.Request.ID, api.ProductHelpUpdate{ExpectedVersion: 2, Status: "resolved", Response: "New response"}); err != nil {
 			t.Fatal(err)
 		}
-		p = notificationTestPage(t, s, scope, "unread", "")
+		p = notificationTestPage(ctx, t, s, scope, "unread", "")
 		if len(p.Items) != 1 || p.Items[0].Revision == n.Revision || p.Items[0].Read {
 			t.Fatal("new reply remained read", p)
 		}
@@ -177,7 +177,7 @@ func productNotificationContract(t *testing.T, s productNotificationTestStore, s
 		}
 	})
 	t.Run("current permissions filter before counts and pages", func(t *testing.T) {
-		f := helpFixture(t, s)
+		f := helpFixture(ctx, t, s)
 		scope := ProductNotificationScope{f.scope}
 		scope.Role = "operator"
 		a := f.admission
@@ -189,21 +189,21 @@ func productNotificationContract(t *testing.T, s productNotificationTestStore, s
 		op.State = api.OperationSucceeded
 		op.UpdatedAt = time.Now().UTC()
 		settle(op)
-		notificationTestReply(t, s, scope, "workspace", "", "")
-		feature := notificationTestReply(t, s, scope, "feature", "export", "")
-		notificationTestReply(t, s, scope, "run", "", op.ID)
+		notificationTestReply(ctx, t, s, scope, "workspace", "", "")
+		feature := notificationTestReply(ctx, t, s, scope, "feature", "export", "")
+		notificationTestReply(ctx, t, s, scope, "run", "", op.ID)
 		for _, tc := range []struct {
 			role  string
 			count int
 		}{{"operator", 4}, {"viewer", 3}, {"billing", 2}, {"team", 1}, {"manager", 1}} {
 			visible := scope
 			visible.Role = tc.role
-			p := notificationTestPage(t, s, visible, "all", "")
+			p := notificationTestPage(ctx, t, s, visible, "all", "")
 			if len(p.Items) != tc.count || p.UnreadCount != int64(tc.count) {
 				t.Fatalf("%s: %+v", tc.role, p)
 			}
 		}
-		p := notificationTestPage(t, s, scope, "all", "")
+		p := notificationTestPage(ctx, t, s, scope, "all", "")
 		var hidden api.ProductNotification
 		for _, n := range p.Items {
 			if n.ReferenceID == feature.Request.ID {
@@ -224,17 +224,17 @@ func productNotificationContract(t *testing.T, s productNotificationTestStore, s
 		}
 	})
 	t.Run("pagination, unread filters and cursor scopes", func(t *testing.T) {
-		f := helpFixture(t, s)
+		f := helpFixture(ctx, t, s)
 		scope := ProductNotificationScope{f.scope}
 		scope.Role = "operator"
 		for range api.ProductControlNotificationPageSize + 1 {
-			notificationTestReply(t, s, scope, "workspace", "", "")
+			notificationTestReply(ctx, t, s, scope, "workspace", "", "")
 		}
-		p := notificationTestPage(t, s, scope, "all", "")
+		p := notificationTestPage(ctx, t, s, scope, "all", "")
 		if len(p.Items) != 20 || p.NextCursor == "" || p.UnreadCount != 21 {
 			t.Fatal("page", p)
 		}
-		older := notificationTestPage(t, s, scope, "all", p.NextCursor)
+		older := notificationTestPage(ctx, t, s, scope, "all", p.NextCursor)
 		if len(older.Items) != 1 || older.NextCursor != "" || older.UnreadCount != 21 {
 			t.Fatal("lookahead", older)
 		}
@@ -244,7 +244,7 @@ func productNotificationContract(t *testing.T, s productNotificationTestStore, s
 		if _, err := s.UpdateProductNotification(ctx, scope, notificationTestUpdate(p.Items[0], true)); err != nil {
 			t.Fatal(err)
 		}
-		unread := notificationTestPage(t, s, scope, "unread", "")
+		unread := notificationTestPage(ctx, t, s, scope, "unread", "")
 		if len(unread.Items) != 20 || unread.UnreadCount != 20 || unread.NextCursor != "" {
 			t.Fatal("unread before limit", unread)
 		}
@@ -255,11 +255,11 @@ func productNotificationContract(t *testing.T, s productNotificationTestStore, s
 		}
 	})
 	t.Run("organization remapping isolates help and read state", func(t *testing.T) {
-		f := helpFixture(t, s)
+		f := helpFixture(ctx, t, s)
 		scope := ProductNotificationScope{f.scope}
 		scope.Role = "operator"
-		notificationTestReply(t, s, scope, "workspace", "", "")
-		p := notificationTestPage(t, s, scope, "all", "")
+		notificationTestReply(ctx, t, s, scope, "workspace", "", "")
+		p := notificationTestPage(ctx, t, s, scope, "all", "")
 		if _, err := s.UpdateProductNotification(ctx, scope, notificationTestUpdate(p.Items[0], true)); err != nil {
 			t.Fatal(err)
 		}
@@ -272,17 +272,17 @@ func productNotificationContract(t *testing.T, s productNotificationTestStore, s
 			t.Fatal("old organization", err)
 		}
 		scope.OrganizationID = c.AuthOrganizationID
-		p = notificationTestPage(t, s, scope, "all", "")
+		p = notificationTestPage(ctx, t, s, scope, "all", "")
 		if len(p.Items) != 0 || p.UnreadCount != 0 {
 			t.Fatal("inherited help", p)
 		}
 	})
 	t.Run("concurrent acknowledgements converge without work mutations", func(t *testing.T) {
-		f := helpFixture(t, s)
+		f := helpFixture(ctx, t, s)
 		scope := ProductNotificationScope{f.scope}
 		scope.Role = "operator"
-		notificationTestReply(t, s, scope, "workspace", "", "")
-		p := notificationTestPage(t, s, scope, "all", "")
+		notificationTestReply(ctx, t, s, scope, "workspace", "", "")
+		p := notificationTestPage(ctx, t, s, scope, "all", "")
 		req := notificationTestUpdate(p.Items[0], true)
 		var wg sync.WaitGroup
 		for range 8 {
@@ -294,7 +294,7 @@ func productNotificationContract(t *testing.T, s productNotificationTestStore, s
 			})
 		}
 		wg.Wait()
-		if p = notificationTestPage(t, s, scope, "unread", ""); len(p.Items) != 0 || p.UnreadCount != 0 {
+		if p = notificationTestPage(ctx, t, s, scope, "unread", ""); len(p.Items) != 0 || p.UnreadCount != 0 {
 			t.Fatal("empty page count", p)
 		}
 		cancelled, cancel := context.WithCancel(ctx)
@@ -305,7 +305,7 @@ func productNotificationContract(t *testing.T, s productNotificationTestStore, s
 	})
 	t.Run("retained outcomes and window boundaries", func(t *testing.T) {
 		for _, state := range []api.OperationState{api.OperationSucceeded, api.OperationFailed, api.OperationCancelled} {
-			f := helpFixture(t, s)
+			f := helpFixture(ctx, t, s)
 			scope := ProductNotificationScope{f.scope}
 			scope.Role = "operator"
 			a := f.admission
@@ -317,12 +317,12 @@ func productNotificationContract(t *testing.T, s productNotificationTestStore, s
 			op.State = state
 			op.UpdatedAt = time.Now().UTC().Add(-time.Hour)
 			settle(op)
-			p := notificationTestPage(t, s, scope, "all", "")
+			p := notificationTestPage(ctx, t, s, scope, "all", "")
 			if len(p.Items) != 1 || p.Items[0].Kind != "work_"+string(state) {
 				t.Fatalf("outcome: %+v", p)
 			}
 		}
-		f := helpFixture(t, s)
+		f := helpFixture(ctx, t, s)
 		scope := ProductNotificationScope{f.scope}
 		scope.Role = "operator"
 		a := f.admission
@@ -334,7 +334,7 @@ func productNotificationContract(t *testing.T, s productNotificationTestStore, s
 		op.State = api.OperationFailed
 		op.UpdatedAt = time.Now().UTC().Add(-api.ProductControlNotificationWindow - time.Hour)
 		settle(op)
-		if p := notificationTestPage(t, s, scope, "all", ""); len(p.Items) != 0 || p.UnreadCount != 0 {
+		if p := notificationTestPage(ctx, t, s, scope, "all", ""); len(p.Items) != 0 || p.UnreadCount != 0 {
 			t.Fatal("outside window", p)
 		}
 	})

@@ -4,7 +4,7 @@ import pg from 'pg'
 import { migrationEnv, runtimeConfig } from './config.mjs'
 import { applyGoTrueMigrations } from './upstream-migrate.mjs'
 
-// Release task (ADR-1190/1545): apply GoTrue's verified files (with the Gregale
+// Release task (ADR-1190/1601): apply GoTrue's verified files (with the Gregale
 // overlay), then Gregale's gregale_auth migrations and the declarative
 // AUTH_AUTHZ roles and policies, all through the auth binding, which acts as
 // the auth schemas' owner. Serving instances never migrate, so snapshot

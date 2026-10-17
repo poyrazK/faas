@@ -44,7 +44,7 @@ SELECT $1,$2,$3,$4,$5,'help',gen_random_uuid(),'help:2',true,1,$6::timestamptz-i
 		}
 	}
 	productNotificationBounds(t, s, seed)
-	f := helpFixture(t, s)
+	f := helpFixture(t.Context(), t, s)
 	scope := ProductNotificationScope{f.scope}
 	scope.Role = "operator"
 	f.admission.IdempotencyKey = "notification-attention"

@@ -15,6 +15,7 @@ printf '[offhostbox]\ntype = memory\n' >"$CONF"
 cat >"$BIN/rclone" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+echo "$*" >>"$MOCK_RCLONE_LOG"
 if [[ "$1" == check && "${MOCK_RCLONE_FAIL:-0}" == 1 ]]; then
   exit 9
 fi
@@ -41,6 +42,7 @@ run_pusher() {
     FAAS_OFF_HOST_BACKUP_RCLONE_CONFIG="$CONF" \
     FAAS_PG_LOCAL_BASEBACKUP_KEEP=2 \
     MOCK_RCLONE_FAIL="${MOCK_RCLONE_FAIL:-0}" \
+    MOCK_RCLONE_LOG="$ROOT/rclone.log" \
     "$PUSHER"
 }
 
@@ -56,3 +58,22 @@ run_pusher >/dev/null
 [[ -d "$SRC/basebackup-2026-01-03T000000Z" ]]
 [[ -s "$STATE/basebackup-push-success" ]]
 echo "PASS: basebackup push verifies the remote before pruning local recovery points"
+
+# A host's private age identity stamped into a backup (as the M8 restore drill
+# once did) is scrubbed locally and never part of the copy or its check.
+stamped="$SRC/basebackup-2026-01-03T000000Z"
+printf 'AGE-SECRET-KEY-1TEST\n' >"$stamped/host.age"
+printf 'age1test\n' >"$stamped/host.age.pub"
+printf 'cafef00d\n' >"$stamped/host.age.sha256"
+: >"$ROOT/rclone.log"
+run_pusher >/dev/null
+for name in host.age host.age.pub host.age.sha256; do
+  [[ ! -e "$stamped/$name" ]] || { echo "FAIL: $name left in the pushed tree" >&2; exit 1; }
+done
+for verb in copy check; do
+  line="$(grep "^$verb " "$ROOT/rclone.log")"
+  [[ "$line" == *"--exclude host.age "* && "$line" == *"--exclude host.age.pub "* && "$line" == *"--exclude host.age.sha256 "* ]] \
+    || { echo "FAIL: rclone $verb does not exclude the host identity: $line" >&2; exit 1; }
+done
+[[ -s "$stamped/base.tar.gz" ]]
+echo "PASS: basebackup push never sends a host age identity off-host"

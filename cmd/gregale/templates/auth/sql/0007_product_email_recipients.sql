@@ -1,4 +1,4 @@
--- ADR-1554. A recipient capability can only resolve one consenting user's
+-- ADR-1610. A recipient capability can only resolve one consenting user's
 -- verified address and current membership for one product and organization.
 CREATE TABLE gregale_auth.product_email_recipients (
  org_id uuid NOT NULL REFERENCES gregale_auth.organizations(id) ON DELETE CASCADE,

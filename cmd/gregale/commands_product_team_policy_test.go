@@ -1,4 +1,4 @@
-// ADR-1544: role delegation is reviewed against immutable product terms.
+// ADR-1600: role delegation is reviewed against immutable product terms.
 package main
 
 import (

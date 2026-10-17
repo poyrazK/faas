@@ -95,7 +95,7 @@ func productWorkspaceActivityContract(t *testing.T, s productWorkspaceActivityTe
 		if kind == "feature" {
 			feature = "export"
 		}
-		r := helpCreate(t, s, ProductHelpScope(scope), kind, feature, op)
+		r := helpCreate(ctx, t, s, ProductHelpScope(scope), kind, feature, op)
 		if _, err = s.UpdateProductHelp(ctx, scope.AccountID, scope.AppID, r.Request.ID, api.ProductHelpUpdate{ExpectedVersion: 1, Status: "resolved", Response: "PRIVATE_HELP_RESPONSE"}); err != nil {
 			t.Fatal(err)
 		}
@@ -237,7 +237,7 @@ func productWorkspaceActivityContract(t *testing.T, s productWorkspaceActivityTe
 	}
 	// More than a page of newer, hidden records must not starve a viewer's page.
 	for range api.ProductControlWorkspaceActivityPageSize + 1 {
-		r := helpCreate(t, s, ProductHelpScope(scope), "feature", "export", "")
+		r := helpCreate(ctx, t, s, ProductHelpScope(scope), "feature", "export", "")
 		if _, err = s.UpdateProductHelp(ctx, scope.AccountID, scope.AppID, r.Request.ID, api.ProductHelpUpdate{ExpectedVersion: 1, Status: "resolved", Response: "Hidden feature reply"}); err != nil {
 			t.Fatal(err)
 		}
@@ -284,13 +284,13 @@ func TestProductControlWorkspaceActivityRemappingMemory(t *testing.T) {
 
 func productWorkspaceActivityRemapping(t *testing.T, s productWorkspaceActivityTestStore) {
 	t.Helper()
-	f := helpFixture(t, s)
+	f := helpFixture(t.Context(), t, s)
 	scope := ProductWorkspaceActivityScope{f.scope}
 	change, err := s.ApplyProductPlanChange(t.Context(), f.scope, productPlanReview(t.Context(), t, s, f.scope, "pro"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := helpCreate(t, s, ProductHelpScope(scope), "workspace", "", "")
+	r := helpCreate(t.Context(), t, s, ProductHelpScope(scope), "workspace", "", "")
 	if _, err = s.UpdateProductHelp(t.Context(), scope.AccountID, scope.AppID, r.Request.ID, api.ProductHelpUpdate{ExpectedVersion: 1, Status: "resolved", Response: "Previous organization's reply"}); err != nil {
 		t.Fatal(err)
 	}
@@ -332,7 +332,7 @@ func TestProductControlWorkspaceActivityAttentionMemory(t *testing.T) {
 
 func productWorkspaceActivityAttention(t *testing.T, s productWorkspaceActivityTestStore, persist func(Operation, bool)) {
 	t.Helper()
-	f := helpFixture(t, s)
+	f := helpFixture(t.Context(), t, s)
 	f.admission.IdempotencyKey = uuid.NewString()
 	op, _, err := s.AdmitOperation(t.Context(), f.admission)
 	if err != nil {

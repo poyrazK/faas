@@ -1,4 +1,4 @@
-// ADR-1542: live Auth roles grant bounded product permissions.
+// ADR-1598: live Auth roles grant bounded product permissions.
 package productcontrol
 
 import (

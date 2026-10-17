@@ -155,7 +155,7 @@ membership APIs retain their own behavior and permissions.
 Use the current template's `node migrate.mjs` release entry point. Its verified
 file runner applies the GoTrue overlay and resumes existing upstream versions;
 the stock GoTrue `migrate` command uses embedded SQL and ignores that overlay.
-See [ADR-1545](../adr/1545-verified-application-auth-release-migrations.md) for the
+See [ADR-1601](../adr/1601-verified-application-auth-release-migrations.md) for the
 runtime verification and compatibility boundary.
 
 Each invitation, role change, removal and revocation has a read-only preview
@@ -358,7 +358,7 @@ request, and the first verified successful action admitted after setup. A prior
 access observation is not a present membership check. Unknown, failed and
 cancelled runs do not establish success; retained proof survives result expiry.
 None of these states grants native qualification. See
-[ADR-1541](../adr/1541-product-control-guided-customer-onboarding.md).
+[ADR-1597](../adr/1597-product-control-guided-customer-onboarding.md).
 
 ### Product readiness
 
@@ -426,7 +426,7 @@ boundary or a failed read require another request rather than a partial success.
 CLI exit zero means the requested observation succeeded, including rows with
 blockers; use `product doctor --tenant UUID` for its configuration exit status.
 Every overview keeps native qualification `unverified`. See
-[ADR-1546](../adr/1546-product-control-customer-readiness-overview.md).
+[ADR-1602](../adr/1602-product-control-customer-readiness-overview.md).
 
 ### Customer activity timeline
 
@@ -465,7 +465,7 @@ not reconstructed. Missing history does not establish inactivity or failure.
 Workspace visits and success are historical facts, not current access/health.
 Admission is not success; waiver is not an execution outcome; invoice handoff
 is not payment or refund. Reading history performs no writes or external calls.
-See [ADR-1547](../adr/1547-product-control-customer-activity.md).
+See [ADR-1603](../adr/1603-product-control-customer-activity.md).
 
 ### Repeatable pilot verification
 
@@ -524,7 +524,7 @@ not reconstruct first response/resolution or establish product latency targets.
 `not_requested`, `recorded`, `incomplete` or `blocked`; missing customers/stages or
 missing successful work/owner response leave requested journeys incomplete.
 Even complete operator records leave qualification and live browser scenarios
-unverified. [ADR-1550](../adr/1550-product-control-internal-pilot-evidence.md)
+unverified. [ADR-1606](../adr/1606-product-control-internal-pilot-evidence.md)
 defines the evidence boundary.
 
 For the complete internal pilot, set manifest `version` to `2`. All three
@@ -552,14 +552,14 @@ as preparation aids. They contain no actual observations. Version one remains
 compatible; an explicitly requested version-two pilot cannot fall back to a
 ledger-only success. Inbox browser visibility/read recovery and native
 qualification always remain unverified by this tool. See
-[ADR-1552](../adr/1552-product-control-complete-internal-pilot.md).
+[ADR-1608](../adr/1608-product-control-complete-internal-pilot.md).
 
 Pilot exit 0 means requested comparisons matched and requested journeys were
 recorded; 1 means a ledger/help/artifact mismatch; 3 means an incomplete requested
 journey unless a mismatch takes precedence. Legacy ledger-only success remains
 exit 0. Request or manifest errors are nonzero. No exit code grants qualification.
 See the [pilot guide](../../examples/customer-operation-export/product-control/README.md)
-and [ADR-1540](../adr/1540-product-control-guided-setup-and-readiness.md).
+and [ADR-1596](../adr/1596-product-control-guided-setup-and-readiness.md).
 
 ### Existing owner workflows
 
@@ -604,7 +604,7 @@ Reasons must contain no secrets; credit reasons are visible to the customer.
 
 Run views exclude inputs, result bodies, storage locations and credentials.
 Commercial receipts remain visible after execution result expiry. Partial document
-pages never claim a net total. See [ADR-1539](../adr/1539-product-control-owner-console.md).
+pages never claim a net total. See [ADR-1595](../adr/1595-product-control-owner-console.md).
 
 ## First internal workflow
 
@@ -790,7 +790,7 @@ not create users or workspace access through recovery.
 Local verification can exercise navigation with fictional Auth API responses.
 The later internal trial must verify actual recovery delivery, one-time/expired
 links, configured password policy and post-reset session behavior on the selected
-Auth deployment. See [ADR-1553](../adr/1553-product-control-customer-account-recovery.md).
+Auth deployment. See [ADR-1609](../adr/1609-product-control-customer-account-recovery.md).
 
 ### Personal notification email
 
@@ -857,7 +857,7 @@ modes. This stream uses the raw idempotent adapter and its own durable retry loo
 provider error bodies and addresses do not enter worker logs. No real sending or
 flag enablement is part of local verification.
 
-See [ADR-1554](../adr/1554-product-control-personal-notification-email.md).
+See [ADR-1610](../adr/1610-product-control-personal-notification-email.md).
 
 ### Owner notification email controls
 
@@ -931,7 +931,7 @@ diagnostics but blocks a new retry. Local mode exercises the entire recovery
 path using fictional identities and the private capture directory; use local
 HTTP fixtures for provider rejection, outages, stable-key recovery and repeated
 receipt checks. No provider credentials are needed. Real delivery qualification
-remains separate. See [ADR-1555](../adr/1555-product-control-owner-email-controls.md).
+remains separate. See [ADR-1611](../adr/1611-product-control-owner-email-controls.md).
 
 ### Provider delivery feedback and paused subscriptions
 
@@ -989,7 +989,7 @@ bounce, complaint precedence, permanent versus temporary bounce, unchanged
 attempt counts, subscription isolation and persistent pauses after saves. No
 provider credential or real email is needed. A later live release must qualify
 actual webhook provisioning, delivery and provider suppression policy separately.
-See [ADR-1556](../adr/1556-product-control-email-provider-feedback.md).
+See [ADR-1612](../adr/1612-product-control-email-provider-feedback.md).
 
 ### Recovering notifications after a hard bounce
 
@@ -1071,7 +1071,7 @@ remains default off and email defaults disabled. Local verification uses
 fictional verified/replacement addresses, a loopback provider and signed
 callbacks. Real address verification and provider suppression policy still need
 live qualification before enabling real sending. See
-[ADR-1557](../adr/1557-product-control-notification-recovery.md).
+[ADR-1613](../adr/1613-product-control-notification-recovery.md).
 
 ### Customer Help
 
@@ -1119,7 +1119,7 @@ bounds and a 16 KiB request-body bound. The existing flag stays default-off.
 The browser saves only a request UUID/hash for acknowledgement-loss recovery;
 reload reads its receipt and never automatically sends another request. Private
 data is cleared on logout/workspace change. No email notification is sent.
-See [ADR-1549](../adr/1549-product-control-customer-help.md).
+See [ADR-1605](../adr/1605-product-control-customer-help.md).
 
 ### Customer updates
 
@@ -1154,7 +1154,7 @@ Expired markers are ignored and pruned during metadata writes; this is not a
 scheduled purge or an event archive. Only source references and metadata appear
 in this projection, not messages, responses, inputs, results or commercial terms.
 There is no email delivery. All inbox routes/assets remain behind the existing
-default-off flag. See [ADR-1551](../adr/1551-product-control-customer-notifications.md).
+default-off flag. See [ADR-1607](../adr/1607-product-control-customer-notifications.md).
 
 ### Usage and next steps
 
@@ -1189,7 +1189,7 @@ Older in-flight refreshes cannot overwrite a newer view. Logout/workspace change
 clear guidance and fence its actions. Existing saved-request lookup and recovery
 remain independent of allowance warnings. All routes/assets remain internal,
 private/no-store and default-off, including unsupported methods at the pre-mux
-gate. See [ADR-1548](../adr/1548-product-control-customer-usage-guidance.md).
+gate. See [ADR-1604](../adr/1604-product-control-customer-usage-guidance.md).
 
 New starts require an `expected_quote` hash bound to the authenticated account,
 app, tenant, feature, assigned catalog/plan, currency, price, monthly allowance
@@ -1330,7 +1330,7 @@ Billing bounds in `pkg/api/limits.go`: 100 receipts/documents per page, 1,000
 invoice groups per review (exceeding it fails rather than truncates), 512-byte
 reasons and 255-byte external references. Finalized data survives flag rollback;
 existing admitted operations continue recording terminal proof while the flag
-is off. See [ADR-1538](../adr/1538-product-control-billing-lifecycle.md).
+is off. See [ADR-1594](../adr/1594-product-control-billing-lifecycle.md).
 
 ## Internal API
 
@@ -1564,7 +1564,7 @@ its independent existing switches. Real provider/mailbox qualification includes
 DKIM signing of the two unsubscribe headers, link/tracking behavior, proxy log
 redaction and the exact deployed API origin. This implementation does not enable
 real flags or require provider credentials. Design and concurrency details are in
-[ADR-1558](../adr/1558-product-control-notification-unsubscribe.md).
+[ADR-1614](../adr/1614-product-control-notification-unsubscribe.md).
 
 ### Customer workspace activity
 
@@ -1605,11 +1605,11 @@ Everything remains behind the default-off `FAAS_PRODUCT_CONTROL_ENABLED` flag.
 No provider credentials, deployment, migration, extra worker or email enablement
 are required. Owners retain their existing console activity view and
 `gregale product customers activity --app exports --tenant CUSTOMER_UUID`.
-See [ADR-1559](../adr/1559-product-control-workspace-activity.md).
+See [ADR-1615](../adr/1615-product-control-workspace-activity.md).
 
 ## Customer run details
 
-[ADR-1560](../adr/1560-product-control-customer-run-details.md) adds
+[ADR-1616](../adr/1616-product-control-customer-run-details.md) adds
 `GET /v1/product-control/customer/{slug}/operations/{operation}/details` and a
 Run details panel in Recent work. Work entries in Updates → Workspace activity
 open the same panel. Both the read API and `portal-run.js` require the existing
@@ -1653,7 +1653,7 @@ outside this local implementation evidence.
 
 ## Customer work history
 
-[ADR-1561](../adr/1561-product-control-customer-work-history.md) adds **Work
+[ADR-1617](../adr/1617-product-control-customer-work-history.md) adds **Work
 history** under Recent work. Search explicitly by exact run reference, original
 feature, recorded/current outcome, or inclusive UTC start dates. Filters combine
 with AND; **Clear filters** searches all retained receipts. **Next page** and

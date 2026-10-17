@@ -1,4 +1,4 @@
-// ADR-1542: reviewed customer-permission changes preserve app and catalog identity.
+// ADR-1598: reviewed customer-permission changes preserve app and catalog identity.
 package main
 
 import (

@@ -5,7 +5,10 @@
 [Unit]
 Description=Cloudflare Tunnel connector for the compute-node app edge (ADR-1343)
 Documentation=https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/
-After=network-online.target faas-gatewayd-public-edge.socket
+# Stopping runs in reverse start order: on a stop, restart or reboot the
+# connector withdraws from the tunnel first and drains its in-flight
+# requests through the still-running edge (ADR-1343 §6).
+After=network-online.target faas-gatewayd-public-edge.socket faas-gatewayd-public-edge.service
 Wants=network-online.target
 ConditionPathExists={{ faas_cloudflared_token_path }}
 StartLimitIntervalSec=60s
@@ -15,11 +18,14 @@ StartLimitBurst=5
 Type=notify
 User=cloudflared
 Group=cloudflared
-ExecStart={{ faas_cloudflared_install_dir }}/cloudflared tunnel --no-autoupdate --metrics {{ faas_cloudflared_metrics_addr }} run --token-file %d/tunnel-token
+ExecStart={{ faas_cloudflared_install_dir }}/cloudflared tunnel --no-autoupdate --grace-period {{ faas_cloudflared_grace_period }} --metrics {{ faas_cloudflared_metrics_addr }} run --token-file %d/tunnel-token
 LoadCredential=tunnel-token:{{ faas_cloudflared_token_path }}
 Restart=on-failure
 RestartSec=5s
 TimeoutStartSec=60s
+# On SIGTERM the connector stops taking new requests and waits up to the
+# grace period for the ones in flight; systemd must wait longer than that.
+TimeoutStopSec={{ faas_cloudflared_stop_timeout }}
 Slice=faas-cp.slice
 MemoryMax=256M
 AmbientCapabilities=

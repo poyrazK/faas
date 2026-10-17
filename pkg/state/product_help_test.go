@@ -1,7 +1,8 @@
-// ADR-1549: shared customer help retains scoped observations and never repairs work.
+// ADR-1605: shared customer help retains scoped observations and never repairs work.
 package state
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"reflect"
@@ -20,12 +21,12 @@ type productHelpTestStore interface {
 	ProductHelpStore
 }
 
-func helpFixture(t *testing.T, s productHelpTestStore) productPlanFixture {
+func helpFixture(ctx context.Context, t *testing.T, s productHelpTestStore) productPlanFixture {
 	t.Helper()
-	f := newProductPlanFixture(t.Context(), t, s)
+	f := newProductPlanFixture(ctx, t, s)
 	f.spec.Access.Roles["viewer"] = []api.ProductPermission{api.ProductPermissionViewWork}
 	f.spec.Access.Roles["team"] = []api.ProductPermission{api.ProductPermissionManageTeam}
-	if _, err := s.PutProductCatalog(t.Context(), f.scope.AccountID, f.scope.AppID, f.spec); err != nil {
+	if _, err := s.PutProductCatalog(ctx, f.scope.AccountID, f.scope.AppID, f.spec); err != nil {
 		t.Fatal(err)
 	}
 	return f
@@ -37,9 +38,9 @@ func helpTestScope(f productPlanFixture, role string) ProductHelpScope {
 	return s
 }
 
-func helpCreate(t *testing.T, s ProductHelpStore, scope ProductHelpScope, kind, feature, op string) api.ProductHelpRequest {
+func helpCreate(ctx context.Context, t *testing.T, s ProductHelpStore, scope ProductHelpScope, kind, feature, op string) api.ProductHelpRequest {
 	t.Helper()
-	r, err := s.CreateProductHelp(t.Context(), scope, api.ProductHelpCreate{ID: uuid.NewString(), Kind: kind, Feature: feature, OperationID: op, Message: "Please investigate <script>this</script> request."})
+	r, err := s.CreateProductHelp(ctx, scope, api.ProductHelpCreate{ID: uuid.NewString(), Kind: kind, Feature: feature, OperationID: op, Message: "Please investigate <script>this</script> request."})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,14 +53,14 @@ func productHelpContract(t *testing.T, s productHelpTestStore) {
 	t.Helper()
 	ctx := t.Context()
 	t.Run("retained context, immutable retries and detached reads", func(t *testing.T) {
-		f := helpFixture(t, s)
+		f := helpFixture(ctx, t, s)
 		scope := helpTestScope(f, "operator")
 		period := productcontrol.Period(time.Now())
 		before, err := s.GetProductUsage(ctx, scope.AccountID, scope.AppID, scope.TenantID, period)
 		if err != nil {
 			t.Fatal(err)
 		}
-		r := helpCreate(t, s, scope, "feature", "export", "")
+		r := helpCreate(ctx, t, s, scope, "feature", "export", "")
 		if r.Context.Usage == nil || r.Context.Usage.Remaining != 1 || r.Context.Reason != "available" || r.Status != "open" || r.Version != 1 || r.Response != "" || r.Context.ResetsAt == nil {
 			t.Fatalf("new help: %+v", r)
 		}
@@ -98,7 +99,7 @@ func productHelpContract(t *testing.T, s productHelpTestStore) {
 		}
 	})
 	t.Run("live role visibility, retained run scope and exhausted allowance", func(t *testing.T) {
-		f := helpFixture(t, s)
+		f := helpFixture(ctx, t, s)
 		scope := helpTestScope(f, "operator")
 		a := f.admission
 		a.IdempotencyKey = uuid.NewString()
@@ -106,9 +107,9 @@ func productHelpContract(t *testing.T, s productHelpTestStore) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		general := helpCreate(t, s, scope, "workspace", "", "")
-		feature := helpCreate(t, s, scope, "feature", "export", "")
-		run := helpCreate(t, s, scope, "run", "", op.ID)
+		general := helpCreate(ctx, t, s, scope, "workspace", "", "")
+		feature := helpCreate(ctx, t, s, scope, "feature", "export", "")
+		run := helpCreate(ctx, t, s, scope, "run", "", op.ID)
 		if feature.Context.Reason != "allowance_exhausted" || feature.Context.Usage.Starts != 1 || run.Context.Feature != "export" || run.Context.Usage != nil || run.Context.Reason != "run_reported" {
 			t.Fatal("wrong source context")
 		}
@@ -155,9 +156,9 @@ func productHelpContract(t *testing.T, s productHelpTestStore) {
 		}
 	})
 	t.Run("organization remapping does not expose a previous workspace history", func(t *testing.T) {
-		f := helpFixture(t, s)
+		f := helpFixture(ctx, t, s)
 		scope := helpTestScope(f, "operator")
-		r := helpCreate(t, s, scope, "workspace", "", "")
+		r := helpCreate(ctx, t, s, scope, "workspace", "", "")
 		c := f.customer
 		c.AuthOrganizationID = uuid.NewString()
 		if _, err := s.SetProductCustomer(ctx, scope.AccountID, scope.AppID, c); err != nil {
@@ -176,9 +177,9 @@ func productHelpContract(t *testing.T, s productHelpTestStore) {
 		}
 	})
 	t.Run("competing status changes, acknowledgement loss and stale retries", func(t *testing.T) {
-		f := helpFixture(t, s)
+		f := helpFixture(ctx, t, s)
 		scope := helpTestScope(f, "operator")
-		r := helpCreate(t, s, scope, "workspace", "", "")
+		r := helpCreate(ctx, t, s, scope, "workspace", "", "")
 		changes := []api.ProductHelpUpdate{{ExpectedVersion: 1, Status: "in_progress", Response: "Investigating"}, {ExpectedVersion: 1, Status: "resolved", Response: "Answered"}}
 		errs := make([]error, 2)
 		var wg sync.WaitGroup
@@ -211,10 +212,10 @@ func productHelpContract(t *testing.T, s productHelpTestStore) {
 		}
 	})
 	t.Run("bounded pages and scope-bound continuation", func(t *testing.T) {
-		f := helpFixture(t, s)
+		f := helpFixture(ctx, t, s)
 		scope := helpTestScope(f, "operator")
 		for i := 0; i < api.ProductControlHelpPageSize+1; i++ {
-			r := helpCreate(t, s, scope, "workspace", "", "")
+			r := helpCreate(ctx, t, s, scope, "workspace", "", "")
 			if _, err := s.UpdateProductHelp(ctx, scope.AccountID, scope.AppID, r.Request.ID, api.ProductHelpUpdate{ExpectedVersion: 1, Status: "resolved", Response: "Recorded"}); err != nil {
 				t.Fatal(err)
 			}
@@ -240,11 +241,11 @@ func productHelpContract(t *testing.T, s productHelpTestStore) {
 		}
 	})
 	t.Run("concurrent open limit and duplicate recovery at capacity", func(t *testing.T) {
-		f := helpFixture(t, s)
+		f := helpFixture(ctx, t, s)
 		scope := helpTestScope(f, "operator")
 		var first api.ProductHelpRequest
 		for range api.ProductControlHelpMaxOpen - 1 {
-			first = helpCreate(t, s, scope, "workspace", "", "")
+			first = helpCreate(ctx, t, s, scope, "workspace", "", "")
 		}
 		var wg sync.WaitGroup
 		errs := make([]error, 2)
@@ -273,7 +274,7 @@ func productHelpContract(t *testing.T, s productHelpTestStore) {
 		}
 	})
 	t.Run("retained limit, invalid input and paused feature help", func(t *testing.T) {
-		f := helpFixture(t, s)
+		f := helpFixture(ctx, t, s)
 		scope := helpTestScope(f, "operator")
 		bad := api.ProductHelpCreate{ID: uuid.NewString(), Kind: "workspace", Message: strings.Repeat("x", api.ProductControlHelpTextMaxBytes+1)}
 		if _, err := s.CreateProductHelp(ctx, scope, bad); !errors.Is(err, ErrInvalidArgument) {
@@ -284,7 +285,7 @@ func productHelpContract(t *testing.T, s productHelpTestStore) {
 		if _, err := s.SetProductCustomer(ctx, scope.AccountID, scope.AppID, c); err != nil {
 			t.Fatal(err)
 		}
-		r := helpCreate(t, s, scope, "feature", "export", "")
+		r := helpCreate(ctx, t, s, scope, "feature", "export", "")
 		if r.Context.Reason != "access_paused" {
 			t.Fatal("cannot report a paused feature")
 		}
@@ -292,7 +293,7 @@ func productHelpContract(t *testing.T, s productHelpTestStore) {
 			t.Fatal(err)
 		}
 		for i := 1; i < api.ProductControlHelpMaxRequests; i++ {
-			next := helpCreate(t, s, scope, "workspace", "", "")
+			next := helpCreate(ctx, t, s, scope, "workspace", "", "")
 			if _, err := s.UpdateProductHelp(ctx, scope.AccountID, scope.AppID, next.Request.ID, api.ProductHelpUpdate{ExpectedVersion: 1, Status: "resolved", Response: "Reviewed"}); err != nil {
 				t.Fatal(err)
 			}

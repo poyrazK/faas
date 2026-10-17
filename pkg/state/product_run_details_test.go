@@ -214,7 +214,7 @@ func TestProductControlRunDetailsLiveMemory(t *testing.T) {
 
 func productRunDetailsLiveContract(t *testing.T, s productRunDetailsTestStore, persist func(Operation, bool)) {
 	t.Helper()
-	f := helpFixture(t, s)
+	f := helpFixture(t.Context(), t, s)
 	f.admission.IdempotencyKey = uuid.NewString()
 	op, _, err := s.AdmitOperation(t.Context(), f.admission)
 	if err != nil {
