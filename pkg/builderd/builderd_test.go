@@ -26,6 +26,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/wire"
 
 	"github.com/google/uuid"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 // fakeNotifier records every Notify call. Used to assert build_log fan-out
@@ -238,7 +240,8 @@ func TestProcessOne_CacheHitSkipsSpawn(t *testing.T) {
 
 	fvm := &fakeVM{} // would panic if called — proves the spawn was skipped.
 	notif := &fakeNotifier{}
-	b := New(store, notif, fvm, c, NewDetector(), nil, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	reg := prometheus.NewPedanticRegistry()
+	b := New(store, notif, fvm, c, NewDetector(), nil, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil))).WithPipelineMetrics(reg)
 
 	res, err := b.ProcessOne(context.Background(), buildID)
 	if err != nil {
@@ -246,6 +249,9 @@ func TestProcessOne_CacheHitSkipsSpawn(t *testing.T) {
 	}
 	if !res.CacheHit {
 		t.Error("expected cache hit")
+	}
+	if pipelineGauge(t, reg, "builderd_build_slots_in_use") != 0 || testutil.ToFloat64(b.pipeline.admission.WithLabelValues("granted")) != 0 || testutil.ToFloat64(b.pipeline.claims.WithLabelValues("notification", "claimed")) != 1 {
+		t.Fatal("cache hit incorrectly reserved a VM slot or missed its claim")
 	}
 	if fvm.spawnCalls != 0 {
 		t.Errorf("VM spawn was called %d times, want 0 (cache hit)", fvm.spawnCalls)
@@ -969,8 +975,13 @@ func TestProcessOne_EmitsBuildMetrics(t *testing.T) {
 	}
 	fvm := &fakeVM{out: BuildOutcome{OCIImage: out, ExitCode: 0, LogTailBytes: 14}}
 	ops := wire.NewOpsMetrics("builderd")
-	b := New(store, &fakeNotifier{}, fvm, NewCache(t.TempDir()), NewDetector(), nil, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil))).WithOpsMetrics(ops)
+	b := New(store, &fakeNotifier{}, fvm, NewCache(t.TempDir()), NewDetector(), nil, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil))).WithOpsMetrics(ops).WithPipelineMetrics(ops.Registry())
 
+	fvm.waitHook = func() {
+		if pipelineGauge(t, ops.Registry(), "builderd_build_slots_in_use") != 1 {
+			t.Error("VM build did not hold its slot")
+		}
+	}
 	if _, err := b.ProcessOne(context.Background(), buildID); err != nil {
 		t.Fatalf("ProcessOne: %v", err)
 	}
@@ -981,6 +992,10 @@ func TestProcessOne_EmitsBuildMetrics(t *testing.T) {
 		`builderd_build_duration_seconds_count{outcome="cache_hit"} 0`,
 		`builderd_build_duration_seconds_count{outcome="failed"} 0`,
 		`builderd_build_queue_wait_seconds_count 1`,
+		`builderd_build_slot_decisions_total{outcome="granted"} 1`,
+		`builderd_build_slots_in_use 0`,
+		`builderd_build_slots_limit 1`,
+		`builderd_build_claims_total{outcome="claimed",source="notification"} 1`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing %q in metrics:\n%s", want, body)
@@ -1625,7 +1640,7 @@ func TestRequeueClaim_DoesNotResetNewerClaim(t *testing.T) {
 	}
 
 	b := New(store, &fakeNotifier{}, nil, NewCache(t.TempDir()), NewDetector(), nil, Config{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	if err := b.requeueClaim(context.Background(), first); !errors.Is(err, state.ErrNotFound) {
+	if err := b.requeueClaim(context.Background(), first, requeueNoSlot); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("stale requeue: got %v, want state.ErrNotFound", err)
 	}
 

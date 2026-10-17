@@ -24,6 +24,9 @@ import (
 
 // memDispatched lists the methods Mem forwards to its override.
 var memDispatched = map[string]bool{
+	"ClaimQueuedBuild":                                        true,
+	"ClaimNextQueuedBuild":                                    true,
+	"RequeueBuildIfClaim":                                     true,
 	"ProcessNextWorkflowInitialManualCompletion":              true,
 	"AcceptEntityOutboxDelivery":                              true,
 	"AccountPasswordByAccountID":                              true,
@@ -3046,4 +3049,31 @@ func (s *Store) RecordOperatorAlertSnapshot(ctx context.Context, snap state.Oper
 		return o.RecordOperatorAlertSnapshot(ctx, snap)
 	}
 	return s.Store.RecordOperatorAlertSnapshot(ctx, snap)
+}
+
+func (s *Mem) ClaimQueuedBuild(ctx context.Context, id string) (state.Build, error) {
+	if over, ok := s.over.(interface {
+		ClaimQueuedBuild(context.Context, string) (state.Build, error)
+	}); ok {
+		return over.ClaimQueuedBuild(ctx, id)
+	}
+	return s.MemStore.ClaimQueuedBuild(ctx, id)
+}
+
+func (s *Mem) ClaimNextQueuedBuild(ctx context.Context) (state.Build, error) {
+	if over, ok := s.over.(interface {
+		ClaimNextQueuedBuild(context.Context) (state.Build, error)
+	}); ok {
+		return over.ClaimNextQueuedBuild(ctx)
+	}
+	return s.MemStore.ClaimNextQueuedBuild(ctx)
+}
+
+func (s *Mem) RequeueBuildIfClaim(ctx context.Context, claim state.Build) error {
+	if over, ok := s.over.(interface {
+		RequeueBuildIfClaim(context.Context, state.Build) error
+	}); ok {
+		return over.RequeueBuildIfClaim(ctx, claim)
+	}
+	return s.MemStore.RequeueBuildIfClaim(ctx, claim)
 }

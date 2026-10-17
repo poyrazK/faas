@@ -3588,6 +3588,127 @@ groups:
           description: "A scraped apid has no successful, complete build queue observation at most 120 seconds old for 5m. Queue depth is unknown, not zero. Inspect apid queue collection and database health; another apid's successful fleet snapshot cannot establish this collector's health."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildQueueBacklog.md"
 
+      # Observe claim/admission outcomes without treating saturation as a
+      # failure. A poll includes the full build, so progress budgets differ
+      # between idle and in-flight work. Keep each builder instance separate.
+      - record: builderd_build_queue_observation_healthy
+        expr: |
+          (up{job="builderd"} == 1)
+          and on (job, instance) ((builderd_build_worker_enabled{job="builderd"} == 0) or (builderd_build_worker_enabled{job="builderd"} == 1))
+          and on (job, instance) ((builderd_build_worker_inflight{job="builderd"} == 0) or (builderd_build_worker_inflight{job="builderd"} == 1))
+          and on (job, instance) (builderd_build_worker_started_timestamp_seconds{job="builderd"} > 0)
+          and on (job, instance) (builderd_build_worker_started_timestamp_seconds{job="builderd"} <= time())
+          and on (job, instance) (builderd_build_worker_last_attempt_timestamp_seconds{job="builderd"} >= 0)
+          and on (job, instance) (builderd_build_worker_last_attempt_timestamp_seconds{job="builderd"} <= time())
+          and on (job, instance) (builderd_build_worker_last_completed_timestamp_seconds{job="builderd"} >= 0)
+          and on (job, instance) (builderd_build_worker_last_completed_timestamp_seconds{job="builderd"} <= time())
+          and on (job, instance) (builderd_build_worker_interval_seconds{job="builderd"} > 0)
+          and on (job, instance) (builderd_build_worker_busy_allowance_seconds{job="builderd"} > 0)
+          and on (job, instance) (builderd_build_slots_limit{job="builderd"} > 0)
+          and on (job, instance) (builderd_build_slots_in_use{job="builderd"} >= 0)
+          and on (job, instance) (builderd_build_slots_in_use{job="builderd"} <= builderd_build_slots_limit{job="builderd"})
+          and on (job, instance) (count by (job, instance) (builderd_build_claims_total{job="builderd",source=~"poll|notification",outcome=~"claimed|not_claimed|error|canceled"}) == 8)
+          and on (job, instance) (count by (job, instance) (builderd_build_requeues_total{job="builderd",reason=~"no_slot|source_unavailable|context_canceled|lookup_failure",outcome=~"accepted|not_requeued|error|canceled"}) == 16)
+          and on (job, instance) (count by (job, instance) (builderd_build_slot_decisions_total{job="builderd",outcome=~"granted|limit|policy"}) == 3)
+          and on (job, instance)
+          (((builderd_build_worker_inflight{job="builderd"} == 1)
+            and on (job, instance) (builderd_build_worker_last_attempt_timestamp_seconds{job="builderd"} > 0)
+            and on (job, instance) (builderd_build_worker_last_completed_timestamp_seconds{job="builderd"} <= builderd_build_worker_last_attempt_timestamp_seconds{job="builderd"}))
+           or ((builderd_build_worker_inflight{job="builderd"} == 0)
+               and on (job, instance)
+               (((builderd_build_worker_last_attempt_timestamp_seconds{job="builderd"} == 0)
+                 and on (job, instance) (builderd_build_worker_last_completed_timestamp_seconds{job="builderd"} == 0))
+                or ((builderd_build_worker_last_attempt_timestamp_seconds{job="builderd"} > 0)
+                    and on (job, instance) (builderd_build_worker_last_completed_timestamp_seconds{job="builderd"} >= builderd_build_worker_last_attempt_timestamp_seconds{job="builderd"})))))
+      - record: builderd_build_worker_progress_age_seconds
+        expr: |
+          (((time() - builderd_build_worker_last_attempt_timestamp_seconds{job="builderd"})
+             and on (job, instance) (builderd_build_worker_inflight{job="builderd"} == 1))
+           or ((time() - builderd_build_worker_last_completed_timestamp_seconds{job="builderd"})
+               and on (job, instance) (builderd_build_worker_inflight{job="builderd"} == 0)
+               and on (job, instance) (builderd_build_worker_last_completed_timestamp_seconds{job="builderd"} > 0))
+           or ((time() - builderd_build_worker_started_timestamp_seconds{job="builderd"})
+               and on (job, instance) (builderd_build_worker_inflight{job="builderd"} == 0)
+               and on (job, instance) (builderd_build_worker_last_completed_timestamp_seconds{job="builderd"} == 0)))
+          and on (job, instance) (builderd_build_queue_observation_healthy == 1)
+      - record: builderd_build_worker_progress_allowance_seconds
+        expr: |
+          (((builderd_build_worker_busy_allowance_seconds{job="builderd"}
+              + on (job, instance) 2 * builderd_build_worker_interval_seconds{job="builderd"})
+             and on (job, instance) (builderd_build_worker_inflight{job="builderd"} == 1))
+           or ((2 * builderd_build_worker_interval_seconds{job="builderd"})
+               and on (job, instance) (builderd_build_worker_inflight{job="builderd"} == 0)))
+          and on (job, instance) (builderd_build_queue_observation_healthy == 1)
+      - alert: FaasBuilderQueueTelemetryUnavailable
+        expr: |
+          (up{job="builderd"} == 1)
+          unless on (job, instance) (builderd_build_queue_observation_healthy == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: builderd
+          family: build_queue_telemetry
+          public_status: internal
+        annotations:
+          summary: Builder queue diagnostics are unavailable
+          description: The builder is scraped but its worker progress, slot state or bounded claim/requeue counters are
+            missing or inconsistent. Worker and admission health are unknown; inspect instrumentation, clocks and scrape
+            configuration.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildWorker.md
+      - alert: FaasBuilderWorkerStalled
+        expr: |
+          (builderd_build_worker_progress_age_seconds
+           > on (job, instance) builderd_build_worker_progress_allowance_seconds)
+          and on (job, instance) (builderd_build_worker_enabled{job="builderd"} == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: builderd
+          family: build_queue_worker
+          public_status: internal
+        annotations:
+          summary: Durable build polling has stopped progressing
+          description: The expected poller has exceeded its progress allowance for 5m. Idle allowance is two poll intervals;
+            an in-flight iteration also receives the effective running-build recovery threshold. Notification work cannot
+            renew poller progress. Capture logs and goroutines before intervening.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildWorker.md
+      - alert: FaasBuilderClaimsFailing
+        expr: |
+          (sum by (job, instance, source) (rate(builderd_build_claims_total{job="builderd",outcome="error"}[5m]))
+           / sum by (job, instance, source) (rate(builderd_build_claims_total{job="builderd",outcome=~"claimed|not_claimed|error"}[5m])) > 0.1)
+          and on (job, instance, source) (sum by (job, instance, source) (increase(builderd_build_claims_total{job="builderd",outcome="error"}[5m])) >= 3)
+          and on (job, instance) (builderd_build_queue_observation_healthy == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: builderd
+          family: build_queue_worker
+          public_status: internal
+        annotations:
+          summary: Build claims are persistently failing
+          description: Claim errors exceed 10% of completed non-canceled claim calls with at least three errors in each
+            rolling 5m window, sustained for 5m. Not-claimed results include affinity and claim races and do not establish
+            an empty queue.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildWorker.md
+      - alert: FaasBuilderRequeuesFailing
+        expr: |
+          (sum by (job, instance, reason) (rate(builderd_build_requeues_total{job="builderd",outcome="error"}[5m]))
+           / sum by (job, instance, reason) (rate(builderd_build_requeues_total{job="builderd",outcome=~"accepted|error"}[5m])) > 0.1)
+          and on (job, instance, reason) (sum by (job, instance, reason) (increase(builderd_build_requeues_total{job="builderd",outcome="error"}[5m])) >= 3)
+          and on (job, instance) (builderd_build_queue_observation_healthy == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: builderd
+          family: build_queue_worker
+          public_status: internal
+        annotations:
+          summary: Build requeues are persistently failing
+          description: Requeue errors exceed 10% of accepted/error calls with at least three errors in each rolling 5m
+            window, sustained for 5m. ErrNoSlot can mask a failed requeue at the worker return boundary; inspect durable
+            build state and recovery. Fenced stale claims and cancellation are excluded.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildWorker.md
+
       # Recovery is observed separately from queue wait. Fleet gauges are
       # coherent per apid; never sum replicas. Timing uses effective config
       # from every discovered builder. Age warnings measure overdue work;

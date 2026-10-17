@@ -89,6 +89,10 @@ independent on-demand count when its database read succeeds.
 
 ## Check
 
+Use [builder worker diagnostics](FaasBuildWorker.md) to distinguish slot
+saturation, no eligible claims, failed requeues and a stopped durable poller.
+Its slot gauges describe process-local admission, not database running counts.
+
 ```bash
 systemctl status builderd
 journalctl -u builderd --since '-15m' --no-pager | grep -iE 'slot|admit|reject'
