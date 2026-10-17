@@ -83,7 +83,8 @@ export interface RealtimeChannelHandle {
 export interface RealtimeClient {
   /**
    * The handle for a channel. Options apply when the channel is first
-   * watched; later calls for the same channel return the same handle.
+   * watched and later calls return the same handle, except that a later
+   * `occupancy: true` turns occupancy on while the channel is not yet watched.
    */
   channel(name: string, options?: RealtimeChannelWatchOptions): RealtimeChannelHandle;
   /** Close the connection and stop every channel. */
@@ -92,7 +93,7 @@ export interface RealtimeClient {
 
 interface HandleState {
   readonly name: string;
-  readonly options: RealtimeChannelWatchOptions;
+  options: RealtimeChannelWatchOptions;
   readonly listeners: Set<() => void>;
   view: RealtimeChannelView;
   messages: RealtimeMessage[];
@@ -275,6 +276,8 @@ export function createRealtimeClient(options: RealtimeClientOptions): RealtimeCl
       if (!state) {
         state = createHandle(name, watch);
         handles.set(name, state);
+      } else if (watch.occupancy && !state.options.occupancy && !state.active) {
+        state.options = { ...state.options, occupancy: true };
       }
       return state.handle;
     },

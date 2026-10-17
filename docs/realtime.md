@@ -142,6 +142,50 @@ too. An SSE stream adds `occupancy=1` to its URL (or passes `onOccupancy` to
 already follows its maximum of 1,000 live-count channels, the subscription
 still works and the client gets an `occupancy_limit` error frame instead.
 
+## Browser apps and React
+
+`createRealtimeClient` from the Node SDK runs in the browser. It keeps one
+WebSocket per endpoint, subscribes a channel while something on the page
+watches it, and gives each channel a view with its status, recent messages,
+presence and occupancy. React hooks come from `@gregale/sdk-node/react`
+(React 18 or later):
+
+```tsx
+import { createBrowserRealtimeTicketSocketFactory, createRealtimeClient } from '@gregale/sdk-node/browser';
+import { RealtimeProvider, useOccupancy, usePresence, useRealtimeChannel } from '@gregale/sdk-node/react';
+
+const client = createRealtimeClient({
+  url: 'wss://app.example.com/__gregale/realtime/ENDPOINT_ID',
+  // Your backend issues a subscription ticket for the signed-in user.
+  webSocketFactory: createBrowserRealtimeTicketSocketFactory(() => fetch('/realtime-ticket').then((r) => r.text())),
+});
+
+function Room({ id }: { id: string }) {
+  const { status, messages } = useRealtimeChannel(`room-${id}`, { presence: { name: 'Ada' } });
+  const people = usePresence(`room-${id}`);
+  const watching = useOccupancy(`room-${id}`);
+  // status: idle, connecting, live, reconnecting, error or closed
+}
+
+<RealtimeProvider client={client}><Room id="42" /></RealtimeProvider>
+```
+
+- A channel is subscribed when the first component watches it and released
+  about a second after the last one unmounts, so re-renders and quick
+  navigation keep the subscription. The WebSocket closes when nothing is
+  watched.
+- A view keeps the 50 most recent messages (`messageLimit`, up to 1,000). A
+  reconnect or a re-watched channel resumes from the last message received.
+- A refused channel (for example `not_authorized`) shows `status: "error"` with
+  the code; the client's other channels keep working.
+- One client watches at most 8 channels at once, the limit of one connection.
+- Watch options (presence state, filter, occupancy) apply when a channel is
+  first watched; `updatePresence` on the hook result changes presence later.
+
+Outside React, `client.channel(name).subscribe(listener)` and `getView()` give
+the same view to any UI library. These features use the resumable WebSocket
+protocol; the [realtime operations guide](ops/realtime.md) covers it.
+
 ## Principal access controls preview
 
 When the operator enables the access-control preview, an endpoint can deny a
