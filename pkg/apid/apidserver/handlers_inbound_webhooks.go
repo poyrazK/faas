@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"filippo.io/age"
 	"io"
 	"net/http"
 	"regexp"
@@ -114,7 +115,12 @@ func (s *server) createInboundWebhookEndpointValidated(w http.ResponseWriter, r 
 		api.WriteProblem(w, api.ErrCapacity("inbound webhook store unavailable"))
 		return
 	}
-	recipient := setSecretRecipient()
+	// The getter is nil until apid loads an age recipient; calling it
+	// would panic the request instead of refusing it.
+	var recipient *age.X25519Recipient
+	if setSecretRecipient != nil {
+		recipient = setSecretRecipient()
+	}
 	if recipient == nil {
 		api.WriteProblem(w, api.ErrCapacity("host identity not loaded — refusing to seal webhook secret"))
 		return

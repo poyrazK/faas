@@ -87,6 +87,9 @@ func newCustomerWorkflowFixture(t *testing.T, finalTimeout time.Duration) *custo
 	mustCustomerWorkflow(t, secretbox.WriteHostKeyAtPath(agePath, ageKey))
 	// imaged and apid load fleet.age beside host.age; the same key serves both.
 	mustCustomerWorkflow(t, secretbox.WriteHostKeyAtPath(filepath.Join(filepath.Dir(agePath), "fleet.age"), ageKey))
+	// apid seals inbound webhook secrets to this recipient.
+	recipientPath := filepath.Join(filepath.Dir(agePath), "host.age.pub")
+	mustCustomerWorkflow(t, os.WriteFile(recipientPath, []byte(ageKey.Recipient().String()), 0o444))
 	receiver := f.webhookReceiver(t)
 	registry := e2etest.NewFakeRegistry()
 	t.Cleanup(registry.Close)
@@ -103,7 +106,7 @@ func newCustomerWorkflowFixture(t *testing.T, finalTimeout time.Duration) *custo
 		"FAAS_WORKFLOWS_ENABLED=1", "FAAS_E2E_APID_CONFIG="+configPath,
 		"FAAS_WORKLOAD_IDENTITY_KEY_PATH="+keyPath, "FAAS_OBJECT_STORAGE_CONFIG="+objectPath,
 		"FAAS_WORKFLOW_S3_ACCESS=fixture-access", "FAAS_WORKFLOW_S3_SECRET=fixture-secret",
-		"FAAS_HOST_AGE_IDENTITY_PATH="+agePath, "FAAS_EGRESS_ALLOW_LOOPBACK=1")
+		"FAAS_HOST_AGE_IDENTITY_PATH="+agePath, "FAAS_HOST_AGE_RECIPIENT_PATH="+recipientPath, "FAAS_EGRESS_ALLOW_LOOPBACK=1")
 	t.Cleanup(func() { f.cleanup(t) })
 	f.store = state.NewPgStore(pool)
 	f.owner = api.NewClient(f.h.APIDURL, f.h.SeedAccount(t.Context(), api.PlanPro, "customer-workflow"))
@@ -371,20 +374,21 @@ func assertCustomerWorkflowFence(t *testing.T, err error) {
 
 // customerWorkflowWaitChains are the ADR-1287 Stage 2 workflows deployed beside
 // export-chain. Step names equal the guest's routes; waits have no route.
-// finish names collect as a dependency because it reads collect's output.
+// Operation workflows are one linear chain, so finish depends only on the wait
+// and declares no input: it receives the Operation's own input (mode,
+// order_id), which the guest accepts.
 func customerWorkflowWaitChains() []api.WorkflowSpec {
-	finish := json.RawMessage(`{"mode":"{{steps.collect.output.mode}}","rows":"{{steps.collect.output.rows}}"}`)
 	return []api.WorkflowSpec{
 		{Name: "wait-chain", Steps: []api.WorkflowStepSpec{
 			{Name: "collect", Path: "/collect", Timeout: 2 * time.Minute},
 			{Name: "review", WaitForCallback: true, Timeout: 30 * time.Minute, DependsOn: []string{"collect"}},
 			{Name: "payment", WaitForEvent: "payment.succeeded", Timeout: 30 * time.Minute, DependsOn: []string{"review"}},
-			{Name: "finish", Path: "/finish", DependsOn: []string{"payment", "collect"}, Input: finish, Timeout: 2 * time.Minute},
+			{Name: "finish", Path: "/finish", DependsOn: []string{"payment"}, Timeout: 2 * time.Minute},
 		}},
 		{Name: "timeout-chain", Steps: []api.WorkflowStepSpec{
 			{Name: "collect", Path: "/collect", Timeout: 2 * time.Minute},
 			{Name: "payment", WaitForEvent: "payment.succeeded", Timeout: 15 * time.Second, DependsOn: []string{"collect"}},
-			{Name: "finish", Path: "/finish", DependsOn: []string{"payment", "collect"}, Input: finish, Timeout: 2 * time.Minute},
+			{Name: "finish", Path: "/finish", DependsOn: []string{"payment"}, Timeout: 2 * time.Minute},
 		}},
 	}
 }
