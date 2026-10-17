@@ -1680,7 +1680,7 @@ export class AppsService {
    * emits the same data as JSON so a separate frontend agent can
    * render without re-parsing HTML.
    *
-   * Returns the 50 most-recent instance rows for the app, joined
+   * Legacy requests select 100 recent candidates before time filtering, joined
    * against the events table's `wake.boot_started` rows for the
    * per-row telemetry (Trigger, QueuedCount, ConcurrencyAtAdmit,
    * AtCapacity, ReadyInMS). The aggregation math is shared with
@@ -1699,6 +1699,17 @@ export class AppsService {
    * to `wake_count_24h` but not the denominator — same
    * posture as the HTML page.
    *
+   * Opt-in keyset_v1 filters app and inclusive since/until before limiting
+   * and seeking in descending (started_at, instance ID) order. Missing
+   * start times are excluded. Bounds normalize to PostgreSQL microseconds;
+   * default until resolves once to now and must not be in the future.
+   * since must precede until. Repeat the original bounds/limit on every
+   * page. Boot and completion metadata are app-scoped. Source failures
+   * return errors, not successful empty/partial results. Page metadata
+   * echoes selection and cursor; counts/histograms describe this page
+   * only. Complete marks the end of this live retained read, not complete
+   * capture or a snapshot. Inserts, retention and metadata can affect pages.
+   *
    * Plan-gated Hobby+ (mirror of /v1/apps/{slug}/metrics —
    * same `code` so a downgrade between the two endpoints flips
    * both at once).
@@ -1710,6 +1721,9 @@ export class AppsService {
     slug,
     since,
     until,
+    pagination,
+    limit = 20,
+    cursor,
   }: {
     /**
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
@@ -1723,6 +1737,18 @@ export class AppsService {
      * Inclusive RFC3339 upper bound; defaults to now.
      */
     until?: string,
+    /**
+     * Opt in to window-first keyset paging. Legacy reads select 100 recent instance candidates before time filtering.
+     */
+    pagination?: 'keyset_v1',
+    /**
+     * Page size in keyset_v1 mode only; legacy requests ignore this parameter.
+     */
+    limit?: number,
+    /**
+     * Opaque page.next_cursor. Repeat original normalized since/until and limit with keyset_v1. Bound to account and immutable app; grants no authority.
+     */
+    cursor?: string,
   }): CancelablePromise<AppWakeTimelineResponse> {
     return __request(OpenAPI, {
       method: 'GET',
@@ -1733,8 +1759,12 @@ export class AppsService {
       query: {
         'since': since,
         'until': until,
+        'pagination': pagination,
+        'limit': limit,
+        'cursor': cursor,
       },
       errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
         401: `code: unauthorized`,
         402: `Plan does not unlock the per-app wake-timeline. Free plan —
         Hobby or above required. Same code as /v1/apps/{slug}/metrics
@@ -1746,6 +1776,10 @@ export class AppsService {
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
         \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
         `,
       },
     });
@@ -5824,7 +5858,11 @@ export class AppsService {
    * distributions in a shared time window. Body holds the
    * two deployment ids + optional route filter + optional
    * since/until bounds. Returns merged per-route stats with
-   * per-deployment p50/p95/p99 + row counts. Plan-gated by
+   * per-deployment p50/p95/p99 + represented request counts. Includes
+   * the effective window and retention-clamping metadata (ADR-1623).
+   * Invalid lookbacks, invalid/future until values, and windows wholly
+   * outside current plan retention are rejected. Reads retained telemetry
+   * without replaying requests or writing platform state. Plan-gated by
    * DebugTelemetryEnabled.
    *
    * @returns DebugCompareResponse Per-route compare stats.
@@ -8419,6 +8457,8 @@ export class AppsService {
     wakeId,
     since,
     limit = 200,
+    pagination,
+    cursor,
   }: {
     /**
      * App slug (lowercase, kebab-case; per-account unique).
@@ -8435,13 +8475,21 @@ export class AppsService {
      */
     wakeId: string,
     /**
-     * Only return rows with `at >= since` (RFC 3339).
+     * Exclusive at > since lower bound (RFC3339). Omission reads from retained history. keyset_v1 normalizes to UTC/PostgreSQL microseconds.
      */
     since?: string,
     /**
-     * Max frames to return. Silently capped at 1000.
+     * Max frames to return. Values outside 1..1000 are rejected.
      */
     limit?: number,
+    /**
+     * Opt in to app-scoped timestamp/event-ID keyset pagination. Omit for the unchanged legacy timestamp-hint contract.
+     */
+    pagination?: 'keyset_v1',
+    /**
+     * Opaque page.next_cursor from keyset_v1. Requires pagination=keyset_v1 and the same account, immutable app, wake, normalized since and limit. Selection data, not authorization; pages are live retained reads, not a snapshot.
+     */
+    cursor?: string,
   }): CancelablePromise<WakeTimelineResponse> {
     return __request(OpenAPI, {
       method: 'GET',
@@ -8453,6 +8501,8 @@ export class AppsService {
       query: {
         'since': since,
         'limit': limit,
+        'pagination': pagination,
+        'cursor': cursor,
       },
       errors: {
         400: `Malformed query parameter on the wake-timeline read — \`since\` not RFC 3339 or \`limit\` out of range.`,
