@@ -5,7 +5,6 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/objectstorageactivity"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -105,7 +104,7 @@ func (h *Handler) admitGatewayCopy(w http.ResponseWriter, r *http.Request, req r
 	if !h.checkCopySource(w, r, sourceReq, copy.SourceKey, source, conditions) {
 		return state.ObjectUploadCompletion{}, objectstorage.CopySourceSnapshot{}, "", false
 	}
-	intent := state.ObjectUploadCompletion{ID: uuid.NewString(), AccountID: req.bucket.AccountID, AppID: req.bucket.AppID, BucketID: req.bucket.ID, SubjectID: req.credential.ID, Key: copy.DestinationKey, Bytes: source.SizeBytes, SourceKey: copy.SourceKey, SourceETag: source.ETag, ContentType: gatewayCopyContentType(copy, source), RequestID: req.requestID, Status: "pending", Protection: req.protection.Clone(), Encryption: req.encryption.Clone()}
+	intent := state.ObjectUploadCompletion{ID: objectstorage.NewWriteReceiptID(), AccountID: req.bucket.AccountID, AppID: req.bucket.AppID, BucketID: req.bucket.ID, SubjectID: req.credential.ID, Key: copy.DestinationKey, Bytes: source.SizeBytes, SourceKey: copy.SourceKey, SourceETag: source.ETag, ContentType: gatewayCopyContentType(copy, source), RequestID: req.requestID, Status: "pending", QueueNodeSettlement: objectstorage.QueueOwnedNodeSettlement(req.provider), Protection: req.protection.Clone(), Encryption: req.encryption.Clone()}
 	if req.copySource != nil {
 		intent.SourceBucketID, intent.SourceCopyGrantID = req.copySource.ID, req.copyGrantID
 	}
