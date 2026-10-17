@@ -3369,16 +3369,17 @@ type FireNowRequest struct {
 // operator_intents.status (migrations/00431). Mirrors the audit-event
 // `operator.action.<verb>.outcome` shape — only `succeeded` and
 // `failed` are emitted by schedd's terminal transition; `cancelled`
-// is reserved for a future operator-cancel surface (schema is
-// forward-compatible).
+// is reserved for a future operator-cancel surface. outcome_unknown pauses an
+// uncertain restart until physical evidence permits reconciliation (ADR-1522).
 type OperatorIntentStatus string
 
 const (
-	OperatorIntentPending   OperatorIntentStatus = "pending"
-	OperatorIntentRunning   OperatorIntentStatus = "running"
-	OperatorIntentSucceeded OperatorIntentStatus = "succeeded"
-	OperatorIntentFailed    OperatorIntentStatus = "failed"
-	OperatorIntentCancelled OperatorIntentStatus = "cancelled"
+	OperatorIntentPending        OperatorIntentStatus = "pending"
+	OperatorIntentRunning        OperatorIntentStatus = "running"
+	OperatorIntentSucceeded      OperatorIntentStatus = "succeeded"
+	OperatorIntentFailed         OperatorIntentStatus = "failed"
+	OperatorIntentCancelled      OperatorIntentStatus = "cancelled"
+	OperatorIntentOutcomeUnknown OperatorIntentStatus = "outcome_unknown"
 )
 
 // OperatorIntentKind is the closed vocabulary for
@@ -3418,8 +3419,9 @@ const (
 // the closed kind, then transitions status to terminal.
 //
 // Invariant: a single row represents a single admin-action attempt.
-// Admin actions are deliberate re-clicks, not retries, so there is
-// no per-request idempotency wrapper — two clicks produce two intents.
+// Node actions are deliberate requests; two submissions produce two intents.
+// Workload recovery submissions may reuse their durable request key (ADR-1524).
+// Node execution receipts fence mutation and completion per intent (ADR-1526).
 //
 // Target_id is free-text (NOT a uuid column) because it can be an instance,
 // deployment, or compute-node identifier. The kind column disambiguates.
@@ -3431,20 +3433,25 @@ const (
 // the action arrived via a path that did not stamp a trace_id
 // (e.g. legacy cron-fired reclaim_build).
 type OperatorIntent struct {
-	ID                 string
-	Kind               OperatorIntentKind
-	TargetID           string
-	AccountID          *string // nil for fleet-level actions; set for per-account actions
-	ActorID            string
-	Reason             string
-	Metadata           json.RawMessage
-	Status             OperatorIntentStatus
-	RequestedAt        time.Time
-	StartedAt          *time.Time
-	FinishedAt         *time.Time
-	Error              string
-	SnapIDsMarkedStale []string
-	TraceID            *string
+	ClaimToken              string
+	CompletionAuditOutboxID int64
+	ColdBootGeneration      int64
+	RestartExecution        *OperatorRestartExecution
+	ParkExecution           *OperatorParkExecution
+	ID                      string
+	Kind                    OperatorIntentKind
+	TargetID                string
+	AccountID               *string // nil for fleet-level actions; set for per-account actions
+	ActorID                 string
+	Reason                  string
+	Metadata                json.RawMessage
+	Status                  OperatorIntentStatus
+	RequestedAt             time.Time
+	StartedAt               *time.Time
+	FinishedAt              *time.Time
+	Error                   string
+	SnapIDsMarkedStale      []string
+	TraceID                 *string
 }
 
 // AlertMetric is a closed vocabulary for the metric side of an AlertRule
@@ -5449,6 +5456,8 @@ type ComputeNode struct {
 	// get the same answer. Writers must go through SetNodeLifecycle
 	// (CAS) so the arbiter and the drain handler can't race.
 	Lifecycle NodeLifecycle
+	// LifecycleGeneration identifies a drain/recovery cycle (ADR-1527).
+	LifecycleGeneration int64
 	// DrainInitiatedAt is stamped when lifecycle flips to 'draining'.
 	// nil until the first drain request lands; nil after a successful
 	// reactivate (the column is reused on the next drain).
@@ -6584,6 +6593,9 @@ type Snapshot struct {
 	ID           string
 	DeploymentID string
 	FCVersion    string
+	// RecoveryGeneration is inherited from immutable boot admission lineage.
+	// Only imaged's source-checked publication can introduce a nonzero value.
+	RecoveryGeneration int64
 	// BaseImageVersion pins the runner base generation used by HTTP/2 and
 	// gRPC snapshots. HTTP/1 restores do not depend on this field. Empty
 	// identifies a legacy row and forces one cold-boot re-prime for H2C.

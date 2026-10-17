@@ -249,6 +249,7 @@ type WakePrepareTimings struct {
 // is left unused (logged as metadata only). When empty, the VMM keeps
 // the legacy moveOut(VMStatePath) behaviour bit-for-bit.
 type SnapshotSpec struct {
+	operatorGeneration string // ADR-1525: checked before quiet resume or snapshot.
 	// Only Manager can populate the retained parent. Wire callers never supply
 	// an admission receipt as authority for a snapshot of another live VM.
 	admittedParent runtimeadmission.Receipt

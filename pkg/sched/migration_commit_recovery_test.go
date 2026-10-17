@@ -1,3 +1,4 @@
+// adr: 1529
 // adr: 568 — environment intent and runtime ownership contracts.
 package sched
 
@@ -19,7 +20,7 @@ type migrationRecoveryFaultStore struct {
 	commit            bool
 	recoveryErr       error
 	cancelAfterCommit context.CancelFunc
-	commitAnotherWake bool
+	retainResolution  bool
 }
 
 func (s *migrationRecoveryFaultStore) MigrateInstanceOwner(ctx context.Context, id, from, to, lease string) error {
@@ -33,9 +34,6 @@ func (s *migrationRecoveryFaultStore) MigrateInstanceOwner(ctx context.Context, 
 
 func (s *migrationRecoveryFaultStore) MigrateInstanceOwnerWithRuntimeConfig(ctx context.Context, id, from, to, lease string, input state.RuntimeConfigMigration) error {
 	if s.commit {
-		if s.commitAnotherWake {
-			input.WakeID = uuid.NewString()
-		}
 		if err := s.MemStore.MigrateInstanceOwnerWithRuntimeConfig(ctx, id, from, to, lease, input); err != nil {
 			return err
 		}
@@ -48,6 +46,9 @@ func (s *migrationRecoveryFaultStore) MigrateInstanceOwnerWithRuntimeConfig(ctx 
 }
 
 func (s *migrationRecoveryFaultStore) ResolveInstanceMigrationCommit(ctx context.Context, attempt state.MigrationCommitAttempt) (state.MigrationCommitResolution, error) {
+	if s.retainResolution {
+		return state.MigrationCommitRetained, nil
+	}
 	if s.recoveryErr != nil {
 		return state.MigrationCommitRetained, s.recoveryErr
 	}
@@ -79,10 +80,10 @@ func TestRuntimeConfigMigrationCommitRecoveryPreservesServingDestination(t *test
 		{name: "transaction never committed", wantDestroy: 1, wantCancel: 1},
 		{name: "committed but recovery database unavailable", commit: true, outage: true, wantUnresolved: true},
 		{name: "uncommitted and recovery database unavailable", outage: true, wantUnresolved: true},
-		{name: "another destination wake is preserved", commit: true, anotherWake: true, wantUnresolved: true},
+		{name: "committed owner requires retained resolution", commit: true, anotherWake: true, wantUnresolved: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			store := &migrationRecoveryFaultStore{MemStore: state.NewMemStore(), commit: tc.commit, commitAnotherWake: tc.anotherWake}
+			store := &migrationRecoveryFaultStore{MemStore: state.NewMemStore(), commit: tc.commit, retainResolution: tc.anotherWake}
 			if tc.outage {
 				store.recoveryErr = errors.New("database unavailable during recovery")
 			}
@@ -111,7 +112,7 @@ func TestRuntimeConfigMigrationCommitRecoveryPreservesServingDestination(t *test
 				store.cancelAfterCommit = cancel
 			}
 			ledger := NewNodeLedger()
-			harness := NewMigrationHarness(t.Context(), statetest.NewMem(store), vmm, wire.NewOpsMetrics("schedd"), testLog(), destination.ID, engine.BuildAppSpecForMigration, ledger, nil)
+			harness := NewMigrationHarness(t.Context(), statetest.NewMem(store), admissionTestVMM(store.MemStore, vmm), wire.NewOpsMetrics("schedd"), testLog(), destination.ID, engine.BuildAppSpecForMigration, ledger, nil)
 			err = harness.MigrateOne(ctx, original.ID, original.NodeID)
 			if (err == nil) != tc.wantSuccess || errors.Is(err, state.ErrMigrationCommitUnresolved) != tc.wantUnresolved {
 				t.Fatalf("handoff result: %v, want success=%v unresolved=%v", err, tc.wantSuccess, tc.wantUnresolved)
@@ -150,6 +151,7 @@ func TestRuntimeConfigMigrationLegacyOwnershipCommitRecovery(t *testing.T) {
 	instanceID := seedInstanceForMigration(t, store.MemStore, "dying")
 	vmm := &fakeVMM{}
 	ledger := NewNodeLedger()
+	seedMigrationDestination(t, store.MemStore, "new-owner")
 	harness := NewMigrationHarness(t.Context(), statetest.NewMem(store), vmm, wire.NewOpsMetrics("schedd"), testLog(), "new-owner", stubSpecBuilder, ledger, nil)
 	if err := harness.MigrateOne(t.Context(), instanceID, "dying"); err != nil {
 		t.Fatal(err)

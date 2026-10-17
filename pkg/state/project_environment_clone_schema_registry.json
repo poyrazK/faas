@@ -2264,7 +2264,8 @@
       "vmmd_admission_protocol",
       "vmmd_incarnation",
       "vpcpus",
-      "zone"
+      "zone",
+      "lifecycle_generation"
     ],
     "kind": "platform_configuration"
   },
@@ -3353,7 +3354,8 @@
       "mail_failure_account_revision",
       "mail_failure_app_revision",
       "mail_failure_revision",
-      "mail_failure_success_revision"
+      "mail_failure_success_revision",
+      "snapshot_recovery_generation"
     ],
     "kind": "configuration"
   },
@@ -7418,7 +7420,8 @@
       "mem_storage_key",
       "pending",
       "source_node_id",
-      "vmstate_storage_key"
+      "vmstate_storage_key",
+      "resume_fenced"
     ],
     "kind": "operational"
   },
@@ -8268,7 +8271,10 @@
       "started_at",
       "status",
       "target_id",
-      "trace_id"
+      "trace_id",
+      "claim_token",
+      "cold_boot_generation",
+      "completion_audit_outbox_id"
     ],
     "kind": "operational"
   },
@@ -11607,7 +11613,8 @@
       "stale",
       "storage_key",
       "stored_bytes",
-      "tier"
+      "tier",
+      "recovery_generation"
     ],
     "kind": "operational"
   },
@@ -13733,6 +13740,133 @@
       "verification_key_id",
       "verification_origin",
       "verification_token_hash"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "instance_snapshot_recovery",
+    "columns": [
+      "generation",
+      "instance_id",
+      "snapshot_id",
+      "wake_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "migration_admissions",
+    "columns": [
+      "active_lease_token",
+      "adoption_receipt",
+      "cleanup_proof",
+      "cpu_millicores",
+      "destination_generation",
+      "destination_node_id",
+      "destination_wake_id",
+      "expires_at",
+      "id",
+      "instance_id",
+      "lease_token",
+      "mem_storage_key",
+      "phase",
+      "ram_mb",
+      "request_digest",
+      "source_node_id",
+      "source_wake_id",
+      "vcpu",
+      "vmstate_storage_key"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "migration_sources",
+    "columns": [
+      "active_lease_token",
+      "cpu_millicores",
+      "instance_id",
+      "lease_token",
+      "native_generation",
+      "phase",
+      "physical_binding",
+      "proof",
+      "ram_mb",
+      "source_node_id",
+      "source_wake_id",
+      "vcpu"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "node_lifecycle_completions",
+    "columns": [
+      "audit_outbox_id",
+      "completed_at",
+      "drained_count",
+      "initiated_at",
+      "migrated_count",
+      "node_id",
+      "node_name",
+      "recreated_count",
+      "result_generation",
+      "result_lifecycle",
+      "source_generation",
+      "source_lifecycle"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "operator_node_executions",
+    "columns": [
+      "audit_outbox_id",
+      "changed",
+      "claim_token",
+      "error",
+      "finished_at",
+      "intent_id",
+      "kind",
+      "previous_lifecycle",
+      "result_lifecycle",
+      "status",
+      "target_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "operator_park_executions",
+    "columns": [
+      "effect_token",
+      "intent_id",
+      "phase",
+      "receipt",
+      "stopped_at",
+      "target",
+      "terminal_state",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "operator_recovery_submissions",
+    "columns": [
+      "actor_id",
+      "audit_outbox_id",
+      "created_at",
+      "intent_id",
+      "key_digest",
+      "request_digest",
+      "response_body"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "operator_restart_executions",
+    "columns": [
+      "destroy_token",
+      "destroyed_at",
+      "intent_id",
+      "phase",
+      "target",
+      "updated_at"
     ],
     "kind": "operational"
   }
