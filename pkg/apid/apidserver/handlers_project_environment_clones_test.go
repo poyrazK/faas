@@ -147,3 +147,54 @@ func TestFullProjectEnvironmentCloneNamesSchemaBlockersAndFailsClosed(t *testing
 		}
 	}
 }
+
+func TestFullProjectEnvironmentCloneHidesInternalHostingBlockers(t *testing.T) {
+	for _, dedicated := range []bool{true, false} {
+		for _, enabled := range []bool{false, true} {
+			for _, operator := range []bool{false, true} {
+				name := map[bool]string{true: "dedicated", false: "legacy"}[dedicated] + "/" +
+					map[bool]string{true: "enabled", false: "disabled"}[enabled] + "/" +
+					map[bool]string{true: "operator", false: "customer"}[operator]
+				t.Run(name, func(t *testing.T) {
+					srv, store, acct, project, _ := apidserver.NewProjectLifecycleFixture(t)
+					srv.WithRuntimeConfigManager(apidserver.NewRuntimeConfigManager(func(key string) string {
+						if key == "FAAS_FRONTEND_HOSTING_ENABLED" && enabled {
+							return "true"
+						}
+						return ""
+					}))
+					if operator {
+						srv.WithAdminAllowlist(acct.Email)
+					}
+					(*srv.Store()) = &cloneSchemaCoverageTestStore{MemStore: store, report: state.ProjectEnvironmentCloneSchemaCoverage{Blockers: []state.ProjectEnvironmentCloneCoverageBlocker{
+						{Table: "queue_bindings", Code: "isolated_strategy_unavailable"},
+						{Table: "hosting_sites", Code: "isolated_strategy_unavailable"},
+						{Table: "hosting_releases", Column: "artifact_bytes", Code: "isolated_data_strategy_unavailable"},
+					}}}
+					req, rec := apidserver.ProjectRequest(http.MethodPost, "/v1/projects/shop/environment-clones", project.Slug,
+						[]byte(`{"slug":"stage","from_environment":"production","full":true}`))
+					if dedicated {
+						srv.CreateFullProjectEnvironmentClone(rec, req, acct)
+					} else {
+						srv.CreateProjectEnvironment(rec, req, acct)
+					}
+					var problem api.Problem
+					if err := json.Unmarshal(rec.Body.Bytes(), &problem); err != nil || rec.Code != http.StatusConflict || problem.Code != api.CodeFullEnvironmentCloneUnavailable {
+						t.Fatalf("clone admission = %d %s, %v", rec.Code, rec.Body.String(), err)
+					}
+					for _, table := range []string{"hosting_sites", "hosting_releases"} {
+						if strings.Contains(rec.Body.String(), table) != (enabled && operator) {
+							t.Fatalf("unexpected internal table visibility: %s", rec.Body.String())
+						}
+					}
+					if !strings.Contains(rec.Body.String(), "resource_coverage.queue_bindings") {
+						t.Fatalf("public coverage blocker missing: %s", rec.Body.String())
+					}
+					if _, err := store.ProjectEnvironmentBySlug(context.Background(), acct.ID, project.ID, "stage"); !errors.Is(err, state.ErrNotFound) {
+						t.Fatalf("partial target exists: %v", err)
+					}
+				})
+			}
+		}
+	}
+}

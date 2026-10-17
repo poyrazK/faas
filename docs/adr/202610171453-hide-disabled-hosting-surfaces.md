@@ -43,6 +43,8 @@ Register hosting tables in environment-clone schema inventory with their existin
 configuration/data, account-identity and operational boundaries. Known schema is
 not a qualified hosting-copy strategy: preserve the configuration and artifact
 strategy blockers, and do not clone credentials, domain claims or serving receipts.
+Public clone-admission errors hide hosting schema blockers unless hosting is
+enabled and the caller is an operator; clone admission remains closed throughout.
 
 The pilot migrations must tolerate replay of their existing DDL after missing
 ledger receipts. Replay preserves accepted promotion times, private staged
