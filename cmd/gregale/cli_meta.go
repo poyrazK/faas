@@ -95,6 +95,9 @@ type cliCommand struct {
 	// scripts do not break, and remain in the manifest for man pages and drift
 	// tests.
 	Audience cliAudience
+	// Unreleased keeps a dark-launched command out of every customer
+	// surface, and out of dispatch, unless it is turned on (unreleased.go).
+	Unreleased bool
 }
 
 // customerCliCommands returns the commands intended for normal application
@@ -102,7 +105,7 @@ type cliCommand struct {
 // legacy entries still need completion/man/dispatch coverage.
 func customerCliCommands() []cliCommand {
 	commands := make([]cliCommand, 0, len(cliCommands))
-	for _, command := range cliCommands {
+	for _, command := range visibleCliCommands() {
 		if command.Audience == cliAudienceCustomer {
 			commands = append(commands, command)
 		}
@@ -112,7 +115,7 @@ func customerCliCommands() []cliCommand {
 
 func advancedCliCommands() []cliCommand {
 	commands := make([]cliCommand, 0, len(cliCommands))
-	for _, command := range cliCommands {
+	for _, command := range visibleCliCommands() {
 		if command.Audience != cliAudienceCustomer && cliCommandAvailable(command.Name) {
 			commands = append(commands, command)
 		}
@@ -315,6 +318,9 @@ type cliFlag struct {
 	// Short is the human description (mirrors flag.NewFlagSet's
 	// third arg in each leaf).
 	Short string
+	// Unreleased keeps a dark-launched flag out of every customer surface
+	// unless it is turned on (unreleased.go).
+	Unreleased bool
 	// Req marks required flags. Completion backends do NOT offer
 	// required flags as a TAB choice (the user is forced to provide
 	// them); the marker exists for the man-page SYNOPSIS section
@@ -499,7 +505,6 @@ var templateNames13 = []string{
 	"data-api-starter",
 	"data-api-teams",
 	"data-api-support-console",
-	"auth",
 }
 
 // cliCommands is the manifest. One entry per top-level command in
@@ -620,7 +625,7 @@ var cliCommands = []cliCommand{
 				{Name: "availability", Short: "availability mode", Value: "MODE", ClosedSet: []string{"single_zone", "high_availability"}},
 				{Name: "scale-to-zero", Short: "suspend compute when idle"},
 				{Name: "environment-key", Short: "connection environment variable", Value: "KEY"},
-				{Name: "access", Short: "credential access", Value: "MODE", ClosedSet: []string{"read_write", "read_only", "migration", "data_api", "auth"}},
+				{Name: "access", Short: "credential access", Value: "MODE", ClosedSet: []string{"read_write", "read_only", "migration", "data_api"}},
 				{Name: "wait-timeout", Short: "readiness timeout", Value: "DURATION"},
 			}},
 			{Name: "bucket", Short: "Provision or attach object storage and inject sealed S3 settings", Positionals: []string{"<name>"}, Flags: []cliFlag{
@@ -2590,7 +2595,21 @@ var cliCommands = []cliCommand{
 		DocSlug:  "test",
 		Short:    "Run scenario suites, lifecycle profiles, and bounded local HTTP load tests",
 		Examples: []string{"gregale test init --from openapi.yaml --project my-api", "gregale test import --from collection.json --project my-api", "gregale test --validate", "gregale test --suite smoke --engine local --fail-fast --junit test-results.xml", "gregale test --suite smoke --engine local --report test-results.json --junit test-results.xml --html test-results.html", "gregale test compare baseline.json current.json --budget test-budget.yaml --html comparison.html", "gregale test --suite regression --validate", "gregale test --scenario customer-export --preflight", "gregale test --scenario customer-export --profile restored --repeat 3 --max-workload-minutes 135 --report test-results.json --junit test-results.xml", "gregale test --scenario api-smoke --engine local", "gregale test --scenario api-smoke --engine local --load --baseline baseline.json --report current.json --junit current.xml", "gregale test --scenario customer-export --engine local --base-url http://localhost:3000 --data cases.json", "gregale test --scenario api-smoke --engine local --base-url http://localhost:3000 --load --vus 5 --duration 30s --pacing 100ms --progress", "gregale test --scenario api-smoke --engine local --load --rate 20 --duration 30s --vus 10 --progress", "gregale test --scenario customer-export --engine simulated"},
-		Subcommands: []cliSub{{Name: "init", Short: "Create public GET smoke checks from a local OpenAPI document", Examples: []string{"gregale test init --from openapi.yaml --project my-api --source ."}, Flags: []cliFlag{
+		Subcommands: []cliSub{{Name: "rehearse", Short: "Compare two pinned Git revisions with one trusted behavior scenario", Examples: []string{"gregale test rehearse --base main --candidate HEAD --scenario customer-export --engine simulated --report rehearsal.json --html rehearsal.html", "gregale test rehearse --base main --candidate HEAD --scenario customer-export --profile restored --max-workload-minutes 90 --report rehearsal.json"}, Flags: []cliFlag{
+			{Name: "repo", Short: "local Git checkout containing both revisions and trusted inputs", Value: "DIR"},
+			{Name: "base", Short: "baseline revision resolved once to a commit", Value: "REF", Req: true},
+			{Name: "candidate", Short: "candidate revision resolved once to a commit", Value: "REF", Req: true},
+			{Name: "manifest", Short: "trusted manifest from the invoking checkout", Value: "PATH"},
+			{Name: "scenario", Short: "scenario with declared behavior observations", Value: "NAME", Req: true},
+			{Name: "engine", Short: "execution engine (default real-vm)", Value: "ENGINE", ClosedSet: []string{"real-vm", "local", "simulated"}},
+			{Name: "profile", Short: "real-vm lifecycle profile (default warm)", Value: "PROFILE", ClosedSet: []string{"warm", "cold", "restored", "all"}},
+			{Name: "repeat", Short: "fresh runs per revision and profile (1..20; default 1)", Value: "N"},
+			{Name: "max-workload-minutes", Short: "required total real-vm workload-minute limit across both revisions", Value: "N"},
+			{Name: "validate", Short: "validate both snapshots without execution or platform access"},
+			{Name: "report", Short: "required combined JSON receipt for execution; new file", Value: "PATH"},
+			{Name: "html", Short: "standalone comparison HTML; new file", Value: "PATH"},
+			{Name: "markdown", Short: "comparison Markdown; new file", Value: "PATH"},
+		}}, {Name: "init", Short: "Create public GET smoke checks from a local OpenAPI document", Examples: []string{"gregale test init --from openapi.yaml --project my-api --source ."}, Flags: []cliFlag{
 			{Name: "from", Short: "local OpenAPI 3.0 or 3.1 document", Value: "PATH", Req: true},
 			{Name: "project", Short: "Gregale project slug", Value: "SLUG", Req: true},
 			{Name: "source", Short: "application source directory", Value: "DIR"},
@@ -3208,7 +3227,7 @@ var cliCommands = []cliCommand{
 				{Name: "geo-deny", Short: "kind=geo: deny ISO country code (repeat)", Value: "CC"},
 				{Name: "jwt-issuer", Short: "kind=jwt: token issuer", Value: "ISSUER"},
 				{Name: "jwt-jwks-url", Short: "kind=jwt: JWKS URL (https)", Value: "URL"},
-				{Name: "jwt-auth", Short: "kind=jwt: Auth app whose tokens to require (sets issuer, JWKS URL, audience, ES256 and exp)", Value: "AUTH_APP"},
+				{Name: "jwt-auth", Short: "kind=jwt: Auth app whose tokens to require (sets issuer, JWKS URL, audience, ES256 and exp)", Value: "AUTH_APP", Unreleased: true},
 				{Name: "on-success-webhook", Short: "success webhook subscription; repeat when updating async policy", Value: "ID"},
 				{Name: "on-failure-webhook", Short: "failure webhook subscription; repeat when updating async policy", Value: "ID"},
 				{Name: "async-max-attempts", Short: "total attempts (0 = plan default; capped by plan)", Value: "N"},
@@ -4386,7 +4405,7 @@ var cliCommands = []cliCommand{
 		ClosedSet: []string{"free", "hobby", "pro", "scale"},
 	},
 	{
-		Name: "auth", DocSlug: "application-auth", Short: "Add sign-up, sessions and users to your application (application Auth, not your Gregale login)",
+		Name: "auth", DocSlug: "application-auth", Short: "Add sign-up, sessions and users to your application (application Auth, not your Gregale login)", Unreleased: true,
 		Subcommands: []cliSub{
 			{Name: "create", Short: "Deploy a managed GoTrue Auth server bound to your database", Positionals: []string{"<name>"}, Flags: []cliFlag{
 				{Name: "database", Value: "DATABASE", Req: true, Short: "ready managed database name or ID"},
@@ -4412,6 +4431,8 @@ var cliCommands = []cliCommand{
 				{Name: "password-require", Value: "CLASSES", Short: "character classes every password needs: lower,upper,digit,symbol, or none"},
 				{Name: "leaked-password-check", Value: "on|off", Short: "refuse passwords found in known breaches (Have I Been Pwned)", ClosedSet: []string{"on", "off"}},
 				{Name: "mfa", Value: "on|off", Short: "let users enrol an authenticator app (TOTP); enrolled users keep verifying when off", ClosedSet: []string{"on", "off"}},
+				{Name: "mfa-phone", Value: "on|off", Short: "let users enrol SMS codes as a second factor (needs an SMS provider)", ClosedSet: []string{"on", "off"}},
+				{Name: "recovery-codes", Value: "on|off", Short: "let users create one-time recovery codes for their second factor", ClosedSet: []string{"on", "off"}},
 				{Name: "email-provider", Value: "PROVIDER", Short: "HTTPS email provider, or none to remove it", ClosedSet: []string{"resend", "postmark", "none"}},
 				{Name: "email-from", Value: "SENDER", Short: "sender address, or a display name with the address in angle brackets"},
 				{Name: "email-api-key-stdin", Short: "read the email provider API key from stdin (prompted on a terminal)"},
@@ -4430,7 +4451,14 @@ var cliCommands = []cliCommand{
 				{Name: "sms-account", Value: "ID", Short: "Twilio account SID or Vonage API key"},
 				{Name: "sms-sender", Value: "SENDER", Short: "Twilio messaging or Verify service SID (or phone number), MessageBird originator, Textlocal sender or Vonage from"},
 				{Name: "sms-secret-stdin", Short: "read the Twilio auth token, MessageBird access key, Textlocal API key or Vonage API secret from stdin"},
+				{Name: "sms-countries", Value: "CODES", Short: "country calling codes phone sign-in may text, comma-separated (1,44,49), or all"},
 				{Name: "sso", Value: "on|off", Short: "organization single sign-on (SAML); manage identity providers with gregale auth sso", ClosedSet: []string{"on", "off"}},
+				{Name: "org-sso", Value: "on|off", Short: "let organizations verify their email domains and connect their own identity provider (needs --sso on)", ClosedSet: []string{"on", "off"}},
+				{Name: "oauth-server", Value: "on|off", Short: "the OAuth 2.1 authorization server, for third-party apps and MCP clients; manage clients with gregale auth oauth-clients", ClosedSet: []string{"on", "off"}},
+				{Name: "oauth-registration", Value: "on|off", Short: "let OAuth clients register themselves (RFC 7591), as MCP clients do", ClosedSet: []string{"on", "off"}},
+				{Name: "anonymous", Value: "on|off", Short: "let people start without an account (anonymous users); turn on CAPTCHA with it", ClosedSet: []string{"on", "off"}},
+				{Name: "anonymous-retention", Value: "DAYS", Short: "days an anonymous user may stay idle before it is deleted, or forever"},
+				{Name: "identity-linking", Value: "on|off", Short: "let signed-in users link and unlink sign-in methods", ClosedSet: []string{"on", "off"}},
 				{Name: "scope", Value: "SCOPE", Short: "environment scope"},
 			}, Examples: []string{"gregale auth config shop-auth", "gregale auth config shop-auth --events on", "gregale auth config shop-auth --password-min-length 12 --password-require lower,upper,digit --mfa on"}},
 			{Name: "providers", Short: "Manage OAuth sign-in providers such as Google or GitHub", Subcommands: []cliSub{
@@ -4485,6 +4513,30 @@ var cliCommands = []cliCommand{
 					{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"},
 				}},
 				{Name: "remove", Short: "Remove an identity provider; its users keep their memberships", Positionals: []string{"<name>", "<provider-id>"}, Flags: []cliFlag{{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"}}},
+				{Name: "scim-token", Short: "Create the token an identity provider uses to provision people through SCIM, or revoke it", Positionals: []string{"<name>", "<provider-id>"}, Flags: []cliFlag{
+					{Name: "revoke", Short: "revoke the token instead of creating one"},
+					{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"},
+				}},
+			}},
+			{Name: "oauth-clients", Short: "Register the apps and MCP clients that may use the Auth app as their OAuth 2.1 server", Subcommands: []cliSub{
+				{Name: "list", Short: "List OAuth clients, owner-registered and self-registered", Positionals: []string{"<name>"}, Flags: []cliFlag{{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"}}},
+				{Name: "add", Short: "Register a client; a confidential client's secret is shown once", Positionals: []string{"<name>"}, Flags: []cliFlag{
+					{Name: "name", Value: "NAME", Short: "the client's name, shown on the consent page"},
+					{Name: "redirect-uri", Value: "URI", Req: true, Short: "an exact redirect URI (HTTPS, loopback HTTP or an app scheme); repeat for more"},
+					{Name: "type", Value: "TYPE", Short: "public (PKCE, no secret) or confidential (keeps a secret)", ClosedSet: []string{"public", "confidential"}},
+					{Name: "client-uri", Value: "URL", Short: "the client's HTTPS home page"},
+					{Name: "logo-uri", Value: "URL", Short: "the client's HTTPS logo URL"},
+					{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"},
+				}, Examples: []string{"printf '%s' \"$ADMIN_KEY\" | gregale auth oauth-clients add shop-auth --name shop-cli --redirect-uri http://127.0.0.1:8976/callback --admin-key-stdin"}},
+				{Name: "update", Short: "Change a client's name, redirect URIs or links", Positionals: []string{"<name>", "<client-id>"}, Flags: []cliFlag{
+					{Name: "name", Value: "NAME", Short: "the client's name, shown on the consent page"},
+					{Name: "redirect-uri", Value: "URI", Short: "an exact redirect URI; repeat for more; replaces the list"},
+					{Name: "client-uri", Value: "URL", Short: "the client's HTTPS home page"},
+					{Name: "logo-uri", Value: "URL", Short: "the client's HTTPS logo URL"},
+					{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"},
+				}},
+				{Name: "remove", Short: "Remove a client; it can no longer get tokens", Positionals: []string{"<name>", "<client-id>"}, Flags: []cliFlag{{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"}}},
+				{Name: "rotate-secret", Short: "Replace a confidential client's secret; the new one is shown once", Positionals: []string{"<name>", "<client-id>"}, Flags: []cliFlag{{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"}}},
 			}},
 		},
 	},
@@ -4585,7 +4637,7 @@ var cliCommands = []cliCommand{
 				{Name: "database", Value: "DATABASE", Req: true, Short: "ready managed database name or ID"},
 				{Name: "schema", Value: "SCHEMA", Short: "exposed schema (api)"},
 				{Name: "scope", Value: "SCOPE", Short: "environment scope"},
-				{Name: "auth", Value: "AUTH_APP", Short: "Auth app whose tokens to verify (replaces --issuer, --jwks-url and --audience)"},
+				{Name: "auth", Value: "AUTH_APP", Short: "Auth app whose tokens to verify (replaces --issuer, --jwks-url and --audience)", Unreleased: true},
 				{Name: "issuer", Value: "HTTPS_URL", Short: "application JWT issuer"},
 				{Name: "jwks-url", Value: "HTTPS_URL", Short: "application JWKS URL"},
 				{Name: "audience", Value: "AUDIENCE", Short: "application JWT audience"},
@@ -4714,7 +4766,7 @@ var cliCommands = []cliCommand{
 					{Name: "app", Short: "app ID", Req: true, Value: "APP_ID"},
 					{Name: "scope", Short: "environment scope", Req: true, Value: "SCOPE"},
 					{Name: "environment-key", Short: "environment variable name", Req: true, Value: "KEY"},
-					{Name: "access", Short: "credential access", Value: "MODE", ClosedSet: []string{"read_write", "read_only", "migration", "data_api", "auth"}},
+					{Name: "access", Short: "credential access", Value: "MODE", ClosedSet: []string{"read_write", "read_only", "migration", "data_api"}},
 				}},
 				{Name: "get", Short: "Show one binding", Positionals: []string{"<id>"}},
 				{Name: "delete", Short: "Delete a binding", Positionals: []string{"<id>"}},
@@ -4727,7 +4779,7 @@ var cliCommands = []cliCommand{
 			{Name: "attach", Short: "Attach a database to an app", Positionals: []string{"<database>", "<app>"}, Flags: []cliFlag{
 				{Name: "scope", Short: "environment scope (defaults to linked project environment, otherwise default)", Value: "SCOPE"},
 				{Name: "env", Short: "connection environment variable", Value: "KEY"},
-				{Name: "access", Short: "credential access", Value: "MODE", ClosedSet: []string{"read_write", "read_only", "migration", "data_api", "auth"}},
+				{Name: "access", Short: "credential access", Value: "MODE", ClosedSet: []string{"read_write", "read_only", "migration", "data_api"}},
 			}, Examples: []string{"gregale postgres attach orders my-api --env DATABASE_URL --access read_write"}},
 		},
 	},
@@ -4868,7 +4920,7 @@ var cliCommands = []cliCommand{
 				{Name: "auth-token", Short: "client static bearer token (prefer --auth-token-stdin)", Value: "TOKEN"},
 				{Name: "auth-issuer", Short: "OIDC issuer URL", Value: "URL"},
 				{Name: "auth-jwks-url", Short: "OIDC JWKS URL", Value: "URL"},
-				{Name: "auth", Short: "Auth app that verifies clients and authorizes channels; replaces the callback and auth flags", Value: "AUTH_APP"},
+				{Name: "auth", Short: "Auth app that verifies clients and authorizes channels; replaces the callback and auth flags", Value: "AUTH_APP", Unreleased: true},
 				{Name: "auth-audience", Short: "OIDC audience (repeatable)", Value: "AUDIENCE", Repeatable: true},
 				{Name: "auth-algorithm", Short: "OIDC signing algorithm (repeatable)", Value: "ALG", Repeatable: true},
 				{Name: "auth-claim", Short: "required OIDC claim as KEY=VALUE (repeatable)", Value: "KEY=VALUE", Repeatable: true},

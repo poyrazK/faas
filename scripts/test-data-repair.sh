@@ -16,8 +16,10 @@ export GREGALE_DATA_REPAIR_CLI="$repair_tmp/gregale"
 export GREGALE_DATA_REPAIR_SCHEMA="$repair_tmp/schema.sql"
 "$GREGALE_DATA_REPAIR_CLI" data-repair schema > "$GREGALE_DATA_REPAIR_SCHEMA"
 GREGALE_DATA_REPAIR_DOCKER_TEST=1 "${GO:-go}" test -race -count=1 ./pkg/datarepair ./pkg/apid/datarepair ./pkg/apid/repairhealth ./pkg/sched/repairhealth ./pkg/dashboard
+"${GO:-go}" test -run '^$' ./pkg/gateway
 "${GO:-go}" test -p=1 -race -gcflags=github.com/onebox-faas/faas/pkg/sched='-c=1 -dwarf=false' -count=1 -run 'Test(DataRepair|RepairRehearsal|NativeProducer)' ./pkg/fcvm ./pkg/sched ./pkg/vmmdgrpc ./guest/init
 GOMEMLIMIT="${GOMEMLIMIT:-6GiB}" "${GO:-go}" test -race -gcflags=github.com/onebox-faas/faas/pkg/state='-c=1 -dwarf=false' -count=1 -run '^Test(ManagedDataRepairState|DataRepairHealth)' ./pkg/state
+FAAS_REPLAY_CHECK_VERSIONS=20261016213037860,20261016213038276 GOMEMLIMIT="${GOMEMLIMIT:-6GiB}" "${GO:-go}" test -race -gcflags=github.com/onebox-faas/faas/pkg/state='-c=1 -dwarf=false' -count=1 -run '^TestNewMigrationsAreReplaySafe$' ./migrations
 GREGALE_DATA_REPAIR_DOCKER_TEST=1 make test-apid GO="${GO:-go}" RUN='^Test(ManagedDataRepair(Named|Validation|Replacement)?(Scheduled)?HTTPJourney|ManagedDataRepairHistoryRequiresMFA|OperatorDataRepairHealth.*|DashboardAdmin_TLSCutoverBannerPersistsAfterRollback)$' RACE=1
 "${GO:-go}" test -count=1 -run '^Test(DataRepairHealthRules|AlertMetricsAreEmitted)$' ./pkg/promqlrules
 bash scripts/ci/check_prometheus_alert_metadata.sh "$repair_root"

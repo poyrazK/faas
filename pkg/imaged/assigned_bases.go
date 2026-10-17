@@ -24,6 +24,8 @@ type assignedBaseStore interface {
 	ComputeNodeByName(context.Context, string) (state.ComputeNode, error)
 	ListAppsByNodeID(context.Context, string) ([]state.App, error)
 	ListAllApps(context.Context) ([]state.App, error)
+	ListDeploymentsByNodeID(context.Context, string) ([]state.Deployment, error)
+	ListAllDeployments(context.Context) ([]state.Deployment, error)
 }
 
 // EnsureAssignedBases stages the current release's base generation for every
@@ -74,16 +76,23 @@ func reconcileAssignedRuntimes(runtimes []string, deferLegacyParent bool, stage 
 func assignedBasePlan(ctx context.Context, store assignedBaseStore, nodeName string) ([]string, bool, error) {
 	var (
 		apps []state.App
+		deps []state.Deployment
 		err  error
 	)
 	if nodeName == "" {
 		apps, err = store.ListAllApps(ctx)
+		if err == nil {
+			deps, err = store.ListAllDeployments(ctx)
+		}
 	} else {
 		node, lookupErr := store.ComputeNodeByName(ctx, nodeName)
 		if lookupErr != nil {
 			return nil, false, fmt.Errorf("imaged: resolve owner node %s for runtime-base reconciliation: %w", nodeName, lookupErr)
 		}
 		apps, err = store.ListAppsByNodeID(ctx, node.ID)
+		if err == nil {
+			deps, err = store.ListDeploymentsByNodeID(ctx, node.ID)
+		}
 	}
 	if err != nil {
 		return nil, false, fmt.Errorf("imaged: list assigned apps for runtime-base reconciliation: %w", err)
@@ -98,6 +107,15 @@ func assignedBasePlan(ctx context.Context, store assignedBaseStore, nodeName str
 		}
 		// Runtimes sharing a base (binary → go124, ADR-987) stage it once.
 		seen[api.FunctionBaseRuntime(app.Runtime)] = struct{}{}
+	}
+	// A source app built for a shared runner base boots that base as drive0
+	// (ADR-1500, H10-140), so it is staged like a function runtime even though
+	// the app row carries no runtime.
+	for _, dep := range deps {
+		if dep.RuntimeBase == "" || dep.Status == state.DeployFailed || dep.Status == state.DeployCancelled {
+			continue
+		}
+		seen[dep.RuntimeBase] = struct{}{}
 	}
 	runtimes := make([]string, 0, len(seen))
 	for runtime := range seen {

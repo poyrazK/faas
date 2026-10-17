@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	authConfigUsage    = "usage: gregale auth config NAME [--site-url URL] [--redirect-urls URLS] [--signup on|off] [--autoconfirm on|off] [--password-min-length N] [--password-require CLASSES] [--leaked-password-check on|off] [--mfa on|off] [--email-provider resend|postmark|none --email-from FROM --email-api-key-stdin] [--authz FILE] [--events on|off] [--passkeys on|off] [--passkey-rp-id DOMAIN|none] [--brand-name NAME] [--brand-color #RRGGBB] [--brand-logo-url URL] [--captcha turnstile|hcaptcha|off --captcha-site-key KEY --captcha-secret-stdin] [--activity-retention DAYS|forever] [--sms twilio|twilio_verify|messagebird|textlocal|vonage|off --sms-account ID --sms-sender SENDER --sms-secret-stdin] [--sso on|off]"
+	authConfigUsage    = "usage: gregale auth config NAME [--site-url URL] [--redirect-urls URLS] [--signup on|off] [--autoconfirm on|off] [--password-min-length N] [--password-require CLASSES] [--leaked-password-check on|off] [--mfa on|off] [--mfa-phone on|off] [--recovery-codes on|off] [--email-provider resend|postmark|none --email-from FROM --email-api-key-stdin] [--authz FILE] [--events on|off] [--passkeys on|off] [--passkey-rp-id DOMAIN|none] [--brand-name NAME] [--brand-color #RRGGBB] [--brand-logo-url URL] [--captcha turnstile|hcaptcha|off --captcha-site-key KEY --captcha-secret-stdin] [--activity-retention DAYS|forever] [--sms twilio|twilio_verify|messagebird|textlocal|vonage|off --sms-account ID --sms-sender SENDER --sms-secret-stdin] [--sms-countries CODES|all] [--sso on|off] [--anonymous on|off] [--anonymous-retention DAYS|forever] [--identity-linking on|off] [--oauth-server on|off] [--oauth-registration on|off] [--org-sso on|off]"
 	authProvidersUsage = "usage: gregale auth providers list NAME | gregale auth providers enable NAME PROVIDER --client-id ID [--client-secret-stdin] [--url URL] | gregale auth providers disable NAME PROVIDER"
 )
 
@@ -40,6 +40,8 @@ func cmdAuthConfig(args []string) int {
 	leaked := fs.String("leaked-password-check", "", "on or off: refuse passwords found in known breaches (Have I Been Pwned)")
 	mfa := fs.String("mfa", "", "on or off: let users enrol an authenticator app (TOTP); enrolled users keep verifying when off")
 	passkeys := fs.String("passkeys", "", "on or off: let users sign in with a passkey")
+	mfaPhone := fs.String("mfa-phone", "", "on or off: let users enrol SMS codes as a second factor (needs an SMS provider)")
+	recoveryCodes := fs.String("recovery-codes", "", "on or off: let users create one-time recovery codes for their second factor")
 	passkeyRPID := fs.String("passkey-rp-id", "", "parent domain shared by the Auth app and your site for passkeys (example.com), or none for the Auth app's host")
 	extras := authHostedFlags{
 		name:            fs.String("brand-name", "", "name shown on the hosted pages and in emails, or none for the site's host"),
@@ -56,11 +58,18 @@ func cmdAuthConfig(args []string) int {
 	authzFile := fs.String("authz", "", "JSON file declaring custom roles and policies (applied on restart)")
 	events := fs.String("events", "", "on or off: publish user lifecycle events (auth.user.*) to Gregale's event bus")
 	sso := fs.String("sso", "", "on or off: organization single sign-on (SAML); manage identity providers with `gregale auth sso`")
+	orgSSO := fs.String("org-sso", "", "on or off: let organizations verify their email domains and connect their own identity provider (needs --sso on)")
+	oauthServer := fs.String("oauth-server", "", "on or off: the OAuth 2.1 authorization server, for third-party apps and MCP clients; manage clients with `gregale auth oauth-clients`")
+	oauthRegistration := fs.String("oauth-registration", "", "on or off: let OAuth clients register themselves (RFC 7591), as MCP clients do")
+	anonymous := fs.String("anonymous", "", "on or off: let people start without an account (anonymous users); turn on CAPTCHA with it")
+	anonymousRetention := fs.String("anonymous-retention", "", "days an anonymous user may stay idle before it is deleted, or forever")
+	identityLinking := fs.String("identity-linking", "", "on or off: let signed-in users link and unlink sign-in methods")
 	sms := authSMSFlags{
-		provider: fs.String("sms", "", "phone sign-in by text message through your own SMS account: twilio, twilio_verify, messagebird, textlocal, vonage, or off"),
-		account:  fs.String("sms-account", "", "Twilio account SID or Vonage API key"),
-		sender:   fs.String("sms-sender", "", "Twilio messaging or Verify service SID (or phone number), MessageBird originator, Textlocal sender or Vonage from"),
-		secretIn: fs.Bool("sms-secret-stdin", false, "read the Twilio auth token, MessageBird access key, Textlocal API key or Vonage API secret from stdin"),
+		provider:  fs.String("sms", "", "phone sign-in by text message through your own SMS account: twilio, twilio_verify, messagebird, textlocal, vonage, or off"),
+		account:   fs.String("sms-account", "", "Twilio account SID or Vonage API key"),
+		sender:    fs.String("sms-sender", "", "Twilio messaging or Verify service SID (or phone number), MessageBird originator, Textlocal sender or Vonage from"),
+		secretIn:  fs.Bool("sms-secret-stdin", false, "read the Twilio auth token, MessageBird access key, Textlocal API key or Vonage API secret from stdin"),
+		countries: fs.String("sms-countries", "", "country calling codes phone sign-in may text, comma-separated (1,44,49), or all"),
 	}
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
@@ -81,12 +90,30 @@ func cmdAuthConfig(args []string) int {
 	if err := sms.apply(given, &change); err != nil {
 		return printErr("Invalid Auth settings", err)
 	}
-	if given["sso"] {
-		on, err := parseOnOff("sso", *sso)
+	for name, target := range map[string]struct {
+		value *string
+		field **bool
+	}{"sso": {sso, &change.SSO}, "org-sso": {orgSSO, &change.OrgSSO}, "oauth-server": {oauthServer, &change.OAuthServer}, "oauth-registration": {oauthRegistration, &change.OAuthRegistration},
+		"mfa-phone": {mfaPhone, &change.MFAPhone}, "recovery-codes": {recoveryCodes, &change.RecoveryCodes},
+		"anonymous": {anonymous, &change.Anonymous}, "identity-linking": {identityLinking, &change.IdentityLinking}} {
+		if !given[name] {
+			continue
+		}
+		on, err := parseOnOff(name, *target.value)
 		if err != nil {
 			return printErr("Invalid Auth settings", err)
 		}
-		change.SSO = &on
+		*target.field = &on
+	}
+	if given["anonymous-retention"] {
+		days, err := parseRetentionDays("anonymous-retention", *anonymousRetention)
+		if err != nil {
+			return printErr("Invalid Auth settings", err)
+		}
+		change.AnonymousRetentionDays = &days
+	}
+	if change.Anonymous != nil && *change.Anonymous && !given["captcha"] {
+		PrintWarn(osStderr, "anyone can now create users in %s; turn on CAPTCHA (--captcha) unless it already is", fs.Arg(0))
 	}
 	if given["passkey-rp-id"] {
 		rpID := *passkeyRPID
@@ -171,11 +198,27 @@ func ensureAuthSAMLKey(ctx context.Context, client *api.Client, app, scope strin
 	return nil
 }
 
+func authMFASummary(settings authPublicSettings) string {
+	methods := []string{}
+	for _, m := range []struct {
+		on   bool
+		name string
+	}{{settings.MFA.TOTP, "authenticator app"}, {settings.MFA.Phone, "SMS code"}, {settings.MFA.RecoveryCodes, "recovery codes"}} {
+		if m.on {
+			methods = append(methods, m.name)
+		}
+	}
+	if len(methods) == 0 {
+		return "off (enrolled users keep verifying)"
+	}
+	return strings.Join(methods, ", ")
+}
+
 // authSMSFlags are phone sign-in's settings. The provider's secret comes
 // only from stdin or a terminal prompt.
 type authSMSFlags struct {
-	provider, account, sender *string
-	secretIn                  *bool
+	provider, account, sender, countries *string
+	secretIn                             *bool
 }
 
 func (f authSMSFlags) apply(given map[string]bool, change *authsettings.Change) error {
@@ -193,6 +236,13 @@ func (f authSMSFlags) apply(given map[string]bool, change *authsettings.Change) 
 		change.SMS = &authsettings.SMS{Provider: *f.provider, Account: *f.account, Sender: *f.sender, Secret: secret}
 	case given["sms-account"] || given["sms-sender"] || *f.secretIn:
 		return errors.New("--sms-account, --sms-sender and --sms-secret-stdin need --sms PROVIDER")
+	}
+	if given["sms-countries"] {
+		codes := []string{}
+		if *f.countries != "all" {
+			codes = strings.Split(*f.countries, ",")
+		}
+		change.SMSCountries = &codes
 	}
 	return nil
 }
@@ -273,17 +323,25 @@ func (f authHostedFlags) apply(given map[string]bool, change *authsettings.Chang
 		return errors.New("--captcha-site-key and --captcha-secret-stdin need --captcha turnstile or hcaptcha")
 	}
 	if given["activity-retention"] {
-		days := 0
-		if *f.retention != "forever" {
-			n, err := strconv.Atoi(*f.retention)
-			if err != nil || n < 1 {
-				return errors.New("--activity-retention must be a number of days or forever")
-			}
-			days = n
+		days, err := parseRetentionDays("activity-retention", *f.retention)
+		if err != nil {
+			return err
 		}
 		change.ActivityRetentionDays = &days
 	}
 	return nil
+}
+
+// parseRetentionDays reads a number of days, or forever as 0.
+func parseRetentionDays(name, value string) (int, error) {
+	if value == "forever" {
+		return 0, nil
+	}
+	n, err := strconv.Atoi(value)
+	if err != nil || n < 1 {
+		return 0, fmt.Errorf("--%s must be a number of days or forever", name)
+	}
+	return n, nil
 }
 
 func parseOnOff(name, value string) (bool, error) {
@@ -413,10 +471,27 @@ func showAuthConfig(ctx context.Context, app api.AppResponse) int {
 	sso := "off"
 	if settings.SSO.Enabled {
 		sso = "on; identity providers trust entity ID " + settings.SSO.EntityID + " with ACS URL " + settings.SSO.ACSURL
+		if settings.SSO.SelfService {
+			sso += "; organizations may connect their own"
+		}
+	}
+	oauth := "off"
+	if settings.OAuth.Enabled {
+		oauth = "on; issuer " + settings.OAuth.Issuer + ", clients register themselves: " + onOff(settings.OAuth.DynamicRegistration)
+	}
+	anonymousUsers := "off"
+	if settings.Anonymous.Enabled {
+		anonymousUsers = "on, kept forever"
+		if settings.Anonymous.RetentionDays != nil {
+			anonymousUsers = fmt.Sprintf("on, deleted after %d idle days", *settings.Anonymous.RetentionDays)
+		}
 	}
 	phone := "off"
 	if settings.Phone.Enabled {
-		phone = "on, through " + settings.Phone.Provider
+		phone = "on, through " + settings.Phone.Provider + "; texts any country"
+		if len(settings.Phone.Countries) > 0 {
+			phone = "on, through " + settings.Phone.Provider + "; texts only +" + strings.Join(settings.Phone.Countries, ", +")
+		}
 	}
 	keys := settings.Keys.Signing
 	if n := len(settings.Keys.Verifying); n > 0 {
@@ -426,7 +501,7 @@ func showAuthConfig(ctx context.Context, app api.AppResponse) int {
 	for _, row := range [][2]string{
 		{"site URL", settings.SiteURL}, {"redirect URLs", redirects}, {"sign-up", signup},
 		{"sign-in methods", strings.Join(providers, ", ")}, {"passwords", passwords},
-		{"MFA (TOTP)", onOff(settings.MFA.TOTP)}, {"passkeys", passkeys}, {"phone (SMS)", phone}, {"organization SSO", sso}, {"CAPTCHA", captchaState}, {"hosted pages", branding},
+		{"MFA", authMFASummary(settings)}, {"passkeys", passkeys}, {"phone (SMS)", phone}, {"organization SSO", sso}, {"OAuth server", oauth}, {"anonymous users", anonymousUsers}, {"identity linking", onOff(settings.IdentityLinking)}, {"CAPTCHA", captchaState}, {"hosted pages", branding},
 		{"email delivery", email}, {"lifecycle events", events}, {"activity kept", retention}, {"signing key", keys},
 	} {
 		_, _ = fmt.Fprintf(osStdout, "  %-16s %s\n", row[0]+":", row[1])

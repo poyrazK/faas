@@ -28375,20 +28375,22 @@ func (q *Queries) InsertEventWorkflowRun(ctx context.Context, db DBTX, arg Inser
 }
 
 const insertExclusiveWorkEffect = `-- name: InsertExclusiveWorkEffect :exec
-INSERT INTO exclusive_work_effects(id,operation_id,generation,name,payload,webhook_id,event_type)
+INSERT INTO exclusive_work_effects(id,operation_id,generation,name,payload,webhook_id,event_type,rehearsal_run_id,receiver_sha256)
 VALUES($1::text::uuid,$2::text::uuid,
 $3::bigint,$4::text,$5::jsonb,
-nullif($6::text,'')::uuid,nullif($7::text,''))
+nullif($6::text,'')::uuid,nullif($7::text,''),$8::text,$9::text)
 `
 
 type InsertExclusiveWorkEffectParams struct {
-	ID          string
-	OperationID string
-	Generation  int64
-	Name        string
-	Payload     []byte
-	WebhookID   string
-	EventType   string
+	ID             string
+	OperationID    string
+	Generation     int64
+	Name           string
+	Payload        []byte
+	WebhookID      string
+	EventType      string
+	RehearsalRunID string
+	ReceiverSha256 string
 }
 
 func (q *Queries) InsertExclusiveWorkEffect(ctx context.Context, db DBTX, arg InsertExclusiveWorkEffectParams) error {
@@ -28400,6 +28402,8 @@ func (q *Queries) InsertExclusiveWorkEffect(ctx context.Context, db DBTX, arg In
 		arg.Payload,
 		arg.WebhookID,
 		arg.EventType,
+		arg.RehearsalRunID,
+		arg.ReceiverSha256,
 	)
 	return err
 }
@@ -31793,27 +31797,29 @@ func (q *Queries) InsertWorkflowAutomationRevision(ctx context.Context, db DBTX,
 
 const insertWorkflowOperationEffect = `-- name: InsertWorkflowOperationEffect :exec
 INSERT INTO workflow_operation_effects(
- id,account_id,app_id,run_id,step_name,operation_id,generation,name,payload,webhook_id,event_type
+ id,account_id,app_id,run_id,step_name,operation_id,generation,name,payload,webhook_id,event_type,rehearsal_run_id,receiver_sha256
 ) VALUES(
  $1::text::uuid,$2::text::uuid,$3::text::uuid,
  $4::text::uuid,$5::text,$6::text::uuid,
  $7::bigint,$8::text,$9::jsonb,
- $10::text::uuid,$11::text
+ $10::text::uuid,$11::text,$12::text,$13::text
 )
 `
 
 type InsertWorkflowOperationEffectParams struct {
-	ID          string
-	AccountID   string
-	AppID       string
-	RunID       string
-	StepName    string
-	OperationID string
-	Generation  int64
-	Name        string
-	Payload     []byte
-	WebhookID   string
-	EventType   string
+	ID             string
+	AccountID      string
+	AppID          string
+	RunID          string
+	StepName       string
+	OperationID    string
+	Generation     int64
+	Name           string
+	Payload        []byte
+	WebhookID      string
+	EventType      string
+	RehearsalRunID string
+	ReceiverSha256 string
 }
 
 func (q *Queries) InsertWorkflowOperationEffect(ctx context.Context, db DBTX, arg InsertWorkflowOperationEffectParams) error {
@@ -31829,6 +31835,8 @@ func (q *Queries) InsertWorkflowOperationEffect(ctx context.Context, db DBTX, ar
 		arg.Payload,
 		arg.WebhookID,
 		arg.EventType,
+		arg.RehearsalRunID,
+		arg.ReceiverSha256,
 	)
 	return err
 }
@@ -41289,7 +41297,8 @@ func (q *Queries) ListExclusiveWorkActive(ctx context.Context, db DBTX, keyID st
 const listExclusiveWorkEffects = `-- name: ListExclusiveWorkEffects :many
 SELECT e.id::text,e.name,e.generation,coalesce(e.webhook_id::text,'')::text AS webhook_id,
  coalesce(e.event_type,'')::text AS event_type,
- CASE WHEN e.webhook_id IS NULL THEN 'recorded' ELSE coalesce(d.status,'unavailable') END::text AS status,
+ CASE WHEN e.rehearsal_run_id<>'' THEN 'captured' WHEN e.webhook_id IS NULL THEN 'recorded' ELSE coalesce(d.status,'unavailable') END::text AS status,
+ e.rehearsal_run_id,
  coalesce(d.attempt,0)::integer AS attempt,coalesce(d.last_error,'')::text AS last_error
 FROM exclusive_work_effects e JOIN exclusive_work_operations o ON o.id=e.operation_id
 LEFT JOIN app_webhook_deliveries d ON d.id=e.id AND d.webhook_id=e.webhook_id AND d.account_id=o.account_id
@@ -41303,14 +41312,15 @@ type ListExclusiveWorkEffectsParams struct {
 }
 
 type ListExclusiveWorkEffectsRow struct {
-	EID        string
-	Name       string
-	Generation int64
-	WebhookID  string
-	EventType  string
-	Status     string
-	Attempt    int32
-	LastError  string
+	EID            string
+	Name           string
+	Generation     int64
+	WebhookID      string
+	EventType      string
+	Status         string
+	RehearsalRunID string
+	Attempt        int32
+	LastError      string
 }
 
 func (q *Queries) ListExclusiveWorkEffects(ctx context.Context, db DBTX, arg ListExclusiveWorkEffectsParams) ([]ListExclusiveWorkEffectsRow, error) {
@@ -41329,6 +41339,7 @@ func (q *Queries) ListExclusiveWorkEffects(ctx context.Context, db DBTX, arg Lis
 			&i.WebhookID,
 			&i.EventType,
 			&i.Status,
+			&i.RehearsalRunID,
 			&i.Attempt,
 			&i.LastError,
 		); err != nil {
@@ -45774,8 +45785,9 @@ func (q *Queries) ListWorkflowAutomationRevisions(ctx context.Context, db DBTX, 
 
 const listWorkflowOperationEffects = `-- name: ListWorkflowOperationEffects :many
 SELECT e.id::text AS id,e.name,e.generation,e.webhook_id::text AS webhook_id,
- e.id::text AS delivery_id,e.event_type AS type,
- coalesce(d.status,'unavailable')::text AS status,coalesce(d.attempt,0)::integer AS attempt,
+ CASE WHEN e.rehearsal_run_id<>'' THEN '' ELSE e.id::text END AS delivery_id,e.event_type AS type,
+ CASE WHEN e.rehearsal_run_id<>'' THEN 'captured' ELSE coalesce(d.status,'unavailable') END::text AS status,
+ e.rehearsal_run_id,coalesce(d.attempt,0)::integer AS attempt,
  coalesce(d.last_error,'')::text AS last_error
 FROM workflow_operation_effects e
 LEFT JOIN app_webhook_deliveries d ON d.id=e.id AND d.webhook_id=e.webhook_id
@@ -45790,15 +45802,16 @@ type ListWorkflowOperationEffectsParams struct {
 }
 
 type ListWorkflowOperationEffectsRow struct {
-	ID         string
-	Name       string
-	Generation int64
-	WebhookID  string
-	DeliveryID string
-	Type       string
-	Status     string
-	Attempt    int32
-	LastError  string
+	ID             string
+	Name           string
+	Generation     int64
+	WebhookID      string
+	DeliveryID     string
+	Type           string
+	Status         string
+	RehearsalRunID string
+	Attempt        int32
+	LastError      string
 }
 
 func (q *Queries) ListWorkflowOperationEffects(ctx context.Context, db DBTX, arg ListWorkflowOperationEffectsParams) ([]ListWorkflowOperationEffectsRow, error) {
@@ -45818,6 +45831,7 @@ func (q *Queries) ListWorkflowOperationEffects(ctx context.Context, db DBTX, arg
 			&i.DeliveryID,
 			&i.Type,
 			&i.Status,
+			&i.RehearsalRunID,
 			&i.Attempt,
 			&i.LastError,
 		); err != nil {

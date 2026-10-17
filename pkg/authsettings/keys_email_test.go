@@ -137,3 +137,19 @@ func TestNewSAMLKeyIsWhatGoTrueAccepts(t *testing.T) {
 		t.Fatalf("SSO on = %v %v", set, err)
 	}
 }
+
+func TestSMSCountries(t *testing.T) {
+	codes := []string{"+44", " 1", "49", "44"}
+	if set, _, err := (Change{SMSCountries: &codes}).Secrets(); err != nil || set["AUTH_SMS_COUNTRIES"] != "44,1,49" {
+		t.Fatalf("countries = %v %v", set, err)
+	}
+	all := []string{}
+	if _, unset, err := (Change{SMSCountries: &all}).Secrets(); err != nil || !reflect.DeepEqual(unset, []string{"AUTH_SMS_COUNTRIES"}) {
+		t.Fatalf("every country = %v %v", unset, err)
+	}
+	for _, bad := range [][]string{{"0"}, {"1234"}, {"uk"}, {""}, make([]string, 51)} {
+		if _, _, err := (Change{SMSCountries: &bad}).Secrets(); err == nil {
+			t.Errorf("accepted %q", bad)
+		}
+	}
+}
