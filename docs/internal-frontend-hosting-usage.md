@@ -25,7 +25,7 @@ Promoting or rolling back does not allocate more bytes. Retiring a release or
 requesting site deletion does not free storage: the existing publication and
 upload/cache grace, artifact removal and catalog deletion must finish first.
 Failed cleanup retains the reservation and retries through the existing controller.
-Pending releases do not expire automatically; finish or retire abandoned uploads.
+Pending releases do not expire automatically by default; finish or retire abandoned uploads. The separate [retention opt-in](internal-frontend-hosting-retention.md) can retire idle uploads and expired never-published CI releases under an explicitly enabled per-site policy.
 
 Capacity admission locks the account before the site and checks usage in the same
 transaction as release insertion, including concurrent deployments to other sites.

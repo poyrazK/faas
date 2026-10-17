@@ -427,3 +427,5 @@ Private immutable URLs for staged releases are documented in the [preview guide]
 The [release source and history guide](internal-frontend-hosting-history.md) explains optional caller-provided source labels and bounded accepted-promotion history, behind a separate default-off opt-in.
 
 The [CI automation guide](internal-frontend-hosting-automation.md) covers site-scoped credentials, retained run identities and a default-off GitHub Action that stages prebuilt files into private previews.
+
+The [retention guide](internal-frontend-hosting-retention.md) covers default-off per-site cleanup policies, protected releases and safe retirement of abandoned uploads and expired CI releases.

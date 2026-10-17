@@ -30,6 +30,7 @@ func (s Service) Capabilities(w http.ResponseWriter, r *http.Request, acct state
 		StorageTimeoutSeconds:  int(api.HostingStorageTimeout / time.Second),
 		FinalizeTimeoutSeconds: int(api.HostingFinalizeTimeout / time.Second),
 	}
+	s.retentionCapabilities(&out)
 	s.extendCapabilities(r, &out)
 	httpkit.WriteJSON(w, http.StatusOK, out)
 }
@@ -68,5 +69,14 @@ func (s Service) extendCapabilities(r *http.Request, out *api.HostingCapabilitie
 	if principal, ok := httpkit.PrincipalFrom(r); ok && principal.Key != nil && principal.Key.HostingSiteID != "" {
 		out.AutomationSiteID = principal.Key.HostingSiteID
 		out.AutomationOperations = append([]string(nil), principal.Key.HostingOperations...)
+	}
+}
+
+func (s Service) retentionCapabilities(out *api.HostingCapabilities) {
+	if h, ok := s.Host.(RetentionHost); ok && h.HostingRetentionEnabled() && h.HostingRetentionStore() != nil {
+		out.RetentionEnabled = true
+		out.RetentionAgeDefaultSeconds = int64(api.HostingRetentionAgeDefault / time.Second)
+		out.RetentionAgeMinSeconds = int64(api.HostingRetentionAgeMin / time.Second)
+		out.RetentionAgeMaxSeconds = int64(api.HostingRetentionAgeMax / time.Second)
 	}
 }

@@ -34,7 +34,7 @@ func hostingSiteRow(r sqlc.HostingSite) api.HostingSite {
 }
 
 func hostingReleaseRow(r sqlc.HostingRelease) (api.HostingRelease, error) {
-	out := api.HostingRelease{ArtifactBytes: r.ArtifactBytes, ID: uuidString(r.ID), SiteID: uuidString(r.SiteID), State: r.State, CreatedAt: r.CreatedAt.Time, RetirementGeneration: r.RetirementGeneration}
+	out := api.HostingRelease{LastActivityAt: r.LastActivityAt.Time, ArtifactBytes: r.ArtifactBytes, ID: uuidString(r.ID), SiteID: uuidString(r.SiteID), State: r.State, CreatedAt: r.CreatedAt.Time, RetirementGeneration: r.RetirementGeneration}
 	if r.FirstPromotedAt.Valid {
 		t := r.FirstPromotedAt.Time
 		out.FirstPromotedAt = &t

@@ -132,6 +132,7 @@ func (m *MemStore) createHostingReleaseLocked(account, site string, manifest api
 		m.hostingReleases = make(map[string]api.HostingRelease)
 	}
 	r := api.HostingRelease{Provenance: cloneHostingProvenance(provenance), ArtifactBytes: payload, ID: uuid.NewString(), SiteID: site, Manifest: manifest, State: "pending", CreatedAt: time.Now().UTC()}
+	r.LastActivityAt = r.CreatedAt
 	m.hostingReleases[r.ID] = cloneHostingRelease(r)
 	return cloneHostingRelease(r), nil
 }
@@ -354,6 +355,7 @@ func (m *MemStore) PurgeHostingSite(_ context.Context, account, site string) err
 			delete(m.hostingCIRuns, key)
 		}
 	}
+	delete(m.hostingRetentionPolicies, site)
 	delete(m.hostingHistory, site)
 	delete(m.hostingSites, site)
 	delete(m.hostingPublications, site)

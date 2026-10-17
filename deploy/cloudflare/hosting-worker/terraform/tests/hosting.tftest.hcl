@@ -245,3 +245,11 @@ run "release_history_api_default_off" {
     error_message = "History/provenance admission must remain an explicit API opt-in."
   }
 }
+
+run "retention_api_default_off" {
+  command = plan
+  assert {
+    condition     = output.apid_environment.FAAS_FRONTEND_HOSTING_RETENTION_ENABLED == "0"
+    error_message = "Infrastructure preparation must not enable automatic retirement."
+  }
+}

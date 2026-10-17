@@ -27519,14 +27519,34 @@ CREATE TABLE public.hosting_releases (
     artifact_bytes bigint NOT NULL,
     first_promoted_at timestamp with time zone,
     provenance jsonb,
+    last_activity_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
     CONSTRAINT hosting_releases_artifact_bytes_check CHECK (((artifact_bytes >= 0) AND (artifact_bytes <= 104857600))),
     CONSTRAINT hosting_releases_check CHECK (((state = ANY (ARRAY['retiring'::text, 'deleted'::text])) = (retired_at IS NOT NULL))),
     CONSTRAINT hosting_releases_check1 CHECK (((retirement_published_at IS NULL) OR ((state = ANY (ARRAY['retiring'::text, 'deleted'::text])) AND (retirement_generation > 0)))),
     CONSTRAINT hosting_releases_check2 CHECK (((first_promoted_at IS NULL) OR (isfinite(first_promoted_at) AND (first_promoted_at >= created_at)))),
+    CONSTRAINT hosting_releases_last_activity_at_check CHECK (isfinite(last_activity_at)),
     CONSTRAINT hosting_releases_manifest_check CHECK (((jsonb_typeof(manifest) = 'object'::text) AND (octet_length((manifest)::text) <= 1048576))),
     CONSTRAINT hosting_releases_provenance_check CHECK (((provenance IS NULL) OR ((jsonb_typeof(provenance) = 'object'::text) AND (octet_length((provenance)::text) <= 4096)))),
     CONSTRAINT hosting_releases_retirement_generation_check CHECK ((retirement_generation >= 0)),
     CONSTRAINT hosting_releases_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'ready'::text, 'retiring'::text, 'deleted'::text])))
+);
+
+
+--
+-- Name: hosting_retention_policies; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.hosting_retention_policies (
+    site_id uuid NOT NULL,
+    revision bigint NOT NULL,
+    enabled boolean DEFAULT false NOT NULL,
+    pending_age_seconds bigint NOT NULL,
+    staged_age_seconds bigint NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT hosting_retention_policies_pending_age_seconds_check CHECK (((pending_age_seconds >= 3600) AND (pending_age_seconds <= 2592000))),
+    CONSTRAINT hosting_retention_policies_revision_check CHECK ((revision > 0)),
+    CONSTRAINT hosting_retention_policies_staged_age_seconds_check CHECK (((staged_age_seconds >= 3600) AND (staged_age_seconds <= 2592000))),
+    CONSTRAINT hosting_retention_policies_updated_at_check CHECK (isfinite(updated_at))
 );
 
 
@@ -41566,6 +41586,14 @@ ALTER TABLE ONLY public.hosting_releases
 
 
 --
+-- Name: hosting_retention_policies hosting_retention_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hosting_retention_policies
+    ADD CONSTRAINT hosting_retention_policies_pkey PRIMARY KEY (site_id);
+
+
+--
 -- Name: hosting_route_publications hosting_route_publications_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -49607,6 +49635,13 @@ CREATE INDEX hosting_previews_site ON public.hosting_previews USING btree (site_
 --
 
 CREATE INDEX hosting_releases_site ON public.hosting_releases USING btree (site_id, created_at DESC);
+
+
+--
+-- Name: hosting_retention_enabled_sites; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX hosting_retention_enabled_sites ON public.hosting_retention_policies USING btree (site_id) WHERE enabled;
 
 
 --
@@ -62707,6 +62742,14 @@ ALTER TABLE ONLY public.hosting_promotion_events
 
 ALTER TABLE ONLY public.hosting_releases
     ADD CONSTRAINT hosting_releases_site_id_fkey FOREIGN KEY (site_id) REFERENCES public.hosting_sites(id) ON DELETE CASCADE;
+
+
+--
+-- Name: hosting_retention_policies hosting_retention_policies_site_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hosting_retention_policies
+    ADD CONSTRAINT hosting_retention_policies_site_id_fkey FOREIGN KEY (site_id) REFERENCES public.hosting_sites(id) ON DELETE CASCADE;
 
 
 --

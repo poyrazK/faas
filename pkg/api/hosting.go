@@ -5,6 +5,10 @@ import "time"
 // HostingCapabilities is an operator-only view of the enforced pilot limits.
 // UploadBaseURL identifies private storage; it conveys no access credentials.
 type HostingCapabilities struct {
+	RetentionEnabled              bool     `json:"retention_enabled"`
+	RetentionAgeDefaultSeconds    int64    `json:"retention_age_default_seconds"`
+	RetentionAgeMinSeconds        int64    `json:"retention_age_min_seconds"`
+	RetentionAgeMaxSeconds        int64    `json:"retention_age_max_seconds"`
 	AutomationSiteID              string   `json:"automation_site_id,omitempty"`
 	AutomationOperations          []string `json:"automation_operations,omitempty"`
 	AutomationEnabled             bool     `json:"automation_enabled"`
@@ -107,6 +111,7 @@ type HostingSite struct {
 }
 
 type HostingRelease struct {
+	LastActivityAt        time.Time                 `json:"last_activity_at"`
 	Provenance            *HostingReleaseProvenance `json:"provenance,omitempty"`
 	FirstPromotedAt       *time.Time                `json:"first_promoted_at,omitempty"`
 	ArtifactBytes         int64                     `json:"artifact_bytes"`

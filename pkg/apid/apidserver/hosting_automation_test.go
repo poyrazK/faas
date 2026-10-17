@@ -38,7 +38,7 @@ func TestHostingAutomationBearerCannotEscapeSiteOrOperations(t *testing.T) {
 	env := apidserver.Setup(t, api.PlanHobby)
 	(*env.S()).WithAdminAllowlist(env.Acct().Email)
 	values := map[string]string{
-		"FAAS_FRONTEND_HOSTING_ENABLED": "true", "FAAS_FRONTEND_HOSTING_AUTOMATION_ENABLED": "true", "FAAS_FRONTEND_HOSTING_DURABLE_ROUTING_ENABLED": "true", "FAAS_FRONTEND_HOSTING_PREVIEWS_ENABLED": "true",
+		"FAAS_FRONTEND_HOSTING_RETENTION_ENABLED": "true", "FAAS_FRONTEND_HOSTING_ENABLED": "true", "FAAS_FRONTEND_HOSTING_AUTOMATION_ENABLED": "true", "FAAS_FRONTEND_HOSTING_DURABLE_ROUTING_ENABLED": "true", "FAAS_FRONTEND_HOSTING_PREVIEWS_ENABLED": "true",
 		"FAAS_FRONTEND_HOSTING_DOMAIN": "hosting.example", "FAAS_FRONTEND_HOSTING_R2_ENDPOINT": "https://example.r2.cloudflarestorage.com", "FAAS_FRONTEND_HOSTING_R2_BUCKET": "hosting", "FAAS_FRONTEND_HOSTING_R2_ACCESS_KEY": "test-key", "FAAS_FRONTEND_HOSTING_R2_SECRET_KEY": "test-secret",
 		"FAAS_FRONTEND_HOSTING_CF_ACCOUNT_ID": strings.Repeat("a", 32), "FAAS_FRONTEND_HOSTING_KV_NAMESPACE_ID": strings.Repeat("b", 32), "FAAS_FRONTEND_HOSTING_CF_TOKEN": "test-token",
 	}
@@ -57,6 +57,24 @@ func TestHostingAutomationBearerCannotEscapeSiteOrOperations(t *testing.T) {
 		t.Fatal(created.Code, created.Body)
 	}
 	root := "/v1/internal/hosting/sites/" + site.ID
+	plan := env.Do(t, "GET", root+"/cleanup", nil, nil)
+	if plan.Code != 200 {
+		t.Fatal(plan.Code, plan.Body)
+	}
+	policy := env.Do(t, "PUT", root+"/retention", api.SetHostingRetentionRequest{Enabled: true, HostingRetentionRules: api.HostingRetentionRules{PendingAgeSeconds: 3600, StagedAgeSeconds: 7200}}, nil)
+	if policy.Code != 200 {
+		t.Fatal(policy.Code, policy.Body)
+	}
+	if err := manager.Apply("frontend_hosting_retention_enabled", []byte("false")); err != nil {
+		t.Fatal(err)
+	}
+	plan = env.Do(t, "GET", root+"/cleanup", nil, nil)
+	if plan.Code != 503 {
+		t.Fatal("retention hot-disable", plan.Code, plan.Body)
+	}
+	if err := manager.Apply("frontend_hosting_retention_enabled", []byte("true")); err != nil {
+		t.Fatal(err)
+	}
 	minted := env.Do(t, "POST", root+"/automation-credentials", api.CreateHostingAutomationCredentialRequest{Label: "CI"}, nil)
 	var credential api.HostingAutomationCredentialResponse
 	if minted.Code != 201 || json.Unmarshal(minted.Body.Bytes(), &credential) != nil {
@@ -72,7 +90,7 @@ func TestHostingAutomationBearerCannotEscapeSiteOrOperations(t *testing.T) {
 		{"POST", root + "/promotions"}, {"DELETE", root}, {"PUT", root + "/suspension"},
 		{"GET", root + "/automation-credentials"}, {"POST", root + "/automation-credentials"}, {"DELETE", root + "/automation-credentials/" + credential.Credential.ID},
 		{"GET", "/v1/apps"}, {"GET", "/v1/internal/hosting/sites"}, {"GET", "/v1/internal/hosting/sites/" + uuid.NewString()},
-		{"GET", root + "/history"}, {"GET", root + "/domains"},
+		{"GET", root + "/cleanup"}, {"PUT", root + "/retention"}, {"GET", root + "/history"}, {"GET", root + "/domains"},
 	} {
 		r := env.Do(t, route.method, route.path, map[string]any{}, headers)
 		if r.Code != 403 {

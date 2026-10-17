@@ -1424,6 +1424,11 @@ type Querier interface {
 	HostingReleaseReady(ctx context.Context, db DBTX, arg HostingReleaseReadyParams) (HostingRelease, error)
 	HostingReleaseRetire(ctx context.Context, db DBTX, arg HostingReleaseRetireParams) (HostingRelease, error)
 	HostingReleaseSetProvenance(ctx context.Context, db DBTX, arg HostingReleaseSetProvenanceParams) (int64, error)
+	HostingReleaseTouch(ctx context.Context, db DBTX, arg HostingReleaseTouchParams) (HostingRelease, error)
+	HostingRetentionCIExpiry(ctx context.Context, db DBTX, siteID pgtype.UUID) ([]HostingRetentionCIExpiryRow, error)
+	HostingRetentionGet(ctx context.Context, db DBTX, siteID pgtype.UUID) (HostingRetentionPolicy, error)
+	HostingRetentionPut(ctx context.Context, db DBTX, arg HostingRetentionPutParams) (HostingRetentionPolicy, error)
+	HostingRetentionSitePage(ctx context.Context, db DBTX, arg HostingRetentionSitePageParams) ([]HostingSite, error)
 	HostingRetirementAcknowledged(ctx context.Context, db DBTX, arg HostingRetirementAcknowledgedParams) error
 	HostingRouteAcknowledged(ctx context.Context, db DBTX, arg HostingRouteAcknowledgedParams) error
 	HostingRouteBacklog(ctx context.Context, db DBTX) (HostingRouteBacklogRow, error)

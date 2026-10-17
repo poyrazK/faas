@@ -140,3 +140,28 @@ func TestCIUploadGrantsCannotEscapeTheirReleaseOrCarryCredentials(t *testing.T) 
 		t.Fatal("credential-bearing upload grant allowed")
 	}
 }
+
+func TestHostingCIExpiredIntentStopsBeforeUploadsOrPreviewMutation(t *testing.T) {
+	// adr: 202610171001 — retained but expired CI identity cannot restart cleanup-bound work.
+	req := api.HostingCIRunRequest{Manifest: api.HostingManifest{Files: []api.HostingFile{{Path: "index.html", SHA256: strings.Repeat("a", 64), Size: 1, ContentType: "text/html"}}}, PreviewTTLSeconds: 3600}
+	fingerprint, _ := hosting.CIFingerprint(req)
+	run := api.HostingCIRun{ID: reviewReleaseID, SiteID: reviewSiteID, ReleaseID: "33333333-3333-4333-8333-333333333333", PreviewID: "44444444-4444-4444-8444-444444444444", Fingerprint: fingerprint, PreviewExpiresAt: time.Now().Add(-time.Hour)}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/capabilities"):
+			_ = json.NewEncoder(w).Encode(api.HostingCapabilities{AutomationEnabled: true, AutomationSiteID: reviewSiteID, AutomationOperations: []string{"stage", "preview"}, StagedReleasesSupported: true, PreviewsEnabled: true})
+		case r.Method == "GET" && strings.HasSuffix(r.URL.Path, reviewSiteID):
+			_ = json.NewEncoder(w).Encode(api.HostingSite{ID: reviewSiteID, DurableRouting: true, Status: "active"})
+		case r.Method == "PUT" && strings.Contains(r.URL.Path, "/ci/"):
+			_ = json.NewEncoder(w).Encode(run)
+		default:
+			t.Error("expired run attempted more work", r.Method, r.URL.Path)
+			w.WriteHeader(403)
+		}
+	}))
+	defer server.Close()
+	result, err := runHostingCI(t.Context(), api.NewHostingAutomationClient(server.URL, "scoped-test-token"), reviewSiteID, run.ID, "unused", req, time.Second)
+	if err == nil || result.Published || result.Run.ReleaseID != run.ReleaseID {
+		t.Fatal(result, err)
+	}
+}

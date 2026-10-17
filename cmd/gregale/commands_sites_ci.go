@@ -97,6 +97,9 @@ func runHostingCI(ctx context.Context, client *api.Client, site, runID, dir stri
 		return result, errors.New("CI identity response does not match the requested intent")
 	}
 	result.Run = run
+	if !run.PreviewExpiresAt.After(time.Now()) {
+		return result, errors.New("the original CI retry window expired; inspect the retained run before starting a new intent")
+	}
 	releases, err := client.ListHostingReleases(ctx, site)
 	if err != nil {
 		return result, err

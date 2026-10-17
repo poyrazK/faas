@@ -125,6 +125,7 @@ func (s *server) runHostingReconciler(ctx context.Context) {
 	}
 	go s.runHostingDomainReconciler(ctx)
 	go s.runHostingPreviewReconciler(ctx)
+	go s.runHostingRetentionReconciler(ctx)
 	ticker := time.NewTicker(api.HostingReconcileInterval)
 	defer ticker.Stop()
 	for {
@@ -196,4 +197,43 @@ func (h hostingHost) HostingAutomationEnabled() bool {
 func (h hostingHost) HostingAutomationStore() state.HostingAutomationStore {
 	store, _ := h.s.store.(state.HostingAutomationStore)
 	return store
+}
+
+func (h hostingHost) HostingRetentionEnabled() bool {
+	return h.s.runtimeBool(runtimeConfigFrontendHostingRetention, false)
+}
+func (h hostingHost) HostingRetentionStore() state.HostingRetentionStore {
+	store, _ := h.s.store.(state.HostingRetentionStore)
+	return store
+}
+func (s *server) runHostingRetentionReconciler(ctx context.Context) {
+	h := hostingHost{s}
+	store := h.HostingRetentionStore()
+	if store == nil {
+		return
+	}
+	reconciler := hostingapi.RetentionReconciler{Store: store, OriginID: h.HostingOriginID(), Enabled: func() bool { return h.HostingEnabled() && h.HostingRetentionEnabled() },
+		Authorize: func(ctx context.Context, id string) (bool, error) {
+			a, err := s.store.AccountByID(ctx, id)
+			if err != nil {
+				return false, err
+			}
+			allowed, _ := s.adminAllows(a)
+			return allowed && a.Active(), nil
+		},
+		Audit: func(ctx context.Context, account, site string, ids []string) {
+			h.HostingAudit(ctx, account, "hosting_retention_releases_retired", map[string]any{"site_id": site, "release_ids": ids})
+		}}
+	ticker := time.NewTicker(api.HostingReconcileInterval)
+	defer ticker.Stop()
+	for {
+		if err := reconciler.RunOnce(ctx); err != nil && ctx.Err() == nil {
+			s.log.Warn("hosting retention pass incomplete")
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
 }

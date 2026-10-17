@@ -116,7 +116,7 @@ The release/preview IDs survive their physical catalog cleanup in the run ledger
 An expired, revoked, retired or removed resource is never replaced for that run;
 inspect it and explicitly start a new intent when appropriate. Pending releases
 and preview holds retain their existing bounded quotas and cleanup rules. CI
-cannot delete them. Operators manage cleanup through the existing workflow.
+cannot delete them. Operators manage cleanup through the existing workflow or the separate [default-off retention policy](internal-frontend-hosting-retention.md). Retention protects the original CI window and preview references, and never removes run identities.
 
 This pilot retains at most **1,000 run identities/site**, with no automatic
 pruning. Retiring releases does **not** free run slots. Existing runs still retry

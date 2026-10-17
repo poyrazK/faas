@@ -220,6 +220,10 @@ func (s Service) Uploads(w http.ResponseWriter, r *http.Request, acct state.Acco
 		failure(w, state.ErrConflict)
 		return
 	}
+	release, ok = s.touchRelease(w, r, acct, release)
+	if !ok {
+		return
+	}
 	result := api.HostingUploadResponse{Release: release, Uploads: []api.HostingUpload{}}
 	for _, file := range release.Manifest.Files {
 		upload, err := s.Host.HostingArtifacts().Upload(r.Context(), release.SiteID, release.ID, file)
@@ -247,6 +251,10 @@ func (s Service) Finalize(w http.ResponseWriter, r *http.Request, acct state.Acc
 	}
 	if release.State != "pending" {
 		failure(w, state.ErrConflict)
+		return
+	}
+	release, ok = s.touchRelease(w, r, acct, release)
+	if !ok {
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), api.HostingFinalizeTimeout)

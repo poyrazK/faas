@@ -4153,6 +4153,16 @@ type HostingRelease struct {
 	ArtifactBytes         int64
 	FirstPromotedAt       pgtype.Timestamptz
 	Provenance            []byte
+	LastActivityAt        pgtype.Timestamptz
+}
+
+type HostingRetentionPolicy struct {
+	SiteID            pgtype.UUID
+	Revision          int64
+	Enabled           bool
+	PendingAgeSeconds int64
+	StagedAgeSeconds  int64
+	UpdatedAt         pgtype.Timestamptz
 }
 
 type HostingRoutePublication struct {
