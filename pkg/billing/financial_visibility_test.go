@@ -32,7 +32,7 @@ func TestFinancialVisibility(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p := state.FinancialPriceSnapshot{AccountID: a.ID, PeriodStart: start, PeriodEnd: start.AddDate(0, 1, 0), EffectiveFrom: start, Plan: api.PlanHobby, DeliveryMode: "live", Price: financial.Price{Version: "hobby-v1", Meter: "compute", Currency: "EUR", Unit: "mb_seconds", UnitQuantity: api.SecondsPerGBHour, MillicentsPerUnit: api.OverageMillicentsPerGBHour, IncludedQuantity: 50 * api.SecondsPerGBHour}}
+	p := state.FinancialPriceSnapshot{AccountID: a.ID, PeriodStart: start, PeriodEnd: start.AddDate(0, 1, 0), EffectiveFrom: start, Plan: api.PlanHobby, DeliveryMode: "live", Price: financial.Price{Version: "hobby-v1", Meter: "compute", Currency: "USD", Unit: "mb_seconds", UnitQuantity: api.SecondsPerGBHour, MillicentsPerUnit: api.OverageMillicentsPerGBHour, IncludedQuantity: 50 * api.SecondsPerGBHour}}
 	if _, err := store.PutFinancialPriceSnapshot(t.Context(), p); err != nil {
 		t.Fatal(err)
 	}

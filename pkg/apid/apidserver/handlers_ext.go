@@ -5528,7 +5528,7 @@ func (s *server) persistBillingInvoice(ctx context.Context, provider string, acc
 	}
 	currency := data.Currency
 	if currency == "" {
-		currency = "eur"
+		currency = api.BillingCurrencyLower
 	}
 	plan := billingPlanFromProviderID(providerPlanID)
 	if !plan.Valid() {
@@ -6667,7 +6667,7 @@ func (s *server) buildUsageSummary(ctx context.Context, acct state.Account, mont
 	if overage < 0 {
 		overage = 0
 	}
-	// Spec §1 / financial model: €0.01/GB-h overage → 1 cent per
+	// Spec §1 / financial model: $0.01/GB-h overage → 1 cent per
 	// GB-h. Plan's overage rate can vary in the model; constants here
 	// are the production default. Storing cents as int64 keeps
 	// floats away from money (spec §Conventions).

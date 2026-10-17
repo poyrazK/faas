@@ -1330,8 +1330,8 @@ func TestAppEffectiveLimits_UsesScalingPolicyCeiling(t *testing.T) {
 	if got.ConcurrencyQueueDepth != 19 || got.ConcurrencyQueueWaitMS != 1750 {
 		t.Fatalf("warm queue limits = %d/%dms, want 19/1750ms", got.ConcurrencyQueueDepth, got.ConcurrencyQueueWaitMS)
 	}
-	if got.MemoryLimitMB != 384 || got.PlanMemoryMaxMB != 512 {
-		t.Fatalf("memory limits = %d/%d, want 384/512", got.MemoryLimitMB, got.PlanMemoryMaxMB)
+	if want := api.MustLimitsFor(api.PlanPro).RAMMB; got.MemoryLimitMB != 384 || got.PlanMemoryMaxMB != want {
+		t.Fatalf("memory limits = %d/%d, want 384/%d", got.MemoryLimitMB, got.PlanMemoryMaxMB, want)
 	}
 	if got.EphemeralDiskMaxMB != api.MustLimitsFor(api.PlanPro).AppLayerMaxMB {
 		t.Fatalf("ephemeral disk limit = %d, want %d", got.EphemeralDiskMaxMB, api.MustLimitsFor(api.PlanPro).AppLayerMaxMB)
@@ -1452,7 +1452,7 @@ func TestUpdateApp_RAMValidationPreservesConfiguration(t *testing.T) {
 	}{
 		{name: "negative", ram: -1, wantStatus: http.StatusUnprocessableEntity, wantCode: api.CodeInvalidAppRAM},
 		{name: "zero", ram: 0, wantStatus: http.StatusUnprocessableEntity, wantCode: api.CodeInvalidAppRAM},
-		{name: "above plan", ram: 513, wantStatus: http.StatusForbidden, wantCode: api.CodePlanLimitRAM},
+		{name: "above plan", ram: api.MustLimitsFor(api.PlanPro).RAMMB + 1, wantStatus: http.StatusForbidden, wantCode: api.CodePlanLimitRAM},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

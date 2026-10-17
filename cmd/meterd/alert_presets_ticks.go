@@ -157,8 +157,8 @@ type AccountSpendAggregatorParams struct {
 
 // AccountSpendAggregatorLoop walks every account every interval,
 // reads MTDSpendEurCents(accountID), and stamps the
-// meterd_account_spend_eur{account_id} gauge. EUR cents are
-// converted to whole-EUR floats so the alert preset's
+// meterd_account_spend_eur{account_id} gauge. Billing-currency cents are
+// converted to whole-unit floats so the alert preset's
 // `threshold = 20` comparison (gauge > 20) reads naturally on the
 // operator's dashboard without an in-PromQL /100. Returns when
 // ctx is cancelled.

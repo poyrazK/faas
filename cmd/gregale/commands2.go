@@ -6025,7 +6025,7 @@ func renderInvoices(w io.Writer, page api.InvoiceListResponse) {
 		}
 		_, _ = fmt.Fprintf(w, "  %-33s %-19s %-8s %-7s %-6s %-10s %-3s %s\n",
 			inv.ID, trunc(inv.Number, 19), inv.Provider, inv.PeriodEnd.Format("2006-01"),
-			inv.Status, "€"+total, inv.Currency, pdf)
+			inv.Status, api.BillingCurrencySymbol+total, inv.Currency, pdf)
 	}
 	if page.NextBefore != "" {
 		_, _ = fmt.Fprintf(w, "\n  next page: gregale invoices --before %s\n", page.NextBefore)
