@@ -4010,10 +4010,11 @@ type FinancialComputeLease struct {
 }
 
 type FinancialComputeOwner struct {
-	NodeID      pgtype.UUID
-	Incarnation pgtype.UUID
-	Protocol    int16
-	ObservedAt  pgtype.Timestamptz
+	NodeID                    pgtype.UUID
+	Incarnation               pgtype.UUID
+	Protocol                  int16
+	ObservedAt                pgtype.Timestamptz
+	AccountComputeIncarnation pgtype.UUID
 }
 
 type FinancialEvidenceCoverage struct {

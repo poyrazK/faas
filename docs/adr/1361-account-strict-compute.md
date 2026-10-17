@@ -41,6 +41,19 @@ larger allowance can reduce future reserves but cannot erase committed authority
 The API exposes paid committed/reserved/remaining millicents and included
 granted/committed/reserved/remaining MB-seconds separately.
 
+## Native owner capability and mixed versions
+
+Financial protocol 1 predates account budgets. Current native owners persist an
+`account_compute_incarnation` proof alongside the original registration. Both
+activation and dispatch require that proof to match the node's live incarnation.
+A legacy daemon's upsert omits the proof, so fresh legacy nodes remain unavailable
+for strict work. Once attested, a database CHECK requires proof and registration
+incarnations to match: a legacy binary restarting with a new incarnation cannot
+overwrite the proof, and its startup registration fails before admission opens.
+The current binary explicitly updates both identities together. Do not roll back
+this capability migration while account policies are enabled; use matching source
+versions across the daemon graph during qualification.
+
 ## Activation, coverage and recovery
 
 Initial activation and re-enabling require quiet account workloads, no unsettled
@@ -55,7 +68,10 @@ account payment/security state remain independently enforced.
 Independent jobs do not yet use native compute authority. Account activation
 therefore refuses any nondeleted job definition or queued/claimed job task, and
 job creation refuses active account strict policies under the same account lock.
-This includes image-run cache and environment-created jobs. Builder VM usage
+This includes image-run cache and environment-created jobs. A database trigger
+locks the same account row and rejects nondeleted job definitions and queued or
+claimed task transitions under an active cap, including legacy intent writers and
+retries of old terminal runs. Terminal transitions remain available for cleanup. Builder VM usage
 remains outside this app compute contract. Subscription, storage,
 egress, builds and tax are excluded; this is not an invoice ceiling.
 

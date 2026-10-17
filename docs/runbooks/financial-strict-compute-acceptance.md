@@ -136,3 +136,10 @@ The portable financial suite includes account contention, joint policy checks,
 retained allowance, replay, unsupported producers and PostgreSQL month recovery.
 These checks and the compiled native account contention fixture do not close the
 physical two-host, full-daemon, workload-matrix or leak acceptance gates above.
+
+Include mixed versions in the full-daemon gate. A fresh legacy native owner with
+only protocol-1 app compute registration must fail strict readiness and receive
+no account-funded dispatch. Upgrade it and verify its account capability matches
+the live incarnation. Restart an older binary with a new incarnation: its legacy
+financial registration must fail the persisted proof constraint before opening
+admission. Restore the current binary and verify recovery preserves both books.

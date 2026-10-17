@@ -10420,6 +10420,59 @@ $$;
 
 
 --
+-- Name: financial_compute_guard_job_definition(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.financial_compute_guard_job_definition() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF NEW.status='deleted' THEN RETURN NEW; END IF;
+ PERFORM financial_compute_require_job_support(NEW.account_id);
+ RETURN NEW;
+END
+$$;
+
+
+--
+-- Name: financial_compute_guard_job_task(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.financial_compute_guard_job_task() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE target_account uuid;
+BEGIN
+ IF NEW.status NOT IN ('queued','claimed') THEN RETURN NEW; END IF;
+ SELECT account_id INTO target_account FROM job_runs WHERE id=NEW.run_id;
+ IF target_account IS NOT NULL THEN
+  PERFORM financial_compute_require_job_support(target_account);
+ END IF;
+ RETURN NEW;
+END
+$$;
+
+
+--
+-- Name: financial_compute_require_job_support(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.financial_compute_require_job_support(target_account uuid) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ PERFORM 1 FROM accounts WHERE id=target_account FOR UPDATE;
+ IF EXISTS(SELECT 1 FROM financial_budget_policies p WHERE p.account_id=target_account
+   AND p.deleted_at IS NULL AND p.spec->>'enabled'='true' AND p.spec->>'mode'='strict'
+   AND p.spec->'scope'->>'kind'='account') THEN
+  RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='financial_compute_account_job_supported',
+   MESSAGE='independent jobs do not support strict account compute';
+ END IF;
+END
+$$;
+
+
+--
 -- Name: financial_preview_command_held(uuid, uuid, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -27646,6 +27699,8 @@ CREATE TABLE public.financial_compute_owners (
     incarnation uuid NOT NULL,
     protocol smallint NOT NULL,
     observed_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    account_compute_incarnation uuid,
+    CONSTRAINT financial_compute_owner_account_incarnation_check CHECK (((account_compute_incarnation IS NULL) OR (account_compute_incarnation = incarnation))),
     CONSTRAINT financial_compute_owners_protocol_check CHECK ((protocol = 1))
 );
 
@@ -56649,6 +56704,20 @@ CREATE TRIGGER financial_budget_revision_immutable BEFORE DELETE OR UPDATE ON pu
 --
 
 CREATE TRIGGER financial_budget_revision_notify AFTER INSERT ON public.financial_budget_revisions FOR EACH ROW EXECUTE FUNCTION public.notify_financial_budget_revision();
+
+
+--
+-- Name: jobs financial_compute_job_definition_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER financial_compute_job_definition_guard BEFORE INSERT OR UPDATE OF status, account_id ON public.jobs FOR EACH ROW EXECUTE FUNCTION public.financial_compute_guard_job_definition();
+
+
+--
+-- Name: job_tasks financial_compute_job_task_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER financial_compute_job_task_guard BEFORE INSERT OR UPDATE OF status, run_id ON public.job_tasks FOR EACH ROW EXECUTE FUNCTION public.financial_compute_guard_job_task();
 
 
 --

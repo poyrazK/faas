@@ -51,7 +51,11 @@ func newAccountComputeFixture(t *testing.T, store computeTestStore, grant, limit
 		}
 		f.owners = append(f.owners, owner)
 	}
-	for at := f.account.CreatedAt.Truncate(time.Minute); at.Before(time.Now().UTC().Truncate(time.Minute)); at = at.Add(time.Minute) {
+	// These ledger fixtures run no physical guests. The current sampling
+	// minute is empty too, so a test may cross its closing boundary without
+	// manufacturing a missing-accounting failure during month recovery.
+	emptyThrough := time.Now().UTC().Truncate(time.Minute)
+	for at := f.account.CreatedAt.Truncate(time.Minute); !at.After(emptyThrough); at = at.Add(time.Minute) {
 		if err := store.RecordFinancialSamplingWindow(ctx, at, true, false); err != nil {
 			t.Fatal(err)
 		}

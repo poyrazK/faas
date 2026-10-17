@@ -236,7 +236,7 @@ func (s *PgStore) RegisterFinancialComputeOwner(ctx context.Context, node, incar
 	}
 	n, _ := parsePgUUID(node)
 	i, _ := parsePgUUID(incarnation)
-	return sqlc.New().FinancialComputeOwnerPut(ctx, s.pool, sqlc.FinancialComputeOwnerPutParams{NodeID: n, Incarnation: i})
+	return sqlc.New().FinancialComputeOwnerPut(ctx, s.pool, sqlc.FinancialComputeOwnerPutParams{NodeID: n, Incarnation: i, AccountComputeIncarnation: i})
 }
 
 func (s *PgStore) FinancialComputeOwnerValid(ctx context.Context, node, incarnation string) (bool, error) {

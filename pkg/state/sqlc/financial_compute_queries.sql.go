@@ -550,24 +550,26 @@ func (q *Queries) FinancialComputeNodeLeases(ctx context.Context, db DBTX, nodeI
 }
 
 const financialComputeOwnerPut = `-- name: FinancialComputeOwnerPut :exec
-INSERT INTO financial_compute_owners(node_id,incarnation,protocol)
-SELECT id,$1::uuid,1 FROM compute_nodes WHERE id=$2::uuid AND vmmd_incarnation=$1::uuid AND active
-ON CONFLICT(node_id) DO UPDATE SET incarnation=EXCLUDED.incarnation,observed_at=clock_timestamp()
+INSERT INTO financial_compute_owners(node_id,incarnation,protocol,account_compute_incarnation)
+SELECT id,$1::uuid,1,$2::uuid FROM compute_nodes WHERE id=$3::uuid AND vmmd_incarnation=$1::uuid AND active
+ON CONFLICT(node_id) DO UPDATE SET incarnation=EXCLUDED.incarnation,observed_at=clock_timestamp(),
+ account_compute_incarnation=COALESCE(EXCLUDED.account_compute_incarnation,financial_compute_owners.account_compute_incarnation)
 `
 
 type FinancialComputeOwnerPutParams struct {
-	Incarnation pgtype.UUID
-	NodeID      pgtype.UUID
+	Incarnation               pgtype.UUID
+	AccountComputeIncarnation pgtype.UUID
+	NodeID                    pgtype.UUID
 }
 
 func (q *Queries) FinancialComputeOwnerPut(ctx context.Context, db DBTX, arg FinancialComputeOwnerPutParams) error {
-	_, err := db.Exec(ctx, financialComputeOwnerPut, arg.Incarnation, arg.NodeID)
+	_, err := db.Exec(ctx, financialComputeOwnerPut, arg.Incarnation, arg.AccountComputeIncarnation, arg.NodeID)
 	return err
 }
 
 const financialComputeOwnerValid = `-- name: FinancialComputeOwnerValid :one
 SELECT EXISTS(SELECT 1 FROM financial_compute_owners o JOIN compute_nodes n ON n.id=o.node_id
- WHERE o.node_id=$1::uuid AND o.incarnation=$2::uuid AND n.vmmd_incarnation=o.incarnation AND n.active) AS valid
+ WHERE o.node_id=$1::uuid AND o.incarnation=$2::uuid AND n.vmmd_incarnation=o.incarnation AND o.account_compute_incarnation=o.incarnation AND n.active) AS valid
 `
 
 type FinancialComputeOwnerValidParams struct {
@@ -585,7 +587,7 @@ func (q *Queries) FinancialComputeOwnerValid(ctx context.Context, db DBTX, arg F
 const financialComputeOwnersReady = `-- name: FinancialComputeOwnersReady :one
 SELECT EXISTS(SELECT 1 FROM compute_nodes WHERE active) AND NOT EXISTS (
  SELECT 1 FROM compute_nodes n LEFT JOIN financial_compute_owners o ON o.node_id=n.id
- WHERE n.active AND (o.node_id IS NULL OR o.incarnation IS DISTINCT FROM n.vmmd_incarnation OR o.observed_at < clock_timestamp()-make_interval(secs=>$1::double precision))
+ WHERE n.active AND (o.node_id IS NULL OR o.incarnation IS DISTINCT FROM n.vmmd_incarnation OR o.account_compute_incarnation IS DISTINCT FROM n.vmmd_incarnation OR o.observed_at < clock_timestamp()-make_interval(secs=>$1::double precision))
 ) AS ready
 `
 

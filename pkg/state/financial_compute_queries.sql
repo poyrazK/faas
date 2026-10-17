@@ -61,19 +61,20 @@ SELECT policy_id, revision, period_start FROM financial_compute_holds WHERE acco
 INSERT INTO financial_compute_holds(account_id,policy_id,revision,period_start) VALUES(sqlc.arg(account_id)::uuid,sqlc.arg(policy_id)::uuid,sqlc.arg(revision)::bigint,sqlc.arg(period_start)::timestamptz) ON CONFLICT DO NOTHING;
 
 -- name: FinancialComputeOwnerPut :exec
-INSERT INTO financial_compute_owners(node_id,incarnation,protocol)
-SELECT id,sqlc.arg(incarnation)::uuid,1 FROM compute_nodes WHERE id=sqlc.arg(node_id)::uuid AND vmmd_incarnation=sqlc.arg(incarnation)::uuid AND active
-ON CONFLICT(node_id) DO UPDATE SET incarnation=EXCLUDED.incarnation,observed_at=clock_timestamp();
+INSERT INTO financial_compute_owners(node_id,incarnation,protocol,account_compute_incarnation)
+SELECT id,sqlc.arg(incarnation)::uuid,1,sqlc.narg(account_compute_incarnation)::uuid FROM compute_nodes WHERE id=sqlc.arg(node_id)::uuid AND vmmd_incarnation=sqlc.arg(incarnation)::uuid AND active
+ON CONFLICT(node_id) DO UPDATE SET incarnation=EXCLUDED.incarnation,observed_at=clock_timestamp(),
+ account_compute_incarnation=COALESCE(EXCLUDED.account_compute_incarnation,financial_compute_owners.account_compute_incarnation);
 
 -- name: FinancialComputeOwnersReady :one
 SELECT EXISTS(SELECT 1 FROM compute_nodes WHERE active) AND NOT EXISTS (
  SELECT 1 FROM compute_nodes n LEFT JOIN financial_compute_owners o ON o.node_id=n.id
- WHERE n.active AND (o.node_id IS NULL OR o.incarnation IS DISTINCT FROM n.vmmd_incarnation OR o.observed_at < clock_timestamp()-make_interval(secs=>sqlc.arg(max_age_seconds)::double precision))
+ WHERE n.active AND (o.node_id IS NULL OR o.incarnation IS DISTINCT FROM n.vmmd_incarnation OR o.account_compute_incarnation IS DISTINCT FROM n.vmmd_incarnation OR o.observed_at < clock_timestamp()-make_interval(secs=>sqlc.arg(max_age_seconds)::double precision))
 ) AS ready;
 
 -- name: FinancialComputeOwnerValid :one
 SELECT EXISTS(SELECT 1 FROM financial_compute_owners o JOIN compute_nodes n ON n.id=o.node_id
- WHERE o.node_id=sqlc.arg(node_id)::uuid AND o.incarnation=sqlc.arg(incarnation)::uuid AND n.vmmd_incarnation=o.incarnation AND n.active) AS valid;
+ WHERE o.node_id=sqlc.arg(node_id)::uuid AND o.incarnation=sqlc.arg(incarnation)::uuid AND n.vmmd_incarnation=o.incarnation AND o.account_compute_incarnation=o.incarnation AND n.active) AS valid;
 
 -- name: FinancialComputeClock :one
 SELECT clock_timestamp()::timestamptz AS now;
