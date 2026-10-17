@@ -626,3 +626,62 @@ WITH scoped AS MATERIALIZED (
 )
 SELECT class,count(*)::bigint AS pending,count(*) FILTER (WHERE since IS NULL)::bigint AS unknown_age,min(since)::timestamptz AS oldest_at
 FROM aged GROUP BY class;
+
+-- Shared fleet app-task claim queue; no batch cap or owner filter. Keep the
+-- queued admission predicates aligned with ClaimNextUnfencedAppTask. Active
+-- tasks on deleted apps remain visible until teardown/lease recovery completes.
+-- name: OperatorAppTaskSnapshot :many
+WITH evidence AS (
+ SELECT task.*, app.status AS app_status,
+  app.managed_postgres_admission_cutover_id IS NOT NULL AS admission_held,
+  (task.exclusive_operation_id IS NULL OR EXISTS (
+   SELECT 1 FROM exclusive_work_operations operation
+   WHERE operation.id=task.exclusive_operation_id AND operation.account_id=task.account_id
+    AND operation.app_id=task.app_id AND operation.state='running'
+    AND operation.generation=task.exclusive_generation
+    AND operation.lease_expires_at>sqlc.arg(observed_at)::timestamptz
+    AND operation.attempt_deadline>sqlc.arg(observed_at))) AS exclusive_current,
+  EXISTS (SELECT 1 FROM schedule_occurrences occurrence
+   WHERE occurrence.id=task.occurrence_id AND occurrence.started_at IS NOT NULL) AS occurrence_started
+ FROM app_tasks task JOIN apps app ON app.id=task.app_id
+ WHERE task.status NOT IN ('succeeded','failed','timed_out','cancelled')
+), classified AS (
+ SELECT *, CASE
+  WHEN NOT isfinite(created_at) OR created_at<='epoch' OR created_at>sqlc.arg(observed_at)
+   OR NOT isfinite(updated_at) OR updated_at<created_at OR updated_at>sqlc.arg(observed_at)
+   OR finished_at IS NOT NULL
+   OR (retry_at IS NOT NULL AND (NOT isfinite(retry_at) OR retry_at<='epoch'))
+   OR (start_deadline_at IS NOT NULL AND (NOT isfinite(start_deadline_at) OR start_deadline_at<='epoch'))
+   OR (cancel_requested_at IS NOT NULL AND (NOT isfinite(cancel_requested_at)
+    OR cancel_requested_at<created_at OR cancel_requested_at>sqlc.arg(observed_at))) THEN 'unknown'
+  WHEN status='queued' THEN CASE
+   WHEN lease_token IS NOT NULL OR lease_owner IS NOT NULL OR lease_expires_at IS NOT NULL
+    OR started_at IS NOT NULL THEN 'unknown'
+   WHEN cancel_requested_at IS NOT NULL THEN 'cancellation_pending'
+   WHEN start_deadline_at<sqlc.arg(observed_at) AND NOT occurrence_started THEN 'deadline_overdue'
+   WHEN admission_held OR NOT exclusive_current OR app_status='deleted' THEN 'held'
+   WHEN retry_at>sqlc.arg(observed_at) THEN 'retry_wait'
+   ELSE 'queued' END
+  WHEN status NOT IN ('restoring','running') OR lease_token IS NULL OR lease_owner IS NULL
+   OR lease_owner='' OR lease_expires_at IS NULL OR NOT isfinite(lease_expires_at) OR lease_expires_at<=created_at
+   OR (status='restoring' AND started_at IS NOT NULL)
+   OR (status='running' AND (started_at IS NULL OR NOT isfinite(started_at)
+    OR started_at<created_at OR started_at>sqlc.arg(observed_at))) THEN 'unknown'
+  WHEN lease_expires_at<=sqlc.arg(observed_at) THEN 'lease_expired'
+  WHEN cancel_requested_at IS NOT NULL THEN 'cancellation_pending'
+  ELSE status END::text AS class
+ FROM evidence
+), timed AS (
+ SELECT kind,class,CASE class
+  WHEN 'queued' THEN greatest(created_at,updated_at,retry_at)
+  WHEN 'deadline_overdue' THEN start_deadline_at
+  WHEN 'running' THEN started_at
+  WHEN 'cancellation_pending' THEN cancel_requested_at
+  WHEN 'lease_expired' THEN lease_expires_at
+  ELSE NULL END::timestamptz AS boundary
+ FROM classified
+)
+SELECT kind::text,class::text,count(*)::bigint AS pending,
+ count(*) FILTER (WHERE boundary IS NULL)::bigint AS unknown_age,
+ min(boundary)::timestamptz AS oldest_at
+FROM timed GROUP BY kind,class;

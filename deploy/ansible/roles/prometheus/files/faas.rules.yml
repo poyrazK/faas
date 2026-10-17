@@ -5947,3 +5947,163 @@ groups:
           summary: "schedd instance-stats collection on {{ $labels.instance }} is slow"
           description: "Collecting per-instance stats from vmmd has taken more than 200 ms at p95 for 10m, which points at dialer saturation; scale signals read stale data until it recovers."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasScheddInstanceStatsPartialErrors.md"
+
+  - name: faas_app_tasks
+    rules:
+      - record: schedd_app_task_class_observation_healthy
+        expr: |
+          ((schedd_app_task_pending{job="schedd",kind=~"release|manual|cron",class=~"queued|retry_wait|held|deadline_overdue|restoring|running|cancellation_pending|lease_expired|unknown"} >= 0) * 0 + 1)
+          and on (job, instance, kind, class) (schedd_app_task_pending{job="schedd"} < +Inf)
+          and on (job, instance, kind, class) (schedd_app_task_pending{job="schedd"} == floor(schedd_app_task_pending{job="schedd"}))
+          and on (job, instance, kind, class) (schedd_app_task_age_unknown{job="schedd"} >= 0)
+          and on (job, instance, kind, class) (schedd_app_task_age_unknown{job="schedd"} == floor(schedd_app_task_age_unknown{job="schedd"}))
+          and on (job, instance, kind, class) (schedd_app_task_age_unknown{job="schedd"} <= schedd_app_task_pending{job="schedd"})
+          and on (job, instance, kind, class) (schedd_app_task_oldest_boundary_timestamp_seconds{job="schedd"} <= time())
+          and on (job, instance, kind, class)
+            (((schedd_app_task_pending{job="schedd"} > schedd_app_task_age_unknown{job="schedd"})
+              and on (job, instance, kind, class) (schedd_app_task_oldest_boundary_timestamp_seconds{job="schedd"} > 0))
+             or ((schedd_app_task_pending{job="schedd"} == schedd_app_task_age_unknown{job="schedd"})
+                 and on (job, instance, kind, class) (schedd_app_task_oldest_boundary_timestamp_seconds{job="schedd"} == 0)))
+          and on (job, instance) (up{job="schedd"} == 1)
+          and on (job, instance) (schedd_app_task_collection_success{job="schedd"} == 1)
+          and on (job, instance) (schedd_app_task_collection_last_success_timestamp_seconds{job="schedd"} > 0)
+          and on (job, instance) (time() - schedd_app_task_collection_last_success_timestamp_seconds{job="schedd"} >= 0)
+          and on (job, instance) (time() - schedd_app_task_collection_last_success_timestamp_seconds{job="schedd"} <= 120)
+          and on (job, instance) ((schedd_app_task_observation_enabled{job="schedd"} == 0) or (schedd_app_task_observation_enabled{job="schedd"} == 1))
+          unless on (job, instance, kind, class) (schedd_app_task_pending{job="schedd",class=~"restoring|retry_wait|held|unknown"} != schedd_app_task_age_unknown{job="schedd",class=~"restoring|retry_wait|held|unknown"})
+      - record: schedd_app_task_observation_healthy
+        expr: |
+          (count by (job, instance) (schedd_app_task_class_observation_healthy == 1) == 27) / 27
+          and on (job, instance) (count by (job, instance) ((schedd_app_task_operations_total{job="schedd",operation=~"claim|sweep|renew|attach_read|restore|running_fence|attach_route|execute|destroy|complete",outcome=~"success|error|canceled|lease_lost|empty|cancellation_pending"} >= 0) and (schedd_app_task_operations_total{job="schedd",operation=~"claim|sweep|renew|attach_read|restore|running_fence|attach_route|execute|destroy|complete",outcome=~"success|error|canceled|lease_lost|empty|cancellation_pending"} < +Inf)) == 60)
+          and on (job, instance) (count by (job, instance) ((schedd_app_task_recovery_total{job="schedd",outcome=~"requeued_restores|failed_runs|cancelled"} >= 0) and (schedd_app_task_recovery_total{job="schedd",outcome=~"requeued_restores|failed_runs|cancelled"} < +Inf)) == 3)
+          and on (job, instance) (count by (job, instance) ((schedd_app_task_results_total{job="schedd",kind=~"release|manual|cron",status=~"succeeded|failed|timed_out|cancelled|queued"} >= 0) and (schedd_app_task_results_total{job="schedd",kind=~"release|manual|cron",status=~"succeeded|failed|timed_out|cancelled|queued"} < +Inf)) == 15)
+          and on (job, instance) (schedd_app_task_dispatch_enabled{job="schedd"} >= 0)
+          and on (job, instance) (schedd_app_task_dispatch_enabled{job="schedd"} <= 1)
+          and on (job, instance) (schedd_app_task_dispatch_enabled{job="schedd"} == floor(schedd_app_task_dispatch_enabled{job="schedd"}))
+          and on (job, instance) (schedd_app_task_runner_running{job="schedd"} >= 0)
+          and on (job, instance) (schedd_app_task_runner_running{job="schedd"} <= 1)
+          and on (job, instance) (schedd_app_task_runner_running{job="schedd"} == floor(schedd_app_task_runner_running{job="schedd"}))
+          and on (job, instance) (schedd_app_task_slots_configured{job="schedd"} >= 1)
+          and on (job, instance) (schedd_app_task_slots_configured{job="schedd"} <= 32)
+          and on (job, instance) (schedd_app_task_slots_configured{job="schedd"} == floor(schedd_app_task_slots_configured{job="schedd"}))
+          and on (job, instance) (schedd_app_task_slots_in_use{job="schedd"} >= 0)
+          and on (job, instance) (schedd_app_task_slots_in_use{job="schedd"} <= 32)
+          and on (job, instance) (schedd_app_task_slots_in_use{job="schedd"} == floor(schedd_app_task_slots_in_use{job="schedd"}))
+          and on (job, instance) (schedd_app_task_slots_in_use{job="schedd"} <= schedd_app_task_slots_configured{job="schedd"})
+          and on (job, instance) (schedd_app_task_claim_last_success_timestamp_seconds{job="schedd"} >= 0)
+          and on (job, instance) (schedd_app_task_claim_last_success_timestamp_seconds{job="schedd"} <= time())
+          and on (job, instance) (schedd_app_task_sweep_last_success_timestamp_seconds{job="schedd"} >= 0)
+          and on (job, instance) (schedd_app_task_sweep_last_success_timestamp_seconds{job="schedd"} <= time())
+      - record: schedd_app_task_oldest_known_boundary_age_seconds
+        expr: |
+          (((time() - schedd_app_task_oldest_boundary_timestamp_seconds{job="schedd"})
+             and on (job, instance, kind, class) (schedd_app_task_pending{job="schedd"} > schedd_app_task_age_unknown{job="schedd"}))
+           or ((schedd_app_task_pending{job="schedd"} == 0) * 0))
+          and on (job, instance) (schedd_app_task_observation_healthy == 1)
+      - alert: FaasAppTaskTelemetryUnavailable
+        expr: |
+          (up{job="schedd"} == 1)
+          unless on (job, instance)
+            ((schedd_app_task_observation_healthy == 1)
+             or (schedd_app_task_observation_enabled{job="schedd"} == 0))
+        for: 5m
+        labels:
+          severity: warn
+          component: schedd
+          family: app_task_telemetry
+          public_status: internal
+        annotations:
+          summary: App-task diagnostics are unavailable
+          description: >-
+            Schedd is scraped but task observations are missing, failed, inconsistent or older than two minutes, or runner gauges and initialized counters are incomplete. Counts and ages are unknown. Check the observer, database, clocks and binary. Intentional observer shutdown is excluded.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAppTasks.md
+      - alert: FaasAppTaskRunnerStalled
+        expr: |
+          ((schedd_app_task_runner_running{job="schedd"} == 0)
+           or (time() - schedd_app_task_sweep_last_success_timestamp_seconds{job="schedd"} > 120)
+           or ((schedd_app_task_slots_in_use{job="schedd"} < schedd_app_task_slots_configured{job="schedd"})
+               and on (job, instance) (time() - schedd_app_task_claim_last_success_timestamp_seconds{job="schedd"} > 120)))
+          and on (job, instance) (schedd_app_task_observation_healthy == 1)
+          and on (job, instance) (schedd_app_task_observation_enabled{job="schedd"} == 1)
+          and on (job, instance) (schedd_app_task_dispatch_enabled{job="schedd"} == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: schedd
+          family: app_task
+          public_status: internal
+        annotations:
+          summary: Enabled app-task runner is not demonstrating progress
+          description: >-
+            Dispatch is enabled but Run is stopped, no successful recovery sweep occurred within two minutes, or free local slots have no successful claim query within two minutes, sustained for five minutes. Empty queries count as success. Fully occupied workers need not claim; they must still sweep. Intentional dispatch opt-out is excluded.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAppTasks.md
+      - alert: FaasReleaseTaskQueued
+        expr: |
+          (schedd_app_task_oldest_known_boundary_age_seconds{kind="release",class="queued"} > 300)
+          and on (job, instance) (schedd_app_task_observation_healthy == 1)
+          and on (job, instance) (schedd_app_task_observation_enabled{job="schedd"} == 1)
+          and on (job, instance) (schedd_app_task_dispatch_enabled{job="schedd"} == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: schedd
+          family: app_task
+          public_status: internal
+        annotations:
+          summary: A claimable release command remains queued
+          description: >-
+            A currently claimable release task has a known eligibility boundary older than five minutes, sustained for five minutes. The boundary includes creation, requeue updates and due retry time. This is not continuous eligibility or a command execution SLO. Retry waits, admission and exclusive holds, running work and disabled dispatch are separate.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAppTasks.md
+      - alert: FaasAppTaskRecoveryOverdue
+        expr: |
+          (schedd_app_task_oldest_known_boundary_age_seconds{class=~"cancellation_pending|lease_expired|deadline_overdue"} > 60)
+          and on (job, instance) (schedd_app_task_observation_healthy == 1)
+          and on (job, instance) (schedd_app_task_observation_enabled{job="schedd"} == 1)
+          and on (job, instance) (schedd_app_task_dispatch_enabled{job="schedd"} == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: schedd
+          family: app_task
+          public_status: internal
+        annotations:
+          summary: App-task cancellation or lease recovery is overdue
+          description: >-
+            A {{ $labels.kind }} task remains {{ $labels.class }} more than one minute after its durable boundary, sustained for five minutes. Inspect teardown, lease fencing and sweeps. Expired running tasks have uncertain outcomes; do not replay customer commands or bypass their existing work policy.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAppTasks.md
+      - alert: FaasAppTaskEvidenceUnknown
+        expr: |
+          ((schedd_app_task_pending{job="schedd",class="unknown"} > 0)
+           or (schedd_app_task_age_unknown{job="schedd",class=~"queued|running|cancellation_pending|lease_expired|deadline_overdue"} > 0))
+          and on (job, instance) (schedd_app_task_observation_healthy == 1)
+          and on (job, instance) (schedd_app_task_observation_enabled{job="schedd"} == 1)
+        for: 15m
+        labels:
+          severity: warn
+          component: schedd
+          family: app_task_telemetry
+          public_status: internal
+        annotations:
+          summary: App-task state or timing evidence is incomplete
+          description: >-
+            Fresh observations have contained {{ $labels.kind }} tasks in {{ $labels.class }} with incomplete evidence for 15m. Future, invalid or missing lifecycle times cannot establish age. Expected unknown restoring, retry-wait and held boundaries are excluded. Inspect supported task evidence without rewriting timestamps.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAppTasks.md
+      - alert: FaasAppTaskOperationsFailing
+        expr: |
+          (sum by (job, instance, operation) (rate(schedd_app_task_operations_total{job="schedd",outcome="error"}[5m]))
+           / sum by (job, instance, operation) (rate(schedd_app_task_operations_total{job="schedd",outcome=~"success|empty|error"}[5m])) > 0.1)
+          and on (job, instance, operation) (sum by (job, instance, operation) (increase(schedd_app_task_operations_total{job="schedd",outcome="error"}[5m])) >= 3)
+          and on (job, instance) (schedd_app_task_observation_healthy == 1)
+          and on (job, instance) (schedd_app_task_observation_enabled{job="schedd"} == 1)
+          and on (job, instance) (schedd_app_task_dispatch_enabled{job="schedd"} == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: schedd
+          family: app_task
+          public_status: internal
+        annotations:
+          summary: App-task coordinator operations are persistently failing
+          description: >-
+            {{ $labels.operation }} errors exceed 10% of non-canceled calls with at least three errors per rolling five-minute window, sustained for five minutes. Customer command exit, timeout and cancellation verdicts are not infrastructure errors. Lease-loss and cancellation-race returns are separate outcomes. Restore errors can include policy or account refusals; inspect bounded logs before assigning cause.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAppTasks.md

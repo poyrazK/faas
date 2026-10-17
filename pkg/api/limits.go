@@ -8920,6 +8920,10 @@ const (
 	// Matches the existing prime recovery instance lookback, not a fleet cap.
 	ObsSnapshotPrimeInstanceLookback = 64
 
+	ObsAppTaskCollectionInterval = 30 * time.Second
+	ObsAppTaskCollectionBudget   = 3 * time.Second
+	ObsAppTaskFreshnessMaxAge    = 2 * time.Minute
+
 	ObsPostCaptureCollectionInterval = 30 * time.Second
 	ObsPostCaptureCollectionBudget   = 3 * time.Second
 	ObsPostCaptureFreshnessMaxAge    = 2 * time.Minute

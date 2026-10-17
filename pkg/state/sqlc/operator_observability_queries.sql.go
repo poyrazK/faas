@@ -954,6 +954,100 @@ func (q *Queries) OperatorAlertWorkloadBuckets(ctx context.Context, db DBTX, arg
 	return items, nil
 }
 
+const operatorAppTaskSnapshot = `-- name: OperatorAppTaskSnapshot :many
+WITH evidence AS (
+ SELECT task.id, task.account_id, task.app_id, task.deployment_id, task.kind, task.command, task.command_shell, task.deployment_scope, task.artifact_key, task.image_digest, task.status, task.timeout_seconds, task.max_output_bytes, task.lease_token, task.lease_owner, task.lease_expires_at, task.cancel_requested_at, task.stdout_tail, task.stderr_tail, task.output_truncated, task.exit_code, task.failure_code, task.failure_message, task.started_at, task.finished_at, task.created_at, task.updated_at, task.cron_id, task.scheduled_for, task.retry_max, task.retry_backoff_seconds, task.attempt_count, task.retry_at, task.failure_rules, task.occurrence_id, task.start_deadline_at, task.work_decision, task.outcome_code, task.exclusive_operation_id, task.exclusive_generation, task.binding_verification, app.status AS app_status,
+  app.managed_postgres_admission_cutover_id IS NOT NULL AS admission_held,
+  (task.exclusive_operation_id IS NULL OR EXISTS (
+   SELECT 1 FROM exclusive_work_operations operation
+   WHERE operation.id=task.exclusive_operation_id AND operation.account_id=task.account_id
+    AND operation.app_id=task.app_id AND operation.state='running'
+    AND operation.generation=task.exclusive_generation
+    AND operation.lease_expires_at>$1::timestamptz
+    AND operation.attempt_deadline>$1)) AS exclusive_current,
+  EXISTS (SELECT 1 FROM schedule_occurrences occurrence
+   WHERE occurrence.id=task.occurrence_id AND occurrence.started_at IS NOT NULL) AS occurrence_started
+ FROM app_tasks task JOIN apps app ON app.id=task.app_id
+ WHERE task.status NOT IN ('succeeded','failed','timed_out','cancelled')
+), classified AS (
+ SELECT id, account_id, app_id, deployment_id, kind, command, command_shell, deployment_scope, artifact_key, image_digest, status, timeout_seconds, max_output_bytes, lease_token, lease_owner, lease_expires_at, cancel_requested_at, stdout_tail, stderr_tail, output_truncated, exit_code, failure_code, failure_message, started_at, finished_at, created_at, updated_at, cron_id, scheduled_for, retry_max, retry_backoff_seconds, attempt_count, retry_at, failure_rules, occurrence_id, start_deadline_at, work_decision, outcome_code, exclusive_operation_id, exclusive_generation, binding_verification, app_status, admission_held, exclusive_current, occurrence_started, CASE
+  WHEN NOT isfinite(created_at) OR created_at<='epoch' OR created_at>$1
+   OR NOT isfinite(updated_at) OR updated_at<created_at OR updated_at>$1
+   OR finished_at IS NOT NULL
+   OR (retry_at IS NOT NULL AND (NOT isfinite(retry_at) OR retry_at<='epoch'))
+   OR (start_deadline_at IS NOT NULL AND (NOT isfinite(start_deadline_at) OR start_deadline_at<='epoch'))
+   OR (cancel_requested_at IS NOT NULL AND (NOT isfinite(cancel_requested_at)
+    OR cancel_requested_at<created_at OR cancel_requested_at>$1)) THEN 'unknown'
+  WHEN status='queued' THEN CASE
+   WHEN lease_token IS NOT NULL OR lease_owner IS NOT NULL OR lease_expires_at IS NOT NULL
+    OR started_at IS NOT NULL THEN 'unknown'
+   WHEN cancel_requested_at IS NOT NULL THEN 'cancellation_pending'
+   WHEN start_deadline_at<$1 AND NOT occurrence_started THEN 'deadline_overdue'
+   WHEN admission_held OR NOT exclusive_current OR app_status='deleted' THEN 'held'
+   WHEN retry_at>$1 THEN 'retry_wait'
+   ELSE 'queued' END
+  WHEN status NOT IN ('restoring','running') OR lease_token IS NULL OR lease_owner IS NULL
+   OR lease_owner='' OR lease_expires_at IS NULL OR NOT isfinite(lease_expires_at) OR lease_expires_at<=created_at
+   OR (status='restoring' AND started_at IS NOT NULL)
+   OR (status='running' AND (started_at IS NULL OR NOT isfinite(started_at)
+    OR started_at<created_at OR started_at>$1)) THEN 'unknown'
+  WHEN lease_expires_at<=$1 THEN 'lease_expired'
+  WHEN cancel_requested_at IS NOT NULL THEN 'cancellation_pending'
+  ELSE status END::text AS class
+ FROM evidence
+), timed AS (
+ SELECT kind,class,CASE class
+  WHEN 'queued' THEN greatest(created_at,updated_at,retry_at)
+  WHEN 'deadline_overdue' THEN start_deadline_at
+  WHEN 'running' THEN started_at
+  WHEN 'cancellation_pending' THEN cancel_requested_at
+  WHEN 'lease_expired' THEN lease_expires_at
+  ELSE NULL END::timestamptz AS boundary
+ FROM classified
+)
+SELECT kind::text,class::text,count(*)::bigint AS pending,
+ count(*) FILTER (WHERE boundary IS NULL)::bigint AS unknown_age,
+ min(boundary)::timestamptz AS oldest_at
+FROM timed GROUP BY kind,class
+`
+
+type OperatorAppTaskSnapshotRow struct {
+	Kind       string
+	Class      string
+	Pending    int64
+	UnknownAge int64
+	OldestAt   pgtype.Timestamptz
+}
+
+// Shared fleet app-task claim queue; no batch cap or owner filter. Keep the
+// queued admission predicates aligned with ClaimNextUnfencedAppTask. Active
+// tasks on deleted apps remain visible until teardown/lease recovery completes.
+func (q *Queries) OperatorAppTaskSnapshot(ctx context.Context, db DBTX, observedAt pgtype.Timestamptz) ([]OperatorAppTaskSnapshotRow, error) {
+	rows, err := db.Query(ctx, operatorAppTaskSnapshot, observedAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []OperatorAppTaskSnapshotRow{}
+	for rows.Next() {
+		var i OperatorAppTaskSnapshotRow
+		if err := rows.Scan(
+			&i.Kind,
+			&i.Class,
+			&i.Pending,
+			&i.UnknownAge,
+			&i.OldestAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const operatorAuditTraceCoverage = `-- name: OperatorAuditTraceCoverage :one
 SELECT coalesce(count(*) FILTER (WHERE data->>'trace_id' ~ '^[0-9a-f]{32}$')::double precision / nullif(count(*), 0), 1.0)::double precision AS ratio
 FROM audit_log WHERE received_at >= $1

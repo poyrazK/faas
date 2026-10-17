@@ -2840,6 +2840,10 @@ type Querier interface {
 	OperatorAlertTriageUpdate(ctx context.Context, db DBTX, arg OperatorAlertTriageUpdateParams) (int64, error)
 	OperatorAlertUpsertEpisodes(ctx context.Context, db DBTX, arg OperatorAlertUpsertEpisodesParams) error
 	OperatorAlertWorkloadBuckets(ctx context.Context, db DBTX, arg OperatorAlertWorkloadBucketsParams) ([]OperatorAlertWorkloadBucketsRow, error)
+	// Shared fleet app-task claim queue; no batch cap or owner filter. Keep the
+	// queued admission predicates aligned with ClaimNextUnfencedAppTask. Active
+	// tasks on deleted apps remain visible until teardown/lease recovery completes.
+	OperatorAppTaskSnapshot(ctx context.Context, db DBTX, observedAt pgtype.Timestamptz) ([]OperatorAppTaskSnapshotRow, error)
 	OperatorAuditTraceCoverage(ctx context.Context, db DBTX, since pgtype.Timestamptz) (float64, error)
 	// Same eligibility and owner compatibility as ListBuildsAwaitingImage, without
 	// its recovery batch limit. Checkpointed preparations are active/resumable work,

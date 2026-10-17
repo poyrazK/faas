@@ -3,10 +3,10 @@
   "fingerprint_algorithm": "promql_ast_v1",
   "sets": [
     {
-      "revision": "cde0c34860b73be938afceb50af40ac6da61e4cc494ea1d2cd23e1615d1e424b",
+      "revision": "ebe9eaf23d97777ddbd1849cee788b5482be28afa41fb785e14a067d5801425d",
       "expected": {
         "id": "gregale-core-v1",
-        "revision": "99614c10bff0dd2fcce7440866630a03fb49ddc8c60470583954d21a8db858b8",
+        "revision": "b4b46252b13f6ba6681b5a4368a07cef11c1a7cf0c968f3cfcbf7caf5fcf8fc9",
         "files": [
           "faas.rules.yml"
         ],
@@ -152,6 +152,19 @@
               "for_seconds": 0,
               "keep_firing_for_seconds": 0,
               "fingerprint": "e9205dde87217783ac78f7dcf85adb278038322450535cf4c71008d0034e2ad6"
+            }
+          },
+          {
+            "id": "3211360514d5a59324539e18dd1d24c36df37764d0d8b37496dddb3e17c0135b",
+            "file_name": "faas.rules.yml",
+            "group_name": "faas_app_tasks",
+            "rule_name": "schedd_app_task_oldest_known_boundary_age_seconds",
+            "definition": {
+              "expression_hash": "2b18b5dd2ab9abfd99b21c7a6fea8700d82a94a8d9bf2b5e7de97638890e00cd",
+              "labels_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "for_seconds": 0,
+              "keep_firing_for_seconds": 0,
+              "fingerprint": "e1cb2fcd7497823d862a239efffa2c3b6bb24dec2631ee21b6979233fcc51705"
             }
           },
           {
@@ -545,6 +558,19 @@
             }
           },
           {
+            "id": "bfa123a2c4594d22596d7a8c33ecfc6ed7449412459e1692bee61a8790ee726e",
+            "file_name": "faas.rules.yml",
+            "group_name": "faas_app_tasks",
+            "rule_name": "schedd_app_task_observation_healthy",
+            "definition": {
+              "expression_hash": "ff80f5dcac4af3cce0d3bf2a302062ddfffa840e887a49d501f232ca43590ac8",
+              "labels_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "for_seconds": 0,
+              "keep_firing_for_seconds": 0,
+              "fingerprint": "86ed3a98591027140a8e4af2749c89debd7c2bdca60b9a8b4bbdd42752a449db"
+            }
+          },
+          {
             "id": "c335e1e461b686d9dc6c06d1441e7ad35a8352cdd3d4e4df91c1c1ec8935db7a",
             "file_name": "faas.rules.yml",
             "group_name": "faas_anomaly_baseline",
@@ -675,6 +701,19 @@
             }
           },
           {
+            "id": "ebdc91c6e9b3dd5b069575bf6fe5dea49394144b0eab2c91fb3afc06cecefe17",
+            "file_name": "faas.rules.yml",
+            "group_name": "faas_app_tasks",
+            "rule_name": "schedd_app_task_class_observation_healthy",
+            "definition": {
+              "expression_hash": "b8ce2da115b78608870bdef1055348be11247580e109ed07141cea318b8d4ab1",
+              "labels_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "for_seconds": 0,
+              "keep_firing_for_seconds": 0,
+              "fingerprint": "98bc9af0c06e629555013ff4971df5ee058e39c5672389b4fba23b7c7cc33ec4"
+            }
+          },
+          {
             "id": "ecddf922e13120343a831f8287e004483bfb149735d1dd0617713c08e9835352",
             "file_name": "faas.rules.yml",
             "group_name": "faas_anomaly_baseline_3d",
@@ -767,8 +806,8 @@
           }
         ]
       },
-      "alert_set_revision": "950c883b00b8ad7ab3d4bbfe17e21ed1cae57073940774ffe87528db5e84fb78",
-      "alert_count": 310,
+      "alert_set_revision": "f6ddc53485f9e59914c7b4ea4a0d2fb6c8aa5dfcf0e3aa5a21fbbf795905acd0",
+      "alert_count": 316,
       "dependents": [
         {
           "rule_id": "04e71a8f5cf3db701f2c7083e95693cd02058aa3b83e91279b44abcac2192ea5",
@@ -1026,6 +1065,23 @@
               "file_name": "faas.rules.yml",
               "group_name": "faas_billing",
               "rule_name": "FaasBuilderReaperFailing"
+            }
+          ]
+        },
+        {
+          "rule_id": "3211360514d5a59324539e18dd1d24c36df37764d0d8b37496dddb3e17c0135b",
+          "alerts": [
+            {
+              "id": "46c6385335c3fc7a9867eb56c828d0bb6a50963021e269dfa7b7149adc4c2a9c",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_app_tasks",
+              "rule_name": "FaasAppTaskRecoveryOverdue"
+            },
+            {
+              "id": "5d0b5b487f172e541372c7e10e79fc8b357e0d6ddc9f4c05b5e86d8f9e796684",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_app_tasks",
+              "rule_name": "FaasReleaseTaskQueued"
             }
           ]
         },
@@ -1429,6 +1485,47 @@
           ]
         },
         {
+          "rule_id": "bfa123a2c4594d22596d7a8c33ecfc6ed7449412459e1692bee61a8790ee726e",
+          "alerts": [
+            {
+              "id": "06db5a8a2966fb8a03acfdf6bf2479530db5d3b5a0dd1fb01ee60d88210f2cf5",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_app_tasks",
+              "rule_name": "FaasAppTaskOperationsFailing"
+            },
+            {
+              "id": "090fca2f387e59bdf46f6c93037cae0566957c6ca30d247e25811e1eabffb82c",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_app_tasks",
+              "rule_name": "FaasAppTaskEvidenceUnknown"
+            },
+            {
+              "id": "46c6385335c3fc7a9867eb56c828d0bb6a50963021e269dfa7b7149adc4c2a9c",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_app_tasks",
+              "rule_name": "FaasAppTaskRecoveryOverdue"
+            },
+            {
+              "id": "57f242a7004adb2b0265c708867081ac21886232970daf99d1edf074d06e95ef",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_app_tasks",
+              "rule_name": "FaasAppTaskRunnerStalled"
+            },
+            {
+              "id": "5d0b5b487f172e541372c7e10e79fc8b357e0d6ddc9f4c05b5e86d8f9e796684",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_app_tasks",
+              "rule_name": "FaasReleaseTaskQueued"
+            },
+            {
+              "id": "84d16f2ceb9c9736119e5651810d7119d19efd5a7609c5b0619ddad57f1b7828",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_app_tasks",
+              "rule_name": "FaasAppTaskTelemetryUnavailable"
+            }
+          ]
+        },
+        {
           "rule_id": "c335e1e461b686d9dc6c06d1441e7ad35a8352cdd3d4e4df91c1c1ec8935db7a",
           "alerts": [
             {
@@ -1605,6 +1702,47 @@
               "file_name": "faas.rules.yml",
               "group_name": "faas_billing",
               "rule_name": "FaasOperatorActionTraceCompletenessLowWarn"
+            }
+          ]
+        },
+        {
+          "rule_id": "ebdc91c6e9b3dd5b069575bf6fe5dea49394144b0eab2c91fb3afc06cecefe17",
+          "alerts": [
+            {
+              "id": "06db5a8a2966fb8a03acfdf6bf2479530db5d3b5a0dd1fb01ee60d88210f2cf5",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_app_tasks",
+              "rule_name": "FaasAppTaskOperationsFailing"
+            },
+            {
+              "id": "090fca2f387e59bdf46f6c93037cae0566957c6ca30d247e25811e1eabffb82c",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_app_tasks",
+              "rule_name": "FaasAppTaskEvidenceUnknown"
+            },
+            {
+              "id": "46c6385335c3fc7a9867eb56c828d0bb6a50963021e269dfa7b7149adc4c2a9c",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_app_tasks",
+              "rule_name": "FaasAppTaskRecoveryOverdue"
+            },
+            {
+              "id": "57f242a7004adb2b0265c708867081ac21886232970daf99d1edf074d06e95ef",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_app_tasks",
+              "rule_name": "FaasAppTaskRunnerStalled"
+            },
+            {
+              "id": "5d0b5b487f172e541372c7e10e79fc8b357e0d6ddc9f4c05b5e86d8f9e796684",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_app_tasks",
+              "rule_name": "FaasReleaseTaskQueued"
+            },
+            {
+              "id": "84d16f2ceb9c9736119e5651810d7119d19efd5a7609c5b0619ddad57f1b7828",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_app_tasks",
+              "rule_name": "FaasAppTaskTelemetryUnavailable"
             }
           ]
         },
@@ -1790,10 +1928,10 @@
       ]
     },
     {
-      "revision": "ced4e5b2df20b71512036dfef0c46583d4a9b7fa4f22e088646c122dff634962",
+      "revision": "0e8a50da00f7e34a24f5b11eac867231e1135cc7242d5b94e5c373f6449e1c52",
       "expected": {
         "id": "gregale-full-v1",
-        "revision": "468870ff3a18170ad48e3ae909579a920a7c168d1b0b327ac5b94631b845aafb",
+        "revision": "1aef0c201c34f24a93fab0b3036ebd7961c0113460695c893f973500cf6f0ab5",
         "files": [
           "bridge.rules.yml",
           "data_placement.yaml",
@@ -1942,6 +2080,19 @@
               "for_seconds": 0,
               "keep_firing_for_seconds": 0,
               "fingerprint": "e9205dde87217783ac78f7dcf85adb278038322450535cf4c71008d0034e2ad6"
+            }
+          },
+          {
+            "id": "3211360514d5a59324539e18dd1d24c36df37764d0d8b37496dddb3e17c0135b",
+            "file_name": "faas.rules.yml",
+            "group_name": "faas_app_tasks",
+            "rule_name": "schedd_app_task_oldest_known_boundary_age_seconds",
+            "definition": {
+              "expression_hash": "2b18b5dd2ab9abfd99b21c7a6fea8700d82a94a8d9bf2b5e7de97638890e00cd",
+              "labels_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "for_seconds": 0,
+              "keep_firing_for_seconds": 0,
+              "fingerprint": "e1cb2fcd7497823d862a239efffa2c3b6bb24dec2631ee21b6979233fcc51705"
             }
           },
           {
@@ -2335,6 +2486,19 @@
             }
           },
           {
+            "id": "bfa123a2c4594d22596d7a8c33ecfc6ed7449412459e1692bee61a8790ee726e",
+            "file_name": "faas.rules.yml",
+            "group_name": "faas_app_tasks",
+            "rule_name": "schedd_app_task_observation_healthy",
+            "definition": {
+              "expression_hash": "ff80f5dcac4af3cce0d3bf2a302062ddfffa840e887a49d501f232ca43590ac8",
+              "labels_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "for_seconds": 0,
+              "keep_firing_for_seconds": 0,
+              "fingerprint": "86ed3a98591027140a8e4af2749c89debd7c2bdca60b9a8b4bbdd42752a449db"
+            }
+          },
+          {
             "id": "c335e1e461b686d9dc6c06d1441e7ad35a8352cdd3d4e4df91c1c1ec8935db7a",
             "file_name": "faas.rules.yml",
             "group_name": "faas_anomaly_baseline",
@@ -2465,6 +2629,19 @@
             }
           },
           {
+            "id": "ebdc91c6e9b3dd5b069575bf6fe5dea49394144b0eab2c91fb3afc06cecefe17",
+            "file_name": "faas.rules.yml",
+            "group_name": "faas_app_tasks",
+            "rule_name": "schedd_app_task_class_observation_healthy",
+            "definition": {
+              "expression_hash": "b8ce2da115b78608870bdef1055348be11247580e109ed07141cea318b8d4ab1",
+              "labels_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "for_seconds": 0,
+              "keep_firing_for_seconds": 0,
+              "fingerprint": "98bc9af0c06e629555013ff4971df5ee058e39c5672389b4fba23b7c7cc33ec4"
+            }
+          },
+          {
             "id": "ecddf922e13120343a831f8287e004483bfb149735d1dd0617713c08e9835352",
             "file_name": "faas.rules.yml",
             "group_name": "faas_anomaly_baseline_3d",
@@ -2557,8 +2734,8 @@
           }
         ]
       },
-      "alert_set_revision": "abde4b151671ccc6a987fc872db8f02e6d6f5eaa22827a47be2356e148bf432f",
-      "alert_count": 322,
+      "alert_set_revision": "331cc18d1ee305348c3956c36718fbe934a2fc8e9f9878805efe19b820c0469a",
+      "alert_count": 328,
       "dependents": [
         {
           "rule_id": "04e71a8f5cf3db701f2c7083e95693cd02058aa3b83e91279b44abcac2192ea5",
@@ -2816,6 +2993,23 @@
               "file_name": "faas.rules.yml",
               "group_name": "faas_billing",
               "rule_name": "FaasBuilderReaperFailing"
+            }
+          ]
+        },
+        {
+          "rule_id": "3211360514d5a59324539e18dd1d24c36df37764d0d8b37496dddb3e17c0135b",
+          "alerts": [
+            {
+              "id": "46c6385335c3fc7a9867eb56c828d0bb6a50963021e269dfa7b7149adc4c2a9c",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_app_tasks",
+              "rule_name": "FaasAppTaskRecoveryOverdue"
+            },
+            {
+              "id": "5d0b5b487f172e541372c7e10e79fc8b357e0d6ddc9f4c05b5e86d8f9e796684",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_app_tasks",
+              "rule_name": "FaasReleaseTaskQueued"
             }
           ]
         },
@@ -3219,6 +3413,47 @@
           ]
         },
         {
+          "rule_id": "bfa123a2c4594d22596d7a8c33ecfc6ed7449412459e1692bee61a8790ee726e",
+          "alerts": [
+            {
+              "id": "06db5a8a2966fb8a03acfdf6bf2479530db5d3b5a0dd1fb01ee60d88210f2cf5",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_app_tasks",
+              "rule_name": "FaasAppTaskOperationsFailing"
+            },
+            {
+              "id": "090fca2f387e59bdf46f6c93037cae0566957c6ca30d247e25811e1eabffb82c",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_app_tasks",
+              "rule_name": "FaasAppTaskEvidenceUnknown"
+            },
+            {
+              "id": "46c6385335c3fc7a9867eb56c828d0bb6a50963021e269dfa7b7149adc4c2a9c",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_app_tasks",
+              "rule_name": "FaasAppTaskRecoveryOverdue"
+            },
+            {
+              "id": "57f242a7004adb2b0265c708867081ac21886232970daf99d1edf074d06e95ef",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_app_tasks",
+              "rule_name": "FaasAppTaskRunnerStalled"
+            },
+            {
+              "id": "5d0b5b487f172e541372c7e10e79fc8b357e0d6ddc9f4c05b5e86d8f9e796684",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_app_tasks",
+              "rule_name": "FaasReleaseTaskQueued"
+            },
+            {
+              "id": "84d16f2ceb9c9736119e5651810d7119d19efd5a7609c5b0619ddad57f1b7828",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_app_tasks",
+              "rule_name": "FaasAppTaskTelemetryUnavailable"
+            }
+          ]
+        },
+        {
           "rule_id": "c335e1e461b686d9dc6c06d1441e7ad35a8352cdd3d4e4df91c1c1ec8935db7a",
           "alerts": [
             {
@@ -3395,6 +3630,47 @@
               "file_name": "faas.rules.yml",
               "group_name": "faas_billing",
               "rule_name": "FaasOperatorActionTraceCompletenessLowWarn"
+            }
+          ]
+        },
+        {
+          "rule_id": "ebdc91c6e9b3dd5b069575bf6fe5dea49394144b0eab2c91fb3afc06cecefe17",
+          "alerts": [
+            {
+              "id": "06db5a8a2966fb8a03acfdf6bf2479530db5d3b5a0dd1fb01ee60d88210f2cf5",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_app_tasks",
+              "rule_name": "FaasAppTaskOperationsFailing"
+            },
+            {
+              "id": "090fca2f387e59bdf46f6c93037cae0566957c6ca30d247e25811e1eabffb82c",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_app_tasks",
+              "rule_name": "FaasAppTaskEvidenceUnknown"
+            },
+            {
+              "id": "46c6385335c3fc7a9867eb56c828d0bb6a50963021e269dfa7b7149adc4c2a9c",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_app_tasks",
+              "rule_name": "FaasAppTaskRecoveryOverdue"
+            },
+            {
+              "id": "57f242a7004adb2b0265c708867081ac21886232970daf99d1edf074d06e95ef",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_app_tasks",
+              "rule_name": "FaasAppTaskRunnerStalled"
+            },
+            {
+              "id": "5d0b5b487f172e541372c7e10e79fc8b357e0d6ddc9f4c05b5e86d8f9e796684",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_app_tasks",
+              "rule_name": "FaasReleaseTaskQueued"
+            },
+            {
+              "id": "84d16f2ceb9c9736119e5651810d7119d19efd5a7609c5b0619ddad57f1b7828",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_app_tasks",
+              "rule_name": "FaasAppTaskTelemetryUnavailable"
             }
           ]
         },

@@ -90,3 +90,7 @@ work-pool and init-capture diagnostics for adjacent boundaries.
 
 For fresh parked captures or recorded snapshots that still await activation, see
 [post-capture publication and activation diagnostics](FaasPostCapture.md).
+
+For release_blocked work, use [app-task runner diagnostics](FaasAppTasks.md) to
+distinguish queued commands, restore/execution, cancellation and lease recovery.
+A missing or incompatible release task remains a deployment gate finding.
