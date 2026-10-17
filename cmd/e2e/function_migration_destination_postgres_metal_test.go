@@ -3,8 +3,8 @@
 package e2e_test
 
 // adr: 1352
-// Successful migrations only. Fault/restart and production activation are
-// separate gates; this test never reconstructs a native process witness.
+// Successful migrations and controlled reply-boundary faults. Packet loss,
+// restart and production activation remain separate gates.
 
 import (
 	"context"
@@ -47,13 +47,19 @@ func TestFunctionMigrationDestinationPostgresMetal(t *testing.T) {
 	if err := pool.Ping(t.Context()); err != nil {
 		t.Fatal("native fixture catalog is unavailable")
 	}
-	report := functionmigration.Report{Version: 1, Scope: "native-successful-migration-v1", Config: c}
+	report := functionmigration.Report{Version: functionmigration.ReportVersion, Scope: functionmigration.ReportScope, Config: c}
 	for _, runtime := range []string{"node22", "node24"} {
-		var run *functionmigration.Run
-		if !t.Run(runtime, func(t *testing.T) { run = runNativeDestinationSQL(t, c, pool, runtime) }) || run == nil {
-			t.Fatal("native runtime failed or skipped; no successful-migration verdict")
+		if !t.Run(runtime, func(t *testing.T) {
+			for _, scenario := range functionmigration.Scenarios() {
+				var run *functionmigration.Run
+				if !t.Run(scenario, func(t *testing.T) { run = runNativeDestinationSQL(t, c, pool, runtime, scenario) }) || run == nil {
+					t.Fatal("native case failed or skipped; no reply-boundary verdict")
+				}
+				report.Runs = append(report.Runs, *run)
+			}
+		}) {
+			t.Fatal("native runtime did not execute every reply-boundary case")
 		}
-		report.Runs = append(report.Runs, *run)
 	}
 	for _, h := range c.Hosts {
 		nativeMigrationProbe(t, t.Context(), h.NodeID, "leakcheck", nil)

@@ -98,11 +98,24 @@ application effects across an aborted migration and later source recovery. Use
 application idempotency or durable jobs for that requirement. No automatic retry
 of the interrupted customer invocation is introduced.
 
-`make test-function-migration-native` implements the successful-migration slice
-against two prepared native hosts. It uses actual VM RPCs and the production
-scheduler migration coordinator, with independent PostgreSQL and physical host
-witnesses. It rejects skipped cases and incomplete cleanup, and always reports
-the failure matrix and production readiness as unqualified. The fixture and
+`make test-function-migration-native` implements successful migrations and
+controlled reply-boundary cases against two prepared native hosts. Both Node
+runtimes must execute the baseline, a discarded readiness reply followed by an
+explicit identical adoption retry, a completed PostgreSQL ownership commit whose
+reply is replaced by an error, and three concurrent identical adoption retries.
+The scheduler's existing durable commit resolver handles the commit case. The
+fixture issues adoption retransmissions while holding the initial reply; this
+does not add automatic adoption retries to the production scheduler, which
+conservatively rolls back an adoption error.
+
+The suite uses actual VM RPCs and the production scheduler migration coordinator,
+with independent PostgreSQL, persistent all-worker callback counts and physical
+host witnesses. These after-effect error injections do not establish real
+network packet loss, PostgreSQL failover or guest vsock loss. Version 2 reports
+require all eight runtime/scenario pairs and reject old two-case evidence,
+changed native epochs, replaced SQL sessions or callback replay. The suite
+rejects skipped cases and incomplete cleanup, and always reports the complete
+failure matrix and production readiness as unqualified. The fixture and
 remaining gates are documented in the
 [native migration runbook](../ops/function-migration-native-acceptance.md).
 Portable guard tests and compilation of this harness do not establish native

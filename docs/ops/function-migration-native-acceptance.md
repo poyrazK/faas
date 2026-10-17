@@ -1,8 +1,8 @@
-# Successful function migration on two native hosts
+# Function migration and controlled reply faults on two native hosts
 
 Status: harness implemented; native execution pending; production off.
-This is the first slice of [ADR-1352](../adr/1352-function-migration-destination.md),
-for Node 22 and Node 24. The complete
+This is the successful-migration and reply-boundary slice of
+[ADR-1352](../adr/1352-function-migration-destination.md), for Node 22 and Node 24. The complete
 [destination qualification matrix](function-backend-concurrency-acceptance.md#measured-migration-destination-qualification)
 still applies before release.
 
@@ -157,7 +157,11 @@ driver builds fresh qualified assets, compares running host binaries and staged
 hashes, verifies distinct physical machine/boot identities and runs both native
 leak checks before mutations. It opens private temporary SSH socket forwards and
 compiles the complete native test executable with the race detector. Only
-`TestFunctionMigrationDestinationPostgresMetal` and its two runtime subtests run.
+`TestFunctionMigrationDestinationPostgresMetal` runs. Each runtime must execute
+four separately deployed cases: `success`, `lost-readiness-reply`,
+`lost-commit-reply` and `duplicate-adoption`. The timeout is 120 minutes for the
+complete eight-case matrix. Fixture input remains version 1; output reports
+use version 2.
 
 For each runtime the test observes four interpreter PIDs, two TLS pools per
 interpreter and three independently committed SQL rows. Checkpoint ACKs stay held
@@ -178,12 +182,45 @@ and netns strings may coincide on different physical hosts; identity includes
 the host. Both runtime apps are deleted through the API and destination physical
 retirement is verified before qualification. Final leak checks run on both hosts.
 
+## Controlled reply-boundary cases
+
+Each fault case starts with its own app, instance and migration attempt. The
+readiness observer retains the actual request/reply privately and the scheduler
+waits at that boundary. Only protobuf fingerprints enter the report; sealed
+application inputs never do.
+
+- `lost-readiness-reply`: after the remote vmmd completes readiness, discard the
+  client reply and explicitly retransmit the identical request once. Forward the
+  actual retry response to the waiting coordinator. Require the same grant,
+  receipt, Firecracker process generation, namespace and eight SQL backends.
+- `lost-commit-reply`: run the real PostgreSQL ownership transaction, then return
+  a controlled error through the test store adapter. The existing scheduler
+  resolver must read the durable committed decision, activate that exact owner
+  and retire the source. This case does not synthesize a successful decision.
+- `duplicate-adoption`: send three concurrent independent copies of the original
+  adoption request to the remote vmmd before allowing ownership commit. Every
+  response must match, and execution must remain closed on that ready owner.
+
+The authenticated lifecycle peer keeps per-interpreter checkpoint/recovery call
+counts after barrier release. Every worker must perform exactly one checkpoint
+and one recovery during this migration attempt, with no extra callback through
+the retries or activation. SQL backend identities must remain unchanged across
+the adoption retransmissions; every case must retain the original committed rows
+and pass the physical retirement/leak checks.
+
+These are deterministic after-effect errors at client/store boundaries. They do
+not cut a network socket, interrupt PostgreSQL COMMIT on the wire or drop guest
+vsock packets. The fixture's explicit adoption retry tests vmmd idempotency;
+production scheduling still rolls back adoption errors. An automatic adoption
+retry policy is outside this increment. Host/daemon restart and actual transport
+loss remain separate qualification work.
+
 ## Evidence and remaining gates
 
-`tests.raw`, `tests.jsonl`, `tests.stderr`, `build.log`, `successful-migrations.json` and
+`tests.raw`, `tests.jsonl`, `tests.stderr`, `build.log`, `migration-replies.json` and
 `verdict.json` stay in the private evidence directory. Reports include source and
 binary hashes, host/daemon identities, receipt hashes, SQL backend generations,
-worker pool generations and observed cleanup. They contain no SQL DSN, private
+worker pool generations, callback counts, request/reply fingerprints and observed cleanup. They contain no SQL DSN, private
 key, secret value or sealed payload. Any failed/skipped/missing runtime, changed
 source/daemon, incomplete witness or failed cleanup prevents a successful verdict.
 The driver removes only its own tunnels and temporary build directory.
@@ -194,8 +231,11 @@ databases are still revoked/removed. Inspect the named native fixture hosts and
 resolve quarantine through the existing owner/recovery procedures before retrying;
 do not delete migration history to force a green run. No retry is automatic.
 
-A successful run is scoped to `native-successful-migration-v1` and always has
-`failure_matrix_qualified: false` and `production_ready: false`. Lost ACKs,
+A successful run has report version 2 and scope
+`native-migration-reply-boundaries-v1`. The driver sets
+`reply_boundaries_qualified` only after all eight cases and both final host leak
+checks pass. Old baseline-only reports cannot qualify this scope. Reports always
+have `failure_matrix_qualified: false` and `production_ready: false`. Real lost ACKs,
 failed probes, cancellation/expiry/commit races, capacity pressure, source or
 destination death/restart and private-environment authority remain future native
 cases. No native result has been obtained from the managed development workspace.

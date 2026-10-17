@@ -34,6 +34,9 @@ func TestControlRejectsUnauthenticatedOrMalformedWitness(t *testing.T) {
 	if c.Arrivals() != 0 {
 		t.Fatal("invalid witness changed arrival count")
 	}
+	if len(c.Calls()) != 0 {
+		t.Fatal("invalid witness changed callback history")
+	}
 }
 
 func TestControlHoldsIndependentPhasesAndClonesWorkers(t *testing.T) {
@@ -86,6 +89,17 @@ func TestControlHoldsIndependentPhasesAndClonesWorkers(t *testing.T) {
 		}
 	case <-ctx.Done():
 		t.Fatal("recovery remained held")
+	}
+	calls := c.Calls()
+	if len(calls) != 1 || calls[0].Checkpoints != 1 || calls[0].Recoveries != 1 {
+		t.Fatal("release discarded actual callback history")
+	}
+	calls[0].Recoveries = 999
+	if status := controlRequest(ctx, c, "POST", "/recovery?pid=9&generations=2,3", c.Token); status != http.StatusNoContent {
+		t.Fatal("unarmed duplicate callback was not observed")
+	}
+	if c.Calls()[0].Recoveries != 2 || c.RecoveryArrivals() != 0 {
+		t.Fatal("duplicate callback after release was hidden or history was mutable")
 	}
 }
 

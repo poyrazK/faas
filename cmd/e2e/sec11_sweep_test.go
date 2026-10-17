@@ -166,7 +166,7 @@ func TestMain(m *testing.M) {
 	if os.Getenv("FAAS_REQUIRE_FUNCTION_MIGRATION_NATIVE") == "1" {
 		flag.Parse()
 		if !functionlifetime.NativeQualificationBuild || flag.Lookup("test.run").Value.String() != "^TestFunctionMigrationDestinationPostgresMetal$" {
-			fmt.Fprintln(os.Stderr, "native migration requires its qualified build and exact successful-migration suite")
+			fmt.Fprintln(os.Stderr, "native migration requires its qualified build and exact reply-boundary suite")
 			os.Exit(2)
 		}
 		os.Exit(m.Run())

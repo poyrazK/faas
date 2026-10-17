@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/google/uuid"
 )
 
 func witnessConfig() Config {
@@ -34,25 +36,46 @@ func witnessConfig() Config {
 
 func witnessReport() Report {
 	c := witnessConfig()
-	r := Report{Version: 1, Scope: "native-successful-migration-v1", Config: c, BothHostsLeakChecked: true}
+	r := Report{Version: ReportVersion, Scope: ReportScope, Config: c, BothHostsLeakChecked: true}
 	for _, runtime := range []string{"node22", "node24"} {
-		run := Run{Runtime: runtime, InstanceID: "44444444-4444-4444-8444-444444444444", SourceNode: c.Hosts[0].NodeID, DestinationNode: c.Hosts[1].NodeID,
-			SourceWake: "55555555-5555-4555-8555-555555555555", DestinationWake: "66666666-6666-4666-8666-666666666666",
-			RootfsInputSHA: strings.Repeat("a", 64), BaseInputSHA: strings.Repeat("b", 64),
-			Source:      Owner{PID: 123, Start: "456", UID: 20001, Netns: "faas-test", ReceiptSHA: strings.Repeat("a", 64), Verified: true},
-			Destination: Owner{PID: 123, Start: "456", UID: 20001, Netns: "faas-test", ReceiptSHA: strings.Repeat("b", 64), Verified: true},
-			RowsBefore:  map[string]int{"one": 100, "two": 101, "three": 102}, RowsAfter: map[string]int{"one": 100, "two": 101, "three": 102},
-			CaptureHeld: true, DrainedBeforeCapture: true, RecoveryHeld: true, ReadyKeptSource: true, ExecutionRefused: true, CommitVerified: true,
-			SourceRetired: true, SourceLeaseRemoved: true, FinalAppRetired: true}
-		for i := range 4 {
-			run.CheckpointWorkers = append(run.CheckpointWorkers, Worker{PID: 100 + i, Generations: []int{0, 1}})
-			run.RecoveryWorkers = append(run.RecoveryWorkers, Worker{PID: 100 + i, Generations: []int{1, 2}})
-			for j := range 2 {
-				run.SourceSQL = append(run.SourceSQL, Session{PID: 200 + i*2 + j, WorkerPID: 100 + i, StartedAt: "2026-10-17T10:00:00Z", TLS: true})
-				run.DestinationSQL = append(run.DestinationSQL, Session{PID: 300 + i*2 + j, WorkerPID: 100 + i, StartedAt: "2026-10-17T10:01:00Z", TLS: true})
+		for _, scenario := range Scenarios() {
+			run := Run{Runtime: runtime, Scenario: scenario, InstanceID: uuid.NewSHA1(uuid.Nil, []byte(runtime+scenario)).String(), SourceNode: c.Hosts[0].NodeID, DestinationNode: c.Hosts[1].NodeID,
+				SourceWake: "55555555-5555-4555-8555-555555555555", DestinationWake: "66666666-6666-4666-8666-666666666666",
+				RootfsInputSHA: strings.Repeat("a", 64), BaseInputSHA: strings.Repeat("b", 64),
+				Source:      Owner{PID: 123, Start: "456", UID: 20001, Netns: "faas-test", ReceiptSHA: strings.Repeat("a", 64), Verified: true},
+				Destination: Owner{PID: 123, Start: "456", UID: 20001, Netns: "faas-test", ReceiptSHA: strings.Repeat("b", 64), Verified: true},
+				RowsBefore:  map[string]int{"one": 100, "two": 101, "three": 102}, RowsAfter: map[string]int{"one": 100, "two": 101, "three": 102},
+				CaptureHeld: true, DrainedBeforeCapture: true, RecoveryHeld: true, ReadyKeptSource: true, ExecutionRefused: true, CommitVerified: true,
+				SourceRetired: true, SourceLeaseRemoved: true, FinalAppRetired: true}
+			run.DestinationWake = uuid.NewSHA1(uuid.Nil, []byte(runtime+scenario+"wake")).String()
+			for i := range 4 {
+				run.CallsAtReady = append(run.CallsAtReady, Calls{PID: 100 + i, Checkpoints: 1, Recoveries: 1})
+				run.CallsAfter = append(run.CallsAfter, Calls{PID: 100 + i, Checkpoints: 1, Recoveries: 1})
+				run.CheckpointWorkers = append(run.CheckpointWorkers, Worker{PID: 100 + i, Generations: []int{0, 1}})
+				run.RecoveryWorkers = append(run.RecoveryWorkers, Worker{PID: 100 + i, Generations: []int{1, 2}})
+				for j := range 2 {
+					run.SourceSQL = append(run.SourceSQL, Session{PID: 200 + i*2 + j, WorkerPID: 100 + i, StartedAt: "2026-10-17T10:00:00Z", TLS: true})
+					run.DestinationSQL = append(run.DestinationSQL, Session{PID: 300 + i*2 + j, WorkerPID: 100 + i, StartedAt: "2026-10-17T10:01:00Z", TLS: true})
+				}
 			}
+			if scenario == LostCommit {
+				run.Fault = &ReplyFault{Mode: "post-commit-error", CommitDiscards: 1, RecoveredDecisions: 1}
+			}
+			if scenario == LostReadiness || scenario == Duplicate {
+				copies := 3
+				fault := &ReplyFault{Mode: "explicit-concurrent-retry", OwnerAfterReplays: run.Destination, SQLAfterReplays: append([]Session{}, run.DestinationSQL...),
+					SourceKeptAfterReplay: true, ClosedAfterReplay: true, Replays: &Replays{RequestSHA: strings.Repeat("c", 64), ReplySHA: strings.Repeat("d", 64)}}
+				if scenario == LostReadiness {
+					copies, fault.Mode, fault.ReadinessDiscards = 1, "client-reply-discard", 1
+				}
+				for range copies {
+					fault.Replays.Requests = append(fault.Replays.Requests, fault.Replays.RequestSHA)
+					fault.Replays.Replies = append(fault.Replays.Replies, fault.Replays.ReplySHA)
+				}
+				run.Fault = fault
+			}
+			r.Runs = append(r.Runs, run)
 		}
-		r.Runs = append(r.Runs, run)
 	}
 	return r
 }
@@ -67,7 +90,23 @@ func TestReportRejectsIncompleteOrReplayedEvidence(t *testing.T) {
 	}{
 		{"empty", func(r *Report) { *r = Report{} }},
 		{"runtime skipped", func(r *Report) { r.Runs = r.Runs[:1] }},
-		{"duplicate runtime", func(r *Report) { r.Runs[1].Runtime = "node22" }},
+		{"duplicate runtime", func(r *Report) { r.Runs[4].Runtime = "node22" }},
+		{"legacy two-case scope", func(r *Report) { r.Version, r.Scope = 1, "native-successful-migration-v1" }},
+		{"relabelled duplicate instance", func(r *Report) { r.Runs[1].InstanceID = r.Runs[0].InstanceID }},
+		{"baseline claims a fault", func(r *Report) { r.Runs[0].Fault = r.Runs[1].Fault }},
+		{"missing readiness discard", func(r *Report) { r.Runs[1].Fault.ReadinessDiscards = 0 }},
+		{"missing native retry", func(r *Report) { r.Runs[1].Fault.Replays = nil }},
+		{"retry changes original request", func(r *Report) { r.Runs[1].Fault.Replays.Requests[0] = strings.Repeat("f", 64) }},
+		{"retry changes physical reply", func(r *Report) { r.Runs[1].Fault.Replays.Replies[0] = strings.Repeat("f", 64) }},
+		{"retry replaces native process", func(r *Report) { r.Runs[1].Fault.OwnerAfterReplays.PID++ }},
+		{"retry reconnects SQL", func(r *Report) { r.Runs[1].Fault.SQLAfterReplays[0].PID++ }},
+		{"retry publishes ownership", func(r *Report) { r.Runs[1].Fault.SourceKeptAfterReplay = false }},
+		{"retry opens execution", func(r *Report) { r.Runs[1].Fault.ClosedAfterReplay = false }},
+		{"commit not discarded", func(r *Report) { r.Runs[2].Fault.CommitDiscards = 0 }},
+		{"commit decision not read", func(r *Report) { r.Runs[2].Fault.RecoveredDecisions = 0 }},
+		{"duplicate adoption omitted", func(r *Report) { r.Runs[3].Fault.Replays.Requests = r.Runs[3].Fault.Replays.Requests[:1] }},
+		{"callback replay after ACK", func(r *Report) { r.Runs[3].CallsAfter[0].Recoveries++ }},
+		{"callback replay before ready", func(r *Report) { r.Runs[1].CallsAtReady[0].Recoveries++ }},
 		{"unsupported production claim", func(r *Report) { r.ProductionReady = true }},
 		{"unsupported failure matrix claim", func(r *Report) { r.FailureMatrixQualified = true }},
 		{"missing host leak check", func(r *Report) { r.BothHostsLeakChecked = false }},

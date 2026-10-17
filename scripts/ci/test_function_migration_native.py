@@ -68,7 +68,8 @@ class GuardTests(unittest.TestCase):
 
     def test_skipped_missing_and_failed_cases_cannot_pass_gate(self):
         root = "TestFunctionMigrationDestinationPostgresMetal"
-        complete = [{"Action": "pass", "Test": name} for name in (root + "/node22", root + "/node24", root)] + [{"Action": "pass"}]
+        cases = [root + "/" + runtime + "/" + case for runtime in ("node22", "node24") for case in DRIVER.SCENARIOS]
+        complete = [{"Action": "pass", "Test": name} for name in (*cases, root + "/node22", root + "/node24", root)] + [{"Action": "pass"}]
         with tempfile.TemporaryDirectory() as work:
             path = pathlib.Path(work) / "test-events.jsonl"
             path.write_text("\n".join(map(json.dumps, complete)))
@@ -83,15 +84,16 @@ class GuardTests(unittest.TestCase):
         c = fixture_config()
         # Only the report envelope is exercised here. Go verifies its physical,
         # SQL and worker witnesses before the real binary may write a report.
-        report = {"version": 1, "scope": "native-successful-migration-v1", "config": c,
+        report = {"version": DRIVER.REPORT_VERSION, "scope": DRIVER.REPORT_SCOPE, "config": c,
                   "both_hosts_leak_checked": True, "failure_matrix_qualified": False, "production_ready": False,
-                  "runs": [{"runtime": "node22"}, {"runtime": "node24"}]}
+                  "runs": [{"runtime": runtime, "scenario": case} for runtime in ("node22", "node24") for case in DRIVER.SCENARIOS]}
         with tempfile.TemporaryDirectory() as work:
             path = pathlib.Path(work) / "report.json"
             path.write_text(json.dumps(report))
             DRIVER.check_report(path, c)
             for field, value in (("config", {}), ("production_ready", True), ("failure_matrix_qualified", True),
-                                 ("both_hosts_leak_checked", False), ("runs", [{"runtime": "node22"}])):
+                                 ("both_hosts_leak_checked", False), ("version", 1), ("scope", "native-successful-migration-v1"),
+                                 ("runs", report["runs"][:-1]), ("runs", [report["runs"][0]] * len(report["runs"]))):
                 bad = copy.deepcopy(report)
                 bad[field] = value
                 path.write_text(json.dumps(bad))

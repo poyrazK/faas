@@ -154,6 +154,15 @@ func TestFunctionResourcesPostgres(t *testing.T) {
 		case <-time.After(3 * time.Second):
 			t.Fatal("SQL recovery did not finish")
 		}
+		calls := control.Calls()
+		if len(calls) != 4 {
+			t.Fatal("resource callback history missed an interpreter")
+		}
+		for _, call := range calls {
+			if call.Checkpoints != uint64(cycle+1) || call.Recoveries != uint64(cycle+1) {
+				t.Fatal("resource callbacks replayed across release or recovery")
+			}
+		}
 		if len(sql.Rows(t.Context(), t)) != 3 {
 			t.Fatal("SQL recovery lost or replayed a mutation")
 		}

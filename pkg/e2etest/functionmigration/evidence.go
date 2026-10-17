@@ -34,6 +34,7 @@ type Owner struct {
 
 type Run struct {
 	Runtime              string         `json:"runtime"`
+	Scenario             string         `json:"scenario"`
 	InstanceID           string         `json:"instance_id"`
 	SourceNode           string         `json:"source_node"`
 	DestinationNode      string         `json:"destination_node"`
@@ -47,6 +48,10 @@ type Run struct {
 	DestinationSQL       []Session      `json:"destination_sql"`
 	CheckpointWorkers    []Worker       `json:"checkpoint_workers"`
 	RecoveryWorkers      []Worker       `json:"recovery_workers"`
+	CallsBefore          []Calls        `json:"calls_before"`
+	CallsAtReady         []Calls        `json:"calls_at_ready"`
+	CallsAfter           []Calls        `json:"calls_after"`
+	Fault                *ReplyFault    `json:"fault,omitempty"`
 	RowsBefore           map[string]int `json:"rows_before"`
 	RowsAfter            map[string]int `json:"rows_after"`
 	CaptureHeld          bool           `json:"capture_held"`
@@ -71,18 +76,24 @@ type Report struct {
 }
 
 func (r Report) Check() error {
-	if r.Version != 1 || r.Scope != "native-successful-migration-v1" || r.Config.Validate() != nil || len(r.Runs) != 2 || !r.BothHostsLeakChecked || r.FailureMatrixQualified || r.ProductionReady {
+	if r.Version != ReportVersion || r.Scope != ReportScope || r.Config.Validate() != nil || len(r.Runs) != 2*len(Scenarios()) || !r.BothHostsLeakChecked || r.FailureMatrixQualified || r.ProductionReady {
 		return errors.New("incomplete native successful-migration evidence or unsupported release claim")
 	}
 	seen := map[string]bool{}
+	instances, wakes := map[string]bool{}, map[string]bool{}
 	for _, run := range r.Runs {
-		if seen[run.Runtime] || run.Check(r.Config) != nil {
+		key := run.Runtime + "/" + run.Scenario
+		if seen[key] || instances[run.InstanceID] || wakes[run.DestinationWake] || run.Check(r.Config) != nil {
 			return errors.New("native migration runtime evidence is invalid")
 		}
-		seen[run.Runtime] = true
+		seen[key], instances[run.InstanceID], wakes[run.DestinationWake] = true, true, true
 	}
-	if !seen["node22"] || !seen["node24"] {
-		return errors.New("both Node runtimes must execute")
+	for _, runtime := range []string{"node22", "node24"} {
+		for _, scenario := range Scenarios() {
+			if !seen[runtime+"/"+scenario] {
+				return errors.New("both Node runtimes must execute every reply-boundary case")
+			}
+		}
 	}
 	return nil
 }
@@ -107,7 +118,7 @@ func (r Run) Check(c Config) error {
 	if err := checkSessionsAndWorkers(r); err != nil {
 		return err
 	}
-	return nil
+	return r.checkReplyEvidence()
 }
 
 func validOwner(o Owner) bool {

@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/e2etest/functionmigration"
 )
 
 // Control holds the native/portable checkpoint after local pools drained but
@@ -21,6 +22,7 @@ type Control struct {
 	Port   uint16
 	mu     sync.Mutex
 	phases map[string]*controlPhase
+	calls  map[int]functionmigration.Calls
 }
 
 type controlPhase struct {
@@ -39,7 +41,7 @@ func NewControl(t *testing.T, host string) *Control {
 	if err != nil {
 		t.Fatal("listen for isolated lifecycle control")
 	}
-	c := &Control{Token: uuid.NewString(), Port: uint16(ln.Addr().(*net.TCPAddr).Port), phases: make(map[string]*controlPhase)}
+	c := &Control{Token: uuid.NewString(), Port: uint16(ln.Addr().(*net.TCPAddr).Port), phases: make(map[string]*controlPhase), calls: make(map[int]functionmigration.Calls)}
 	server := httptest.NewUnstartedServer(http.HandlerFunc(c.serve))
 	server.Listener = ln
 	server.Start()
@@ -70,6 +72,7 @@ func (c *Control) serve(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	c.mu.Lock()
+	c.recordCall(r.URL.Path, pid)
 	phase := c.phases[r.URL.Path]
 	var gate chan struct{}
 	if phase != nil {
@@ -85,6 +88,30 @@ func (c *Control) serve(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// Calls survives Release so a duplicate callback after readiness is visible.
+// Arm/Release controls waiting only; it never resets observation history.
+func (c *Control) Calls() []functionmigration.Calls {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var result []functionmigration.Calls
+	for _, call := range c.calls {
+		result = append(result, call)
+	}
+	slices.SortFunc(result, func(a, b functionmigration.Calls) int { return a.PID - b.PID })
+	return result
+}
+
+func (c *Control) recordCall(path string, pid int) {
+	call := c.calls[pid]
+	call.PID = pid
+	if path == "/checkpoint" {
+		call.Checkpoints++
+	} else {
+		call.Recoveries++
+	}
+	c.calls[pid] = call
 }
 
 func (c *Control) Arm() {

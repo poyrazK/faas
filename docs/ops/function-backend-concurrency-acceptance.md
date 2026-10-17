@@ -252,10 +252,12 @@ The existing strict native target qualifies source cancellation/recovery; it is
 not a two-host destination acceptance result. Do not count its source-only cases
 as completion of this matrix.
 
-The successful-migration portion now has a separate guarded entry point,
+The successful-migration and controlled reply-boundary portion has a guarded entry point,
 `make test-function-migration-native`. Follow the
 [prepared two-host fixture procedure](function-migration-native-acceptance.md).
-Its verdict covers successful moves only; the failure/restart matrix below and
+Its version 2 verdict requires baseline, readiness/commit reply-discard and
+duplicate-adoption cases for both Node runtimes. These deterministic after-effect
+errors do not qualify actual transport loss. The complete failure/restart matrix below and
 production activation remain separate gates. Local compilation and portable
 witness tests supply no native verdict.
 

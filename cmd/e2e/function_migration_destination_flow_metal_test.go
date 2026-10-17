@@ -21,6 +21,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"github.com/prometheus/client_golang/prometheus"
 	"google.golang.org/grpc"
@@ -31,6 +32,7 @@ type nativeDestinationGate struct {
 	ready   chan state.FunctionMigrationDestination
 	release chan struct{}
 	once    sync.Once
+	call    *nativeAdoptionCall
 }
 
 func (g *nativeDestinationGate) intercept(ctx context.Context, method string, req, reply any, conn *grpc.ClientConn, invoke grpc.UnaryInvoker, options ...grpc.CallOption) error {
@@ -48,6 +50,11 @@ func (g *nativeDestinationGate) intercept(ctx context.Context, method string, re
 	if d.Phase != state.FunctionDestinationReady {
 		return nil // Committed activation is a separate RPC without a callback.
 	}
+	call, err := captureNativeAdoption(ctx, method, req, reply, conn, invoke, options)
+	if err != nil {
+		return err
+	}
+	g.call = call // Published to the observer by the ready channel below.
 	select {
 	case g.ready <- d:
 	case <-ctx.Done():
@@ -98,8 +105,9 @@ func nativeMigrationRouter(t *testing.T, ctx context.Context, c functionmigratio
 	return router, clients, connections
 }
 
-func runNativeDestinationSQL(t *testing.T, c functionmigration.Config, catalog *pgxpool.Pool, runtime string) *functionmigration.Run {
+func runNativeDestinationSQL(t *testing.T, c functionmigration.Config, catalog *pgxpool.Pool, runtime, scenario string) *functionmigration.Run {
 	f := newNativeDestinationFixture(t, c, catalog, runtime)
+	f.run.Scenario = scenario
 	ctx, cancel := context.WithTimeout(t.Context(), sourceDeployCtxTimeout())
 	defer cancel()
 	gate := &nativeDestinationGate{store: f.store, ready: make(chan state.FunctionMigrationDestination, 1), release: make(chan struct{})}
@@ -129,6 +137,7 @@ func runNativeDestinationSQL(t *testing.T, c functionmigration.Config, catalog *
 	nativeMigrationProbe(t, ctx, ins.NodeID, "owner", &r.Source)
 	r.Source.Verified = true
 	seedNativeMigrationPools(t, ctx, f, clients[ins.NodeID], ins.ID)
+	r.CallsBefore = f.control.Calls()
 	ledger := sched.NewLedger()
 	f.ledger = ledger
 	engine, err := sched.NewEngine(ctx, f.store, ledger, router, nil, c.FCVersion, slog.Default())
@@ -136,7 +145,13 @@ func runNativeDestinationSQL(t *testing.T, c functionmigration.Config, catalog *
 		t.Fatal("construct native schedd migration coordinator", err)
 	}
 	metrics := nativeMigrationMetrics{prometheus.NewCounter(prometheus.CounterOpts{Name: "native_migration_decisions_total", Help: "Native fixture migration decisions."})}
-	handoff := sched.NewMigrationHarness(ctx, f.store, router, metrics, slog.Default(), to, engine.BuildAppSpecForMigration, ledger,
+	store := state.Store(f.store)
+	var commitFault *nativeCommitReplyLoss
+	if scenario == functionmigration.LostCommit {
+		commitFault = &nativeCommitReplyLoss{PgStore: f.store, instanceID: ins.ID}
+		store = statetest.NewPg(commitFault)
+	}
+	handoff := sched.NewMigrationHarness(ctx, store, router, metrics, slog.Default(), to, engine.BuildAppSpecForMigration, ledger,
 		func(ctx context.Context, id string) (int, int, error) {
 			n, err := f.store.ComputeNodeByID(ctx, id)
 			return n.AdmissionCeilingMB, n.VCPUBudget, err
@@ -205,6 +220,10 @@ func runNativeDestinationSQL(t *testing.T, c functionmigration.Config, catalog *
 		t.Fatal("destination never returned measured readiness")
 	}
 	verifyNativeReadyDestination(t, ctx, f, ins, destination, connections[to])
+	r.CallsAtReady = f.control.Calls()
+	if scenario == functionmigration.LostReadiness || scenario == functionmigration.Duplicate {
+		exerciseNativeAdoptionReplies(t, ctx, f, gate.call, ins, destination, connections[to])
+	}
 	gate.open()
 	select {
 	case <-done:
@@ -215,6 +234,10 @@ func runNativeDestinationSQL(t *testing.T, c functionmigration.Config, catalog *
 		t.Fatal("native ownership handoff did not finish")
 	}
 	verifyNativeCommittedDestination(t, ctx, f, ins, destination, clients[ins.NodeID])
+	r.CallsAfter = f.control.Calls()
+	if commitFault != nil {
+		r.Fault = commitFault.evidence()
+	}
 	return r
 }
 
