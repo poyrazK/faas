@@ -493,3 +493,38 @@ fences and persist recovery decisions under current ownership. No automatic retr
 dead-letter, release or repair is selected. Query failures discard the connection;
 unavailable evidence is never an `absent` observation. See the
 [snapshot and cancellation contract](../../docs/event-consumer-processing-inspection.md#python-inspection).
+
+## Observe coordinated preparation
+
+`prepared_options_with_diagnostics` configures the existing version-5 processor
+with a synchronous observer and application-owned bounded `asyncio.Queue`:
+
+```python
+import asyncio
+from prepared_consumer import prepared_options_with_diagnostics, process_owned_prepared_delivery
+
+diagnostics = asyncio.Queue(maxsize=256)  # Capacity chosen by the host.
+options = prepared_options_with_diagnostics(60_000, diagnostics)
+queued = await process_owned_prepared_delivery(
+    client.inner, job, scope, connection_scope, prepare, apply, options,
+)
+```
+
+The helper rejects unbounded queues and forwards frozen primitive metadata using
+`put_nowait(asdict(event))`. Queue-full and other observer exceptions are isolated;
+events may drop. The host owns a separate bounded drain to its diagnostic backend,
+including shutdown and availability. No drain, transport or worker loop starts on
+import. The SDK schedules no async observer work and never waits for diagnostics
+before acknowledging an already committed job.
+
+Successful heartbeats emit nothing. At most nine events describe the operation's
+start, claim/preparation, first failure per lease, confirmed/unknown commit and
+shutdown. No event includes owner/event IDs, original bytes, tokens, prepared data,
+saved results or raw exceptions. Callback duration and total elapsed time use a
+monotonic clock and do not establish lease validity.
+
+The same protected job version, phases and ownership fence apply. Diagnostics
+never select retry/dead-letter, release claims or prove rollback/completion.
+Keep observers passive and nonblocking; blocking callbacks can consume budgets
+and stall timers even though exceptions are isolated. Callback recovery remains
+independent of telemetry. See the [Python event and isolation contract](../../docs/event-acknowledgment-python-telemetry.md).

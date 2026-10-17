@@ -1,5 +1,8 @@
 # Node preparation lifecycle telemetry
 
+The [Python preparation observer](event-acknowledgment-python-telemetry.md) uses the
+same event vocabulary with frozen dataclass metadata and synchronous callbacks.
+
 `runPreparedDurable` accepts an optional `onEvent` callback for application logs,
 metrics and alerts. Events describe the local coordinator's phases and observed
 outcomes. They contain no event body, prepared value, saved response, identity,

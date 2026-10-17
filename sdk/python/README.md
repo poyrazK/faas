@@ -2748,6 +2748,14 @@ scopes for each operation. Existing receipts skip preparation and new claims;
 local renewal is joined before completion while platform renewal continues.
 See [budgets, cleanup and uncertain commits](../../docs/event-acknowledgment-python-preparation.md).
 
+Set keyword-only `EventAcknowledgmentPreparedOptions.on_event` for best-effort
+preparation metadata. Frozen `EventAcknowledgmentPreparationEvent` variants report
+bounded durations, acquisition/preparation, renewal failure, confirmed/unknown
+commit and shutdown outcomes, without identities, payloads, tokens or raw errors.
+Use a synchronous nonblocking callback and an application-owned bounded queue.
+Observer exceptions preserve processing outcomes; no observer work is scheduled
+or awaited. See [event fields and isolation](../../docs/event-acknowledgment-python-telemetry.md).
+
 `ainspect_event_consumer_processing(connection, request, stop_event=...)` reads
 frozen receipt/claim metadata for one original consumer request in one statement.
 It reports matching/completed, active, expired, absent or conflicting evidence and

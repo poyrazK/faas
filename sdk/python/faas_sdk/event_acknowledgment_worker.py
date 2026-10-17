@@ -37,6 +37,7 @@ from .event_acknowledgment_preparation import (
     _run_prepared,
     _settings,
 )
+from .event_acknowledgment_preparation_events import observe_preparation
 from .event_consumer_delivery_context import event_consumer_delivery_context_from_headers
 from .event_consumer_processing import EventConsumerProcessingLease
 from .event_consumer_transactions import (
@@ -282,7 +283,11 @@ class AsyncEventAcknowledgmentWorker:
         if not callable(connection_factory) or not callable(prepare) or not callable(handler):
             raise ValueError("invalid acknowledgment preparation factory or callbacks")
         return await self._operate(
-            lambda control: _run_prepared(self, connection_factory, prepare, handler, settings, control), stop_event
+            lambda control: observe_preparation(
+                settings.on_event,
+                lambda events: _run_prepared(self, connection_factory, prepare, handler, settings, control, events),
+            ),
+            stop_event,
         )
 
     async def _stage(
@@ -449,7 +454,17 @@ class AsyncEventAcknowledgmentWorker:
             control.check()
             return
 
-    async def _monitor(self, control: Control) -> None:
+    async def _monitor(self, control: Control, on_failure: Callable[[BaseException, bool], None] | None = None) -> None:
+        def stop(failure: EventAcknowledgmentWorkerError) -> None:
+            already_stopped = control.event.is_set()
+            control.stop(failure)
+            if on_failure is not None:
+                try:
+                    on_failure(failure, already_stopped)
+                except BaseException:
+                    pass  # Optional diagnostics cannot alter renewal cancellation.
+
+        failure = None
         try:
             while True:
                 await pause(self._budget.interval_ms, control)
@@ -460,11 +475,13 @@ class AsyncEventAcknowledgmentWorker:
                     )
                 )
         except CallbackFailure as error:
-            control.stop(callback_error(error, control.result))
+            failure = callback_error(error, control.result)
         except (asyncio.CancelledError, EventAcknowledgmentWorkerError):
             pass
         except Exception:
-            control.stop(EventAcknowledgmentWorkerError("event_acknowledgment_unconfirmed"))
+            failure = EventAcknowledgmentWorkerError("event_acknowledgment_unconfirmed")
+        if failure is not None:
+            stop(failure)
 
     async def _terminal(self, action: str, value: bytes | str, control: Control) -> EventAcknowledgmentWorkerResult:
         return await terminal(

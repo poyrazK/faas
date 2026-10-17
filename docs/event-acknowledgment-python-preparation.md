@@ -110,6 +110,7 @@ independent acceptance identity.
 | --- | --- |
 | `preparation_timeout_ms` | Required native integer, 1–2,147,483,647 ms. Covers platform startup, claim, preparation, local handoff and final refresh, including acquisition/cleanup. |
 | `processing_lease_ms` | Native integer, 3–2,147,483,647 ms; default 30,000. Local renewal waits `duration // 3` after each completed scope. |
+| `on_event` | Optional keyword-only synchronous, nonblocking observer of [bounded lifecycle metadata](event-acknowledgment-python-telemetry.md). Observer exceptions are isolated. |
 
 Reject booleans/fractional values and snapshot effective options for the call.
 `stop_event` is an optional `asyncio.Event` covering initial reconciliation, final
@@ -169,3 +170,8 @@ For read-only diagnostics after busy or interrupted preparation, use
 [`ainspect_event_consumer_processing`](event-consumer-processing-inspection.md#python-inspection).
 Its metadata snapshot grants no ownership, validates no saved result and never
 chooses recovery. Unknown commits still require the existing receipt protocol.
+
+For process-local phase/outcome diagnostics, attach the optional
+[`on_event` observer](event-acknowledgment-python-telemetry.md). Events contain fixed
+metadata only and never select recovery. Confirmed/unknown commit outcomes retain
+their existing precedence; shutdown follows joined coordinator renewal cleanup.

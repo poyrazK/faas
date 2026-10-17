@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping, Sequence
+from dataclasses import asdict
 from typing import Any
 
 from consumer import _enqueue_authenticated_delivery, _owned_delivery
 from durable_consumer import _ack
 from faas_sdk import (
+    EventAcknowledgmentPreparationEvent,
     EventAcknowledgmentPreparedOptions,
     ainspect_event_consumer_processing,
     event_consumer_request_from_headers,
@@ -80,3 +83,18 @@ async def inspect_owned_prepared_delivery(
     return await ainspect_event_consumer_processing(
         connection, request, stop_event=job.stop_event
     )
+
+
+def prepared_options_with_diagnostics(
+    preparation_timeout_ms: int, diagnostics: asyncio.Queue[dict[str, Any]]
+) -> EventAcknowledgmentPreparedOptions:
+    """Use a bounded local queue; the host owns draining it to its diagnostics backend."""
+    if not isinstance(diagnostics, asyncio.Queue):
+        raise TypeError("bounded diagnostic queue required")
+    if diagnostics.maxsize <= 0:
+        raise ValueError("bounded diagnostic queue required")
+
+    def observe(event: EventAcknowledgmentPreparationEvent) -> None:
+        diagnostics.put_nowait(asdict(event))
+
+    return EventAcknowledgmentPreparedOptions(preparation_timeout_ms, on_event=observe)

@@ -1,5 +1,7 @@
 # Architecture Decision Records
 
+- [Python preparation lifecycle telemetry](20261017161548-python-preparation-lifecycle-telemetry.md)
+
 - [Python processing recovery inspection](20261017155904-python-processing-recovery-inspection.md)
 
 - [Coordinated Python event preparation](20261017154707-coordinated-python-event-preparation.md)

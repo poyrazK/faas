@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from ._event_acknowledgment_preparation_runtime import (
@@ -21,6 +21,7 @@ from ._event_acknowledgment_protocol import (
 from ._event_consumer_processing_store import _store_error as processing_store_error
 from .event_acknowledgment_intents import EventAcknowledgmentIntentResult
 from .event_acknowledgment_intents import _store_error as intent_store_error
+from .event_acknowledgment_preparation_events import EventAcknowledgmentPreparationEvent, PreparationEvents
 from .event_consumer_processing import aclaim_event_consumer_processing
 from .event_consumer_transactions import _EventConsumerTransactionHooks
 
@@ -34,18 +35,25 @@ _T = TypeVar("_T")
 class EventAcknowledgmentPreparedOptions:
     preparation_timeout_ms: int
     processing_lease_ms: int = 30000
+    on_event: Callable[[EventAcknowledgmentPreparationEvent], None] | None = field(
+        default=None, kw_only=True, repr=False
+    )
 
 
 def _settings(options: EventAcknowledgmentPreparedOptions) -> EventAcknowledgmentPreparedOptions:
+    if not isinstance(options, EventAcknowledgmentPreparedOptions):
+        raise ValueError("invalid acknowledgment preparation budget")
+    timeout, lease, observer = options.preparation_timeout_ms, options.processing_lease_ms, options.on_event
     if (
-        not isinstance(options, EventAcknowledgmentPreparedOptions)
-        or type(options.preparation_timeout_ms) is not int
-        or not 1 <= options.preparation_timeout_ms <= 2147483647
-        or type(options.processing_lease_ms) is not int
-        or not 3 <= options.processing_lease_ms <= 2147483647
+        type(timeout) is not int
+        or not 1 <= timeout <= 2147483647
+        or type(lease) is not int
+        or not 3 <= lease <= 2147483647
     ):
         raise ValueError("invalid acknowledgment preparation budget")
-    return EventAcknowledgmentPreparedOptions(options.preparation_timeout_ms, options.processing_lease_ms)
+    if observer is not None and not callable(observer):
+        raise ValueError("invalid acknowledgment preparation observer")
+    return EventAcknowledgmentPreparedOptions(timeout, lease, on_event=observer)
 
 
 async def _run_prepared(
@@ -55,15 +63,18 @@ async def _run_prepared(
     handler: Callable[[Any, EventAcknowledgmentWorkerCancellation, _T], Awaitable[bytes | str]],
     options: EventAcknowledgmentPreparedOptions,
     parent: Control,
+    events: PreparationEvents,
 ) -> EventAcknowledgmentIntentResult:
     async def stage(
         control: Control,
         callback: Callable[[Any], Awaitable[bytes | str]] | None = None,
         hooks: _EventConsumerTransactionHooks | None = None,
     ) -> EventAcknowledgmentIntentResult:
-        return await connection_operation(
+        result = await connection_operation(
             factory, control, lambda connection: worker._stage(connection, callback, control, hooks), intent_store_error
         )
+        events.intent_committed(result.receipt.replayed)
+        return result
 
     try:
         return await stage(parent, hooks=_EventConsumerTransactionHooks(intent_store_error))
@@ -90,9 +101,22 @@ async def _run_prepared(
     result: EventAcknowledgmentIntentResult | None = None
     try:
         work.check()
-        await worker._start(work)
+        events.stage("platform_start")
+        startup_failure: BaseException | None = None
+        try:
+            await worker._start(work)
+        except BaseException as error:
+            startup_failure = error
+        if startup_failure is not None:
+            already_stopped = work.event.is_set()
+            work.stop(startup_failure)
+            events.renewal_failed("platform", startup_failure, already_stopped)
+            raise startup_failure
         work.check()
-        platform = asyncio.create_task(worker._monitor(work))
+        platform = asyncio.create_task(
+            worker._monitor(work, lambda error, stopped: events.renewal_failed("platform", error, stopped))
+        )
+        events.stage("claim")
         lease = await connection_operation(
             factory,
             work,
@@ -101,33 +125,50 @@ async def _run_prepared(
             ),
             processing_store_error,
         )
+        if not lease.completed:
+            events.claim_acquired()
         work.check()
         if lease.completed:
             work.preparing = False
             timer.cancel()
+            events.stage("receipt_reconciliation")
             result = await stage(work, hooks=_EventConsumerTransactionHooks(intent_store_error))
         else:
 
             async def renew() -> None:
-                await connection_operation(
-                    factory,
-                    work,
-                    lambda connection: lease.renew(connection, options.processing_lease_ms, stop_event=work.event),
-                    processing_store_error,
-                )
+                failure: BaseException | None = None
+                try:
+                    await connection_operation(
+                        factory,
+                        work,
+                        lambda connection: lease.renew(connection, options.processing_lease_ms, stop_event=work.event),
+                        processing_store_error,
+                    )
+                except BaseException as error:
+                    failure = error
+                if failure is not None:
+                    already_stopped = work.event.is_set()
+                    work.stop(failure)
+                    events.renewal_failed("local", failure, already_stopped)
+                    raise failure
 
+            events.stage("local_renewal")
             await renew()
             work.check()
             local = asyncio.create_task(renew_processing(renew, options.processing_lease_ms // 3, local_stop, work))
-            prepared = await prepare(EventAcknowledgmentWorkerCancellation(work))
+            events.stage("preparation")
+            prepared = await events.prepare(lambda: prepare(EventAcknowledgmentWorkerCancellation(work)))
             work.check()
+            events.stage("local_handoff")
             local_stop.set()
             await local
             work.check()
+            events.stage("local_renewal")
             await renew()
             work.check()
             work.preparing = False
             timer.cancel()
+            events.stage("completion")
             async with lease._use(worker._input, work) as hooks:
                 result = await stage(
                     work, lambda cursor: handler(cursor, EventAcknowledgmentWorkerCancellation(work), prepared), hooks
