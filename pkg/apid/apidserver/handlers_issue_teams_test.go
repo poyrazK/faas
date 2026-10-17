@@ -11,7 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 )
 
-// adr: 1406
+// adr: 1461
 func TestIssueTeamManagementRoutingAndInbox(t *testing.T) {
 	e := apidserver.SetupPGHandler(t, api.PlanPro)
 	app := apidserver.SeedPGApp(t, e, "team-inbox")

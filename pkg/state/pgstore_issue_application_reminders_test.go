@@ -21,7 +21,7 @@ type nativeReminderTransport func(*http.Request) (*http.Response, error)
 
 func (f nativeReminderTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
-// ADR-1438: native reminders are bounded per response and share safe Slack delivery.
+// ADR-1493: native reminders are bounded per response and share safe Slack delivery.
 func TestPg_NativeApplicationReminderLifecycle(t *testing.T) {
 	s, pool, ctx := pgStoreWithPool(t)
 	account, app := seedPgAccountAndApp(t, s, ctx)

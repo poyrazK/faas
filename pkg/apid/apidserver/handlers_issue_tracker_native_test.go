@@ -63,7 +63,7 @@ func (p *nativeStatusFake) SetStatus(_ context.Context, expected issuetracker.St
 	return p.status, nil
 }
 
-// adr: 1411
+// adr: 1466
 func TestNativeIssueTrackerUsesOwnedConnectionAndRejectsReportersAndRevokedRepository(t *testing.T) {
 	e := apidserver.SetupPGHandler(t, api.PlanPro)
 	app := apidserver.SeedPGApp(t, e, "native-tracker")
@@ -141,7 +141,7 @@ func (p *nativeCreateFake) Recover(context.Context, issuetracker.Request, string
 	panic("unexpected recovery")
 }
 
-// adr: 1412
+// adr: 1467
 func TestNativeIssueTicketCreationPersistsRetryEvidenceAndScopesConnection(t *testing.T) {
 	e := apidserver.SetupPGHandler(t, api.PlanPro)
 	app := apidserver.SeedPGApp(t, e, "native-create")
@@ -252,7 +252,7 @@ func TestNativeIssueTicketCreationPersistsRetryEvidenceAndScopesConnection(t *te
 	}
 }
 
-// adr: 1413
+// adr: 1468
 func TestNativeIssueTrackerAutoSyncScopesClaimsPushesAndPauses(t *testing.T) {
 	e := apidserver.SetupPGHandler(t, api.PlanPro)
 	app := apidserver.SeedPGApp(t, e, "native-auto")
@@ -434,7 +434,7 @@ func (p *nativeLinearFake) VerifyLinearConnection(_ context.Context, token, team
 	return issuetracker.LinearIdentity{WorkspaceID: "11111111-1111-4111-8111-111111111111", ViewerID: "33333333-3333-4333-8333-333333333333", TeamID: team}, nil
 }
 
-// adr: 1415
+// adr: 1470
 func TestNativeIssueLinearConnectionScopesSealsAndDisconnects(t *testing.T) {
 	e := apidserver.SetupPGHandler(t, api.PlanPro)
 	app := apidserver.SeedPGApp(t, e, "linear-connection")
@@ -553,7 +553,7 @@ func (p *nativeLinearCreateFake) Recover(_ context.Context, r issuetracker.Reque
 	return issuetracker.Ticket{URL: "https://linear.app/acme/issue/PAY-42", ProviderID: r.RequestID}, nil
 }
 
-// adr: 1416
+// adr: 1471
 func TestNativeIssueLinearCreationRecoversUUIDAndRejectsRevokedConnections(t *testing.T) {
 	e := apidserver.SetupPGHandler(t, api.PlanPro)
 	app := apidserver.SeedPGApp(t, e, "linear-native-create")
@@ -693,7 +693,7 @@ func (p *nativeLinearLifecycleFake) SetStatus(_ context.Context, expected issuet
 	return p.status, nil
 }
 
-// adr: 1417
+// adr: 1472
 func TestNativeIssueLinearStatusPinsPreviewAndRequiresWorkflowSelection(t *testing.T) {
 	e := apidserver.SetupPGHandler(t, api.PlanPro)
 	app := apidserver.SeedPGApp(t, e, "linear-native-status")
@@ -759,7 +759,7 @@ func TestNativeIssueLinearStatusPinsPreviewAndRequiresWorkflowSelection(t *testi
 	}
 }
 
-// adr: 1418
+// adr: 1473
 func TestNativeIssueLinearAutoSyncPersistsMappingsAndRecoversUncertainWrites(t *testing.T) {
 	e := apidserver.SetupPGHandler(t, api.PlanPro)
 	app := apidserver.SeedPGApp(t, e, "linear-auto-sync")
@@ -1096,7 +1096,7 @@ func TestNativeIssueDashboardTrackerSyncReviewConnectAndRecovery(t *testing.T) {
 	}
 }
 
-// adr: 1421
+// adr: 1476
 func TestNativeIssueLinearCallbacksAreScopedDurableHintsAndPreserveClaimWakeups(t *testing.T) {
 	e := apidserver.SetupPGHandler(t, api.PlanPro)
 	app := apidserver.SeedPGApp(t, e, "linear-callbacks")
@@ -1350,7 +1350,7 @@ func TestNativeIssueGitHubCallbacksOnlyWakeOwnedActiveReferences(t *testing.T) {
 
 }
 
-// adr: 1425
+// adr: 1480
 func TestNativeIssueInboundStoreIsAtomicAndScopesDeployment(t *testing.T) {
 	e := apidserver.SetupPGHandler(t, api.PlanPro)
 	app := apidserver.SeedPGApp(t, e, "inbound-atomic")
@@ -1474,7 +1474,7 @@ func TestNativeIssueInboundStoreIsAtomicAndScopesDeployment(t *testing.T) {
 	}
 }
 
-// adr: 1426
+// adr: 1481
 func TestNativeIssueDirectionalWorkerReopensAndHoldsResolutions(t *testing.T) {
 	for _, providerName := range []string{"github", "linear"} {
 		t.Run(providerName, func(t *testing.T) {
@@ -1702,7 +1702,7 @@ func TestNativeIssueDirectionalWorkerReopensAndHoldsResolutions(t *testing.T) {
 	}
 }
 
-// adr: 1426
+// adr: 1481
 func TestNativeIssueAutomaticReopenConsumesClaimAtomically(t *testing.T) {
 	e := apidserver.SetupPGHandler(t, api.PlanPro)
 	app := apidserver.SeedPGApp(t, e, "reopen-claims")
@@ -1959,7 +1959,7 @@ func TestNativeIssueTrackerReviewQueueScopesFiltersAndPages(t *testing.T) {
 	}
 }
 
-// adr: 1428
+// adr: 1483
 func TestNativeIssueSyncHealthReceiptsAndReadOnlyRecovery(t *testing.T) {
 	e := apidserver.SetupPGHandler(t, api.PlanPro)
 	app := apidserver.SeedPGApp(t, e, "sync-health")
@@ -2176,7 +2176,7 @@ func TestNativeIssueSyncHealthReceiptsAndReadOnlyRecovery(t *testing.T) {
 	}
 }
 
-// adr: 1429
+// adr: 1484
 func TestNativeIssueSyncNotificationOwnershipSettingsAndAtomicOutbox(t *testing.T) {
 	e := apidserver.SetupPGHandler(t, api.PlanPro)
 	app := apidserver.SeedPGApp(t, e, "sync-notifications")

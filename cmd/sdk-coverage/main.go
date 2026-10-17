@@ -47,9 +47,9 @@ const (
 // Mirror logic in cmd/apid/spec_compliance_test.go::routeExclude;
 // keep both in sync.
 var routeExclude = map[string]bool{
-	"POST /integrations/slack/actions":                                                  true, // ADR-1442 signed managed Slack actions.
-	"POST /integrations/slack/events":                                                   true, // ADR-1442 signed Slack uninstall/revocation callbacks.
-	"POST /integrations/slack/issues/{app_id}":                                          true, // ADR-1441 Slack-signed provider callback.
+	"POST /integrations/slack/actions":                                                  true, // ADR-1497 signed managed Slack actions.
+	"POST /integrations/slack/events":                                                   true, // ADR-1497 signed Slack uninstall/revocation callbacks.
+	"POST /integrations/slack/issues/{app_id}":                                          true, // ADR-1496 Slack-signed provider callback.
 	"GET /dashboard/apps/{slug}/issues/tracker-notifications":                           true, // authenticated browser-only tracker review/notification surface
 	"POST /dashboard/apps/{slug}/issues/tracker-notifications":                          true, // authenticated browser-only tracker review/notification surface
 	"GET /dashboard/apps/{slug}/issues/tracker-notifications/triage/{notification_id}":  true, // authenticated browser-only tracker review/notification surface
@@ -79,12 +79,12 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/apps/{slug}/crons/{id}/policy":                   true, // HTML form, scheduled-work policy editor (ADR-385)
 	"POST /dashboard/jobs/{name}/policy":                              true, // HTML form, scheduled-work policy editor (ADR-385)
 	"POST /dashboard/jobs/{name}/runs/{id}/replay-failed":             true, // HTML form, failed job partition replay (ADR-385)
-	"POST /dashboard/apps/{slug}/issues/{issue_id}/tracker-sync":      true, // ADR-1419: authenticated HTML review/recovery form with named CSRF.
-	"POST /dashboard/apps/{slug}/issues/{issue_id}/linear-connection": true, // ADR-1419: owner HTML credential form with session MFA and CSRF.
-	"POST /hooks/issue-trackers/linear/{app_id}":                      true, // ADR-1421: raw-body HMAC provider protocol, outside the Bearer-auth DTO/SDK surface.
-	"GET /dashboard/apps/{slug}/issues/slack-routing":                 true, // ADR-1443 owner-only Slack routing editor.
-	"GET /oauth/slack/callback":                                       true, // ADR-1442 owner session and one-use state confirmation.
-	"GET /oauth/linear/callback":                                      true, // ADR-1423: owner session OAuth callback and HTML team picker with PKCE and one-use state.
+	"POST /dashboard/apps/{slug}/issues/{issue_id}/tracker-sync":      true, // ADR-1474: authenticated HTML review/recovery form with named CSRF.
+	"POST /dashboard/apps/{slug}/issues/{issue_id}/linear-connection": true, // ADR-1474: owner HTML credential form with session MFA and CSRF.
+	"POST /hooks/issue-trackers/linear/{app_id}":                      true, // ADR-1476: raw-body HMAC provider protocol, outside the Bearer-auth DTO/SDK surface.
+	"GET /dashboard/apps/{slug}/issues/slack-routing":                 true, // ADR-1498 owner-only Slack routing editor.
+	"GET /oauth/slack/callback":                                       true, // ADR-1497 owner session and one-use state confirmation.
+	"GET /oauth/linear/callback":                                      true, // ADR-1478: owner session OAuth callback and HTML team picker with PKCE and one-use state.
 
 	// Issue #555 trace endpoint. Operator-only surface (X-Faas-Trace-Auth
 	// header), not a customer-Bearer-auth endpoint. The SDK does not

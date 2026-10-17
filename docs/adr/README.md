@@ -1133,14 +1133,14 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 
 - [ADR-910: Per-plan block rate limits](910-block-rate-limits.md)
 
-- [ADR-1401: Deployment-bound Issues source-map artifacts](1401-deployment-issue-source-map-artifacts.md)
+- [ADR-1456: Deployment-bound Issues source-map artifacts](1456-deployment-issue-source-map-artifacts.md)
 
-- [ADR-1402: Labeled Issues grouping evaluation](1402-issue-grouping-evaluation-corpus.md)
-- [1403: Bounded operational context for Issues](1403-bounded-issue-operational-context.md)
+- [ADR-1457: Labeled Issues grouping evaluation](1457-issue-grouping-evaluation-corpus.md)
+- [1458: Bounded operational context for Issues](1458-bounded-issue-operational-context.md)
 
-- [ADR-1404: Observed release comparison and atomic bulk issue triage](1404-issue-release-comparison-and-bulk-triage.md)
+- [ADR-1459: Observed release comparison and atomic bulk issue triage](1459-issue-release-comparison-and-bulk-triage.md)
 
-- [ADR-1405: Shared issue views and source/tag ownership routing](1405-shared-issue-views-and-source-routing.md)
+- [ADR-1460: Shared issue views and source/tag ownership routing](1460-shared-issue-views-and-source-routing.md)
 - [ADR-1348: Checked project binding release graphs](1348-checked-project-binding-release-graphs.md)
 
 - [ADR-1352: Push queue binding handler completion canaries](1352-push-queue-binding-completion-canaries.md)
@@ -1206,78 +1206,78 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 
 - [ADR-1331: Retained GitOps workload retirement and reviewed recovery](1331-gitops-workload-retirement.md)
 
-- [ADR 1406: App-scoped issue teams and explicit CODEOWNERS import](1406-issue-teams-and-codeowners.md)
+- [ADR 1461: App-scoped issue teams and explicit CODEOWNERS import](1461-issue-teams-and-codeowners.md)
 
-- [ADR 1407: Slack alerts through verified Issues webhook receivers](1407-issue-slack-webhook-bridge.md)
+- [ADR 1462: Slack alerts through verified Issues webhook receivers](1462-issue-slack-webhook-bridge.md)
 
-- [ADR 1408: Native issue tracker references](1408-issue-tracker-links.md)
+- [ADR 1463: Native issue tracker references](1463-issue-tracker-links.md)
 
-- [ADR 1409: Explicit provider ticket creation with durable CLI recovery](1409-issue-ticket-creation-journal.md)
+- [ADR 1464: Explicit provider ticket creation with durable CLI recovery](1464-issue-ticket-creation-journal.md)
 
-- [ADR 1410: Explicit tracker lifecycle synchronization](1410-explicit-tracker-lifecycle-sync.md)
+- [ADR 1465: Explicit tracker lifecycle synchronization](1465-explicit-tracker-lifecycle-sync.md)
 
-- [ADR 1411: Native GitHub connections for issue status](1411-native-github-issue-status.md)
+- [ADR 1466: Native GitHub connections for issue status](1466-native-github-issue-status.md)
 
-- [ADR-1412: Native GitHub ticket creation receipts](1412-native-github-ticket-creation.md)
+- [ADR-1467: Native GitHub ticket creation receipts](1467-native-github-ticket-creation.md)
 
-- [ADR-1413: Opt-in automatic native GitHub lifecycle reconciliation](1413-automatic-native-github-lifecycle.md)
+- [ADR-1468: Opt-in automatic native GitHub lifecycle reconciliation](1468-automatic-native-github-lifecycle.md)
 
-- [ADR-1414: Verified Linear credential boundary](1414-linear-connection-credential-boundary.md)
+- [ADR-1469: Verified Linear credential boundary](1469-linear-connection-credential-boundary.md)
 
-- [ADR-1415: Durable Linear Issues connections](1415-durable-linear-issue-connections.md)
+- [ADR-1470: Durable Linear Issues connections](1470-durable-linear-issue-connections.md)
 
-- [ADR-1416: Native Linear ticket creation and UUID recovery](1416-native-linear-ticket-creation.md)
+- [ADR-1471: Native Linear ticket creation and UUID recovery](1471-native-linear-ticket-creation.md)
 
-- [ADR-1417: Explicit native Linear lifecycle sync](1417-native-linear-lifecycle-sync.md)
+- [ADR-1472: Explicit native Linear lifecycle sync](1472-native-linear-lifecycle-sync.md)
 
-- [ADR-1418: Automatic native Linear lifecycle sync](1418-automatic-native-linear-lifecycle.md)
+- [ADR-1473: Automatic native Linear lifecycle sync](1473-automatic-native-linear-lifecycle.md)
 
-- [ADR-1419: Dashboard tracker sync controls](1419-dashboard-tracker-sync-controls.md)
+- [ADR-1474: Dashboard tracker sync controls](1474-dashboard-tracker-sync-controls.md)
 
-- [ADR-1420: Named Linear workflow picker](1420-named-linear-workflow-picker.md)
+- [ADR-1475: Named Linear workflow picker](1475-named-linear-workflow-picker.md)
 
-- [ADR-1421: Provider issue callbacks as durable refresh hints](1421-provider-issue-callback-hints.md)
+- [ADR-1476: Provider issue callbacks as durable refresh hints](1476-provider-issue-callback-hints.md)
 
-- [ADR-1422: Callback rejection diagnostics and setup evidence](1422-callback-rejection-diagnostics-and-setup-evidence.md)
+- [ADR-1477: Callback rejection diagnostics and setup evidence](1477-callback-rejection-diagnostics-and-setup-evidence.md)
 
-- [ADR-1423: Linear Issue tracker OAuth](1423-linear-issue-tracker-oauth.md)
+- [ADR-1478: Linear Issue tracker OAuth](1478-linear-issue-tracker-oauth.md)
 
-- [ADR-1424: Read-only inbound tracker lifecycle assessment](1424-issue-tracker-inbound-preview.md)
+- [ADR-1479: Read-only inbound tracker lifecycle assessment](1479-issue-tracker-inbound-preview.md)
 
-- [ADR-1425: Explicit inbound tracker lifecycle application](1425-explicit-inbound-tracker-lifecycle.md)
+- [ADR-1480: Explicit inbound tracker lifecycle application](1480-explicit-inbound-tracker-lifecycle.md)
 
-- [ADR-1426: Opt-in directional tracker sync and automatic reopenings](1426-directional-issue-tracker-reopenings.md)
+- [ADR-1481: Opt-in directional tracker sync and automatic reopenings](1481-directional-issue-tracker-reopenings.md)
 
-- [ADR-1427: Tracker closure review queue and deployment evidence](1427-tracker-closure-review-queue.md)
+- [ADR-1482: Tracker closure review queue and deployment evidence](1482-tracker-closure-review-queue.md)
 
-- [ADR-1428: Durable sync health and read-only recovery inspections](1428-tracker-sync-health-and-inspections.md)
+- [ADR-1483: Durable sync health and read-only recovery inspections](1483-tracker-sync-health-and-inspections.md)
 
-- [ADR-1429: Opt-in tracker sync notifications and ownership routing](1429-tracker-sync-notifications-and-team-routing.md)
+- [ADR-1484: Opt-in tracker sync notifications and ownership routing](1484-tracker-sync-notifications-and-team-routing.md)
 
-- [ADR-1430: Tracker notification acknowledgment and claims](1430-tracker-notification-acknowledgment-and-claims.md)
+- [ADR-1485: Tracker notification acknowledgment and claims](1485-tracker-notification-acknowledgment-and-claims.md)
 
-- [ADR-1431: Tracker incident snoozing and automatic resurfacing](1431-tracker-incident-snoozing-and-resurfacing.md)
+- [ADR-1486: Tracker incident snoozing and automatic resurfacing](1486-tracker-incident-snoozing-and-resurfacing.md)
 
-- [ADR-1432: Bounded reminders for unacknowledged tracker incidents](1432-unacknowledged-tracker-incident-reminders.md)
+- [ADR-1487: Bounded reminders for unacknowledged tracker incidents](1487-unacknowledged-tracker-incident-reminders.md)
 
-- [ADR-1433: One-step backup team escalation for tracker incidents](1433-backup-team-tracker-incident-escalation.md)
+- [ADR-1488: One-step backup team escalation for tracker incidents](1488-backup-team-tracker-incident-escalation.md)
 
-- [ADR-1434: Team Slack destinations for tracker incidents](1434-team-slack-incident-destinations.md)
+- [ADR-1489: Team Slack destinations for tracker incidents](1489-team-slack-incident-destinations.md)
 
-- [ADR-1435: Application issue event-frequency alert rules](1435-issue-frequency-alert-rules.md)
+- [ADR-1490: Application issue event-frequency alert rules](1490-issue-frequency-alert-rules.md)
 
-- [ADR-1436: Native Slack delivery for application issue alerts](1436-native-application-issue-slack.md)
+- [ADR-1491: Native Slack delivery for application issue alerts](1491-native-application-issue-slack.md)
 
-- [ADR-1437: Native application issue acknowledgment and snoozing](1437-native-application-issue-response.md)
+- [ADR-1492: Native application issue acknowledgment and snoozing](1492-native-application-issue-response.md)
 
-- [ADR-1438: Reminders for unacknowledged native application issues](1438-native-application-issue-reminders.md)
+- [ADR-1493: Reminders for unacknowledged native application issues](1493-native-application-issue-reminders.md)
 
-- [ADR-1439: Backup-team escalation for native application issues](1439-native-application-issue-escalation.md)
+- [ADR-1494: Backup-team escalation for native application issues](1494-native-application-issue-escalation.md)
 
-- [ADR-1440: Native application issue response inbox](1440-native-application-issue-response-inbox.md)
+- [ADR-1495: Native application issue response inbox](1495-native-application-issue-response-inbox.md)
 
-- [ADR-1441: Native Slack response actions and account links](1441-native-slack-response-actions.md)
+- [ADR-1496: Native Slack response actions and account links](1496-native-slack-response-actions.md)
 
-- [ADR-1442: Native Slack OAuth installation](1442-native-slack-oauth-installation.md)
+- [ADR-1497: Native Slack OAuth installation](1497-native-slack-oauth-installation.md)
 
-- [ADR-1443: Native Slack channel routing rules](1443-native-slack-channel-routing.md)
+- [ADR-1498: Native Slack channel routing rules](1498-native-slack-channel-routing.md)

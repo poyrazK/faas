@@ -11327,7 +11327,7 @@ const (
 	IssueTrackerSyncSnoozeReasonMaxBytes        = 512
 	IssueTrackerSyncTriageHistoryMax            = 20
 	IssueTrackerSyncNotificationsMax            = 50
-	IssueTrackerSyncHistoryMax                  = 50 // Recent receipts retained per linked ticket (ADR-1428).
+	IssueTrackerSyncHistoryMax                  = 50 // Recent receipts retained per linked ticket (ADR-1483).
 	IssueTrackerAutoSyncBatch                   = 5
 	IssueTrackerAutoSyncCheckInterval           = 5 * time.Minute
 	IssueTrackerAutoSyncLease                   = 2 * IssueTrackerRequestTimeoutSeconds * time.Second
@@ -11359,7 +11359,7 @@ const (
 	IssueTrackerLinearOAuthCleanupBatch  = 100
 )
 
-// Team Slack incident notifications (ADR-1434) use the existing webhook retry ladder.
+// Team Slack incident notifications (ADR-1489) use the existing webhook retry ladder.
 const (
 	IssueSlackTokenMaxBytes    = 4096
 	IssueSlackResponseMaxBytes = 64 << 10
@@ -11414,10 +11414,10 @@ const (
 	IssueApplicationEscalationBatch          = 100
 )
 
-// Native Slack action verification and account-link bounds (ADR-1441).
+// Native Slack action verification and account-link bounds (ADR-1496).
 const (
 	IssueSlackInteractionMaxBytes = 64 << 10
-	// ADR-1442: owner-bound Slack OAuth and bounded channel discovery.
+	// ADR-1497: owner-bound Slack OAuth and bounded channel discovery.
 	IssueSlackOAuthFlowTTL          = 10 * time.Minute
 	IssueSlackOAuthTimeout          = 10 * time.Second
 	IssueSlackOAuthSealedMaxBytes   = 16 << 10
@@ -11440,7 +11440,7 @@ const (
 	IssueSlackSnoozeLong            = 24 * time.Hour
 )
 
-// Native Slack channel routing bounds (ADR-1443).
+// Native Slack channel routing bounds (ADR-1498).
 const (
 	IssueSlackRoutingMaxRules            = 20
 	IssueSlackRoutingKeyMaxBytes         = 48

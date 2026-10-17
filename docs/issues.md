@@ -1059,7 +1059,7 @@ This adds managed workspace consent, verified channel selection and installation
 lifecycle handling to the Sentry comparison. Automatic rotating-token refresh and
 Enterprise Grid organization grants remain gaps. Per-rule native alert channel
 routing is described below.
-See [ADR-1442](adr/1442-native-slack-oauth-installation.md).
+See [ADR-1497](adr/1497-native-slack-oauth-installation.md).
 
 ### Route native alerts to different Slack channels
 
@@ -1096,7 +1096,7 @@ Recent Slack deliveries retain the selected rule key, routing revision and chann
 including after edits or removal. Default deliveries say **team default channel**.
 Threads are distinct per issue and channel; a post to an override channel never
 uses another channel’s thread. Slack response buttons retain exact-message binding
-and current Gregale permissions. See [ADR-1443](adr/1443-native-slack-channel-routing.md).
+and current Gregale permissions. See [ADR-1498](adr/1498-native-slack-channel-routing.md).
 
 ### Native application Slack alerts
 
@@ -1232,7 +1232,7 @@ If the provider outcome is unconfirmed, the server refuses another create. After
 
 A `created` result means GitHub accepted the ticket but Gregale attachment needs retry; the CLI exits unsuccessfully and prints the confirmed URL. Repeat identical inputs to resume attachment. A `linked` receipt is retained even if the link is subsequently removed, so retrying never creates another ticket. Existing link quota, group lookup and audit rules apply; a full group may leave the external ticket awaiting attachment.
 
-The API is `POST /v1/apps/{slug}/issues/{issue_id}/native-tickets` with `request_id`, `repository`, `title`, optional `description` and `recovery_url`. Go exposes `CreateNativeIssueTicket`, Node `AppsService.createNativeIssueTicket`, and Python `faas_sdk.api.apps.create_native_issue_ticket`. Native Linear ticket creation is described below; automatic GitHub push is described below. See [ADR-1412](adr/1412-native-github-ticket-creation.md).
+The API is `POST /v1/apps/{slug}/issues/{issue_id}/native-tickets` with `request_id`, `repository`, `title`, optional `description` and `recovery_url`. Go exposes `CreateNativeIssueTicket`, Node `AppsService.createNativeIssueTicket`, and Python `faas_sdk.api.apps.create_native_issue_ticket`. Native Linear ticket creation is described below; automatic GitHub push is described below. See [ADR-1467](adr/1467-native-github-ticket-creation.md).
 
 ## Automatic native GitHub lifecycle sync
 
@@ -1254,7 +1254,7 @@ The worker polls every minute, takes at most five due references per batch, and 
 
 Unexpected provider edits, a changed source group or connection, ignored/unsupported states, and owner/entitlement loss pause the policy. Outcomes `conflict` and `blocked` require manual triage and an explicit aligned `--enable`; they do not silently resume. `enabled: true` means the delegation remains configured, while the outcome tells you whether the worker is paused. The connection and canonical source are pinned; merges/splits require review before re-enabling. Removing a tracker reference removes its policy.
 
-Disabling remains available when repository access is revoked and invalidates the worker claim. A GitHub write already dispatched during disable cannot be recalled. The provider and Gregale do not share an atomic transaction; see [ADR-1413](adr/1413-automatic-native-github-lifecycle.md) for the recovery and concurrency limits.
+Disabling remains available when repository access is revoked and invalidates the worker claim. A GitHub write already dispatched during disable cannot be recalled. The provider and Gregale do not share an atomic transaction; see [ADR-1468](adr/1468-automatic-native-github-lifecycle.md) for the recovery and concurrency limits.
 
 The API is GET/PUT `/v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/auto-sync`. PUT always supplies `enabled` and `expected_revision`; enabling also supplies `expected_status` from the native status read and `expected_issue_state`. Go exposes `GetIssueTrackerAutoSync`/`UpdateIssueTrackerAutoSync`, Node uses `AppsService.getIssueTrackerAutoSync`/`updateIssueTrackerAutoSync`, and Python exposes the corresponding `faas_sdk.api.apps` operations. Native Linear lifecycle sync is described below; provider callbacks and automatic inbound resolution remain separate work.
 
@@ -1283,7 +1283,7 @@ requires `team_id` and `api_key`, while disconnect must omit both. Go exposes
 `GetIssueTrackerLinearConnection`/`UpdateIssueTrackerLinearConnection`, Node uses
 matching `AppsService` operations, and Python exposes matching `faas_sdk.api.apps`
 operations. Native Linear creation and lifecycle sync are described below; OAuth remains separate work. Existing explicit CLI Linear operations still use a local key.
-See [ADR-1415](adr/1415-durable-linear-issue-connections.md).
+See [ADR-1470](adr/1470-durable-linear-issue-connections.md).
 
 ## Native Linear ticket creation
 
@@ -1321,7 +1321,7 @@ POST `/v1/apps/{slug}/issues/{issue_id}/native-linear-tickets` accepts `request_
 `team_id`, `title`, optional `description`, `recover` and `recovery_url`. Go exposes
 `CreateNativeLinearIssueTicket`, Node uses `AppsService.createNativeLinearIssueTicket`,
 and Python exposes `faas_sdk.api.apps.create_native_linear_issue_ticket`. This uses
-the stored personal API key; Native Linear lifecycle sync is described below; OAuth remains separate work. See [ADR-1416](adr/1416-native-linear-ticket-creation.md).
+the stored personal API key; Native Linear lifecycle sync is described below; OAuth remains separate work. See [ADR-1471](adr/1471-native-linear-ticket-creation.md).
 
 ## Native Linear lifecycle sync
 
@@ -1363,7 +1363,7 @@ lifecycle, `linear_state_id`. Go exposes `GetNativeLinearIssueTrackerStatus` and
 and Python exposes matching `faas_sdk.api.apps` operations. A provider write already
 dispatched cannot be recalled by disconnect or another edit; preview again after
 an unconfirmed outcome. OAuth and provider callbacks remain separate work. Automatic outbound Linear
-sync is described below. See [ADR-1417](adr/1417-native-linear-lifecycle-sync.md).
+sync is described below. See [ADR-1472](adr/1472-native-linear-lifecycle-sync.md).
 
 
 ## Automatic native Linear lifecycle sync
@@ -1409,7 +1409,7 @@ Enabling Linear supplies `enabled`, `expected_revision`, `expected_issue_state`,
 `expected_linear_status` from a fresh native Linear read, `linear_open_state_id`
 and `linear_resolved_state_id`. Omit the GitHub `expected_status` field. Disabling
 needs only `enabled: false` and the current `expected_revision`.
-See [ADR-1418](adr/1418-automatic-native-linear-lifecycle.md).
+See [ADR-1473](adr/1473-automatic-native-linear-lifecycle.md).
 
 ## Manage tracker sync in the dashboard
 
@@ -1439,7 +1439,7 @@ aligning or re-enabling: disabling cannot recall a dispatched provider mutation.
 **Disable automatic sync** uses the stored revision and works after provider
 access is revoked or disconnected. Successful changes return to the issue page;
 failed or stale forms report the existing API problem so you can reload and
-review again. See [ADR-1419](adr/1419-dashboard-tracker-sync-controls.md).
+review again. See [ADR-1474](adr/1474-dashboard-tracker-sync-controls.md).
 
 
 Linear workflow discovery runs only during owner-requested review, never on a
@@ -1448,7 +1448,7 @@ If an open or completed destination is missing, automatic enable stays unavailab
 The catalog is bounded to 200 scanned states across four pages of 50; failed or
 incomplete discovery returns no partial picker. Names are bounded to 256 bytes
 and pagination cursors to 512 bytes. CLI sync and delegation still accept explicit
-workflow UUIDs. See [ADR-1420](adr/1420-named-linear-workflow-picker.md).
+workflow UUIDs. See [ADR-1475](adr/1475-named-linear-workflow-picker.md).
 
 ## Provider callbacks for prompt tracker refresh
 
@@ -1503,7 +1503,7 @@ hashes, with at most 10,000 per scope. Processed receipts remain for seven days;
 pending hints wait for active claims and are preserved for recovery. Scheduling
 and cleanup each handle at most 100 receipts per pass. Callbacks for untracked,
 disabled or paused policies do not enable delegation.
-See [ADR-1421](adr/1421-provider-issue-callback-hints.md) and
+See [ADR-1476](adr/1476-provider-issue-callback-hints.md) and
 [Linear's webhook protocol](https://linear.app/developers/webhooks).
 
 ### Callback health and recovery

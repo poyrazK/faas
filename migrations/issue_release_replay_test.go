@@ -11,7 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
 
-// adr: 1435, 1443. Issues upgrades retain other products' webhook events, and
+// adr: 1490, 1498. Issues upgrades retain other products' webhook events, and
 // replay must preserve a captured override channel even without retained delivery rows.
 func TestIssueReleaseWebhookVocabularyAndRoutingReplay(t *testing.T) {
 	pool := pgtest.OpenMigrated(t)

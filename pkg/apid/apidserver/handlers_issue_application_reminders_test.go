@@ -14,7 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// ADR-1438: owner-only opt-in settings use existing browser CSRF and revision checks.
+// ADR-1493: owner-only opt-in settings use existing browser CSRF and revision checks.
 func TestNativeApplicationReminderDashboardPostgres(t *testing.T) {
 	e := apidserver.SetupPGHandler(t, api.PlanPro)
 	app := apidserver.SeedPGApp(t, e, "native-reminder-settings")

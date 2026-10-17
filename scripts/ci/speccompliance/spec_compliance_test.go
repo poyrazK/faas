@@ -96,12 +96,12 @@ const (
 // /dashboard/account/set-password into the public spec — the
 // dashboard auth surface is now real auth, not a backstop fallback.
 var routeExclude = map[string]bool{
-	"POST /integrations/slack/actions":                     true, // ADR-1442 signed managed Slack actions.
-	"POST /integrations/slack/events":                      true, // ADR-1442 signed Slack uninstall/revocation callbacks.
-	"POST /integrations/slack/issues/{app_id}":             true, // ADR-1441 Slack-signed provider callback; no account credentials
-	"GET /dashboard/apps/{slug}/issues/responses":          true, // ADR-1440 authenticated browser-only response inbox
-	"GET /dashboard/apps/{slug}/issues/{issue_id}/triage":  true, // ADR-1437 authenticated browser-only native response surface
-	"POST /dashboard/apps/{slug}/issues/{issue_id}/triage": true, // ADR-1437 authenticated browser-only native response surface
+	"POST /integrations/slack/actions":                     true, // ADR-1497 signed managed Slack actions.
+	"POST /integrations/slack/events":                      true, // ADR-1497 signed Slack uninstall/revocation callbacks.
+	"POST /integrations/slack/issues/{app_id}":             true, // ADR-1496 Slack-signed provider callback; no account credentials
+	"GET /dashboard/apps/{slug}/issues/responses":          true, // ADR-1495 authenticated browser-only response inbox
+	"GET /dashboard/apps/{slug}/issues/{issue_id}/triage":  true, // ADR-1492 authenticated browser-only native response surface
+	"POST /dashboard/apps/{slug}/issues/{issue_id}/triage": true, // ADR-1492 authenticated browser-only native response surface
 
 	"GET /dashboard/apps/{slug}/issues/tracker-notifications":                           true, // authenticated browser-only tracker review/notification surface
 	"POST /dashboard/apps/{slug}/issues/tracker-notifications":                          true, // authenticated browser-only tracker review/notification surface
@@ -128,12 +128,12 @@ var routeExclude = map[string]bool{
 	"GET /v1/dev/bridges/{id}/connect":                                true, // ADR-378 scoped WebSocket transport, described in docs/dev-bridge.md
 	"GET /v1/dev/bridges/{id}/status":                                 true, // attachment-authenticated CLI readiness protocol
 	"GET /v1/account/dpa":                                             true, // public markdown (no auth)
-	"POST /dashboard/apps/{slug}/issues/{issue_id}/tracker-sync":      true, // ADR-1419: authenticated HTML review/recovery form with named CSRF.
-	"POST /dashboard/apps/{slug}/issues/{issue_id}/linear-connection": true, // ADR-1419: owner HTML credential form with session MFA and CSRF.
-	"POST /hooks/issue-trackers/linear/{app_id}":                      true, // ADR-1421: raw-body HMAC provider protocol, outside the Bearer-auth DTO/SDK surface.
-	"GET /dashboard/apps/{slug}/issues/slack-routing":                 true, // ADR-1443 owner-only Slack routing editor.
-	"GET /oauth/slack/callback":                                       true, // ADR-1442 owner session and one-use state confirmation.
-	"GET /oauth/linear/callback":                                      true, // ADR-1423: owner session OAuth callback and HTML team picker with PKCE and one-use state.
+	"POST /dashboard/apps/{slug}/issues/{issue_id}/tracker-sync":      true, // ADR-1474: authenticated HTML review/recovery form with named CSRF.
+	"POST /dashboard/apps/{slug}/issues/{issue_id}/linear-connection": true, // ADR-1474: owner HTML credential form with session MFA and CSRF.
+	"POST /hooks/issue-trackers/linear/{app_id}":                      true, // ADR-1476: raw-body HMAC provider protocol, outside the Bearer-auth DTO/SDK surface.
+	"GET /dashboard/apps/{slug}/issues/slack-routing":                 true, // ADR-1498 owner-only Slack routing editor.
+	"GET /oauth/slack/callback":                                       true, // ADR-1497 owner session and one-use state confirmation.
+	"GET /oauth/linear/callback":                                      true, // ADR-1478: owner session OAuth callback and HTML team picker with PKCE and one-use state.
 	"POST /v1/webhooks/stripe":                                        true, // HMAC-signed webhook
 	"POST /v1/webhooks/paddle":                                        true, // HMAC-signed webhook (PR #3 / ADR-025)
 	"POST /v1/webhooks/polar":                                         true, // Standard Webhooks-signed webhook

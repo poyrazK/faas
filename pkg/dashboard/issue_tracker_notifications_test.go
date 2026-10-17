@@ -9,7 +9,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// ADR-1438: native reminder settings are owner-only alongside existing controls.
+// ADR-1493: native reminder settings are owner-only alongside existing controls.
 func TestTrackerNotificationInboxSeparatesOwnerControlsAndEscapesEvidence(t *testing.T) {
 	tmpl, err := template.ParseFS(tmplFS, "templates/issue_tracker_notifications.html")
 	if err != nil {
