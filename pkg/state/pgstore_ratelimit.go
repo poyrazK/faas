@@ -207,7 +207,7 @@ func (b *PGRateLimitBackend) ConsumeTokens(ctx context.Context, scope, subjectID
 }
 
 // ReturnTokens gives n unspent leased tokens back to one counter, capped at
-// its burst (ADR-1499). It implements gateway.CentralLeaseBackend; a gateway
+// its burst (ADR-1520). It implements gateway.CentralLeaseBackend; a gateway
 // returns tokens only while the bucket is under pressure, so a customer
 // pacing at the limit is not short-changed by tokens that expired unspent.
 // Returning a token adds it to the stored balance; the next consume applies

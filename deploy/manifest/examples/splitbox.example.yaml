@@ -139,7 +139,7 @@ daemons:
     # local keeps one in-process bucket per node (each node admits the full
     # burst on its own).
     # ratelimit_mode: central
-    # ADR-1499: spend those counters from local leases instead of one
+    # ADR-1520: spend those counters from local leases instead of one
     # Postgres consult per request. Omitted renders false; needs central.
     # ratelimit_lease: true
     # Split-box peer identities. These are intentionally separate from

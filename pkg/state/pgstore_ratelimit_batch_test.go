@@ -1,4 +1,4 @@
-// adr: 104, 1499 — batched central rate-limit consumes and lease returns.
+// adr: 104, 1520 — batched central rate-limit consumes and lease returns.
 package state_test
 
 import (
@@ -118,7 +118,7 @@ func TestPGRateLimitBackendConsumeTokensSerializesReplicas(t *testing.T) {
 }
 
 // TestPGRateLimitBackendReturnTokensCapsAtBurst pins the statement a leasing
-// gateway uses to give unspent tokens back under pressure (ADR-1499): the
+// gateway uses to give unspent tokens back under pressure (ADR-1520): the
 // tokens rejoin the shared balance, never above burst, and a missing counter
 // is left alone.
 func TestPGRateLimitBackendReturnTokensCapsAtBurst(t *testing.T) {

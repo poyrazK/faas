@@ -225,7 +225,7 @@ type TOMLRateLimitConfig struct {
 	Mode string `toml:"mode"`
 
 	// Lease makes central mode spend tokens from local leases instead of
-	// consulting Postgres for every request (ADR-1499). It requires
+	// consulting Postgres for every request (ADR-1520). It requires
 	// Mode = "central" and is off by default.
 	Lease bool `toml:"lease"`
 	// LeaseWindowMS is how long a lease should last at the counter's recent

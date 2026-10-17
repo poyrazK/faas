@@ -103,7 +103,7 @@ func TestMetricsRateLimitDegraded(t *testing.T) {
 	}
 }
 
-// TestMetricsRateLimitLeasing pins the ADR-1499 series: closed scope labels
+// TestMetricsRateLimitLeasing pins the ADR-1520 series: closed scope labels
 // and a bounded outcome set, so an unexpected value cannot grow cardinality.
 func TestMetricsRateLimitLeasing(t *testing.T) {
 	m := NewMetrics()

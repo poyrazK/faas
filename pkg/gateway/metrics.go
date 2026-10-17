@@ -28,7 +28,7 @@
 //     consult breaker is open; scope is a
 //     closed app|account|rule|other set)
 //   - gateway_ratelimit_lease_requests_total{scope, result}  counter
-//     (ADR-1499 lease statements: granted|partial|empty|failed)
+//     (ADR-1520 lease statements: granted|partial|empty|failed)
 //   - gateway_ratelimit_lease_tokens_total{scope, outcome}   counter
 //     (granted|spent|allowance|over_admitted|expired|returned)
 //   - gateway_ratelimit_sync_consults_total{scope}           counter
@@ -248,7 +248,7 @@ type Metrics struct {
 	// process-local fallback. The closed scope label keeps cardinality fixed;
 	// warning logs and audit events are separately cooled down by Handler.
 	rateLimitDegraded *prometheus.CounterVec
-	// ADR-1499 token leasing: lease statements, token outcomes, and requests
+	// ADR-1520 token leasing: lease statements, token outcomes, and requests
 	// that waited for Postgres. Scope is the closed app|account|rule|other set.
 	rateLimitLeaseRequests *prometheus.CounterVec
 	rateLimitLeaseTokens   *prometheus.CounterVec
@@ -1406,15 +1406,15 @@ func NewMetrics() *Metrics {
 		}, []string{"scope"}),
 		rateLimitLeaseRequests: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_ratelimit_lease_requests_total",
-			Help: "Central rate-limit lease statements (ADR-1499) by closed scope (app|account|rule|other) and result (granted|partial|empty|failed).",
+			Help: "Central rate-limit lease statements (ADR-1520) by closed scope (app|account|rule|other) and result (granted|partial|empty|failed).",
 		}, []string{"scope", "result"}),
 		rateLimitLeaseTokens: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_ratelimit_lease_tokens_total",
-			Help: "Central rate-limit tokens by closed scope and outcome (ADR-1499): granted by a lease, spent from one, admitted by the local allowance, over_admitted when a grant could not cover the allowance, expired unspent, or returned to the shared bucket.",
+			Help: "Central rate-limit tokens by closed scope and outcome (ADR-1520): granted by a lease, spent from one, admitted by the local allowance, over_admitted when a grant could not cover the allowance, expired unspent, or returned to the shared bucket.",
 		}, []string{"scope", "outcome"}),
 		rateLimitSyncConsults: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_ratelimit_sync_consults_total",
-			Help: "Requests that waited for a central rate-limit lease (ADR-1499), by closed scope. Only counters at or near their limit should wait.",
+			Help: "Requests that waited for a central rate-limit lease (ADR-1520), by closed scope. Only counters at or near their limit should wait.",
 		}, []string{"scope"}),
 		// ADR-046 PR-2 producer observability. Counter is
 		// registered on the gatewayd-internal-local registry (this
@@ -2730,7 +2730,7 @@ func leaseScope(scope string) string {
 	return "other"
 }
 
-// ObserveLeaseRequest records one central lease statement (ADR-1499).
+// ObserveLeaseRequest records one central lease statement (ADR-1520).
 func (m *Metrics) ObserveLeaseRequest(scope, result string) {
 	if m == nil || m.rateLimitLeaseRequests == nil {
 		return
@@ -2743,7 +2743,7 @@ func (m *Metrics) ObserveLeaseRequest(scope, result string) {
 	m.rateLimitLeaseRequests.WithLabelValues(leaseScope(scope), result).Inc()
 }
 
-// ObserveLeaseTokens records n central tokens with one outcome (ADR-1499).
+// ObserveLeaseTokens records n central tokens with one outcome (ADR-1520).
 func (m *Metrics) ObserveLeaseTokens(scope, outcome string, n int) {
 	if m == nil || m.rateLimitLeaseTokens == nil || n <= 0 {
 		return
@@ -2757,7 +2757,7 @@ func (m *Metrics) ObserveLeaseTokens(scope, outcome string, n int) {
 }
 
 // ObserveRateLimitSyncConsult records a request that waited for a central
-// lease (ADR-1499).
+// lease (ADR-1520).
 func (m *Metrics) ObserveRateLimitSyncConsult(scope string) {
 	if m == nil || m.rateLimitSyncConsults == nil {
 		return

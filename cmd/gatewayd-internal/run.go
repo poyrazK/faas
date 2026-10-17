@@ -2720,7 +2720,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				return fmt.Errorf("gatewayd-internal: [ratelimit] mode = \"central\" requires a Postgres pool")
 			}
 			handler.WithCentralBackend(backend)
-			// ADR-1499: spend central tokens from local leases.
+			// ADR-1520: spend central tokens from local leases.
 			if deps.config.RateLimit.Lease {
 				handler.WithRateLimitLeasing(leaseCfg)
 			}

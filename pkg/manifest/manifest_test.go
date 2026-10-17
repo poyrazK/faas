@@ -249,7 +249,7 @@ func TestValidate_GatewaydInternalRateLimitMode(t *testing.T) {
 		{"local", gateway + "    ratelimit_mode: local\n", ""},
 		{"typo", gateway + "    ratelimit_mode: centrall\n", `daemons.gatewayd_internal.ratelimit_mode: unsupported "centrall"`},
 		{"wrong daemon", "  apid:\n    bind: unix:///run/faas/apid.sock\n    ratelimit_mode: central\n", "daemons.apid.ratelimit_mode: is only valid for gatewayd_internal"},
-		// ADR-1499: leasing spends central counters, so it needs central mode.
+		// ADR-1520: leasing spends central counters, so it needs central mode.
 		{"lease with default mode", gateway + "    ratelimit_lease: true\n", ""},
 		{"lease with central", gateway + "    ratelimit_mode: central\n    ratelimit_lease: true\n", ""},
 		{"lease with local", gateway + "    ratelimit_mode: local\n    ratelimit_lease: true\n", `daemons.gatewayd_internal.ratelimit_lease: requires ratelimit_mode central, got "local"`},

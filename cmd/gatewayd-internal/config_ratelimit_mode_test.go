@@ -64,7 +64,7 @@ func TestLoadConfig_RateLimitModeUnknownAccepted(t *testing.T) {
 	}
 }
 
-// TestRateLimitLeaseConfig pins the ADR-1499 knobs: leasing needs central
+// TestRateLimitLeaseConfig pins the ADR-1520 knobs: leasing needs central
 // mode, zero takes the defaults, and out-of-range tunables are refused at
 // boot with their TOML key.
 func TestRateLimitLeaseConfig(t *testing.T) {

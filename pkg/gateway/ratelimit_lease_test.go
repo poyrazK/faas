@@ -1,7 +1,7 @@
 // ratelimit_lease_test.go pins central-mode token leasing: requests within
 // their limit never wait for Postgres, a busy counter costs a bounded number
 // of statements, and N gateways stay within the ADR's admission bounds.
-// adr: 1499
+// adr: 1520
 package gateway
 
 import (
@@ -209,7 +209,7 @@ func TestLeaseStatementsPerSecondAreBounded(t *testing.T) {
 			t.Fatal("request below the limit was refused")
 		}
 	}
-	// ADR-1499: at most 1/W + 1 statements per second per gateway.
+	// ADR-1520: at most 1/W + 1 statements per second per gateway.
 	limit := int((time.Second/defaultLeaseWindow + 1) * seconds)
 	if got := bucket.statementCount() - before; got > limit {
 		t.Fatalf("statements in %d s at %d req/s = %d, want at most %d", seconds, rate, got, limit)

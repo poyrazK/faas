@@ -1536,7 +1536,7 @@ func (h *Handler) WithCentralBackend(central CentralBackend) *Handler {
 }
 
 // WithRateLimitLeasing makes every Limiter the Handler owns spend central
-// tokens from local leases (ADR-1499) instead of consulting Postgres per
+// tokens from local leases (ADR-1520) instead of consulting Postgres per
 // request. It matters only after WithCentralBackend installed a backend that
 // grants tokens in batches. Call before serving requests.
 func (h *Handler) WithRateLimitLeasing(cfg LeaseConfig) *Handler {

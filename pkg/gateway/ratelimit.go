@@ -120,7 +120,7 @@ type Limiter struct {
 	// backend implements CentralBatchBackend.
 	coalescer centralCoalescer
 	// lease, when set, spends central tokens from local leases instead of
-	// consulting Postgres per request (ADR-1499). Set by EnableLeasing.
+	// consulting Postgres per request (ADR-1520). Set by EnableLeasing.
 	lease *leaseTable
 }
 

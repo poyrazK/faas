@@ -486,7 +486,7 @@ type DaemonConfig struct {
 	// per node. "local" keeps one in-process bucket per gateway.
 	RateLimitMode string `yaml:"ratelimit_mode,omitempty"`
 
-	// RateLimitLease is gatewayd-internal's [ratelimit] lease (ADR-1499):
+	// RateLimitLease is gatewayd-internal's [ratelimit] lease (ADR-1520):
 	// central counters are spent from local leases instead of one Postgres
 	// consult per request. Omitted renders false. Requires central mode.
 	RateLimitLease *bool `yaml:"ratelimit_lease,omitempty"`

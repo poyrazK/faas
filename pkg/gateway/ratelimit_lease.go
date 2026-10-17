@@ -1,4 +1,4 @@
-// Package gateway — rate-limit token leasing (ADR-1499).
+// Package gateway — rate-limit token leasing (ADR-1520).
 //
 // In central mode every request used to consume its token from Postgres,
 // about two control-plane writes per app request (an app and an account
@@ -128,7 +128,7 @@ type leaseCall struct {
 	err  error
 }
 
-// EnableLeasing turns on token leasing for central counters (ADR-1499). It
+// EnableLeasing turns on token leasing for central counters (ADR-1520). It
 // takes effect only while the central backend can grant tokens in batches
 // (CentralBatchBackend). Call before serving requests.
 func (l *Limiter) EnableLeasing(cfg LeaseConfig, observer LeaseObserver) *Limiter {

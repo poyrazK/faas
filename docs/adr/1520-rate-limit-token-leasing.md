@@ -1,4 +1,4 @@
-# ADR-1499 · Rate-limit token leasing
+# ADR-1520 · Rate-limit token leasing
 
 - **Status:** proposed. Built behind `[ratelimit] lease`, off by default
   (see Implementation).
