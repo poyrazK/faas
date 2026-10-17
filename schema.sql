@@ -20886,6 +20886,38 @@ CREATE TABLE public.account_async_quota (
 
 
 --
+-- Name: account_billing_connections; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.account_billing_connections (
+    account_id uuid NOT NULL,
+    provider text NOT NULL,
+    sealed_secret bytea NOT NULL,
+    key_last4 text NOT NULL,
+    livemode boolean NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    api_url text,
+    collection text DEFAULT 'none'::text NOT NULL,
+    days_until_due integer DEFAULT 30 NOT NULL,
+    automatic_tax boolean DEFAULT false NOT NULL,
+    CONSTRAINT account_billing_connections_api_url_chk CHECK (((api_url IS NULL) OR ((char_length(api_url) <= 512) AND (api_url ~~ 'https://%'::text)))),
+    CONSTRAINT account_billing_connections_automatic_tax_chk CHECK (((NOT automatic_tax) OR (provider = 'stripe'::text))),
+    CONSTRAINT account_billing_connections_collection_chk CHECK ((((provider = 'stripe'::text) AND (collection = ANY (ARRAY['none'::text, 'send'::text, 'charge'::text]))) OR ((provider = 'paddle'::text) AND (collection = 'none'::text)) OR ((provider = 'lago'::text) AND (collection = ANY (ARRAY['none'::text, 'charge'::text]))))),
+    CONSTRAINT account_billing_connections_days_until_due_chk CHECK (((days_until_due >= 1) AND (days_until_due <= 365))),
+    CONSTRAINT account_billing_connections_last4_chk CHECK ((char_length(key_last4) = 4)),
+    CONSTRAINT account_billing_connections_provider_chk CHECK ((provider = ANY (ARRAY['stripe'::text, 'paddle'::text, 'lago'::text])))
+);
+
+
+--
+-- Name: TABLE account_billing_connections; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.account_billing_connections IS 'Sealed credentials for exporting usage statements to the account''s own payment provider; only key_last4 and livemode are ever returned.';
+
+
+--
 -- Name: account_credits; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -21253,6 +21285,119 @@ CREATE TABLE public.alert_rules (
 
 
 --
+-- Name: api_consumer_billing_policies; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.api_consumer_billing_policies (
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    block_overdue_after_days integer NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT api_consumer_billing_policies_days_chk CHECK (((block_overdue_after_days >= 0) AND (block_overdue_after_days <= 365)))
+);
+
+
+--
+-- Name: TABLE api_consumer_billing_policies; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.api_consumer_billing_policies IS 'Per-app rule blocking API consumers whose exported invoice is unpaid that many days after its due date (ADR-1315).';
+
+
+--
+-- Name: api_consumer_credit_applications; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.api_consumer_credit_applications (
+    grant_id uuid NOT NULL,
+    statement_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    amount_millicents bigint NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT api_consumer_credit_applications_amount_chk CHECK ((amount_millicents > 0))
+);
+
+
+--
+-- Name: api_consumer_credit_grants; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.api_consumer_credit_grants (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    consumer_id uuid NOT NULL,
+    currency text NOT NULL,
+    amount_millicents bigint NOT NULL,
+    remaining_millicents bigint NOT NULL,
+    note text DEFAULT ''::text NOT NULL,
+    expires_at timestamp with time zone,
+    voided_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT api_consumer_credit_grants_amount_chk CHECK (((amount_millicents > 0) AND (remaining_millicents >= 0) AND (remaining_millicents <= amount_millicents))),
+    CONSTRAINT api_consumer_credit_grants_currency_chk CHECK ((currency ~ '^[A-Z]{3}$'::text)),
+    CONSTRAINT api_consumer_credit_grants_expiry_chk CHECK (((expires_at IS NULL) OR (expires_at > created_at))),
+    CONSTRAINT api_consumer_credit_grants_note_chk CHECK ((char_length(note) <= 200)),
+    CONSTRAINT api_consumer_credit_grants_voided_chk CHECK (((voided_at IS NULL) OR (remaining_millicents = 0)))
+);
+
+
+--
+-- Name: TABLE api_consumer_credit_grants; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.api_consumer_credit_grants IS 'Prepaid credit granted to an API consumer; finalized statements draw it down oldest-expiring first (ADR-1306).';
+
+
+--
+-- Name: api_consumer_meter_usage_minutes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.api_consumer_meter_usage_minutes (
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    consumer_key text NOT NULL,
+    meter text NOT NULL,
+    window_start timestamp with time zone NOT NULL,
+    units bigint DEFAULT 0 NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT api_consumer_meter_usage_minutes_consumer_key_chk CHECK ((consumer_key ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'::text)),
+    CONSTRAINT api_consumer_meter_usage_minutes_meter_chk CHECK ((meter ~ '^[a-z][a-z0-9_]{0,31}$'::text)),
+    CONSTRAINT api_consumer_meter_usage_minutes_minute_chk CHECK ((window_start = (date_trunc('minute'::text, (window_start AT TIME ZONE 'UTC'::text)) AT TIME ZONE 'UTC'::text))),
+    CONSTRAINT api_consumer_meter_usage_minutes_units_chk CHECK ((units >= 0))
+);
+
+
+--
+-- Name: TABLE api_consumer_meter_usage_minutes; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.api_consumer_meter_usage_minutes IS 'Units an app reported per consumer, meter and UTC minute for billable requests (ADR-1318).';
+
+
+--
+-- Name: api_consumer_overdue_holds; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.api_consumer_overdue_holds (
+    consumer_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    export_id uuid NOT NULL,
+    due_at timestamp with time zone NOT NULL,
+    since timestamp with time zone NOT NULL
+);
+
+
+--
+-- Name: TABLE api_consumer_overdue_holds; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.api_consumer_overdue_holds IS 'API consumers the gateway refuses because of an overdue invoice; recomputed by apid (ADR-1315).';
+
+
+--
 -- Name: api_consumer_plan_admissions; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -21348,13 +21493,18 @@ CREATE TABLE public.api_consumer_rate_cards (
     tiers jsonb DEFAULT '[]'::jsonb NOT NULL,
     route_weights jsonb DEFAULT '{}'::jsonb NOT NULL,
     plan_id uuid,
+    tier_mode text DEFAULT 'graduated'::text NOT NULL,
+    base_fee_millicents_per_month bigint DEFAULT 0 NOT NULL,
+    minimum_millicents_per_month bigint DEFAULT 0 NOT NULL,
     CONSTRAINT api_consumer_rate_cards_currency_chk CHECK ((currency ~ '^[A-Z]{3}$'::text)),
     CONSTRAINT api_consumer_rate_cards_effective_minute_chk CHECK ((effective_from = date_trunc('minute'::text, effective_from))),
     CONSTRAINT api_consumer_rate_cards_included_units_chk CHECK ((included_units_per_month >= 0)),
+    CONSTRAINT api_consumer_rate_cards_monthly_fees_chk CHECK (((base_fee_millicents_per_month >= 0) AND (minimum_millicents_per_month >= 0))),
     CONSTRAINT api_consumer_rate_cards_price_chk CHECK ((price_millicents_per_unit >= 0)),
     CONSTRAINT api_consumer_rate_cards_route_weights_chk CHECK ((jsonb_typeof(route_weights) = 'object'::text)),
+    CONSTRAINT api_consumer_rate_cards_tier_mode_chk CHECK (((tier_mode = 'graduated'::text) OR ((tier_mode = 'volume'::text) AND (jsonb_array_length(tiers) > 0)))),
     CONSTRAINT api_consumer_rate_cards_tiers_chk CHECK (((jsonb_typeof(tiers) = 'array'::text) AND (jsonb_array_length(tiers) <= 10))),
-    CONSTRAINT api_consumer_rate_cards_unit_chk CHECK ((unit = 'request'::text))
+    CONSTRAINT api_consumer_rate_cards_unit_chk CHECK (((unit = ANY (ARRAY['request'::text, 'compute_second'::text, 'response_megabyte'::text])) OR (unit ~ '^app:[a-z][a-z0-9_]{0,31}$'::text)))
 );
 
 
@@ -21410,6 +21560,61 @@ CREATE TABLE public.api_consumer_route_usage_minutes (
 --
 
 COMMENT ON TABLE public.api_consumer_route_usage_minutes IS 'Billable units per consumer, bounded route label, and UTC minute; per-minute totals stay in api_consumer_usage_minutes.';
+
+
+--
+-- Name: api_consumer_spend_caps; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.api_consumer_spend_caps (
+    consumer_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    currency text NOT NULL,
+    monthly_cap_millicents bigint NOT NULL,
+    capped boolean DEFAULT false NOT NULL,
+    month_start timestamp with time zone,
+    amount_due_millicents bigint,
+    checked_at timestamp with time zone,
+    next_check_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT api_consumer_spend_caps_cap_chk CHECK ((monthly_cap_millicents >= 0)),
+    CONSTRAINT api_consumer_spend_caps_capped_chk CHECK (((NOT capped) OR ((month_start IS NOT NULL) AND (checked_at IS NOT NULL)))),
+    CONSTRAINT api_consumer_spend_caps_currency_chk CHECK ((currency ~ '^[A-Z]{3}$'::text)),
+    CONSTRAINT api_consumer_spend_caps_due_chk CHECK (((amount_due_millicents IS NULL) OR (amount_due_millicents >= 0)))
+);
+
+
+--
+-- Name: TABLE api_consumer_spend_caps; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.api_consumer_spend_caps IS 'Monthly spend cap per API consumer; apid checks the month to date and the gateway denies capped consumers (ADR-1306).';
+
+
+--
+-- Name: api_consumer_trials; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.api_consumer_trials (
+    consumer_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    starts_at timestamp with time zone NOT NULL,
+    ends_at timestamp with time zone NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT api_consumer_trials_minute_chk CHECK (((starts_at = (date_trunc('minute'::text, (starts_at AT TIME ZONE 'UTC'::text)) AT TIME ZONE 'UTC'::text)) AND (ends_at = (date_trunc('minute'::text, (ends_at AT TIME ZONE 'UTC'::text)) AT TIME ZONE 'UTC'::text)))),
+    CONSTRAINT api_consumer_trials_window_chk CHECK (((ends_at > starts_at) AND ((ends_at - starts_at) <= '365 days'::interval)))
+);
+
+
+--
+-- Name: TABLE api_consumer_trials; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.api_consumer_trials IS 'One free trial per API consumer (ADR-1314): usage in [starts_at, ends_at) is priced at zero.';
 
 
 --
@@ -21479,11 +21684,14 @@ CREATE TABLE public.api_consumer_usage_minutes (
     error_count bigint DEFAULT 0 NOT NULL,
     billable_units bigint DEFAULT 0 NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    compute_ms bigint DEFAULT 0 NOT NULL,
+    response_bytes bigint DEFAULT 0 NOT NULL,
     CONSTRAINT api_consumer_usage_minutes_check CHECK (((error_count >= 0) AND (error_count <= request_count))),
     CONSTRAINT api_consumer_usage_minutes_check1 CHECK (((billable_units >= 0) AND (billable_units <= request_count))),
     CONSTRAINT api_consumer_usage_minutes_consumer_key_chk CHECK (((consumer_key = '__anonymous__'::text) OR (consumer_key ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'::text))),
     CONSTRAINT api_consumer_usage_minutes_minute_chk CHECK ((window_start = (date_trunc('minute'::text, (window_start AT TIME ZONE 'UTC'::text)) AT TIME ZONE 'UTC'::text))),
-    CONSTRAINT api_consumer_usage_minutes_request_count_check CHECK ((request_count >= 0))
+    CONSTRAINT api_consumer_usage_minutes_request_count_check CHECK ((request_count >= 0)),
+    CONSTRAINT api_consumer_usage_minutes_resources_chk CHECK (((compute_ms >= 0) AND (response_bytes >= 0)))
 );
 
 
@@ -21529,8 +21737,12 @@ CREATE TABLE public.api_consumer_usage_statements (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     finalized_at timestamp with time zone,
     revision integer DEFAULT 1 NOT NULL,
+    credit_applied_millicents bigint DEFAULT 0 NOT NULL,
+    fees jsonb DEFAULT '[]'::jsonb NOT NULL,
     CONSTRAINT api_consumer_usage_statements_buckets_chk CHECK ((jsonb_typeof(buckets) = 'array'::text)),
+    CONSTRAINT api_consumer_usage_statements_credit_chk CHECK (((credit_applied_millicents >= 0) AND (credit_applied_millicents <= amount_millicents))),
     CONSTRAINT api_consumer_usage_statements_currency_chk CHECK (((currency IS NULL) OR (currency ~ '^[A-Z]{3}$'::text))),
+    CONSTRAINT api_consumer_usage_statements_fees_chk CHECK (((jsonb_typeof(fees) = 'array'::text) AND (jsonb_array_length(fees) <= 64))),
     CONSTRAINT api_consumer_usage_statements_finalized_chk CHECK ((((status = ANY (ARRAY['draft'::text, 'superseded'::text])) AND (finalized_at IS NULL)) OR ((status = 'finalized'::text) AND (finalized_at IS NOT NULL)))),
     CONSTRAINT api_consumer_usage_statements_period_chk CHECK (((period_start = date_trunc('minute'::text, period_start)) AND (period_end = date_trunc('minute'::text, period_end)) AND (period_end > period_start))),
     CONSTRAINT api_consumer_usage_statements_revision_chk CHECK ((revision > 0)),
@@ -23458,6 +23670,118 @@ CREATE TABLE public.billing_meter_usage_deliveries (
 
 
 --
+-- Name: billing_run_items; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.billing_run_items (
+    run_id uuid NOT NULL,
+    source_kind text NOT NULL,
+    source_id uuid NOT NULL,
+    app_id uuid,
+    external_ref text DEFAULT ''::text NOT NULL,
+    outcome text DEFAULT 'pending'::text NOT NULL,
+    statement_id uuid,
+    revision integer,
+    currency text,
+    amount_millicents bigint,
+    completeness text,
+    invoice_id text,
+    exported_count integer DEFAULT 0 NOT NULL,
+    reason text,
+    attempts integer DEFAULT 0 NOT NULL,
+    next_attempt_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT billing_run_items_app_chk CHECK (((source_kind = 'app_consumer'::text) = (app_id IS NOT NULL))),
+    CONSTRAINT billing_run_items_completeness_chk CHECK (((completeness IS NULL) OR (completeness = ANY (ARRAY['verified'::text, 'partial'::text, 'gaps_detected'::text, 'unverifiable'::text])))),
+    CONSTRAINT billing_run_items_counts_chk CHECK (((attempts >= 0) AND (exported_count >= 0) AND ((revision IS NULL) OR (revision >= 1)))),
+    CONSTRAINT billing_run_items_currency_chk CHECK (((currency IS NULL) OR (currency ~ '^[A-Z]{3}$'::text))),
+    CONSTRAINT billing_run_items_external_ref_chk CHECK ((char_length(external_ref) <= 256)),
+    CONSTRAINT billing_run_items_outcome_chk CHECK ((outcome = ANY (ARRAY['pending'::text, 'drafted'::text, 'finalized'::text, 'exported'::text, 'up_to_date'::text, 'held'::text, 'skipped'::text, 'failed'::text]))),
+    CONSTRAINT billing_run_items_reason_chk CHECK (((reason IS NULL) OR (char_length(reason) <= 1000))),
+    CONSTRAINT billing_run_items_source_chk CHECK ((source_kind = ANY (ARRAY['app_consumer'::text, 'platform_tenant'::text])))
+);
+
+
+--
+-- Name: TABLE billing_run_items; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.billing_run_items IS 'One customer of a billing run: the statement drafted, finalized or exported for it, or why it was held, skipped or failed.';
+
+
+--
+-- Name: billing_run_schedules; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.billing_run_schedules (
+    account_id uuid NOT NULL,
+    sources text[] NOT NULL,
+    finalize boolean NOT NULL,
+    export_provider text NOT NULL,
+    hold_on_gaps boolean NOT NULL,
+    delay_hours integer NOT NULL,
+    next_period_start timestamp with time zone NOT NULL,
+    next_run_at timestamp with time zone NOT NULL,
+    last_period_start timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT billing_run_schedules_delay_chk CHECK (((delay_hours >= 1) AND (delay_hours <= 240))),
+    CONSTRAINT billing_run_schedules_export_chk CHECK ((export_provider = ANY (ARRAY['none'::text, 'stripe'::text, 'paddle'::text, 'lago'::text]))),
+    CONSTRAINT billing_run_schedules_export_finalize_chk CHECK (((export_provider = 'none'::text) OR finalize)),
+    CONSTRAINT billing_run_schedules_last_month_chk CHECK (((last_period_start IS NULL) OR (last_period_start = (date_trunc('month'::text, (last_period_start AT TIME ZONE 'UTC'::text)) AT TIME ZONE 'UTC'::text)))),
+    CONSTRAINT billing_run_schedules_next_month_chk CHECK (((next_period_start = (date_trunc('month'::text, (next_period_start AT TIME ZONE 'UTC'::text)) AT TIME ZONE 'UTC'::text)) AND (next_run_at > next_period_start))),
+    CONSTRAINT billing_run_schedules_sources_chk CHECK ((((cardinality(sources) >= 1) AND (cardinality(sources) <= 2)) AND (sources <@ ARRAY['app_consumers'::text, 'platform_tenants'::text])))
+);
+
+
+--
+-- Name: TABLE billing_run_schedules; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.billing_run_schedules IS 'Per-account schedule that starts a billing run for each month after month end plus delay_hours.';
+
+
+--
+-- Name: billing_runs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.billing_runs (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    period_start timestamp with time zone NOT NULL,
+    period_end timestamp with time zone NOT NULL,
+    sources text[] NOT NULL,
+    finalize boolean NOT NULL,
+    export_provider text NOT NULL,
+    hold_on_gaps boolean NOT NULL,
+    trigger text NOT NULL,
+    status text DEFAULT 'queued'::text NOT NULL,
+    discovered_at timestamp with time zone,
+    lease_owner text,
+    lease_until timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    started_at timestamp with time zone,
+    completed_at timestamp with time zone,
+    notified_at timestamp with time zone,
+    CONSTRAINT billing_runs_completed_chk CHECK (((status = 'completed'::text) = (completed_at IS NOT NULL))),
+    CONSTRAINT billing_runs_export_chk CHECK ((export_provider = ANY (ARRAY['none'::text, 'stripe'::text, 'paddle'::text, 'lago'::text]))),
+    CONSTRAINT billing_runs_export_finalize_chk CHECK (((export_provider = 'none'::text) OR finalize)),
+    CONSTRAINT billing_runs_lease_chk CHECK (((lease_owner IS NULL) = (lease_until IS NULL))),
+    CONSTRAINT billing_runs_month_chk CHECK (((period_start = (date_trunc('month'::text, (period_start AT TIME ZONE 'UTC'::text)) AT TIME ZONE 'UTC'::text)) AND (period_end = ((date_trunc('month'::text, (period_start AT TIME ZONE 'UTC'::text)) + '1 mon'::interval) AT TIME ZONE 'UTC'::text)))),
+    CONSTRAINT billing_runs_sources_chk CHECK ((((cardinality(sources) >= 1) AND (cardinality(sources) <= 2)) AND (sources <@ ARRAY['app_consumers'::text, 'platform_tenants'::text]))),
+    CONSTRAINT billing_runs_status_chk CHECK ((status = ANY (ARRAY['queued'::text, 'running'::text, 'completed'::text]))),
+    CONSTRAINT billing_runs_trigger_chk CHECK ((trigger = ANY (ARRAY['api'::text, 'schedule'::text])))
+);
+
+
+--
+-- Name: TABLE billing_runs; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.billing_runs IS 'Month-end billing runs (ADR-1301): one ended UTC month billed for every customer with billable usage; worker-leased.';
+
+
+--
 -- Name: billing_usage_deliveries; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -23981,7 +24305,7 @@ CREATE TABLE public.consumer_keys (
     CONSTRAINT consumer_keys_name_len_chk CHECK (((length(name) >= 1) AND (length(name) <= 64))),
     CONSTRAINT consumer_keys_prefix_len_chk CHECK (((length(prefix) >= 1) AND (length(prefix) <= 16))),
     CONSTRAINT consumer_keys_revoked_state_chk CHECK (((revoked_at IS NULL) OR (revoked_at >= created_at))),
-    CONSTRAINT consumer_keys_scopes_vocab_chk CHECK (((scopes <@ ARRAY['read'::text, 'write'::text, 'admin'::text]) AND (cardinality(scopes) > 0)))
+    CONSTRAINT consumer_keys_scopes_vocab_chk CHECK (((scopes <@ ARRAY['read'::text, 'write'::text, 'admin'::text, 'billing'::text]) AND (cardinality(scopes) > 0)))
 );
 
 
@@ -34529,6 +34853,58 @@ CREATE TABLE public.platform_tenant_offboarding_receipts (
 
 
 --
+-- Name: platform_tenant_plan_assignments; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.platform_tenant_plan_assignments (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    tenant_id uuid NOT NULL,
+    plan_id uuid NOT NULL,
+    rate_card_id uuid NOT NULL,
+    effective_from timestamp with time zone NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: platform_tenant_plans; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.platform_tenant_plans (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    name text NOT NULL,
+    currency text NOT NULL,
+    price_millicents_per_unit bigint NOT NULL,
+    included_units_per_month bigint DEFAULT 0 NOT NULL,
+    tiers jsonb DEFAULT '[]'::jsonb NOT NULL,
+    route_weights jsonb DEFAULT '{}'::jsonb NOT NULL,
+    max_requests_per_minute bigint,
+    max_requests_per_day bigint,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    tier_mode text DEFAULT 'graduated'::text NOT NULL,
+    unit text DEFAULT 'request'::text NOT NULL,
+    CONSTRAINT platform_tenant_plans_budget_chk CHECK ((((max_requests_per_minute IS NULL) = (max_requests_per_day IS NULL)) AND ((max_requests_per_minute IS NULL) OR ((max_requests_per_minute >= 0) AND (max_requests_per_day >= 0))))),
+    CONSTRAINT platform_tenant_plans_currency_chk CHECK ((currency ~ '^[A-Z]{3}$'::text)),
+    CONSTRAINT platform_tenant_plans_name_chk CHECK ((name ~ '^[a-z0-9][a-z0-9-]{0,62}$'::text)),
+    CONSTRAINT platform_tenant_plans_price_chk CHECK (((price_millicents_per_unit >= 0) AND (included_units_per_month >= 0))),
+    CONSTRAINT platform_tenant_plans_route_weights_chk CHECK ((jsonb_typeof(route_weights) = 'object'::text)),
+    CONSTRAINT platform_tenant_plans_tier_mode_chk CHECK (((tier_mode = 'graduated'::text) OR ((tier_mode = 'volume'::text) AND (jsonb_array_length(tiers) > 0)))),
+    CONSTRAINT platform_tenant_plans_tiers_chk CHECK (((jsonb_typeof(tiers) = 'array'::text) AND (jsonb_array_length(tiers) <= 10) AND ((jsonb_array_length(tiers) = 0) OR (included_units_per_month = 0)))),
+    CONSTRAINT platform_tenant_plans_unit_chk CHECK ((unit = ANY (ARRAY['request'::text, 'compute_second'::text, 'response_megabyte'::text])))
+);
+
+
+--
+-- Name: TABLE platform_tenant_plans; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.platform_tenant_plans IS 'Reusable platform tenant price and request-budget bundle; assigning one creates the tenant''s rate card and sets its budget (ADR-1307).';
+
+
+--
 -- Name: platform_tenant_rate_cards; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -34543,12 +34919,16 @@ CREATE TABLE public.platform_tenant_rate_cards (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     included_units_per_month bigint DEFAULT 0 NOT NULL,
     tiers jsonb DEFAULT '[]'::jsonb NOT NULL,
+    route_weights jsonb DEFAULT '{}'::jsonb NOT NULL,
+    tier_mode text DEFAULT 'graduated'::text NOT NULL,
     CONSTRAINT platform_tenant_rate_cards_currency_check CHECK ((currency ~ '^[A-Z]{3}$'::text)),
     CONSTRAINT platform_tenant_rate_cards_effective_from_check CHECK ((effective_from = (date_trunc('minute'::text, (effective_from AT TIME ZONE 'UTC'::text)) AT TIME ZONE 'UTC'::text))),
     CONSTRAINT platform_tenant_rate_cards_included_units_chk CHECK ((included_units_per_month >= 0)),
     CONSTRAINT platform_tenant_rate_cards_price_millicents_per_unit_check CHECK ((price_millicents_per_unit >= 0)),
+    CONSTRAINT platform_tenant_rate_cards_route_weights_chk CHECK ((jsonb_typeof(route_weights) = 'object'::text)),
+    CONSTRAINT platform_tenant_rate_cards_tier_mode_chk CHECK (((tier_mode = 'graduated'::text) OR ((tier_mode = 'volume'::text) AND (jsonb_array_length(tiers) > 0)))),
     CONSTRAINT platform_tenant_rate_cards_tiers_chk CHECK (((jsonb_typeof(tiers) = 'array'::text) AND (jsonb_array_length(tiers) <= 10) AND ((jsonb_array_length(tiers) = 0) OR (included_units_per_month = 0)))),
-    CONSTRAINT platform_tenant_rate_cards_unit_check CHECK ((unit = 'request'::text))
+    CONSTRAINT platform_tenant_rate_cards_unit_check CHECK ((unit = ANY (ARRAY['request'::text, 'compute_second'::text, 'response_megabyte'::text])))
 );
 
 
@@ -34564,6 +34944,13 @@ COMMENT ON COLUMN public.platform_tenant_rate_cards.included_units_per_month IS 
 --
 
 COMMENT ON COLUMN public.platform_tenant_rate_cards.tiers IS 'Graduated price ladder [{up_to, price_millicents_per_unit}], counted per tenant per UTC calendar month across all attributed apps; empty means the single price and allowance apply.';
+
+
+--
+-- Name: COLUMN platform_tenant_rate_cards.route_weights; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.platform_tenant_rate_cards.route_weights IS 'Units charged per consumer request on a route label ("METHOD /template" -> weight); unlisted routes and non-consumer subjects count 1.';
 
 
 --
@@ -34605,6 +34992,34 @@ CREATE TABLE public.platform_tenant_request_budgets (
     CONSTRAINT platform_tenant_request_budgets_minute_start_check CHECK (((minute_start IS NULL) OR (minute_start = (date_trunc('minute'::text, (minute_start AT TIME ZONE 'UTC'::text)) AT TIME ZONE 'UTC'::text)))),
     CONSTRAINT platform_tenant_request_budgets_minute_used_check CHECK ((minute_used >= 0))
 );
+
+
+--
+-- Name: platform_tenant_source_route_usage_minutes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.platform_tenant_source_route_usage_minutes (
+    account_id uuid NOT NULL,
+    platform_tenant_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    source_kind text NOT NULL,
+    source_id uuid NOT NULL,
+    route text NOT NULL,
+    window_start timestamp with time zone NOT NULL,
+    billable_units bigint DEFAULT 0 NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT platform_tenant_source_route_usage_minutes_kind_chk CHECK ((source_kind = ANY (ARRAY['surface'::text, 'jwt'::text]))),
+    CONSTRAINT platform_tenant_source_route_usage_minutes_minute_chk CHECK ((window_start = (date_trunc('minute'::text, (window_start AT TIME ZONE 'UTC'::text)) AT TIME ZONE 'UTC'::text))),
+    CONSTRAINT platform_tenant_source_route_usage_minutes_route_chk CHECK (((char_length(route) >= 3) AND (char_length(route) <= 256))),
+    CONSTRAINT platform_tenant_source_route_usage_minutes_units_chk CHECK ((billable_units >= 0))
+);
+
+
+--
+-- Name: TABLE platform_tenant_source_route_usage_minutes; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.platform_tenant_source_route_usage_minutes IS 'Billable units per tenant surface or JWT authorization rule, bounded route label, and UTC minute; consumer routes stay in api_consumer_route_usage_minutes.';
 
 
 --
@@ -34722,11 +35137,14 @@ CREATE TABLE public.platform_tenant_usage_minutes (
     billable_units bigint NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     source_kind text DEFAULT 'consumer'::text NOT NULL,
+    compute_ms bigint DEFAULT 0 NOT NULL,
+    response_bytes bigint DEFAULT 0 NOT NULL,
     CONSTRAINT platform_tenant_usage_minutes_check CHECK (((error_count >= 0) AND (error_count <= request_count))),
     CONSTRAINT platform_tenant_usage_minutes_check1 CHECK (((billable_units >= 0) AND (billable_units <= request_count))),
     CONSTRAINT platform_tenant_usage_minutes_consumer_key_chk CHECK ((consumer_key ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'::text)),
     CONSTRAINT platform_tenant_usage_minutes_minute_chk CHECK ((window_start = (date_trunc('minute'::text, (window_start AT TIME ZONE 'UTC'::text)) AT TIME ZONE 'UTC'::text))),
     CONSTRAINT platform_tenant_usage_minutes_request_count_check CHECK ((request_count >= 0)),
+    CONSTRAINT platform_tenant_usage_minutes_resources_chk CHECK (((compute_ms >= 0) AND (response_bytes >= 0))),
     CONSTRAINT platform_tenant_usage_minutes_source_kind_chk CHECK ((source_kind = ANY (ARRAY['consumer'::text, 'surface'::text, 'jwt'::text])))
 );
 
@@ -39428,6 +39846,63 @@ CREATE VIEW public.usage_monthly AS
 
 
 --
+-- Name: usage_statement_invoice_exports; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.usage_statement_invoice_exports (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    source_kind text NOT NULL,
+    statement_id uuid NOT NULL,
+    provider text NOT NULL,
+    customer text NOT NULL,
+    status text DEFAULT 'creating'::text NOT NULL,
+    provider_invoice_id text,
+    currency text NOT NULL,
+    amount_minor bigint NOT NULL,
+    livemode boolean NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    completed_at timestamp with time zone,
+    payment_status text,
+    amount_paid_minor bigint,
+    amount_remaining_minor bigint,
+    due_at timestamp with time zone,
+    paid_at timestamp with time zone,
+    hosted_invoice_url text,
+    status_synced_at timestamp with time zone,
+    next_status_sync_at timestamp with time zone,
+    overdue_notified_at timestamp with time zone,
+    collection text DEFAULT 'none'::text NOT NULL,
+    days_until_due integer DEFAULT 30 NOT NULL,
+    automatic_tax boolean DEFAULT false NOT NULL,
+    CONSTRAINT usage_statement_invoice_exports_automatic_tax_chk CHECK (((NOT automatic_tax) OR (provider = 'stripe'::text))),
+    CONSTRAINT usage_statement_invoice_exports_collection_chk CHECK (((collection = ANY (ARRAY['none'::text, 'send'::text, 'charge'::text])) AND ((days_until_due >= 1) AND (days_until_due <= 365)))),
+    CONSTRAINT usage_statement_invoice_exports_completed_chk CHECK (((status = 'completed'::text) = ((completed_at IS NOT NULL) AND (provider_invoice_id IS NOT NULL)))),
+    CONSTRAINT usage_statement_invoice_exports_currency_chk CHECK ((currency ~ '^[A-Z]{3}$'::text)),
+    CONSTRAINT usage_statement_invoice_exports_hosted_url_chk CHECK (((hosted_invoice_url IS NULL) OR ((char_length(hosted_invoice_url) <= 2048) AND (hosted_invoice_url ~~ 'https://%'::text)))),
+    CONSTRAINT usage_statement_invoice_exports_payment_amounts_chk CHECK ((((amount_paid_minor IS NULL) OR (amount_paid_minor >= 0)) AND ((amount_remaining_minor IS NULL) OR (amount_remaining_minor >= 0)))),
+    CONSTRAINT usage_statement_invoice_exports_payment_status_chk CHECK (((payment_status IS NULL) OR (payment_status = ANY (ARRAY['draft'::text, 'open'::text, 'paid'::text, 'void'::text, 'uncollectible'::text, 'deleted'::text])))),
+    CONSTRAINT usage_statement_invoice_exports_provider_chk CHECK ((provider = ANY (ARRAY['stripe'::text, 'paddle'::text, 'lago'::text]))),
+    CONSTRAINT usage_statement_invoice_exports_source_chk CHECK ((source_kind = ANY (ARRAY['app_consumer'::text, 'platform_tenant'::text]))),
+    CONSTRAINT usage_statement_invoice_exports_status_chk CHECK ((status = ANY (ARRAY['creating'::text, 'completed'::text])))
+);
+
+
+--
+-- Name: TABLE usage_statement_invoice_exports; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.usage_statement_invoice_exports IS 'One draft provider invoice per finalized usage statement, recorded before provider calls so retries resume the same invoice.';
+
+
+--
+-- Name: COLUMN usage_statement_invoice_exports.payment_status; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.usage_statement_invoice_exports.payment_status IS 'Stripe invoice status last read by apid (ADR-1302); NULL until the first sync.';
+
+
+--
 -- Name: warm_hint; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -40369,6 +40844,14 @@ ALTER TABLE ONLY public.account_async_quota
 
 
 --
+-- Name: account_billing_connections account_billing_connections_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.account_billing_connections
+    ADD CONSTRAINT account_billing_connections_pkey PRIMARY KEY (account_id, provider);
+
+
+--
 -- Name: account_credits account_credits_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -40481,6 +40964,46 @@ ALTER TABLE ONLY public.alert_rules
 
 
 --
+-- Name: api_consumer_billing_policies api_consumer_billing_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_billing_policies
+    ADD CONSTRAINT api_consumer_billing_policies_pkey PRIMARY KEY (app_id);
+
+
+--
+-- Name: api_consumer_credit_applications api_consumer_credit_applications_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_credit_applications
+    ADD CONSTRAINT api_consumer_credit_applications_pkey PRIMARY KEY (grant_id, statement_id);
+
+
+--
+-- Name: api_consumer_credit_grants api_consumer_credit_grants_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_credit_grants
+    ADD CONSTRAINT api_consumer_credit_grants_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: api_consumer_meter_usage_minutes api_consumer_meter_usage_minutes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_meter_usage_minutes
+    ADD CONSTRAINT api_consumer_meter_usage_minutes_pkey PRIMARY KEY (account_id, app_id, consumer_key, meter, window_start);
+
+
+--
+-- Name: api_consumer_overdue_holds api_consumer_overdue_holds_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_overdue_holds
+    ADD CONSTRAINT api_consumer_overdue_holds_pkey PRIMARY KEY (consumer_id);
+
+
+--
 -- Name: api_consumer_plan_admissions api_consumer_plan_admissions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -40542,6 +41065,22 @@ ALTER TABLE ONLY public.api_consumer_rate_cards
 
 ALTER TABLE ONLY public.api_consumer_route_usage_minutes
     ADD CONSTRAINT api_consumer_route_usage_minutes_pkey PRIMARY KEY (account_id, app_id, consumer_key, window_start, route);
+
+
+--
+-- Name: api_consumer_spend_caps api_consumer_spend_caps_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_spend_caps
+    ADD CONSTRAINT api_consumer_spend_caps_pkey PRIMARY KEY (consumer_id);
+
+
+--
+-- Name: api_consumer_trials api_consumer_trials_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_trials
+    ADD CONSTRAINT api_consumer_trials_pkey PRIMARY KEY (consumer_id);
 
 
 --
@@ -41558,6 +42097,30 @@ ALTER TABLE ONLY public.billing_identities
 
 ALTER TABLE ONLY public.billing_meter_usage_deliveries
     ADD CONSTRAINT billing_meter_usage_deliveries_pkey PRIMARY KEY (provider, account_id, meter, window_start);
+
+
+--
+-- Name: billing_run_items billing_run_items_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.billing_run_items
+    ADD CONSTRAINT billing_run_items_pkey PRIMARY KEY (run_id, source_kind, source_id);
+
+
+--
+-- Name: billing_run_schedules billing_run_schedules_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.billing_run_schedules
+    ADD CONSTRAINT billing_run_schedules_pkey PRIMARY KEY (account_id);
+
+
+--
+-- Name: billing_runs billing_runs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.billing_runs
+    ADD CONSTRAINT billing_runs_pkey PRIMARY KEY (id);
 
 
 --
@@ -46169,6 +46732,30 @@ ALTER TABLE ONLY public.platform_tenant_offboarding_receipts
 
 
 --
+-- Name: platform_tenant_plan_assignments platform_tenant_plan_assignments_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_plan_assignments
+    ADD CONSTRAINT platform_tenant_plan_assignments_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: platform_tenant_plans platform_tenant_plans_name_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_plans
+    ADD CONSTRAINT platform_tenant_plans_name_key UNIQUE (account_id, name);
+
+
+--
+-- Name: platform_tenant_plans platform_tenant_plans_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_plans
+    ADD CONSTRAINT platform_tenant_plans_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: platform_tenant_rate_cards platform_tenant_rate_cards_account_id_platform_tenant_id_ef_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -46198,6 +46785,14 @@ ALTER TABLE ONLY public.platform_tenant_reconciliation_receipts
 
 ALTER TABLE ONLY public.platform_tenant_request_budgets
     ADD CONSTRAINT platform_tenant_request_budgets_pkey PRIMARY KEY (tenant_id);
+
+
+--
+-- Name: platform_tenant_source_route_usage_minutes platform_tenant_source_route_usage_minutes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_source_route_usage_minutes
+    ADD CONSTRAINT platform_tenant_source_route_usage_minutes_pkey PRIMARY KEY (account_id, platform_tenant_id, app_id, source_kind, source_id, window_start, route);
 
 
 --
@@ -48473,6 +49068,22 @@ ALTER TABLE ONLY public.usage_minutes
 
 
 --
+-- Name: usage_statement_invoice_exports usage_statement_invoice_exports_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.usage_statement_invoice_exports
+    ADD CONSTRAINT usage_statement_invoice_exports_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: usage_statement_invoice_exports usage_statement_invoice_exports_statement_uniq; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.usage_statement_invoice_exports
+    ADD CONSTRAINT usage_statement_invoice_exports_statement_uniq UNIQUE (source_kind, statement_id);
+
+
+--
 -- Name: warm_hint warm_hint_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -49068,6 +49679,27 @@ CREATE INDEX alert_rules_org_id_idx ON public.alert_rules USING btree (org_id) W
 
 
 --
+-- Name: api_consumer_credit_applications_statement_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX api_consumer_credit_applications_statement_idx ON public.api_consumer_credit_applications USING btree (statement_id);
+
+
+--
+-- Name: api_consumer_credit_grants_consumer_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX api_consumer_credit_grants_consumer_idx ON public.api_consumer_credit_grants USING btree (consumer_id, currency, created_at);
+
+
+--
+-- Name: api_consumer_overdue_holds_app_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX api_consumer_overdue_holds_app_idx ON public.api_consumer_overdue_holds USING btree (account_id, app_id, due_at);
+
+
+--
 -- Name: api_consumer_plan_assignments_lookup_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -49082,17 +49714,24 @@ CREATE INDEX api_consumer_rate_cards_account_app_effective_idx ON public.api_con
 
 
 --
--- Name: api_consumer_rate_cards_default_effective_uniq; Type: INDEX; Schema: public; Owner: -
+-- Name: api_consumer_rate_cards_default_unit_effective_uniq; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX api_consumer_rate_cards_default_effective_uniq ON public.api_consumer_rate_cards USING btree (app_id, effective_from) WHERE (plan_id IS NULL);
+CREATE UNIQUE INDEX api_consumer_rate_cards_default_unit_effective_uniq ON public.api_consumer_rate_cards USING btree (app_id, unit, effective_from) WHERE (plan_id IS NULL);
 
 
 --
--- Name: api_consumer_rate_cards_plan_effective_uniq; Type: INDEX; Schema: public; Owner: -
+-- Name: api_consumer_rate_cards_plan_unit_effective_uniq; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX api_consumer_rate_cards_plan_effective_uniq ON public.api_consumer_rate_cards USING btree (plan_id, effective_from) WHERE (plan_id IS NOT NULL);
+CREATE UNIQUE INDEX api_consumer_rate_cards_plan_unit_effective_uniq ON public.api_consumer_rate_cards USING btree (plan_id, unit, effective_from) WHERE (plan_id IS NOT NULL);
+
+
+--
+-- Name: api_consumer_spend_caps_next_check_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX api_consumer_spend_caps_next_check_idx ON public.api_consumer_spend_caps USING btree (next_check_at);
 
 
 --
@@ -50052,6 +50691,55 @@ CREATE UNIQUE INDEX billing_identities_provider_subscription_idx ON public.billi
 --
 
 CREATE INDEX billing_meter_usage_deliveries_window_idx ON public.billing_meter_usage_deliveries USING btree (window_start);
+
+
+--
+-- Name: billing_run_items_pending_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX billing_run_items_pending_idx ON public.billing_run_items USING btree (run_id, next_attempt_at) WHERE (outcome = 'pending'::text);
+
+
+--
+-- Name: billing_run_schedules_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX billing_run_schedules_due_idx ON public.billing_run_schedules USING btree (next_run_at);
+
+
+--
+-- Name: billing_runs_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX billing_runs_account_idx ON public.billing_runs USING btree (account_id, created_at DESC);
+
+
+--
+-- Name: billing_runs_claim_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX billing_runs_claim_idx ON public.billing_runs USING btree (created_at) WHERE (status = ANY (ARRAY['queued'::text, 'running'::text]));
+
+
+--
+-- Name: billing_runs_notify_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX billing_runs_notify_idx ON public.billing_runs USING btree (completed_at) WHERE ((status = 'completed'::text) AND (notified_at IS NULL));
+
+
+--
+-- Name: billing_runs_one_active_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX billing_runs_one_active_idx ON public.billing_runs USING btree (account_id) WHERE (status = ANY (ARRAY['queued'::text, 'running'::text]));
+
+
+--
+-- Name: billing_runs_scheduled_month_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX billing_runs_scheduled_month_idx ON public.billing_runs USING btree (account_id, period_start) WHERE (trigger = 'schedule'::text);
 
 
 --
@@ -54500,10 +55188,24 @@ CREATE INDEX platform_tenant_offboarding_receipts_history_idx ON public.platform
 
 
 --
+-- Name: platform_tenant_plan_assignments_tenant_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX platform_tenant_plan_assignments_tenant_idx ON public.platform_tenant_plan_assignments USING btree (tenant_id, effective_from DESC);
+
+
+--
 -- Name: platform_tenant_reconciliation_receipts_history_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX platform_tenant_reconciliation_receipts_history_idx ON public.platform_tenant_reconciliation_receipts USING btree (account_id, tenant_id, applied_at DESC, receipt_id DESC);
+
+
+--
+-- Name: platform_tenant_source_route_usage_minutes_read_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX platform_tenant_source_route_usage_minutes_read_idx ON public.platform_tenant_source_route_usage_minutes USING btree (account_id, platform_tenant_id, window_start);
 
 
 --
@@ -56051,6 +56753,27 @@ CREATE INDEX usage_minutes_minute_idx ON public.usage_minutes USING btree (minut
 --
 
 CREATE INDEX usage_minutes_org_id_idx ON public.usage_minutes USING btree (org_id) WHERE (org_id IS NOT NULL);
+
+
+--
+-- Name: usage_statement_invoice_exports_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX usage_statement_invoice_exports_account_idx ON public.usage_statement_invoice_exports USING btree (account_id, created_at DESC);
+
+
+--
+-- Name: usage_statement_invoice_exports_overdue_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX usage_statement_invoice_exports_overdue_idx ON public.usage_statement_invoice_exports USING btree (due_at) WHERE ((payment_status = 'open'::text) AND (overdue_notified_at IS NULL));
+
+
+--
+-- Name: usage_statement_invoice_exports_sync_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX usage_statement_invoice_exports_sync_idx ON public.usage_statement_invoice_exports USING btree (next_status_sync_at) WHERE (next_status_sync_at IS NOT NULL);
 
 
 --
@@ -61599,6 +62322,14 @@ ALTER TABLE ONLY public.account_async_quota
 
 
 --
+-- Name: account_billing_connections account_billing_connections_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.account_billing_connections
+    ADD CONSTRAINT account_billing_connections_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
 -- Name: account_credits account_credits_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -61703,6 +62434,94 @@ ALTER TABLE ONLY public.alert_rules
 
 
 --
+-- Name: api_consumer_billing_policies api_consumer_billing_policies_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_billing_policies
+    ADD CONSTRAINT api_consumer_billing_policies_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_billing_policies api_consumer_billing_policies_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_billing_policies
+    ADD CONSTRAINT api_consumer_billing_policies_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_credit_applications api_consumer_credit_applications_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_credit_applications
+    ADD CONSTRAINT api_consumer_credit_applications_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_credit_applications api_consumer_credit_applications_grant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_credit_applications
+    ADD CONSTRAINT api_consumer_credit_applications_grant_id_fkey FOREIGN KEY (grant_id) REFERENCES public.api_consumer_credit_grants(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_credit_applications api_consumer_credit_applications_statement_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_credit_applications
+    ADD CONSTRAINT api_consumer_credit_applications_statement_id_fkey FOREIGN KEY (statement_id) REFERENCES public.api_consumer_usage_statements(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_credit_grants api_consumer_credit_grants_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_credit_grants
+    ADD CONSTRAINT api_consumer_credit_grants_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_credit_grants api_consumer_credit_grants_consumer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_credit_grants
+    ADD CONSTRAINT api_consumer_credit_grants_consumer_id_fkey FOREIGN KEY (consumer_id) REFERENCES public.api_consumers(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_meter_usage_minutes api_consumer_meter_usage_minutes_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_meter_usage_minutes
+    ADD CONSTRAINT api_consumer_meter_usage_minutes_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_overdue_holds api_consumer_overdue_holds_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_overdue_holds
+    ADD CONSTRAINT api_consumer_overdue_holds_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_overdue_holds api_consumer_overdue_holds_consumer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_overdue_holds
+    ADD CONSTRAINT api_consumer_overdue_holds_consumer_id_fkey FOREIGN KEY (consumer_id) REFERENCES public.api_consumers(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_overdue_holds api_consumer_overdue_holds_export_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_overdue_holds
+    ADD CONSTRAINT api_consumer_overdue_holds_export_id_fkey FOREIGN KEY (export_id) REFERENCES public.usage_statement_invoice_exports(id) ON DELETE CASCADE;
+
+
+--
 -- Name: api_consumer_plan_admissions api_consumer_plan_admissions_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -61804,6 +62623,38 @@ ALTER TABLE ONLY public.api_consumer_route_usage_minutes
 
 ALTER TABLE ONLY public.api_consumer_route_usage_minutes
     ADD CONSTRAINT api_consumer_route_usage_minutes_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_spend_caps api_consumer_spend_caps_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_spend_caps
+    ADD CONSTRAINT api_consumer_spend_caps_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_spend_caps api_consumer_spend_caps_consumer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_spend_caps
+    ADD CONSTRAINT api_consumer_spend_caps_consumer_id_fkey FOREIGN KEY (consumer_id) REFERENCES public.api_consumers(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_trials api_consumer_trials_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_trials
+    ADD CONSTRAINT api_consumer_trials_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: api_consumer_trials api_consumer_trials_consumer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.api_consumer_trials
+    ADD CONSTRAINT api_consumer_trials_consumer_id_fkey FOREIGN KEY (consumer_id) REFERENCES public.api_consumers(id) ON DELETE CASCADE;
 
 
 --
@@ -63348,6 +64199,30 @@ ALTER TABLE ONLY public.billing_identities
 
 ALTER TABLE ONLY public.billing_meter_usage_deliveries
     ADD CONSTRAINT billing_meter_usage_deliveries_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: billing_run_items billing_run_items_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.billing_run_items
+    ADD CONSTRAINT billing_run_items_run_id_fkey FOREIGN KEY (run_id) REFERENCES public.billing_runs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: billing_run_schedules billing_run_schedules_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.billing_run_schedules
+    ADD CONSTRAINT billing_run_schedules_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: billing_runs billing_runs_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.billing_runs
+    ADD CONSTRAINT billing_runs_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --
@@ -69071,6 +69946,46 @@ ALTER TABLE ONLY public.platform_tenant_offboarding_receipts
 
 
 --
+-- Name: platform_tenant_plan_assignments platform_tenant_plan_assignments_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_plan_assignments
+    ADD CONSTRAINT platform_tenant_plan_assignments_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: platform_tenant_plan_assignments platform_tenant_plan_assignments_plan_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_plan_assignments
+    ADD CONSTRAINT platform_tenant_plan_assignments_plan_id_fkey FOREIGN KEY (plan_id) REFERENCES public.platform_tenant_plans(id) ON DELETE CASCADE;
+
+
+--
+-- Name: platform_tenant_plan_assignments platform_tenant_plan_assignments_rate_card_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_plan_assignments
+    ADD CONSTRAINT platform_tenant_plan_assignments_rate_card_id_fkey FOREIGN KEY (rate_card_id) REFERENCES public.platform_tenant_rate_cards(id) ON DELETE CASCADE;
+
+
+--
+-- Name: platform_tenant_plan_assignments platform_tenant_plan_assignments_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_plan_assignments
+    ADD CONSTRAINT platform_tenant_plan_assignments_tenant_id_fkey FOREIGN KEY (tenant_id) REFERENCES public.platform_tenants(id) ON DELETE CASCADE;
+
+
+--
+-- Name: platform_tenant_plans platform_tenant_plans_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_plans
+    ADD CONSTRAINT platform_tenant_plans_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
 -- Name: platform_tenant_rate_cards platform_tenant_rate_cards_account_id_platform_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -69092,6 +70007,14 @@ ALTER TABLE ONLY public.platform_tenant_reconciliation_receipts
 
 ALTER TABLE ONLY public.platform_tenant_request_budgets
     ADD CONSTRAINT platform_tenant_request_budgets_account_id_tenant_id_fkey FOREIGN KEY (account_id, tenant_id) REFERENCES public.platform_tenants(account_id, id) ON DELETE CASCADE;
+
+
+--
+-- Name: platform_tenant_source_route_usage_minutes platform_tenant_source_route_usage_minutes_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_tenant_source_route_usage_minutes
+    ADD CONSTRAINT platform_tenant_source_route_usage_minutes_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --
@@ -72084,6 +73007,14 @@ ALTER TABLE ONLY public.usage_daily
 
 ALTER TABLE ONLY public.usage_minutes
     ADD CONSTRAINT usage_minutes_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: usage_statement_invoice_exports usage_statement_invoice_exports_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.usage_statement_invoice_exports
+    ADD CONSTRAINT usage_statement_invoice_exports_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --

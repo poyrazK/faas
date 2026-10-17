@@ -246,6 +246,10 @@ type APIConsumerUsageStatementFinalizedWebhookPayload struct {
 	Buckets          []APIConsumerUsageStatementBucketResponse `json:"buckets"`
 	AsOf             string                                    `json:"as_of"`
 	FinalizedAt      time.Time                                 `json:"finalized_at"`
+	// Prepaid credit drawn at finalization and what is left to bill
+	// (ADR-1306).
+	CreditAppliedMillicents int64 `json:"credit_applied_millicents"`
+	AmountDueMillicents     int64 `json:"amount_due_millicents"`
 }
 
 // PlatformTenantStatementFinalizedWebhookPayload is the cross-app billing
