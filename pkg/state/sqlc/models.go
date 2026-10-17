@@ -1536,6 +1536,14 @@ type BillingMeterUsageDelivery struct {
 	DeliveredAt pgtype.Timestamptz
 }
 
+type BillingPaymentFailureReceipt struct {
+	Provider    string
+	EventID     string
+	AccountID   pgtype.UUID
+	EventType   string
+	ProcessedAt pgtype.Timestamptz
+}
+
 type BillingUsageDelivery struct {
 	Provider    string
 	AccountID   pgtype.UUID
@@ -7353,6 +7361,7 @@ type PlatformMailProducerOutbox struct {
 	VerificationOrigin    string
 	SealedSecurityAlert   []byte
 	SecurityAlertKeyID    string
+	PaymentPastDueAt      pgtype.Timestamptz
 }
 
 type PlatformTenant struct {

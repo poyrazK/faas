@@ -19,6 +19,8 @@ type Account struct {
 	MfaRecoveryCodesHash  [][]byte
 	MfaSecretEncrypted    []byte
 	MfaRequired           bool
+	PastDueAt             pgtype.Timestamptz
+	SuspendedReason       pgtype.Text
 	PasswordResetRevision int64
 	MfaRevision           int64
 }
@@ -32,6 +34,20 @@ type AccountPassword struct {
 type ApiKey struct {
 	ID        pgtype.UUID
 	AccountID pgtype.UUID
+}
+
+type BillingIdentity struct {
+	AccountID  pgtype.UUID
+	Provider   string
+	CustomerID string
+}
+
+type BillingPaymentFailureReceipt struct {
+	Provider    string
+	EventID     string
+	AccountID   pgtype.UUID
+	EventType   string
+	ProcessedAt pgtype.Timestamptz
 }
 
 type EmailVerificationToken struct {
@@ -113,6 +129,14 @@ type MfaDisableToken struct {
 	ConsumedAt       pgtype.Timestamptz
 }
 
+type Org struct {
+	ID                     pgtype.UUID
+	PersonalOrg            bool
+	PersonalOwnerAccountID pgtype.UUID
+	Status                 string
+	UpdatedAt              pgtype.Timestamptz
+}
+
 type PasswordResetToken struct {
 	TokenHash        []byte
 	AccountID        pgtype.UUID
@@ -170,6 +194,7 @@ type PlatformMailProducerOutbox struct {
 	VerificationOrigin    string
 	SealedSecurityAlert   []byte
 	SecurityAlertKeyID    string
+	PaymentPastDueAt      pgtype.Timestamptz
 }
 
 type Session struct {

@@ -145,6 +145,7 @@ type server struct {
 	magicLinkMailOutboxRequested        func() bool
 	mfaRecoveryAlertOutboxRequested     func() bool
 	mfaDisabledAlertOutboxRequested     func() bool
+	paymentFailedOutboxRequested        func() bool
 	mfaEnabledAlertOutboxRequested      func() bool
 	passwordChangedAlertOutboxRequested func() bool
 	magicLinkCredentials                *mailoutbox.MagicLinkCredentials

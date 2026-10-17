@@ -59,6 +59,7 @@ type Service struct {
 	MagicLinkOutboxEnabled            func() bool
 	MFARecoveryAlertOutboxEnabled     func() bool
 	MFADisabledAlertOutboxEnabled     func() bool
+	PaymentFailedOutboxEnabled        func() bool
 	MFAEnabledAlertOutboxEnabled      func() bool
 	PasswordChangedAlertOutboxEnabled func() bool
 	MFADisableOutboxEnabled           func() bool
@@ -540,7 +541,18 @@ func (s *Service) prepareAndSubmit(ctx context.Context, r Recipient) (string, st
 	if !s.producerMessagePermitted(m.Message) {
 		return "queued", "producer_unavailable"
 	}
-	if err := s.beginMailSubmission(ctx, r, d.Selector); err != nil {
+	submissionCtx, err := s.paymentFailedSubmissionContext(ctx, m.Message)
+	if err != nil {
+		if errors.Is(err, ErrDisabled) {
+			return "queued", "producer_unavailable"
+		}
+		return "deferred", "submission_not_started"
+	}
+	if err := s.beginMailSubmission(submissionCtx, r, d.Selector); err != nil {
+		if errors.Is(err, errPaymentFailureObsolete) {
+			return "cancelled", "account_changed"
+		}
+
 		if errors.Is(err, ErrRecoveryHeld) {
 			return "queued", "recovery_held"
 		}

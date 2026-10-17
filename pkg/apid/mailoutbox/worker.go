@@ -35,6 +35,7 @@ func (s *Service) claim(ctx context.Context) (q.PlatformMailProducerOutbox, erro
 	alertKeys := []string{}
 	disabledKeys := []string{}
 	changedKeys := []string{}
+	paymentKeys := []string{}
 	enabledKeys := []string{}
 	disableOrigin := ""
 	disableKeys := []string{}
@@ -65,6 +66,11 @@ func (s *Service) claim(ctx context.Context) (q.PlatformMailProducerOutbox, erro
 	if err := s.queries.PurgeExpiredMFADisableTokens(ctx, tx, api.InternalMailProducerOutboxMaintenanceBatch); err != nil {
 		return q.PlatformMailProducerOutbox{}, err
 	}
+	if s.paymentFailedEnabled() {
+		for key := range s.paymentFailed.readers {
+			paymentKeys = append(paymentKeys, key)
+		}
+	}
 	if s.mfaEnabledAlertEnabled() {
 		for key := range s.mfaEnabledAlert.readers {
 			enabledKeys = append(enabledKeys, key)
@@ -91,7 +97,7 @@ func (s *Service) claim(ctx context.Context) (q.PlatformMailProducerOutbox, erro
 	if err := s.queries.PurgeExpiredPasswordResetTokens(ctx, tx, api.InternalMailProducerOutboxMaintenanceBatch); err != nil {
 		return q.PlatformMailProducerOutbox{}, err
 	}
-	r, err := s.queries.Claim(ctx, tx, q.ClaimParams{Namespace: s.namespace, ProducerID: s.producer, FromAddress: s.from, VerificationEnabled: s.verificationEnabled(), VerificationOrigin: origin, VerificationKeys: keys, PasswordResetEnabled: s.passwordResetEnabled(), PasswordResetOrigin: resetOrigin, PasswordResetKeys: resetKeys, MagicLinkEnabled: s.magicLinkEnabled(), MagicLinkOrigin: magicOrigin, MagicLinkKeys: magicKeys, MfaDisableEnabled: s.mfaDisableEnabled(), MfaDisableOrigin: disableOrigin, MfaDisableKeys: disableKeys, MfaEnabledAlertEnabled: s.mfaEnabledAlertEnabled(), MfaEnabledAlertKeys: enabledKeys, PasswordChangedAlertEnabled: s.passwordChangedAlertEnabled(), PasswordChangedAlertKeys: changedKeys, MfaDisabledAlertEnabled: s.mfaDisabledAlertEnabled(), MfaDisabledAlertKeys: disabledKeys, MfaRecoveryAlertEnabled: s.mfaRecoveryAlertEnabled(), MfaRecoveryAlertKeys: alertKeys, MaxAttempts: api.InternalMailProducerOutboxMaxAttempts, LeaseID: pgID(uuid.NewString()), LeaseSeconds: int32(api.InternalMailProducerOutboxLease / time.Second)})
+	r, err := s.queries.Claim(ctx, tx, q.ClaimParams{Namespace: s.namespace, ProducerID: s.producer, FromAddress: s.from, VerificationEnabled: s.verificationEnabled(), VerificationOrigin: origin, VerificationKeys: keys, PasswordResetEnabled: s.passwordResetEnabled(), PasswordResetOrigin: resetOrigin, PasswordResetKeys: resetKeys, MagicLinkEnabled: s.magicLinkEnabled(), MagicLinkOrigin: magicOrigin, MagicLinkKeys: magicKeys, MfaDisableEnabled: s.mfaDisableEnabled(), MfaDisableOrigin: disableOrigin, MfaDisableKeys: disableKeys, PaymentFailedEnabled: s.paymentFailedEnabled(), PaymentFailedKeys: paymentKeys, MfaEnabledAlertEnabled: s.mfaEnabledAlertEnabled(), MfaEnabledAlertKeys: enabledKeys, PasswordChangedAlertEnabled: s.passwordChangedAlertEnabled(), PasswordChangedAlertKeys: changedKeys, MfaDisabledAlertEnabled: s.mfaDisabledAlertEnabled(), MfaDisabledAlertKeys: disabledKeys, MfaRecoveryAlertEnabled: s.mfaRecoveryAlertEnabled(), MfaRecoveryAlertKeys: alertKeys, MaxAttempts: api.InternalMailProducerOutboxMaxAttempts, LeaseID: pgID(uuid.NewString()), LeaseSeconds: int32(api.InternalMailProducerOutboxLease / time.Second)})
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return r, err
 	}
@@ -175,6 +181,8 @@ func (s *Service) dispatch(ctx context.Context, claimed q.PlatformMailProducerOu
 		state, code = "cancelled", "token_unavailable"
 	case (r.Template == MFARecoveryAlertTemplate || r.Template == MFADisabledAlertTemplate || r.Template == PasswordChangedAlertTemplate || r.Template == MFAEnabledAlertTemplate) && account.Status != "active" && account.Status != "past_due" && account.Status != "suspended":
 		state, code = "cancelled", "account_changed"
+	case r.Template == PaymentFailedTemplate && (account.Status != "past_due" || account.DeletionRequestedAt.Valid || !account.PastDueAt.Valid || !r.PaymentPastDueAt.Valid || !account.PastDueAt.Time.Equal(r.PaymentPastDueAt.Time)):
+		state, code = "cancelled", "account_changed"
 	case !r.ExpiresAt.Time.After(time.Now()):
 		state, code = "expired", "notification_expired"
 	default:
@@ -208,13 +216,18 @@ func (s *Service) handoff(ctx context.Context, tx pgx.Tx, r q.PlatformMailProduc
 	sender := s.sender
 	var message mail.Message
 	switch r.Template {
-	case VerificationTemplate, PasswordResetTemplate, MagicLinkTemplate, MFARecoveryAlertTemplate, MFADisableTemplate, MFADisabledAlertTemplate, PasswordChangedAlertTemplate, MFAEnabledAlertTemplate:
+	case VerificationTemplate, PasswordResetTemplate, MagicLinkTemplate, MFARecoveryAlertTemplate, MFADisableTemplate, MFADisabledAlertTemplate, PasswordChangedAlertTemplate, MFAEnabledAlertTemplate, PaymentFailedTemplate:
 		var err error
 		switch r.Template {
 		case MFADisableTemplate:
 			message, err = s.mfaDisableMessage(ctx, tx, r, account)
 			if s.mfaDisable != nil {
 				sender = s.mfaDisable.sender
+			}
+		case PaymentFailedTemplate:
+			message, err = s.paymentFailedMessage(r)
+			if s.paymentFailed != nil {
+				sender = s.paymentFailed.sender
 			}
 		case MFAEnabledAlertTemplate:
 			message, err = s.mfaEnabledAlertMessage(r)

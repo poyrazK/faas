@@ -19,6 +19,7 @@ import (
 	"filippo.io/age"
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/migrations"
+	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/internalmail"
 )
@@ -36,11 +37,13 @@ func (s *fixtureSMTP) Submit(context.Context, internalmail.Envelope) (string, st
 
 func TestPGProducerOutboxRealMaildLostAcknowledgementDoesNotDuplicate(t *testing.T) {
 	pool := pgtest.Open(t)
-	if _, err := pool.Exec(t.Context(), `CREATE TABLE accounts(id uuid PRIMARY KEY,email text NOT NULL,status text NOT NULL,deletion_requested_at timestamptz,email_verified_at timestamptz,abuse_hold_at timestamptz,mfa_enrolled_at timestamptz,mfa_recovery_codes_hash bytea[],mfa_secret_encrypted bytea,mfa_required boolean NOT NULL DEFAULT false);
+	if _, err := pool.Exec(t.Context(), `CREATE TABLE accounts(id uuid PRIMARY KEY,email text NOT NULL,status text NOT NULL,deletion_requested_at timestamptz,email_verified_at timestamptz,abuse_hold_at timestamptz,mfa_enrolled_at timestamptz,mfa_recovery_codes_hash bytea[],mfa_secret_encrypted bytea,mfa_required boolean NOT NULL DEFAULT false,past_due_at timestamptz,suspended_reason text);
 CREATE TABLE login_tokens(token_hash bytea PRIMARY KEY,account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,expires_at timestamptz NOT NULL,consumed_at timestamptz);
 CREATE TABLE mfa_disable_requests(token_hash bytea PRIMARY KEY,account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,requested_at timestamptz NOT NULL,consumed_at timestamptz);
 CREATE TABLE email_verification_tokens(token_hash bytea PRIMARY KEY,account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,expires_at timestamptz NOT NULL,consumed_at timestamptz,created_at timestamptz NOT NULL DEFAULT now());
         CREATE TABLE account_passwords(account_id uuid PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,hash text NOT NULL,updated_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE orgs(id uuid PRIMARY KEY,personal_org boolean NOT NULL DEFAULT false,personal_owner_account_id uuid,status text NOT NULL DEFAULT 'active',updated_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE billing_identities(account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,provider text NOT NULL,customer_id text NOT NULL,PRIMARY KEY(account_id,provider),UNIQUE(provider,customer_id));
 CREATE TABLE mail_suppressions(email text NOT NULL,expires_at timestamptz)`); err != nil {
 		t.Fatal(err)
 	}
@@ -83,6 +86,7 @@ CREATE TABLE mail_suppressions(email text NOT NULL,expires_at timestamptz)`); er
 	var mfaDisableGate atomic.Bool
 	var mfaDisabledAlertGate atomic.Bool
 	var passwordChangedAlertGate atomic.Bool
+	var paymentFailedGate atomic.Bool
 	var mfaEnabledAlertGate atomic.Bool
 	outboxGate.Store(true)
 	daemon := &internalmail.Service{Store: store, Codec: internalmail.AgeCodec{Identity: identity, Namespace: "platform"}, Resolver: resolver, SendingIP: netip.MustParseAddr("192.0.2.10"),
@@ -96,8 +100,9 @@ CREATE TABLE mail_suppressions(email text NOT NULL,expires_at timestamptz)`); er
 		MFADisableOutboxEnabled:           mfaDisableGate.Load,
 		MFADisabledAlertOutboxEnabled:     mfaDisabledAlertGate.Load,
 		PasswordChangedAlertOutboxEnabled: passwordChangedAlertGate.Load,
+		PaymentFailedOutboxEnabled:        paymentFailedGate.Load,
 		MFAEnabledAlertOutboxEnabled:      mfaEnabledAlertGate.Load,
-		Producers:                         map[string]internalmail.Producer{"auth": {ID: "auth", Token: testProducerToken, From: []string{"notify@example.test"}, DailyRecipientLimit: 10, PendingRecipientLimit: 100}},
+		Producers:                         map[string]internalmail.Producer{"auth": {ID: "auth", Token: testProducerToken, From: []string{"notify@example.test"}, DailyRecipientLimit: 30, PendingRecipientLimit: 100}},
 		RecipientAllowed:                  func(string) bool { return true }, Transport: smtp}
 	domain, err := daemon.RegisterDomain(t.Context(), "example.test")
 	if err != nil {
@@ -702,6 +707,8 @@ CREATE TABLE mail_suppressions(email text NOT NULL,expires_at timestamptz)`); er
 	if smtp.accepted.Load() != 10 {
 		t.Fatal("MFA enabled alert retry duplicated SMTP custody")
 	}
+	f.service = restarted
+	expectedMailCount := 10 + exercisePaymentHandoff(t, f, daemon, smtp, &paymentFailedGate, &dropped)
 	// The producer must retain no recovery advisory lock across HTTP. Start
 	// and release a new recovery after producer preflight but before maild
 	// admission: the owner's generation check must reject this stale request.
@@ -721,7 +728,7 @@ CREATE TABLE mail_suppressions(email text NOT NULL,expires_at timestamptz)`); er
 	if got := row(t, f, uuid.UUID(late.ID.Bytes).String()); got.State != "queued" {
 		t.Fatal("stale generation was admitted")
 	}
-	if err := pool.QueryRow(t.Context(), "SELECT count(*) FROM internal_mail_messages WHERE producer_id='auth'").Scan(&count); err != nil || count != 10 {
+	if err := pool.QueryRow(t.Context(), "SELECT count(*) FROM internal_mail_messages WHERE producer_id='auth'").Scan(&count); err != nil || count != expectedMailCount {
 		t.Fatal("stale generation created new mail after release", err)
 	}
 	// A remote management rollback keeps a generation-bound intent retryable.
@@ -733,4 +740,144 @@ CREATE TABLE mail_suppressions(email text NOT NULL,expires_at timestamptz)`); er
 	if got := row(t, f, uuid.UUID(paused.ID.Bytes).String()); got.State != "queued" || got.Code != "maild_unavailable" {
 		t.Fatal("remote gate rollback discarded pending intent")
 	}
+}
+
+// Uses the real Unix handler, owner transactions and fake SMTP. No external
+// transport or billing API is contacted.
+func exercisePaymentHandoff(t *testing.T, f *fixture, daemon *internalmail.Service, smtp *fixtureSMTP, gate, dropped *atomic.Bool) int {
+	t.Helper()
+	f.env[internalmail.PaymentFailedOutboxEnableEnv] = "1"
+	if err := f.service.ConfigurePaymentFailed(t.Context(), func(k string) string { return f.env[k] }); err != nil {
+		t.Fatal(err)
+	}
+	_, _, first := queuePayment(t, f)
+	if err := f.service.DeliverOne(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if got := row(t, f, uuidString(first.ID.Bytes)); got.State != "queued" || len(got.SealedSecurityAlert) == 0 {
+		t.Fatal("remote pause lost payment warning")
+	}
+	gate.Store(true)
+	for attempt := 0; attempt < 2; attempt++ {
+		if _, err := f.pool.Exec(t.Context(), "UPDATE platform_mail_producer_outbox SET next_attempt_at=clock_timestamp() WHERE id=$1", first.ID); err != nil {
+			t.Fatal(err)
+		}
+		restarted, err := NewFromEnv(f.pool, func(k string) string { return f.env[k] })
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := restarted.ConfigurePaymentFailed(t.Context(), func(k string) string { return f.env[k] }); err != nil {
+			t.Fatal(err)
+		}
+		f.service = restarted
+		if attempt == 0 {
+			dropped.Store(false)
+		}
+		if err := restarted.DeliverOne(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if got := row(t, f, uuidString(first.ID.Bytes)); attempt == 0 && got.State != "queued" {
+			t.Fatal("payment admission response was not lost")
+		}
+	}
+	if got := row(t, f, uuidString(first.ID.Bytes)); got.State != "admitted" {
+		t.Fatal("payment retry lost admission")
+	} else {
+		assertMFAAlertErased(t, got)
+	}
+	before := smtp.accepted.Load()
+	gate.Store(false)
+	if err := daemon.DeliverOne(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if smtp.accepted.Load() != before {
+		t.Fatal("disabled payment delivery reached SMTP")
+	}
+	gate.Store(true)
+	for range 2 {
+		if err := daemon.DeliverOne(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if smtp.accepted.Load() != before+1 {
+		t.Fatal("lost acknowledgement duplicated payment SMTP custody")
+	}
+	admitted := 1
+	for _, mode := range []string{"paid", "new_episode", "address", "erasure", "recovery_wait", "flag_wait"} {
+		id, customer, intent := queuePayment(t, f)
+		if err := f.service.DeliverOne(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if row(t, f, uuidString(intent.ID.Bytes)).State != "admitted" {
+			t.Fatal("payment warning not admitted", mode)
+		}
+		admitted++
+		var err error
+		switch mode {
+		case "paid":
+			_, err = f.service.RestorePaymentAfterFailure(t.Context(), id, "stripe", customer)
+		case "new_episode":
+			_, err = f.service.RestorePaymentAfterFailure(t.Context(), id, "stripe", customer)
+			if err == nil {
+				err = f.service.RecordPaymentFailure(t.Context(), id, "stripe", uuid.NewString(), customer, billing.EventPaymentFailed)
+			}
+		case "address":
+			_, err = f.pool.Exec(t.Context(), "UPDATE accounts SET email='other@example.net' WHERE id=$1", id)
+		case "erasure":
+			_, err = f.pool.Exec(t.Context(), "DELETE FROM accounts WHERE id=$1", id)
+		case "recovery_wait", "flag_wait":
+			tx, beginErr := f.pool.Begin(t.Context())
+			if beginErr != nil {
+				t.Fatal(beginErr)
+			}
+			defer rollback(t.Context(), tx)
+			if _, err := tx.Exec(t.Context(), "SELECT id FROM accounts WHERE id=$1 FOR UPDATE", id); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			done := make(chan error, 1)
+			go func() { done <- daemon.DeliverOne(ctx) }()
+			waitForReconciliationBlock(t, f, ctx, tx.Conn().PgConn().PID())
+			if mode == "recovery_wait" {
+				if _, err := tx.Exec(ctx, "UPDATE accounts SET status='active',past_due_at=NULL WHERE id=$1", id); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				gate.Store(false)
+			}
+			if err := tx.Commit(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if err := <-done; err != nil {
+				t.Fatal(err)
+			}
+			if mode == "flag_wait" {
+				gate.Store(true)
+				_, err = f.service.RestorePaymentAfterFailure(t.Context(), id, "stripe", customer)
+			}
+		}
+		if err != nil {
+			t.Fatal(mode, err)
+		}
+		for range 2 {
+			if err := daemon.DeliverOne(t.Context()); err != nil {
+				t.Fatal(mode, err)
+			}
+		}
+		if smtp.accepted.Load() != before+1 {
+			t.Fatal("obsolete payment warning reached SMTP", mode)
+		}
+		var state string
+		if err := f.pool.QueryRow(t.Context(), "SELECT r.status FROM internal_mail_messages m JOIN internal_mail_recipients r ON r.message_id=m.id WHERE m.idempotency_key=$1", "payment-failed:"+uuidString(intent.ID.Bytes)).Scan(&state); err != nil || state != "cancelled" {
+			t.Fatal("maild did not cancel obsolete payment warning", mode, state, err)
+		}
+		if mode == "new_episode" {
+			if _, err := f.service.RestorePaymentAfterFailure(t.Context(), id, "stripe", customer); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	f.env[internalmail.PaymentFailedOutboxEnableEnv] = "0"
+	return admitted
 }

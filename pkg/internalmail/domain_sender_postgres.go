@@ -64,6 +64,16 @@ func (s *PGStore) beginScheduled(ctx context.Context, r Recipient, selector stri
 		return err
 	}
 	defer rollbackOperator(ctx, tx)
+	// The extra account read is selected only for the new internal template.
+	paymentGate, paymentBound := ctx.Value(paymentFailedSubmissionGateKey{}).(func() bool)
+	if paymentBound {
+		if paymentGate == nil || !paymentGate() {
+			return ErrDisabled
+		}
+		if err := s.sharePaymentFailedAccount(ctx, tx, r); err != nil {
+			return err
+		}
+	}
 	if err := s.shareRecovery(ctx, tx, r.ID); err != nil {
 		return err
 	}
@@ -142,6 +152,9 @@ func (s *PGStore) beginScheduled(ctx context.Context, r Recipient, selector stri
 			}
 		}
 		return ErrLeaseLost
+	}
+	if paymentBound && !paymentGate() {
+		return ErrDisabled
 	}
 	return tx.Commit(ctx)
 }

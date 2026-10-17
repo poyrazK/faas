@@ -2957,3 +2957,74 @@ and pauses pending alert handoff. Base maintenance still expires and erases
 payloads. Terminal settlement and reconciliation erase recipient/ciphertext;
 hard account erasure cascades intent while opaque audit survives. Migration Down
 refuses activation intent or audit history. No forced resend is provided.
+
+## Durable payment-failure notifications
+
+`FAAS_INTERNAL_MAIL_PAYMENT_FAILED_OUTBOX_ENABLED=0` independently gates this
+internal billing capability in apid, maild and private reconciliation. Units and
+examples keep it off. Apply
+[`20261017105351033_platform_mail_payment_failed_outbox.sql`](../../migrations/20261017105351033_platform_mail_payment_failed_outbox.sql)
+before opting in. See
+[ADR-20261017105351](../adr/20261017105351-mail-payment-failure-notifications.md).
+
+It requires master, producer, scheduling and producer-outbox gates, scoped
+`internal-producer` transport and dedicated apid readers under
+`FAAS_INTERNAL_MAIL_VERIFICATION_IDENTITY_PATH` and
+`FAAS_INTERNAL_MAIL_VERIFICATION_PREVIOUS_IDENTITY_PATH`. No origin is required.
+Keep readers for all enabled families' unexpired pending payloads. They are not
+supplied to maild or mailctl. Enabled startup checks the new schema and reader
+references; maild separately checks its lifecycle metadata projection.
+
+After signature verification, customer binding and idempotent invoice upsert,
+all three provider webhooks select this path for normalized payment-failed and
+subscription-past-due events. A provider event ID is mandatory. Apid saves the
+first overdue status, its original dunning timestamp, encrypted warning and
+permanent provider event receipt in one transaction. A failed save, pending
+limit, recovery hold or late flag withdrawal leaves that transition retryable
+without an expiring claim or inline-email fallback. Overlapping failure kinds
+share one warning and never reset the original overdue clock.
+
+Receipts have no TTL and must not be pruned: they prevent a repeated failure
+from re-entering dunning after recovery. They contain only provider, event ID,
+account ID, normalized event type and processing time. Account erasure cascades
+them. Distinct provider events still follow the existing billing event policy;
+receipts neither reorder those events nor backfill historical legacy events.
+
+The encrypted payload contains only the original database overdue timestamp.
+Retries retain the frozen V1 body, absolute seven-day suspension and
+twenty-one-day deletion-scheduling deadlines, original 24-hour delivery expiry
+and `payment-failed:<intent UUID>` admission key. No invoice, charge amount,
+payment method, billing portal credential or raw webhook enters the payload.
+Existing suppressions, budgets, leases and recovery quarantine remain in force.
+
+Enabled payment recovery checks the locked current account rather than a stale
+webhook snapshot. It restores dunning accounts, clears dunning/deletion stamps,
+mirrors a real restoration to the personal organization and atomically cancels
+and erases pending warnings. Operator suspensions remain in place. The current
+best-effort restored-account notice and meterd's later dunning notices retain
+their existing behavior.
+
+Before handoff, apid checks current address, past-due status, deletion stamp and
+the exact overdue period. Maild checks the same lifecycle metadata under an
+account lock before committing SMTP submission start. This also stops warnings
+already admitted to maild if recovery, changed address or account erasure wins
+before that commit. A new overdue period cannot revive an older warning. The
+maild record becomes `cancelled` with `account_changed` and no SMTP call. The
+own gate is checked after submission lock waits; disabling it holds admitted
+warnings. Once submission start commits, a later recovery cannot recall SMTP
+custody. Submitted/uncertain work is never automatically resent.
+
+Private inspection exposes bounded metadata. Acknowledgement, receipt review
+and exact audit replay require this own flag plus existing operator and
+reconciliation gates. Acknowledgement sends no mail and extends no deadline.
+Terminal outbox settlement erases recipient and ciphertext. Account erasure
+cascades intent/receipts while opaque reconciliation audit survives. Migration
+Down refuses any used payment notification, receipt or audit history.
+
+Flag rollback pauses pending handoff and maild delivery. Base maintenance can
+still expire and erase pending payloads. Later webhooks use the legacy billing
+path, including its five-minute replay window; permanent failure deduplication
+requires this capability to remain selected. Retain durable receipts and
+evaluate provider redelivery before switching to legacy processing. Admission
+does not establish SMTP custody or destination delivery; live qualification
+remains separate. No activation, deployment or real email is part of this change.

@@ -90,6 +90,10 @@ func (s *Service) ProducerOutboxAdmission(ctx context.Context, id string) (Produ
 		review.CanAcknowledge = false
 		review.BlockReason = "mfa_enabled_alert_disabled"
 	}
+	if review.Template == ProducerOutboxPaymentFailedTemplate && !s.paymentFailedOutboxEnabled() {
+		review.CanAcknowledge = false
+		review.BlockReason = "payment_failed_disabled"
+	}
 	return review, err
 }
 

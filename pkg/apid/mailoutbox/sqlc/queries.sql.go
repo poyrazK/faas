@@ -45,7 +45,7 @@ SELECT o.id,o.revision,o.state,o.template,o.from_address,o.expires_at,o.recovery
     coalesce(m.sender_address,'')::text AS sender_address
 FROM platform_mail_producer_outbox o
 LEFT JOIN internal_mail_messages m ON m.namespace=o.namespace AND m.producer_id=o.producer_id
-    AND m.idempotency_key=(CASE o.template WHEN 'email_verification' THEN 'verify-email:' WHEN 'password_reset' THEN 'password-reset:' WHEN 'magic_link' THEN 'magic-link:' WHEN 'mfa_recovery_used' THEN 'mfa-recovery-alert:' WHEN 'mfa_enabled' THEN 'mfa-enabled:' WHEN 'password_changed' THEN 'password-changed:' WHEN 'mfa_disabled' THEN 'mfa-disabled:' WHEN 'mfa_disable_request' THEN 'mfa-disable:' ELSE 'account-delete:' END)||o.id::text
+    AND m.idempotency_key=(CASE o.template WHEN 'email_verification' THEN 'verify-email:' WHEN 'password_reset' THEN 'password-reset:' WHEN 'magic_link' THEN 'magic-link:' WHEN 'mfa_recovery_used' THEN 'mfa-recovery-alert:' WHEN 'payment_failed' THEN 'payment-failed:' WHEN 'mfa_enabled' THEN 'mfa-enabled:' WHEN 'password_changed' THEN 'password-changed:' WHEN 'mfa_disabled' THEN 'mfa-disabled:' WHEN 'mfa_disable_request' THEN 'mfa-disable:' ELSE 'account-delete:' END)||o.id::text
 WHERE o.namespace=$1 AND o.id=$2
 `
 
@@ -95,6 +95,18 @@ func (q *Queries) AdmissionLookup(ctx context.Context, db DBTX, arg AdmissionLoo
 	return i, err
 }
 
+const cancelPaymentFailedIntents = `-- name: CancelPaymentFailedIntents :exec
+UPDATE platform_mail_producer_outbox SET state='cancelled',code='account_changed',recipient_address='',
+    lease_id=NULL,lease_until=NULL,sealed_security_alert='',security_alert_key_id='',
+    updated_at=clock_timestamp(),revision=revision+1
+WHERE account_id=$1 AND template='payment_failed' AND state IN ('queued','claimed')
+`
+
+func (q *Queries) CancelPaymentFailedIntents(ctx context.Context, db DBTX, accountID pgtype.UUID) error {
+	_, err := db.Exec(ctx, cancelPaymentFailedIntents, accountID)
+	return err
+}
+
 const claim = `-- name: Claim :one
 WITH candidate AS (
     SELECT id FROM platform_mail_producer_outbox o WHERE o.namespace=$3
@@ -107,22 +119,24 @@ WITH candidate AS (
           AND o.verification_key_id=ANY($14::text[]))
         OR (o.template='mfa_disable_request' AND $15::boolean AND o.verification_origin=$16::text
           AND o.verification_key_id=ANY($17::text[]))
-        OR (o.template='mfa_enabled' AND $18::boolean
+        OR (o.template='payment_failed' AND $18::boolean
           AND o.security_alert_key_id=ANY($19::text[]))
-        OR (o.template='password_changed' AND $20::boolean
+        OR (o.template='mfa_enabled' AND $20::boolean
           AND o.security_alert_key_id=ANY($21::text[]))
-        OR (o.template='mfa_disabled' AND $22::boolean
+        OR (o.template='password_changed' AND $22::boolean
           AND o.security_alert_key_id=ANY($23::text[]))
-        OR (o.template='mfa_recovery_used' AND $24::boolean
-          AND o.security_alert_key_id=ANY($25::text[])))
-      AND o.attempts<$26 AND o.expires_at>clock_timestamp()
+        OR (o.template='mfa_disabled' AND $24::boolean
+          AND o.security_alert_key_id=ANY($25::text[]))
+        OR (o.template='mfa_recovery_used' AND $26::boolean
+          AND o.security_alert_key_id=ANY($27::text[])))
+      AND o.attempts<$28 AND o.expires_at>clock_timestamp()
       AND ((o.state='queued' AND o.next_attempt_at<=clock_timestamp()) OR (o.state='claimed' AND o.lease_until<=clock_timestamp()))
       AND NOT EXISTS(SELECT 1 FROM internal_mail_recovery_state s WHERE s.namespace=o.namespace AND (s.held OR s.recovery_id<>o.recovery_id))
     ORDER BY next_attempt_at,id LIMIT 1 FOR UPDATE SKIP LOCKED
 )
 UPDATE platform_mail_producer_outbox o SET state='claimed',attempts=attempts+1,lease_id=$1,
     lease_until=clock_timestamp()+$2::integer*interval '1 second',updated_at=clock_timestamp(),revision=o.revision+1
-FROM candidate c WHERE o.id=c.id RETURNING o.id, o.account_id, o.namespace, o.producer_id, o.from_address, o.recipient_address, o.template, o.template_version, o.deletion_requested_at, o.restore_until, o.expires_at, o.recovery_id, o.state, o.attempts, o.next_attempt_at, o.lease_id, o.lease_until, o.code, o.created_at, o.updated_at, o.revision, o.verification_token_hash, o.sealed_verification, o.verification_key_id, o.verification_origin, o.sealed_security_alert, o.security_alert_key_id
+FROM candidate c WHERE o.id=c.id RETURNING o.id, o.account_id, o.namespace, o.producer_id, o.from_address, o.recipient_address, o.template, o.template_version, o.deletion_requested_at, o.restore_until, o.expires_at, o.recovery_id, o.state, o.attempts, o.next_attempt_at, o.lease_id, o.lease_until, o.code, o.created_at, o.updated_at, o.revision, o.verification_token_hash, o.sealed_verification, o.verification_key_id, o.verification_origin, o.sealed_security_alert, o.security_alert_key_id, o.payment_past_due_at
 `
 
 type ClaimParams struct {
@@ -143,6 +157,8 @@ type ClaimParams struct {
 	MfaDisableEnabled           bool
 	MfaDisableOrigin            string
 	MfaDisableKeys              []string
+	PaymentFailedEnabled        bool
+	PaymentFailedKeys           []string
 	MfaEnabledAlertEnabled      bool
 	MfaEnabledAlertKeys         []string
 	PasswordChangedAlertEnabled bool
@@ -173,6 +189,8 @@ func (q *Queries) Claim(ctx context.Context, db DBTX, arg ClaimParams) (Platform
 		arg.MfaDisableEnabled,
 		arg.MfaDisableOrigin,
 		arg.MfaDisableKeys,
+		arg.PaymentFailedEnabled,
+		arg.PaymentFailedKeys,
 		arg.MfaEnabledAlertEnabled,
 		arg.MfaEnabledAlertKeys,
 		arg.PasswordChangedAlertEnabled,
@@ -212,6 +230,7 @@ func (q *Queries) Claim(ctx context.Context, db DBTX, arg ClaimParams) (Platform
 		&i.VerificationOrigin,
 		&i.SealedSecurityAlert,
 		&i.SecurityAlertKeyID,
+		&i.PaymentPastDueAt,
 	)
 	return i, err
 }
@@ -740,6 +759,43 @@ func (q *Queries) CreatePasswordResetToken(ctx context.Context, db DBTX, arg Cre
 	return err
 }
 
+const createPaymentFailedIntent = `-- name: CreatePaymentFailedIntent :exec
+INSERT INTO platform_mail_producer_outbox(id,account_id,namespace,producer_id,from_address,recipient_address,
+    template,template_version,expires_at,recovery_id,sealed_security_alert,security_alert_key_id,payment_past_due_at)
+VALUES($1,$2,$3,$4,$5,$6,'payment_failed',1,$7,$8,$9,$10,$11)
+`
+
+type CreatePaymentFailedIntentParams struct {
+	ID                  pgtype.UUID
+	AccountID           pgtype.UUID
+	Namespace           string
+	ProducerID          string
+	FromAddress         string
+	RecipientAddress    string
+	ExpiresAt           pgtype.Timestamptz
+	RecoveryID          pgtype.UUID
+	SealedSecurityAlert []byte
+	SecurityAlertKeyID  string
+	PaymentPastDueAt    pgtype.Timestamptz
+}
+
+func (q *Queries) CreatePaymentFailedIntent(ctx context.Context, db DBTX, arg CreatePaymentFailedIntentParams) error {
+	_, err := db.Exec(ctx, createPaymentFailedIntent,
+		arg.ID,
+		arg.AccountID,
+		arg.Namespace,
+		arg.ProducerID,
+		arg.FromAddress,
+		arg.RecipientAddress,
+		arg.ExpiresAt,
+		arg.RecoveryID,
+		arg.SealedSecurityAlert,
+		arg.SecurityAlertKeyID,
+		arg.PaymentPastDueAt,
+	)
+	return err
+}
+
 const createVerificationIntent = `-- name: CreateVerificationIntent :exec
 INSERT INTO platform_mail_producer_outbox(id,account_id,namespace,producer_id,from_address,recipient_address,
     template,template_version,expires_at,recovery_id,verification_token_hash,sealed_verification,verification_key_id,verification_origin)
@@ -823,6 +879,18 @@ func (q *Queries) DeleteMagicLinkPassword(ctx context.Context, db DBTX, accountI
 	return err
 }
 
+const enterPaymentPastDue = `-- name: EnterPaymentPastDue :one
+UPDATE accounts SET status='past_due',past_due_at=coalesce(past_due_at,clock_timestamp()),suspended_reason=NULL
+WHERE id=$1 AND status='active' RETURNING past_due_at
+`
+
+func (q *Queries) EnterPaymentPastDue(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.Timestamptz, error) {
+	row := db.QueryRow(ctx, enterPaymentPastDue, id)
+	var past_due_at pgtype.Timestamptz
+	err := row.Scan(&past_due_at)
+	return past_due_at, err
+}
+
 const existingIntent = `-- name: ExistingIntent :one
 SELECT id FROM platform_mail_producer_outbox WHERE account_id=$1 AND template='account_deletion_pending' AND deletion_requested_at=$2
 `
@@ -898,7 +966,7 @@ func (q *Queries) InsertReconciliation(ctx context.Context, db DBTX, arg InsertR
 }
 
 const intent = `-- name: Intent :one
-SELECT id, account_id, namespace, producer_id, from_address, recipient_address, template, template_version, deletion_requested_at, restore_until, expires_at, recovery_id, state, attempts, next_attempt_at, lease_id, lease_until, code, created_at, updated_at, revision, verification_token_hash, sealed_verification, verification_key_id, verification_origin, sealed_security_alert, security_alert_key_id FROM platform_mail_producer_outbox WHERE namespace=$1 AND id=$2
+SELECT id, account_id, namespace, producer_id, from_address, recipient_address, template, template_version, deletion_requested_at, restore_until, expires_at, recovery_id, state, attempts, next_attempt_at, lease_id, lease_until, code, created_at, updated_at, revision, verification_token_hash, sealed_verification, verification_key_id, verification_origin, sealed_security_alert, security_alert_key_id, payment_past_due_at FROM platform_mail_producer_outbox WHERE namespace=$1 AND id=$2
 `
 
 type IntentParams struct {
@@ -937,6 +1005,7 @@ func (q *Queries) Intent(ctx context.Context, db DBTX, arg IntentParams) (Platfo
 		&i.VerificationOrigin,
 		&i.SealedSecurityAlert,
 		&i.SecurityAlertKeyID,
+		&i.PaymentPastDueAt,
 	)
 	return i, err
 }
@@ -1012,7 +1081,7 @@ func (q *Queries) LockAdmission(ctx context.Context, db DBTX, dollar_1 string) e
 }
 
 const lockIntent = `-- name: LockIntent :one
-SELECT id, account_id, namespace, producer_id, from_address, recipient_address, template, template_version, deletion_requested_at, restore_until, expires_at, recovery_id, state, attempts, next_attempt_at, lease_id, lease_until, code, created_at, updated_at, revision, verification_token_hash, sealed_verification, verification_key_id, verification_origin, sealed_security_alert, security_alert_key_id FROM platform_mail_producer_outbox WHERE namespace=$1 AND id=$2 FOR UPDATE
+SELECT id, account_id, namespace, producer_id, from_address, recipient_address, template, template_version, deletion_requested_at, restore_until, expires_at, recovery_id, state, attempts, next_attempt_at, lease_id, lease_until, code, created_at, updated_at, revision, verification_token_hash, sealed_verification, verification_key_id, verification_origin, sealed_security_alert, security_alert_key_id, payment_past_due_at FROM platform_mail_producer_outbox WHERE namespace=$1 AND id=$2 FOR UPDATE
 `
 
 type LockIntentParams struct {
@@ -1051,6 +1120,7 @@ func (q *Queries) LockIntent(ctx context.Context, db DBTX, arg LockIntentParams)
 		&i.VerificationOrigin,
 		&i.SealedSecurityAlert,
 		&i.SecurityAlertKeyID,
+		&i.PaymentPastDueAt,
 	)
 	return i, err
 }
@@ -1492,6 +1562,23 @@ func (q *Queries) LockPasswordResetToken(ctx context.Context, db DBTX, arg LockP
 		&i.ConsumedAt,
 		&i.CreatedAt,
 	)
+	return i, err
+}
+
+const lockPaymentFailedAccount = `-- name: LockPaymentFailedAccount :one
+SELECT id,email,status FROM accounts WHERE id=$1 FOR UPDATE
+`
+
+type LockPaymentFailedAccountRow struct {
+	ID     pgtype.UUID
+	Email  string
+	Status string
+}
+
+func (q *Queries) LockPaymentFailedAccount(ctx context.Context, db DBTX, id pgtype.UUID) (LockPaymentFailedAccountRow, error) {
+	row := db.QueryRow(ctx, lockPaymentFailedAccount, id)
+	var i LockPaymentFailedAccountRow
+	err := row.Scan(&i.ID, &i.Email, &i.Status)
 	return i, err
 }
 
@@ -2035,6 +2122,95 @@ func (q *Queries) PasswordResetKeyReferences(ctx context.Context, db DBTX, arg P
 	return items, nil
 }
 
+const paymentFailedDeliveryReady = `-- name: PaymentFailedDeliveryReady :exec
+SELECT a.email,a.status,a.past_due_at,a.deletion_requested_at,o.payment_past_due_at
+FROM accounts a JOIN platform_mail_producer_outbox o ON o.account_id=a.id LIMIT 0
+`
+
+func (q *Queries) PaymentFailedDeliveryReady(ctx context.Context, db DBTX) error {
+	_, err := db.Exec(ctx, paymentFailedDeliveryReady)
+	return err
+}
+
+const paymentFailedKeyReferences = `-- name: PaymentFailedKeyReferences :many
+SELECT DISTINCT security_alert_key_id FROM platform_mail_producer_outbox
+WHERE namespace=$1 AND producer_id=$2 AND template='payment_failed' AND state IN ('queued','claimed') AND expires_at>clock_timestamp()
+`
+
+type PaymentFailedKeyReferencesParams struct {
+	Namespace  string
+	ProducerID string
+}
+
+func (q *Queries) PaymentFailedKeyReferences(ctx context.Context, db DBTX, arg PaymentFailedKeyReferencesParams) ([]string, error) {
+	rows, err := db.Query(ctx, paymentFailedKeyReferences, arg.Namespace, arg.ProducerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var security_alert_key_id string
+		if err := rows.Scan(&security_alert_key_id); err != nil {
+			return nil, err
+		}
+		items = append(items, security_alert_key_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const paymentFailedReady = `-- name: PaymentFailedReady :one
+SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_constraint c
+    JOIN pg_catalog.pg_class t ON t.oid=c.conrelid JOIN pg_catalog.pg_namespace n ON n.oid=t.relnamespace
+    WHERE n.nspname=current_schema() AND t.relname='platform_mail_producer_outbox'
+      AND c.conname='platform_mail_producer_outbox_security_alert_check'
+      AND position('payment_failed' in pg_catalog.pg_get_constraintdef(c.oid))>0)::boolean AS ready
+`
+
+func (q *Queries) PaymentFailedReady(ctx context.Context, db DBTX) (bool, error) {
+	row := db.QueryRow(ctx, paymentFailedReady)
+	var ready bool
+	err := row.Scan(&ready)
+	return ready, err
+}
+
+const paymentFailedSchemaReady = `-- name: PaymentFailedSchemaReady :exec
+SELECT a.past_due_at,a.suspended_reason,o.payment_past_due_at,r.event_id,b.customer_id,g.status
+FROM accounts a JOIN platform_mail_producer_outbox o ON o.account_id=a.id
+JOIN billing_payment_failure_receipts r ON r.account_id=a.id
+JOIN billing_identities b ON b.account_id=a.id
+LEFT JOIN orgs g ON g.personal_owner_account_id=a.id LIMIT 0
+`
+
+func (q *Queries) PaymentFailedSchemaReady(ctx context.Context, db DBTX) error {
+	_, err := db.Exec(ctx, paymentFailedSchemaReady)
+	return err
+}
+
+const paymentFailureReceipt = `-- name: PaymentFailureReceipt :one
+SELECT account_id,event_type FROM billing_payment_failure_receipts WHERE provider=$1 AND event_id=$2
+`
+
+type PaymentFailureReceiptParams struct {
+	Provider string
+	EventID  string
+}
+
+type PaymentFailureReceiptRow struct {
+	AccountID pgtype.UUID
+	EventType string
+}
+
+func (q *Queries) PaymentFailureReceipt(ctx context.Context, db DBTX, arg PaymentFailureReceiptParams) (PaymentFailureReceiptRow, error) {
+	row := db.QueryRow(ctx, paymentFailureReceipt, arg.Provider, arg.EventID)
+	var i PaymentFailureReceiptRow
+	err := row.Scan(&i.AccountID, &i.EventType)
+	return i, err
+}
+
 const pending = `-- name: Pending :one
 SELECT count(*)::bigint FROM platform_mail_producer_outbox WHERE namespace=$1 AND state IN ('queued','claimed')
 `
@@ -2140,6 +2316,31 @@ func (q *Queries) ReconciliationReady(ctx context.Context, db DBTX) error {
 	return err
 }
 
+const recordPaymentFailureReceipt = `-- name: RecordPaymentFailureReceipt :execrows
+INSERT INTO billing_payment_failure_receipts(provider,event_id,account_id,event_type)
+VALUES($1,$2,$3,$4) ON CONFLICT(provider,event_id) DO NOTHING
+`
+
+type RecordPaymentFailureReceiptParams struct {
+	Provider  string
+	EventID   string
+	AccountID pgtype.UUID
+	EventType string
+}
+
+func (q *Queries) RecordPaymentFailureReceipt(ctx context.Context, db DBTX, arg RecordPaymentFailureReceiptParams) (int64, error) {
+	result, err := db.Exec(ctx, recordPaymentFailureReceipt,
+		arg.Provider,
+		arg.EventID,
+		arg.AccountID,
+		arg.EventType,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const recovery = `-- name: Recovery :one
 SELECT coalesce((SELECT r.recovery_id FROM internal_mail_recovery_state r WHERE r.namespace=$1),
     '00000000-0000-0000-0000-000000000000'::uuid)::uuid AS recovery_id,
@@ -2180,6 +2381,29 @@ func (q *Queries) ReplaceResetPassword(ctx context.Context, db DBTX, arg Replace
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const restorePaymentAccount = `-- name: RestorePaymentAccount :execrows
+UPDATE accounts SET status='active',past_due_at=NULL,deletion_requested_at=NULL,suspended_reason=NULL
+WHERE id=$1 AND (status='past_due' OR (status IN ('suspended','deleted_pending') AND past_due_at IS NOT NULL))
+`
+
+// Preserve UpdateAccountStatus's recovery behavior and personal-org mirror.
+func (q *Queries) RestorePaymentAccount(ctx context.Context, db DBTX, id pgtype.UUID) (int64, error) {
+	result, err := db.Exec(ctx, restorePaymentAccount, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const restorePaymentPersonalOrg = `-- name: RestorePaymentPersonalOrg :exec
+UPDATE orgs SET status='active',updated_at=now() WHERE personal_org=true AND personal_owner_account_id=$1
+`
+
+func (q *Queries) RestorePaymentPersonalOrg(ctx context.Context, db DBTX, personalOwnerAccountID pgtype.UUID) error {
+	_, err := db.Exec(ctx, restorePaymentPersonalOrg, personalOwnerAccountID)
+	return err
 }
 
 const revokeMagicLinkSessions = `-- name: RevokeMagicLinkSessions :execrows
@@ -2274,7 +2498,7 @@ func (q *Queries) Settle(ctx context.Context, db DBTX, arg SettleParams) (int64,
 }
 
 const shareAccount = `-- name: ShareAccount :one
-SELECT id,email,status,deletion_requested_at,email_verified_at,abuse_hold_at,password_reset_revision,mfa_enrolled_at,mfa_revision FROM accounts WHERE id=$1 FOR SHARE
+SELECT id,email,status,deletion_requested_at,email_verified_at,abuse_hold_at,password_reset_revision,mfa_enrolled_at,mfa_revision,past_due_at FROM accounts WHERE id=$1 FOR SHARE
 `
 
 type ShareAccountRow struct {
@@ -2287,6 +2511,7 @@ type ShareAccountRow struct {
 	PasswordResetRevision int64
 	MfaEnrolledAt         pgtype.Timestamptz
 	MfaRevision           int64
+	PastDueAt             pgtype.Timestamptz
 }
 
 func (q *Queries) ShareAccount(ctx context.Context, db DBTX, id pgtype.UUID) (ShareAccountRow, error) {
@@ -2302,6 +2527,7 @@ func (q *Queries) ShareAccount(ctx context.Context, db DBTX, id pgtype.UUID) (Sh
 		&i.PasswordResetRevision,
 		&i.MfaEnrolledAt,
 		&i.MfaRevision,
+		&i.PastDueAt,
 	)
 	return i, err
 }
@@ -2384,6 +2610,66 @@ func (q *Queries) SharePasswordResetToken(ctx context.Context, db DBTX, arg Shar
 		&i.ExpiresAt,
 		&i.ConsumedAt,
 		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const sharePaymentFailedIdentity = `-- name: SharePaymentFailedIdentity :one
+SELECT customer_id FROM billing_identities WHERE account_id=$1 AND provider=$2 AND customer_id=$3 FOR SHARE
+`
+
+type SharePaymentFailedIdentityParams struct {
+	AccountID  pgtype.UUID
+	Provider   string
+	CustomerID string
+}
+
+func (q *Queries) SharePaymentFailedIdentity(ctx context.Context, db DBTX, arg SharePaymentFailedIdentityParams) (string, error) {
+	row := db.QueryRow(ctx, sharePaymentFailedIdentity, arg.AccountID, arg.Provider, arg.CustomerID)
+	var customer_id string
+	err := row.Scan(&customer_id)
+	return customer_id, err
+}
+
+const sharePaymentFailedSubmissionAccount = `-- name: SharePaymentFailedSubmissionAccount :one
+SELECT a.email,a.status,a.past_due_at,a.deletion_requested_at,o.payment_past_due_at,o.from_address,m.sender_address
+FROM internal_mail_messages m JOIN platform_mail_producer_outbox o
+    ON o.namespace=m.namespace AND o.producer_id=m.producer_id
+    AND m.idempotency_key='payment-failed:'||o.id::text AND o.template='payment_failed'
+    AND o.expires_at=m.expires_at
+JOIN accounts a ON a.id=o.account_id
+WHERE m.namespace=$1 AND m.id=$2 FOR SHARE OF a
+`
+
+type SharePaymentFailedSubmissionAccountParams struct {
+	Namespace string
+	ID        pgtype.UUID
+}
+
+type SharePaymentFailedSubmissionAccountRow struct {
+	Email               string
+	Status              string
+	PastDueAt           pgtype.Timestamptz
+	DeletionRequestedAt pgtype.Timestamptz
+	PaymentPastDueAt    pgtype.Timestamptz
+	FromAddress         string
+	SenderAddress       string
+}
+
+// Maild reads only lifecycle metadata. It locks the account before its own
+// submission locks and holds that shared lock through durable submission start.
+// Missing intent/account/binding fails closed, including account erasure.
+func (q *Queries) SharePaymentFailedSubmissionAccount(ctx context.Context, db DBTX, arg SharePaymentFailedSubmissionAccountParams) (SharePaymentFailedSubmissionAccountRow, error) {
+	row := db.QueryRow(ctx, sharePaymentFailedSubmissionAccount, arg.Namespace, arg.ID)
+	var i SharePaymentFailedSubmissionAccountRow
+	err := row.Scan(
+		&i.Email,
+		&i.Status,
+		&i.PastDueAt,
+		&i.DeletionRequestedAt,
+		&i.PaymentPastDueAt,
+		&i.FromAddress,
+		&i.SenderAddress,
 	)
 	return i, err
 }

@@ -5238,6 +5238,9 @@ func (s *server) stripeWebhook(w http.ResponseWriter, r *http.Request) {
 	// row carries the resolved account id as the subject (matching
 	// the refund.processed precedent at spec §5.7 line 336).
 	//
+	if s.handlePaymentFailedOutbox(w, r, "stripe", normalized, acct) {
+		return
+	}
 	if ev.ID == "" {
 		api.WriteProblem(w, api.ErrValidation("stripe webhook event id is required"))
 		return
@@ -5455,6 +5458,9 @@ func (s *server) paddleWebhook(w http.ResponseWriter, r *http.Request) {
 	// the check — pre-#294 behaviour. Claim failures are retryable because
 	// acknowledging without replay protection could duplicate money-related
 	// audit/state side effects.
+	if s.handlePaymentFailedOutbox(w, r, "paddle", ev, acct) {
+		return
+	}
 	if ev.EventID != "" {
 		now := time.Now().UTC()
 		claimed, err := s.store.ClaimWebhookDelivery(
@@ -5700,24 +5706,14 @@ func (s *server) handleBillingEventWithOptions(ctx context.Context, ev billing.E
 		// Operator suspensions carry no past_due_at and stay in place.
 		// A dunning deletion (deleted_pending with past_due_at) is
 		// undone by paying within its grace window as well.
-		if acct.Status == state.AccountPastDue ||
-			(acct.Status == state.AccountSuspended && acct.PastDueAt != nil) ||
-			(acct.Status == state.AccountDeletedPending && acct.PastDueAt != nil) {
-			if err := s.store.UpdateAccountStatus(ctx, acct.ID, state.AccountActive); err != nil {
-				s.log.Warn("apid: payment_succeeded restore",
-					"account", acct.ID, "err", err)
-				return fmt.Errorf("restore account: %w", err)
-			} else {
-				s.notifyAccountLifecycle(ctx, acct.ID, "account_reactivated")
-				// Status just flipped back to active. Send the
-				// recovery email (spec §171 "All transitions emailed").
-				// payment_succeeded is naturally idempotent — the
-				// status guard above ensures we only fire on a real
-				// past_due → active transition, never on a no-op
-				// redelivery.
-				subject, body := mail.AccountRestoredBody(acct.Email, time.Now().UTC())
-				s.sendBillingTransitionMail(ctx, acct, subject, body, asyncBillingMail, "payment_succeeded")
-			}
+		restored, err := s.restoreBillingPayment(ctx, ev, acct)
+		if err != nil {
+			return fmt.Errorf("restore account: %w", err)
+		}
+		if restored {
+			s.notifyAccountLifecycle(ctx, acct.ID, "account_reactivated")
+			subject, body := mail.AccountRestoredBody(acct.Email, time.Now().UTC())
+			s.sendBillingTransitionMail(ctx, acct, subject, body, asyncBillingMail, "payment_succeeded")
 		}
 		// Clear the dedupe stamp on every payment_succeeded, not just
 		// past_due → active flips: a fresh signup's first provider
