@@ -100,3 +100,69 @@ func TestPruneRejectsUnsafeCurrent(t *testing.T) {
 		t.Fatal("Prune returned nil for an unsafe current target")
 	}
 }
+
+// TestPruneKeepsTheBaseOfAnActiveUnitRelease: a per-unit release names its
+// base full release in release-manifest.json. Retention must keep that base
+// however many unit releases followed it.
+func TestPruneKeepsTheBaseOfAnActiveUnitRelease(t *testing.T) {
+	root := t.TempDir()
+	releases := filepath.Join(root, "releases")
+	base := "00000000000000000000000000000000000000b0"
+	ids := []string{
+		base,
+		"0000000000000000000000000000000000000001",
+		"0000000000000000000000000000000000000002",
+		"0000000000000000000000000000000000000003",
+		"0000000000000000000000000000000000000004",
+	}
+	for i, id := range ids {
+		path := filepath.Join(releases, id)
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		// Every unit release carries the base's canonical manifest.
+		if err := os.WriteFile(filepath.Join(path, "release-manifest.json"), []byte(`{"git_sha":"`+base+`"}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		when := time.Unix(int64(i+1), 0)
+		if err := os.Chtimes(path, when, when); err != nil {
+			t.Fatal(err)
+		}
+	}
+	current := filepath.Join(root, "current")
+	if err := os.Symlink(filepath.Join(releases, ids[4]), current); err != nil {
+		t.Fatal(err)
+	}
+	report, err := Prune(releases, current, 2)
+	if err != nil {
+		t.Fatalf("Prune: %v", err)
+	}
+	if len(report.Removed) != 1 || report.Removed[0] != ids[1] {
+		t.Fatalf("Removed = %v, want only %s", report.Removed, ids[1])
+	}
+	if _, err := os.Stat(filepath.Join(releases, base)); err != nil {
+		t.Fatalf("base of the active unit release was pruned: %v", err)
+	}
+
+	// Once a full release is active again, the old base is an ordinary
+	// previous release.
+	full := "00000000000000000000000000000000000000f0"
+	if err := os.MkdirAll(filepath.Join(releases, full), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(releases, full, "release-manifest.json"), []byte(`{"git_sha":"`+full+`"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(current); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(releases, full), current); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Prune(releases, current, 2); err != nil {
+		t.Fatalf("Prune: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(releases, base)); !os.IsNotExist(err) {
+		t.Fatalf("old base survived after a full release took over: %v", err)
+	}
+}

@@ -404,3 +404,65 @@ func TestDryRunAcceptsSBOMBaselineInTargetRelease(t *testing.T) {
 		t.Fatalf("report.ReleaseID = %q, want %q", report.ReleaseID, "new")
 	}
 }
+
+func TestDeployOverRequiresTheReleaseItWasBuiltOn(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		active   string
+		expected string
+		want     string
+	}{
+		{name: "expected base active", active: "base", expected: "base"},
+		{name: "no expectation", active: "other", expected: ""},
+		{name: "another release active", active: "other", expected: "base", want: `built over "base", but the active release is "other"`},
+		{name: "nothing active", active: "", expected: "base", want: `active release is "<none>"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			makeRelease(t, root, "base")
+			makeRelease(t, root, "other")
+			overlay := makeRelease(t, root, "overlay")
+			current := filepath.Join(root, "current")
+			if tc.active != "" {
+				if err := os.Symlink(filepath.Join(root, tc.active), current); err != nil {
+					t.Fatal(err)
+				}
+			}
+			runtime := &fakeRuntime{}
+			err := newController(t, root, current, runtime).DeployOver(context.Background(), "overlay", tc.expected)
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("DeployOver: %v", err)
+				}
+				if got, _ := os.Readlink(current); got != overlay {
+					t.Fatalf("current = %q, want %q", got, overlay)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("DeployOver error = %v, want %q", err, tc.want)
+			}
+			// Refused before any host mutation.
+			if len(runtime.calls) != 0 {
+				t.Fatalf("runtime calls = %v, want none", runtime.calls)
+			}
+		})
+	}
+}
+
+func TestDeployOverRerunAfterActivationIsConverged(t *testing.T) {
+	root := t.TempDir()
+	makeRelease(t, root, "base")
+	overlay := makeRelease(t, root, "overlay")
+	current := filepath.Join(root, "current")
+	if err := os.Symlink(overlay, current); err != nil {
+		t.Fatal(err)
+	}
+	runtime := &fakeRuntime{}
+	if err := newController(t, root, current, runtime).DeployOver(context.Background(), "overlay", "base"); err != nil {
+		t.Fatalf("rerun DeployOver: %v", err)
+	}
+	if len(runtime.calls) != 0 {
+		t.Fatalf("runtime calls = %v, want none for an already active overlay", runtime.calls)
+	}
+}

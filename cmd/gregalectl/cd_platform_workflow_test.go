@@ -262,7 +262,9 @@ func TestDeployVersionSkewDegradesDuringMixedRelease(t *testing.T) {
 	if strings.Contains(rule, "\n        for:") {
 		t.Fatal("version skew remains hidden behind a hold duration")
 	}
-	if !strings.Contains(rule, `count(count by (version) ({__name__=~".*_faas_deploy_version"})) > 1`) {
-		t.Fatal("version skew alert no longer detects multiple observed releases")
+	// Full releases must converge to one version; per-unit releases
+	// (unit-<commit>) are excluded by design.
+	if !strings.Contains(rule, `count(count by (version) ({__name__=~".*_faas_deploy_version", version!~"unit-.+"})) > 1`) {
+		t.Fatal("version skew alert no longer detects multiple observed full releases")
 	}
 }
