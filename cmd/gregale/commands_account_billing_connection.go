@@ -21,7 +21,7 @@ var stdinReader io.Reader = os.Stdin
 const accountBillingConnectionUsage = "usage: gregale account billing-connection {connect|status|disconnect} {stripe|paddle|lago} [--api-url URL] [--collection none|send|charge] [--days-until-due N] [--automatic-tax]  (connect reads the key from stdin)"
 
 // cmdAccountBillingConnection manages the account's billing provider keys
-// for statement invoice exports (ADR-1300, ADR-1305): connect reads the key
+// for statement invoice exports (ADR-1502, ADR-1507): connect reads the key
 // from stdin so it never appears in shell history or the process list.
 func cmdAccountBillingConnection(args []string) int {
 	fs := newFlagSet("account billing-connection", flag.ContinueOnError)

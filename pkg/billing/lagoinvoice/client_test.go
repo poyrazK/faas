@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-// adr: 1305 — one-off invoices use the gregale_usage add-on with skip_psp;
+// adr: 1507 — one-off invoices use the gregale_usage add-on with skip_psp;
 // retries find them by metadata; crashed exports surface untagged invoices.
 func TestLagoInvoices(t *testing.T) {
 	var created, tagged, addOn map[string]any

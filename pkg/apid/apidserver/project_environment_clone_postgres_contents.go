@@ -56,7 +56,7 @@ func (s *server) projectEnvironmentClonePostgresContents(ctx context.Context, l 
 		if setSecretRecipient == nil {
 			return copycontents.Manifest{}, managedpostgres.ErrUnavailable
 		}
-		recipient := setSecretRecipient()
+		recipient := hostSecretRecipient()
 		if !cloneInventoryCanOpen(recipient, identities) {
 			return copycontents.Manifest{}, managedpostgres.ErrUnavailable
 		}

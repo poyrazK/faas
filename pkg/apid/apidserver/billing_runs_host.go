@@ -14,7 +14,7 @@ import (
 
 // billingRunsHost adapts *server to billingruns.Host (ADR-982). Statement
 // steps call the same functions as the statement endpoints, so a run
-// applies identical rules, audit events and webhooks (ADR-1301).
+// applies identical rules, audit events and webhooks (ADR-1503).
 type billingRunsHost struct{ s *server }
 
 var _ billingruns.Host = billingRunsHost{}

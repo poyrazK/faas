@@ -8,7 +8,7 @@
 export type CreateConsumerKeyRequest = {
   name: string;
   /**
-   * read allows GET, write and admin allow every method; billing lets the consumer read its own billing (ADR-1304) and grants no app access.
+   * read allows GET, write and admin allow every method; billing lets the consumer read its own billing (ADR-1506) and grants no app access.
    */
   scopes: Array<'read' | 'write' | 'admin' | 'billing'>;
   expires_at?: string | null;

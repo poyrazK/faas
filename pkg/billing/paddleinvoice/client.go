@@ -1,5 +1,5 @@
 // Package paddleinvoice creates draft transactions in a customer's own
-// Paddle Billing account from finalized usage statements (ADR-1305). Every
+// Paddle Billing account from finalized usage statements (ADR-1507). Every
 // call takes the customer's API key explicitly and never logs it.
 package paddleinvoice
 
@@ -248,7 +248,7 @@ func (c *Client) CreateTransaction(ctx context.Context, key string, p Transactio
 	return out.Data.ID, nil
 }
 
-// TransactionState is a transaction's payment state (ADR-1302).
+// TransactionState is a transaction's payment state (ADR-1504).
 type TransactionState struct {
 	Status      string
 	Currency    string

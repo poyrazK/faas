@@ -5132,7 +5132,7 @@ paths:
     get:
       tags: [consumers]
       operationId: getConsumerBillingSummary
-      summary: Read your own month-to-date usage and spend with your consumer key (ADR-1304).
+      summary: Read your own month-to-date usage and spend with your consumer key (ADR-1506).
       description: |
         For an app's customers, not operators. Authenticate with a consumer
         key that carries the billing scope. The amount is priced like the
@@ -12027,7 +12027,7 @@ paths:
       description: |
         Exports one finalized platform tenant statement revision to the
         provider in the body (default stripe; connect it with
-        PUT /v1/account/billing-connections/{provider}), ADR-1300 and ADR-1305.
+        PUT /v1/account/billing-connections/{provider}), ADR-1502 and ADR-1507.
         Stripe gets a draft invoice and Paddle a draft manually collected
         transaction; neither is finalized or sent. Lago issues a one-off
         invoice at once, without charging it. Items are one per rate card and
@@ -12070,7 +12070,7 @@ paths:
       - name: provider
         in: path
         required: true
-        description: Billing provider statements export to (ADR-1305).
+        description: Billing provider statements export to (ADR-1507).
         schema: { $ref: '#/components/schemas/BillingProvider' }
     get:
       tags: [account]
@@ -12132,7 +12132,7 @@ paths:
     get:
       tags: [account]
       operationId: listStatementInvoices
-      summary: List invoices exported from usage statements, with their payment status (ADR-1302).
+      summary: List invoices exported from usage statements, with their payment status (ADR-1504).
       parameters:
         - name: status
           in: query
@@ -12180,7 +12180,7 @@ paths:
     post:
       tags: [account]
       operationId: createBillingRun
-      summary: Bill one ended month for every customer (ADR-1301).
+      summary: Bill one ended month for every customer (ADR-1503).
       description: |
         Starts a background run for one UTC calendar month that ended at least
         an hour ago. For every app consumer and platform tenant with billable
@@ -15913,7 +15913,7 @@ paths:
       description: |
         Exports one finalized app consumer statement revision to the
         provider in the body (default stripe; connect it with
-        PUT /v1/account/billing-connections/{provider}), ADR-1300 and ADR-1305.
+        PUT /v1/account/billing-connections/{provider}), ADR-1502 and ADR-1507.
         Stripe and Paddle receive drafts that Gregale never finalizes or
         sends; Lago issues its one-off invoice immediately but never charges
         it. One item per rate card and unit price, plus a rounding item, makes
@@ -18154,6 +18154,94 @@ paths:
         '404': { $ref: '#/components/responses/AppNotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+  /v1/apps/{slug}/issue-lifecycle-alert-policy:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getIssueLifecycleAlertPolicy
+      summary: Read native new-issue and regression alert filters.
+      description: Unconfigured apps return revision zero, all environments and zero cooldown.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Current lifecycle alert policy.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IssueLifecycleAlertPolicy' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    put:
+      tags: [apps]
+      operationId: setIssueLifecycleAlertPolicy
+      summary: Replace native new-issue and regression alert filters.
+      description: >-
+        Requires deploy-write and session MFA. Empty environments means all exact environments.
+        The cooldown is shared across created/regressed native Slack alerts per canonical issue,
+        across channels and teams. Zero disables throttling. Only queue admission consumes it;
+        missing routes, capacity failures and previews do not. Edits preserve receipts and affect
+        future events only; queued messages are unchanged. Merge uses the latest member receipt.
+        No events are replayed. Lifecycle audit webhooks, impact/frequency alerts, reminders and
+        tracker notifications retain their independent policies. Stale revisions return 409.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateIssueLifecycleAlertPolicyRequest' }
+      responses:
+        '200':
+          description: Updated policy; identical writes preserve its revision.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IssueLifecycleAlertPolicy' }
+        '409':
+          description: Lifecycle alert policy revision changed.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+  /v1/apps/{slug}/issue-lifecycle-alert-policy/preview:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    post:
+      tags: [apps]
+      operationId: previewIssueLifecycleAlert
+      summary: Preview a draft lifecycle alert filter without sending.
+      description: >-
+        Requires app read access and Issues entitlement. Evaluates the supplied draft's
+        environment filter and shared cooldown for a hypothetical created/regressed event,
+        resolving merged aliases. Reads one database snapshot and returns the saved policy
+        revision at that snapshot. Does not save, reserve cooldown, mutate lifecycle or contact
+        Slack. Allowed means this policy permits the event; actual delivery separately applies
+        native event subscription, ignore/response state, eligible routing, capacity and sender gates.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PreviewIssueLifecycleAlertRequest' }
+      responses:
+        '200':
+          description: Draft policy eligibility at the preview snapshot.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IssueLifecycleAlertPreview' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
   /v1/apps/{slug}/issue-frequency-alert-policy:
     parameters:
@@ -30338,9 +30426,12 @@ paths:
       operationId: batchCreateTriggers
       summary: Bulk-create triggers from a gregale.yaml fragment.
       description: |
-        Dashboard-only shortcut — fires a `triggers:` fragment at the
-        server, validates via the same path the CLI uses, and returns
-        per-row ids and any per-row RFC 7807 codes.
+        Fires a `triggers:` and `event_triggers:` fragment at the server,
+        validates via the same path the CLI uses, and returns per-row ids
+        and any per-row RFC 7807 codes. Event triggers for the target app
+        are applied the way a source deploy applies them (ADR-1342):
+        existing subscriptions are kept, and a failure is one `errors`
+        row after its changes are rolled back.
       requestBody:
         required: true
         content:
@@ -47115,7 +47206,28 @@ paths:
         operator fat-fingering. Optional `?reason=<slug>` defaults
         to `operator_force_park`; values are clamped to the
         `[a-z0-9_]{1,64}` shape.
+
+        ADR-1524: requires an MFA-verified operator session with step-up in
+        the last five minutes, admin scope, the operator allowlist and same
+        origin. Bearer keys do not satisfy step-up. Requires one
+        Idempotency-Key (1-255 visible ASCII characters), an empty body,
+        exactly one confirm=true and at most one reason; other query
+        parameters are rejected. The key is scoped to the actor across all
+        three recovery routes. Intent, exact 202 response and attributed
+        request audit handoff commit atomically. Matching retries return
+        the original response before reading mutable target state, without
+        expiry; changed action, target or reason returns 409
+        operator_submission_conflict. Trace changes do not change identity.
+        An existing legacy recovery cache/reservation returns 409
+        operator_submission_legacy and requires reconciliation. Notification
+        after acceptance is best effort; the scheduler safety tick recovers
+        a lost notification.
       parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 255, pattern: '^[!-~]+$' }
+          description: Park request key. Reuse with the original target and reason to recover an uncertain submission. No receipt expiry.
         - in: path
           name: id
           required: true
@@ -47133,7 +47245,7 @@ paths:
           description: Audit-log slug. Default `operator_force_park`. Clamped to `[a-z0-9_]{1,64}`.
       responses:
         '202':
-          description: Intent row written + pg_notify emitted. Poll `status_url` for terminal state.
+          description: Intent, response receipt and request audit handoff committed; notification attempted. Poll `status_url` for terminal state.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/OperatorIntentAcceptedResponse' }
@@ -47154,7 +47266,7 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
         '409':
-          description: 'code: instance_not_parkable — instance state is not in {RUNNING, WAKING, COLD_BOOTING}.'
+          description: 'code: instance_not_parkable — instance state is not in {RUNNING, WAKING, COLD_BOOTING}. Also operator_submission_conflict for changed parameters or operator_submission_legacy for an ambiguous pre-upgrade key.'
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -47186,12 +47298,33 @@ paths:
 
         Requires `?confirm=true` as a tripwire. Optional
         `?reason=<slug>` defaults to `operator_force_cold_boot`.
+
+        ADR-1524: requires an MFA-verified operator session with step-up in
+        the last five minutes, admin scope, the operator allowlist and same
+        origin. Bearer keys do not satisfy step-up. Requires one
+        Idempotency-Key (1-255 visible ASCII characters), an empty body,
+        exactly one confirm=true and at most one reason; other query
+        parameters are rejected. The key is scoped to the actor across all
+        three recovery routes. Intent, exact 202 response and attributed
+        request audit handoff commit atomically. Matching retries return
+        the original response before reading mutable target state, without
+        expiry; changed action, target or reason returns 409
+        operator_submission_conflict. Trace changes do not change identity.
+        An existing legacy recovery cache/reservation returns 409
+        operator_submission_legacy and requires reconciliation. Notification
+        after acceptance is best effort; the scheduler safety tick recovers
+        a lost notification.
       parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 255, pattern: '^[!-~]+$' }
+          description: Cold-boot request key. Reuse with the original target and reason to recover an uncertain submission. No receipt expiry.
         - in: path
           name: slug
           required: true
           schema: { type: string }
-          description: App slug (e.g. "my-app"). Resolved to the app's latest deployment by `created_at DESC`.
+          description: App slug (e.g. "my-app"). Resolved once at acceptance by `created_at DESC, id DESC`; retries retain the original deployment.
         - in: query
           name: confirm
           required: true
@@ -47204,7 +47337,7 @@ paths:
           description: Audit-log slug. Default `operator_force_cold_boot`. Clamped to `[a-z0-9_]{1,64}`.
       responses:
         '202':
-          description: Intent row written + pg_notify emitted. Poll `status_url` for terminal state and `snap_ids_marked_stale`.
+          description: Intent, response receipt and request audit handoff committed; notification attempted. Poll `status_url` for terminal state and `snap_ids_marked_stale`.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/OperatorIntentAcceptedResponse' }
@@ -47221,6 +47354,11 @@ paths:
               schema: { $ref: '#/components/schemas/Problem' }
         '404':
           description: 'code: app_not_found — no app with the supplied slug; OR code: deployment_not_found — app has no deployments to force-cold-boot.'
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: 'operator_submission_conflict for changed parameters; operator_submission_legacy for an ambiguous pre-upgrade request key.'
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -47276,7 +47414,28 @@ paths:
         operator fat-fingering. Optional `?reason=<slug>` defaults
         to `operator_force_restart`; values are clamped to the
         `[a-z0-9_]{1,64}` shape.
+
+        ADR-1524: requires an MFA-verified operator session with step-up in
+        the last five minutes, admin scope, the operator allowlist and same
+        origin. Bearer keys do not satisfy step-up. Requires one
+        Idempotency-Key (1-255 visible ASCII characters), an empty body,
+        exactly one confirm=true and at most one reason; other query
+        parameters are rejected. The key is scoped to the actor across all
+        three recovery routes. Intent, exact 202 response and attributed
+        request audit handoff commit atomically. Matching retries return
+        the original response before reading mutable target state, without
+        expiry; changed action, target or reason returns 409
+        operator_submission_conflict. Trace changes do not change identity.
+        An existing legacy recovery cache/reservation returns 409
+        operator_submission_legacy and requires reconciliation. Notification
+        after acceptance is best effort; the scheduler safety tick recovers
+        a lost notification.
       parameters:
+        - in: header
+          name: Idempotency-Key
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 255, pattern: '^[!-~]+$' }
+          description: Restart request key. Reuse with the original target and reason to recover an uncertain submission. No receipt expiry.
         - in: path
           name: id
           required: true
@@ -47294,7 +47453,7 @@ paths:
           description: Audit-log slug. Default `operator_force_restart`. Clamped to `[a-z0-9_]{1,64}`.
       responses:
         '202':
-          description: 'Force-restart 202: intent row written + pg_notify emitted. Poll `status_url` for terminal state and `snap_ids_marked_stale`.'
+          description: 'Force-restart 202: intent, response receipt and request audit handoff committed; notification attempted. Poll `status_url` for terminal state and `snap_ids_marked_stale`.'
           content:
             application/json:
               schema: { $ref: '#/components/schemas/OperatorIntentAcceptedResponse' }
@@ -47315,7 +47474,7 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
         '409':
-          description: 'Force-restart 409: code: instance_not_restartable — instance state is not RUNNING. WAKING / COLD_BOOTING / PARKED / STOPPED all return this code without writing an intent row.'
+          description: 'Force-restart 409: code: instance_not_restartable — instance state is not RUNNING. WAKING / COLD_BOOTING / PARKED / STOPPED all return this code without writing an intent row. Also operator_submission_conflict for changed parameters or operator_submission_legacy for an ambiguous pre-upgrade key.'
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -55125,7 +55284,7 @@ components:
       type: http
       scheme: bearer
       bearerFormat: ck_<prefix>_<secret>
-      description: An app's consumer key with the billing scope (ADR-1304); only the consumer billing endpoints accept it.
+      description: An app's consumer key with the billing scope (ADR-1506); only the consumer billing endpoints accept it.
     realtimePublisherCredential:
       type: http
       scheme: bearer
@@ -69848,7 +70007,9 @@ components:
         under operator.action.{park_instance, restart_instance,
         force_cold_boot} with target_account_id = the instance's /
         app's owning account. StatusURL is the relative path;
-        clients prepend the apid base URL.
+        clients prepend the apid base URL. The exact response is retained for
+        matching request-key retries independently of target state and audit
+        queue retention (ADR-1524).
       type: object
       required: [ok, intent_id, status_url, expires_at, kind, reason]
       properties:
@@ -69864,7 +70025,7 @@ components:
         expires_at:
           type: string
           format: date-time
-          description: Recommended horizon to stop polling (UTC, RFC 3339).
+          description: Advisory horizon for one polling session (UTC, RFC 3339), retained unchanged on replay. This is not receipt expiry.
         kind:
           type: string
           enum: [force_park, force_cold_boot, force_restart]
@@ -69874,7 +70035,7 @@ components:
           description: Populated for force_park and force_restart. The instance the operator targeted.
         previous_state:
           type: string
-          enum: [RUNNING, WAKING, COLD_BOOTING]
+          enum: [running, waking, cold_booting]
           description: Populated for force_park and force_restart. Gate-time read of `instances.state`.
         app_id:
           type: string
@@ -69948,6 +70109,57 @@ components:
     # SnapIDsMarkedStale is populated for force_cold_boot (warm +
     # init tiers walked). On failure, Error carries the bounded
     # dispatch error message (1 KB cap).
+    OperatorParkExecutionResponse:
+      type: object
+      description: Verified force-park execution evidence for the original VM generation.
+      required: [phase, node_id, wake_id, generation, action, capture_completed, cold_boot_required, updated_at]
+      properties:
+        phase:
+          type: string
+          enum: [prepared, started, acknowledged, outcome_unknown, completed, failed, cancelled]
+        node_id:
+          type: string
+        wake_id:
+          type: string
+        generation:
+          type: string
+        action:
+          type: string
+          enum: [capture, stop]
+        capture_completed:
+          type: boolean
+          description: Capture and original VM cleanup were durably acknowledged.
+        stopped_at:
+          type: string
+          format: date-time
+        terminal_state:
+          type: string
+          enum: [parked, stopped]
+        cold_boot_required:
+          type: boolean
+          description: The verified result is stopped and requires a cold boot.
+        reason:
+          type: string
+        updated_at:
+          type: string
+          format: date-time
+    OperatorRestartExecutionResponse:
+      type: object
+      description: Durable restart evidence. An uncertain teardown is never automatically repeated. A later durable acknowledgement can resume database completion against the original target.
+      required: [phase, node_id, wake_id, generation, snapshot_ids, updated_at]
+      properties:
+        phase:
+          type: string
+          enum: [prepared, started, destroyed, outcome_unknown, completed, failed]
+        node_id: {type: string, format: uuid}
+        wake_id: {type: string, format: uuid}
+        generation: {type: string, maxLength: 128}
+        snapshot_ids:
+          type: array
+          items: {type: string, format: uuid}
+        destroyed_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+
     OperatorIntentResponse:
       description: |
         Wire shape for GET /v1/admin/operator-intents/{id}
@@ -69958,13 +70170,22 @@ components:
       type: object
       required: [intent_id, kind, status, target_id, actor_id, reason, metadata, requested_at]
       properties:
+        cold_boot_generation:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Durable recovery generation committed by a successful force_cold_boot intent. Retries retain the original value.
+        park_execution:
+          $ref: "#/components/schemas/OperatorParkExecutionResponse"
+        restart_execution:
+          $ref: "#/components/schemas/OperatorRestartExecutionResponse"
         intent_id: { type: string, format: uuid }
         kind:
           type: string
           enum: [force_park, force_cold_boot, force_restart, node_drain, node_force_drain, node_activate]
         status:
           type: string
-          enum: [pending, running, succeeded, failed, cancelled]
+          enum: [pending, running, succeeded, failed, cancelled, outcome_unknown]
         target_id:
           type: string
           description: Instance UUID (force_park or force_restart), deployment UUID (force_cold_boot), or compute-node UUID (node lifecycle intents).
@@ -69996,7 +70217,7 @@ components:
           description: Set on terminal status (succeeded/failed/cancelled).
         error:
           type: string
-          description: Bounded dispatch error message (1 KB cap) on failed status.
+          description: Bounded dispatch error message (1 KB cap) on failed or outcome_unknown status.
         snap_ids_marked_stale:
           type: array
           items: { type: string, format: uuid }
@@ -70601,6 +70822,7 @@ components:
         effective_limits: { $ref: '#/components/schemas/AppEffectiveLimits' }
         idle_timeout_s: { type: [integer, "null"] }
         request_timeout_s: { type: integer, minimum: 0, maximum: 30, description: "Configured per-app request wall-clock timeout in seconds; 0 means the plan/type default." }
+        function_concurrency: { type: integer, minimum: 0, maximum: 80, description: "Requests one Node or Python function worker serves at once (ADR-1342). 0 or 1 keeps one request per worker; the plan's concurrency_per_vm bound caps it. Python runs sync handlers on threads. Takes effect on the next deploy." }
         min_instances: { type: integer }
         status:
           type: string
@@ -72178,7 +72400,7 @@ components:
           type: array
           minItems: 1
           items: { type: string, enum: [read, write, admin, billing] }
-          description: "read allows GET, write and admin allow every method; billing lets the consumer read its own billing (ADR-1304) and grants no app access."
+          description: "read allows GET, write and admin allow every method; billing lets the consumer read its own billing (ADR-1506) and grants no app access."
         expires_at: { type: [string, "null"], format: date-time }
 
     ConsumerKeyResponse:
@@ -72953,6 +73175,11 @@ components:
           minimum: 0
           maximum: 30
           description: "Per-app request wall-clock timeout in seconds. 0 inherits the plan/type default; the current platform ceiling is 30 seconds."
+        function_concurrency:
+          type: integer
+          minimum: 0
+          maximum: 80
+          description: "Requests one Node or Python function worker may serve at once (ADR-1342). Omitted, 0 or 1 keeps one request per worker; the plan's concurrency_per_vm bound caps it. Python runs sync handlers on threads."
         # Service/lifecycle settings are persisted on the app and merged into
         # every deployment manifest. Omitted values use the mode/plan defaults.
         execution_mode:
@@ -73658,6 +73885,11 @@ components:
           minimum: 0
           maximum: 30
           description: "Per-app request wall-clock timeout in seconds. 0 inherits the plan/type default."
+        function_concurrency:
+          type: [integer, "null"]
+          minimum: 0
+          maximum: 80
+          description: "Changes how many requests one Node or Python function worker serves at once (ADR-1342). 0 or 1 restores one request per worker; capped by the plan's concurrency_per_vm. Existing functions pick up the change on their next deploy."
         request_rate_limit_rps:
           type: [integer, "null"]
           minimum: 0
@@ -74410,6 +74642,11 @@ components:
           minimum: 0
           maximum: 30
           description: "Runtime request wall-clock timeout in seconds. 0 inherits the plan/type default."
+        function_concurrency:
+          type: [integer, "null"]
+          minimum: 0
+          maximum: 80
+          description: "Per-worker request concurrency imaged stamps into the function's build as FAAS_FUNCTION_CONCURRENCY (ADR-1342). 0 or 1 means one request per worker."
         # M-2 (ADR-137 §Decision 3): per-deployment replica
         # scaffold for execution_mode='service'. Foundation here;
         # full rolling-deploy / rollback / image-digest pinning
@@ -97748,12 +97985,12 @@ components:
       description: One retained publication in a channel batch, with an optional override of the batch message TTL.
 
     BillingProvider:
-      description: "A billing provider statements export to (ADR-1305)."
+      description: "A billing provider statements export to (ADR-1507)."
       type: string
       enum: [stripe, paddle, lago]
 
     PutBillingConnectionRequest:
-      description: "The account's own key for one billing provider (ADR-1300, ADR-1305)."
+      description: "The account's own key for one billing provider (ADR-1502, ADR-1507)."
       type: object
       required: [secret_key]
       properties:
@@ -97786,7 +98023,7 @@ components:
         customer: { type: string, maxLength: 255, description: "The provider's customer: a Stripe cus_… ID, a Paddle ctm_… ID, or a Lago external customer ID. Omitted, the consumer's or tenant's external_ref is used when it is one." }
 
     StatementInvoiceExportResponse:
-      description: "A finalized statement's invoice in the account's billing provider (ADR-1300, ADR-1305)."
+      description: "A finalized statement's invoice in the account's billing provider (ADR-1502, ADR-1507)."
       type: object
       required: [statement_id, provider, customer, status, currency, amount_minor, livemode, created_at]
       properties:
@@ -97807,7 +98044,7 @@ components:
         payment_status:
           type: string
           enum: [draft, open, paid, void, uncollectible, deleted]
-          description: "The provider invoice's status as last read by Gregale (ADR-1302, ADR-1305); deleted means the provider no longer has it. Absent until the first sync."
+          description: "The provider invoice's status as last read by Gregale (ADR-1504, ADR-1507); deleted means the provider no longer has it. Absent until the first sync."
         amount_paid_minor: { type: integer, format: int64, minimum: 0 }
         amount_remaining_minor: { type: integer, format: int64, minimum: 0 }
         due_at: { type: string, format: date-time }
@@ -97835,7 +98072,7 @@ components:
         max_units_per_month: { type: integer, format: int64, minimum: 1 }
 
     ConsumerBillingSummaryResponse:
-      description: "A consumer's own month to date (ADR-1304), priced like its next statement."
+      description: "A consumer's own month to date (ADR-1506), priced like its next statement."
       type: object
       required: [consumer_id, external_ref, name, app, month, billable_units, unpriced_units, amount_millicents, priced, as_of]
       properties:
@@ -97888,7 +98125,7 @@ components:
           items: { $ref: '#/components/schemas/ConsumerBillingDay' }
 
     ConsumerBillingInvoice:
-      description: "The customer-facing view of a statement's exported invoice (ADR-1302)."
+      description: "The customer-facing view of a statement's exported invoice (ADR-1504)."
       type: object
       required: [amount_minor]
       properties:
@@ -97924,7 +98161,7 @@ components:
           items: { $ref: '#/components/schemas/ConsumerBillingStatement' }
 
     CreateBillingRunRequest:
-      description: "A month-end billing run (ADR-1301). Omitted options bill both sources, finalize, do not export, and hold consumers with completeness gaps."
+      description: "A month-end billing run (ADR-1503). Omitted options bill both sources, finalize, do not export, and hold consumers with completeness gaps."
       type: object
       required: [month]
       properties:
@@ -97943,7 +98180,7 @@ components:
       items: { type: string, enum: [app_consumers, platform_tenants] }
 
     BillingRunExport:
-      description: "Where finalized statements go: none, or invoices in the account's Stripe, Paddle or Lago (ADR-1305; requires finalize and a connected key)."
+      description: "Where finalized statements go: none, or invoices in the account's Stripe, Paddle or Lago (ADR-1507; requires finalize and a connected key)."
       type: string
       enum: [none, stripe, paddle, lago]
 
@@ -98017,7 +98254,7 @@ components:
         payment_status:
           type: string
           enum: [draft, open, paid, void, uncollectible, deleted]
-          description: "Payment status of the invoice exported for the item's statement (ADR-1302)."
+          description: "Payment status of the invoice exported for the item's statement (ADR-1504)."
 
     BillingRunItemListResponse:
       description: "One page of a billing run's customers, ordered by kind and ID."
@@ -101568,6 +101805,62 @@ components:
         unattributed_events: { type: integer }
         coverage: { type: string }
 
+    IssueLifecycleAlertPolicy:
+      description: "Native new-issue/regression environment filter and shared per-group cooldown."
+      type: object
+      additionalProperties: false
+      required: [revision, environments, cooldown_seconds]
+      properties:
+        revision: { type: integer, format: int64, minimum: 0 }
+        environments:
+          type: array
+          maxItems: 20
+          uniqueItems: true
+          description: Environments permitted by the saved policy; an empty array means all.
+          items: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$', maxLength: 63 }
+        cooldown_seconds: { type: integer, format: int64, minimum: 0, maximum: 604800 }
+    UpdateIssueLifecycleAlertPolicyRequest:
+      description: "Revision-guarded replacement lifecycle alert policy."
+      type: object
+      additionalProperties: false
+      required: [expected_revision, environments, cooldown_seconds]
+      properties:
+        expected_revision: { type: integer, format: int64, minimum: 0 }
+        environments:
+          type: array
+          maxItems: 20
+          uniqueItems: true
+          description: Replacement allowlist of exact names; an empty array removes the environment filter.
+          items: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$', maxLength: 63 }
+        cooldown_seconds: { type: integer, format: int64, minimum: 0, maximum: 604800 }
+    PreviewIssueLifecycleAlertRequest:
+      description: "Draft policy and hypothetical lifecycle event for an existing issue."
+      type: object
+      additionalProperties: false
+      required: [issue_id, event, environments, cooldown_seconds]
+      properties:
+        issue_id: { type: string, format: uuid }
+        event: { type: string, enum: [created, regressed] }
+        environments:
+          type: array
+          maxItems: 20
+          uniqueItems: true
+          description: Draft environment allowlist used only for this preview; an empty array matches all.
+          items: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$', maxLength: 63 }
+        cooldown_seconds: { type: integer, format: int64, minimum: 0, maximum: 604800 }
+    IssueLifecycleAlertPreview:
+      description: "Policy-only eligibility; actual Slack delivery has additional subscription, routing and sender gates."
+      type: object
+      additionalProperties: false
+      required: [issue_id, event, environment, policy_revision, allowed, reason]
+      properties:
+        issue_id: { type: string, format: uuid }
+        event: { type: string, enum: [created, regressed] }
+        environment: { type: string }
+        policy_revision: { type: integer, format: int64, minimum: 0 }
+        allowed: { type: boolean }
+        reason: { type: string, enum: [eligible, environment_excluded, cooldown] }
+        next_eligible_at: { type: string, format: date-time }
     IssueFrequencyAlertRule:
       description: "Named event-frequency threshold with a bounded observation window, cooldown and optional filters."
       type: object

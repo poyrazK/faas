@@ -21,6 +21,60 @@ import (
 	"time"
 )
 
+// Operator restart execution and persistence budgets (ADR-1522).
+const (
+	OperatorRestartGenerationMaxBytes    = 128
+	OperatorRestartRPCTimeout            = 10 * time.Second
+	OperatorRestartPersistenceTimeout    = 10 * time.Second
+	OperatorRestartPersistenceAttempts   = 3
+	OperatorRestartPersistenceRetryDelay = 100 * time.Millisecond
+	OperatorParkMaxGraceSeconds          = int32(MaxAppManifestStopGracePeriod / time.Second)
+	OperatorParkCleanupTimeout           = 10 * time.Second
+	OperatorParkRPCTimeout               = 90 * time.Second
+)
+
+// Database-only operator cold-boot execution and replay (ADR-1523).
+const (
+	OperatorColdBootPersistenceTimeout    = 10 * time.Second
+	OperatorColdBootPersistenceAttempts   = 3
+	OperatorColdBootPersistenceRetryDelay = 100 * time.Millisecond
+)
+
+// Database-only node maintenance execution and receipt replay (ADR-1526).
+const (
+	OperatorNodePersistenceTimeout    = 10 * time.Second
+	OperatorNodePersistenceAttempts   = 3
+	OperatorNodePersistenceRetryDelay = 100 * time.Millisecond
+)
+
+// Stale node placement retries before VM dispatch (ADR-1528).
+const NodeAdmissionPlacementAttempts = 3
+
+// Durable migration evidence is bounded, never expired into cleanup proof.
+const (
+	MigrationAdmissionRecoveryBatchMax = 128
+	MigrationAdoptionReceiptMaxBytes   = 65536
+	MigrationCleanupProofMaxBytes      = 1024
+	MigrationSourceLeaseTokenMaxBytes  = 128
+)
+
+// Database-only node lifecycle completion and receipt replay (ADR-1527).
+const (
+	NodeLifecycleCompletionTimeout    = 10 * time.Second
+	NodeLifecycleCompletionAttempts   = 3
+	NodeLifecycleCompletionRetryDelay = 100 * time.Millisecond
+)
+
+// Durable operator recovery acceptance (ADR-1524). Receipts do not expire;
+// PollHorizon is only guidance for one polling session.
+const (
+	OperatorRecoveryRequestKeyMaxBytes = 255
+	OperatorRecoveryReasonMaxBytes     = 64
+	OperatorRecoveryTargetMaxBytes     = 255
+	OperatorRecoverySubmissionTimeout  = 10 * time.Second
+	OperatorRecoveryPollHorizon        = 5 * time.Minute
+)
+
 // Application standards preview safeguards, independent of billing quotas.
 const (
 	ApplicationStandardMaxDefinitionBytes             = 64 << 10
@@ -279,7 +333,7 @@ const (
 	ProfileDefaultSocket            = "/run/faas/profiled.sock"
 )
 
-// Billing runs (ADR-1301).
+// Billing runs (ADR-1503).
 const (
 	// BillingRunSettleDelay is how long after month end a run may start, so
 	// gateway usage outboxes have delivered the month's last minutes.
@@ -305,7 +359,7 @@ const (
 	BillingRunItemListMax     = 500
 )
 
-// Payment status of exported statement invoices (ADR-1302).
+// Payment status of exported statement invoices (ADR-1504).
 const (
 	// A completed export is first synced after StatementInvoiceFirstSyncDelay,
 	// then polled by status until paid, void or deleted.
@@ -329,7 +383,7 @@ const (
 	StatementInvoiceListMax     = 200
 )
 
-// Consumer billing self-service (ADR-1304).
+// Consumer billing self-service (ADR-1506).
 const (
 	// Requests per minute and burst allowed per consumer key prefix.
 	ConsumerBillingRequestsPerMinute = 60
@@ -364,7 +418,7 @@ const (
 	// unpaid invoice blocks its consumer.
 	ConsumerOverdueBlockMaxDays = 365
 	// apid recomputes overdue holds this often; payment status itself is
-	// synced on the ADR-1302 schedule.
+	// synced on the ADR-1504 schedule.
 	ConsumerOverdueCheckInterval = 5 * time.Minute
 	// An invoice holding its consumer has its payment status read at least
 	// this often, so paying it lifts the hold within minutes.
@@ -1231,49 +1285,213 @@ const (
 	ObjectCapacityReconciliationTimeout       = time.Hour
 	ObjectCapacityReconciliationRetry         = 30 * time.Second
 	ObjectCapacityInventoryTimeout            = 45 * time.Second
-	ObjectCapacityReconciliationBatch         = 10
-	DefaultObjectBucketsPerApp                = 10
-	MaxObjectBucketsPerApp                    = 100
-	DefaultObjectUploadBytes            int64 = 100 << 20
-	MaxObjectSinglePutBytes             int64 = 5 << 30
-	MaxObjectUploadSpoolBytes           int64 = 5 << 30
-	ObjectUploadSpoolMinFreeBytes       int64 = 1 << 30
-	ObjectTransferTimeout                     = 30 * time.Minute
-	ObjectMutationObservationTimeout          = 5 * time.Second
-	MaxObjectTransferTimeout                  = 24 * time.Hour
-	DefaultObjectConcurrentUploads            = 4
-	MaxObjectConcurrentUploads                = 64
-	MaxObjectProxiedRequestBytes        int64 = 64 << 20
-	ObjectGatewayPutURLTTL                    = time.Minute
-	DefaultObjectSignedURLTTL                 = 5 * time.Minute
-	MaxObjectSignedURLTTL                     = 15 * time.Minute
-	MaxObjectURLCapabilitiesPerBucket         = 1024
-	MaxObjectURLRequestBytes                  = 32 << 10
-	ObjectUploadRecoveryBatch                 = 10
-	ObjectUploadPreparationTimeout            = time.Minute
-	ObjectUploadRecoveryRetry                 = 30 * time.Second
-	ObjectUploadRecoveryLease                 = time.Minute
-	ObjectUploadRecoveryProbeTimeout          = 10 * time.Second
-	ObjectUploadHistoryPageSize               = 10
-	ObjectUploadHistoryCursorMaxBytes         = 8192
-	ObjectProviderVersionIDMaxBytes           = 1024
-	ObjectUploadSettlementTimeout             = 5 * time.Second
-	ObjectMultipartOperationTimeout           = 90 * time.Second
-	ObjectMultipartInitiationMaxPages         = 100
-	ObjectProviderUploadIDMaxBytes            = 4096
-	ObjectWriteReceiptPageDefault             = 50
-	ObjectWriteReceiptPageMax                 = 100
-	ObjectWriteReceiptCursorMaxBytes          = 512
-	ObjectWriteReceiptWaitTimeout             = 5 * time.Minute
-	ObjectWriteReceiptPollInterval            = 5 * time.Second
-	ObjectWriteReceiptMinPollInterval         = time.Second
-	ObjectMultipartCleanupGrace               = 5 * time.Minute
-	ObjectMultipartCleanupRetry               = 30 * time.Second
-	ObjectMultipartPartURLTTLSeconds          = 60
-	MaxObjectUploadBytes                int64 = 5 << 40
-	DefaultMultipartPartBytes           int64 = 64 << 20
-	MinMultipartPartBytes               int64 = 5 << 20
-	MaxMultipartParts                         = 10000
+	// Read-only owned-node audits retain bounded diagnostics and publish cached
+	// metrics. These are operator work bounds, not customer allowances.
+	ObjectNodeInventoryInterval         = time.Minute
+	ObjectNodeInventoryMaxIssues        = 100
+	ObjectNodeInventoryMaxDepth         = 8
+	ObjectNodeInventoryMaxResponseBytes = 4 << 20
+	// Periodic source audits checkpoint bounded work; freshness requires a
+	// complete cycle at one source revision, never merely an active worker.
+	ObjectNodeAuditRecords            = 64
+	ObjectNodeAuditMaxRecords         = 256
+	ObjectNodeAuditStepTime           = 25 * time.Millisecond
+	ObjectNodeAuditMaxStepTime        = 100 * time.Millisecond
+	ObjectNodeAuditStepInterval       = 10 * time.Millisecond
+	ObjectNodeAuditDirectoryBytes     = 4 << 10
+	ObjectNodeAuditCheckpointMaxBytes = 1 << 20
+	ObjectNodeAuditPendingRecords     = 4096
+	ObjectNodeAuditMaxPendingRecords  = 65536
+	ObjectNodeAuditPendingBytes       = 16 << 20
+	// Owned-node checksum verification uses a bounded durable worklist and
+	// checkpoints large-file hashes between these background read budgets.
+	ObjectNodeScrubInterval                  = 24 * time.Hour
+	ObjectNodeScrubStepInterval              = time.Second
+	ObjectNodeScrubRetry                     = 30 * time.Second
+	ObjectNodeScrubDefaultBytesPerStep int64 = 8 << 20
+	ObjectNodeScrubMaxBytesPerStep     int64 = 64 << 20
+	ObjectNodeScrubBufferBytes               = 64 << 10
+	ObjectNodeScrubTargetsPerStep            = 32
+	ObjectNodeScrubManifestMaxBytes    int64 = 64 << 20
+	ObjectNodeScrubRecordMaxBytes            = 8 << 10
+
+	// Offline backups bound manifest parsing and stream one file at a time.
+	ObjectNodeBackupMaxEntries             = 1_000_000
+	ObjectNodeBackupManifestMaxBytes int64 = 256 << 20
+	ObjectNodeBackupRecordMaxBytes         = 4 << 10
+	ObjectNodeBackupBufferBytes            = 256 << 10
+	// Asynchronous owned-node replication retains a bounded immutable journal.
+	ObjectNodeReplicationMaxEntries = 1_000_000
+	// Recovery proof collection is opt-in. The window also bounds first use of
+	// time-bearing receipt IDs; unacknowledged proofs and live objects stay pinned.
+	ObjectNodeRecoveryWindow           = 30 * 24 * time.Hour
+	ObjectNodeRecoveryClockSkew        = 5 * time.Minute
+	ObjectNodeRecoveryBatch            = 128
+	ObjectNodeRecoveryMaxBatch         = 1024
+	ObjectNodeRecoveryRequestMaxBytes  = 16 << 10
+	ObjectNodeRecoveryResponseMaxBytes = 4 << 10
+	ObjectNodeRecoveryAckTimeout       = 2 * time.Second
+	// Indexed recovery cleanup releases the catalog lock between identities.
+	ObjectNodeRecoveryCleanupBatch       = 8
+	ObjectNodeRecoveryCleanupMaxBatch    = 128
+	ObjectNodeRecoveryCleanupInterval    = time.Second
+	ObjectNodeRecoveryCleanupStepTime    = 25 * time.Millisecond
+	ObjectNodeRecoveryCleanupMaxStepTime = 100 * time.Millisecond
+	ObjectNodeRecoveryCleanupRetry       = 30 * time.Second
+	ObjectNodeRecoveryCleanupProtected   = time.Hour
+	ObjectNodeRecoveryIndexBuildBatch    = 128
+	ObjectNodeRecoveryIndexReplayMax     = 4096
+	ObjectNodeRecoveryIndexOpenTimeout   = time.Second
+	ObjectNodeRecoveryTerminalEntries    = 3 // session.json, optional empty parts/, and one unexpected entry.
+	// Local listing/expiry projections rebuild from the catalog at primary startup.
+	ObjectNodeCatalogIndexBuildBatch     = 128
+	ObjectNodeCatalogIndexOpenTimeout    = time.Second
+	ObjectNodeMultipartExpirySessions    = 32
+	ObjectNodeMultipartExpiryMaxSessions = 128
+	ObjectNodeMultipartExpiryParts       = 8
+	ObjectNodeMultipartExpiryMaxParts    = 128
+	ObjectNodeMultipartExpiryStepTime    = 25 * time.Millisecond
+	ObjectNodeMultipartExpiryMaxStepTime = 100 * time.Millisecond
+	ObjectNodeMultipartExpiryPartFiles   = 16
+	// Central acknowledgement delivery is independent of customer write recovery.
+	ObjectNodeSettlementBatch        = 16
+	ObjectNodeSettlementLease        = 2 * time.Minute
+	ObjectNodeSettlementSweepTimeout = 40 * time.Second
+	ObjectNodeSettlementRetryMin     = 5 * time.Second
+	ObjectNodeSettlementRetryMax     = time.Hour
+	ObjectNodeSettlementMaxAttempts  = 1<<31 - 1
+	// Sequence values remain exact in JSON consumers; retention is a separate budget.
+	ObjectNodeReplicationMaxSequence     int64 = 1<<53 - 1
+	ObjectNodeReplicationJournalBytes    int64 = 1 << 30
+	ObjectNodeReplicationBlobBytes       int64 = 8 << 40
+	ObjectNodeReplicationMaxFollowers          = 64
+	ObjectNodeReplicationMaxEpoch        int64 = 1_000_000
+	ObjectNodeReplicationRecordMaxBytes        = 2 << 20
+	ObjectNodeReplicationChunkBytes      int64 = 4 << 20
+	ObjectNodeReplicationStepBytes       int64 = 64 << 20
+	ObjectNodeReplicationBatch                 = 32
+	ObjectNodeReplicationBatchMaxBytes         = 4 << 20
+	ObjectNodeReplicationMaxEntryBatches       = 2
+	// Admission watermarks leave room for already admitted work and recovery.
+	ObjectNodeAdmissionLagHigh              int64 = 4096
+	ObjectNodeAdmissionLagLow               int64 = 2048
+	ObjectNodeAdmissionRecordsHigh          int64 = 900_000
+	ObjectNodeAdmissionRecordsLow           int64 = 600_000
+	ObjectNodeAdmissionJournalHigh          int64 = 896 << 20
+	ObjectNodeAdmissionJournalLow           int64 = 640 << 20
+	ObjectNodeAdmissionReplayHigh           int64 = 7 << 40
+	ObjectNodeAdmissionReplayLow            int64 = 5 << 40
+	ObjectNodeAdmissionFreeRecovery         int64 = 512 << 20
+	ObjectNodeAdmissionPhysicalCopies             = 2
+	ObjectNodeAdmissionCompletionRecords          = 6
+	ObjectNodeAdmissionRetryAfter                 = time.Second
+	ObjectNodeReplayPreparationConcurrency        = 1
+	ObjectNodeReplicationDefaultWorkBytes   int64 = 64 << 20
+	ObjectNodeReplicationMaxWorkBytes       int64 = 1 << 30
+	ObjectNodeReplicationDefaultWorkEntries       = 256
+	ObjectNodeReplicationMaxWorkEntries           = 4096
+	ObjectNodeReplicationMaxTransfers             = 2
+	ObjectNodeReplicationRequestTimeout           = 30 * time.Second
+	ObjectNodeReplicationChangeWaitTimeout        = 20 * time.Second
+	ObjectNodeReplicationMaxWaiters               = 64
+	// Online retention bounds metadata work per tick; full integrity audits remain separate.
+	ObjectNodeCompactionTriggerRecords      int64 = 750_000
+	ObjectNodeCompactionTriggerJournalBytes int64 = 768 << 20
+	ObjectNodeCompactionTriggerBlobBytes    int64 = 6 << 40
+	ObjectNodeCompactionMinFreeBytes        int64 = 4 << 30
+	ObjectNodeCompactionFreePercent               = 25
+	ObjectNodeCompactionStepRecords               = 128
+	ObjectNodeCompactionStepBlobs                 = 128
+	ObjectNodeCompactionMaxStepFiles              = 1024
+	ObjectNodeCompactionStepMetadataBytes   int64 = 1 << 20
+	ObjectNodeCompactionInterval                  = 100 * time.Millisecond
+	ObjectNodeCompactionRetry                     = 5 * time.Second
+	// Backoff after transport failures; fallback for in-process sources without waits.
+	ObjectNodeReplicationPollInterval = time.Second
+	ObjectNodeReplicaAckMaxBytes      = 4 << 10
+	ObjectNodeReplicaWaitTimeout      = 10 * time.Second
+	// Disposable local object-service qualification; never customer quotas.
+	ObjectQualificationDefaultDuration        = 2 * time.Second
+	ObjectQualificationMaxDuration            = 30 * time.Minute
+	ObjectQualificationDefaultWorkers         = 4
+	ObjectQualificationMaxWorkers             = 16
+	ObjectQualificationDefaultCycles          = 2
+	ObjectQualificationMaxCycles              = 16
+	ObjectQualificationDefaultWorkflows       = 32
+	ObjectQualificationMaxWorkflows           = 256
+	ObjectQualificationDefaultBytes     int64 = 64 << 10
+	ObjectQualificationMaxBytes         int64 = 8 << 20
+	ObjectQualificationDiskBudget       int64 = 2 << 30
+	ObjectQualificationRequestTimeout         = 30 * time.Second
+	ObjectQualificationProbeTimeout           = 300 * time.Millisecond
+	ObjectQualificationStartupTimeout         = 15 * time.Second
+	ObjectQualificationStopTimeout            = 5 * time.Second
+	ObjectQualificationSampleInterval         = 200 * time.Millisecond
+	ObjectQualificationReportBytes            = 2 << 20
+	ObjectQualificationAgentChunkBytes        = 64 << 10
+	ObjectQualificationAgentLineBytes         = 256 << 10
+	ObjectQualificationRemoteTimeout          = 2 * time.Minute
+	ObjectQualificationMaxNetworkDelay        = 2 * time.Second
+	// Soak limits bound disposable work, retained receipt metadata and timeline output.
+	ObjectQualificationSoakDefaultDuration           = 5 * time.Minute
+	ObjectQualificationSoakDefaultCycles             = 1
+	ObjectQualificationSoakDefaultFlows              = 4096
+	ObjectQualificationSoakMaxFlows                  = 16384
+	ObjectQualificationSoakMaxFlowsPerSecond         = 32
+	ObjectQualificationSoakCompactionRecords   int64 = 64
+	ObjectQualificationSoakMinCompactionCycles       = 2
+	ObjectQualificationSoakInterval                  = 5 * time.Second
+	ObjectQualificationSoakMinInterval               = time.Second
+	ObjectQualificationSoakMaxInterval               = time.Minute
+	ObjectQualificationSoakFaultDuration             = time.Second
+	ObjectQualificationSoakMinFault                  = 200 * time.Millisecond
+	ObjectQualificationSoakMaxFault                  = 2 * time.Second
+	ObjectQualificationSoakMaxSampleAge              = 5 * time.Second
+	ObjectQualificationSoakTimelineBytes             = 16 << 20
+	ObjectQualificationSoakWindowBytes               = 32 << 10
+	ObjectCapacityReconciliationBatch                = 10
+	DefaultObjectBucketsPerApp                       = 10
+	MaxObjectBucketsPerApp                           = 100
+	DefaultObjectUploadBytes                   int64 = 100 << 20
+	MaxObjectSinglePutBytes                    int64 = 5 << 30
+	MaxObjectUploadSpoolBytes                  int64 = 5 << 30
+	ObjectUploadSpoolMinFreeBytes              int64 = 1 << 30
+	ObjectTransferTimeout                            = 30 * time.Minute
+	ObjectMutationObservationTimeout                 = 5 * time.Second
+	MaxObjectTransferTimeout                         = 24 * time.Hour
+	DefaultObjectConcurrentUploads                   = 4
+	MaxObjectConcurrentUploads                       = 64
+	MaxObjectProxiedRequestBytes               int64 = 64 << 20
+	ObjectGatewayPutURLTTL                           = time.Minute
+	DefaultObjectSignedURLTTL                        = 5 * time.Minute
+	MaxObjectSignedURLTTL                            = 15 * time.Minute
+	MaxObjectURLCapabilitiesPerBucket                = 1024
+	MaxObjectURLRequestBytes                         = 32 << 10
+	ObjectUploadRecoveryBatch                        = 10
+	ObjectUploadPreparationTimeout                   = time.Minute
+	ObjectUploadRecoveryRetry                        = 30 * time.Second
+	ObjectUploadRecoveryLease                        = time.Minute
+	ObjectUploadRecoveryProbeTimeout                 = 10 * time.Second
+	ObjectUploadHistoryPageSize                      = 10
+	ObjectUploadHistoryCursorMaxBytes                = 8192
+	ObjectProviderVersionIDMaxBytes                  = 1024
+	ObjectUploadSettlementTimeout                    = 5 * time.Second
+	ObjectMultipartOperationTimeout                  = 90 * time.Second
+	ObjectMultipartInitiationMaxPages                = 100
+	ObjectProviderUploadIDMaxBytes                   = 4096
+	ObjectWriteReceiptPageDefault                    = 50
+	ObjectWriteReceiptPageMax                        = 100
+	ObjectWriteReceiptCursorMaxBytes                 = 512
+	ObjectWriteReceiptWaitTimeout                    = 5 * time.Minute
+	ObjectWriteReceiptPollInterval                   = 5 * time.Second
+	ObjectWriteReceiptMinPollInterval                = time.Second
+	ObjectMultipartCleanupGrace                      = 5 * time.Minute
+	ObjectMultipartCleanupRetry                      = 30 * time.Second
+	ObjectMultipartPartURLTTLSeconds                 = 60
+	MaxObjectUploadBytes                       int64 = 5 << 40
+	DefaultMultipartPartBytes                  int64 = 64 << 20
+	MinMultipartPartBytes                      int64 = 5 << 20
+	MaxMultipartParts                                = 10000
 	// Local CLI checkpoints hold at most 10,000 part hashes and acknowledgments.
 	MaxObjectMultipartCheckpointBytes  = 4 << 20
 	MaxObjectWriteETagBytes            = 256
@@ -9494,6 +9712,12 @@ func AsyncInvocationLease(timeout time.Duration) time.Duration {
 // one guest. This is a runtime safety bound, not the plan's HTTP concurrency.
 const FunctionInterpreterMaxWorkers = 4
 
+// FunctionConcurrencyEnv carries an app's function_concurrency to its
+// generated adapter (ADR-1342). imaged stamps it on function deployments
+// whose setting is above one; the adapter then advertises that many slots
+// per worker.
+const FunctionConcurrencyEnv = "FAAS_FUNCTION_CONCURRENCY"
+
 // The layer attestation warm verifies the owned live layers in the
 // background at schedd start and again every AttestationWarmInterval, so a
 // wake rarely hashes a layer itself. A layer that failed is retried after
@@ -9530,6 +9754,10 @@ type NodeSizing struct {
 	// CPUOvercommit, so storing an already-overcommitted count there would
 	// apply the factor twice.
 	HostCPUs int
+	// TenantCPUs is the CPU count registered for tenant admission
+	// (compute_nodes.vpcpus): HostCPUs, less the app-edge hold-back on a
+	// node that runs the edge (ADR-1343 §4). VCPUSlots derive from it.
+	TenantCPUs int
 }
 
 // NodeRoleShape selects which non-tenant workloads share the host, and so
@@ -9545,14 +9773,33 @@ const (
 	// gatewayd-internal, builderd, imaged, and schedd, but NOT Postgres,
 	// apid, meterd, githubd, or gatewayd-public. See pkg/role.
 	NodeShapeComputeOnly
+	// NodeShapeComputeEdge is a compute-only host that also runs the app
+	// edge (ADR-1343): gatewayd-public in compute edge mode and the
+	// Cloudflare Tunnel connector. It holds back ComputeEdgeDaemonReserveMB
+	// more RAM and ComputeEdgeCPUHoldbackMillicores of CPU from tenants.
+	NodeShapeComputeEdge
 )
 
 // nonTenantReserveMB is the RAM held back from tenants for a box shape.
 func nonTenantReserveMB(shape NodeRoleShape) int {
-	if shape == NodeShapeComputeOnly {
+	switch shape {
+	case NodeShapeComputeOnly:
 		return ComputeNodeDaemonReserveMB + BuilderSlotReserveMB
+	case NodeShapeComputeEdge:
+		return ComputeNodeDaemonReserveMB + BuilderSlotReserveMB + ComputeEdgeDaemonReserveMB
 	}
 	return ControlPlaneReserveMB
+}
+
+// tenantCPUs is the CPU count a host registers for tenant admission. The
+// edge hold-back is rounded up to whole CPUs, because compute_nodes.vpcpus
+// counts whole CPUs; at least one CPU is always registered.
+func tenantCPUs(hostCPUs int, shape NodeRoleShape) int {
+	if shape != NodeShapeComputeEdge {
+		return hostCPUs
+	}
+	holdback := (ComputeEdgeCPUHoldbackMillicores + 999) / 1000
+	return max(1, hostCPUs-holdback)
 }
 
 // DeriveNodeSizing generalises the spec §13 RAM budget to an arbitrary host.
@@ -9625,7 +9872,8 @@ func DeriveNodeSizingForRole(memTotalMB, hostCPUs int, shape NodeRoleShape) Node
 	}
 	if hostCPUs > 0 {
 		out.HostCPUs = hostCPUs
-		out.VCPUSlots = hostCPUs * CPUOvercommit
+		out.TenantCPUs = tenantCPUs(hostCPUs, shape)
+		out.VCPUSlots = out.TenantCPUs * CPUOvercommit
 	}
 	return out
 }
@@ -9650,6 +9898,14 @@ const (
 	// node that runs builderd. A build must never be paid for out of the
 	// tenant slice, so it is reserved rather than admitted.
 	BuilderSlotReserveMB = 2_048
+	// ComputeEdgeDaemonReserveMB is the extra RAM held back on a compute node
+	// that runs the app edge, for gatewayd-public and cloudflared
+	// (ADR-1343 §4).
+	ComputeEdgeDaemonReserveMB = 256
+	// ComputeEdgeCPUHoldbackMillicores is the CPU a compute node that runs
+	// the app edge keeps out of tenant admission for the same two daemons
+	// (ADR-1343 §4). Size it from the cutover load test.
+	ComputeEdgeCPUHoldbackMillicores = 1_000
 )
 
 // TenantEgressBasePorts are the TCP destination ports every guest may open
@@ -11481,6 +11737,11 @@ const (
 
 // Application Slack delivery history and admission are bounded independently of telemetry.
 const (
+	IssueLifecycleAlertMaxEnvironments    = 20
+	IssueLifecycleAlertMaxCooldownSeconds = 604800
+)
+
+const (
 	IssueApplicationSlackMaxDeliveries    = 1000
 	IssueApplicationSlackHistoryRetention = 7 * 24 * time.Hour
 	IssueApplicationSlackCleanupBatch     = 1000
@@ -11726,6 +11987,175 @@ const (
 	MCPConnectionHealthPageSize           = 50
 	MCPConnectionHealthMaxOffset          = 10000
 	MCPConnectionRetirementWarningSeconds = 24 * 60 * 60
+)
+
+// Internal static hosting (ADR-20261015). These caps bound control-plane memory,
+// publication work, retained artifacts, and the edge kill-switch convergence.
+const (
+	HostingFilesMax                            = 1000
+	HostingDeploymentPlanTimeout               = 15 * time.Second
+	HostingDeploymentPlanVersion               = 1
+	HostingDeploymentPlanMaxBytes              = 4 << 20
+	HostingDeploymentPlanJSONDepth             = 16
+	HostingPlannedStageTimeout                 = 10 * time.Minute
+	HostingPublicationWaitDefault              = 2 * time.Minute
+	HostingPublicationWaitMax                  = 10 * time.Minute
+	HostingPublicationPollInterval             = time.Second
+	HostingConfigMaxBytes                      = 32 << 10
+	HostingConfigRedirectsMax                  = 32
+	HostingConfigHeaderRulesMax                = 16
+	HostingConfigHeadersPerRuleMax             = 8
+	HostingConfigHeaderValueMaxBytes           = 2048
+	HostingAnalyticsDatasetMaxBytes            = 64
+	HostingTrafficQueryTimeout                 = 5 * time.Second
+	HostingTrafficQueryConcurrency             = 2
+	HostingTrafficCacheTTL                     = time.Minute
+	HostingTrafficCacheEntries                 = 128
+	HostingTrafficWindow                       = 24 * time.Hour
+	HostingTrafficRowsMax                      = 2048
+	HostingTrafficResponseMaxBytes             = 512 << 10
+	HostingTrafficCounterMax             int64 = 1<<53 - 1
+	HostingTrafficFailureGroupsMax             = 20
+	HostingAccountStorageMaxBytes        int64 = 1 << 30
+	HostingAccountPendingUploadsMax      int64 = 4
+	HostingStorageCopies                 int64 = 2
+	HostingFileMaxBytes                  int64 = 32 << 20
+	HostingReleaseMaxBytes               int64 = 100 << 20
+	HostingManifestMaxBytes              int64 = 512 << 10
+	HostingPathMaxBytes                        = 512
+	HostingContentTypeMaxBytes                 = 128
+	HostingNameMaxBytes                        = 48
+	HostingSitesPerAccount                     = 25
+	HostingReleasesPerSite                     = 10
+	HostingPublishConcurrency                  = 1
+	HostingRoutePageSize                       = 100
+	HostingUploadTTL                           = 5 * time.Minute
+	HostingStorageTimeout                      = 30 * time.Second
+	HostingFinalizeTimeout                     = 2 * time.Minute
+	HostingRouteLease                          = 120 * time.Second
+	HostingReconcileInterval                   = 30 * time.Second
+	HostingRetirementGrace                     = HostingUploadTTL + 2*HostingRouteLease + HostingStorageTimeout
+	HostingDurableRouteMaxBytes                = 8 << 10
+	HostingRouteCacheTTL                       = time.Minute
+	HostingRouteRepairInterval                 = 6 * time.Hour
+	HostingRouteRetryInterval                  = 30 * time.Second
+	HostingRouteCASAttempts                    = 3
+	HostingRoutePublishConcurrency             = 4
+	HostingRouteDispatchTimeout                = 30 * time.Second
+	HostingRouteStatusReadTimeout              = 5 * time.Second
+	HostingDomainsPerSite                      = 5
+	HostingDomainHostnameMaxBytes              = 64
+	HostingPilotRelaySocketMaxBytes            = 100
+	HostingDomainPageSize                      = 10
+	HostingDomainConcurrency                   = 2
+	HostingDomainDetailsMaxBytes               = 16 << 10
+	HostingDomainProviderMaxBytes              = 256 << 10
+	HostingDomainRecordsMax                    = 16
+	HostingDomainRecordMaxBytes                = 2048
+	HostingDomainProviderPagesMax              = 20
+	HostingDomainProviderTimeout               = 10 * time.Second
+	HostingDomainDNSTimeout                    = 5 * time.Second
+	HostingDomainDispatchTimeout               = 30 * time.Second
+	HostingDomainLease                         = 2 * time.Minute
+	HostingDomainRecoveryDelay                 = HostingDomainLease + HostingDomainProviderTimeout + HostingDomainDispatchTimeout
+	HostingDomainRetryInterval                 = time.Minute
+	HostingDomainCheckInterval                 = 30 * time.Minute
+	HostingDomainValidationRetryInterval       = 30 * time.Minute
+	HostingDomainRemovalGrace                  = 2*HostingRouteCacheTTL + HostingStorageTimeout
+)
+
+// Private immutable previews share release bytes and the existing wildcard Access policy.
+const (
+	HostingPreviewsPerSite       = 8
+	HostingPreviewTTLDefault     = 24 * time.Hour
+	HostingPreviewTTLMin         = 5 * time.Minute
+	HostingPreviewTTLMax         = 72 * time.Hour
+	HostingPreviewRetry          = 30 * time.Second
+	HostingPreviewRepairInterval = 6 * time.Hour
+	HostingPreviewRemovalGrace   = 2*HostingRouteCacheTTL + HostingStorageTimeout
+	HostingPreviewPageSize       = 100
+)
+
+const HostingPreviewConcurrency = 2
+
+// Internal deployment provenance and bounded, paginated accepted-intent history.
+const (
+	HostingProvenanceRepositoryMaxBytes  = 256
+	HostingProvenanceBranchMaxBytes      = 128
+	HostingProvenanceDescriptionMaxBytes = 280
+	HostingProvenanceMaxBytes            = 4096
+	HostingHistoryPerSite                = 1000
+	HostingHistoryPageSize               = 50
+)
+
+const HostingReleaseRequestMaxBytes = HostingManifestMaxBytes + HostingProvenanceMaxBytes
+
+// Internal site-scoped automation; credentials and run identity ledgers are bounded.
+const (
+	HostingAutomationCredentialsPerSite = 16
+	HostingOIDCRepositoryMaxBytes       = 200
+	HostingOIDCRefMaxBytes              = 255
+	HostingOIDCWorkflowMaxBytes         = 512
+	HostingOIDCEnvironmentMaxBytes      = 255
+	HostingOIDCTrustsPerSite            = 8
+	HostingOIDCSessionsPerSite          = 32
+	HostingOIDCBearerTTL                = 5 * time.Minute
+	HostingOIDCAssertionMaxTTL          = 10 * time.Minute
+	HostingOIDCRefreshMargin            = 30 * time.Second
+	HostingOIDCRequestTimeout           = 15 * time.Second
+	HostingOIDCRequestMaxBytes          = 32 << 10
+	HostingAutomationLabelMaxBytes      = 64
+	HostingAutomationTTLDefault         = 24 * time.Hour
+	HostingAutomationTTLMin             = 5 * time.Minute
+	HostingAutomationTTLMax             = 30 * 24 * time.Hour
+	HostingCIRunsPerSite                = 1000
+	HostingCIWaitDefault                = 2 * time.Minute
+	HostingCIWaitMax                    = 10 * time.Minute
+)
+
+const HostingCIWorkflowTimeout = 20 * time.Minute
+
+// Read-only deployment activity never changes the retained CI-run quota.
+const (
+	HostingActivityPageSize       = 25
+	HostingActivityCursorMaxBytes = 128
+	HostingCancellationTimeout    = 15 * time.Second
+	HostingPreviewCapacityTimeout = 15 * time.Second
+	HostingActivityTimeout        = 15 * time.Second
+)
+
+const HostingDiagnosticsTimeout = 15 * time.Second
+
+const (
+	HostingCISetupCronMaxBytes      = 100
+	HostingCISetupTimeout           = 15 * time.Second
+	HostingCISetupRequestMaxBytes   = 128 << 10
+	HostingCISetupWorkflowMaxBytes  = 64 << 10
+	HostingCISetupPathMaxBytes      = 256
+	HostingCISetupCLIMaxBytes       = 256 << 20
+	HostingCISetupJobTimeoutMinutes = 30
+	HostingCISetupYAMLMaxNodes      = 4096
+	HostingCISetupYAMLMaxDepth      = 32
+)
+
+// Automatic retirement is an internal opt-in, separate from physical cleanup.
+const (
+	HostingRetentionAgeDefault   = 24 * time.Hour
+	HostingRetentionAgeMin       = time.Hour
+	HostingRetentionAgeMax       = 30 * 24 * time.Hour
+	HostingRetentionSitesPerPass = 100
+	HostingRetentionPassTimeout  = 30 * time.Second
+)
+
+// Local CLI preview limits; no server process or cloud resource is allocated.
+const (
+	HostingLocalPreviewPort            = 4173
+	HostingLocalPreviewHeaderTimeout   = 5 * time.Second
+	HostingLocalPreviewReadTimeout     = 10 * time.Second
+	HostingLocalPreviewWriteTimeout    = 30 * time.Second
+	HostingLocalPreviewIdleTimeout     = 30 * time.Second
+	HostingLocalPreviewShutdownTimeout = 5 * time.Second
+	HostingLocalPreviewHeaderMaxBytes  = 16 << 10
 )
 
 // Deferred event processing remains bounded independently of dispatch timeout.

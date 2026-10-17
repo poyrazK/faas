@@ -108,7 +108,7 @@ func (f billingRunFixture) items(t *testing.T, runID string) map[string]api.Bill
 	return out
 }
 
-// adr: 1301 — one run bills every customer of an ended month: exported,
+// adr: 1503 — one run bills every customer of an ended month: exported,
 // held on unpriced usage, failed without a Stripe customer, skipped when a
 // platform tenant bills the usage; running the month again exports nothing.
 func TestBillingRunExportsEveryCustomer(t *testing.T) {
@@ -183,7 +183,7 @@ func TestBillingRunExportsEveryCustomer(t *testing.T) {
 	}
 }
 
-// adr: 1301 — a schedule starts the month's run after month end plus its
+// adr: 1503 — a schedule starts the month's run after month end plus its
 // delay, once.
 func TestBillingRunScheduleStartsMonthlyRun(t *testing.T) {
 	f := newBillingRunFixture(t)

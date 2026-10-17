@@ -159,8 +159,12 @@ domains still enter there.
   gatewayd-public control target and `cloudflared` metrics endpoint.
 - Alerts become per instance: daemon down or not ready, connector
   disconnected, local-gateway fallback rate, `421` rate.
-- `check_public_endpoint` gains a per-node mode that probes each edge through
-  its local listener from the control plane.
+- A per-node check (`make check-compute-edges`,
+  `deploy/scripts/faas-check-compute-edges.sh`) probes each edge from the
+  control plane: gatewayd-public's `/readyz` on its control port and the
+  connector's `/ready` on its metrics port. The edge's own listener is
+  loopback-only, and a public request cannot pick its connector, so
+  `check_public_endpoint` alone cannot see one bad node.
 - `/v1/traces` lookups are per edge process: a lookup sees only spans from
   the edge that served the request. This is accepted; the spans pipeline is
   the durable record.
@@ -173,6 +177,22 @@ Before a compute node is drained, upgraded or rebooted:
 2. let gatewayd-public drain: new admissions close and existing HTTP,
    WebSocket and SSE streams finish within the drain grace (25 s today);
 3. then drain the node as today.
+
+Two mechanisms carry this out without an operator step:
+
+- **Drain.** A node drained in the registry withdraws its edge's local path.
+  The edge keeps answering tunnel traffic and sends every request to the
+  other active nodes. That is a planned route, so it does not count as a
+  local-gateway fallback (`gatewayd_public_edge_node_drained` is 1 instead).
+  The edge withdraws only while the registry is readable and another node is
+  active: a drain must not move traffic to nowhere.
+- **Stop, restart or reboot.** `faas-cloudflared` is ordered after the edge
+  unit, so it stops first. On SIGTERM it withdraws from the tunnel and serves
+  in-flight requests for its grace period (30 s), through the edge that is
+  still running. Its stop timeout (45 s) outwaits that.
+
+For planned maintenance that must also end long-lived streams before the
+node goes down, stop `faas-cloudflared` on the node first.
 
 The steps run inside ADR-1344 P4's lossless drain. When the runtime-upgrade
 public-edge protocol (ADR-698–702) is on, each compute gatewayd-public is a

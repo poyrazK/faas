@@ -1,5 +1,5 @@
 // Package statementinvoices exports finalized usage statements as invoices
-// in the account's own Stripe, Paddle or Lago (ADR-1300, ADR-1305). Like
+// in the account's own Stripe, Paddle or Lago (ADR-1502, ADR-1507). Like
 // the other apid domains (ADR-982), it reaches apid only through Host;
 // apidserver keeps the route table.
 package statementinvoices
@@ -46,7 +46,7 @@ type Host interface {
 	// SealSecret and OpenSecret seal with apid's own age identity.
 	SealSecret(namespace string, plaintext []byte, maxBytes int) ([]byte, error)
 	OpenSecret(blob []byte) (namespace string, plaintext []byte, err error)
-	// SendEmail sends a plain-text notification (ADR-1302); messageID is the
+	// SendEmail sends a plain-text notification (ADR-1504); messageID is the
 	// provider idempotency key.
 	SendEmail(ctx context.Context, to, subject, body, messageID string) error
 }
@@ -127,7 +127,7 @@ func (s *Service) connectionTarget(w http.ResponseWriter, r *http.Request, acct 
 
 // PutBillingConnection checks the key against the provider, seals it, and
 // stores it; only its last four characters, mode and Lago API URL are ever
-// returned (ADR-1300, ADR-1305).
+// returned (ADR-1502, ADR-1507).
 func (s *Service) PutBillingConnection(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	store, name, p, ok := s.connectionTarget(w, r, acct)
 	if !ok {
@@ -369,7 +369,7 @@ func (s *Service) exportStatementInvoice(ctx context.Context, acct state.Account
 const ErrHandoffOverlapDetail = "another statement already handed off part of this usage to an invoice"
 
 // checkHandoffAllowed refuses an export whose handoff ADR-238's overlap
-// rules would reject, before any provider invoice exists (ADR-1301).
+// rules would reject, before any provider invoice exists (ADR-1503).
 func (s *Service) checkHandoffAllowed(ctx context.Context, acct state.Account, src statementInvoiceSource) *api.Problem {
 	checker, ok := s.Host.Store().(state.StatementHandoffChecker)
 	if !ok {

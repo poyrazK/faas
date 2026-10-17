@@ -4350,7 +4350,7 @@ SELECT
     release_id, manifest_hash, host_certificate, cert_fingerprint, role,
     generation, gateway_target_url,
     drain_initiated_at, drain_completed_at, recovery_initiated_at,
-    last_recovery_outcome
+    last_recovery_outcome, lifecycle_generation
 FROM compute_nodes
 WHERE id = $1;
 
@@ -4367,7 +4367,7 @@ SELECT
     release_id, manifest_hash, host_certificate, cert_fingerprint, role,
     generation, gateway_target_url,
     drain_initiated_at, drain_completed_at, recovery_initiated_at,
-    last_recovery_outcome
+    last_recovery_outcome, lifecycle_generation
 FROM compute_nodes
 WHERE name = $1;
 
@@ -4385,7 +4385,7 @@ SELECT
     release_id, manifest_hash, host_certificate, cert_fingerprint, role,
     generation, gateway_target_url,
     drain_initiated_at, drain_completed_at, recovery_initiated_at,
-    last_recovery_outcome
+    last_recovery_outcome, lifecycle_generation
 FROM compute_nodes
 WHERE ($1 = '' OR lifecycle::text = $1)
 ORDER BY name;
@@ -4452,7 +4452,7 @@ SELECT
     release_id, manifest_hash, host_certificate, cert_fingerprint, role,
     generation, gateway_target_url,
     drain_initiated_at, drain_completed_at, recovery_initiated_at,
-    last_recovery_outcome
+    last_recovery_outcome, lifecycle_generation
 FROM compute_nodes
 WHERE lifecycle = 'recovering'
    OR (lifecycle = 'unavailable' AND coalesce(last_heartbeat_at, created_at) >= now() - interval '24 hours')
@@ -4472,7 +4472,7 @@ SELECT
     release_id, manifest_hash, host_certificate, cert_fingerprint, role,
     generation, gateway_target_url,
     drain_initiated_at, drain_completed_at, recovery_initiated_at,
-    last_recovery_outcome
+    last_recovery_outcome, lifecycle_generation
 FROM compute_nodes
 WHERE lifecycle = 'active'
   AND NOT EXISTS (
@@ -5121,9 +5121,10 @@ lease_token=NULL,lease_until=NULL,attempt_count=0,last_error_code='',retry_at=no
 WHERE id=$1 AND lease_token=$2 AND state='initiating' AND $3<>'';
 
 -- name: ObjectMultipartFinish :execrows
-UPDATE object_storage_multipart_uploads SET state=$3,lease_token=NULL,lease_until=NULL,
+UPDATE object_storage_multipart_uploads AS u SET state=$3,lease_token=NULL,lease_until=NULL,
 attempt_count=0,last_error_code='',retry_at=now(),updated_at=now()
-WHERE id=$1 AND lease_token=$2 AND
+WHERE u.id=$1 AND u.lease_token=$2
+AND NOT EXISTS (SELECT 1 FROM object_node_settlement_outbox o WHERE o.id=u.id) AND
 (state IN ('completing','completing_conditional') AND $3='completed' AND NOT completion_dispatched AND encryption_snapshot='{}' AND protection_snapshot='{}');
 
 -- name: ObjectMultipartFinishVerifiedAbort :execrows
@@ -9834,18 +9835,20 @@ SELECT app_id::text,deployment_id::text,started_at FROM instances WHERE id=sqlc.
 SELECT changed_at FROM app_runtime_config_changes WHERE app_id=sqlc.arg(app_id)::uuid;
 
 -- name: CreateSnapshot :one
-INSERT INTO snapshots(deployment_id,fc_version,base_image_version,mem_bytes,disk_bytes,stored_bytes,storage_key,stale,tier,application_standard_capture_token)
+INSERT INTO snapshots(deployment_id,fc_version,base_image_version,mem_bytes,disk_bytes,stored_bytes,storage_key,stale,tier,application_standard_capture_token,recovery_generation)
 VALUES(sqlc.arg(deployment_id)::uuid,sqlc.arg(fc_version)::text,sqlc.arg(base_image_version)::text,
  sqlc.arg(mem_bytes)::bigint,sqlc.arg(disk_bytes)::bigint,sqlc.arg(stored_bytes)::bigint,
- sqlc.arg(storage_key)::text,sqlc.arg(stale)::boolean,sqlc.arg(tier)::text,sqlc.narg(application_standard_capture_token)::uuid)
+ sqlc.arg(storage_key)::text,sqlc.arg(stale)::boolean,sqlc.arg(tier)::text,sqlc.narg(application_standard_capture_token)::uuid,sqlc.arg(recovery_generation)::bigint)
 RETURNING *;
 
 -- name: LatestSnapshot :one
 SELECT * FROM snapshots WHERE deployment_id=sqlc.arg(deployment_id)::uuid AND stale=false
+AND recovery_generation=(SELECT snapshot_recovery_generation FROM deployments WHERE id=sqlc.arg(deployment_id)::uuid)
 ORDER BY (tier='warm') DESC,created_at DESC LIMIT 1;
 
 -- name: LatestSnapshotForTier :one
 SELECT * FROM snapshots WHERE deployment_id=sqlc.arg(deployment_id)::uuid AND tier=sqlc.arg(tier)::text AND stale=false
+AND recovery_generation=(SELECT snapshot_recovery_generation FROM deployments WHERE id=sqlc.arg(deployment_id)::uuid)
 ORDER BY created_at DESC LIMIT 1;
 
 -- name: LockInstanceApplicationStandardBoot :one
@@ -17205,6 +17208,54 @@ WHERE o.id=sqlc.arg(operation_id)::uuid AND o.execution_kind='job';
 
 -- name: ObjectTrackedUploadMutationRead :one
 SELECT * FROM object_bucket_mutations WHERE upload_id=sqlc.arg(upload_id);
+
+-- name: ObjectNodeSettlementEnroll :execrows
+INSERT INTO object_node_settlement_outbox (id, account_id, app_id, bucket_id, kind, backend_id, backend_fingerprint, physical_name)
+SELECT src.id, src.account_id, src.app_id, src.bucket_id, src.kind, m.backend_id, m.backend_fingerprint, m.physical_name
+FROM (
+    SELECT id, account_id, app_id, bucket_id, 'put'::text AS kind FROM object_upload_completions WHERE status='pending' AND write_phase='prepared'
+    UNION ALL
+    SELECT id, account_id, app_id, bucket_id, 'multipart'::text AS kind FROM object_storage_multipart_uploads WHERE state='initiating'
+) src
+JOIN object_bucket_mutations m ON m.bucket_id=src.bucket_id AND ((src.kind='put' AND m.upload_id=src.id) OR (src.kind='multipart' AND m.multipart_upload_id=src.id))
+WHERE src.id=sqlc.arg(id)::uuid AND src.account_id=sqlc.arg(account_id)::uuid AND src.app_id=sqlc.arg(app_id)::uuid
+AND src.bucket_id=sqlc.arg(bucket_id)::uuid AND src.kind=sqlc.arg(kind)::text AND m.kind='request';
+
+-- name: ObjectNodeSettlementLock :one
+SELECT * FROM object_node_settlement_outbox WHERE id=sqlc.arg(id)::uuid FOR UPDATE;
+
+-- name: ObjectNodeSettlementReady :execrows
+UPDATE object_node_settlement_outbox SET payload=sqlc.arg(payload)::jsonb, ready_at=clock_timestamp(), retry_at=clock_timestamp()
+WHERE id=sqlc.arg(id)::uuid AND ready_at IS NULL;
+
+-- name: ObjectNodeSettlementDiscard :execrows
+DELETE FROM object_node_settlement_outbox WHERE id=sqlc.arg(id)::uuid AND ready_at IS NULL;
+
+-- name: ObjectNodeSettlementClaim :many
+WITH due AS (
+    SELECT id FROM object_node_settlement_outbox
+    WHERE ready_at IS NOT NULL AND retry_at <= clock_timestamp() AND (lease_until IS NULL OR lease_until <= clock_timestamp())
+    ORDER BY retry_at, id LIMIT sqlc.arg(batch)::integer FOR UPDATE SKIP LOCKED
+)
+UPDATE object_node_settlement_outbox o SET lease_token=sqlc.arg(token)::uuid,
+    lease_until=clock_timestamp()+make_interval(secs=>sqlc.arg(lease_seconds)::integer),
+    attempts=least(o.attempts::bigint+1, sqlc.arg(max_attempts)::bigint)::integer
+FROM due WHERE o.id=due.id RETURNING o.*;
+
+-- name: ObjectNodeSettlementFinish :execrows
+DELETE FROM object_node_settlement_outbox
+WHERE id=sqlc.arg(id)::uuid AND lease_token=sqlc.arg(token)::uuid AND lease_until > clock_timestamp();
+
+-- name: ObjectNodeSettlementRetry :execrows
+UPDATE object_node_settlement_outbox SET lease_token=NULL, lease_until=NULL, last_error=sqlc.arg(code)::text,
+    retry_at=clock_timestamp()+make_interval(secs=>sqlc.arg(delay_seconds)::integer)
+WHERE id=sqlc.arg(id)::uuid AND lease_token=sqlc.arg(token)::uuid AND lease_until > clock_timestamp();
+
+-- name: ObjectNodeSettlementStats :one
+SELECT count(*) FILTER (WHERE ready_at IS NULL)::bigint AS waiting,
+       count(*) FILTER (WHERE ready_at IS NOT NULL)::bigint AS ready,
+       min(ready_at)::timestamptz AS oldest_ready_at
+FROM object_node_settlement_outbox;
 
 -- name: ObjectMultipartMutationRead :one
 SELECT * FROM object_bucket_mutations WHERE multipart_upload_id=sqlc.arg(multipart_upload_id);

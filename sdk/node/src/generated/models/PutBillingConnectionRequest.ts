@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * The account's own key for one billing provider (ADR-1300, ADR-1305).
+ * The account's own key for one billing provider (ADR-1502, ADR-1507).
  */
 export type PutBillingConnectionRequest = {
   /**

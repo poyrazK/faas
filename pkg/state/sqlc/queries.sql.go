@@ -10699,11 +10699,11 @@ func (q *Queries) CreateSession(ctx context.Context, db DBTX, arg CreateSessionP
 }
 
 const createSnapshot = `-- name: CreateSnapshot :one
-INSERT INTO snapshots(deployment_id,fc_version,base_image_version,mem_bytes,disk_bytes,stored_bytes,storage_key,stale,tier,application_standard_capture_token)
+INSERT INTO snapshots(deployment_id,fc_version,base_image_version,mem_bytes,disk_bytes,stored_bytes,storage_key,stale,tier,application_standard_capture_token,recovery_generation)
 VALUES($1::uuid,$2::text,$3::text,
  $4::bigint,$5::bigint,$6::bigint,
- $7::text,$8::boolean,$9::text,$10::uuid)
-RETURNING id, deployment_id, fc_version, mem_bytes, disk_bytes, stale, created_at, storage_key, tier, stored_bytes, base_image_version, delete_pending, application_standard_capture_token
+ $7::text,$8::boolean,$9::text,$10::uuid,$11::bigint)
+RETURNING id, deployment_id, fc_version, mem_bytes, disk_bytes, stale, created_at, storage_key, tier, stored_bytes, base_image_version, delete_pending, application_standard_capture_token, recovery_generation
 `
 
 type CreateSnapshotParams struct {
@@ -10717,6 +10717,7 @@ type CreateSnapshotParams struct {
 	Stale                           bool
 	Tier                            string
 	ApplicationStandardCaptureToken pgtype.UUID
+	RecoveryGeneration              int64
 }
 
 func (q *Queries) CreateSnapshot(ctx context.Context, db DBTX, arg CreateSnapshotParams) (Snapshot, error) {
@@ -10731,6 +10732,7 @@ func (q *Queries) CreateSnapshot(ctx context.Context, db DBTX, arg CreateSnapsho
 		arg.Stale,
 		arg.Tier,
 		arg.ApplicationStandardCaptureToken,
+		arg.RecoveryGeneration,
 	)
 	var i Snapshot
 	err := row.Scan(
@@ -10747,6 +10749,7 @@ func (q *Queries) CreateSnapshot(ctx context.Context, db DBTX, arg CreateSnapsho
 		&i.BaseImageVersion,
 		&i.DeletePending,
 		&i.ApplicationStandardCaptureToken,
+		&i.RecoveryGeneration,
 	)
 	return i, err
 }
@@ -35056,7 +35059,8 @@ func (q *Queries) LatestRetainedRollbackDeployment(ctx context.Context, db DBTX,
 }
 
 const latestSnapshot = `-- name: LatestSnapshot :one
-SELECT id, deployment_id, fc_version, mem_bytes, disk_bytes, stale, created_at, storage_key, tier, stored_bytes, base_image_version, delete_pending, application_standard_capture_token FROM snapshots WHERE deployment_id=$1::uuid AND stale=false
+SELECT id, deployment_id, fc_version, mem_bytes, disk_bytes, stale, created_at, storage_key, tier, stored_bytes, base_image_version, delete_pending, application_standard_capture_token, recovery_generation FROM snapshots WHERE deployment_id=$1::uuid AND stale=false
+AND recovery_generation=(SELECT snapshot_recovery_generation FROM deployments WHERE id=$1::uuid)
 ORDER BY (tier='warm') DESC,created_at DESC LIMIT 1
 `
 
@@ -35077,12 +35081,14 @@ func (q *Queries) LatestSnapshot(ctx context.Context, db DBTX, deploymentID pgty
 		&i.BaseImageVersion,
 		&i.DeletePending,
 		&i.ApplicationStandardCaptureToken,
+		&i.RecoveryGeneration,
 	)
 	return i, err
 }
 
 const latestSnapshotForTier = `-- name: LatestSnapshotForTier :one
-SELECT id, deployment_id, fc_version, mem_bytes, disk_bytes, stale, created_at, storage_key, tier, stored_bytes, base_image_version, delete_pending, application_standard_capture_token FROM snapshots WHERE deployment_id=$1::uuid AND tier=$2::text AND stale=false
+SELECT id, deployment_id, fc_version, mem_bytes, disk_bytes, stale, created_at, storage_key, tier, stored_bytes, base_image_version, delete_pending, application_standard_capture_token, recovery_generation FROM snapshots WHERE deployment_id=$1::uuid AND tier=$2::text AND stale=false
+AND recovery_generation=(SELECT snapshot_recovery_generation FROM deployments WHERE id=$1::uuid)
 ORDER BY created_at DESC LIMIT 1
 `
 
@@ -35108,6 +35114,7 @@ func (q *Queries) LatestSnapshotForTier(ctx context.Context, db DBTX, arg Latest
 		&i.BaseImageVersion,
 		&i.DeletePending,
 		&i.ApplicationStandardCaptureToken,
+		&i.RecoveryGeneration,
 	)
 	return i, err
 }
@@ -37848,7 +37855,7 @@ func (q *Queries) ListCloneCheckpointMigrationAdoptionsForRetirement(ctx context
 }
 
 const listCloneCheckpointMigrationHoldingsForRetirement = `-- name: ListCloneCheckpointMigrationHoldingsForRetirement :many
-SELECT m.instance_id, m.lease_token, m.source_node_id, m.created_at, m.lease_expires_at, m.mem_storage_key, m.vmstate_storage_key, m.pending,i.app_id,i.deployment_id,i.wake_id,i.node_id AS scheduling_node_id
+SELECT m.instance_id, m.lease_token, m.source_node_id, m.created_at, m.lease_expires_at, m.mem_storage_key, m.vmstate_storage_key, m.pending, m.resume_fenced,i.app_id,i.deployment_id,i.wake_id,i.node_id AS scheduling_node_id
 FROM migration_leases m JOIN instances i ON i.id=m.instance_id
 LEFT JOIN deployments d ON d.id=i.deployment_id
 JOIN project_environment_clone_checkpoint_workload_retirements r ON r.operation_id=$1::uuid
@@ -37874,6 +37881,7 @@ type ListCloneCheckpointMigrationHoldingsForRetirementRow struct {
 	MemStorageKey     string
 	VmstateStorageKey string
 	Pending           bool
+	ResumeFenced      bool
 	AppID             pgtype.UUID
 	DeploymentID      pgtype.UUID
 	WakeID            pgtype.UUID
@@ -37900,6 +37908,7 @@ func (q *Queries) ListCloneCheckpointMigrationHoldingsForRetirement(ctx context.
 			&i.MemStorageKey,
 			&i.VmstateStorageKey,
 			&i.Pending,
+			&i.ResumeFenced,
 			&i.AppID,
 			&i.DeploymentID,
 			&i.WakeID,
@@ -41693,7 +41702,7 @@ func (q *Queries) ListInvoiceSnapshots(ctx context.Context, db DBTX, arg ListInv
 }
 
 const listLatestDeploymentPerApp = `-- name: ListLatestDeploymentPerApp :many
-select distinct on (d.app_id) d.id, d.app_id, d.build_id, d.image_digest, d.rootfs_path, d.rootfs_bytes, d.status, d.error, d.created_at, d.kind, d.source_path, d.source_bytes, d.handler, d.log_path, d.error_code, d.rootfs_key, d.source_url, d.commit_sha, d.override_entrypoint, d.override_cmd, d.override_env, d.override_env_secrets, d.override_port, d.override_healthcheck, d.sidecars, d.min_instances, d.scan_result, d.scan_status, d.scanned_at, d.override_liveness_probe, d.parked_reason, d.parked_at, d.traffic_percent, d.scope, d.secret_findings, d.secret_scanned_at, d.error_hint, d.error_why, d.error_fix, d.error_relevant_logs, d.stage_state, d.deployed_by_user_id, d.deployed_via, d.deployed_from_ip, d.pusher_login, d.reason, d.tag, d.deployed_by, d.pr_number, d.rollback_on_5xx, d.first_wake_at, d.first_5xx_window_ends_at, d.first_5xx_count, d.last_auto_rollback_at, d.last_auto_rollback_reason, d.liveness_restart_count, d.canary_preset, d.canary_step, d.canary_total_steps, d.canary_step_started_at, d.rollout_state, d.rollout_started_at, d.rollout_completed_at, d.rollout_aborted_at, d.rollout_aborted_reason, d.cancelled_at, d.cancelled_by_principal, d.cancel_reason, d.deleted_at, d.deleted_by_principal, d.priority, d.reordered_at, d.reordered_by_principal, d.canary_stages, d.snapshot_miss_count, d.snapshot_miss_last_at, d.snapshot_miss_backoff_until, d.workflows, d.source_root, d.full_rootfs_allow_auto, d.full_rootfs_override, d.source_sha256, d.api_hosting_receipt, d.inferred_profile, d.traffic_percent_explicit, d.revision, d.service_rollout_handoff, d.release_command, d.release_command_shell, d.disable_startup_cpu_boost, d.override_main_depends_on, d.override_readiness_probe, d.secret_reload_signal, d.github_source_ref, d.github_installation_id, d.environment_workload_runtime, d.serving_ended_at, d.runtime_upgrade_routing_token, d.environment_workload_held, d.runtime_base
+select distinct on (d.app_id) d.id, d.app_id, d.build_id, d.image_digest, d.rootfs_path, d.rootfs_bytes, d.status, d.error, d.created_at, d.kind, d.source_path, d.source_bytes, d.handler, d.log_path, d.error_code, d.rootfs_key, d.source_url, d.commit_sha, d.override_entrypoint, d.override_cmd, d.override_env, d.override_env_secrets, d.override_port, d.override_healthcheck, d.sidecars, d.min_instances, d.scan_result, d.scan_status, d.scanned_at, d.override_liveness_probe, d.parked_reason, d.parked_at, d.traffic_percent, d.scope, d.secret_findings, d.secret_scanned_at, d.error_hint, d.error_why, d.error_fix, d.error_relevant_logs, d.stage_state, d.deployed_by_user_id, d.deployed_via, d.deployed_from_ip, d.pusher_login, d.reason, d.tag, d.deployed_by, d.pr_number, d.rollback_on_5xx, d.first_wake_at, d.first_5xx_window_ends_at, d.first_5xx_count, d.last_auto_rollback_at, d.last_auto_rollback_reason, d.liveness_restart_count, d.canary_preset, d.canary_step, d.canary_total_steps, d.canary_step_started_at, d.rollout_state, d.rollout_started_at, d.rollout_completed_at, d.rollout_aborted_at, d.rollout_aborted_reason, d.cancelled_at, d.cancelled_by_principal, d.cancel_reason, d.deleted_at, d.deleted_by_principal, d.priority, d.reordered_at, d.reordered_by_principal, d.canary_stages, d.snapshot_miss_count, d.snapshot_miss_last_at, d.snapshot_miss_backoff_until, d.workflows, d.source_root, d.full_rootfs_allow_auto, d.full_rootfs_override, d.source_sha256, d.api_hosting_receipt, d.inferred_profile, d.traffic_percent_explicit, d.revision, d.service_rollout_handoff, d.release_command, d.release_command_shell, d.disable_startup_cpu_boost, d.override_main_depends_on, d.override_readiness_probe, d.secret_reload_signal, d.github_source_ref, d.github_installation_id, d.environment_workload_runtime, d.serving_ended_at, d.runtime_upgrade_routing_token, d.environment_workload_held, d.snapshot_recovery_generation, d.runtime_base
 from deployments d
 join apps a on a.id = d.app_id
 where a.account_id = $1 and a.status <> 'deleted' and d.deleted_at IS NULL
@@ -41809,6 +41818,7 @@ func (q *Queries) ListLatestDeploymentPerApp(ctx context.Context, db DBTX, accou
 			&i.ServingEndedAt,
 			&i.RuntimeUpgradeRoutingToken,
 			&i.EnvironmentWorkloadHeld,
+			&i.SnapshotRecoveryGeneration,
 			&i.RuntimeBase,
 		); err != nil {
 			return nil, err
@@ -52250,7 +52260,7 @@ SELECT
     release_id, manifest_hash, host_certificate, cert_fingerprint, role,
     generation, gateway_target_url,
     drain_initiated_at, drain_completed_at, recovery_initiated_at,
-    last_recovery_outcome
+    last_recovery_outcome, lifecycle_generation
 FROM compute_nodes
 WHERE id = $1
 `
@@ -52284,6 +52294,7 @@ type NodeGetRow struct {
 	DrainCompletedAt    pgtype.Timestamptz
 	RecoveryInitiatedAt pgtype.Timestamptz
 	LastRecoveryOutcome pgtype.Text
+	LifecycleGeneration int64
 }
 
 // ----------------------------------------------------------------------
@@ -52337,6 +52348,7 @@ func (q *Queries) NodeGet(ctx context.Context, db DBTX, id pgtype.UUID) (NodeGet
 		&i.DrainCompletedAt,
 		&i.RecoveryInitiatedAt,
 		&i.LastRecoveryOutcome,
+		&i.LifecycleGeneration,
 	)
 	return i, err
 }
@@ -52350,7 +52362,7 @@ SELECT
     release_id, manifest_hash, host_certificate, cert_fingerprint, role,
     generation, gateway_target_url,
     drain_initiated_at, drain_completed_at, recovery_initiated_at,
-    last_recovery_outcome
+    last_recovery_outcome, lifecycle_generation
 FROM compute_nodes
 WHERE name = $1
 `
@@ -52384,6 +52396,7 @@ type NodeGetByNameRow struct {
 	DrainCompletedAt    pgtype.Timestamptz
 	RecoveryInitiatedAt pgtype.Timestamptz
 	LastRecoveryOutcome pgtype.Text
+	LifecycleGeneration int64
 }
 
 // Same as NodeGet but by the human-stable name. The apid handler
@@ -52422,6 +52435,7 @@ func (q *Queries) NodeGetByName(ctx context.Context, db DBTX, name string) (Node
 		&i.DrainCompletedAt,
 		&i.RecoveryInitiatedAt,
 		&i.LastRecoveryOutcome,
+		&i.LifecycleGeneration,
 	)
 	return i, err
 }
@@ -52435,7 +52449,7 @@ SELECT
     release_id, manifest_hash, host_certificate, cert_fingerprint, role,
     generation, gateway_target_url,
     drain_initiated_at, drain_completed_at, recovery_initiated_at,
-    last_recovery_outcome
+    last_recovery_outcome, lifecycle_generation
 FROM compute_nodes
 WHERE ($1 = '' OR lifecycle::text = $1)
 ORDER BY name
@@ -52470,6 +52484,7 @@ type NodeListRow struct {
 	DrainCompletedAt    pgtype.Timestamptz
 	RecoveryInitiatedAt pgtype.Timestamptz
 	LastRecoveryOutcome pgtype.Text
+	LifecycleGeneration int64
 }
 
 // All nodes, optionally filtered by lifecycle. The recovery arbiter
@@ -52515,6 +52530,7 @@ func (q *Queries) NodeList(ctx context.Context, db DBTX, dollar_1 interface{}) (
 			&i.DrainCompletedAt,
 			&i.RecoveryInitiatedAt,
 			&i.LastRecoveryOutcome,
+			&i.LifecycleGeneration,
 		); err != nil {
 			return nil, err
 		}
@@ -52535,7 +52551,7 @@ SELECT
     release_id, manifest_hash, host_certificate, cert_fingerprint, role,
     generation, gateway_target_url,
     drain_initiated_at, drain_completed_at, recovery_initiated_at,
-    last_recovery_outcome
+    last_recovery_outcome, lifecycle_generation
 FROM compute_nodes
 WHERE lifecycle = 'active'
   AND NOT EXISTS (
@@ -52575,6 +52591,7 @@ type NodeListDrainableRow struct {
 	DrainCompletedAt    pgtype.Timestamptz
 	RecoveryInitiatedAt pgtype.Timestamptz
 	LastRecoveryOutcome pgtype.Text
+	LifecycleGeneration int64
 }
 
 // Drainable candidates: lifecycle='active' AND zero live instances.
@@ -52620,6 +52637,7 @@ func (q *Queries) NodeListDrainable(ctx context.Context, db DBTX) ([]NodeListDra
 			&i.DrainCompletedAt,
 			&i.RecoveryInitiatedAt,
 			&i.LastRecoveryOutcome,
+			&i.LifecycleGeneration,
 		); err != nil {
 			return nil, err
 		}
@@ -52640,7 +52658,7 @@ SELECT
     release_id, manifest_hash, host_certificate, cert_fingerprint, role,
     generation, gateway_target_url,
     drain_initiated_at, drain_completed_at, recovery_initiated_at,
-    last_recovery_outcome
+    last_recovery_outcome, lifecycle_generation
 FROM compute_nodes
 WHERE lifecycle = 'recovering'
    OR (lifecycle = 'unavailable' AND coalesce(last_heartbeat_at, created_at) >= now() - interval '24 hours')
@@ -52676,6 +52694,7 @@ type NodeListRecoverableRow struct {
 	DrainCompletedAt    pgtype.Timestamptz
 	RecoveryInitiatedAt pgtype.Timestamptz
 	LastRecoveryOutcome pgtype.Text
+	LifecycleGeneration int64
 }
 
 // Nodes that need the recovery arbiter's attention. Two lifecycle
@@ -52726,6 +52745,7 @@ func (q *Queries) NodeListRecoverable(ctx context.Context, db DBTX) ([]NodeListR
 			&i.DrainCompletedAt,
 			&i.RecoveryInitiatedAt,
 			&i.LastRecoveryOutcome,
+			&i.LifecycleGeneration,
 		); err != nil {
 			return nil, err
 		}
@@ -56179,9 +56199,10 @@ func (q *Queries) ObjectMultipartDue(ctx context.Context, db DBTX, batchLimit in
 }
 
 const objectMultipartFinish = `-- name: ObjectMultipartFinish :execrows
-UPDATE object_storage_multipart_uploads SET state=$3,lease_token=NULL,lease_until=NULL,
+UPDATE object_storage_multipart_uploads AS u SET state=$3,lease_token=NULL,lease_until=NULL,
 attempt_count=0,last_error_code='',retry_at=now(),updated_at=now()
-WHERE id=$1 AND lease_token=$2 AND
+WHERE u.id=$1 AND u.lease_token=$2
+AND NOT EXISTS (SELECT 1 FROM object_node_settlement_outbox o WHERE o.id=u.id) AND
 (state IN ('completing','completing_conditional') AND $3='completed' AND NOT completion_dispatched AND encryption_snapshot='{}' AND protection_snapshot='{}')
 `
 
@@ -57266,6 +57287,224 @@ type ObjectMutationEventAppendParams struct {
 func (q *Queries) ObjectMutationEventAppend(ctx context.Context, db DBTX, arg ObjectMutationEventAppendParams) error {
 	_, err := db.Exec(ctx, objectMutationEventAppend, arg.AccountID, arg.Payload, arg.At)
 	return err
+}
+
+const objectNodeSettlementClaim = `-- name: ObjectNodeSettlementClaim :many
+WITH due AS (
+    SELECT id FROM object_node_settlement_outbox
+    WHERE ready_at IS NOT NULL AND retry_at <= clock_timestamp() AND (lease_until IS NULL OR lease_until <= clock_timestamp())
+    ORDER BY retry_at, id LIMIT $4::integer FOR UPDATE SKIP LOCKED
+)
+UPDATE object_node_settlement_outbox o SET lease_token=$1::uuid,
+    lease_until=clock_timestamp()+make_interval(secs=>$2::integer),
+    attempts=least(o.attempts::bigint+1, $3::bigint)::integer
+FROM due WHERE o.id=due.id RETURNING o.id, o.account_id, o.app_id, o.bucket_id, o.kind, o.backend_id, o.backend_fingerprint, o.physical_name, o.payload, o.created_at, o.ready_at, o.retry_at, o.lease_token, o.lease_until, o.attempts, o.last_error
+`
+
+type ObjectNodeSettlementClaimParams struct {
+	Token        pgtype.UUID
+	LeaseSeconds int32
+	MaxAttempts  int64
+	Batch        int32
+}
+
+func (q *Queries) ObjectNodeSettlementClaim(ctx context.Context, db DBTX, arg ObjectNodeSettlementClaimParams) ([]ObjectNodeSettlementOutbox, error) {
+	rows, err := db.Query(ctx, objectNodeSettlementClaim,
+		arg.Token,
+		arg.LeaseSeconds,
+		arg.MaxAttempts,
+		arg.Batch,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ObjectNodeSettlementOutbox{}
+	for rows.Next() {
+		var i ObjectNodeSettlementOutbox
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.AppID,
+			&i.BucketID,
+			&i.Kind,
+			&i.BackendID,
+			&i.BackendFingerprint,
+			&i.PhysicalName,
+			&i.Payload,
+			&i.CreatedAt,
+			&i.ReadyAt,
+			&i.RetryAt,
+			&i.LeaseToken,
+			&i.LeaseUntil,
+			&i.Attempts,
+			&i.LastError,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const objectNodeSettlementDiscard = `-- name: ObjectNodeSettlementDiscard :execrows
+DELETE FROM object_node_settlement_outbox WHERE id=$1::uuid AND ready_at IS NULL
+`
+
+func (q *Queries) ObjectNodeSettlementDiscard(ctx context.Context, db DBTX, id pgtype.UUID) (int64, error) {
+	result, err := db.Exec(ctx, objectNodeSettlementDiscard, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const objectNodeSettlementEnroll = `-- name: ObjectNodeSettlementEnroll :execrows
+INSERT INTO object_node_settlement_outbox (id, account_id, app_id, bucket_id, kind, backend_id, backend_fingerprint, physical_name)
+SELECT src.id, src.account_id, src.app_id, src.bucket_id, src.kind, m.backend_id, m.backend_fingerprint, m.physical_name
+FROM (
+    SELECT id, account_id, app_id, bucket_id, 'put'::text AS kind FROM object_upload_completions WHERE status='pending' AND write_phase='prepared'
+    UNION ALL
+    SELECT id, account_id, app_id, bucket_id, 'multipart'::text AS kind FROM object_storage_multipart_uploads WHERE state='initiating'
+) src
+JOIN object_bucket_mutations m ON m.bucket_id=src.bucket_id AND ((src.kind='put' AND m.upload_id=src.id) OR (src.kind='multipart' AND m.multipart_upload_id=src.id))
+WHERE src.id=$1::uuid AND src.account_id=$2::uuid AND src.app_id=$3::uuid
+AND src.bucket_id=$4::uuid AND src.kind=$5::text AND m.kind='request'
+`
+
+type ObjectNodeSettlementEnrollParams struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	BucketID  pgtype.UUID
+	Kind      string
+}
+
+func (q *Queries) ObjectNodeSettlementEnroll(ctx context.Context, db DBTX, arg ObjectNodeSettlementEnrollParams) (int64, error) {
+	result, err := db.Exec(ctx, objectNodeSettlementEnroll,
+		arg.ID,
+		arg.AccountID,
+		arg.AppID,
+		arg.BucketID,
+		arg.Kind,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const objectNodeSettlementFinish = `-- name: ObjectNodeSettlementFinish :execrows
+DELETE FROM object_node_settlement_outbox
+WHERE id=$1::uuid AND lease_token=$2::uuid AND lease_until > clock_timestamp()
+`
+
+type ObjectNodeSettlementFinishParams struct {
+	ID    pgtype.UUID
+	Token pgtype.UUID
+}
+
+func (q *Queries) ObjectNodeSettlementFinish(ctx context.Context, db DBTX, arg ObjectNodeSettlementFinishParams) (int64, error) {
+	result, err := db.Exec(ctx, objectNodeSettlementFinish, arg.ID, arg.Token)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const objectNodeSettlementLock = `-- name: ObjectNodeSettlementLock :one
+SELECT id, account_id, app_id, bucket_id, kind, backend_id, backend_fingerprint, physical_name, payload, created_at, ready_at, retry_at, lease_token, lease_until, attempts, last_error FROM object_node_settlement_outbox WHERE id=$1::uuid FOR UPDATE
+`
+
+func (q *Queries) ObjectNodeSettlementLock(ctx context.Context, db DBTX, id pgtype.UUID) (ObjectNodeSettlementOutbox, error) {
+	row := db.QueryRow(ctx, objectNodeSettlementLock, id)
+	var i ObjectNodeSettlementOutbox
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.BucketID,
+		&i.Kind,
+		&i.BackendID,
+		&i.BackendFingerprint,
+		&i.PhysicalName,
+		&i.Payload,
+		&i.CreatedAt,
+		&i.ReadyAt,
+		&i.RetryAt,
+		&i.LeaseToken,
+		&i.LeaseUntil,
+		&i.Attempts,
+		&i.LastError,
+	)
+	return i, err
+}
+
+const objectNodeSettlementReady = `-- name: ObjectNodeSettlementReady :execrows
+UPDATE object_node_settlement_outbox SET payload=$1::jsonb, ready_at=clock_timestamp(), retry_at=clock_timestamp()
+WHERE id=$2::uuid AND ready_at IS NULL
+`
+
+type ObjectNodeSettlementReadyParams struct {
+	Payload []byte
+	ID      pgtype.UUID
+}
+
+func (q *Queries) ObjectNodeSettlementReady(ctx context.Context, db DBTX, arg ObjectNodeSettlementReadyParams) (int64, error) {
+	result, err := db.Exec(ctx, objectNodeSettlementReady, arg.Payload, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const objectNodeSettlementRetry = `-- name: ObjectNodeSettlementRetry :execrows
+UPDATE object_node_settlement_outbox SET lease_token=NULL, lease_until=NULL, last_error=$1::text,
+    retry_at=clock_timestamp()+make_interval(secs=>$2::integer)
+WHERE id=$3::uuid AND lease_token=$4::uuid AND lease_until > clock_timestamp()
+`
+
+type ObjectNodeSettlementRetryParams struct {
+	Code         string
+	DelaySeconds int32
+	ID           pgtype.UUID
+	Token        pgtype.UUID
+}
+
+func (q *Queries) ObjectNodeSettlementRetry(ctx context.Context, db DBTX, arg ObjectNodeSettlementRetryParams) (int64, error) {
+	result, err := db.Exec(ctx, objectNodeSettlementRetry,
+		arg.Code,
+		arg.DelaySeconds,
+		arg.ID,
+		arg.Token,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const objectNodeSettlementStats = `-- name: ObjectNodeSettlementStats :one
+SELECT count(*) FILTER (WHERE ready_at IS NULL)::bigint AS waiting,
+       count(*) FILTER (WHERE ready_at IS NOT NULL)::bigint AS ready,
+       min(ready_at)::timestamptz AS oldest_ready_at
+FROM object_node_settlement_outbox
+`
+
+type ObjectNodeSettlementStatsRow struct {
+	Waiting       int64
+	Ready         int64
+	OldestReadyAt pgtype.Timestamptz
+}
+
+func (q *Queries) ObjectNodeSettlementStats(ctx context.Context, db DBTX) (ObjectNodeSettlementStatsRow, error) {
+	row := db.QueryRow(ctx, objectNodeSettlementStats)
+	var i ObjectNodeSettlementStatsRow
+	err := row.Scan(&i.Waiting, &i.Ready, &i.OldestReadyAt)
+	return i, err
 }
 
 const objectNotificationInvocationExisting = `-- name: ObjectNotificationInvocationExisting :one
@@ -78605,7 +78844,7 @@ func (q *Queries) RetainProjectEnvironmentClonePostgresSnapshot(ctx context.Cont
 
 const retainedLayerBytesWithClonePins = `-- name: RetainedLayerBytesWithClonePins :one
 WITH retained_deployments AS (
-    SELECT d.id, d.app_id, d.build_id, d.image_digest, d.rootfs_path, d.rootfs_bytes, d.status, d.error, d.created_at, d.kind, d.source_path, d.source_bytes, d.handler, d.log_path, d.error_code, d.rootfs_key, d.source_url, d.commit_sha, d.override_entrypoint, d.override_cmd, d.override_env, d.override_env_secrets, d.override_port, d.override_healthcheck, d.sidecars, d.min_instances, d.scan_result, d.scan_status, d.scanned_at, d.override_liveness_probe, d.parked_reason, d.parked_at, d.traffic_percent, d.scope, d.secret_findings, d.secret_scanned_at, d.error_hint, d.error_why, d.error_fix, d.error_relevant_logs, d.stage_state, d.deployed_by_user_id, d.deployed_via, d.deployed_from_ip, d.pusher_login, d.reason, d.tag, d.deployed_by, d.pr_number, d.rollback_on_5xx, d.first_wake_at, d.first_5xx_window_ends_at, d.first_5xx_count, d.last_auto_rollback_at, d.last_auto_rollback_reason, d.liveness_restart_count, d.canary_preset, d.canary_step, d.canary_total_steps, d.canary_step_started_at, d.rollout_state, d.rollout_started_at, d.rollout_completed_at, d.rollout_aborted_at, d.rollout_aborted_reason, d.cancelled_at, d.cancelled_by_principal, d.cancel_reason, d.deleted_at, d.deleted_by_principal, d.priority, d.reordered_at, d.reordered_by_principal, d.canary_stages, d.snapshot_miss_count, d.snapshot_miss_last_at, d.snapshot_miss_backoff_until, d.workflows, d.source_root, d.full_rootfs_allow_auto, d.full_rootfs_override, d.source_sha256, d.api_hosting_receipt, d.inferred_profile, d.traffic_percent_explicit, d.revision, d.service_rollout_handoff, d.release_command, d.release_command_shell, d.disable_startup_cpu_boost, d.override_main_depends_on, d.override_readiness_probe, d.secret_reload_signal, d.github_source_ref, d.github_installation_id, d.environment_workload_runtime, d.serving_ended_at, d.runtime_upgrade_routing_token, d.environment_workload_held, d.runtime_base FROM deployments d JOIN apps a ON a.id = d.app_id
+    SELECT d.id, d.app_id, d.build_id, d.image_digest, d.rootfs_path, d.rootfs_bytes, d.status, d.error, d.created_at, d.kind, d.source_path, d.source_bytes, d.handler, d.log_path, d.error_code, d.rootfs_key, d.source_url, d.commit_sha, d.override_entrypoint, d.override_cmd, d.override_env, d.override_env_secrets, d.override_port, d.override_healthcheck, d.sidecars, d.min_instances, d.scan_result, d.scan_status, d.scanned_at, d.override_liveness_probe, d.parked_reason, d.parked_at, d.traffic_percent, d.scope, d.secret_findings, d.secret_scanned_at, d.error_hint, d.error_why, d.error_fix, d.error_relevant_logs, d.stage_state, d.deployed_by_user_id, d.deployed_via, d.deployed_from_ip, d.pusher_login, d.reason, d.tag, d.deployed_by, d.pr_number, d.rollback_on_5xx, d.first_wake_at, d.first_5xx_window_ends_at, d.first_5xx_count, d.last_auto_rollback_at, d.last_auto_rollback_reason, d.liveness_restart_count, d.canary_preset, d.canary_step, d.canary_total_steps, d.canary_step_started_at, d.rollout_state, d.rollout_started_at, d.rollout_completed_at, d.rollout_aborted_at, d.rollout_aborted_reason, d.cancelled_at, d.cancelled_by_principal, d.cancel_reason, d.deleted_at, d.deleted_by_principal, d.priority, d.reordered_at, d.reordered_by_principal, d.canary_stages, d.snapshot_miss_count, d.snapshot_miss_last_at, d.snapshot_miss_backoff_until, d.workflows, d.source_root, d.full_rootfs_allow_auto, d.full_rootfs_override, d.source_sha256, d.api_hosting_receipt, d.inferred_profile, d.traffic_percent_explicit, d.revision, d.service_rollout_handoff, d.release_command, d.release_command_shell, d.disable_startup_cpu_boost, d.override_main_depends_on, d.override_readiness_probe, d.secret_reload_signal, d.github_source_ref, d.github_installation_id, d.environment_workload_runtime, d.serving_ended_at, d.runtime_upgrade_routing_token, d.environment_workload_held, d.snapshot_recovery_generation, d.runtime_base FROM deployments d JOIN apps a ON a.id = d.app_id
     WHERE d.app_id = $1::uuid AND a.status <> 'deleted'
       AND (d.deleted_at IS NULL
            OR EXISTS (SELECT 1 FROM snapshots sn WHERE sn.deployment_id = d.id AND NOT sn.stale)

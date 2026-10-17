@@ -278,6 +278,81 @@ class DatabaseTests(unittest.IsolatedAsyncioTestCase):
                     "X-Faas-After-Restore": "1"})).status_code, 503)
                 self.assertEqual((await client.get("/healthz")).status_code, 503)
 
+    async def test_checkpoint_drains_every_session_and_refuses_work_until_restore(self):
+        await self.db.start()
+        old = self.h.pools[0]
+        old.query_gate = asyncio.Event()
+        query = asyncio.create_task(self.db.query("blocked-write", write=True))
+        await old.entered.wait()
+        first = asyncio.create_task(self.db.checkpoint())
+        await asyncio.sleep(0)
+        second = asyncio.create_task(self.db.checkpoint())
+        await asyncio.gather(first, second)
+        with self.assertRaises(DatabaseError):
+            await query
+        self.assertEqual((old.closed, old.rollbacks), (1, 1))
+        await self.db.checkpoint()  # A retried capture finds it drained.
+        self.assertEqual(old.closed, 1)
+        with self.assertRaises(DatabaseError):
+            await self.db.query(READINESS_SQL)
+        with self.assertRaises(DatabaseError):
+            await self.db.reload()
+        self.assertEqual(len(self.h.pools), 1)
+        await self.db.restore()
+        self.assertEqual((self.db.generation, len(self.h.pools)), (1, 2))
+        await self.db.query(READINESS_SQL)
+
+    async def test_failed_checkpoint_drain_stays_closed_and_drains_again(self):
+        await self.db.start()
+        old, gate = self.h.pools[0], asyncio.Event()
+
+        async def close(**_options):
+            await gate.wait()
+            old.closed += 1
+        old.close = close
+        with self.assertRaises(DatabaseError):
+            await self.db.checkpoint()
+        with self.assertRaises(DatabaseError):
+            await self.db.query(READINESS_SQL)
+        with self.assertRaises(DatabaseError):
+            await self.db.checkpoint()
+        gate.set()
+        await self.db.checkpoint()
+        self.assertEqual(old.closed, 1)
+        await self.db.restore()
+        await self.db.query(READINESS_SQL)
+
+    async def test_rotation_cannot_build_a_pool_while_checkpointed(self):
+        await self.db.start()
+        await self.db.checkpoint()
+        self.h.snapshot = {"revision": "b" * 64, "secrets": {"DATABASE_URL": uri("second")}}
+        with self.assertRaises(Exception):
+            await self.db.coordinator.reload(timeout=1)
+        self.assertEqual(len(self.h.pools), 1)
+        await self.db.restore()
+        self.assertEqual(len(self.h.pools), 2)
+        self.assertEqual(self.h.acks[-1], {"revision": "b" * 64, "status": "applied", "generation": "a" * 32})
+
+    async def test_http_checkpoint_hook_requires_loopback_and_its_marker(self):
+        app = create_app(lambda: self.db)
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app, client=("198.51.100.2", 1234)),
+                                        base_url="http://example") as client:
+                self.assertEqual((await client.post("/internal/before-checkpoint", headers={
+                    "X-Faas-Before-Checkpoint": "1", "X-Forwarded-For": "127.0.0.1"})).status_code, 403)
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app, client=("127.0.0.1", 1)),
+                                        base_url="http://example") as client:
+                for headers in ({}, {"X-Faas-After-Restore": "1"}, {"X-Faas-Before-Checkpoint": "0"}):
+                    self.assertEqual((await client.post("/internal/before-checkpoint", headers=headers)).status_code, 403)
+                self.assertEqual(self.h.pools[0].closed, 0)
+                self.assertEqual((await client.post("/internal/before-checkpoint", headers={
+                    "X-Faas-Before-Checkpoint": "1"})).status_code, 204)
+                self.assertEqual(self.h.pools[0].closed, 1)
+                self.assertEqual((await client.get("/healthz")).status_code, 503)
+                self.assertEqual((await client.post("/internal/after-restore", headers={
+                    "X-Faas-After-Restore": "1"})).status_code, 204)
+                self.assertEqual((await client.get("/healthz")).status_code, 200)
+
     async def test_cancelled_restore_caller_is_fenced_and_does_not_stick_the_gate(self):
         await self.db.start()
         self.h.validate_gate = asyncio.Event()
