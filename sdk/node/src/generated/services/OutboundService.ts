@@ -23,6 +23,7 @@ import type { OutboundAIRoute } from '../models/OutboundAIRoute.js';
 import type { OutboundAIRouteCanary } from '../models/OutboundAIRouteCanary.js';
 import type { OutboundAIRouteCanaryStatus } from '../models/OutboundAIRouteCanaryStatus.js';
 import type { OutboundAIRouteList } from '../models/OutboundAIRouteList.js';
+import type { OutboundAIRouteStats } from '../models/OutboundAIRouteStats.js';
 import type { OutboundAIUsageResponse } from '../models/OutboundAIUsageResponse.js';
 import type { OutboundAIUserUsageResponse } from '../models/OutboundAIUserUsageResponse.js';
 import type { OutboundAppBinding } from '../models/OutboundAppBinding.js';
@@ -1191,6 +1192,39 @@ export class OutboundService {
     return __request(OpenAPI, {
       method: 'DELETE',
       url: '/v1/outbound/ai-routes/{route}/canary',
+      path: {
+        'route': route,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: plan_feature_gated — the account plan does not include the AI gateway; upgrade to Hobby or above (ADR-998).`,
+        403: `code: outbound_ai_gateway_unavailable — the AI gateway is closed on this platform, or the account is not yet in its staged preview rollout (ADR-998).`,
+        404: `code: not_found`,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * Read an AI route's targets' recent attempts.
+   * Requires MFA and read scope. Returns each target's settled attempts, errors, mean time to first byte and mean cost per successful attempt over the window latency and cost routes judge (ADR-1390). Attempts are counted for latency and cost routes and during a canary; other routes report zeros.
+   * @returns OutboundAIRouteStats The route's targets' attempts.
+   * @throws ApiError
+   */
+  public static getOutboundAiRouteStats({
+    route,
+  }: {
+    /**
+     * UUID of the AI route whose targets' recent attempts are read.
+     */
+    route: string,
+  }): CancelablePromise<OutboundAIRouteStats> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/outbound/ai-routes/{route}/stats',
       path: {
         'route': route,
       },

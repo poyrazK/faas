@@ -918,6 +918,17 @@ const (
 	// AI fallback routes (ADR-990).
 	OutboundAIRouteTargetsMax     = 5
 	MaxOutboundAIRoutesPerAccount = 25
+	// Route strategies (ADR-1390): the window latency and cost routes judge
+	// targets over; the attempts a target needs in it to be judged; the
+	// error rate above which it is unhealthy; the share of calls that try a
+	// target without data first; the largest target weight; and the largest
+	// latency target of a cost route.
+	OutboundAIRouteStatsWindowMinutes    = 15
+	OutboundAIRouteStatsMinCalls         = 10
+	OutboundAIRouteUnhealthyErrorPercent = 25
+	OutboundAIRouteExplorePercent        = 5
+	OutboundAIRouteWeightMax             = 100
+	OutboundAIRouteMaxTTFBMSMax          = 600_000
 	// Admission-time reservations (ADR-991): the output reserve when a call
 	// names no output ceiling, and the bytes per estimated input token.
 	OutboundAIDefaultOutputReserveTokens int64 = 4096

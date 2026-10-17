@@ -183,12 +183,14 @@ func TestRouteWithoutCanaryRecordsNoAttempts(t *testing.T) {
 func TestRouteStepsAndStickyChoice(t *testing.T) {
 	route := AIRoute{ID: "r", Canary: &AIRouteCanary{Position: 3, Percent: 20},
 		Targets: []AIRouteTarget{{IntegrationID: "a"}, {IntegrationID: "b"}, {IntegrationID: "c"}}}
-	steps := routeSteps(route, true)
-	if len(steps) != 3 || steps[0].position != 3 || steps[1].position != 1 || steps[2].position != 2 {
-		t.Fatalf("canary steps = %+v", steps)
+	never := func(int) int { return 0 }
+	plain := httptest.NewRequest(http.MethodPost, "/", nil)
+	steps, pick := planRouteSteps(route, plain, true, never)
+	if len(steps) != 3 || steps[0].position != 3 || steps[1].position != 1 || steps[2].position != 2 || pick != routePickCanary {
+		t.Fatalf("canary steps = %+v, %s", steps, pick)
 	}
-	if steps := routeSteps(route, false); steps[0].position != 1 || steps[2].position != 3 {
-		t.Fatalf("baseline steps = %+v", steps)
+	if steps, pick := planRouteSteps(route, plain, false, never); steps[0].position != 1 || steps[2].position != 3 || pick != routePickOrdered {
+		t.Fatalf("baseline steps = %+v, %s", steps, pick)
 	}
 	chosen := 0
 	for index := range 400 {

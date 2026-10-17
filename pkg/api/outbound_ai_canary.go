@@ -78,6 +78,18 @@ type OutboundAIRouteTargetStats struct {
 	ErrorRate      float64 `json:"error_rate"`
 	MeanTTFBMS     *int64  `json:"mean_ttfb_ms"`
 	CostMillicents int64   `json:"cost_millicents"`
+	// MeanCostMillicents is the cost per successful attempt, or null
+	// (ADR-1390).
+	MeanCostMillicents *int64 `json:"mean_cost_millicents"`
+}
+
+// OutboundAIRouteStats is each target's settled attempts since WindowStart:
+// the window a latency or cost route judges its targets over (ADR-1390).
+// Rows are kept for latency and cost routes and during a canary.
+type OutboundAIRouteStats struct {
+	Strategy    string                       `json:"strategy"`
+	WindowStart time.Time                    `json:"window_start"`
+	Targets     []OutboundAIRouteTargetStats `json:"targets"`
 }
 
 // OutboundAIRouteCanaryStatus is a canary with both targets' counts since

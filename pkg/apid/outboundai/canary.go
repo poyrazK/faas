@@ -36,6 +36,10 @@ func targetStatsResponse(stats state.OutboundAIRouteTargetStats) api.OutboundAIR
 		mean := stats.TTFBMSTotal / stats.TTFBCalls
 		out.MeanTTFBMS = &mean
 	}
+	if successes := stats.Calls - stats.Errors; successes > 0 {
+		mean := stats.CostMillicents / successes
+		out.MeanCostMillicents = &mean
+	}
 	return out
 }
 

@@ -6841,6 +6841,8 @@ type OutboundAiRoute struct {
 	CreatedAt pgtype.Timestamptz
 	UpdatedAt pgtype.Timestamptz
 	Format    string
+	Strategy  string
+	MaxTtfbMs pgtype.Int4
 }
 
 type OutboundAiRouteCanary struct {
@@ -6862,6 +6864,7 @@ type OutboundAiRouteTarget struct {
 	Position      int16
 	IntegrationID pgtype.UUID
 	Model         pgtype.Text
+	Weight        pgtype.Int2
 }
 
 type OutboundAiRouteTargetMinute struct {

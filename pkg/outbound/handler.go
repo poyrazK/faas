@@ -75,6 +75,8 @@ type Handler struct {
 	// aiContainers charges each code-interpreter container once per
 	// session window (ADR-1380).
 	aiContainers aiContainerSessions
+	// routeRandom replaces the routing draw in tests (ADR-1390).
+	routeRandom func(int) int
 }
 
 // ManagedCredentialResolver supplies a customer-sealed Authorization value

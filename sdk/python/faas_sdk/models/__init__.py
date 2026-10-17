@@ -730,6 +730,7 @@ from .create_outbound_ai_evaluation_request import CreateOutboundAIEvaluationReq
 from .create_outbound_ai_replay_request import CreateOutboundAIReplayRequest
 from .create_outbound_ai_route_request import CreateOutboundAIRouteRequest
 from .create_outbound_ai_route_request_format import CreateOutboundAIRouteRequestFormat
+from .create_outbound_ai_route_request_strategy import CreateOutboundAIRouteRequestStrategy
 from .create_outbound_credential_key_request import CreateOutboundCredentialKeyRequest
 from .create_outbound_integration_request import CreateOutboundIntegrationRequest
 from .create_outbound_integration_request_ai_provider import CreateOutboundIntegrationRequestAiProvider
@@ -3121,6 +3122,9 @@ from .outbound_ai_route_canary_state import OutboundAIRouteCanaryState
 from .outbound_ai_route_canary_status import OutboundAIRouteCanaryStatus
 from .outbound_ai_route_format import OutboundAIRouteFormat
 from .outbound_ai_route_list import OutboundAIRouteList
+from .outbound_ai_route_stats import OutboundAIRouteStats
+from .outbound_ai_route_stats_strategy import OutboundAIRouteStatsStrategy
+from .outbound_ai_route_strategy import OutboundAIRouteStrategy
 from .outbound_ai_route_target import OutboundAIRouteTarget
 from .outbound_ai_route_target_stats import OutboundAIRouteTargetStats
 from .outbound_ai_usage_item import OutboundAIUsageItem
@@ -3619,6 +3623,7 @@ from .put_outbound_ai_policy_request_ai_provider import PutOutboundAIPolicyReque
 from .put_outbound_ai_prices_request import PutOutboundAIPricesRequest
 from .put_outbound_ai_route_canary_request import PutOutboundAIRouteCanaryRequest
 from .put_outbound_ai_route_targets_request import PutOutboundAIRouteTargetsRequest
+from .put_outbound_ai_route_targets_request_strategy import PutOutboundAIRouteTargetsRequestStrategy
 from .put_outbound_binding_ai_budget_request import PutOutboundBindingAIBudgetRequest
 from .put_outbound_binding_ai_guardrails_request import PutOutboundBindingAIGuardrailsRequest
 from .put_outbound_binding_daily_request_budget_request import PutOutboundBindingDailyRequestBudgetRequest
@@ -5492,6 +5497,7 @@ __all__ = (
     "CreateOutboundAIReplayRequest",
     "CreateOutboundAIRouteRequest",
     "CreateOutboundAIRouteRequestFormat",
+    "CreateOutboundAIRouteRequestStrategy",
     "CreateOutboundCredentialKeyRequest",
     "CreateOutboundIntegrationRequest",
     "CreateOutboundIntegrationRequestAiProvider",
@@ -7676,6 +7682,9 @@ __all__ = (
     "OutboundAIRouteCanaryStatus",
     "OutboundAIRouteFormat",
     "OutboundAIRouteList",
+    "OutboundAIRouteStats",
+    "OutboundAIRouteStatsStrategy",
+    "OutboundAIRouteStrategy",
     "OutboundAIRouteTarget",
     "OutboundAIRouteTargetStats",
     "OutboundAIUsageItem",
@@ -8128,6 +8137,7 @@ __all__ = (
     "PutOutboundAIPricesRequest",
     "PutOutboundAIRouteCanaryRequest",
     "PutOutboundAIRouteTargetsRequest",
+    "PutOutboundAIRouteTargetsRequestStrategy",
     "PutOutboundBindingAIBudgetRequest",
     "PutOutboundBindingAIGuardrailsRequest",
     "PutOutboundBindingDailyRequestBudgetRequest",

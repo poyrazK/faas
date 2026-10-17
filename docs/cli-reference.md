@@ -2138,6 +2138,7 @@ gregale ai users export <integration-id> --from 2026-10-01 > ai-users.csv
 gregale ai catalog openai --model gpt-4o-mini
 gregale ai routes create --name chat --format openai --target <openai-id> --target <anthropic-id>:claude-sonnet-4
 gregale ai routes canary <route-id> --position 2 --percent 10 --max-latency-increase 50
+gregale ai routes set <route-id> --target <openai-id> --target <anthropic-id>:claude-sonnet-4-5 --strategy latency
 gregale ai content-policy <integration-id> --moderation block --moderation-kind classifier --moderation-integration <id> --moderation-model gpt-5-nano --moderation-categories prompt_injection,harassment
 printf '%s\n' "$SECOND_KEY" | gregale ai keys add <integration-id> --label second --from-stdin
 gregale ai logs <integration-id> --limit 20
@@ -2260,15 +2261,18 @@ Show one UTC day of usage by end user (X-Gregale-AI-User), most expensive first,
 
 ### ai routes
 
-List, create, update (set) or delete (rm) AI fallback routes, or run a model canary on one
+List, create, update (set) or delete (rm) AI routes, run a model canary on one, or show its targets&#39; recent stats
 
-`gregale ai routes [--name <NAME>] [--format <FORMAT>] [--target <TARGET>] [--position <N>] [--percent <N>] [--max-error-increase <N>] [--max-latency-increase <N>] [--min-calls <N>] [--window <N>] <list|create|set|rm|canary> [<route-id>] [status|promote|stop]`
+`gregale ai routes [--name <NAME>] [--format <FORMAT>] [--target <TARGET>] [--strategy <STRATEGY>] [--weights <70,30>] [--max-ttfb-ms <N>] [--position <N>] [--percent <N>] [--max-error-increase <N>] [--max-latency-increase <N>] [--min-calls <N>] [--window <N>] <list|create|set|rm|canary|stats> [<route-id>] [status|promote|stop]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--name <NAME>` | route name for create |  |
 | `--format <FORMAT>` | route format for create: native or openai (translates OpenAI chat completions) | one of `native` · `openai` |
 | `--target <TARGET>` | &lt;integration-id&gt;[:&lt;model&gt;] in fallback order (repeat) |  |
+| `--strategy <STRATEGY>` | first-target choice for create or set: ordered, weighted, latency or cost | one of `ordered` · `weighted` · `latency` · `cost` |
+| `--weights <70,30>` | a weighted route&#39;s target weights, 0 to 100, in target order |  |
+| `--max-ttfb-ms <N>` | a cost route&#39;s latency target in milliseconds |  |
 | `--position <N>` | canary: the route target (2 to 5) tried first |  |
 | `--percent <N>` | canary: share of calls sent to it first, 1 to 50 |  |
 | `--max-error-increase <N>` | canary: roll back past this many error-rate points worse (default 5) |  |

@@ -220,6 +220,47 @@ var outboundAIRouteName = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])
 type OutboundAIRouteTarget struct {
 	IntegrationID string `json:"integration_id"`
 	Model         string `json:"model,omitempty"`
+	// Weight is the target's share of first attempts on a weighted route,
+	// from 0 to 100 (ADR-1390).
+	Weight *int `json:"weight,omitempty"`
+}
+
+// Route strategies (ADR-1390): how a route picks the target a call tries
+// first. The other targets follow as fallbacks in route order.
+const (
+	OutboundAIRouteStrategyOrdered  = "ordered"
+	OutboundAIRouteStrategyWeighted = "weighted"
+	OutboundAIRouteStrategyLatency  = "latency"
+	OutboundAIRouteStrategyCost     = "cost"
+)
+
+// ValidOutboundAIRouteStrategy checks a strategy with its targets' weights
+// and latency target. A weighted route weighs every target, at least one
+// above zero; other strategies take no weights; only a cost route takes
+// max_ttfb_ms.
+func ValidOutboundAIRouteStrategy(strategy string, maxTTFBMS *int, targets []OutboundAIRouteTarget) bool {
+	switch strategy {
+	case "", OutboundAIRouteStrategyOrdered, OutboundAIRouteStrategyLatency, OutboundAIRouteStrategyCost:
+		for _, target := range targets {
+			if target.Weight != nil {
+				return false
+			}
+		}
+	case OutboundAIRouteStrategyWeighted:
+		total := 0
+		for _, target := range targets {
+			if target.Weight == nil || *target.Weight < 0 || *target.Weight > OutboundAIRouteWeightMax {
+				return false
+			}
+			total += *target.Weight
+		}
+		if total == 0 {
+			return false
+		}
+	default:
+		return false
+	}
+	return maxTTFBMS == nil || (strategy == OutboundAIRouteStrategyCost && *maxTTFBMS >= 1 && *maxTTFBMS <= OutboundAIRouteMaxTTFBMSMax)
 }
 
 // OutboundAIRoute tries its targets in order (ADR-990). Callers use
@@ -234,6 +275,10 @@ type OutboundAIRoute struct {
 	UpdatedAt time.Time               `json:"updated_at"`
 	// Canary is the route's model canary, if it has one (ADR-1340).
 	Canary *OutboundAIRouteCanary `json:"canary"`
+	// Strategy picks the target each call tries first; MaxTTFBMS is a cost
+	// route's latency target (ADR-1390).
+	Strategy  string `json:"strategy"`
+	MaxTTFBMS *int   `json:"max_ttfb_ms"`
 }
 
 type OutboundAIRouteList struct {
@@ -246,11 +291,18 @@ type CreateOutboundAIRouteRequest struct {
 	// Format defaults to "native"; "openai" translates (ADR-991).
 	Format  string                  `json:"format,omitempty"`
 	Targets []OutboundAIRouteTarget `json:"targets"`
+	// Strategy defaults to "ordered"; MaxTTFBMS is a cost route's latency
+	// target (ADR-1390).
+	Strategy  string `json:"strategy,omitempty"`
+	MaxTTFBMS *int   `json:"max_ttfb_ms,omitempty"`
 }
 
-// PutOutboundAIRouteTargetsRequest replaces a route's ordered targets.
+// PutOutboundAIRouteTargetsRequest replaces a route's ordered targets and
+// its strategy, which defaults to "ordered" (ADR-1390).
 type PutOutboundAIRouteTargetsRequest struct {
-	Targets []OutboundAIRouteTarget `json:"targets"`
+	Targets   []OutboundAIRouteTarget `json:"targets"`
+	Strategy  string                  `json:"strategy,omitempty"`
+	MaxTTFBMS *int                    `json:"max_ttfb_ms,omitempty"`
 }
 
 // ValidOutboundAIRouteName accepts DNS-label style route names.

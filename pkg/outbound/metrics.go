@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // Metrics is the bounded observability surface for outboundd. Operator IDs
@@ -38,6 +40,7 @@ type Metrics struct {
 	aiBatches              *prometheus.CounterVec
 	aiUnmetered            *prometheus.CounterVec
 	aiToolUses             *prometheus.CounterVec
+	aiRouteCalls           *prometheus.CounterVec
 	aiCanaryCalls          *prometheus.CounterVec
 	aiCanaryRollbacks      *prometheus.CounterVec
 	aiModeration           *prometheus.CounterVec
@@ -158,6 +161,10 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 			Name: "outbound_ai_tool_uses_total",
 			Help: "Settled built-in tool uses by integration and tool (web_searches, file_searches, or code_session_gb) (ADR-1380).",
 		}, []string{"integration_id", "tool"}),
+		aiRouteCalls: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "outbound_ai_route_calls_total",
+			Help: "AI route calls by strategy and how the first target was picked (ordered, weighted, best, explore, or canary) (ADR-1390).",
+		}, []string{"strategy", "pick"}),
 		aiCanaryCalls: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "outbound_ai_route_canary_calls_total",
 			Help: "Calls of routes with an active canary, by the target tried first (canary or baseline) (ADR-1340).",
@@ -202,6 +209,7 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 		m.aiBatches,
 		m.aiUnmetered,
 		m.aiToolUses,
+		m.aiRouteCalls,
 		m.aiCanaryCalls,
 		m.aiCanaryRollbacks,
 		m.aiModeration,
@@ -380,6 +388,18 @@ func (m *Metrics) ObserveAICost(integrationID string, millicents int64) {
 		return
 	}
 	m.aiCost.WithLabelValues(integrationID).Add(float64(millicents))
+}
+
+// ObserveAIRouteCall counts one route call by its strategy and how its
+// first target was picked.
+func (m *Metrics) ObserveAIRouteCall(strategy, pick string) {
+	if m == nil || m.aiRouteCalls == nil {
+		return
+	}
+	if strategy == "" {
+		strategy = api.OutboundAIRouteStrategyOrdered
+	}
+	m.aiRouteCalls.WithLabelValues(strategy, pick).Inc()
 }
 
 // ObserveAIRouteCanaryCall counts a call of a route with an active canary

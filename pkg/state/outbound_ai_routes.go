@@ -16,6 +16,15 @@ var ErrOutboundAIRouteLimit = errors.New("state: outbound AI route limit reached
 type OutboundAIRouteTarget struct {
 	IntegrationID string
 	Model         string
+	// Weight is the target's weight on a weighted route (ADR-1390).
+	Weight *int
+}
+
+// OutboundAIRouteRouting is a route's strategy and a cost route's latency
+// target (ADR-1390).
+type OutboundAIRouteRouting struct {
+	Strategy  string
+	MaxTTFBMS *int
 }
 
 // OutboundAIRoute is an account-owned ordered list of same-format managed AI
@@ -31,6 +40,10 @@ type OutboundAIRoute struct {
 	UpdatedAt time.Time
 	// Canary is the route's model canary, if any (ADR-1340).
 	Canary *OutboundAIRouteCanary
+	// Strategy and MaxTTFBMS pick the target each call tries first
+	// (ADR-1390).
+	Strategy  string
+	MaxTTFBMS *int
 }
 
 // OutboundAIRouteCanary sends a share of a route's calls to the target at
@@ -59,6 +72,14 @@ type OutboundAIRouteTargetStats struct {
 	CostMillicents int64
 }
 
+// OutboundAIRouteStatsWindow is each target's settled attempts since
+// WindowStart (ADR-1390).
+type OutboundAIRouteStatsWindow struct {
+	Strategy    string
+	WindowStart time.Time
+	Targets     []OutboundAIRouteTargetStats
+}
+
 // OutboundAIRouteCanaryStatus is a canary with its first target's and its
 // own counts since WindowStart.
 type OutboundAIRouteCanaryStatus struct {
@@ -73,8 +94,10 @@ type OutboundAIRouteStore interface {
 	ListOutboundAIRoutes(ctx context.Context, accountID string) ([]OutboundAIRoute, error)
 	GetOutboundAIRoute(ctx context.Context, accountID, routeID string) (OutboundAIRoute, error)
 	CreateOutboundAIRoute(ctx context.Context, route OutboundAIRoute) (OutboundAIRoute, error)
-	// SetOutboundAIRouteTargets replaces the targets and ends any canary.
-	SetOutboundAIRouteTargets(ctx context.Context, accountID, routeID string, targets []OutboundAIRouteTarget) error
+	// SetOutboundAIRouteTargets replaces the targets and the strategy, ends
+	// any canary and clears the per-target counts.
+	SetOutboundAIRouteTargets(ctx context.Context, accountID, routeID string, targets []OutboundAIRouteTarget,
+		routing OutboundAIRouteRouting) error
 	DeleteOutboundAIRoute(ctx context.Context, accountID, routeID string) error
 	// SetOutboundAIRouteCanary starts or replaces the canary and clears its
 	// counts. The position must name a target after the first.
@@ -84,6 +107,9 @@ type OutboundAIRouteStore interface {
 	// ends the canary.
 	PromoteOutboundAIRouteCanary(ctx context.Context, accountID, routeID string) (OutboundAIRoute, error)
 	OutboundAIRouteCanaryStatus(ctx context.Context, accountID, routeID string) (OutboundAIRouteCanaryStatus, error)
+	// OutboundAIRouteStats returns each target's counts over the strategy
+	// window (ADR-1390).
+	OutboundAIRouteStats(ctx context.Context, accountID, routeID string) (OutboundAIRouteStatsWindow, error)
 }
 
 // validOutboundAIRouteCanary checks a canary's settings against the route's
@@ -118,6 +144,19 @@ func validOutboundAIRouteShape(targets []OutboundAIRouteTarget) bool {
 		wire = append(wire, api.OutboundAIRouteTarget{IntegrationID: target.IntegrationID, Model: target.Model})
 	}
 	return api.ValidOutboundAIRouteTargetShape(wire)
+}
+
+// normalizeOutboundAIRouteRouting defaults an empty strategy to ordered and
+// checks it with the targets' weights (ADR-1390).
+func normalizeOutboundAIRouteRouting(routing OutboundAIRouteRouting, targets []OutboundAIRouteTarget) (OutboundAIRouteRouting, bool) {
+	if routing.Strategy == "" {
+		routing.Strategy = api.OutboundAIRouteStrategyOrdered
+	}
+	wire := make([]api.OutboundAIRouteTarget, 0, len(targets))
+	for _, target := range targets {
+		wire = append(wire, api.OutboundAIRouteTarget{IntegrationID: target.IntegrationID, Weight: target.Weight})
+	}
+	return routing, api.ValidOutboundAIRouteStrategy(routing.Strategy, routing.MaxTTFBMS, wire)
 }
 
 // normalizeOutboundAIRouteFormat defaults an empty format to native.
@@ -170,6 +209,16 @@ func outboundAIRouteTargetsAllowed(format string, targets []OutboundAIRouteTarge
 
 func copyOutboundAIRoute(in OutboundAIRoute) OutboundAIRoute {
 	in.Targets = append([]OutboundAIRouteTarget(nil), in.Targets...)
+	for index, target := range in.Targets {
+		if target.Weight != nil {
+			weight := *target.Weight
+			in.Targets[index].Weight = &weight
+		}
+	}
+	if in.MaxTTFBMS != nil {
+		maxTTFB := *in.MaxTTFBMS
+		in.MaxTTFBMS = &maxTTFB
+	}
 	if in.Canary != nil {
 		canary := *in.Canary
 		if canary.MaxLatencyIncreasePercent != nil {

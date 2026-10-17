@@ -2955,6 +2955,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/outbound/ai-routes/{route}/canary", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.GetRouteCanary)))))
 	mux.HandleFunc("POST /v1/outbound/ai-routes/{route}/canary/promote", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.outboundAI.PromoteRouteCanary)))))
 	mux.HandleFunc("DELETE /v1/outbound/ai-routes/{route}/canary", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.outboundAI.DeleteRouteCanary)))))
+	// ADR-1390: each target's attempts over the strategy window.
+	mux.HandleFunc("GET /v1/outbound/ai-routes/{route}/stats", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.GetRouteStats)))))
 	// ADR-991: per-app guardrails, extra key pools, budget alerts and the
 	// opt-in AI request log.
 	mux.HandleFunc("PUT /v1/apps/{slug}/outbound-bindings/{integration}/ai-guardrails", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.outboundAI.PutBindingGuardrails)))))

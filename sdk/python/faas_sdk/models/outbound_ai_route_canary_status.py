@@ -27,11 +27,13 @@ class OutboundAIRouteCanaryStatus:
     max_latency_increase_percent."""
     window_start: datetime.datetime
     baseline: OutboundAIRouteTargetStats
-    """One target's settled attempts in a canary's window. Errors are attempts with a provider status of 400 or
-    above; mean_ttfb_ms averages successful attempts that received a first byte, or is null."""
+    """One target's settled attempts in a canary's or a strategy's window. Errors are attempts with a provider
+    status of 400 or above; mean_ttfb_ms averages successful attempts that received a first byte, and
+    mean_cost_millicents is the cost per successful attempt; each is null without one."""
     canary_stats: OutboundAIRouteTargetStats
-    """One target's settled attempts in a canary's window. Errors are attempts with a provider status of 400 or
-    above; mean_ttfb_ms averages successful attempts that received a first byte, or is null."""
+    """One target's settled attempts in a canary's or a strategy's window. Errors are attempts with a provider
+    status of 400 or above; mean_ttfb_ms averages successful attempts that received a first byte, and
+    mean_cost_millicents is the cost per successful attempt; each is null without one."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

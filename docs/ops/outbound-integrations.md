@@ -1116,6 +1116,46 @@ of the route's order is unchanged, so a failing canary call still falls back.
 `outbound_ai_route_canary_rollbacks_total` counts rollbacks by reason.
 Per-minute rows are kept for 48 hours.
 
+## AI route strategies
+
+`gregale ai routes set <route-id> --target <a> --target <b> --strategy latency`
+(or `strategy` in `PUT /v1/outbound/ai-routes/{route}/targets`) picks the
+target each call tries first (ADR-1390). The other targets follow in route
+order as fallbacks.
+
+- **`ordered`:** the default; route order.
+- **`weighted`:** `--weights 70,30` gives each target, in order, a weight from
+  0 to 100. The first target is drawn by weight. A call with
+  `X-Gregale-AI-Session`, or else `X-Gregale-AI-User`, always draws the same
+  target. A weight of 0 makes a target a fallback only.
+- **`latency`:** the target with the lowest mean time to first byte goes
+  first.
+- **`cost`:** the target with the lowest mean cost per successful attempt
+  goes first. With `--max-ttfb-ms`, targets slower on average go after the
+  ones within it.
+
+For `latency` and `cost`:
+
+- **Data:** settled attempts over the last 15 minutes, from the per-minute
+  rows canaries use. Rows are written for these routes even without a canary.
+  The route query outboundd already runs for each call reads the sums.
+- **Order:** targets with at least 10 attempts and an error rate of at most
+  25%, best first; then targets with fewer attempts, in route order; then
+  targets above 25% errors.
+- **Exploration:** 5% of calls put a target with fewer than 10 attempts
+  first, so every target keeps current numbers. A new route routes in order,
+  apart from exploration, until its targets have data.
+- **Cost is measured,** including cache hits and tool fees, not list prices.
+
+An active canary still sends its share to its target first; the strategy
+orders the rest. Replacing a route's targets, or starting, stopping or
+promoting a canary, resets its numbers.
+`gregale ai routes stats <route-id>` (or
+`GET /v1/outbound/ai-routes/{route}/stats`) shows each target's attempts,
+errors, mean time to first byte and mean cost.
+`outbound_ai_route_calls_total{strategy,pick}` counts calls by how the first
+target was picked: `ordered`, `weighted`, `best`, `explore` or `canary`.
+
 ## AI log export
 
 `gregale ai policy <id> --log-export on` (or `"log_export": true` in the AI

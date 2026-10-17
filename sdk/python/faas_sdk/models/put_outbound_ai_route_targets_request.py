@@ -6,6 +6,12 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.put_outbound_ai_route_targets_request_strategy import (
+    PutOutboundAIRouteTargetsRequestStrategy,
+    check_put_outbound_ai_route_targets_request_strategy,
+)
+from ..types import UNSET, Unset
+
 if TYPE_CHECKING:
     from ..models.outbound_ai_route_target import OutboundAIRouteTarget
 
@@ -15,9 +21,18 @@ T = TypeVar("T", bound="PutOutboundAIRouteTargetsRequest")
 
 @_attrs_define
 class PutOutboundAIRouteTargetsRequest:
-    """The complete ordered target list that replaces an AI route's targets."""
+    """The complete ordered target list that replaces an AI route's targets, with its strategy (default ordered). New
+    targets end the route's canary and reset its targets' recent attempts.
+
+    """
 
     targets: list[OutboundAIRouteTarget]
+    strategy: PutOutboundAIRouteTargetsRequestStrategy | Unset = UNSET
+    """How a call picks its first target (ADR-1390). ordered (the default) follows route order; weighted draws by
+    target weight; latency picks the healthy target with the lowest recent mean time to first byte; cost picks the
+    healthy target with the lowest recent mean cost per call. The other targets follow as fallbacks."""
+    max_ttfb_ms: int | Unset = UNSET
+    """A cost route's latency target; targets slower on average go after those within it."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -26,6 +41,12 @@ class PutOutboundAIRouteTargetsRequest:
             targets_item = targets_item_data.to_dict()
             targets.append(targets_item)
 
+        strategy: str | Unset = UNSET
+        if not isinstance(self.strategy, Unset):
+            strategy = self.strategy
+
+        max_ttfb_ms = self.max_ttfb_ms
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -33,6 +54,10 @@ class PutOutboundAIRouteTargetsRequest:
                 "targets": targets,
             }
         )
+        if strategy is not UNSET:
+            field_dict["strategy"] = strategy
+        if max_ttfb_ms is not UNSET:
+            field_dict["max_ttfb_ms"] = max_ttfb_ms
 
         return field_dict
 
@@ -48,8 +73,19 @@ class PutOutboundAIRouteTargetsRequest:
 
             targets.append(targets_item)
 
+        _strategy = d.pop("strategy", UNSET)
+        strategy: PutOutboundAIRouteTargetsRequestStrategy | Unset
+        if isinstance(_strategy, Unset):
+            strategy = UNSET
+        else:
+            strategy = check_put_outbound_ai_route_targets_request_strategy(_strategy)
+
+        max_ttfb_ms = d.pop("max_ttfb_ms", UNSET)
+
         put_outbound_ai_route_targets_request = cls(
             targets=targets,
+            strategy=strategy,
+            max_ttfb_ms=max_ttfb_ms,
         )
 
         put_outbound_ai_route_targets_request.additional_properties = d

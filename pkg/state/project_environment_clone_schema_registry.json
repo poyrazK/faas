@@ -8036,7 +8036,8 @@
       "integration_id",
       "model",
       "position",
-      "route_id"
+      "route_id",
+      "weight"
     ],
     "kind": "configuration"
   },
@@ -8047,7 +8048,9 @@
       "created_at",
       "format",
       "id",
+      "max_ttfb_ms",
       "name",
+      "strategy",
       "updated_at"
     ],
     "kind": "configuration"

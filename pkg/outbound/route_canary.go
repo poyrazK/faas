@@ -50,22 +50,6 @@ type routeStep struct {
 	target   AIRouteTarget
 }
 
-// routeSteps orders a route's targets for one call: the canary first when
-// chosen, the rest in route order.
-func routeSteps(route AIRoute, canaryFirst bool) []routeStep {
-	steps := make([]routeStep, 0, len(route.Targets))
-	if canaryFirst {
-		steps = append(steps, routeStep{position: route.Canary.Position, target: route.Targets[route.Canary.Position-1]})
-	}
-	for index, target := range route.Targets {
-		if canaryFirst && index == route.Canary.Position-1 {
-			continue
-		}
-		steps = append(steps, routeStep{position: index + 1, target: target})
-	}
-	return steps
-}
-
 // chooseRouteCanary decides whether a call goes to the canary first. A call
 // naming a session, or else an end user, always gets the same answer for
 // the route, so one conversation stays on one model; other calls are chosen
@@ -97,9 +81,11 @@ type AIRouteCanaryJudgement struct {
 	Baseline, Canary          AIRouteTargetCounts
 }
 
-// AIRouteTargetCounts sums one target's settled attempts.
+// AIRouteTargetCounts sums one target's settled attempts. CostMillicents
+// is their cost, which cost routes rank by (ADR-1390).
 type AIRouteTargetCounts struct {
 	Calls, Errors, TTFBCalls, TTFBMSTotal int64
+	CostMillicents                        int64
 }
 
 // rollbackReason returns why a canary must be rolled back, or "". It waits

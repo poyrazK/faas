@@ -4750,6 +4750,34 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
+  /v1/outbound/ai-routes/{route}/stats:
+    parameters:
+      - name: route
+        in: path
+        required: true
+        description: UUID of the AI route whose targets' recent attempts are read.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [outbound]
+      operationId: getOutboundAIRouteStats
+      summary: Read an AI route's targets' recent attempts.
+      description: >-
+        Requires MFA and read scope. Returns each target's settled attempts, errors, mean time to first byte and mean cost
+        per successful attempt over the window latency and cost routes judge (ADR-1390). Attempts are counted for latency
+        and cost routes and during a canary; other routes report zeros.
+      responses:
+        '200':
+          description: The route's targets' attempts.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAIRouteStats' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /v1/outbound/ai-routes/{route}/canary/promote:
     parameters:
       - name: route
@@ -62361,10 +62389,15 @@ components:
       properties:
         integration_id: { type: string, format: uuid }
         model: { type: string, maxLength: 128 }
+        weight:
+          type: integer
+          minimum: 0
+          maximum: 100
+          description: A weighted route's share of first attempts for this target; 0 makes it a fallback only (ADR-1390).
     OutboundAIRoute:
       type: object
       description: An ordered list of managed AI integrations. Apps call $GREGALE_OUTBOUND_URL/r/{id}/{provider path} (ADR-990). An openai-format route accepts OpenAI chat completions and embeddings and translates them for each target's provider (ADR-991, ADR-995).
-      required: [id, name, format, targets, created_at, updated_at]
+      required: [id, name, format, targets, created_at, updated_at, strategy]
       properties:
         id: { type: string, format: uuid }
         name: { type: string }
@@ -62374,6 +62407,15 @@ components:
           items: { $ref: '#/components/schemas/OutboundAIRouteTarget' }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+        strategy:
+          type: string
+          enum: [ordered, weighted, latency, cost]
+          description: How a call picks its first target (ADR-1390).
+        max_ttfb_ms:
+          type: [integer, 'null']
+          minimum: 1
+          maximum: 600000
+          description: A cost route's latency target, or null.
         canary:
           description: The route's model canary, or null (ADR-1340).
           oneOf:
@@ -62418,9 +62460,10 @@ components:
     OutboundAIRouteTargetStats:
       type: object
       description: >-
-        One target's settled attempts in a canary's window. Errors are attempts with a provider status of 400 or above;
-        mean_ttfb_ms averages successful attempts that received a first byte, or is null.
-      required: [target, calls, errors, error_rate, mean_ttfb_ms, cost_millicents]
+        One target's settled attempts in a canary's or a strategy's window. Errors are attempts with a provider status of
+        400 or above; mean_ttfb_ms averages successful attempts that received a first byte, and mean_cost_millicents is
+        the cost per successful attempt; each is null without one.
+      required: [target, calls, errors, error_rate, mean_ttfb_ms, cost_millicents, mean_cost_millicents]
       properties:
         target: { type: integer, minimum: 1, maximum: 5 }
         calls: { type: integer, format: int64, minimum: 0 }
@@ -62428,6 +62471,17 @@ components:
         error_rate: { type: number, minimum: 0, maximum: 1 }
         mean_ttfb_ms: { type: [integer, 'null'], format: int64, minimum: 0 }
         cost_millicents: { type: integer, format: int64, minimum: 0 }
+        mean_cost_millicents: { type: [integer, 'null'], format: int64, minimum: 0 }
+    OutboundAIRouteStats:
+      type: object
+      description: Each target's settled attempts since window_start, the window latency and cost routes judge (ADR-1390).
+      required: [strategy, window_start, targets]
+      properties:
+        strategy: { type: string, enum: [ordered, weighted, latency, cost] }
+        window_start: { type: string, format: date-time }
+        targets:
+          type: array
+          items: { $ref: '#/components/schemas/OutboundAIRouteTargetStats' }
     OutboundAIRouteCanaryStatus:
       type: object
       description: A canary with the route's first target's and its own counts since window_start.
@@ -62593,9 +62647,23 @@ components:
           minItems: 1
           maxItems: 5
           items: { $ref: '#/components/schemas/OutboundAIRouteTarget' }
+        strategy:
+          type: string
+          enum: [ordered, weighted, latency, cost]
+          description: >-
+            How a call picks its first target (ADR-1390). ordered (the default) follows route order; weighted draws by target
+            weight; latency picks the healthy target with the lowest recent mean time to first byte; cost picks the healthy
+            target with the lowest recent mean cost per call. The other targets follow as fallbacks.
+        max_ttfb_ms:
+          type: integer
+          minimum: 1
+          maximum: 600000
+          description: A cost route's latency target; targets slower on average go after those within it.
     PutOutboundAIRouteTargetsRequest:
       type: object
-      description: The complete ordered target list that replaces an AI route's targets.
+      description: >-
+        The complete ordered target list that replaces an AI route's targets, with its strategy (default ordered). New
+        targets end the route's canary and reset its targets' recent attempts.
       required: [targets]
       properties:
         targets:
@@ -62603,6 +62671,18 @@ components:
           minItems: 1
           maxItems: 5
           items: { $ref: '#/components/schemas/OutboundAIRouteTarget' }
+        strategy:
+          type: string
+          enum: [ordered, weighted, latency, cost]
+          description: >-
+            How a call picks its first target (ADR-1390). ordered (the default) follows route order; weighted draws by target
+            weight; latency picks the healthy target with the lowest recent mean time to first byte; cost picks the healthy
+            target with the lowest recent mean cost per call. The other targets follow as fallbacks.
+        max_ttfb_ms:
+          type: integer
+          minimum: 1
+          maximum: 600000
+          description: A cost route's latency target; targets slower on average go after those within it.
     PutOutboundBindingAIGuardrailsRequest:
       type: object
       description: Replace an app's AI guardrails on one integration (ADR-991). Null fields remove that guardrail.

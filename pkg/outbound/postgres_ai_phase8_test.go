@@ -155,7 +155,7 @@ func TestPostgresRouteCanaryLifecycle(t *testing.T) {
 		MaxErrorRateIncrease: 5, MinCalls: 10, WindowMinutes: 30}); err != nil {
 		t.Fatal(err)
 	}
-	if err := f.store.SetOutboundAIRouteTargets(ctx, f.account.ID, route.ID, promoted.Targets); err != nil {
+	if err := f.store.SetOutboundAIRouteTargets(ctx, f.account.ID, route.ID, promoted.Targets, state.OutboundAIRouteRouting{}); err != nil {
 		t.Fatal(err)
 	}
 	if stored, _ := f.store.GetOutboundAIRoute(ctx, f.account.ID, route.ID); stored.Canary != nil {

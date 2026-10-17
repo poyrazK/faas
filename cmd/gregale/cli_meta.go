@@ -783,6 +783,7 @@ var cliCommands = []cliCommand{
 			"gregale ai catalog openai --model gpt-4o-mini",
 			"gregale ai routes create --name chat --format openai --target <openai-id> --target <anthropic-id>:claude-sonnet-4",
 			"gregale ai routes canary <route-id> --position 2 --percent 10 --max-latency-increase 50",
+			"gregale ai routes set <route-id> --target <openai-id> --target <anthropic-id>:claude-sonnet-4-5 --strategy latency",
 			"gregale ai content-policy <integration-id> --moderation block --moderation-kind classifier --moderation-integration <id> --moderation-model gpt-5-nano --moderation-categories prompt_injection,harassment",
 			"printf '%s\\n' \"$SECOND_KEY\" | gregale ai keys add <integration-id> --label second --from-stdin",
 			"gregale ai logs <integration-id> --limit 20",
@@ -847,10 +848,13 @@ var cliCommands = []cliCommand{
 				{Name: "to", Short: "export: last UTC day (default today)", Value: "YYYY-MM-DD"},
 				{Name: "format", Short: "export format", Value: "csv|ndjson", ClosedSet: []string{"csv", "ndjson"}},
 			}},
-			{Name: "routes", Short: "List, create, update (set) or delete (rm) AI fallback routes, or run a model canary on one", Positionals: []string{"<list|create|set|rm|canary>", "[<route-id>]", "[status|promote|stop]"}, Flags: []cliFlag{
+			{Name: "routes", Short: "List, create, update (set) or delete (rm) AI routes, run a model canary on one, or show its targets' recent stats", Positionals: []string{"<list|create|set|rm|canary|stats>", "[<route-id>]", "[status|promote|stop]"}, Flags: []cliFlag{
 				{Name: "name", Short: "route name for create", Value: "NAME"},
 				{Name: "format", Short: "route format for create: native or openai (translates OpenAI chat completions)", Value: "FORMAT", ClosedSet: []string{"native", "openai"}},
 				{Name: "target", Short: "<integration-id>[:<model>] in fallback order (repeat)", Value: "TARGET"},
+				{Name: "strategy", Short: "first-target choice for create or set: ordered, weighted, latency or cost", Value: "STRATEGY", ClosedSet: []string{"ordered", "weighted", "latency", "cost"}},
+				{Name: "weights", Short: "a weighted route's target weights, 0 to 100, in target order", Value: "70,30"},
+				{Name: "max-ttfb-ms", Short: "a cost route's latency target in milliseconds", Value: "N"},
 				{Name: "position", Short: "canary: the route target (2 to 5) tried first", Value: "N"},
 				{Name: "percent", Short: "canary: share of calls sent to it first, 1 to 50", Value: "N"},
 				{Name: "max-error-increase", Short: "canary: roll back past this many error-rate points worse (default 5)", Value: "N"},

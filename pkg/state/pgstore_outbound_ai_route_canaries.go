@@ -167,7 +167,7 @@ func (s *PgStore) PromoteOutboundAIRouteCanary(ctx context.Context, accountID, r
 
 func outboundAIRouteTargetsTx(ctx context.Context, tx pgx.Tx, routeID string) ([]OutboundAIRouteTarget, error) {
 	rows, err := tx.Query(ctx, `
-		SELECT integration_id::text, COALESCE(model, '') FROM outbound_ai_route_targets
+		SELECT integration_id::text, COALESCE(model, ''), weight FROM outbound_ai_route_targets
 		 WHERE route_id = $1 ORDER BY position`, mustPgUUID(routeID))
 	if err != nil {
 		return nil, mapErr(err)
@@ -176,7 +176,7 @@ func outboundAIRouteTargetsTx(ctx context.Context, tx pgx.Tx, routeID string) ([
 	var targets []OutboundAIRouteTarget
 	for rows.Next() {
 		var target OutboundAIRouteTarget
-		if err := rows.Scan(&target.IntegrationID, &target.Model); err != nil {
+		if err := rows.Scan(&target.IntegrationID, &target.Model, &target.Weight); err != nil {
 			return nil, mapErr(err)
 		}
 		targets = append(targets, target)
@@ -186,7 +186,9 @@ func outboundAIRouteTargetsTx(ctx context.Context, tx pgx.Tx, routeID string) ([
 
 // OutboundAIRouteCanaryStatus returns a route's canary with the first
 // target's and the canary target's counts over its window: from the later
-// of the canary's start and the window's start, by whole minutes.
+// of the canary's start and the window's start, by whole minutes, up to the
+// minute it was decided, since latency and cost routes keep counting
+// (ADR-1390).
 func (s *PgStore) OutboundAIRouteCanaryStatus(ctx context.Context, accountID, routeID string) (OutboundAIRouteCanaryStatus, error) {
 	var scan outboundAIRouteCanaryScan
 	var windowStart time.Time
@@ -211,7 +213,8 @@ func (s *PgStore) OutboundAIRouteCanaryStatus(ctx context.Context, accountID, ro
 		       sum(cost_millicents)::bigint
 		  FROM outbound_ai_route_target_minutes
 		 WHERE route_id = $1 AND position IN (1, $2) AND minute >= date_trunc('minute', $3::timestamptz)
-		 GROUP BY position`, mustPgUUID(routeID), canary.Position, windowStart)
+		   AND ($4::timestamptz IS NULL OR minute <= date_trunc('minute', $4::timestamptz))
+		 GROUP BY position`, mustPgUUID(routeID), canary.Position, windowStart, canary.DecidedAt)
 	if err != nil {
 		return OutboundAIRouteCanaryStatus{}, mapErr(err)
 	}

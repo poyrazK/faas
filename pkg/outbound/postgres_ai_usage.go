@@ -210,9 +210,10 @@ type aiSettlementPlan struct {
 }
 
 // queueAIRouteAttempt adds a route attempt to its target's row for the
-// current UTC minute while the route's canary is active. Without one, or
-// for a route deleted meanwhile, it writes nothing: the table has no
-// foreign key, so a settlement never fails on it.
+// current UTC minute while the route's canary is active, or when its
+// strategy judges targets by these rows (ADR-1390). Otherwise, or for a
+// route deleted meanwhile, it writes nothing: the table has no foreign key,
+// so a settlement never fails on it.
 func queueAIRouteAttempt(batch *pgx.Batch, record AIUsageRecord) {
 	attempt := record.Route
 	var errorCount, ttfbCalls, ttfbMS int64
@@ -227,6 +228,7 @@ func queueAIRouteAttempt(batch *pgx.Batch, record AIUsageRecord) {
 		    (route_id, position, minute, calls, errors, ttfb_calls, ttfb_ms_total, cost_millicents)
 		SELECT $1, $2, date_trunc('minute', now()), 1, $3, $4, $5, $6
 		 WHERE EXISTS (SELECT 1 FROM outbound_ai_route_canaries canary WHERE canary.route_id = $1 AND canary.state = 'active')
+		    OR EXISTS (SELECT 1 FROM outbound_ai_routes route WHERE route.id = $1 AND route.strategy IN ('latency', 'cost'))
 		ON CONFLICT (route_id, position, minute) DO UPDATE SET
 		    calls = stats.calls + 1,
 		    errors = stats.errors + EXCLUDED.errors,

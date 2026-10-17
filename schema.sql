@@ -32519,8 +32519,10 @@ CREATE TABLE public.outbound_ai_route_targets (
     "position" smallint NOT NULL,
     integration_id uuid NOT NULL,
     model text,
+    weight smallint,
     CONSTRAINT outbound_ai_route_targets_model_chk CHECK (((model IS NULL) OR (((length(model) >= 1) AND (length(model) <= 128)) AND (model ~ '^[ -~]+$'::text)))),
-    CONSTRAINT outbound_ai_route_targets_position_chk CHECK ((("position" >= 1) AND ("position" <= 5)))
+    CONSTRAINT outbound_ai_route_targets_position_chk CHECK ((("position" >= 1) AND ("position" <= 5))),
+    CONSTRAINT outbound_ai_route_targets_weight_chk CHECK (((weight IS NULL) OR ((weight >= 0) AND (weight <= 100))))
 );
 
 
@@ -32535,8 +32537,11 @@ CREATE TABLE public.outbound_ai_routes (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     format text DEFAULT 'native'::text NOT NULL,
+    strategy text DEFAULT 'ordered'::text NOT NULL,
+    max_ttfb_ms integer,
     CONSTRAINT outbound_ai_routes_format_chk CHECK ((format = ANY (ARRAY['native'::text, 'openai'::text]))),
-    CONSTRAINT outbound_ai_routes_name_chk CHECK ((name ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$'::text))
+    CONSTRAINT outbound_ai_routes_name_chk CHECK ((name ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$'::text)),
+    CONSTRAINT outbound_ai_routes_strategy_chk CHECK (((strategy = ANY (ARRAY['ordered'::text, 'weighted'::text, 'latency'::text, 'cost'::text])) AND ((max_ttfb_ms IS NULL) OR ((strategy = 'cost'::text) AND ((max_ttfb_ms >= 1) AND (max_ttfb_ms <= 600000))))))
 );
 
 

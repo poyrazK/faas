@@ -15,6 +15,14 @@ export type OutboundAIRoute = {
   created_at: string;
   updated_at: string;
   /**
+   * How a call picks its first target (ADR-1390).
+   */
+  strategy: 'ordered' | 'weighted' | 'latency' | 'cost';
+  /**
+   * A cost route's latency target, or null.
+   */
+  max_ttfb_ms?: number | null;
+  /**
    * The route's model canary, or null (ADR-1340).
    */
   canary?: (OutboundAIRouteCanary | null);

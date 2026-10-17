@@ -1588,6 +1588,7 @@ export type { OutboundAIRoute } from './models/OutboundAIRoute.js';
 export type { OutboundAIRouteCanary } from './models/OutboundAIRouteCanary.js';
 export type { OutboundAIRouteCanaryStatus } from './models/OutboundAIRouteCanaryStatus.js';
 export type { OutboundAIRouteList } from './models/OutboundAIRouteList.js';
+export type { OutboundAIRouteStats } from './models/OutboundAIRouteStats.js';
 export type { OutboundAIRouteTarget } from './models/OutboundAIRouteTarget.js';
 export type { OutboundAIRouteTargetStats } from './models/OutboundAIRouteTargetStats.js';
 export type { OutboundAIUsageItem } from './models/OutboundAIUsageItem.js';

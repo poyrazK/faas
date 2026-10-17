@@ -38,6 +38,14 @@ type AIRoute struct {
 	Targets   []AIRouteTarget
 	// Canary is the route's active model canary, if any (ADR-1340).
 	Canary *AIRouteCanary
+	// Strategy picks the target each call tries first; MaxTTFBMS is a cost
+	// route's latency target. Weights hold a weighted route's target
+	// weights and Stats a latency or cost route's window counts, both by
+	// position (ADR-1390).
+	Strategy  string
+	MaxTTFBMS *int
+	Weights   []int
+	Stats     []AIRouteTargetCounts
 }
 
 // RouteResolver loads AI routes; apid owns their lifecycle.
@@ -187,13 +195,16 @@ func (h *Handler) serveRoute(w http.ResponseWriter, r *http.Request) {
 	if canaryFirst {
 		w.Header().Set(RouteCanaryHeader, "1")
 	}
-	steps := routeSteps(route, canaryFirst)
+	// ADR-1390: the strategy orders the targets; a chosen canary goes first.
+	steps, pick := planRouteSteps(route, r, canaryFirst, h.routeIntN)
+	h.Metrics.ObserveAIRouteCall(route.Strategy, pick)
 	if !replayable {
 		steps = steps[:1]
 	}
+	tracked := routeTracksStats(route)
 	for index, step := range steps {
 		target := step.target
-		ctx := withRouteAttempt(r.Context(), routeAttempt{routeID: route.ID, position: step.position, tracked: route.Canary != nil,
+		ctx := withRouteAttempt(r.Context(), routeAttempt{routeID: route.ID, position: step.position, tracked: tracked,
 			canary: route.Canary != nil && step.position == route.Canary.Position})
 		attemptBody, attemptPath, attemptQuery := body, providerPath, r.URL.RawQuery
 		var translator aiResponseTranslator

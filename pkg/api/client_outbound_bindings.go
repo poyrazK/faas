@@ -209,7 +209,13 @@ func (c *Client) GetOutboundAIRoute(ctx context.Context, routeID string) (Outbou
 }
 
 func (c *Client) SetOutboundAIRouteTargets(ctx context.Context, routeID string, targets []OutboundAIRouteTarget) error {
-	return c.do(ctx, "PUT", "/v1/outbound/ai-routes/"+url.PathEscape(routeID)+"/targets", PutOutboundAIRouteTargetsRequest{Targets: targets}, nil)
+	return c.SetOutboundAIRouteRouting(ctx, routeID, PutOutboundAIRouteTargetsRequest{Targets: targets})
+}
+
+// SetOutboundAIRouteRouting replaces a route's targets and its strategy
+// (ADR-1390).
+func (c *Client) SetOutboundAIRouteRouting(ctx context.Context, routeID string, req PutOutboundAIRouteTargetsRequest) error {
+	return c.do(ctx, "PUT", "/v1/outbound/ai-routes/"+url.PathEscape(routeID)+"/targets", req, nil)
 }
 
 func (c *Client) DeleteOutboundAIRoute(ctx context.Context, routeID string) error {
@@ -273,6 +279,13 @@ func (c *Client) ListOutboundAIAccessTokens(ctx context.Context, appSlug string)
 // RevokeOutboundAIAccessToken revokes one of an app's access tokens.
 func (c *Client) RevokeOutboundAIAccessToken(ctx context.Context, appSlug, tokenID string) error {
 	return c.do(ctx, "DELETE", "/v1/apps/"+url.PathEscape(appSlug)+"/ai-access-tokens/"+url.PathEscape(tokenID), nil, nil)
+}
+
+// GetOutboundAIRouteStats returns each route target's settled attempts
+// over the window latency and cost routes judge (ADR-1390).
+func (c *Client) GetOutboundAIRouteStats(ctx context.Context, routeID string) (OutboundAIRouteStats, error) {
+	var out OutboundAIRouteStats
+	return out, c.do(ctx, "GET", "/v1/outbound/ai-routes/"+url.PathEscape(routeID)+"/stats", nil, &out)
 }
 
 // DeleteOutboundAIRouteCanary ends a route's canary.

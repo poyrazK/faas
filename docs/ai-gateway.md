@@ -27,6 +27,8 @@ account during the preview; contact support to have it turned on for yours.
 - **Fallback routes.** Try targets in order across providers. An
   OpenAI-format route translates chat completions, the Responses API and
   embeddings for Anthropic, Gemini, Bedrock and Vertex.
+- **Route strategies.** Split a route's calls by weight, or send each call
+  first to the target with the lowest recent latency or cost that is up.
 - **Model canaries.** Send a share of a route's calls to a new model first and
   compare errors, latency and cost with the current one. Gregale rolls the
   canary back on its own when the new model does worse; promote it when it
@@ -93,6 +95,8 @@ gregale ai content-policy <id> --email redact --secrets block
 gregale ai content-policy <id> --moderation block --moderation-kind classifier \
   --moderation-integration <check-id> --moderation-model gpt-5-nano --moderation-categories prompt_injection
 gregale ai policy <id> --log-export on                  # to the app's log drains
+gregale ai routes set <route-id> --target <a> --target <b> --strategy weighted --weights 70,30
+gregale ai routes set <route-id> --target <a> --target <b> --strategy cost --max-ttfb-ms 1500
 gregale ai routes canary <route-id> --position 2 --percent 10
 gregale ai usage <id>
 ```

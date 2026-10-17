@@ -9,6 +9,7 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 from ..models.outbound_ai_route_format import OutboundAIRouteFormat, check_outbound_ai_route_format
+from ..models.outbound_ai_route_strategy import OutboundAIRouteStrategy, check_outbound_ai_route_strategy
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
@@ -33,6 +34,10 @@ class OutboundAIRoute:
     targets: list[OutboundAIRouteTarget]
     created_at: datetime.datetime
     updated_at: datetime.datetime
+    strategy: OutboundAIRouteStrategy
+    """How a call picks its first target (ADR-1390)."""
+    max_ttfb_ms: int | None | Unset = UNSET
+    """A cost route's latency target, or null."""
     canary: None | OutboundAIRouteCanary | Unset = UNSET
     """The route's model canary, or null (ADR-1340)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -55,6 +60,14 @@ class OutboundAIRoute:
 
         updated_at = self.updated_at.isoformat()
 
+        strategy: str = self.strategy
+
+        max_ttfb_ms: int | None | Unset
+        if isinstance(self.max_ttfb_ms, Unset):
+            max_ttfb_ms = UNSET
+        else:
+            max_ttfb_ms = self.max_ttfb_ms
+
         canary: dict[str, Any] | None | Unset
         if isinstance(self.canary, Unset):
             canary = UNSET
@@ -73,8 +86,11 @@ class OutboundAIRoute:
                 "targets": targets,
                 "created_at": created_at,
                 "updated_at": updated_at,
+                "strategy": strategy,
             }
         )
+        if max_ttfb_ms is not UNSET:
+            field_dict["max_ttfb_ms"] = max_ttfb_ms
         if canary is not UNSET:
             field_dict["canary"] = canary
 
@@ -103,6 +119,17 @@ class OutboundAIRoute:
 
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
 
+        strategy = check_outbound_ai_route_strategy(d.pop("strategy"))
+
+        def _parse_max_ttfb_ms(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        max_ttfb_ms = _parse_max_ttfb_ms(d.pop("max_ttfb_ms", UNSET))
+
         def _parse_canary(data: object) -> None | OutboundAIRouteCanary | Unset:
             if data is None:
                 return data
@@ -127,6 +154,8 @@ class OutboundAIRoute:
             targets=targets,
             created_at=created_at,
             updated_at=updated_at,
+            strategy=strategy,
+            max_ttfb_ms=max_ttfb_ms,
             canary=canary,
         )
 

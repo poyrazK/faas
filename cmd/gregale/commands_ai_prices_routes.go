@@ -5,8 +5,10 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"strconv"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -177,7 +179,7 @@ func parseAIPriceSpec(spec string) (api.OutboundAIPriceEntry, error) {
 	return entry, nil
 }
 
-const aiRoutesUsage = "usage: gregale ai routes <list|create|set|rm|canary> ... (targets as <integration-id>[:<model>])"
+const aiRoutesUsage = "usage: gregale ai routes <list|create|set|rm|canary|stats> ... (targets as <integration-id>[:<model>])"
 
 func cmdAIRoutes(args []string) int {
 	if len(args) == 0 {
@@ -196,6 +198,8 @@ func cmdAIRoutes(args []string) int {
 		return cmdAIRoutesSet(client, args[1:])
 	case "canary":
 		return cmdAIRoutesCanary(client, args[1:])
+	case "stats":
+		return cmdAIRoutesStats(client, args[1:])
 	case "rm":
 		if len(args) != 2 {
 			return printErr("Invalid ai routes rm arguments", errors.New("usage: gregale ai routes rm <route-id>"))
@@ -226,8 +230,8 @@ func cmdAIRoutesList(client *api.Client) int {
 		for _, target := range route.Targets {
 			targets = append(targets, formatAIRouteTarget(target))
 		}
-		_, _ = fmt.Fprintf(osStdout, "%s  %s  [%s]  %s\n  call: $GREGALE_OUTBOUND_URL/r/%s/%s\n", route.ID, route.Name, route.Format,
-			strings.Join(targets, " -> "), route.ID, aiRouteCallPath(route.Format))
+		_, _ = fmt.Fprintf(osStdout, "%s  %s  [%s, %s]  %s\n  call: $GREGALE_OUTBOUND_URL/r/%s/%s\n", route.ID, route.Name, route.Format,
+			displayRouteStrategy(route.Strategy), strings.Join(targets, " -> "), route.ID, aiRouteCallPath(route.Format))
 		if canary := route.Canary; canary != nil {
 			_, _ = fmt.Fprintf(osStdout, "  canary: target %d, %d%% of calls, %s\n", canary.Target, canary.Percent, canary.State)
 		}
@@ -262,21 +266,74 @@ func parseAIRouteTargets(values []string) ([]api.OutboundAIRouteTarget, error) {
 	return targets, nil
 }
 
+// aiRouteStrategyUsage names the strategy flags of create and set
+// (ADR-1390).
+const aiRouteStrategyUsage = "[--strategy ordered|weighted|latency|cost] [--weights 70,30] [--max-ttfb-ms N]"
+
+// routingFlags are the strategy flags of create and set.
+type routingFlags struct {
+	strategy, weights *string
+	maxTTFBMS         *int
+}
+
+func addRoutingFlags(fs *flag.FlagSet) routingFlags {
+	return routingFlags{
+		strategy:  fs.String("strategy", "", "first-target choice: ordered, weighted, latency or cost"),
+		weights:   fs.String("weights", "", "a weighted route's target weights, 0 to 100, in target order, such as 70,30"),
+		maxTTFBMS: fs.Int("max-ttfb-ms", 0, "a cost route's latency target in milliseconds (0: none)"),
+	}
+}
+
+// apply sets a request's strategy, weights and latency target and checks
+// them with its targets.
+func (f routingFlags) apply(targets []api.OutboundAIRouteTarget, strategy string) (string, *int, error) {
+	if *f.strategy != "" {
+		strategy = *f.strategy
+	}
+	if *f.weights != "" {
+		parts := strings.Split(*f.weights, ",")
+		if len(parts) != len(targets) {
+			return "", nil, fmt.Errorf("--weights needs one weight per target (%d)", len(targets))
+		}
+		for index, part := range parts {
+			weight, err := strconv.Atoi(strings.TrimSpace(part))
+			if err != nil {
+				return "", nil, fmt.Errorf("--weights: %q is not a whole number", part)
+			}
+			targets[index].Weight = &weight
+		}
+	}
+	var maxTTFBMS *int
+	if *f.maxTTFBMS > 0 {
+		maxTTFBMS = f.maxTTFBMS
+	}
+	if !api.ValidOutboundAIRouteStrategy(strategy, maxTTFBMS, targets) {
+		return "", nil, errors.New("a weighted route needs --weights for every target (0 to 100, one above 0); only a cost route takes --max-ttfb-ms (1 to 600000)")
+	}
+	return strategy, maxTTFBMS, nil
+}
+
 func cmdAIRoutesCreate(client *api.Client, args []string) int {
 	fs := newFlagSet("ai routes create", flag.ContinueOnError)
 	name := fs.String("name", "", "route name, a DNS label (required)")
 	format := fs.String("format", "", "native (default: one provider) or openai (translate OpenAI chat completions)")
 	var targetValues stringListFlag
 	fs.Var(&targetValues, "target", "<integration-id>[:<model>] in fallback order (repeatable, required)")
+	routing := addRoutingFlags(fs)
 	if err := parseInterspersed(fs, args); err != nil || fs.NArg() != 0 || !api.ValidOutboundAIRouteName(*name) || !api.ValidOutboundAIRouteFormat(*format) {
 		return printErr("Invalid ai routes create arguments",
-			errors.New("usage: gregale ai routes create --name <name> [--format native|openai] --target <integration-id>[:<model>] (repeatable)"))
+			errors.New("usage: gregale ai routes create --name <name> [--format native|openai] --target <integration-id>[:<model>] (repeatable) "+aiRouteStrategyUsage))
 	}
 	targets, err := parseAIRouteTargets(targetValues)
 	if err != nil {
 		return printErr("Invalid --target", err)
 	}
-	route, err := client.CreateOutboundAIRoute(context.Background(), api.CreateOutboundAIRouteRequest{Name: *name, Format: *format, Targets: targets})
+	strategy, maxTTFBMS, err := routing.apply(targets, "")
+	if err != nil {
+		return printErr("Invalid strategy", err)
+	}
+	route, err := client.CreateOutboundAIRoute(context.Background(), api.CreateOutboundAIRouteRequest{Name: *name, Format: *format, Targets: targets,
+		Strategy: strategy, MaxTTFBMS: maxTTFBMS})
 	if err != nil {
 		return printErr("Could not create AI route", err)
 	}
@@ -291,16 +348,66 @@ func cmdAIRoutesSet(client *api.Client, args []string) int {
 	fs := newFlagSet("ai routes set", flag.ContinueOnError)
 	var targetValues stringListFlag
 	fs.Var(&targetValues, "target", "<integration-id>[:<model>] in fallback order (repeatable, required)")
+	routing := addRoutingFlags(fs)
 	if err := parseInterspersed(fs, args); err != nil || fs.NArg() != 1 {
-		return printErr("Invalid ai routes set arguments", errors.New("usage: gregale ai routes set <route-id> --target <integration-id>[:<model>] (repeatable)"))
+		return printErr("Invalid ai routes set arguments",
+			errors.New("usage: gregale ai routes set <route-id> --target <integration-id>[:<model>] (repeatable) "+aiRouteStrategyUsage))
 	}
 	targets, err := parseAIRouteTargets(targetValues)
 	if err != nil {
 		return printErr("Invalid --target", err)
 	}
-	if err := client.SetOutboundAIRouteTargets(context.Background(), fs.Arg(0), targets); err != nil {
+	// A set without --strategy keeps the route's strategy and latency target.
+	current, err := client.GetOutboundAIRoute(context.Background(), fs.Arg(0))
+	if err != nil {
+		return printErr("Could not read AI route", err)
+	}
+	if *routing.maxTTFBMS == 0 && *routing.strategy == "" && current.MaxTTFBMS != nil {
+		*routing.maxTTFBMS = *current.MaxTTFBMS
+	}
+	strategy, maxTTFBMS, err := routing.apply(targets, current.Strategy)
+	if err != nil {
+		return printErr("Invalid strategy", err)
+	}
+	req := api.PutOutboundAIRouteTargetsRequest{Targets: targets, Strategy: strategy, MaxTTFBMS: maxTTFBMS}
+	if err := client.SetOutboundAIRouteRouting(context.Background(), fs.Arg(0), req); err != nil {
 		return printErr("Could not update AI route", err)
 	}
-	_, _ = fmt.Fprintf(osStdout, "AI route %s now tries %d target(s)\n", fs.Arg(0), len(targets))
+	_, _ = fmt.Fprintf(osStdout, "AI route %s now tries %d target(s), %s\n", fs.Arg(0), len(targets), displayRouteStrategy(strategy))
 	return 0
+}
+
+// cmdAIRoutesStats shows each target's attempts over the strategy window
+// (ADR-1390).
+func cmdAIRoutesStats(client *api.Client, args []string) int {
+	if len(args) != 1 {
+		return printErr("Invalid ai routes stats arguments", errors.New("usage: gregale ai routes stats <route-id>"))
+	}
+	stats, err := client.GetOutboundAIRouteStats(context.Background(), args[0])
+	if err != nil {
+		return printErr("Could not read AI route stats", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(stats))
+	}
+	_, _ = fmt.Fprintf(osStdout, "Route %s, %s, since %s\n", args[0], displayRouteStrategy(stats.Strategy), stats.WindowStart.UTC().Format(time.RFC3339))
+	tw := tabwriter.NewWriter(osStdout, 0, 0, 2, ' ', 0)
+	_, _ = fmt.Fprintln(tw, "TARGET\tCALLS\tERRORS\tERROR RATE\tMEAN TTFB\tMEAN COST")
+	for _, target := range stats.Targets {
+		meanCost := "-"
+		if target.MeanCostMillicents != nil {
+			meanCost = financialMoney(*target.MeanCostMillicents)
+		}
+		_, _ = fmt.Fprintf(tw, "%d\t%d\t%d\t%.1f%%\t%s\t%s\n", target.Target, target.Calls, target.Errors, 100*target.ErrorRate,
+			formatOptionalCount(target.MeanTTFBMS), meanCost)
+	}
+	_ = tw.Flush()
+	return 0
+}
+
+func displayRouteStrategy(strategy string) string {
+	if strategy == "" {
+		strategy = api.OutboundAIRouteStrategyOrdered
+	}
+	return strategy
 }
