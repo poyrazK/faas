@@ -3613,3 +3613,11 @@ live/expired claims, stalled recovery and oldest overdue age. Export `complete`,
 `truncated` and `coverage` with the counts; incomplete scans cannot establish
 healthy recovery. The helper reads metadata only and claims no work. See
 [options, coverage and cancellation](../../docs/event-acknowledgment-intent-health.md#node-summary).
+
+`watchEventAcknowledgmentIntentHealth(pool, accountId, appId, options, notify)`
+adds sustained `due_backlog` / `stalled_recovery` alerts with opt-in thresholds.
+Firing and resolution require multiple fresh, complete observations; failed,
+incomplete or stale evidence becomes `unknown` / `confirmation_lost`. Polls and
+local callbacks run sequentially, and cancellation never resolves an incident.
+State is in memory; notification transport and durable identity stay application-owned.
+See [watch options, callback errors and cooperative deadlines](../../docs/event-acknowledgment-intent-health.md#node-watch).

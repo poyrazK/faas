@@ -1,7 +1,7 @@
 // Integration functions for an application-owned durable queue. See README for
 // the adapter's persistence and exclusive-ownership requirements.
 import { randomUUID } from 'node:crypto';
-import { eventAcknowledgmentWorkerFromHeaders, recoverNextEventAcknowledgmentIntent, getEventAcknowledgmentIntentHealth, EventAcknowledgmentIntentError } from '@gregale/sdk-node';
+import { eventAcknowledgmentWorkerFromHeaders, recoverNextEventAcknowledgmentIntent, getEventAcknowledgmentIntentHealth, watchEventAcknowledgmentIntentHealth, EventAcknowledgmentIntentError } from '@gregale/sdk-node';
 
 const names = new Set([
   'x-gregale-event-source', 'x-gregale-event-id', 'x-gregale-event-subscription-id',
@@ -75,4 +75,13 @@ export async function readAcknowledgmentRecoveryHealth(scope, pool, signal) {
   return getEventAcknowledgmentIntentHealth(pool, target.accountId, target.appId, {
     signal, scanLimit: 1000, stallAfterMs: 300000,
   });
+}
+
+/** Run explicitly from the monitoring host. notify is local and awaited. */
+export async function watchAcknowledgmentRecovery(scope, pool, signal, notify) {
+  const target = owner(scope);
+  return watchEventAcknowledgmentIntentHealth(pool, target.accountId, target.appId, {
+    signal, health: { scanLimit: 1000, stallAfterMs: 300000 },
+    dueThreshold: 100, stalledThreshold: 1, sustainMs: 30000,
+  }, notify);
 }

@@ -103,10 +103,7 @@ export async function getEventAcknowledgmentIntentHealth(pool: EventConsumerPool
   options: EventAcknowledgmentIntentHealthOptions = {}): Promise<EventAcknowledgmentIntentHealth> {
   const signal = operationSignal(options), [account, app] = intentScope(accountId, appId);
   intentPool(pool);
-  const scanLimit = options.scanLimit === undefined ? 1000 : options.scanLimit;
-  const stallAfterMs = options.stallAfterMs === undefined ? 300000 : options.stallAfterMs;
-  if (!Number.isInteger(scanLimit) || scanLimit < 1 || scanLimit > 10000
-    || !Number.isInteger(stallAfterMs) || stallAfterMs < 1000 || stallAfterMs > 86400000) throw new TypeError('invalid acknowledgment intent health options');
+  const { scanLimit, stallAfterMs } = intentHealthOptions(options);
   const connection = await pool.connect().catch(() => { throw intentStoreError(); });
   let discard = false;
   try {
@@ -118,4 +115,14 @@ export async function getEventAcknowledgmentIntentHealth(pool: EventConsumerPool
     if (result.rows.length !== 1) throw intentStoreError();
     return summary(result.rows[0], account, app, scanLimit, stallAfterMs);
   } finally { connection.release(discard); }
+}
+/** Internal normalized bounds shared with the watch; excluded from package exports. */
+export function intentHealthOptions(options: Pick<EventAcknowledgmentIntentHealthOptions, 'scanLimit' | 'stallAfterMs'>):
+  Readonly<{ scanLimit: number; stallAfterMs: number }> {
+  if (!options || typeof options !== 'object' || Array.isArray(options)) throw new TypeError('invalid acknowledgment intent health options');
+  const scanLimit = options.scanLimit === undefined ? 1000 : options.scanLimit;
+  const stallAfterMs = options.stallAfterMs === undefined ? 300000 : options.stallAfterMs;
+  if (!Number.isInteger(scanLimit) || scanLimit < 1 || scanLimit > 10000
+    || !Number.isInteger(stallAfterMs) || stallAfterMs < 1000 || stallAfterMs > 86400000) throw new TypeError('invalid acknowledgment intent health options');
+  return Object.freeze({ scanLimit, stallAfterMs });
 }

@@ -615,3 +615,8 @@ export { EventAcknowledgmentIntentClaim, claimEventAcknowledgmentIntent, recover
 
 export { getEventAcknowledgmentIntentHealth, type EventAcknowledgmentIntentHealthOptions,
   type EventAcknowledgmentIntentHealth } from './event-acknowledgment-intent-health.js';
+
+export { watchEventAcknowledgmentIntentHealth, EventAcknowledgmentIntentWatchCallbackError,
+  type EventAcknowledgmentIntentWatchOptions, type EventAcknowledgmentIntentWatchMetric,
+  type EventAcknowledgmentIntentAlert, type EventAcknowledgmentIntentAlertChange,
+  type EventAcknowledgmentIntentAlertReason } from './event-acknowledgment-intent-watch.js';

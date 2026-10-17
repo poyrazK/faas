@@ -1,5 +1,7 @@
 # Architecture Decision Records
 
+- [Node sustained acknowledgment recovery alerts](20261017111119-node-acknowledgment-recovery-watch.md)
+
 - [Node acknowledgment intent recovery health](20261017110351-node-acknowledgment-intent-health.md)
 
 - [Durable Node acknowledgment intents](20261017105545-node-durable-acknowledgment-intents.md)

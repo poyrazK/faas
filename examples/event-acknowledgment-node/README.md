@@ -2,8 +2,8 @@
 
 This module connects the [Node durable intent store](../../docs/event-acknowledgment-node-intents.md)
 to an application-owned durable ingestion queue and a separate recovery host.
-Copy/import `consumer.mjs` into those hosts. It starts no in-process background
-worker and supplies no queue/storage implementation.
+Copy/import `consumer.mjs` into those hosts. No helper starts automatically, and
+the module supplies no queue/storage implementation.
 
 Install the Node SDK, configure one `FaaSClient` with `apps:read` and `deploy:write`
 (or admin) credentials, and explicitly install `eventConsumerReceiptSchema` and
@@ -128,5 +128,35 @@ An extra row marks `truncated`; invalid timestamp metadata makes `complete` fals
 A zero stalled count in an incomplete sample cannot establish healthy recovery.
 Oldest ages describe the sample and `observedAt` comes from the database clock.
 
-The host owns observation scheduling and metrics/notification transport. Nothing
-starts a poller or installs alerts. See the [Node health options and coverage](../../docs/event-acknowledgment-intent-health.md#node-summary).
+The host owns observation scheduling and metrics/notification transport. The read
+helper starts no poller or alerts. See the [Node health options and coverage](../../docs/event-acknowledgment-intent-health.md#node-summary).
+
+## Watch sustained recovery conditions
+
+Start a separate monitoring watch explicitly from the host, using a signal that
+is aborted on shutdown:
+
+```js
+import { watchAcknowledgmentRecovery } from './consumer.mjs';
+
+await watchAcknowledgmentRecovery({ app: appSlug, accountId, appId }, pool, signal,
+  async (alert, callbackSignal) => {
+    callbackSignal.throwIfAborted();
+    await recordRecoveryAlertLocally(alert, callbackSignal);
+  });
+```
+
+The wrapper enables a due threshold of 100 and stalled threshold of 1, with
+30-second confirmation for both firing and resolution. It reads metadata only,
+uses the shared five-minute stall definition and claims no recovery work. Both
+transitions need multiple fresh, complete, advancing observations. Missing,
+truncated, stale or out-of-order evidence resets proof and emits `unknown` or
+`confirmation_lost`; it never proves an incident resolved.
+
+Callbacks are local, sequential and awaited. The host owns their persistence and
+notification transport. Failure stops the watch with the failed metadata alert;
+notification uncertainty is not automatically retried. Cancellation rejects with
+the signal reason, without resolving an alert. Configure actual acquisition/query
+and statement timeouts: SDK cancellation is cooperative and waits for active
+operations rather than overlapping polls or releasing a busy connection. Watch
+state is in memory and resets on restart. See [Node watch configuration and recovery](../../docs/event-acknowledgment-intent-health.md#node-watch).

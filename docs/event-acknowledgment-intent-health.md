@@ -1,7 +1,7 @@
 # Acknowledgment intent recovery health
 
-The Go and Node SDKs can inspect the application-owned acknowledgment intent store.
-The Go SDK also watches for sustained recovery backlog. Install the schema and
+The Go and Node SDKs inspect the application-owned acknowledgment intent store and
+watch for sustained recovery backlog. Install the schema and
 configure recovery with [Go intents](event-acknowledgment-intents.md) or
 [Node intents](event-acknowledgment-node-intents.md) first.
 These helpers only read local metadata: they do not claim work, send callbacks,
@@ -80,8 +80,8 @@ Export `complete` and `truncated` with every metric. An incomplete sample cannot
 establish that all recovery work is healthy, even when `stalled` is zero. A stopped
 recovery host can leave ingestion and business processing working while due and
 stalled callback backlog grows. This summary describes that local backlog; it does
-not confirm platform delivery or prove the recovery host's availability. Sustained
-Node alerts are a separate increment. See the
+not confirm platform delivery or prove the recovery host's availability. For
+sustained alerts, use the [Node watch](#node-watch). See the
 [read-only example](../examples/event-acknowledgment-node/README.md#observe-recovery-health).
 
 ## Reading the summary
@@ -114,7 +114,7 @@ confirmation concerns Gregale acknowledgment receipt; it does not independently
 prove business processing, ordering, or exactly-once side effects. No payloads,
 tokens, or claim secrets appear in these summaries.
 
-## Watching sustained conditions (Go)
+## Watching sustained conditions
 
 Thresholds are opt-in counts: zero disables a condition, at least one must be
 positive, and neither may exceed the scan limit. Metrics are `due_backlog` and
@@ -135,9 +135,111 @@ reset confirmation. They produce `unknown`, or `confirmation_lost` for a firing
 condition, never `resolved`. Fresh evidence must establish a condition again.
 Repeated unchanged unknown reasons are suppressed.
 
-Notifications are synchronous local callbacks. Slow callbacks delay polling and
-can invalidate continuity. The caller owns cancellation and application lifetime;
-cancellation returns the context error without resolving alerts. Alert state is
+Go notifications are synchronous local callbacks; Node callbacks are awaited
+sequentially. Slow callbacks delay polling and can invalidate continuity. The
+caller owns cancellation and application lifetime; cancellation returns the
+context error or abort reason without resolving alerts. Alert state is
 in memory and resets on restart. There is no notification transport, durable
 incident identity, checkpoint, or alert outbox. Applications needing those
 properties must provide them separately.
+
+## Node watch
+
+```js
+import {
+  watchEventAcknowledgmentIntentHealth,
+  EventAcknowledgmentIntentWatchCallbackError,
+} from '@gregale/sdk-node';
+
+const controller = new AbortController();
+// The host calls controller.abort() on shutdown.
+try {
+  await watchEventAcknowledgmentIntentHealth(pool, accountId, appId, {
+    signal: controller.signal,
+    health: { scanLimit: 1000, stallAfterMs: 300000 },
+    dueThreshold: 100,
+    stalledThreshold: 1,
+    sustainMs: 30000,
+  }, async (alert, signal) => {
+    signal.throwIfAborted();
+    await recordRecoveryAlertLocally(alert, signal);
+  });
+} catch (error) {
+  if (controller.signal.aborted) throw controller.signal.reason;
+  if (error instanceof EventAcknowledgmentIntentWatchCallbackError) {
+    // error.alert is metadata only; notification outcome is unconfirmed.
+    // The application decides how to reconcile or retry its own notification.
+  }
+  throw error;
+}
+```
+
+The watch starts with one immediate read and runs until cancellation or a local
+callback failure. It performs only the read-only health query; it never claims or
+repairs intents, sends platform acknowledgment callbacks, or executes business work.
+Use a recoverable monitoring host; the function does not keep a parked VM awake.
+One watch has at most two conditions, with options copied before its first await.
+
+| Option | Range and default |
+| --- | --- |
+| `health.scanLimit`, `health.stallAfterMs` | Same bounds/defaults as the Node summary. |
+| `dueThreshold`, `stalledThreshold` | Integer counts 0..scanLimit; default 0 disables. Enable at least one. |
+| `pollIntervalMs` | Whole milliseconds 100..60000; default 5000 after completed reads and callbacks. |
+| `queryTimeoutMs` | Cooperative read deadline, whole milliseconds 10..30000; default 5000, including acquisition. |
+| `maxAgeMs` | Whole milliseconds from max(2*pollIntervalMs, queryTimeoutMs) through 300000; default max(3*pollIntervalMs, 2*queryTimeoutMs). |
+| `sustainMs` | Whole milliseconds pollIntervalMs..86400000; default max(30000, pollIntervalMs), for firing and resolution. |
+| `signal` | Optional host cancellation. Without it the host must otherwise own process lifetime. |
+
+Omit an option to choose its default. Zero is accepted only for disabled thresholds.
+Threshold equality breaches. Complete observations must have distinct, advancing
+database timestamps, be no later than the local wall clock, and be within
+`maxAgeMs`. Poll continuity and sustain duration use the local monotonic clock.
+A gap longer than `maxAgeMs` resets proof even when the latest database observation
+is fresh. Both firing and resolution need at least two eligible samples spanning
+`sustainMs`. Crossing back over the threshold resets the relevant proof.
+
+Each alert is immutable metadata with `accountId`, `appId`, `metric`, `change`,
+`reason`, `at`, `value`, `threshold`, and optional `health`. Metrics are
+`due_backlog` and `stalled_recovery`. `at` records local observation completion;
+`health.observedAt` remains the database observation time. No token, payload,
+invocation identity, SQL diagnostic or raw read error is included.
+
+| Change | Meaning |
+| --- | --- |
+| `firing` / `threshold_exceeded` | Sustained complete evidence confirmed a breach. |
+| `resolved` / `threshold_cleared` | A firing condition cleared for the full confirmation interval. |
+| `unknown` | Evidence is unavailable: `read_failed`, `incomplete`, `stale`, `out_of_order`, or `sample_gap`. |
+| `confirmation_lost` | A firing condition lost evidence; the reason identifies the loss. This does not resolve it. |
+
+Repeated unchanged unknown reasons are suppressed. After evidence loss the
+condition starts fresh confirmation; a renewed breach must sustain again. Initial
+healthy reads, and healthy reads after an unknown state, do not emit a resolution
+for an earlier incident. Applications must retain their own incident/reconciliation
+policy; this watch persists no incident identity. A read failure has no `health`
+and `value` is zero, which is not evidence of an empty backlog. Incomplete/stale
+snapshots may be attached to unknown alerts but are not confirmation evidence.
+
+The per-read deadline aborts the health call cooperatively. An operation that
+settles after its deadline becomes `read_failed` even if its timer callback was
+delayed. The watch awaits actual acquisition/query completion before releasing
+the connection or starting another poll. It never races an active query and
+abandons its connection. Configure driver acquisition/query timeouts and
+PostgreSQL statement timeouts to bound an unresponsive operation. Cancellation
+likewise waits for active driver work, then rejects with the host signal reason
+without emitting a final resolution.
+
+Local `notify(alert, signal)` callbacks may be synchronous or async; the watch
+awaits them in order and does not retry them. A callback failure stops the watch
+with `EventAcknowledgmentIntentWatchCallbackError`, whose `alert` is the failed
+metadata notification. The raw cause is omitted. If cancellation occurs while a
+callback is running, the watch waits for it and returns the abort reason. Callback
+work must observe its signal and return promptly. Slow callbacks delay later
+notifications and can cause a sample gap on the next read. Notifications generated
+from one observation retain that observation-completion time if delivery is slow.
+
+State resets on restart. There is no durable alert outbox, notification transport
+or automatic reattachment of an old incident. The host owns scheduling, persistence
+and downstream deduplication when needed. See the
+[monitoring integration example](../examples/event-acknowledgment-node/README.md#watch-sustained-recovery-conditions).
+Local validation is build, generation and static checks; database timing,
+cancellation and notification behavior require hosted acceptance before release.
