@@ -4,6 +4,7 @@ import { gotrue, limits } from './config.mjs'
 import { EmailError, invitationMessage } from './email.mjs'
 import { objectResource, objectURL, presign } from './storage.mjs'
 import { WorkflowError } from './workflows.mjs'
+import { orgSSORoute } from './orgsso.mjs'
 
 // /authz/v1: organizations, members, invitations and authorization checks
 // (ADR-1190). Every operation is a gregale_auth SQL function that enforces
@@ -16,7 +17,8 @@ const codes = new Map([
 ])
 // Messages raised by gregale_auth functions; anything else is never echoed.
 const stableMessages = new Set(['not_authenticated', 'forbidden', 'not_found', 'slug_taken', 'invalid_organization', 'organization_limit',
-  'unknown_role', 'invalid_invitation', 'invitation_limit', 'invitation_invalid', 'invitation_email_mismatch', 'already_member', 'last_owner'])
+  'unknown_role', 'invalid_invitation', 'invitation_limit', 'invitation_invalid', 'invitation_email_mismatch', 'already_member', 'last_owner',
+  'domain_taken', 'domain_limit', 'invalid_domain', 'domain_in_use', 'domain_not_verified', 'sso_provider_limit'])
 
 export class HTTPError extends Error {
   constructor(status, code) { super(code); this.status = status; this.code = code }
@@ -107,6 +109,10 @@ export async function route(pool, claims, method, path, body, services = {}) {
   }
   if (parts[0] === 'orgs' && parts.length >= 3) {
     const org = requireUUID(parts[1])
+    if (parts[2] === 'domains' || parts[2] === 'sso') {
+      if (!services.orgSSO) throw new HTTPError(403, 'org_sso_disabled')
+      return orgSSORoute({ rows, ...services.orgSSO }, org, method, parts.slice(2), body)
+    }
     if (parts[2] === 'members' && parts.length === 3 && method === 'GET') {
       return [200, { members: await rows('SELECT user_id, email, role, created_at FROM gregale_auth.list_members($1)', [org]) }]
     }
@@ -192,7 +198,7 @@ export function readJSON(req, maxBytes) {
   })
 }
 
-export function createAuthzHandler({ pool, authenticate, origins = [], invitations = {}, storage, workflows }) {
+export function createAuthzHandler({ pool, authenticate, origins = [], invitations = {}, storage, workflows, orgSSO }) {
   const allowed = new Set(origins)
   return async (req, res, path) => {
     const origin = req.headers.origin
@@ -208,7 +214,7 @@ export function createAuthzHandler({ pool, authenticate, origins = [], invitatio
       if (!token) throw new HTTPError(401, 'not_authenticated')
       const body = await readJSON(req, limits.authzBodyBytes)
       const claims = await authenticate(token)
-      const [status, payload] = await route(pool, claims, req.method, path, body, { invitations, storage, workflows })
+      const [status, payload] = await route(pool, claims, req.method, path, body, { invitations, storage, workflows, orgSSO })
       res.writeHead(status, headers)
       res.end(payload === null ? undefined : JSON.stringify(payload))
     } catch (err) {

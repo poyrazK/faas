@@ -126,6 +126,9 @@ type Change struct {
 	// SMSCountries lists the country calling codes phone sign-in may text;
 	// empty allows every country.
 	SMSCountries *[]string
+	// OrgSSO lets organizations verify their email domains and connect
+	// their own SAML identity provider; it needs SSO.
+	OrgSSO *bool
 }
 
 // Captcha is a CAPTCHA provider and its keys; the secret stays in the app.
@@ -237,6 +240,9 @@ func (c Change) Secrets() (map[string]string, []string, error) {
 		} else {
 			set[secretSMSCountries] = value
 		}
+	}
+	if c.OrgSSO != nil {
+		set["AUTH_ORG_SSO"] = flag(*c.OrgSSO)
 	}
 	if c.SMS != nil {
 		sms, removed, err := c.SMS.secrets()

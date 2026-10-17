@@ -160,6 +160,7 @@ gregale auth config shop-auth --email-provider resend --email-from 'Shop <auth@s
 | `--sms PROVIDER\|off`, `--sms-account`, `--sms-sender`, `--sms-secret-stdin` | Phone sign-in by text message (see Phone sign-in). |
 | `--sms-countries CODES\|all` | The countries phone sign-in may text (see Phone sign-in). |
 | `--sso on\|off` | Organization single sign-on with SAML (see Organization single sign-on). |
+| `--org-sso on\|off` | Let organizations connect their own identity provider (see Organization single sign-on). |
 
 Settings are app secrets, which are write-only, so the CLI and the dashboard
 read them back from the running app's public `/settings/v1`. It reports only
@@ -428,6 +429,34 @@ it. The Auth app then serves `/scim/v2/Users` for that provider's people:
 - Lookups by `userName eq` and `externalId eq`, replace (`PUT`) and both Okta
   and Entra ID `PATCH` forms are supported. Groups are not: the provider's
   `--org` and `--role` decide membership.
+
+### Self-service SSO for organizations
+
+Let your business customers set up SSO themselves:
+
+```sh
+gregale auth config shop-auth --sso on --org-sso on
+```
+
+An organization's owners, and members whose role grants `sso:manage`, then
+prove they control an email domain and connect their identity provider from
+your application, with `@gregale/auth`:
+
+```ts
+const { record } = await auth.orgSSO.domains.add(org.id, 'acme.com')
+// Publish record: TXT _gregale-auth.acme.com "gregale-auth-verification=…"
+await auth.orgSSO.domains.verify(org.id, 'acme.com')
+await auth.orgSSO.providers.add(org.id, { metadataUrl: 'https://acme.okta.com/app/abc/sso/saml/metadata', domains: ['acme.com'], role: 'member' })
+const { token, scim_url } = await auth.orgSSO.providers.scimToken(org.id, providerId) // optional SCIM
+```
+
+The Auth app looks the TXT record up itself. A domain can be verified by
+only one organization, so no organization can send another's people to its
+identity provider, and a provider may serve only its organization's verified
+domains. Each organization may connect up to three providers, and a provider
+never grants the owner role. The same routes are on `/authz/v1/orgs/{org}/domains`
+and `/authz/v1/orgs/{org}/sso` for other clients. `--org-sso off` stops new
+changes; providers already connected keep working.
 
 An SSO user is a separate account from a password or OAuth account with the
 same address. Because an identity provider vouches only for its own domains,

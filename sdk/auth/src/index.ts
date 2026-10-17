@@ -59,6 +59,9 @@ function aal(token: string): 'aal1' | 'aal2' {
 export type Organization = Readonly<{ id: string; slug: string; name: string; role?: string; created_at: string }>
 export type Member = Readonly<{ user_id: string; email: string; role: string; created_at: string }>
 export type Invitation = Readonly<{ id: string; email: string; role: string; expires_at: string; created_at?: string }>
+/** An email domain an organization proves it controls with a DNS TXT record. */
+export type OrgDomain = Readonly<{ domain: string; verified: boolean; verified_at: string | null; record: Readonly<{ type: 'TXT'; name: string; value: string }> }>
+export type OrgSSOProvider = Readonly<{ id: string; entity_id: string | null; metadata_url: string | null; domains: readonly string[]; role: string }>
 export type CreatedInvitation = Invitation & Readonly<{ delivered: boolean; token?: string }>
 
 /** A failed request. `code` is the stable server code, or `http_<status>`. */
@@ -385,6 +388,31 @@ export function createAuthClient(options: AuthClientOptions) {
       revoke: (org: string, invitation: string) => authz<null>('DELETE', `/orgs/${id(org)}/invitations/${id(invitation)}`),
       accept: (token: string) => authz<{ org_id: string; role: string }>('POST', '/invitations/accept', { token }),
     },
+    /**
+     * Self-service organization SSO, when the app owner turned it on: an
+     * organization's owners (or members with sso:manage) verify email
+     * domains with a DNS TXT record, then connect their own SAML identity
+     * provider for those domains.
+     */
+    orgSSO: {
+      domains: {
+        list: async (org: string) => (await authz<{ domains: OrgDomain[] }>('GET', `/orgs/${id(org)}/domains`)).domains,
+        /** Returns the TXT record to publish; then call verify. */
+        add: (org: string, domain: string) => authz<OrgDomain>('POST', `/orgs/${id(org)}/domains`, { domain }),
+        verify: (org: string, domain: string) => authz<OrgDomain>('POST', `/orgs/${id(org)}/domains/${id(domain)}/verify`, {}),
+        remove: (org: string, domain: string) => authz<null>('DELETE', `/orgs/${id(org)}/domains/${id(domain)}`),
+      },
+      providers: {
+        list: async (org: string) => (await authz<{ providers: OrgSSOProvider[] }>('GET', `/orgs/${id(org)}/sso`)).providers,
+        add: (org: string, input: { metadataUrl?: string; metadataXml?: string; domains: string[]; role?: string }) =>
+          authz<OrgSSOProvider>('POST', `/orgs/${id(org)}/sso`, ssoBody(input)),
+        update: (org: string, provider: string, input: { metadataUrl?: string; metadataXml?: string; domains?: string[]; role?: string }) =>
+          authz<OrgSSOProvider>('PATCH', `/orgs/${id(org)}/sso/${id(provider)}`, ssoBody(input)),
+        remove: (org: string, provider: string) => authz<null>('DELETE', `/orgs/${id(org)}/sso/${id(provider)}`),
+        /** Creates the token the identity provider uses for SCIM provisioning; shown once. */
+        scimToken: (org: string, provider: string) => authz<{ token: string; scim_url: string }>('POST', `/orgs/${id(org)}/sso/${id(provider)}/scim-token`, {}),
+      },
+    },
     /** Asks the Auth app whether the signed-in user may take action on resource. */
     async authorize(action: string, resource: string): Promise<boolean> {
       return (await authz<{ allowed: boolean }>('POST', '/authorize', { action, resource })).allowed === true
@@ -393,6 +421,13 @@ export function createAuthClient(options: AuthClientOptions) {
 }
 
 export type AuthClient = ReturnType<typeof createAuthClient>
+
+function ssoBody(input: { metadataUrl?: string; metadataXml?: string; domains?: string[]; role?: string }) {
+  return {
+    ...(input.metadataUrl ? { metadata_url: input.metadataUrl } : {}), ...(input.metadataXml ? { metadata_xml: input.metadataXml } : {}),
+    ...(input.domains ? { domains: input.domains } : {}), ...(input.role ? { role: input.role } : {}),
+  }
+}
 
 /** The resource name authorize() and gregale_auth.authorize() expect. */
 export function resource(org: string, kind: string, name: string | number): string {

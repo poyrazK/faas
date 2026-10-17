@@ -34,9 +34,11 @@ test('SSO settings name the service provider and never the key', () => {
   }
   const key = samlKey()
   const config = runtimeConfig({ ...base, AUTH_SSO: '1', AUTH_SAML_PRIVATE_KEY: key })
-  assert.deepEqual(config.settings.sso, { enabled: true, entity_id: 'https://shop-auth.gregale.app/auth/v1/sso/saml/metadata', acs_url: 'https://shop-auth.gregale.app/auth/v1/sso/saml/acs' })
+  assert.deepEqual(config.settings.sso, { enabled: true, entity_id: 'https://shop-auth.gregale.app/auth/v1/sso/saml/metadata', acs_url: 'https://shop-auth.gregale.app/auth/v1/sso/saml/acs', self_service: false })
+  assert.equal(runtimeConfig({ ...base, AUTH_SSO: '1', AUTH_SAML_PRIVATE_KEY: key, AUTH_ORG_SSO: '1' }).settings.sso.self_service, true)
+  assert.equal(runtimeConfig({ ...base, AUTH_ORG_SSO: '1' }).orgSSO, false)
   assert.ok(!JSON.stringify(config.settings).includes(key.slice(0, 40)))
-  assert.deepEqual(runtimeConfig(base).settings.sso, { enabled: false, entity_id: null, acs_url: null })
+  assert.deepEqual(runtimeConfig(base).settings.sso, { enabled: false, entity_id: null, acs_url: null, self_service: false })
   assert.throws(() => runtimeConfig({ ...base, GOTRUE_SAML_ENABLED: 'true' }), /managed by Gregale/)
   assert.throws(() => runtimeConfig({ ...base, AUTH_SSO: 'yes' }), /Invalid AUTH_SSO/)
 })

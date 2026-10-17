@@ -1,6 +1,6 @@
 # ADR-1190: Application Auth on a pinned GoTrue server
 
-- **Status:** proposed; phases 1–6 implemented (the `auth` credential mode; the template and `gregale auth create|status`; organizations, roles, `authorize()` and `--auth`; email, hosted pages and `@gregale/auth`; storage, realtime and workflow checks; owner administration, the dashboard screens and user import; signing-key rotation and typed settings; lifecycle events and the activity view; passkeys, branded hosted pages, CAPTCHA and activity retention; Go, Python and Node backend SDKs; phone sign-in by SMS; organization SAML single sign-on; Go and Python backend SDKs; SMS and recovery-code second factors with a hosted verification step; SCIM provisioning), not yet qualified on a live backend or native builder
+- **Status:** proposed; phases 1–6 implemented (the `auth` credential mode; the template and `gregale auth create|status`; organizations, roles, `authorize()` and `--auth`; email, hosted pages and `@gregale/auth`; storage, realtime and workflow checks; owner administration, the dashboard screens and user import; signing-key rotation and typed settings; lifecycle events and the activity view; passkeys, branded hosted pages, CAPTCHA and activity retention; Go, Python and Node backend SDKs; phone sign-in by SMS; organization SAML single sign-on; Go and Python backend SDKs; SMS and recovery-code second factors with a hosted verification step; SCIM provisioning; self-service organization SSO with DNS domain verification), not yet qualified on a live backend or native builder
 - **Date:** 2026-10-13
 - **Decision:** Package a pinned Supabase Auth (GoTrue) server with a Gregale front process as an ordinary Gregale app bound to the customer's managed PostgreSQL. Add Gregale-owned organizations, invitations, roles and one SQL authorization function that the Data API, object downloads, realtime channels and workflow starts all use.
 - **Why:** Gregale authenticates its own accounts, and its gateway, Data API and realtime service verify tokens from an identity provider the customer brings. Gregale issues no tokens for an application's own users, so every customer must still design sign-up, sessions, recovery, membership and permissions alone.
@@ -425,9 +425,19 @@ GoTrue keeps SSO accounts separate from other accounts with the same address,
 so an identity provider cannot sign in as an existing password or OAuth user.
 It could still assert any address for its own users, so an SSO user may
 accept an organization invitation only for an address in one of its
-provider's domains. Self-service SSO for an organization's own admins is
-rejected for now: it needs domain ownership proof, without which one
-organization could claim another's domain.
+provider's domains.
+
+Self-service SSO for an organization's own admins is opt-in
+(`AUTH_ORG_SSO`, which needs SSO). It requires proof of domain control: the
+organization adds a domain, publishes the returned token as a TXT record at
+`_gregale-auth.<domain>`, and the Auth app looks it up itself; a domain is
+verified by at most one organization (a partial unique index), so one
+organization cannot claim another's domain. Owners and members with
+`sso:manage` then register up to three providers for verified domains only,
+through `/authz/v1/orgs/{org}/sso`, which checks the rules in SQL
+(`check_org_sso`) before calling GoTrue's admin API and links the provider
+to the organization; a failed link removes the provider again. A domain an
+organization's provider serves cannot be removed.
 
 SCIM provisioning is served by the front, because GoTrue v2.197.0's SCIM
 module is an experimental stub with discovery endpoints only. Each SSO

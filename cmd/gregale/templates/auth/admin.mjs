@@ -71,7 +71,7 @@ export function goTrueAdmin(signer, port = gotrue.port) {
   })
 }
 
-function goTrueError({ status, data }) {
+export function goTrueError({ status, data }) {
   if (status >= 500) return new HTTPError(503, 'auth_unavailable')
   if (status === 404) return new HTTPError(404, 'not_found')
   // GoTrue's error codes are stable identifiers; its messages are not echoed.

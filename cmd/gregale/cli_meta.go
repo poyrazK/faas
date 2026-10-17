@@ -4325,6 +4325,7 @@ var cliCommands = []cliCommand{
 				{Name: "sms-secret-stdin", Short: "read the Twilio auth token, MessageBird access key, Textlocal API key or Vonage API secret from stdin"},
 				{Name: "sms-countries", Value: "CODES", Short: "country calling codes phone sign-in may text, comma-separated (1,44,49), or all"},
 				{Name: "sso", Value: "on|off", Short: "organization single sign-on (SAML); manage identity providers with gregale auth sso", ClosedSet: []string{"on", "off"}},
+				{Name: "org-sso", Value: "on|off", Short: "let organizations verify their email domains and connect their own identity provider (needs --sso on)", ClosedSet: []string{"on", "off"}},
 				{Name: "scope", Value: "SCOPE", Short: "environment scope"},
 			}, Examples: []string{"gregale auth config shop-auth", "gregale auth config shop-auth --events on", "gregale auth config shop-auth --password-min-length 12 --password-require lower,upper,digit --mfa on"}},
 			{Name: "providers", Short: "Manage OAuth sign-in providers such as Google or GitHub", Subcommands: []cliSub{

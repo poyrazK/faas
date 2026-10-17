@@ -263,3 +263,22 @@ test('second factors enrol, challenge and verify to aal2', async () => {
   await auth.mfa.unenroll('f3')
   assert.deepEqual(events, ['SIGNED_IN', 'MFA_VERIFIED', 'MFA_VERIFIED'])
 })
+
+test('organization SSO verifies domains and manages providers', async () => {
+  const api = server({
+    'POST /auth/v1/token': () => [200, tokens(1)],
+    'POST /authz/v1/orgs/o1/domains': call => [201, { domain: call.body.domain, verified: false, verified_at: null, record: { type: 'TXT', name: '_gregale-auth.acme.com', value: 'gregale-auth-verification=t' } }],
+    'POST /authz/v1/orgs/o1/domains/acme.com/verify': () => [200, { domain: 'acme.com', verified: true }],
+    'POST /authz/v1/orgs/o1/sso': call => [201, { id: 'p1', domains: call.body.domains, role: call.body.role }],
+    'POST /authz/v1/orgs/o1/sso/p1/scim-token': () => [201, { token: 'gscim_x', scim_url: 'https://shop-auth.gregale.app/scim/v2' }],
+  })
+  const auth = createAuthClient({ url: origin, fetch: api.fetch, store: null })
+  await auth.signInWithPassword({ email: 'a@example.test', password: 'pw' })
+  assert.equal((await auth.orgSSO.domains.add('o1', 'acme.com')).record.name, '_gregale-auth.acme.com')
+  assert.equal((await auth.orgSSO.domains.verify('o1', 'acme.com')).verified, true)
+  assert.deepEqual(api.calls.at(-1).body, {})
+  await auth.orgSSO.providers.add('o1', { metadataUrl: 'https://idp.acme.com/m', domains: ['acme.com'], role: 'member' })
+  assert.deepEqual(api.calls.at(-1).body, { metadata_url: 'https://idp.acme.com/m', domains: ['acme.com'], role: 'member' })
+  assert.equal((await auth.orgSSO.providers.scimToken('o1', 'p1')).token, 'gscim_x')
+  assert.equal(api.calls.at(-1).headers.Authorization, 'Bearer access-1')
+})

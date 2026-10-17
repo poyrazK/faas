@@ -195,7 +195,7 @@ export function runtimeConfig(env) {
   if (redirects.length > limits.redirectURLs) throw new Error('Too many AUTH_REDIRECT_URLS')
   redirects.forEach(value => redirectURL(value, 'AUTH_REDIRECT_URLS'))
   if (typeof env.AUTH_JWT_SECRET !== 'string' || env.AUTH_JWT_SECRET.length < 32) throw new Error('AUTH_JWT_SECRET must hold at least 32 characters')
-  for (const flag of ['AUTH_AUTOCONFIRM', 'AUTH_DISABLE_SIGNUP', 'AUTH_LIFECYCLE_EVENTS', 'AUTH_SSO']) {
+  for (const flag of ['AUTH_AUTOCONFIRM', 'AUTH_DISABLE_SIGNUP', 'AUTH_LIFECYCLE_EVENTS', 'AUTH_SSO', 'AUTH_ORG_SSO']) {
     if (env[flag] !== undefined && env[flag] !== '1' && env[flag] !== '0') throw new Error(`Invalid ${flag}`)
   }
   const passthrough = {}
@@ -249,7 +249,9 @@ export function runtimeConfig(env) {
   const captcha = captchaConfig(env)
   const retention = env.AUTH_AUDIT_RETENTION_DAYS ?? ''
   if (retention !== '' && (!/^[1-9][0-9]{0,3}$/.test(retention) || Number(retention) > limits.auditRetentionMaxDays)) throw new Error(`AUTH_AUDIT_RETENTION_DAYS must be 1 to ${limits.auditRetentionMaxDays}`)
-  const config = { external, api, gotrueEnv, redirects, keys: { signing: keys.signing, verifying: keys.verifying }, authz: authzConfig(env.AUTH_AUTHZ), origins: browserOrigins(site, redirects), email, app: branding.name, branding, captcha, lifecycleEvents: env.AUTH_LIFECYCLE_EVENTS === '1', auditRetentionDays: retention === '' ? null : Number(retention), smsCountries: smsCountries(env) }
+  const config = { external, api, gotrueEnv, redirects, keys: { signing: keys.signing, verifying: keys.verifying }, authz: authzConfig(env.AUTH_AUTHZ), origins: browserOrigins(site, redirects), email, app: branding.name, branding, captcha, lifecycleEvents: env.AUTH_LIFECYCLE_EVENTS === '1', auditRetentionDays: retention === '' ? null : Number(retention), smsCountries: smsCountries(env),
+    // Self-service organization SSO needs SSO itself.
+    orgSSO: env.AUTH_ORG_SSO === '1' && gotrueEnv.GOTRUE_SAML_ENABLED === 'true' }
   return { ...config, settings: publicSettings(config) }
 }
 
@@ -257,7 +259,7 @@ export function runtimeConfig(env) {
 // anyway (published key IDs, enabled providers, rules a sign-up form shows)
 // or harmless. The CLI and dashboard read settings here because app secrets
 // are write-only.
-export function publicSettings({ gotrueEnv: g, redirects, keys, email, app, branding, captcha, lifecycleEvents, auditRetentionDays, smsCountries: countries }) {
+export function publicSettings({ gotrueEnv: g, redirects, keys, email, app, branding, captcha, lifecycleEvents, auditRetentionDays, smsCountries: countries, orgSSO }) {
   const passkeys = g.GOTRUE_PASSKEY_ENABLED === 'true'
   const flag = (value, fallback) => value === undefined ? fallback : value === 'true'
   const required = (g.GOTRUE_PASSWORD_REQUIRED_CHARACTERS ?? '').split(':').filter(Boolean)
@@ -283,8 +285,8 @@ export function publicSettings({ gotrueEnv: g, redirects, keys, email, app, bran
     // What an identity provider needs to trust this app: GoTrue uses its
     // metadata URL as the service provider's entity ID.
     sso: g.GOTRUE_SAML_ENABLED === 'true'
-      ? { enabled: true, entity_id: `${g.API_EXTERNAL_URL}/sso/saml/metadata`, acs_url: `${g.API_EXTERNAL_URL}/sso/saml/acs` }
-      : { enabled: false, entity_id: null, acs_url: null },
+      ? { enabled: true, entity_id: `${g.API_EXTERNAL_URL}/sso/saml/metadata`, acs_url: `${g.API_EXTERNAL_URL}/sso/saml/acs`, self_service: Boolean(orgSSO) }
+      : { enabled: false, entity_id: null, acs_url: null, self_service: false },
     keys,
   }
 }

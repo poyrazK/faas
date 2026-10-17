@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs'
 import { spawn } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
 import pg from 'pg'
-import { adminKeyHashes, createAdminHandler, goTrueAdmin, signingKey } from './admin.mjs'
+import { adminKeyHashes, createAdminHandler, goTrueAdmin, goTrueError, signingKey } from './admin.mjs'
 import { createAuthzHandler, goTrueAuthenticator } from './authz.mjs'
 import { createHookServer, createMailer, hookAddress, hookEnv, newHookSecret } from './email.mjs'
 import { filterLogs } from './logs.mjs'
@@ -186,12 +186,13 @@ export function start(env = process.env) {
   const invitations = { mailer, external: config.external, app: config.app }
   const ui = { siteURL: config.gotrueEnv.GOTRUE_SITE_URL, redirectURLs: config.redirects, app: config.app, branding: config.branding, captcha: config.captcha }
   const workflows = workflowsConfig(env)
-  const authz = createAuthzHandler({ pool, authenticate: goTrueAuthenticator(), origins: config.origins, invitations, storage: storageBindings(env), workflows: workflows && createWorkflowStarter(workflows) })
+  const goTrue = goTrueAdmin(signingKey(config.gotrueEnv.GOTRUE_JWT_KEYS))
+  const orgSSO = config.orgSSO ? { admin: goTrue, goTrueError, external: config.external } : null
+  const authz = createAuthzHandler({ pool, authenticate: goTrueAuthenticator(), origins: config.origins, invitations, storage: storageBindings(env), workflows: workflows && createWorkflowStarter(workflows), orgSSO })
   const realtime = createRealtimeAuthorizer({ pool, tokens: callbackTokens(env) })
   // The dashboard is served from the Gregale API origin.
   let dashboard = []
   try { dashboard = [new URL(env.AUTH_GREGALE_API_URL).origin] } catch { /* no dashboard origin sealed */ }
-  const goTrue = goTrueAdmin(signingKey(config.gotrueEnv.GOTRUE_JWT_KEYS))
   const admin = createAdminHandler({ pool, admin: goTrue, keys: adminKeyHashes(env), origins: dashboard, external: config.external })
   const scim = createScimHandler({ pool, admin: goTrue, base: config.external })
   const server = createServer({ authz, ui, realtime, admin, settings: config.settings, smsCountries: config.smsCountries, scim })

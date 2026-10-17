@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	authConfigUsage    = "usage: gregale auth config NAME [--site-url URL] [--redirect-urls URLS] [--signup on|off] [--autoconfirm on|off] [--password-min-length N] [--password-require CLASSES] [--leaked-password-check on|off] [--mfa on|off] [--mfa-phone on|off] [--recovery-codes on|off] [--email-provider resend|postmark|none --email-from FROM --email-api-key-stdin] [--authz FILE] [--events on|off] [--passkeys on|off] [--passkey-rp-id DOMAIN|none] [--brand-name NAME] [--brand-color #RRGGBB] [--brand-logo-url URL] [--captcha turnstile|hcaptcha|off --captcha-site-key KEY --captcha-secret-stdin] [--activity-retention DAYS|forever] [--sms twilio|twilio_verify|messagebird|textlocal|vonage|off --sms-account ID --sms-sender SENDER --sms-secret-stdin] [--sms-countries CODES|all] [--sso on|off]"
+	authConfigUsage    = "usage: gregale auth config NAME [--site-url URL] [--redirect-urls URLS] [--signup on|off] [--autoconfirm on|off] [--password-min-length N] [--password-require CLASSES] [--leaked-password-check on|off] [--mfa on|off] [--mfa-phone on|off] [--recovery-codes on|off] [--email-provider resend|postmark|none --email-from FROM --email-api-key-stdin] [--authz FILE] [--events on|off] [--passkeys on|off] [--passkey-rp-id DOMAIN|none] [--brand-name NAME] [--brand-color #RRGGBB] [--brand-logo-url URL] [--captcha turnstile|hcaptcha|off --captcha-site-key KEY --captcha-secret-stdin] [--activity-retention DAYS|forever] [--sms twilio|twilio_verify|messagebird|textlocal|vonage|off --sms-account ID --sms-sender SENDER --sms-secret-stdin] [--sms-countries CODES|all] [--sso on|off] [--org-sso on|off]"
 	authProvidersUsage = "usage: gregale auth providers list NAME | gregale auth providers enable NAME PROVIDER --client-id ID [--client-secret-stdin] [--url URL] | gregale auth providers disable NAME PROVIDER"
 )
 
@@ -58,6 +58,7 @@ func cmdAuthConfig(args []string) int {
 	authzFile := fs.String("authz", "", "JSON file declaring custom roles and policies (applied on restart)")
 	events := fs.String("events", "", "on or off: publish user lifecycle events (auth.user.*) to Gregale's event bus")
 	sso := fs.String("sso", "", "on or off: organization single sign-on (SAML); manage identity providers with `gregale auth sso`")
+	orgSSO := fs.String("org-sso", "", "on or off: let organizations verify their email domains and connect their own identity provider (needs --sso on)")
 	sms := authSMSFlags{
 		provider:  fs.String("sms", "", "phone sign-in by text message through your own SMS account: twilio, twilio_verify, messagebird, textlocal, vonage, or off"),
 		account:   fs.String("sms-account", "", "Twilio account SID or Vonage API key"),
@@ -84,12 +85,15 @@ func cmdAuthConfig(args []string) int {
 	if err := sms.apply(given, &change); err != nil {
 		return printErr("Invalid Auth settings", err)
 	}
-	if given["sso"] {
-		on, err := parseOnOff("sso", *sso)
+	for name, target := range map[string]**bool{"sso": &change.SSO, "org-sso": &change.OrgSSO} {
+		if !given[name] {
+			continue
+		}
+		on, err := parseOnOff(name, map[string]string{"sso": *sso, "org-sso": *orgSSO}[name])
 		if err != nil {
 			return printErr("Invalid Auth settings", err)
 		}
-		change.SSO = &on
+		*target = &on
 	}
 	for name, target := range map[string]**bool{"mfa-phone": &change.MFAPhone, "recovery-codes": &change.RecoveryCodes} {
 		if !given[name] {
@@ -449,6 +453,9 @@ func showAuthConfig(ctx context.Context, app api.AppResponse) int {
 	sso := "off"
 	if settings.SSO.Enabled {
 		sso = "on; identity providers trust entity ID " + settings.SSO.EntityID + " with ACS URL " + settings.SSO.ACSURL
+		if settings.SSO.SelfService {
+			sso += "; organizations may connect their own"
+		}
 	}
 	phone := "off"
 	if settings.Phone.Enabled {
