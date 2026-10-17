@@ -21598,3 +21598,11 @@ SELECT f.deployment_id::text FROM deployments d JOIN apps a ON a.id=d.app_id
  JOIN source_build_rootfs f ON f.id=p.artifact_id
 WHERE d.id=sqlc.arg(deployment_id)::uuid AND d.app_id=sqlc.arg(app_id)::uuid AND a.account_id=sqlc.arg(account_id)::uuid
  AND environment_build_artifact_valid(d,true);
+
+-- Retained serving receipts select historical graphs without requiring them to
+-- remain active or to match the source's current approved revision.
+-- name: EnvironmentWorkloadGraphsForRollback :many
+SELECT g.* FROM environment_workload_graphs g
+JOIN environment_workload_serving_receipts r ON r.graph_id=g.id
+WHERE g.source_id=sqlc.arg(source_id)::uuid AND g.environment_id=sqlc.arg(environment_id)::uuid
+ AND r.release_set_id=sqlc.arg(release_id)::uuid;

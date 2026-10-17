@@ -14335,6 +14335,56 @@ func (q *Queries) EnvironmentWorkloadGraphForStatus(ctx context.Context, db DBTX
 	return i, err
 }
 
+const environmentWorkloadGraphsForRollback = `-- name: EnvironmentWorkloadGraphsForRollback :many
+SELECT g.id, g.source_id, g.environment_id, g.revision_id, g.generation, g.intent_version, g.plan_hash, g.definition_digest, g.members, g.resource_ids, g.phase, g.error_code, g.created_at, g.prepared_at FROM environment_workload_graphs g
+JOIN environment_workload_serving_receipts r ON r.graph_id=g.id
+WHERE g.source_id=$1::uuid AND g.environment_id=$2::uuid
+ AND r.release_set_id=$3::uuid
+`
+
+type EnvironmentWorkloadGraphsForRollbackParams struct {
+	SourceID      pgtype.UUID
+	EnvironmentID pgtype.UUID
+	ReleaseID     pgtype.UUID
+}
+
+// Retained serving receipts select historical graphs without requiring them to
+// remain active or to match the source's current approved revision.
+func (q *Queries) EnvironmentWorkloadGraphsForRollback(ctx context.Context, db DBTX, arg EnvironmentWorkloadGraphsForRollbackParams) ([]EnvironmentWorkloadGraph, error) {
+	rows, err := db.Query(ctx, environmentWorkloadGraphsForRollback, arg.SourceID, arg.EnvironmentID, arg.ReleaseID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []EnvironmentWorkloadGraph{}
+	for rows.Next() {
+		var i EnvironmentWorkloadGraph
+		if err := rows.Scan(
+			&i.ID,
+			&i.SourceID,
+			&i.EnvironmentID,
+			&i.RevisionID,
+			&i.Generation,
+			&i.IntentVersion,
+			&i.PlanHash,
+			&i.DefinitionDigest,
+			&i.Members,
+			&i.ResourceIds,
+			&i.Phase,
+			&i.ErrorCode,
+			&i.CreatedAt,
+			&i.PreparedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const environmentWorkloadIntent = `-- name: EnvironmentWorkloadIntent :one
 SELECT w.account_id,w.app_id,w.environment_id,w.source,w.runtime,w.created_at,w.updated_at,w.source_revision,w.service_bindings,w.schedule,w.variables,w.job_id
 FROM app_environment_workload_intents w

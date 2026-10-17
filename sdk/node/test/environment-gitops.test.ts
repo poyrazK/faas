@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { FaaSClient, ProjectsService } from '../src/index.js';
 import type { EnvironmentGitOpsExplanation } from '../src/index.js';
-import type { PreviewEnvironmentGitPromotionResponse } from '../src/index.js';
+import type { PreviewEnvironmentGitPromotionResponse, PreviewEnvironmentGitRollbackResponse } from '../src/index.js';
 
 test('GitOps promotion carries the reviewed hash and requires fresh target qualification', async () => {
   const sha = 'a'.repeat(40), digest = 'b'.repeat(64), hash = 'c'.repeat(64);
@@ -31,6 +31,38 @@ test('GitOps promotion carries the reviewed hash and requires fresh target quali
   try {
     const preview = await ProjectsService.previewEnvironmentGitPromotion({ slug: 'shop', environment: 'production', requestBody: {
       from_environment: 'staging', target_commit_sha: sha, expected_plan_hash: hash,
+    } });
+    assert.deepEqual(preview, result);
+  } finally { client.uninstall(); }
+});
+
+test('GitOps rollback carries the reviewed hash and requires fresh target qualification', async () => {
+  const sha = 'a'.repeat(40), digest = 'b'.repeat(64), hash = 'c'.repeat(64);
+  const result: PreviewEnvironmentGitRollbackResponse = {
+    project: 'shop', environment: 'production', current_release_set_id: 'current-release', observed_at: '2026-10-16T12:00:00Z',
+    read_only: true, values_redacted: true, requires_target_qualification: true,
+    origin: { source_id: 'source', revision_id: 'revision', commit_sha: sha, definition_digest: digest,
+      generation: 2, intent_version: 3, graph_id: 'graph', release_set_id: 'release', provider: 'github', repository_id: 123 },
+    target: { source_id: 'target', generation: 4, intent_version: 5, commit_sha: sha, definition_digest: digest,
+      proposed_digest: digest, manifest_path: 'environments/production.yaml' },
+    artifacts: [{ resource: 'workload/api', deployment_id: 'deployment', kind: 'image', image_digest: `sha256:${digest}` },
+      { resource: 'workload/worker', deployment_id: 'built-deployment', kind: 'github', build_id: 'build',
+        build_artifact_id: '018f22b4-1d51-7d55-a5d8-fdc06ec7c663', build_artifact_hash: hash,
+        artifact_digest: `sha256:${digest}`, build_commit_sha: sha }],
+    changes: [{ resource: 'workload/worker', before: { kind: 'source', directory: 'apps/worker' },
+      after: { kind: 'source', directory: 'apps/worker', build_artifact_id: '018f22b4-1d51-7d55-a5d8-fdc06ec7c663', build_artifact_hash: hash } }], blocking_reasons: [], plan_hash: hash,
+    target_plan: { manager: 'target', revision: `candidate:${sha}`, commit_sha: sha, generation: 4,
+      observed_version: 5, desired_digest: digest, plan_hash: hash, changes: [], blocking_reasons: [] },
+  };
+  const client = new FaaSClient('https://api.example.test', { token: 'token', fetch: async (input, init) => {
+    assert.equal(input instanceof Request ? input.url : String(input), 'https://api.example.test/v1/projects/shop/environments/production/gitops/rollback-plan');
+    assert.equal(init?.method, 'POST');
+    assert.deepEqual(JSON.parse(String(init?.body)), { release_set_id: '2ba0aa40-2362-4c0e-aeb1-6381666bb514', target_commit_sha: sha, expected_plan_hash: hash });
+    return Response.json(result);
+  } });
+  try {
+    const preview = await ProjectsService.previewEnvironmentGitRollback({ slug: 'shop', environment: 'production', requestBody: {
+      release_set_id: '2ba0aa40-2362-4c0e-aeb1-6381666bb514', target_commit_sha: sha, expected_plan_hash: hash,
     } });
     assert.deepEqual(preview, result);
   } finally { client.uninstall(); }

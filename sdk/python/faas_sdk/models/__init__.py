@@ -3348,6 +3348,8 @@ from .preview_environment_git_promotion_request import PreviewEnvironmentGitProm
 from .preview_environment_git_promotion_response import PreviewEnvironmentGitPromotionResponse
 from .preview_environment_git_revision_request import PreviewEnvironmentGitRevisionRequest
 from .preview_environment_git_revision_response import PreviewEnvironmentGitRevisionResponse
+from .preview_environment_git_rollback_request import PreviewEnvironmentGitRollbackRequest
+from .preview_environment_git_rollback_response import PreviewEnvironmentGitRollbackResponse
 from .preview_environment_member_response import PreviewEnvironmentMemberResponse
 from .preview_environment_status_response import PreviewEnvironmentStatusResponse
 from .preview_environment_status_response_phase import PreviewEnvironmentStatusResponsePhase
@@ -7904,6 +7906,8 @@ __all__ = (
     "PreviewEnvironmentGitPromotionResponse",
     "PreviewEnvironmentGitRevisionRequest",
     "PreviewEnvironmentGitRevisionResponse",
+    "PreviewEnvironmentGitRollbackRequest",
+    "PreviewEnvironmentGitRollbackResponse",
     "PreviewEnvironmentMemberResponse",
     "PreviewEnvironmentStatusResponse",
     "PreviewEnvironmentStatusResponsePhase",

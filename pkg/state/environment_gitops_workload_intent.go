@@ -231,6 +231,8 @@ func observeGitOpsWorkloadIntent(out *EnvironmentGitOpsObservation, snapshot git
 	if row.SourceRevision != "" {
 		value, _ := json.Marshal(row.SourceRevision)
 		out.State.Fields = append(out.State.Fields, environmentsync.Field{Resource: resource, Path: "source_revision", Value: value})
+	} else if source != nil && source.BuildArtifactID != "" {
+		out.State.Fields = append(out.State.Fields, environmentsync.Field{Resource: resource, Path: "source_revision", Value: json.RawMessage("null")})
 	} else if source != nil && source.Kind != "image" && sourceRevision != "" {
 		value, _ := json.Marshal(sourceRevision)
 		out.State.Fields = append(out.State.Fields, environmentsync.Field{Resource: resource, Path: "source_revision", Value: value})

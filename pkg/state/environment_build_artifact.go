@@ -41,7 +41,7 @@ func attachBuiltArtifact(input Deployment, origin Deployment, root SourceBuildRo
 		validateSourceBuildRootfs(root) != nil || root.ID != frozen.Source.BuildArtifactID || root.InputHash != frozen.Source.BuildArtifactHash ||
 		!sameStandardUUID(root.Input.DeploymentID, origin.ID) || !sameStandardUUID(root.Input.AppID, input.AppID) || !sameStandardUUID(origin.AppID, input.AppID) ||
 		origin.DeletedAt != nil || !sourceBuildRootfsMetadataMatches(root, origin) ||
-		original.Scope == frozen.Scope || original.SourceProvider != frozen.SourceProvider || original.SourceRepositoryID != frozen.SourceRepositoryID || original.SourceRepository != frozen.SourceRepository ||
+		sameStandardUUID(origin.ID, input.ID) || original.SourceProvider != frozen.SourceProvider || original.SourceRepositoryID != frozen.SourceRepositoryID || original.SourceRepository != frozen.SourceRepository ||
 		buildArtifactRecipe(*original.Source) != buildArtifactRecipe(*frozen.Source) || original.AppType != frozen.AppType || original.RuntimeBase != frozen.RuntimeBase {
 		return input, fmt.Errorf("%w: build artifact is absent, incompatible or outside the app trust scope", ErrEnvironmentWorkloadPreparationUnavailable)
 	}

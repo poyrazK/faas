@@ -364,6 +364,48 @@ and fresh environment-specific qualification remain required; production
 enforcement and dedicated native acceptance retain their existing gates. See
 [ADR-1345](adr/1345-gitops-promotion-proposals.md).
 
+## Prepare a reviewed code rollback
+
+Use `gregale projects environments release-sets shop production` to find retained
+release UUIDs. Select one previously served by this Git source in this
+environment. The read-only plan identifies its manifest commit, graph, exact
+image/build artifact and historical serving time:
+
+```sh
+gregale projects environments gitops rollback-plan shop production \
+  --to-release "$RELEASE_ID" --target-commit "$TARGET_COMMIT" --fail-on-blocked
+```
+
+Review the result, then request a fresh observation with its `plan_hash` before
+exporting a patch or manifest:
+
+```sh
+gregale projects environments gitops rollback-plan shop production \
+  --to-release "$RELEASE_ID" --target-commit "$TARGET_COMMIT" \
+  --expected-plan-hash "$REVIEWED_PLAN_HASH" --format patch > rollback-plan.json
+```
+
+`TARGET_COMMIT` contains the current target manifest, not the old code commit.
+`--format manifest --manifest environments/production.yaml` validates the complete
+local base digest and writes canonical JSON to stdout. Patch output carries the
+base digest and source test/replace operations; verify the full base digest
+before applying it. JSON and Markdown previews can report blockers; exports refuse
+a blocked or changed plan. `--fail-on-blocked` exits 2 for a printed blocked plan.
+
+Only compatible workload sources change. Current configuration, variables,
+secret references, routes, policy, queue/service bindings, schedules and additional
+workloads are preserved. Removed workloads and changed app mappings block export.
+Source/Dockerfile/function reuse requires compatible recipes and explicit matching
+app mappings. Missing, revoked or subsequently replaced artifacts block recovery. Preview does not pin
+artifacts or guarantee indefinite retention. Normal Git approval retains selected
+build artifacts under the existing GC fence before preparation.
+
+Historical serving receipts are selection evidence, not current readiness.
+Rollback requires normal Git review and fresh qualification/activation/serving;
+it does not restore data or undo database migrations. Job workloads and sidecars
+are excluded initially. Native VM/leak acceptance and production gates remain
+unchanged. See [ADR-1347](adr/1347-gitops-reviewed-rollback-proposals.md).
+
 ## Receive drift and source notifications
 
 Subscribe an account receiver explicitly to `environment.gitops.changed`:

@@ -34,7 +34,13 @@ func BuildPlan(desired DesiredState, observed ObservedState, owners []Ownership,
 	// commit must reconcile source workloads even if their manifest is unchanged.
 	for _, name := range sortedKeys(compiled.Definition.Workloads) {
 		workload := compiled.Definition.Workloads[name]
-		if workload.Source == nil || workload.Source.Kind == "image" || workload.Source.BuildArtifactID != "" {
+		if workload.Source == nil || workload.Source.Kind == "image" {
+			continue
+		}
+		if workload.Source.BuildArtifactID != "" {
+			// An explicit artifact replaces commit-based build intent. Keep
+			// ownership and clear the obsolete commit without enabling prune.
+			compiled.Fields = append(compiled.Fields, Field{Resource: "workload/" + name, Path: "source_revision", Value: json.RawMessage("null")})
 			continue
 		}
 		if !validCommitSHA(options.CommitSHA) {

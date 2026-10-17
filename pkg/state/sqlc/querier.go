@@ -738,6 +738,9 @@ type Querier interface {
 	EnvironmentWorkloadGraphForPreparation(ctx context.Context, db DBTX, arg EnvironmentWorkloadGraphForPreparationParams) (EnvironmentWorkloadGraph, error)
 	// Status reads use a read-only transaction and must not lock the candidate graph.
 	EnvironmentWorkloadGraphForStatus(ctx context.Context, db DBTX, arg EnvironmentWorkloadGraphForStatusParams) (EnvironmentWorkloadGraph, error)
+	// Retained serving receipts select historical graphs without requiring them to
+	// remain active or to match the source's current approved revision.
+	EnvironmentWorkloadGraphsForRollback(ctx context.Context, db DBTX, arg EnvironmentWorkloadGraphsForRollbackParams) ([]EnvironmentWorkloadGraph, error)
 	EnvironmentWorkloadIntent(ctx context.Context, db DBTX, arg EnvironmentWorkloadIntentParams) (AppEnvironmentWorkloadIntent, error)
 	EnvironmentWorkloadIntentContext(ctx context.Context, db DBTX, arg EnvironmentWorkloadIntentContextParams) ([]byte, error)
 	EnvironmentWorkloadIntentLockSource(ctx context.Context, db DBTX, arg EnvironmentWorkloadIntentLockSourceParams) ([]pgtype.UUID, error)

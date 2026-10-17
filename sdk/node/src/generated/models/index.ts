@@ -1706,6 +1706,8 @@ export type { PreviewEnvironmentGitPromotionRequest } from './PreviewEnvironment
 export type { PreviewEnvironmentGitPromotionResponse } from './PreviewEnvironmentGitPromotionResponse.js';
 export type { PreviewEnvironmentGitRevisionRequest } from './PreviewEnvironmentGitRevisionRequest.js';
 export type { PreviewEnvironmentGitRevisionResponse } from './PreviewEnvironmentGitRevisionResponse.js';
+export type { PreviewEnvironmentGitRollbackRequest } from './PreviewEnvironmentGitRollbackRequest.js';
+export type { PreviewEnvironmentGitRollbackResponse } from './PreviewEnvironmentGitRollbackResponse.js';
 export type { PreviewEnvironmentMemberResponse } from './PreviewEnvironmentMemberResponse.js';
 export type { PreviewEnvironmentStatusResponse } from './PreviewEnvironmentStatusResponse.js';
 export type { PreviewEventRequest } from './PreviewEventRequest.js';

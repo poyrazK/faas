@@ -29594,6 +29594,48 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
+  /v1/projects/{slug}/environments/{environment}/gitops/rollback-plan:
+    parameters:
+    - $ref: '#/components/parameters/EnvironmentGitOpsProjectSlug'
+    - $ref: '#/components/parameters/EnvironmentGitOpsEnvironment'
+    post:
+      tags:
+      - projects
+      operationId: previewEnvironmentGitRollback
+      summary: Propose a code rollback from a retained GitOps serving release.
+      description: Read-only, value-redacted proposal selecting exact retained artifacts in this environment.
+        Rechecks historical serving evidence, current artifact trust, identity mappings, target intent and ownership
+        on one snapshot. It preserves current configuration and changes only compatible workload sources.
+        Review the observation hash before export; normal Git approval and fresh qualification remain required.
+      requestBody:
+        required: true
+        description: Retained release UUID, immutable target-manifest commit, and optional previously reviewed observation
+          hash.
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PreviewEnvironmentGitRollbackRequest'
+      responses:
+        '200':
+          description: Read-only rollback proposal; blockers prevent patch and manifest export.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PreviewEnvironmentGitRollbackResponse'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
   /v1/projects/{slug}/environments/{environment}/gitops/revisions/preview:
     parameters:
     - $ref: '#/components/parameters/EnvironmentGitOpsProjectSlug'
@@ -58217,6 +58259,26 @@ components:
           type: string
           description: Previously reviewed hash; changed source, release, artifact or target observations return 409.
           pattern: ^[a-f0-9]{64}$
+    PreviewEnvironmentGitRollbackRequest:
+      type: object
+      description: Read-only environment rollback observation. A saved hash is not approval.
+      additionalProperties: false
+      required:
+      - release_set_id
+      - target_commit_sha
+      properties:
+        release_set_id:
+          type: string
+          format: uuid
+          description: Retained GitOps serving release UUID in this environment.
+        target_commit_sha:
+          type: string
+          description: Immutable commit whose current manifest will receive the rollback source changes.
+          pattern: ^[a-f0-9]{40}$
+        expected_plan_hash:
+          type: string
+          description: Previously reviewed rollback hash; changed historical evidence or target intent returns 409.
+          pattern: ^[a-f0-9]{64}$
     EnvironmentGitPromotionOrigin:
       type: object
       description: Scoped identity of the approved source release; graph and release IDs are empty if unproven.
@@ -58444,6 +58506,83 @@ components:
           type: string
           description: Domain-separated hash of source release, artifacts and target observation; never an execution
             token.
+          pattern: ^[a-f0-9]{64}$
+    PreviewEnvironmentGitRollbackResponse:
+      type: object
+      description: Read-only, value-redacted rollback proposal. It neither activates a release nor proves target readiness.
+      additionalProperties: false
+      required:
+      - project
+      - environment
+      - observed_at
+      - read_only
+      - values_redacted
+      - requires_target_qualification
+      - current_release_set_id
+      - origin
+      - target
+      - artifacts
+      - changes
+      - target_plan
+      - blocking_reasons
+      - plan_hash
+      properties:
+        project:
+          type: string
+          description: Project containing the selected historical release.
+        environment:
+          type: string
+          description: Environment whose workload code would be restored.
+        observed_at:
+          type: string
+          description: Time at which rollback selection and current target intent were observed.
+          format: date-time
+        read_only:
+          type: boolean
+          enum:
+          - true
+          description: True because rollback planning does not change pins, intent or deployment status.
+        values_redacted:
+          type: boolean
+          enum:
+          - true
+          description: Rollback output excludes variable values and secret-reference destinations.
+        requires_target_qualification:
+          type: boolean
+          enum:
+          - true
+          description: Historical serving evidence selects code; the new target still needs fresh qualification.
+        current_release_set_id:
+          type: string
+          description: Current active release identity, or empty when no release is active.
+        origin_served_at:
+          type: string
+          format: date-time
+          description: Historical serving completion time; missing proof blocks export.
+        origin:
+          $ref: '#/components/schemas/EnvironmentGitPromotionOrigin'
+        target:
+          $ref: '#/components/schemas/EnvironmentGitPromotionTarget'
+        artifacts:
+          type: array
+          description: Retained deployment and exact code artifact identities selected for rollback.
+          items:
+            $ref: '#/components/schemas/EnvironmentGitPromotionArtifact'
+        changes:
+          type: array
+          description: Code-only source contract proposals.
+          items:
+            $ref: '#/components/schemas/EnvironmentGitPromotionChange'
+        target_plan:
+          $ref: '#/components/schemas/EnvironmentGitOpsPlan'
+        blocking_reasons:
+          type: array
+          description: Historical evidence, artifact or target conflicts that prevent rollback export.
+          items:
+            type: string
+        plan_hash:
+          type: string
+          description: Rollback-specific SHA256 of historical serving evidence, selected code and current target intent; never deployment authority.
           pattern: ^[a-f0-9]{64}$
     PreviewEnvironmentGitPlanResponse:
       type: object

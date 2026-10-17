@@ -1712,6 +1712,8 @@ export type { PreviewEnvironmentGitPromotionRequest } from './models/PreviewEnvi
 export type { PreviewEnvironmentGitPromotionResponse } from './models/PreviewEnvironmentGitPromotionResponse.js';
 export type { PreviewEnvironmentGitRevisionRequest } from './models/PreviewEnvironmentGitRevisionRequest.js';
 export type { PreviewEnvironmentGitRevisionResponse } from './models/PreviewEnvironmentGitRevisionResponse.js';
+export type { PreviewEnvironmentGitRollbackRequest } from './models/PreviewEnvironmentGitRollbackRequest.js';
+export type { PreviewEnvironmentGitRollbackResponse } from './models/PreviewEnvironmentGitRollbackResponse.js';
 export type { PreviewEnvironmentMemberResponse } from './models/PreviewEnvironmentMemberResponse.js';
 export type { PreviewEnvironmentStatusResponse } from './models/PreviewEnvironmentStatusResponse.js';
 export type { PreviewEventRequest } from './models/PreviewEventRequest.js';

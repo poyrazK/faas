@@ -69,38 +69,52 @@ func Prepare(in Input) (api.PreviewEnvironmentGitPromotionResponse, environments
 	if e == nil || e.GraphID == "" || e.PlanHash == "" || e.GraphErrorCode != "" || e.SourceID != in.From.ID || e.EnvironmentID != in.From.EnvironmentID || e.RevisionID != in.Revision.ID || e.DefinitionDigest != from.Digest || e.Generation != in.From.Generation || e.IntentVersion != in.From.IntentVersion || !e.ArtifactsPrepared || !e.Qualified || !e.Activated || !e.Serving || len(e.BlockingReasons) != 0 || in.ReleaseID == "" {
 		out.BlockingReasons = append(out.BlockingReasons, "promotion_source_release_unproven")
 	}
+	proposal, proposed, err := ProposeSources(from.Definition, in.Target, out.Artifacts, "promotion")
+	out.Artifacts, out.Changes = proposal.Artifacts, proposal.Changes
+	out.BlockingReasons = append(out.BlockingReasons, proposal.BlockingReasons...)
+	out.Target.ProposedDigest = proposed.Digest
+	return out, proposed, err
+}
+
+// ProposeSources changes only compatible source contracts, retaining every
+// target configuration field. Scope and serving evidence are checked by callers.
+func ProposeSources(origin api.EnvironmentDefinition, target environmentsync.DesiredState, artifactsInput []api.EnvironmentGitPromotionArtifact, prefix string) (api.PreviewEnvironmentGitPromotionResponse, environmentsync.DesiredState, error) {
+	out := api.PreviewEnvironmentGitPromotionResponse{Artifacts: slices.Clone(artifactsInput), Changes: []api.EnvironmentGitPromotionChange{}, BlockingReasons: []string{}}
+	if out.Artifacts == nil {
+		out.Artifacts = []api.EnvironmentGitPromotionArtifact{}
+	}
 	artifacts := map[string]api.EnvironmentGitPromotionArtifact{}
 	for i, artifact := range out.Artifacts {
 		if artifact.ImageDigest != "" && !validImageIdentity(artifact.ImageDigest) {
 			artifact.ImageDigest = ""
 			out.Artifacts[i] = artifact
-			out.BlockingReasons = append(out.BlockingReasons, artifact.Resource+": promotion_artifact_provenance_mismatch")
+			out.BlockingReasons = append(out.BlockingReasons, artifact.Resource+": "+prefix+"_artifact_provenance_mismatch")
 		}
 		if hasBuildArtifact(artifact) && !validBuildArtifact(artifact) {
 			artifact.BuildArtifactID, artifact.BuildArtifactHash, artifact.ArtifactDigest, artifact.BuildCommitSHA = "", "", "", ""
 			out.Artifacts[i] = artifact
-			out.BlockingReasons = append(out.BlockingReasons, artifact.Resource+": promotion_artifact_provenance_mismatch")
+			out.BlockingReasons = append(out.BlockingReasons, artifact.Resource+": "+prefix+"_artifact_provenance_mismatch")
 		}
 		if _, exists := artifacts[artifact.Resource]; exists {
-			out.BlockingReasons = append(out.BlockingReasons, "promotion_artifact_ambiguous")
+			out.BlockingReasons = append(out.BlockingReasons, prefix+"_artifact_ambiguous")
 		}
 		artifacts[artifact.Resource] = artifact
 	}
-	proposed, err := environmentsync.Compile(in.Target.Definition)
-	if err != nil || proposed.Digest != in.Target.Digest {
+	proposed, err := environmentsync.Compile(target.Definition)
+	if err != nil || proposed.Digest != target.Digest {
 		return out, environmentsync.DesiredState{}, fmt.Errorf("invalid target definition")
 	}
-	for _, name := range slices.Sorted(maps.Keys(from.Definition.Workloads)) {
+	for _, name := range slices.Sorted(maps.Keys(origin.Workloads)) {
 		resource := "workload/" + name
-		origin, target := from.Definition.Workloads[name], proposed.Definition.Workloads[name]
+		origin, target := origin.Workloads[name], proposed.Definition.Workloads[name]
 		if origin.Source != nil && origin.Source.Kind != "image" {
 			artifact, exists := artifacts[resource]
 			if !exists || !validBuildArtifact(artifact) {
-				out.BlockingReasons = append(out.BlockingReasons, resource+": promotion_build_artifact_unproven")
+				out.BlockingReasons = append(out.BlockingReasons, resource+": "+prefix+"_build_artifact_unproven")
 				continue
 			}
 			if target.Source == nil || sourceRecipe(*origin.Source) != sourceRecipe(*target.Source) || origin.App == "" || origin.App != target.App || origin.Schedule != nil || target.Schedule != nil {
-				out.BlockingReasons = append(out.BlockingReasons, resource+": promotion_build_artifact_target_incompatible")
+				out.BlockingReasons = append(out.BlockingReasons, resource+": "+prefix+"_build_artifact_target_incompatible")
 				continue
 			}
 			after := *origin.Source
@@ -113,21 +127,21 @@ func Prepare(in Input) (api.PreviewEnvironmentGitPromotionResponse, environments
 			continue
 		}
 		if origin.Source == nil {
-			out.BlockingReasons = append(out.BlockingReasons, resource+": promotion_source_artifact_reference_unsupported")
+			out.BlockingReasons = append(out.BlockingReasons, resource+": "+prefix+"_source_artifact_reference_unsupported")
 			continue
 		}
 		if !api.ValidDeploymentImage(origin.Source.Image) {
-			out.BlockingReasons = append(out.BlockingReasons, resource+": promotion_artifact_provenance_mismatch")
+			out.BlockingReasons = append(out.BlockingReasons, resource+": "+prefix+"_artifact_provenance_mismatch")
 			continue
 		}
 		artifact, exists := artifacts[resource]
 		_, digest, _ := strings.Cut(origin.Source.Image, "@")
 		if !exists || artifact.DeploymentID == "" || artifact.Kind != "image" || artifact.ImageDigest != origin.Source.Image && artifact.ImageDigest != digest {
-			out.BlockingReasons = append(out.BlockingReasons, resource+": promotion_artifact_provenance_mismatch")
+			out.BlockingReasons = append(out.BlockingReasons, resource+": "+prefix+"_artifact_provenance_mismatch")
 			continue
 		}
 		if target.Source == nil || target.Source.Kind != "image" || !api.ValidDeploymentImage(target.Source.Image) {
-			out.BlockingReasons = append(out.BlockingReasons, resource+": promotion_target_image_contract_required")
+			out.BlockingReasons = append(out.BlockingReasons, resource+": "+prefix+"_target_image_contract_required")
 			continue
 		}
 		if *origin.Source != *target.Source {
@@ -137,8 +151,8 @@ func Prepare(in Input) (api.PreviewEnvironmentGitPromotionResponse, environments
 			proposed.Definition.Workloads[name] = target
 		}
 	}
-	if len(from.Definition.Workloads) == 0 {
-		out.BlockingReasons = append(out.BlockingReasons, "promotion_source_workloads_missing")
+	if len(origin.Workloads) == 0 {
+		out.BlockingReasons = append(out.BlockingReasons, prefix+"_source_workloads_missing")
 	}
 	proposed, err = environmentsync.Compile(proposed.Definition)
 	out.Target.ProposedDigest = proposed.Digest
@@ -207,4 +221,11 @@ func hasBuildArtifact(artifact api.EnvironmentGitPromotionArtifact) bool {
 }
 func validBuildArtifact(artifact api.EnvironmentGitPromotionArtifact) bool {
 	return api.ValidEnvironmentBuildArtifactReference(artifact.BuildArtifactID, artifact.BuildArtifactHash) && len(artifact.ArtifactDigest) == 71 && strings.HasPrefix(artifact.ArtifactDigest, "sha256:") && validImageIdentity(artifact.ArtifactDigest) && artifact.BuildID != "" && validBuildCommit(artifact.BuildCommitSHA)
+}
+
+func HasBuildArtifact(a api.EnvironmentGitPromotionArtifact) bool   { return hasBuildArtifact(a) }
+func ValidBuildArtifact(a api.EnvironmentGitPromotionArtifact) bool { return validBuildArtifact(a) }
+func ValidImageIdentity(value string) bool                          { return validImageIdentity(value) }
+func SourceRecipe(s api.EnvironmentWorkloadSource) api.EnvironmentWorkloadSource {
+	return sourceRecipe(s)
 }

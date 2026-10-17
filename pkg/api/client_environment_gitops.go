@@ -46,6 +46,12 @@ func (c *Client) PreviewEnvironmentGitPromotion(ctx context.Context, project, en
 	return out, err
 }
 
+func (c *Client) PreviewEnvironmentGitRollback(ctx context.Context, project, environment string, request PreviewEnvironmentGitRollbackRequest) (PreviewEnvironmentGitRollbackResponse, error) {
+	var out PreviewEnvironmentGitRollbackResponse
+	err := c.do(ctx, http.MethodPost, environmentGitOpsPath(project, environment)+"/rollback-plan", request, &out)
+	return out, err
+}
+
 func (c *Client) ApproveEnvironmentGitRevision(ctx context.Context, project, environment string, request ApproveEnvironmentGitRevisionRequest) (ApproveEnvironmentGitRevisionResponse, error) {
 	var out ApproveEnvironmentGitRevisionResponse
 	err := c.do(ctx, http.MethodPost, environmentGitOpsPath(project, environment)+"/revisions/approve", request, &out)

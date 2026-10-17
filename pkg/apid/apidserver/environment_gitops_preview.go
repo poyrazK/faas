@@ -18,3 +18,9 @@ func (s *server) previewEnvironmentGitPromotion(w http.ResponseWriter, r *http.R
 	service := gitops.PromotionService{Store: store, Source: s.environmentGitSourceForRequest, Revision: s.readEnvironmentGitRevision, Decode: decodeJSON}
 	service.Preview(w, r, account)
 }
+
+func (s *server) previewEnvironmentGitRollback(w http.ResponseWriter, r *http.Request, account state.Account) {
+	store, _ := s.store.(state.EnvironmentGitOpsRollbackStore)
+	service := gitops.RollbackService{Store: store, Source: s.environmentGitSourceForRequest, Revision: s.readEnvironmentGitRevision, Decode: decodeJSON}
+	service.Preview(w, r, account)
+}
