@@ -162,8 +162,9 @@ func TestNativeSlackInteractionDashboardAndCallbackPostgres(t *testing.T) {
 	}
 	issue := issues.Items[0].ID
 	callbackURL := "/integrations/slack/issues/" + app.ID
+	actionID := "gregale_acknowledge"
 	payload := func(actionTS, workspace string) string {
-		raw, _ := json.Marshal(map[string]any{"type": "block_actions", "response_url": "https://hooks.slack.com/actions/T0123456789/123456789/test-response-token", "api_app_id": "A0123456789", "team": map[string]string{"id": workspace}, "user": map[string]string{"id": "U0123456789"}, "channel": map[string]string{"id": "C0123456789"}, "container": map[string]string{"type": "message", "channel_id": "C0123456789", "message_ts": "123.456"}, "actions": []map[string]string{{"action_id": "gregale_acknowledge", "value": deliveryID, "action_ts": actionTS}}})
+		raw, _ := json.Marshal(map[string]any{"type": "block_actions", "response_url": "https://hooks.slack.com/actions/T0123456789/123456789/test-response-token", "api_app_id": "A0123456789", "team": map[string]string{"id": workspace}, "user": map[string]string{"id": "U0123456789"}, "channel": map[string]string{"id": "C0123456789"}, "container": map[string]string{"type": "message", "channel_id": "C0123456789", "message_ts": "123.456"}, "actions": []map[string]string{{"action_id": actionID, "value": deliveryID, "action_ts": actionTS}}})
 		return url.Values{"payload": {string(raw)}}.Encode()
 	}
 	callback := func(raw, ts string, tamper bool) *httptest.ResponseRecorder {
@@ -260,5 +261,67 @@ func TestNativeSlackInteractionDashboardAndCallbackPostgres(t *testing.T) {
 	link, err := st.GetIssueSlackAccountLink(t.Context(), app.ID, app.AccountID, app.AccountID, issue, "")
 	if err != nil || link.UserID != "" {
 		t.Fatal(link, err)
+	}
+	// Claiming uses the same authenticated consent flow, but leaves response
+	// handling untouched and recovers after a committed action's reply fails.
+	ingest = e.Do(t, "POST", "/v1/apps/"+app.Slug+"/issue-events", api.IssueEvent{EventID: uuid.NewString(), OccurredAt: time.Now().UTC(), ExceptionType: "AssignError", SourceKind: "exception"}, map[string]string{"Authorization": "Bearer " + token.Token})
+	created := apidserver.IssueDecode[api.IssueEventResponse](t, ingest, http.StatusAccepted)
+	if _, err = (*e.Pool()).Exec(t.Context(), "UPDATE issue_team_slack_destinations SET next_send_at=clock_timestamp()-interval '1 second' WHERE app_id=$1", app.ID); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := worker.Step(t.Context()); err != nil || !ok {
+		t.Fatal("assignment message", ok, err)
+	}
+	actionID = "gregale_assign_to_me"
+	raw = payload("200.001", "T0123456789")
+	if w := callback(raw, ts, false); w.Code != http.StatusOK {
+		t.Fatal("assignment consent", w.Code)
+	}
+	match = regexp.MustCompile(`slack_link=([a-f0-9]{64})`).FindStringSubmatch(lastReply)
+	if len(match) != 2 {
+		t.Fatal("missing assignment link", lastReply)
+	}
+	triageURL = "/dashboard/apps/" + app.Slug + "/issues/" + created.IssueID + "/triage"
+	linkPage = get(triageURL + "?slack_link=" + match[1])
+	if linkPage.Code != http.StatusOK || !strings.Contains(linkPage.Body.String(), "assigning issues to yourself") {
+		t.Fatal("assignment consent scope", linkPage.Code, linkPage.Body.String())
+	}
+	linkCookie = csrfFrom(linkPage)
+	if w := post(triageURL, url.Values{"action": {"link_slack"}, "slack_link": {match[1]}}, linkCookie, false); w.Code != http.StatusBadRequest {
+		t.Fatal("assignment consent CSRF", w.Code)
+	}
+	if w := post(triageURL, url.Values{"action": {"link_slack"}, "slack_link": {match[1]}}, linkCookie, true); w.Code != http.StatusSeeOther {
+		t.Fatal("assignment consent confirmation", w.Code, w.Body.String())
+	}
+	if w := callback(raw, ts, false); w.Code != http.StatusOK || !strings.Contains(lastReply, "Click the action") {
+		t.Fatal("replayed assignment link", w.Code, lastReply)
+	}
+	raw = payload("200.002", "T0123456789")
+	failNextReply = true
+	if w := callback(raw, ts, false); w.Code != http.StatusServiceUnavailable {
+		t.Fatal("committed assignment reply failure", w.Code)
+	}
+	if w := callback(raw, ts, false); w.Code != http.StatusOK {
+		t.Fatal("assignment callback recovery", w.Code)
+	}
+	detail, err := st.GetIssueDetail(t.Context(), app.ID, created.IssueID, time.Now().Add(-time.Hour), time.Now().Add(time.Hour), state.IssueDetailCursors{})
+	if err != nil || detail.Issue.AssigneeAccountID != app.AccountID {
+		t.Fatal("linked assignment", detail.Issue, err)
+	}
+	assignments := 0
+	for _, activity := range detail.Activity {
+		if activity.Action == "assigned" && activity.Details["assignment_source"] == "slack" {
+			assignments++
+			if activity.ActorAccountID != app.AccountID {
+				t.Fatal("wrong assignment actor", activity)
+			}
+		}
+	}
+	if assignments != 1 {
+		t.Fatal("assignment callback duplicated activity", assignments)
+	}
+	response, err := st.GetIssueApplicationTriage(t.Context(), app.ID, app.AccountID, app.AccountID, created.IssueID)
+	if err != nil || response.Revision != 0 || response.AcknowledgedAt != nil || response.SnoozedUntil != nil {
+		t.Fatal("assignment mutated response", response, err)
 	}
 }

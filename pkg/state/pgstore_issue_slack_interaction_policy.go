@@ -85,26 +85,28 @@ func (s *PgStore) SetIssueSlackInteractionPolicy(ctx context.Context, app, owner
 	in.SecretSealed = nil
 	return in, tx.Commit(ctx)
 }
-func (s *PgStore) PrepareIssueSlackActions(ctx context.Context, c IssueSlackClaim) (bool, error) {
+func (s *PgStore) PrepareIssueSlackActions(ctx context.Context, c IssueSlackClaim) (IssueSlackMessageActions, error) {
+	out := IssueSlackMessageActions{}
 	if !c.Application {
-		return false, nil
+		return out, nil
 	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return false, err
+		return out, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	q := sqlc.New()
 	if _, err = q.IssueLockApp(ctx, tx, issueUUID(c.AppID)); err != nil {
-		return false, mapErr(err)
+		return out, mapErr(err)
 	}
 	args := sqlc.IssueSlackActionPrepareParams{ID: issueUUID(c.ID), ClaimID: issueUUID(c.ClaimID)}
 	if err = q.IssueSlackActionPrepare(ctx, tx, args); err != nil {
-		return false, err
+		return out, err
 	}
-	ok, err := q.IssueSlackActionPrepared(ctx, tx, sqlc.IssueSlackActionPreparedParams(args))
+	prepared, err := q.IssueSlackActionPrepared(ctx, tx, sqlc.IssueSlackActionPreparedParams(args))
 	if err != nil {
-		return false, err
+		return out, err
 	}
-	return ok, tx.Commit(ctx)
+	out.Enabled, out.CanAssign = prepared.Enabled, prepared.CanAssign
+	return out, tx.Commit(ctx)
 }

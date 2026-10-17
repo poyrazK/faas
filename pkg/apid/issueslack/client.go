@@ -194,7 +194,11 @@ func applicationMessage(c state.IssueSlackClaim, base *url.URL) ([]byte, error) 
 	}}
 	if c.Interactive {
 		buttons := []any{}
-		for _, a := range []struct{ id, label string }{{"gregale_acknowledge", "Acknowledge"}, {"gregale_snooze_1h", "Snooze 1 hour"}, {"gregale_snooze_24h", "Snooze 24 hours"}} {
+		actions := []struct{ id, label string }{{"gregale_acknowledge", "Acknowledge"}, {"gregale_snooze_1h", "Snooze 1 hour"}, {"gregale_snooze_24h", "Snooze 24 hours"}}
+		if c.CanAssign {
+			actions = append(actions, struct{ id, label string }{"gregale_assign_to_me", "Assign to me"})
+		}
+		for _, a := range actions {
 			buttons = append(buttons, map[string]any{"type": "button", "action_id": a.id, "value": c.ID, "text": map[string]any{"type": "plain_text", "text": a.label}})
 		}
 		body["blocks"] = append(body["blocks"].([]any), map[string]any{"type": "actions", "elements": buttons})

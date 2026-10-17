@@ -248,7 +248,7 @@ func (q *Queries) IssueSlackActionConsume(ctx context.Context, db DBTX, delivery
 }
 
 const issueSlackActionContext = `-- name: IssueSlackActionContext :one
-SELECT a.id AS app_id,a.account_id,a.slug,src.issue_id,m.response_id,m.response_revision,m.consumed_at,tr.incident_id AS current_response_id,COALESCE(tr.revision,0)::bigint AS current_response_revision
+SELECT a.id AS app_id,a.account_id,a.slug,src.issue_id,m.response_id,m.response_revision,m.consumed_at,m.can_assign,tr.incident_id AS current_response_id,COALESCE(tr.revision,0)::bigint AS current_response_revision
 FROM issue_slack_action_messages m JOIN issue_team_slack_deliveries d ON d.id=m.delivery_id
 JOIN issue_team_slack_destinations dst ON dst.id=d.destination_id AND dst.revision=d.destination_revision AND dst.enabled
 JOIN apps a ON a.id=dst.app_id JOIN accounts owner ON owner.id=a.account_id JOIN issue_slack_interaction_policies p ON p.app_id=a.id AND p.enabled AND p.revision=m.policy_revision
@@ -277,6 +277,7 @@ type IssueSlackActionContextRow struct {
 	ResponseID              pgtype.UUID
 	ResponseRevision        int64
 	ConsumedAt              pgtype.Timestamptz
+	CanAssign               bool
 	CurrentResponseID       pgtype.UUID
 	CurrentResponseRevision int64
 }
@@ -299,6 +300,7 @@ func (q *Queries) IssueSlackActionContext(ctx context.Context, db DBTX, arg Issu
 		&i.ResponseID,
 		&i.ResponseRevision,
 		&i.ConsumedAt,
+		&i.CanAssign,
 		&i.CurrentResponseID,
 		&i.CurrentResponseRevision,
 	)
@@ -306,8 +308,8 @@ func (q *Queries) IssueSlackActionContext(ctx context.Context, db DBTX, arg Issu
 }
 
 const issueSlackActionPrepare = `-- name: IssueSlackActionPrepare :exec
-INSERT INTO issue_slack_action_messages(delivery_id,policy_revision,response_id,response_revision)
-SELECT d.id,p.revision,tr.incident_id,COALESCE(tr.revision,0) FROM issue_team_slack_deliveries d
+INSERT INTO issue_slack_action_messages(delivery_id,policy_revision,response_id,response_revision,can_assign)
+SELECT d.id,p.revision,tr.incident_id,COALESCE(tr.revision,0),true FROM issue_team_slack_deliveries d
 JOIN issue_team_slack_destinations dst ON dst.id=d.destination_id
 JOIN issue_slack_interaction_policies p ON p.app_id=dst.app_id AND p.enabled
 JOIN issue_slack_delivery_sources src ON src.delivery_id=d.id AND src.eligible
@@ -327,9 +329,9 @@ func (q *Queries) IssueSlackActionPrepare(ctx context.Context, db DBTX, arg Issu
 }
 
 const issueSlackActionPrepared = `-- name: IssueSlackActionPrepared :one
-SELECT EXISTS(SELECT 1 FROM issue_slack_action_messages m JOIN issue_team_slack_deliveries d ON d.id=m.delivery_id
+SELECT (count(*)>0)::boolean AS enabled,COALESCE(bool_or(m.can_assign),false)::boolean AS can_assign FROM issue_slack_action_messages m JOIN issue_team_slack_deliveries d ON d.id=m.delivery_id
 JOIN issue_team_slack_destinations dst ON dst.id=d.destination_id JOIN issue_slack_interaction_policies p ON p.app_id=dst.app_id AND p.enabled AND p.revision=m.policy_revision
-WHERE d.id=$1 AND d.claim_id=$2 AND d.status='in_flight')
+WHERE d.id=$1 AND d.claim_id=$2 AND d.status='in_flight'
 `
 
 type IssueSlackActionPreparedParams struct {
@@ -337,11 +339,16 @@ type IssueSlackActionPreparedParams struct {
 	ClaimID pgtype.UUID
 }
 
-func (q *Queries) IssueSlackActionPrepared(ctx context.Context, db DBTX, arg IssueSlackActionPreparedParams) (bool, error) {
+type IssueSlackActionPreparedRow struct {
+	Enabled   bool
+	CanAssign bool
+}
+
+func (q *Queries) IssueSlackActionPrepared(ctx context.Context, db DBTX, arg IssueSlackActionPreparedParams) (IssueSlackActionPreparedRow, error) {
 	row := db.QueryRow(ctx, issueSlackActionPrepared, arg.ID, arg.ClaimID)
-	var exists bool
-	err := row.Scan(&exists)
-	return exists, err
+	var i IssueSlackActionPreparedRow
+	err := row.Scan(&i.Enabled, &i.CanAssign)
+	return i, err
 }
 
 const issueSlackActionSent = `-- name: IssueSlackActionSent :exec
@@ -355,6 +362,25 @@ type IssueSlackActionSentParams struct {
 
 func (q *Queries) IssueSlackActionSent(ctx context.Context, db DBTX, arg IssueSlackActionSentParams) error {
 	_, err := db.Exec(ctx, issueSlackActionSent, arg.DeliveryID, arg.MessageTs)
+	return err
+}
+
+const issueSlackActionsInvalidate = `-- name: IssueSlackActionsInvalidate :exec
+UPDATE issue_slack_action_messages m SET consumed_at=clock_timestamp()
+FROM issue_team_slack_deliveries d JOIN issue_team_slack_destinations dst ON dst.id=d.destination_id
+LEFT JOIN issue_activity act ON act.id=d.activity_id
+LEFT JOIN issue_application_reminders rem ON rem.id=d.reminder_id
+WHERE d.id=m.delivery_id AND dst.app_id=$1
+AND COALESCE(act.issue_id,rem.issue_id)=$2 AND m.consumed_at IS NULL
+`
+
+type IssueSlackActionsInvalidateParams struct {
+	AppID   pgtype.UUID
+	IssueID pgtype.UUID
+}
+
+func (q *Queries) IssueSlackActionsInvalidate(ctx context.Context, db DBTX, arg IssueSlackActionsInvalidateParams) error {
+	_, err := db.Exec(ctx, issueSlackActionsInvalidate, arg.AppID, arg.IssueID)
 	return err
 }
 
@@ -986,7 +1012,7 @@ func (q *Queries) IssueSlackIdentityDelete(ctx context.Context, db DBTX, arg Iss
 }
 
 const issueSlackIdentityGet = `-- name: IssueSlackIdentityGet :one
-SELECT l.slack_user_id,l.account_id FROM issue_slack_identities l JOIN issue_slack_interaction_policies p ON p.app_id=l.app_id AND p.revision=l.policy_revision AND p.enabled
+SELECT l.slack_user_id,l.account_id,l.can_assign FROM issue_slack_identities l JOIN issue_slack_interaction_policies p ON p.app_id=l.app_id AND p.revision=l.policy_revision AND p.enabled
 JOIN accounts ac ON ac.id=l.account_id AND ac.status='active' AND ac.abuse_hold_at IS NULL
 WHERE l.app_id=$1 AND l.slack_user_id=$2 AND l.expires_at>clock_timestamp()
 AND l.mfa_enrolled_at IS NOT DISTINCT FROM ac.mfa_enrolled_at AND l.mfa_required=ac.mfa_required AND NOT(ac.mfa_required AND ac.mfa_enrolled_at IS NULL)
@@ -1000,17 +1026,18 @@ type IssueSlackIdentityGetParams struct {
 type IssueSlackIdentityGetRow struct {
 	SlackUserID string
 	AccountID   pgtype.UUID
+	CanAssign   bool
 }
 
 func (q *Queries) IssueSlackIdentityGet(ctx context.Context, db DBTX, arg IssueSlackIdentityGetParams) (IssueSlackIdentityGetRow, error) {
 	row := db.QueryRow(ctx, issueSlackIdentityGet, arg.AppID, arg.SlackUserID)
 	var i IssueSlackIdentityGetRow
-	err := row.Scan(&i.SlackUserID, &i.AccountID)
+	err := row.Scan(&i.SlackUserID, &i.AccountID, &i.CanAssign)
 	return i, err
 }
 
 const issueSlackIdentityMine = `-- name: IssueSlackIdentityMine :one
-SELECT l.slack_user_id,p.workspace_id,l.expires_at FROM issue_slack_identities l JOIN issue_slack_interaction_policies p ON p.app_id=l.app_id AND p.revision=l.policy_revision AND p.enabled
+SELECT l.slack_user_id,p.workspace_id,l.expires_at,l.can_assign FROM issue_slack_identities l JOIN issue_slack_interaction_policies p ON p.app_id=l.app_id AND p.revision=l.policy_revision AND p.enabled
 WHERE l.app_id=$1 AND l.account_id=$2
 `
 
@@ -1023,20 +1050,26 @@ type IssueSlackIdentityMineRow struct {
 	SlackUserID string
 	WorkspaceID string
 	ExpiresAt   pgtype.Timestamptz
+	CanAssign   bool
 }
 
 func (q *Queries) IssueSlackIdentityMine(ctx context.Context, db DBTX, arg IssueSlackIdentityMineParams) (IssueSlackIdentityMineRow, error) {
 	row := db.QueryRow(ctx, issueSlackIdentityMine, arg.AppID, arg.AccountID)
 	var i IssueSlackIdentityMineRow
-	err := row.Scan(&i.SlackUserID, &i.WorkspaceID, &i.ExpiresAt)
+	err := row.Scan(
+		&i.SlackUserID,
+		&i.WorkspaceID,
+		&i.ExpiresAt,
+		&i.CanAssign,
+	)
 	return i, err
 }
 
 const issueSlackIdentityPut = `-- name: IssueSlackIdentityPut :execrows
-INSERT INTO issue_slack_identities(app_id,slack_user_id,account_id,policy_revision,mfa_enrolled_at,mfa_required,expires_at)
-SELECT $1,$2,ac.id,$3,ac.mfa_enrolled_at,ac.mfa_required,$4 FROM accounts ac
+INSERT INTO issue_slack_identities(app_id,slack_user_id,account_id,policy_revision,mfa_enrolled_at,mfa_required,expires_at,can_assign)
+SELECT $1,$2,ac.id,$3,ac.mfa_enrolled_at,ac.mfa_required,$4,true FROM accounts ac
 WHERE ac.id=$5 AND ac.status='active' AND ac.abuse_hold_at IS NULL AND NOT(ac.mfa_required AND ac.mfa_enrolled_at IS NULL)
-ON CONFLICT(app_id,slack_user_id) DO UPDATE SET policy_revision=excluded.policy_revision,mfa_enrolled_at=excluded.mfa_enrolled_at,mfa_required=excluded.mfa_required,expires_at=excluded.expires_at WHERE issue_slack_identities.account_id=excluded.account_id
+ON CONFLICT(app_id,slack_user_id) DO UPDATE SET policy_revision=excluded.policy_revision,mfa_enrolled_at=excluded.mfa_enrolled_at,mfa_required=excluded.mfa_required,expires_at=excluded.expires_at,can_assign=excluded.can_assign WHERE issue_slack_identities.account_id=excluded.account_id
 `
 
 type IssueSlackIdentityPutParams struct {

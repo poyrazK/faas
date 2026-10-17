@@ -12650,6 +12650,7 @@
   {
     "table": "issue_slack_action_messages",
     "columns": [
+      "can_assign",
       "consumed_at",
       "delivery_id",
       "message_ts",
@@ -12664,6 +12665,7 @@
     "columns": [
       "account_id",
       "app_id",
+      "can_assign",
       "expires_at",
       "mfa_enrolled_at",
       "mfa_required",

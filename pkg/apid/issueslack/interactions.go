@@ -93,7 +93,7 @@ func ParseInteraction(body []byte, policy state.IssueSlackInteractionPolicy) (st
 	if err != nil || id == uuid.Nil || id.String() != a.Value || !state.ValidIssueSlackTimestamp(a.TS) {
 		return out, state.ErrInvalidArgument
 	}
-	actions := map[string]string{"gregale_acknowledge": "acknowledge", "gregale_snooze_1h": "snooze_1h", "gregale_snooze_24h": "snooze_24h"}
+	actions := map[string]string{"gregale_assign_to_me": "assign_to_me", "gregale_acknowledge": "acknowledge", "gregale_snooze_1h": "snooze_1h", "gregale_snooze_24h": "snooze_24h"}
 	action, ok := actions[a.ID]
 	if !ok {
 		return out, state.ErrInvalidArgument
@@ -111,6 +111,8 @@ func ParseInteraction(body []byte, policy state.IssueSlackInteractionPolicy) (st
 }
 func InteractionText(result state.IssueSlackInteractionResult, base string) (string, error) {
 	switch result.Status {
+	case "assigned":
+		return "Gregale issue assigned to you. Acknowledgment and snoozing are unchanged. Open Gregale for further response actions.", nil
 	case "handled":
 		return "Gregale issue response updated. Open Gregale for current status.", nil
 	case "already_handled":

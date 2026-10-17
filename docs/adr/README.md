@@ -1472,3 +1472,5 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR 202610171900: Release compatibility gates (N±1, deploy order, skew and migration checks, SLO gate)](202610171900-release-compatibility-gates.md)
 
 - [ADR-1650: Per-unit control-plane releases](1650-per-unit-control-plane-releases.md)
+
+- [ADR-1658: Native Slack issue self-assignment](1658-slack-issue-self-assignment.md)

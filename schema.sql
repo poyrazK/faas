@@ -31229,6 +31229,7 @@ CREATE TABLE public.issue_slack_action_messages (
     response_revision bigint NOT NULL,
     message_ts text DEFAULT ''::text NOT NULL,
     consumed_at timestamp with time zone,
+    can_assign boolean DEFAULT false NOT NULL,
     CONSTRAINT issue_slack_action_messages_message_ts_check CHECK (((message_ts = ''::text) OR (message_ts ~ '^[0-9]{1,20}\.[0-9]{1,10}$'::text))),
     CONSTRAINT issue_slack_action_messages_policy_revision_check CHECK ((policy_revision > 0)),
     CONSTRAINT issue_slack_action_messages_response_revision_check CHECK ((response_revision >= 0))
@@ -31446,6 +31447,7 @@ CREATE TABLE public.issue_slack_identities (
     mfa_enrolled_at timestamp with time zone,
     mfa_required boolean NOT NULL,
     expires_at timestamp with time zone NOT NULL,
+    can_assign boolean DEFAULT false NOT NULL,
     CONSTRAINT issue_slack_identities_policy_revision_check CHECK ((policy_revision > 0)),
     CONSTRAINT issue_slack_identities_slack_user_id_check CHECK ((slack_user_id ~ '^[UW][A-Z0-9]{8,31}$'::text))
 );

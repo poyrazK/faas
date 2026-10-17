@@ -33,6 +33,9 @@ func issueGroupView(ctx context.Context, q *sqlc.Queries, db sqlc.DBTX, row sqlc
 }
 
 func issueRegroupAudit(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, row sqlc.AppIssue, action, actor string, details map[string]string, now time.Time) error {
+	if err := q.IssueSlackActionsInvalidate(ctx, tx, sqlc.IssueSlackActionsInvalidateParams{AppID: row.AppID, IssueID: row.ID}); err != nil {
+		return err
+	}
 	raw, err := json.Marshal(details)
 	if err != nil {
 		return err

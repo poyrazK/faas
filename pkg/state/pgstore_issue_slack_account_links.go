@@ -21,6 +21,7 @@ func (s *PgStore) GetIssueSlackAccountLink(ctx context.Context, app, owner, acto
 		out.UserID = row.SlackUserID
 		out.WorkspaceID = row.WorkspaceID
 		out.ExpiresAt = trackerSnoozeTime(row.ExpiresAt)
+		out.CanAssign = row.CanAssign
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return out, err
 	}
@@ -80,7 +81,15 @@ func (s *PgStore) ConfirmIssueSlackAccountLink(ctx context.Context, app, owner, 
 		return err
 	}
 	if n >= api.IssueSlackIdentitiesMax {
-		return api.ErrCapacity("Slack identity limit reached")
+		// Renewing the same link (including its assignment consent) consumes no
+		// additional identity slot.
+		mine, lookupErr := q.IssueSlackIdentityMine(ctx, tx, sqlc.IssueSlackIdentityMineParams{AppID: a.ID, AccountID: issueUUID(actor)})
+		if lookupErr != nil && !errors.Is(lookupErr, pgx.ErrNoRows) {
+			return lookupErr
+		}
+		if lookupErr != nil || mine.SlackUserID != ch.SlackUserID {
+			return api.ErrCapacity("Slack identity limit reached")
+		}
 	}
 	changed, err := q.IssueSlackIdentityPut(ctx, tx, sqlc.IssueSlackIdentityPutParams{AppID: a.ID, AccountID: issueUUID(actor), SlackUserID: ch.SlackUserID, PolicyRevision: ch.PolicyRevision, ExpiresAt: issueTime(scope.CheckedAt.Time.Add(api.IssueSlackIdentityTTL))})
 	if err != nil {

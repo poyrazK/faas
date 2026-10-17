@@ -32,15 +32,19 @@ type IssueSlackInteractionResult struct {
 	LinkToken                string `json:"-"`
 }
 type IssueSlackAccountLink struct {
+	CanAssign                                                  bool
 	UserID, WorkspaceID, ChallengeUserID, ChallengeWorkspaceID string
 	ExpiresAt                                                  *time.Time
 	ChallengeToken                                             string `json:"-"`
+}
+type IssueSlackMessageActions struct {
+	Enabled, CanAssign bool
 }
 type IssueSlackInteractionStore interface {
 	GetIssueSlackInteractionPolicy(context.Context, string, string) (IssueSlackInteractionPolicy, error)
 	SetIssueSlackInteractionPolicy(context.Context, string, string, IssueSlackInteractionPolicy) (IssueSlackInteractionPolicy, error)
 	IssueSlackInteractionVerifier(context.Context, string) (IssueSlackInteractionPolicy, error)
-	PrepareIssueSlackActions(context.Context, IssueSlackClaim) (bool, error)
+	PrepareIssueSlackActions(context.Context, IssueSlackClaim) (IssueSlackMessageActions, error)
 	ApplyIssueSlackInteraction(context.Context, string, IssueSlackInteractionRequest) (IssueSlackInteractionResult, error)
 	GetIssueSlackAccountLink(context.Context, string, string, string, string, string) (IssueSlackAccountLink, error)
 	ConfirmIssueSlackAccountLink(context.Context, string, string, string, string, string) error

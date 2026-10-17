@@ -673,7 +673,7 @@ The current application-error alert surface has these boundaries (reviewed
 | Environment routing | Exact frequency-rule selectors and native lifecycle-alert environment allowlist; groups remain separate | Lifecycle filtering for generic webhook subscriptions |
 | Noise control | Frequency-rule cooldowns, shared native new-issue/regression cooldown, ignore and response suppression | Compound suppression conditions and traffic-relative thresholds |
 | Slack | OAuth workspace installation, verified team and per-rule channels, routing preview/history, revocation handling, native threads and retries | Rotating tokens and Enterprise Grid organization grants |
-| Response | Native response inbox, dashboard/Slack acknowledgment and snoozing, reminders, backup-team escalation and handling history | Resolve and assign directly in Slack |
+| Response | Native response inbox, dashboard/Slack acknowledgment and snoozing, Slack self-assignment, reminders, backup-team escalation and handling history | Resolve and choose another assignee directly in Slack |
 
 Native Slack delivery now connects application alerts to team channels.
 Native application issues now have dashboard acknowledgment and snoozing.
@@ -1094,6 +1094,28 @@ lifecycle handling to the Sentry comparison. Automatic rotating-token refresh an
 Enterprise Grid organization grants remain gaps. Per-rule native alert channel
 routing is described below.
 See [ADR-1497](adr/1497-native-slack-oauth-installation.md).
+
+### Assign an issue to yourself in Slack
+
+New interactive application-error messages include **Assign to me**. A currently
+eligible responder can take ownership using their linked Gregale identity. This
+replaces the issue's team/account assignment with that responder and uses normal
+assignment activity and `issue.assigned` webhooks, including all merged members.
+It does not acknowledge, snooze, resolve or reopen the issue, and grants no general
+app access. The fixed private Slack reply confirms the assignment.
+
+Existing account links retain acknowledgment/snooze access but require fresh
+browser confirmation before self-assignment. Confirm the workspace and Slack user
+on the authenticated response page; linking itself performs no action. Click the
+Slack button again afterward. Old messages are not edited and cannot gain the new
+action. Expired links, removed membership, MFA changes and revoked installations
+continue to require current access and linking.
+
+Each message accepts one handling action. Ownership or grouping changes invalidate
+old buttons permanently, including a change away and back to the same owner.
+Duplicate or competing callbacks never repeat assignment activity or webhook
+admission. If a button is stale, open Gregale for the current issue and response.
+See [ADR-1658](adr/1658-slack-issue-self-assignment.md).
 
 ### Route native alerts to different Slack channels
 

@@ -43,6 +43,7 @@ type IssueSlackClaim struct {
 	ID, AppID, AccountID, DestinationID, NotificationID, IncidentID, IssueID, LinkID, AppSlug, TeamID, ChannelID, Kind, Reason, ThreadTS, ClaimID, Status string
 	Application                                                                                                                                           bool
 	Interactive                                                                                                                                           bool
+	CanAssign                                                                                                                                             bool
 	Details                                                                                                                                               map[string]string
 	DestinationRevision                                                                                                                                   int64
 	Attempt                                                                                                                                               int

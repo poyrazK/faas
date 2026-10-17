@@ -5401,6 +5401,7 @@ type IssueSlackActionMessage struct {
 	ResponseRevision int64
 	MessageTs        string
 	ConsumedAt       pgtype.Timestamptz
+	CanAssign        bool
 }
 
 type IssueSlackDeliverySource struct {
@@ -5422,6 +5423,7 @@ type IssueSlackIdentity struct {
 	MfaEnrolledAt  pgtype.Timestamptz
 	MfaRequired    bool
 	ExpiresAt      pgtype.Timestamptz
+	CanAssign      bool
 }
 
 type IssueSlackInstallation struct {

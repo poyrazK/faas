@@ -2125,8 +2125,9 @@ type Querier interface {
 	IssueSlackActionConsume(ctx context.Context, db DBTX, deliveryID pgtype.UUID) error
 	IssueSlackActionContext(ctx context.Context, db DBTX, arg IssueSlackActionContextParams) (IssueSlackActionContextRow, error)
 	IssueSlackActionPrepare(ctx context.Context, db DBTX, arg IssueSlackActionPrepareParams) error
-	IssueSlackActionPrepared(ctx context.Context, db DBTX, arg IssueSlackActionPreparedParams) (bool, error)
+	IssueSlackActionPrepared(ctx context.Context, db DBTX, arg IssueSlackActionPreparedParams) (IssueSlackActionPreparedRow, error)
 	IssueSlackActionSent(ctx context.Context, db DBTX, arg IssueSlackActionSentParams) error
+	IssueSlackActionsInvalidate(ctx context.Context, db DBTX, arg IssueSlackActionsInvalidateParams) error
 	IssueSlackCancelPrevious(ctx context.Context, db DBTX, arg IssueSlackCancelPreviousParams) error
 	IssueSlackCandidateApp(ctx context.Context, db DBTX) (pgtype.UUID, error)
 	IssueSlackCandidateDelivery(ctx context.Context, db DBTX, arg IssueSlackCandidateDeliveryParams) (IssueSlackCandidateDeliveryRow, error)

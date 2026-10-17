@@ -393,6 +393,13 @@ func issueAttribution(ctx context.Context, q *sqlc.Queries, db sqlc.DBTX, in Rec
 }
 
 func issueActivity(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, row sqlc.AppIssue, action, actor string, details map[string]string, now time.Time) error {
+	if action == "assigned" {
+		// A later assignment must not revive an earlier Slack snapshot, including
+		// an ownership change away and back to the same team/account.
+		if err := q.IssueSlackActionsInvalidate(ctx, tx, sqlc.IssueSlackActionsInvalidateParams{AppID: row.AppID, IssueID: row.ID}); err != nil {
+			return err
+		}
+	}
 	if action == "regressed" || action == "reopened" {
 		if err := resetApplicationTriage(ctx, q, tx, row, actor); err != nil {
 			return err

@@ -18,7 +18,7 @@ func (s *PgStore) ApplyIssueSlackInteraction(ctx context.Context, app string, in
 		return out, ErrInvalidArgument
 	}
 	switch in.Action {
-	case "acknowledge", "snooze_1h", "snooze_24h":
+	case "acknowledge", "snooze_1h", "snooze_24h", "assign_to_me":
 	default:
 		return out, ErrInvalidArgument
 	}
@@ -44,6 +44,9 @@ func (s *PgStore) ApplyIssueSlackInteraction(ctx context.Context, app string, in
 	if c.ResponseID != c.CurrentResponseID || c.ResponseRevision != c.CurrentResponseRevision {
 		return out, applicationTriageConflict()
 	}
+	if in.Action == "assign_to_me" && !c.CanAssign {
+		return out, ErrNotFound
+	}
 	// Remember unsigned-browser linking separately from response mutation. A retry of
 	// the original click cannot execute an action after the user confirms linking.
 	ch, err := q.IssueSlackChallengeGet(ctx, tx, sqlc.IssueSlackChallengeGetParams{AppID: c.AppID, RequestKey: in.RequestKey})
@@ -60,7 +63,7 @@ func (s *PgStore) ApplyIssueSlackInteraction(ctx context.Context, app string, in
 		return out, err
 	}
 	identity, err := q.IssueSlackIdentityGet(ctx, tx, sqlc.IssueSlackIdentityGetParams{AppID: c.AppID, SlackUserID: in.UserID})
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, pgx.ErrNoRows) || (err == nil && in.Action == "assign_to_me" && !identity.CanAssign) {
 		out.LinkToken, err = createSlackLinkChallenge(ctx, q, tx, c.AppID, in)
 		if err != nil {
 			return out, err
@@ -76,24 +79,33 @@ func (s *PgStore) ApplyIssueSlackInteraction(ctx context.Context, app string, in
 	if err != nil {
 		return out, mapErr(err)
 	}
+	out.Status, err = applyLinkedSlackAction(ctx, q, tx, c, scope, actor, in.Action)
+	if err != nil {
+		return out, err
+	}
+	if err = q.IssueSlackActionConsume(ctx, tx, issueUUID(in.DeliveryID)); err != nil {
+		return out, err
+	}
+	return out, tx.Commit(ctx)
+}
+
+func applyLinkedSlackAction(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, c sqlc.IssueSlackActionContextRow, scope sqlc.IssueApplicationTriageScopeRow, actor, action string) (string, error) {
+	app, issue := issueID(c.AppID), issueID(c.IssueID)
+	if action == "assign_to_me" {
+		_, err := actOnIssueTxDetails(ctx, q, tx, app, issue, actor, api.IssueActionRequest{Action: "assign", AssigneeAccountID: actor}, scope.CheckedAt.Time, map[string]string{"assignment_source": "slack"})
+		return "assigned", err
+	}
 	req := IssueApplicationTriageAction{Action: "acknowledge"}
-	if in.Action != "acknowledge" {
+	if action != "acknowledge" {
 		duration := api.IssueSlackSnoozeShort
-		if in.Action == "snooze_24h" {
+		if action == "snooze_24h" {
 			duration = api.IssueSlackSnoozeLong
 		}
 		until := scope.CheckedAt.Time.Add(duration)
 		req.Action = "snooze"
 		req.SnoozedUntil = &until
 	}
-	if err = applyApplicationTriageAction(ctx, q, tx, app, issueID(c.AccountID), actor, issueID(c.IssueID), c.ResponseRevision, req); err != nil {
-		return out, err
-	}
-	if err = q.IssueSlackActionConsume(ctx, tx, issueUUID(in.DeliveryID)); err != nil {
-		return out, err
-	}
-	out.Status = "handled"
-	return out, tx.Commit(ctx)
+	return "handled", applyApplicationTriageAction(ctx, q, tx, app, issueID(c.AccountID), actor, issue, c.ResponseRevision, req)
 }
 func createSlackLinkChallenge(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, appID pgtype.UUID, in IssueSlackInteractionRequest) (string, error) {
 	if err := q.IssueSlackChallengesExpire(ctx, tx, appID); err != nil {

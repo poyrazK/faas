@@ -62,6 +62,26 @@ func TestSlackInteractionSignatureAndPayload(t *testing.T) {
 	if err != nil || in.RequestKey != again.RequestKey {
 		t.Fatal("unstable retry identity")
 	}
+	for _, tc := range []struct{ id, action string }{
+		{"gregale_assign_to_me", "assign_to_me"},
+		{"gregale_acknowledge", "acknowledge"},
+		{"gregale_snooze_1h", "snooze_1h"},
+		{"gregale_snooze_24h", "snooze_24h"},
+		{"gregale_assign_someone_else", ""},
+	} {
+		p["actions"].([]map[string]string)[0]["action_id"] = tc.id
+		action, err := ParseInteraction(encode(), policy)
+		if tc.action == "" {
+			if err == nil {
+				t.Fatal("unsupported assignment accepted")
+			}
+			continue
+		}
+		if err != nil || action.Action != tc.action || action.DeliveryID != in.DeliveryID || (tc.action != in.Action && action.RequestKey == in.RequestKey) {
+			t.Fatal("action/message binding", action, err)
+		}
+	}
+	p["actions"].([]map[string]string)[0]["action_id"] = "gregale_acknowledge"
 	for _, field := range []string{"type", "api_app_id", "team", "user", "container", "actions"} {
 		old := p[field]
 		p[field] = nil
@@ -80,7 +100,7 @@ func TestSlackInteractionSignatureAndPayload(t *testing.T) {
 }
 func TestNativeSlackButtonsAndSafeLinkConfirmation(t *testing.T) {
 	for _, kind := range []string{"created", "application_reminder", "application_escalation"} {
-		c := state.IssueSlackClaim{Application: true, Interactive: true, Kind: kind, ID: uuid.NewString(), AppSlug: "app", IssueID: uuid.NewString(), ChannelID: "C0123456789"}
+		c := state.IssueSlackClaim{Application: true, Interactive: true, CanAssign: true, Kind: kind, ID: uuid.NewString(), AppSlug: "app", IssueID: uuid.NewString(), ChannelID: "C0123456789"}
 		body, err := message(c, "https://gregale.dev")
 		if err != nil {
 			t.Fatal(err)
@@ -105,8 +125,18 @@ func TestNativeSlackButtonsAndSafeLinkConfirmation(t *testing.T) {
 				}
 			}
 		}
-		if n != 3 || !strings.Contains(string(body), "gregale_acknowledge") || !strings.Contains(string(body), "gregale_snooze_24h") {
+		if n != 4 || !strings.Contains(string(body), "gregale_assign_to_me") || !strings.Contains(string(body), "gregale_acknowledge") || !strings.Contains(string(body), "gregale_snooze_24h") {
 			t.Fatal(string(body))
+		}
+		c.CanAssign = false
+		legacy, err := message(c, "https://gregale.dev")
+		if err != nil || strings.Contains(string(legacy), "gregale_assign_to_me") {
+			t.Fatal("legacy snapshot gained assignment", err)
+		}
+		c.Interactive = false
+		legacy, err = message(c, "https://gregale.dev")
+		if err != nil || strings.Contains(string(legacy), "\"actions\"") {
+			t.Fatal("noninteractive message gained buttons", err)
 		}
 	}
 	result := state.IssueSlackInteractionResult{Status: "link_required", AppSlug: "app", IssueID: "issue", LinkToken: strings.Repeat("a", 64)}
@@ -118,5 +148,9 @@ func TestNativeSlackButtonsAndSafeLinkConfirmation(t *testing.T) {
 		if _, err := InteractionText(result, base); err == nil {
 			t.Fatal(base)
 		}
+	}
+	text, err = InteractionText(state.IssueSlackInteractionResult{Status: "assigned"}, "https://gregale.dev")
+	if err != nil || !strings.Contains(text, "assigned to you") || !strings.Contains(text, "unchanged") {
+		t.Fatal("assignment confirmation", text, err)
 	}
 }
