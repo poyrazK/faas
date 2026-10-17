@@ -32,6 +32,11 @@ func (m *management) preflight(ctx context.Context, args appArgs) (any, error) {
 		"write_consent":           {"blocked", "connection_read_only"},
 		"durable_state":           {"unknown", "ephemeral_connection"},
 	}
+	checks["request_read_consent"] = preflightCheck{"blocked", "app_wide_request_diagnostics_not_consented"}
+	if m.requestReadAllowed(args.App, app.ID) {
+		checks["request_read_consent"] = preflightCheck{"passed", "app_wide_request_consent_only"}
+	}
+	checks["request_api"] = preflightCheck{"unknown", "requires_exact_request_read_and_native_entitlement"}
 	if m.opts.AllowWrites {
 		checks["write_consent"] = preflightCheck{"passed", "local_write_consent"}
 		allowed := m.opts.Environments == nil

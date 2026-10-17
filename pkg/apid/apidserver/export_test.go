@@ -1438,3 +1438,7 @@ func (r *server) MountInternalMailNonpaymentDeletion(mux *http.ServeMux, addr st
 func (r *server) MountInternalMailQuotaWarning(mux *http.ServeMux, addr string, getenv func(string) string) error {
 	return r.mountInternalMailQuotaWarning(mux, addr, getenv)
 }
+
+func (s *server) StartInternalCIWorker(ctx context.Context, log *slog.Logger) func() {
+	return s.startInternalCIWorker(ctx, log)
+}

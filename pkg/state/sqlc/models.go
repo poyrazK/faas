@@ -1922,6 +1922,318 @@ type CanaryRouteGate struct {
 	UpdatedAt pgtype.Timestamptz
 }
 
+type CiAutomationBranch struct {
+	AccountID pgtype.UUID
+	BindingID pgtype.UUID
+	Branch    string
+	HeadFence int64
+}
+
+type CiAutomationEvent struct {
+	ID               pgtype.UUID
+	AccountID        pgtype.UUID
+	BindingID        pgtype.UUID
+	PolicyID         pgtype.UUID
+	PolicyGeneration int64
+	ProfileID        pgtype.UUID
+	EventKey         string
+	Snapshot         []byte
+	Status           string
+	Attempts         int32
+	LeaseToken       pgtype.UUID
+	LeaseUntil       pgtype.Timestamptz
+	NextAttemptAt    pgtype.Timestamptz
+	LastError        string
+	ExecutionID      pgtype.UUID
+	CreatedAt        pgtype.Timestamptz
+	RetryGeneration  int32
+	SupersededBy     pgtype.UUID
+	SupersededSha    pgtype.Text
+	SupersededAt     pgtype.Timestamptz
+	PathDecision     []byte
+}
+
+type CiAutomationEventRetry struct {
+	ID               pgtype.UUID
+	AccountID        pgtype.UUID
+	EventID          pgtype.UUID
+	Generation       int32
+	KeyDigest        string
+	PreviousAttempts int32
+	PreviousError    string
+	RequestedAt      pgtype.Timestamptz
+}
+
+type CiAutomationPathCheck struct {
+	AccountID       pgtype.UUID
+	EventID         pgtype.UUID
+	Snapshot        []byte
+	Status          string
+	Attempts        int32
+	LeaseToken      pgtype.UUID
+	LeaseUntil      pgtype.Timestamptz
+	NextAttemptAt   pgtype.Timestamptz
+	CheckID         int64
+	LastError       string
+	CreatedAt       pgtype.Timestamptz
+	RetryGeneration int32
+}
+
+type CiAutomationPolicy struct {
+	ID                pgtype.UUID
+	AccountID         pgtype.UUID
+	BindingID         pgtype.UUID
+	BindingGeneration int64
+	ProfileID         pgtype.UUID
+	PushBranches      []byte
+	Enabled           bool
+	Generation        int64
+	CreatedAt         pgtype.Timestamptz
+	LatestOnly        bool
+	PrBranches        []byte
+	IncludePaths      []byte
+	ExcludePaths      []byte
+}
+
+type CiAutomationPullRequest struct {
+	AccountID pgtype.UUID
+	BindingID pgtype.UUID
+	PrNumber  int64
+	HeadFence int64
+}
+
+type CiDispatchBudget struct {
+	LockID bool
+}
+
+type CiExecution struct {
+	ID                pgtype.UUID
+	AccountID         pgtype.UUID
+	RevisionID        pgtype.UUID
+	CommitSha         string
+	IdempotencyKey    string
+	Mode              string
+	Status            string
+	Snapshot          []byte
+	Version           int64
+	Fence             int64
+	LeaseUntil        pgtype.Timestamptz
+	CreatedAt         pgtype.Timestamptz
+	FinishedAt        pgtype.Timestamptz
+	NextReconcileAt   pgtype.Timestamptz
+	ReconcileFailures int32
+	ArchivedAt        pgtype.Timestamptz
+	RerunParentID     pgtype.UUID
+	RerunRootID       pgtype.UUID
+}
+
+type CiExecutionArchive struct {
+	AccountID   pgtype.UUID
+	ExecutionID pgtype.UUID
+	Receipt     []byte
+	ArchivedAt  pgtype.Timestamptz
+}
+
+type CiExecutionCheck struct {
+	AccountID        pgtype.UUID
+	ExecutionID      pgtype.UUID
+	Status           string
+	Attempts         int32
+	LeaseToken       pgtype.UUID
+	LeaseUntil       pgtype.Timestamptz
+	NextAttemptAt    pgtype.Timestamptz
+	DeliveredVersion int64
+	DeliveredDigest  string
+	CheckID          int64
+	LastError        string
+	CreatedAt        pgtype.Timestamptz
+	RetryGeneration  int32
+}
+
+type CiExecutionCheckRetry struct {
+	ID          pgtype.UUID
+	AccountID   pgtype.UUID
+	ExecutionID pgtype.UUID
+	Generation  int32
+	KeyDigest   string
+	RequestedAt pgtype.Timestamptz
+	AppliedAt   pgtype.Timestamptz
+}
+
+type CiExecutionProfile struct {
+	ID                pgtype.UUID
+	AccountID         pgtype.UUID
+	Name              string
+	RevisionID        pgtype.UUID
+	RevisionDigest    string
+	BindingID         pgtype.UUID
+	BindingGeneration int64
+	Templates         []byte
+	Snapshot          []byte
+	State             string
+	CreatedAt         pgtype.Timestamptz
+}
+
+type CiGithubBinding struct {
+	ID             pgtype.UUID
+	AccountID      pgtype.UUID
+	Name           string
+	RevisionID     pgtype.UUID
+	InstallationID int64
+	RepositoryID   int64
+	Repository     string
+	PushBranches   []byte
+	PrBranches     []byte
+	Enabled        bool
+	Generation     int64
+	CreatedAt      pgtype.Timestamptz
+}
+
+type CiGithubCheck struct {
+	AccountID     pgtype.UUID
+	RunID         pgtype.UUID
+	Status        string
+	Attempts      int32
+	CheckID       int64
+	LeaseToken    pgtype.UUID
+	LeaseUntil    pgtype.Timestamptz
+	NextAttemptAt pgtype.Timestamptz
+	LastError     string
+	CreatedAt     pgtype.Timestamptz
+}
+
+type CiGithubTrigger struct {
+	ID            pgtype.UUID
+	AccountID     pgtype.UUID
+	BindingID     pgtype.UUID
+	EventKey      string
+	Snapshot      []byte
+	Status        string
+	Attempts      int32
+	LeaseToken    pgtype.UUID
+	LeaseUntil    pgtype.Timestamptz
+	NextAttemptAt pgtype.Timestamptz
+	LastError     string
+	RunID         pgtype.UUID
+	CreatedAt     pgtype.Timestamptz
+}
+
+type CiJobAttempt struct {
+	AttemptID        pgtype.UUID
+	AccountID        pgtype.UUID
+	ExecutionID      pgtype.UUID
+	JobName          string
+	Fence            int64
+	CancelRequested  bool
+	RunID            pgtype.UUID
+	Source           []byte
+	Output           []byte
+	CreatedAt        pgtype.Timestamptz
+	Progress         []byte
+	ProgressSequence int32
+	ProgressDigest   string
+}
+
+type CiJobRuntime struct {
+	AttemptID      pgtype.UUID
+	InstanceID     pgtype.UUID
+	CapabilityHash []byte
+	ExpiresAt      pgtype.Timestamptz
+	CancelledAt    pgtype.Timestamptz
+	Result         []byte
+	SealedAt       pgtype.Timestamptz
+	TransferToken  pgtype.UUID
+	TransferUntil  pgtype.Timestamptz
+	CreatedAt      pgtype.Timestamptz
+}
+
+type CiJobRuntimeObject struct {
+	AttemptID pgtype.UUID
+	Name      string
+	Digest    string
+	Bytes     int64
+	Retained  bool
+}
+
+type CiManagedObject struct {
+	ObjectKey   string
+	ID          pgtype.UUID
+	AccountID   pgtype.UUID
+	ExecutionID pgtype.UUID
+	AttemptID   pgtype.UUID
+	JobID       pgtype.UUID
+	Kind        string
+	Digest      string
+	Bytes       int64
+	State       string
+	OpToken     pgtype.UUID
+	OpUntil     pgtype.Timestamptz
+	CreatedAt   pgtype.Timestamptz
+	ExpiresAt   pgtype.Timestamptz
+	ReadyAt     pgtype.Timestamptz
+	DeletedAt   pgtype.Timestamptz
+}
+
+type CiPipelineRevision struct {
+	ID         pgtype.UUID
+	AccountID  pgtype.UUID
+	Name       string
+	Digest     string
+	Definition []byte
+	CreatedAt  pgtype.Timestamptz
+}
+
+type CiRun struct {
+	ID             pgtype.UUID
+	AccountID      pgtype.UUID
+	RevisionID     pgtype.UUID
+	Pipeline       string
+	CommitSha      string
+	IdempotencyKey string
+	Plan           []byte
+	Status         string
+	BlockedReason  string
+	CreatedAt      pgtype.Timestamptz
+	FinishedAt     pgtype.Timestamptz
+	GithubSource   []byte
+}
+
+type CiRunEvent struct {
+	AccountID pgtype.UUID
+	RunID     pgtype.UUID
+	Sequence  int32
+	EventType string
+	CreatedAt pgtype.Timestamptz
+}
+
+type CiSourceCheckRetry struct {
+	ID          pgtype.UUID
+	AccountID   pgtype.UUID
+	EventID     pgtype.UUID
+	Generation  int32
+	KeyDigest   string
+	RequestedAt pgtype.Timestamptz
+	AppliedAt   pgtype.Timestamptz
+}
+
+type CiStorageBudget struct {
+	LockID bool
+}
+
+type CiWorkerHealth struct {
+	Worker        string
+	Slot          int32
+	Token         pgtype.UUID
+	Enabled       bool
+	Ready         bool
+	StartedAt     pgtype.Timestamptz
+	HeartbeatAt   pgtype.Timestamptz
+	CycleAt       pgtype.Timestamptz
+	CycleSequence int64
+	SuccessAt     pgtype.Timestamptz
+	LastError     string
+}
+
 type CliAuthCode struct {
 	TokenHash  []byte
 	AccountID  pgtype.UUID

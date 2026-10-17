@@ -186,6 +186,8 @@ tests:
   - interval: 1m
     name: "a healthy usage outbox stays quiet"
     input_series:
+      - series: 'gateway_usage_commit_aborts_total{job="gatewayd-internal",instance="fsn-2.gregale.dev:9092"}'
+        values: '3x30'
       - series: 'gateway_consumer_usage_outbox_failures_total{job="gatewayd-internal",instance="fsn-2.gregale.dev:9092"}'
         values: '3x30'
       - series: 'gateway_consumer_usage_outbox_pending_bytes{job="gatewayd-internal",instance="fsn-2.gregale.dev:9092"}'
@@ -193,6 +195,9 @@ tests:
       - series: 'gateway_usage_commit_aborts_total{job="gatewayd-internal",instance="fsn-2.gregale.dev:9092"}'
         values: '3x30'
     alert_rule_test:
+      - eval_time: 20m
+        alertname: FaasUsageCommitAborted
+        exp_alerts: []
       - eval_time: 20m
         alertname: FaasConsumerUsageOutboxAppendFailed
         exp_alerts: []

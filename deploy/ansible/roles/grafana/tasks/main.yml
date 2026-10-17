@@ -423,6 +423,7 @@
     mode: "0640"
   loop:
     - top-tenants.json
+    - internal-ci.json
     - edge-rules.json
     - durable-entities.json
     - frozen-tier.json
