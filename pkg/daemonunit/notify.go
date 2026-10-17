@@ -104,7 +104,7 @@ func Notify(state string) error {
 // ctx is cancelled. The returned function stops the bridge for tests or
 // callers that own a shorter lifecycle.
 func NotifyReadyWhen(ctx context.Context, ready func() bool) func() {
-	if ready == nil || os.Getenv("NOTIFY_SOCKET") == "" {
+	if ready == nil || (os.Getenv("NOTIFY_SOCKET") == "" && !isHandoffSuccessor()) {
 		return func() {}
 	}
 	stop := make(chan struct{})
@@ -119,6 +119,9 @@ func NotifyReadyWhen(ctx context.Context, ready func() bool) func() {
 		for {
 			if ready() {
 				_ = Notify("READY=1")
+				// A hand-off successor is not the main process yet, so
+				// systemd ignores READY=1; its predecessor moves MAINPID.
+				SignalHandoffReady()
 				select {
 				case <-stop:
 				case <-ctx.Done():
