@@ -24,6 +24,12 @@ func (f *computeAuthorityFixture) CancelFinancialCompute(context.Context, financ
 	return financial.ComputeLease{}, financial.ErrComputeUnavailable
 }
 
+func (f *computeAuthorityFixture) FinancialComputeLease(_ context.Context, account, id string) (financial.ComputeLease, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.lease, f.lease.ID == id && f.lease.AccountID == account, nil
+}
+
 func (f *computeAuthorityFixture) FinancialComputeRetired(context.Context, string, string) (bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

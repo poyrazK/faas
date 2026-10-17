@@ -19,6 +19,7 @@ type FinancialComputeStore interface {
 	RegisterFinancialComputeOwner(context.Context, string, string) error
 	FinancialComputeOwnerValid(context.Context, string, string) (bool, error)
 	FinancialComputeRetired(context.Context, string, string) (bool, error)
+	FinancialComputeLease(context.Context, string, string) (financial.ComputeLease, bool, error)
 	FinancialComputeInstanceLease(context.Context, string, string, string) (financial.ComputeLease, bool, error)
 	AcquireFinancialCompute(context.Context, financial.ComputeRequest) (financial.ComputeLease, error)
 	RenewFinancialCompute(context.Context, financial.ComputeRequest) (financial.ComputeLease, error)

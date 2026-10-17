@@ -1,6 +1,7 @@
 package financialtest
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"sync"
@@ -248,6 +249,28 @@ func computeReservationSuite(t *testing.T, store computeTestStore) {
 	if err != nil || replay.Revision != settled.Revision || replay.Committed != settled.Committed {
 		t.Fatalf("settlement replay: %+v %v", replay, err)
 	}
+	// Recovery refreshes an exact, account-scoped receipt. A later attempt on
+	// the same instance must never substitute for this settled generation.
+	read, found, err := store.FinancialComputeLease(ctx, a.ID, settled.ID)
+	if err != nil || !found || read.Revision != settled.Revision || read.SettledAt == nil {
+		t.Fatalf("exact receipt read: %+v %v %v", read, found, err)
+	}
+	*read.SettledAt = time.Time{}
+	read, found, err = store.FinancialComputeLease(ctx, a.ID, settled.ID)
+	if err != nil || !found || read.SettledAt == nil || read.SettledAt.IsZero() {
+		t.Fatalf("receipt read mutated authority: %+v %v %v", read, found, err)
+	}
+	if _, found, err := store.FinancialComputeLease(ctx, other.ID, settled.ID); err != nil || found {
+		t.Fatalf("foreign account read funding receipt: %v %v", found, err)
+	}
+	if _, found, err := store.FinancialComputeLease(ctx, a.ID, uuid.NewString()); err != nil || found {
+		t.Fatalf("missing receipt became authority: %v %v", found, err)
+	}
+	cancelled, cancelRead := context.WithCancel(ctx)
+	cancelRead()
+	if _, _, err := store.FinancialComputeLease(cancelled, a.ID, settled.ID); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled receipt read: %v", err)
+	}
 	b, err = store.FinancialComputeBalance(ctx, p, time.Now())
 	if err != nil || b.ReservedMillicents != 0 || b.CommittedMillicents == 0 || !b.Held {
 		t.Fatalf("settlement erased spending/hold: %+v %v", b, err)
@@ -358,5 +381,8 @@ func computeReservationSuite(t *testing.T, store computeTestStore) {
 	retired, err := store.FinancialComputeRetired(ctx, late.NodeID, late.InstanceID)
 	if err != nil || !retired {
 		t.Fatalf("missing retirement receipt: %v %v", retired, err)
+	}
+	if read, found, err := store.FinancialComputeLease(ctx, a.ID, settled.ID); err != nil || !found || read.ID != settled.ID || read.SettledAt == nil {
+		t.Fatalf("later attempts hid original receipt: %+v %v %v", read, found, err)
 	}
 }

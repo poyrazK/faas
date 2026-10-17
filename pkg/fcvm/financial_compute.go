@@ -18,6 +18,7 @@ import (
 type FinancialComputeAuthority interface {
 	CancelFinancialCompute(context.Context, financial.ComputeRequest) (financial.ComputeLease, error)
 	FinancialComputeRetired(context.Context, string, string) (bool, error)
+	FinancialComputeLease(context.Context, string, string) (financial.ComputeLease, bool, error)
 	AcquireFinancialCompute(context.Context, financial.ComputeRequest) (financial.ComputeLease, error)
 	RenewFinancialCompute(context.Context, financial.ComputeRequest) (financial.ComputeLease, error)
 	SettleFinancialCompute(context.Context, financial.ComputeRequest) (financial.ComputeLease, error)
@@ -344,6 +345,8 @@ func (m *Manager) RecoverFinancialComputeLease(ctx context.Context, l financial.
 	if m.computeAuthority == nil || l.NodeID != m.computeNode || l.SettledAt != nil {
 		return financial.ErrComputeFence
 	}
+	m.computeRecoveryMu.Lock()
+	defer m.computeRecoveryMu.Unlock()
 	m.mu.Lock()
 	local := m.computeLeases[l.InstanceID]
 	flight := m.instanceFlights[l.InstanceID]
@@ -368,6 +371,22 @@ func (m *Manager) RecoverFinancialComputeLease(ctx context.Context, l financial.
 		if flight != nil {
 			return nil
 		}
+		// The node inventory may have raced the previous owner's final
+		// settlement. Refresh this exact receipt, not the instance's latest
+		// attempt, before reconstructing allocator or teardown ownership.
+		callCtx, cancel := context.WithTimeout(ctx, api.FinancialComputeAuthorityTimeout)
+		current, found, err := m.computeAuthority.FinancialComputeLease(callCtx, l.AccountID, l.ID)
+		cancel()
+		if err != nil {
+			return err
+		}
+		if !found || current.SettledAt != nil || current.ID != l.ID || current.Fence != l.Fence || current.NodeID != l.NodeID || current.InstanceID != l.InstanceID {
+			return financial.ErrComputeFence
+		}
+		l = current
+		if err := m.retainUnsettledFinancialComputeSlot(ctx, l.InstanceID); err != nil {
+			return err
+		}
 		local = &localComputeLease{lease: l, request: computeRequest(l), done: make(chan struct{})}
 		m.mu.Lock()
 		if m.computeLeases == nil {
@@ -381,6 +400,50 @@ func (m *Manager) RecoverFinancialComputeLease(ctx context.Context, l financial.
 		m.mu.Unlock()
 	}
 	return m.retireExpiredFinancialCompute(ctx, l.InstanceID, local)
+}
+
+// Physical cleanup can commit before financial settlement. After a crash the
+// native inventory correctly omits that cleared slot, but a failed settlement
+// must not let another VM reuse it while retirement is still retryable. Join
+// the durable native receipt before any cleanup effects; a slot already held
+// by another instance fails closed without touching that replacement.
+func (m *Manager) retainUnsettledFinancialComputeSlot(ctx context.Context, instance string) error {
+	v := m.nativeVMM()
+	if v == nil {
+		return nil
+	}
+	if err := m.RecoverNativeProcesses(ctx); err != nil {
+		return err
+	}
+	record, err := v.nativeRecoveryRuntime().journal.read(instance)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil // An unstarted/denied attempt owns no allocator identity.
+	}
+	if err != nil {
+		return err
+	}
+	if !record.ResourcesRemoved {
+		return nil // Native recovery already quarantined physical ownership.
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.nativeRecovered[instance]) > 0 {
+		return nil
+	}
+	m.alloc.mu.Lock()
+	_, allocated := m.alloc.byInstance[instance]
+	m.alloc.mu.Unlock()
+	if allocated {
+		return nil // A local failed cleanup still retains its original slot.
+	}
+	if err := m.alloc.reserveRecovered([]Lease{record.Lease}); err != nil {
+		return err
+	}
+	if m.nativeRecovered == nil {
+		m.nativeRecovered = make(map[string][]Lease)
+	}
+	m.nativeRecovered[instance] = []Lease{record.Lease}
+	return nil
 }
 
 // Bypass paths without ordinary Wake funding must be refused for strict apps.

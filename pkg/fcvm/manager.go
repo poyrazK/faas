@@ -770,6 +770,7 @@ type Manager struct {
 	computeAuthority                FinancialComputeAuthority
 	computeNode, computeIncarnation string
 	computeLeases                   map[string]*localComputeLease
+	computeRecoveryMu               sync.Mutex // serializes reconstruction of missing local receipts
 	computeBypassGuard              func(context.Context, string) error
 	// outboundRelayEnabled advertises vmmd's streaming relay to
 	// outbound-enabled Runs (ADR-990).

@@ -241,6 +241,24 @@ func (s *PgStore) FinancialComputeRetired(ctx context.Context, node, instance st
 	return sqlc.New().FinancialComputeRetired(ctx, s.pool, sqlc.FinancialComputeRetiredParams{NodeID: n, InstanceID: instance})
 }
 
+func (s *PgStore) FinancialComputeLease(ctx context.Context, account, id string) (financial.ComputeLease, bool, error) {
+	a, accountErr := parsePgUUID(account)
+	i, idErr := parsePgUUID(id)
+	if accountErr != nil || idErr != nil {
+		return financial.ComputeLease{}, false, ErrInvalidArgument
+	}
+	raw, err := sqlc.New().FinancialComputeLeaseGet(ctx, s.pool, sqlc.FinancialComputeLeaseGetParams{AccountID: a, ID: i})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return financial.ComputeLease{}, false, nil
+	}
+	if err != nil {
+		return financial.ComputeLease{}, false, err
+	}
+	var l financial.ComputeLease
+	err = json.Unmarshal(raw, &l)
+	return l, err == nil, err
+}
+
 func (s *PgStore) FinancialComputeInstanceLease(ctx context.Context, account, app, instance string) (financial.ComputeLease, bool, error) {
 	a, _ := parsePgUUID(account)
 	p, _ := parsePgUUID(app)

@@ -237,6 +237,23 @@ func (m *MemStore) FinancialComputeRetired(ctx context.Context, node, instance s
 	return ok && l.SettledAt != nil, nil
 }
 
+func (m *MemStore) FinancialComputeLease(ctx context.Context, account, id string) (financial.ComputeLease, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return financial.ComputeLease{}, false, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	l, ok := m.financialComputeLeases[id]
+	if !ok || l.AccountID != account {
+		return financial.ComputeLease{}, false, nil
+	}
+	if l.SettledAt != nil {
+		at := *l.SettledAt
+		l.SettledAt = &at
+	}
+	return l, true, nil
+}
+
 func (m *MemStore) FinancialComputeInstanceLease(ctx context.Context, account, app, instance string) (financial.ComputeLease, bool, error) {
 	if err := ctx.Err(); err != nil {
 		return financial.ComputeLease{}, false, err
