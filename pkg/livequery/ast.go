@@ -101,17 +101,32 @@ func deparseSelect(sel *pgq.SelectStmt) (string, error) {
 func batchSelect(sel *pgq.SelectStmt, paramTypes []string) (string, error) {
 	n := int32(len(paramTypes))
 	inner := cloneSelect(sel)
+	var castErr error
 	walkNodes(inner, func(node *pgq.Node) {
 		ref := node.GetParamRef()
 		if ref == nil {
 			return
 		}
 		if ref.Number <= n {
-			node.Node = columnRef(hiddenPrefix+"s", fmt.Sprintf("p%d", ref.Number)).Node
+			col := columnRef(hiddenPrefix+"s", fmt.Sprintf("p%d", ref.Number))
+			if typ := paramTypes[ref.Number-1]; isArrayType(typ) {
+				// unnest flattens an array of arrays, so an array parameter
+				// travels as text and is cast where it is used.
+				cast, err := parseValue(fmt.Sprintf("%ss.p%d::%s", hiddenPrefix, ref.Number, typ))
+				if err != nil {
+					castErr = err
+					return
+				}
+				col = cast
+			}
+			node.Node = col.Node
 			return
 		}
 		ref.Number++
 	})
+	if castErr != nil {
+		return "", castErr
+	}
 	body, err := deparseSelect(inner)
 	if err != nil {
 		return "", err
@@ -119,11 +134,23 @@ func batchSelect(sel *pgq.SelectStmt, paramTypes []string) (string, error) {
 	args := []string{"$1::int[]"}
 	cols := []string{"idx"}
 	for k, typ := range paramTypes {
-		args = append(args, fmt.Sprintf("$%d::text[]::%s[]", k+2, typ))
+		args = append(args, unnestArg(k+2, typ))
 		cols = append(cols, fmt.Sprintf("p%d", k+1))
 	}
 	return fmt.Sprintf("SELECT %[1]ss.idx AS %[1]ssub, %[1]sq.* FROM unnest(%[2]s) AS %[1]ss(%[3]s) CROSS JOIN LATERAL (%[4]s) AS %[1]sq",
 		hiddenPrefix, strings.Join(args, ", "), strings.Join(cols, ", "), body), nil
+}
+
+func isArrayType(typ string) bool { return strings.HasSuffix(typ, "[]") }
+
+// unnestArg is batch parameter n holding one typ value per member, as
+// unnest takes it: typ[] for a scalar type, text[] for an array type (an
+// array of arrays would be flattened) to be cast at its use.
+func unnestArg(n int, typ string) string {
+	if isArrayType(typ) {
+		return fmt.Sprintf("$%d::text[]", n)
+	}
+	return fmt.Sprintf("$%d::text[]::%s[]", n, typ)
 }
 
 // parseExpr parses a boolean SQL expression by wrapping it in a SELECT.

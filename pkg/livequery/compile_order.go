@@ -343,9 +343,12 @@ func rankSQL(items []OrderItem) string {
 	cols := []string{"m", "c"}
 	order := []string{"r.m"}
 	for k, it := range items {
-		args = append(args, fmt.Sprintf("$%d::text[]::%s[]", k+3, it.Type))
+		args = append(args, unnestArg(k+3, it.Type))
 		cols = append(cols, fmt.Sprintf("v%d", k))
 		item := fmt.Sprintf("r.v%d", k)
+		if isArrayType(it.Type) {
+			item = fmt.Sprintf("(r.v%d::%s)", k, it.Type)
+		}
 		if it.Collation != "" {
 			item += " COLLATE " + it.Collation
 		}

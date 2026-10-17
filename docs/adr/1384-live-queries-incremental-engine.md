@@ -887,6 +887,35 @@ Phase 0 did not cover:
   - **Cost.** Each distinct claim set is maintained separately, and a
     dependency change re-reads the groups it affects. The ADR's per-database
     RLS subscription limit bounds both.
+- **RLS mode, the PostgREST compiler** (2026-10-17).
+  - **What it compiles.** `pkg/livequery/rest` compiles the reads that
+    `@gregale/data` sends to the Data API, as `relation?query`, into SQL
+    the engine maintains:
+    - select with aliases, casts, JSON paths and foreign-key embedding:
+      to-one as an object or null, to-many as an array, nested, with
+      `!inner` and `!hint`;
+    - filters on the queried relation (`eq` through `wfts`, `in`, `is`,
+      `not.`, `any`/`all`, `or=`/`and=` trees);
+    - `order`, `limit` and `offset`.
+  - **Safety.** Identifiers are checked against the catalog and quoted,
+    casts are resolved by `to_regtype`, and every filter value is a
+    parameter, so requests differing only in values share one plan.
+  - **Refused:** filters on embedded relations, many-to-many embedding,
+    writes' parameters, and `limit` or `offset` without an `order` (a live
+    result must be deterministic).
+  - **Embeds as correlated subqueries.** Embeds compile to correlated JSON
+    subqueries. The engine maintains those queries by recompute (a
+    lineage-mode rewrite of to-one embeds as joins is a later
+    optimisation). Filters, windows and plain projections stay incremental.
+  - **Engine fix.** Array parameters, and array sort keys, were unnested as
+    `text[]::T[][]`, which `unnest` flattens. They now travel as text and
+    are cast where used. This also fixes sealed queries such as
+    `id = ANY($1)`.
+  - **Tests:**
+    - every request above is maintained sealed and as a session through
+      writes to the queried, embedded and policy tables, with
+      `VerifyEachRound`;
+    - an array-parameter regression test.
 
 ## Consequences
 
