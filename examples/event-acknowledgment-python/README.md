@@ -278,3 +278,62 @@ and callbacks, then raises `EventAcknowledgmentWorkerCancelled` without resolvin
 alerts. Drain the watch before closing the pool/loop. No schema installation,
 callback recovery, business work or monitoring loop starts on import. See the
 [Python watch protocol](../../docs/event-acknowledgment-intent-health.md#python-watch).
+
+## Persist recovery alert checkpoints
+
+`watch_acknowledgment_recovery_with_checkpoint` adds an explicit fenced store
+adapter and idempotent notification callback to the same monitoring setup:
+
+```python
+from faas_sdk import EventAcknowledgmentIntentCheckpointWatchCancelled
+from durable_consumer import watch_acknowledgment_recovery_with_checkpoint
+
+try:
+    await watch_acknowledgment_recovery_with_checkpoint(
+        connection_scope, scope, shutdown, store, notify_idempotently,
+    )
+except EventAcknowledgmentIntentCheckpointWatchCancelled as stopped:
+    # Independent bounded shutdown context; the store still rejects stale ownership.
+    await store.save_owned_on_shutdown(stopped.result["checkpoint"])
+    raise
+```
+
+The source helper loads the owned checkpoint, applies optional exact
+acknowledgments, and commits every `snapshot["checkpoint"]` **before** attempting
+any pending notification. It records a delivery acknowledgment only after the
+destination confirms that exact incident/sequence pair. Pending history replays
+at startup before any health query, even if the health database is unavailable.
+
+The additional adapter contract is:
+
+- `load_owned(stop_event)` reads current state under the monitoring writer fence.
+- `save_owned(checkpoint, cancel)` atomically commits the complete snapshot while
+  rejecting stale writers; detached snapshots must be stored unchanged.
+- `list_acknowledgments(checkpoint, cancel)` returns nondestructive durable exact
+  pairs still pending or retained as receipts. Filter old ledger rows after their
+  checkpoint receipts are safely committed.
+- `record_acknowledgment(pair, cancel)` durably records confirmed delivery; retries
+  of the same pair are idempotent.
+- `save_owned_on_shutdown(checkpoint)` uses an independent bounded shutdown
+  context and the same ownership fence. Keep ownership until it completes; lost
+  owners cannot overwrite a successor.
+
+Keep one serialized writer, including offline acknowledgment updates. Configure
+bounded cooperative storage/notification work. `notify(notification, cancel)` must
+deduplicate by owner plus incident ID and sequence, and resolve only after actual
+destination confirmation. A successful notification with a lost acknowledgment
+write repeats on replay; that is expected at-least-once delivery.
+
+Callbacks receive detached metadata. A callback failure stops with
+`EventAcknowledgmentIntentCheckpointWatchCallbackError.phase` and `.result`.
+Reconcile its checkpoint against current fenced storage before retry; a failed
+save may already have committed. Do not blindly overwrite state or infer rollback.
+Cancellation retains pending notifications/unresolved IDs and requires fresh proof
+on resume, without resolving or acknowledging them automatically. Shutdown save
+failure is also an application persistence outcome requiring reconciliation.
+
+Checkpoint kind/version are Python-specific and reject Node/Go/deadline formats.
+The bounded outbox reserves closing capacity for unresolved incidents and blocks
+new openings when full. No alert table, file, transport or polling service is
+installed. Ordinary monitoring and callback recovery behavior remain unchanged.
+See [validation, exact acknowledgments and resume semantics](../../docs/event-acknowledgment-python-checkpoints.md).

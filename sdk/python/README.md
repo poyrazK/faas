@@ -2766,3 +2766,13 @@ coverage produce unknown states. Callbacks are awaited serially, cancellation
 joins active work, and callback errors expose only the affected metadata alert.
 State is in memory and resets on restart. See the
 [Python watch](../../docs/event-acknowledgment-intent-health.md#python-watch).
+
+`awatch_event_acknowledgment_intent_health_with_checkpoint(...,
+EventAcknowledgmentIntentCheckpointWatchOptions(on_progress=..., resume=..., ...))`
+adds stable incident IDs, a bounded pending outbox and fresh confirmation after
+resume. Persist each checkpoint before notification attempts, and apply exact
+pairs with `acknowledge_event_acknowledgment_intent_alerts`. Validate stored state
+with `validate_event_acknowledgment_intent_checkpoint`. Storage fencing and
+idempotent delivery remain application-owned. Cancellation exposes the detached
+final result through `EventAcknowledgmentIntentCheckpointWatchCancelled.result`.
+See the [Python checkpoint protocol](../../docs/event-acknowledgment-python-checkpoints.md).

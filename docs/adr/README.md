@@ -1,5 +1,7 @@
 # Architecture Decision Records
 
+- [Python recovery alert checkpoints](20261017145402-python-recovery-alert-checkpoints.md)
+
 - [Python sustained acknowledgment recovery alerts](20261017144446-python-sustained-acknowledgment-recovery-alerts.md)
 
 - [Python acknowledgment recovery health](20261017143147-python-acknowledgment-recovery-health.md)

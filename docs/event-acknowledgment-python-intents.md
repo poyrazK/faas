@@ -208,6 +208,11 @@ async scope factory. Reads/notifications run sequentially with cooperative clean
 missing evidence never resolves a condition. See the
 [Python watch contract](event-acknowledgment-intent-health.md#python-watch).
 
+For stable incident IDs and pending alert replay across restart, use the separate
+[checkpointed Python watch](event-acknowledgment-python-checkpoints.md). Its pure
+validation/acknowledgment helpers and fenced application-owned persistence keep
+notification state separate from callback delivery intents and business receipts.
+
 `alist_event_acknowledgment_intents(connection, account_id, app_id, invocation_id=None,
 limit=25, stop_event=None)` returns immutable metadata, at most 100 rows. It does
 not claim work or return raw results/tokens. Generations/counters are native

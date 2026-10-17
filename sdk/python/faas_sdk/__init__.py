@@ -694,3 +694,22 @@ __all__ += (
     "EventAcknowledgmentIntentAlert", "EventAcknowledgmentIntentWatchCallbackError",
     "EventAcknowledgmentIntentWatchOptions", "awatch_event_acknowledgment_intent_health",
 )
+
+from .event_acknowledgment_intent_checkpoint import (
+    EVENT_ACKNOWLEDGMENT_INTENT_OUTBOX_MAX,
+    acknowledge_event_acknowledgment_intent_alerts,
+    validate_event_acknowledgment_intent_checkpoint,
+)
+from .event_acknowledgment_intent_checkpoint_watch import (
+    EventAcknowledgmentIntentCheckpointWatchCallbackError,
+    EventAcknowledgmentIntentCheckpointWatchCancelled,
+    EventAcknowledgmentIntentCheckpointWatchOptions,
+    awatch_event_acknowledgment_intent_health_with_checkpoint,
+)
+
+__all__ += (
+    "EVENT_ACKNOWLEDGMENT_INTENT_OUTBOX_MAX", "acknowledge_event_acknowledgment_intent_alerts",
+    "validate_event_acknowledgment_intent_checkpoint", "EventAcknowledgmentIntentCheckpointWatchCallbackError",
+    "EventAcknowledgmentIntentCheckpointWatchCancelled", "EventAcknowledgmentIntentCheckpointWatchOptions",
+    "awatch_event_acknowledgment_intent_health_with_checkpoint",
+)

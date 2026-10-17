@@ -409,6 +409,16 @@ and incident identity remain application-owned. See the
 Local build/generation/static evidence does not replace hosted database timing,
 cancellation, connection-replacement and notification qualification before release.
 
+## Checkpointed Python watch
+
+For retained incident identity and replayable notifications across restarts, use
+the opt-in [checkpointed Python watch](event-acknowledgment-python-checkpoints.md).
+It persists a Python-specific validated metadata format through application
+callbacks, reserves bounded outbox capacity, and applies exact acknowledgments.
+Resume retains unresolved IDs/high-water marks while requiring fresh proof.
+Cancellation carries a detached final checkpoint in its cancellation exception.
+The ordinary Python watch retains its in-memory behavior.
+
 ## Checkpointed Node watch
 
 Node applications can use the separate opt-in

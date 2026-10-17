@@ -230,6 +230,9 @@ WRAPPER_MODULES = (
     "event_acknowledgment_intent_health.py",
     "event_acknowledgment_intent_watch.py",
     "_event_acknowledgment_intent_watch_policy.py",
+    "event_acknowledgment_intent_checkpoint.py",
+    "_event_acknowledgment_intent_checkpoint_state.py",
+    "event_acknowledgment_intent_checkpoint_watch.py",
     "event_acknowledgment_intent_schema.sql",
     "_event_acknowledgment_protocol.py",
     "_event_acknowledgment_callbacks.py",
@@ -1430,6 +1433,25 @@ from .event_acknowledgment_intent_watch import (
 __all__ += (
     "EventAcknowledgmentIntentAlert", "EventAcknowledgmentIntentWatchCallbackError",
     "EventAcknowledgmentIntentWatchOptions", "awatch_event_acknowledgment_intent_health",
+)
+
+from .event_acknowledgment_intent_checkpoint import (
+    EVENT_ACKNOWLEDGMENT_INTENT_OUTBOX_MAX,
+    acknowledge_event_acknowledgment_intent_alerts,
+    validate_event_acknowledgment_intent_checkpoint,
+)
+from .event_acknowledgment_intent_checkpoint_watch import (
+    EventAcknowledgmentIntentCheckpointWatchCallbackError,
+    EventAcknowledgmentIntentCheckpointWatchCancelled,
+    EventAcknowledgmentIntentCheckpointWatchOptions,
+    awatch_event_acknowledgment_intent_health_with_checkpoint,
+)
+
+__all__ += (
+    "EVENT_ACKNOWLEDGMENT_INTENT_OUTBOX_MAX", "acknowledge_event_acknowledgment_intent_alerts",
+    "validate_event_acknowledgment_intent_checkpoint", "EventAcknowledgmentIntentCheckpointWatchCallbackError",
+    "EventAcknowledgmentIntentCheckpointWatchCancelled", "EventAcknowledgmentIntentCheckpointWatchOptions",
+    "awatch_event_acknowledgment_intent_health_with_checkpoint",
 )
 '''
 

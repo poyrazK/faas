@@ -9,6 +9,7 @@ from typing import Any
 
 from consumer import _enqueue_authenticated_delivery, _owned_delivery
 from faas_sdk import (
+    EventAcknowledgmentIntentCheckpointWatchOptions,
     EventAcknowledgmentIntentError,
     EventAcknowledgmentIntentHealthOptions,
     EventAcknowledgmentIntentWatchOptions,
@@ -17,6 +18,7 @@ from faas_sdk import (
     aget_event_acknowledgment_intent_health,
     arecover_next_event_acknowledgment_intent,
     awatch_event_acknowledgment_intent_health,
+    awatch_event_acknowledgment_intent_health_with_checkpoint,
 )
 
 
@@ -185,5 +187,54 @@ async def watch_acknowledgment_recovery(
             sustain_ms=30000,
         ),
         notify,
+        stop_event=stop_event,
+    )
+
+
+async def watch_acknowledgment_recovery_with_checkpoint(
+    connection_factory: Any,
+    scope: Mapping[str, str],
+    stop_event: Any,
+    store: Any,
+    notify: Any,
+) -> Any:
+    """One fenced writer; callbacks below require the durable/idempotent adapter contract in README."""
+    saved = await store.load_owned(stop_event)
+
+    async def poll(checkpoint: Any, cancel: Any) -> Any:
+        return await store.list_acknowledgments(checkpoint, cancel)
+
+    async def progress(snapshot: Any, cancel: Any) -> None:
+        # Commit the complete checkpoint BEFORE every external notification attempt.
+        await store.save_owned(snapshot["checkpoint"], cancel)
+        for notification in snapshot["checkpoint"]["pending"]:
+            cancel.check()
+            await notify(
+                notification, cancel
+            )  # Deduplicate by owner/session incident ID + sequence.
+            cancel.check()
+            await store.record_acknowledgment(
+                {
+                    "incident_id": notification["incident_id"],
+                    "sequence": notification["sequence"],
+                },
+                cancel,
+            )
+
+    return await awatch_event_acknowledgment_intent_health_with_checkpoint(
+        connection_factory,
+        scope["account_id"],
+        scope["app_id"],
+        EventAcknowledgmentIntentCheckpointWatchOptions(
+            health=EventAcknowledgmentIntentHealthOptions(
+                scan_limit=1000, stall_after_ms=300000
+            ),
+            due_threshold=100,
+            stalled_threshold=1,
+            sustain_ms=30000,
+            resume=saved,
+            on_progress=progress,
+            poll_acknowledgments=poll,
+        ),
         stop_event=stop_event,
     )
