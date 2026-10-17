@@ -33,15 +33,6 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		"postgres_capacity_resources":    CloneSchemaOperational,
 		"postgres_capacity_sources":      CloneSchemaOperational,
 		"postgres_capacity_targets":      CloneSchemaOperational,
-		"instance_snapshot_recovery":     CloneSchemaOperational,
-		"migration_admissions":           CloneSchemaOperational,
-		"migration_sources":              CloneSchemaOperational,
-		"node_lifecycle_completions":     CloneSchemaOperational,
-		"object_node_settlement_outbox":  CloneSchemaOperational,
-		"operator_node_executions":       CloneSchemaOperational,
-		"operator_park_executions":       CloneSchemaOperational,
-		"operator_recovery_submissions":  CloneSchemaOperational,
-		"operator_restart_executions":    CloneSchemaOperational,
 
 		// CI configuration stays scoped; execution authority remains at its source.
 		"ci_automation_event_retries": CloneSchemaOperational,
