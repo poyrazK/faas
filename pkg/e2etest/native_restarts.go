@@ -38,9 +38,13 @@ func (h *Harness) restartNativeOwner(name string) error {
 	if name == "vmmd" && (h.SockDir == "" || filepath.Dir(h.VMMDSock) != h.SockDir) {
 		return fmt.Errorf("e2etest: vmmd socket is not harness-owned")
 	}
-	control, err := url.Parse(h.GatewayControlURL)
-	if name == "gatewayd-internal" && (err != nil || control.Host == "" || control.Scheme != "http") {
-		return fmt.Errorf("e2etest: invalid owned gateway control URL")
+	var gatewayControlHost string
+	if name == "gatewayd-internal" {
+		control, err := url.Parse(h.GatewayControlURL)
+		if err != nil || control.Host == "" || control.Scheme != "http" {
+			return fmt.Errorf("e2etest: invalid owned gateway control URL")
+		}
+		gatewayControlHost = control.Host
 	}
 	for index, child := range h.procs {
 		if child == nil || child.Process == nil || child.ProcessState != nil || child.Path != filepath.Join(h.BinDir, name) {
@@ -65,7 +69,7 @@ func (h *Harness) restartNativeOwner(name string) error {
 		if name == "vmmd" {
 			waitUnix(h.T, h.VMMDSock, 30*time.Second)
 		} else {
-			waitReadyz(h.T, control.Host, 30*time.Second)
+			waitReadyz(h.T, gatewayControlHost, 30*time.Second)
 		}
 		h.requireDaemonsAlive(h.T)
 		return nil
