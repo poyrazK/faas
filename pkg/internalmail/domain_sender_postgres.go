@@ -74,6 +74,15 @@ func (s *PGStore) beginScheduled(ctx context.Context, r Recipient, selector stri
 			return err
 		}
 	}
+	deployGate, deployBound := ctx.Value(deploymentFailedSubmissionGateKey{}).(func() bool)
+	if deployBound {
+		if deployGate == nil || !deployGate() {
+			return ErrDisabled
+		}
+		if err := s.shareDeploymentFailedSource(ctx, tx, r); err != nil {
+			return err
+		}
+	}
 	endedGate, endedBound := ctx.Value(subscriptionEndedSubmissionGateKey{}).(func() bool)
 	if endedBound {
 		if endedGate == nil || !endedGate() {
@@ -197,6 +206,9 @@ func (s *PGStore) beginScheduled(ctx context.Context, r Recipient, selector stri
 			}
 		}
 		return ErrLeaseLost
+	}
+	if deployBound && !deployGate() {
+		return ErrDisabled
 	}
 	if endedBound && !endedGate() {
 		return ErrDisabled

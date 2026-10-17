@@ -69,6 +69,9 @@ func (s *Service) allowedProducerSenders() []string {
 }
 
 func (s *Service) producerMessagePermitted(m Message) bool {
+	if deploymentFailedMessage(m) && !s.deploymentFailedOutboxEnabled() {
+		return false
+	}
 	if subscriptionEndedMessage(m) && !s.subscriptionEndedOutboxEnabled() {
 		return false
 	}

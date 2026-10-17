@@ -88,7 +88,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_BUILD_PUBLISHER_NAME` | builderd | `default` |  |  | `` | explicit optional source-build publisher name paired with FAAS_BUILD_PUBLISHER_KEY; unset leaves publication disabled and required signature policies fail closed; public standards activation remains disabled (ADR-435) |
 | `FAAS_CANARY_PROGRESSION_TOKEN` | apid, meterd | `secrets-env` |  |  | `` | distinct random 32+ byte internal service token delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid); activates only with FAAS_SAFEDEPLOY_TOKEN |
 | `FAAS_CERT_EXPIRY_REFRESHER_INTERVAL` | meterd | `default` |  |  | `` |  |
-| `FAAS_CLI_AUTH_URL_BASE` | apid | `default` |  |  | `` |  |
+| `FAAS_CLI_AUTH_URL_BASE` | apid, shared | `default` |  |  | `` |  |
 | `FAAS_CLONE_WORKER_SPOOL_DIR` | apid | `unit` |  |  | `` | dedicated APID clone-worker mode; private 0700 spool with one OS-locked owner |
 | `FAAS_COMMIT_API_ENABLED` | apid | `default` |  |  | `` | opt-in Gregale Commit qualification gate; disabled unless explicitly set to true |
 | `FAAS_COMMIT_DATABASE_CIDRS` | schedd | `default` |  |  | `` | operator-approved database address prefixes; required when the Commit relay is enabled |
@@ -300,6 +300,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_INTERNAL_MAIL_DAILY_RECIPIENT_LIMIT` | shared | `secrets-env` |  | 10 | `` | pilot recipient submissions per UTC day in /etc/faas/secrets/internal-mail/maild.env; range 1..100, enforced under the existing namespace admission lock |
 | `FAAS_INTERNAL_MAIL_DELIVERY_CONTROLS_ENABLED` | mailctl, maild, shared | `unit` |  | 0 | `` | exact opt-in for private pause/resume, drain status and queued cancellation operations; requires master and operator gates; disabling access preserves durable holds and cancellations |
 | `FAAS_INTERNAL_MAIL_DELIVERY_ENABLED` | maild, shared | `unit` |  | 0 | `` | internal mail SMTP dispatch gate; only exact 1 enables delivery, independent of the master flag |
+| `FAAS_INTERNAL_MAIL_DEPLOYMENT_FAILED_OUTBOX_ENABLED` | apid, mailctl, maild, shared | `unit` |  | 0 | `` | exact internal opt-in for durable deployment-failure capture and encrypted notices; independent source, account, cooldown and success fences; no historical backfill on first enable |
 | `FAAS_INTERNAL_MAIL_DKIM_ROTATION_ENABLED` | mailctl, maild, shared | `unit` |  | 0 | `` | exact opt-in for staged DKIM rotation on private operator routes; requires the master and operations gates, one hour of observed publication and at least seven days of old-selector overlap |
 | `FAAS_INTERNAL_MAIL_DOMAIN_PACING_ENABLED` | maild, shared | `unit` |  | 0 | `` | exact opt-in for durable per-namespace recipient-domain submission pacing; does not enable SMTP; cooldowns are written only during gated delivery; disabling bypasses pacing waits while retaining cooldown metadata |
 | `FAAS_INTERNAL_MAIL_DOMAIN_PACING_INTERVAL_SECONDS` | shared | `secrets-env` |  | 5 | `` | minimum interval between new maild submission reservations for the same namespace and exact recipient domain in /etc/faas/secrets/internal-mail/maild.env; range 1..300 whole seconds, read only with domain pacing enabled; persisted cooldowns survive restarts and policy changes |

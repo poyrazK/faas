@@ -35,6 +35,8 @@ type Service struct {
 	quotaWarningUnsubscribe   string
 	nonpaymentDeletion        *credentialConfig
 	accountSuspended          *credentialConfig
+	deploymentFailed          *credentialConfig
+	deploymentDashboardOrigin string
 	subscriptionEnded         *credentialConfig
 	accountRestored           *credentialConfig
 	paymentFailed             *credentialConfig

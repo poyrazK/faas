@@ -37,6 +37,7 @@ const (
 	PasswordResetOutboxEnableEnv        = "FAAS_INTERNAL_MAIL_PASSWORD_RESET_OUTBOX_ENABLED"
 	MagicLinkOutboxEnableEnv            = "FAAS_INTERNAL_MAIL_MAGIC_LINK_OUTBOX_ENABLED"
 	MFADisableOutboxEnableEnv           = "FAAS_INTERNAL_MAIL_MFA_DISABLE_OUTBOX_ENABLED"
+	DeploymentFailedOutboxEnableEnv     = "FAAS_INTERNAL_MAIL_DEPLOYMENT_FAILED_OUTBOX_ENABLED"
 	SubscriptionEndedOutboxEnableEnv    = "FAAS_INTERNAL_MAIL_SUBSCRIPTION_ENDED_OUTBOX_ENABLED"
 	QuotaWarningOutboxEnableEnv         = "FAAS_INTERNAL_MAIL_QUOTA_WARNING_OUTBOX_ENABLED"
 	NonpaymentDeletionOutboxEnableEnv   = "FAAS_INTERNAL_MAIL_NONPAYMENT_DELETION_OUTBOX_ENABLED"
@@ -388,4 +389,8 @@ func QuotaWarningOutboxEnabled(getenv func(string) string) bool {
 
 func SubscriptionEndedOutboxEnabled(getenv func(string) string) bool {
 	return getenv(SubscriptionEndedOutboxEnableEnv) == "1" && ProducerOutboxEnabled(getenv)
+}
+
+func DeploymentFailedOutboxEnabled(getenv func(string) string) bool {
+	return getenv(DeploymentFailedOutboxEnableEnv) == "1" && ProducerOutboxEnabled(getenv)
 }

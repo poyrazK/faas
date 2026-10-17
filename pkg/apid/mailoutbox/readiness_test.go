@@ -43,7 +43,7 @@ CHECK(value IN ('mfa_disabled','password_changed','mfa_enabled','payment_failed'
 		f.service.queries.MFADisabledAlertReady, f.service.queries.PasswordChangedAlertReady,
 		f.service.queries.MFAEnabledAlertReady, f.service.queries.PaymentFailedReady,
 		f.service.queries.AccountRestoredReady, f.service.queries.AccountSuspendedReady,
-		f.service.queries.NonpaymentDeletionReady, f.service.queries.QuotaWarningReady, f.service.queries.SubscriptionEndedReady,
+		f.service.queries.NonpaymentDeletionReady, f.service.queries.QuotaWarningReady, f.service.queries.SubscriptionEndedReady, f.service.queries.DeploymentFailedReady,
 	}
 	for range 100 {
 		for i, check := range checks {

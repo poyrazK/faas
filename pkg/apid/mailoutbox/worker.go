@@ -121,13 +121,19 @@ func (s *Service) claim(ctx context.Context) (q.PlatformMailProducerOutbox, erro
 	if err := s.queries.PurgeExpiredPasswordResetTokens(ctx, tx, api.InternalMailProducerOutboxMaintenanceBatch); err != nil {
 		return q.PlatformMailProducerOutbox{}, err
 	}
+	var deploymentKeys []string
+	if s.deploymentFailedEnabled() {
+		for key := range s.deploymentFailed.readers {
+			deploymentKeys = append(deploymentKeys, key)
+		}
+	}
 	var endedKeys []string
 	if s.subscriptionEndedEnabled() {
 		for key := range s.subscriptionEnded.readers {
 			endedKeys = append(endedKeys, key)
 		}
 	}
-	r, err := s.queries.Claim(ctx, tx, q.ClaimParams{Namespace: s.namespace, ProducerID: s.producer, FromAddress: s.from, VerificationEnabled: s.verificationEnabled(), VerificationOrigin: origin, VerificationKeys: keys, PasswordResetEnabled: s.passwordResetEnabled(), PasswordResetOrigin: resetOrigin, PasswordResetKeys: resetKeys, MagicLinkEnabled: s.magicLinkEnabled(), MagicLinkOrigin: magicOrigin, MagicLinkKeys: magicKeys, MfaDisableEnabled: s.mfaDisableEnabled(), MfaDisableOrigin: disableOrigin, MfaDisableKeys: disableKeys, SubscriptionEndedEnabled: s.subscriptionEndedEnabled(), SubscriptionEndedKeys: endedKeys, QuotaWarningEnabled: s.quotaWarningEnabled(), QuotaWarningKeys: quotaKeys, NonpaymentDeletionEnabled: s.nonpaymentDeletionEnabled(), NonpaymentDeletionKeys: nonpaymentKeys, AccountSuspendedEnabled: s.accountSuspendedEnabled(), AccountSuspendedKeys: suspendedKeys, AccountRestoredEnabled: s.accountRestoredEnabled(), AccountRestoredKeys: restoredKeys, PaymentFailedEnabled: s.paymentFailedEnabled(), PaymentFailedKeys: paymentKeys, MfaEnabledAlertEnabled: s.mfaEnabledAlertEnabled(), MfaEnabledAlertKeys: enabledKeys, PasswordChangedAlertEnabled: s.passwordChangedAlertEnabled(), PasswordChangedAlertKeys: changedKeys, MfaDisabledAlertEnabled: s.mfaDisabledAlertEnabled(), MfaDisabledAlertKeys: disabledKeys, MfaRecoveryAlertEnabled: s.mfaRecoveryAlertEnabled(), MfaRecoveryAlertKeys: alertKeys, MaxAttempts: api.InternalMailProducerOutboxMaxAttempts, LeaseID: pgID(uuid.NewString()), LeaseSeconds: int32(api.InternalMailProducerOutboxLease / time.Second)})
+	r, err := s.queries.Claim(ctx, tx, q.ClaimParams{Namespace: s.namespace, ProducerID: s.producer, FromAddress: s.from, VerificationEnabled: s.verificationEnabled(), VerificationOrigin: origin, VerificationKeys: keys, PasswordResetEnabled: s.passwordResetEnabled(), PasswordResetOrigin: resetOrigin, PasswordResetKeys: resetKeys, MagicLinkEnabled: s.magicLinkEnabled(), MagicLinkOrigin: magicOrigin, MagicLinkKeys: magicKeys, MfaDisableEnabled: s.mfaDisableEnabled(), MfaDisableOrigin: disableOrigin, MfaDisableKeys: disableKeys, DeploymentFailedEnabled: s.deploymentFailedEnabled(), DeploymentFailedKeys: deploymentKeys, SubscriptionEndedEnabled: s.subscriptionEndedEnabled(), SubscriptionEndedKeys: endedKeys, QuotaWarningEnabled: s.quotaWarningEnabled(), QuotaWarningKeys: quotaKeys, NonpaymentDeletionEnabled: s.nonpaymentDeletionEnabled(), NonpaymentDeletionKeys: nonpaymentKeys, AccountSuspendedEnabled: s.accountSuspendedEnabled(), AccountSuspendedKeys: suspendedKeys, AccountRestoredEnabled: s.accountRestoredEnabled(), AccountRestoredKeys: restoredKeys, PaymentFailedEnabled: s.paymentFailedEnabled(), PaymentFailedKeys: paymentKeys, MfaEnabledAlertEnabled: s.mfaEnabledAlertEnabled(), MfaEnabledAlertKeys: enabledKeys, PasswordChangedAlertEnabled: s.passwordChangedAlertEnabled(), PasswordChangedAlertKeys: changedKeys, MfaDisabledAlertEnabled: s.mfaDisabledAlertEnabled(), MfaDisabledAlertKeys: disabledKeys, MfaRecoveryAlertEnabled: s.mfaRecoveryAlertEnabled(), MfaRecoveryAlertKeys: alertKeys, MaxAttempts: api.InternalMailProducerOutboxMaxAttempts, LeaseID: pgID(uuid.NewString()), LeaseSeconds: int32(api.InternalMailProducerOutboxLease / time.Second)})
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return r, err
 	}
@@ -196,6 +202,19 @@ func (s *Service) dispatch(ctx context.Context, claimed q.PlatformMailProducerOu
 	if !live {
 		return internalmail.ErrLeaseLost
 	}
+	if r.Template == DeploymentFailedTemplate {
+		current, err := s.deploymentFailureCurrent(ctx, tx, r)
+		if err != nil {
+			return err
+		}
+		if !current {
+			_, err := s.queries.Settle(ctx, tx, q.SettleParams{Namespace: s.namespace, ID: r.ID, LeaseID: claimed.LeaseID, State: "cancelled", Code: "account_changed"})
+			if err != nil {
+				return err
+			}
+			return tx.Commit(ctx)
+		}
+	}
 	state, code := "", ""
 	refund := false
 	switch {
@@ -256,13 +275,18 @@ func (s *Service) handoff(ctx context.Context, tx pgx.Tx, r q.PlatformMailProduc
 	sender := s.sender
 	var message mail.Message
 	switch r.Template {
-	case VerificationTemplate, PasswordResetTemplate, MagicLinkTemplate, MFARecoveryAlertTemplate, MFADisableTemplate, MFADisabledAlertTemplate, PasswordChangedAlertTemplate, MFAEnabledAlertTemplate, PaymentFailedTemplate, AccountRestoredTemplate, AccountSuspendedTemplate, NonpaymentDeletionTemplate, QuotaWarningTemplate, SubscriptionEndedTemplate:
+	case VerificationTemplate, PasswordResetTemplate, MagicLinkTemplate, MFARecoveryAlertTemplate, MFADisableTemplate, MFADisabledAlertTemplate, PasswordChangedAlertTemplate, MFAEnabledAlertTemplate, PaymentFailedTemplate, AccountRestoredTemplate, AccountSuspendedTemplate, NonpaymentDeletionTemplate, QuotaWarningTemplate, SubscriptionEndedTemplate, DeploymentFailedTemplate:
 		var err error
 		switch r.Template {
 		case MFADisableTemplate:
 			message, err = s.mfaDisableMessage(ctx, tx, r, account)
 			if s.mfaDisable != nil {
 				sender = s.mfaDisable.sender
+			}
+		case DeploymentFailedTemplate:
+			message, err = s.deploymentFailedMessage(r)
+			if s.deploymentFailed != nil {
+				sender = s.deploymentFailed.sender
 			}
 		case SubscriptionEndedTemplate:
 			message, err = s.subscriptionEndedMessage(r)
@@ -387,6 +411,11 @@ func (s *Service) Run(ctx context.Context, onError func(error)) {
 	for {
 		if !s.Enabled() {
 			return
+		}
+		if s.deploymentFailedEnabled() {
+			if err := s.CaptureDeploymentFailures(ctx); err != nil && ctx.Err() == nil && onError != nil {
+				onError(err)
+			}
 		}
 		if err := s.DeliverOne(ctx); err != nil && ctx.Err() == nil && onError != nil {
 			onError(err)

@@ -4,6 +4,10 @@
 - Date: 2026-10-15
 - Builds on: ADR-115 and ADR-136 (platform mail transport and suppression).
 
+Durable deployment-failure capture and notices are specified in
+[ADR-20261017155842](20261017155842-mail-deployment-failure-notices.md). They remain
+internal behind their independent default-off gate.
+
 Gregale needs to evaluate running its own transactional mail delivery. This
 change introduces an internal service rather than a customer email entitlement.
 Existing Resend/Postmark selections remain operator-controlled.

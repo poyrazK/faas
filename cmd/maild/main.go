@@ -62,6 +62,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 			return errors.New("maild: producer outbox metadata schema is unavailable")
 		}
 	}
+	if internalmail.DeploymentFailedOutboxEnabled(os.Getenv) {
+		if err := store.DeploymentFailedOutboxReady(ctx); err != nil {
+			return errors.New("maild: deployment-failure schema unavailable")
+		}
+	}
 	if internalmail.SubscriptionEndedOutboxEnabled(os.Getenv) {
 		if err := store.SubscriptionEndedOutboxReady(ctx); err != nil {
 			return errors.New("maild: subscription-ended schema unavailable")
@@ -140,6 +145,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		PasswordResetOutboxEnabled:        func() bool { return internalmail.PasswordResetOutboxEnabled(os.Getenv) },
 		MagicLinkOutboxEnabled:            func() bool { return internalmail.MagicLinkOutboxEnabled(os.Getenv) },
 		MFADisableOutboxEnabled:           func() bool { return internalmail.MFADisableOutboxEnabled(os.Getenv) },
+		DeploymentFailedOutboxEnabled:     func() bool { return internalmail.DeploymentFailedOutboxEnabled(os.Getenv) },
 		SubscriptionEndedOutboxEnabled:    func() bool { return internalmail.SubscriptionEndedOutboxEnabled(os.Getenv) },
 		QuotaWarningOutboxEnabled:         func() bool { return internalmail.QuotaWarningOutboxEnabled(os.Getenv) },
 		NonpaymentDeletionOutboxEnabled:   func() bool { return internalmail.NonpaymentDeletionOutboxEnabled(os.Getenv) },

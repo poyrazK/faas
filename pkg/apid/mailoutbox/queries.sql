@@ -27,7 +27,7 @@ SELECT count(*)::bigint FROM platform_mail_producer_outbox WHERE namespace=$1 AN
 SELECT id,email,status,deletion_requested_at FROM accounts WHERE id=$1 FOR UPDATE;
 
 -- name: ShareAccount :one
-SELECT subscription_mail_revision,coalesce(stripe_subscription_item,'')::text AS stripe_subscription_item,plan,last_quota_warning_at,quota_mail_revision,id,email,status,deletion_requested_at,email_verified_at,abuse_hold_at,password_reset_revision,mfa_enrolled_at,mfa_revision,past_due_at,billing_mail_revision FROM accounts WHERE id=$1 FOR SHARE;
+SELECT deployment_mail_revision,subscription_mail_revision,coalesce(stripe_subscription_item,'')::text AS stripe_subscription_item,plan,last_quota_warning_at,quota_mail_revision,id,email,status,deletion_requested_at,email_verified_at,abuse_hold_at,password_reset_revision,mfa_enrolled_at,mfa_revision,past_due_at,billing_mail_revision FROM accounts WHERE id=$1 FOR SHARE;
 
 -- name: ScheduleDeletion :one
 UPDATE accounts SET status='deleted_pending',deletion_requested_at=coalesce(deletion_requested_at,clock_timestamp())
@@ -69,6 +69,8 @@ WITH candidate AS (
           AND o.verification_key_id=ANY(sqlc.arg(magic_link_keys)::text[]))
         OR (o.template='mfa_disable_request' AND sqlc.arg(mfa_disable_enabled)::boolean AND o.verification_origin=sqlc.arg(mfa_disable_origin)::text
           AND o.verification_key_id=ANY(sqlc.arg(mfa_disable_keys)::text[]))
+        OR (o.template='deployment_failed' AND sqlc.arg(deployment_failed_enabled)::boolean
+          AND o.security_alert_key_id=ANY(sqlc.arg(deployment_failed_keys)::text[]))
         OR (o.template='subscription_ended' AND sqlc.arg(subscription_ended_enabled)::boolean
           AND o.security_alert_key_id=ANY(sqlc.arg(subscription_ended_keys)::text[]))
         OR (o.template='quota_warning' AND sqlc.arg(quota_warning_enabled)::boolean
@@ -158,7 +160,7 @@ SELECT o.id,o.revision,o.state,o.template,o.from_address,o.expires_at,o.recovery
     coalesce(m.sender_address,'')::text AS sender_address
 FROM platform_mail_producer_outbox o
 LEFT JOIN internal_mail_messages m ON m.namespace=o.namespace AND m.producer_id=o.producer_id
-    AND m.idempotency_key=(CASE o.template WHEN 'email_verification' THEN 'verify-email:' WHEN 'password_reset' THEN 'password-reset:' WHEN 'magic_link' THEN 'magic-link:' WHEN 'mfa_recovery_used' THEN 'mfa-recovery-alert:' WHEN 'subscription_ended' THEN 'subscription-ended:' WHEN 'quota_warning' THEN 'quota-warning:' WHEN 'nonpayment_deletion' THEN 'nonpayment-deletion:' WHEN 'account_suspended' THEN 'account-suspended:' WHEN 'account_restored' THEN 'account-restored:' WHEN 'payment_failed' THEN 'payment-failed:' WHEN 'mfa_enabled' THEN 'mfa-enabled:' WHEN 'password_changed' THEN 'password-changed:' WHEN 'mfa_disabled' THEN 'mfa-disabled:' WHEN 'mfa_disable_request' THEN 'mfa-disable:' ELSE 'account-delete:' END)||o.id::text
+    AND m.idempotency_key=(CASE o.template WHEN 'email_verification' THEN 'verify-email:' WHEN 'password_reset' THEN 'password-reset:' WHEN 'magic_link' THEN 'magic-link:' WHEN 'mfa_recovery_used' THEN 'mfa-recovery-alert:' WHEN 'deployment_failed' THEN 'deployment-failed:' WHEN 'subscription_ended' THEN 'subscription-ended:' WHEN 'quota_warning' THEN 'quota-warning:' WHEN 'nonpayment_deletion' THEN 'nonpayment-deletion:' WHEN 'account_suspended' THEN 'account-suspended:' WHEN 'account_restored' THEN 'account-restored:' WHEN 'payment_failed' THEN 'payment-failed:' WHEN 'mfa_enabled' THEN 'mfa-enabled:' WHEN 'password_changed' THEN 'password-changed:' WHEN 'mfa_disabled' THEN 'mfa-disabled:' WHEN 'mfa_disable_request' THEN 'mfa-disable:' ELSE 'account-delete:' END)||o.id::text
 WHERE o.namespace=$1 AND o.id=$2;
 
 -- name: ReconciliationReady :exec
@@ -966,3 +968,128 @@ WHERE m.namespace=$1 AND m.id=$2 FOR SHARE OF a;
 -- name: SubscriptionEndedDeliveryReady :exec
 SELECT a.subscription_mail_revision,a.plan,a.stripe_subscription_item,o.subscription_ended_revision
 FROM accounts a JOIN platform_mail_producer_outbox o ON o.account_id=a.id LIMIT 0;
+
+-- name: DeploymentFailedReady :one
+WITH own_constraint AS MATERIALIZED (
+    SELECT c.oid FROM pg_catalog.pg_constraint c
+    JOIN pg_catalog.pg_class t ON t.oid=c.conrelid JOIN pg_catalog.pg_namespace n ON n.oid=t.relnamespace
+    WHERE n.nspname=current_schema() AND t.relname='platform_mail_producer_outbox'
+      AND c.conname='platform_mail_producer_outbox_security_alert_check'
+)
+SELECT EXISTS(SELECT 1 FROM own_constraint c
+    WHERE position('deployment_failed' in pg_catalog.pg_get_constraintdef(c.oid))>0)::boolean AS ready;
+
+-- name: DeploymentFailedLifecycleReady :one
+SELECT (count(*)=3)::boolean AS ready
+FROM pg_catalog.pg_trigger g JOIN pg_catalog.pg_class t ON t.oid=g.tgrelid
+JOIN pg_catalog.pg_namespace n ON n.oid=t.relnamespace
+WHERE n.nspname=current_schema() AND g.tgenabled IN ('O','A')
+    AND ((t.relname='accounts' AND g.tgname='accounts_deployment_mail_revision_guard')
+        OR (t.relname='apps' AND g.tgname='apps_deployment_mail_revision_guard')
+        OR (t.relname='deployments' AND g.tgname='deployments_mail_failure_guard'));
+
+-- name: DeploymentFailedSchemaReady :exec
+SELECT a.deployment_mail_revision,p.deployment_mail_revision,p.last_deploy_failed_email_at,
+    d.mail_failed_at,d.mail_failure_revision,d.mail_failure_account_revision,d.mail_failure_app_revision,d.mail_failure_success_revision,
+    o.deployment_failure_id,o.deployment_failure_at,o.deployment_failure_scope,f.success_revision,c.started_at,r.disposition
+FROM accounts a JOIN apps p ON p.account_id=a.id JOIN deployments d ON d.app_id=p.id
+JOIN platform_mail_producer_outbox o ON o.account_id=a.id
+JOIN platform_mail_deployment_fences f ON f.app_id=p.id AND f.scope=d.scope
+JOIN platform_mail_deployment_capture c ON c.namespace=o.namespace AND c.producer_id=o.producer_id
+JOIN platform_mail_deployment_observations r ON r.deployment_id=d.id LIMIT 0;
+
+-- name: DeploymentFailedKeyReferences :many
+SELECT DISTINCT security_alert_key_id FROM platform_mail_producer_outbox
+WHERE namespace=$1 AND producer_id=$2 AND template='deployment_failed' AND state IN ('queued','claimed') AND expires_at>clock_timestamp();
+
+-- name: EnrollDeploymentFailureCapture :exec
+INSERT INTO platform_mail_deployment_capture(namespace,producer_id,recovery_id) VALUES($1,$2,$3)
+ON CONFLICT(namespace,producer_id) DO UPDATE SET started_at=clock_timestamp(),recovery_id=EXCLUDED.recovery_id
+WHERE platform_mail_deployment_capture.recovery_id<>EXCLUDED.recovery_id;
+
+-- name: DeploymentFailureCapture :one
+SELECT started_at,recovery_id FROM platform_mail_deployment_capture WHERE namespace=$1 AND producer_id=$2;
+
+-- name: DeploymentFailureCandidates :many
+SELECT d.id,d.app_id,d.scope,d.mail_failure_revision,d.mail_failure_account_id
+FROM deployments d JOIN platform_mail_deployment_capture c ON c.namespace=$1 AND c.producer_id=$2
+JOIN accounts a ON a.id=d.mail_failure_account_id
+WHERE d.status='failed' AND d.deleted_at IS NULL AND d.mail_failed_at>=c.started_at
+    AND d.mail_failed_at>clock_timestamp()-make_interval(secs=>sqlc.arg(ttl_seconds)::integer)
+    AND NOT EXISTS(SELECT 1 FROM platform_mail_deployment_observations r WHERE r.deployment_id=d.id AND r.failure_revision=d.mail_failure_revision)
+ORDER BY d.mail_failed_at,d.id LIMIT sqlc.arg(batch_size);
+
+-- name: LockDeploymentFailureApp :one
+SELECT id,account_id,org_id,slug,status,deployment_mail_revision,last_deploy_failed_email_at FROM apps WHERE id=$1 FOR NO KEY UPDATE;
+
+-- name: ShareDeploymentFailureApp :one
+SELECT id,account_id,org_id FROM apps WHERE id=$1 FOR SHARE;
+
+-- name: ShareDeploymentFailureMember :one
+SELECT role FROM org_memberships WHERE org_id=$1 AND account_id=$2 AND removed_at IS NULL FOR SHARE;
+
+-- Source writers own deployment row locks and then the separate scope fence.
+-- Readers acquire this fence and read deployment metadata without row locks.
+-- name: ShareDeploymentFailureFence :one
+SELECT success_revision FROM platform_mail_deployment_fences WHERE app_id=$1 AND scope=$2 FOR SHARE;
+
+-- Bound source fields are selected whole or omitted before redaction, so a
+-- cut through a credential never turns its partial value into a diagnostic.
+-- name: DeploymentFailureSnapshot :one
+SELECT id,app_id,scope,status,deleted_at,mail_failed_at,mail_failure_revision,mail_failure_account_id,
+    mail_failure_account_revision,mail_failure_app_revision,mail_failure_success_revision,
+    CASE WHEN octet_length(error_code)<=sqlc.arg(source_max_bytes)::integer THEN coalesce(error_code,'') ELSE '' END::text AS error_code,
+    CASE WHEN octet_length(error)<=sqlc.arg(source_max_bytes)::integer THEN coalesce(error,'') ELSE '' END::text AS error,
+    CASE WHEN octet_length(error_hint)<=sqlc.arg(source_max_bytes)::integer THEN coalesce(error_hint,'') ELSE '' END::text AS error_hint,
+    CASE WHEN octet_length(error_why)<=sqlc.arg(source_max_bytes)::integer THEN coalesce(error_why,'') ELSE '' END::text AS error_why,
+    CASE WHEN octet_length(error_fix)<=sqlc.arg(source_max_bytes)::integer THEN coalesce(error_fix,'') ELSE '' END::text AS error_fix
+FROM deployments WHERE id=$1;
+
+-- name: DeploymentFailureObserved :one
+SELECT EXISTS(SELECT 1 FROM platform_mail_deployment_observations WHERE deployment_id=$1 AND failure_revision=$2)::boolean;
+
+-- name: ClaimDeploymentFailureCooldown :one
+UPDATE apps SET last_deploy_failed_email_at=clock_timestamp()
+WHERE id=$1 AND status='active' AND (last_deploy_failed_email_at IS NULL
+    OR last_deploy_failed_email_at<clock_timestamp()-make_interval(secs=>sqlc.arg(cooldown_seconds)::integer))
+RETURNING last_deploy_failed_email_at;
+
+-- name: RecordDeploymentFailureObservation :exec
+INSERT INTO platform_mail_deployment_observations(deployment_id,failure_revision,account_id,disposition,intent_id)
+VALUES($1,$2,$3,$4,$5);
+
+-- name: CreateDeploymentFailedIntent :exec
+INSERT INTO platform_mail_producer_outbox(id,account_id,namespace,producer_id,from_address,recipient_address,
+    template,template_version,expires_at,recovery_id,sealed_security_alert,security_alert_key_id,
+    deployment_failure_id,deployment_failure_app_id,deployment_failure_scope,deployment_failure_revision,
+    deployment_failure_account_revision,deployment_failure_app_revision,deployment_failure_success_revision,deployment_failure_at)
+VALUES($1,$2,$3,$4,$5,$6,'deployment_failed',1,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18);
+
+-- Shared by apid and maild after account, app, optional membership and scope
+-- fence locks. Terminal intents erase the address; use the actual recipient.
+-- name: DeploymentFailureCurrent :one
+SELECT EXISTS(
+    SELECT 1 FROM platform_mail_producer_outbox o
+    JOIN accounts a ON a.id=o.account_id JOIN apps p ON p.id=o.deployment_failure_app_id
+    JOIN deployments d ON d.id=o.deployment_failure_id AND d.app_id=p.id AND d.scope=o.deployment_failure_scope
+    JOIN platform_mail_deployment_fences f ON f.app_id=p.id AND f.scope=d.scope
+    WHERE o.namespace=$1 AND o.id=$2 AND o.template='deployment_failed'
+      AND a.status IN ('active','past_due','suspended') AND a.deletion_requested_at IS NULL
+      AND lower(a.email)=lower(sqlc.arg(recipient_address)::text) AND a.deployment_mail_revision=o.deployment_failure_account_revision
+      AND p.status='active' AND p.deployment_mail_revision=o.deployment_failure_app_revision
+      AND d.status='failed' AND d.deleted_at IS NULL AND d.mail_failure_revision=o.deployment_failure_revision
+      AND d.mail_failed_at=o.deployment_failure_at AND d.mail_failure_account_id=o.account_id
+      AND d.mail_failure_account_revision=o.deployment_failure_account_revision
+      AND d.mail_failure_app_revision=o.deployment_failure_app_revision
+      AND d.mail_failure_success_revision=o.deployment_failure_success_revision AND f.success_revision=o.deployment_failure_success_revision
+      AND (p.account_id=a.id OR EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=p.org_id AND m.account_id=a.id AND m.removed_at IS NULL))
+)::boolean AS current;
+
+-- name: ShareDeploymentFailureSubmissionAccount :one
+SELECT a.id AS account_id,o.id AS intent_id,o.deployment_failure_app_id,o.deployment_failure_scope,
+    o.from_address,m.sender_address
+FROM internal_mail_messages m JOIN platform_mail_producer_outbox o
+    ON o.namespace=m.namespace AND o.producer_id=m.producer_id
+    AND m.idempotency_key='deployment-failed:'||o.id::text AND o.template='deployment_failed' AND o.expires_at=m.expires_at
+JOIN accounts a ON a.id=o.account_id
+WHERE m.namespace=$1 AND m.id=$2 FOR SHARE OF a;

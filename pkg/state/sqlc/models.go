@@ -89,6 +89,7 @@ type Account struct {
 	BillingMailRevision      int64
 	QuotaMailRevision        int64
 	SubscriptionMailRevision int64
+	DeploymentMailRevision   int64
 }
 
 type AccountAsyncQuotum struct {
@@ -518,6 +519,7 @@ type App struct {
 	ManagedPostgresAdmissionCutoverID pgtype.UUID
 	ManagedPostgresAdmissionFencedAt  pgtype.Timestamptz
 	ServiceAddressIndex               pgtype.Int4
+	DeploymentMailRevision            int64
 }
 
 type AppApiRoute struct {
@@ -2476,6 +2478,12 @@ type Deployment struct {
 	ServingEndedAt             pgtype.Timestamptz
 	RuntimeUpgradeRoutingToken pgtype.UUID
 	EnvironmentWorkloadHeld    bool
+	MailFailureRevision        int64
+	MailFailedAt               pgtype.Timestamptz
+	MailFailureAccountID       pgtype.UUID
+	MailFailureAccountRevision pgtype.Int8
+	MailFailureAppRevision     pgtype.Int8
+	MailFailureSuccessRevision pgtype.Int8
 }
 
 type DeploymentAlias struct {
@@ -7380,6 +7388,29 @@ type PgRatelimitCounter struct {
 	LastRefill pgtype.Timestamptz
 }
 
+type PlatformMailDeploymentCapture struct {
+	Namespace  string
+	ProducerID string
+	StartedAt  pgtype.Timestamptz
+	RecoveryID pgtype.UUID
+}
+
+type PlatformMailDeploymentFence struct {
+	AppID           pgtype.UUID
+	Scope           string
+	Revision        int64
+	SuccessRevision int64
+}
+
+type PlatformMailDeploymentObservation struct {
+	DeploymentID    pgtype.UUID
+	FailureRevision int64
+	AccountID       pgtype.UUID
+	Disposition     string
+	IntentID        pgtype.UUID
+	ObservedAt      pgtype.Timestamptz
+}
+
 type PlatformMailOutboxReconciliation struct {
 	Namespace         string
 	RequestID         pgtype.UUID
@@ -7398,44 +7429,52 @@ type PlatformMailOutboxReconciliation struct {
 }
 
 type PlatformMailProducerOutbox struct {
-	ID                         pgtype.UUID
-	AccountID                  pgtype.UUID
-	Namespace                  string
-	ProducerID                 string
-	FromAddress                string
-	RecipientAddress           string
-	Template                   string
-	TemplateVersion            int32
-	DeletionRequestedAt        pgtype.Timestamptz
-	RestoreUntil               pgtype.Timestamptz
-	ExpiresAt                  pgtype.Timestamptz
-	RecoveryID                 pgtype.UUID
-	State                      string
-	Attempts                   int32
-	NextAttemptAt              pgtype.Timestamptz
-	LeaseID                    pgtype.UUID
-	LeaseUntil                 pgtype.Timestamptz
-	Code                       string
-	CreatedAt                  pgtype.Timestamptz
-	UpdatedAt                  pgtype.Timestamptz
-	Revision                   int64
-	VerificationTokenHash      []byte
-	SealedVerification         []byte
-	VerificationKeyID          string
-	VerificationOrigin         string
-	SealedSecurityAlert        []byte
-	SecurityAlertKeyID         string
-	PaymentPastDueAt           pgtype.Timestamptz
-	AccountRestoredRevision    pgtype.Int8
-	SuspensionPastDueAt        pgtype.Timestamptz
-	AccountSuspendedRevision   pgtype.Int8
-	NonpaymentPastDueAt        pgtype.Timestamptz
-	NonpaymentDeletionRevision pgtype.Int8
-	NonpaymentDeletionAt       pgtype.Timestamptz
-	QuotaWarningDay            pgtype.Timestamptz
-	QuotaWarningPlan           pgtype.Text
-	QuotaWarningRevision       pgtype.Int8
-	SubscriptionEndedRevision  pgtype.Int8
+	ID                               pgtype.UUID
+	AccountID                        pgtype.UUID
+	Namespace                        string
+	ProducerID                       string
+	FromAddress                      string
+	RecipientAddress                 string
+	Template                         string
+	TemplateVersion                  int32
+	DeletionRequestedAt              pgtype.Timestamptz
+	RestoreUntil                     pgtype.Timestamptz
+	ExpiresAt                        pgtype.Timestamptz
+	RecoveryID                       pgtype.UUID
+	State                            string
+	Attempts                         int32
+	NextAttemptAt                    pgtype.Timestamptz
+	LeaseID                          pgtype.UUID
+	LeaseUntil                       pgtype.Timestamptz
+	Code                             string
+	CreatedAt                        pgtype.Timestamptz
+	UpdatedAt                        pgtype.Timestamptz
+	Revision                         int64
+	VerificationTokenHash            []byte
+	SealedVerification               []byte
+	VerificationKeyID                string
+	VerificationOrigin               string
+	SealedSecurityAlert              []byte
+	SecurityAlertKeyID               string
+	PaymentPastDueAt                 pgtype.Timestamptz
+	AccountRestoredRevision          pgtype.Int8
+	SuspensionPastDueAt              pgtype.Timestamptz
+	AccountSuspendedRevision         pgtype.Int8
+	NonpaymentPastDueAt              pgtype.Timestamptz
+	NonpaymentDeletionRevision       pgtype.Int8
+	NonpaymentDeletionAt             pgtype.Timestamptz
+	QuotaWarningDay                  pgtype.Timestamptz
+	QuotaWarningPlan                 pgtype.Text
+	QuotaWarningRevision             pgtype.Int8
+	SubscriptionEndedRevision        pgtype.Int8
+	DeploymentFailureID              pgtype.UUID
+	DeploymentFailureAppID           pgtype.UUID
+	DeploymentFailureScope           pgtype.Text
+	DeploymentFailureRevision        pgtype.Int8
+	DeploymentFailureAccountRevision pgtype.Int8
+	DeploymentFailureAppRevision     pgtype.Int8
+	DeploymentFailureSuccessRevision pgtype.Int8
+	DeploymentFailureAt              pgtype.Timestamptz
 }
 
 type PlatformTenant struct {

@@ -63,6 +63,24 @@ END $$;
 
 
 --
+-- Name: advance_account_deployment_mail_revision(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.advance_account_deployment_mail_revision() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF NEW.email IS DISTINCT FROM OLD.email OR NEW.status IS DISTINCT FROM OLD.status
+        OR NEW.deletion_requested_at IS DISTINCT FROM OLD.deletion_requested_at
+        OR NEW.deployment_mail_revision IS DISTINCT FROM OLD.deployment_mail_revision THEN
+        NEW.deployment_mail_revision := OLD.deployment_mail_revision+1;
+    ELSE NEW.deployment_mail_revision := OLD.deployment_mail_revision;
+    END IF;
+    RETURN NEW;
+END $$;
+
+
+--
 -- Name: advance_account_quota_mail_revision(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -99,6 +117,24 @@ BEGIN
         NEW.subscription_mail_revision := OLD.subscription_mail_revision+1;
     ELSE
         NEW.subscription_mail_revision := OLD.subscription_mail_revision;
+    END IF;
+    RETURN NEW;
+END $$;
+
+
+--
+-- Name: advance_app_deployment_mail_revision(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.advance_app_deployment_mail_revision() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF NEW.account_id IS DISTINCT FROM OLD.account_id OR NEW.org_id IS DISTINCT FROM OLD.org_id
+        OR NEW.project_id IS DISTINCT FROM OLD.project_id OR NEW.slug IS DISTINCT FROM OLD.slug
+        OR NEW.status IS DISTINCT FROM OLD.status OR NEW.deployment_mail_revision IS DISTINCT FROM OLD.deployment_mail_revision THEN
+        NEW.deployment_mail_revision := OLD.deployment_mail_revision+1;
+    ELSE NEW.deployment_mail_revision := OLD.deployment_mail_revision;
     END IF;
     RETURN NEW;
 END $$;
@@ -794,6 +830,7 @@ CREATE TABLE public.apps (
     managed_postgres_admission_cutover_id uuid,
     managed_postgres_admission_fenced_at timestamp with time zone,
     service_address_index integer,
+    deployment_mail_revision bigint DEFAULT 1 NOT NULL,
     CONSTRAINT apps_app_cpu_policy_revision_positive CHECK ((app_cpu_policy_revision > 0)),
     CONSTRAINT apps_app_protocol_chk CHECK ((app_protocol = ANY (ARRAY['http1'::text, 'http2'::text, 'grpc'::text]))),
     CONSTRAINT apps_autoscale_target_cpu_pct_range CHECK (((autoscale_target_cpu_pct IS NULL) OR ((autoscale_target_cpu_pct >= 0) AND (autoscale_target_cpu_pct <= 100)))),
@@ -801,6 +838,7 @@ CREATE TABLE public.apps (
     CONSTRAINT apps_consumer_auth_mode_chk CHECK ((consumer_auth_mode = ANY (ARRAY['optional'::text, 'required'::text]))),
     CONSTRAINT apps_cpu_millicores_chk CHECK ((cpu_millicores = ANY (ARRAY[250, 500, 1000]))),
     CONSTRAINT apps_declared_routes_array_chk CHECK ((jsonb_typeof(declared_routes) = 'array'::text)),
+    CONSTRAINT apps_deployment_mail_revision_check CHECK ((deployment_mail_revision > 0)),
     CONSTRAINT apps_egress_allowlist_revision_positive CHECK ((egress_allowlist_revision > 0)),
     CONSTRAINT apps_egress_ports_valid CHECK (((cardinality(egress_ports) <= 64) AND (1 <= ALL (egress_ports)) AND (65535 >= ALL (egress_ports)))),
     CONSTRAINT apps_eviction_priority_chk CHECK ((eviction_priority = ANY (ARRAY['best_effort'::text, 'reserved'::text]))),
@@ -3211,6 +3249,12 @@ CREATE TABLE public.deployments (
     serving_ended_at timestamp with time zone,
     runtime_upgrade_routing_token uuid DEFAULT gen_random_uuid() NOT NULL,
     environment_workload_held boolean DEFAULT false NOT NULL,
+    mail_failure_revision bigint DEFAULT 1 NOT NULL,
+    mail_failed_at timestamp with time zone,
+    mail_failure_account_id uuid,
+    mail_failure_account_revision bigint,
+    mail_failure_app_revision bigint,
+    mail_failure_success_revision bigint,
     CONSTRAINT deployments_canary_preset_chk CHECK ((canary_preset = ANY (ARRAY['none'::text, 'slow'::text, 'balanced'::text, 'aggressive'::text, '1-10-50-100'::text, 'custom'::text]))),
     CONSTRAINT deployments_canary_stages_shape CHECK (((canary_preset <> 'custom'::text) OR ((canary_stages IS NOT NULL) AND (jsonb_typeof(canary_stages) = 'array'::text) AND (jsonb_array_length(canary_stages) > 0)))),
     CONSTRAINT deployments_canary_step_nonneg_chk CHECK ((canary_step >= 0)),
@@ -3227,6 +3271,11 @@ CREATE TABLE public.deployments (
     CONSTRAINT deployments_kind_check CHECK ((kind = ANY (ARRAY['image'::text, 'tarball'::text, 'dockerfile'::text, 'github'::text, 'preview'::text]))),
     CONSTRAINT deployments_last_auto_rollback_reason_check CHECK (((last_auto_rollback_reason IS NULL) OR (last_auto_rollback_reason = ANY (ARRAY['threshold_exceeded'::text, 'first_window_expired'::text])))),
     CONSTRAINT deployments_liveness_restart_count_nonneg_chk CHECK ((liveness_restart_count >= 0)),
+    CONSTRAINT deployments_mail_failed_at_check CHECK (((mail_failed_at IS NULL) OR isfinite(mail_failed_at))),
+    CONSTRAINT deployments_mail_failure_account_revision_check CHECK (((mail_failure_account_revision IS NULL) OR (mail_failure_account_revision > 0))),
+    CONSTRAINT deployments_mail_failure_app_revision_check CHECK (((mail_failure_app_revision IS NULL) OR (mail_failure_app_revision > 0))),
+    CONSTRAINT deployments_mail_failure_revision_check CHECK ((mail_failure_revision > 0)),
+    CONSTRAINT deployments_mail_failure_success_revision_check CHECK (((mail_failure_success_revision IS NULL) OR (mail_failure_success_revision >= 0))),
     CONSTRAINT deployments_main_depends_on_shape_chk CHECK (((jsonb_typeof(override_main_depends_on) = 'array'::text) AND (jsonb_array_length(override_main_depends_on) <= 6))),
     CONSTRAINT deployments_min_instances_chk CHECK (((min_instances >= 0) AND (min_instances <= 100))),
     CONSTRAINT deployments_parked_reason_check CHECK (((parked_reason IS NULL) OR (parked_reason = ANY (ARRAY['liveness_exhausted'::text, 'lifecycle_park'::text, 'admin_park'::text, 'security_scan_regressed'::text])))),
@@ -19951,6 +20000,71 @@ $$;
 
 
 --
+-- Name: stamp_deployment_mail_failure(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.stamp_deployment_mail_failure() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE success bigint; recipient uuid; app_revision bigint; account_revision bigint; became_live boolean; became_failed boolean;
+BEGIN
+    IF TG_OP='DELETE' THEN
+        UPDATE platform_mail_deployment_fences SET revision=revision+1 WHERE app_id=OLD.app_id AND scope=OLD.scope;
+        RETURN OLD;
+    END IF;
+    -- Acquire the ordinary parent FK key-share before the scope fence on
+    -- insert/reassignment. Capturers use NO KEY UPDATE for the cooldown,
+    -- which is compatible with this lock and avoids a parent/fence cycle.
+    IF TG_OP='INSERT' THEN
+        PERFORM 1 FROM apps WHERE id=NEW.app_id FOR KEY SHARE;
+    ELSIF NEW.app_id<>OLD.app_id THEN
+        PERFORM 1 FROM apps WHERE id=NEW.app_id FOR KEY SHARE;
+    END IF;
+    IF TG_OP='UPDATE' THEN
+        NEW.mail_failed_at := OLD.mail_failed_at;
+        NEW.mail_failure_account_id := OLD.mail_failure_account_id;
+        NEW.mail_failure_account_revision := OLD.mail_failure_account_revision;
+        NEW.mail_failure_app_revision := OLD.mail_failure_app_revision;
+        NEW.mail_failure_success_revision := OLD.mail_failure_success_revision;
+        IF NEW.status IS NOT DISTINCT FROM OLD.status AND NEW.app_id=OLD.app_id AND NEW.scope=OLD.scope
+            AND NEW.deployed_by_user_id IS NOT DISTINCT FROM OLD.deployed_by_user_id
+            AND NEW.deleted_at IS NOT DISTINCT FROM OLD.deleted_at
+            AND NEW.mail_failure_revision=OLD.mail_failure_revision THEN RETURN NEW;
+        END IF;
+        NEW.mail_failure_revision := OLD.mail_failure_revision+1;
+        -- Ordered fences for the exceptional app/scope reassignment path.
+        PERFORM 1 FROM platform_mail_deployment_fences
+            WHERE (app_id=OLD.app_id AND scope=OLD.scope) OR (app_id=NEW.app_id AND scope=NEW.scope)
+            ORDER BY app_id,scope FOR UPDATE;
+        IF NEW.app_id<>OLD.app_id OR NEW.scope<>OLD.scope THEN
+            UPDATE platform_mail_deployment_fences SET revision=revision+1 WHERE app_id=OLD.app_id AND scope=OLD.scope;
+        END IF;
+        became_live := NEW.status='live' AND (OLD.status<>'live' OR NEW.app_id<>OLD.app_id OR NEW.scope<>OLD.scope);
+        became_failed := NEW.status='failed' AND OLD.status<>'failed';
+    ELSE
+        NEW.mail_failure_revision := 1;
+        NEW.mail_failed_at := NULL; NEW.mail_failure_account_id := NULL;
+        NEW.mail_failure_account_revision := NULL; NEW.mail_failure_app_revision := NULL; NEW.mail_failure_success_revision := NULL;
+        became_live := NEW.status='live'; became_failed := NEW.status='failed';
+    END IF;
+    INSERT INTO platform_mail_deployment_fences(app_id,scope,success_revision)
+        VALUES(NEW.app_id,NEW.scope,CASE WHEN became_live THEN 1 ELSE 0 END)
+        ON CONFLICT(app_id,scope) DO UPDATE SET revision=platform_mail_deployment_fences.revision+1,
+            success_revision=platform_mail_deployment_fences.success_revision+CASE WHEN became_live THEN 1 ELSE 0 END
+        RETURNING success_revision INTO success;
+    IF became_failed THEN
+        SELECT coalesce(NEW.deployed_by_user_id,a.account_id),a.deployment_mail_revision
+            INTO recipient,app_revision FROM apps a WHERE a.id=NEW.app_id;
+        SELECT deployment_mail_revision INTO account_revision FROM accounts WHERE id=recipient;
+        NEW.mail_failed_at := clock_timestamp(); NEW.mail_failure_account_id := recipient;
+        NEW.mail_failure_account_revision := account_revision; NEW.mail_failure_app_revision := app_revision;
+        NEW.mail_failure_success_revision := success;
+    END IF;
+    RETURN NEW;
+END $$;
+
+
+--
 -- Name: stamp_deployment_serving_ended_at(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -20635,10 +20749,12 @@ CREATE TABLE public.accounts (
     billing_mail_revision bigint DEFAULT 1 NOT NULL,
     quota_mail_revision bigint DEFAULT 1 NOT NULL,
     subscription_mail_revision bigint DEFAULT 1 NOT NULL,
+    deployment_mail_revision bigint DEFAULT 1 NOT NULL,
     CONSTRAINT accounts_abuse_hold_valid CHECK ((((abuse_hold_at IS NULL) = (abuse_hold_reason IS NULL)) AND ((abuse_hold_reason IS NULL) OR (abuse_hold_reason = ANY (ARRAY['egress_fanout'::text, 'egress_flood'::text, 'operator'::text]))))),
     CONSTRAINT accounts_billing_address_length_chk CHECK (((billing_address IS NULL) OR ((char_length(billing_address) >= 1) AND (char_length(billing_address) <= 1000)))),
     CONSTRAINT accounts_billing_mail_revision_check CHECK ((billing_mail_revision > 0)),
     CONSTRAINT accounts_business_name_length_chk CHECK (((business_name IS NULL) OR ((char_length(business_name) >= 1) AND (char_length(business_name) <= 256)))),
+    CONSTRAINT accounts_deployment_mail_revision_check CHECK ((deployment_mail_revision > 0)),
     CONSTRAINT accounts_egress_allowlist_extra_check CHECK ((egress_allowlist_extra >= 0)),
     CONSTRAINT accounts_key_grace_window_days_check CHECK (((key_grace_window_days IS NULL) OR (key_grace_window_days >= 0))),
     CONSTRAINT accounts_mfa_enrolled_shape_chk CHECK (((mfa_enrolled_at IS NULL) OR ((mfa_secret_encrypted IS NOT NULL) AND ((mfa_recovery_codes_hash IS NULL) OR (array_length(mfa_recovery_codes_hash, 1) >= 0))))),
@@ -33673,6 +33789,54 @@ CREATE TABLE public.pg_ratelimit_counters (
 
 
 --
+-- Name: platform_mail_deployment_capture; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.platform_mail_deployment_capture (
+    namespace text NOT NULL,
+    producer_id text NOT NULL,
+    started_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    recovery_id uuid NOT NULL,
+    CONSTRAINT platform_mail_deployment_capture_namespace_check CHECK ((namespace ~ '^[a-z][a-z0-9_-]{0,63}$'::text)),
+    CONSTRAINT platform_mail_deployment_capture_producer_id_check CHECK ((producer_id ~ '^[a-z][a-z0-9_-]{0,31}$'::text)),
+    CONSTRAINT platform_mail_deployment_capture_started_at_check CHECK (isfinite(started_at))
+);
+
+
+--
+-- Name: platform_mail_deployment_fences; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.platform_mail_deployment_fences (
+    app_id uuid NOT NULL,
+    scope text NOT NULL,
+    revision bigint DEFAULT 1 NOT NULL,
+    success_revision bigint DEFAULT 0 NOT NULL,
+    CONSTRAINT platform_mail_deployment_fences_revision_check CHECK ((revision > 0)),
+    CONSTRAINT platform_mail_deployment_fences_scope_check CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text)),
+    CONSTRAINT platform_mail_deployment_fences_success_revision_check CHECK ((success_revision >= 0))
+);
+
+
+--
+-- Name: platform_mail_deployment_observations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.platform_mail_deployment_observations (
+    deployment_id uuid NOT NULL,
+    failure_revision bigint NOT NULL,
+    account_id uuid NOT NULL,
+    disposition text NOT NULL,
+    intent_id uuid,
+    observed_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT platform_mail_deployment_observations_check CHECK (((disposition = 'queued'::text) OR (intent_id IS NULL))),
+    CONSTRAINT platform_mail_deployment_observations_disposition_check CHECK ((disposition = ANY (ARRAY['queued'::text, 'cooldown'::text, 'stale'::text, 'unavailable'::text, 'expired'::text]))),
+    CONSTRAINT platform_mail_deployment_observations_failure_revision_check CHECK ((failure_revision > 0)),
+    CONSTRAINT platform_mail_deployment_observations_observed_at_check CHECK (isfinite(observed_at))
+);
+
+
+--
 -- Name: platform_mail_outbox_reconciliations; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -33703,7 +33867,7 @@ CREATE TABLE public.platform_mail_outbox_reconciliations (
     CONSTRAINT platform_mail_outbox_reconciliations_reason_check CHECK ((reason ~ '^[a-z][a-z0-9_]{0,63}$'::text)),
     CONSTRAINT platform_mail_outbox_reconciliations_request_hash_check CHECK ((octet_length(request_hash) = 32)),
     CONSTRAINT platform_mail_outbox_reconciliations_request_id_check CHECK ((request_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
-    CONSTRAINT platform_mail_outbox_reconciliations_template_check CHECK ((template = ANY (ARRAY['account_deletion_pending'::text, 'email_verification'::text, 'password_reset'::text, 'magic_link'::text, 'mfa_recovery_used'::text, 'mfa_disable_request'::text, 'mfa_disabled'::text, 'password_changed'::text, 'mfa_enabled'::text, 'payment_failed'::text, 'account_restored'::text, 'account_suspended'::text, 'nonpayment_deletion'::text, 'quota_warning'::text, 'subscription_ended'::text])))
+    CONSTRAINT platform_mail_outbox_reconciliations_template_check CHECK ((template = ANY (ARRAY['account_deletion_pending'::text, 'email_verification'::text, 'password_reset'::text, 'magic_link'::text, 'mfa_recovery_used'::text, 'mfa_disable_request'::text, 'mfa_disabled'::text, 'password_changed'::text, 'mfa_enabled'::text, 'payment_failed'::text, 'account_restored'::text, 'account_suspended'::text, 'nonpayment_deletion'::text, 'quota_warning'::text, 'subscription_ended'::text, 'deployment_failed'::text])))
 );
 
 
@@ -33750,6 +33914,14 @@ CREATE TABLE public.platform_mail_producer_outbox (
     quota_warning_plan text,
     quota_warning_revision bigint,
     subscription_ended_revision bigint,
+    deployment_failure_id uuid,
+    deployment_failure_app_id uuid,
+    deployment_failure_scope text,
+    deployment_failure_revision bigint,
+    deployment_failure_account_revision bigint,
+    deployment_failure_app_revision bigint,
+    deployment_failure_success_revision bigint,
+    deployment_failure_at timestamp with time zone,
     CONSTRAINT platform_mail_producer_outbox_attempts_check CHECK ((attempts >= 0)),
     CONSTRAINT platform_mail_producer_outbox_check CHECK ((isfinite(restore_until) AND (restore_until > deletion_requested_at))),
     CONSTRAINT platform_mail_producer_outbox_check1 CHECK ((isfinite(expires_at) AND (expires_at > deletion_requested_at))),
@@ -33758,6 +33930,7 @@ CREATE TABLE public.platform_mail_producer_outbox (
     CONSTRAINT platform_mail_producer_outbox_code_check CHECK ((code = ANY (ARRAY[''::text, 'maild_unavailable'::text, 'maild_rejected'::text, 'attempt_limit'::text, 'notification_expired'::text, 'account_changed'::text, 'platform_suppressed'::text, 'token_unavailable'::text, 'payload_unavailable'::text]))),
     CONSTRAINT platform_mail_producer_outbox_created_at_check CHECK (isfinite(created_at)),
     CONSTRAINT platform_mail_producer_outbox_deletion_requested_at_check CHECK (isfinite(deletion_requested_at)),
+    CONSTRAINT platform_mail_producer_outbox_deployment_failure_check CHECK ((((template = 'deployment_failed'::text) AND (deployment_failure_id IS NOT NULL) AND (deployment_failure_app_id IS NOT NULL) AND (deployment_failure_scope IS NOT NULL) AND (deployment_failure_scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text) AND (deployment_failure_revision IS NOT NULL) AND (deployment_failure_revision > 0) AND (deployment_failure_account_revision IS NOT NULL) AND (deployment_failure_account_revision > 0) AND (deployment_failure_app_revision IS NOT NULL) AND (deployment_failure_app_revision > 0) AND (deployment_failure_success_revision IS NOT NULL) AND (deployment_failure_success_revision >= 0) AND (deployment_failure_at IS NOT NULL) AND isfinite(deployment_failure_at)) OR ((template <> 'deployment_failed'::text) AND (deployment_failure_id IS NULL) AND (deployment_failure_app_id IS NULL) AND (deployment_failure_scope IS NULL) AND (deployment_failure_revision IS NULL) AND (deployment_failure_account_revision IS NULL) AND (deployment_failure_app_revision IS NULL) AND (deployment_failure_success_revision IS NULL) AND (deployment_failure_at IS NULL)))),
     CONSTRAINT platform_mail_producer_outbox_from_address_check CHECK (((length(from_address) >= 3) AND (length(from_address) <= 1024))),
     CONSTRAINT platform_mail_producer_outbox_id_check CHECK ((id <> '00000000-0000-0000-0000-000000000000'::uuid)),
     CONSTRAINT platform_mail_producer_outbox_lease_until_check CHECK (((lease_until IS NULL) OR isfinite(lease_until))),
@@ -33770,14 +33943,14 @@ CREATE TABLE public.platform_mail_producer_outbox (
     CONSTRAINT platform_mail_producer_outbox_recipient_address_check CHECK (((length(recipient_address) <= 254) AND (POSITION((chr(10)) IN (recipient_address)) = 0) AND (POSITION((chr(13)) IN (recipient_address)) = 0))),
     CONSTRAINT platform_mail_producer_outbox_restored_check CHECK ((((template = 'account_restored'::text) AND (account_restored_revision IS NOT NULL) AND (account_restored_revision > 0)) OR ((template <> 'account_restored'::text) AND (account_restored_revision IS NULL)))),
     CONSTRAINT platform_mail_producer_outbox_revision_check CHECK ((revision > 0)),
-    CONSTRAINT platform_mail_producer_outbox_security_alert_check CHECK ((((template <> ALL (ARRAY['mfa_recovery_used'::text, 'mfa_disabled'::text, 'password_changed'::text, 'mfa_enabled'::text, 'payment_failed'::text, 'account_restored'::text, 'account_suspended'::text, 'nonpayment_deletion'::text, 'quota_warning'::text, 'subscription_ended'::text])) AND (octet_length(sealed_security_alert) = 0) AND (security_alert_key_id = ''::text)) OR ((template = ANY (ARRAY['mfa_recovery_used'::text, 'mfa_disabled'::text, 'password_changed'::text, 'mfa_enabled'::text, 'payment_failed'::text, 'account_restored'::text, 'account_suspended'::text, 'nonpayment_deletion'::text, 'quota_warning'::text, 'subscription_ended'::text])) AND (((state = ANY (ARRAY['queued'::text, 'claimed'::text])) AND ((octet_length(sealed_security_alert) >= 64) AND (octet_length(sealed_security_alert) <= 4096)) AND (security_alert_key_id ~ '^[0-9a-f]{64}$'::text)) OR ((state <> ALL (ARRAY['queued'::text, 'claimed'::text])) AND (octet_length(sealed_security_alert) = 0) AND (security_alert_key_id = ''::text)))))),
+    CONSTRAINT platform_mail_producer_outbox_security_alert_check CHECK ((((template <> ALL (ARRAY['mfa_recovery_used'::text, 'mfa_disabled'::text, 'password_changed'::text, 'mfa_enabled'::text, 'payment_failed'::text, 'account_restored'::text, 'account_suspended'::text, 'nonpayment_deletion'::text, 'quota_warning'::text, 'subscription_ended'::text, 'deployment_failed'::text])) AND (octet_length(sealed_security_alert) = 0) AND (security_alert_key_id = ''::text)) OR ((template = ANY (ARRAY['mfa_recovery_used'::text, 'mfa_disabled'::text, 'password_changed'::text, 'mfa_enabled'::text, 'payment_failed'::text, 'account_restored'::text, 'account_suspended'::text, 'nonpayment_deletion'::text, 'quota_warning'::text, 'subscription_ended'::text, 'deployment_failed'::text])) AND (((state = ANY (ARRAY['queued'::text, 'claimed'::text])) AND ((octet_length(sealed_security_alert) >= 64) AND (octet_length(sealed_security_alert) <= 4096)) AND (security_alert_key_id ~ '^[0-9a-f]{64}$'::text)) OR ((state <> ALL (ARRAY['queued'::text, 'claimed'::text])) AND (octet_length(sealed_security_alert) = 0) AND (security_alert_key_id = ''::text)))))),
     CONSTRAINT platform_mail_producer_outbox_state_check CHECK ((state = ANY (ARRAY['queued'::text, 'claimed'::text, 'admitted'::text, 'failed'::text, 'expired'::text, 'cancelled'::text, 'suppressed'::text]))),
     CONSTRAINT platform_mail_producer_outbox_subscription_ended_check CHECK ((((template = 'subscription_ended'::text) AND (subscription_ended_revision IS NOT NULL) AND (subscription_ended_revision > 0)) OR ((template <> 'subscription_ended'::text) AND (subscription_ended_revision IS NULL)))),
     CONSTRAINT platform_mail_producer_outbox_suspended_check CHECK ((((template = 'account_suspended'::text) AND (suspension_past_due_at IS NOT NULL) AND isfinite(suspension_past_due_at) AND (account_suspended_revision IS NOT NULL) AND (account_suspended_revision > 0)) OR ((template <> 'account_suspended'::text) AND (suspension_past_due_at IS NULL) AND (account_suspended_revision IS NULL)))),
-    CONSTRAINT platform_mail_producer_outbox_template_check CHECK ((template = ANY (ARRAY['account_deletion_pending'::text, 'email_verification'::text, 'password_reset'::text, 'magic_link'::text, 'mfa_recovery_used'::text, 'mfa_disable_request'::text, 'mfa_disabled'::text, 'password_changed'::text, 'mfa_enabled'::text, 'payment_failed'::text, 'account_restored'::text, 'account_suspended'::text, 'nonpayment_deletion'::text, 'quota_warning'::text, 'subscription_ended'::text]))),
+    CONSTRAINT platform_mail_producer_outbox_template_check CHECK ((template = ANY (ARRAY['account_deletion_pending'::text, 'email_verification'::text, 'password_reset'::text, 'magic_link'::text, 'mfa_recovery_used'::text, 'mfa_disable_request'::text, 'mfa_disabled'::text, 'password_changed'::text, 'mfa_enabled'::text, 'payment_failed'::text, 'account_restored'::text, 'account_suspended'::text, 'nonpayment_deletion'::text, 'quota_warning'::text, 'subscription_ended'::text, 'deployment_failed'::text]))),
     CONSTRAINT platform_mail_producer_outbox_template_version_check CHECK ((template_version = 1)),
     CONSTRAINT platform_mail_producer_outbox_updated_at_check CHECK (isfinite(updated_at)),
-    CONSTRAINT platform_mail_producer_outbox_verification_check CHECK ((((template = 'account_deletion_pending'::text) AND (deletion_requested_at IS NOT NULL) AND (restore_until IS NOT NULL) AND (verification_token_hash IS NULL) AND (octet_length(sealed_verification) = 0) AND (verification_key_id = ''::text) AND (verification_origin = ''::text)) OR ((template = ANY (ARRAY['mfa_recovery_used'::text, 'mfa_disabled'::text, 'password_changed'::text, 'mfa_enabled'::text, 'payment_failed'::text, 'account_restored'::text, 'account_suspended'::text, 'nonpayment_deletion'::text, 'quota_warning'::text, 'subscription_ended'::text])) AND (deletion_requested_at IS NULL) AND (restore_until IS NULL) AND (verification_token_hash IS NULL) AND (octet_length(sealed_verification) = 0) AND (verification_key_id = ''::text) AND (verification_origin = ''::text)) OR ((template = ANY (ARRAY['email_verification'::text, 'password_reset'::text, 'magic_link'::text, 'mfa_disable_request'::text])) AND (deletion_requested_at IS NULL) AND (restore_until IS NULL) AND (((state = ANY (ARRAY['queued'::text, 'claimed'::text])) AND (verification_token_hash IS NOT NULL) AND (octet_length(verification_token_hash) = 32) AND ((octet_length(sealed_verification) >= 64) AND (octet_length(sealed_verification) <= 4096)) AND (verification_key_id ~ '^[0-9a-f]{64}$'::text) AND ((length(verification_origin) >= 9) AND (length(verification_origin) <= 2048)) AND (verification_origin ~ '^https://[^/?#[:space:]]+$'::text)) OR ((state <> ALL (ARRAY['queued'::text, 'claimed'::text])) AND (verification_token_hash IS NULL) AND (octet_length(sealed_verification) = 0) AND (verification_key_id = ''::text) AND (verification_origin = ''::text))))))
+    CONSTRAINT platform_mail_producer_outbox_verification_check CHECK ((((template = 'account_deletion_pending'::text) AND (deletion_requested_at IS NOT NULL) AND (restore_until IS NOT NULL) AND (verification_token_hash IS NULL) AND (octet_length(sealed_verification) = 0) AND (verification_key_id = ''::text) AND (verification_origin = ''::text)) OR ((template = ANY (ARRAY['mfa_recovery_used'::text, 'mfa_disabled'::text, 'password_changed'::text, 'mfa_enabled'::text, 'payment_failed'::text, 'account_restored'::text, 'account_suspended'::text, 'nonpayment_deletion'::text, 'quota_warning'::text, 'subscription_ended'::text, 'deployment_failed'::text])) AND (deletion_requested_at IS NULL) AND (restore_until IS NULL) AND (verification_token_hash IS NULL) AND (octet_length(sealed_verification) = 0) AND (verification_key_id = ''::text) AND (verification_origin = ''::text)) OR ((template = ANY (ARRAY['email_verification'::text, 'password_reset'::text, 'magic_link'::text, 'mfa_disable_request'::text])) AND (deletion_requested_at IS NULL) AND (restore_until IS NULL) AND (((state = ANY (ARRAY['queued'::text, 'claimed'::text])) AND (verification_token_hash IS NOT NULL) AND (octet_length(verification_token_hash) = 32) AND ((octet_length(sealed_verification) >= 64) AND (octet_length(sealed_verification) <= 4096)) AND (verification_key_id ~ '^[0-9a-f]{64}$'::text) AND ((length(verification_origin) >= 9) AND (length(verification_origin) <= 2048)) AND (verification_origin ~ '^https://[^/?#[:space:]]+$'::text)) OR ((state <> ALL (ARRAY['queued'::text, 'claimed'::text])) AND (verification_token_hash IS NULL) AND (octet_length(sealed_verification) = 0) AND (verification_key_id = ''::text) AND (verification_origin = ''::text))))))
 );
 
 
@@ -45183,6 +45356,38 @@ ALTER TABLE ONLY public.pg_ratelimit_counters
 
 
 --
+-- Name: platform_mail_deployment_capture platform_mail_deployment_capture_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_mail_deployment_capture
+    ADD CONSTRAINT platform_mail_deployment_capture_pkey PRIMARY KEY (namespace, producer_id);
+
+
+--
+-- Name: platform_mail_deployment_fences platform_mail_deployment_fences_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_mail_deployment_fences
+    ADD CONSTRAINT platform_mail_deployment_fences_pkey PRIMARY KEY (app_id, scope);
+
+
+--
+-- Name: platform_mail_deployment_observations platform_mail_deployment_observations_intent_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_mail_deployment_observations
+    ADD CONSTRAINT platform_mail_deployment_observations_intent_id_key UNIQUE (intent_id);
+
+
+--
+-- Name: platform_mail_deployment_observations platform_mail_deployment_observations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_mail_deployment_observations
+    ADD CONSTRAINT platform_mail_deployment_observations_pkey PRIMARY KEY (deployment_id, failure_revision);
+
+
+--
 -- Name: platform_mail_outbox_reconciliations platform_mail_outbox_reconciliations_namespace_intent_id_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -50105,6 +50310,13 @@ CREATE INDEX deployments_live_traffic_idx ON public.deployments USING btree (app
 
 
 --
+-- Name: deployments_mail_failures_pending_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX deployments_mail_failures_pending_idx ON public.deployments USING btree (mail_failed_at, id) WHERE ((status = 'failed'::text) AND (deleted_at IS NULL) AND (mail_failed_at IS NOT NULL));
+
+
+--
 -- Name: deployments_operation_code_pin_owner_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -53388,6 +53600,13 @@ CREATE INDEX pg_ratelimit_counters_subject_id_app_idx ON public.pg_ratelimit_cou
 
 
 --
+-- Name: platform_mail_deployment_observations_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX platform_mail_deployment_observations_account_idx ON public.platform_mail_deployment_observations USING btree (account_id);
+
+
+--
 -- Name: platform_mail_producer_outbox_account_restored_keys_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -53399,6 +53618,20 @@ CREATE INDEX platform_mail_producer_outbox_account_restored_keys_idx ON public.p
 --
 
 CREATE INDEX platform_mail_producer_outbox_account_suspended_keys_idx ON public.platform_mail_producer_outbox USING btree (namespace, producer_id, security_alert_key_id) WHERE ((template = 'account_suspended'::text) AND (state = ANY (ARRAY['queued'::text, 'claimed'::text])));
+
+
+--
+-- Name: platform_mail_producer_outbox_deployment_failure_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX platform_mail_producer_outbox_deployment_failure_idx ON public.platform_mail_producer_outbox USING btree (deployment_failure_id, deployment_failure_revision) WHERE (template = 'deployment_failed'::text);
+
+
+--
+-- Name: platform_mail_producer_outbox_deployment_failure_keys_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX platform_mail_producer_outbox_deployment_failure_keys_idx ON public.platform_mail_producer_outbox USING btree (namespace, producer_id, security_alert_key_id) WHERE ((template = 'deployment_failed'::text) AND (state = ANY (ARRAY['queued'::text, 'claimed'::text])));
 
 
 --
@@ -55838,6 +56071,13 @@ CREATE TRIGGER accounts_billing_mail_revision_guard BEFORE UPDATE OF status, pas
 
 
 --
+-- Name: accounts accounts_deployment_mail_revision_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER accounts_deployment_mail_revision_guard BEFORE UPDATE OF email, status, deletion_requested_at, deployment_mail_revision ON public.accounts FOR EACH ROW EXECUTE FUNCTION public.advance_account_deployment_mail_revision();
+
+
+--
 -- Name: accounts accounts_quota_mail_revision_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -56563,6 +56803,13 @@ CREATE TRIGGER apps_bump_scaling_policy_revision_trg BEFORE UPDATE OF min_instan
 --
 
 CREATE TRIGGER apps_declared_routes_policy_notify_trg AFTER UPDATE OF only_declared_routes, declared_routes ON public.apps FOR EACH ROW EXECUTE FUNCTION public.apps_declared_routes_policy_notify();
+
+
+--
+-- Name: apps apps_deployment_mail_revision_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER apps_deployment_mail_revision_guard BEFORE UPDATE OF account_id, org_id, project_id, slug, status, deployment_mail_revision ON public.apps FOR EACH ROW EXECUTE FUNCTION public.advance_app_deployment_mail_revision();
 
 
 --
@@ -57557,6 +57804,13 @@ CREATE TRIGGER deployments_layer_artifact_guard BEFORE INSERT OR UPDATE OF rootf
 --
 
 CREATE TRIGGER deployments_lifecycle_webhooks AFTER UPDATE OF status ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.enqueue_deployment_lifecycle_webhooks();
+
+
+--
+-- Name: deployments deployments_mail_failure_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER deployments_mail_failure_guard BEFORE INSERT OR DELETE OR UPDATE OF status, app_id, scope, deployed_by_user_id, deleted_at, mail_failure_revision, mail_failed_at, mail_failure_account_id, mail_failure_account_revision, mail_failure_app_revision, mail_failure_success_revision ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.stamp_deployment_mail_failure();
 
 
 --
@@ -67388,6 +67642,30 @@ ALTER TABLE ONLY public.paddle_overage_dedupe
 
 ALTER TABLE ONLY public.password_reset_tokens
     ADD CONSTRAINT password_reset_tokens_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: platform_mail_deployment_fences platform_mail_deployment_fences_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_mail_deployment_fences
+    ADD CONSTRAINT platform_mail_deployment_fences_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: platform_mail_deployment_observations platform_mail_deployment_observations_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_mail_deployment_observations
+    ADD CONSTRAINT platform_mail_deployment_observations_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: platform_mail_deployment_observations platform_mail_deployment_observations_intent_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_mail_deployment_observations
+    ADD CONSTRAINT platform_mail_deployment_observations_intent_id_fkey FOREIGN KEY (intent_id) REFERENCES public.platform_mail_producer_outbox(id) ON DELETE SET NULL;
 
 
 --

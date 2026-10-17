@@ -1047,6 +1047,14 @@ func (r *server) ConfigureMailOutbox(ctx context.Context, pool *pgxpool.Pool, ge
 	return r.configureMailOutbox(ctx, pool, getenv)
 }
 
+func (r *server) SendDeployFailedEmail(ctx context.Context, id string) error {
+	return sendDeployFailedEmail(ctx, r, deploymentFailedEmailPayload{DeploymentID: id})
+}
+
+func (r *server) CaptureDeploymentFailureMail(ctx context.Context) error {
+	return r.deletionMailOutbox.CaptureDeploymentFailures(ctx)
+}
+
 func (r *server) GitOpsDashboardRequestForTest(request *http.Request) (any, string, error) {
 	body, _, method, err := r.environmentGitOpsDashboardRequest(request)
 	return body, method, err

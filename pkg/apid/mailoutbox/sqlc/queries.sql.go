@@ -249,7 +249,7 @@ SELECT o.id,o.revision,o.state,o.template,o.from_address,o.expires_at,o.recovery
     coalesce(m.sender_address,'')::text AS sender_address
 FROM platform_mail_producer_outbox o
 LEFT JOIN internal_mail_messages m ON m.namespace=o.namespace AND m.producer_id=o.producer_id
-    AND m.idempotency_key=(CASE o.template WHEN 'email_verification' THEN 'verify-email:' WHEN 'password_reset' THEN 'password-reset:' WHEN 'magic_link' THEN 'magic-link:' WHEN 'mfa_recovery_used' THEN 'mfa-recovery-alert:' WHEN 'subscription_ended' THEN 'subscription-ended:' WHEN 'quota_warning' THEN 'quota-warning:' WHEN 'nonpayment_deletion' THEN 'nonpayment-deletion:' WHEN 'account_suspended' THEN 'account-suspended:' WHEN 'account_restored' THEN 'account-restored:' WHEN 'payment_failed' THEN 'payment-failed:' WHEN 'mfa_enabled' THEN 'mfa-enabled:' WHEN 'password_changed' THEN 'password-changed:' WHEN 'mfa_disabled' THEN 'mfa-disabled:' WHEN 'mfa_disable_request' THEN 'mfa-disable:' ELSE 'account-delete:' END)||o.id::text
+    AND m.idempotency_key=(CASE o.template WHEN 'email_verification' THEN 'verify-email:' WHEN 'password_reset' THEN 'password-reset:' WHEN 'magic_link' THEN 'magic-link:' WHEN 'mfa_recovery_used' THEN 'mfa-recovery-alert:' WHEN 'deployment_failed' THEN 'deployment-failed:' WHEN 'subscription_ended' THEN 'subscription-ended:' WHEN 'quota_warning' THEN 'quota-warning:' WHEN 'nonpayment_deletion' THEN 'nonpayment-deletion:' WHEN 'account_suspended' THEN 'account-suspended:' WHEN 'account_restored' THEN 'account-restored:' WHEN 'payment_failed' THEN 'payment-failed:' WHEN 'mfa_enabled' THEN 'mfa-enabled:' WHEN 'password_changed' THEN 'password-changed:' WHEN 'mfa_disabled' THEN 'mfa-disabled:' WHEN 'mfa_disable_request' THEN 'mfa-disable:' ELSE 'account-delete:' END)||o.id::text
 WHERE o.namespace=$1 AND o.id=$2
 `
 
@@ -351,34 +351,36 @@ WITH candidate AS (
           AND o.verification_key_id=ANY($14::text[]))
         OR (o.template='mfa_disable_request' AND $15::boolean AND o.verification_origin=$16::text
           AND o.verification_key_id=ANY($17::text[]))
-        OR (o.template='subscription_ended' AND $18::boolean
+        OR (o.template='deployment_failed' AND $18::boolean
           AND o.security_alert_key_id=ANY($19::text[]))
-        OR (o.template='quota_warning' AND $20::boolean
+        OR (o.template='subscription_ended' AND $20::boolean
           AND o.security_alert_key_id=ANY($21::text[]))
-        OR (o.template='nonpayment_deletion' AND $22::boolean
+        OR (o.template='quota_warning' AND $22::boolean
           AND o.security_alert_key_id=ANY($23::text[]))
-        OR (o.template='account_suspended' AND $24::boolean
+        OR (o.template='nonpayment_deletion' AND $24::boolean
           AND o.security_alert_key_id=ANY($25::text[]))
-        OR (o.template='account_restored' AND $26::boolean
+        OR (o.template='account_suspended' AND $26::boolean
           AND o.security_alert_key_id=ANY($27::text[]))
-        OR (o.template='payment_failed' AND $28::boolean
+        OR (o.template='account_restored' AND $28::boolean
           AND o.security_alert_key_id=ANY($29::text[]))
-        OR (o.template='mfa_enabled' AND $30::boolean
+        OR (o.template='payment_failed' AND $30::boolean
           AND o.security_alert_key_id=ANY($31::text[]))
-        OR (o.template='password_changed' AND $32::boolean
+        OR (o.template='mfa_enabled' AND $32::boolean
           AND o.security_alert_key_id=ANY($33::text[]))
-        OR (o.template='mfa_disabled' AND $34::boolean
+        OR (o.template='password_changed' AND $34::boolean
           AND o.security_alert_key_id=ANY($35::text[]))
-        OR (o.template='mfa_recovery_used' AND $36::boolean
-          AND o.security_alert_key_id=ANY($37::text[])))
-      AND o.attempts<$38 AND o.expires_at>clock_timestamp()
+        OR (o.template='mfa_disabled' AND $36::boolean
+          AND o.security_alert_key_id=ANY($37::text[]))
+        OR (o.template='mfa_recovery_used' AND $38::boolean
+          AND o.security_alert_key_id=ANY($39::text[])))
+      AND o.attempts<$40 AND o.expires_at>clock_timestamp()
       AND ((o.state='queued' AND o.next_attempt_at<=clock_timestamp()) OR (o.state='claimed' AND o.lease_until<=clock_timestamp()))
       AND NOT EXISTS(SELECT 1 FROM internal_mail_recovery_state s WHERE s.namespace=o.namespace AND (s.held OR s.recovery_id<>o.recovery_id))
     ORDER BY next_attempt_at,id LIMIT 1 FOR UPDATE SKIP LOCKED
 )
 UPDATE platform_mail_producer_outbox o SET state='claimed',attempts=attempts+1,lease_id=$1,
     lease_until=clock_timestamp()+$2::integer*interval '1 second',updated_at=clock_timestamp(),revision=o.revision+1
-FROM candidate c WHERE o.id=c.id RETURNING o.id, o.account_id, o.namespace, o.producer_id, o.from_address, o.recipient_address, o.template, o.template_version, o.deletion_requested_at, o.restore_until, o.expires_at, o.recovery_id, o.state, o.attempts, o.next_attempt_at, o.lease_id, o.lease_until, o.code, o.created_at, o.updated_at, o.revision, o.verification_token_hash, o.sealed_verification, o.verification_key_id, o.verification_origin, o.sealed_security_alert, o.security_alert_key_id, o.payment_past_due_at, o.account_restored_revision, o.suspension_past_due_at, o.account_suspended_revision, o.nonpayment_past_due_at, o.nonpayment_deletion_revision, o.nonpayment_deletion_at, o.quota_warning_day, o.quota_warning_plan, o.quota_warning_revision, o.subscription_ended_revision
+FROM candidate c WHERE o.id=c.id RETURNING o.id, o.account_id, o.namespace, o.producer_id, o.from_address, o.recipient_address, o.template, o.template_version, o.deletion_requested_at, o.restore_until, o.expires_at, o.recovery_id, o.state, o.attempts, o.next_attempt_at, o.lease_id, o.lease_until, o.code, o.created_at, o.updated_at, o.revision, o.verification_token_hash, o.sealed_verification, o.verification_key_id, o.verification_origin, o.sealed_security_alert, o.security_alert_key_id, o.payment_past_due_at, o.account_restored_revision, o.suspension_past_due_at, o.account_suspended_revision, o.nonpayment_past_due_at, o.nonpayment_deletion_revision, o.nonpayment_deletion_at, o.quota_warning_day, o.quota_warning_plan, o.quota_warning_revision, o.subscription_ended_revision, o.deployment_failure_id, o.deployment_failure_app_id, o.deployment_failure_scope, o.deployment_failure_revision, o.deployment_failure_account_revision, o.deployment_failure_app_revision, o.deployment_failure_success_revision, o.deployment_failure_at
 `
 
 type ClaimParams struct {
@@ -399,6 +401,8 @@ type ClaimParams struct {
 	MfaDisableEnabled           bool
 	MfaDisableOrigin            string
 	MfaDisableKeys              []string
+	DeploymentFailedEnabled     bool
+	DeploymentFailedKeys        []string
 	SubscriptionEndedEnabled    bool
 	SubscriptionEndedKeys       []string
 	QuotaWarningEnabled         bool
@@ -441,6 +445,8 @@ func (q *Queries) Claim(ctx context.Context, db DBTX, arg ClaimParams) (Platform
 		arg.MfaDisableEnabled,
 		arg.MfaDisableOrigin,
 		arg.MfaDisableKeys,
+		arg.DeploymentFailedEnabled,
+		arg.DeploymentFailedKeys,
 		arg.SubscriptionEndedEnabled,
 		arg.SubscriptionEndedKeys,
 		arg.QuotaWarningEnabled,
@@ -503,8 +509,35 @@ func (q *Queries) Claim(ctx context.Context, db DBTX, arg ClaimParams) (Platform
 		&i.QuotaWarningPlan,
 		&i.QuotaWarningRevision,
 		&i.SubscriptionEndedRevision,
+		&i.DeploymentFailureID,
+		&i.DeploymentFailureAppID,
+		&i.DeploymentFailureScope,
+		&i.DeploymentFailureRevision,
+		&i.DeploymentFailureAccountRevision,
+		&i.DeploymentFailureAppRevision,
+		&i.DeploymentFailureSuccessRevision,
+		&i.DeploymentFailureAt,
 	)
 	return i, err
+}
+
+const claimDeploymentFailureCooldown = `-- name: ClaimDeploymentFailureCooldown :one
+UPDATE apps SET last_deploy_failed_email_at=clock_timestamp()
+WHERE id=$1 AND status='active' AND (last_deploy_failed_email_at IS NULL
+    OR last_deploy_failed_email_at<clock_timestamp()-make_interval(secs=>$2::integer))
+RETURNING last_deploy_failed_email_at
+`
+
+type ClaimDeploymentFailureCooldownParams struct {
+	ID              pgtype.UUID
+	CooldownSeconds int32
+}
+
+func (q *Queries) ClaimDeploymentFailureCooldown(ctx context.Context, db DBTX, arg ClaimDeploymentFailureCooldownParams) (pgtype.Timestamptz, error) {
+	row := db.QueryRow(ctx, claimDeploymentFailureCooldown, arg.ID, arg.CooldownSeconds)
+	var last_deploy_failed_email_at pgtype.Timestamptz
+	err := row.Scan(&last_deploy_failed_email_at)
+	return last_deploy_failed_email_at, err
 }
 
 const claimMagicLinkOwnership = `-- name: ClaimMagicLinkOwnership :exec
@@ -896,6 +929,59 @@ func (q *Queries) CreateAccountSuspendedIntent(ctx context.Context, db DBTX, arg
 		arg.SecurityAlertKeyID,
 		arg.AccountSuspendedRevision,
 		arg.SuspensionPastDueAt,
+	)
+	return err
+}
+
+const createDeploymentFailedIntent = `-- name: CreateDeploymentFailedIntent :exec
+INSERT INTO platform_mail_producer_outbox(id,account_id,namespace,producer_id,from_address,recipient_address,
+    template,template_version,expires_at,recovery_id,sealed_security_alert,security_alert_key_id,
+    deployment_failure_id,deployment_failure_app_id,deployment_failure_scope,deployment_failure_revision,
+    deployment_failure_account_revision,deployment_failure_app_revision,deployment_failure_success_revision,deployment_failure_at)
+VALUES($1,$2,$3,$4,$5,$6,'deployment_failed',1,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+`
+
+type CreateDeploymentFailedIntentParams struct {
+	ID                               pgtype.UUID
+	AccountID                        pgtype.UUID
+	Namespace                        string
+	ProducerID                       string
+	FromAddress                      string
+	RecipientAddress                 string
+	ExpiresAt                        pgtype.Timestamptz
+	RecoveryID                       pgtype.UUID
+	SealedSecurityAlert              []byte
+	SecurityAlertKeyID               string
+	DeploymentFailureID              pgtype.UUID
+	DeploymentFailureAppID           pgtype.UUID
+	DeploymentFailureScope           pgtype.Text
+	DeploymentFailureRevision        pgtype.Int8
+	DeploymentFailureAccountRevision pgtype.Int8
+	DeploymentFailureAppRevision     pgtype.Int8
+	DeploymentFailureSuccessRevision pgtype.Int8
+	DeploymentFailureAt              pgtype.Timestamptz
+}
+
+func (q *Queries) CreateDeploymentFailedIntent(ctx context.Context, db DBTX, arg CreateDeploymentFailedIntentParams) error {
+	_, err := db.Exec(ctx, createDeploymentFailedIntent,
+		arg.ID,
+		arg.AccountID,
+		arg.Namespace,
+		arg.ProducerID,
+		arg.FromAddress,
+		arg.RecipientAddress,
+		arg.ExpiresAt,
+		arg.RecoveryID,
+		arg.SealedSecurityAlert,
+		arg.SecurityAlertKeyID,
+		arg.DeploymentFailureID,
+		arg.DeploymentFailureAppID,
+		arg.DeploymentFailureScope,
+		arg.DeploymentFailureRevision,
+		arg.DeploymentFailureAccountRevision,
+		arg.DeploymentFailureAppRevision,
+		arg.DeploymentFailureSuccessRevision,
+		arg.DeploymentFailureAt,
 	)
 	return err
 }
@@ -1526,6 +1612,275 @@ func (q *Queries) DeleteMagicLinkPassword(ctx context.Context, db DBTX, accountI
 	return err
 }
 
+const deploymentFailedKeyReferences = `-- name: DeploymentFailedKeyReferences :many
+SELECT DISTINCT security_alert_key_id FROM platform_mail_producer_outbox
+WHERE namespace=$1 AND producer_id=$2 AND template='deployment_failed' AND state IN ('queued','claimed') AND expires_at>clock_timestamp()
+`
+
+type DeploymentFailedKeyReferencesParams struct {
+	Namespace  string
+	ProducerID string
+}
+
+func (q *Queries) DeploymentFailedKeyReferences(ctx context.Context, db DBTX, arg DeploymentFailedKeyReferencesParams) ([]string, error) {
+	rows, err := db.Query(ctx, deploymentFailedKeyReferences, arg.Namespace, arg.ProducerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var security_alert_key_id string
+		if err := rows.Scan(&security_alert_key_id); err != nil {
+			return nil, err
+		}
+		items = append(items, security_alert_key_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const deploymentFailedLifecycleReady = `-- name: DeploymentFailedLifecycleReady :one
+SELECT (count(*)=3)::boolean AS ready
+FROM pg_catalog.pg_trigger g JOIN pg_catalog.pg_class t ON t.oid=g.tgrelid
+JOIN pg_catalog.pg_namespace n ON n.oid=t.relnamespace
+WHERE n.nspname=current_schema() AND g.tgenabled IN ('O','A')
+    AND ((t.relname='accounts' AND g.tgname='accounts_deployment_mail_revision_guard')
+        OR (t.relname='apps' AND g.tgname='apps_deployment_mail_revision_guard')
+        OR (t.relname='deployments' AND g.tgname='deployments_mail_failure_guard'))
+`
+
+func (q *Queries) DeploymentFailedLifecycleReady(ctx context.Context, db DBTX) (bool, error) {
+	row := db.QueryRow(ctx, deploymentFailedLifecycleReady)
+	var ready bool
+	err := row.Scan(&ready)
+	return ready, err
+}
+
+const deploymentFailedReady = `-- name: DeploymentFailedReady :one
+WITH own_constraint AS MATERIALIZED (
+    SELECT c.oid FROM pg_catalog.pg_constraint c
+    JOIN pg_catalog.pg_class t ON t.oid=c.conrelid JOIN pg_catalog.pg_namespace n ON n.oid=t.relnamespace
+    WHERE n.nspname=current_schema() AND t.relname='platform_mail_producer_outbox'
+      AND c.conname='platform_mail_producer_outbox_security_alert_check'
+)
+SELECT EXISTS(SELECT 1 FROM own_constraint c
+    WHERE position('deployment_failed' in pg_catalog.pg_get_constraintdef(c.oid))>0)::boolean AS ready
+`
+
+func (q *Queries) DeploymentFailedReady(ctx context.Context, db DBTX) (bool, error) {
+	row := db.QueryRow(ctx, deploymentFailedReady)
+	var ready bool
+	err := row.Scan(&ready)
+	return ready, err
+}
+
+const deploymentFailedSchemaReady = `-- name: DeploymentFailedSchemaReady :exec
+SELECT a.deployment_mail_revision,p.deployment_mail_revision,p.last_deploy_failed_email_at,
+    d.mail_failed_at,d.mail_failure_revision,d.mail_failure_account_revision,d.mail_failure_app_revision,d.mail_failure_success_revision,
+    o.deployment_failure_id,o.deployment_failure_at,o.deployment_failure_scope,f.success_revision,c.started_at,r.disposition
+FROM accounts a JOIN apps p ON p.account_id=a.id JOIN deployments d ON d.app_id=p.id
+JOIN platform_mail_producer_outbox o ON o.account_id=a.id
+JOIN platform_mail_deployment_fences f ON f.app_id=p.id AND f.scope=d.scope
+JOIN platform_mail_deployment_capture c ON c.namespace=o.namespace AND c.producer_id=o.producer_id
+JOIN platform_mail_deployment_observations r ON r.deployment_id=d.id LIMIT 0
+`
+
+func (q *Queries) DeploymentFailedSchemaReady(ctx context.Context, db DBTX) error {
+	_, err := db.Exec(ctx, deploymentFailedSchemaReady)
+	return err
+}
+
+const deploymentFailureCandidates = `-- name: DeploymentFailureCandidates :many
+SELECT d.id,d.app_id,d.scope,d.mail_failure_revision,d.mail_failure_account_id
+FROM deployments d JOIN platform_mail_deployment_capture c ON c.namespace=$1 AND c.producer_id=$2
+JOIN accounts a ON a.id=d.mail_failure_account_id
+WHERE d.status='failed' AND d.deleted_at IS NULL AND d.mail_failed_at>=c.started_at
+    AND d.mail_failed_at>clock_timestamp()-make_interval(secs=>$3::integer)
+    AND NOT EXISTS(SELECT 1 FROM platform_mail_deployment_observations r WHERE r.deployment_id=d.id AND r.failure_revision=d.mail_failure_revision)
+ORDER BY d.mail_failed_at,d.id LIMIT $4
+`
+
+type DeploymentFailureCandidatesParams struct {
+	Namespace  string
+	ProducerID string
+	TtlSeconds int32
+	BatchSize  int32
+}
+
+type DeploymentFailureCandidatesRow struct {
+	ID                   pgtype.UUID
+	AppID                pgtype.UUID
+	Scope                string
+	MailFailureRevision  int64
+	MailFailureAccountID pgtype.UUID
+}
+
+func (q *Queries) DeploymentFailureCandidates(ctx context.Context, db DBTX, arg DeploymentFailureCandidatesParams) ([]DeploymentFailureCandidatesRow, error) {
+	rows, err := db.Query(ctx, deploymentFailureCandidates,
+		arg.Namespace,
+		arg.ProducerID,
+		arg.TtlSeconds,
+		arg.BatchSize,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []DeploymentFailureCandidatesRow{}
+	for rows.Next() {
+		var i DeploymentFailureCandidatesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.AppID,
+			&i.Scope,
+			&i.MailFailureRevision,
+			&i.MailFailureAccountID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const deploymentFailureCapture = `-- name: DeploymentFailureCapture :one
+SELECT started_at,recovery_id FROM platform_mail_deployment_capture WHERE namespace=$1 AND producer_id=$2
+`
+
+type DeploymentFailureCaptureParams struct {
+	Namespace  string
+	ProducerID string
+}
+
+type DeploymentFailureCaptureRow struct {
+	StartedAt  pgtype.Timestamptz
+	RecoveryID pgtype.UUID
+}
+
+func (q *Queries) DeploymentFailureCapture(ctx context.Context, db DBTX, arg DeploymentFailureCaptureParams) (DeploymentFailureCaptureRow, error) {
+	row := db.QueryRow(ctx, deploymentFailureCapture, arg.Namespace, arg.ProducerID)
+	var i DeploymentFailureCaptureRow
+	err := row.Scan(&i.StartedAt, &i.RecoveryID)
+	return i, err
+}
+
+const deploymentFailureCurrent = `-- name: DeploymentFailureCurrent :one
+SELECT EXISTS(
+    SELECT 1 FROM platform_mail_producer_outbox o
+    JOIN accounts a ON a.id=o.account_id JOIN apps p ON p.id=o.deployment_failure_app_id
+    JOIN deployments d ON d.id=o.deployment_failure_id AND d.app_id=p.id AND d.scope=o.deployment_failure_scope
+    JOIN platform_mail_deployment_fences f ON f.app_id=p.id AND f.scope=d.scope
+    WHERE o.namespace=$1 AND o.id=$2 AND o.template='deployment_failed'
+      AND a.status IN ('active','past_due','suspended') AND a.deletion_requested_at IS NULL
+      AND lower(a.email)=lower($3::text) AND a.deployment_mail_revision=o.deployment_failure_account_revision
+      AND p.status='active' AND p.deployment_mail_revision=o.deployment_failure_app_revision
+      AND d.status='failed' AND d.deleted_at IS NULL AND d.mail_failure_revision=o.deployment_failure_revision
+      AND d.mail_failed_at=o.deployment_failure_at AND d.mail_failure_account_id=o.account_id
+      AND d.mail_failure_account_revision=o.deployment_failure_account_revision
+      AND d.mail_failure_app_revision=o.deployment_failure_app_revision
+      AND d.mail_failure_success_revision=o.deployment_failure_success_revision AND f.success_revision=o.deployment_failure_success_revision
+      AND (p.account_id=a.id OR EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=p.org_id AND m.account_id=a.id AND m.removed_at IS NULL))
+)::boolean AS current
+`
+
+type DeploymentFailureCurrentParams struct {
+	Namespace        string
+	ID               pgtype.UUID
+	RecipientAddress string
+}
+
+// Shared by apid and maild after account, app, optional membership and scope
+// fence locks. Terminal intents erase the address; use the actual recipient.
+func (q *Queries) DeploymentFailureCurrent(ctx context.Context, db DBTX, arg DeploymentFailureCurrentParams) (bool, error) {
+	row := db.QueryRow(ctx, deploymentFailureCurrent, arg.Namespace, arg.ID, arg.RecipientAddress)
+	var current bool
+	err := row.Scan(&current)
+	return current, err
+}
+
+const deploymentFailureObserved = `-- name: DeploymentFailureObserved :one
+SELECT EXISTS(SELECT 1 FROM platform_mail_deployment_observations WHERE deployment_id=$1 AND failure_revision=$2)::boolean
+`
+
+type DeploymentFailureObservedParams struct {
+	DeploymentID    pgtype.UUID
+	FailureRevision int64
+}
+
+func (q *Queries) DeploymentFailureObserved(ctx context.Context, db DBTX, arg DeploymentFailureObservedParams) (bool, error) {
+	row := db.QueryRow(ctx, deploymentFailureObserved, arg.DeploymentID, arg.FailureRevision)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const deploymentFailureSnapshot = `-- name: DeploymentFailureSnapshot :one
+SELECT id,app_id,scope,status,deleted_at,mail_failed_at,mail_failure_revision,mail_failure_account_id,
+    mail_failure_account_revision,mail_failure_app_revision,mail_failure_success_revision,
+    CASE WHEN octet_length(error_code)<=$2::integer THEN coalesce(error_code,'') ELSE '' END::text AS error_code,
+    CASE WHEN octet_length(error)<=$2::integer THEN coalesce(error,'') ELSE '' END::text AS error,
+    CASE WHEN octet_length(error_hint)<=$2::integer THEN coalesce(error_hint,'') ELSE '' END::text AS error_hint,
+    CASE WHEN octet_length(error_why)<=$2::integer THEN coalesce(error_why,'') ELSE '' END::text AS error_why,
+    CASE WHEN octet_length(error_fix)<=$2::integer THEN coalesce(error_fix,'') ELSE '' END::text AS error_fix
+FROM deployments WHERE id=$1
+`
+
+type DeploymentFailureSnapshotParams struct {
+	ID             pgtype.UUID
+	SourceMaxBytes int32
+}
+
+type DeploymentFailureSnapshotRow struct {
+	ID                         pgtype.UUID
+	AppID                      pgtype.UUID
+	Scope                      string
+	Status                     string
+	DeletedAt                  pgtype.Timestamptz
+	MailFailedAt               pgtype.Timestamptz
+	MailFailureRevision        int64
+	MailFailureAccountID       pgtype.UUID
+	MailFailureAccountRevision pgtype.Int8
+	MailFailureAppRevision     pgtype.Int8
+	MailFailureSuccessRevision pgtype.Int8
+	ErrorCode                  string
+	Error                      string
+	ErrorHint                  string
+	ErrorWhy                   string
+	ErrorFix                   string
+}
+
+// Bound source fields are selected whole or omitted before redaction, so a
+// cut through a credential never turns its partial value into a diagnostic.
+func (q *Queries) DeploymentFailureSnapshot(ctx context.Context, db DBTX, arg DeploymentFailureSnapshotParams) (DeploymentFailureSnapshotRow, error) {
+	row := db.QueryRow(ctx, deploymentFailureSnapshot, arg.ID, arg.SourceMaxBytes)
+	var i DeploymentFailureSnapshotRow
+	err := row.Scan(
+		&i.ID,
+		&i.AppID,
+		&i.Scope,
+		&i.Status,
+		&i.DeletedAt,
+		&i.MailFailedAt,
+		&i.MailFailureRevision,
+		&i.MailFailureAccountID,
+		&i.MailFailureAccountRevision,
+		&i.MailFailureAppRevision,
+		&i.MailFailureSuccessRevision,
+		&i.ErrorCode,
+		&i.Error,
+		&i.ErrorHint,
+		&i.ErrorWhy,
+		&i.ErrorFix,
+	)
+	return i, err
+}
+
 const downgradeEndedSubscription = `-- name: DowngradeEndedSubscription :one
 UPDATE accounts SET plan='free',provider_customer_id=$2,stripe_subscription_item='' WHERE id=$1
 RETURNING subscription_mail_revision,clock_timestamp()::timestamptz AS ended_at
@@ -1546,6 +1901,23 @@ func (q *Queries) DowngradeEndedSubscription(ctx context.Context, db DBTX, arg D
 	var i DowngradeEndedSubscriptionRow
 	err := row.Scan(&i.SubscriptionMailRevision, &i.EndedAt)
 	return i, err
+}
+
+const enrollDeploymentFailureCapture = `-- name: EnrollDeploymentFailureCapture :exec
+INSERT INTO platform_mail_deployment_capture(namespace,producer_id,recovery_id) VALUES($1,$2,$3)
+ON CONFLICT(namespace,producer_id) DO UPDATE SET started_at=clock_timestamp(),recovery_id=EXCLUDED.recovery_id
+WHERE platform_mail_deployment_capture.recovery_id<>EXCLUDED.recovery_id
+`
+
+type EnrollDeploymentFailureCaptureParams struct {
+	Namespace  string
+	ProducerID string
+	RecoveryID pgtype.UUID
+}
+
+func (q *Queries) EnrollDeploymentFailureCapture(ctx context.Context, db DBTX, arg EnrollDeploymentFailureCaptureParams) error {
+	_, err := db.Exec(ctx, enrollDeploymentFailureCapture, arg.Namespace, arg.ProducerID, arg.RecoveryID)
+	return err
 }
 
 const enterPaymentPastDue = `-- name: EnterPaymentPastDue :one
@@ -1635,7 +2007,7 @@ func (q *Queries) InsertReconciliation(ctx context.Context, db DBTX, arg InsertR
 }
 
 const intent = `-- name: Intent :one
-SELECT id, account_id, namespace, producer_id, from_address, recipient_address, template, template_version, deletion_requested_at, restore_until, expires_at, recovery_id, state, attempts, next_attempt_at, lease_id, lease_until, code, created_at, updated_at, revision, verification_token_hash, sealed_verification, verification_key_id, verification_origin, sealed_security_alert, security_alert_key_id, payment_past_due_at, account_restored_revision, suspension_past_due_at, account_suspended_revision, nonpayment_past_due_at, nonpayment_deletion_revision, nonpayment_deletion_at, quota_warning_day, quota_warning_plan, quota_warning_revision, subscription_ended_revision FROM platform_mail_producer_outbox WHERE namespace=$1 AND id=$2
+SELECT id, account_id, namespace, producer_id, from_address, recipient_address, template, template_version, deletion_requested_at, restore_until, expires_at, recovery_id, state, attempts, next_attempt_at, lease_id, lease_until, code, created_at, updated_at, revision, verification_token_hash, sealed_verification, verification_key_id, verification_origin, sealed_security_alert, security_alert_key_id, payment_past_due_at, account_restored_revision, suspension_past_due_at, account_suspended_revision, nonpayment_past_due_at, nonpayment_deletion_revision, nonpayment_deletion_at, quota_warning_day, quota_warning_plan, quota_warning_revision, subscription_ended_revision, deployment_failure_id, deployment_failure_app_id, deployment_failure_scope, deployment_failure_revision, deployment_failure_account_revision, deployment_failure_app_revision, deployment_failure_success_revision, deployment_failure_at FROM platform_mail_producer_outbox WHERE namespace=$1 AND id=$2
 `
 
 type IntentParams struct {
@@ -1685,6 +2057,14 @@ func (q *Queries) Intent(ctx context.Context, db DBTX, arg IntentParams) (Platfo
 		&i.QuotaWarningPlan,
 		&i.QuotaWarningRevision,
 		&i.SubscriptionEndedRevision,
+		&i.DeploymentFailureID,
+		&i.DeploymentFailureAppID,
+		&i.DeploymentFailureScope,
+		&i.DeploymentFailureRevision,
+		&i.DeploymentFailureAccountRevision,
+		&i.DeploymentFailureAppRevision,
+		&i.DeploymentFailureSuccessRevision,
+		&i.DeploymentFailureAt,
 	)
 	return i, err
 }
@@ -1812,8 +2192,37 @@ func (q *Queries) LockAdmission(ctx context.Context, db DBTX, dollar_1 string) e
 	return err
 }
 
+const lockDeploymentFailureApp = `-- name: LockDeploymentFailureApp :one
+SELECT id,account_id,org_id,slug,status,deployment_mail_revision,last_deploy_failed_email_at FROM apps WHERE id=$1 FOR NO KEY UPDATE
+`
+
+type LockDeploymentFailureAppRow struct {
+	ID                      pgtype.UUID
+	AccountID               pgtype.UUID
+	OrgID                   pgtype.UUID
+	Slug                    string
+	Status                  string
+	DeploymentMailRevision  int64
+	LastDeployFailedEmailAt pgtype.Timestamptz
+}
+
+func (q *Queries) LockDeploymentFailureApp(ctx context.Context, db DBTX, id pgtype.UUID) (LockDeploymentFailureAppRow, error) {
+	row := db.QueryRow(ctx, lockDeploymentFailureApp, id)
+	var i LockDeploymentFailureAppRow
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.OrgID,
+		&i.Slug,
+		&i.Status,
+		&i.DeploymentMailRevision,
+		&i.LastDeployFailedEmailAt,
+	)
+	return i, err
+}
+
 const lockIntent = `-- name: LockIntent :one
-SELECT id, account_id, namespace, producer_id, from_address, recipient_address, template, template_version, deletion_requested_at, restore_until, expires_at, recovery_id, state, attempts, next_attempt_at, lease_id, lease_until, code, created_at, updated_at, revision, verification_token_hash, sealed_verification, verification_key_id, verification_origin, sealed_security_alert, security_alert_key_id, payment_past_due_at, account_restored_revision, suspension_past_due_at, account_suspended_revision, nonpayment_past_due_at, nonpayment_deletion_revision, nonpayment_deletion_at, quota_warning_day, quota_warning_plan, quota_warning_revision, subscription_ended_revision FROM platform_mail_producer_outbox WHERE namespace=$1 AND id=$2 FOR UPDATE
+SELECT id, account_id, namespace, producer_id, from_address, recipient_address, template, template_version, deletion_requested_at, restore_until, expires_at, recovery_id, state, attempts, next_attempt_at, lease_id, lease_until, code, created_at, updated_at, revision, verification_token_hash, sealed_verification, verification_key_id, verification_origin, sealed_security_alert, security_alert_key_id, payment_past_due_at, account_restored_revision, suspension_past_due_at, account_suspended_revision, nonpayment_past_due_at, nonpayment_deletion_revision, nonpayment_deletion_at, quota_warning_day, quota_warning_plan, quota_warning_revision, subscription_ended_revision, deployment_failure_id, deployment_failure_app_id, deployment_failure_scope, deployment_failure_revision, deployment_failure_account_revision, deployment_failure_app_revision, deployment_failure_success_revision, deployment_failure_at FROM platform_mail_producer_outbox WHERE namespace=$1 AND id=$2 FOR UPDATE
 `
 
 type LockIntentParams struct {
@@ -1863,6 +2272,14 @@ func (q *Queries) LockIntent(ctx context.Context, db DBTX, arg LockIntentParams)
 		&i.QuotaWarningPlan,
 		&i.QuotaWarningRevision,
 		&i.SubscriptionEndedRevision,
+		&i.DeploymentFailureID,
+		&i.DeploymentFailureAppID,
+		&i.DeploymentFailureScope,
+		&i.DeploymentFailureRevision,
+		&i.DeploymentFailureAccountRevision,
+		&i.DeploymentFailureAppRevision,
+		&i.DeploymentFailureSuccessRevision,
+		&i.DeploymentFailureAt,
 	)
 	return i, err
 }
@@ -3532,6 +3949,30 @@ func (q *Queries) RecordAccountSuspension(ctx context.Context, db DBTX, arg Reco
 	return err
 }
 
+const recordDeploymentFailureObservation = `-- name: RecordDeploymentFailureObservation :exec
+INSERT INTO platform_mail_deployment_observations(deployment_id,failure_revision,account_id,disposition,intent_id)
+VALUES($1,$2,$3,$4,$5)
+`
+
+type RecordDeploymentFailureObservationParams struct {
+	DeploymentID    pgtype.UUID
+	FailureRevision int64
+	AccountID       pgtype.UUID
+	Disposition     string
+	IntentID        pgtype.UUID
+}
+
+func (q *Queries) RecordDeploymentFailureObservation(ctx context.Context, db DBTX, arg RecordDeploymentFailureObservationParams) error {
+	_, err := db.Exec(ctx, recordDeploymentFailureObservation,
+		arg.DeploymentID,
+		arg.FailureRevision,
+		arg.AccountID,
+		arg.Disposition,
+		arg.IntentID,
+	)
+	return err
+}
+
 const recordNonpaymentDeletion = `-- name: RecordNonpaymentDeletion :exec
 INSERT INTO billing_account_nonpayment_deletions(account_id,past_due_at,intent_id,deletion_requested_at,billing_revision)
 VALUES($1,$2,$3,$4,$5)
@@ -3877,10 +4318,11 @@ func (q *Queries) Settle(ctx context.Context, db DBTX, arg SettleParams) (int64,
 }
 
 const shareAccount = `-- name: ShareAccount :one
-SELECT subscription_mail_revision,coalesce(stripe_subscription_item,'')::text AS stripe_subscription_item,plan,last_quota_warning_at,quota_mail_revision,id,email,status,deletion_requested_at,email_verified_at,abuse_hold_at,password_reset_revision,mfa_enrolled_at,mfa_revision,past_due_at,billing_mail_revision FROM accounts WHERE id=$1 FOR SHARE
+SELECT deployment_mail_revision,subscription_mail_revision,coalesce(stripe_subscription_item,'')::text AS stripe_subscription_item,plan,last_quota_warning_at,quota_mail_revision,id,email,status,deletion_requested_at,email_verified_at,abuse_hold_at,password_reset_revision,mfa_enrolled_at,mfa_revision,past_due_at,billing_mail_revision FROM accounts WHERE id=$1 FOR SHARE
 `
 
 type ShareAccountRow struct {
+	DeploymentMailRevision   int64
 	SubscriptionMailRevision int64
 	StripeSubscriptionItem   string
 	Plan                     string
@@ -3903,6 +4345,7 @@ func (q *Queries) ShareAccount(ctx context.Context, db DBTX, id pgtype.UUID) (Sh
 	row := db.QueryRow(ctx, shareAccount, id)
 	var i ShareAccountRow
 	err := row.Scan(
+		&i.DeploymentMailRevision,
 		&i.SubscriptionMailRevision,
 		&i.StripeSubscriptionItem,
 		&i.Plan,
@@ -4005,6 +4448,95 @@ func (q *Queries) ShareAccountSuspendedSubmissionAccount(ctx context.Context, db
 		&i.BillingMailRevision,
 		&i.AccountSuspendedRevision,
 		&i.SuspensionPastDueAt,
+		&i.FromAddress,
+		&i.SenderAddress,
+	)
+	return i, err
+}
+
+const shareDeploymentFailureApp = `-- name: ShareDeploymentFailureApp :one
+SELECT id,account_id,org_id FROM apps WHERE id=$1 FOR SHARE
+`
+
+type ShareDeploymentFailureAppRow struct {
+	ID        pgtype.UUID
+	AccountID pgtype.UUID
+	OrgID     pgtype.UUID
+}
+
+func (q *Queries) ShareDeploymentFailureApp(ctx context.Context, db DBTX, id pgtype.UUID) (ShareDeploymentFailureAppRow, error) {
+	row := db.QueryRow(ctx, shareDeploymentFailureApp, id)
+	var i ShareDeploymentFailureAppRow
+	err := row.Scan(&i.ID, &i.AccountID, &i.OrgID)
+	return i, err
+}
+
+const shareDeploymentFailureFence = `-- name: ShareDeploymentFailureFence :one
+SELECT success_revision FROM platform_mail_deployment_fences WHERE app_id=$1 AND scope=$2 FOR SHARE
+`
+
+type ShareDeploymentFailureFenceParams struct {
+	AppID pgtype.UUID
+	Scope string
+}
+
+// Source writers own deployment row locks and then the separate scope fence.
+// Readers acquire this fence and read deployment metadata without row locks.
+func (q *Queries) ShareDeploymentFailureFence(ctx context.Context, db DBTX, arg ShareDeploymentFailureFenceParams) (int64, error) {
+	row := db.QueryRow(ctx, shareDeploymentFailureFence, arg.AppID, arg.Scope)
+	var success_revision int64
+	err := row.Scan(&success_revision)
+	return success_revision, err
+}
+
+const shareDeploymentFailureMember = `-- name: ShareDeploymentFailureMember :one
+SELECT role FROM org_memberships WHERE org_id=$1 AND account_id=$2 AND removed_at IS NULL FOR SHARE
+`
+
+type ShareDeploymentFailureMemberParams struct {
+	OrgID     pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) ShareDeploymentFailureMember(ctx context.Context, db DBTX, arg ShareDeploymentFailureMemberParams) (string, error) {
+	row := db.QueryRow(ctx, shareDeploymentFailureMember, arg.OrgID, arg.AccountID)
+	var role string
+	err := row.Scan(&role)
+	return role, err
+}
+
+const shareDeploymentFailureSubmissionAccount = `-- name: ShareDeploymentFailureSubmissionAccount :one
+SELECT a.id AS account_id,o.id AS intent_id,o.deployment_failure_app_id,o.deployment_failure_scope,
+    o.from_address,m.sender_address
+FROM internal_mail_messages m JOIN platform_mail_producer_outbox o
+    ON o.namespace=m.namespace AND o.producer_id=m.producer_id
+    AND m.idempotency_key='deployment-failed:'||o.id::text AND o.template='deployment_failed' AND o.expires_at=m.expires_at
+JOIN accounts a ON a.id=o.account_id
+WHERE m.namespace=$1 AND m.id=$2 FOR SHARE OF a
+`
+
+type ShareDeploymentFailureSubmissionAccountParams struct {
+	Namespace string
+	ID        pgtype.UUID
+}
+
+type ShareDeploymentFailureSubmissionAccountRow struct {
+	AccountID              pgtype.UUID
+	IntentID               pgtype.UUID
+	DeploymentFailureAppID pgtype.UUID
+	DeploymentFailureScope pgtype.Text
+	FromAddress            string
+	SenderAddress          string
+}
+
+func (q *Queries) ShareDeploymentFailureSubmissionAccount(ctx context.Context, db DBTX, arg ShareDeploymentFailureSubmissionAccountParams) (ShareDeploymentFailureSubmissionAccountRow, error) {
+	row := db.QueryRow(ctx, shareDeploymentFailureSubmissionAccount, arg.Namespace, arg.ID)
+	var i ShareDeploymentFailureSubmissionAccountRow
+	err := row.Scan(
+		&i.AccountID,
+		&i.IntentID,
+		&i.DeploymentFailureAppID,
+		&i.DeploymentFailureScope,
 		&i.FromAddress,
 		&i.SenderAddress,
 	)

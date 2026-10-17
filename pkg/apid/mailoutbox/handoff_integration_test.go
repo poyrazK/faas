@@ -46,7 +46,9 @@ CREATE TABLE email_verification_tokens(token_hash bytea PRIMARY KEY,account_id u
         CREATE TABLE account_passwords(account_id uuid PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,hash text NOT NULL,updated_at timestamptz NOT NULL DEFAULT now());
 CREATE TABLE orgs(id uuid PRIMARY KEY,personal_org boolean NOT NULL DEFAULT false,personal_owner_account_id uuid,status text NOT NULL DEFAULT 'active',plan text NOT NULL DEFAULT 'free',provider_customer_id text,stripe_subscription_item text,updated_at timestamptz NOT NULL DEFAULT now());
 CREATE TABLE billing_identities(account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,provider text NOT NULL,customer_id text NOT NULL,subscription_id text NOT NULL DEFAULT '',billing_from timestamptz NOT NULL DEFAULT now(),updated_at timestamptz NOT NULL DEFAULT now(),PRIMARY KEY(account_id,provider),UNIQUE(provider,customer_id));
-CREATE TABLE apps(id uuid PRIMARY KEY,account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,streaming_enabled boolean NOT NULL DEFAULT false);
+CREATE TABLE apps(id uuid PRIMARY KEY,account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,streaming_enabled boolean NOT NULL DEFAULT false,slug text NOT NULL DEFAULT 'test-app',status text NOT NULL DEFAULT 'active',org_id uuid,project_id uuid,last_deploy_failed_email_at timestamptz);
+CREATE TABLE deployments(id uuid PRIMARY KEY,app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,status text NOT NULL DEFAULT 'pending',scope text NOT NULL DEFAULT 'default',deployed_by_user_id uuid REFERENCES accounts(id) ON DELETE SET NULL,deleted_at timestamptz,created_at timestamptz NOT NULL DEFAULT now(),error_code text,error text,error_hint text,error_why text,error_fix text);
+CREATE TABLE org_memberships(org_id uuid NOT NULL,account_id uuid NOT NULL,role text NOT NULL,removed_at timestamptz,PRIMARY KEY(org_id,account_id));
 CREATE TABLE mail_suppressions(email text NOT NULL,expires_at timestamptz)`); err != nil {
 		t.Fatal(err)
 	}
@@ -92,6 +94,7 @@ CREATE TABLE mail_suppressions(email text NOT NULL,expires_at timestamptz)`); er
 	var nonpaymentDeletionGate atomic.Bool
 	var quotaWarningGate atomic.Bool
 	var subscriptionEndedGate atomic.Bool
+	var deploymentFailedGate atomic.Bool
 	var accountSuspendedGate atomic.Bool
 	var accountRestoredGate atomic.Bool
 	var paymentFailedGate atomic.Bool
@@ -111,11 +114,12 @@ CREATE TABLE mail_suppressions(email text NOT NULL,expires_at timestamptz)`); er
 		NonpaymentDeletionOutboxEnabled:   nonpaymentDeletionGate.Load,
 		QuotaWarningOutboxEnabled:         quotaWarningGate.Load,
 		SubscriptionEndedOutboxEnabled:    subscriptionEndedGate.Load,
+		DeploymentFailedOutboxEnabled:     deploymentFailedGate.Load,
 		AccountSuspendedOutboxEnabled:     accountSuspendedGate.Load,
 		AccountRestoredOutboxEnabled:      accountRestoredGate.Load,
 		PaymentFailedOutboxEnabled:        paymentFailedGate.Load,
 		MFAEnabledAlertOutboxEnabled:      mfaEnabledAlertGate.Load,
-		Producers:                         map[string]internalmail.Producer{"auth": {ID: "auth", Token: testProducerToken, From: []string{"notify@example.test"}, DailyRecipientLimit: 80, PendingRecipientLimit: 100}},
+		Producers:                         map[string]internalmail.Producer{"auth": {ID: "auth", Token: testProducerToken, From: []string{"notify@example.test"}, DailyRecipientLimit: 100, PendingRecipientLimit: 100}},
 		RecipientAllowed:                  func(string) bool { return true }, Transport: smtp}
 	domain, err := daemon.RegisterDomain(t.Context(), "example.test")
 	if err != nil {
@@ -727,6 +731,7 @@ CREATE TABLE mail_suppressions(email text NOT NULL,expires_at timestamptz)`); er
 	expectedMailCount += exerciseNonpaymentDeletionHandoff(t, f, daemon, smtp, &nonpaymentDeletionGate, &dropped)
 	expectedMailCount += exerciseQuotaWarningHandoff(t, f, daemon, smtp, &quotaWarningGate, &dropped)
 	expectedMailCount += exerciseSubscriptionEndedHandoff(t, f, daemon, smtp, &subscriptionEndedGate, &dropped)
+	expectedMailCount += exerciseDeploymentFailedHandoff(t, f, daemon, smtp, &deploymentFailedGate, &dropped)
 	// The producer must retain no recovery advisory lock across HTTP. Start
 	// and release a new recovery after producer preflight but before maild
 	// admission: the owner's generation check must reject this stale request.

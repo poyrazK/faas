@@ -64,6 +64,11 @@ func runDeployFailedEmailSubscriber(ctx context.Context, pool *pgxpool.Pool, srv
 }
 
 func sendDeployFailedEmail(parent context.Context, srv *server, p deploymentFailedEmailPayload) error {
+	// Once selected, durable polling owns capture. LISTEN is only a wake hint;
+	// no inline fallback may consume a cooldown or send a second notice.
+	if srv != nil && srv.deploymentFailedOutboxRequested != nil && srv.deploymentFailedOutboxRequested() {
+		return nil
+	}
 	if srv == nil || srv.store == nil || srv.mailer == nil {
 		return nil
 	}

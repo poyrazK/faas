@@ -32,6 +32,11 @@ type DeploymentFailure struct {
 // control-character sanitizer. This keeps secrets and header injection out of
 // both the email body and provider logs.
 func DeploymentFailedBody(f DeploymentFailure) (subject, body string) {
+	return DeploymentFailedBodyV1(f)
+}
+
+// DeploymentFailedBodyV1 freezes the durable notification's rendering.
+func DeploymentFailedBodyV1(f DeploymentFailure) (subject, body string) {
 	redactor := redact.New(4096)
 	safe := func(v string) string {
 		v, _ = redactor.Apply(v)

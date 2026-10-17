@@ -3381,3 +3381,67 @@ confirmations. Re-enable to resume current, unexpired notices. Account erasure
 cascades intents and receipts; terminal settlement erases address/ciphertext.
 Opaque audit survives and Down refuses used history. Activation, deployment,
 credential enrollment and live qualification remain separate work.
+
+## Durable deployment-failure notices
+
+`FAAS_INTERNAL_MAIL_DEPLOYMENT_FAILED_OUTBOX_ENABLED=0` independently gates apid
+capture/handoff, maild admission/submission and private reconciliation. Delivered
+units and examples keep it off. Apply
+[`20261017155842001_platform_mail_deployment_failed_outbox.sql`](../../migrations/20261017155842001_platform_mail_deployment_failed_outbox.sql)
+before opting in; see
+[ADR-20261017155842](../adr/20261017155842-mail-deployment-failure-notices.md).
+
+Enabled apid needs the existing producer outbox, parent gates, internal-producer
+transport and dedicated current/previous payload readers. The optional
+`FAAS_CLI_AUTH_URL_BASE` must be an HTTPS origin of at most 256 bytes; the default
+is `https://gregale.dev`. Retries retain the saved dashboard origin. Disabled
+setup reads only the exact own flag. This adds no public route, credential, SDK
+method or meterd command. A selected subscriber never sends inline, including
+when its durable service is unavailable.
+
+Passive lifecycle metadata records the database failure time without copying
+addresses, errors or logs. Mail capacity/encryption/delivery run later in apid;
+they cannot roll back an already committed deployment outcome. The existing
+worker polls at most 25 failures per bounded pass. The first enable creates a
+durable boundary and excludes old failures. Same-generation restarts retain it,
+including failures committed while apid stopped. A pause can resume eligible
+failures within their original 24-hour lifetime.
+
+Capture commits encrypted notice, per-failure observation and app cooldown
+together. A failed capture leaves its cooldown unclaimed for retry. The hourly
+cooldown is shared with the legacy path. Suppressed failures have durable skip
+receipts and do not reappear after the hour passes. The recipient is the named
+deployer. Legacy inline cooldown claims during a rollback also exclude those
+failures after the hour elapses. Recipient selection falls back to the app owner
+only when no deployer is recorded. A
+deployer outside the app account must still be an active member of its org.
+
+The frozen V1 notice has a stable `deployment-failed:<intent UUID>` key and a
+24-hour expiry measured from failure, not capture/retry. It contains a bounded
+redacted summary and dashboard link. Oversized fields are omitted whole; build
+log excerpts and attachments never enter the queue. Keep payload readers
+covering this family's unexpired pending snapshots when rotating identities.
+Existing budgets, suppressions and retry controls apply.
+
+Apid and maild check source revision, recipient address/status, app
+identity/status, membership when needed and same-scope success revision.
+Address/status/ownership cycles, recovered/replaced/deleted deployments or a
+later same-scope success cancel stale notices, including admitted mail. Success
+in another scope leaves the notice eligible. Keep all three lifecycle triggers
+enabled. Readers use the separate scope fence without locking deployment rows.
+After durable submission start, SMTP custody cannot be recalled or replayed.
+
+A recovery hold stops capture. After an explicit recovery changes the generation,
+the first enabled pass after release advances the discovery boundary to that
+generation. Unobserved history before the new boundary is excluded. Investigate
+using deployment records and existing recovery evidence; do not rewrite failure
+stamps or replay keys to resend mail.
+
+Use existing private outbox status/list/admission and audited reconciliation
+commands for saved intents. Reconciliation also requires this exact flag and
+never resends mail. Withdrawing the flag pauses durable work. Future legacy
+notifications use the inline path, sharing its cooldown. Re-enable explicitly to
+resume current, unexpired durable jobs. Account erasure cascades
+intents/observations; terminal settlement erases address/ciphertext. Used history
+blocks schema rollback. Deployment, activation, credential enrollment and live
+qualification remain separate work.
