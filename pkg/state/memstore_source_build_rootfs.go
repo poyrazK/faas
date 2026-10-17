@@ -127,7 +127,7 @@ func sourceBuildRootfsHistoricalParent(in SourceBuildRootfsInput, parent BuildEx
 	c := parent.Input.Claims
 	if validateBuildExportPublication(parent) != nil || in.PublicationHash != parent.InputHash ||
 		c.AccountID != canonicalStandardUUID(app.AccountID) || c.AppID != canonicalStandardUUID(app.ID) ||
-		c.OrgID != registryCanonicalOrg(app.OrgID) || c.DeploymentID != canonicalStandardUUID(dep.ID) || c.Runtime != app.Runtime ||
+		c.OrgID != registryCanonicalOrg(app.OrgID) || c.DeploymentID != canonicalStandardUUID(dep.ID) || !SourceRuntimeClaimAllowed(app, c.Runtime) ||
 		dep.SourceSHA256 != "" && c.SourceSHA256 != dep.SourceSHA256 {
 		return false
 	}

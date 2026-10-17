@@ -164,3 +164,8 @@ func TestPgSourceBuildRootfsSoftDeleteRestore(t *testing.T) {
 		t.Fatal("restored live owner evidence erased")
 	}
 }
+
+func TestPgSourceBuildRootfsSharedRuntime(t *testing.T) {
+	s, _ := registryVerificationPGStore(t)
+	sourceBuildRootfsSharedRuntime(t, s)
+}
