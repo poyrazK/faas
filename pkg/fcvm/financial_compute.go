@@ -193,10 +193,6 @@ func (m *Manager) watchFinancialCompute(ctx context.Context, local *localCompute
 	}
 }
 
-func (m *Manager) renewFinancialCompute(ctx context.Context, local *localComputeLease) bool {
-	return m.renewFinancialComputeCredit(ctx, local, false)
-}
-
 func (m *Manager) renewFinancialComputeCredit(ctx context.Context, local *localComputeLease, refill bool) bool {
 	local.mu.Lock()
 	defer local.mu.Unlock()

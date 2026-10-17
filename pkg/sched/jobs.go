@@ -31,6 +31,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/ci"
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/financial"
 	"github.com/onebox-faas/faas/pkg/jobresult"
@@ -111,6 +112,10 @@ func (e *Engine) wakeJobOnce(ctx context.Context, accountID, runID string, taskI
 	if task.Status != "queued" {
 		return JobWakeResult{}, ErrJobTaskAlreadyClaimed
 	}
+	ciOwned, ciDeadline, err := e.ciJobPreflight(ctx, run, taskIndex)
+	if err != nil {
+		return JobWakeResult{}, err
+	}
 	if task.NextAttemptAt != nil && task.NextAttemptAt.After(time.Now()) {
 		return JobWakeResult{}, ErrJobRetryBackoff
 	}
@@ -134,6 +139,9 @@ func (e *Engine) wakeJobOnce(ctx context.Context, accountID, runID string, taskI
 		if owned && (op.JobRunID != runID || op.CancellationRequested) {
 			return JobWakeResult{}, state.ErrOperationStaleAttempt
 		}
+	}
+	if ciOwned && operationOwned {
+		return JobWakeResult{}, ci.ErrRuntimeAuthority
 	}
 	imageKey := job.ImageStorageKey
 	if run.ImageRefSnapshot != "" {
@@ -230,6 +238,14 @@ func (e *Engine) wakeJobOnce(ctx context.Context, accountID, runID string, taskI
 	if taskTimeoutSec <= 0 {
 		taskTimeoutSec = 300
 	}
+	if ciOwned {
+		remaining := int(time.Until(ciDeadline).Seconds())
+		if remaining < 1 {
+			e.ledger.Release(instanceID)
+			return JobWakeResult{}, ci.ErrRuntimeAuthority
+		}
+		taskTimeoutSec = min(taskTimeoutSec, remaining)
+	}
 
 	// 3. Mint lease + claim. Lease TTL = task_timeout_s + 90s grace
 	// (mirrors the §6.1 cold-boot + cleanup envelope for app
@@ -275,6 +291,14 @@ func (e *Engine) wakeJobOnce(ctx context.Context, accountID, runID string, taskI
 		e.rollbackUnclaimedJobAdmission(ctx, instanceID, tok, "")
 		return JobWakeResult{}, fmt.Errorf("sched: WakeJob create and claim instance: %w", err)
 	}
+	var ciProof ci.RuntimeProof
+	if ciOwned {
+		ciProof, err = e.ciJobProof(ctx, runID, instanceID, tok)
+		if err != nil {
+			e.rollbackJobAdmission(ctx, runID, taskIndex, instanceID, tok, task.Attempt, 0, "ci_runtime_refused", "CI runtime authorization was refused")
+			return JobWakeResult{}, err
+		}
+	}
 
 	operationEnv := map[string]string{}
 	if adapter, ok := e.store.(state.JobOperationStore); ok {
@@ -311,6 +335,12 @@ func (e *Engine) wakeJobOnce(ctx context.Context, accountID, runID string, taskI
 	if err != nil {
 		e.rollbackJobAdmission(ctx, runID, taskIndex, instanceID, tok, task.Attempt, 0, "job_env_invalid", "job environment overrides are invalid; update the job or run")
 		return JobWakeResult{}, fmt.Errorf("sched: WakeJob decode env overrides: %w", err)
+	}
+	scrubCIJobEnv(env)
+	if ciOwned {
+		env["GREGALE_CI_RUNTIME_URL"] = e.ciJobs.origin
+		env["GREGALE_CI_INSTANCE_ID"] = instanceID
+		env["GREGALE_CI_CAPABILITY"] = ciProof.Capability
 	}
 	// These values identify the actual task and attempt, so customer-supplied
 	// job/run environment entries must never be able to replace them.
@@ -408,6 +438,15 @@ func (e *Engine) wakeJobOnce(ctx context.Context, accountID, runID string, taskI
 		command = job.Command
 	}
 	interactive, err := e.jobRunAttach(ctx, runID)
+	if ciOwned {
+		if runtimeInputs != nil || len(sealedEnv) != 0 || len(operationEnv) != 0 {
+			err = ci.ErrRuntimeAuthority
+		}
+		startHeld = true
+		startGateReleaser, _ = e.jobVmmClient.(interface {
+			ReleaseJobStart(context.Context, JobStartSpec) error
+		})
+	}
 	if err == nil && interactive != nil && startHeld {
 		err = errors.New("an interactive run cannot be start-held")
 	}
@@ -508,6 +547,13 @@ func (e *Engine) wakeJobOnce(ctx context.Context, accountID, runID string, taskI
 	e.recordCommittedInstanceTransition(ctx, published, state.StateColdBooting, state.StateRunning,
 		"", "job_boot_completed", "job_vmmd_boot_completed")
 	if startHeld {
+		if ciOwned {
+			if err := e.ciJobStartAllowed(ctx, ciProof); err != nil {
+				e.rollbackJobAdmission(ctx, runID, taskIndex, instanceID, tok, task.Attempt, 0,
+					"ci_start_revoked", "CI authorization changed before command start")
+				return JobWakeResult{}, err
+			}
+		}
 		releaseCtx, releaseCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		err := startGateReleaser.ReleaseJobStart(releaseCtx, JobStartSpec{NodeID: out.NodeID, InstanceID: instanceID})
 		releaseCancel()
@@ -613,6 +659,17 @@ func (e *Engine) prepareEnvironmentGitOpsJobRuntimeInputs(ctx context.Context, a
 func (e *Engine) rollbackJobAdmission(ctx context.Context, runID string, taskIndex int, instanceID string, tok LeaseToken, attempt, retryMax int, reason, errorMessage string) {
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
+	if e.ciJobs != nil && e.ciJobs.store != nil {
+		owned, err := e.ciJobs.store.JobsRetryBlocked(cleanupCtx, runID)
+		if err != nil {
+			e.log.Warn("sched: job rollback ownership unavailable", "run", runID)
+			return
+		}
+		if owned {
+			e.rollbackCIJobAdmission(ctx, runID, taskIndex, instanceID, tok, errorMessage)
+			return
+		}
+	}
 	if e.vmm != nil {
 		ins, err := e.store.InstanceByID(cleanupCtx, instanceID)
 		if err != nil {

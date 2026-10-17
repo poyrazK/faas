@@ -6,6 +6,7 @@ package fcvm
 import (
 	"context"
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -102,6 +103,38 @@ func TestNativeWakeCompletesNetworkBeforeRestoreStaging(t *testing.T) {
 	case <-restoreAttempted:
 	default:
 		t.Fatal("restore staging did not run after network setup")
+	}
+	target, err := m.PublicForwardTarget("native-network-order")
+	if err != nil || target == nil || target.IfIndex != 1 {
+		t.Fatalf("wake did not retain the fixture's captured interface: %+v %v", target, err)
+	}
+}
+
+func TestNativePublicForwardCaptureRejectsHostObservationFailures(t *testing.T) {
+	for _, observation := range []string{"routing", "interface"} {
+		t.Run(observation, func(t *testing.T) {
+			m, _, _ := nativeManagerFixture(t)
+			cause := errors.New("host observation failed")
+			m.publicForwardProbe.checkRouting = func() error {
+				if observation == "routing" {
+					return cause
+				}
+				return nil
+			}
+			m.publicForwardProbe.interfaceByName = func(string) (*net.Interface, error) {
+				if observation == "routing" {
+					t.Fatal("interface lookup followed a failed routing check")
+				}
+				return nil, cause
+			}
+			target, err := m.capturePublicForwardTarget(t.Context(), netns.Config{PublicForwarding: true})
+			if target != nil || !errors.Is(err, cause) {
+				t.Fatalf("failed %s observation published a target: %+v %v", observation, target, err)
+			}
+			if len(m.run.(*fakeRunner).commands) != 0 {
+				t.Fatal("failed host observation reached neighbor setup")
+			}
+		})
 	}
 }
 
@@ -272,6 +305,12 @@ func nativeManagerFixture(t *testing.T) (*Manager, *JailerVMM, string) {
 	})
 	fixture := &recoveryVMMFixture{fakeVMM: &fakeVMM{}, jailer: v}
 	m := NewManager(&fakeRunner{}, fixture, Paths{}, "1.7.0", nil, nil)
+	m.publicForwardProbe = publicForwardHostProbe{
+		checkRouting: func() error { return nil },
+		interfaceByName: func(name string) (*net.Interface, error) {
+			return &net.Interface{Name: name, Index: 1}, nil
+		},
+	}
 	fixture.command = func(ctx context.Context, argv []string, input []byte) ([]byte, error) {
 		if input != nil {
 			if runner, ok := m.run.(InputRunner); ok {
@@ -280,6 +319,9 @@ func nativeManagerFixture(t *testing.T) (*Manager, *JailerVMM, string) {
 		}
 		if m.captureRunner != nil && strings.Contains(strings.Join(argv, " "), "nft -a list") {
 			return m.captureRunner.RunCapture(ctx, argv)
+		}
+		if len(argv) == 8 && argv[0] == "ip" && argv[1] == "-n" && argv[3] == "-j" && argv[4] == "link" && argv[5] == "show" && argv[6] == "dev" {
+			return []byte(`[{"address":"02:00:00:00:00:01"}]`), m.run.Run(ctx, argv)
 		}
 		return nil, m.run.Run(ctx, argv)
 	}

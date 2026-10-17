@@ -2483,6 +2483,11 @@ type Querier interface {
 	// denominator.
 	ListAppSecretRuntimeReloadTargets(ctx context.Context, db DBTX, arg ListAppSecretRuntimeReloadTargetsParams) ([]ListAppSecretRuntimeReloadTargetsRow, error)
 	ListAppSecretsWithBindingAccessInScope(ctx context.Context, db DBTX, arg ListAppSecretsWithBindingAccessInScopeParams) ([]ListAppSecretsWithBindingAccessInScopeRow, error)
+	// ADR-1638: retained history is scoped and windowed before limiting. Metadata
+	// is scoped to the same app for both the canonical boot and completion reads.
+	ListAppWakeHistoryPage(ctx context.Context, db DBTX, arg ListAppWakeHistoryPageParams) ([]ListAppWakeHistoryPageRow, error)
+	// ADR-1637: app scope/canonical selection before a total-order seek and limit.
+	ListAppWakeTimelinePage(ctx context.Context, db DBTX, arg ListAppWakeTimelinePageParams) ([]ListAppWakeTimelinePageRow, error)
 	ListApplicationStandardAssignmentInventory(ctx context.Context, db DBTX, arg ListApplicationStandardAssignmentInventoryParams) ([]ApplicationStandardAssignment, error)
 	ListApplicationStandardAssignments(ctx context.Context, db DBTX, orgID pgtype.UUID) ([]ListApplicationStandardAssignmentsRow, error)
 	ListApplicationStandardControlBackups(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ApplicationStandardControlBackup, error)

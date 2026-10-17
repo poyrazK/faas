@@ -1021,6 +1021,12 @@ func (s *PgStore) JobRunCreate(ctx context.Context, jobID, accountID, triggerKin
 // and creates a linked run. The current image must resolve to the same digest
 // so replay never silently runs the old command against different bits.
 func (s *PgStore) JobRunReplayFailed(ctx context.Context, sourceRunID, accountID string) (JobRun, []JobTask, error) {
+	if owned, err := s.ciJobRunOwned(ctx, accountID, sourceRunID); err != nil || owned {
+		if err == nil {
+			err = ErrConflict
+		}
+		return JobRun{}, nil, err
+	}
 	if owned, err := sqlc.New().CustomerOperationJobOwned(ctx, s.pool, mustPgUUID(sourceRunID)); err != nil || owned {
 		if err == nil {
 			err = ErrConflict
@@ -2046,6 +2052,12 @@ func (s *PgStore) jobTaskMarkTerminal(ctx context.Context, runID string, taskInd
 //
 // Returns ErrNotFound when (run_id, task_index) does not resolve.
 func (s *PgStore) JobTaskRetry(ctx context.Context, runID string, taskIndex int, nextAttemptAt time.Time) error {
+	if blocked, err := s.ciJobRetryBlocked(ctx, runID); err != nil || blocked {
+		if err == nil {
+			err = ErrConflict
+		}
+		return err
+	}
 	if owned, err := sqlc.New().CustomerOperationJobOwned(ctx, s.pool, mustPgUUID(runID)); err != nil || owned {
 		if err == nil {
 			err = ErrConflict
@@ -2120,6 +2132,11 @@ func (s *PgStore) JobTaskRetry(ctx context.Context, runID string, taskIndex int,
 // while the task remains at attempt 1, and a late boot failure must not touch
 // a replacement attempt or a task already settled by exit/cancellation.
 func (s *PgStore) JobTaskFailBoot(ctx context.Context, runID string, taskIndex int, instanceID, leaseToken string, retryMax int, nextAttemptAt time.Time, errorMessage string) (bool, error) {
+	if owned, err := s.ciJobRetryBlocked(ctx, runID); err != nil {
+		return false, err
+	} else if owned {
+		retryMax = 0
+	}
 	if owned, err := sqlc.New().CustomerOperationJobOwned(ctx, s.pool, mustPgUUID(runID)); err != nil {
 		return false, err
 	} else if owned {
@@ -2296,6 +2313,11 @@ func (s *PgStore) JobTaskFindStuck(ctx context.Context, ttl time.Duration) ([]Jo
 // JobTaskReapClaimed is a fenced, atomic retry/dead-letter transition.
 // Expiry is checked again so a heartbeat after JobTaskFindStuck wins safely.
 func (s *PgStore) JobTaskReapClaimed(ctx context.Context, runID string, taskIndex int, leaseToken string, cutoff time.Time, retryMax int, nextAttemptAt time.Time) (bool, error) {
+	if owned, err := s.ciJobRetryBlocked(ctx, runID); err != nil {
+		return false, err
+	} else if owned {
+		retryMax = 0
+	}
 	if owned, err := sqlc.New().CustomerOperationJobOwned(ctx, s.pool, mustPgUUID(runID)); err != nil {
 		return false, err
 	} else if owned {

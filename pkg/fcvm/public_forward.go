@@ -10,6 +10,13 @@ import (
 	"github.com/onebox-faas/faas/pkg/netns"
 )
 
+// Host observations are separate from network effects so portable ownership
+// fixtures can model both without inspecting the runner's host network.
+type publicForwardHostProbe struct {
+	checkRouting    func() error
+	interfaceByName func(string) (*net.Interface, error)
+}
+
 // Capture while Wake owns this network, before publishing/prewarming a bridge.
 // Test/alternate VMMs retain their namespace transport; native owners must have
 // a real public interface and never fall back after a capture failure.
@@ -20,10 +27,18 @@ func (m *Manager) capturePublicForwardTarget(ctx context.Context, nc netns.Confi
 	if !nc.PublicForwarding {
 		return nil, errors.New("public forward has no generation-owned host route")
 	}
-	if err := netns.CheckPublicForwardRouting(); err != nil {
+	checkRouting := netns.CheckPublicForwardRouting
+	if m.publicForwardProbe.checkRouting != nil {
+		checkRouting = m.publicForwardProbe.checkRouting
+	}
+	if err := checkRouting(); err != nil {
 		return nil, err
 	}
-	iface, err := net.InterfaceByName(nc.VethHost)
+	interfaceByName := net.InterfaceByName
+	if m.publicForwardProbe.interfaceByName != nil {
+		interfaceByName = m.publicForwardProbe.interfaceByName
+	}
+	iface, err := interfaceByName(nc.VethHost)
 	if err != nil {
 		return nil, fmt.Errorf("public forward interface: %w", err)
 	}

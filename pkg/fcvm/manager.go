@@ -797,11 +797,12 @@ type Manager struct {
 	// list). Production wires the metal runner that wraps
 	// exec.CommandContext with CombinedOutput; unit tests can
 	// stub via WithCaptureRunner.
-	captureRunner CaptureRunner
-	vmm           VMM
-	paths         Paths
-	fcVersion     string // the running Firecracker version; snapshots load only on a match
-	log           *slog.Logger
+	captureRunner      CaptureRunner
+	publicForwardProbe publicForwardHostProbe // startup-only; zero uses native host observations
+	vmm                VMM
+	paths              Paths
+	fcVersion          string // the running Firecracker version; snapshots load only on a match
+	log                *slog.Logger
 
 	mu   sync.Mutex
 	live map[string]*Instance

@@ -88,6 +88,18 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_BUILD_PUBLISHER_NAME` | builderd | `default` |  |  | `` | explicit optional source-build publisher name paired with FAAS_BUILD_PUBLISHER_KEY; unset leaves publication disabled and required signature policies fail closed; public standards activation remains disabled (ADR-435) |
 | `FAAS_CANARY_PROGRESSION_TOKEN` | apid, meterd | `secrets-env` |  |  | `` | distinct random 32+ byte internal service token delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid); activates only with FAAS_SAFEDEPLOY_TOKEN |
 | `FAAS_CERT_EXPIRY_REFRESHER_INTERVAL` | meterd | `default` |  |  | `` |  |
+| `FAAS_CI_AUTOMATION_ENABLED` | apid, githubd, shared | `unit` |  | 0 | `` | ADR-1656 exact opt-in for new verified branch-push automation capture and profile admission; generated units keep 0; blocked receipts never promote |
+| `FAAS_CI_DISPATCH_ENABLED` | apid, schedd, shared | `unit` |  | 0 | `` | ADR-1651 internal CI Jobs launch gate; requires internal/GitHub gates and allowlist; execution admission also requires worker/storage/HTTPS; generated units keep 0 |
+| `FAAS_CI_EXECUTION_CHECKS_ENABLED` | apid, githubd, shared | `unit` |  | 0 | `` | ADR-1657 exact opt-in for fresh Jobs execution Check capture and publication; also requires GitHub Checks, internal/GitHub gates and allowlist; generated units keep 0; old executions never backfill |
+| `FAAS_CI_GCS_BUCKET` | apid, shared | `unit` |  |  | `` | ADR-1652 existing dedicated private GCS bucket for CI payloads; empty default, no provisioning; transport/retention/worker off avoids client discovery |
+| `FAAS_CI_GITHUB_CHECKS_ENABLED` | apid, githubd, shared | `unit` |  | 0 | `` | ADR-1572 internal CI Checks publication gate; also requires internal and GitHub admission gates and account allowlist; generated units keep 0 |
+| `FAAS_CI_GITHUB_ENABLED` | apid, githubd, schedd, shared | `unit` |  | 0 | `` | ADR-1572 internal CI GitHub bindings and authenticated trigger admission; generated units keep 0; does not enable compute |
+| `FAAS_CI_INTERNAL_ACCOUNTS` | apid, githubd, schedd, shared | `unit` |  |  | `` | ADR-1576 internal CI account UUID allowlist; generated units keep it empty and malformed lists fail closed |
+| `FAAS_CI_INTERNAL_ENABLED` | apid, githubd, schedd, shared | `unit` |  | 0 | `` | ADR-1576 internal CI metadata gate; generated units keep 0; enabling metadata never enables compute dispatch |
+| `FAAS_CI_RETENTION_ENABLED` | apid, shared | `unit` |  | 0 | `` | ADR-1652 independent exact opt-in for journaled CI payload retirement; generated units keep 0; may drain with admission and transport off |
+| `FAAS_CI_RUNTIME_URL` | apid, schedd, shared | `unit` |  |  | `url` | ADR-1652 credential-free HTTPS origin for CI-owned guest transfers and artifact downloads; empty default refuses transport/launch |
+| `FAAS_CI_TRANSPORT_ENABLED` | apid, schedd, shared | `unit` |  | 0 | `` | ADR-1652 independent exact opt-in for scoped HTTPS CI transport and scheduler grants; generated units keep 0; fresh execution admission also requires the worker gate |
+| `FAAS_CI_WORKER_ENABLED` | apid, shared | `unit` |  | 0 | `` | ADR-1654 exact opt-in for the bounded internal CI Jobs reconciler; off in shipped units; retain for cancellation and output drain when admission is disabled |
 | `FAAS_CLI_AUTH_URL_BASE` | apid | `default` |  |  | `` |  |
 | `FAAS_CLONE_WORKER_SPOOL_DIR` | apid | `unit` |  |  | `` | dedicated APID clone-worker mode; private 0700 spool with one OS-locked owner |
 | `FAAS_COMMIT_API_ENABLED` | apid | `default` |  |  | `` | opt-in Gregale Commit qualification gate; disabled unless explicitly set to true |
