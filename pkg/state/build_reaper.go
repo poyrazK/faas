@@ -50,6 +50,13 @@ type ActiveDeploymentRootfsStore interface {
 	SetDeploymentRootfsIfActive(ctx context.Context, id, path, key string, bytes int64) error
 }
 
+// DeploymentRuntimeBaseStore stamps the shared runner base an unsigned
+// source build was made FROM (H10-140). Signed builds stamp it with their
+// source rootfs record instead.
+type DeploymentRuntimeBaseStore interface {
+	SetDeploymentRuntimeBase(ctx context.Context, id, runtime string) error
+}
+
 // BuildVMCleanupClaim is one durable builder-VM teardown obligation claimed
 // by a builderd worker. The token prevents a late result from an expired
 // claim from completing a newer worker's attempt.

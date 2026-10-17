@@ -837,12 +837,9 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		b.markFailed(ctx, build, state.FailureInfra, "resolve runtime base: "+baseErr.Error(), buildStart)
 		return BuildResult{}, baseErr
 	}
-	sharedRuntime := ""
-	if b.buildPublisher != nil {
-		// The runner base reaches drive0 only through an approved export
-		// claim, so a build without a publisher keeps the app's own base.
-		sharedRuntime = sharedSourceAppRuntime(app, fw, ver, dockerfilePath, os.Getenv)
-	}
+	// The runner base reaches imaged through the signed export claim, or, on
+	// a node without a build publisher, through this build's provenance.
+	sharedRuntime := sharedSourceAppRuntime(app, fw, ver, dockerfilePath, os.Getenv)
 	if sharedRuntime != "" {
 		ref, refErr := resolveBuildRuntimeBaseRef(sharedRuntime, fw, os.Getenv)
 		if refErr != nil {

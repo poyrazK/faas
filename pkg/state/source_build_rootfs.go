@@ -6,6 +6,8 @@ import (
 	"context"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/imagechain"
 	"github.com/onebox-faas/faas/pkg/ociref"
@@ -192,4 +194,34 @@ func sourceBuildRootfsRuntimeBase(in SourceBuildRootfsInput) string {
 		return in.Runtime
 	}
 	return ""
+}
+
+// SetDeploymentRuntimeBase records the shared runner base for an in-flight
+// deployment whose source build has no signed export (H10-140).
+func (s *PgStore) SetDeploymentRuntimeBase(ctx context.Context, id, runtime string) error {
+	if runtime != "" && !SharedSourceAppRuntime(runtime) {
+		return ErrInvalidArgument
+	}
+	return mapErr(sqlc.New().StampDeploymentRuntimeBase(ctx, s.pool, sqlc.StampDeploymentRuntimeBaseParams{DeploymentID: mustPgUUID(id), RuntimeBase: runtime}))
+}
+
+// SetDeploymentRuntimeBase is the MemStore twin of the PgStore method.
+func (m *MemStore) SetDeploymentRuntimeBase(_ context.Context, id, runtime string) error {
+	if runtime != "" && !SharedSourceAppRuntime(runtime) {
+		return ErrInvalidArgument
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	d, ok := m.deployments[id]
+	if !ok {
+		return ErrNotFound
+	}
+	switch d.Status {
+	case DeployPending, DeployBuilding, DeployImaging, DeploySnapshotting:
+	default:
+		return nil
+	}
+	d.RuntimeBase = runtime
+	m.putDeploymentLocked(id, d)
+	return nil
 }

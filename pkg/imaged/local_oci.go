@@ -570,7 +570,15 @@ func (h *Handler) buildLocalOCIAppLayer(ctx context.Context, app state.App, dep 
 	}
 	appsKey := sched.AppLayerKey(app.Slug, dep.ID)
 	buildLayers := layersAsReaders(layers)
-	if runtime := sharedRuntimeClaim(app, source); runtime != "" {
+	runtime := sharedRuntimeClaim(app, source)
+	if source == nil {
+		unsigned, provErr := h.sharedRuntimeFromProvenance(ctx, app, *dep)
+		if provErr != nil {
+			return fmt.Errorf("imaged: shared runtime: %w", provErr)
+		}
+		runtime = unsigned
+	}
+	if runtime != "" {
 		shared, sharedErr := h.sharedRuntimeAppLayers(ctx, runtime, dep.RootfsPath, config, layers, &manifest, app)
 		if sharedErr != nil {
 			return fmt.Errorf("imaged: shared runtime app layer: %w", sharedErr)
@@ -595,6 +603,17 @@ func (h *Handler) buildLocalOCIAppLayer(ctx context.Context, app state.App, dep 
 		return fmt.Errorf("imaged: build local OCI app layer: %w", err)
 	}
 	h.updateBuildProvenanceSBOM(ctx, dep.ID, result.SBOMKey)
+	if source == nil && runtime != "" {
+		// A signed build stamps the runner base with its source rootfs
+		// record; an unsigned one stamps it before the rootfs it boots under.
+		stamper, ok := h.store.(state.DeploymentRuntimeBaseStore)
+		if !ok {
+			return fmt.Errorf("imaged: deployment runtime base store unavailable")
+		}
+		if err := stamper.SetDeploymentRuntimeBase(ctx, dep.ID, runtime); err != nil {
+			return fmt.Errorf("imaged: stamp runtime base: %w", err)
+		}
+	}
 	if err := h.publishSourceRootfs(ctx, app, *dep, appsKey, result, source); err != nil {
 		return fmt.Errorf("imaged: stamp local OCI rootfs: %w", err)
 	}

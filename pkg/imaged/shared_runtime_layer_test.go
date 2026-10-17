@@ -182,3 +182,78 @@ func TestSharedRuntimeAppLayers(t *testing.T) {
 		})
 	}
 }
+
+func TestRuntimeFromBaseRef(t *testing.T) {
+	for ref, want := range map[string]string{
+		"ghcr.io/poyrazk/runner-node24@sha256:" + strings.Repeat("a", 64): "node24",
+		"ghcr.io/poyrazk/runner-node22:latest":                            "node22",
+		"ghcr.io/poyrazk/base-minimal@sha256:" + strings.Repeat("b", 64):  "",
+		"not a reference": "",
+	} {
+		if got := runtimeFromBaseRef(ref); got != want {
+			t.Errorf("%s: %q, want %q", ref, got, want)
+		}
+	}
+}
+
+// spec: §4.6
+// H10-140: without a build publisher, the runner base an app was built FROM
+// comes from its build provenance, and only for an eligible container app.
+func TestSharedRuntimeFromProvenance(t *testing.T) {
+	ctx := t.Context()
+	store := state.NewMemStore()
+	acct, err := store.CreateAccount(ctx, "shared-runtime@example.com", "pro")
+	if err != nil {
+		t.Fatal(err)
+	}
+	newDeployment := func(t *testing.T, app state.App, ref string) state.Deployment {
+		t.Helper()
+		app.AccountID = acct.ID
+		app.Slug = "shared-" + strings.ToLower(strings.ReplaceAll(t.Name(), "/", "-"))
+		created, err := store.CreateApp(ctx, app)
+		if err != nil {
+			t.Fatal(err)
+		}
+		dep, err := store.CreateDeployment(ctx, state.Deployment{AppID: created.ID, Kind: state.DeploymentKindTarball})
+		if err != nil {
+			t.Fatal(err)
+		}
+		build, err := store.CreateBuild(ctx, dep.ID, state.DeploymentKindTarball, 0, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := store.CreateBuildProvenance(ctx, state.BuildProvenance{BuildID: build.ID, RuntimeBaseRef: ref}); err != nil {
+			t.Fatal(err)
+		}
+		dep.BuildID = build.ID
+		return dep
+	}
+	h := &Handler{store: store}
+	runner := "ghcr.io/poyrazk/runner-node24@sha256:" + strings.Repeat("c", 64)
+	tests := []struct {
+		name string
+		app  state.App
+		ref  string
+		want string
+	}{
+		{name: "container app on runner", app: state.App{Type: state.AppTypeApp}, ref: runner, want: "node24"},
+		{name: "container app on minimal", app: state.App{Type: state.AppTypeApp}, ref: "ghcr.io/poyrazk/base-minimal@sha256:" + strings.Repeat("d", 64)},
+		{name: "container app with own runtime", app: state.App{Type: state.AppTypeApp, Runtime: "go124"}, ref: runner},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dep := newDeployment(t, tt.app, tt.ref)
+			app, err := store.AppByID(ctx, dep.AppID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := h.sharedRuntimeFromProvenance(ctx, app, dep)
+			if err != nil || got != tt.want {
+				t.Fatalf("runtime = %q, %v; want %q", got, err, tt.want)
+			}
+		})
+	}
+	if got, err := h.sharedRuntimeFromProvenance(ctx, state.App{Type: state.AppTypeApp}, state.Deployment{BuildID: "00000000-0000-4000-8000-000000000000"}); err != nil || got != "" {
+		t.Fatalf("missing provenance = %q, %v; want the app's own base", got, err)
+	}
+}

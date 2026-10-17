@@ -2,6 +2,7 @@ package imaged
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -29,6 +30,48 @@ func sharedRuntimeClaim(app state.App, source *sourceBuildRootfsBinding) string 
 		return ""
 	}
 	return claimed
+}
+
+// sharedRuntimeFromProvenance returns the runner base an unsigned source build
+// of app was made FROM, read from the build's provenance (builderd records
+// the base it built on). Only a node without a build publisher takes this
+// path; a signed build's runner base comes from its export claim.
+func (h *Handler) sharedRuntimeFromProvenance(ctx context.Context, app state.App, dep state.Deployment) (string, error) {
+	if dep.BuildID == "" || app.Type == state.AppTypeFunction || app.Runtime != "" {
+		return "", nil
+	}
+	prov, err := h.store.BuildProvenanceByBuildID(ctx, dep.BuildID)
+	if errors.Is(err, state.ErrNotFound) {
+		return "", nil
+	}
+	if err != nil {
+		// Guessing the app's own base for an artifact built FROM a runner
+		// base would boot the wrong drive0.
+		return "", fmt.Errorf("read build provenance: %w", err)
+	}
+	runtime := runtimeFromBaseRef(prov.RuntimeBaseRef)
+	if !state.SharedSourceAppRuntime(runtime) || !state.SourceRuntimeClaimAllowed(app, runtime) {
+		return "", nil
+	}
+	return runtime, nil
+}
+
+// runtimeFromBaseRef maps a runner base reference such as
+// ghcr.io/poyrazk/runner-node24@sha256:… to its runtime ("node24").
+func runtimeFromBaseRef(ref string) string {
+	parsed, err := oci.ParseReference(ref)
+	if err != nil {
+		return ""
+	}
+	name := parsed.Repository
+	if i := strings.LastIndex(name, "/"); i >= 0 {
+		name = name[i+1:]
+	}
+	runtime, ok := strings.CutPrefix(name, "runner-")
+	if !ok {
+		return ""
+	}
+	return runtime
 }
 
 type sharedRuntimeLayers struct {
