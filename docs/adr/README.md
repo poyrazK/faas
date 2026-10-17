@@ -1,5 +1,7 @@
 # Architecture Decision Records
 
+- [Node processing recovery inspection](20261017115623-node-processing-recovery-inspection.md)
+
 - [Coordinated Node event preparation](20261017114800-coordinated-node-event-preparation.md)
 
 - [Node consumer processing leases](20261017114009-node-consumer-processing-leases.md)

@@ -3644,3 +3644,10 @@ renewal stops and joins before the fenced business-write/receipt/intent commit;
 platform renewal continues through it. The preparation timeout is required and
 does not bound the final transaction; supply a parent deadline and driver timeouts.
 See [coordinated preparation and recovery](../../docs/event-acknowledgment-node-preparation.md).
+
+`inspectEventConsumerProcessing(pool, input, { signal })` reads one original
+consumer acceptance's local receipt/claim metadata. It reports completed, active,
+expired, absent or conflict evidence plus database observation/expiry times and
+rounded-down remaining lease milliseconds. It selects no token or response body,
+makes no mutation and grants no processing ownership or acknowledgment proof.
+See [snapshot boundaries and explicit recovery](../../docs/event-consumer-processing-inspection.md).

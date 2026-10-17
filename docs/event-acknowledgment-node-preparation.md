@@ -128,6 +128,12 @@ and cleanup, but separate instances still require exclusive durable-job ownershi
 Use the leased protocol consistently for a consumer and retain receipts while
 retry/replay remains possible.
 
+For read-only diagnostics after a busy or interrupted job, use
+[`inspectEventConsumerProcessing`](event-consumer-processing-inspection.md).
+It observes local receipt/claim metadata without selecting tokens/results or
+granting ownership. Unknown commits still require receipt reconciliation through
+the existing completion path; an absent/expired observation does not prove rollback.
+
 The [version 4 example](../examples/event-acknowledgment-node/README.md#coordinate-both-leases-during-preparation)
 explicitly selects this lifecycle while leaving earlier job versions on their
 original paths. Local validation covers build, generation, packaging and static

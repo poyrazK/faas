@@ -284,3 +284,28 @@ The required preparation budget covers startup, claim, preparation and the local
 renewal handoff. It does not bound the final transaction. Configure job deadlines,
 pool/query/statement timeouts and a host that remains available; neither HTTP 202
 nor timers keep a parked VM awake. See [lease loss, cancellation and uncertain commits](../../docs/event-acknowledgment-node-preparation.md).
+
+## Inspect a processing job
+
+`inspectOwnedProcessingDelivery` in `processing.mjs` reads metadata for a protected
+version 3 manual or version 4 coordinated job after checking trusted owner scope,
+mode and original bytes. It requires the job's ownership/cancellation signal but
+does not reconstruct an acknowledgment capability or validate its token:
+
+```js
+import { inspectOwnedProcessingDelivery } from './processing.mjs';
+
+const evidence = await inspectOwnedProcessingDelivery(
+  job, { app: appSlug, accountId, appId }, pool,
+);
+console.log(evidence); // Only bounded receipt/claim evidence and timing metadata.
+```
+
+The helper invokes no preparation, business callback, platform request or job
+acknowledgment. Keep the protected job and its original processing mode. A
+`completed` observation leads to the owner's existing receipt reconciliation
+path, which validates the saved result before staging or sending completion.
+An active/expired/absent observation does not prove work stopped, a transaction
+rolled back or a restart may commit. Conflicts require investigation. The owner
+chooses recovery explicitly, and live claim/completion fences decide admission.
+See [inspection states and snapshot limits](../../docs/event-consumer-processing-inspection.md).

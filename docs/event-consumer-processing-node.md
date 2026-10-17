@@ -168,3 +168,11 @@ performed. Expiry alone schedules nothing. Retain receipts and immutable claims
 while retry/replay remains possible. Local validation is build, schema generation,
 packaging and static checks; hosted acceptance is required for timing, takeover,
 concurrency, rollback and shared Go/Node behavior before release.
+
+## Inspect retained recovery evidence
+
+[`inspectEventConsumerProcessing`](event-consumer-processing-inspection.md) reads
+one original consumer request's receipt/claim metadata with a single database
+snapshot and clock. It reports completion evidence, active/expired/absent claims
+and conflicts without selecting tokens or result bodies. Inspection grants no
+ownership or acknowledgment proof; use the existing fenced recovery paths.

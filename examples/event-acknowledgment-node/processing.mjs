@@ -1,6 +1,6 @@
 // Explicit alternative to the version 2 unleased integration; see README.
 import { eventAcknowledgmentWorkerFromHeaders, eventConsumerRequestFromHeaders,
-  claimEventConsumerProcessing } from '@gregale/sdk-node';
+  claimEventConsumerProcessing, inspectEventConsumerProcessing } from '@gregale/sdk-node';
 import { acceptAuthenticatedDelivery } from './consumer.mjs';
 
 /** Authenticate/authorize first, as for the ordinary ingress. Commit protected original inputs before 202. */
@@ -25,13 +25,13 @@ function ownedProcessingDelivery(job, scope, version, mode) {
     || typeof record.bodyBase64 !== 'string' || record.bodyBase64.length > 1398104) throw new TypeError('invalid protected processing job');
   const original = Buffer.from(record.bodyBase64, 'base64');
   if (original.toString('base64') !== record.bodyBase64) throw new TypeError('invalid original body encoding');
-  const worker = eventAcknowledgmentWorkerFromHeaders(target.app, record.headers, original, target.accountId, target.appId);
-  return { worker, original, signal, target };
+  return { original, signal, target };
 }
 /** Preparation must be side-effect-free, bounded and observe signal. It owns serialized local renewals. */
 export async function processOwnedPreparedDelivery(job, scope, pool, prepare, handler, leaseDurationMs = 30000) {
   if (typeof prepare !== 'function' || typeof handler !== 'function') throw new TypeError('invalid owned processing callbacks');
-  const { worker, original, signal, target } = ownedProcessingDelivery(job, scope, 3, 'durable-intent-processing');
+  const { original, signal, target } = ownedProcessingDelivery(job, scope, 3, 'durable-intent-processing');
+  const worker = eventAcknowledgmentWorkerFromHeaders(target.app, job.record.headers, original, target.accountId, target.appId);
   const input = eventConsumerRequestFromHeaders(job.record.headers, original, target.accountId, target.appId);
   const lease = await claimEventConsumerProcessing(pool, input, leaseDurationMs, { signal });
   let prepared;
@@ -53,11 +53,21 @@ export async function processOwnedPreparedDelivery(job, scope, pool, prepare, ha
 /** The coordinator owns both renewal loops. Preparation must join its work and observe signal. */
 export async function processOwnedCoordinatedDelivery(job, scope, pool, prepare, handler, options) {
   if (typeof prepare !== 'function' || typeof handler !== 'function') throw new TypeError('invalid owned processing callbacks');
-  const { worker, original, signal } = ownedProcessingDelivery(job, scope, 4, 'durable-intent-prepared');
+  const { original, signal, target } = ownedProcessingDelivery(job, scope, 4, 'durable-intent-prepared');
+  const worker = eventAcknowledgmentWorkerFromHeaders(target.app, job.record.headers, original, target.accountId, target.appId);
   const result = await worker.runPreparedDurable(pool,
     workSignal => prepare(original, { signal: workSignal }),
     (tx, workSignal, prepared) => handler(tx, workSignal, original, prepared), { ...options, signal });
   signal.throwIfAborted();
   await job.ack(); // Intent delivery is independent; keep the job after any uncertain result.
   return result;
+}
+/** Observe only: no callback, claim, job acknowledgment or inferred recovery decision. */
+export async function inspectOwnedProcessingDelivery(job, scope, pool) {
+  const version = job.record.version;
+  const mode = version === 3 ? 'durable-intent-processing' : version === 4 ? 'durable-intent-prepared' : undefined;
+  if (mode === undefined) throw new TypeError('unsupported processing job version');
+  const { original, signal, target } = ownedProcessingDelivery(job, scope, version, mode);
+  const input = eventConsumerRequestFromHeaders(job.record.headers, original, target.accountId, target.appId);
+  return inspectEventConsumerProcessing(pool, input, { signal });
 }
