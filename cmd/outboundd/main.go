@@ -8,8 +8,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 
 	"filippo.io/age"
@@ -257,27 +259,56 @@ func run(ctx context.Context, log *slog.Logger) error {
 		}()
 		log.Info("outboundd metrics listening", "addr", cfg.MetricsAddr)
 	}
-	go func() {
-		<-ctx.Done()
-		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-		defer cancel()
-		_ = server.Shutdown(shutdownCtx)
-		if metricsServer != nil {
-			_ = metricsServer.Shutdown(shutdownCtx)
-		}
-		if shutdownRelay != nil {
-			shutdownRelay(shutdownCtx)
-		}
-	}()
+	listener, err := wire.ListenInherited("tcp", cfg.ListenAddr)
+	if err != nil {
+		return fmt.Errorf("outboundd: listen %s: %w", cfg.ListenAddr, err)
+	}
+	if err := wire.RequireInheritedListenersClaimed("outboundd"); err != nil {
+		_ = listener.Close()
+		return err
+	}
 	// All startup dependencies (config, Postgres, policy resolution, and the
 	// metrics registry) are ready before the serving listener is entered. Keep
 	// the daemon-level metric aligned with the /readyz contract; wire.Daemon
 	// flips it back to 0 on shutdown or an early return.
 	ops.MarkReady("outboundd", true, "")
 	log.Info("outbound gateway listening", "addr", cfg.ListenAddr, "integrations", len(configured))
-	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		return err
+	stops := []func(context.Context){func(ctx context.Context) { _ = server.Shutdown(ctx) }}
+	if metricsServer != nil {
+		stops = append(stops, func(ctx context.Context) { _ = metricsServer.Shutdown(ctx) })
 	}
+	if shutdownRelay != nil {
+		stops = append(stops, shutdownRelay)
+	}
+	return serveUntilShutdown(ctx, server, listener, outbounddDrainGrace, stops...)
+}
+
+// outbounddDrainGrace bounds how long a stopping outboundd lets in-flight
+// third-party and AI calls finish, inside systemd's default 90 s stop budget.
+const outbounddDrainGrace = time.Duration(api.GatewayDrainGraceSeconds) * time.Second
+
+// serveUntilShutdown serves until ctx ends, then stops every server at once
+// and returns only after they drained or grace expired. Returning from
+// ListenAndServe as soon as Shutdown began let wire.Daemon exit the process
+// while calls were still in flight, cutting them on every restart.
+func serveUntilShutdown(ctx context.Context, server *http.Server, listener net.Listener, grace time.Duration, stops ...func(context.Context)) error {
+	served := make(chan error, 1)
+	go func() { served <- server.Serve(listener) }()
+	select {
+	case err := <-served:
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			return err
+		}
+		return nil
+	case <-ctx.Done():
+	}
+	shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), grace)
+	defer cancel()
+	var wg sync.WaitGroup
+	for _, stop := range stops {
+		wg.Go(func() { stop(shutdownCtx) })
+	}
+	wg.Wait()
 	return nil
 }
 

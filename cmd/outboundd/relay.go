@@ -71,15 +71,8 @@ func startRelay(ctx context.Context, cfg *Config, pool *pgxpool.Pool, handler ht
 	}
 	var inner net.Listener
 	if network == "unix" {
-		if removeErr := os.Remove(address); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
-			return nil, fmt.Errorf("outboundd: remove stale relay socket: %w", removeErr)
-		}
-		if inner, err = net.Listen("unix", address); err != nil {
-			return nil, fmt.Errorf("outboundd: relay listen: %w", err)
-		}
-		if err := os.Chmod(address, 0o660); err != nil {
-			_ = inner.Close()
-			return nil, fmt.Errorf("outboundd: relay socket mode: %w", err)
+		if inner, err = listenRelaySocket(address); err != nil {
+			return nil, err
 		}
 	} else {
 		nodeVerifier := wire.NewPGNodeVerifier(wire.NewPGNodeLoader(pool), log)
@@ -100,7 +93,7 @@ func startRelay(ctx context.Context, cfg *Config, pool *pgxpool.Pool, handler ht
 		if err != nil {
 			return nil, err
 		}
-		tcp, err := net.Listen("tcp", address)
+		tcp, err := wire.ListenInherited("tcp", address)
 		if err != nil {
 			return nil, fmt.Errorf("outboundd: relay listen: %w", err)
 		}
@@ -123,4 +116,26 @@ func startRelay(ctx context.Context, cfg *Config, pool *pgxpool.Pool, handler ht
 	}()
 	log.Info("outboundd relay listening", "listen", cfg.RelayListen)
 	return func(shutdownCtx context.Context) { _ = server.Shutdown(shutdownCtx) }, nil
+}
+
+// listenRelaySocket prefers a socket a systemd socket unit holds open across
+// restarts, so vmmd's relay connections wait for the replacement.
+func listenRelaySocket(address string) (net.Listener, error) {
+	if l, ok, err := wire.InheritedListener("unix", address); err != nil {
+		return nil, fmt.Errorf("outboundd: relay listen: %w", err)
+	} else if ok {
+		return l, nil
+	}
+	if err := os.Remove(address); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("outboundd: remove stale relay socket: %w", err)
+	}
+	l, err := net.Listen("unix", address)
+	if err != nil {
+		return nil, fmt.Errorf("outboundd: relay listen: %w", err)
+	}
+	if err := os.Chmod(address, 0o660); err != nil {
+		_ = l.Close()
+		return nil, fmt.Errorf("outboundd: relay socket mode: %w", err)
+	}
+	return l, nil
 }
