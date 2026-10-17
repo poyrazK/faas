@@ -37,9 +37,6 @@ func baseGuestDigest(raw string) string {
 }
 
 func (h *Handler) ensureVerifiedBaseExt4(ctx context.Context, r verifiedBaseRequest, resolver oci.ImageResolver) (BaseStageResult, error) {
-	if err := writeProducedBaseScanCompatibility(ctx, r.be, r.key, r.ref, r.out, state.BaseImageScan{}); err != nil {
-		return BaseStageResult{}, err
-	}
 	store, ok := h.store.(state.BaseImageProducerStore)
 	if !ok {
 		return BaseStageResult{}, fmt.Errorf("imaged: base producer store unavailable")
@@ -104,8 +101,33 @@ func (h *Handler) reuseVerifiedBase(ctx context.Context, r verifiedBaseRequest, 
 }
 
 // Invalid or missing cache bytes require a verified rebuild before reuse.
+// ext4 builds are not byte-reproducible, so a node's cached copy can be its
+// own earlier build while the current producer records another node's bytes.
+// Adopt the canonical publication first: rebuilding would supersede the shared
+// producer, the other node would then do the same, and every swap stales
+// in-flight scan publications and every snapshot on that base (H10-101).
 func (h *Handler) verifiedBaseArtifactReusable(ctx context.Context, r verifiedBaseRequest, artifact imagechain.BaseArtifact) bool {
-	return checkStoredBaseArtifact(ctx, r.be, artifact) == nil && h.validateBaseArtifact(ctx, r.be, r.key) == nil
+	if checkStoredBaseArtifact(ctx, r.be, artifact) != nil {
+		if !refreshCachedBase(ctx, r.be, artifact.StorageKey) || checkStoredBaseArtifact(ctx, r.be, artifact) != nil {
+			return false
+		}
+	}
+	return h.validateBaseArtifact(ctx, r.be, r.key) == nil
+}
+
+// refreshCachedBase replaces this node's cached copy of key with the canonical
+// parent object. It reports false when key is not cache-backed or the refresh
+// fails; the caller then rebuilds as before.
+func refreshCachedBase(ctx context.Context, be storage.StorageBackend, key string) bool {
+	cache, rel, err := storage.CacheBackendForKey(be, key)
+	if err != nil || cache == nil {
+		return false
+	}
+	rc, err := cache.Refresh(ctx, rel)
+	if err != nil {
+		return false
+	}
+	return rc.Close() == nil
 }
 
 func baseCacheParentMatches(ctx context.Context, store state.BaseImageProducerStore, in state.BaseImageProducerInput, r verifiedBaseRequest) bool {
@@ -169,6 +191,9 @@ func (h *Handler) buildVerifiedBase(ctx context.Context, r verifiedBaseRequest, 
 		return build, err
 	}
 	defer closeContainerLayers(readers)
+	if err := invalidateScanBeforeRebuild(ctx, r); err != nil {
+		return build, err
+	}
 	build.result, err = h.builder.BuildBase(ctx, rootfs.BaseBuildInput{Layers: layersAsReaders(readers), Storage: r.be, StorageKey: r.key, GuestInitPath: h.guestInitPath})
 	if err != nil {
 		return build, err
@@ -232,6 +257,9 @@ func (h *Handler) applyVerifiedBaseDelta(ctx context.Context, r verifiedBaseRequ
 	if err != nil {
 		return build, err
 	}
+	if err := invalidateScanBeforeRebuild(ctx, r); err != nil {
+		return build, err
+	}
 	build.result, err = h.builder.BuildBaseFromStaging(ctx, staging, rootfs.BaseBuildInput{Storage: r.be, StorageKey: r.key, GuestInitPath: h.guestInitPath})
 	return build, err
 }
@@ -248,7 +276,17 @@ func (h *Handler) publishVerifiedBase(ctx context.Context, r verifiedBaseRequest
 	if err := h.validateBaseArtifact(ctx, r.be, r.key); err != nil {
 		return state.BaseImageProducer{}, err
 	}
-	return store.PublishBaseImageProducer(ctx, state.BaseImageProducerInput{ID: uuid.NewString(), Artifact: artifact, SourceReference: prepared.SourceReference, SourceDigest: prepared.SourceDigest, SelectedDigest: prepared.Digest, ImageChain: prepared.Evidence, LayoutVersion: baseLayoutVersion, GuestInitDigest: result.GuestInitDigest, ContentBytes: result.SizeBytes, LayerStart: prepared.LayerStart, Layers: prepared.Layers, ParentProducerID: build.parent.ID, ParentInputHash: build.parent.InputHash, ParentMaterialization: build.materialization})
+	producer, err := store.PublishBaseImageProducer(ctx, state.BaseImageProducerInput{ID: uuid.NewString(), Artifact: artifact, SourceReference: prepared.SourceReference, SourceDigest: prepared.SourceDigest, SelectedDigest: prepared.Digest, ImageChain: prepared.Evidence, LayoutVersion: baseLayoutVersion, GuestInitDigest: result.GuestInitDigest, ContentBytes: result.SizeBytes, LayerStart: prepared.LayerStart, Layers: prepared.Layers, ParentProducerID: build.parent.ID, ParentInputHash: build.parent.InputHash, ParentMaterialization: build.materialization})
+	if err != nil {
+		return state.BaseImageProducer{}, err
+	}
+	// ADR-567: record the published bytes like every other staging path, so
+	// other nodes' convergence adopts them instead of declining a stale
+	// sidecar and keeping their own build (H10-101).
+	if err := h.writeBaseContentSidecar(ctx, r.be, r.key); err != nil {
+		return state.BaseImageProducer{}, err
+	}
+	return producer, nil
 }
 
 func (h *Handler) finishVerifiedBase(ctx context.Context, r verifiedBaseRequest, producer state.BaseImageProducer, configDigest string, skipped bool) (BaseStageResult, error) {
@@ -258,9 +296,24 @@ func (h *Handler) finishVerifiedBase(ctx context.Context, r verifiedBaseRequest,
 	if err := h.writeProducedBaseScanSidecar(ctx, r, producer); err != nil {
 		return BaseStageResult{}, fmt.Errorf("imaged: publish produced shared-base scan: %w", err)
 	}
-	generation := baseDigestSidecarValueWithSource(configDigest, r.guestDigest, producer.Input.SourceReference)
-	if err := markCachedBaseGeneration(r.be, r.key, r.digestKey, generation); err != nil {
+	// The cache generation is the immutable release ref, as on every other
+	// staging path: vmmd compares it with the configured runtime base. The
+	// multi-line digest sidecar value is not a valid generation, so marking
+	// with it failed the first stage of every new base and stopped the
+	// rc.266 rollout on fsn-2 (hunt #10, H10-91).
+	if err := markCachedBaseGeneration(r.be, r.key, r.digestKey, r.ref); err != nil {
 		return BaseStageResult{}, err
 	}
 	return BaseStageResult{OutImage: r.out, StorageKey: r.key, ConfigDigest: configDigest, Skipped: skipped, Producer: producer}, nil
+}
+
+// invalidateScanBeforeRebuild replaces the base's shared scan sidecar with a
+// fail-closed refusal immediately before the build overwrites the base
+// object, so the old result never vouches for new bytes. It used to run at
+// the start of every staging attempt: a reuse, an unchanged resolve failure
+// or a deferred child base (H10-95) then left the refusal on bytes that had
+// not changed, and every cold boot on that base returned 503 until a later
+// stage rewrote it (H10-103).
+func invalidateScanBeforeRebuild(ctx context.Context, r verifiedBaseRequest) error {
+	return writeProducedBaseScanCompatibility(ctx, r.be, r.key, r.ref, r.out, state.BaseImageScan{})
 }

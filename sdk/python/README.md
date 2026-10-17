@@ -272,6 +272,13 @@ destination cannot inherit session authority. Application authentication remains
 subject to HTTPX's normal redirect policy. Gregale authorizes scope at every hop.
 See [the Dev Bridge guide](../../docs/dev-bridge.md) for local execution.
 
+## Application Auth tokens
+
+`pip install 'faas_sdk[auth]'`, then verify application Auth access tokens and
+check permissions with `faas_sdk.auth.AuthClient` (`verify`, `authorize` and
+their `_async` forms). See
+[Application Auth](../../docs/application-auth.md#in-your-backend).
+
 ## Runtime feature flags
 
 Managed Python ASGI applications can use Gregale's customer-aware runtime flag
@@ -2523,3 +2530,182 @@ Consume/close response bodies before leaving that block. Managed bindings reject
 raw `current()`. Stop admission and the coordinator before
 `storage.wait_for_retirement(timeout=5)`; timeout never closes leased clients.
 Without a hook, `current()` keeps caller-owned lifetime behavior.
+
+Checked project release graphs use the preparation and activation endpoints.
+Preparation returns a manifest with exact members, expected routing and policy
+revisions; activation independently rechecks binding evidence and service
+readiness. Internal service evidence is selected by `service_targets` together
+with an exact caller deployment. See the [qualification and activation workflow](../../docs/networking.md#qualify-and-activate-a-project-release-graph)
+for the CLI steps, consent requirements and graph limitations.
+
+
+Checked graph recovery uses the `prepare_checked_project_rollback` and
+`rollback_checked_project_release` project API modules to select retained history
+and commit the verified manifest. Historical membership and expiry are checked
+atomically under current binding policies. The new release records
+`rollback_source_release_id` and `rollback_previous_release_id`. See the
+[recovery workflow](../../docs/networking.md#recover-a-retained-project-release-graph).
+
+
+Checked graph deactivation uses the `prepare_checked_project_deactivation` and `deactivate_checked_project_release` project API modules.
+Preparation freezes one 100% weighted fallback per workload with current policy
+and service targets. Qualify this `deactivate: true`, `ttl_seconds: 0` manifest,
+then deactivate explicitly. Missing fallbacks, splits, stale intent and missing
+readiness block the switch. The retired release's `deactivation` field contains
+the durable receipt and exact fallback members. See the
+[deactivation workflow](../../docs/networking.md#deactivate-a-project-graph-with-checked-fallback-routing).
+
+Candidate service staging uses `POST .../release-sets/staging` with a complete
+prepared forward or rollback manifest and a 1–1800 second `ttl_seconds` lease.
+Read or cancel the stage with `GET` / `DELETE .../release-sets/staging/{stage}`.
+Staging capacity is billable, preserves current routes, uses ordinary admission
+limits, and excludes GitOps-managed workloads. Repeating the same manifest reuses
+its original expiry. `ready` is observed replica readiness, not binding proof;
+run verification and explicit activation/rollback afterwards. Cancellation or
+expiry removes temporary capacity while active graph allocations remain.
+
+
+Push queue canaries require an exact deployment, a declared safe `GREGALE_QUEUE_CANARY_BINDINGS` override and explicit publication consent. Create, get and cancel operations expose bounded publication/dispatch/completion status. The `handler_completion` queue release requirement checks fresh completion on the selected deployment plus normal consumer readiness. See [queue completion canaries](../../docs/networking.md#push-queue-binding-completion-canaries).
+
+Durable single-app binding verification exposes create, status, resume, atomic
+step admission, complete and cancel operations. Supply a stable run UUID and
+review digest; original consent and deadlines are immutable, and observing an
+existing task/message does not acquire ownership. See
+[durable verification runs](../../docs/networking.md#durable-single-app-binding-verification).
+
+Durable graph qualification preserves the reviewed manifest, member receipts and exact service targets. See [durable project graph verification](../../docs/networking.md#durable-project-graph-verification) for status, resume and cancel.
+
+Binding verification review endpoints return an executable plan and opaque digests without admitting work. Call `ReviewBindingVerification` / `reviewBindingVerification` / `review_binding_verification`, or the corresponding project review method. Check `ready`, show blockers and required consent, then forward the returned selection and digest to receipt creation. Graph creation also forwards the aggregate `review_digest`, member `review_digests` and unchanged consent. No client-side digest calculation is required. A ready review is not a passing verification result.
+
+### Run a durable binding verification receipt
+
+Use the configured `FaaSClient` or its generated `inner` client after explicit review and receipt creation:
+
+```python
+from faas_sdk import run_binding_verification, arun_project_binding_verification
+run = run_binding_verification(client, "api", saved_run_id, concurrency=2,
+                               on_progress=lambda progress: print(progress))
+graph = await arun_project_binding_verification(client, "project", "production",
+                                               saved_graph_run_id, concurrency=2)
+```
+
+Both app and graph helpers have synchronous and `arun_` asynchronous variants. The default poll interval is one second; concurrency defaults to two and ranges from one to eight unfinished resources across the graph. Progress callbacks run serially with frozen `BindingVerificationProgress` metadata; async helpers also accept async callbacks. A persisted passed receipt reports `qualifying` until server completion is reconfirmed.
+
+`BindingVerificationRecoveryError` retains `run_id`, `cause` and the latest observed receipt dictionary. Resume the original ID after transport, callback or local stop errors; these never cancel server work or renew expiry. Use `stop_event=threading.Event()` for synchronous observation or `asyncio.Event()` for async observation. Synchronous stops are checked between HTTP calls, and the runner preserves configured HTTP timeouts while bounding them to remaining lifetime. Async task cancellation keeps `asyncio.CancelledError` semantics and carries `run_id`. Explicit server cancellation uses the existing generated cancel API. Review, effect consent, receipt creation and route activation stay explicit.
+
+### Diagnose a stopped verification run
+
+```python
+from faas_sdk.api.apps import get_binding_verification_run_diagnostics
+from faas_sdk.api.projects import get_project_binding_verification_run_diagnostics
+diag = get_binding_verification_run_diagnostics.sync("api", saved_run_id, client=client.inner)
+graph_diag = await get_project_binding_verification_run_diagnostics.asyncio("project", "production", saved_graph_run_id, client=client.inner)
+```
+
+Inspect `blockers`, whitelisted public `changes` and suggested `recovery` actions after a runner error. `complete` describes diagnostic read completeness; optional `check_passed` describes public evidence and conveys no admission or completion authority. Diagnostics preserve the original deadline and perform no execution, cancellation or receipt mutation. Missing domain permission fails the read. Continue with the same run ID only when current server checks allow it, or explicitly cancel and obtain a new reviewed receipt as directed.
+
+Runner recovery errors now attach typed optional `diagnostics` containing server blockers, public changes and recovery suggestions. The read-only lookup has a two-second cap and respects the original receipt/caller deadlines. Unavailable, forbidden or mismatched diagnostics preserve the original cause and run ID. Cancellation and callback failures skip enrichment; no recovery action is executed automatically. Use `skip_diagnostics=True` to disable it.
+
+### Create from a reviewed binding selection
+
+Persist a canonical nonzero run UUID before creation. Pass a ready server review, lifetime and explicit effect consent; digests and selections are forwarded unchanged. Typed creation errors retain the UUID, original cause and whether creation was invoked. This flag does not prove acceptance. Reconcile uncertain creation by reading the same ID with the same review/options. Reconciliation never writes, resumes or replaces work; a failed read does not establish noncreation. Run a confirmed receipt explicitly using the existing runner.
+
+```python
+options = dict(run_id=saved_id, ttl_seconds=60, max_concurrency=2, queue_publish=True)
+run = create_binding_verification_from_review(client, "api", review, **options)
+# After an uncertain creation error, inspect the same identity:
+recovered = reconcile_binding_verification_creation(client, "api", review, **options)
+```
+
+Graph helpers are `create_project_binding_verification_from_review` and `reconcile_project_binding_verification_creation`; all four have async equivalents prefixed with `a`. `BindingVerificationCreationError` exposes `run_id`, `attempted` and `cause`. Native async cancellation carries `run_id` and `attempted`.
+
+Durable runner status GETs now retry temporary connection failures and HTTP 502/503/504 with bounded exponential jitter. Configure `status_read_retries` (default three; zero disables), maximum eight retries per read. Retry waits obey the original expiry and caller stop controls. Progress exposes `retrying`, `retry_attempt` and `retry_delay_ms`; callback failures stop observation. Lifecycle writes and invalid responses retain explicit recovery behavior.
+
+### Discover retained verification receipts
+
+Use `faas_sdk.api.apps.list_binding_verification_runs.sync(app, client=client, limit=20)` or `faas_sdk.api.projects.list_project_binding_verification_runs.sync(project, environment, client=client, limit=20)`; each also exposes `asyncio`. Filters include `cursor`, UUID `deployment_id` and `status`, plus app-only `scope`/`include_members`. Follow `next_cursor` with the same filters. The typed result contains `runs` and `observed_at`. Summaries describe retained receipt state without current requalification or private resource details. App lists omit graph members by default; included members carry `graph_run_id`. Project lists contain roots only. Existing retention remains unchanged.
+
+After an eligible admission/completion transport failure or HTTP 502/503/504, durable runners reconcile through a bounded GET of the original receipt. They continue only after validating proof of the exact owned admission or fresh passed completion, and never automatically replay the uncertain write. Progress exposes `reconciling` with `operation` and admission selectors. Reads obey existing status retry settings, original expiry and caller stop controls. Unproved results preserve explicit recovery with the original ID and write cause. See [ADR-1366](../../docs/adr/1366-verification-write-reconciliation.md).
+
+Reviewed creation now reconciles eligible transport failures and HTTP 502/503/504 through bounded reads of the original UUID. It returns only a matching usable receipt, without repeating creation or generating another UUID. Configure `status_read_retries`, `on_progress` and `stop_event`; read retries default to three, with zero disabling extra attempts. Progress emits `reconciling` with `operation: creation` and bounded `retrying` events. Recovery is capped at five seconds and the requested TTL measured from the attempt, plus caller context/stop controls. Unproved results preserve the typed creation error, attempted flag, original UUID and write cause. Explicit reconciliation remains a single read that can inspect terminal or expired receipts. See [ADR-1368](../../docs/adr/1368-verification-creation-reconciliation.md).
+
+### Synchronous PostgreSQL pool runtime
+
+Use `PostgresPoolBinding` to validate a fresh pool before atomic secret adoption and
+retire old pools after their transaction leases release. Validation and retirement
+callbacks are required; the application supplies its driver. Register the secret
+consumer with the reload coordinator, hold each lease through driver connection
+release, and invalidate before waiting for retirement at shutdown. See the
+[pool lifecycle and SDK examples](../../docs/postgres-pool-runtime.md) and the
+[runnable Node pg.Pool service](../../examples/postgres-pool-rotation/README.md).
+
+### Async PostgreSQL pool runtime
+
+Use `faas_sdk.async_postgres_pool_runtime.AsyncPostgresPoolBinding` and
+`faas_sdk.async_secret_reload_runtime.AsyncSecretReloadCoordinator` for async
+drivers. Factory, validation and retirement hooks run on the same owning event
+loop. Await coordinator startup before serving, hold `async with database.acquire()`
+through transaction completion and connection return, then stop admission,
+call `coordinator.stop()`, and await both `coordinator.wait_stopped()` and
+`database.wait_for_retirement()` before closing the loop.
+
+Manual reload supports an optional total `timeout` and `asyncio.Event` cancellation;
+native task cancellation preserves `CancelledError`. Failed adoption/revocation
+blocks new leases, existing transactions may finish, and cancelled late candidates
+are cleaned up without publication. Register every consumer with one coordinator;
+async consumers invalidate synchronously to fence work immediately. See the
+[async lifecycle contract](../../docs/postgres-pool-runtime.md#async-python) and
+[runnable FastAPI/psycopg service](../../examples/postgres-pool-rotation-python/README.md).
+
+For a self-contained deployment with schema-backed readiness, separate release
+migrations and bounded snapshot reconnect, use
+`gregale init --template rest-api-postgres-python --path notes-api`. The
+[built-in starter guide](../../cmd/gregale/templates/rest-api-postgres-python/README.md)
+covers managed bindings, verified TLS, restore failure and cold-boot fallback.
+
+### Async object-storage runtime
+
+`faas_sdk.async_object_storage_runtime.AsyncObjectStorageBinding` supplies async
+factories, application validation and retirement on one event loop. Register its
+secret consumer alongside PostgreSQL with one `AsyncSecretReloadCoordinator`;
+the coordinator ACKs only after all consumers validate and invalidates them all
+on failure. Keep `async with storage.acquire()` through complete upload/download
+body closure. Failed and cancelled candidates are fenced and retired; old clients
+close after their last lease. SDK core imports no S3 driver.
+
+See the [async storage lifecycle](../../docs/object-storage-compute.md#async-python-clients-and-streaming)
+and [FastAPI/aiobotocore streaming example](../../examples/object-storage-rotation-python/README.md)
+for explicit credentials, readiness validation, disconnect cleanup, mixed binding
+adoption and shutdown draining.
+
+For a self-contained private file service, use
+`gregale init --template object-storage-python --path files-app`. The
+[built-in starter guide](../../cmd/gregale/templates/object-storage-python/README.md)
+covers bearer authentication, bounded uploads, streaming downloads, managed
+read/write bindings and bounded transport recovery after snapshot restore.
+
+### Async deadline count alerts
+
+`awatch_event_subscription_deadlines(client.inner, target, options)` supports
+sustained total/reason deadline alerts, separate recovery counts, fresh-evidence
+progress, task cancellation, checkpoint/resume and exact alert acknowledgments.
+Configure `EventDeadlineTarget` and `EventDeadlineWatchOptions`; load saved state
+with `validate_event_deadline_checkpoint` and apply offline acknowledgments with
+`acknowledge_event_deadline_alerts`.
+
+Python uses its own deadline-only checkpoint format; Go/CLI and Node checkpoints
+are rejected. Applications own persistence and notification delivery. Persist before
+publishing and deduplicate replayed alerts. See [configuration and cancellation](../../docs/event-deadline-python-watch.md).
+
+`expired_ratio=EventDeadlineRatioOptions(warning_basis_points=1000,
+recovery_basis_points=500, minimum_recipients=100)` adds an expired backlog ratio
+condition with exact integer comparisons and retained source samples. Ratio watches
+use version 2 Python checkpoints; count-only checkpoints remain version 1. See
+[ratio policy and compatibility](../../docs/event-deadline-python-watch.md#expired-backlog-ratio-conditions).
+
+`ainvestigate_event_deadline_alert(client.inner, checkpoint, reference, options)`
+maps an exact retained Python incident/sequence pair to one current read-only triage
+page. `EventDeadlineInvestigationOptions` controls page size, opaque continuation
+and a cancellable read budget up to five seconds. Saved notification timestamps and
+ratio samples remain separate from current observations. See
+[investigation, validation and pagination](../../docs/event-deadline-python-investigation.md).

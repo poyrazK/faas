@@ -93,6 +93,8 @@ def sync_detailed(
     the cookie is `faas_csrf_github_connect` and clients send the
     token as a form field in a native browser POST to
     `/dashboard/install/connect`, which redirects to GitHub.
+    For `bind_app_to_repo`, the cookie is `faas_csrf_github_bind`;
+    send the token in the JSON body of `POST /v1/apps/{slug}/install/bind`.
     This route remains reachable while the session is `mfa_pending` so the dashboard
     can complete MFA enrollment or recovery.
 
@@ -135,6 +137,8 @@ def sync(
     the cookie is `faas_csrf_github_connect` and clients send the
     token as a form field in a native browser POST to
     `/dashboard/install/connect`, which redirects to GitHub.
+    For `bind_app_to_repo`, the cookie is `faas_csrf_github_bind`;
+    send the token in the JSON body of `POST /v1/apps/{slug}/install/bind`.
     This route remains reachable while the session is `mfa_pending` so the dashboard
     can complete MFA enrollment or recovery.
 
@@ -172,6 +176,8 @@ async def asyncio_detailed(
     the cookie is `faas_csrf_github_connect` and clients send the
     token as a form field in a native browser POST to
     `/dashboard/install/connect`, which redirects to GitHub.
+    For `bind_app_to_repo`, the cookie is `faas_csrf_github_bind`;
+    send the token in the JSON body of `POST /v1/apps/{slug}/install/bind`.
     This route remains reachable while the session is `mfa_pending` so the dashboard
     can complete MFA enrollment or recovery.
 
@@ -212,6 +218,8 @@ async def asyncio(
     the cookie is `faas_csrf_github_connect` and clients send the
     token as a form field in a native browser POST to
     `/dashboard/install/connect`, which redirects to GitHub.
+    For `bind_app_to_repo`, the cookie is `faas_csrf_github_bind`;
+    send the token in the JSON body of `POST /v1/apps/{slug}/install/bind`.
     This route remains reachable while the session is `mfa_pending` so the dashboard
     can complete MFA enrollment or recovery.
 

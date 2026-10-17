@@ -995,9 +995,11 @@ func TestHandleDeployment_PullDigestSentinel_PersistsErrorCode(t *testing.T) {
 			want: api.CodeStatelessOnlyViolation,
 		},
 		{
-			name: "non-sentinel error leaves code empty (free-text only)",
+			// H10-107: an unmapped failure still gets a stable code;
+			// the free-text error keeps the detail.
+			name: "non-sentinel error gets deploy_failed",
 			err:  errors.New("net down"),
-			want: "",
+			want: api.CodeDeployFailed,
 		},
 	}
 	for _, tc := range cases {
@@ -2336,5 +2338,61 @@ func TestHandleSnapshotWritten_ReplacesUnrestorableLegacyRow(t *testing.T) {
 	}
 	if !retired {
 		t.Fatal("legacy drive-less row was not retired")
+	}
+}
+
+// adr: 1344
+// TestHandleSnapshotWritten_ReplacesOtherFirecrackerVersionRow: with no
+// fleet-wide FC sweep, a restorable live row of another Firecracker version
+// would otherwise hold the unique (deployment, tier) slot and make every new
+// capture be discarded, so the deployment cold-booted forever on upgraded
+// nodes. The new capture replaces it; a capture of the same version still
+// does not.
+func TestHandleSnapshotWritten_ReplacesOtherFirecrackerVersionRow(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		captureFC   string
+		wantReplace bool
+	}{
+		{name: "other version", captureFC: "firecracker-1.11", wantReplace: true},
+		{name: "same version", captureFC: "firecracker-1.10", wantReplace: false},
+		{name: "unstamped capture", captureFC: "", wantReplace: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			store := state.NewMemStore()
+			acct, _ := store.CreateAccount(ctx, "u@example.com", "pro")
+			app, _ := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "fc-upgrade", RAMMB: 256})
+			dep, _ := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, ImageDigest: "sha256:abc", Kind: state.DeploymentKindImage})
+			oldKey := state.SnapshotCaptureMemKey(dep.ID, state.SnapshotTierInit, "old1")
+			old, err := store.CreateSnapshot(ctx, state.Snapshot{
+				DeploymentID: dep.ID, FCVersion: "firecracker-1.10", MemBytes: 256 << 20,
+				StorageKey: oldKey, Tier: state.SnapshotTierInit,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if state.SnapshotDriveKey(old) == "" {
+				t.Fatal("fixture must be a restorable capture with a drive")
+			}
+			_ = store.UpdateDeploymentStatus(ctx, dep.ID, state.DeployLive, "")
+			h := New(store, &fakeNotifier{}, fakePuller{}, &fakeBuilder{}, "./init", t.TempDir(), silentLogger())
+			newKey := state.SnapshotCaptureMemKey(dep.ID, state.SnapshotTierInit, "new1")
+			h.HandleNotification(ctx, db.Notification{
+				Channel: db.NotifySnapshotWritten,
+				Payload: `{"deployment_id":"` + dep.ID + `","storage_key":"` + newKey + `","mem_bytes":268435456,"fc_version":"` + tc.captureFC + `"}`,
+			})
+			live, err := store.LatestSnapshotForTier(ctx, dep.ID, state.SnapshotTierInit)
+			if err != nil {
+				t.Fatalf("LatestSnapshotForTier: %v", err)
+			}
+			want := oldKey
+			if tc.wantReplace {
+				want = newKey
+			}
+			if live.StorageKey != want {
+				t.Fatalf("live snapshot = %q, want %q", live.StorageKey, want)
+			}
+		})
 	}
 }

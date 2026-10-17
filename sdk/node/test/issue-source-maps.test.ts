@@ -15,6 +15,25 @@ const fixture = {
 const registration = { generatedFile: '/app/dist/chunk-a.js', payload: JSON.stringify(fixture) };
 const frame = { file: '/app/dist/chunk-a.js', function: 'a', line: 1, in_app: true };
 
+test('server symbolication sends immutable generated coordinates and rejects conflicting local mapping', async () => {
+  const events: Array<Record<string, unknown>> = [];
+  const reporter = createIssueReporter({baseURL:'https://api.gregale.dev',app:'exports',token:'g_issue_test',
+    groupingStrategy:'cause-chain-v1',symbolicationStrategy:'deployment-source-maps-v1',
+    fetch:(async(_url,options)=>{events.push(JSON.parse(String(options?.body)));return new Response('{}',{status:events.length===1?503:202});}) as typeof fetch});
+  const cause = new Error('payment failed');cause.stack='Error: payment failed\n    at a (/app/dist/chunk-a.js:1:11)';
+  reporter.captureException(new Error('wrapper',{cause}));
+  assert.equal(await reporter.flush(),false);assert.equal(await reporter.flush(),true);
+  assert.deepEqual(events[0],events[1]);
+  assert.equal(events[0]?.symbolication_strategy,'deployment-source-maps-v1');
+  const reportedCause=(events[0]?.causes as Array<{frames:Array<{column?:number}>}>)[0]!;
+  assert.equal(reportedCause.frames[0]?.column,11);
+  await reporter.close();
+  assert.throws(()=>createIssueReporter({baseURL:'https://api.gregale.dev',app:'exports',token:'g_issue_test',
+    symbolicationStrategy:'deployment-source-maps-v1'}),/Server symbolication requires/);
+  assert.throws(()=>createIssueReporter({baseURL:'https://api.gregale.dev',app:'exports',token:'g_issue_test',
+    groupingStrategy:'failure-site-v1',symbolicationStrategy:'deployment-source-maps-v1',sourceMaps:[registration]}),/without local source maps/);
+});
+
 test('source maps use one-based stack coordinates and preserve unmapped ranges', () => {
   const maps = registerIssueSourceMaps([registration]);
   assert.deepEqual(maps.resolve(frame, 1), { file: '/app/src/checkout.ts', function: 'charge', line: 10, in_app: true });

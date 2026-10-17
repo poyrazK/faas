@@ -277,6 +277,7 @@ func (s *server) applyProject(w http.ResponseWriter, r *http.Request, acct state
 		ProjectID string         `json:"project_id"`
 		AppIDs    []appSummary   `json:"apps"`
 		Builds    []appliedBuild `json:"builds,omitempty"`
+		Unchanged []string       `json:"unchanged"`
 	}
 	currentApps, err := s.store.AppsForProject(r.Context(), acct.ID, insertedProject.ID)
 	if err != nil {
@@ -293,6 +294,7 @@ func (s *server) applyProject(w http.ResponseWriter, r *http.Request, acct state
 		ProjectID:        insertedProject.ID,
 		AppIDs:           appIDs,
 		Builds:           builds,
+		Unchanged:        unchangedProjectMembers(appIDs, builds),
 	}
 
 	s.audit.Emit(r.Context(), "project.created", &acct.ID, map[string]any{
@@ -575,3 +577,22 @@ func quotaProblem(plan api.Plan, l api.Limits, qe *state.QuotaError) *api.Proble
 var (
 	_ = json.Marshal
 )
+
+// unchangedProjectMembers lists the project members this apply did not
+// rebuild. The response's apps is the whole membership while builds holds only
+// what was enqueued, so the CLI counted every untouched workload as a missing
+// build: editing one service of a two-service project printed "applied with
+// failures" and exited 1 (hunt #10, H10-88).
+func unchangedProjectMembers(apps []appSummary, builds []appliedBuild) []string {
+	built := make(map[string]bool, len(builds))
+	for _, build := range builds {
+		built[build.AppID] = true
+	}
+	unchanged := []string{}
+	for _, app := range apps {
+		if !built[app.ID] {
+			unchanged = append(unchanged, app.Slug)
+		}
+	}
+	return unchanged
+}

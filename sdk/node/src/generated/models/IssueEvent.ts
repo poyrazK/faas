@@ -2,12 +2,25 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { IssueBreadcrumb } from './IssueBreadcrumb.js';
 import type { IssueCause } from './IssueCause.js';
 import type { IssueFrame } from './IssueFrame.js';
+import type { IssueSymbolicationResult } from './IssueSymbolicationResult.js';
 /**
  * Structured exception evidence; credential-derived account and deployment identity cannot be overridden.
  */
 export type IssueEvent = {
+  breadcrumbs?: Array<IssueBreadcrumb>;
+  breadcrumbs_dropped?: number;
+  /**
+   * Sanitized operational dimensions; unknown keys are discarded. Allowed keys are component, operation, feature_flag, feature_variant, dependency, region, job_type, workflow, state, error_class, release_channel, runtime.
+   */
+  tags?: Record<string, string>;
+  /**
+   * Opt-in server mapping against this credential's deployment artifacts; requires failure-site-v1 or cause-chain-v1.
+   */
+  symbolication_strategy?: 'deployment-source-maps-v1';
+  symbolication?: IssueSymbolicationResult;
   causes?: Array<IssueCause>;
   /**
    * Incomplete or ambiguous chain; version 3 uses outer evidence instead of a partial cause.

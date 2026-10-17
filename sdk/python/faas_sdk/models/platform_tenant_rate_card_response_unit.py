@@ -1,9 +1,11 @@
 from typing import Literal
 
-PlatformTenantRateCardResponseUnit = Literal["request"]
+PlatformTenantRateCardResponseUnit = Literal["compute_second", "request", "response_megabyte"]
 
 PLATFORM_TENANT_RATE_CARD_RESPONSE_UNIT_VALUES: set[PlatformTenantRateCardResponseUnit] = {
+    "compute_second",
     "request",
+    "response_megabyte",
 }
 
 

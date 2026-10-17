@@ -55,7 +55,7 @@
       </div>
       <p class="kv">{{printf "%.1f" $d.UsedPct}}% of included quota</p>
       {{if gt $d.OverageGBHours 0.0}}
-        <p>Overage: <strong class="kv">{{printf "%.3f" $d.OverageGBHours}}</strong> GB-hours at €0.01/GB-h.</p>
+        <p>Overage: <strong class="kv">{{printf "%.3f" $d.OverageGBHours}}</strong> GB-hours at $0.01/GB-h.</p>
       {{end}}
 
       <section class="summary" aria-label="Usage summary">

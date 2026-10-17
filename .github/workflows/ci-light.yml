@@ -1,27 +1,33 @@
 name: ci-light
 
-# Light tier: runs on every pull request push and every merge to main.
+# Light tier: runs on every pull request push and every merge to main, with a
+# budget of about 10 minutes per job.
 #
 # CI is split into two tiers so the full suite runs a few times a day instead
 # of on every push (it was ~25 jobs x 150-480 runs/day, saturating the hosted
 # runner pool and pushing PR feedback past 90 minutes):
 #
-#   ci-light.yml (this file)  changed-package lint, vet of changed packages
-#                             and direct importers, -race tests of changed
-#                             packages and the §6.2 invariants, boot-contract,
-#                             generated-code drift, policy gates and migration
-#                             ID/apply/replay checks. Six jobs, no gate job,
-#                             so a run never ends waiting for a runner.
-#   ci.yml (mega)             the complete suite: every unit shard, e2e,
-#                             migration history, container/UDP contracts,
-#                             flags, load, SDK acceptance, ops/infra gates.
-#                             Runs nightly, on workflow_dispatch, and from
-#                             release.yml before any release tag publishes.
+#   ci-light.yml (this file)  golangci-lint (govet included) of changed
+#                             packages and `go vet` of the importers that use
+#                             a changed exported name; -race tests of changed
+#                             packages and the §6.2 invariants; for
+#                             cmd/gregale, pkg/state and pkg/apid/apidserver
+#                             only the tests related to the change, without
+#                             -race (scripts/ci/select_package_tests.py);
+#                             boot-contract, generated-code drift, policy
+#                             gates and migration ID/apply/replay checks.
+#                             Three test shards, no gate job.
+#   ci.yml (mega)             the complete suite: every unit shard with -race,
+#                             vet and build of the whole tree, e2e, migration
+#                             history, container/UDP contracts, flags, load,
+#                             SDK acceptance, ops/infra gates. Runs nightly,
+#                             on workflow_dispatch, and from release.yml
+#                             before any release tag publishes.
 #
 # Package selection lives in scripts/ci/affected_packages.py. A change to
 # go.mod, go.sum, the selector or this workflow selects every package.
 #
-# Required checks on main are the five job names below; a job skipped because
+# Required checks on main are the job names below; a job skipped because
 # nothing relevant changed reports as passing.
 
 on:
@@ -52,6 +58,48 @@ env:
   PROTOC_SHA256_LINUX_AMD64: "9c49962391ff8b5754342509efc3885db91dfe11a358e1e98c9a71518f0ad199"
 
 jobs:
+  service-binding-contract:
+    name: service-binding SDK contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22.10.0'
+          cache: npm
+          cache-dependency-path: sdk/node/package-lock.json
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.11'
+          cache: pip
+          cache-dependency-path: sdk/python/pyproject.toml
+      - name: install Python contract dependencies
+        run: python -m pip install ruamel.yaml pytest -e sdk/python
+      - name: OpenAPI schema and shared fixture coverage
+        run: |
+          python scripts/sync_binding_runner.py --check
+          python scripts/ci/check-service-binding-sdk-contract.py
+          python scripts/ci/test_service_binding_sdk_contract.py
+      - name: Go SDK contracts
+        working-directory: sdk/go
+        run: |
+          go test -count=1 ./...
+          go vet ./...
+      - name: Node SDK contracts
+        working-directory: sdk/node
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm run test:build
+          node --test dist-test/test/service-binding-contract.test.js dist-test/test/service-binding-plan.test.js
+      - name: Python SDK contracts
+        working-directory: sdk/python
+        run: python -m pytest tests/test_service_binding_contract.py tests/test_service_binding_plan.py -q
+
   storage-node-starter:
     uses: ./.github/workflows/storage-node-starter.yml
     permissions:
@@ -60,8 +108,12 @@ jobs:
   lint:
     name: "light: lint, vet, build"
     runs-on: ubuntu-latest
-    # Broad cold selections need time for serialized vet and unchanged lint rules.
-    timeout-minutes: 60
+    # Light-tier budget: about 10 minutes. golangci-lint (govet included) runs
+    # on the changed packages; compiling their importers moved to the mega
+    # tier, because a pkg/api change recompiles most of the module. Main
+    # pushes also lint the three large packages to keep their analysis in
+    # the cache, which takes longer.
+    timeout-minutes: ${{ github.ref == 'refs/heads/main' && 40 || 20 }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -107,10 +159,10 @@ jobs:
           fi
           git diff --name-only "$base" HEAD > "$RUNNER_TEMP/changed-paths.txt"
           python3 scripts/ci/affected_packages.py summary < "$RUNNER_TEMP/changed-paths.txt"
+          echo "LINT_SELECTED_AT=$(date +%s)" >> "$GITHUB_ENV"
           {
             echo "base=$base"
             echo "changed=$(python3 scripts/ci/affected_packages.py changed < "$RUNNER_TEMP/changed-paths.txt")"
-            echo "vet=$(python3 scripts/ci/affected_packages.py vet < "$RUNNER_TEMP/changed-paths.txt")"
             echo "go_files=$(grep -E '\.go$' "$RUNNER_TEMP/changed-paths.txt" | while read -r f; do [[ -f "$f" ]] && printf '%s ' "$f"; done)"
           } >> "$GITHUB_OUTPUT"
 
@@ -125,40 +177,11 @@ jobs:
           # shellcheck disable=SC2086 # space-separated path list
           unformatted="$(gofmt -l $GO_FILES)"
           test -z "$unformatted" || { echo "$unformatted"; exit 1; }
-      # vet type-checks every changed package and direct importer, test files
-      # included, so an API change that breaks a caller fails here. The mega
-      # tier builds every binary and runs the importers' tests.
-      # Match the proven API test compiler bounds: standard runners cannot
-      # sustain a 10GiB heap target across concurrent package compilations.
-      - name: vet (changed packages and direct importers)
-        if: steps.select.outputs.vet != ''
-        # Bound each compiler/analyzer and serialize package compilation so
-        # cold API/CLI builds cannot exhaust the hosted runner in parallel.
-        env:
-          PKGS: ${{ steps.select.outputs.vet }}
-          GOFLAGS: '-p=1 "-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver_test=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
-          GOMEMLIMIT: 2GiB
-          GOGC: 50
-          GOMAXPROCS: 2
-        run: |
-          # apidserver's external tests (apidserver_test, ADR-982) import its
-          # internal test variant, so vetting them compiles apidserver with its
-          # internal tests: ~5 GB of live heap. Next to three other vet
-          # processes that lost the hosted runner, so vet it alone first under
-          # the full tier's vet bounds, then vet every remaining package serially.
-          apid=./pkg/apid/apidserver
-          rest=""
-          for pkg in $PKGS; do
-            if [ "$pkg" = "$apid" ]; then
-              GOMEMLIMIT=2GiB GOGC=10 GOMAXPROCS=2 go vet -p=1 "$apid"
-            else
-              rest="$rest $pkg"
-            fi
-          done
-          if [ -n "$rest" ]; then
-            # shellcheck disable=SC2086 # space-separated package list
-            go vet -p=1 $rest
-          fi
+      # No separate `go vet`: golangci-lint below runs govet on every changed
+      # package (test files included). Type-checking their importers meant
+      # compiling 200+ packages whenever pkg/api changed (25 minutes); the
+      # mega tier (ci.yml) builds and vets the whole tree nightly and before
+      # every release.
       # Same linter, rules and per-package invocation as the mega tier's
       # sharded `Go lint` jobs (scripts/ci/lint_go_shard.py), restricted to the
       # packages this change touches. The complete tree is linted nightly and
@@ -178,20 +201,89 @@ jobs:
         if: steps.select.outputs.changed != ''
         env:
           PKGS: ${{ steps.select.outputs.changed }}
-          GOFLAGS: '-p=1 "-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver_test=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
-          GOMEMLIMIT: 2GiB
-          GOGC: 50
-          GOMAXPROCS: 2
+          # The mega tier's lint bounds: the whole 4-core, 16 GB runner.
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver_test=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
+          GOMEMLIMIT: 10GiB
+          GOGC: 100
+          GOMAXPROCS: 4
         run: |
           failed=()
           for pkg in $PKGS; do
             echo "Checking $pkg"
-            golangci-lint run --concurrency=2 --timeout=20m "$pkg" || failed+=("$pkg")
+            golangci-lint run --timeout=20m "$pkg" || failed+=("$pkg")
           done
           if (( ${#failed[@]} )); then
             echo "::error::lint failed for: ${failed[*]}"
             exit 1
           fi
+      # golangci-lint compiles only the changed packages. An unchanged
+      # importer breaks when an exported name it uses changes under it (a
+      # signature, a field, a constant), so vet exactly those importers
+      # (scripts/ci/select_importers.py); a body edit selects none. The mega
+      # tier vets every package nightly and before every release.
+      #
+      # A change to a widely used API can select ~100 importers and recompile
+      # most of the module (11 minutes at 4 cores for #4809). The check runs
+      # most specific importers first, in batches, and stops 13 minutes after
+      # package selection so the job stays under 15; any importers left over
+      # are named in a warning and left to the mega tier.
+      - name: compile importers that use changed exported names
+        if: steps.select.outputs.changed != ''
+        env:
+          BASE: ${{ steps.select.outputs.base }}
+          BUDGET_SECONDS: "780"
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver_test=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
+          GOMEMLIMIT: 10GiB
+          GOGC: 100
+          GOMAXPROCS: 4
+        run: |
+          set -euo pipefail
+          read -r -a pkgs <<<"$(python3 scripts/ci/select_importers.py --base "$BASE" < "$RUNNER_TEMP/changed-paths.txt")"
+          (( ${#pkgs[@]} )) || exit 0
+          deadline=$((SECONDS + LINT_SELECTED_AT + BUDGET_SECONDS - $(date +%s)))
+          i=0
+          while (( i < ${#pkgs[@]} )) && (( SECONDS < deadline )); do
+            # apidserver's external tests import its internal test variant,
+            # so vetting it holds about 5 GB: it goes alone.
+            if [[ "${pkgs[i]}" == ./pkg/apid/apidserver ]]; then
+              batch=("${pkgs[i]}"); i=$((i + 1))
+            else
+              batch=()
+              while (( i < ${#pkgs[@]} && ${#batch[@]} < 8 )) && [[ "${pkgs[i]}" != ./pkg/apid/apidserver ]]; do
+                batch+=("${pkgs[i]}"); i=$((i + 1))
+              done
+            fi
+            # A batch cut off by the budget is unchecked, not failed.
+            status=0
+            timeout "$((deadline - SECONDS))" go vet "${batch[@]}" || status=$?
+            if (( status == 124 )); then
+              i=$((i - ${#batch[@]}))
+              break
+            elif (( status != 0 )); then
+              exit "$status"
+            fi
+          done
+          if (( i < ${#pkgs[@]} )); then
+            echo "::warning::importer compile check reached the job's 15-minute budget; not checked here (the mega tier vets them): ${pkgs[*]:i}"
+          fi
+      # Main pushes lint cmd/gregale, pkg/state and pkg/apid/apidserver even
+      # when unchanged, so the saved cache holds their dependencies' export
+      # data and analysis facts: a pull request touching one of them then
+      # re-analyses only what it changed (about a minute, not ten).
+      - name: warm the large packages' lint cache (main)
+        if: github.ref == 'refs/heads/main'
+        env:
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver_test=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
+          GOMEMLIMIT: 10GiB
+          GOGC: 100
+          GOMAXPROCS: 4
+        run: |
+          for shard in 1 2 3; do
+            pkg="$(python3 scripts/ci/affected_packages.py pinned --shard "$shard" --shards 3 < /dev/null)"
+            echo "Warming $pkg"
+            golangci-lint run --timeout=20m "$pkg" >/dev/null \
+              || echo "::warning::golangci-lint reports findings in $pkg on main; the mega tier's lint shards fail on them"
+          done
       - name: save Go build + lint cache
         if: always() && github.ref == 'refs/heads/main'
         uses: actions/cache/save@v4
@@ -250,7 +342,11 @@ jobs:
 
       # ---- policy gates (static, seconds each) ----
       - name: light-tier package selector tests
-        run: python3 scripts/ci/affected_packages_test.py
+        run: |
+          python3 scripts/ci/affected_packages_test.py
+          python3 scripts/ci/select_package_tests_test.py
+          python3 scripts/ci/select_importers_test.py
+          python3 scripts/ci/cancel_conflicted_pr_runs_test.py
       - name: MemStore stub guard
         run: make memstore-stubs-check
       - name: daemon environment contract
@@ -368,17 +464,17 @@ jobs:
   tests:
     name: "light: tests (shard ${{ matrix.shard }})"
     runs-on: ubuntu-latest
-    # Cover cold API compilation, sequential ordinary/API/state race runs,
-    # and container setup. State batches keep their own 12m timeouts and
-    # default runtime settings, on the separate PostgreSQL service.
-    # API jobs retain the full fixture inventory with a 45m runtime budget.
-    timeout-minutes: 90
+    # Light-tier budget: about 10 minutes per shard. Changed packages run in
+    # full with -race; cmd/gregale, pkg/state and pkg/apid/apidserver (one per
+    # shard, see affected_packages.py SELECTIVE_SHARD) run only the tests
+    # related to the change, without -race. The mega tier (ci.yml) runs every
+    # suite in full with -race nightly and before every release. Main pushes
+    # also warm the large-package build for later pull requests.
+    timeout-minutes: ${{ github.ref == 'refs/heads/main' && 40 || 20 }}
     strategy:
       fail-fast: false
       matrix:
-        # Shards 4-9 split apidserver's long suite across dedicated PostgreSQL
-        # services; its database DDL cannot race pkg/state's catalogue checks.
-        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9]
+        shard: [1, 2, 3]
     services:
       postgres:
         image: mirror.gcr.io/library/postgres:16
@@ -454,6 +550,7 @@ jobs:
             fi
           fi
           git diff --name-only "$base" HEAD > "$RUNNER_TEMP/changed-paths.txt"
+          echo "LIGHT_DIFF_BASE=$base" >> "$GITHUB_ENV"
       # pkg/managedpostgres durable credential qualification delivers
       # credentials over native TLS (mega pg shard 2b does the same). Enabling
       # it only turns ssl on; non-TLS clients are unaffected.
@@ -468,6 +565,12 @@ jobs:
         if: matrix.shard == 1
         with:
           node-version: '22'
+      - name: queue worker safe completion canary
+        if: matrix.shard == 1
+        run: |
+          if grep -qE '^(cmd/gregale/templates/(queue-worker/|starter_handlers_test.go)|\.github/workflows/ci(-light)?\.yml)' "$RUNNER_TEMP/changed-paths.txt"; then
+            go test -race -p 1 ./cmd/gregale/templates -run '^TestQueueWorkerStarter' -count=1
+          fi
       - name: generated PostgreSQL starter TLS recovery
         if: matrix.shard == 1
         env:
@@ -479,116 +582,110 @@ jobs:
           fi
           docker cp "$POSTGRES_SERVICE_CONTAINER:/var/lib/postgresql/data/qualification-server.crt" "$RUNNER_TEMP/starter-postgres-ca.pem"
           NODE_EXTRA_CA_CERTS="$RUNNER_TEMP/starter-postgres-ca.pem" go test -race -p 2 ./cmd/gregale/templates -run '^TestPostgresStarterSQLRecovery$' -count=1 -v -timeout=180s
-      - name: PostgreSQL fixture API and guest compilation (no KVM)
-        if: matrix.shard == 4
+      - name: binding guest manifests and native harness contracts (no KVM)
+        if: matrix.shard == 3
         env:
           GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-dwarf=false -c=1"'
           GOGC: 10
           GOMEMLIMIT: 2GiB
           GOMAXPROCS: 2
         run: |
-          if ! grep -qE '^(pkg/apid/apidserver/managed_postgres|pkg/managedpostgres/(guestqualification/|.*qualification|provisioning_gate)|cmd/managed-postgres-qualify/|cmd/e2e/managed_postgres_native|pkg/e2etest/(postgresfixture/|postgresstarter/|postgres_guest_manifest|buildtags)|scripts/(test-managed-postgres-native|ci/managed-postgres-native)|\.github/workflows/ci(-light)?\.yml)' "$RUNNER_TEMP/changed-paths.txt"; then
+          if ! grep -qE '^(cmd/gregale/templates/(queue-worker/|starter_handlers_test.go)|pkg/apid/apidserver/managed_postgres|pkg/managedpostgres/(guestqualification/|.*qualification|provisioning_gate)|cmd/managed-postgres-qualify/|cmd/e2e/(managed_postgres_native|object_storage_native|queue_binding_native)|pkg/e2etest/(postgresfixture/|postgresstarter/|postgres_guest_manifest|storagefixture/|storagestarter/|storage_guest_manifest|queuestarter/|queue_(catalog|guest_manifest)|buildtags)|scripts/(test-(managed-postgres|object-storage|queue-bindings)-native|ci/((managed-postgres|object-storage|queue-bindings)-native|native_guest_evidence))|\.github/workflows/ci(-light)?\.yml)' "$RUNNER_TEMP/changed-paths.txt"; then
             exit 0
           fi
           python3 scripts/ci/managed-postgres-native-verdict_test.py
-          go test -race -p 1 -tags metal,managed_postgres_native ./pkg/apid/apidserver -run '^TestManagedPostgresFixturePublicRotation$' -count=1 -v -timeout=180s
-          go test -race -p 1 -tags metal,managed_postgres_native -c -o "$RUNNER_TEMP/managed-postgres-native.test" ./cmd/e2e
-      - name: GitOps source approval and native graph compilation (no KVM)
-        if: matrix.shard == 4
+          python3 scripts/ci/object-storage-native-verdict_test.py
+          python3 scripts/ci/queue-bindings-native-verdict_test.py
+          python3 scripts/ci/queue-bindings-native-runner_test.py
+          sh -n scripts/test-queue-bindings-native.sh
+          go test -race -p 1 ./pkg/managedpostgres/guestqualification ./pkg/e2etest/postgresstarter ./pkg/e2etest/queuestarter
+          go test -race -p 1 ./pkg/e2etest -run '^Test(PostgresGuest|StorageGuest|QueueGuest)'
+      - uses: actions/setup-python@v7
+        if: matrix.shard == 1
+        with:
+          python-version: '3.12'
+      - name: generated Python PostgreSQL starter TLS recovery
+        if: matrix.shard == 1
         env:
-          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-dwarf=false -c=1"'
-          GOGC: 10
-          GOMEMLIMIT: 2GiB
-          GOMAXPROCS: 2
-          GREGALE_GITOPS_ACCEPTANCE: '1'
+          POSTGRES_SERVICE_CONTAINER: ${{ job.services.postgres.id }}
         run: |
-          if ! grep -qE '^(cmd/e2e/environment_gitops|pkg/e2etest/(fakeregistry|testdata/helloserver/)|scripts/test-environment-gitops-native|\.github/workflows/ci(-light)?\.yml)' "$RUNNER_TEMP/changed-paths.txt"; then
+          if ! grep -qE '^(cmd/gregale/templates/(rest-api-postgres-python/|python_postgres_test.go|embed.go)|pkg/e2etest/postgresstarter/|sdk/python/(faas_sdk/|scripts/sync_binding_starters.py|tests/(async_storage_fixture.py|test_async.*storage))|examples/object-storage-rotation-python/|scripts/ci/test_python_postgres_starter.sh|\.github/workflows/ci(-light)?\.yml)' "$RUNNER_TEMP/changed-paths.txt"; then
             exit 0
           fi
-          # TestMain prepares the shared daemons before the HTTP case starts.
-          go test -race -p 1 ./cmd/e2e -run '^TestE2E_GitOpsSourceRevisionReviewAndRollback$' -count=1 -v -timeout=15m
-          go test -race -p 1 -tags metal -c -o "$RUNNER_TEMP/gitops-native.test" ./cmd/e2e
-          rm -f "$RUNNER_TEMP/gitops-native.test"
-      # -race on every tested package: races are the failures hardest to
-      # trace back later. Changed packages plus the §6.2 invariant tests
-      # (tests/property) when anything in their import tree changed.
-      #
-      # Two phases. The race build of cmd/apid can exhaust hosted-runner
-      # memory, so test binaries are compiled first under the mega pg shard 1
-      # bounds (GOMEMLIMIT/GOGC/GOMAXPROCS). Ordinary-package tests retain
-      # those proven bounds: two unbounded APID runs lost their hosted runner
-      # after compilation. State tests use default runtime settings because
-      # GOGC=10 on two cores previously exhausted their execution budget.
-      # The run phase reuses the compiled binaries from the build cache.
-      - name: race tests (changed packages and invariants)
+          docker cp "$POSTGRES_SERVICE_CONTAINER:/var/lib/postgresql/data/qualification-server.crt" "$RUNNER_TEMP/python-starter-postgres-ca.pem"
+          bash scripts/ci/test_python_postgres_starter.sh "$RUNNER_TEMP/python-starter-postgres-ca.pem"
+      - name: generated Python storage starter HTTPS and recovery
+        if: matrix.shard == 1
+        run: |
+          if ! grep -qE '^(cmd/gregale/templates/(object-storage-python/|python_storage_test.go|embed.go)|sdk/python/(faas_sdk/|scripts/sync_binding_starters.py)|scripts/ci/test_python_storage_starter.sh|\.github/workflows/ci(-light)?\.yml)' "$RUNNER_TEMP/changed-paths.txt"; then
+            exit 0
+          fi
+          bash scripts/ci/test_python_storage_starter.sh
+      # The managed-Postgres fixture API check and the GitOps native e2e
+      # compile build apidserver and cmd/e2e under extra build tags, which
+      # nothing caches: 18 minutes on their own. The mega tier runs both (pg
+      # shard 2b), nightly and before every release.
+      # Two kinds of package per shard:
+      #   - changed packages (and the §6.2 invariants in tests/property when
+      #     anything in their import tree changed) run in full with -race;
+      #   - the shard's pinned large package (cmd/gregale, pkg/state or
+      #     pkg/apid/apidserver), when changed, runs only the tests
+      #     scripts/ci/select_package_tests.py relates to the change, capped,
+      #     without -race. The mega tier runs those suites in full with -race.
+      # The race build of cmd/apid can exhaust hosted-runner memory, so race
+      # test binaries compile first under the mega pg shard 1 bounds.
+      - name: tests (changed packages, invariants and related large-suite tests)
+        env:
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
+          SHARD: ${{ matrix.shard }}
+          # Related-test cap per large package: enough for a focused change,
+          # small enough for the shard's 10-minute budget.
+          SELECTIVE_CAP: "150"
+        run: |
+          set -euo pipefail
+          PKGS="$(python3 scripts/ci/affected_packages.py test --shard "$SHARD" --shards 3 < "$RUNNER_TEMP/changed-paths.txt")"
+          LARGE="$(python3 scripts/ci/affected_packages.py selective --shard "$SHARD" --shards 3 < "$RUNNER_TEMP/changed-paths.txt")"
+          if [[ -z "$PKGS" && -z "$LARGE" ]]; then
+            echo "no affected Go packages assigned to shard $SHARD"
+            exit 0
+          fi
+          status=0
+          if [[ -n "$PKGS" ]]; then
+            echo "::group::compile race test binaries (bounded memory)"
+            # shellcheck disable=SC2086 # space-separated package list
+            GOMEMLIMIT=2GiB GOGC=10 GOMAXPROCS=2 go test -race -count=1 -run '^$' $PKGS
+            echo "::endgroup::"
+            echo "testing with -race: $PKGS"
+            # shellcheck disable=SC2086 # space-separated package list
+            GOMEMLIMIT=2GiB GOGC=10 GOMAXPROCS=2 go test -race -count=1 -p 4 -timeout=10m $PKGS || status=1
+          fi
+          for pkg in $LARGE; do
+            run="$(python3 scripts/ci/select_package_tests.py --package "${pkg#./}" --cap "$SELECTIVE_CAP" --base "$LIGHT_DIFF_BASE" < "$RUNNER_TEMP/changed-paths.txt")"
+            if [[ -z "$run" ]]; then
+              echo "$pkg: no tests relate to this change; the mega tier runs its full suite"
+              continue
+            fi
+            (
+              # pkg/state verifies the whole PostgreSQL catalogue; it keeps the
+              # shard's second service to itself.
+              [[ "$pkg" == ./pkg/state ]] && export DATABASE_URL="$SPLIT_DATABASE_URL"
+              echo "testing related tests of $pkg (no -race)"
+              go test -count=1 -timeout=8m -run "$run" "$pkg"
+            ) || status=1
+          done
+          exit "$status"
+      # Main pushes warm each shard's large-package test build (no -race, as
+      # pull requests run it) so a pull request touching that package only
+      # recompiles what it changed.
+      - name: warm the shard's large-package test build (main)
+        if: github.ref == 'refs/heads/main'
         env:
           GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
           SHARD: ${{ matrix.shard }}
         run: |
           set -euo pipefail
-          PKGS="$(python3 scripts/ci/affected_packages.py test --shard "$SHARD" --shards 9 < "$RUNNER_TEMP/changed-paths.txt")"
-          if (( SHARD > 3 )); then
-            SPLIT="$PKGS"
-            PKGS=""
-            SPLIT_SHARD=$((SHARD - 3))
-          else
-            selected_split="$(python3 scripts/ci/affected_packages.py split < "$RUNNER_TEMP/changed-paths.txt")"
-            SPLIT=""
-            for pkg in $selected_split; do
-              if [[ "$pkg" == ./pkg/state ]]; then
-                SPLIT="$pkg"
-              fi
-            done
-            SPLIT_SHARD="$SHARD"
-          fi
-          if [[ -z "$PKGS" && -z "$SPLIT" ]]; then
-            echo "no affected Go packages assigned to shard $SHARD"
-            exit 0
-          fi
-          echo "::group::compile test binaries (bounded memory)"
-          # shellcheck disable=SC2086 # space-separated package lists
-          GOMEMLIMIT=2GiB GOGC=10 GOMAXPROCS=2 go test -race -count=1 -run '^$' $PKGS $SPLIT
-          echo "::endgroup::"
-          status=0
-          if [[ -n "$PKGS" ]]; then
-            echo "testing: $PKGS"
-            # shellcheck disable=SC2086 # space-separated package list
-            GOMEMLIMIT=2GiB GOGC=10 GOMAXPROCS=2 go test -race -count=1 -p 4 -timeout=30m $PKGS || status=1
-          fi
-          # Dedicated API jobs cover six independent name batches. State jobs
-          # split each state job into four smaller batches.
-          # Verify every selected package's complete compiled inventory.
-          for pkg in $SPLIT; do
-            (
-              if [[ "$pkg" == ./pkg/state ]]; then
-                export DATABASE_URL="$SPLIT_DATABASE_URL"
-                shards=12
-                batches=("$SHARD" "$((SHARD + 3))" "$((SHARD + 6))" "$((SHARD + 9))")
-              else
-                # Aggressive compiler GC must not carry into fixture execution.
-                export GOMEMLIMIT=2GiB GOGC=100 GOMAXPROCS=2
-                shards=6
-                batches=("$SPLIT_SHARD")
-              fi
-              echo "checking complete test inventory: $pkg"
-              inventory="$(mktemp "$RUNNER_TEMP/light-test-inventory-${SHARD}.XXXXXX")"
-              go test -race -list . "$pkg" > "$inventory" || exit 1
-              go run ./scripts/ci/e2eshard -package="$pkg" -all-tests -shards="$shards" -check -list-file="$inventory" || exit 1
-              split_status=0
-              for test_shard in "${batches[@]}"; do
-                run="$(go run ./scripts/ci/e2eshard -package="$pkg" -all-tests -shards="$shards" -shard="$test_shard")" || exit 1
-                echo "testing: $pkg (test batch $test_shard/$shards)"
-                # Full API batches include stage checkpoint PostgreSQL fixtures.
-                # Keep state batches at their original budget.
-                budget=12m
-                [[ "$pkg" == ./pkg/apid/apidserver ]] && budget=45m
-                go test -race -count=1 -timeout="$budget" -run "$run" "$pkg" || split_status=1
-              done
-              exit "$split_status"
-            ) || status=1
-
-          done
-          exit "$status"
+          pkg="$(python3 scripts/ci/affected_packages.py pinned --shard "$SHARD" --shards 3 < /dev/null)"
+          go test -count=1 -run '^$' "$pkg"
       - name: save Go build + test cache
         if: always() && github.ref == 'refs/heads/main'
         uses: actions/cache/save@v4

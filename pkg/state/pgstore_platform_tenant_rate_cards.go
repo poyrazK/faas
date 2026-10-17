@@ -12,7 +12,7 @@ import (
 )
 
 const platformTenantRateCardSelectCols = `id, account_id, platform_tenant_id, currency, unit,
-	price_millicents_per_unit, included_units_per_month, tiers, effective_from, created_at`
+	price_millicents_per_unit, included_units_per_month, tiers, effective_from, created_at, route_weights, tier_mode`
 
 type platformTenantRateCardRowScanner interface {
 	Scan(dest ...any) error
@@ -20,14 +20,20 @@ type platformTenantRateCardRowScanner interface {
 
 func scanPlatformTenantRateCardRow(row platformTenantRateCardRowScanner) (PlatformTenantRateCard, error) {
 	var card PlatformTenantRateCard
-	var tiers []byte
+	var tiers, weights []byte
 	err := row.Scan(&card.ID, &card.AccountID, &card.TenantID, &card.Currency, &card.Unit,
-		&card.PriceMillicentsPerUnit, &card.IncludedUnitsPerMonth, &tiers, &card.EffectiveFrom, &card.CreatedAt)
+		&card.PriceMillicentsPerUnit, &card.IncludedUnitsPerMonth, &tiers, &card.EffectiveFrom, &card.CreatedAt, &weights, &card.TierMode)
 	if err != nil {
 		return PlatformTenantRateCard{}, err
 	}
 	if err := json.Unmarshal(tiers, &card.Tiers); err != nil {
 		return PlatformTenantRateCard{}, fmt.Errorf("decode platform tenant rate card tiers: %w", err)
+	}
+	if err := json.Unmarshal(weights, &card.RouteWeights); err != nil {
+		return PlatformTenantRateCard{}, fmt.Errorf("decode platform tenant rate card route weights: %w", err)
+	}
+	if len(card.RouteWeights) == 0 {
+		card.RouteWeights = nil
 	}
 	if len(card.Tiers) == 0 {
 		card.Tiers = nil
@@ -55,6 +61,12 @@ func (s *PgStore) CreatePlatformTenantRateCardVersion(ctx context.Context, in Pl
 	if in.Tiers == nil {
 		tiers = []byte("[]")
 	}
+	weights := []byte("{}")
+	if len(in.RouteWeights) > 0 {
+		if weights, err = json.Marshal(in.RouteWeights); err != nil {
+			return PlatformTenantRateCard{}, err
+		}
+	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return PlatformTenantRateCard{}, err
@@ -78,12 +90,12 @@ func (s *PgStore) CreatePlatformTenantRateCardVersion(ctx context.Context, in Pl
 	card, err := scanPlatformTenantRateCardRow(tx.QueryRow(ctx,
 		`insert into platform_tenant_rate_cards
 			(account_id, platform_tenant_id, currency, unit, price_millicents_per_unit, effective_from,
-			 included_units_per_month, tiers)
-		 select account_id, id, $3, $4, $5, $6, $7, $8::jsonb from platform_tenants
+			 included_units_per_month, tiers, route_weights, tier_mode)
+		 select account_id, id, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10 from platform_tenants
 		 where account_id = $1::uuid and id = $2::uuid
 		 returning `+platformTenantRateCardSelectCols,
-		accountID, tenantID, currency, PlatformTenantRateCardUnitRequest, in.PriceMillicentsPerUnit, effectiveFrom,
-		in.IncludedUnitsPerMonth, string(tiers)))
+		accountID, tenantID, currency, in.Unit, in.PriceMillicentsPerUnit, effectiveFrom,
+		in.IncludedUnitsPerMonth, string(tiers), string(weights), in.TierMode))
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "23505" {

@@ -42,7 +42,7 @@ import (
 // issueCreditPayload is the JSON body POST /v1/admin/accounts/{id}/credits
 // accepts. Reason is required and length-validated client-side for a
 // friendlier 400; the migration's CHECK constraint is the floor a
-// typo cannot cross. Cents is integer, > 0, in EUR cents.
+// typo cannot cross. Cents is integer, > 0, in USD cents.
 type issueCreditPayload struct {
 	Cents  int64  `json:"cents"`
 	Reason string `json:"reason"`
@@ -76,7 +76,7 @@ func (s *server) issueCredit(w http.ResponseWriter, r *http.Request, acct state.
 	}
 	if req.Cents <= 0 {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
-			"Bad cents", "cents must be a positive integer (in EUR cents)"))
+			"Bad cents", "cents must be a positive integer (in USD cents)"))
 		return
 	}
 	if n := len(req.Reason); n < 3 || n > 500 {

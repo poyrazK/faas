@@ -33,8 +33,11 @@ const (
 
 // IssueContext contains the bounded correlation fields accepted by the issue
 // ingestion endpoint. It deliberately has no arbitrary tags or customer
-// identity fields.
+// identity fields. Operational tags use a fixed allowlist.
 type IssueContext struct {
+	Breadcrumbs         []IssueBreadcrumb
+	BreadcrumbsDropped  int
+	Tags                map[string]string
 	TraceID             string
 	SpanID              string
 	RequestID           string
@@ -60,7 +63,8 @@ type IssueReporterOptions struct {
 	HTTPClient *http.Client
 	// GroupingStrategy is empty/legacy by default, or "failure-site-v1"/"cause-chain-v1".
 	// Opting in creates version 2 or 3 groups without migrating existing history.
-	GroupingStrategy string
+	GroupingStrategy      string
+	SymbolicationStrategy string
 }
 
 // IssueReporterStats reports the current in-memory queue and settled delivery
@@ -91,13 +95,14 @@ const (
 // trace sampling. Capture methods never return application errors; an empty
 // event ID means the event was not queued.
 type IssueReporter struct {
-	endpoint         string
-	token            string
-	client           *http.Client
-	timeout          time.Duration
-	retryDelay       time.Duration
-	maxQueue         int
-	groupingStrategy string
+	endpoint              string
+	token                 string
+	client                *http.Client
+	timeout               time.Duration
+	retryDelay            time.Duration
+	maxQueue              int
+	groupingStrategy      string
+	symbolicationStrategy string
 
 	ctx        context.Context
 	cancel     context.CancelFunc
@@ -132,6 +137,9 @@ func NewIssueReporter(options IssueReporterOptions) (*IssueReporter, error) {
 		return nil, errors.New("invalid issue grouping strategy")
 	}
 
+	if options.SymbolicationStrategy != "" && (options.SymbolicationStrategy != "deployment-source-maps-v1" || (options.GroupingStrategy != "failure-site-v1" && options.GroupingStrategy != "cause-chain-v1")) {
+		return nil, errors.New("server symbolication requires failure-site-v1 or cause-chain-v1")
+	}
 	maxQueue := options.MaxQueue
 	if maxQueue == 0 {
 		maxQueue = issueReporterDefaultQueue
@@ -178,17 +186,18 @@ func NewIssueReporter(options IssueReporterOptions) (*IssueReporter, error) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	reporter := &IssueReporter{
-		endpoint:         base.Scheme + "://" + base.Host + "/v1/apps/" + url.PathEscape(options.App) + "/issue-events",
-		token:            options.Token,
-		client:           &clientCopy,
-		timeout:          timeout,
-		retryDelay:       retryDelay,
-		maxQueue:         maxQueue,
-		groupingStrategy: options.GroupingStrategy,
-		ctx:              ctx,
-		cancel:           cancel,
-		workerDone:       make(chan struct{}),
-		changed:          make(chan struct{}),
+		endpoint:              base.Scheme + "://" + base.Host + "/v1/apps/" + url.PathEscape(options.App) + "/issue-events",
+		token:                 options.Token,
+		client:                &clientCopy,
+		timeout:               timeout,
+		retryDelay:            retryDelay,
+		maxQueue:              maxQueue,
+		groupingStrategy:      options.GroupingStrategy,
+		symbolicationStrategy: options.SymbolicationStrategy,
+		ctx:                   ctx,
+		cancel:                cancel,
+		workerDone:            make(chan struct{}),
+		changed:               make(chan struct{}),
 	}
 	go reporter.run()
 	return reporter, nil
@@ -366,6 +375,8 @@ func (r *IssueReporter) capture(exceptionType, message string, ctx IssueContext,
 		HTTPStatus:          ctx.HTTPStatus,
 		SourceKind:          sourceKind,
 	}
+	event.SymbolicationStrategy = r.symbolicationStrategy
+	event.Breadcrumbs, event.BreadcrumbsDropped, event.Tags = boundedIssueContext(ctx)
 	if r.groupingStrategy == "failure-site-v1" || r.groupingStrategy == "cause-chain-v1" {
 		event.GroupingStrategy = r.groupingStrategy
 		event.FrameOrder = "newest-first"

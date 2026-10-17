@@ -22,7 +22,9 @@ func sourceRuntimeProducerSelection(root SourceBuildRootfs, proof BuildExportPub
 }
 
 func checkSourceRuntimeIntent(in SourceBuildRootfsInput, intent sourceBuildRootfsIntent) error {
-	kind, runtime := SourceBuildRootfsKind(App{Type: intent.Type, Runtime: intent.Runtime}, Deployment{Handler: intent.Handler})
+	// The record's runtime was bound to its signed export claim when it was
+	// published; a shared runner base stays valid only for a container app.
+	kind, runtime := SourceBuildRootfsKindForClaim(App{Type: intent.Type, Runtime: intent.Runtime}, Deployment{Handler: intent.Handler}, in.Runtime)
 	hash, err := hashSourceBuildRootfsIntent(intent)
 	if err != nil {
 		return err

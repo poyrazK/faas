@@ -7,6 +7,10 @@
  */
 export type AppPublishEventRequest = {
   /**
+   * Optional canonical application UUID guard; mismatches return 409 before publication or comparison.
+   */
+  expected_app_id?: string;
+  /**
    * Stable exact application-scoped producer key; preserve on retry.
    */
   key: string;

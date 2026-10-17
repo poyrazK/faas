@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from ..models.event_consumer_execution_health import EventConsumerExecutionHealth
     from ..models.event_consumer_health import EventConsumerHealth
     from ..models.event_consumer_pending_sample import EventConsumerPendingSample
+    from ..models.event_consumer_processing_health import EventConsumerProcessingHealth
     from ..models.event_consumer_waiting_reasons import EventConsumerWaitingReasons
 
 
@@ -42,6 +43,9 @@ class EventConsumerDeliveryHealth:
     pending_sample: EventConsumerPendingSample
     """Up to 50 oldest pending application recipients, ordered by acceptance time with stable outbox and
     subscription ties. Waiting reason counts cover only these recipients."""
+    processing: EventConsumerProcessingHealth | Unset = UNSET
+    """Current retained deferred invocation gauges, retained completion latency and optional durable full-minute
+    renewal metrics with independent coverage."""
     capacity_pressure: EventConsumerCapacityPressure | Unset = UNSET
     """Read-only current live slot usage and effective capacity waiting reasons from one owned subscription
     snapshot. Independent of the other delivery-health reads and history window. Recorded waits may remain after
@@ -67,6 +71,10 @@ class EventConsumerDeliveryHealth:
 
         pending_sample = self.pending_sample.to_dict()
 
+        processing: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.processing, Unset):
+            processing = self.processing.to_dict()
+
         capacity_pressure: dict[str, Any] | Unset = UNSET
         if not isinstance(self.capacity_pressure, Unset):
             capacity_pressure = self.capacity_pressure.to_dict()
@@ -90,6 +98,8 @@ class EventConsumerDeliveryHealth:
                 "pending_sample": pending_sample,
             }
         )
+        if processing is not UNSET:
+            field_dict["processing"] = processing
         if capacity_pressure is not UNSET:
             field_dict["capacity_pressure"] = capacity_pressure
         if waiting_reasons is not UNSET:
@@ -106,6 +116,7 @@ class EventConsumerDeliveryHealth:
         from ..models.event_consumer_execution_health import EventConsumerExecutionHealth
         from ..models.event_consumer_health import EventConsumerHealth
         from ..models.event_consumer_pending_sample import EventConsumerPendingSample
+        from ..models.event_consumer_processing_health import EventConsumerProcessingHealth
         from ..models.event_consumer_waiting_reasons import EventConsumerWaitingReasons
 
         d = dict(src_dict)
@@ -118,6 +129,13 @@ class EventConsumerDeliveryHealth:
         execution = EventConsumerExecutionHealth.from_dict(d.pop("execution"))
 
         pending_sample = EventConsumerPendingSample.from_dict(d.pop("pending_sample"))
+
+        _processing = d.pop("processing", UNSET)
+        processing: EventConsumerProcessingHealth | Unset
+        if isinstance(_processing, Unset):
+            processing = UNSET
+        else:
+            processing = EventConsumerProcessingHealth.from_dict(_processing)
 
         _capacity_pressure = d.pop("capacity_pressure", UNSET)
         capacity_pressure: EventConsumerCapacityPressure | Unset
@@ -146,6 +164,7 @@ class EventConsumerDeliveryHealth:
             routing=routing,
             execution=execution,
             pending_sample=pending_sample,
+            processing=processing,
             capacity_pressure=capacity_pressure,
             waiting_reasons=waiting_reasons,
             capacity_waits=capacity_waits,

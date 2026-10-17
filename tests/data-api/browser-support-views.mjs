@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import {browserInspector} from './browser-inspector.mjs'
+import {waitUntil} from './browser-wait.mjs'
 export async function browserSupportViews(url){
  const inspectorURL=new URL(url),state=await(await fetch(new URL('session',inspectorURL),{headers:{Authorization:'Bearer '+inspectorURL.hash.slice(1)}})).json()
  const ro={Authorization:'Bearer '+state.identities.support_a.token,'Accept-Profile':'api','Content-Profile':'api','Content-Type':'application/json'}
@@ -9,7 +10,7 @@ export async function browserSupportViews(url){
  for(const method of ['POST','PATCH','DELETE']){response=await fetch(new URL('/rest/v1/support_cases',inspectorURL),{method,headers:ro,...(method!=='DELETE'?{body:'{}'}:{})});assert.equal(response.status,403);assert.equal((await response.json()).code,'read_only_identity')}
  assert.ok(state.snapshot.tables.every(table=>table.schema==='api'&&!table.columns.some(column=>column.name==='internal_notes')))
  await browserInspector(url,async evaluate=>{
-  const until=async expression=>{for(let i=0;i<200;i++){if(await evaluate(expression))return;await new Promise(resolve=>setTimeout(resolve,30))}assert.fail('Support inspector action did not finish')}
+  const until=expression=>waitUntil(evaluate,expression,'Support inspector action did not finish')
   await until("document.querySelector('#status').textContent.includes('ready')")
   await evaluate("document.querySelector('#identity').value='support_a';document.querySelector('#identity').dispatchEvent(new Event('change'));document.querySelector('#resource').value=JSON.stringify(['tables','api.support_cases']);document.querySelector('#resource').dispatchEvent(new Event('change'));document.querySelector('#data-read').click()")
   await until("!document.querySelector('#data-read').disabled&&document.querySelector('#data-rows').textContent.includes('Support case A')")

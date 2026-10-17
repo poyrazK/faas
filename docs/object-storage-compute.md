@@ -78,10 +78,9 @@ For in-process rotation, enable Gregale's secret reload protocol and use a
 language-specific coordinator below. Each reads the single
 `FAAS_SECRETS_SNAPSHOT_FILE` `{revision,secrets}` envelope, applies all registered
 consumers and ACKs its revision using the captured process generation. The existing
-[`secret-reload-node` helper](../cmd/gregale/templates/secret-reload-node/secret-reload.js)
+[canonical reload coordinator](../sdk/node/src/secret-reload-runtime.ts)
 provides snapshot reading, startup waiting, serialization and fenced ACKs:
-call `await storage.reload(snapshot.secrets, signal)` from its application
-callback. A helper that merely reads startup environment variables cannot
+register `storage.secretConsumer()` with that coordinator. A helper that merely reads startup environment variables cannot
 adopt a later credential rotation.
 
 ### Node reload coordinator
@@ -184,7 +183,7 @@ consumers without joining arbitrary factories. A factory that ignores context
 may finish later; its candidate is fenced and subsequent factories cannot overlap
 it. Supply appropriate factory/readiness timeouts. SIGHUP requires a Unix runtime.
 
-### Python reload coordinator
+### Synchronous Python reload coordinator
 
 Use `faas_sdk.secret_reload_runtime` with the binding configured above:
 
@@ -228,6 +227,74 @@ callbacks and factories must bound their own work. The storage factory retains
 the thread calling `storage.reload()` and runs outside the binding state lock.
 Stopping does not join arbitrary callbacks or destroy previously acquired clients.
 
+### Async Python clients and streaming
+
+Use `faas_sdk.async_object_storage_runtime.AsyncObjectStorageBinding` with
+`faas_sdk.async_secret_reload_runtime.AsyncSecretReloadCoordinator` for
+loop-owned S3 libraries. The existing synchronous APIs remain unchanged. Core
+imports no database or S3 driver. Factories receive the same immutable explicit
+`ObjectStorageClientConfig`, including bucket, credentials, path addressing and
+`when_required` checksum settings, plus an async cancellation token.
+
+```python
+from faas_sdk.async_object_storage_runtime import AsyncObjectStorageBinding
+from faas_sdk.async_secret_reload_runtime import AsyncSecretReloadCoordinator
+
+# App-supplied async callbacks. validate(client, bucket, cancel) must complete a
+# readiness check and close any response body before returning None.
+storage = AsyncObjectStorageBinding("FILES", make_client,
+                                   validate=validate_client, retire=close_client)
+coordinator = AsyncSecretReloadCoordinator([storage.secret_consumer()])
+await coordinator.start()  # Main-thread owning loop, before serving.
+try:
+    async with storage.acquire() as lease:
+        client, bucket = lease.current()
+        # Await the complete operation and close its body inside this lease.
+        await consume_and_close_download(client, bucket, key)
+finally:
+    # Stop request admission first and keep the event loop alive while draining.
+    coordinator.stop()
+    await coordinator.wait_stopped(timeout=5)
+    await storage.wait_for_retirement(timeout=5)
+```
+
+Factory, validation and retirement hooks are required and return awaitables;
+validators and retirement hooks return `None`, not boolean verdicts. Validation
+is application-defined and must match the binding's allowed operations. It is
+not automatic permission expansion or independent evidence of ongoing health.
+Factories own partial allocations until returning a fresh, exclusively owned
+client. All lifecycle work, including late-result cleanup, runs on the owning
+event loop. Async invalidation is rejected: the consumer's synchronous gate must
+disable new acquisitions immediately and schedule cleanup.
+
+Keep leases through every upload/download body close, including forwarding a
+body into an HTTP response, errors and disconnects. Acquiring a lease only inside
+a lazy generator can miss cleanup if cancellation happens before its first
+iteration. The runnable
+[FastAPI/aiobotocore example](../examples/object-storage-rotation-python/README.md)
+owns the response task and closes late responses before releasing their leases.
+Its validator performs a bounded `HeadObject` on an app-provisioned readiness
+object; its driver uses explicit credentials and does not retry requests.
+
+Rotation, revocation and failed adoption disable new acquisitions while existing
+leases retain their client. Cancellation before a queued reload's admission does
+not disturb another successful attempt. Once admitted, cancellation fences late
+publication and retains ownership of callbacks that suppress cancellation until
+they return. Direct `reload(values, cancel)` accepts
+`AsyncSecretReloadCancellation`; native task cancellation/token expiry preserve
+`CancelledError`. Coordinator manual reload supports a total timeout and optional
+`asyncio.Event`, including queue wait, consumers and ACK transport.
+
+Storage and PostgreSQL share an internal async lifecycle and may register with
+one coordinator. It reads one immutable snapshot and sends an applied ACK only
+after every consumer validates; any failure invalidates every consumer. This
+does not create atomic visibility or distributed transactions across resources.
+Cancellation cannot retract an ACK already sent or undo completed operations.
+Stop admission/reloads, invalidate, and await retirement for every binding before
+closing the loop. Drain timeout/cancellation affects only the wait, never forces
+closure of leased clients, and never cancels their cleanup. Retirement failures
+are sticky and sanitized; cleanup is not retried. Bound all driver hooks.
+
 The coordinator captures the four guest reload settings once. Missing/malformed
 snapshots cannot be ACKed; a consumer failure disables all consumers and sends
 only a `failed` ACK for a known valid revision. Native metadata HTTP bypasses
@@ -239,9 +306,10 @@ Unconfirmed ACKs disable clients; a later signal/manual reload can recover from
 an ordinary refresh failure. ACKs attest only to registered callbacks and do not
 prove provider readiness or atomic publication of every application client.
 
-The examples above use caller-owned clients: reacquire `current()`/`Current()`
-for each new request and manage retired-client lifetime yourself. For automatic
-cleanup, use request leases as described below. Reloads are serialized.
+Bindings configured without a retirement hook use caller-owned clients: reacquire
+`current()`/`Current()` for each new request and manage retired-client lifetime
+yourself. For automatic cleanup, use request leases as described below. The
+async Python helper always requires retirement and leases. Reloads are serialized.
 A failed candidate or missing/revoked settings disables new acquisition and
 returns a sanitized error. Do not send an `applied` ACK on failure. Constructors
 alone do not verify credentials; a factory's readiness check and the workload
@@ -328,10 +396,11 @@ Keeping a local client alive cannot override gateway credential revocation or
 guarantee success for a subsequent network request.
 
 Retirement callbacks run outside state mutation and never delay release,
-invalidation or new acquisition. Go and Python invoke them on background
+invalidation or new acquisition. Go and synchronous Python invoke them on background
 goroutines/threads; Node permits async callbacks. Different clients can retire
 concurrently. Hooks must be thread-safe where applicable and bound their work;
-Node hooks must avoid blocking the event loop. Python hooks are synchronous.
+Node hooks must avoid blocking the event loop. The synchronous Python helper's
+hooks run on threads; the async helper's hooks stay on its owning event loop.
 Do not call the binding's retirement wait from its own retirement hook.
 The SDK cannot preempt arbitrary application cleanup. Callback failures are
 sanitized, optionally reported through `OnRetireError`/`onRetireError`/
@@ -479,8 +548,8 @@ Waiting observes already scheduled probes and ACKs; it never schedules writes.
 Without `--release-policy`, `bindings check` retains its local flag behavior.
 Use `bindings release-policy get` to inspect the stored policy separately.
 
-To collect every storage canary required by an enforced policy, preview the plan
-and then explicitly consent to its writes:
+To collect missing storage evidence and qualify the app's other bindings against
+an enforced policy, preview the plan and then explicitly consent to its writes:
 
 ```sh
 gregale bindings verify my-api --deployment v12 --release-policy --dry-run --json
@@ -488,15 +557,21 @@ gregale bindings verify my-api --deployment v12 --release-policy \
   --object-storage-write --wait-timeout 5m --json
 ```
 
-This mode requires a nonempty stored storage-requirements map, a complete
-inventory, a valid configuration timestamp and one active, settled binding for
-each prefix. It selects and reconfirms the exact deployment and scope even when
+This mode requires an enforced policy, a complete inventory, a valid
+configuration timestamp and one active, settled binding for each selected
+prefix. Storage requirements may be empty; default storage probes check listing
+access, while write-only bindings require upload/cleanup. The plan also covers
+services, runtime PostgreSQL, configured outbound and required queue readiness.
+It selects and reconfirms the exact deployment and scope even when
 `--deployment` is omitted. `--dry-run` performs only metadata reads: `status` is
 `planned`, `passed` is false, and `write_consent_required` identifies whether the
 whole plan needs opt-in. Preview success does not test connectivity or readiness.
 
-Without consent to every planned write, the entire batch stops before creating
-any task. `read` runs a bounded bucket listing. `write` runs upload and cleanup;
+Current evidence is reused when its deployment, scope, age, generation and
+operation stages satisfy the stored policy. Reused write evidence schedules no
+new write and needs no write consent. Already-pending probes are observed without
+replacements. Without consent to every scheduled write, the entire batch stops
+before creating any task. `read` runs a bounded bucket listing. `write` runs upload and cleanup;
 if the binding grants `read_write`, the canary also downloads and compares bytes,
 and the preview shows that extra operation. Consent does not broaden a binding's
 permission. Existing retention/Object Lock admission and cleanup rules still
@@ -505,10 +580,14 @@ apply. `verify --all` and single-prefix verification keep their existing behavio
 The command checks the original policy and binding configuration before each
 admission and after each successful probe, and stops on the first failure or
 observed change. It finishes with a policy-aware preflight against that same
-snapshot. JSON contains `plan`, `probes`, `release_policy`, `snapshot_confirmed`
-and `preflight`, including remaining application ACK or other binding blockers.
+snapshot, waiting for supported pending observations under the same timeout.
+JSON contains typed plan actions, `plan_blockers`, `observed_check`, `probes`,
+`release_policy`, `snapshot_confirmed` and `preflight`, including remaining
+application ACK or other binding blockers.
 A successful canary batch can therefore still return exit status 1. Canaries
-never supply application ACKs or automatically verify unrelated binding families.
+never supply application ACKs. Required queue readiness sends no messages and
+retains partial connectivity coverage. See
+[ADR-1347](adr/1347-unified-binding-policy-verification.md).
 
 `--wait-timeout` bounds the entire workflow; it does not reset for every prefix.
 An ordinary timeout keeps the existing task running and reports its ID; inspect
@@ -593,7 +672,7 @@ Gregale storage; it is separate from the starter's disposable local test fixture
 `gregale init --template object-storage-node --path files-app` materializes a private
 managed-storage application with authenticated binary PUT/GET, atomic storage
 and auth secret consumers, request leases, storage-aware local readiness and
-bounded shutdown. Reserve the app with `deploy --create-only`, attach assets
+bounded shutdown and application restore recovery. Reserve the app with `deploy --create-only`, attach assets
 using `gregale add bucket ... --permission read_write --prefix GREGALE_S3_ASSETS`,
 and supply STORAGE_APP_TOKEN through an external 0600 secrets file. Follow the
 [starter README](../cmd/gregale/templates/object-storage-node/README.md) for setup
@@ -605,12 +684,70 @@ write permission or continuous provider health. Every response body retains its
 lease until completion or cancellation. The five-second shutdown budget aborts
 unfinished transfers after draining expires.
 
+The manifest selects `/readyz` and a two-second after_restore hook authenticated
+by actual loopback peer plus the restore header. The hook closes admission,
+cancels captured transfers and replaces the transport even at an unchanged
+credential revision. It validates fresh storage/auth adoption and drains captured
+body/spool leases within a maximum 1.5-second application budget before reopening
+readiness. Failed or cancelled recovery stays closed until a successful hook;
+the platform's existing cold-boot fallback applies. A normal SIGHUP cannot clear
+this failed-recovery gate. Cancellation closes captured HTTP connections while
+late driver results stay owned until actual cleanup; uncertain PUTs are never replayed.
+
 `bash scripts/test-storage-node-starter.sh` checks the CLI-embedded artifact, its
 lockfile, app tests and actual Node/SigV4/gateway/provider-adapter memory-store
-journey. Its disposable local provider is not GCS/R2 or a native microVM
+journey, including same-revision transport replacement, blocked validation/queued
+SIGHUP cancellation and recovery. Its disposable local provider is not GCS/R2 or a native microVM
 qualification. The bundled helper drift check runs with Node SDK tests; regenerate
 using `npm run build && npm run starter:sync` in sdk/node after helper changes.
 
+
+The [native storage acceptance harness](ops/object-storage-native-acceptance.md)
+deploys this exact Node starter and requires real snapshot/restore, public running
+and parked rotation, failed-hook cold fallback and independent cleanup. Its strict
+report distinguishes native execution from nested diagnostics. Native KVM and
+live-provider qualification remain pending until their respective runs pass.
+
+## Python compute starter
+
+`gregale init --template object-storage-python --path files-app` materializes a
+self-contained FastAPI/aiobotocore private file service. It bundles the canonical
+async SDK runtime, dependency pins, an unprivileged Python 3.12 image, authenticated
+PUT/GET, bounded disk spooling, streaming leases and an application restore hook.
+Reserve the app with `deploy --create-only`, attach a managed `read_write` bucket
+with prefix `GREGALE_S3_ASSETS`, and supply `STORAGE_APP_TOKEN` through an external
+0600 secrets file. Follow the [starter README](../cmd/gregale/templates/object-storage-python/README.md).
+
+Storage validation and HTTP authentication adopt one atomic snapshot before the
+applied ACK. ListObjectsV2(MaxKeys=1) checks read/list access without requiring a
+pre-created object; use operation canaries to qualify write permission. `/healthz`
+is liveness; the manifest's `/readyz` checks local adoption and recovery readiness.
+Neither endpoint proves continuous provider availability.
+
+HTTPS verifies the certificate chain and hostname. For a private CA, set the
+application environment's `AWS_CA_BUNDLE` to a readable PEM bundle deployed inside
+the image, such as `/app/runtime/company-ca.pem`; `runtime/` is already copied by
+the Dockerfile. This replaces the driver's default public CA trust for S3.
+Invalid trust files, untrusted/expired certificates and hostname mismatches fail
+adoption without a successful ACK. The path is captured at startup; new transports
+load its contents again on reload and restore. See the starter README for deployment
+and recovery details.
+
+The authenticated two-second after_restore hook closes admission, cancels captured
+transfers and rebuilds transports even at an unchanged revision. It validates the
+fresh client and drains captured body/spool leases within a maximum 1.5-second
+application budget before reopening readiness. Failed recovery stays closed until
+a successful hook; the existing platform cold-boot fallback applies. Graceful
+shutdown allows five seconds to drain. Transfers and uncertain PUTs are never replayed.
+
+`bash scripts/ci/test_python_storage_starter.sh` installs standalone requirements,
+checks canonical drift and tests the exact CLI-embedded artifact, including actual
+aiobotocore SigV4 HTTP/HTTPS requests and the handler subprocess's
+SIGHUP/restore/shutdown. OpenSSL is required only to generate disposable test
+certificates. HTTPS rejection and corrected-bundle recovery are part of this gate.
+The owned local S3 fixture does not qualify a live provider or native microVM
+snapshot recovery. Regenerate bundled helpers with
+`python sdk/python/scripts/sync_binding_starters.py` after SDK runtime changes.
 
 ## Upload-triggered compute
 

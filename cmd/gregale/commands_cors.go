@@ -33,12 +33,14 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 
@@ -203,6 +205,14 @@ func cmdCorsAllow(args []string) int {
 		AllowHeaders:     []string(allowedHeaders),
 		AllowCredentials: *credentials,
 		MaxAgeSeconds:    *maxAge,
+	}
+	if existing, ok := identicalCORSRule(context.Background(), client, slug, opts); ok {
+		if jsonOutput {
+			return jsonOut(writeJSON(existing))
+		}
+		PrintOK(osStdout, "CORS rule already attached to %s; nothing changed.", slug)
+		_, _ = fmt.Fprintf(osStdout, "  id:            %s\n", existing.ID)
+		return 0
 	}
 	resp, err := client.CreateCORSEdgeRule(context.Background(), slug, opts)
 	if err != nil {
@@ -398,4 +408,40 @@ func sortedAllowedMethods() string {
 	}
 	sort.Strings(keys)
 	return strings.Join(keys, ", ")
+}
+
+// identicalCORSRule finds an active inline CORS rule that already matches
+// opts. Re-running `cors allow` with the same arguments created a second,
+// identical rule each time (production-us hunt #10, H10-119). A failed
+// lookup falls through to the create, which the server still validates.
+func identicalCORSRule(ctx context.Context, client *Client, slug string, opts api.CreateCORSEdgeRuleOpts) (api.EdgeRuleResponse, bool) {
+	rules, err := client.ListEdgeRulesForApp(ctx, slug)
+	if err != nil {
+		return api.EdgeRuleResponse{}, false
+	}
+	maxAge := opts.MaxAgeSeconds
+	if maxAge == 0 {
+		maxAge = 600
+	}
+	for _, rule := range rules {
+		if rule.Kind != "cors" || !rule.Enabled || rule.Expired || rule.MatchHost != opts.MatchHost || rule.MatchPath != opts.MatchPath || !sameStringSet(rule.MatchMethods, opts.MatchMethods) {
+			continue
+		}
+		var action api.EdgeRuleCORSAction
+		if json.Unmarshal(rule.Action, &action) != nil || action.CorsPresetID != nil || len(action.ExposeHeaders) != 0 {
+			continue
+		}
+		if sameStringSet(action.AllowOrigins, opts.AllowOrigins) && sameStringSet(action.AllowMethods, opts.AllowMethods) &&
+			sameStringSet(action.AllowHeaders, opts.AllowHeaders) && action.AllowCredentials == opts.AllowCredentials && action.MaxAgeSeconds == maxAge {
+			return rule, true
+		}
+	}
+	return api.EdgeRuleResponse{}, false
+}
+
+func sameStringSet(a, b []string) bool {
+	x, y := slices.Clone(a), slices.Clone(b)
+	slices.Sort(x)
+	slices.Sort(y)
+	return slices.Equal(x, y)
 }

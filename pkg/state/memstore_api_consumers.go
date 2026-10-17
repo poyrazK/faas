@@ -131,7 +131,7 @@ func validateConsumerKeyForConsumer(op, accountID, consumerID, name, prefix stri
 	}
 	for _, scope := range scopes {
 		switch scope {
-		case "read", "write", "admin":
+		case "read", "write", "admin", "billing":
 		default:
 			return fmt.Errorf("memstore: %s: scope %q is not in the closed-set {read, write, admin}", op, scope)
 		}

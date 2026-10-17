@@ -22,7 +22,7 @@ func seedFOCUSInvoice(e apidserver.TestEnv, id, accountID string, end time.Time)
 	memSeedInvoice((*e.Store()), state.Invoice{
 		ID: id, AccountID: accountID, Provider: "polar", ProviderInvoiceID: "provider-" + id,
 		Status: "paid", PeriodStart: end.AddDate(0, 0, -20), PeriodEnd: end,
-		SubtotalCents: 1200, TaxCents: 190, TotalCents: 1190, Currency: "eur", CreatedAt: end, UpdatedAt: end,
+		SubtotalCents: 1200, TaxCents: 190, TotalCents: 1190, Currency: "usd", CreatedAt: end, UpdatedAt: end,
 	})
 }
 

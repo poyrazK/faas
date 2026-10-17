@@ -112,7 +112,7 @@ func (s *PostgresStore) ReserveCutover(ctx context.Context, request PrepareCutov
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return Cutover{}, false, mapPostgresError(err)
 	}
-	if source.State != "ready" || target.State != "ready" || !source.ProviderResourceID.Valid || !target.ProviderResourceID.Valid || source.CutoverID.Valid || target.CutoverID.Valid || !target.RestoreSourceDatabaseID.Valid || target.RestoreSourceDatabaseID != source.ID || target.RestoreSourceResourceID.String != source.ProviderResourceID.String {
+	if source.State != "ready" || target.State != "ready" || !source.ProviderResourceID.Valid || !target.ProviderResourceID.Valid || source.CutoverID.Valid || target.CutoverID.Valid || !target.RestoreSourceDatabaseID.Valid || target.RestoreSourceDatabaseID != source.ID || target.RestoreSourceResourceID.String != databaseDataResource(databaseFromSQL(source)) {
 		return Cutover{}, false, ErrConflict
 	}
 	targetBindings, err := q.CountManagedPostgresCutoverTargetBindings(ctx, tx, request.TargetDatabaseID)

@@ -20,6 +20,7 @@ func cmdAppHealth(slug string, args []string) int {
 	check := fs.Bool("check", false, "exit nonzero unless a single assessment is fresh, healthy, and default-scope")
 	timeout := fs.Duration("timeout", 2*time.Minute, "maximum health wait (requires --wait)")
 	interval := fs.Duration("poll-interval", 2*time.Second, "health poll interval (requires --wait)")
+	environment := fs.String("environment", "", "assess this project environment's serving releases instead of the default scope")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -35,6 +36,12 @@ func cmdAppHealth(slug string, args []string) int {
 			historyOptions = true
 		}
 	})
+	if *environment != "" && (*history || historyOptions) {
+		return printErr("Invalid health options", fmt.Errorf("--environment applies to a current assessment; history covers the default scope"))
+	}
+	if *environment != "" && !api.ValidProjectEnvironmentSlug(*environment) {
+		return printErr("Invalid health options", fmt.Errorf("--environment must be a project environment slug"))
+	}
 	if *check && (*wait || *history || historyOptions || waitOptions) {
 		return printErr("Invalid health check options", fmt.Errorf("--check cannot be combined with --wait, history options, --timeout, or --poll-interval"))
 	}
@@ -52,7 +59,7 @@ func cmdAppHealth(slug string, args []string) int {
 		return printAppHealthHistory(client, slug, *limit, *before)
 	}
 	if *wait {
-		return waitAppHealth(client, slug, *timeout, *interval)
+		return waitAppHealth(client, slug, *environment, *timeout, *interval)
 	}
 	ctx := context.Background()
 	if *check {
@@ -60,16 +67,16 @@ func cmdAppHealth(slug string, args []string) int {
 		ctx, cancel = context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
 	}
-	out, err := client.GetAppHealth(ctx, slug)
+	out, err := readAppHealth(ctx, client, slug, *environment)
 	if err != nil {
 		return printErr("Health assessment failed", err)
 	}
-	passed := appHealthCheckPassed(out, time.Now())
+	passed := appHealthCheckPassed(out, *environment, time.Now())
 	if code := renderAppHealth(slug, out); code != 0 {
 		return code
 	}
 	if *check && !passed {
-		return printErr("Health check failed", fmt.Errorf("the assessment is not fresh, healthy, and default-scope (status=%s; scope=%s; fresh=%t); inspect the returned assessment before proceeding", compactInspectFailureText(out.Status), compactInspectFailureText(out.Scope), appHealthFresh(out, time.Now())))
+		return printErr("Health check failed", fmt.Errorf("the assessment is not fresh, healthy, and %s-scope (status=%s; scope=%s; fresh=%t); inspect the returned assessment before proceeding", appHealthScope(*environment), compactInspectFailureText(out.Status), compactInspectFailureText(out.Scope), appHealthFresh(out, time.Now())))
 	}
 	return 0
 }

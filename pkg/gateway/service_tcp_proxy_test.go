@@ -49,6 +49,8 @@ type tcpTestHarness struct {
 	onWake   func()
 	release  string
 	dead     map[string]bool // instance IDs whose guest dial fails
+	caller   string          // app ID the "caller" source resolves to
+	preview  string          // PreviewOfSlug the caller authorizes as
 	frozen   map[string]bool // instance IDs vmmd refuses as frozen (ADR-1151)
 
 	mu   sync.Mutex
@@ -64,6 +66,7 @@ func newTCPTestHarness(t *testing.T) *tcpTestHarness {
 			netip.MustParseAddr("198.19.0.7"): {AppID: "db", AccountID: "acct", Plan: api.PlanPro, TCPPorts: []int{5432, 443}, IdleTimeout: 5 * time.Minute},
 		},
 		dead:   map[string]bool{},
+		caller: "api",
 		frozen: map[string]bool{},
 	}
 	services := NewServiceProxy(ServiceProxyConfig{
@@ -72,12 +75,12 @@ func newTCPTestHarness(t *testing.T) *tcpTestHarness {
 			if h.authzErr != nil {
 				return ServiceCaller{}, h.authzErr
 			}
-			return ServiceCaller{AppID: callerAppID, AccountID: "acct", CallScope: h.scope}, nil
+			return ServiceCaller{AppID: callerAppID, AccountID: "acct", CallScope: h.scope, PreviewOfSlug: h.preview}, nil
 		},
 		ResolveCallerIdentity: func(_ context.Context, remoteAddr string) (string, string, error) {
 			switch remoteAddr {
 			case "caller":
-				return "api", "api-dep", nil
+				return h.caller, "api-dep", nil
 			case "broken":
 				return "", "", ErrServiceProxyUnavailable
 			}
