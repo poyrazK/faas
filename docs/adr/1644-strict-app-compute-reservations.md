@@ -1,4 +1,4 @@
-# ADR-20261017: fund app compute before execution
+# ADR-1644: fund app compute before execution
 
 - **Status:** local implementation candidate; native lifecycle acceptance pending.
 - **Date:** 2026-10-17

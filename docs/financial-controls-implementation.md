@@ -25,7 +25,7 @@ required. Other stopping actions and strict scopes remain deferred.
 - Atomic app/job gross compute and shared account compute/egress funding,
   fenced native execution leases, kernel byte quotas, local deadlines, durable
   recovery, funded billing windows and conservative balances
-  in the API, CLI, SDKs and console. See [strict compute decision](adr/20261017-strict-app-compute-reservations.md).
+  in the API, CLI, SDKs and console. See [strict compute decision](adr/1644-strict-app-compute-reservations.md).
 - Account ownership, usage-read/admin authorization, MFA, bounded idempotency
   keys and optimistic revisions. Recovery reads remain available during billing
   suspension without changing payment status.

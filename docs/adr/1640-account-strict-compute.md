@@ -1,7 +1,7 @@
 # ADR-1640: account strict compute with shared quantity allowance
 
 - **Status:** local implementation candidate; native release gates remain open.
-- **Extends:** ADR-566 and [strict app compute](20261017-strict-app-compute-reservations.md).
+- **Extends:** ADR-566 and [strict app compute](1644-strict-app-compute-reservations.md).
 - **Decision:** enable account-scoped, compute-only `strict` / `net_usage` /
   `suspend_workloads`, zero drain and no notification thresholds. The account
   policy covers every app, worker and deployment, including newly created apps.
