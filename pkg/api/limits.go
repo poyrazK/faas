@@ -10777,6 +10777,9 @@ const (
 	// and AuthSSOMaxDomains the email domains one provider serves.
 	AuthSSOMetadataBytes = 512 << 10
 	AuthSSOMaxDomains    = 50
+	// AuthSMSMaxCountries bounds the country calling codes phone sign-in may
+	// text (AUTH_SMS_COUNTRIES).
+	AuthSMSMaxCountries = 50
 	// AuthUINameMaxChars bounds the hosted pages' display name.
 	AuthUINameMaxChars = 60
 	// AuthAuditRetentionMaxDays bounds activity retention. The Auth app

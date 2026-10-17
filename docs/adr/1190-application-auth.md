@@ -381,7 +381,12 @@ typed setting writes one provider's account, sender and secret and removes
 every other provider's. Codes last five minutes rather than GoTrue's 60
 seconds, which a delayed text can outlast, and the message names the app.
 Texting costs the customer money and attracts SMS pumping, so the CLI warns
-when phone sign-in is on without CAPTCHA; GoTrue's per-instance limit of 30
+when phone sign-in is on without CAPTCHA, and `AUTH_SMS_COUNTRIES` limits the
+country calling codes the app texts: the front reads every request that can
+text a number (code sign-in, sign-up, resend, phone change, phone MFA
+enrolment), normalises the number exactly as GoTrue does, checks every JSON
+key GoTrue would read as the phone (Go matches field names without regard to
+case) and refuses the rest before GoTrue sees them; GoTrue's per-instance limit of 30
 messages an hour and one code a minute per number also apply. A confirmed
 phone number publishes `auth.user.confirmed` with `channel: phone`; the
 number itself is never in an event.

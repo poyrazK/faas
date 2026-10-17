@@ -102,6 +102,7 @@ export function errorMessage(body, status) {
     over_sms_send_rate_limit: 'Too many codes sent. Wait a minute and try again.',
     sms_send_failed: 'We could not text this number. Check it and try again.',
     phone_provider_disabled: 'Phone sign-in is turned off for this application.',
+    sms_country_not_allowed: 'This application cannot text numbers in that country.',
     validation_failed: 'Check what you entered and try again. Phone numbers need their country code.',
     sso_provider_not_found: 'No organization sign-in is set up for this email domain.',
     sso_provider_disabled: 'Organization sign-in for this domain is turned off.',

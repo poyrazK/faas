@@ -158,6 +158,10 @@ func hostedPageChange(form url.Values, change *authsettings.Change) error {
 	if form.Has("captcha_provider") {
 		change.Captcha = &authsettings.Captcha{Provider: form.Get("captcha_provider"), SiteKey: strings.TrimSpace(form.Get("captcha_site_key")), Secret: strings.TrimSpace(form.Get("captcha_secret"))}
 	}
+	if form.Has("sms_countries") {
+		codes := strings.FieldsFunc(form.Get("sms_countries"), func(r rune) bool { return r == ',' || r == ' ' })
+		change.SMSCountries = &codes
+	}
 	if form.Has("sms_provider") {
 		change.SMS = &authsettings.SMS{Provider: form.Get("sms_provider"), Account: strings.TrimSpace(form.Get("sms_account")), Sender: strings.TrimSpace(form.Get("sms_sender")), Secret: strings.TrimSpace(form.Get("sms_secret"))}
 	}

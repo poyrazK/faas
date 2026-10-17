@@ -12,6 +12,7 @@ import { storageBindings } from './storage.mjs'
 import { createWorkflowStarter, workflowsConfig } from './workflows.mjs'
 import { createEventPublisher, lifecycleConfig, publishesAfter, setLifecycleEvents } from './events.mjs'
 import { createAuditPruner } from './retention.mjs'
+import { bodyAllowed, smsSendPath } from './sms.mjs'
 import { gotrue, limits, pagePolicy, runtimeConfig } from './config.mjs'
 
 const prefix = '/auth/v1'
@@ -98,7 +99,18 @@ function serveSettings(req, res, settings) {
   res.end(JSON.stringify(settings))
 }
 
-export function createServer({ upstreamPort = gotrue.port, bodyBytes = limits.bodyBytes, authz, ui, realtime, admin, settings } = {}) {
+// readBody buffers a request body up to bodyBytes for an SMS country check.
+function readBody(req, res, bodyBytes, done) {
+  const chunks = []
+  let received = 0
+  req.on('data', chunk => {
+    received += chunk.length
+    if (received > bodyBytes) { problem(res, 413, 'request_too_large'); req.destroy() } else chunks.push(chunk)
+  })
+  req.on('end', () => { if (received <= bodyBytes) done(Buffer.concat(chunks)) })
+}
+
+export function createServer({ upstreamPort = gotrue.port, bodyBytes = limits.bodyBytes, authz, ui, realtime, admin, settings, smsCountries = null } = {}) {
   return http.createServer((req, res) => {
     if (settings && req.url.split('?')[0] === '/settings/v1') return serveSettings(req, res, settings)
     if (realtime && req.url === '/realtime/authorize-channel') return realtime(req, res)
@@ -121,11 +133,25 @@ export function createServer({ upstreamPort = gotrue.port, bodyBytes = limits.bo
     if (path === null || goTrueAdminPath(path)) return problem(res, 404, 'not_found')
     const declared = Number(req.headers['content-length'] ?? 0)
     if (!Number.isSafeInteger(declared) || declared > bodyBytes) return problem(res, 413, 'request_too_large')
-    const upstream = http.request({ host: gotrue.host, port: upstreamPort, method: req.method, path, headers: forwardHeaders(req.headers) }, response => {
-      res.writeHead(response.statusCode, forwardHeaders(response.headers))
-      response.pipe(res)
-    })
-    upstream.on('error', () => problem(res, 502, 'auth_unavailable'))
+    const open = headers => {
+      const upstream = http.request({ host: gotrue.host, port: upstreamPort, method: req.method, path, headers }, response => {
+        res.writeHead(response.statusCode, forwardHeaders(response.headers))
+        response.pipe(res)
+      })
+      upstream.on('error', () => problem(res, 502, 'auth_unavailable'))
+      return upstream
+    }
+    // A request that may text a number is read whole, checked against the
+    // country allowlist and forwarded as read.
+    if (smsCountries && smsSendPath(req.method, req.url)) {
+      return readBody(req, res, bodyBytes, body => {
+        if (!bodyAllowed(body, smsCountries)) return problem(res, 422, 'sms_country_not_allowed')
+        const headers = forwardHeaders(req.headers)
+        delete headers['content-length']
+        open({ ...headers, 'content-length': String(body.length) }).end(body)
+      })
+    }
+    const upstream = open(forwardHeaders(req.headers))
     let received = 0
     req.on('data', chunk => {
       received += chunk.length
@@ -164,7 +190,7 @@ export function start(env = process.env) {
   let dashboard = []
   try { dashboard = [new URL(env.AUTH_GREGALE_API_URL).origin] } catch { /* no dashboard origin sealed */ }
   const admin = createAdminHandler({ pool, admin: goTrueAdmin(signingKey(config.gotrueEnv.GOTRUE_JWT_KEYS)), keys: adminKeyHashes(env), origins: dashboard })
-  const server = createServer({ authz, ui, realtime, admin, settings: config.settings })
+  const server = createServer({ authz, ui, realtime, admin, settings: config.settings, smsCountries: config.smsCountries })
   // Lifecycle events publish after requests that may change users, and
   // once at startup for anything recorded while the app was parked.
   const lifecycle = lifecycleConfig(env)

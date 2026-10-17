@@ -112,7 +112,7 @@ test('enabled providers get this app\'s callback, and settings report only publi
     password: { min_length: 12, required: ['lower', 'digit', 'custom'], leaked_password_check: false },
     mfa: { totp: false }, email: { configured: false, provider: null, from: null }, events: { lifecycle: false },
     passkeys: { enabled: false, rp_id: 'shop-auth.gregale.app', origins: ['https://shop-auth.gregale.app'] },
-    branding: { name: 'shop.example.com', color: null, logo_url: null }, captcha: null, activity: { retention_days: null }, phone: { enabled: false, provider: null }, sso: { enabled: false, entity_id: null, acs_url: null }, keys: { signing: '0A1B2C3D', verifying: ['FFFF0001'] },
+    branding: { name: 'shop.example.com', color: null, logo_url: null }, captcha: null, activity: { retention_days: null }, phone: { enabled: false, provider: null, countries: null }, sso: { enabled: false, entity_id: null, acs_url: null }, keys: { signing: '0A1B2C3D', verifying: ['FFFF0001'] },
   })
   assert.ok(!JSON.stringify(config.settings).includes('provider-secret'))
   assert.deepEqual(runtimeConfig(env()).settings.password, { min_length: 6, required: [], leaked_password_check: false })
@@ -183,7 +183,9 @@ test('phone sign-in needs a known SMS provider and names the app in the message'
   assert.equal(config.gotrueEnv.GOTRUE_SMS_TEMPLATE, 'Your Shop  .Evil  code is {{ .Code }}')
   assert.equal(config.gotrueEnv.GOTRUE_SMS_OTP_EXP, '300')
   assert.equal(runtimeConfig(env({ ...twilio, GOTRUE_SMS_OTP_EXP: '120' })).gotrueEnv.GOTRUE_SMS_OTP_EXP, '120')
-  assert.deepEqual(config.settings.phone, { enabled: true, provider: 'twilio' })
+  assert.deepEqual(config.settings.phone, { enabled: true, provider: 'twilio', countries: null })
+  assert.deepEqual(runtimeConfig(env({ ...twilio, AUTH_SMS_COUNTRIES: '1,44' })).settings.phone.countries, ['1', '44'])
+  assert.throws(() => runtimeConfig(env({ ...twilio, AUTH_SMS_COUNTRIES: '+44' })), /AUTH_SMS_COUNTRIES/)
   assert.ok(!JSON.stringify(config.settings).includes('token-secret'))
   assert.equal(runtimeConfig(env({ ...twilio, GOTRUE_SMS_TEMPLATE: '{{ .Code }} is your code' })).gotrueEnv.GOTRUE_SMS_TEMPLATE, '{{ .Code }} is your code')
   assert.throws(() => runtimeConfig(env({ GOTRUE_EXTERNAL_PHONE_ENABLED: 'true', GOTRUE_SMS_PROVIDER: 'sinch' })), /GOTRUE_SMS_PROVIDER must be one of/)
@@ -191,6 +193,6 @@ test('phone sign-in needs a known SMS provider and names the app in the message'
   const off = runtimeConfig(env({ GOTRUE_EXTERNAL_PHONE_ENABLED: 'false', GOTRUE_SMS_PROVIDER: 'twilio' }))
   assert.equal(off.gotrueEnv.GOTRUE_SMS_TEMPLATE, undefined)
   assert.equal(off.gotrueEnv.GOTRUE_SMS_OTP_EXP, undefined)
-  assert.deepEqual(off.settings.phone, { enabled: false, provider: null })
+  assert.deepEqual(off.settings.phone, { enabled: false, provider: null, countries: null })
   assert.throws(() => runtimeConfig(env({ GOTRUE_RATE_LIMIT_SMS_SENT: '1000' })), /managed by Gregale/)
 })
