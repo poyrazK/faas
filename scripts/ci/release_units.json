@@ -28,6 +28,10 @@
       "lane": "control-plane",
       "services": [{"name": "bridged", "optional": true}]
     },
+    "maild": {
+      "lane": "control-plane",
+      "services": [{"name": "maild", "optional": true}]
+    },
     "schedd": {"lane": "shared"},
     "gatewayd-public": {"lane": "shared"},
     "realtimed": {"lane": "compute"},
@@ -42,6 +46,10 @@
     "imaged": {"lane": "compute"},
     "profiled": {"lane": "compute"},
     "hostage-gen": {"lane": "compute"},
+    "mailctl": {"lane": "tool"},
+    "mail-report": {"lane": "tool"},
+    "mail-metrics": {"lane": "tool"},
+    "mail-feedback": {"lane": "tool"},
     "gregale": {"lane": "tool"},
     "gregalectl": {"lane": "tool"}
   },
