@@ -1,4 +1,4 @@
-# ADR 1545: MCP readiness policy history and restore
+# ADR 20261017191515: MCP readiness policy history and restore
 
 Status: Accepted
 

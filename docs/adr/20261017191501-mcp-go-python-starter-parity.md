@@ -1,4 +1,4 @@
-# ADR-1531: Browser and Task migration parity for Go/Python MCP starters
+# ADR-20261017191501: Browser and Task migration parity for Go/Python MCP starters
 
 ## Status
 

@@ -3845,7 +3845,7 @@ least 20 observations per five-minute window and ten minutes of sustained
 failure. These defaults use existing Alertmanager routing; customer alert-rule
 configuration is not extended by this feature. See
 [the performance runbook](runbooks/FaasMCPProtocolPerformance.md) and
-[ADR 1536](adr/1536-mcp-protocol-performance.md).
+[ADR 20261017191506](adr/20261017191506-mcp-protocol-performance.md).
 
 ### Customer performance alerts
 
@@ -3873,7 +3873,7 @@ The alert API accepts `mcp_protocol_error_rate_pct` and
 `mcp_for_minutes` (1..60). Omit these fields for other metrics. MCP rules require
 app scope, webhook action, gt/gte comparison and a supported window. Error-rate
 thresholds are 0..100; latency thresholds are 0..300000 ms. The Node and Python
-SDKs expose the same fields. See [ADR 1537](adr/1537-customer-mcp-performance-alerts.md).
+SDKs expose the same fields. See [ADR 20261017191507](adr/20261017191507-customer-mcp-performance-alerts.md).
 
 ### Independent telemetry coverage
 
@@ -4434,7 +4434,7 @@ recovery delivery.
 Apply the fallback migration and upgrade **all readiness evaluators** before enabling
 this policy. Older evaluator binaries do not honor pinned routing. Rollback refuses
 to discard fallback policies or routing history. See
-[ADR 1552](adr/1552-mcp-readiness-fallback-delivery.md) for the routing decisions.
+[ADR 20261017191522](adr/20261017191522-mcp-readiness-fallback-delivery.md) for the routing decisions.
 
 ### Independent webhook receiver queues
 
@@ -4479,7 +4479,7 @@ preserving retry deadlines, successful receiver flags and legacy lease fences.
 Do not mix old and new evaluators. Rollback refuses to discard destination
 progress or targeted action history.
 
-See [ADR 1553](adr/1553-mcp-readiness-destination-queues.md) for ordering and upgrade decisions.
+See [ADR 20261017191523](adr/20261017191523-mcp-readiness-destination-queues.md) for ordering and upgrade decisions.
 
 
 ### Reminder defaults for new incidents
@@ -4788,7 +4788,7 @@ evaluators and apid**, then resume before enabling native fallback. Old evaluato
 native fallback routing and credential namespaces. Existing policies remain
 webhook, and acknowledgement bindings remain primary. Rollback refuses to discard
 native fallback configuration, pinned routing, delivery or acknowledgement history.
-See [ADR 1558](adr/1558-mcp-readiness-pagerduty-fallback.md). Memory/PostgreSQL and
+See [ADR 20261017191528](adr/20261017191528-mcp-readiness-pagerduty-fallback.md). Memory/PostgreSQL and
 local fake-provider tests cover the implementation; real PagerDuty service/key,
 paging and subscription delivery still require live qualification.
 
@@ -4843,7 +4843,7 @@ refuses independent bindings and disabled fallback version tombstones; preserve
 these records before a downgrade. Older binaries do not serve destination-specific
 callbacks, so pause incoming subscriptions during rollback and reconfigure to the
 original callback URL only after preserving the data required by the rollback
-guard. See [ADR 1559](adr/1559-mcp-readiness-independent-pagerduty-bindings.md).
+guard. See [ADR 20261017191529](adr/20261017191529-mcp-readiness-independent-pagerduty-bindings.md).
 Local signature, persistence and migration checks do not replace live PagerDuty
 subscription qualification.
 
@@ -4918,6 +4918,6 @@ all writers are upgraded; enable release sync and begin a fresh acknowledgement
 cycle. Rollback refuses enabled release settings, ownership/watermarks or release
 receipts rather than discarding ordering and audit history. Disabling the setting
 alone does not remove that retained state. See
-[ADR 1560](adr/1560-mcp-readiness-pagerduty-release.md). Local tests cover memory,
+[ADR 20261017191530](adr/20261017191530-mcp-readiness-pagerduty-release.md). Local tests cover memory,
 PostgreSQL restart, signatures, migration replay and client contracts; live
 PagerDuty subscription qualification remains pending.

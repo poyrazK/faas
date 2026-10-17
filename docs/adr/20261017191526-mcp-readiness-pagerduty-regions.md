@@ -1,10 +1,10 @@
-# ADR-1556: Regional PagerDuty readiness delivery
+# ADR-20261017191526: Regional PagerDuty readiness delivery
 
 Status: Accepted
 
 ## Context
 
-ADR-1555 fixes native readiness delivery to the US Events API. EU integrations need
+ADR-20261017191525 fixes native readiness delivery to the US Events API. EU integrations need
 their regional endpoint without permitting arbitrary credential-bearing URLs or
 retargeting ongoing incident recovery.
 

@@ -1,4 +1,4 @@
-# ADR-1532: Bounded starter protocol observations
+# ADR-20261017191502: Bounded starter protocol observations
 
 ## Status
 

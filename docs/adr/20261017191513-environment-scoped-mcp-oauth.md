@@ -1,6 +1,6 @@
-# ADR 1543: Environment-scoped MCP OAuth connections
+# ADR 20261017191513: Environment-scoped MCP OAuth connections
 
-Status: Accepted (app-wide readiness policy limitation superseded by ADR 1544)
+Status: Accepted (app-wide readiness policy limitation superseded by ADR 20261017191514)
 
 Each catalog connection role binds to one immutable deployment `scope`. Omission
 means `default`, preserving existing connections. Role names remain unique per

@@ -1,4 +1,4 @@
-# ADR-1558: Native PagerDuty readiness fallback
+# ADR-20261017191528: Native PagerDuty readiness fallback
 
 Status: Accepted
 

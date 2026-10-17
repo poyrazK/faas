@@ -1,4 +1,4 @@
-# ADR 1535: MCP browser OAuth and guarded renewal recovery
+# ADR 20261017191505: MCP browser OAuth and guarded renewal recovery
 
 ## Decision
 

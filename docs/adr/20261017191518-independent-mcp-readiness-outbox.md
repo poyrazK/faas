@@ -1,7 +1,7 @@
 # 1276: Independent MCP readiness incidents and delivery outbox
 
 Status: Accepted. Maintenance suppression and continuation notifications are
-extended by [ADR-1549](1549-mcp-readiness-maintenance-windows.md).
+extended by [ADR-20261017191519](20261017191519-mcp-readiness-maintenance-windows.md).
 
 ## Context
 

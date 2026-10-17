@@ -1,8 +1,8 @@
-# ADR-1542: Managed OAuth credentials for MCP readiness
+# ADR-20261017191512: Managed OAuth credentials for MCP readiness
 
-Status: Accepted (environment scope limitation superseded by ADR 1543)
+Status: Accepted (environment scope limitation superseded by ADR 20261017191513)
 
-Continuous readiness checks (ADR-1541) previously supported anonymous access and app-secret token references. OAuth-protected MCP deployments also need expiring access tokens, refresh-token rotation, revoked-grant handling, and recovery after an uncertain provider response.
+Continuous readiness checks (ADR-20261017191511) previously supported anonymous access and app-secret token references. OAuth-protected MCP deployments also need expiring access tokens, refresh-token rotation, revoked-grant handling, and recovery after an uncertain provider response.
 
 A readiness role can now reference an existing app-local catalog OAuth connection by role and exact revision. `oauth_connection` and `secret_ref` are mutually exclusive. The referenced connection must be enabled, unpaused, configured for OAuth, and use the same MCP endpoint path. Connection references use the default environment scope because the existing managed OAuth connection and its grants are app-local in that scope. Other environment scopes cannot consume the grant. Existing managed-connection plan eligibility applies.
 

@@ -1,6 +1,6 @@
-# ADR 1561: Durable platform MCP readiness admission
+# ADR 20261017191510: Durable platform MCP readiness admission
 
-This extends ADR 1539's client-side readiness checks. A client-provided success
+This extends ADR 20261017191509's client-side readiness checks. A client-provided success
 flag or saved CLI report cannot authorize production traffic. The platform runs
 the read-only probe itself, through a fixed deployment-preview origin, before
 recording its result. The API body accepts only a configured role name. The

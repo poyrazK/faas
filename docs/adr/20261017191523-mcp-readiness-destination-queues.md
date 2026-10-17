@@ -1,8 +1,8 @@
-# ADR-1553: Independent MCP readiness destination queues
+# ADR-20261017191523: Independent MCP readiness destination queues
 
 ## Context
 
-ADR-1552 keeps a logical recovery at the rule's FIFO head until every informed
+ADR-20261017191522 keeps a logical recovery at the rule's FIFO head until every informed
 receiver succeeds. A broken primary can therefore block subsequent failures and
 recoveries at a healthy fallback. Retries must remain durable without forcing
 operators to discard the old primary recovery.

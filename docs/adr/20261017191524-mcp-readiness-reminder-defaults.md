@@ -1,4 +1,4 @@
-# ADR-1554: Versioned readiness reminder defaults
+# ADR-20261017191524: Versioned readiness reminder defaults
 
 ## Status
 

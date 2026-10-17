@@ -1,4 +1,4 @@
-# ADR 1544: Environment-scoped MCP readiness policies
+# ADR 20261017191514: Environment-scoped MCP readiness policies
 
 Status: Accepted
 

@@ -1,4 +1,4 @@
-# ADR 1537: Customer MCP performance alerts
+# ADR 20261017191507: Customer MCP performance alerts
 
 Status: accepted
 
@@ -11,7 +11,7 @@ thresholds and notifications through the existing customer alert system.
 
 Add two app-scoped, webhook-only metrics: `mcp_protocol_error_rate_pct` and
 `mcp_protocol_execution_p95_ms`. They use the host-attributed starter observations
-from ADR 1536. They are not authorization evidence or deployment-action inputs.
+from ADR 20261017191506. They are not authorization evidence or deployment-action inputs.
 The error population includes RPC errors, tool errors, authorization errors,
 internal errors, and timeouts. Cancellations remain separate. Execution p95 uses
 response-construction measurements, independently of SSE delivery duration.

@@ -1,4 +1,4 @@
-# ADR 1534: MCP dashboard grant retirement recovery
+# ADR 20261017191504: MCP dashboard grant retirement recovery
 
 ## Decision
 

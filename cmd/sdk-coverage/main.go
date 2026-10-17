@@ -142,7 +142,7 @@ var routeExclude = map[string]bool{
 	"GET /oauth/slack/callback":                                              true, // ADR-1497 owner session and one-use state confirmation.
 	"GET /oauth/linear/callback":                                             true, // ADR-1478: owner session OAuth callback and HTML team picker with PKCE and one-use state.
 	"POST /v1/webhooks/mcp-readiness/pagerduty/{id}":                         true, // Provider HMAC authentication, not Bearer HTTP.
-	"POST /v1/webhooks/mcp-readiness/pagerduty/{id}/{destination}":           true, // Destination-scoped provider HMAC ingress (ADR-1559).
+	"POST /v1/webhooks/mcp-readiness/pagerduty/{id}/{destination}":           true, // Destination-scoped provider HMAC ingress (ADR-20261017191529).
 	"POST /dashboard/mcp/apps/{slug}/alerts/{id}/pagerduty-acknowledgements": true, // Named-CSRF browser adapter.
 
 	// Issue #555 trace endpoint. Operator-only surface (X-Faas-Trace-Auth

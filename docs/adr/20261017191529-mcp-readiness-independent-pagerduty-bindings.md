@@ -1,4 +1,4 @@
-# ADR 1559: Independent PagerDuty acknowledgement bindings
+# ADR 20261017191529: Independent PagerDuty acknowledgement bindings
 
 ## Status
 
@@ -6,7 +6,7 @@ Accepted, 2026-10-17.
 
 ## Context
 
-ADR 1558 supports a native PagerDuty primary and fallback but permits only one
+ADR 20261017191528 supports a native PagerDuty primary and fallback but permits only one
 inbound acknowledgement binding per readiness rule. Installing fallback sync
 replaces primary sync. Operators need acknowledgements from either destination
 to pause reminders without sharing signing secrets or rotation schedules.

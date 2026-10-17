@@ -1,4 +1,4 @@
-# ADR 1560: Opt-in PagerDuty acknowledgement release
+# ADR 20261017191530: Opt-in PagerDuty acknowledgement release
 
 ## Status
 

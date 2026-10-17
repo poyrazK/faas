@@ -1,4 +1,4 @@
-# ADR 1539: Public deployment MCP readiness
+# ADR 20261017191509: Public deployment MCP readiness
 
 The existing MCP deploy path already checks candidate replicas, catalog pins,
 role authorization and traffic-admission evidence. We add a reusable, read-only

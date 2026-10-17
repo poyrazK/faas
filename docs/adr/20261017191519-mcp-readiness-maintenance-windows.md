@@ -46,7 +46,7 @@ suppressed work stays terminal, so restarts cannot replay a burst. Cancellation
 is idempotent and retains its original attribution. The PostgreSQL implementation
 locks app, then rule, then events to serialize window edits, observations and
 claims. Memory uses its existing mutex. Claim/acknowledgement token fencing and
-at-least-once transport semantics from ADR-1548 remain in force.
+at-least-once transport semantics from ADR-20261017191518 remain in force.
 
 The migration is replayable and refuses rollback when maintenance or suppressed
 history would be lost. CLI, dashboard, OpenAPI and generated SDKs expose the same

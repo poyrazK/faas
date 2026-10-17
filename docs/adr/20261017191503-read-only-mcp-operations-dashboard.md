@@ -1,4 +1,4 @@
-# ADR-1533: Read-only MCP operations dashboard
+# ADR-20261017191503: Read-only MCP operations dashboard
 
 ## Status
 

@@ -208,7 +208,7 @@ var routeExclude = map[string]bool{
 	"GET /v1/internal/metrics/promtail-targets":                       true, // issue #274 — loopback Promtail HTTP-SD endpoint
 
 	"POST /v1/webhooks/mcp-readiness/pagerduty/{id}":                         true, // Provider HMAC authentication, not Bearer HTTP.
-	"POST /v1/webhooks/mcp-readiness/pagerduty/{id}/{destination}":           true, // Destination-scoped provider HMAC ingress (ADR-1559).
+	"POST /v1/webhooks/mcp-readiness/pagerduty/{id}/{destination}":           true, // Destination-scoped provider HMAC ingress (ADR-20261017191529).
 	"POST /dashboard/mcp/apps/{slug}/alerts/{id}/pagerduty-acknowledgements": true, // Named-CSRF browser adapter.
 	// Issue #777 / ADR-091: operator observability backend.
 	// Mirror the operator-only exclusion across both this list

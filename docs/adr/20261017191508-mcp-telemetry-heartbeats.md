@@ -1,4 +1,4 @@
-# ADR 1538: Independent MCP telemetry heartbeats
+# ADR 20261017191508: Independent MCP telemetry heartbeats
 
 Updated Go, Python and Node web starters emit a payload-free version-1 heartbeat
 immediately and every 30 seconds, independent of requests. Shutdown stops the

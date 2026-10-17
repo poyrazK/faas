@@ -1,4 +1,4 @@
-# ADR-1557: Signed PagerDuty readiness acknowledgements
+# ADR-20261017191527: Signed PagerDuty readiness acknowledgements
 
 Status: Accepted
 

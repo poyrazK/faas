@@ -1,4 +1,4 @@
-# ADR 1536: MCP protocol performance aggregation
+# ADR 20261017191506: MCP protocol performance aggregation
 
 Status: accepted
 

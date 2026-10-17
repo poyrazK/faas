@@ -1,6 +1,6 @@
 # 1275: MCP readiness incident lifecycle
 
-Status: Superseded by [ADR 1548](1548-independent-mcp-readiness-outbox.md) for incident persistence and delivery sequencing.
+Status: Superseded by [ADR 20261017191518](20261017191518-independent-mcp-readiness-outbox.md) for incident persistence and delivery sequencing.
 
 ## Context
 
