@@ -101,6 +101,38 @@ the fake-API smoke cases; only the separately passed opt-in regeneration test
 was deselected. Generator and changed-test Ruff checks pass after removing an
 unused generator variable.
 
+## Acceptance host preflight and evidence
+
+Both native runners execute `scripts/ci/native-acceptance-preflight.py` before
+compiling guests or stopping services. The check reads host state and writes
+only its requested JSON report. It checks Linux/amd64, root, KVM, the designated
+host marker, helper tools, pinned Go and Firecracker versions, cgroup v2 CPU and
+memory delegation, the tenant bridge and forwarding. E2E also checks PostgreSQL
+schema/extension privileges with a read-only query; credentials stay in the
+environment and are omitted from reports and repair messages.
+
+With local artifact storage, E2E checks `kernel/<Firecracker version>` against
+`FAAS_TEST_KERNEL`. VMMD uses this canonical key; an existing compatibility
+kernel path alone is insufficient. It checks `base/runner-builder-amd64.ext4`,
+its digest sidecar and its canonical Grype scan, applying the fix-available
+CRITICAL gate with the stricter total-count fallback for legacy scans. Additional
+runtime bases can be checked with repeated `--runtime-base-key base/*.ext4`
+arguments when invoking the helper directly. These checks require staging through
+the repository's imaged pipeline; copying an unscanned ext4 is insufficient.
+Remote OCI/GCS artifacts remain explicitly unverified by this local inspection
+and must still resolve and pass admission in E2E.
+
+The runners retain `acceptance-*.json` beside their logs; native CI collects the
+reports before removing its transfer bundle. Each report records the source SHA,
+lane, host CPU/RAM and detected virtualization, inspected artifact SHA-256 values,
+test passes/skips/failures, process exit status and final leak/service-restoration
+outcome. Skips, missing logs or unverified preflight checks make the evidence
+incomplete; failures and failed cleanup remain failed. Existing runner verdicts
+still control the job result. A completed report covers only its named lane,
+not every acceptance gate. Virtualization detection does not qualify performance:
+the report always leaves performance qualification false. Nested-KVM runs provide
+functional evidence only and do not replace designated native-host acceptance.
+
 ## Linux guest process contracts
 
 On a Linux host as root with an explicitly delegated cgroup v2 parent:

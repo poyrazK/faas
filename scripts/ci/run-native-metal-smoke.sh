@@ -25,7 +25,7 @@ die() {
   die "/etc/faas/builder-acceptance-host is missing; this node is not designated for disruptive acceptance tests"
 
 for tool in busybox e2fsck file firecracker flock gcc install ip iptables jailer \
-  make mkfs.ext4 nft readlink systemctl systemd-run tc truncate unshare; do
+  make mkfs.ext4 nft python3 readlink systemctl systemd-run tc truncate unshare; do
   command -v "${tool}" >/dev/null || die "required host tool is missing: ${tool}"
 done
 
@@ -61,6 +61,13 @@ active_services="${stage_root}/active-services"
 cache_root="/var/cache/faas-metal-smoke"
 services=(faas-vmmd faas-builderd faas-imaged faas-gatewayd-internal)
 base_mountpoints=(dev overlay proc run sys sys/fs/cgroup tmp)
+evidence="${transfer_root:-/var/tmp}/acceptance-metal-${FAAS_METAL_SOURCE_SHA}-${run_id}.json"
+acceptance_logs=()
+
+# Read-only checks run before fixture compilation or service quiescing.
+python3 "${repo_root}/scripts/ci/native-acceptance-preflight.py" check \
+  --mode metal --repo-root "${repo_root}" --source-sha "${FAAS_METAL_SOURCE_SHA}" \
+  --go "${FAAS_METAL_GO}" --kernel "${kernel}" --fc-version "${fc_version}" --report "${evidence}"
 
 mkdir -p /var/lock
 exec 9>/var/lock/faas-builder-acceptance.lock
@@ -79,11 +86,13 @@ done
 cleanup() {
   local rc=$?
   local restore_failed=0
+  local cleanup_status=passed
   trap - EXIT HUP INT TERM
   set +e
 
   if ! bash "${repo_root}/deploy/scripts/leakcheck.sh"; then
     echo "native metal smoke: final leak check failed" >&2
+    cleanup_status=failed
     [[ "${rc}" -ne 0 ]] || rc=1
   fi
 
@@ -95,6 +104,15 @@ cleanup() {
     fi
   done < "${active_services}" 2>/dev/null || true
   if [[ "${restore_failed}" -ne 0 ]]; then
+    cleanup_status=failed
+    [[ "${rc}" -ne 0 ]] || rc=1
+  fi
+
+  local log_args=() log
+  for log in "${acceptance_logs[@]}"; do log_args+=(--log "${log}"); done
+  if ! python3 "${repo_root}/scripts/ci/native-acceptance-preflight.py" finish \
+    --report "${evidence}" --exit-code "${rc}" --cleanup "${cleanup_status}" "${log_args[@]}"; then
+    echo "native metal smoke: could not finalize acceptance evidence" >&2
     [[ "${rc}" -ne 0 ]] || rc=1
   fi
 
@@ -204,6 +222,7 @@ unset RUN_REGEX
 # shrinks back to a single test.
 echo "native metal smoke: run the pkg/fcvm metal package"
 metal_log="${FAAS_METAL_TRANSFER_ROOT:-/var/tmp}/fcvm-metal.log"
+acceptance_logs+=("${metal_log}")
 set +e
 make GO="${FAAS_METAL_GO}" PKGS=./pkg/fcvm \
   RUN_ARGS='-timeout=30m -v' test-metal 2>&1 | tee "${metal_log}"
@@ -257,6 +276,7 @@ batch_tests=(
 batch_regex="^($(IFS='|'; echo "${batch_tests[*]}"))$"
 batch_bin="${FAAS_METAL_TRANSFER_ROOT:-/var/tmp}/fcvm-metal.test"
 batch_log="${FAAS_METAL_TRANSFER_ROOT:-/var/tmp}/fcvm-metal-batch.log"
+acceptance_logs+=("${batch_log}")
 
 echo "native metal smoke: compile the namespace-batch test binary"
 "${FAAS_METAL_GO}" test -c -tags metal -race -o "${batch_bin}" ./pkg/fcvm
