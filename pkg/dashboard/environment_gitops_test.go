@@ -72,6 +72,7 @@ func TestGitOpsDashboardCandidatePlanDisplaysPinnedObservation(t *testing.T) {
 func TestGitOpsDashboardSourceOutageShowsGuidanceWithoutWireCodes(t *testing.T) {
 	now := time.Now().UTC()
 	status := api.EnvironmentGitOpsStatusResponse{Source: api.EnvironmentGitSource{
+		ID:              "source",
 		Spec:            api.EnvironmentGitSourceSpec{Provider: "github", Mode: "report", ApprovalPolicy: "manual"},
 		SourceCheckedAt: &now, SourceErrorCode: "environment_git_source_unavailable",
 	}}

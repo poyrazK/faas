@@ -459,6 +459,11 @@ var NewPgBackupPushedSampler = newPgBackupPushedSampler
 var NewPreviewJanitor = newPreviewJanitor
 var NewProjectLifecycleFixture = newProjectLifecycleFixture
 var NewRuntimeConfigManager = newRuntimeConfigManager
+
+func (s *server) ConfigureHostingForTest(getenv func(string) string) error {
+	return s.configureHosting(getenv)
+}
+
 var NewSafeReleaseLeaseMetrics = newSafeReleaseLeaseMetrics
 var NewServer = newServer
 var NewServerWithDeps = newServerWithDeps

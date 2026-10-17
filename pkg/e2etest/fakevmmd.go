@@ -137,6 +137,7 @@ type FakeVMMD struct {
 	// a stable sequence.
 	liveInstances   []string
 	instanceStats   map[string]*vmmdpb.InstanceStats
+	instanceMemory  map[string]int64
 	frameworkReady  []*vmmdpb.FrameworkReadyRequest
 	egressUpdates   []*vmmdpb.UpdateEgressAllowlistRequest
 	cpuLimitUpdates []*vmmdpb.UpdateAppCPULimitRequest
@@ -224,11 +225,9 @@ func (g *RequestGate) Release() {
 }
 
 const (
-	// FakeSnapshotRAMMB is the RAM size the fake reports for a captured
-	// snapshot. Engine.snapshotMatchesRAM rejects a snapshot whose mem_bytes
-	// disagrees with the admitted instance size, so a test that seeds both has
-	// to use this for each or the wake cold-boots for a reason it was not
-	// testing.
+	// FakeSnapshotRAMMB is the fallback for legacy fixtures that seed an
+	// instance without booting it through an AppSpec. Actual cold boots and
+	// restores retain their requested memory shape for captures and Stats.
 	FakeSnapshotRAMMB = 256
 
 	// FakeFCVersion is what tests pin schedd's Firecracker version to via
@@ -466,7 +465,7 @@ func (s *FakeVMMD) isUnreachable() bool {
 func (s *FakeVMMD) CreateColdBoot(_ context.Context, request *vmmdpb.CreateColdBootRequest) (*vmmdpb.WakeResponse, error) {
 	s.mu.Lock()
 	s.coldBootCalls = append(s.coldBootCalls, proto.Clone(request).(*vmmdpb.CreateColdBootRequest))
-	s.trackLiveLocked(request.GetInstance())
+	s.trackLiveShapeLocked(request.GetInstance(), request.GetApp())
 	s.mu.Unlock()
 	return &vmmdpb.WakeResponse{
 		Instance: request.GetInstance(),
@@ -501,7 +500,7 @@ func (s *FakeVMMD) CreateFromSnapshot(_ context.Context, request *vmmdpb.CreateF
 	failure := s.failRestore
 	degrade := s.degradeWake
 	if failure == nil {
-		s.trackLiveLocked(request.GetInstance())
+		s.trackLiveShapeLocked(request.GetInstance(), request.GetApp())
 	}
 	s.mu.Unlock()
 	if failure != nil {
@@ -528,14 +527,15 @@ func (s *FakeVMMD) PauseAndSnapshot(_ context.Context, request *vmmdpb.PauseAndS
 	s.mu.Lock()
 	s.snapshotCalls = append(s.snapshotCalls, proto.Clone(request).(*vmmdpb.PauseAndSnapshotRequest))
 	failure := s.failSnapshot
+	memory := s.instanceMemoryBytesLocked(request.GetInstance())
 	s.mu.Unlock()
 	if failure != nil {
 		return nil, failure
 	}
 	return &vmmdpb.SnapshotResponse{
-		MemBytes:     int64(FakeSnapshotRAMMB) << 20,
+		MemBytes:     memory,
 		VmstateBytes: 4096,
-		StoredBytes:  int64(FakeSnapshotRAMMB)<<20 + 4096,
+		StoredBytes:  memory + 4096,
 	}, nil
 }
 
@@ -575,7 +575,7 @@ func (s *FakeVMMD) Stats(context.Context, *vmmdpb.StatsRequest) (*vmmdpb.StatsRe
 				Instance:      id,
 				LeaseUid:      20000,
 				HostIp:        "127.0.0.1",
-				ResidentBytes: wrapperspb.Int64(int64(FakeSnapshotRAMMB) << 20),
+				ResidentBytes: wrapperspb.Int64(s.instanceMemoryBytesLocked(id)),
 			}
 		}
 		resident += stat.GetResidentBytes().GetValue()
@@ -671,6 +671,24 @@ func (s *FakeVMMD) FrameworkReadyCalls() []*vmmdpb.FrameworkReadyRequest {
 	return append([]*vmmdpb.FrameworkReadyRequest(nil), s.frameworkReady...)
 }
 
+// trackLiveShapeLocked retains the AppSpec memory shape. Callers hold s.mu.
+func (s *FakeVMMD) trackLiveShapeLocked(instanceID string, app *vmmdpb.AppSpec) {
+	s.trackLiveLocked(instanceID)
+	if app.GetMemSizeMib() > 0 {
+		if s.instanceMemory == nil {
+			s.instanceMemory = map[string]int64{}
+		}
+		s.instanceMemory[instanceID] = int64(app.GetMemSizeMib()) << 20
+	}
+}
+
+func (s *FakeVMMD) instanceMemoryBytesLocked(instanceID string) int64 {
+	if memory := s.instanceMemory[instanceID]; memory > 0 {
+		return memory
+	}
+	return int64(FakeSnapshotRAMMB) << 20
+}
+
 // trackLiveLocked records an instance as resident. Callers hold s.mu.
 func (s *FakeVMMD) trackLiveLocked(instanceID string) {
 	if instanceID == "" {
@@ -694,6 +712,7 @@ func (s *FakeVMMD) forgetLiveLocked(instanceID string) {
 	}
 	s.liveInstances = kept
 	delete(s.instanceStats, instanceID)
+	delete(s.instanceMemory, instanceID)
 }
 
 // FailRestore makes the next and every subsequent CreateFromSnapshot return a

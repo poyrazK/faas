@@ -140,6 +140,9 @@ func run(args []string) (status int) {
 		fmt.Print(topLevelUsage(false))
 		return 0
 	}
+	if !cliCommandAvailable(args[0]) {
+		return unknownCommand(args[0])
+	}
 	// Help is always local and comes from the same manifest as completion and
 	// the generated reference. This also handles flags preceding --help.
 	if len(args) > 1 && args[0] != "help" && hasHelpFlag(args[1:]) {
@@ -176,7 +179,7 @@ func run(args []string) (status int) {
 			fmt.Print(topLevelUsage(len(args) == 2 && args[1] == "--all"))
 			return 0
 		}
-		if command, ok := lookupCliCommand(args[1]); ok {
+		if command, ok := lookupCliCommand(args[1]); ok && cliCommandAvailable(command.Name) {
 			if printManifestHelp(osStdout, command, args[2:]) {
 				return 0
 			}
@@ -431,6 +434,8 @@ func run(args []string) (status int) {
 		return cmdUploadCache(args[1:])
 	case "domains":
 		return cmdDomains(args[1:])
+	case "sites":
+		return cmdSites(args[1:])
 	case "tenant-surfaces":
 		return cmdTenantSurfaces(args[1:])
 	case "flags":
@@ -677,11 +682,15 @@ func run(args []string) (status int) {
 		// flipping the box to FAAS_MAIL_TRANSPORT=resend.
 		return cmdMail(args[1:])
 	default:
-		if suggestion, ok := suggestCommand(args[0]); ok {
-			return printErr("Unknown command", fmt.Errorf("gregale: unknown command %q; did you mean 'gregale %s'?", args[0], suggestion))
-		}
-		return printErr("Unknown command", fmt.Errorf("gregale: unknown command %q; run 'gregale help' for usage", args[0]))
+		return unknownCommand(args[0])
 	}
+}
+
+func unknownCommand(name string) int {
+	if suggestion, ok := suggestCommand(name); ok {
+		return printErr("Unknown command", fmt.Errorf("gregale: unknown command %q; did you mean 'gregale %s'?", name, suggestion))
+	}
+	return printErr("Unknown command", fmt.Errorf("gregale: unknown command %q; run 'gregale help' for usage", name))
 }
 
 // printManifestHelp resolves verb paths without invoking a command parser or

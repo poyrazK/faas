@@ -1,0 +1,82 @@
+name: internal-hosting-worker
+on:
+  pull_request:
+    paths:
+      - deploy/cloudflare/hosting-worker/**
+      - scripts/ops/internal-frontend-hosting-qualification.py
+      - scripts/ops/internal_frontend_hosting_*.py
+      - scripts/ci/test_internal_frontend_hosting_*.py
+      - pkg/hosting/pilot*.go
+      - pkg/hosting/config.go
+      - pkg/hosting/release_config*.go
+      - pkg/hosting/manifest.go
+      - pkg/api/hosting.go
+      - pkg/api/limits.go
+      - .github/actions/frontend-hosting/**
+      - scripts/ci/test_frontend_hosting_action.py
+      - .github/workflows/internal-hosting-worker.yml
+  push:
+    branches: [main]
+    paths:
+      - deploy/cloudflare/hosting-worker/**
+      - scripts/ops/internal-frontend-hosting-qualification.py
+      - scripts/ops/internal_frontend_hosting_*.py
+      - scripts/ci/test_internal_frontend_hosting_*.py
+      - pkg/hosting/pilot*.go
+      - pkg/hosting/config.go
+      - pkg/hosting/release_config*.go
+      - pkg/hosting/manifest.go
+      - pkg/api/hosting.go
+      - .github/actions/frontend-hosting/**
+      - scripts/ci/test_frontend_hosting_action.py
+      - .github/workflows/internal-hosting-worker.yml
+permissions:
+  contents: read
+jobs:
+  worker-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+      - run: node --test --test-isolation=none deploy/cloudflare/hosting-worker/worker.test.mjs
+  deployment-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      TF_IN_AUTOMATION: 'true'
+      TF_INPUT: 'false'
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Qualification failure and credential boundaries
+        run: python3 -m unittest discover -s scripts/ci -p 'test_internal_frontend_hosting_*.py'
+      - name: Site-scoped CI Action contracts
+        run: python3 -m unittest discover -s scripts/ci -p 'test_frontend_hosting_action.py'
+      - name: Install checksum-pinned Terraform
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/terraform_1.12.2_linux_amd64.zip"
+          curl --fail --silent --show-error --retry 3 --max-time 60 \
+            --output "$archive" \
+            https://releases.hashicorp.com/terraform/1.12.2/terraform_1.12.2_linux_amd64.zip
+          printf '%s  %s\n' \
+            1eaed12ca41fcfe094da3d76a7e9aa0639ad3409c43be0103ee9f5a1ff4b7437 "$archive" \
+            | sha256sum --check --strict
+          mkdir -p "$RUNNER_TEMP/hosting-terraform"
+          unzip -q "$archive" terraform -d "$RUNNER_TEMP/hosting-terraform"
+          echo "$RUNNER_TEMP/hosting-terraform" >> "$GITHUB_PATH"
+      - name: Validate infrastructure and default-off contracts without cloud credentials
+        working-directory: deploy/cloudflare/hosting-worker/terraform
+        run: |
+          set -euo pipefail
+          terraform fmt -check -recursive
+          terraform init -backend=false -input=false -lockfile=readonly
+          terraform validate -no-color
+          terraform test -no-color
