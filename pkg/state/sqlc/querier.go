@@ -1410,6 +1410,7 @@ type Querier interface {
 	HostingOIDCTrustList(ctx context.Context, db DBTX, arg HostingOIDCTrustListParams) ([]HostingOidcTrust, error)
 	HostingOIDCTrustLock(ctx context.Context, db DBTX, arg HostingOIDCTrustLockParams) (HostingOidcTrust, error)
 	HostingOIDCTrustRevoke(ctx context.Context, db DBTX, arg HostingOIDCTrustRevokeParams) (int64, error)
+	HostingPreviewCapacity(ctx context.Context, db DBTX, arg HostingPreviewCapacityParams) (HostingPreviewCapacityRow, error)
 	HostingPreviewCount(ctx context.Context, db DBTX, siteID pgtype.UUID) (int64, error)
 	HostingPreviewCreate(ctx context.Context, db DBTX, arg HostingPreviewCreateParams) (HostingPreview, error)
 	HostingPreviewDeleteSite(ctx context.Context, db DBTX, siteID pgtype.UUID) error

@@ -45,6 +45,9 @@ func cmdSitesCISetup(args []string, preflight bool) int {
 	if err != nil {
 		return printErr("Invalid setup recipe", err)
 	}
+	if recipe.Config.ReservePreview && !hostingPreviewReservationsWorkstationEnabled() {
+		return printErr("Preview reservations are disabled", errors.New("set FAAS_FRONTEND_HOSTING_PREVIEW_RESERVATIONS_ENABLED=1"))
+	}
 	client, err := hostingDiagnosticClient(recipe.SiteID, "")
 	if err != nil {
 		return printErr("Operator connection unavailable", err)

@@ -4084,6 +4084,7 @@ type HostingCiRun struct {
 	Fingerprint      string
 	CreatedAt        pgtype.Timestamptz
 	PreviewExpiresAt pgtype.Timestamptz
+	PreviewReserved  bool
 }
 
 type HostingDomain struct {

@@ -160,3 +160,17 @@ func TestWorkflowPreflightRejectsExecutableDriftAndAmbiguousYAML(t *testing.T) {
 		t.Fatal("composite shape")
 	}
 }
+
+func TestPreparePreviewReservationsAreExplicitAndGated(t *testing.T) {
+	// adr: 202610171216 — generated workflows never silently change existing retry fingerprints.
+	site, trust, caps, req := setupFixture()
+	req.Config.ReservePreview = true
+	if out := Prepare(site, trust, caps, req, time.Now().UTC()); out.ConfigurationValid || out.WorkflowYAML != "" {
+		t.Fatal("disabled reservation export", out)
+	}
+	caps.PreviewReservationsEnabled = true
+	out := Prepare(site, trust, caps, req, time.Now().UTC())
+	if !out.ConfigurationValid || !strings.Contains(out.WorkflowYAML, `reserve-preview: "true"`) {
+		t.Fatal(out)
+	}
+}

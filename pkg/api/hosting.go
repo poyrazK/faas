@@ -5,6 +5,7 @@ import "time"
 // HostingCapabilities is an operator-only view of the enforced pilot limits.
 // UploadBaseURL identifies private storage; it conveys no access credentials.
 type HostingCapabilities struct {
+	PreviewReservationsEnabled    bool     `json:"preview_reservations_enabled"`
 	ActivityEnabled               bool     `json:"activity_enabled"`
 	ActivityPageSize              int      `json:"activity_page_size"`
 	CISetupEnabled                bool     `json:"ci_setup_enabled"`

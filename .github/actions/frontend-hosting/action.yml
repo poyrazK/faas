@@ -31,6 +31,9 @@ inputs:
   run-id:
     description: Optional stable intent UUID; otherwise derived from repository, GitHub run ID, API and site. Reruns reuse it.
     default: ''
+  reserve-preview:
+    description: Reserve preview capacity before uploads; independently gated by the API. Keep unchanged on retries.
+    default: 'false'
   preview-ttl:
     description: Immutable preview TTL measured from the first accepted run.
     default: 24h
@@ -74,6 +77,7 @@ runs:
         HOSTING_PATH: ${{ inputs.path }}
         HOSTING_SPA: ${{ inputs.spa }}
         HOSTING_RUN_ID: ${{ inputs.run-id }}
+        HOSTING_RESERVE_PREVIEW: ${{ inputs.reserve-preview }}
         HOSTING_PREVIEW_TTL: ${{ inputs.preview-ttl }}
         HOSTING_WAIT_TIMEOUT: ${{ inputs.wait-timeout }}
         HOSTING_DESCRIPTION: ${{ inputs.description }}

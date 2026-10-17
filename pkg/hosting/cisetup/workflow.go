@@ -56,7 +56,7 @@ if digest.hexdigest() != os.environ['GREGALE_CLI_SHA256']:
     sys.exit('Prepared Gregale CLI does not match the reviewed SHA-256.')
 PY
 `, api.HostingCISetupCLIMaxBytes)
-	return workflow{Name: "Gregale internal frontend preview", On: on, Permissions: map[string]string{}, Jobs: map[string]job{"frontend": {
+	out := workflow{Name: "Gregale internal frontend preview", On: on, Permissions: map[string]string{}, Jobs: map[string]job{"frontend": {
 		RunsOn: "ubuntu-latest", Timeout: api.HostingCISetupJobTimeoutMinutes, If: guard, Environment: t.Environment,
 		Permissions: map[string]string{"contents": "read", "id-token": "write"},
 		Steps: []step{
@@ -67,4 +67,8 @@ PY
 				With: map[string]any{"enabled": "true", "oidc-enabled": "true", "oidc-trust": t.ID, "api-base": c.APIBase, "site": t.SiteID, "cli-path": c.CLIPath, "path": c.OutputPath, "spa": fmt.Sprint(c.SPAFallback), "preview-ttl": fmt.Sprintf("%ds", c.PreviewTTLSeconds), "wait-timeout": fmt.Sprintf("%ds", c.WaitTimeoutSeconds)}},
 		},
 	}}}
+	if c.ReservePreview {
+		out.Jobs["frontend"].Steps[3].With["reserve-preview"] = "true"
+	}
+	return out
 }

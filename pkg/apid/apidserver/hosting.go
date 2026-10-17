@@ -268,3 +268,11 @@ func (h hostingHost) HostingActivityReader() state.HostingActivityReader {
 	reader, _ := h.s.store.(state.HostingActivityReader)
 	return reader
 }
+
+func (h hostingHost) HostingPreviewReservationsEnabled() bool {
+	return h.s.runtimeBool(runtimeConfigFrontendHostingPreviewReservations, false)
+}
+func (h hostingHost) HostingPreviewCapacityReader() state.HostingPreviewCapacityReader {
+	reader, _ := h.s.store.(state.HostingPreviewCapacityReader)
+	return reader
+}

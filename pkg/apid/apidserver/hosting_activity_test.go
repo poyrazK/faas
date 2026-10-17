@@ -43,6 +43,15 @@ func TestHostingActivityFlagsRoutesAndCICredentialDenial(t *testing.T) {
 		t.Fatal(created.Code, created.Body)
 	}
 	root := "/v1/internal/hosting/sites/" + site.ID
+	if got := env.Do(t, "GET", root+"/preview-capacity", nil, nil); got.Code != 503 {
+		t.Fatal("capacity default off", got.Code, got.Body)
+	}
+	if err := manager.Apply("frontend_hosting_preview_reservations_enabled", []byte("true")); err != nil {
+		t.Fatal(err)
+	}
+	if got := env.Do(t, "GET", root+"/preview-capacity", nil, nil); got.Code != 200 {
+		t.Fatal("capacity route", got.Code, got.Body)
+	}
 	if got := env.Do(t, "GET", root+"/runs", nil, nil); got.Code != 503 {
 		t.Fatal("default off", got.Code, got.Body)
 	}
@@ -68,6 +77,9 @@ func TestHostingActivityFlagsRoutesAndCICredentialDenial(t *testing.T) {
 		var credential api.HostingAutomationCredentialResponse
 		if minted.Code != 201 || json.Unmarshal(minted.Body.Bytes(), &credential) != nil {
 			t.Fatal(minted.Code, minted.Body)
+		}
+		if got := env.Do(t, "GET", root+"/preview-capacity", nil, map[string]string{"Authorization": "Bearer " + credential.Token}); got.Code != 403 {
+			t.Fatal("CI gained capacity inventory authority", got.Code, got.Body)
 		}
 		if got := env.Do(t, "GET", root+"/runs", nil, map[string]string{"Authorization": "Bearer " + credential.Token}); got.Code != 403 {
 			t.Fatal("CI gained listing authority", got.Code, got.Body)

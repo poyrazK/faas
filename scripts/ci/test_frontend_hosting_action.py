@@ -35,6 +35,13 @@ class ActionContracts(unittest.TestCase):
   self.assertEqual(first[0],0);self.assertEqual(first[2],second[2]);self.assertNotIn(TOKEN,first[1]+first[2])
   args=first[3].args[0];self.assertEqual(args[1:3],['sites','ci']);self.assertNotIn(TOKEN,str(args));self.assertIn('$(touch /tmp/not-executed); echo unsafe',args)
   self.assertEqual(first[3].kwargs['env']['FAAS_TOKEN'],TOKEN);self.assertNotIn('shell',first[3].kwargs)
+ def test_preview_reservations_are_explicit_and_retry_stable(self):
+  plain=self.invoke();reserved=self.invoke({'HOSTING_RESERVE_PREVIEW':'true'})
+  self.assertNotIn('--reserve-preview',plain[3].args[0])
+  self.assertIn('--reserve-preview',reserved[3].args[0])
+  self.assertEqual(reserved[3].kwargs['env']['FAAS_FRONTEND_HOSTING_PREVIEW_RESERVATIONS_ENABLED'],'1')
+  self.assertEqual(reserved[2],self.invoke({'HOSTING_RESERVE_PREVIEW':'true','GITHUB_RUN_ATTEMPT':'2'})[2])
+  self.assertEqual(self.invoke({'HOSTING_RESERVE_PREVIEW':'TRUE'})[4],0)
  def test_default_off_and_generic_credentials_never_execute_cli(self):
   for overrides in [{'HOSTING_ENABLED':'false'},{'FAAS_TOKEN':'fp_live_'+'a'*48},{'FAAS_API':'http://api.example.com'},{'FAAS_API':'https://user:password@api.example.com'},{'FAAS_API':'https://api.example.com/path'},{'HOSTING_RUN_ID':'bad'}]:
    code,text,output,args,calls=self.invoke(overrides);self.assertEqual(code,1);self.assertEqual(calls,0);self.assertEqual(output,'');self.assertNotIn(TOKEN,text)

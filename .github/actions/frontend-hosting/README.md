@@ -60,3 +60,5 @@ the same run ID and original preview expiry. No credentials are printed or saved
 For operator-generated workflows matching an existing trust, see
 [guided setup and local preflight](../../../docs/internal-frontend-hosting-ci-setup.md).
 Setup is independently default-off and does not install the CLI or perform GitHub writes.
+
+Optional `reserve-preview: 'true'` requests atomic preview capacity admission before uploads. It defaults off and requires the separate API preview-reservations flag and a compatible pinned CLI/Action. Keep this value unchanged on retries. See [capacity reservations](../../../docs/internal-frontend-hosting-preview-reservations.md).

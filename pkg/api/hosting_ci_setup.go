@@ -14,6 +14,7 @@ type HostingCISetupConfig struct {
 	CLIPath            string `json:"cli_path"`
 	CLISHA256          string `json:"cli_sha256"`
 	OutputPath         string `json:"output_path"`
+	ReservePreview     bool   `json:"reserve_preview,omitempty"`
 	SPAFallback        bool   `json:"spa_fallback"`
 	PreviewTTLSeconds  int64  `json:"preview_ttl_seconds"`
 	WaitTimeoutSeconds int64  `json:"wait_timeout_seconds"`

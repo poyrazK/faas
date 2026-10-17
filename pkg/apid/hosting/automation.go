@@ -123,6 +123,9 @@ func (s Service) CreateCIRun(w http.ResponseWriter, r *http.Request, a state.Acc
 		api.WriteProblem(w, api.ErrValidation("a stable run UUID, valid manifest/source and bounded preview TTL are required"))
 		return
 	}
+	if req.ReservePreview && !s.allowReservedIntent(w, r, a, site.ID, id, req, store) {
+		return
+	}
 	if !s.requireConfig(w, req.Manifest) {
 		return
 	}

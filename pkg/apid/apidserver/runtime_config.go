@@ -19,27 +19,28 @@ import (
 )
 
 const (
-	runtimeConfigTenantSurfaces             = "tenant_surfaces_enabled"
-	runtimeConfigDomainDoctor               = "domain_doctor_enabled"
-	runtimeConfigDomainDoctorTTL            = "domain_doctor_ttl_seconds"
-	runtimeConfigDataPlacement              = "data_placement_enabled"
-	runtimeConfigAppErrors                  = "app_errors_enabled"
-	runtimeConfigRekey                      = "rekey_enabled"
-	runtimeConfigHSTS                       = "hsts_enabled"
-	runtimeConfigS3                         = "s3_enabled"
-	runtimeConfigFrontendHosting            = "frontend_hosting_enabled"
-	runtimeConfigFrontendHostingDurable     = "frontend_hosting_durable_routing_enabled"
-	runtimeConfigFrontendHostingConfig      = "frontend_hosting_config_enabled"
-	runtimeConfigFrontendHostingPreviews    = "frontend_hosting_previews_enabled"
-	runtimeConfigFrontendHostingHistory     = "frontend_hosting_history_enabled"
-	runtimeConfigFrontendHostingRetention   = "frontend_hosting_retention_enabled"
-	runtimeConfigFrontendHostingActivity    = "frontend_hosting_activity_enabled"
-	runtimeConfigFrontendHostingCISetup     = "frontend_hosting_ci_setup_enabled"
-	runtimeConfigFrontendHostingDiagnostics = "frontend_hosting_diagnostics_enabled"
-	runtimeConfigFrontendHostingOIDC        = "frontend_hosting_oidc_enabled"
-	runtimeConfigFrontendHostingAutomation  = "frontend_hosting_automation_enabled"
-	runtimeConfigFrontendHostingAnalytics   = "frontend_hosting_analytics_enabled"
-	runtimeConfigFrontendHostingDomains     = "frontend_hosting_domains_enabled"
+	runtimeConfigTenantSurfaces                     = "tenant_surfaces_enabled"
+	runtimeConfigDomainDoctor                       = "domain_doctor_enabled"
+	runtimeConfigDomainDoctorTTL                    = "domain_doctor_ttl_seconds"
+	runtimeConfigDataPlacement                      = "data_placement_enabled"
+	runtimeConfigAppErrors                          = "app_errors_enabled"
+	runtimeConfigRekey                              = "rekey_enabled"
+	runtimeConfigHSTS                               = "hsts_enabled"
+	runtimeConfigS3                                 = "s3_enabled"
+	runtimeConfigFrontendHosting                    = "frontend_hosting_enabled"
+	runtimeConfigFrontendHostingDurable             = "frontend_hosting_durable_routing_enabled"
+	runtimeConfigFrontendHostingConfig              = "frontend_hosting_config_enabled"
+	runtimeConfigFrontendHostingPreviews            = "frontend_hosting_previews_enabled"
+	runtimeConfigFrontendHostingHistory             = "frontend_hosting_history_enabled"
+	runtimeConfigFrontendHostingRetention           = "frontend_hosting_retention_enabled"
+	runtimeConfigFrontendHostingPreviewReservations = "frontend_hosting_preview_reservations_enabled"
+	runtimeConfigFrontendHostingActivity            = "frontend_hosting_activity_enabled"
+	runtimeConfigFrontendHostingCISetup             = "frontend_hosting_ci_setup_enabled"
+	runtimeConfigFrontendHostingDiagnostics         = "frontend_hosting_diagnostics_enabled"
+	runtimeConfigFrontendHostingOIDC                = "frontend_hosting_oidc_enabled"
+	runtimeConfigFrontendHostingAutomation          = "frontend_hosting_automation_enabled"
+	runtimeConfigFrontendHostingAnalytics           = "frontend_hosting_analytics_enabled"
+	runtimeConfigFrontendHostingDomains             = "frontend_hosting_domains_enabled"
 
 	// pg_notify is deliberately only a wake-up signal. This repair interval
 	// bounds convergence when a notification is lost during a database or
@@ -69,6 +70,7 @@ var runtimeConfigCatalog = []runtimeConfigDefinition{
 	{Key: runtimeConfigFrontendHostingPreviews, Label: "Internal hosting private previews", Description: "Admit immutable private release previews. Worker serving has a separate default-off switch.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
 	{Key: runtimeConfigFrontendHostingHistory, Label: "Internal hosting release history", Description: "Admit caller-provided provenance, record accepted promotions transactionally, and expose bounded history.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
 	{Key: runtimeConfigFrontendHostingRetention, Label: "Internal hosting retention", Description: "Opt in to per-site automatic retirement of abandoned uploads and expired never-published CI releases.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
+	{Key: runtimeConfigFrontendHostingPreviewReservations, Label: "Internal hosting preview reservations", Description: "Reserve preview capacity atomically at explicit CI admission and show stored capacity.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
 	{Key: runtimeConfigFrontendHostingActivity, Label: "Internal hosting deployment activity", Description: "List bounded stored CI intent and release/preview evidence without mutations or provider probes.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
 	{Key: runtimeConfigFrontendHostingCISetup, Label: "Internal hosting GitHub setup", Description: "Render and preflight reviewed deployment configuration without repository writes or deployments.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
 	{Key: runtimeConfigFrontendHostingDiagnostics, Label: "Internal hosting diagnostics", Description: "Read stored site and CI evidence with safe recovery guidance. Does not probe or mutate providers.", Category: "Feature flags", Kind: "boolean", Default: json.RawMessage("false"), ApplyMode: state.RuntimeConfigApplyHot, ControllerEnabled: true, Mutable: true},
@@ -130,6 +132,8 @@ func runtimeConfigEnvDefault(def runtimeConfigDefinition, getenv func(string) st
 		envName = "FAAS_FRONTEND_HOSTING_DURABLE_ROUTING_ENABLED"
 	case runtimeConfigFrontendHostingRetention:
 		envName = "FAAS_FRONTEND_HOSTING_RETENTION_ENABLED"
+	case runtimeConfigFrontendHostingPreviewReservations:
+		envName = "FAAS_FRONTEND_HOSTING_PREVIEW_RESERVATIONS_ENABLED"
 	case runtimeConfigFrontendHostingActivity:
 		envName = "FAAS_FRONTEND_HOSTING_ACTIVITY_ENABLED"
 	case runtimeConfigFrontendHostingCISetup:

@@ -11372,6 +11372,7 @@ const HostingCIWorkflowTimeout = 20 * time.Minute
 const (
 	HostingActivityPageSize       = 25
 	HostingActivityCursorMaxBytes = 128
+	HostingPreviewCapacityTimeout = 15 * time.Second
 	HostingActivityTimeout        = 15 * time.Second
 )
 

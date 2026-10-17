@@ -21,7 +21,7 @@ func hostingCredentialRow(r sqlc.HostingAutomationCredential) api.HostingAutomat
 	return c
 }
 func hostingCIRunRow(r sqlc.HostingCiRun) api.HostingCIRun {
-	return api.HostingCIRun{ID: uuidString(r.ID), SiteID: uuidString(r.SiteID), ReleaseID: uuidString(r.ReleaseID), PreviewID: uuidString(r.PreviewID), PreviewCreated: r.PreviewCreated, PreviewExpiresAt: r.PreviewExpiresAt.Time, Fingerprint: r.Fingerprint, CreatedAt: r.CreatedAt.Time}
+	return api.HostingCIRun{ID: uuidString(r.ID), SiteID: uuidString(r.SiteID), ReleaseID: uuidString(r.ReleaseID), PreviewID: uuidString(r.PreviewID), PreviewCreated: r.PreviewCreated, PreviewReserved: r.PreviewReserved, PreviewExpiresAt: r.PreviewExpiresAt.Time, Fingerprint: r.Fingerprint, CreatedAt: r.CreatedAt.Time}
 }
 func (s *PgStore) CreateHostingAutomationCredential(ctx context.Context, c api.HostingAutomationCredential) (api.HostingAutomationCredential, error) {
 	if c.OIDCTrustID != "" || !validHostingCredential(c) {
@@ -141,6 +141,15 @@ func (s *PgStore) CreateHostingCIRun(ctx context.Context, account, site, id stri
 	if count >= api.HostingCIRunsPerSite {
 		return api.HostingCIRun{}, &HostingQuotaError{Limit: api.HostingCIRunsPerSite, Observed: api.HostingCIRunsPerSite + 1, Resource: "ci_runs"}
 	}
+	if req.ReservePreview {
+		capacity, err := hostingPreviewCapacityQuery(ctx, tx, account, site, "", time.Now().UTC())
+		if err != nil {
+			return api.HostingCIRun{}, err
+		}
+		if err = requireHostingPreviewCapacity(capacity); err != nil {
+			return api.HostingCIRun{}, err
+		}
+	}
 	release, err := s.createHostingReleaseTx(ctx, tx, account, site, req.Manifest, req.Provenance)
 	if err != nil {
 		return api.HostingCIRun{}, err
@@ -148,7 +157,7 @@ func (s *PgStore) CreateHostingCIRun(ctx context.Context, account, site, id stri
 	run := newCIRun(id, site, release.ID, fingerprint, req.PreviewTTLSeconds)
 	rid, _ := parsePgUUID(run.ReleaseID)
 	pid, _ := parsePgUUID(run.PreviewID)
-	row, err := q.HostingCIRunCreate(ctx, tx, sqlc.HostingCIRunCreateParams{SiteID: si, ID: i, ReleaseID: rid, PreviewID: pid, Fingerprint: fingerprint, CreatedAt: hostingTimestamp(run.CreatedAt), PreviewExpiresAt: hostingTimestamp(run.PreviewExpiresAt)})
+	row, err := q.HostingCIRunCreate(ctx, tx, sqlc.HostingCIRunCreateParams{SiteID: si, ID: i, ReleaseID: rid, PreviewID: pid, Fingerprint: fingerprint, CreatedAt: hostingTimestamp(run.CreatedAt), PreviewExpiresAt: hostingTimestamp(run.PreviewExpiresAt), PreviewReserved: req.ReservePreview})
 	if err != nil {
 		return run, err
 	}
@@ -180,6 +189,9 @@ func (s *PgStore) CreateHostingCIPreview(ctx context.Context, account, site, id 
 	a, _ := parsePgUUID(account)
 	si, _ := parsePgUUID(site)
 	i, _ := parsePgUUID(id)
+	if _, err = q.HostingAccountLock(ctx, tx, a); err != nil {
+		return api.HostingPreview{}, hostingStoreError(err)
+	}
 	owned, err := q.HostingSiteLock(ctx, tx, sqlc.HostingSiteLockParams{AccountID: a, ID: si})
 	if err != nil {
 		return api.HostingPreview{}, hostingStoreError(err)
@@ -204,7 +216,7 @@ func (s *PgStore) CreateHostingCIPreview(ctx context.Context, account, site, id 
 	if !run.PreviewExpiresAt.After(time.Now()) {
 		return api.HostingPreview{}, ErrConflict
 	}
-	p, err := s.createHostingPreviewTx(ctx, tx, ciPreview(run, hostingSiteRow(owned)))
+	p, err := s.createHostingPreviewWithReservationTx(ctx, tx, ciPreview(run, hostingSiteRow(owned)), run.ID)
 	if err != nil {
 		return p, err
 	}

@@ -42,6 +42,9 @@ func Prepare(site api.HostingSite, trust api.HostingOIDCTrust, caps api.HostingC
 	add("features", caps.CISetupEnabled && caps.OIDCEnabled && caps.AutomationEnabled && caps.PreviewsEnabled && caps.HistoryEnabled && caps.StagedReleasesSupported, "Enable setup, OIDC, automation, previews, history and durable hosting before using this configuration.")
 	branch := strings.TrimPrefix(trust.Ref, "refs/heads/")
 	safeIdentity := branchPattern.MatchString(branch) && !strings.Contains(trust.Environment, "${{") && !strings.ContainsAny(trust.Environment, "\x00\r\n")
+	if req.Config.ReservePreview {
+		add("preview_reservations", caps.PreviewReservationsEnabled, "Enable preview reservations before exporting reservation-backed CI admission.")
+	}
 	add("identity", safeIdentity, "Workflow export supports literal branch names containing letters, digits, dots, underscores, slashes and dashes; environment names cannot contain GitHub expressions.")
 	out.WorkflowPath = strings.TrimSuffix(strings.TrimPrefix(trust.WorkflowRef, trust.Repository+"/"), "@"+trust.Ref)
 	c := req.Config

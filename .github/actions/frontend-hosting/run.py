@@ -61,6 +61,12 @@ def main():
     if spa not in ('true', 'false'):
         return fail('spa must be true or false.')
     args = [binary, 'sites', 'ci', '--site', site, '--run-id', run, '--path', env.get('HOSTING_PATH', 'dist'), '--preview-ttl', env.get('HOSTING_PREVIEW_TTL', '24h'), '--wait-timeout', env.get('HOSTING_WAIT_TIMEOUT', '2m')]
+    reserve = env.get('HOSTING_RESERVE_PREVIEW', 'false')
+    if reserve not in ('true', 'false'):
+        return fail('reserve-preview must be true or false.')
+    if reserve == 'true':
+        args.append('--reserve-preview')
+        env['FAAS_FRONTEND_HOSTING_PREVIEW_RESERVATIONS_ENABLED'] = '1'
     if oidc == 'true':
         args.extend(['--oidc-trust', trust])
         env['FAAS_FRONTEND_HOSTING_OIDC_ENABLED'] = '1'

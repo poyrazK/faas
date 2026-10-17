@@ -91,7 +91,7 @@ func failure(w http.ResponseWriter, err error) {
 			}
 			if quota.Resource == "previews" {
 				p.Code = "hosting_preview_quota_exceeded"
-				p.Detail = "revoke unused previews and wait for safe cleanup before creating another"
+				p.Detail = "preview rows and unconverted CI reservations fill capacity; retire unused CI releases or revoke previews and wait for safe cleanup, or let unused reservations expire"
 			}
 			if quota.Resource == "storage_bytes" {
 				p.Code = "hosting_storage_quota_exceeded"

@@ -25,6 +25,10 @@ func (s *PgStore) CreateHostingPreview(ctx context.Context, p api.HostingPreview
 		return api.HostingPreview{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	a, _ := parsePgUUID(p.AccountID)
+	if _, err = sqlc.New().HostingAccountLock(ctx, tx, a); err != nil {
+		return api.HostingPreview{}, hostingStoreError(err)
+	}
 	out, err := s.createHostingPreviewTx(ctx, tx, p)
 	if err != nil {
 		return out, err
@@ -32,6 +36,9 @@ func (s *PgStore) CreateHostingPreview(ctx context.Context, p api.HostingPreview
 	return out, tx.Commit(ctx)
 }
 func (s *PgStore) createHostingPreviewTx(ctx context.Context, tx pgx.Tx, p api.HostingPreview) (api.HostingPreview, error) {
+	return s.createHostingPreviewWithReservationTx(ctx, tx, p, "")
+}
+func (s *PgStore) createHostingPreviewWithReservationTx(ctx context.Context, tx pgx.Tx, p api.HostingPreview, excludeRun string) (api.HostingPreview, error) {
 	q := sqlc.New()
 	a, _ := parsePgUUID(p.AccountID)
 	si, _ := parsePgUUID(p.SiteID)
@@ -51,12 +58,12 @@ func (s *PgStore) createHostingPreviewTx(ctx context.Context, tx pgx.Tx, p api.H
 	if release.State != "ready" {
 		return api.HostingPreview{}, ErrConflict
 	}
-	count, err := q.HostingPreviewCount(ctx, tx, si)
+	capacity, err := hostingPreviewCapacityQuery(ctx, tx, p.AccountID, p.SiteID, excludeRun, time.Now().UTC())
 	if err != nil {
 		return api.HostingPreview{}, err
 	}
-	if count >= api.HostingPreviewsPerSite {
-		return api.HostingPreview{}, &HostingQuotaError{Limit: api.HostingPreviewsPerSite, Observed: api.HostingPreviewsPerSite + 1, Resource: "previews"}
+	if err = requireHostingPreviewCapacity(capacity); err != nil {
+		return api.HostingPreview{}, err
 	}
 	row, err := q.HostingPreviewCreate(ctx, tx, sqlc.HostingPreviewCreateParams{ID: id, AccountID: a, SiteID: si, ReleaseID: ri, Hostname: p.Hostname, OriginID: p.OriginID, ExpiresAt: hostingTimestamp(p.ExpiresAt), CreatedAt: hostingTimestamp(p.CreatedAt)})
 	if err != nil {

@@ -441,3 +441,5 @@ for reviewable downloads based on an existing immutable site trust.
 The separately flagged [deployment activity view](internal-frontend-hosting-activity.md)
 lists retained CI intents with bounded pagination and links to diagnostics and
 release review. It performs no mutations or live provider checks.
+
+See [preview admission reservations](internal-frontend-hosting-preview-reservations.md) for default-off capacity admission and operator snapshots.

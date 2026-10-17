@@ -20,6 +20,9 @@ func (m *MemStore) CreateHostingPreview(_ context.Context, p api.HostingPreview)
 	return m.createHostingPreviewLocked(p)
 }
 func (m *MemStore) createHostingPreviewLocked(p api.HostingPreview) (api.HostingPreview, error) {
+	return m.createHostingPreviewWithReservationLocked(p, "")
+}
+func (m *MemStore) createHostingPreviewWithReservationLocked(p api.HostingPreview, excludeRun string) (api.HostingPreview, error) {
 	s := m.hostingSites[p.SiteID]
 	r := m.hostingReleases[p.ReleaseID]
 	if s.AccountID != p.AccountID {
@@ -28,17 +31,13 @@ func (m *MemStore) createHostingPreviewLocked(p api.HostingPreview) (api.Hosting
 	if !s.DurableRouting || s.Status != "active" || s.OriginID != p.OriginID || r.SiteID != s.ID || r.State != "ready" || p.Hostname != "p-"+p.ID+strings.TrimPrefix(s.Hostname, s.ID) {
 		return api.HostingPreview{}, ErrConflict
 	}
-	count := 0
 	for _, v := range m.hostingPreviews {
-		if v.SiteID == s.ID {
-			count++
-		}
 		if v.ID == p.ID || v.Hostname == p.Hostname {
 			return api.HostingPreview{}, ErrConflict
 		}
 	}
-	if count >= api.HostingPreviewsPerSite {
-		return api.HostingPreview{}, &HostingQuotaError{Limit: api.HostingPreviewsPerSite, Observed: api.HostingPreviewsPerSite + 1, Resource: "previews"}
+	if err := requireHostingPreviewCapacity(m.hostingPreviewCapacityLocked(s.ID, excludeRun, time.Now().UTC())); err != nil {
+		return api.HostingPreview{}, err
 	}
 	p.Generation = 1
 	p.Revoked = false

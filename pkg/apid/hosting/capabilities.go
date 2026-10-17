@@ -36,6 +36,7 @@ func (s Service) Capabilities(w http.ResponseWriter, r *http.Request, acct state
 }
 
 func (s Service) extendCapabilities(r *http.Request, out *api.HostingCapabilities) {
+	out.PreviewReservationsEnabled = s.previewReservationsEnabled()
 	if h, ok := s.Host.(ActivityHost); ok && h.HostingActivityEnabled() && h.HostingActivityReader() != nil {
 		if a, ok := s.Host.(AutomationHost); ok && a.HostingAutomationEnabled() && a.HostingAutomationStore() != nil {
 			out.ActivityEnabled = true

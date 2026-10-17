@@ -55,6 +55,7 @@ type HostingCIRunRequest struct {
 	Manifest          HostingManifest           `json:"manifest"`
 	Provenance        *HostingReleaseProvenance `json:"provenance,omitempty"`
 	PreviewTTLSeconds int64                     `json:"preview_ttl_seconds"`
+	ReservePreview    bool                      `json:"reserve_preview,omitempty"`
 }
 
 // Run identities survive release/preview GC. Reusing one never allocates new IDs.
@@ -64,6 +65,7 @@ type HostingCIRun struct {
 	ReleaseID        string    `json:"release_id"`
 	PreviewID        string    `json:"preview_id"`
 	PreviewCreated   bool      `json:"preview_created"`
+	PreviewReserved  bool      `json:"preview_reserved,omitempty"`
 	PreviewExpiresAt time.Time `json:"preview_expires_at"`
 	Fingerprint      string    `json:"fingerprint"`
 	CreatedAt        time.Time `json:"created_at"`

@@ -119,11 +119,17 @@ func (m *MemStore) CreateHostingCIRun(_ context.Context, account, site, id strin
 	if count >= api.HostingCIRunsPerSite {
 		return api.HostingCIRun{}, &HostingQuotaError{Limit: api.HostingCIRunsPerSite, Observed: api.HostingCIRunsPerSite + 1, Resource: "ci_runs"}
 	}
+	if req.ReservePreview {
+		if err := requireHostingPreviewCapacity(m.hostingPreviewCapacityLocked(site, "", time.Now().UTC())); err != nil {
+			return api.HostingCIRun{}, err
+		}
+	}
 	release, err := m.createHostingReleaseLocked(account, site, req.Manifest, req.Provenance)
 	if err != nil {
 		return api.HostingCIRun{}, err
 	}
 	run := newCIRun(id, site, release.ID, fingerprint, req.PreviewTTLSeconds)
+	run.PreviewReserved = req.ReservePreview
 	if m.hostingCIRuns == nil {
 		m.hostingCIRuns = make(map[string]api.HostingCIRun)
 	}
@@ -169,7 +175,7 @@ func (m *MemStore) CreateHostingCIPreview(_ context.Context, account, site, id s
 	if !run.PreviewExpiresAt.After(time.Now()) {
 		return api.HostingPreview{}, ErrConflict
 	}
-	p, err := m.createHostingPreviewLocked(ciPreview(run, owned))
+	p, err := m.createHostingPreviewWithReservationLocked(ciPreview(run, owned), run.ID)
 	if err != nil {
 		return p, err
 	}

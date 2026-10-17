@@ -26,6 +26,7 @@ func cmdSitesCI(args []string) int {
 	site := flags.String("site", "", "one site UUID")
 	runID := flags.String("run-id", "", "stable UUID for this CI intent, reused on every retry")
 	dir := flags.String("path", "dist", "prebuilt output directory")
+	reserve := flags.Bool("reserve-preview", false, "reserve capacity before upload; requires the independent preview reservation opt-in")
 	spa := flags.Bool("spa", false, "SPA navigation fallback")
 	ttl := flags.Duration("preview-ttl", api.HostingPreviewTTLDefault, "preview TTL measured from first accepted run")
 	timeout := flags.Duration("wait-timeout", api.HostingCIWaitDefault, "wait for provider publication receipts")
@@ -38,6 +39,9 @@ func cmdSitesCI(args []string) int {
 	}
 	if uuid.Validate(*site) != nil || !hosting.ValidCIRunID(*runID) || *ttl < api.HostingPreviewTTLMin || *ttl > api.HostingPreviewTTLMax || *ttl%time.Second != 0 || *timeout <= 0 || *timeout > api.HostingCIWaitMax {
 		return printErr("Invalid CI intent", errors.New("site and stable run UUIDs, bounded preview TTL and wait timeout are required"))
+	}
+	if *reserve && !hostingPreviewReservationsWorkstationEnabled() {
+		return printErr("Preview reservations are disabled", errors.New("set FAAS_FRONTEND_HOSTING_PREVIEW_RESERVATIONS_ENABLED=1"))
 	}
 	token := ""
 	if *trust == "" {
@@ -53,7 +57,7 @@ func cmdSitesCI(args []string) int {
 	if err != nil {
 		return printErr("Invalid prebuilt directory", err)
 	}
-	req := api.HostingCIRunRequest{Manifest: manifest, PreviewTTLSeconds: int64(*ttl / time.Second)}
+	req := api.HostingCIRunRequest{Manifest: manifest, PreviewTTLSeconds: int64(*ttl / time.Second), ReservePreview: *reserve}
 	if *repository != "" || *commit != "" || *branch != "" || *description != "" {
 		req.Provenance = &api.HostingReleaseProvenance{Repository: *repository, CommitSHA: *commit, Branch: *branch, Description: *description}
 		if !hostingHistoryWorkstationEnabled() || hosting.ValidateProvenance(req.Provenance) != nil {
@@ -107,7 +111,7 @@ func runHostingCI(ctx context.Context, client *api.Client, site, runID, dir stri
 		return result, err
 	}
 	fingerprint, _ := hosting.CIFingerprint(req)
-	if run.ID != runID || run.SiteID != site || uuid.Validate(run.ReleaseID) != nil || uuid.Validate(run.PreviewID) != nil || run.Fingerprint != fingerprint {
+	if run.ID != runID || run.SiteID != site || uuid.Validate(run.ReleaseID) != nil || uuid.Validate(run.PreviewID) != nil || run.Fingerprint != fingerprint || run.PreviewReserved != req.ReservePreview {
 		return result, errors.New("CI identity response does not match the requested intent")
 	}
 	result.Run = run

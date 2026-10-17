@@ -14,7 +14,7 @@ WHERE c.token_hash=$1 AND c.expires_at>clock_timestamp() AND s.account_id=c.acco
 -- name: HostingCIRunCount :one
 SELECT count(*)::bigint FROM hosting_ci_runs WHERE site_id=$1;
 -- name: HostingCIRunCreate :one
-INSERT INTO hosting_ci_runs(site_id,id,release_id,preview_id,fingerprint,created_at,preview_expires_at) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *;
+INSERT INTO hosting_ci_runs(site_id,id,release_id,preview_id,fingerprint,created_at,preview_expires_at,preview_reserved) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *;
 -- name: HostingCIRunGet :one
 SELECT r.* FROM hosting_ci_runs r JOIN hosting_sites s ON s.id=r.site_id WHERE s.account_id=$1 AND r.site_id=$2 AND r.id=$3;
 -- name: HostingCIRunPreviewCreated :exec
@@ -34,3 +34,12 @@ LEFT JOIN hosting_previews p ON p.id=r.preview_id AND p.site_id=r.site_id AND p.
 WHERE s.account_id=sqlc.arg(account_id) AND r.site_id=sqlc.arg(site_id)
  AND (NOT sqlc.arg(has_cursor)::boolean OR (r.created_at,r.id)<(sqlc.arg(before_created_at)::timestamptz,sqlc.arg(before_id)::uuid))
 ORDER BY r.created_at DESC,r.id DESC LIMIT sqlc.arg(page_size);
+
+-- name: HostingPreviewCapacity :one
+SELECT s.id,
+ (SELECT count(*)::bigint FROM hosting_previews p WHERE p.site_id=s.id) AS previews,
+ (SELECT count(*)::bigint FROM hosting_ci_runs r JOIN hosting_releases rel ON rel.id=r.release_id AND rel.site_id=r.site_id
+  WHERE r.site_id=s.id AND r.preview_reserved AND NOT r.preview_created
+   AND (NOT sqlc.arg(has_excluded_run)::boolean OR r.id<>sqlc.arg(exclude_run_id)::uuid) AND r.preview_expires_at>sqlc.arg(observed_at)::timestamptz
+   AND rel.state IN ('pending','ready')) AS reservations
+FROM hosting_sites s WHERE s.account_id=sqlc.arg(account_id) AND s.id=sqlc.arg(site_id);

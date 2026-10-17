@@ -83,7 +83,7 @@ func (s Service) prepareCISetup(r *http.Request, account state.Account, site api
 	}
 	latest := api.HostingCapabilities{StagedReleasesSupported: true}
 	s.extendCapabilities(r, &latest)
-	if latest.CISetupEnabled != caps.CISetupEnabled || latest.OIDCEnabled != caps.OIDCEnabled || latest.AutomationEnabled != caps.AutomationEnabled || latest.PreviewsEnabled != caps.PreviewsEnabled || latest.HistoryEnabled != caps.HistoryEnabled {
+	if latest.PreviewReservationsEnabled != caps.PreviewReservationsEnabled || latest.CISetupEnabled != caps.CISetupEnabled || latest.OIDCEnabled != caps.OIDCEnabled || latest.AutomationEnabled != caps.AutomationEnabled || latest.PreviewsEnabled != caps.PreviewsEnabled || latest.HistoryEnabled != caps.HistoryEnabled {
 		return api.HostingCISetup{}, state.ErrConflict
 	}
 	return result, nil

@@ -119,7 +119,7 @@ func (q *Queries) HostingCIRunCount(ctx context.Context, db DBTX, siteID pgtype.
 }
 
 const hostingCIRunCreate = `-- name: HostingCIRunCreate :one
-INSERT INTO hosting_ci_runs(site_id,id,release_id,preview_id,fingerprint,created_at,preview_expires_at) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING site_id, id, release_id, preview_id, preview_created, fingerprint, created_at, preview_expires_at
+INSERT INTO hosting_ci_runs(site_id,id,release_id,preview_id,fingerprint,created_at,preview_expires_at,preview_reserved) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING site_id, id, release_id, preview_id, preview_created, fingerprint, created_at, preview_expires_at, preview_reserved
 `
 
 type HostingCIRunCreateParams struct {
@@ -130,6 +130,7 @@ type HostingCIRunCreateParams struct {
 	Fingerprint      string
 	CreatedAt        pgtype.Timestamptz
 	PreviewExpiresAt pgtype.Timestamptz
+	PreviewReserved  bool
 }
 
 func (q *Queries) HostingCIRunCreate(ctx context.Context, db DBTX, arg HostingCIRunCreateParams) (HostingCiRun, error) {
@@ -141,6 +142,7 @@ func (q *Queries) HostingCIRunCreate(ctx context.Context, db DBTX, arg HostingCI
 		arg.Fingerprint,
 		arg.CreatedAt,
 		arg.PreviewExpiresAt,
+		arg.PreviewReserved,
 	)
 	var i HostingCiRun
 	err := row.Scan(
@@ -152,12 +154,13 @@ func (q *Queries) HostingCIRunCreate(ctx context.Context, db DBTX, arg HostingCI
 		&i.Fingerprint,
 		&i.CreatedAt,
 		&i.PreviewExpiresAt,
+		&i.PreviewReserved,
 	)
 	return i, err
 }
 
 const hostingCIRunGet = `-- name: HostingCIRunGet :one
-SELECT r.site_id, r.id, r.release_id, r.preview_id, r.preview_created, r.fingerprint, r.created_at, r.preview_expires_at FROM hosting_ci_runs r JOIN hosting_sites s ON s.id=r.site_id WHERE s.account_id=$1 AND r.site_id=$2 AND r.id=$3
+SELECT r.site_id, r.id, r.release_id, r.preview_id, r.preview_created, r.fingerprint, r.created_at, r.preview_expires_at, r.preview_reserved FROM hosting_ci_runs r JOIN hosting_sites s ON s.id=r.site_id WHERE s.account_id=$1 AND r.site_id=$2 AND r.id=$3
 `
 
 type HostingCIRunGetParams struct {
@@ -178,6 +181,7 @@ func (q *Queries) HostingCIRunGet(ctx context.Context, db DBTX, arg HostingCIRun
 		&i.Fingerprint,
 		&i.CreatedAt,
 		&i.PreviewExpiresAt,
+		&i.PreviewReserved,
 	)
 	return i, err
 }
@@ -334,4 +338,41 @@ func (q *Queries) HostingCredentialRevoke(ctx context.Context, db DBTX, arg Host
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const hostingPreviewCapacity = `-- name: HostingPreviewCapacity :one
+SELECT s.id,
+ (SELECT count(*)::bigint FROM hosting_previews p WHERE p.site_id=s.id) AS previews,
+ (SELECT count(*)::bigint FROM hosting_ci_runs r JOIN hosting_releases rel ON rel.id=r.release_id AND rel.site_id=r.site_id
+  WHERE r.site_id=s.id AND r.preview_reserved AND NOT r.preview_created
+   AND (NOT $1::boolean OR r.id<>$2::uuid) AND r.preview_expires_at>$3::timestamptz
+   AND rel.state IN ('pending','ready')) AS reservations
+FROM hosting_sites s WHERE s.account_id=$4 AND s.id=$5
+`
+
+type HostingPreviewCapacityParams struct {
+	HasExcludedRun bool
+	ExcludeRunID   pgtype.UUID
+	ObservedAt     pgtype.Timestamptz
+	AccountID      pgtype.UUID
+	SiteID         pgtype.UUID
+}
+
+type HostingPreviewCapacityRow struct {
+	ID           pgtype.UUID
+	Previews     int64
+	Reservations int64
+}
+
+func (q *Queries) HostingPreviewCapacity(ctx context.Context, db DBTX, arg HostingPreviewCapacityParams) (HostingPreviewCapacityRow, error) {
+	row := db.QueryRow(ctx, hostingPreviewCapacity,
+		arg.HasExcludedRun,
+		arg.ExcludeRunID,
+		arg.ObservedAt,
+		arg.AccountID,
+		arg.SiteID,
+	)
+	var i HostingPreviewCapacityRow
+	err := row.Scan(&i.ID, &i.Previews, &i.Reservations)
+	return i, err
 }
