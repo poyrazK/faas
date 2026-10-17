@@ -896,3 +896,40 @@ The read shares the three-second inventory budget and excludes raw queries,
 labels, errors and absolute paths. It never writes incident or collection state.
 Existing catalog generation/check targets now cover both generated catalogs;
 Go tests also detect recording definition or dependency drift.
+
+### Critical telemetry input health
+
+```sh
+gregalectl obs input-health --json
+gregalectl obs input-health --expected-role single-box-v1
+gregalectl obs input-health --expected-role control-plane-v1 --json
+```
+
+The first command advertises expectations and returns unknown without reading
+Prometheus. Select the role explicitly; binary presence does not establish the
+installed topology. Both roles expect at least one apid, public gateway
+(`gatewayd` scrape job) and control-plane schedd target. Single-box adds vmmd.
+Control-plane reads gatewayd-internal, schedd-compute and vmmd expectations from
+fresh apid compute discovery snapshots, including omitted invalid target counts.
+The reader uses the default `job="apid", exported_job="<compute-job>"` collision
+mapping. A different label mapping or multiple discovery producers stays unknown.
+A fresh successful zero-node registry can legitimately have no compute targets.
+
+Read scrape coverage and metric evidence separately. Fresh `up=0`, stale scrape
+samples and missing minimum targets are different counts. Unexpected dynamic
+counts remain partial. Each job checks its own always-instantiated readiness
+gauge on every fresh up target: a fresh sibling cannot conceal a missing or
+stale sibling. A readiness value of zero is valid telemetry; this command does
+not assess whether the daemon is ready. Traffic counters are not required at
+idle. Missing samples mean none found within the ten-minute lookback; original
+sample timestamps, with a 120-second freshness threshold, determine staleness.
+Down targets remain in scrape evidence rather than becoming missing gauge faults.
+
+Static expectations are minimums and cannot detect every missing replica.
+Discovery counts cannot verify target identity membership. This first input set
+covers apid, gateways, schedulers and VM managers, one readiness gauge per job;
+other rule inputs remain unassessed. Use `rule-coverage`, `recording-coverage`,
+`rule-health` and `notification-health` for their independent evidence. The API
+is GET `/v1/admin/obs/input-health?expected_role=control-plane-v1` with existing
+operator/MFA/allowlist controls, a shared three-second read budget and aggregate
+counts only. It writes no history or configuration.

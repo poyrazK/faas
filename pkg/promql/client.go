@@ -189,13 +189,27 @@ func (c *Client) QueryVectorStrict(ctx context.Context, query string) ([]VectorS
 	return c.queryVector(ctx, query, true)
 }
 
+// QueryVectorStrictAt pins related evidence reads to the same evaluation time.
+// Use timestamp(selector) when original sample freshness matters: an instant
+// query's result timestamp is the evaluation time, not the scrape time.
+func (c *Client) QueryVectorStrictAt(ctx context.Context, query string, at time.Time) ([]VectorSample, error) {
+	return c.queryVectorAt(ctx, query, true, &at)
+}
+
 func (c *Client) queryVector(ctx context.Context, query string, strict bool) ([]VectorSample, error) {
+	return c.queryVectorAt(ctx, query, strict, nil)
+}
+
+func (c *Client) queryVectorAt(ctx context.Context, query string, strict bool, at *time.Time) ([]VectorSample, error) {
 	if c == nil || c.baseURL == "" {
 		return nil, fmt.Errorf("promql: client not configured")
 	}
 	qctx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 	u := c.baseURL + "/api/v1/query?query=" + url.QueryEscape(query)
+	if at != nil {
+		u += "&time=" + url.QueryEscape(at.UTC().Format(time.RFC3339Nano))
+	}
 	req, err := http.NewRequestWithContext(qctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil, err

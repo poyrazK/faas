@@ -45129,6 +45129,51 @@ paths:
         '403': { description: Rule coverage read denied by operator scope or MFA or allowlist policy. }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/admin/obs/input-health:
+    get:
+      tags: [admin]
+      operationId: getObsInputHealth
+      summary: Inspect critical telemetry inputs for an explicitly selected role.
+      description: |
+        Requires operator read scope, MFA and the operator allowlist. Without an
+        explicit expected_role, returns unknown with choices and reads no source.
+        Both roles expect at least one apid, gatewayd (public gateway) and schedd
+        scrape target. Single-box also expects vmmd. Control-plane adds vmmd,
+        gatewayd-internal and schedd-compute counts from fresh apid discovery.
+        Static counts are minimums, not a complete intended inventory. Compute
+        counts do not prove target identity membership. The default Prometheus
+        collision mapping job=apid plus exported_job selects discovery evidence.
+        Missing, stale, conflicting or invalid discovery stays unknown. A fresh
+        zero registry is legitimate; omitted invalid discovery targets degrade.
+        Pins strict Prometheus queries to one time under a three-second budget
+        with at most six concurrent fixed job readers. Compares original sample
+        timestamps, distinguishing fresh up, down, stale and missing minimum
+        targets, with unexpected compute counts reported separately. Checks one
+        vetted always-instantiated daemon readiness gauge per job only on fresh
+        up targets, preserving per-target gaps. Uses a ten-minute lookback at
+        fifteen-second steps; freshness is 120 seconds. Gauge value zero is a
+        valid input and does not imply ready. Other metrics and rule evaluation
+        or notification health are unassessed. A known zero expectation with no
+        observed targets makes metric checks not applicable. Failures remain
+        unknown without cached values. Returns aggregate counts and closed codes,
+        excluding target addresses, labels, queries, URLs and raw errors. No writes.
+      parameters:
+        - name: expected_role
+          in: query
+          required: false
+          description: Operator-selected minimum role expectation; this does not discover deployment intent.
+          schema: { type: string, enum: [single-box-v1, control-plane-v1] }
+      responses:
+        '200':
+          description: Independently scoped scrape expectations and critical gauge sample evidence.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObsInputHealth' }
+        '400': { description: Unknown or empty or repeated expected_role or another input health query key. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Input health read denied by operator scope or MFA or allowlist policy. }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/admin/obs/recording-coverage:
     get:
       tags: [admin]
@@ -64606,6 +64651,124 @@ components:
           uniqueItems: true
           description: Changed fields in expression then for then keep_firing_for then labels order; empty unless comparison is known changed.
           items: { type: string, enum: [expression, for, keep_firing_for, labels] }
+
+    ObsInputHealth:
+      type: object
+      description: Critical telemetry sample evidence for a selected minimum deployment role expectation.
+      required: [generated_at, scope, expected_role, available_roles, state, max_age_seconds, lookback_seconds, jobs, limitations]
+      properties:
+        generated_at: { type: string, format: date-time }
+        scope: { type: string, const: selected_critical_telemetry_inputs }
+        expected_role: { type: string, enum: ['', single-box-v1, control-plane-v1] }
+        available_roles:
+          type: array
+          minItems: 2
+          maxItems: 2
+          items: { type: string, enum: [single-box-v1, control-plane-v1] }
+        state: { type: string, enum: [healthy, degraded, partial, unknown] }
+        reason: { type: string, enum: [expected_role_not_selected, expected_role_unavailable] }
+        max_age_seconds: { type: integer, const: 120 }
+        lookback_seconds: { type: integer, const: 600 }
+        jobs:
+          type: array
+          maxItems: 6
+          description: Fixed selected job inventory; empty before role selection, with full aggregate counts and no target preview.
+          items: { $ref: '#/components/schemas/ObsInputJob' }
+        limitations:
+          type: array
+          items:
+            type: string
+            enum: [role_selected_per_request_not_deployment_evidence, static_expectations_are_minimum_one_not_full_inventory, discovery_counts_not_target_identity_membership, default_scrape_job_collision_uses_exported_job, readiness_sample_presence_not_readiness_value, metric_checks_cover_fresh_up_targets_only, one_vetted_idle_safe_gauge_per_selected_job_not_all_rule_inputs, historical_samples_bounded_by_lookback, raw_labels_queries_urls_and_errors_excluded]
+    ObsInputJob:
+      type: object
+      description: One selected job's independent expectation, scrape and gauge evidence.
+      required: [job, state, expectation, targets, metrics]
+      properties:
+        job: { type: string, enum: [apid, gatewayd, schedd, gatewayd-internal, schedd-compute, vmmd] }
+        state: { type: string, enum: [healthy, degraded, partial, unknown] }
+        expectation: { $ref: '#/components/schemas/ObsInputExpectation' }
+        targets: { $ref: '#/components/schemas/ObsInputTargets' }
+        metrics:
+          type: array
+          minItems: 1
+          maxItems: 1
+          items: { $ref: '#/components/schemas/ObsInputMetric' }
+    ObsInputExpectation:
+      type: object
+      description: Explicit static minimum or validated fresh compute discovery count; unknown counts remain null.
+      required: [source, state, minimum_targets, invalid_targets, observed_at]
+      properties:
+        source: { type: string, enum: [explicit_minimum, compute_discovery] }
+        state: { type: string, enum: [healthy, degraded, unknown] }
+        reason: { type: string, enum: [discovery_unavailable, discovery_missing, discovery_invalid, discovery_stale, discovery_invalid_targets] }
+        minimum_targets:
+          description: Minimum expected returned scrape targets; null when fresh discovery cannot establish a count.
+          oneOf:
+            - { type: integer, minimum: 0, maximum: 4096 }
+            - { type: 'null' }
+        invalid_targets:
+          description: Omitted invalid compute registry rows; null for static minimums or unavailable discovery.
+          oneOf:
+            - { type: integer, minimum: 0, maximum: 4096 }
+            - { type: 'null' }
+        observed_at:
+          description: Oldest original discovery sample or successful refresh time; null without validated discovery.
+          oneOf:
+            - { type: string, format: date-time }
+            - { type: 'null' }
+    ObsInputTargets:
+      type: object
+      description: Configured scrape coverage with known failures retained independently of unknown expectations.
+      required: [state, counts]
+      properties:
+        state: { type: string, enum: [healthy, degraded, partial, unknown] }
+        reason: { type: string, enum: [source_unavailable, invalid_evidence, scrape_coverage_gap, inventory_count_mismatch, expectation_unavailable] }
+        counts:
+          description: Complete strict scrape vector counts; null when source evidence is unavailable or invalid.
+          oneOf:
+            - { $ref: '#/components/schemas/ObsInputTargetCounts' }
+            - { type: 'null' }
+    ObsInputTargetCounts:
+      type: object
+      description: Original scrape freshness partition; missing minimum is separate from observed target failures.
+      required: [observed, fresh_up, down, stale, missing_minimum, extra]
+      properties:
+        observed: { type: integer, minimum: 0, maximum: 4096 }
+        fresh_up: { type: integer, minimum: 0, maximum: 4096 }
+        down: { type: integer, minimum: 0, maximum: 4096 }
+        stale: { type: integer, minimum: 0, maximum: 4096 }
+        missing_minimum:
+          description: Expected minimum less observed count, clamped at zero; null if the expectation is unknown.
+          oneOf:
+            - { type: integer, minimum: 0, maximum: 4096 }
+            - { type: 'null' }
+        extra:
+          description: Observed count above fresh discovery count; null for static minimums or unknown expectations.
+          oneOf:
+            - { type: integer, minimum: 0, maximum: 4096 }
+            - { type: 'null' }
+    ObsInputMetric:
+      type: object
+      description: Presence and freshness of one idle-safe readiness gauge on each fresh successful scrape target.
+      required: [metric, state, counts]
+      properties:
+        metric: { type: string, enum: [apid_daemon_ready, gatewayd_public_daemon_ready, gatewayd_daemon_ready, schedd_daemon_ready, vmmd_daemon_ready] }
+        state: { type: string, enum: [healthy, degraded, unknown, not_applicable] }
+        reason: { type: string, enum: [target_evidence_unavailable, no_fresh_up_targets, zero_expected_targets, source_unavailable, invalid_evidence, metric_sample_gap] }
+        counts:
+          description: Gauge sample partition over all fresh up targets; null if this metric assessment is unknown.
+          oneOf:
+            - { $ref: '#/components/schemas/ObsInputMetricCounts' }
+            - { type: 'null' }
+    ObsInputMetricCounts:
+      type: object
+      description: Per-target sample coverage before aggregation; freshness uses original sample times in bounded history.
+      required: [expected, fresh, missing, stale]
+      properties:
+        expected: { type: integer, minimum: 0, maximum: 4096 }
+        fresh: { type: integer, minimum: 0, maximum: 4096 }
+        missing: { type: integer, minimum: 0, maximum: 4096 }
+        stale: { type: integer, minimum: 0, maximum: 4096 }
 
     ObsRecordingCoverage:
       type: object

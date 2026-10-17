@@ -1168,6 +1168,13 @@ export type { ObsAlertWorkloadOldest } from './models/ObsAlertWorkloadOldest.js'
 export type { ObsAlertWorkloadSummary } from './models/ObsAlertWorkloadSummary.js';
 export type { ObsHealthResponse } from './models/ObsHealthResponse.js';
 export type { ObsHealthSignal } from './models/ObsHealthSignal.js';
+export type { ObsInputExpectation } from './models/ObsInputExpectation.js';
+export type { ObsInputHealth } from './models/ObsInputHealth.js';
+export type { ObsInputJob } from './models/ObsInputJob.js';
+export type { ObsInputMetric } from './models/ObsInputMetric.js';
+export type { ObsInputMetricCounts } from './models/ObsInputMetricCounts.js';
+export type { ObsInputTargetCounts } from './models/ObsInputTargetCounts.js';
+export type { ObsInputTargets } from './models/ObsInputTargets.js';
 export type { ObsNodeOperationPreflight } from './models/ObsNodeOperationPreflight.js';
 export type { ObsNotificationAPIStatus } from './models/ObsNotificationAPIStatus.js';
 export type { ObsNotificationHealth } from './models/ObsNotificationHealth.js';

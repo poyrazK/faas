@@ -27,6 +27,7 @@ import type { ObsAlertTriageRequest } from '../models/ObsAlertTriageRequest.js';
 import type { ObsAlertTriageResponse } from '../models/ObsAlertTriageResponse.js';
 import type { ObsAlertWorkloadSummary } from '../models/ObsAlertWorkloadSummary.js';
 import type { ObsHealthResponse } from '../models/ObsHealthResponse.js';
+import type { ObsInputHealth } from '../models/ObsInputHealth.js';
 import type { ObsNotificationHealth } from '../models/ObsNotificationHealth.js';
 import type { ObsRecordingCoverage } from '../models/ObsRecordingCoverage.js';
 import type { ObsRuleCoverage } from '../models/ObsRuleCoverage.js';
@@ -1220,6 +1221,60 @@ export class AdminService {
         400: `Unknown or empty or repeated expected_set or another query parameter.`,
         401: `code: unauthorized`,
         403: `Rule coverage read denied by operator scope or MFA or allowlist policy.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Inspect critical telemetry inputs for an explicitly selected role.
+   * Requires operator read scope, MFA and the operator allowlist. Without an
+   * explicit expected_role, returns unknown with choices and reads no source.
+   * Both roles expect at least one apid, gatewayd (public gateway) and schedd
+   * scrape target. Single-box also expects vmmd. Control-plane adds vmmd,
+   * gatewayd-internal and schedd-compute counts from fresh apid discovery.
+   * Static counts are minimums, not a complete intended inventory. Compute
+   * counts do not prove target identity membership. The default Prometheus
+   * collision mapping job=apid plus exported_job selects discovery evidence.
+   * Missing, stale, conflicting or invalid discovery stays unknown. A fresh
+   * zero registry is legitimate; omitted invalid discovery targets degrade.
+   * Pins strict Prometheus queries to one time under a three-second budget
+   * with at most six concurrent fixed job readers. Compares original sample
+   * timestamps, distinguishing fresh up, down, stale and missing minimum
+   * targets, with unexpected compute counts reported separately. Checks one
+   * vetted always-instantiated daemon readiness gauge per job only on fresh
+   * up targets, preserving per-target gaps. Uses a ten-minute lookback at
+   * fifteen-second steps; freshness is 120 seconds. Gauge value zero is a
+   * valid input and does not imply ready. Other metrics and rule evaluation
+   * or notification health are unassessed. A known zero expectation with no
+   * observed targets makes metric checks not applicable. Failures remain
+   * unknown without cached values. Returns aggregate counts and closed codes,
+   * excluding target addresses, labels, queries, URLs and raw errors. No writes.
+   *
+   * @returns ObsInputHealth Independently scoped scrape expectations and critical gauge sample evidence.
+   * @throws ApiError
+   */
+  public static getObsInputHealth({
+    expectedRole,
+  }: {
+    /**
+     * Operator-selected minimum role expectation; this does not discover deployment intent.
+     */
+    expectedRole?: 'single-box-v1' | 'control-plane-v1',
+  }): CancelablePromise<ObsInputHealth> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/admin/obs/input-health',
+      query: {
+        'expected_role': expectedRole,
+      },
+      errors: {
+        400: `Unknown or empty or repeated expected_role or another input health query key.`,
+        401: `code: unauthorized`,
+        403: `Input health read denied by operator scope or MFA or allowlist policy.`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and

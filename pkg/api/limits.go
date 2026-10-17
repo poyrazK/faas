@@ -8935,7 +8935,15 @@ const (
 	ObsRuleHealthRunbookMaxBytes  = 512
 
 	// Expected rule coverage is explicit and bounded independently of health.
-	ObsRuleCoverageBudget             = 3 * time.Second
+	ObsRuleCoverageBudget = 3 * time.Second
+	// Critical input diagnostics pin reads to one time and bound work to six
+	// jobs, one always-instantiated readiness gauge each, and strict vectors.
+	ObsInputHealthBudget              = 3 * time.Second
+	ObsInputHealthMaxAge              = 120 * time.Second
+	ObsInputHealthLookback            = 10 * time.Minute
+	ObsInputHealthStep                = 15 * time.Second
+	ObsInputHealthJobsMax             = 6
+	ObsInputHealthTargetsMax          = 4096
 	ObsRuleCoverageItemsMax           = 200
 	ObsRuleCoverageExpectedSetsMax    = 8
 	ObsRuleCoverageExpectedFilesMax   = 8
