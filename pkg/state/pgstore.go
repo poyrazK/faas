@@ -5224,7 +5224,7 @@ func (s *PgStore) UpdateProjectBinding(ctx context.Context, accountID, projectID
 func (s *PgStore) DeleteProject(ctx context.Context, projectID string) error {
 	tag, err := s.pool.Exec(ctx, `DELETE FROM projects WHERE id = $1`, projectID)
 	if err != nil {
-		return fmt.Errorf("pgstore: delete project %q: %w", projectID, err)
+		return fmt.Errorf("pgstore: delete project %q: %w", projectID, hostingParentDeleteError(err))
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
@@ -5446,7 +5446,7 @@ func (s *PgStore) deleteProjectEnvironmentWithCleanup(
 		 where project_id = $1 and slug = $2
 	`, projectID, slug)
 	if err != nil {
-		return ProjectEnvironmentCleanupJob{}, mapErr(err)
+		return ProjectEnvironmentCleanupJob{}, mapErr(hostingParentDeleteError(err))
 	}
 	if tag.RowsAffected() == 0 {
 		return ProjectEnvironmentCleanupJob{}, ErrNotFound
