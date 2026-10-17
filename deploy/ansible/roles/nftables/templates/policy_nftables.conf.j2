@@ -139,3 +139,14 @@ table inet faas {
 {{ '    ' }}ip6 saddr {{ masquerade_cidr_v6 }} oifname "{{ public_iface }}" masquerade
 {% endif -%}{{ '  ' }}}
 }
+
+{% if faas_public_forwarding | default(false) -%}
+table inet faas_public_forward {
+  chain output {
+    type filter hook output priority -1; policy accept;
+    meta mark & 0x80000000 == 0x80000000 meta mark set meta mark ^ meta oif
+    meta mark & 0x80000000 == 0x80000000 meta mark != 0x80000000 drop
+    meta mark == 0x80000000 meta mark set meta mark ^ meta oif
+  }
+}
+{% endif -%}

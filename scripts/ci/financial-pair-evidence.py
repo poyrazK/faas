@@ -202,7 +202,7 @@ def build_report(root, evidence, source_sha, run_id):
         "hosts": hosts, "commands": status, "logs": logs, "sources": sources,
         "single_host": single, "failures": errors,
         "remaining_release_gates": [
-            "remote ForwardHTTPStream response bytes traverse the canonical funded interface",
+            "cross-host gateway/owner response traffic and the complete custom-port/H2C/Upgrade/TCP/UDP matrix",
             "complete app/job/worker/sidecar/private workload matrix",
             "reference-SSD 100-cycle wake p95 and funded-egress throughput targets",
             "external provider sandbox/catalog reconciliation and complete native lifecycle gate",

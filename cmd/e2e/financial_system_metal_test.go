@@ -159,6 +159,13 @@ func TestFinancialSystemDaemonRecoveryMetal(t *testing.T) {
 	if err != nil || counter < beforeCounter+uint64(12*len(body)) || counter > uint64(lease.EgressGranted) {
 		t.Fatalf("physical bytes=%d grant=%d err=%v", counter, lease.EgressGranted, err)
 	}
+	if !t.Run("remote_http_variants", func(t *testing.T) {
+		financialRemoteVariants(t, h, record, body, func(t *testing.T) financial.ComputeLease {
+			return financialSystemLease(t, s, account, apps[1].ID, instance)
+		})
+	}) {
+		return
+	}
 	// Actual meterd sampling must observe this physical attempt; fixture
 	// rows cannot satisfy this predicate. Compute closes at a UTC minute.
 	keepaliveAt := time.Now()
@@ -181,6 +188,11 @@ func TestFinancialSystemDaemonRecoveryMetal(t *testing.T) {
 		}
 		proxy.SetAvailable(false) // all real daemon pools, independent observer stays up
 		lease = financialSystemLease(t, s, account, apps[1].ID, instance)
+		if !t.Run("remote_exhaustion", func(t *testing.T) {
+			financialRemoteExhaustion(t, h, record, lease, body)
+		}) {
+			return
+		}
 		financialSystemWait(t, time.Until(lease.FundedUntil)+2*time.Second, "physical retirement within funded teardown", func() bool {
 			r := financialSystemNativeRecord(t, instance)
 			return r.ResourcesRemoved && financialSystemPhysicalAbsent(r)
@@ -225,6 +237,36 @@ func TestFinancialSystemDaemonRecoveryMetal(t *testing.T) {
 		if err := h.RestartSchedd(); err != nil {
 			t.Fatal(err)
 		}
+		t.Run("remote_after_restart", func(t *testing.T) {
+			client := financialRemoteDaemonClient(t, h)
+			ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+			response := financialRemoteRequest(ctx, client, old.InstanceID)
+			cancel()
+			if len(response.body) != 0 {
+				t.Fatal("retired owner delivered a response after restart")
+			}
+			if got := request(t, apps[1].Slug); got != http.StatusOK {
+				t.Fatalf("new funded generation after restart: %d", got)
+			}
+			live, err := e2etest.WaitForInstanceState(t.Context(), t, pool, apps[1].ID, state.StateRunning, 30*time.Second)
+			if err != nil || len(live) != 1 || live[0].ID == old.InstanceID {
+				t.Fatalf("replacement attempt: %+v %v", live, err)
+			}
+			physical := financialSystemNativeRecord(t, live[0].ID)
+			before, err := netns.ReadVethRXBytes(physical.Lease.VethHost)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel = context.WithTimeout(t.Context(), 5*time.Second)
+			response = financialRemoteRequest(ctx, client, live[0].ID)
+			cancel()
+			after, err := netns.ReadVethRXBytes(physical.Lease.VethHost)
+			funding := financialSystemLease(t, s, account, apps[1].ID, live[0].ID)
+			if err != nil || response.err != nil || string(response.body) != body || after < before+uint64(len(body)) || after > uint64(funding.EgressGranted) {
+				t.Fatalf("replacement remote funding: bytes=%d -> %d grant=%d err=%v/%v", before, after, funding.EgressGranted, response.err, err)
+			}
+			t.Logf("financial-remote-restart: payload=%d interface_delta=%d cumulative=%d funded=%d retired_payload=0", len(response.body), after-before, after, funding.EgressGranted)
+		})
 	})
 	raw, status = doReq(t, h, key, http.MethodGet, "/v1/billing/budgets/"+budget.ID, nil)
 	if status != http.StatusOK || json.Unmarshal(raw, &budget) != nil || budget.Runtime == nil || budget.Runtime.Compute == nil {

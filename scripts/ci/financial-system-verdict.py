@@ -15,7 +15,39 @@ SOURCES = {
     "native": "cmd/e2e/financial_system_metal_test.go",
     "provider": "pkg/e2etest/financialfixture/reconciliation_test.go",
 }
-BINARIES = ("apid", "schedd", "vmmd", "imaged", "gatewayd-internal", "gatewayd-public", "meterd")
+BINARIES = ("apid", "schedd", "vmmd", "imaged", "gatewayd-internal", "gatewayd-public", "meterd", "vmmd-stream-bridge", "vmmd-raw-bridge", "vmmd-tcp-bridge", "vmmd-udp-bridge")
+REMOTE_SOURCE = "cmd/e2e/financial_remote_forwarding_metal_test.go"
+REMOTE_SUPPORT = (REMOTE_SOURCE, "pkg/netns/public_forward.go", "pkg/netns/public_forward_linux.go", "pkg/netns/public_forward_rules.go", "pkg/netns/public_forward_policy.go", "pkg/netns/policy.go", "deploy/ansible/roles/nftables/templates/policy_nftables.conf.j2", "pkg/netns/config.go", "pkg/fcvm/public_forward.go", "pkg/vmmdgrpc/public_forward.go", "pkg/vmmdgrpc/stream_bridge_manager.go", "pkg/wire/private_forward.go", "cmd/vmmd-stream-bridge/guest_transport_pool.go", "cmd/vmmd-stream-bridge/h2c_terminator.go", "cmd/vmmd-stream-bridge/main.go", "cmd/vmmd-raw-bridge/main.go", "cmd/vmmd-tcp-bridge/main.go", "cmd/vmmd-udp-bridge/main.go")
+
+
+def remote_http_contract(root, output):
+    source = (root / REMOTE_SOURCE).read_text()
+    variants = re.findall(r't\.Run\("([^"\n]+)",\s*func\(t \*testing\.T\)\s*{\s*check\(t,\s*"([^"\n]+)",\s*"([^"\n]+)"\)', source)
+    if {name for name, _, _ in variants} != {"legacy_v1", "per_request_v2", "persistent_v2"} or len(variants) != 3:
+        raise ValueError("remote HTTP source must select all live rollback modes")
+    measurements = {}
+    for name, version, persistent in variants:
+        if len(re.findall(rf"^\s+--- PASS: TestFinancialSystem\w+/remote_http_variants/{re.escape(name)}(?: |$)", output, re.M)) != 1:
+            raise ValueError(f"remote HTTP phase missing: {name}")
+        pattern = rf"financial-remote-http: version={re.escape(version)} persistent={re.escape(persistent)} payload=(\d+) interface_delta=(\d+) cumulative=(\d+) funded=(\d+)"
+        matches = re.findall(pattern, output)
+        if len(matches) != 1:
+            raise ValueError(f"remote HTTP measured payload missing or repeated: {name}")
+        payload, delta, cumulative, funded = map(int, matches[0])
+        if not 0 < payload <= delta < 2 * payload or not delta <= cumulative <= funded <= 2**63 - 1:
+            raise ValueError(f"remote HTTP unmetered, duplicated or unfunded bytes: {name}")
+        measurements[name] = dict(payload=payload, interface_delta=delta, cumulative=cumulative, funded=funded)
+    exhaustion = re.findall(r"financial-remote-exhaustion: payload=(\d+) interface_delta=(\d+) cumulative=(\d+) funded=(\d+) private_payload=(\d+) stable_after=(\d+) private_counter=(\d+)", output)
+    restart = re.findall(r"financial-remote-restart: payload=(\d+) interface_delta=(\d+) cumulative=(\d+) funded=(\d+) retired_payload=(\d+)", output)
+    if len(exhaustion) != 1 or len(restart) != 1:
+        raise ValueError("remote exhaustion/private/restart measurement missing")
+    payload, delta, cumulative, funded, private, stable, private_counter = map(int, exhaustion[0])
+    if not 0 < payload <= delta <= cumulative <= funded <= 2**63 - 1 or private <= 0 or stable != cumulative or private_counter != cumulative:
+        raise ValueError("remote quota reopened, private bytes billed or funded bound exceeded")
+    payload, delta, cumulative, funded, retired = map(int, restart[0])
+    if not 0 < payload <= delta < 2 * payload or not delta <= cumulative <= funded <= 2**63 - 1 or retired != 0:
+        raise ValueError("remote owner restart reopened or exceeded old authority")
+    return {"sources": {name: digest(root / name) for name in REMOTE_SUPPORT}, "variants": measurements, "exhaustion": list(map(int, exhaustion[0])), "restart": list(map(int, restart[0]))}
 
 
 def reconciliation_contract(root, records):
@@ -117,8 +149,12 @@ def inspect_lane(root, lane, log, exit_code):
             phases = sorted(set(re.findall(r't\.Run\("([^"\n]+)"', source_text)))
             result["required_phases"] = phases
             for phase in phases:
-                if not re.search(rf"^\s+--- PASS: TestFinancialSystem\w+/{re.escape(phase)}(?: |$)", output, re.M):
+                if not re.search(rf"^\s+--- PASS: TestFinancialSystem\w+/(?:[^\n ]+/)*{re.escape(phase)}(?: |$)", output, re.M):
                     errors.append(f"{lane}: recovery phase {phase} absent")
+            try:
+                result["remote_http"] = remote_http_contract(root, output)
+            except (OSError, ValueError, KeyError, TypeError):
+                errors.append("native: remote HTTP canonical byte evidence missing or invalid")
     except OSError:
         errors.append(f"{lane}: required log missing")
     if type(exit_code) is not int or exit_code != 0:

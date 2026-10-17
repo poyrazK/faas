@@ -263,6 +263,20 @@ durable settlement of that generation. API balance readback must fit the shared
 paid limit. These are single-host scenarios; physical two-host partitions and
 contention remain separate release checks.
 
+The ADR-1364 response checks compare complete multi-frame HTTP payloads with
+canonical root veth RX and the real lease's issued credits. The same funded
+Firecracker guest is exercised through the production RPC handler in v1,
+per-request v2 and persistent v2 modes, with four concurrent requests per mode.
+After the DB cut, the actual VMMD RPC must exhaust its public quota while the
+VM is still physically alive, emit no additional public bytes on retry, and
+serve an authorized private reply without increasing the public counter.
+After owner restart the old attempt must return no payload; the replacement
+must use its new funded interface. These checks add no gateway or gRPC billing
+meter. Reports reject missing modes, payload-only/ARP-only counters, duplicated
+response quantities, reopened quotas, changed supporting sources or missing
+bridge binaries. Cross-host overlay traffic and the complete custom-port,
+sidecar, H2C/gRPC and Layer-4 matrix remain native release gates.
+
 The same lane first runs portable acceptance against real PostgreSQL and a real
 meterd child. A loopback-only Polar fixture validates the configured catalog and
 records immutable provider events. The fixture covers:

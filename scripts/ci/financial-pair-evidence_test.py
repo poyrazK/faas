@@ -55,7 +55,7 @@ class PairEvidenceTest(unittest.TestCase):
         case.setUp()
         self.addCleanup(case.doCleanups)
         old_root = case.args.root
-        for source_name in fixture.verdict.SOURCES.values():
+        for source_name in (*fixture.verdict.SOURCES.values(), *fixture.verdict.REMOTE_SUPPORT):
             path = self.root / source_name
             path.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(old_root / source_name, path)

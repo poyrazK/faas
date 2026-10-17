@@ -1341,8 +1341,14 @@ func TestRetargetAppPortCommandsMatchFullRuleset(t *testing.T) {
 					t.Fatalf("retarget adds\n%s\nfull ruleset installs\n%s", strings.Join(added, "\n"), strings.Join(installed, "\n"))
 				}
 				want := strconv.Itoa(c.guestAppPort())
-				if !strings.HasSuffix(added[0], "dnat to "+GuestIP+":"+want) {
-					t.Fatalf("public DNAT = %q, want target port %s", added[0], want)
+				found := false
+				for _, line := range added {
+					if strings.Contains(line, "iifname vp0 tcp dport 8080 dnat to "+GuestIP+":"+want) {
+						found = true
+					}
+				}
+				if !found {
+					t.Fatalf("published :8080 DNAT missing, want target port %s: %v", want, added)
 				}
 			})
 		}

@@ -100,8 +100,15 @@ runner and CI wiring. It uses a real remote native owner, per-host SQL network
 cuts, retained credits, owner restart, source-derived component selection and
 cleanup evidence from both hosts. The full-daemon CI job retains and rechecks
 raw provider/receipt vectors. These are implementation and execution gates;
-remote HTTP accounting, the full workload matrix and performance still block
+the required remote HTTP payload evidence, the full workload matrix and performance still block
 promotion. No physical two-host execution has been performed locally.
+
+ADR-1364 adds public forwarding through the native-recovery owner's funded
+interface for HTTP, Upgrade, TCP and UDP, with captured-interface checks and
+separate authorized private bridges. The full-daemon report now requires v1/v2
+streamed payload measurements, quota exhaustion without the DB, private
+isolation and owner restart, plus exact bridge binary/supporting-source hashes.
+These local changes prepare native evidence; they do not supply that evidence.
 
 ## Rollout and rollback
 

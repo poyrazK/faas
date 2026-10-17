@@ -21,6 +21,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/chaos"
 	"github.com/onebox-faas/faas/pkg/tcpmetrics"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // ErrServiceTCPTargetUnavailable reports a target that exists but refuses
@@ -333,7 +334,7 @@ func (p *ServiceTCPProxy) forward(ctx context.Context, conn net.Conn, caller Ser
 		}
 		hop := serviceEndpointTarget(target.AppID, endpoint)
 		hop.Port = port
-		err = p.cfg.Forward(ctx, conn, hop, target.IdleTimeout)
+		err = p.cfg.Forward(wire.WithPrivateForward(ctx), conn, hop, target.IdleTimeout)
 		if errors.Is(err, ErrTCPGuestUnreachable) {
 			frozen := instanceFrozenRefusal(err)
 			if frozen {

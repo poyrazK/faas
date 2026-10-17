@@ -90,6 +90,9 @@ func SetDefaultHostBridgeIP(addr netip.Addr) {
 //	                                  │  (veth pair)
 //	netns fc-<instance>:  vethPeer(10.100.x.y/16) ── [route/DNAT] ── tap0(10.0.0.1) ── guest(10.0.0.2)
 type Config struct {
+	// PublicForwarding installs the generation-owned host route used by
+	// native-recovery bridge sockets pinned to the original veth ifindex.
+	PublicForwarding bool
 	// EgressBudgetBytes bounds this network generation before any peer is up.
 	EgressBudgetBytes int64
 	EgressBudgetUntil time.Time
@@ -281,7 +284,9 @@ func (c Config) guestAppPort() int {
 func (c Config) appPortDNATRules(nft func(...string) []string) [][]string {
 	port := strconv.Itoa(AppPort)
 	target := fmt.Sprintf("%s:%d", GuestIP, c.guestAppPort())
-	rules := [][]string{nft("add", "rule", "ip", "faas", "prerouting", "iifname", c.VethPeer, "tcp", "dport", port, "dnat", "to", target)}
+	rules := c.publicBridgeDNATRules(nft, true)
+	rules = append(rules, nft("add", "rule", "ip", "faas", "prerouting", "iifname", c.VethPeer, "tcp", "dport", port, "dnat", "to", target))
+	rules = append(rules, c.publicBridgeDNATRules(nft, false)...)
 	if c.privateNetworkEnabled() {
 		// Private ingress targets the stable allocated app address. DNAT
 		// happens before local-delivery routing, so the address can remain
@@ -368,6 +373,12 @@ func (c Config) SetupCommands() [][]string {
 		cmds = append(cmds, tapUp)
 		gate := c.EgressBudgetSetupCommands()
 		cmds = append(cmds[:6], append(gate, cmds[6:]...)...)
+	}
+	if c.PublicForwarding {
+		// The marked-socket host guard fixes output to this generation. Its
+		// /32 route disappears with the owned device; the bridge's /16 must
+		// never become a fallback after this interface has been retired.
+		cmds = append(cmds, []string{"ip", "route", "add", c.HostIP.String() + "/32", "dev", c.VethHost, "scope", "link", "src", c.HostBridgeIP.String()})
 	}
 	cmds = append(cmds, c.PrivateNetworkSetupCommands()...)
 	// Provider-verified private destinations get an explicit route so they
@@ -710,6 +721,11 @@ func (c Config) NftCommands() [][]string {
 		add("add", "rule", "ip", "faas", "forward", "iifname", c.VethPeer,
 			"oifname", c.Tap, "ip", "daddr", GuestIP, "meta", "l4proto", "tcp",
 			"ct", "status", "dnat", "accept")
+		if c.PublicForwarding && c.HostBridgeIP.IsValid() && c.HostIP.IsValid() {
+			add("add", "rule", "ip", "faas", "forward", "iifname", c.VethPeer,
+				"oifname", c.Tap, "ip", "saddr", c.HostBridgeIP.String(), "ip", "daddr", GuestIP,
+				"meta", "l4proto", "udp", "ct", "status", "dnat", "accept")
+		}
 		cmds = append(cmds, c.serviceAddressRules(nft)...)
 	}
 

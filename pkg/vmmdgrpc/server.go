@@ -688,7 +688,7 @@ func (s *Server) wakeWithBridgePrewarm(ctx context.Context, wr fcvm.WakeRequest,
 		s.streamBridges = newStreamBridgeManager(s.log)
 	}
 	inst, err := fastVMM.WakeWithNetworkReady(ctx, wr, func(ready fcvm.WakeNetworkReady) {
-		s.streamBridges.prewarm(ctx, &vmmdpb.ForwardHTTPRequestInit{
+		s.streamBridges.prewarm(withPublicTarget(ctx, ready.PublicTarget), &vmmdpb.ForwardHTTPRequestInit{
 			Instance:    ready.Instance,
 			Port:        uint32(wr.Port),
 			AppProtocol: appProtocol,

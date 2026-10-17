@@ -25,6 +25,8 @@ def verify(root, directory, source_sha, run_id):
         checked, errors = verdict.inspect_lane(root, lane, path, record["exit_code"])
         if errors or checked["log_sha256"] != record["log_sha256"] or checked["source_sha256"] != record["source_sha256"]:
             raise ValueError(f"{lane}: collected log/source does not match the native verdict")
+        if lane == "native" and checked.get("remote_http") != record.get("remote_http"):
+            raise ValueError("remote HTTP measurements or supporting sources changed")
     proofs = verdict.reconciliation_contract(root, directory / "financial-system-records")
     if {key: value["sha256"] for key, value in proofs.items()} != {key: value["sha256"] for key, value in report["reconciliation"].items()}:
         raise ValueError("collected provider proof hashes changed")

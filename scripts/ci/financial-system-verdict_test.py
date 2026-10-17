@@ -24,6 +24,15 @@ class VerdictTest(unittest.TestCase):
             path.write_text('func TestFinancialSystemFixture(t *testing.T) { t.Run("outage", fn) }\n')
             log = getattr(self.args, lane + "_log")
             log.write_text('    --- PASS: TestFinancialSystemFixture/outage (0.1s)\n--- PASS: TestFinancialSystemFixture (1.0s)\nPASS\nok  github.com/onebox-faas/faas/fixture 1.1s\n')
+        for source in verdict.REMOTE_SUPPORT:
+            path = root / source
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("synthetic supporting source; never native execution\n")
+        (root / verdict.REMOTE_SOURCE).write_text('\n'.join(f't.Run("{name}", func(t *testing.T) {{ check(t, "{version}", "{persistent}") }})' for name, version, persistent in (("legacy_v1", "v1", "0"), ("per_request_v2", "v2", "0"), ("persistent_v2", "v2", "1"))))
+        with self.args.native_log.open("a") as log:
+            for name, version, persistent in (("legacy_v1", "v1", "0"), ("per_request_v2", "v2", "0"), ("persistent_v2", "v2", "1")):
+                log.write(f'    --- PASS: TestFinancialSystemFixture/remote_http_variants/{name} (0.1s)\nfinancial-remote-http: version={version} persistent={persistent} payload=10000 interface_delta=11000 cumulative=33000 funded=65536\n')
+            log.write('financial-remote-exhaustion: payload=10000 interface_delta=11000 cumulative=44000 funded=65536 private_payload=10000 stable_after=44000 private_counter=44000\nfinancial-remote-restart: payload=10000 interface_delta=11000 cumulative=11000 funded=65536 retired_payload=0\n')
         for path in [self.args.binary_root / name for name in verdict.BINARIES] + [self.args.guest_init, self.args.kernel]:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(b"synthetic artifact; never native execution")
@@ -59,6 +68,16 @@ class VerdictTest(unittest.TestCase):
                 setattr(self.args, name, 1)
                 self.assertFalse(self.report()["qualified"])
                 setattr(self.args, name, 0)
+
+    def test_remote_payload_billing_and_restart_proofs_are_required(self):
+        original = self.args.native_log.read_text()
+        for before, after in (("payload=10000 interface_delta=11000", "payload=0 interface_delta=11000"), ("interface_delta=11000", "interface_delta=9999"), ("interface_delta=11000", "interface_delta=20000"), ("funded=65536", "funded=1"), ("private_counter=44000", "private_counter=54000"), ("retired_payload=0", "retired_payload=1"), ("persistent_v2 (0.1s)", "missing_v2 (0.1s)")):
+            with self.subTest(before=before):
+                self.args.native_log.write_text(original.replace(before, after))
+                self.assertFalse(self.report()["qualified"])
+        self.args.native_log.write_text(original)
+        (self.args.binary_root / "vmmd-stream-bridge").unlink()
+        self.assertFalse(self.report()["qualified"])
 
     def test_provider_raw_receipts_quantities_and_money_are_required(self):
         path = self.args.root / "financial-system-records/reconciliation-lost_reply.json"

@@ -14,6 +14,16 @@ quantities are synthetic; they are not usage collected from the two-host guests.
 The pair fixture registers real native owners but prepares price/allowance and
 sampling rows directly. API activation is covered by the full-daemon lane.
 
+The full-daemon report also requires canonical response-byte evidence for
+`ForwardHTTPStream` (ADR-1364). On the real funded guest it exercises v1,
+per-request v2 and persistent v2 handlers, including four concurrent streamed
+responses per mode. Those mode checks use an in-process production RPC server
+and a live-identity adapter; the actual VMMD daemon then serves the database
+outage/quota-exhaustion, private-isolation and owner-restart checks. The adapter
+does not create financial authority or native resources. This is node-A
+handler/daemon evidence, not a cross-host overlay-traffic claim. Supporting
+source hashes and all four bridge binary hashes are mandatory in the report.
+
 Local compilation and portable rejection tests do not qualify either host.
 No publication, deployment or remote execution is part of preparing this lane.
 
@@ -22,6 +32,11 @@ No publication, deployment or remote execution is part of preparing this lane.
 Use two drained native x86_64 Linux KVM hosts. Both need Firecracker and jailer
 with identical hashes, the native networking tools, cgroups v2, loop devices,
 `br-tenants`, IPv4 forwarding and the platform's normal tenant host policy.
+Native public forwarding also requires nftables 1.1.3+, Linux 6.13+ and the
+matching host policy, plus effective loose or
+disabled `rp_filter` on the root tenant bridge. Strict reverse-path filtering
+is incompatible with its device-specific output route; publication refuses
+unsupported routing instead of changing global host configuration.
 Neither host may serve customer workloads or maintain a resident warm pool.
 Node A also needs the pinned Go toolchain, a static busybox, build tools,
 the existing full-system kernel/base assets and PostgreSQL tooling.
@@ -103,10 +118,12 @@ The report's `qualified` field covers physical native financial components
 plus the separate full-daemon/provider lane. **`promotion_ready` remains false.**
 Before promotion, close these remaining gates:
 
-1. Measure HTTP response bodies through remote `ForwardHTTPStream` against
-   canonical interface bytes and funded credits. That bridge currently dials
-   the guest from inside its namespace; it may bypass the public veth boundary.
-   Positive ARP counters or direct-egress packet tests cannot cover this path.
+1. Execute the required `ForwardHTTPStream` response-byte checks and extend
+   traffic coverage to the real cross-host gateway/owner route, custom main
+   ports, sidecars, H2C/gRPC, upgrades and public TCP/UDP. The ADR-1364 candidate
+   routes native-recovery public bridges through the canonical funded interface;
+   legacy owners cannot attest strict readiness. Positive ARP counters, source
+   inspection and compilation cannot substitute for response-payload evidence.
 2. Run the complete strict app/job/worker/sidecar/private workload matrix.
 3. Measure the 100-cycle reference-SSD wake p95 against the spec's 350 ms target,
    and set and meet a reviewed funded-egress throughput target. This lane does

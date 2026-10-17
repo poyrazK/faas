@@ -32,6 +32,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/devbridge"
 	"github.com/onebox-faas/faas/pkg/flags"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
+	"github.com/onebox-faas/faas/pkg/wire"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/propagation"
@@ -1524,6 +1525,7 @@ func (p *ServiceProxy) guestRequest(r *http.Request, targetPath string, target S
 	if p.attachCallerAssertion(request, target, caller, callerEnv) {
 		request = withTrustedServiceCallerAssertion(request)
 	}
+	request = request.WithContext(wire.WithPrivateForward(request.Context())) //nolint:contextcheck // request inherits r.Context and may carry the authorized assertion context.
 	return request
 }
 

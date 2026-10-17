@@ -51,6 +51,19 @@ class CollectedEvidenceTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.verify()
 
+    def test_changed_remote_source_or_rehashed_false_measurements_fail(self):
+        path = self.args.root / fixture.verdict.REMOTE_SUPPORT[1]
+        original = path.read_text()
+        path.write_text(original + "changed routing\n")
+        with self.assertRaises(ValueError):
+            self.verify()
+        path.write_text(original)
+        self.args.native_log.write_text(self.args.native_log.read_text().replace("private_counter=44000", "private_counter=45000"))
+        self.report["lanes"]["native"]["log_sha256"] = fixture.verdict.digest(self.args.native_log)
+        self.path.write_text(json.dumps(self.report))
+        with self.assertRaises(ValueError):
+            self.verify()
+
     def test_rehashed_billing_vectors_cannot_hide_quantity_mismatch(self):
         path = self.args.root / "financial-system-records/reconciliation-unavailable.json"
         proof = json.loads(path.read_text())
