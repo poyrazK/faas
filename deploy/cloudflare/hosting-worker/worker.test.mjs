@@ -507,3 +507,31 @@ test('preview configuration uses its own release with SPA, redirects, headers, a
  assert.equal(await(await f.previewRequest('/missing.js',{headers:{Accept:'text/html'}})).text(),'preview missing');
  f.env.FAAS_FRONTEND_HOSTING_CONFIG_ENABLED='false';assert.equal((await f.previewRequest()).status,503);
 });
+
+// Shared with pkg/hosting/localpreview. This exercises the production Worker,
+// including Access verification; local preview does not emulate Access or CDN.
+const localPreviewCases = JSON.parse(readFileSync(new URL('./local-preview-cases.json', import.meta.url), 'utf8'));
+for (const scenario of localPreviewCases.scenarios) {
+  test(`local preview contract: ${scenario.name}`, async () => {
+    const f = fixture();
+    f.env.FAAS_FRONTEND_HOSTING_CONFIG_ENABLED = 'true';
+    const files = localPreviewCases.files.map(file => {
+      f.objects.set(`hosting/published/${site}/${first}/files/${file.path}`, file.body);
+      return {path: file.path, size: Buffer.byteLength(file.body), sha256: createHash('sha256').update(file.body).digest('hex'), content_type: file.content_type};
+    });
+    f.objects.set(`hosting/published/${site}/${first}/manifest.json`, JSON.stringify({files, spa_fallback: !!scenario.spa, ...(scenario.config ? {config: scenario.config} : {})}));
+    for (const item of scenario.requests) {
+      const headers = {...item.headers};
+      const tagFile = item.if_none_match_file || item.weak_if_none_match_file;
+      if (tagFile) headers['If-None-Match'] = (item.weak_if_none_match_file ? 'W/' : '') + `"sha256:${files.find(file => file.path === tagFile).sha256}"`;
+      const response = await f.request(item.path, {method: item.method || 'GET', headers});
+      assert.equal(response.status, item.status, item.name);
+      for (const [key, value] of Object.entries(item.response_headers || {})) assert.equal(response.headers.get(key), value, `${item.name}: ${key}`);
+      for (const key of item.absent_headers || []) assert.equal(response.headers.get(key), null, `${item.name}: absent ${key}`);
+      // HTTP transports suppress HEAD bodies, including platform errors.
+      const body = item.method === 'HEAD' ? '' : await response.text();
+      if (item.body !== undefined) assert.equal(body, item.body, item.name);
+      if (item.code) assert.equal(JSON.parse(body).code, item.code, item.name);
+    }
+  });
+}

@@ -27,3 +27,5 @@ Durable responses also report `X-Gregale-Route-Generation` on GET, HEAD, and
 conditional revalidation. The value is evaluated after authorization/routing,
 including when file bytes come from cache, and supports
 [outage and regional qualification](../../../docs/internal-frontend-hosting-qualification.md).
+
+The local CLI preview uses [shared serving cases](local-preview-cases.json), also executed by `worker.test.mjs` against this authenticated Worker. The local command models one build and does not emulate Access, DNS, TLS, retained releases or CDN propagation. See the [local preview guide](../../../docs/internal-frontend-hosting-local-preview.md).

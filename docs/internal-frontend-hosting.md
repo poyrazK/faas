@@ -445,3 +445,5 @@ release review. It performs no mutations or live provider checks.
 See [preview admission reservations](internal-frontend-hosting-preview-reservations.md) for default-off capacity admission and operator snapshots.
 
 See [terminal CI cancellation](internal-frontend-hosting-cancellation.md) for default-off operator recovery of abandoned runs.
+
+See [local frontend serving preview](internal-frontend-hosting-local-preview.md) for default-off, credential-free build inspection before upload.

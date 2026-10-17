@@ -11399,3 +11399,14 @@ const (
 	HostingRetentionSitesPerPass = 100
 	HostingRetentionPassTimeout  = 30 * time.Second
 )
+
+// Local CLI preview limits; no server process or cloud resource is allocated.
+const (
+	HostingLocalPreviewPort            = 4173
+	HostingLocalPreviewHeaderTimeout   = 5 * time.Second
+	HostingLocalPreviewReadTimeout     = 10 * time.Second
+	HostingLocalPreviewWriteTimeout    = 30 * time.Second
+	HostingLocalPreviewIdleTimeout     = 30 * time.Second
+	HostingLocalPreviewShutdownTimeout = 5 * time.Second
+	HostingLocalPreviewHeaderMaxBytes  = 16 << 10
+)
