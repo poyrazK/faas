@@ -56,5 +56,9 @@ func (s *Service) reserveControlMultipart(ctx context.Context, b state.ObjectBuc
 	}
 	// Session, captured enrollment and declared object capacity commit together
 	// before a native initialization can be attempted.
-	return admitted.ReserveAdmittedObjectMultipartUpload(ctx, state.ObjectMultipartUpload{ID: uuid.NewString(), AccountID: b.AccountID, AppID: b.AppID, BucketID: b.ID, Key: req.Key, SizeBytes: req.SizeBytes, PartSizeBytes: partSize, PartCount: partCount, ContentType: req.ContentType, Protection: protection, Encryption: encryption, ExpiresAt: time.Now().UTC().Add(api.ObjectMultipartUploadTTL)}, api.MaxActiveMultipartUploadsPerBucket, s.Host.ObjectStorage().Accounting)
+	enroll, err := s.objectNodeSettlementEnrollment(b)
+	if err != nil {
+		return state.ObjectMultipartUpload{}, err
+	}
+	return admitted.ReserveAdmittedObjectMultipartUpload(ctx, state.ObjectMultipartUpload{ID: objectstorage.NewWriteReceiptID(), AccountID: b.AccountID, AppID: b.AppID, BucketID: b.ID, Key: req.Key, SizeBytes: req.SizeBytes, PartSizeBytes: partSize, PartCount: partCount, ContentType: req.ContentType, QueueNodeSettlement: enroll, Protection: protection, Encryption: encryption, ExpiresAt: time.Now().UTC().Add(api.ObjectMultipartUploadTTL)}, api.MaxActiveMultipartUploadsPerBucket, s.Host.ObjectStorage().Accounting)
 }

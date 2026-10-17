@@ -10,7 +10,6 @@ import (
 	"os"
 	"strings"
 
-	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/objectstorageactivity"
@@ -68,7 +67,7 @@ func (h *Handler) performTrackedGatewayPut(w http.ResponseWriter, r *http.Reques
 
 func (h *Handler) completeGatewayPut(w http.ResponseWriter, r *http.Request, req requestContext, st state.ObjectTrackedGatewayUploadStore, c state.ObjectUploadCompletion, response *http.Response) {
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		if response.StatusCode >= 400 && response.StatusCode < 500 && response.StatusCode != http.StatusRequestTimeout {
+		if objectstorage.ProviderWriteDefinitelyRejected(req.provider, response.StatusCode) {
 			c.Status = "failed"
 			c.ErrorCode = "provider_write_rejected"
 			if _, err := h.finishGatewayPut(r.Context(), st, c, false); err != nil {
@@ -213,7 +212,7 @@ func (h *Handler) admitGatewayPut(w http.ResponseWriter, r *http.Request, req re
 		c, ready := h.loadURLPutReceipt(w, r, req, st)
 		return st, c, ready
 	}
-	c, err := st.BeginTrackedGatewayUpload(r.Context(), state.ObjectUploadCompletion{ID: uuid.NewString(), AccountID: req.bucket.AccountID, AppID: req.bucket.AppID, BucketID: req.bucket.ID, SubjectID: req.credential.ID, Key: key, Bytes: r.ContentLength, ContentType: contentType, RequestID: req.requestID, Status: "pending", Protection: req.protection.Clone(), Encryption: req.encryption.Clone()}, h.registry.Accounting)
+	c, err := st.BeginTrackedGatewayUpload(r.Context(), state.ObjectUploadCompletion{ID: objectstorage.NewWriteReceiptID(), AccountID: req.bucket.AccountID, AppID: req.bucket.AppID, BucketID: req.bucket.ID, SubjectID: req.credential.ID, Key: key, Bytes: r.ContentLength, ContentType: contentType, RequestID: req.requestID, Status: "pending", QueueNodeSettlement: objectstorage.QueueOwnedNodeSettlement(req.provider), Protection: req.protection.Clone(), Encryption: req.encryption.Clone()}, h.registry.Accounting)
 	return st, c, h.writeAdmissionError(w, r, req, err)
 }
 func (h *Handler) dispatchGatewayPut(w http.ResponseWriter, r *http.Request, req requestContext, st state.ObjectTrackedGatewayUploadStore, c state.ObjectUploadCompletion) (state.ObjectUploadCompletion, bool) {

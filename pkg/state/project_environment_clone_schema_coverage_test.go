@@ -33,6 +33,9 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		"operator_recovery_submissions": CloneSchemaOperational,
 		"operator_restart_executions":   CloneSchemaOperational,
 
+		// ADR-1562: retain delivery of original physical storage settlements.
+		"object_node_settlement_outbox": CloneSchemaOperational,
+
 		// ADR-202610171453: inventory internal hosting without copying identity or serving state.
 		"hosting_sites":                                 CloneSchemaConfiguration,
 		"hosting_domains":                               CloneSchemaConfiguration,
