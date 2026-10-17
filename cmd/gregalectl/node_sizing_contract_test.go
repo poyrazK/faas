@@ -35,7 +35,10 @@ func TestNodeJoinDerivesCapacityFromTheCLI(t *testing.T) {
 		t.Error("node_join.yml still carries its own capacity formula; it must use the sizing CLI")
 	}
 	for _, want := range []string{
-		"compute-nodes\n          - sizing",
+		"'compute-nodes', 'sizing'",
+		"(['--edge'] if (faas_edge_on_compute_nodes | default(false) | bool) else [])",
+		"faas_node_sizing.tenant_cpus | default(faas_node_sizing.host_cpus)",
+		"- \"{{ faas_join_tenant_vcpus }}\"",
 		"faas_node_sizing_raw.stdout | from_json",
 		"faas_node_sizing.admission_ceiling_mb",
 		"faas_node_sizing.tenant_slice_max_mb",
@@ -70,13 +73,15 @@ func TestComputeNodesSizingReportMatchesTheLibrary(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		role  role.Role
+		edge  bool
 		shape api.NodeRoleShape
 	}{
-		{"compute-only", role.RoleComputeOnly, api.NodeShapeComputeOnly},
-		{"control-plane", role.RoleControlPlane, api.NodeShapeSingleBox},
-		{"single-box", role.RoleSingleBox, api.NodeShapeSingleBox},
+		{"compute-only", role.RoleComputeOnly, false, api.NodeShapeComputeOnly},
+		{"compute-only edge", role.RoleComputeOnly, true, api.NodeShapeComputeEdge},
+		{"control-plane", role.RoleControlPlane, false, api.NodeShapeSingleBox},
+		{"single-box", role.RoleSingleBox, false, api.NodeShapeSingleBox},
 	} {
-		if got := nodeSizingShape(tc.role); got != tc.shape {
+		if got := nodeSizingShape(tc.role, tc.edge); got != tc.shape {
 			t.Errorf("%s: shape = %v, want %v", tc.name, got, tc.shape)
 		}
 	}
@@ -101,8 +106,35 @@ func TestComputeNodesSizingReportMatchesTheLibrary(t *testing.T) {
 	if report.AdmissionCeilingMB != want.AdmissionCeilingMB ||
 		report.TenantSliceMaxMB != want.TenantSliceMaxMB ||
 		report.TenantBudgetMB != want.TenantBudgetMB ||
-		report.NonTenantReserveMB != want.NonTenantReserveMB {
+		report.NonTenantReserveMB != want.NonTenantReserveMB ||
+		report.TenantCPUs != want.TenantCPUs {
 		t.Fatalf("report %+v does not match library %+v", report, want)
+	}
+}
+
+// ADR-1343 §4: --edge reports the edge node's hold-back, and only a
+// compute-only host can run the edge.
+func TestComputeNodesSizingEdge(t *testing.T) {
+	_, restore := captureSizingStdout(t)
+	code := cmdComputeNodesSizing([]string{"--role", "compute-only", "--edge", "--json"})
+	out := restore()
+	if code != 0 {
+		t.Fatalf("sizing --edge exit = %d, output %q", code, out)
+	}
+	var report nodeSizingReport
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &report); err != nil {
+		t.Fatalf("parse report %q: %v", out, err)
+	}
+	want := api.DeriveNodeSizingForRole(report.HostMemTotalMB, report.HostCPUs, api.NodeShapeComputeEdge)
+	if !report.Edge || report.TenantCPUs != want.TenantCPUs || report.NonTenantReserveMB != want.NonTenantReserveMB || report.AdmissionCeilingMB != want.AdmissionCeilingMB {
+		t.Fatalf("edge report %+v does not match library %+v", report, want)
+	}
+	if report.HostCPUs > 1 && report.TenantCPUs >= report.HostCPUs {
+		t.Errorf("edge node registers %d of %d CPUs; the hold-back is missing", report.TenantCPUs, report.HostCPUs)
+	}
+
+	if code := cmdComputeNodesSizing([]string{"--role", "control-plane", "--edge", "--json"}); code != 2 {
+		t.Errorf("--edge on a control-plane host exit = %d, want 2", code)
 	}
 }
 

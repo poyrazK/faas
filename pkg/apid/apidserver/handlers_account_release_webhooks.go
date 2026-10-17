@@ -52,7 +52,7 @@ func sealAccountReleaseWebhookSecret(plaintext string) ([]byte, *api.Problem) {
 	if prob := validateWebhookSecret(plaintext); prob != nil {
 		return nil, prob
 	}
-	recipient := setSecretRecipient()
+	recipient := hostSecretRecipient()
 	if recipient == nil {
 		return nil, api.ErrCapacity("host age recipient not loaded — refusing to seal webhook secret")
 	}

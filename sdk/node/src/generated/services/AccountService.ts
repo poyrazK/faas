@@ -584,7 +584,7 @@ export class AccountService {
     provider,
   }: {
     /**
-     * Billing provider statements export to (ADR-1305).
+     * Billing provider statements export to (ADR-1507).
      */
     provider: BillingProvider,
   }): CancelablePromise<BillingConnectionResponse> {
@@ -618,7 +618,7 @@ export class AccountService {
     requestBody,
   }: {
     /**
-     * Billing provider statements export to (ADR-1305).
+     * Billing provider statements export to (ADR-1507).
      */
     provider: BillingProvider,
     requestBody: PutBillingConnectionRequest,
@@ -648,7 +648,7 @@ export class AccountService {
     provider,
   }: {
     /**
-     * Billing provider statements export to (ADR-1305).
+     * Billing provider statements export to (ADR-1507).
      */
     provider: BillingProvider,
   }): CancelablePromise<void> {
@@ -665,7 +665,7 @@ export class AccountService {
     });
   }
   /**
-   * List invoices exported from usage statements, with their payment status (ADR-1302).
+   * List invoices exported from usage statements, with their payment status (ADR-1504).
    * @returns StatementInvoiceListResponse Exported invoices, newest first.
    * @throws ApiError
    */
@@ -727,7 +727,7 @@ export class AccountService {
     });
   }
   /**
-   * Bill one ended month for every customer (ADR-1301).
+   * Bill one ended month for every customer (ADR-1503).
    * Starts a background run for one UTC calendar month that ended at least
    * an hour ago. For every app consumer and platform tenant with billable
    * usage, it drafts the month's statement, holds consumers whose ledger

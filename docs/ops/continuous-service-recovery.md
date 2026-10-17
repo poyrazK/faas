@@ -8,7 +8,7 @@ Worker apps are not in this ledger. schedd reconciles every active worker app
 it owns once, 30 seconds after it starts, and logs `worker startup reconcile:
 done` with the number of apps. A worker pool that is still empty after that
 line needs an event (a deploy, a lifecycle change or `gregale wake`) or an
-operator. See [the worker startup reconcile ADR](../adr/20261017-worker-startup-reconcile.md).
+operator. See [the worker startup reconcile ADR](../adr/1501-worker-startup-reconcile.md).
 
 ## Inspect recovery
 

@@ -971,6 +971,8 @@ export type { IssueImpact } from './IssueImpact.js';
 export type { IssueImpactAlertPolicy } from './IssueImpactAlertPolicy.js';
 export type { IssueImpactSummary } from './IssueImpactSummary.js';
 export type { IssueIngestToken } from './IssueIngestToken.js';
+export type { IssueLifecycleAlertPolicy } from './IssueLifecycleAlertPolicy.js';
+export type { IssueLifecycleAlertPreview } from './IssueLifecycleAlertPreview.js';
 export type { IssueOccurrence } from './IssueOccurrence.js';
 export type { IssueOwnershipRule } from './IssueOwnershipRule.js';
 export type { IssueOwnershipRules } from './IssueOwnershipRules.js';
@@ -1690,6 +1692,8 @@ export type { OperationXGregaleOperationWorkflowStep } from './OperationXGregale
 export type { OperationXGregaleRelease } from './OperationXGregaleRelease.js';
 export type { OperatorIntentAcceptedResponse } from './OperatorIntentAcceptedResponse.js';
 export type { OperatorIntentResponse } from './OperatorIntentResponse.js';
+export type { OperatorParkExecutionResponse } from './OperatorParkExecutionResponse.js';
+export type { OperatorRestartExecutionResponse } from './OperatorRestartExecutionResponse.js';
 export type { OperatorRuntimeConfig } from './OperatorRuntimeConfig.js';
 export type { OperatorRuntimeConfigOperation } from './OperatorRuntimeConfigOperation.js';
 export type { OperatorRuntimeConfigRevision } from './OperatorRuntimeConfigRevision.js';
@@ -1846,6 +1850,7 @@ export type { PreviewEnvironmentMemberResponse } from './PreviewEnvironmentMembe
 export type { PreviewEnvironmentStatusResponse } from './PreviewEnvironmentStatusResponse.js';
 export type { PreviewEventRequest } from './PreviewEventRequest.js';
 export type { PreviewEventResponse } from './PreviewEventResponse.js';
+export type { PreviewIssueLifecycleAlertRequest } from './PreviewIssueLifecycleAlertRequest.js';
 export type { PreviewProductionChangesResponse } from './PreviewProductionChangesResponse.js';
 export type { PreviewResourceLinksResponse } from './PreviewResourceLinksResponse.js';
 export type { PreviewResourceResponse } from './PreviewResourceResponse.js';
@@ -2453,6 +2458,7 @@ export type { UpdateFinancialBudgetRequest } from './UpdateFinancialBudgetReques
 export type { UpdateInboundWebhookEndpointRequest } from './UpdateInboundWebhookEndpointRequest.js';
 export type { UpdateIssueFrequencyAlertPolicyRequest } from './UpdateIssueFrequencyAlertPolicyRequest.js';
 export type { UpdateIssueImpactAlertPolicyRequest } from './UpdateIssueImpactAlertPolicyRequest.js';
+export type { UpdateIssueLifecycleAlertPolicyRequest } from './UpdateIssueLifecycleAlertPolicyRequest.js';
 export type { UpdateIssueTrackerAutoSyncRequest } from './UpdateIssueTrackerAutoSyncRequest.js';
 export type { UpdateIssueTrackerLinearConnectionRequest } from './UpdateIssueTrackerLinearConnectionRequest.js';
 export type { UpdateJobRequest } from './UpdateJobRequest.js';

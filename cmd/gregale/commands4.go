@@ -46,14 +46,14 @@ func cmdAccount(args []string) int {
 		// from a CI box or pin the response in a contract test.
 		return cmdAccountDPA(args[1:])
 	case "billing-connection":
-		// ADR-1300, ADR-1305: the account's billing provider keys for
+		// ADR-1502, ADR-1507: the account's billing provider keys for
 		// statement invoice exports.
 		return cmdAccountBillingConnection(args[1:])
 	case "billing-run":
-		// ADR-1301: bill a month for every customer, or schedule it.
+		// ADR-1503: bill a month for every customer, or schedule it.
 		return cmdAccountBillingRun(args[1:])
 	case "invoices":
-		// ADR-1302: exported invoices and their payment status.
+		// ADR-1504: exported invoices and their payment status.
 		return cmdAccountInvoices(args[1:])
 	case "slo":
 		// Move 2 PR-A: CLI twin for GET /v1/account/slo

@@ -1,3 +1,4 @@
+// adr: 1529
 // adr: 568 — environment intent and runtime ownership contracts.
 package sched
 
@@ -87,7 +88,7 @@ func TestRuntimeConfigMigrationUsesAcknowledgedRestoreOrColdInputs(t *testing.T)
 			if err != nil {
 				t.Fatal(err)
 			}
-			harness := NewMigrationHarness(t.Context(), store, vmm, wire.NewOpsMetrics("schedd"), testLog(), destination.ID, engine.BuildAppSpecForMigration, NewNodeLedger(), nil)
+			harness := NewMigrationHarness(t.Context(), store, admissionTestVMM(store, vmm), wire.NewOpsMetrics("schedd"), testLog(), destination.ID, engine.BuildAppSpecForMigration, NewNodeLedger(), nil)
 			if err := harness.MigrateOne(t.Context(), original.ID, original.NodeID); err != nil {
 				t.Fatal(err)
 			}

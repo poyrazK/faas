@@ -120,6 +120,22 @@ func (p *computeGatewayPool) DialContext(ctx context.Context, _ string) (net.Con
 	return nil, fmt.Errorf("%w: %w", gateway.ErrNoComputeCapacity, lastErr)
 }
 
+// nodeStatus reports whether name is in the active compute inventory and
+// how many active nodes it holds. known is false while no inventory can be
+// read, so a registry outage never reads as a drain (ADR-1343 §6).
+func (p *computeGatewayPool) nodeStatus(ctx context.Context, name string) (active bool, activeNodes int, known bool) {
+	endpoints, err := p.snapshot(ctx)
+	if err != nil {
+		return false, 0, false
+	}
+	for _, endpoint := range endpoints {
+		if endpoint.name == name {
+			active = true
+		}
+	}
+	return active, len(endpoints), true
+}
+
 func (p *computeGatewayPool) nextIndex(size int) int {
 	p.mu.Lock()
 	defer p.mu.Unlock()

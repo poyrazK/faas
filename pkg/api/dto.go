@@ -585,6 +585,9 @@ type CreateAppRequest struct {
 	// seconds. Zero inherits the plan/type default; positive values are
 	// bounded by the plan request-budget ceiling.
 	RequestTimeoutS int `json:"request_timeout_s,omitempty"`
+	// FunctionConcurrency is how many requests one Node or Python function
+	// worker serves at once (ADR-1342); zero keeps one.
+	FunctionConcurrency int `json:"function_concurrency,omitempty"`
 	// RetryPolicy is the app-level default for invocation retries. Binding
 	// and per-invocation overrides take precedence over this policy.
 	RetryPolicy     *RetryPolicyDTO  `json:"retry_policy,omitempty"`
@@ -988,6 +991,10 @@ type UpdateAppRequest struct {
 	// seconds. A pointer distinguishes an explicit 0 (restore the plan
 	// default) from an omitted field.
 	RequestTimeoutS *int `json:"request_timeout_s,omitempty"`
+	// FunctionConcurrency sets how many requests one Node or Python function
+	// worker serves at once (ADR-1342). It takes effect on the next deploy;
+	// an explicit 0 restores one request per worker.
+	FunctionConcurrency *int `json:"function_concurrency,omitempty"`
 	// RequestRateLimitRPS and RequestRateLimitBurst override the app-wide
 	// request token bucket without changing the deployment. Zero restores the
 	// plan default; positive values may lower, but never exceed, the plan cap.
@@ -1912,6 +1919,9 @@ type AppResponse struct {
 	ConfiguredResources AppConfiguredResources `json:"configured_resources"`
 	IdleTimeoutS        int                    `json:"idle_timeout_s,omitempty"`
 	RequestTimeoutS     int                    `json:"request_timeout_s,omitempty"`
+	// FunctionConcurrency is the requests one function worker serves at
+	// once (ADR-1342); omitted means one.
+	FunctionConcurrency int `json:"function_concurrency,omitempty"`
 	// MinInstances is the per-app cold-wake floor (ux_spec §6.5).
 	// 0 => scale to zero; >0 => keep N warm. Pro/Scale only.
 	MinInstances int    `json:"min_instances"`
@@ -10588,20 +10598,50 @@ type OperatorIntentAcceptedResponse struct {
 // force_cold_boot (warm + init tiers walked). On failure,
 // Error carries the bounded dispatch error message (1 KB cap).
 type OperatorIntentResponse struct {
-	IntentID           string          `json:"intent_id"`
-	Kind               string          `json:"kind"`
-	Status             string          `json:"status"`
-	TargetID           string          `json:"target_id"`
-	AccountID          string          `json:"account_id,omitempty"`
-	ActorID            string          `json:"actor_id"`
-	Reason             string          `json:"reason"`
-	Metadata           json.RawMessage `json:"metadata"`
-	TraceID            string          `json:"trace_id,omitempty"`
-	RequestedAt        time.Time       `json:"requested_at"`
-	StartedAt          *time.Time      `json:"started_at,omitempty"`
-	FinishedAt         *time.Time      `json:"finished_at,omitempty"`
-	Error              string          `json:"error,omitempty"`
-	SnapIDsMarkedStale []string        `json:"snap_ids_marked_stale,omitempty"`
+	ParkExecution      *OperatorParkExecutionResponse    `json:"park_execution,omitempty"`
+	ColdBootGeneration int64                             `json:"cold_boot_generation,omitempty"`
+	RestartExecution   *OperatorRestartExecutionResponse `json:"restart_execution,omitempty"`
+	IntentID           string                            `json:"intent_id"`
+	Kind               string                            `json:"kind"`
+	Status             string                            `json:"status"`
+	TargetID           string                            `json:"target_id"`
+	AccountID          string                            `json:"account_id,omitempty"`
+	ActorID            string                            `json:"actor_id"`
+	Reason             string                            `json:"reason"`
+	Metadata           json.RawMessage                   `json:"metadata"`
+	TraceID            string                            `json:"trace_id,omitempty"`
+	RequestedAt        time.Time                         `json:"requested_at"`
+	StartedAt          *time.Time                        `json:"started_at,omitempty"`
+	FinishedAt         *time.Time                        `json:"finished_at,omitempty"`
+	Error              string                            `json:"error,omitempty"`
+	SnapIDsMarkedStale []string                          `json:"snap_ids_marked_stale,omitempty"`
+}
+
+// OperatorParkExecutionResponse exposes proof of capture and cleanup (ADR-1525).
+type OperatorParkExecutionResponse struct {
+	Phase            string     `json:"phase"`
+	NodeID           string     `json:"node_id"`
+	WakeID           string     `json:"wake_id"`
+	Generation       string     `json:"generation"`
+	Action           string     `json:"action"`
+	CaptureCompleted bool       `json:"capture_completed"`
+	StoppedAt        *time.Time `json:"stopped_at,omitempty"`
+	TerminalState    string     `json:"terminal_state,omitempty"`
+	ColdBootRequired bool       `json:"cold_boot_required"`
+	Reason           string     `json:"reason,omitempty"`
+	UpdatedAt        time.Time  `json:"updated_at"`
+}
+
+// OperatorRestartExecutionResponse exposes durable evidence without internal
+// claim/destroy tokens. outcome_unknown requires reconciliation before a new action.
+type OperatorRestartExecutionResponse struct {
+	Phase       string     `json:"phase"`
+	NodeID      string     `json:"node_id"`
+	WakeID      string     `json:"wake_id"`
+	Generation  string     `json:"generation"`
+	SnapshotIDs []string   `json:"snapshot_ids"`
+	DestroyedAt *time.Time `json:"destroyed_at,omitempty"`
+	UpdatedAt   time.Time  `json:"updated_at"`
 }
 
 // SweepStuckBuildsResponse is the wire shape returned by POST

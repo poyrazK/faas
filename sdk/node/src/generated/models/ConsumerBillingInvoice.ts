@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * The customer-facing view of a statement's exported invoice (ADR-1302).
+ * The customer-facing view of a statement's exported invoice (ADR-1504).
  */
 export type ConsumerBillingInvoice = {
   payment_status?: 'draft' | 'open' | 'paid' | 'void' | 'uncollectible' | 'deleted';

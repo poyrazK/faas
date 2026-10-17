@@ -97,9 +97,9 @@ def sync_detailed(
     returned.
 
     Args:
-        provider (BillingProvider): A billing provider statements export to (ADR-1305).
+        provider (BillingProvider): A billing provider statements export to (ADR-1507).
         body (PutBillingConnectionRequest): The account's own key for one billing provider
-            (ADR-1300, ADR-1305).
+            (ADR-1502, ADR-1507).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -138,9 +138,9 @@ def sync(
     returned.
 
     Args:
-        provider (BillingProvider): A billing provider statements export to (ADR-1305).
+        provider (BillingProvider): A billing provider statements export to (ADR-1507).
         body (PutBillingConnectionRequest): The account's own key for one billing provider
-            (ADR-1300, ADR-1305).
+            (ADR-1502, ADR-1507).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -174,9 +174,9 @@ async def asyncio_detailed(
     returned.
 
     Args:
-        provider (BillingProvider): A billing provider statements export to (ADR-1305).
+        provider (BillingProvider): A billing provider statements export to (ADR-1507).
         body (PutBillingConnectionRequest): The account's own key for one billing provider
-            (ADR-1300, ADR-1305).
+            (ADR-1502, ADR-1507).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -213,9 +213,9 @@ async def asyncio(
     returned.
 
     Args:
-        provider (BillingProvider): A billing provider statements export to (ADR-1305).
+        provider (BillingProvider): A billing provider statements export to (ADR-1507).
         body (PutBillingConnectionRequest): The account's own key for one billing provider
-            (ADR-1300, ADR-1305).
+            (ADR-1502, ADR-1507).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

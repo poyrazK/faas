@@ -5690,7 +5690,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// or alter the headers — strictly observability.
 	rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK, request: r}
 	w = rec
-	// ADR-1303: the commit is armed once a monetized request is about to be
+	// ADR-1505: the commit is armed once a monetized request is about to be
 	// forwarded; at exit it completes or aborts the response.
 	rec.usage = &usageCommitHolder{rec: rec}
 	r = r.WithContext(withUsageCommitHolder(r.Context(), rec.usage))
@@ -7903,7 +7903,7 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 			}
 			platformFailure := platformFailureUnbillable(r, status)
 			if commit := usageCommitFrom(r.Context()); commit != nil {
-				// ADR-1303: the response's completion already waited for (or
+				// ADR-1505: the response's completion already waited for (or
 				// is aborted by) this event; never append it twice.
 				row.EventID = commit.eventID
 				_ = commit.commit(status, commit.writtenBytes())
@@ -8443,7 +8443,7 @@ type statusRecorder struct {
 	// after (or while) the source response is being written.
 	mirrorSourceCapture *mirrorSourceCapture
 
-	// usage holds a monetized request's usage commit (ADR-1303): the bytes
+	// usage holds a monetized request's usage commit (ADR-1505): the bytes
 	// that complete the response wait until its usage is durable.
 	usage *usageCommitHolder
 }
@@ -8513,7 +8513,7 @@ func (s *statusRecorder) WriteHeader(code int) {
 		s.Header().Set("Cache-Control", "no-store")
 	}
 	if code == http.StatusSwitchingProtocols && !s.commitUsage(s.Bytes) {
-		// ADR-1303: an upgrade completes the request; without durable
+		// ADR-1505: an upgrade completes the request; without durable
 		// usage the client gets a refusal instead of a session.
 		s.ResponseWriter.WriteHeader(http.StatusServiceUnavailable)
 		return

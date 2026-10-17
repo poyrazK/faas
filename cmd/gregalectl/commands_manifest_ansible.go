@@ -206,6 +206,11 @@ func renderManifestAnsibleFiles(m *manifest.Manifest, outputDir string) ([]manif
 		if host.Role == roleControlPlane {
 			body += renderCustomDomainEdgeVars(m.PublicEdge.CustomDomains)
 			body += renderScheddListenVars(m)
+			if standby := m.PostgreSQL.Standby; standby != nil {
+				// ADR-1344 §8: the primary admits replication from the
+				// standby's address and keeps its slot.
+				body += fmt.Sprintf("faas_postgres_standby_address: %q\n", standby.Address)
+			}
 		}
 		body += renderComputeEdgeVars(m.PublicEdge.ComputeNodes, host.Role, postgresListenAddress, computeAllowedCIDRs)
 		if host.Role == roleComputeOnly && m.Egress.TenantGateway != nil {
@@ -237,6 +242,16 @@ func renderManifestAnsibleFiles(m *manifest.Manifest, outputDir string) ([]manif
 		hostVars = append(hostVars, manifestAnsibleFile{
 			Path: filepath.Join(outputDir, "inventory", "host_vars", tenantEgressGatewayHost+".yml"),
 			Body: []byte(gatewayVars),
+		})
+	}
+	if standby := m.PostgreSQL.Standby; standby != nil {
+		if gw := m.Egress.TenantGateway; gw != nil && standby.Name == tenantEgressGatewayHost {
+			return nil, fmt.Errorf("postgresql.standby name %q is reserved for the tenant egress gateway", tenantEgressGatewayHost)
+		}
+		writeInventoryGroup(&inventory, "postgres_standby", []string{standby.Name})
+		hostVars = append(hostVars, manifestAnsibleFile{
+			Path: filepath.Join(outputDir, "inventory", "host_vars", standby.Name+".yml"),
+			Body: []byte(renderPostgresStandbyHostVars(standby)),
 		})
 	}
 	files := []manifestAnsibleFile{{
@@ -674,6 +689,18 @@ const tenantEgressGatewayHost = "tenant-egress-gateway"
 
 // renderTenantEgressGatewayHostVars is the gateway host's side of the
 // tunnel contract; compute peers register themselves at converge time.
+// renderPostgresStandbyHostVars writes the warm standby's host vars (ADR-1344
+// §8). Its private address is the replication source the primary admits, so
+// the discovery play publishes it rather than the default route's address.
+func renderPostgresStandbyHostVars(s *manifest.PostgresStandby) string {
+	var b strings.Builder
+	b.WriteString("# Generated from the split-box manifest; do not hand-edit.\n")
+	fmt.Fprintf(&b, "ansible_host: %q\n", s.AnsibleHost())
+	fmt.Fprintf(&b, "faas_private_address: %q\n", s.Address)
+	b.WriteString("faas_postgres_standby_mode: true\n")
+	return b.String()
+}
+
 func renderTenantEgressGatewayHostVars(g *manifest.TenantEgressGateway) (string, error) {
 	addr, err := manifest.TenantGatewayAddress(g.TunnelCIDR)
 	if err != nil {

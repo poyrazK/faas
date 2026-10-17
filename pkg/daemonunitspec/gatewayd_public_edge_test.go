@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -117,6 +118,16 @@ func TestGatewaydPublicEdgeRoleContract(t *testing.T) {
 		Version string            `yaml:"faas_cloudflared_version"`
 		SHA256  map[string]string `yaml:"faas_cloudflared_sha256"`
 		Token   string            `yaml:"faas_cloudflared_token_path"`
+		Grace   string            `yaml:"faas_cloudflared_grace_period"`
+		Stop    string            `yaml:"faas_cloudflared_stop_timeout"`
+	}
+	if err := yaml.Unmarshal([]byte(read("defaults/main.yml")), &defaults); err != nil {
+		t.Fatal(err)
+	}
+	grace, graceErr := time.ParseDuration(defaults.Grace)
+	stop, stopErr := time.ParseDuration(defaults.Stop)
+	if graceErr != nil || stopErr != nil || stop <= grace || grace < 25*time.Second {
+		t.Errorf("connector grace %q / stop timeout %q: the grace must cover the edge's 25 s drain and systemd must outwait it", defaults.Grace, defaults.Stop)
 	}
 	if err := yaml.Unmarshal([]byte(read("defaults/main.yml")), &defaults); err != nil {
 		t.Fatal(err)
@@ -217,6 +228,11 @@ func TestGatewaydPublicEdgeRoleContract(t *testing.T) {
 		"--no-autoupdate",
 		"User=cloudflared",
 		"NoNewPrivileges=yes",
+		// ADR-1343 §6: on a stop or reboot the connector withdraws before
+		// the edge and drains through it, and systemd outwaits the drain.
+		"After=network-online.target faas-gatewayd-public-edge.socket faas-gatewayd-public-edge.service",
+		"--grace-period {{ faas_cloudflared_grace_period }}",
+		"TimeoutStopSec={{ faas_cloudflared_stop_timeout }}",
 	} {
 		if !strings.Contains(connector, want) {
 			t.Errorf("connector unit missing %q", want)
@@ -254,10 +270,13 @@ from jinja2 import Template
 print(Template(pathlib.Path(sys.argv[1]).read_text()).render(public_iface="eth0", masquerade_cidr="10.100.0.0/16",
     faas_edge_on_compute_nodes=sys.argv[2], faas_edge_private_listen_addr="10.42.0.1:8090",
     faas_compute_allowed_cidrs=["10.42.0.2/32"], faas_compute_allowed_ports=[9091],
-    faas_edge_peer_cidrs=["10.42.0.2/32", "10.42.0.3/32"], faas_edge_peer_gateway_port=8080), end="")
+    faas_edge_peer_cidrs=["10.42.0.2/32", "10.42.0.3/32"], faas_edge_peer_gateway_port=8080,
+    faas_control_plane_allowed_cidrs=["10.42.0.1/32"], faas_control_plane_allowed_ports=[9092],
+    faas_edge_connector_metrics_port=20241), end="")
 `
 	private := `ip saddr 10.42.0.2/32 tcp dport 8090 accept comment "faas app edge forwards from compute (ADR-1343)"`
 	peer := `ip saddr 10.42.0.3/32 tcp dport 8080 accept comment "faas app edge compute-pool fallback (ADR-1343)"`
+	connector := `ip saddr 10.42.0.1/32 tcp dport 20241 accept comment "faas app edge connector metrics from control (ADR-1343)"`
 	for _, tc := range []struct {
 		enabled string
 		want    bool
@@ -267,7 +286,7 @@ print(Template(pathlib.Path(sys.argv[1]).read_text()).render(public_iface="eth0"
 			if err != nil {
 				t.Fatalf("standard Jinja render failed: %v: %s", err, output)
 			}
-			for _, rule := range []string{private, peer} {
+			for _, rule := range []string{private, peer, connector} {
 				if got := strings.Contains(string(output), rule); got != tc.want {
 					t.Errorf("rule %q present = %v, want %v", rule, got, tc.want)
 				}
@@ -294,5 +313,44 @@ print(Template(sys.argv[1]).render(faas_edge_private_listen_addr="10.42.0.1:8090
 		if !strings.Contains(string(output), want) {
 			t.Errorf("control-plane edge drop-in missing %q:\n%s", want, output)
 		}
+	}
+}
+
+// ADR-1343 §5: the control plane scrapes each edge and its connector per node,
+// and only while the cell runs the edge; the connector's metrics port is the
+// one the firewall admits.
+func TestComputeEdgeScrapeJobsFollowTheSwitch(t *testing.T) {
+	root := repoRoot(t)
+	read := func(parts ...string) string {
+		t.Helper()
+		body, err := os.ReadFile(filepath.Join(append([]string{root, "deploy", "ansible", "roles"}, parts...)...))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(body)
+	}
+	tmpl := read("prometheus", "templates", "prometheus.yml.j2")
+	gate := strings.Index(tmpl, "{% if faas_edge_on_compute_nodes | default(false) | bool %}")
+	if gate < 0 {
+		t.Fatal("prometheus.yml.j2 does not gate the edge jobs on faas_edge_on_compute_nodes")
+	}
+	end := gate + strings.Index(tmpl[gate:], "{% endif %}")
+	for _, job := range []string{`job_name: "gatewayd-public-edge"`, `job_name: "cloudflared"`} {
+		at := strings.Index(tmpl, job)
+		if at < gate || at > end {
+			t.Errorf("%s is not inside the edge switch", job)
+		}
+	}
+	defaults := read("prometheus", "defaults", "main.yml")
+	for _, want := range []string{"/v1/internal/metrics/gatewayd-public-edge-targets", "/v1/internal/metrics/cloudflared-targets"} {
+		if !strings.Contains(defaults, want) {
+			t.Errorf("prometheus defaults missing %s", want)
+		}
+	}
+	if !strings.Contains(read("gatewayd_public_edge_service", "defaults", "main.yml"), "faas_cloudflared_metrics_addr: 0.0.0.0:20241") {
+		t.Error("the connector's metrics are not reachable from the control plane")
+	}
+	if !strings.Contains(read("nftables", "defaults", "main.yml"), "faas_edge_connector_metrics_port: 20241") {
+		t.Error("the firewall admits a different connector metrics port than the connector binds")
 	}
 }

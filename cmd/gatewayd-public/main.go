@@ -393,7 +393,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 		if pool != nil {
 			go cgp.WatchInvalidations(ctx, pool)
 		}
-		lfd := newLocalFirstDialer(localDialer, cgp, internalURL, edgeMetricsSet, log)
+		// ADR-1343 §6: FAAS_NODE_NAME is the name vmmd registers this node
+		// under (the shared node-name drop-in), so a drain in the registry
+		// withdraws this edge's local path.
+		lfd := newLocalFirstDialer(localDialer, cgp, internalURL, edgeMetricsSet, log).
+			withDrainWatch(strings.TrimSpace(os.Getenv("FAAS_NODE_NAME")), cgp)
 		go lfd.run(ctx)
 		internalDialer = lfd
 		dynamicUpstream = true

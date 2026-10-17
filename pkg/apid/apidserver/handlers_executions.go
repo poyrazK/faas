@@ -157,7 +157,7 @@ func (s *server) createExecution(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, api.ErrCapacity("host age recipient is not loaded; refusing to seal execution payload"))
 		return
 	}
-	recipient := setSecretRecipient()
+	recipient := hostSecretRecipient()
 	if recipient == nil {
 		api.WriteProblem(w, api.ErrCapacity("host age recipient is not loaded; refusing to seal execution payload"))
 		return
