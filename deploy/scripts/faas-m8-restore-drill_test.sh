@@ -64,8 +64,15 @@ echo "OK: required tokens present in drill script"
 
 # 4. Host identity is preserved where present and may be absent only as a
 #    complete key pair on split control-plane hosts.
-grep -q "0.75/7 Stamp host.age into basebackup when this role owns it" "$SCRIPT" \
+grep -q "0.75/7 Stamp host.age outside the backup tree when this role owns it" "$SCRIPT" \
   || { echo "FAIL: missing role-aware host.age stamp step"; exit 1; }
+# The basebackup tree is pushed off-host; the private identity must never be
+# written into it.
+if grep -nE '(install|cp|printf).*\$LATEST_BB/host\.age' "$SCRIPT"; then
+  echo "FAIL: the drill writes host.age into the pushed basebackup tree"; exit 1
+fi
+grep -q 'rm -rf -- "\$IDENTITY_STAMP_DIR"' "$SCRIPT" \
+  || { echo "FAIL: cleanup does not remove the host.age stamp directory"; exit 1; }
 grep -q "5.5/7 Restore host.age into /etc/faas/secrets when this role owns it" "$SCRIPT" \
   || { echo "FAIL: missing step 5.5 header"; exit 1; }
 grep -q "host.age.sha256" "$SCRIPT" \

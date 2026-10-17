@@ -29,8 +29,17 @@ for backup in "${backups[@]}"; do
   [[ -s "$backup/backup_manifest" ]] || fail "backup manifest missing: $backup/backup_manifest"
 done
 
-"$rclone_bin" copy "$src" "$remote:$path" --config="$config" --stats=0 --quiet
-"$rclone_bin" check "$src" "$remote:$path" --config="$config" --one-way --checkers=16 --quiet \
+# A host's private age identity never leaves the host. The M8 restore drill
+# used to stamp host.age into the newest basebackup, and this push copied it
+# off-host with the backup. Scrub any stamped copy, and keep the names out of
+# the copy and its verification in case one appears between the two.
+for backup in "${backups[@]}"; do
+  rm -f -- "$backup/host.age" "$backup/host.age.pub" "$backup/host.age.sha256"
+done
+identity_exclude=(--exclude 'host.age' --exclude 'host.age.pub' --exclude 'host.age.sha256')
+
+"$rclone_bin" copy "$src" "$remote:$path" "${identity_exclude[@]}" --config="$config" --stats=0 --quiet
+"$rclone_bin" check "$src" "$remote:$path" "${identity_exclude[@]}" --config="$config" --one-way --checkers=16 --quiet \
   || fail "off-host verification failed; local basebackups left intact"
 
 remove_count=$((${#backups[@]} - keep))

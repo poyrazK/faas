@@ -67,6 +67,7 @@ RESTORE_EXTRACTED=0
 RECOVERY_PROMOTED=0
 DAEMONS_WERE_STOPPED=0
 PG_CONF_BACKUP=""
+IDENTITY_STAMP_DIR=""
 LATEST_BB="-"
 LATEST_WAL="-"
 RPO_BASE=0
@@ -326,6 +327,7 @@ cleanup() {
   fi
 
   rm -f "$PG_CONF_BACKUP"
+  [[ -n "$IDENTITY_STAMP_DIR" ]] && rm -rf -- "$IDENTITY_STAMP_DIR"
   if (( DRILL_ACTIVE == 1 && RECORD_WRITTEN == 0 )); then
     DRILL_END=$(date +%s)
     DRILL_END_ISO=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
@@ -456,12 +458,17 @@ LATEST_WAL="$PG_ARCHIVE/$FORCED_WAL"
 RPO_SECONDS=0
 ok "forced and archived quiesced WAL segment ${FORCED_WAL} (RPO 0s)"
 
-heading "0.75/7 Stamp host.age into basebackup when this role owns it"
+heading "0.75/7 Stamp host.age outside the backup tree when this role owns it"
+# Never into $LATEST_BB: faas-pg-basebackup-push copies that tree off-host,
+# and the private identity must stay on this host. The stamp lives in a
+# root-only directory on tmpfs that the cleanup trap removes.
 if [[ "$HOST_IDENTITY_STATUS" == "present-and-preserved" ]]; then
-  install -m 0400 "$HOST_KEY" "$LATEST_BB/host.age"
-  install -m 0444 "$HOST_PUB" "$LATEST_BB/host.age.pub"
-  printf '%s\n' "$SHA_PRE" > "$LATEST_BB/host.age.sha256"
-  ok "host.age SHA-256 stamped at $LATEST_BB/host.age"
+  IDENTITY_STAMP_DIR="$(mktemp -d /run/faas-m8-identity.XXXXXX)" || fail "could not create the host.age stamp directory"
+  chmod 0700 "$IDENTITY_STAMP_DIR"
+  install -m 0400 "$HOST_KEY" "$IDENTITY_STAMP_DIR/host.age"
+  install -m 0444 "$HOST_PUB" "$IDENTITY_STAMP_DIR/host.age.pub"
+  printf '%s\n' "$SHA_PRE" > "$IDENTITY_STAMP_DIR/host.age.sha256"
+  ok "host.age SHA-256 stamped in $IDENTITY_STAMP_DIR"
 else
   ok "host.age stamp skipped on split control-plane role"
 fi
@@ -539,14 +546,14 @@ done
 
 heading "5.5/7 Restore host.age into /etc/faas/secrets when this role owns it"
 if [[ "$HOST_IDENTITY_STATUS" == "present-and-preserved" ]]; then
-  SHA_STORED="$(cat "$LATEST_BB/host.age.sha256")"
-  SHA_LIVE="$(sha256sum "$LATEST_BB/host.age" | awk '{print $1}')"
+  SHA_STORED="$(cat "$IDENTITY_STAMP_DIR/host.age.sha256")"
+  SHA_LIVE="$(sha256sum "$IDENTITY_STAMP_DIR/host.age" | awk '{print $1}')"
   [[ "$SHA_STORED" == "$SHA_LIVE" ]] || fail "host.age SHA changed between backup and restore — refusing to overwrite"
   # HOST_KEY and HOST_PUB already passed preflight, so their parent exists.
   # Preserve that directory's deployed root:faas 0750 ownership and mode;
   # schedd must traverse it to read the world-readable signing public key.
-  install -m 0400 "$LATEST_BB/host.age" "$HOST_KEY"
-  install -m 0444 "$LATEST_BB/host.age.pub" "$HOST_PUB"
+  install -m 0400 "$IDENTITY_STAMP_DIR/host.age" "$HOST_KEY"
+  install -m 0444 "$IDENTITY_STAMP_DIR/host.age.pub" "$HOST_PUB"
   if daemon_was_active vmmd; then
     systemctl restart faas-vmmd.service
   fi
