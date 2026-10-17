@@ -50999,6 +50999,302 @@ paths:
         '409':
           $ref: '#/components/responses/Conflict'
 
+  /v1/apps/{slug}/automations/{name}/live-baselines:
+    parameters:
+    - $ref: '#/components/parameters/Slug'
+    - name: name
+      description: Automation whose baseline catalog is being listed.
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+    get:
+      tags:
+      - workflows
+      operationId: listAutomationLiveBaselines
+      summary: Discover named baseline heads and current retained evidence health.
+      description: 'Read-only coherent snapshot, sorted by baseline name and bounded by the 20-name quota. Requires
+        app read scope. Never runs workflows, checks assertions, repairs evidence or promotes. Evidence availability
+        and renewal readiness are separate observations, not CI gate verdicts: historical baseline targets and baseline
+        age remain allowed by CI. Renewal evaluates original run age and the current target against each promoted
+        policy.'
+      responses:
+        '200':
+          description: Current heads and current retained evidence observations; historical audit receipts remain
+            immutable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListAutomationLiveBaselinesResponse'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/AutomationConflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServerError'
+  /v1/apps/{slug}/automations/{name}/live-baselines/{baseline}:
+    parameters:
+    - $ref: '#/components/parameters/Slug'
+    - name: name
+      description: Automation whose current baseline receipt is being read.
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+    - name: baseline
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 63
+        pattern: ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$
+      description: Baseline name whose current promotion receipt is requested.
+    get:
+      tags:
+      - workflows
+      operationId: getAutomationLiveBaseline
+      summary: Read the current named automation baseline promotion receipt.
+      description: Read-only; requires app read scope. Records the exact suite, revision, actor, promotion time and reviewed
+        coverage/age policy.
+      responses:
+        '200':
+          description: Current immutable promotion receipt; inspect retained evidence separately for current validity.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutomationLiveBaseline'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/AutomationConflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServerError'
+        '410':
+          description: This baseline name is permanently retired; its retirement audit remains available from history.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /v1/apps/{slug}/automations/{name}/live-baselines/{baseline}/history:
+    parameters:
+    - $ref: '#/components/parameters/Slug'
+    - name: name
+      description: Automation whose baseline audit history is being read.
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+    - name: baseline
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 63
+        pattern: ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$
+      description: Baseline name whose immutable promotion and retirement history is requested.
+    get:
+      tags:
+      - workflows
+      operationId: getAutomationLiveBaselineHistory
+      summary: Read the last 100 promotions for a named automation baseline.
+      description: Newest revision first. History is immutable until bounded retention or automation deletion. Requires app
+        read scope.
+      responses:
+        '200':
+          description: Bounded immutable promotion history, including the permanent retirement receipt when present.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutomationLiveBaselineHistory'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/AutomationConflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServerError'
+  /v1/apps/{slug}/automations/{name}/live-baselines/{baseline}/promotions/{promotion_id}:
+    parameters:
+    - $ref: '#/components/parameters/Slug'
+    - name: name
+      description: Automation whose passing suite is being promoted.
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+    - name: baseline
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 63
+        pattern: ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$
+      description: Release track to promote within this automation; execution routing is unchanged.
+    - name: promotion_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Stable caller-selected UUID. Retry uncertain requests only with the original ID and identical semantic request.
+    put:
+      tags:
+      - workflows
+      operationId: promoteAutomationLiveBaseline
+      summary: Deliberately promote passing retained evidence to a named baseline.
+      description: Requires deploy write scope. Atomically checks the explicit current target and version 2 required-case/evidence-age
+        policy, compares expected_revision, appends an attributed receipt and changes the head. expected_revision 0 creates.
+        An identical retained promotion ID replays its original receipt without moving the head or rechecking. Never executes
+        or checks assertions. At most 20 active and 100 lifetime names per automation, with 100 receipts per name; active current
+        suite groups are pinned within the existing suite limit, while linked run retention still applies. Retired names cannot
+        be reused; original promotion retries return historical receipts without reactivation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PromoteAutomationLiveBaselineRequest'
+      responses:
+        '200':
+          description: Attributed promotion receipt for this request, replayed unchanged on an identical retained retry.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutomationLiveBaseline'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/AutomationConflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServerError'
+        '410':
+          description: Promotion cannot reuse a retired baseline name. Choose a different active name explicitly.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+  /v1/apps/{slug}/automations/{name}/live-baselines/{baseline}/retirements/{retirement_id}:
+    parameters:
+    - $ref: '#/components/parameters/Slug'
+    - name: name
+      description: Automation whose named baseline is being retired.
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+    - name: baseline
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 63
+        pattern: ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$
+      description: Baseline name to retire permanently within this automation.
+    - name: retirement_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Stable caller-selected retirement UUID; preserve this ID and expected revision for uncertain retries.
+    put:
+      tags:
+      - workflows
+      operationId: retireAutomationLiveBaseline
+      summary: Permanently retire a named baseline and release its evidence pin.
+      description: Requires deploy write scope and verified email. Atomically compares the positive expected revision and records
+        the authenticated actor. Retirement permanently reserves the name, frees an active-name slot and releases its suite
+        pin for normal retention; no evidence is immediately deleted. Promotion history remains available. Exact retries return
+        the original retirement receipt. Old promotion retries never reactivate the name. At most 20 active and 100 lifetime
+        names per automation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RetireAutomationLiveBaselineRequest'
+      responses:
+        '200':
+          description: Attributed immutable retirement receipt.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AutomationLiveBaselineRetirement'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/AutomationConflict'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServerError'
+        '410':
+          description: The requested baseline was previously retired by another retirement request. Read its audit history.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
   /v1/apps/{slug}/automations/{name}/live-suites/{suite_id}/start:
     parameters:
     - $ref: '#/components/parameters/Slug'
@@ -73082,6 +73378,287 @@ components:
           type: string
           format: uuid
       description: One saved live case and its optional existing verification run identity.
+    AutomationLiveBaselinePolicy:
+      description: Version 2 required-case coverage and evidence-age policy reviewed during baseline promotion.
+      type: object
+      additionalProperties: false
+      required:
+      - version
+      - required_cases
+      - max_candidate_age_seconds
+      properties:
+        version:
+          type: integer
+          enum:
+          - 2
+        required_cases:
+          type: array
+          minItems: 1
+          maxItems: 32
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+            maxLength: 128
+        max_candidate_age_seconds:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 9223372036
+    PromoteAutomationLiveBaselineRequest:
+      description: Explicit target suite, reviewed policy and expected baseline revision for an audited promotion.
+      type: object
+      additionalProperties: false
+      required:
+      - suite_id
+      - expected_revision
+      - expected_version
+      - expected_published_version
+      - expected_deployment_id
+      - policy
+      properties:
+        suite_id:
+          type: string
+          format: uuid
+        expected_revision:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 9223372036854775806
+        expected_version:
+          type: integer
+          format: int64
+          minimum: 1
+        expected_published_version:
+          type: integer
+          format: int64
+          minimum: 1
+        expected_deployment_id:
+          type: string
+          format: uuid
+        policy:
+          $ref: '#/components/schemas/AutomationLiveBaselinePolicy'
+    AutomationLiveBaseline:
+      description: Immutable attributed receipt binding a named baseline revision to its retained suite and reviewed policy.
+      type: object
+      additionalProperties: false
+      required:
+      - promotion_id
+      - app_id
+      - name
+      - baseline_name
+      - revision
+      - actor_account_id
+      - promoted_at
+      - suite
+      - policy
+      - policy_hash
+      - cases_passed
+      - oldest_run_created_at
+      - evidence_age_seconds
+      properties:
+        promotion_id:
+          type: string
+          format: uuid
+        app_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        baseline_name:
+          type: string
+        revision:
+          type: integer
+          format: int64
+          minimum: 1
+        previous_promotion_id:
+          type: string
+          format: uuid
+        actor_account_id:
+          type: string
+          format: uuid
+        actor_api_key_id:
+          type: string
+          format: uuid
+        promoted_at:
+          type: string
+          format: date-time
+        suite:
+          $ref: '#/components/schemas/AutomationLiveSuiteSummary'
+        policy:
+          $ref: '#/components/schemas/AutomationLiveBaselinePolicy'
+        policy_hash:
+          type: string
+          pattern: ^[a-f0-9]{64}$
+        cases_passed:
+          type: integer
+          minimum: 1
+          maximum: 32
+        oldest_run_created_at:
+          type: string
+          format: date-time
+        evidence_age_seconds:
+          type: number
+          format: double
+          minimum: 0
+    AutomationLiveBaselineCaseHealth:
+      description: Current retained verification availability and renewal readiness for one promoted suite case.
+      type: object
+      additionalProperties: false
+      required:
+      - name
+      - status
+      properties:
+        name:
+          type: string
+          maxLength: 128
+        run_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum:
+          - passed
+          - failed
+          - pending
+          - unavailable
+          - not_started
+    AutomationLiveBaselineHealth:
+      description: Coherent read-only evidence health observations for a named baseline head.
+      type: object
+      additionalProperties: false
+      required:
+      - baseline
+      - evidence_status
+      - renewal_status
+      - reasons
+      - outdated
+      - cases
+      properties:
+        baseline:
+          $ref: '#/components/schemas/AutomationLiveBaseline'
+        evidence_status:
+          type: string
+          enum:
+          - usable
+          - failed
+          - unavailable
+          description: Availability of current recorded reports; not a gate verdict.
+        renewal_status:
+          type: string
+          enum:
+          - passed
+          - failed
+          - inconclusive
+          description: Whether this same suite qualifies for a new promotion now.
+        reasons:
+          type: array
+          items:
+            type: string
+        outdated:
+          type: boolean
+        cases:
+          type: array
+          maxItems: 32
+          items:
+            $ref: '#/components/schemas/AutomationLiveBaselineCaseHealth'
+        age_seconds:
+          type: number
+          description: Oldest original retained run age. Negative values indicate future timestamps.
+        oldest_run_created_at:
+          type: string
+          format: date-time
+        max_age_seconds:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 9223372036
+    ListAutomationLiveBaselinesResponse:
+      description: Bounded sorted catalog of active named baseline heads and their current evidence observations.
+      type: object
+      additionalProperties: false
+      required:
+      - baselines
+      - observed_at
+      properties:
+        baselines:
+          type: array
+          maxItems: 20
+          items:
+            $ref: '#/components/schemas/AutomationLiveBaselineHealth'
+        observed_at:
+          type: string
+          format: date-time
+    RetireAutomationLiveBaselineRequest:
+      description: Expected positive baseline revision required to permanently retire an active name.
+      type: object
+      additionalProperties: false
+      required:
+      - expected_revision
+      properties:
+        expected_revision:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 9223372036854775806
+    AutomationLiveBaselineRetirement:
+      description: Immutable attributed receipt recording permanent retirement and release of the baseline evidence pin.
+      type: object
+      additionalProperties: false
+      required:
+      - retirement_id
+      - app_id
+      - name
+      - baseline_name
+      - revision
+      - previous_promotion_id
+      - actor_account_id
+      - retired_at
+      properties:
+        retirement_id:
+          type: string
+          format: uuid
+        app_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          minLength: 1
+          maxLength: 128
+        baseline_name:
+          type: string
+          minLength: 1
+          maxLength: 63
+        revision:
+          type: integer
+          format: int64
+          minimum: 2
+        previous_promotion_id:
+          type: string
+          format: uuid
+        actor_account_id:
+          type: string
+          format: uuid
+        actor_api_key_id:
+          type: string
+          format: uuid
+        retired_at:
+          type: string
+          format: date-time
+    AutomationLiveBaselineHistory:
+      description: Bounded promotion audit history and optional permanent retirement receipt for one baseline name.
+      type: object
+      additionalProperties: false
+      required:
+      - promotions
+      properties:
+        retirement:
+          $ref: '#/components/schemas/AutomationLiveBaselineRetirement'
+        promotions:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/AutomationLiveBaseline'
     AutomationLiveSuiteComparison:
       type: object
       additionalProperties: false
@@ -73188,11 +73765,15 @@ components:
         run_id:
           type: string
           format: uuid
+        created_at:
+          type: string
+          format: date-time
+          description: Original linked verification creation time, when retained. Never refreshed by grouping or checking runs.
         result:
           type: string
           enum: [passed, failed, pending, not_started, unavailable]
           description: Result of the original run independently of target drift. Unavailable includes missing runs and terminal runs without a current assertion report.
-      description: Safe original run identity and recorded result only.
+      description: Safe original run identity, creation time and recorded result only.
     AutomationLiveSuiteSummary:
       type: object
       additionalProperties: false
