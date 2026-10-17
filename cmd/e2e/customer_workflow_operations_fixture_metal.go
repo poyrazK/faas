@@ -124,7 +124,7 @@ func newCustomerWorkflowFixture(t *testing.T, finalTimeout time.Duration) *custo
 	_, err = f.store.LinkPlatformTenantSurface(t.Context(), f.account.ID, tenant.ID, surface.ID)
 	mustCustomerWorkflow(t, err)
 	mustCustomerWorkflow(t, f.store.UpdateTenantSurfaceStatus(t.Context(), surface.ID, state.SurfaceStatusActive))
-	mustCustomerWorkflow(t, seedOperationObjectAccounting(t.Context(), f.store, f.account.ID, f.app.ID, backend))
+	mustCustomerWorkflow(t, seedOperationObjectAccounting(t, f.store, f.account.ID, f.app.ID, backend))
 	runtime, err := f.store.UpsertRuntimeConfig(t.Context(), state.RuntimeConfigUpdate{Key: "s3_enabled", Scope: state.RuntimeConfigScopeGlobal, DesiredValue: json.RawMessage(`true`), ApplyMode: state.RuntimeConfigApplyHot, ActorID: f.account.ID, Reason: "isolated native workflow file fixture"})
 	mustCustomerWorkflow(t, err)
 	mustCustomerWorkflow(t, f.store.MarkRuntimeConfigApplied(t.Context(), runtime.Key, runtime.Scope, "", runtime.Version, json.RawMessage(`true`), ""))
@@ -389,8 +389,10 @@ func customerWorkflowWaitChains() []api.WorkflowSpec {
 // seedOperationObjectAccounting gives the account healthy object-storage
 // accounting: a usage report is accepted only for a backend that holds one of
 // the account's buckets, so reserve a ready, inventoried bucket first, as the
-// Job fixture does.
-func seedOperationObjectAccounting(ctx context.Context, store *state.PgStore, accountID, appID string, backend objectstorage.Backend) error {
+// Job fixture does. The bucket is retired again before the fixture deletes
+// its app, which refuses to delete an app that still has buckets.
+func seedOperationObjectAccounting(t *testing.T, store *state.PgStore, accountID, appID string, backend objectstorage.Backend) error {
+	ctx := t.Context()
 	bucket, err := store.ReserveObjectBucket(ctx, state.ObjectBucket{ID: uuid.NewString(), AccountID: accountID, AppID: appID, Scope: state.DefaultEnvScope, Name: "operation-files", Region: backend.Region, BackendID: backend.ID, BackendFingerprint: backend.Fingerprint, PhysicalName: "operation-files"}, api.DefaultObjectBucketsPerApp)
 	if err != nil {
 		return fmt.Errorf("reserve accounting bucket: %w", err)
@@ -401,6 +403,17 @@ func seedOperationObjectAccounting(ctx context.Context, store *state.PgStore, ac
 	if err := store.FinishObjectBucket(ctx, bucket.ID, "native-fixture", "ready"); err != nil {
 		return fmt.Errorf("finish accounting bucket: %w", err)
 	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if _, err := store.ClaimObjectBucket(ctx, accountID, appID, bucket.ID, "native-fixture-cleanup", "deleting"); err != nil {
+			t.Errorf("retire accounting bucket: %v", err)
+			return
+		}
+		if err := store.FinishObjectBucket(ctx, bucket.ID, "native-fixture-cleanup", "deleted"); err != nil {
+			t.Errorf("retire accounting bucket: %v", err)
+		}
+	})
 	if err := store.ClaimObjectInventory(ctx, bucket.ID, "native-fixture"); err != nil {
 		return fmt.Errorf("claim accounting inventory: %w", err)
 	}
