@@ -3237,11 +3237,11 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	}
 	rollbackOutcomesTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_rollback_outcomes_total",
-		Help: "Plain rollback outcomes verified by apid (ADR-1353), labelled by trigger ∈ {manual, auto_5xx, alert} and outcome ∈ {complete, failed}. A failed outcome means the rollback target never served: the previous release was not restored.",
+		Help: "Plain rollback outcomes verified by apid (ADR-1353), labelled by trigger ∈ {manual, auto_5xx, alert, post_release} and outcome ∈ {complete, failed}. A failed outcome means the rollback target never served: the previous release was not restored.",
 	}, []string{"trigger", "outcome"})
 	rollbackRecoverySeconds := prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    prefix + "_rollback_recovery_seconds",
-		Help:    "Seconds from a plain rollback request to its target serving (ADR-1353), labelled by trigger ∈ {manual, auto_5xx, alert}. The API-hosting scorecard bar is p95 <= 60 s.",
+		Help:    "Seconds from a plain rollback request to its target serving (ADR-1353), labelled by trigger ∈ {manual, auto_5xx, alert, post_release}. The API-hosting scorecard bar is p95 <= 60 s.",
 		Buckets: []float64{1, 2, 5, 10, 15, 30, 45, 60, 90, 120, 300, 600},
 	}, []string{"trigger"})
 	for _, trigger := range rollbackOutcomeTriggers {
@@ -8732,10 +8732,9 @@ func (m *OpsMetrics) CanaryProgressionErrorsTotal(reason string) prometheus.Coun
 	return m.canaryProgressionErrorsTotal.WithLabelValues(reason)
 }
 
-// CanaryProgressionCircuitBreakerTotal returns a closed-label counter for
 // rollbackOutcomeTriggers is the closed trigger vocabulary for the ADR-1353
-// rollback outcome metrics.
-var rollbackOutcomeTriggers = []string{"manual", "auto_5xx", "alert"}
+// rollback outcome metrics; post_release is the ADR-1445 watch.
+var rollbackOutcomeTriggers = []string{"manual", "auto_5xx", "alert", "post_release"}
 
 func knownRollbackTrigger(trigger string) bool {
 	for _, t := range rollbackOutcomeTriggers {
@@ -8768,6 +8767,7 @@ func (m *OpsMetrics) RollbackOutcomesCounter(trigger, outcome string) prometheus
 	return m.rollbackOutcomesTotal.WithLabelValues(trigger, outcome)
 }
 
+// CanaryProgressionCircuitBreakerTotal returns a closed-label counter for
 // one breaker abort or boundary hold. Unknown events are ignored so metric
 // labels can never be influenced by an error string or deployment metadata.
 func (m *OpsMetrics) CanaryProgressionCircuitBreakerTotal(event string) prometheus.Counter {

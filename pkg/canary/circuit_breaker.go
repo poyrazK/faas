@@ -295,6 +295,21 @@ func ServerErrorRegression(candidate, stable HealthWindow) (CircuitBreakerDecisi
 	return serverErrorRegression(candidate, stable, "")
 }
 
+// LatencyRegression applies the breaker's p95 comparison to two samples that
+// both meet CircuitBreakerMinRequests. The post-release watch (ADR-1445)
+// judges a completed release against its predecessor with it.
+func LatencyRegression(candidate, stable HealthWindow) (CircuitBreakerDecision, bool) {
+	if candidate.Requests < CircuitBreakerMinRequests || stable.Requests < CircuitBreakerMinRequests {
+		return CircuitBreakerDecision{}, false
+	}
+	if candidate.P95LatencyMS >= stable.P95LatencyMS*circuitBreakerLatencyFactor &&
+		candidate.P95LatencyMS-stable.P95LatencyMS >= circuitBreakerLatencyDeltaMS {
+		return CircuitBreakerDecision{Action: CircuitBreakerAbort, Reason: fmt.Sprintf(
+			"p95 latency regression (candidate %.0fms, stable %.0fms)", candidate.P95LatencyMS, stable.P95LatencyMS)}, true
+	}
+	return CircuitBreakerDecision{}, false
+}
+
 // serverErrorRegression is the 5xx rate comparison for two samples that
 // already meet the request floor.
 func serverErrorRegression(c, s HealthWindow, note string) (CircuitBreakerDecision, bool) {

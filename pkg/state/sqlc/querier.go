@@ -2269,6 +2269,14 @@ type Querier interface {
 	// The tenant creation index supports descending keyset paging. Only public
 	// summary fields cross this boundary; source input/results/capabilities do not.
 	ListPlatformTenantCustomerOperationsBySubject(ctx context.Context, db DBTX, arg ListPlatformTenantCustomerOperationsBySubjectParams) ([][]byte, error)
+	// ADR-1445: post-release watch.
+	// Completed live releases that kept automatic rollback, finished within the
+	// watch window (plus telemetry grace), are the newest deployment in their
+	// scope, and have a superseded predecessor created before them. Being the
+	// newest excludes rollback targets, which are older than what they replaced.
+	// An immediate release may not stamp rollout_started_at; its baseline then
+	// ends when it completed.
+	ListPostReleaseWatchCandidates(ctx context.Context, db DBTX, arg ListPostReleaseWatchCandidatesParams) ([]ListPostReleaseWatchCandidatesRow, error)
 	ListProductionDeadLetterEvents(ctx context.Context, db DBTX, arg ListProductionDeadLetterEventsParams) ([]DeadLetterEvent, error)
 	ListProductionLifecycleHistory(ctx context.Context, db DBTX, arg ListProductionLifecycleHistoryParams) ([][]byte, error)
 	// ADR-531: production queue pollers cannot own stage work.
@@ -3672,6 +3680,8 @@ type Querier interface {
 	// ADR-1259: append-once; a replay must describe the same verified lineage.
 	RecordManagedPostgresRestoreVerification(ctx context.Context, db DBTX, arg RecordManagedPostgresRestoreVerificationParams) (ManagedPostgresRestoreVerification, error)
 	RecordManagedPostgresSharedUsage(ctx context.Context, db DBTX, arg RecordManagedPostgresSharedUsageParams) (int64, error)
+	// Records the watch's explained decision (ADR-1354 shape) on the release.
+	RecordPostReleaseRolloutDecision(ctx context.Context, db DBTX, arg RecordPostReleaseRolloutDecisionParams) (int64, error)
 	RecordProjectEnvironmentClonePostgresArchive(ctx context.Context, db DBTX, arg RecordProjectEnvironmentClonePostgresArchiveParams) (ProjectEnvironmentClonePostgresArchive, error)
 	RecordProjectEnvironmentClonePostgresContents(ctx context.Context, db DBTX, arg RecordProjectEnvironmentClonePostgresContentsParams) (ProjectEnvironmentClonePostgresContent, error)
 	RecordProjectEnvironmentClonePostgresCopyReader(ctx context.Context, db DBTX, arg RecordProjectEnvironmentClonePostgresCopyReaderParams) (ProjectEnvironmentClonePostgresCopyReader, error)

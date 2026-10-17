@@ -354,6 +354,9 @@ const (
 	// closes. Not wired yet; the schema CHECK accepts it so the
 	// caller can stamp it without a migration.
 	AutoRollbackReasonFirstWindowExpired AutoRollbackReason = "first_window_expired"
+	// AutoRollbackReasonPostReleaseRegression is stamped when the
+	// post-release watch rolls a completed release back (ADR-1445).
+	AutoRollbackReasonPostReleaseRegression AutoRollbackReason = "post_release_regression"
 )
 
 // IsValidAutoRollbackReason reports whether r is one of the
@@ -362,7 +365,7 @@ const (
 // on a stray value before the SQL UPDATE surfaces a 23514.
 func (r AutoRollbackReason) IsValid() bool {
 	switch r {
-	case AutoRollbackReasonThresholdExceeded, AutoRollbackReasonFirstWindowExpired:
+	case AutoRollbackReasonThresholdExceeded, AutoRollbackReasonFirstWindowExpired, AutoRollbackReasonPostReleaseRegression:
 		return true
 	default:
 		return false

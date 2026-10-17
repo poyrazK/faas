@@ -276,6 +276,13 @@ A new revision that its liveness probe restarts twice (and more than twice as
 often as the release it replaces) is treated as crash-looping: the rollout is
 aborted and traffic returns to the previous revision, even with no traffic.
 
+For 30 minutes after a release reaches 100%, Gregale keeps comparing it with
+the previous release's traffic from before the rollout. A clear 5xx or p95
+latency regression rolls it back automatically and records why on the
+deployment (`gregale deployment summary`). This also covers immediate
+releases, and anything the canary's share of traffic did not show. Releases
+deployed with `--rollback-on-5xx=false` are not watched.
+
 Opt out when you need an immediate cutover:
 
 ```bash

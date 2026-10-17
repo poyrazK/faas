@@ -41,6 +41,9 @@ const (
 	RolloutRuleAbortCrashLoop        = "abort_crash_loop"
 	RolloutRuleAbortManual           = "abort_manual"
 	RolloutRuleAbortLeaseExpired     = "abort_worker_lease_expired"
+	// Post-release watch (ADR-1445): regressions after the rollout completed.
+	RolloutRuleAbortPostRelease5xx = "abort_post_release_5xx"
+	RolloutRuleAbortPostReleaseP95 = "abort_post_release_p95_latency"
 )
 
 var rolloutDecisionRules = map[string]string{
@@ -62,6 +65,8 @@ var rolloutDecisionRules = map[string]string{
 	RolloutRuleAbortCrashLoop:        RolloutDecisionAbort,
 	RolloutRuleAbortManual:           RolloutDecisionAbort,
 	RolloutRuleAbortLeaseExpired:     RolloutDecisionAbort,
+	RolloutRuleAbortPostRelease5xx:   RolloutDecisionAbort,
+	RolloutRuleAbortPostReleaseP95:   RolloutDecisionAbort,
 }
 
 // RolloutDecision is the evidence behind one decision about a rollout

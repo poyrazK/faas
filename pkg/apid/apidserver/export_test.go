@@ -1189,6 +1189,16 @@ func (r *server) ConfigGuardSweep(p0 context.Context, p1 time.Time) error {
 func (r *server) SetConfigGuardTelemetry(t state.ConfigGuardTelemetryStore) {
 	r.configGuardTelemetry = t
 }
+func (r *server) PostReleaseWatchSweep(p0 context.Context, p1 time.Time) error {
+	return r.postReleaseWatchSweep(p0, p1)
+}
+
+// PostReleaseTelemetry is the request summary the post-release watch reads.
+type PostReleaseTelemetry = rollbackOn5xxTelemetry
+
+func (r *server) SetPostReleaseTelemetry(t PostReleaseTelemetry) {
+	r.postReleaseTelemetry = t
+}
 func (r *server) RollbackProjectEnvironmentPromotion(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.rollbackProjectEnvironmentPromotion(p0, p1, p2)
 }

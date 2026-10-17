@@ -76,6 +76,7 @@ func main() {
 	failAPI := flag.Bool("fail-api", false, "answer /api with 500 while / and /healthz stay healthy (bad release)")
 	failLivez := flag.Bool("fail-livez", false, "answer /livez with 500 while /healthz stays healthy (crash loop)")
 	failRootAfter := flag.Int64("fail-root-after-requests", 0, "answer / with 500 after this many / requests, so a release passes its post-readiness smoke and fails later (0 disables)")
+	delayRoot := flag.Duration("delay-root", 0, "wait this long before answering / (a release that is slow at full traffic, ADR-1445)")
 	flag.Parse()
 	if *echoSession {
 		runEchoSession()
@@ -233,6 +234,9 @@ func main() {
 		if failRequests {
 			http.Error(w, "fixture broken config", http.StatusInternalServerError)
 			return
+		}
+		if *delayRoot > 0 {
+			time.Sleep(*delayRoot)
 		}
 		if *gitOpsResilience && !waitGitOpsRequestDelay(w, r) {
 			return

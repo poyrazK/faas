@@ -19,6 +19,8 @@ const (
 	RollbackTriggerManual  = "manual"
 	RollbackTriggerAuto5xx = "auto_5xx"
 	RollbackTriggerAlert   = "alert"
+	// RollbackTriggerPostRelease is the post-release watch (ADR-1445).
+	RollbackTriggerPostRelease = "post_release"
 
 	RollbackStatusPreparing = "preparing"
 	RollbackStatusComplete  = "complete"

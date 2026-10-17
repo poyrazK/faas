@@ -746,6 +746,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		go srv.runAlertRollbackWorker(ctx)
 		go srv.runRollbackOn5xxWorker(ctx)
 		go srv.runConfigGuardWorker(ctx)
+		go srv.runPostReleaseWatchWorker(ctx)
 		go srv.plainRollbacks().Run(ctx)
 		go srv.operation.RunOperationArtifactCleanup(ctx)
 		go srv.object.RunObjectStorageRecovery(ctx)

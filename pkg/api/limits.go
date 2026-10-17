@@ -415,6 +415,15 @@ const RollbackOn5xxTelemetryGrace = 2 * time.Minute
 const RollbackOn5xxCheckIntervalSeconds = 15
 const RollbackOn5xxBatchSize = 100
 
+// Post-release watch (ADR-1445). For PostReleaseWatchWindow after a release
+// reaches 100%, apid compares it with its predecessor's traffic in the
+// PostReleaseWatchBaseline before the rollout started, and rolls back a
+// clear 5xx or p95 regression. Plan-independent, like ADR-625.
+const PostReleaseWatchWindow = 30 * time.Minute
+const PostReleaseWatchBaseline = 30 * time.Minute
+const PostReleaseWatchCheckIntervalSeconds = 15
+const PostReleaseWatchBatchSize = 100
+
 // Guarded, reversible config changes (ADR-1391). Each customer write to an
 // app scope's variables or secrets records a revision; apid keeps the newest
 // ConfigRevisionsRetained per scope (plus any watching guard's base). A write

@@ -74,6 +74,8 @@ func TestSafeReleaseDrillMetal(t *testing.T) {
 	crash := registry.AddImage("library/sr-crash", crashImg)
 	lateImg, _ := e2etest.DelayedRootFailureImageAboveBase("library/sr-late", safeReleaseDrillBody)
 	late := registry.AddImage("library/sr-late", lateImg)
+	slowImg, _ := e2etest.HelloImageAboveBaseWithArgs("library/sr-slow", safeReleaseDrillBody, "-addr", ":8080", "-delay-root", "700ms")
+	slow := registry.AddImage("library/sr-slow", slowImg)
 
 	prom := newSafeReleasePromStub(t)
 	operator := freeTCPAddr(t)
@@ -347,6 +349,39 @@ func TestSafeReleaseDrillMetal(t *testing.T) {
 		}
 		d.waitServing(t, app, 3*time.Minute)
 		t.Logf("DRILL config_guard_recovered seconds=%.0f", time.Since(changed).Seconds())
+	})
+
+	// ADR-1445: a release with no canary that is slow at full traffic is
+	// rolled back by the post-release watch against its predecessor.
+	t.Run("release that regresses after completing is rolled back by the post-release watch", func(t *testing.T) {
+		const app = "sr-default"
+		d.waitServing(t, app, 3*time.Minute)
+		for range 40 { // the predecessor's sample before the rollout
+			d.get(app, "/")
+		}
+		rollback := true
+		started := time.Now()
+		release := d.deployLive(t, app, api.CreateDeploymentRequest{Image: slow,
+			Canary: &api.CanaryPresetSpec{Preset: "none"}, RollbackOn5xx: &rollback})
+		release = d.waitDeployment(t, release.ID, time.Minute, func(dep state.Deployment) bool {
+			return dep.TrafficPercent == 100 && dep.RolloutState == "complete"
+		})
+		stop := d.sendTraffic(app, "/", 200*time.Millisecond)
+		got := d.waitDeployment(t, release.ID, 5*time.Minute, func(dep state.Deployment) bool { return dep.LastAutoRollbackReason != "" })
+		stop()
+		if got.LastAutoRollbackReason != string(state.AutoRollbackReasonPostReleaseRegression) {
+			t.Fatalf("release rolled back with reason %q, want %q", got.LastAutoRollbackReason, state.AutoRollbackReasonPostReleaseRegression)
+		}
+		var decision api.RolloutDecision
+		if err := json.Unmarshal(got.RolloutDecision, &decision); err != nil || decision.Rule != api.RolloutRuleAbortPostReleaseP95 ||
+			decision.Candidate == nil || decision.Stable == nil {
+			t.Fatalf("post-release decision = %s err=%v, want %s", got.RolloutDecision, err, api.RolloutRuleAbortPostReleaseP95)
+		}
+		t.Logf("DRILL post_release seconds=%.0f rule=%s release_p95=%.0fms predecessor_p95=%.0fms requests=%d/%d summary=%q",
+			time.Since(started).Seconds(), decision.Rule, decision.Candidate.P95LatencyMS, decision.Stable.P95LatencyMS,
+			decision.Candidate.Requests, decision.Stable.Requests, decision.Summary)
+		d.waitServing(t, app, 3*time.Minute)
+		t.Logf("DRILL post_release_recovered seconds=%.0f", time.Since(started).Seconds())
 	})
 
 	// Last: it stops meterd for the rest of the harness.

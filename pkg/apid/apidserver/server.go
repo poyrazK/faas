@@ -80,7 +80,10 @@ type server struct {
 	serviceMap                             servicemap.Service // ADR-1131; Host wired in newServer
 	// configGuardTelemetry overrides the store's request telemetry for
 	// config guards (ADR-1391); nil reads it from the store.
-	configGuardTelemetry  state.ConfigGuardTelemetryStore
+	configGuardTelemetry state.ConfigGuardTelemetryStore
+	// postReleaseTelemetry overrides the store's request telemetry for the
+	// post-release watch (ADR-1445); nil reads it from the store.
+	postReleaseTelemetry  rollbackOn5xxTelemetry
 	featureFlagsEnabled   bool
 	aiGatewayEnabled      bool
 	aiGatewayRollout      outbound.AIGatewayRollout // ADR-998
