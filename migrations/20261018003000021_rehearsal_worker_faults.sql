@@ -1,4 +1,5 @@
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 CREATE TABLE scenario_worker_faults (
  id uuid PRIMARY KEY,
  account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
@@ -189,6 +190,7 @@ END $$;
 -- +goose StatementEnd
 
 -- +goose Down
+SET LOCAL lock_timeout = '5s';
 -- An enrolled fault cannot be downgraded while its cleanup/evidence is pending.
 -- +goose StatementBegin
 DO $$ BEGIN IF EXISTS(SELECT 1 FROM scenario_worker_faults) THEN RAISE EXCEPTION 'worker fault receipts must be retired before downgrade'; END IF; END $$;

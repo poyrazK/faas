@@ -1,4 +1,5 @@
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 CREATE FUNCTION scenario_command_retirement_network_fence() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
@@ -12,6 +13,7 @@ END $$;
 CREATE TRIGGER scenario_command_retirement_network_fence BEFORE INSERT OR UPDATE ON scenario_recorder_sessions FOR EACH ROW EXECUTE FUNCTION scenario_command_retirement_network_fence();
 
 -- +goose Down
+SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 DO $$ BEGIN
  IF EXISTS(SELECT 1 FROM scenario_test_action_policies WHERE simulation_plan IS NOT NULL) THEN

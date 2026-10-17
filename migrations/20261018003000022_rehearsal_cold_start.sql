@@ -1,4 +1,5 @@
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 ALTER TABLE scenario_test_action_policies ADD COLUMN cold_start_spec jsonb
  CHECK(cold_start_spec IS NULL OR (jsonb_typeof(cold_start_spec)='object' AND cold_start_spec->>'version'='1'
   AND (cold_start_spec->>'within_ms')::bigint BETWEEN 1 AND 120000 AND simulation_plan IS NOT NULL AND network_mode='contained'));
@@ -161,6 +162,7 @@ END $$;
 -- +goose StatementEnd
 
 -- +goose Down
+SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 DO $$ BEGIN IF EXISTS(SELECT 1 FROM scenario_cold_preparations) OR EXISTS(SELECT 1 FROM scenario_test_action_policies WHERE cold_start_spec IS NOT NULL) THEN RAISE EXCEPTION 'cold-start enrollment must be removed before downgrade'; END IF; END $$;
 -- +goose StatementEnd

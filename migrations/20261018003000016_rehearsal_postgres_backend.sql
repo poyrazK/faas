@@ -1,4 +1,5 @@
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 ALTER TABLE scenario_postgres_fixtures ADD COLUMN backend_sha256 text NOT NULL DEFAULT ''
  CHECK (backend_sha256='' OR backend_sha256 ~ '^[a-f0-9]{64}$');
 -- +goose StatementBegin
@@ -15,6 +16,7 @@ CREATE TRIGGER scenario_postgres_backend_guard BEFORE INSERT OR UPDATE ON scenar
  FOR EACH ROW EXECUTE FUNCTION scenario_postgres_backend_guard();
 
 -- +goose Down
+SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 DO $$ BEGIN
  IF EXISTS(SELECT 1 FROM scenario_postgres_fixtures WHERE status NOT IN ('complete','deleted')) THEN

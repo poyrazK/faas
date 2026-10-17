@@ -1,4 +1,5 @@
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 ALTER TABLE scenario_test_action_policies ADD COLUMN network_mode text NOT NULL DEFAULT ''
     CHECK (network_mode IN ('', 'contained'));
 
@@ -18,6 +19,7 @@ CREATE TRIGGER scenario_network_policy_immutable BEFORE UPDATE ON scenario_test_
     FOR EACH ROW EXECUTE FUNCTION scenario_network_policy_immutable();
 
 -- +goose Down
+SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 DO $$ BEGIN
     IF EXISTS (SELECT 1 FROM scenario_test_action_policies WHERE network_mode = 'contained') THEN

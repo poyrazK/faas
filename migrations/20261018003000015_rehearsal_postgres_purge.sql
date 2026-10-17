@@ -1,4 +1,5 @@
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 -- Completed evidence can follow its owning app/account's retention lifecycle.
 -- An active fixture must retain its cleanup journal until deletion is confirmed.
 ALTER TABLE scenario_postgres_fixtures DROP CONSTRAINT scenario_postgres_fixtures_account_id_fkey;
@@ -20,6 +21,7 @@ CREATE TRIGGER scenario_postgres_fixture_delete_guard BEFORE DELETE ON scenario_
  FOR EACH ROW EXECUTE FUNCTION scenario_postgres_fixture_delete_guard();
 
 -- +goose Down
+SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 DO $$ BEGIN
  IF EXISTS(SELECT 1 FROM scenario_postgres_fixtures WHERE status NOT IN ('complete','deleted')) THEN

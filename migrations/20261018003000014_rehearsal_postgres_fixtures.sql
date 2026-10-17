@@ -1,4 +1,5 @@
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 CREATE TABLE scenario_postgres_fixtures (
  id uuid PRIMARY KEY,
  account_id uuid NOT NULL REFERENCES accounts(id),
@@ -34,6 +35,7 @@ CREATE TRIGGER scenario_postgres_fixture_immutable BEFORE UPDATE ON scenario_pos
  FOR EACH ROW EXECUTE FUNCTION scenario_postgres_fixture_immutable();
 
 -- +goose Down
+SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 DO $$ BEGIN
  IF EXISTS(SELECT 1 FROM scenario_postgres_fixtures WHERE status NOT IN ('complete','deleted')) THEN

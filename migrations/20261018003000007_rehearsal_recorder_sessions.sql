@@ -1,4 +1,5 @@
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 ALTER TABLE scenario_test_action_policies ADD COLUMN recorder_closing boolean NOT NULL DEFAULT false;
 
 CREATE TABLE scenario_recorder_sessions (
@@ -61,6 +62,7 @@ END $$;
 CREATE TRIGGER scenario_recorder_closing_fence BEFORE UPDATE ON scenario_test_action_policies FOR EACH ROW EXECUTE FUNCTION scenario_recorder_closing_fence();
 
 -- +goose Down
+SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 DO $$ BEGIN
  IF EXISTS(SELECT 1 FROM scenario_test_action_policies WHERE simulation_plan IS NOT NULL) THEN

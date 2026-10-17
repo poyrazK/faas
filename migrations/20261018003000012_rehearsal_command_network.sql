@@ -1,4 +1,5 @@
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 CREATE TABLE scenario_command_networks (
  task_id uuid PRIMARY KEY REFERENCES app_tasks(id) ON DELETE CASCADE,
  node_id uuid NOT NULL REFERENCES compute_nodes(id),
@@ -27,6 +28,7 @@ END $$;
 CREATE TRIGGER scenario_command_network_fence BEFORE INSERT OR UPDATE ON scenario_command_networks FOR EACH ROW EXECUTE FUNCTION scenario_command_network_fence();
 
 -- +goose Down
+SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 DO $$ BEGIN
  IF EXISTS(SELECT 1 FROM scenario_command_networks) THEN

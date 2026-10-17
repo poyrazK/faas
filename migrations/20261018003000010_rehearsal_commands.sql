@@ -1,4 +1,5 @@
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 CREATE FUNCTION scenario_rehearsal_command_spec(argv text[]) RETURNS jsonb LANGUAGE plpgsql IMMUTABLE AS $$
 DECLARE spec jsonb;
@@ -122,6 +123,7 @@ END $$;
 
 
 -- +goose Down
+SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 DO $$ BEGIN
  IF EXISTS(SELECT 1 FROM scenario_test_action_policies WHERE simulation_plan IS NOT NULL) THEN

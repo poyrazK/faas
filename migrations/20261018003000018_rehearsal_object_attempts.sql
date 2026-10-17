@@ -1,4 +1,5 @@
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 CREATE FUNCTION scenario_object_attempt_immutable() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE old_attempt jsonb; new_attempt jsonb; ordinal bigint;
@@ -22,5 +23,6 @@ END $$;
 CREATE TRIGGER scenario_object_attempt_immutable BEFORE UPDATE ON scenario_object_fixtures
  FOR EACH ROW EXECUTE FUNCTION scenario_object_attempt_immutable();
 -- +goose Down
+SET LOCAL lock_timeout = '5s';
 DROP TRIGGER scenario_object_attempt_immutable ON scenario_object_fixtures;
 DROP FUNCTION scenario_object_attempt_immutable();

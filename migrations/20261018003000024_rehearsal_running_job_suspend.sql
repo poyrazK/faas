@@ -1,4 +1,5 @@
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 -- ADR-20261017201015: retained first-dispatch and broker checkpoint identity.
 ALTER TABLE scenario_test_action_policies DROP CONSTRAINT scenario_test_action_policies_check3;
 ALTER TABLE scenario_test_action_policies ADD CONSTRAINT scenario_suspend_plan_check CHECK(suspend_resume_spec IS NULL OR ((jsonb_typeof(suspend_resume_spec)='object'
@@ -127,6 +128,7 @@ END $$;
 CREATE TRIGGER scenario_suspend_dispatch_guard BEFORE UPDATE OF state,attempts,instance_id ON invocations FOR EACH ROW EXECUTE FUNCTION scenario_suspend_dispatch_guard();
 
 -- +goose Down
+SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 DO $$ BEGIN IF EXISTS(SELECT 1 FROM scenario_test_action_policies WHERE suspend_resume_spec->>'checkpoint'='managed_job')
  THEN RAISE EXCEPTION 'running-job checkpoint evidence is retained until app deletion'; END IF; END $$;

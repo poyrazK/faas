@@ -1,4 +1,5 @@
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 ALTER TABLE scenario_test_action_policies
  ADD COLUMN simulation_plan jsonb CHECK (simulation_plan IS NULL OR (network_mode='contained' AND jsonb_typeof(simulation_plan)='object' AND octet_length(simulation_plan::text)<=131072)),
  ADD COLUMN simulation_failed boolean NOT NULL DEFAULT false CHECK (NOT simulation_failed OR simulation_plan IS NOT NULL);
@@ -42,6 +43,7 @@ CREATE TRIGGER scenario_simulation_sealed_fence BEFORE INSERT OR UPDATE ON scena
  FOR EACH ROW EXECUTE FUNCTION scenario_simulation_sealed_fence();
 
 -- +goose Down
+SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 DO $$ BEGIN
  IF EXISTS(SELECT 1 FROM scenario_test_action_policies WHERE simulation_plan IS NOT NULL) THEN

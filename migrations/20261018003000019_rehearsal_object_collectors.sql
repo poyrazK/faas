@@ -1,4 +1,5 @@
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 -- Old unqualified windows have no collector acknowledgement and cannot be adopted.
 UPDATE scenario_object_fixtures SET document=jsonb_set(document,'{Failed}','true') WHERE status IN ('ready','sealing');
 -- +goose StatementBegin
@@ -35,6 +36,7 @@ BEGIN
 END $$;
 -- +goose StatementEnd
 -- +goose Down
+SET LOCAL lock_timeout = '5s';
 -- Collector proof is a safety boundary; dropping it requires rolling back the adapter.
 -- +goose StatementBegin
 DO $$ BEGIN

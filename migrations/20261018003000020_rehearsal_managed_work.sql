@@ -1,4 +1,5 @@
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 ALTER TABLE scenario_test_action_policies
  ADD COLUMN managed_work_plan jsonb,
  ADD COLUMN managed_work_closing boolean NOT NULL DEFAULT false,
@@ -120,6 +121,7 @@ CREATE TRIGGER scenario_managed_work_journal_fence BEFORE INSERT OR UPDATE OR DE
  FOR EACH ROW EXECUTE FUNCTION scenario_managed_work_journal_fence();
 
 -- +goose Down
+SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 DO $$ BEGIN
  IF EXISTS(SELECT 1 FROM scenario_test_action_policies WHERE managed_work_plan IS NOT NULL) THEN

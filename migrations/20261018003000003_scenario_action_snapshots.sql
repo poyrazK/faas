@@ -1,4 +1,5 @@
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 ALTER TABLE scenario_test_action_policies
  ADD COLUMN workload_name text NOT NULL DEFAULT '' CHECK (workload_name = '' OR workload_name ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'),
  ADD COLUMN sealed_at timestamptz,
@@ -37,6 +38,7 @@ CREATE TRIGGER scenario_action_sealed_effect_fence BEFORE INSERT OR UPDATE ON wo
  FOR EACH ROW EXECUTE FUNCTION scenario_action_sealed_effect_fence();
 
 -- +goose Down
+SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 DO $$ BEGIN
  IF EXISTS (SELECT 1 FROM scenario_test_action_policies WHERE sealed_at IS NOT NULL) THEN

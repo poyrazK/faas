@@ -1,4 +1,5 @@
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 ALTER TABLE scenario_test_action_policies ADD COLUMN suspend_resume_spec jsonb
  CHECK(suspend_resume_spec IS NULL OR (jsonb_typeof(suspend_resume_spec)='object'
   AND suspend_resume_spec->>'version'='1' AND suspend_resume_spec->>'checkpoint'='after_setup'
@@ -133,6 +134,7 @@ $$;
 -- +goose StatementEnd
 
 -- +goose Down
+SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 DO $$ BEGIN IF EXISTS(SELECT 1 FROM scenario_test_action_policies WHERE suspend_resume_spec IS NOT NULL)
  THEN RAISE EXCEPTION 'suspend/resume evidence must be retained until its apps are deleted'; END IF; END $$;

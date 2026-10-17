@@ -1,4 +1,5 @@
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 CREATE FUNCTION scenario_rehearsal_command_update_fence() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
@@ -35,6 +36,7 @@ END $$;
 CREATE TRIGGER scenario_rehearsal_command_attach_fence BEFORE INSERT ON app_task_attach_sessions FOR EACH ROW EXECUTE FUNCTION scenario_rehearsal_command_attach_fence();
 
 -- +goose Down
+SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 DO $$ BEGIN
  IF EXISTS(SELECT 1 FROM scenario_test_action_policies WHERE simulation_plan IS NOT NULL) THEN

@@ -1,4 +1,5 @@
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 CREATE TABLE scenario_test_action_policies (
     app_id uuid PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE,
     account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
@@ -41,6 +42,7 @@ BEFORE INSERT OR UPDATE ON app_webhook_deliveries
 FOR EACH ROW EXECUTE FUNCTION scenario_webhook_delivery_fence();
 
 -- +goose Down
+SET LOCAL lock_timeout = '5s';
 -- Capture authority must never be silently removed by a routine rollback while
 -- its retained effect records or suppressed deliveries still exist.
 -- +goose StatementBegin

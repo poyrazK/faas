@@ -1,4 +1,5 @@
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 CREATE TABLE scenario_object_fixtures (
  id uuid PRIMARY KEY,
  account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
@@ -39,6 +40,7 @@ END $$;
 CREATE TRIGGER scenario_object_fixture_immutable BEFORE UPDATE OR DELETE ON scenario_object_fixtures
  FOR EACH ROW EXECUTE FUNCTION scenario_object_fixture_immutable();
 -- +goose Down
+SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 DO $$ BEGIN
  IF EXISTS(SELECT 1 FROM scenario_object_fixtures WHERE status NOT IN ('complete','deleted')) THEN

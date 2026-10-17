@@ -1,4 +1,5 @@
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 ALTER TABLE scenario_simulation_attempts ADD CONSTRAINT scenario_simulation_evidence_identity
  CHECK (coalesce(evidence->>'id'=id::text,false) AND
         coalesce(evidence->>'status' IN ('pending','completed','interrupted','unsupported'),false));
@@ -23,6 +24,7 @@ END $$;
 -- +goose StatementEnd
 
 -- +goose Down
+SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 DO $$ BEGIN
  IF EXISTS(SELECT 1 FROM scenario_test_action_policies WHERE simulation_plan IS NOT NULL) THEN
