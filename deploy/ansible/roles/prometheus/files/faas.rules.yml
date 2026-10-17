@@ -253,7 +253,13 @@ groups:
     interval: 30s
     rules:
       - alert: FaasRequestIDJournalWriteFailures
-        expr: sum(rate(gateway_request_id_journal_write_total{result="failed"}[5m])) > (1 / 60)
+        # ADR-1521: records are written in batches, so one failed batch counts
+        # up to 128 failed records. Alert on a failure share, not a count alone.
+        expr: |
+          sum(rate(gateway_request_id_journal_write_total{result="failed"}[5m])) > (1 / 60)
+          and
+          sum(rate(gateway_request_id_journal_write_total{result="failed"}[5m]))
+            / sum(rate(gateway_request_id_journal_write_total{result=~"recorded|rejected|failed"}[5m])) > 0.05
         for: 2m
         labels:
           severity: warn
@@ -261,7 +267,7 @@ groups:
           family: request_id_journal
         annotations:
           summary: "Exact request-ID journal writes are failing"
-          description: "The gateway's mandatory pre-proxy request-ID journal has failed above 1 write per minute for 2 minutes. Affected requests are rejected with 503 before guest execution; check the apid private gRPC path and Postgres write health."
+          description: "More than 5% of exact request-ID journal records (and more than 1 per minute) failed to reach apid for 2 minutes. Requests are still served (ADR-634), but their public request IDs may not resolve in the debugger; check the apid private gRPC path and Postgres write health."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRequestIDJournalWriteFailures.md"
 
   - name: outbound_webhook_delivery

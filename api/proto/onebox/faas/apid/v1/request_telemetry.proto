@@ -61,6 +61,13 @@ service RequestTelemetry {
   // request telemetry, this identity mapping is not sampled or rate-limited.
   // Apid applies the account's request-time debugger retention window.
   rpc RecordRequestIDJournal(RecordRequestIDJournalRequest) returns (RecordRequestIDJournalResponse);
+
+  // RecordRequestIDJournalBatch commits up to 512 journal records with one
+  // account lookup per distinct account and one multi-row insert (ADR-1521).
+  // An invalid record is counted as rejected instead of failing the batch;
+  // storage failures are gRPC errors for the whole batch. Gateways fall back
+  // to RecordRequestIDJournal while apid answers Unimplemented.
+  rpc RecordRequestIDJournalBatch(RecordRequestIDJournalBatchRequest) returns (RecordRequestIDJournalBatchResponse);
 }
 
 message RecordRequestIDJournalRequest {
@@ -76,6 +83,16 @@ message RecordRequestIDJournalResponse {
   // False only when the account plan has no debugger entitlement. Storage or
   // validation failures are gRPC errors and must prevent guest forwarding.
   bool recorded = 1;
+}
+
+message RecordRequestIDJournalBatchRequest {
+  repeated RecordRequestIDJournalRequest records = 1; // 1..512
+}
+
+message RecordRequestIDJournalBatchResponse {
+  int32 recorded = 1; // inserted, or an identical retry of an existing record
+  int32 not_entitled = 2; // the account's plan has no debugger retention
+  int32 rejected = 3; // malformed, or the app is not owned by the account
 }
 
 // The financial fields contain no request path, client metadata, or payload.

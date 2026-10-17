@@ -998,11 +998,11 @@ func NewMetrics() *Metrics {
 		}),
 		requestIDJournalWrites: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_request_id_journal_write_total",
-			Help: "Exact public request-ID journal write outcomes; result is recorded, failed, or dropped (the asynchronous queue was full, ADR-634).",
+			Help: "Exact public request-ID journal records by outcome; result is recorded, rejected (apid refused the record), failed, or dropped (the asynchronous queue was full, ADR-634).",
 		}, []string{"result"}),
 		requestIDJournalWriteTime: prometheus.NewHistogram(prometheus.HistogramOpts{
 			Name:    "gateway_request_id_journal_write_duration_seconds",
-			Help:    "Time spent writing one exact public request-ID mapping to apid (asynchronous since ADR-634).",
+			Help:    "Time spent writing one batch of exact public request-ID mappings to apid (asynchronous since ADR-634, batched since ADR-1521).",
 			Buckets: []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2},
 		}),
 		usageOutboxPending:    prometheus.NewGauge(prometheus.GaugeOpts{Name: "gateway_consumer_usage_outbox_pending_records", Help: "Unacknowledged financial usage events on local disk."}),
@@ -3940,18 +3940,28 @@ func (m *Metrics) AddRequestTelemetryShipped(n int64) {
 	m.requestTelemetryShipped.Add(float64(n))
 }
 
-// ObserveRequestIDJournalWrite records the mandatory pre-proxy journal RPC.
-// Labels are a closed outcome set and intentionally omit tenant/request IDs.
-func (m *Metrics) ObserveRequestIDJournalWrite(duration time.Duration, err error) {
-	if m == nil || m.requestIDJournalWrites == nil || m.requestIDJournalWriteTime == nil {
+// ObserveRequestIDJournalBatch records one batch write (ADR-1521): every
+// record counts once as recorded, rejected or failed, and the duration is the
+// batch's. A batch error counts all of its records as failed. Labels are a
+// closed outcome set and intentionally omit tenant/request IDs.
+func (m *Metrics) ObserveRequestIDJournalBatch(duration time.Duration, records int, result RequestIDJournalBatchResult, err error) {
+	if m == nil || m.requestIDJournalWrites == nil || m.requestIDJournalWriteTime == nil || records <= 0 {
 		return
 	}
-	result := "recorded"
-	if err != nil {
-		result = "failed"
-	}
-	m.requestIDJournalWrites.WithLabelValues(result).Inc()
 	m.requestIDJournalWriteTime.Observe(duration.Seconds())
+	if err != nil {
+		m.requestIDJournalWrites.WithLabelValues("failed").Add(float64(records))
+		return
+	}
+	// Clamp to the batch so a miscounting writer cannot inflate the counters;
+	// whatever is left over (result.Failed included) counts as failed.
+	recorded := min(result.Recorded, records)
+	rejected := min(result.Rejected, records-recorded)
+	m.requestIDJournalWrites.WithLabelValues("recorded").Add(float64(recorded))
+	m.requestIDJournalWrites.WithLabelValues("rejected").Add(float64(rejected))
+	if failed := records - recorded - rejected; failed > 0 {
+		m.requestIDJournalWrites.WithLabelValues("failed").Add(float64(failed))
+	}
 }
 
 // IncRequestIDJournalDropped counts a journal record the queue had no room
