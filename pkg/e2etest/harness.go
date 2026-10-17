@@ -2989,9 +2989,11 @@ func startImaged(t *testing.T, h *Harness, bin, dbURL, tmp, appsRoot string, ext
 	// did not exist yet, and imaged's catch-up sweep only looks at
 	// deployments older than two hours: the image deploy sat in `pending`
 	// until the test gave up, in every image-deploy test. Wait for the
-	// subscription itself, not the process.
+	// subscription itself, not the process. Restaging a base whose guest init
+	// changed takes close to three minutes on a two-vCPU shared host, so the
+	// wait leaves headroom beyond that.
 	imagedStart := time.Now()
-	if err := h.waitImagedListens(3 * time.Minute); err != nil {
+	if err := h.waitImagedListens(6 * time.Minute); err != nil {
 		// Say why: an imaged that exited (metrics port taken, base
 		// staging failed) is otherwise reported only as "never
 		// subscribed", with its last words lost — smoke run
