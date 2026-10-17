@@ -8,7 +8,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-func TestSnapshotFleetCapacityAlertsStayInternal(t *testing.T) {
+func TestInternalOnlyAlertsStayInternal(t *testing.T) {
 	rulesPath := filepath.Join("..", "..", "deploy", "ansible", "roles", "prometheus", "files", "faas.rules.yml")
 	raw, err := os.ReadFile(rulesPath)
 	if err != nil {
@@ -30,6 +30,8 @@ func TestSnapshotFleetCapacityAlertsStayInternal(t *testing.T) {
 	want := map[string]bool{
 		"FaasSnapshotFleetAvgHighPage": false,
 		"FaasSnapshotFleetAvgHighWarn": false,
+		"FaasTrafficSpikeAccount":      false,
+		"FaasTrafficDropAccount":       false,
 	}
 	for _, group := range doc.Groups {
 		for _, rule := range group.Rules {
