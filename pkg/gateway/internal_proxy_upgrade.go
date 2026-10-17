@@ -11,6 +11,7 @@ import (
 	"go.opentelemetry.io/otel/propagation"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/gateway/drain"
 	"github.com/onebox-faas/faas/pkg/httpsec"
 )
 
@@ -71,6 +72,9 @@ func (p *InternalReverseProxy) serveUpgrade(w http.ResponseWriter, r *http.Reque
 			}
 			if resp.StatusCode == http.StatusSwitchingProtocols {
 				detachBudget()
+				// httputil closes the tunnel when streamCtx ends; WebSocket
+				// clients reconnect to the replacement process.
+				drain.EndOnShutdown(streamCtx, cancelStream)
 			} else if edgeTransportStatus(r, resp.StatusCode) {
 				w.Header().Set(edgeOriginalStatusHeader, strconv.Itoa(resp.StatusCode))
 				resp.StatusCode = edgeOrigin504TransportStatus

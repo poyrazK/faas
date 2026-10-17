@@ -42,6 +42,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -1340,7 +1341,7 @@ type runDeps struct {
 
 func defaultDeps() runDeps {
 	return runDeps{
-		listen:       net.Listen,
+		listen:       wire.ListenInherited,
 		listenPacket: net.ListenPacket,
 		newSrv:       defaultServer,
 		backend:      unwiredBackend{},
@@ -4274,6 +4275,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				"socket", gatewaydInternalSocket, "err", err)
 		}
 	}
+	// faas-gatewayd-internal.socket must only carry addresses this process
+	// serves; anything else would hold its callers' connections forever.
+	if err := wire.RequireInheritedListenersClaimed("gatewayd-internal"); err != nil {
+		return err
+	}
 
 	notifyStop := daemonunit.NotifyReadyWhen(ctx, readyProbe.ReadyFunc())
 	defer notifyStop()
@@ -4285,20 +4291,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	case <-ctx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), drain.DrainGrace)
 		defer cancel()
-		for _, s := range serviceDiscoveryServers {
-			//nolint:contextcheck // shutdownCtx intentionally outlives the cancelled run context.
-			_ = s.ShutdownContext(shutdownCtx)
+		if deps.drain != nil {
+			// SSE and WebSocket sessions end now: their clients reconnect,
+			// and the replacement process cannot start until this one exits.
+			deps.drain.BeginShutdown()
 		}
 		//nolint:contextcheck // shutdown ctx must outlive the cancelled caller ctx (net/http contract).
-		// Best-effort shutdown of every listener we may have started.
-		// Servers track themselves in `servers`; certmagic owns its renew loop
-		// on a separate goroutine — we Close the bundle now that the public +
-		// ACME servers have drained. The bundle's Close is a no-op against
-		// certmagic v0.25 (no public Stop API) but the seam lets a future
-		// upgrade wire real shutdown without touching call sites.
-		for _, s := range servers {
-			_ = s.Shutdown(shutdownCtx)
-		}
+		shutdownListeners(shutdownCtx, servers, serviceDiscoveryServers, deps.synth)
 		if wakeAheadPersisted != nil {
 			select {
 			case <-wakeAheadPersisted:
@@ -4307,10 +4306,6 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		// ADR-068 / Tier A7 split: tlsBundle.Close + tlsCertExpiryCancel
 		// moved to gatewayd-public's shutdown path (cmd/gatewayd-public/main.go).
-		if deps.synth != nil {
-			//nolint:contextcheck // same shutdown-ctx contract as public.Shutdown above.
-			_ = deps.synth.Stop(shutdownCtx)
-		}
 		if deps.nodeCache != nil {
 			// Closing every cached *grpc.ClientConn here means
 			// in-flight ForwardHTTPStream RPCs see a "transport
@@ -4373,6 +4368,24 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		return nil
 	}
+}
+
+// shutdownListeners stops every listener at once and waits for their
+// requests within ctx. Stopping them one at a time let the first server's
+// slowest request keep every later listener accepting and spend the grace
+// serially, while connections to the stopped ones queued for the restart.
+func shutdownListeners(ctx context.Context, servers []*http.Server, dnsServers []*dns.Server, synth *gateway.SynthServer) {
+	var wg sync.WaitGroup
+	for _, s := range dnsServers {
+		wg.Go(func() { _ = s.ShutdownContext(ctx) })
+	}
+	for _, s := range servers {
+		wg.Go(func() { _ = s.Shutdown(ctx) })
+	}
+	if synth != nil {
+		wg.Go(func() { _ = synth.Stop(ctx) })
+	}
+	wg.Wait()
 }
 
 // unwiredBackend routes nothing; every request 404s until the Postgres routing

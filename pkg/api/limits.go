@@ -6571,6 +6571,15 @@ const (
 	// change cannot widen the attack surface on this listener; a single
 	// tenant-crafted 1 MiB header is fine, 64 MiB is not.
 	DefaultMaxHeaderBytes = 1 << 20 // 1 MiB
+
+	// InternalHopReplayableBodyBytes is the largest request body
+	// gatewayd-public buffers before forwarding it to gatewayd-internal, so
+	// the HTTP/2 hop can resend it. A request that crosses gatewayd-internal's
+	// graceful-restart GOAWAY was never processed; the transport retries it on
+	// a new connection only when it can rewind the body. Larger or chunked
+	// bodies keep streaming and can still fail in that window
+	// (docs/adr/20261017-zero-downtime-daemon-restarts.md).
+	InternalHopReplayableBodyBytes = 64 << 10 // 64 KiB
 )
 
 // EffectiveRetryMaxAttempts resolves a requested durable-invocation attempt

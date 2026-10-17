@@ -1039,6 +1039,11 @@ func shutdownGatewayServers(ctx context.Context, log *slog.Logger, publicSrv, co
 	shutdownCtx, cancel := context.WithTimeout(ctx, grace)
 	defer cancel()
 	drainStart := time.Now()
+	if drainTracker != nil {
+		// SSE and WebSocket clients reconnect; end them now so the
+		// replacement waiting on the socket can start sooner.
+		drainTracker.BeginShutdown()
+	}
 
 	var shutdownErr error
 	if err := publicSrv.Shutdown(shutdownCtx); err != nil {
