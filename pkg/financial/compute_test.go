@@ -1,6 +1,7 @@
 package financial
 
 import (
+	"errors"
 	"math/big"
 	"testing"
 	"time"
@@ -43,7 +44,7 @@ func TestFinancialComputeChargeOverflowAndSubsecond(t *testing.T) {
 	if err != nil || got != 2 {
 		t.Fatalf("subsecond bound: %d %v", got, err)
 	}
-	if _, err := ComputeCharge(1<<30, start, start.Add(31*24*time.Hour), 1<<62, 1); err != ErrOverflow {
+	if _, err := ComputeCharge(1<<30, start, start.Add(31*24*time.Hour), 1<<62, 1); !errors.Is(err, ErrOverflow) {
 		t.Fatalf("overflow: %v", err)
 	}
 }
