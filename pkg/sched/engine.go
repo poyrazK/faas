@@ -5401,6 +5401,10 @@ func (e *Engine) buildAppSpecForMigrationWithValues(ctx context.Context, instanc
 	if err != nil {
 		return AppSpec{}, state.RuntimeAppValuesSnapshot{}, fmt.Errorf("sched: build app spec: app by id: %w", err)
 	}
+	if run, err := e.rehearsalNetworkRun(ctx, app.ID); err != nil || run != "" {
+		return AppSpec{}, state.RuntimeAppValuesSnapshot{}, errors.New("rehearsal network policy unavailable or migration unsupported")
+	}
+
 	if err := e.checkApplicationStandardAdmission(ctx, app); err != nil {
 		return AppSpec{}, state.RuntimeAppValuesSnapshot{}, err
 	}
@@ -6148,6 +6152,19 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 	if err != nil {
 		return err
 	}
+	// ADR-1357: cold rehearsals exercise startup at the trigger, including
+	// startup failures. Verify the artifact without running a warm-up guest.
+	if member, memberErr := e.store.ScenarioTestMemberByApp(ctx, appID); memberErr == nil && member.ColdStartJSON != "" {
+		if !eligibleColdPrime(app, member, dep) || upgradeTarget != nil || executionModeForApp(app) == api.ExecutionModeJob {
+			return state.ErrConflict
+		}
+		if err := e.verifyPrimeLayer(ctx, appID, primeLayer); err != nil {
+			return err
+		}
+		return e.emitDeploymentReady(ctx, deploymentID, executionModeForApp(app), "", "rehearsal_cold_start")
+	} else if memberErr != nil && !errors.Is(memberErr, state.ErrNotFound) {
+		return memberErr
+	}
 	if executionModeForApp(app) == api.ExecutionModeJob {
 		if err := e.verifyPrimeLayer(ctx, appID, primeLayer); err != nil {
 			return err
@@ -6662,6 +6679,10 @@ func (e *Engine) ParkApp(ctx context.Context, appID string) (int, error) {
 	}
 	if !e.appMustPark(ctx, app, account) {
 		return 0, nil
+	}
+
+	if handled, count, coldErr := e.parkScenarioCold(ctx, appID); handled {
+		return count, coldErr
 	}
 
 	instances, err := e.store.ListInstancesForApp(ctx, appID)

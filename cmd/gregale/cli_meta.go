@@ -2406,7 +2406,21 @@ var cliCommands = []cliCommand{
 		DocSlug:  "test",
 		Short:    "Run scenario suites, lifecycle profiles, and bounded local HTTP load tests",
 		Examples: []string{"gregale test init --from openapi.yaml --project my-api", "gregale test import --from collection.json --project my-api", "gregale test --validate", "gregale test --suite smoke --engine local --fail-fast --junit test-results.xml", "gregale test --suite smoke --engine local --report test-results.json --junit test-results.xml --html test-results.html", "gregale test compare baseline.json current.json --budget test-budget.yaml --html comparison.html", "gregale test --suite regression --validate", "gregale test --scenario customer-export --preflight", "gregale test --scenario customer-export --profile restored --repeat 3 --max-workload-minutes 135 --report test-results.json --junit test-results.xml", "gregale test --scenario api-smoke --engine local", "gregale test --scenario api-smoke --engine local --load --baseline baseline.json --report current.json --junit current.xml", "gregale test --scenario customer-export --engine local --base-url http://localhost:3000 --data cases.json", "gregale test --scenario api-smoke --engine local --base-url http://localhost:3000 --load --vus 5 --duration 30s --pacing 100ms --progress", "gregale test --scenario api-smoke --engine local --load --rate 20 --duration 30s --vus 10 --progress", "gregale test --scenario customer-export --engine simulated"},
-		Subcommands: []cliSub{{Name: "init", Short: "Create public GET smoke checks from a local OpenAPI document", Examples: []string{"gregale test init --from openapi.yaml --project my-api --source ."}, Flags: []cliFlag{
+		Subcommands: []cliSub{{Name: "rehearse", Short: "Compare two pinned Git revisions with one trusted behavior scenario", Examples: []string{"gregale test rehearse --base main --candidate HEAD --scenario customer-export --engine simulated --report rehearsal.json --html rehearsal.html", "gregale test rehearse --base main --candidate HEAD --scenario customer-export --profile restored --max-workload-minutes 90 --report rehearsal.json"}, Flags: []cliFlag{
+			{Name: "repo", Short: "local Git checkout containing both revisions and trusted inputs", Value: "DIR"},
+			{Name: "base", Short: "baseline revision resolved once to a commit", Value: "REF", Req: true},
+			{Name: "candidate", Short: "candidate revision resolved once to a commit", Value: "REF", Req: true},
+			{Name: "manifest", Short: "trusted manifest from the invoking checkout", Value: "PATH"},
+			{Name: "scenario", Short: "scenario with declared behavior observations", Value: "NAME", Req: true},
+			{Name: "engine", Short: "execution engine (default real-vm)", Value: "ENGINE", ClosedSet: []string{"real-vm", "local", "simulated"}},
+			{Name: "profile", Short: "real-vm lifecycle profile (default warm)", Value: "PROFILE", ClosedSet: []string{"warm", "cold", "restored", "all"}},
+			{Name: "repeat", Short: "fresh runs per revision and profile (1..20; default 1)", Value: "N"},
+			{Name: "max-workload-minutes", Short: "required total real-vm workload-minute limit across both revisions", Value: "N"},
+			{Name: "validate", Short: "validate both snapshots without execution or platform access"},
+			{Name: "report", Short: "required combined JSON receipt for execution; new file", Value: "PATH"},
+			{Name: "html", Short: "standalone comparison HTML; new file", Value: "PATH"},
+			{Name: "markdown", Short: "comparison Markdown; new file", Value: "PATH"},
+		}}, {Name: "init", Short: "Create public GET smoke checks from a local OpenAPI document", Examples: []string{"gregale test init --from openapi.yaml --project my-api --source ."}, Flags: []cliFlag{
 			{Name: "from", Short: "local OpenAPI 3.0 or 3.1 document", Value: "PATH", Req: true},
 			{Name: "project", Short: "Gregale project slug", Value: "SLUG", Req: true},
 			{Name: "source", Short: "application source directory", Value: "DIR"},

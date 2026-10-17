@@ -835,6 +835,15 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 		}
 	}
 	cap := d.accountAsyncCap(ctx, inv)
+	if faults, ok := d.store.(interface {
+		ScenarioWorkerDispatchBlocked(context.Context, string) (bool, error)
+	}); ok {
+		blocked, faultErr := faults.ScenarioWorkerDispatchBlocked(ctx, inv.AppID)
+		if faultErr != nil || blocked {
+			release()
+			return
+		}
+	}
 	claimed, err := d.store.ClaimInvocationWithCap(ctx, inv.ID, "", leaseSeconds, cap)
 	if err != nil {
 		release()

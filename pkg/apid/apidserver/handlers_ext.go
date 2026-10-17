@@ -2661,10 +2661,14 @@ func (s *server) parkAppWithGuard(w http.ResponseWriter, r *http.Request, acct s
 			"Preview required", "fresh park is available only for preview apps"))
 		return
 	}
+	coldPreparation, err := s.beginScenarioColdPark(r.Context(), acct.ID, app.ID, fresh)
+	if err != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict, "Cold-start preparation unavailable", "finish managed work and use a fresh preview park with one running instance per workload"))
+		return
+	}
 	st := state.AppEvictedCold
 	var (
 		claimed        bool
-		err            error
 		parkTransition state.AppParkTransition
 		durablePark    state.AppParkTransitionStore
 	)
@@ -2719,6 +2723,12 @@ func (s *server) parkAppWithGuard(w http.ResponseWriter, r *http.Request, acct s
 		s.audit.Emit(r.Context(), "preview.test_fresh_parked", &acct.ID, map[string]any{
 			"app_id": app.ID, "slug": app.Slug,
 		})
+	}
+	if coldPreparation {
+		if err := s.completeScenarioColdPark(r.Context(), acct.ID, app.ID); err != nil {
+			api.WriteProblem(w, api.ErrCapacity("cold-start preparation receipt is incomplete"))
+			return
+		}
 	}
 	if durablePark != nil {
 		if _, err := durablePark.CompleteDrainedAppParkTransition(r.Context(), parkTransition.ID); err != nil {

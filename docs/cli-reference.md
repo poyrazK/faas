@@ -7926,6 +7926,35 @@ gregale test --scenario api-smoke --engine local --load --rate 20 --duration 30s
 gregale test --scenario customer-export --engine simulated
 ```
 
+### test rehearse
+
+Compare two pinned Git revisions with one trusted behavior scenario
+
+`gregale test rehearse [--repo <DIR>] --base <REF> --candidate <REF> [--manifest <PATH>] --scenario <NAME> [--engine <ENGINE>] [--profile <PROFILE>] [--repeat <N>] [--max-workload-minutes <N>] [--validate] [--report <PATH>] [--html <PATH>] [--markdown <PATH>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--repo <DIR>` | local Git checkout containing both revisions and trusted inputs |  |
+| `--base <REF>` | baseline revision resolved once to a commit | required |
+| `--candidate <REF>` | candidate revision resolved once to a commit | required |
+| `--manifest <PATH>` | trusted manifest from the invoking checkout |  |
+| `--scenario <NAME>` | scenario with declared behavior observations | required |
+| `--engine <ENGINE>` | execution engine (default real-vm) | one of `real-vm` · `local` · `simulated` |
+| `--profile <PROFILE>` | real-vm lifecycle profile (default warm) | one of `warm` · `cold` · `restored` · `all` |
+| `--repeat <N>` | fresh runs per revision and profile (1..20; default 1) |  |
+| `--max-workload-minutes <N>` | required total real-vm workload-minute limit across both revisions |  |
+| `--validate` | validate both snapshots without execution or platform access |  |
+| `--report <PATH>` | required combined JSON receipt for execution; new file |  |
+| `--html <PATH>` | standalone comparison HTML; new file |  |
+| `--markdown <PATH>` | comparison Markdown; new file |  |
+
+Examples:
+
+```sh
+gregale test rehearse --base main --candidate HEAD --scenario customer-export --engine simulated --report rehearsal.json --html rehearsal.html
+gregale test rehearse --base main --candidate HEAD --scenario customer-export --profile restored --max-workload-minutes 90 --report rehearsal.json
+```
+
 ### test init
 
 Create public GET smoke checks from a local OpenAPI document

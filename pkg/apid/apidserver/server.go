@@ -47,6 +47,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/promql"
 	"github.com/onebox-faas/faas/pkg/realtime"
 	"github.com/onebox-faas/faas/pkg/reconcile"
+	objruntime "github.com/onebox-faas/faas/pkg/rehearsalobj/runtime"
+	pgruntime "github.com/onebox-faas/faas/pkg/rehearsalpg/runtime"
 	"github.com/onebox-faas/faas/pkg/session"
 	"github.com/onebox-faas/faas/pkg/state"
 	artifactstorage "github.com/onebox-faas/faas/pkg/storage"
@@ -66,6 +68,18 @@ import (
 // wires a stub that returns 503 for every RPC; slices 7-8 replace with a
 // live socket-dialed client.
 type server struct {
+	rehearsalNetworkEnabled                bool
+	rehearsalSimulationEnabled             bool
+	rehearsalWorkersEnabled                bool
+	rehearsalWorkerFaultsEnabled           bool
+	rehearsalColdStartEnabled              bool
+	rehearsalSuspendResumeEnabled          bool
+	rehearsalRunningSuspendEnabled         bool
+	rehearsalCommandsEnabled               bool
+	rehearsalObjectsEnabled                bool
+	rehearsalObjects                       *objruntime.Service
+	rehearsalPostgresEnabled               bool
+	rehearsalPostgres                      *pgruntime.Service
 	environmentGitOpsAcceptanceEnforcement atomic.Bool
 	profileBackend                         profiling.Backend
 	profileQuerySlots                      chan struct{}
@@ -1615,6 +1629,15 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/dev/sessions/{project}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getDevSession))))
 	mux.HandleFunc("DELETE /v1/dev/sessions/{project}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.destroyDevSession))))
 	mux.HandleFunc("PUT /v1/dev/test-runs/{run_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.registerScenarioTest))))
+	mux.HandleFunc("POST /v1/dev/test-runs/{run_id}/suspend-resume", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.scenarioSuspendResume))))
+	mux.HandleFunc("GET /v1/dev/test-runs/{run_id}/suspend-resume", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.scenarioSuspendResume))))
+	mux.HandleFunc("POST /v1/dev/test-runs/{run_id}/actions/seal", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.sealScenarioTestActions))))
+	mux.HandleFunc("POST /v1/dev/test-runs/{run_id}/objects", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.createScenarioObjects))))
+	mux.HandleFunc("POST /v1/dev/test-runs/{run_id}/objects/seal", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.sealScenarioObjects))))
+	mux.HandleFunc("DELETE /v1/dev/test-runs/{run_id}/objects", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteScenarioObjects))))
+	mux.HandleFunc("POST /v1/dev/test-runs/{run_id}/postgres", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.createScenarioPostgres))))
+	mux.HandleFunc("POST /v1/dev/test-runs/{run_id}/postgres/seal", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.sealScenarioPostgres))))
+	mux.HandleFunc("DELETE /v1/dev/test-runs/{run_id}/postgres", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.deleteScenarioPostgres))))
 	mux.HandleFunc("PUT /v1/dev/test-runs/{run_id}/chaos", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.injectScenarioTestChaos))))
 	mux.HandleFunc("DELETE /v1/dev/test-runs/{run_id}/chaos", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.clearScenarioTestChaos))))
 	mux.HandleFunc("GET /v1/dev/test-runs/{run_id}/chaos/matches", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.getScenarioTestChaosMatches))))

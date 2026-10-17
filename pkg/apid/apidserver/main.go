@@ -1450,6 +1450,20 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithRealtimeTicketsPreviewEnabled(deps.getenv("FAAS_REALTIME_TICKETS_PREVIEW_ENABLED") == "1").
 		WithRealtimeAccessPreviewEnabled(deps.getenv("FAAS_REALTIME_ACCESS_PREVIEW_ENABLED") == "1").
 		WithGitHubDeploysAvailable(githubDeploysAvailabilityProbe(deps.getenv, resolveGithubdBridgeSock(deps.getenv, cfg)))
+	srv.rehearsalNetworkEnabled = deps.getenv("FAAS_REHEARSAL_NETWORK_CONTAINMENT") == "1"
+	srv.rehearsalSimulationEnabled = deps.getenv("FAAS_REHEARSAL_ACTION_SIMULATION") == "1"
+	srv.rehearsalWorkersEnabled = deps.getenv("FAAS_REHEARSAL_WORKERS") == "1"
+	srv.rehearsalWorkerFaultsEnabled = deps.getenv("FAAS_REHEARSAL_WORKER_FAULTS") == "1"
+	srv.rehearsalSuspendResumeEnabled = deps.getenv("FAAS_REHEARSAL_SUSPEND_RESUME") == "1"
+	srv.rehearsalRunningSuspendEnabled = deps.getenv("FAAS_REHEARSAL_RUNNING_JOB_SUSPEND") == "1"
+	srv.rehearsalColdStartEnabled = deps.getenv("FAAS_REHEARSAL_COLD_START") == "1"
+	srv.rehearsalCommandsEnabled = deps.getenv("FAAS_REHEARSAL_COMMAND_EXECUTION") == "1"
+	if err := srv.configureRehearsalObjects(ctx, deps.getenv); err != nil {
+		return err
+	}
+	if err := srv.configureRehearsalPostgres(ctx, deps.getenv); err != nil {
+		return err
+	}
 	srv.guestTracingEnabled = deps.getenv("FAAS_GUEST_TRACING_ENABLED") == "1"
 	if err := srv.configureProfiles(deps.getenv); err != nil {
 		return fmt.Errorf("apid profiling: %w", err)

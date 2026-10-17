@@ -127,7 +127,7 @@ func (m *Manager) ClosePreparedNetworks() error {
 // pool with apps on 8080. The full resulting config is checked again after
 // Wake validates its request.
 func (m *Manager) preparedPolicy(req WakeRequest) (preparedNetworkPolicy, bool) {
-	if !req.Plan.Valid() || req.ExecutionOnly || req.ExportDir != "" || req.StaticEgressIP != "" ||
+	if req.RehearsalRunID != "" || !req.Plan.Valid() || req.ExecutionOnly || req.ExportDir != "" || req.StaticEgressIP != "" ||
 		len(req.EgressAllowlist) != 0 || len(m.mergeOperatorBundle(nil)) != 0 ||
 		req.Port < 0 || req.Port > 65535 {
 		return preparedNetworkPolicy{}, false

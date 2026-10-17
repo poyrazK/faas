@@ -1304,7 +1304,34 @@ func (s *Server) Destroy(ctx context.Context, req *vmmdpb.DestroyRequest) (*vmmd
 	const op = "Destroy"
 	start := time.Now()
 	exportDir := s.exportDirFor(req.GetInstance())
-	code, err := s.vmm.DestroyWithExport(ctx, req.GetInstance(), exportDir)
+	var code int
+	var err error
+	if req.GetRehearsalColdPreparationId() != "" && req.GetRehearsalWorkerFaultId() != "" {
+		return nil, status.Error(codes.InvalidArgument, "one rehearsal retirement authority is required")
+	}
+	if prep := req.GetRehearsalColdPreparationId(); prep != "" {
+		owner, ok := s.vmm.(interface {
+			RetireRehearsalCold(context.Context, string, string) error
+		})
+		if !ok {
+			err = status.Error(codes.Unimplemented, "cold-start rehearsal retirement unavailable")
+			s.ops.Observe(op, time.Since(start), err)
+			return nil, err
+		}
+		err = owner.RetireRehearsalCold(ctx, req.GetInstance(), prep)
+	} else if fault := req.GetRehearsalWorkerFaultId(); fault != "" {
+		terminator, ok := s.vmm.(interface {
+			TerminateRehearsalWorker(context.Context, string, string) error
+		})
+		if !ok {
+			err = status.Error(codes.Unimplemented, "rehearsal worker termination unavailable")
+			s.ops.Observe(op, time.Since(start), err)
+			return nil, err
+		}
+		err = terminator.TerminateRehearsalWorker(ctx, req.GetInstance(), fault)
+	} else {
+		code, err = s.vmm.DestroyWithExport(ctx, req.GetInstance(), exportDir)
+	}
 	if err != nil {
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(toProblem(err))
@@ -1315,7 +1342,7 @@ func (s *Server) Destroy(ctx context.Context, req *vmmdpb.DestroyRequest) (*vmmd
 	s.ForgetActivity(req.GetInstance())
 	s.diverged.Forget(req.GetInstance())
 	s.ops.Observe(op, time.Since(start), nil)
-	return &vmmdpb.DestroyResponse{Instance: req.GetInstance(), ExitCode: int32(code)}, nil
+	return &vmmdpb.DestroyResponse{Instance: req.GetInstance(), ExitCode: int32(code), RehearsalWorkerFaultId: req.GetRehearsalWorkerFaultId(), RehearsalColdPreparationId: req.GetRehearsalColdPreparationId()}, nil
 }
 
 // StopInstance (M-2 / ADR-138 §Decision 1) is the graceful

@@ -20,6 +20,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apptaskproto"
 	"github.com/onebox-faas/faas/pkg/jobresult"
+	"github.com/onebox-faas/faas/pkg/rehearsalcommand"
 	"golang.org/x/sys/unix"
 )
 
@@ -188,6 +189,9 @@ func loadAppTaskRuntime(log *slog.Logger) (appTaskRuntime, *apptaskproto.Result)
 }
 
 func executeAppTaskCommand(ctx context.Context, req apptaskproto.Request, manifest api.AppManifest, secrets, apiEnv map[string]string, stdout, stderr io.Writer) (apptaskproto.Result, error) {
+	if rehearsalcommand.IsCommand(req.Command) {
+		return executeRehearsalCommand(ctx, req, manifest, secrets, apiEnv, stdout)
+	}
 	if isOutboundBindingProbeCommand(req) {
 		return executeOutboundBindingProbeCommand(ctx, req, stdout)
 	}

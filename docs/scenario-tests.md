@@ -951,8 +951,10 @@ added and removed runs, status changes, duration and phase changes, HTTP step
 timings, and aggregate, per-step, and arrival-rate load metrics when available.
 It also marks a changed load workload signature or label so those metric deltas
 are easy to spot.
-Without `--budget`, the comparison is informational. Pass a versioned YAML
-budget file to enforce run outcomes and optional performance limits:
+Without `--budget`, run-outcome and performance comparisons are informational.
+Opt-in [behavior observations](#compare-declared-application-behavior) have a
+separate gate. Pass a versioned YAML budget file to enforce run outcomes and
+optional performance limits:
 
 ```sh
 gregale test compare before.json after.json \
@@ -1011,6 +1013,685 @@ shows how to compare each pull request with a saved `main` artifact and upload
 the comparison for review. Use `--baseline` during a load run when you want its
 in-run regression limits to gate that execution directly. Inputs are local
 JSON report arrays written by `--report` or JSON stdout, capped at 64 MiB each.
+
+### Compare declared application behavior
+
+Opt a scenario into selected outcome collection with `behavior`. This supplements
+the normal HTTP/assertion results with application-reported values that
+`gregale test compare` can compare across executions:
+
+```yaml
+behavior:
+  version: 1
+  fixtures: [test/input.json]
+  observers: [test/observe.mjs]
+  observations:
+    - key: export.response
+      kind: http
+    - key: export.report
+      kind: object
+    - key: notification.successful_deliveries
+      kind: delivery
+```
+
+Paths are relative to the primary scenario's `source`. Declare 1–32 fixture
+files and 1–32 observer files, each a regular file of at most 64 MiB that resolves
+inside that source directory. Declare 1–100 uniquely keyed observations. Keys
+start with a lowercase letter and contain lowercase letters, digits, `.`, `_`,
+`/`, or `-`, up to 128 characters. Supported kind labels are `http`, `delivery`,
+`object`, `database`, and `application`; labels describe application-reported
+values rather than enabling a database reader or integration adapter.
+
+The runner passes a fresh private `GREGALE_TEST_BEHAVIOR_OUTPUT` path to scenario
+commands. An assertion command, staged command, or simulation writes one complete
+version 1 JSON document there before it exits:
+
+```js
+import { writeFile } from "node:fs/promises";
+
+await writeFile(process.env.GREGALE_TEST_BEHAVIOR_OUTPUT, JSON.stringify({
+  version: 1,
+  observations: [
+    { key: "export.response", value: { status: 202, created: true } },
+    { key: "export.report", value: { sha256: reportDigest, bytes: reportBytes } },
+    { key: "notification.successful_deliveries", value: successfulDeliveries },
+  ],
+}), { mode: 0o600 });
+```
+
+Every declared key must appear exactly once with an explicit JSON value; `null`
+is a value, while an omitted value is invalid. Output may not add observations,
+fields, or a provenance claim. The format is bounded to 1 MiB and 64 nested JSON
+containers. Unknown versions, duplicate JSON keys, invalid encoding, and malformed
+or missing output fail the run. Keep credentials, personal data, and unneeded
+payloads out of selected values: these values are deliberately retained in JSON,
+HTML, terminal, and Markdown comparison artifacts.
+
+The receipt records the selected values with `provenance: application_reported`.
+It fingerprints the declared fixture files, observer files, observation schema,
+and operation recipe (setup, trigger, commands, native requests/checks, staged
+steps, wait conditions and load settings). Local case data contributes to the
+fixture fingerprint. The application source and runtime configuration under
+comparison are allowed to differ. Declared files are checked again when evidence
+is collected; edits during execution invalidate the evidence. Collection happens
+before runner-owned fixture cleanup, including on assertion failures, and private
+output files are removed afterward. Failed commands remain failed even if they
+produced valid evidence. Simulations retain their `simulated` engine label.
+
+Comparisons match the existing scenario/engine/profile/case/attempt identities.
+Object key ordering and equivalent JSON number spellings compare equally without
+floating-point precision loss. Arrays preserve ordering and duplicate entries.
+Select or normalize volatile IDs, timestamps, and intentionally unordered values
+in the declared observer, identically for both runs; changing that observer makes
+the comparison inconclusive.
+
+When either report contains behavior evidence, missing evidence, a changed
+contract or fixture fingerprint, or failed execution/cleanup produces an
+`inconclusive` comparison. Changed selected values produce `failed`; equal values
+produce `passed`. Failed and inconclusive behavior comparisons return a nonzero
+exit code **even without a performance budget**. Legacy reports without behavior
+evidence keep their existing informational comparison behavior. JSON, terminal,
+HTML, Markdown, and GitHub job summaries include the behavior results. Displayed
+values are bounded; the full selected values remain in JSON evidence.
+
+This version supports ordinary local, simulated, and real-VM runs, including
+normal `--repeat`. Resilience/campaign expansion is rejected when `behavior` is
+declared until nested run comparison is supported. This collection contract
+does not attest that an application used every declared fixture or that all
+dependencies or external effects were observed. Observer imports and other input
+files are pinned only when explicitly declared. It does not capture production
+traffic, clone production data, intercept arbitrary outbound actions, or approve
+intentional differences. The `rehearse` command below orchestrates two Git
+revisions using this collection contract.
+
+The [behavior comparison acceptance example](../tests/scenario-acceptance/behavior/README.md)
+runs the existing export API and worker with in-memory storage and a notification
+sink. Both implementations pass the same response and export checks; the
+candidate duplicates a successful notification after a retry. Comparison shows
+the unchanged response/report and the change from one to two successful
+deliveries. This portable example is simulation evidence, not live-fleet VM or
+object-provider qualification.
+
+### Rehearse two Git revisions
+
+Run one reviewed behavior scenario against two locally available Git revisions:
+
+```sh
+gregale test rehearse \
+  --base main --candidate HEAD \
+  --manifest gregale-test.yaml --scenario customer-export \
+  --engine simulated \
+  --report rehearsal.json --html rehearsal.html --markdown rehearsal.md
+```
+
+Both refs resolve once to immutable commits before execution. The selected
+manifest is read from the invoking checkout, and the declared fixture and
+observer files are captured once and overlaid into both committed source trees.
+Declare shared harness scripts and observer imports in `behavior.observers` when
+they must stay fixed across revisions. All other application files, configuration
+and migrations come from the selected commits; dirty application files are
+excluded. Git archive attributes apply. The checkout, index and branch remain
+untouched; no worktree or remote fetch is created.
+
+`--repo DIR` selects the local checkout (default `.`). `--manifest` is relative to
+the invoking directory, even with `--repo`. The manifest and all source directories
+must be inside that checkout. Snapshots use the existing source archive bounds:
+250 MiB compressed, 625 MiB expanded, 256 MiB per archived file, and 10,000 archive
+entries. Symlinks, submodules and non-regular files fail preparation explicitly.
+The declared behavior files retain their 64 MiB per-file bound. Both revision
+snapshots are validated before application execution or platform provisioning.
+
+Every revision/profile/attempt gets a fresh source directory. Real-VM runs also
+get the existing isolated, expiring apps, services and supported data resources.
+Use `--repeat N` for 1–20 fresh runs per revision and lifecycle profile. Real-VM
+execution is the default, with `--profile warm`; cold, restored and all are also
+supported. It requires a workload-minute limit covering **both revisions**:
+
+```sh
+gregale test rehearse --base main --candidate HEAD \
+  --scenario customer-export --profile restored --repeat 2 \
+  --max-workload-minutes 180 --report rehearsal.json
+```
+
+Local rehearsals require a managed `local.command` so each revision starts its
+own application. A shared `--base-url`, CLI data files, suites, load overrides and
+resilience/campaign expansion are outside this first command's scope. Use declared
+fixture files and scenario setup to populate fresh state. Simulations own their
+fixture startup and cleanup and retain their `simulated` label. Host-side commands
+run with the invoking user's permissions and environment; fresh directories do
+not sandbox hostile code or automatically block external actions. Supply trusted
+recipes and suitable test credentials. Unix command cancellation stops the active
+process group; ordinary scenario cleanup and hosted resource expiry still apply.
+
+Use `--validate` instead of output flags to prepare both snapshots without running
+commands, logging in or provisioning resources. JSON mode prints the resolved
+revision and input identities. Execution requires `--report`; all requested output
+files must be new and distinct, and are reserved before any application runs.
+
+The version 1 combined JSON receipt includes:
+
+- Baseline/candidate commit and tree IDs, archive digests, and materialized-source
+  digests covering the source files after the trusted overlays.
+- The original manifest digest, selected recipe digest, and declared trusted file
+  paths/digests. Fixture contents and secret values are not copied into metadata.
+- `baseline_runs` and `candidate_runs`, including normal lifecycle, deployment,
+  assertion, observation and cleanup evidence, plus the behavior comparison.
+
+HTML and Markdown comparisons show the same revision and input identities.
+Changed selected behavior returns exit 1. Failed execution, missing or incompatible
+evidence, interruption, or failed cleanup prevents equivalence and returns exit 1.
+All scheduled slots remain explicit, including those skipped after interruption.
+Source digests identify configuration and migration files; they do not establish
+that a migration ran or every fixture was applied. External action interception,
+production snapshots and intentional-change approval remain separate capabilities.
+
+The [export acceptance example](../tests/scenario-acceptance/behavior/README.md#two-committed-implementations)
+compares two real commits and detects successful notifications changing from one
+to two while the selected response and generated file stay equal.
+
+### Capture managed webhook actions
+
+Real-VM scenarios, including `gregale test rehearse`, can capture managed webhook
+intents by declaring:
+
+```yaml
+actions:
+  webhooks: capture
+```
+
+The runner requests a durable policy for every isolated workload before deploying
+source, and records `actions: {webhooks: capture, policy_version: 1, status:
+applied}` only after the server acknowledges it. Registration requires fresh
+developer-session apps with no deployments or existing work. Older servers that
+ignore the request, omit evidence-version support or return the legacy 204 response cannot satisfy this gate;
+the runner stops and cleans up its sessions. Local and simulated engines reject
+this option because they cannot enforce the platform dispatcher boundary.
+
+Complete a supported managed HTTP operation or managed workflow step using the
+[managed operation effects contract](managed-operation-effects.md). Captured
+effects retain their stable identity, receiver ID, event type, bounded payload,
+and rehearsal run ID in Gregale's completion transaction. Normal receiver and
+customer authorization checks still apply. Inspect through:
+
+```sh
+gregale --json operations get OPERATION_ID
+gregale --json workflows attempts WORKFLOW_RUN_ID STEP_NAME
+```
+
+Captured records have `status: captured`, `rehearsal_run_id`, zero attempts and no
+delivery ID. Result completion does not contact the receiver. Expiry, namespace
+cleanup and manual delivery retry do not restore outbound authority. Ordinary
+webhook events associated with these apps are retained as suppressed `dead`
+deliveries with a rehearsal reason. They indicate unsupported event coverage;
+they are not successful business effects. Older completion workers can produce
+these suppressed rows instead of the new captured-effect status, so upgrade API
+and workers for captured intent inspection.
+
+Before fixture cleanup, the runner waits up to ten seconds for managed operations,
+workflows and invocations to settle, then seals an account-owned action snapshot.
+Sealing closes subsequent managed-effect writes. The receipt includes the sealed
+inventory under `actions.evidence`, with provenance
+`gregale_captured_managed_webhooks` and scope `managed_operation_webhooks`.
+Retries can retrieve that same snapshot after namespace cleanup or soft deletion;
+physical purge of its anchor app/account removes retained evidence.
+
+`test rehearse` and `test compare` compare the captured intents independently of
+declared `behavior` observations. Each logical workload/source/effect name is
+compared by destination configuration fingerprint, event type and exact canonical
+JSON payload. Workflow name and step are included. Generated operation/receiver
+IDs and completion order do not affect comparison; repeated notifications remain
+separate intents. For example, unchanged application observations with one
+captured notification before and two afterward produce a failed action comparison
+and a nonzero command exit status. Console, JSON, HTML and Markdown show this
+separate result. Declare a `behavior` contract to supply the trusted recipe,
+observer and fixture hashes; those identities must match. Capture-only runs
+still retain their action inventory, but cannot establish comparable input
+identity without that contract.
+
+Missing, pending, unsealed, legacy or partial evidence is **inconclusive**.
+The version 1 format supports 256 intents, 512 KiB of aggregate stored payload
+and a 1 MiB document. Exceeding these bounds seals an incomplete inventory without
+a partial intent list. A collection failure fails the run; execution or cleanup
+failure prevents a passing comparison. Upgraded completion workers must record
+receiver fingerprints. Ordinary suppressed lifecycle events are counted, without
+being treated as successful managed business actions.
+
+This setting covers Gregale-managed webhooks. Direct application HTTP calls,
+email/payment SDKs and workload network containment are separate capabilities.
+A passing action comparison applies to the declared scope; existing `behavior`
+observations remain application-reported. Hosted/native qualification requires
+the supported acceptance hosts. See the
+[sealed comparison decision](adr/1348-sealed-rehearsal-action-comparison.md).
+
+### Contain serving-VM outbound traffic
+
+Rehearsal containment version 1 is an operator-gated extension:
+
+```yaml
+actions:
+  webhooks: capture
+  network: contained
+```
+
+The complete serving fleet must run the new scheduler, vmmd and internal gateway
+code, with database-backed runtime policy reads. After native qualification,
+the operator enables enrollment with `FAAS_REHEARSAL_NETWORK_CONTAINMENT=1` on
+apid. It is disabled by default. Registration must echo `network_mode: contained`
+before the runner deploys anything; every VM must also acknowledge the exact run
+before the scheduler accepts its boot. An older runtime refuses the dedicated
+boot methods. Policy read or firewall installation failures stop boot/resume.
+
+This profile allows published app requests and private HTTP calls to active,
+contained members of the same run through TCP 10081 (for example,
+`http://worker.svc.gregale:10081/import`). Rehearsal DNS is transparently
+redirected to a private-only resolver, including before the app becomes ready;
+it never uses a public upstream. Direct HTTP/HTTPS, SMTP, public DNS, private-network
+routes, direct service TCP, aliases, development tunnels and operator egress
+exceptions are blocked. Host-mediated live outbound relay, federated identity and
+guest event publishing are refused as well; the IP firewall alone cannot
+contain those channels.
+Database and object-store access require future isolated adapters. Ordinary app tasks,
+live migration, managed application-standard native admission and GitOps
+qualification remain unsupported for contained apps. Explicit
+[contained rehearsal commands](#execute-rehearsal-commands-in-microvms) extend the
+boundary to deployment-attached command VMs. Builds, other job VMs and standalone
+Runs remain outside this boundary.
+
+The receipt records `actions.network: contained`; comparisons with a different
+network policy are inconclusive. Blocked requests are not simulated or captured
+as business intents. Without simulation fixtures, the sealed action snapshot
+compares managed webhook intent. A passing result does not establish complete asynchronous drain
+or coverage of every integration.
+
+Run `scripts/ci/rehearsal-network-acceptance.sh` on the dedicated native x86_64
+Linux KVM host before enabling enrollment. See the
+[containment decision and rollout boundary](adr/1349-rehearsal-network-containment.md)
+for supported paths, required assets and lifecycle acceptance. Portable checks
+and metal compilation do not qualify a production fleet.
+
+### Simulate HTTP and email actions
+
+Contained serving apps can use declared fixtures through the managed outbound
+relay. Simulation enrollment additionally requires the default-off
+`FAAS_REHEARSAL_ACTION_SIMULATION=1` on apid after native qualification. Add this
+to a scenario whose main workload is `import-api`:
+
+```yaml
+actions:
+  webhooks: capture
+  network: contained
+  simulation:
+    version: 1
+    fixtures:
+      - workload: import-api
+        name: notification
+        integration: email
+        adapter: resend
+        method: POST
+        path: /emails
+        capture_fields: [to, subject]
+        responses:
+          - fault: timeout
+            delay_ms: 200
+          - status: 200
+            body: '{"id":"simulated-email-1"}'
+      - workload: import-api
+        name: import-service
+        integration: imports
+        adapter: http
+        method: POST
+        path: /imports
+        capture_fields: [order_id]
+        responses:
+          - status: 429
+            retry_after_seconds: 1
+            body: '{"error":"rate_limit"}'
+          - status: 200
+            body: '{"ok":true}'
+```
+
+The application calls `GREGALE_OUTBOUND_URL + "/i/email/emails"` for the Resend
+wire API, or configures a compatible integration client's base URL as
+`GREGALE_OUTBOUND_URL + "/i/email"`. Supply fixture request content and a stable
+`Idempotency-Key`. These logical integration names do not require a live provider
+configuration. The simulator has no provider transport or credentials.
+
+The HTTP adapter accepts bounded JSON-object requests at exact declared routes.
+The Resend adapter requires `from`, `to`, `subject`, and `text` or `html` on
+`POST /emails`. It returns the explicit JSON response in the fixture. Headers,
+query strings, SMTP and direct calls to provider URLs are outside this adapter.
+Other integrations can use declared HTTP fixtures within this contract; this is
+not a claim of complete provider or SDK compatibility.
+
+Response lists advance separately for each fixture and idempotency key; the
+final response repeats. Without a key, calls share that fixture's sequence.
+Timeout fixtures wait for the bounded delay then close the connection; the
+application's deadline determines whether it observes timeout or connection
+closure. Disconnect faults close immediately unless a delay is declared.
+
+Registration negotiates action evidence version 2 and acknowledges the canonical
+fixture digest before deployment. Reports use scope
+`managed_webhooks_and_simulated_outbound` and keep webhook intents and simulated
+attempts distinct. Every attempt retains its ordinal, hashed idempotency key,
+canonical request digest, declared payload fields and injected outcome. Exact
+request digests also compare fields excluded from payload display; no arbitrary
+headers or unselected body content are stored. Selected nested fields are retained
+in full. Runtime IDs and interleaving between independent groups are ignored.
+
+Unknown or invalid relay calls make evidence incomplete. Storage errors refuse
+admission; interrupted requests and protocol overflow cannot pass. Sealing waits
+for pending simulations. Recipes must also wait for application completion:
+arbitrary timers and external queues have no general drain guarantee, and late
+calls are refused after sealing. An extra simulated attempt is evidence of an
+extra request, not proof that a real provider delivered an email twice.
+
+Simulation registration also requires `recorder_version: 1` acknowledgement
+before deployment. vmmd opens a durable recorder before each serving VM starts
+and records each host relay request before contacting the broker. Sealing first
+waits for supported managed work, then fences new relay admission and requires
+the owning recorders to shut down their HTTP connections and acknowledge all
+request receipts. A missing owner, rejected broker connection, or storage failure
+cannot establish a passing empty inventory. Pending receipts exhaust the bounded
+collector and produce inconclusive evidence; failed sessions make it incomplete.
+The snapshot includes recorder version, session count and pending/incomplete
+session counts. Keep the tested VM alive until collection completes; retiring
+it before its closing acknowledgement currently makes the rehearsal incomplete.
+
+This covers requests received by the host relay. Assert application and
+integration outcomes in the recipe, including client failures before that
+boundary and expected injected faults. General external queues and timers still
+need application completion checks. Host shell commands and separate job/Run
+executions do not acquire this serving-VM recorder coverage. See the
+[recorder session and closing decision](adr/1351-rehearsal-recorder-sessions.md).
+
+Bounds are 64 fixtures/64 KiB per plan, 16 responses per fixture, 8 KiB response
+bodies, 2-second delays, 64 KiB request bodies, 256 attempts, 256 recorder
+sessions and 256 request obligations per run. Existing
+combined payload and snapshot bounds still apply. Enrollment remains disabled
+until the native qualification gate passes. See the
+[outbound simulation decision](adr/1350-rehearsal-outbound-simulation.md).
+
+### Execute rehearsal commands in microVMs
+
+Opt in on a behavior scenario that already declares contained action simulation:
+
+```yaml
+command_execution:
+  version: 1
+  runtime: contained
+  env: {IMPORT_MODE: fixture}
+command: [node, tests/import-and-observe.mjs]
+checks:
+  - name: serving-app
+    method: GET
+    path: /status
+    expect: {status: 200}
+```
+
+Use `--engine real-vm --profile warm`, or the separately qualified cold profile
+below. Registration requires `command_version: 1`
+before configuration or source deployment. The operator must first qualify and
+set `FAAS_REHEARSAL_COMMAND_EXECUTION=1`, in addition to the containment,
+simulation and ordinary app-task gates. All remain opt-in; portable tests do not
+qualify the native runtime.
+
+Every `setup`, `trigger`, assertion `command` and `cleanup` runs in a fresh
+app-task microVM pinned to that run's deployment. There is no host fallback.
+The reviewed `behavior.fixtures` and `behavior.observers` are overlaid as regular
+files beneath the app working directory. Each command starts with the deployment
+filesystem; changes made by a preceding command do not persist. Supply the whole
+observation document from the final observer command.
+
+The command inherits the deployment-scoped environment and sealed secrets, plus
+explicit `command_execution.env` values and generated `GREGALE_TEST_*` variables.
+The CLI host environment and account token are not forwarded. Explicit values
+and input files are retained in task intent; keep credentials in the existing
+sealed deployment environment. `GREGALE_TEST_URL` and service URL variables name
+same-run private HTTP services, for example `http://import-api.svc.gregale:10081`.
+The behavior and trigger output variables point to guest-private files. Their
+bounded contents return in the command receipt and feed the existing validators.
+These observations retain application-reported provenance.
+
+Version 1 supports warm and explicitly enrolled cold runs with a native HTTP request or check for serving-app
+lifecycle evidence. Local/simulated engines, staged steps, resilience, load, TCP,
+ordinary Postgres bindings, buckets, consumer credentials and token-bearing built-in fixtures are refused.
+The explicit PostgreSQL fixture adapter below has its own containment and evidence
+contract. The object fixture adapter below is also explicit. Restore/resume command
+comparisons remain unsupported. Ordinary scheduler concurrency, RAM and account quotas apply to the
+additional VM; the workload-minute estimate includes its capacity and cleanup.
+
+Inputs are limited to 32 files/8 KiB and a 15 KiB command envelope. Combined
+stdout/stderr is bounded to 8 KiB, behavior output to 24 KiB, trigger values to
+4 KiB, and the receipt to 64 KiB. Overflow, malformed or foreign receipts, missing
+completion, cancellation and timeout cannot pass. The JSON report's `commands`
+list records each task, stage, deployment, input/receipt hashes, exit and bounded
+output. Output hashes bind receipt bytes; they do not compare runtime identifiers
+between revisions.
+
+A leased command network identity enables private calls without making the task
+VM a serving target. It is revoked before address release and on vmmd restart.
+If revocation storage is unavailable, cleanup retains the address reservation.
+Exit zero alone is insufficient: vmmd must stop relay admission, join handlers,
+confirm VM cleanup and persist the exact command retirement receipt before the
+scheduler can mark success. Sealing also counts queued and failed commands, so a
+missing recorder cannot become a passing empty action inventory. Behavior is
+collected before cleanup commands; action sealing follows their completion.
+Detached processes are terminated with the command VM. The explicit managed-worker
+adapter below tracks supported async work; other delegation still needs recipe
+completion checks and assertions for failures before the host relay.
+
+See [ADR-1352](adr/1352-contained-rehearsal-commands.md) for rollout and native
+qualification requirements.
+
+### Observe isolated PostgreSQL effects
+
+Add `postgres_fixture` to a warm, contained command scenario:
+
+```yaml
+postgres_fixture:
+  version: 1
+  fixture: tests/import-fixture.sql
+  max_lock_wait_ms: 250
+  tables:
+    - schema: public
+      name: imports
+      columns: [external_id, state]
+```
+
+The SQL file is separate from `behavior.fixtures`; it is executed by the platform
+under a generated, unprivileged database login. It is not uploaded as command
+argv or executed on the CLI host. An example fixture is:
+
+```sql
+CREATE TABLE public.imports (external_id text NOT NULL, state text NOT NULL);
+INSERT INTO public.imports VALUES ('seed-item', 'ready');
+```
+
+Gregale creates a fresh database and login for each revision before deployment,
+captures the initial selected rows directly using the restricted login, and injects `DATABASE_URL` into the
+deployment's sealed ephemeral secrets. Commands and serving instances of the
+primary workload share this run's database. Explicit `DATABASE_URL` overrides
+are refused; sibling services receive database credentials only through explicit
+`managed_work` capabilities, described below.
+The private PostgreSQL proxy accepts only a live same-run
+execution and the generated database/login. It has no arbitrary destination,
+production URL or managed-binding fallback. Fixture SQL must contain sanitized
+data and no credentials. `test rehearse` pins the trusted SQL file alongside the
+recipe and observer inputs; both sides must have the same fixture hash and the
+same independently observed initial-data hash.
+
+After commands finish and supported actions seal, the collector fences new
+connections, disables the database, checks for unfinished SQL, terminates
+retained connections, captures final committed rows and confirms database/login
+deletion. Recipe `cleanup` commands are refused for this adapter; Gregale owns
+fixture cleanup. A lost creation response still triggers cleanup. Durable
+journals expire after 15 minutes and are reaped when the collector is running,
+including with new fixture admission disabled. Journals pin the cluster and local endpoint; a changed backend cannot acknowledge cleanup of an older fixture. Active journals block owner purging until cleanup is confirmed. A new process can clean old
+resources but cannot adopt their observations into a passing receipt.
+
+The report's `postgres` section has `platform_postgres_collector` provenance,
+run/app/deployment identities, fixture/contract/initial-data hashes, initial and
+final rows, inserted/deleted row multisets, sampled lock waits and confirmed
+cleanup. Duplicate rows retain their multiplicity. An update appears as one
+deleted row and one inserted row. JSON, text, Markdown and HTML comparisons have
+a separate PostgreSQL result; any changed row effects or exceeded lock budget
+fails comparison. Missing evidence, different starting data, a failed command,
+unfinished SQL, collector loss or unconfirmed cleanup is inconclusive.
+
+Version 1 supports one fixture database per run on a dedicated, local PostgreSQL
+16+ cluster, 1–16 ordinary persistent `public` tables, 1–32 selected columns per
+table, and at most 1000 rows per table. All ordinary user tables must be declared;
+views, foreign/partitioned tables, forced row-security filtering, non-built-in scalar column types and additional
+extensions are refused. Select only stable, non-sensitive columns; omitted
+columns, sequence counters, schema/index differences and intermediate statements
+are outside the comparison scope. SQL fixtures are bounded to 64 KiB; each
+snapshot to 256 KiB and the full evidence document to 1 MiB. Overflow cannot pass.
+The collector samples lock waits approximately every 50ms; short waits may be
+missed. A command or startup migration failure remains a failed execution with
+its existing task/deployment diagnostics. Arbitrary detached work and external
+queues still require explicit recipe completion checks.
+
+The adapter is **disabled pending dedicated native qualification**. Operators
+must use a separate disposable cluster with a `gregale_rehearsal_admin` database,
+authenticated local TCP access, `max_prepared_transactions=0`, and no production
+or platform databases. Set `FAAS_REHEARSAL_POSTGRES_ADMIN_URL` only on apid; it
+must explicitly select that database and a loopback address with
+`sslmode=disable`. Configure
+`FAAS_REHEARSAL_POSTGRES_PROXY_TARGET=127.0.0.1:PORT` on the same node's private
+gateway. After qualification, `FAAS_REHEARSAL_POSTGRES_FIXTURES=1` on apid and the
+gateway enables admission in addition to the existing rehearsal gates. Port
+10083 is private on the service bridge; plaintext PostgreSQL stays on the local
+fixture path and inside the VM network boundary. Other placements, TLS-required
+clients, protocol cancellation packets and production snapshots are unsupported.
+Keep the admin URL configured during draining so expired journals can be cleaned.
+
+Portable SQL acceptance uses an explicitly disposable fixture cluster:
+
+```bash
+FAAS_REHEARSAL_PG_TEST_ADMIN_URL='postgres://USER:PASSWORD@127.0.0.1:PORT/gregale_rehearsal_admin?sslmode=disable' \
+  go test -race -count=1 ./pkg/rehearsalpg/...
+```
+
+This acceptance does not qualify KVM, private bridge isolation, guest secret
+delivery or native VM cleanup. Native qualification must exercise the contained
+import command, both revisions, cross-run/database/login rejection, lock waits,
+cancellation, collector failure, cleanup failure and leakcheck before enabling
+the gate. See [ADR-1353](adr/1353-rehearsal-postgres-fixtures.md).
+
+### Observe isolated object-storage effects
+
+Add `objects_fixture` to a warm, contained command scenario that already has
+behavior observations and action simulation:
+
+```yaml
+objects_fixture:
+  version: 1
+  bucket: imports
+  fixtures:
+    - key: customers/seed/source.csv
+      file: tests/source.csv
+      content_type: text/csv
+      metadata: {owner: seed-customer}
+```
+
+Use `fixtures: []` for an empty starting bucket. Use sanitized files without
+credentials; they may contain binary data.
+They are read once before allocation, cannot traverse symlinks, and are separate
+from the command input files and their 8 KiB bound. `test rehearse` captures the
+trusted fixture bytes with the recipe and supplies them to both revisions.
+
+Namespace creation waits for the qualified private gateway to acknowledge ownership
+before deployment. Replacing or losing that collector makes an old capture window
+inconclusive, including when no mutation rows were recorded. The initial rollout
+requires a single qualified private gateway placement.
+
+Each run receives a fresh namespace in dedicated rehearsal tables. This is an
+S3 fixture simulator, with no connection to managed buckets or a production
+provider. The primary app and its contained commands receive five sealed
+ephemeral secrets: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`,
+`AWS_ENDPOINT_URL_S3`, and `S3_BUCKET`. Use the supplied endpoint explicitly if
+your SDK does not read `AWS_ENDPOINT_URL_S3`, and enable path-style addressing.
+These values cannot be overridden in the scenario or command environment.
+Sibling services receive bindings only through explicit `managed_work` capabilities
+below. Do not combine the
+adapter with ordinary `buckets` or recipe cleanup commands; Gregale owns cleanup.
+It can be combined with the isolated PostgreSQL fixture adapter.
+
+The private bridge endpoint on port 10084 resolves the live caller and deployment
+for every request, verifies the namespace's SigV4 credentials, and checks the
+retained run policy under the action closing lock before admission. It never
+forwards a request to another storage endpoint. Ordinary VMs gain no new port
+permission. Customer object keys are names within the isolated namespace; they
+are never host filesystem paths.
+
+Supported operations are header-signed, path-style PutObject, GetObject,
+HeadObject, DeleteObject, HeadBucket, and ListObjectsV2 with an optional prefix.
+Listing returns the complete bounded inventory; pagination, delimiters, and
+`max-keys` below 32 are unsupported. Use ordinary, nonstreaming request bodies.
+For the AWS Go SDK, set `RequestChecksumCalculation` and
+`ResponseChecksumValidation` to `WhenRequired` to avoid automatic streaming
+trailers and checksum-mode requests. Content-MD5 and explicit SHA-256, CRC32 or
+CRC32C upload checksums are verified. Multipart, copy, presigned URLs, versions,
+tags, encryption controls, range/conditional requests, caching metadata, storage
+notifications and other provider features are refused and make collection
+incomplete. This scope does not qualify production-provider behavior or collect
+arbitrary guest filesystem writes.
+
+The platform durably admits each request before reading its upload body. A
+successful mutation and its receipt commit together. Repeated PUTs and DELETEs
+remain separate receipts, including writes whose final contents are identical.
+At collection, new requests are fenced and admitted requests have at most five
+seconds to finish. Mutation receipts use completion order, so concurrent writes
+are replayed in the order they changed storage. The original collector must acknowledge the closed capture window before final
+collection; a replacement cannot adopt it. The collector hashes every final
+object directly and publishes evidence in the same transaction that removes all
+object bodies. Lost requests, unsupported operations, changed deployments,
+expired namespaces, exceeded bounds and failed cleanup cannot pass. Cleanup is
+idempotent after an ambiguous response. Fixed 14-minute resource expiries and an
+apid reaper bound abandoned resources; cleanup remains active when admission is
+disabled. Active journals block owner purging until cleanup; terminal journals
+follow owner retention.
+
+The JSON report's `objects` evidence has `platform_object_collector` provenance,
+run/app/deployment/resource/collector identity, its closing acknowledgement, fixture and contract hashes, initial/final
+inventories, mutation receipts and confirmed cleanup. Inventories include keys,
+sizes, SHA-256 digests, content types and bounded user metadata, without content
+or credentials. JSON, text, Markdown and HTML comparisons report a separate
+object-storage result. They compare the final inventory and the multiset of
+mutation attempts. Thus a second identical upload fails comparison even if all
+final objects match. Ordering across independent operations and intermediate
+read timing are outside this comparison scope. Calls that never reach the private
+listener need explicit application outcome assertions. Collector storage or identity
+lookup errors make the listener incarnation fail closed until it is restarted.
+General detached workers still
+need explicit completion checks in the recipe.
+
+Version 1 permits one bucket, 32 current objects, 64 KiB per object, 256 KiB of
+current content, eight metadata entries per object and 256 requests per run.
+Evidence is bounded to 1 MiB. These are format bounds; existing account and app
+quotas still apply.
+
+The adapter stays **disabled pending native qualification**. After qualification,
+`FAAS_REHEARSAL_OBJECT_FIXTURES=1` on apid and the private gateway enables it in
+addition to the existing containment, simulation and command gates. The gateway
+needs the existing fleet/host secret opener. No provider credentials or customer
+endpoint are configured. The apid expiry reaper starts independently of this
+admission flag.
+
+Portable acceptance exercises the actual AWS Go S3 client and both durable
+store implementations:
+
+```bash
+go test -race -count=1 ./pkg/rehearsalobj/...
+```
+
+The PostgreSQL cases require the repository's disposable test database and must
+run without skips for qualification. Native acceptance must additionally cover
+the guest SDK/secret delivery, both firewall hooks with real packets, cross-run
+and ordinary-caller denial, an upload racing sealing, cancellation, collector
+restart, expired-resource cleanup, both revision reports and leakcheck. Portable
+acceptance does not establish those native properties. See
+[ADR-1354](adr/1354-rehearsal-object-fixtures.md).
 
 ## Native HTTP workflows
 
@@ -1114,6 +1795,388 @@ for queue, invocation, delivery, object, and lifecycle evidence. `--profile`,
 label local runs with `engine: local` and `profile: local` and contain no VM wake
 evidence. A local HTTP test and a simulated test do not establish that an app
 behaves correctly after being parked and restored.
+
+### Rehearse managed async workers
+
+Add `managed_work` to a contained-command scenario to share fixtures with declared
+workers and collect durable completion evidence. The initial adapter supports
+Gregale managed HTTP async routes. Each revision receives fresh resources with
+identical pinned initial data; participants share resources within that revision.
+
+For an existing behavior scenario named `import-api`, with the PostgreSQL and
+object fixture adapters above, declare:
+
+```yaml
+services:
+  worker:
+    source: ./worker
+    async_routes:
+      - path: /import
+        methods: [POST]
+        retry_policy: {max_attempts: 3, base_seconds: 1, max_seconds: 2}
+managed_work:
+  version: 1
+  primary: import-api
+  participants:
+    - workload: import-api
+      postgres: read_write
+      objects: read_write
+    - workload: worker
+      async: true
+      postgres: read_write
+      objects: read_write
+```
+
+List every enrolled workload, including services with no resource permissions.
+The primary must own declared fixtures with `read_write`; at least one sibling
+must have `async: true` and declared async routes. A service with no resource
+capability gets no fixture credentials. PostgreSQL currently supports explicit
+`read_write` access to this fixture database; object access supports `read` and
+`read_write` to this fixture namespace. Declared workers get distinct database
+logins and workload-bound object credentials. Ordinary provider bindings and
+account tokens are never copied. Service secrets cannot override these bindings.
+
+An authorized private call to `http://worker.svc.gregale:10081/import` now follows
+the worker's enabled async route path/method/header rules and returns the ordinary
+202 invocation receipt without waking the worker inline. The existing scheduler
+then dispatches the admitted job and its configured retries. Admission strips
+credential and platform headers using the existing async-route contract. Routes
+with advanced match expressions, callbacks, release overrides or upgrades are
+outside this adapter. Ordinary HTTP routes such as `/status` retain their serving
+behavior. Public async admission also participates in the durable work journal.
+
+Sealing closes admission to new jobs before checking completion. Admitted jobs
+and retries retain fixture access while draining. The platform records each
+job's workload, deployment, payload digest, dispatch instance and attempt outcome.
+After work settles, recorder owners must acknowledge closing before database,
+object and external-effect collectors can publish complete evidence. Each declared
+async worker must execute at least one job; an idle queue alone is insufficient.
+
+Admission during closing is durably cancelled and makes evidence incomplete; the
+private ingress returns a conflict. New writes after sealing are rejected. A
+cancelled job, an unknown or lost attempt, replacement deployment, missing worker,
+missing recorder acknowledgement, journal loss or unfinished retry cannot pass.
+Requests rejected before durable admission are outside the job inventory; assert
+expected HTTP outcomes in the recipe. The existing collection deadline is ten
+seconds after the recipe finishes. Use
+explicit outcome assertions or invocation waits when the operation needs longer;
+unsettled work at the deadline is inconclusive. New child work must be admitted
+before collection starts. Arbitrary external queues, cron, trigger records,
+customer timers and detached processes are outside this completion proof.
+
+The action snapshot's `managed_work` section retains the participant plan and
+resource bindings, plus jobs and retry outcomes. The CLI verifies these identities
+against its own deployment and fixture receipts. Action comparisons include an
+`async` group for each worker method/path, compare payload digests and attempt
+outcomes, and preserve duplicate jobs. Generated app, deployment, resource and
+instance IDs support inspection and do not become equality requirements between
+revisions. Object mutation receipts also retain the responsible logical workload.
+
+For example, two revisions can return the same API response and finish with
+identical database rows and export contents while the candidate uploads the
+export and simulates a notification twice after a retry. Their effect comparison
+fails even though the final data matches. Missing completion evidence instead
+makes comparison inconclusive.
+
+The adapter remains **disabled pending native qualification**. After native VM
+identity, containment, secret delivery and cleanup acceptance passes, operators
+may set `FAAS_REHEARSAL_WORKERS=1` on apid alongside the required earlier rehearsal
+gates. The private gateway continues honoring durable enrollment when new
+admission is disabled. Cleanup removes participant database roles and isolated
+object data; existing expiry cleanup stays available with admission disabled.
+Contained cold starts use the separate preparation and boot protocol below;
+snapshot restore remains unsupported. The separately qualified in-place suspend/resume checkpoint below uses warm execution. The worker-termination extension uses warm execution.
+See [ADR-1355](adr/1355-rehearsal-managed-workers.md).
+
+Portable acceptance (the fixture URL must name a separate disposable cluster):
+
+```bash
+FAAS_REHEARSAL_PG_TEST_ADMIN_URL='postgres://USER:PASSWORD@127.0.0.1:PORT/gregale_rehearsal_admin?sslmode=disable' \
+  go test -race -count=1 ./pkg/rehearsalwork/...
+```
+
+The v1 evidence bounds are 64 jobs per run, 32 attempts per job and 8 KiB of stored
+JSON payload per job, in addition to each fixture adapter's limits.
+
+### Rehearse worker termination and recovery
+
+An optional `managed_work.worker_termination` exercises a single worker job's
+retry after its VM is terminated at an explicit application checkpoint. It uses
+the managed worker setup above and remains disabled pending native qualification.
+
+```yaml
+managed_work:
+  version: 1
+  primary: import-api
+  participants:
+    - workload: import-api
+      postgres: read_write
+      objects: read_write
+    - workload: worker
+      async: true
+      postgres: read_write
+      objects: read_write
+  worker_termination:
+    workload: worker
+    checkpoint: after-commit
+actions:
+  network: contained
+  simulation:
+    version: 1
+    fixtures:
+      - workload: worker
+        name: after-commit
+        integration: checkpoint
+        adapter: http
+        method: POST
+        path: /after-commit
+        responses:
+          - status: 200
+```
+
+After its chosen operation, the worker awaits a POST with a JSON body to
+`GREGALE_OUTBOUND_URL + "/i/checkpoint/after-commit"`, using the existing
+outbound relay configuration. Allow at least 35 seconds for that checkpoint call.
+The host relay receives the simulator's durable receipt and holds the response;
+schedd then asks vmmd to fence effects, join collectors and destroy that VM. The
+first checkpoint call ends with the VM's termination. The same call on a retry
+receives the ordinary fixture response. Configure the managed async route's retry
+policy and invocation deadline to allow this recovery, and use existing HTTP
+checks/waits to confirm completion before collecting evidence.
+
+V1 permits exactly one admitted job for the selected worker and terminates its
+first dispatch only. Other declared workers may participate normally. This is a
+cooperative checkpoint: the application must await it, and the receipt does not
+assert that an earlier database commit actually happened. Database, object and
+outbound evidence establish the resulting effects independently.
+
+Reports retain the original VM, recorder, checkpoint and job identities alongside
+the replacement VM's dispatch. Missing checkpoints, an early disconnect, uncertain
+cleanup, unknown attempts or recovery on the old VM cannot pass. A declared fault
+never excuses missing collector evidence. Cold/resume profiles, process-only
+termination and dependency faults remain unsupported by this contract.
+
+After native qualification, `FAAS_REHEARSAL_WORKER_FAULTS=1` on apid enables new
+fault enrollment alongside all preceding rehearsal gates. Existing enrolled fault
+cleanup and receipt reconciliation continue when new admission is disabled.
+See [ADR-1356](adr/1356-rehearsal-worker-termination.md).
+
+The native VM cleanup component gate is
+`scripts/ci/rehearsal-worker-fault-acceptance.sh`. It requires the dedicated root
+x86 KVM host and staged metal-test images. It complements the portable store,
+relay, scheduler, retry and effect-comparison suites; it does not replace the
+preceding containment, credential-delivery and resource qualification gates.
+
+### Rehearse contained cold starts
+
+Cold-start support remains **disabled pending native qualification**. After the
+preceding rehearsal gates and native acceptance pass, operators may enable
+`FAAS_REHEARSAL_COLD_START=1` on apid for new enrollment. Turning admission off
+continues honoring existing durable preparations and cleanup receipts.
+
+Reuse a contained command recipe and select `--profile cold`:
+
+```yaml
+command_execution:
+  version: 1
+  runtime: contained
+  startup_within: 10s
+```
+
+`startup_within` bounds host-observed VM startup through guest readiness for
+every declared serving workload. It accepts 1ms through 2m and defaults to 2m.
+HTTP assertion deadlines still bound application readiness and operation outcomes.
+For example, run the reviewed import recipe against both pinned revisions:
+
+```sh
+gregale test rehearse --base main --candidate HEAD --scenario import \
+  --engine real-vm --profile cold --max-workload-minutes 60 \
+  --report import-cold.json --html import-cold.html
+```
+
+Enrollment acknowledges the exact budget and workload inventory before deployment.
+Cold-enrolled previews verify their deployment artifacts without the normal
+serving warm-up boot. Application startup failures are exercised by the scenario
+trigger. Commands still execute in separate contained task VMs; they cannot
+supply serving lifecycle proof.
+
+The existing preview-only fresh park prepares each workload. If setup started a
+serving VM, its original relay owner must fence requests, join collectors, and
+acknowledge normal physical teardown before schedd retires its instance row.
+After all old instances drain and snapshots are invalidated, preparation becomes
+ready. The next serving boot rejects snapshot inputs and records its actual
+`cold_boot` method, startup duration, deployment, instance, wake and recorder
+identities. The runner matches these receipts to new completed wake timelines,
+including operations triggered from command VMs through private service URLs.
+All managed async job attempts must use the corresponding verified cold VM.
+
+Reports retain receipts in `actions.evidence.snapshot.cold_start`, observed wake
+correlation in `cold_wake`, and the existing command, database, object, job and
+outbound evidence. Comparison ignores generated identities and timing jitter
+within the declared budget. A complete boot that exceeds the budget fails;
+missing retirement, boot, matching wake or collector proof remains inconclusive.
+Uncertain retirement is never retried as another planned kill.
+
+V1 permits one deployment, one preparation and one post-preparation serving VM
+per declared workload. An optional setup VM must be the sole running VM with no
+pending tail work or unsettled effects. Setup must not admit managed async jobs
+before preparation; admit them from the trigger. Multiple replicas, standalone
+job execution modes, snapshot restore, and combining cold start with suspend/resume or worker
+termination remain unsupported. `--profile all` includes restored execution and
+is therefore rejected for contained command recipes.
+
+Portable acceptance covers both stores, original-owner loss, unsettled effects,
+missing/foreign boot proof, scheduler recovery, RPC capability refusal, startup
+budgets and duplicate notifications. The native component gate is
+`scripts/ci/rehearsal-cold-start-acceptance.sh`; run it only on the dedicated root
+x86 KVM host with the staged metal-test images. It complements the required
+containment, credential-delivery and fixture qualifications. See
+[ADR-1357](adr/1357-rehearsal-cold-start-parity.md).
+
+### Rehearse contained suspend/resume
+
+Operator-qualified contained command recipes can declare one in-place pause per
+selected HTTP-serving workload. Use the warm profile and add:
+
+```yaml
+suspend_resume:
+  version: 1
+  checkpoint: after_setup
+  workloads: [api, worker]
+  pause_for: 1s
+  resume_within: 2s
+```
+
+`workloads` names existing logical workloads, including the scenario's project
+name for its primary app. `pause_for` is 1ms–30s and `resume_within` is 1ms–2m.
+The checkpoint runs after setup commands and warm preparation, before the trigger,
+requests, checks and behavior observers. Keep setup synchronous; V1 refuses runs
+that have already admitted managed jobs. Each selected workload needs one
+request-serving VM, one deployment and its original live collector. Pending
+commands, effects, tail work and active operations cannot cross the checkpoint.
+
+```sh
+gregale test --scenario customer-import --engine real-vm --profile warm \
+  --report import-resume.json --html import-resume.html
+```
+
+Gregale removes the VM from routing, retains its full memory reservation and
+fences new recorded outbound effects while it pauses the resident VM. It joins existing idle relay
+connections, revalidates containment before resuming, runs the real guest resume
+hook, then checks readiness. The same VM, lease and original recorder continue;
+fixture credentials stay in memory and no persistent VM snapshot is written.
+Declared async HTTP workers can execute their managed jobs after this checkpoint.
+Those jobs must use the verified resumed instance for complete evidence.
+
+The resume hook can reconnect to contained dependencies before the VM becomes a
+serving target. Hooks must wait until the checkpoint completes before enqueueing
+managed jobs. Existing isolated PostgreSQL sessions retain their transaction
+semantics: pausing a VM does not pause its database. The fixture collector's SQL
+completion checks and the object adapter's mutation receipts still define their
+respective evidence boundaries.
+
+Reports retain the observed checkpoint in `suspend_resume` and the sealed host
+receipts in `actions.evidence.snapshot.suspend_resume`. Each receipt identifies
+its run, workload, deployment, VM and original recorder, actual pause duration,
+resume-readiness duration and scheduler acknowledgement. Comparison excludes
+runtime IDs and raw timing jitter. Exceeding `resume_within` is a behavioral
+failure even if both revisions exceed it. Missing physical receipts, collector
+loss, an unsupported owner, changed configuration or uncertain cleanup remains
+inconclusive. A lost reply can use a durable resume receipt; it cannot repeat an
+uncertain pause or count a fresh VM as an in-place resume.
+
+For example, the comparison can expose an unchanged import result accompanied by
+a duplicate captured notification after resume. This is an illustrative result,
+not a finding from an existing customer run.
+
+V1 supports only `real-vm --profile warm` with contained commands and simulation.
+Replicas, standalone worker/job lifecycle modes, private
+network members, gRPC readiness, cold-start and worker-termination combinations,
+persistent snapshot restore, and fixture credential rotation during the pause
+remain outside this protocol. `restored` and `all` do not qualify it.
+
+New admission requires `FAAS_REHEARSAL_SUSPEND_RESUME=1` on apid, off by default.
+Previously enrolled intent and receipt handling continues when admission is
+disabled. Portable tests exercise both metadata stores, ownership loss, missing
+proof, lost replies, configuration changes, budget failures and post-resume
+notification multiplicity. Before rollout, run
+`scripts/ci/rehearsal-suspend-resume-acceptance.sh` on the dedicated native root
+x86 Linux KVM host with staged V6 guest images, and satisfy the existing network,
+credential-delivery and cleanup gates. Compilation and portable tests do not
+replace those gates. See [ADR-1358](adr/1358-rehearsal-suspend-resume.md).
+
+
+#### Pause a running managed job
+
+New running-job admission additionally requires operator qualification and
+`FAAS_REHEARSAL_RUNNING_JOB_SUSPEND=1` on apid, off by default.
+To pause inside an operation, use the same warm contained recipe with one declared
+async HTTP worker and one managed job in the entire run:
+
+```yaml
+suspend_resume:
+  version: 1
+  checkpoint: managed_job
+  workloads: [worker]
+  worker_checkpoint: after-commit
+  pause_for: 1s
+  resume_within: 2s
+```
+
+Add an HTTP simulation fixture to the recipe's `actions.simulation.fixtures`:
+
+```yaml
+- workload: worker
+  name: after-commit
+  integration: checkpoint
+  adapter: http
+  method: POST
+  path: /after-commit
+  responses:
+    - status: 200
+```
+
+The worker must await `POST /i/checkpoint/after-commit` through its existing
+contained outbound relay at the application's chosen boundary. For an import,
+commit the records, await this call, then send the notification. Its name does not
+prove a SQL commit: the application chooses the location and the database collector
+independently verifies final results and completion. Existing database sessions and
+the fixture database keep their normal transaction semantics during the pause.
+
+Gregale holds the successful simulated response locally before the guest can
+receive it. The original relay arms the checkpoint; the CLI does not start it with
+the after-setup POST endpoint. The VM pauses with that exact first dispatch and
+response still open. All prior recorded effects must be settled; other relay
+connections are joined. Ordinary freeze still refuses an active request. After
+containment revalidation, the resume hook and readiness, the scheduler publishes
+the same VM. Only then does the original relay release the response and let the
+worker continue.
+
+Setup must finish before admitting the job. A fast worker may reach its checkpoint
+while the contained trigger command is still retiring; Gregale holds the response
+and waits for that existing command to settle before making the pause eligible.
+Additional jobs, other async workers,
+concurrent forwards, replicas and termination/cold combinations are unsupported.
+The checkpoint permits a bounded host hold of 170 seconds, covering the maximum
+pause and readiness intervals plus coordination. Keep the application's request
+and job deadlines long enough for the planned pause; Gregale does not extend them
+or change lease renewal. New dispatch attempts remain fenced while the original
+checkpoint is pending or uncertain; an actual retry can proceed after the
+checkpoint completes. An expired lease, lost relay, early disconnect, changed
+attempt or missing checkpoint leaves the rehearsal inconclusive.
+
+Receipts additionally retain `invocation_id`, `invocation_attempt` and
+`checkpoint_attempt_id`. Sealed comparison requires the matching independent job
+journal and completed simulation receipt. A pause injects no retry. If the
+application actually retries after release, that retry remains visible and can
+produce a behavioral difference, including duplicate notifications or object
+writes. This protocol retains the original worker VM and collector for the
+operation, including retries. A retry that replaces that VM remains inconclusive
+and needs a separate ownership protocol. The CLI polls this lifecycle while draining and sealing managed work;
+JSON and HTML retain its identities for inspection. Missing evidence cannot be
+replaced by a fresh VM or a reconstructed collector. See
+[ADR-1359](adr/1359-rehearsal-running-job-suspend.md).
+
 
 ### Start and stop the app with the test
 

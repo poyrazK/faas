@@ -1899,7 +1899,13 @@ type Store interface {
 	PreviewAppByProjectWorkload(ctx context.Context, accountID, projectID string, previewPRNumber int, workloadName string) (App, error)
 	// Scenario test members form an explicit, fail-closed service namespace.
 	// Registration accepts only live developer previews and is atomic.
+	// Retained network containment is read before every application boot.
+	ScenarioRehearsalNetworkRun(context.Context, string) (string, error)
+
 	RegisterScenarioTestMembers(ctx context.Context, accountID, runID string, members []ScenarioTestMember) error
+	// ScenarioWebhookDeliveryBlocked consults retained capture authority, including
+	// after namespace cleanup. Errors must prevent all outbound transmission.
+	ScenarioWebhookDeliveryBlocked(ctx context.Context, appID, webhookID string) (bool, error)
 	ScenarioTestMemberByApp(ctx context.Context, appID string) (ScenarioTestMember, error)
 	ScenarioTestAppByWorkload(ctx context.Context, accountID, runID, workload string) (App, error)
 	SetScenarioTestChaosPlan(ctx context.Context, accountID, runID string, plan chaos.Plan) (chaos.Lease, error)
