@@ -6,13 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 )
 
 // BuildEnvironment identifies the builder toolchain and output platform used
-// to produce a cached artifact. The identity hashes the staged builder base's
-// complete digest sidecar, which includes the OCI config, base layout, and
-// injected guest-init digest.
+// to produce a cached artifact. The identity covers what can change a build's
+// output: the builder image (its OCI config digest), the base layout, and
+// guest-init's build contract (builderIdentity).
 type BuildEnvironment struct {
 	BuilderBaseIdentity string `json:"builder_base_identity"`
 	BaseDigest          string `json:"base_digest"`
@@ -129,18 +130,32 @@ func readBuildEnvironment(builderBase, digestPath, platform string) (BuildEnviro
 	if err != nil {
 		return BuildEnvironment{}, fmt.Errorf("read builder base digest sidecar: %w", err)
 	}
-	identitySource := strings.TrimSpace(string(data))
-	lines := strings.Split(identitySource, "\n")
-	if len(lines) < 2 || !validSHA256Digest(strings.TrimSpace(lines[0])) || strings.TrimSpace(lines[1]) == "" {
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	baseDigest, layout := strings.TrimSpace(lines[0]), ""
+	if len(lines) >= 2 {
+		layout = strings.TrimSpace(lines[1])
+	}
+	if !validSHA256Digest(baseDigest) || layout == "" {
 		return BuildEnvironment{}, errors.New("builder base digest sidecar has an invalid identity")
 	}
 
-	sum := sha256.Sum256([]byte(identitySource))
 	return BuildEnvironment{
-		BuilderBaseIdentity: "sha256:" + hex.EncodeToString(sum[:]),
-		BaseDigest:          strings.TrimSpace(lines[0]),
+		BuilderBaseIdentity: builderIdentity(baseDigest, layout),
+		BaseDigest:          baseDigest,
 		TargetPlatform:      platform,
 	}, nil
+}
+
+// builderIdentity derives the cache identity from the builder image, the base
+// layout and guest-init's build contract version. The sidecar's remaining
+// lines are deliberately left out: the guest-init binary digest changes on
+// every release because guest-init links most of pkg/api, and keying on it
+// started every release with a cold cache (gate builds took 5 min instead
+// of seconds). The source ref names the same image as the config digest.
+func builderIdentity(baseDigest, layout string) string {
+	sum := sha256.Sum256([]byte(baseDigest + "\n" + layout + "\nguest-init-build-contract=" +
+		strconv.Itoa(guestInitBuildContractVersion)))
+	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
 func validSHA256Digest(value string) bool {
