@@ -24,7 +24,7 @@ func TestPostgresCommandsNameInvalidChoices(t *testing.T) {
 		{name: "create availability", run: cmdPostgresCreate, args: []string{"orders", "--region", "us-east-2", "--availability", "multi_zone"},
 			want: `invalid --availability "multi_zone" (want single_zone|high_availability)`},
 		{name: "attach access", run: cmdPostgresAttach, args: []string{"orders", "api", "--scope", "production", "--access", "admin"},
-			want: `invalid --access "admin" (want read_write|read_only|migration|data_api|auth)`},
+			want: `invalid --access "admin" (want read_write|read_only|migration|data_api)`},
 		{name: "bindings create access", run: cmdPostgresBindingsCreate, args: []string{"db-1", "--app", "app-1", "--scope", "production", "--environment-key", "DATABASE_URL", "--access", "superuser"},
 			want: `invalid --access "superuser"`},
 		{name: "resize class", run: cmdPostgresResize, args: []string{"orders", "--class", "huge", "--request-id", requestID},
@@ -45,5 +45,14 @@ func TestPostgresCommandsNameInvalidChoices(t *testing.T) {
 				t.Fatalf("stderr = %q, want it to contain %q", stderr.String(), tc.want)
 			}
 		})
+	}
+	// The auth mode of application Auth, a dark launch, is listed only
+	// while Auth is turned on in the CLI.
+	t.Setenv("FAAS_APPLICATION_AUTH_ENABLED", "1")
+	t.Setenv("FAAS_API", "http://127.0.0.1:1")
+	var stderr bytes.Buffer
+	_ = captureStderrSwap(t, &stderr, func() int { return cmdPostgresAttach([]string{"orders", "api", "--scope", "production", "--access", "admin"}) })
+	if !strings.Contains(stderr.String(), `(want read_write|read_only|migration|data_api|auth)`) {
+		t.Fatalf("with Auth on, stderr = %q", stderr.String())
 	}
 }
