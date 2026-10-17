@@ -17,7 +17,7 @@ jobs:
     if: github.ref == 'refs/heads/main'
     runs-on: [self-hosted, linux, x64, gregale-financial-pair]
     # Covers serial build/test caps plus host restoration and evidence upload.
-    timeout-minutes: 330
+    timeout-minutes: 360
     steps:
       - uses: actions/checkout@v7
         with:

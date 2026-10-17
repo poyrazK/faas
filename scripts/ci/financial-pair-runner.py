@@ -2,6 +2,7 @@
 """Prepare two dedicated hosts, execute native cost drills, retain all evidence."""
 import hashlib
 import importlib.util
+import ipaddress
 import json
 import os
 from pathlib import Path
@@ -17,10 +18,15 @@ import time
 
 ROOT = Path(__file__).resolve().parents[2]
 BUILD_TIMEOUT = 30 * 60
+TRANSPORT_BUILD_TIMEOUT = 60 * 60
 FILESYSTEM_TIMEOUT = 5 * 60
 SINGLE_HOST_TIMEOUT = 79 * 60
 PEER_NETWORK_TIMEOUT = 5 * 60
 NATIVE_TIMEOUT = 68 * 60
+TRANSPORT_PACKAGES = (
+    "./cmd/vmmd", "./cmd/vmmd-stream-bridge", "./cmd/vmmd-raw-bridge",
+    "./cmd/vmmd-tcp-bridge", "./cmd/vmmd-udp-bridge", "./pkg/e2etest/financialguest",
+)
 spec = importlib.util.spec_from_file_location("financial_pair_evidence", ROOT / "scripts/ci/financial-pair-evidence.py")
 evidence = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(evidence)
@@ -115,32 +121,37 @@ def await_ready(hold, path, target=None):
 
 
 def build_fixture(bundle, go, env, output):
-    for name, args, cgo in (
-        ("guest-init", ["build", "-trimpath", "-buildvcs=false", "-o", str(bundle / "guest-init"), "./guest/init"], "0"),
-        ("vmmd", ["build", "-trimpath", "-buildvcs=false", "-o", str(bundle / "vmmd"), "./cmd/vmmd"], "0"),
-        ("fcvm", ["test", "-c", "-race", "-tags=metal", "-p=1", "-o", str(bundle / "fcvm.test"), "./pkg/fcvm"], "1"),
+    for name, args, cgo, timeout in (
+        ("guest-init", ["build", "-trimpath", "-buildvcs=false", "-o", str(bundle / "guest-init"), "./guest/init"], "0", BUILD_TIMEOUT),
+        ("transports", ["build", "-p=1", "-trimpath", "-buildvcs=false", "-o", str(bundle) + "/", *TRANSPORT_PACKAGES], "0", TRANSPORT_BUILD_TIMEOUT),
+        ("fcvm", ["test", "-c", "-race", "-tags=metal", "-p=1", "-o", str(bundle / "fcvm.test"), "./pkg/fcvm"], "1", BUILD_TIMEOUT),
     ):
         build_env = {**env, "CGO_ENABLED": cgo}
-        require(run([go, *args], output / f"build-{name}.log", build_env) == 0, f"{name} build failed")
+        require(run([go, *args], output / f"build-{name}.log", build_env, timeout=timeout) == 0, f"{name} build failed")
     kernel = Path(env.get("FAAS_TEST_KERNEL", "/srv/fc/base/vmlinux-6.18.54"))
     shutil.copyfile(kernel, bundle / "kernel")
     busybox = Path(env.get("FAAS_METAL_BUSYBOX", "/bin/busybox"))
     kind = subprocess.check_output(["file", str(busybox)], text=True)
     require("statically linked" in kind or "static-pie linked" in kind, "guest busybox must be static")
-    base, layer = bundle / "base", bundle / "layer"
+    base, layer, traffic = bundle / "base", bundle / "layer", bundle / "traffic"
     for name in ("bin", "sbin", "etc/faas", "dev", "overlay", "proc", "run", "sys/fs/cgroup", "tmp"):
         (base / name).mkdir(parents=True, exist_ok=True)
     (layer / "upper/etc/faas").mkdir(parents=True)
     (layer / "work").mkdir()
+    (traffic / "upper/etc/faas").mkdir(parents=True)
+    (traffic / "work").mkdir()
+    (traffic / "upper/etc/faas/app.json").write_text(json.dumps({"entrypoint": ["/bin/financial-guest"], "port": 9000}) + "\n")
     shutil.copyfile(busybox, base / "bin/busybox")
     (base / "bin/busybox").chmod(0o755)
+    shutil.copyfile(bundle / "financialguest", base / "bin/financial-guest")
+    (base / "bin/financial-guest").chmod(0o755)
     shutil.copyfile(bundle / "guest-init", base / "sbin/init")
     (base / "sbin/init").chmod(0o755)
     for name in ("sh", "ash", "cat", "true"):
         (base / "bin" / name).symlink_to("/bin/busybox")
     (layer / "upper/etc/faas/app.json").write_text(json.dumps({"entrypoint": ["/bin/busybox", "httpd", "-f", "-p", "8080", "-h", "/"], "port": 8080}) + "\n")
     (layer / "upper/index.html").write_text("financial pair ready\n")
-    for name, source, size in (("base", base, 128 << 20), ("layer", layer, 16 << 20)):
+    for name, source, size in (("base", base, 128 << 20), ("layer", layer, 16 << 20), ("traffic", traffic, 16 << 20)):
         image = bundle / (name + ".ext4")
         with image.open("wb") as stream:
             stream.truncate(size)
@@ -148,6 +159,7 @@ def build_fixture(bundle, go, env, output):
         require(run(["e2fsck", "-fn", str(image)], output / f"e2fsck-{name}.log", env, timeout=FILESYSTEM_TIMEOUT) == 0, "fixture filesystem check failed")
     shutil.rmtree(base)
     shutil.rmtree(layer)
+    shutil.rmtree(traffic)
 
 
 def main():
@@ -161,6 +173,8 @@ def main():
     require(subprocess.check_output([go, "env", "GOVERSION"], text=True).strip() == "go" + re.search(r"^go (\S+)$", (ROOT / "go.mod").read_text(), re.M)[1], "Go toolchain differs from go.mod")
     target = env["FAAS_FINANCIAL_PAIR_SSH_B"]
     require(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.@-]*", target) is not None, "invalid SSH peer target")
+    addresses = [ipaddress.ip_address(env[name]) for name in ("FAAS_FINANCIAL_PAIR_ADDR_A", "FAAS_FINANCIAL_PAIR_ADDR_B")]
+    require(addresses[0] != addresses[1] and all(not (addr.is_loopback or addr.is_unspecified or addr.is_multicast or addr.is_link_local) for addr in addresses), "pair traffic requires distinct, reachable fixture addresses")
     require(env.get("FAAS_SKIP_PG_TESTS", "") == "", "financial acceptance cannot skip PostgreSQL")
     require(env.get("DATABASE_URL"), "disposable fixture DATABASE_URL is required")
     transfer = Path(env["FAAS_E2E_TRANSFER_ROOT"])
@@ -201,13 +215,14 @@ def main():
             shutil.copytree(records, output / "reconciliation")
             shutil.copytree(records, collected / "financial-system-records")
         build_fixture(bundle, go, env, output)
-        for name in ("financial-pair-host.sh", "financial-pair-evidence.py", "native-e2e-reap.sh"):
+        for name in ("financial-pair-host.sh", "financial-pair-evidence.py", "financial-pair-traffic.py", "native-e2e-reap.sh"):
             shutil.copyfile(ROOT / "scripts/ci" / name, bundle / name)
         scripts = bundle / "deploy/scripts"
         scripts.mkdir(parents=True)
         for name in ("leakcheck.sh", "leakcheck_native_loops.py"):
             shutil.copyfile(ROOT / "deploy/scripts" / name, scripts / name)
-        evidence.write_json(bundle / "source.json", {"source_sha": source_sha, "run_id": run_id})
+        support = evidence.traffic_sources(ROOT)
+        evidence.write_json(bundle / "source.json", {"source_sha": source_sha, "run_id": run_id, "traffic_sources": support})
         peer_env = {
             "FAAS_FINANCIAL_PAIR": "1", "FAAS_FINANCIAL_COMPUTE_ACCEPTANCE": "1",
             "FAAS_FINANCIAL_PAIR_RUN_ID": run_id, "FAAS_FINANCIAL_PAIR_BUNDLE": str(bundle),
@@ -216,6 +231,8 @@ def main():
             "FAAS_TEST_KERNEL": str(bundle / "kernel"), "FAAS_TEST_BASE_ROOTFS": str(bundle / "base.ext4"),
             "FAAS_TEST_LAYER_ROOTFS": str(bundle / "layer.ext4"), "FAAS_TEST_VMMD_BINARY": str(bundle / "vmmd"),
             "FAAS_TEST_FC_VERSION": env.get("FAAS_TEST_FC_VERSION", "1.17.0"),
+            "FAAS_STREAM_BRIDGE_VERSION": "v2", "FAAS_STREAM_BRIDGE_PERSISTENT": "1",
+            **{"FAAS_VMMD_" + kind.upper() + "_BRIDGE_PATH": str(bundle / ("vmmd-" + kind + "-bridge")) for kind in ("stream", "raw", "tcp", "udp")},
             "PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
         }
         env_file = bundle / "peer.env"
@@ -225,7 +242,7 @@ def main():
         with tarfile.open(archive, "w:gz") as tar:
             for path in sorted(bundle.iterdir()):
                 tar.add(path, arcname=path.name)
-        evidence.write_json(output / "fixture.json", {"archive_sha256": evidence.digest(archive), "assets": {name: evidence.digest(bundle / name) for name in evidence.ASSETS}})
+        evidence.write_json(output / "fixture.json", {"archive_sha256": evidence.digest(archive), "assets": {name: evidence.digest(bundle / name) for name in evidence.ASSETS}, "traffic_host_b": str(addresses[1]), "traffic_sources": support})
         # Refuse an existing run path. No untrusted archive entries are used:
         # this archive was built above from this exact source and its assets.
         prepare = ["sudo", "-n", "bash", "-c", 'set -euo pipefail; test -f /etc/faas/financial-pair-acceptance-host; umask 077; mkdir -- "$1"; tar -xz --no-same-owner -C "$1"', "_", str(bundle)]

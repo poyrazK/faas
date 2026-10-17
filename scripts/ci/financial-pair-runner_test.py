@@ -19,7 +19,7 @@ class RunnerTest(unittest.TestCase):
         match = re.search(r"timeout-minutes:\s*(\d+)", workflow)
         self.assertIsNotNone(match)
         budget = int(match[1]) * 60
-        commands = 3 * runner.BUILD_TIMEOUT + 4 * runner.FILESYSTEM_TIMEOUT + runner.SINGLE_HOST_TIMEOUT + runner.PEER_NETWORK_TIMEOUT + runner.NATIVE_TIMEOUT
+        commands = 2 * runner.BUILD_TIMEOUT + runner.TRANSPORT_BUILD_TIMEOUT + 6 * runner.FILESYSTEM_TIMEOUT + runner.SINGLE_HOST_TIMEOUT + runner.PEER_NETWORK_TIMEOUT + runner.NATIVE_TIMEOUT
         # Setup/upload, both host joins, retirement, eight evidence reads,
         # both readiness waits, and fixture transfer must fit as well.
         overhead = 20 * 60 + 2 * 180 + 2 * 120 + 8 * 20 + 2 * 90 + 180

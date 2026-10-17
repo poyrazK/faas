@@ -24,6 +24,41 @@ does not create financial authority or native resources. This is node-A
 handler/daemon evidence, not a cross-host overlay-traffic claim. Supporting
 source hashes and all four bridge binary hashes are mandatory in the report.
 
+The pair lane also selects `TestMetalFinancialPairGatewayProtocols`,
+`TestMetalFinancialPairGatewayFailureBounds` and
+`TestMetalFinancialPairGatewayOwnerRestart`. The controller accepts real local
+HTTP/H2C, Upgrade, TCP and UDP client traffic through the production gateway
+transports and SQL-backed `NodeClientCache`. These dial the production VMMD
+RPC server on node B over fixture-scoped mutual TLS. That server wraps the
+existing real native Manager and its PostgreSQL financial authority; it has no
+fake dialer, fake guest or synthetic byte counter. The already-admitted target
+is supplied by the fixture: this lane does not duplicate gateway daemon,
+API/scheduler admission, certificate-registry or sidecar lifecycle acceptance.
+
+The disposable guest serves a main port at `9000`, auxiliary/sidecar-routing
+ports at `8080` and `9001`, gRPC over H2C at `9002`, binary Upgrade echo,
+TCP echo at `9090` and UDP echo at `9091`. The same funded attempt serves all
+protocol cases without resetting its interface counter. Four concurrent HTTP
+streams must complete. During a real SQL connection cut, quota exhaustion must
+stop public payload while the guest is alive; a trusted private service-hop
+request must complete without increasing public bytes. Quota checks include
+explicit zero-payload retries for H2C/gRPC, Upgrade, TCP and UDP
+after the HTTP flood exhausts the shared interface quota. Physical retirement
+must finish within the funded deadline without refunding uncertain credits.
+After owner death, recovery must reject the old target and settle exactly once.
+Only an explicit manual resume and a new attempt may use fresh authority.
+
+Every required phase logs `financial-pair-traffic:` JSON. The verifier requires
+all 14 phases, distinct attested host/boot identities, the peer TCP address,
+native attempt/lease/incarnation and interface identities, actual payload and
+canonical counter deltas, issued byte credits, and the shared integer money
+ceiling. It rejects counter resets, duplicate measurements, billed private
+bytes, retry payload after exhaustion, late physical retirement and reused
+authority. The compiled fixture and both host records retain supporting-source
+hashes. All bridge binaries, the guest executable and both guest layers are
+hashed with the native artifacts. Parent test success and both strict host
+leakchecks remain mandatory; repaired leaks never qualify.
+
 Local compilation and portable rejection tests do not qualify either host.
 No publication, deployment or remote execution is part of preparing this lane.
 
@@ -54,6 +89,7 @@ mode `0600` `/etc/faas/financial-pair.env` contains:
 DATABASE_URL='postgresql://fixture-role@fixture-postgres/acceptance?sslmode=verify-full'
 FAAS_FINANCIAL_PAIR_SSH_B='acceptance-peer'
 FAAS_FINANCIAL_PAIR_ADDR_A='10.0.0.12'
+FAAS_FINANCIAL_PAIR_ADDR_B='10.0.0.13'
 FAAS_PGTEST_TEMPLATE_DATABASE=1
 ```
 
@@ -63,8 +99,14 @@ name. Node B reaches two per-test TCP proxies on node A's configured numeric
 fixture IP; restrict access to the acceptance pair with the fixture firewall.
 TLS and PostgreSQL authentication remain end to end. Credentials travel in the
 SSH stdin configuration, not in process arguments or the peer archive.
+For traffic tests, node A must also reach ephemeral TCP listeners on node B's
+configured numeric fixture address. They require the per-fixture client
+certificate. The runner creates this CA in memory and sends only the peer's
+leaf identity over stdin; it never uses production CA or node keys. No listener
+is bound on an unspecified address and no firewall rules are relaxed by tests.
 
-The controller builds the native test binary, static VMMD helper, guest init
+The controller builds the native test binary, static VMMD and all four bridge
+helpers, the multi-protocol guest workload, guest init
 and two-drive images once. It copies those exact artifacts and the kernel to
 node B and checks their hashes, plus both host tools, before starting drills.
 Host/boot identities are checked again in each native owner's startup evidence
@@ -114,16 +156,19 @@ for repair. Successful runs remove native fixture staging after copying its
 evidence. Successful CI runs remove controller staging after artifact upload.
 Failed runs retain their logs/source/toolchain for operator repair and removal.
 
-The report's `qualified` field covers physical native financial components
-plus the separate full-daemon/provider lane. **`promotion_ready` remains false.**
+The report's `qualified` field covers physical native financial components,
+cross-host gateway transports and the separate full-daemon/provider lane.
+**`promotion_ready` remains false.**
 Before promotion, close these remaining gates:
 
-1. Execute the required `ForwardHTTPStream` response-byte checks and extend
-   traffic coverage to the real cross-host gateway/owner route, custom main
-   ports, sidecars, H2C/gRPC, upgrades and public TCP/UDP. The ADR-1364 candidate
-   routes native-recovery public bridges through the canonical funded interface;
-   legacy owners cannot attest strict readiness. Positive ARP counters, source
-   inspection and compilation cannot substitute for response-payload evidence.
+1. Execute the required single-host `ForwardHTTPStream` checks and all 14
+   cross-host gateway transport phases with the exact immutable bundle. Extend
+   full daemon/API/scheduler admission, registered node-certificate validation
+   and sidecar process lifecycle coverage across hosts as well. The ADR-1364
+   candidate routes native-recovery public bridges through the canonical funded
+   interface; legacy owners cannot attest strict readiness. Positive ARP
+   counters, source inspection and compilation cannot substitute for measured
+   response-payload evidence. Local preparation supplies no KVM execution proof.
 2. Run the complete strict app/job/worker/sidecar/private workload matrix.
 3. Measure the 100-cycle reference-SSD wake p95 against the spec's 350 ms target,
    and set and meet a reviewed funded-egress throughput target. This lane does

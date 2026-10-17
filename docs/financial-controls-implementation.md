@@ -110,6 +110,18 @@ streamed payload measurements, quota exhaustion without the DB, private
 isolation and owner restart, plus exact bridge binary/supporting-source hashes.
 These local changes prepare native evidence; they do not supply that evidence.
 
+The physical-pair runner now also prepares a source-bound, 14-phase gateway
+transport gate. Production HTTP/H2C, Upgrade, TCP and UDP forwarding crosses
+fixture-authenticated TCP to node B's production VMMD RPC server and its real
+funded native Manager. Tests compare complete streamed payloads with the same
+canonical interface counter, including custom main and sidecar-routing ports,
+real SQL partitions, quota exhaustion, trusted private forwarding, physical
+deadline retirement and owner replacement. Supporting sources, all bridge
+helpers and the multi-protocol guest fixture are bound to both host records.
+The targets are pre-admitted by the fixture; full daemon/API/scheduler admission,
+registered-node PKI and sidecar process lifecycle remain separate gates. These
+tests have not executed on dedicated KVM hosts in the local workspace.
+
 ## Rollout and rollback
 
 1. Review and merge the platform preview PR after its migrations, accounting,

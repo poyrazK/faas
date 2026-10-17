@@ -12,8 +12,19 @@ import shutil
 import stat
 import sys
 
-ASSETS = ("fcvm.test", "vmmd", "guest-init", "kernel", "base.ext4", "layer.ext4")
+ASSETS = ("fcvm.test", "vmmd", "guest-init", "kernel", "base.ext4", "layer.ext4", "traffic.ext4", "financialguest", "vmmd-stream-bridge", "vmmd-raw-bridge", "vmmd-tcp-bridge", "vmmd-udp-bridge")
 PAIR_SOURCE = "pkg/fcvm/financial_pair_metal_test.go"
+
+
+def traffic_checker():
+    spec = importlib.util.spec_from_file_location("financial_pair_traffic", Path(__file__).with_name("financial-pair-traffic.py"))
+    checker = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(checker)
+    return checker
+
+
+def traffic_sources(root):
+    return {name: digest(root / name) for name in traffic_checker().SUPPORT}
 
 
 def read_object(path):
@@ -59,7 +70,7 @@ def host_report(bundle):
 
 
 def source_tests(root, pair=False):
-    paths = [root / PAIR_SOURCE] if pair else sorted((root / "pkg/fcvm").glob("financial_compute*metal_test.go"))
+    paths = sorted((root / "pkg/fcvm").glob("financial_pair*metal_test.go")) if pair else sorted((root / "pkg/fcvm").glob("financial_compute*metal_test.go"))
     tests, sources = {}, {}
     pattern = r"TestMetalFinancialPair\w+" if pair else r"TestMetalFinancial\w+"
     for path in paths:
@@ -146,7 +157,7 @@ def build_report(root, evidence, source_sha, run_id):
                 errors.append("host assets differ from the controller's compiled fixture")
         except (OSError, ValueError, KeyError, TypeError):
             errors.append("compiled fixture manifest missing or malformed")
-    sources = {}
+    sources, traffic = {}, {}
     try:
         component, sources = source_tests(root)
         pair, pair_sources = source_tests(root, pair=True)
@@ -176,6 +187,18 @@ def build_report(root, evidence, source_sha, run_id):
             errors.append("native owner execution evidence missing on one or both hosts")
     except (OSError, ValueError, KeyError, TypeError):
         errors.append("native source/log/owner evidence missing or malformed")
+    try:
+        fixture = read_object(evidence / "fixture.json")
+        checker = traffic_checker()
+        traffic = checker.verify(root, (evidence / "native.log").read_text(), hosts, fixture)
+        if traffic["sources"] != fixture.get("traffic_sources"):
+            errors.append("gateway traffic supporting source differs from the compiled fixture")
+        for node in ("a", "b"):
+            for kind in ("host", "cleanup"):
+                if hosts[node][kind].get("traffic_sources") != fixture.get("traffic_sources"):
+                    errors.append(f"host {node}: gateway traffic source identity changed")
+    except (OSError, ValueError, KeyError, TypeError, OverflowError):
+        errors.append("cross-host gateway traffic evidence missing, invalid or outside funded authority")
     single = {}
     try:
         single = read_object(evidence / "single-host.json")
@@ -196,13 +219,13 @@ def build_report(root, evidence, source_sha, run_id):
     except (OSError, ValueError, KeyError, TypeError):
         errors.append("full-daemon/provider verdict missing")
     return {
-        "schema_version": 1, "scope": "physical_two_host_native_financial_components",
+        "schema_version": 1, "scope": "physical_two_host_native_financial_components_and_gateway_transports",
         "source_sha": source_sha, "run_id": run_id, "qualified": not errors,
         "promotion_ready": False,
         "hosts": hosts, "commands": status, "logs": logs, "sources": sources,
-        "single_host": single, "failures": errors,
+        "single_host": single, "traffic": traffic, "failures": errors,
         "remaining_release_gates": [
-            "cross-host gateway/owner response traffic and the complete custom-port/H2C/Upgrade/TCP/UDP matrix",
+            "complete daemon/API/scheduler admission and sidecar lifecycle matrix across hosts; transport measurements alone do not qualify admission",
             "complete app/job/worker/sidecar/private workload matrix",
             "reference-SSD 100-cycle wake p95 and funded-egress throughput targets",
             "external provider sandbox/catalog reconciliation and complete native lifecycle gate",

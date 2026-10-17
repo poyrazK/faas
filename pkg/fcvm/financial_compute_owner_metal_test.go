@@ -31,6 +31,7 @@ import (
 const financialNativePrefix = "financial-native-event:"
 
 type financialNativeConfig struct {
+	Traffic                        *FinancialPairTrafficOptions
 	JobID, JobRunID, JobLeaseToken string
 	// Configuration travels over stdin, never process arguments or test logs.
 	DBURL, Database                          string
@@ -45,6 +46,10 @@ type financialNativeConfig struct {
 type financialNativeCommand struct{ Operation string }
 
 type financialNativeEvent struct {
+	RPCTarget, Veth           string
+	InterfaceBytes            uint64
+	InterfaceIndex            int
+	CounterAvailable          bool
 	Operation                 string
 	Error, Detail             string
 	Identity                  runtimeadmission.Identity
@@ -312,6 +317,15 @@ func TestFinancialComputeNativeOwnerProcess(t *testing.T) {
 	}
 	status := func(operation string, operationErr error) financialNativeEvent {
 		e := financialNativeEvent{Operation: operation, Error: financialNativeError(operationErr), Live: m.LiveCount(), Leased: m.LeasedCount()}
+		if cfg.Traffic != nil {
+			if target, targetErr := m.PublicForwardTarget(cfg.Instance); targetErr == nil && target != nil {
+				e.Veth = target.Veth
+				e.InterfaceIndex = target.IfIndex
+				if value, readErr := m.readFinancialEgress(target.Veth); readErr == nil {
+					e.InterfaceBytes, e.CounterAvailable = value, true
+				}
+			}
+		}
 		if operationErr != nil {
 			e.Detail = operationErr.Error()
 		}
@@ -394,6 +408,17 @@ func TestFinancialComputeNativeOwnerProcess(t *testing.T) {
 		}
 	}()
 	ready := status("ready", nil)
+	if cfg.Traffic != nil {
+		if FinancialPairServeRPC == nil {
+			t.Fatal("native traffic RPC wiring is unavailable")
+		}
+		target, stop, startErr := FinancialPairServeRPC(ctx, m, *cfg.Traffic)
+		if startErr != nil {
+			t.Fatal("native traffic RPC startup:", startErr)
+		}
+		defer stop()
+		ready.RPCTarget = target
+	}
 	ready.Identity = identity
 	ready.Host = financialNativeHostFacts()
 	emit(ready)
@@ -406,8 +431,14 @@ func TestFinancialComputeNativeOwnerProcess(t *testing.T) {
 		switch command.Operation {
 		case "wake":
 			req := admissionWake(cfg.Instance)
+			if cfg.Traffic != nil {
+				req.Port = 9000 // dedicated multi-protocol acceptance guest
+			}
 			req.AccountID, req.AppID = cfg.AccountID, cfg.AppID
 			req.BaseKey, req.LayerKey = os.Getenv("FAAS_TEST_BASE_ROOTFS"), os.Getenv("FAAS_TEST_LAYER_ROOTFS")
+			if cfg.Traffic != nil {
+				req.LayerKey = filepath.Join(os.Getenv("FAAS_FINANCIAL_PAIR_BUNDLE"), "traffic.ext4")
+			}
 			// Cancel the RPC immediately after its result. The native deadline
 			// must continue on the daemon lifetime, not this request context.
 			wakeCtx, done := context.WithCancel(wire.WithContext(ctx, wire.CorrelationFields{AppID: cfg.AppID, InstanceID: cfg.Instance, WakeID: cfg.Attempt}))
