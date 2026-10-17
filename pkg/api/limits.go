@@ -10672,6 +10672,9 @@ const (
 	// and AuthSSOMaxDomains the email domains one provider serves.
 	AuthSSOMetadataBytes = 512 << 10
 	AuthSSOMaxDomains    = 50
+	// AuthOAuthMaxClients bounds the OAuth clients one Auth app holds,
+	// registered by the owner or by the clients themselves (RFC 7591).
+	AuthOAuthMaxClients = 1000
 	// AuthUINameMaxChars bounds the hosted pages' display name.
 	AuthUINameMaxChars = 60
 	// AuthAuditRetentionMaxDays bounds activity retention. The Auth app

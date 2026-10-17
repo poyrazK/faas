@@ -17,6 +17,10 @@ keys, its issuer, its audience and its expiry, without a network call once the
 keys are cached. A token stays valid until it expires, at most 600 seconds
 after a sign-out or ban. ``authorize`` asks the Auth app, which also checks
 that the session is still active. Each method has an ``_async`` twin.
+
+An API or MCP server that third-party OAuth clients call passes its resource
+URL as ``audience``; ``Claims.client_id`` and ``Claims.scopes`` then name the
+client and what its user granted.
 """
 
 from __future__ import annotations
@@ -89,6 +93,10 @@ class Claims:
     aal: str | None = None
     is_anonymous: bool = False
     issued_at: datetime | None = None
+    # The third-party OAuth client the token was issued to, and the scopes
+    # its user granted it; empty for the Auth app's own sessions.
+    client_id: str | None = None
+    scopes: tuple[str, ...] = ()
     app_metadata: Mapping[str, Any] = field(default_factory=dict)
     user_metadata: Mapping[str, Any] = field(default_factory=dict)
     raw: Mapping[str, Any] = field(default_factory=dict)
@@ -213,6 +221,7 @@ class AuthClient:
         auth_url: str,
         *,
         leeway: float = DEFAULT_LEEWAY,
+        audience: str = AUDIENCE,
         timeout: float = 10.0,
         http_client: httpx.Client | None = None,
         async_http_client: httpx.AsyncClient | None = None,
@@ -220,6 +229,11 @@ class AuthClient:
     ) -> None:
         if leeway < 0:
             raise ValueError("leeway must not be negative")
+        if not audience:
+            raise ValueError("audience must not be empty")
+        # An API or MCP server that third-party OAuth clients call passes its
+        # resource URL: the Auth app gives a client's token that audience.
+        self.audience = audience
         self.origin = _origin(auth_url)
         self.issuer = self.origin + "/auth/v1"
         self._jwks_url = self.issuer + "/.well-known/jwks.json"
@@ -305,8 +319,8 @@ class AuthClient:
         sub = payload.get("sub")
         if payload.get("iss") != self.issuer:
             raise InvalidTokenError(f"issuer {payload.get('iss')!r} is not {self.issuer!r}")
-        if not (aud == AUDIENCE or (isinstance(aud, list) and AUDIENCE in aud)):
-            raise InvalidTokenError(f"audience is not {AUDIENCE!r}")
+        if not (aud == self.audience or (isinstance(aud, list) and self.audience in aud)):
+            raise InvalidTokenError(f"audience is not {self.audience!r}")
         if not isinstance(sub, str) or not sub:
             raise InvalidTokenError("no subject")
         if exp is None:
@@ -334,6 +348,8 @@ class AuthClient:
             aal=text("aal"),
             is_anonymous=payload.get("is_anonymous") is True,
             issued_at=_utc(iat) if iat is not None else None,
+            client_id=text("client_id"),
+            scopes=tuple((text("scope") or "").split()),
             app_metadata=mapping("app_metadata"),
             user_metadata=mapping("user_metadata"),
             raw=payload,

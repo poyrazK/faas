@@ -231,3 +231,19 @@ test('organization single sign-on returns the identity provider URL', async () =
   assert.deepEqual(api.calls[1].body, { provider_id: 'p1', skip_http_redirect: true })
   await assert.rejects(auth.signInWithSSO({ domain: 'globex.com' }), { status: 404, code: 'sso_provider_not_found' })
 })
+
+test('lists and revokes the apps a user connected through the OAuth server', async () => {
+  const grant = { client: { id: 'c1', name: 'Claude' }, scopes: ['openid'], granted_at: '2026-10-17T00:00:00Z' }
+  const api = server({
+    'POST /auth/v1/token': () => [200, tokens(1)],
+    'GET /auth/v1/user/oauth/grants': () => [200, [grant]],
+    'DELETE /auth/v1/user/oauth/grants': () => [204, undefined],
+  })
+  const auth = createAuthClient({ url: origin, fetch: api.fetch, store: null })
+  await auth.signInWithPassword({ email: 'a@example.test', password: 'pw' })
+  assert.deepEqual(await auth.connectedApps.list(), [grant])
+  await auth.connectedApps.revoke('c1')
+  const revoke = api.calls.at(-1)
+  assert.equal(revoke.url.searchParams.get('client_id'), 'c1')
+  assert.equal(revoke.headers.Authorization, 'Bearer access-1')
+})

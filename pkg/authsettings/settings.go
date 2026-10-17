@@ -114,6 +114,11 @@ type Change struct {
 	// SSO turns organization single sign-on (SAML) on or off. Turning it on
 	// also needs SAMLKeySecret, which the caller creates once.
 	SSO *bool
+	// OAuthServer turns the OAuth 2.1 authorization server on or off.
+	// OAuthRegistration lets clients register themselves (RFC 7591), as MCP
+	// clients do; it takes effect only while the server is on.
+	OAuthServer       *bool
+	OAuthRegistration *bool
 }
 
 // Captcha is a CAPTCHA provider and its keys; the secret stays in the app.
@@ -208,6 +213,12 @@ func (c Change) Secrets() (map[string]string, []string, error) {
 	}
 	if c.SSO != nil {
 		set["AUTH_SSO"] = flag(*c.SSO)
+	}
+	if c.OAuthServer != nil {
+		set["AUTH_OAUTH_SERVER"] = flag(*c.OAuthServer)
+	}
+	if c.OAuthRegistration != nil {
+		set["AUTH_OAUTH_REGISTRATION"] = flag(*c.OAuthRegistration)
 	}
 	if c.SMS != nil {
 		sms, removed, err := c.SMS.secrets()

@@ -403,3 +403,31 @@ func TestRedirectsAreNotFollowed(t *testing.T) {
 		t.Fatalf("redirected key set: %v", err)
 	}
 }
+
+func TestVerifyWithAudienceAcceptsAnOAuthClientsToken(t *testing.T) {
+	key := newKey(t, "0A1B2C3D")
+	app := newAuthApp(t, key)
+	own, clk := newClient(t, app)
+	resource := "https://shop-mcp.gregale.app/mcp"
+	mcp, err := New(app.server.URL, WithAudience(resource))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mcp.now = clk.now
+	claims := userClaims(mcp, clk)
+	claims["aud"], claims["client_id"], claims["scope"] = resource, "6a1b2c3d-0000-4000-8000-000000000002", "openid email"
+	token := key.sign(t, header(key.kid), claims)
+	verified, err := mcp.Verify(context.Background(), token)
+	if err != nil || verified.ClientID != "6a1b2c3d-0000-4000-8000-000000000002" || strings.Join(verified.Scopes, " ") != "openid email" {
+		t.Fatalf("Verify = %+v, %v", verified, err)
+	}
+	if _, err := own.Verify(context.Background(), token); !errors.Is(err, ErrInvalidToken) {
+		t.Fatalf("a client's token passed the app's own audience: %v", err)
+	}
+	if _, err := mcp.Verify(context.Background(), key.sign(t, header(key.kid), userClaims(own, clk))); !errors.Is(err, ErrInvalidToken) {
+		t.Fatalf("an app session passed the resource's audience: %v", err)
+	}
+	if _, err := New(app.server.URL, WithAudience("")); err == nil {
+		t.Fatal("accepted an empty audience")
+	}
+}

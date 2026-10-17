@@ -38,6 +38,9 @@ export type Passkey = Readonly<{ id: string; friendly_name?: string | null; crea
 /** Sign-up and sign-in calls take the CAPTCHA token when the Auth app requires one. */
 export type Captcha = { captchaToken?: string }
 
+/** A third-party app (an OAuth client) the user allowed to use their account. */
+export type ConnectedApp = Readonly<{ client: { id: string; name: string; uri?: string; logo_uri?: string }; scopes: string[]; granted_at: string }>
+
 export type AuthEvent = 'SIGNED_IN' | 'TOKEN_REFRESHED' | 'SIGNED_OUT'
 
 export type Organization = Readonly<{ id: string; slug: string; name: string; role?: string; created_at: string }>
@@ -267,6 +270,14 @@ export function createAuthClient(options: AuthClientOptions) {
       list: async (): Promise<Passkey[]> => (await call<Passkey[] | null>('GET', '/auth/v1/passkeys', { token: await bearer() })) ?? [],
       rename: async (passkey: string, name: string): Promise<void> => { await call('PATCH', `/auth/v1/passkeys/${id(passkey)}`, { token: await bearer(), body: { friendly_name: name } }) },
       remove: async (passkey: string): Promise<void> => { await call('DELETE', `/auth/v1/passkeys/${id(passkey)}`, { token: await bearer() }) },
+    },
+    /**
+     * Apps the user allowed through the Auth app's OAuth server. Revoking one
+     * ends its sessions; it must ask the user again.
+     */
+    connectedApps: {
+      list: async (): Promise<ConnectedApp[]> => (await call<ConnectedApp[] | null>('GET', '/auth/v1/user/oauth/grants', { token: await bearer() })) ?? [],
+      revoke: async (clientId: string): Promise<void> => { await call('DELETE', `/auth/v1/user/oauth/grants?client_id=${id(clientId)}`, { token: await bearer() }) },
     },
     /** Navigate the browser here to sign in with an OAuth provider. */
     oauthUrl(input: { provider: string; redirectTo: string }): string {

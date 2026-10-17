@@ -157,3 +157,13 @@ func TestBrandingCaptchaAndRetention(t *testing.T) {
 		}
 	}
 }
+
+func TestOAuthServerSwitches(t *testing.T) {
+	set, unset, err := Change{OAuthServer: ptr(true), OAuthRegistration: ptr(false)}.Secrets()
+	if err != nil || !reflect.DeepEqual(set, map[string]string{"AUTH_OAUTH_SERVER": "1", "AUTH_OAUTH_REGISTRATION": "0"}) || len(unset) != 0 {
+		t.Fatalf("set = %v unset = %v err = %v", set, unset, err)
+	}
+	if (Change{OAuthRegistration: ptr(true)}).Empty() {
+		t.Fatal("a registration change is not empty")
+	}
+}

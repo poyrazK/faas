@@ -75,9 +75,10 @@ func mcpCLICommand() cliCommand {
 			{Name: "jwks-url", Short: "HTTPS OAuth signing-key URL", Value: "URL"},
 			{Name: "resource", Short: "canonical HTTPS MCP endpoint and token audience", Value: "URL"},
 			{Name: "scopes", Short: "comma-separated required OAuth scopes", Value: "SCOPES"},
+			{Name: "auth-app", Short: "Gregale Auth app whose OAuth server issues the tokens; sets --auth, --issuer and --jwks-url", Value: "NAME"},
 			{Name: "tasks", Short: "scaffold separate web, worker and observer task projects", Bool: true},
 			{Name: "name", Short: "app slug prefix and task namespace (required with --tasks)", Value: "SLUG"},
-		}, Examples: []string{"gregale mcp init --path ./my-mcp", "gregale mcp init --path ./my-mcp --runtime go", "gregale mcp init --path ./my-mcp --runtime python", "gregale mcp init --path ./private-mcp --auth external-oauth --issuer https://identity.example.com --jwks-url https://identity.example.com/jwks --resource https://mcp.example.com/mcp --scopes mcp:tools", "gregale mcp init --path ./reports --tasks --name reports"}},
+		}, Examples: []string{"gregale mcp init --path ./my-mcp", "gregale mcp init --path ./my-mcp --runtime go", "gregale mcp init --path ./my-mcp --runtime python", "gregale mcp init --path ./private-mcp --auth external-oauth --issuer https://identity.example.com --jwks-url https://identity.example.com/jwks --resource https://mcp.example.com/mcp --scopes mcp:tools", "gregale mcp init --path ./private-mcp --auth-app shop-auth --resource https://shop-mcp.gregale.app/mcp", "gregale mcp init --path ./reports --tasks --name reports"}},
 		{Name: "capabilities", Short: "Show the built-in starter contract and runtime differences", Flags: []cliFlag{
 			{Name: "runtime", Short: "filter to one starter runtime", Value: "RUNTIME", ClosedSet: []string{"node", "go", "python"}},
 			{Name: "markdown", Short: "render the generated starter capability reference", Bool: true},

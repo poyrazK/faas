@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { once } from 'node:events'
-import { allowedRedirect, errorMessage, fragmentParams, handoffURL } from '../ui/app.js'
+import { allowedRedirect, consentView, errorMessage, fragmentParams, handoffURL } from '../ui/app.js'
 import { createServer } from '../server.mjs'
 
 const site = 'https://shop.example.com'
@@ -108,4 +108,14 @@ test('a CAPTCHA token is required when the check is shown, and sent once', async
   assert.deepEqual(captchaBody({ email: 'a@example.test' }, undefined), { email: 'a@example.test' })
   assert.deepEqual(captchaBody({ email: 'a@example.test' }, 'tok'), { email: 'a@example.test', gotrue_meta_security: { captcha_token: 'tok' } })
   assert.throws(() => captchaBody({}, ''), /security check/)
+})
+
+test('the consent page names the client, its permissions, its resource and where it returns', () => {
+  const view = consentView({ client: { name: 'Claude' }, user: { email: 'ada@example.com' }, scope: 'openid email custom', redirect_uri: 'http://localhost:6274/oauth/callback', resource: 'https://mcp.shop.example.com/mcp' })
+  assert.deepEqual(view, { name: 'Claude', account: 'ada@example.com', abilities: ['Know who you are', 'See your email address', 'Use the custom permission'], resource: 'https://mcp.shop.example.com/mcp', destination: 'localhost:6274' })
+  assert.equal(consentView({ redirect_uri: 'cursor://anysphere.cursor-mcp/oauth/callback' }).destination, 'cursor app')
+  assert.equal(consentView({ redirect_uri: 'not a url' }).destination, 'an unknown address')
+  assert.equal(consentView({ client: { name: '' } }).name, 'An application')
+  assert.equal(consentView({ client: { name: 'x'.repeat(500) } }).name.length, 100)
+  assert.equal(allowedRedirect('https://shop-auth.gregale.app/ui/consent?authorization_id=a', 'https://shop.example.com', ['https://shop-auth.gregale.app/ui/consent']), 'https://shop-auth.gregale.app/ui/consent?authorization_id=a')
 })
