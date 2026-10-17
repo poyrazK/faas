@@ -42,11 +42,12 @@ class FinancialBudgetSpec:
     usage."""
     limit_millicents: int
     notify_millicents: list[int]
-    """Increasing nonnegative thresholds at or below the limit."""
+    """Increasing nonnegative thresholds at or below the limit. Strict app compute requires an empty array;
+    configure a separate monitored policy for alerts."""
     mode: FinancialBudgetSpecMode
     action: FinancialBudgetSpecAction
     drain_seconds: int
-    """Notify uses zero; stopping targets drain before the deadline."""
+    """Notify and strict app compute use zero; monitored stopping targets drain before the deadline."""
     resume_rule: FinancialBudgetSpecResumeRule
     enabled: bool
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

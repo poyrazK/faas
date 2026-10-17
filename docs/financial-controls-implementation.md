@@ -1,10 +1,10 @@
-# Financial visibility and monitored preview stopping candidate
+# Financial controls local implementation candidate
 
 This release candidate includes the implemented financial visibility and
 budget-planning surfaces from ADR-566, active monitored notifications and
-compute-only `stop_previews`. This branch is a local release candidate; native
-VM acceptance and publication are still required. Strict reservations and other
-stopping actions remain deferred.
+compute-only `stop_previews`, plus strict app compute reservations. This branch
+is a local release candidate; native VM acceptance and publication are still
+required. Other stopping actions and strict scopes remain deferred.
 
 ## Customer-visible scope
 
@@ -20,6 +20,9 @@ stopping actions remain deferred.
   warm HTTP and service/TCP admission, queued invocation/command claim gates,
   scheduler drain/teardown retries and per-target acknowledgements. Preview
   command VM ownership and preparation deadlines survive scheduler restart.
+- Atomic app/month compute funding, fenced native execution leases, local
+  deadlines, durable recovery, funded billing windows and conservative balances
+  in the API, CLI, SDKs and console. See [strict compute decision](adr/20261017-strict-app-compute-reservations.md).
 - Account ownership, usage-read/admin authorization, MFA, bounded idempotency
   keys and optimistic revisions. Recovery reads remain available during billing
   suspension without changing payment status.
@@ -27,7 +30,9 @@ stopping actions remain deferred.
 ## Release limits
 
 Budget activation accepts `mode=monitored` with `action=notify`, or
-`action=stop_previews` with the compute meter alone. Other enabled
+`action=stop_previews` with the compute meter alone. Strict app-scoped
+`gross_usage`, compute-only `suspend_workloads` supports zero drain and no alert
+thresholds, with quiet-app/accounting/native-owner activation checks. Other enabled
 responses return HTTP 422 `financial_budget_activation_unavailable`. Disabled
 drafts neither stop workloads nor send spending notifications. Notification
 policies report active monitoring while `enforcement_ready` remains false. Financial totals cover recorded supported
@@ -42,8 +47,8 @@ reports partial coverage with `compute:missing_scope_attribution`; it does not
 present an unallocated amount as complete zero spending. Account and app
 subtotals still include the retained charges.
 
-The release excludes strict monetary reservations, other stopping actions and
-full-invoice hard ceilings. A monitored preview budget can be exceeded during
+The release excludes other stopping actions, strict account/project/environment/job
+scopes, scoped net reservations and full-invoice hard ceilings. A monitored preview budget can be exceeded during
 evidence ingestion, scheduler sweeps, the configured drain interval, and bounded
 VM teardown. Broad scopes leave production spending explicitly continuing.
 
@@ -68,13 +73,14 @@ its existing customer-selected expiration/cancellation policy applies.
 1. Review and merge the platform preview PR after its migrations, accounting,
    API/CLI/SDK and repository CI checks pass.
 2. Before publishing, run the native gates in
-   [preview stop acceptance](runbooks/financial-preview-stops-acceptance.md).
+   [preview stop acceptance](runbooks/financial-preview-stops-acceptance.md) and
+   [strict compute acceptance](runbooks/financial-strict-compute-acceptance.md).
    Publish the ordinary signed platform release from the reviewed main commit
    using the existing release workflow. Apply the retained-history, monitoring, stop and command-ownership migrations
    before exposing the console release.
 3. Let meterd capture current price contracts and fresh usage evidence. Old
    periods without recorded prices stay incomplete. Verify account isolation,
-   freshness/coverage, one retained sample replay, revision handling, notification activation and preview-stop activation and other stopping/strict activation refusal.
+   freshness/coverage, one retained sample replay, revision handling, notification activation and preview-stop activation, strict app funding, and unsupported activation refusal.
    Exercise a threshold, replay, mail failure/retry and expired claim recovery;
    verify that partial/stale evidence stays visible and sampling remains healthy.
 4. Release the console only after the platform APIs answer successfully.
@@ -82,6 +88,7 @@ its existing customer-selected expiration/cancellation policy applies.
    financial tables, migrations and audit history; do not drop populated
    evidence. A platform rollback must retain the additive migration set, or
    verify compatibility of the older binary against the migrated schema.
+   Retain funded billing and native recovery until every strict lease settles.
    Existing provider delivery remains in place throughout this release.
 
 Production publication, deployment and operational smoke evidence are tracked

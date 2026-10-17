@@ -171,6 +171,20 @@ func printBillingBudgetResult(out any) error {
 }
 
 func printBillingBudgetRuntime(runtime *financial.BudgetRuntime) error {
+	if runtime != nil && runtime.Compute != nil {
+		b := runtime.Compute
+		if _, err := fmt.Fprintf(osStdout, "Committed compute (conservative): %s\nReserved compute: %s\nRemaining compute: %s\nUnconfirmed VM attempts: %d; budget held: %t\n", financialMoney(b.CommittedMillicents), financialMoney(b.ReservedMillicents), financialMoney(b.RemainingMillicents), b.UnconfirmedLeases, b.Held); err != nil {
+			return err
+		}
+		if !b.Initialized {
+			if _, err := fmt.Fprintln(osStdout, "Awaiting accounting initialization for the current UTC month."); err != nil {
+				return err
+			}
+		}
+		if runtime.Evaluation == nil {
+			return nil
+		}
+	}
 	if runtime != nil {
 		for _, stop := range runtime.Stops {
 			if _, err := fmt.Fprintf(osStdout, "Preview stop %s: requested %s; drain deadline %s; resume %s\n", stop.ID, stop.RequestedAt.Format(time.RFC3339), stop.DrainDeadline.Format(time.RFC3339), stop.ResumeRule); err != nil {

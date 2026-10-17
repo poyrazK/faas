@@ -59,6 +59,18 @@ func PreviewFinancialBudget(ctx context.Context, store state.Store, account stri
 	}
 	if spec.Mode == "strict" {
 		out.Guarantee = "strict_compute_pending_reservations_and_local_deadline_acceptance"
+		if financial.StrictAppCompute(spec) {
+			if compute, ok := store.(state.FinancialComputeStore); ok {
+				out.EnforcementReady, err = compute.FinancialComputeReady(ctx, account, spec.Scope.ID)
+				if err != nil {
+					return out, err
+				}
+				out.Guarantee = "strict_app_gross_compute_funded_windows;conservative_commitments;other_meters_excluded"
+				if !out.EnforcementReady {
+					out.Reasons = append(out.Reasons, "requires_quiet_app_complete_accounting_native_owners")
+				}
+			}
+		}
 	}
 	members, err := financialBudgetMembers(ctx, store, account, spec.Scope)
 	if err != nil {

@@ -39,7 +39,7 @@ class FinancialBudgetResponse:
     status: FinancialBudgetResponseStatus
     enforcement_ready: bool
     """True when the selected stopping integration is available; actual per-target teardown is reported in
-    runtime.stops. This is not a strict spending ceiling."""
+    runtime.stops. Strict compute balances are reported in runtime.compute."""
     reasons: list[str]
     deleted_at: datetime.datetime | Unset = UNSET
     notification_ready: bool | Unset = UNSET

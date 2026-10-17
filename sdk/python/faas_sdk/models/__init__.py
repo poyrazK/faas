@@ -1584,6 +1584,7 @@ from .financial_budget_stop_target_last_error import FinancialBudgetStopTargetLa
 from .financial_budget_stop_target_state import FinancialBudgetStopTargetState
 from .financial_budget_target import FinancialBudgetTarget
 from .financial_budget_target_kind import FinancialBudgetTargetKind
+from .financial_compute_balance import FinancialComputeBalance
 from .financial_contract_costs import FinancialContractCosts
 from .financial_costs_response import FinancialCostsResponse
 from .financial_costs_response_currency import FinancialCostsResponseCurrency
@@ -6321,6 +6322,7 @@ __all__ = (
     "FinancialBudgetStopTargetState",
     "FinancialBudgetTarget",
     "FinancialBudgetTargetKind",
+    "FinancialComputeBalance",
     "FinancialContractCosts",
     "FinancialCostsResponse",
     "FinancialCostsResponseCurrency",

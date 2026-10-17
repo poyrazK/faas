@@ -98,21 +98,25 @@ def sync_detailed(
     body: CreateFinancialBudgetRequest,
     idempotency_key: str,
 ) -> Response[FinancialBudgetResponse | Problem]:
-    """Save a budget policy with atomic revision audit; monitored notifications can activate.
+    """Save a budget policy with atomic revision audit and supported activation checks.
 
      Requires admin scope and session MFA. Idempotency-Key is required (1..255 bytes).
     It fixes creation identity beyond replay-cache retention. Reusing an operation
     identity cannot overwrite a changed or deleted policy. Disabled policies are drafts.
-    Activation is accepted only for mode=monitored and action=notify; other enabled responses return 422
-    financial_budget_activation_unavailable.
+    Activation supports monitored notify, monitored compute-only stop_previews, and strict app gross
+    compute suspend_workloads with zero drain and no alert thresholds. Other enabled responses return
+    422 financial_budget_activation_unavailable. Strict app activation also requires a quiet app,
+    complete accounting and native owners; unavailable authority returns 422
+    financial_compute_not_ready.
     Disabled drafts create no notifications or workload changes. Active notification policies never stop
     workloads.
 
     Args:
         idempotency_key (str):
-        body (CreateFinancialBudgetRequest): New budget intent; enabled policies support monitored
-            notify or compute-only stop_previews. Other actions and strict policies remain disabled
-            drafts.
+        body (CreateFinancialBudgetRequest): New budget intent; activation supports monitored
+            notify, monitored compute-only stop_previews, and app-scoped strict gross compute
+            suspend_workloads with zero drain and no alert thresholds. Strict activation requires a
+            quiet app, complete accounting, and native compute owners.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -140,21 +144,25 @@ def sync(
     body: CreateFinancialBudgetRequest,
     idempotency_key: str,
 ) -> FinancialBudgetResponse | Problem | None:
-    """Save a budget policy with atomic revision audit; monitored notifications can activate.
+    """Save a budget policy with atomic revision audit and supported activation checks.
 
      Requires admin scope and session MFA. Idempotency-Key is required (1..255 bytes).
     It fixes creation identity beyond replay-cache retention. Reusing an operation
     identity cannot overwrite a changed or deleted policy. Disabled policies are drafts.
-    Activation is accepted only for mode=monitored and action=notify; other enabled responses return 422
-    financial_budget_activation_unavailable.
+    Activation supports monitored notify, monitored compute-only stop_previews, and strict app gross
+    compute suspend_workloads with zero drain and no alert thresholds. Other enabled responses return
+    422 financial_budget_activation_unavailable. Strict app activation also requires a quiet app,
+    complete accounting and native owners; unavailable authority returns 422
+    financial_compute_not_ready.
     Disabled drafts create no notifications or workload changes. Active notification policies never stop
     workloads.
 
     Args:
         idempotency_key (str):
-        body (CreateFinancialBudgetRequest): New budget intent; enabled policies support monitored
-            notify or compute-only stop_previews. Other actions and strict policies remain disabled
-            drafts.
+        body (CreateFinancialBudgetRequest): New budget intent; activation supports monitored
+            notify, monitored compute-only stop_previews, and app-scoped strict gross compute
+            suspend_workloads with zero drain and no alert thresholds. Strict activation requires a
+            quiet app, complete accounting, and native compute owners.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -177,21 +185,25 @@ async def asyncio_detailed(
     body: CreateFinancialBudgetRequest,
     idempotency_key: str,
 ) -> Response[FinancialBudgetResponse | Problem]:
-    """Save a budget policy with atomic revision audit; monitored notifications can activate.
+    """Save a budget policy with atomic revision audit and supported activation checks.
 
      Requires admin scope and session MFA. Idempotency-Key is required (1..255 bytes).
     It fixes creation identity beyond replay-cache retention. Reusing an operation
     identity cannot overwrite a changed or deleted policy. Disabled policies are drafts.
-    Activation is accepted only for mode=monitored and action=notify; other enabled responses return 422
-    financial_budget_activation_unavailable.
+    Activation supports monitored notify, monitored compute-only stop_previews, and strict app gross
+    compute suspend_workloads with zero drain and no alert thresholds. Other enabled responses return
+    422 financial_budget_activation_unavailable. Strict app activation also requires a quiet app,
+    complete accounting and native owners; unavailable authority returns 422
+    financial_compute_not_ready.
     Disabled drafts create no notifications or workload changes. Active notification policies never stop
     workloads.
 
     Args:
         idempotency_key (str):
-        body (CreateFinancialBudgetRequest): New budget intent; enabled policies support monitored
-            notify or compute-only stop_previews. Other actions and strict policies remain disabled
-            drafts.
+        body (CreateFinancialBudgetRequest): New budget intent; activation supports monitored
+            notify, monitored compute-only stop_previews, and app-scoped strict gross compute
+            suspend_workloads with zero drain and no alert thresholds. Strict activation requires a
+            quiet app, complete accounting, and native compute owners.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -217,21 +229,25 @@ async def asyncio(
     body: CreateFinancialBudgetRequest,
     idempotency_key: str,
 ) -> FinancialBudgetResponse | Problem | None:
-    """Save a budget policy with atomic revision audit; monitored notifications can activate.
+    """Save a budget policy with atomic revision audit and supported activation checks.
 
      Requires admin scope and session MFA. Idempotency-Key is required (1..255 bytes).
     It fixes creation identity beyond replay-cache retention. Reusing an operation
     identity cannot overwrite a changed or deleted policy. Disabled policies are drafts.
-    Activation is accepted only for mode=monitored and action=notify; other enabled responses return 422
-    financial_budget_activation_unavailable.
+    Activation supports monitored notify, monitored compute-only stop_previews, and strict app gross
+    compute suspend_workloads with zero drain and no alert thresholds. Other enabled responses return
+    422 financial_budget_activation_unavailable. Strict app activation also requires a quiet app,
+    complete accounting and native owners; unavailable authority returns 422
+    financial_compute_not_ready.
     Disabled drafts create no notifications or workload changes. Active notification policies never stop
     workloads.
 
     Args:
         idempotency_key (str):
-        body (CreateFinancialBudgetRequest): New budget intent; enabled policies support monitored
-            notify or compute-only stop_previews. Other actions and strict policies remain disabled
-            drafts.
+        body (CreateFinancialBudgetRequest): New budget intent; activation supports monitored
+            notify, monitored compute-only stop_previews, and app-scoped strict gross compute
+            suspend_workloads with zero drain and no alert thresholds. Strict activation requires a
+            quiet app, complete accounting, and native compute owners.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

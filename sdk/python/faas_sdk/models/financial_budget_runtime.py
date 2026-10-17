@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from ..models.financial_budget_alert import FinancialBudgetAlert
     from ..models.financial_budget_evaluation import FinancialBudgetEvaluation
     from ..models.financial_budget_stop import FinancialBudgetStop
+    from ..models.financial_compute_balance import FinancialComputeBalance
 
 
 T = TypeVar("T", bound="FinancialBudgetRuntime")
@@ -25,6 +26,10 @@ class FinancialBudgetRuntime:
     """
 
     alerts: list[FinancialBudgetAlert]
+    compute: FinancialComputeBalance | Unset = UNSET
+    """Conservative app admission ledger before allowances, including startup and rounding per funded minute. These
+    commitments may exceed invoice compute charges. Expired funding stays reserved until physical retirement and
+    settlement. Other meters, subscriptions and taxes are excluded."""
     evaluation: FinancialBudgetEvaluation | Unset = UNSET
     """Retained evidence boundary; an absent known_millicents means evaluation unavailable, never zero. Partial
     known costs can trigger labelled notifications; stale observations cannot create new alerts."""
@@ -36,6 +41,10 @@ class FinancialBudgetRuntime:
         for alerts_item_data in self.alerts:
             alerts_item = alerts_item_data.to_dict()
             alerts.append(alerts_item)
+
+        compute: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.compute, Unset):
+            compute = self.compute.to_dict()
 
         evaluation: dict[str, Any] | Unset = UNSET
         if not isinstance(self.evaluation, Unset):
@@ -55,6 +64,8 @@ class FinancialBudgetRuntime:
                 "alerts": alerts,
             }
         )
+        if compute is not UNSET:
+            field_dict["compute"] = compute
         if evaluation is not UNSET:
             field_dict["evaluation"] = evaluation
         if stops is not UNSET:
@@ -67,6 +78,7 @@ class FinancialBudgetRuntime:
         from ..models.financial_budget_alert import FinancialBudgetAlert
         from ..models.financial_budget_evaluation import FinancialBudgetEvaluation
         from ..models.financial_budget_stop import FinancialBudgetStop
+        from ..models.financial_compute_balance import FinancialComputeBalance
 
         d = dict(src_dict)
         alerts = []
@@ -75,6 +87,13 @@ class FinancialBudgetRuntime:
             alerts_item = FinancialBudgetAlert.from_dict(alerts_item_data)
 
             alerts.append(alerts_item)
+
+        _compute = d.pop("compute", UNSET)
+        compute: FinancialComputeBalance | Unset
+        if isinstance(_compute, Unset):
+            compute = UNSET
+        else:
+            compute = FinancialComputeBalance.from_dict(_compute)
 
         _evaluation = d.pop("evaluation", UNSET)
         evaluation: FinancialBudgetEvaluation | Unset
@@ -94,6 +113,7 @@ class FinancialBudgetRuntime:
 
         financial_budget_runtime = cls(
             alerts=alerts,
+            compute=compute,
             evaluation=evaluation,
             stops=stops,
         )

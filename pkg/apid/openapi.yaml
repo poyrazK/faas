@@ -43957,12 +43957,12 @@ paths:
     post:
       tags: [billing]
       operationId: createFinancialBudget
-      summary: Save a budget policy with atomic revision audit; monitored notifications can activate.
+      summary: Save a budget policy with atomic revision audit and supported activation checks.
       description: |
         Requires admin scope and session MFA. Idempotency-Key is required (1..255 bytes).
         It fixes creation identity beyond replay-cache retention. Reusing an operation
         identity cannot overwrite a changed or deleted policy. Disabled policies are drafts.
-        Activation is accepted only for mode=monitored and action=notify; other enabled responses return 422 financial_budget_activation_unavailable.
+        Activation supports monitored notify, monitored compute-only stop_previews, and strict app gross compute suspend_workloads with zero drain and no alert thresholds. Other enabled responses return 422 financial_budget_activation_unavailable. Strict app activation also requires a quiet app, complete accounting and native owners; unavailable authority returns 422 financial_compute_not_ready.
         Disabled drafts create no notifications or workload changes. Active notification policies never stop workloads.
       parameters:
         - name: Idempotency-Key
@@ -44022,7 +44022,7 @@ paths:
       description: |
         Requires admin scope, session MFA and Idempotency-Key. expected_revision
         must match the current policy; stale edits return 409. Monitored notify and compute-only stop_previews
-        policies can activate; other actions and strict policies must remain disabled.
+        policies can activate, along with strict app gross compute suspend_workloads with zero drain and no alert thresholds. A limit below committed and reserved funding returns 422 financial_compute_budget_too_low. Other policies remain disabled drafts.
         Scope ownership and action eligibility are revalidated. Payment, security and user holds are independent of this intent.
       parameters:
         - name: Idempotency-Key
@@ -61390,7 +61390,7 @@ components:
         updated_at: { type: string, format: date-time }
         deleted_at: { type: string, format: date-time }
         status: { type: string, enum: [draft, unavailable, active, deleted] }
-        enforcement_ready: { type: boolean, description: True when the selected stopping integration is available; actual per-target teardown is reported in runtime.stops. This is not a strict spending ceiling. }
+        enforcement_ready: { type: boolean, description: True when the selected stopping integration is available; actual per-target teardown is reported in runtime.stops. Strict compute balances are reported in runtime.compute. }
         notification_ready: { type: boolean, description: True for an enabled supported monitored policy; inspect runtime for evaluation freshness and delivery status. }
         runtime: { $ref: '#/components/schemas/FinancialBudgetRuntime' }
         reasons: { type: array, items: { type: string } }
@@ -61448,11 +61448,27 @@ components:
         resume_rule: { type: string, enum: [manual, next_period] }
         evaluation: { $ref: '#/components/schemas/FinancialBudgetEvaluation' }
         targets: { type: array, maxItems: 10000, items: { $ref: '#/components/schemas/FinancialBudgetStopTarget' } }
+    FinancialComputeBalance:
+      type: object
+      description: Conservative app admission ledger before allowances, including startup and rounding per funded minute. These commitments may exceed invoice compute charges. Expired funding stays reserved until physical retirement and settlement. Other meters, subscriptions and taxes are excluded.
+      required: [initialized, app_id, period_start, period_end, committed_millicents, reserved_millicents, remaining_millicents, unconfirmed_leases, held, observed_at]
+      properties:
+        initialized: { type: boolean }
+        app_id: { type: string, format: uuid }
+        period_start: { type: string, format: date-time }
+        period_end: { type: string, format: date-time }
+        committed_millicents: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        reserved_millicents: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        remaining_millicents: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        unconfirmed_leases: { type: integer, minimum: 0, maximum: 10000 }
+        held: { type: boolean }
+        observed_at: { type: string, format: date-time }
     FinancialBudgetRuntime:
       type: object
       description: Evaluation and alerts cover the current revision and UTC month. Active manual stop decisions can carry over from earlier months until a policy mutation releases that revision.
       required: [alerts]
       properties:
+        compute: { $ref: '#/components/schemas/FinancialComputeBalance' }
         evaluation: { $ref: '#/components/schemas/FinancialBudgetEvaluation' }
         alerts: { type: array, maxItems: 9, items: { $ref: '#/components/schemas/FinancialBudgetAlert' } }
         stops: { type: array, maxItems: 1, items: { $ref: '#/components/schemas/FinancialBudgetStop' } }
@@ -61464,7 +61480,7 @@ components:
         budgets: { type: array, maxItems: 128, items: { $ref: '#/components/schemas/FinancialBudgetResponse' } }
     CreateFinancialBudgetRequest:
       type: object
-      description: New budget intent; enabled policies support monitored notify or compute-only stop_previews. Other actions and strict policies remain disabled drafts.
+      description: New budget intent; activation supports monitored notify, monitored compute-only stop_previews, and app-scoped strict gross compute suspend_workloads with zero drain and no alert thresholds. Strict activation requires a quiet app, complete accounting, and native compute owners.
       required: [spec]
       properties:
         spec: { $ref: '#/components/schemas/FinancialBudgetSpec' }
@@ -61517,10 +61533,10 @@ components:
         meters: { type: array, minItems: 1, maxItems: 2, uniqueItems: true, description: Sorted meter names; strict mode covers compute only., items: { type: string, enum: [compute, egress] } }
         basis: { type: string, enum: [net_usage, gross_usage], description: Net usage after the shared account allowance or gross usage before it; strict resource scopes require gross usage. }
         limit_millicents: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
-        notify_millicents: { type: array, maxItems: 8, uniqueItems: true, description: Increasing nonnegative thresholds at or below the limit., items: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 } }
+        notify_millicents: { type: array, maxItems: 8, uniqueItems: true, description: Increasing nonnegative thresholds at or below the limit. Strict app compute requires an empty array; configure a separate monitored policy for alerts., items: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 } }
         mode: { type: string, enum: [monitored, strict] }
         action: { type: string, enum: [notify, reject_traffic, suspend_background, stop_previews, suspend_workloads] }
-        drain_seconds: { type: integer, minimum: 0, maximum: 300, description: Notify uses zero; stopping targets drain before the deadline. }
+        drain_seconds: { type: integer, minimum: 0, maximum: 300, description: Notify and strict app compute use zero; monitored stopping targets drain before the deadline. }
         resume_rule: { type: string, enum: [manual, next_period] }
         enabled: { type: boolean }
     FinancialBudgetPreviewRequest:

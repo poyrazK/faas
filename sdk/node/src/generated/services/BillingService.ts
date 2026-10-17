@@ -229,11 +229,11 @@ export class BillingService {
     });
   }
   /**
-   * Save a budget policy with atomic revision audit; monitored notifications can activate.
+   * Save a budget policy with atomic revision audit and supported activation checks.
    * Requires admin scope and session MFA. Idempotency-Key is required (1..255 bytes).
    * It fixes creation identity beyond replay-cache retention. Reusing an operation
    * identity cannot overwrite a changed or deleted policy. Disabled policies are drafts.
-   * Activation is accepted only for mode=monitored and action=notify; other enabled responses return 422 financial_budget_activation_unavailable.
+   * Activation supports monitored notify, monitored compute-only stop_previews, and strict app gross compute suspend_workloads with zero drain and no alert thresholds. Other enabled responses return 422 financial_budget_activation_unavailable. Strict app activation also requires a quiet app, complete accounting and native owners; unavailable authority returns 422 financial_compute_not_ready.
    * Disabled drafts create no notifications or workload changes. Active notification policies never stop workloads.
    *
    * @returns FinancialBudgetResponse Saved draft with revision 1; retries retain its identity.
@@ -307,7 +307,7 @@ export class BillingService {
    * Replace a budget policy at its expected revision.
    * Requires admin scope, session MFA and Idempotency-Key. expected_revision
    * must match the current policy; stale edits return 409. Monitored notify and compute-only stop_previews
-   * policies can activate; other actions and strict policies must remain disabled.
+   * policies can activate, along with strict app gross compute suspend_workloads with zero drain and no alert thresholds. A limit below committed and reserved funding returns 422 financial_compute_budget_too_low. Other policies remain disabled drafts.
    * Scope ownership and action eligibility are revalidated. Payment, security and user holds are independent of this intent.
    *
    * @returns FinancialBudgetResponse Updated draft and incremented revision.

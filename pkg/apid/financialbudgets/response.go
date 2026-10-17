@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/financial"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -21,6 +22,37 @@ func Response(ctx context.Context, store state.Store, p state.FinancialBudget, n
 		return out, nil
 	}
 	out.Status = "unavailable"
+	if financial.StrictAppCompute(p.Spec) {
+		compute, ok := store.(state.FinancialComputeStore)
+		if !ok {
+			return out, nil
+		}
+		balance, err := compute.FinancialComputeBalance(ctx, p, now)
+		if err != nil {
+			return out, err
+		}
+		out.Status = "active"
+		out.EnforcementReady = true
+		out.Runtime = &financial.BudgetRuntime{Compute: &balance, Alerts: []financial.BudgetAlert{}}
+		out.Reasons = []string{"strict_app_gross_compute", "conservative_compute_commitments", "funded_execution_window_only", "subscription_storage_egress_tax_excluded"}
+		if !balance.Initialized {
+			out.Reasons = append(out.Reasons, "awaiting_period_initialization")
+		}
+		if balance.Held {
+			out.Reasons = append(out.Reasons, "compute_budget_held")
+		}
+		report, readErr := billing.ReadFinancialCosts(ctx, store, p.AccountID, financial.ComputeMonth(now), now)
+		if readErr == nil {
+			evaluation, evalErr := billing.EvaluateFinancialBudget(report, p.Spec, now)
+			if evalErr != nil {
+				return out, evalErr
+			}
+			out.Runtime.Evaluation = &evaluation
+		} else {
+			out.Reasons = append(out.Reasons, "cost_evidence_unavailable")
+		}
+		return out, nil
+	}
 	monitor, ok := store.(state.FinancialBudgetMonitorStore)
 	if !ok || !financial.Monitored(p.Spec) {
 		return out, nil

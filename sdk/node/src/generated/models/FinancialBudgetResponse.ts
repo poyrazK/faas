@@ -17,7 +17,7 @@ export type FinancialBudgetResponse = {
   deleted_at?: string;
   status: 'draft' | 'unavailable' | 'active' | 'deleted';
   /**
-   * True when the selected stopping integration is available; actual per-target teardown is reported in runtime.stops. This is not a strict spending ceiling.
+   * True when the selected stopping integration is available; actual per-target teardown is reported in runtime.stops. Strict compute balances are reported in runtime.compute.
    */
   enforcement_ready: boolean;
   /**

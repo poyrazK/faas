@@ -48,7 +48,8 @@ a month, the month keeps the largest allowance any of its plans granted.
 
 This financial visibility preview reports supported usage costs and budget
 policies. Enabled monitored notification policies send spending alerts; disabled
-drafts do not. Workload stopping and strict budget enforcement remain unavailable.
+drafts do not. Monitored preview stopping and strict app compute are local
+candidates pending native acceptance; see their sections below.
 Coverage and unavailable bill components are reported explicitly.
 
 ```bash
@@ -170,8 +171,9 @@ stop every covered workload.
 
 Notification-only policies report `enforcement_ready: false`. Monitored
 compute-only preview stopping reports integration readiness separately from
-actual per-target stopping acknowledgements. Other stopping actions and strict
-compute reservations remain unavailable. A successful preview does
+actual per-target stopping acknowledgements. The strict app compute candidate
+reports conservative commitments and funding separately. Other stopping actions
+and strict scopes remain unavailable. A successful preview does
 not activate a spending limit. Monitored responses can exceed a threshold while
 usage arrives or workloads drain. Full-invoice hard limits are not implied by
 compute controls.
@@ -185,7 +187,7 @@ policy specifications remain accessible through the API and CLI. EUR text is
 parsed to exact millicents. Disabled drafts do not stop usage or send alerts.
 
 ```bash
-# Use enabled=false for drafts. Only mode=monitored, action=notify can activate.
+# Use enabled=false for unsupported policy drafts; see supported modes below.
 gregale billing budgets create --file budget-draft.json --key previews-october --json
 gregale billing budgets list --json
 gregale billing budgets get --json POLICY_ID
@@ -211,7 +213,8 @@ deletion retains that history, accessible through
 page. At most 128 nondeleted policies are allowed per account.
 
 `mode=monitored` with `action=notify`, or compute-only `action=stop_previews`,
-accepts `enabled=true`. Other enabled
+accepts `enabled=true`. The strict app compute contract below also supports
+activation when its readiness checks pass. Other enabled
 responses return 422 `financial_budget_activation_unavailable` without changing
 policy intent. Save `enabled=false` to retain those drafts. A notification policy
 reports `status=active`, `notification_ready=true` and `enforcement_ready=false`.
@@ -507,3 +510,44 @@ policy mutation. Re-enabling evaluates existing monthly spending again.
 This is a monitored response: usage ingestion, scheduler sweeps, draining and
 teardown can exceed the threshold. Production and uncovered meters can continue
 spending. It does not establish a strict compute or full-invoice ceiling.
+
+
+## Strict app compute candidate
+
+This implementation is local; native KVM acceptance and release review remain
+required. Configure `scope={kind:app,id:APP_ID}`, `mode=strict`,
+`basis=gross_usage`, `meters=[compute]`, `action=suspend_workloads`,
+`drain_seconds=0`, and `notify_millicents=[]`. A separate monitored policy can
+send spending alerts. Subscription, storage, network egress, taxes, builds and
+independent job resources are outside this app compute limit.
+
+Activation requires a quiet app, settled prior VM ownership, complete retained
+closed-minute accounting from app creation or UTC month start, and matching
+native compute owners on all active nodes. Unsupported dedicated qualification
+restore/job paths fail closed. Live migration cannot duplicate an active funded
+instance identity; drain it before moving that workload.
+
+Every VM reserves startup/execution and teardown funding before allocation.
+Renewal failure preserves a local deadline; no timeout releases the money.
+Shutdown and financial settlement must be confirmed. The API's `runtime.compute`
+and `gregale billing budgets get POLICY_ID` show committed, reserved and remaining
+millicents, unconfirmed VM attempts and durable holds. Commitments use a paid-rate
+upper bound, include startup, and round up per funded minute; they can exceed
+known billed compute. Cost evidence retains its own freshness/coverage status.
+
+Changing/deleting/replacing a policy never resets the app/month book. A new
+limit must cover existing funding. Manual holds cross UTC months until their
+policy changes; next-period holds reset at the next UTC month. Independent
+payment, security and user holds still apply.
+
+Execution funding ends before the UTC reset with thirty seconds for teardown.
+Work may pause at that boundary until earlier attempts settle and the new
+month's accounting and funding are ready.
+
+The meter charges only funded windows, even when instance rows are stale after
+local shutdown. Gregale absorbs unfunded teardown tail. Strict budgets preempt
+capacity floors; the book waives synthetic floor charges for that UTC month,
+including replay after policy deletion. This bounds supported customer compute
+charges, rather than promising a ceiling on host cost or the complete invoice.
+See the [decision](adr/20261017-strict-app-compute-reservations.md) and
+[native acceptance procedure](runbooks/financial-strict-compute-acceptance.md).

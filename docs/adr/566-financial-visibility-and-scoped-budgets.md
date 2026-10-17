@@ -22,8 +22,9 @@ commit atomically. Preview/runtime fields never claim workload stopping from
 notification readiness. Preview stopping uses independent latched decisions,
 authoritative preview identity, warm/cold admission guards, retained command VM
 ownership and per-target scheduler teardown acknowledgements. Publication and
-native lifecycle acceptance remain required; strict reservations and other
-stopping actions remain future work. See [release scope](../financial-controls-implementation.md).
+native lifecycle acceptance remain required. A local strict app compute candidate
+now implements [reservations and funded billing](20261017-strict-app-compute-reservations.md);
+other strict scopes and stopping actions remain future work. See [release scope](../financial-controls-implementation.md).
 
 ## Accounting contract
 

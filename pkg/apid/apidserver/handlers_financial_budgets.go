@@ -87,6 +87,7 @@ func (s *server) createFinancialBudget(w http.ResponseWriter, r *http.Request, a
 		api.WriteProblem(w, api.ErrValidation("expected one bounded budget spec"))
 		return
 	}
+	req.Spec = state.NormalizeFinancialBudgetSpec(req.Spec)
 	if !validateFinancialBudgetActivation(w, r, store, acct.ID, req.Spec) {
 		return
 	}
@@ -123,6 +124,7 @@ func (s *server) updateFinancialBudget(w http.ResponseWriter, r *http.Request, a
 		api.WriteProblem(w, api.ErrValidation("expected_revision must be the policy's current revision"))
 		return
 	}
+	req.Spec = state.NormalizeFinancialBudgetSpec(req.Spec)
 	if !validateFinancialBudgetActivation(w, r, store, acct.ID, req.Spec) {
 		return
 	}
@@ -187,13 +189,18 @@ func validateFinancialBudgetActivation(w http.ResponseWriter, r *http.Request, s
 		return false
 	}
 	if spec.Enabled {
+		if financial.StrictAppCompute(spec) {
+			if _, ok := store.(state.FinancialComputeStore); ok {
+				return true
+			}
+		}
 		_, monitoring := store.(state.FinancialBudgetMonitorStore)
 		_, stopping := store.(state.FinancialBudgetStopStore)
 		_, commandOwnership := store.(state.FinancialPreviewCommandStore)
 		if monitoring && (financial.NotificationOnly(spec) || stopping && commandOwnership && financial.PreviewStopping(spec)) {
 			return true
 		}
-		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, "financial_budget_activation_unavailable", "Budget activation unavailable", "Activate monitored notify policies or monitored compute-only stop_previews policies. Other actions and strict limits must remain disabled drafts."))
+		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, "financial_budget_activation_unavailable", "Budget activation unavailable", "Activate monitored notify, monitored compute-only stop_previews, or app-scoped strict gross compute suspend_workloads with zero drain and no alert thresholds. Other policies must remain disabled drafts."))
 		return false
 	}
 	return true
@@ -211,6 +218,8 @@ func financialBudgetActor(r *http.Request) string {
 }
 
 func financialBudgetSpecsEqual(a, b financial.BudgetSpec) bool {
+	a = state.NormalizeFinancialBudgetSpec(a)
+	b = state.NormalizeFinancialBudgetSpec(b)
 	return a.Name == b.Name && a.Scope == b.Scope && a.Currency == b.Currency && slices.Equal(a.Meters, b.Meters) && a.Basis == b.Basis && a.LimitMillicents == b.LimitMillicents && slices.Equal(a.NotifyMillicents, b.NotifyMillicents) && a.Mode == b.Mode && a.Action == b.Action && a.DrainSeconds == b.DrainSeconds && a.ResumeRule == b.ResumeRule && a.Enabled == b.Enabled
 }
 
@@ -245,6 +254,12 @@ func financialBudgetHistoryQuery(raw string) (int64, int, error) {
 }
 
 func financialBudgetProblem(err error) *api.Problem {
+	if errors.Is(err, financial.ErrComputeUnavailable) {
+		return api.NewProblem(422, "financial_compute_not_ready", "Strict compute activation unavailable", "Activation requires a quiet app, complete retained compute accounting, and current native compute owners on every active node.")
+	}
+	if errors.Is(err, financial.ErrComputeBudget) {
+		return api.NewProblem(422, "financial_compute_budget_too_low", "Compute budget below committed funding", "The limit must cover this month's committed and reserved compute. Changing a policy does not reset spending.")
+	}
 	if errors.Is(err, state.ErrConflict) {
 		return api.NewProblem(http.StatusConflict, api.CodeConflict, "Budget revision conflict", "Read the current policy before retrying. A stale revision or reused operation identity cannot overwrite it.")
 	}
