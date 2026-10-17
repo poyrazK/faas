@@ -1021,18 +1021,24 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// suspended → deleted_pending transitions (spec §4.7, §17). Wired
 	// into the loop alongside sample/quota/stripe so all five timers
 	// share the same ctx-cancel lifecycle.
+	nonpaymentDeletionCommands, err := configureNonpaymentDeletionCommands(ctx, deps.getenv)
+	if err != nil {
+		return err
+	}
 	suspensionCommands, err := configureSuspensionCommands(ctx, deps.getenv)
 	if err != nil {
 		return err
 	}
 	dunning := meter.NewDunning(meter.DunningParams{
-		SuspensionCommands:  suspensionCommands,
-		SuspensionRequested: func() bool { return deps.getenv(internalmail.AccountSuspendedOutboxEnableEnv) == "1" },
-		Store:               store,
-		Parker:              parker,
-		Mailer:              mailer,
-		Notif:               pn,
-		Log:                 log,
+		NonpaymentDeletionCommands:  nonpaymentDeletionCommands,
+		NonpaymentDeletionRequested: func() bool { return deps.getenv(internalmail.NonpaymentDeletionOutboxEnableEnv) == "1" },
+		SuspensionCommands:          suspensionCommands,
+		SuspensionRequested:         func() bool { return deps.getenv(internalmail.AccountSuspendedOutboxEnableEnv) == "1" },
+		Store:                       store,
+		Parker:                      parker,
+		Mailer:                      mailer,
+		Notif:                       pn,
+		Log:                         log,
 	})
 
 	// Per-daemon Prometheus registry (ADR-015) — built unconditionally

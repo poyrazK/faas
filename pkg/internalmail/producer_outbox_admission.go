@@ -98,6 +98,10 @@ func (s *Service) ProducerOutboxAdmission(ctx context.Context, id string) (Produ
 		review.CanAcknowledge = false
 		review.BlockReason = "account_restored_disabled"
 	}
+	if review.Template == ProducerOutboxNonpaymentDeletionTemplate && !s.nonpaymentDeletionOutboxEnabled() {
+		review.CanAcknowledge = false
+		review.BlockReason = "nonpayment_deletion_disabled"
+	}
 	if review.Template == ProducerOutboxAccountSuspendedTemplate && !s.accountSuspendedOutboxEnabled() {
 		review.CanAcknowledge = false
 		review.BlockReason = "account_suspended_disabled"

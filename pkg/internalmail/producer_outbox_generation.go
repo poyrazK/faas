@@ -15,6 +15,7 @@ const ProducerOutboxPasswordResetTemplate = "password_reset"
 const ProducerOutboxMagicLinkTemplate = "magic_link"
 const ProducerOutboxMFADisableTemplate = "mfa_disable_request"
 const ProducerOutboxMFADisabledAlertTemplate = "mfa_disabled"
+const ProducerOutboxNonpaymentDeletionTemplate = "nonpayment_deletion"
 const ProducerOutboxAccountSuspendedTemplate = "account_suspended"
 const ProducerOutboxAccountRestoredTemplate = "account_restored"
 const ProducerOutboxPaymentFailedTemplate = "payment_failed"
@@ -93,6 +94,8 @@ func (s *Service) producerOutboxContext(ctx context.Context, header http.Header)
 			gate = s.magicLinkOutboxEnabled
 		case ProducerOutboxMFADisableTemplate:
 			gate = s.mfaDisableOutboxEnabled
+		case ProducerOutboxNonpaymentDeletionTemplate:
+			gate = s.nonpaymentDeletionOutboxEnabled
 		case ProducerOutboxAccountSuspendedTemplate:
 			gate = s.accountSuspendedOutboxEnabled
 		case ProducerOutboxAccountRestoredTemplate:
@@ -108,7 +111,7 @@ func (s *Service) producerOutboxContext(ctx context.Context, header http.Header)
 		case ProducerOutboxMFARecoveryAlertTemplate:
 			gate = s.mfaRecoveryAlertOutboxEnabled
 		default:
-			if !s.verificationOutboxEnabled() && !s.passwordResetOutboxEnabled() && !s.magicLinkOutboxEnabled() && !s.mfaRecoveryAlertOutboxEnabled() && !s.mfaDisableOutboxEnabled() && !s.mfaDisabledAlertOutboxEnabled() && !s.passwordChangedAlertOutboxEnabled() && !s.mfaEnabledAlertOutboxEnabled() && !s.paymentFailedOutboxEnabled() && !s.accountRestoredOutboxEnabled() && !s.accountSuspendedOutboxEnabled() {
+			if !s.verificationOutboxEnabled() && !s.passwordResetOutboxEnabled() && !s.magicLinkOutboxEnabled() && !s.mfaRecoveryAlertOutboxEnabled() && !s.mfaDisableOutboxEnabled() && !s.mfaDisabledAlertOutboxEnabled() && !s.passwordChangedAlertOutboxEnabled() && !s.mfaEnabledAlertOutboxEnabled() && !s.paymentFailedOutboxEnabled() && !s.accountRestoredOutboxEnabled() && !s.accountSuspendedOutboxEnabled() && !s.nonpaymentDeletionOutboxEnabled() {
 				return ctx, ErrDisabled
 			}
 			return ctx, ErrInvalid
@@ -157,4 +160,8 @@ func (s *PGStore) checkOutboxGeneration(ctx context.Context, db q.DBTX, expected
 		return ErrRecoveryHeld
 	}
 	return nil
+}
+
+func (s *Service) nonpaymentDeletionOutboxEnabled() bool {
+	return s.producerOutboxEnabled() && s.NonpaymentDeletionOutboxEnabled != nil && s.NonpaymentDeletionOutboxEnabled()
 }

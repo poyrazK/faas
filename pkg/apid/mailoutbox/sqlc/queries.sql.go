@@ -249,7 +249,7 @@ SELECT o.id,o.revision,o.state,o.template,o.from_address,o.expires_at,o.recovery
     coalesce(m.sender_address,'')::text AS sender_address
 FROM platform_mail_producer_outbox o
 LEFT JOIN internal_mail_messages m ON m.namespace=o.namespace AND m.producer_id=o.producer_id
-    AND m.idempotency_key=(CASE o.template WHEN 'email_verification' THEN 'verify-email:' WHEN 'password_reset' THEN 'password-reset:' WHEN 'magic_link' THEN 'magic-link:' WHEN 'mfa_recovery_used' THEN 'mfa-recovery-alert:' WHEN 'account_suspended' THEN 'account-suspended:' WHEN 'account_restored' THEN 'account-restored:' WHEN 'payment_failed' THEN 'payment-failed:' WHEN 'mfa_enabled' THEN 'mfa-enabled:' WHEN 'password_changed' THEN 'password-changed:' WHEN 'mfa_disabled' THEN 'mfa-disabled:' WHEN 'mfa_disable_request' THEN 'mfa-disable:' ELSE 'account-delete:' END)||o.id::text
+    AND m.idempotency_key=(CASE o.template WHEN 'email_verification' THEN 'verify-email:' WHEN 'password_reset' THEN 'password-reset:' WHEN 'magic_link' THEN 'magic-link:' WHEN 'mfa_recovery_used' THEN 'mfa-recovery-alert:' WHEN 'nonpayment_deletion' THEN 'nonpayment-deletion:' WHEN 'account_suspended' THEN 'account-suspended:' WHEN 'account_restored' THEN 'account-restored:' WHEN 'payment_failed' THEN 'payment-failed:' WHEN 'mfa_enabled' THEN 'mfa-enabled:' WHEN 'password_changed' THEN 'password-changed:' WHEN 'mfa_disabled' THEN 'mfa-disabled:' WHEN 'mfa_disable_request' THEN 'mfa-disable:' ELSE 'account-delete:' END)||o.id::text
 WHERE o.namespace=$1 AND o.id=$2
 `
 
@@ -311,6 +311,18 @@ func (q *Queries) CancelPaymentFailedIntents(ctx context.Context, db DBTX, accou
 	return err
 }
 
+const cancelPreDeletionDunningIntents = `-- name: CancelPreDeletionDunningIntents :exec
+UPDATE platform_mail_producer_outbox SET state='cancelled',code='account_changed',
+    recipient_address='',lease_id=NULL,lease_until=NULL,sealed_security_alert='',security_alert_key_id='',
+    updated_at=clock_timestamp(),revision=revision+1
+WHERE account_id=$1 AND template IN ('payment_failed','account_suspended') AND state IN ('queued','claimed')
+`
+
+func (q *Queries) CancelPreDeletionDunningIntents(ctx context.Context, db DBTX, accountID pgtype.UUID) error {
+	_, err := db.Exec(ctx, cancelPreDeletionDunningIntents, accountID)
+	return err
+}
+
 const claim = `-- name: Claim :one
 WITH candidate AS (
     SELECT id FROM platform_mail_producer_outbox o WHERE o.namespace=$3
@@ -323,28 +335,30 @@ WITH candidate AS (
           AND o.verification_key_id=ANY($14::text[]))
         OR (o.template='mfa_disable_request' AND $15::boolean AND o.verification_origin=$16::text
           AND o.verification_key_id=ANY($17::text[]))
-        OR (o.template='account_suspended' AND $18::boolean
+        OR (o.template='nonpayment_deletion' AND $18::boolean
           AND o.security_alert_key_id=ANY($19::text[]))
-        OR (o.template='account_restored' AND $20::boolean
+        OR (o.template='account_suspended' AND $20::boolean
           AND o.security_alert_key_id=ANY($21::text[]))
-        OR (o.template='payment_failed' AND $22::boolean
+        OR (o.template='account_restored' AND $22::boolean
           AND o.security_alert_key_id=ANY($23::text[]))
-        OR (o.template='mfa_enabled' AND $24::boolean
+        OR (o.template='payment_failed' AND $24::boolean
           AND o.security_alert_key_id=ANY($25::text[]))
-        OR (o.template='password_changed' AND $26::boolean
+        OR (o.template='mfa_enabled' AND $26::boolean
           AND o.security_alert_key_id=ANY($27::text[]))
-        OR (o.template='mfa_disabled' AND $28::boolean
+        OR (o.template='password_changed' AND $28::boolean
           AND o.security_alert_key_id=ANY($29::text[]))
-        OR (o.template='mfa_recovery_used' AND $30::boolean
-          AND o.security_alert_key_id=ANY($31::text[])))
-      AND o.attempts<$32 AND o.expires_at>clock_timestamp()
+        OR (o.template='mfa_disabled' AND $30::boolean
+          AND o.security_alert_key_id=ANY($31::text[]))
+        OR (o.template='mfa_recovery_used' AND $32::boolean
+          AND o.security_alert_key_id=ANY($33::text[])))
+      AND o.attempts<$34 AND o.expires_at>clock_timestamp()
       AND ((o.state='queued' AND o.next_attempt_at<=clock_timestamp()) OR (o.state='claimed' AND o.lease_until<=clock_timestamp()))
       AND NOT EXISTS(SELECT 1 FROM internal_mail_recovery_state s WHERE s.namespace=o.namespace AND (s.held OR s.recovery_id<>o.recovery_id))
     ORDER BY next_attempt_at,id LIMIT 1 FOR UPDATE SKIP LOCKED
 )
 UPDATE platform_mail_producer_outbox o SET state='claimed',attempts=attempts+1,lease_id=$1,
     lease_until=clock_timestamp()+$2::integer*interval '1 second',updated_at=clock_timestamp(),revision=o.revision+1
-FROM candidate c WHERE o.id=c.id RETURNING o.id, o.account_id, o.namespace, o.producer_id, o.from_address, o.recipient_address, o.template, o.template_version, o.deletion_requested_at, o.restore_until, o.expires_at, o.recovery_id, o.state, o.attempts, o.next_attempt_at, o.lease_id, o.lease_until, o.code, o.created_at, o.updated_at, o.revision, o.verification_token_hash, o.sealed_verification, o.verification_key_id, o.verification_origin, o.sealed_security_alert, o.security_alert_key_id, o.payment_past_due_at, o.account_restored_revision, o.suspension_past_due_at, o.account_suspended_revision
+FROM candidate c WHERE o.id=c.id RETURNING o.id, o.account_id, o.namespace, o.producer_id, o.from_address, o.recipient_address, o.template, o.template_version, o.deletion_requested_at, o.restore_until, o.expires_at, o.recovery_id, o.state, o.attempts, o.next_attempt_at, o.lease_id, o.lease_until, o.code, o.created_at, o.updated_at, o.revision, o.verification_token_hash, o.sealed_verification, o.verification_key_id, o.verification_origin, o.sealed_security_alert, o.security_alert_key_id, o.payment_past_due_at, o.account_restored_revision, o.suspension_past_due_at, o.account_suspended_revision, o.nonpayment_past_due_at, o.nonpayment_deletion_revision, o.nonpayment_deletion_at
 `
 
 type ClaimParams struct {
@@ -365,6 +379,8 @@ type ClaimParams struct {
 	MfaDisableEnabled           bool
 	MfaDisableOrigin            string
 	MfaDisableKeys              []string
+	NonpaymentDeletionEnabled   bool
+	NonpaymentDeletionKeys      []string
 	AccountSuspendedEnabled     bool
 	AccountSuspendedKeys        []string
 	AccountRestoredEnabled      bool
@@ -401,6 +417,8 @@ func (q *Queries) Claim(ctx context.Context, db DBTX, arg ClaimParams) (Platform
 		arg.MfaDisableEnabled,
 		arg.MfaDisableOrigin,
 		arg.MfaDisableKeys,
+		arg.NonpaymentDeletionEnabled,
+		arg.NonpaymentDeletionKeys,
 		arg.AccountSuspendedEnabled,
 		arg.AccountSuspendedKeys,
 		arg.AccountRestoredEnabled,
@@ -450,6 +468,9 @@ func (q *Queries) Claim(ctx context.Context, db DBTX, arg ClaimParams) (Platform
 		&i.AccountRestoredRevision,
 		&i.SuspensionPastDueAt,
 		&i.AccountSuspendedRevision,
+		&i.NonpaymentPastDueAt,
+		&i.NonpaymentDeletionRevision,
+		&i.NonpaymentDeletionAt,
 	)
 	return i, err
 }
@@ -461,6 +482,26 @@ UPDATE accounts SET email_verified_at=clock_timestamp(),password_reset_revision=
 func (q *Queries) ClaimMagicLinkOwnership(ctx context.Context, db DBTX, id pgtype.UUID) error {
 	_, err := db.Exec(ctx, claimMagicLinkOwnership, id)
 	return err
+}
+
+const claimNonpaymentDeletionFollowup = `-- name: ClaimNonpaymentDeletionFollowup :one
+UPDATE billing_account_nonpayment_deletions SET lease_id=$1,lease_until=clock_timestamp()+make_interval(secs=>$2::integer)
+WHERE intent_id=$3 AND followup_completed_at IS NULL
+    AND (lease_id IS NULL OR lease_until<=clock_timestamp() OR lease_id=$1)
+RETURNING lease_id
+`
+
+type ClaimNonpaymentDeletionFollowupParams struct {
+	LeaseID      pgtype.UUID
+	LeaseSeconds int32
+	IntentID     pgtype.UUID
+}
+
+func (q *Queries) ClaimNonpaymentDeletionFollowup(ctx context.Context, db DBTX, arg ClaimNonpaymentDeletionFollowupParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, claimNonpaymentDeletionFollowup, arg.LeaseID, arg.LeaseSeconds, arg.IntentID)
+	var lease_id pgtype.UUID
+	err := row.Scan(&lease_id)
+	return lease_id, err
 }
 
 const claimSuspensionFollowup = `-- name: ClaimSuspensionFollowup :one
@@ -492,6 +533,35 @@ UPDATE accounts SET mfa_secret_encrypted=NULL,mfa_recovery_codes_hash=NULL,mfa_e
 func (q *Queries) ClearMFADisableFactor(ctx context.Context, db DBTX, id pgtype.UUID) error {
 	_, err := db.Exec(ctx, clearMFADisableFactor, id)
 	return err
+}
+
+const completeNonpaymentDeletionFollowup = `-- name: CompleteNonpaymentDeletionFollowup :execrows
+UPDATE billing_account_nonpayment_deletions p SET followup_completed_at=coalesce(p.followup_completed_at,clock_timestamp())
+FROM platform_mail_producer_outbox o
+WHERE o.id=p.intent_id AND o.namespace=$1 AND o.producer_id=$2 AND p.account_id=$3 AND p.intent_id=$4
+    AND p.lease_id=$5
+`
+
+type CompleteNonpaymentDeletionFollowupParams struct {
+	Namespace  string
+	ProducerID string
+	AccountID  pgtype.UUID
+	IntentID   pgtype.UUID
+	LeaseID    pgtype.UUID
+}
+
+func (q *Queries) CompleteNonpaymentDeletionFollowup(ctx context.Context, db DBTX, arg CompleteNonpaymentDeletionFollowupParams) (int64, error) {
+	result, err := db.Exec(ctx, completeNonpaymentDeletionFollowup,
+		arg.Namespace,
+		arg.ProducerID,
+		arg.AccountID,
+		arg.IntentID,
+		arg.LeaseID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const completeSuspensionFollowup = `-- name: CompleteSuspensionFollowup :execrows
@@ -1002,6 +1072,47 @@ func (q *Queries) CreateMagicLinkToken(ctx context.Context, db DBTX, arg CreateM
 	return err
 }
 
+const createNonpaymentDeletionIntent = `-- name: CreateNonpaymentDeletionIntent :exec
+INSERT INTO platform_mail_producer_outbox(id,account_id,namespace,producer_id,from_address,recipient_address,
+    template,template_version,expires_at,recovery_id,sealed_security_alert,security_alert_key_id,nonpayment_deletion_revision,nonpayment_past_due_at,nonpayment_deletion_at)
+VALUES($1,$2,$3,$4,$5,$6,'nonpayment_deletion',1,$7,$8,$9,$10,$11,$12,$13)
+`
+
+type CreateNonpaymentDeletionIntentParams struct {
+	ID                         pgtype.UUID
+	AccountID                  pgtype.UUID
+	Namespace                  string
+	ProducerID                 string
+	FromAddress                string
+	RecipientAddress           string
+	ExpiresAt                  pgtype.Timestamptz
+	RecoveryID                 pgtype.UUID
+	SealedSecurityAlert        []byte
+	SecurityAlertKeyID         string
+	NonpaymentDeletionRevision pgtype.Int8
+	NonpaymentPastDueAt        pgtype.Timestamptz
+	NonpaymentDeletionAt       pgtype.Timestamptz
+}
+
+func (q *Queries) CreateNonpaymentDeletionIntent(ctx context.Context, db DBTX, arg CreateNonpaymentDeletionIntentParams) error {
+	_, err := db.Exec(ctx, createNonpaymentDeletionIntent,
+		arg.ID,
+		arg.AccountID,
+		arg.Namespace,
+		arg.ProducerID,
+		arg.FromAddress,
+		arg.RecipientAddress,
+		arg.ExpiresAt,
+		arg.RecoveryID,
+		arg.SealedSecurityAlert,
+		arg.SecurityAlertKeyID,
+		arg.NonpaymentDeletionRevision,
+		arg.NonpaymentPastDueAt,
+		arg.NonpaymentDeletionAt,
+	)
+	return err
+}
+
 const createPasswordChangedAlertIntent = `-- name: CreatePasswordChangedAlertIntent :exec
 INSERT INTO platform_mail_producer_outbox(id,account_id,namespace,producer_id,from_address,recipient_address,
     template,template_version,expires_at,recovery_id,sealed_security_alert,security_alert_key_id)
@@ -1310,7 +1421,7 @@ func (q *Queries) InsertReconciliation(ctx context.Context, db DBTX, arg InsertR
 }
 
 const intent = `-- name: Intent :one
-SELECT id, account_id, namespace, producer_id, from_address, recipient_address, template, template_version, deletion_requested_at, restore_until, expires_at, recovery_id, state, attempts, next_attempt_at, lease_id, lease_until, code, created_at, updated_at, revision, verification_token_hash, sealed_verification, verification_key_id, verification_origin, sealed_security_alert, security_alert_key_id, payment_past_due_at, account_restored_revision, suspension_past_due_at, account_suspended_revision FROM platform_mail_producer_outbox WHERE namespace=$1 AND id=$2
+SELECT id, account_id, namespace, producer_id, from_address, recipient_address, template, template_version, deletion_requested_at, restore_until, expires_at, recovery_id, state, attempts, next_attempt_at, lease_id, lease_until, code, created_at, updated_at, revision, verification_token_hash, sealed_verification, verification_key_id, verification_origin, sealed_security_alert, security_alert_key_id, payment_past_due_at, account_restored_revision, suspension_past_due_at, account_suspended_revision, nonpayment_past_due_at, nonpayment_deletion_revision, nonpayment_deletion_at FROM platform_mail_producer_outbox WHERE namespace=$1 AND id=$2
 `
 
 type IntentParams struct {
@@ -1353,6 +1464,9 @@ func (q *Queries) Intent(ctx context.Context, db DBTX, arg IntentParams) (Platfo
 		&i.AccountRestoredRevision,
 		&i.SuspensionPastDueAt,
 		&i.AccountSuspendedRevision,
+		&i.NonpaymentPastDueAt,
+		&i.NonpaymentDeletionRevision,
+		&i.NonpaymentDeletionAt,
 	)
 	return i, err
 }
@@ -1481,7 +1595,7 @@ func (q *Queries) LockAdmission(ctx context.Context, db DBTX, dollar_1 string) e
 }
 
 const lockIntent = `-- name: LockIntent :one
-SELECT id, account_id, namespace, producer_id, from_address, recipient_address, template, template_version, deletion_requested_at, restore_until, expires_at, recovery_id, state, attempts, next_attempt_at, lease_id, lease_until, code, created_at, updated_at, revision, verification_token_hash, sealed_verification, verification_key_id, verification_origin, sealed_security_alert, security_alert_key_id, payment_past_due_at, account_restored_revision, suspension_past_due_at, account_suspended_revision FROM platform_mail_producer_outbox WHERE namespace=$1 AND id=$2 FOR UPDATE
+SELECT id, account_id, namespace, producer_id, from_address, recipient_address, template, template_version, deletion_requested_at, restore_until, expires_at, recovery_id, state, attempts, next_attempt_at, lease_id, lease_until, code, created_at, updated_at, revision, verification_token_hash, sealed_verification, verification_key_id, verification_origin, sealed_security_alert, security_alert_key_id, payment_past_due_at, account_restored_revision, suspension_past_due_at, account_suspended_revision, nonpayment_past_due_at, nonpayment_deletion_revision, nonpayment_deletion_at FROM platform_mail_producer_outbox WHERE namespace=$1 AND id=$2 FOR UPDATE
 `
 
 type LockIntentParams struct {
@@ -1524,6 +1638,9 @@ func (q *Queries) LockIntent(ctx context.Context, db DBTX, arg LockIntentParams)
 		&i.AccountRestoredRevision,
 		&i.SuspensionPastDueAt,
 		&i.AccountSuspendedRevision,
+		&i.NonpaymentPastDueAt,
+		&i.NonpaymentDeletionRevision,
+		&i.NonpaymentDeletionAt,
 	)
 	return i, err
 }
@@ -1858,6 +1975,36 @@ func (q *Queries) LockMagicLinkToken(ctx context.Context, db DBTX, arg LockMagic
 		&i.ExpiresAt,
 		&i.ConsumedAt,
 		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const lockNonpaymentDeletionAccount = `-- name: LockNonpaymentDeletionAccount :one
+SELECT id,email,status,past_due_at,deletion_requested_at,billing_mail_revision,clock_timestamp()::timestamptz AS checked_at
+FROM accounts WHERE id=$1 FOR UPDATE
+`
+
+type LockNonpaymentDeletionAccountRow struct {
+	ID                  pgtype.UUID
+	Email               string
+	Status              string
+	PastDueAt           pgtype.Timestamptz
+	DeletionRequestedAt pgtype.Timestamptz
+	BillingMailRevision int64
+	CheckedAt           pgtype.Timestamptz
+}
+
+func (q *Queries) LockNonpaymentDeletionAccount(ctx context.Context, db DBTX, id pgtype.UUID) (LockNonpaymentDeletionAccountRow, error) {
+	row := db.QueryRow(ctx, lockNonpaymentDeletionAccount, id)
+	var i LockNonpaymentDeletionAccountRow
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.Status,
+		&i.PastDueAt,
+		&i.DeletionRequestedAt,
+		&i.BillingMailRevision,
+		&i.CheckedAt,
 	)
 	return i, err
 }
@@ -2256,6 +2403,123 @@ type MaintainParams struct {
 // may expire, but are never resubmitted merely because a global hold releases.
 func (q *Queries) Maintain(ctx context.Context, db DBTX, arg MaintainParams) error {
 	_, err := db.Exec(ctx, maintain, arg.Namespace, arg.MaxAttempts, arg.BatchSize)
+	return err
+}
+
+const nonpaymentDeletionDeliveryReady = `-- name: NonpaymentDeletionDeliveryReady :exec
+SELECT a.email,a.status,a.past_due_at,a.deletion_requested_at,a.billing_mail_revision,o.nonpayment_deletion_revision,o.nonpayment_past_due_at,o.nonpayment_deletion_at
+FROM accounts a JOIN platform_mail_producer_outbox o ON o.account_id=a.id LIMIT 0
+`
+
+func (q *Queries) NonpaymentDeletionDeliveryReady(ctx context.Context, db DBTX) error {
+	_, err := db.Exec(ctx, nonpaymentDeletionDeliveryReady)
+	return err
+}
+
+const nonpaymentDeletionKeyReferences = `-- name: NonpaymentDeletionKeyReferences :many
+SELECT DISTINCT security_alert_key_id FROM platform_mail_producer_outbox
+WHERE namespace=$1 AND producer_id=$2 AND template='nonpayment_deletion' AND state IN ('queued','claimed') AND expires_at>clock_timestamp()
+`
+
+type NonpaymentDeletionKeyReferencesParams struct {
+	Namespace  string
+	ProducerID string
+}
+
+func (q *Queries) NonpaymentDeletionKeyReferences(ctx context.Context, db DBTX, arg NonpaymentDeletionKeyReferencesParams) ([]string, error) {
+	rows, err := db.Query(ctx, nonpaymentDeletionKeyReferences, arg.Namespace, arg.ProducerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var security_alert_key_id string
+		if err := rows.Scan(&security_alert_key_id); err != nil {
+			return nil, err
+		}
+		items = append(items, security_alert_key_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const nonpaymentDeletionPeriod = `-- name: NonpaymentDeletionPeriod :one
+SELECT p.account_id, p.past_due_at, p.intent_id, p.deletion_requested_at, p.billing_revision, p.followup_completed_at, p.lease_id, p.lease_until,o.namespace,o.producer_id,o.from_address,o.recovery_id
+FROM billing_account_nonpayment_deletions p JOIN platform_mail_producer_outbox o ON o.id=p.intent_id
+WHERE p.account_id=$1 AND p.past_due_at=$2 FOR UPDATE OF p
+`
+
+type NonpaymentDeletionPeriodParams struct {
+	AccountID pgtype.UUID
+	PastDueAt pgtype.Timestamptz
+}
+
+type NonpaymentDeletionPeriodRow struct {
+	AccountID           pgtype.UUID
+	PastDueAt           pgtype.Timestamptz
+	IntentID            pgtype.UUID
+	DeletionRequestedAt pgtype.Timestamptz
+	BillingRevision     int64
+	FollowupCompletedAt pgtype.Timestamptz
+	LeaseID             pgtype.UUID
+	LeaseUntil          pgtype.Timestamptz
+	Namespace           string
+	ProducerID          string
+	FromAddress         string
+	RecoveryID          pgtype.UUID
+}
+
+func (q *Queries) NonpaymentDeletionPeriod(ctx context.Context, db DBTX, arg NonpaymentDeletionPeriodParams) (NonpaymentDeletionPeriodRow, error) {
+	row := db.QueryRow(ctx, nonpaymentDeletionPeriod, arg.AccountID, arg.PastDueAt)
+	var i NonpaymentDeletionPeriodRow
+	err := row.Scan(
+		&i.AccountID,
+		&i.PastDueAt,
+		&i.IntentID,
+		&i.DeletionRequestedAt,
+		&i.BillingRevision,
+		&i.FollowupCompletedAt,
+		&i.LeaseID,
+		&i.LeaseUntil,
+		&i.Namespace,
+		&i.ProducerID,
+		&i.FromAddress,
+		&i.RecoveryID,
+	)
+	return i, err
+}
+
+const nonpaymentDeletionReady = `-- name: NonpaymentDeletionReady :one
+WITH own_constraint AS MATERIALIZED (
+    SELECT c.oid FROM pg_catalog.pg_constraint c
+    JOIN pg_catalog.pg_class t ON t.oid=c.conrelid JOIN pg_catalog.pg_namespace n ON n.oid=t.relnamespace
+    WHERE n.nspname=current_schema() AND t.relname='platform_mail_producer_outbox'
+      AND c.conname='platform_mail_producer_outbox_security_alert_check'
+)
+SELECT EXISTS(SELECT 1 FROM own_constraint c
+    WHERE position('nonpayment_deletion' in pg_catalog.pg_get_constraintdef(c.oid))>0)::boolean AS ready
+`
+
+// Materialization keeps catalog deparsing behind the exact schema/relation
+// filter. Unrelated DDL can otherwise race pg_get_constraintdef's relation lookup.
+func (q *Queries) NonpaymentDeletionReady(ctx context.Context, db DBTX) (bool, error) {
+	row := db.QueryRow(ctx, nonpaymentDeletionReady)
+	var ready bool
+	err := row.Scan(&ready)
+	return ready, err
+}
+
+const nonpaymentDeletionSchemaReady = `-- name: NonpaymentDeletionSchemaReady :exec
+SELECT a.billing_mail_revision,o.nonpayment_deletion_revision,o.nonpayment_past_due_at,o.nonpayment_deletion_at,p.followup_completed_at,p.lease_id
+FROM accounts a JOIN platform_mail_producer_outbox o ON o.account_id=a.id
+JOIN billing_account_nonpayment_deletions p ON p.intent_id=o.id LIMIT 0
+`
+
+func (q *Queries) NonpaymentDeletionSchemaReady(ctx context.Context, db DBTX) error {
+	_, err := db.Exec(ctx, nonpaymentDeletionSchemaReady)
 	return err
 }
 
@@ -2779,6 +3043,30 @@ func (q *Queries) RecordAccountSuspension(ctx context.Context, db DBTX, arg Reco
 	return err
 }
 
+const recordNonpaymentDeletion = `-- name: RecordNonpaymentDeletion :exec
+INSERT INTO billing_account_nonpayment_deletions(account_id,past_due_at,intent_id,deletion_requested_at,billing_revision)
+VALUES($1,$2,$3,$4,$5)
+`
+
+type RecordNonpaymentDeletionParams struct {
+	AccountID           pgtype.UUID
+	PastDueAt           pgtype.Timestamptz
+	IntentID            pgtype.UUID
+	DeletionRequestedAt pgtype.Timestamptz
+	BillingRevision     int64
+}
+
+func (q *Queries) RecordNonpaymentDeletion(ctx context.Context, db DBTX, arg RecordNonpaymentDeletionParams) error {
+	_, err := db.Exec(ctx, recordNonpaymentDeletion,
+		arg.AccountID,
+		arg.PastDueAt,
+		arg.IntentID,
+		arg.DeletionRequestedAt,
+		arg.BillingRevision,
+	)
+	return err
+}
+
 const recordPaymentFailureReceipt = `-- name: RecordPaymentFailureReceipt :execrows
 INSERT INTO billing_payment_failure_receipts(provider,event_id,account_id,event_type)
 VALUES($1,$2,$3,$4) ON CONFLICT(provider,event_id) DO NOTHING
@@ -2955,6 +3243,24 @@ func (q *Queries) ScheduleDeletion(ctx context.Context, db DBTX, id pgtype.UUID)
 	row := db.QueryRow(ctx, scheduleDeletion, id)
 	var i ScheduleDeletionRow
 	err := row.Scan(&i.ID, &i.Email, &i.DeletionRequestedAt)
+	return i, err
+}
+
+const scheduleNonpaymentDeletionAccount = `-- name: ScheduleNonpaymentDeletionAccount :one
+UPDATE accounts SET status='deleted_pending',suspended_reason=NULL,deletion_requested_at=clock_timestamp()
+WHERE id=$1 AND status='suspended' AND deletion_requested_at IS NULL
+RETURNING billing_mail_revision,deletion_requested_at
+`
+
+type ScheduleNonpaymentDeletionAccountRow struct {
+	BillingMailRevision int64
+	DeletionRequestedAt pgtype.Timestamptz
+}
+
+func (q *Queries) ScheduleNonpaymentDeletionAccount(ctx context.Context, db DBTX, id pgtype.UUID) (ScheduleNonpaymentDeletionAccountRow, error) {
+	row := db.QueryRow(ctx, scheduleNonpaymentDeletionAccount, id)
+	var i ScheduleNonpaymentDeletionAccountRow
+	err := row.Scan(&i.BillingMailRevision, &i.DeletionRequestedAt)
 	return i, err
 }
 
@@ -3175,6 +3481,53 @@ func (q *Queries) ShareMagicLinkToken(ctx context.Context, db DBTX, arg ShareMag
 		&i.ExpiresAt,
 		&i.ConsumedAt,
 		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const shareNonpaymentDeletionSubmissionAccount = `-- name: ShareNonpaymentDeletionSubmissionAccount :one
+SELECT a.email,a.status,a.past_due_at,a.deletion_requested_at,a.billing_mail_revision,
+    o.nonpayment_deletion_revision,o.nonpayment_past_due_at,o.nonpayment_deletion_at,o.from_address,m.sender_address
+FROM internal_mail_messages m JOIN platform_mail_producer_outbox o
+    ON o.namespace=m.namespace AND o.producer_id=m.producer_id
+    AND m.idempotency_key='nonpayment-deletion:'||o.id::text AND o.template='nonpayment_deletion'
+    AND o.expires_at=m.expires_at
+JOIN accounts a ON a.id=o.account_id
+WHERE m.namespace=$1 AND m.id=$2 FOR SHARE OF a
+`
+
+type ShareNonpaymentDeletionSubmissionAccountParams struct {
+	Namespace string
+	ID        pgtype.UUID
+}
+
+type ShareNonpaymentDeletionSubmissionAccountRow struct {
+	Email                      string
+	Status                     string
+	PastDueAt                  pgtype.Timestamptz
+	DeletionRequestedAt        pgtype.Timestamptz
+	BillingMailRevision        int64
+	NonpaymentDeletionRevision pgtype.Int8
+	NonpaymentPastDueAt        pgtype.Timestamptz
+	NonpaymentDeletionAt       pgtype.Timestamptz
+	FromAddress                string
+	SenderAddress              string
+}
+
+func (q *Queries) ShareNonpaymentDeletionSubmissionAccount(ctx context.Context, db DBTX, arg ShareNonpaymentDeletionSubmissionAccountParams) (ShareNonpaymentDeletionSubmissionAccountRow, error) {
+	row := db.QueryRow(ctx, shareNonpaymentDeletionSubmissionAccount, arg.Namespace, arg.ID)
+	var i ShareNonpaymentDeletionSubmissionAccountRow
+	err := row.Scan(
+		&i.Email,
+		&i.Status,
+		&i.PastDueAt,
+		&i.DeletionRequestedAt,
+		&i.BillingMailRevision,
+		&i.NonpaymentDeletionRevision,
+		&i.NonpaymentPastDueAt,
+		&i.NonpaymentDeletionAt,
+		&i.FromAddress,
+		&i.SenderAddress,
 	)
 	return i, err
 }

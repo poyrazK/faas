@@ -87,6 +87,7 @@ CREATE TABLE mail_suppressions(email text NOT NULL,expires_at timestamptz)`); er
 	var mfaDisableGate atomic.Bool
 	var mfaDisabledAlertGate atomic.Bool
 	var passwordChangedAlertGate atomic.Bool
+	var nonpaymentDeletionGate atomic.Bool
 	var accountSuspendedGate atomic.Bool
 	var accountRestoredGate atomic.Bool
 	var paymentFailedGate atomic.Bool
@@ -103,6 +104,7 @@ CREATE TABLE mail_suppressions(email text NOT NULL,expires_at timestamptz)`); er
 		MFADisableOutboxEnabled:           mfaDisableGate.Load,
 		MFADisabledAlertOutboxEnabled:     mfaDisabledAlertGate.Load,
 		PasswordChangedAlertOutboxEnabled: passwordChangedAlertGate.Load,
+		NonpaymentDeletionOutboxEnabled:   nonpaymentDeletionGate.Load,
 		AccountSuspendedOutboxEnabled:     accountSuspendedGate.Load,
 		AccountRestoredOutboxEnabled:      accountRestoredGate.Load,
 		PaymentFailedOutboxEnabled:        paymentFailedGate.Load,
@@ -716,6 +718,7 @@ CREATE TABLE mail_suppressions(email text NOT NULL,expires_at timestamptz)`); er
 	expectedMailCount := 10 + exercisePaymentHandoff(t, f, daemon, smtp, &paymentFailedGate, &dropped)
 	expectedMailCount += exerciseRestoredHandoff(t, f, daemon, smtp, &accountRestoredGate, &dropped)
 	expectedMailCount += exerciseSuspendedHandoff(t, f, daemon, smtp, &accountSuspendedGate, &dropped)
+	expectedMailCount += exerciseNonpaymentDeletionHandoff(t, f, daemon, smtp, &nonpaymentDeletionGate, &dropped)
 	// The producer must retain no recovery advisory lock across HTTP. Start
 	// and release a new recovery after producer preflight but before maild
 	// admission: the owner's generation check must reject this stale request.
@@ -1171,5 +1174,151 @@ func exerciseSuspendedHandoff(t *testing.T, f *fixture, daemon *internalmail.Ser
 		}
 	}
 	f.env[internalmail.AccountSuspendedOutboxEnableEnv] = "0"
+	return admitted
+}
+
+func exerciseNonpaymentDeletionHandoff(t *testing.T, f *fixture, daemon *internalmail.Service, smtp *fixtureSMTP, gate, dropped *atomic.Bool) int {
+	t.Helper()
+	if err := daemon.Store.(*internalmail.PGStore).NonpaymentDeletionOutboxReady(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	f.env[internalmail.NonpaymentDeletionOutboxEnableEnv] = "1"
+	if err := f.service.ConfigureNonpaymentDeletion(t.Context(), func(k string) string { return f.env[k] }); err != nil {
+		t.Fatal(err)
+	}
+	_, _, first, _ := queueNonpaymentDeletion(t, f)
+	if err := f.service.DeliverOne(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if got := row(t, f, uuidString(first.ID.Bytes)); got.State != "queued" || len(got.SealedSecurityAlert) == 0 {
+		t.Fatal("remote pause lost committed non-payment deletion")
+	}
+	gate.Store(true)
+	for attempt := 0; attempt < 2; attempt++ {
+		if _, err := f.pool.Exec(t.Context(), "UPDATE platform_mail_producer_outbox SET next_attempt_at=clock_timestamp() WHERE id=$1", first.ID); err != nil {
+			t.Fatal(err)
+		}
+		next, err := NewFromEnv(f.pool, func(k string) string { return f.env[k] })
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := next.ConfigureNonpaymentDeletion(t.Context(), func(k string) string { return f.env[k] }); err != nil {
+			t.Fatal(err)
+		}
+		f.service = next
+		if attempt == 0 {
+			dropped.Store(false)
+		}
+		if err := next.DeliverOne(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if got := row(t, f, uuidString(first.ID.Bytes)); attempt == 0 && got.State != "queued" {
+			t.Fatal("non-payment deletion admission acknowledgement was not lost")
+		}
+	}
+	if got := row(t, f, uuidString(first.ID.Bytes)); got.State != "admitted" {
+		t.Fatal("non-payment deletion retry lost admission")
+	} else {
+		assertMFAAlertErased(t, got)
+	}
+	before := smtp.accepted.Load()
+	gate.Store(false)
+	if err := daemon.DeliverOne(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if smtp.accepted.Load() != before {
+		t.Fatal("disabled non-payment deletion template reached SMTP")
+	}
+	gate.Store(true)
+	for range 2 {
+		if err := daemon.DeliverOne(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if smtp.accepted.Load() != before+1 {
+		t.Fatal("non-payment deletion retry duplicated SMTP custody")
+	}
+	store := state.NewPgStore(f.pool)
+	admitted := 1
+	for _, mode := range []string{"recovered", "status_aba", "address_aba", "deadline_changed", "erasure", "status_wait", "flag_wait"} {
+		id, _, intent, _ := queueNonpaymentDeletion(t, f)
+		if err := f.service.DeliverOne(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if row(t, f, uuidString(intent.ID.Bytes)).State != "admitted" {
+			t.Fatal("non-payment deletion notice not admitted", mode)
+		}
+		admitted++
+		var err error
+		switch mode {
+		case "recovered":
+			err = store.UpdateAccountStatus(t.Context(), id, state.AccountActive)
+		case "status_aba":
+			err = store.MarkDunningStep(t.Context(), id, state.AccountDeletedPending, state.AccountSuspended)
+			if err == nil {
+				err = store.MarkDunningStep(t.Context(), id, state.AccountSuspended, state.AccountDeletedPending)
+			}
+		case "address_aba":
+			_, err = f.pool.Exec(t.Context(), "UPDATE accounts SET email='other@example.net' WHERE id=$1", id)
+			if err == nil {
+				_, err = f.pool.Exec(t.Context(), "UPDATE accounts SET email='one@example.net' WHERE id=$1", id)
+			}
+		case "deadline_changed":
+			_, err = f.pool.Exec(t.Context(), "UPDATE accounts SET deletion_requested_at=deletion_requested_at+interval '1 hour' WHERE id=$1", id)
+		case "erasure":
+			_, err = f.pool.Exec(t.Context(), "DELETE FROM accounts WHERE id=$1", id)
+		case "status_wait", "flag_wait":
+			tx, beginErr := f.pool.Begin(t.Context())
+			if beginErr != nil {
+				t.Fatal(beginErr)
+			}
+			defer rollback(t.Context(), tx)
+			if _, err := tx.Exec(t.Context(), "SELECT id FROM accounts WHERE id=$1 FOR UPDATE", id); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			done := make(chan error, 1)
+			go func() { done <- daemon.DeliverOne(ctx) }()
+			waitForReconciliationBlock(t, f, ctx, tx.Conn().PgConn().PID())
+			if mode == "status_wait" {
+				if _, err := tx.Exec(ctx, "UPDATE accounts SET status='active',past_due_at=NULL WHERE id=$1", id); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				gate.Store(false)
+			}
+			if err := tx.Commit(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if err := <-done; err != nil {
+				t.Fatal(err)
+			}
+			if mode == "flag_wait" {
+				var status string
+				if err := f.pool.QueryRow(ctx, "SELECT r.status FROM internal_mail_recipients r JOIN internal_mail_messages m ON m.id=r.message_id WHERE m.idempotency_key=$1", "nonpayment-deletion:"+uuidString(intent.ID.Bytes)).Scan(&status); err != nil || status != "queued" {
+					t.Fatal("late gate withdrawal did not hold notice", status, err)
+				}
+				gate.Store(true)
+				err = store.UpdateAccountStatus(t.Context(), id, state.AccountActive)
+			}
+		}
+		if err != nil {
+			t.Fatal(mode, err)
+		}
+		for range 2 {
+			if err := daemon.DeliverOne(t.Context()); err != nil {
+				t.Fatal(mode, err)
+			}
+		}
+		if smtp.accepted.Load() != before+1 {
+			t.Fatal("stale non-payment deletion reached SMTP", mode)
+		}
+		var status string
+		if err := f.pool.QueryRow(t.Context(), "SELECT r.status FROM internal_mail_recipients r JOIN internal_mail_messages m ON m.id=r.message_id WHERE m.idempotency_key=$1", "nonpayment-deletion:"+uuidString(intent.ID.Bytes)).Scan(&status); err != nil || status != "cancelled" {
+			t.Fatal("maild did not cancel stale non-payment deletion", mode, status, err)
+		}
+	}
+	f.env[internalmail.NonpaymentDeletionOutboxEnableEnv] = "0"
 	return admitted
 }

@@ -74,6 +74,15 @@ func (s *PGStore) beginScheduled(ctx context.Context, r Recipient, selector stri
 			return err
 		}
 	}
+	nonpaymentGate, nonpaymentBound := ctx.Value(nonpaymentDeletionSubmissionGateKey{}).(func() bool)
+	if nonpaymentBound {
+		if nonpaymentGate == nil || !nonpaymentGate() {
+			return ErrDisabled
+		}
+		if err := s.shareNonpaymentDeletionAccount(ctx, tx, r); err != nil {
+			return err
+		}
+	}
 	suspendedGate, suspendedBound := ctx.Value(accountSuspendedSubmissionGateKey{}).(func() bool)
 	if suspendedBound {
 		if suspendedGate == nil || !suspendedGate() {
@@ -170,6 +179,9 @@ func (s *PGStore) beginScheduled(ctx context.Context, r Recipient, selector stri
 			}
 		}
 		return ErrLeaseLost
+	}
+	if nonpaymentBound && !nonpaymentGate() {
+		return ErrDisabled
 	}
 	if suspendedBound && !suspendedGate() {
 		return ErrDisabled

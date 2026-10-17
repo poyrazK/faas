@@ -1348,3 +1348,7 @@ func WorkloadTrust(cfg Config, getenv func(string) string, pathEnv, path, issuer
 func (r *server) MountInternalMailSuspension(mux *http.ServeMux, addr string, getenv func(string) string) error {
 	return r.mountInternalMailSuspension(mux, addr, getenv)
 }
+
+func (r *server) MountInternalMailNonpaymentDeletion(mux *http.ServeMux, addr string, getenv func(string) string) error {
+	return r.mountInternalMailNonpaymentDeletion(mux, addr, getenv)
+}

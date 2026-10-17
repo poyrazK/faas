@@ -3183,3 +3183,67 @@ accounts do not re-enter the legacy suspension step. Retain receipts; changed
 recovery generations require operator review. No activation, deployment,
 credential enrollment or real email is part of this change. Live qualification
 remains separate.
+
+## Durable non-payment deletion notices
+
+`FAAS_INTERNAL_MAIL_NONPAYMENT_DELETION_OUTBOX_ENABLED=0` independently gates
+non-payment deletion notices across apid, meterd, maild and private
+reconciliation. Units and examples keep it off. Apply
+[`20261017125602853_platform_mail_nonpayment_deletion_outbox.sql`](../../migrations/20261017125602853_platform_mail_nonpayment_deletion_outbox.sql)
+before opting in; see
+[ADR-20261017125602](../adr/20261017125602-mail-nonpayment-deletion-notices.md).
+
+Meterd uses apid's existing loopback operator listener and
+`FAAS_APID_INTERNAL_BASE_URL` (plain HTTP, literal loopback IP, explicit port).
+The dedicated `FAAS_INTERNAL_MAIL_NONPAYMENT_DELETION_TOKEN_PATH` is delivered
+through apid's private environment and meterd's existing
+`/etc/faas/secrets/meterd/billing.env`. Provision a distinct token file of at
+least 32 printable bytes, protected for the two daemon users. Never reuse the
+producer, Safe Deploy or enabled suspension-command token. Maild receives no
+command token. Default-off meterd reads only the exact own flag; enabled startup
+requires the parent mail gates and authenticated readiness. The client disables
+proxies/redirects, uses a five-second timeout and bounds bodies.
+
+Private routes are `GET /v1/internal/billing/nonpayment-deletions/readyz`,
+`POST /v1/internal/billing/accounts/{id}/nonpayment-deletion` and its `/complete`
+suffix. Only the loopback operator mux mounts them. Requests contain expected
+overdue time/request UUID or exact intent/lease completion proof; callers cannot
+choose recipient, body or deadline. No listener or public mail permission is
+added. Late enablement requires configuration/restart and cannot fall back.
+
+Apid checks the locked row and database time against the original 21-day overdue
+threshold. Deletion-pending status, the database deletion timestamp, billing
+revision, cancellation of pending failure/suspension mail, encrypted notice and
+per-period receipt commit together. Failed persistence, capacity exhaustion,
+recovery hold or gate withdrawal leaves the transition retryable. Duplicate
+ticks cannot create another notice. No historical deletion is backfilled.
+
+The frozen V1 body retains the original overdue timestamp and the actual
+hard-deletion deadline: saved `deletion_requested_at` plus the canonical account
+grace period. Expiry is the earlier of 24 hours after that saved transition or
+the hard-deletion deadline. Retries preserve body, expiry and
+`nonpayment-deletion:<intent UUID>`. Only apid gets the dedicated current/previous
+payload readers; retain all readers needed by enabled families' unexpired
+pending payloads. No origin is required.
+
+Apid and maild recheck current status, recipient, overdue/deletion timestamps
+and billing revision before handoff/SMTP submission start. Recovery, address or
+status cycles, changed deadlines and erasure cancel stale notices before custody.
+After submission start commits, mail cannot be recalled or automatically resent.
+Shared suppression, budgets, retry leases and recovery quarantine apply.
+
+A saved five-minute lease lets meterd resume its existing lifecycle/deletion
+notifications after lost replies and restarts, including deletion-pending rows.
+It sends no inline mail or scheduler call on this path. Exact account/intent/lease
+completion is idempotent; notification follow-up remains at least once across
+crashes and retains best-effort handling of individual failures. Changed billing
+revisions or recovery generations stop stale follow-up and require review.
+
+Rollback pauses pending notices and private follow-up. Future timer transitions
+use the legacy path; review already-committed incomplete follow-up since those
+deletion-pending rows do not repeat the legacy step. Re-enabling can resume
+eligible expired leases. Receipts never extend the reaper's saved deadline.
+Account erasure cascades intent/receipt; terminal settlement erases address and
+ciphertext. Opaque reconciliation audit survives; Down refuses used history.
+No activation, deployment, credential enrollment or real email is part of this
+change. Live qualification remains separate.

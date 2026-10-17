@@ -62,6 +62,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 			return errors.New("maild: producer outbox metadata schema is unavailable")
 		}
 	}
+	if internalmail.NonpaymentDeletionOutboxEnabled(os.Getenv) {
+		if err := store.NonpaymentDeletionOutboxReady(ctx); err != nil {
+			return errors.New("maild: non-payment deletion notification schema is unavailable")
+		}
+	}
 	if internalmail.AccountSuspendedOutboxEnabled(os.Getenv) {
 		if err := store.AccountSuspendedOutboxReady(ctx); err != nil {
 			return errors.New("maild: account suspension notification schema is unavailable")
@@ -125,6 +130,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		PasswordResetOutboxEnabled:        func() bool { return internalmail.PasswordResetOutboxEnabled(os.Getenv) },
 		MagicLinkOutboxEnabled:            func() bool { return internalmail.MagicLinkOutboxEnabled(os.Getenv) },
 		MFADisableOutboxEnabled:           func() bool { return internalmail.MFADisableOutboxEnabled(os.Getenv) },
+		NonpaymentDeletionOutboxEnabled:   func() bool { return internalmail.NonpaymentDeletionOutboxEnabled(os.Getenv) },
 		AccountSuspendedOutboxEnabled:     func() bool { return internalmail.AccountSuspendedOutboxEnabled(os.Getenv) },
 		AccountRestoredOutboxEnabled:      func() bool { return internalmail.AccountRestoredOutboxEnabled(os.Getenv) },
 		PaymentFailedOutboxEnabled:        func() bool { return internalmail.PaymentFailedOutboxEnabled(os.Getenv) },

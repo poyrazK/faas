@@ -1518,6 +1518,17 @@ type BaseImageScanCurrent struct {
 	ScanID     pgtype.UUID
 }
 
+type BillingAccountNonpaymentDeletion struct {
+	AccountID           pgtype.UUID
+	PastDueAt           pgtype.Timestamptz
+	IntentID            pgtype.UUID
+	DeletionRequestedAt pgtype.Timestamptz
+	BillingRevision     int64
+	FollowupCompletedAt pgtype.Timestamptz
+	LeaseID             pgtype.UUID
+	LeaseUntil          pgtype.Timestamptz
+}
+
 type BillingAccountSuspension struct {
 	AccountID           pgtype.UUID
 	PastDueAt           pgtype.Timestamptz
@@ -7353,37 +7364,40 @@ type PlatformMailOutboxReconciliation struct {
 }
 
 type PlatformMailProducerOutbox struct {
-	ID                       pgtype.UUID
-	AccountID                pgtype.UUID
-	Namespace                string
-	ProducerID               string
-	FromAddress              string
-	RecipientAddress         string
-	Template                 string
-	TemplateVersion          int32
-	DeletionRequestedAt      pgtype.Timestamptz
-	RestoreUntil             pgtype.Timestamptz
-	ExpiresAt                pgtype.Timestamptz
-	RecoveryID               pgtype.UUID
-	State                    string
-	Attempts                 int32
-	NextAttemptAt            pgtype.Timestamptz
-	LeaseID                  pgtype.UUID
-	LeaseUntil               pgtype.Timestamptz
-	Code                     string
-	CreatedAt                pgtype.Timestamptz
-	UpdatedAt                pgtype.Timestamptz
-	Revision                 int64
-	VerificationTokenHash    []byte
-	SealedVerification       []byte
-	VerificationKeyID        string
-	VerificationOrigin       string
-	SealedSecurityAlert      []byte
-	SecurityAlertKeyID       string
-	PaymentPastDueAt         pgtype.Timestamptz
-	AccountRestoredRevision  pgtype.Int8
-	SuspensionPastDueAt      pgtype.Timestamptz
-	AccountSuspendedRevision pgtype.Int8
+	ID                         pgtype.UUID
+	AccountID                  pgtype.UUID
+	Namespace                  string
+	ProducerID                 string
+	FromAddress                string
+	RecipientAddress           string
+	Template                   string
+	TemplateVersion            int32
+	DeletionRequestedAt        pgtype.Timestamptz
+	RestoreUntil               pgtype.Timestamptz
+	ExpiresAt                  pgtype.Timestamptz
+	RecoveryID                 pgtype.UUID
+	State                      string
+	Attempts                   int32
+	NextAttemptAt              pgtype.Timestamptz
+	LeaseID                    pgtype.UUID
+	LeaseUntil                 pgtype.Timestamptz
+	Code                       string
+	CreatedAt                  pgtype.Timestamptz
+	UpdatedAt                  pgtype.Timestamptz
+	Revision                   int64
+	VerificationTokenHash      []byte
+	SealedVerification         []byte
+	VerificationKeyID          string
+	VerificationOrigin         string
+	SealedSecurityAlert        []byte
+	SecurityAlertKeyID         string
+	PaymentPastDueAt           pgtype.Timestamptz
+	AccountRestoredRevision    pgtype.Int8
+	SuspensionPastDueAt        pgtype.Timestamptz
+	AccountSuspendedRevision   pgtype.Int8
+	NonpaymentPastDueAt        pgtype.Timestamptz
+	NonpaymentDeletionRevision pgtype.Int8
+	NonpaymentDeletionAt       pgtype.Timestamptz
 }
 
 type PlatformTenant struct {

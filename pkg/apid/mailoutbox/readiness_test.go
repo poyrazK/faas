@@ -31,7 +31,7 @@ func TestPGMailReadinessIgnoresForeignSchemaChurn(t *testing.T) {
 		for ctx.Err() == nil {
 			_, err := foreign.Exec(ctx, `DROP TABLE IF EXISTS platform_mail_producer_outbox;
 CREATE TABLE platform_mail_producer_outbox(value text CONSTRAINT platform_mail_producer_outbox_security_alert_check
-CHECK(value IN ('mfa_disabled','password_changed','mfa_enabled','payment_failed','account_restored','account_suspended')))`)
+CHECK(value IN ('mfa_disabled','password_changed','mfa_enabled','payment_failed','account_restored','account_suspended','nonpayment_deletion')))`)
 			if err != nil && ctx.Err() == nil {
 				errors <- err
 				return
@@ -43,6 +43,7 @@ CHECK(value IN ('mfa_disabled','password_changed','mfa_enabled','payment_failed'
 		f.service.queries.MFADisabledAlertReady, f.service.queries.PasswordChangedAlertReady,
 		f.service.queries.MFAEnabledAlertReady, f.service.queries.PaymentFailedReady,
 		f.service.queries.AccountRestoredReady, f.service.queries.AccountSuspendedReady,
+		f.service.queries.NonpaymentDeletionReady,
 	}
 	for range 100 {
 		for i, check := range checks {

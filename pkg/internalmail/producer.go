@@ -69,6 +69,9 @@ func (s *Service) allowedProducerSenders() []string {
 }
 
 func (s *Service) producerMessagePermitted(m Message) bool {
+	if nonpaymentDeletionMessage(m) && !s.nonpaymentDeletionOutboxEnabled() {
+		return false
+	}
 	if accountSuspendedMessage(m) && !s.accountSuspendedOutboxEnabled() {
 		return false
 	}

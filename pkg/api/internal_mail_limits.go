@@ -138,24 +138,31 @@ const (
 )
 
 const (
-	InternalMailAccountSuspendedTTL           = 24 * time.Hour
-	InternalMailAccountSuspendedMaxBytes      = 512
-	InternalMailDunningSuspendAfter           = 7 * 24 * time.Hour
-	InternalMailDunningDeleteAfter            = 21 * 24 * time.Hour
-	InternalMailSuspensionFollowupLease       = 5 * time.Minute
-	InternalMailSuspensionCommandTimeout      = 5 * time.Second
-	InternalMailSuspensionCommandMaxBytes     = 4096
-	InternalMailSuspensionTokenMinBytes       = 32
-	InternalMailSuspensionTokenMaxBytes       = 4096
-	InternalMailAccountRestoredTTL            = 24 * time.Hour
-	InternalMailAccountRestoredMaxBytes       = 512
-	InternalMailPaymentFailureEventIDMaxBytes = 256
-	InternalMailPaymentFailedTTL              = 24 * time.Hour
-	InternalMailPaymentFailedMaxBytes         = 512
-	InternalMailMFAEnabledAlertTTL            = 24 * time.Hour
-	InternalMailMFAEnabledAlertMaxBytes       = 512
-	InternalMailPasswordChangedAlertTTL       = 24 * time.Hour
-	InternalMailPasswordChangedAlertMaxBytes  = 512
-	InternalMailMFADisabledAlertTTL           = 24 * time.Hour
-	InternalMailMFADisabledAlertMaxBytes      = 512
+	InternalMailNonpaymentDeletionTTL             = 24 * time.Hour
+	InternalMailNonpaymentDeletionMaxBytes        = 512
+	InternalMailNonpaymentDeletionFollowupLease   = 5 * time.Minute
+	InternalMailNonpaymentDeletionCommandTimeout  = 5 * time.Second
+	InternalMailNonpaymentDeletionCommandMaxBytes = 4096
+	InternalMailNonpaymentDeletionTokenMinBytes   = 32
+	InternalMailNonpaymentDeletionTokenMaxBytes   = 4096
+	InternalMailAccountSuspendedTTL               = 24 * time.Hour
+	InternalMailAccountSuspendedMaxBytes          = 512
+	InternalMailDunningSuspendAfter               = 7 * 24 * time.Hour
+	InternalMailDunningDeleteAfter                = 21 * 24 * time.Hour
+	InternalMailSuspensionFollowupLease           = 5 * time.Minute
+	InternalMailSuspensionCommandTimeout          = 5 * time.Second
+	InternalMailSuspensionCommandMaxBytes         = 4096
+	InternalMailSuspensionTokenMinBytes           = 32
+	InternalMailSuspensionTokenMaxBytes           = 4096
+	InternalMailAccountRestoredTTL                = 24 * time.Hour
+	InternalMailAccountRestoredMaxBytes           = 512
+	InternalMailPaymentFailureEventIDMaxBytes     = 256
+	InternalMailPaymentFailedTTL                  = 24 * time.Hour
+	InternalMailPaymentFailedMaxBytes             = 512
+	InternalMailMFAEnabledAlertTTL                = 24 * time.Hour
+	InternalMailMFAEnabledAlertMaxBytes           = 512
+	InternalMailPasswordChangedAlertTTL           = 24 * time.Hour
+	InternalMailPasswordChangedAlertMaxBytes      = 512
+	InternalMailMFADisabledAlertTTL               = 24 * time.Hour
+	InternalMailMFADisabledAlertMaxBytes          = 512
 )
