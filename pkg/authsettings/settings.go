@@ -50,6 +50,10 @@ const (
 	secretLeakedPasswords = "GOTRUE_PASSWORD_HIBP_ENABLED"
 	secretTOTPEnroll      = "GOTRUE_MFA_TOTP_ENROLL_ENABLED"
 	secretTOTPVerify      = "GOTRUE_MFA_TOTP_VERIFY_ENABLED"
+	secretPhoneMFAEnroll  = "GOTRUE_MFA_PHONE_ENROLL_ENABLED"
+	secretPhoneMFAVerify  = "GOTRUE_MFA_PHONE_VERIFY_ENABLED"
+	secretRecoveryEnroll  = "GOTRUE_MFA_RECOVERY_CODES_ENROLL_ENABLED"
+	secretRecoveryVerify  = "GOTRUE_MFA_RECOVERY_CODES_VERIFY_ENABLED"
 	secretPasskeys        = "GOTRUE_PASSKEY_ENABLED"
 	secretPasskeyRPID     = "AUTH_PASSKEY_RP_ID"
 	secretUIName          = "AUTH_UI_NAME"
@@ -91,6 +95,11 @@ type Change struct {
 	// MFA turns TOTP enrolment on or off. Verification stays on, so users
 	// who already enrolled an authenticator keep using it.
 	MFA *bool
+	// MFAPhone turns enrolment of SMS codes as a second factor on or off;
+	// RecoveryCodes does the same for one-time recovery codes. As with
+	// TOTP, verification stays on, so enrolled users keep signing in.
+	MFAPhone      *bool
+	RecoveryCodes *bool
 	// Passkeys turns passkey sign-in on or off. PasskeyRPID names a parent
 	// domain the Auth app shares with the site so both use the same
 	// passkeys; empty returns to the Auth app's own host.
@@ -177,6 +186,12 @@ func (c Change) Secrets() (map[string]string, []string, error) {
 	}
 	if c.MFA != nil {
 		set[secretTOTPEnroll], set[secretTOTPVerify] = strconv.FormatBool(*c.MFA), "true"
+	}
+	if c.MFAPhone != nil {
+		set[secretPhoneMFAEnroll], set[secretPhoneMFAVerify] = strconv.FormatBool(*c.MFAPhone), "true"
+	}
+	if c.RecoveryCodes != nil {
+		set[secretRecoveryEnroll], set[secretRecoveryVerify] = strconv.FormatBool(*c.RecoveryCodes), "true"
 	}
 	if c.Passkeys != nil {
 		set[secretPasskeys] = strconv.FormatBool(*c.Passkeys)

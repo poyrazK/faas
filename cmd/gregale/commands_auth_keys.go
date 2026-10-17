@@ -361,7 +361,9 @@ type authPublicSettings struct {
 		LeakedPasswordCheck bool     `json:"leaked_password_check"`
 	} `json:"password"`
 	MFA struct {
-		TOTP bool `json:"totp"`
+		TOTP          bool `json:"totp"`
+		Phone         bool `json:"phone"`
+		RecoveryCodes bool `json:"recovery_codes"`
 	} `json:"mfa"`
 	Email struct {
 		Configured bool   `json:"configured"`

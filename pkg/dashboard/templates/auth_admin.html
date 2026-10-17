@@ -22,6 +22,8 @@
 <input type="hidden" name="password_require">
 <label>Refuse passwords found in known breaches (Have I Been Pwned)<select name="leaked_password_check"><option value="off">Off</option><option value="on">On</option></select></label>
 <label>Authenticator-app (TOTP) MFA<select name="mfa"><option value="on">Users may enrol</option><option value="off">No new enrolments; enrolled users keep using it</option></select></label>
+<label>SMS codes as a second factor (needs an SMS provider)<select name="mfa_phone"><option value="off">Off</option><option value="on">Users may enrol</option></select></label>
+<label>Recovery codes for users with a second factor<select name="recovery_codes"><option value="off">Off</option><option value="on">Users may create them</option></select></label>
 <label>Passkeys<select name="passkeys"><option value="off">Off</option><option value="on">Users may sign in with a passkey</option></select></label>
 <fieldset><legend>Hosted pages</legend>
 <label>Display name (also used in emails)<input name="brand_name" maxlength="60"></label>
@@ -397,6 +399,7 @@
       site_url: settings.site_url, redirect_urls: settings.redirect_urls.join('\n'), signup: settings.signup.enabled ? 'on' : 'off',
       autoconfirm: settings.signup.autoconfirm ? 'on' : 'off', password_min_length: String(settings.password.min_length),
       leaked_password_check: settings.password.leaked_password_check ? 'on' : 'off', mfa: settings.mfa.totp ? 'on' : 'off',
+      mfa_phone: settings.mfa.phone ? 'on' : 'off', recovery_codes: settings.mfa.recovery_codes ? 'on' : 'off',
       passkeys: settings.passkeys?.enabled ? 'on' : 'off',
       brand_name: settings.branding?.name ?? '', brand_color: settings.branding?.color ?? '', brand_logo_url: settings.branding?.logo_url ?? '',
       captcha_provider: settings.captcha?.provider ?? '', captcha_site_key: settings.captcha?.site_key ?? '', captcha_secret: '',

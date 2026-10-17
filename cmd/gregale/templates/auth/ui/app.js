@@ -98,6 +98,9 @@ export function errorMessage(body, status) {
     webauthn_challenge_not_found: 'The passkey request expired. Try again.',
     passkey_not_found: 'This passkey is no longer registered. Sign in another way.',
     captcha_failed: 'The security check failed or expired. Complete it again.',
+    mfa_verification_failed: 'That code is wrong. Try again.',
+    mfa_challenge_expired: 'That code has expired. Request a new one.',
+    mfa_recovery_codes_locked: 'Too many wrong recovery codes. Wait 15 minutes and try again.',
     otp_expired: 'That code is wrong or has expired. Request a new one.',
     over_sms_send_rate_limit: 'Too many codes sent. Wait a minute and try again.',
     sms_send_failed: 'We could not text this number. Check it and try again.',
@@ -248,6 +251,50 @@ async function offerPasskey(root, settings, session, done) {
     el('button', { type: 'button', class: 'secondary', on: { click: () => done(session) } }, 'Not now')))
 }
 
+// tokenAAL reads the assurance level of an access token GoTrue just issued.
+export function tokenAAL(token) {
+  try { return JSON.parse(new TextDecoder().decode(fromBase64url(token.split('.')[1]))).aal ?? 'aal1' } catch { return 'aal1' }
+}
+
+// secondFactors returns a user's verified factors that can be challenged on
+// these pages, and whether recovery codes can stand in for them.
+export function secondFactors(user) {
+  const verified = (user?.factors ?? []).filter(factor => factor.status === 'verified')
+  return { factors: verified.filter(factor => factor.factor_type === 'totp' || factor.factor_type === 'phone'), recovery: verified.some(factor => factor.factor_type === 'recovery_code') }
+}
+
+// completeSignIn asks a user with a verified second factor to complete it
+// after any first-factor sign-in on these pages, so the session handed to
+// the application is aal2; then finish(session) runs.
+async function completeSignIn(root, session, finish) {
+  if (tokenAAL(session.access_token) === 'aal2') return finish(session)
+  const user = await request('GET', '/auth/v1/user', { token: session.access_token }).catch(() => null)
+  const { factors, recovery } = secondFactors(user)
+  if (!factors.length) return finish(session)
+  const token = session.access_token
+  render(root, 'Two-step verification')
+  const say = status(root)
+  const area = el('div')
+  root.append(area)
+  const useFactor = async factor => {
+    let challenge
+    try { challenge = await request('POST', `/auth/v1/factors/${encodeURIComponent(factor.id)}/challenge`, { token, body: {} }) } catch (err) { return say(err.message) }
+    say(factor.factor_type === 'phone' ? `We texted a code to ${factor.phone ?? 'your phone'}.` : `Enter the code from ${factor.friendly_name || 'your authenticator app'}.`)
+    area.replaceChildren(plainForm(async ({ code }) => {
+      try { finish(await request('POST', `/auth/v1/factors/${encodeURIComponent(factor.id)}/verify`, { token, body: { challenge_id: challenge.id, code: code.trim() } })) } catch (err) { say(err.message) }
+    }, 'Verify', el('label', {}, 'Code', el('input', { name: 'code', inputmode: 'numeric', autocomplete: 'one-time-code', required: '' }))))
+  }
+  const useRecovery = () => {
+    say('Enter one of your recovery codes. Each code works once.')
+    area.replaceChildren(plainForm(async ({ code }) => {
+      try { finish(await request('POST', '/auth/v1/factors/recovery-codes/verify', { token, body: { code: code.trim() } })) } catch (err) { say(err.message) }
+    }, 'Verify', el('label', {}, 'Recovery code', el('input', { name: 'code', autocomplete: 'off', spellcheck: 'false', required: '' }))))
+  }
+  const choices = [...factors.slice(1).map(factor => [factor.factor_type === 'phone' ? 'Text me a code instead' : `Use ${factor.friendly_name || 'an authenticator app'} instead`, () => useFactor(factor)]), ...(recovery ? [['Use a recovery code', useRecovery]] : [])]
+  if (choices.length) root.append(el('div', { class: 'providers' }, ...choices.map(([label, onClick]) => el('button', { type: 'button', class: 'secondary', on: { click: onClick } }, label))))
+  await useFactor(factors[0])
+}
+
 function links(...items) {
   return el('nav', {}, ...items.map(([href, label]) => el('a', { href }, label)))
 }
@@ -270,7 +317,7 @@ async function main() {
     const signIn = form(async ({ email, password }, protect) => {
       let session
       try { session = await protect({ email, password }, body => request('POST', '/auth/v1/token?grant_type=password', { body })) } catch (err) { return say(err.message) }
-      await offerPasskey(root, settings, session, done)
+      await completeSignIn(root, session, verified => offerPasskey(root, settings, verified, done))
     }, 'Sign in', field('Email', 'email', 'email', 'username webauthn'), field('Password', 'password', 'password', 'current-password'))
     // A magic link needs only the email address from the same form.
     signIn.append(el('button', { type: 'button', class: 'secondary', on: { click: async () => {
@@ -285,7 +332,7 @@ async function main() {
     const providers = Object.entries(settings.external ?? {}).filter(([name, on]) => on && !['email', 'phone', 'anonymous_users', 'saml'].includes(name))
     const passkey = passkeysAvailable(settings) ? [el('button', { type: 'button', class: 'secondary', on: { click: async event => {
       event.target.disabled = true
-      try { done(await signInWithPasskey(signIn.protect)) } catch (err) { say(passkeyFailure(err)); event.target.disabled = false }
+      try { await completeSignIn(root, await signInWithPasskey(signIn.protect), done) } catch (err) { say(passkeyFailure(err)); event.target.disabled = false }
     } } }, 'Sign in with a passkey')] : []
     if (providers.length || passkey.length) {
       root.append(el('p', { class: 'divider' }, 'or'), el('div', { class: 'providers' }, ...passkey, ...providers.map(([name]) =>
@@ -307,7 +354,7 @@ async function main() {
       sendCode.replaceWith(plainForm(async ({ code }) => {
         let session
         try { session = await request('POST', '/auth/v1/verify', { body: { type: 'sms', phone, token: code.trim() } }) } catch (err) { return say(err.message) }
-        await offerPasskey(root, settings, session, done)
+        await completeSignIn(root, session, verified => offerPasskey(root, settings, verified, done))
       }, 'Sign in', el('label', {}, 'Code', el('input', { name: 'code', inputmode: 'numeric', autocomplete: 'one-time-code', pattern: '[0-9 ]{6,12}', required: '' }))))
     }, 'Text me a code', el('label', {}, 'Phone number, with country code', el('input', { name: 'phone', type: 'tel', autocomplete: 'tel', placeholder: '+44 7700 900123', required: '' })))
     root.append(sendCode, links([keep('/ui/phone'), 'Use a different number or get a new code'], [keep('/ui/sign-in'), 'Sign in another way']))

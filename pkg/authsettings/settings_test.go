@@ -157,3 +157,13 @@ func TestBrandingCaptchaAndRetention(t *testing.T) {
 		}
 	}
 }
+
+func TestMoreMFASettings(t *testing.T) {
+	on, off := true, false
+	set, _, err := Change{MFAPhone: &on, RecoveryCodes: &off}.Secrets()
+	want := map[string]string{"GOTRUE_MFA_PHONE_ENROLL_ENABLED": "true", "GOTRUE_MFA_PHONE_VERIFY_ENABLED": "true",
+		"GOTRUE_MFA_RECOVERY_CODES_ENROLL_ENABLED": "false", "GOTRUE_MFA_RECOVERY_CODES_VERIFY_ENABLED": "true"}
+	if err != nil || !reflect.DeepEqual(set, want) {
+		t.Fatalf("set %v err %v", set, err)
+	}
+}

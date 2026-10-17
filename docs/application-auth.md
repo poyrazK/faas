@@ -149,6 +149,7 @@ gregale auth config shop-auth --email-provider resend --email-from 'Shop <auth@s
 | `--password-require CLASSES` | `lower`, `upper`, `digit` and `symbol`, comma-separated, or `none`. |
 | `--leaked-password-check on\|off` | Refuse passwords found in known breaches (Have I Been Pwned). |
 | `--mfa on\|off` | Let users enrol an authenticator app (TOTP). `off` stops new enrolments; enrolled users keep verifying. |
+| `--mfa-phone on\|off`, `--recovery-codes on\|off` | SMS codes as a second factor, and one-time recovery codes (see Two-step verification). |
 | `--email-provider`, `--email-from`, `--email-api-key-stdin` | HTTPS email delivery (see Email); `--email-provider none` removes it. |
 | `--authz FILE` | Replace custom roles and policies (see Organizations and roles). |
 | `--events on\|off` | Publish user lifecycle events to your event bus (see Lifecycle events). |
@@ -252,6 +253,31 @@ instance and one code a minute per number. Codes last five minutes; set
 `GOTRUE_SMS_OTP_EXP` (seconds) to change that. `--sms off` turns phone sign-in off and
 removes the provider's credentials; changing provider removes the previous
 one's.
+
+### Two-step verification
+
+Users can add a second factor: an authenticator app (on by default), SMS codes
+(`--mfa-phone on`, which needs an SMS provider; see Phone sign-in) or both.
+With `--recovery-codes on` they can also create one-time recovery codes, which
+stand in for a lost second factor but never replace it. A user who has a
+second factor signs in at assurance level `aal1` and reaches `aal2` by
+entering a code.
+
+The hosted sign-in pages ask for the code after a password, phone or passkey
+sign-in, offer the user's other factors and recovery codes, and hand the
+application an `aal2` session. In your own pages, use `@gregale/auth`:
+
+```ts
+const { totp } = await auth.mfa.enrollTOTP({ friendlyName: 'Phone app' }) // show totp.qr_code
+const challenge = await auth.mfa.challenge(factorId)
+await auth.mfa.verify({ factorId, challengeId: challenge.id, code })
+const { current, next } = await auth.mfa.assuranceLevel() // next is 'aal2' when the user must verify
+const { codes } = await auth.mfa.recoveryCodes.generate()   // shown once
+```
+
+Require `aal2` where it matters: in row-level security with
+`gregale_auth.claims()->>'aal' = 'aal2'`, or in a backend from
+`claims.AAL` (Go), `claims.aal` (Python) or `claims.aal` (Node).
 
 ### CAPTCHA
 

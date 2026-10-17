@@ -39,7 +39,22 @@ export type Passkey = Readonly<{ id: string; friendly_name?: string | null; crea
 /** Sign-up and sign-in calls take the CAPTCHA token when the Auth app requires one. */
 export type Captcha = { captchaToken?: string }
 
-export type AuthEvent = 'SIGNED_IN' | 'TOKEN_REFRESHED' | 'SIGNED_OUT'
+export type AuthEvent = 'SIGNED_IN' | 'TOKEN_REFRESHED' | 'SIGNED_OUT' | 'MFA_VERIFIED'
+
+/** A second factor: an authenticator app, a phone, a passkey or recovery codes. */
+export type Factor = Readonly<{ id: string; factor_type: string; status: string; friendly_name?: string; phone?: string; created_at?: string; [key: string]: unknown }>
+export type TOTPEnrollment = Readonly<{ id: string; type: 'totp'; friendly_name?: string; totp: Readonly<{ qr_code: string; secret: string; uri: string }> }>
+export type FactorChallenge = Readonly<{ id: string; type: string; expires_at?: number }>
+export type RecoveryCodes = Readonly<{ id: string; type: string; total: number; remaining?: number; codes?: readonly string[] }>
+export type AssuranceLevel = Readonly<{ current: 'aal1' | 'aal2' | null; next: 'aal1' | 'aal2' | null }>
+
+/** aal reads the assurance level of an access token without verifying it. */
+function aal(token: string): 'aal1' | 'aal2' {
+  try {
+    const part = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')
+    return JSON.parse(atob(part + '='.repeat((4 - part.length % 4) % 4))).aal === 'aal2' ? 'aal2' : 'aal1'
+  } catch { return 'aal1' }
+}
 
 export type Organization = Readonly<{ id: string; slug: string; name: string; role?: string; created_at: string }>
 export type Member = Readonly<{ user_id: string; email: string; role: string; created_at: string }>
@@ -248,6 +263,44 @@ export function createAuthClient(options: AuthClientOptions) {
       const credential = await webauthn().get({ publicKey: decodeOptions(options) })
       if (!credential) throw new AuthError(400, 'passkey_cancelled')
       return save(toSession(await call<TokenResponse>('POST', '/auth/v1/passkeys/authentication/verify', { body: { challenge_id, credential: credentialJSON(credential) } })), 'SIGNED_IN')
+    },
+    /**
+     * Second factors. A user who enrolled one signs in at aal1 and reaches
+     * aal2 by verifying a challenge (or a recovery code); require aal2 where
+     * it matters, for example with `gregale_auth.claims()->>'aal'` in RLS.
+     */
+    mfa: {
+      listFactors: async (): Promise<Factor[]> => (await call<{ factors?: Factor[] }>('GET', '/auth/v1/user', { token: await bearer() })).factors ?? [],
+      /** Starts enrolling an authenticator app; show totp.qr_code, then challenge and verify to activate it. */
+      enrollTOTP: async (input: { friendlyName?: string; issuer?: string } = {}): Promise<TOTPEnrollment> =>
+        call<TOTPEnrollment>('POST', '/auth/v1/factors', { token: await bearer(), body: { factor_type: 'totp', ...(input.friendlyName ? { friendly_name: input.friendlyName } : {}), ...(input.issuer ? { issuer: input.issuer } : {}) } }),
+      /** Starts enrolling a phone for SMS codes; challenge and verify to activate it. */
+      enrollPhone: async (input: { phone: string; friendlyName?: string }): Promise<Factor> =>
+        call<Factor>('POST', '/auth/v1/factors', { token: await bearer(), body: { factor_type: 'phone', phone: input.phone, ...(input.friendlyName ? { friendly_name: input.friendlyName } : {}) } }),
+      /** Creates a challenge; for a phone factor this texts the code. */
+      challenge: async (factorId: string): Promise<FactorChallenge> => call<FactorChallenge>('POST', `/auth/v1/factors/${id(factorId)}/challenge`, { token: await bearer(), body: {} }),
+      /** Verifies a challenge; the stored session becomes aal2. */
+      verify: async (input: { factorId: string; challengeId: string; code: string }): Promise<Session> =>
+        save(toSession(await call<TokenResponse>('POST', `/auth/v1/factors/${id(input.factorId)}/verify`, { token: await bearer(), body: { challenge_id: input.challengeId, code: input.code } })), 'MFA_VERIFIED'),
+      unenroll: async (factorId: string): Promise<void> => { await call('DELETE', `/auth/v1/factors/${id(factorId)}`, { token: await bearer() }) },
+      /** current is the session's level; next is aal2 when the user has a verified second factor. */
+      assuranceLevel: async (): Promise<AssuranceLevel> => {
+        const session = await getSession()
+        if (!session) return { current: null, next: null }
+        const factors = (await call<{ factors?: Factor[] }>('GET', '/auth/v1/user', { token: session.accessToken })).factors ?? []
+        const current = aal(session.accessToken)
+        return { current, next: factors.some(f => f.status === 'verified' && f.factor_type !== 'recovery_code') ? 'aal2' : current }
+      },
+      recoveryCodes: {
+        /** Creates one-time recovery codes (needs aal2); the codes are returned only here. */
+        generate: async (friendlyName?: string): Promise<RecoveryCodes> => call<RecoveryCodes>('POST', '/auth/v1/factors/recovery-codes', { token: await bearer(), body: friendlyName ? { friendly_name: friendlyName } : {} }),
+        regenerate: async (): Promise<RecoveryCodes> => call<RecoveryCodes>('POST', '/auth/v1/factors/recovery-codes/regenerate', { token: await bearer(), body: {} }),
+        status: async (): Promise<RecoveryCodes> => call<RecoveryCodes>('GET', '/auth/v1/factors/recovery-codes', { token: await bearer() }),
+        remove: async (): Promise<void> => { await call('DELETE', '/auth/v1/factors/recovery-codes', { token: await bearer() }) },
+        /** Uses one recovery code in place of a second factor; the session becomes aal2. */
+        verify: async (code: string): Promise<Session> =>
+          save(toSession(await call<TokenResponse>('POST', '/auth/v1/factors/recovery-codes/verify', { token: await bearer(), body: { code } })), 'MFA_VERIFIED'),
+      },
     },
     passkeys: {
       /** Registers a new passkey for the signed-in user. */

@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	authConfigUsage    = "usage: gregale auth config NAME [--site-url URL] [--redirect-urls URLS] [--signup on|off] [--autoconfirm on|off] [--password-min-length N] [--password-require CLASSES] [--leaked-password-check on|off] [--mfa on|off] [--email-provider resend|postmark|none --email-from FROM --email-api-key-stdin] [--authz FILE] [--events on|off] [--passkeys on|off] [--passkey-rp-id DOMAIN|none] [--brand-name NAME] [--brand-color #RRGGBB] [--brand-logo-url URL] [--captcha turnstile|hcaptcha|off --captcha-site-key KEY --captcha-secret-stdin] [--activity-retention DAYS|forever] [--sms twilio|twilio_verify|messagebird|textlocal|vonage|off --sms-account ID --sms-sender SENDER --sms-secret-stdin] [--sms-countries CODES|all] [--sso on|off]"
+	authConfigUsage    = "usage: gregale auth config NAME [--site-url URL] [--redirect-urls URLS] [--signup on|off] [--autoconfirm on|off] [--password-min-length N] [--password-require CLASSES] [--leaked-password-check on|off] [--mfa on|off] [--mfa-phone on|off] [--recovery-codes on|off] [--email-provider resend|postmark|none --email-from FROM --email-api-key-stdin] [--authz FILE] [--events on|off] [--passkeys on|off] [--passkey-rp-id DOMAIN|none] [--brand-name NAME] [--brand-color #RRGGBB] [--brand-logo-url URL] [--captcha turnstile|hcaptcha|off --captcha-site-key KEY --captcha-secret-stdin] [--activity-retention DAYS|forever] [--sms twilio|twilio_verify|messagebird|textlocal|vonage|off --sms-account ID --sms-sender SENDER --sms-secret-stdin] [--sms-countries CODES|all] [--sso on|off]"
 	authProvidersUsage = "usage: gregale auth providers list NAME | gregale auth providers enable NAME PROVIDER --client-id ID [--client-secret-stdin] [--url URL] | gregale auth providers disable NAME PROVIDER"
 )
 
@@ -40,6 +40,8 @@ func cmdAuthConfig(args []string) int {
 	leaked := fs.String("leaked-password-check", "", "on or off: refuse passwords found in known breaches (Have I Been Pwned)")
 	mfa := fs.String("mfa", "", "on or off: let users enrol an authenticator app (TOTP); enrolled users keep verifying when off")
 	passkeys := fs.String("passkeys", "", "on or off: let users sign in with a passkey")
+	mfaPhone := fs.String("mfa-phone", "", "on or off: let users enrol SMS codes as a second factor (needs an SMS provider)")
+	recoveryCodes := fs.String("recovery-codes", "", "on or off: let users create one-time recovery codes for their second factor")
 	passkeyRPID := fs.String("passkey-rp-id", "", "parent domain shared by the Auth app and your site for passkeys (example.com), or none for the Auth app's host")
 	extras := authHostedFlags{
 		name:            fs.String("brand-name", "", "name shown on the hosted pages and in emails, or none for the site's host"),
@@ -88,6 +90,16 @@ func cmdAuthConfig(args []string) int {
 			return printErr("Invalid Auth settings", err)
 		}
 		change.SSO = &on
+	}
+	for name, target := range map[string]**bool{"mfa-phone": &change.MFAPhone, "recovery-codes": &change.RecoveryCodes} {
+		if !given[name] {
+			continue
+		}
+		on, err := parseOnOff(name, map[string]string{"mfa-phone": *mfaPhone, "recovery-codes": *recoveryCodes}[name])
+		if err != nil {
+			return printErr("Invalid Auth settings", err)
+		}
+		*target = &on
 	}
 	if given["passkey-rp-id"] {
 		rpID := *passkeyRPID
@@ -170,6 +182,22 @@ func ensureAuthSAMLKey(ctx context.Context, client *api.Client, app, scope strin
 	}
 	set[authsettings.SAMLKeySecret] = key
 	return nil
+}
+
+func authMFASummary(settings authPublicSettings) string {
+	methods := []string{}
+	for _, m := range []struct {
+		on   bool
+		name string
+	}{{settings.MFA.TOTP, "authenticator app"}, {settings.MFA.Phone, "SMS code"}, {settings.MFA.RecoveryCodes, "recovery codes"}} {
+		if m.on {
+			methods = append(methods, m.name)
+		}
+	}
+	if len(methods) == 0 {
+		return "off (enrolled users keep verifying)"
+	}
+	return strings.Join(methods, ", ")
 }
 
 // authSMSFlags are phone sign-in's settings. The provider's secret comes
@@ -437,7 +465,7 @@ func showAuthConfig(ctx context.Context, app api.AppResponse) int {
 	for _, row := range [][2]string{
 		{"site URL", settings.SiteURL}, {"redirect URLs", redirects}, {"sign-up", signup},
 		{"sign-in methods", strings.Join(providers, ", ")}, {"passwords", passwords},
-		{"MFA (TOTP)", onOff(settings.MFA.TOTP)}, {"passkeys", passkeys}, {"phone (SMS)", phone}, {"organization SSO", sso}, {"CAPTCHA", captchaState}, {"hosted pages", branding},
+		{"MFA", authMFASummary(settings)}, {"passkeys", passkeys}, {"phone (SMS)", phone}, {"organization SSO", sso}, {"CAPTCHA", captchaState}, {"hosted pages", branding},
 		{"email delivery", email}, {"lifecycle events", events}, {"activity kept", retention}, {"signing key", keys},
 	} {
 		_, _ = fmt.Fprintf(osStdout, "  %-16s %s\n", row[0]+":", row[1])
