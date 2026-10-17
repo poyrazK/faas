@@ -10044,6 +10044,15 @@ const (
 	IssueMaxClockSkew     = 5 * time.Minute
 )
 
+// Offline grouping evaluation and reviewed partition snapshots (ADR-1661).
+const (
+	IssueGroupingEvaluationCasesMax         = 10000
+	IssueGroupingEvaluationCorpusMaxBytes   = 8 << 20
+	IssueGroupingEvaluationBaselineMaxBytes = 8 << 20
+	IssueGroupingEvaluationCaseIDMaxBytes   = 128
+	IssueGroupingEvaluationJSONDepthMax     = 64
+)
+
 // Deployment-local Node source-map registration (ADR-1113). SDK mirrors these
 // bounds; map artifacts and source content never enter ingestion.
 const (

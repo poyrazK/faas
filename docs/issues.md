@@ -1026,6 +1026,52 @@ semantics. The initial 19 fixtures are a regression baseline, not production
 accuracy evidence; add reviewed, sanitized real incidents before making rollout
 claims. The evaluator uses no network or database and does not output event content.
 
+Preview which cases would merge or split when switching strategies:
+
+```sh
+go run ./cmd/issues-grouping-eval -strategy cause-chain-v1 -compare-with failure-site-v1
+```
+
+The preview lists affected case IDs, their old/new group representatives and
+structural grouping reasons: selected frame indexes, cause index, evidence basis
+and discriminator kind. It omits messages, paths, code/override values, namespace
+values and family labels. Case IDs are intentionally visible; use non-sensitive
+identifiers. Group names are the smallest member case ID, so a fingerprint version
+change alone does not appear as a membership change. This evaluates offline
+strategy behavior; it does not simulate live manual merge/split rules.
+
+Check future normalizer changes against the checked-in, reviewed synthetic
+partition:
+
+```sh
+make issues-grouping-check
+```
+
+The same baseline is checked by the normalizer and evaluator test suites. A check
+fails for **any newly incorrect pair**, even if total false merges/splits stay the
+same or another pair improves. Existing incorrect pairs do not fail again unless
+they are newly introduced. The JSON report separates new and fixed false merges
+and splits. Previews alone return success when their inputs are valid; `-check`
+requires a saved baseline and returns nonzero for regressions (exit 2 from the
+compiled binary; `go run` wraps that exit).
+
+For an independently reviewed, sanitized incident corpus:
+
+```sh
+go run ./cmd/issues-grouping-eval -corpus PATH -strategy cause-chain-v1 -write-baseline review.next.json
+# Review the labeled corpus and snapshot before accepting it as a baseline.
+go run ./cmd/issues-grouping-eval -corpus PATH -strategy cause-chain-v1 -baseline review.next.json -check
+```
+
+Snapshot creation uses a new private file and refuses to overwrite an existing
+path. Checks never rewrite baselines. Snapshots bind the complete parsed corpus,
+including labels and namespaces, with a SHA-256 digest; reordering cases or JSON
+formatting is harmless, while changing fixtures requires an explicit new review.
+The tool accepts the existing corpus array format and never infers incident truth
+or exports incidents. Review sanitation and labels together, preserving grouping
+differences that matter. See the [corpus guide](../pkg/issues/evaluation/testdata/README.md)
+and [ADR-1661](adr/1661-issue-grouping-previews-and-baselines.md).
+
 ### Reported breadcrumbs and operational tags
 
 Create a collector for each request or job; add only messages appropriate to retain as issue evidence:
