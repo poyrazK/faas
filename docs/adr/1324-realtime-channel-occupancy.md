@@ -36,7 +36,7 @@ One request reads 1 to `RealtimeOccupancyChannelsMax` (20) channels.
 - A single-box deployment has one realtime node, whose count is exact, and never calls apid.
 - A node watches at most 1,000 channels (`RealtimeOccupancyWatchedMax`), which bounds the refresh to 50 small apid calls per interval. Past it the subscription succeeds and the client gets an `occupancy_limit` error frame instead of counts.
 - A frame that cannot be queued is retried on the next interval. Occupancy never closes a connection, unlike presence and control frames.
-- SSE streams count toward occupancy but do not receive live frames yet.
+- An SSE stream asks with `?occupancy=1` and receives `event: occupancy` with the same JSON. The stream writes counts while it waits for new history; it holds one pending count, and a newer count replaces one not yet written.
 
 ## Rejected alternatives
 

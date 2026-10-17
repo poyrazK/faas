@@ -132,8 +132,14 @@ type sseTestEvent struct {
 // event channel; otherwise events arrive on the channel until the stream ends.
 func (n *pgConnectionsNode) openSSE(t *testing.T, token, channel, lastEventID string) (int, <-chan sseTestEvent) {
 	t.Helper()
+	return n.openSSEQuery(t, token, "channel="+url.QueryEscape(channel), lastEventID)
+}
+
+// openSSEQuery is openSSE with a raw query after transport=sse.
+func (n *pgConnectionsNode) openSSEQuery(t *testing.T, token, query, lastEventID string) (int, <-chan sseTestEvent) {
+	t.Helper()
 	ctx, cancel := context.WithCancel(t.Context())
-	target := n.server.URL + ManagedPathPrefix + n.endpoint + "?transport=sse&channel=" + url.QueryEscape(channel)
+	target := n.server.URL + ManagedPathPrefix + n.endpoint + "?transport=sse&" + query
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {
 		cancel()

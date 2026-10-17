@@ -204,6 +204,18 @@ func (m *Manager) serveSSE(w http.ResponseWriter, r *http.Request) {
 	}) {
 		return
 	}
+	// ?occupancy=1 adds live occupancy events (ADR-1324), written while the
+	// stream waits for new history.
+	var occupancy <-chan int
+	if value := r.URL.Query().Get("occupancy"); value == "1" || value == "true" {
+		watcher := newSSEOccupancyWatcher()
+		if m.watchOccupancy(id, channel, watcher) {
+			defer m.unwatchOccupancy(id, channel, watcher)
+			occupancy = watcher.updates
+		} else if !send("error", "", map[string]string{"channel": channel, "code": "occupancy_limit"}) {
+			return
+		}
+	}
 	for {
 		if !auth.admit(ctx, send) {
 			return
@@ -240,21 +252,35 @@ func (m *Manager) serveSSE(w http.ResponseWriter, r *http.Request) {
 			if !send("heartbeat", "", map[string]string{"channel": channel}) {
 				return
 			}
-			timer := time.NewTimer(min(m.cfg.ResumePollInterval, realtimeAccessRefreshInterval))
-			select {
-			case <-ctx.Done():
-				timer.Stop()
+			if !m.waitSSE(ctx, min(m.cfg.ResumePollInterval, realtimeAccessRefreshInterval), channel, occupancy, send) {
 				return
-			case <-m.ctx.Done():
-				timer.Stop()
-				return
-			case <-timer.C:
 			}
 		}
 		page, err = read()
 		if err != nil {
 			// Transient: end the stream so the client reconnects from its cursor.
 			return
+		}
+	}
+}
+
+// waitSSE waits for the next history poll, writing live occupancy counts as
+// they arrive. It reports false when the stream should end.
+func (m *Manager) waitSSE(ctx context.Context, interval time.Duration, channel string, occupancy <-chan int, send func(string, string, any) bool) bool {
+	timer := time.NewTimer(interval)
+	defer timer.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return false
+		case <-m.ctx.Done():
+			return false
+		case <-timer.C:
+			return true
+		case count := <-occupancy:
+			if !send("occupancy", "", map[string]any{"channel": channel, "subscribers": count}) {
+				return false
+			}
 		}
 	}
 }

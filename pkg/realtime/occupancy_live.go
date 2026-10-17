@@ -33,12 +33,49 @@ const (
 	occupancyRemoteWorkers = 4
 )
 
-// occupancyLive tracks which connections watch which channels and what each
-// was last sent. Its mutex may be taken while m.mu or c.mu is held, and is
-// never held while queueing frames or calling apid.
+// occupancyWatcher receives live occupancy counts: a resumable WebSocket
+// connection queues a frame, an SSE stream keeps the latest count for its
+// writer.
+type occupancyWatcher interface {
+	sendOccupancy(ctx context.Context, channel string, count int) error
+}
+
+func (c *connection) sendOccupancy(ctx context.Context, channel string, count int) error {
+	return c.m.queueResume(ctx, c, resumeServerFrame{Type: "occupancy", Channel: channel, Subscribers: &count})
+}
+
+// sseOccupancyWatcher hands an SSE stream the latest count; a count the
+// stream has not written yet is replaced, never queued behind.
+type sseOccupancyWatcher struct {
+	updates chan int
+}
+
+func newSSEOccupancyWatcher() *sseOccupancyWatcher {
+	return &sseOccupancyWatcher{updates: make(chan int, 1)}
+}
+
+// sendOccupancy is only called by the single flushing goroutine, so the
+// drain-then-send loop always finishes.
+func (w *sseOccupancyWatcher) sendOccupancy(_ context.Context, _ string, count int) error {
+	for {
+		select {
+		case w.updates <- count:
+			return nil
+		default:
+			select {
+			case <-w.updates:
+			default:
+			}
+		}
+	}
+}
+
+// occupancyLive tracks which watchers follow which channels and what each was
+// last sent. Its mutex may be taken while m.mu or c.mu is held, and is never
+// held while queueing frames or calling apid.
 type occupancyLive struct {
 	mu       sync.Mutex
-	watchers map[channelKey]map[*connection]int // last count sent; -1 before the first frame
+	watchers map[channelKey]map[occupancyWatcher]int // last count sent; -1 before the first frame
 	since    map[channelKey]time.Time
 	remote   map[channelKey]int
 	remoteAt map[channelKey]time.Time
@@ -47,7 +84,7 @@ type occupancyLive struct {
 
 func newOccupancyLive() occupancyLive {
 	return occupancyLive{
-		watchers: make(map[channelKey]map[*connection]int),
+		watchers: make(map[channelKey]map[occupancyWatcher]int),
 		since:    make(map[channelKey]time.Time),
 		remote:   make(map[channelKey]int),
 		remoteAt: make(map[channelKey]time.Time),
@@ -65,10 +102,11 @@ func (m *Manager) occupancyChanged(key channelKey) {
 	l.mu.Unlock()
 }
 
-// watchOccupancy subscribes a connection to live occupancy for a channel. It
-// reports false when the node already watches its maximum of channels.
-func (m *Manager) watchOccupancy(c *connection, channel string) bool {
-	key := channelKey{endpointID: c.info.EndpointID, channel: channel}
+// watchOccupancy subscribes a watcher to live occupancy for an endpoint
+// channel. It reports false when the node already watches its maximum of
+// channels.
+func (m *Manager) watchOccupancy(endpointID, channel string, w occupancyWatcher) bool {
+	key := channelKey{endpointID: endpointID, channel: channel}
 	l := &m.occupancyLive
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -77,21 +115,20 @@ func (m *Manager) watchOccupancy(c *connection, channel string) bool {
 		if len(l.watchers) >= api.RealtimeOccupancyWatchedMax {
 			return false
 		}
-		watchers = make(map[*connection]int)
+		watchers = make(map[occupancyWatcher]int)
 		l.watchers[key] = watchers
 		l.since[key] = time.Now()
 	}
-	watchers[c] = -1
+	watchers[w] = -1
 	l.dirty[key] = struct{}{}
 	return true
 }
 
-func (m *Manager) unwatchOccupancy(c *connection, channel string) {
-	key := channelKey{endpointID: c.info.EndpointID, channel: channel}
+func (m *Manager) unwatchOccupancy(endpointID, channel string, w occupancyWatcher) {
 	l := &m.occupancyLive
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.unwatchLocked(key, c)
+	l.unwatchLocked(channelKey{endpointID: endpointID, channel: channel}, w)
 }
 
 // unwatchOccupancyConnection drops every watch of a removed connection.
@@ -106,9 +143,9 @@ func (m *Manager) unwatchOccupancyConnection(c *connection) {
 	}
 }
 
-func (l *occupancyLive) unwatchLocked(key channelKey, c *connection) {
+func (l *occupancyLive) unwatchLocked(key channelKey, w occupancyWatcher) {
 	watchers := l.watchers[key]
-	delete(watchers, c)
+	delete(watchers, w)
 	if len(watchers) == 0 {
 		delete(l.watchers, key)
 		delete(l.since, key)
@@ -144,9 +181,9 @@ func (m *Manager) runOccupancyTicker(ctx context.Context, interval time.Duration
 }
 
 type occupancyDelivery struct {
-	key   channelKey
-	count int
-	conns []*connection
+	key      channelKey
+	count    int
+	watchers []occupancyWatcher
 }
 
 // flushOccupancy sends each changed channel's count to the watchers that have
@@ -164,26 +201,26 @@ func (m *Manager) flushOccupancy(ctx context.Context) {
 		}
 		delete(l.dirty, key)
 		total := m.occupancy.count(key) + l.remote[key]
-		var conns []*connection
-		for c, last := range watchers {
+		var pending []occupancyWatcher
+		for w, last := range watchers {
 			if last != total {
-				conns = append(conns, c)
+				pending = append(pending, w)
 			}
 		}
-		if len(conns) > 0 {
-			deliveries = append(deliveries, occupancyDelivery{key: key, count: total, conns: conns})
+		if len(pending) > 0 {
+			deliveries = append(deliveries, occupancyDelivery{key: key, count: total, watchers: pending})
 		}
 	}
 	l.mu.Unlock()
 	for _, delivery := range deliveries {
-		for _, c := range delivery.conns {
+		for _, w := range delivery.watchers {
 			count := delivery.count
-			err := m.queueResume(ctx, c, resumeServerFrame{Type: "occupancy", Channel: delivery.key.channel, Subscribers: &count})
+			err := w.sendOccupancy(ctx, delivery.key.channel, count)
 			l.mu.Lock()
 			if watchers := l.watchers[delivery.key]; watchers != nil {
-				if _, ok := watchers[c]; ok {
+				if _, ok := watchers[w]; ok {
 					if err == nil {
-						watchers[c] = count
+						watchers[w] = count
 					} else {
 						l.dirty[delivery.key] = struct{}{}
 					}

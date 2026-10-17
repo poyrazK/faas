@@ -81,7 +81,7 @@ func TestOccupancyFramesFollowLocalChanges(t *testing.T) {
 	if err := m.Subscribe(watcher.info.ID, "lobby"); err != nil {
 		t.Fatal(err)
 	}
-	if !m.watchOccupancy(watcher, "lobby") {
+	if !m.watchOccupancy("e", "lobby", watcher) {
 		t.Fatal("watch refused")
 	}
 	m.flushOccupancy(ctx)
@@ -131,7 +131,7 @@ func TestOccupancyFramesAddRemoteCounts(t *testing.T) {
 	if err := m.Subscribe(watcher.info.ID, "lobby"); err != nil {
 		t.Fatal(err)
 	}
-	m.watchOccupancy(watcher, "lobby")
+	m.watchOccupancy("e", "lobby", watcher)
 	m.flushOccupancy(ctx)
 	if got := occupancyFrames(t, watcher); len(got) != 0 {
 		t.Fatalf("frame before the other nodes' counts = %v", got)
@@ -170,14 +170,64 @@ func TestOccupancyWatchLimit(t *testing.T) {
 	m := newOccupancyTestManager(t, nil)
 	c, _ := outboundTestConnection(t, m, "e")
 	for i := range api.RealtimeOccupancyWatchedMax {
-		if !m.watchOccupancy(c, fmt.Sprintf("ch-%d", i)) {
+		if !m.watchOccupancy("e", fmt.Sprintf("ch-%d", i), c) {
 			t.Fatalf("watch %d refused below the limit", i)
 		}
 	}
-	if m.watchOccupancy(c, "one-more") {
+	if m.watchOccupancy("e", "one-more", c) {
 		t.Fatal("watch past the node limit accepted")
 	}
-	if !m.watchOccupancy(c, "ch-0") {
+	if !m.watchOccupancy("e", "ch-0", c) {
 		t.Fatal("a second watcher of a watched channel refused")
+	}
+}
+
+// adr: 1324 — an SSE stream gets counts through a one-slot channel where a
+// newer count replaces one the stream has not written yet.
+func TestOccupancyCountsReachSSEStreams(t *testing.T) {
+	m := newOccupancyTestManager(t, nil)
+	ctx := context.Background()
+	c, _ := outboundTestConnection(t, m, "e")
+	other, _ := outboundTestConnection(t, m, "e")
+	if err := m.Subscribe(c.info.ID, "lobby"); err != nil {
+		t.Fatal(err)
+	}
+	stream := newSSEOccupancyWatcher()
+	key := channelKey{endpointID: "e", channel: "lobby"}
+	m.occupancy.add(key, 1) // the SSE stream's own subscription
+	if !m.watchOccupancy("e", "lobby", stream) {
+		t.Fatal("watch refused")
+	}
+	m.flushOccupancy(ctx)
+	if got := <-stream.updates; got != 2 {
+		t.Fatalf("first count = %d, want 2", got)
+	}
+	if err := m.Subscribe(other.info.ID, "lobby"); err != nil {
+		t.Fatal(err)
+	}
+	m.flushOccupancy(ctx) // 3, not read by the stream
+	if err := m.Unsubscribe(other.info.ID, "lobby"); err != nil {
+		t.Fatal(err)
+	}
+	m.flushOccupancy(ctx) // 2 replaces the unread 3
+	select {
+	case got := <-stream.updates:
+		if got != 2 {
+			t.Fatalf("latest count = %d, want 2", got)
+		}
+	default:
+		t.Fatal("no count pending")
+	}
+	select {
+	case got := <-stream.updates:
+		t.Fatalf("stale count %d queued behind the latest", got)
+	default:
+	}
+	m.unwatchOccupancy("e", "lobby", stream)
+	m.occupancyLive.mu.Lock()
+	watched := len(m.occupancyLive.watchers)
+	m.occupancyLive.mu.Unlock()
+	if watched != 0 {
+		t.Fatalf("watched channels after the stream ended = %d, want 0", watched)
 	}
 }

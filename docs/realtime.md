@@ -137,7 +137,8 @@ await consumeRealtimeChannel({
 The server sends `{"type":"occupancy","channel":"lobby","subscribers":23}`
 after subscribing and whenever the count changes, at most once a second. The
 count includes this connection. Read-only ticket subscribers can ask for it
-too; SSE streams count but do not receive live counts yet. If a realtime node
+too. An SSE stream adds `occupancy=1` to its URL (or passes `onOccupancy` to
+`subscribeRealtimeSSE`) and gets `event: occupancy` with the same data. If a realtime node
 already follows its maximum of 1,000 live-count channels, the subscription
 still works and the client gets an `occupancy_limit` error frame instead.
 

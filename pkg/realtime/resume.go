@@ -563,7 +563,7 @@ func (m *Manager) resumeSubscribe(ctx context.Context, c *connection, frame resu
 // watchSubscriptionOccupancy starts live occupancy frames when the subscribe
 // frame asked for them (ADR-1324).
 func (m *Manager) watchSubscriptionOccupancy(ctx context.Context, c *connection, frame resumeClientFrame) {
-	if frame.Occupancy && !m.watchOccupancy(c, frame.Channel) {
+	if frame.Occupancy && !m.watchOccupancy(c.info.EndpointID, frame.Channel, c) {
 		m.queueResumeControl(ctx, c, resumeServerFrame{Type: "error", Channel: frame.Channel, Code: "occupancy_limit"})
 	}
 }
@@ -1032,7 +1032,7 @@ func (m *Manager) removeResumeSubscription(ctx context.Context, c *connection, c
 	m.mu.Unlock()
 	subscription.cancel()
 	if removed {
-		m.unwatchOccupancy(c, channel)
+		m.unwatchOccupancy(c.info.EndpointID, channel, c)
 	}
 	for _, slow := range fullPresenceQueues {
 		m.closeResumeOnQueueFull(slow, ErrOutboundQueueFull)

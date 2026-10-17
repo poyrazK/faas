@@ -1,5 +1,6 @@
 import { notifyRealtimeMessageExpiry, type RealtimeMessageExpiryObserver } from './realtime-expiry.js';
 import { parseFrame } from './sse.js';
+import type { RealtimeOccupancy } from './realtime-resume.js';
 
 export interface RealtimeSSEOptions {
   onMessageExpired?: RealtimeMessageExpiryObserver;
@@ -10,6 +11,13 @@ export interface RealtimeSSEOptions {
   after?: string;
   signal?: AbortSignal;
   fetch?: typeof fetch;
+  /**
+   * Receive the channel's subscriber count across all realtime nodes after
+   * subscribing and whenever it changes, at most once a second (ADR-1324).
+   * Errors thrown here are ignored. When the node already follows its maximum
+   * of live-count channels, the stream continues without counts.
+   */
+  onOccupancy?(occupancy: RealtimeOccupancy): void;
 }
 export interface RealtimeSSEMessage {
   /** Expired position: advance/persist cursor without processing a payload. */
@@ -39,6 +47,8 @@ export async function* subscribeRealtimeSSE(options: RealtimeSSEOptions): AsyncG
   url.searchParams.set('transport', 'sse');
   url.searchParams.set('channel', options.channel);
   url.searchParams.delete('after');
+  if (options.onOccupancy) url.searchParams.set('occupancy', '1');
+  else url.searchParams.delete('occupancy');
   const fetcher = options.fetch ?? globalThis.fetch;
   const stop = new AbortController();
   const signal = options.signal ? AbortSignal.any([options.signal, stop.signal]) : stop.signal;
@@ -74,6 +84,14 @@ export async function* subscribeRealtimeSSE(options: RealtimeSSEOptions): AsyncG
             let data: unknown;
             try { data = JSON.parse(event.data); } catch { throw new RealtimeSSEError('invalid_frame'); }
             if (event.event === 'resync_required') throw new RealtimeSSEError('resync_required', data);
+            if (event.event === 'occupancy') {
+              const occupancy = data as { channel?: unknown; subscribers?: unknown };
+              if (!occupancy || occupancy.channel !== options.channel || typeof occupancy.subscribers !== 'number'
+                || !Number.isSafeInteger(occupancy.subscribers) || occupancy.subscribers < 0) throw new RealtimeSSEError('invalid_frame');
+              try { options.onOccupancy?.({ channel: options.channel, subscribers: occupancy.subscribers }); } catch { /* ignored, see onOccupancy */ }
+              continue;
+            }
+            if (event.event === 'error' && (data as { code?: unknown } | null)?.code === 'occupancy_limit') continue;
             if (event.event === 'error') throw new RealtimeSSEError('stream_error', data);
             if (event.event === 'checkpoint') {
               const checkpoint = data as { channel?: unknown; sequence?: unknown; code?: unknown };

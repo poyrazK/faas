@@ -531,7 +531,8 @@ fleet-wide subscriber count (ADR-1324):
 ```
 
 The count covers every transport and node and is sent after subscribing and on
-each change, at most once a second. Compute-only realtimed reads the other
+each change, at most once a second. SSE streams ask with `&occupancy=1` and get
+`event: occupancy` with the same data. Compute-only realtimed reads the other
 nodes' counts from apid over `RealtimeFleet/OccupancyOperation` every 5 seconds
 (apid caches each channel for 2 seconds); single-box realtimed counts locally.
 A node follows at most 1,000 live-count channels; past that, subscribers get an
