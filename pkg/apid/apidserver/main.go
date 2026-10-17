@@ -583,11 +583,19 @@ func apidConfigPath(lookup func(string) *flag.Flag) string {
 
 // Main runs the apid daemon; cmd/apid calls it.
 func Main() {
+	pipelineAlerts := flag.Bool("data-pipeline-alert-worker", false, "monitor pipeline health and deliver opt-in webhooks without replication or API listeners")
+	pipelineWorker := flag.Bool("data-pipeline-worker", false, "reconcile managed Postgres mirrors without API listeners")
 	cloneWorker := flag.Bool("clone-worker", false, "run the bounded project-environment clone worker without API listeners")
 	runtimeUpgradeWorker := flag.Bool("runtime-upgrade-worker", false, "run the private runtime upgrade worker without API listeners; requires native qualification for each operation")
 	wire.Daemon("apid", func(ctx context.Context, log *slog.Logger) error {
-		if *cloneWorker && *runtimeUpgradeWorker {
+		if (*cloneWorker && *runtimeUpgradeWorker) || (*pipelineWorker && (*cloneWorker || *runtimeUpgradeWorker)) || (*pipelineAlerts && (*cloneWorker || *runtimeUpgradeWorker || *pipelineWorker)) {
 			return errors.New("apid: worker modes are mutually exclusive")
+		}
+		if *pipelineAlerts {
+			return runDataPipelineAlertWorker(ctx, log)
+		}
+		if *pipelineWorker {
+			return runDataPipelineWorker(ctx, log)
 		}
 		if *runtimeUpgradeWorker {
 			return runRuntimeUpgradeWorker(ctx, log)
@@ -1547,6 +1555,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return fmt.Errorf("apid managed postgres configuration: %w", err)
 	}
 	srv.WithManagedPostgres(managedPostgresService, managedPostgresReconciler, managedPostgresBindings, managedPostgresBindingReconciler, managedPostgresUsageCollector, managedPostgresHealthCollector)
+	if err := srv.configureDataPipelines(*cfg, deps.pool); err != nil {
+		return err
+	}
 	srv.WithResendWebhookSecret(resendSecret)
 	// Issue #246 acceptance item 8: wire the meterd-owned bounce
 	// handler so Resend bounce / complaint events feed the

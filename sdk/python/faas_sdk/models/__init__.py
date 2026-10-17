@@ -730,6 +730,8 @@ from .consumer_key_list_response import ConsumerKeyListResponse
 from .consumer_key_response import ConsumerKeyResponse
 from .consumer_key_response_scopes_item import ConsumerKeyResponseScopesItem
 from .control_application_standard_operation_request import ControlApplicationStandardOperationRequest
+from .control_data_pipeline_request import ControlDataPipelineRequest
+from .control_data_pipeline_request_action import ControlDataPipelineRequestAction
 from .control_event_execution_lineage_case_backfill_request import ControlEventExecutionLineageCaseBackfillRequest
 from .control_event_execution_lineage_retry_job_request import ControlEventExecutionLineageRetryJobRequest
 from .control_realtime_replay_job_action import ControlRealtimeReplayJobAction
@@ -789,6 +791,8 @@ from .create_consumer_key_request_scopes_item import CreateConsumerKeyRequestSco
 from .create_cors_preset_request import CreateCorsPresetRequest
 from .create_cron_request import CreateCronRequest
 from .create_custom_domain_request import CreateCustomDomainRequest
+from .create_data_connection_request import CreateDataConnectionRequest
+from .create_data_pipeline_request import CreateDataPipelineRequest
 from .create_deploy_token_request import CreateDeployTokenRequest
 from .create_deployment_files_body import CreateDeploymentFilesBody
 from .create_deployment_files_body_kind import CreateDeploymentFilesBodyKind
@@ -953,6 +957,27 @@ from .dashboard_replay_failed_event_body import DashboardReplayFailedEventBody
 from .data_api_connection_budgets import DataAPIConnectionBudgets
 from .data_api_connection_budgets_state import DataAPIConnectionBudgetsState
 from .data_api_connection_budgets_version import DataAPIConnectionBudgetsVersion
+from .data_connection import DataConnection
+from .data_connection_check import DataConnectionCheck
+from .data_connection_check_state import DataConnectionCheckState
+from .data_connection_issue import DataConnectionIssue
+from .data_connection_issue_state import DataConnectionIssueState
+from .data_connection_list import DataConnectionList
+from .data_endpoint_capacity import DataEndpointCapacity
+from .data_endpoint_capacity_limiting_resource import DataEndpointCapacityLimitingResource
+from .data_endpoint_capacity_state import DataEndpointCapacityState
+from .data_pipeline import DataPipeline
+from .data_pipeline_capacity import DataPipelineCapacity
+from .data_pipeline_capacity_state import DataPipelineCapacityState
+from .data_pipeline_desired_state import DataPipelineDesiredState
+from .data_pipeline_health import DataPipelineHealth
+from .data_pipeline_health_action import DataPipelineHealthAction
+from .data_pipeline_health_state import DataPipelineHealthState
+from .data_pipeline_list import DataPipelineList
+from .data_pipeline_state import DataPipelineState
+from .data_pipeline_verification import DataPipelineVerification
+from .data_source_column import DataSourceColumn
+from .data_source_table import DataSourceTable
 from .data_upstream_history_bucket import DataUpstreamHistoryBucket
 from .data_upstream_history_response import DataUpstreamHistoryResponse
 from .data_upstream_history_response_kind import DataUpstreamHistoryResponseKind
@@ -4166,6 +4191,7 @@ from .request_analytics_timeseries_series import RequestAnalyticsTimeseriesSerie
 from .request_analytics_timeseries_series_method import RequestAnalyticsTimeseriesSeriesMethod
 from .request_audit_list_response import RequestAuditListResponse
 from .request_audit_record import RequestAuditRecord
+from .request_data_connection_check import RequestDataConnectionCheck
 from .request_event_execution_lineage_case_backfill_request import RequestEventExecutionLineageCaseBackfillRequest
 from .resize_managed_postgres_database_request import ResizeManagedPostgresDatabaseRequest
 from .resize_managed_postgres_database_request_service_class import ResizeManagedPostgresDatabaseRequestServiceClass
@@ -4216,6 +4242,7 @@ from .rotate_app_webhook_secret_response import RotateAppWebhookSecretResponse
 from .rotate_app_webhook_secret_response_webhook_secret_sealed_masked import (
     RotateAppWebhookSecretResponseWebhookSecretSealedMasked,
 )
+from .rotate_data_connection_request import RotateDataConnectionRequest
 from .rotate_deploy_token_request import RotateDeployTokenRequest
 from .rotate_deploy_token_response import RotateDeployTokenResponse
 from .rotate_key_response import RotateKeyResponse
@@ -5953,6 +5980,8 @@ __all__ = (
     "ConsumerKeyResponse",
     "ConsumerKeyResponseScopesItem",
     "ControlApplicationStandardOperationRequest",
+    "ControlDataPipelineRequest",
+    "ControlDataPipelineRequestAction",
     "ControlEventExecutionLineageCaseBackfillRequest",
     "ControlEventExecutionLineageRetryJobRequest",
     "ControlRealtimeReplayJobAction",
@@ -6012,6 +6041,8 @@ __all__ = (
     "CreateCorsPresetRequest",
     "CreateCronRequest",
     "CreateCustomDomainRequest",
+    "CreateDataConnectionRequest",
+    "CreateDataPipelineRequest",
     "CreateDeploymentFilesBody",
     "CreateDeploymentFilesBodyKind",
     "CreateDeploymentFilesBodyRuntime",
@@ -6158,6 +6189,27 @@ __all__ = (
     "DataAPIConnectionBudgets",
     "DataAPIConnectionBudgetsState",
     "DataAPIConnectionBudgetsVersion",
+    "DataConnection",
+    "DataConnectionCheck",
+    "DataConnectionCheckState",
+    "DataConnectionIssue",
+    "DataConnectionIssueState",
+    "DataConnectionList",
+    "DataEndpointCapacity",
+    "DataEndpointCapacityLimitingResource",
+    "DataEndpointCapacityState",
+    "DataPipeline",
+    "DataPipelineCapacity",
+    "DataPipelineCapacityState",
+    "DataPipelineDesiredState",
+    "DataPipelineHealth",
+    "DataPipelineHealthAction",
+    "DataPipelineHealthState",
+    "DataPipelineList",
+    "DataPipelineState",
+    "DataPipelineVerification",
+    "DataSourceColumn",
+    "DataSourceTable",
     "DataUpstreamHistoryBucket",
     "DataUpstreamHistoryResponse",
     "DataUpstreamHistoryResponseKind",
@@ -9113,6 +9165,7 @@ __all__ = (
     "RequestAnalyticsTimeseriesSeriesMethod",
     "RequestAuditListResponse",
     "RequestAuditRecord",
+    "RequestDataConnectionCheck",
     "RequestEventExecutionLineageCaseBackfillRequest",
     "ResizeManagedPostgresDatabaseRequest",
     "ResizeManagedPostgresDatabaseRequestServiceClass",
@@ -9157,6 +9210,7 @@ __all__ = (
     "RotateAppWebhookSecretRequest",
     "RotateAppWebhookSecretResponse",
     "RotateAppWebhookSecretResponseWebhookSecretSealedMasked",
+    "RotateDataConnectionRequest",
     "RotateDeployTokenRequest",
     "RotateDeployTokenResponse",
     "RotateKeyResponse",

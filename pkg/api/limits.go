@@ -12524,3 +12524,80 @@ const ServiceMapDefaultRange = "1h"
 
 // ServiceMapHighErrorRatePct is the edge error rate the dashboard highlights.
 const ServiceMapHighErrorRatePct = 5.0
+
+// Pipeline limits are intentionally separate from Data API request limits.
+// Native replication holds connections independently of application traffic.
+const (
+	DataPipelinePilotAccountsMax           = 100
+	DataPipelineConnectionsMax             = 10
+	DataPipelinesMax                       = 3
+	DataPipelineGenerationsMax             = 1000
+	DataPipelineHistoryMax                 = 100
+	DataPipelineSchemaRefreshAppsMax       = 100
+	DataPipelineSchemaRetriesMax           = 10
+	DataPipelineSetupsMax                  = 3
+	DataPipelineSetupsPerConnection        = 1
+	DataPipelineSetupHistoryMax            = 100
+	DataPipelineObservationMaxAge          = 90 * time.Second
+	DataPipelineRetentionWarningBytes      = DataPipelineRetainedWALMaxBytes * 4 / 5
+	DataPipelineLiveLagMaxBytes            = int64(16 << 20)
+	DataPipelineTablesMax                  = 16
+	DataPipelineRetainedTablesMax          = 32
+	DataPipelineColumnsMax                 = 128
+	DataPipelineSubjectsMax                = 32
+	DataPipelineSubjectMaxBytes            = 256
+	DataPipelineCredentialMaxBytes         = 8192
+	DataPipelineRequestMaxBytes            = 32768
+	DataPipelineLease                      = 60 * time.Second
+	DataPipelineOperationTimeout           = 20 * time.Second
+	DataPipelinePollInterval               = 15 * time.Second
+	DataPipelineVerificationChunkRows      = 2000
+	DataPipelineVerificationChunkBytes     = 4 << 20
+	DataPipelineVerificationRangesMax      = 4096
+	DataPipelineVerificationSealRangesMax  = 2
+	DataPipelineVerificationChunksPerTick  = 4
+	DataPipelineVerificationLockTimeout    = 250 * time.Millisecond
+	DataPipelineVerificationCatchupTimeout = 2 * time.Second
+	DataPipelineVerificationQueryTimeout   = 2 * time.Second
+	DataPipelineVerificationPoll           = 25 * time.Millisecond
+	DataPipelineVerificationBytesMax       = 16 << 20
+	DataPipelineRetainedWALMaxBytes        = int64(1 << 30)
+	DataPipelineDiscoveryTablesMax         = 128
+	DataPipelineCheckMaxBytes              = 4 << 20
+	DataPipelineCheckEnvelopeBytes         = 4096
+	DataPipelineCheckMaxAge                = 90 * time.Second
+	DataPipelineCheckRetryInterval         = 15 * time.Second
+	DataPipelineCopyWorkersMax             = 2
+	DataPipelineCopyStallTimeout           = 5 * time.Minute
+	// Admission reserves the copy peak until confirmed deletion, including
+	// control/verification sessions. Credential rotations reserve both logins.
+	DataPipelineControlConnections        = 2
+	DataPipelineBindingConnections        = 42 // 2 connections × (Scale concurrency 20 + rollout 1)
+	DataPipelineAuthBindingConnections    = 84 // 4 connections × (Scale concurrency 20 + rollout 1)
+	DataPipelineBindingControlConnections = 2
+	DataPipelineCapacityMaxAge            = 30 * time.Second
+	DataPipelineQualificationMaxAge       = 24 * time.Hour
+	DataPipelineQualificationsMax         = 200
+	DataPipelineDashboardRefresh          = 2 * time.Second
+)
+
+// Pipeline health webhooks have one encrypted destination per pipeline. The
+// independent catalog worker debounces incidents and recovery before delivery.
+const (
+	DataPipelineAlertDebounce           = 2 * time.Minute
+	DataPipelineAlertRecoveryDebounce   = 30 * time.Second
+	DataPipelineAlertCheckInterval      = 15 * time.Second
+	DataPipelineAlertWorkerInterval     = time.Second
+	DataPipelineAlertBatch              = 32
+	DataPipelineAlertHistoryMax         = 100
+	DataPipelineAlertPendingMax         = 100
+	DataPipelineAlertAttemptsMax        = 7
+	DataPipelineAlertAttemptTimeout     = 10 * time.Second
+	DataPipelineAlertLease              = 30 * time.Second
+	DataPipelineAlertRetryBase          = 30 * time.Second
+	DataPipelineAlertRetryMax           = 6 * time.Hour
+	DataPipelineAlertURLMaxBytes        = 2048
+	DataPipelineAlertSecretMinBytes     = 32
+	DataPipelineAlertSecretMaxBytes     = 256
+	DataPipelineAlertRetryAfterMaxBytes = 256
+)

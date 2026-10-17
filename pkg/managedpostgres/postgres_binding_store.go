@@ -8,6 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	capacitySQL "github.com/onebox-faas/faas/pkg/connectioncapacity/sqlc"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -15,7 +16,7 @@ const postgresBindingColumns = `id::text, account_id::text, database_id::text,
 app_id::text, scope, environment_key, access, provider_identity_id,
 credential_ref, credential_generation, rotation_previous_generation,
 rotation_wake_id::text, rotation_cleanup_ready, state, last_error_code, lease_token,
-lease_until, attempt_count, retry_at, created_at, updated_at, deleted_at`
+lease_until, attempt_count, retry_at, created_at, updated_at, deleted_at, connection_limit`
 
 var _ BindingStore = (*PostgresStore)(nil)
 
@@ -71,6 +72,11 @@ func (s *PostgresStore) ReserveBinding(ctx context.Context, binding Binding) (Bi
 	}
 
 	var databaseAccountID, databaseState string
+	// Admitted targets need the exclusive lifecycle lock before a key-share
+	// lock. Concurrent key-share upgrades would deadlock in the mirror guard.
+	if err := capacitySQL.New().CapacityLockBindingTarget(ctx, tx, capacitySQL.CapacityLockBindingTargetParams{AccountID: binding.AccountID, DatabaseID: binding.DatabaseID}); err != nil {
+		return Binding{}, false, mapPostgresError(err)
+	}
 	if _, err := new(sqlc.Queries).LockManagedPostgresCustomerDatabase(ctx, tx, sqlc.LockManagedPostgresCustomerDatabaseParams{AccountID: accountID, ID: databaseID}); err != nil {
 		return Binding{}, false, mapPostgresError(err)
 	}
@@ -235,7 +241,7 @@ func (s *PostgresStore) DueBindings(ctx context.Context, includeProvisioning boo
 }
 
 func bindingFromSQL(row sqlc.ManagedPostgresBinding) Binding {
-	binding := Binding{ID: databaseUUID(row.ID), AccountID: databaseUUID(row.AccountID), DatabaseID: databaseUUID(row.DatabaseID), AppID: databaseUUID(row.AppID),
+	binding := Binding{ID: databaseUUID(row.ID), AccountID: databaseUUID(row.AccountID), DatabaseID: databaseUUID(row.DatabaseID), AppID: databaseUUID(row.AppID), ConnectionLimit: row.ConnectionLimit,
 		Scope: row.Scope, EnvironmentKey: row.EnvironmentKey, Access: CredentialAccess(row.Access), ProviderIdentityID: row.ProviderIdentityID.String,
 		CredentialRef: row.CredentialRef.String, CredentialGeneration: row.CredentialGeneration, RotationPreviousGeneration: row.RotationPreviousGeneration.Int64,
 		RotationWakeID: databaseUUID(row.RotationWakeID), RotationCleanupReady: row.RotationCleanupReady, State: BindingState(row.State),
@@ -476,7 +482,7 @@ func scanBinding(row bindingScanner) (Binding, error) {
 		&rotationPreviousGeneration, &rotationWakeID, &binding.RotationCleanupReady,
 		&binding.State, &lastErrorCode, &leaseToken, &leaseUntil,
 		&binding.AttemptCount, &binding.RetryAt, &binding.CreatedAt,
-		&binding.UpdatedAt, &deletedAt,
+		&binding.UpdatedAt, &deletedAt, &binding.ConnectionLimit,
 	); err != nil {
 		return Binding{}, mapPostgresError(err)
 	}

@@ -5590,6 +5590,71 @@ $$;
 
 
 --
+-- Name: data_pipeline_setup_owner_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.data_pipeline_setup_owner_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_TABLE_NAME='accounts' THEN
+  IF EXISTS(SELECT 1 FROM data_pipeline_setups WHERE account_id=OLD.id AND state IN ('working','blocked')) THEN
+   RAISE EXCEPTION 'stop data pipeline setups before deleting the account';
+  END IF;
+ ELSIF TG_TABLE_NAME='data_pipeline_connections' THEN
+  IF EXISTS(SELECT 1 FROM data_pipeline_setups WHERE source_connection_id=OLD.id AND state IN ('working','blocked')) THEN
+   RAISE EXCEPTION 'stop data pipeline setups before deleting the source';
+  END IF;
+ ELSIF EXISTS(SELECT 1 FROM data_pipeline_setups WHERE database_id=OLD.id AND state IN ('working','blocked')) THEN
+  IF TG_OP='DELETE' THEN
+   RAISE EXCEPTION 'stop data pipeline setups before deleting the mirror';
+  END IF;
+  IF NEW.desired_generation<>OLD.desired_generation OR NEW.state IN ('deleting','deleted') THEN
+   RAISE EXCEPTION 'active data pipeline setup owns the mirror lifecycle';
+  END IF;
+ END IF;
+ IF TG_OP='DELETE' THEN RETURN OLD; END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: data_pipeline_target_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.data_pipeline_target_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_TABLE_NAME='data_pipelines' THEN
+  PERFORM 1 FROM managed_postgres_databases WHERE id=NEW.database_id AND account_id=NEW.account_id
+   AND state='ready' AND desired_generation=observed_generation FOR UPDATE;
+  IF NOT FOUND OR EXISTS(SELECT 1 FROM managed_postgres_bindings WHERE database_id=NEW.database_id AND state<>'deleted') THEN
+   RAISE EXCEPTION 'pipeline target must be an unbound ready database';
+  END IF;
+ ELSIF TG_TABLE_NAME='managed_postgres_bindings' THEN
+  PERFORM 1 FROM managed_postgres_databases WHERE id=NEW.database_id FOR UPDATE;
+  IF NEW.access<>'read_only' AND EXISTS(SELECT 1 FROM data_pipelines WHERE database_id=NEW.database_id AND state<>'deleted') THEN
+   RAISE EXCEPTION 'pipeline mirrors permit only read-only application bindings';
+  END IF;
+ ELSIF TG_TABLE_NAME='managed_postgres_databases' THEN
+  IF EXISTS(SELECT 1 FROM data_pipelines WHERE database_id=OLD.id AND state<>'deleted') THEN
+   IF TG_OP='DELETE' THEN RAISE EXCEPTION 'delete the pipeline before deleting its mirror'; END IF;
+   IF NEW.state<>'ready' OR NEW.desired_generation<>OLD.desired_generation THEN
+    RAISE EXCEPTION 'active pipeline owns the mirror lifecycle';
+   END IF;
+  END IF;
+ ELSIF TG_TABLE_NAME='accounts' THEN
+  IF EXISTS(SELECT 1 FROM data_pipelines WHERE account_id=OLD.id AND state<>'deleted') THEN
+   RAISE EXCEPTION 'delete data pipelines before deleting the account';
+  END IF;
+ END IF;
+ IF TG_OP='DELETE' THEN RETURN OLD; END IF;
+ RETURN NEW;
+END; $$;
+
+
+--
 -- Name: data_upstreams_notify(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -17787,6 +17852,192 @@ $$;
 
 
 --
+-- Name: postgres_capacity_admit(uuid, uuid, bigint, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.postgres_capacity_admit(pid uuid, acct uuid, rev bigint, token text) RETURNS boolean
+    LANGUAGE plpgsql
+    AS $$
+DECLARE p data_pipelines;
+BEGIN
+ SELECT * INTO p FROM data_pipelines WHERE id=pid AND account_id=acct AND revision=rev AND lease_token=token AND lease_until>clock_timestamp() FOR SHARE;
+ IF NOT FOUND THEN RETURN false; END IF;
+ PERFORM pg_advisory_xact_lock(51733);
+ PERFORM postgres_capacity_pipeline_reserve(p.id,p.account_id,p.source_connection_id,p.database_id);
+ IF EXISTS(SELECT 1 FROM postgres_capacity_reservations h JOIN postgres_capacity_resources r USING(resource_key)
+  WHERE h.owner_kind='pipeline' AND h.owner_id=p.id AND (r.observed_at>clock_timestamp() OR r.expires_at<=clock_timestamp())) THEN
+  RAISE EXCEPTION 'capacity requires qualification' USING ERRCODE='PCC02';
+ END IF;
+ IF EXISTS(SELECT 1 FROM postgres_capacity_resources r JOIN postgres_capacity_reservations own USING(resource_key)
+  CROSS JOIN LATERAL(SELECT coalesce(sum(connections),0) c,coalesce(sum(slots),0) sl,coalesce(sum(senders),0) se,coalesce(sum(workers),0) wo
+   FROM postgres_capacity_reservations h WHERE h.resource_key=r.resource_key) demand
+  WHERE own.owner_kind='pipeline' AND own.owner_id=p.id AND (demand.c>r.connections OR demand.sl>r.slots OR demand.se>r.senders OR demand.wo>r.workers)) THEN
+  RAISE EXCEPTION 'insufficient database capacity' USING ERRCODE='PCC01';
+ END IF;
+ RETURN true;
+END; $$;
+
+
+--
+-- Name: postgres_capacity_binding_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.postgres_capacity_binding_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE t postgres_capacity_targets;
+BEGIN
+ IF TG_OP='UPDATE' AND OLD.connection_limit>0 AND (NEW.connection_limit,NEW.database_id) IS DISTINCT FROM (OLD.connection_limit,OLD.database_id) THEN
+  RAISE EXCEPTION 'reserved credential ceiling is immutable' USING ERRCODE='PCC02';
+ END IF;
+ IF NEW.state='deleted' THEN
+  PERFORM pg_advisory_xact_lock(51733);
+  DELETE FROM postgres_capacity_reservations WHERE owner_kind='binding' AND owner_id=NEW.id;
+  RETURN NEW;
+ END IF;
+ IF TG_OP='UPDATE' AND OLD.state<>'deleted' THEN RETURN NEW; END IF;
+ PERFORM pg_advisory_xact_lock(51733);
+ SELECT m.* INTO t FROM postgres_capacity_targets m JOIN managed_postgres_databases d ON d.id=m.database_id AND d.account_id=m.account_id
+ WHERE m.database_id=NEW.database_id AND m.account_id=NEW.account_id AND m.database_generation=d.observed_generation
+  AND d.desired_generation=d.observed_generation AND d.state='ready' AND m.backend_fingerprint=d.backend_fingerprint AND m.data_resource_id=d.data_resource_id;
+ IF NOT FOUND THEN
+  IF EXISTS(SELECT 1 FROM postgres_capacity_targets WHERE database_id=NEW.database_id) OR EXISTS(SELECT 1 FROM data_pipelines p WHERE p.database_id=NEW.database_id AND p.state<>'deleted') OR NEW.connection_limit>0 THEN
+   RAISE EXCEPTION 'mirror capacity requires qualification' USING ERRCODE='PCC02';
+  END IF;
+  RETURN NEW;
+ END IF;
+ -- Both current and previous credentials fit during rotation, irrespective
+ -- of runtime version, replica count, wake bursts or client pool settings.
+ NEW.connection_limit:=CASE WHEN NEW.access='auth' THEN 84 ELSE 42 END;
+ PERFORM postgres_capacity_reserve('binding',NEW.id,'target',t.resource_key,t.placement,t.generation,NEW.connection_limit*2+2,0,0,0);
+ RETURN NEW;
+END; $$;
+
+
+--
+-- Name: postgres_capacity_cutover_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.postgres_capacity_cutover_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ PERFORM pg_advisory_xact_lock(51733);
+ IF EXISTS(SELECT 1 FROM postgres_capacity_targets WHERE database_id IN(NEW.source_database_id,NEW.target_database_id)) THEN
+  RAISE EXCEPTION 'cutover credentials require a qualified capacity model' USING ERRCODE='PCC02';
+ END IF;
+ RETURN NEW;
+END; $$;
+
+
+--
+-- Name: postgres_capacity_mapping_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.postgres_capacity_mapping_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ PERFORM pg_advisory_xact_lock(51733);
+ IF (NEW.resource_key,NEW.placement,NEW.generation) IS DISTINCT FROM (OLD.resource_key,OLD.placement,OLD.generation) THEN
+  IF TG_TABLE_NAME='postgres_capacity_sources' THEN
+   IF EXISTS(SELECT 1 FROM data_pipelines p WHERE p.source_connection_id=OLD.connection_id AND p.state<>'deleted') THEN
+    RAISE EXCEPTION 'active source capacity placement is immutable' USING ERRCODE='PCC02';
+   END IF;
+  ELSE
+   IF EXISTS(SELECT 1 FROM data_pipelines p WHERE p.database_id=OLD.database_id AND p.state<>'deleted') OR EXISTS(SELECT 1 FROM managed_postgres_bindings b WHERE b.database_id=OLD.database_id AND b.state<>'deleted') THEN
+    RAISE EXCEPTION 'active mirror capacity placement is immutable' USING ERRCODE='PCC02';
+   END IF;
+  END IF;
+ END IF;
+ RETURN NEW;
+END; $$;
+
+
+--
+-- Name: postgres_capacity_pipeline_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.postgres_capacity_pipeline_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='INSERT' THEN
+  PERFORM postgres_capacity_pipeline_reserve(NEW.id,NEW.account_id,NEW.source_connection_id,NEW.database_id);
+ ELSIF NEW.state='deleted' AND OLD.state<>'deleted' THEN
+  PERFORM pg_advisory_xact_lock(51733);
+  DELETE FROM postgres_capacity_reservations WHERE owner_kind='pipeline' AND owner_id=NEW.id;
+ ELSIF (NEW.source_connection_id,NEW.database_id) IS DISTINCT FROM (OLD.source_connection_id,OLD.database_id) THEN
+  RAISE EXCEPTION 'reserved pipeline placement is immutable' USING ERRCODE='PCC02';
+ END IF;
+ RETURN NEW;
+END; $$;
+
+
+--
+-- Name: postgres_capacity_pipeline_reserve(uuid, uuid, uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.postgres_capacity_pipeline_reserve(pid uuid, acct uuid, src uuid, dst uuid) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+DECLARE s postgres_capacity_sources; t postgres_capacity_targets;
+BEGIN
+ PERFORM pg_advisory_xact_lock(51733);
+ SELECT m.* INTO s FROM postgres_capacity_sources m JOIN data_pipeline_connections c ON c.id=m.connection_id AND c.account_id=m.account_id
+ WHERE m.connection_id=src AND m.account_id=acct AND m.connection_revision=c.revision;
+ IF NOT FOUND THEN RAISE EXCEPTION 'source capacity requires qualification' USING ERRCODE='PCC02'; END IF;
+ SELECT m.* INTO t FROM postgres_capacity_targets m JOIN managed_postgres_databases d ON d.id=m.database_id AND d.account_id=m.account_id
+ WHERE m.database_id=dst AND m.account_id=acct AND m.database_generation=d.observed_generation AND d.desired_generation=d.observed_generation
+  AND d.state='ready' AND m.backend_fingerprint=d.backend_fingerprint AND m.data_resource_id=d.data_resource_id;
+ IF NOT FOUND THEN RAISE EXCEPTION 'mirror capacity requires qualification' USING ERRCODE='PCC02'; END IF;
+ PERFORM postgres_capacity_reserve('pipeline',pid,'source',s.resource_key,s.placement,s.generation,5,3,3,0);
+ PERFORM postgres_capacity_reserve('pipeline',pid,'target',t.resource_key,t.placement,t.generation,5,0,0,3);
+END; $$;
+
+
+--
+-- Name: postgres_capacity_reserve(text, uuid, text, text, text, bigint, bigint, bigint, bigint, bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.postgres_capacity_reserve(kind text, owner uuid, ep text, rk text, place text, gen bigint, conns bigint, sl bigint, se bigint, wo bigint) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+DECLARE r postgres_capacity_resources; used record; held postgres_capacity_reservations;
+BEGIN
+ PERFORM pg_advisory_xact_lock(51733);
+ SELECT * INTO held FROM postgres_capacity_reservations WHERE owner_kind=kind AND owner_id=owner AND endpoint=ep;
+ IF FOUND THEN
+  IF (held.resource_key,held.placement,held.generation,held.connections,held.slots,held.senders,held.workers) IS DISTINCT FROM (rk,place,gen,conns,sl,se,wo) THEN
+   RAISE EXCEPTION 'capacity placement changed' USING ERRCODE='PCC02';
+  END IF;
+  RETURN;
+ END IF;
+ SELECT * INTO r FROM postgres_capacity_resources WHERE resource_key=rk FOR UPDATE;
+ IF NOT FOUND OR r.placement<>place OR r.generation<>gen OR r.observed_at>clock_timestamp() OR r.expires_at<=clock_timestamp() THEN
+  RAISE EXCEPTION 'capacity requires qualification' USING ERRCODE='PCC02';
+ END IF;
+ -- A legacy native generation or unbounded credential must be accounted for
+ -- before ANY new consumer can claim this allocation.
+ IF EXISTS(SELECT 1 FROM data_pipelines p WHERE p.state<>'deleted' AND
+  (NOT EXISTS(SELECT 1 FROM postgres_capacity_reservations h WHERE h.owner_kind='pipeline' AND h.owner_id=p.id AND h.endpoint='source') OR
+   NOT EXISTS(SELECT 1 FROM postgres_capacity_reservations h WHERE h.owner_kind='pipeline' AND h.owner_id=p.id AND h.endpoint='target')))
+ OR EXISTS(SELECT 1 FROM managed_postgres_cutovers c JOIN postgres_capacity_targets t ON t.database_id IN(c.source_database_id,c.target_database_id) WHERE t.resource_key=rk AND c.state<>'cancelled')
+ OR EXISTS(SELECT 1 FROM managed_postgres_bindings b JOIN postgres_capacity_targets t ON t.database_id=b.database_id
+  WHERE t.resource_key=rk AND b.state<>'deleted' AND b.connection_limit=0) THEN
+  RAISE EXCEPTION 'existing consumers require qualification' USING ERRCODE='PCC02';
+ END IF;
+ SELECT coalesce(sum(connections),0) AS c,coalesce(sum(slots),0) AS sl,coalesce(sum(senders),0) AS se,coalesce(sum(workers),0) AS wo INTO used
+ FROM postgres_capacity_reservations WHERE resource_key=rk;
+ IF used.c+conns>r.connections OR used.sl+sl>r.slots OR used.se+se>r.senders OR used.wo+wo>r.workers THEN
+  RAISE EXCEPTION 'insufficient database capacity' USING ERRCODE='PCC01';
+ END IF;
+ INSERT INTO postgres_capacity_reservations(owner_kind,owner_id,endpoint,resource_key,placement,generation,connections,slots,senders,workers)
+ VALUES(kind,owner,ep,rk,place,gen,conns,sl,se,wo);
+END; $$;
+
+
+--
 -- Name: preserve_api_key_runs_principal(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -27101,6 +27352,223 @@ CREATE TABLE public.customer_workflow_readiness_subscriptions (
 
 
 --
+-- Name: data_connection_checks; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.data_connection_checks (
+    connection_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    id uuid NOT NULL,
+    connection_revision bigint NOT NULL,
+    database_id text DEFAULT ''::text NOT NULL,
+    state text DEFAULT 'pending'::text NOT NULL,
+    result jsonb DEFAULT '{}'::jsonb NOT NULL,
+    lease_token text DEFAULT ''::text NOT NULL,
+    lease_until timestamp with time zone,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    observed_at timestamp with time zone,
+    CONSTRAINT data_connection_checks_connection_revision_check CHECK ((connection_revision > 0)),
+    CONSTRAINT data_connection_checks_database_id_check CHECK (((database_id = ''::text) OR (database_id ~ '^[0-9a-f-]{36}$'::text))),
+    CONSTRAINT data_connection_checks_result_check CHECK (((jsonb_typeof(result) = 'object'::text) AND (octet_length((result)::text) <= 4194304))),
+    CONSTRAINT data_connection_checks_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'running'::text, 'passed'::text, 'blocked'::text])))
+);
+
+
+--
+-- Name: data_pipeline_alert_deliveries; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.data_pipeline_alert_deliveries (
+    id uuid NOT NULL,
+    sequence bigint NOT NULL,
+    pipeline_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    config_revision bigint NOT NULL,
+    incident_id uuid NOT NULL,
+    kind text NOT NULL,
+    code text NOT NULL,
+    occurred_at timestamp with time zone NOT NULL,
+    status text DEFAULT 'pending'::text NOT NULL,
+    attempts integer DEFAULT 0 NOT NULL,
+    response_code integer DEFAULT 0 NOT NULL,
+    result text DEFAULT ''::text NOT NULL,
+    next_attempt_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    lease_token text DEFAULT ''::text NOT NULL,
+    lease_until timestamp with time zone,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT data_pipeline_alert_deliveries_attempts_check CHECK (((attempts >= 0) AND (attempts <= 7))),
+    CONSTRAINT data_pipeline_alert_deliveries_code_check CHECK ((code = ANY (ARRAY['monitoring_stale'::text, 'sync_blocked'::text, 'retention_pressure'::text, 'apply_unconfirmed'::text]))),
+    CONSTRAINT data_pipeline_alert_deliveries_config_revision_check CHECK ((config_revision > 0)),
+    CONSTRAINT data_pipeline_alert_deliveries_kind_check CHECK ((kind = ANY (ARRAY['incident'::text, 'recovery'::text]))),
+    CONSTRAINT data_pipeline_alert_deliveries_response_code_check CHECK (((response_code >= 0) AND (response_code <= 599))),
+    CONSTRAINT data_pipeline_alert_deliveries_result_check CHECK ((result = ANY (ARRAY[''::text, 'accepted'::text, 'receiver_rejected'::text, 'redirect_rejected'::text, 'network_failure'::text, 'credential_unavailable'::text, 'attempts_exhausted'::text, 'destination_changed'::text, 'pipeline_deleted'::text]))),
+    CONSTRAINT data_pipeline_alert_deliveries_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'delivered'::text, 'dead'::text, 'cancelled'::text])))
+);
+
+
+--
+-- Name: data_pipeline_alert_deliveries_sequence_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.data_pipeline_alert_deliveries ALTER COLUMN sequence ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.data_pipeline_alert_deliveries_sequence_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: data_pipeline_alerts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.data_pipeline_alerts (
+    pipeline_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    revision bigint DEFAULT 1 NOT NULL,
+    enabled boolean DEFAULT false NOT NULL,
+    ciphertext bytea DEFAULT '\x'::bytea NOT NULL,
+    candidate_code text DEFAULT ''::text NOT NULL,
+    candidate_since timestamp with time zone,
+    incident_id text DEFAULT ''::text NOT NULL,
+    incident_code text DEFAULT ''::text NOT NULL,
+    check_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT data_pipeline_alerts_candidate_code_check CHECK ((candidate_code = ANY (ARRAY[''::text, 'monitoring_stale'::text, 'sync_blocked'::text, 'retention_pressure'::text, 'apply_unconfirmed'::text, 'recovered'::text]))),
+    CONSTRAINT data_pipeline_alerts_check CHECK (((NOT enabled) OR (octet_length(ciphertext) > 0))),
+    CONSTRAINT data_pipeline_alerts_ciphertext_check CHECK ((octet_length(ciphertext) <= 16384)),
+    CONSTRAINT data_pipeline_alerts_incident_code_check CHECK ((incident_code = ANY (ARRAY[''::text, 'monitoring_stale'::text, 'sync_blocked'::text, 'retention_pressure'::text, 'apply_unconfirmed'::text]))),
+    CONSTRAINT data_pipeline_alerts_incident_id_check CHECK (((incident_id = ''::text) OR (incident_id ~ '^[0-9a-f-]{36}$'::text))),
+    CONSTRAINT data_pipeline_alerts_revision_check CHECK ((revision > 0))
+);
+
+
+--
+-- Name: data_pipeline_connections; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.data_pipeline_connections (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    name text NOT NULL,
+    revision bigint DEFAULT 1 NOT NULL,
+    ciphertext bytea NOT NULL,
+    identity text NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT data_pipeline_connections_ciphertext_check CHECK (((octet_length(ciphertext) >= 1) AND (octet_length(ciphertext) <= 16384))),
+    CONSTRAINT data_pipeline_connections_identity_check CHECK ((identity ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT data_pipeline_connections_name_check CHECK ((name ~ '^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$'::text)),
+    CONSTRAINT data_pipeline_connections_revision_check CHECK ((revision > 0))
+);
+
+
+--
+-- Name: data_pipeline_schema_refreshes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.data_pipeline_schema_refreshes (
+    pipeline_id uuid NOT NULL,
+    change_id text NOT NULL,
+    app_id uuid NOT NULL,
+    attempt integer NOT NULL,
+    wake_id uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT data_pipeline_schema_refreshes_attempt_check CHECK (((attempt >= 0) AND (attempt <= 10))),
+    CONSTRAINT data_pipeline_schema_refreshes_change_id_check CHECK ((change_id ~ '^[a-f0-9]{64}$'::text))
+);
+
+
+--
+-- Name: data_pipeline_setups; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.data_pipeline_setups (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    source_connection_id uuid NOT NULL,
+    name text NOT NULL,
+    request jsonb NOT NULL,
+    mirror_plan jsonb NOT NULL,
+    database_id uuid NOT NULL,
+    mirror_name text NOT NULL,
+    pipeline_id text DEFAULT ''::text NOT NULL,
+    state text DEFAULT 'working'::text NOT NULL,
+    phase text DEFAULT 'checking_source'::text NOT NULL,
+    reason text DEFAULT ''::text NOT NULL,
+    revision bigint DEFAULT 1 NOT NULL,
+    lease_token text DEFAULT ''::text NOT NULL,
+    lease_until timestamp with time zone,
+    retry_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    data_api_plan jsonb DEFAULT '{}'::jsonb NOT NULL,
+    CONSTRAINT data_pipeline_setups_data_api_plan_check CHECK (((jsonb_typeof(data_api_plan) = 'object'::text) AND (octet_length((data_api_plan)::text) <= 16384))),
+    CONSTRAINT data_pipeline_setups_mirror_plan_check CHECK ((jsonb_typeof(mirror_plan) = 'object'::text)),
+    CONSTRAINT data_pipeline_setups_phase_check CHECK ((phase = ANY (ARRAY['checking_source'::text, 'provisioning'::text, 'checking_mirror'::text, 'starting'::text, 'syncing'::text, 'configuring_api'::text, 'deploying_api'::text, 'waiting_api'::text, 'api_failed'::text]))),
+    CONSTRAINT data_pipeline_setups_pipeline_id_check CHECK (((pipeline_id = ''::text) OR (pipeline_id ~ '^[0-9a-f-]{36}$'::text))),
+    CONSTRAINT data_pipeline_setups_reason_check CHECK ((reason ~ '^[a-z0-9_]{0,80}$'::text)),
+    CONSTRAINT data_pipeline_setups_request_check CHECK (((jsonb_typeof(request) = 'object'::text) AND (octet_length((request)::text) <= 32768))),
+    CONSTRAINT data_pipeline_setups_revision_check CHECK ((revision > 0)),
+    CONSTRAINT data_pipeline_setups_state_check CHECK ((state = ANY (ARRAY['working'::text, 'blocked'::text, 'ready'::text, 'cancelled'::text])))
+);
+
+
+--
+-- Name: data_pipelines; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.data_pipelines (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    name text NOT NULL,
+    source_connection_id uuid NOT NULL,
+    database_id uuid NOT NULL,
+    tables jsonb NOT NULL,
+    read_subjects jsonb NOT NULL,
+    desired_state text DEFAULT 'running'::text NOT NULL,
+    state text DEFAULT 'validating'::text NOT NULL,
+    revision bigint DEFAULT 1 NOT NULL,
+    observed_revision bigint DEFAULT 0 NOT NULL,
+    generation bigint DEFAULT 1 NOT NULL,
+    reason text DEFAULT ''::text NOT NULL,
+    tables_ready integer DEFAULT 0 NOT NULL,
+    retained_wal_bytes bigint,
+    observed_at timestamp with time zone,
+    verification text DEFAULT 'unknown'::text NOT NULL,
+    verified_at timestamp with time zone,
+    initialized boolean DEFAULT false NOT NULL,
+    verify_requested boolean DEFAULT false NOT NULL,
+    lease_token text DEFAULT ''::text NOT NULL,
+    lease_until timestamp with time zone,
+    retry_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    applied_through_at timestamp with time zone,
+    schema_approval text DEFAULT ''::text NOT NULL,
+    schema_change jsonb DEFAULT '{}'::jsonb NOT NULL,
+    verification_progress jsonb DEFAULT '{}'::jsonb NOT NULL,
+    reader_change jsonb DEFAULT '{}'::jsonb NOT NULL,
+    CONSTRAINT data_pipelines_check CHECK (((observed_revision >= 0) AND (observed_revision <= revision))),
+    CONSTRAINT data_pipelines_desired_state_check CHECK ((desired_state = ANY (ARRAY['running'::text, 'paused'::text, 'deleted'::text]))),
+    CONSTRAINT data_pipelines_generation_check CHECK ((generation > 0)),
+    CONSTRAINT data_pipelines_name_check CHECK ((name ~ '^[a-z0-9][a-z0-9-]{1,38}[a-z0-9]$'::text)),
+    CONSTRAINT data_pipelines_read_subjects_check CHECK (((jsonb_typeof(read_subjects) = 'array'::text) AND ((jsonb_array_length(read_subjects) >= 1) AND (jsonb_array_length(read_subjects) <= 32)))),
+    CONSTRAINT data_pipelines_reader_change_check CHECK (((jsonb_typeof(reader_change) = 'object'::text) AND (octet_length((reader_change)::text) <= 131072) AND ((reader_change = '{}'::jsonb) OR ((reader_change ->> 'State'::text) = ANY (ARRAY['preview'::text, 'approved'::text, 'applied'::text]))))),
+    CONSTRAINT data_pipelines_reason_check CHECK ((reason ~ '^[a-z0-9_]{0,80}$'::text)),
+    CONSTRAINT data_pipelines_retained_wal_bytes_check CHECK ((retained_wal_bytes >= 0)),
+    CONSTRAINT data_pipelines_revision_check CHECK ((revision > 0)),
+    CONSTRAINT data_pipelines_schema_approval_check CHECK (((schema_approval = ''::text) OR (schema_approval ~ '^[a-f0-9]{64}$'::text))),
+    CONSTRAINT data_pipelines_schema_change_check CHECK (((jsonb_typeof(schema_change) = 'object'::text) AND (octet_length((schema_change)::text) <= 4194304))),
+    CONSTRAINT data_pipelines_state_check CHECK ((state = ANY (ARRAY['validating'::text, 'copying'::text, 'catching_up'::text, 'live'::text, 'paused'::text, 'blocked'::text, 'deleting'::text, 'deleted'::text, 'resync_required'::text]))),
+    CONSTRAINT data_pipelines_tables_check CHECK (((jsonb_typeof(tables) = 'array'::text) AND ((jsonb_array_length(tables) >= 1) AND (jsonb_array_length(tables) <= 16)))),
+    CONSTRAINT data_pipelines_tables_ready_check CHECK (((tables_ready >= 0) AND (tables_ready <= 16))),
+    CONSTRAINT data_pipelines_verification_check CHECK ((verification = ANY (ARRAY['unknown'::text, 'pending'::text, 'passed'::text, 'mismatch'::text, 'inconclusive'::text]))),
+    CONSTRAINT data_pipelines_verification_progress_check CHECK (((jsonb_typeof(verification_progress) = 'object'::text) AND (octet_length((verification_progress)::text) <= 4194304)))
+);
+
+
+--
 -- Name: data_upstream_probes; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -33280,10 +33748,12 @@ CREATE TABLE public.managed_postgres_bindings (
     rotation_wake_id uuid,
     rotation_cleanup_ready boolean DEFAULT false NOT NULL,
     cutover_id uuid,
+    connection_limit bigint DEFAULT 0 NOT NULL,
     CONSTRAINT managed_postgres_bindings_access_check CHECK ((access = ANY (ARRAY['read_write'::text, 'read_only'::text, 'migration'::text, 'data_api'::text, 'auth'::text]))),
     CONSTRAINT managed_postgres_bindings_attempt_count_check CHECK (((attempt_count >= 0) AND (attempt_count <= 30))),
     CONSTRAINT managed_postgres_bindings_check CHECK (((state <> 'ready'::text) OR ((provider_identity_id IS NOT NULL) AND (credential_ref IS NOT NULL)))),
     CONSTRAINT managed_postgres_bindings_check1 CHECK (((state = 'deleted'::text) = (deleted_at IS NOT NULL))),
+    CONSTRAINT managed_postgres_bindings_connection_limit_check CHECK (((connection_limit >= 0) AND (connection_limit <= 84))),
     CONSTRAINT managed_postgres_bindings_credential_generation_check CHECK ((credential_generation >= 1)),
     CONSTRAINT managed_postgres_bindings_environment_key_check CHECK ((environment_key ~ '^[A-Z_][A-Z0-9_]{0,126}$'::text)),
     CONSTRAINT managed_postgres_bindings_last_error_code_check CHECK ((last_error_code ~ '^[a-z][a-z0-9_]{0,62}$'::text)),
@@ -37719,6 +38189,89 @@ CREATE TABLE public.platform_tenants (
     CONSTRAINT platform_tenants_external_ref_check CHECK (((char_length(external_ref) >= 1) AND (char_length(external_ref) <= 256))),
     CONSTRAINT platform_tenants_name_check CHECK (((char_length(name) >= 1) AND (char_length(name) <= 128))),
     CONSTRAINT platform_tenants_status_check CHECK ((status = ANY (ARRAY['active'::text, 'suspended'::text])))
+);
+
+
+--
+-- Name: postgres_capacity_reservations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.postgres_capacity_reservations (
+    owner_kind text NOT NULL,
+    owner_id uuid NOT NULL,
+    endpoint text NOT NULL,
+    resource_key text NOT NULL,
+    placement text NOT NULL,
+    generation bigint NOT NULL,
+    connections bigint NOT NULL,
+    slots bigint NOT NULL,
+    senders bigint NOT NULL,
+    workers bigint NOT NULL,
+    CONSTRAINT postgres_capacity_reservations_connections_check CHECK ((connections >= 0)),
+    CONSTRAINT postgres_capacity_reservations_endpoint_check CHECK ((endpoint = ANY (ARRAY['source'::text, 'target'::text]))),
+    CONSTRAINT postgres_capacity_reservations_generation_check CHECK ((generation > 0)),
+    CONSTRAINT postgres_capacity_reservations_owner_kind_check CHECK ((owner_kind = ANY (ARRAY['pipeline'::text, 'binding'::text]))),
+    CONSTRAINT postgres_capacity_reservations_senders_check CHECK ((senders >= 0)),
+    CONSTRAINT postgres_capacity_reservations_slots_check CHECK ((slots >= 0)),
+    CONSTRAINT postgres_capacity_reservations_workers_check CHECK ((workers >= 0))
+);
+
+
+--
+-- Name: postgres_capacity_resources; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.postgres_capacity_resources (
+    resource_key text NOT NULL,
+    placement text NOT NULL,
+    generation bigint NOT NULL,
+    report_sha256 text NOT NULL,
+    connections bigint NOT NULL,
+    slots bigint NOT NULL,
+    senders bigint NOT NULL,
+    workers bigint NOT NULL,
+    observed_at timestamp with time zone NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT postgres_capacity_resources_check CHECK (((expires_at > observed_at) AND (expires_at <= (observed_at + '00:00:30'::interval)))),
+    CONSTRAINT postgres_capacity_resources_connections_check CHECK ((connections >= 0)),
+    CONSTRAINT postgres_capacity_resources_generation_check CHECK ((generation > 0)),
+    CONSTRAINT postgres_capacity_resources_senders_check CHECK ((senders >= 0)),
+    CONSTRAINT postgres_capacity_resources_slots_check CHECK ((slots >= 0)),
+    CONSTRAINT postgres_capacity_resources_workers_check CHECK ((workers >= 0))
+);
+
+
+--
+-- Name: postgres_capacity_sources; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.postgres_capacity_sources (
+    connection_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    connection_revision bigint NOT NULL,
+    resource_key text NOT NULL,
+    placement text NOT NULL,
+    generation bigint NOT NULL,
+    CONSTRAINT postgres_capacity_sources_connection_revision_check CHECK ((connection_revision > 0)),
+    CONSTRAINT postgres_capacity_sources_generation_check CHECK ((generation > 0))
+);
+
+
+--
+-- Name: postgres_capacity_targets; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.postgres_capacity_targets (
+    database_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    database_generation bigint NOT NULL,
+    backend_fingerprint text NOT NULL,
+    data_resource_id text NOT NULL,
+    resource_key text NOT NULL,
+    placement text NOT NULL,
+    generation bigint NOT NULL,
+    CONSTRAINT postgres_capacity_targets_database_generation_check CHECK ((database_generation > 0)),
+    CONSTRAINT postgres_capacity_targets_generation_check CHECK ((generation > 0))
 );
 
 
@@ -45875,6 +46428,126 @@ ALTER TABLE ONLY public.customer_workflow_readiness_subscriptions
 
 
 --
+-- Name: data_connection_checks data_connection_checks_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_connection_checks
+    ADD CONSTRAINT data_connection_checks_id_key UNIQUE (id);
+
+
+--
+-- Name: data_connection_checks data_connection_checks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_connection_checks
+    ADD CONSTRAINT data_connection_checks_pkey PRIMARY KEY (connection_id);
+
+
+--
+-- Name: data_pipeline_alert_deliveries data_pipeline_alert_deliverie_pipeline_id_config_revision_i_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_pipeline_alert_deliveries
+    ADD CONSTRAINT data_pipeline_alert_deliverie_pipeline_id_config_revision_i_key UNIQUE (pipeline_id, config_revision, incident_id, kind);
+
+
+--
+-- Name: data_pipeline_alert_deliveries data_pipeline_alert_deliveries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_pipeline_alert_deliveries
+    ADD CONSTRAINT data_pipeline_alert_deliveries_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: data_pipeline_alert_deliveries data_pipeline_alert_deliveries_sequence_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_pipeline_alert_deliveries
+    ADD CONSTRAINT data_pipeline_alert_deliveries_sequence_key UNIQUE (sequence);
+
+
+--
+-- Name: data_pipeline_alerts data_pipeline_alerts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_pipeline_alerts
+    ADD CONSTRAINT data_pipeline_alerts_pkey PRIMARY KEY (pipeline_id);
+
+
+--
+-- Name: data_pipeline_connections data_pipeline_connections_account_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_pipeline_connections
+    ADD CONSTRAINT data_pipeline_connections_account_id_id_key UNIQUE (account_id, id);
+
+
+--
+-- Name: data_pipeline_connections data_pipeline_connections_account_id_name_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_pipeline_connections
+    ADD CONSTRAINT data_pipeline_connections_account_id_name_key UNIQUE (account_id, name);
+
+
+--
+-- Name: data_pipeline_connections data_pipeline_connections_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_pipeline_connections
+    ADD CONSTRAINT data_pipeline_connections_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: data_pipeline_schema_refreshes data_pipeline_schema_refreshes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_pipeline_schema_refreshes
+    ADD CONSTRAINT data_pipeline_schema_refreshes_pkey PRIMARY KEY (pipeline_id, change_id, attempt, app_id);
+
+
+--
+-- Name: data_pipeline_schema_refreshes data_pipeline_schema_refreshes_wake_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_pipeline_schema_refreshes
+    ADD CONSTRAINT data_pipeline_schema_refreshes_wake_id_key UNIQUE (wake_id);
+
+
+--
+-- Name: data_pipeline_setups data_pipeline_setups_account_id_name_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_pipeline_setups
+    ADD CONSTRAINT data_pipeline_setups_account_id_name_key UNIQUE (account_id, name);
+
+
+--
+-- Name: data_pipeline_setups data_pipeline_setups_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_pipeline_setups
+    ADD CONSTRAINT data_pipeline_setups_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: data_pipelines data_pipelines_account_id_name_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_pipelines
+    ADD CONSTRAINT data_pipelines_account_id_name_key UNIQUE (account_id, name);
+
+
+--
+-- Name: data_pipelines data_pipelines_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_pipelines
+    ADD CONSTRAINT data_pipelines_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: data_upstream_probes data_upstream_probes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -50352,6 +51025,38 @@ ALTER TABLE ONLY public.platform_tenants
 
 ALTER TABLE ONLY public.project_environment_clone_postgres_archives
     ADD CONSTRAINT postgres_archive_contents_identity UNIQUE (operation_id, source_database_id, database_oid, owner_id);
+
+
+--
+-- Name: postgres_capacity_reservations postgres_capacity_reservations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.postgres_capacity_reservations
+    ADD CONSTRAINT postgres_capacity_reservations_pkey PRIMARY KEY (owner_kind, owner_id, endpoint);
+
+
+--
+-- Name: postgres_capacity_resources postgres_capacity_resources_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.postgres_capacity_resources
+    ADD CONSTRAINT postgres_capacity_resources_pkey PRIMARY KEY (resource_key);
+
+
+--
+-- Name: postgres_capacity_sources postgres_capacity_sources_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.postgres_capacity_sources
+    ADD CONSTRAINT postgres_capacity_sources_pkey PRIMARY KEY (connection_id);
+
+
+--
+-- Name: postgres_capacity_targets postgres_capacity_targets_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.postgres_capacity_targets
+    ADD CONSTRAINT postgres_capacity_targets_pkey PRIMARY KEY (database_id);
 
 
 --
@@ -55163,6 +55868,55 @@ CREATE INDEX customer_workflow_readiness_subscription_owner ON public.customer_w
 
 
 --
+-- Name: data_connection_checks_due; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX data_connection_checks_due ON public.data_connection_checks USING btree (created_at, connection_id) WHERE (state = ANY (ARRAY['pending'::text, 'running'::text]));
+
+
+--
+-- Name: data_pipeline_alert_deliveries_due; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX data_pipeline_alert_deliveries_due ON public.data_pipeline_alert_deliveries USING btree (next_attempt_at, sequence) WHERE (status = 'pending'::text);
+
+
+--
+-- Name: data_pipeline_alerts_due; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX data_pipeline_alerts_due ON public.data_pipeline_alerts USING btree (check_at, pipeline_id) WHERE enabled;
+
+
+--
+-- Name: data_pipeline_setups_due; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX data_pipeline_setups_due ON public.data_pipeline_setups USING btree (retry_at, id) WHERE (state = 'working'::text);
+
+
+--
+-- Name: data_pipeline_setups_source_active; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX data_pipeline_setups_source_active ON public.data_pipeline_setups USING btree (source_connection_id) WHERE (state = ANY (ARRAY['working'::text, 'blocked'::text]));
+
+
+--
+-- Name: data_pipelines_due; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX data_pipelines_due ON public.data_pipelines USING btree (retry_at, id) WHERE (state <> 'deleted'::text);
+
+
+--
+-- Name: data_pipelines_owned_target; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX data_pipelines_owned_target ON public.data_pipelines USING btree (database_id) WHERE (state <> 'deleted'::text);
+
+
+--
 -- Name: data_upstreams_app_created_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -59139,6 +59893,13 @@ CREATE INDEX platform_tenants_account_created_id_idx ON public.platform_tenants 
 
 
 --
+-- Name: postgres_capacity_reservations_resource; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX postgres_capacity_reservations_resource ON public.postgres_capacity_reservations USING btree (resource_key);
+
+
+--
 -- Name: postgres_contents_account_holds; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -63024,6 +63785,55 @@ CREATE TRIGGER customer_operation_webhook_routing_guard BEFORE INSERT OR UPDATE 
 
 
 --
+-- Name: accounts data_pipeline_account_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER data_pipeline_account_guard BEFORE DELETE ON public.accounts FOR EACH ROW EXECUTE FUNCTION public.data_pipeline_target_guard();
+
+
+--
+-- Name: managed_postgres_bindings data_pipeline_binding_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER data_pipeline_binding_guard BEFORE INSERT OR UPDATE OF access, database_id ON public.managed_postgres_bindings FOR EACH ROW EXECUTE FUNCTION public.data_pipeline_target_guard();
+
+
+--
+-- Name: managed_postgres_databases data_pipeline_database_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER data_pipeline_database_guard BEFORE DELETE OR UPDATE ON public.managed_postgres_databases FOR EACH ROW EXECUTE FUNCTION public.data_pipeline_target_guard();
+
+
+--
+-- Name: data_pipelines data_pipeline_reserve_target; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER data_pipeline_reserve_target BEFORE INSERT ON public.data_pipelines FOR EACH ROW EXECUTE FUNCTION public.data_pipeline_target_guard();
+
+
+--
+-- Name: accounts data_pipeline_setup_account_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER data_pipeline_setup_account_guard BEFORE DELETE ON public.accounts FOR EACH ROW EXECUTE FUNCTION public.data_pipeline_setup_owner_guard();
+
+
+--
+-- Name: managed_postgres_databases data_pipeline_setup_database_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER data_pipeline_setup_database_guard BEFORE DELETE OR UPDATE ON public.managed_postgres_databases FOR EACH ROW EXECUTE FUNCTION public.data_pipeline_setup_owner_guard();
+
+
+--
+-- Name: data_pipeline_connections data_pipeline_setup_source_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER data_pipeline_setup_source_guard BEFORE DELETE ON public.data_pipeline_connections FOR EACH ROW EXECUTE FUNCTION public.data_pipeline_setup_owner_guard();
+
+
+--
 -- Name: data_upstreams data_upstreams_notify_trg; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -65366,6 +66176,41 @@ CREATE TRIGGER platform_tenant_surface_certificate_changed_webhooks AFTER UPDATE
 --
 
 CREATE TRIGGER platform_tenant_surface_deployment_changed_webhooks AFTER UPDATE OF status ON public.deployments FOR EACH ROW WHEN (((old.status IS DISTINCT FROM new.status) AND (new.status = ANY (ARRAY['live'::text, 'failed'::text])))) EXECUTE FUNCTION public.enqueue_platform_tenant_surface_deployment_changed_webhooks();
+
+
+--
+-- Name: managed_postgres_bindings postgres_capacity_binding_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER postgres_capacity_binding_guard BEFORE INSERT OR UPDATE OF state, connection_limit, database_id ON public.managed_postgres_bindings FOR EACH ROW EXECUTE FUNCTION public.postgres_capacity_binding_guard();
+
+
+--
+-- Name: managed_postgres_cutovers postgres_capacity_cutover_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER postgres_capacity_cutover_guard BEFORE INSERT ON public.managed_postgres_cutovers FOR EACH ROW EXECUTE FUNCTION public.postgres_capacity_cutover_guard();
+
+
+--
+-- Name: data_pipelines postgres_capacity_pipeline_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER postgres_capacity_pipeline_guard BEFORE INSERT OR UPDATE OF state, source_connection_id, database_id ON public.data_pipelines FOR EACH ROW EXECUTE FUNCTION public.postgres_capacity_pipeline_guard();
+
+
+--
+-- Name: postgres_capacity_sources postgres_capacity_source_mapping_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER postgres_capacity_source_mapping_guard BEFORE UPDATE ON public.postgres_capacity_sources FOR EACH ROW EXECUTE FUNCTION public.postgres_capacity_mapping_guard();
+
+
+--
+-- Name: postgres_capacity_targets postgres_capacity_target_mapping_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER postgres_capacity_target_mapping_guard BEFORE UPDATE ON public.postgres_capacity_targets FOR EACH ROW EXECUTE FUNCTION public.postgres_capacity_mapping_guard();
 
 
 --
@@ -69646,6 +70491,86 @@ ALTER TABLE ONLY public.customer_workflow_readiness_subscriptions
 
 ALTER TABLE ONLY public.customer_workflow_readiness_subscriptions
     ADD CONSTRAINT customer_workflow_readiness_subscriptions_tenant_id_fkey FOREIGN KEY (tenant_id) REFERENCES public.platform_tenants(id) ON DELETE CASCADE;
+
+
+--
+-- Name: data_connection_checks data_connection_checks_account_id_connection_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_connection_checks
+    ADD CONSTRAINT data_connection_checks_account_id_connection_id_fkey FOREIGN KEY (account_id, connection_id) REFERENCES public.data_pipeline_connections(account_id, id) ON DELETE CASCADE;
+
+
+--
+-- Name: data_pipeline_alert_deliveries data_pipeline_alert_deliveries_pipeline_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_pipeline_alert_deliveries
+    ADD CONSTRAINT data_pipeline_alert_deliveries_pipeline_id_fkey FOREIGN KEY (pipeline_id) REFERENCES public.data_pipeline_alerts(pipeline_id) ON DELETE CASCADE;
+
+
+--
+-- Name: data_pipeline_alerts data_pipeline_alerts_pipeline_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_pipeline_alerts
+    ADD CONSTRAINT data_pipeline_alerts_pipeline_id_fkey FOREIGN KEY (pipeline_id) REFERENCES public.data_pipelines(id) ON DELETE CASCADE;
+
+
+--
+-- Name: data_pipeline_connections data_pipeline_connections_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_pipeline_connections
+    ADD CONSTRAINT data_pipeline_connections_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: data_pipeline_schema_refreshes data_pipeline_schema_refreshes_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_pipeline_schema_refreshes
+    ADD CONSTRAINT data_pipeline_schema_refreshes_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: data_pipeline_schema_refreshes data_pipeline_schema_refreshes_pipeline_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_pipeline_schema_refreshes
+    ADD CONSTRAINT data_pipeline_schema_refreshes_pipeline_id_fkey FOREIGN KEY (pipeline_id) REFERENCES public.data_pipelines(id) ON DELETE CASCADE;
+
+
+--
+-- Name: data_pipeline_setups data_pipeline_setups_account_id_source_connection_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_pipeline_setups
+    ADD CONSTRAINT data_pipeline_setups_account_id_source_connection_id_fkey FOREIGN KEY (account_id, source_connection_id) REFERENCES public.data_pipeline_connections(account_id, id) ON DELETE CASCADE;
+
+
+--
+-- Name: data_pipelines data_pipelines_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_pipelines
+    ADD CONSTRAINT data_pipelines_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: data_pipelines data_pipelines_account_id_source_connection_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_pipelines
+    ADD CONSTRAINT data_pipelines_account_id_source_connection_id_fkey FOREIGN KEY (account_id, source_connection_id) REFERENCES public.data_pipeline_connections(account_id, id) ON DELETE CASCADE;
+
+
+--
+-- Name: data_pipelines data_pipelines_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_pipelines
+    ADD CONSTRAINT data_pipelines_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE CASCADE;
 
 
 --
@@ -75022,6 +75947,30 @@ ALTER TABLE ONLY public.platform_tenant_workflow_schedule_cursors
 
 ALTER TABLE ONLY public.platform_tenants
     ADD CONSTRAINT platform_tenants_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: postgres_capacity_reservations postgres_capacity_reservations_resource_key_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.postgres_capacity_reservations
+    ADD CONSTRAINT postgres_capacity_reservations_resource_key_fkey FOREIGN KEY (resource_key) REFERENCES public.postgres_capacity_resources(resource_key);
+
+
+--
+-- Name: postgres_capacity_sources postgres_capacity_sources_resource_key_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.postgres_capacity_sources
+    ADD CONSTRAINT postgres_capacity_sources_resource_key_fkey FOREIGN KEY (resource_key) REFERENCES public.postgres_capacity_resources(resource_key);
+
+
+--
+-- Name: postgres_capacity_targets postgres_capacity_targets_resource_key_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.postgres_capacity_targets
+    ADD CONSTRAINT postgres_capacity_targets_resource_key_fkey FOREIGN KEY (resource_key) REFERENCES public.postgres_capacity_resources(resource_key);
 
 
 --

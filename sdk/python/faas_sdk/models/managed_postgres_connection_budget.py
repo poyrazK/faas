@@ -32,8 +32,9 @@ T = TypeVar("T", bound="ManagedPostgresConnectionBudget")
 
 @_attrs_define
 class ManagedPostgresConnectionBudget:
-    """Canonical pool planning, not live SQL usage or reservation. A comparison requires complete verified capacity and
-    consumer evidence; current adapters report unknown.
+    """Capacity evidence and demand. Canonical pool planning remains unknown without complete evidence. Qualified mirrors
+    enforce shared reservations and login ceilings; their modeled peak includes all reservations sharing physical
+    limits. Runtime pool estimate fields are zero in that model.
 
     """
 

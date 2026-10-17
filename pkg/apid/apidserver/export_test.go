@@ -33,6 +33,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/consumerbilling"
 	"github.com/onebox-faas/faas/pkg/apid/consumercontrols"
 	"github.com/onebox-faas/faas/pkg/apid/consumercredits"
+	"github.com/onebox-faas/faas/pkg/apid/datapipelines"
 	"github.com/onebox-faas/faas/pkg/apid/durable"
 	"github.com/onebox-faas/faas/pkg/apid/edgerules"
 	"github.com/onebox-faas/faas/pkg/apid/issuetrackers"
@@ -111,6 +112,13 @@ type RuntimeConfigManager = runtimeConfigManager
 type RuntimeConfigRestartNotifier = runtimeConfigRestartNotifier
 type ScanPlanResponse = scanPlanResponse
 type Server = server
+
+func (s *server) DataPipelines() **datapipelines.Handler { return &s.dataPipelines }
+
+func (s *server) ConfigurePipelineAPIApp(ctx context.Context, a state.Account, app state.App) error {
+	return s.configurePipelineAPIApp(ctx, a, app)
+}
+
 type SourceRefManagedPostgresProvider = sourceRefManagedPostgresProvider
 type SourceRefTestEnv = sourceRefTestEnv
 type SpyNotifier = spyNotifier

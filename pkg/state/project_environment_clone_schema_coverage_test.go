@@ -19,6 +19,34 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		t.Fatal(err)
 	}
 	wanted := map[string]string{
+		// ADR-1591: source credentials are account-owned; pipeline and alert
+		// intent need isolated cloning strategies. Onboarding, verification,
+		// physical capacity and recovery receipts must never be copied.
+		"data_pipeline_connections":      CloneSchemaIdentity,
+		"data_pipelines":                 CloneSchemaConfiguration,
+		"data_pipeline_alerts":           CloneSchemaConfiguration,
+		"data_connection_checks":         CloneSchemaOperational,
+		"data_pipeline_alert_deliveries": CloneSchemaOperational,
+		"data_pipeline_schema_refreshes": CloneSchemaOperational,
+		"data_pipeline_setups":           CloneSchemaOperational,
+		"postgres_capacity_reservations": CloneSchemaOperational,
+		"postgres_capacity_resources":    CloneSchemaOperational,
+		"postgres_capacity_sources":      CloneSchemaOperational,
+		"postgres_capacity_targets":      CloneSchemaOperational,
+
+		// Rehearsal policies, leases, fixtures and receipts belong to their original run.
+		"scenario_cold_preparations":    CloneSchemaOperational,
+		"scenario_command_networks":     CloneSchemaOperational,
+		"scenario_managed_work":         CloneSchemaOperational,
+		"scenario_object_fixtures":      CloneSchemaOperational,
+		"scenario_postgres_fixtures":    CloneSchemaOperational,
+		"scenario_recorder_requests":    CloneSchemaOperational,
+		"scenario_recorder_sessions":    CloneSchemaOperational,
+		"scenario_simulation_attempts":  CloneSchemaOperational,
+		"scenario_suspend_resumes":      CloneSchemaOperational,
+		"scenario_test_action_policies": CloneSchemaOperational,
+		"scenario_worker_faults":        CloneSchemaOperational,
+
 		// CI configuration stays scoped; execution authority remains at its source.
 		"ci_automation_event_retries": CloneSchemaOperational,
 		"ci_automation_branches":      CloneSchemaOperational,

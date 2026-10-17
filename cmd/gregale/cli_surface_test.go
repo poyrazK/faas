@@ -102,7 +102,7 @@ func TestApplicationAuthStaysOutOfEveryCustomerSurface(t *testing.T) {
 	if code := run([]string{"auth", "create", "shop-auth"}); code == 0 || !strings.Contains(stderr(), "unknown command") {
 		t.Fatalf("gregale auth = %d: %s", code, stderr())
 	}
-	for _, args := range [][]string{{"data-api", "create", "notes", "--database", "db", "--auth", "shop-auth"}, {"edge-rules", "create", "--app", "shop", "--kind", "jwt", "--jwt-auth", "shop-auth"}} {
+	for _, args := range [][]string{{"data-api", "create", "notes", "--database", "db", "--auth", "shop-auth"}, {"pipeline", "create", "notes", "--auth", "shop-auth"}, {"pipeline", "create", "notes", "--api", "notes-data"}, {"edge-rules", "create", "--app", "shop", "--kind", "jwt", "--jwt-auth", "shop-auth"}} {
 		before := strings.Count(stderr(), "unknown flag")
 		if code := run(args); code == 0 || strings.Count(stderr(), "unknown flag") != before+1 {
 			t.Errorf("%v = %d: %s", args, code, stderr())
@@ -114,6 +114,10 @@ func TestApplicationAuthStaysOutOfEveryCustomerSurface(t *testing.T) {
 	t.Setenv("FAAS_APPLICATION_AUTH_ENABLED", "1")
 	if _, ok := lookupCliCommand("auth"); !ok || !templateAvailable("auth") {
 		t.Fatal("turning Auth on does not show it")
+	}
+	before := len(stderr())
+	if code := run([]string{"pipeline", "create", "notes", "--api", "notes-data", "--auth", "shop-auth"}); code != 1 || !strings.Contains(stderr()[before:], "Invalid pipeline") {
+		t.Fatalf("turning Auth on does not recognize the pipeline API shortcut: %d: %s", code, stderr()[before:])
 	}
 }
 

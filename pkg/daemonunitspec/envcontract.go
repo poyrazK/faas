@@ -293,7 +293,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_EGRESS_CIRCUIT_BREAKER", Owners: []string{"schedd"}, Source: EnvSourceDefault, Note: "ADR-201 §3; off by default — an open circuit rejects a tenant's connections to their own upstream"},
 	{Name: "FAAS_EGRESS_DNS_GATING", Owners: []string{"vmmd"}, Source: EnvSourceDefault, Note: "ADR-373 per-node escape hatch; \"off\" disables DNS-gated tenant egress, any other value keeps it on"},
 	{Name: "FAAS_EGRESS_SOCKET", Owners: []string{"shared"}, Source: EnvSourceDropin},
-	{Name: "FAAS_ENVIRONMENT", Owners: []string{"shared"}, Source: EnvSourceDefault, Note: "optional deployment environment label; managed PostgreSQL provisioning requires the explicit staging value"},
+	{Name: "FAAS_ENVIRONMENT", Owners: []string{"shared", "apid"}, Source: EnvSourceDefault, Note: "optional deployment environment label; managed PostgreSQL provisioning and data pipeline workers require the explicit staging value"},
 	{Name: "FAAS_ENVIRONMENT_GITOPS_ACCEPTANCE_ENFORCEMENT", Owners: []string{"apid"}, Source: EnvSourceDevOnly, Default: "0", Note: "isolated GitOps end-to-end acceptance only; requires FAAS_DEV=1 and GREGALE_GITOPS_ACCEPTANCE=1 and is rejected on production control-plane roles"},
 	{Name: "FAAS_ENVIRONMENT_GITOPS_QUALIFICATION_DISPATCH", Owners: []string{"schedd"}, Source: EnvSourceDefault, Default: "0", Note: "explicit opt-in for preview qualification dispatch; leave off until dedicated native Linux acceptance passes"},
 	{Name: "FAAS_ENVIRONMENT_GITOPS_QUALIFICATION_SERVICE_PROXY_HTTPS_URL", Owners: []string{"schedd"}, Source: EnvSourceDefault, Validate: EnvValidationURL, Note: "optional local private HTTPS service proxy URL for qualification; unset rejects HTTPS service-bound graphs before VM admission"},

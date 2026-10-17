@@ -44,7 +44,7 @@ func (s *BindingService) PrepareReservedCredential(ctx context.Context, requeste
 		return "", "", err
 	}
 	callCtx, cancel := context.WithTimeout(ctx, s.providerTimeout)
-	material, err := backend.Provider.IssueCredentials(callCtx, bindingCredentialRequest(binding, databaseDataResource(database)))
+	material, err := issueAdmittedCredentials(callCtx, backend.Provider, bindingCredentialRequest(binding, databaseDataResource(database)))
 	cancel()
 	defer clearCredentialMaterial(&material)
 	if err != nil {

@@ -3,7 +3,7 @@ SELECT DISTINCT b.database_id::text AS database_id
 FROM managed_postgres_bindings b
 JOIN managed_postgres_databases d ON d.id=b.database_id AND d.account_id=b.account_id
 WHERE b.account_id=sqlc.arg(account_id)::text::uuid AND b.app_id=sqlc.arg(app_id)::text::uuid
- AND b.access='data_api'
+ AND b.access IN ('data_api','read_only')
  AND (b.state<>'deleted' OR EXISTS(SELECT 1 FROM instances i LEFT JOIN deployments dep ON dep.id=i.deployment_id
    WHERE i.app_id=b.app_id AND i.state NOT IN ('stopped','failed')
     AND (dep.id IS NULL OR coalesce(nullif(dep.scope,''),'default')=b.scope)))
@@ -59,7 +59,7 @@ WITH owned AS (
    AND (dep.id IS NULL OR coalesce(nullif(dep.scope,''),'default')=b.scope)
  ) inventory
 )
-SELECT d.id::text AS database_id,d.name,d.state,d.backend_fingerprint,d.observed_generation,
+SELECT d.id::text AS database_id,d.name,d.state,d.backend_fingerprint,d.observed_generation,d.data_resource_id,
  statement_timestamp()::timestamptz AS checked_at,
  (SELECT count(*)>sqlc.arg(page_limit)::integer FROM candidates) AS truncated,
  coalesce((SELECT jsonb_agg(item ORDER BY id) FROM consumers),'[]'::jsonb)::jsonb AS bindings

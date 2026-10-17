@@ -29,6 +29,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/datapipeline"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -38,8 +39,9 @@ import (
 // many tools; pinning it here makes the daemon's config story
 // explicit).
 type Config struct {
-	EventAcknowledgmentWriterSlot   string `toml:"event_acknowledgment_writer_slot"`
-	EventAcknowledgmentWriterRoster string `toml:"event_acknowledgment_writer_roster"`
+	EventAcknowledgmentWriterSlot   string              `toml:"event_acknowledgment_writer_slot"`
+	EventAcknowledgmentWriterRoster string              `toml:"event_acknowledgment_writer_roster"`
+	DataPipelines                   datapipeline.Config `toml:"data_pipelines"`
 	// Empty preview policy path keeps admission closed. No boolean/env override.
 	OperationsPreviewPolicyPath string `toml:"operations_preview_policy_path"`
 	// Runtime trust remains available independently of new admission.

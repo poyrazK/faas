@@ -126,7 +126,8 @@ func cmdDataAPIRefresh(args []string) int {
 func cmdDataAPICreate(args []string) int {
 	fs := newFlagSet("data-api create", flag.ContinueOnError)
 	database := fs.String("database", "", "managed PostgreSQL name or ID")
-	schema := fs.String("schema", "api", "exposed schema (managed Data APIs use api)")
+	schema := fs.String("schema", "api", "exposed schema (api, or public with --read-only)")
+	readOnly := fs.Bool("read-only", false, "use a SELECT-only public-schema binding and reject mutation requests")
 	scope := fs.String("scope", api.DefaultEnvScope, "environment scope")
 	issuer := fs.String("issuer", "", "HTTPS application JWT issuer")
 	jwks := fs.String("jwks-url", "", "HTTPS application JWKS URL")
@@ -137,11 +138,20 @@ func cmdDataAPICreate(args []string) int {
 	if err := fs.Parse(normalizeDataAPITypeArgs(args)); err != nil {
 		return 1
 	}
+	schemaExplicit := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "schema" {
+			schemaExplicit = true
+		}
+	})
+	if *readOnly && !schemaExplicit {
+		*schema = "public"
+	}
 	explicitIssuer := dataAPIHTTPS(*issuer) && dataAPIHTTPS(*jwks) && strings.TrimSpace(*audience) != ""
 	if *authApp != "" && (*issuer != "" || *jwks != "" || *audience != "") {
 		return printErr("Invalid flags", errors.New("--auth replaces --issuer, --jwks-url and --audience; pass one or the other"))
 	}
-	if fs.NArg() != 1 || !api.ValidAppSlug(fs.Arg(0)) || *database == "" || *schema != "api" || api.ValidateScope(*scope) != nil || (*authApp == "" && !explicitIssuer) {
+	if fs.NArg() != 1 || !api.ValidAppSlug(fs.Arg(0)) || *database == "" || (!*readOnly && *schema != "api") || (*readOnly && *schema != "public") || api.ValidateScope(*scope) != nil || (*authApp == "" && !explicitIssuer) {
 		PrintUsage(os.Stderr, dataAPICreateUsage(), "data-api")
 		return 1
 	}
@@ -174,7 +184,11 @@ func cmdDataAPICreate(args []string) int {
 	// the binding, leaving an undeployed app on the plan's app count (hunt #9
 	// H9-P119; live test 2026-10-14 hit the 100-app cap instead). An unreadable
 	// capability answer does not block: the binding still decides.
-	if caps, capErr := client.GetManagedPostgresCapabilities(ctx, db.Region); capErr == nil && !slices.Contains(caps.CredentialAccess, "data_api") {
+	access := "data_api"
+	if *readOnly {
+		access = "read_only"
+	}
+	if caps, capErr := client.GetManagedPostgresCapabilities(ctx, db.Region); capErr == nil && !slices.Contains(caps.CredentialAccess, access) {
 		return printErr("Data API not offered", fmt.Errorf("the database's backend in %s does not offer data_api credential access; no app was created", db.Region))
 	}
 	var app api.AppResponse
@@ -192,7 +206,7 @@ func cmdDataAPICreate(args []string) int {
 	}
 	// Retain partially configured intent on failure: the ordinary app and
 	// binding recovery paths own cleanup and retries, never an ad-hoc rollback.
-	if err := configureDataAPI(ctx, client, app, db.ID, *scope, map[string]string{"DATA_API_SCHEMAS": *schema, "DATA_API_ISSUER": *issuer, "DATA_API_JWKS_URL": *jwks, "DATA_API_AUDIENCE": *audience, "DATA_API_ALLOWED_ORIGINS": *origins}); err != nil {
+	if err := configureDataAPI(ctx, client, app, db.ID, *scope, map[string]string{"DATA_API_SCHEMAS": *schema, "DATA_API_ISSUER": *issuer, "DATA_API_JWKS_URL": *jwks, "DATA_API_AUDIENCE": *audience, "DATA_API_ALLOWED_ORIGINS": *origins, "DATA_API_READ_ONLY": fmt.Sprint(*readOnly)}); err != nil {
 		return printErr("Data API configuration failed; the app is retained for recovery", err)
 	}
 	deployArgs := []string{"--name", app.Slug, "--template", "data-api", "--dockerfile", "--healthcheck-path", "/healthz", "--no-doctor"}
@@ -203,7 +217,11 @@ func cmdDataAPICreate(args []string) int {
 }
 
 func configureDataAPI(ctx context.Context, client *api.Client, app api.AppResponse, database, scope string, settings map[string]string) error {
-	binding, err := client.CreateManagedPostgresBinding(api.ContextWithIdempotencyKey(ctx, addResourceIdempotencyKey("data-api", app.ID, database, scope)), database, api.CreateManagedPostgresBindingRequest{AppID: app.ID, Scope: scope, EnvironmentKey: "DATABASE_URL", Access: "data_api"})
+	access := "data_api"
+	if settings["DATA_API_READ_ONLY"] == "true" {
+		access = "read_only"
+	}
+	binding, err := client.CreateManagedPostgresBinding(api.ContextWithIdempotencyKey(ctx, addResourceIdempotencyKey("data-api", app.ID, database, scope)), database, api.CreateManagedPostgresBindingRequest{AppID: app.ID, Scope: scope, EnvironmentKey: "DATABASE_URL", Access: access})
 	if err != nil {
 		return err
 	}
@@ -219,8 +237,13 @@ func configureDataAPI(ctx context.Context, client *api.Client, app api.AppRespon
 	if _, err = client.UpdateApp(ctx, app.Slug, api.UpdateAppRequest{EgressPorts: &ports, RequireAuthn: &requireAuthn, PublicAuth: publicAuth, SetPublicAuth: publicAuth != nil}); err != nil {
 		return err
 	}
-	for _, key := range []string{"DATA_API_SCHEMAS", "DATA_API_ISSUER", "DATA_API_JWKS_URL", "DATA_API_AUDIENCE", "DATA_API_ALLOWED_ORIGINS"} {
-		if err = client.SetSecretWithScope(ctx, app.Slug, key, settings[key], scope); err != nil {
+	for _, key := range []string{"DATA_API_SCHEMAS", "DATA_API_ISSUER", "DATA_API_JWKS_URL", "DATA_API_AUDIENCE", "DATA_API_ALLOWED_ORIGINS", "DATA_API_READ_ONLY"} {
+		if err = client.SetSecretWithScope(ctx, app.Slug, key, func() string {
+			if key == "DATA_API_READ_ONLY" && settings[key] == "" {
+				return "false"
+			}
+			return settings[key]
+		}(), scope); err != nil {
 			return err
 		}
 	}
