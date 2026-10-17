@@ -1,4 +1,4 @@
-# Application-owned prepared Node workers, using the formatter's default prefix.
+# Application-owned prepared Node or Python workers, using the default SDK prefix.
 # Evaluate locally with unique (job, instance) pairs and one collector per target.
 # See README.md for installation, threshold tuning and observation limitations.
 groups:

@@ -2,7 +2,7 @@
   "annotations": {
     "list": []
   },
-  "description": "Opt-in monitoring for application-owned prepared Node event workers. Uses the default SDK formatter prefix and companion recording rules; observations do not prove callback success or recovery.",
+  "description": "Opt-in monitoring for application-owned prepared Node or Python event workers. Uses the default SDK formatter prefix and companion recording rules; observations do not prove callback success or recovery.",
   "editable": true,
   "graphTooltip": 1,
   "id": null,
@@ -18,7 +18,7 @@
     {
       "id": 1,
       "type": "text",
-      "title": "Prepared Node workers: observation limits",
+      "title": "Prepared workers: observation limits",
       "gridPos": {
         "h": 5,
         "w": 24,
@@ -27,7 +27,7 @@
       },
       "options": {
         "mode": "markdown",
-        "content": "Load `preparation.rules.yml` before using the derived panels. Select the Prometheus datasource, job and instance. Ten-minute increases are extrapolated observations; they can be fractional. Failure ratios and p95 panels require at least 20 estimated observations. Derived panels disappear while a target is down, its collector is missing, or clipping was observed in the window. An idle worker can have zero increases and unavailable p95 values. Missing data is not zero or proof of recovery. Local receipt commits do not confirm platform callbacks. These metrics contain no job identity; inspect protected jobs and receipts before recovery. [Recovery runbook](https://github.com/poyrazK/faas/blob/main/docs/runbooks/GregaleEventPreparation.md) · [Setup and tuning](https://github.com/poyrazK/faas/blob/main/examples/event-acknowledgment-node/monitoring/README.md)"
+        "content": "Load `preparation.rules.yml` before using the derived panels. Select the Prometheus datasource, job and instance. Ten-minute increases are extrapolated observations; they can be fractional. Failure ratios and p95 panels require at least 20 estimated observations. Derived panels disappear while a target is down, its collector is missing, or clipping was observed in the window. An idle worker can have zero increases and unavailable p95 values. Missing data is not zero or proof of recovery. Local receipt commits do not confirm platform callbacks. These metrics contain no job identity; inspect protected jobs and receipts before recovery. [Recovery runbook](https://github.com/poyrazK/faas/blob/main/docs/runbooks/GregaleEventPreparation.md) · [Setup and tuning](https://github.com/poyrazK/faas/blob/main/examples/event-acknowledgment-monitoring/README.md)"
       }
     },
     {
@@ -754,5 +754,5 @@
   "timezone": "browser",
   "title": "Gregale event preparation workers",
   "uid": "gregale-event-preparation",
-  "version": 1
+  "version": 2
 }

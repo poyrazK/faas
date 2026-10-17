@@ -399,7 +399,7 @@ Do not construct a collector per scrape or record the same snapshot as new event
 The formatter has no dependency on a metrics library and performs no processing,
 renewal or callback action. See [metric families, seconds, saturation and validation](../../docs/event-acknowledgment-node-prometheus.md).
 
-The [opt-in monitoring pack](monitoring/README.md) adds a scrape configuration,
+The [shared Node/Python monitoring pack](../event-acknowledgment-monitoring/README.md) adds a scrape configuration,
 recording rules, warning alerts, a Grafana dashboard and recovery guidance for
 these observations. Install it explicitly in your application monitoring stack
 and tune its workload thresholds and notification routing before enabling it.

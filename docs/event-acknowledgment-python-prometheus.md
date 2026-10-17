@@ -134,6 +134,12 @@ this HTTP-only app and keep the listener separate from delivery ingress. Remote
 scrapes use the host's authenticated proxy/protected transport. No authentication
 middleware or monitoring deployment is installed by this helper.
 
+The [shared Node/Python monitoring pack](../examples/event-acknowledgment-monitoring/README.md)
+adds a Python scrape configuration, seven guarded recording rules, nine warning
+alerts and a Grafana dashboard. Install one copy of the shared rules per evaluation
+domain and preserve worker scope. The [recovery runbook](runbooks/GregaleEventPreparation.md#sdk-recovery-paths)
+covers Python inspection and receipt-only handoff before any explicit recovery.
+
 Local verification covers compilation/lint, Python 3.11 syntax, isolated SDK
 generation, wheel/sdist inclusion, static family/vocabulary/source comparisons
 and schema/ADR/documentation checks. No tests or assertions are added or changed

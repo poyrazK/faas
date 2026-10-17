@@ -51,7 +51,7 @@ jobs, tokens, business payloads or per-consumer identities.
 No new metrics, SDK behavior, schemas, routes, migrations or automatic recovery
 actions are introduced. Existing static CI checks include the example rule/config
 pair, dashboard JSON and alert metadata without changing tests. See the
-[setup and tuning contract](../../examples/event-acknowledgment-node/monitoring/README.md).
+[setup and tuning contract](../../examples/event-acknowledgment-monitoring/README.md).
 
 ## Validation
 

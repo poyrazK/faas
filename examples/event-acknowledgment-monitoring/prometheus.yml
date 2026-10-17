@@ -1,4 +1,4 @@
-# Opt-in worker-host example; merge these entries into your own configuration.
+# Opt-in Node or SDK-neutral worker-host example; merge into your configuration.
 # Loopback works only when Prometheus shares the worker's network namespace.
 global:
   scrape_interval: 15s

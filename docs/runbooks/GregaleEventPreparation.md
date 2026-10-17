@@ -1,7 +1,7 @@
-# Prepared Node event worker recovery
+# Prepared event worker recovery
 
-Source: [opt-in preparation monitoring rules](../../examples/event-acknowledgment-node/monitoring/preparation.rules.yml).
-The [setup guide](../../examples/event-acknowledgment-node/monitoring/README.md)
+Source: [opt-in preparation monitoring rules](../../examples/event-acknowledgment-monitoring/preparation.rules.yml).
+The [shared Node/Python setup guide](../../examples/event-acknowledgment-monitoring/README.md)
 defines thresholds, scope and observation guards. All nine alerts share this
 runbook and carry `family=event_preparation`, `severity=warn`.
 
@@ -20,12 +20,59 @@ affected jobs around the observed time. Authenticate and authorize that access;
 keep original records, tokens and payloads out of monitoring labels, annotations
 and exported diagnostic logs.
 
-Read receipt/claim metadata with
-[`inspectEventConsumerProcessing`](../event-consumer-processing-inspection.md)
+Read receipt/claim metadata through the SDK-specific inspection path below,
 using trusted owner scope and the retained exact original inputs. Read durable
-intent status through the existing
-[intent recovery health and listing APIs](../event-acknowledgment-node-intents.md).
+intent status through its health and listing APIs.
 An unavailable database observation is unknown evidence, not an absent receipt.
+
+## SDK recovery paths
+
+Use the SDK and original protected-job mode that produced the retained job.
+The shared monitoring contract grants no permission to convert job records,
+acknowledge jobs, run business code or choose a negative acknowledgment.
+
+| Operation | Node | Python |
+| --- | --- | --- |
+| Read receipt/claim metadata | [`inspectEventConsumerProcessing`](../event-consumer-processing-inspection.md) | [`ainspect_event_consumer_processing`](../event-consumer-processing-inspection.md#python-inspection) |
+| Validate a saved receipt and stage its completion intent | [`worker.saveCompletionIntent`](../event-acknowledgment-node-intents.md) | [`worker.save_completion_intent`](../event-acknowledgment-python-intents.md) |
+| Read bounded retained backlog health | [`getEventAcknowledgmentIntentHealth`](../event-acknowledgment-node-intents.md) | [`aget_event_acknowledgment_intent_health`](../event-acknowledgment-intent-health.md#python-summary) |
+| List retained intent metadata | [`listEventAcknowledgmentIntents`](../event-acknowledgment-node-intents.md) | [`alist_event_acknowledgment_intents`](../event-acknowledgment-python-intents.md) |
+| Deliver one saved callback without business work | [`recoverNextEventAcknowledgmentIntent`](../event-acknowledgment-node-intents.md) | [`arecover_next_event_acknowledgment_intent`](../event-acknowledgment-python-intents.md) |
+
+### Python job and connection ownership
+
+For version-5 `python-prepared-durable` jobs, use the existing
+[`inspect_owned_prepared_delivery`](../../examples/event-acknowledgment-python/README.md#inspect-a-processing-job)
+wrapper under the application's diagnostic authorization and job-owner policy.
+It preserves record/scope validation and performs metadata inspection without
+acknowledging the job. The public inspector itself needs no platform client or
+acknowledgment token. Supply a separately leased idle autocommit async psycopg
+connection with bounded acquisition/query/statement calls, against the authoritative
+application database.
+
+Inspect the frozen snake-case `state`, `receipt`, `claim`, `observed_at`,
+`expires_at` and `remaining_lease_ms` evidence. Use the claim/state classification:
+an active claim can have zero whole milliseconds remaining. Absent receipts and
+expired claims establish neither rollback nor stopped work, and inspection
+validates no saved result bytes. Unavailable evidence remains unknown.
+
+For a matching receipt, the original owner can use
+`save_owned_prepared_completion_intent` on a fresh connection to validate the saved
+result and stage callback recovery without preparation, new claims or business
+code. Preserve the existing ownership fence before acknowledging the ingestion
+job; a diagnostic snapshot alone never permits deletion. The recovery host then
+uses the saved callback through `arecover_next_event_acknowledgment_intent` or
+`recover_one_saved_callback`, with its own exclusive connection and owner policy.
+Use health/listing independently to inspect unfinished retained intents.
+
+An uncertain COMMIT closes the exclusively owned connection; discard it through
+the pool and reconcile on a fresh idle autocommit connection. Cancellation joins
+active SQL and cleanup, so bound driver calls and drain operations before closing
+pools/clients/event loops. Never reinterpret a new diagnostic read as proof that
+the old transaction rolled back. If restart is explicitly authorized by the job
+owner, the original `run_prepared_durable` coordinator and live platform/local/
+receipt fences still decide admission. The alert selects no restart or failure
+decision. See the [Python preparation lifecycle](../event-acknowledgment-python-preparation.md).
 
 ## Uncertain commits
 
@@ -41,7 +88,7 @@ an owner-controlled recovery action:
 
 | Evidence | Action |
 | --- | --- |
-| Matching completed receipt | Use the existing receipt reconciliation path, such as `worker.saveCompletionIntent`, to validate the saved result and stage completion without invoking business work. Recover the saved callback separately. |
+| Matching completed receipt | Use the SDK's receipt reconciliation path above to validate the saved result and stage completion without invoking business work. Recover the saved callback separately. |
 | Matching active processing claim | Respect the live fence and job ownership. A snapshot supplies no permission to take over or extend the claim. |
 | Expired/absent claim and no observed receipt | Reconcile uncertain transactions, retention and exclusive job ownership before an explicit restart through the original coordinator path. Live claim/platform/receipt fences still decide admission. |
 | Identity/input conflict | Preserve the evidence and investigate the immutable disagreement. Keep conflicting work out of automatic recovery. |

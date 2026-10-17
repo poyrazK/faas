@@ -320,7 +320,7 @@ Prometheus federation or a shared remote-write backend.
 
 ## Application worker monitoring
 
-The opt-in [prepared Node worker dashboard and alert pack](../../examples/event-acknowledgment-node/monitoring/README.md)
+The opt-in [prepared Node/Python worker dashboard and alert pack](../../examples/event-acknowledgment-monitoring/README.md)
 covers application worker observations, lease failures and uncertain local
 commits. Import it into the application's monitoring environment; fleet
 provisioning does not install it.

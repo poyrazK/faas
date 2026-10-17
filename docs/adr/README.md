@@ -1,5 +1,7 @@
 # Architecture Decision Records
 
+- [Shared Node and Python preparation monitoring](20261017165449-shared-preparation-monitoring.md)
+
 - [Prometheus exposition for Python preparation metrics](20261017164707-python-preparation-prometheus.md)
 
 - [Bounded Python preparation metrics](20261017164105-python-preparation-metrics.md)

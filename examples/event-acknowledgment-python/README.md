@@ -604,3 +604,12 @@ provided by this example. Reuse the collector across scrapes, publish absolute
 cumulative totals, preserve process/reset boundaries and export outside the
 observer. No monitoring deployment or metrics library is installed. See
 [families, seconds, saturation and validation](../../docs/event-acknowledgment-python-prometheus.md).
+
+The [shared Node/Python monitoring pack](../event-acknowledgment-monitoring/README.md)
+includes `prometheus-python.yml`, seven guarded recording rules, nine alerts and
+the same Grafana dashboard used for Node workers. Use one shared rule group and
+one scrape job per collector. For mixed hosts, keep listener ports and job/instance
+pairs distinct. The guide preserves low-volume, saturation and missing-data guards;
+the [Python recovery guidance](../../docs/runbooks/GregaleEventPreparation.md#python-job-and-connection-ownership)
+uses retained receipt/claim/intent evidence. Install and tune the pack explicitly
+through the application's monitoring process.

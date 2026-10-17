@@ -123,7 +123,7 @@ errors. Keep it separate from delivery ingress. For remote scrapes, use your
 existing authenticated proxy or protected transport; the example supplies no
 authentication layer. The host owns listener errors and shutdown.
 
-The [opt-in monitoring pack](../examples/event-acknowledgment-node/monitoring/README.md)
+The [shared Node/Python monitoring pack](../examples/event-acknowledgment-monitoring/README.md)
 provides guarded recording rules, nine warning alerts and a Grafana dashboard.
 It retains per-worker scope, leaves unavailable/low-volume derived series
 missing and links uncertain commits to protected receipt/intent inspection.

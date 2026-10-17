@@ -2770,6 +2770,12 @@ and saturation gauges. Serve with
 scrape path. Complete validation precedes rendering; no registry, listener, task
 or metrics dependency is added. See [formatting and the ASGI scrape example](../../docs/event-acknowledgment-python-prometheus.md).
 
+The application-owned [shared Node/Python monitoring pack](../../examples/event-acknowledgment-monitoring/README.md)
+provides a Python scrape configuration, guarded recording/alert rules, Grafana
+dashboard and SDK-specific recovery runbook. Install one shared rule group per
+evaluation domain, preserve target/process identity and tune thresholds through
+your monitoring deployment process. No monitoring service is started by the SDK.
+
 `ainspect_event_consumer_processing(connection, request, stop_event=...)` reads
 frozen receipt/claim metadata for one original consumer request in one statement.
 It reports matching/completed, active, expired, absent or conflicting evidence and
