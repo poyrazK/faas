@@ -73,3 +73,33 @@ def test_job_compute_preserves_scope_gross_spending_and_hold():
     assert serialized["committed_millicents"] + serialized["reserved_millicents"] == 9007199254740991
     assert serialized["held"]
     assert "app_id" not in serialized
+
+
+def test_shared_account_retains_separate_exact_egress_credits():
+    egress = {
+        "initialized": True,
+        "committed_bytes": 9007199254740000,
+        "reserved_bytes": 991,
+        "allowance_granted_bytes": 9007199254740991,
+        "allowance_committed_bytes": 9007199254740000,
+        "allowance_reserved_bytes": 991,
+        "allowance_remaining_bytes": 0,
+        "committed_millicents": 1000,
+        "reserved_millicents": 25,
+    }
+    compute = {
+        "initialized": True,
+        "period_start": "2026-10-01T00:00:00Z",
+        "period_end": "2026-11-01T00:00:00Z",
+        "committed_millicents": 2000,
+        "reserved_millicents": 50,
+        "remaining_millicents": 0,
+        "unconfirmed_leases": 1,
+        "held": True,
+        "observed_at": "2026-10-17T10:00:00Z",
+        "egress": egress,
+    }
+    runtime = FinancialBudgetRuntime.from_dict({"alerts": [], "compute": compute})
+    assert runtime.compute.egress.committed_bytes + runtime.compute.egress.reserved_bytes == 9007199254740991
+    assert runtime.to_dict()["compute"]["egress"] == egress
+    assert runtime.compute.committed_millicents == 2000

@@ -793,6 +793,7 @@ export type { FinancialBudgetTarget } from './models/FinancialBudgetTarget.js';
 export type { FinancialComputeBalance } from './models/FinancialComputeBalance.js';
 export type { FinancialContractCosts } from './models/FinancialContractCosts.js';
 export type { FinancialCostsResponse } from './models/FinancialCostsResponse.js';
+export type { FinancialEgressBalance } from './models/FinancialEgressBalance.js';
 export type { FinancialForecast } from './models/FinancialForecast.js';
 export type { FinancialForecastResponse } from './models/FinancialForecastResponse.js';
 export type { FinancialMeterCost } from './models/FinancialMeterCost.js';

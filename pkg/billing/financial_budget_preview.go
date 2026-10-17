@@ -69,7 +69,17 @@ func PreviewFinancialBudget(ctx context.Context, store state.Store, account stri
 				if financial.StrictJobCompute(spec) {
 					out.Guarantee = "strict_job_gross_compute_funded_windows;conservative_commitments;other_meters_excluded"
 				}
-				if financial.StrictAccountCompute(spec) {
+				if financial.StrictAccountEgress(spec) {
+					ready, ok := store.(state.FinancialEgressReadinessStore)
+					out.EnforcementReady = false
+					if ok {
+						out.EnforcementReady, err = ready.FinancialEgressReady(ctx, account)
+						if err != nil {
+							return out, err
+						}
+					}
+					out.Guarantee = "strict_shared_account_compute_egress;separate_quantity_allowances;kernel_byte_credits;unused_credits_commit_conservatively;other_meters_excluded"
+				} else if financial.StrictAccountCompute(spec) {
 					out.Guarantee = "strict_account_net_compute_funded_windows;shared_quantity_allowance;funded_job_attempts;other_meters_excluded"
 				}
 				if !out.EnforcementReady {

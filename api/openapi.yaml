@@ -43962,7 +43962,7 @@ paths:
         Requires admin scope and session MFA. Idempotency-Key is required (1..255 bytes).
         It fixes creation identity beyond replay-cache retention. Reusing an operation
         identity cannot overwrite a changed or deleted policy. Disabled policies are drafts.
-        Activation supports monitored notify, monitored compute-only stop_previews, and strict app/job gross compute or account net compute suspend_workloads with zero drain and no alert thresholds. Other enabled responses return 422 financial_budget_activation_unavailable. Strict activation requires quiet covered workloads, complete accounting and capable native owners; unavailable authority returns 422 financial_compute_not_ready.
+        Activation supports monitored notify, monitored compute-only stop_previews, and strict app/job gross compute or account net compute (optionally combined with egress) suspend_workloads with zero drain and no alert thresholds. Other enabled responses return 422 financial_budget_activation_unavailable. Strict activation requires quiet covered workloads, complete accounting and capable native owners; unavailable authority returns 422 financial_compute_not_ready.
         Disabled drafts create no notifications or workload changes. Active notification policies never stop workloads.
       parameters:
         - name: Idempotency-Key
@@ -44022,7 +44022,7 @@ paths:
       description: |
         Requires admin scope, session MFA and Idempotency-Key. expected_revision
         must match the current policy; stale edits return 409. Monitored notify and compute-only stop_previews
-        policies can activate, along with strict app/job gross compute or account net compute suspend_workloads with zero drain and no alert thresholds. A limit below committed and reserved funding returns 422 financial_compute_budget_too_low. Other policies remain disabled drafts.
+        policies can activate, along with strict app/job gross compute or account net compute (optionally combined with egress) suspend_workloads with zero drain and no alert thresholds. A limit below committed and reserved funding returns 422 financial_compute_budget_too_low. Other policies remain disabled drafts.
         Scope ownership and action eligibility are revalidated. Payment, security and user holds are independent of this intent.
       parameters:
         - name: Idempotency-Key
@@ -61448,11 +61448,26 @@ components:
         resume_rule: { type: string, enum: [manual, next_period] }
         evaluation: { $ref: '#/components/schemas/FinancialBudgetEvaluation' }
         targets: { type: array, maxItems: 10000, items: { $ref: '#/components/schemas/FinancialBudgetStopTarget' } }
+    FinancialEgressBalance:
+      type: object
+      description: Egress contribution to a shared account compute and egress budget. Funded interface bytes include framing margin. Unused or uncertain credits commit conservatively after physical absence; invoice usage remains measured bytes.
+      required: [initialized, committed_bytes, reserved_bytes, allowance_granted_bytes, allowance_committed_bytes, allowance_reserved_bytes, allowance_remaining_bytes, committed_millicents, reserved_millicents]
+      properties:
+        initialized: { type: boolean }
+        committed_bytes: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        reserved_bytes: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        allowance_granted_bytes: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        allowance_committed_bytes: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        allowance_reserved_bytes: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        allowance_remaining_bytes: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        committed_millicents: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        reserved_millicents: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
     FinancialComputeBalance:
       type: object
-      description: Conservative compute admission ledger. App and job scopes use gross compute; account scopes share included MB-seconds and cap net paid compute. Commitments may exceed invoice charges. Expired funding remains reserved until physical retirement. Subscriptions, storage, egress, builds and taxes are excluded. Independent job task attempts share account funding with apps.
+      description: Conservative admission ledger. App/job budgets cap gross compute. Account budgets share included quantities; with meters compute and egress the monetary totals sum both meters under one paid limit and egress shows its contribution. Byte credits include framing and unused credits commit after physical retirement; these upper bounds can exceed invoice charges. Expired funding stays reserved until physical retirement. Subscriptions, storage, builds, object-storage delivery and taxes are excluded. Independent job attempts share account funding with apps.
       required: [initialized, period_start, period_end, committed_millicents, reserved_millicents, remaining_millicents, unconfirmed_leases, held, observed_at]
       properties:
+        egress: { $ref: '#/components/schemas/FinancialEgressBalance' }
         initialized: { type: boolean }
         app_id: { type: string, format: uuid }
         job_id: { type: string, format: uuid }
@@ -61488,7 +61503,7 @@ components:
         budgets: { type: array, maxItems: 128, items: { $ref: '#/components/schemas/FinancialBudgetResponse' } }
     CreateFinancialBudgetRequest:
       type: object
-      description: New budget intent; activation supports monitored notify, monitored compute-only stop_previews, and strict compute suspend_workloads (app/job gross_usage or account net_usage) with zero drain and no alert thresholds. Strict activation requires quiet covered workloads, complete accounting, and native owners. Account strict activation also requires recorded allowance and native owners capable of funded jobs.
+      description: New budget intent; activation supports monitored notify, monitored compute-only stop_previews, and strict suspend_workloads (app/job gross compute or account net compute optionally combined with egress) with zero drain and no alert thresholds. Strict activation requires quiet covered workloads, complete accounting, and native owners. Account strict activation also requires recorded allowances and native owners capable of funded jobs. Combining compute and egress additionally requires complete egress accounting and byte-capable native owners.
       required: [spec]
       properties:
         spec: { $ref: '#/components/schemas/FinancialBudgetSpec' }
@@ -61538,7 +61553,7 @@ components:
         name: { type: string, minLength: 1, maxLength: 128, description: Nonblank name bounded to 128 UTF-8 bytes. }
         scope: { $ref: '#/components/schemas/FinancialBudgetScope' }
         currency: { type: string, enum: [EUR] }
-        meters: { type: array, minItems: 1, maxItems: 2, uniqueItems: true, description: Sorted meter names; strict mode covers compute only., items: { type: string, enum: [compute, egress] } }
+        meters: { type: array, minItems: 1, maxItems: 2, uniqueItems: true, description: Sorted meter names; strict account net_usage may combine compute and egress under one paid limit; app/job strict covers compute only., items: { type: string, enum: [compute, egress] } }
         basis: { type: string, enum: [net_usage, gross_usage], description: Net usage after the shared account allowance or gross usage before it; strict resource scopes require gross usage. }
         limit_millicents: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
         notify_millicents: { type: array, maxItems: 8, uniqueItems: true, description: Increasing nonnegative thresholds at or below the limit. Strict compute requires an empty array; configure a separate monitored policy for alerts., items: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 } }

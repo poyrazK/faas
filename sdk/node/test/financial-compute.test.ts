@@ -43,3 +43,17 @@ test('job compute reads retain job identity, gross spending and a queued-work ho
     assert.equal(budget.runtime?.compute?.app_id, undefined);
   } finally { globalThis.fetch = originalFetch; }
 });
+
+test('shared account limit retains separate conservative egress funding', async () => {
+  const originalFetch = globalThis.fetch;
+  const id = '6dc4f678-5766-4a06-a061-845c2b133fdd';
+  const egress = { initialized: true, committed_bytes: Number.MAX_SAFE_INTEGER - 991, reserved_bytes: 991, allowance_granted_bytes: Number.MAX_SAFE_INTEGER, allowance_committed_bytes: Number.MAX_SAFE_INTEGER - 991, allowance_reserved_bytes: 991, allowance_remaining_bytes: 0, committed_millicents: 1000, reserved_millicents: 25 };
+  try {
+    globalThis.fetch = async () => Response.json({ id, runtime: { compute: { egress, committed_millicents: 2000, reserved_millicents: 50, remaining_millicents: 0, held: true }, alerts: [] } });
+    const budget = await BillingService.getFinancialBudget({ id });
+    assert.deepEqual(budget.runtime?.compute?.egress, egress);
+    assert.equal(budget.runtime?.compute?.egress?.committed_bytes! + budget.runtime?.compute?.egress?.reserved_bytes!, Number.MAX_SAFE_INTEGER);
+    assert.equal(budget.runtime?.compute?.committed_millicents, 2000);
+    assert.equal(budget.runtime?.compute?.held, true);
+  } finally { globalThis.fetch = originalFetch; }
+});

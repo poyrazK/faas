@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import datetime
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 from uuid import UUID
 
 from attrs import define as _attrs_define
@@ -15,15 +15,20 @@ from ..models.financial_compute_balance_scope_kind import (
 )
 from ..types import UNSET, Unset
 
+if TYPE_CHECKING:
+    from ..models.financial_egress_balance import FinancialEgressBalance
+
+
 T = TypeVar("T", bound="FinancialComputeBalance")
 
 
 @_attrs_define
 class FinancialComputeBalance:
-    """Conservative compute admission ledger. App and job scopes use gross compute; account scopes share included MB-
-    seconds and cap net paid compute. Commitments may exceed invoice charges. Expired funding remains reserved until
-    physical retirement. Subscriptions, storage, egress, builds and taxes are excluded. Independent job task attempts
-    share account funding with apps.
+    """Conservative admission ledger. App/job budgets cap gross compute. Account budgets share included quantities; with
+    meters compute and egress the monetary totals sum both meters under one paid limit and egress shows its
+    contribution. Byte credits include framing and unused credits commit after physical retirement; these upper bounds
+    can exceed invoice charges. Expired funding stays reserved until physical retirement. Subscriptions, storage,
+    builds, object-storage delivery and taxes are excluded. Independent job attempts share account funding with apps.
 
     """
 
@@ -36,6 +41,10 @@ class FinancialComputeBalance:
     unconfirmed_leases: int
     held: bool
     observed_at: datetime.datetime
+    egress: FinancialEgressBalance | Unset = UNSET
+    """Egress contribution to a shared account compute and egress budget. Funded interface bytes include framing
+    margin. Unused or uncertain credits commit conservatively after physical absence; invoice usage remains measured
+    bytes."""
     app_id: UUID | Unset = UNSET
     job_id: UUID | Unset = UNSET
     account_id: UUID | Unset = UNSET
@@ -65,6 +74,10 @@ class FinancialComputeBalance:
         held = self.held
 
         observed_at = self.observed_at.isoformat()
+
+        egress: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.egress, Unset):
+            egress = self.egress.to_dict()
 
         app_id: str | Unset = UNSET
         if not isinstance(self.app_id, Unset):
@@ -109,6 +122,8 @@ class FinancialComputeBalance:
                 "observed_at": observed_at,
             }
         )
+        if egress is not UNSET:
+            field_dict["egress"] = egress
         if app_id is not UNSET:
             field_dict["app_id"] = app_id
         if job_id is not UNSET:
@@ -132,6 +147,8 @@ class FinancialComputeBalance:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.financial_egress_balance import FinancialEgressBalance
+
         d = dict(src_dict)
         initialized = d.pop("initialized")
 
@@ -150,6 +167,13 @@ class FinancialComputeBalance:
         held = d.pop("held")
 
         observed_at = datetime.datetime.fromisoformat(d.pop("observed_at"))
+
+        _egress = d.pop("egress", UNSET)
+        egress: FinancialEgressBalance | Unset
+        if isinstance(_egress, Unset):
+            egress = UNSET
+        else:
+            egress = FinancialEgressBalance.from_dict(_egress)
 
         _app_id = d.pop("app_id", UNSET)
         app_id: UUID | Unset
@@ -204,6 +228,7 @@ class FinancialComputeBalance:
             unconfirmed_leases=unconfirmed_leases,
             held=held,
             observed_at=observed_at,
+            egress=egress,
             app_id=app_id,
             job_id=job_id,
             account_id=account_id,

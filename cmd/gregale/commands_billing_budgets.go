@@ -16,7 +16,7 @@ import (
 
 func cmdBillingBudgets(args []string) int {
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
-		if _, err := fmt.Fprintln(osStdout, "usage: gregale billing budgets <list|get|create|update|delete|history> [flags] [ID]\nEnable monitored notify policies or compute-only stop_previews policies. Strict compute supports app/job gross_usage or account net_usage suspend_workloads with zero drain and no alert thresholds. Other stopping actions remain drafts. Preview consequences with billing budget-preview."); err != nil {
+		if _, err := fmt.Fprintln(osStdout, "usage: gregale billing budgets <list|get|create|update|delete|history> [flags] [ID]\nEnable monitored notify policies or compute-only stop_previews policies. Strict supports app/job gross compute or account net compute optionally combined with egress, using suspend_workloads with zero drain and no alert thresholds. Other stopping actions remain drafts. Preview consequences with billing budget-preview."); err != nil {
 			return printErr("Could not print budget help", err)
 		}
 		return 0
@@ -178,11 +178,20 @@ func printBillingBudgetRuntime(runtime *financial.BudgetRuntime) error {
 				return err
 			}
 		}
-		if _, err := fmt.Fprintf(osStdout, "Committed compute (conservative): %s\nReserved compute: %s\nRemaining compute: %s\nUnconfirmed VM attempts: %d; budget held: %t\n", financialMoney(b.CommittedMillicents), financialMoney(b.ReservedMillicents), financialMoney(b.RemainingMillicents), b.UnconfirmedLeases, b.Held); err != nil {
+		label := "compute"
+		if b.Egress != nil {
+			label = "compute and egress"
+		}
+		if _, err := fmt.Fprintf(osStdout, "Committed %s (conservative): %s\nReserved %s: %s\nRemaining %s: %s\nUnconfirmed VM attempts: %d; budget held: %t\n", label, financialMoney(b.CommittedMillicents), label, financialMoney(b.ReservedMillicents), label, financialMoney(b.RemainingMillicents), b.UnconfirmedLeases, b.Held); err != nil {
 			return err
 		}
 		if b.ScopeKind == "account" {
 			if _, err := fmt.Fprintf(osStdout, "Shared account allowance (MB-seconds): granted %d; committed %d; reserved %d; remaining %d\n", b.AllowanceGranted, b.AllowanceCommitted, b.AllowanceReserved, b.AllowanceRemaining); err != nil {
+				return err
+			}
+		}
+		if e := b.Egress; e != nil {
+			if _, err := fmt.Fprintf(osStdout, "Egress funding: committed %s; reserved %s\nInterface byte credits: committed %d; reserved %d\nShared included egress bytes: granted %d; committed %d; reserved %d; remaining %d\nUnused or uncertain credits commit conservatively after shutdown; invoice usage remains measured bytes.\n", financialMoney(e.CommittedMillicents), financialMoney(e.ReservedMillicents), e.CommittedBytes, e.ReservedBytes, e.AllowanceGranted, e.AllowanceCommitted, e.AllowanceReserved, e.AllowanceRemaining); err != nil {
 				return err
 			}
 		}

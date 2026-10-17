@@ -2,7 +2,8 @@
 
 This release candidate includes the implemented financial visibility and
 budget-planning surfaces from ADR-566, active monitored notifications and
-compute-only `stop_previews`, plus strict app compute reservations. This branch
+compute-only `stop_previews`, strict app/job gross compute reservations, and shared
+account net compute funding optionally combined with interface egress. This branch
 is a local release candidate; native VM acceptance and publication are still
 required. Other stopping actions and strict scopes remain deferred.
 
@@ -15,13 +16,15 @@ required. Other stopping actions and strict scopes remain deferred.
 - Revisioned budget policies and drafts through the API, CLI and console.
 - Active monitored notification policies, retained evaluation health, atomic
   threshold outbox events and fenced/retryable email delivery. The console
-  creates account/app compute policies; API/CLI support every existing scope.
+  creates account/app/job compute policies and combined account compute/egress
+  policies; API/CLI also support monitored policies across existing scopes.
 - Latched preview stop decisions, independent of payment/security/user intent;
   warm HTTP and service/TCP admission, queued invocation/command claim gates,
   scheduler drain/teardown retries and per-target acknowledgements. Preview
   command VM ownership and preparation deadlines survive scheduler restart.
-- Atomic app/month compute funding, fenced native execution leases, local
-  deadlines, durable recovery, funded billing windows and conservative balances
+- Atomic app/job gross compute and shared account compute/egress funding,
+  fenced native execution leases, kernel byte quotas, local deadlines, durable
+  recovery, funded billing windows and conservative balances
   in the API, CLI, SDKs and console. See [strict compute decision](adr/20261017-strict-app-compute-reservations.md).
 - Account ownership, usage-read/admin authorization, MFA, bounded idempotency
   keys and optimistic revisions. Recovery reads remain available during billing
@@ -30,9 +33,12 @@ required. Other stopping actions and strict scopes remain deferred.
 ## Release limits
 
 Budget activation accepts `mode=monitored` with `action=notify`, or
-`action=stop_previews` with the compute meter alone. Strict app-scoped
-`gross_usage`, compute-only `suspend_workloads` supports zero drain and no alert
-thresholds, with quiet-app/accounting/native-owner activation checks. Other enabled
+`action=stop_previews` with the compute meter alone. Strict app/job `gross_usage`
+compute and account `net_usage` compute (optionally `[compute, egress]`) support
+`suspend_workloads`, zero drain and no alert thresholds. Initial activation
+requires quiet covered workloads, complete accounting, recorded account
+allowances, and capable native owners. Combined policies check the sum of both
+meters against one paid limit with separate quantity allowances. Other enabled
 responses return HTTP 422 `financial_budget_activation_unavailable`. Disabled
 drafts neither stop workloads nor send spending notifications. Notification
 policies report active monitoring while `enforcement_ready` remains false. Financial totals cover recorded supported
@@ -47,8 +53,13 @@ reports partial coverage with `compute:missing_scope_attribution`; it does not
 present an unallocated amount as complete zero spending. Account and app
 subtotals still include the retained charges.
 
-The release excludes other stopping actions, strict account/project/environment/job
-scopes, scoped net reservations and full-invoice hard ceilings. A monitored preview budget can be exceeded during
+The release excludes other stopping actions, strict project/environment scopes,
+app/job net reservations, scoped egress-only reservations and full-invoice hard
+ceilings. Byte credits include a framing margin; unused or uncertain credits
+commit in full after physical retirement. Budget commitments can exceed invoice
+usage, which continues to use measured bytes. A funded period pins its recorded
+egress rate ceiling; incompatible pricing changes must wait for a new period.
+See [shared egress funding](adr/1363-account-strict-egress.md). A monitored preview budget can be exceeded during
 evidence ingestion, scheduler sweeps, the configured drain interval, and bounded
 VM teardown. Broad scopes leave production spending explicitly continuing.
 
@@ -80,7 +91,8 @@ its existing customer-selected expiration/cancellation policy applies.
    before exposing the console release.
 3. Let meterd capture current price contracts and fresh usage evidence. Old
    periods without recorded prices stay incomplete. Verify account isolation,
-   freshness/coverage, one retained sample replay, revision handling, notification activation and preview-stop activation, strict app funding, and unsupported activation refusal.
+   freshness/coverage, one retained sample replay, revision handling, notification activation and preview-stop activation, strict app/job/account funding, combined compute/egress byte exhaustion, and
+   unsupported activation refusal.
    Exercise a threshold, replay, mail failure/retry and expired claim recovery;
    verify that partial/stale evidence stays visible and sampling remains healthy.
 4. Release the console only after the platform APIs answer successfully.

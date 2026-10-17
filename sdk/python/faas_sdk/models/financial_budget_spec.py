@@ -36,7 +36,8 @@ class FinancialBudgetSpec:
     """Authoritative account or resource identity; resource ids must belong to the account."""
     currency: FinancialBudgetSpecCurrency
     meters: list[FinancialBudgetSpecMetersItem]
-    """Sorted meter names; strict mode covers compute only."""
+    """Sorted meter names; strict account net_usage may combine compute and egress under one paid limit; app/job
+    strict covers compute only."""
     basis: FinancialBudgetSpecBasis
     """Net usage after the shared account allowance or gross usage before it; strict resource scopes require gross
     usage."""

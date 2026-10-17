@@ -1591,6 +1591,7 @@ from .financial_contract_costs import FinancialContractCosts
 from .financial_costs_response import FinancialCostsResponse
 from .financial_costs_response_currency import FinancialCostsResponseCurrency
 from .financial_costs_response_invoice_reconciliation import FinancialCostsResponseInvoiceReconciliation
+from .financial_egress_balance import FinancialEgressBalance
 from .financial_forecast import FinancialForecast
 from .financial_forecast_currency import FinancialForecastCurrency
 from .financial_forecast_response import FinancialForecastResponse
@@ -6331,6 +6332,7 @@ __all__ = (
     "FinancialCostsResponse",
     "FinancialCostsResponseCurrency",
     "FinancialCostsResponseInvoiceReconciliation",
+    "FinancialEgressBalance",
     "FinancialForecast",
     "FinancialForecastCurrency",
     "FinancialForecastResponse",

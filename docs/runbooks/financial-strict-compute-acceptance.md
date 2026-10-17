@@ -179,3 +179,50 @@ Record native job image, guest-init and daemon source SHAs, two-host observation
 performance and leak results with the existing release evidence. The local
 container can run PostgreSQL conformance and compile these fixtures; it cannot
 close any native execution gate.
+
+
+## Shared account compute and egress candidate (ADR-1363)
+
+Use account `net_usage`, meters `[compute, egress]`, strict
+`suspend_workloads`, zero drain and empty alert thresholds. All app, worker,
+command, execution, sidecar and independent-job traffic crossing the public
+veth is covered. The separate private side-link is outside this interface meter.
+Builds, object-storage delivery, subscriptions, storage and tax remain excluded.
+
+The opt-in lane now discovers the egress financial tests and three additional
+native tests from source: packet-credit exhaustion, PostgreSQL app/job byte
+contention, and native restart with failed settlement. Missing, skipped or failed
+cases cannot qualify the lane. Packet tests exercise concurrent IPv4, IPv6, ARP,
+small frames and unsupported protocols against the root veth RX byte bound.
+The native images, daemon binary, PostgreSQL and final leakcheck remain required.
+
+Require Linux kernel and nftables support for `netdev` egress quotas and `meta
+time`. An unsupported host must refuse boot, with no guest execution. Native
+clocks must stay synchronized to UTC: test a skew beyond the authority timeout
+and confirm refusal before boot, and verify early kernel expiry through the UTC
+month boundary. Time-only renewals must retain the remaining byte quota.
+
+In addition to the automatic fixtures, generate large HTTP and WebSocket replies,
+stream uploads from all workload modes, use static egress routing, and exercise
+private-side-link traffic independently. Confirm actual root veth RX never
+exceeds the issued conservative credit total. Disconnect PostgreSQL, pause or
+kill vmmd, inject failed VM kills, lose a refill reply before/after kernel apply,
+and restart the owner. Kernel byte and time limits must persist; uncertain
+credits stay reserved until physical retirement and then commit in full.
+
+Inspect API/CLI/console shared monetary totals and separate compute/egress
+allowances. A successful refill must buy both its compute window and byte credit
+under one account lock; neither meter may independently spend the whole limit.
+Exercise simultaneous compute-only and combined policies, limit raises, disable,
+deletion, grant changes, prior-month unsettled attempts and legacy owner/price
+writers. The maximum recorded rate remains pinned even after policy deletion.
+
+The budget balance is conservative: framing margins, unused credits and lost
+credit delivery count against it, without adding invoice usage. Confirm invoice
+billing still follows measured interface bytes. Measure refill stalls, DB load
+and small-packet throughput before release. Production acceptance still requires
+physical two-host and matching full-daemon fixtures; compilation is preparation.
+
+The managed cloud environment used for this candidate lacks KVM and rejects
+`nft add table netdev` with `Operation not supported`, including in an isolated
+privileged container. It provides no packet-enforcement or native lifecycle pass.

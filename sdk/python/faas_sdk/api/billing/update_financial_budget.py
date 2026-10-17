@@ -109,9 +109,10 @@ def sync_detailed(
      Requires admin scope, session MFA and Idempotency-Key. expected_revision
     must match the current policy; stale edits return 409. Monitored notify and compute-only
     stop_previews
-    policies can activate, along with strict app/job gross compute or account net compute
-    suspend_workloads with zero drain and no alert thresholds. A limit below committed and reserved
-    funding returns 422 financial_compute_budget_too_low. Other policies remain disabled drafts.
+    policies can activate, along with strict app/job gross compute or account net compute (optionally
+    combined with egress) suspend_workloads with zero drain and no alert thresholds. A limit below
+    committed and reserved funding returns 422 financial_compute_budget_too_low. Other policies remain
+    disabled drafts.
     Scope ownership and action eligibility are revalidated. Payment, security and user holds are
     independent of this intent.
 
@@ -154,9 +155,10 @@ def sync(
      Requires admin scope, session MFA and Idempotency-Key. expected_revision
     must match the current policy; stale edits return 409. Monitored notify and compute-only
     stop_previews
-    policies can activate, along with strict app/job gross compute or account net compute
-    suspend_workloads with zero drain and no alert thresholds. A limit below committed and reserved
-    funding returns 422 financial_compute_budget_too_low. Other policies remain disabled drafts.
+    policies can activate, along with strict app/job gross compute or account net compute (optionally
+    combined with egress) suspend_workloads with zero drain and no alert thresholds. A limit below
+    committed and reserved funding returns 422 financial_compute_budget_too_low. Other policies remain
+    disabled drafts.
     Scope ownership and action eligibility are revalidated. Payment, security and user holds are
     independent of this intent.
 
@@ -194,9 +196,10 @@ async def asyncio_detailed(
      Requires admin scope, session MFA and Idempotency-Key. expected_revision
     must match the current policy; stale edits return 409. Monitored notify and compute-only
     stop_previews
-    policies can activate, along with strict app/job gross compute or account net compute
-    suspend_workloads with zero drain and no alert thresholds. A limit below committed and reserved
-    funding returns 422 financial_compute_budget_too_low. Other policies remain disabled drafts.
+    policies can activate, along with strict app/job gross compute or account net compute (optionally
+    combined with egress) suspend_workloads with zero drain and no alert thresholds. A limit below
+    committed and reserved funding returns 422 financial_compute_budget_too_low. Other policies remain
+    disabled drafts.
     Scope ownership and action eligibility are revalidated. Payment, security and user holds are
     independent of this intent.
 
@@ -237,9 +240,10 @@ async def asyncio(
      Requires admin scope, session MFA and Idempotency-Key. expected_revision
     must match the current policy; stale edits return 409. Monitored notify and compute-only
     stop_previews
-    policies can activate, along with strict app/job gross compute or account net compute
-    suspend_workloads with zero drain and no alert thresholds. A limit below committed and reserved
-    funding returns 422 financial_compute_budget_too_low. Other policies remain disabled drafts.
+    policies can activate, along with strict app/job gross compute or account net compute (optionally
+    combined with egress) suspend_workloads with zero drain and no alert thresholds. A limit below
+    committed and reserved funding returns 422 financial_compute_budget_too_low. Other policies remain
+    disabled drafts.
     Scope ownership and action eligibility are revalidated. Payment, security and user holds are
     independent of this intent.
 

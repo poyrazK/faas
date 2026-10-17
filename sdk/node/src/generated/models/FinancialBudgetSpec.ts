@@ -14,7 +14,7 @@ export type FinancialBudgetSpec = {
   scope: FinancialBudgetScope;
   currency: 'EUR';
   /**
-   * Sorted meter names; strict mode covers compute only.
+   * Sorted meter names; strict account net_usage may combine compute and egress under one paid limit; app/job strict covers compute only.
    */
   meters: Array<'compute' | 'egress'>;
   /**
