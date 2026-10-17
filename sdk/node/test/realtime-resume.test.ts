@@ -167,3 +167,35 @@ test('rejects out-of-order delivery rather than persisting a gap', async () => {
     message_id: 'id-3', data_base64: 'dGhyZWU=' });
   await assert.rejects(consuming, RealtimeProtocolError);
 });
+
+test('asks for live occupancy and reports each count', async () => {
+  const sockets: FakeSocket[] = [];
+  const controller = new AbortController();
+  const counts: number[] = [];
+  const rejected: string[] = [];
+  const consuming = consumeRealtimeChannel({
+    url: 'wss://app.example.test/__gregale/realtime/endpoint-1',
+    channel: 'lobby', signal: controller.signal, retryInitialMs: 0, retryMaxMs: 0,
+    cursorStore: { load: () => 0, save: () => {} },
+    onMessage: () => {},
+    onOccupancy: ({ channel, subscribers }) => { assert.equal(channel, 'lobby'); counts.push(subscribers); },
+    onEphemeralRejected: ({ code }) => { rejected.push(code); },
+    webSocketFactory: async () => {
+      const socket = new FakeSocket();
+      sockets.push(socket);
+      queueMicrotask(() => socket.open());
+      return socket;
+    },
+  });
+  await until(() => sockets[0]?.sent.length === 1);
+  assert.deepEqual(sockets[0]?.sent[0], { type: 'subscribe', channel: 'lobby', after: 0, occupancy: true });
+  sockets[0]!.receive({ type: 'subscribed', channel: 'lobby', sequence: 0 });
+  sockets[0]!.receive({ type: 'occupancy', channel: 'lobby', subscribers: 23 });
+  sockets[0]!.receive({ type: 'occupancy', channel: 'lobby', subscribers: 24 });
+  sockets[0]!.receive({ type: 'error', channel: 'lobby', code: 'occupancy_limit' });
+  await until(() => counts.length === 2 && rejected.length === 1);
+  assert.deepEqual(counts, [23, 24]);
+  assert.deepEqual(rejected, ['occupancy_limit']);
+  controller.abort();
+  await consuming;
+});

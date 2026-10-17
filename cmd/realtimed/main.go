@@ -95,6 +95,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	var fleetClient realtime.ManagedRealtimeFleetClient
 	var usageReporter realtime.UsageReporter
 	var connectionSync realtime.ConnectionSyncer
+	var occupancyClient realtime.ManagedRealtimeOccupancyClient
 	if resumePreview || accessPreview || ticketPreview || usageEnabled {
 		historyTLS, tlsErr := wire.LoadClientTLSConfigWithPrefix("realtime_history_",
 			os.Getenv("FAAS_REALTIME_HISTORY_TLS_CERT_PATH"),
@@ -122,6 +123,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 			usageReporter = reader
 		}
 		connectionSync = reader
+		// A single box has one realtime node, whose own counts are exact
+		// (ADR-1324); only split nodes ask apid for the others.
+		if observedRole == role.RoleComputeOnly {
+			occupancyClient = reader
+		}
 	}
 	manager := realtime.NewManager(realtime.Config{
 		MaxConnections:       envInt("FAAS_REALTIME_MAX_CONNECTIONS", api.RealtimeNodeConnectionsDefault),
@@ -142,6 +148,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		AccessReader:         accessReader,
 		HistoryReader:        historyReader,
 		ChannelRouteReporter: routeReporter,
+		OccupancyClient:      occupancyClient,
 		FleetClient:          fleetClient,
 		FleetReportFailure: func(err error) {
 			log.Warn("realtimed: fleet presence or ephemeral relay failed", "err", err)

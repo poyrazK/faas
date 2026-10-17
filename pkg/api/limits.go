@@ -1623,9 +1623,20 @@ const (
 	RealtimeConnectionSyncMaxAccounts = 10_000
 )
 
-// RealtimeOccupancyChannelsMax bounds one channel occupancy read (ADR-1324);
-// each read asks every realtime node.
-const RealtimeOccupancyChannelsMax = 20
+// Channel occupancy (ADR-1324). One read covers at most
+// RealtimeOccupancyChannelsMax channels and asks every realtime node. Live
+// occupancy frames go out at most once per RealtimeOccupancyFrameInterval per
+// channel. A node refreshes the other nodes' counts every
+// RealtimeOccupancyRemoteRefresh, from an apid cache kept for
+// RealtimeOccupancyCacheTTL, and watches at most RealtimeOccupancyWatchedMax
+// channels, which bounds that refresh to 50 small apid calls per interval.
+const (
+	RealtimeOccupancyChannelsMax   = 20
+	RealtimeOccupancyFrameInterval = time.Second
+	RealtimeOccupancyRemoteRefresh = 5 * time.Second
+	RealtimeOccupancyCacheTTL      = 2 * time.Second
+	RealtimeOccupancyWatchedMax    = 1_000
+)
 
 func RealtimeLimitsFor(p Plan) (RealtimeLimits, bool) {
 	l, ok := realtimeLimits[p]

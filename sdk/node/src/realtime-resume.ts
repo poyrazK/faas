@@ -166,7 +166,14 @@ export interface RealtimeSignal {
 
 export interface RealtimeEphemeralRejection {
   channel: string;
-  code: 'presence_rate_limited' | 'signal_rate_limited' | 'signal_relay_unavailable';
+  code: 'presence_rate_limited' | 'signal_rate_limited' | 'signal_relay_unavailable' | 'occupancy_limit';
+}
+
+/** A channel's subscriber count across every realtime node (ADR-1324). */
+export interface RealtimeOccupancy {
+  channel: string;
+  /** Open subscriptions on every transport, including this one. */
+  subscribers: number;
 }
 
 export interface RealtimeChannelActions extends RealtimeReadActions {
@@ -216,6 +223,11 @@ export interface RealtimeChannelConsumerOptions {
   onPresence?(event: RealtimePresenceEvent): void | Promise<void>;
   /** Receive transient JSON signals. They are not stored in channel history. */
   onSignal?(signal: RealtimeSignal): void | Promise<void>;
+  /**
+   * Receive the channel's subscriber count across all realtime nodes after
+   * subscribing and whenever it changes, at most once a second.
+   */
+  onOccupancy?(occupancy: RealtimeOccupancy): void | Promise<void>;
   /** Current named activity; expiry and lifecycle changes call this synchronously. */
   onActivityChange?(activities: RealtimeActivity[]): void;
   /** Bound tracked identities including expiry markers; default 1024, maximum 8192. */
@@ -810,6 +822,7 @@ export async function consumeRealtimeChannels(options: ConsumeRealtimeChannelsOp
                 ...((state.options.onReadProgress || state.options.onReadError) ? { read_receipts: true } : {}),
                 ...(state.presenceState === undefined ? {} : { state: state.presenceState }),
                 ...(state.options.presenceScope === undefined ? {} : { presence_scope: state.options.presenceScope }),
+                ...(state.options.onOccupancy ? { occupancy: true } : {}),
               };
               const directMessageOption = options.onDirectMessage === undefined ? {} : { direct_messages: true };
               socket.send(JSON.stringify(subscription === undefined
@@ -1046,6 +1059,14 @@ export async function consumeRealtimeChannels(options: ConsumeRealtimeChannelsOp
             await state.options.onPresence?.(presence);
             break;
           }
+          case 'occupancy': {
+            const subscribers = frame.subscribers;
+            if (!state.subscribed || typeof subscribers !== 'number' || !Number.isSafeInteger(subscribers) || subscribers < 0) {
+              throw new RealtimeProtocolError('invalid realtime occupancy');
+            }
+            await state.options.onOccupancy?.({ channel, subscribers });
+            break;
+          }
           case 'signal': {
             if (!state.subscribed || typeof frame.member_id !== 'string' || !frame.member_id || !('data' in frame)) {
               throw new RealtimeProtocolError('invalid realtime signal');
@@ -1112,7 +1133,7 @@ export async function consumeRealtimeChannels(options: ConsumeRealtimeChannelsOp
           case 'error':
             if (frame.code === 'history_read_failed' || frame.code === 'checkpoint_write_failed') break;
             if (frame.code === 'presence_rate_limited' || frame.code === 'signal_rate_limited' ||
-                frame.code === 'signal_relay_unavailable') {
+                frame.code === 'signal_relay_unavailable' || frame.code === 'occupancy_limit') {
               await state.options.onEphemeralRejected?.({ channel, code: frame.code });
               break;
             }
@@ -1153,10 +1174,10 @@ export async function consumeRealtimeChannels(options: ConsumeRealtimeChannelsOp
  * rebuilds application state and returns the sequence represented by it.
  */
 export async function consumeRealtimeChannel(options: ConsumeRealtimeChannelOptions): Promise<void> {
-  const { channel, filter, cursorStore, durableSubscription, initialSequence, presence, presenceScope, onMessage, onSubscribed, onPresence, onSignal, onActivityChange, activityMaxEntries, onEphemeralRejected, onReadProgress, onReadError, onResync, ...connection } = options;
+  const { channel, filter, cursorStore, durableSubscription, initialSequence, presence, presenceScope, onMessage, onSubscribed, onPresence, onSignal, onOccupancy, onActivityChange, activityMaxEntries, onEphemeralRejected, onReadProgress, onReadError, onResync, ...connection } = options;
   return consumeRealtimeChannels({
     ...connection,
-    channels: [{ channel, filter, cursorStore, durableSubscription, initialSequence, presence, presenceScope, onMessage, onSubscribed, onPresence, onSignal, onActivityChange, activityMaxEntries, onEphemeralRejected, onReadProgress, onReadError, onResync }],
+    channels: [{ channel, filter, cursorStore, durableSubscription, initialSequence, presence, presenceScope, onMessage, onSubscribed, onPresence, onSignal, onOccupancy, onActivityChange, activityMaxEntries, onEphemeralRejected, onReadProgress, onReadError, onResync }],
   });
 }
 

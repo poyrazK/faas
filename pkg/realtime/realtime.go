@@ -280,6 +280,13 @@ type Config struct {
 	ConnectionSync         ConnectionSyncer
 	ConnectionSyncInterval time.Duration
 	ConnectionSyncFailure  func(error)
+	// OccupancyClient reads the other nodes' channel occupancy for live
+	// occupancy frames (ADR-1324). Nil counts this node only, which is exact
+	// when it is the only realtime node.
+	OccupancyClient ManagedRealtimeOccupancyClient
+	// occupancyManual stops the occupancy loops so tests drive flushes and
+	// refreshes themselves.
+	occupancyManual bool
 }
 
 func (c Config) withDefaults() Config {
@@ -572,6 +579,7 @@ type Manager struct {
 	outboundShedDisconnects       atomic.Uint64
 	outboundShed                  chan struct{}
 	occupancy                     occupancyIndex
+	occupancyLive                 occupancyLive
 	callbackErrors                atomic.Uint64
 	callbackOutboxFull            atomic.Uint64
 	callbackOutboxAdmissionErrors atomic.Uint64
@@ -604,6 +612,7 @@ func NewManager(cfg Config, hooks Hooks) *Manager {
 		channelRouteInstance:    uuid.NewString(),
 		resumeMetrics:           newResumeMetrics(),
 		outboundShed:            make(chan struct{}, 1),
+		occupancyLive:           newOccupancyLive(),
 		upgrader: websocket.Upgrader{
 			ReadBufferSize:  4096,
 			WriteBufferSize: 4096,
@@ -613,6 +622,8 @@ func NewManager(cfg Config, hooks Hooks) *Manager {
 	m.startUsageRecorder()
 	m.startConnectionSync()
 	m.startOutboundShed()
+	m.occupancy.changed = m.occupancyChanged
+	m.startOccupancyFrames()
 	return m
 }
 
@@ -1413,6 +1424,7 @@ func (m *Manager) removeConnection(ctx context.Context, c *connection) {
 	callbackAuthToken := c.currentCallbackAuthToken()
 	m.mu.Unlock()
 	c.state.gate.Unlock()
+	m.unwatchOccupancyConnection(c)
 	for _, slow := range fullPresenceQueues {
 		m.closeResumeOnQueueFull(slow, ErrOutboundQueueFull)
 	}

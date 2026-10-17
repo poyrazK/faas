@@ -97,6 +97,7 @@ type resumeClientFrame struct {
 	Subscription   string            `json:"subscription,omitempty"`
 	PresenceScope  string            `json:"presence_scope,omitempty"`
 	DirectMessages bool              `json:"direct_messages,omitempty"`
+	Occupancy      bool              `json:"occupancy,omitempty"`
 	MessageID      string            `json:"message_id,omitempty"`
 	After          int64             `json:"after,omitempty"`
 	Sequence       int64             `json:"sequence,omitempty"`
@@ -134,6 +135,7 @@ type resumeServerFrame struct {
 	Data               json.RawMessage                      `json:"data,omitempty"`
 	ConnectionCount    int                                  `json:"connection_count,omitempty"`
 	Members            []resumePresenceMember               `json:"members,omitempty"`
+	Subscribers        *int                                 `json:"subscribers,omitempty"`
 	Complete           bool                                 `json:"complete,omitempty"`
 	UpdatedAt          time.Time                            `json:"updated_at,omitempty"`
 }
@@ -554,7 +556,16 @@ func (m *Manager) resumeSubscribe(ctx context.Context, c *connection, frame resu
 	}
 	m.syncFleetPresence(ctx, key)
 	release = false
+	m.watchSubscriptionOccupancy(ctx, c, frame)
 	go m.pumpResumeSubscription(subCtx, c, frame.Channel, subscription, page)
+}
+
+// watchSubscriptionOccupancy starts live occupancy frames when the subscribe
+// frame asked for them (ADR-1324).
+func (m *Manager) watchSubscriptionOccupancy(ctx context.Context, c *connection, frame resumeClientFrame) {
+	if frame.Occupancy && !m.watchOccupancy(c, frame.Channel) {
+		m.queueResumeControl(ctx, c, resumeServerFrame{Type: "error", Channel: frame.Channel, Code: "occupancy_limit"})
+	}
 }
 
 func normalizeResumePresenceState(raw json.RawMessage) (json.RawMessage, bool) {
@@ -969,6 +980,7 @@ func (m *Manager) pumpResumeSubscription(ctx context.Context, c *connection, cha
 
 func (m *Manager) removeResumeSubscription(ctx context.Context, c *connection, channel string, subscription *resumeSubscription) {
 	var routeRemoved bool
+	var removed bool
 	var memberID string
 	var leaseDeleted bool
 	var fullPresenceQueues []*connection
@@ -976,6 +988,7 @@ func (m *Manager) removeResumeSubscription(ctx context.Context, c *connection, c
 	m.mu.Lock()
 	c.mu.Lock()
 	if c.resumeSubs[channel] == subscription {
+		removed = true
 		delete(c.resumeSubs, channel)
 		c.removeChannelLocked(channel)
 		if member := m.presenceMembers[key][c.info.ID]; member != nil {
@@ -1018,6 +1031,9 @@ func (m *Manager) removeResumeSubscription(ctx context.Context, c *connection, c
 	c.mu.Unlock()
 	m.mu.Unlock()
 	subscription.cancel()
+	if removed {
+		m.unwatchOccupancy(c, channel)
+	}
 	for _, slow := range fullPresenceQueues {
 		m.closeResumeOnQueueFull(slow, ErrOutboundQueueFull)
 	}

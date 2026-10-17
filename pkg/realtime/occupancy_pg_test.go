@@ -48,12 +48,14 @@ func TestChannelOccupancyCountsEveryTransport(t *testing.T) {
 	}
 	waitOccupancy(1, "legacy subscribe")
 
+	// The resumable subscriber also asks for live occupancy frames.
 	resumable := dialTicketWebSocket(t, node, "test-jwt")
-	sendResumeTestFrame(t, resumable, resumeClientFrame{Type: "subscribe", Channel: "lobby"})
+	sendResumeTestFrame(t, resumable, resumeClientFrame{Type: "subscribe", Channel: "lobby", Occupancy: true})
 	if frame := readResumeTestFrame(t, resumable); frame.Type != "subscribed" {
 		t.Fatalf("resumable subscribe = %+v", frame)
 	}
 	waitOccupancy(2, "resumable subscribe")
+	expectOccupancyFrame(t, resumable, 2)
 
 	reader := dialTicketWebSocket(t, node, node.ticket(t, "reader", 60, "lobby"))
 	sendResumeTestFrame(t, reader, resumeClientFrame{Type: "subscribe", Channel: "lobby"})
@@ -61,6 +63,7 @@ func TestChannelOccupancyCountsEveryTransport(t *testing.T) {
 		t.Fatalf("ticket subscribe = %+v", frame)
 	}
 	waitOccupancy(3, "ticket subscribe")
+	expectOccupancyFrame(t, resumable, 3)
 
 	status, events := node.openSSE(t, node.ticket(t, "viewer", 1, "lobby"), "lobby", "")
 	if status != http.StatusOK {
@@ -78,4 +81,22 @@ func TestChannelOccupancyCountsEveryTransport(t *testing.T) {
 	waitOccupancy(1, "ticket socket closed")
 	_ = legacy.Close()
 	waitOccupancy(0, "legacy socket closed")
+}
+
+// expectOccupancyFrame reads past other frames to the next live occupancy
+// frame for lobby and checks its count.
+func expectOccupancyFrame(t *testing.T, client *websocket.Conn, want int) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		frame := readResumeTestFrame(t, client)
+		if frame.Type != "occupancy" {
+			continue
+		}
+		if frame.Channel != "lobby" || frame.Subscribers == nil || *frame.Subscribers != want {
+			t.Fatalf("occupancy frame = %+v, want lobby %d", frame, want)
+		}
+		return
+	}
+	t.Fatalf("no occupancy frame with %d subscribers", want)
 }

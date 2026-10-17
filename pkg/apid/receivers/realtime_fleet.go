@@ -60,6 +60,9 @@ type realtimeFleetReceiver struct {
 	registerPush PushRegistrar
 	usage        state.RealtimeUsageStore
 	connections  state.RealtimeConnectionSyncStore
+	// occupancy reads the fleet for live channel occupancy (ADR-1324).
+	occupancy      RealtimeOccupancyReader
+	occupancyCache *realtimeOccupancyCache
 }
 
 type realtimeFleetPresenceRequest struct {
@@ -113,6 +116,7 @@ type realtimeFleetServer interface {
 	DirectMessageOperation(context.Context, *wrapperspb.BytesValue) (*wrapperspb.BytesValue, error)
 	ReportUsage(context.Context, *wrapperspb.BytesValue) (*wrapperspb.BytesValue, error)
 	SyncConnections(context.Context, *wrapperspb.BytesValue) (*wrapperspb.BytesValue, error)
+	OccupancyOperation(context.Context, *wrapperspb.BytesValue) (*wrapperspb.BytesValue, error)
 }
 
 func (r *realtimeFleetReceiver) PresenceOperation(ctx context.Context, envelope *wrapperspb.BytesValue) (*wrapperspb.BytesValue, error) {
@@ -433,6 +437,9 @@ var realtimeFleetServiceDesc = grpc.ServiceDesc{
 		realtimeFleetUnaryHandler("SyncConnections", func(server realtimeFleetServer, ctx context.Context, req *wrapperspb.BytesValue) (*wrapperspb.BytesValue, error) {
 			return server.SyncConnections(ctx, req)
 		}),
+		realtimeFleetUnaryHandler("OccupancyOperation", func(server realtimeFleetServer, ctx context.Context, req *wrapperspb.BytesValue) (*wrapperspb.BytesValue, error) {
+			return server.OccupancyOperation(ctx, req)
+		}),
 	},
 }
 
@@ -448,5 +455,7 @@ func RegisterRealtimeFleetReceiver(server *grpc.Server, store state.Store, owner
 	router, _ := owner.(RealtimeEphemeralRouter)
 	usage, _ := store.(state.RealtimeUsageStore)
 	connections, _ := store.(state.RealtimeConnectionSyncStore)
-	server.RegisterService(&realtimeFleetServiceDesc, &realtimeFleetReceiver{store: reader, nodes: nodes, presence: presence, receipts: receipts, inbox: inbox, router: router, registerPush: registerPush, usage: usage, connections: connections})
+	occupancy, _ := owner.(RealtimeOccupancyReader)
+	server.RegisterService(&realtimeFleetServiceDesc, &realtimeFleetReceiver{store: reader, nodes: nodes, presence: presence, receipts: receipts, inbox: inbox, router: router, registerPush: registerPush, usage: usage, connections: connections,
+		occupancy: occupancy, occupancyCache: newRealtimeOccupancyCache()})
 }

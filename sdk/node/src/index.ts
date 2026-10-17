@@ -120,6 +120,7 @@ export {
   type RealtimePresenceEvent,
   type RealtimePresenceMember,
   type RealtimeSignal,
+  type RealtimeOccupancy,
   type RealtimeReadProgress,
   type RealtimeReadActions,
   type RealtimePushRegistration,

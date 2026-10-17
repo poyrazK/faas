@@ -522,6 +522,22 @@ repairs presence event delivery after a transient relay failure. These frames
 remain behind the v2 preview flags and the endpoint's channel authorization
 callback.
 
+Add `"occupancy": true` to a subscribe frame to receive the channel's
+fleet-wide subscriber count (ADR-1324):
+
+```json
+{"type":"subscribe","channel":"room-a","after":0,"occupancy":true}
+{"type":"occupancy","channel":"room-a","subscribers":23}
+```
+
+The count covers every transport and node and is sent after subscribing and on
+each change, at most once a second. Compute-only realtimed reads the other
+nodes' counts from apid over `RealtimeFleet/OccupancyOperation` every 5 seconds
+(apid caches each channel for 2 seconds); single-box realtimed counts locally.
+A node follows at most 1,000 live-count channels; past that, subscribers get an
+`occupancy_limit` error frame and no counts. `GET …/occupancy` answers the same
+question for backends.
+
 To let Gregale keep the checkpoint, add a stable name for each logical
 consumer. Optionally send `after` as that name's first-use baseline:
 

@@ -30,7 +30,13 @@ One request reads 1 to `RealtimeOccupancyChannelsMax` (20) channels.
 
 ### Live occupancy frames
 
-Live frames are a second step in the same ADR; see "Live frames" below once built.
+- A resumable WebSocket subscriber (including a read-only ticket subscriber) adds `"occupancy": true` to its `subscribe` frame. It then receives `{"type":"occupancy","channel":…,"subscribers":N}` after subscribing and whenever the fleet-wide count changes, at most once per second per channel (`RealtimeOccupancyFrameInterval`). An unchanged count is never sent twice to the same connection.
+- Each node adds its exact local count to the other nodes' counts. A compute-only node reads those from apid over the private `RealtimeFleet/OccupancyOperation` every 5 s (`RealtimeOccupancyRemoteRefresh`), up to 20 channels per call and 4 calls at a time. apid answers from a per-channel, per-node cache kept for 2 s (`RealtimeOccupancyCacheTTL`) and leaves out the asking node, so nodes watching the same channel share one fleet read.
+- A new watcher's first frame waits up to 2 s for the other nodes' counts, so the number does not jump from local to fleet-wide. A failed read keeps the last counts and is retried after a full interval.
+- A single-box deployment has one realtime node, whose count is exact, and never calls apid.
+- A node watches at most 1,000 channels (`RealtimeOccupancyWatchedMax`), which bounds the refresh to 50 small apid calls per interval. Past it the subscription succeeds and the client gets an `occupancy_limit` error frame instead of counts.
+- A frame that cannot be queued is retried on the next interval. Occupancy never closes a connection, unlike presence and control frames.
+- SSE streams count toward occupancy but do not receive live frames yet.
 
 ## Rejected alternatives
 

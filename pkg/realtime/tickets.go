@@ -91,6 +91,7 @@ func (m *Manager) startTicketSubscription(ctx context.Context, c *connection, fr
 		m.removeResumeSubscription(ctx, c, frame.Channel, sub)
 		return false
 	}
+	m.watchSubscriptionOccupancy(ctx, c, frame)
 	go m.pumpResumeSubscription(subCtx, c, frame.Channel, sub, page)
 	return true
 }

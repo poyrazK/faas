@@ -40,11 +40,13 @@ func (i OccupancyInventory) Subscribers(channel, excludeNode string) int {
 type occupancyIndex struct {
 	mu     sync.Mutex
 	counts map[channelKey]int
+	// changed is told about every change after mu is released, so live
+	// occupancy can mark the channel for its next frame.
+	changed func(channelKey)
 }
 
 func (o *occupancyIndex) add(key channelKey, delta int) {
 	o.mu.Lock()
-	defer o.mu.Unlock()
 	if o.counts == nil {
 		o.counts = make(map[channelKey]int)
 	}
@@ -52,6 +54,10 @@ func (o *occupancyIndex) add(key channelKey, delta int) {
 		o.counts[key] = next
 	} else {
 		delete(o.counts, key)
+	}
+	o.mu.Unlock()
+	if o.changed != nil {
+		o.changed(key)
 	}
 }
 

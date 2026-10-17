@@ -63,6 +63,35 @@ tickets at logout with `DELETE …/tickets?principal=…`. Connections using a
 revoked ticket close within about a second. See the
 [ticket operations guide](ops/realtime.md#short-lived-subscription-tickets-operator-preview).
 
+## Presence
+
+Presence shows who is on a channel: every resumable WebSocket subscriber joins
+the channel's presence with an optional JSON state (up to 512 bytes), such as
+`{"status":"online"}` or a cursor position. Other subscribers get a snapshot
+when they subscribe, then `joined`, `updated` and `left` events. A client
+changes its state with a `presence` frame, at most 10 times a second.
+
+```json
+{"type":"subscribe","channel":"room-a","after":0,"state":{"status":"online"}}
+{"type":"presence","channel":"room-a","state":{"status":"typing"}}
+```
+
+- By default each connection is its own member. Add
+  `"presence_scope": "principal"` to group a signed-in user's tabs and devices
+  into one member; `connection_count` says how many sockets it has, and the
+  principal itself is never shown to other clients.
+- Presence works across realtime nodes. A crashed node's members disappear
+  within 45 seconds; a normal unsubscribe or close removes them at once.
+- A channel holds up to 512 present connections. Presence state comes from the
+  client, so treat it as display data, not identity.
+- Read-only ticket subscribers do not join presence.
+
+With the Node SDK, pass `presence` (initial state), `presenceScope` and
+`onPresence` to `consumeRealtimeChannel`, and update state through the actions
+passed to `onSubscribed` (`updatePresence`). The
+[realtime operations guide](ops/realtime.md) describes the v2 presence and
+signal frames in full, including transient signals such as typing indicators.
+
 ## Channel occupancy
 
 Occupancy tells you how many clients are on a channel right now, for "23
@@ -90,6 +119,27 @@ curl -H "Authorization: Bearer $GREGALE_TOKEN" \
   that answered.
 
 Occupancy reads are free and need read access to the app.
+
+### Live counts in the browser
+
+A client on the resumable WebSocket protocol can receive the count as it
+changes instead of polling. Add `"occupancy": true` to the subscribe frame, or
+pass `onOccupancy` with the Node SDK:
+
+```ts
+await consumeRealtimeChannel({
+  url, webSocketFactory, channel: 'lobby', cursorStore,
+  onMessage: render,
+  onOccupancy: ({ subscribers }) => setWatching(subscribers),
+});
+```
+
+The server sends `{"type":"occupancy","channel":"lobby","subscribers":23}`
+after subscribing and whenever the count changes, at most once a second. The
+count includes this connection. Read-only ticket subscribers can ask for it
+too; SSE streams count but do not receive live counts yet. If a realtime node
+already follows its maximum of 1,000 live-count channels, the subscription
+still works and the client gets an `occupancy_limit` error frame instead.
 
 ## Principal access controls preview
 
