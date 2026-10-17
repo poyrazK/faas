@@ -19,6 +19,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
+	"github.com/onebox-faas/faas/pkg/e2etest/postgresfixture"
 	"github.com/onebox-faas/faas/pkg/fcvm/leakcheck"
 	"github.com/onebox-faas/faas/pkg/financial"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -254,6 +255,7 @@ type financialNativeFixture struct {
 	owners   []*financialNativeOwner
 	root     string
 	jailRoot string
+	proxies  [2]postgresfixture.Proxy
 }
 
 func newFinancialNativeFixture(t *testing.T) *financialNativeFixture {
@@ -318,7 +320,14 @@ func newFinancialNativeFixture(t *testing.T) *financialNativeFixture {
 	}
 	// Keep Firecracker/vsock Unix sockets below sockaddr_un's path limit.
 	// Persistent image staging stays in the runner's long, exact-commit tree.
-	jailRoot, err := os.MkdirTemp("/srv/fc", "cost-")
+	jailParent := "/srv/fc"
+	if os.Getenv("FAAS_FINANCIAL_PAIR") == "1" {
+		jailParent = os.Getenv("FAAS_FINANCIAL_PAIR_JAIL_ROOT")
+		if jailParent == "" {
+			t.Fatal("native pair jail root is missing")
+		}
+	}
+	jailRoot, err := os.MkdirTemp(jailParent, "cost-")
 	if err != nil {
 		_ = os.Remove(root) // no producer has started
 		t.Fatal(err)
@@ -327,6 +336,7 @@ func newFinancialNativeFixture(t *testing.T) *financialNativeFixture {
 	for i, node := range []state.ComputeNode{first, second} {
 		f.configs[i] = financialNativeConfig{DBURL: os.Getenv("DATABASE_URL"), Database: pool.Config().ConnConfig.Database, RuntimeParams: pool.Config().ConnConfig.RuntimeParams, NodeID: node.ID, AccountID: a.ID, AppID: app.ID, Instance: uuid.NewString(), Attempt: uuid.NewString(), Root: filepath.Join(root, fmt.Sprintf("node-%d", i)), JailRoot: filepath.Join(jailRoot, fmt.Sprintf("n%d", i))}
 	}
+	f.configurePair(pool)
 	t.Cleanup(f.cleanup)
 	return f
 }
@@ -337,6 +347,7 @@ func (f *financialNativeFixture) start(node int, phase string) *financialNativeO
 	cfg.Phase = phase
 	owner := startFinancialNativeOwner(f.t, f.ctx, cfg)
 	f.owners = append(f.owners, owner)
+	f.recordPairOwner(node, owner)
 	return owner
 }
 
@@ -452,6 +463,11 @@ func (f *financialNativeFixture) assertSettled(owner *financialNativeOwner, orig
 }
 
 func (f *financialNativeFixture) cleanup() {
+	if os.Getenv("FAAS_FINANCIAL_PAIR") == "1" {
+		for _, proxy := range f.proxies {
+			proxy.SetAvailable(true)
+		}
+	}
 	// Stop all producers first, including any blocked checkpoint. Then recover
 	// nodes with outstanding money before empty roots, because this is one host.
 	for _, owner := range f.owners {
@@ -483,6 +499,20 @@ func (f *financialNativeFixture) cleanup() {
 	if errs := leakcheck.Zero(); len(errs) != 0 {
 		f.t.Errorf("native financial cleanup leaks: %v", errs)
 		clean = false
+	}
+	if clean {
+		if os.Getenv("FAAS_FINANCIAL_PAIR") == "1" {
+			for _, root := range []string{f.root, f.jailRoot} {
+				cmd, err := financialPeerCommand(ctx, f.configs[1].PeerTarget, "remove", root)
+				if err == nil {
+					err = cmd.Run()
+				}
+				if err != nil {
+					f.t.Errorf("native pair remote cleanup: %v", err)
+					clean = false
+				}
+			}
+		}
 	}
 	if clean {
 		for _, root := range []string{f.root, f.jailRoot} {

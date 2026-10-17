@@ -35,6 +35,9 @@ type financialNativeConfig struct {
 	// Configuration travels over stdin, never process arguments or test logs.
 	DBURL, Database                          string
 	RuntimeParams                            map[string]string
+	ProxyHost                                string
+	ProxyPort                                uint16
+	PeerTarget                               string `json:"-"`
 	NodeID, AccountID, AppID                 string
 	Instance, Attempt, Root, JailRoot, Phase string
 }
@@ -47,6 +50,7 @@ type financialNativeEvent struct {
 	Identity                  runtimeadmission.Identity
 	Live, Leased, Physical    int
 	Journal, ResourcesRemoved bool
+	Host                      financialNativeHost
 }
 
 type financialNativeOwner struct {
@@ -80,6 +84,13 @@ func launchFinancialNativeOwner(ctx context.Context, cfg financialNativeConfig) 
 	}
 	owner := &financialNativeOwner{config: cfg, events: make(chan financialNativeEvent, 16), done: make(chan struct{})}
 	owner.cmd = exec.CommandContext(ctx, os.Args[0], "-test.run=^TestFinancialComputeNativeOwnerProcess$", "-test.timeout=9m")
+	if cfg.PeerTarget != "" {
+		var err error
+		owner.cmd, err = financialPeerCommand(ctx, cfg.PeerTarget, "start", cfg.Instance)
+		if err != nil {
+			return nil, err
+		}
+	}
 	owner.cmd.Env = append(os.Environ(), "FAAS_FINANCIAL_NATIVE_OWNER_CHILD=1", "TMPDIR="+tmpDir)
 	owner.cmd.Stderr = &owner.stderr
 	var err error
@@ -207,6 +218,13 @@ func (o *financialNativeOwner) wait(t *testing.T, deadline time.Time, condition 
 
 func (o *financialNativeOwner) terminate() {
 	_ = o.input.Close()
+	if o.config.PeerTarget != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		if cmd, err := financialPeerCommand(ctx, o.config.PeerTarget, "kill", o.config.Instance); err == nil {
+			_ = cmd.Run()
+		}
+	}
 	_ = o.cmd.Process.Kill()
 	<-o.done
 	o.killed = true
@@ -215,6 +233,10 @@ func (o *financialNativeOwner) terminate() {
 func (o *financialNativeOwner) kill(t *testing.T) {
 	t.Helper()
 	if o.killed {
+		return
+	}
+	if o.config.PeerTarget != "" {
+		o.killPeer(t)
 		return
 	}
 	// SIGKILL is essential: running Go cleanup would not exercise orphaned
@@ -248,16 +270,15 @@ func TestFinancialComputeNativeOwnerProcess(t *testing.T) {
 	if err := decoder.Decode(&cfg); err != nil {
 		t.Fatal("read native financial fixture configuration")
 	}
+	if err := financialPairOwnedPaths(cfg); err != nil {
+		t.Fatal(err)
+	}
 	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
 	defer cancel()
-	poolCfg, err := pgxpool.ParseConfig(cfg.DBURL)
+	poolCfg, err := financialNativePoolConfig(cfg)
 	if err != nil {
 		t.Fatal("invalid private PostgreSQL fixture configuration")
 	}
-	// ConnString retains the original DSN, so copy the actual isolated
-	// database/schema fields explicitly instead of silently using public.
-	poolCfg.ConnConfig.Database = cfg.Database
-	poolCfg.ConnConfig.RuntimeParams = cfg.RuntimeParams
 	pool, err := pgxpool.NewWithConfig(ctx, poolCfg)
 	if err != nil {
 		t.Fatal("open private PostgreSQL fixture")
@@ -374,6 +395,7 @@ func TestFinancialComputeNativeOwnerProcess(t *testing.T) {
 	}()
 	ready := status("ready", nil)
 	ready.Identity = identity
+	ready.Host = financialNativeHostFacts()
 	emit(ready)
 	for {
 		var command financialNativeCommand
@@ -423,6 +445,24 @@ func TestFinancialComputeNativeOwnerProcess(t *testing.T) {
 		}
 		emit(status(command.Operation, err))
 	}
+}
+
+func financialNativePoolConfig(cfg financialNativeConfig) (*pgxpool.Config, error) {
+	pool, err := pgxpool.ParseConfig(cfg.DBURL)
+	if err != nil {
+		return nil, errors.New("invalid private PostgreSQL fixture configuration")
+	}
+	// ConnString retains the original DSN. Copy actual clone/schema identity,
+	// and redirect every TLS/address fallback through the fault proxy too.
+	pool.ConnConfig.Database = cfg.Database
+	pool.ConnConfig.RuntimeParams = cfg.RuntimeParams
+	if cfg.ProxyHost != "" {
+		pool.ConnConfig.Host, pool.ConnConfig.Port = cfg.ProxyHost, cfg.ProxyPort
+		for _, fallback := range pool.ConnConfig.Fallbacks {
+			fallback.Host, fallback.Port = cfg.ProxyHost, cfg.ProxyPort
+		}
+	}
+	return pool, nil
 }
 
 // A narrow fault seam around a real PgStore; it neither embeds a store nor
