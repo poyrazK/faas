@@ -101,10 +101,18 @@ func (m *Manager) beginLiveInstanceFlight(ctx context.Context, instance string) 
 }
 
 func (m *Manager) registerLiveInstanceFlight(ctx context.Context, instance string) (context.Context, *Instance, *instanceFlight, error) {
-	return m.registerLiveInstanceFlightForMigration(ctx, instance, nil)
+	return m.registerLiveInstanceGenerationForMigration(ctx, instance, "", nil)
+}
+
+func (m *Manager) registerLiveInstanceGeneration(ctx context.Context, instance, generation string) (context.Context, *Instance, *instanceFlight, error) {
+	return m.registerLiveInstanceGenerationForMigration(ctx, instance, generation, nil)
 }
 
 func (m *Manager) registerLiveInstanceFlightForMigration(ctx context.Context, instance string, source *functionMigrationSource) (context.Context, *Instance, *instanceFlight, error) {
+	return m.registerLiveInstanceGenerationForMigration(ctx, instance, "", source)
+}
+
+func (m *Manager) registerLiveInstanceGenerationForMigration(ctx context.Context, instance, generation string, source *functionMigrationSource) (context.Context, *Instance, *instanceFlight, error) {
 	if v := m.nativeVMM(); v != nil {
 		if err := v.nativeRecoveryRuntime().journal.checkQualificationProducer(ctx, instance); err != nil {
 			return nil, nil, nil, err
@@ -130,6 +138,10 @@ func (m *Manager) registerLiveInstanceFlightForMigration(ctx context.Context, in
 	if functionMigrationActive(inst) && (inst.functionDestination != nil && !inst.functionDestination.published || inst.functionMigration != source) || source != nil && (inst != source.inst || inst.functionMigration != source) {
 		flight.cancel()
 		return nil, nil, nil, ErrInstanceBusy
+	}
+	if generation != "" && physicalOperatorGeneration(inst) != generation {
+		flight.cancel()
+		return nil, nil, nil, fmt.Errorf("operator park: physical VM generation changed")
 	}
 	if _, ok := m.instanceFlights[instance]; ok {
 		flight.cancel()

@@ -274,18 +274,22 @@ See [ADR-1342](adr/1342-function-settings-and-concurrent-workers.md).
 
 ### Database requests and cancellation
 
-Keep a pool at module scope and pass each request's own signal:
+Keep one database adapter at module scope and pass each request's own signal.
+`gregale init --template rest-api-postgres` provides `database.js` and its
+vendored `runtime/` (the SDK's `PostgresPoolBinding` and secret coordinator):
 
 ```js
 import pg from 'pg';
-import {createPostgresPool, postgresPoolConfig} from '@gregale/sdk-node/postgres/runtime';
+import {createDatabase, poolConfig} from './database.js';
 
-const db = createPostgresPool(
-  () => new pg.Pool({...postgresPoolConfig(process.env.DATABASE_URL), max: 4}),
-  {maxInFlight: 4},
+const db = createDatabase(
+  config => new pg.Pool({...poolConfig(config.connectionString), max: 4}),
+  {maxInFlight: 4, readinessQuery: 'SELECT 1'},
 );
+const started = db.start();
 
 export async function handler(event, ctx) {
+  await started;
   const result = await db.query('SELECT id FROM notes LIMIT 20', [], {signal: ctx.signal});
   return {body: result.rows};
 }
@@ -303,12 +307,13 @@ Configured function lifecycle endpoints can inspect `ctx.lifecycle_hook`,
 which is `before_checkpoint`, `after_restore` or an empty string. The runner
 derives it from guest-init's loopback socket and marker; event headers and
 request bodies cannot set it. Match both this context and your configured
-hook path before calling a resource hook. Production function hooks run in one
+hook path before calling `db.checkpoint({signal: ctx.signal})` or
+`db.restore({signal: ctx.signal})`. Production function hooks run in one
 worker, so they cannot prove that pools in every worker have drained. The
 single HTTP-process PostgreSQL starter remains the reference for production
 checkpoint pool ownership.
 
-In the dedicated native acceptance build, SDK pools automatically register with
+In the dedicated native acceptance build, resource-aware SDK pools and the shipped database adapter register with
 the generated Node adapter before their driver factory runs. Default lifecycle
 endpoints drain and rebuild pools across every loaded interpreter. Custom hooks
 are preserved: before-checkpoint runs, including its response body cleanup,
@@ -341,12 +346,12 @@ The default Node `waitUntil` scaffold therefore still provides no instance
 lifetime guarantee. Use a durable queue for work that must survive worker or
 VM replacement; bounded post-response work does not provide durable execution.
 
-See [ADR-1345](adr/1345-function-cancellation-cleanup-and-lifecycle-context.md),
-[ADR-1346](adr/1346-function-background-completion-protocol.md),
-[ADR-1347](adr/1347-function-vm-execution-lifetime.md),
-[ADR-1348](adr/1348-function-postgres-resource-lifecycle.md),
-[ADR-1349](adr/1349-function-warm-snapshot-resource-recovery.md),
-[ADR-1350](adr/1350-function-migration-source-rollback.md),
-[ADR-1351](adr/1351-function-migration-admission.md),
-[ADR-1352](adr/1352-function-migration-destination.md)
+See [ADR-1540](adr/1540-function-cancellation-cleanup-and-lifecycle-context.md),
+[ADR-1541](adr/1541-function-background-completion-protocol.md),
+[ADR-1542](adr/1542-function-vm-execution-lifetime.md),
+[ADR-1543](adr/1543-function-postgres-resource-lifecycle.md),
+[ADR-1544](adr/1544-function-warm-snapshot-resource-recovery.md),
+[ADR-1545](adr/1545-function-migration-source-rollback.md),
+[ADR-1546](adr/1546-function-migration-admission.md),
+[ADR-1547](adr/1547-function-migration-destination.md)
 and [backend concurrency acceptance](ops/function-backend-concurrency-acceptance.md).

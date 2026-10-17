@@ -309,6 +309,26 @@ func (h *MigrationHarness) MigrateOne(ctx context.Context, instanceID, fromNodeI
 		return fmt.Errorf("sched: migrate one: load app spec: deployment id is empty")
 	}
 
+	_, wireSupportsAdmission := h.vmm.(migrationAdoptionRetirer)
+	if appSpec.migrationRuntime != nil {
+		if _, ok := h.store.(state.MigrationAdmissionStore); !ok || !wireSupportsAdmission {
+			return fmt.Errorf("migration destination requires durable adoption support: %w", state.ErrInvalidArgument)
+		}
+	} else if wireSupportsAdmission {
+		return fmt.Errorf("migration destination wake lineage is missing: %w", state.ErrInvalidArgument)
+	}
+
+	// Capture the destination decision before any source pause. The ownership
+	// transaction checks this exact generation again after adoption (ADR-1528).
+	destination, err := h.store.NodeGet(leaseCtx, h.newOwnerNodeID)
+	if err != nil {
+		return fmt.Errorf("sched: migrate one: read destination: %w", err)
+	}
+	if !destination.Lifecycle.IsAdmitting() || !destination.Active || destination.LifecycleGeneration <= 0 {
+		return state.ErrNodeAdmissionStale
+	}
+	leaseCtx = state.WithNodeAdmission(leaseCtx, state.NodeAdmission{NodeID: destination.ID, Generation: destination.LifecycleGeneration})
+
 	// Phase 1: PrepareLiveMigration on the dying vmmd. The
 	// dying vmmd pauses the VM, writes the snapshot to the
 	// canonical storage backend, and returns the storage keys
@@ -434,9 +454,25 @@ func (h *MigrationHarness) MigrateOne(ctx context.Context, instanceID, fromNodeI
 		h.cancelSource(leaseCtx, fromNodeID, instanceID, prepared.LeaseToken)
 		return fmt.Errorf("sched: migrate one: phase 3 ledger: %w", err)
 	}
+	if appSpec.migrationRuntime != nil {
+		if err := h.reserveMigrationDestination(leaseCtx, instanceID, fromNodeID, destination.LifecycleGeneration, prepared, &appSpec); err != nil {
+			if errors.Is(err, state.ErrConflict) || errors.Is(err, state.ErrNodeCapacity) || errors.Is(err, state.ErrNodeAdmissionStale) || errors.Is(err, state.ErrNotFound) || errors.Is(err, state.ErrInvalidArgument) {
+				h.ledger.Release(instanceID)
+				h.rollbackStore(leaseCtx, instanceID, fromNodeID, prepared.LeaseToken)
+				h.cancelSource(leaseCtx, fromNodeID, instanceID, prepared.LeaseToken)
+			}
+			return fmt.Errorf("migration destination reservation: %w", err)
+		}
+		leaseCtx = state.WithMigrationAdmission(leaseCtx, appSpec.migrationAdmissionID)
+	}
 	adopted, err := h.vmm.AdoptMigratedInstance(leaseCtx, h.newOwnerNodeID, instanceID, appSpec,
 		prepared.MemStorageKey, prepared.VMStateStorageKey, prepared.LeaseToken)
 	if err != nil {
+		if appSpec.migrationAdmissionID != "" {
+			_, recoveryErr := h.resolveMigrationAdmission(ctx, instanceID, fromNodeID, prepared.LeaseToken, appSpec)
+			return errors.Join(fmt.Errorf("migration adoption: %w", err), recoveryErr)
+		}
+
 		// Phase 3 wire failure (new owner dial / restore
 		// failed). Roll back Phase 2 + Phase 4 + ledger
 		// reservation. Destination cleanup and ledger release happen

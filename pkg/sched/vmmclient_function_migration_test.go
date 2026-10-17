@@ -1,6 +1,6 @@
 package sched_test
 
-// adr: 1350. An older empty cancel response must never publish RUNNING.
+// adr: 1545. An older empty cancel response must never publish RUNNING.
 
 import (
 	"context"

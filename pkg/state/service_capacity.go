@@ -216,7 +216,7 @@ func (m *MemStore) serviceCapacitySnapshotLocked() serviceCapacitySnapshot {
 			vcpu = 1
 		}
 		cost := capacityResources{RAM: int64(ins.RAMMB+api.PerVMOverheadMB) + ram, CPU: int64(max(app.CPUMillicores, api.DefaultAppCPUMillicores)) + cpu, VCPU: vcpu}
-		admitted := m.capacityInstanceResources[ins.ID]
+		admitted := m.migrationResourceFloorLocked(ins, m.capacityInstanceResources[ins.ID])
 		cost.RAM = max(cost.RAM, admitted.RAM)
 		cost.CPU = max(cost.CPU, admitted.CPU)
 		cost.VCPU = max(cost.VCPU, admitted.VCPU)
@@ -241,8 +241,49 @@ func (m *MemStore) serviceCapacitySnapshotLocked() serviceCapacitySnapshot {
 			s.Other[ins.NodeID] = other
 		}
 	}
+	for _, a := range m.migrationAdmissions {
+		if !a.Pending() {
+			continue
+		}
+		i := m.instances[a.InstanceID]
+		if i.NodeID == a.DestinationNodeID && i.WakeID == a.DestinationWakeID && i.State == string(StateRunning) {
+			continue
+		}
+		resident, other := s.Resident[a.DestinationNodeID], s.Other[a.DestinationNodeID]
+		resident.RAM += int64(a.RAMMB)
+		resident.CPU += int64(a.CPUMillicores)
+		resident.VCPU += int64(a.VCPU)
+		other.RAM += int64(a.RAMMB)
+		other.CPU += int64(a.CPUMillicores)
+		other.VCPU += int64(a.VCPU)
+		s.Resident[a.DestinationNodeID], s.Other[a.DestinationNodeID] = resident, other
+	}
+	for _, source := range m.migrationSources {
+		c := m.migrationSourceCostLocked(source, false)
+		if c == (capacityResources{}) {
+			continue
+		}
+		resident, other := s.Resident[source.SourceNodeID], s.Other[source.SourceNodeID]
+		resident.RAM += c.RAM
+		resident.CPU += c.CPU
+		resident.VCPU += c.VCPU
+		other.RAM += c.RAM
+		other.CPU += c.CPU
+		other.VCPU += c.VCPU
+		s.Resident[source.SourceNodeID], s.Other[source.SourceNodeID] = resident, other
+	}
 	var largest int64
 	for _, n := range m.computeNodes {
+		if c := m.functionMigrationNodeUsageLocked(n.ID); c != (capacityResources{}) {
+			resident, other := s.Resident[n.ID], s.Other[n.ID]
+			resident.RAM += c.RAM
+			resident.CPU += c.CPU
+			resident.VCPU += c.VCPU
+			other.RAM += c.RAM
+			other.CPU += c.CPU
+			other.VCPU += c.VCPU
+			s.Resident[n.ID], s.Other[n.ID] = resident, other
+		}
 		if n.Lifecycle != NodeLifecycleActive || n.AdmissionCeilingMB <= 0 || n.VPCPUs <= 0 || n.VCPUBudget <= 0 || time.Since(n.LastHeartbeatAt) > DefaultHeartbeatStaleness {
 			delete(s.Other, n.ID)
 			continue
@@ -368,6 +409,9 @@ func (m *MemStore) checkServiceCapacityAppLocked(app App) error {
 
 func (m *MemStore) checkServiceCapacityInstanceLocked(ins Instance) error {
 	if err := m.functionDestinationInstanceCapacityLocked(ins); err != nil {
+		return err
+	}
+	if err := m.checkMigrationAdmissionCapacityLocked(ins); err != nil {
 		return err
 	}
 	if !m.serviceCapacityProtection {

@@ -1,6 +1,6 @@
 package state
 
-// adr: 1352
+// adr: 1547
 // These tests simulate native witnesses; SQL effects are real in Pg.
 
 import (

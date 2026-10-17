@@ -8,17 +8,24 @@ package lists derived from `go list`:
            testdata/) contains a changed file
   vet      changed packages plus their direct importers (production, in-package
            test and external test imports): compile-checked by `go vet`
-  test     changed packages, optionally narrowed to one shard: tested
-  split    selected packages too slow for one shard, tested by name per shard
+  test     changed packages that run in full with -race, optionally narrowed
+           to one shard
+  selective  the large package pinned to a shard, when the change selects
+           it: the light tier runs only its related tests (without -race,
+           scripts/ci/select_package_tests.py); the mega tier runs it in full
+  pinned   the large package a shard owns, whether or not it changed
 
-Global inputs (go.mod, go.sum, this selector and the light workflow) vet
-every package; tests still cover changed packages only. The light tier
-compile-checks importers instead of testing them; the mega tier (ci.yml)
-runs every package's -race tests nightly and before every release.
+A global input (go.mod, go.sum, this selector or the light workflow) puts
+every package in the vet set; tests still cover changed packages only. The
+light tier compile-checks only the importers that use a changed exported
+name (scripts/ci/select_importers.py); the mega tier (ci.yml) vets every
+package and runs every package's -race tests nightly and before every
+release.
 
 Usage:
   git diff --name-only BASE HEAD | scripts/ci/affected_packages.py changed
   git diff --name-only BASE HEAD | scripts/ci/affected_packages.py test --shard 1 --shards 3
+  git diff --name-only BASE HEAD | scripts/ci/affected_packages.py selective --shard 3
 """
 import argparse
 import json
@@ -46,23 +53,24 @@ EXCLUDED_TEST_PREFIXES = ("cmd/e2e", "migrations")
 # they import a changed package directly, and on every global-input change.
 INVARIANT_PACKAGES = ("tests/property",)
 
-# Large suites partitioned to bound per-process runtime and race-instrumented
-# resource use. Instead of being
-# assigned whole, each one's tests are split by name across every shard
-# (scripts/ci/e2eshard, as the mega tier's state shards do). `split` lists
-# the ones a change selects.
-SPLIT_PACKAGES = ("pkg/apid/apidserver", "pkg/state")
-
-# pkg/apid/apidserver and pkg/state both create/drop databases while clone tests verify
-# the whole PostgreSQL catalogue. Give apid separate CI services, and split
-# its long race suite by test name so each hosted runner finishes promptly.
-ISOLATED_APID_FIRST_SHARD = 4
-LIGHT_TEST_SHARDS = 9
+# Suites too large for the light tier's 10-minute budget (thousands of tests
+# each). A pull request runs only the tests related to its change, without
+# -race; the mega tier runs them in full with -race nightly and before every
+# release. Each is pinned to its own shard so their compiles never share a
+# runner: pkg/state and pkg/apid/apidserver also keep separate PostgreSQL
+# services (pkg/state uses the shard's second one).
+SELECTIVE_SHARD = {
+    "cmd/gregale": 1,
+    "pkg/state": 2,
+    "pkg/apid/apidserver": 3,
+}
+# Shard-balancing weight of a pinned selective package (compile plus capped
+# test run), so the -race packages are spread around it.
+SELECTIVE_WEIGHT = 6
 
 # Relative cost of a package's race test run, used only to balance shards.
 # Unlisted packages weigh 1. Measured from the mega tier's shard timings.
 WEIGHTS = {
-    "cmd/gregale": 8,
     "pkg/e2etest": 6,
     "pkg/sched": 5,
     "pkg/gateway": 5,
@@ -143,17 +151,13 @@ def internal_deps(root, pkgs):
 
 
 def shard(dirs, index, count):
-    """Longest-processing-time assignment: deterministic and roughly balanced."""
-    # Retain the original six-job topology for callers outside ci-light.
-    if count in (6, LIGHT_TEST_SHARDS):
-        if index >= ISOLATED_APID_FIRST_SHARD:
-            return ["pkg/apid/apidserver"] if "pkg/apid/apidserver" in dirs else []
-        # Preserve the established first three package assignments; moving
-        # their database tests would introduce new catalogue races with state.
-        return [d for d in shard(dirs, index, ISOLATED_APID_FIRST_SHARD - 1)
-                if d != "pkg/apid/apidserver"]
+    """Longest-processing-time assignment of the -race packages: deterministic
+    and roughly balanced, counting each shard's pinned selective package."""
     bins = [[0, []] for _ in range(count)]
-    dirs = [d for d in dirs if d not in SPLIT_PACKAGES]
+    for pkg, pinned in SELECTIVE_SHARD.items():
+        if pkg in dirs and pinned <= count:
+            bins[pinned - 1][0] += SELECTIVE_WEIGHT
+    dirs = [d for d in dirs if d not in SELECTIVE_SHARD]
     for d in sorted(dirs, key=lambda d: (-WEIGHTS.get(d, 1), d)):
         target = min(range(count), key=lambda b: (bins[b][0], b))
         bins[target][0] += WEIGHTS.get(d, 1)
@@ -163,13 +167,18 @@ def shard(dirs, index, count):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("kind", choices=["changed", "vet", "test", "split", "summary"])
+    ap.add_argument("kind", choices=["changed", "vet", "test", "selective", "pinned", "summary"])
     ap.add_argument("--shard", type=int, default=1)
     ap.add_argument("--shards", type=int, default=1)
     args = ap.parse_args()
     if not 1 <= args.shard <= args.shards:
         ap.error("--shard must be within 1..--shards")
 
+    if args.kind == "pinned":
+        # The large package a shard owns, changed or not: main pushes warm its
+        # test build so pull requests restore it from the shard's cache.
+        print(" ".join("./" + d for d, s in SELECTIVE_SHARD.items() if s == args.shard))
+        return
     everything, changed, vet, test = select(sys.stdin.read().splitlines(), go_packages())
     if args.kind == "summary":
         print(f"global inputs changed: {str(everything).lower()}")
@@ -181,8 +190,8 @@ def main():
         dirs = changed
     elif args.kind == "vet":
         dirs = vet
-    elif args.kind == "split":
-        dirs = [d for d in test if d in SPLIT_PACKAGES]
+    elif args.kind == "selective":
+        dirs = [d for d in test if SELECTIVE_SHARD.get(d) == args.shard]
     else:
         dirs = shard(test, args.shard, args.shards)
     print(" ".join("./" + d if d != "." else "." for d in dirs))

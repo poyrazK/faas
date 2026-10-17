@@ -6,9 +6,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -22,10 +24,14 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func postgresNativeStarterPhases(t *testing.T, h *e2etest.Harness, key, slug, appID, account string, pool *pgxpool.Pool, store *state.PgStore, fixture *postgresfixture.Fixture, proxy postgresfixture.Proxy, bindings map[mp.CredentialAccess]mp.Binding, phase func(string, func(*testing.T)), rotate func(*testing.T, bool), workload *func(*testing.T, mp.Binding, string), deploymentID, snapshotID *string, recordRuntime func(*testing.T, string, string)) {
+func postgresNativeStarterPhases(t *testing.T, starter postgresstarter.Starter, expected map[int64]string, h *e2etest.Harness, key, slug, appID, account string, pool *pgxpool.Pool, store *state.PgStore, fixture *postgresfixture.Fixture, proxy postgresfixture.Proxy, bindings map[mp.CredentialAccess]mp.Binding, phase func(string, func(*testing.T)), rotate func(*testing.T, bool), workload *func(*testing.T, mp.Binding, string), deploymentID, snapshotID *string, recordRuntime func(*testing.T, string, string, string)) {
 	t.Helper()
-	noteBody := "starter-" + randHexSuffix()
-	expected := make(map[int64]string)
+	sourceArchive := filepath.Join(t.TempDir(), "starter-source.tar.gz")
+	noteBody := starter.Runtime + "-" + randHexSuffix()
+	starterPhase := func(name string, fn func(*testing.T)) { phase(starter.PhasePrefix+"_"+name, fn) }
+	adopted := func(t *testing.T) {
+		waitPostgresStarterAdoption(t, h, key, slug, *deploymentID, bindings[mp.CredentialReadWrite].CredentialGeneration)
+	}
 	request := func(t *testing.T, method, path string, value any, want int) []byte {
 		t.Helper()
 		encoded, err := json.Marshal(value)
@@ -81,6 +87,7 @@ func postgresNativeStarterPhases(t *testing.T, h *e2etest.Harness, key, slug, ap
 			}
 			seen[note.ID] = true
 		}
+		adopted(t)
 		if method != "" {
 			if wakeID == "" {
 				t.Fatal("starter response omitted wake receipt")
@@ -99,28 +106,42 @@ func postgresNativeStarterPhases(t *testing.T, h *e2etest.Harness, key, slug, ap
 			if err := store.MarkSnapshotStale(t.Context(), current.ID); err != nil {
 				t.Fatal(err)
 			}
-		} else {
-			t.Fatal("starter has no snapshot to retire before fresh capture")
+		} else if !errors.Is(err, state.ErrNotFound) {
+			t.Fatal("could not inspect the starter snapshot before fresh capture")
 		}
+		// Failed-hook fallback and rolling rotation can leave only stale
+		// captures. Parking the replacement creates the next fresh init.
 		if _, status := doReq(t, h, key, http.MethodPost, "/v1/apps/"+slug+"/park", nil); status != http.StatusNoContent {
 			t.Fatalf("park starter: status=%d", status)
 		}
 		*snapshotID = waitAfterRestoreSnapshot(t, store, *deploymentID, *snapshotID)
 	}
-	phase("starter_release_and_initial_restore", func(t *testing.T) {
+	// Client sessions the guest holds in the customer database; the fixture's own
+	// Data pool is excluded.
+	guestSessions := func(ctx context.Context) (int, error) {
+		var sessions int
+		err := fixture.Data.QueryRow(ctx, `SELECT count(*) FROM pg_stat_activity
+			WHERE datname = current_database() AND usename <> current_user AND backend_type = 'client backend'`).Scan(&sessions)
+		return sessions, err
+	}
+	starterPhase("release_and_initial_restore", func(t *testing.T) {
 		ca, err := os.ReadFile(os.Getenv("GREGALE_POSTGRES_NATIVE_CA_PATH"))
 		if err != nil {
 			t.Fatal("read disposable SQL trust certificate")
 		}
-		source, err := postgresstarter.Source(ca)
+		source, err := postgresstarter.Source(starter.Template, ca)
 		if err != nil {
 			t.Fatal(err)
 		}
 		source["faas-build-token"] = noteBody
-		if status := statusOnly(t, h, key, http.MethodPut, "/v1/apps/"+slug+"/env/NODE_EXTRA_CA_CERTS", api.PutAppEnvRequest{Value: "/app/fixture-ca.pem"}); status != http.StatusOK {
+		if status := statusOnly(t, h, key, http.MethodPut, "/v1/apps/"+slug+"/env/"+starter.TrustEnv, api.PutAppEnvRequest{Value: "/app/" + postgresstarter.CAPath}); status != http.StatusOK {
 			t.Fatalf("set fixture trust: status=%d", status)
 		}
-		body, status := postMultipartDeployment(t, h, key, slug, buildTarGz(t, source), true, "")
+		archive := buildTarGz(t, source)
+		if err := os.WriteFile(sourceArchive, archive, 0600); err != nil {
+			t.Fatal("retain exact SQL starter source")
+		}
+		body, status := postMultipartDeployment(t, h, key, slug, archive, true, "")
 		if status != http.StatusAccepted {
 			t.Fatalf("deploy embedded starter: status=%d", status)
 		}
@@ -130,13 +151,14 @@ func postgresNativeStarterPhases(t *testing.T, h *e2etest.Harness, key, slug, ap
 		if _, _, err := e2etest.WaitForSourceDeployment(ctx, t, pool, *deploymentID, e2etest.DefaultBuildStallWindow, e2etest.DefaultBuildCeiling); err != nil {
 			t.Fatalf("starter deployment: %v", err)
 		}
-		recordRuntime(t, *deploymentID, "node22")
+		recordRuntime(t, *deploymentID, starter.Runtime, sourceArchive)
 		release, err := store.ReleaseAppTaskByDeployment(ctx, *deploymentID)
 		if err != nil || release.Kind != state.AppTaskKindRelease || release.Status != state.AppTaskSucceeded {
 			t.Fatal("starter migration release did not succeed")
 		}
 		app, err := store.AppByID(ctx, appID)
-		if err != nil || app.Manifest.AfterRestore == nil || app.Manifest.AfterRestore.Path != "/internal/after-restore" || app.Manifest.AfterRestore.TimeoutMS != 2000 || app.Manifest.BeforeCheckpoint == nil || app.Manifest.BeforeCheckpoint.Path != "/internal/before-checkpoint" || app.Manifest.BeforeCheckpoint.TimeoutMS != 2000 {
+		if err != nil || app.Manifest.AfterRestore == nil || app.Manifest.AfterRestore.Path != "/internal/after-restore" || app.Manifest.AfterRestore.TimeoutMS != 2000 ||
+			app.Manifest.BeforeCheckpoint == nil || app.Manifest.BeforeCheckpoint.Path != "/internal/before-checkpoint" || app.Manifest.BeforeCheckpoint.TimeoutMS != 2000 {
 			t.Fatal("generated starter manifest was not applied")
 		}
 		if _, err := e2etest.WaitForInstanceState(ctx, t, pool, appID, state.StateParked, 90*time.Second); err != nil {
@@ -185,8 +207,8 @@ func postgresNativeStarterPhases(t *testing.T, h *e2etest.Harness, key, slug, ap
 			}
 		}
 	})
-	phase("starter_manual_task_without_migration_secret", func(t *testing.T) {
-		body, status := doReq(t, h, key, http.MethodPost, "/v1/apps/"+slug+"/tasks", api.CreateAppTaskRequest{Command: []string{"node", "-e", `if (!process.env.DATABASE_URL || process.env.MIGRATION_DATABASE_URL) process.exit(1)`}, TimeoutSeconds: 30})
+	starterPhase("manual_task_without_migration_secret", func(t *testing.T) {
+		body, status := doReq(t, h, key, http.MethodPost, "/v1/apps/"+slug+"/tasks", api.CreateAppTaskRequest{Command: starter.TaskCommand, TimeoutSeconds: 30})
 		var response api.AppTaskResponse
 		if status != http.StatusAccepted || json.Unmarshal(body, &response) != nil || response.ID == "" {
 			t.Fatalf("starter manual task: status=%d", status)
@@ -202,59 +224,67 @@ func postgresNativeStarterPhases(t *testing.T, h *e2etest.Harness, key, slug, ap
 			return task.Kind == state.AppTaskKindManual && task.Status == state.AppTaskSucceeded
 		})
 	})
-	phase("starter_checkpoint_pool_recovery", func(t *testing.T) {
-		read(t, "") // retain an actual pg session before the checkpoint callback
-		if proxy.ConnectionCount() == 0 {
-			t.Fatal("starter did not retain a SQL session before checkpoint")
+	starterPhase("pooled_disconnect_recovery", func(t *testing.T) {
+		read(t, "") // the driver pool keeps an idle session in the process about to be captured
+		if sessions, err := guestSessions(t.Context()); err != nil || sessions == 0 {
+			t.Fatal("starter kept no SQL session before capture; the drain check would prove nothing")
 		}
 		park(t)
-		postgresNativeWait(t, "starter checkpoint session drain", func(context.Context) bool { return proxy.ConnectionCount() == 0 })
+		// before_checkpoint drained the pool, so the capture strands no server
+		// session for keepalive to reap.
+		postgresNativeWait(t, "starter capture to hold no SQL session", func(ctx context.Context) bool {
+			sessions, err := guestSessions(ctx)
+			return err == nil && sessions == 0
+		})
+		proxy.Disconnect()
 		read(t, "restore")
 		request(t, http.MethodPost, "internal/after-restore", nil, http.StatusForbidden)
 		request(t, http.MethodPost, "internal/before-checkpoint", nil, http.StatusForbidden)
 	})
-	phase("starter_frozen_pool_recovery", func(t *testing.T) {
-		app, err := store.AppByID(t.Context(), appID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, name := range []string{"FAAS_FROZEN_TIER", "FAAS_FROZEN_TIER_APPS"} {
-			if err := h.SetScheddEnv(name, "1"); err != nil {
+	if starter.Template == "rest-api-postgres" {
+		starterPhase("frozen_pool_recovery", func(t *testing.T) {
+			app, err := store.AppByID(t.Context(), appID)
+			if err != nil {
 				t.Fatal(err)
 			}
-		}
-		defer func() {
-			setAppIdleTimeout(t, h, key, slug, app.IdleTimeoutS)
 			for _, name := range []string{"FAAS_FROZEN_TIER", "FAAS_FROZEN_TIER_APPS"} {
-				if err := h.SetScheddEnv(name, "0"); err != nil {
-					t.Error(err)
+				if err := h.SetScheddEnv(name, "1"); err != nil {
+					t.Fatal(err)
 				}
 			}
+			defer func() {
+				setAppIdleTimeout(t, h, key, slug, app.IdleTimeoutS)
+				for _, name := range []string{"FAAS_FROZEN_TIER", "FAAS_FROZEN_TIER_APPS"} {
+					if err := h.SetScheddEnv(name, "0"); err != nil {
+						t.Error(err)
+					}
+				}
+				if err := h.RestartSchedd(); err != nil {
+					t.Error(err)
+				}
+			}()
 			if err := h.RestartSchedd(); err != nil {
-				t.Error(err)
+				t.Fatal(err)
 			}
-		}()
-		if err := h.RestartSchedd(); err != nil {
-			t.Fatal(err)
-		}
-		setAppIdleTimeout(t, h, key, slug, api.IdleTimeoutFloorSeconds)
-		read(t, "")
-		instances, err := e2etest.WaitForInstanceState(t.Context(), t, pool, appID, state.StateFrozen, 45*time.Second)
-		if err != nil {
-			t.Fatal("starter did not freeze with retained SQL sessions")
-		}
-		frozen := pickState(instances, state.StateFrozen)
-		if frozen.ID == "" || proxy.ConnectionCount() == 0 {
-			t.Fatal("frozen starter did not retain a SQL session for the thaw fault")
-		}
-		proxy.Disconnect()
-		read(t, "restore")
-		instances, err = e2etest.WaitForInstanceState(t.Context(), t, pool, appID, state.StateRunning, 10*time.Second)
-		if err != nil || pickState(instances, state.StateRunning).ID != frozen.ID {
-			t.Fatal("starter replaced the frozen guest instead of reconnecting on thaw")
-		}
-	})
-	phase("starter_failed_hook_cold_boot", func(t *testing.T) {
+			setAppIdleTimeout(t, h, key, slug, api.IdleTimeoutFloorSeconds)
+			read(t, "")
+			instances, err := e2etest.WaitForInstanceState(t.Context(), t, pool, appID, state.StateFrozen, 45*time.Second)
+			if err != nil {
+				t.Fatal("starter did not freeze with retained SQL sessions")
+			}
+			frozen := pickState(instances, state.StateFrozen)
+			if frozen.ID == "" || proxy.ConnectionCount() == 0 {
+				t.Fatal("frozen starter did not retain a SQL session for the thaw fault")
+			}
+			proxy.Disconnect()
+			read(t, "restore")
+			instances, err = e2etest.WaitForInstanceState(t.Context(), t, pool, appID, state.StateRunning, 10*time.Second)
+			if err != nil || pickState(instances, state.StateRunning).ID != frozen.ID {
+				t.Fatal("starter replaced the frozen guest instead of reconnecting on thaw")
+			}
+		})
+	}
+	starterPhase("failed_hook_cold_boot", func(t *testing.T) {
 		park(t)
 		failedSnapshot := *snapshotID
 		proxy.Disconnect()
@@ -283,8 +313,8 @@ func postgresNativeStarterPhases(t *testing.T, h *e2etest.Harness, key, slug, ap
 			t.Fatalf("failed restore left %d resident guests; want one cold-booted guest", residents)
 		}
 	})
-	phase("starter_running_rotation_and_retirement", func(t *testing.T) { rotate(t, false) })
-	phase("starter_parked_rotation_scheduler_recovery", func(t *testing.T) { read(t, ""); park(t); rotate(t, true) })
+	starterPhase("running_rotation_and_retirement", func(t *testing.T) { rotate(t, false) })
+	starterPhase("parked_rotation_scheduler_recovery", func(t *testing.T) { read(t, ""); park(t); rotate(t, true) })
 	// Read directly as an independent authority to catch duplicate replayed writes
 	// or serving a healthy response from a different dataset.
 	var rows int

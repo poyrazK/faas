@@ -11,14 +11,24 @@ import (
 func (m *MemStore) ReserveMigrationLease(_ context.Context, lease MigrationLease) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if lease.SourceNodeID != "" {
+		if n, ok := m.computeNodes[lease.SourceNodeID]; ok && (n.Lifecycle == NodeLifecycleMaintenance || n.Lifecycle == NodeLifecycleRetired) {
+			return ErrConflict
+		}
+	}
 	for _, existing := range m.migrationLeases {
 		if existing.InstanceID != lease.InstanceID {
 			continue
+		}
+		_, sourceReceipt := m.migrationSources[existing.LeaseToken]
+		if m.migrationPendingLocked(existing.InstanceID, existing.LeaseToken, false) || sourceReceipt {
+			return ErrConflict
 		}
 		if existing.LeaseExpiresAt.After(lease.CreatedAt) || m.functionMigrationSources[existing.InstanceID].LeaseToken != "" {
 			return ErrConflict
 		}
 		delete(m.migrationLeases, existing.LeaseToken)
+		delete(m.migrationResumeFences, existing.LeaseToken)
 	}
 	m.migrationLeases[lease.LeaseToken] = lease
 	return nil
@@ -30,6 +40,9 @@ func (m *MemStore) CompleteMigrationLease(_ context.Context, leaseToken, memStor
 	lease, ok := m.migrationLeases[leaseToken]
 	if !ok {
 		return ErrNotFound
+	}
+	if _, bound := m.migrationSources[leaseToken]; bound && (lease.MemStorageKey != "" && lease.MemStorageKey != memStorageKey || lease.VMStateStorageKey != "" && lease.VMStateStorageKey != vmstateStorageKey) {
+		return ErrConflict
 	}
 	lease.MemStorageKey = memStorageKey
 	lease.VMStateStorageKey = vmstateStorageKey
@@ -79,16 +92,20 @@ func (m *MemStore) RenewMigrationLease(_ context.Context, leaseToken, sourceNode
 func (m *MemStore) DeleteMigrationLease(_ context.Context, leaseToken string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, ok := m.migrationLeases[leaseToken]; !ok {
+	lease, ok := m.migrationLeases[leaseToken]
+	if !ok {
 		return ErrNotFound
+	}
+	if m.migrationPendingLocked(lease.InstanceID, leaseToken, false) || m.migrationSourcePendingLocked(leaseToken) {
+		return ErrConflict
 	}
 	if d, ok := m.functionMigrationDestinations[leaseToken]; ok && d.Phase != FunctionDestinationRetired && d.Phase != FunctionDestinationCommitted {
 		return ErrConflict
 	}
-	lease := m.migrationLeases[leaseToken]
 	delete(m.functionMigrationSources, lease.InstanceID)
 	delete(m.functionMigrationPermissions, leaseToken)
 	delete(m.migrationLeases, leaseToken)
+	delete(m.migrationResumeFences, leaseToken)
 	return nil
 }
 

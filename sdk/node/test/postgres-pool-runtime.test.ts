@@ -1,231 +1,142 @@
 import assert from 'node:assert/strict';
-import {EventEmitter} from 'node:events';
 import {test} from 'node:test';
 import {inspect} from 'node:util';
-import {createPostgresPool, postgresPoolConfig, PostgresPoolError,
-  type PostgresPoolOptions, type PostgresQueryResult} from '../src/postgres-pool-runtime.js';
+import {PostgresPoolBinding, PostgresPoolBindingError, type PostgresPoolConfig} from '../src/postgres-pool-runtime.js';
+import {SecretReloadCoordinator} from '../src/secret-reload-runtime.js';
 
-function deferred<T>() {
-  let resolve!: (value: T) => void, reject!: (error: Error) => void;
-  const promise = new Promise<T>((done, fail) => { resolve = done; reject = fail; });
-  return {promise, resolve, reject};
-}
-const tick = () => new Promise<void>(resolve => setImmediate(resolve));
+const uri = (password = 'private-first') => `postgresql://worker:${password}@db.example:6432/app?sslmode=require`;
+const values = (password?: string) => ({DATABASE_URL: uri(password)});
+const deferred = () => {let resolve!: () => void; const promise = new Promise<void>(done => {resolve = done;}); return {promise, resolve};};
+class Pool {closed = 0; constructor(readonly dsn: string) {} close(): void {this.closed++;}}
+const binding = (validate: (pool: Pool, signal?: AbortSignal) => void | Promise<void> = () => {}) =>
+  new PostgresPoolBinding('DATABASE_URL', config => new Pool(config.connectionString), {validate, retire: pool => pool.close()});
 
-test('generated function registration precedes pool creation and survives a timed-out close until actual drainage', async t => {
-  const key = Symbol.for('gregale.function.postgres.lifecycle.v1');
-  const held = new Set<unknown>();
-  Object.defineProperty(globalThis, key, {configurable: true, value: {version: 1, register(resource: unknown) {
-    held.add(resource); return () => held.delete(resource);
-  }}});
-  t.after(() => { Reflect.deleteProperty(globalThis, key); });
-  const drained = deferred<void>();
-  const db = createPostgresPool(() => {
-    assert.equal(held.size, 1);
-    const pool = new Pool(); pool.finish = () => drained.promise; return pool;
-  }, {lifecycleTimeoutMs: 25});
-  assert.ok(held.has(db));
-  await assert.rejects(db.close(), /database_unavailable/);
-  assert.ok(held.has(db));
-  drained.resolve(); await tick();
-  assert.equal(held.size, 0);
-  await assert.rejects(db.query('SELECT 1'), /database_unavailable/);
+test('validation gates publication and transactions retain old pools until their final lease', async () => {
+  const entered = deferred(), finish = deferred();
+  const b = binding(async pool => {if (pool.dsn.includes('private-second')) {entered.resolve(); await finish.promise;}});
+  await b.reload(values());
+  const first = b.acquire(), second = b.acquire();
+  const old = first.current();
+  const reload = b.reload(values('private-second'));
+  await entered.promise;
+  assert.throws(() => b.acquire(), /not ready/);
+  assert.equal(first.current(), old); assert.equal(old.closed, 0);
+  finish.resolve(); await reload;
+  const next = b.acquire(), current = next.current();
+  assert.notEqual(current, old);
+  const copied = {...first}; first.release(); copied.release();
+  assert.throws(() => copied.current(), /released/);
+  assert.equal(old.closed, 0);
+  b.invalidate(); assert.throws(() => b.acquire());
+  await assert.rejects(b.waitForRetirement(AbortSignal.abort()), /cancelled/);
+  assert.equal(current.closed, 0);
+  second.release(); next.release();
+  await b.waitForRetirement();
+  assert.equal(old.closed, 1); assert.equal(current.closed, 1);
 });
 
-test('invalid or full function registries refuse before driver side effects and sanitize bridge failures', async t => {
-  const key = Symbol.for('gregale.function.postgres.lifecycle.v1');
-  t.after(() => { Reflect.deleteProperty(globalThis, key); });
-  let opened = 0;
-  for (const bridge of [{version: 9}, {version: 1, register() { throw new Error('private-fixture-value'); }}]) {
-    Object.defineProperty(globalThis, key, {configurable: true, value: bridge});
-    assert.throws(() => createPostgresPool(() => { opened++; return new Pool(); }), error =>
-      error instanceof PostgresPoolError && error.message === 'database_unavailable');
-  }
-  assert.equal(opened, 0);
-});
-class Client extends EventEmitter {
-  readonly queries: {text: string; values: unknown[]}[] = [];
-  readonly releases: boolean[] = [];
-  constructor(readonly execute: (text: string) => Promise<PostgresQueryResult> = async () => ({rows: []})) { super(); }
-  async query(text: string, values: unknown[] = []): Promise<PostgresQueryResult> {
-    this.queries.push({text, values}); return this.execute(text);
-  }
-  release(destroy = false): void { this.releases.push(destroy); }
-}
-class Pool extends EventEmitter {
-  readonly clients: Client[] = [];
-  ended = 0;
-  acquire: (() => Promise<Client>) | undefined;
-  finish: (() => Promise<void>) | undefined;
-  execute: ((text: string) => Promise<PostgresQueryResult>) | undefined;
-  async connect(): Promise<Client> {
-    if (this.acquire) return this.acquire();
-    const client = new Client(this.execute); this.clients.push(client); return client;
-  }
-  async end(): Promise<void> { this.ended += 1; await this.finish?.(); }
-}
-function fixture(options: PostgresPoolOptions = {}, configure: (pool: Pool, index: number) => void = () => {}) {
-  const pools: Pool[] = [];
-  const db = createPostgresPool(() => {
-    const pool = new Pool(); configure(pool, pools.length); pools.push(pool); return pool;
-  }, options);
-  return {db, pools};
-}
-
-test('checkpoint cancels unfinished writes, drains once and gates until a fresh read probe succeeds', async () => {
-  const blocked = deferred<PostgresQueryResult>();
-  const {db, pools} = fixture({readinessQuery: {text: 'SELECT id FROM existing_table LIMIT 1'}});
-  pools[0]!.execute = async text => text === 'INSERT fixture' ? blocked.promise : {rows: []};
-  const work = db.query('INSERT fixture', [], {write: true});
-  const cancelled = assert.rejects(work, /database_cancelled/);
-  await tick();
-  const checkpoint = db.beforeCheckpoint();
-  assert.equal(db.beforeCheckpoint(), checkpoint);
-  await assert.rejects(db.query('SELECT 1'), /database_unavailable/);
-  await checkpoint; await cancelled;
-  assert.equal(db.diagnostics.state, 'checkpointed');
-  assert.equal(db.diagnostics.openPools, 0);
-  assert.deepEqual(pools[0]!.clients[0]!.releases, [true]);
-  blocked.resolve({rows: []}); await tick();
-  assert.ok(!pools[0]!.clients[0]!.queries.some(q => q.text === 'COMMIT'));
-  await db.beforeCheckpoint(); assert.equal(pools.length, 1);
-  await assert.rejects(db.query('SELECT 1'), /database_unavailable/);
-  const restore = db.afterRestore(); assert.equal(db.afterRestore(), restore); await restore;
-  assert.equal(db.generation, 1);
-  assert.deepEqual(pools[1]!.clients[0]!.queries.map(q => q.text), [
-    'BEGIN READ ONLY', "SELECT set_config('statement_timeout', $1, true)", 'SELECT id FROM existing_table LIMIT 1', 'COMMIT',
-  ]);
-  await db.close(); assert.ok(pools.every(pool => pool.ended === 1));
-});
-
-test('thaw replaces retained sessions without a checkpoint and re-evaluates the pool factory', async () => {
-  let credential = 'old'; const observed: string[] = [];
-  const db = createPostgresPool(() => { observed.push(credential); return new Pool(); });
-  await db.query('SELECT 1'); credential = 'rotated';
-  await db.afterRestore(); await db.afterRestore();
-  assert.deepEqual(observed, ['old', 'rotated', 'rotated']);
-  assert.equal(db.generation, 2); assert.equal(db.diagnostics.openPools, 1);
-  await db.close();
-});
-
-test('a client acquired after cancellation is destroyed and never executes SQL', async () => {
-  const acquisition = deferred<Client>(); const {db, pools} = fixture();
-  pools[0]!.acquire = () => acquisition.promise;
-  const controller = new AbortController();
-  const cancelled = assert.rejects(db.query('INSERT fixture', [], {write: true, signal: controller.signal}), /database_cancelled/);
-  controller.abort(); await cancelled;
-  const late = new Client(); acquisition.resolve(late); await tick();
-  assert.deepEqual(late.releases, [true]); assert.deepEqual(late.queries, []);
-  assert.equal(late.listenerCount('error'), 0); await db.close();
-});
-
-test('slow draining fails checkpoint within its budget and cannot accumulate replacement pools', async () => {
-  const drained = deferred<void>(); const {db, pools} = fixture({lifecycleTimeoutMs: 25});
-  pools[0]!.finish = () => drained.promise;
-  await assert.rejects(db.beforeCheckpoint(), /database_unavailable/);
-  assert.equal(db.diagnostics.state, 'unavailable');
-  await assert.rejects(db.query('SELECT 1'), /database_unavailable/);
-  await assert.rejects(db.afterRestore(), /database_unavailable/);
-  assert.equal(pools.length, 1); assert.equal(pools[0]!.ended, 1);
-  drained.resolve(); await db.afterRestore(); assert.equal(db.generation, 1); await db.close();
-});
-
-test('a late readiness result never publishes a timed-out pool; a subsequent explicit restore can recover', async () => {
-  const probe = deferred<PostgresQueryResult>();
-  const {db, pools} = fixture({lifecycleTimeoutMs: 25}, (pool, index) => {
-    if (index === 1) pool.execute = async text => text === 'SELECT 1' ? probe.promise : {rows: []};
+test('failed validation retires candidates, hides driver errors and permits later recovery', async () => {
+  const created: Pool[] = [];
+  let config!: PostgresPoolConfig;
+  const b = new PostgresPoolBinding('DATABASE_URL', input => {config = input; const pool = new Pool(input.connectionString); created.push(pool); return pool;}, {
+    validate: pool => {if (pool.dsn.includes('private-bad')) throw new Error(pool.dsn);}, retire: pool => pool.close(),
   });
-  await assert.rejects(db.afterRestore(), /database_unavailable/);
-  assert.equal(db.diagnostics.state, 'unavailable'); assert.equal(db.generation, 0);
-  probe.resolve({rows: []}); await tick();
-  assert.deepEqual(pools[1]!.clients[0]!.releases, [true]);
-  assert.ok(!pools[1]!.clients[0]!.queries.some(q => q.text === 'COMMIT'));
-  await assert.rejects(db.query('SELECT 1'), /database_unavailable/);
-  await db.afterRestore(); assert.equal(db.generation, 1); await db.close();
+  await b.reload(values());
+  const old = b.acquire();
+  await assert.rejects(b.reload(values('private-bad')), error => error instanceof PostgresPoolBindingError && !String(error).includes('private-'));
+  assert.throws(() => b.acquire());
+  assert.ok(!inspect(config).includes('private-')); assert.ok(!JSON.stringify(config).includes('private-'));
+  assert.equal({...config}.connectionString, uri('private-bad'));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(created[0]!.closed, 0); assert.equal(created[1]!.closed, 1);
+  old.release(); await b.waitForRetirement();
+  await b.reload(values('private-recovered'));
+  const recovered = b.acquire(); assert.equal(recovered.current().dsn, uri('private-recovered'));
+  assert.ok(!JSON.stringify(recovered).includes('private-')); assert.ok(!inspect(recovered).includes('private-'));
+  recovered.release(); b.invalidate(); await b.waitForRetirement();
 });
 
-test('shutdown cancels a readiness probe and stays closed after late completion', async () => {
-  const probe = deferred<PostgresQueryResult>(), entered = deferred<void>();
-  const {db} = fixture({}, (pool, index) => {
-    if (index === 1) pool.execute = async () => { entered.resolve(); return probe.promise; };
-  });
-  const failed = assert.rejects(db.afterRestore(), /database_unavailable/); await entered.promise;
-  const closing = db.close(); assert.equal(db.close(), closing); await closing; await failed;
-  probe.resolve({rows: []}); await tick();
-  assert.equal(db.diagnostics.state, 'closed'); assert.equal(db.generation, 0);
-  await assert.rejects(db.afterRestore(), /database_unavailable/);
-  await assert.rejects(db.beforeCheckpoint(), /database_unavailable/);
-  await assert.rejects(db.query('SELECT 1'), /database_unavailable/);
-});
-
-test('concurrent hook kinds cannot overlap; cancelling a duplicate waiter leaves its owner running', async () => {
-  const drained = deferred<void>(); const {db, pools} = fixture(); pools[0]!.finish = () => drained.promise;
-  const owner = db.afterRestore(), waiter = new AbortController();
-  const cancelled = assert.rejects(db.afterRestore({signal: waiter.signal}), /database_cancelled/);
-  waiter.abort(); await cancelled;
-  await assert.rejects(db.beforeCheckpoint(), /database_busy/);
-  drained.resolve(); await owner; assert.equal(db.generation, 1); await db.close();
-});
-
-test('pool creation and disposal failures are sanitized, close is bounded, and pools cannot be reused', async () => {
-  assert.throws(() => createPostgresPool(() => { throw new Error('postgres://private:password@provider'); }), PostgresPoolError);
-  const shared = new Pool(), reused = createPostgresPool(() => shared);
-  await assert.rejects(reused.afterRestore(), /database_unavailable/);
-  assert.equal(shared.ended, 1); await reused.close();
-  const events: unknown[] = [];
-  const {db, pools} = fixture({onEvent: event => { events.push(event); }});
-  pools[0]!.finish = async () => { throw new Error('private-provider-close-error'); };
-  await assert.rejects(db.beforeCheckpoint(), /database_unavailable/);
-  await assert.rejects(db.close(), /database_unavailable/);
-  assert.equal(pools[0]!.ended, 1); assert.ok(!JSON.stringify(events).includes('private'));
-  const hung = fixture({lifecycleTimeoutMs: 25}); hung.pools[0]!.finish = () => new Promise(() => {});
-  const closing = hung.db.close(); assert.equal(hung.db.close(), closing);
-  await assert.rejects(closing, /database_unavailable/);
-});
-
-test('a lost COMMIT response is reported once and never replays the mutation', async () => {
-  let writes = 0, commits = 0; const {db, pools} = fixture();
-  pools[0]!.execute = async text => {
-    if (text === 'INSERT fixture') writes += 1;
-    if (text === 'COMMIT') { commits += 1; throw new Error('private uncertain commit'); }
-    return {rows: []};
-  };
-  await assert.rejects(db.query('INSERT fixture', [], {write: true}), /database_unavailable/);
-  assert.equal(writes, 1); assert.equal(commits, 1);
-  assert.deepEqual(pools[0]!.clients[0]!.releases, [true]);
-  await db.afterRestore(); assert.equal(writes, 1); assert.equal(commits, 1); await db.close();
-});
-
-test('admission and query deadlines bound unavailable SQL, and observers cannot break cleanup', async () => {
-  const events: unknown[] = [];
-  const {db, pools} = fixture({timeoutMs: 25, maxInFlight: 2, onEvent: async event => {
-    events.push(event); throw new Error('private observer failure');
-  }});
-  pools[0]!.emit('error', new Error('private idle password'));
-  pools[0]!.execute = () => new Promise(() => {});
-  const requests = Array.from({length: 2}, () => assert.rejects(db.query('SELECT 1'), /database_cancelled/));
-  await assert.rejects(db.query('SELECT 1'), /database_busy/);
-  await Promise.all(requests); assert.equal(db.diagnostics.activeRequests, 0);
-  assert.ok(pools[0]!.clients.every(client => client.releases.length === 1 && client.releases[0]));
-  assert.ok(!JSON.stringify(events).includes('private')); assert.ok(!inspect(db).includes('private'));
-  await db.close();
-});
-
-test('TLS verification cannot be overridden by URL options; invalid budgets fail before creating resources', () => {
-  for (const mode of ['require', 'verify-ca', 'verify-full']) {
-    const config = postgresPoolConfig(`postgres://user:private@db.example/db?sslmode=${mode}`);
-    assert.deepEqual(config.ssl, {rejectUnauthorized: true});
-    assert.equal(new URL(config.connectionString).searchParams.has('sslmode'), false);
+test('invalidation and cancellation fence late validation and queued reloads', async () => {
+  for (const mode of ['invalidate', 'cancel']) {
+    const entered = deferred(), finish = deferred(), cancel = new AbortController();
+    let calls = 0; const pools: Pool[] = [];
+    const b = new PostgresPoolBinding('DATABASE_URL', config => {calls++; const p = new Pool(config.connectionString); pools.push(p); return p;}, {
+      validate: async () => {entered.resolve(); await finish.promise;}, retire: pool => pool.close(),
+    });
+    const reload = b.reload(values(), cancel.signal); await entered.promise;
+    const queued = mode === 'invalidate' ? b.reload(values()) : undefined;
+    if (mode === 'invalidate') b.invalidate(); else cancel.abort();
+    assert.throws(() => b.acquire());
+    finish.resolve(); await assert.rejects(reload, /cancelled/);
+    if (queued) await assert.rejects(queued, /cancelled/);
+    await b.waitForRetirement(); assert.equal(calls, 1); assert.equal(pools[0]!.closed, 1);
   }
-  assert.equal(postgresPoolConfig('postgres://localhost/test?sslmode=disable').ssl, false);
-  for (const url of ['private-invalid-url', 'https://private@db.example',
-    'postgres://db/db?sslmode=prefer', 'postgres://db/db?ssl=0', 'postgres://db/db?sslrootcert=/private/key']) {
-    assert.throws(() => postgresPoolConfig(url), error => error instanceof PostgresPoolError && !String(error).includes('private'));
-  }
+});
+
+test('a tracked alias is rejected before validation without retiring its borrower', async () => {
+  const pool = new Pool(uri()); let checks = 0;
+  const b = new PostgresPoolBinding('DATABASE_URL', () => pool, {validate: () => {checks++;}, retire: p => p.close()});
+  await b.reload(values()); const lease = b.acquire();
+  await assert.rejects(b.reload(values()), /reused an owned pool/);
+  assert.equal(checks, 1); assert.equal(pool.closed, 0); assert.equal(lease.current(), pool);
+  lease.release(); await b.waitForRetirement(); assert.equal(pool.closed, 1);
+});
+
+test('URI identity is explicit; invalid snapshots never invoke the factory', async () => {
+  const invalid = ['\v' + uri(), 'postgres://worker:%1f@db:5432/app', 'postgres://worker:secret@db/app', 'postgres://worker:secret@%2Ftmp:5432/app', uri() + '&database=other', '', 'host=db user=worker', 'https://worker:secret@db/app', 'postgres://db/app', 'postgres://worker@db/app',
+    'postgres://worker:secret@db', 'postgres://worker:secret@db/', 'postgres://worker:secret@db:0/app',
+    'postgres://worker:secret@db:65536/app', uri() + '#fragment', uri() + '#', uri() + '&UsEr=other', uri() + '&host=other',
+    'postgres://worker:%00@db/app', 'postgres://worker:%ZZ@db/app', uri() + '\n'];
   let calls = 0;
-  for (const options of [{timeoutMs: NaN}, {timeoutMs: 0}, {timeoutMs: 2 ** 31}, {lifecycleTimeoutMs: 1501},
-    {lifecycleTimeoutMs: -1}, {maxInFlight: 1.5}, {readinessQuery: {text: ''}}]) {
-    assert.throws(() => createPostgresPool(() => { calls += 1; return new Pool(); }, options), PostgresPoolError);
-  }
+  const b = new PostgresPoolBinding('DATABASE_URL', () => {calls++; return new Pool('unused');}, {validate: () => {}, retire: p => p.close()});
+  for (const value of invalid) {await assert.rejects(b.reload({DATABASE_URL: value}), PostgresPoolBindingError); assert.throws(() => b.acquire());}
   assert.equal(calls, 0);
+  for (const value of [uri(), 'postgres://work%20er:p%40ss@[::1]:5432/app%2Fdb?sslmode=disable']) {
+    await b.reload({DATABASE_URL: value}); b.invalidate(); await b.waitForRetirement();
+  }
+  assert.throws(() => new PostgresPoolBinding('invalid-key', () => new Pool('unused'), {validate: () => {}, retire: () => {}}));
+  assert.throws(() => new PostgresPoolBinding('DATABASE_URL', () => new Pool('unused'), {} as never));
+});
+
+test('retirement failures stay sanitized and are never retried', async () => {
+  let calls = 0; const observed = deferred();
+  const b = new PostgresPoolBinding('DATABASE_URL', () => new Pool(uri()), {validate: () => {},
+    retire: () => {calls++; throw new Error('private-cleanup');},
+    onRetireError: error => {assert.ok(error instanceof PostgresPoolBindingError); assert.ok(!String(error).includes('private-')); observed.resolve(); throw new Error('private-observer');},
+  });
+  await b.reload(values()); b.invalidate();
+  await assert.rejects(b.waitForRetirement(), /pool retirement failed/); await observed.promise;
+  await assert.rejects(b.waitForRetirement(), /pool retirement failed/); assert.equal(calls, 1);
+});
+
+test('a boolean validation result cannot publish a pool', async () => {
+  const pool = new Pool(uri());
+  const b = new PostgresPoolBinding('DATABASE_URL', () => pool, {
+    validate: (() => false) as unknown as () => void, retire: p => p.close(),
+  });
+  await assert.rejects(b.reload(values()), /validation failed/);
+  assert.throws(() => b.acquire());
+  await b.waitForRetirement(); assert.equal(pool.closed, 1);
+});
+
+test('coordinated applied ACK follows validation; a later consumer failure invalidates the adopted pool', async t => {
+  const entered = deferred(), finish = deferred(); let fail = false, checks = 0;
+  const b = binding(async () => {checks++; if (checks === 1) {entered.resolve(); await finish.promise;}});
+  let raw = JSON.stringify({revision: 'a'.repeat(64), secrets: values()}); const receipts: string[] = [];
+  const coordinator = new SecretReloadCoordinator({consumers: [b.secretConsumer(), {
+    apply: () => {if (fail) throw new Error('private-other-consumer');}, invalidate: () => {},
+  }], env: {FAAS_SECRETS_SNAPSHOT_FILE: '/snapshot', FAAS_SECRETS_RELOAD_READY_FILE: '/ready',
+    FAAS_SECRETS_RELOAD_ACK_ENDPOINT: 'http://metadata.test/ack', FAAS_SECRETS_RELOAD_GENERATION: 'e'.repeat(32)},
+    io: {read: async () => raw, ready: async () => {}, fetch: async (_input, init) => {
+      receipts.push(JSON.parse(String(init?.body)).status); return new Response(null, {status: 202});
+    }},
+  });
+  t.after(() => coordinator.stop());
+  const start = coordinator.start(); await entered.promise;
+  assert.deepEqual(receipts, []); assert.throws(() => b.acquire()); finish.resolve(); await start;
+  assert.deepEqual(receipts, ['applied']); const old = b.acquire(), pool = old.current();
+  fail = true; raw = JSON.stringify({revision: 'b'.repeat(64), secrets: values('private-second')});
+  await assert.rejects(coordinator.reload()); assert.throws(() => b.acquire());
+  assert.equal(pool.closed, 0); assert.deepEqual(receipts, ['applied', 'failed']);
+  old.release(); coordinator.stop(); await b.waitForRetirement(); assert.equal(pool.closed, 1);
 });

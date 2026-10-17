@@ -15,7 +15,8 @@ and a nested-node diagnostic must not be mistaken for guest execution evidence.
 ## Decision
 
 **2026-10-16 update:** the report envelope remains version 1; its required guest
-suite is now version 2 with fourteen phases. The Node PostgreSQL SDK adapter and
+suite is now version 4 with twenty phases covering both shipped starters and
+Node frozen-thaw recovery. The Node PostgreSQL SDK adapter and
 shipped starter add pre-checkpoint draining and same-guest frozen-thaw recovery.
 The shared contract and strict verdict reject earlier reports. These additions
 need fresh supported native execution before they provide rollout evidence.

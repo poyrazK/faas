@@ -30,6 +30,16 @@ func (s *PgStore) ResolveInstanceMigrationCommit(ctx context.Context, attempt Mi
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	q := sqlc.New()
+	if err := q.LockNodeAdmissionPolicy(ctx, tx); err != nil {
+		return MigrationCommitRetained, err
+	}
+	pending, err := q.MigrationAdmissionPendingForInstance(ctx, tx, sqlc.MigrationAdmissionPendingForInstanceParams{InstanceID: mustPgUUID(attempt.InstanceID), LeaseToken: attempt.LeaseToken})
+	if err != nil {
+		return MigrationCommitRetained, mapErr(err)
+	}
+	if pending {
+		return MigrationCommitRetained, ErrMigrationCommitUnresolved
+	}
 	row, err := q.LockInstanceMigrationCommit(ctx, tx, mustPgUUID(attempt.InstanceID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return MigrationCommitObsolete, nil

@@ -1,6 +1,6 @@
 package functionmigration
 
-// adr: 1352
+// adr: 1547
 // These synthetic documents test rejection rules only; they supply no native
 // execution evidence and are never written as qualification artifacts.
 

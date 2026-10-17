@@ -1,9 +1,9 @@
 # Function backend concurrency acceptance
 
 This guide covers shared-worker cancellation and PostgreSQL integration
-(ADR-1345), the Node background-completion foundation (ADR-1346), and the
-acknowledged VM execution lifetime/checkpoint barrier (ADR-1347) and automatic
-Node PostgreSQL ownership (ADR-1348).
+(ADR-1540), the Node background-completion foundation (ADR-1541), and the
+acknowledged VM execution lifetime/checkpoint barrier (ADR-1542) and automatic
+Node PostgreSQL ownership (ADR-1543).
 Shared-worker concurrency is opt-in and takes effect after redeployment.
 The new background-completion contract is disabled in production runners.
 This guide does not enable production traffic or certify Vercel performance parity.
@@ -196,8 +196,8 @@ approval. This workspace has no `/dev/kvm` and cannot certify the native gate.
 
 ## Function migration source rollback qualification
 
-[ADR-1350](../adr/1350-function-migration-source-rollback.md) adds a source-only
-qualification seam. Production activation stays off. ADR-1351 adds measured source permission in the
+[ADR-1545](../adr/1545-function-migration-source-rollback.md) adds a source-only
+qualification seam. Production activation stays off. ADR-1546 adds measured source permission in the
 native qualification build; destination adoption rejects function-source captures. A native source
 fixture must retain the existing boot/admission contract, never disable a guard
 or discard an admission receipt to make a migration capture run.
@@ -242,11 +242,11 @@ Portable permission and transaction tests are selected by `^TestFunctionMigratio
 in the backend CI lane. They cover current-input drift, purpose/parent/keys,
 atomic registration, expired-lease recovery and permission renewal. Actual KVM,
 vsock loss/duplication, restart, private-environment and leak acceptance remain
-required. See [ADR-1351 evidence](evidence/20261017-function-migration-admission/REPORT.md).
+required. See [ADR-1546 evidence](evidence/20261017-function-migration-admission/REPORT.md).
 
 ## Measured migration destination qualification
 
-ADR-1352 adds a dedicated destination restore capability in
+ADR-1547 adds a dedicated destination restore capability in
 `metal,function_background_native` builds. Normal builds continue to refuse it.
 The existing strict native target qualifies source cancellation/recovery; it is
 not a two-host destination acceptance result. Do not count its source-only cases
@@ -259,7 +259,7 @@ has a guarded entry point,
 Its version 3 verdict requires baseline, readiness/commit reply-discard,
 duplicate-adoption and coordinator SIGKILL/replacement cases before and after
 ownership commit for both Node runtimes. Startup recovery follows
-[ADR-1353](../adr/1353-function-migration-scheduler-restart.md). These tests do not
+[ADR-1548](../adr/1548-function-migration-scheduler-restart.md). These tests do not
 qualify actual transport loss, systemd service restart or vmmd/host restart. The
 complete failure/restart matrix below and production activation remain separate
 gates. Local compilation and portable
@@ -300,4 +300,4 @@ identities, all eight pool sessions and committed SQL rows before migration.
 
 Portable CI selects `^TestFunctionDestination` in addition to the existing
 migration/source suites. Its PostgreSQL ownership and capacity races remain
-separate from the native matrix. See [ADR-1352](../adr/1352-function-migration-destination.md).
+separate from the native matrix. See [ADR-1547](../adr/1547-function-migration-destination.md).

@@ -122,7 +122,7 @@ loop and Python's asyncio can wait on many requests in one process.
 - Opting in means a handler's module state is shared by concurrent
   requests. Handlers must not keep per-request data in globals; this is why
   the default stays one.
-- [ADR-1345](1345-function-cancellation-cleanup-and-lifecycle-context.md)
+- [ADR-1540](1540-function-cancellation-cleanup-and-lifecycle-context.md)
   completes cancellation: Node gets an abort signal and Python cancellation
   waits for cleanup. The shared slot stays occupied until acknowledgement;
   an uncooperative handler loses its worker after five seconds.

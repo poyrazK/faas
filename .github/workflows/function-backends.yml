@@ -29,10 +29,13 @@ on:
       - 'cmd/schedd/**'
       - 'pkg/rootfs/**'
       - 'sdk/node/src/postgres-pool-runtime.ts'
+      - 'sdk/node/src/binding-client-runtime.ts'
+      - 'sdk/node/src/secret-reload-runtime.ts'
       - 'sdk/node/test/postgres-pool*'
-      - 'sdk/node/scripts/sync-postgres-starter.mjs'
+      - 'sdk/node/scripts/sync-binding-starters.mjs'
       - 'sdk/node/package*.json'
       - 'cmd/gregale/templates/rest-api-postgres/**'
+      - 'cmd/gregale/templates/secret-reload-node/**'
       - 'go.mod'
       - 'go.sum'
       - 'Makefile'
@@ -50,11 +53,13 @@ jobs:
   portable:
     name: shared workers and TLS PostgreSQL
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 45
     env:
       GOMEMLIMIT: 2GiB
       GOGC: 10
       GOMAXPROCS: 2
+      # Keep the expanded state contracts within the runner's memory/disk budget.
+      GOFLAGS: '-gcflags=github.com/onebox-faas/faas/pkg/state=-dwarf=false'
     services:
       postgres:
         image: postgres@sha256:1a6ab3f5345eb6dbe04a1349529caabdb0ab09293a09590fad07b2246bfa4b54
@@ -116,8 +121,8 @@ jobs:
           npm ci --ignore-scripts --no-audit --no-fund
           npm run build
           npm run test:build
-          node scripts/sync-postgres-starter.mjs --check
-          node --test dist-test/test/postgres-pool-runtime.test.js
+          npm run starter:sync -- --check
+          node --test dist-test/test/postgres-pool-runtime.test.js dist-test/test/restore-aware-postgres-pool.test.js
           node --test test/postgres-pool-package.test.mjs
       - name: runner, adapter and real SQL race checks
         env:

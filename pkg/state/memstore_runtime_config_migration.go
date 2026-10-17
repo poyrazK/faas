@@ -17,6 +17,9 @@ func (m *MemStore) MigrateInstanceOwnerWithRuntimeConfig(ctx context.Context, id
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkNodeAdmissionLocked(ctx, to); err != nil {
+		return err
+	}
 	if strings.HasPrefix(leaseToken, FunctionMigrationTokenPrefix) {
 		return m.commitFunctionDestinationLocked(ctx, id, from, to, leaseToken, input)
 	}
@@ -48,7 +51,11 @@ func (m *MemStore) MigrateInstanceOwnerWithRuntimeConfig(ctx context.Context, id
 	if err := m.guardInstanceRuntimeTransitionLocked(ctx, m.instances[id], instance); err != nil {
 		return err
 	}
+	if err := m.validateMigrationAdmissionCommitLocked(ctx, instance, from, to, leaseToken); err != nil {
+		return err
+	}
 	m.instances[id] = instance
+	m.consumeMigrationAdmissionLocked(instance, from, leaseToken)
 	delete(m.instanceRuntimeConfigReceipts, id)
 	if input.Inputs != nil {
 		// The new wake and matching deployment were checked before mutation.

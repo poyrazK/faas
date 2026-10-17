@@ -1,6 +1,6 @@
 package fcvm
 
-// adr: 1350. Source recovery is bound to the original physical incarnation.
+// adr: 1545. Source recovery is bound to the original physical incarnation.
 
 import (
 	"context"

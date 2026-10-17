@@ -9,7 +9,7 @@ historical.
 
 ## Measured Node function migration destinations — 2026-10-17
 
-[ADR-1352](adr/1352-function-migration-destination.md) adds qualification-only
+[ADR-1547](adr/1547-function-migration-destination.md) adds qualification-only
 measured destination restore, durable readiness and ownership epochs, a separate
 execution activation fence, and confirmed destination retirement before source
 recovery. Current configuration and artifact approval are rechecked at commit;
@@ -20,7 +20,7 @@ two-host Node 22/24 KVM/TLS SQL qualification remain pending. See the
 
 ## Measured Node function migration source permissions — 2026-10-17
 
-[ADR-1351](adr/1351-function-migration-admission.md) adds separate capture and
+[ADR-1546](adr/1546-function-migration-admission.md) adds separate capture and
 recovery permissions to the qualification-only source path. Each permission
 binds the measured parent, original wake, source lease and capture files, and
 uses the existing current-input and artifact approval fences. Recovery permission
@@ -34,19 +34,19 @@ production activation and destination adoption remain gated. See the
 
 ## Node function migration source rollback — 2026-10-17
 
-[ADR-1350](adr/1350-function-migration-source-rollback.md) adds a qualification-only
+[ADR-1545](adr/1545-function-migration-source-rollback.md) adds a qualification-only
 source path: mandatory all-interpreter checkpoint drainage, paused publication,
 a durable scheduler rollback fence, and one acknowledged pool-recovery attempt.
 Cancellation and expired leases retain source capacity until recovery or physical
 retirement is confirmed. schedd completes RUNNING or STOPPED after that result;
-vmmd never writes the instance ownership row. ADR-1351 above adds measured source
+vmmd never writes the instance ownership row. ADR-1546 above adds measured source
 permission; destination adoption remains refused. Native KVM/vsock, restart/private-environment
 acceptance and production activation remain pending. See the
 [evidence](ops/evidence/20261017-function-migration-source-rollback/REPORT.md).
 
 ## Node function warm-snapshot recovery — 2026-10-17
 
-[ADR-1349](adr/1349-function-warm-snapshot-resource-recovery.md) adds qualified
+[ADR-1544](adr/1544-function-warm-snapshot-resource-recovery.md) adds qualified
 warm capture with PostgreSQL drainage, paused publication and all-worker recovery
 before the original VM admits traffic. Cancelled/failed capture also recovers;
 unconfirmed recovery seals admission and retires the original physical VM.
@@ -56,6 +56,351 @@ Portable host race and real TLS/SCRAM SQL tests pass on Node 22/24; see the
 [evidence](ops/evidence/20261017-function-warm-snapshot-recovery/REPORT.md).
 This is local implementation evidence. Native KVM/vsock and recovery
 qualification remain pending, and ordinary production builds keep activation off.
+
+## Durable migration source retirement — 2026-10-17
+
+[ADR-1530](adr/1530-durable-migration-source-retirement.md) binds production
+sources to their original native generation before capture. Ownership movement
+atomically records pending source retirement. Source RAM/CPU/vCPU remains charged
+until physical cleanup is proven, and source records/leases block maintenance,
+retirement and deletion. Retained receipts fence delayed capture, late resume,
+and instance-name reuse across daemon replacement.
+
+Shared memory/PostgreSQL contracts, ordinary and protected capacity, atomic
+ownership/retirement, source drain races, direct-writer guards and deferred/
+suppressed-write failures pass. Full scheduler/RPC regressions, portable native
+fixtures, targeted races, SQL generation, schema restore/down/up parity and
+scoped lint are verified. Failed preparation cannot erase uncertain binding
+commits or pin an unstarted lease; parked rollback never resumes an unaccounted VM.
+
+Release preparation also verifies replay of all nine recovery migrations against
+existing DDL. Replay preserves current operator claims and the newer source
+guards when an earlier incoming migration is replayed alone. The canonical schema
+and its migration-source checksum are regenerated from fresh PostgreSQL 16.
+
+Dedicated x86_64 KVM migration/process-death and leak qualification remains
+pending: this environment has no `/dev/kvm`, and leakcheck cannot inspect its
+kernel loop devices. The broader portable VM suite excludes the same 21 existing
+filesystem/source-mode/readiness failure families documented under ADR-1529.
+Nothing deployed. See the [source retirement guide](ops/migration-source-retirement.md).
+
+## Durable incoming migration reservations — 2026-10-17
+
+[ADR-1529](adr/1529-durable-inbound-migration-reservations.md) persists destination
+generation, resource bounds, both wakes and source-lease authority before adoption.
+Pending reservations consume capacity and block drain completion/retirement.
+One dispatch grant, retained response/cleanup receipts and an fsynced native
+generation binding fence delayed creation and late ownership commit. Source resume,
+lease deletion/replacement and the migration watchdog retain unresolved attempts.
+Ownership conversion preserves admitted resident resource floors atomically.
+
+Shared memory/PostgreSQL phases, replay, RAM/CPU/vCPU contention, source fencing,
+drain races, commit/cleanup races (including direct writers), suppressed writes and
+deferred commit failures pass. Full scheduler and vmmd RPC regressions, manager
+tests, targeted memory/scheduler/manager/RPC races, SQLC/protobuf regeneration,
+restored-schema parity, scoped production/test lint and schedd/vmmd link checks pass.
+
+The broader VM suite has 21 existing failure families involving filesystem,
+source-mode and readiness expectations; all reproduce with the incoming journal
+hooks removed. The portable VM suite excluding those failures passes. Dedicated
+x86_64 KVM migration/process-death and leak qualification remains pending; this
+environment has no `/dev/kvm`. Nothing deployed. Upgrade dispatchers/receivers
+together, preserve journals and inspect historical handoffs; see the
+[migration recovery guide](ops/inbound-migration-reservations.md), including
+conservative process-ledger recovery after a failed handoff.
+
+## Node admission generation fencing — 2026-10-17
+
+[ADR-1528](adr/1528-node-admission-generation-fencing.md) carries placement's
+selected lifecycle generation into instance and migration ownership transactions.
+New residency requires an admitting node at that generation. A database guard
+also protects direct writers, while existing residents can finish publication and
+cleanup. Definite stale placements trigger bounded fresh selection; failed
+attempts release restore pressure and job leases/ledger reservations. Migration
+uses its existing commit resolver and adopted-VM cleanup after a refusal.
+
+Memory/PostgreSQL admission, lifecycle-cycle, job/migration rollback, lock-order
+and both admission/drain race orderings pass. The full scheduler suite, targeted
+memory/scheduler/event/statetest race checks, scoped production/test lint, SQLC
+diff and restored-schema parity pass; schedd links. Nothing deployed. Coordinate
+the dispatcher upgrade and inspect historical closed-node inventory;
+see the [admission rollout guide](ops/node-admission-fencing.md). Native migration
+and evacuation qualification remains a separate fleet acceptance gate.
+
+## Generation-fenced node completion — 2026-10-17
+
+[ADR-1527](adr/1527-generation-fenced-node-completion.md) binds recovery-controller
+completion to the lifecycle generation captured before its sweep. The final work
+check, lifecycle transition, immutable cycle receipt and audit handoff share one
+transaction. Delayed workers cannot complete a later cycle with the same lifecycle;
+retries preserve the original result after later cycles, node deletion and outbox
+retention. Warm and frozen resident rows keep drains pending.
+
+Targeted memory/PostgreSQL generation, precondition, replay, concurrency and fault
+injection suites pass, including suppressed writes, deferred commit failure and
+capacity lock ordering. Scheduler/heartbeat/operator recovery and event/statetest
+regressions, memory-store and runner race detection, scoped production/test lint,
+SQLC compile/diff and restored-schema parity pass. Nothing deployed. Stop old
+recovery controllers before migration; see the
+[node completion guide](ops/node-lifecycle-completion.md). Native migration and
+evacuation qualification remains a separate fleet acceptance gate.
+
+## Atomic operator node maintenance — 2026-10-17
+
+[ADR-1526](adr/1526-atomic-operator-node-maintenance.md) makes node lifecycle
+transition, execution receipt, intent result and outcome audit handoff atomic.
+Claims fence obsolete workers and terminal replay preserves original outcomes
+after later maintenance cycles and outbox pruning. RecoveryRunner retains
+migration/evacuation ownership. Coordinated upgrade quarantines ambiguous legacy
+node actions; receipts and unresolved evidence block downgrade.
+
+Memory/PostgreSQL recovery, concurrency and fault injection, scheduler integration
+and recovery regressions, memory race detection, scoped production/test lint,
+SQLC and restored-schema parity pass. Nothing deployed. Stop old schedd writers
+before migration and reconcile quarantined legacy requests before another action;
+see the [node maintenance guide](ops/operator-node-maintenance.md).
+
+## Operator recovery submission receipts — 2026-10-17
+
+[ADR-1524](adr/1524-durable-operator-recovery-submissions.md) atomically accepts
+restart, park and cold-boot intents with their original 202 response and request
+audit handoff. Actor-scoped keys have no receipt TTL; replays precede mutable
+target checks, changed parameters return 409, and every replay runs current
+operator authentication. gregalectl exposes reusable --request-key and an
+instances wait --intent-id command that only polls.
+
+Targeted memory/PostgreSQL concurrency and fault-injection, HTTP authentication
+and replay, CLI and memory race tests pass. SQLC/schema/spec validation, scoped
+lint, SDK generation/request smoke checks, Node SDK build and API/CLI link
+builds pass. No deployment has been performed. Apply the migration and drain
+old API writers before rollout; uncertain pre-upgrade requests need
+reconciliation. See the [submission upgrade guide](ops/operator-recovery-submissions.md).
+This change adds no VM lifecycle behavior; native qualification of the earlier
+restart/cold-boot execution changes remains pending below.
+
+## Operator cold-boot recovery — 2026-10-17
+
+[ADR-1523](adr/1523-durable-operator-cold-boot-recovery.md) makes cold-boot
+invalidation, the deployment recovery generation, intent completion and audit
+handoff one transaction. Boot lineage fences delayed captures, and warm/frozen
+promotion cannot bypass recovery. Original results survive worker replacement,
+lost acknowledgements and outbox pruning. Memory/PostgreSQL recovery and failure
+injection, scheduler/publisher/RPC and HTTP regressions, memory race checks,
+SQLC/OpenAPI/schema validation, scoped lint and daemon/CLI builds pass.
+Native KVM lifecycle and leak qualification remains pending; no deployment has
+been performed. Migration and coordinated schedd/imaged rollout are required:
+[cold-boot recovery guide](ops/operator-cold-boot-recovery.md).
+
+## Operator restart execution recovery — 2026-10-17
+
+[ADR-1522](adr/1522-recoverable-operator-restart-execution.md) adds an immutable
+restart plan, per-claim ownership, a generation-bound vmmd teardown protocol and
+an independent durable acknowledgement. Confirmed teardown, STOPPED, operator
+completion and its audit handoff commit together; interrupted execution without
+proof is exposed as `outcome_unknown`. Late acknowledgements allow database-only
+reconciliation against the original target. Legacy unary restart propagates
+terminal-state write errors. See the [recovery and rollout guide](ops/operator-restart-recovery.md).
+
+Targeted memory/PostgreSQL, scheduler/manager/RPC, API/CLI and memory race suites
+pass. SQL/protobuf regeneration, restored-schema parity and changed-code lint
+pass; schedd, vmmd and gregalectl link successfully. State tests and their lint
+run as file suites to avoid unrelated state-test compiler memory pressure.
+The new metal test compiles and skips without staged VM images. Native
+`test-metal` and `leakcheck` qualification remain pending: this environment has
+neither `/dev/kvm` nor the acceptance images. Nothing deployed.
+
+## Read-only all-binding verification preview — 2026-10-16
+
+`gregale bindings verify APP --all --dry-run` shares preparation and selection
+with batch execution. Its separate preview report describes planned operations,
+consent flags, exclusions, prospective coverage, and structured blockers.
+`plan_ready` and `complete_coverage_possible` express metadata readiness and
+potential coverage, never a passed verification gate. Both queue and storage
+consent flags remain inert during preview. Strict mode evaluates whether the
+plan could cover every eligible binding; default partial-coverage behavior is
+preserved. See [preview before execution](bindings-verify-all-queues.md#preview-before-execution).
+
+## Writable storage in all-binding verification — 2026-10-16
+
+`gregale bindings verify APP --all --deployment ID|vN --object-storage-write`
+uses existing disposable-object canaries for writable bindings and read-only
+probes for read-only bindings. Upload, download where granted, and cleanup
+evidence must match the requested prefix and mode. The combined report and
+strict gate reject failed operations, failed cleanup, incompatible guest
+reports, and mismatched deployment/scope receipts. Storage write consent remains
+separate from queue publication; omitted consent preserves existing behavior.
+See [writable storage](bindings-verify-all-queues.md#verify-writable-object-storage).
+
+## Strict all-binding verification coverage — 2026-10-16
+
+`gregale bindings verify APP --all --require-complete` adds a CI gate to the
+existing batch verifier. Its JSON `gate` and human output explain failed probes,
+unsupported or unchecked eligible bindings, incomplete inventory, and empty
+eligible selections. Disabled, out-of-scope, and release-only bindings remain
+explicit exclusions. Default verification semantics, explicit write/publication
+consent, and interruption exit 130 are preserved. See
+[strict coverage](bindings-verify-all-queues.md#require-complete-coverage-in-ci).
+
+## Queue canaries in all-binding verification — 2026-10-16
+
+`gregale bindings verify APP --all --deployment ID|vN --queue-publish`
+includes eligible push queues in the existing combined report using the existing
+completion-canary runner. Publication is opt-in and deployment-pinned; receipts
+must match the selected scope, binding, and deployment and confirm handler
+completion. Missing consent or capability remains explicit partial coverage;
+disabled and out-of-scope bindings are skipped. Interrupted and unsuccessful
+canaries use existing cancellation cleanup. See
+[all-binding queue verification](bindings-verify-all-queues.md).
+
+## Service authorization explanation — 2026-10-16
+
+`gregale bindings service explain CALLER TARGET --method GET --path /path`
+reads app-level policies and reports allowed, denied, or indeterminate with
+structured rules, reasons, and settings to review. It uses the shared scope
+normalizer and gateway matcher, preserves caller-policy intersections, and
+makes no application requests. Previews, unavailable apps, and unsupported
+policy contracts remain indeterminate; runtime and environment resolution are
+outside this snapshot explanation. See
+[service binding configuration](service-binding-configuration.md).
+
+## Service policy export and drift checks — 2026-10-16
+
+`gregale bindings service export` produces reusable six-field policy JSON in a
+new private file or on stdout. `service check` compares normalized live values
+against supplied fields without mutation, retaining null versus deny-all caller
+semantics. CI exits distinguish match (0), drift (1), and errors (2). Checks are
+snapshots; reviewed plans remain the guarded write path. See
+[service binding configuration](service-binding-configuration.md).
+
+## Reviewed service binding plans — 2026-10-16
+
+[ADR-1386](adr/1386-reviewed-service-binding-plans.md) adds private saved plans
+with app/account/endpoint identity and service-settings fingerprints. Apply
+checks its precondition under the app lock in both ordinary and activity-aware
+store transactions. Stale plans conflict before mutation, and unrelated manifest
+edits survive guarded updates. Direct configuration retains its existing
+unguarded behavior. See the [workflow](service-binding-configuration.md#save-and-apply-a-reviewed-plan).
+
+## Service binding reliability and transport CLI — 2026-10-16
+
+[ADR-1384](adr/1384-service-binding-reliability-cli.md) extends the service policy
+file with dependency timeouts/retries and canonical URL transport. Validation
+uses the resulting target list before mutation; previews and saved receipts
+expose implicit reliability pruning when a target is removed. Omitted settings
+remain partial updates, non-idempotent retries require explicit per-target
+opt-in, and URL selection does not certify running-guest adoption.
+
+## Service binding CLI configuration — 2026-10-16
+
+[ADR-1383](adr/1383-service-binding-cli-configuration.md) adds policy-file
+configuration for standalone service targets, declared-only authorization,
+caller restrictions and method/path scopes. Read-only previews preserve the
+API's omitted/null/empty distinctions; apply uses one partial app update and
+reports saved values. See the [configuration guide](service-binding-configuration.md).
+Runtime adoption and connectivity still require inspection and verification.
+
+## Queue canary CLI setup — 2026-10-16
+
+[ADR-1382](adr/1382-queue-canary-cli-deployment-intent.md) adds bounded revision
+pin lifetime updates and repeatable per-deployment queue canary declarations.
+Source archive validation precedes deployment mutations, previews expose the
+selected bindings, and redeployments require fresh opt-in. The queue worker
+quickstart now uses the CLI throughout; message publication retains separate
+explicit consent. Native acceptance qualification remains pending below.
+
+## Queue worker completion acceptance — 2026-10-15
+
+[ADR-1381](adr/1381-queue-worker-completion-acceptance.md) gives the shipped
+queue worker a safe reserved canary path with exact deployment opt-in and
+publication consent. The [native queue journey](ops/queue-bindings-native-acceptance.md)
+requires nine phases covering real parked delivery, exact handler completion,
+scheduler restart, durable receipt/message recovery, cancellation, expiry,
+completed-work replay rejection and a zero-traffic candidate's release fence.
+Fresh completion on the old serving revision cannot qualify the candidate.
+Independent invocation counts, source/build/runtime provenance, published Node
+base hashes, registered cleanup and host leak checks constrain the report.
+Portable starter/source/artifact and PostgreSQL-backed authority race checks,
+CLI quickstart materialization, API consent/receipt-recovery regressions,
+13 queue runner/verdict regressions, the existing
+49 PostgreSQL/storage runner/verdict regressions, real fragmented Go JSON parsing,
+Python lint and combined native-tag compilation passed. Tagged Go lint has no
+new findings; the same 18 existing issues remain. This workspace has no `/dev/kvm`;
+supported native execution and host leak qualification remain pending. No
+provisioning or rollout gate is enabled.
+
+## Python PostgreSQL native acceptance — 2026-10-15
+
+[ADR-1380](adr/1380-python-postgres-native-acceptance.md) extends the
+[PostgreSQL native journey](ops/managed-postgres-native-acceptance.md) to the
+unchanged Python starter. Nineteen phases now require the probe and both shipped
+starters, private-CA trust, release-only migration credentials, disconnected-pool
+restore, failed-hook cold fallback, running/parked rotation and scheduler recovery.
+Starter reads require current credential/version/process adoption ACKs, and
+independent SQL checks preserve the shared Node/Python notes dataset. Version-3
+reports/manifests require separate Python source and deployed app-layer hashes;
+old or partial Node-only evidence must be regenerated. Portable Go race checks,
+the exact materialized Python lifecycle/SQL recovery suite, real pinned-driver
+TLS success and negative trust cases, 23 PostgreSQL verdict regressions, 26 storage
+runner/verdict regressions, rollout/CLI checks, real fragmented Go JSON parsing,
+canonical starter drift, Python lint and combined native-tag compilation passed.
+Tagged Go lint has no new findings; the same 18 existing issues remain. This
+workspace has no `/dev/kvm`; supported native execution and host leak qualification
+remain pending. No provisioning or rollout gate is enabled.
+
+## PostgreSQL native acceptance repair — 2026-10-15
+
+[ADR-1379](adr/1379-postgres-native-acceptance-repair.md) repairs the existing
+thirteen-phase [PostgreSQL native harness](ops/managed-postgres-native-acceptance.md):
+the fixture CA is packaged under the shipped runtime COPY, provenance identifies
+actual OCI app layers/source archives and the minimal base, and the verdict
+handles bounded fragmented Go cleanup logs. Version-2 guest reports/manifests
+replace the inapplicable function-runtime base identities; old guest evidence
+cannot satisfy combined readiness. Portable source/provenance and cross-language
+Go race tests, 21 PostgreSQL verdict regressions, the existing 26 storage
+runner/verdict tests, rollout/CLI checks, real Go JSON cleanup-log parsing,
+Python lint and combined native-tag compilation passed. Tagged Go lint has no
+new findings; 18 existing issues remain. This workspace has no `/dev/kvm`; supported native execution and
+host leak qualification remain pending. No provisioning or rollout gate is enabled.
+
+## Native storage starter runtime matrix — 2026-10-15
+
+[ADR-1378](adr/1378-native-storage-starter-runtime-matrix.md) extends the
+[deployed storage acceptance journey](ops/object-storage-native-acceptance.md) to
+both unchanged Node and Python starters. Each runs eight phases with isolated
+fixtures, strict TLS trust and its own source/build/app-layer evidence. The
+Dockerfile starters are full OCI apps; this replaces the earlier harness's
+inapplicable function-runtime release lookup with actual deployed artifacts. Version-2
+reports require both cleanup identities, the same revision and shared artifact
+hashes; Node-only or reused Node evidence cannot qualify Python. Portable Go race
+checks, 26 storage runner/verdict tests, real Go JSON cleanup-log parsing,
+Python lint and combined native-tag compilation passed. Changed-file Go lint is
+clean; full tagged lint retains 18 unrelated existing issues. This workspace has no `/dev/kvm`;
+supported native execution and host leak qualification remain pending for both
+starters. No feature or rollout gate is enabled.
+
+## Python storage explicit TLS trust — 2026-10-15
+
+[ADR-1377](adr/1377-python-storage-explicit-tls-trust.md) makes the Python storage
+starter honor its explicit `AWS_CA_BUNDLE` while preserving certificate-chain and
+hostname verification. Default public CA trust remains enabled; invalid bundles
+and certificates fail adoption/readiness. New transports reread the configured
+file on reload and restore. The exact materialized starter passed all 35 portable
+tests, including signed HTTPS operations, negative trust cases, the real handler
+process and corrected-bundle recovery. Fresh dependency isolation, canonical drift,
+Python/Go lint and packaging checks passed. Live-provider and native VM execution
+remain separate qualification work.
+
+## Object-storage starter native acceptance harness — 2026-10-15
+
+[ADR-1376](adr/1376-native-object-storage-starter-acceptance.md) adds a strict
+[deployed storage acceptance journey](ops/object-storage-native-acceptance.md)
+for the unchanged Node starter, public credential rotation, real snapshot/restore,
+failed-hook cold fallback, independent byte/replay checks and credential cleanup.
+Portable race, runner/verdict checks and tagged compilation passed; changed-file
+lint is clean. These checks are separate from native execution. This
+implementation workspace has no `/dev/kvm`; supported native
+execution and host leak qualification remain pending. No feature or rollout gate
+is enabled. Python guest and live-provider qualification remain separate.
 
 ## Containers: image runs, process identity and Compose build context — 2026-10-15
 
@@ -115,22 +460,24 @@ lint and tagged compilation checks passed; [evidence and limits](ops/evidence/20
 record the qualification boundary. Supported native execution remains pending; this change
 does not enable production provisioning or alter Neon resources or billing.
 
-## Restore-aware Node PostgreSQL pools — 2026-10-16
+## PostgreSQL starter checkpoint drain — 2026-10-17
 
-`@gregale/sdk-node/postgres/runtime` extracts the starter's connection ownership
-into a reusable factory-backed adapter. The shipped starter drains sessions
-before checkpoint and reconnects with a bounded read probe on restore or thaw;
-SQL mutations are never replayed. The native gate now requires suite version 2
-and fourteen phases, including independent checkpoint drain and same-guest thaw
-checks. Supported native execution of these new phases remains pending. The
-portable SDK/package and TLS/SCRAM tests are separate from guest qualification;
-this change does not enable provisioning or alter provider resources or billing.
+The Node and Python PostgreSQL starters' first capture happened right after
+readiness, so every wake restored the startup check's open SQL session and
+orphaned its server backend. Both adapters now drain every session in a
+`before_checkpoint` hook (idempotent, retried after a failed drain, rotation
+refused until restore) next to the existing `after_restore` replacement.
+`secret-reload-node` bundled the restore code but never called it; it now
+serves both hooks. Declaring the checkpoint hook turns off warm captures for
+those apps (ADR-351). Unit tests and the TLS/SCRAM suites (Node and Python
+starters, concurrent functions) check that no server session survives the
+drain. Native VM capture evidence is pending.
 
 ## Concurrent backend cancellation — 2026-10-16
 
 The follow-up to PR #4768 holds shared-worker slots through cancellation
 cleanup. Node receives an abort signal, Python acknowledges completed cleanup,
-and function hook handlers receive socket-derived lifecycle context (ADR-1345).
+and function hook handlers receive socket-derived lifecycle context (ADR-1540).
 Portable interpreter/race tests and real TLS/SCRAM PostgreSQL integration check
 bounded admission, blocked-write rollback, healthy neighbours, pool replacement
 and worker-death recovery. [Portable evidence](ops/evidence/20261016-function-backend-concurrency/REPORT.md)
@@ -141,7 +488,7 @@ does not qualify VM-wide pool draining or durable post-response `waitUntil`.
 
 ## Node background completion foundation — 2026-10-16
 
-ADR-1346 adds a negotiated response/execution completion protocol. Portable
+ADR-1541 adds a negotiated response/execution completion protocol. Portable
 runner and generated-adapter tests cover early HTTP/1 and HTTP/2 response EOF,
 registered promises and children, rejection, central plan limits, neighbour
 isolation, deadlines/disconnect cleanup, crash recovery and recycle retention.
@@ -150,14 +497,14 @@ uncooperative workers are retired after the existing acknowledgement grace.
 Production runner mains leave activation disabled. Acknowledged VM registration,
 VM-wide checkpoint protection, Python background execution and native snapshot
 qualification remain separate work. No deployment or durable execution is
-claimed. See [ADR-1346](adr/1346-function-background-completion-protocol.md) and
+claimed. See [ADR-1541](adr/1541-function-background-completion-protocol.md) and
 the [acceptance procedure](ops/function-backend-concurrency-acceptance.md).
 [Portable evidence](ops/evidence/20261016-function-background-completion/REPORT.md)
 records the disabled activation boundary and native prerequisite failures.
 
 ## Node VM execution lifetime and checkpoint admission — 2026-10-16
 
-[ADR-1347](adr/1347-function-vm-execution-lifetime.md) adds host-acknowledged,
+[ADR-1542](adr/1542-function-vm-execution-lifetime.md) adds host-acknowledged,
 incarnation-scoped execution reservations before handler dispatch. HTTP EOF
 does not release them; actual worker completion/cancellation does. Lost replies,
 late messages and runner generation changes retain ownership conservatively.
@@ -179,7 +526,7 @@ not qualified by these portable checks. No deployment was performed.
 
 ## Automatic Node function PostgreSQL lifecycle — 2026-10-17
 
-[ADR-1348](adr/1348-function-postgres-resource-lifecycle.md) adds automatic SDK
+[ADR-1543](adr/1543-function-postgres-resource-lifecycle.md) adds automatic SDK
 pool registration before driver creation in qualified generated adapters. It
 supplies default lifecycle endpoints, preserves custom hooks, consumes their
 response cleanup before drainage and waits for every registered pool in every
@@ -2078,3 +2425,18 @@ that unattributed gap. Open evidence: a `make test-metal` +
 `make leakcheck` run on a native KVM host, then a re-run of
 `scripts/ops/wake_performance_gate.py` to record the new
 `stage_pre_boot_files_ms` distribution against the rc.98 baseline.
+
+### Recoverable operator force-park (ADR-1525)
+
+Force-park now has an immutable VM-generation execution journal, fenced claims,
+verified capture/cleanup receipts and atomic terminal state, intent, audit and
+snapshot publication handoff. Fresh traffic cancels before execution; a proven
+stop requiring cold boot is distinct from a captured park and an uncertain
+outcome. Reclaim never repeats a started VM effect. See
+[operator park recovery](ops/operator-park-recovery.md) for coordinated rollout.
+Targeted portable memory/PostgreSQL, scheduler, manager, RPC, API/CLI and race
+checks pass, as do differential lint, SDK validation, OpenAPI parity and schema
+parity. Vmmd and the metal tests compile; the new metal tests skip without
+staged VM images. Native lifecycle qualification remains pending: this workspace
+has no `/dev/kvm`, and leak inspection fails because `/dev/loop0`–`/dev/loop7`
+are unavailable. Migration `20261017120000001` has not been deployed.

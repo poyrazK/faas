@@ -160,7 +160,7 @@ func waitTCP(t *testing.T, addr string, d time.Duration, proc ...*exec.Cmd) {
 // *before* any KVM/listener binding, so the test is CI-safe (no
 // /dev/kvm needed, no root needed).
 func TestMain(m *testing.M) {
-	// adr: 1352
+	// adr: 1547
 	// The prepared two-host fixture uses already-running daemons. Avoid
 	// building unrelated local services, and reject a broader test selection.
 	if os.Getenv("FAAS_REQUIRE_FUNCTION_MIGRATION_NATIVE") == "1" {

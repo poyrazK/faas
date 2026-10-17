@@ -34,7 +34,7 @@ These numbers come from the financial model and are **not negotiable at implemen
 | Expected resident concurrency (planning) | 0.02 / 0.15 / 0.60 / 3.00 | telemetry comparison only |
 | Continuous app ownership recovery (ADR-421) | `OwnershipRecoveryIntervalSeconds=5`, `OwnershipRecoveryTimeoutSeconds=30`, `OwnershipRecoveryStoreTimeoutSeconds=5`; existing rebalance cooldown 60 s and batch limit 50 | `schedd` startup and periodic scan, fair app-ID pages, node-health-fenced ownership transfer, existing routing invalidation and durable service recovery |
 | Bare-metal service recovery capacity (ADR-422) | `ServiceCapacityMinimumHosts=2`; existing VM overhead, startup CPU, plan guest vCPU and CPU overcommit; heartbeat freshness 90 s | Atomic fleet policy and desired-intent reservations; conservative slots preserve one-host recovery; existing declared replicas may recover while degraded |
-| Overage meter | €0.01 per GB-RAM-hour | `meterd` → the selected `billing.Provider` (Polar by default) |
+| Overage meter | $0.01 per GB-RAM-hour (USD, ADR-1430) | `meterd` → the selected `billing.Provider` (Polar by default) |
 | Build cost envelope | builds fit inside control-plane + headroom, never tenant RAM | `builderd` admission §9 |
 
 **Three numbers the business is fragile to** (founding doc §5): fleet snapshot size, resident concurrency per customer, churn. The first two are produced by this system — §12 makes them first-class metrics from day one.
@@ -1157,6 +1157,7 @@ This subsection is the cross-reference page for the three v1.1 ADRs. Steady-stat
 | Dependency install step (npm/pip/go mod/cargo) exited non-zero | `pkg/builderd/vm_metal.go::classifyBuildFailure` extended with the `pkg` discriminator | RFC 7807 `dep_install_failed` 422 with `pkg` (npm/pip/go/cargo) on the wire. CLI recommends `npm install` locally to reproduce | error-explanations cluster, amendment 1 |
 | App boot timeout (readiness probe waited the full `startup_timeout_s` and `/healthz` never returned 200) | `pkg/sched/engine.go::KillStuck` carries `StuckReason` into the typed Problem | RFC 7807 `app_startup_timeout` 422 distinct from idle timeout (which parks). CLI hints to increase `startup_timeout_s` or defer boot work until after the `/healthz` listener is up | error-explanations cluster, amendment 1 |
 | App process exited during startup (crash loop, or a non-zero exit in the characterization report) | `pkg/fcvm/vmm.go::guestStoppedDuringStartup` requires guest-init's supervisor restart/crash-loop lines; `characterizationBootOutcome` reads the reported exit code | RFC 7807 `app_startup_crash` 422 carrying the workload's last output lines. A guest that died without supervisor output (overlay/pivot/init failure) stays a platform error. Customer-caused codes (`api.CustomerCausedDeploymentFailureCodes`) are excluded from the public status page's deployment-success SLO (§12) | error-explanations cluster, amendment 1 |
+| Workload behavior contradicts its declared `execution_mode` (a worker bound a port or exited cleanly, a job served) | `pkg/fcvm/vmm.go::characterizationBootOutcome` compares the mode with the characterized class | RFC 7807 `execution_mode_conflict` 422, customer-caused (excluded from the public status page like `app_startup_crash`); production-us hunt #10 (H10-135) found it surfacing as `internal` | error-explanations cluster, amendment 1 |
 | Tarball or base image is a stateful shape (Dockerfile `VOLUME`, top-level `data/` / `db/` / `var/`, or a stateful base image) | `pkg/oci` + G13 stateless-only gate | RFC 7807 `stateless_only_violation` 422 (already shipped pre-cluster). Now flows through the same 5-line renderer from `pkg/whycopy` row `stateless_only_violation` so the prose is uniform with the new codes | error-explanations cluster, amendment 1 |
 
 **Operator runbook pointers:**
@@ -1506,7 +1507,7 @@ The §9.A payoff multiplies with each compute box added at M9. On a single-node 
 ## 10. Metering and billing detail
 
 - Unit: GB-RAM-hour, billed on provisioned `ram_mb + 8` per running second (§4.7). Definition published verbatim in docs — no surprise-RSS billing.
-- Included quotas per plan per calendar month (UTC): 5 / 50 / 250 / 1,500 GB-h. Overage €0.01/GB-h, metered in millicents, provider usage records hourly, idempotent by `(subscription_item, hour)`. An hour is delivered only once every minute up to its end is final — recorded compute-complete or older than `MeterUsageFinalAfter` — so a late catch-up row never lands in a delivered hour (ADR-1162). Deleting an app keeps its usage rows; they are the month's billing evidence.
+- Included quotas per plan per calendar month (UTC): 20 / 200 / 1,000 / 3,000 GB-h (ADR-1430). Overage $0.01/GB-h, metered in USD millicents, provider usage records hourly, idempotent by `(subscription_item, hour)`. An hour is delivered only once every minute up to its end is final — recorded compute-complete or older than `MeterUsageFinalAfter` — so a late catch-up row never lands in a delivered hour (ADR-1162). Deleting an app keeps its usage rows; they are the month's billing evidence.
 - When the plan changes mid-month, the month's allowance for usage up to an instant is the largest plan grant recorded before it (financial price activations): a downgrade never shrinks the month's allowance, an upgrade applies from its activation and does not refund overage already billed (ADR-1162).
 - Requests are counted but not billed (v1). Canonical customer egress is `usage_minutes.net_tx_bytes`; gateway `tx_bytes` remains a diagnostic subset and is never added. Polar egress billing is independently gated `off` (default) / `shadow` / `live`, with explicit per-plan monthly GiB allowances and a whole-cent per-GiB price. Shadow records local, non-retroactive receipts and sends no provider events. Live uses a separate Polar meter. Stripe/Paddle remain compute-only. The host uplink and per-plan shaping (10/25/100/250 Mbit, §7) are unchanged.
 - Plan changes: upgrade immediate with provider-managed proration (Polar schedules paid-to-paid changes for the subscription period end; the local plan flips on its webhook); downgrade at period end; quota checks (deployed count, RAM sizes) run pre-downgrade and block with a task list ("delete 3 apps or reduce RAM…").
@@ -1928,6 +1929,8 @@ request therefore does not create an instance transition or resident usage.
 | headroom (inside tenant slice, above admission line) | ≈ 8.4 GB | tenant spike absorption and restore safety margin; builder VMs do not borrow from this slice |
 
 `memory.max` on each slice makes the ledger real: a control-plane leak OOMs the control plane, never tenants — and vice versa.
+
+A multi-box compute host derives its own slice from the same arithmetic with a smaller reserve (`ComputeNodeDaemonReserveMB` + `BuilderSlotReserveMB`, `pkg/api/limits.go`). A compute host that runs the app edge (ADR-1343) reserves `ComputeEdgeDaemonReserveMB` (256 MB) more, and registers its CPUs less `ComputeEdgeCPUHoldbackMillicores` (1,000, rounded up to whole CPUs) for tenant admission.
 
 The per-VM request-concurrency bound (`concurrency_per_vm`, issue #559) is independent of the RAM ledger — a customer's `concurrency_per_vm` ceiling is the platform-advertised listener-level bound (Free 4 / Hobby 5 / Pro 25 / Scale 80), set by plan tier rather than by VM RAM. See §4.9.1 for the runner-level concurrency model.
 
@@ -2838,3 +2841,177 @@ Readiness follow-up queue (ADR-519): account and customer readers can aggregate 
 
 
 Readiness due reminders (ADR-519): one durable marker per original notification/normalized deadline is published by a separate apid worker, with a 100-reminder batch budget, 30-second polling interval and 10-second publication timeout. Retries and restarts preserve stable reminder identity. Coordination edits and publication serialize on the notification row; rescheduling or clearing retires the marker, while unchanged deadlines preserve it. Follow-up queue reads expose optional reminder metadata, filtered due-reminder counts and reminder-only selection under existing account/customer/environment authorization. Dashboard counts and the reminder view link to original notifications and current evidence. Reminders share source notification retention and do not advance inbox sequences, mutate application evidence or authorize execution. No new migration is required.
+
+
+## Operator cold-boot recovery (ADR-1523, 2026-10-17)
+
+A claimed `force_cold_boot` advances the deployment snapshot recovery generation,
+invalidates both tiers and their replicas, clears snapshot-miss backoff, saves
+its exact IDs and generation, completes the intent and enqueues its outcome in
+one transaction. Replays return the original receipt after outbox pruning.
+Wake and prime bind immutable instance/wake lineage before vmmd dispatch;
+publication and warm/frozen promotion require the current generation. Delayed
+captures and late readiness cannot turn a pre-recovery process into a fresh
+source. Running processes remain serving; new boots use rootfs until a capture
+of the new generation is published. Generation zero preserves legacy behavior.
+See [ADR-1523](adr/1523-durable-operator-cold-boot-recovery.md) and its
+[recovery/rollout guide](ops/operator-cold-boot-recovery.md). Native KVM and leak
+qualification remains pending.
+
+## Operator restart execution recovery (ADR-1522, 2026-10-17)
+
+For `force_restart` operator intents, schedd commits the original instance, node,
+wake, vmmd generation and exact snapshot invalidation before authorizing teardown.
+Vmmd alone records physical acknowledgement. Schedd atomically commits the proven
+STOPPED transition, command outcome and audit handoff; it releases admission after
+commit. Started work without an acknowledgement is `outcome_unknown` and cannot
+be redispatched automatically. Late physical evidence permits completion only
+against the original target. See [ADR-1522](adr/1522-recoverable-operator-restart-execution.md)
+and its [operator guide](ops/operator-restart-recovery.md) for the protocol, limits
+and coordinated rollout. Native lifecycle qualification remains required.
+
+## Operator recovery submission receipts (ADR-1524, 2026-10-17)
+
+Force-restart, force-park and force-cold-boot HTTP acceptance commits the intent,
+original response bytes and attributed request audit handoff in one transaction.
+Actor-scoped request keys bind the action, requested target and normalized reason.
+Matching retries replay before mutable target validation; changed parameters
+return 409. Receipts have no TTL and survive audit queue pruning. Every request,
+including replay, retains MFA, admin scope, operator allowlist, recent session
+step-up and origin checks. gregalectl exposes --request-key and instances wait
+--intent-id. See [ADR-1524](adr/1524-durable-operator-recovery-submissions.md) and
+its [upgrade and retry guide](ops/operator-recovery-submissions.md) for the
+legacy request boundary and coordinated API rollout.
+
+### ADR-1525 operator force-park execution
+
+Asynchronous `force_park` intents follow
+[ADR-1525](adr/1525-recoverable-operator-park-execution.md): claim-fenced immutable
+VM generation plans, explicit fresh-traffic cancellation, generation-bound
+capture/stop, durable cleanup evidence, and atomic terminal state, intent, audit
+and snapshot publication handoff. PARKED requires capture plus confirmed cleanup;
+STOPPED reports `cold_boot_required`. Started effects without receipts remain
+`outcome_unknown` and are never automatically repeated. Admission is released
+after the completion commit. Native lifecycle and leak qualification remain a
+rollout gate; see [operator park recovery](ops/operator-park-recovery.md).
+
+
+## Atomic operator node maintenance (ADR-1526, 2026-10-17)
+
+Schedd executes node drain, force-drain, activation and retirement intents in one
+transaction with current-claim validation, node lifecycle/precondition checks,
+an immutable execution receipt, terminal result and durable outcome audit handoff.
+Retries return the original receipt before inspecting current node lifecycle;
+reclaimed workers cannot mutate or complete. A successful drain intent acknowledges
+the lifecycle request; the recovery controller separately completes evacuation.
+Retirement rechecks live instances and protects default-local; retired nodes
+cannot be revived by force-drain. Unfinished legacy node intents are quarantined
+as outcome_unknown during coordinated upgrade. See
+[ADR-1526](adr/1526-atomic-operator-node-maintenance.md) and the
+[rollout guide](ops/operator-node-maintenance.md).
+
+## Generation-fenced node completion (ADR-1527, 2026-10-17)
+
+RecoveryRunner captures the node's separate lifecycle generation before a sweep.
+The database owns this positive generation and advances it on lifecycle or drain/
+recovery initiation changes. Completion validates that cycle and current remaining
+work under the capacity-policy lock before the node lock, then commits the target
+lifecycle, immutable receipt and completion audit handoff together. Drain reaches
+maintenance only with zero resident rows, including warm/frozen; recovery retains
+its existing migrating/snapshotting exclusion and healthy local-running behavior.
+Legacy unfenced completion writes are rejected. Retries return the original receipt
+before inspecting mutable node state, even after node deletion or audit retention.
+Completion persistence is database-only and does not expand migration/recreation
+RPC behavior. ADR-1528 below adds transactional fencing to later admissions.
+
+Old schedulers must be quiesced during the coordinated migration. Existing nodes
+begin at generation 1 without invented historical receipts; advanced generations
+and completion receipts block downgrade. See
+[ADR-1527](adr/1527-generation-fenced-node-completion.md) and the
+[node completion guide](ops/node-lifecycle-completion.md).
+
+## Node admission generation fencing (ADR-1528, 2026-10-17)
+
+Placement carries the selected node's lifecycle generation through instance
+creation and migration destination ownership. The admitting transaction takes the
+capacity-policy lock before the node and reservation locks, requires an active or
+recovering node, and validates the captured generation. Its node share lock holds
+that decision stable through commit. Disabled capacity protection retains shared
+policy locking. Existing operation/qualification authority locks keep their order.
+
+A database trigger guards every resident insert, destination change and
+nonresident-to-resident transition. Existing residents may continue transitions
+on the same node during maintenance so publication and cleanup can finish. Direct
+calls without a placement binding perform a fresh lifecycle check; cached scheduler
+decisions also require their original generation, including after a node returns
+to active in a later cycle.
+
+Wake, prime and warm-fill admission retry definite stale-placement refusals at
+most three times, select current database inventory and release failed restore
+pressure. Job retries release their preclaimed lease and ledger slot while leaving
+the task queued. Uncertain writes do not authorize replay. Qualification flows
+retain their private-node restrictions. Migration validates its destination before
+pausing the source and again at ownership commit, then uses existing durable
+resolution and adopted-VM cleanup on refusal. ADR-1529 below adds a durable
+destination reservation before the VM RPC; native migration qualification remains required.
+
+Quiesce old admission/job/migration/recovery dispatchers for the coordinated
+migration and inspect historical resident inventory before removing a host.
+See [ADR-1528](adr/1528-node-admission-generation-fencing.md) and the
+[admission rollout guide](ops/node-admission-fencing.md).
+
+## Durable incoming migration reservations (ADR-1529, 2026-10-17)
+
+Schedd persists destination generation, both node/wake identities, source lease,
+snapshot keys, resource bounds, request digest and deadline before adoption.
+Pending reservations consume destination RAM/CPU/vCPU and protected fleet
+headroom, and block maintenance completion, retirement and destination deletion.
+Ordinary admission shares their transactional capacity guard.
+
+An atomic reserved-to-adopting transition grants one physical dispatch. Unknown
+dispatches retain capacity; acknowledged requests replay their original response.
+The destination uses an fsynced incoming journal and per-instance lock shared by
+native preparation and retirement. Physical generation binding precedes launch
+effects. Cleanup revokes delayed creation and requires original generation exit
+and resource-removal proof; missing/corrupt evidence or a replacement generation
+cannot authorize cleanup acknowledgement.
+
+Ownership and runtime-input publication validate the adopted reservation and
+consume it in one transaction. Admitted resource floors remain on the resident
+instance, and placement/RAM admission retain any charge above legacy row values.
+Cleanup fences a late commit. Source resume, lease
+replacement/deletion and watchdog transitions retain unresolved attempts. Expiry
+only schedules bounded destination reconciliation; it never releases capacity.
+Internal adoption/retirement RPCs carry admission authority. Production dispatchers
+and registered receivers refuse missing durable ownership support.
+
+Upgrade schedd and vmmd together after settling historical handoffs. Preserve
+native journals and retained receipts. Native migration, daemon/process-death and
+leak qualification remains a deployment gate. See
+[ADR-1529](adr/1529-durable-inbound-migration-reservations.md) and the
+[migration recovery guide](ops/inbound-migration-reservations.md).
+
+## Durable migration source retirement (ADR-1530, 2026-10-17)
+
+Before source capture, registered vmmd binds its lease to the source node/wake,
+native generation and original physical lease digest. A durable source record
+captures RAM/CPU/vCPU bounds. Ownership commit atomically marks that source
+retiring. Its physical resources remain charged after the routing row moves,
+including ordinary/incoming admission and protected fleet capacity. Matching
+original live rows count once. Pending source records and source leases block
+maintenance completion, retirement and node deletion.
+
+Cleanup requires original native revocation, exit and resource-removal proof.
+Private fsynced source receipts survive daemon replacement and are replayed
+without touching later VM generations. Ordinary preparation retains old cleanup
+proof before replacing its native frame. Source resume and retirement require their matching durable authority. Only a
+running or draining source owner can resume; parked rollbacks retire their
+original physical VM. Delayed capture cannot follow a terminal source receipt.
+
+Source reconciliation runs at startup and in bounded sweeps, including committed
+retirements whose lease has not expired. Failed cleanup or acknowledgement retains
+durable authority; expiry never releases it. Upgrade both sides together after
+settling historical handoffs, preserve journals and receipts, and qualify native
+migration/process-death/leak behavior before deployment. See
+[ADR-1530](adr/1530-durable-migration-source-retirement.md) and the
+[source retirement guide](ops/migration-source-retirement.md).

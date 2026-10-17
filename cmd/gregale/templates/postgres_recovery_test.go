@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -34,9 +35,42 @@ func TestPostgresStarterRestoreManifest(t *testing.T) {
 	if hook == nil || hook.Path != "/internal/after-restore" || hook.TimeoutMS != 2000 {
 		t.Fatalf("starter hook = %#v", hook)
 	}
-	checkpoint := manifest.Lifecycle.ToAPI().BeforeCheckpoint
-	if checkpoint == nil || checkpoint.Path != "/internal/before-checkpoint" || checkpoint.TimeoutMS != 2000 {
-		t.Fatalf("starter checkpoint hook = %#v", checkpoint)
+	// The drain keeps SQL sessions out of every capture (ADR-351).
+	drain := manifest.Lifecycle.ToAPI().BeforeCheckpoint
+	if drain == nil || drain.Path != "/internal/before-checkpoint" || drain.TimeoutMS != 2000 {
+		t.Fatalf("starter checkpoint hook = %#v", drain)
+	}
+	dockerfile, err := os.ReadFile(filepath.Join(dest, "Dockerfile"))
+	if err != nil || !strings.Contains(string(dockerfile), `com.gregale.secret-reload-signal="SIGHUP"`) ||
+		!strings.Contains(string(dockerfile), `com.gregale.secret-reload-readiness="required"`) ||
+		!strings.Contains(string(dockerfile), `COPY runtime ./runtime`) {
+		t.Fatal("PostgreSQL image must include its runtime and opt into startup-safe reload", err)
+	}
+}
+
+// secret-reload-node shares the REST starter's database adapter, so it must
+// call the same drain and restore hooks; without them a wake reused the pool
+// captured in its snapshot.
+func TestSecretReloadNodeStarterLifecycleHooks(t *testing.T) {
+	dest := filepath.Join(t.TempDir(), "starter")
+	if err := Materialize("secret-reload-node", dest); err != nil {
+		t.Fatal(err)
+	}
+	manifest, present, err := gregalemanifest.Load(dest)
+	if err != nil || !present || manifest == nil || manifest.Lifecycle == nil {
+		t.Fatalf("load generated manifest: %v, present=%v", err, present)
+	}
+	if err := manifest.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	hooks := manifest.Lifecycle.ToAPI()
+	if hooks.BeforeCheckpoint == nil || hooks.BeforeCheckpoint.Path != "/internal/before-checkpoint" || hooks.BeforeCheckpoint.TimeoutMS != 2000 ||
+		hooks.AfterRestore == nil || hooks.AfterRestore.Path != "/internal/after-restore" || hooks.AfterRestore.TimeoutMS != 2000 {
+		t.Fatalf("starter hooks = before %#v, after %#v", hooks.BeforeCheckpoint, hooks.AfterRestore)
+	}
+	handler, err := os.ReadFile(filepath.Join(dest, "handler.js"))
+	if err != nil || !strings.Contains(string(handler), `"/internal/before-checkpoint"`) || !strings.Contains(string(handler), `"/internal/after-restore"`) {
+		t.Fatal("handler must serve both lifecycle hooks", err)
 	}
 }
 

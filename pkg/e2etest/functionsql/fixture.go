@@ -127,7 +127,7 @@ func (f *Fixture) Rows(ctx context.Context, t *testing.T) map[string]int {
 func Files(t *testing.T) map[string]string {
 	t.Helper()
 	files := map[string]string{"handler.js": Handler}
-	for _, name := range []string{"package.json", "package-lock.json", "runtime/postgres-pool-runtime.js"} {
+	for _, name := range []string{"package.json", "package-lock.json", "runtime/postgres-pool-runtime.js", "runtime/binding-client-runtime.js", "runtime/secret-reload-runtime.js"} {
 		data, err := templates.FS.ReadFile("rest-api-postgres/" + name)
 		if err != nil {
 			t.Fatal(err)

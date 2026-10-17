@@ -1,6 +1,6 @@
 package vmmdgrpc
 
-// adr: 1352. schedd's existing authenticated migration RPC carries each phase.
+// adr: 1547. schedd's existing authenticated migration RPC carries each phase.
 
 import (
 	"context"

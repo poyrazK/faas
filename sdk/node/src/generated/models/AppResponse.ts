@@ -21,6 +21,10 @@ import type { ServiceReliabilityPolicies } from './ServiceReliabilityPolicies.js
  * An app: slug, type, runtime (for functions), RAM/cpu/idle-timeout config, current state, last-deploy pointer, per-app outbound CIDR allowlist (ADR-031 + ADR-032), and reactive scale-up trigger targets (issue #169 / #172).
  */
 export type AppResponse = {
+  /**
+   * Opaque fingerprint of app identity, source ownership and service binding settings. Use as the atomic precondition for a reviewed service-only update.
+   */
+  service_binding_fingerprint?: string;
   id: string;
   slug: string;
   type: 'app' | 'function';

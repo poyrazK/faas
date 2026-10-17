@@ -1,6 +1,6 @@
 package functionmigration
 
-// adr: 1352
+// adr: 1547
 // An in-memory gRPC transport verifies fixture wiring only. It supplies no VM,
 // PostgreSQL, packet-loss or native acceptance evidence.
 

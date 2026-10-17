@@ -12,7 +12,7 @@ import (
 )
 
 const lockFunctionMigrationAdmissionLease = `-- name: LockFunctionMigrationAdmissionLease :one
-SELECT instance_id, lease_token, source_node_id, created_at, lease_expires_at, mem_storage_key, vmstate_storage_key, pending FROM migration_leases
+SELECT instance_id, lease_token, source_node_id, created_at, lease_expires_at, mem_storage_key, vmstate_storage_key, pending, resume_fenced FROM migration_leases
 WHERE instance_id=$1::uuid AND lease_token=$2::text FOR UPDATE
 `
 
@@ -21,7 +21,7 @@ type LockFunctionMigrationAdmissionLeaseParams struct {
 	LeaseToken string
 }
 
-// ADR-1351: lock current native inputs/instance first, then the parent lease and source.
+// ADR-1546: lock current native inputs/instance first, then the parent lease and source.
 func (q *Queries) LockFunctionMigrationAdmissionLease(ctx context.Context, db DBTX, arg LockFunctionMigrationAdmissionLeaseParams) (MigrationLease, error) {
 	row := db.QueryRow(ctx, lockFunctionMigrationAdmissionLease, arg.InstanceID, arg.LeaseToken)
 	var i MigrationLease
@@ -34,6 +34,7 @@ func (q *Queries) LockFunctionMigrationAdmissionLease(ctx context.Context, db DB
 		&i.MemStorageKey,
 		&i.VmstateStorageKey,
 		&i.Pending,
+		&i.ResumeFenced,
 	)
 	return i, err
 }

@@ -5,11 +5,14 @@
 import type { ChangeManagedPostgresComputePolicyRequest } from '../models/ChangeManagedPostgresComputePolicyRequest.js';
 import type { CreateManagedPostgresBindingRequest } from '../models/CreateManagedPostgresBindingRequest.js';
 import type { CreateManagedPostgresDatabaseRequest } from '../models/CreateManagedPostgresDatabaseRequest.js';
+import type { DataAPIConnectionBudgets } from '../models/DataAPIConnectionBudgets.js';
 import type { ManagedPostgresBinding } from '../models/ManagedPostgresBinding.js';
 import type { ManagedPostgresBindingList } from '../models/ManagedPostgresBindingList.js';
 import type { ManagedPostgresCapabilities } from '../models/ManagedPostgresCapabilities.js';
 import type { ManagedPostgresComputePolicyChange } from '../models/ManagedPostgresComputePolicyChange.js';
+import type { ManagedPostgresConnectionBudget } from '../models/ManagedPostgresConnectionBudget.js';
 import type { ManagedPostgresCutover } from '../models/ManagedPostgresCutover.js';
+import type { ManagedPostgresCutoverPreflight } from '../models/ManagedPostgresCutoverPreflight.js';
 import type { ManagedPostgresDatabase } from '../models/ManagedPostgresDatabase.js';
 import type { ManagedPostgresDatabaseList } from '../models/ManagedPostgresDatabaseList.js';
 import type { ManagedPostgresResize } from '../models/ManagedPostgresResize.js';
@@ -229,6 +232,74 @@ export class ManagedPostgresService {
     });
   }
   /**
+   * Queue a restore activation preflight
+   * Requires managed PostgreSQL manage scope and verified email. Durably
+   * queues catalog inspection, including while provider provisioning is
+   * disabled. Concurrent pending requests keep the revision; requesting a
+   * completed check starts a new revision. Does not fence admissions, call
+   * a provider, publish bindings or resume workloads. Activation remains
+   * disabled. Idempotency replay returns the original response; poll GET
+   * for latest progress. Cancelling or cancelled cutovers conflict.
+   *
+   * @returns Problem Authentication, state conflict or cutover error
+   * @returns ManagedPostgresCutoverPreflight Durable preflight request; Cache-Control no-store
+   * @throws ApiError
+   */
+  public static requestManagedPostgresCutoverPreflight({
+    id,
+    idempotencyKey,
+  }: {
+    /**
+     * Gregale managed PostgreSQL cutover UUID.
+     */
+    id: string,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<Problem | ManagedPostgresCutoverPreflight> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/postgres/cutovers/{id}/preflight',
+      path: {
+        'id': id,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+    });
+  }
+  /**
+   * Read restore activation preflight findings
+   * Requires managed PostgreSQL read scope. Findings describe a historical
+   * catalog snapshot. Positive fields remain historical when stale is true.
+   * Staleness is recomputed for expiry, cutover changes and cancellation.
+   * Even fresh findings never authorize activation or prove writer isolation.
+   * Returns 404 if no preflight has been requested.
+   *
+   * @returns ManagedPostgresCutoverPreflight Durable preflight findings; Cache-Control no-store
+   * @returns Problem Authentication or preflight status error
+   * @throws ApiError
+   */
+  public static getManagedPostgresCutoverPreflight({
+    id,
+  }: {
+    /**
+     * Gregale managed PostgreSQL cutover UUID.
+     */
+    id: string,
+  }): CancelablePromise<ManagedPostgresCutoverPreflight | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/postgres/cutovers/{id}/preflight',
+      path: {
+        'id': id,
+      },
+    });
+  }
+  /**
    * Cancel a managed PostgreSQL cutover
    * Requires managed PostgreSQL manage scope. Queue revocation of all staged target credentials. Cleanup remains available with provisioning disabled. Source bindings and app secrets remain unchanged.
    * @returns Problem Authentication, unknown cutover, or cancellation conflict
@@ -423,6 +494,52 @@ export class ManagedPostgresService {
       },
       body: requestBody,
       mediaType: 'application/json',
+    });
+  }
+  /**
+   * Inspect read-only database connection planning
+   * Account-scoped metadata only; requires managed PostgreSQL read permission. Does not wake SQL, reserve connections or change admission. Current adapters have no verified usable-capacity observation and return unknown with canonical pool estimates. Database snapshots are independent.
+   * @returns ManagedPostgresConnectionBudget Bounded credential-free planning and explicit unknown coverage
+   * @returns Problem Authentication, ownership or metadata read error
+   * @throws ApiError
+   */
+  public static getManagedPostgresConnectionBudget({
+    id,
+  }: {
+    /**
+     * Opaque Gregale managed PostgreSQL resource identifier.
+     */
+    id: string,
+  }): CancelablePromise<ManagedPostgresConnectionBudget | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/postgres/databases/{id}/connection-budget',
+      path: {
+        'id': id,
+      },
+    });
+  }
+  /**
+   * Inspect shared database budgets for Data API bindings
+   * Lists independently sampled planning reports for the app's shared managed Data API databases, including other bindings in the same account. Requires managed PostgreSQL read permission. Reads metadata without waking SQL or changing admission; current adapters retain unknown capacity.
+   * @returns DataAPIConnectionBudgets Per-database estimates and unknown coverage for this app's managed Data API bindings
+   * @returns Problem Data API app lookup, permission or budget inventory failure
+   * @throws ApiError
+   */
+  public static getAppDataApiConnectionBudgets({
+    slug,
+  }: {
+    /**
+     * App whose managed Data API bindings select the shared database reports.
+     */
+    slug: string,
+  }): CancelablePromise<DataAPIConnectionBudgets | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/data-api/connection-budget',
+      path: {
+        'slug': slug,
+      },
     });
   }
   /**

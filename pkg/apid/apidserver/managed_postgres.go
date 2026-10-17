@@ -194,24 +194,24 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 	return service, reconciler, bindingService, bindingReconciler, usageCollector, healthCollector, nil
 }
 
-// managedPostgresUsageCeilings converts customer-facing storage entitlements
-// into the canonical byte-second meter. Compute, restore-history, egress, and
+// managedPostgresUsageCeilings converts customer-facing entitlements into the
+// canonical meters: the account's pooled storage held for a whole billing
+// month, and its monthly compute units (ADR-1430). Restore history, egress and
 // spend remain operator-configured COGS ceilings; the intersection is applied
 // in managedpostgres so adapters never learn about Gregale plan names.
 func managedPostgresUsageCeilings(limits api.ManagedPostgresPlanLimits) managedpostgres.UsageCeilings {
-	if limits.StorageLimitBytes <= 0 || limits.DatabasesMax <= 0 {
+	if limits.DatabasesMax <= 0 {
 		return managedpostgres.UsageCeilings{}
 	}
 	const secondsPerBillingMonth = int64(31 * 24 * time.Hour / time.Second)
-	accountStorageBytes := limits.StorageLimitBytes
-	if accountStorageBytes > math.MaxInt64/int64(limits.DatabasesMax) {
-		return managedpostgres.UsageCeilings{}
+	ceilings := managedpostgres.UsageCeilings{}
+	if limits.MonthlyComputeUnitSeconds > 0 {
+		ceilings.MaxMonthlyComputeUnitSeconds = limits.MonthlyComputeUnitSeconds
 	}
-	accountStorageBytes *= int64(limits.DatabasesMax)
-	if accountStorageBytes > math.MaxInt64/secondsPerBillingMonth {
-		return managedpostgres.UsageCeilings{}
+	if limits.StorageLimitBytes > 0 && limits.StorageLimitBytes <= math.MaxInt64/secondsPerBillingMonth {
+		ceilings.MaxMonthlyStorageByteSeconds = limits.StorageLimitBytes * secondsPerBillingMonth
 	}
-	return managedpostgres.UsageCeilings{MaxMonthlyStorageByteSeconds: accountStorageBytes * secondsPerBillingMonth}
+	return ceilings
 }
 
 func (s *server) WithManagedPostgres(service *managedpostgres.Service, reconciler *managedpostgres.Reconciler, bindingService *managedpostgres.BindingService, bindingReconciler *managedpostgres.BindingReconciler, usageCollector *managedpostgres.UsageCollector, healthCollector *managedpostgres.HealthCollector) *server {

@@ -1,6 +1,6 @@
 package vmmdgrpc
 
-// adr: 1350. vmmd reads schedd's fence; only vmmd touches the physical source.
+// adr: 1545. vmmd reads schedd's fence; only vmmd touches the physical source.
 
 import (
 	"context"

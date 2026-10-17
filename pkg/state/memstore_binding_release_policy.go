@@ -23,6 +23,7 @@ func (m *MemStore) bindingReleasePolicyLocked(appID, scope string) api.BindingRe
 		p.UpdatedAt = &stamp
 	}
 	p.ObjectStorageRequirements = maps.Clone(p.ObjectStorageRequirements)
+	p.QueueRequirements = maps.Clone(p.QueueRequirements)
 	return p
 }
 func (m *MemStore) GetBindingReleasePolicy(_ context.Context, accountID, appID, scope string) (api.BindingReleasePolicy, error) {
@@ -55,6 +56,7 @@ func (m *MemStore) SetBindingReleasePolicy(_ context.Context, accountID, appID, 
 	now := time.Now().UTC()
 	p.Mode, p.Revision, p.MaxVerificationAge, p.RequireApplicationAck, p.UpdatedAt, p.Reason = r.Mode, p.Revision+1, age.String(), r.RequireApplicationAck, &now, r.Reason
 	p.ObjectStorageRequirements = maps.Clone(r.ObjectStorageRequirements)
+	p.QueueRequirements = maps.Clone(r.QueueRequirements)
 	if m.bindingReleasePolicies == nil {
 		m.bindingReleasePolicies = map[bindingReleasePolicyKey]api.BindingReleasePolicy{}
 	}

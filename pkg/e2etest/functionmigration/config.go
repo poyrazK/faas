@@ -2,7 +2,7 @@
 // its successful-migration evidence. It does not enable production execution.
 package functionmigration
 
-// adr: 1352
+// adr: 1547
 
 import (
 	"bytes"

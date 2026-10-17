@@ -1,6 +1,7 @@
 package gregalemanifest
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -84,7 +85,8 @@ func TestFunctionsManifestRejections(t *testing.T) {
 		{"non-cron trigger", "functions:\n  - name: a\n    root: f\ntriggers:\n  - kind: queue\n    app: a\n    config:\n      mode: queue\n", api.PlanPro, "cron triggers only"},
 		{"trigger for unknown function", "functions:\n  - name: a\n    root: f\ntriggers:\n  - kind: cron\n    app: b\n    schedule: \"* * * * *\"\n    path: /\n", api.PlanPro, "must name one of the functions"},
 		// ADR-1342 per-function settings.
-		{"ram above plan", "functions:\n  - name: a\n    root: f\n    ram_mb: 4096\n", api.PlanHobby, "ram_mb 4096 must be between 1 and 256"},
+		// The bound comes from limits.go, which plan revisions change (ADR-1430).
+		{"ram above plan", "functions:\n  - name: a\n    root: f\n    ram_mb: 4096\n", api.PlanHobby, fmt.Sprintf("ram_mb 4096 must be between 1 and %d", api.MustLimitsFor(api.PlanHobby).RAMMB)},
 		{"timeout above plan", "functions:\n  - name: a\n    root: f\n    request_timeout_s: 100000\n", api.PlanPro, "request_timeout_s 100000"},
 		{"negative min instances", "functions:\n  - name: a\n    root: f\n    min_instances: -1\n", api.PlanPro, "min_instances -1"},
 		{"concurrency above per-VM bound", "functions:\n  - name: a\n    root: f\n    concurrency: 6\n", api.PlanHobby, "concurrency 6 must be between 1 and 5"},

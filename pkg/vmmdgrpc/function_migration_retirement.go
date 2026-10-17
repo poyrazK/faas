@@ -1,6 +1,6 @@
 package vmmdgrpc
 
-// adr: 1352. A rollback fence can authorize retirement, never stale resume.
+// adr: 1547. A rollback fence can authorize retirement, never stale resume.
 
 import (
 	"context"

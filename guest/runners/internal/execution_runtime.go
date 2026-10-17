@@ -29,7 +29,7 @@ func NewExecutionRuntime(dial functionlifetime.Dial) *ExecutionRuntime {
 }
 
 // QualifiedExecutionRuntime is dormant in ordinary builds. The explicit
-// metal,function_background_native build is for acceptance only (ADR-1347).
+// metal,function_background_native build is for acceptance only (ADR-1542).
 func QualifiedExecutionRuntime() *ExecutionRuntime {
 	if !functionlifetime.NativeQualificationBuild {
 		return nil

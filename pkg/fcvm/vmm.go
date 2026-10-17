@@ -6525,19 +6525,29 @@ func characterizationBootOutcome(report api.CharacterizationReport, executionMod
 		case "worker":
 			return true, nil
 		case "job", "http", "graphql", "grpc":
-			return true, fmt.Errorf("execution mode %q conflicts with characterized class %q (port=%d, exit_code=%d)", executionMode, report.ObservedClass, report.ObservedPort, report.ExitCode)
+			return true, executionModeConflict(executionMode, report)
 		}
 	case api.ExecutionModeJob:
 		switch report.ObservedClass {
 		case "job":
 			return true, nil
 		case "worker", "http", "graphql", "grpc":
-			return true, fmt.Errorf("execution mode %q conflicts with characterized class %q (port=%d, exit_code=%d)", executionMode, report.ObservedClass, report.ObservedPort, report.ExitCode)
+			return true, executionModeConflict(executionMode, report)
 		}
 	default:
 		return true, fmt.Errorf("unsupported execution mode %q", executionMode)
 	}
 	return false, nil
+}
+
+// executionModeConflict is the customer's declared mode disagreeing with what
+// the workload did at startup: a worker that bound a port or exited, a job
+// that served. production-us hunt #10 (H10-135): the plain error surfaced as
+// "internal", so the status page counted it as a platform failure and the
+// owner got no stable code.
+func executionModeConflict(executionMode string, report api.CharacterizationReport) error {
+	return api.NewProblem(422, api.CodeExecutionModeConflict, "execution mode conflicts with the app's behavior",
+		fmt.Sprintf("execution mode %q conflicts with characterized class %q (port=%d, exit_code=%d)", executionMode, report.ObservedClass, report.ObservedPort, report.ExitCode))
 }
 
 // loopbackBindProblem names a readiness failure whose only observed listener

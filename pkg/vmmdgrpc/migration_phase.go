@@ -1,6 +1,6 @@
 package vmmdgrpc
 
-// adr: 1350. Cancel/ack/expiry serialize; the pending capture reservation fences prepare.
+// adr: 1545. Cancel/ack/expiry serialize; the pending capture reservation fences prepare.
 
 import "context"
 

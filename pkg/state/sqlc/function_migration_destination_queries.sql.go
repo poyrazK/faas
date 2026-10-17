@@ -102,7 +102,7 @@ type ListRestartFunctionMigrationDestinationsParams struct {
 	MaxRows int64
 }
 
-// adr: 1353
+// adr: 1548
 func (q *Queries) ListRestartFunctionMigrationDestinations(ctx context.Context, db DBTX, arg ListRestartFunctionMigrationDestinationsParams) ([]FunctionMigrationDestination, error) {
 	rows, err := db.Query(ctx, listRestartFunctionMigrationDestinations, arg.NodeID, arg.AfterID, arg.MaxRows)
 	if err != nil {
@@ -170,7 +170,7 @@ type RecordFunctionMigrationCaptureParams struct {
 	CaptureToken pgtype.UUID
 }
 
-// adr: 1352
+// adr: 1547
 func (q *Queries) RecordFunctionMigrationCapture(ctx context.Context, db DBTX, arg RecordFunctionMigrationCaptureParams) (int64, error) {
 	result, err := db.Exec(ctx, recordFunctionMigrationCapture,
 		arg.Capture,

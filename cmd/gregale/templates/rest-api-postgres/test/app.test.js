@@ -8,10 +8,8 @@ function fixture(database) {
   const express = () => ({ use() {}, get(path, handler) { routes.set(`GET ${path}`, handler); }, post(path, handler) { routes.set(`POST ${path}`, handler); } });
   express.json = () => () => {};
   createApp(express, database);
-  function request(route, { peer = "127.0.0.1", header = "1", headers, body } = {}) {
-    const marker = route.endsWith("before-checkpoint") ? "X-Faas-Before-Checkpoint" : "X-Faas-After-Restore";
-    const received = headers ?? { [marker]: header };
-    const req = Object.assign(new EventEmitter(), { socket: { remoteAddress: peer }, get: (name) => received[name], body });
+  function request(route, { peer = "127.0.0.1", header = "1", body } = {}) {
+    const req = Object.assign(new EventEmitter(), { socket: { remoteAddress: peer }, get: () => header, body });
     const res = Object.assign(new EventEmitter(), { statusCode: 200, status(code) { this.statusCode = code; return this; },
       json(body) { this.body = body; this.writableFinished = true; }, sendStatus(code) { this.statusCode = code; this.writableFinished = true; } });
     const done = routes.get(route)(req, res);
@@ -20,29 +18,40 @@ function fixture(database) {
   return request;
 }
 
-for (const route of ["POST /internal/after-restore", "POST /internal/before-checkpoint"]) {
-test(`${route} requires the real loopback peer and exact platform header`, async () => {
-  let restored = 0;
-  const apply = async () => { restored += 1; };
-  const request = fixture({ restore: apply, beforeCheckpoint: apply });
-  const wrongMarker = route.endsWith("before-checkpoint") ? "X-Faas-After-Restore" : "X-Faas-Before-Checkpoint";
-  for (const options of [{ peer: "203.0.113.1" }, { peer: "127.0.0.2" }, { header: null }, { header: "0" }, { header: ["1", "1"] }, { headers: { [wrongMarker]: "1" } }]) {
-    const { res, done } = request(route, options);
-    await done;
-    assert.equal(res.statusCode, 403);
+test("lifecycle hooks require the real loopback peer and exact platform header", async () => {
+  const calls = { checkpoint: 0, restore: 0 };
+  const request = fixture({ checkpoint: async () => { calls.checkpoint += 1; }, restore: async () => { calls.restore += 1; } });
+  for (const route of ["POST /internal/before-checkpoint", "POST /internal/after-restore"]) {
+    for (const options of [{ peer: "203.0.113.1" }, { peer: "127.0.0.2" }, { header: null }, { header: "0" }, { header: ["1", "1"] }, { header: "" }]) {
+      const { res, done } = request(route, options);
+      await done;
+      assert.equal(res.statusCode, 403);
+    }
+    for (const peer of ["127.0.0.1", "::1", "::ffff:127.0.0.1"]) {
+      const { res, done } = request(route, { peer }); await done; assert.equal(res.statusCode, 204);
+    }
   }
-  const denied = request(route, { header: "" }); await denied.done; assert.equal(denied.res.statusCode, 403);
-  for (const peer of ["127.0.0.1", "::1", "::ffff:127.0.0.1"]) {
-    const { res, done } = request(route, { peer }); await done; assert.equal(res.statusCode, 204);
-  }
-  assert.equal(restored, 3);
+  assert.deepEqual(calls, { checkpoint: 3, restore: 3 });
 });
-}
+
+test("each hook checks its own marker header", async () => {
+  const markers = [];
+  const routes = new Map();
+  const express = () => ({ use() {}, get() {}, post(path, handler) { routes.set(path, handler); } });
+  express.json = () => () => {};
+  createApp(express, { checkpoint: async () => {}, restore: async () => {} });
+  for (const path of ["/internal/before-checkpoint", "/internal/after-restore"]) {
+    const req = Object.assign(new EventEmitter(), { socket: { remoteAddress: "127.0.0.1" }, get: (name) => { markers.push(name); return "1"; } });
+    const res = Object.assign(new EventEmitter(), { sendStatus() { this.writableFinished = true; } });
+    await routes.get(path)(req, res);
+  }
+  assert.deepEqual(markers, ["X-Faas-Before-Checkpoint", "X-Faas-After-Restore"]);
+});
 
 test("HTTP SQL and restore failures do not disclose database errors", async () => {
   const error = new Error("postgres://user:secret@provider.example/db"); error.code = "secret";
-  const request = fixture({ query: async () => { throw error; }, restore: async () => { throw error; }, beforeCheckpoint: async () => { throw error; } });
-  for (const route of ["GET /healthz", "GET /notes", "POST /notes", "POST /internal/after-restore", "POST /internal/before-checkpoint"]) {
+  const request = fixture({ query: async () => { throw error; }, checkpoint: async () => { throw error; }, restore: async () => { throw error; } });
+  for (const route of ["GET /healthz", "GET /notes", "POST /notes", "POST /internal/before-checkpoint", "POST /internal/after-restore"]) {
     const { res, done } = request(route, { body: { body: "note" } }); await done;
     assert.equal(res.statusCode, 503); assert.deepEqual(res.body, { ok: false, error: "database_unavailable" });
   }

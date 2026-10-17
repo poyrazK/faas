@@ -592,6 +592,7 @@ type objectStorageS3Stub struct {
 	buckets       map[string]map[string]objectStorageS3Object
 	multiparts    map[string]objectStorageS3Multipart
 	createCalls   map[string]int
+	putCalls      map[string]int
 	completeCalls map[string]int
 	nextUploadID  int
 	failComplete  bool
@@ -602,7 +603,7 @@ func newObjectStorageS3Stub(t *testing.T) *objectStorageS3Stub {
 	stub := &objectStorageS3Stub{
 		buckets:     make(map[string]map[string]objectStorageS3Object),
 		multiparts:  make(map[string]objectStorageS3Multipart),
-		createCalls: make(map[string]int), completeCalls: make(map[string]int),
+		createCalls: make(map[string]int), putCalls: make(map[string]int), completeCalls: make(map[string]int),
 	}
 	stub.server = httptest.NewServer(http.HandlerFunc(stub.handle))
 	t.Cleanup(stub.server.Close)
@@ -669,6 +670,9 @@ func (s *objectStorageS3Stub) handle(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodGet && key == "" && query.Has("versioning"):
 		s3StubXML(w, `<VersioningConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/"/>`)
 	case r.Method == http.MethodPut && key != "" && query.Get("uploadId") == "":
+		s.mu.Lock()
+		s.putCalls[bucket+"/"+key]++
+		s.mu.Unlock()
 		body, err := io.ReadAll(io.LimitReader(r.Body, api.MaxObjectSinglePutBytes+1))
 		if err != nil {
 			s3StubError(w, http.StatusInternalServerError, "InternalError", "read failed")

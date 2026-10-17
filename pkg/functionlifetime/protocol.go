@@ -1,5 +1,5 @@
 // Package functionlifetime carries acknowledged execution ownership between
-// the function runner, guest-init and vmmd (ADR-1347). EOF is never completion.
+// the function runner, guest-init and vmmd (ADR-1542). EOF is never completion.
 package functionlifetime
 
 import (

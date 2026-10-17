@@ -419,13 +419,14 @@ func (w *wakePhases) attrs() []any {
 
 type Instance struct {
 	// Immutable launch identity; late network work cannot acquire a replacement VM.
-	nativeGeneration    string
-	wakeID              string                        // original scheduler wake; source migration authority
-	functionMigration   *functionMigrationSource      // guarded by Manager.mu
-	functionDestination *functionMigrationDestination // guarded by Manager.mu
-	Lease               Lease
-	Net                 netns.Config
-	Method              WakeMethod // how it came up; a restore that fell back reads WakeColdBoot
+	nativeGeneration          string
+	operatorRestartGeneration string
+	wakeID                    string                        // original scheduler wake; source migration authority
+	functionMigration         *functionMigrationSource      // guarded by Manager.mu
+	functionDestination       *functionMigrationDestination // guarded by Manager.mu
+	Lease                     Lease
+	Net                       netns.Config
+	Method                    WakeMethod // how it came up; a restore that fell back reads WakeColdBoot
 
 	runtimeAdmissionReceipt runtimeadmission.Receipt
 	runtimeAdmissionEgress  WakeRequest
@@ -5463,8 +5464,32 @@ func (m *Manager) bringUpScanCheck(ctx context.Context, baseKey string) error {
 			"runtime base generation unavailable",
 			fmt.Sprintf("runtime base %q could not adopt its configured generation: %v", baseKey, err))
 	}
-	scan, err := m.readBaseScan(ctx, scanKey)
-	if err != nil {
+	scan, readErr := m.readBaseScan(ctx, scanKey)
+	gateErr := m.baseScanVerdict(baseKey, scanKey, scan, readErr)
+	// The sidecar is read through this node's cache. Another node may since
+	// have published a complete scan for the same base (H10-103 left a
+	// refusal cached on fsn-3 after fsn-2 rewrote it), so a refusal is
+	// re-checked once against the canonical copy before the boot fails.
+	if gateErr != nil && m.refreshCachedScan(ctx, scanKey) {
+		scan, readErr = m.readBaseScan(ctx, scanKey)
+		gateErr = m.baseScanVerdict(baseKey, scanKey, scan, readErr)
+	}
+	if gateErr != nil {
+		return gateErr
+	}
+	// Forward per-severity finding counts to the vmmd Prometheus
+	// counter. The image label is the OCI ref imaged wrote into
+	// the sidecar (defensive empty-string fallback if absent —
+	// imaged always populates it in production).
+	for sev, n := range scan.Findings {
+		m.metricsImageScan(scan.Image, sev, n)
+	}
+	return nil
+}
+
+// baseScanVerdict applies the boot gate to one read of a base's scan sidecar.
+func (m *Manager) baseScanVerdict(baseKey, scanKey string, scan baseScanSidecar, readErr error) error {
+	if readErr != nil {
 		return api.NewProblem(http.StatusServiceUnavailable, api.CodeScanCritical,
 			"scan sidecar missing",
 			fmt.Sprintf("scan sidecar missing for base %q at %q; refusing to boot un-scanned ext4 (issue #299)", baseKey, scanKey))
@@ -5497,30 +5522,43 @@ func (m *Manager) bringUpScanCheck(ctx context.Context, baseKey string) error {
 			"Fixable CRITICAL vulnerability in base ext4",
 			fmt.Sprintf("base %q has %d fix-available CRITICAL Grype findings; refusing to boot (issue #299)", baseKey, n))
 	}
-	// Forward per-severity finding counts to the vmmd Prometheus
-	// counter. The image label is the OCI ref imaged wrote into
-	// the sidecar (defensive empty-string fallback if absent —
-	// imaged always populates it in production).
-	for sev, n := range scan.Findings {
-		m.metricsImageScan(scan.Image, sev, n)
-	}
 	return nil
+}
+
+// refreshCachedScan replaces this node's cached copy of scanKey with the
+// canonical object. It reports false when the key is not cache-backed or the
+// refresh fails, leaving the cached verdict in force.
+func (m *Manager) refreshCachedScan(ctx context.Context, scanKey string) bool {
+	cache, rel, err := storage.CacheBackendForKey(m.storage, scanKey)
+	if err != nil || cache == nil {
+		return false
+	}
+	rc, err := cache.Refresh(ctx, rel)
+	if err != nil {
+		return false
+	}
+	return rc.Close() == nil
 }
 
 // Park snapshots a running instance then destroys it, freeing all resident RAM
 // (invariant §6.2-4: a parked app's cgroup is gone). The snapshot files are
 // written to spec's paths. Returns the snapshot info for schedd/imaged to record.
 func (m *Manager) Park(ctx context.Context, instance string, spec SnapshotSpec) (SnapshotInfo, error) {
+	info, _, err := m.parkWithCleanupResult(ctx, instance, spec)
+	return info, err
+}
+
+func (m *Manager) parkWithCleanupResult(ctx context.Context, instance string, spec SnapshotSpec) (SnapshotInfo, bool, error) {
 	operationCtx, inst, spec, flight, err := m.beginSnapshotFlight(ctx, instance, spec, snapshotTerminal)
 	if err != nil {
-		return SnapshotInfo{}, fmt.Errorf("park %s: %w", instance, err)
+		return SnapshotInfo{}, false, fmt.Errorf("park %s: %w", instance, err)
 	}
 	defer m.finishInstanceFlight(instance, flight)
 	if inst.AppTaskOnly {
-		return SnapshotInfo{}, fmt.Errorf("park %s: app task instances cannot be snapshotted", instance)
+		return SnapshotInfo{}, false, fmt.Errorf("park %s: app task instances cannot be snapshotted", instance)
 	}
 	if m.isFrozen(inst) {
-		return SnapshotInfo{}, fmt.Errorf("park %s: %w", instance, ErrInstanceFrozen)
+		return SnapshotInfo{}, false, fmt.Errorf("park %s: %w", instance, ErrInstanceFrozen)
 	}
 	m.mu.Lock()
 	flight.parking = true
@@ -5540,13 +5578,19 @@ func (m *Manager) Park(ctx context.Context, instance string, spec SnapshotSpec) 
 	}
 	// Even a failed capture can leave a paused guest. Retain ownership if
 	// teardown fails, and never report a successful park before releasing RAM.
-	cleanupErr := m.cleanup(context.WithoutCancel(ctx), inst.Lease, inst.Net, inst.WorkloadNames)
+	cleanupCtx := context.WithoutCancel(ctx)
+	if spec.operatorGeneration != "" {
+		var cancel context.CancelFunc
+		cleanupCtx, cancel = context.WithTimeout(cleanupCtx, api.OperatorParkCleanupTimeout)
+		defer cancel()
+	}
+	cleanupErr := m.cleanup(cleanupCtx, inst.Lease, inst.Net, inst.WorkloadNames)
 	if err := errors.Join(snapshotErr, cleanupErr); err != nil {
-		return SnapshotInfo{}, fmt.Errorf("park %s: %w", instance, err)
+		return SnapshotInfo{}, cleanupErr == nil, fmt.Errorf("park %s: %w", instance, err)
 	}
 	m.writeSnapshotBacking(context.WithoutCancel(ctx), instance, spec.StorageKey)
 	m.log.Info("parked", "instance", instance, "mem_bytes", info.MemBytes)
-	return info, nil
+	return info, true, nil
 }
 
 // WarmSnapshot (issue #470 / PR #470-FU-A) is the warm-tier
@@ -5568,7 +5612,7 @@ func (m *Manager) Park(ctx context.Context, instance string, spec SnapshotSpec) 
 // Qualified Node capture instead keeps the guest paused through publication,
 // then recovers all workers' resources under this flight. Failed or cancelled
 // captures also recover; unconfirmed recovery seals admission and retires the
-// physical VM (ADR-1349).
+// physical VM (ADR-1544).
 //
 // Ordinary failure path: any error from SnapshotKeepAlive OR ResumeVM is
 // surfaced as-is. The engine's captureWarmSnapshotLocked decides

@@ -126,6 +126,8 @@ def sync_detailed(
     become eligible for pruning after 30 days; holds can extend this window.
     After pruning the same key may be accepted again. App renames preserve
     identity; replacement apps have a new UUID and a new key namespace.
+    Optional expected_app_id must match the resolved canonical app UUID;
+    mismatches return 409 before accepting any publication.
     No request-wide Idempotency-Key middleware is used. Retry uncertain outcomes
     with the same app, key and content. Acceptance does not mean delivery success.
 
@@ -176,6 +178,8 @@ def sync(
     become eligible for pruning after 30 days; holds can extend this window.
     After pruning the same key may be accepted again. App renames preserve
     identity; replacement apps have a new UUID and a new key namespace.
+    Optional expected_app_id must match the resolved canonical app UUID;
+    mismatches return 409 before accepting any publication.
     No request-wide Idempotency-Key middleware is used. Retry uncertain outcomes
     with the same app, key and content. Acceptance does not mean delivery success.
 
@@ -221,6 +225,8 @@ async def asyncio_detailed(
     become eligible for pruning after 30 days; holds can extend this window.
     After pruning the same key may be accepted again. App renames preserve
     identity; replacement apps have a new UUID and a new key namespace.
+    Optional expected_app_id must match the resolved canonical app UUID;
+    mismatches return 409 before accepting any publication.
     No request-wide Idempotency-Key middleware is used. Retry uncertain outcomes
     with the same app, key and content. Acceptance does not mean delivery success.
 
@@ -269,6 +275,8 @@ async def asyncio(
     become eligible for pruning after 30 days; holds can extend this window.
     After pruning the same key may be accepted again. App renames preserve
     identity; replacement apps have a new UUID and a new key namespace.
+    Optional expected_app_id must match the resolved canonical app UUID;
+    mismatches return 409 before accepting any publication.
     No request-wide Idempotency-Key middleware is used. Retry uncertain outcomes
     with the same app, key and content. Acceptance does not mean delivery success.
 

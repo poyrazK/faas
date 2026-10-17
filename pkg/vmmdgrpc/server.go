@@ -260,6 +260,10 @@ type flowSnapshotter interface {
 
 // Server implements vmmdpb.VmmdServer.
 type Server struct {
+	parkStore     state.OperatorParkStore
+	parkNodeID    string
+	restartStore  state.OperatorRestartStore
+	restartNodeID string
 	vmmdpb.UnimplementedVmmdServer
 
 	// appTaskAttach pairs interactive app tasks with their attached client
@@ -330,7 +334,11 @@ type Server struct {
 	// migrationLeases is the optional durable source-side lease record. The
 	// in-memory tracker remains the hot cache for paused-VM handles; this store
 	// survives vmmd restarts and supplies those handles to Ack/Cancel/expiry.
-	migrationLeases state.MigrationLeaseStore
+	migrationLeases         state.MigrationLeaseStore
+	migrationAdmissions     state.MigrationAdmissionStore
+	migrationAdmissionAfter string // owned by LeaseExpiryLoop
+	migrationSources        state.MigrationSourceStore
+	migrationSourceAfter    string // owned by LeaseExpiryLoop
 	// nodeID is this vmmd's registered compute-node identity. Lease
 	// expiry uses it to distinguish a source VM that still belongs
 	// here from a row already committed to a peer; without that
@@ -417,6 +425,8 @@ func (s *Server) WithEvents(p *events.Platform) *Server {
 func (s *Server) WithMigrationStore(store state.Store) *Server {
 	if s != nil {
 		s.migrationStore = store
+		s.migrationAdmissions, _ = store.(state.MigrationAdmissionStore)
+		s.migrationSources, _ = store.(state.MigrationSourceStore)
 		s.migrationLeases = nil
 		if leases, ok := store.(state.MigrationLeaseStore); ok {
 			s.migrationLeases = leases

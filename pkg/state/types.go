@@ -778,6 +778,13 @@ type APIConsumerUsageEvent struct {
 	RequestCount  int64
 	ErrorCount    int64
 	BillableUnits int64
+	// ComputeMS and ResponseBytes measure a billable consumer request for
+	// rate cards that price compute time or response size (ADR-1308).
+	ComputeMS     int64
+	ResponseBytes int64
+	// MeterUnits are the units the app reported for a billable consumer
+	// request, by meter (ADR-1318).
+	MeterUnits map[string]int64
 }
 
 // DiscoveredAPIRoute is a capped, per-app inventory entry. The count reflects
@@ -826,6 +833,10 @@ type APIConsumerUsageBucket struct {
 	RequestCount           int64
 	ErrorCount             int64
 	BillableUnits          int64
+	// ComputeMS and ResponseBytes sum the minute's billable consumer
+	// requests (ADR-1308).
+	ComputeMS     int64
+	ResponseBytes int64
 }
 
 // APIConsumerRouteUsageBucket is one consumer's billable units on one
@@ -838,8 +849,27 @@ type APIConsumerRouteUsageBucket struct {
 	BillableUnits int64
 }
 
+// PlatformTenantSourceRouteUsageBucket is one tenant surface's or JWT
+// authorization rule's billable units on one route in one minute (ADR-1310).
+// SourceKind is "surface" or "jwt".
+type PlatformTenantSourceRouteUsageBucket struct {
+	AppID         string
+	SourceKind    string
+	SourceID      string
+	WindowStart   time.Time
+	Route         string
+	BillableUnits int64
+}
+
 // MaxBillingRouteBytes bounds a billing route label ("METHOD /template").
 const MaxBillingRouteBytes = 256
+
+// Bounds on one request's measured compute and response size (ADR-1308):
+// a day of execution and 64 GiB.
+const (
+	MaxUsageComputeMSPerRequest     int64 = 24 * 60 * 60 * 1000
+	MaxUsageResponseBytesPerRequest int64 = 64 << 30
+)
 
 // ValidBillingRoute reports whether label is a storable billing route: an
 // HTTP method, one space, and a path, without control characters.
@@ -868,15 +898,29 @@ type APIConsumerRateCard struct {
 	// Tiers is an optional graduated price ladder (ADR-951). When set it
 	// replaces PriceMillicentsPerUnit and IncludedUnitsPerMonth for pricing.
 	Tiers []APIConsumerRateCardTier
+	// TierMode is how Tiers price a month: graduated (the default) or
+	// volume (ADR-1309).
+	TierMode string
 	// RouteWeights counts each request on a listed route label as that many
 	// units (ADR-952); unlisted routes count 1. Weighted units feed the
 	// allowance and tiers.
 	RouteWeights map[string]int64
 	// PlanID names the consumer plan whose price history this card belongs
 	// to (ADR-953); empty is the app default plan.
-	PlanID        string
-	EffectiveFrom time.Time
-	CreatedAt     time.Time
+	PlanID string
+	// BaseFeeMillicentsPerMonth and MinimumMillicentsPerMonth are a fixed
+	// monthly charge and a minimum monthly usage charge per consumer
+	// (ADR-1316), taken from the card in force when the consumer's month
+	// starts.
+	BaseFeeMillicentsPerMonth int64
+	MinimumMillicentsPerMonth int64
+	EffectiveFrom             time.Time
+	CreatedAt                 time.Time
+}
+
+// MonthlyFees reports whether the card charges a base fee or a minimum.
+func (c APIConsumerRateCard) MonthlyFees() bool {
+	return c.BaseFeeMillicentsPerMonth > 0 || c.MinimumMillicentsPerMonth > 0
 }
 
 // Route weight bounds: a card weights at most this many route labels, each
@@ -960,15 +1004,30 @@ type PlatformTenantRateCard struct {
 	// Tiers is an optional graduated ladder counted per tenant per UTC month
 	// across every attributed app (ADR-975); it replaces the flat price and
 	// allowance, and PriceMillicentsPerUnit records the last step's price.
-	Tiers         []APIConsumerRateCardTier
+	Tiers []APIConsumerRateCardTier
+	// TierMode is how Tiers price a month: graduated (the default) or
+	// volume (ADR-1309).
+	TierMode string
+	// RouteWeights charge a request on a route that many units (ADR-1307);
+	// unlisted routes count 1. Surface and JWT-rule requests are weighted
+	// by their own route (ADR-1310).
+	RouteWeights  map[string]int64
 	EffectiveFrom time.Time
 	CreatedAt     time.Time
 }
 
-// MonthlyPricing reports whether the card prices usage by its position in
-// the tenant's UTC month, so statements must re-price whole months.
+// MonthlyPricing reports whether statements must re-price whole months:
+// the card prices usage by its position in the tenant's UTC month, weights
+// routes, or prices compute or response size (ADR-1310), none of which
+// per-minute request coverage deltas can express.
 func (c PlatformTenantRateCard) MonthlyPricing() bool {
-	return c.IncludedUnitsPerMonth > 0 || len(c.Tiers) > 0
+	return c.IncludedUnitsPerMonth > 0 || len(c.Tiers) > 0 || len(c.RouteWeights) > 0 || !c.PricesRequests()
+}
+
+// PricesRequests reports whether the card counts requests rather than
+// compute seconds or response megabytes.
+func (c PlatformTenantRateCard) PricesRequests() bool {
+	return c.Unit == "" || c.Unit == PlatformTenantRateCardUnitRequest
 }
 
 // APIConsumerUsageStatementStatus is the lifecycle of an immutable usage
@@ -1003,6 +1062,12 @@ type APIConsumerUsageStatementBucket struct {
 	// already-billed units into another step.
 	TierUnits        []int64 `json:"tier_units,omitempty"`
 	AmountMillicents int64   `json:"amount_millicents"`
+	// Trial marks a minute of the consumer's free trial, priced at zero
+	// (ADR-1314).
+	Trial bool `json:"trial,omitempty"`
+	// Unit is the price stream a bucket belongs to when it is not request
+	// (ADR-1317): a minute carries one bucket per unit its cards price.
+	Unit string `json:"unit,omitempty"`
 }
 
 // Charged returns the units this bucket bills at its price.
@@ -1036,9 +1101,20 @@ type APIConsumerUsageStatement struct {
 	AmountMillicents int64
 	Priced           bool
 	Buckets          []APIConsumerUsageStatementBucket
-	AsOf             time.Time
-	CreatedAt        time.Time
-	FinalizedAt      *time.Time
+	// Fees are the month's base fee and minimum-spend top-up (ADR-1316);
+	// AmountMillicents includes them.
+	Fees        []APIConsumerStatementFee
+	AsOf        time.Time
+	CreatedAt   time.Time
+	FinalizedAt *time.Time
+	// CreditAppliedMillicents is prepaid credit drawn down when the
+	// statement was finalized (ADR-1306).
+	CreditAppliedMillicents int64
+}
+
+// AmountDueMillicents is what the statement bills after prepaid credit.
+func (s APIConsumerUsageStatement) AmountDueMillicents() int64 {
+	return s.AmountMillicents - s.CreditAppliedMillicents
 }
 
 // APIConsumerUsageStatementHandoff is the immutable customer-billing claim
@@ -1085,7 +1161,24 @@ type APIConsumerUsageStatementInput struct {
 	AmountMillicents int64
 	Priced           bool
 	Buckets          []APIConsumerUsageStatementBucket
+	Fees             []APIConsumerStatementFee
 	AsOf             time.Time
+}
+
+// Statement fee kinds (ADR-1316).
+const (
+	StatementFeeBase    = "base_fee"
+	StatementFeeMinimum = "minimum"
+)
+
+// APIConsumerStatementFee is one month-level charge of a statement: the
+// card's monthly base fee, or the top-up to its minimum spend. In an
+// adjustment a minimum top-up can be negative, when late usage covers part
+// of the minimum it already billed; the revision total never is.
+type APIConsumerStatementFee struct {
+	Kind             string `json:"kind"`
+	RateCardID       string `json:"rate_card_id"`
+	AmountMillicents int64  `json:"amount_millicents"`
 }
 
 // Active reports whether the key is in an authentication-eligible
@@ -1102,8 +1195,11 @@ func (k ConsumerKey) Active(now time.Time) bool {
 }
 
 type APIKey struct {
-	ID        string
-	AccountID string
+	HostingSiteID      string   `json:"-"`
+	HostingOIDCTrustID string   `json:"-"`
+	HostingOperations  []string `json:"-"`
+	ID                 string
+	AccountID          string
 	// RunsPrincipalID is a stable, internal key-family identity used to
 	// partition disposable execution receipts between narrow Runs agents.
 	// It is preserved across key rotation and never returned in API DTOs.
@@ -2649,6 +2745,11 @@ type Deployment struct {
 	// legacy deployment whose support has not been recorded yet.
 	SecretReloadSignal      string `json:"-"`
 	SecretReloadSignalKnown bool   `json:"-"`
+	// RuntimeBase is the shared runner base a source-built container app's
+	// layer was built for ("" for the app's own base). imaged stamps it with
+	// the deployment's source rootfs; schedd boots that base
+	// (docs/adr/1500-shared-runtime-source-apps.md, H10-140).
+	RuntimeBase string `json:"-"`
 	// Revision (ADR-198) is the per-AppID monotonic counter that makes
 	// an immutable deployment row addressable as `v42` instead of a
 	// uuid. Assigned inside CreateDeployment's existing `FOR UPDATE`
@@ -3271,16 +3372,17 @@ type FireNowRequest struct {
 // operator_intents.status (migrations/00431). Mirrors the audit-event
 // `operator.action.<verb>.outcome` shape — only `succeeded` and
 // `failed` are emitted by schedd's terminal transition; `cancelled`
-// is reserved for a future operator-cancel surface (schema is
-// forward-compatible).
+// is reserved for a future operator-cancel surface. outcome_unknown pauses an
+// uncertain restart until physical evidence permits reconciliation (ADR-1522).
 type OperatorIntentStatus string
 
 const (
-	OperatorIntentPending   OperatorIntentStatus = "pending"
-	OperatorIntentRunning   OperatorIntentStatus = "running"
-	OperatorIntentSucceeded OperatorIntentStatus = "succeeded"
-	OperatorIntentFailed    OperatorIntentStatus = "failed"
-	OperatorIntentCancelled OperatorIntentStatus = "cancelled"
+	OperatorIntentPending        OperatorIntentStatus = "pending"
+	OperatorIntentRunning        OperatorIntentStatus = "running"
+	OperatorIntentSucceeded      OperatorIntentStatus = "succeeded"
+	OperatorIntentFailed         OperatorIntentStatus = "failed"
+	OperatorIntentCancelled      OperatorIntentStatus = "cancelled"
+	OperatorIntentOutcomeUnknown OperatorIntentStatus = "outcome_unknown"
 )
 
 // OperatorIntentKind is the closed vocabulary for
@@ -3320,8 +3422,9 @@ const (
 // the closed kind, then transitions status to terminal.
 //
 // Invariant: a single row represents a single admin-action attempt.
-// Admin actions are deliberate re-clicks, not retries, so there is
-// no per-request idempotency wrapper — two clicks produce two intents.
+// Node actions are deliberate requests; two submissions produce two intents.
+// Workload recovery submissions may reuse their durable request key (ADR-1524).
+// Node execution receipts fence mutation and completion per intent (ADR-1526).
 //
 // Target_id is free-text (NOT a uuid column) because it can be an instance,
 // deployment, or compute-node identifier. The kind column disambiguates.
@@ -3333,20 +3436,25 @@ const (
 // the action arrived via a path that did not stamp a trace_id
 // (e.g. legacy cron-fired reclaim_build).
 type OperatorIntent struct {
-	ID                 string
-	Kind               OperatorIntentKind
-	TargetID           string
-	AccountID          *string // nil for fleet-level actions; set for per-account actions
-	ActorID            string
-	Reason             string
-	Metadata           json.RawMessage
-	Status             OperatorIntentStatus
-	RequestedAt        time.Time
-	StartedAt          *time.Time
-	FinishedAt         *time.Time
-	Error              string
-	SnapIDsMarkedStale []string
-	TraceID            *string
+	ClaimToken              string
+	CompletionAuditOutboxID int64
+	ColdBootGeneration      int64
+	RestartExecution        *OperatorRestartExecution
+	ParkExecution           *OperatorParkExecution
+	ID                      string
+	Kind                    OperatorIntentKind
+	TargetID                string
+	AccountID               *string // nil for fleet-level actions; set for per-account actions
+	ActorID                 string
+	Reason                  string
+	Metadata                json.RawMessage
+	Status                  OperatorIntentStatus
+	RequestedAt             time.Time
+	StartedAt               *time.Time
+	FinishedAt              *time.Time
+	Error                   string
+	SnapIDsMarkedStale      []string
+	TraceID                 *string
 }
 
 // AlertMetric is a closed vocabulary for the metric side of an AlertRule
@@ -3824,6 +3932,9 @@ const (
 	AppWebhookEventRecoveryExecutionAttention              AppWebhookEvent = "event_recovery.execution_attention"
 	AppWebhookEventRecoveryPollingStatus                   AppWebhookEvent = "automation.recovery_polling_status"
 	AppWebhookEventEnvironmentGitOpsChanged                AppWebhookEvent = "environment.gitops.changed"
+	AppWebhookEventIssueTrackerSyncAttention               AppWebhookEvent = "issue.tracker_sync.attention"
+	AppWebhookEventIssueTrackerSyncRecovered               AppWebhookEvent = "issue.tracker_sync.recovered"
+	AppWebhookEventIssueFrequencyThresholdReached          AppWebhookEvent = "issue.frequency_threshold_reached"
 )
 
 // AllAppWebhookEvents is the canonical closed vocabulary shared by
@@ -3875,6 +3986,8 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventRouteRequirementsChanged,
 	AppWebhookEventRouteRequirementsViolated,
 	AppWebhookEventRouteRequirementsRecovered,
+	AppWebhookEventIssueTrackerSyncAttention,
+	AppWebhookEventIssueTrackerSyncRecovered,
 	AppWebhookEventIssueCreated,
 	AppWebhookEventIssueAssigned,
 	AppWebhookEventIssueResolved,
@@ -3882,7 +3995,19 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventIssueIgnored,
 	AppWebhookEventIssueRegressed,
 	AppWebhookEventIssueImpactThresholdReached,
-	AppWebhookEventRecoveryPollingStatus, AppWebhookEventRecoveryHealthAlert, AppWebhookEventRecoveryHealthRecovered, AppWebhookEventRecoveryQueueBlocked, AppWebhookEventRecoveryPolicyPaused, AppWebhookEventRecoveryReviewFinished, AppWebhookEventRecoveryReviewReady, AppWebhookEventRecoveryCompleted, AppWebhookEventRecoveryCancelled, AppWebhookEventRecoveryExpired, AppWebhookEventRecoveryExecutionFinished, AppWebhookEventRecoveryExecutionAttention,
+	AppWebhookEventRecoveryPollingStatus,
+	AppWebhookEventRecoveryHealthAlert,
+	AppWebhookEventRecoveryHealthRecovered,
+	AppWebhookEventRecoveryQueueBlocked,
+	AppWebhookEventRecoveryPolicyPaused,
+	AppWebhookEventRecoveryReviewFinished,
+	AppWebhookEventRecoveryReviewReady,
+	AppWebhookEventRecoveryCompleted,
+	AppWebhookEventRecoveryCancelled,
+	AppWebhookEventRecoveryExpired,
+	AppWebhookEventRecoveryExecutionFinished,
+	AppWebhookEventRecoveryExecutionAttention,
+	AppWebhookEventIssueFrequencyThresholdReached,
 	AppWebhookEventWorkflowFinished, AppWebhookEventAutomationPaused,
 	AppWebhookEventEnvironmentGitOpsChanged,
 }
@@ -5334,6 +5459,8 @@ type ComputeNode struct {
 	// get the same answer. Writers must go through SetNodeLifecycle
 	// (CAS) so the arbiter and the drain handler can't race.
 	Lifecycle NodeLifecycle
+	// LifecycleGeneration identifies a drain/recovery cycle (ADR-1527).
+	LifecycleGeneration int64
 	// DrainInitiatedAt is stamped when lifecycle flips to 'draining'.
 	// nil until the first drain request lands; nil after a successful
 	// reactivate (the column is reused on the next drain).
@@ -5970,7 +6097,7 @@ type StorageUsage struct {
 // returns this type — never expose the cross-account scan.
 //
 // Money is integer cents in the provider's currency; the financial
-// model distills to EUR at the API edge. Currency is preserved per
+// model distills to the billing currency at the API edge. Currency is preserved per
 // row so future multi-currency support can land without a backfill.
 //
 // HostedURL is intentionally NOT exposed on the read surface — the
@@ -6100,6 +6227,7 @@ type CreditLedgerEntry struct {
 // lifecycle fields are stored as an app-owned manifest patch alongside the
 // existing resource and scaling settings.
 type UpdateAppParams struct {
+	ExpectedServiceBindingFingerprint string
 	// Visibility is the app edge exposure policy. SetVisibility distinguishes
 	// an explicit public reset from an omitted field.
 	Visibility     *api.AppVisibility
@@ -6468,6 +6596,9 @@ type Snapshot struct {
 	ID           string
 	DeploymentID string
 	FCVersion    string
+	// RecoveryGeneration is inherited from immutable boot admission lineage.
+	// Only imaged's source-checked publication can introduce a nonzero value.
+	RecoveryGeneration int64
 	// BaseImageVersion pins the runner base generation used by HTTP/2 and
 	// gRPC snapshots. HTTP/1 restores do not depend on this field. Empty
 	// identifies a legacy row and forces one cold-boot re-prime for H2C.

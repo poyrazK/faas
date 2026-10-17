@@ -1,6 +1,6 @@
 package state
 
-// adr: 1352
+// adr: 1547
 
 import (
 	"context"
@@ -302,18 +302,7 @@ func (m *MemStore) functionDestinationCapacityLocked(nodeID, excludeID string, e
 	if !ok || !node.Active || node.Lifecycle != "active" || node.AdmissionCeilingMB <= 0 || node.VPCPUs <= 0 {
 		return ErrNodeCapacity
 	}
-	var used capacityResources
-	add := func(r capacityResources) { used.RAM += r.RAM; used.CPU += r.CPU; used.VCPU += r.VCPU }
-	for _, i := range m.instances {
-		if i.NodeID == nodeID && i.ID != excludeID && (capacityResident(State(i.State)) || State(i.State) == StateFrozen) {
-			add(m.functionDestinationShapeLocked(i))
-		}
-	}
-	for _, d := range m.functionMigrationDestinations {
-		if d.Grant.Binding.NodeID == nodeID && (d.Phase == FunctionDestinationIssued || d.Phase == FunctionDestinationReady) {
-			add(m.functionDestinationShapeLocked(m.instances[d.Grant.Binding.InstanceID]))
-		}
-	}
+	used := m.migrationNodeUsedLocked(nodeID, excludeID)
 	budget := node.VCPUBudget
 	if budget <= 0 {
 		budget = api.VCPUSlots
@@ -322,6 +311,29 @@ func (m *MemStore) functionDestinationCapacityLocked(nodeID, excludeID string, e
 		return ErrNodeCapacity
 	}
 	return nil
+}
+
+// Both protocols reserve the same node budget. After ownership commits, the
+// original function source remains physical residency until its lease cleanup.
+func (m *MemStore) functionMigrationNodePendingLocked(node string) bool {
+	u := m.functionMigrationNodeUsageLocked(node)
+	return u.RAM != 0 || u.CPU != 0 || u.VCPU != 0
+}
+
+func (m *MemStore) functionMigrationNodeUsageLocked(node string) capacityResources {
+	var used capacityResources
+	for token, d := range m.functionMigrationDestinations {
+		source, held := m.functionMigrationSources[d.Grant.Binding.InstanceID]
+		pendingDestination := d.Grant.Binding.NodeID == node && (d.Phase == FunctionDestinationIssued || d.Phase == FunctionDestinationReady)
+		pendingSource := d.Phase == FunctionDestinationCommitted && held && source.LeaseToken == token && source.SourceNodeID == node && source.Phase != FunctionMigrationRecovered && source.Phase != FunctionMigrationRetired
+		if pendingDestination || pendingSource {
+			c := m.functionDestinationShapeLocked(m.instances[d.Grant.Binding.InstanceID])
+			used.RAM += c.RAM
+			used.CPU += c.CPU
+			used.VCPU += c.VCPU
+		}
+	}
+	return used
 }
 func (m *MemStore) functionDestinationShapeLocked(ins Instance) capacityResources {
 	if shape, ok := m.capacityInstanceResources[ins.ID]; ok {

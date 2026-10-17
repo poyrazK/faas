@@ -35,6 +35,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/durableentity/validatorbundle"
+	"github.com/onebox-faas/faas/pkg/eventrecording"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/heartbeatretention"
@@ -447,6 +448,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	vmmRotator.Set(vmmTLS)
 	store := state.NewPgStore(pool)
+	stopEventWriter, err := eventrecording.Start(ctx, store, "schedd", cfg.EventAcknowledgmentWriterSlot, cfg.EventAcknowledgmentWriterRoster, log)
+	if err != nil {
+		return err
+	}
+	defer stopEventWriter()
 
 	// Phase 2 / Gate A: resolve this schedd's owner node id at
 	// startup. Empty cfg.NodeName → empty owner (legacy
@@ -957,7 +963,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if leaser := sched.NewPgLeaserFromPool(pool, ownerNodeID, nil); leaser != nil {
 		engine.WithJobLeaser(sched.AdaptJobLeaser(leaser))
 	}
-	// adr: 1353
+	// adr: 1548
 	// Reconstruct measured destination work before ledger seeding and serving.
 	// Failures retain durable capacity/ownership for the fenced expiry path.
 	migrationRecoveryReady := true

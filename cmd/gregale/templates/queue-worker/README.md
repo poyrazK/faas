@@ -13,8 +13,9 @@ gregale deploy --name orders-worker
 ```
 
 The default binding consumes the `default` queue through this HTTP function.
-The current trigger dispatches one message at a time per binding; it does not
-provide per-worker parallel delivery or queue-depth autoscaling. Edit
+The starter dispatches one message at a time with `max_concurrency: 1`.
+Increasing that binding setting enables bounded parallel HTTP deliveries.
+This function does not use worker queue-depth autoscaling. Edit
 `gregale.yaml` before deploying if your queue name or retry budget differs.
 
 ## Send and inspect work
@@ -30,6 +31,42 @@ accepting it. Keep the business operation idempotent because retries and
 redelivery are normal queue behavior. Exhausted messages are visible with
 `gregale dlq orders-worker` and can be replayed after the underlying error is
 fixed.
+
+## Verify handler completion before release
+
+The reserved `gregale_queue_canary: "v1"` message takes a safe no-op path before
+ordinary job handling. It returns success after that path finishes and never
+processes a business job. Malformed canaries, unexpected fields and bindings
+outside the deployment's declared capability fail. This proves delivery and
+handler completion; it does not prove your application's business effects.
+
+Enable bounded deployment pinning, then opt in for the exact deployment:
+
+```sh
+gregale app orders-worker --revision-pin-ttl 10m
+gregale deploy --name orders-worker --queue-canary-binding default
+```
+
+Use `--dry-run --json` to preview the declared capability before deploying.
+The flag validates the selected source manifest and sets deployment-specific
+`GREGALE_QUEUE_CANARY_BINDINGS`; it does not publish a message. An app-wide
+environment setting alone does not declare this capability. Repeat the flag
+for each binding and on each new deployment that should support verification.
+Omitting it on redeployment does not carry forward the previous opt-in.
+Use the returned deployment UUID below:
+
+```sh
+gregale bindings release-policy set orders-worker --scope default --require-verification --queue-require default=handler_completion --expected-revision 0
+gregale bindings verify orders-worker --deployment DEPLOYMENT_UUID --release-policy --dry-run --json
+gregale bindings verify orders-worker --deployment DEPLOYMENT_UUID --release-policy --durable --queue-publish --json
+```
+
+The final command explicitly consents to publishing a safe test message. Save
+its run ID and resume it with `gregale bindings verification-runs resume
+orders-worker RUN_ID --json` after a disconnected session. Resume retains the
+original message and deadline. Verification does not promote traffic; promotion
+rechecks fresh completion evidence. Cancelled, expired or other-deployment
+evidence cannot satisfy the release requirement.
 
 ## Re-deploy after edits
 

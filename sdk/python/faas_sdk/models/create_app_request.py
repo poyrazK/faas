@@ -58,8 +58,8 @@ T = TypeVar("T", bound="CreateAppRequest")
 
 @_attrs_define
 class CreateAppRequest:
-    """App creation payload: slug, type (app|function), runtime (only for function), RAM MB, max concurrency, idle timeout,
-    and optional manifest.
+    """App creation payload: slug, type (app|function), runtime (required for function; must be omitted for app), RAM MB,
+    max concurrency, idle timeout, and optional manifest.
 
     """
 

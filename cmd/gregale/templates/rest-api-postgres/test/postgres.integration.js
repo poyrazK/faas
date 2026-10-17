@@ -8,6 +8,10 @@ import { lookup } from "node:dns/promises";
 import { fileURLToPath } from "node:url";
 import { once } from "node:events";
 import { setTimeout as delay } from "node:timers/promises";
+import {mkdtemp, rename, rm, writeFile} from "node:fs/promises";
+import {createServer} from "node:http";
+import {tmpdir} from "node:os";
+import {join} from "node:path";
 import express from "express";
 import pg from "pg";
 import { createApp } from "../app.js";
@@ -21,7 +25,7 @@ test("generated PostgreSQL starter survives real TLS/SCRAM connection failures",
   const admin = new pg.Client(poolConfig(url));
   await admin.connect();
   const suffix = randomBytes(8).toString("hex"), password = randomBytes(24).toString("hex");
-  const role = `starter_${suffix}`, nextRole = `starter_next_${suffix}`;
+  const role = `starter_${suffix}`, nextRole = `starter_next_${suffix}`, rotationRole = `starter_rotation_${suffix}`;
   const databases = [], servers = [], idleErrors = [];
   const ownedRoles = [];
   const terminate = (name) => admin.query("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE usename = $1", [name]);
@@ -31,7 +35,7 @@ test("generated PostgreSQL starter survives real TLS/SCRAM connection failures",
     for (const server of servers) { server.closeAllConnections(); await new Promise((resolve) => server.close(resolve)); }
     for (const db of databases) await db.close();
     await admin.query("ROLLBACK");
-    await terminate(role); await terminate(nextRole);
+    for (const name of ownedRoles) await terminate(name);
     await admin.query("DROP TABLE IF EXISTS notes, notes_saved");
     for (const name of ownedRoles) { await admin.query(`DROP OWNED BY "${name}"`); await admin.query(`DROP ROLE "${name}"`); }
     await admin.end();
@@ -39,25 +43,24 @@ test("generated PostgreSQL starter survives real TLS/SCRAM connection failures",
   // Migration is the actual starter release entrypoint. The runtime receives
   // only a restricted login; owner credentials remain in this test process.
   await migrate(url);
-  for (const name of [role, nextRole]) {
+  for (const name of [role, nextRole, rotationRole]) {
     await admin.query(`CREATE ROLE "${name}" LOGIN PASSWORD '${password}'`);
     ownedRoles.push(name);
     await admin.query(`GRANT USAGE ON SCHEMA public TO "${name}"`);
     await admin.query(`GRANT SELECT, INSERT, UPDATE, DELETE ON notes TO "${name}"`);
     await admin.query(`GRANT USAGE, SELECT ON SEQUENCE notes_id_seq TO "${name}"`);
   }
-  function runtime(name, options = {}) {
-    const db = createDatabase(() => {
-      const uri = new URL(url); uri.username = typeof name === "function" ? name() : name; uri.password = password;
-      return new pg.Pool(poolConfig(uri.href));
-    }, { log: (code) => idleErrors.push(code), ...options });
-    databases.push(db); return db;
+  async function runtime(name) {
+    const uri = new URL(url); uri.username = name; uri.password = password;
+    const config = poolConfig(uri.href);
+    const db = createDatabase(() => new pg.Pool(config), { env: {DATABASE_URL: uri.href}, log: (code) => idleErrors.push(code) });
+    databases.push(db); await db.start(); return db;
   }
   async function listen(db) {
     const server = createApp(express, db).listen(0, "127.0.0.1"); servers.push(server); await once(server, "listening");
     return `http://127.0.0.1:${server.address().port}`;
   }
-  const db = runtime(role), base = await listen(db);
+  const db = await runtime(role), base = await listen(db);
   const hook = () => fetch(`${base}/internal/after-restore`, { method: "POST", headers: { "X-Faas-After-Restore": "1" } });
   async function note(body, signal) {
     return fetch(`${base}/notes`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ body }), signal });
@@ -185,6 +188,102 @@ test("generated PostgreSQL starter survives real TLS/SCRAM connection failures",
     await assert.rejects(bounded.query("SELECT 1"), /database_unavailable/);
     await bounded.restore(); assert.equal(bounded.generation, 1); await bounded.close();
   });
+  await t.test("before_checkpoint closes every server session; restore reconnects", async () => {
+    const sessions = async () => (await admin.query("SELECT count(*)::int AS count FROM pg_stat_activity WHERE usename=$1", [role])).rows[0].count;
+    const checkpoint = () => fetch(`${base}/internal/before-checkpoint`, { method: "POST", headers: { "X-Faas-Before-Checkpoint": "1" } });
+    assert.equal((await fetch(`${base}/healthz`)).status, 200);
+    assert.ok(await sessions() > 0, "the pool keeps an idle session after a request");
+    assert.equal((await checkpoint()).status, 204);
+    await waitFor(async () => await sessions() === 0);
+    assert.equal((await fetch(`${base}/healthz`)).status, 503);
+    assert.equal((await checkpoint()).status, 204); // A retried capture finds it drained.
+    assert.equal(await sessions(), 0);
+    assert.equal((await hook()).status, 204); assert.equal(db.generation, 3);
+    assert.equal((await fetch(`${base}/healthz`)).status, 200);
+    const result = await (await fetch(`${base}/notes`)).json(); assert.ok(result.notes.some(note => note.body === "preserved"));
+  });
+  await t.test("atomic rotation drains an open write, rejects stale SCRAM credentials, and fences restore races", async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'gregale-postgres-rotation-'));
+    const receipts = [], pools = [];
+    const generation = 'e'.repeat(32), nextPassword = randomBytes(24).toString('hex');
+    let current = 'a'.repeat(64);
+    const snapshot = join(directory, 'snapshot');
+    const uri = credential => {const value = new URL(url); value.username = rotationRole; value.password = credential; return value.href;};
+    const publish = async (revision, secrets = {DATABASE_URL: uri(nextPassword)}) => {
+      current = revision.repeat(64);
+      const pending = join(directory, 'pending');
+      await writeFile(pending, JSON.stringify({revision: current, secrets}), {mode: 0o600});
+      await rename(pending, snapshot);
+    };
+    await publish('a', {DATABASE_URL: uri(password)});
+    const ack = createServer((request, response) => {
+      void (async () => {
+        let body = ''; for await (const chunk of request) body += chunk;
+        const receipt = JSON.parse(body); receipts.push(receipt);
+        response.writeHead(receipt.revision === current ? 202 : 409).end();
+      })().catch(() => response.writeHead(500).end());
+    });
+    ack.listen(0, '127.0.0.1'); await once(ack, 'listening');
+    const managed = createDatabase(config => {
+      const pool = new pg.Pool(poolConfig(config.connectionString)), entry = {pool, ends: 0};
+      const end = pool.end.bind(pool); pool.end = () => {entry.ends++; return end();};
+      pools.push(entry); return pool;
+    }, {env: {DATABASE_URL: uri(password), FAAS_SECRETS_SNAPSHOT_FILE: snapshot,
+      FAAS_SECRETS_RELOAD_READY_FILE: join(directory, 'ready'), FAAS_SECRETS_RELOAD_GENERATION: generation,
+      FAAS_SECRETS_RELOAD_ACK_ENDPOINT: `http://127.0.0.1:${ack.address().port}/ack`},
+      log: code => idleErrors.push(code),
+    });
+    databases.push(managed);
+    const blocker = new pg.Client(poolConfig(url)); await blocker.connect();
+    let heldWrite;
+    try {
+      await managed.start(); const managedBase = await listen(managed);
+      const health = () => fetch(`${managedBase}/healthz`);
+      const restore = () => fetch(`${managedBase}/internal/after-restore`, {method:'POST', headers:{'X-Faas-After-Restore':'1'}});
+      await blocker.query('BEGIN'); await blocker.query('LOCK TABLE notes IN SHARE MODE');
+      let finished = false;
+      heldWrite = fetch(`${managedBase}/notes`, {method:'POST',headers:{'content-type':'application/json'},
+        body:JSON.stringify({body:'rotated-once'})}).then(response => {finished = true; return response;});
+      await waitFor(async () => (await admin.query("SELECT count(*)::int AS count FROM pg_stat_activity WHERE usename=$1 AND wait_event_type='Lock'",[rotationRole])).rows[0].count > 0);
+      await admin.query(`ALTER ROLE "${rotationRole}" PASSWORD '${nextPassword}'`);
+      await publish('b'); process.kill(process.pid, 'SIGHUP');
+      await waitFor(() => receipts.some(r => r.revision === 'b'.repeat(64) && r.status === 'applied'));
+      assert.equal(finished, false); assert.equal(pools[0].ends, 0);
+      await publish('c', {DATABASE_URL: uri(password)});
+      await assert.rejects(managed.reload(), /database_unavailable/);
+      assert.equal((await health()).status, 503);
+      await publish('d', {}); await assert.rejects(managed.reload());
+      assert.equal(pools[0].ends, 0); assert.equal(finished, false);
+      await blocker.query('COMMIT');
+      assert.equal((await heldWrite).status, 201);
+      await waitFor(() => pools[0].ends === 1);
+      assert.equal((await admin.query("SELECT count(*)::int AS count FROM notes WHERE body='rotated-once'")).rows[0].count, 1);
+      await publish('e'); assert.equal((await restore()).status, 204);
+      assert.equal(managed.generation, 1); assert.equal((await health()).status, 200);
+      // Hold the real schema validation during SIGHUP, then time out a restore
+      // queued behind it. Neither that candidate nor the queued reload may ACK applied.
+      await blocker.query('BEGIN'); await blocker.query('LOCK TABLE notes IN ACCESS EXCLUSIVE MODE');
+      await publish('f'); process.kill(process.pid, 'SIGHUP');
+      await waitFor(async () => (await admin.query("SELECT count(*)::int AS count FROM pg_stat_activity WHERE usename=$1 AND wait_event_type='Lock'",[rotationRole])).rows[0].count > 0);
+      assert.equal((await restore()).status, 503); assert.equal(managed.generation, 1);
+      await blocker.query('ROLLBACK');
+      await waitFor(() => receipts.some(r => r.revision === 'f'.repeat(64)));
+      assert.ok(!receipts.some(r => r.revision === 'f'.repeat(64) && r.status === 'applied'));
+      assert.equal((await health()).status, 503);
+      await publish('1'); assert.equal((await restore()).status, 204, JSON.stringify({logs:idleErrors,receipts,pools:pools.map(p=>p.ends)}));
+      assert.equal(managed.generation, 2); assert.equal((await health()).status, 200);
+      assert.deepEqual(receipts.map(r => r.status), ['applied','applied','failed','failed','applied','failed','applied']);
+      assert.ok(receipts.every(r => r.generation === generation && Object.keys(r).sort().join(',') === 'generation,revision,status'));
+      assert.ok(!JSON.stringify(receipts).includes(password));
+    } finally {
+      await blocker.query('ROLLBACK'); await blocker.end();
+      await heldWrite?.catch(() => {});
+      await managed.close();
+      ack.closeAllConnections(); await new Promise(resolve => ack.close(resolve));
+      await rm(directory, {recursive:true,force:true});
+    }
+    assert.ok(pools.every(entry => entry.ends === 1));
+  });
   await t.test("retired held and fresh credentials fail; replacement preserves data", async () => {
     let currentRole = role;
     const refreshed = runtime(() => currentRole);
@@ -192,16 +291,11 @@ test("generated PostgreSQL starter survives real TLS/SCRAM connection failures",
     await admin.query(`ALTER ROLE "${role}" NOLOGIN`); await terminate(role);
     assert.equal((await fetch(`${base}/healthz`)).status, 503);
     assert.equal((await hook()).status, 503);
-    await assert.rejects(refreshed.query("SELECT 1"), /database_unavailable/);
-    currentRole = nextRole;
-    await refreshed.restore();
-    assert.equal((await refreshed.query("SELECT current_user AS name")).rows[0].name, nextRole);
-    assert.equal((await refreshed.query("SELECT body FROM notes")).rows[0].body, "preserved");
-    const replacement = runtime(nextRole), nextBase = await listen(replacement);
+    const replacement = await runtime(nextRole), nextBase = await listen(replacement);
     assert.equal((await fetch(`${nextBase}/healthz`)).status, 200);
-    assert.equal((await (await fetch(`${nextBase}/notes`)).json()).notes[0].body, "preserved");
+    assert.ok((await (await fetch(`${nextBase}/notes`)).json()).notes.some(note => note.body === "preserved"));
   });
-  await t.test("public restore attempts cannot reset a pool", async () => {
+  await t.test("public lifecycle attempts cannot reset or drain a pool", async () => {
     for (const path of ["after-restore", "before-checkpoint"]) {
       const result = await fetch(`${base}/internal/${path}`, { method: "POST" });
       assert.equal(result.status, 403);

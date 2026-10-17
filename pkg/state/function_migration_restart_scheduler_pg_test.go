@@ -2,7 +2,7 @@
 
 package state_test
 
-// adr: 1353
+// adr: 1548
 // Real PostgreSQL and scheduler startup with a simulated VM RPC peer. This is
 // composition/failure validation, not native process or SQL pool acceptance.
 

@@ -108,6 +108,12 @@ type Change struct {
 	ActivityRetentionDays *int
 	// Email sets the HTTPS email provider, or removes it (empty Provider).
 	Email *Email
+	// SMS turns phone sign-in by text message on with a provider, or off
+	// (empty Provider).
+	SMS *SMS
+	// SSO turns organization single sign-on (SAML) on or off. Turning it on
+	// also needs SAMLKeySecret, which the caller creates once.
+	SSO *bool
 }
 
 // Captcha is a CAPTCHA provider and its keys; the secret stays in the app.
@@ -199,6 +205,17 @@ func (c Change) Secrets() (map[string]string, []string, error) {
 			}
 			maps.Copy(set, email)
 		}
+	}
+	if c.SSO != nil {
+		set["AUTH_SSO"] = flag(*c.SSO)
+	}
+	if c.SMS != nil {
+		sms, removed, err := c.SMS.secrets()
+		if err != nil {
+			return nil, nil, err
+		}
+		maps.Copy(set, sms)
+		unset = append(unset, removed...)
 	}
 	if c.PasskeyRPID != nil {
 		switch {

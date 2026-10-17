@@ -14,6 +14,19 @@ function failure(res, error) {
   res.status(503).json({ ok: false, error: code });
 }
 
+// Lifecycle callbacks come from guest-init over loopback with one exact marker
+// header; anything else is a forged public request.
+function lifecycleHook(app, path, marker, run) {
+  app.post(path, async (req, res) => {
+    if (!["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(req.socket.remoteAddress) ||
+        req.get(marker) !== "1") return res.sendStatus(403);
+    const request = requestSignal(req, res);
+    try { await run(request); res.sendStatus(204); }
+    catch (error) { failure(res, error); }
+    finally { request.dispose(); }
+  });
+}
+
 export function createApp(express, database) {
   const app = express();
   app.use(express.json({ limit: "64kb" }));
@@ -43,18 +56,8 @@ export function createApp(express, database) {
     } catch (error) { failure(res, error); }
     finally { request.dispose(); }
   });
-  for (const [path, header, callback] of [
-    ["/internal/before-checkpoint", "X-Faas-Before-Checkpoint", (options) => database.beforeCheckpoint(options)],
-    ["/internal/after-restore", "X-Faas-After-Restore", (options) => database.restore(options)],
-  ]) {
-    app.post(path, async (req, res) => {
-      if (!["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(req.socket.remoteAddress) ||
-          req.get(header) !== "1") return res.sendStatus(403);
-      const request = requestSignal(req, res);
-      try { await callback(request); res.sendStatus(204); }
-      catch (error) { failure(res, error); }
-      finally { request.dispose(); }
-    });
-  }
+  // Drain every SQL session before a capture; replace any pool after restore.
+  lifecycleHook(app, "/internal/before-checkpoint", "X-Faas-Before-Checkpoint", request => database.checkpoint(request));
+  lifecycleHook(app, "/internal/after-restore", "X-Faas-After-Restore", request => database.restore(request));
   return app;
 }

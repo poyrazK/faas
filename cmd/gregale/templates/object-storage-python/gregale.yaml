@@ -1,0 +1,7 @@
+hosting:
+  port: 8080
+  health: /readyz
+lifecycle:
+  after_restore:
+    path: /internal/after-restore
+    timeout_ms: 2000
