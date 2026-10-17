@@ -2876,6 +2876,26 @@
     "kind": "operational"
   },
   {
+    "table": "deployment_rollbacks",
+    "columns": [
+      "account_id",
+      "app_id",
+      "audit_id",
+      "error",
+      "error_code",
+      "finished_at",
+      "from_deployment_id",
+      "id",
+      "recovery_ms",
+      "requested_at",
+      "scope",
+      "status",
+      "target_deployment_id",
+      "trigger"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "deployment_route_policy_snapshots",
     "columns": [
       "app_id",
@@ -3081,9 +3101,11 @@
       "reordered_by_principal",
       "revision",
       "rollback_on_5xx",
+      "rollback_prepared_at",
       "rollout_aborted_at",
       "rollout_aborted_reason",
       "rollout_completed_at",
+      "rollout_decision",
       "rollout_started_at",
       "rollout_state",
       "rootfs_bytes",
