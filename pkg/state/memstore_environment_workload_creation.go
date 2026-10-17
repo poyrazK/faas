@@ -64,7 +64,7 @@ func (m *MemStore) PrepareEnvironmentGitOpsWorkloads(ctx context.Context, lease 
 	}()
 	limits, _ := api.LimitsFor(snapshot.Plan)
 	for _, resource := range environmentWorkloadCreationNames(apps) {
-		app, err := m.createAppIfUnderQuotaLocked(apps[resource], limits)
+		app, err := m.createAppIfUnderQuotaLocked(ctx, apps[resource], limits)
 		if err != nil {
 			return nil, fmt.Errorf("create workload %s: %w", resource, err)
 		}

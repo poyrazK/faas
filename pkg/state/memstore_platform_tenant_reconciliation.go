@@ -19,6 +19,11 @@ func (m *MemStore) PlanPlatformTenantReconciliation(ctx context.Context, in Plat
 	if err != nil {
 		return api.PlatformTenantReconciliationPlanResponse{}, err
 	}
+	proposal := trafficTenantApplyProposal(in.ApplyPlatformTenantParams, snapshot.planned)
+	addTrafficTenantRemovals(&proposal, snapshot.changes)
+	if err := m.checkMemTrafficTenantBindingLocked(ctx, in.AccountID, trafficTenantApplyHosts(in.ApplyPlatformTenantParams), proposal); err != nil {
+		return api.PlatformTenantReconciliationPlanResponse{}, err
+	}
 	return api.PlatformTenantReconciliationPlanResponse{TenantID: in.TenantID,
 		PlanHash: snapshot.planHash, Changes: snapshot.changes}, nil
 }
@@ -39,18 +44,19 @@ func (m *MemStore) ApplyPlatformTenantReconciliation(ctx context.Context, in Pla
 	if !platformTenantPlanHashMatches(expectedPlanHash, snapshot.planHash) {
 		return api.PlatformTenantReconciliationApplyResponse{}, ErrPlatformTenantPlanStale
 	}
-	if err := m.validateManagedTenantRemovalsLocked(in.TenantID, snapshot.changes); err != nil {
+	result := snapshot.planned
+	now := time.Now().UTC()
+	prepareMemPlatformTenantApply(&result, now)
+	proposal := trafficTenantApplyProposal(in.ApplyPlatformTenantParams, result)
+	addTrafficTenantRemovals(&proposal, snapshot.changes)
+	if err := m.validateManagedTenantRemovalsLocked(in.AccountID, in.TenantID, proposal, snapshot.changes); err != nil {
 		return api.PlatformTenantReconciliationApplyResponse{}, err
 	}
-	applyInput := in.ApplyPlatformTenantParams
-	applyInput.DryRun = false
-	result, err := m.applyPlatformTenantLocked(ctx, applyInput)
-	if err != nil {
+	if err := m.checkMemTrafficTenantBindingLocked(ctx, in.AccountID, trafficTenantApplyHosts(in.ApplyPlatformTenantParams), proposal); err != nil {
 		return api.PlatformTenantReconciliationApplyResponse{}, err
 	}
-	if err := m.applyManagedTenantRemovalsLocked(in.TenantID, snapshot.changes); err != nil {
-		return api.PlatformTenantReconciliationApplyResponse{}, err
-	}
+	m.publishPlatformTenantApplyLocked(result, now)
+	m.publishManagedTenantRemovalsLocked(snapshot.changes)
 	changes := platformTenantAppliedReconciliationChanges(snapshot.changes, result)
 	response := api.PlatformTenantReconciliationApplyResponse{TenantID: result.Tenant.ID, ReceiptID: uuid.NewString(),
 		PlanHash: snapshot.planHash, AppliedAt: m.clock().UTC(), Applied: true, Changes: changes}
@@ -138,7 +144,7 @@ func (m *MemStore) GetPlatformTenantReconciliationReceipt(_ context.Context, acc
 func (m *MemStore) planPlatformTenantReconciliationLocked(ctx context.Context, in PlatformTenantReconciliationParams) (platformTenantReconciliationSnapshot, error) {
 	planInput := in.ApplyPlatformTenantParams
 	planInput.DryRun = true
-	planned, err := m.applyPlatformTenantLocked(ctx, planInput)
+	planned, err := m.planPlatformTenantApplyLocked(ctx, planInput)
 	if err != nil {
 		return platformTenantReconciliationSnapshot{}, err
 	}
@@ -167,10 +173,13 @@ func (m *MemStore) planPlatformTenantReconciliationLocked(ctx context.Context, i
 		if surfaceID == "" {
 			continue
 		}
-		for _, hostname := range m.tenantHostnames {
+		if err := visitMemTrafficTenantHostnames(ctx, m.tenantHostnames, nil, func(hostname TenantHostname) error {
 			if hostname.SurfaceID == surfaceID {
 				hostnamesBySurface[surfaceID] = append(hostnamesBySurface[surfaceID], hostname)
 			}
+			return nil
+		}); err != nil {
+			return platformTenantReconciliationSnapshot{}, err
 		}
 	}
 	changes := platformTenantReconciliationPlanChanges(planInput, planned, consumers, surfaces, hostnamesBySurface)
@@ -178,7 +187,7 @@ func (m *MemStore) planPlatformTenantReconciliationLocked(ctx context.Context, i
 		planHash: platformTenantReconciliationPlanHash(in.AccountID, in.TenantID, planInput, changes)}, nil
 }
 
-func (m *MemStore) validateManagedTenantRemovalsLocked(tenantID string, changes []api.PlatformTenantReconciliationPlanChange) error {
+func (m *MemStore) validateManagedTenantRemovalsLocked(accountID, tenantID string, proposal memTrafficPolicyChange, changes []api.PlatformTenantReconciliationPlanChange) error {
 	for _, change := range changes {
 		if change.Action != "remove_candidate" {
 			continue
@@ -186,12 +195,12 @@ func (m *MemStore) validateManagedTenantRemovalsLocked(tenantID string, changes 
 		switch change.ResourceType {
 		case "consumer":
 			consumer, ok := m.apiConsumers[change.ID]
-			if !ok || m.platformTenantByConsumer[change.ID] != tenantID || !consumer.PlatformTenantManaged {
+			if !ok || consumer.AccountID != accountID || m.platformTenantByConsumer[change.ID] != tenantID || !consumer.PlatformTenantManaged {
 				return ErrPlatformTenantPlanStale
 			}
 		case "surface":
 			surface, ok := m.tenantSurfaces[change.ID]
-			if !ok || m.platformTenantBySurface[change.ID] != tenantID || !surface.PlatformTenantManaged || surface.Status == SurfaceStatusDeleted {
+			if !ok || surface.AccountID != accountID || m.platformTenantBySurface[change.ID] != tenantID || !surface.PlatformTenantManaged || surface.Status == SurfaceStatusDeleted {
 				return ErrPlatformTenantPlanStale
 			}
 		case "hostname":
@@ -202,7 +211,14 @@ func (m *MemStore) validateManagedTenantRemovalsLocked(tenantID string, changes 
 					break
 				}
 			}
-			if !found || m.platformTenantBySurface[change.SurfaceID] != tenantID {
+			surface, exists := m.tenantSurfaces[change.SurfaceID]
+			linked := m.platformTenantBySurface[change.SurfaceID]
+			// The planner can adopt an owned, unlinked managed surface and
+			// remove omitted managed hostnames in the same final topology.
+			if linked == "" {
+				linked = proposal.TenantSurfaceLinks[change.SurfaceID]
+			}
+			if !found || !exists || surface.AccountID != accountID || surface.Status == SurfaceStatusDeleted || linked != tenantID {
 				return ErrPlatformTenantPlanStale
 			}
 		default:
@@ -212,7 +228,9 @@ func (m *MemStore) validateManagedTenantRemovalsLocked(tenantID string, changes 
 	return nil
 }
 
-func (m *MemStore) applyManagedTenantRemovalsLocked(tenantID string, changes []api.PlatformTenantReconciliationPlanChange) error {
+// publishManagedTenantRemovalsLocked runs only after every removal and the
+// complete proposed topology have been validated under the same mutex.
+func (m *MemStore) publishManagedTenantRemovalsLocked(changes []api.PlatformTenantReconciliationPlanChange) {
 	now := time.Now().UTC()
 	for _, change := range changes {
 		if change.Action != "remove_candidate" {
@@ -233,11 +251,8 @@ func (m *MemStore) applyManagedTenantRemovalsLocked(tenantID string, changes []a
 					delete(m.tenantHostnames, key)
 				}
 			}
-		default:
-			return ErrInvalidArgument
 		}
 	}
-	return nil
 }
 
 var _ PlatformTenantReconciliationStore = (*MemStore)(nil)

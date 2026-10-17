@@ -18,6 +18,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/google/uuid"
 )
 
 const testHexKey = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
@@ -126,5 +129,41 @@ func TestGatewaydSessionManager_WrongByteLength_FailsClosed(t *testing.T) {
 	mgr := loadSessionManager(getenv, newTestLogger2())
 	if mgr != nil {
 		t.Errorf("short-hex: want nil manager, got %+v", mgr)
+	}
+}
+
+func TestTrafficDeadlineSignerHasNoEphemeralFallback(t *testing.T) {
+	signer, err := loadTrafficDeadlineSigner(func(string) string { return "" })
+	if err != nil || signer != nil {
+		t.Fatalf("signer=%v error=%v; want disabled without shared material", signer, err)
+	}
+}
+
+func TestTrafficDeadlineSignerSharedContentAndPathKeys(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "session.key")
+	if err := os.WriteFile(path, []byte(testHexKey), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	first, err := loadTrafficDeadlineSigner(func(string) string { return testHexKey })
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := loadTrafficDeadlineSigner(func(string) string { return path })
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, err := first.Mint("app", "account", uuid.NewString(), time.Now().Add(time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := second.Verify(token, "app"); err != nil {
+		t.Fatalf("separate loaders disagree: %v", err)
+	}
+	buf := &strings.Builder{}
+	if manager := loadSessionManager(func(string) string { return path }, slog.New(slog.NewTextHandler(buf, nil))); manager == nil {
+		t.Fatal("session manager failed")
+	}
+	if strings.Contains(buf.String(), testHexKey) {
+		t.Fatal("loader logged secret material")
 	}
 }

@@ -197,32 +197,25 @@ type Config struct {
 	// UpsertComputeNodeFromOperator). Defaults to "".
 	NodeName string `toml:"node_name"`
 
-	// RateLimit configures the opt-in central mode for
-	// pg_ratelimit_counters (ADR-104 amendment 5, issue #881
-	// Phase 4). When Mode = "local" (the default), each
-	// gatewayd-internal serves the rate limit from its
-	// in-process Limiter (the pre-Phase-4 behaviour, unchanged
-	// for back-compat). When Mode = "central", every request
-	// atomically consumes from Postgres via the CentralBackend interface (see
-	// pkg/gateway/ratelimit_central.go). Multi-replica
-	// clusters SHOULD run Mode = "central" to avoid the
-	// sticky-by-warm-node drift the 00126 schema was created
-	// to solve (ADR-070 bench follow-up). Single-box dev
-	// deployments keep the default and incur no PG round-trips.
+	// RateLimit selects shared Postgres counters by default (ADR-570).
+	// Explicit local mode is a development/operator exception and does not
+	// provide a fleet cap. The same mode selects the default retry backend.
 	RateLimit TOMLRateLimitConfig `toml:"ratelimit"`
 }
 
-// TOMLRateLimitConfig is the on-disk shape of the [ratelimit] table.
-// The default Mode is "local" so a missing table reproduces today's
-// byte-for-byte behaviour.
+// TOMLRateLimitConfig selects the authoritative traffic counter backend.
 type TOMLRateLimitConfig struct {
-	// Mode selects the rate-limit counter backend. Accepted values:
-	//   "local"   — in-process Limiter only (default, back-compat)
-	//   "central" — pg-backed counters via CentralBackend (Phase 4)
-	// Any other value is rejected at startup with the
-	// ratelimit.mode field name so an operator can map the
-	// error straight to the TOML key.
+	// central is the default and requires Postgres; local explicitly selects
+	// process-local counters. Redis retry credentials override local/PG retry
+	// selection while app/account/rule rate counters retain this mode.
 	Mode string `toml:"mode"`
+}
+
+func (c *Config) validateTrafficMode() error {
+	if c.RateLimit.Mode != "central" && c.RateLimit.Mode != "local" {
+		return fmt.Errorf("gatewayd: ratelimit.mode must be central or local, got %q", c.RateLimit.Mode)
+	}
+	return nil
 }
 
 // TOMLTLSConfig is the on-disk TLS subset. Function pointers and derived
@@ -258,12 +251,7 @@ func LoadConfig(path string) (*Config, error) {
 		APIDLoopback:       "http://127.0.0.1:8081",
 		GithubdLoopback:    "http://127.0.0.1:8083",
 		TLS:                TOMLTLSConfig{Disabled: true}, // e2e harness default
-		// ADR-104 amendment 5 / issue #881 Phase 4 C2: default
-		// RateLimit.Mode = "local" so single-box dev reproduces
-		// the pre-Phase-4 in-process bucket byte-for-byte. The
-		// opt-in to "central" requires an explicit TOML entry
-		// (or future env override; not implemented in C2).
-		RateLimit: TOMLRateLimitConfig{Mode: "local"},
+		RateLimit:          TOMLRateLimitConfig{Mode: "central"},
 	}
 	if path == "" {
 		// Gate-B: resolve Role from FAAS_GATEWAYD_ROLE even on the
@@ -271,7 +259,7 @@ func LoadConfig(path string) (*Config, error) {
 		// role.FromConfig falls back to RoleSingleBox when the env
 		// is unset, preserving single-box dev back-compat.
 		c.Role = role.FromConfig(string(c.Role), "FAAS_GATEWAYD_ROLE")
-		return c, nil
+		return c, c.validateTrafficMode()
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -280,7 +268,7 @@ func LoadConfig(path string) (*Config, error) {
 			// from FAAS_GATEWAYD_ROLE so env wins over the empty
 			// TOML default.
 			c.Role = role.FromConfig(string(c.Role), "FAAS_GATEWAYD_ROLE")
-			return c, nil
+			return c, c.validateTrafficMode()
 		}
 		return nil, fmt.Errorf("gatewayd: read %q: %w", path, err)
 	}
@@ -303,7 +291,7 @@ func LoadConfig(path string) (*Config, error) {
 	if v := os.Getenv("FAAS_NODE_NAME"); v != "" {
 		c.NodeName = v
 	}
-	return c, nil
+	return c, c.validateTrafficMode()
 }
 
 // resolveTLSConfig lifts the TOML-shaped TLS into the gateway.TLSConfig the

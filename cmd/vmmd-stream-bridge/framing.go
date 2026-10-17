@@ -207,16 +207,5 @@ func bridgeRequestHeaders(r *http.Request) []headerEntry {
 }
 
 func isBridgeRequestHeader(name string) bool {
-	switch {
-	case strings.EqualFold(name, bridgeRequestMarkerHeader):
-		return true
-	case strings.EqualFold(name, bridgeRequestProtocolHeader):
-		return true
-	case strings.EqualFold(name, bridgeRequestPortHeader):
-		return true
-	case strings.EqualFold(name, bridgeRequestHostHeader):
-		return true
-	default:
-		return false
-	}
+	return strings.HasPrefix(strings.ToLower(name), "x-faas-bridge-")
 }

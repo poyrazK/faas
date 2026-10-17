@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/trafficproblem"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -35,9 +36,9 @@ func (s *server) writeDeploymentCreateError(w http.ResponseWriter, err error) {
 		s.notFound(w, "app no longer accepts deployments")
 		return
 	}
+	fallback := api.ErrCapacity("could not create deployment")
 	if problem := state.ServiceCapacityProblem(err); problem != nil {
-		api.WriteProblem(w, problem)
-		return
+		fallback = problem
 	}
 	// The client only sees "Briefly at capacity", and no caller logs the
 	// cause, so without this line the failure is untraceable (hunt #9
@@ -45,5 +46,5 @@ func (s *server) writeDeploymentCreateError(w http.ResponseWriter, err error) {
 	if s.log != nil {
 		s.log.Error("create deployment failed", "err", err)
 	}
-	api.WriteProblem(w, api.ErrCapacity("could not create deployment"))
+	api.WriteProblem(w, trafficproblem.Policy(err, fallback))
 }

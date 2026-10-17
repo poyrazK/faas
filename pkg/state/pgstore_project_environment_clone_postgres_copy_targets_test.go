@@ -238,15 +238,16 @@ func TestPgClonePostgresSnapshotCopyTargetLeaseExpiresBehindOwnedLocks(t *testin
 				t.Fatal(err)
 			}
 			defer func() { _ = lock.Rollback(context.WithoutCancel(ctx)) }()
-			needle := "ReadProjectEnvironmentClonePostgresCopyTarget"
+			var blockerPID int32
+			if err := lock.QueryRow(ctx, "select pg_backend_pid()").Scan(&blockerPID); err != nil {
+				t.Fatal(err)
+			}
 			switch kind {
 			case "account":
-				needle = "LockProjectEnvironmentCloneDatabaseAccount"
 				_, err = lock.Exec(ctx, "select id from accounts where id=$1 for update", lease.Operation.AccountID)
 			case "receipt":
 				_, err = lock.Exec(ctx, "select operation_id from project_environment_clone_postgres_copy_targets where operation_id=$1 for update", lease.Operation.ID)
 			case "catalogue":
-				needle = "LockManagedPostgresLifecycleDatabase"
 				_, err = lock.Exec(ctx, "select id from managed_postgres_databases where id=$1 for update", r.TargetDatabaseID)
 			}
 			if err != nil {
@@ -264,7 +265,9 @@ func TestPgClonePostgresSnapshotCopyTargetLeaseExpiresBehindOwnedLocks(t *testin
 			deadline := time.Now().Add(2 * time.Second)
 			for {
 				var waiting bool
-				if err := pool.QueryRow(ctx, "select exists(select 1 from pg_stat_activity where datname=current_database() and wait_event_type='Lock' and query like $1)", "%"+needle+"%").Scan(&waiting); err != nil {
+				// Follow the actual owned blocker, including the earlier
+				// account write lock, rather than a SQL comment's spelling.
+				if err := pool.QueryRow(ctx, "select exists(select 1 from pg_stat_activity where datname=current_database() and $1::int=any(pg_blocking_pids(pid)))", blockerPID).Scan(&waiting); err != nil {
 					t.Fatal(err)
 				}
 				if waiting {

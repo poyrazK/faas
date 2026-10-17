@@ -15,7 +15,7 @@ import (
 )
 
 type workflowRoutingRecoveryStore struct {
-	*recipientRouteFaultStore
+	*recipientDualStoreRouteFaultStore
 	waitingApp, loseCommitApp string
 	lostCommit                bool
 }
@@ -33,7 +33,7 @@ func (s *workflowRoutingRecoveryStore) FinishPublishedEventRecipient(ctx context
 	if work.Recipient.AppID == s.waitingApp && progress.State == state.PublishedEventRecipientPending {
 		next = progress.UpdatedAt.Add(2 * time.Hour)
 	}
-	return s.recipientRouteFaultStore.FinishPublishedEventRecipient(ctx, work, progress, next)
+	return s.recipientDualStoreRouteFaultStore.FinishPublishedEventRecipient(ctx, work, progress, next)
 }
 
 // adr: 648 — failed workflows and apps recover independently while a workflow
@@ -55,7 +55,7 @@ func TestEventWorkflowRecipientRoutingSelectiveRecovery(t *testing.T) {
 
 func testEventWorkflowRecipientRoutingSelectiveRecovery(t *testing.T, backing recipientRoutingTestStore, restart func() recipientRoutingTestStore) {
 	ctx := t.Context()
-	store := &workflowRoutingRecoveryStore{recipientRouteFaultStore: &recipientRouteFaultStore{
+	store := &workflowRoutingRecoveryStore{recipientDualStoreRouteFaultStore: &recipientDualStoreRouteFaultStore{
 		recipientRoutingTestStore: backing, failures: map[string]error{},
 	}}
 	account, err := store.CreateAccount(ctx, uuid.NewString()+"@example.com", api.PlanPro)

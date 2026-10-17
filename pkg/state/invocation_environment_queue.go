@@ -185,7 +185,9 @@ func validateInvocationEnvironmentQueueAdmission(ctx context.Context, store invo
 		}
 		return nil
 	}
-	consumers, ok := store.(ProjectEnvironmentQueueConsumerStore)
+	consumers, ok := store.(interface {
+		ProjectEnvironmentQueueConsumersForDeployment(context.Context, string, string, string) (ProjectEnvironmentQueueRuntimeSet, error)
+	})
 	if !ok || !invocationStageScope(version.Scope) || version.DeploymentID != owner.DeploymentID {
 		return ErrInvocationEnvironmentWorkIsolation
 	}

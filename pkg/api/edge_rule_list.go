@@ -131,6 +131,7 @@ func normalizeEdgeRuleListHost(item string) (string, error) {
 // lookups.
 type EdgeRuleList struct {
 	Kind     string
+	items    []string            // normalized source, for condition encoding
 	exact    map[string]struct{} // lowercased for country and host
 	nets     []*net.IPNet
 	suffixes map[string]struct{} // ".example.com" for "*.example.com"
@@ -145,7 +146,7 @@ func CompileEdgeRuleList(kind string, items []string) (*EdgeRuleList, error) {
 	if err != nil {
 		return nil, err
 	}
-	l := &EdgeRuleList{Kind: kind, exact: make(map[string]struct{}, len(items))}
+	l := &EdgeRuleList{Kind: kind, items: items, exact: make(map[string]struct{}, len(items))}
 	for _, item := range items {
 		switch {
 		case kind == EdgeRuleListKindIP && strings.Contains(item, "/"):

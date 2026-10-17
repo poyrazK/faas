@@ -14,10 +14,12 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // deadlineRecordingClient records the context each vmmd stream is opened with
@@ -58,6 +60,8 @@ func TestStreamForwardersDoNotSendBudgetDeadlineToVMMD(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			parent, cancelParent := context.WithCancel(context.Background())
 			defer cancelParent()
+			want := wire.CorrelationFields{RequestID: "request", WakeID: "wake", AppID: "app", DeploymentID: "deployment", InstanceID: "instance", NodeID: "node"}
+			parent = wire.WithContext(metadata.NewOutgoingContext(parent, metadata.Pairs("x-transport", "retained")), want)
 			budgetCtx, cancelBudget, _ := reqbudget.WithRemaining(parent, 30*time.Second, 30*time.Second, "test", "stream")
 			defer cancelBudget()
 			if _, ok := budgetCtx.Deadline(); !ok {
@@ -75,6 +79,11 @@ func TestStreamForwardersDoNotSendBudgetDeadlineToVMMD(t *testing.T) {
 			}
 			if deadline, ok := client.ctxs[0].Deadline(); ok {
 				t.Fatalf("vmmd stream opened with deadline %s (in %s); gRPC would send it as grpc-timeout", deadline.Format(time.RFC3339Nano), time.Until(deadline).Round(time.Second))
+			}
+			md, _ := metadata.FromOutgoingContext(client.ctxs[0])
+			got, _ := wire.CorrelationFromIncoming(metadata.NewIncomingContext(client.ctxs[0], md))
+			if got != want || len(md.Get("x-transport")) != 1 || md.Get("x-transport")[0] != "retained" {
+				t.Fatalf("vmmd stream lost request correlation or transport metadata: %+v metadata=%v", got, md)
 			}
 		})
 	}

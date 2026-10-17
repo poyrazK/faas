@@ -61,18 +61,18 @@ func invocationPinScopeIDs(appID, revision, release string) (pgtype.UUID, pgtype
 	if appUUID.Scan(appID) != nil || !appUUID.Valid || (revision == "") == (release == "") {
 		return appUUID, revisionUUID, releaseUUID, ErrInvalidArgument
 	}
-	for _, value := range []string{revision, release} {
-		if value != "" {
-			parsed, err := uuid.Parse(value)
-			if err != nil || parsed == uuid.Nil {
-				return appUUID, revisionUUID, releaseUUID, ErrInvalidArgument
-			}
+	for _, pin := range []struct {
+		value  string
+		result *pgtype.UUID
+	}{{revision, &revisionUUID}, {release, &releaseUUID}} {
+		if pin.value == "" {
+			continue
 		}
-	}
-	if revision != "" {
-		_ = revisionUUID.Scan(revision)
-	} else {
-		_ = releaseUUID.Scan(release)
+		parsed, err := uuid.Parse(pin.value)
+		if err != nil || parsed == uuid.Nil {
+			return appUUID, revisionUUID, releaseUUID, ErrInvalidArgument
+		}
+		*pin.result = pgtype.UUID{Bytes: parsed, Valid: true}
 	}
 	return appUUID, revisionUUID, releaseUUID, nil
 }

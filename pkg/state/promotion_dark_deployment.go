@@ -17,11 +17,11 @@ var _ ProjectPromotionDeploymentStore = (*MemStore)(nil)
 // release graph member without changing the workload's weighted route. GitOps
 // candidates require a graph-scoped activation transaction for their lifecycle.
 func (s *PgStore) MarkDeploymentLiveDark(ctx context.Context, id string) error {
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.beginDeploymentTrafficMutation(ctx, id)
 	if err != nil {
 		return fmt.Errorf("state: mark dark deployment live begin: %w", err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 
 	var appID string
 	if err := tx.QueryRow(ctx, `select app_id from deployments where id = $1`, id).Scan(&appID); err != nil {
@@ -132,6 +132,9 @@ func (m *MemStore) MarkDeploymentLiveDark(ctx context.Context, id string) (err e
 	if dep.RolloutCompletedAt == nil {
 		now := time.Now().UTC()
 		dep.RolloutCompletedAt = &now
+	}
+	if err := m.checkMemTrafficDeploymentChangeLocked(ctx, dep); err != nil {
+		return err
 	}
 	if err := m.captureAndStoreDeploymentSnapshotsLocked(ctx, dep, previousStatus != DeployLive); err != nil {
 		return err

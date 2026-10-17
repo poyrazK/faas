@@ -813,6 +813,7 @@ func TestBuildEdgeRuleAction_Throttle_CountryAndStrictMissingKey(t *testing.T) {
 func TestBuildEdgeRuleAction_Budget_Marshals(t *testing.T) {
 	raw, err := buildEdgeRuleAction("budget", edgeRuleActionInputs{
 		BudgetMs:             10000,
+		TotalDeadlineMs:      15000,
 		BudgetOverrideHeader: "X-My-Budget",
 	})
 	if err != nil {
@@ -824,6 +825,9 @@ func TestBuildEdgeRuleAction_Budget_Marshals(t *testing.T) {
 	}
 	if got.BudgetMs != 10000 {
 		t.Errorf("budget_ms = %d, want 10000", got.BudgetMs)
+	}
+	if got.TotalDeadlineMs != 15000 {
+		t.Errorf("total_deadline_ms = %d, want 15000", got.TotalDeadlineMs)
 	}
 	if got.AllowOverrideHeader != "X-My-Budget" {
 		t.Errorf("allow_override_header = %q, want X-My-Budget", got.AllowOverrideHeader)

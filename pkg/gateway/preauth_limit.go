@@ -243,6 +243,7 @@ func (l *preAuthSourceLimiter) ForgetAll() int {
 // authentication. It deliberately uses only the public gateway's overwritten
 // single-hop XFF value; arbitrary inbound headers never select a bucket.
 func (h *Handler) applyPreAuthRateLimit(w http.ResponseWriter, r *http.Request, rec *statusRecorder, app App, deploymentSmoke bool) bool {
+	markTrafficPhase(r.Context(), trafficRates)
 	config := app.PreAuthRateLimit
 	if deploymentSmoke || config == nil || config.Mode == api.PreAuthRateLimitOff {
 		return false
@@ -332,6 +333,8 @@ func (h *Handler) applyPreAuthRateLimit(w http.ResponseWriter, r *http.Request, 
 				h.metrics.ObservePreAuthRateLimit(app.ID, outcome)
 			}
 			if config.Mode == api.PreAuthRateLimitEnforce {
+				recordTrafficLimiter(r.Context(), "surface")
+				recordTrafficRefusal(r.Context(), "rate_limited")
 				w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
 				w.Header().Set("x-faas-rate-limit-scope", "pre-auth-failures")
 				api.WriteProblem(w, api.NewProblem(http.StatusTooManyRequests, "rate_limited",
@@ -381,6 +384,8 @@ func (h *Handler) applyPreAuthRateLimit(w http.ResponseWriter, r *http.Request, 
 	if allowed && routeAllowed {
 		return false
 	}
+	recordTrafficLimiter(r.Context(), "surface")
+	recordTrafficRefusal(r.Context(), "rate_limited")
 	w.Header().Set("Retry-After", "1")
 	w.Header().Set("x-faas-rate-limit-scope", scope)
 	api.WriteProblem(w, api.NewProblem(http.StatusTooManyRequests, "rate_limited",

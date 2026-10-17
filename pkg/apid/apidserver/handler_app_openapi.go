@@ -49,6 +49,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/edgerules"
+	"github.com/onebox-faas/faas/pkg/apid/trafficproblem"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/openapidiff"
 	"github.com/onebox-faas/faas/pkg/openapiimport"
@@ -831,35 +832,13 @@ func (s *server) postAppOpenAPIImport(w http.ResponseWriter, r *http.Request, ac
 }
 
 // enforceOpenAPIImportQuota runs the per-account quota gate +
-// atomic upsert. The Count+check+Upsert triplet is bundled
-// inside UpsertAppOpenAPIDocIfUnderQuota so a TOCTOU race
-// between two concurrent imports can't slip past the cap; the
-// upfront Count here is a fast-feedback pre-check that lets us
-// return the 403 BEFORE the JSONB INSERT round-trip. Writes the
+// atomic upsert. The store owns the locked count and replacement-slot decision
+// so concurrent imports cannot slip past the cap and an existing document can
+// be repaired when the account is at its limit. Writes the
 // RFC 7807 problem to w on any reject path. Returns nil on
 // success.
 func (s *server) enforceOpenAPIImportQuota(w http.ResponseWriter, r *http.Request, acct state.Account, app state.App, raw []byte, endpointCount int, openapiVersion string) error {
-	count, err := s.store.CountOpenAPIImportsByAccount(r.Context(), acct.ID)
-	if err != nil {
-		api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal_error",
-			"failed to count imports", err.Error()))
-		return err
-	}
 	planMax := acct.Plan.OpenAPIImportsPerAccount()
-	if planMax == 0 {
-		// Fail-closed: unknown plans (or plans explicitly set
-		// to 0 — e.g., a tier-down migration) cannot import.
-		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, "openapi_import_quota_reached",
-			"per-account OpenAPI import quota reached",
-			fmt.Sprintf("limit=%d observed=%d", planMax, count)))
-		return state.ErrQuotaExceeded
-	}
-	if count >= planMax {
-		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, "openapi_import_quota_reached",
-			"per-account OpenAPI import quota reached",
-			fmt.Sprintf("limit=%d observed=%d", planMax, count)))
-		return state.ErrQuotaExceeded
-	}
 	if err := s.store.UpsertAppOpenAPIDocIfUnderQuota(r.Context(), app.ID, acct.ID, raw, endpointCount, openapiVersion, planMax); err != nil {
 		var qe *state.QuotaError
 		switch {
@@ -870,8 +849,8 @@ func (s *server) enforceOpenAPIImportQuota(w http.ResponseWriter, r *http.Reques
 		case errors.Is(err, state.ErrNotFound):
 			s.notFound(w, "no such app")
 		default:
-			api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, "internal_error",
-				"failed to persist import", err.Error()))
+			api.WriteProblem(w, trafficproblem.Policy(err, api.NewProblem(http.StatusInternalServerError, "internal_error",
+				"failed to persist import", err.Error())))
 		}
 		return err
 	}

@@ -5,6 +5,14 @@ staged to /srv/fc/base/ (inside the 60 GB reserve, counted once). drive0 is one 
 these shared read-only base rootfs; per-app layers stack over it via overlayfs.
 Never flatten into one rootfs per app (breaks the 130 MB fleet target).
 
+`base-debian-parent`, `runner-node24`, and `runner-python312` share the exact
+Debian 13 OCI base layer. Their AMD64 manifest pins move together so
+imaged can keep the parent/delta composition and shared read-only drive0.
+The parent includes Perl 5.40.1-6+deb13u1, which fixes the findings covered
+by [DLA-4821-1](https://security-tracker.debian.org/tracker/DLA-4821-1).
+Runtime smoke, full vulnerability reports, and publication gates remain
+required for the concrete built images.
+
 `runner-python313` is a standalone Wolfi/glibc chain rather than a child of
 `base-debian-parent`; imaged stages its complete shared base once and still
 uses the same two-drive layout for every Python 3.13 app.

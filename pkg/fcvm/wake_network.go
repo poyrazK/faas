@@ -36,12 +36,15 @@ type wakeNetworkKey struct{}
 
 // startWakeNetwork builds nc in the background. A nil result means the wake
 // has no network to build (execution-only); every method accepts nil.
-func (m *Manager) startWakeNetwork(ctx context.Context, nc netns.Config, prepared *preparedNetworkEntry, onReady func()) *wakeNetwork {
+func (m *Manager) startWakeNetwork(ctx context.Context, nc netns.Config, prepared *preparedNetworkEntry, register func() error, onReady func()) *wakeNetwork {
 	n := &wakeNetwork{done: make(chan struct{})}
 	go func() {
 		defer close(n.done)
 		started := time.Now()
 		n.hit, n.err = m.setupWakeNetwork(ctx, nc, prepared)
+		if n.err == nil && register != nil {
+			n.err = register()
+		}
 		n.duration = time.Since(started)
 		if n.err == nil && onReady != nil {
 			onReady()
