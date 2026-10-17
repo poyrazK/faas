@@ -685,3 +685,24 @@ SELECT kind::text,class::text,count(*)::bigint AS pending,
  count(*) FILTER (WHERE boundary IS NULL)::bigint AS unknown_age,
  min(boundary)::timestamptz AS oldest_at
 FROM timed GROUP BY kind,class;
+
+-- No execution list/page cap. Include disabled and suspended command crons as
+-- separate intentional cohorts. Nonempty ownership matches ListOwnedCrons;
+-- legacy listing also applies Engine.ownsAppDecision's local fallback.
+-- name: OperatorCommandCronObservations :many
+SELECT c.schedule,c.timezone,c.created_at,c.last_fired_at,c.enabled,c.skip_if_running,c.schedule_policy,
+ (c.suspended_reason<>'')::boolean AS suspended,(a.status='deleted')::boolean AS app_deleted,
+ (account.status IN ('active','past_due') AND account.abuse_hold_at IS NULL)::boolean AS account_active,
+ EXISTS(SELECT 1 FROM deployments d WHERE d.app_id=c.app_id AND d.status='live'
+  AND coalesce(d.rootfs_key,'')<>'' AND d.image_digest<>'')::boolean AS live_deployment,
+ EXISTS(SELECT 1 FROM app_tasks task WHERE task.cron_id=c.id AND task.status IN ('queued','restoring','running'))::boolean AS active_tasks,
+ EXISTS(SELECT 1 FROM app_tasks task WHERE task.cron_id=c.id AND task.status IN ('queued','restoring','running')
+  AND task.exclusive_operation_id IS NULL)::boolean AS active_ordinary_tasks,
+ (binding.trigger_id IS NOT NULL)::boolean AS exclusive_bound,
+ (binding.trigger_id IS NULL OR binding.app_id=c.app_id)::boolean AS binding_valid
+FROM crons c JOIN apps a ON a.id=c.app_id JOIN accounts account ON account.id=a.account_id
+LEFT JOIN exclusive_work_trigger_bindings binding ON binding.source='cron' AND binding.trigger_id=c.id AND binding.account_id=a.account_id
+WHERE cardinality(c.command)>0 AND
+ ((sqlc.arg(owner_node)::text<>'' AND a.node_id::text=sqlc.arg(owner_node))
+  OR (sqlc.arg(owner_node)::text='' AND
+   (sqlc.arg(local_node)::text='' OR a.node_id IS NULL OR a.node_id::text=sqlc.arg(local_node))));

@@ -6107,3 +6107,147 @@ groups:
           description: >-
             {{ $labels.operation }} errors exceed 10% of non-canceled calls with at least three errors per rolling five-minute window, sustained for five minutes. Customer command exit, timeout and cancellation verdicts are not infrastructure errors. Lease-loss and cancellation-race returns are separate outcomes. Restore errors can include policy or account refusals; inspect bounded logs before assigning cause.
           runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAppTasks.md
+
+  - name: faas_command_cron_admission
+    rules:
+      - record: schedd_command_cron_class_observation_healthy
+        expr: |
+          ((schedd_command_cron_schedules{job="schedd",class=~"due|overlap_due|replacement_wait|deployment_missing|exclusive_due|disabled|suspended|account_held|not_due|unknown"} >= 0) * 0 + 1)
+          and on (job, instance, class) (schedd_command_cron_schedules{job="schedd"} < +Inf)
+          and on (job, instance, class) (schedd_command_cron_schedules{job="schedd"} == floor(schedd_command_cron_schedules{job="schedd"}))
+          and on (job, instance, class) (schedd_command_cron_age_unknown{job="schedd"} >= 0)
+          and on (job, instance, class) (schedd_command_cron_age_unknown{job="schedd"} == floor(schedd_command_cron_age_unknown{job="schedd"}))
+          and on (job, instance, class) (schedd_command_cron_age_unknown{job="schedd"} <= schedd_command_cron_schedules{job="schedd"})
+          and on (job, instance, class) (schedd_command_cron_oldest_due_timestamp_seconds{job="schedd"} <= time())
+          and on (job, instance, class)
+            (((schedd_command_cron_schedules{job="schedd"} > schedd_command_cron_age_unknown{job="schedd"}) and on (job, instance, class) (schedd_command_cron_oldest_due_timestamp_seconds{job="schedd"} > 0))
+             or ((schedd_command_cron_schedules{job="schedd"} == schedd_command_cron_age_unknown{job="schedd"}) and on (job, instance, class) (schedd_command_cron_oldest_due_timestamp_seconds{job="schedd"} == 0)))
+          and on (job, instance) (up{job="schedd"} == 1)
+          and on (job, instance) (schedd_command_cron_collection_success{job="schedd"} == 1)
+          and on (job, instance) (schedd_command_cron_collection_last_success_timestamp_seconds{job="schedd"} > 0)
+          and on (job, instance) (time() - schedd_command_cron_collection_last_success_timestamp_seconds{job="schedd"} >= 0)
+          and on (job, instance) (time() - schedd_command_cron_collection_last_success_timestamp_seconds{job="schedd"} <= 120)
+          unless on (job, instance, class) (schedd_command_cron_schedules{job="schedd",class=~"disabled|suspended|account_held|not_due|unknown"} != schedd_command_cron_age_unknown{job="schedd",class=~"disabled|suspended|account_held|not_due|unknown"})
+      - record: schedd_command_cron_observation_healthy
+        expr: |
+          (count by (job, instance) (schedd_command_cron_class_observation_healthy == 1) == 10) / 10
+          and on (job, instance) (count by (job, instance) ((schedd_command_cron_sweeps_total{job="schedd",outcome=~"success|error|canceled"} >= 0) and (schedd_command_cron_sweeps_total{job="schedd",outcome=~"success|error|canceled"} < +Inf)) == 3)
+          and on (job, instance) (count by (job, instance) ((schedd_command_cron_decisions_total{job="schedd",outcome=~"disabled|not_due|account_held|replacement_wait|not_owned|invalid_schedule|lookup_error|store_unavailable|no_live_deployment|canceled|legacy_queued|legacy_skipped|legacy_stale|legacy_error"} >= 0) and (schedd_command_cron_decisions_total{job="schedd",outcome=~"disabled|not_due|account_held|replacement_wait|not_owned|invalid_schedule|lookup_error|store_unavailable|no_live_deployment|canceled|legacy_queued|legacy_skipped|legacy_stale|legacy_error"} < +Inf)) == 14)
+          and on (job, instance) (count by (job, instance) ((schedd_command_cron_admissions_total{job="schedd",outcome=~"queued|exclusive_pending|coalesced|skipped_overlap|missed_deadline|stale|deployment_unavailable|rejected|error|canceled|unknown"} >= 0) and (schedd_command_cron_admissions_total{job="schedd",outcome=~"queued|exclusive_pending|coalesced|skipped_overlap|missed_deadline|stale|deployment_unavailable|rejected|error|canceled|unknown"} < +Inf)) == 11)
+          and on (job, instance) ((schedd_command_cron_observation_enabled{job="schedd"} == 0) or (schedd_command_cron_observation_enabled{job="schedd"} == 1))
+          and on (job, instance) ((schedd_command_cron_sweep_running{job="schedd"} == 0) or (schedd_command_cron_sweep_running{job="schedd"} == 1))
+          and on (job, instance) (schedd_command_cron_sweep_last_start_timestamp_seconds{job="schedd"} >= 0)
+          and on (job, instance) (schedd_command_cron_sweep_last_start_timestamp_seconds{job="schedd"} <= time())
+          and on (job, instance) (schedd_command_cron_sweep_last_success_timestamp_seconds{job="schedd"} >= 0)
+          and on (job, instance) (schedd_command_cron_sweep_last_success_timestamp_seconds{job="schedd"} <= time())
+          and on (job, instance) (schedd_command_cron_admission_lag_unknown_total{job="schedd"} >= 0)
+          and on (job, instance) (schedd_command_cron_admission_lag_unknown_total{job="schedd"} < +Inf)
+          and on (job, instance) (schedd_command_cron_admission_lag_seconds_count{job="schedd"} >= 0)
+          and on (job, instance) (schedd_command_cron_admission_lag_seconds_count{job="schedd"} < +Inf)
+          and on (job, instance) (schedd_command_cron_admission_lag_seconds_sum{job="schedd"} >= 0)
+          and on (job, instance) (schedd_command_cron_admission_lag_seconds_sum{job="schedd"} < +Inf)
+          and on (job, instance) (schedd_command_cron_sweep_duration_seconds_count{job="schedd"} >= 0)
+          and on (job, instance) (schedd_command_cron_sweep_duration_seconds_count{job="schedd"} < +Inf)
+          and on (job, instance) (schedd_command_cron_sweep_duration_seconds_sum{job="schedd"} >= 0)
+          and on (job, instance) (schedd_command_cron_sweep_duration_seconds_sum{job="schedd"} < +Inf)
+      - record: schedd_command_cron_oldest_known_due_age_seconds
+        expr: |
+          (((time() - schedd_command_cron_oldest_due_timestamp_seconds{job="schedd"}) and on (job, instance, class) (schedd_command_cron_schedules{job="schedd"} > schedd_command_cron_age_unknown{job="schedd"}))
+           or ((schedd_command_cron_schedules{job="schedd"} == 0) * 0))
+          and on (job, instance) (schedd_command_cron_observation_healthy == 1)
+      - alert: FaasCommandCronTelemetryUnavailable
+        expr: |
+          (up{job="schedd"} == 1)
+          unless on (job, instance) ((schedd_command_cron_observation_healthy == 1) or (schedd_command_cron_observation_enabled{job="schedd"} == 0))
+        for: 5m
+        labels:
+          severity: warn
+          component: schedd
+          family: command_cron_telemetry
+          public_status: internal
+        annotations:
+          summary: Command-cron admission diagnostics are unavailable
+          description: >-
+            Schedd is scraped but command schedule observations are missing, failed, inconsistent or older than two minutes, or initialized counters and sweep gauges are incomplete. Counts and ages are unknown. Check observer, database, clocks and binary. Intentional observer shutdown is excluded.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommandCrons.md
+      - alert: FaasCommandCronSweepStalled
+        expr: |
+          (time() - schedd_command_cron_sweep_last_success_timestamp_seconds{job="schedd"} > 180)
+          and on (job, instance) (schedd_command_cron_observation_healthy == 1)
+          and on (job, instance) (schedd_command_cron_observation_enabled{job="schedd"} == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: schedd
+          family: command_cron
+          public_status: internal
+        annotations:
+          summary: Cron scanning is not demonstrating progress
+          description: >-
+            No actual cron scan with successful enumeration and owner lookups completed within three minutes, sustained for five minutes. Empty scans count as success. Shared scans include inline HTTP cron work; this alone does not identify a command runner failure.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommandCrons.md
+      - alert: FaasCommandCronDecisionOverdue
+        expr: |
+          (schedd_command_cron_oldest_known_due_age_seconds{class=~"due|overlap_due|deployment_missing|exclusive_due"} > 300)
+          and on (job, instance) (schedd_command_cron_observation_healthy == 1)
+          and on (job, instance) (schedd_command_cron_observation_enabled{job="schedd"} == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: schedd
+          family: command_cron
+          public_status: internal
+        annotations:
+          summary: A command schedule has unconsumed due history
+          description: >-
+            A {{ $labels.class }} command schedule has a first unconsumed nominal boundary older than five minutes, sustained for five minutes. This is pending admission or a policy decision, not continuous execution eligibility or a missed delivery SLO. Inspect cursor, deadline, overlap, deployment and exclusive policy before acting.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommandCrons.md
+      - alert: FaasCommandCronReplacementWaiting
+        expr: |
+          (schedd_command_cron_oldest_known_due_age_seconds{class="replacement_wait"} > 300)
+          and on (job, instance) (schedd_command_cron_observation_healthy == 1)
+          and on (job, instance) (schedd_command_cron_observation_enabled{job="schedd"} == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: schedd
+          family: command_cron
+          public_status: internal
+        annotations:
+          summary: A replacement schedule is waiting on prior work
+          description: >-
+            An unbound replacement schedule still has active prior tasks and old unconsumed due history for five minutes. Age is nominal schedule history, not cancellation duration. Inspect task cancellation, leases and teardown; do not replay commands or bypass fencing.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommandCrons.md
+      - alert: FaasCommandCronEvidenceUnknown
+        expr: |
+          ((schedd_command_cron_schedules{job="schedd",class="unknown"} > 0) or (schedd_command_cron_age_unknown{job="schedd",class=~"due|overlap_due|replacement_wait|deployment_missing|exclusive_due"} > 0))
+          and on (job, instance) (schedd_command_cron_observation_healthy == 1)
+          and on (job, instance) (schedd_command_cron_observation_enabled{job="schedd"} == 1)
+        for: 15m
+        labels:
+          severity: warn
+          component: schedd
+          family: command_cron_telemetry
+          public_status: internal
+        annotations:
+          summary: Command schedule timing or policy evidence is incomplete
+          description: >-
+            Fresh observations have contained {{ $labels.class }} command schedules with incomplete timing or policy evidence for 15m. Disabled, suspended, held and not-due schedules intentionally have unknown age and are excluded. Inspect supported durable evidence without rewriting cursors.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommandCrons.md
+      - alert: FaasCommandCronAdmissionErrors
+        expr: |
+          (sum by (job, instance) (increase(schedd_command_cron_admissions_total{job="schedd",outcome="error"}[5m]))
+           + sum by (job, instance) (increase(schedd_command_cron_decisions_total{job="schedd",outcome=~"lookup_error|store_unavailable|legacy_error"}[5m]))) >= 3
+          and on (job, instance) (schedd_command_cron_observation_healthy == 1)
+          and on (job, instance) (schedd_command_cron_observation_enabled{job="schedd"} == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: schedd
+          family: command_cron
+          public_status: internal
+        annotations:
+          summary: Command-cron admission calls are persistently failing
+          description: >-
+            At least three admission or pre-admission store errors occurred per rolling five-minute window, sustained for five minutes. Policy rejections, overlap skips, coalescing, missed deadlines, deployment-unavailable returns and parent cancellation are separate outcomes. Inspect bounded logs before attributing infrastructure failure.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCommandCrons.md

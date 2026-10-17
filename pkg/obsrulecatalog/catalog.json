@@ -4,7 +4,7 @@
   "sets": [
     {
       "id": "gregale-core-v1",
-      "revision": "f6ddc53485f9e59914c7b4ea4a0d2fb6c8aa5dfcf0e3aa5a21fbbf795905acd0",
+      "revision": "3c4a26ae4cbcfb28346d9bbb9206735f20132af71d10c9063e3de777a4f6c77e",
       "files": [
         "faas.rules.yml"
       ],
@@ -215,6 +215,19 @@
             "for_seconds": 3600,
             "keep_firing_for_seconds": 0,
             "fingerprint": "b869a61281ce2f1c2829c55cb79818e06c29ed0dd5ed60cb9fd62ab69aefe0ef"
+          }
+        },
+        {
+          "id": "0a17428e9f4496d65cfc9b88c5503e18e03597ff3f565739cb1656229db54000",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_command_cron_admission",
+          "rule_name": "FaasCommandCronEvidenceUnknown",
+          "definition": {
+            "expression_hash": "8ad7327f89481e324be5c5328df90e35f5e6fb89e5a9ab841431b8f79c550e4b",
+            "labels_hash": "98ce6f293bb4e3af6fc0aff21e8e2e8c8077203fe266ba54329551038a227e4e",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "8fe92f2e3435622098dc0efdb0a2284d10f926892dc5205b71a57454337ffd05"
           }
         },
         {
@@ -1076,6 +1089,19 @@
           }
         },
         {
+          "id": "410777058870f178475698582da88f12fac629df37bd7e0e697f079ae3a06f81",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_command_cron_admission",
+          "rule_name": "FaasCommandCronTelemetryUnavailable",
+          "definition": {
+            "expression_hash": "755859a6db69fee8f59349dfab84d35eb0997b92f48679aa4712b5a487e6cead",
+            "labels_hash": "98ce6f293bb4e3af6fc0aff21e8e2e8c8077203fe266ba54329551038a227e4e",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "2169a4997aaf4fa7d4b9022bfa1d0ff24ab06d33bc53154eb8132a7023ae0518"
+          }
+        },
+        {
           "id": "410d03be18926668aea253f693ee8fa9573a452f34291204d03787c9b8b8201d",
           "file_name": "faas.rules.yml",
           "group_name": "faas_billing",
@@ -1401,6 +1427,19 @@
           }
         },
         {
+          "id": "4c9b3aabeafa25061e5c2aaa6ff4460872cb883b042f1417e668ab8abc99eb90",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_command_cron_admission",
+          "rule_name": "FaasCommandCronDecisionOverdue",
+          "definition": {
+            "expression_hash": "adb8bd3d3c09b89993065287d76fe801033b4e5a658a9ea5408eda7ba57e6251",
+            "labels_hash": "2654e4dcd10fa2b6fc862c649f535d4bb6105f7e06a18ee329c359d14d09acad",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "e55c451ff8dfad3eeb7dbf5608601d4258d3e95dc5c66e2ecff5eccaa6ebd912"
+          }
+        },
+        {
           "id": "4d76e86219477b092d7938400333f0355ef9ac3fb94828f9e2af4891fa47b6a9",
           "file_name": "faas.rules.yml",
           "group_name": "faas_customer_log_drains",
@@ -1567,6 +1606,19 @@
             "for_seconds": 600,
             "keep_firing_for_seconds": 0,
             "fingerprint": "9caefa85e589c9cbd45a136b5f9c85cba28bcf4b0bb48431f3bdf2434c0f5868"
+          }
+        },
+        {
+          "id": "571fa696559c1412b970cdcf9994810e25ae2f2ee758b545a0148aff09d4926b",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_command_cron_admission",
+          "rule_name": "FaasCommandCronReplacementWaiting",
+          "definition": {
+            "expression_hash": "3700a46c16b9617cd27e19543722e58c91bf036e2cf2499209470e462ce6aff4",
+            "labels_hash": "2654e4dcd10fa2b6fc862c649f535d4bb6105f7e06a18ee329c359d14d09acad",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "ac943bd5ae4ebe066eab976be04508da35abe9f6e7a334e370a070b82a2c68f5"
           }
         },
         {
@@ -3689,6 +3741,19 @@
           }
         },
         {
+          "id": "e89852f67ebe74a5f85adc270c6bdc046a2f4db116425ce25b1b22ebcf3c34c6",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_command_cron_admission",
+          "rule_name": "FaasCommandCronAdmissionErrors",
+          "definition": {
+            "expression_hash": "4bade5ab8cfc71e33bb8d7cf70517675e1ef998cdd3fadbc58b8560c0c95a58b",
+            "labels_hash": "2654e4dcd10fa2b6fc862c649f535d4bb6105f7e06a18ee329c359d14d09acad",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "8b24f8ec7f000b661fd6a1bd1f33821ed4f89a4946173b64d0559f4d777f60cf"
+          }
+        },
+        {
           "id": "e8d293b1a0cfe8fae134e73d9cb52d3daaf42c3fe076835325e7d56bd2339c76",
           "file_name": "faas.rules.yml",
           "group_name": "faas_spec12_operator_signals",
@@ -4040,6 +4105,19 @@
           }
         },
         {
+          "id": "fc02abfaab37b10bbbfd5742dd1e776c9d9b5cb3c2870341f828712a5756e6c4",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_command_cron_admission",
+          "rule_name": "FaasCommandCronSweepStalled",
+          "definition": {
+            "expression_hash": "42abc2eaeaf40c26f06cd55985530840d9f7f1980d2e7f7dcf660c1ceab6dbb7",
+            "labels_hash": "2654e4dcd10fa2b6fc862c649f535d4bb6105f7e06a18ee329c359d14d09acad",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "4159421640945d2938a58aefa9210e4be39c5829fc24679e7fe46e6e631498db"
+          }
+        },
+        {
           "id": "fd93636f3ec468cfee3c2656005922d2cfb43f680e4d189821675dbff026bc91",
           "file_name": "faas.rules.yml",
           "group_name": "faas_safe_release",
@@ -4121,7 +4199,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "331cc18d1ee305348c3956c36718fbe934a2fc8e9f9878805efe19b820c0469a",
+      "revision": "7dc5f5b6a2bd754ced10b907cb82087386cebd9cc464bf947e06e9a68fc97450",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -4335,6 +4413,19 @@
             "for_seconds": 3600,
             "keep_firing_for_seconds": 0,
             "fingerprint": "b869a61281ce2f1c2829c55cb79818e06c29ed0dd5ed60cb9fd62ab69aefe0ef"
+          }
+        },
+        {
+          "id": "0a17428e9f4496d65cfc9b88c5503e18e03597ff3f565739cb1656229db54000",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_command_cron_admission",
+          "rule_name": "FaasCommandCronEvidenceUnknown",
+          "definition": {
+            "expression_hash": "8ad7327f89481e324be5c5328df90e35f5e6fb89e5a9ab841431b8f79c550e4b",
+            "labels_hash": "98ce6f293bb4e3af6fc0aff21e8e2e8c8077203fe266ba54329551038a227e4e",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "8fe92f2e3435622098dc0efdb0a2284d10f926892dc5205b71a57454337ffd05"
           }
         },
         {
@@ -5235,6 +5326,19 @@
           }
         },
         {
+          "id": "410777058870f178475698582da88f12fac629df37bd7e0e697f079ae3a06f81",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_command_cron_admission",
+          "rule_name": "FaasCommandCronTelemetryUnavailable",
+          "definition": {
+            "expression_hash": "755859a6db69fee8f59349dfab84d35eb0997b92f48679aa4712b5a487e6cead",
+            "labels_hash": "98ce6f293bb4e3af6fc0aff21e8e2e8c8077203fe266ba54329551038a227e4e",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "2169a4997aaf4fa7d4b9022bfa1d0ff24ab06d33bc53154eb8132a7023ae0518"
+          }
+        },
+        {
           "id": "410d03be18926668aea253f693ee8fa9573a452f34291204d03787c9b8b8201d",
           "file_name": "faas.rules.yml",
           "group_name": "faas_billing",
@@ -5560,6 +5664,19 @@
           }
         },
         {
+          "id": "4c9b3aabeafa25061e5c2aaa6ff4460872cb883b042f1417e668ab8abc99eb90",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_command_cron_admission",
+          "rule_name": "FaasCommandCronDecisionOverdue",
+          "definition": {
+            "expression_hash": "adb8bd3d3c09b89993065287d76fe801033b4e5a658a9ea5408eda7ba57e6251",
+            "labels_hash": "2654e4dcd10fa2b6fc862c649f535d4bb6105f7e06a18ee329c359d14d09acad",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "e55c451ff8dfad3eeb7dbf5608601d4258d3e95dc5c66e2ecff5eccaa6ebd912"
+          }
+        },
+        {
           "id": "4d76e86219477b092d7938400333f0355ef9ac3fb94828f9e2af4891fa47b6a9",
           "file_name": "faas.rules.yml",
           "group_name": "faas_customer_log_drains",
@@ -5752,6 +5869,19 @@
             "for_seconds": 600,
             "keep_firing_for_seconds": 0,
             "fingerprint": "9caefa85e589c9cbd45a136b5f9c85cba28bcf4b0bb48431f3bdf2434c0f5868"
+          }
+        },
+        {
+          "id": "571fa696559c1412b970cdcf9994810e25ae2f2ee758b545a0148aff09d4926b",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_command_cron_admission",
+          "rule_name": "FaasCommandCronReplacementWaiting",
+          "definition": {
+            "expression_hash": "3700a46c16b9617cd27e19543722e58c91bf036e2cf2499209470e462ce6aff4",
+            "labels_hash": "2654e4dcd10fa2b6fc862c649f535d4bb6105f7e06a18ee329c359d14d09acad",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "ac943bd5ae4ebe066eab976be04508da35abe9f6e7a334e370a070b82a2c68f5"
           }
         },
         {
@@ -7952,6 +8082,19 @@
           }
         },
         {
+          "id": "e89852f67ebe74a5f85adc270c6bdc046a2f4db116425ce25b1b22ebcf3c34c6",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_command_cron_admission",
+          "rule_name": "FaasCommandCronAdmissionErrors",
+          "definition": {
+            "expression_hash": "4bade5ab8cfc71e33bb8d7cf70517675e1ef998cdd3fadbc58b8560c0c95a58b",
+            "labels_hash": "2654e4dcd10fa2b6fc862c649f535d4bb6105f7e06a18ee329c359d14d09acad",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "8b24f8ec7f000b661fd6a1bd1f33821ed4f89a4946173b64d0559f4d777f60cf"
+          }
+        },
+        {
           "id": "e8d293b1a0cfe8fae134e73d9cb52d3daaf42c3fe076835325e7d56bd2339c76",
           "file_name": "faas.rules.yml",
           "group_name": "faas_spec12_operator_signals",
@@ -8313,6 +8456,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "41cab1a9a724c477d18c63da48ad58e94e9152b37cf0224f0da2a99aabf948a8"
+          }
+        },
+        {
+          "id": "fc02abfaab37b10bbbfd5742dd1e776c9d9b5cb3c2870341f828712a5756e6c4",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_command_cron_admission",
+          "rule_name": "FaasCommandCronSweepStalled",
+          "definition": {
+            "expression_hash": "42abc2eaeaf40c26f06cd55985530840d9f7f1980d2e7f7dcf660c1ceab6dbb7",
+            "labels_hash": "2654e4dcd10fa2b6fc862c649f535d4bb6105f7e06a18ee329c359d14d09acad",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "4159421640945d2938a58aefa9210e4be39c5829fc24679e7fe46e6e631498db"
           }
         },
         {

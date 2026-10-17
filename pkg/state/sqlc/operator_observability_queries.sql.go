@@ -1194,6 +1194,87 @@ func (q *Queries) OperatorCapacityProfiles(ctx context.Context, db DBTX, resourc
 	return items, nil
 }
 
+const operatorCommandCronObservations = `-- name: OperatorCommandCronObservations :many
+SELECT c.schedule,c.timezone,c.created_at,c.last_fired_at,c.enabled,c.skip_if_running,c.schedule_policy,
+ (c.suspended_reason<>'')::boolean AS suspended,(a.status='deleted')::boolean AS app_deleted,
+ (account.status IN ('active','past_due') AND account.abuse_hold_at IS NULL)::boolean AS account_active,
+ EXISTS(SELECT 1 FROM deployments d WHERE d.app_id=c.app_id AND d.status='live'
+  AND coalesce(d.rootfs_key,'')<>'' AND d.image_digest<>'')::boolean AS live_deployment,
+ EXISTS(SELECT 1 FROM app_tasks task WHERE task.cron_id=c.id AND task.status IN ('queued','restoring','running'))::boolean AS active_tasks,
+ EXISTS(SELECT 1 FROM app_tasks task WHERE task.cron_id=c.id AND task.status IN ('queued','restoring','running')
+  AND task.exclusive_operation_id IS NULL)::boolean AS active_ordinary_tasks,
+ (binding.trigger_id IS NOT NULL)::boolean AS exclusive_bound,
+ (binding.trigger_id IS NULL OR binding.app_id=c.app_id)::boolean AS binding_valid
+FROM crons c JOIN apps a ON a.id=c.app_id JOIN accounts account ON account.id=a.account_id
+LEFT JOIN exclusive_work_trigger_bindings binding ON binding.source='cron' AND binding.trigger_id=c.id AND binding.account_id=a.account_id
+WHERE cardinality(c.command)>0 AND
+ (($1::text<>'' AND a.node_id::text=$1)
+  OR ($1::text='' AND
+   ($2::text='' OR a.node_id IS NULL OR a.node_id::text=$2)))
+`
+
+type OperatorCommandCronObservationsParams struct {
+	OwnerNode string
+	LocalNode string
+}
+
+type OperatorCommandCronObservationsRow struct {
+	Schedule            string
+	Timezone            string
+	CreatedAt           pgtype.Timestamptz
+	LastFiredAt         pgtype.Timestamptz
+	Enabled             bool
+	SkipIfRunning       bool
+	SchedulePolicy      []byte
+	Suspended           bool
+	AppDeleted          bool
+	AccountActive       bool
+	LiveDeployment      bool
+	ActiveTasks         bool
+	ActiveOrdinaryTasks bool
+	ExclusiveBound      bool
+	BindingValid        bool
+}
+
+// No execution list/page cap. Include disabled and suspended command crons as
+// separate intentional cohorts. Nonempty ownership matches ListOwnedCrons;
+// legacy listing also applies Engine.ownsAppDecision's local fallback.
+func (q *Queries) OperatorCommandCronObservations(ctx context.Context, db DBTX, arg OperatorCommandCronObservationsParams) ([]OperatorCommandCronObservationsRow, error) {
+	rows, err := db.Query(ctx, operatorCommandCronObservations, arg.OwnerNode, arg.LocalNode)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []OperatorCommandCronObservationsRow{}
+	for rows.Next() {
+		var i OperatorCommandCronObservationsRow
+		if err := rows.Scan(
+			&i.Schedule,
+			&i.Timezone,
+			&i.CreatedAt,
+			&i.LastFiredAt,
+			&i.Enabled,
+			&i.SkipIfRunning,
+			&i.SchedulePolicy,
+			&i.Suspended,
+			&i.AppDeleted,
+			&i.AccountActive,
+			&i.LiveDeployment,
+			&i.ActiveTasks,
+			&i.ActiveOrdinaryTasks,
+			&i.ExclusiveBound,
+			&i.BindingValid,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const operatorImagePreparationProgressSnapshot = `-- name: OperatorImagePreparationProgressSnapshot :many
 SELECT p.phase, count(*)::bigint AS pending,
  count(*) FILTER (WHERE p.phase_started_at IS NULL)::bigint AS unknown_age,

@@ -2854,6 +2854,10 @@ type Querier interface {
 	// share one custom bucket, keeping the result bounded as the fleet grows.
 	// Aggregate instances before joining so app reservations are counted once.
 	OperatorCapacityProfiles(ctx context.Context, db DBTX, resourceProfiles []byte) ([]OperatorCapacityProfilesRow, error)
+	// No execution list/page cap. Include disabled and suspended command crons as
+	// separate intentional cohorts. Nonempty ownership matches ListOwnedCrons;
+	// legacy listing also applies Engine.ownsAppDecision's local fallback.
+	OperatorCommandCronObservations(ctx context.Context, db DBTX, arg OperatorCommandCronObservationsParams) ([]OperatorCommandCronObservationsRow, error)
 	OperatorContextAccountExists(ctx context.Context, db DBTX, accountID pgtype.UUID) (bool, error)
 	OperatorContextAppOwner(ctx context.Context, db DBTX, appID pgtype.UUID) (string, error)
 	OperatorContextNodeExists(ctx context.Context, db DBTX, nodeID pgtype.UUID) (bool, error)

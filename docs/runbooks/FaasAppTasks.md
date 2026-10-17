@@ -133,3 +133,5 @@ finding, not an eligible-queue delay. After a successful pinned release, follow
 [snapshot capture](FaasInitSnapshotCaptureFailures.md) and
 [publication/activation](FaasPostCapture.md). No new API, frontend or rollout
 behavior is introduced here.
+
+Command schedules before task admission have separate [cron admission diagnostics](FaasCommandCrons.md).
