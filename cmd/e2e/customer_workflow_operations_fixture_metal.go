@@ -27,6 +27,7 @@ import (
 
 	"filippo.io/age"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/e2etest"
 	"github.com/onebox-faas/faas/pkg/fcvm/leakcheck"
@@ -91,6 +92,9 @@ func newCustomerWorkflowFixture(t *testing.T, finalTimeout time.Duration) *custo
 	f.imageRef = registry.AddImage("native-workflow-app", image)
 	t.Setenv("FAAS_E2E_API_HOSTING_SMOKE", "1")
 	pool := pgtest.OpenMigrated(t)
+	// Without the template clone (FAAS_PGTEST_TEMPLATE_DATABASE) the pool is an
+	// empty schema; the harness waits for migrations it does not run.
+	mustCustomerWorkflow(t, db.MigrateUp(t.Context(), pool))
 	f.h = e2etest.Start(t, pool, e2etest.DeployWake|e2etest.GatewaydPublic|e2etest.Meterd,
 		"FAAS_WORKFLOWS_ENABLED=1", "FAAS_APID_CONFIG="+configPath,
 		"FAAS_WORKLOAD_IDENTITY_KEY_PATH="+keyPath, "FAAS_OBJECT_STORAGE_CONFIG="+objectPath,

@@ -28,6 +28,7 @@ import (
 	"filippo.io/age"
 	"github.com/jackc/pgx/v5"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/e2etest"
 	"github.com/onebox-faas/faas/pkg/fcvm/leakcheck"
@@ -93,6 +94,9 @@ func newCustomerHTTPFixture(t *testing.T) *customerHTTPFixture {
 	f.imageRef = registry.AddImage("native-http-app", image)
 	t.Setenv("FAAS_E2E_API_HOSTING_SMOKE", "1")
 	pool := pgtest.OpenMigrated(t)
+	// Without the template clone (FAAS_PGTEST_TEMPLATE_DATABASE) the pool is an
+	// empty schema; the harness waits for migrations it does not run.
+	mustCustomerHTTP(t, db.MigrateUp(t.Context(), pool))
 	f.h = e2etest.Start(t, pool, e2etest.DeployWake|e2etest.GatewaydPublic|e2etest.Meterd,
 		"FAAS_APID_CONFIG="+configPath, "FAAS_WORKLOAD_IDENTITY_KEY_PATH="+keyPath, "FAAS_OBJECT_STORAGE_CONFIG="+objectPath,
 		"FAAS_WORKFLOW_S3_ACCESS=fixture-access", "FAAS_WORKFLOW_S3_SECRET=fixture-secret",
