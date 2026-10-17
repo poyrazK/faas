@@ -3,10 +3,14 @@ package realtime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/gorilla/websocket"
 )
 
 // fakeLive records a connection's live frames and lets the test answer.
@@ -116,6 +120,60 @@ func TestLiveRoutesFollowRegistration(t *testing.T) {
 	}
 	if got := routes(); len(got) != 1 || got[0] != route {
 		t.Fatalf("routes after re-registration = %v", got)
+	}
+}
+
+// adr: 1384 — live frames count against the connection's outbound queue like
+// any other traffic (ADR-1323): a client too slow for them is closed with
+// 1013 so it reconnects, rather than growing realtimed's memory.
+func TestLiveFramesUseTheOutboundBudget(t *testing.T) {
+	live := &fakeLive{got: make(chan struct{}, 4)}
+	m := NewManager(Config{
+		JWTAuthorizer: &recordingJWTAuthorizer{}, ResumePreview: true,
+		HistoryReader: &testResumeHistory{}, ResumePollInterval: 15 * time.Millisecond, Live: live,
+		OutboundQueueBytes: 1024,
+	}, &testChannelHooks{})
+	if err := m.RegisterEndpoint(Endpoint{
+		ID: "resume-endpoint", AppID: "app-1", AccountID: "acct-1", CallbackURL: "https://app.example",
+		AllowedOrigins: []string{"https://app.example"},
+		ClientAuth: AuthPolicy{
+			Mode: AuthModeOIDCJWT, Issuer: "https://issuer.example",
+			JWKSURL: "https://issuer.example/.well-known/jwks.json", Algorithms: []string{"RS256"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(m.Handler())
+	t.Cleanup(func() { server.Close(); _ = m.Close() })
+	client := dialResumeTest(t, server)
+	if err := client.WriteMessage(1, []byte(`{"type":"live.subscribe","subscription":"feed","sealed":"gls1.0123456789abcdef.x"}`)); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-live.got:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the live session never received the frame")
+	}
+	live.mu.Lock()
+	send := live.send
+	live.mu.Unlock()
+	big := `{"type":"live.rows","subscription":"feed","rows":["` + strings.Repeat("x", 2048) + `"]}`
+	if err := send([]byte(big)); !errors.Is(err, ErrOutboundQueueFull) {
+		t.Fatalf("an oversized live frame queued: %v", err)
+	}
+	_ = client.SetReadDeadline(time.Now().Add(5 * time.Second))
+	for {
+		_, _, err := client.ReadMessage()
+		var closeErr *websocket.CloseError
+		if errors.As(err, &closeErr) {
+			if closeErr.Code != websocket.CloseTryAgainLater {
+				t.Fatalf("closed with %d, want 1013", closeErr.Code)
+			}
+			return
+		}
+		if err != nil {
+			t.Fatalf("read: %v", err)
+		}
 	}
 }
 

@@ -20,6 +20,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/livequery"
 	"github.com/onebox-faas/faas/pkg/livequery/liveproto"
 	"github.com/onebox-faas/faas/pkg/livequery/seal"
@@ -455,6 +456,15 @@ func TestHubLimitsAndDisconnects(t *testing.T) {
 	c.until("the results", func() bool { return c.results["q0"].Ready() && c.results["q1"].Ready() })
 	c.send(liveproto.ClientFrame{Type: liveproto.TypeUnsubscribe, Subscription: "q0"})
 	f.waitSubscriptions(1, "after unsubscribing one of two")
+
+	// A result too large to send whole is refused with its size, so it can
+	// never close a realtime connection as a slow consumer.
+	f.exec(`INSERT INTO messages SELECT g, 9, repeat('x', 200000) FROM generate_series(1, 12) g`)
+	c.subscribe("big", f.seal(f.secret, "db_1", `SELECT id, body FROM messages WHERE channel_id = $1`, time.Minute, "9"))
+	c.until("the size refusal", func() bool { return c.results["big"].Closed })
+	if e := c.lastError("big"); e.Code != liveproto.CodeLimit || e.Limit != api.LiveQueryResultBytesMax || e.Observed <= e.Limit {
+		t.Fatalf("size error %+v", e)
+	}
 	_ = c.ws.Close()
 	f.waitSubscriptions(0, "after the connection closed")
 }

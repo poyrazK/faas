@@ -431,7 +431,8 @@ is a later step.
   - distinct compiled queries per database;
   - RLS-mode subscriptions per database;
   - rows per result: 10,000;
-  - bytes per result;
+  - bytes per result sent whole: 2 MiB (`LiveQueryResultBytesMax`, half of
+    realtimed's per-connection outbound queue);
   - the engine's memory share of the VM;
   - the recompute fallback budget per round;
   - planner-cost ceiling per query;
@@ -827,10 +828,31 @@ Phase 0 did not cover:
     - Rollout order: realtimed before apid. An older realtimed rejects a
       registration carrying `live_routes`, because the field is unknown to
       it.
-  - **Not yet:**
-    - ADR-1323 budget accounting for live bytes;
-    - realtimed's live connections and bytes in the per-account connection
-      limits.
+- **Fair use (ADR-1323)** (2026-10-17).
+  - **Covered by construction.** Live queries ride ordinary v2 connections,
+    so the per-account connection allowance applies to them unchanged. Every
+    live frame goes through `queueOutbound`, where the per-connection queue,
+    and ADR-1323's node outbound budget, are enforced. A client too slow
+    for its live frames is closed with 1013 and reconnects; a test covers
+    this.
+  - **Results sent whole are bounded.** A new subscriber, a reset or a
+    resubscription receives the whole result. Above 2 MiB of rows it is
+    refused with `live_query_limit` (limit and observed bytes), because
+    the burst could otherwise overflow a slow client's 4 MiB queue. The
+    client's reconnect would then meet the same result and loop.
+    Incremental changes are already capped at one 256 KiB frame per round;
+    anything larger is sent whole.
+  - **Metrics:**
+    - `realtimed_live_sessions`, `realtimed_live_subscriptions` and
+      `realtimed_live_upstreams`;
+    - `realtimed_live_upstream_drops_total`;
+    - `realtimed_live_frames_total{direction}` and
+      `realtimed_live_bytes_total{direction}`;
+    - `realtimed_live_refusals_total{code}`.
+  - **When ADR-1323's branch merges:** its usage recording counts delivered
+    frames in `queueResume`, which live frames bypass. `queueLive` must also
+    call `c.state.usage.delivered`. The connection allowance and the node
+    budget need no change.
 
 ## Consequences
 

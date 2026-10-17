@@ -141,6 +141,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	proxy.Metrics = liveproxy.NewMetrics(ops.Registry())
 	defer proxy.Close()
 	manager := realtime.NewManager(realtime.Config{
 		Live:                 liveproxy.ForRealtime(proxy),

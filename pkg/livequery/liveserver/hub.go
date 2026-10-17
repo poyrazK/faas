@@ -251,8 +251,12 @@ func (h *Hub) deliver(s *sub, d livequery.Delta) {
 		}
 	}
 	if err != nil {
-		s.session.send(&liveproto.Error{Type: liveproto.TypeError, Subscription: s.client, Code: liveproto.CodeLimit,
-			Message: err.Error(), Closed: true})
+		refusal := &liveproto.Error{Type: liveproto.TypeError, Subscription: s.client, Code: liveproto.CodeLimit,
+			Message: err.Error(), Closed: true}
+		if limit := (*liveproto.LimitError)(nil); errors.As(err, &limit) {
+			refusal.Limit, refusal.Observed = limit.Limit, limit.Observed
+		}
+		s.session.send(refusal)
 		h.forget(s, true)
 		return
 	}

@@ -11610,6 +11610,11 @@ const (
 	LiveQueryClientFrameMaxBytes = 80 << 10
 	LiveQueryServerFrameMaxBytes = 256 << 10
 	LiveQueryResultRowsMax       = 10000
+	// A result sent whole (a new subscriber, a reset, a resubscription) is at
+	// most this many bytes of rows: half of realtimed's per-connection
+	// outbound queue, so delivering it cannot close the connection as a slow
+	// consumer on its own.
+	LiveQueryResultBytesMax = 2 << 20
 	// Starting values for the operator preview, to be set per database class
 	// from measurements before general availability.
 	LiveQuerySubscriptionsPerDatabase   = 10000

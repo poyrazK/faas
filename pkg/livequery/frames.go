@@ -31,7 +31,7 @@ func (d Delta) Frames(database string, base uint64, expires int64) ([]any, error
 			Ordered:      d.Ordered,
 			Rows:         protoRows(d.Rows),
 		}
-		parts, err := rows.Split(api.LiveQueryServerFrameMaxBytes)
+		parts, err := rows.SplitWithin(api.LiveQueryServerFrameMaxBytes, api.LiveQueryResultBytesMax)
 		if err != nil {
 			return nil, err
 		}

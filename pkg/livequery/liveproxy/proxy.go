@@ -50,6 +50,8 @@ type Router func(ctx context.Context, kid string) (Route, error)
 type Proxy struct {
 	dialer *websocket.Dialer
 	log    *slog.Logger
+	// Metrics, when set before the first Attach, records the proxy's work.
+	Metrics *Metrics
 
 	mu        sync.Mutex
 	upstreams map[string]*upstream // by database
@@ -113,6 +115,7 @@ func (s *sub) upstreamID() string {
 // routes to. send queues a frame to the client; it must be safe for
 // concurrent use.
 func (p *Proxy) Attach(router Router, send func(frame []byte) error) *Session {
+	p.Metrics.addSessions(1)
 	return &Session{proxy: p, router: router, id: p.nextID.Add(1), send: send, subs: map[string]*sub{}}
 }
 
@@ -142,6 +145,9 @@ func (s *Session) Receive(ctx context.Context, data []byte) {
 // Close ends the session and its subscriptions.
 func (s *Session) Close() {
 	s.mu.Lock()
+	if !s.closed {
+		s.proxy.Metrics.addSessions(-1)
+	}
 	s.closed = true
 	subs := s.subs
 	s.subs = map[string]*sub{}
@@ -165,10 +171,13 @@ func (s *Session) deliver(frame any) {
 	}
 	if err := s.send(data); err != nil {
 		s.proxy.log.Debug("liveproxy: client send failed", "session", s.id, "err", err)
+		return
 	}
+	s.proxy.Metrics.carried("to_client", len(data))
 }
 
 func (s *Session) refuse(id, code, msg string, closed bool) {
+	s.proxy.Metrics.refused(code)
 	s.deliver(&liveproto.Error{Type: liveproto.TypeError, Subscription: id, Code: code, Message: msg, Closed: closed})
 }
 
@@ -253,6 +262,7 @@ func (p *Proxy) upstream(route Route) (*upstream, error) {
 	}
 	up := &upstream{proxy: p, route: route, subs: map[string]*sub{}, wake: make(chan struct{}, 1), done: make(chan struct{})}
 	p.upstreams[route.Database] = up
+	p.Metrics.addUpstreams(1)
 	go up.run()
 	return up, nil
 }
@@ -296,6 +306,7 @@ func (u *upstream) stop() {
 			_ = conn.Close()
 		}
 		close(u.done)
+		u.proxy.Metrics.addUpstreams(-1)
 	})
 }
 
@@ -314,11 +325,16 @@ func (u *upstream) write(frame liveproto.ClientFrame) {
 	u.mu.Unlock()
 	if err != nil {
 		_ = conn.Close() // the reader sees it and reconnects
+		return
 	}
+	u.proxy.Metrics.carried("to_hub", len(data))
 }
 
 func (u *upstream) add(sb *sub) {
 	u.mu.Lock()
+	if _, ok := u.subs[sb.upstreamID()]; !ok {
+		u.proxy.Metrics.addSubscriptions(1)
+	}
 	u.subs[sb.upstreamID()] = sb
 	connected := u.conn != nil
 	u.mu.Unlock()
@@ -358,6 +374,9 @@ func (u *upstream) forget(sb *sub, unsubscribe bool) {
 	u.mu.Lock()
 	_, ok := u.subs[sb.upstreamID()]
 	delete(u.subs, sb.upstreamID())
+	if ok {
+		u.proxy.Metrics.addSubscriptions(-1)
+	}
 	attached := sb.attached
 	u.mu.Unlock()
 	if ok && unsubscribe && attached {
@@ -415,6 +434,7 @@ func (u *upstream) run() {
 		if stopped {
 			return
 		}
+		u.proxy.Metrics.upstreamDropped()
 		u.unavailable("the live query service connection dropped; resuming")
 	}
 }
@@ -508,6 +528,7 @@ func (u *upstream) dispatch(frame any) {
 				sb.session.mu.Lock()
 				delete(sb.session.subs, sb.client)
 				sb.session.mu.Unlock()
+				u.proxy.Metrics.addSubscriptions(-1)
 			}
 		}
 	}

@@ -159,8 +159,16 @@ func TestRowsSplit(t *testing.T) {
 		t.Fatalf("empty result: %+v %v", empty, err)
 	}
 	big := strings.Repeat("x", 5000)
-	if _, err := (Rows{Rows: []Row{{ID: "a", Values: []*string{&big}}}}).Split(4096); err == nil {
-		t.Fatal("oversized row accepted")
+	var limit *LimitError
+	if _, err := (Rows{Rows: []Row{{ID: "a", Values: []*string{&big}}}}).Split(4096); !errors.As(err, &limit) || limit.Limit != 4096 {
+		t.Fatalf("oversized row: %v", err)
+	}
+	// A bound on the whole result counts rows across frames.
+	if _, err := f.SplitWithin(4096, 20000); !errors.As(err, &limit) || limit.Limit != 20000 || limit.Observed <= 20000 {
+		t.Fatalf("oversized result: %v", err)
+	}
+	if _, err := f.SplitWithin(4096, 1<<20); err != nil {
+		t.Fatalf("result within its bound: %v", err)
 	}
 }
 

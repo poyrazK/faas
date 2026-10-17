@@ -230,10 +230,24 @@ func ParseServerFrame(data []byte) (any, error) {
 	return out, nil
 }
 
+// LimitError is a result that breaks a live_query_limit.
+type LimitError struct {
+	What            string
+	Limit, Observed int64
+}
+
+func (e *LimitError) Error() string {
+	return fmt.Sprintf("liveproto: %s is %d bytes, limit %d", e.What, e.Observed, e.Limit)
+}
+
 // Split cuts a result into frames of at most maxBytes each, all with f's
 // version; the last one is Complete. A single row larger than a frame is an
 // error: the result breaks the live_query_limit on bytes per row.
-func (f Rows) Split(maxBytes int) ([]Rows, error) {
+func (f Rows) Split(maxBytes int) ([]Rows, error) { return f.SplitWithin(maxBytes, 0) }
+
+// SplitWithin is Split for a result of at most maxTotal bytes across its
+// frames (zero: unbounded); a larger result is a *LimitError.
+func (f Rows) SplitWithin(maxBytes, maxTotal int) ([]Rows, error) {
 	f.Type = TypeRows
 	f.Complete = false
 	rows := f.Rows
@@ -245,13 +259,17 @@ func (f Rows) Split(maxBytes int) ([]Rows, error) {
 	var out []Rows
 	cur := f
 	size := len(empty) + len(`,"complete":true`)
+	total := 0 // bytes of rows, across frames
 	for _, r := range rows {
 		b, err := json.Marshal(r)
 		if err != nil {
 			return nil, fmt.Errorf("liveproto: encode row: %w", err)
 		}
 		if len(empty)+len(b)+len(`,"complete":true`) > maxBytes {
-			return nil, fmt.Errorf("liveproto: row %s is %d bytes, frame limit %d", r.ID, len(b), maxBytes)
+			return nil, &LimitError{What: "row " + r.ID, Limit: int64(maxBytes), Observed: int64(len(b))}
+		}
+		if total += len(b) + 1; maxTotal > 0 && total > maxTotal {
+			return nil, &LimitError{What: "the result", Limit: int64(maxTotal), Observed: int64(total)}
 		}
 		if size+len(b)+1 > maxBytes && len(cur.Rows) > 0 {
 			out = append(out, cur)

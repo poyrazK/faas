@@ -17,6 +17,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	"github.com/onebox-faas/faas/pkg/livequery"
 	"github.com/onebox-faas/faas/pkg/livequery/liveproto"
@@ -240,6 +242,7 @@ func TestProxyCarriesLiveQueries(t *testing.T) {
 
 	router := StaticRouter(map[string]Route{secret.KID: {Database: "db_1", URL: "ws://" + ln.Addr().String() + "/live"}})
 	proxy := New(nil, nil)
+	proxy.Metrics = NewMetrics(prometheus.NewRegistry())
 	defer proxy.Close()
 	sealFor := func(channel string, ttl time.Duration) string {
 		q := seal.Query{Database: "db_1", SQL: `SELECT id, body FROM messages WHERE channel_id = $1`, Params: []*string{&channel}}
@@ -256,6 +259,14 @@ func TestProxyCarriesLiveQueries(t *testing.T) {
 	b.subscribe("other", sealFor("1", time.Minute))
 	a.until("a's result", func() bool { return a.results["feed"].Ready() })
 	b.until("b's results", func() bool { return b.results["feed"].Ready() && b.results["other"].Ready() })
+
+	gauges := func() string {
+		return fmt.Sprintf("sessions=%v subscriptions=%v upstreams=%v", testutil.ToFloat64(proxy.Metrics.sessions),
+			testutil.ToFloat64(proxy.Metrics.subscriptions), testutil.ToFloat64(proxy.Metrics.upstreams))
+	}
+	if got := gauges(); got != "sessions=2 subscriptions=3 upstreams=1" {
+		t.Fatalf("metrics %s", got)
+	}
 
 	exec(`INSERT INTO messages VALUES (1, 1, 'one'), (2, 2, 'two')`)
 	a.until("a's change", func() bool { return rows(a.results["feed"]) == "1:one" })
@@ -298,5 +309,12 @@ func TestProxyCarriesLiveQueries(t *testing.T) {
 			t.Fatal("subscriptions left upstream after every client left")
 		}
 		time.Sleep(50 * time.Millisecond)
+	}
+	if got := gauges(); got != "sessions=1 subscriptions=0 upstreams=1" {
+		t.Fatalf("metrics after leaving %s", got)
+	}
+	if testutil.ToFloat64(proxy.Metrics.drops) < 1 || testutil.ToFloat64(proxy.Metrics.bytes.WithLabelValues("to_client")) == 0 ||
+		testutil.ToFloat64(proxy.Metrics.frames.WithLabelValues("to_hub")) == 0 {
+		t.Fatal("carried frames or the upstream drop were not counted")
 	}
 }
