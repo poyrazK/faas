@@ -25,8 +25,13 @@ func admissionCutoverFixture(t *testing.T) (*PostgresStore, *state.PgStore, Cuto
 	}
 	now := time.Now().UTC().Truncate(time.Microsecond)
 	source := postgresReadyDatabase(t, s, account, "source", now.Add(-time.Hour))
+	// Modern source fences require independently recorded dataset identity.
+	source.DataResourceID = "dataset-" + source.ID
+	if _, err := s.pool.Exec(ctx, `UPDATE managed_postgres_databases SET data_resource_id=$2 WHERE id=$1`, source.ID, source.DataResourceID); err != nil {
+		t.Fatal(err)
+	}
 	input := postgresTestDatabase(account, "restore", now.Add(-time.Hour))
-	input.RestoreSourceDatabaseID, input.RestoreSourceResourceID, input.RestorePointInTime = source.ID, source.ProviderResourceID, now.Add(-time.Minute)
+	input.RestoreSourceDatabaseID, input.RestoreSourceResourceID, input.RestorePointInTime = source.ID, source.DataResourceID, now.Add(-time.Minute)
 	target, _, err := s.Reserve(ctx, input, 10)
 	if err != nil {
 		t.Fatal(err)
@@ -378,11 +383,13 @@ func cutoverMigrationStatements(t *testing.T, name string) (string, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	parts := strings.Split(string(migration), "-- +goose Down")
-	body := func(part string) string {
-		return strings.Split(strings.Split(part, "-- +goose StatementBegin")[1], "-- +goose StatementEnd")[0]
+	parts := strings.SplitN(string(migration), "-- +goose Down", 2)
+	if len(parts) != 2 {
+		t.Fatal("missing cutover migration downgrade")
 	}
-	return body(parts[0]), body(parts[1])
+	// Goose directives are SQL comments. Keep all statements surrounding and
+	// inside its blocks when exercising the actual upgrade/downgrade chain.
+	return parts[0], parts[1]
 }
 
 // adr: 568 — serving receipts prove the eligible source keys actually delivered.

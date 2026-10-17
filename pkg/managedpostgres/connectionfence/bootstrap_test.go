@@ -12,8 +12,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/connectionfence/sqlc"
+	"github.com/onebox-faas/faas/pkg/managedpostgres/pgerrors"
 )
 
 type bootstrapFixture struct {
@@ -164,7 +164,7 @@ func TestMaintenanceBootstrapRecoversOwnershipAndActivatesPrivately(t *testing.T
 	}
 	for _, pins := range [][2]uint32{{ready.DatabaseOID + 1, ready.OwnerOID}, {ready.DatabaseOID, ready.OwnerOID + 1}} {
 		if _, err := New(ctx, pool, Config{MaintenanceDatabase: MaintenanceDatabase, MaintenanceRole: f.admin,
-			MaintenanceDatabaseOID: pins[0], MaintenanceOwnerOID: pins[1]}); !errors.Is(err, managedpostgres.ErrUnsupported) {
+			MaintenanceDatabaseOID: pins[0], MaintenanceOwnerOID: pins[1]}); !errors.Is(err, pgerrors.ErrUnsupported) {
 			t.Fatalf("controller ignored bootstrap OID pins: %v", err)
 		}
 	}
@@ -177,7 +177,7 @@ func TestMaintenanceBootstrapRecoversOwnershipAndActivatesPrivately(t *testing.T
 	if _, err := c.Release(ctx, f.request.Identity); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.bootstrap(t).RetireReserved(ctx, ready); !errors.Is(err, managedpostgres.ErrConflict) {
+	if _, err := f.bootstrap(t).RetireReserved(ctx, ready); !errors.Is(err, pgerrors.ErrConflict) {
 		t.Fatalf("reserved cleanup retired an installed maintenance database: %v", err)
 	}
 	if _, err := c.Observe(ctx, f.request.Identity); err != nil {
@@ -199,7 +199,7 @@ func TestMaintenanceBootstrapRejectsSubstitution(t *testing.T) {
 				if _, err := f.root.Exec(ctx, "CREATE DATABASE gregale_checkpoint OWNER "+pgx.Identifier{f.tenant}.Sanitize()+" TEMPLATE template0"); err != nil {
 					t.Fatal(err)
 				}
-				if _, err := f.bootstrap(t).Reserve(ctx, f.identity); !errors.Is(err, managedpostgres.ErrConflict) {
+				if _, err := f.bootstrap(t).Reserve(ctx, f.identity); !errors.Is(err, pgerrors.ErrConflict) {
 					t.Fatalf("adopted unrelated database: %v", err)
 				}
 				return
@@ -230,7 +230,7 @@ func TestMaintenanceBootstrapRejectsSubstitution(t *testing.T) {
 						t.Fatal(err)
 					}
 				}
-				if _, err := f.bootstrap(t).Reserve(ctx, f.identity); !errors.Is(err, managedpostgres.ErrConflict) {
+				if _, err := f.bootstrap(t).Reserve(ctx, f.identity); !errors.Is(err, pgerrors.ErrConflict) {
 					t.Fatalf("adopted %s: %v", fault, err)
 				}
 				return
@@ -287,10 +287,10 @@ func TestMaintenanceBootstrapRejectsSubstitution(t *testing.T) {
 				}
 			}
 			if fault == "foreign_grant" {
-				if _, err := f.bootstrap(t).Activate(ctx, receipt); !errors.Is(err, managedpostgres.ErrConflict) {
+				if _, err := f.bootstrap(t).Activate(ctx, receipt); !errors.Is(err, pgerrors.ErrConflict) {
 					t.Fatalf("activated shared maintenance: %v", err)
 				}
-			} else if _, err := f.bootstrap(t).Observe(ctx, receipt); !errors.Is(err, managedpostgres.ErrConflict) {
+			} else if _, err := f.bootstrap(t).Observe(ctx, receipt); !errors.Is(err, pgerrors.ErrConflict) {
 				t.Fatalf("accepted %s: %v", fault, err)
 			}
 		})
@@ -330,12 +330,12 @@ func TestMaintenanceBootstrapRetirementFencesDelayedCreation(t *testing.T) {
 					t.Fatalf("terminal recovery changed: %+v %v", observed, err)
 				}
 			}
-			if _, err := f.bootstrap(t).Reserve(ctx, f.identity); !errors.Is(err, managedpostgres.ErrConflict) {
+			if _, err := f.bootstrap(t).Reserve(ctx, f.identity); !errors.Is(err, pgerrors.ErrConflict) {
 				t.Fatalf("late reserve revived retired owner: %v", err)
 			}
 			late := terminal
 			late.State = "reserved"
-			if _, err := f.bootstrap(t).Create(ctx, late); !errors.Is(err, managedpostgres.ErrConflict) {
+			if _, err := f.bootstrap(t).Create(ctx, late); !errors.Is(err, pgerrors.ErrConflict) {
 				t.Fatalf("late create revived retired owner: %v", err)
 			}
 			// Even a connection that had already selected the owner cannot
@@ -400,7 +400,7 @@ func TestMaintenanceBootstrapCancellationKeepsRecovery(t *testing.T) {
 	if err != nil || terminal.State != "retired" {
 		t.Fatalf("replacement recovery: %+v %v", terminal, err)
 	}
-	if _, err := f.bootstrap(t).Create(ctx, receipt); !errors.Is(err, managedpostgres.ErrConflict) {
+	if _, err := f.bootstrap(t).Create(ctx, receipt); !errors.Is(err, pgerrors.ErrConflict) {
 		t.Fatalf("late request escaped terminal owner: %v", err)
 	}
 }
@@ -427,7 +427,7 @@ func TestMaintenanceBootstrapRequiresAuthenticatedConnection(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if _, err := b.Reserve(ctx, f.identity); !errors.Is(err, managedpostgres.ErrUnsupported) {
+			if _, err := b.Reserve(ctx, f.identity); !errors.Is(err, pgerrors.ErrUnsupported) {
 				t.Fatalf("%s source was not authenticated: %v", fault, err)
 			}
 			if !b.conn.IsClosed() {
