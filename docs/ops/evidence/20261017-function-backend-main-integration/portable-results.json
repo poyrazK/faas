@@ -283,5 +283,45 @@
       "log_sha256": "16175c681a9b3640e614e2338bea2a4f2f6e88bb74bddce982274d0b2e76eece"
     }
   },
-  "all_39_normal_qualification_guards_executed_with_tags": true
+  "all_39_normal_qualification_guards_executed_with_tags": true,
+  "post_ready_checks": {
+    "feature_head": "51d97f9e9b26fec22d0b675736cdb1fb06bff877",
+    "qualification_tagged_scoped_lint": {
+      "passed": true,
+      "issues": 0,
+      "log_sha256": "e92606b0bf483111dff0a120c315ea165821348f31365020e2468a0059095c47"
+    },
+    "native_e2e_compile": {
+      "passed": true,
+      "binary_sha256": "ff5a96b0486c92864ef60220ba66ff62d1100147b8e6ba83fa47ffe4df3a36f7",
+      "native_execution_qualified": false
+    },
+    "data_api_audit_teardown": {
+      "initial_ci_run": 39064772402,
+      "initial_ci_job": 117490007645,
+      "initial_ci_error_code": "57P01",
+      "controlled_checkout_pause_ms": 150,
+      "controlled_initial_log_sha256": "e46d3c448dc61af514997597f5aa04c386513d2677fffddbe4f4107cdcfef4cf",
+      "controlled_correction_passes": 3,
+      "controlled_correction_log_sha256": [
+        "b2ebb565aca0cabe4f2e17c2dff196231e556c632985b66a78a6d918bc49a021",
+        "193287462ea4c63977c7b08221a86e0d87e1683bc1d975f135a6245ac0b01f96",
+        "5f11e0ffbee127184f250d265e1b2ff0b4b1acb4e200fffec76b6c0116371f33"
+      ],
+      "unmodified_runtime": {
+        "node22": {
+          "passed_tests": 2,
+          "skipped_tests": [],
+          "failed_tests": [],
+          "log_sha256": "c57df62b38f50d6c3211d84e507ea454498d2eadf8646c036360a26c612c87a4"
+        },
+        "node24": {
+          "passed_tests": 2,
+          "skipped_tests": [],
+          "failed_tests": [],
+          "log_sha256": "83463ad8588394c8a04c9950abbd7271b40b606d315742f878aa1d307cc679e8"
+        }
+      }
+    }
+  }
 }

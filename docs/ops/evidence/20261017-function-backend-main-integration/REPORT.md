@@ -61,6 +61,25 @@ Hosted PR checks were pending when this record was prepared. Final hosted result
 retain their validation-time source names and repository state; their ADR links
 now resolve to the reconciled decisions.
 
+## Post-ready checks and CI correction
+
+At feature head `51d97f9e9b26fec22d0b675736cdb1fb06bff877`, scoped
+qualification-tagged lint reported zero issues. The race-enabled native E2E
+binary compiled with `metal,function_background_native`; its SHA-256 was
+`ff5a96b0486c92864ef60220ba66ff62d1100147b8e6ba83fa47ffe4df3a36f7`.
+Compilation supplies no native execution qualification.
+
+The first hosted Data API acceptance run failed in the existing support-audit
+fixture with PostgreSQL `57P01`. HTTP shutdown starts asynchronous audit-pool
+cleanup, and the fixture could force-drop its database while a client remained
+checked out. A 150 ms pause after pool checkout, injected into a temporary copy
+of the audit runtime, reproduced the same uncaught termination on Node 22.
+Teardown now closes HTTP services before database disposal and asserts that
+all of the fixture's audit-login connections have retired. The corrected fixture
+passed three consecutive runs with that controlled pause, then both SQL tests
+passed with the unmodified runtime on Node 22 and Node 24. Hosted CI on the
+corrected feature head still must pass before merge.
+
 ## Qualification boundary
 
 Production activation remains disabled. This managed container has no supported
