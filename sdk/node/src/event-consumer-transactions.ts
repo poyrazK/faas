@@ -17,6 +17,10 @@ export interface EventConsumerIdentity {
 }
 export interface EventConsumerRequest extends EventConsumerIdentity {}
 export interface EventConsumerTransactionResult { body: string; replayed: boolean }
+export interface EventConsumerTransactionOptions {
+  /** Cooperative cancellation between queries and before COMMIT. Configure driver timeouts for active queries. */
+  signal?: AbortSignal;
+}
 const requests = new WeakMap<EventConsumerRequest, Buffer>();
 export class EventConsumerConflictError extends Error {
   readonly code = 'event_consumer_receipt_conflict';
@@ -79,18 +83,28 @@ function validateResult(body: string): void {
  * transaction or make external effects. Acknowledge only after success. */
 export async function withEventConsumerTransaction(
   pool: EventConsumerPool, input: EventConsumerRequest, handler: (transaction: EventConsumerTransaction) => Promise<string>,
+  options: EventConsumerTransactionOptions = {},
 ): Promise<EventConsumerTransactionResult> {
+  const signal = options.signal;
+  if (signal !== undefined && !(signal instanceof AbortSignal)) throw new TypeError('invalid event consumer signal');
+  signal?.throwIfAborted();
   const original = requests.get(input);
   if (!original || typeof handler !== 'function') throw new TypeError('use an event consumer request constructor');
   const identityDigest = createHash('sha256').update(['gregale.event-consumer.v1', input.accountId, input.appId,
     input.subscriptionId, input.acceptanceId].join('\n')).digest();
   const requestDigest = createHash('sha256').update('gregale.event-consumer-input.v1\n').update(original).digest();
   const connection = await pool.connect();
+  const query: EventConsumerTransaction['query'] = async (sql, values) => {
+    signal?.throwIfAborted();
+    const result = await connection.query(sql, values);
+    signal?.throwIfAborted();
+    return result;
+  };
   let discard = false;
   try {
-    await connection.query('BEGIN ISOLATION LEVEL READ COMMITTED');
-    await connection.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', ['gregale.event-consumer-inbox.v1:' + identityDigest.toString('hex')]);
-    const stored = (await connection.query(`SELECT account_id::text,app_id::text,subscription_id::text,acceptance_id::text,event_source,event_id,request_digest,response_body FROM public.gregale_event_consumer_inbox WHERE identity_digest=$1`, [identityDigest])).rows[0];
+    await query('BEGIN ISOLATION LEVEL READ COMMITTED');
+    await query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', ['gregale.event-consumer-inbox.v1:' + identityDigest.toString('hex')]);
+    const stored = (await query(`SELECT account_id::text,app_id::text,subscription_id::text,acceptance_id::text,event_source,event_id,request_digest,response_body FROM public.gregale_event_consumer_inbox WHERE identity_digest=$1`, [identityDigest])).rows[0];
     let body: string;
     if (stored) {
       if (stored.account_id !== input.accountId || stored.app_id !== input.appId || stored.subscription_id !== input.subscriptionId
@@ -100,11 +114,16 @@ export async function withEventConsumerTransaction(
       body = stored.response_body;
       validateResult(body);
     } else {
-      body = await handler(Object.freeze({ query: (sql: string, values?: unknown[]) => connection.query(sql, values) }));
+      signal?.throwIfAborted();
+      body = await handler(Object.freeze({ query }));
+      signal?.throwIfAborted();
       validateResult(body);
-      await connection.query(`INSERT INTO public.gregale_event_consumer_inbox(identity_digest,account_id,app_id,subscription_id,acceptance_id,event_source,event_id,request_digest,response_body) VALUES ($1,$2::uuid,$3::uuid,$4::uuid,$5::bigint,$6,$7,$8,$9)`,
+      await query(`INSERT INTO public.gregale_event_consumer_inbox(identity_digest,account_id,app_id,subscription_id,acceptance_id,event_source,event_id,request_digest,response_body) VALUES ($1,$2::uuid,$3::uuid,$4::uuid,$5::bigint,$6,$7,$8,$9)`,
         [identityDigest, input.accountId, input.appId, input.subscriptionId, input.acceptanceId, input.source, input.eventId, requestDigest, body]);
     }
+    // Once COMMIT is sent, cancellation cannot establish rollback. Preserve a
+    // confirmed result or the existing unknown-commit error even after abort.
+    signal?.throwIfAborted();
     try { await connection.query('COMMIT'); }
     catch (error) { discard = true; throw new EventConsumerCommitUnknownError(error); }
     return { body, replayed: stored !== undefined };

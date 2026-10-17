@@ -330,7 +330,11 @@ export type { RealtimeChangefeedConfig } from './realtime-changefeeds.js';
 export { eventConsumerReceiptSchema, newEventConsumerRequest, eventConsumerRequestFromHeaders,
   withEventConsumerTransaction, EventConsumerConflictError, EventConsumerCommitUnknownError,
   type EventConsumerIdentity, type EventConsumerRequest, type EventConsumerPool,
-  type EventConsumerTransaction, type EventConsumerTransactionResult } from './event-consumer-transactions.js';
+  type EventConsumerTransaction, type EventConsumerTransactionResult,
+  type EventConsumerTransactionOptions } from './event-consumer-transactions.js';
+export { EventAcknowledgmentWorker, eventAcknowledgmentWorkerFromHeaders, EventAcknowledgmentWorkerError,
+  type EventAcknowledgmentWorkerOptions, type EventAcknowledgmentWorkerOperationOptions,
+  type EventAcknowledgmentWorkerResult, type EventAcknowledgmentWorkerErrorCode } from './event-acknowledgment-worker.js';
 
 export { waitCommitSubscriber, type CommitSubscriberWaitResult } from './commit-subscriber-wait.js';
 

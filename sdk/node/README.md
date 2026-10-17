@@ -3585,3 +3585,15 @@ the checkpoint and returned scope/cohort, preserves opaque cursor continuation a
 keeps the saved notification time separate from current observation clocks. Ratio
 alerts list the expired numerator only. See
 [investigation, cancellation and pagination](../../docs/event-deadline-node-investigation.md).
+
+### Deferred event acknowledgment worker
+
+`eventAcknowledgmentWorkerFromHeaders(app, headers, originalBody, accountId, appId)`
+reconstructs a worker from an authenticated delivery or its protected durable job.
+`run(pool, handler, { signal })` renews the platform lease while the transactional
+consumer receipt and business writes commit, then completes with the exact saved
+JSON. `completeReceipt` recovers an uncertain commit/completion without invoking
+business code. Explicit `retry` / `deadLetter` decisions check for an existing
+receipt first. The application owns durable job storage and exclusive ownership.
+See [usage, cancellation and recovery](../../docs/event-acknowledgment-node-worker.md)
+and the [durable-job integration](../../examples/event-acknowledgment-node/README.md).

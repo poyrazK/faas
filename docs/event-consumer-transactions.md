@@ -128,6 +128,9 @@ PostgreSQL remain separate transactions; delivery remains at least once.
 
 ## Node handler
 
+For detached durable workers, the [Node acknowledgment worker](event-acknowledgment-node-worker.md)
+combines this receipt transaction with platform lease renewal and completion.
+
 Install `eventConsumerReceiptSchema` explicitly as the database owner. Supply a
 `pg.Pool` to the wrapper; it leases and releases a dedicated connection. Acceptance
 IDs are decimal **strings**, including in `newEventConsumerRequest`, so values

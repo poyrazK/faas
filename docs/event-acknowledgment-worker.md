@@ -1,5 +1,7 @@
 # Go worker acknowledgments
 
+For Node applications, see the [Node acknowledgment worker](event-acknowledgment-node-worker.md).
+
 `EventAcknowledgmentWorker` connects the Go consumer receipt transaction to deferred
 platform acknowledgments. It renews the platform lease while the transaction runs,
 completes only after a confirmed receipt commit, and retries callbacks with unchanged
