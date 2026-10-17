@@ -124,10 +124,17 @@ func newServiceProxyAuthorizer(store state.Store) gateway.ServiceProxyAuthorizer
 			// pr-N slug. The environment check above makes this alias safe.
 			bindingTarget = target.PreviewOfSlug
 		}
+		legacyBindingTarget := bindingTarget
+		projectAliases := caller.ProjectID != "" && caller.ProjectID == target.ProjectID &&
+			!callerIsTest && (target.PreviewOfSlug == "" || projectPreviewToPreview)
+		if projectAliases && target.WorkloadName != "" {
+			bindingTarget = target.WorkloadName
+		}
 		if caller.Manifest.EffectiveServiceBindingPolicy() == api.ServiceBindingPolicyDeclared {
 			declared := false
 			for _, binding := range caller.Manifest.ServiceBindings {
-				if strings.EqualFold(strings.TrimSpace(binding.Service), strings.TrimSpace(bindingTarget)) {
+				if strings.EqualFold(strings.TrimSpace(binding.Service), strings.TrimSpace(bindingTarget)) ||
+					strings.EqualFold(strings.TrimSpace(binding.Service), strings.TrimSpace(legacyBindingTarget)) {
 					declared = true
 					break
 				}
@@ -137,7 +144,11 @@ func newServiceProxyAuthorizer(store state.Store) gateway.ServiceProxyAuthorizer
 			}
 		}
 		var reliability *api.ServiceReliabilityPolicy
-		if configured, ok := caller.Manifest.ServiceReliability[strings.ToLower(strings.TrimSpace(bindingTarget))]; ok {
+		configured, ok := caller.Manifest.ServiceReliability[strings.ToLower(strings.TrimSpace(legacyBindingTarget))]
+		if !ok {
+			configured, ok = caller.Manifest.ServiceReliability[strings.ToLower(strings.TrimSpace(bindingTarget))]
+		}
+		if ok {
 			if configured.Validate() != nil {
 				return gateway.ServiceCaller{}, gateway.ErrServiceProxyBindingDenied
 			}
@@ -153,7 +164,7 @@ func newServiceProxyAuthorizer(store state.Store) gateway.ServiceProxyAuthorizer
 			}
 			allowed := false
 			for _, name := range *target.Manifest.AllowedServiceCallers {
-				if strings.EqualFold(name, logicalCaller) {
+				if strings.EqualFold(name, logicalCaller) || projectAliases && caller.WorkloadName != "" && strings.EqualFold(name, caller.WorkloadName) {
 					allowed = true
 					break
 				}
@@ -176,6 +187,9 @@ func newServiceProxyAuthorizer(store state.Store) gateway.ServiceProxyAuthorizer
 				logicalCaller = caller.PreviewOfSlug
 			}
 			scope, allowed := scopes[strings.ToLower(strings.TrimSpace(logicalCaller))]
+			if !allowed && projectAliases && caller.WorkloadName != "" {
+				scope, allowed = scopes[strings.ToLower(strings.TrimSpace(caller.WorkloadName))]
+			}
 			if !allowed {
 				return gateway.ServiceCaller{}, gateway.ErrServiceProxyCallerDenied
 			}

@@ -21,6 +21,55 @@ import (
 	"time"
 )
 
+// Migration verification shares normal task and wake admission. These bounds
+// limit orchestration receipts, not customer compute entitlements.
+const (
+	AppSlugMaxLength                      = 40
+	ProjectAppSlugsMaxBytes               = 16 << 10
+	ProjectMigrationMaxServices           = 10
+	ProjectMigrationListLimit             = 20
+	ProjectMigrationMaxAttempts           = 8
+	ProjectMigrationMaxServiceConnections = 10
+	ProjectMigrationRetention             = 90 * 24 * time.Hour
+	ProjectMigrationRequestMaxBytes       = 2 << 20
+	ProjectMigrationPersistTimeout        = 5 * time.Second
+	ProjectMigrationLeaseGrace            = 15 * time.Second
+
+	MigrationCutoverMaxHostnameBytes       = 253
+	MigrationCutoverMaxLabelBytes          = 63
+	MigrationCutoverMaxRecords             = 16
+	MigrationCutoverListLimit              = 20
+	MigrationCutoverRetention              = 90 * 24 * time.Hour
+	MigrationCutoverMinTTL                 = 0
+	MigrationCutoverMaxTTL                 = 2147483647
+	MigrationCutoverCheckDuration          = 30 * time.Minute
+	MigrationCutoverLease                  = 40 * time.Second
+	MigrationCutoverProbeTimeout           = 10 * time.Second
+	MigrationCutoverCheckInterval          = 30 * time.Second
+	MigrationCutoverPollInterval           = 5 * time.Second
+	MigrationCutoverWorkerBatch            = 16
+	MigrationCutoverWorkers                = 2
+	MigrationCutoverRequestMaxBytes        = 16 << 10
+	MigrationCutoverDefaultErrorBPS  int64 = 100
+	MigrationCutoverDefaultP95MS     int64 = 1000
+
+	MigrationVerificationTTL            = 10 * time.Minute
+	MigrationVerificationLease          = 55 * time.Second
+	MigrationVerificationRetention      = 30 * 24 * time.Hour
+	MigrationVerificationMaxActive      = 1
+	MigrationVerificationListLimit      = 20
+	MigrationVerificationMaxPathBytes   = 512
+	MigrationVerificationTaskTimeout    = 30
+	MigrationVerificationMaxOutputBytes = 8192
+	MigrationVerificationPollInterval   = time.Second
+	MigrationVerificationStepInterval   = 2 * time.Second
+	MigrationVerificationRetryMax       = 30 * time.Second
+	MigrationVerificationWorkerBatch    = 32
+	MigrationVerificationWorkers        = 4
+	MigrationVerificationCancelAttempts = 8
+	MigrationVerificationPersistTimeout = 5 * time.Second
+)
+
 // Application standards preview safeguards, independent of billing quotas.
 const (
 	ApplicationStandardMaxDefinitionBytes             = 64 << 10
@@ -11400,5 +11449,20 @@ const ServiceMapMaxEdges = 500
 // default of the per-app metrics endpoints.
 const ServiceMapDefaultRange = "1h"
 
+// Public build configuration is intentionally limited to reviewed URL values.
+const (
+	PublicBuildURLsMaxPerApp       = 10
+	PublicBuildURLsEncodedMaxBytes = 24000 // Mirrored by the deployment_public_build_urls CHECK.
+	PublicBuildURLMaxBytes         = 2048
+	PublicBuildPlanMaxBytes        = 8 << 20
+)
+
 // ServiceMapHighErrorRatePct is the edge error rate the dashboard highlights.
 const ServiceMapHighErrorRatePct = 5.0
+
+// Migration builds may wait for APIs without consuming a builder slot.
+const (
+	ProjectMigrationBuildGateMaxBytes = 16000 // Mirrored by the deployment_build_dependency_gates CHECK.
+	ProjectMigrationBuildWaitTimeout  = 30 * time.Minute
+	ProjectMigrationBuildWaitPoll     = 5 * time.Second
+)

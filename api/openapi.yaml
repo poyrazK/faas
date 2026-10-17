@@ -330,6 +330,139 @@ security:
   - bearerAuth: []
 
 paths:
+  /v1/project-migrations:
+    post:
+      operationId: createProjectMigration
+      tags:
+      - projects
+      summary: Save and apply a reviewed multi-service migration
+      description: Save and apply a reviewed multi-service migration. Source-backed HTTP and GraphQL services
+        only. Secret values are request-only; the receipt retains key names. Existing reconcile, sealing,
+        deployment admission, verification and cutover owners remain authoritative. No domain or production
+        traffic changes are performed by this endpoint.
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: Save and apply a reviewed multi-service migration result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectMigration'
+        default:
+          description: Save and apply a reviewed multi-service migration error.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateProjectMigrationRequest'
+    get:
+      operationId: listProjectMigrations
+      tags:
+      - projects
+      summary: List saved project migrations for the authenticated account
+      description: List saved project migrations for the authenticated account. Source-backed HTTP and GraphQL
+        services only. Secret values are request-only; the receipt retains key names. Existing reconcile,
+        sealing, deployment admission, verification and cutover owners remain authoritative. No domain or
+        production traffic changes are performed by this endpoint.
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: List saved project migrations for the authenticated account result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectMigrationList'
+        default:
+          description: List saved project migrations for the authenticated account error.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      parameters:
+      - name: project
+        in: query
+        description: Optional exact project slug to filter migration records.
+        schema:
+          type: string
+  /v1/project-migrations/{migration}:
+    get:
+      operationId: getProjectMigration
+      tags:
+      - projects
+      summary: Inspect each reserved deployment and its recorded verification and cutover
+      description: Inspect each reserved deployment and its recorded verification and cutover. Source-backed
+        HTTP and GraphQL services only. Secret values are request-only; the receipt retains key names. Existing
+        reconcile, sealing, deployment admission, verification and cutover owners remain authoritative.
+        No domain or production traffic changes are performed by this endpoint.
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: Inspect each reserved deployment and its recorded verification and cutover result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectMigration'
+        default:
+          description: Inspect each reserved deployment and its recorded verification and cutover error.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      parameters:
+      - name: migration
+        in: path
+        required: true
+        description: Creator-owned migration journal UUID.
+        schema:
+          type: string
+          format: uuid
+  /v1/project-migrations/{migration}/resume:
+    post:
+      operationId: resumeProjectMigration
+      tags:
+      - projects
+      summary: Resume unfinished migration services while preserving accepted deployments
+      description: Resume unfinished migration services while preserving accepted deployments. Source-backed
+        HTTP and GraphQL services only. Secret values are request-only; the receipt retains key names. Existing
+        reconcile, sealing, deployment admission, verification and cutover owners remain authoritative.
+        No domain or production traffic changes are performed by this endpoint.
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: Resume unfinished migration services while preserving accepted deployments result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProjectMigration'
+        default:
+          description: Resume unfinished migration services while preserving accepted deployments error.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ResumeProjectMigrationRequest'
+      parameters:
+      - name: migration
+        in: path
+        required: true
+        description: Saved migration to resume after reviewing unfinished services.
+        schema:
+          type: string
+          format: uuid
   /v1/mcp/admissions/{id}:
     get:
       operationId: getMCPAdmissionReceipt
@@ -9081,6 +9214,364 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/apps/{slug}/migration-cutovers:
+    parameters:
+    - $ref: '#/components/parameters/Slug'
+    get:
+      tags:
+      - apps
+      operationId: listMigrationCutovers
+      summary: List saved production cutover plans.
+      description: |
+        Return the latest app-owned production switch plans, newest first. Revalidate
+        deployment, configuration and domain binding evidence without starting network
+        probes. Up to twenty plans are retained; terminal plans may be pruned after
+        ninety days. Requires app read scope and MFA.
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: Latest retained plans with current deployment and binding validity.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MigrationCutoverList'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+        '503':
+          $ref: '#/components/responses/ServerError'
+    post:
+      tags:
+      - apps
+      operationId: createMigrationCutover
+      summary: Prepare a production switch without changing traffic.
+      description: |
+        Save a plan for a currently passed default-scope verification. Supply a stable
+        caller UUID, production hostname, previous routing records and TTLs, previous
+        proxy setting and traffic budgets. Reusing an ID returns its original intent;
+        changed intent conflicts. Preparation edits no DNS, domain binding, rollout,
+        default hostname or monitor policy. Connect the domain through the existing
+        domain API before starting checks. Requires deployment write scope, verified
+        email and MFA.
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: New or replayed immutable production switch plan; traffic remains unchanged.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MigrationCutover'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+        '503':
+          $ref: '#/components/responses/ServerError'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateMigrationCutoverRequest'
+  /v1/apps/{slug}/migration-cutovers/{plan}:
+    parameters:
+    - $ref: '#/components/parameters/Slug'
+    - name: plan
+      in: path
+      required: true
+      description: Identity of the retained production switch to inspect.
+      schema:
+        type: string
+        format: uuid
+    get:
+      tags:
+      - apps
+      operationId: getMigrationCutover
+      summary: Read a saved production cutover plan.
+      description: |
+        Read one saved production switch and its original DNS recovery settings.
+        Changed source verification, deployment configuration or domain binding blocks
+        its evidence. Reads perform no HTTP or DNS probes. Requires app read scope
+        and MFA; a blocked plan retains its previous-provider routing instructions.
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: Requested plan, saved recovery settings and validity of its evidence.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MigrationCutover'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+        '503':
+          $ref: '#/components/responses/ServerError'
+  /v1/apps/{slug}/migration-cutovers/{plan}/actions:
+    parameters:
+    - $ref: '#/components/parameters/Slug'
+    - name: plan
+      in: path
+      required: true
+      description: Identity of the production switch receiving this explicit action.
+      schema:
+        type: string
+        format: uuid
+    post:
+      tags:
+      - apps
+      operationId: actOnMigrationCutover
+      summary: Start checks, complete a switch or record recovery.
+      description: |
+        start_checks explicitly arms thirty minutes of durable server checks after
+        domain connection and a customer DNS change. Complete performs fresh DNS,
+        trusted TLS and exact deployment response checks through the published Gregale
+        edge, refuses sustained traffic budget violations and requires acknowledgement
+        for limited coverage. Cancel stops checking only. confirm_restored records
+        a customer attestation after manually restoring the saved provider routing,
+        TTL and proxy settings. No action edits external DNS or monitor policies.
+        Requires deployment write scope, verified email and MFA.
+      security:
+      - bearerAuth: []
+      responses:
+        '200':
+          description: Updated cutover progress or customer acknowledgement of manual recovery.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MigrationCutover'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+        '503':
+          $ref: '#/components/responses/ServerError'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MigrationCutoverActionRequest'
+
+  /v1/apps/{slug}/migration-verifications:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: listMigrationVerifications
+      summary: List saved migration verification reports.
+      description: |
+        Return the latest twenty app-owned migration reports, newest first.
+        Each report is checked against the current deployment and scoped runtime
+        configuration; changed evidence is blocked. Reading never starts work.
+        Requires app read scope and MFA. Old reports are pruned after thirty
+        days on subsequent creation; no connection values or response bodies
+        are returned.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Latest retained migration reports with current validity.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MigrationVerificationList' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+        '503': { $ref: '#/components/responses/ServerError' }
+    post:
+      tags: [apps]
+      operationId: createMigrationVerification
+      summary: Start a resumable migration verification.
+      description: |
+        Save immutable checks for the current public HTTP deployment with all
+        Gregale traffic. Supply a stable caller-generated UUID to reconcile
+        response loss. Creation queues durable background execution; clients
+        may close while the API worker drives checks. Cold-wake consent permits briefly parking this Gregale
+        app while production remains on the previous provider. One unfinished,
+        run per app, including cancellation/recovery, and a ten-minute checking deadline. Requires deployment
+        write scope, verified email and MFA. Checks select saved environment
+        names; credentials are resolved only inside task guests.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateMigrationVerificationRequest' }
+      responses:
+        '200':
+          description: Original or newly saved verification intent and receipt.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MigrationVerification' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+        '503': { $ref: '#/components/responses/ServerError' }
+
+  /v1/apps/{slug}/migration-verifications/{run}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - { name: run, in: path, required: true, description: Receipt UUID to inspect., schema: { type: string, format: uuid } }
+    get:
+      tags: [apps]
+      operationId: getMigrationVerification
+      summary: Read a migration verification and current configuration validity.
+      description: |
+        Read one owned receipt and re-evaluate deployment/configuration validity.
+        Passed evidence becomes blocked when recorded inputs change. Reads never
+        advance checks, park an app or request a wake. Requires app read scope
+        and MFA. This is the recovery operation after an uncertain advance.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Owned verification status and current evidence validity.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MigrationVerification' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+        '503': { $ref: '#/components/responses/ServerError' }
+
+  /v1/apps/{slug}/migration-verifications/{run}/advance:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - { name: run, in: path, required: true, description: Receipt UUID to advance., schema: { type: string, format: uuid } }
+    post:
+      tags: [apps]
+      operationId: advanceMigrationVerification
+      summary: Advance one saved migration verification step.
+      description: |
+        Advance one leased step of an existing migration receipt. Dependency
+        tasks and their IDs commit atomically. Startup and post-wake HTTP checks
+        require a successful exact-deployment gateway response proof. Cold wake
+        waits for zero active instances and a running instance with the saved
+        wake identity. Replays preserve task IDs and wake correlation. The
+        server worker continues pending runs independently of clients and
+        resumes after restart. This operation is an optional compatibility
+        action; clients normally poll GET. Cancelled, expired or invalidated
+        runs stop tasks and restore a service they may have parked before
+        becoming terminal. Recovery retries continue beyond the checking deadline.
+        Requires deployment write scope, verified email and MFA. Changed inputs
+        block qualification; infrastructure errors preserve resumable progress.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Journaled progress after one bounded verification step.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MigrationVerification' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+        '503': { $ref: '#/components/responses/ServerError' }
+
+  /v1/apps/{slug}/migration-verifications/{run}/cancel:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - { name: run, in: path, required: true, description: Receipt UUID to cancel., schema: { type: string, format: uuid } }
+    post:
+      tags: [apps]
+      operationId: cancelMigrationVerification
+      summary: Cancel saved migration checks and recover a parked service.
+      description: |
+        Persist idempotent cancellation intent. An active worker lease remains
+        fenced until its bounded step ends or the lease expires. No further
+        checks can commit after cancellation. Background cleanup cancels saved
+        tasks and restores the same deployment if this run may have parked it.
+        Status remains pending while cleanup runs; recovery_status describes
+        restoration, supersession by another deployment or an account/security
+        block. A wake notification alone never means service was restored.
+        Completed runs are unchanged. Requires deployment write scope, verified
+        email and MFA; remains available when task admission is disabled.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Saved cancellation intent or the unchanged terminal report.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MigrationVerification' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/ServerError' }
 
   /v1/apps/{slug}/tasks:
     parameters:
@@ -29076,6 +29567,46 @@ paths:
         '413': { $ref: '#/components/responses/SourceTooLarge' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/projects/apply-plan:
+    post:
+      tags: [projects]
+      operationId: applyCachedProjectPlan
+      summary: Deploy an account-owned reviewed project source without another upload.
+      description: |
+        Applies the exact archive retained by a project scan, not the current
+        head of a mutable Git ref. The normal scanner and apply admission gates
+        run again. The account-scoped source expires after one hour; rescan on
+        preview_expired. Initial secrets require secrets:write or admin and are
+        sealed before any deployment is enqueued. Failed configuration starts
+        no builds; saved apps and any completed configuration remain available
+        for correction. Values are never included in responses or scan plans.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ApplyCachedProjectPlanRequest' }
+      responses:
+        '200':
+          description: Project applied with per-workload deployment receipts.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApplyResponse' }
+        '403':
+          description: The caller lacks deployment or secret write permission.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: The plan is stale, blocked, or requires environment approval.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '410':
+          description: The account-owned reviewed source expired; scan again.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
 
   /v1/projects:
     get:
@@ -52349,6 +52880,249 @@ components:
       description: "Cursor — the last id from the previous page (omit for the first page)."
 
   schemas:
+    CreateProjectMigrationRequest:
+      description: Start one durable migration of selected reviewed services with request-only configuration.
+      type: object
+      additionalProperties: false
+      required:
+      - id
+      - plan_token
+      - only
+      properties:
+        id:
+          type: string
+          description: Client-generated identity saved before submission.
+          format: uuid
+        plan_token:
+          type: string
+          description: Reviewed migration-mode source token; never persisted in the receipt.
+        only:
+          type: array
+          minItems: 1
+          maxItems: 10
+          uniqueItems: true
+          items:
+            type: string
+        initial_secrets:
+          $ref: '#/components/schemas/ProjectInitialSecrets'
+        service_connections:
+          $ref: '#/components/schemas/ProjectServiceConnections'
+        public_service_connections:
+          $ref: '#/components/schemas/ProjectServiceConnections'
+          description: Explicit public build URL mappings to selected declared dependencies. Resolves their reviewed public_url and saves it for retries. Public URL keys only.
+        public_build_urls:
+          $ref: '#/components/schemas/ProjectPublicBuildURLs'
+        build_dependencies:
+          type: object
+          maxProperties: 10
+          description: Optional caller-to-API build waits. Targets must be selected declared dependencies. Each attempt pins the saved API deployment, waits up to 30 minutes without using a builder slot, and requires it to be live with 100 percent traffic. Resume restores these choices.
+          additionalProperties:
+            type: array
+            maxItems: 10
+            uniqueItems: true
+            items: { type: string }
+    ResumeProjectMigrationRequest:
+      description: Explicitly resume unfinished migration work against the original reviewed source checksum.
+      type: object
+      additionalProperties: false
+      required:
+      - plan_token
+      - expected_version
+      - only
+      properties:
+        expected_version:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Version of the saved receipt reviewed before this resume; stale replays are rejected.
+        only:
+          type: array
+          minItems: 1
+          maxItems: 10
+          uniqueItems: true
+          description: Exact unfinished services approved for this resume action.
+          items:
+            type: string
+        plan_token:
+          type: string
+          description: Fresh migration-mode token for the original source checksum and project.
+        initial_secrets:
+          $ref: '#/components/schemas/ProjectInitialSecrets'
+    ProjectMigrationBuildWait:
+      type: object
+      description: Durable readiness progress before a migration build consumes a builder slot. Public URLs still route normally; this is a point-in-time readiness check.
+      required: [status, deadline_at]
+      properties:
+        status:
+          type: string
+          enum: [waiting, ready, failed]
+          description: Whether selected API deployments satisfied build admission.
+        code:
+          type: string
+          description: Stable build dependency blocker code, when present.
+        detail:
+          type: string
+          description: Customer-safe explanation of a build dependency wait or failure.
+        deadline_at:
+          type: string
+          format: date-time
+          description: Fixed deadline for this attempt's API readiness wait.
+    ProjectMigrationService:
+      description: Progress and historical evidence pointers for one migration service and its current attempt.
+      type: object
+      required:
+      - name
+      - attempt
+      - status
+      - depends_on
+      - required_env_keys
+      - configured_keys
+      properties:
+        build_dependencies:
+          type: array
+          maxItems: 10
+          uniqueItems: true
+          description: Saved declared API services required before this migration service builds.
+          items: { type: string }
+        build_wait:
+          $ref: '#/components/schemas/ProjectMigrationBuildWait'
+
+        public_service_connections:
+          type: object
+          additionalProperties: { type: string }
+          description: Saved public build variable-to-service choices.
+        public_build_urls:
+          type: object
+          maxProperties: 10
+          additionalProperties: { type: string, maxLength: 2048 }
+          description: Explicitly reviewed public HTTPS URLs. Saved values may appear in browser bundles; credentials, queries and fragments are rejected.
+        name:
+          type: string
+          description: Selected workload name.
+        app:
+          type: string
+          description: Current application slug.
+        app_id:
+          type: string
+          description: Application identity bound before enqueue.
+          format: uuid
+        deployment_id:
+          type: string
+          description: Exact reserved deployment for this attempt.
+          format: uuid
+        build_id:
+          type: string
+          description: Exact reserved build for this attempt.
+          format: uuid
+        attempt:
+          type: integer
+          minimum: 1
+          maximum: 8
+        status:
+          type: string
+          description: Observed state of the reserved deployment, waiting for build APIs, pending work or changed application.
+        reason:
+          type: string
+          description: Metadata-only explanation for unfinished work.
+        depends_on:
+          type: array
+          items:
+            type: string
+        required_env_keys:
+          type: array
+          items:
+            type: string
+        configured_keys:
+          type: array
+          items:
+            type: string
+        service_connections:
+          type: object
+          maxProperties: 10
+          description: Saved runtime variable names mapped to selected declared services. Resumed automatically; contains no values.
+          additionalProperties:
+            type: string
+        verification_id:
+          type: string
+          description: Latest recorded verification identity for this exact deployment.
+          format: uuid
+        verification_status:
+          type: string
+          description: Last recorded verification result; reopen verification to validate current configuration.
+        cutover_id:
+          type: string
+          description: Latest saved cutover identity for this exact deployment.
+          format: uuid
+        cutover_status:
+          type: string
+          description: Last recorded cutover state; reopen cutover to validate current configuration.
+    ProjectMigration:
+      description: Creator-owned migration receipt linking selected services to exact deployment identities.
+      type: object
+      required:
+      - id
+      - version
+      - project
+      - source_sha256
+      - status
+      - services
+      - created_at
+      - updated_at
+      properties:
+        version:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Monotonic journal version required to resume the reviewed set of services.
+        id:
+          type: string
+          description: Durable project migration identity.
+          format: uuid
+        project:
+          type: string
+          description: Creator-owned project slug.
+        project_id:
+          type: string
+          description: Project identity after reconciliation.
+          format: uuid
+        source_sha256:
+          type: string
+          description: Checksum of the original reviewed source archive.
+        status:
+          type: string
+          enum:
+          - prepared
+          - applying
+          - tracking
+          - attention
+        reason:
+          type: string
+          description: Project migration recovery guidance.
+        services:
+          type: array
+          minItems: 1
+          maxItems: 10
+          items:
+            $ref: '#/components/schemas/ProjectMigrationService'
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        retry_after:
+          type: string
+          format: date-time
+    ProjectMigrationList:
+      description: Bounded newest-first inventory of saved migrations for the authenticated creator.
+      type: object
+      required:
+      - migrations
+      properties:
+        migrations:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProjectMigration'
     MCPCatalogObserverOAuthConfig:
       description: Explicit OAuth refresh grant for one app and role; credentials are app default-scope secret references.
       type: object
@@ -81008,6 +81782,14 @@ components:
       type: object
       required: [source]
       properties:
+        migration:
+          type: boolean
+          default: false
+          description: "Preserve repository service identities and suggest project-prefixed app names. Requires no_triggers and no repository push binding; apply repeats the reviewed setting."
+        app_slugs:
+          type: object
+          additionalProperties: { type: string }
+          description: "Exact repository service names mapped to Gregale app names. Existing project members retain their names. Names are checked for format, reservation and availability; they are never allocated by scan. Multipart clients send this field as JSON."
         source:
           type: string
           format: binary
@@ -82080,6 +82862,10 @@ components:
       type: object
       required: [repo, ref, project_slug]
       properties:
+        app_slugs:
+          type: object
+          additionalProperties: { type: string }
+          description: "App allocations for this connected repository review. Keys are exact service names. Existing project apps keep their names; new names are checked for format, reservation and availability without being allocated."
         repo:
           type: string
           pattern: '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$'
@@ -82117,6 +82903,11 @@ components:
         no_triggers:
           type: boolean
           default: false
+
+        migration:
+          type: boolean
+          default: false
+          description: "Prepare a manual migration: preserve repository service names, suggest project-prefixed app names, leave the project unbound from GitHub push deployments and suppress schedules and async routes. Credentials remain inside githubd."
 
     SourceReviewRequest:
       description: Git repository and revision selectors to resolve without creating a deployment.
@@ -82461,6 +83252,325 @@ components:
           enum: [free, hobby, pro, scale]
           description: "Echoed at top level too — kept in sync with diff.plan."
 
+    ProjectInitialSecrets:
+      type: object
+      description: Request-only mapping of exact selected workload names to initial sealed environment values. Values stay in memory until sealing and never enter responses or source caches.
+      additionalProperties:
+        type: object
+        additionalProperties: { type: string, writeOnly: true }
+
+    MigrationDNSRecord:
+      type: object
+      description: Previous routing record at the production hostname. No URLs, credentials or TXT records.
+      required:
+      - type
+      - value
+      - ttl
+      properties:
+        type:
+          type: string
+          enum:
+          - A
+          - AAAA
+          - CNAME
+        value:
+          type: string
+          maxLength: 253
+        ttl:
+          type: integer
+          minimum: 0
+          maximum: 2147483647
+    CreateMigrationCutoverRequest:
+      type: object
+      description: Immutable production cutover plan. The stable ID reconciles lost responses. Preparation changes no
+        traffic or domain bindings.
+      required:
+      - id
+      - verification_id
+      - hostname
+      - previous_records
+      - previous_proxy_enabled
+      - max_5xx_rate_bps
+      - max_p95_ms
+      properties:
+        id:
+          type: string
+          format: uuid
+        verification_id:
+          type: string
+          format: uuid
+        hostname:
+          type: string
+          maxLength: 253
+        previous_records:
+          type: array
+          minItems: 1
+          maxItems: 16
+          items:
+            $ref: '#/components/schemas/MigrationDNSRecord'
+        previous_proxy_enabled:
+          type: boolean
+        max_5xx_rate_bps:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 10000
+        max_p95_ms:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 86400000
+    MigrationCutoverActionRequest:
+      type: object
+      description: Explicit user action. Restored records the customer attestation that provider DNS was restored; Gregale
+        never edits external DNS.
+      required:
+      - action
+      - acknowledge_limited_traffic
+      properties:
+        action:
+          type: string
+          enum:
+          - start_checks
+          - complete
+          - cancel
+          - confirm_restored
+        acknowledge_limited_traffic:
+          type: boolean
+    MigrationCutoverTraffic:
+      type: object
+      description: Existing deployment and exact GET route observations after hostname proof. Aggregates are not hostname-specific
+        and never prove every customer moved.
+      required:
+      - status
+      - coverage
+      - reason
+      - requests
+      - server_errors
+      properties:
+        status:
+          type: string
+          enum:
+          - unknown
+          - healthy
+          - violated
+        coverage:
+          type: string
+          enum:
+          - deployment_route_observed_only
+        reason:
+          type: string
+        requests:
+          type: integer
+          format: int64
+        server_errors:
+          type: integer
+          format: int64
+        worst_window_p95_ms:
+          type: number
+          format: double
+        checked_at:
+          type: string
+          format: date-time
+    MigrationCutover:
+      type: object
+      description: Saved plan, immutable recovery routing and bounded background cutover evidence. Ready means current
+        DNS, trusted TLS and an exact-deployment gateway response passed; completion remains explicit.
+      required:
+      - id
+      - app
+      - deployment_id
+      - configuration_revision
+      - smoke_path
+      - status
+      - request
+      - domain_connected
+      - dns_records
+      - checks
+      - traffic
+      - created_at
+      - limited_traffic_acknowledged
+      properties:
+        id:
+          type: string
+          format: uuid
+        app:
+          type: string
+        deployment_id:
+          type: string
+          format: uuid
+        configuration_revision:
+          type: string
+        smoke_path:
+          type: string
+        status:
+          type: string
+          enum:
+          - prepared
+          - checking
+          - ready
+          - attention
+          - completed
+          - cancelled
+          - restored
+          - blocked
+        reason:
+          type: string
+        request:
+          $ref: '#/components/schemas/CreateMigrationCutoverRequest'
+        domain_connected:
+          type: boolean
+        dns_records:
+          type: array
+          items:
+            $ref: '#/components/schemas/DNSRecordInstruction'
+        checks:
+          type: array
+          items:
+            $ref: '#/components/schemas/MigrationVerificationCheck'
+        traffic:
+          $ref: '#/components/schemas/MigrationCutoverTraffic'
+        created_at:
+          type: string
+          format: date-time
+        started_at:
+          type: string
+          format: date-time
+        check_deadline:
+          type: string
+          format: date-time
+        checked_at:
+          type: string
+          format: date-time
+        hostname_verified_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+        limited_traffic_acknowledged:
+          type: boolean
+    MigrationCutoverList:
+      type: object
+      description: Latest app-owned cutover plans, newest first. Up to twenty are retained; terminal plans may be pruned
+        after ninety days.
+      required:
+      - plans
+      properties:
+        plans:
+          type: array
+          maxItems: 20
+          items:
+            $ref: '#/components/schemas/MigrationCutover'
+
+    ProjectServiceConnections:
+      type: object
+      maxProperties: 10
+      description: Selected caller names mapped to variable-to-service choices. Targets must be selected declared HTTP or GraphQL dependencies. service_connections uses private runtime URLs; public_service_connections uses reviewed public build URLs.
+      additionalProperties:
+        type: object
+        maxProperties: 10
+        additionalProperties:
+          type: string
+    ProjectPublicBuildURLs:
+      type: object
+      maxProperties: 10
+      description: Explicit public HTTPS build URLs for selected services, persisted and exposed in frontend bundles. Keys use VITE_, NEXT_PUBLIC_, REACT_APP_, PUBLIC_, NUXT_PUBLIC_ or GATSBY_ and end in _URL. URLs may include a base path but no credentials, query, fragment, IP, localhost or private service name. Up to ten URLs per service. Omitted keys keep their existing runtime configuration.
+      additionalProperties:
+        type: object
+        maxProperties: 10
+        additionalProperties: { type: string, maxLength: 2048 }
+    MigrationServiceConnectionCheck:
+      type: object
+      additionalProperties: false
+      required: [env_key, service, deployment_id]
+      description: Runtime variable and logical service pinned to an exact target deployment. The guest checks its private HTTPS value and authorized routing; no URLs or credentials are saved.
+      properties:
+        env_key: { type: string }
+        service: { type: string }
+        deployment_id: { type: string, format: uuid }
+    MigrationDependencyChecks:
+      type: object
+      description: Existing scoped environment names; values are resolved only in the task guest.
+      properties:
+        postgres_env_key: { type: string, description: "PostgreSQL connection string environment key for authenticated SELECT 1." }
+        object_storage_prefix: { type: string, description: "Prefix for the existing six S3 binding variables; read-only listing." }
+        http_env_key: { type: string, description: "Environment key containing an HTTPS external API URL for a bounded GET; redirects are rejected." }
+        service_connections:
+          type: array
+          maxItems: 10
+          items:
+            $ref: '#/components/schemas/MigrationServiceConnectionCheck'
+    CreateMigrationVerificationRequest:
+      type: object
+      description: Immutable migration checks and explicit consent to park and wake the selected Gregale app.
+      required: [id, deployment_id, checks, smoke_path, cold_wake]
+      properties:
+        id: { type: string, format: uuid, description: "Stable caller-generated identity for creation recovery." }
+        deployment_id: { type: string, format: uuid }
+        checks: { $ref: '#/components/schemas/MigrationDependencyChecks' }
+        smoke_path: { type: string, maxLength: 512, description: "Read-only GET path on this app; no query, fragment or absolute URL. A successful 2xx response is required." }
+        cold_wake: { type: boolean, description: "Explicitly park this Gregale app and verify a correlated wake followed by repeated checks." }
+    MigrationVerificationCheck:
+      type: object
+      description: Sanitized verification verdict; excludes credentials, URLs, response headers and bodies.
+      required: [name, status, detail]
+      properties:
+        name: { type: string }
+        status: { type: string, enum: [passed, failed, pending] }
+        detail: { type: string }
+    MigrationVerification:
+      type: object
+      description: Durable migration report tied to a deployment, configuration revision and optional cold-wake evidence.
+      required: [id, app, deployment_id, scope, configuration_revision, status, phase, request, checks, created_at, expires_at]
+      properties:
+        id: { type: string, format: uuid }
+        app: { type: string }
+        deployment_id: { type: string, format: uuid }
+        scope: { type: string }
+        configuration_revision: { type: string, description: "Opaque fingerprint of deployment and scoped runtime configuration." }
+        status: { type: string, enum: [pending, passed, failed, blocked, expired, cancelled] }
+        phase: { type: string, enum: [dependencies, startup, park, drain, wake, waking, cold_smoke, cold_dependencies, restoring, complete] }
+        reason: { type: string }
+        request: { $ref: '#/components/schemas/CreateMigrationVerificationRequest' }
+        checks:
+          type: array
+          items: { $ref: '#/components/schemas/MigrationVerificationCheck' }
+        dependency_task_id: { type: string, format: uuid }
+        cold_dependency_task_id: { type: string, format: uuid }
+        wake_id: { type: string, format: uuid }
+        instance_id: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        drained_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
+        cancel_requested_at: { type: string, format: date-time, description: Durable cancellation intent; pending status includes task shutdown and service recovery. }
+        recovery_status: { type: string, enum: [pending, restored, superseded, blocked], description: "Restoration outcome after interrupted verification. Restored requires a running instance; superseded leaves the new deployment alone; blocked requires resolving an account or security restriction." }
+    MigrationVerificationList:
+      type: object
+      description: Latest saved migration reports for the authorized app.
+      required: [runs]
+      properties:
+        runs:
+          type: array
+          maxItems: 20
+          items: { $ref: '#/components/schemas/MigrationVerification' }
+    ApplyCachedProjectPlanRequest:
+      type: object
+      description: Applies an account-owned reviewed project archive with selected workloads and optional initial sealed configuration.
+      required: [plan_token]
+      properties:
+        plan_token: { type: string, minLength: 1 }
+        only:
+          type: array
+          items: { type: string }
+          description: Selected workload names; unselected existing workloads remain unchanged.
+        exclude:
+          type: array
+          items: { type: string }
+        approval_token: { type: string }
+        initial_secrets: { $ref: '#/components/schemas/ProjectInitialSecrets' }
+
     ProjectApplyRequest:
       description: |
         Multipart body for POST /v1/projects (apply). Same shape as
@@ -82469,6 +83579,14 @@ components:
       type: object
       required: [source]
       properties:
+        migration:
+          type: boolean
+          default: false
+          description: "Apply the reviewed migration naming mode, preserving repository service identities and project-prefixed app allocations. Automatic triggers and repository push bindings must be disabled."
+        app_slugs:
+          type: object
+          additionalProperties: { type: string }
+          description: "Reviewed repository service-to-app allocations for this apply. Preserve existing project app names and repeat the exact selected names from review; multipart clients encode this object as JSON."
         source:
           type: string
           format: binary
@@ -82491,6 +83609,8 @@ components:
         platform_tenant_required:
           type: boolean
           description: "Override the customer identity policy for selected workloads (Hobby and above). Must match the scan override. Omitted uses Compose declarations and preserves existing app policy."
+        initial_secrets:
+          $ref: '#/components/schemas/ProjectInitialSecrets'
 
     ComposeHealthcheck:
       type: object
@@ -82510,6 +83630,12 @@ components:
       type: object
       required: [name, root_dir, command, ports]
       properties:
+        public_url:
+          type: string
+          description: Reviewed public HTTPS base URL derived from this app allocation and installation domain. Absent when wildcard app URLs are disabled.
+        app_slug:
+          type: string
+          description: "Reviewed Gregale app name. Repository name, dependencies and configuration keys retain their original identity. Present for migration scans and existing allocations."
         name: { type: string, example: api }
         platform_tenant_required:
           type: boolean
@@ -82571,6 +83697,10 @@ components:
           type: array
           items: { type: string }
           description: "KEYS only — never values; spec §11 forbids logging secrets"
+        required_env_keys:
+          type: array
+          items: { type: string }
+          description: "Explicit names from .gregale/required-secrets.json. Detected env_keys alone do not establish requirements."
         source:
           type: string
           description: "detector provenance, e.g. compose.yaml: api"

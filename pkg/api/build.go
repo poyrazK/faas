@@ -42,16 +42,18 @@ const (
 // cover everything guest-init needs to run one build to completion without
 // further host contact.
 type BuildManifest struct {
-	SchemaVersion  int            `json:"schema_version"`
-	BuildID        string         `json:"build_id"`
-	TenantID       string         `json:"tenant_id"`
-	DeploymentID   string         `json:"deployment_id"`
-	SourceTarPath  string         `json:"source_tar_path"`           // absolute path on drive1
-	BuildContext   string         `json:"build_context,omitempty"`   // extracted repository context
-	Workdir        string         `json:"workdir"`                   // default /build/src
-	DockerfilePath string         `json:"dockerfile_path,omitempty"` // relative to Workdir; empty = Dockerfile
-	OutDir         string         `json:"out_dir"`                   // default /build/out
-	Framework      BuildFramework `json:"framework"`
+	BuildDependencyDigest string            `json:"build_dependency_digest,omitempty"`
+	PublicBuildURLs       map[string]string `json:"public_build_urls,omitempty"`
+	SchemaVersion         int               `json:"schema_version"`
+	BuildID               string            `json:"build_id"`
+	TenantID              string            `json:"tenant_id"`
+	DeploymentID          string            `json:"deployment_id"`
+	SourceTarPath         string            `json:"source_tar_path"`           // absolute path on drive1
+	BuildContext          string            `json:"build_context,omitempty"`   // extracted repository context
+	Workdir               string            `json:"workdir"`                   // default /build/src
+	DockerfilePath        string            `json:"dockerfile_path,omitempty"` // relative to Workdir; empty = Dockerfile
+	OutDir                string            `json:"out_dir"`                   // default /build/out
+	Framework             BuildFramework    `json:"framework"`
 	// Runtime and RuntimeBaseRef make the builder output reproducible with
 	// imaged's deployment layer. Railpack otherwise chooses its own mutable
 	// runtime base (currently railpack-runtime), which cannot be consumed by
@@ -98,12 +100,14 @@ type BuildManifest struct {
 // customer sees hint/why/fix from pkg/whycopy rather than the legacy
 // bare CodeDeployFailed.
 type BuildDone struct {
-	SchemaVersion int    `json:"schema_version"`
-	BuildID       string `json:"build_id"`
-	ExitCode      int    `json:"exit_code"`
-	OCIImagePath  string `json:"oci_image_path"` // path on drive1, typically /build/out/image.tar
-	LogTail       string `json:"log_tail"`
-	FailureClass  string `json:"failure_class,omitempty"`
+	BuildDependencyDigest string `json:"build_dependency_digest,omitempty"`
+	PublicBuildURLsSHA256 string `json:"public_build_urls_sha256,omitempty"`
+	SchemaVersion         int    `json:"schema_version"`
+	BuildID               string `json:"build_id"`
+	ExitCode              int    `json:"exit_code"`
+	OCIImagePath          string `json:"oci_image_path"` // path on drive1, typically /build/out/image.tar
+	LogTail               string `json:"log_tail"`
+	FailureClass          string `json:"failure_class,omitempty"`
 	// FailureCode is the RFC 7807 code guest-init identified (e.g.
 	// "app_arch_mismatch" when the build VM's kernel returned
 	// ENOEXEC on the customer binary; "dep_install_failed" with a
@@ -125,4 +129,20 @@ type BuildDone struct {
 	// dependency cache instead of exporting it: its plan and install inputs
 	// matched the ones that produced it. builderd keeps the stored cache.
 	DependencyCacheUnchanged bool `json:"dependency_cache_unchanged,omitempty"`
+}
+
+// ValidBuildDependencyDigest accepts the optional internal cache partition.
+func ValidBuildDependencyDigest(value string) bool {
+	if value == "" {
+		return true
+	}
+	if len(value) != 64 {
+		return false
+	}
+	for _, c := range value {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
 }

@@ -1165,6 +1165,16 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-1380: Python PostgreSQL native acceptance](1380-python-postgres-native-acceptance.md)
 - [ADR-1381: Queue worker completion acceptance](1381-queue-worker-completion-acceptance.md)
 
+- [ADR-1571: Guided migration of an existing service](1571-guided-service-migration.md)
+- [ADR-1572: Resumable migration verification](1572-resumable-migration-verification.md)
+- [ADR-1573: Background migration verification and service recovery](1573-background-migration-verification.md)
+- [ADR-1574: Saved production cutover and DNS recovery](1574-guided-production-cutover.md)
+- [ADR-1575: Saved multi-service migration progress](1575-project-migration-journal.md)
+- [ADR-1576: Separate migration service names from app names](1576-migration-service-app-names.md)
+- [ADR-1577: Map migration runtime variables to selected services](1577-migration-runtime-connections.md)
+- [ADR-1578: Configure public frontend URLs before migration builds](1578-public-frontend-migration-urls.md)
+- [ADR-1579: Wait for selected APIs before migration builds](1579-migration-build-dependency-waits.md)
+
 - [ADR-1260: Initial-failure policy dry run](1260-initial-failure-policy-dry-run.md)
 - [ADR-1261: Durable first-recovery reviews](1261-durable-initial-recovery-reviews.md)
 - [ADR-1135: Sparse extent encoding for remote drives and snapshot memory](1135-sparse-extent-encoding-for-remote-artifacts.md)

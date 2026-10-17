@@ -376,6 +376,7 @@ from .application_standard_version import ApplicationStandardVersion
 from .application_standard_violation import ApplicationStandardViolation
 from .applied_build import AppliedBuild
 from .apply_app_open_api_policy_request import ApplyAppOpenAPIPolicyRequest
+from .apply_cached_project_plan_request import ApplyCachedProjectPlanRequest
 from .apply_durable_entity_quota_policy_body import ApplyDurableEntityQuotaPolicyBody
 from .apply_durable_entity_quota_policy_body_limits import ApplyDurableEntityQuotaPolicyBodyLimits
 from .apply_durable_entity_quota_policy_response_200 import ApplyDurableEntityQuotaPolicyResponse200
@@ -758,6 +759,8 @@ from .create_managed_realtime_endpoint_request_auth_mode import CreateManagedRea
 from .create_managed_realtime_endpoint_request_auth_required_claims import (
     CreateManagedRealtimeEndpointRequestAuthRequiredClaims,
 )
+from .create_migration_cutover_request import CreateMigrationCutoverRequest
+from .create_migration_verification_request import CreateMigrationVerificationRequest
 from .create_mirror_rule_request import CreateMirrorRuleRequest
 from .create_object_bucket_body import CreateObjectBucketBody
 from .create_object_multipart_upload_request import CreateObjectMultipartUploadRequest
@@ -807,6 +810,8 @@ from .create_project_environment_qualification_request_workload_config_hashes im
     CreateProjectEnvironmentQualificationRequestWorkloadConfigHashes,
 )
 from .create_project_environment_request import CreateProjectEnvironmentRequest
+from .create_project_migration_request import CreateProjectMigrationRequest
+from .create_project_migration_request_build_dependencies import CreateProjectMigrationRequestBuildDependencies
 from .create_queue_binding_canary_request import CreateQueueBindingCanaryRequest
 from .create_queue_binding_request import CreateQueueBindingRequest
 from .create_queue_binding_request_mode import CreateQueueBindingRequestMode
@@ -2311,6 +2316,25 @@ from .mfa_recover_request import MFARecoverRequest
 from .mfa_recover_response import MFARecoverResponse
 from .mfa_verify_request import MFAVerifyRequest
 from .mfa_verify_response import MFAVerifyResponse
+from .migration_cutover import MigrationCutover
+from .migration_cutover_action_request import MigrationCutoverActionRequest
+from .migration_cutover_action_request_action import MigrationCutoverActionRequestAction
+from .migration_cutover_list import MigrationCutoverList
+from .migration_cutover_status import MigrationCutoverStatus
+from .migration_cutover_traffic import MigrationCutoverTraffic
+from .migration_cutover_traffic_coverage import MigrationCutoverTrafficCoverage
+from .migration_cutover_traffic_status import MigrationCutoverTrafficStatus
+from .migration_dependency_checks import MigrationDependencyChecks
+from .migration_dns_record import MigrationDNSRecord
+from .migration_dns_record_type import MigrationDNSRecordType
+from .migration_service_connection_check import MigrationServiceConnectionCheck
+from .migration_verification import MigrationVerification
+from .migration_verification_check import MigrationVerificationCheck
+from .migration_verification_check_status import MigrationVerificationCheckStatus
+from .migration_verification_list import MigrationVerificationList
+from .migration_verification_phase import MigrationVerificationPhase
+from .migration_verification_recovery_status import MigrationVerificationRecoveryStatus
+from .migration_verification_status import MigrationVerificationStatus
 from .mint_durable_entity_session_grant_body import MintDurableEntitySessionGrantBody
 from .mint_durable_entity_session_grant_response_201 import MintDurableEntitySessionGrantResponse201
 from .mirror_clean_condition import MirrorCleanCondition
@@ -3508,6 +3532,7 @@ from .programmatic_signup_magic_link_response_200 import ProgrammaticSignupMagic
 from .programmatic_signup_magic_link_response_200_status import ProgrammaticSignupMagicLinkResponse200Status
 from .progressive_rollout import ProgressiveRollout
 from .project_apply_request import ProjectApplyRequest
+from .project_apply_request_app_slugs import ProjectApplyRequestAppSlugs
 from .project_binding_verification_review import ProjectBindingVerificationReview
 from .project_binding_verification_review_members import ProjectBindingVerificationReviewMembers
 from .project_binding_verification_review_review_digests import ProjectBindingVerificationReviewReviewDigests
@@ -3639,6 +3664,19 @@ from .project_environment_variable_change_response import ProjectEnvironmentVari
 from .project_environment_variable_change_response_kind import ProjectEnvironmentVariableChangeResponseKind
 from .project_environment_variable_response import ProjectEnvironmentVariableResponse
 from .project_environment_workload_diff_response import ProjectEnvironmentWorkloadDiffResponse
+from .project_initial_secrets import ProjectInitialSecrets
+from .project_initial_secrets_additional_property import ProjectInitialSecretsAdditionalProperty
+from .project_migration import ProjectMigration
+from .project_migration_build_wait import ProjectMigrationBuildWait
+from .project_migration_build_wait_status import ProjectMigrationBuildWaitStatus
+from .project_migration_list import ProjectMigrationList
+from .project_migration_service import ProjectMigrationService
+from .project_migration_service_public_build_urls import ProjectMigrationServicePublicBuildUrls
+from .project_migration_service_public_service_connections import ProjectMigrationServicePublicServiceConnections
+from .project_migration_service_service_connections import ProjectMigrationServiceServiceConnections
+from .project_migration_status import ProjectMigrationStatus
+from .project_public_build_ur_ls import ProjectPublicBuildURLs
+from .project_public_build_ur_ls_additional_property import ProjectPublicBuildURLsAdditionalProperty
 from .project_release_deactivation_receipt import ProjectReleaseDeactivationReceipt
 from .project_release_set_list_response import ProjectReleaseSetListResponse
 from .project_release_set_member_response import ProjectReleaseSetMemberResponse
@@ -3648,7 +3686,11 @@ from .project_release_stage_member import ProjectReleaseStageMember
 from .project_release_stage_status import ProjectReleaseStageStatus
 from .project_response import ProjectResponse
 from .project_scan_request import ProjectScanRequest
+from .project_scan_request_app_slugs import ProjectScanRequestAppSlugs
+from .project_service_connections import ProjectServiceConnections
+from .project_service_connections_additional_property import ProjectServiceConnectionsAdditionalProperty
 from .project_source_ref_scan_request import ProjectSourceRefScanRequest
+from .project_source_ref_scan_request_app_slugs import ProjectSourceRefScanRequestAppSlugs
 from .project_summary_response import ProjectSummaryResponse
 from .project_workload_response import ProjectWorkloadResponse
 from .promote_project_environment_request import PromoteProjectEnvironmentRequest
@@ -3914,6 +3956,7 @@ from .resource_profile import ResourceProfile
 from .restore_automation_revision_request import RestoreAutomationRevisionRequest
 from .restore_managed_postgres_database_request import RestoreManagedPostgresDatabaseRequest
 from .resume_automation_failure_pause_request import ResumeAutomationFailurePauseRequest
+from .resume_project_migration_request import ResumeProjectMigrationRequest
 from .resume_workflow_run_request import ResumeWorkflowRunRequest
 from .retry_deployment_request import RetryDeploymentRequest
 from .retry_deployment_request_from_stage import RetryDeploymentRequestFromStage
@@ -5118,6 +5161,7 @@ __all__ = (
     "AppLogDrainResponseAuthHeaderMasked",
     "AppLogDrainResponseKind",
     "ApplyAppOpenAPIPolicyRequest",
+    "ApplyCachedProjectPlanRequest",
     "ApplyDurableEntityQuotaPolicyBody",
     "ApplyDurableEntityQuotaPolicyBodyLimits",
     "ApplyDurableEntityQuotaPolicyResponse200",
@@ -5609,6 +5653,8 @@ __all__ = (
     "CreateManagedRealtimeEndpointRequestAuthAlgorithmsItem",
     "CreateManagedRealtimeEndpointRequestAuthMode",
     "CreateManagedRealtimeEndpointRequestAuthRequiredClaims",
+    "CreateMigrationCutoverRequest",
+    "CreateMigrationVerificationRequest",
     "CreateMirrorRuleRequest",
     "CreateObjectBucketBody",
     "CreateObjectMultipartUploadRequest",
@@ -5650,6 +5696,8 @@ __all__ = (
     "CreateProjectEnvironmentQualificationRequestSecretRevisionHashes",
     "CreateProjectEnvironmentQualificationRequestWorkloadConfigHashes",
     "CreateProjectEnvironmentRequest",
+    "CreateProjectMigrationRequest",
+    "CreateProjectMigrationRequestBuildDependencies",
     "CreateQueueBindingCanaryRequest",
     "CreateQueueBindingRequest",
     "CreateQueueBindingRequestMode",
@@ -7064,6 +7112,25 @@ __all__ = (
     "MFARecoverResponse",
     "MFAVerifyRequest",
     "MFAVerifyResponse",
+    "MigrationCutover",
+    "MigrationCutoverActionRequest",
+    "MigrationCutoverActionRequestAction",
+    "MigrationCutoverList",
+    "MigrationCutoverStatus",
+    "MigrationCutoverTraffic",
+    "MigrationCutoverTrafficCoverage",
+    "MigrationCutoverTrafficStatus",
+    "MigrationDependencyChecks",
+    "MigrationDNSRecord",
+    "MigrationDNSRecordType",
+    "MigrationServiceConnectionCheck",
+    "MigrationVerification",
+    "MigrationVerificationCheck",
+    "MigrationVerificationCheckStatus",
+    "MigrationVerificationList",
+    "MigrationVerificationPhase",
+    "MigrationVerificationRecoveryStatus",
+    "MigrationVerificationStatus",
     "MintDurableEntitySessionGrantBody",
     "MintDurableEntitySessionGrantResponse201",
     "MirrorCleanCondition",
@@ -8129,6 +8196,7 @@ __all__ = (
     "ProgrammaticSignupMagicLinkResponse200Status",
     "ProgressiveRollout",
     "ProjectApplyRequest",
+    "ProjectApplyRequestAppSlugs",
     "ProjectBindingVerificationReview",
     "ProjectBindingVerificationReviewMembers",
     "ProjectBindingVerificationReviewReviewDigests",
@@ -8236,6 +8304,19 @@ __all__ = (
     "ProjectEnvironmentVariableChangeResponseKind",
     "ProjectEnvironmentVariableResponse",
     "ProjectEnvironmentWorkloadDiffResponse",
+    "ProjectInitialSecrets",
+    "ProjectInitialSecretsAdditionalProperty",
+    "ProjectMigration",
+    "ProjectMigrationBuildWait",
+    "ProjectMigrationBuildWaitStatus",
+    "ProjectMigrationList",
+    "ProjectMigrationService",
+    "ProjectMigrationServicePublicBuildUrls",
+    "ProjectMigrationServicePublicServiceConnections",
+    "ProjectMigrationServiceServiceConnections",
+    "ProjectMigrationStatus",
+    "ProjectPublicBuildURLs",
+    "ProjectPublicBuildURLsAdditionalProperty",
     "ProjectReleaseDeactivationReceipt",
     "ProjectReleaseSetListResponse",
     "ProjectReleaseSetMemberResponse",
@@ -8245,7 +8326,11 @@ __all__ = (
     "ProjectReleaseStageStatus",
     "ProjectResponse",
     "ProjectScanRequest",
+    "ProjectScanRequestAppSlugs",
+    "ProjectServiceConnections",
+    "ProjectServiceConnectionsAdditionalProperty",
     "ProjectSourceRefScanRequest",
+    "ProjectSourceRefScanRequestAppSlugs",
     "ProjectSummaryResponse",
     "ProjectWorkloadResponse",
     "PromoteProjectEnvironmentRequest",
@@ -8505,6 +8590,7 @@ __all__ = (
     "RestoreAutomationRevisionRequest",
     "RestoreManagedPostgresDatabaseRequest",
     "ResumeAutomationFailurePauseRequest",
+    "ResumeProjectMigrationRequest",
     "ResumeWorkflowRunRequest",
     "RetryDeploymentRequest",
     "RetryDeploymentRequestFromStage",

@@ -140,6 +140,10 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
+	migrationVerifications                     map[string]MigrationVerificationRecord
+	migrationCutovers                          map[string]MigrationCutoverRecord
+	projectMigrations                          map[string]ProjectMigrationRecord
+	publicBuildURLs                            map[string]map[string]string
 	projectReleaseStages                       map[string]projectReleaseStage
 	bindingVerificationRuns                    map[string]verificationRunRecord
 	graphVerificationRuns                      map[string]graphVerificationRecord
@@ -6814,6 +6818,7 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 		if d.AppID == id {
 			depIDs[key] = struct{}{}
 			delete(m.deployments, key)
+			delete(m.publicBuildURLs, key)
 			delete(m.deploymentRuntimeEnvironmentOwners, key)
 			delete(m.operationCodePins, key)
 			delete(m.workflowCodePins, key)
@@ -7431,6 +7436,11 @@ func (m *MemStore) createDeployment(d Deployment, activity *OrgActivity, promoti
 	if err := m.checkDeploymentAutomationsLocked(d); err != nil {
 		return Deployment{}, 0, err
 	}
+	buildGate, gateErr := newBuildDependencyGate(d, d.BuildDependencies, time.Now())
+	if gateErr != nil {
+		return Deployment{}, 0, gateErr
+	}
+	d.BuildDependencies = nil
 	dependencyGate, err := m.captureDeploymentDependenciesLocked(app, d)
 	if err != nil {
 		return Deployment{}, 0, err
@@ -7574,6 +7584,12 @@ func (m *MemStore) createDeployment(d Deployment, activity *OrgActivity, promoti
 		return Deployment{}, 0, fmt.Errorf("state: encode deployment stage state: %w", err)
 	}
 	d.StageState = stageState
+	if buildGate != nil {
+		d.StageState, err = projectBuildGate(d.StageState, buildGate)
+		if err != nil {
+			return Deployment{}, 0, err
+		}
+	}
 	// ADR-198 — mirror PgStore's `max(revision) + 1` per app. PgStore
 	// derives this in SQL under the apps FOR UPDATE lock; here m.mu
 	// serves the same role. A caller-supplied positive Revision is
@@ -9793,6 +9809,22 @@ func (m *MemStore) RetryDeploymentFromStage(_ context.Context, failedID string, 
 	if gate, exists := m.deploymentDependencyGates[failedID]; exists {
 		m.deploymentDependencyGates[newDep.ID] = cloneDeploymentDependencyGate(gate)
 	}
+	if m.publicBuildURLs == nil {
+		m.publicBuildURLs = map[string]map[string]string{}
+	}
+	if oldGate, err := buildGateFromStages(src.StageState); err != nil {
+		return Deployment{}, err
+	} else if oldGate != nil {
+		gate, err := newBuildDependencyGate(newDep, oldGate.Dependencies, now)
+		if err != nil {
+			return Deployment{}, err
+		}
+		newDep.StageState, err = projectBuildGate(newDep.StageState, gate)
+		if err != nil {
+			return Deployment{}, err
+		}
+	}
+	m.publicBuildURLs[newDep.ID] = maps.Clone(m.publicBuildURLs[failedID])
 	m.putDeploymentLocked(newDep.ID, newDep)
 	return newDep, nil
 }
@@ -11511,7 +11543,7 @@ func (m *MemStore) ClaimQueuedBuild(_ context.Context, id string) (Build, error)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	b, ok := m.builds[id]
-	if !ok || b.Status != BuildQueued {
+	if !ok || b.Status != BuildQueued || !m.buildDependencyEligibleLocked(b, time.Now()) {
 		return Build{}, ErrNotFound
 	}
 	b.Status = BuildRunning
@@ -11530,7 +11562,7 @@ func (m *MemStore) ClaimQueuedBuildWithNodeAffinity(ctx context.Context, id, nod
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	b, ok := m.builds[id]
-	if !ok || b.Status != BuildQueued || !m.buildEligibleOnNodeLocked(b, nodeID, affinityGrace, time.Now()) {
+	if !ok || b.Status != BuildQueued || !m.buildDependencyEligibleLocked(b, time.Now()) || !m.buildEligibleOnNodeLocked(b, nodeID, affinityGrace, time.Now()) {
 		return Build{}, ErrNotFound
 	}
 	b.Status = BuildRunning
@@ -11593,7 +11625,7 @@ func (m *MemStore) ClaimNextQueuedBuild(_ context.Context) (Build, error) {
 		found    bool
 	)
 	for id, b := range m.builds {
-		if b.Status != BuildQueued {
+		if b.Status != BuildQueued || !m.buildDependencyEligibleLocked(b, time.Now()) {
 			continue
 		}
 		if !found || b.EnqueuedAt.Before(earliest) {
@@ -11642,7 +11674,7 @@ func (m *MemStore) ClaimNextQueuedBuildWithFairness(_ context.Context, fairnessW
 	}
 	var queued []candidate
 	for id, b := range m.builds {
-		if b.Status != BuildQueued {
+		if b.Status != BuildQueued || !m.buildDependencyEligibleLocked(b, time.Now()) {
 			continue
 		}
 		dep, ok := m.deployments[b.DeploymentID]
@@ -11727,7 +11759,7 @@ func (m *MemStore) ClaimNextQueuedBuildWithNodeAffinity(ctx context.Context, nod
 	}
 	queued := make([]candidate, 0)
 	for id, build := range m.builds {
-		if build.Status != BuildQueued || !m.buildEligibleOnNodeLocked(build, nodeID, affinityGrace, now) {
+		if build.Status != BuildQueued || !m.buildDependencyEligibleLocked(build, now) || !m.buildEligibleOnNodeLocked(build, nodeID, affinityGrace, now) {
 			continue
 		}
 		dep, ok := m.deployments[build.DeploymentID]
@@ -22202,6 +22234,7 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 		if app, ok := m.apps[d.AppID]; ok && app.AccountID == id {
 			deletedDeployments[did] = struct{}{}
 			delete(m.deployments, did)
+			delete(m.publicBuildURLs, did)
 			delete(m.deploymentRuntimeEnvironmentOwners, did)
 			delete(m.operationCodePins, did)
 			delete(m.workflowCodePins, did)

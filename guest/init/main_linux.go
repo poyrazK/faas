@@ -69,6 +69,9 @@ const (
 // main is guest PID 1. Any fatal error here panics the VM (panic=1 in boot args
 // reboots it), which schedd observes as a failed wake.
 func main() {
+	if os.Getenv(dependencyInputsHelperEnv) == publicBuildURLsHelperValue && os.Getpid() != 1 {
+		os.Exit(runPublicBuildURLs(os.Args[1:]))
+	}
 	// A re-executed copy-out child (ADR-1037) never boots.
 	if len(os.Args) > 0 && os.Args[0] == appTaskCopyOutHelperArg0 && os.Getpid() != 1 {
 		os.Exit(runCopyOutHelper(os.Args[1:]))
@@ -920,6 +923,12 @@ func runBuild(m api.BuildManifest) error {
 // runBuildOnce executes one build attempt. It leaves the VM alive only when
 // the attempt succeeded and the manifest opted into the warm handoff.
 func runBuildOnce(m api.BuildManifest) error {
+	if !api.ValidBuildDependencyDigest(m.BuildDependencyDigest) {
+		return writeAndPoweroff(m, errors.New("invalid build dependency digest"), "")
+	}
+	if problem := api.ValidatePublicBuildURLs(m.PublicBuildURLs); problem != nil {
+		return writeAndPoweroff(m, fmt.Errorf("invalid public build URLs"), "")
+	}
 	if m.BuildContext == "" {
 		m.BuildContext = "/build/src"
 	}
@@ -1719,8 +1728,14 @@ func buildArgv(m api.BuildManifest) []string {
 			"--local", "context=" + contextDir,
 			"--local", "dockerfile=" + m.Workdir,
 		}
+		if m.BuildDependencyDigest != "" {
+			argv = append(argv, "--no-cache")
+		}
 		if m.DockerfilePath != "" {
 			argv = append(argv, "--opt", "filename="+m.DockerfilePath)
+		}
+		for _, key := range publicBuildURLKeys(m.PublicBuildURLs) {
+			argv = append(argv, "--opt", "build-arg:"+key+"="+m.PublicBuildURLs[key])
 		}
 		if m.DependencyCacheImport {
 			argv = append(argv, "--import-cache", "type=local,src=/build/cache")
@@ -1743,6 +1758,9 @@ func buildArgv(m api.BuildManifest) []string {
 		"--plan-out", shellQuote(planPath),
 		"--info-out", shellQuote(infoPath),
 	}, " ")
+	if len(m.PublicBuildURLs) > 0 || m.BuildDependencyDigest != "" {
+		prepare += " && " + dependencyInputsHelperEnv + "=" + publicBuildURLsHelperValue + " /proc/1/exe " + shellQuote(planPath)
+	}
 	build := strings.Join([]string{
 		"/usr/local/bin/buildctl", "--addr", "unix:///run/buildkit/buildkitd.sock", "build",
 		"--frontend", "gateway.v0",
@@ -2028,6 +2046,8 @@ func writeBuildDone(m api.BuildManifest, runErr error, logTail string) {
 		RailpackVersion: railpackVersion,
 	}
 	if runErr == nil {
+		done.PublicBuildURLsSHA256 = api.PublicBuildURLsSHA256(m.PublicBuildURLs)
+		done.BuildDependencyDigest = m.BuildDependencyDigest
 		done.DependencyCacheUnchanged = m.DependencyCache && dependencyCacheKept(m.OutDir)
 		sourceMap, watchErr := devWatchSourceMap(m, buildDevPatchSourceMap(m, readBuildPlan))
 		done.DevPatch = sourceMap

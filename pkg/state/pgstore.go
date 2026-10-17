@@ -7189,6 +7189,9 @@ func (s *PgStore) createDeployment(ctx context.Context, d Deployment, activity *
 			return Deployment{}, 0, mapErr(err)
 		}
 	}
+	if err := captureBuildDependencyGateTx(ctx, tx, created, d.BuildDependencies); err != nil {
+		return Deployment{}, 0, err
+	}
 	if err := captureDeploymentDependenciesTx(ctx, tx, created); err != nil {
 		return Deployment{}, 0, err
 	}
@@ -10860,6 +10863,14 @@ func (s *PgStore) RetryDeploymentFromStage(ctx context.Context, failedID string,
 	}); err != nil {
 		return Deployment{}, err
 	}
+	if err := retryBuildDependencyGateTx(ctx, tx, created, failedID); err != nil {
+		return Deployment{}, err
+	}
+	if err := sqlc.New().CopyDeploymentPublicBuildURLs(ctx, tx, sqlc.CopyDeploymentPublicBuildURLsParams{
+		DeploymentID: mustPgUUID(created.ID), SourceDeploymentID: mustPgUUID(failedID),
+	}); err != nil {
+		return Deployment{}, err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return Deployment{}, err
 	}
@@ -12634,7 +12645,7 @@ func (s *PgStore) ClaimQueuedBuild(ctx context.Context, id string) (Build, error
 	row := s.pool.QueryRow(ctx,
 		`update builds
 		   set status = 'running', started_at = now()
-		 where id = $1 and status = 'queued'
+		 where id = $1 and status = 'queued' and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=builds.deployment_id and g.check_after>now())
 		 returning id, deployment_id, kind, source_bytes, status,
 		           coalesce(failure_class,''), coalesce(log_path,''),
 		           started_at, finished_at, enqueued_at,
@@ -12665,7 +12676,7 @@ func (s *PgStore) ClaimQueuedBuildWithNodeAffinity(ctx context.Context, id, node
 		   set status = 'running', started_at = now()
 		  from deployments d
 		 where b.id = $1
-		   and b.status = 'queued'
+		   and b.status = 'queued' and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=b.deployment_id and g.check_after>now())
 		   and d.id = b.deployment_id
 		   and (
 		     b.enqueued_at <= now() - $3::interval
@@ -12713,7 +12724,7 @@ func (s *PgStore) ClaimNextQueuedBuild(ctx context.Context) (Build, error) {
 		   set status = 'running', started_at = now()
 		 where id = (
 		   select id from builds
-		    where status = 'queued'
+		    where status = 'queued' and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=builds.deployment_id and g.check_after>now())
 		    order by enqueued_at asc
 		    limit 1
 		    for update skip locked
@@ -12741,12 +12752,12 @@ func (s *PgStore) ClaimNextQueuedBuild(ctx context.Context) (Build, error) {
 func (s *PgStore) ClaimNextQueuedBuildWithFairness(ctx context.Context, fairnessWindow time.Duration) (Build, error) {
 	row := s.pool.QueryRow(ctx,
 		`update builds set status='running', started_at = now()
-    where status = 'queued' and id = (
+    where status = 'queued' and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=builds.deployment_id and g.check_after>now()) and id = (
       select b.id
         from builds b
         join deployments d on d.id = b.deployment_id
         join apps a on a.id = d.app_id
-       where b.status = 'queued'
+       where b.status = 'queued' and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=b.deployment_id and g.check_after>now())
        order by exists (
          select 1 from recent_build_claims r
           where r.account_id = a.account_id
@@ -12784,12 +12795,12 @@ func (s *PgStore) ClaimNextQueuedBuildWithNodeAffinity(ctx context.Context, node
 	}
 	row := s.pool.QueryRow(ctx,
 		`update builds set status = 'running', started_at = now()
-		 where status = 'queued' and id = (
+		 where status = 'queued' and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=builds.deployment_id and g.check_after>now()) and id = (
 		   select b.id
 		     from builds b
 		     join deployments d on d.id = b.deployment_id
 		     join apps a on a.id = d.app_id
-		    where b.status = 'queued'
+		    where b.status = 'queued' and not exists (select 1 from deployment_build_dependency_gates g where g.deployment_id=b.deployment_id and g.check_after>now())
 		      and (
 		        b.enqueued_at <= now() - $2::interval
 		        or coalesce((

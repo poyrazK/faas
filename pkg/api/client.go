@@ -1748,6 +1748,19 @@ func (c *Client) ApplyProjectPlanWithBindingEnvironmentApproval(
 	environment, approvalToken string,
 	platformTenantRequired ...*bool,
 ) (ApplyResponse, error) {
+	return c.ApplyProjectPlanWithInitialSecrets(ctx, planToken, source, sourceName, projectSlug, repoFullName,
+		productionBranch, installID, only, exclude, persistExclude, noTriggers, environment, approvalToken, nil, platformTenantRequired...)
+}
+
+// ApplyProjectPlanWithInitialSecrets seals initial workload configuration on
+// the server before any selected workload's first build is enqueued.
+func (c *Client) ApplyProjectPlanWithInitialSecrets(
+	ctx context.Context, planToken string,
+	source io.Reader, sourceName, projectSlug, repoFullName, productionBranch string,
+	installID int64, only, exclude []string, persistExclude, noTriggers bool,
+	environment, approvalToken string, initialSecrets ProjectInitialSecrets,
+	platformTenantRequired ...*bool,
+) (ApplyResponse, error) {
 	var b bytes.Buffer
 	w := multipart.NewWriter(&b)
 	if err := writeProjectMultipartFields(w, source, sourceName, projectSlug, repoFullName, productionBranch, installID, only, exclude, persistExclude, noTriggers, environment, approvalToken); err != nil {
@@ -1755,6 +1768,15 @@ func (c *Client) ApplyProjectPlanWithBindingEnvironmentApproval(
 	}
 	if err := writeProjectTenantPolicy(w, platformTenantRequired); err != nil {
 		return ApplyResponse{}, fmt.Errorf("build tenant policy field: %w", err)
+	}
+	if len(initialSecrets) > 0 {
+		body, err := json.Marshal(initialSecrets)
+		if err != nil {
+			return ApplyResponse{}, fmt.Errorf("encode initial project configuration: %w", err)
+		}
+		if err := w.WriteField("initial_secrets", string(body)); err != nil {
+			return ApplyResponse{}, fmt.Errorf("write initial project configuration: %w", err)
+		}
 	}
 	if err := w.Close(); err != nil {
 		return ApplyResponse{}, fmt.Errorf("close multipart writer: %w", err)
@@ -1782,6 +1804,12 @@ func (c *Client) ApplyProjectPlanWithBindingEnvironmentApproval(
 	req.Header.Set("Idempotency-Key", idempotencyKey)
 	var out ApplyResponse
 	return out, c.doReq(c.uploadHTTP(), req, &out)
+}
+
+// ApplyCachedProjectPlan deploys exactly the account-owned source from scan.
+func (c *Client) ApplyCachedProjectPlan(ctx context.Context, request ApplyCachedProjectPlanRequest) (ApplyResponse, error) {
+	var out ApplyResponse
+	return out, c.do(ctx, http.MethodPost, "/v1/projects/apply-plan", request, &out)
 }
 
 // DeleteDeploymentScopeExclusion drops a single persisted

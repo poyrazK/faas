@@ -111,6 +111,11 @@ type ResolvedCreateAppTaskRequest struct {
 
 // Resolve validates all caller-controlled fields and fills bounded defaults.
 func (r CreateAppTaskRequest) Resolve() (ResolvedCreateAppTaskRequest, *Problem) {
+	if len(r.Command) > 0 && r.Command[0] == AppTaskMigrationDependenciesCommand {
+		if _, valid := ParseMigrationDependenciesCommand(r.Command, r.CommandShell); !valid || r.Interactive || r.VerificationDeploymentID != "" || r.SmokeDeploymentID != "" {
+			return ResolvedCreateAppTaskRequest{}, appTaskInvalid("invalid migration dependency command")
+		}
+	}
 	if r.TTY && !r.Interactive {
 		return ResolvedCreateAppTaskRequest{}, appTaskInvalid("tty requires interactive")
 	}
