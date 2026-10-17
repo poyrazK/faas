@@ -2756,6 +2756,13 @@ Use a synchronous nonblocking callback and an application-owned bounded queue.
 Observer exceptions preserve processing outcomes; no observer work is scheduled
 or awaited. See [event fields and isolation](../../docs/event-acknowledgment-python-telemetry.md).
 
+`EventAcknowledgmentPreparationMetrics` aggregates these events into fixed
+counters and cumulative duration histograms. Pass `metrics.record` as `on_event`
+and read detached JSON-safe `metrics.snapshot()` dictionaries from a separate
+export path. Serialize access in one execution context; no exporter, background
+task or retained event data is installed. Safe-integer saturation is explicit.
+See [counting and export rules](../../docs/event-acknowledgment-python-metrics.md).
+
 `ainspect_event_consumer_processing(connection, request, stop_event=...)` reads
 frozen receipt/claim metadata for one original consumer request in one statement.
 It reports matching/completed, active, expired, absent or conflicting evidence and

@@ -1,5 +1,7 @@
 # Architecture Decision Records
 
+- [Bounded Python preparation metrics](20261017164105-python-preparation-metrics.md)
+
 - [Python preparation lifecycle telemetry](20261017161548-python-preparation-lifecycle-telemetry.md)
 
 - [Python processing recovery inspection](20261017155904-python-processing-recovery-inspection.md)

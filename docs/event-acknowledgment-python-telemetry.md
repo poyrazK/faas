@@ -140,3 +140,8 @@ static vocabulary/source checks. No tests/assertions are added/changed and no
 local tests run. Hosted observer isolation, event ordering, secret exclusion,
 cancellation, renewal loss and confirmed/unknown commit acceptance remains pending
 before release.
+
+For fixed counters and duration histograms, pass the synchronous
+[`EventAcknowledgmentPreparationMetrics.record`](event-acknowledgment-python-metrics.md)
+method as the observer and export detached snapshots separately. Its observations
+do not establish stream completeness or recovery proof.

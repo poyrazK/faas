@@ -528,3 +528,38 @@ never select retry/dead-letter, release claims or prove rollback/completion.
 Keep observers passive and nonblocking; blocking callbacks can consume budgets
 and stall timers even though exceptions are isolated. Callback recovery remains
 independent of telemetry. See the [Python event and isolation contract](../../docs/event-acknowledgment-python-telemetry.md).
+
+## Collect preparation metrics
+
+Use one long-lived process-local collector in place of the diagnostic queue
+observer. The existing version-5 processing helper and protected records stay
+the same:
+
+```python
+from faas_sdk import EventAcknowledgmentPreparationMetrics
+from prepared_consumer import prepared_options_with_metrics, process_owned_prepared_delivery
+
+metrics = EventAcknowledgmentPreparationMetrics()
+options = prepared_options_with_metrics(60_000, metrics)
+
+queued = await process_owned_prepared_delivery(
+    client.inner, job, scope, connection_scope, prepare, apply, options,
+)
+
+# Later, in the host's scrape/export path; never export inside the observer.
+snapshot = metrics.snapshot()
+```
+
+The helper binds synchronous `metrics.record` directly. No exporter, listener,
+drain or background task starts. Calls on the same asyncio event-loop thread
+serialize naturally; the host must serialize all record/snapshot accesses from
+other threads. Snapshots are detached mutable JSON-safe dictionaries/lists, so
+changing one cannot change the collector or an earlier snapshot.
+
+Counters use only fixed labels and histograms use fixed inclusive cumulative
+millisecond buckets, including a final `None` bound for positive infinity. Publish
+absolute cumulative totals, handle restart/reset detection, and check sticky
+saturation before deriving rates/averages. Duplicate observations count again;
+missing shutdowns or crashes prevent active-work or deduplication inferences.
+Metrics select no recovery and prove no acknowledgment. See
+[counting, validation and export details](../../docs/event-acknowledgment-python-metrics.md).

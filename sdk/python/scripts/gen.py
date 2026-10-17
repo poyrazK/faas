@@ -230,6 +230,8 @@ WRAPPER_MODULES = (
     "event_acknowledgment_worker.py",
     "event_acknowledgment_preparation.py",
     "event_acknowledgment_preparation_events.py",
+    "event_acknowledgment_preparation_metrics.py",
+    "_event_acknowledgment_preparation_metric_events.py",
     "_event_acknowledgment_preparation_runtime.py",
     "event_acknowledgment_intents.py",
     "event_acknowledgment_intent_recovery.py",
@@ -1494,6 +1496,18 @@ from .event_acknowledgment_preparation_events import (
 __all__ += (
     "EventAcknowledgmentPreparationEvent", "EventAcknowledgmentPreparationOutcome",
     "EventAcknowledgmentPreparationReason", "EventAcknowledgmentPreparationStage",
+)
+
+from .event_acknowledgment_preparation_metrics import (
+    EVENT_ACKNOWLEDGMENT_PREPARATION_DURATION_BUCKETS_MS,
+    EventAcknowledgmentPreparationHistogram,
+    EventAcknowledgmentPreparationMetrics,
+    EventAcknowledgmentPreparationMetricsSnapshot,
+)
+
+__all__ += (
+    "EVENT_ACKNOWLEDGMENT_PREPARATION_DURATION_BUCKETS_MS", "EventAcknowledgmentPreparationHistogram",
+    "EventAcknowledgmentPreparationMetrics", "EventAcknowledgmentPreparationMetricsSnapshot",
 )
 '''
 

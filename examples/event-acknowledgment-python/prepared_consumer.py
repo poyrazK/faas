@@ -11,6 +11,7 @@ from consumer import _enqueue_authenticated_delivery, _owned_delivery
 from durable_consumer import _ack
 from faas_sdk import (
     EventAcknowledgmentPreparationEvent,
+    EventAcknowledgmentPreparationMetrics,
     EventAcknowledgmentPreparedOptions,
     ainspect_event_consumer_processing,
     event_consumer_request_from_headers,
@@ -98,3 +99,14 @@ def prepared_options_with_diagnostics(
         diagnostics.put_nowait(asdict(event))
 
     return EventAcknowledgmentPreparedOptions(preparation_timeout_ms, on_event=observe)
+
+
+def prepared_options_with_metrics(
+    preparation_timeout_ms: int, metrics: EventAcknowledgmentPreparationMetrics
+) -> EventAcknowledgmentPreparedOptions:
+    """Aggregate metadata synchronously; the host exports snapshots separately."""
+    if not isinstance(metrics, EventAcknowledgmentPreparationMetrics):
+        raise TypeError("preparation metrics collector required")
+    return EventAcknowledgmentPreparedOptions(
+        preparation_timeout_ms, on_event=metrics.record
+    )

@@ -1,5 +1,9 @@
 # Node preparation metrics
 
+Python provides the same fixed counting and bucket contract through
+[Python preparation metrics](event-acknowledgment-python-metrics.md), with detached
+JSON-safe dictionaries and Python field names.
+
 `EventAcknowledgmentPreparationMetrics` collects bounded counters and cumulative
 duration histograms from [preparation lifecycle events](event-acknowledgment-node-telemetry.md).
 Create one long-lived collector for an application-owned observation scope and
