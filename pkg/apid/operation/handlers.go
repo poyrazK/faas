@@ -184,7 +184,7 @@ func (s *Service) platformTenantSelfOperation(w http.ResponseWriter, r *http.Req
 }
 
 func (s *Service) GetPlatformTenantSelfOperation(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	op, _, ok := s.platformTenantSelfOperation(w, r, acct)
+	op, _, ok := s.readablePlatformTenantSelfOperation(w, r, acct)
 	if ok {
 		httpkit.WriteJSON(w, http.StatusOK, op.OperationResponse)
 	}
@@ -209,7 +209,7 @@ func OperationEventsCursor(r *http.Request) (int64, error) {
 }
 
 func (s *Service) GetPlatformTenantSelfOperationEvents(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	op, store, ok := s.platformTenantSelfOperation(w, r, acct)
+	op, store, ok := s.readablePlatformTenantSelfOperation(w, r, acct)
 	if !ok {
 		return
 	}

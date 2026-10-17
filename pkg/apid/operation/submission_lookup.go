@@ -15,7 +15,7 @@ func (s *Service) LookupPlatformTenantSelfOperationSubmission(w http.ResponseWri
 		WriteOperationError(w, state.ErrInvalidArgument)
 		return
 	}
-	tenant, ok := httpkit.PlatformTenantSelfID(w, r)
+	tenant, ok := s.activePlatformTenantSelfID(w, r, acct)
 	if !ok {
 		return
 	}

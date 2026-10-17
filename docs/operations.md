@@ -518,6 +518,13 @@ Customer bearer tokens use a separate namespace:
   is exposed through `X-Gregale-Artifact-SHA256`. Results can expire independently
   of the operation's successful business outcome.
 
+While the owning account suspends a customer, that customer's reads close at
+once: listing, status, events, milestones, identity, submission lookup and
+artifact downloads return `403`, and an open event stream ends with
+`auth_expired` at its next credential recheck. Suspension does not cancel
+admitted work, and the account keeps reading every outcome. Resuming the
+customer reopens its reads.
+
 Runtime `POST /v1/runtime/operations/{id}/progress` and `.../{id}/artifacts`
 require a fresh workload JWT for audience `gregale:operations`, plus the current
 invocation ID, attempt and ephemeral capability. Customer and account tokens do
