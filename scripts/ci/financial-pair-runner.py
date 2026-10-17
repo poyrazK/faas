@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Prepare two dedicated hosts, execute native cost drills, retain all evidence."""
+import hashlib
 import importlib.util
 import json
 import os
@@ -28,6 +29,12 @@ def require(condition, message):
 def remote(target, args):
     # SSH invokes a remote shell; quote every argv element exactly once.
     return ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-o", "ServerAliveInterval=10", "-o", "ServerAliveCountMax=3", "--", target, shlex.join(args)]
+
+
+def jail_root(source_sha, run_id):
+    # Reserve a short, exclusive namespace: versioned Firecracker + instance
+    # UUID + vsock port must still fit Linux's 107-byte Unix socket pathname.
+    return "/srv/f" + hashlib.sha256((source_sha + "-" + run_id).encode()).hexdigest()[:6]
 
 
 def run(args, log, env=None, timeout=1800):
@@ -157,7 +164,7 @@ def main():
     output.mkdir(parents=True, exist_ok=False)
     bundle = Path(f"/var/tmp/faas-financial-pair-{source_sha}-{run_id}")
     bundle.mkdir(mode=0o700)
-    jail = f"/srv/fc/fp-{source_sha[:8]}-{run_id}"
+    jail = jail_root(source_sha, run_id)
     statuses = {name: 125 for name in ("single_host", "native", "peer_network", "host_a", "host_b")}
     holds = []
     try:

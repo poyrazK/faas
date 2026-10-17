@@ -13,6 +13,12 @@ spec.loader.exec_module(runner)
 
 
 class RunnerTest(unittest.TestCase):
+    def test_jail_namespace_leaves_room_for_native_sockets(self):
+        first = runner.jail_root("a" * 40, "long-reviewed-run-identifier")
+        self.assertRegex(first, r"^/srv/f[a-f0-9]{6}$")
+        self.assertLessEqual(len(first), 12)
+        self.assertNotEqual(first, runner.jail_root("a" * 40, "another-run"))
+
     def test_ssh_preserves_literal_arguments(self):
         args = ["sudo", "bash", "a path/with 'quotes'", "$(must-stay-literal); true"]
         command = runner.remote("fixture-peer", args)

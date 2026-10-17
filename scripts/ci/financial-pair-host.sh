@@ -14,7 +14,7 @@ bundle="${2:?bundle required}"
 # shellcheck disable=SC1090
 source "${bundle}/peer.env"
 [[ "${FAAS_FINANCIAL_PAIR_BUNDLE}" == "${bundle}" ]] || die "bundle identity changed"
-[[ "${FAAS_FINANCIAL_PAIR_JAIL_ROOT}" =~ ^/srv/fc/fp-[a-f0-9]{8}-[A-Za-z0-9._-]+$ ]] || die "invalid jail root"
+[[ "${FAAS_FINANCIAL_PAIR_JAIL_ROOT}" =~ ^/srv/f[a-f0-9]{6}$ ]] || die "invalid jail root"
 unit_prefix="faas-financial-${FAAS_FINANCIAL_PAIR_RUN_ID}-"
 [[ "${FAAS_FINANCIAL_PAIR_RUN_ID}" =~ ^[A-Za-z0-9._-]{1,32}$ ]] || die "invalid run ID"
 export FAAS_E2E_JAIL_ROOT="${FAAS_FINANCIAL_PAIR_JAIL_ROOT}"
@@ -41,7 +41,7 @@ case "${action}" in
     owned="${3:?owned path required}"
     [[ "${owned}" != *..* ]] || die "invalid owned path"
     case "${owned}" in
-      "${bundle}"/owned/cost-*|"${FAAS_FINANCIAL_PAIR_JAIL_ROOT}"/cost-*) rm -rf -- "${owned}" ;;
+      "${bundle}"/owned/cost-*|"${FAAS_FINANCIAL_PAIR_JAIL_ROOT}"/c????) rm -rf -- "${owned}" ;;
       *) die "cleanup path is outside this fixture" ;;
     esac
     exit
@@ -76,12 +76,14 @@ exec 9>/var/lock/faas-builder-acceptance.lock
 flock -w 60 9 || die "another native gate owns this host"
 [[ ! -e "${bundle}/ready.json" && ! -e "${bundle}/cleanup.json" ]] || die "run ID was already used"
 bash "${bundle}/deploy/scripts/leakcheck.sh" > "${bundle}/baseline.log" 2>&1 || die "host baseline is dirty"
-mkdir -p "${bundle}/owned" "${bundle}/tmp" "${FAAS_FINANCIAL_PAIR_JAIL_ROOT}"
+mkdir -p "${bundle}/owned" "${bundle}/tmp"
+# A short hash collision must refuse, never reuse retained ownership evidence.
+mkdir -m 0700 "${FAAS_FINANCIAL_PAIR_JAIL_ROOT}" || die "jail namespace already exists; retain it for repair"
 active="${bundle}/active-services"
 : > "${active}"
 
 cleanup() {
-  local rc=$? restore_rc=0 preleak=0 postleak=0 unit
+  local rc=$? restore_rc=0 preleak=0 postleak=0 unit jail
   trap - EXIT HUP INT TERM
   set +e
   # A still-active owner is a failed test cleanup, even when emergency
@@ -98,6 +100,10 @@ cleanup() {
     # and locked; emergency reaping cannot affect customer workloads.
     source "${bundle}/native-e2e-reap.sh"
     reap_test_microvms >> "${bundle}/leakcheck.log" 2>&1
+    for jail in "${FAAS_FINANCIAL_PAIR_JAIL_ROOT}"/c????/n?; do
+      [[ -d "${jail}" ]] || continue
+      FAAS_E2E_JAIL_ROOT="${jail}" reap_test_microvms >> "${bundle}/leakcheck.log" 2>&1
+    done
   fi
   bash "${bundle}/deploy/scripts/leakcheck.sh" >> "${bundle}/leakcheck.log" 2>&1
   postleak=$?

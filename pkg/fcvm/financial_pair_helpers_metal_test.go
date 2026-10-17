@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/pkg/e2etest/postgresfixture"
 )
@@ -43,6 +44,22 @@ func financialNativeHostFacts() financialNativeHost {
 	}
 	info, err := os.Stat("/dev/kvm")
 	return financialNativeHost{MachineID: hash("/etc/machine-id"), BootID: hash("/proc/sys/kernel/random/boot_id"), Arch: runtime.GOARCH, Root: os.Geteuid() == 0, KVM: err == nil && info.Mode()&os.ModeCharDevice != 0}
+}
+
+func financialPairJailDirectory(parent string) (string, error) {
+	// A versioned Firecracker basename, UUID, vsock port suffix and n0/n1
+	// already use most of sockaddr_un. MkdirTemp's long decimal suffix would
+	// exceed it beneath the run namespace. Creation remains exclusive.
+	for range 16 {
+		path := filepath.Join(parent, "c"+uuid.NewString()[:4])
+		if err := os.Mkdir(path, 0o700); errors.Is(err, os.ErrExist) {
+			continue
+		} else if err != nil {
+			return "", err
+		}
+		return path, nil
+	}
+	return "", errors.New("native pair short jail namespace is occupied")
 }
 
 func financialPeerCommand(ctx context.Context, target, operation, argument string) (*exec.Cmd, error) {

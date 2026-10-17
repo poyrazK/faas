@@ -4,6 +4,7 @@ package fcvm
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -75,5 +76,27 @@ func TestFinancialPairProxyHasNoUnpartitionedFallback(t *testing.T) {
 		if fallback.Host != cfg.ProxyHost || fallback.Port != cfg.ProxyPort {
 			t.Fatal("PostgreSQL fallback can bypass the native partition")
 		}
+	}
+}
+
+func TestFinancialPairJailDirectoryKeepsNativeSocketsShort(t *testing.T) {
+	parent := t.TempDir()
+	first, err := financialPairJailDirectory(parent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := financialPairJailDirectory(parent)
+	if err != nil || first == second {
+		t.Fatalf("non-exclusive jail directory: %s %s %v", first, second, err)
+	}
+	info, err := os.Stat(first)
+	if err != nil || info.Mode().Perm() != 0o700 {
+		t.Fatalf("jail ownership mode: %v %v", info, err)
+	}
+	// Use the longest supported fixture binary name and five-digit vsock
+	// port suffix, plus the pair runner's real fixed-length parent layout.
+	path := filepath.Join("/srv/f123456", filepath.Base(first), "n0", "firecracker-v1.17.0-x86_64", strings.Repeat("a", 36), "root", "vsock.sock_65535")
+	if len(path) > 107 {
+		t.Fatalf("pair vsock path exceeds Linux sockaddr_un: %d %s", len(path), path)
 	}
 }

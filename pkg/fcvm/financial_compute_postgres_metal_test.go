@@ -320,14 +320,16 @@ func newFinancialNativeFixture(t *testing.T) *financialNativeFixture {
 	}
 	// Keep Firecracker/vsock Unix sockets below sockaddr_un's path limit.
 	// Persistent image staging stays in the runner's long, exact-commit tree.
-	jailParent := "/srv/fc"
+	var jailRoot string
 	if os.Getenv("FAAS_FINANCIAL_PAIR") == "1" {
-		jailParent = os.Getenv("FAAS_FINANCIAL_PAIR_JAIL_ROOT")
+		jailParent := os.Getenv("FAAS_FINANCIAL_PAIR_JAIL_ROOT")
 		if jailParent == "" {
 			t.Fatal("native pair jail root is missing")
 		}
+		jailRoot, err = financialPairJailDirectory(jailParent)
+	} else {
+		jailRoot, err = os.MkdirTemp("/srv/fc", "cost-")
 	}
-	jailRoot, err := os.MkdirTemp(jailParent, "cost-")
 	if err != nil {
 		_ = os.Remove(root) // no producer has started
 		t.Fatal(err)
