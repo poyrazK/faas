@@ -2,7 +2,7 @@
 
 - Status: Accepted for a local prototype; no production enrollment.
 - Date: 2026-10-15
-- Related: [ADR-151](151-provider-neutral-object-storage.md), [ADR-530](530-s003-compatibility-and-multipart-capacity.md)
+- Related: [ADR-151](151-provider-neutral-object-storage.md), [ADR-530](530-s3-compatibility-and-multipart-capacity.md)
 
 ## Context
 
