@@ -455,6 +455,17 @@ databases.
      database.
 3. Apply migration `20261017121336518_managed_postgres_live_keys` before
    deploying the apid that serves the routes.
+4. Run livequeryd with these flags:
+   - `-keys-dsn-file`: a file holding a read-only control-plane connection
+     string;
+   - `-keys-identity`: the age identity, mode 0400;
+   - `-listen` for realtimed, with `-tls-cert`, `-tls-key` and `-client-ca`
+     on any shared network.
+
+   It reads the database's keys every `-keys-refresh` (5 seconds), so
+   revocations reach open subscriptions within that. The metrics
+   `livequery_keys` and `livequery_key_refreshes_total{result}` show the
+   ring and its reads.
 
 ### Customer commands
 

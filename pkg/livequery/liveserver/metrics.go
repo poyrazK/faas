@@ -25,6 +25,8 @@ type Metrics struct {
 	windowRefills  prometheus.Counter
 	appliedTxns    prometheus.Counter
 	maintenanceSec prometheus.Counter
+	keys           prometheus.Gauge
+	keyRefreshes   *prometheus.CounterVec
 }
 
 // NewMetrics registers the metrics with reg.
@@ -53,9 +55,12 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Help: "Transactions applied to live queries."}),
 		maintenanceSec: prometheus.NewCounter(prometheus.CounterOpts{Name: "livequery_maintenance_seconds_total",
 			Help: "Time spent in maintenance statements."}),
+		keys: prometheus.NewGauge(prometheus.GaugeOpts{Name: "livequery_keys", Help: "Live secrets the hub opens seals with."}),
+		keyRefreshes: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "livequery_key_refreshes_total",
+			Help: "Reads of the database's live keys from the control plane, by result."}, []string{"result"}),
 	}
 	reg.MustRegister(m.subscriptions, m.queries, m.round, m.commitToDelta, m.recompute, m.resnapshots, m.memory,
-		m.slotLag, m.checkpoint, m.slowConsumers, m.windowRefills, m.appliedTxns, m.maintenanceSec)
+		m.slotLag, m.checkpoint, m.slowConsumers, m.windowRefills, m.appliedTxns, m.maintenanceSec, m.keys, m.keyRefreshes)
 	return m
 }
 
@@ -103,6 +108,18 @@ func (m *Metrics) slowConsumer() {
 func (m *Metrics) SlotLost(queries int) {
 	if m != nil {
 		m.resnapshots.WithLabelValues("slot_lost").Add(float64(queries))
+	}
+}
+
+func (m *Metrics) keyRefresh(result string) {
+	if m != nil {
+		m.keyRefreshes.WithLabelValues(result).Inc()
+	}
+}
+
+func (m *Metrics) setKeys(n int) {
+	if m != nil {
+		m.keys.Set(float64(n))
 	}
 }
 

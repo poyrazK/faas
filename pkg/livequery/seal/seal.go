@@ -311,6 +311,25 @@ func (k *Keyring) Open(token string, now time.Time) (Query, error) {
 	return q, nil
 }
 
+// KeyID returns the key ID in a seal's clear header, or "" when the header is
+// malformed. It authenticates nothing.
+func KeyID(token string) string {
+	parts := strings.SplitN(token, ".", 3)
+	if len(parts) != 3 || parts[0] != tokenPrefix || !validKID(parts[1]) {
+		return ""
+	}
+	return parts[1]
+}
+
+// Opens reports whether the ring holds key ID kid and it has not retired.
+func (k *Keyring) Opens(kid string, now time.Time) bool {
+	key, ok := k.keys[kid]
+	return ok && (key.Retires.IsZero() || now.Before(key.Retires))
+}
+
+// Len is the number of keys in the ring.
+func (k *Keyring) Len() int { return len(k.keys) }
+
 // Code is the live.error code for an Open or Seal error.
 func Code(err error) string {
 	switch {

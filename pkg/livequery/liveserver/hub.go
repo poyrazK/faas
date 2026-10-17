@@ -29,8 +29,10 @@ import (
 type Config struct {
 	// Database is the database the engine maintains; seals must name it.
 	Database string
-	Keyring  *seal.Keyring
-	Engine   *livequery.Engine
+	// Keyring opens seals; SetKeyring replaces it while the hub runs. Nil
+	// opens none.
+	Keyring *seal.Keyring
+	Engine  *livequery.Engine
 	// Checkpoint, when set, is the file the engine checkpoints to every
 	// CheckpointEvery (default one minute) and when Run returns.
 	Checkpoint      string
@@ -53,6 +55,7 @@ type Config struct {
 // Hub serves one database's live queries.
 type Hub struct {
 	cfg      Config
+	keys     *seal.Keyring
 	engine   *livequery.Engine
 	cmds     chan func(ctx context.Context)
 	subs     map[string]*sub // by engine subscription ID
@@ -67,6 +70,7 @@ type Hub struct {
 type sub struct {
 	session     *Session
 	client      string // the client's subscription ID
+	kid         string // key ID of the latest seal
 	engineID    string
 	fingerprint string
 	expires     time.Time
@@ -105,7 +109,11 @@ func New(cfg Config) *Hub {
 	// from an earlier process, so each hub prefixes its own.
 	prefix := make([]byte, 6)
 	_, _ = rand.Read(prefix) // crypto/rand.Read never fails
-	return &Hub{cfg: cfg, engine: cfg.Engine, cmds: make(chan func(context.Context), 256), subs: map[string]*sub{},
+	keys := cfg.Keyring
+	if keys == nil {
+		keys, _ = seal.NewKeyring() // an empty ring never fails
+	}
+	return &Hub{cfg: cfg, keys: keys, engine: cfg.Engine, cmds: make(chan func(context.Context), 256), subs: map[string]*sub{},
 		sessions: map[*Session]bool{}, done: make(chan struct{}), prefix: hex.EncodeToString(prefix) + "."}
 }
 
@@ -275,6 +283,28 @@ func (h *Hub) expire() {
 	}
 }
 
+// SetKeyring replaces the key ring. Subscriptions whose latest seal used a
+// key the new ring no longer opens are closed at once: removing a key (a
+// rotation without overlap, disabling live queries, or a retirement) revokes
+// its outstanding seals.
+func (h *Hub) SetKeyring(ctx context.Context, ring *seal.Keyring) {
+	if ring == nil {
+		ring, _ = seal.NewKeyring() // an empty ring never fails
+	}
+	h.do(ctx, func(context.Context) {
+		h.keys = ring
+		now := h.cfg.Now()
+		for _, s := range h.subs {
+			if s.session == nil || h.keys.Opens(s.kid, now) {
+				continue
+			}
+			s.session.send(&liveproto.Error{Type: liveproto.TypeError, Subscription: s.client, Code: liveproto.CodeSealRejected,
+				Message: "the live secret that sealed this query was revoked", Closed: true})
+			h.forget(s, true)
+		}
+	})
+}
+
 // forget removes a subscription; with unregister it also leaves the engine.
 func (h *Hub) forget(s *sub, unregister bool) {
 	if unregister {
@@ -315,7 +345,7 @@ func (h *Hub) subscribe(ctx context.Context, sess *Session, f liveproto.ClientFr
 		sess.send(&liveproto.Error{Type: liveproto.TypeError, Subscription: f.Subscription, Code: code, Message: msg,
 			Closed: true, Limit: int64(limit), Observed: int64(observed)})
 	}
-	q, err := h.cfg.Keyring.Open(f.Sealed, h.cfg.Now())
+	q, err := h.keys.Open(f.Sealed, h.cfg.Now())
 	if err != nil {
 		refuse(seal.Code(err), err.Error(), 0, 0)
 		return
@@ -350,7 +380,7 @@ func (h *Hub) subscribe(ctx context.Context, sess *Session, f liveproto.ClientFr
 		return
 	}
 	h.cfg.Logger.Debug("live subscribe", "session", sess.id, "subscription", f.Subscription, "engine", engineID)
-	s := &sub{session: sess, client: f.Subscription, engineID: engineID, fingerprint: q.Fingerprint(), expires: q.ExpiresAt()}
+	s := &sub{session: sess, client: f.Subscription, kid: seal.KeyID(f.Sealed), engineID: engineID, fingerprint: q.Fingerprint(), expires: q.ExpiresAt()}
 	h.subs[engineID] = s
 	sess.subs[f.Subscription] = s
 	h.dirty = true
@@ -365,7 +395,7 @@ func (h *Hub) renew(sess *Session, f liveproto.ClientFrame) {
 		refuse(liveproto.CodeProtocol, "no such subscription")
 		return
 	}
-	q, err := h.cfg.Keyring.Open(f.Sealed, h.cfg.Now())
+	q, err := h.keys.Open(f.Sealed, h.cfg.Now())
 	switch {
 	case err != nil:
 		refuse(seal.Code(err), err.Error())
@@ -374,7 +404,7 @@ func (h *Hub) renew(sess *Session, f liveproto.ClientFrame) {
 		refuse(liveproto.CodeRenewMismatch, "the renewal seals a different query")
 		return
 	}
-	s.expires = q.ExpiresAt()
+	s.expires, s.kid = q.ExpiresAt(), seal.KeyID(f.Sealed)
 	sess.send(&liveproto.Renewed{Type: liveproto.TypeRenewed, Subscription: s.client, Expires: s.expires.Unix()})
 	if !s.stale {
 		return

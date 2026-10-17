@@ -796,8 +796,18 @@ Phase 0 did not cover:
     Configuration refuses one on Neon backends, so on main today no
     production database can enable them. The native provider (ADR-1027) will
     set it.
+  - **livequeryd's keys.** livequeryd reads its database's sealed keys from
+    the control plane, over a read-only connection (`-keys-dsn-file`). It
+    opens them with its age identity (`-keys-identity`) and replaces the
+    hub's key ring when they change (`-keys-refresh`, 5 seconds).
+    - When a key leaves the ring, the subscriptions its seals opened close
+      at once with `seal_rejected`. A key leaves through a rotation without
+      overlap, disabling, or retirement.
+    - A failed read keeps the last ring, so a control-plane outage does not
+      stop live queries. apid is down with it, so no revocation is lost.
+    - `-listen` serves realtimed; `-tls-cert` with `-client-ca` requires its
+      client certificate. Browser origins are refused there.
   - **Not yet:**
-    - livequeryd reading its database's sealed keys;
     - route distribution to realtimed with endpoint registrations, and the
       endpoint-must-be-bound-to-the-database check;
     - ADR-1323 budget accounting for live bytes.

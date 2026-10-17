@@ -8,6 +8,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"flag"
 	"fmt"
@@ -141,6 +142,23 @@ func run(ctx context.Context, log *slog.Logger) error {
 			cancel()
 		}
 	}()
+	if *keysDSNFile != "" || *keysIdentity != "" {
+		if keyring != nil {
+			return errors.New("livequeryd: -dev-secret-file and -keys-* are exclusive")
+		}
+		closeKeys, err := watchKeys(ctx, hub, log)
+		if err != nil {
+			return err
+		}
+		defer closeKeys()
+	}
+	if *listen != "" {
+		srv, err := serveRealtimed(hub, log)
+		if err != nil {
+			return err
+		}
+		servers = append(servers, srv)
+	}
 	if *metricsListen != "" {
 		srv, err := serve(*metricsListen, ops.Handler(), log)
 		if err != nil {
@@ -150,8 +168,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 		go pollSlotLag(ctx, pool, *slotName, metrics, log)
 	}
 	if *devListen != "" {
-		if keyring == nil {
-			return errors.New("livequeryd: -dev-listen needs -dev-secret-file")
+		if keyring == nil && *keysDSNFile == "" {
+			return errors.New("livequeryd: -dev-listen needs -dev-secret-file or -keys-dsn-file")
 		}
 		mux := http.NewServeMux()
 		mux.Handle("/live", liveserver.WebSocket(hub, originChecker(*devAllowOrigins)))
@@ -211,8 +229,8 @@ func ensurePublication(ctx context.Context, pool *pgxpool.Pool, name string) err
 
 func quoteIdent(s string) string { return `"` + strings.ReplaceAll(s, `"`, `""`) + `"` }
 
-// devKeyring reads the development secret, if any. In production realtimed
-// holds the key ring and opens seals itself.
+// devKeyring reads the development secret, if any. In production the key
+// ring comes from the control plane (-keys-dsn-file).
 func devKeyring() (*seal.Keyring, error) {
 	if *devSecretFile == "" {
 		return nil, nil
@@ -244,9 +262,17 @@ func originChecker(list string) func(*http.Request) bool {
 }
 
 func serve(addr string, h http.Handler, log *slog.Logger) (*http.Server, error) {
+	return serveTLS(addr, h, nil, log)
+}
+
+// serveTLS serves h on addr, with TLS when conf is set.
+func serveTLS(addr string, h http.Handler, conf *tls.Config, log *slog.Logger) (*http.Server, error) {
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return nil, fmt.Errorf("livequeryd: listen %s: %w", addr, err)
+	}
+	if conf != nil {
+		ln = tls.NewListener(ln, conf)
 	}
 	srv := &http.Server{Handler: h, ReadHeaderTimeout: 10 * time.Second}
 	go func() {
