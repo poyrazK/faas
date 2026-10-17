@@ -31,7 +31,7 @@ const defaultSocket = "/run/faas/realtimed.sock"
 const defaultHealthListen = "127.0.0.1:9107"
 
 func main() {
-	wire.Daemon("realtimed", run)
+	wire.HandoffDaemon("realtimed", run)
 }
 
 func run(ctx context.Context, log *slog.Logger) error {
@@ -238,6 +238,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 
 	notifyStop := wire.NotifyReadyWhen(ctx, readyProbe.ReadyFunc())
 	defer notifyStop()
+	defer wire.StartWatchdog(ctx, wire.NewLiveness(), ops, log)()
 	// WebSocket fan-out is per process: a session left on the old generation
 	// would miss what is published to the successor. A hand-off therefore
 	// closes the old generation's sessions once the successor serves, and

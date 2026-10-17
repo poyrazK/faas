@@ -99,6 +99,21 @@ func IsHandoffSuccessor() bool {
 // the successor has been stopped and this process should keep serving.
 func Handoff(ctx context.Context, opts HandoffOptions) (int, error) {
 	opts = opts.withDefaults()
+	if !opts.underSystemd() {
+		return handoff(ctx, opts)
+	}
+	// A deploy that reloads the unit reads STATUS= to tell a refused or
+	// failed hand-off from one still starting (cmd/deployctl).
+	_ = opts.notify("STATUS=" + HandoffStatusStarted)
+	pid, err := handoff(ctx, opts)
+	if err != nil {
+		msg := strings.ReplaceAll(err.Error(), "\n", " ")
+		_ = opts.notify(fmt.Sprintf("STATUS=%s %s: %s", HandoffStatusFailed, time.Now().UTC().Format(time.RFC3339Nano), msg))
+	}
+	return pid, err
+}
+
+func handoff(ctx context.Context, opts HandoffOptions) (int, error) {
 	if err := opts.memoryAllowed(); err != nil {
 		return 0, fmt.Errorf("wire: hand-off refused: %w", err)
 	}

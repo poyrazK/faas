@@ -57,3 +57,9 @@ func WatchHandoffs(ctx context.Context, daemon string, log *slog.Logger, handedO
 		}
 	}()
 }
+
+// The STATUS= texts a hand-off reports to systemd.
+const (
+	HandoffStatusStarted = "hand-off started"
+	HandoffStatusFailed  = "hand-off failed at"
+)

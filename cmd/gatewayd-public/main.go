@@ -198,7 +198,7 @@ func loadPublicStorageRegistry(getenv func(string) string) (*objectstorage.Regis
 }
 
 func main() {
-	wire.Daemon("gatewayd-public", run)
+	wire.HandoffDaemon("gatewayd-public", run)
 }
 
 // run is the daemon entry point. It builds the listener stack,

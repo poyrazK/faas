@@ -83,12 +83,19 @@ type Unit struct {
 	StartLimitBurst       string
 
 	// [Service]
-	Type            string // "simple" for every faas daemon today
-	User            string
-	Group           string
-	ExecStart       string
-	ExecStartPre    []string // ordered (vmmd has 2; nobody else has any)
-	ExecStartPost   []string // ordered post-start fixups (vmmd runtime dir)
+	Type string // "simple" for every faas daemon today
+	// NotifyAccess names who may send sd_notify messages. A daemon that
+	// hands off on reload (ADR-1580) pins "main": once its successor is the
+	// main process, the old generation's messages are rejected.
+	NotifyAccess  string
+	User          string
+	Group         string
+	ExecStart     string
+	ExecStartPre  []string // ordered (vmmd has 2; nobody else has any)
+	ExecStartPost []string // ordered post-start fixups (vmmd runtime dir)
+	// ExecReload is what `systemctl reload` runs. "/bin/kill -USR2 $MAINPID"
+	// starts a two-generation hand-off (ADR-1580).
+	ExecReload      string
 	Restart         string
 	RestartSec      string
 	TimeoutStartSec string // bounded allowance for Type=notify startup work
@@ -154,8 +161,9 @@ func BoolPtr(b bool) *bool { return &b }
 
 // Render emits the unit file as bytes. Section ordering: [Unit] first,
 // then [Service], then [Install] — matching every shipped faas unit.
-// Inside [Service], field ordering is fixed (Type → User → Group →
-// ExecStartPre → ExecStart → Restart → RestartSec →
+// Inside [Service], field ordering is fixed (Type → NotifyAccess → User →
+// Group → ExecStartPre → ExecStart → ExecStartPost → ExecReload → Restart →
+// RestartSec →
 // TimeoutStartSec → WatchdogSec → Slice → MemoryHigh → MemoryMax → CPUQuota → TasksMax → Delegate →
 // CapabilityBoundingSet → AmbientCapabilities → EnvironmentFile →
 // Environment entries → LoadCredential entries → NoNewPrivileges →
@@ -186,6 +194,7 @@ func (u Unit) Render() []byte {
 
 	buf.WriteString("[Service]\n")
 	writeStringKV(&buf, "Type", u.Type)
+	writeStringKV(&buf, "NotifyAccess", u.NotifyAccess)
 	writeStringKV(&buf, "User", u.User)
 	writeStringKV(&buf, "Group", u.Group)
 
@@ -203,6 +212,7 @@ func (u Unit) Render() []byte {
 		buf.WriteString(post)
 		buf.WriteByte('\n')
 	}
+	writeStringKV(&buf, "ExecReload", u.ExecReload)
 	writeStringKV(&buf, "Restart", u.Restart)
 	writeStringKV(&buf, "RestartSec", u.RestartSec)
 	writeStringKV(&buf, "TimeoutStartSec", u.TimeoutStartSec)
@@ -506,6 +516,10 @@ func apply(u *Unit, section, key, val string) error {
 		u.ExecStartPre = append(u.ExecStartPre, val)
 	case "[Service]/ExecStartPost":
 		u.ExecStartPost = append(u.ExecStartPost, val)
+	case "[Service]/ExecReload":
+		u.ExecReload = val
+	case "[Service]/NotifyAccess":
+		u.NotifyAccess = val
 	case "[Service]/Restart":
 		u.Restart = val
 	case "[Service]/RestartSec":

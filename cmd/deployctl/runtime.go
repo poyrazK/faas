@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -623,14 +624,25 @@ func (r hostRuntime) Restart(ctx context.Context, manifest releasebundle.Manifes
 		if err := r.preloadDaemon(ctx, service); err != nil {
 			return err
 		}
-		if err := runCommand(ctx, "systemctl", "reset-failed", "faas-"+service+".service"); err != nil {
-			return err
-		}
 		if err := r.ensureRunFaasOwnership(ctx); err != nil {
 			return err
 		}
-		if err := runCommand(ctx, "systemctl", "restart", "faas-"+service+".service"); err != nil {
+		// A reload hands off to a second generation, which keeps the old
+		// one's long requests and streams (ADR-1580); otherwise restart.
+		handedOff, reason, err := r.reloadByHandoff(ctx, service)
+		if err != nil {
 			return err
+		}
+		if !handedOff {
+			if reason != "" {
+				fmt.Fprintf(os.Stderr, "deployctl: restarting %s instead of handing off: %s\n", service, reason)
+			}
+			if err := runCommand(ctx, "systemctl", "reset-failed", "faas-"+service+".service"); err != nil {
+				return err
+			}
+			if err := runCommand(ctx, "systemctl", "restart", "faas-"+service+".service"); err != nil {
+				return err
+			}
 		}
 		if err := r.waitReady(ctx, service); err != nil {
 			return err
@@ -853,6 +865,14 @@ func installAtomic(source, destination string, mode fs.FileMode) error {
 	body, err := os.ReadFile(source)
 	if err != nil {
 		return err
+	}
+	// An unchanged unit keeps its mtime: a reload by hand-off is allowed
+	// only while every file the unit read at start is older than the start
+	// (ADR-1580).
+	if current, err := os.ReadFile(destination); err == nil && bytes.Equal(current, body) {
+		if info, err := os.Stat(destination); err == nil && info.Mode().Perm() == mode.Perm() {
+			return nil
+		}
 	}
 	tmp, err := os.CreateTemp(filepath.Dir(destination), ".deploy-unit-*.tmp")
 	if err != nil {
