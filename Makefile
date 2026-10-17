@@ -160,6 +160,18 @@ build-release-batch: ## Build the complete static release binary set in batched 
 	  done
 	@install -m 0755 scripts/schedd-brokerq-apply $(BINDIR)/schedd-brokerq-apply
 
+# Per-unit releases (docs/adr/1650-per-unit-control-plane-releases.md)
+# build one binary with build-release-batch's flags. VERSION is the unit
+# version (unit-<commit that last changed the binary's inputs>), so the bytes
+# depend only on the source the binary was built from.
+.PHONY: build-release-unit
+build-release-unit: ## Build one release binary: UNIT=<cmd> VERSION=unit-<commit> [BINDIR=dir]
+	@case " $(DAEMONS) $(CLIS) " in *" $(UNIT) "*) ;; *) echo "UNIT=$(UNIT) is not a release binary"; exit 2;; esac
+	@case "$(VERSION)" in unit-*) ;; *) echo "VERSION=$(VERSION) must be unit-<commit>"; exit 2;; esac
+	@mkdir -p $(BINDIR)
+	@CGO_ENABLED=$(BUILD_CGO_ENABLED) $(GO) build $(GO_BUILD_FLAGS) $(if $(filter $(UNIT),$(DAEMONS)),-tags metal) \
+	  -ldflags '$(LDFLAGS) -s -w' -o $(BINDIR)/$(UNIT) ./cmd/$(UNIT)
+
 # M1 gRPC codegen (ADR-013). Generated *.pb.go is COMMITTED — do not run
 # `make proto` to produce output; CI uses `proto-check` to verify drift only.
 PROTO_ROOT := api/proto

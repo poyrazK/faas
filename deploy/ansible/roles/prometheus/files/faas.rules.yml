@@ -2476,8 +2476,12 @@ groups:
       # different hosts (or different daemons on one host) are serving
       # incompatible code. The canonical rollout owns a bounded convergence
       # window; public status must show the mixed fleet while that gate runs.
+      # Per-unit control-plane releases stamp unit-<commit> versions and are
+      # deliberately mixed with their base release until the next full one
+      # (docs/adr/1650-per-unit-control-plane-releases.md); the unit lane
+      # gates each restarted daemon itself, so they are left out here.
       - alert: FaasDeployVersionSkew
-        expr: count(count by (version) ({__name__=~".*_faas_deploy_version"})) > 1
+        expr: count(count by (version) ({__name__=~".*_faas_deploy_version", version!~"unit-.+"})) > 1
         labels:
           severity: warn
           component: platform
