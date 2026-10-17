@@ -43,6 +43,10 @@ func (f *fakeLive) Close() {
 	f.mu.Unlock()
 }
 
+// testLiveRoute makes an endpoint offer the live protocol; an endpoint
+// without live routes answers live frames like unknown ones.
+var testLiveRoute = LiveRoute{KID: "0123456789abcdef", Database: "db", URL: "wss://live.internal/db/live"}
+
 func newLiveTestManager(t *testing.T, live LiveQueries) *httptest.Server {
 	t.Helper()
 	m := NewManager(Config{
@@ -56,6 +60,7 @@ func newLiveTestManager(t *testing.T, live LiveQueries) *httptest.Server {
 			Mode: AuthModeOIDCJWT, Issuer: "https://issuer.example",
 			JWKSURL: "https://issuer.example/.well-known/jwks.json", Algorithms: []string{"RS256"},
 		},
+		LiveRoutes: []LiveRoute{testLiveRoute},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -93,6 +98,7 @@ func TestLiveRoutesFollowRegistration(t *testing.T) {
 			Mode: AuthModeOIDCJWT, Issuer: "https://issuer.example",
 			JWKSURL: "https://issuer.example/.well-known/jwks.json", Algorithms: []string{"RS256"},
 		},
+		LiveRoutes: []LiveRoute{testLiveRoute},
 	}
 	if err := m.RegisterEndpoint(endpoint); err != nil {
 		t.Fatal(err)
@@ -111,8 +117,8 @@ func TestLiveRoutesFollowRegistration(t *testing.T) {
 	live.mu.Lock()
 	routes := live.routes
 	live.mu.Unlock()
-	if got := routes(); len(got) != 0 {
-		t.Fatalf("routes before binding = %v", got)
+	if got := routes(); len(got) != 1 || got[0] != testLiveRoute {
+		t.Fatalf("routes before re-registration = %v", got)
 	}
 	endpoint.LiveRoutes = []LiveRoute{route}
 	if err := m.RegisterEndpoint(endpoint); err != nil {
@@ -120,6 +126,57 @@ func TestLiveRoutesFollowRegistration(t *testing.T) {
 	}
 	if got := routes(); len(got) != 1 || got[0] != route {
 		t.Fatalf("routes after re-registration = %v", got)
+	}
+}
+
+// adr: 1384 — an endpoint without live routes (its account is outside the
+// FAAS_LIVE_QUERIES_ACCOUNTS rollout) answers live frames exactly like an
+// unknown frame type, and nothing reaches a live session.
+func TestLiveProtocolHiddenWithoutRoutes(t *testing.T) {
+	live := &fakeLive{got: make(chan struct{}, 4)}
+	m := NewManager(Config{
+		JWTAuthorizer: &claimsJWT{}, ResumePreview: true,
+		HistoryReader: &testResumeHistory{}, ResumePollInterval: 15 * time.Millisecond, Live: live,
+	}, &testChannelHooks{})
+	if err := m.RegisterEndpoint(Endpoint{
+		ID: "resume-endpoint", AppID: "app-1", AccountID: "acct-1", CallbackURL: "https://app.example",
+		AllowedOrigins: []string{"https://app.example"},
+		ClientAuth: AuthPolicy{
+			Mode: AuthModeOIDCJWT, Issuer: "https://issuer.example",
+			JWKSURL: "https://issuer.example/.well-known/jwks.json", Algorithms: []string{"RS256"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(m.Handler())
+	t.Cleanup(func() { server.Close(); _ = m.Close() })
+	client := dialResumeTest(t, server)
+	answer := func(frame string) string {
+		t.Helper()
+		if err := client.WriteMessage(1, []byte(frame)); err != nil {
+			t.Fatal(err)
+		}
+		_ = client.SetReadDeadline(time.Now().Add(5 * time.Second))
+		_, data, err := client.ReadMessage()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(data)
+	}
+	unknown := answer(`{"type":"bogus.frame","subscription":"feed"}`)
+	for _, frame := range []string{
+		`{"type":"live.subscribe","subscription":"feed","sealed":"gls1.0123456789abcdef.x"}`,
+		`{"type":"live.subscribe","subscription":"feed","database":"db","rest":"messages?select=id","token":"user:alice"}`,
+		`{"type":"live.unsubscribe","subscription":"feed"}`,
+	} {
+		if got := answer(frame); got != unknown {
+			t.Fatalf("%s answered %s, an unknown frame %s", frame, got, unknown)
+		}
+	}
+	live.mu.Lock()
+	defer live.mu.Unlock()
+	if len(live.received) != 0 {
+		t.Fatalf("a live session received %d frames", len(live.received))
 	}
 }
 
@@ -150,6 +207,7 @@ func TestLiveTokensBecomeClaims(t *testing.T) {
 			Mode: AuthModeOIDCJWT, Issuer: "https://issuer.example",
 			JWKSURL: "https://issuer.example/.well-known/jwks.json", Algorithms: []string{"RS256"},
 		},
+		LiveRoutes: []LiveRoute{testLiveRoute},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -218,6 +276,7 @@ func TestLiveFramesUseTheOutboundBudget(t *testing.T) {
 			Mode: AuthModeOIDCJWT, Issuer: "https://issuer.example",
 			JWKSURL: "https://issuer.example/.well-known/jwks.json", Algorithms: []string{"RS256"},
 		},
+		LiveRoutes: []LiveRoute{testLiveRoute},
 	}); err != nil {
 		t.Fatal(err)
 	}

@@ -523,6 +523,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_LINEAR_OAUTH_CLIENT_ID", Owners: []string{"apid", "shared"}, Source: EnvSourceSecretsEnv, Note: "optional Issues Linear OAuth client; delivered by /etc/faas/sealed.env on apid (ADR-1478)"},
 	{Name: "FAAS_LINEAR_OAUTH_CLIENT_SECRET", Owners: []string{"apid", "shared"}, Source: EnvSourceSecretsEnv, Note: "optional Issues Linear OAuth client secret; delivered by /etc/faas/sealed.env on apid (ADR-1478)"},
 	{Name: "FAAS_LINEAR_OAUTH_REDIRECT_URI", Owners: []string{"apid", "shared"}, Source: EnvSourceSecretsEnv, Note: "optional Issues Linear OAuth callback URI; delivered by /etc/faas/sealed.env on apid (ADR-1478)"},
+	{Name: "FAAS_LIVE_QUERIES_ACCOUNTS", Owners: []string{"apid"}, Source: EnvSourceDefault, Default: "", Note: "ADR-1384 live-query rollout: comma-separated account UUIDs that see live queries, or * for every account; unset hides the live API routes and realtime protocol from every account"},
 	{Name: "FAAS_LOG_ARCHIVE_AUTH_MODE", Owners: []string{"shared"}, Source: EnvSourceDefault, Note: "optional environment override; production metadata auth is normally loaded from the archive credential envelope"},
 	{Name: "FAAS_LOG_ARCHIVE_BUCKET", Owners: []string{"shared"}, Source: EnvSourceDefault},
 	{Name: "FAAS_LOG_ARCHIVE_CREDS_PATH", Owners: []string{"shared"}, Source: EnvSourceUnit},

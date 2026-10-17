@@ -17,10 +17,16 @@ import (
 	"github.com/onebox-faas/faas/pkg/state/livekeys"
 )
 
-// configureLiveQueries wires ADR-1384 live-query enablement. Without managed
-// Postgres or FAAS_APID_LIVE_KEY_RECIPIENT_FILE (livequeryd's age recipient)
-// the routes answer live_queries_unavailable.
+// configureLiveQueries wires ADR-1384 live-query enablement. Only accounts in
+// FAAS_LIVE_QUERIES_ACCOUNTS see it at all (empty: nobody); for them, without
+// managed Postgres or FAAS_APID_LIVE_KEY_RECIPIENT_FILE (livequeryd's age
+// recipient) the routes answer live_queries_unavailable.
 func (s *server) configureLiveQueries(pool *pgxpool.Pool, getenv func(string) string) error {
+	rollout, err := livequeries.ParseRollout(getenv("FAAS_LIVE_QUERIES_ACCOUNTS"))
+	if err != nil {
+		return err
+	}
+	s.liveRollout = rollout
 	svc := &livequeries.Service{
 		DatabaseProblem: managedPostgresProblem,
 		Audit: func(ctx context.Context, action, accountID string, fields map[string]any) {
@@ -52,6 +58,9 @@ func (s *server) configureLiveQueries(pool *pgxpool.Pool, getenv func(string) st
 // live databases bound to the app, each with its database's hub. This is the
 // check that an endpoint serves only databases its app is bound to.
 func (s *server) liveRoutes(ctx context.Context, store *livekeys.Store, accountID, appID string) ([]realtime.LiveRoute, error) {
+	if !s.liveRollout.Allows(accountID) {
+		return nil, nil // outside the rollout the protocol is not offered at all
+	}
 	keys, err := store.AppRoutes(ctx, accountID, appID)
 	if err != nil {
 		return nil, err
@@ -90,6 +99,16 @@ func (s *server) resyncLiveEndpoints(ctx context.Context, store *livekeys.Store,
 			}
 		}
 	}()
+}
+
+// liveRoute and liveAccount read the rollout per request: apid tests build
+// the handler before they configure live queries.
+func (s *server) liveRoute(next http.HandlerFunc) http.HandlerFunc {
+	return livequeries.Route(func() livequeries.Rollout { return s.liveRollout }, next)
+}
+
+func (s *server) liveAccount(next accountHandler) accountHandler {
+	return livequeries.Account(func() livequeries.Rollout { return s.liveRollout }, next)
 }
 
 func (s *server) getLiveQueries(w http.ResponseWriter, r *http.Request, acct state.Account) {

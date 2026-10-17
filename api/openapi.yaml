@@ -6607,80 +6607,6 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
-  /v1/postgres/databases/{id}/live:
-    parameters:
-      - $ref: '#/components/parameters/ManagedPostgresID'
-    get:
-      operationId: getManagedPostgresLiveQueries
-      summary: Get managed PostgreSQL live-query state
-      description: Reports whether live queries (ADR-1384) are enabled and lists the database's live secrets by key ID. Secrets themselves are never returned here.
-      tags: [managed_postgres]
-      responses:
-        '200':
-          description: Live-query state
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ManagedPostgresLiveQueries' }
-        default:
-          description: Database lookup failure
-          content:
-            application/problem+json:
-              schema: { $ref: '#/components/schemas/Problem' }
-    post:
-      operationId: enableManagedPostgresLiveQueries
-      summary: Enable managed PostgreSQL live queries
-      description: Enables live queries on a native database and issues its live secret, which backends seal queries with. The secret is returned once, in this response; it is stored sealed to the live-query service and cannot be read again. A database that already has live queries conflicts; rotate its secret instead. Operator preview.
-      tags: [managed_postgres]
-      responses:
-        '201':
-          description: Live queries enabled; the response carries the new secret
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ManagedPostgresLiveQueries' }
-        default:
-          description: Unsupported backend, database not ready, already enabled, or live queries unavailable
-          content:
-            application/problem+json:
-              schema: { $ref: '#/components/schemas/Problem' }
-    delete:
-      operationId: disableManagedPostgresLiveQueries
-      summary: Disable managed PostgreSQL live queries
-      description: Removes every live secret of the database, revoking outstanding sealed queries, and turns live queries off. Idempotent.
-      tags: [managed_postgres]
-      responses:
-        '204':
-          description: Live queries disabled
-        default:
-          description: Database lookup or live-secret store failure
-          content:
-            application/problem+json:
-              schema: { $ref: '#/components/schemas/Problem' }
-
-  /v1/postgres/databases/{id}/live/rotate:
-    parameters:
-      - $ref: '#/components/parameters/ManagedPostgresID'
-    post:
-      operationId: rotateManagedPostgresLiveSecret
-      summary: Rotate a managed PostgreSQL live secret
-      description: Issues a new live secret, returned once in this response. The previous secret keeps opening seals for overlap_seconds (default 24 hours, at most 7 days); 0 revokes it at once. Any older secret is removed, so a database holds at most two.
-      tags: [managed_postgres]
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/RotateManagedPostgresLiveSecretRequest' }
-      responses:
-        '200':
-          description: Secret rotated; the response carries the new secret
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ManagedPostgresLiveQueries' }
-        default:
-          description: Invalid overlap, live queries not enabled, or live queries unavailable
-          content:
-            application/problem+json:
-              schema: { $ref: '#/components/schemas/Problem' }
-
   /v1/postgres/databases/{id}/compute-policy:
     parameters:
       - $ref: '#/components/parameters/ManagedPostgresID'
@@ -70565,32 +70491,6 @@ components:
         class_resize: { type: boolean, description: "Compute-class resizing supported by the configured regional backend. Reservations still require admission and the database pinned backend." }
         storage_limit_bytes: { type: integer, format: int64, minimum: 0 }
         restore_window_seconds: { type: integer, format: int64, minimum: 0 }
-    ManagedPostgresLiveQueries:
-      description: Live-query state of a managed database (ADR-1384). secret appears only in the response that issues it.
-      type: object
-      required: [database_id, enabled, keys]
-      properties:
-        database_id: { type: string }
-        enabled: { type: boolean }
-        keys:
-          type: array
-          items: { $ref: '#/components/schemas/ManagedPostgresLiveKey' }
-        secret: { type: string, description: "The new live secret (glsk1_...). Store it as a backend secret; it cannot be read again." }
-    ManagedPostgresLiveKey:
-      description: One live secret, identified by its key ID; key material is never returned.
-      type: object
-      required: [key_id, active, created_at]
-      properties:
-        key_id: { type: string, pattern: '^[0-9a-f]{16}$' }
-        active: { type: boolean }
-        created_at: { type: string, format: date-time }
-        retires_at: { type: string, format: date-time, description: "When a rotated-out secret stops opening seals." }
-    RotateManagedPostgresLiveSecretRequest:
-      description: Live secret rotation. An empty body keeps the previous secret for 24 hours.
-      type: object
-      additionalProperties: false
-      properties:
-        overlap_seconds: { type: integer, format: int64, minimum: 0, maximum: 604800, description: "How long the previous secret keeps opening seals; 0 revokes it at once." }
     ChangeManagedPostgresComputePolicyRequest:
       description: Canonical UUID request for a scale-to-zero change on an existing managed PostgreSQL database.
       type: object

@@ -251,6 +251,15 @@ var routeExclude = map[string]bool{
 	// coverage map.
 	"GET /v1/traces/{trace_id}": true,
 
+	// ADR-1384 live queries: a preview gated by FAAS_LIVE_QUERIES_ACCOUNTS
+	// and answering like unregistered routes outside it, so it stays out of
+	// the public OpenAPI spec and generated SDKs until launch. pkg/api keeps
+	// its client for the operator CLI. Mirror across this list AND scripts/ci/speccompliance/spec_compliance_test.go::routeExclude.
+	"GET /v1/postgres/databases/{id}/live":         true,
+	"POST /v1/postgres/databases/{id}/live":        true,
+	"DELETE /v1/postgres/databases/{id}/live":      true,
+	"POST /v1/postgres/databases/{id}/live/rotate": true,
+
 	// Issue #777 / ADR-091: operator observability backend. Same
 	// operator-only posture as /v1/compute-nodes — admin scope
 	// + FAAS_ADMIN_EMAILS allowlist. Mirror the exclusion across
@@ -1112,10 +1121,6 @@ var methodRouteMap = map[string]string{
 	"POST /v1/postgres/databases/{id}/compute-policy":                                 "ChangeManagedPostgresComputePolicy",
 	"GET /v1/postgres/databases/{id}/compute-policy-changes/{change_id}":              "GetManagedPostgresComputePolicyChange",
 	"POST /v1/postgres/databases/{id}/resize":                                         "ResizeManagedPostgresDatabase",
-	"GET /v1/postgres/databases/{id}/live":                                            "GetManagedPostgresLiveQueries",
-	"POST /v1/postgres/databases/{id}/live":                                           "EnableManagedPostgresLiveQueries",
-	"DELETE /v1/postgres/databases/{id}/live":                                         "DisableManagedPostgresLiveQueries",
-	"POST /v1/postgres/databases/{id}/live/rotate":                                    "RotateManagedPostgresLiveSecret",
 	"GET /v1/postgres/databases/{id}/resizes/{resize_id}":                             "GetManagedPostgresResize",
 	"GET /v1/postgres/capabilities":                                                   "GetManagedPostgresCapabilities",
 	"GET /v1/postgres/databases":                                                      "ListManagedPostgresDatabases",

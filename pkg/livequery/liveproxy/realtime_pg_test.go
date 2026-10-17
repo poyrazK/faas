@@ -159,8 +159,9 @@ func TestRealtimeCarriesLiveQueries(t *testing.T) {
 		t.Fatalf("feed %v", got)
 	}
 
-	// An endpoint whose app is not bound to the database has no route for
-	// the seal's key: the subscription is refused in realtimed.
+	// An endpoint whose app is bound to no live database (or whose account
+	// is outside the rollout) has no live routes: realtimed answers the
+	// live frame like an unknown one, and nothing reaches the proxy.
 	unbound := realtime.Endpoint{
 		ID: "unbound", AppID: "app-2", AccountID: "acct-1", CallbackURL: "https://app.example",
 		AllowedOrigins: []string{"https://app.example"},
@@ -195,8 +196,11 @@ func TestRealtimeCarriesLiveQueries(t *testing.T) {
 	if err := other.WriteMessage(websocket.TextMessage, data); err != nil {
 		t.Fatal(err)
 	}
-	if f := frameOn(other, "unbound"); f["type"] != liveproto.TypeError || f["code"] != liveproto.CodeForbidden || f["closed"] != true {
-		t.Fatalf("unbound endpoint: %v", f)
+	_ = other.SetReadDeadline(time.Now().Add(30 * time.Second))
+	_, reply, err := other.ReadMessage()
+	var unknown map[string]any
+	if err != nil || json.Unmarshal(reply, &unknown) != nil || unknown["type"] != "error" || unknown["code"] != "invalid_frame" || unknown["subscription"] != nil {
+		t.Fatalf("unbound endpoint answered %s, %v; want the unknown-frame error", reply, err)
 	}
 
 	// Binding the app (apid re-registers the endpoint with the route) applies

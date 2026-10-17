@@ -255,3 +255,13 @@ test('an RLS-mode query subscribes with its read and the user token, and renews 
   q.close()
   conn.close()
 })
+
+test('live queries are not published until launch (ADR-1384 rollout)', async () => {
+  const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))
+  assert.deepEqual(Object.keys(pkg.exports), ['.'], 'no ./live export')
+  assert.ok(pkg.files.includes('!dist/live'), 'dist/live stays out of the package')
+  assert.equal(pkg.peerDependencies?.react, undefined, 'no React peer for an unpublished hook')
+  assert.doesNotMatch(readFileSync(new URL('../README.md', import.meta.url), 'utf8'), /live quer/i)
+  const root = await import('../dist/index.js')
+  assert.equal(Object.keys(root).some((k) => /live/i.test(k)), false, 'the root entry exports nothing live')
+})

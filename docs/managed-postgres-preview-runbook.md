@@ -438,6 +438,36 @@ per database; enabling issues the database's live secret, which backends
 seal queries with. They are an operator preview and run only on native
 databases.
 
+### Rollout gate
+
+Live queries are invisible to customers until launch.
+
+- **`FAAS_LIVE_QUERIES_ACCOUNTS` on apid** lists the account UUIDs that see
+  them. It is empty by default, which means nobody. Set it to our own
+  account to test on production; `*` admits every account at launch. An
+  invalid entry stops apid at startup.
+- **Outside the list:**
+  - every live route answers exactly like an unregistered API route, for
+    any method and without credentials;
+  - the account's realtime endpoints get no live routes, so realtimed
+    answers `live.*` frames like any unknown frame;
+  - livequeryd is unreachable without a route.
+- **Kept off the public surface until launch:**
+  - the OpenAPI spec and the generated Go, Node and Python SDKs (the live
+    routes are in the spec-compliance and sdk-coverage `routeExclude`
+    lists);
+  - customer CLI help and the CLI reference, since `gregale postgres` is
+    operator-only;
+  - the `@gregale/data` package, which neither exports nor packs
+    `dist/live` and has no README section for it.
+- **Launch** means setting `*`, then restoring the spec entries, generated
+  SDKs, the `./live` exports with the React peer dependency, and the README
+  section from commits `4196fef625` and `b860a62753`.
+- Removing an account from the list hides the routes and stops new live
+  subscriptions within the 30-second endpoint reconciler. Sessions already
+  open keep their subscriptions until they close; disable the database's
+  live queries to revoke its keys at once.
+
 ### Operator setup
 
 1. Generate an age identity for livequeryd on each database node. Give apid

@@ -1,4 +1,9 @@
 /**
+ * Not published: live queries are an operator preview (ADR-1384) until
+ * launch. package.json neither exports nor packs dist/live; launching adds
+ * the "./live" and "./live/react" exports, the react peer dependency and the
+ * README section back.
+ *
  * Live queries (ADR-1384): SQL results that stay current. A backend seals a
  * query, or (RLS mode) the browser sends a Data API read with its user's
  * token; it subscribes over the app's realtime endpoint and holds the result

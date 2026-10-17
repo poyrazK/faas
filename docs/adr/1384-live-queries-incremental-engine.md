@@ -968,6 +968,23 @@ Phase 0 did not cover:
   - Binding changes reach realtimed through the 30-second endpoint
     reconciler. A dropped login closes its queries with `invalid_query`.
   - Replaces the `-rls-roles` and `-rls-anon-role` flags.
+- **Rollout gate** (2026-10-17). Nothing about live queries is visible to
+  customers before it is tested on production:
+  - `FAAS_LIVE_QUERIES_ACCOUNTS` on apid names the accounts that see them:
+    nobody by default, `*` at launch. It follows the durable-entity preview
+    (ADR-712) and `FAAS_AI_GATEWAY_ACCOUNTS`.
+  - Outside it, every live route answers like an unregistered route, before
+    authentication when nobody is listed and right after it otherwise.
+    Method mismatches on live paths answer 404, not a revealing 405.
+  - apid gives such an account's realtime endpoints no live routes, and
+    realtimed answers `live.*` frames on an endpoint without routes like any
+    unknown frame.
+  - The routes are excluded from the public OpenAPI spec and the generated
+    SDKs (`routeExclude`); `pkg/api` keeps the client for the operator CLI.
+    `@gregale/data` neither exports nor packs `dist/live`.
+  - One gap remains: while some account is listed, an unauthenticated
+    request to a live path gets the 401 that any authenticated route gives,
+    not the unregistered 404.
 
 ## Consequences
 
