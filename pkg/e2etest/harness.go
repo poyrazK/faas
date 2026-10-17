@@ -161,6 +161,15 @@ type Harness struct {
 	apidEnv              []string
 	apidListen           string
 	requestTelemetrySock string
+	// killed holds daemons stopped on purpose by KillAPID or KillSchedd.
+	killed map[*exec.Cmd]bool
+}
+
+func (h *Harness) markKilled(proc *exec.Cmd) {
+	if h.killed == nil {
+		h.killed = map[*exec.Cmd]bool{}
+	}
+	h.killed[proc] = true
 }
 
 // currentHarness points at the most recently booted Harness. Used by
@@ -1729,6 +1738,7 @@ func (h *Harness) KillSchedd() error {
 					return fmt.Errorf("e2etest: reap schedd: %w", err)
 				}
 			}
+			h.markKilled(proc)
 		}
 		return nil
 	}
@@ -1813,6 +1823,7 @@ func (h *Harness) KillAPID() error {
 					return fmt.Errorf("e2etest: reap apid: %w", err)
 				}
 			}
+			h.markKilled(proc)
 		}
 		return nil
 	}
@@ -2127,7 +2138,15 @@ func (h *Harness) requireDaemonsAlive(t *testing.T) {
 	// scheduled. One sleep for the whole set, not one per daemon.
 	time.Sleep(150 * time.Millisecond)
 
-	if name, out, dead := firstDeadDaemon(h.procs); dead {
+	// A daemon stopped on purpose by KillAPID or KillSchedd awaits its own
+	// Restart; restarting the other one must not report it as a crash.
+	live := make([]*exec.Cmd, 0, len(h.procs))
+	for _, p := range h.procs {
+		if !h.killed[p] {
+			live = append(live, p)
+		}
+	}
+	if name, out, dead := firstDeadDaemon(live); dead {
 		t.Fatalf("e2etest: %s exited during startup; nothing it owns will happen, "+
 			"and the failure would otherwise surface much later as an unrelated "+
 			"timeout.\n%s", name, out)
