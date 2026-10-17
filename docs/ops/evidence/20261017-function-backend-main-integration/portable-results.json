@@ -323,5 +323,56 @@
         }
       }
     }
+  },
+  "latest_main_integration": {
+    "main_base": "c23392d9a7969d9d4beb639d888edf241b650c26",
+    "feature_head": "76a4ec629dc80320fa543fe6da3fdf876612debf",
+    "function_adr_range": [
+      1658,
+      1665
+    ],
+    "schema_lines": 77227,
+    "adr_uniqueness_passed": true,
+    "checks": {
+      "fresh_schema": {
+        "passed": true,
+        "log_sha256": "b689907a331a6a216f497f6d2492dac651fc3df556c84da611ff0a89f88d4434"
+      },
+      "sqlc": {
+        "passed": true,
+        "log_sha256": "1175d7bbb92d8df7bf5aba98f1372028e88e4395ff62071b1297e5d5502e7855"
+      },
+      "protobuf": {
+        "passed": true,
+        "log_sha256": "3527862273bad2495db3831df4453a6765075b8aba5be0fc445bcd8d271df2c1"
+      },
+      "documentation": {
+        "passed": true,
+        "log_sha256": "f05db317778ade9671d252606f86b6093a2cac186ed40900f6b379e329e44459"
+      },
+      "node_sdk_build": {
+        "passed": true,
+        "log_sha256": "01569a110227e471b5b46e1c495f2fc92cf3f1cd4f021b4a8f09186d17e1288c"
+      },
+      "function_migration_roundtrip": {
+        "passed": true,
+        "log_sha256": "f4395373131a87a04a6e8f0ea12f3887fab52537428811a3c3828204935a3593"
+      }
+    },
+    "race": {
+      "log_sha256": "7930c58e1e6fc14341d8eb3df6d9fae78c509ea8451e546e7f0a55b7018d45e7",
+      "packages": {
+        "github.com/onebox-faas/faas/pkg/state": {
+          "passed_tests": 104,
+          "skipped_tests": [],
+          "failed_tests": []
+        },
+        "github.com/onebox-faas/faas/pkg/sched": {
+          "passed_tests": 72,
+          "skipped_tests": [],
+          "failed_tests": []
+        }
+      }
+    }
   }
 }

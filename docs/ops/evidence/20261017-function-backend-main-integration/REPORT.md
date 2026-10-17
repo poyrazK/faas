@@ -1,6 +1,7 @@
 # Function backend integration with current main
 
 This review increment integrates main at `5f10b1f27616c7543680df4c31b79018312911e1`.
+Later integration checks are recorded below with their own source revision.
 It preserves the shipped `PostgresPoolBinding` API, its secret-adoption and
 starter checkpoint behavior, and the generic migration source journal. The
 function decisions are [ADR-1658](../../../adr/1658-function-background-completion-protocol.md)
@@ -79,6 +80,23 @@ all of the fixture's audit-login connections have retired. The corrected fixture
 passed three consecutive runs with that controlled pause, then both SQL tests
 passed with the unmodified runtime on Node 22 and Node 24. Hosted CI on the
 corrected feature head still must pass before merge.
+
+## Integration with the internal CI release
+
+Main subsequently advanced through
+`c23392d9a7969d9d4beb639d888edf241b650c26`, including MCP diagnostics, the
+retained-capture drift fix, and the default-off internal CI service. The function
+decisions now use ADR-1658 through ADR-1665, leaving the published CI decisions
+at their existing numbers.
+
+The combined schema was regenerated from a fresh owned database: 77,227 lines,
+including the internal CI migrations and all three function migrations. Function
+migration replay and reverse down/forward up preserved the identical combined
+schema. SQLC and protobuf drift checks, ADR uniqueness, documentation links/live
+fixtures, and the Node SDK build passed. The affected state and scheduler race
+run passed 104 and 72 tests/subtests respectively, with no skips or failures. It
+includes both function handoff/capacity coverage and the internal-CI scheduler
+boundary and snapshot-drift regressions.
 
 ## Qualification boundary
 
