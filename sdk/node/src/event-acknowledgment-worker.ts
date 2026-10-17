@@ -10,6 +10,7 @@ import { eventConsumerDeliveryContextFromHeaders, type EventConsumerDeliveryCont
 import { acknowledgmentCall, acknowledgmentWait, AcknowledgmentCallbackFailure,
   type AcknowledgmentWorkerSettings, type AcknowledgmentWorkerScope } from './event-acknowledgment-callbacks.js';
 
+import { withEventConsumerProcessingLease, processingStoreError, type EventConsumerProcessingLease } from './event-consumer-processing.js';
 import { saveIntent, saveNegativeIntent, intentStoreError, type EventAcknowledgmentIntentResult,
   type EventAcknowledgmentIntentStatus, type IntentInput } from './event-acknowledgment-intent-store.js';
 
@@ -72,6 +73,21 @@ export class EventAcknowledgmentWorker {
     if (typeof handler !== 'function') throw new TypeError('invalid event consumer handler');
     return this.#operate(pool, options, signal => this.#durable(pool, signal, handler));
   }
+  /** Complete with an independently acquired local processing lease. Stop local renewal before calling. */
+  async runWithProcessingLease(pool: EventConsumerPool, lease: EventConsumerProcessingLease,
+    handler: (transaction: EventConsumerTransaction, signal: AbortSignal) => Promise<string>,
+    options: EventAcknowledgmentWorkerOperationOptions = {}): Promise<EventAcknowledgmentWorkerResult> {
+    return this.#operate(pool, options, signal => withEventConsumerProcessingLease(lease, this.#input, async hooks =>
+      this.#complete(await this.#process(pool, handler, signal, { ...hooks, storageError: processingStoreError }), signal)));
+  }
+  /** Atomically saves the receipt/intent and releases the matching unexpired processing claim. */
+  async runDurableWithProcessingLease(pool: EventConsumerPool, lease: EventConsumerProcessingLease,
+    handler: (transaction: EventConsumerTransaction, signal: AbortSignal) => Promise<string>,
+    options: EventAcknowledgmentWorkerOperationOptions = {}): Promise<EventAcknowledgmentIntentResult> {
+    if (typeof handler !== 'function') throw new TypeError('invalid event consumer handler');
+    return this.#operate(pool, options, signal => withEventConsumerProcessingLease(lease, this.#input,
+      hooks => this.#durable(pool, signal, handler, hooks)));
+  }
   /** Receipt-only staging after uncertain COMMIT. Never invokes business code. */
   async saveCompletionIntent(pool: EventConsumerPool, options: EventAcknowledgmentWorkerOperationOptions = {}): Promise<EventAcknowledgmentIntentResult> {
     return this.#operate(pool, options, signal => this.#durable(pool, signal));
@@ -88,10 +104,11 @@ export class EventAcknowledgmentWorker {
     return { input: this.#input, scope: this.#scope, delivery: this.#delivery, seconds: this.#seconds };
   }
   async #durable(pool: EventConsumerPool, signal?: AbortSignal,
-    handler?: (transaction: EventConsumerTransaction, signal: AbortSignal) => Promise<string>): Promise<EventAcknowledgmentIntentResult> {
+    handler?: (transaction: EventConsumerTransaction, signal: AbortSignal) => Promise<string>,
+    processingHooks: EventConsumerTransactionHooks = {}): Promise<EventAcknowledgmentIntentResult> {
     let intent: EventAcknowledgmentIntentStatus | undefined;
     const input = this.#intentInput();
-    const hooks: EventConsumerTransactionHooks = { storageError: intentStoreError,
+    const hooks: EventConsumerTransactionHooks = { ...processingHooks, storageError: intentStoreError,
       beforeCommit: async (tx, receipt) => { intent = await saveIntent(tx, input, 'complete', '', receipt.body); } };
     const receipt = handler === undefined ? await this.#receipt(pool, signal, hooks) : await this.#process(pool, handler, signal, hooks);
     return Object.freeze({ receiptConfirmed: true, receipt: Object.freeze(receipt), intent: intent! });
@@ -143,7 +160,8 @@ export class EventAcknowledgmentWorker {
     try { return await operation(signal); } finally { this.#busy = false; }
   }
   async #receipt(pool: EventConsumerPool, signal?: AbortSignal, hooks: EventConsumerTransactionHooks = {}): Promise<EventConsumerTransactionResult> {
-    return eventConsumerTransaction(pool, this.#input, async () => { throw new EventAcknowledgmentWorkerError('event_consumer_receipt_missing'); }, { signal }, hooks);
+    return eventConsumerTransaction(pool, this.#input, async () => { throw new EventAcknowledgmentWorkerError('event_consumer_receipt_missing'); }, { signal },
+      { ...hooks, beforeHandler: undefined, afterReceipt: undefined });
   }
   async #reject(pool: EventConsumerPool, action: 'retry' | 'dead-letter', reason: string,
     options: EventAcknowledgmentWorkerOperationOptions): Promise<EventAcknowledgmentWorkerResult> {

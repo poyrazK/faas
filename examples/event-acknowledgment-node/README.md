@@ -202,3 +202,49 @@ with a detached result. The wrapper does not overwrite storage in that case:
 compare/reconcile current storage and `error.result.checkpoint` under the ownership
 fence before notification retry. Cancellation returns a final snapshot which the
 wrapper saves with its bounded shutdown hook. See [checkpoint, acknowledgment and replay rules](../../docs/event-acknowledgment-node-checkpoints.md).
+
+## Prepare with a processing lease
+
+`processing.mjs` is an explicit alternative for consumers doing side-effect-free
+preparation before a short final transaction. Install `eventConsumerProcessingSchema`
+as well as the receipt/intent schemas. Ingress calls
+`acceptAuthenticatedDeliveryForPreparation` after authentication/authorization;
+it uses the same protected durable queue contract but saves version 3 records
+with mode `durable-intent-processing`. Keep version 2 jobs on the existing
+unleased flow. Do not relabel jobs or mix leased and unleased processing for the
+same consumer.
+
+```js
+import { processOwnedPreparedDelivery } from './processing.mjs';
+
+await processOwnedPreparedDelivery(job, { app: appSlug, accountId, appId }, pool,
+  async (originalBody, { signal, renew }) => {
+    signal.throwIfAborted();
+    const event = JSON.parse(originalBody.toString('utf8'));
+    const prepared = await readAndValidateWithoutEffects(event, signal);
+    await renew(); // Serialize local renewals and stop/join all work before returning.
+    return prepared;
+  }, async (tx, signal, _originalBody, prepared) => {
+    signal.throwIfAborted();
+    await tx.query('UPDATE invoices SET paid=true WHERE id=$1', [prepared.invoiceId]);
+    return '{"applied":true}';
+  });
+```
+
+Claiming a committed receipt skips preparation and the handler. Otherwise the
+opaque local token fences the final callback and conditional claim removal. The
+job is acked after writes, receipt, claim removal and completion intent commit;
+the independent intent host delivers the platform callback.
+
+The example renews the local lease before/after preparation and defaults to
+30 seconds. Preparation owns its renewal cadence, must remain side-effect-free,
+and must return only after its work/renewals stop. A busy claim or any renewal
+failure leaves the job for the owner's recovery policy; no negative disposition
+is inferred. Reconstructed jobs reclaim after expiry, and committed receipts
+continue to deduplicate writes.
+
+Local renewal does not extend the platform acknowledgment lease. Bound preparation
+to its remaining budget or maintain that platform lease separately under trusted
+host ownership. The worker confirms/renews the platform lease only during final
+transactional work. Configure driver/query/statement timeouts and job cancellation;
+this module installs no renewal loop or worker service. See [processing lease semantics and unknown commits](../../docs/event-consumer-processing-node.md).

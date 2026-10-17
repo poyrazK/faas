@@ -132,6 +132,8 @@ For atomic callback persistence, use [durable Node acknowledgment intents](event
 recovery host delivers it. The [durable-job integration module](../examples/event-acknowledgment-node/README.md)
 uses that mode for new jobs. Keep existing immediate-mode jobs on their original
 recovery protocol; do not mix modes for the same attempt. Neither mode installs
-schemas or background services. No Node preparation lease is added. See the
+schemas or background services. For a local preparation fence, use the separate
+[Node processing lease](event-consumer-processing-node.md) and the worker
+`runWithProcessingLease` / `runDurableWithProcessingLease` methods. See the
 [Go worker](event-acknowledgment-worker.md) and [platform protocol](event-deferred-acknowledgments.md)
 for shared boundaries.

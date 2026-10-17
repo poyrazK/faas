@@ -629,3 +629,6 @@ export { watchEventAcknowledgmentIntentHealthWithCheckpoint, EventAcknowledgment
   type EventAcknowledgmentIntentCheckpointWatchOptions,
   type EventAcknowledgmentIntentCheckpointWatchResult } from './event-acknowledgment-intent-checkpoint-watch.js';
 export type { EventAcknowledgmentIntentConfirmation } from './event-acknowledgment-intent-checkpoint-state.js';
+
+export { eventConsumerProcessingSchema, claimEventConsumerProcessing, EventConsumerProcessingLease,
+  EventConsumerProcessingError, type EventConsumerProcessingErrorCode } from './event-consumer-processing.js';

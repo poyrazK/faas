@@ -65,6 +65,11 @@ platform renewal. Use receipt-only staging when the owner wants reconciliation
 without permitting new business work. Missing receipts require an explicit owner
 recovery policy.
 
+For preparation outside the transaction, `runDurableWithProcessingLease` composes
+the [Node local processing fence](event-consumer-processing-node.md) with atomic
+receipt/intent staging. It does not renew a local lease during the locked final
+transaction or maintain the platform lease during external preparation.
+
 ## Persist explicit negative decisions
 
 After known rollback, stopped work and exclusive job ownership:

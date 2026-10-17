@@ -3629,3 +3629,10 @@ outbox. Persist `progress.checkpoint` in `onProgress` before delivering
 `acknowledgeEventAcknowledgmentIntentAlerts`. Resume validates owner/policy and
 requires fresh confirmation while retaining unresolved incident identity.
 See [checkpoint validation, replay and shutdown](../../docs/event-acknowledgment-node-checkpoints.md).
+
+`claimEventConsumerProcessing(pool, input, durationMs, { signal })` provides an
+opaque local preparation lease with `completed`, `renew` and `complete`. Install
+`eventConsumerProcessingSchema` explicitly beside the inbox. Worker
+`runWithProcessingLease` / `runDurableWithProcessingLease` compose the same local
+fence with platform acknowledgment and optional atomic intent staging. Stop local
+renewal before the short final transaction. See [takeover, failure and lease boundaries](../../docs/event-consumer-processing-node.md).

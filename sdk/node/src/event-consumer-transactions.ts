@@ -89,6 +89,8 @@ export async function withEventConsumerTransaction(
 }
 /** Internal hooks are deliberately excluded from the package entry point. */
 export interface EventConsumerTransactionHooks {
+  beforeHandler?: (tx: EventConsumerTransaction) => Promise<void>;
+  afterReceipt?: (tx: EventConsumerTransaction) => Promise<void>;
   beforeCommit?: (tx: EventConsumerTransaction, receipt: EventConsumerTransactionResult) => Promise<void>;
   storageError?: () => Error;
 }
@@ -133,11 +135,14 @@ export async function eventConsumerTransaction(
       try { validateResult(body); } catch (error) { throw hooks.storageError?.() ?? error; }
     } else {
       signal?.throwIfAborted();
+      await hooks.beforeHandler?.(Object.freeze({ query }));
+      signal?.throwIfAborted();
       body = await handler(Object.freeze({ query }));
       signal?.throwIfAborted();
       validateResult(body);
       await query(`INSERT INTO public.gregale_event_consumer_inbox(identity_digest,account_id,app_id,subscription_id,acceptance_id,event_source,event_id,request_digest,response_body) VALUES ($1,$2::uuid,$3::uuid,$4::uuid,$5::bigint,$6,$7,$8,$9)`,
         [identityDigest, input.accountId, input.appId, input.subscriptionId, input.acceptanceId, input.source, input.eventId, requestDigest, body]);
+      await hooks.afterReceipt?.(Object.freeze({ query }));
     }
     const receipt = { body, replayed: stored !== undefined };
     await hooks.beforeCommit?.(Object.freeze({ query }), Object.freeze({ ...receipt }));
