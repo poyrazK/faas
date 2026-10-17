@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/outbound/relaywire"
 )
@@ -23,6 +24,8 @@ type RelayIdentityVerifier interface {
 // relayPrincipal is the verified caller of one relay connection: an app, or
 // a Run with the integrations its scheduler grant named.
 type relayPrincipal struct {
+	recorderRequestID     string
+	rehearsalRunID        string
 	app                   WorkloadIdentity
 	execution             *ExecutionIdentity
 	executionIntegrations map[string]struct{}
@@ -61,7 +64,7 @@ func withRelayIdentity(ctx context.Context, identity WorkloadIdentity) context.C
 // Requests on the ordinary listener and Run relays never carry one.
 func relayIdentityFromContext(ctx context.Context) (WorkloadIdentity, bool) {
 	principal, ok := relayPrincipalFromContext(ctx)
-	return principal.app, ok && principal.execution == nil
+	return principal.app, ok && principal.execution == nil && principal.rehearsalRunID == ""
 }
 
 // relayExecutionFromContext returns the verified Run of a relay request.
@@ -193,6 +196,21 @@ func readRelayPrincipal(conn net.Conn, verifier RelayIdentityVerifier) (relayPri
 		return relayPrincipal{}, err
 	}
 	var principal relayPrincipal
+	if rehearsal, ok := verifier.(RehearsalRelayIdentityVerifier); ok && len(preamble.ExecutionIntegrations) == 0 {
+		if identity, run, verifyErr := rehearsal.VerifyRehearsalRelay(preamble.Assertion); verifyErr == nil {
+			id, err := uuid.Parse(preamble.RecorderRequestID)
+			if err != nil || id == uuid.Nil {
+				return relayPrincipal{}, errors.New("outbound relay: a rehearsal needs a recorder request")
+			}
+			if err := conn.SetDeadline(time.Time{}); err != nil {
+				return relayPrincipal{}, err
+			}
+			return relayPrincipal{app: identity, rehearsalRunID: run, recorderRequestID: id.String()}, nil
+		}
+	}
+	if preamble.RecorderRequestID != "" {
+		return relayPrincipal{}, errors.New("outbound relay: recorder requests require rehearsal identity")
+	}
 	if identity, appErr := verifier.VerifyRelay(preamble.Assertion); appErr == nil && len(preamble.ExecutionIntegrations) == 0 {
 		principal = relayPrincipal{app: identity}
 	} else {

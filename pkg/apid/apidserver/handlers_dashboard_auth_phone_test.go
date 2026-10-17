@@ -13,6 +13,7 @@ import (
 )
 
 func TestDashboardAuthPhoneSignIn(t *testing.T) {
+	t.Setenv("FAAS_APPLICATION_AUTH_ENABLED", "1")
 	_, restore := apidserver.WithTestIdentities(t)
 	t.Cleanup(restore)
 	e := apidserver.Setup(t, api.PlanPro)
@@ -58,5 +59,14 @@ func TestDashboardAuthPhoneSignIn(t *testing.T) {
 	}
 	if rec := authSettingsPost(e, cookie, csrf, base+"/settings", url.Values{"csrf_token": {token}, "sms_provider": {""}}); rec.Code != http.StatusSeeOther || strings.Contains(names(), "GOTRUE_SMS_") {
 		t.Fatalf("off = %d, secrets %s", rec.Code, names())
+	}
+	if rec := authSettingsPost(e, cookie, csrf, base+"/settings", url.Values{"csrf_token": {token}, "sms_countries": {"44, +1"}}); rec.Code != http.StatusSeeOther || !strings.Contains(names(), "AUTH_SMS_COUNTRIES") {
+		t.Fatalf("countries = %d, secrets %s", rec.Code, names())
+	}
+	if rec := authSettingsPost(e, cookie, csrf, base+"/settings", url.Values{"csrf_token": {token}, "sms_countries": {"uk"}}); !strings.Contains(rec.Header().Get("Location"), "error=") {
+		t.Fatalf("country name accepted: %q", rec.Header().Get("Location"))
+	}
+	if rec := authSettingsPost(e, cookie, csrf, base+"/settings", url.Values{"csrf_token": {token}, "sms_countries": {""}}); rec.Code != http.StatusSeeOther || strings.Contains(names(), "AUTH_SMS_COUNTRIES") {
+		t.Fatalf("every country = %d, secrets %s", rec.Code, names())
 	}
 }

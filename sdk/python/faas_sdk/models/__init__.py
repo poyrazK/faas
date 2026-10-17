@@ -910,6 +910,8 @@ from .create_queue_binding_canary_request import CreateQueueBindingCanaryRequest
 from .create_queue_binding_request import CreateQueueBindingRequest
 from .create_queue_binding_request_mode import CreateQueueBindingRequestMode
 from .create_queue_binding_request_workload_class import CreateQueueBindingRequestWorkloadClass
+from .create_scenario_objects_request import CreateScenarioObjectsRequest
+from .create_scenario_postgres_request import CreateScenarioPostgresRequest
 from .create_statement_invoice_request import CreateStatementInvoiceRequest
 from .create_tcp_listener_request import CreateTCPListenerRequest
 from .create_tenant_surface_request import CreateTenantSurfaceRequest
@@ -4140,6 +4142,17 @@ from .register_event_schema_request import RegisterEventSchemaRequest
 from .register_event_schema_response import RegisterEventSchemaResponse
 from .register_managed_realtime_push_device_response_200 import RegisterManagedRealtimePushDeviceResponse200
 from .register_scenario_test_request import RegisterScenarioTestRequest
+from .register_scenario_test_request_action_evidence_version import RegisterScenarioTestRequestActionEvidenceVersion
+from .register_scenario_test_request_command_version import RegisterScenarioTestRequestCommandVersion
+from .register_scenario_test_request_network_mode import RegisterScenarioTestRequestNetworkMode
+from .register_scenario_test_request_webhook_mode import RegisterScenarioTestRequestWebhookMode
+from .register_scenario_test_response import RegisterScenarioTestResponse
+from .register_scenario_test_response_action_evidence_version import RegisterScenarioTestResponseActionEvidenceVersion
+from .register_scenario_test_response_command_version import RegisterScenarioTestResponseCommandVersion
+from .register_scenario_test_response_network_mode import RegisterScenarioTestResponseNetworkMode
+from .register_scenario_test_response_policy_version import RegisterScenarioTestResponsePolicyVersion
+from .register_scenario_test_response_recorder_version import RegisterScenarioTestResponseRecorderVersion
+from .register_scenario_test_response_webhook_mode import RegisterScenarioTestResponseWebhookMode
 from .rekey_progress import RekeyProgress
 from .remove_environment_git_ops_override_request import RemoveEnvironmentGitOpsOverrideRequest
 from .rename_app_request import RenameAppRequest
@@ -4501,6 +4514,81 @@ from .scaling_target import ScalingTarget
 from .scaling_target_metric import ScalingTargetMetric
 from .scan_result import ScanResult
 from .scan_result_status import ScanResultStatus
+from .scenario_action_snapshot import ScenarioActionSnapshot
+from .scenario_action_snapshot_recorder_version import ScenarioActionSnapshotRecorderVersion
+from .scenario_action_snapshot_scope import ScenarioActionSnapshotScope
+from .scenario_action_snapshot_simulation_version import ScenarioActionSnapshotSimulationVersion
+from .scenario_action_snapshot_status import ScenarioActionSnapshotStatus
+from .scenario_action_snapshot_version import ScenarioActionSnapshotVersion
+from .scenario_captured_action import ScenarioCapturedAction
+from .scenario_captured_action_source import ScenarioCapturedActionSource
+from .scenario_cold_preparation import ScenarioColdPreparation
+from .scenario_cold_preparation_method import ScenarioColdPreparationMethod
+from .scenario_cold_preparation_state import ScenarioColdPreparationState
+from .scenario_cold_start_evidence import ScenarioColdStartEvidence
+from .scenario_cold_start_evidence_status import ScenarioColdStartEvidenceStatus
+from .scenario_cold_start_evidence_version import ScenarioColdStartEvidenceVersion
+from .scenario_cold_start_spec import ScenarioColdStartSpec
+from .scenario_cold_start_spec_version import ScenarioColdStartSpecVersion
+from .scenario_managed_work_attempt import ScenarioManagedWorkAttempt
+from .scenario_managed_work_binding import ScenarioManagedWorkBinding
+from .scenario_managed_work_evidence import ScenarioManagedWorkEvidence
+from .scenario_managed_work_evidence_status import ScenarioManagedWorkEvidenceStatus
+from .scenario_managed_work_evidence_version import ScenarioManagedWorkEvidenceVersion
+from .scenario_managed_work_job import ScenarioManagedWorkJob
+from .scenario_managed_work_participant import ScenarioManagedWorkParticipant
+from .scenario_managed_work_participant_objects import ScenarioManagedWorkParticipantObjects
+from .scenario_managed_work_participant_postgres import ScenarioManagedWorkParticipantPostgres
+from .scenario_managed_work_plan import ScenarioManagedWorkPlan
+from .scenario_managed_work_plan_version import ScenarioManagedWorkPlanVersion
+from .scenario_objects_data import ScenarioObjectsData
+from .scenario_objects_data_metadata import ScenarioObjectsDataMetadata
+from .scenario_objects_evidence import ScenarioObjectsEvidence
+from .scenario_objects_evidence_provenance import ScenarioObjectsEvidenceProvenance
+from .scenario_objects_evidence_status import ScenarioObjectsEvidenceStatus
+from .scenario_objects_mutation import ScenarioObjectsMutation
+from .scenario_objects_mutation_method import ScenarioObjectsMutationMethod
+from .scenario_objects_mutation_status import ScenarioObjectsMutationStatus
+from .scenario_objects_object import ScenarioObjectsObject
+from .scenario_objects_object_metadata import ScenarioObjectsObjectMetadata
+from .scenario_objects_receipt import ScenarioObjectsReceipt
+from .scenario_objects_receipt_version import ScenarioObjectsReceiptVersion
+from .scenario_objects_spec import ScenarioObjectsSpec
+from .scenario_objects_spec_version import ScenarioObjectsSpecVersion
+from .scenario_postgres_delta import ScenarioPostgresDelta
+from .scenario_postgres_delta_deleted_item import ScenarioPostgresDeltaDeletedItem
+from .scenario_postgres_delta_inserted_item import ScenarioPostgresDeltaInsertedItem
+from .scenario_postgres_evidence import ScenarioPostgresEvidence
+from .scenario_postgres_evidence_provenance import ScenarioPostgresEvidenceProvenance
+from .scenario_postgres_evidence_status import ScenarioPostgresEvidenceStatus
+from .scenario_postgres_receipt import ScenarioPostgresReceipt
+from .scenario_postgres_receipt_version import ScenarioPostgresReceiptVersion
+from .scenario_postgres_snapshot import ScenarioPostgresSnapshot
+from .scenario_postgres_snapshot_rows_item import ScenarioPostgresSnapshotRowsItem
+from .scenario_postgres_spec import ScenarioPostgresSpec
+from .scenario_postgres_spec_version import ScenarioPostgresSpecVersion
+from .scenario_postgres_table import ScenarioPostgresTable
+from .scenario_postgres_table_schema import ScenarioPostgresTableSchema
+from .scenario_simulation_attempt import ScenarioSimulationAttempt
+from .scenario_simulation_attempt_adapter import ScenarioSimulationAttemptAdapter
+from .scenario_simulation_attempt_fault import ScenarioSimulationAttemptFault
+from .scenario_simulation_attempt_status import ScenarioSimulationAttemptStatus
+from .scenario_simulation_fixture import ScenarioSimulationFixture
+from .scenario_simulation_fixture_adapter import ScenarioSimulationFixtureAdapter
+from .scenario_simulation_fixture_method import ScenarioSimulationFixtureMethod
+from .scenario_simulation_plan import ScenarioSimulationPlan
+from .scenario_simulation_plan_version import ScenarioSimulationPlanVersion
+from .scenario_simulation_response import ScenarioSimulationResponse
+from .scenario_simulation_response_fault import ScenarioSimulationResponseFault
+from .scenario_suspend_resume_evidence import ScenarioSuspendResumeEvidence
+from .scenario_suspend_resume_evidence_status import ScenarioSuspendResumeEvidenceStatus
+from .scenario_suspend_resume_evidence_version import ScenarioSuspendResumeEvidenceVersion
+from .scenario_suspend_resume_receipt import ScenarioSuspendResumeReceipt
+from .scenario_suspend_resume_receipt_method import ScenarioSuspendResumeReceiptMethod
+from .scenario_suspend_resume_receipt_state import ScenarioSuspendResumeReceiptState
+from .scenario_suspend_resume_spec import ScenarioSuspendResumeSpec
+from .scenario_suspend_resume_spec_checkpoint import ScenarioSuspendResumeSpecCheckpoint
+from .scenario_suspend_resume_spec_version import ScenarioSuspendResumeSpecVersion
 from .scenario_test_chaos_match import ScenarioTestChaosMatch
 from .scenario_test_chaos_matches_response import ScenarioTestChaosMatchesResponse
 from .scenario_test_chaos_rule import ScenarioTestChaosRule
@@ -4508,6 +4596,9 @@ from .scenario_test_chaos_rule_direction import ScenarioTestChaosRuleDirection
 from .scenario_test_chaos_rule_kind import ScenarioTestChaosRuleKind
 from .scenario_test_chaos_rule_status_code_type_0 import ScenarioTestChaosRuleStatusCodeType0
 from .scenario_test_workload import ScenarioTestWorkload
+from .scenario_worker_fault import ScenarioWorkerFault
+from .scenario_worker_fault_state import ScenarioWorkerFaultState
+from .scenario_worker_termination import ScenarioWorkerTermination
 from .schedule_occurrence_response import ScheduleOccurrenceResponse
 from .schedule_occurrence_response_status import ScheduleOccurrenceResponseStatus
 from .schedule_policy import SchedulePolicy
@@ -4526,6 +4617,8 @@ from .scoped_app_secret_response_last_runtime_reload_signal import ScopedAppSecr
 from .scoped_app_secret_response_secret_class import ScopedAppSecretResponseSecretClass
 from .scoped_route_budget_report import ScopedRouteBudgetReport
 from .scoped_route_budget_report_budget_source import ScopedRouteBudgetReportBudgetSource
+from .seal_scenario_objects_request import SealScenarioObjectsRequest
+from .seal_scenario_postgres_request import SealScenarioPostgresRequest
 from .seat_usage_response import SeatUsageResponse
 from .seat_usage_response_plan import SeatUsageResponsePlan
 from .secret_finding import SecretFinding
@@ -6050,6 +6143,8 @@ __all__ = (
     "CreateQueueBindingRequest",
     "CreateQueueBindingRequestMode",
     "CreateQueueBindingRequestWorkloadClass",
+    "CreateScenarioObjectsRequest",
+    "CreateScenarioPostgresRequest",
     "CreateStatementInvoiceRequest",
     "CreateTCPListenerRequest",
     "CreateTenantSurfaceRequest",
@@ -9018,6 +9113,17 @@ __all__ = (
     "RegisterEventSchemaResponse",
     "RegisterManagedRealtimePushDeviceResponse200",
     "RegisterScenarioTestRequest",
+    "RegisterScenarioTestRequestActionEvidenceVersion",
+    "RegisterScenarioTestRequestCommandVersion",
+    "RegisterScenarioTestRequestNetworkMode",
+    "RegisterScenarioTestRequestWebhookMode",
+    "RegisterScenarioTestResponse",
+    "RegisterScenarioTestResponseActionEvidenceVersion",
+    "RegisterScenarioTestResponseCommandVersion",
+    "RegisterScenarioTestResponseNetworkMode",
+    "RegisterScenarioTestResponsePolicyVersion",
+    "RegisterScenarioTestResponseRecorderVersion",
+    "RegisterScenarioTestResponseWebhookMode",
     "RekeyProgress",
     "RemoveEnvironmentGitOpsOverrideRequest",
     "RenameAppRequest",
@@ -9373,6 +9479,81 @@ __all__ = (
     "ScalingTargetMetric",
     "ScanResult",
     "ScanResultStatus",
+    "ScenarioActionSnapshot",
+    "ScenarioActionSnapshotRecorderVersion",
+    "ScenarioActionSnapshotScope",
+    "ScenarioActionSnapshotSimulationVersion",
+    "ScenarioActionSnapshotStatus",
+    "ScenarioActionSnapshotVersion",
+    "ScenarioCapturedAction",
+    "ScenarioCapturedActionSource",
+    "ScenarioColdPreparation",
+    "ScenarioColdPreparationMethod",
+    "ScenarioColdPreparationState",
+    "ScenarioColdStartEvidence",
+    "ScenarioColdStartEvidenceStatus",
+    "ScenarioColdStartEvidenceVersion",
+    "ScenarioColdStartSpec",
+    "ScenarioColdStartSpecVersion",
+    "ScenarioManagedWorkAttempt",
+    "ScenarioManagedWorkBinding",
+    "ScenarioManagedWorkEvidence",
+    "ScenarioManagedWorkEvidenceStatus",
+    "ScenarioManagedWorkEvidenceVersion",
+    "ScenarioManagedWorkJob",
+    "ScenarioManagedWorkParticipant",
+    "ScenarioManagedWorkParticipantObjects",
+    "ScenarioManagedWorkParticipantPostgres",
+    "ScenarioManagedWorkPlan",
+    "ScenarioManagedWorkPlanVersion",
+    "ScenarioObjectsData",
+    "ScenarioObjectsDataMetadata",
+    "ScenarioObjectsEvidence",
+    "ScenarioObjectsEvidenceProvenance",
+    "ScenarioObjectsEvidenceStatus",
+    "ScenarioObjectsMutation",
+    "ScenarioObjectsMutationMethod",
+    "ScenarioObjectsMutationStatus",
+    "ScenarioObjectsObject",
+    "ScenarioObjectsObjectMetadata",
+    "ScenarioObjectsReceipt",
+    "ScenarioObjectsReceiptVersion",
+    "ScenarioObjectsSpec",
+    "ScenarioObjectsSpecVersion",
+    "ScenarioPostgresDelta",
+    "ScenarioPostgresDeltaDeletedItem",
+    "ScenarioPostgresDeltaInsertedItem",
+    "ScenarioPostgresEvidence",
+    "ScenarioPostgresEvidenceProvenance",
+    "ScenarioPostgresEvidenceStatus",
+    "ScenarioPostgresReceipt",
+    "ScenarioPostgresReceiptVersion",
+    "ScenarioPostgresSnapshot",
+    "ScenarioPostgresSnapshotRowsItem",
+    "ScenarioPostgresSpec",
+    "ScenarioPostgresSpecVersion",
+    "ScenarioPostgresTable",
+    "ScenarioPostgresTableSchema",
+    "ScenarioSimulationAttempt",
+    "ScenarioSimulationAttemptAdapter",
+    "ScenarioSimulationAttemptFault",
+    "ScenarioSimulationAttemptStatus",
+    "ScenarioSimulationFixture",
+    "ScenarioSimulationFixtureAdapter",
+    "ScenarioSimulationFixtureMethod",
+    "ScenarioSimulationPlan",
+    "ScenarioSimulationPlanVersion",
+    "ScenarioSimulationResponse",
+    "ScenarioSimulationResponseFault",
+    "ScenarioSuspendResumeEvidence",
+    "ScenarioSuspendResumeEvidenceStatus",
+    "ScenarioSuspendResumeEvidenceVersion",
+    "ScenarioSuspendResumeReceipt",
+    "ScenarioSuspendResumeReceiptMethod",
+    "ScenarioSuspendResumeReceiptState",
+    "ScenarioSuspendResumeSpec",
+    "ScenarioSuspendResumeSpecCheckpoint",
+    "ScenarioSuspendResumeSpecVersion",
     "ScenarioTestChaosMatch",
     "ScenarioTestChaosMatchesResponse",
     "ScenarioTestChaosRule",
@@ -9380,6 +9561,9 @@ __all__ = (
     "ScenarioTestChaosRuleKind",
     "ScenarioTestChaosRuleStatusCodeType0",
     "ScenarioTestWorkload",
+    "ScenarioWorkerFault",
+    "ScenarioWorkerFaultState",
+    "ScenarioWorkerTermination",
     "ScheduleOccurrenceResponse",
     "ScheduleOccurrenceResponseStatus",
     "SchedulePolicy",
@@ -9396,6 +9580,8 @@ __all__ = (
     "ScopedAppSecretResponseSecretClass",
     "ScopedRouteBudgetReport",
     "ScopedRouteBudgetReportBudgetSource",
+    "SealScenarioObjectsRequest",
+    "SealScenarioPostgresRequest",
     "SeatUsageResponse",
     "SeatUsageResponsePlan",
     "SecretFinding",

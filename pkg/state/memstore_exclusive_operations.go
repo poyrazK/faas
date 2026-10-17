@@ -318,9 +318,13 @@ func (tx *exclusiveMemoryTx) reserve(account string) error {
 	return nil
 }
 func (tx *exclusiveMemoryTx) effects(o ExclusiveOperation, effects []exclusivework.Effect) error {
+	if policy, exists := tx.store.scenarioActionPolicyLocked(o.AppID); exists && !policy.SealedAt.IsZero() && len(effects) > 0 {
+		return ErrOperationEffectDestination
+	}
 	copyEffects := make([]exclusiveStoredEffect, len(effects))
 	for i, e := range effects {
 		id := uuid.NewString()
+		receiverSHA256 := ""
 		record := api.OperationEffectRecord{ID: id, Name: e.Name, Generation: o.Generation, Status: "recorded"}
 		if e.WebhookID != "" {
 			hook := tx.store.appWebhooks[e.WebhookID]
@@ -351,11 +355,23 @@ func (tx *exclusiveMemoryTx) effects(o ExclusiveOperation, effects []exclusivewo
 			if err != nil {
 				return err
 			}
-			tx.deliveries[id] = AppWebhookDelivery{ID: id, WebhookID: hook.ID, AppID: o.AppID, AccountID: o.AccountID, Event: OperationEffectEvent, Payload: body, Status: AppWebhookDeliveryPending, NextAttemptAt: now, CreatedAt: now, UpdatedAt: now}
 			record.WebhookID, record.DeliveryID, record.Type, record.Status = hook.ID, id, e.Type, "pending"
+			captureRun, err := tx.store.scenarioCaptureRunLocked(o.AccountID, o.AppID)
+			if err != nil {
+				return err
+			}
+			if captureRun != "" {
+				record.Status, record.DeliveryID, record.RehearsalRunID = "captured", "", captureRun
+				receiverSHA256, err = tx.store.scenarioReceiverFingerprintLocked(hook)
+				if err != nil {
+					return err
+				}
+			} else {
+				tx.deliveries[id] = AppWebhookDelivery{ID: id, WebhookID: hook.ID, AppID: o.AppID, AccountID: o.AccountID, Event: OperationEffectEvent, Payload: body, Status: AppWebhookDeliveryPending, NextAttemptAt: now, CreatedAt: now, UpdatedAt: now}
+			}
 		}
 		e.Payload = slices.Clone(e.Payload)
-		copyEffects[i] = exclusiveStoredEffect{Effect: e, Record: record}
+		copyEffects[i] = exclusiveStoredEffect{Effect: e, Record: record, ReceiverSHA256: receiverSHA256}
 	}
 	tx.committedEffects[o.ID] = copyEffects
 	return nil
@@ -365,7 +381,7 @@ func (tx *exclusiveMemoryTx) effectRecords(o ExclusiveOperation) ([]api.Operatio
 	var records []api.OperationEffectRecord
 	for _, effect := range tx.committedEffects[o.ID] {
 		record := effect.Record
-		if record.WebhookID != "" {
+		if record.WebhookID != "" && record.RehearsalRunID == "" {
 			record.Status = "unavailable"
 			_, receiverExists := tx.store.appWebhooks[record.WebhookID]
 			if delivery, ok := tx.deliveries[record.DeliveryID]; ok && receiverExists {

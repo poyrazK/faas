@@ -56,6 +56,7 @@ type Querier interface {
 	ActiveQueueCanaryExists(ctx context.Context, db DBTX, arg ActiveQueueCanaryExistsParams) (bool, error)
 	ActiveServiceProjectReleaseTargets(ctx context.Context, db DBTX, appID pgtype.UUID) ([]string, error)
 	ActiveTCPListenerByPublicPort(ctx context.Context, db DBTX, publicPort int32) (AppTcpListener, error)
+	AdmitScenarioRecorderRequest(ctx context.Context, db DBTX, arg AdmitScenarioRecorderRequestParams) (int64, error)
 	AdoptProjectEnvironmentCloneCheckpointSnapshot(ctx context.Context, db DBTX, arg AdoptProjectEnvironmentCloneCheckpointSnapshotParams) (ProjectEnvironmentClonePostgresSnapshot, error)
 	AdoptProjectEnvironmentClonePostgresSnapshotRestore(ctx context.Context, db DBTX, arg AdoptProjectEnvironmentClonePostgresSnapshotRestoreParams) (ProjectEnvironmentClonePostgresSnapshotRestore, error)
 	AdvanceCustomerOperationWorkflowAttempt(ctx context.Context, db DBTX, arg AdvanceCustomerOperationWorkflowAttemptParams) (int64, error)
@@ -128,6 +129,7 @@ type Querier interface {
 	// non-active observation starts a new detection lifecycle so the transition
 	// webhook gets its own stable id.
 	ApplyRegressionAction(ctx context.Context, db DBTX, arg ApplyRegressionActionParams) (DebugRegressionObservation, error)
+	ArmScenarioWorkerFault(ctx context.Context, db DBTX, arg ArmScenarioWorkerFaultParams) error
 	ArtifactEvidenceStorageTime(ctx context.Context, db DBTX) (pgtype.Timestamptz, error)
 	AssociateEventExecutionRoot(ctx context.Context, db DBTX, arg AssociateEventExecutionRootParams) (AssociateEventExecutionRootRow, error)
 	AttachCloneCheckpointPgActivationConnection(ctx context.Context, db DBTX, arg AttachCloneCheckpointPgActivationConnectionParams) (int64, error)
@@ -303,6 +305,7 @@ type Querier interface {
 	ClaimRouteProbeRound(ctx context.Context, db DBTX, arg ClaimRouteProbeRoundParams) (string, error)
 	ClaimRuntimeUpgradeOperation(ctx context.Context, db DBTX, leaseSeconds int32) (RuntimeUpgradeOperation, error)
 	ClaimRuntimeUpgradeVerification(ctx context.Context, db DBTX, leaseSeconds int32) (RuntimeUpgradeVerification, error)
+	ClaimScenarioWorkerFault(ctx context.Context, db DBTX, id string) (int64, error)
 	ClaimServiceRecovery(ctx context.Context, db DBTX, arg ClaimServiceRecoveryParams) (ServiceRecovery, error)
 	// Persist ownership before returning. SKIP LOCKED alone would release the
 	// claim at statement end and let another scheduler deliver the same row.
@@ -361,6 +364,8 @@ type Querier interface {
 	CloseApplicationStandardLogConsumer(ctx context.Context, db DBTX, arg CloseApplicationStandardLogConsumerParams) ([]byte, error)
 	CloseCustomerOperationWorkflowAttempts(ctx context.Context, db DBTX, runID pgtype.UUID) error
 	CloseLegacyWorkflowOutboundUnknownAttempts(ctx context.Context, db DBTX, runID pgtype.UUID) error
+	CloseScenarioManagedWork(ctx context.Context, db DBTX, arg CloseScenarioManagedWorkParams) error
+	CloseScenarioRecorderAdmission(ctx context.Context, db DBTX, arg CloseScenarioRecorderAdmissionParams) error
 	CloseWorkflowOutboundUnknownAttempts(ctx context.Context, db DBTX, runID pgtype.UUID) error
 	CommitManagedReceipt(ctx context.Context, db DBTX, arg CommitManagedReceiptParams) (CommitManagedReceiptRow, error)
 	CommitManagedReceiptReplay(ctx context.Context, db DBTX, arg CommitManagedReceiptReplayParams) (CommitManagedReceiptReplayRow, error)
@@ -400,6 +405,7 @@ type Querier interface {
 	CompleteOperatorNode(ctx context.Context, db DBTX, arg CompleteOperatorNodeParams) (pgtype.UUID, error)
 	CompleteOperatorRestartIntent(ctx context.Context, db DBTX, arg CompleteOperatorRestartIntentParams) (OperatorIntent, error)
 	CompleteProjectEnvironmentClonePublication(ctx context.Context, db DBTX, arg CompleteProjectEnvironmentClonePublicationParams) (int64, error)
+	CompleteScenarioWorkerFault(ctx context.Context, db DBTX, arg CompleteScenarioWorkerFaultParams) (int64, error)
 	CompleteServiceRecovery(ctx context.Context, db DBTX, arg CompleteServiceRecoveryParams) (int64, error)
 	CompleteWorkflowForEach(ctx context.Context, db DBTX, arg CompleteWorkflowForEachParams) error
 	CompleteWorkflowJoin(ctx context.Context, db DBTX, arg CompleteWorkflowJoinParams) error
@@ -1160,6 +1166,10 @@ type Querier interface {
 	FailAutomaticRouteCheck(ctx context.Context, db DBTX, arg FailAutomaticRouteCheckParams) (int64, error)
 	FailCheckedRollbackTarget(ctx context.Context, db DBTX, targetID pgtype.UUID) error
 	FailNotificationClaim(ctx context.Context, db DBTX, arg FailNotificationClaimParams) (int64, error)
+	FailScenarioColdPreparation(ctx context.Context, db DBTX, appID string) error
+	FailScenarioSimulation(ctx context.Context, db DBTX, appID string) error
+	FailScenarioSuspendResume(ctx context.Context, db DBTX, id string) error
+	FailScenarioWorkerFault(ctx context.Context, db DBTX, id string) error
 	FailedCheckedRollbackTarget(ctx context.Context, db DBTX, targetID pgtype.UUID) (bool, error)
 	FeatureFlagCustomerOwned(ctx context.Context, db DBTX, arg FeatureFlagCustomerOwnedParams) (bool, error)
 	// Keep a sentinel row so the API can report when a busy flag has more than
@@ -1170,6 +1180,8 @@ type Querier interface {
 	FenceAutomationLiveBaselineMutation(ctx context.Context, db DBTX, arg FenceAutomationLiveBaselineMutationParams) error
 	FenceManagedPostgresCutoverAdmission(ctx context.Context, db DBTX, arg FenceManagedPostgresCutoverAdmissionParams) (pgtype.Timestamptz, error)
 	FenceMigrationSourceResume(ctx context.Context, db DBTX, arg FenceMigrationSourceResumeParams) error
+	FenceScenarioCommandNetwork(ctx context.Context, db DBTX, taskID string) error
+	FenceScenarioWorkerFault(ctx context.Context, db DBTX, arg FenceScenarioWorkerFaultParams) (int64, error)
 	FinalizeRetainedServiceRolloutAbortTarget(ctx context.Context, db DBTX, arg FinalizeRetainedServiceRolloutAbortTargetParams) (string, error)
 	FinancialAdjustmentInsert(ctx context.Context, db DBTX, arg FinancialAdjustmentInsertParams) error
 	// ADR-566. Policy mutations serialize per account and publish an atomic audit.
@@ -1247,6 +1259,8 @@ type Querier interface {
 	FinishProjectEnvironmentClonePostgresSnapshotRestoreCleanup(ctx context.Context, db DBTX, arg FinishProjectEnvironmentClonePostgresSnapshotRestoreCleanupParams) (ProjectEnvironmentClonePostgresSnapshotRestore, error)
 	FinishQueueCanary(ctx context.Context, db DBTX, arg FinishQueueCanaryParams) error
 	FinishReadinessSubscription(ctx context.Context, db DBTX, arg FinishReadinessSubscriptionParams) (pgtype.UUID, error)
+	FinishScenarioRecorderRequest(ctx context.Context, db DBTX, arg FinishScenarioRecorderRequestParams) (int64, error)
+	FinishScenarioSimulationAttempt(ctx context.Context, db DBTX, arg FinishScenarioSimulationAttemptParams) (int64, error)
 	FinishWorkflowRunCancellation(ctx context.Context, db DBTX, arg FinishWorkflowRunCancellationParams) (WorkflowRun, error)
 	FirstCustomerOperationWorkflowEvent(ctx context.Context, db DBTX, arg FirstCustomerOperationWorkflowEventParams) (WorkflowEvent, error)
 	GetActiveManagedPostgresCutover(ctx context.Context, db DBTX, arg GetActiveManagedPostgresCutoverParams) (ManagedPostgresCutover, error)
@@ -1913,6 +1927,13 @@ type Querier interface {
 	InsertRuntimeUpgradePublicEdgeRoster(ctx context.Context, db DBTX, arg InsertRuntimeUpgradePublicEdgeRosterParams) (RuntimeUpgradePublicEdgeRoster, error)
 	// Private immutable reviewed participants and durable verification (ADR-694).
 	InsertRuntimeUpgradeVerification(ctx context.Context, db DBTX, arg InsertRuntimeUpgradeVerificationParams) (RuntimeUpgradeVerification, error)
+	InsertScenarioActionPolicy(ctx context.Context, db DBTX, arg InsertScenarioActionPolicyParams) error
+	InsertScenarioColdPreparation(ctx context.Context, db DBTX, arg InsertScenarioColdPreparationParams) error
+	InsertScenarioRecorderRequest(ctx context.Context, db DBTX, arg InsertScenarioRecorderRequestParams) error
+	InsertScenarioSimulationAttempt(ctx context.Context, db DBTX, arg InsertScenarioSimulationAttemptParams) error
+	InsertScenarioSuspendCheckpoint(ctx context.Context, db DBTX, arg InsertScenarioSuspendCheckpointParams) error
+	InsertScenarioSuspendResume(ctx context.Context, db DBTX, arg InsertScenarioSuspendResumeParams) error
+	InsertScenarioTestMember(ctx context.Context, db DBTX, arg InsertScenarioTestMemberParams) error
 	InsertScheduledWorkflowRun(ctx context.Context, db DBTX, arg InsertScheduledWorkflowRunParams) (InsertScheduledWorkflowRunRow, error)
 	InsertSnapshotRuntimeConfigReceipt(ctx context.Context, db DBTX, arg InsertSnapshotRuntimeConfigReceiptParams) error
 	InsertSourceBuildRootfs(ctx context.Context, db DBTX, arg InsertSourceBuildRootfsParams) (SourceBuildRootf, error)
@@ -3107,6 +3128,8 @@ type Querier interface {
 	// queue admission, so pinning cannot race a claimed or queued build (ADR-737).
 	LockRuntimeUpgradeTargetApp(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (pgtype.UUID, error)
 	LockRuntimeUpgradeVerification(ctx context.Context, db DBTX, arg LockRuntimeUpgradeVerificationParams) (RuntimeUpgradeVerification, error)
+	LockScenarioActionApp(ctx context.Context, db DBTX, arg LockScenarioActionAppParams) (pgtype.Bool, error)
+	LockScenarioActionRun(ctx context.Context, db DBTX, arg LockScenarioActionRunParams) error
 	LockSnapshotPublicationApp(ctx context.Context, db DBTX, arg LockSnapshotPublicationAppParams) (pgtype.UUID, error)
 	LockSnapshotPublicationDeployment(ctx context.Context, db DBTX, arg LockSnapshotPublicationDeploymentParams) (pgtype.UUID, error)
 	// Parent locks follow the same app/deployment order as runtime publication.
@@ -3573,6 +3596,9 @@ type Querier interface {
 	PendingEnvironmentGitOpsRuntime(ctx context.Context, db DBTX, sourceID pgtype.UUID) ([]EnvironmentGitopsRuntimeEffect, error)
 	PendingLayerArtifactDeletions(ctx context.Context, db DBTX) ([]PendingLayerArtifactDeletionsRow, error)
 	PendingManagedPostgresCutoverPreflights(ctx context.Context, db DBTX, batchSize int32) ([]ManagedPostgresCutover, error)
+	PendingScenarioCommands(ctx context.Context, db DBTX, arg PendingScenarioCommandsParams) (int64, error)
+	PendingScenarioSuspendResumes(ctx context.Context, db DBTX) ([]string, error)
+	PendingScenarioWorkerFaults(ctx context.Context, db DBTX) ([]PendingScenarioWorkerFaultsRow, error)
 	// ADR-091 §3.5 — operator observability backend (PR #2) durable view.
 	// Aggregates `events` rows of kind='auth.rate_limited' over a rolling
 	// window, grouped by subject (account_id, NULL for anonymous actors).
@@ -4080,6 +4106,7 @@ type Querier interface {
 	ReadSnapshotRecoveryInstance(ctx context.Context, db DBTX, instanceID pgtype.UUID) (ReadSnapshotRecoveryInstanceRow, error)
 	ReadValidRouteLifecycleApprovals(ctx context.Context, db DBTX, arg ReadValidRouteLifecycleApprovalsParams) ([][]byte, error)
 	ReadWorkerRolloutObservation(ctx context.Context, db DBTX, arg ReadWorkerRolloutObservationParams) (ReadWorkerRolloutObservationRow, error)
+	ReadyScenarioWorkerFault(ctx context.Context, db DBTX, arg ReadyScenarioWorkerFaultParams) (int64, error)
 	// The reaper's scan query (cmd/apid/upload_session_reaper.go).
 	// Returns at most 100 rows per invocation to bound memory; the
 	// goroutine ticker at cmd/apid/main.go re-invokes on its 5-minute
@@ -4224,6 +4251,8 @@ type Querier interface {
 	RecordRuntimeUpgradePublicEdgeActivity(ctx context.Context, db DBTX, arg RecordRuntimeUpgradePublicEdgeActivityParams) (int64, error)
 	RecordRuntimeUpgradePublicEdgeGuard(ctx context.Context, db DBTX, arg RecordRuntimeUpgradePublicEdgeGuardParams) (int64, error)
 	RecordRuntimeUpgradePublicEdgeWithdrawalReceipt(ctx context.Context, db DBTX, arg RecordRuntimeUpgradePublicEdgeWithdrawalReceiptParams) (int64, error)
+	RecordScenarioColdBoot(ctx context.Context, db DBTX, arg RecordScenarioColdBootParams) (int64, error)
+	RecordScenarioCommandNetwork(ctx context.Context, db DBTX, arg RecordScenarioCommandNetworkParams) (int64, error)
 	RecordTelemetryCoverage(ctx context.Context, db DBTX, arg RecordTelemetryCoverageParams) error
 	RecordTriggerConsumerHealth(ctx context.Context, db DBTX, arg RecordTriggerConsumerHealthParams) error
 	// INSERT ON CONFLICT DO NOTHING for the upload_commit_outcomes
@@ -4391,6 +4420,7 @@ type Querier interface {
 	ResetRuntimeUpgradeGatewayHeartbeats(ctx context.Context, db DBTX) error
 	ResetRuntimeUpgradePublicEdgeActivity(ctx context.Context, db DBTX) error
 	ResetRuntimeUpgradePublicEdgeGuards(ctx context.Context, db DBTX) error
+	ResetScenarioManagedInvocationBinding(ctx context.Context, db DBTX, id string) error
 	ResetWorkflowResumeStep(ctx context.Context, db DBTX, arg ResetWorkflowResumeStepParams) error
 	ResetWorkflowRunningSteps(ctx context.Context, db DBTX, runID pgtype.UUID) error
 	ResolveEnvironmentFieldOwnershipScope(ctx context.Context, db DBTX, arg ResolveEnvironmentFieldOwnershipScopeParams) (ResolveEnvironmentFieldOwnershipScopeRow, error)
@@ -4425,6 +4455,7 @@ type Querier interface {
 	RetireLiveDeploymentSiblings(ctx context.Context, db DBTX, arg RetireLiveDeploymentSiblingsParams) (int64, error)
 	RetireProjectEnvironmentCloneNativeForkDatabase(ctx context.Context, db DBTX, arg RetireProjectEnvironmentCloneNativeForkDatabaseParams) (ManagedPostgresDatabase, error)
 	RetireProjectEnvironmentClonePostgresCopyTargetDatabase(ctx context.Context, db DBTX, arg RetireProjectEnvironmentClonePostgresCopyTargetDatabaseParams) (ManagedPostgresDatabase, error)
+	RetireScenarioCommandRecorder(ctx context.Context, db DBTX, arg RetireScenarioCommandRecorderParams) (int64, error)
 	RetireUndispatchedProjectEnvironmentClonePostgresCopyTarget(ctx context.Context, db DBTX, arg RetireUndispatchedProjectEnvironmentClonePostgresCopyTargetParams) (ProjectEnvironmentClonePostgresCopyTarget, error)
 	RetireUndispatchedProjectEnvironmentClonePostgresCopyTargetDatabase(ctx context.Context, db DBTX, arg RetireUndispatchedProjectEnvironmentClonePostgresCopyTargetDatabaseParams) (ManagedPostgresDatabase, error)
 	RetryCustomerOperationBlobCleanup(ctx context.Context, db DBTX, arg RetryCustomerOperationBlobCleanupParams) (int64, error)
@@ -4445,6 +4476,7 @@ type Querier interface {
 	RevokeManagedPostgresCutoverCredential(ctx context.Context, db DBTX, arg RevokeManagedPostgresCutoverCredentialParams) (int64, error)
 	RevokeRuntimeReleaseQualification(ctx context.Context, db DBTX, arg RevokeRuntimeReleaseQualificationParams) (RuntimeReleaseQualification, error)
 	RevokeRuntimeUpgradeExternalFenceAuthority(ctx context.Context, db DBTX, id pgtype.UUID) (int64, error)
+	RevokeScenarioCommandNetworksForNode(ctx context.Context, db DBTX, arg RevokeScenarioCommandNetworksForNodeParams) error
 	// Account-scoped atomic stamp. WHERE includes account_id so a
 	// cross-account DELETE returns 0 rows (handler maps false → 404) —
 	// IDOR is a persistence invariant, not a handler check.
@@ -4546,11 +4578,47 @@ type Querier interface {
 	SaveRuntimeInstanceConfigProof(ctx context.Context, db DBTX, arg SaveRuntimeInstanceConfigProofParams) error
 	SaveServiceRolloutHandoff(ctx context.Context, db DBTX, arg SaveServiceRolloutHandoffParams) error
 	SaveWebhookAutomationBinding(ctx context.Context, db DBTX, arg SaveWebhookAutomationBindingParams) (WorkflowWebhookBinding, error)
+	ScenarioActionAppUnstarted(ctx context.Context, db DBTX, appID string) (pgtype.Bool, error)
+	ScenarioActionPoliciesForRun(ctx context.Context, db DBTX, arg ScenarioActionPoliciesForRunParams) ([]ScenarioActionPoliciesForRunRow, error)
+	ScenarioActionRunCanEnroll(ctx context.Context, db DBTX, arg ScenarioActionRunCanEnrollParams) (pgtype.Bool, error)
+	ScenarioActionRunMembersMatch(ctx context.Context, db DBTX, arg ScenarioActionRunMembersMatchParams) (bool, error)
+	ScenarioActionSnapshotSummary(ctx context.Context, db DBTX, arg ScenarioActionSnapshotSummaryParams) (ScenarioActionSnapshotSummaryRow, error)
+	ScenarioCaptureReceiver(ctx context.Context, db DBTX, webhookID string) (ScenarioCaptureReceiverRow, error)
+	ScenarioCapturedActions(ctx context.Context, db DBTX, arg ScenarioCapturedActionsParams) ([]ScenarioCapturedActionsRow, error)
+	ScenarioColdInventory(ctx context.Context, db DBTX, appID string) (ScenarioColdInventoryRow, error)
+	ScenarioColdPreparation(ctx context.Context, db DBTX, appID string) (ScenarioColdPreparationRow, error)
+	ScenarioCommandCallersByHostIP(ctx context.Context, db DBTX, arg ScenarioCommandCallersByHostIPParams) ([]ScenarioCommandCallersByHostIPRow, error)
+	ScenarioManagedWorkBindings(ctx context.Context, db DBTX, arg ScenarioManagedWorkBindingsParams) ([]ScenarioManagedWorkBindingsRow, error)
+	ScenarioManagedWorkInventoryValid(ctx context.Context, db DBTX, arg ScenarioManagedWorkInventoryValidParams) (pgtype.Bool, error)
+	ScenarioManagedWorkJobs(ctx context.Context, db DBTX, arg ScenarioManagedWorkJobsParams) ([]ScenarioManagedWorkJobsRow, error)
+	ScenarioRecorderAttemptOwner(ctx context.Context, db DBTX, arg ScenarioRecorderAttemptOwnerParams) (bool, error)
+	ScenarioRecorderRequestAvailable(ctx context.Context, db DBTX, arg ScenarioRecorderRequestAvailableParams) (bool, error)
+	ScenarioRecorderRunCounts(ctx context.Context, db DBTX, arg ScenarioRecorderRunCountsParams) (ScenarioRecorderRunCountsRow, error)
+	ScenarioRecorderSession(ctx context.Context, db DBTX, arg ScenarioRecorderSessionParams) (ScenarioRecorderSessionRow, error)
+	ScenarioRecorderSnapshot(ctx context.Context, db DBTX, arg ScenarioRecorderSnapshotParams) (ScenarioRecorderSnapshotRow, error)
+	ScenarioRehearsalNetworkRun(ctx context.Context, db DBTX, appID string) (string, error)
+	ScenarioRehearsalSimulationRun(ctx context.Context, db DBTX, appID string) (string, error)
+	ScenarioResumingCallersByHostIP(ctx context.Context, db DBTX, arg ScenarioResumingCallersByHostIPParams) ([]ScenarioResumingCallersByHostIPRow, error)
+	ScenarioSimulationPolicy(ctx context.Context, db DBTX, arg ScenarioSimulationPolicyParams) (ScenarioSimulationPolicyRow, error)
+	ScenarioSimulationRunAttempts(ctx context.Context, db DBTX, arg ScenarioSimulationRunAttemptsParams) ([]ScenarioSimulationRunAttemptsRow, error)
+	ScenarioSuspendCheckpoint(ctx context.Context, db DBTX, arg ScenarioSuspendCheckpointParams) (ScenarioSuspendCheckpointRow, error)
+	ScenarioSuspendCommandsPending(ctx context.Context, db DBTX, arg ScenarioSuspendCommandsPendingParams) (bool, error)
+	ScenarioSuspendResume(ctx context.Context, db DBTX, id string) (ScenarioSuspendResumeRow, error)
+	ScenarioSuspendResumesForRun(ctx context.Context, db DBTX, arg ScenarioSuspendResumesForRunParams) ([]string, error)
+	ScenarioTestMemberWithPolicy(ctx context.Context, db DBTX, appID string) (ScenarioTestMemberWithPolicyRow, error)
+	ScenarioWebhookCapture(ctx context.Context, db DBTX, arg ScenarioWebhookCaptureParams) (ScenarioWebhookCaptureRow, error)
+	ScenarioWebhookDeliveryBlocked(ctx context.Context, db DBTX, arg ScenarioWebhookDeliveryBlockedParams) (bool, error)
+	ScenarioWorkerCheckpoint(ctx context.Context, db DBTX, arg ScenarioWorkerCheckpointParams) (ScenarioWorkerCheckpointRow, error)
+	ScenarioWorkerDispatchBlocked(ctx context.Context, db DBTX, appID string) (bool, error)
+	ScenarioWorkerFault(ctx context.Context, db DBTX, id string) (ScenarioWorkerFaultRow, error)
+	ScenarioWorkerFaultForApp(ctx context.Context, db DBTX, appID string) (ScenarioWorkerFaultForAppRow, error)
+	ScenarioWorkerFaultsForRun(ctx context.Context, db DBTX, arg ScenarioWorkerFaultsForRunParams) ([]ScenarioWorkerFaultsForRunRow, error)
 	ScheduleWorkflowRunFenced(ctx context.Context, db DBTX, arg ScheduleWorkflowRunFencedParams) (int64, error)
 	ScopedOpenMonitorIncident(ctx context.Context, db DBTX, arg ScopedOpenMonitorIncidentParams) (ScopedOpenMonitorIncidentRow, error)
 	ScopedRouteMonitorServingDeployments(ctx context.Context, db DBTX, arg ScopedRouteMonitorServingDeploymentsParams) ([]ScopedRouteMonitorServingDeploymentsRow, error)
 	SealCloneCheckpointPgConnectionValue(ctx context.Context, db DBTX, arg SealCloneCheckpointPgConnectionValueParams) (ProjectEnvironmentCloneCheckpointPgConnectionValue, error)
 	SealCloneCheckpointPostgresCredential(ctx context.Context, db DBTX, arg SealCloneCheckpointPostgresCredentialParams) (ProjectEnvironmentCloneCheckpointPostgresCredential, error)
+	SealScenarioActionPolicies(ctx context.Context, db DBTX, arg SealScenarioActionPoliciesParams) (int64, error)
 	SelectBaseImageProducer(ctx context.Context, db DBTX, arg SelectBaseImageProducerParams) error
 	SelectBaseImageScan(ctx context.Context, db DBTX, arg SelectBaseImageScanParams) error
 	SelectDeploymentArtifactScan(ctx context.Context, db DBTX, arg SelectDeploymentArtifactScanParams) error
@@ -4622,6 +4690,7 @@ type Querier interface {
 	SetProjectEnvironmentCloneDeploymentArtifact(ctx context.Context, db DBTX, arg SetProjectEnvironmentCloneDeploymentArtifactParams) error
 	SetRetainedServiceRolloutSiblingTraffic(ctx context.Context, db DBTX, arg SetRetainedServiceRolloutSiblingTrafficParams) (int64, error)
 	SetRoutePriorities(ctx context.Context, db DBTX, arg SetRoutePrioritiesParams) (SetRoutePrioritiesRow, error)
+	SetScenarioRecorderStatus(ctx context.Context, db DBTX, arg SetScenarioRecorderStatusParams) error
 	SetServiceCapacityProtection(ctx context.Context, db DBTX, enabled bool) ([]byte, error)
 	SetServiceWakeAhead(ctx context.Context, db DBTX, arg SetServiceWakeAheadParams) (SetServiceWakeAheadRow, error)
 	SetUDPListenerEnabled(ctx context.Context, db DBTX, arg SetUDPListenerEnabledParams) (AppUdpListener, error)
@@ -4660,6 +4729,7 @@ type Querier interface {
 	StartMigrationAdmission(ctx context.Context, db DBTX, id pgtype.UUID) (int64, error)
 	StartOperatorPark(ctx context.Context, db DBTX, arg StartOperatorParkParams) (OperatorParkExecution, error)
 	StartOperatorRestartDestroy(ctx context.Context, db DBTX, arg StartOperatorRestartDestroyParams) (OperatorRestartExecution, error)
+	StartScenarioRecorder(ctx context.Context, db DBTX, arg StartScenarioRecorderParams) error
 	StopEnvironmentQualificationInstance(ctx context.Context, db DBTX, instanceID pgtype.UUID) (Instance, error)
 	StopManagedPostgresDrainInstance(ctx context.Context, db DBTX, arg StopManagedPostgresDrainInstanceParams) (int64, error)
 	StopOperatorRestartInstance(ctx context.Context, db DBTX, arg StopOperatorRestartInstanceParams) (int64, error)
@@ -4732,6 +4802,8 @@ type Querier interface {
 	// is by PK; the join is O(matches) on the PK.
 	TrafficAnomalyAggregateByNode(ctx context.Context, db DBTX, arg TrafficAnomalyAggregateByNodeParams) ([]TrafficAnomalyAggregateByNodeRow, error)
 	TransitionImagePreparation(ctx context.Context, db DBTX, arg TransitionImagePreparationParams) (int64, error)
+	TransitionScenarioColdPreparation(ctx context.Context, db DBTX, arg TransitionScenarioColdPreparationParams) (int64, error)
+	TransitionScenarioSuspendResume(ctx context.Context, db DBTX, arg TransitionScenarioSuspendResumeParams) (int64, error)
 	// ADR-118 / commit 6 of the issue #757 mega-PR: filter_criteria
 	// is projected so pgstore.TriggerByID returns the same shape as
 	// ListEnabledTriggers (sqlc generates identical column sets as

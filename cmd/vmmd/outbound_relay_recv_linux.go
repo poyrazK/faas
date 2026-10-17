@@ -52,7 +52,24 @@ func StartOutboundRelayReceiver(ctx context.Context, log *slog.Logger, mgr *fcvm
 func (r *OutboundRelayReceiver) Close() {}
 
 func (r *OutboundRelayReceiver) handleGuestStream(instance string, guest net.Conn) (string, error) {
-	if r.signer == nil || r.dial == nil || r.mgr == nil {
+	if r.mgr == nil {
+		return "", nil
+	}
+	app, account, run, err := r.mgr.InstanceRehearsalRelayIdentity(r.ctx, instance)
+	if err != nil {
+		if session, sessionErr := r.mgr.InstanceRehearsalRecorder(instance); sessionErr == nil {
+			session.Fail()
+		}
+		return "protocol", err
+	}
+	if run != "" {
+		session, err := r.mgr.InstanceRehearsalRecorder(instance)
+		if err != nil {
+			return "protocol", err
+		}
+		return "", r.serveRehearsalRelay(session, instance, app, account, run, guest)
+	}
+	if r.signer == nil || r.dial == nil {
 		return "", nil
 	}
 	preamble, err := r.relayPreamble(instance)
@@ -77,6 +94,21 @@ func (r *OutboundRelayReceiver) handleGuestStream(instance string, guest net.Con
 // (ADR-990) or as an app (ADR-989). A Run without grants, or any other
 // instance, gets no relay.
 func (r *OutboundRelayReceiver) relayPreamble(instance string) (relaywire.Preamble, error) {
+	app, account, run, simErr := r.mgr.InstanceRehearsalRelayIdentity(r.ctx, instance)
+	if simErr != nil {
+		return relaywire.Preamble{}, simErr
+	}
+	if run != "" {
+		token, err := r.signer.MintRehearsalRelay(r.now(), account, app, instance, run)
+		if err != nil {
+			return relaywire.Preamble{}, err
+		}
+		return relaywire.Preamble{Assertion: token.BearerValue()}, nil
+	}
+	appID, accountID, err := r.mgr.InstanceExternalActionIdentity(r.ctx, instance)
+	if err != nil {
+		return relaywire.Preamble{}, err
+	}
 	if accountID, executionID, leaseToken, integrations, err := r.mgr.ExecutionRelayIdentity(instance); err == nil {
 		token, mintErr := r.signer.MintExecution(r.now(), accountID, executionID, leaseToken, workloadidentity.OutboundRelayAudience)
 		if mintErr != nil {
@@ -84,8 +116,7 @@ func (r *OutboundRelayReceiver) relayPreamble(instance string) (relaywire.Preamb
 		}
 		return relaywire.Preamble{Assertion: token.BearerValue(), ExecutionIntegrations: integrations}, nil
 	}
-	appID, accountID, err := r.mgr.InstanceIdentity(instance)
-	if err != nil || appID == "" || accountID == "" {
+	if appID == "" || accountID == "" {
 		return relaywire.Preamble{}, fmt.Errorf("outbound relay: instance identity unavailable")
 	}
 	token, err := r.signer.Mint(r.now(), accountID, appID, instance, workloadidentity.OutboundRelayAudience)
