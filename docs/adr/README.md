@@ -1236,6 +1236,22 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 
 - [ADR-1331: Retained GitOps workload retirement and reviewed recovery](1331-gitops-workload-retirement.md)
 
+- [ADR-1522: Recoverable operator restart execution](1522-recoverable-operator-restart-execution.md)
+- [ADR-1523: Durable operator cold-boot recovery](1523-durable-operator-cold-boot-recovery.md)
+- [ADR-1524: Durable operator recovery submissions](1524-durable-operator-recovery-submissions.md)
+
+- [ADR-1525: Recoverable operator park execution](1525-recoverable-operator-park-execution.md) — generation-bound capture/stop, durable cleanup receipts and atomic verified completion; native qualification pending.
+
+- [ADR-1526: Atomic operator node maintenance](1526-atomic-operator-node-maintenance.md) — claim-fenced lifecycle transitions, immutable outcomes and transactional audit handoff.
+
+- [ADR-1527: Generation-fenced node lifecycle completion](1527-generation-fenced-node-completion.md) — captured maintenance cycles, atomic work checks, immutable receipts and completion audit handoff.
+
+- [ADR-1528: Node admission generation fencing](1528-node-admission-generation-fencing.md) — transactional lifecycle/generation checks, fresh placement retries and migration destination validation.
+
+- [ADR-1529: Durable inbound migration reservations](1529-durable-inbound-migration-reservations.md) — persistent destination capacity, one adoption dispatch, original-generation cleanup and atomic ownership conversion.
+
+- [ADR-1530: Durable migration source retirement](1530-durable-migration-source-retirement.md) — original physical source receipts, atomic retirement accounting and maintenance fencing after ownership moves.
+
 - [ADR 1461: App-scoped issue teams and explicit CODEOWNERS import](1461-issue-teams-and-codeowners.md)
 
 - [ADR 1462: Slack alerts through verified Issues webhook receivers](1462-issue-slack-webhook-bridge.md)

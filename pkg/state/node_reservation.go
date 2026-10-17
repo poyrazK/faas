@@ -39,10 +39,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 // ErrNodeCapacity reports that admitting an instance would push a compute
@@ -141,7 +143,7 @@ func (s *PgStore) insertInstanceWithReservationsOnce(
 	ctx context.Context, nodeID, newState string, ramMB int,
 	reserve func(pgx.Tx) error, insert func(instanceInserter) (Instance, error),
 ) (Instance, error) {
-	if !nodeUsageCounts(State(newState)) && reserve == nil {
+	if !IsLive(strings.ToLower(newState)) && reserve == nil {
 		return insert(s.pool)
 	}
 
@@ -150,6 +152,9 @@ func (s *PgStore) insertInstanceWithReservationsOnce(
 		return Instance{}, fmt.Errorf("state: node reservation: begin (node=%s): %w", nodeID, err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	if err := checkNodeAdmissionDB(ctx, tx, nodeID); err != nil {
+		return Instance{}, err
+	}
 
 	if nodeUsageCounts(State(newState)) {
 		// Taken before the sum so a peer admitting to the same node blocks here
@@ -183,6 +188,11 @@ func (s *PgStore) insertInstanceWithReservationsOnce(
 		case err != nil:
 			return Instance{}, fmt.Errorf("state: node reservation: read headroom (node=%s): %w", nodeID, err)
 		default:
+			residentExtra, err := sqlc.New().MigrationAdmissionResidentRAM(ctx, tx, mustPgUUID(nodeID))
+			if err != nil {
+				return Instance{}, mapErr(err)
+			}
+			usedMB += residentExtra
 			admitMB := int64(ramMB) + int64(api.PerVMOverheadMB)
 			if ceilingMB > 0 && usedMB+admitMB > ceilingMB {
 				return Instance{}, fmt.Errorf(
@@ -232,7 +242,12 @@ func (m *MemStore) checkNodeReservationLocked(nodeID, newState string, ramMB int
 			continue
 		}
 		if nodeUsageCounts(State(ins.State)) {
-			usedMB += int64(ins.RAMMB + api.PerVMOverheadMB)
+			usedMB += m.migrationResidentRAMLocked(ins)
+		}
+	}
+	for _, r := range m.migrationSources {
+		if r.SourceNodeID == nodeID {
+			usedMB += m.migrationSourceCostLocked(r, true).RAM
 		}
 	}
 	admitMB := int64(ramMB) + int64(api.PerVMOverheadMB)
@@ -268,11 +283,18 @@ func (m *MemStore) checkNodeReservationLocked(nodeID, newState string, ramMB int
 //
 // Caller must already hold tx; the lock releases with it.
 func reserveNodeForMigration(ctx context.Context, tx pgx.Tx, instanceID, toNodeID string) error {
+	if err := checkNodeAdmissionDB(ctx, tx, toNodeID); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(ctx,
 		`select pg_advisory_xact_lock($1, hashtext($2))`,
 		nodeReservationLockClass, toNodeID,
 	); err != nil {
 		return fmt.Errorf("state: migration reservation: lock node %s: %w", toNodeID, err)
+	}
+
+	if err := lockMigrationAdmissionCommit(ctx, tx, instanceID, toNodeID); err != nil {
+		return err
 	}
 
 	var ceilingMB, usedMB, ramMB int64
@@ -301,6 +323,11 @@ func reserveNodeForMigration(ctx context.Context, tx pgx.Tx, instanceID, toNodeI
 		return nil
 	}
 	admitMB := ramMB + int64(api.PerVMOverheadMB)
+	residentExtra, err := sqlc.New().MigrationAdmissionResidentRAM(ctx, tx, mustPgUUID(toNodeID))
+	if err != nil {
+		return mapErr(err)
+	}
+	usedMB += residentExtra
 	if usedMB+admitMB > ceilingMB {
 		return fmt.Errorf(
 			"state: %w: migration target node=%s used_mb=%d admit_mb=%d ceiling_mb=%d",

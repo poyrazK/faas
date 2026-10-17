@@ -7,6 +7,153 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Durable migration source retirement — 2026-10-17
+
+[ADR-1530](adr/1530-durable-migration-source-retirement.md) binds production
+sources to their original native generation before capture. Ownership movement
+atomically records pending source retirement. Source RAM/CPU/vCPU remains charged
+until physical cleanup is proven, and source records/leases block maintenance,
+retirement and deletion. Retained receipts fence delayed capture, late resume,
+and instance-name reuse across daemon replacement.
+
+Shared memory/PostgreSQL contracts, ordinary and protected capacity, atomic
+ownership/retirement, source drain races, direct-writer guards and deferred/
+suppressed-write failures pass. Full scheduler/RPC regressions, portable native
+fixtures, targeted races, SQL generation, schema restore/down/up parity and
+scoped lint are verified. Failed preparation cannot erase uncertain binding
+commits or pin an unstarted lease; parked rollback never resumes an unaccounted VM.
+
+Dedicated x86_64 KVM migration/process-death and leak qualification remains
+pending: this environment has no `/dev/kvm`, and leakcheck cannot inspect its
+kernel loop devices. The broader portable VM suite excludes the same 21 existing
+filesystem/source-mode/readiness failure families documented under ADR-1529.
+Nothing deployed. See the [source retirement guide](ops/migration-source-retirement.md).
+
+## Durable incoming migration reservations — 2026-10-17
+
+[ADR-1529](adr/1529-durable-inbound-migration-reservations.md) persists destination
+generation, resource bounds, both wakes and source-lease authority before adoption.
+Pending reservations consume capacity and block drain completion/retirement.
+One dispatch grant, retained response/cleanup receipts and an fsynced native
+generation binding fence delayed creation and late ownership commit. Source resume,
+lease deletion/replacement and the migration watchdog retain unresolved attempts.
+Ownership conversion preserves admitted resident resource floors atomically.
+
+Shared memory/PostgreSQL phases, replay, RAM/CPU/vCPU contention, source fencing,
+drain races, commit/cleanup races (including direct writers), suppressed writes and
+deferred commit failures pass. Full scheduler and vmmd RPC regressions, manager
+tests, targeted memory/scheduler/manager/RPC races, SQLC/protobuf regeneration,
+restored-schema parity, scoped production/test lint and schedd/vmmd link checks pass.
+
+The broader VM suite has 21 existing failure families involving filesystem,
+source-mode and readiness expectations; all reproduce with the incoming journal
+hooks removed. The portable VM suite excluding those failures passes. Dedicated
+x86_64 KVM migration/process-death and leak qualification remains pending; this
+environment has no `/dev/kvm`. Nothing deployed. Upgrade dispatchers/receivers
+together, preserve journals and inspect historical handoffs; see the
+[migration recovery guide](ops/inbound-migration-reservations.md), including
+conservative process-ledger recovery after a failed handoff.
+
+## Node admission generation fencing — 2026-10-17
+
+[ADR-1528](adr/1528-node-admission-generation-fencing.md) carries placement's
+selected lifecycle generation into instance and migration ownership transactions.
+New residency requires an admitting node at that generation. A database guard
+also protects direct writers, while existing residents can finish publication and
+cleanup. Definite stale placements trigger bounded fresh selection; failed
+attempts release restore pressure and job leases/ledger reservations. Migration
+uses its existing commit resolver and adopted-VM cleanup after a refusal.
+
+Memory/PostgreSQL admission, lifecycle-cycle, job/migration rollback, lock-order
+and both admission/drain race orderings pass. The full scheduler suite, targeted
+memory/scheduler/event/statetest race checks, scoped production/test lint, SQLC
+diff and restored-schema parity pass; schedd links. Nothing deployed. Coordinate
+the dispatcher upgrade and inspect historical closed-node inventory;
+see the [admission rollout guide](ops/node-admission-fencing.md). Native migration
+and evacuation qualification remains a separate fleet acceptance gate.
+
+## Generation-fenced node completion — 2026-10-17
+
+[ADR-1527](adr/1527-generation-fenced-node-completion.md) binds recovery-controller
+completion to the lifecycle generation captured before its sweep. The final work
+check, lifecycle transition, immutable cycle receipt and audit handoff share one
+transaction. Delayed workers cannot complete a later cycle with the same lifecycle;
+retries preserve the original result after later cycles, node deletion and outbox
+retention. Warm and frozen resident rows keep drains pending.
+
+Targeted memory/PostgreSQL generation, precondition, replay, concurrency and fault
+injection suites pass, including suppressed writes, deferred commit failure and
+capacity lock ordering. Scheduler/heartbeat/operator recovery and event/statetest
+regressions, memory-store and runner race detection, scoped production/test lint,
+SQLC compile/diff and restored-schema parity pass. Nothing deployed. Stop old
+recovery controllers before migration; see the
+[node completion guide](ops/node-lifecycle-completion.md). Native migration and
+evacuation qualification remains a separate fleet acceptance gate.
+
+## Atomic operator node maintenance — 2026-10-17
+
+[ADR-1526](adr/1526-atomic-operator-node-maintenance.md) makes node lifecycle
+transition, execution receipt, intent result and outcome audit handoff atomic.
+Claims fence obsolete workers and terminal replay preserves original outcomes
+after later maintenance cycles and outbox pruning. RecoveryRunner retains
+migration/evacuation ownership. Coordinated upgrade quarantines ambiguous legacy
+node actions; receipts and unresolved evidence block downgrade.
+
+Memory/PostgreSQL recovery, concurrency and fault injection, scheduler integration
+and recovery regressions, memory race detection, scoped production/test lint,
+SQLC and restored-schema parity pass. Nothing deployed. Stop old schedd writers
+before migration and reconcile quarantined legacy requests before another action;
+see the [node maintenance guide](ops/operator-node-maintenance.md).
+
+## Operator recovery submission receipts — 2026-10-17
+
+[ADR-1524](adr/1524-durable-operator-recovery-submissions.md) atomically accepts
+restart, park and cold-boot intents with their original 202 response and request
+audit handoff. Actor-scoped keys have no receipt TTL; replays precede mutable
+target checks, changed parameters return 409, and every replay runs current
+operator authentication. gregalectl exposes reusable --request-key and an
+instances wait --intent-id command that only polls.
+
+Targeted memory/PostgreSQL concurrency and fault-injection, HTTP authentication
+and replay, CLI and memory race tests pass. SQLC/schema/spec validation, scoped
+lint, SDK generation/request smoke checks, Node SDK build and API/CLI link
+builds pass. No deployment has been performed. Apply the migration and drain
+old API writers before rollout; uncertain pre-upgrade requests need
+reconciliation. See the [submission upgrade guide](ops/operator-recovery-submissions.md).
+This change adds no VM lifecycle behavior; native qualification of the earlier
+restart/cold-boot execution changes remains pending below.
+
+## Operator cold-boot recovery — 2026-10-17
+
+[ADR-1523](adr/1523-durable-operator-cold-boot-recovery.md) makes cold-boot
+invalidation, the deployment recovery generation, intent completion and audit
+handoff one transaction. Boot lineage fences delayed captures, and warm/frozen
+promotion cannot bypass recovery. Original results survive worker replacement,
+lost acknowledgements and outbox pruning. Memory/PostgreSQL recovery and failure
+injection, scheduler/publisher/RPC and HTTP regressions, memory race checks,
+SQLC/OpenAPI/schema validation, scoped lint and daemon/CLI builds pass.
+Native KVM lifecycle and leak qualification remains pending; no deployment has
+been performed. Migration and coordinated schedd/imaged rollout are required:
+[cold-boot recovery guide](ops/operator-cold-boot-recovery.md).
+
+## Operator restart execution recovery — 2026-10-17
+
+[ADR-1522](adr/1522-recoverable-operator-restart-execution.md) adds an immutable
+restart plan, per-claim ownership, a generation-bound vmmd teardown protocol and
+an independent durable acknowledgement. Confirmed teardown, STOPPED, operator
+completion and its audit handoff commit together; interrupted execution without
+proof is exposed as `outcome_unknown`. Late acknowledgements allow database-only
+reconciliation against the original target. Legacy unary restart propagates
+terminal-state write errors. See the [recovery and rollout guide](ops/operator-restart-recovery.md).
+
+Targeted memory/PostgreSQL, scheduler/manager/RPC, API/CLI and memory race suites
+pass. SQL/protobuf regeneration, restored-schema parity and changed-code lint
+pass; schedd, vmmd and gregalectl link successfully. State tests and their lint
+run as file suites to avoid unrelated state-test compiler memory pressure.
+The new metal test compiles and skips without staged VM images. Native
+`test-metal` and `leakcheck` qualification remain pending: this environment has
+neither `/dev/kvm` nor the acceptance images. Nothing deployed.
+
 ## Read-only all-binding verification preview — 2026-10-16
 
 `gregale bindings verify APP --all --dry-run` shares preparation and selection
@@ -2122,3 +2269,18 @@ that unattributed gap. Open evidence: a `make test-metal` +
 `make leakcheck` run on a native KVM host, then a re-run of
 `scripts/ops/wake_performance_gate.py` to record the new
 `stage_pre_boot_files_ms` distribution against the rc.98 baseline.
+
+### Recoverable operator force-park (ADR-1525)
+
+Force-park now has an immutable VM-generation execution journal, fenced claims,
+verified capture/cleanup receipts and atomic terminal state, intent, audit and
+snapshot publication handoff. Fresh traffic cancels before execution; a proven
+stop requiring cold boot is distinct from a captured park and an uncertain
+outcome. Reclaim never repeats a started VM effect. See
+[operator park recovery](ops/operator-park-recovery.md) for coordinated rollout.
+Targeted portable memory/PostgreSQL, scheduler, manager, RPC, API/CLI and race
+checks pass, as do differential lint, SDK validation, OpenAPI parity and schema
+parity. Vmmd and the metal tests compile; the new metal tests skip without
+staged VM images. Native lifecycle qualification remains pending: this workspace
+has no `/dev/kvm`, and leak inspection fails because `/dev/loop0`–`/dev/loop7`
+are unavailable. Migration `20261017120000001` has not been deployed.
