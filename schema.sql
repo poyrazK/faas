@@ -3146,7 +3146,7 @@ CREATE TABLE public.deployments (
     CONSTRAINT deployments_failed_traffic_fence_chk CHECK (((status <> 'failed'::text) OR ((traffic_percent = 0) AND (rollout_state = 'aborted'::text) AND (rollout_aborted_at IS NOT NULL)))),
     CONSTRAINT deployments_github_source_ref_pair_chk CHECK ((((github_source_ref IS NULL) AND (github_installation_id IS NULL)) OR ((github_source_ref IS NOT NULL) AND (btrim(github_source_ref) <> ''::text) AND (github_installation_id IS NOT NULL) AND (github_installation_id > 0)))),
     CONSTRAINT deployments_kind_check CHECK ((kind = ANY (ARRAY['image'::text, 'tarball'::text, 'dockerfile'::text, 'github'::text, 'preview'::text]))),
-    CONSTRAINT deployments_last_auto_rollback_reason_check CHECK (((last_auto_rollback_reason IS NULL) OR (last_auto_rollback_reason = ANY (ARRAY['threshold_exceeded'::text, 'first_window_expired'::text])))),
+    CONSTRAINT deployments_last_auto_rollback_reason_check CHECK (((last_auto_rollback_reason IS NULL) OR (last_auto_rollback_reason = ANY (ARRAY['threshold_exceeded'::text, 'first_window_expired'::text])) OR (last_auto_rollback_reason = 'post_release_regression'::text))),
     CONSTRAINT deployments_liveness_restart_count_nonneg_chk CHECK ((liveness_restart_count >= 0)),
     CONSTRAINT deployments_main_depends_on_shape_chk CHECK (((jsonb_typeof(override_main_depends_on) = 'array'::text) AND (jsonb_array_length(override_main_depends_on) <= 6))),
     CONSTRAINT deployments_min_instances_chk CHECK (((min_instances >= 0) AND (min_instances <= 100))),
@@ -24914,7 +24914,7 @@ CREATE TABLE public.deployment_rollbacks (
     CONSTRAINT deployment_rollbacks_recovery_ms_check CHECK (((recovery_ms IS NULL) OR (recovery_ms >= 0))),
     CONSTRAINT deployment_rollbacks_scope_check CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'::text)),
     CONSTRAINT deployment_rollbacks_status_check CHECK ((status = ANY (ARRAY['preparing'::text, 'complete'::text, 'failed'::text]))),
-    CONSTRAINT deployment_rollbacks_trigger_check CHECK ((trigger = ANY (ARRAY['manual'::text, 'auto_5xx'::text, 'alert'::text])))
+    CONSTRAINT deployment_rollbacks_trigger_check CHECK (((trigger = ANY (ARRAY['manual'::text, 'auto_5xx'::text, 'alert'::text])) OR (trigger = 'post_release'::text)))
 );
 
 
