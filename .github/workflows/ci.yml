@@ -2294,7 +2294,9 @@ jobs:
   sdk-python:
     name: sdk-python (gen-check + smoke + unit)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # Fixture acceptance and three generations consume most of ten minutes.
+    # Leave time for the complete smoke and unit suite on hosted runners.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
