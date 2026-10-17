@@ -14,6 +14,7 @@ the caller supplies an occurrence URI.
 | `dep_install_failed` | Dependencies could not be installed | Pin the lockfile and inspect `gregale logs APP`. |
 | `app_startup_timeout`, `app_runtime_oom` | Readiness or memory budget was exceeded | Run `gregale doctor` and select a compatible profile. |
 | `app_startup_crash` | The app process exited before it became ready (the detail carries its last output lines) | Fix the error in that output; `gregale logs APP` has the full startup log. |
+| `execution_mode_conflict` | The app's startup behavior contradicts its `execution_mode` (a worker bound a port or exited, a job served) | Set `execution_mode` to match the app, or change its start command. |
 | `validation_failed` | A request or manifest is malformed | Correct the named field; no write is committed. |
 | `request_budget_exceeded` (504) | The request ran past its wall-clock budget (30 s for apps by default) before the app sent response headers; `limit` and `observed` are in milliseconds | Return headers sooner (stream, or accept and process asynchronously with `gregale invoke --async`), or lower the work per request. A `kind=budget` edge rule can set a route budget up to the plan maximum. |
 | `capacity_unavailable` | The platform cannot admit work now | Retry with backoff; the response includes `Retry-After` where applicable. |

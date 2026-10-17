@@ -148,7 +148,7 @@ func TestMemStoreCoveragePaddleAndInvoices(t *testing.T) {
 	if _, err := m.ListInvoicesForAccount(ctx, account.ID, nil, time.Now(), 10); err != nil {
 		t.Fatal(err)
 	}
-	invoice := Invoice{ID: uuid.NewString(), AccountID: account.ID, PeriodStart: month, PeriodEnd: month.AddDate(0, 0, 15), TotalCents: 1234, Currency: "EUR", CreatedAt: time.Now()}
+	invoice := Invoice{ID: uuid.NewString(), AccountID: account.ID, PeriodStart: month, PeriodEnd: month.AddDate(0, 0, 15), TotalCents: 1234, Currency: "USD", CreatedAt: time.Now()}
 	m.SeedInvoiceForTest(invoice)
 	got, err := m.ListInvoicesForAccount(ctx, account.ID, &month, time.Time{}, 10)
 	if err != nil || len(got) != 1 || got[0].ID != invoice.ID {

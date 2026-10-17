@@ -18423,7 +18423,7 @@ func (m *MemStore) UpsertInvoice(_ context.Context, inv Invoice) error {
 		inv.PeriodEnd = inv.PeriodStart
 	}
 	if inv.Currency == "" {
-		inv.Currency = "eur"
+		inv.Currency = api.BillingCurrencyLower
 	}
 	if inv.Status == "" {
 		inv.Status = "open"
@@ -18665,7 +18665,7 @@ func (m *MemStore) SeedInvoiceForTest(inv Invoice) {
 		inv.ID = "inv-" + inv.ProviderInvoiceID
 	}
 	if inv.Currency == "" {
-		inv.Currency = "eur"
+		inv.Currency = api.BillingCurrencyLower
 	}
 	m.invoices[inv.ID] = cloneInvoice(inv)
 }

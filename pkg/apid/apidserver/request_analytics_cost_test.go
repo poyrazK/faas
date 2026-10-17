@@ -77,7 +77,7 @@ func TestAllocateRequestAnalyticsRouteCostByTime_FallsBackWithoutTiming(t *testi
 	}
 }
 
-func TestMillicentsAsEUR(t *testing.T) {
+func TestMillicentsAsCurrency(t *testing.T) {
 	for _, tc := range []struct {
 		value int64
 		want  string
@@ -85,8 +85,8 @@ func TestMillicentsAsEUR(t *testing.T) {
 		{value: 0, want: "0.00000"},
 		{value: 1_234_567, want: "12.34567"},
 	} {
-		if got := apidserver.MillicentsAsEUR(tc.value); got != tc.want {
-			t.Errorf("millicentsAsEUR(%d) = %q, want %q", tc.value, got, tc.want)
+		if got := apidserver.MillicentsAsCurrency(tc.value); got != tc.want {
+			t.Errorf("millicentsAsCurrency(%d) = %q, want %q", tc.value, got, tc.want)
 		}
 	}
 }

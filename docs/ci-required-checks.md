@@ -68,8 +68,16 @@ contexts (`lint + build`, `unit tests (…)`, `e2e (shard N — …)`,
 the ruleset. `boot-contract (production config)` stays: the light tier
 reports it under the same name.
 
-`CodeQL` and the path-filtered acceptance workflows (`Data API acceptance`,
-`MCP contract`, `Customer platform starter`) run on pull requests but do not
+`CodeQL` no longer runs on pull requests: it scans every push to `main`, a
+weekly schedule, and any branch on demand (`workflow_dispatch`). The
+acceptance workflows (`Data API acceptance`, `MCP contract`, `Customer
+platform starter`, `durable-entity-developer-workflow`, `S3 multipart
+integrity`) run on a pull request only when their own code changes, never
+for shared paths such as `pkg/api`, `pkg/state`, `pkg/apid`, `migrations` or
+`go.mod`; `ci.yml` calls all five, so they run nightly and gate every
+release. `images.yml` builds `builder-base` for linux/amd64 only on pull
+requests (main pushes build and scan both architectures) and decides from
+the pull request's merge base whether an image input changed. None of these
 block a merge.
 
 The metal gates (`e2e-native`, `builder-native`) are deliberately excluded:
@@ -81,8 +89,7 @@ The pull request that introduces `ci-light.yml` cannot report the old
 `ci.yml` contexts, so the switch is one coordinated ruleset edit:
 
 1. replace the old `ci.yml` contexts in ruleset `19061133` with the five
-   `light: …` contexts above (keep `boot-contract (production config)` and
-   `runtime-contract-gate`);
+   `light: …` contexts above (keep `boot-contract (production config)`);
 2. merge the pull request, whose own run reports exactly those contexts.
 
 ## Renaming a required job
