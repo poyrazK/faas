@@ -39,6 +39,12 @@ backlog, and uncertainty takes precedence over cancellation. No alert starts a
 pass or authorizes job mutation. Node's unsupported-generation code requires a
 compatible recovery host, preserving the retained row's full lineage.
 
+For hosts using Go's application-owned callback store, the
+[Go pass](../event-acknowledgment-go-recovery-pass.md) provides the same finite
+admission model with `database/sql`, joined context cancellation and scalar
+progress. Preserve committed unconfirmed settlements and check unknown-commit
+sentinels before cancellation or ordinary failures.
+
 | Operation | Node | Python |
 | --- | --- | --- |
 | Read receipt/claim metadata | [`inspectEventConsumerProcessing`](../event-consumer-processing-inspection.md) | [`ainspect_event_consumer_processing`](../event-consumer-processing-inspection.md#python-inspection) |

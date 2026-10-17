@@ -1,5 +1,7 @@
 # Architecture Decision Records
 
+- [Bounded Go acknowledgment intent recovery passes](20261017181200-bounded-go-intent-recovery.md)
+
 - [Bounded Node acknowledgment intent recovery passes](20261017171806-bounded-node-intent-recovery.md)
 
 - [Bounded Python acknowledgment intent recovery passes](20261017170311-bounded-python-intent-recovery.md)

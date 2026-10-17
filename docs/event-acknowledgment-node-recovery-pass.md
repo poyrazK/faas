@@ -153,6 +153,9 @@ demonstrates explicit scheduling and progress handling. Python provides the
 [same bounded-pass model](event-acknowledgment-python-recovery-pass.md), using its
 own connection-scope and native cancellation contracts.
 
+Go also provides a [bounded recovery pass](event-acknowledgment-go-recovery-pass.md)
+using `database/sql`, context cancellation and progress returned by value.
+
 Local validation covers generation, TypeScript build/declarations, package
 inclusion, example syntax, static admission/result/source comparisons and
 schema/ADR/documentation checks. No tests/assertions are added or changed and no

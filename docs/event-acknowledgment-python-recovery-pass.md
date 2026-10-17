@@ -9,6 +9,8 @@ background service, schema or route is installed.
 
 Node provides the [same bounded-pass model](event-acknowledgment-node-recovery-pass.md)
 with its existing pool ownership, generation limit and AbortSignal contracts.
+Go provides the [same finite-pass model](event-acknowledgment-go-recovery-pass.md)
+using its existing `database/sql` recovery primitive and context cancellation.
 
 ```python
 from faas_sdk import (

@@ -1419,6 +1419,13 @@ worker uses `RenewEventAcknowledgment` and `CompleteEventAcknowledgment` with th
 secret delivery token and an appropriately scoped API credential. Inspect state
 with `GetEventAcknowledgment`. See [the protocol and rollout requirements](../../docs/event-deferred-acknowledgments.md).
 
+For saved application-owned callback intents,
+`RecoverEventAcknowledgmentIntents` runs a finite pass with bounded attempts and
+concurrency, joined context cancellation and scalar progress returned alongside
+errors. It preserves committed settlements even when their callbacks return
+uncertainty. See the [Go recovery pass contract](../../docs/event-acknowledgment-go-recovery-pass.md)
+and [buildable host example](examples/event-acknowledgment-recovery/README.md).
+
 For application event publication, `SaveEventOutbox` stages a producer-key request
 in the business transaction; `RecoverNextEventOutbox` publishes retained due work
 with leased recovery. Install the application-owned `EventOutboxSchema` explicitly.

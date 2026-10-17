@@ -89,6 +89,10 @@ back; business callbacks must contain only transactional database writes.
 
 ## Recover one callback
 
+For a finite concurrent pass with aggregate progress and joined shutdown, use
+[`RecoverEventAcknowledgmentIntents`](event-acknowledgment-go-recovery-pass.md).
+The single-iteration API below remains available for host-owned scheduling.
+
 Run a bounded iteration from an application-owned durable recovery host:
 
 ```go
