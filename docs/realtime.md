@@ -215,6 +215,34 @@ An error or non-2xx response retries the whole batch. For realtime triggers the
 group's ordering still holds: messages with the same ordering key never share a
 batch while one of them is unfinished.
 
+The SDKs do the parsing and bookkeeping. A handler that throws for a record
+puts just that record in `batchItemFailures`:
+
+```ts
+import { handleTriggerBatch } from '@gregale/sdk-node/triggers/runtime';
+
+export async function POST(request: Request) {
+  const result = await handleTriggerBatch(await request.json(), async (record) => {
+    await saveOrder(record.data);            // record.bytes / record.text() for non-JSON
+  });
+  return Response.json(result);
+}
+```
+
+```python
+from faas_sdk.trigger_batch import handle_trigger_batch
+
+def handler(request):
+    return handle_trigger_batch(request.body, lambda record: save_order(record.data))
+```
+
+Records run one at a time in delivery order. Pass `concurrency` (Node, or
+`handle_trigger_batch_async` in Python) when records do not depend on each
+other's order. `stopOnFailure` / `stop_on_failure` reports every record after a
+failure for retry without running it, keeping order at the cost of extra
+attempts for those records. A realtime trigger's batch never holds two
+messages with the same ordering key, so `concurrency` is safe there.
+
 ```yaml
 triggers:
   - kind: realtime

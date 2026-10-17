@@ -202,6 +202,7 @@ WRAPPER_MODULES = (
     "object_storage_runtime.py",
     "secret_reload_runtime.py",
     "queue_consumer.py",
+    "trigger_batch.py",
     "operations.py",
     "event_consumer_transactions.py",
     "event_consumer_delivery_context.py",

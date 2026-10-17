@@ -51,5 +51,5 @@ One invocation gets the same per-invocation limit a single record gets today (30
 
 ## Consequences
 
-- A function with `delivery: batch` must accept the batch envelope and report partial failures by item identifier. SDK helpers for the envelope are a follow-up; the shape is plain JSON.
+- A function with `delivery: batch` must accept the batch envelope and report partial failures by item identifier. The Node (`@gregale/sdk-node/triggers/runtime`) and Python (`faas_sdk.trigger_batch`) SDKs parse the envelope, run a handler per record and build `batchItemFailures`; the shape stays plain JSON for other languages.
 - Fewer, longer invocations for busy triggers; per-record retry and dead-letter accounting is unchanged.

@@ -452,6 +452,30 @@ generated services. The canonical mapping:
 Regenerate via `npm run gen` (committed per ADR-013; CI's
 `sdk-gen-node` job is the dirty-diff gate).
 
+## Batched trigger delivery
+
+A trigger with `delivery: batch` sends one request with several records
+(ADR-1321). `handleTriggerBatch` parses the body, runs your handler for each
+record in delivery order and returns the response body; a record whose handler
+throws is retried, the rest are complete:
+
+```ts
+import { handleTriggerBatch, isTriggerBatch } from '@gregale/sdk-node/triggers/runtime';
+
+export async function POST(request: Request) {
+  const result = await handleTriggerBatch(await request.json(), async (record) => {
+    await saveOrder(record.data); // record.isJSON, record.bytes, record.text(), record.metadata
+  });
+  return Response.json(result); // {"batchItemFailures": [...]}
+}
+```
+
+`isTriggerBatch(request.headers)` tells batch and single-record deliveries apart.
+Options: `concurrency` (1-100) for records that do not depend on each other's
+order, `stopOnFailure` to retry every record after a failure in order, and
+`onError` to log each failure. A malformed body throws `TriggerBatchError`;
+let the request fail so the whole batch is retried.
+
 ## Transactional operation handlers
 
 Customer Operations HTTP definitions explicitly enable
