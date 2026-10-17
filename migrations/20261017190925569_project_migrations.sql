@@ -1,6 +1,6 @@
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
-CREATE TABLE project_migrations (
+CREATE TABLE IF NOT EXISTS project_migrations (
  id uuid PRIMARY KEY,
  account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
  project_slug text NOT NULL,
@@ -15,8 +15,8 @@ CREATE TABLE project_migrations (
   AND snapshot->'Report'->>'project' = project_slug
   AND jsonb_array_length(snapshot->'Report'->'services') BETWEEN 1 AND 10, false))
 );
-CREATE INDEX project_migrations_account_idx ON project_migrations(account_id,created_at DESC,id DESC);
-CREATE INDEX project_migrations_project_idx ON project_migrations(account_id,project_slug);
+CREATE INDEX IF NOT EXISTS project_migrations_account_idx ON project_migrations(account_id,created_at DESC,id DESC);
+CREATE INDEX IF NOT EXISTS project_migrations_project_idx ON project_migrations(account_id,project_slug);
 
 -- +goose Down
 DROP TABLE project_migrations;

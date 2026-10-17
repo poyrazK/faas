@@ -1,6 +1,6 @@
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
-CREATE TABLE migration_verifications (
+CREATE TABLE IF NOT EXISTS migration_verifications (
  id uuid PRIMARY KEY,
  account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
  app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
@@ -13,7 +13,7 @@ CREATE TABLE migration_verifications (
   AND snapshot->'Report'->>'phase' IN ('dependencies','startup','park','drain','wake','waking','cold_smoke','cold_dependencies','complete')
   AND snapshot->'Report'->>'id' = id::text, false))
 );
-CREATE INDEX migration_verifications_app_idx ON migration_verifications(account_id,app_id,created_at DESC,id DESC);
+CREATE INDEX IF NOT EXISTS migration_verifications_app_idx ON migration_verifications(account_id,app_id,created_at DESC,id DESC);
 
 -- +goose Down
 DROP TABLE migration_verifications;

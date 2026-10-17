@@ -1,6 +1,6 @@
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
-CREATE TABLE deployment_build_dependency_gates (
+CREATE TABLE IF NOT EXISTS deployment_build_dependency_gates (
  deployment_id uuid PRIMARY KEY REFERENCES deployments(id) ON DELETE CASCADE CHECK (deployment_id <> '00000000-0000-0000-0000-000000000000'),
  progress jsonb NOT NULL CHECK (
   jsonb_typeof(progress)='object'
