@@ -11596,9 +11596,14 @@ type StartDatabaseRequest struct {
 	// standby that took over from a lost primary; this boot promotes it
 	// onto a new timeline as soon as it replays. Never with a primary or a
 	// restore.
-	Promote       bool `protobuf:"varint,13,opt,name=promote,proto3" json:"promote,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Promote bool `protobuf:"varint,13,opt,name=promote,proto3" json:"promote,omitempty"`
+	// An in-place major upgrade (ADR-1027): the volume holds a cluster of
+	// this older major, which the boot upgrades to postgres_major with
+	// pg_upgrade --link. The node needs both majors' bases. Never with a
+	// primary, a promotion or a restore.
+	UpgradeFromMajor int32 `protobuf:"varint,14,opt,name=upgrade_from_major,json=upgradeFromMajor,proto3" json:"upgrade_from_major,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *StartDatabaseRequest) Reset() {
@@ -11720,6 +11725,13 @@ func (x *StartDatabaseRequest) GetPromote() bool {
 		return x.Promote
 	}
 	return false
+}
+
+func (x *StartDatabaseRequest) GetUpgradeFromMajor() int32 {
+	if x != nil {
+		return x.UpgradeFromMajor
+	}
+	return 0
 }
 
 type StartDatabaseResponse struct {
@@ -13376,7 +13388,7 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x0eDatabaseVolume\x12\x1f\n" +
 	"\vdatabase_id\x18\x01 \x01(\tR\n" +
 	"databaseId\x12\x18\n" +
-	"\arunning\x18\x02 \x01(\bR\arunning\"\xc0\x04\n" +
+	"\arunning\x18\x02 \x01(\bR\arunning\"\xee\x04\n" +
 	"\x14StartDatabaseRequest\x12\x1f\n" +
 	"\vdatabase_id\x18\x01 \x01(\tR\n" +
 	"databaseId\x12%\n" +
@@ -13394,7 +13406,8 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	" \x01(\bR\x0frestoreUntilEnd\x12!\n" +
 	"\fprimary_node\x18\v \x01(\tR\vprimaryNode\x12%\n" +
 	"\x0eprimary_target\x18\f \x01(\tR\rprimaryTarget\x12\x18\n" +
-	"\apromote\x18\r \x01(\bR\apromote\"-\n" +
+	"\apromote\x18\r \x01(\bR\apromote\x12,\n" +
+	"\x12upgrade_from_major\x18\x0e \x01(\x05R\x10upgradeFromMajor\"-\n" +
 	"\x15StartDatabaseResponse\x12\x14\n" +
 	"\x05state\x18\x01 \x01(\tR\x05state\"6\n" +
 	"\x13StopDatabaseRequest\x12\x1f\n" +

@@ -2752,6 +2752,11 @@ message StartDatabaseRequest {
   // onto a new timeline as soon as it replays. Never with a primary or a
   // restore.
   bool promote = 13;
+  // An in-place major upgrade (ADR-1027): the volume holds a cluster of
+  // this older major, which the boot upgrades to postgres_major with
+  // pg_upgrade --link. The node needs both majors' bases. Never with a
+  // primary, a promotion or a restore.
+  int32 upgrade_from_major = 14;
 }
 
 message StartDatabaseResponse {

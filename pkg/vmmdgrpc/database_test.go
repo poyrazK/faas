@@ -384,6 +384,28 @@ func TestStartDatabaseRelaysARestore(t *testing.T) {
 	}
 }
 
+// An upgrade boot names its older major; anything else with it is refused.
+func TestStartDatabaseRelaysAnUpgrade(t *testing.T) {
+	rt := &fakeDatabaseRuntime{controlRs: dbguest.Response{State: dbguest.StateStarting}}
+	s := New(vmmStubBase{}, nil, "test", nil).WithDatabases(rt)
+	req := &vmmdpb.StartDatabaseRequest{DatabaseId: testDatabaseID, PostgresMajor: 17, VcpuCount: 1, MemSizeMib: 384, UpgradeFromMajor: 14}
+	if _, err := s.StartDatabase(unixCaller(), req); err != nil || rt.started.UpgradeFrom != 14 || rt.started.Major != 17 {
+		t.Fatalf("StartDatabase = %v; boot %+v", err, rt.started)
+	}
+	for name, bad := range map[string]*vmmdpb.StartDatabaseRequest{
+		"same major": {DatabaseId: testDatabaseID, PostgresMajor: 17, VcpuCount: 1, MemSizeMib: 384, UpgradeFromMajor: 17},
+		"downgrade":  {DatabaseId: testDatabaseID, PostgresMajor: 15, VcpuCount: 1, MemSizeMib: 384, UpgradeFromMajor: 17},
+		"too old":    {DatabaseId: testDatabaseID, PostgresMajor: 17, VcpuCount: 1, MemSizeMib: 384, UpgradeFromMajor: 9},
+		"promotion":  {DatabaseId: testDatabaseID, PostgresMajor: 17, VcpuCount: 1, MemSizeMib: 384, UpgradeFromMajor: 14, Promote: true},
+		"with a primary": {DatabaseId: testDatabaseID, PostgresMajor: 17, VcpuCount: 1, MemSizeMib: 384, UpgradeFromMajor: 14,
+			PrimaryNode: "db-2", PrimaryTarget: "10.42.0.6:9443"},
+	} {
+		if _, err := s.StartDatabase(unixCaller(), bad); status.Code(err) != codes.InvalidArgument {
+			t.Errorf("%s = %v, want InvalidArgument", name, err)
+		}
+	}
+}
+
 func TestDatabaseControlRelaysFlushInstant(t *testing.T) {
 	recovered := time.Date(2026, 10, 13, 9, 29, 0, 0, time.UTC)
 	rt := &fakeDatabaseRuntime{controlRs: dbguest.Response{State: dbguest.StateReady, RecoveredTo: recovered}}

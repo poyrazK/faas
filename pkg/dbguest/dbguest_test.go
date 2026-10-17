@@ -124,3 +124,18 @@ func TestReportableExtensions(t *testing.T) {
 		t.Fatalf("reportable of 40 = %d names", len(got))
 	}
 }
+
+func TestUpgradeFromArg(t *testing.T) {
+	line := "console=ttyS0 " + ModeArg + " " + MajorArgKey + "=17 " + UpgradeFromArg(14)
+	if from, err := UpgradeFrom(line, 17); err != nil || from != 14 {
+		t.Fatalf("upgrade from = %d, %v", from, err)
+	}
+	if from, err := UpgradeFrom("console=ttyS0 "+ModeArg, 17); err != nil || from != 0 {
+		t.Fatalf("no upgrade = %d, %v", from, err)
+	}
+	for _, bad := range []string{UpgradeFromArg(17), UpgradeFromArg(18), UpgradeFromArg(MinMajor - 1), UpgradeFromArgKey + "=x"} {
+		if _, err := UpgradeFrom(bad, 17); err == nil {
+			t.Errorf("accepted %q for major 17", bad)
+		}
+	}
+}

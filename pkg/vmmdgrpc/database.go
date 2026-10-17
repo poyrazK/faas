@@ -323,6 +323,12 @@ func databaseBootRequest(req *vmmdpb.StartDatabaseRequest) (dbvm.BootRequest, er
 		return dbvm.BootRequest{}, status.Error(codes.InvalidArgument, "a promotion boot has no primary and is not a restore")
 	}
 	boot.Promote = req.GetPromote()
+	if from := int(req.GetUpgradeFromMajor()); from != 0 {
+		if from < dbguest.MinMajor || from >= major || req.GetPrimaryNode() != "" || boot.Promote || boot.RestoreSource != "" {
+			return dbvm.BootRequest{}, status.Error(codes.InvalidArgument, "an upgrade goes from an older supported major and is neither a standby, a promotion nor a restore")
+		}
+		boot.UpgradeFrom = from
+	}
 	return boot, nil
 }
 

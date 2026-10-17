@@ -23,6 +23,9 @@ import (
 const (
 	DriveBase   = "base"
 	DriveVolume = "volume"
+	// DriveUpgradeBase is an upgrade boot's old major's base: the third
+	// drive, read-only.
+	DriveUpgradeBase = "upgrade_base"
 )
 
 // Volume sizing bounds. Plan storage limits are enforced separately; these
@@ -62,6 +65,10 @@ type Spec struct {
 	Standby bool
 	// Promote, with Standby, promotes the standby as soon as it replays.
 	Promote bool
+	// UpgradeFrom boots the volume's cluster of that older major for an
+	// in-place upgrade to Major; UpgradeBasePath is that major's base.
+	UpgradeFrom     int
+	UpgradeBasePath string
 }
 
 // Validate rejects a spec that would not boot a database VM.
@@ -85,6 +92,10 @@ func (s Spec) Validate() error {
 		return errors.New("dbvm: a standby is neither a spare nor a restore")
 	case s.Promote && !s.Standby:
 		return errors.New("dbvm: only a standby is promoted at boot")
+	case s.UpgradeFrom != 0 && (s.UpgradeFrom < dbguest.MinMajor || s.UpgradeFrom >= s.Major || s.UpgradeBasePath == ""):
+		return fmt.Errorf("dbvm: an upgrade to %d needs an older major's base, not %d", s.Major, s.UpgradeFrom)
+	case s.UpgradeFrom != 0 && (s.Spare || s.Standby || !s.RestoreTarget.IsZero()):
+		return errors.New("dbvm: an upgrade boot is neither a spare, a standby nor a restore")
 	}
 	return nil
 }
@@ -119,12 +130,17 @@ func BuildConfig(s Spec) (fcvm.VMConfig, error) {
 	if s.Promote {
 		bootArgs += " " + dbguest.PromoteArg
 	}
+	drives := []fcvm.Drive{
+		{DriveID: DriveBase, PathOnHost: s.BasePath, IsRootDevice: true, IsReadOnly: true},
+		{DriveID: DriveVolume, PathOnHost: s.VolumePath, CacheType: fcvm.DriveCacheWriteback, RateLimiter: s.VolumeRateLimiter},
+	}
+	if s.UpgradeFrom != 0 {
+		bootArgs += " " + dbguest.UpgradeFromArg(s.UpgradeFrom)
+		drives = append(drives, fcvm.Drive{DriveID: DriveUpgradeBase, PathOnHost: s.UpgradeBasePath, IsReadOnly: true})
+	}
 	return fcvm.VMConfig{
-		BootSource: fcvm.BootSource{KernelImagePath: s.KernelPath, BootArgs: bootArgs},
-		Drives: []fcvm.Drive{
-			{DriveID: DriveBase, PathOnHost: s.BasePath, IsRootDevice: true, IsReadOnly: true},
-			{DriveID: DriveVolume, PathOnHost: s.VolumePath, CacheType: fcvm.DriveCacheWriteback, RateLimiter: s.VolumeRateLimiter},
-		},
+		BootSource:    fcvm.BootSource{KernelImagePath: s.KernelPath, BootArgs: bootArgs},
+		Drives:        drives,
 		MachineConfig: fcvm.Machine{VcpuCount: s.VcpuCount, MemSizeMib: s.MemSizeMiB},
 		Entropy:       &fcvm.Entropy{},
 		VsockDevice:   &fcvm.VsockDevice{GuestCID: s.GuestCID, UDSSocket: s.VsockUDS},

@@ -75,8 +75,12 @@ type databaseGuest struct {
 	// soon as it replays (a failover while parked).
 	standby       bool
 	promoteOnBoot bool
-	uid           int
-	gid           int
+	// upgradeFrom, when set, boots for an in-place upgrade from that major
+	// (database_upgrade.go); upgradePending is a cluster still to upgrade.
+	upgradeFrom    int
+	upgradePending bool
+	uid            int
+	gid            int
 	// bridgeUID and bridgeGID are the replication bridge's OS user; zero
 	// when the base has none, and then no standby is admitted.
 	bridgeUID int
@@ -108,6 +112,7 @@ type databaseBoot struct {
 	spare           bool
 	standby         bool
 	promote         bool
+	upgradeFrom     int
 }
 
 func runDatabaseGuest(log *slog.Logger, boot databaseBoot) error {
@@ -115,7 +120,7 @@ func runDatabaseGuest(log *slog.Logger, boot databaseBoot) error {
 		log = slog.Default()
 	}
 	g := &databaseGuest{log: log, major: boot.major, archive: boot.archive, restoreTarget: boot.restoreTarget, restoreUntilEnd: boot.restoreUntilEnd,
-		standby: boot.standby, promoteOnBoot: boot.promote, exited: make(chan struct{}), done: make(chan struct{})}
+		standby: boot.standby, promoteOnBoot: boot.promote, upgradeFrom: boot.upgradeFrom, exited: make(chan struct{}), done: make(chan struct{})}
 	if boot.spare {
 		// The volume drive is a placeholder until OpAdopt.
 		if g.prepareRuntime() {
@@ -158,6 +163,8 @@ func runDatabaseGuest(log *slog.Logger, boot databaseBoot) error {
 	case state == dbguest.StateNeedsBootstrap && !g.restoreTarget.IsZero():
 		g.setState(dbguest.StateStarting)
 		go g.restoreAndStart()
+	case state == dbguest.StateStarting && g.upgradePending:
+		go g.upgradeAndStart()
 	case state == dbguest.StateStarting:
 		g.startPostgres()
 	}
@@ -271,8 +278,19 @@ func (g *databaseGuest) decideClusterState() {
 			return
 		}
 	}
+	if g.upgradeFrom != 0 && fileExists(databaseUpgradeMarker) {
+		// pg_upgrade succeeded on an earlier boot; switching clusters
+		// remains (database_upgrade.go).
+		g.upgradePending = true
+		g.setState(dbguest.StateStarting)
+		return
+	}
 	version, err := os.ReadFile(filepath.Join(databasePGData, "PG_VERSION"))
 	if errors.Is(err, os.ErrNotExist) {
+		if g.upgradeFrom != 0 {
+			g.fail(dbguest.ErrCodeUpgradeRefused, "an upgrade boot found no cluster", nil)
+			return
+		}
 		g.setState(dbguest.StateNeedsBootstrap)
 		return
 	}
@@ -282,6 +300,11 @@ func (g *databaseGuest) decideClusterState() {
 		return
 	}
 	if major != g.major {
+		if g.upgradeFrom != 0 && major == g.upgradeFrom {
+			g.upgradePending = true
+			g.setState(dbguest.StateStarting)
+			return
+		}
 		g.fail(dbguest.ErrCodeMajorMismatch, fmt.Sprintf("cluster major %d, binaries %d", major, g.major), nil)
 		return
 	}

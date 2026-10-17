@@ -109,9 +109,18 @@ func boot() error {
 				_ = poweroffDatabase()
 				return fmt.Errorf("database restore mode: %w", targetErr)
 			}
+			upgradeFrom, upgradeErr := dbguest.UpgradeFrom(string(cmdline), major)
+			if upgradeErr != nil {
+				_ = poweroffDatabase()
+				return fmt.Errorf("database upgrade mode: %w", upgradeErr)
+			}
 			boot := databaseBoot{major: major, archive: dbguest.ArchiveEnabled(string(cmdline)), restoreTarget: target,
 				restoreUntilEnd: dbguest.RestoreUntilEnd(string(cmdline)), spare: dbguest.Spare(string(cmdline)), standby: dbguest.Standby(string(cmdline)),
-				promote: dbguest.Promote(string(cmdline))}
+				promote: dbguest.Promote(string(cmdline)), upgradeFrom: upgradeFrom}
+			if upgradeFrom != 0 && (boot.spare || boot.standby || restoring) {
+				_ = poweroffDatabase()
+				return errors.New("database mode: an upgrade boot is neither a spare, a standby nor a restore")
+			}
 			if boot.spare && (restoring || boot.standby) {
 				_ = poweroffDatabase()
 				return errors.New("database mode: a spare boots neither a restore nor a standby")

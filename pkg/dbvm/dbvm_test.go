@@ -334,3 +334,37 @@ func TestBuildConfigPromotionBoot(t *testing.T) {
 		t.Fatalf("promotion boot args %q", args)
 	}
 }
+
+// An upgrade boot carries the old major's base as a third, read-only drive
+// and names that major on the command line.
+func TestBuildConfigUpgradeBoot(t *testing.T) {
+	s := validSpec()
+	s.UpgradeFrom, s.UpgradeBasePath = 14, "/srv/fc/base/postgres-14.ext4"
+	cfg, err := BuildConfig(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if from, err := dbguest.UpgradeFrom(cfg.BootSource.BootArgs, 17); err != nil || from != 14 {
+		t.Fatalf("boot args %q: upgrade from %d, %v", cfg.BootSource.BootArgs, from, err)
+	}
+	if len(cfg.Drives) != 3 || cfg.Drives[2].DriveID != DriveUpgradeBase || !cfg.Drives[2].IsReadOnly || cfg.Drives[2].IsRootDevice ||
+		cfg.Drives[2].PathOnHost != s.UpgradeBasePath {
+		t.Fatalf("drives = %+v", cfg.Drives)
+	}
+	for name, mutate := range map[string]func(*Spec){
+		"same major":   func(s *Spec) { s.UpgradeFrom = 17 },
+		"downgrade":    func(s *Spec) { s.UpgradeFrom = 18 },
+		"no old base":  func(s *Spec) { s.UpgradeBasePath = "" },
+		"with standby": func(s *Spec) { s.Standby = true },
+		"with spare":   func(s *Spec) { s.Spare = true },
+	} {
+		bad := s
+		mutate(&bad)
+		if _, err := BuildConfig(bad); err == nil {
+			t.Errorf("%s: built an upgrade boot", name)
+		}
+	}
+	if cfg, err := BuildConfig(validSpec()); err != nil || len(cfg.Drives) != 2 {
+		t.Fatalf("a plain boot has %d drives, %v", len(cfg.Drives), err)
+	}
+}

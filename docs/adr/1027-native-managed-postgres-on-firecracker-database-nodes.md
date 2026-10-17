@@ -1157,15 +1157,63 @@ and flag it uses exists from 14 on.
   only nodes offering the database's major, so a fleet can add a major one
   node at a time. A major no node offers fails placement with no capacity.
 - **Driver.** The native driver advertises 14–18 by default;
-  `postgres_majors` in its settings narrows the list. Major upgrades of an
-  existing database (pg_upgrade) are not supported yet: a database keeps
-  the major it was created with.
+  `postgres_majors` in its settings narrows the list. A database keeps the
+  major it was created with until it is upgraded in place (below).
 - Metal (`TestMetalPostgresMajors`): each base built from its pinned image
   with this release's guest-init in 13–20 s; each major provisioned (with
   its first base backup), took writes and restored to a point in time
   between two commits, the restore holding only the earlier one.
   Provision took 9.5–15.5 s for 14–17 and 27.7 s for 18; the restores
   9.2–13.5 s.
+
+### In-place major upgrades
+
+PostgreSQL 14 reaches its end of life in November 2026, and a database
+must be able to leave its major. An upgrade boot (`BootRequest.UpgradeFrom`,
+vmmd `StartDatabase.upgrade_from_major`, kernel `gregale.upgrade_from`)
+boots the new major's base with the database's volume, plus the old
+major's base as a third read-only drive. guest-init mounts that drive
+and runs `pg_upgrade --link` against the old major's binaries on it.
+PostgreSQL resolves its share and library directories relative to its
+binaries, so they resolve on the old base too. The node needs both
+majors' bases.
+
+- **Check first.** guest-init reads the old cluster's checksum setting
+  (`pg_controldata`) and initializes the new cluster to match:
+  PostgreSQL 18 turns checksums on by default, and pg_upgrade needs them
+  equal. It then runs `pg_upgrade --check`, and only then the upgrade.
+  A cluster the check refuses (a `reg*` column, a missing library, ...)
+  is untouched. The guest fails with `upgrade_refused`, and the database
+  boots its old major again.
+- **Linking is the one-way step.** `--link` hard-links the cluster's
+  files into the new cluster, so an upgrade takes seconds and little
+  space whatever the database's size. Once pg_upgrade renames the old
+  `global/pg_control` to `pg_control.old`, the old cluster cannot start
+  again. A failure from then on, or a boot that finds `pg_control.old`
+  without the done marker, is `upgrade_failed`, and the database is
+  restored from its backups. Success writes a synced marker. Every later
+  boot then finishes the swap: the new cluster becomes `data`, and the
+  old directory, whose files the new one shares, is removed. Each step is
+  safe to repeat.
+- **After.** Once the upgraded cluster serves, guest-init runs the
+  `update_extensions.sql` pg_upgrade may write, and `vacuumdb --all
+  --analyze-in-stages`, because pg_upgrade carries no planner statistics.
+- **Crashes.** A cluster that crashed is no obstacle: pg_upgrade starts it
+  on its old binaries, which recover it, before it checks.
+
+On metal (`TestMetalMajorUpgrade`), a PostgreSQL 14 database with a
+`regprocedure` column was refused and booted on 14 again with its rows.
+Without that column, and after a crash, it upgraded in place to 17 in
+20.9 s from boot to ready: 2,000 rows, a pgcrypto password check, a
+function, an index and its sequence (the next id was 2001) all came
+through, and a plain 17 boot then served it.
+
+Not yet done: schedd orchestration (an `upgrading` state that holds wakes
+off and survives a schedd restart, the database's major in
+`database_vms`, a fresh base backup, and point-in-time restores to before
+the upgrade on the old major, since the new cluster's archive starts
+anew), production databases' standbys (re-seeded on the new major), and
+the operator and customer surfaces.
 
 ### Spares
 

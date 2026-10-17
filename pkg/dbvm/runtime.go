@@ -48,10 +48,12 @@ var (
 
 // In-chroot names. Firecracker resolves them relative to the jail root.
 const (
-	jailKernel   = "vmlinux"
-	jailBase     = "base.ext4"
-	jailVolume   = "volume.img"
-	jailIDPrefix = "db-"
+	jailKernel = "vmlinux"
+	jailBase   = "base.ext4"
+	jailVolume = "volume.img"
+	// jailUpgradeBase is an upgrade boot's old major's base.
+	jailUpgradeBase = "upgrade-base.ext4"
+	jailIDPrefix    = "db-"
 	// maxUnixPath is the longest unix socket path Linux accepts.
 	maxUnixPath = 107
 )
@@ -152,6 +154,10 @@ type BootRequest struct {
 	// Promote boots a standby volume without a primary and promotes it as
 	// soon as it replays: a failover while parked.
 	Promote bool
+	// UpgradeFrom boots the volume's cluster of that older major and
+	// upgrades it in place to Major (pg_upgrade --link); the node needs
+	// both majors' bases.
+	UpgradeFrom int
 }
 
 // Runtime runs database VMs through jailer (ADR-1027). Only vmmd uses it.
@@ -404,6 +410,16 @@ func (r *Runtime) Start(ctx context.Context, req BootRequest) (err error) {
 	if req.Promote && (req.Primary != nil || req.RestoreSource != "") {
 		return errors.New("dbvm: a promotion boot has no primary and is not a restore")
 	}
+	var upgradeBase string
+	if req.UpgradeFrom != 0 {
+		if req.UpgradeFrom >= req.Major || req.Primary != nil || req.Promote || req.RestoreSource != "" {
+			return errors.New("dbvm: an upgrade boot goes to a newer major and is neither a standby nor a restore")
+		}
+		var ok bool
+		if upgradeBase, ok = r.base(req.UpgradeFrom); !ok {
+			return fmt.Errorf("%w %d", ErrUnknownMajor, req.UpgradeFrom)
+		}
+	}
 	if req.RestoreSource != "" {
 		if err := validID(req.RestoreSource); err != nil {
 			return err
@@ -417,7 +433,7 @@ func (r *Runtime) Start(ctx context.Context, req BootRequest) (err error) {
 	if _, err := os.Stat(volume); err != nil {
 		return ErrVolumeNotFound
 	}
-	if req.RestoreTarget.IsZero() && req.Primary == nil && !req.Promote && r.startFromSpare(ctx, req) {
+	if req.RestoreTarget.IsZero() && req.Primary == nil && !req.Promote && req.UpgradeFrom == 0 && r.startFromSpare(ctx, req) {
 		return nil
 	}
 	vm, err := r.reserve(req.ID)
@@ -432,6 +448,11 @@ func (r *Runtime) Start(ctx context.Context, req BootRequest) (err error) {
 	vm.volume, vm.base = volume, base
 	if err = r.prepareJail(vm, base); err != nil {
 		return err
+	}
+	if upgradeBase != "" {
+		if err = r.bindUpgradeBase(vm, upgradeBase); err != nil {
+			return err
+		}
 	}
 	if err = r.writeConfig(vm, req); err != nil {
 		return err
@@ -498,7 +519,7 @@ func (r *Runtime) writeConfig(vm *databaseVM, req BootRequest) error {
 		GuestCID: fcvm.GuestVsockCID(vm.lease.Slot), VsockUDS: fcvm.VsockUDSSocketName,
 		VolumeRateLimiter: req.VolumeRateLimiter, Archive: r.cfg.ArchiveSocket != "",
 		RestoreTarget: req.RestoreTarget, RestoreUntilEnd: req.RestoreUntilEnd, Standby: req.Primary != nil || req.Promote,
-		Promote: req.Promote,
+		Promote: req.Promote, UpgradeFrom: req.UpgradeFrom, UpgradeBasePath: upgradeBasePath(req),
 	})
 }
 
@@ -559,6 +580,15 @@ func (r *Runtime) launch(vm *databaseVM, req BootRequest) error {
 		close(vm.exited)
 	}()
 	return nil
+}
+
+// upgradeBasePath is the old major's base inside the jail, for an upgrade
+// boot.
+func upgradeBasePath(req BootRequest) string {
+	if req.UpgradeFrom == 0 {
+		return ""
+	}
+	return jailUpgradeBase
 }
 
 // recordVM writes the jail's record (recovery.go).

@@ -67,6 +67,11 @@ const (
 	// the control plane named, over TLS it verifies itself; the guest
 	// speaks plaintext to it.
 	ImportPort uint32 = 5436
+	// UpgradeFromArgKey boots a cluster of an older major for an in-place
+	// major upgrade (pg_upgrade --link) to the major MajorArgKey names.
+	// The old major's base is the VM's third drive (UpgradeBaseDevice),
+	// whose binaries pg_upgrade runs.
+	UpgradeFromArgKey = "gregale.upgrade_from"
 
 	// MinMajor and MaxMajor bound the supported PostgreSQL majors.
 	MinMajor = 14
@@ -289,6 +294,14 @@ const (
 	ErrCodePromoteFailed     = "promote_failed"
 	// ErrCodeSeedFailed: a standby could not copy its primary.
 	ErrCodeSeedFailed = "seed_failed"
+	// ErrCodeUpgradeRefused: pg_upgrade refused the cluster before
+	// changing it (its check, or a failure before linking); the cluster is
+	// intact on its old major.
+	ErrCodeUpgradeRefused = "upgrade_refused"
+	// ErrCodeUpgradeFailed: the upgrade failed or was interrupted after
+	// pg_upgrade linked the cluster's files, so the old cluster cannot
+	// start again; the database needs a restore from its backups.
+	ErrCodeUpgradeFailed = "upgrade_failed"
 )
 
 // Request is one control request line.
@@ -396,6 +409,24 @@ func BootArgs(major int) (string, error) {
 		return "", fmt.Errorf("unsupported postgres major %d", major)
 	}
 	return ModeArg + " " + MajorArgKey + "=" + strconv.Itoa(major), nil
+}
+
+// UpgradeFromArg renders the upgrade boot argument.
+func UpgradeFromArg(major int) string { return UpgradeFromArgKey + "=" + strconv.Itoa(major) }
+
+// UpgradeFrom reports the major an upgrade boot upgrades from (0: none).
+// It must be an older supported major than to.
+func UpgradeFrom(cmdline string, to int) (int, error) {
+	for _, field := range strings.Fields(cmdline) {
+		if value, ok := strings.CutPrefix(field, UpgradeFromArgKey+"="); ok {
+			from, err := strconv.Atoi(value)
+			if err != nil || from < MinMajor || from >= to {
+				return 0, fmt.Errorf("invalid %s %q for major %d", UpgradeFromArgKey, value, to)
+			}
+			return from, nil
+		}
+	}
+	return 0, nil
 }
 
 // RestoreTargetArg renders the restore target boot argument.

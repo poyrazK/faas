@@ -50,6 +50,17 @@ func (r *Runtime) prepareJail(vm *databaseVM, base string) error {
 	return os.Chmod(vm.volume, 0o600)
 }
 
+// bindUpgradeBase binds an upgrade boot's old major's base read-only into
+// the jail.
+func (r *Runtime) bindUpgradeBase(vm *databaseVM, base string) error {
+	target := filepath.Join(vm.root, jailUpgradeBase)
+	if err := bindFile(base, target, true); err != nil {
+		return fmt.Errorf("dbvm: bind %s: %w", jailUpgradeBase, err)
+	}
+	vm.binds = append(vm.binds, target)
+	return nil
+}
+
 // prepareSpareJail binds the kernel and base like any VM's, and the spare's
 // directory in place of a volume: a database's volume is linked into it
 // when one adopts the spare.

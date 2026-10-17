@@ -21,3 +21,5 @@ func removeJailCgroup(string, string) {}
 func (r *Runtime) Recover() error { return nil }
 
 func (r *Runtime) startConsole(*databaseVM) (*os.File, error) { return nil, errHostUnsupported }
+
+func (r *Runtime) bindUpgradeBase(*databaseVM, string) error { return errHostUnsupported }
