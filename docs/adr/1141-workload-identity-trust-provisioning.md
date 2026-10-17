@@ -92,3 +92,10 @@ booting or not.
 
 Only the token endpoint changes. The outbound relay (ADR-989) and in-guest
 event publishing still resolve live instances only.
+
+Measured on n2 with the same test after the change: the first lease came at a
+median 2.0 s (1.9–2.2 s over five cycles), about 1.7 s after the boot
+started, while RUNNING still came at 11.9 s. The test now fails if any worker
+takes its token after it is RUNNING. A burst still boots workers one at a
+time (first leases at 2.0, 13.9 and 25.6 s for three workers), because the
+pool admits the next worker only when the previous boot returns.
