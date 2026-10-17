@@ -27,7 +27,9 @@ and [source retirement](migration-source-retirement.md):
 
 The test calls the production scheduler migration adapter directly. It qualifies
 the handoff and receipts. Automatic arbiter selection, gateway routing, full host
-power loss, partitions, recreation and drain convergence remain separate drills.
+power loss, partitions and recreation remain separate drills. The
+[automatic drain drill](#automatic-node-drain-and-controller-restart) below has
+its own target and report.
 Existing skipped `cmd/e2e` scenarios do not count as evidence for this gate.
 
 ## Prepare the designated pair
@@ -61,8 +63,9 @@ idle timeout at least as long as `timeout_seconds` (for example 300 seconds for 
 fixture instances park first, and send no external probe traffic during the run.
 
 The fixture intentionally keeps its boot UUID and operation counter in guest
-memory. Cold fallback loses this evidence. Each run consumes two unique operation
-IDs; deploy a fresh fixture when its bounded 128-operation receipt map fills.
+memory. Cold fallback loses this evidence. A migration run consumes two unique
+operation IDs and a drain run consumes one; deploy a fresh fixture when its
+bounded 128-operation receipt map fills.
 
 ## Run and retain evidence
 
@@ -141,12 +144,85 @@ park the run-owned fixture, and verify both peers' database/native capacity and
 leak checks before an operator removes an inspected stale lease. Preserve source
 receipts and native generation journals.
 
+## Automatic node drain and controller restart
+
+`make native-m9-drain-acceptance` uses the same pre-deployed fixture, native host
+guards, artifact provenance, exclusive peer leases and private evidence format.
+It requires an isolated fleet with exactly the designated pair admitting work,
+and both node-local schedd services must already run the same reviewed binary
+built from the checkout being qualified.
+
+Add a `drain` object to a copy of the configuration above:
+
+```json
+"drain": {
+  "api_url": "https://control.acceptance.example.test",
+  "schedd_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+}
+```
+
+Use the actual HTTPS API origin and reviewed schedd digest. The URL cannot contain
+credentials, a path, query or fragment. Supply `FAAS_M9_OPERATOR_TOKEN` through the
+runner's protected environment: it must authenticate an allowlisted operator with
+admin scope under the API's existing MFA policy. Authorization is checked against
+the real node/progress routes before pausing a controller. Certificate verification
+stays enabled, redirects are refused, and tokens are never put in configuration,
+URLs or evidence.
+
+```sh
+export FAAS_M9_CONFIG=/root/native-m9-drain.json
+export FAAS_M9_VMMD_BINARY=/root/reviewed-artifacts/vmmd
+export FAAS_M9_SCHEDD_BINARY=/root/reviewed-artifacts/schedd
+export FAAS_M9_CONFIRM=native-x86
+make native-m9-drain-acceptance
+```
+
+The seven required phases perform these checks:
+
+1. Verify API/database node identity, authorization, the isolated native pair and
+   both reviewed daemons. Confirm the source is eligible for placement.
+2. Wake the fixture through the scheduler engine and record its in-memory receipt.
+3. Pause the destination schedd with a pidfd, then issue the real
+   `POST /v1/compute-nodes/{name}/drain`. For multiple recovery sweep intervals,
+   require the source to remain serving and draining, with retained RAM/CPU and
+   no completion receipt. Run the production placement chooser against the live
+   source row to verify that the draining generation refuses placement.
+4. SIGKILL that paused destination schedd and observe a new reviewed systemd
+   invocation. Restart intent is persisted before the signal, so restoration
+   after a controller disconnect does not send SIGCONT to a dead PID.
+5. Let the installed schedulers automatically migrate the original instance to
+   the destination. The test does not invoke migration, recovery ticks or
+   lifecycle completion itself. Verify its new wake, original physical source
+   binding and identical in-memory operation receipt.
+6. Require `maintenance` in the captured generation's successor, with zero source
+   residents, retained RAM/CPU and source cleanup leases. Verify physical source
+   retirement, the immutable completion receipt/audit outbox handoff, agreement
+   with the real progress API, and receipt stability over later controller sweeps.
+7. Park the fixture and run leak checks on both peers. Independently restore and
+   verify both vmmd and schedd before the runner can release either peer lease.
+
+The deterministic barrier is before migration: it demonstrates that an accepted
+drain remains pending while its original resident work exists. The completion
+phase checks actual source retirement and cleanup at observed completion; it does
+not inject a post-commit acknowledgement fault into the running daemons. The
+separate migration gate covers that client reply-loss boundary. This drill also
+does not send concurrent customer requests or qualify an availability SLO.
+
+A passing drain leaves the source in **maintenance** and the fixture parked on
+the destination. Neither success nor failure automatically activates the source.
+After inspection, use the normal operator activation workflow before another
+suite needs that node to admit work. Failed runs retain their peer leases and any
+uncertain workload evidence; follow the recovery procedure above. Each report
+records `scenario: "drain"` or `"migration"`; the configuration and selected
+target must match, and evidence from one scenario cannot qualify the other.
+
 ## Portable checks and heartbeat smoke
 
-`make test-native-m9-contracts` tests report rejection, peer ownership/PID fences,
-the HTTP fixture and one-shot reply loss. Both CI tiers run it and compile the
-tagged package without executing native faults. These checks verify the harness;
-native execution still requires the designated pair.
+`make test-native-m9-contracts` tests both scenario verdicts, the authenticated
+HTTPS drain client, peer ownership/PID fences, restoration after a stopped schedd
+is killed, the HTTP fixture and one-shot reply loss. Both CI tiers run it and
+compile the tagged package without native faults. These checks verify the
+harness; native execution still requires the designated pair.
 
 The previous heartbeat runner is available as `make native-m9-heartbeat-smoke`,
 using its existing `FAAS_TWO_NODE_*` settings and `FAAS_M9_CONFIRM=native-x86`.

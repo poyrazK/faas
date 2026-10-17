@@ -14,8 +14,10 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -50,6 +52,9 @@ func newRuntime(t *testing.T, ctx context.Context, c Config) *nativeRuntime {
 	runID := os.Getenv("FAAS_M9_RUN_ID")
 	r.source = nativePeer{config: c.Source, runID: runID}
 	r.dest = nativePeer{config: c.Destination, runID: runID}
+	if c.Drain != nil {
+		r.source.scheddSHA, r.dest.scheddSHA = c.Drain.ScheddSHA256, c.Drain.ScheddSHA256
+	}
 	t.Cleanup(r.cleanup)
 	bundle := map[string]string{}
 	for _, name := range []string{"leakcheck.sh", "leakcheck_native_loops.py"} {
@@ -284,6 +289,24 @@ func require(t *testing.T, err error) {
 	if err != nil {
 		t.Fatal(err)
 	}
+}
+
+func nativeConfig(t *testing.T) Config {
+	t.Helper()
+	if os.Geteuid() != 0 || !CanonicalUUID(os.Getenv("FAAS_M9_RUN_ID")) ||
+		!regexp.MustCompile(`^[0-9a-f]{40,64}$`).MatchString(os.Getenv("FAAS_M9_REVISION")) {
+		t.Fatal("native M9 requires root, a run UUID and the gate's checkout revision")
+	}
+	if info, err := os.Lstat("/etc/faas/m9-acceptance-host"); err != nil || !info.Mode().IsRegular() ||
+		info.Mode().Perm()&0o022 != 0 || info.Sys().(*syscall.Stat_t).Uid != 0 {
+		t.Fatal("native M9 requires the designated control-plane acceptance marker")
+	}
+	file, err := os.Open(os.Getenv("FAAS_M9_CONFIG")) //nolint:forbidigo // The root gate freezes this operator config in its private evidence directory.
+	require(t, err)
+	c, err := DecodeConfig(file)
+	require(t, file.Close())
+	require(t, err)
+	return c
 }
 
 func oneOwner(ctx context.Context, r *nativeRuntime, nodeID, wake string) (state.Instance, error) {

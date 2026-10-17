@@ -9,8 +9,6 @@ import (
 	"context"
 	"errors"
 	"os"
-	"regexp"
-	"syscall"
 	"testing"
 	"time"
 
@@ -23,19 +21,10 @@ func TestMigrationAcknowledgementRecovery(t *testing.T) {
 	if os.Getenv("FAAS_M9_QUALIFY") != "1" {
 		t.Skip("native M9 is opt-in; use make native-m9-acceptance on the designated pair")
 	}
-	if os.Geteuid() != 0 || !CanonicalUUID(os.Getenv("FAAS_M9_RUN_ID")) ||
-		!regexp.MustCompile(`^[0-9a-f]{40,64}$`).MatchString(os.Getenv("FAAS_M9_REVISION")) {
-		t.Fatal("native M9 requires root, a run UUID and the gate's checkout revision")
+	c := nativeConfig(t)
+	if c.Drain != nil {
+		t.Fatal("use the drain gate for a drain configuration")
 	}
-	if info, err := os.Lstat("/etc/faas/m9-acceptance-host"); err != nil || !info.Mode().IsRegular() ||
-		info.Mode().Perm()&0o022 != 0 || info.Sys().(*syscall.Stat_t).Uid != 0 {
-		t.Fatal("native M9 requires the designated control-plane acceptance marker")
-	}
-	config, err := os.Open(os.Getenv("FAAS_M9_CONFIG")) //nolint:forbidigo // The root gate freezes this operator config in its private evidence directory; it is not a customer path.
-	require(t, err)
-	c, err := DecodeConfig(config)
-	require(t, config.Close())
-	require(t, err)
 	ctx, cancel := context.WithTimeout(t.Context(), time.Duration(c.TimeoutSeconds)*time.Second)
 	// Register first, so nativeRuntime.cleanup runs before its tunnels close.
 	t.Cleanup(cancel)
@@ -189,8 +178,9 @@ func TestMigrationAcknowledgementRecovery(t *testing.T) {
 			t.Fatal("return migration did not restore a distinct destination wake")
 		}
 		r.ownedWakes[adopted.GetWakeId()] = true
-		replacement, err = oneOwner(ctx, r, r.source.nodeID, adopted.GetWakeId())
+		owner, err := oneOwner(ctx, r, r.source.nodeID, adopted.GetWakeId())
 		require(t, err)
+		replacement = owner
 		generation, err := r.source.client.GetOperatorRestartGeneration(ctx, &vmmdpb.GetOperatorRestartGenerationRequest{Instance: r.instance})
 		require(t, err)
 		oldGeneration = generation.GetGeneration()

@@ -55,15 +55,16 @@ def fixtures():
     return run, revision, c, bundle, copy.deepcopy(proofs)
 
 
-def events(run, revision, proofs):
-    rows = [{"Action": "start"}, {"Action": "run", "Test": gate.TEST}]
-    for phase in gate.PHASES:
-        test = gate.TEST + "/" + phase
+def events(run, revision, proofs, scenario="migration"):
+    name, phases = (gate.DRAIN_TEST, gate.DRAIN_PHASES) if scenario == "drain" else (gate.TEST, gate.PHASES)
+    rows = [{"Action": "start"}, {"Action": "run", "Test": name}]
+    for phase in phases:
+        test = name + "/" + phase
         proof = {"version": 1, "run_id": run, "revision": revision, "phase": phase, "details": proofs[phase]}
         rows.extend([{"Action": "run", "Test": test}, {"Action": "output", "Test": test,
                       "Output": "    native_test.go:42: M9_EVIDENCE " + json.dumps(proof) + "\n"},
                      {"Action": "pass", "Test": test}])
-    rows.extend([{"Action": "pass", "Test": gate.TEST}, {"Action": "pass"}])
+    rows.extend([{"Action": "pass", "Test": name}, {"Action": "pass"}])
     return [dict(row, Package=gate.PACKAGE) for row in rows]
 
 

@@ -31,6 +31,7 @@ type nativePeer struct {
 	runID       string
 	nodeID      string
 	incarnation string
+	scheddSHA   string
 	claimed     bool
 	leaks       map[string]string
 	conn        *grpc.ClientConn
@@ -42,6 +43,9 @@ type nativePeer struct {
 
 func (p *nativePeer) action(ctx context.Context, action string) (map[string]any, error) {
 	request := map[string]any{"run_id": p.runID, "vmmd_sha256": p.config.VMMDSHA256, "action": action}
+	if p.scheddSHA != "" {
+		request["schedd_sha256"] = p.scheddSHA
+	}
 	if action == "leaks" || action == "release" {
 		request["leak_files"] = p.leaks
 	}

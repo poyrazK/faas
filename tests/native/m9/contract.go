@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"path"
 	"regexp"
 	"strings"
@@ -27,13 +28,35 @@ type Peer struct {
 // Config identifies an operator-provisioned, scale-to-zero fixture deployment.
 // DATABASE_URL remains in the environment and never enters an evidence report.
 type Config struct {
-	Version        int    `json:"version"`
-	AppID          string `json:"app_id"`
-	DeploymentID   string `json:"deployment_id"`
-	FixtureID      string `json:"fixture_id"`
-	TimeoutSeconds int    `json:"timeout_seconds"`
-	Source         Peer   `json:"source"`
-	Destination    Peer   `json:"destination"`
+	Version        int          `json:"version"`
+	AppID          string       `json:"app_id"`
+	DeploymentID   string       `json:"deployment_id"`
+	FixtureID      string       `json:"fixture_id"`
+	TimeoutSeconds int          `json:"timeout_seconds"`
+	Source         Peer         `json:"source"`
+	Destination    Peer         `json:"destination"`
+	Drain          *DrainConfig `json:"drain,omitempty"`
+}
+
+// DrainConfig opts into the API/controller drill. Credentials stay in the
+// environment; the same reviewed schedd binary must run on both peers.
+type DrainConfig struct {
+	APIURL       string `json:"api_url"`
+	ScheddSHA256 string `json:"schedd_sha256"`
+}
+
+func (c DrainConfig) Validate() error {
+	u, err := url.Parse(c.APIURL)
+	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil ||
+		u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.RawPath != "" ||
+		strings.ContainsAny(c.APIURL, "?#") || u.Path != "" && u.Path != "/" {
+		return errors.New("M9 drain API must be an HTTPS origin without credentials, query or fragment")
+	}
+	digest, err := hex.DecodeString(c.ScheddSHA256)
+	if err != nil || len(digest) != 32 || hex.EncodeToString(digest) != c.ScheddSHA256 {
+		return errors.New("M9 drain requires the reviewed schedd SHA-256")
+	}
+	return nil
 }
 
 var safeName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.@-]{0,253}$`)
@@ -79,6 +102,9 @@ func (c Config) Validate() error {
 	}
 	if c.Source.VMMDSHA256 != c.Destination.VMMDSHA256 {
 		return errors.New("M9 requires the same reviewed vmmd artifact on both peers")
+	}
+	if c.Drain != nil {
+		return c.Drain.Validate()
 	}
 	return nil
 }

@@ -7,6 +7,24 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Native M9 automatic drain gate — 2026-10-18
+
+The [automatic drain drill](ops/native-m9-acceptance.md#automatic-node-drain-and-controller-restart)
+now drives the real admin drain/progress API and installed schedulers. It pauses
+the destination controller to verify a pending, non-admitting drain with retained
+source work, then replaces that controller and waits for automatic migration.
+The serving fixture must preserve its in-memory receipt. Maintenance completion
+requires physical source retirement, zero source resources/cleanup leases and the
+generation-bound immutable completion/audit receipt. Both peers must pass leak
+checks, and restoration verifies both vmmd and schedd. Successful runs leave the
+source in maintenance; no automatic activation or forced cleanup is performed.
+
+Portable drain verdict, API, peer guard/restoration and existing migration tests,
+race tests, tagged native compilation and scoped lint are verified. The existing
+CI target includes the new contracts in both tiers. Native execution remains
+pending because this workspace has no KVM device or designated fleet credentials.
+Nothing deployed; no native availability or customer traffic SLO is claimed.
+
 ## Native M9 migration recovery gate — 2026-10-18
 
 The [first live migration drill](ops/native-m9-acceptance.md) now has a dedicated

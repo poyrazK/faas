@@ -123,6 +123,88 @@ class PeerTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             peer.leakcheck(request)
 
+    def scheduler_data(self):
+        state = {"pid": 456, "invocation_id": "c" * 32, "start_ticks": "45", "schedd_sha256": "d" * 64}
+        return dict(self.data(), schedd_sha256="d" * 64, scheduler={"initial": state, "paused": None})
+
+    def test_scheduler_pause_persists_identity_and_targets_only_schedd(self):
+        data = self.scheduler_data()
+        request = dict(self.request, action="schedd-pause", schedd_sha256="d" * 64)
+        def stopped(expected, sig, unit):
+            self.assertEqual(unit, peer.SCHEDD_UNIT)
+            self.assertEqual(sig, signal.SIGSTOP)
+            self.assertEqual(expected, data["scheduler"]["initial"])
+            self.assertEqual(json.loads(self.lease.read_text())["scheduler"]["paused"], expected)
+            raise OSError("signal delivery interrupted")
+        with patch.object(peer, "validate"), patch.object(peer, "load_lease", return_value=data), \
+             patch.object(peer, "fenced_signal", side_effect=stopped):
+            with self.assertRaises(OSError):
+                peer.execute(request)
+        self.assertIsNone(data["paused"], "scheduler pause must not claim a vmmd fault")
+
+    def test_killing_paused_scheduler_can_restore_after_disconnect_without_sigcont(self):
+        data = self.scheduler_data()
+        data["scheduler"]["paused"] = data["scheduler"]["initial"]
+        request = dict(self.request, action="schedd-crash", schedd_sha256="d" * 64)
+        def killed(expected, sig, unit):
+            self.assertEqual((sig, unit), (signal.SIGKILL, peer.SCHEDD_UNIT))
+            self.assertTrue(json.loads(self.lease.read_text())["scheduler"]["crash_requested"])
+            raise ConnectionError("controller disconnected")
+        with patch.object(peer, "validate"), patch.object(peer, "load_lease", return_value=data), \
+             patch.object(peer, "fenced_signal", side_effect=killed):
+            with self.assertRaises(ConnectionError):
+                peer.execute(request)
+        retained = json.loads(self.lease.read_text())
+        replacement = dict(data["scheduler"]["initial"], pid=457, invocation_id="e" * 32)
+        with patch.object(peer, "restart_reviewed", return_value=replacement) as start, \
+             patch.object(peer, "identity", side_effect=OSError("original no longer exists")), \
+             patch.object(peer, "fenced_signal") as send:
+            result = peer.restore_scheduler(request, retained)
+            self.assertTrue(result["restored"])
+            start.assert_called_once_with(request, retained["scheduler"], peer.SCHEDD_UNIT)
+            send.assert_not_called()
+        self.assertIsNone(json.loads(self.lease.read_text())["scheduler"]["paused"])
+        with patch.object(peer, "validate"), patch.object(peer, "load_lease", return_value=retained), \
+             patch.object(peer, "fenced_signal") as send:
+            with self.assertRaisesRegex(ValueError, "already claimed"):
+                peer.execute(request)
+            send.assert_not_called()
+
+    def test_scheduler_disconnect_before_kill_resumes_only_live_original(self):
+        data = self.scheduler_data()
+        state = data["scheduler"]
+        state["paused"], state["crash_requested"] = state["initial"], True
+        request = dict(self.request, schedd_sha256="d" * 64)
+        with patch.object(peer, "identity", return_value=state["initial"]), \
+             patch.object(peer, "restart_reviewed") as start, patch.object(peer, "fenced_signal") as send:
+            self.assertTrue(peer.restore_scheduler(request, data)["restored"])
+            send.assert_called_once_with(state["initial"], signal.SIGCONT, peer.SCHEDD_UNIT)
+            start.assert_not_called()
+        self.assertIsNone(json.loads(self.lease.read_text())["scheduler"]["paused"])
+
+    def test_restore_attempts_scheduler_even_when_vmmd_identity_changed(self):
+        request = dict(self.request, action="restore", schedd_sha256="d" * 64)
+        with patch.object(peer, "validate"), patch.object(peer, "load_lease", return_value=self.scheduler_data()), \
+             patch.object(peer, "resume", side_effect=ValueError("vmmd changed")), \
+             patch.object(peer, "restore_scheduler", return_value={"restored": True}) as restore:
+            with self.assertRaisesRegex(ValueError, "restoration incomplete"):
+                peer.execute(request)
+            restore.assert_called_once()
+
+    def test_scheduler_fault_refuses_unclaimed_artifact_and_paused_release(self):
+        with patch.object(peer, "validate"), patch.object(peer, "load_lease", return_value=self.data()), \
+             patch.object(peer, "fenced_signal") as send:
+            with self.assertRaisesRegex(ValueError, "artifact-bound"):
+                peer.execute(dict(self.request, action="schedd-pause"))
+            send.assert_not_called()
+        data = self.scheduler_data()
+        data["scheduler"]["paused"] = data["scheduler"]["initial"]
+        with patch.object(peer, "validate"), patch.object(peer, "load_lease", return_value=data), \
+             patch.object(peer, "identity", return_value=self.identity), patch.object(peer, "leakcheck") as check:
+            with self.assertRaisesRegex(ValueError, "paused scheduler"):
+                peer.execute(dict(self.request, action="release", schedd_sha256="d" * 64))
+            check.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()
