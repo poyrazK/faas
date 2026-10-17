@@ -408,3 +408,25 @@ func TestEnvContractDurableObjectManagementRemainsOptIn(t *testing.T) {
 		}
 	}
 }
+
+func TestEnvContractHostingRemainsOptIn(t *testing.T) {
+	// adr: 202610171453 — daemon defaults must not expose the internal pilot.
+	count := 0
+	for _, v := range EnvContract {
+		if !strings.HasPrefix(v.Name, "FAAS_FRONTEND_HOSTING_") {
+			continue
+		}
+		if v.Required {
+			t.Errorf("disabled hosting must not require %s", v.Name)
+		}
+		if strings.HasSuffix(v.Name, "_ENABLED") {
+			count++
+			if v.Default != "0" || (v.Source != EnvSourceRuntimeConfig && v.Source != EnvSourceDevOnly) {
+				t.Errorf("hosting admission must default off: %+v", v)
+			}
+		}
+	}
+	if count == 0 {
+		t.Fatal("missing hosting admission environment contracts")
+	}
+}
