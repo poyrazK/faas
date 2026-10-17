@@ -1,7 +1,7 @@
 -- +goose Up
 -- +goose StatementBegin
 DO $migration$ BEGIN
- IF to_regclass('public.mcp_readiness_incident_events') IS NOT NULL THEN RETURN; END IF;
+ IF to_regclass('mcp_readiness_incident_events') IS NOT NULL THEN RETURN; END IF;
  CREATE TABLE mcp_readiness_incidents (
   id uuid PRIMARY KEY,
   rule_id uuid NOT NULL REFERENCES alert_rules(id) ON DELETE CASCADE,

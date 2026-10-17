@@ -13,7 +13,7 @@
 // surface here is the schema-vs-row mapping + the (category, name)
 // order. TestPg_AlertPresetCatalog_SeedMigration pins that the
 // the base, safe-release, B3, login-abuse, automation notification, edge
-// security and edge WAF migrations seed the 31 catalog rows.
+// security, edge WAF and MCP readiness migrations seed the 32 catalog rows.
 //
 // pgtest.Open handles the skip when Postgres is unreachable, so
 // the test is safe to run on a dev box without /var/run/postgresql.
@@ -79,7 +79,7 @@ func TestPGAutomationBacklogAlertPresetDefaults(t *testing.T) {
 
 // TestPg_AlertPresetCatalog_ListOrdered pins the
 // (category, name) sort order of ListAlertPresets. After the seed
-// migration lands, the 31 catalog rows must come back in the order
+// migration lands, the 32 catalog rows must come back in the order
 // availability < cost < deployment < infrastructure < reliability < security, and
 // within each category by name.
 func TestPg_AlertPresetCatalog_ListOrdered(t *testing.T) {
@@ -107,10 +107,10 @@ func TestPg_AlertPresetCatalog_ListOrdered(t *testing.T) {
 	}
 	// The base seed (migrations/00348_alert_presets_seed.sql) plus the
 	// safe-releases, B3, O2, login-abuse, automation notification, edge
-	// security and edge WAF seeds plus MCP seeds ship 31 rows. This test pins the count and
+	// security and edge WAF seeds plus MCP readiness seeds ship 32 rows. This test pins the count and
 	// (category, name) ordering shape.
-	if len(got) != 31 {
-		t.Errorf("catalog row count = %d; want 31 (base + safe-releases + B3 + O2 + login-abuse + automation + edge security + edge WAF + MCP seeds)", len(got))
+	if len(got) != 32 {
+		t.Errorf("catalog row count = %d; want 32 (base + safe-releases + B3 + O2 + login-abuse + automation + edge security + edge WAF + MCP readiness seeds)", len(got))
 	}
 	// Verify (category, name) order is sorted.
 	for i := 1; i < len(got); i++ {

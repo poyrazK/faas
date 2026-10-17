@@ -8,12 +8,18 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
 
 func TestMCPReadinessIndependentOutboxMigration(t *testing.T) {
-	pool := pgtest.OpenMigrated(t)
+	// Exercise replay in an isolated schema so a public-only existence guard
+	// cannot hide behind the template database's public schema.
+	pool := pgtest.Open(t)
 	ctx := t.Context()
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
