@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -93,7 +94,7 @@ func TestProductControlOwnerEmailConsoleAndScopes(t *testing.T) {
 	}
 	srv := apidserver.NewServerWithDeps(store, slog.New(slog.NewTextHandler(io.Discard, nil)), "example.test", apidserver.NoopNotifier{}, "", apidserver.NoopMailer{}, apidserver.StubGithubdClient{}, mgr, nil, 15*time.Minute, "")
 	p := srv.ProductControl()
-	p.EmailTransport, err = productemail.NewLocal(t.TempDir())
+	p.EmailTransport, err = productemail.NewLocal(filepath.Join(t.TempDir(), "mail"))
 	if err != nil {
 		t.Fatal(err)
 	}
