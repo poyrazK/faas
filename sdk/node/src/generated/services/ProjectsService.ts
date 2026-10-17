@@ -3368,7 +3368,8 @@ export class ProjectsService {
         `,
       },
     });
-  }  /**
+  }
+  /**
    * List projects owned by a company organization.
    * @returns ProjectSummaryResponse Projects visible to the current company member.
    * @throws ApiError

@@ -335,238 +335,6 @@ export class OrgsService {
     });
   }
   /**
-   * Get organization billing status.
-   * Requires current organization membership and usage:read. Billing attachment belongs to the organization.
-   * @returns BillingStatusResponse Organization billing attachment status.
-   * @throws ApiError
-   */
-  public static getOrgBillingStatus({
-    slug,
-  }: {
-    /**
-     * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
-     * (`make spec-check`) stays green.
-     *
-     */
-    slug: string,
-  }): CancelablePromise<BillingStatusResponse> {
-    return __request(OpenAPI, {
-      method: 'GET',
-      url: '/v1/orgs/{slug}/billing/status',
-      path: {
-        'slug': slug,
-      },
-      errors: {
-        401: `code: unauthorized`,
-        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
-        404: `code: not_found`,
-        429: `429 application/problem+json response. Authentication throttling uses
-        \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
-        \`profile_investigation_limit\`.
-        `,
-      },
-    });
-  }
-  /**
-   * Get organization monthly application usage.
-   * Requires current organization membership and usage:read. Historical personal usage keeps its original billing subject.
-   * @returns UsageResponse Monthly usage billed to this organization.
-   * @throws ApiError
-   */
-  public static getOrgUsage({
-    slug,
-    month,
-  }: {
-    /**
-     * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
-     * (`make spec-check`) stays green.
-     *
-     */
-    slug: string,
-    /**
-     * Billing month in YYYY-MM form (UTC). Defaults to the current month.
-     */
-    month?: string,
-  }): CancelablePromise<Array<UsageResponse>> {
-    return __request(OpenAPI, {
-      method: 'GET',
-      url: '/v1/orgs/{slug}/usage',
-      path: {
-        'slug': slug,
-      },
-      query: {
-        'month': month,
-      },
-      errors: {
-        401: `code: unauthorized`,
-        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
-        404: `code: not_found`,
-        429: `429 application/problem+json response. Authentication throttling uses
-        \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
-        \`profile_investigation_limit\`.
-        `,
-      },
-    });
-  }
-  /**
-   * List organization invoices.
-   * Requires owner or billing role and usage:read. Returns invoices recorded under the organization billing subject.
-   * @returns InvoiceListResponse One page of organization invoices, newest first.
-   * @throws ApiError
-   */
-  public static listOrgInvoices({
-    slug,
-    month,
-    before,
-    limit = 25,
-  }: {
-    /**
-     * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
-     * (`make spec-check`) stays green.
-     *
-     */
-    slug: string,
-    /**
-     * Optional billing month filter (UTC).
-     */
-    month?: string,
-    /**
-     * Cursor for the next older page.
-     */
-    before?: string,
-    /**
-     * Invoice page size.
-     */
-    limit?: number,
-  }): CancelablePromise<InvoiceListResponse> {
-    return __request(OpenAPI, {
-      method: 'GET',
-      url: '/v1/orgs/{slug}/invoices',
-      path: {
-        'slug': slug,
-      },
-      query: {
-        'month': month,
-        'before': before,
-        'limit': limit,
-      },
-      errors: {
-        401: `code: unauthorized`,
-        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
-        404: `code: not_found`,
-        429: `429 application/problem+json response. Authentication throttling uses
-        \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
-        \`profile_investigation_limit\`.
-        `,
-      },
-    });
-  }
-  /**
-   * Get the organization billing portal.
-   * Requires the organization owner, admin credential scope, verified email, MFA and recent step-up. The provider session uses the organization customer identity.
-   * @returns BillingPortalResponse Organization provider portal and payment method summary.
-   * @throws ApiError
-   */
-  public static getOrgBillingPortal({
-    slug,
-  }: {
-    /**
-     * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
-     * (`make spec-check`) stays green.
-     *
-     */
-    slug: string,
-  }): CancelablePromise<BillingPortalResponse> {
-    return __request(OpenAPI, {
-      method: 'GET',
-      url: '/v1/orgs/{slug}/billing/portal',
-      path: {
-        'slug': slug,
-      },
-      errors: {
-        401: `code: unauthorized`,
-        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
-        404: `code: not_found`,
-        429: `429 application/problem+json response. Authentication throttling uses
-        \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
-        \`profile_investigation_limit\`.
-        `,
-      },
-    });
-  }
-  /**
-   * Change the organization plan after provider confirmation.
-   * Requires the organization owner, admin credential scope, verified email,
-   * MFA and recent step-up. Paid entitlements activate only after provider
-   * confirmation. Existing personal subscriptions are never reassigned.
-   * A payment-required response carries checkout_url or billing_portal_url.
-   *
-   * @returns OrgPlanResponse The confirmed organization plan.
-   * @throws ApiError
-   */
-  public static changeOrgPlan({
-    slug,
-    requestBody,
-    idempotencyKey,
-  }: {
-    /**
-     * Org slug. Lowercase letters, digits, hyphens; must start
-     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
-     * in `pkg/api/errors.go` exactly so the spec drift gate
-     * (`make spec-check`) stays green.
-     *
-     */
-    slug: string,
-    /**
-     * Target plan to submit to the organization billing provider.
-     */
-    requestBody: ChangePlanRequest,
-    /**
-     * Idempotency key for the POST. Stored for 24h. On replay the server
-     * returns the original response with `Idempotent-Replayed: true`.
-     *
-     */
-    idempotencyKey?: string,
-  }): CancelablePromise<OrgPlanResponse> {
-    return __request(OpenAPI, {
-      method: 'PATCH',
-      url: '/v1/orgs/{slug}/plan',
-      path: {
-        'slug': slug,
-      },
-      headers: {
-        'Idempotency-Key': idempotencyKey,
-      },
-      body: requestBody,
-      mediaType: 'application/json',
-      errors: {
-        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
-        401: `code: unauthorized`,
-        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
-        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
-        404: `code: not_found`,
-        409: `code: conflict`,
-        429: `429 application/problem+json response. Authentication throttling uses
-        \`auth_rate_limited\`; plan and usage limits use their specific stable
-        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
-        \`profile_investigation_limit\`.
-        `,
-      },
-    });
-  }
-  /**
    * Get one org by slug.
    * Returns the org row + the caller's role on the org. Authz:
    * any active member of the org (`org.view`); non-members see
@@ -2697,6 +2465,238 @@ export class OrgsService {
         active org. Stable code \`org_role_forbidden\`.
         `,
         404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Get organization billing status.
+   * Requires current organization membership and usage:read. Billing attachment belongs to the organization.
+   * @returns BillingStatusResponse Organization billing attachment status.
+   * @throws ApiError
+   */
+  public static getOrgBillingStatus({
+    slug,
+  }: {
+    /**
+     * Org slug. Lowercase letters, digits, hyphens; must start
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
+     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * (`make spec-check`) stays green.
+     *
+     */
+    slug: string,
+  }): CancelablePromise<BillingStatusResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{slug}/billing/status',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Get organization monthly application usage.
+   * Requires current organization membership and usage:read. Historical personal usage keeps its original billing subject.
+   * @returns UsageResponse Monthly usage billed to this organization.
+   * @throws ApiError
+   */
+  public static getOrgUsage({
+    slug,
+    month,
+  }: {
+    /**
+     * Org slug. Lowercase letters, digits, hyphens; must start
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
+     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * (`make spec-check`) stays green.
+     *
+     */
+    slug: string,
+    /**
+     * Billing month in YYYY-MM form (UTC). Defaults to the current month.
+     */
+    month?: string,
+  }): CancelablePromise<Array<UsageResponse>> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{slug}/usage',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'month': month,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * List organization invoices.
+   * Requires owner or billing role and usage:read. Returns invoices recorded under the organization billing subject.
+   * @returns InvoiceListResponse One page of organization invoices, newest first.
+   * @throws ApiError
+   */
+  public static listOrgInvoices({
+    slug,
+    month,
+    before,
+    limit = 25,
+  }: {
+    /**
+     * Org slug. Lowercase letters, digits, hyphens; must start
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
+     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * (`make spec-check`) stays green.
+     *
+     */
+    slug: string,
+    /**
+     * Optional billing month filter (UTC).
+     */
+    month?: string,
+    /**
+     * Cursor for the next older page.
+     */
+    before?: string,
+    /**
+     * Invoice page size.
+     */
+    limit?: number,
+  }): CancelablePromise<InvoiceListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{slug}/invoices',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'month': month,
+        'before': before,
+        'limit': limit,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Get the organization billing portal.
+   * Requires the organization owner, admin credential scope, verified email, MFA and recent step-up. The provider session uses the organization customer identity.
+   * @returns BillingPortalResponse Organization provider portal and payment method summary.
+   * @throws ApiError
+   */
+  public static getOrgBillingPortal({
+    slug,
+  }: {
+    /**
+     * Org slug. Lowercase letters, digits, hyphens; must start
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
+     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * (`make spec-check`) stays green.
+     *
+     */
+    slug: string,
+  }): CancelablePromise<BillingPortalResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/orgs/{slug}/billing/portal',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Change the organization plan after provider confirmation.
+   * Requires the organization owner, admin credential scope, verified email,
+   * MFA and recent step-up. Paid entitlements activate only after provider
+   * confirmation. Existing personal subscriptions are never reassigned.
+   * A payment-required response carries checkout_url or billing_portal_url.
+   *
+   * @returns OrgPlanResponse The confirmed organization plan.
+   * @throws ApiError
+   */
+  public static changeOrgPlan({
+    slug,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * Org slug. Lowercase letters, digits, hyphens; must start
+     * and end with alnum. 3..32 chars. Mirrors `OrgSlugPattern`
+     * in `pkg/api/errors.go` exactly so the spec drift gate
+     * (`make spec-check`) stays green.
+     *
+     */
+    slug: string,
+    /**
+     * Target plan to submit to the organization billing provider.
+     */
+    requestBody: ChangePlanRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<OrgPlanResponse> {
+    return __request(OpenAPI, {
+      method: 'PATCH',
+      url: '/v1/orgs/{slug}/plan',
+      path: {
+        'slug': slug,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and

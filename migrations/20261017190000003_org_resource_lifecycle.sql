@@ -1887,6 +1887,13 @@ eligible AS (
       FROM instances i LEFT JOIN apps a ON a.id=i.app_id LEFT JOIN accounts ac ON ac.id=a.account_id
       LEFT JOIN deployments d ON d.id=i.deployment_id CROSS JOIN policy p
      WHERE i.state IN ('waking','cold_booting','running','draining','warm','snapshotting','migrating')
+    UNION ALL
+    SELECT r.destination_node_id,NULL::text,r.ram_mb::bigint,r.cpu_millicores::bigint,r.vcpu::bigint,false
+      FROM migration_admissions r WHERE r.phase NOT IN ('cleaned','committed')
+       AND NOT EXISTS(SELECT 1 FROM instances i WHERE i.id=r.instance_id AND i.node_id=r.destination_node_id AND i.wake_id=r.destination_wake_id AND i.state='running')
+    UNION ALL
+    SELECT n.id,NULL::text,u.ram,u.cpu,u.vcpu,false FROM compute_nodes n CROSS JOIN LATERAL migration_source_node_usage(n.id) u
+      WHERE u.ram>0 OR u.cpu>0 OR u.vcpu>0
 ), shape AS (
     SELECT greatest(coalesce((SELECT max(ram) FROM demand WHERE count>0),0),coalesce((SELECT max(ram) FROM resident WHERE service),0),1) AS ram,
            greatest(coalesce((SELECT max(cpu) FROM demand WHERE count>0),0),coalesce((SELECT max(cpu) FROM resident WHERE service),0),1) AS cpu,

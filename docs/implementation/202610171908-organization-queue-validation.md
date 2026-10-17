@@ -61,3 +61,25 @@ pending; the HTTP fixture creates a live worker record without booting a VM.
 Async admission and dispatch must be paused during the schema change, with all
 quota writers restarted together before resuming. Mixed old/new quota writers
 are unsupported; rollback must precede creator erasure.
+
+## Release branch verification
+
+[PR #4882](https://github.com/poyrazK/faas/pull/4882) combines the eight enterprise
+slices with main at `28cd8cb3c`. Their ADR identifiers are now
+`202610171901` through `202610171908`, avoiding concurrent decision numbers.
+The seven ownership migrations follow main's migration tail and recognize
+completed schema expansions during replay without overwriting later functions.
+
+Fresh PostgreSQL 16 schema generation, deterministic SQL bindings, apply-and-walk
+and replay of all seven migrations pass. The three historical migration fixtures
+previously rejected by membership/project guards now create valid personal
+organization parents and pass. A new race regression rolls all seven ownership
+migrations down and up, preserving main's incoming migration capacity accounting,
+restoring organization policy and retaining identical constraint definitions.
+The complete historical migration package has not been rerun.
+
+All seven affected daemon entry points build with the metal tag. Node build and
+the three organization client tests pass, as do the three Python organization
+client tests, ADR uniqueness, core test citations, Go formatting, embedded
+OpenAPI parity and whitespace checks. Production rollout and native runtime
+acceptance remain pending.

@@ -369,9 +369,10 @@ See [implementation evidence](implementation/202610171908-organization-queue-val
 This supersedes ADR-202610171907's queue ownership restriction. External trigger
 administration, jobs, GitOps and full cloning retain their separate restrictions.
 
-Changes remain local. The migration requires a coordinated restart of async
-quota writers while admission and dispatch are paused. Deployment and native
-KVM acceptance remain pending.
+The accumulated enterprise changes are under review in
+[PR #4882](https://github.com/poyrazK/faas/pull/4882). The migration requires a
+coordinated restart of async quota writers while admission and dispatch are
+paused. Deployment and native KVM acceptance remain pending.
 
 ## Organization object storage — local implementation, 2026-10-17
 
