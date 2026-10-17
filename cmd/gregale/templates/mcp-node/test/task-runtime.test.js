@@ -76,6 +76,31 @@ test('runtime startup selects the process role and closes the runtime and pool o
   assert.equal(poolCloseCount, 1);
 });
 
+// A database restart drops idle pool clients and node-postgres emits 'error'
+// on the pool; without a listener that crashes the whole runtime process.
+test('runtime keeps an idle pool error from crashing the process', async () => {
+  const { EventEmitter } = await import('node:events');
+  const pool = Object.assign(new EventEmitter(), { async end() {} });
+  const service = await startMcpTaskRuntime(config, {
+    env: { ...baseEnv, MCP_TASK_NAMESPACE: 'storefront-prod' },
+    role: 'worker',
+    createPool: () => pool,
+    createStore: () => ({}),
+    createRuntime: () => ({ async start() {}, async stop() {} }),
+  });
+  assert.equal(pool.listenerCount('error'), 1);
+  const logged = [];
+  const original = console.error;
+  console.error = (...args) => logged.push(args.join(' '));
+  try {
+    pool.emit('error', new Error('terminating connection due to administrator command; password=hunter2'));
+  } finally {
+    console.error = original;
+  }
+  assert.deepEqual(logged, ['MCP task database connection unavailable']);
+  await service.close();
+});
+
 test('dedicated workers enable the optional metrics publisher with the scoped app credentials', async () => {
   let publishedSettings;
   let publisherCloseCount = 0;

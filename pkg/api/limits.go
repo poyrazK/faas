@@ -7791,6 +7791,7 @@ const (
 	BindingReleasePolicyMaxRevision    int64 = 1<<53 - 1
 	BindingReleasePolicyMaxAge               = 24 * time.Hour
 	BindingReleasePolicyReasonMaxBytes       = 256
+	QueueReleaseRequirementsMax              = 32
 	RoutePolicyArtifactMaxBytes              = 16 << 20
 	RoutePolicyIdempotencyKeyMaxBytes        = 200
 	// Automatic checks retain a bounded latest result and history (ADR-449/405).
@@ -10582,18 +10583,64 @@ const (
 // constants; the CLI tripwire tests keep the runtime and platform contract aligned.
 const (
 	DataAPIMaxPoolConnections = 2
-	DataAPIMaxRows            = 1000
-	DataAPIMaxRequestBytes    = 1 << 20
-	DataAPIMaxOutputBytes     = 1 << 20
-	DataAPIQueryTimeoutMS     = 15000
-	DataAPIMaxRelations       = 1000
-	DataAPIMaxColumns         = 10000
-	DataAPIMaxTypes           = 20000
+	// Read-only connection-budget planning, not SQL quotas or reservations.
+	DataAPIConnectionBudgetMaxDatabases      = 100
+	DataAPIConnectionBudgetMaxBindings       = 1024
+	DataAPIConnectionBudgetMaxCount          = 1000000000
+	DataAPIConnectionBudgetReadTimeout       = 5 * time.Second
+	DataAPIConnectionBudgetMaxAge            = 30 * time.Second
+	DataAPIConnectionBudgetControlHeadroom   = 1
+	DataAPIConnectionBudgetMigrationHeadroom = 1
+	DataAPIConnectionBudgetOverlapInstances  = 1
+	DataAPIMaxRows                           = 1000
+	DataAPIMaxRequestBytes                   = 1 << 20
+	DataAPIMaxResponseBytes                  = 16 << 20
+	DataAPIMaxOutputBytes                    = 1 << 20
+	DataAPIQueryTimeoutMS                    = 15000
+	// Per-runtime HTTP admission. Active work follows the engine pool size;
+	// coordinated refresh reserves one pool connection for its control reader.
+	DataAPIMaxQueuedRequests    = 8
+	DataAPIAdmissionWaitMS      = 1000
+	DataAPIOverloadRetrySeconds = 1
+	DataAPIHealthProbeMS        = 2000
+	DataAPIHealthMaxBytes       = 8 << 10
+	DataAPIHealthHTTPTimeout    = 5 * time.Second
+	DataAPIHealthReportTimeout  = 30 * time.Second
+	DataAPIHealthMaxTimeout     = time.Hour
+	DataAPIMaxRelations         = 1000
+	DataAPIMaxColumns           = 10000
+	DataAPIMaxTypes             = 20000
+	// Optional per-subject token buckets are local to one Data API runtime.
+	DataAPIRateLimitDefaultPerSecond = 10
+	DataAPIRateLimitDefaultBurst     = 20
+	DataAPIRateLimitMaxPerSecond     = 1000
+	DataAPIRateLimitMaxBurst         = 1000
+	DataAPIRateLimitMaxSubjects      = 4096
+	DataAPIRateLimitSweepMS          = 1000
 
 	// Data API diagnostics is a bounded CLI analysis of retained request logs,
 	// not a plan quota or a change to runtime log retention.
 	DataAPIDiagnosticsMaxBytes   = 16 << 20
 	DataAPIDiagnosticsMaxRecords = 100000
+
+	// Local Data API load qualification bounds, not customer traffic quotas.
+	DataAPILoadMaxConcurrency    = 32
+	DataAPILoadMaxRequests       = 1000
+	DataAPILoadMaxUsers          = 16
+	DataAPILoadRunTimeoutMS      = 180000
+	DataAPILoadScenarioTimeoutMS = 45000
+	DataAPILoadCleanupTimeoutMS  = 30000
+	DataAPILoadControlTimeoutMS  = 5000
+	DataAPILoadSampleIntervalMS  = 50
+	DataAPILoadMaxRecords        = 4096
+	DataAPILoadReportMaxBytes    = 65536
+	// Isolated hosted qualification includes observed parking and managed restart.
+	DataAPIHostedLoadRunTimeoutMS      = 1800000
+	DataAPIHostedLoadScenarioTimeoutMS = 60000
+	DataAPIHostedLoadParkTimeoutMS     = 900000
+	DataAPIHostedLoadRestartTimeoutMS  = 300000
+	DataAPIHostedLoadPauseMS           = 3000
+	DataAPIHostedLoadResponseMaxBytes  = 1048576
 )
 
 // Application Auth bounds (ADR-1190). AuthStatementTimeoutMS is the auth
@@ -10667,6 +10714,14 @@ const (
 	AuthEventLeaseSeconds      = 120
 	AuthEventMaxBackoffSeconds = 3600
 	AuthEventRetentionSeconds  = 3 * 24 * 3600
+	// AuthSMSCodeSeconds is how long a texted phone sign-in code stays valid
+	// unless the owner sets GOTRUE_SMS_OTP_EXP; GoTrue's own 60 seconds can
+	// expire before a delayed text arrives.
+	AuthSMSCodeSeconds = 300
+	// AuthSSOMetadataBytes bounds a SAML identity provider's metadata XML,
+	// and AuthSSOMaxDomains the email domains one provider serves.
+	AuthSSOMetadataBytes = 512 << 10
+	AuthSSOMaxDomains    = 50
 	// AuthUINameMaxChars bounds the hosted pages' display name.
 	AuthUINameMaxChars = 60
 	// AuthAuditRetentionMaxDays bounds activity retention. The Auth app
@@ -11245,6 +11300,47 @@ const (
 
 // Review decisions retain a bounded journal independent of item reviews.
 const OperationWorkflowPlaybookReviewsMax = 32
+
+// ProjectReleaseStageMaxTTLSeconds bounds temporary, billable candidate service capacity.
+const ProjectReleaseStageMaxTTLSeconds = 1800
+
+// Queue canaries are bounded, single-message work.
+const QueueCanaryMaxTTLSeconds = 600
+
+// Durable single-app verification receipts have fixed bounds (ADR-1355).
+const BindingVerificationRunMaxTTLSeconds = 600
+const BindingVerificationRunMaxSteps = 128
+const BindingVerificationRunMaxActive = 8
+const BindingVerificationRunRequestMaxBytes = 16384
+
+const BindingVerificationRunProbeTimeoutSeconds = 15
+const BindingVerificationRunProbeOutputBytes = 4096
+
+// ADR-1356: durable graph receipts use the member run lifetime and admission limits.
+const ProjectBindingVerificationRunMaxActive = 8
+const ProjectBindingVerificationRunRequestMaxBytes = 1048576
+
+// Client runner budgets do not replace server admission or plan quotas.
+const BindingVerificationRunnerDefaultConcurrency = 2
+const BindingVerificationRunnerMaxConcurrency = 8
+
+// Automatic failure diagnostics never extend the original execution deadline.
+const BindingVerificationRunnerDiagnosticsTimeoutMilliseconds = 2000
+
+// Client-side retries apply only to existing verification status GETs.
+const BindingVerificationRunnerDefaultStatusReadRetries = 3
+const BindingVerificationRunnerMaxStatusReadRetries = 8
+const BindingVerificationRunnerStatusReadRetryInitialMilliseconds = 250
+const BindingVerificationRunnerStatusReadRetryMaxMilliseconds = 2000
+
+const BindingVerificationRunListDefaultLimit = 20
+const BindingVerificationRunListMaxLimit = 100
+const BindingVerificationRunListCursorMaxBytes = 2048
+
+const BindingVerificationQualificationMaxConditions = 12800
+
+// Read-after-error creation recovery has no confirmed receipt deadline yet.
+const BindingVerificationCreationReconcileTimeoutMilliseconds = 5000
 
 // Bounded scheduler work for legacy execution-ledger reconciliation.
 const EventExecutionReconciliationBatch = 100

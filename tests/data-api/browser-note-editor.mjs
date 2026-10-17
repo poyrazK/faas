@@ -3,6 +3,7 @@ import http from 'node:http'
 import {readFile} from 'node:fs/promises'
 import {join} from 'node:path'
 import {browserInspector} from './browser-inspector.mjs'
+import {waitUntil} from './browser-wait.mjs'
 export async function browserNoteEditor(directory){
  const server=http.createServer(async(req,res)=>{try{const name=req.url==='/'?'index.html':req.url==='/client.js'?'client.js':null;if(!name){res.statusCode=404;res.end();return}res.setHeader('Content-Type',name.endsWith('html')?'text/html; charset=utf-8':'text/javascript');res.end(await readFile(join(directory,'client/browser',name)))}catch{res.statusCode=500;res.end()}})
  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve))
@@ -16,7 +17,7 @@ export async function browserNoteEditor(directory){
    };
    document.querySelector('#session [name=url]').value='https://notes.example';document.querySelector('#session [name=subject]').value='alice';document.querySelector('#session [name=token]').value='test-token';
    document.querySelector('#note-form [name=body]').value='x'.repeat(129);document.querySelector('#save-note').click();`)
-  const until=async(expression)=>{for(let i=0;i<100;i++){if(await evaluate(expression))return;await new Promise(resolve=>setTimeout(resolve,30))}assert.fail('Editor feedback did not finish')}
+  const until=expression=>waitUntil(evaluate,expression,'Editor feedback did not finish')
   await until("document.querySelector('#insert-body-error').textContent.includes('too long')")
   assert.equal(await evaluate('window.editorCalls.length'),0)
   await evaluate(`document.querySelector('#edit-form [name=id]').value='1';document.querySelector('#edit-form [name=version]').value='1';document.querySelector('#edit-form [name=body]').value='x'.repeat(129);document.querySelector('#edit-form [name=priority]').value='2';document.querySelector('#session [name=token]').value='test-token';document.querySelector('#edit-form button').click()`)

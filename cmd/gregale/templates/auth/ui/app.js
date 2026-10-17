@@ -3,7 +3,7 @@
 // application only in the URL fragment, only to the site URL or an allowed
 // redirect URL, and are never written to storage by these pages.
 
-export const routes = ['sign-in', 'sign-up', 'forgot-password', 'reset-password', 'invitation']
+export const routes = ['sign-in', 'sign-up', 'forgot-password', 'reset-password', 'invitation', 'phone', 'sso']
 
 // allowedRedirect returns target when it is the site URL or starts with an
 // allowed redirect URL (the same list GoTrue enforces), else the site URL.
@@ -98,6 +98,14 @@ export function errorMessage(body, status) {
     webauthn_challenge_not_found: 'The passkey request expired. Try again.',
     passkey_not_found: 'This passkey is no longer registered. Sign in another way.',
     captcha_failed: 'The security check failed or expired. Complete it again.',
+    otp_expired: 'That code is wrong or has expired. Request a new one.',
+    over_sms_send_rate_limit: 'Too many codes sent. Wait a minute and try again.',
+    sms_send_failed: 'We could not text this number. Check it and try again.',
+    phone_provider_disabled: 'Phone sign-in is turned off for this application.',
+    validation_failed: 'Check what you entered and try again. Phone numbers need their country code.',
+    sso_provider_not_found: 'No organization sign-in is set up for this email domain.',
+    sso_provider_disabled: 'Organization sign-in for this domain is turned off.',
+    saml_provider_disabled: 'Organization sign-in is turned off for this application.',
   }
   return known[code] ?? (status === 429 ? 'Too many attempts. Wait a minute and try again.' : 'Something went wrong. Try again.')
 }
@@ -173,8 +181,18 @@ function status(root) {
   return text => { node.textContent = text }
 }
 
+// form renders the CAPTCHA widget when CAPTCHA is on; plainForm never does,
+// for requests GoTrue does not check (verifying a code, a new password).
 function form(onSubmit, submitLabel, ...fields) {
-  const check = captcha ? el('div', { class: 'captcha' }) : null
+  return buildForm(Boolean(captcha), onSubmit, submitLabel, fields)
+}
+
+function plainForm(onSubmit, submitLabel, ...fields) {
+  return buildForm(false, onSubmit, submitLabel, fields)
+}
+
+function buildForm(withCaptcha, onSubmit, submitLabel, fields) {
+  const check = withCaptcha ? el('div', { class: 'captcha' }) : null
   const node = el('form', {}, ...fields, ...(check ? [check] : []), el('button', { type: 'submit' }, submitLabel))
   const widget = check ? captchaWidget(check) : Promise.resolve(null)
   // protect(body) adds the token for one request and then resets the widget.
@@ -272,7 +290,40 @@ async function main() {
       root.append(el('p', { class: 'divider' }, 'or'), el('div', { class: 'providers' }, ...passkey, ...providers.map(([name]) =>
         el('a', { class: 'button secondary', href: `/auth/v1/authorize?provider=${encodeURIComponent(name)}&redirect_to=${encodeURIComponent(target)}` }, `Continue with ${providerName(name)}`))))
     }
+    const others = [...(settings.external?.phone ? [[keep('/ui/phone'), 'Sign in with a phone number']] : []), ...(settings.saml_enabled ? [[keep('/ui/sso'), 'Sign in with your organization (SSO)']] : [])]
+    if (others.length) root.append(el('div', { class: 'providers' }, ...others.map(([href, label]) => el('a', { class: 'button secondary', href }, label))))
     root.append(links(...(settings.disable_signup ? [] : [[keep('/ui/sign-up'), 'Create an account']]), [keep('/ui/forgot-password'), 'Forgot password?']))
+  } else if (route === 'phone') {
+    // GoTrue texts a one-time code; a new number signs up unless sign-up is
+    // closed. Only sending the code is CAPTCHA-checked.
+    render(root, `Sign in to ${config.app} with your phone`)
+    const say = status(root)
+    const sendCode = form(async ({ phone }, protect) => {
+      try {
+        await protect({ phone, channel: 'sms', create_user: !settings.disable_signup }, body => request('POST', '/auth/v1/otp', { body }))
+      } catch (err) { return say(err.message) }
+      say(`We texted a code to ${phone}.`)
+      sendCode.replaceWith(plainForm(async ({ code }) => {
+        let session
+        try { session = await request('POST', '/auth/v1/verify', { body: { type: 'sms', phone, token: code.trim() } }) } catch (err) { return say(err.message) }
+        await offerPasskey(root, settings, session, done)
+      }, 'Sign in', el('label', {}, 'Code', el('input', { name: 'code', inputmode: 'numeric', autocomplete: 'one-time-code', pattern: '[0-9 ]{6,12}', required: '' }))))
+    }, 'Text me a code', el('label', {}, 'Phone number, with country code', el('input', { name: 'phone', type: 'tel', autocomplete: 'tel', placeholder: '+44 7700 900123', required: '' })))
+    root.append(sendCode, links([keep('/ui/phone'), 'Use a different number or get a new code'], [keep('/ui/sign-in'), 'Sign in another way']))
+  } else if (route === 'sso') {
+    // GoTrue finds the identity provider by the email's domain and returns
+    // its sign-in URL; after it, GoTrue returns to the target with a session.
+    render(root, `Sign in to ${config.app} with your organization`)
+    const say = status(root)
+    root.append(form(async ({ email }, protect) => {
+      const domain = email.trim().toLowerCase().split('@').pop()
+      try {
+        const { url } = await protect({ domain, redirect_to: target, skip_http_redirect: true }, body => request('POST', '/auth/v1/sso', { body }))
+        if (new URL(url).protocol !== 'https:') throw new Error('Organization sign-in is misconfigured.')
+        location.assign(url)
+      } catch (err) { say(err.message) }
+    }, 'Continue', el('label', {}, 'Work email', el('input', { name: 'email', type: 'email', autocomplete: 'username', required: '' }))))
+    root.append(links([keep('/ui/sign-in'), 'Sign in another way']))
   } else if (route === 'sign-up') {
     render(root, `Create your ${config.app} account`)
     const say = status(root)
@@ -305,7 +356,7 @@ async function main() {
       root.append(links([keep('/ui/forgot-password'), 'Send a new link']))
       return
     }
-    root.append(form(async ({ password }) => {
+    root.append(plainForm(async ({ password }) => {
       try {
         await request('PUT', '/auth/v1/user', { token: session.access_token, body: { password } })
         done({ ...session, expires_in: Number(session.expires_in), expires_at: Number(session.expires_at) || undefined })

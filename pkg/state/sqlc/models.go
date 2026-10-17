@@ -668,6 +668,7 @@ type AppBindingReleasePolicy struct {
 	Reason                    string
 	UpdatedAt                 pgtype.Timestamptz
 	ObjectStorageRequirements []byte
+	QueueRequirements         []byte
 }
 
 type AppBindingReleasePolicyHistory struct {
@@ -1699,6 +1700,26 @@ type BillingUsageDelivery struct {
 	WindowStart pgtype.Timestamptz
 	MbSeconds   int64
 	DeliveredAt pgtype.Timestamptz
+}
+
+type BindingVerificationRun struct {
+	ID           pgtype.UUID
+	AccountID    pgtype.UUID
+	AppID        pgtype.UUID
+	DeploymentID pgtype.UUID
+	Scope        string
+	Status       string
+	Snapshot     []byte
+	CreatedAt    pgtype.Timestamptz
+	ExpiresAt    pgtype.Timestamptz
+	GraphRunID   pgtype.UUID
+}
+
+type BindingVerificationRunStep struct {
+	RunID        pgtype.UUID
+	StepIndex    int32
+	ResourceID   pgtype.UUID
+	ResourceKind string
 }
 
 type Build struct {
@@ -5029,6 +5050,7 @@ type ManagedPostgresCheckpointMaintenance struct {
 	ReadyAt                  pgtype.Timestamptz
 	CreatedAt                pgtype.Timestamptz
 	UpdatedAt                pgtype.Timestamptz
+	ReservedByCutoverID      pgtype.UUID
 }
 
 type ManagedPostgresCreationReceipt struct {
@@ -5133,6 +5155,60 @@ type ManagedPostgresCutoverDrainPlanMember struct {
 	QualificationLive  bool
 	DrainID            pgtype.UUID
 	BlockerCode        string
+}
+
+type ManagedPostgresCutoverPreflight struct {
+	CutoverID                 pgtype.UUID
+	State                     string
+	Revision                  int64
+	BindingIds                []string
+	Blockers                  []string
+	VerificationFresh         bool
+	SourceMatches             bool
+	TargetMatches             bool
+	BindingsMatch             bool
+	CutoverUpdatedAt          pgtype.Timestamptz
+	CheckedAt                 pgtype.Timestamptz
+	ExpiresAt                 pgtype.Timestamptz
+	CreatedAt                 pgtype.Timestamptz
+	UpdatedAt                 pgtype.Timestamptz
+	RuntimeDrain              []byte
+	RuntimeDrainFingerprint   string
+	SourceSessions            []byte
+	SourceSessionsFingerprint string
+}
+
+type ManagedPostgresCutoverSourceFence struct {
+	CutoverID                pgtype.UUID
+	OwnerToken               pgtype.UUID
+	MaintenanceID            pgtype.UUID
+	SourceDatabaseID         pgtype.UUID
+	BackendID                string
+	BackendFingerprint       string
+	SourceProviderResourceID string
+	SourceDataResourceID     string
+	SourceGeneration         int64
+	SourceSpec               []byte
+	OwnerNodeID              pgtype.UUID
+	OwnerRevision            int64
+	AdmissionFencedAt        pgtype.Timestamptz
+	RuntimeFingerprint       string
+	State                    string
+	DatabaseNames            []string
+	CloseRequestedAt         pgtype.Timestamptz
+	Closure                  []byte
+	ObservedAt               pgtype.Timestamptz
+	LastErrorCode            string
+	RemoteTerminalState      pgtype.Text
+	RemoteReleasedAt         pgtype.Timestamptz
+	LeaseToken               pgtype.Text
+	LeaseUntil               pgtype.Timestamptz
+	AttemptCount             int32
+	RetryAt                  pgtype.Timestamptz
+	CreatedAt                pgtype.Timestamptz
+	UpdatedAt                pgtype.Timestamptz
+	CatalogFingerprint       string
+	CatalogInvalidatedAt     pgtype.Timestamptz
 }
 
 type ManagedPostgresDatabase struct {
@@ -7562,6 +7638,17 @@ type Project struct {
 	OrgID            pgtype.UUID
 }
 
+type ProjectBindingVerificationRun struct {
+	ID              pgtype.UUID
+	AccountID       pgtype.UUID
+	ProjectID       pgtype.UUID
+	EnvironmentSlug string
+	Status          string
+	Snapshot        []byte
+	CreatedAt       pgtype.Timestamptz
+	ExpiresAt       pgtype.Timestamptz
+}
+
 type ProjectEnvironment struct {
 	ID        pgtype.UUID
 	AccountID pgtype.UUID
@@ -8631,14 +8718,29 @@ type ProjectReleaseMember struct {
 }
 
 type ProjectReleaseSet struct {
+	ID                        pgtype.UUID
+	AccountID                 pgtype.UUID
+	ProjectID                 pgtype.UUID
+	EnvironmentSlug           string
+	Active                    bool
+	TtlSeconds                int32
+	ExpiresAt                 pgtype.Timestamptz
+	CreatedAt                 pgtype.Timestamptz
+	RollbackSourceReleaseID   pgtype.UUID
+	RollbackPreviousReleaseID pgtype.UUID
+	Deactivation              []byte
+}
+
+type ProjectReleaseStage struct {
 	ID              pgtype.UUID
 	AccountID       pgtype.UUID
 	ProjectID       pgtype.UUID
 	EnvironmentSlug string
-	Active          bool
-	TtlSeconds      int32
-	ExpiresAt       pgtype.Timestamptz
+	Manifest        []byte
+	Targets         []byte
 	CreatedAt       pgtype.Timestamptz
+	ExpiresAt       pgtype.Timestamptz
+	Cancelled       bool
 }
 
 type ProvisionedStaticEgressIp struct {
@@ -8663,6 +8765,22 @@ type QueueBinding struct {
 	RetiredAt       pgtype.Timestamptz
 	DeploymentScope string
 	EnvironmentID   pgtype.UUID
+}
+
+type QueueBindingCanary struct {
+	ID                    pgtype.UUID
+	AccountID             pgtype.UUID
+	AppID                 pgtype.UUID
+	BindingID             pgtype.UUID
+	TriggerID             pgtype.UUID
+	DeploymentID          pgtype.UUID
+	Snapshot              []byte
+	PublishedAt           pgtype.Timestamptz
+	ExpiresAt             pgtype.Timestamptz
+	Cancelled             bool
+	CompletedDeploymentID pgtype.UUID
+	CompletedAttempt      pgtype.Int4
+	CompletedGeneration   pgtype.Int8
 }
 
 type RecentBuildClaim struct {

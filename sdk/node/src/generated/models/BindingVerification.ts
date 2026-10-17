@@ -8,6 +8,14 @@ import type { BindingVerificationCheck } from './BindingVerificationCheck.js';
  */
 export type BindingVerification = {
   /**
+   * Original probe task identity for pending observation and durable receipts.
+   */
+  task_id?: string;
+  /**
+   * Service recipient qualified by the probe; absent for legacy any-replica evidence.
+   */
+  target_deployment_id?: string;
+  /**
    * Object operation level admitted for this stored verification; missing values denote a legacy listing canary and do not qualify required write operations.
    */
   object_storage_mode?: 'read' | 'write' | 'read_write';

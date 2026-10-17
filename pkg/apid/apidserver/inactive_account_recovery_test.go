@@ -149,7 +149,7 @@ func TestPastDueAccount_CannotDeploy(t *testing.T) {
 		(*env.H()).ServeHTTP(rec, r)
 		return rec
 	}
-	if rec := do("POST", "/v1/apps", `{"slug":"pd-app","runtime":"node22"}`); rec.Code != http.StatusCreated {
+	if rec := do("POST", "/v1/apps", `{"slug":"pd-app","type":"app"}`); rec.Code != http.StatusCreated {
 		t.Fatalf("create app = %d %s", rec.Code, rec.Body.String())
 	}
 	if err := (*env.Store()).MarkDunningStep(t.Context(), (*env.Acct()).ID, state.AccountActive, state.AccountPastDue); err != nil {
@@ -211,9 +211,9 @@ func TestRestoreApp_HonoursDeployedAppQuota(t *testing.T) {
 		method, path, body string
 		want               int
 	}{
-		{"POST", "/v1/apps", `{"slug":"quota-a","runtime":"node22"}`, http.StatusCreated},
+		{"POST", "/v1/apps", `{"slug":"quota-a","type":"app"}`, http.StatusCreated},
 		{"DELETE", "/v1/apps/quota-a", "", http.StatusNoContent},
-		{"POST", "/v1/apps", `{"slug":"quota-b","runtime":"node22"}`, http.StatusCreated},
+		{"POST", "/v1/apps", `{"slug":"quota-b","type":"app"}`, http.StatusCreated},
 		{"POST", "/v1/apps/quota-a/restore", "", http.StatusForbidden},
 		{"DELETE", "/v1/apps/quota-b", "", http.StatusNoContent},
 		{"POST", "/v1/apps/quota-a/restore", "", http.StatusOK},
@@ -242,10 +242,10 @@ func TestAppIdleTimeout_OutOfRangeIsRejected(t *testing.T) {
 		return rec.Code
 	}
 	floor, ceiling := api.MustLimitsFor(api.PlanPro).IdleTimeoutBounds()
-	if code := do("POST", "/v1/apps", `{"slug":"idle-app","runtime":"node22","idle_timeout_s":999999999}`); code != http.StatusBadRequest {
+	if code := do("POST", "/v1/apps", `{"slug":"idle-app","type":"app","idle_timeout_s":999999999}`); code != http.StatusBadRequest {
 		t.Fatalf("create with an out-of-range idle timeout = %d, want 400", code)
 	}
-	if code := do("POST", "/v1/apps", `{"slug":"idle-app","runtime":"node22"}`); code != http.StatusCreated {
+	if code := do("POST", "/v1/apps", `{"slug":"idle-app","type":"app"}`); code != http.StatusCreated {
 		t.Fatalf("create = %d", code)
 	}
 	for body, want := range map[string]int{

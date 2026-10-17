@@ -129,7 +129,7 @@ func checkSourceBuildRootfsOwner(in SourceBuildRootfsInput, parent BuildExportPu
 }
 
 func SourceBuildRootfsKind(app App, dep Deployment) (string, string) {
-	if app.Type == AppTypeFunction || app.Runtime != "" {
+	if app.Type == AppTypeFunction {
 		runtime := app.Runtime
 		if runtime == "" {
 			runtime = dep.Handler

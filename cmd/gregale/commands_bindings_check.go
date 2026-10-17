@@ -26,6 +26,8 @@ func cmdBindingsCheck(args []string) int {
 	releasePolicy := fs.Bool("release-policy", false, "apply the stored scope release policy and confirm it after every inventory evaluation (read-only)")
 	var storageRequirements storageRequirementsFlag
 	fs.Var(&storageRequirements, "object-storage-require", "require PREFIX=read|write|read_write evidence (repeatable; reads recorded evidence only)")
+	var queueRequirements queueRequirementsFlag
+	fs.Var(&queueRequirements, "queue-require", "require NAME=consumer_readiness for a push binding (repeatable; connectivity coverage remains partial)")
 	wait := fs.Bool("wait", false, "poll read-only inventory while probes, refreshes or application acknowledgements are pending")
 	timeout := fs.Duration("timeout", bindingProbeWaitTimeoutDefault, "maximum time for a waiting or policy-aware binding preflight")
 	pollInterval := fs.Duration("poll-interval", bindingCheckPollIntervalDefault, "inventory polling interval with --wait")
@@ -91,7 +93,7 @@ func cmdBindingsCheck(args []string) int {
 		}
 		return code
 	}
-	policy := bindingcheck.Policy{App: slug, Scope: *scope, DeploymentID: deploymentID, MaxVerificationAge: *maxAge, AllowUnsupported: *allowUnsupported, RequireApplicationAck: *requireAck, ObjectStorageRequirements: storageRequirements}
+	policy := bindingcheck.Policy{App: slug, Scope: *scope, DeploymentID: deploymentID, MaxVerificationAge: *maxAge, AllowUnsupported: *allowUnsupported, RequireApplicationAck: *requireAck, ObjectStorageRequirements: storageRequirements, QueueRequirements: queueRequirements}
 	var report bindingcheck.Report
 	var releaseReport bindingReleasePolicyCheckReport
 	if *releasePolicy {
@@ -153,6 +155,9 @@ func renderBindingCheck(report bindingcheck.Report) {
 		_, _ = fmt.Fprintln(osStdout)
 		if item.RequiredObjectStorageMode != "" || item.ObjectStorageMode != "" {
 			_, _ = fmt.Fprintf(osStdout, "  storage evidence=%s required=%s\n", humanBindingValue(item.ObjectStorageMode), humanBindingValue(item.RequiredObjectStorageMode))
+		}
+		if item.RequiredQueueEvidence != "" {
+			_, _ = fmt.Fprintf(osStdout, "  required queue evidence=%s; connectivity remains unverified\n", item.RequiredQueueEvidence)
 		}
 		if adoption := item.ApplicationAdoption; adoption != nil {
 			_, _ = fmt.Fprintf(osStdout, "  application adoption=%s; ACK pairs current=%d failed=%d stale=%d unknown=%d; reload pairs current=%d failed=%d stale=%d unknown=%d\n", adoption.Status, adoption.Application.Current, adoption.Application.Failed, adoption.Application.Stale, adoption.Application.Unknown, adoption.Reload.Current, adoption.Reload.Failed, adoption.Reload.Stale, adoption.Reload.Unknown)

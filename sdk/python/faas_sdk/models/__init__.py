@@ -137,6 +137,7 @@ from .api_key_response_status import APIKeyResponseStatus
 from .app_binding_inventory import AppBindingInventory
 from .app_binding_inventory_item import AppBindingInventoryItem
 from .app_binding_inventory_item_type import AppBindingInventoryItemType
+from .app_binding_inventory_service_targets import AppBindingInventoryServiceTargets
 from .app_configured_resources import AppConfiguredResources
 from .app_configured_resources_cpu_millicores import AppConfiguredResourcesCpuMillicores
 from .app_effective_limits import AppEffectiveLimits
@@ -526,6 +527,7 @@ from .binding_check_binding_result_object_storage_mode import BindingCheckBindin
 from .binding_check_binding_result_required_object_storage_mode import (
     BindingCheckBindingResultRequiredObjectStorageMode,
 )
+from .binding_check_binding_result_required_queue_evidence import BindingCheckBindingResultRequiredQueueEvidence
 from .binding_check_finding import BindingCheckFinding
 from .binding_check_report import BindingCheckReport
 from .binding_inventory_issue import BindingInventoryIssue
@@ -542,8 +544,30 @@ from .binding_runtime_deployment_status import BindingRuntimeDeploymentStatus
 from .binding_runtime_freshness import BindingRuntimeFreshness
 from .binding_runtime_instance_counts import BindingRuntimeInstanceCounts
 from .binding_verification import BindingVerification
+from .binding_verification_budget import BindingVerificationBudget
 from .binding_verification_check import BindingVerificationCheck
+from .binding_verification_diagnostic_blocker import BindingVerificationDiagnosticBlocker
+from .binding_verification_diagnostic_blocker_recovery import BindingVerificationDiagnosticBlockerRecovery
+from .binding_verification_diagnostic_blocker_resource_kind import BindingVerificationDiagnosticBlockerResourceKind
+from .binding_verification_difference import BindingVerificationDifference
 from .binding_verification_object_storage_mode import BindingVerificationObjectStorageMode
+from .binding_verification_plan_step import BindingVerificationPlanStep
+from .binding_verification_qualification import BindingVerificationQualification
+from .binding_verification_qualification_condition import BindingVerificationQualificationCondition
+from .binding_verification_qualification_condition_code import BindingVerificationQualificationConditionCode
+from .binding_verification_recovery_action import BindingVerificationRecoveryAction
+from .binding_verification_recovery_action_action import BindingVerificationRecoveryActionAction
+from .binding_verification_review import BindingVerificationReview
+from .binding_verification_review_service_targets import BindingVerificationReviewServiceTargets
+from .binding_verification_run import BindingVerificationRun
+from .binding_verification_run_diagnostics import BindingVerificationRunDiagnostics
+from .binding_verification_run_diagnostics_status import BindingVerificationRunDiagnosticsStatus
+from .binding_verification_run_list import BindingVerificationRunList
+from .binding_verification_run_status import BindingVerificationRunStatus
+from .binding_verification_run_step import BindingVerificationRunStep
+from .binding_verification_run_step_resource_kind import BindingVerificationRunStepResourceKind
+from .binding_verification_run_summary import BindingVerificationRunSummary
+from .binding_verification_run_summary_status import BindingVerificationRunSummaryStatus
 from .browser_promotion_approval_exchange import BrowserPromotionApprovalExchange
 from .browser_promotion_approval_request import BrowserPromotionApprovalRequest
 from .browser_promotion_approval_response import BrowserPromotionApprovalResponse
@@ -593,6 +617,20 @@ from .check_automation_publication_response import CheckAutomationPublicationRes
 from .check_platform_tenant_self_workflow_readiness_body import CheckPlatformTenantSelfWorkflowReadinessBody
 from .check_profile_regression_request import CheckProfileRegressionRequest
 from .check_route_requirements_request import CheckRouteRequirementsRequest
+from .checked_project_release_manifest import CheckedProjectReleaseManifest
+from .checked_project_release_manifest_deployments import CheckedProjectReleaseManifestDeployments
+from .checked_project_release_manifest_expected_fallback_deployments import (
+    CheckedProjectReleaseManifestExpectedFallbackDeployments,
+)
+from .checked_project_release_manifest_expected_policy_revisions import (
+    CheckedProjectReleaseManifestExpectedPolicyRevisions,
+)
+from .checked_project_release_manifest_service_targets import CheckedProjectReleaseManifestServiceTargets
+from .checked_project_release_manifest_service_targets_additional_property import (
+    CheckedProjectReleaseManifestServiceTargetsAdditionalProperty,
+)
+from .checked_project_release_response import CheckedProjectReleaseResponse
+from .checked_project_release_response_bindings_checks import CheckedProjectReleaseResponseBindingsChecks
 from .claim_api_consumer_usage_statement_request import ClaimAPIConsumerUsageStatementRequest
 from .clear_obsolete_deployments_body import ClearObsoleteDeploymentsBody
 from .clear_obsolete_report import ClearObsoleteReport
@@ -620,6 +658,10 @@ from .configure_managed_realtime_push_provider_response_200 import ConfigureMana
 from .configure_managed_realtime_push_provider_response_200_provider import (
     ConfigureManagedRealtimePushProviderResponse200Provider,
 )
+from .connection_budget_capacity import ConnectionBudgetCapacity
+from .connection_budget_capacity_state import ConnectionBudgetCapacityState
+from .connection_budget_demand import ConnectionBudgetDemand
+from .connection_budget_inventory import ConnectionBudgetInventory
 from .consume_invoice_response import ConsumeInvoiceResponse
 from .consumed_credit_row import ConsumedCreditRow
 from .consumer_billing_day import ConsumerBillingDay
@@ -683,6 +725,8 @@ from .create_application_standard_log_destination_request_kind import CreateAppl
 from .create_application_standard_publisher_request import CreateApplicationStandardPublisherRequest
 from .create_application_standard_version_request import CreateApplicationStandardVersionRequest
 from .create_billing_run_request import CreateBillingRunRequest
+from .create_binding_verification_run_request import CreateBindingVerificationRunRequest
+from .create_binding_verification_run_request_service_targets import CreateBindingVerificationRunRequestServiceTargets
 from .create_commit_source_body import CreateCommitSourceBody
 from .create_commit_source_request import CreateCommitSourceRequest
 from .create_commit_source_request_contract_version import CreateCommitSourceRequestContractVersion
@@ -794,6 +838,10 @@ from .create_platform_tenant_webhook_request_retry_policy import CreatePlatformT
 from .create_preview_request import CreatePreviewRequest
 from .create_private_network_peering_request import CreatePrivateNetworkPeeringRequest
 from .create_private_network_request import CreatePrivateNetworkRequest
+from .create_project_binding_verification_run_request import CreateProjectBindingVerificationRunRequest
+from .create_project_binding_verification_run_request_review_digests import (
+    CreateProjectBindingVerificationRunRequestReviewDigests,
+)
 from .create_project_environment_approval_request import CreateProjectEnvironmentApprovalRequest
 from .create_project_environment_qualification_request import CreateProjectEnvironmentQualificationRequest
 from .create_project_environment_qualification_request_secret_revision_hashes import (
@@ -803,6 +851,7 @@ from .create_project_environment_qualification_request_workload_config_hashes im
     CreateProjectEnvironmentQualificationRequestWorkloadConfigHashes,
 )
 from .create_project_environment_request import CreateProjectEnvironmentRequest
+from .create_queue_binding_canary_request import CreateQueueBindingCanaryRequest
 from .create_queue_binding_request import CreateQueueBindingRequest
 from .create_queue_binding_request_mode import CreateQueueBindingRequestMode
 from .create_queue_binding_request_workload_class import CreateQueueBindingRequestWorkloadClass
@@ -844,6 +893,9 @@ from .dashboard_discard_failed_event_body import DashboardDiscardFailedEventBody
 from .dashboard_replay_account_failed_event_body import DashboardReplayAccountFailedEventBody
 from .dashboard_replay_app_debug_request_body import DashboardReplayAppDebugRequestBody
 from .dashboard_replay_failed_event_body import DashboardReplayFailedEventBody
+from .data_api_connection_budgets import DataAPIConnectionBudgets
+from .data_api_connection_budgets_state import DataAPIConnectionBudgetsState
+from .data_api_connection_budgets_version import DataAPIConnectionBudgetsVersion
 from .data_upstream_history_bucket import DataUpstreamHistoryBucket
 from .data_upstream_history_response import DataUpstreamHistoryResponse
 from .data_upstream_history_response_kind import DataUpstreamHistoryResponseKind
@@ -1914,6 +1966,7 @@ from .list_audit_log_response import ListAuditLogResponse
 from .list_automation_revisions_response import ListAutomationRevisionsResponse
 from .list_automations_response import ListAutomationsResponse
 from .list_billing_run_items_outcome import ListBillingRunItemsOutcome
+from .list_binding_verification_runs_status import ListBindingVerificationRunsStatus
 from .list_bucket_objects_response_200 import ListBucketObjectsResponse200
 from .list_bucket_objects_response_200_items_item import ListBucketObjectsResponse200ItemsItem
 from .list_cron_runs_response import ListCronRunsResponse
@@ -2006,6 +2059,7 @@ from .list_platform_tenant_self_workflow_runs_status import ListPlatformTenantSe
 from .list_profile_deployment_checks_response import ListProfileDeploymentChecksResponse
 from .list_profile_investigations_response import ListProfileInvestigationsResponse
 from .list_profile_periodic_monitors_response import ListProfilePeriodicMonitorsResponse
+from .list_project_binding_verification_runs_status import ListProjectBindingVerificationRunsStatus
 from .list_project_environment_promotions_status import ListProjectEnvironmentPromotionsStatus
 from .list_schedule_occurrences_response import ListScheduleOccurrencesResponse
 from .list_secrets_for_account_response import ListSecretsForAccountResponse
@@ -2053,11 +2107,26 @@ from .managed_postgres_capabilities_credential_access_item import ManagedPostgre
 from .managed_postgres_capabilities_service_classes_item import ManagedPostgresCapabilitiesServiceClassesItem
 from .managed_postgres_compute_policy_change import ManagedPostgresComputePolicyChange
 from .managed_postgres_compute_policy_change_state import ManagedPostgresComputePolicyChangeState
+from .managed_postgres_connection_budget import ManagedPostgresConnectionBudget
+from .managed_postgres_connection_budget_model import ManagedPostgresConnectionBudgetModel
+from .managed_postgres_connection_budget_state import ManagedPostgresConnectionBudgetState
+from .managed_postgres_connection_budget_version import ManagedPostgresConnectionBudgetVersion
 from .managed_postgres_cutover import ManagedPostgresCutover
 from .managed_postgres_cutover_member import ManagedPostgresCutoverMember
 from .managed_postgres_cutover_member_access import ManagedPostgresCutoverMemberAccess
 from .managed_postgres_cutover_member_state import ManagedPostgresCutoverMemberState
+from .managed_postgres_cutover_preflight import ManagedPostgresCutoverPreflight
+from .managed_postgres_cutover_preflight_blockers_item import ManagedPostgresCutoverPreflightBlockersItem
+from .managed_postgres_cutover_preflight_state import ManagedPostgresCutoverPreflightState
+from .managed_postgres_cutover_runtime_drain import ManagedPostgresCutoverRuntimeDrain
+from .managed_postgres_cutover_runtime_drain_member import ManagedPostgresCutoverRuntimeDrainMember
+from .managed_postgres_cutover_runtime_drain_member_state import ManagedPostgresCutoverRuntimeDrainMemberState
+from .managed_postgres_cutover_runtime_drain_state import ManagedPostgresCutoverRuntimeDrainState
+from .managed_postgres_cutover_source_sessions import ManagedPostgresCutoverSourceSessions
+from .managed_postgres_cutover_source_sessions_state import ManagedPostgresCutoverSourceSessionsState
 from .managed_postgres_cutover_state import ManagedPostgresCutoverState
+from .managed_postgres_cutover_writer_isolation import ManagedPostgresCutoverWriterIsolation
+from .managed_postgres_cutover_writer_isolation_state import ManagedPostgresCutoverWriterIsolationState
 from .managed_postgres_database import ManagedPostgresDatabase
 from .managed_postgres_database_availability import ManagedPostgresDatabaseAvailability
 from .managed_postgres_database_list import ManagedPostgresDatabaseList
@@ -3378,6 +3447,7 @@ from .preflight_report import PreflightReport
 from .preflight_source import PreflightSource
 from .preflight_verdict import PreflightVerdict
 from .prepare_managed_postgres_cutover_request import PrepareManagedPostgresCutoverRequest
+from .prepare_project_rollback_request import PrepareProjectRollbackRequest
 from .prepare_workflow_operation_artifact_x_gregale_operation_execution_kind import (
     PrepareWorkflowOperationArtifactXGregaleOperationExecutionKind,
 )
@@ -3499,6 +3569,15 @@ from .programmatic_signup_magic_link_response_200 import ProgrammaticSignupMagic
 from .programmatic_signup_magic_link_response_200_status import ProgrammaticSignupMagicLinkResponse200Status
 from .progressive_rollout import ProgressiveRollout
 from .project_apply_request import ProjectApplyRequest
+from .project_binding_verification_review import ProjectBindingVerificationReview
+from .project_binding_verification_review_members import ProjectBindingVerificationReviewMembers
+from .project_binding_verification_review_review_digests import ProjectBindingVerificationReviewReviewDigests
+from .project_binding_verification_run import ProjectBindingVerificationRun
+from .project_binding_verification_run_diagnostics import ProjectBindingVerificationRunDiagnostics
+from .project_binding_verification_run_diagnostics_members import ProjectBindingVerificationRunDiagnosticsMembers
+from .project_binding_verification_run_diagnostics_status import ProjectBindingVerificationRunDiagnosticsStatus
+from .project_binding_verification_run_members import ProjectBindingVerificationRunMembers
+from .project_binding_verification_run_status import ProjectBindingVerificationRunStatus
 from .project_delete_preview_response import ProjectDeletePreviewResponse
 from .project_environment_approval_response import ProjectEnvironmentApprovalResponse
 from .project_environment_approval_response_status import ProjectEnvironmentApprovalResponseStatus
@@ -3621,9 +3700,13 @@ from .project_environment_variable_change_response import ProjectEnvironmentVari
 from .project_environment_variable_change_response_kind import ProjectEnvironmentVariableChangeResponseKind
 from .project_environment_variable_response import ProjectEnvironmentVariableResponse
 from .project_environment_workload_diff_response import ProjectEnvironmentWorkloadDiffResponse
+from .project_release_deactivation_receipt import ProjectReleaseDeactivationReceipt
 from .project_release_set_list_response import ProjectReleaseSetListResponse
 from .project_release_set_member_response import ProjectReleaseSetMemberResponse
 from .project_release_set_response import ProjectReleaseSetResponse
+from .project_release_stage import ProjectReleaseStage
+from .project_release_stage_member import ProjectReleaseStageMember
+from .project_release_stage_status import ProjectReleaseStageStatus
 from .project_response import ProjectResponse
 from .project_scan_request import ProjectScanRequest
 from .project_source_ref_scan_request import ProjectSourceRefScanRequest
@@ -3696,6 +3779,8 @@ from .put_outbound_request_policy_request import PutOutboundRequestPolicyRequest
 from .put_outbound_runs_binding_request import PutOutboundRunsBindingRequest
 from .put_webhook_automation_binding_request import PutWebhookAutomationBindingRequest
 from .put_webhook_automation_binding_request_filter import PutWebhookAutomationBindingRequestFilter
+from .queue_binding_canary import QueueBindingCanary
+from .queue_binding_canary_status import QueueBindingCanaryStatus
 from .queue_binding_response import QueueBindingResponse
 from .queue_binding_response_mode import QueueBindingResponseMode
 from .queue_binding_response_workload_class import QueueBindingResponseWorkloadClass
@@ -3720,6 +3805,8 @@ from .queue_peek_response import QueuePeekResponse
 from .queue_receive_response import QueueReceiveResponse
 from .queue_receive_response_payload import QueueReceiveResponsePayload
 from .queue_receive_response_result import QueueReceiveResponseResult
+from .queue_release_requirements import QueueReleaseRequirements
+from .queue_release_requirements_additional_property import QueueReleaseRequirementsAdditionalProperty
 from .queue_send_request import QueueSendRequest
 from .queue_send_request_payload import QueueSendRequestPayload
 from .queue_send_response import QueueSendResponse
@@ -3907,6 +3994,9 @@ from .reuse_workflow_operation_artifact_x_gregale_operation_execution_kind impor
 from .reuse_workflow_operation_upload_x_gregale_operation_execution_kind import (
     ReuseWorkflowOperationUploadXGregaleOperationExecutionKind,
 )
+from .review_binding_verification_request import ReviewBindingVerificationRequest
+from .review_binding_verification_request_service_targets import ReviewBindingVerificationRequestServiceTargets
+from .review_project_binding_verification_request import ReviewProjectBindingVerificationRequest
 from .revoke_application_standard_exception_request import RevokeApplicationStandardExceptionRequest
 from .revoke_execution_artifact_grant_response import RevokeExecutionArtifactGrantResponse
 from .revoke_platform_tenant_self_consumers_request import RevokePlatformTenantSelfConsumersRequest
@@ -4316,6 +4406,7 @@ from .set_platform_tenant_hostname_policy_request import SetPlatformTenantHostna
 from .set_platform_tenant_request_budget_request import SetPlatformTenantRequestBudgetRequest
 from .set_platform_tenant_status_request import SetPlatformTenantStatusRequest
 from .set_platform_tenant_status_request_status import SetPlatformTenantStatusRequestStatus
+from .set_queue_binding_release_policy_request import SetQueueBindingReleasePolicyRequest
 from .set_route_health_gate_request import SetRouteHealthGateRequest
 from .set_route_health_gate_request_mode import SetRouteHealthGateRequestMode
 from .set_route_health_gate_request_on_regression import SetRouteHealthGateRequestOnRegression
@@ -4361,6 +4452,7 @@ from .source_review_request import SourceReviewRequest
 from .source_review_response import SourceReviewResponse
 from .source_tarball_deploy_request import SourceTarballDeployRequest
 from .source_tarball_deploy_request_tag import SourceTarballDeployRequestTag
+from .stage_project_release_request import StageProjectReleaseRequest
 from .start_durable_entity_quota_migration_body import StartDurableEntityQuotaMigrationBody
 from .start_durable_entity_quota_migration_response_200 import StartDurableEntityQuotaMigrationResponse200
 from .start_durable_entity_registry_cleanup_body import StartDurableEntityRegistryCleanupBody
@@ -4989,6 +5081,7 @@ __all__ = (
     "AppBindingInventory",
     "AppBindingInventoryItem",
     "AppBindingInventoryItemType",
+    "AppBindingInventoryServiceTargets",
     "AppConfiguredResources",
     "AppConfiguredResourcesCpuMillicores",
     "AppEffectiveLimits",
@@ -5372,6 +5465,7 @@ __all__ = (
     "BindingCheckBindingResult",
     "BindingCheckBindingResultObjectStorageMode",
     "BindingCheckBindingResultRequiredObjectStorageMode",
+    "BindingCheckBindingResultRequiredQueueEvidence",
     "BindingCheckFinding",
     "BindingCheckReport",
     "BindingInventoryIssue",
@@ -5388,8 +5482,30 @@ __all__ = (
     "BindingRuntimeFreshness",
     "BindingRuntimeInstanceCounts",
     "BindingVerification",
+    "BindingVerificationBudget",
     "BindingVerificationCheck",
+    "BindingVerificationDiagnosticBlocker",
+    "BindingVerificationDiagnosticBlockerRecovery",
+    "BindingVerificationDiagnosticBlockerResourceKind",
+    "BindingVerificationDifference",
     "BindingVerificationObjectStorageMode",
+    "BindingVerificationPlanStep",
+    "BindingVerificationQualification",
+    "BindingVerificationQualificationCondition",
+    "BindingVerificationQualificationConditionCode",
+    "BindingVerificationRecoveryAction",
+    "BindingVerificationRecoveryActionAction",
+    "BindingVerificationReview",
+    "BindingVerificationReviewServiceTargets",
+    "BindingVerificationRun",
+    "BindingVerificationRunDiagnostics",
+    "BindingVerificationRunDiagnosticsStatus",
+    "BindingVerificationRunList",
+    "BindingVerificationRunStatus",
+    "BindingVerificationRunStep",
+    "BindingVerificationRunStepResourceKind",
+    "BindingVerificationRunSummary",
+    "BindingVerificationRunSummaryStatus",
     "BrowserPromotionApprovalExchange",
     "BrowserPromotionApprovalRequest",
     "BrowserPromotionApprovalResponse",
@@ -5436,6 +5552,14 @@ __all__ = (
     "CheckAccountWorkflowReadinessBody",
     "CheckAutomationPublicationRequest",
     "CheckAutomationPublicationResponse",
+    "CheckedProjectReleaseManifest",
+    "CheckedProjectReleaseManifestDeployments",
+    "CheckedProjectReleaseManifestExpectedFallbackDeployments",
+    "CheckedProjectReleaseManifestExpectedPolicyRevisions",
+    "CheckedProjectReleaseManifestServiceTargets",
+    "CheckedProjectReleaseManifestServiceTargetsAdditionalProperty",
+    "CheckedProjectReleaseResponse",
+    "CheckedProjectReleaseResponseBindingsChecks",
     "CheckPlatformTenantSelfWorkflowReadinessBody",
     "CheckProfileRegressionRequest",
     "CheckRouteRequirementsRequest",
@@ -5464,6 +5588,10 @@ __all__ = (
     "ConfigureManagedRealtimePushProviderProvider",
     "ConfigureManagedRealtimePushProviderResponse200",
     "ConfigureManagedRealtimePushProviderResponse200Provider",
+    "ConnectionBudgetCapacity",
+    "ConnectionBudgetCapacityState",
+    "ConnectionBudgetDemand",
+    "ConnectionBudgetInventory",
     "ConsumedCreditRow",
     "ConsumeInvoiceResponse",
     "ConsumerBillingDay",
@@ -5527,6 +5655,8 @@ __all__ = (
     "CreateAppWebhookRequestEventFilterItem",
     "CreateAppWebhookRequestRetryPolicy",
     "CreateBillingRunRequest",
+    "CreateBindingVerificationRunRequest",
+    "CreateBindingVerificationRunRequestServiceTargets",
     "CreateCommitSourceBody",
     "CreateCommitSourceRequest",
     "CreateCommitSourceRequestContractVersion",
@@ -5630,11 +5760,14 @@ __all__ = (
     "CreatePreviewRequest",
     "CreatePrivateNetworkPeeringRequest",
     "CreatePrivateNetworkRequest",
+    "CreateProjectBindingVerificationRunRequest",
+    "CreateProjectBindingVerificationRunRequestReviewDigests",
     "CreateProjectEnvironmentApprovalRequest",
     "CreateProjectEnvironmentQualificationRequest",
     "CreateProjectEnvironmentQualificationRequestSecretRevisionHashes",
     "CreateProjectEnvironmentQualificationRequestWorkloadConfigHashes",
     "CreateProjectEnvironmentRequest",
+    "CreateQueueBindingCanaryRequest",
     "CreateQueueBindingRequest",
     "CreateQueueBindingRequestMode",
     "CreateQueueBindingRequestWorkloadClass",
@@ -5672,6 +5805,9 @@ __all__ = (
     "DashboardReplayAccountFailedEventBody",
     "DashboardReplayAppDebugRequestBody",
     "DashboardReplayFailedEventBody",
+    "DataAPIConnectionBudgets",
+    "DataAPIConnectionBudgetsState",
+    "DataAPIConnectionBudgetsVersion",
     "DataUpstreamHistoryBucket",
     "DataUpstreamHistoryResponse",
     "DataUpstreamHistoryResponseKind",
@@ -6704,6 +6840,7 @@ __all__ = (
     "ListAutomationRevisionsResponse",
     "ListAutomationsResponse",
     "ListBillingRunItemsOutcome",
+    "ListBindingVerificationRunsStatus",
     "ListBucketObjectsResponse200",
     "ListBucketObjectsResponse200ItemsItem",
     "ListCronRunsResponse",
@@ -6764,6 +6901,7 @@ __all__ = (
     "ListProfileDeploymentChecksResponse",
     "ListProfileInvestigationsResponse",
     "ListProfilePeriodicMonitorsResponse",
+    "ListProjectBindingVerificationRunsStatus",
     "ListProjectEnvironmentPromotionsStatus",
     "ListScheduleOccurrencesResponse",
     "ListSecretsForAccountResponse",
@@ -6811,11 +6949,26 @@ __all__ = (
     "ManagedPostgresCapabilitiesServiceClassesItem",
     "ManagedPostgresComputePolicyChange",
     "ManagedPostgresComputePolicyChangeState",
+    "ManagedPostgresConnectionBudget",
+    "ManagedPostgresConnectionBudgetModel",
+    "ManagedPostgresConnectionBudgetState",
+    "ManagedPostgresConnectionBudgetVersion",
     "ManagedPostgresCutover",
     "ManagedPostgresCutoverMember",
     "ManagedPostgresCutoverMemberAccess",
     "ManagedPostgresCutoverMemberState",
+    "ManagedPostgresCutoverPreflight",
+    "ManagedPostgresCutoverPreflightBlockersItem",
+    "ManagedPostgresCutoverPreflightState",
+    "ManagedPostgresCutoverRuntimeDrain",
+    "ManagedPostgresCutoverRuntimeDrainMember",
+    "ManagedPostgresCutoverRuntimeDrainMemberState",
+    "ManagedPostgresCutoverRuntimeDrainState",
+    "ManagedPostgresCutoverSourceSessions",
+    "ManagedPostgresCutoverSourceSessionsState",
     "ManagedPostgresCutoverState",
+    "ManagedPostgresCutoverWriterIsolation",
+    "ManagedPostgresCutoverWriterIsolationState",
     "ManagedPostgresDatabase",
     "ManagedPostgresDatabaseAvailability",
     "ManagedPostgresDatabaseList",
@@ -7992,6 +8145,7 @@ __all__ = (
     "PreflightSource",
     "PreflightVerdict",
     "PrepareManagedPostgresCutoverRequest",
+    "PrepareProjectRollbackRequest",
     "PrepareWorkflowOperationArtifactXGregaleOperationExecutionKind",
     "PreviewAccountWorkflowActionsBody",
     "PreviewArtifactResponse",
@@ -8109,6 +8263,15 @@ __all__ = (
     "ProgrammaticSignupMagicLinkResponse200Status",
     "ProgressiveRollout",
     "ProjectApplyRequest",
+    "ProjectBindingVerificationReview",
+    "ProjectBindingVerificationReviewMembers",
+    "ProjectBindingVerificationReviewReviewDigests",
+    "ProjectBindingVerificationRun",
+    "ProjectBindingVerificationRunDiagnostics",
+    "ProjectBindingVerificationRunDiagnosticsMembers",
+    "ProjectBindingVerificationRunDiagnosticsStatus",
+    "ProjectBindingVerificationRunMembers",
+    "ProjectBindingVerificationRunStatus",
     "ProjectDeletePreviewResponse",
     "ProjectEnvironmentApprovalResponse",
     "ProjectEnvironmentApprovalResponseStatus",
@@ -8207,9 +8370,13 @@ __all__ = (
     "ProjectEnvironmentVariableChangeResponseKind",
     "ProjectEnvironmentVariableResponse",
     "ProjectEnvironmentWorkloadDiffResponse",
+    "ProjectReleaseDeactivationReceipt",
     "ProjectReleaseSetListResponse",
     "ProjectReleaseSetMemberResponse",
     "ProjectReleaseSetResponse",
+    "ProjectReleaseStage",
+    "ProjectReleaseStageMember",
+    "ProjectReleaseStageStatus",
     "ProjectResponse",
     "ProjectScanRequest",
     "ProjectSourceRefScanRequest",
@@ -8282,6 +8449,8 @@ __all__ = (
     "PutOutboundRunsBindingRequest",
     "PutWebhookAutomationBindingRequest",
     "PutWebhookAutomationBindingRequestFilter",
+    "QueueBindingCanary",
+    "QueueBindingCanaryStatus",
     "QueueBindingResponse",
     "QueueBindingResponseMode",
     "QueueBindingResponseWorkloadClass",
@@ -8306,6 +8475,8 @@ __all__ = (
     "QueueReceiveResponse",
     "QueueReceiveResponsePayload",
     "QueueReceiveResponseResult",
+    "QueueReleaseRequirements",
+    "QueueReleaseRequirementsAdditionalProperty",
     "QueueSendRequest",
     "QueueSendRequestPayload",
     "QueueSendResponse",
@@ -8483,6 +8654,9 @@ __all__ = (
     "RetryPolicyDTO",
     "ReuseWorkflowOperationArtifactXGregaleOperationExecutionKind",
     "ReuseWorkflowOperationUploadXGregaleOperationExecutionKind",
+    "ReviewBindingVerificationRequest",
+    "ReviewBindingVerificationRequestServiceTargets",
+    "ReviewProjectBindingVerificationRequest",
     "RevokeApplicationStandardExceptionRequest",
     "RevokeExecutionArtifactGrantResponse",
     "RevokePlatformTenantSelfConsumersRequest",
@@ -8884,6 +9058,7 @@ __all__ = (
     "SetPlatformTenantRequestBudgetRequest",
     "SetPlatformTenantStatusRequest",
     "SetPlatformTenantStatusRequestStatus",
+    "SetQueueBindingReleasePolicyRequest",
     "SetRouteHealthGateRequest",
     "SetRouteHealthGateRequestMode",
     "SetRouteHealthGateRequestOnRegression",
@@ -8927,6 +9102,7 @@ __all__ = (
     "SourceReviewResponse",
     "SourceTarballDeployRequest",
     "SourceTarballDeployRequestTag",
+    "StageProjectReleaseRequest",
     "StartDurableEntityQuotaMigrationBody",
     "StartDurableEntityQuotaMigrationResponse200",
     "StartDurableEntityRegistryCleanupBody",

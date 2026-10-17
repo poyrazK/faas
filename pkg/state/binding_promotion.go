@@ -25,6 +25,7 @@ type BindingPromotionFence struct {
 	AllowUnsupported          bool              `json:"allow_unsupported"`
 	RequireApplicationAck     bool              `json:"require_application_ack"`
 	ObjectStorageRequirements map[string]string `json:"object_storage_requirements,omitempty"`
+	QueueRequirements         map[string]string `json:"queue_requirements,omitempty"`
 }
 
 type BindingPromotionResult struct {

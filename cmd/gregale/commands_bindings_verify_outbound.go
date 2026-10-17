@@ -74,7 +74,7 @@ func executeOutboundBindingProbe(ctx context.Context, client serviceBindingProbe
 	for !task.Status.Terminal() {
 		select {
 		case <-waitContext.Done():
-			if errors.Is(interruptContext.Err(), context.Canceled) {
+			if bindingProbeAutoCancel(ctx) && errors.Is(interruptContext.Err(), context.Canceled) {
 				cancelContext, cancelRequest := context.WithTimeout(context.WithoutCancel(ctx), bindingProbeCancelTimeout)
 				defer cancelRequest()
 				cancelled, cancelErr := client.CancelAppTask(cancelContext, slug, task.ID)

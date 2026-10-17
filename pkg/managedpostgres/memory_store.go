@@ -12,6 +12,7 @@ import (
 type MemoryStore struct {
 	resizes                   map[string]ResizeOperation
 	cutovers                  map[string]Cutover
+	preflights                map[string]CutoverPreflight
 	health                    map[string]memoryHealthEntry
 	mu                        sync.Mutex
 	databases                 map[string]Database
@@ -31,6 +32,7 @@ func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
 		resizes:                   map[string]ResizeOperation{},
 		cutovers:                  map[string]Cutover{},
+		preflights:                map[string]CutoverPreflight{},
 		health:                    map[string]memoryHealthEntry{},
 		databases:                 map[string]Database{},
 		names:                     map[string]string{},

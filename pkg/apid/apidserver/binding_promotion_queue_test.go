@@ -211,7 +211,8 @@ func TestBindingPromotionDeadlineUsesEarliestRequiredObservation(t *testing.T) {
 		{Type: api.BindingTypePostgres, Status: "passed", CheckedAt: &proofAt},
 		{Type: api.BindingTypeQueue, Status: "unsupported"},
 	}}
-	inventory := api.AppBindingInventory{Bindings: []api.AppBindingInventoryItem{{Type: api.BindingTypeQueue, Name: "events", Binding: "worker", State: "enabled", Access: "push", ObservedAt: &pollAt}}}
+	shared := ""
+	inventory := api.AppBindingInventory{Bindings: []api.AppBindingInventoryItem{{Type: api.BindingTypeQueue, Name: "events", Binding: "worker", Scope: "app", QueueEnvironment: &shared, State: "enabled", Access: "push", ObservedAt: &pollAt}}}
 	deadline, finding := bindingPromotionDeadline(report, inventory, time.Hour)
 	if !deadline.Equal(pollAt.Add(api.QueueConsumerMaxPollAge)) || finding.Code != "queue_consumer_stale" || finding.Binding != "worker" {
 		t.Fatalf("queue poll did not bound promotion: %v %+v", deadline, finding)

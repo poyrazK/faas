@@ -31,7 +31,11 @@ func buildExportFixtureRuntime(t *testing.T, s buildExportTestStore, runtime str
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := s.CreateApp(t.Context(), App{AccountID: owner.Account.ID, OrgID: owner.PersonalOrg.ID, Slug: "export-" + uuid.NewString()[:8], Runtime: runtime, RAMMB: 128, MaxConcurrency: 2})
+	typ := AppTypeApp
+	if runtime != "" {
+		typ = AppTypeFunction
+	}
+	app, err := s.CreateApp(t.Context(), App{AccountID: owner.Account.ID, OrgID: owner.PersonalOrg.ID, Slug: "export-" + uuid.NewString()[:8], Type: typ, Runtime: runtime, RAMMB: 128, MaxConcurrency: 2})
 	if err != nil {
 		t.Fatal(err)
 	}

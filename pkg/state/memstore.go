@@ -140,6 +140,10 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
+	projectReleaseStages                       map[string]projectReleaseStage
+	bindingVerificationRuns                    map[string]verificationRunRecord
+	graphVerificationRuns                      map[string]graphVerificationRecord
+	queueBindingCanaries                       map[string]queueCanaryRecord
 	baseImageProducers                         map[string]BaseImageProducer
 	baseImageProducerCurrent                   map[string]string
 	deploymentRegistryVerifications            map[string]DeploymentRegistryVerification
@@ -6339,11 +6343,16 @@ func (m *MemStore) updateAppWithActivity(_ context.Context, id string, p UpdateA
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	defer m.invalidateChangedLifecycleSuccessorsLocked()
 	a, ok := m.apps[id]
 	if !ok {
 		return App{}, ErrNotFound
 	}
+	var guardErr error
+	p, guardErr = prepareServiceBindingPlanUpdate(a, p)
+	if guardErr != nil {
+		return App{}, guardErr
+	}
+	defer m.invalidateChangedLifecycleSuccessorsLocked()
 	if (p.SetRequireSigned && boolOrFalse(p.RequireSigned) != a.RequireSigned && m.standardManagedControlLocked(a.ID, appstandards.RequireSigned)) ||
 		(p.SetSecurityPolicy && p.SecurityPolicy != nil && *p.SecurityPolicy != a.SecurityPolicy && m.standardManagedControlLocked(a.ID, appstandards.SecurityPolicy)) ||
 		(p.SetEgressAllowlist && !slices.Equal(derefPrefixes(p.EgressAllowlist), a.EgressAllowlist) && m.standardManagedControlLocked(a.ID, appstandards.EgressCIDRs)) ||

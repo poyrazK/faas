@@ -203,3 +203,78 @@ type PrepareManagedPostgresCutoverRequest struct {
 	AppID            string `json:"app_id"`
 	Scope            string `json:"scope"`
 }
+
+// ManagedPostgresCutoverPreflight is a historical catalog observation. Stale
+// is recomputed when read; ActivationAllowed remains false in this release.
+type ManagedPostgresCutoverPreflight struct {
+	CutoverID                string                                `json:"cutover_id"`
+	State                    string                                `json:"state"`
+	Revision                 int64                                 `json:"revision"`
+	ActivationAllowed        bool                                  `json:"activation_allowed"`
+	Stale                    bool                                  `json:"stale"`
+	BindingIDs               []string                              `json:"binding_ids"`
+	Blockers                 []string                              `json:"blockers"`
+	VerificationFresh        bool                                  `json:"verification_fresh"`
+	SourceMatches            bool                                  `json:"source_matches"`
+	TargetMatches            bool                                  `json:"target_matches"`
+	BindingsMatch            bool                                  `json:"bindings_match"`
+	ObservedCutoverUpdatedAt string                                `json:"observed_cutover_updated_at,omitempty"`
+	CheckedAt                string                                `json:"checked_at,omitempty"`
+	ExpiresAt                string                                `json:"expires_at,omitempty"`
+	CreatedAt                string                                `json:"created_at"`
+	UpdatedAt                string                                `json:"updated_at"`
+	RuntimeDrain             *ManagedPostgresCutoverRuntimeDrain   `json:"runtime_drain,omitempty"`
+	SourceSessions           *ManagedPostgresCutoverSourceSessions `json:"source_sessions,omitempty"`
+}
+
+// ManagedPostgresCutoverSourceSessions describes a selected SQL database set,
+// never complete writer isolation or permission to activate.
+type ManagedPostgresCutoverSourceSessions struct {
+	State                    string                                 `json:"state"`
+	AdmissionClosed          bool                                   `json:"admission_closed"`
+	SelectedDatabasesDrained bool                                   `json:"selected_databases_drained"`
+	SelectedDatabaseCount    int                                    `json:"selected_database_count"`
+	Sessions                 int64                                  `json:"sessions"`
+	PreparedTransactions     int64                                  `json:"prepared_transactions"`
+	UnselectedDatabases      int64                                  `json:"unselected_databases"`
+	Blockers                 []string                               `json:"blockers"`
+	ObservedAt               string                                 `json:"observed_at,omitempty"`
+	WriterIsolation          *ManagedPostgresCutoverWriterIsolation `json:"writer_isolation,omitempty"`
+}
+
+// ManagedPostgresCutoverWriterIsolation reports safe historical diagnostics and
+// provider evidence; it is never permission to activate a customer cutover.
+type ManagedPostgresCutoverWriterIsolation struct {
+	State                   string `json:"state"`
+	Confirmed               bool   `json:"confirmed"`
+	InventoryAvailable      bool   `json:"inventory_available"`
+	CatalogMatches          bool   `json:"catalog_matches"`
+	CatalogStable           bool   `json:"catalog_stable"`
+	BackgroundWritersFenced bool   `json:"background_writers_fenced"`
+	ClientSessions          int64  `json:"client_sessions"`
+	BackgroundWorkers       int64  `json:"background_workers"`
+	ReplicationWorkers      int64  `json:"replication_workers"`
+	UnknownBackends         int64  `json:"unknown_backends"`
+	ExpiresAt               string `json:"expires_at,omitempty"`
+}
+
+// ManagedPostgresCutoverRuntimeDrain covers the captured instance catalog only.
+// Catalog retirement does not establish complete writer isolation.
+type ManagedPostgresCutoverRuntimeDrain struct {
+	State          string                                     `json:"state"`
+	InventoryCount int                                        `json:"inventory_count"`
+	Pending        int                                        `json:"pending"`
+	Retired        int                                        `json:"retired"`
+	Blocked        int                                        `json:"blocked"`
+	Blockers       []string                                   `json:"blockers"`
+	Members        []ManagedPostgresCutoverRuntimeDrainMember `json:"members"`
+}
+
+type ManagedPostgresCutoverRuntimeDrainMember struct {
+	InstanceID   string `json:"instance_id"`
+	DeploymentID string `json:"deployment_id,omitempty"`
+	Scope        string `json:"scope"`
+	Mode         string `json:"mode"`
+	State        string `json:"state"`
+	BlockerCode  string `json:"blocker_code,omitempty"`
+}
