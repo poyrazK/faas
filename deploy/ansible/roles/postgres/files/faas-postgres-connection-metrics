@@ -37,6 +37,19 @@ if test -e /var/lib/pgsql/archive/.offhost-last-success; then
   offhost_last_success="$(stat -c %Y /var/lib/pgsql/archive/.offhost-last-success)"
 fi
 
+# Warm-standby slot health (ADR-1344 §8), read on the primary. No row means
+# no standby is declared, or this host is the standby, and emits nothing.
+standby="$(psql -d faas -At -F ' ' -c "
+SELECT s.active::int,
+       COALESCE(pg_wal_lsn_diff(pg_current_wal_lsn(), s.restart_lsn), 0)::bigint,
+       COALESCE(s.wal_status, 'unknown'),
+       COALESCE(pg_wal_lsn_diff(pg_current_wal_lsn(), r.replay_lsn), -1)::bigint,
+       pg_size_bytes(current_setting('max_slot_wal_keep_size'))
+FROM pg_replication_slots s
+LEFT JOIN pg_stat_replication r ON r.pid = s.active_pid
+WHERE s.slot_name = 'faas_standby' AND NOT pg_is_in_recovery();
+")"
+
 cat >"$tmp" <<EOF
 # HELP faas_postgres_client_connections PostgreSQL client sessions across all databases.
 # TYPE faas_postgres_client_connections gauge
@@ -60,5 +73,35 @@ faas_postgres_offhost_wal_configured $offhost_configured
 # TYPE faas_postgres_offhost_wal_last_success_timestamp_seconds gauge
 faas_postgres_offhost_wal_last_success_timestamp_seconds $offhost_last_success
 EOF
+
+if test -n "$standby"; then
+  set -- $standby
+  slot_active="${1:?missing standby slot state}"
+  slot_retained="${2:?missing standby slot retained bytes}"
+  slot_wal_status="${3:?missing standby slot wal status}"
+  replay_lag="${4:?missing standby replay lag}"
+  slot_keep_size="${5:?missing max_slot_wal_keep_size}"
+  cat >>"$tmp" <<EOF
+# HELP faas_postgres_standby_slot_active 1 while the warm standby streams from its slot.
+# TYPE faas_postgres_standby_slot_active gauge
+faas_postgres_standby_slot_active $slot_active
+# HELP faas_postgres_standby_slot_retained_bytes WAL the primary keeps for the warm standby's slot.
+# TYPE faas_postgres_standby_slot_retained_bytes gauge
+faas_postgres_standby_slot_retained_bytes $slot_retained
+# HELP faas_postgres_standby_slot_keep_size_bytes max_slot_wal_keep_size; past it the slot is lost (-1 is unlimited).
+# TYPE faas_postgres_standby_slot_keep_size_bytes gauge
+faas_postgres_standby_slot_keep_size_bytes $slot_keep_size
+# HELP faas_postgres_standby_slot_wal_status The warm standby slot's pg_replication_slots.wal_status.
+# TYPE faas_postgres_standby_slot_wal_status gauge
+faas_postgres_standby_slot_wal_status{wal_status="$slot_wal_status"} 1
+EOF
+  if test "$replay_lag" -ge 0; then
+    cat >>"$tmp" <<EOF
+# HELP faas_postgres_standby_replay_lag_bytes WAL the connected warm standby has not replayed yet.
+# TYPE faas_postgres_standby_replay_lag_bytes gauge
+faas_postgres_standby_replay_lag_bytes $replay_lag
+EOF
+  fi
+fi
 chmod 0644 "$tmp"
 mv "$tmp" "$output"

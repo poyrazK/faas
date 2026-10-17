@@ -1,4 +1,5 @@
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 -- The final schema object marks this transactional Up as applied. A ledger
 -- replay must preserve definitions widened by later migrations and must not
 -- re-run grant backfills or replace saved rollback constraint definitions.

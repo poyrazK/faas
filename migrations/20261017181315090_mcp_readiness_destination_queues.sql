@@ -1,4 +1,5 @@
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 -- Hydrated lazily from existing routing, leases and retry deadlines on first use.
 -- Stop readiness evaluators and upgrade them together before resuming dispatch.
 ALTER TABLE mcp_readiness_incident_events ADD COLUMN IF NOT EXISTS destination_deliveries jsonb NOT NULL DEFAULT '{}'

@@ -1,4 +1,5 @@
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 CREATE TABLE IF NOT EXISTS mcp_readiness_fallback_policies (
  rule_id uuid PRIMARY KEY REFERENCES alert_rules(id) ON DELETE CASCADE,
  version bigint NOT NULL CHECK(version>0),

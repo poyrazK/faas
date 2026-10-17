@@ -1435,6 +1435,7 @@ var cliCommands = []cliCommand{
 			{Name: "wake-max-queue-wait-seconds", Short: "set per-app cold-wake wait budget", Value: "N"},
 			{Name: "idle", Short: "set idle timeout in seconds", Value: "SEC"},
 			{Name: "request-timeout", Short: "set per-app request timeout in seconds", Value: "SEC"},
+			{Name: "function-concurrency", Short: "set requests one Node/Python function worker serves at once", Value: "N"},
 			{Name: "revision-pin-ttl", Short: "revision pin lifetime; 0 disables, maximum 168h", Value: "DURATION"},
 			{Name: "require-signed", Short: "toggle require_signed", ClosedSet: []string{"true", "false"}},
 			{Name: "security-policy", Short: "deploy posture policy", ClosedSet: []string{"off", "warn", "enforce"}},

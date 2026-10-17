@@ -1,4 +1,4 @@
-# ADR 1540: Durable platform MCP readiness admission
+# ADR 1561: Durable platform MCP readiness admission
 
 This extends ADR 1539's client-side readiness checks. A client-provided success
 flag or saved CLI report cannot authorize production traffic. The platform runs

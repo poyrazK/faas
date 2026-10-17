@@ -2,7 +2,7 @@
 
 Status: Accepted
 
-Readiness admission (ADR-1540) records public protocol and expected-catalog checks before traffic increases. A serving deployment can subsequently regress, and an old successful observation must not imply continuous health.
+Readiness admission (ADR-1561) records public protocol and expected-catalog checks before traffic increases. A serving deployment can subsequently regress, and an old successful observation must not imply continuous health.
 
 Each readiness policy role may opt into monitoring with a 60–3600 second interval, a threshold of 1–10 consecutive failures, and an optional `secret:KEY` credential reference. If admission is enabled, the interval must be at most half the maximum evidence age. Monitoring can operate while admission is disabled. Existing policies remain unscheduled until explicitly configured.
 

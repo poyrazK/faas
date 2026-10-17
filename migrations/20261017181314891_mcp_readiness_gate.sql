@@ -1,4 +1,5 @@
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 DO $migration$ BEGIN
  IF EXISTS(SELECT 1 FROM pg_trigger WHERE tgname='deployment_mcp_readiness_gate' AND tgrelid='deployments'::regclass) THEN RETURN; END IF;
