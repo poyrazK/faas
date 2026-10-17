@@ -1,6 +1,7 @@
 # ADR-1499 · Rate-limit token leasing
 
-- **Status:** proposed
+- **Status:** proposed. Built behind `[ratelimit] lease`, off by default
+  (see Implementation).
 - **Date:** 2026-10-15
 - **Amends:** ADR-104 amendment 5 (central rate-limit mode) and ADR-040
   (per-account limits). Keeps the shared Postgres counter as the authority.
@@ -154,6 +155,9 @@ still spent.
   `returned`), and `gateway_ratelimit_sync_consults_total{scope}`: requests
   that waited for Postgres, which should only grow for counters at their
   limit.
+- Deploy manifest: `daemons.gatewayd_internal.ratelimit_lease` (omitted
+  renders `false`; refused with `ratelimit_mode: local`), rendered into the
+  `[ratelimit]` table. Ansible: `gatewayd_ratelimit_lease`.
 
 ## Verification
 
@@ -173,6 +177,28 @@ still spent.
      the limit;
    - driving twice the plan rate at a Free-plan test app admits within
      ±10% of the plan's 5 req/s.
+
+## Implementation
+
+Built in `pkg/gateway/ratelimit_lease.go` behind the limiter's central
+consume, so app, account, rule and dimensional consumer counters all lease.
+`ReturnTokens` is the one new statement (`pkg/state/pgstore_ratelimit.go`).
+
+Not built yet: requesting a request's account and app leases in one pgx
+batch. Until then a request that waits for both pays two round trips. Only
+traffic at or near its limit waits, so this is the last slice, after the
+production check shows how often requests wait.
+
+Two choices the design left open:
+
+- A lease that arrives while tokens from the previous one are unspent
+  extends their expiry to the new grant's. Refills start at half a lease, so
+  at most half a lease is extended, once per grant.
+- A gateway that has no lease state for a counter (first use, after a
+  restart, or after its state was dropped) treats the balance as unknown and
+  allows the allowance. Idle state is dropped only after the bucket would
+  have refilled completely, so this matters only for a gateway restart or a
+  counter another gateway drained meanwhile, and stays within `N * A`.
 
 ## Rejected alternatives
 
