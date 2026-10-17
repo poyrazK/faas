@@ -42,6 +42,11 @@ const (
 	// connection for an app instance (ADR-989). Only vmmd mints it; the guest
 	// identity endpoint refuses it so the audience stays host-internal.
 	OutboundRelayAudience = "gregale:outbound:relay"
+	// OutboundHeader carries a vmmd-signed assertion to outboundd. It lives
+	// here, not in pkg/outbound, so guest-init's binding probe can name it
+	// without linking the outbound proxy and, through it, the control plane
+	// (production-us hunt #10, H10-139).
+	OutboundHeader = "X-Gregale-Workload-Identity"
 )
 
 // Claims is the stable Gregale workload identity contract. Standard OIDC
