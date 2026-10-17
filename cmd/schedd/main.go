@@ -31,6 +31,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/audit"
 	"github.com/onebox-faas/faas/pkg/capdecl/runtimecheck"
+	"github.com/onebox-faas/faas/pkg/ci"
 	"github.com/onebox-faas/faas/pkg/cosign"
 	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/db"
@@ -961,6 +962,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		log.Info("schedd jobs dispatch disabled — set FAAS_JOBS_DISPATCH=1 to enable (Mega-1 cluster-wide gate)")
 	}
 	engine.WithJobVmmClient(vmmRouter).WithJobExitWaiter(vmmRouter)
+	engine.WithCIJobsRuntime(ci.NewPostgresStore(pool), ci.ConfigFromEnv(os.Getenv), os.Getenv(ci.RuntimeURLEnv))
 	if leaser := sched.NewPgLeaserFromPool(pool, ownerNodeID, nil); leaser != nil {
 		engine.WithJobLeaser(sched.AdaptJobLeaser(leaser))
 	}
