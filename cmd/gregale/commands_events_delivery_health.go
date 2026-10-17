@@ -52,6 +52,7 @@ func cmdEventsSubscriptionDeliveryHealth(args []string) int {
 
 func printEventConsumerDeliveryHealth(out api.EventConsumerDeliveryHealth) {
 	r, e, sample := out.Routing, out.Execution, out.PendingSample
+	printEventConsumerProcessingHealth(out.Processing)
 	printLineageRetryJobHealth(e.LineageRetryJobs)
 	_, _ = fmt.Fprintf(osStdout, "Subscription %s | pending routing %d | processing routing %d | oldest pending %.0fs\n", oneLine(r.SubscriptionID), r.PendingRecipients, r.ProcessingRecipients, r.OldestAgeSeconds)
 	_, _ = fmt.Fprintf(osStdout, "Execution history %s (%s) | collection start %v | evidence lost %v\n", oneLine(e.HistoryStatus), oneLine(e.HistoryReason), e.CoverageStartedAt, e.CoverageLostAt)
@@ -89,16 +90,35 @@ type deliveryHealthWatchFlags struct {
 	ackInbox             *string
 	options              api.EventDeliveryHealthWatchOptions
 	slo                  api.EventDeliveryHealthSLOOptions
+	deadline             *deliveryHealthDeadlineFlags
 }
 
 func newDeliveryHealthWatchFlags(fs *flag.FlagSet) *deliveryHealthWatchFlags {
 	f := &deliveryHealthWatchFlags{}
+	f.deadline = newDeliveryHealthDeadlineFlags(fs)
+	fs.Float64Var(&f.options.ProcessingRenewalRejectionFraction, "renewal-rejection-threshold", 0, "recorded rejected renewal fraction (0..1); zero disables")
+	fs.Float64Var(&f.options.ProcessingLeaseExpiryRate, "lease-expiry-rate-threshold", 0, "recorded expiry transitions per second; zero disables")
+	fs.Int64Var(&f.options.ProcessingRenewalMinimumSamples, "renewal-min-samples", 0, "minimum recorded renewals per window (default 10 when enabled)")
+	fs.DurationVar(&f.options.ProcessingWindowSustain, "processing-window-sustain", 0, "breach and recovery sustain, at least 1m (default 1m)")
+	fs.Func("processing-metrics-recording-since", "RFC3339 manual coverage override; omitted uses verified server writer inventory", func(raw string) error {
+		at, err := time.Parse(time.RFC3339Nano, raw)
+		if err != nil {
+			return fmt.Errorf("recording-since must be RFC3339: %w", err)
+		}
+		at = at.UTC()
+		f.options.ProcessingMetricsRecordingSince = &at
+		return nil
+	})
+
+	fs.DurationVar(&f.options.ProcessingOldest, "processing-oldest-threshold", 0, "active processing attempt age threshold; fresh breach must persist 30s")
+	fs.DurationVar(&f.options.ProcessingLeaseRisk, "processing-lease-risk-threshold", 0, "sustained nonzero leases in their final third (capped at 30s)")
+	fs.DurationVar(&f.options.ProcessingExpired, "processing-expired-threshold", 0, "sustained nonzero expired processing leases")
 	f.watch = fs.Bool("watch", false, "watch configured delivery health thresholds")
 	f.checkpoint = fs.String("checkpoint", "", "persist a bounded delivery health watch checkpoint")
 	f.ackInbox = fs.String("ack-inbox", "", "atomically replaced JSON acknowledgement batch; requires checkpoint")
 	f.resume = fs.Bool("resume", false, "resume the selected checkpoint with fresh evidence")
 	f.alertsJSON = fs.Bool("alerts-json", false, "emit local lifecycle alert JSON lines on stderr")
-	f.confirmationProgress = fs.Bool("confirmation-progress", false, "print live receipt-budget confirmation progress on text stdout")
+	f.confirmationProgress = fs.Bool("confirmation-progress", false, "print live delivery-health confirmation progress on text stdout")
 	fs.DurationVar(&f.options.Interval, "interval", api.EventDeliveryHealthWatchIntervalDefault, "watch polling interval (100ms-1m)")
 	fs.DurationVar(&f.options.Timeout, "timeout", api.EventDeliveryHealthWatchTimeoutDefault, "watch deadline (up to 24h)")
 	fs.DurationVar(&f.options.MaxAge, "max-age", api.EventDeliveryHealthWatchAgeDefault, "maximum component sample age (100ms-24h)")
@@ -164,8 +184,9 @@ func newDeliveryHealthWatchFlags(fs *flag.FlagSet) *deliveryHealthWatchFlags {
 
 func (f *deliveryHealthWatchFlags) validate(fs *flag.FlagSet) error {
 	var err error
-	sloSelected, sloTarget := false, false
+	sloSelected, sloTarget, deadlineSelected := false, false, false
 	fs.Visit(func(option *flag.Flag) {
+		deadlineSelected = deadlineSelected || strings.HasPrefix(option.Name, "deadline-")
 		if (option.Name == "receipt-budget-low-sustain" || option.Name == "receipt-budget-recovery-threshold" || option.Name == "receipt-budget-recovery-sustain") && f.options.ReceiptBudgetRemaining == 0 {
 			err = fmt.Errorf("--%s requires an enabled --receipt-budget-remaining-threshold", option.Name)
 		}
@@ -179,6 +200,16 @@ func (f *deliveryHealthWatchFlags) validate(fs *flag.FlagSet) error {
 			err = fmt.Errorf("--%s requires --watch", option.Name)
 		}
 	})
+	if err != nil {
+		return err
+	}
+	if deadlineSelected {
+		options, deadlineErr := f.deadline.options()
+		if deadlineErr != nil {
+			return deadlineErr
+		}
+		f.options.RateRisk = options
+	}
 	if f.confirmationProgress != nil && *f.confirmationProgress && jsonOutput {
 		return fmt.Errorf("live confirmation progress uses text stdout; omit --confirmation-progress with --json")
 	}
@@ -226,6 +257,10 @@ func runDeliveryHealthWatch(client *api.Client, app, sub, window string, f *deli
 				if err := json.NewEncoder(os.Stderr).Encode(alert); err != nil {
 					return err
 				}
+			} else if isDeadlineRatioMetric(alert.Metric) {
+				if err := printDeadlineRatioAlert(alert); err != nil {
+					return err
+				}
 			} else {
 				if _, err := fmt.Fprintf(os.Stderr, "%s %s | app %s | subscription %s | incident %s | sequence %d | value %.3f | threshold %.3f | %s\n", alert.Metric, alert.Transition, alert.AppID, alert.SubscriptionID, alert.IncidentID, alert.Sequence, alert.Value, alert.Threshold, alert.Reason); err != nil {
 					return err
@@ -233,6 +268,8 @@ func runDeliveryHealthWatch(client *api.Client, app, sub, window string, f *deli
 			}
 		}
 		if f.confirmationProgress != nil && *f.confirmationProgress {
+			printDeadlineHealthConditions(progress.Conditions)
+			printDeadlineRatioHealth(progress)
 			printDeliveryHealthConfirmations(progress.Confirmations)
 		}
 		return nil
@@ -254,6 +291,8 @@ func runDeliveryHealthWatch(client *api.Client, app, sub, window string, f *deli
 		for _, v := range result.SLO {
 			_, _ = fmt.Fprintf(osStdout, "SLO %s: %s (%s) | value %.6f | target %.6f | samples %d/%d | coverage %s | budget burn %.3fx\n", v.Metric, v.Status, v.Reason, v.Value, v.Threshold, v.Samples, v.MinimumSamples, v.Coverage, v.ErrorBudgetBurnRate)
 		}
+		printDeadlineHealthConditions(result.Conditions)
+		printDeadlineRatioHealth(result)
 		printDeliveryHealthConfirmations(result.Confirmations)
 		_, _ = fmt.Fprintf(osStdout, "Watch stopped: %s | observations %d | alert sequence %d\n", result.StopReason, result.Observations, result.Sequence)
 	}
@@ -278,4 +317,51 @@ func printEventConsumerCapacityPressure(pressure *api.EventConsumerCapacityPress
 			_, _ = fmt.Fprintf(osStdout, "    %s\n", oneLine(scope.Advice))
 		}
 	}
+}
+
+func printEventConsumerProcessingHealth(p *api.EventConsumerProcessingHealth) {
+	if p == nil {
+		_, _ = fmt.Fprintln(osStdout, "Deferred processing: unavailable")
+		return
+	}
+	_, _ = fmt.Fprintf(osStdout, "Deferred processing: waiting %d | delivering %d | processing %d | expired %d | near expiry %d (final third; cap %ds) | completed %d | dead letters %d | failed %d | other %d\n", p.Waiting, p.Delivering, p.Processing, p.Expired, p.NearExpiry, p.NearExpirySeconds, p.Completed, p.DeadLettered, p.Failed, p.Other)
+	latency := "unavailable"
+	if p.AcknowledgmentSamples > 0 {
+		latency = fmt.Sprintf("%.0fs", p.AcknowledgmentLatencyMaxSeconds)
+	}
+	renewalCoverage := p.RenewalFailureCoverage
+	if p.RenewalWindow != nil {
+		renewalCoverage = p.RenewalWindow.Coverage
+	}
+	_, _ = fmt.Fprintf(osStdout, "Processing attempt age %.0fs | retained acknowledgment samples %d | maximum acknowledgment latency %s | renewal failures %s | coverage %s | complete %t | observed %s\n", p.OldestProcessingAgeSeconds, p.AcknowledgmentSamples, latency, oneLine(renewalCoverage), oneLine(p.Coverage), p.Complete, p.ObservedAt.Format(time.RFC3339))
+	if p.RenewalWindow != nil {
+		printEventAcknowledgmentWindowHealth(p.RenewalWindow)
+	}
+}
+
+func printEventAcknowledgmentWindowHealth(p *api.EventAcknowledgmentWindowHealth) {
+	rejection, expiryRate := "unavailable", "unavailable"
+	if p.RenewalRejectionFraction != nil {
+		rejection = fmt.Sprintf("%.2f%%", *p.RenewalRejectionFraction*100)
+	}
+	if p.LeaseExpiryRatePerSecond != nil {
+		expiryRate = fmt.Sprintf("%.6f/s", *p.LeaseExpiryRatePerSecond)
+	}
+	_, _ = fmt.Fprintf(osStdout, "Recorded renewal window %s to %s | successes %d | rejections %d / %d attempts (%s) | lease expiries %d (%s) | saturated %t | coverage %s\n", p.WindowStart.Format(time.RFC3339), p.WindowEnd.Format(time.RFC3339), p.RenewalSuccesses, p.RenewalRejections, p.RenewalAttempts, rejection, p.LeaseExpiries, expiryRate, p.Saturated, oneLine(p.Coverage))
+	printEventRecordingCoverage(p.RecordingCoverage)
+}
+
+func printEventRecordingCoverage(c *api.EventAcknowledgmentRecordingCoverage) {
+	if c == nil {
+		_, _ = fmt.Fprintln(osStdout, "Writer recording coverage: unavailable")
+		return
+	}
+	since, through := "unavailable", "unavailable"
+	if c.ContinuousSince != nil {
+		since = c.ContinuousSince.Format(time.RFC3339)
+	}
+	if c.VerifiedThrough != nil {
+		through = c.VerifiedThrough.Format(time.RFC3339)
+	}
+	_, _ = fmt.Fprintf(osStdout, "Writer recording coverage: verified %t | reason %s | live %d / expected %d | continuous since %s | verified through %s\n", c.Verified, oneLine(c.Reason), c.ActiveWriters, c.ExpectedWriters, since, through)
 }

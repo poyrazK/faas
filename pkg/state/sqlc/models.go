@@ -3327,6 +3327,63 @@ type Event struct {
 	OutboxID       pgtype.Int8
 }
 
+type EventAcknowledgmentMetricBucket struct {
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	SubscriptionID pgtype.UUID
+	BucketStart    pgtype.Timestamptz
+	Kind           string
+	Occurrences    int64
+	Saturated      bool
+	RetainUntil    pgtype.Timestamptz
+}
+
+type EventAcknowledgmentOutcome struct {
+	InvocationID     pgtype.UUID
+	Attempt          int32
+	ReplayGeneration int64
+	Kind             string
+	FirstAt          pgtype.Timestamptz
+	LastAt           pgtype.Timestamptz
+	Occurrences      int64
+	RetainUntil      pgtype.Timestamptz
+}
+
+type EventAcknowledgmentRecordingCoverage struct {
+	Singleton         bool
+	InventoryRevision string
+	ContinuousSince   pgtype.Timestamptz
+	VerifiedThrough   pgtype.Timestamptz
+	UpdatedAt         pgtype.Timestamptz
+}
+
+type EventAcknowledgmentWriter struct {
+	SessionID         pgtype.UUID
+	Role              string
+	Slot              string
+	CapabilityVersion int32
+	Inventory         []byte
+	InventoryRevision string
+	StartedAt         pgtype.Timestamptz
+	SeenAt            pgtype.Timestamptz
+	ContinuousSince   pgtype.Timestamptz
+	ExpiresAt         pgtype.Timestamptz
+}
+
+type EventDeliveryAcknowledgment struct {
+	InvocationID     pgtype.UUID
+	Attempt          int32
+	ReplayGeneration int64
+	TokenDigest      []byte
+	Phase            string
+	CompletionDigest []byte
+	LeaseSeconds     int32
+	DeadlineAt       pgtype.Timestamptz
+	MaxAttempts      int32
+	RetryDelayMs     int64
+	RejectionStatus  []byte
+}
+
 type EventDeliveryCapacity struct {
 	AccountID     pgtype.UUID
 	ConsumerLimit int32
@@ -3711,17 +3768,18 @@ type EventStorageAdmission struct {
 }
 
 type EventSubscription struct {
-	ID                 pgtype.UUID
-	AccountID          pgtype.UUID
-	AppID              pgtype.UUID
-	Source             string
-	Type               string
-	Filter             []byte
-	Enabled            bool
-	CreatedAt          pgtype.Timestamptz
-	UpdatedAt          pgtype.Timestamptz
-	RoutingRetryPolicy []byte
-	SchemaVersions     []string
+	ID                         pgtype.UUID
+	AccountID                  pgtype.UUID
+	AppID                      pgtype.UUID
+	Source                     string
+	Type                       string
+	Filter                     []byte
+	Enabled                    bool
+	CreatedAt                  pgtype.Timestamptz
+	UpdatedAt                  pgtype.Timestamptz
+	RoutingRetryPolicy         []byte
+	SchemaVersions             []string
+	AcknowledgmentLeaseSeconds int32
 }
 
 type EventSubscriptionCapacityCommand struct {
@@ -3755,6 +3813,25 @@ type EventSubscriptionDeliveryControl struct {
 	UpdatedAt            pgtype.Timestamptz
 	PausedAt             pgtype.Timestamptz
 	MaxPendingDeliveries int32
+	RateEnabled          bool
+	RateIntervalMs       int64
+	RateBurst            int64
+	RateCreditMs         int64
+	RateRefilledAt       pgtype.Timestamptz
+	RateRevision         int64
+	RateSequence         int64
+}
+
+type EventSubscriptionRateCommand struct {
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	SubscriptionID pgtype.UUID
+	CommandID      pgtype.UUID
+	Sequence       int64
+	Request        []byte
+	Receipt        []byte
+	RecordedAt     pgtype.Timestamptz
+	RetainUntil    pgtype.Timestamptz
 }
 
 type EventSubscriptionWorkBinding struct {

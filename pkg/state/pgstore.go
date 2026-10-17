@@ -15901,6 +15901,7 @@ func (s *PgStore) RequeueExpiredInvocations(ctx context.Context, now time.Time, 
 			select id, quota_reserved
 			  from invocations
 			 where state = 'dispatching'
+ and not exists(select 1 from event_delivery_acknowledgments a where a.invocation_id=invocations.id and a.attempt=invocations.attempts and a.replay_generation=invocations.replay_generation and a.phase='awaiting')
            and not exists(select 1 from customer_operation_executions e where e.invocation_id=invocations.id)
 			   and lease_expires_at is not null
 			   and lease_expires_at <= $1

@@ -2683,3 +2683,29 @@ For a self-contained private file service, use
 [built-in starter guide](../../cmd/gregale/templates/object-storage-python/README.md)
 covers bearer authentication, bounded uploads, streaming downloads, managed
 read/write bindings and bounded transport recovery after snapshot restore.
+
+### Async deadline count alerts
+
+`awatch_event_subscription_deadlines(client.inner, target, options)` supports
+sustained total/reason deadline alerts, separate recovery counts, fresh-evidence
+progress, task cancellation, checkpoint/resume and exact alert acknowledgments.
+Configure `EventDeadlineTarget` and `EventDeadlineWatchOptions`; load saved state
+with `validate_event_deadline_checkpoint` and apply offline acknowledgments with
+`acknowledge_event_deadline_alerts`.
+
+Python uses its own deadline-only checkpoint format; Go/CLI and Node checkpoints
+are rejected. Applications own persistence and notification delivery. Persist before
+publishing and deduplicate replayed alerts. See [configuration and cancellation](../../docs/event-deadline-python-watch.md).
+
+`expired_ratio=EventDeadlineRatioOptions(warning_basis_points=1000,
+recovery_basis_points=500, minimum_recipients=100)` adds an expired backlog ratio
+condition with exact integer comparisons and retained source samples. Ratio watches
+use version 2 Python checkpoints; count-only checkpoints remain version 1. See
+[ratio policy and compatibility](../../docs/event-deadline-python-watch.md#expired-backlog-ratio-conditions).
+
+`ainvestigate_event_deadline_alert(client.inner, checkpoint, reference, options)`
+maps an exact retained Python incident/sequence pair to one current read-only triage
+page. `EventDeadlineInvestigationOptions` controls page size, opaque continuation
+and a cancellable read budget up to five seconds. Saved notification timestamps and
+ratio samples remain separate from current observations. See
+[investigation, validation and pagination](../../docs/event-deadline-python-investigation.md).

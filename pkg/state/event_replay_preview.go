@@ -244,7 +244,7 @@ func (s *PgStore) PreviewEventReplay(ctx context.Context, accountID string, quer
 	if err != nil {
 		return api.EventReplayPreviewResponse{}, fmt.Errorf("read replay preview target: %w", err)
 	}
-	sub := EventSubscription{SchemaVersions: append([]string(nil), row.SchemaVersions...), RoutingRetryPolicy: decodeEventRoutingRetryPolicy(row.RoutingRetryPolicy), ID: uuidFromPgtype(row.ID).String(), AccountID: uuidFromPgtype(row.AccountID).String(), AppID: uuidFromPgtype(row.AppID).String(), Source: row.Source, Type: row.Type, Filter: row.Filter, Enabled: row.Enabled, CreatedAt: timeFromPgtype(row.CreatedAt), UpdatedAt: timeFromPgtype(row.UpdatedAt)}
+	sub := EventSubscription{AcknowledgmentLeaseSeconds: int(row.AcknowledgmentLeaseSeconds), SchemaVersions: append([]string(nil), row.SchemaVersions...), RoutingRetryPolicy: decodeEventRoutingRetryPolicy(row.RoutingRetryPolicy), ID: uuidFromPgtype(row.ID).String(), AccountID: uuidFromPgtype(row.AccountID).String(), AppID: uuidFromPgtype(row.AppID).String(), Source: row.Source, Type: row.Type, Filter: row.Filter, Enabled: row.Enabled, CreatedAt: timeFromPgtype(row.CreatedAt), UpdatedAt: timeFromPgtype(row.UpdatedAt)}
 	now := time.Now().UTC()
 	c, err := eventReplayPreviewWindow(accountID, query, sub, row.WorkBound, now)
 	if err != nil {
