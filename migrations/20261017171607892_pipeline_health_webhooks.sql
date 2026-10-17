@@ -1,4 +1,5 @@
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 CREATE TABLE IF NOT EXISTS data_pipeline_alerts (
  pipeline_id uuid PRIMARY KEY REFERENCES data_pipelines(id) ON DELETE CASCADE,
  account_id uuid NOT NULL,
@@ -37,5 +38,6 @@ CREATE TABLE IF NOT EXISTS data_pipeline_alert_deliveries (
 CREATE INDEX IF NOT EXISTS data_pipeline_alert_deliveries_due ON data_pipeline_alert_deliveries(next_attempt_at,sequence) WHERE status='pending';
 
 -- +goose Down
+SET LOCAL lock_timeout = '5s';
 DROP TABLE IF EXISTS data_pipeline_alert_deliveries;
 DROP TABLE IF EXISTS data_pipeline_alerts;

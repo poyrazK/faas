@@ -1,4 +1,5 @@
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 -- The projection is also the source for the migration's owned tables.
 CREATE TABLE IF NOT EXISTS data_pipeline_connections (
  id uuid PRIMARY KEY,
@@ -82,6 +83,7 @@ CREATE TRIGGER data_pipeline_account_guard BEFORE DELETE ON accounts FOR EACH RO
 -- +goose StatementEnd
 
 -- +goose Down
+SET LOCAL lock_timeout = '5s';
 DROP TRIGGER data_pipeline_account_guard ON accounts;
 DROP TRIGGER data_pipeline_database_guard ON managed_postgres_databases;
 DROP TRIGGER data_pipeline_binding_guard ON managed_postgres_bindings;

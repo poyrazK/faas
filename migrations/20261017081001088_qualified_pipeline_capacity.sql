@@ -1,4 +1,5 @@
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 ALTER TABLE managed_postgres_bindings ADD COLUMN IF NOT EXISTS connection_limit bigint NOT NULL DEFAULT 0 CHECK(connection_limit BETWEEN 0 AND 84);
 CREATE TABLE IF NOT EXISTS postgres_capacity_resources (
  resource_key text PRIMARY KEY,
@@ -195,6 +196,7 @@ CREATE TRIGGER postgres_capacity_cutover_guard BEFORE INSERT ON managed_postgres
 -- +goose StatementEnd
 
 -- +goose Down
+SET LOCAL lock_timeout = '5s';
 DROP TRIGGER postgres_capacity_cutover_guard ON managed_postgres_cutovers;
 DROP FUNCTION postgres_capacity_cutover_guard();
 DROP TRIGGER postgres_capacity_target_mapping_guard ON postgres_capacity_targets;

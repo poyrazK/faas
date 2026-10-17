@@ -1,5 +1,6 @@
 -- +goose Up
-CREATE TABLE data_pipeline_setups (
+SET LOCAL lock_timeout = '5s';
+CREATE TABLE IF NOT EXISTS data_pipeline_setups (
  id uuid PRIMARY KEY,
  account_id uuid NOT NULL,
  source_connection_id uuid NOT NULL,
@@ -21,11 +22,11 @@ CREATE TABLE data_pipeline_setups (
  UNIQUE(account_id,name),
  FOREIGN KEY(account_id,source_connection_id) REFERENCES data_pipeline_connections(account_id,id) ON DELETE CASCADE
 );
-CREATE UNIQUE INDEX data_pipeline_setups_source_active ON data_pipeline_setups(source_connection_id) WHERE state IN ('working','blocked');
-CREATE INDEX data_pipeline_setups_due ON data_pipeline_setups(retry_at,id) WHERE state='working';
+CREATE UNIQUE INDEX IF NOT EXISTS data_pipeline_setups_source_active ON data_pipeline_setups(source_connection_id) WHERE state IN ('working','blocked');
+CREATE INDEX IF NOT EXISTS data_pipeline_setups_due ON data_pipeline_setups(retry_at,id) WHERE state='working';
 
 -- +goose StatementBegin
-CREATE FUNCTION data_pipeline_setup_owner_guard() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION data_pipeline_setup_owner_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF TG_TABLE_NAME='accounts' THEN
   IF EXISTS(SELECT 1 FROM data_pipeline_setups WHERE account_id=OLD.id AND state IN ('working','blocked')) THEN
@@ -46,12 +47,16 @@ BEGIN
  IF TG_OP='DELETE' THEN RETURN OLD; END IF;
  RETURN NEW;
 END $$;
+DROP TRIGGER IF EXISTS data_pipeline_setup_account_guard ON accounts;
 CREATE TRIGGER data_pipeline_setup_account_guard BEFORE DELETE ON accounts FOR EACH ROW EXECUTE FUNCTION data_pipeline_setup_owner_guard();
+DROP TRIGGER IF EXISTS data_pipeline_setup_source_guard ON data_pipeline_connections;
 CREATE TRIGGER data_pipeline_setup_source_guard BEFORE DELETE ON data_pipeline_connections FOR EACH ROW EXECUTE FUNCTION data_pipeline_setup_owner_guard();
+DROP TRIGGER IF EXISTS data_pipeline_setup_database_guard ON managed_postgres_databases;
 CREATE TRIGGER data_pipeline_setup_database_guard BEFORE UPDATE OR DELETE ON managed_postgres_databases FOR EACH ROW EXECUTE FUNCTION data_pipeline_setup_owner_guard();
 -- +goose StatementEnd
 
 -- +goose Down
+SET LOCAL lock_timeout = '5s';
 DROP TRIGGER data_pipeline_setup_account_guard ON accounts;
 DROP TRIGGER data_pipeline_setup_source_guard ON data_pipeline_connections;
 DROP TRIGGER data_pipeline_setup_database_guard ON managed_postgres_databases;

@@ -1,5 +1,6 @@
 -- filename: 20261017070846822_data_connection_checks.sql
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 
 CREATE TABLE IF NOT EXISTS data_connection_checks (
@@ -20,6 +21,7 @@ CREATE INDEX IF NOT EXISTS data_connection_checks_due ON data_connection_checks(
 -- +goose StatementEnd
 
 -- +goose Down
+SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 DROP TABLE IF EXISTS data_connection_checks;
 -- +goose StatementEnd
