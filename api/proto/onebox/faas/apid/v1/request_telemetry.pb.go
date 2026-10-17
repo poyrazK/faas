@@ -301,7 +301,16 @@ type ConsumerUsageEvent struct {
 	// Bounded "METHOD /template" label for consumer-attributed traffic. apid
 	// keeps route-level billable minutes so rate cards can weight routes
 	// (ADR-952). Empty for anonymous traffic and from older gateways.
-	BillingRoute  string `protobuf:"bytes,15,opt,name=billing_route,json=billingRoute,proto3" json:"billing_route,omitempty"`
+	BillingRoute string `protobuf:"bytes,15,opt,name=billing_route,json=billingRoute,proto3" json:"billing_route,omitempty"`
+	// Execution time and response size of a billable consumer request, which
+	// rate cards can price instead of requests (ADR-1308). Zero from older
+	// gateways and for requests a customer is not billed for.
+	ComputeMs     int64 `protobuf:"varint,16,opt,name=compute_ms,json=computeMs,proto3" json:"compute_ms,omitempty"`
+	ResponseBytes int64 `protobuf:"varint,17,opt,name=response_bytes,json=responseBytes,proto3" json:"response_bytes,omitempty"`
+	// Units the app reported for a billable consumer request in its
+	// Gregale-Usage header or trailer, by meter (ADR-1318). Empty from older
+	// gateways.
+	MeterUnits    map[string]int64 `protobuf:"bytes,18,rep,name=meter_units,json=meterUnits,proto3" json:"meter_units,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"varint,2,opt,name=value"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -441,6 +450,27 @@ func (x *ConsumerUsageEvent) GetBillingRoute() string {
 	return ""
 }
 
+func (x *ConsumerUsageEvent) GetComputeMs() int64 {
+	if x != nil {
+		return x.ComputeMs
+	}
+	return 0
+}
+
+func (x *ConsumerUsageEvent) GetResponseBytes() int64 {
+	if x != nil {
+		return x.ResponseBytes
+	}
+	return 0
+}
+
+func (x *ConsumerUsageEvent) GetMeterUnits() map[string]int64 {
+	if x != nil {
+		return x.MeterUnits
+	}
+	return nil
+}
+
 type ConsumerUsageReceipt struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// False means the event was committed by an earlier attempt.
@@ -456,8 +486,14 @@ type ConsumerUsageReceipt struct {
 	// outbox record until a receiver explicitly advertises support.
 	SurfaceAttributionSupported   bool `protobuf:"varint,4,opt,name=surface_attribution_supported,json=surfaceAttributionSupported,proto3" json:"surface_attribution_supported,omitempty"`
 	JwtTenantAttributionSupported bool `protobuf:"varint,5,opt,name=jwt_tenant_attribution_supported,json=jwtTenantAttributionSupported,proto3" json:"jwt_tenant_attribution_supported,omitempty"`
-	unknownFields                 protoimpl.UnknownFields
-	sizeCache                     protoimpl.SizeCache
+	// True when the receiver stored compute_ms and response_bytes. A gateway
+	// retains an event carrying them until a receiver acknowledges it.
+	ResourceUsageRecorded bool `protobuf:"varint,6,opt,name=resource_usage_recorded,json=resourceUsageRecorded,proto3" json:"resource_usage_recorded,omitempty"`
+	// True when the receiver stored meter_units. A gateway retains an event
+	// carrying them until a receiver acknowledges it (ADR-1318).
+	MeterUsageRecorded bool `protobuf:"varint,7,opt,name=meter_usage_recorded,json=meterUsageRecorded,proto3" json:"meter_usage_recorded,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *ConsumerUsageReceipt) Reset() {
@@ -521,6 +557,20 @@ func (x *ConsumerUsageReceipt) GetSurfaceAttributionSupported() bool {
 func (x *ConsumerUsageReceipt) GetJwtTenantAttributionSupported() bool {
 	if x != nil {
 		return x.JwtTenantAttributionSupported
+	}
+	return false
+}
+
+func (x *ConsumerUsageReceipt) GetResourceUsageRecorded() bool {
+	if x != nil {
+		return x.ResourceUsageRecorded
+	}
+	return false
+}
+
+func (x *ConsumerUsageReceipt) GetMeterUsageRecorded() bool {
+	if x != nil {
+		return x.MeterUsageRecorded
 	}
 	return false
 }
@@ -1378,7 +1428,7 @@ const file_onebox_faas_apid_v1_request_telemetry_proto_rawDesc = "" +
 	"#RecordRequestIDJournalBatchResponse\x12\x1a\n" +
 	"\brecorded\x18\x01 \x01(\x05R\brecorded\x12!\n" +
 	"\fnot_entitled\x18\x02 \x01(\x05R\vnotEntitled\x12\x1a\n" +
-	"\brejected\x18\x03 \x01(\x05R\brejected\"\xac\x05\n" +
+	"\brejected\x18\x03 \x01(\x05R\brejected\"\x8b\a\n" +
 	"\x12ConsumerUsageEvent\x12\x19\n" +
 	"\bevent_id\x18\x01 \x01(\tR\aeventId\x12\x1d\n" +
 	"\n" +
@@ -1398,13 +1448,23 @@ const file_onebox_faas_apid_v1_request_telemetry_proto_rawDesc = "" +
 	"\x15discovered_at_unix_ms\x18\f \x01(\x03R\x12discoveredAtUnixMs\x12;\n" +
 	"\x1aplatform_tenant_surface_id\x18\r \x01(\tR\x17platformTenantSurfaceId\x12W\n" +
 	")platform_tenant_jwt_authorization_rule_id\x18\x0e \x01(\tR$platformTenantJwtAuthorizationRuleId\x12#\n" +
-	"\rbilling_route\x18\x0f \x01(\tR\fbillingRoute\"\x93\x02\n" +
+	"\rbilling_route\x18\x0f \x01(\tR\fbillingRoute\x12\x1d\n" +
+	"\n" +
+	"compute_ms\x18\x10 \x01(\x03R\tcomputeMs\x12%\n" +
+	"\x0eresponse_bytes\x18\x11 \x01(\x03R\rresponseBytes\x12X\n" +
+	"\vmeter_units\x18\x12 \x03(\v27.onebox.faas.apid.v1.ConsumerUsageEvent.MeterUnitsEntryR\n" +
+	"meterUnits\x1a=\n" +
+	"\x0fMeterUnitsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\x03R\x05value:\x028\x01\"\xfd\x02\n" +
 	"\x14ConsumerUsageReceipt\x12\x18\n" +
 	"\aapplied\x18\x01 \x01(\bR\aapplied\x12%\n" +
 	"\x0eaudit_recorded\x18\x02 \x01(\bR\rauditRecorded\x12-\n" +
 	"\x12discovery_recorded\x18\x03 \x01(\bR\x11discoveryRecorded\x12B\n" +
 	"\x1dsurface_attribution_supported\x18\x04 \x01(\bR\x1bsurfaceAttributionSupported\x12G\n" +
-	" jwt_tenant_attribution_supported\x18\x05 \x01(\bR\x1djwtTenantAttributionSupported\"\xdf\x02\n" +
+	" jwt_tenant_attribution_supported\x18\x05 \x01(\bR\x1djwtTenantAttributionSupported\x126\n" +
+	"\x17resource_usage_recorded\x18\x06 \x01(\bR\x15resourceUsageRecorded\x120\n" +
+	"\x14meter_usage_recorded\x18\a \x01(\bR\x12meterUsageRecorded\"\xdf\x02\n" +
 	"\x14RequestAuditEvidence\x12%\n" +
 	"\x0eroute_template\x18\x01 \x01(\tR\rrouteTemplate\x12\x16\n" +
 	"\x06method\x18\x02 \x01(\tR\x06method\x12\x1f\n" +
@@ -1508,7 +1568,7 @@ func file_onebox_faas_apid_v1_request_telemetry_proto_rawDescGZIP() []byte {
 	return file_onebox_faas_apid_v1_request_telemetry_proto_rawDescData
 }
 
-var file_onebox_faas_apid_v1_request_telemetry_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
+var file_onebox_faas_apid_v1_request_telemetry_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
 var file_onebox_faas_apid_v1_request_telemetry_proto_goTypes = []any{
 	(*RecordRequestIDJournalRequest)(nil),       // 0: onebox.faas.apid.v1.RecordRequestIDJournalRequest
 	(*RecordRequestIDJournalResponse)(nil),      // 1: onebox.faas.apid.v1.RecordRequestIDJournalResponse
@@ -1522,26 +1582,28 @@ var file_onebox_faas_apid_v1_request_telemetry_proto_goTypes = []any{
 	(*TelemetryCoverage)(nil),                   // 9: onebox.faas.apid.v1.TelemetryCoverage
 	(*TelemetryAppGap)(nil),                     // 10: onebox.faas.apid.v1.TelemetryAppGap
 	(*TelemetryCoverageReceipt)(nil),            // 11: onebox.faas.apid.v1.TelemetryCoverageReceipt
+	nil,                                         // 12: onebox.faas.apid.v1.ConsumerUsageEvent.MeterUnitsEntry
 }
 var file_onebox_faas_apid_v1_request_telemetry_proto_depIdxs = []int32{
 	0,  // 0: onebox.faas.apid.v1.RecordRequestIDJournalBatchRequest.records:type_name -> onebox.faas.apid.v1.RecordRequestIDJournalRequest
 	6,  // 1: onebox.faas.apid.v1.ConsumerUsageEvent.audit:type_name -> onebox.faas.apid.v1.RequestAuditEvidence
-	10, // 2: onebox.faas.apid.v1.TelemetryCoverage.app_gaps:type_name -> onebox.faas.apid.v1.TelemetryAppGap
-	9,  // 3: onebox.faas.apid.v1.RequestTelemetry.RecordTelemetryCoverage:input_type -> onebox.faas.apid.v1.TelemetryCoverage
-	7,  // 4: onebox.faas.apid.v1.RequestTelemetry.IncrementRequestTelemetry:input_type -> onebox.faas.apid.v1.IncrementRequestTelemetryRequest
-	4,  // 5: onebox.faas.apid.v1.RequestTelemetry.RecordConsumerUsage:input_type -> onebox.faas.apid.v1.ConsumerUsageEvent
-	0,  // 6: onebox.faas.apid.v1.RequestTelemetry.RecordRequestIDJournal:input_type -> onebox.faas.apid.v1.RecordRequestIDJournalRequest
-	2,  // 7: onebox.faas.apid.v1.RequestTelemetry.RecordRequestIDJournalBatch:input_type -> onebox.faas.apid.v1.RecordRequestIDJournalBatchRequest
-	11, // 8: onebox.faas.apid.v1.RequestTelemetry.RecordTelemetryCoverage:output_type -> onebox.faas.apid.v1.TelemetryCoverageReceipt
-	8,  // 9: onebox.faas.apid.v1.RequestTelemetry.IncrementRequestTelemetry:output_type -> onebox.faas.apid.v1.IncrementRequestTelemetryResponse
-	5,  // 10: onebox.faas.apid.v1.RequestTelemetry.RecordConsumerUsage:output_type -> onebox.faas.apid.v1.ConsumerUsageReceipt
-	1,  // 11: onebox.faas.apid.v1.RequestTelemetry.RecordRequestIDJournal:output_type -> onebox.faas.apid.v1.RecordRequestIDJournalResponse
-	3,  // 12: onebox.faas.apid.v1.RequestTelemetry.RecordRequestIDJournalBatch:output_type -> onebox.faas.apid.v1.RecordRequestIDJournalBatchResponse
-	8,  // [8:13] is the sub-list for method output_type
-	3,  // [3:8] is the sub-list for method input_type
-	3,  // [3:3] is the sub-list for extension type_name
-	3,  // [3:3] is the sub-list for extension extendee
-	0,  // [0:3] is the sub-list for field type_name
+	12, // 2: onebox.faas.apid.v1.ConsumerUsageEvent.meter_units:type_name -> onebox.faas.apid.v1.ConsumerUsageEvent.MeterUnitsEntry
+	10, // 3: onebox.faas.apid.v1.TelemetryCoverage.app_gaps:type_name -> onebox.faas.apid.v1.TelemetryAppGap
+	9,  // 4: onebox.faas.apid.v1.RequestTelemetry.RecordTelemetryCoverage:input_type -> onebox.faas.apid.v1.TelemetryCoverage
+	7,  // 5: onebox.faas.apid.v1.RequestTelemetry.IncrementRequestTelemetry:input_type -> onebox.faas.apid.v1.IncrementRequestTelemetryRequest
+	4,  // 6: onebox.faas.apid.v1.RequestTelemetry.RecordConsumerUsage:input_type -> onebox.faas.apid.v1.ConsumerUsageEvent
+	0,  // 7: onebox.faas.apid.v1.RequestTelemetry.RecordRequestIDJournal:input_type -> onebox.faas.apid.v1.RecordRequestIDJournalRequest
+	2,  // 8: onebox.faas.apid.v1.RequestTelemetry.RecordRequestIDJournalBatch:input_type -> onebox.faas.apid.v1.RecordRequestIDJournalBatchRequest
+	11, // 9: onebox.faas.apid.v1.RequestTelemetry.RecordTelemetryCoverage:output_type -> onebox.faas.apid.v1.TelemetryCoverageReceipt
+	8,  // 10: onebox.faas.apid.v1.RequestTelemetry.IncrementRequestTelemetry:output_type -> onebox.faas.apid.v1.IncrementRequestTelemetryResponse
+	5,  // 11: onebox.faas.apid.v1.RequestTelemetry.RecordConsumerUsage:output_type -> onebox.faas.apid.v1.ConsumerUsageReceipt
+	1,  // 12: onebox.faas.apid.v1.RequestTelemetry.RecordRequestIDJournal:output_type -> onebox.faas.apid.v1.RecordRequestIDJournalResponse
+	3,  // 13: onebox.faas.apid.v1.RequestTelemetry.RecordRequestIDJournalBatch:output_type -> onebox.faas.apid.v1.RecordRequestIDJournalBatchResponse
+	9,  // [9:14] is the sub-list for method output_type
+	4,  // [4:9] is the sub-list for method input_type
+	4,  // [4:4] is the sub-list for extension type_name
+	4,  // [4:4] is the sub-list for extension extendee
+	0,  // [0:4] is the sub-list for field type_name
 }
 
 func init() { file_onebox_faas_apid_v1_request_telemetry_proto_init() }
@@ -1555,7 +1617,7 @@ func file_onebox_faas_apid_v1_request_telemetry_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_onebox_faas_apid_v1_request_telemetry_proto_rawDesc), len(file_onebox_faas_apid_v1_request_telemetry_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   12,
+			NumMessages:   13,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

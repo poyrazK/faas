@@ -56,8 +56,13 @@ func TestPgCloneSchedulerFenceAdmissionsAndRetention(t *testing.T) {
 	}
 	_, err = pool.Exec(ctx, "UPDATE instances SET state='waking' WHERE id=$1", ins.ID)
 	requireCloneSchedulerFence(t, err)
+	// ADR-595 makes a wake instance's artifact identity immutable, so that
+	// guard refuses the move before the clone fence can.
 	_, err = pool.Exec(ctx, "UPDATE instances SET deployment_id=$2 WHERE id=$1", ins.ID, w.SourceDeploymentID)
-	requireCloneSchedulerFence(t, err)
+	var identity *pgconn.PgError
+	if !errors.As(err, &identity) || identity.ConstraintName != "application_standard_runtime_identity" {
+		requireCloneSchedulerFence(t, err)
+	}
 	if _, err = pool.Exec(ctx, "DELETE FROM instances WHERE id=$1", ins.ID); err != nil {
 		t.Fatal(err)
 	}

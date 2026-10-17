@@ -1,23 +1,31 @@
+// adr: 1350 — managed PostgreSQL plan entitlements follow the October 2026
+// COGS report.
 package api
 
 import "testing"
 
 func TestManagedPostgresLimitsFor(t *testing.T) {
-	hobby, ok := ManagedPostgresLimitsFor(PlanHobby)
-	if !ok || hobby.DatabasesMax != 1 || hobby.StorageLimitBytes != 10*(1<<30) || hobby.RestoreWindowSeconds != 7*24*60*60 || !hobby.DevelopmentAllowed || hobby.BurstableAllowed || hobby.ProductionAllowed || hobby.AlwaysOnAllowed {
-		t.Fatalf("unexpected hobby managed postgres limits: %+v, ok=%v", hobby, ok)
+	const gib = int64(1 << 30)
+	const cuHour = int64(60 * 60)
+	const week = int64(7 * 24 * 60 * 60)
+	want := map[Plan]ManagedPostgresPlanLimits{
+		PlanFree: {DatabasesMax: 1, StorageLimitBytes: gib / 2, MonthlyComputeUnitSeconds: 5 * cuHour,
+			RestoreWindowSeconds: week, DevelopmentAllowed: true},
+		PlanHobby: {DatabasesMax: 1, StorageLimitBytes: gib, MonthlyComputeUnitSeconds: 25 * cuHour,
+			RestoreWindowSeconds: week, DevelopmentAllowed: true},
+		PlanPro: {DatabasesMax: 3, StorageLimitBytes: 5 * gib, MonthlyComputeUnitSeconds: 75 * cuHour,
+			RestoreWindowSeconds: week, DevelopmentAllowed: true, BurstableAllowed: true},
+		PlanScale: {DatabasesMax: 10, StorageLimitBytes: 20 * gib, MonthlyComputeUnitSeconds: 200 * cuHour,
+			RestoreWindowSeconds: week, DevelopmentAllowed: true, BurstableAllowed: true, ProductionAllowed: true},
 	}
-	pro, _ := ManagedPostgresLimitsFor(PlanPro)
-	if pro.DatabasesMax != 3 || pro.StorageLimitBytes != 50*(1<<30) || !pro.BurstableAllowed || pro.ProductionAllowed {
-		t.Fatalf("unexpected pro managed postgres limits: %+v", pro)
-	}
-	scale, _ := ManagedPostgresLimitsFor(PlanScale)
-	if scale.DatabasesMax != 10 || scale.StorageLimitBytes != 100*(1<<30) || !scale.ProductionAllowed || scale.AlwaysOnAllowed {
-		t.Fatalf("unexpected scale managed postgres limits: %+v", scale)
-	}
-	free, _ := ManagedPostgresLimitsFor(PlanFree)
-	if free.DatabasesMax != 0 || free.StorageLimitBytes != 0 {
-		t.Fatalf("free must not include managed postgres: %+v", free)
+	for plan, limits := range want {
+		got, ok := ManagedPostgresLimitsFor(plan)
+		if !ok || got != limits {
+			t.Fatalf("%s managed postgres limits = %+v (ok=%v), want %+v", plan, got, ok, limits)
+		}
+		if got.AlwaysOnAllowed {
+			t.Fatalf("%s allows always-on compute; no plan includes it", plan)
+		}
 	}
 	if _, ok := ManagedPostgresLimitsFor(Plan("unknown")); ok {
 		t.Fatal("unknown plan unexpectedly received managed postgres limits")

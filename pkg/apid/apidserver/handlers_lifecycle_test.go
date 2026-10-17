@@ -177,6 +177,42 @@ func TestBeforeCheckpointUpdateInvalidatesOldSnapshots(t *testing.T) {
 	}
 }
 
+// adr: 1151 — an app's declared pause is created, updated, cleared to the
+// default and validated through the app API.
+func TestAppPauseLifecycleRoundTrip(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanPro)
+	rec := e.Do(t, "POST", "/v1/apps", api.CreateAppRequest{Slug: "pause-app", Pause: api.PauseNever}, nil)
+	if rec.Code != 201 {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body)
+	}
+	var out api.AppResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.Manifest.Pause != api.PauseNever {
+		t.Fatalf("create response pause = %q, want never", out.Manifest.Pause)
+	}
+	for _, want := range []string{api.PauseBetweenRequests, ""} {
+		pause := want
+		if rec := e.Do(t, "PATCH", "/v1/apps/pause-app", api.UpdateAppRequest{Pause: &pause}, nil); rec.Code != 200 {
+			t.Fatalf("update pause %q: %d %s", want, rec.Code, rec.Body)
+		}
+		stored, err := (*e.Store()).AppBySlug(t.Context(), "pause-app")
+		if err != nil || stored.Manifest.Pause != want {
+			t.Fatalf("stored pause = %q, err=%v; want %q", stored.Manifest.Pause, err, want)
+		}
+	}
+	for name, req := range map[string]api.CreateAppRequest{
+		"unknown value":    {Slug: "pause-bad", Pause: "sometimes"},
+		"service app idle": {Slug: "pause-service", ExecutionMode: api.ExecutionModeService, Pause: api.PauseWhenIdle},
+	} {
+		t.Run(name, func(t *testing.T) {
+			rec := e.Do(t, "POST", "/v1/apps", req, nil)
+			apidserver.AssertProblem(t, rec, 400, api.CodeValidation)
+		})
+	}
+}
+
 func TestAppAfterRestoreRejectsUnsupportedModeAndPath(t *testing.T) {
 	e := apidserver.Setup(t, api.PlanPro)
 	for _, tc := range []struct {

@@ -115,6 +115,40 @@ func selectInternalUpstreamMode(computeDiscovery, internalTarget string) interna
 	return internalUpstreamUnix
 }
 
+// selectInternalDialer builds the control-plane edge's upstream dialer for
+// mode. Static mode also points target at the configured host.
+func selectInternalDialer(ctx context.Context, mode internalUpstreamMode, internalTarget string, target *url.URL, pgStore *state.PgStore, pool *pgxpool.Pool, log *slog.Logger) (gateway.InternalDialer, error) {
+	switch mode {
+	case internalUpstreamDatabase:
+		cgp := newComputeGatewayPool(pgStore, log).(*computeGatewayPool)
+		log.Info("gatewayd-public: database-backed compute gateway pool enabled")
+		if internalTarget != "" {
+			log.Warn("gatewayd-public: ignoring legacy FAAS_INTERNAL_TARGET because database discovery is enabled",
+				"target", internalTarget)
+		}
+		// Workstream B / issue #1184 / Task #65: subscribe to
+		// compute_node_changed pg_notify so a node drain /
+		// activation / overlay-IP change refreshes the cached
+		// endpoints within <500ms instead of waiting for the
+		// 5s TTL to elapse. Mirrors gatewayd-internal's
+		// nodecache.WatchEvictions pattern.
+		if pool != nil {
+			go cgp.WatchInvalidations(ctx, pool)
+		}
+		return cgp, nil
+	case internalUpstreamStatic:
+		parsedTarget, parseErr := url.Parse(internalTarget)
+		if parseErr != nil || parsedTarget.Scheme != "tcp" || parsedTarget.Host == "" || parsedTarget.Path != "" {
+			return nil, fmt.Errorf("gatewayd-public: FAAS_INTERNAL_TARGET must be tcp://host:port, got %q", internalTarget)
+		}
+		target.Host = parsedTarget.Host
+		log.Info("gatewayd-public: split-box internal target", "target", internalTarget)
+		return gateway.NewTCPDialer(parsedTarget.Host), nil
+	default:
+		return gateway.NewUnixSocketDialer(envOr("FAAS_INTERNAL_SOCKET", defaultInternalSocket)), nil
+	}
+}
+
 const (
 	internalGatewayHealthHost = "gatewayd-internal.faas"
 	// defaultListenAddr is the loopback bind for the public listener.
@@ -192,15 +226,25 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 
 	// Gate-B box-role gate. gatewayd-public is a control-plane
-	// daemon — it refuses to start under RoleComputeOnly. The
+	// daemon — it refuses to start under RoleComputeOnly unless it
+	// runs as a compute-node app edge (ADR-1343). The
 	// role is set from FAAS_GATEWAYD_PUBLIC_ROLE at deploy time
 	// (gatewayd-public has no config.go today; the env is the
 	// only source); default is RoleSingleBox so single-box dev
 	// boots unmoved. The gate runs before db.Open so a
 	// misconfigured boot doesn't waste a Postgres connection.
-	if err := role.Require("gatewayd-public", role.FromConfig("", "FAAS_GATEWAYD_PUBLIC_ROLE"),
-		role.RoleSingleBox, role.RoleControlPlane); err != nil {
+	edgeMode, err := parsePublicEdgeMode(os.Getenv(publicEdgeModeEnv))
+	if err != nil {
+		return fmt.Errorf("gatewayd-public: %w", err)
+	}
+	if err := edgeMode.requireRole(role.FromConfig("", "FAAS_GATEWAYD_PUBLIC_ROLE")); err != nil {
 		return err
+	}
+	if edgeMode == edgeModeCompute {
+		if err := requireComputeEdgeConfig(os.Getenv); err != nil {
+			return err
+		}
+		log.Info("gatewayd-public: compute-node app edge (ADR-1343)")
 	}
 
 	// Mega-PR-A (issue #911 / ADR-110 PR-1): capture FAAS_NODE_NAME
@@ -335,41 +379,37 @@ func run(ctx context.Context, log *slog.Logger) error {
 	upstreamMode := selectInternalUpstreamMode(computeDiscovery, internalTarget)
 	internalURL := &url.URL{Scheme: "http", Host: "gatewayd-internal"}
 	var internalDialer gateway.InternalDialer
-	switch upstreamMode {
-	case internalUpstreamDatabase:
+	edgeMetricsSet := newEdgeMetrics()
+	// A dynamic dialer can pick a different upstream per request, so the
+	// transport must not pool connections under the one logical URL.
+	dynamicUpstream := upstreamMode == internalUpstreamDatabase
+	if edgeMode == edgeModeCompute {
+		// ADR-1343 §2: this node's gatewayd-internal first, the compute pool
+		// only while it is unhealthy.
+		localDialer := gateway.NewUnixSocketDialer(envOr("FAAS_INTERNAL_SOCKET", defaultInternalSocket))
 		cgp := newComputeGatewayPool(pgStore, log).(*computeGatewayPool)
-		internalDialer = cgp
-		log.Info("gatewayd-public: database-backed compute gateway pool enabled")
-		if internalTarget != "" {
-			log.Warn("gatewayd-public: ignoring legacy FAAS_INTERNAL_TARGET because database discovery is enabled",
-				"target", internalTarget)
-		}
-		// Workstream B / issue #1184 / Task #65: subscribe to
-		// compute_node_changed pg_notify so a node drain /
-		// activation / overlay-IP change refreshes the cached
-		// endpoints within <500ms instead of waiting for the
-		// 5s TTL to elapse. Mirrors gatewayd-internal's
-		// nodecache.WatchEvictions pattern.
 		if pool != nil {
 			go cgp.WatchInvalidations(ctx, pool)
 		}
-	case internalUpstreamUnix:
-		internalSocket := envOr("FAAS_INTERNAL_SOCKET", defaultInternalSocket)
-		internalDialer = gateway.NewUnixSocketDialer(internalSocket)
-	case internalUpstreamStatic:
-		parsedTarget, parseErr := url.Parse(internalTarget)
-		if parseErr != nil || parsedTarget.Scheme != "tcp" || parsedTarget.Host == "" || parsedTarget.Path != "" {
-			return fmt.Errorf("gatewayd-public: FAAS_INTERNAL_TARGET must be tcp://host:port, got %q", internalTarget)
+		lfd := newLocalFirstDialer(localDialer, cgp, internalURL, edgeMetricsSet, log)
+		go lfd.run(ctx)
+		internalDialer = lfd
+		dynamicUpstream = true
+		if upstreamMode != internalUpstreamUnix {
+			log.Warn("gatewayd-public: compute edge ignores FAAS_COMPUTE_GATEWAY_DISCOVERY and FAAS_INTERNAL_TARGET")
 		}
-		internalURL.Host = parsedTarget.Host
-		internalDialer = gateway.NewTCPDialer(parsedTarget.Host)
-		log.Info("gatewayd-public: split-box internal target", "target", internalTarget)
+	} else {
+		internalDialer, err = selectInternalDialer(ctx, upstreamMode, internalTarget, internalURL, pgStore, pool, log)
+		if err != nil {
+			return err
+		}
 	}
 	// Issue #675: FAAS_INTERNAL_H2C toggles H2C (HTTP/2 cleartext) on
 	// the public→internal hop. The unix SynthServer enables native H2C;
 	// the split-box TCP listener uses the ordinary HTTP/1.1 server unless
 	// an operator explicitly enables H2C after both ends are configured.
-	h2cEnabled := envBoolOr("FAAS_INTERNAL_H2C", upstreamMode == internalUpstreamUnix)
+	// A compute edge can fall back to the TCP pool, so it defaults to off.
+	h2cEnabled := envBoolOr("FAAS_INTERNAL_H2C", upstreamMode == internalUpstreamUnix && edgeMode != edgeModeCompute)
 	trustedIngressCIDRs, err := gateway.ParseTrustedIngressCIDRs(os.Getenv("FAAS_TRUSTED_INGRESS_CIDRS"))
 	if err != nil {
 		return fmt.Errorf("gatewayd-public: trusted ingress config: %w", err)
@@ -383,7 +423,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// A dynamic dialer selects a different compute node per request. Do not
 	// let the transport pool an idle connection under the single logical
 	// gatewayd URL, otherwise a drained node could keep receiving traffic.
-	if upstreamMode == internalUpstreamDatabase {
+	if dynamicUpstream {
 		if transport, ok := proxy.Transport.(*http.Transport); ok {
 			transport.DisableKeepAlives = true
 		}
@@ -505,10 +545,22 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("gatewayd-public: control-plane API proxy: %w", err)
 	}
+	// ADR-1343 §2: a compute edge sends requests that need control-plane
+	// credentials or sockets to the control plane's edge.
+	var edgeForward http.Handler
+	if edgeMode == edgeModeCompute {
+		edgeForward, err = newControlPlaneForwarder(os.Getenv(publicEdgeControlPlaneTargetEnv), trustedIngressCIDRs, log)
+		if err != nil {
+			return fmt.Errorf("gatewayd-public: %w", err)
+		}
+	}
 	traceMux := http.NewServeMux()
 	var tenantRoot http.Handler
 	installPublicStaticRoutes(traceMux, platformAppsDomain(), func() http.Handler { return tenantRoot })
 	traceMux.Handle("/v1/traces/", traceSetup.Handler)
+	if edgeMode == edgeModeCompute {
+		traceMux.Handle(otelTracesPath, edgeForward)
+	}
 	// ADR-127 PR-D: OTLP spans writer handler. Mounted on the
 	// same traceMux so it shares the same drain tracker as
 	// /v1/traces/ and the control proxy. Gated behind
@@ -516,7 +568,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// of the apid Auth service is only attempted when the
 	// handler is enabled, so killing the env var is the
 	// fail-closed kill-switch.
-	if envOr("FAAS_OTEL_SPANS_WRITER_ENABLED", "true") != "false" {
+	if edgeMode != edgeModeCompute && envOr("FAAS_OTEL_SPANS_WRITER_ENABLED", "true") != "false" {
 		authTarget := envOr("FAAS_APID_AUTH_SOCKET", "/run/faas/auth.sock")
 		authCli, authErr := apidgrpc.DialAuth(ctx, authTarget, nil)
 		if authErr != nil {
@@ -582,7 +634,14 @@ func run(ctx context.Context, log *slog.Logger) error {
 		}()
 	}
 	rootHandler := http.Handler(controlPlaneHandler)
-	if publicStorageRegistry != nil {
+	if edgeMode == edgeModeCompute {
+		// No storage credentials here: upload routes and public bucket
+		// reads go to the control plane's edge.
+		rootHandler, err = computeEdgeRoot(controlPlaneHandler, edgeForward, pgStore, platformAppsDomain(), log)
+		if err != nil {
+			return fmt.Errorf("gatewayd-public: compute edge routes: %w", err)
+		}
+	} else if publicStorageRegistry != nil {
 		requestMetrics, _ := any(pgStore).(state.ObjectStorageProviderUsageStore)
 		accounting, _ := any(pgStore).(state.ObjectStorageAccountingStore)
 		publicHandler, publicErr := objectstorage.NewPublicReadHandler(objectstorage.PublicReadConfig{
@@ -630,8 +689,12 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// budget middleware writes the 504 problem when the inner chain
 	// (proxy → gatewayd-internal) doesn't return in time, regardless
 	// of where the slowness lives.
+	edgeRoot := http.Handler(traceMux)
+	if edgeMode == edgeModeCompute {
+		edgeRoot = appHostsOnly(traceMux, platformAppsDomain(), edgeMetricsSet.misdirected)
+	}
 	publicHandler := budgetCfg.Middleware(otelhttp.NewHandler(
-		trace.WithTraceIDHeader(traceMux), "gatewayd-public.handler"))
+		trace.WithTraceIDHeader(edgeRoot), "gatewayd-public.handler"))
 	// Stamp the request id before the budget middleware so a public-edge
 	// timeout that fires before gatewayd-internal replies still carries the
 	// same correlation id a CDN/Worker can preserve.
@@ -642,6 +705,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 	publicHandler = httpsec.ForSurface(
 		func(r *http.Request) httpsec.Surface { return httpsec.ClassifyHost(r.Host, appsDomain) },
 		true, publicHandler)
+	if edgeMode == edgeModeCompute {
+		// Outermost, so every layer below sees the canonical client address.
+		publicHandler = cloudflareClientIP(publicHandler, trustedIngressCIDRs)
+	}
 
 	// Control mux + listeners. Combine opsMetrics.Registry() with
 	// budgetReg into a prometheus.Gatherers so /metrics exposes
@@ -655,7 +722,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// during graceful shutdown.
 	tlsAskReg := prometheus.NewRegistry()
 	controlMux := gateway.ControlMuxWithExtra(gatewayMetrics,
-		prometheus.Gatherers{opsMetrics.Registry(), budgetReg, tcpMetrics.Registry(), udpMetrics.Registry(), tlsAskReg},
+		prometheus.Gatherers{opsMetrics.Registry(), budgetReg, tcpMetrics.Registry(), udpMetrics.Registry(), tlsAskReg, edgeMetricsSet.registry},
 		probe.ReadyFunc(), drainTracker)
 	installOnDemandTLSAsk(controlMux, pgStore, platformAppsDomain(), tlsAskReg, log)
 	controlAddr := envOr("FAAS_PUBLIC_CONTROL_ADDR", defaultPublicControlAddr)
@@ -701,7 +768,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	defer wire.StartWatchdog(ctx, wire.NewLiveness(), opsMetrics, log)()
 
 	// Drain orchestration.
-	if err := runDrain(ctx, log, publicSrv, controlSrv, pgProbeSig, pgStop, traceSetup, drainTracker, gatewayMetrics, rawIngressDrain); err != nil {
+	if err := runDrain(ctx, log, publicSrv, controlSrv, strings.TrimSpace(os.Getenv(publicPrivateListenEnv)), pgProbeSig, pgStop, traceSetup, drainTracker, gatewayMetrics, rawIngressDrain); err != nil {
 		return err
 	}
 	return nil
@@ -865,7 +932,12 @@ func buildServers(listenAddr, controlAddr string, publicHandler http.Handler, co
 //  4. Wait for tracked requests and hijacked streams within the remainder of
 //     that same budget. A second SIGTERM cancels the drain immediately.
 //  5. The caller's deferred pgStop runs again as an idempotent safety net.
-func runDrain(ctx context.Context, log *slog.Logger, publicSrv, controlSrv *http.Server, pgProbeSig *gateway.ReadySignal, pgStop func(), traceSetup *gateway.TraceSetup, drainTracker *drain.Tracker, gMetrics *gateway.Metrics, tcpDrain func(context.Context) error) error {
+//
+// privateAddr, when set, adds a second listener for publicSrv on the control
+// plane's private address (ADR-1343 §2): compute-node edges forward
+// credential-bound requests there. It shares publicSrv, so Shutdown closes and
+// drains it with the public listener.
+func runDrain(ctx context.Context, log *slog.Logger, publicSrv, controlSrv *http.Server, privateAddr string, pgProbeSig *gateway.ReadySignal, pgStop func(), traceSetup *gateway.TraceSetup, drainTracker *drain.Tracker, gMetrics *gateway.Metrics, tcpDrain func(context.Context) error) error {
 	drainCtx, cancelDrain := context.WithCancel(context.Background())
 	defer cancelDrain()
 	forceCtx, forceCancel := context.WithCancel(context.WithoutCancel(ctx))
@@ -900,7 +972,19 @@ func runDrain(ctx context.Context, log *slog.Logger, publicSrv, controlSrv *http
 	}()
 
 	// Start the listeners.
-	errc := make(chan error, 2)
+	errc := make(chan error, 3)
+	if privateAddr != "" {
+		privateLn, lerr := net.Listen("tcp", privateAddr)
+		if lerr != nil {
+			return fmt.Errorf("gatewayd-public: listen private %s: %w", privateAddr, lerr)
+		}
+		go func() {
+			log.Info("gatewayd-public: private listening for compute edges", "addr", privateAddr)
+			if err := publicSrv.Serve(privateLn); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				errc <- err
+			}
+		}()
+	}
 	go func() {
 		l, lerr := publicListener(publicSrv.Addr)
 		if lerr != nil {

@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime
 from collections.abc import Mapping
 from typing import Any, TypeVar
+from uuid import UUID
 
 from attrs import define as _attrs_define
 
@@ -20,6 +21,8 @@ class AppPublishEventRequest:
     type_: str
     data: Any
     """Event data associated with this producer key."""
+    expected_app_id: UUID | Unset = UNSET
+    """Optional canonical application UUID guard; mismatches return 409 before publication or comparison."""
     time: datetime.datetime | Unset = UNSET
     """Original occurrence time; defaults to ingress time."""
     schemaversion: str | Unset = UNSET
@@ -30,6 +33,10 @@ class AppPublishEventRequest:
         type_ = self.type_
 
         data = self.data
+
+        expected_app_id: str | Unset = UNSET
+        if not isinstance(self.expected_app_id, Unset):
+            expected_app_id = str(self.expected_app_id)
 
         time: str | Unset = UNSET
         if not isinstance(self.time, Unset):
@@ -46,6 +53,8 @@ class AppPublishEventRequest:
                 "data": data,
             }
         )
+        if expected_app_id is not UNSET:
+            field_dict["expected_app_id"] = expected_app_id
         if time is not UNSET:
             field_dict["time"] = time
         if schemaversion is not UNSET:
@@ -62,6 +71,13 @@ class AppPublishEventRequest:
 
         data = d.pop("data")
 
+        _expected_app_id = d.pop("expected_app_id", UNSET)
+        expected_app_id: UUID | Unset
+        if isinstance(_expected_app_id, Unset):
+            expected_app_id = UNSET
+        else:
+            expected_app_id = UUID(_expected_app_id)
+
         _time = d.pop("time", UNSET)
         time: datetime.datetime | Unset
         if isinstance(_time, Unset):
@@ -75,6 +91,7 @@ class AppPublishEventRequest:
             key=key,
             type_=type_,
             data=data,
+            expected_app_id=expected_app_id,
             time=time,
             schemaversion=schemaversion,
         )

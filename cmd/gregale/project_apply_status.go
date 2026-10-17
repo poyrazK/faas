@@ -16,6 +16,9 @@ type projectApplyStatus struct {
 	buildsQueued   int
 	imagesQueued   int
 	buildsFailed   int
+	// unchanged counts selected workloads the server did not rebuild because
+	// nothing in them changed (H10-88); they are neither queued nor failed.
+	unchanged int
 	// missingBuilds is the number of expected build rows that the server did
 	// not return. It is kept separately so the text renderer can explain an
 	// empty/short builds array without inventing a workload slug.
@@ -44,7 +47,11 @@ func summarizeProjectApply(apply api.ApplyResponse) projectApplyStatus {
 		}
 	}
 
-	expected := len(apply.Apps)
+	// Apps is the whole project membership. A server that reports Unchanged
+	// names the members it did not rebuild; an older one leaves it nil and
+	// the CLI keeps expecting a build per member.
+	status.unchanged = len(apply.Unchanged)
+	expected := len(apply.Apps) - len(apply.Unchanged)
 	if missing := expected - len(apply.Builds); missing > 0 {
 		status.missingBuilds = missing
 		status.buildsFailed += missing
@@ -93,6 +100,9 @@ func renderProjectApplyResult(w io.Writer, plan api.PlanResponse, apply api.Appl
 			}
 		}
 	}
+	for _, slug := range apply.Unchanged {
+		_, _ = fmt.Fprintf(w, "  = %s: unchanged; its live release keeps serving\n", slug)
+	}
 	if status.missingBuilds > 0 {
 		_, _ = fmt.Fprintf(w, "  ! missing build results: %d workload(s) were expected but not returned\n", status.missingBuilds)
 	}
@@ -101,6 +111,9 @@ func renderProjectApplyResult(w io.Writer, plan api.PlanResponse, apply api.Appl
 		status.appsReconciled, status.buildsQueued, status.buildsFailed)
 	if status.imagesQueued > 0 {
 		_, _ = fmt.Fprintf(w, ", images queued=%d", status.imagesQueued)
+	}
+	if status.unchanged > 0 {
+		_, _ = fmt.Fprintf(w, ", unchanged=%d", status.unchanged)
 	}
 	_, _ = fmt.Fprintln(w)
 	if status.buildsFailed > 0 {
@@ -116,6 +129,9 @@ func reportProjectApplyFailure(w io.Writer, status projectApplyStatus) {
 		status.appsReconciled, status.buildsQueued, status.buildsFailed)
 	if status.imagesQueued > 0 {
 		_, _ = fmt.Fprintf(w, ", images queued=%d", status.imagesQueued)
+	}
+	if status.unchanged > 0 {
+		_, _ = fmt.Fprintf(w, ", unchanged=%d", status.unchanged)
 	}
 	_, _ = fmt.Fprintln(w)
 }

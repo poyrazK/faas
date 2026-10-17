@@ -27,6 +27,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/extension"
+	"github.com/onebox-faas/faas/pkg/overlaymetadata"
 	"golang.org/x/sys/unix"
 )
 
@@ -2030,6 +2031,7 @@ func writeBuildDone(m api.BuildManifest, runErr error, logTail string) {
 		done.DependencyCacheUnchanged = m.DependencyCache && dependencyCacheKept(m.OutDir)
 		sourceMap, watchErr := devWatchSourceMap(m, buildDevPatchSourceMap(m, readBuildPlan))
 		done.DevPatch = sourceMap
+		done.SharedRuntime = buildSharedRuntimeVerdict(m, readBuildPlan)
 		if watchErr != nil {
 			done.ExitCode, done.FailureClass = buildExitStatus(watchErr)
 			done.LogTail = tailOf([]byte(logTail+"\n"+watchErr.Error()+"\n"), m.LogTailBytes)
@@ -2163,7 +2165,16 @@ func assembleOverlay() (string, error) {
 			return "", err
 		}
 	}
-	opts := "lowerdir=/" +
+	lower, err := overlaymetadata.GuestLowerDirectory(layerMount+"/upper", "/", layerMount+"/empty-lower")
+	if err != nil {
+		return "", fmt.Errorf("inspect app root opacity: %w", err)
+	}
+	if lower != "/" {
+		if err := overlaymetadata.EnsureEmptyLowerDirectory(lower); err != nil {
+			return "", fmt.Errorf("prepare opaque root lower: %w", err)
+		}
+	}
+	opts := "lowerdir=" + lower +
 		",upperdir=" + layerMount + "/upper" +
 		",workdir=" + layerMount + "/work"
 	if err := syscall.Mount("overlay", newRoot, "overlay", 0, opts); err != nil {

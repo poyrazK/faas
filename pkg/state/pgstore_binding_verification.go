@@ -42,8 +42,12 @@ func (s *PgStore) ListBindingVerificationTasks(ctx context.Context, accountID, a
 	if selection.DeploymentID != "" {
 		selectedID = mustPgUUID(selection.DeploymentID)
 	}
+	targets, err := json.Marshal(selection.ServiceTargets)
+	if err != nil {
+		return nil, err
+	}
 	rows, err := sqlc.New().ListBindingVerificationTasks(ctx, s.pool, sqlc.ListBindingVerificationTasksParams{
-		AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID), Kinds: kinds,
+		AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID), Kinds: kinds, ServiceTargets: targets,
 		SelectedDeploymentID: selectedID, ExactDeployment: selection.DeploymentID != "" && !selection.AllowFallback,
 	})
 	if err != nil {
@@ -61,7 +65,7 @@ func (s *PgStore) ListBindingVerificationTasks(ctx context.Context, accountID, a
 			exit = &value
 		}
 		items = append(items, BindingVerificationTask{
-			Pin: pin, DeploymentID: uuidString(row.DeploymentID), Scope: row.DeploymentScope,
+			TaskID: uuidString(row.ID), Pin: pin, DeploymentID: uuidString(row.DeploymentID), Scope: row.DeploymentScope,
 			Status: row.Status, Stdout: row.Stdout, OutputTruncated: row.Truncated.Bool,
 			ExitCode: exit, CreatedAt: row.CreatedAt.Time.UTC(), FinishedAt: optionalHealthTime(row.FinishedAt),
 		})

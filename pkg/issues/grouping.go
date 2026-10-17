@@ -74,6 +74,12 @@ func Normalize(in api.IssueEvent, now time.Time, limits api.IssueLimits) (api.Is
 	default:
 		return in, "", "", errors.New("invalid frame_order")
 	}
+	if in.Symbolication != nil {
+		return in, "", "", errors.New("symbolication is read-only evidence")
+	}
+	if in.SymbolicationStrategy != "" && (in.SymbolicationStrategy != DeploymentSourceMapStrategy || (in.GroupingStrategy != FailureSiteStrategy && in.GroupingStrategy != CauseStrategy)) {
+		return in, "", "", errors.New("deployment-source-maps-v1 requires failure-site-v1 or cause-chain-v1")
+	}
 	if len(in.ErrorCode) > api.IssueMaxTypeBytes || !utf8.ValidString(in.ErrorCode) {
 		return in, "", "", errors.New("error_code must be bounded UTF-8 text")
 	}
@@ -116,9 +122,18 @@ func Normalize(in api.IssueEvent, now time.Time, limits api.IssueLimits) (api.Is
 	}
 	in.FingerprintOverride = sanitize(in.FingerprintOverride, api.IssueMaxTypeBytes)
 	in.ErrorCode = sanitize(strings.TrimSpace(in.ErrorCode), api.IssueMaxTypeBytes)
+	if err := normalizeContext(&in, sanitize); err != nil {
+		return in, "", "", err
+	}
 	in.Frames = append([]api.IssueFrame(nil), in.Frames...)
 	if len(in.Frames) == 0 {
-		if in.GroupingStrategy == FailureSiteStrategy || in.GroupingStrategy == CauseStrategy {
+		if in.SymbolicationStrategy == DeploymentSourceMapStrategy {
+			var order string
+			in.Frames, order = parseStack(in.StackTrace, true, true)
+			if in.FrameOrder == "" {
+				in.FrameOrder = order
+			}
+		} else if in.GroupingStrategy == FailureSiteStrategy || in.GroupingStrategy == CauseStrategy {
 			var order string
 			in.Frames, order = parseFailureSiteStack(in.StackTrace)
 			if in.FrameOrder == "" {
@@ -130,7 +145,7 @@ func Normalize(in api.IssueEvent, now time.Time, limits api.IssueLimits) (api.Is
 	}
 	for i := range in.Frames {
 		f := &in.Frames[i]
-		if f.Line < 0 || !utf8.ValidString(f.File) || !utf8.ValidString(f.Function) {
+		if f.Line < 0 || f.Column < 0 || f.Column > api.IssueFrameCoordinateMax || !utf8.ValidString(f.File) || !utf8.ValidString(f.Function) {
 			return in, "", "", errors.New("invalid stack frame")
 		}
 		f.File = sanitize(f.File, api.IssueMaxFrameBytes)

@@ -1,0 +1,18 @@
+{{define "automation-live-suites"}}
+<section id="automation-live-suites"><h2>Shared live verification suites</h2>
+<p>Share a CLI suite with <code>--share</code> to keep its selection and run links here. Results reflect retained verification records when this page is read. Opening or refreshing a suite does not start or check execution.</p>
+{{if .Data.LiveSuiteError}}<p class="notice" role="status">{{.Data.LiveSuiteError}}</p>{{end}}
+{{with .Data.LiveSuites}}{{if .Suites}}<ul>{{range .Suites}}<li><a href="{{$.Data.BaseURL}}?name={{urlquery $.Data.Name}}&amp;suite={{.ID}}">{{.CreatedAt.UTC.Format "2006-01-02 15:04:05 UTC"}} · {{.LinkedRuns}}/{{.CaseCount}} runs linked</a> · revision {{.PublishedVersion}}</li>{{end}}</ul>{{else}}<p>No shared suites retained for this automation.</p>{{end}}{{end}}
+{{if and .Data.Published .Data.LiveHistory .Data.LiveCases}}
+<details><summary>Run saved cases as a live suite</summary>
+<p>Select cases to execute in the order shown. This uses the displayed published revision and deployment. Each case must pass before the next starts.</p>
+<input type="hidden" name="live_suite_start_id" value="{{.Data.LiveSuiteStartID}}">
+{{range .Data.LiveCases}}<label class="check"><input type="checkbox" name="live_suite_case" value="{{.}}">{{.}}</label>{{end}}
+<label class="check"><input type="checkbox" name="confirm_live_suite_start" value="yes">I confirm that these cases may perform real actions in my app and connected services.</label>
+<button type="submit" formaction="{{.Data.BaseURL}}/start-live-suite" {{if or (not .Data.RuntimeEnabled) .Data.UnavailableReason .Data.LiveEditorChanged .Data.LiveError (not .Data.LiveHistory.DeploymentID)}}disabled{{end}}>Start live suite</button>
+<p>Keep this page open for automatic progress. Leaving stops further advancement; already admitted runs continue. Reopen the saved suite and confirm continuation to recover its progress.</p>
+</details>{{end}}
+{{template "automation-live-suite-result" .}}
+{{template "automation-live-suite-progress" .}}
+</section>
+{{end}}

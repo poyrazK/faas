@@ -44,6 +44,9 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 	if app.AccountID != request.AccountID || app.Status == state.AppDeleted {
 		return ResolvedAppTaskRuntime{}, state.ErrAppTaskDeploymentUnavailable
 	}
+	if err := e.checkApplicationStandardAdmission(ctx, app); err != nil {
+		return ResolvedAppTaskRuntime{}, err
+	}
 	dep, err := e.store.DeploymentByID(ctx, request.DeploymentID)
 	if err != nil {
 		return ResolvedAppTaskRuntime{}, fmt.Errorf("sched: resolve app task deployment: %w", err)
@@ -98,7 +101,7 @@ func (e *Engine) ResolveAppTaskRuntime(ctx context.Context, request AppTaskResto
 	}
 	privateNetwork := e.privateNetworkProjection(ctx, app)
 	healthcheckGRPC, healthcheckGRPCService := healthcheckGRPCFromDep(dep)
-	pinnedBase, err := e.artifactBaseKey(ctx, app, request.ArtifactKey)
+	pinnedBase, err := e.deploymentBaseKey(ctx, app, dep, request.ArtifactKey)
 	if err != nil {
 		return ResolvedAppTaskRuntime{}, withAppTaskStage("base_layer", err)
 	}

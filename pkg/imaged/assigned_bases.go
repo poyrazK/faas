@@ -2,6 +2,7 @@ package imaged
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 
@@ -14,6 +15,9 @@ import (
 type AssignedBasesResult struct {
 	Runtimes []string
 	Minimal  bool
+	// Deferred lists runtimes the rolling pre-stage left for the serving
+	// imaged because the serving vmmd predates verified parents (H10-95).
+	Deferred []string
 }
 
 type assignedBaseStore interface {
@@ -39,12 +43,32 @@ func (h *Handler) EnsureAssignedBases(ctx context.Context, arch string, envLooku
 			return AssignedBasesResult{}, fmt.Errorf("imaged: reconcile assigned minimal base: %w", err)
 		}
 	}
+	deferred, err := reconcileAssignedRuntimes(runtimes, h.deferLegacyParentBases, func(runtime string) error {
+		_, err := h.EnsureRuntimeBase(ctx, runtime, arch, envLookup)
+		return err
+	})
+	if err != nil {
+		return AssignedBasesResult{}, err
+	}
+	return AssignedBasesResult{Runtimes: runtimes, Minimal: minimal, Deferred: deferred}, nil
+}
+
+// reconcileAssignedRuntimes stages each runtime in order. Only a pre-stage
+// may defer, and only for ErrVerifiedParentUnsupported: every other failure,
+// and every failure in the serving imaged, stays fatal.
+func reconcileAssignedRuntimes(runtimes []string, deferLegacyParent bool, stage func(string) error) ([]string, error) {
+	var deferred []string
 	for _, runtime := range runtimes {
-		if _, err := h.EnsureRuntimeBase(ctx, runtime, arch, envLookup); err != nil {
-			return AssignedBasesResult{}, fmt.Errorf("imaged: reconcile assigned runtime %s: %w", runtime, err)
+		err := stage(runtime)
+		if err != nil && deferLegacyParent && errors.Is(err, ErrVerifiedParentUnsupported) {
+			deferred = append(deferred, runtime)
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("imaged: reconcile assigned runtime %s: %w", runtime, err)
 		}
 	}
-	return AssignedBasesResult{Runtimes: runtimes, Minimal: minimal}, nil
+	return deferred, nil
 }
 
 func assignedBasePlan(ctx context.Context, store assignedBaseStore, nodeName string) ([]string, bool, error) {

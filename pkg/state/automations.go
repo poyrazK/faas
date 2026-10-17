@@ -13,14 +13,15 @@ import (
 )
 
 type Automation struct {
-	AppID            string
-	Name             string
-	Version          int64
-	Draft            json.RawMessage
-	Published        json.RawMessage
-	PublishedVersion int64
-	Enabled          bool
-	UpdatedAt        time.Time
+	TestSuite, TestReport json.RawMessage
+	AppID                 string
+	Name                  string
+	Version               int64
+	Draft                 json.RawMessage
+	Published             json.RawMessage
+	PublishedVersion      int64
+	Enabled               bool
+	UpdatedAt             time.Time
 }
 
 // AutomationRevision is an immutable snapshot created whenever a dashboard
@@ -50,6 +51,7 @@ func validAutomationRevisionListOptions(opts AutomationRevisionListOptions) bool
 }
 
 type AutomationMutation struct {
+	TestSuite        json.RawMessage
 	CheckReceipt     string
 	CheckEvidence    *api.AutomationCheckEvidence
 	Action           string
@@ -87,6 +89,7 @@ func (e *AutomationQuotaError) Error() string {
 }
 
 func copyAutomation(a Automation) Automation {
+	a.TestSuite, a.TestReport = cloneWorkflowJSON(a.TestSuite), cloneWorkflowJSON(a.TestReport)
 	a.Draft = cloneWorkflowJSON(a.Draft)
 	a.Published = cloneWorkflowJSON(a.Published)
 	return a
@@ -169,6 +172,17 @@ func mutateAutomation(appID, name string, mutation AutomationMutation, previous 
 		return Automation{}, &AutomationQuotaError{plan, plan.WorkflowMaxPerApp(), len(names)}
 	}
 	switch mutation.Action {
+	case "tests":
+		if previous == nil {
+			return Automation{}, ErrNotFound
+		}
+		if err := validateAutomationTestSuite(mutation.TestSuite); err != nil {
+			return Automation{}, err
+		}
+		current.TestSuite = cloneWorkflowJSON(mutation.TestSuite)
+		if len(current.TestSuite) == 0 {
+			current.TestReport = nil
+		}
 	case "save":
 		if len(mutation.Draft) == 0 || int64(len(mutation.Draft)) > api.AutomationDefinitionMaxBytes {
 			return Automation{}, ErrAutomationInvalid

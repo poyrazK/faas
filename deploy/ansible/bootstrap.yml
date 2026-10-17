@@ -91,6 +91,9 @@
     - role: firecracker
     - role: supply_chain_scanners
     - role: systemd_slices
+    # ADR-906 decision 6: memory-only compressed swap for frozen VMs; a no-op
+    # unless faas_zswap_enabled is set for the host.
+    - role: zswap
     # Optional OTLP traces + metrics configuration. The role only validates
     # the operator-owned root-only env file and installs the example;
     # export stays disabled when /etc/faas/otel.env is absent.
@@ -160,6 +163,9 @@
     - role: firecracker
     - role: supply_chain_scanners
     - role: systemd_slices
+    # ADR-906 decision 6: memory-only compressed swap for frozen VMs; a no-op
+    # unless faas_zswap_enabled is set for the host.
+    - role: zswap
     # Keep the optional OTLP configuration tripwire consistent on compute nodes.
     - role: otlp_exporter
     - role: nftables
@@ -179,6 +185,9 @@
     # first start finds the file at the FAAS_GEOIP_DB_PATH default.
     - role: geoip
     - role: gatewayd_internal_service
+    # ADR-1343: the app edge (Cloudflare Tunnel connector + gatewayd-public in
+    # compute edge mode); removes itself unless the manifest turns it on.
+    - role: gatewayd_public_edge_service
     - role: builderd_service
     - role: compute_only_service
     - role: profiled_service

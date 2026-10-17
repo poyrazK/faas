@@ -19,11 +19,13 @@ func (s *server) postgresBindingInventory(ctx context.Context, accountID, appID,
 	section := bindingInventorySection{revisions: make(map[string]string), refreshWakeIDs: make(map[string]string), adoptionSelectors: make(map[string]state.BindingAdoptionSelector)}
 	for _, row := range rows {
 		item := inventoryItem(api.BindingTypePostgres, row.DatabaseName, row.EnvironmentKey, row.Scope, row.Access, row.State)
-		section.adoptionSelectors[bindingVerificationKey(item.Type, item.Binding, item.Scope)] = state.BindingAdoptionSelector{Type: item.Type, BindingID: row.BindingID, Scope: item.Scope, Keys: api.BindingCredentialSecretKeys(item.Type, item.Binding)}
+		if row.Access != "migration" {
+			section.adoptionSelectors[bindingVerificationKey(item.Type, item.Binding, item.Scope)] = state.BindingAdoptionSelector{Type: item.Type, BindingID: row.BindingID, Scope: item.Scope, Keys: api.BindingCredentialSecretKeys(item.Type, item.Binding)}
+		}
 		generation, pending := row.CredentialGeneration, row.RotationPending
 		item.CredentialGeneration, item.RotationPending = &generation, &pending
 		section.revisions[bindingVerificationKey(item.Type, item.Binding, item.Scope)] = bindingMetadataRevision(item, row.BindingID)
-		if pending && row.RotationWakeID != "" {
+		if pending && row.RotationWakeID != "" && row.Access != "migration" {
 			section.refreshWakeIDs[bindingVerificationKey(item.Type, item.Binding, item.Scope)] = row.RotationWakeID
 		}
 		section.items = append(section.items, item)
@@ -89,7 +91,7 @@ func (s *server) outboundBindingInventory(ctx context.Context, accountID, appID 
 	return section
 }
 
-func (s *server) queueBindingInventory(ctx context.Context, accountID, appID string, now time.Time) bindingInventorySection {
+func (s *server) queueBindingInventory(ctx context.Context, accountID, appID, scope string, now time.Time) bindingInventorySection {
 	bindings, err := s.store.ListQueueBindingsForApp(ctx, accountID, appID)
 	if err != nil {
 		return bindingInventoryUnavailable(api.BindingTypeQueue, "query_failed", "error", "Queue bindings could not be listed.")
@@ -100,11 +102,20 @@ func (s *server) queueBindingInventory(ctx context.Context, accountID, appID str
 	}
 	consumers, available := s.bindingConsumerInventory(ctx, accountID, appID)
 	for _, binding := range bindings {
+		if scope != "" && binding.DeploymentScope != "" && binding.DeploymentScope != scope {
+			continue
+		}
 		config := "disabled"
 		if binding.Enabled {
 			config = "enabled"
 		}
-		item := inventoryItem(api.BindingTypeQueue, binding.QueueName, binding.Name, "app", binding.Mode, config)
+		bindingScope := binding.DeploymentScope
+		if bindingScope == "" {
+			bindingScope = "app"
+		}
+		item := inventoryItem(api.BindingTypeQueue, binding.QueueName, binding.Name, bindingScope, binding.Mode, config)
+		environment := binding.DeploymentScope
+		item.QueueEnvironment = &environment
 		item.ConsumerState, item.ConsumerLiveness = "unknown", "unknown"
 		consumer, found := consumers[binding.ID]
 		if binding.Mode == "pull" {

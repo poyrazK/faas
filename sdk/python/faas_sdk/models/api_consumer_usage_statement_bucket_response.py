@@ -31,6 +31,11 @@ class APIConsumerUsageStatementBucketResponse:
     tier_units: list[int] | Unset = UNSET
     """Units per step of a tiered rate card's ladder. In an adjustment revision, entries are differences and can be
     negative when late usage moved billed units into a cheaper step."""
+    trial: bool | Unset = UNSET
+    """A minute of the consumer's free trial, billed at zero (ADR-1314)."""
+    unit: str | Unset = UNSET
+    """The billed minute's price stream when it is not request: compute_second, response_megabyte or app:<meter>
+    (ADR-1317)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -54,6 +59,10 @@ class APIConsumerUsageStatementBucketResponse:
         if not isinstance(self.tier_units, Unset):
             tier_units = self.tier_units
 
+        trial = self.trial
+
+        unit = self.unit
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -72,6 +81,10 @@ class APIConsumerUsageStatementBucketResponse:
             field_dict["price_millicents_per_unit"] = price_millicents_per_unit
         if tier_units is not UNSET:
             field_dict["tier_units"] = tier_units
+        if trial is not UNSET:
+            field_dict["trial"] = trial
+        if unit is not UNSET:
+            field_dict["unit"] = unit
 
         return field_dict
 
@@ -99,6 +112,10 @@ class APIConsumerUsageStatementBucketResponse:
 
         tier_units = cast(list[int], d.pop("tier_units", UNSET))
 
+        trial = d.pop("trial", UNSET)
+
+        unit = d.pop("unit", UNSET)
+
         api_consumer_usage_statement_bucket_response = cls(
             window_start=window_start,
             billable_units=billable_units,
@@ -108,6 +125,8 @@ class APIConsumerUsageStatementBucketResponse:
             currency=currency,
             price_millicents_per_unit=price_millicents_per_unit,
             tier_units=tier_units,
+            trial=trial,
+            unit=unit,
         )
 
         api_consumer_usage_statement_bucket_response.additional_properties = d

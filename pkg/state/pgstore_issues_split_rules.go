@@ -78,7 +78,7 @@ func issueCreateSplitRule(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, sourc
 	}
 	ruleID := uuid.NewString()
 	digest := sha256.Sum256([]byte("gregale-issue-split-rule-v1:" + ruleID))
-	branch, err := q.IssueCreateSplitGroup(ctx, tx, sqlc.IssueCreateSplitGroupParams{AccountID: source.AccountID, AppID: source.AppID, Environment: source.Environment, GroupingVersion: source.GroupingVersion, Fingerprint: fmt.Sprintf("%x", digest), Title: issueSplitBranchTitle(source.Title, m, priority), Now: issueTime(now), AssigneeAccountID: canonical.AssigneeAccountID, SourceIssueID: source.ID})
+	branch, err := q.IssueCreateSplitGroup(ctx, tx, sqlc.IssueCreateSplitGroupParams{AccountID: source.AccountID, AppID: source.AppID, Environment: source.Environment, GroupingVersion: source.GroupingVersion, Fingerprint: fmt.Sprintf("%x", digest), Title: issueSplitBranchTitle(source.Title, m, priority), Now: issueTime(now), AssigneeAccountID: canonical.AssigneeAccountID, AssigneeTeamID: canonical.AssigneeTeamID, SourceIssueID: source.ID})
 	if err != nil {
 		return sqlc.IssueSplitRule{}, err
 	}

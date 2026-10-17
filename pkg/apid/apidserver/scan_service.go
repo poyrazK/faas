@@ -253,7 +253,7 @@ func toPlanWorkload(w reposcan.Workload) api.PlanWorkload {
 
 		Class:      string(w.Class),
 		Schedule:   w.Schedule,
-		Ports:      w.Ports,
+		Ports:      append([]int{}, w.Ports...),
 		EnvKeys:    w.EnvKeys,
 		Source:     w.Source,
 		Tier:       w.Tier.String(),
@@ -891,7 +891,7 @@ type planCron struct {
 }
 
 func projectWorkloadCrons(workloads []reposcan.Workload) []planCron {
-	var crons []planCron
+	crons := make([]planCron, 0)
 	for _, workload := range workloads {
 		for _, schedule := range workload.CronSchedules() {
 			crons = append(crons, planCron{
@@ -984,6 +984,15 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 		// later cannot deploy).
 		if !acct.MayDeploy() {
 			res.Error = acct.DeployBlockedProblem().Detail
+			out = append(out, res)
+			continue
+		}
+		// New services install their pinned company intent before staging or
+		// consuming deploy rate. The ordinary deployment fence still applies.
+		var standardError string
+		app, standardError = s.prepareProjectApplicationStandard(ctx, app)
+		if standardError != "" {
+			res.Error = standardError
 			out = append(out, res)
 			continue
 		}

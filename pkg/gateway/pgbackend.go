@@ -268,10 +268,11 @@ func (s *targetSet) routableCount() int {
 // deployments but does not deadlock the request. PR-C ships
 // wake-fan-out to remove this fallback.
 type PGBackend struct {
-	router  Router
-	sched   Scheduler
-	log     *slog.Logger
-	metrics *Metrics
+	workloadAdmissions workloadAdmissionCache
+	router             Router
+	sched              Scheduler
+	log                *slog.Logger
+	metrics            *Metrics
 
 	routes *RouteCache // host -> app_id (LRU)
 	// stale (ADR-190) is the last-known-good host -> App tier consulted
@@ -1021,10 +1022,11 @@ func (b *PGBackend) Lookup(ctx context.Context, host string) (App, bool) {
 		if target.CustomDomain {
 			active, err := b.cachedCustomDomainRouteActive(ctx, host, target.AppID)
 			if err != nil {
-				if b.log != nil {
-					b.log.Warn("gateway: custom domain cache validation failed", "host", host, "err", err)
-				}
-				return App{}, false
+				// The validation could not reach the registry. Treat it like
+				// any other route lookup error (ADR-190, ADR-1344 §5): serve
+				// the last-known-good route within the stale TTL instead of
+				// failing every request to the domain.
+				return b.lookupStale(ctx, host, err)
 			}
 			if !active {
 				b.routes.Invalidate(host)
@@ -1046,6 +1048,12 @@ func (b *PGBackend) Lookup(ctx context.Context, host string) (App, bool) {
 				app.CustomDomainRoute = target.CustomDomain
 				if !b.prepareProductionWeights(ctx, app) {
 					return App{}, false
+				}
+				if target.CustomDomain {
+					// The registry just confirmed this route, so its stale
+					// TTL restarts from now rather than from the first
+					// resolution that filled the cache.
+					b.stale.Put(host, app)
 				}
 				return app, true
 			}
@@ -2477,6 +2485,7 @@ func (b *PGBackend) WithMirrorStore(s mirrorRulesStore) *PGBackend {
 // an app_changed / domain_changed notification so a renamed slug, plan change,
 // or deleted app is re-resolved (or 404'd) on the next request.
 func (b *PGBackend) FlushRoutes() {
+	b.workloadAdmissions.reset()
 	b.routes.Reset()
 	b.appsMu.Lock()
 	b.apps = map[string]App{}
@@ -2490,6 +2499,7 @@ func (b *PGBackend) InvalidateRoutesForApp(appID string) {
 	if b == nil || appID == "" {
 		return
 	}
+	b.InvalidateWorkloadAdmission(appID)
 	if b.routes != nil {
 		b.routes.InvalidateApp(appID)
 	}

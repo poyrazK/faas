@@ -259,7 +259,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			}
 			return dep.RootfsPath == leasePath, nil
 		},
-	)
+	).WithMinFreeFraction(cfg.CacheMinFreeFraction)
 	validatorArtifacts, artifactErr := validatorbundle.OpenArtifacts(os.Getenv)
 	if artifactErr != nil {
 		return artifactErr
@@ -280,6 +280,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// override per-builder via the toml field.
 		BuilderNodeID: cfg.BuilderNodeID,
 	}, log).WithOpsMetrics(ops).WithEvents(eventsPlatform).WithSourceStorage(sourceStorage).WithValidatorBuild(validatorArtifacts.Build)
+	publisher, err := loadBuildPublisher()
+	if err != nil {
+		return err
+	}
+	b.WithBuildPublisher(publisher)
 	notifCh, err := db.SubscribeWithReconnect(ctx, pool, builderNotificationChannels(), log)
 	if err != nil {
 		return err
@@ -377,13 +382,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	go builderdpkg.ReaperLoopWithVM(runCtx, store, driver, reapInterval, reapThreshold, log)
 
 	// Build cache GC (issue #196 B2.1). Content-addressed cache at
-	// cfg.CacheDir grows forever as builds accumulate; a daily sweep
-	// enforces TTL + size cap (defaults: 30 days, 50 GiB). The sweep
-	// shares the Cache instance used by build workers so lookup+lease,
-	// Store and Sweep cannot race over the same entry.
+	// cfg.CacheDir grows forever as builds accumulate; a sweep at startup
+	// and then hourly enforces TTL, size cap and the free-space floor
+	// (defaults: 30 days, 50 GiB, 20% free). The sweep shares the Cache
+	// instance used by build workers so lookup+lease, Store and Sweep
+	// cannot race over the same entry.
 	gcInterval := cfg.CacheGCSweepInterval
 	if gcInterval <= 0 {
-		gcInterval = 24 * time.Hour
+		gcInterval = time.Hour
 	}
 	go builderdpkg.CacheGCSweepLoop(runCtx, cache, gcInterval, cfg.CacheMaxBytes, cfg.CacheMaxAge, log)
 

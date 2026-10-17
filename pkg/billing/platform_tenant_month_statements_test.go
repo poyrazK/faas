@@ -43,7 +43,7 @@ func TestBuildPlatformTenantMonthStatementAllowanceAdjustment(t *testing.T) {
 	m1, m2 := start.Add(10*time.Minute), start.Add(20*time.Minute)
 	first := []state.APIConsumerUsageBucket{tenantBucket(appA, "a", m1, 6), tenantBucket(appB, "b", m2, 6)}
 	rev1, err := BuildPlatformTenantMonthStatement("acct", "tenant", start, end, end, 1, "", first, first, nil,
-		[]state.PlatformTenantRateCard{card}, nil)
+		[]state.PlatformTenantRateCard{card}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +60,7 @@ func TestBuildPlatformTenantMonthStatementAllowanceAdjustment(t *testing.T) {
 	late := tenantBucket(appA, "a", start.Add(5*time.Minute), 3)
 	month := append([]state.APIConsumerUsageBucket{late}, first...)
 	rev2, err := BuildPlatformTenantMonthStatement("acct", "tenant", start, end, end, 2, state.APIConsumerUsageStatementFinalized,
-		[]state.APIConsumerUsageBucket{late}, month, nil, []state.PlatformTenantRateCard{card}, []state.PlatformTenantStatement{finalized})
+		[]state.APIConsumerUsageBucket{late}, month, nil, []state.PlatformTenantRateCard{card}, []state.PlatformTenantStatement{finalized}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +83,7 @@ func TestBuildPlatformTenantMonthStatementTiersAndRules(t *testing.T) {
 		PriceMillicentsPerUnit: 50, Tiers: []state.APIConsumerRateCardTier{{UpTo: &five, PriceMillicentsPerUnit: 100}, {PriceMillicentsPerUnit: 50}},
 		EffectiveFrom: start}
 	usage := []state.APIConsumerUsageBucket{tenantBucket("app-1", "a", start.Add(time.Minute), 4), tenantBucket("app-2", "b", start.Add(2*time.Minute), 4)}
-	in, err := BuildPlatformTenantMonthStatement("acct", "tenant", start, end, end, 1, "", usage, usage, nil, []state.PlatformTenantRateCard{card}, nil)
+	in, err := BuildPlatformTenantMonthStatement("acct", "tenant", start, end, end, 1, "", usage, usage, nil, []state.PlatformTenantRateCard{card}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,11 +92,11 @@ func TestBuildPlatformTenantMonthStatementTiersAndRules(t *testing.T) {
 		t.Fatalf("tiered month = %+v lines %+v, want 650 across the shared ladder", in, got)
 	}
 	if _, err := BuildPlatformTenantMonthStatement("acct", "tenant", start, start.AddDate(0, 0, 7), end, 1, "", usage, usage, nil,
-		[]state.PlatformTenantRateCard{card}, nil); !errors.Is(err, ErrTenantMonthPeriodRequired) {
+		[]state.PlatformTenantRateCard{card}, nil, nil); !errors.Is(err, ErrTenantMonthPeriodRequired) {
 		t.Fatalf("weekly period err = %v, want ErrTenantMonthPeriodRequired", err)
 	}
 	if _, err := BuildPlatformTenantMonthStatement("acct", "tenant", start, end, end, 1, "", nil, usage, nil,
-		[]state.PlatformTenantRateCard{card}, nil); !errors.Is(err, ErrNoNewTenantUsage) {
+		[]state.PlatformTenantRateCard{card}, nil, nil); !errors.Is(err, ErrNoNewTenantUsage) {
 		t.Fatalf("no delta err = %v, want ErrNoNewTenantUsage", err)
 	}
 	flat := state.PlatformTenantRateCard{ID: uuid.NewString(), Currency: "EUR", Unit: state.PlatformTenantRateCardUnitRequest,
@@ -134,5 +134,45 @@ func TestQuotePlatformTenantUsageAppAllowanceOnlyOnFallback(t *testing.T) {
 	early := []state.APIConsumerUsageBucket{tenantBucket("app", "a", start.Add(time.Minute), 3)}
 	if _, err := QuotePlatformTenantUsage(appCards, tenantCards, early); !errors.Is(err, ErrAPIConsumerAllowanceInTenantStatement) {
 		t.Fatalf("fallback to an allowance card err = %v, want ErrAPIConsumerAllowanceInTenantStatement", err)
+	}
+}
+
+// adr: 1307 — a tenant card's route weights charge consumer subjects by
+// route while surfaces count 1; a late request re-prices the month and
+// overlap is checked on raw request units, not weighted ones.
+func TestBuildPlatformTenantMonthStatementRouteWeights(t *testing.T) {
+	start := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	end := start.AddDate(0, 1, 0)
+	app := uuid.NewString()
+	card := state.PlatformTenantRateCard{ID: uuid.NewString(), Currency: "EUR", Unit: state.PlatformTenantRateCardUnitRequest,
+		PriceMillicentsPerUnit: 100, RouteWeights: map[string]int64{"POST /generate": 5}, EffectiveFrom: start}
+	if !card.MonthlyPricing() {
+		t.Fatal("a weighted tenant card must re-price whole months")
+	}
+	minute := start.Add(10 * time.Minute)
+	surface := state.APIConsumerUsageBucket{AppID: app, SurfaceID: "surface-1", WindowStart: minute, RequestCount: 3, BillableUnits: 3}
+	first := []state.APIConsumerUsageBucket{tenantBucket(app, "c1", minute, 10), surface}
+	routes := TenantRouteUsage{TenantRouteKey(app, "c1"): {{WindowStart: minute, Route: "POST /generate", BillableUnits: 4}}}
+	rev1, err := BuildPlatformTenantMonthStatement("acct", "tenant", start, end, end, 1, "", first, first, nil,
+		[]state.PlatformTenantRateCard{card}, nil, routes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// c1: 6 requests at weight 1 and 4 at weight 5 = 26 units; the surface 3.
+	if rev1.BillableUnits != 29 || rev1.AmountMillicents != 2900 || len(rev1.Coverage) != 2 || !rev1.Weighted {
+		t.Fatalf("revision 1 = %+v", rev1)
+	}
+	finalized := state.PlatformTenantStatement{Status: state.APIConsumerUsageStatementFinalized, PeriodStart: start, PeriodEnd: end,
+		BillableUnits: rev1.BillableUnits, AmountMillicents: rev1.AmountMillicents, Lines: rev1.Lines, Coverage: rev1.Coverage}
+	late := tenantBucket(app, "c1", minute, 1)
+	month := []state.APIConsumerUsageBucket{tenantBucket(app, "c1", minute, 11), surface}
+	routes[TenantRouteKey(app, "c1")][0].BillableUnits = 5
+	rev2, err := BuildPlatformTenantMonthStatement("acct", "tenant", start, end, end, 2, state.APIConsumerUsageStatementFinalized,
+		[]state.APIConsumerUsageBucket{late}, month, nil, []state.PlatformTenantRateCard{card}, []state.PlatformTenantStatement{finalized}, routes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rev2.BillableUnits != 5 || rev2.AmountMillicents != 500 {
+		t.Fatalf("revision 2 = %+v, want the late weighted request (5 units)", rev2)
 	}
 }

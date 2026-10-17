@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run the real API + push-worker GitOps graph on an isolated KVM host. A nested
+# Run the real API + push-worker GitOps resilience graph on an isolated KVM host. A nested
 # run is useful for diagnosis but cannot qualify production enforcement.
 set -Eeuo pipefail
 umask 077
@@ -63,7 +63,7 @@ make leakcheck || status=1
 if [[ "$status" == 0 ]]; then
   GOMEMLIMIT=6GiB GREGALE_GITOPS_NATIVE_ACCEPTANCE=1 GREGALE_GITOPS_ACCEPTANCE=1 \
     make GO="$go_binary" PKGS=./cmd/e2e RUN_REGEX='^TestEnvironmentGitOpsNativeMetal$' \
-    RUN_ARGS='-v -timeout 30m' test-metal >"$log" 2>&1 || status=1
+    RUN_ARGS='-v -timeout 90m' test-metal >"$log" 2>&1 || status=1
 fi
 if ! grep -qE '^--- PASS: TestEnvironmentGitOpsNativeMetal( |$)' "$log"; then
   echo "GitOps native acceptance: required end-to-end graph test did not pass" >&2

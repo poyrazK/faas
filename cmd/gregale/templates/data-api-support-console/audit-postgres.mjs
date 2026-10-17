@@ -18,6 +18,8 @@ export function auditCSV(events){
 export async function postgresAudit({url,outbox,days},options={}){
  const pool=options.pool??new (await import('pg')).default.Pool({connectionString:url,max:2,connectionTimeoutMillis:3000,query_timeout:5000,statement_timeout:5000})
  let closed=false,running=false,timer=null,lastFailure=null,writing=0
+ // An idle client dropped by a database restart must not crash the console; the outbox retries delivery.
+ if(!options.pool)pool.on('error',()=>{lastFailure=new Date().toISOString()})
  const pending=new Map()
  try{
  const privilege=await pool.query("SELECT r.rolsuper,r.rolbypassrls,c.relowner=r.oid AS owner,c.relrowsecurity,c.relforcerowsecurity FROM pg_roles r JOIN pg_class c ON c.oid='support_audit.events'::regclass WHERE r.rolname=current_user")

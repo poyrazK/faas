@@ -38,7 +38,7 @@ func testInvoiceDetailsPersistence(t *testing.T, s state.Store) {
 		t.Fatal(err)
 	}
 	period := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
-	inv := state.Invoice{AccountID: acct.ID, Provider: "polar", ProviderInvoiceID: "order-1", Status: "paid", Currency: "eur", Plan: api.PlanPro,
+	inv := state.Invoice{AccountID: acct.ID, Provider: "polar", ProviderInvoiceID: "order-1", Status: "paid", Currency: "usd", Plan: api.PlanPro,
 		PeriodStart: period, PeriodEnd: period.AddDate(0, 0, 29), TotalCents: 1190, TaxCents: 190,
 		Details: &state.InvoiceDetails{IssuerName: "Invoice seller", PaymentTerms: "Net 30", IssuedAt: "2026-09-30T00:00:00Z", DueAt: "2026-10-30T00:00:00Z",
 			Lines: &state.InvoiceLines{Complete: true, Items: []state.InvoiceLineItem{{ID: "item-1", Description: "Plan", ChargeCategory: "Purchase", NetCents: 1000, TaxCents: 190}}}}}

@@ -390,6 +390,11 @@ func TestCDControlPlaneConvergesKeylessBackupIdentityBeforeActivation(t *testing
 		"faas-pg-basebackup-push.service faas-pg-wal-prune.service",
 		"FAAS_RCLONE_BIN=/usr/local/lib/faas/faas-rclone-backup-identity.py",
 		"offhostbox:faas-pg-wal/%f",
+		// The workflow's ALTER SYSTEM value overrides the role's postgresql.conf
+		// line, so it must also touch the marker PgWalOffHostPushStale reads.
+		// Without it the alert fired after every rollout while WAL was being
+		// pushed (hunt #10, H10-92).
+		"--quiet && touch /var/lib/pgsql/archive/.offhost-last-success ||",
 	} {
 		if !strings.Contains(workflow, required) {
 			t.Errorf("control-plane workflow is missing backup identity contract %q", required)

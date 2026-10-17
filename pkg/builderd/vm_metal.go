@@ -677,6 +677,7 @@ func (d *VMMDriver) waitForCompletion(ctx context.Context, h BuildHandle, retain
 		res.BuildkitVer = done.BuildkitVersion
 		res.RailpackVer = done.RailpackVersion
 		res.DevPatch = done.DevPatch
+		res.SharedRuntime = done.SharedRuntime
 		res.DependencyCacheUnchanged = done.DependencyCacheUnchanged
 	} else if exitCode == 0 {
 		// A clean host exit alone does not prove that a customer build ran.

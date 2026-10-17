@@ -19,6 +19,7 @@ export function writePackedSDKRuntimeLock(directory, sdk) {
       dependencies: sdkManifest.dependencies,
       optionalDependencies: sdkManifest.optionalDependencies,
       engines: sdkManifest.engines,
+      bin: sdkManifest.bin,
     },
   };
   for (const [path, entry] of Object.entries(sdkLock.packages)) {

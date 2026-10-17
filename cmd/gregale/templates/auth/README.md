@@ -31,6 +31,12 @@ realtime endpoints created with `gregale realtime create APP --auth`; and
 `POST /authz/v1/workflows/{name}/start` publishes an `auth.workflow.start`
 event with the `events:publish` key from `gregale auth create --workflows`.
 
+Realtime callbacks must include the verified token's UUID `session_id` and user
+ID. The callback scopes `gregale_auth.authorize` to that exact session, so a
+signed-out device cannot borrow another device's session. Deploy a daemon with
+the verified session handoff before updating an existing Auth app, then reconnect
+clients. No SQL migration is needed for this change.
+
 The create command seals these values: `AUTH_EXTERNAL_URL`, `AUTH_SITE_URL`,
 `AUTH_REDIRECT_URLS`, `AUTH_AUTOCONFIRM`, `AUTH_DISABLE_SIGNUP`, `AUTH_AUTHZ`,
 `AUTH_JWT_SECRET`, an ES256 key as `AUTH_JWT_KEY_<ID>` and `AUTH_JWT_SIGNER_<ID>`.
@@ -38,9 +44,11 @@ Each signing key is its own secret; the newest `AUTH_JWT_SIGNER_<ID>` (its
 value is the Unix time it was activated) names the key that signs, and the
 others only verify. `gregale auth keys` rotates them. Configure sign-in
 providers, MFA and password rules with `gregale auth config` and
-`gregale auth providers`, which write `GOTRUE_EXTERNAL_*`, `GOTRUE_MFA_*` and
-`GOTRUE_PASSWORD_*` secrets; `GOTRUE_SECURITY_CAPTCHA_*` can also be set
-directly. Any other `GOTRUE_*` secret stops startup because Gregale owns that
+`gregale auth providers`, which write `GOTRUE_EXTERNAL_*`, `GOTRUE_MFA_*`,
+`GOTRUE_PASSWORD_*`, `GOTRUE_PASSKEY_ENABLED` and `GOTRUE_SECURITY_CAPTCHA_*`
+secrets, and the hosted pages' `AUTH_UI_*` branding, `AUTH_CAPTCHA_SITE_KEY`,
+`AUTH_PASSKEY_RP_ID` and `AUTH_AUDIT_RETENTION_DAYS`. The front derives
+GoTrue's WebAuthn relying party from the Auth app's host. Any other `GOTRUE_*` secret stops startup because Gregale owns that
 setting. `GET /settings/v1` reports the running configuration without
 credentials.
 
