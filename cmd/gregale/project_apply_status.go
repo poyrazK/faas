@@ -36,7 +36,7 @@ func summarizeProjectApply(apply api.ApplyResponse) projectApplyStatus {
 	}
 
 	for _, build := range apply.Builds {
-		if build.Error != "" || build.DeploymentID == "" {
+		if build.Error != "" || build.DeploymentID == "" || projectConfigurationFailure(build.Configuration) != "" {
 			status.buildsFailed++
 			continue
 		}
@@ -75,6 +75,9 @@ func renderProjectApplyResult(w io.Writer, plan api.PlanResponse, apply api.Appl
 	renderApplyRescue(w, apply)
 
 	for _, build := range apply.Builds {
+		if build.Error == "" {
+			build.Error = projectConfigurationFailure(build.Configuration)
+		}
 		switch {
 		case build.Error != "":
 			if build.DeploymentStatus != "" || build.BuildStatus != "" {
@@ -97,6 +100,12 @@ func renderProjectApplyResult(w io.Writer, plan api.PlanResponse, apply api.Appl
 					build.Slug, build.DeploymentID, build.BuildID, build.DeploymentStatus, build.BuildStatus)
 			} else {
 				_, _ = fmt.Fprintf(w, "  ✓ %s: deployment=%s build=%s\n", build.Slug, build.DeploymentID, build.BuildID)
+			}
+		}
+		if build.Configuration != nil && !build.Configuration.Complete {
+			_, _ = fmt.Fprintf(w, "    crons=%s: %s\n", build.Configuration.Crons.Status, build.Configuration.Crons.Message)
+			if build.Configuration.Crons.Hint != "" {
+				_, _ = fmt.Fprintf(w, "    %s\n", build.Configuration.Crons.Hint)
 			}
 		}
 	}

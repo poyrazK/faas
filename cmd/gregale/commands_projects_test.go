@@ -53,7 +53,7 @@ func TestProjectsEnvironmentPromotionPreviewUsesTargetRoute(t *testing.T) {
 
 func TestProjectsEnvironmentPromotionPreviewCanIncludeConfigSync(t *testing.T) {
 	resetJSONOut(t)
-	f := authedFakeAPI(t, `{"project_slug":"shop","from_environment":"staging","to_environment":"production","sync_config":true,"to_environment_protected":false,"approval_required":false,"can_promote":true,"config_diff":{"project_slug":"shop","from_environment":"staging","to_environment":"production","from_version":1,"to_version":1,"from_hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","to_hash":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","changes":[{"key":"REGION","kind":"changed","before":"us","after":"eu"}]},"changes":[],"promotion_hash":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","promotion_token":"token"}`, http.StatusOK)
+	f := authedFakeAPI(t, `{"project_slug":"shop","from_environment":"staging","to_environment":"production","sync_config":true,"to_environment_protected":false,"approval_required":false,"can_promote":true,"config_diff":{"project_slug":"shop","from_environment":"staging","to_environment":"production","from_version":1,"to_version":1,"from_hash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","to_hash":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","changes":[{"key":"REGION","kind":"changed","before":"us","after":"eu"}]},"changes":[{"workload_slug":"api","workload_name":"api","kind":"update","release_configuration_hash":"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","environment_changes":[{"key":"MODE","kind":"changed"},{"key":"OLD_ONLY","kind":"removed"}]}],"promotion_hash":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","promotion_token":"token"}`, http.StatusOK)
 	previousOut := osStdout
 	var out bytes.Buffer
 	osStdout = &out
@@ -65,6 +65,9 @@ func TestProjectsEnvironmentPromotionPreviewCanIncludeConfigSync(t *testing.T) {
 	if f.sawMethod != http.MethodGet || f.sawPath != "/v1/projects/shop/environments/production/promotion-preview" ||
 		f.sawQuery != "from=staging&sync_config=true" {
 		t.Fatalf("route = %s %s?%s", f.sawMethod, f.sawPath, f.sawQuery)
+	}
+	if !strings.Contains(out.String(), "destination secrets and bindings retained") || !strings.Contains(out.String(), "MODE") || !strings.Contains(out.String(), "OLD_ONLY") {
+		t.Fatalf("preview omitted snapshot variable changes or destination ownership: %s", out.String())
 	}
 	if !strings.Contains(out.String(), "Non-secret configuration to copy:") ||
 		!strings.Contains(out.String(), "REGION") || !strings.Contains(out.String(), "after=\"eu\"") {

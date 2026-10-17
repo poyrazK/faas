@@ -7,6 +7,10 @@
  */
 export type ProjectScanRequest = {
   /**
+   * JSON-encoded ProjectReleaseConfigRequest for atomic-config-verify; contains only non-secret workload variables.
+   */
+  release_config?: string;
+  /**
    * tar.gz of the repo root.
    */
   source: Blob;

@@ -21,11 +21,12 @@ func TestWaitForProjectApply_ZeroBuilds(t *testing.T) {
 }
 
 func TestWaitForProjectApply_MixedTerminalStates(t *testing.T) {
+	config := api.NewDeploymentConfigurationStatus("activated", "")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case strings.HasPrefix(r.URL.Path, "/v1/deployments/dep-live"):
-			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "dep-live", Status: statusLive})
+			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "dep-live", Status: statusLive, Configuration: &config})
 		case strings.HasPrefix(r.URL.Path, "/v1/deployments/dep-fail"):
 			_ = json.NewEncoder(w).Encode(api.DeploymentResponse{ID: "dep-fail", Status: deploymentStatusFailed, Error: "health check failed"})
 		case strings.HasPrefix(r.URL.Path, "/v1/builds/build-live"):
@@ -49,6 +50,9 @@ func TestWaitForProjectApply_MixedTerminalStates(t *testing.T) {
 	}
 	if got.Builds[0].DeploymentStatus != statusLive || got.Builds[0].BuildStatus != api.BuildStatusSucceeded || got.Builds[0].Error != "" {
 		t.Fatalf("live result = %+v", got.Builds[0])
+	}
+	if got.Builds[0].Configuration == nil || got.Builds[0].Configuration.Crons.Status != "activated" {
+		t.Fatalf("configuration lost: %+v", got.Builds[0])
 	}
 	if got.Builds[1].DeploymentStatus != deploymentStatusFailed || got.Builds[1].BuildStatus != api.BuildStatusFailed || !strings.Contains(got.Builds[1].Error, "health check failed") {
 		t.Fatalf("failed result = %+v", got.Builds[1])

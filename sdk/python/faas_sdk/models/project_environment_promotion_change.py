@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -20,6 +20,10 @@ from ..models.project_environment_promotion_change_target_revision_kind import (
 )
 from ..types import UNSET, Unset
 
+if TYPE_CHECKING:
+    from ..models.project_environment_config_change import ProjectEnvironmentConfigChange
+
+
 T = TypeVar("T", bound="ProjectEnvironmentPromotionChange")
 
 
@@ -30,6 +34,13 @@ class ProjectEnvironmentPromotionChange:
     workload_slug: str
     workload_name: str
     kind: ProjectEnvironmentPromotionChangeKind
+    secret_changes: list[ProjectEnvironmentConfigChange] | Unset = UNSET
+    """Production secret key names and change kinds, without values or fingerprints."""
+    release_configuration_hash: str | Unset = UNSET
+    """Identity of the approved immutable HTTP variable snapshot and environment versions; destination secrets and
+    bindings remain owned by the target."""
+    environment_changes: list[ProjectEnvironmentConfigChange] | Unset = UNSET
+    """Variable key names and change kinds only; values and secret material are omitted."""
     source_workload_config_hash: str | Unset = UNSET
     target_workload_config_hash: str | Unset = UNSET
     promoted_workload_config_hash: str | Unset = UNSET
@@ -49,6 +60,22 @@ class ProjectEnvironmentPromotionChange:
         workload_name = self.workload_name
 
         kind: str = self.kind
+
+        secret_changes: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.secret_changes, Unset):
+            secret_changes = []
+            for secret_changes_item_data in self.secret_changes:
+                secret_changes_item = secret_changes_item_data.to_dict()
+                secret_changes.append(secret_changes_item)
+
+        release_configuration_hash = self.release_configuration_hash
+
+        environment_changes: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.environment_changes, Unset):
+            environment_changes = []
+            for environment_changes_item_data in self.environment_changes:
+                environment_changes_item = environment_changes_item_data.to_dict()
+                environment_changes.append(environment_changes_item)
 
         source_workload_config_hash = self.source_workload_config_hash
 
@@ -85,6 +112,12 @@ class ProjectEnvironmentPromotionChange:
                 "kind": kind,
             }
         )
+        if secret_changes is not UNSET:
+            field_dict["secret_changes"] = secret_changes
+        if release_configuration_hash is not UNSET:
+            field_dict["release_configuration_hash"] = release_configuration_hash
+        if environment_changes is not UNSET:
+            field_dict["environment_changes"] = environment_changes
         if source_workload_config_hash is not UNSET:
             field_dict["source_workload_config_hash"] = source_workload_config_hash
         if target_workload_config_hash is not UNSET:
@@ -112,12 +145,34 @@ class ProjectEnvironmentPromotionChange:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.project_environment_config_change import ProjectEnvironmentConfigChange
+
         d = dict(src_dict)
         workload_slug = d.pop("workload_slug")
 
         workload_name = d.pop("workload_name")
 
         kind = check_project_environment_promotion_change_kind(d.pop("kind"))
+
+        _secret_changes = d.pop("secret_changes", UNSET)
+        secret_changes: list[ProjectEnvironmentConfigChange] | Unset = UNSET
+        if _secret_changes is not UNSET:
+            secret_changes = []
+            for secret_changes_item_data in _secret_changes:
+                secret_changes_item = ProjectEnvironmentConfigChange.from_dict(secret_changes_item_data)
+
+                secret_changes.append(secret_changes_item)
+
+        release_configuration_hash = d.pop("release_configuration_hash", UNSET)
+
+        _environment_changes = d.pop("environment_changes", UNSET)
+        environment_changes: list[ProjectEnvironmentConfigChange] | Unset = UNSET
+        if _environment_changes is not UNSET:
+            environment_changes = []
+            for environment_changes_item_data in _environment_changes:
+                environment_changes_item = ProjectEnvironmentConfigChange.from_dict(environment_changes_item_data)
+
+                environment_changes.append(environment_changes_item)
 
         source_workload_config_hash = d.pop("source_workload_config_hash", UNSET)
 
@@ -159,6 +214,9 @@ class ProjectEnvironmentPromotionChange:
             workload_slug=workload_slug,
             workload_name=workload_name,
             kind=kind,
+            secret_changes=secret_changes,
+            release_configuration_hash=release_configuration_hash,
+            environment_changes=environment_changes,
             source_workload_config_hash=source_workload_config_hash,
             target_workload_config_hash=target_workload_config_hash,
             promoted_workload_config_hash=promoted_workload_config_hash,

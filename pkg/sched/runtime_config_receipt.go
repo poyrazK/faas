@@ -38,6 +38,13 @@ func (e *Engine) snapshotRuntimeConfigFresh(ctx context.Context, snap state.Snap
 		if inputs.Scope != normalizedDeploymentScope(deployment.Scope) {
 			return false, nil
 		}
+		app, err := e.store.AppByID(ctx, deployment.AppID)
+		if err != nil {
+			return false, err
+		}
+		if handled, fresh, err := state.ReleaseSecretRuntimeInputsFresh(ctx, e.store, app.AccountID, app.ID, deployment.ID, inputs); err != nil || handled {
+			return fresh, err
+		}
 		return receipts.RuntimeConfigInputsFresh(ctx, deployment.AppID, inputs)
 	}
 	required, err := receipts.RuntimeConfigReceiptRequired(ctx, deployment.AppID, deployment.Scope)
@@ -54,6 +61,13 @@ func (e *Engine) runtimeConfigReceiptStale(ctx context.Context, instance state.I
 		return true
 	}
 	if exists {
+		app, err := e.store.AppByID(ctx, instance.AppID)
+		if err != nil {
+			return true
+		}
+		if handled, fresh, err := state.ReleaseSecretRuntimeInputsFresh(ctx, e.store, app.AccountID, app.ID, instance.DeploymentID, inputs); err != nil || handled {
+			return err != nil || inputs.Boundary.Before(boundary) || !fresh
+		}
 		fresh, err := receipts.RuntimeConfigInputsFresh(ctx, instance.AppID, inputs)
 		return err != nil || inputs.Scope != normalizedDeploymentScope(scope) || inputs.Boundary.Before(boundary) || !fresh
 	}

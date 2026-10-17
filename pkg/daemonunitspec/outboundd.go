@@ -28,6 +28,7 @@ func UnitOutboundd() daemonunit.Unit {
 		},
 		LoadCredential: []daemonunit.LoadCred{
 			{Name: "faas_fleet_age_identity", Path: "/etc/faas/secrets/fleet.age"},
+			{Name: "faas_fleet_age_identity_previous", Path: "/etc/faas/secrets/fleet.age.previous", Optional: true},
 		},
 
 		NoNewPrivileges:       true,

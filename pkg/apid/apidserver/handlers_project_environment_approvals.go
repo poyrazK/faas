@@ -42,6 +42,12 @@ func (s *server) approveProjectEnvironment(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if promotionToken != "" {
+		if wire, err := decodeProjectEnvironmentPromotionToken(promotionToken); err == nil {
+			if problem := validatePromotionSecretAccess(r, wire.ReleaseSecrets); problem != nil {
+				api.WriteProblem(w, problem)
+				return
+			}
+		}
 		approvalToken, approval, problem := s.issueProjectEnvironmentPromotionApproval(r.Context(), acct, projectSlug, environment, promotionToken)
 		if problem != nil {
 			api.WriteProblem(w, problem)
@@ -96,7 +102,7 @@ func (s *server) validateProjectEnvironmentPromotionApproval(ctx context.Context
 		return projectEnvironmentPromotionPlan{}, api.NewProblem(http.StatusConflict, api.CodeProjectEnvironmentApprovalInvalid,
 			"Promotion token does not match", "approve the exact promotion preview for this project and environment")
 	}
-	plan, problem := s.buildProjectEnvironmentPromotionPlan(ctx, acct, projectSlug, wire.FromEnvironment, environment, wire.SyncConfig)
+	plan, problem := s.buildProjectEnvironmentPromotionSecretPlan(ctx, acct, projectSlug, wire.FromEnvironment, environment, wire.SyncConfig, wire.ReleaseSecrets, wire.Verify, wire.Migrate, wire.Workers)
 	if problem != nil {
 		return projectEnvironmentPromotionPlan{}, problem
 	}

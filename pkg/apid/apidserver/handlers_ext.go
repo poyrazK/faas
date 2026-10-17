@@ -981,6 +981,10 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
 		return
 	}
+	if problem := validateDeploySettingsCondition(req, environment); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	allowedCallers, callerPolicySet, callerProblem := serviceCallersForPatch(req.AllowedServiceCallers)
 	if callerProblem != nil {
 		api.WriteProblem(w, callerProblem)
@@ -1498,6 +1502,8 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		return
 	}
 	configActivityAtomic := false
+	params.TouchDeploymentPolicies = req.Profiling != nil || req.Tracing != nil
+	params = guardedDeploySettingsParams(req, acct, params)
 	var configActivityOutboxID int64
 	var updated state.App
 	var err error
@@ -1524,7 +1530,9 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		updated, err = s.store.UpdateApp(r.Context(), app.ID, params)
 	}
 	if err != nil {
-		if problem := state.ServiceCapacityProblem(err); problem != nil {
+		if problem := deploySettingsUpdateProblem(err); problem != nil {
+			api.WriteProblem(w, problem)
+		} else if problem := state.ServiceCapacityProblem(err); problem != nil {
 			api.WriteProblem(w, problem)
 		} else {
 			// The caller only sees a generic 503; keep the cause. Under load,
@@ -2018,7 +2026,16 @@ func (s *server) getDeployment(w http.ResponseWriter, r *http.Request, acct stat
 		s.notFound(w, "no such deployment")
 		return
 	}
-	writeJSON(w, http.StatusOK, s.deploymentResponseWithBuild(r.Context(), d, app))
+	response := s.deploymentResponseWithBuild(r.Context(), d, app)
+	if store, ok := s.store.(state.DeploymentConfigurationStore); ok {
+		configuration, err := store.DeploymentConfiguration(r.Context(), acct.ID, d.ID)
+		if err != nil {
+			api.WriteProblem(w, api.ErrCapacity("could not read deployment configuration status"))
+			return
+		}
+		response.Configuration = &configuration
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 // updateDeploymentMinInstances (issue #557 closure / ADR-074) is the

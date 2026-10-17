@@ -3,15 +3,19 @@ package main
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 func TestUploadStateLockRemovesTerminalOrphan(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	path, err := uploadStatePath("demo", "0123abcd", "options")
+	path, err := uploadStatePath("fixture-identity")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,4 +122,55 @@ func writeUploadStateFixture(t *testing.T, key string, created time.Time) string
 		t.Fatal(err)
 	}
 	return path
+}
+
+func TestReclaimUploadSessionsPreservesRecoveryEvidence(t *testing.T) {
+	for _, tc := range []struct {
+		name                        string
+		uncertain, foreign, denied  bool
+		wantRequests, wantReclaimed int
+	}{
+		{name: "unfinished", wantRequests: 1, wantReclaimed: 1},
+		{name: "uncertain commit", uncertain: true},
+		{name: "different API", foreign: true},
+		{name: "cancellation denied", denied: true, wantRequests: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			requests := 0
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests++
+				if r.Method != http.MethodDelete || r.URL.Path != "/v1/uploads/old-upload" {
+					t.Errorf("unexpected cleanup request: %s %s", r.Method, r.URL.Path)
+				}
+				if tc.denied {
+					w.WriteHeader(http.StatusForbidden)
+				} else {
+					w.WriteHeader(http.StatusNoContent)
+				}
+			}))
+			defer srv.Close()
+			path := filepath.Join(t.TempDir(), "old.json")
+			base := srv.URL
+			if tc.foreign {
+				base = "https://another-api.example"
+			}
+			if err := saveResumableUploadState(path, resumableUploadState{
+				Version: resumableUploadStateVersion, UploadID: "old-upload", AppSlug: "demo",
+				APIBase: base, CommitAttempted: tc.uncertain, ArchiveSize: 1,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			got := reclaimAppUploadSessions(t.Context(), api.NewClient(srv.URL, "test"), "demo", filepath.Join(filepath.Dir(path), "keep.json"))
+			if got != tc.wantReclaimed || requests != tc.wantRequests {
+				t.Fatalf("reclaimed=%d requests=%d", got, requests)
+			}
+			_, err := os.Stat(path)
+			if tc.wantReclaimed == 0 && err != nil {
+				t.Fatalf("recovery evidence lost: %v", err)
+			}
+			if tc.wantReclaimed == 1 && !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("cancelled state remains: %v", err)
+			}
+		})
+	}
 }

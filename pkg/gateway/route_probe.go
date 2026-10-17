@@ -56,14 +56,25 @@ func (h *Handler) authorizedRouteProbe(r *http.Request, app App) (deploymentID, 
 // AuthorizeRouteProbe installs a short-lived probe challenge delivered over
 // the private notification channel. Probe tokens live in their own map so a
 // probe token can never authorize the hosting smoke bypass.
+type routeProbeChallenge struct {
+	token     string
+	expiresAt time.Time
+	scope     string
+}
+
 func (b *PGBackend) AuthorizeRouteProbe(appID, deploymentID, token string, expiresAt time.Time) {
+	b.AuthorizeRouteProbeForScope(appID, deploymentID, token, "", expiresAt)
+}
+
+// AuthorizeRouteProbeForScope binds the private challenge to a named release scope.
+func (b *PGBackend) AuthorizeRouteProbeForScope(appID, deploymentID, token, scope string, expiresAt time.Time) {
 	if b == nil || appID == "" || deploymentID == "" || token == "" || !expiresAt.After(time.Now()) {
 		return
 	}
 	b.probeMu.Lock()
 	defer b.probeMu.Unlock()
 	if b.probeChallenges == nil {
-		b.probeChallenges = map[string][]deploymentSmokeChallenge{}
+		b.probeChallenges = map[string][]routeProbeChallenge{}
 	}
 	now := time.Now()
 	for key, challenges := range b.probeChallenges {
@@ -80,7 +91,7 @@ func (b *PGBackend) AuthorizeRouteProbe(appID, deploymentID, token string, expir
 		}
 	}
 	key := smokeChallengeKey(appID, deploymentID)
-	b.probeChallenges[key] = append(b.probeChallenges[key], deploymentSmokeChallenge{token: token, expiresAt: expiresAt})
+	b.probeChallenges[key] = append(b.probeChallenges[key], routeProbeChallenge{token: token, expiresAt: expiresAt, scope: scope})
 }
 
 // ValidateRouteProbe authenticates a probe token bound to app and deployment.
@@ -107,4 +118,26 @@ func (b *PGBackend) ValidateRouteProbe(appID, deploymentID, token string) bool {
 		b.probeChallenges[key] = live
 	}
 	return matched == 1
+}
+
+// RouteProbeScope returns only the scope bound to an authenticated live challenge.
+func (b *PGBackend) RouteProbeScope(appID, deploymentID, token string) string {
+	b.probeMu.Lock()
+	defer b.probeMu.Unlock()
+	for _, c := range b.probeChallenges[smokeChallengeKey(appID, deploymentID)] {
+		if c.expiresAt.After(time.Now()) && subtle.ConstantTimeCompare([]byte(c.token), []byte(token)) == 1 {
+			return c.scope
+		}
+	}
+	return ""
+}
+func (h *Handler) routeProbeScope(app App, deploymentID, token string) string {
+	if resolver, ok := h.backend.(interface {
+		RouteProbeScope(string, string, string) string
+	}); ok {
+		if scope := resolver.RouteProbeScope(app.ID, deploymentID, token); scope != "" {
+			return scope
+		}
+	}
+	return app.Scope
 }

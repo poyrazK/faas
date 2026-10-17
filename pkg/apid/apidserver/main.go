@@ -68,6 +68,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/meter"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/openapidiff"
+	"github.com/onebox-faas/faas/pkg/promotionrollout"
 	"github.com/onebox-faas/faas/pkg/ratelimit/peraccount"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/role"
@@ -740,6 +741,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// block short-circuits to nil when pool is nil.
 	deps.pool = pool
 	deps.bgBefore = func(ctx context.Context, log *slog.Logger, srv *server) {
+		go srv.runCronActivationWorker(ctx)
+		go srv.runSafeProjectReleaseWorker(ctx)
+		go srv.runPromotionHealthWorker(ctx)
 		go srv.runSafeReleaseEmergencyAbort(ctx)
 		go srv.runServiceRolloutBindingWorker(ctx)
 		go srv.runCheckedRollbackWorker(ctx)
@@ -1443,6 +1447,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithWorkflowRuntimeEnabled(workflowsEnabledFromEnv(deps.getenv)).
 		WithExecutionAPIEnabled(executionAPIEnabledFromEnv(deps.getenv)).
 		WithAppTaskAPIEnabled(appTaskAPIEnabledFromEnv(deps.getenv)).
+		WithAtomicWorkerReleaseEnabled(deps.getenv("FAAS_ATOMIC_WORKER_RELEASES_ENABLED") == "1").
+		WithProjectCanariesEnabled(deps.getenv("FAAS_PROJECT_CANARIES_ENABLED") == "1").
+		WithPromotionHealthEnabled(deps.getenv("FAAS_PROMOTION_HEALTH_ENABLED") == "1").
+		WithPromotionServiceGraphEnabled(deps.getenv("FAAS_PROMOTION_SERVICE_GRAPH_ENABLED") == "1").
+		WithPromotionMigrationsEnabled(deps.getenv("FAAS_PROMOTION_MIGRATIONS_ENABLED") == "1").
+		WithPromotionWorkersEnabled(deps.getenv("FAAS_PROMOTION_WORKERS_ENABLED") == "1").
+		WithProjectReleaseSecretsEnabled(deps.getenv("FAAS_PROJECT_RELEASE_SECRETS_ENABLED") == "1").
+		WithAtomicServiceAdditionsEnabled(deps.getenv("FAAS_ATOMIC_SERVICE_ADDITIONS_ENABLED") == "1").
+		WithProjectMigrationContractsEnabled(deps.getenv("FAAS_PROJECT_MIGRATION_CONTRACTS_ENABLED") == "1").
 		WithInteractiveAppTasksEnabled(apptaskattach.EnabledFromEnv(deps.getenv)).
 		WithImageRunsEnabled(imagerun.EnabledFromEnv(deps.getenv)).
 		WithInteractiveImageRunsEnabled(imagerun.InteractiveEnabledFromEnv(deps.getenv)).
@@ -1450,6 +1463,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithRealtimeTicketsPreviewEnabled(deps.getenv("FAAS_REALTIME_TICKETS_PREVIEW_ENABLED") == "1").
 		WithRealtimeAccessPreviewEnabled(deps.getenv("FAAS_REALTIME_ACCESS_PREVIEW_ENABLED") == "1").
 		WithGitHubDeploysAvailable(githubDeploysAvailabilityProbe(deps.getenv, resolveGithubdBridgeSock(deps.getenv, cfg)))
+	srv.promotionRollout = promotionrollout.FromEnv(deps.getenv, wire.GitSHA)
 	srv.guestTracingEnabled = deps.getenv("FAAS_GUEST_TRACING_ENABLED") == "1"
 	if err := srv.configureProfiles(deps.getenv); err != nil {
 		return fmt.Errorf("apid profiling: %w", err)

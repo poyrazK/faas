@@ -139,6 +139,7 @@ func (m *MemStore) deleteEnvironmentInvocationsLocked(environmentID string) {
 			m.captureEventExecutionTransitionLocked(inv, Invocation{}, time.Now().UTC(), true)
 			m.loseExecutionCoverageLocked(inv.AppID, "invocation_deleted", time.Now().UTC())
 			delete(m.invocations, id)
+			delete(m.workerReleasePins, id)
 			delete(m.invocationEnvironmentQueueReceipts, id)
 			delete(m.invocationWorkEnvironmentAdmissions, id)
 			delete(m.invocationEnvironmentQueueAdmissions, id)

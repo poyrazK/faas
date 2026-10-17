@@ -24,7 +24,7 @@ const dispatchFleetSeal = "fleet-seal"
 
 func cmdFleetSeal(args []string) int {
 	if len(args) == 0 || args[0] == "--help" || args[0] == "-h" {
-		PrintUsage(os.Stderr, "usage: gregalectl fleet-seal <init|migrate|verify> [flags]", "fleet-seal")
+		PrintUsage(os.Stderr, "usage: gregalectl fleet-seal <init|migrate|verify|retire-release-key> [flags]", "fleet-seal")
 		return 0
 	}
 	var err error
@@ -35,6 +35,8 @@ func cmdFleetSeal(args []string) int {
 		err = runFleetSealMigrate(args[1:])
 	case "verify":
 		err = runFleetSealVerify(args[1:])
+	case "retire-release-key":
+		err = runFleetSealRetireReleaseKey(args[1:])
 	default:
 		fmt.Fprintf(os.Stderr, "gregalectl fleet-seal: unknown subcommand %q\n", args[0])
 		return 2

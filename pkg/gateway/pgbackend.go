@@ -321,6 +321,7 @@ type PGBackend struct {
 	appResolver            func(ctx context.Context, appID string) (App, bool, error)
 	revisionPinResolver    func(context.Context, string, string, string) (bool, error)
 	projectReleaseResolver func(context.Context, string, string, string) (string, string, error)
+	projectCanaryResolver  func(context.Context, string, string, string) (string, string, error)
 
 	// clientForApp (Phase 2 / Gate A) returns the schedd client that
 	// owns the given app. Mandatory when appResolver is set. Production wires
@@ -425,7 +426,7 @@ type PGBackend struct {
 	// probeMu/probeChallenges hold ADR-847 route probe tokens, separate
 	// from smoke tokens so a probe never authorizes the smoke bypass.
 	probeMu         sync.Mutex
-	probeChallenges map[string][]deploymentSmokeChallenge
+	probeChallenges map[string][]routeProbeChallenge
 }
 
 type deploymentSmokeChallenge struct {
@@ -504,6 +505,17 @@ func (b *PGBackend) ResolveProjectRelease(ctx context.Context, appID, scope, req
 		return "", "", errors.New("project release resolver unavailable")
 	}
 	return b.projectReleaseResolver(ctx, appID, scope, requestedID)
+}
+
+func (b *PGBackend) WithProjectCanaryResolver(fn func(context.Context, string, string, string) (string, string, error)) *PGBackend {
+	b.projectCanaryResolver = fn
+	return b
+}
+func (b *PGBackend) ResolveProjectCanary(ctx context.Context, appID, scope, key string) (string, string, error) {
+	if b != nil && b.projectCanaryResolver != nil {
+		return b.projectCanaryResolver(ctx, appID, scope, key)
+	}
+	return b.ResolveProjectRelease(ctx, appID, scope, "")
 }
 
 // WithClientForApp sets the per-app schedd client factory used by

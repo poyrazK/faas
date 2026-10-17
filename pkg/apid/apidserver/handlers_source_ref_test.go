@@ -686,8 +686,8 @@ release:
 		t.Fatalf("status = %d, want 202; body=%s", rec.Code, rec.Body)
 	}
 	crons, err := e.store.ListCronsForApp(context.Background(), e.appID)
-	if err != nil || len(crons) != 1 {
-		t.Fatalf("crons = %d, err=%v; want one archive-declared cron", len(crons), err)
+	if err != nil || len(crons) != 0 {
+		t.Fatalf("crons = %d, err=%v; want none before deployment readiness", len(crons), err)
 	}
 	triggers, err := e.store.ListTriggersForApp(context.Background(), e.appID)
 	if err != nil || len(triggers) != 1 || triggers[0].Slug != "jobs" {
@@ -696,6 +696,15 @@ release:
 	deps, err := e.store.ListDeploymentsForApp(context.Background(), e.appID, 0, 0)
 	if err != nil || len(deps) != 1 {
 		t.Fatalf("deployments = %d, err=%v; want one", len(deps), err)
+	}
+	if err := e.store.UpdateDeploymentStatus(t.Context(), deps[0].ID, state.DeployLive, ""); err != nil {
+		t.Fatal(err)
+	}
+	if changes, err := e.store.ReconcileDeploymentCrons(t.Context()); err != nil || len(changes) != 1 {
+		t.Fatalf("activation changes=%v err=%v", changes, err)
+	}
+	if crons, err := e.store.ListCronsForApp(t.Context(), e.appID); err != nil || len(crons) != 1 {
+		t.Fatalf("ready crons=%v err=%v", crons, err)
 	}
 	if !bytes.Contains(deps[0].Workflows, []byte("process_order")) {
 		t.Fatalf("workflows = %s, want archive workflow", deps[0].Workflows)

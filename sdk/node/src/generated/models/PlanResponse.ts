@@ -8,10 +8,12 @@ import type { PlanCron } from './PlanCron.js';
 import type { PlanDetectionWarning } from './PlanDetectionWarning.js';
 import type { PlanManaged } from './PlanManaged.js';
 import type { PlanWorkload } from './PlanWorkload.js';
+import type { ProjectSafeRelease } from './ProjectSafeRelease.js';
 /**
  * Dry-run scan response.
  */
 export type PlanResponse = {
+  safe_release?: ProjectSafeRelease;
   project_slug: string;
   repo_full_name?: string;
   /**

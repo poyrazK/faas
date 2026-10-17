@@ -121,9 +121,9 @@ func (c *Client) AppendUpload(ctx context.Context, uploadID string, offset int64
 // id to retrieve the original deployment without re-uploading.
 func (c *Client) CommitUpload(ctx context.Context, uploadID string) (DeploymentResponse, error) {
 	var out DeploymentResponse
-	_, _, err := c.doResumableUpload(ctx, http.MethodPost,
+	_, _, err := c.doResumableUpload(deploymentSubmissionContext(ctx), http.MethodPost,
 		"/v1/uploads/"+url.PathEscape(uploadID)+"/commit", nil,
-		"", nil, &out, false)
+		"", deploymentAttemptHeaders(ctx), &out, false)
 	return out, err
 }
 
@@ -181,6 +181,10 @@ func (c *Client) doResumableUpload(ctx context.Context, method, path string, bod
 		newCtx, cancel, _ := b.WithCeiling(ctx, cli.Timeout)
 		defer cancel()
 		req = req.WithContext(newCtx)
+	}
+	preventDeploymentReplay(req)
+	if err := recordDeploymentSubmissionBoundary(req); err != nil {
+		return nil, nil, err
 	}
 	resp, err := cli.Do(req)
 	if err != nil {

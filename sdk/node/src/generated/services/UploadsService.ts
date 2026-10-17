@@ -135,17 +135,32 @@ export class UploadsService {
    */
   public static commitUpload({
     id,
+    deploymentAttemptId,
   }: {
     /**
      * Upload session id to finalize (returned by POST /v1/uploads).
      */
     id: string,
+    /**
+     * Persist a random opaque ID before submission to recover lost acceptance
+     * replies. The accepted attempt remains bound to its original deployment,
+     * including after failure or supersession. Missing receipts never authorize
+     * resubmission. Independent from Idempotency-Key replay.
+     * Concurrent accepted/in-progress attempts may return 409 with
+     * deployment_attempt_accepted or deployment_attempt_pending; recover
+     * acceptance using the receipt instead of treating that conflict as rejection.
+     *
+     */
+    deploymentAttemptId?: string,
   }): CancelablePromise<DeploymentResponse> {
     return __request(OpenAPI, {
       method: 'POST',
       url: '/v1/uploads/{id}/commit',
       path: {
         'id': id,
+      },
+      headers: {
+        'Deployment-Attempt-ID': deploymentAttemptId,
       },
       errors: {
         400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,

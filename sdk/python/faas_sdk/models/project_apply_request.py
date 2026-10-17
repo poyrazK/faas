@@ -22,6 +22,9 @@ class ProjectApplyRequest:
     """
 
     source: File
+    release_config: str | Unset = UNSET
+    """Planned non-secret workload variables encoded as ProjectReleaseConfigRequest JSON for atomic-config-verify
+    admission."""
     project_slug: str | Unset = UNSET
     repo_full_name: str | Unset = UNSET
     production_branch: str | Unset = UNSET
@@ -29,6 +32,11 @@ class ProjectApplyRequest:
     only: str | Unset = UNSET
     environment: str | Unset = UNSET
     """Environment slug applied to deployments created by this apply"""
+    secrets: str | Unset = UNSET
+    """JSON object of secret names to plaintext values, sealed for every selected workload in the deployment
+    environment before any build is queued. Requires secrets:write or admin in addition to deploy permission. Uses
+    the existing plan secret count/value quotas; never included in source or responses. Failed configuration queues
+    no builds; already applied configuration remains available for retry."""
     approval_token: str | Unset = UNSET
     """Short-lived approval credential for the exact protected-environment plan"""
     no_triggers: bool | Unset = False
@@ -42,6 +50,8 @@ class ProjectApplyRequest:
     def to_dict(self) -> dict[str, Any]:
         source = self.source.to_tuple()
 
+        release_config = self.release_config
+
         project_slug = self.project_slug
 
         repo_full_name = self.repo_full_name
@@ -53,6 +63,8 @@ class ProjectApplyRequest:
         only = self.only
 
         environment = self.environment
+
+        secrets = self.secrets
 
         approval_token = self.approval_token
 
@@ -67,6 +79,8 @@ class ProjectApplyRequest:
                 "source": source,
             }
         )
+        if release_config is not UNSET:
+            field_dict["release_config"] = release_config
         if project_slug is not UNSET:
             field_dict["project_slug"] = project_slug
         if repo_full_name is not UNSET:
@@ -79,6 +93,8 @@ class ProjectApplyRequest:
             field_dict["only"] = only
         if environment is not UNSET:
             field_dict["environment"] = environment
+        if secrets is not UNSET:
+            field_dict["secrets"] = secrets
         if approval_token is not UNSET:
             field_dict["approval_token"] = approval_token
         if no_triggers is not UNSET:
@@ -92,6 +108,9 @@ class ProjectApplyRequest:
         files: types.RequestFiles = []
 
         files.append(("source", self.source.to_tuple()))
+
+        if not isinstance(self.release_config, Unset):
+            files.append(("release_config", (None, str(self.release_config).encode(), "text/plain")))
 
         if not isinstance(self.project_slug, Unset):
             files.append(("project_slug", (None, str(self.project_slug).encode(), "text/plain")))
@@ -110,6 +129,9 @@ class ProjectApplyRequest:
 
         if not isinstance(self.environment, Unset):
             files.append(("environment", (None, str(self.environment).encode(), "text/plain")))
+
+        if not isinstance(self.secrets, Unset):
+            files.append(("secrets", (None, str(self.secrets).encode(), "text/plain")))
 
         if not isinstance(self.approval_token, Unset):
             files.append(("approval_token", (None, str(self.approval_token).encode(), "text/plain")))
@@ -132,6 +154,8 @@ class ProjectApplyRequest:
         d = dict(src_dict)
         source = File(payload=BytesIO(d.pop("source")))
 
+        release_config = d.pop("release_config", UNSET)
+
         project_slug = d.pop("project_slug", UNSET)
 
         repo_full_name = d.pop("repo_full_name", UNSET)
@@ -144,6 +168,8 @@ class ProjectApplyRequest:
 
         environment = d.pop("environment", UNSET)
 
+        secrets = d.pop("secrets", UNSET)
+
         approval_token = d.pop("approval_token", UNSET)
 
         no_triggers = d.pop("no_triggers", UNSET)
@@ -152,12 +178,14 @@ class ProjectApplyRequest:
 
         project_apply_request = cls(
             source=source,
+            release_config=release_config,
             project_slug=project_slug,
             repo_full_name=repo_full_name,
             production_branch=production_branch,
             install_id=install_id,
             only=only,
             environment=environment,
+            secrets=secrets,
             approval_token=approval_token,
             no_triggers=no_triggers,
             platform_tenant_required=platform_tenant_required,

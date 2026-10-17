@@ -2320,6 +2320,11 @@ func (m AppManifest) MarshalJSON() ([]byte, error) {
 
 // Deployment is one attempt to ship a version of an app.
 type Deployment struct {
+	// submissionAttemptID is creation-only metadata, never copied onto the wire.
+	submissionAttemptID  string
+	releaseWorkerAttempt string
+	releaseConfigAttempt string
+	retryDeploymentID    string
 	// Admission metadata only: checked under the parent lock, never persisted.
 	ExpectedReview      *api.AppReleaseReview `json:"-"`
 	ReviewedRolloutMode string                `json:"-"`
@@ -4346,6 +4351,7 @@ type Invocation struct {
 	PlatformTenantID string `json:"platform_tenant_id,omitempty"`
 	InstanceID       string `json:"instance_id,omitempty"`
 	// ResolvedDeploymentID proves the release member that handled synthetic dispatch.
+	WorkerJobEvidence    bool             `json:"-"`
 	ResolvedDeploymentID string           `json:"-"`
 	Source               InvocationSource `json:"source"`
 	// EnvironmentID is authenticated operational ownership, never request intent.
@@ -6097,6 +6103,9 @@ type CreditLedgerEntry struct {
 // lifecycle fields are stored as an app-owned manifest patch alongside the
 // existing resource and scaling settings.
 type UpdateAppParams struct {
+	// Explicit policy writes relinquish a previous deploy's ownership even at the same value.
+	TouchDeploymentPolicies bool
+	DeploySettingsGuard     *DeploySettingsGuard
 	// Visibility is the app edge exposure policy. SetVisibility distinguishes
 	// an explicit public reset from an omitted field.
 	Visibility     *api.AppVisibility
@@ -7316,6 +7325,14 @@ type ProjectEnvironmentConfig struct {
 // project-environment promotion. The operation remains available after the
 // request ends so a caller can inspect or resume a partial promotion.
 type ProjectEnvironmentPromotion struct {
+	Approval         *PromotionApprovalIntent
+	ConsumedApproval *ProjectEnvironmentApproval
+	// Admission-only policy. Durable progress belongs to the health store.
+	ReleaseSecrets               map[string]map[string]string
+	Workers                      bool
+	Migrate                      bool
+	ResolveServiceBindings       bool
+	HealthPolicy                 *api.ProjectPromotionHealthPolicy
 	ID                           string
 	AccountID                    string
 	ProjectID                    string
@@ -7357,6 +7374,8 @@ type ProjectEnvironmentPromotion struct {
 	// actual snapshots atomically with creation; callers cannot supply payloads.
 	SourceFeatureFlagsHash         string
 	PreviousTargetFeatureFlagsHash string
+	// Preview identity; the store captures the private configuration itself.
+	ReleaseConfigurationHash string
 }
 
 // ProjectEnvironmentPromotionWorkload is one checkpoint within a promotion.

@@ -382,6 +382,9 @@ func cmdHostAgeStatus(args []string) int {
 	paths := hostAgePaths(f.dir)
 	if *jsonOut {
 		rep := inspectHostAgeStatus(f.dir)
+		if rep.PruneSafe {
+			rep.PruneSafe = checkHostAgeSecretRetirement(f.dir, true) == nil
+		}
 		jsonEmit(os.Stdout, rep)
 		return 0
 	}
@@ -529,6 +532,8 @@ func cmdHostAgePrunePrevious(args []string) int {
 	fs := flag.NewFlagSet("host-age prune-previous", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	f := &hostAgeFlags{}
+	fs.StringVar(&f.dir, "dir", "/etc/faas/secrets", "directory containing host.age and host.age.previous")
+	fs.BoolVar(&f.force, "force", false, "skip the overlap age check; encrypted release dependency checks remain required")
 	minOverlap := fs.Int("min-overlap-days", defaultMinOverlapDays,
 		"refuse if host.age.previous is younger than this many days (set to 0 with --force for an unconditional prune)")
 	promote := fs.Bool("promote", false,
@@ -548,7 +553,7 @@ func cmdHostAgePrunePrevious(args []string) int {
 	if dir == "" {
 		dir = "/etc/faas/secrets"
 	}
-	rep := hostAgePruneTo(dir, *minOverlap, f.force, *promote, *dryRun)
+	rep := guardedHostAgePruneTo(dir, *minOverlap, f.force, *promote, *dryRun, checkHostAgeSecretRetirement)
 	if *jsonOut {
 		jsonEmit(os.Stdout, rep)
 		if !rep.Applied && !rep.WouldApply {

@@ -9,6 +9,10 @@
  *
  */
 export type ProjectApplyRequest = {
+  /**
+   * Planned non-secret workload variables encoded as ProjectReleaseConfigRequest JSON for atomic-config-verify admission.
+   */
+  release_config?: string;
   source: Blob;
   project_slug?: string;
   repo_full_name?: string;
@@ -19,6 +23,10 @@ export type ProjectApplyRequest = {
    * Environment slug applied to deployments created by this apply
    */
   environment?: string;
+  /**
+   * JSON object of secret names to plaintext values, sealed for every selected workload in the deployment environment before any build is queued. Requires secrets:write or admin in addition to deploy permission. Uses the existing plan secret count/value quotas; never included in source or responses. Failed configuration queues no builds; already applied configuration remains available for retry.
+   */
+  secrets?: string;
   /**
    * Short-lived approval credential for the exact protected-environment plan
    */

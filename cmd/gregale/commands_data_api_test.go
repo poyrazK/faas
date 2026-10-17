@@ -81,9 +81,9 @@ func testDataAPICreateDeploysRuntime(t *testing.T, resume bool, mode string) {
 				t.Error("application JWTs would be blocked by the paid-plan owner-key default")
 			}
 			created++
-			writeJSONTest(w, api.AppResponse{ID: "app", Slug: "notes-data", Type: "app"})
+			writeJSONTest(w, api.AppResponse{ID: "a1", Slug: "notes-data", Type: "app"})
 		case r.Method == "GET" && r.URL.Path == "/v1/apps/notes-data":
-			writeJSONTest(w, map[string]any{"id": "app", "slug": "notes-data", "type": "app", "require_authn": true, "public_auth": map[string]string{"mode": mode}})
+			writeJSONTest(w, map[string]any{"id": "a1", "slug": "notes-data", "type": "app", "require_authn": true, "public_auth": map[string]string{"mode": mode}})
 		case r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/bindings"):
 			writeJSONTest(w, api.ManagedPostgresBinding{ID: "binding", State: "ready"})
 		case r.Method == "PATCH" || r.Method == "PUT":

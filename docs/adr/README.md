@@ -1,5 +1,9 @@
 # Architecture Decision Records
 
+- [ADR-1446: Preserve configuration when deployment acceptance is uncertain](1446-deploy-submission-outcomes.md) — explicit submission outcomes and commit uncertainty across processes
+
+- [ADR-1445: Deploy upload recovery across CLI processes](1445-deploy-upload-recovery.md) — content and intent checkpoints, interruption recovery, and expired-session replacement keys
+
 ADR-001 through ADR-010 are **accepted and locked for v1**; they live inline in
 [`../faas_implementation_spec.md`](../faas_implementation_spec.md) §3, not as
 separate files here. This directory holds ADRs made *after* the spec.
@@ -1016,6 +1020,33 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-869: Reconnectable durable entity sessions](869-reconnectable-durable-entity-sessions.md)
 - [ADR-870: Durable session recovery and lifecycle](870-durable-session-recovery-and-lifecycle.md)
 
+- [ADR-977: Decompose cmd/apid into pkg/apid domain packages](977-apid-package-decomposition.md)
+
+- [ADR-1444: Deploy acceptance and secret ordering](1444-deploy-acceptance-and-secret-ordering.md)
+
+- [ADR-1448: Saved deploy sessions](1448-saved-deploy-sessions.md)
+
+- [ADR-1447: Atomic deploy settings recovery](1447-atomic-deploy-settings-recovery.md)
+
+- [ADR-1449: Durable deployment submission receipts](1449-deployment-submission-receipts.md)
+
+- [ADR-1450: Durable pre-submission profiling and tracing recovery](1450-durable-deploy-policy-staging.md)
+
+- [ADR-1451: Durable manifest cron staging and recovery](1451-durable-deploy-cron-staging.md)
+
+- [ADR-1410: Progressive project canary policy](1410-project-progressive-canary-policy.md)
+
+- [ADR-1411: Durable project worker release pins](1411-durable-project-worker-release-pins.md)
+
+- [ADR-1412: Retained project worker pools for pinned jobs](1412-retained-project-worker-pools.md)
+
+- [ADR-1413: Staged project canary publication and transactional promotion](1413-staged-project-canary-publication.md)
+
+- [ADR-1422: Snapshot-aware HTTP environment promotion](1422-snapshot-aware-environment-promotion.md)
+
+- [ADR-1423: Health-gated HTTP environment promotion](1423-health-gated-environment-promotion.md)
+
+- [ADR-1424: Destination-aware HTTP service graph promotion](1424-destination-aware-service-graph-promotion.md)
 
 - [ADR-1237: Local management MCP server](1237-local-management-mcp.md)
 - [ADR-1238: Reviewed management MCP releases and delegated OAuth](1238-management-mcp-releases-and-oauth.md)

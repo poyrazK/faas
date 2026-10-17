@@ -186,6 +186,10 @@ type ServiceProxyReleaseResolver func(ctx context.Context, callerAppID, callerDe
 // an active reviewed environment graph. TargetDeploymentID and ReleaseSetID
 // are selected by the platform store, never by a guest header.
 type ServiceProxyEnvironmentBinding struct {
+	// FrozenPolicy means the resolver already enforced the deployment's
+	// immutable caller and target policies. The bound authorizer still checks
+	// live tenant ownership and deletion before any endpoint lookup.
+	FrozenPolicy       bool
 	Target             ServiceTarget
 	TargetDeploymentID string
 	ReleaseSetID       string
@@ -263,6 +267,7 @@ type ServiceProxyRequestAttemptObserver func(runID, callerAppID, generation stri
 // small handler factory so selection and retry behavior can be exercised
 // without a live gRPC server.
 type ServiceProxyConfig struct {
+	AuthorizeBound            ServiceProxyAuthorizer
 	Provider                  ServiceEndpointProvider
 	Resolve                   ServiceProxyResolver
 	Authorize                 ServiceProxyAuthorizer
@@ -338,6 +343,7 @@ type ServiceProxyConfig struct {
 // endpoints that recently failed transport, and retries one alternate target
 // for safe idempotent requests.
 type ServiceProxy struct {
+	authorizeBound            ServiceProxyAuthorizer
 	mintAssertion             ServiceCallerMinter
 	localNodeID               string
 	provider                  ServiceEndpointProvider
@@ -453,6 +459,7 @@ func NewServiceProxy(cfg ServiceProxyConfig) *ServiceProxy {
 		resolveCaller:             cfg.ResolveCaller,
 		resolveCallerIdentity:     cfg.ResolveCallerIdentity,
 		resolveRelease:            cfg.ResolveRelease,
+		authorizeBound:            cfg.AuthorizeBound,
 		devBridge:                 cfg.DevBridge,
 		forward:                   cfg.Forward,
 		rawForward:                cfg.RawForward,
@@ -607,6 +614,10 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		serviceProxyProblem(dispatchWriter, http.StatusUnauthorized, "caller identity is required")
 		return
 	}
+	if requested, present, valid := serviceReleaseFromRequest(r); present && valid {
+		dependencyCtx = context.WithValue(dependencyCtx, requestedServiceReleaseKey{}, requested)
+		r = r.WithContext(dependencyCtx)
+	}
 	var environmentBinding *ServiceProxyEnvironmentBinding
 	if p.resolveEnvironmentBinding != nil {
 		binding, managed, found, err := p.resolveEnvironmentBinding(dependencyCtx, caller, callerDeploymentID, service)
@@ -678,7 +689,15 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	dependencySpan.SetAttributes(attribute.String("gregale.service.target_app_id", target.AppID))
-	callerInfo, err := p.authorize(dependencyCtx, caller, target.AppID)
+	authorize := p.authorize
+	if environmentBinding != nil && environmentBinding.FrozenPolicy {
+		authorize = p.authorizeBound
+		if authorize == nil {
+			serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "frozen service authorization is unavailable")
+			return
+		}
+	}
+	callerInfo, err := authorize(dependencyCtx, caller, target.AppID)
 	if err != nil {
 		if errors.Is(err, ErrServiceProxyPreviewProductionDenied) {
 			p.metrics.IncServiceCall(ServiceCallPreviewDenied)
@@ -2210,4 +2229,13 @@ func (w *serviceProxyResponseWriter) commit() {
 		_, _ = w.dst.Write(w.buffer.Bytes())
 		w.buffer.Reset()
 	}
+}
+
+type requestedServiceReleaseKey struct{}
+
+// RequestedServiceRelease returns a syntactically valid request hint. Resolvers
+// must still prove the node-verified caller belongs to that exact graph.
+func RequestedServiceRelease(ctx context.Context) string {
+	id, _ := ctx.Value(requestedServiceReleaseKey{}).(string)
+	return id
 }

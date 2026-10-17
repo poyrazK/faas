@@ -8,12 +8,17 @@ from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.deployment_response import DeploymentResponse
 from ...models.problem import Problem
-from ...types import Response
+from ...types import UNSET, Response, Unset
 
 
 def _get_kwargs(
     id: str,
+    *,
+    deployment_attempt_id: str | Unset = UNSET,
 ) -> dict[str, Any]:
+    headers: dict[str, Any] = {}
+    if not isinstance(deployment_attempt_id, Unset):
+        headers["Deployment-Attempt-ID"] = deployment_attempt_id
 
     _kwargs: dict[str, Any] = {
         "method": "post",
@@ -22,6 +27,7 @@ def _get_kwargs(
         ),
     }
 
+    _kwargs["headers"] = headers
     return _kwargs
 
 
@@ -32,6 +38,11 @@ def _parse_response(
         response_201 = DeploymentResponse.from_dict(response.json())
 
         return response_201
+
+    if response.status_code == 202:
+        response_202 = DeploymentResponse.from_dict(response.json())
+
+        return response_202
 
     if response.status_code == 400:
         response_400 = Problem.from_dict(response.json())
@@ -74,11 +85,13 @@ def sync_detailed(
     id: str,
     *,
     client: AuthenticatedClient | Client,
+    deployment_attempt_id: str | Unset = UNSET,
 ) -> Response[DeploymentResponse | Problem]:
     """Finalize the session, validate the tarball, enqueue the build.
 
     Args:
         id (str):
+        deployment_attempt_id (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -90,6 +103,7 @@ def sync_detailed(
 
     kwargs = _get_kwargs(
         id=id,
+        deployment_attempt_id=deployment_attempt_id,
     )
 
     response = client.get_httpx_client().request(
@@ -103,11 +117,13 @@ def sync(
     id: str,
     *,
     client: AuthenticatedClient | Client,
+    deployment_attempt_id: str | Unset = UNSET,
 ) -> DeploymentResponse | Problem | None:
     """Finalize the session, validate the tarball, enqueue the build.
 
     Args:
         id (str):
+        deployment_attempt_id (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -120,6 +136,7 @@ def sync(
     return sync_detailed(
         id=id,
         client=client,
+        deployment_attempt_id=deployment_attempt_id,
     ).parsed
 
 
@@ -127,11 +144,13 @@ async def asyncio_detailed(
     id: str,
     *,
     client: AuthenticatedClient | Client,
+    deployment_attempt_id: str | Unset = UNSET,
 ) -> Response[DeploymentResponse | Problem]:
     """Finalize the session, validate the tarball, enqueue the build.
 
     Args:
         id (str):
+        deployment_attempt_id (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -143,6 +162,7 @@ async def asyncio_detailed(
 
     kwargs = _get_kwargs(
         id=id,
+        deployment_attempt_id=deployment_attempt_id,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -154,11 +174,13 @@ async def asyncio(
     id: str,
     *,
     client: AuthenticatedClient | Client,
+    deployment_attempt_id: str | Unset = UNSET,
 ) -> DeploymentResponse | Problem | None:
     """Finalize the session, validate the tarball, enqueue the build.
 
     Args:
         id (str):
+        deployment_attempt_id (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -172,5 +194,6 @@ async def asyncio(
         await asyncio_detailed(
             id=id,
             client=client,
+            deployment_attempt_id=deployment_attempt_id,
         )
     ).parsed

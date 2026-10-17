@@ -18,7 +18,7 @@ import (
 )
 
 const (
-	resumableUploadStateVersion = 2
+	resumableUploadStateVersion = 3
 	uploadCacheMaxAge           = 7 * 24 * time.Hour
 	uploadCacheMaxEntries       = 256
 )
@@ -31,32 +31,36 @@ type resumableUploadState struct {
 	UploadID               string `json:"upload_id"`
 	AppSlug                string `json:"app_slug"`
 	APIBase                string `json:"api_base"`
+	RecoveryIdentitySHA256 string `json:"recovery_identity_sha256"`
 	ArchivePath            string `json:"archive_path"`
 	ArchiveSize            int64  `json:"archive_size"`
 	ArchiveSHA256          string `json:"archive_sha256"`
-	ArchiveModTimeUnixNano int64  `json:"archive_mtime_unix_nano"`
 	DeployOptionsSHA256    string `json:"deploy_options_sha256"`
 	TotalSize              int64  `json:"total_size"`
 	ChunkSize              int64  `json:"chunk_size"`
 	CreatedAt              string `json:"created_at"`
+	CommitAttempted        bool   `json:"commit_attempted,omitempty"`
 }
 
-// uploadStatePath is keyed by the app and absolute archive path so rerunning
-// the same deploy resumes naturally while separate archives can progress in
-// parallel. The path itself is stored only as diagnostic metadata.
-// uploadStatePath names the resumable state of one upload by what is being
-// uploaded, not where the archive lives: `deploy --path` packs the directory
-// into a fresh temp file on every run, so a path-keyed state never matched
-// and every retry re-uploaded the whole archive (production-us hunt #9: a
-// 76 MiB source restarted from 0% on each retry, leaving a new state file and
-// an open server session each time).
-func uploadStatePath(appSlug, archiveSHA256, optionsSHA256 string) (string, error) {
+// uploadRecoveryIdentity binds recovery to the authenticated connection,
+// source bytes, deployment options, and logical retry intent. Temporary archive
+// paths and mtimes do not determine source identity. Only the
+// combined digest is persisted; credentials and retry keys are never saved.
+func uploadRecoveryIdentity(c *Client, ctx context.Context, slug, archiveSHA256, optionsSHA256 string) string {
+	values := []string{c.BaseURL(), c.Token(), slug, archiveSHA256, optionsSHA256, api.IdempotencyKeyFromContext(ctx)}
+	data, _ := json.Marshal(values) // A slice of strings cannot fail to marshal.
+	key := sha256.Sum256(data)
+	return hex.EncodeToString(key[:])
+}
+
+// uploadStatePath is keyed by content and intent so a repacked archive can
+// resume across CLI processes. The same identity also serializes local uploads.
+func uploadStatePath(identity string) (string, error) {
 	dir, err := uploadStateDir()
 	if err != nil {
 		return "", err
 	}
-	key := sha256.Sum256([]byte(apiBase() + "\x00" + appSlug + "\x00" + strings.ToLower(archiveSHA256) + "\x00" + optionsSHA256))
-	return filepath.Join(dir, hex.EncodeToString(key[:])+".json"), nil
+	return filepath.Join(dir, identity+".json"), nil
 }
 
 func uploadStateDir() (string, error) {
@@ -205,7 +209,8 @@ func isUploadSessionCap(err error) bool {
 // counts against the per-app cap of five until its 24 h TTL: after five
 // failed submissions of edited sources the app could not deploy at all
 // (production-us hunt #9, "Too many upload sessions"). A state another local
-// deploy holds locked is left alone.
+// deploy holds locked is left alone. Uncertain commits retain their recovery
+// evidence, and a failed cancellation never removes a local receipt.
 func reclaimAppUploadSessions(ctx context.Context, c *Client, slug, keepStatePath string) int {
 	dir := filepath.Dir(keepStatePath)
 	files, err := os.ReadDir(dir)
@@ -219,7 +224,7 @@ func reclaimAppUploadSessions(ctx context.Context, c *Client, slug, keepStatePat
 			continue
 		}
 		state, found, err := loadResumableUploadState(path)
-		if err != nil || !found || state.AppSlug != slug || state.APIBase != apiBase() || state.UploadID == "" {
+		if err != nil || !found || state.AppSlug != slug || state.APIBase != c.BaseURL() || state.UploadID == "" || state.CommitAttempted {
 			continue
 		}
 		lock := flock.New(path+".lock", flock.SetPermissions(0o600))
@@ -227,7 +232,19 @@ func reclaimAppUploadSessions(ctx context.Context, c *Client, slug, keepStatePat
 			_ = lock.Close()
 			continue
 		}
-		cancelUploadBestEffort(ctx, c, state.UploadID)
+		// Re-read after locking: the previous owner may have attempted commit
+		// between discovery and our acquisition of its recovery lock.
+		current, currentFound, currentErr := loadResumableUploadState(path)
+		if currentErr != nil || !currentFound || current.UploadID != state.UploadID || current.CommitAttempted || current.APIBase != c.BaseURL() || current.AppSlug != slug {
+			_ = lock.Unlock()
+			_ = lock.Close()
+			continue
+		}
+		if err := c.CancelUpload(ctx, state.UploadID); err != nil {
+			_ = lock.Unlock()
+			_ = lock.Close()
+			continue
+		}
 		removeResumableUploadState(path)
 		_ = lock.Unlock()
 		_ = lock.Close()
