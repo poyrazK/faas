@@ -1887,21 +1887,73 @@ type Querier interface {
 	IsMailSuppressed(ctx context.Context, db DBTX, lower string) (bool, error)
 	IssueAddActivity(ctx context.Context, db DBTX, arg IssueAddActivityParams) (IssueActivity, error)
 	IssueAddResolution(ctx context.Context, db DBTX, arg IssueAddResolutionParams) error
+	IssueAddTeamMember(ctx context.Context, db DBTX, arg IssueAddTeamMemberParams) error
 	IssueAddTransition(ctx context.Context, db DBTX, arg IssueAddTransitionParams) error
+	IssueApplicationEscalationApp(ctx context.Context, db DBTX, entitledPlans []string) (pgtype.UUID, error)
+	IssueApplicationEscalationCancel(ctx context.Context, db DBTX, appID pgtype.UUID) error
+	IssueApplicationEscalationDue(ctx context.Context, db DBTX, arg IssueApplicationEscalationDueParams) (IssueApplicationEscalationDueRow, error)
+	IssueApplicationEscalationPolicy(ctx context.Context, db DBTX, arg IssueApplicationEscalationPolicyParams) (IssueApplicationEscalationPolicyRow, error)
+	IssueApplicationEscalationPolicyPut(ctx context.Context, db DBTX, arg IssueApplicationEscalationPolicyPutParams) error
+	IssueApplicationEscalationReceipt(ctx context.Context, db DBTX, arg IssueApplicationEscalationReceiptParams) error
+	IssueApplicationEscalationRecord(ctx context.Context, db DBTX, arg IssueApplicationEscalationRecordParams) error
+	IssueApplicationEscalationRelease(ctx context.Context, db DBTX, appID pgtype.UUID) error
+	IssueApplicationReminderApp(ctx context.Context, db DBTX, entitledPlans []string) (pgtype.UUID, error)
+	IssueApplicationReminderCancel(ctx context.Context, db DBTX, arg IssueApplicationReminderCancelParams) error
+	IssueApplicationReminderDue(ctx context.Context, db DBTX, arg IssueApplicationReminderDueParams) (IssueApplicationReminderDueRow, error)
+	IssueApplicationReminderEnqueue(ctx context.Context, db DBTX, arg IssueApplicationReminderEnqueueParams) error
+	IssueApplicationReminderHistory(ctx context.Context, db DBTX, arg IssueApplicationReminderHistoryParams) ([]IssueApplicationReminderHistoryRow, error)
+	IssueApplicationReminderPolicy(ctx context.Context, db DBTX, arg IssueApplicationReminderPolicyParams) (IssueApplicationReminderPolicyRow, error)
+	IssueApplicationReminderPolicyPut(ctx context.Context, db DBTX, arg IssueApplicationReminderPolicyPutParams) error
+	IssueApplicationReminderPrune(ctx context.Context, db DBTX, arg IssueApplicationReminderPruneParams) error
+	IssueApplicationReminderReceipt(ctx context.Context, db DBTX, arg IssueApplicationReminderReceiptParams) error
+	IssueApplicationReminderRecord(ctx context.Context, db DBTX, arg IssueApplicationReminderRecordParams) error
+	IssueApplicationReminderRelease(ctx context.Context, db DBTX, arg IssueApplicationReminderReleaseParams) error
+	IssueApplicationReminderStart(ctx context.Context, db DBTX, arg IssueApplicationReminderStartParams) error
+	IssueApplicationReminderStopSchedules(ctx context.Context, db DBTX, appID pgtype.UUID) error
+	IssueApplicationResponseInbox(ctx context.Context, db DBTX, arg IssueApplicationResponseInboxParams) ([]IssueApplicationResponseInboxRow, error)
+	IssueApplicationSlackCancelPolicy(ctx context.Context, db DBTX, appID pgtype.UUID) error
+	IssueApplicationSlackCount(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
+	IssueApplicationSlackEnqueue(ctx context.Context, db DBTX, arg IssueApplicationSlackEnqueueParams) error
+	IssueApplicationSlackHistoryExpire(ctx context.Context, db DBTX, arg IssueApplicationSlackHistoryExpireParams) error
+	IssueApplicationSlackHistoryTrim(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
+	IssueApplicationSlackMissed(ctx context.Context, db DBTX, arg IssueApplicationSlackMissedParams) error
+	IssueApplicationSlackPolicy(ctx context.Context, db DBTX, arg IssueApplicationSlackPolicyParams) (IssueApplicationSlackPolicyRow, error)
+	IssueApplicationSlackPolicyPut(ctx context.Context, db DBTX, arg IssueApplicationSlackPolicyPutParams) error
+	IssueApplicationSlackReleaseClaims(ctx context.Context, db DBTX, appID pgtype.UUID) error
+	IssueApplicationSlackRoute(ctx context.Context, db DBTX, arg IssueApplicationSlackRouteParams) (IssueApplicationSlackRouteRow, error)
+	IssueApplicationTriageAudit(ctx context.Context, db DBTX, arg IssueApplicationTriageAuditParams) error
+	IssueApplicationTriageCancelSlack(ctx context.Context, db DBTX, issueID pgtype.UUID) error
+	IssueApplicationTriageGet(ctx context.Context, db DBTX, issueID pgtype.UUID) (IssueApplicationTriageGetRow, error)
+	IssueApplicationTriageHistory(ctx context.Context, db DBTX, arg IssueApplicationTriageHistoryParams) ([]IssueApplicationTriageHistoryRow, error)
+	IssueApplicationTriagePrune(ctx context.Context, db DBTX, arg IssueApplicationTriagePruneParams) error
+	IssueApplicationTriagePut(ctx context.Context, db DBTX, arg IssueApplicationTriagePutParams) error
+	IssueApplicationTriageReleaseLease(ctx context.Context, db DBTX, issueID pgtype.UUID) error
+	IssueApplicationTriageReset(ctx context.Context, db DBTX, issueID pgtype.UUID) (IssueApplicationTriage, error)
+	IssueApplicationTriageScope(ctx context.Context, db DBTX, arg IssueApplicationTriageScopeParams) (IssueApplicationTriageScopeRow, error)
+	IssueApplicationTriageSnoozed(ctx context.Context, db DBTX, issueID pgtype.UUID) (bool, error)
 	IssueApplySplitRule(ctx context.Context, db DBTX, arg IssueApplySplitRuleParams) (int64, error)
 	IssueAssigneeAllowed(ctx context.Context, db DBTX, arg IssueAssigneeAllowedParams) (bool, error)
 	IssueAttribution(ctx context.Context, db DBTX, arg IssueAttributionParams) ([]IssueAttributionRow, error)
 	IssueCanonicalID(ctx context.Context, db DBTX, arg IssueCanonicalIDParams) (pgtype.UUID, error)
 	IssueCount(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
 	IssueCountEvents(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
+	IssueCountReadySourceMaps(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
 	IssueCountRecentEvents(ctx context.Context, db DBTX, arg IssueCountRecentEventsParams) (int64, error)
+	IssueCountSavedViews(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
+	IssueCountTeams(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
 	IssueCountTokens(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
+	IssueCountTrackerLinks(ctx context.Context, db DBTX, canonicalIssueID pgtype.UUID) (int64, error)
 	IssueCreate(ctx context.Context, db DBTX, arg IssueCreateParams) (AppIssue, error)
 	IssueCreateSplitGroup(ctx context.Context, db DBTX, arg IssueCreateSplitGroupParams) (AppIssue, error)
 	IssueCreateSplitRule(ctx context.Context, db DBTX, arg IssueCreateSplitRuleParams) (IssueSplitRule, error)
+	IssueCreateTrackerLink(ctx context.Context, db DBTX, arg IssueCreateTrackerLinkParams) (IssueTrackerLink, error)
 	IssueDebugRequest(ctx context.Context, db DBTX, arg IssueDebugRequestParams) ([]pgtype.UUID, error)
 	IssueDeleteImpactAlertPolicy(ctx context.Context, db DBTX, appID pgtype.UUID) error
 	IssueDeleteOwnershipRules(ctx context.Context, db DBTX, appID pgtype.UUID) error
+	IssueDeleteSavedView(ctx context.Context, db DBTX, arg IssueDeleteSavedViewParams) (int64, error)
+	IssueDeleteTeam(ctx context.Context, db DBTX, arg IssueDeleteTeamParams) (int64, error)
+	IssueDeleteTeamMembers(ctx context.Context, db DBTX, teamID pgtype.UUID) error
+	IssueDeleteTrackerLink(ctx context.Context, db DBTX, id pgtype.UUID) error
 	IssueDeploymentScope(ctx context.Context, db DBTX, arg IssueDeploymentScopeParams) (IssueDeploymentScopeRow, error)
 	IssueEnrichAttribution(ctx context.Context, db DBTX, arg IssueEnrichAttributionParams) (int64, error)
 	IssueExpiredIgnores(ctx context.Context, db DBTX, arg IssueExpiredIgnoresParams) ([]IssueExpiredIgnoresRow, error)
@@ -1909,11 +1961,21 @@ type Querier interface {
 	IssueFindGroup(ctx context.Context, db DBTX, arg IssueFindGroupParams) (AppIssue, error)
 	IssueFindSplitTarget(ctx context.Context, db DBTX, arg IssueFindSplitTargetParams) (pgtype.UUID, error)
 	IssueFindToken(ctx context.Context, db DBTX, arg IssueFindTokenParams) (IssueIngestToken, error)
+	IssueFindTrackerLink(ctx context.Context, db DBTX, arg IssueFindTrackerLinkParams) (IssueTrackerLink, error)
+	IssueFrequencyCount(ctx context.Context, db DBTX, arg IssueFrequencyCountParams) (int64, error)
+	IssueFrequencyLastAlert(ctx context.Context, db DBTX, arg IssueFrequencyLastAlertParams) (pgtype.Timestamptz, error)
+	IssueFrequencyPolicy(ctx context.Context, db DBTX, arg IssueFrequencyPolicyParams) (IssueFrequencyPolicyRow, error)
+	IssueFrequencyPruneReceipts(ctx context.Context, db DBTX, arg IssueFrequencyPruneReceiptsParams) error
+	IssueFrequencyPutPolicy(ctx context.Context, db DBTX, arg IssueFrequencyPutPolicyParams) error
+	IssueFrequencyRecordAlert(ctx context.Context, db DBTX, arg IssueFrequencyRecordAlertParams) error
 	IssueGet(ctx context.Context, db DBTX, arg IssueGetParams) (AppIssue, error)
 	IssueGetGroup(ctx context.Context, db DBTX, arg IssueGetGroupParams) (IssueGroupRollup, error)
 	IssueGetImpactAlertPolicy(ctx context.Context, db DBTX, appID pgtype.UUID) (int32, error)
 	IssueGetLocked(ctx context.Context, db DBTX, arg IssueGetLockedParams) (AppIssue, error)
+	IssueGetSavedView(ctx context.Context, db DBTX, arg IssueGetSavedViewParams) (AppIssueSavedView, error)
 	IssueGetSplitRule(ctx context.Context, db DBTX, arg IssueGetSplitRuleParams) (IssueSplitRule, error)
+	IssueGetTeam(ctx context.Context, db DBTX, arg IssueGetTeamParams) (AppIssueTeam, error)
+	IssueGetTrackerLink(ctx context.Context, db DBTX, arg IssueGetTrackerLinkParams) (IssueTrackerLink, error)
 	IssueGroupMembers(ctx context.Context, db DBTX, id pgtype.UUID) ([]AppIssue, error)
 	IssueHasSplitAudit(ctx context.Context, db DBTX, arg IssueHasSplitAuditParams) (bool, error)
 	IssueImpact(ctx context.Context, db DBTX, arg IssueImpactParams) (IssueImpactRow, error)
@@ -1931,26 +1993,171 @@ type Querier interface {
 	IssueListGroupSplitRules(ctx context.Context, db DBTX, issueID pgtype.UUID) ([]IssueSplitRule, error)
 	IssueListOwnershipRules(ctx context.Context, db DBTX, appID pgtype.UUID) ([]IssueListOwnershipRulesRow, error)
 	IssueListReleases(ctx context.Context, db DBTX, arg IssueListReleasesParams) ([]IssueListReleasesRow, error)
+	IssueListSavedViews(ctx context.Context, db DBTX, arg IssueListSavedViewsParams) ([]AppIssueSavedView, error)
 	IssueListSourceSplitRules(ctx context.Context, db DBTX, sourceIssueID pgtype.UUID) ([]IssueSplitRule, error)
+	IssueListTeams(ctx context.Context, db DBTX, arg IssueListTeamsParams) ([]AppIssueTeam, error)
 	IssueListTokens(ctx context.Context, db DBTX, appID pgtype.UUID) ([]IssueIngestToken, error)
+	IssueListTrackerLinks(ctx context.Context, db DBTX, arg IssueListTrackerLinksParams) ([]IssueTrackerLink, error)
 	IssueLockApp(ctx context.Context, db DBTX, appID pgtype.UUID) (IssueLockAppRow, error)
 	IssueObserve(ctx context.Context, db DBTX, arg IssueObserveParams) (AppIssue, error)
 	IssueObserveRelease(ctx context.Context, db DBTX, arg IssueObserveReleaseParams) error
+	IssuePublishSourceMaps(ctx context.Context, db DBTX, arg IssuePublishSourceMapsParams) (IssueSourceMapArtifact, error)
 	IssuePurgeEvents(ctx context.Context, db DBTX, arg IssuePurgeEventsParams) error
 	IssuePurgeExpiredTokens(ctx context.Context, db DBTX, now pgtype.Timestamptz) (int64, error)
 	IssuePurgePlanEvents(ctx context.Context, db DBTX, arg IssuePurgePlanEventsParams) (int64, error)
+	IssuePutSavedView(ctx context.Context, db DBTX, arg IssuePutSavedViewParams) (AppIssueSavedView, error)
+	IssuePutTeam(ctx context.Context, db DBTX, arg IssuePutTeamParams) (AppIssueTeam, error)
+	IssueReadSourceMaps(ctx context.Context, db DBTX, arg IssueReadSourceMapsParams) (IssueSourceMapArtifact, error)
+	// Independent aggregates avoid multiplying request weights by issue occurrences.
+	IssueReleaseHealth(ctx context.Context, db DBTX, arg IssueReleaseHealthParams) (IssueReleaseHealthRow, error)
 	IssueReopenGroup(ctx context.Context, db DBTX, id pgtype.UUID) error
 	IssueReparentGroup(ctx context.Context, db DBTX, arg IssueReparentGroupParams) error
 	IssueRequestAttribution(ctx context.Context, db DBTX, arg IssueRequestAttributionParams) ([]IssueRequestAttributionRow, error)
+	IssueRetireSourceMaps(ctx context.Context, db DBTX, arg IssueRetireSourceMapsParams) (IssueSourceMapArtifact, error)
 	IssueRevokeToken(ctx context.Context, db DBTX, arg IssueRevokeTokenParams) (int64, error)
+	IssueSavedViewOwner(ctx context.Context, db DBTX, arg IssueSavedViewOwnerParams) (pgtype.UUID, error)
 	IssueSetNewIssueAssignee(ctx context.Context, db DBTX, arg IssueSetNewIssueAssigneeParams) (AppIssue, error)
 	IssueSetSplitRuleEnabled(ctx context.Context, db DBTX, arg IssueSetSplitRuleEnabledParams) (IssueSplitRule, error)
+	IssueSlackActionConsume(ctx context.Context, db DBTX, deliveryID pgtype.UUID) error
+	IssueSlackActionContext(ctx context.Context, db DBTX, arg IssueSlackActionContextParams) (IssueSlackActionContextRow, error)
+	IssueSlackActionPrepare(ctx context.Context, db DBTX, arg IssueSlackActionPrepareParams) error
+	IssueSlackActionPrepared(ctx context.Context, db DBTX, arg IssueSlackActionPreparedParams) (bool, error)
+	IssueSlackActionSent(ctx context.Context, db DBTX, arg IssueSlackActionSentParams) error
+	IssueSlackCancelPrevious(ctx context.Context, db DBTX, arg IssueSlackCancelPreviousParams) error
+	IssueSlackCandidateApp(ctx context.Context, db DBTX) (pgtype.UUID, error)
+	IssueSlackCandidateDelivery(ctx context.Context, db DBTX, arg IssueSlackCandidateDeliveryParams) (IssueSlackCandidateDeliveryRow, error)
+	IssueSlackChallengeByToken(ctx context.Context, db DBTX, arg IssueSlackChallengeByTokenParams) (IssueSlackChallengeByTokenRow, error)
+	IssueSlackChallengeConsume(ctx context.Context, db DBTX, token string) error
+	IssueSlackChallengeCount(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
+	IssueSlackChallengeGet(ctx context.Context, db DBTX, arg IssueSlackChallengeGetParams) (IssueSlackLinkChallenge, error)
+	IssueSlackChallengePut(ctx context.Context, db DBTX, arg IssueSlackChallengePutParams) error
+	IssueSlackChallengesExpire(ctx context.Context, db DBTX, appID pgtype.UUID) error
+	IssueSlackClaim(ctx context.Context, db DBTX, arg IssueSlackClaimParams) error
+	IssueSlackDeliveryList(ctx context.Context, db DBTX, arg IssueSlackDeliveryListParams) ([]IssueSlackDeliveryListRow, error)
+	IssueSlackDestinationGet(ctx context.Context, db DBTX, arg IssueSlackDestinationGetParams) (IssueTeamSlackDestination, error)
+	IssueSlackDestinationLease(ctx context.Context, db DBTX, arg IssueSlackDestinationLeaseParams) error
+	IssueSlackDestinationList(ctx context.Context, db DBTX, arg IssueSlackDestinationListParams) ([]IssueSlackDestinationListRow, error)
+	IssueSlackDestinationPut(ctx context.Context, db DBTX, arg IssueSlackDestinationPutParams) (IssueTeamSlackDestination, error)
+	IssueSlackEnqueue(ctx context.Context, db DBTX, arg IssueSlackEnqueueParams) error
+	IssueSlackFinish(ctx context.Context, db DBTX, arg IssueSlackFinishParams) error
+	IssueSlackHeld(ctx context.Context, db DBTX, arg IssueSlackHeldParams) (IssueTeamSlackDelivery, error)
+	IssueSlackIdentitiesExpire(ctx context.Context, db DBTX, appID pgtype.UUID) error
+	IssueSlackIdentitiesRevoke(ctx context.Context, db DBTX, appID pgtype.UUID) error
+	IssueSlackIdentityCount(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
+	IssueSlackIdentityDelete(ctx context.Context, db DBTX, arg IssueSlackIdentityDeleteParams) error
+	IssueSlackIdentityGet(ctx context.Context, db DBTX, arg IssueSlackIdentityGetParams) (IssueSlackIdentityGetRow, error)
+	IssueSlackIdentityMine(ctx context.Context, db DBTX, arg IssueSlackIdentityMineParams) (IssueSlackIdentityMineRow, error)
+	IssueSlackIdentityPut(ctx context.Context, db DBTX, arg IssueSlackIdentityPutParams) (int64, error)
+	IssueSlackInstallation(ctx context.Context, db DBTX, arg IssueSlackInstallationParams) (IssueSlackInstallation, error)
+	IssueSlackInstallationDisable(ctx context.Context, db DBTX, arg IssueSlackInstallationDisableParams) error
+	IssueSlackInstallationPut(ctx context.Context, db DBTX, arg IssueSlackInstallationPutParams) (IssueSlackInstallation, error)
+	IssueSlackInteractionNow(ctx context.Context, db DBTX) (pgtype.Timestamptz, error)
+	IssueSlackInteractionPolicy(ctx context.Context, db DBTX, id pgtype.UUID) (IssueSlackInteractionPolicyRow, error)
+	IssueSlackInteractionPolicyPut(ctx context.Context, db DBTX, arg IssueSlackInteractionPolicyPutParams) error
+	IssueSlackOAuthActionApp(ctx context.Context, db DBTX, arg IssueSlackOAuthActionAppParams) (pgtype.UUID, error)
+	IssueSlackOAuthAffectedApps(ctx context.Context, db DBTX, arg IssueSlackOAuthAffectedAppsParams) ([]IssueSlackOAuthAffectedAppsRow, error)
+	IssueSlackOAuthDeliveriesCancel(ctx context.Context, db DBTX, appID pgtype.UUID) error
+	IssueSlackOAuthDestinationBind(ctx context.Context, db DBTX, arg IssueSlackOAuthDestinationBindParams) error
+	IssueSlackOAuthDestinationsDisable(ctx context.Context, db DBTX, arg IssueSlackOAuthDestinationsDisableParams) error
+	IssueSlackOAuthExpiredCleanup(ctx context.Context, db DBTX, limit int32) error
+	IssueSlackOAuthFlow(ctx context.Context, db DBTX, arg IssueSlackOAuthFlowParams) (IssueSlackOauthFlow, error)
+	IssueSlackOAuthFlowClaim(ctx context.Context, db DBTX, arg IssueSlackOAuthFlowClaimParams) (IssueSlackOauthFlow, error)
+	IssueSlackOAuthFlowDelete(ctx context.Context, db DBTX, appID pgtype.UUID) error
+	IssueSlackOAuthFlowPut(ctx context.Context, db DBTX, arg IssueSlackOAuthFlowPutParams) error
+	IssueSlackOAuthFlowSave(ctx context.Context, db DBTX, arg IssueSlackOAuthFlowSaveParams) (IssueSlackOauthFlow, error)
+	IssueSlackOAuthInteractionsDisable(ctx context.Context, db DBTX, appID pgtype.UUID) error
+	IssueSlackOAuthOwnerReady(ctx context.Context, db DBTX, arg IssueSlackOAuthOwnerReadyParams) (bool, error)
+	IssueSlackReady(ctx context.Context, db DBTX, arg IssueSlackReadyParams) (bool, error)
+	IssueSlackRelease(ctx context.Context, db DBTX, arg IssueSlackReleaseParams) error
+	IssueSlackRetry(ctx context.Context, db DBTX, arg IssueSlackRetryParams) error
+	IssueSlackRetryGet(ctx context.Context, db DBTX, arg IssueSlackRetryGetParams) (IssueSlackRetryGetRow, error)
+	IssueSlackRoutingCancel(ctx context.Context, db DBTX, arg IssueSlackRoutingCancelParams) error
+	IssueSlackRoutingPolicy(ctx context.Context, db DBTX, arg IssueSlackRoutingPolicyParams) (IssueSlackRoutingPolicyRow, error)
+	IssueSlackRoutingPut(ctx context.Context, db DBTX, arg IssueSlackRoutingPutParams) error
+	IssueSlackRoutingRelease(ctx context.Context, db DBTX, arg IssueSlackRoutingReleaseParams) error
+	IssueSlackTerminal(ctx context.Context, db DBTX, arg IssueSlackTerminalParams) error
+	IssueSlackThreadCleanup(ctx context.Context, db DBTX) error
+	IssueSlackThreadEnsure(ctx context.Context, db DBTX, arg IssueSlackThreadEnsureParams) error
+	IssueSlackThreadGet(ctx context.Context, db DBTX, arg IssueSlackThreadGetParams) (string, error)
+	IssueSlackThreadSet(ctx context.Context, db DBTX, arg IssueSlackThreadSetParams) error
+	IssueSourceMapDeploymentOwner(ctx context.Context, db DBTX, arg IssueSourceMapDeploymentOwnerParams) (pgtype.UUID, error)
 	IssueSplitPreviewCounts(ctx context.Context, db DBTX, arg IssueSplitPreviewCountsParams) (IssueSplitPreviewCountsRow, error)
 	IssueSyncGroupAction(ctx context.Context, db DBTX, id pgtype.UUID) error
+	IssueTeamAllowed(ctx context.Context, db DBTX, arg IssueTeamAllowedParams) (bool, error)
+	IssueTeamExists(ctx context.Context, db DBTX, arg IssueTeamExistsParams) (bool, error)
+	IssueTeamMembers(ctx context.Context, db DBTX, teamID pgtype.UUID) ([]pgtype.UUID, error)
+	IssueTeamReferenced(ctx context.Context, db DBTX, teamID pgtype.UUID) (bool, error)
 	IssueTokenStillValid(ctx context.Context, db DBTX, arg IssueTokenStillValidParams) (bool, error)
+	IssueTrackerAutoReopenComplete(ctx context.Context, db DBTX, arg IssueTrackerAutoReopenCompleteParams) (IssueTrackerAutoSync, error)
+	IssueTrackerAutoSyncClaim(ctx context.Context, db DBTX, arg IssueTrackerAutoSyncClaimParams) (IssueTrackerAutoSync, error)
+	IssueTrackerAutoSyncDisable(ctx context.Context, db DBTX, linkID pgtype.UUID) (IssueTrackerAutoSync, error)
+	IssueTrackerAutoSyncEnable(ctx context.Context, db DBTX, arg IssueTrackerAutoSyncEnableParams) (IssueTrackerAutoSync, error)
+	IssueTrackerAutoSyncFinish(ctx context.Context, db DBTX, arg IssueTrackerAutoSyncFinishParams) (IssueTrackerAutoSync, error)
+	IssueTrackerAutoSyncGet(ctx context.Context, db DBTX, linkID pgtype.UUID) (IssueTrackerAutoSync, error)
+	IssueTrackerAutoSyncPending(ctx context.Context, db DBTX, arg IssueTrackerAutoSyncPendingParams) (IssueTrackerAutoSync, error)
+	IssueTrackerCallbackCleanup(ctx context.Context, db DBTX, arg IssueTrackerCallbackCleanupParams) error
+	IssueTrackerCallbackComplete(ctx context.Context, db DBTX, arg IssueTrackerCallbackCompleteParams) error
+	IssueTrackerCallbackCount(ctx context.Context, db DBTX, scopeKey string) (int64, error)
+	IssueTrackerCallbackDiagnosticRecord(ctx context.Context, db DBTX, arg IssueTrackerCallbackDiagnosticRecordParams) error
+	IssueTrackerCallbackFind(ctx context.Context, db DBTX, arg IssueTrackerCallbackFindParams) ([]IssueTrackerCallbackFindRow, error)
+	IssueTrackerCallbackHealth(ctx context.Context, db DBTX, arg IssueTrackerCallbackHealthParams) (IssueTrackerCallbackHealthRow, error)
+	IssueTrackerCallbackInsert(ctx context.Context, db DBTX, arg IssueTrackerCallbackInsertParams) error
+	IssueTrackerCallbackNext(ctx context.Context, db DBTX) (IssueTrackerCallback, error)
+	IssueTrackerCallbackPolicies(ctx context.Context, db DBTX, arg IssueTrackerCallbackPoliciesParams) ([]IssueTrackerCallbackPoliciesRow, error)
+	IssueTrackerCallbackSchedule(ctx context.Context, db DBTX, linkID pgtype.UUID) error
+	IssueTrackerCallbackScopeLock(ctx context.Context, db DBTX, scopeKey string) error
+	IssueTrackerCallbackSetup(ctx context.Context, db DBTX, arg IssueTrackerCallbackSetupParams) (IssueTrackerCallbackSetupRow, error)
+	IssueTrackerEscalationApp(ctx context.Context, db DBTX, entitledPlans []string) (IssueTrackerEscalationAppRow, error)
+	IssueTrackerEscalationDue(ctx context.Context, db DBTX, arg IssueTrackerEscalationDueParams) (IssueTrackerSyncIncident, error)
+	IssueTrackerEscalationHistory(ctx context.Context, db DBTX, arg IssueTrackerEscalationHistoryParams) ([]IssueTrackerEscalationHistoryRow, error)
+	IssueTrackerEscalationPolicyGet(ctx context.Context, db DBTX, arg IssueTrackerEscalationPolicyGetParams) (IssueTrackerSyncEscalationPolicy, error)
+	IssueTrackerEscalationPolicyPut(ctx context.Context, db DBTX, arg IssueTrackerEscalationPolicyPutParams) (IssueTrackerSyncEscalationPolicy, error)
+	IssueTrackerEscalationReceipt(ctx context.Context, db DBTX, arg IssueTrackerEscalationReceiptParams) error
+	IssueTrackerInboundApplied(ctx context.Context, db DBTX, arg IssueTrackerInboundAppliedParams) error
+	IssueTrackerInboundDeployments(ctx context.Context, db DBTX, arg IssueTrackerInboundDeploymentsParams) ([]IssueTrackerInboundDeploymentsRow, error)
+	IssueTrackerInboundGuard(ctx context.Context, db DBTX, arg IssueTrackerInboundGuardParams) (int64, error)
+	IssueTrackerInboundGuardLock(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
+	IssueTrackerInboundPolicyLock(ctx context.Context, db DBTX, linkID pgtype.UUID) (IssueTrackerAutoSync, error)
+	IssueTrackerIncidentGet(ctx context.Context, db DBTX, linkID pgtype.UUID) (IssueTrackerSyncIncident, error)
+	IssueTrackerIncidentPut(ctx context.Context, db DBTX, arg IssueTrackerIncidentPutParams) error
+	IssueTrackerLinearGet(ctx context.Context, db DBTX, arg IssueTrackerLinearGetParams) (IssueTrackerLinearConnection, error)
+	IssueTrackerLinearOwner(ctx context.Context, db DBTX, arg IssueTrackerLinearOwnerParams) (pgtype.UUID, error)
+	IssueTrackerLinearPut(ctx context.Context, db DBTX, arg IssueTrackerLinearPutParams) (IssueTrackerLinearConnection, error)
+	IssueTrackerNotificationCanRead(ctx context.Context, db DBTX, arg IssueTrackerNotificationCanReadParams) (bool, error)
+	IssueTrackerNotificationInsert(ctx context.Context, db DBTX, arg IssueTrackerNotificationInsertParams) (int64, error)
+	IssueTrackerNotificationList(ctx context.Context, db DBTX, arg IssueTrackerNotificationListParams) ([]IssueTrackerNotificationListRow, error)
+	IssueTrackerNotificationPolicyGet(ctx context.Context, db DBTX, arg IssueTrackerNotificationPolicyGetParams) (IssueTrackerSyncNotificationPolicy, error)
+	IssueTrackerNotificationPolicyPut(ctx context.Context, db DBTX, arg IssueTrackerNotificationPolicyPutParams) (IssueTrackerSyncNotificationPolicy, error)
+	IssueTrackerNotificationPrune(ctx context.Context, db DBTX, arg IssueTrackerNotificationPruneParams) error
+	IssueTrackerNotificationRecipients(ctx context.Context, db DBTX, arg IssueTrackerNotificationRecipientsParams) ([]pgtype.UUID, error)
+	IssueTrackerNotificationRecoveryRecipients(ctx context.Context, db DBTX, arg IssueTrackerNotificationRecoveryRecipientsParams) ([]pgtype.UUID, error)
+	IssueTrackerNotificationTarget(ctx context.Context, db DBTX, arg IssueTrackerNotificationTargetParams) (IssueTrackerNotificationTargetRow, error)
+	IssueTrackerReminderApp(ctx context.Context, db DBTX, arg IssueTrackerReminderAppParams) (IssueTrackerReminderAppRow, error)
+	IssueTrackerReminderDue(ctx context.Context, db DBTX, arg IssueTrackerReminderDueParams) (IssueTrackerSyncIncident, error)
+	IssueTrackerReminderHistory(ctx context.Context, db DBTX, arg IssueTrackerReminderHistoryParams) ([]IssueTrackerReminderHistoryRow, error)
+	IssueTrackerReminderOrigin(ctx context.Context, db DBTX, incidentID pgtype.UUID) (IssueTrackerReminderOriginRow, error)
+	IssueTrackerReminderPolicyGet(ctx context.Context, db DBTX, arg IssueTrackerReminderPolicyGetParams) (IssueTrackerSyncReminderPolicy, error)
+	IssueTrackerReminderPolicyPut(ctx context.Context, db DBTX, arg IssueTrackerReminderPolicyPutParams) (IssueTrackerSyncReminderPolicy, error)
+	IssueTrackerReminderReceipt(ctx context.Context, db DBTX, arg IssueTrackerReminderReceiptParams) error
+	IssueTrackerReviewQueue(ctx context.Context, db DBTX, arg IssueTrackerReviewQueueParams) ([]IssueTrackerReviewQueueRow, error)
+	IssueTrackerSourceRevision(ctx context.Context, db DBTX, arg IssueTrackerSourceRevisionParams) (int64, error)
+	// Acquire the fence only. Read the effective group revision in a new statement
+	// after this lock returns, so a wait cannot preserve an older subquery snapshot.
+	IssueTrackerSourceRevisionLock(ctx context.Context, db DBTX, arg IssueTrackerSourceRevisionLockParams) (int64, error)
+	IssueTrackerSyncHistoryAdd(ctx context.Context, db DBTX, arg IssueTrackerSyncHistoryAddParams) error
+	IssueTrackerSyncHistoryList(ctx context.Context, db DBTX, arg IssueTrackerSyncHistoryListParams) ([]IssueTrackerSyncHistory, error)
+	IssueTrackerSyncHistoryPrune(ctx context.Context, db DBTX, arg IssueTrackerSyncHistoryPruneParams) error
+	IssueTrackerTriageActivityAdd(ctx context.Context, db DBTX, arg IssueTrackerTriageActivityAddParams) error
+	IssueTrackerTriageActivityList(ctx context.Context, db DBTX, arg IssueTrackerTriageActivityListParams) ([]IssueTrackerTriageActivityListRow, error)
+	IssueTrackerTriageActivityPrune(ctx context.Context, db DBTX, arg IssueTrackerTriageActivityPruneParams) error
+	IssueTrackerTriageGet(ctx context.Context, db DBTX, incidentID pgtype.UUID) (IssueTrackerTriageGetRow, error)
+	IssueTrackerTriagePrune(ctx context.Context, db DBTX, linkID pgtype.UUID) error
+	IssueTrackerTriagePut(ctx context.Context, db DBTX, arg IssueTrackerTriagePutParams) error
+	IssueTrackerTriageScope(ctx context.Context, db DBTX, arg IssueTrackerTriageScopeParams) (IssueTrackerTriageScopeRow, error)
 	IssueUnattributedEvents(ctx context.Context, db DBTX, arg IssueUnattributedEventsParams) ([]IssueUnattributedEventsRow, error)
 	IssueUnlinkGroup(ctx context.Context, db DBTX, arg IssueUnlinkGroupParams) (int64, error)
 	IssueUpdateAction(ctx context.Context, db DBTX, arg IssueUpdateActionParams) (AppIssue, error)
+	IssueUpdateTrackerLink(ctx context.Context, db DBTX, arg IssueUpdateTrackerLinkParams) (IssueTrackerLink, error)
 	IssueUpsertImpactAlertPolicy(ctx context.Context, db DBTX, arg IssueUpsertImpactAlertPolicyParams) error
 	JobInstancesInBillingWindow(ctx context.Context, db DBTX, arg JobInstancesInBillingWindowParams) ([]JobInstancesInBillingWindowRow, error)
 	// ADR-1330: an interactive image run's session, read by schedd at dispatch.
@@ -1997,6 +2204,15 @@ type Querier interface {
 	LayerArtifactHasReferences(ctx context.Context, db DBTX, storageKey string) (pgtype.Bool, error)
 	LifecycleApprovalClock(ctx context.Context, db DBTX) (pgtype.Timestamptz, error)
 	LifecycleHistoryCursorExists(ctx context.Context, db DBTX, arg LifecycleHistoryCursorExistsParams) (bool, error)
+	LinearOAuthFlowClaim(ctx context.Context, db DBTX, arg LinearOAuthFlowClaimParams) (IssueTrackerLinearOauthFlow, error)
+	LinearOAuthFlowCleanup(ctx context.Context, db DBTX, limit int32) error
+	LinearOAuthFlowDelete(ctx context.Context, db DBTX, arg LinearOAuthFlowDeleteParams) error
+	LinearOAuthFlowGet(ctx context.Context, db DBTX, arg LinearOAuthFlowGetParams) (IssueTrackerLinearOauthFlow, error)
+	LinearOAuthFlowSave(ctx context.Context, db DBTX, arg LinearOAuthFlowSaveParams) (int64, error)
+	LinearOAuthFlowStart(ctx context.Context, db DBTX, arg LinearOAuthFlowStartParams) error
+	LinearOAuthRefreshClaim(ctx context.Context, db DBTX, arg LinearOAuthRefreshClaimParams) (IssueTrackerLinearConnection, error)
+	LinearOAuthRefreshFinish(ctx context.Context, db DBTX, arg LinearOAuthRefreshFinishParams) (IssueTrackerLinearConnection, error)
+	LinearOAuthSetStatus(ctx context.Context, db DBTX, arg LinearOAuthSetStatusParams) (IssueTrackerLinearConnection, error)
 	LinkProjectBindingVerificationMember(ctx context.Context, db DBTX, arg LinkProjectBindingVerificationMemberParams) (int64, error)
 	// scopes is the auth permission set surfaced to the dashboard and the
 	// /v1/keys listing. See ADR-034 rev2.
@@ -2844,6 +3060,12 @@ type Querier interface {
 	MarkWorkflowOutboundUnknown(ctx context.Context, db DBTX, runID pgtype.UUID) error
 	MarkWorkflowRunStatusFenced(ctx context.Context, db DBTX, arg MarkWorkflowRunStatusFencedParams) (int64, error)
 	MigrateInstanceRuntimeConfig(ctx context.Context, db DBTX, arg MigrateInstanceRuntimeConfigParams) (Instance, error)
+	NativeIssueTicketClaim(ctx context.Context, db DBTX, arg NativeIssueTicketClaimParams) (NativeIssueTicketReceipt, error)
+	NativeIssueTicketCount(ctx context.Context, db DBTX, issueID pgtype.UUID) (int64, error)
+	NativeIssueTicketFinish(ctx context.Context, db DBTX, arg NativeIssueTicketFinishParams) (NativeIssueTicketReceipt, error)
+	NativeIssueTicketGet(ctx context.Context, db DBTX, arg NativeIssueTicketGetParams) (NativeIssueTicketReceipt, error)
+	NativeIssueTicketInsert(ctx context.Context, db DBTX, arg NativeIssueTicketInsertParams) (NativeIssueTicketReceipt, error)
+	NativeIssueTicketLinked(ctx context.Context, db DBTX, arg NativeIssueTicketLinkedParams) (NativeIssueTicketReceipt, error)
 	NextAutomationVersion(ctx context.Context, db DBTX) (int64, error)
 	// Backend row first, operation row second. A current custody lease prevents
 	// another worker claiming a callback wake or parked state early.

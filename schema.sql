@@ -15219,6 +15219,104 @@ $$;
 
 
 --
+-- Name: issue_slack_revoke_mfa_links(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.issue_slack_revoke_mfa_links() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ DELETE FROM issue_slack_identities WHERE account_id=NEW.id;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: issue_tracker_inbound_bump(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.issue_tracker_inbound_bump() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE target uuid;
+ source_change boolean;
+BEGIN
+ IF TG_TABLE_NAME = 'apps' THEN
+  target := NEW.id;
+ ELSIF TG_TABLE_NAME = 'issue_tracker_links' THEN
+  IF TG_OP = 'DELETE' THEN
+   SELECT app_id INTO target FROM app_issues WHERE id=OLD.issue_id;
+  ELSE
+   SELECT app_id INTO target FROM app_issues WHERE id=NEW.issue_id;
+  END IF;
+ ELSIF TG_OP = 'DELETE' THEN
+  target := OLD.app_id;
+ ELSE
+  target := NEW.app_id;
+ END IF;
+ source_change := TG_TABLE_NAME IN ('apps','issue_tracker_linear_connections');
+ INSERT INTO issue_tracker_inbound_guards(app_id) SELECT target WHERE EXISTS(SELECT 1 FROM apps WHERE id=target)
+ ON CONFLICT(app_id) DO UPDATE SET revision=issue_tracker_inbound_guards.revision+1,
+ source_revision=CASE WHEN source_change THEN nextval('issue_tracker_source_revision_seq') ELSE issue_tracker_inbound_guards.source_revision END;
+ IF TG_TABLE_NAME='app_issues' THEN
+  IF TG_OP<>'DELETE' THEN PERFORM issue_tracker_source_bump(NEW.id); END IF;
+ ELSIF TG_TABLE_NAME='issue_group_links' THEN
+  IF TG_OP<>'INSERT' THEN
+   PERFORM issue_tracker_source_bump(OLD.issue_id);
+   PERFORM issue_tracker_source_bump(OLD.canonical_issue_id);
+  END IF;
+  IF TG_OP<>'DELETE' THEN
+   PERFORM issue_tracker_source_bump(NEW.issue_id);
+   PERFORM issue_tracker_source_bump(NEW.canonical_issue_id);
+  END IF;
+ ELSIF TG_TABLE_NAME='issue_split_rules' THEN
+  IF TG_OP<>'INSERT' THEN
+   PERFORM issue_tracker_source_bump(OLD.source_issue_id);
+   PERFORM issue_tracker_source_bump(OLD.target_issue_id);
+  END IF;
+  IF TG_OP<>'DELETE' THEN
+   PERFORM issue_tracker_source_bump(NEW.source_issue_id);
+   PERFORM issue_tracker_source_bump(NEW.target_issue_id);
+  END IF;
+ ELSIF TG_TABLE_NAME='issue_tracker_links' THEN
+  IF TG_OP<>'INSERT' THEN PERFORM issue_tracker_source_bump(OLD.issue_id); END IF;
+  IF TG_OP<>'DELETE' THEN PERFORM issue_tracker_source_bump(NEW.issue_id); END IF;
+ END IF;
+ RETURN NULL;
+END $$;
+
+
+--
+-- Name: issue_tracker_inbound_install_bump(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.issue_tracker_inbound_install_bump() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ INSERT INTO issue_tracker_inbound_guards(app_id)
+ SELECT id FROM apps WHERE
+  (TG_OP <> 'INSERT' AND github_install_id=OLD.installation_id AND github_install_account_id=OLD.account_id) OR
+  (TG_OP <> 'DELETE' AND github_install_id=NEW.installation_id AND github_install_account_id=NEW.account_id)
+ ORDER BY id
+ ON CONFLICT(app_id) DO UPDATE SET revision=issue_tracker_inbound_guards.revision+1,source_revision=nextval('issue_tracker_source_revision_seq');
+ RETURN NULL;
+END $$;
+
+
+--
+-- Name: issue_tracker_source_bump(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.issue_tracker_source_bump(target uuid) RETURNS void
+    LANGUAGE sql
+    AS $$
+ INSERT INTO issue_tracker_source_guards(issue_id) SELECT id FROM app_issues WHERE id=target
+ ON CONFLICT(issue_id) DO UPDATE SET revision=nextval('issue_tracker_source_revision_seq');
+$$;
+
+
+--
 -- Name: job_tasks_notify_v2(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -21904,6 +22002,19 @@ CREATE TABLE public.app_health_history (
 
 
 --
+-- Name: app_issue_frequency_alert_policies; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_issue_frequency_alert_policies (
+    app_id uuid NOT NULL,
+    revision bigint NOT NULL,
+    rules jsonb NOT NULL,
+    CONSTRAINT app_issue_frequency_alert_policies_revision_check CHECK ((revision > 0)),
+    CONSTRAINT app_issue_frequency_alert_policies_rules_check CHECK (((jsonb_typeof(rules) = 'array'::text) AND (jsonb_array_length(rules) <= 10)))
+);
+
+
+--
 -- Name: app_issue_impact_alert_policies; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -21925,11 +22036,62 @@ CREATE TABLE public.app_issue_ownership_rules (
     exception_type text,
     source_kind text,
     route_prefix text,
-    assignee_account_id uuid NOT NULL,
-    CONSTRAINT app_issue_ownership_rules_check CHECK ((((exception_type IS NOT NULL) AND ((length(exception_type) >= 1) AND (length(exception_type) <= 256))) OR (source_kind IS NOT NULL) OR (route_prefix IS NOT NULL))),
+    assignee_account_id uuid,
+    source_path_prefix text,
+    tag_filter text,
+    assignee_team_id uuid,
+    CONSTRAINT app_issue_ownership_rules_check CHECK ((((exception_type IS NOT NULL) AND ((length(exception_type) >= 1) AND (length(exception_type) <= 256))) OR (source_kind IS NOT NULL) OR (route_prefix IS NOT NULL) OR (source_path_prefix IS NOT NULL) OR (tag_filter IS NOT NULL))),
     CONSTRAINT app_issue_ownership_rules_route_prefix_check CHECK (((route_prefix IS NULL) OR ((length(route_prefix) <= 256) AND ("left"(route_prefix, 1) = '/'::text) AND (POSITION(('?'::text) IN (route_prefix)) = 0) AND (POSITION(('#'::text) IN (route_prefix)) = 0)))),
     CONSTRAINT app_issue_ownership_rules_rule_order_check CHECK (((rule_order >= 0) AND (rule_order <= 49))),
-    CONSTRAINT app_issue_ownership_rules_source_kind_check CHECK (((source_kind IS NULL) OR (source_kind = ANY (ARRAY['exception'::text, 'http'::text, 'runtime'::text, 'worker'::text]))))
+    CONSTRAINT app_issue_ownership_rules_source_kind_check CHECK (((source_kind IS NULL) OR (source_kind = ANY (ARRAY['exception'::text, 'http'::text, 'runtime'::text, 'worker'::text])))),
+    CONSTRAINT app_issue_ownership_rules_source_path_prefix_check CHECK (((source_path_prefix IS NULL) OR ((octet_length(source_path_prefix) >= 1) AND (octet_length(source_path_prefix) <= 256)))),
+    CONSTRAINT app_issue_ownership_rules_tag_filter_check CHECK (((tag_filter IS NULL) OR ((strpos(tag_filter, '='::text) > 0) AND (split_part(tag_filter, '='::text, 1) = ANY (ARRAY['component'::text, 'operation'::text, 'feature_flag'::text, 'feature_variant'::text, 'dependency'::text, 'region'::text, 'job_type'::text, 'workflow'::text, 'state'::text, 'error_class'::text, 'release_channel'::text, 'runtime'::text])) AND (octet_length(SUBSTRING(tag_filter FROM (strpos(tag_filter, '='::text) + 1))) <= 128)))),
+    CONSTRAINT app_issue_ownership_rules_target_check CHECK ((num_nonnulls(assignee_account_id, assignee_team_id) = 1))
+);
+
+
+--
+-- Name: app_issue_saved_views; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_issue_saved_views (
+    app_id uuid NOT NULL,
+    view_key text NOT NULL,
+    name text NOT NULL,
+    filters jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_by_account_id uuid,
+    CONSTRAINT app_issue_saved_views_filters_check CHECK (((jsonb_typeof(filters) = 'object'::text) AND (octet_length((filters)::text) <= 2048))),
+    CONSTRAINT app_issue_saved_views_name_check CHECK (((octet_length(name) >= 1) AND (octet_length(name) <= 64))),
+    CONSTRAINT app_issue_saved_views_view_key_check CHECK ((view_key ~ '^[a-z0-9][a-z0-9-]{0,47}$'::text))
+);
+
+
+--
+-- Name: app_issue_team_members; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_issue_team_members (
+    team_id uuid NOT NULL,
+    account_id uuid NOT NULL
+);
+
+
+--
+-- Name: app_issue_teams; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_issue_teams (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    app_id uuid NOT NULL,
+    team_key text NOT NULL,
+    name text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_by_account_id uuid,
+    CONSTRAINT app_issue_teams_name_check CHECK (((octet_length(name) >= 1) AND (octet_length(name) <= 64))),
+    CONSTRAINT app_issue_teams_team_key_check CHECK ((team_key ~ '^[a-z0-9][a-z0-9-]{0,47}$'::text))
 );
 
 
@@ -21956,12 +22118,14 @@ CREATE TABLE public.app_issues (
     fixed_deployment_created_at timestamp with time zone,
     ignored_until timestamp with time zone,
     split_source_issue_id uuid,
+    assignee_team_id uuid,
     CONSTRAINT app_issues_environment_check CHECK ((environment ~ '^[a-z0-9][a-z0-9-]{0,62}$'::text)),
     CONSTRAINT app_issues_event_count_check CHECK ((event_count >= 0)),
     CONSTRAINT app_issues_fingerprint_check CHECK ((fingerprint ~ '^[a-f0-9]{64}$'::text)),
     CONSTRAINT app_issues_grouping_version_check CHECK ((grouping_version > 0)),
     CONSTRAINT app_issues_regression_count_check CHECK ((regression_count >= 0)),
     CONSTRAINT app_issues_state_check CHECK ((state = ANY (ARRAY['open'::text, 'resolved'::text, 'ignored'::text]))),
+    CONSTRAINT app_issues_target_check CHECK ((num_nonnulls(assignee_account_id, assignee_team_id) <= 1)),
     CONSTRAINT app_issues_title_check CHECK ((octet_length(title) <= 2048))
 );
 
@@ -22689,7 +22853,7 @@ CREATE TABLE public.app_webhook_event_outbox (
     payload jsonb NOT NULL,
     recipient_webhook_ids uuid[] NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT app_webhook_event_outbox_event_chk CHECK (((event = ANY (ARRAY['usage_statement.finalized'::text, 'app.parked'::text, 'app.woken'::text, 'issue.created'::text, 'issue.assigned'::text, 'issue.resolved'::text, 'issue.reopened'::text, 'issue.ignored'::text, 'issue.regressed'::text, 'issue.impact_threshold_reached'::text, 'routes.requirements.violated'::text, 'routes.requirements.recovered'::text, 'routes.requirements.changed'::text, 'routes.health.blocked'::text, 'routes.health.resumed'::text, 'routes.health.aborted'::text, 'routes.monitor.violated'::text, 'routes.monitor.escalated'::text, 'routes.monitor.recovered'::text, 'workflow.finished'::text, 'app.health.changed'::text, 'event_recovery.completed'::text, 'event_recovery.cancelled'::text, 'event_recovery.expired'::text, 'event_recovery.execution_finished'::text, 'profile.route_regressed'::text, 'profile.route_recovered'::text])) OR (event = 'automation.paused'::text) OR (event = 'event_recovery.execution_attention'::text) OR (event = 'automation.recovery_review_ready'::text) OR (event = 'automation.recovery_review_finished'::text) OR (event = 'automation.recovery_policy_paused'::text) OR (event = 'automation.recovery_queue_blocked'::text) OR (event = ANY (ARRAY['automation.recovery_health_alert'::text, 'automation.recovery_health_recovered'::text])) OR (event = 'outbound.ai_budget.threshold'::text) OR (event = 'realtime.channel.published'::text) OR (event = 'realtime.channel.acknowledged'::text) OR (event = 'realtime.consumer_group.dead_lettered'::text) OR (event = ANY (ARRAY['realtime.consumer_group.lag_exceeded'::text, 'realtime.consumer_group.lag_recovered'::text])) OR (event = 'realtime.consumer_group.dead_letter_expiring'::text) OR (event = 'realtime.consumer_group.delivery_expired'::text) OR (event = ANY (ARRAY['realtime.consumer_group.worker_lost'::text, 'realtime.consumer_group.worker_recovered'::text])) OR (event = ANY (ARRAY['realtime.consumer_group.circuit_opened'::text, 'realtime.consumer_group.circuit_half_open'::text, 'realtime.consumer_group.circuit_closed'::text])) OR (event = ANY (ARRAY['realtime.replay_job.completed'::text, 'realtime.replay_job.cancelled'::text, 'realtime.replay_job.processing_failed'::text])) OR (event = 'automation.recovery_polling_status'::text))),
+    CONSTRAINT app_webhook_event_outbox_event_chk CHECK (((event = ANY (ARRAY['usage_statement.finalized'::text, 'app.parked'::text, 'app.woken'::text, 'issue.created'::text, 'issue.assigned'::text, 'issue.resolved'::text, 'issue.reopened'::text, 'issue.ignored'::text, 'issue.regressed'::text, 'issue.impact_threshold_reached'::text, 'routes.requirements.violated'::text, 'routes.requirements.recovered'::text, 'routes.requirements.changed'::text, 'routes.health.blocked'::text, 'routes.health.resumed'::text, 'routes.health.aborted'::text, 'routes.monitor.violated'::text, 'routes.monitor.escalated'::text, 'routes.monitor.recovered'::text, 'workflow.finished'::text, 'app.health.changed'::text, 'event_recovery.completed'::text, 'event_recovery.cancelled'::text, 'event_recovery.expired'::text, 'event_recovery.execution_finished'::text, 'profile.route_regressed'::text, 'profile.route_recovered'::text])) OR (event = 'automation.paused'::text) OR (event = 'event_recovery.execution_attention'::text) OR (event = 'automation.recovery_review_ready'::text) OR (event = 'automation.recovery_review_finished'::text) OR (event = 'automation.recovery_policy_paused'::text) OR (event = 'automation.recovery_queue_blocked'::text) OR (event = ANY (ARRAY['automation.recovery_health_alert'::text, 'automation.recovery_health_recovered'::text])) OR (event = 'outbound.ai_budget.threshold'::text) OR (event = 'realtime.channel.published'::text) OR (event = 'realtime.channel.acknowledged'::text) OR (event = 'realtime.consumer_group.dead_lettered'::text) OR (event = ANY (ARRAY['realtime.consumer_group.lag_exceeded'::text, 'realtime.consumer_group.lag_recovered'::text])) OR (event = 'realtime.consumer_group.dead_letter_expiring'::text) OR (event = 'realtime.consumer_group.delivery_expired'::text) OR (event = ANY (ARRAY['realtime.consumer_group.worker_lost'::text, 'realtime.consumer_group.worker_recovered'::text])) OR (event = ANY (ARRAY['realtime.consumer_group.circuit_opened'::text, 'realtime.consumer_group.circuit_half_open'::text, 'realtime.consumer_group.circuit_closed'::text])) OR (event = ANY (ARRAY['realtime.replay_job.completed'::text, 'realtime.replay_job.cancelled'::text, 'realtime.replay_job.processing_failed'::text])) OR (event = 'automation.recovery_polling_status'::text) OR (event = ANY (ARRAY['issue.tracker_sync.attention'::text, 'issue.tracker_sync.recovered'::text])) OR (event = 'issue.frequency_threshold_reached'::text))),
     CONSTRAINT app_webhook_event_outbox_payload_chk CHECK ((jsonb_typeof(payload) = 'object'::text)),
     CONSTRAINT app_webhook_event_outbox_recipients_chk CHECK ((cardinality(recipient_webhook_ids) > 0))
 );
@@ -28974,8 +29138,242 @@ CREATE TABLE public.issue_activity (
     actor_account_id uuid,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     details jsonb DEFAULT '{}'::jsonb NOT NULL,
-    CONSTRAINT issue_activity_action_check CHECK ((action = ANY (ARRAY['created'::text, 'assigned'::text, 'resolved'::text, 'reopened'::text, 'ignored'::text, 'regressed'::text, 'impact_threshold_reached'::text, 'merged'::text, 'split'::text, 'split_rule_created'::text, 'split_rule_updated'::text]))),
+    CONSTRAINT issue_activity_action_check CHECK ((action = ANY (ARRAY['created'::text, 'assigned'::text, 'resolved'::text, 'reopened'::text, 'ignored'::text, 'regressed'::text, 'impact_threshold_reached'::text, 'frequency_threshold_reached'::text, 'merged'::text, 'split'::text, 'split_rule_created'::text, 'split_rule_updated'::text, 'tracker_linked'::text, 'tracker_link_updated'::text, 'tracker_unlinked'::text]))),
     CONSTRAINT issue_activity_details_check CHECK ((jsonb_typeof(details) = 'object'::text))
+);
+
+
+--
+-- Name: issue_application_escalation_policies; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.issue_application_escalation_policies (
+    app_id uuid NOT NULL,
+    enabled boolean DEFAULT false NOT NULL,
+    revision bigint NOT NULL,
+    delay_minutes integer NOT NULL,
+    team_id uuid,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT issue_application_escalation_policies_delay_minutes_check CHECK (((delay_minutes >= 15) AND (delay_minutes <= 10080))),
+    CONSTRAINT issue_application_escalation_policies_revision_check CHECK ((revision > 0))
+);
+
+
+--
+-- Name: issue_application_reminder_policies; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.issue_application_reminder_policies (
+    app_id uuid NOT NULL,
+    enabled boolean DEFAULT false NOT NULL,
+    revision bigint NOT NULL,
+    interval_minutes integer NOT NULL,
+    repeat_limit integer NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT issue_application_reminder_policies_interval_minutes_check CHECK (((interval_minutes >= 5) AND (interval_minutes <= 1440))),
+    CONSTRAINT issue_application_reminder_policies_repeat_limit_check CHECK (((repeat_limit >= 1) AND (repeat_limit <= 3))),
+    CONSTRAINT issue_application_reminder_policies_revision_check CHECK ((revision > 0))
+);
+
+
+--
+-- Name: issue_application_reminders; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.issue_application_reminders (
+    id uuid NOT NULL,
+    issue_id uuid NOT NULL,
+    response_id uuid NOT NULL,
+    sequence integer NOT NULL,
+    policy_revision bigint NOT NULL,
+    outcome text NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    kind text DEFAULT 'reminder'::text NOT NULL,
+    escalation_policy_revision bigint,
+    responsibility_team_id uuid,
+    target_team_name text DEFAULT ''::text NOT NULL,
+    CONSTRAINT issue_application_reminders_escalation_policy_revision_check CHECK ((escalation_policy_revision > 0)),
+    CONSTRAINT issue_application_reminders_kind_check CHECK ((kind = ANY (ARRAY['reminder'::text, 'escalation'::text]))),
+    CONSTRAINT issue_application_reminders_outcome_check CHECK (((outcome = ANY (ARRAY['queued'::text, 'unrouted'::text, 'queue_full'::text, 'already_responsible'::text])) AND ((kind = 'escalation'::text) OR (outcome <> 'already_responsible'::text)))),
+    CONSTRAINT issue_application_reminders_policy_revision_check CHECK ((policy_revision > 0)),
+    CONSTRAINT issue_application_reminders_sequence_check CHECK ((((kind = 'reminder'::text) AND ((sequence >= 1) AND (sequence <= 3)) AND (escalation_policy_revision IS NULL)) OR ((kind = 'escalation'::text) AND (sequence = 0) AND (escalation_policy_revision IS NOT NULL)))),
+    CONSTRAINT issue_application_reminders_target_team_name_check CHECK ((octet_length(target_team_name) <= 64))
+);
+
+
+--
+-- Name: issue_application_slack_policies; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.issue_application_slack_policies (
+    app_id uuid NOT NULL,
+    enabled boolean DEFAULT false NOT NULL,
+    revision bigint NOT NULL,
+    events text[] NOT NULL,
+    fallback_team_id uuid,
+    skipped_deliveries bigint DEFAULT 0 NOT NULL,
+    unrouted_alerts bigint DEFAULT 0 NOT NULL,
+    CONSTRAINT issue_application_slack_policies_check CHECK (((NOT enabled) OR (cardinality(events) > 0))),
+    CONSTRAINT issue_application_slack_policies_events_check CHECK (((cardinality(events) <= 4) AND (events <@ ARRAY['created'::text, 'regressed'::text, 'impact_threshold_reached'::text, 'frequency_threshold_reached'::text]))),
+    CONSTRAINT issue_application_slack_policies_revision_check CHECK ((revision > 0)),
+    CONSTRAINT issue_application_slack_policies_skipped_deliveries_check CHECK ((skipped_deliveries >= 0)),
+    CONSTRAINT issue_application_slack_policies_unrouted_alerts_check CHECK ((unrouted_alerts >= 0))
+);
+
+
+--
+-- Name: issue_application_triage; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.issue_application_triage (
+    issue_id uuid NOT NULL,
+    incident_id uuid DEFAULT gen_random_uuid() NOT NULL,
+    revision bigint NOT NULL,
+    acknowledged_by uuid,
+    acknowledged_at timestamp with time zone,
+    snoozed_until timestamp with time zone,
+    snoozed_by uuid,
+    snooze_reason text DEFAULT ''::text NOT NULL,
+    reminder_started_at timestamp with time zone,
+    last_reminded_at timestamp with time zone,
+    reminder_count integer DEFAULT 0 NOT NULL,
+    first_reminded_at timestamp with time zone,
+    escalation_attempted_at timestamp with time zone,
+    escalated_at timestamp with time zone,
+    escalation_team_id uuid,
+    CONSTRAINT issue_application_triage_check CHECK (((acknowledged_at IS NOT NULL) OR (acknowledged_by IS NULL))),
+    CONSTRAINT issue_application_triage_check1 CHECK (((snoozed_until IS NOT NULL) OR ((snoozed_by IS NULL) AND (snooze_reason = ''::text)))),
+    CONSTRAINT issue_application_triage_reminder_count_check CHECK (((reminder_count >= 0) AND (reminder_count <= 3))),
+    CONSTRAINT issue_application_triage_revision_check CHECK ((revision > 0)),
+    CONSTRAINT issue_application_triage_snooze_reason_check CHECK ((octet_length(snooze_reason) <= 1024))
+);
+
+
+--
+-- Name: issue_group_links; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.issue_group_links (
+    issue_id uuid NOT NULL,
+    canonical_issue_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    environment text NOT NULL,
+    linked_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT issue_group_links_check CHECK ((issue_id <> canonical_issue_id)),
+    CONSTRAINT issue_group_links_environment_check CHECK ((environment ~ '^[a-z0-9][a-z0-9-]{0,62}$'::text))
+);
+
+
+--
+-- Name: issue_team_slack_destinations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.issue_team_slack_destinations (
+    id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    team_id uuid NOT NULL,
+    channel_id text NOT NULL,
+    token_sealed bytea NOT NULL,
+    enabled boolean DEFAULT false NOT NULL,
+    revision bigint DEFAULT 1 NOT NULL,
+    next_send_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    claim_id uuid,
+    claim_until timestamp with time zone,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    oauth_revision bigint,
+    CONSTRAINT issue_team_slack_destinations_channel_id_check CHECK ((channel_id ~ '^[CG][A-Z0-9]{8,31}$'::text)),
+    CONSTRAINT issue_team_slack_destinations_check CHECK (((claim_id IS NULL) = (claim_until IS NULL))),
+    CONSTRAINT issue_team_slack_destinations_oauth_revision_check CHECK ((oauth_revision > 0)),
+    CONSTRAINT issue_team_slack_destinations_revision_check CHECK ((revision > 0)),
+    CONSTRAINT issue_team_slack_destinations_token_sealed_check CHECK (((octet_length(token_sealed) > 0) OR (NOT enabled)))
+);
+
+
+--
+-- Name: org_memberships; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.org_memberships (
+    org_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    role text NOT NULL,
+    invited_by_account_id uuid,
+    joined_at timestamp with time zone DEFAULT now() NOT NULL,
+    removed_at timestamp with time zone,
+    CONSTRAINT org_memberships_removed_role_chk CHECK (((removed_at IS NULL) OR (role = ANY (ARRAY['admin'::text, 'developer'::text, 'viewer'::text, 'billing'::text])))),
+    CONSTRAINT org_memberships_role_chk CHECK ((role = ANY (ARRAY['owner'::text, 'admin'::text, 'developer'::text, 'viewer'::text, 'billing'::text])))
+);
+
+
+--
+-- Name: issue_application_response_access; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.issue_application_response_access AS
+ SELECT i.id AS issue_id,
+    a.id AS app_id,
+    a.account_id AS owner_account_id,
+    actor.id AS actor_account_id,
+    owner.plan AS owner_plan,
+        CASE
+            WHEN (tr.escalated_at IS NOT NULL) THEN tr.escalation_team_id
+            ELSE i.assignee_team_id
+        END AS responsible_team_id,
+    route.team_id AS routed_team_id
+   FROM ((((((public.app_issues i
+     JOIN public.apps a ON (((a.id = i.app_id) AND (a.account_id = i.account_id))))
+     JOIN public.accounts owner ON ((owner.id = a.account_id)))
+     LEFT JOIN public.issue_application_triage tr ON ((tr.issue_id = i.id)))
+     LEFT JOIN public.issue_application_slack_policies p ON (((p.app_id = a.id) AND p.enabled)))
+     LEFT JOIN LATERAL ( SELECT dst.team_id
+           FROM public.issue_team_slack_destinations dst
+          WHERE ((p.app_id IS NOT NULL) AND (dst.app_id = a.id) AND (dst.account_id = a.account_id) AND dst.enabled AND (dst.team_id = ANY (ARRAY[
+                CASE
+                    WHEN (tr.escalated_at IS NOT NULL) THEN tr.escalation_team_id
+                    ELSE i.assignee_team_id
+                END, p.fallback_team_id])) AND (EXISTS ( SELECT 1
+                   FROM public.app_issue_team_members member
+                  WHERE ((member.team_id = dst.team_id) AND ((member.account_id = a.account_id) OR (EXISTS ( SELECT 1
+                           FROM public.org_memberships m
+                          WHERE ((m.org_id = a.org_id) AND (m.account_id = member.account_id) AND (m.removed_at IS NULL)))))))))
+          ORDER BY
+                CASE
+                    WHEN (dst.team_id =
+                    CASE
+                        WHEN (tr.escalated_at IS NOT NULL) THEN tr.escalation_team_id
+                        ELSE i.assignee_team_id
+                    END) THEN 0
+                    ELSE 1
+                END
+         LIMIT 1) route ON (true))
+     JOIN public.accounts actor ON (((actor.id = a.account_id) OR (EXISTS ( SELECT 1
+           FROM public.org_memberships m
+          WHERE ((m.org_id = a.org_id) AND (m.account_id = actor.id) AND (m.removed_at IS NULL)))))))
+  WHERE ((a.deleted_at IS NULL) AND (a.status <> 'deleted'::text) AND (owner.status = 'active'::text) AND (owner.abuse_hold_at IS NULL) AND (NOT (EXISTS ( SELECT 1
+           FROM public.issue_group_links gl
+          WHERE (gl.issue_id = i.id)))) AND ((actor.id = a.account_id) OR (actor.id = i.assignee_account_id) OR (EXISTS ( SELECT 1
+           FROM public.app_issue_team_members tm
+          WHERE ((tm.account_id = actor.id) AND ((tm.team_id = i.assignee_team_id) OR ((tr.escalated_at IS NOT NULL) AND (tm.team_id = tr.escalation_team_id)) OR (tm.team_id = route.team_id)))))));
+
+
+--
+-- Name: issue_application_triage_activity; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.issue_application_triage_activity (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    issue_id uuid NOT NULL,
+    incident_id uuid NOT NULL,
+    revision bigint NOT NULL,
+    actor_id uuid,
+    action text NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    snoozed_until timestamp with time zone,
+    reason text DEFAULT ''::text NOT NULL,
+    CONSTRAINT issue_application_triage_activity_action_check CHECK ((action = ANY (ARRAY['acknowledge'::text, 'snooze'::text, 'unsnooze'::text, 'reset'::text]))),
+    CONSTRAINT issue_application_triage_activity_reason_check CHECK ((octet_length(reason) <= 1024)),
+    CONSTRAINT issue_application_triage_activity_revision_check CHECK ((revision > 0))
 );
 
 
@@ -29003,17 +29401,17 @@ CREATE TABLE public.issue_events (
 
 
 --
--- Name: issue_group_links; Type: TABLE; Schema: public; Owner: -
+-- Name: issue_frequency_alert_receipts; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.issue_group_links (
-    issue_id uuid NOT NULL,
-    canonical_issue_id uuid NOT NULL,
+CREATE TABLE public.issue_frequency_alert_receipts (
     app_id uuid NOT NULL,
-    environment text NOT NULL,
-    linked_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT issue_group_links_check CHECK ((issue_id <> canonical_issue_id)),
-    CONSTRAINT issue_group_links_environment_check CHECK ((environment ~ '^[a-z0-9][a-z0-9-]{0,62}$'::text))
+    rule_key text NOT NULL,
+    issue_id uuid NOT NULL,
+    rule_hash text NOT NULL,
+    last_alert_at timestamp with time zone NOT NULL,
+    CONSTRAINT issue_frequency_alert_receipts_rule_hash_check CHECK ((rule_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT issue_frequency_alert_receipts_rule_key_check CHECK ((rule_key ~ '^[a-z0-9][a-z0-9-]{0,47}$'::text))
 );
 
 
@@ -29056,7 +29454,8 @@ CREATE VIEW public.issue_group_rollups AS
     i.fixed_deployment_id,
     i.fixed_deployment_created_at,
     i.ignored_until,
-    i.split_source_issue_id
+    i.split_source_issue_id,
+    i.assignee_team_id
    FROM (public.app_issues i
      CROSS JOIN LATERAL ( SELECT min(m.first_seen_at) AS first_seen_at,
             max(m.last_seen_at) AS last_seen_at,
@@ -29124,6 +29523,317 @@ CREATE TABLE public.issue_resolutions (
 
 
 --
+-- Name: issue_slack_action_messages; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.issue_slack_action_messages (
+    delivery_id uuid NOT NULL,
+    policy_revision bigint NOT NULL,
+    response_id uuid,
+    response_revision bigint NOT NULL,
+    message_ts text DEFAULT ''::text NOT NULL,
+    consumed_at timestamp with time zone,
+    CONSTRAINT issue_slack_action_messages_message_ts_check CHECK (((message_ts = ''::text) OR (message_ts ~ '^[0-9]{1,20}\.[0-9]{1,10}$'::text))),
+    CONSTRAINT issue_slack_action_messages_policy_revision_check CHECK ((policy_revision > 0)),
+    CONSTRAINT issue_slack_action_messages_response_revision_check CHECK ((response_revision >= 0))
+);
+
+
+--
+-- Name: issue_slack_installations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.issue_slack_installations (
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    revision bigint NOT NULL,
+    status text NOT NULL,
+    workspace_id text NOT NULL,
+    workspace_name text NOT NULL,
+    slack_app_id text NOT NULL,
+    bot_user_id text NOT NULL,
+    token_sealed bytea NOT NULL,
+    installed_at timestamp with time zone NOT NULL,
+    CONSTRAINT issue_slack_installations_bot_user_id_check CHECK ((bot_user_id ~ '^[UW][A-Z0-9]{8,31}$'::text)),
+    CONSTRAINT issue_slack_installations_check CHECK (((status = 'connected'::text) = (octet_length(token_sealed) > 0))),
+    CONSTRAINT issue_slack_installations_revision_check CHECK ((revision > 0)),
+    CONSTRAINT issue_slack_installations_slack_app_id_check CHECK ((slack_app_id ~ '^A[A-Z0-9]{8,31}$'::text)),
+    CONSTRAINT issue_slack_installations_status_check CHECK ((status = ANY (ARRAY['connected'::text, 'disconnected'::text, 'revoked'::text]))),
+    CONSTRAINT issue_slack_installations_token_sealed_check CHECK ((octet_length(token_sealed) <= 8192)),
+    CONSTRAINT issue_slack_installations_workspace_id_check CHECK ((workspace_id ~ '^T[A-Z0-9]{8,31}$'::text)),
+    CONSTRAINT issue_slack_installations_workspace_name_check CHECK (((octet_length(workspace_name) >= 1) AND (octet_length(workspace_name) <= 256)))
+);
+
+
+--
+-- Name: issue_slack_routing_policies; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.issue_slack_routing_policies (
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    revision bigint NOT NULL,
+    installation_revision bigint NOT NULL,
+    rules jsonb NOT NULL,
+    CONSTRAINT issue_slack_routing_policies_installation_revision_check CHECK ((installation_revision > 0)),
+    CONSTRAINT issue_slack_routing_policies_revision_check CHECK ((revision > 0)),
+    CONSTRAINT issue_slack_routing_policies_rules_check CHECK (((jsonb_typeof(rules) = 'array'::text) AND (jsonb_array_length(rules) <= 20)))
+);
+
+
+--
+-- Name: issue_team_slack_deliveries; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.issue_team_slack_deliveries (
+    id uuid NOT NULL,
+    delivery_seq bigint NOT NULL,
+    channel_id text NOT NULL,
+    destination_id uuid NOT NULL,
+    destination_revision bigint NOT NULL,
+    notification_id uuid,
+    incident_id uuid NOT NULL,
+    status text DEFAULT 'pending'::text NOT NULL,
+    attempt integer DEFAULT 0 NOT NULL,
+    total_attempts bigint DEFAULT 0 NOT NULL,
+    next_attempt_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    expires_at timestamp with time zone DEFAULT (clock_timestamp() + '24:00:00'::interval) NOT NULL,
+    claim_id uuid,
+    claim_until timestamp with time zone,
+    last_error text DEFAULT ''::text NOT NULL,
+    response_code integer DEFAULT 0 NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    activity_id uuid,
+    application_policy_revision bigint,
+    recipient_account_ids uuid[],
+    assigned_team_id uuid,
+    assigned_account_id uuid,
+    reminder_id uuid,
+    routing_revision bigint DEFAULT 0 NOT NULL,
+    routing_rule_key text DEFAULT ''::text NOT NULL,
+    CONSTRAINT issue_slack_routing_snapshot CHECK ((((activity_id IS NOT NULL) OR ((routing_revision = 0) AND (routing_rule_key = ''::text))) AND ((routing_rule_key = ''::text) OR (routing_revision > 0)))),
+    CONSTRAINT issue_slack_source_check CHECK ((((notification_id IS NOT NULL) AND (activity_id IS NULL) AND (reminder_id IS NULL) AND (application_policy_revision IS NULL) AND (recipient_account_ids IS NULL) AND (assigned_team_id IS NULL) AND (assigned_account_id IS NULL)) OR ((notification_id IS NULL) AND (num_nonnulls(activity_id, reminder_id) = 1) AND (application_policy_revision IS NOT NULL) AND (application_policy_revision > 0) AND (recipient_account_ids IS NOT NULL) AND (cardinality(recipient_account_ids) > 0)))),
+    CONSTRAINT issue_team_slack_deliveries_attempt_check CHECK (((attempt >= 0) AND (attempt <= 7))),
+    CONSTRAINT issue_team_slack_deliveries_channel_id_check CHECK ((channel_id ~ '^[CG][A-Z0-9]{8,31}$'::text)),
+    CONSTRAINT issue_team_slack_deliveries_check CHECK ((((status = 'in_flight'::text) = (claim_id IS NOT NULL)) AND ((claim_id IS NULL) = (claim_until IS NULL)))),
+    CONSTRAINT issue_team_slack_deliveries_destination_revision_check CHECK ((destination_revision > 0)),
+    CONSTRAINT issue_team_slack_deliveries_last_error_check CHECK ((last_error = ANY (ARRAY[''::text, 'issue_snoozed'::text, 'destination_unavailable'::text, 'delivery_expired'::text, 'attempts_exhausted'::text, 'token_unavailable'::text, 'transport_error'::text, 'rate_limited'::text, 'slack_unavailable'::text, 'slack_rejected'::text, 'invalid_auth'::text, 'channel_not_found'::text, 'not_in_channel'::text, 'missing_scope'::text, 'thread_unavailable'::text, 'invalid_response'::text]))),
+    CONSTRAINT issue_team_slack_deliveries_response_code_check CHECK (((response_code >= 0) AND (response_code <= 599))),
+    CONSTRAINT issue_team_slack_deliveries_routing_revision_check CHECK ((routing_revision >= 0)),
+    CONSTRAINT issue_team_slack_deliveries_routing_rule_key_check CHECK (((routing_rule_key = ''::text) OR (routing_rule_key ~ '^[a-z0-9][a-z0-9-]{0,47}$'::text))),
+    CONSTRAINT issue_team_slack_deliveries_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'in_flight'::text, 'failed'::text, 'succeeded'::text, 'dead'::text, 'canceled'::text]))),
+    CONSTRAINT issue_team_slack_deliveries_total_attempts_check CHECK ((total_attempts >= 0))
+);
+
+
+--
+-- Name: issue_tracker_sync_notification_policies; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.issue_tracker_sync_notification_policies (
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    enabled boolean DEFAULT false NOT NULL,
+    revision bigint DEFAULT 1 NOT NULL,
+    failure_threshold integer NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT issue_tracker_sync_notification_policie_failure_threshold_check CHECK ((failure_threshold > 0)),
+    CONSTRAINT issue_tracker_sync_notification_policies_revision_check CHECK ((revision > 0))
+);
+
+
+--
+-- Name: issue_tracker_sync_notifications; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.issue_tracker_sync_notifications (
+    id uuid NOT NULL,
+    link_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    issue_id uuid NOT NULL,
+    incident_id uuid NOT NULL,
+    kind text NOT NULL,
+    outcome text NOT NULL,
+    reason text DEFAULT ''::text NOT NULL,
+    team_id uuid,
+    recipient_account_ids uuid[] NOT NULL,
+    payload jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    reminder_sequence integer DEFAULT 0 NOT NULL,
+    CONSTRAINT issue_tracker_notification_reminder_sequence CHECK ((((kind = 'reminder'::text) AND ((reminder_sequence >= 1) AND (reminder_sequence <= 3))) OR ((kind <> 'reminder'::text) AND (reminder_sequence = 0)))),
+    CONSTRAINT issue_tracker_sync_notifications_kind_check CHECK ((kind = ANY (ARRAY['paused'::text, 'closure'::text, 'failure'::text, 'recovered'::text, 'reminder'::text, 'escalation'::text]))),
+    CONSTRAINT issue_tracker_sync_notifications_outcome_check CHECK ((outcome = ANY (ARRAY['matched'::text, 'pending'::text, 'applied'::text, 'error'::text, 'conflict'::text, 'blocked'::text, 'disabled'::text]))),
+    CONSTRAINT issue_tracker_sync_notifications_payload_check CHECK ((jsonb_typeof(payload) = 'object'::text)),
+    CONSTRAINT issue_tracker_sync_notifications_reason_check CHECK ((octet_length(reason) <= 128)),
+    CONSTRAINT issue_tracker_sync_notifications_recipient_account_ids_check CHECK ((cardinality(recipient_account_ids) > 0))
+);
+
+
+--
+-- Name: issue_slack_delivery_sources; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.issue_slack_delivery_sources AS
+ SELECT d.id AS delivery_id,
+    COALESCE(n.issue_id, i.id) AS issue_id,
+    n.link_id,
+    COALESCE(n.kind, act.action,
+        CASE
+            WHEN (rem.kind = 'escalation'::text) THEN 'application_escalation'::text
+            WHEN (rem.id IS NOT NULL) THEN 'application_reminder'::text
+            ELSE NULL::text
+        END, ''::text) AS kind,
+    COALESCE(n.reason, ''::text) AS reason,
+    (COALESCE(act.details,
+        CASE
+            WHEN (rem.kind = 'escalation'::text) THEN '{}'::jsonb
+            WHEN (rem.id IS NOT NULL) THEN jsonb_build_object('reminder_sequence', (rem.sequence)::text)
+            ELSE NULL::jsonb
+        END, '{}'::jsonb) ||
+        CASE
+            WHEN (i.id IS NOT NULL) THEN jsonb_build_object('environment', i.environment)
+            ELSE '{}'::jsonb
+        END) AS details,
+    COALESCE(
+        CASE
+            WHEN (d.notification_id IS NOT NULL) THEN ((a.account_id = n.account_id) AND p.enabled AND (n.team_id = dst.team_id) AND (EXISTS ( SELECT 1
+               FROM public.app_issue_team_members tm
+              WHERE ((tm.team_id = dst.team_id) AND (tm.account_id = ANY (n.recipient_account_ids)) AND ((tm.account_id = a.account_id) OR (EXISTS ( SELECT 1
+                       FROM public.org_memberships m
+                      WHERE ((m.org_id = a.org_id) AND (m.account_id = tm.account_id) AND (m.removed_at IS NULL)))))))))
+            ELSE (ap.enabled AND ((d.activity_id IS NULL) OR ((d.routing_revision = COALESCE(( SELECT cr.revision
+               FROM public.issue_slack_routing_policies cr
+              WHERE (cr.app_id = a.id)), (0)::bigint)) AND ((d.routing_rule_key = ''::text) OR (EXISTS ( SELECT 1
+               FROM (public.issue_slack_routing_policies cr
+                 JOIN public.issue_slack_installations si ON ((si.app_id = cr.app_id)))
+              WHERE ((cr.app_id = a.id) AND (cr.account_id = a.account_id) AND (si.account_id = a.account_id) AND (si.status = 'connected'::text) AND (si.revision = cr.installation_revision) AND (si.revision = dst.oauth_revision))))))) AND (ap.revision = d.application_policy_revision) AND (((d.reminder_id IS NULL) AND (act.action = ANY (ap.events))) OR ((d.reminder_id IS NOT NULL) AND rp.enabled AND (rp.revision = rem.policy_revision) AND (NOT (tr.escalation_team_id IS DISTINCT FROM rem.responsibility_team_id)) AND ((rem.kind = 'reminder'::text) OR (ep.enabled AND (ep.revision = rem.escalation_policy_revision) AND (ep.team_id = dst.team_id))) AND (tr.incident_id = rem.response_id) AND (tr.acknowledged_at IS NULL) AND (i.state = 'open'::text) AND ((tr.snoozed_until IS NULL) OR (tr.snoozed_until <= clock_timestamp())))) AND (i.id IS NOT NULL) AND (i.app_id = a.id) AND (i.account_id = a.account_id) AND (NOT (i.assignee_team_id IS DISTINCT FROM d.assigned_team_id)) AND (NOT (i.assignee_account_id IS DISTINCT FROM d.assigned_account_id)) AND (NOT ((i.state = 'ignored'::text) AND ((i.ignored_until IS NULL) OR (i.ignored_until > clock_timestamp())))) AND (NOT (EXISTS ( SELECT 1
+               FROM public.issue_group_links gl
+              WHERE (gl.issue_id = i.id)))) AND (NOT (EXISTS ( SELECT 1
+               FROM public.issue_application_triage tr_1
+              WHERE ((tr_1.issue_id = i.id) AND (tr_1.snoozed_until > clock_timestamp()))))) AND (EXISTS ( SELECT 1
+               FROM public.app_issue_team_members tm
+              WHERE ((tm.team_id = dst.team_id) AND (tm.account_id = ANY (d.recipient_account_ids)) AND ((tm.account_id = a.account_id) OR (EXISTS ( SELECT 1
+                       FROM public.org_memberships m
+                      WHERE ((m.org_id = a.org_id) AND (m.account_id = tm.account_id) AND (m.removed_at IS NULL)))))))))
+        END, false) AS eligible,
+    COALESCE(((d.notification_id IS NOT NULL) OR (ap.enabled AND ((d.activity_id IS NULL) OR ((d.routing_revision = COALESCE(( SELECT cr.revision
+           FROM public.issue_slack_routing_policies cr
+          WHERE (cr.app_id = a.id)), (0)::bigint)) AND ((d.routing_rule_key = ''::text) OR (EXISTS ( SELECT 1
+           FROM (public.issue_slack_routing_policies cr
+             JOIN public.issue_slack_installations si ON ((si.app_id = cr.app_id)))
+          WHERE ((cr.app_id = a.id) AND (cr.account_id = a.account_id) AND (si.account_id = a.account_id) AND (si.status = 'connected'::text) AND (si.revision = cr.installation_revision) AND (si.revision = dst.oauth_revision))))))) AND (ap.revision = d.application_policy_revision) AND (((d.reminder_id IS NULL) AND (act.action = ANY (ap.events))) OR ((d.reminder_id IS NOT NULL) AND rp.enabled AND (rp.revision = rem.policy_revision) AND (NOT (tr.escalation_team_id IS DISTINCT FROM rem.responsibility_team_id)) AND ((rem.kind = 'reminder'::text) OR (ep.enabled AND (ep.revision = rem.escalation_policy_revision) AND (ep.team_id = dst.team_id))) AND (tr.incident_id = rem.response_id) AND (tr.acknowledged_at IS NULL) AND (i.state = 'open'::text) AND ((tr.snoozed_until IS NULL) OR (tr.snoozed_until <= clock_timestamp())))))), false) AS application_retry_allowed
+   FROM (((((((((((public.issue_team_slack_deliveries d
+     JOIN public.issue_team_slack_destinations dst ON ((dst.id = d.destination_id)))
+     JOIN public.apps a ON ((a.id = dst.app_id)))
+     LEFT JOIN public.issue_tracker_sync_notifications n ON ((n.id = d.notification_id)))
+     LEFT JOIN public.issue_tracker_sync_notification_policies p ON (((p.app_id = a.id) AND (p.account_id = a.account_id))))
+     LEFT JOIN public.issue_activity act ON ((act.id = d.activity_id)))
+     LEFT JOIN public.issue_application_reminders rem ON ((rem.id = d.reminder_id)))
+     LEFT JOIN public.app_issues i ON ((i.id = COALESCE(act.issue_id, rem.issue_id))))
+     LEFT JOIN public.issue_application_slack_policies ap ON ((ap.app_id = a.id)))
+     LEFT JOIN public.issue_application_reminder_policies rp ON ((rp.app_id = a.id)))
+     LEFT JOIN public.issue_application_triage tr ON ((tr.issue_id = i.id)))
+     LEFT JOIN public.issue_application_escalation_policies ep ON ((ep.app_id = a.id)));
+
+
+--
+-- Name: issue_slack_identities; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.issue_slack_identities (
+    app_id uuid NOT NULL,
+    slack_user_id text NOT NULL,
+    account_id uuid NOT NULL,
+    policy_revision bigint NOT NULL,
+    mfa_enrolled_at timestamp with time zone,
+    mfa_required boolean NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT issue_slack_identities_policy_revision_check CHECK ((policy_revision > 0)),
+    CONSTRAINT issue_slack_identities_slack_user_id_check CHECK ((slack_user_id ~ '^[UW][A-Z0-9]{8,31}$'::text))
+);
+
+
+--
+-- Name: issue_slack_interaction_policies; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.issue_slack_interaction_policies (
+    app_id uuid NOT NULL,
+    enabled boolean DEFAULT false NOT NULL,
+    revision bigint NOT NULL,
+    workspace_id text NOT NULL,
+    slack_app_id text NOT NULL,
+    secret_sealed bytea NOT NULL,
+    CONSTRAINT issue_slack_interaction_policies_revision_check CHECK ((revision > 0)),
+    CONSTRAINT issue_slack_interaction_policies_secret_sealed_check CHECK (((octet_length(secret_sealed) >= 1) AND (octet_length(secret_sealed) <= 8192))),
+    CONSTRAINT issue_slack_interaction_policies_slack_app_id_check CHECK ((slack_app_id ~ '^A[A-Z0-9]{8,31}$'::text)),
+    CONSTRAINT issue_slack_interaction_policies_workspace_id_check CHECK ((workspace_id ~ '^T[A-Z0-9]{8,31}$'::text))
+);
+
+
+--
+-- Name: issue_slack_link_challenges; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.issue_slack_link_challenges (
+    token text NOT NULL,
+    app_id uuid NOT NULL,
+    delivery_id uuid NOT NULL,
+    request_key text NOT NULL,
+    slack_user_id text NOT NULL,
+    policy_revision bigint NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    consumed_at timestamp with time zone,
+    CONSTRAINT issue_slack_link_challenges_policy_revision_check CHECK ((policy_revision > 0)),
+    CONSTRAINT issue_slack_link_challenges_request_key_check CHECK ((request_key ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT issue_slack_link_challenges_slack_user_id_check CHECK ((slack_user_id ~ '^[UW][A-Z0-9]{8,31}$'::text)),
+    CONSTRAINT issue_slack_link_challenges_token_check CHECK ((token ~ '^[0-9a-f]{64}$'::text))
+);
+
+
+--
+-- Name: issue_slack_oauth_flows; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.issue_slack_oauth_flows (
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    state_hash text NOT NULL,
+    expected_revision bigint NOT NULL,
+    phase text NOT NULL,
+    sealed bytea NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT issue_slack_oauth_flows_expected_revision_check CHECK ((expected_revision >= 0)),
+    CONSTRAINT issue_slack_oauth_flows_phase_check CHECK ((phase = ANY (ARRAY['authorizing'::text, 'exchanging'::text, 'choosing'::text]))),
+    CONSTRAINT issue_slack_oauth_flows_sealed_check CHECK (((octet_length(sealed) >= 1) AND (octet_length(sealed) <= 16384))),
+    CONSTRAINT issue_slack_oauth_flows_state_hash_check CHECK ((state_hash ~ '^[0-9a-f]{64}$'::text))
+);
+
+
+--
+-- Name: issue_source_map_artifacts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.issue_source_map_artifacts (
+    app_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    manifest_sha256 text NOT NULL,
+    canonical_manifest jsonb,
+    map_count integer NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_by_account_id uuid,
+    retired_at timestamp with time zone,
+    retired_by_account_id uuid,
+    CONSTRAINT issue_source_map_artifacts_canonical_manifest_check CHECK (((canonical_manifest IS NULL) OR (octet_length((canonical_manifest)::text) <= 4259840))),
+    CONSTRAINT issue_source_map_artifacts_check CHECK (((canonical_manifest IS NULL) = (retired_at IS NOT NULL))),
+    CONSTRAINT issue_source_map_artifacts_manifest_sha256_check CHECK ((manifest_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT issue_source_map_artifacts_map_count_check CHECK (((map_count >= 1) AND (map_count <= 32)))
+);
+
+
+--
 -- Name: issue_split_rules; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -29154,6 +29864,375 @@ CREATE TABLE public.issue_split_rules (
     CONSTRAINT issue_split_rules_route_check CHECK ((octet_length(route) <= 256)),
     CONSTRAINT issue_split_rules_source_kind_check CHECK ((source_kind = ANY (ARRAY[''::text, 'exception'::text, 'http'::text, 'runtime'::text, 'worker'::text]))),
     CONSTRAINT issue_split_rules_unavailable_history_event_count_check CHECK ((unavailable_history_event_count >= 0))
+);
+
+
+--
+-- Name: issue_team_slack_deliveries_delivery_seq_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.issue_team_slack_deliveries ALTER COLUMN delivery_seq ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.issue_team_slack_deliveries_delivery_seq_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: issue_team_slack_threads; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.issue_team_slack_threads (
+    destination_id uuid NOT NULL,
+    destination_revision bigint NOT NULL,
+    incident_id uuid NOT NULL,
+    root_ts text DEFAULT ''::text NOT NULL,
+    channel_id text NOT NULL,
+    CONSTRAINT issue_slack_thread_channel CHECK ((channel_id ~ '^[CG][A-Z0-9]{8,31}$'::text)),
+    CONSTRAINT issue_team_slack_threads_destination_revision_check CHECK ((destination_revision > 0)),
+    CONSTRAINT issue_team_slack_threads_root_ts_check CHECK (((root_ts = ''::text) OR (root_ts ~ '^[0-9]{1,20}\.[0-9]{1,10}$'::text)))
+);
+
+
+--
+-- Name: issue_tracker_auto_sync; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.issue_tracker_auto_sync (
+    link_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    source_issue_id uuid NOT NULL,
+    enabled boolean DEFAULT true NOT NULL,
+    revision bigint DEFAULT 1 NOT NULL,
+    binding_fingerprint text NOT NULL,
+    baseline jsonb NOT NULL,
+    source_state text NOT NULL,
+    pending_state text DEFAULT ''::text NOT NULL,
+    outcome text DEFAULT 'matched'::text NOT NULL,
+    reason text DEFAULT ''::text NOT NULL,
+    claim_id uuid,
+    claim_until timestamp with time zone,
+    last_checked_at timestamp with time zone,
+    next_check_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    linear_open_state_id text DEFAULT ''::text NOT NULL,
+    linear_resolved_state_id text DEFAULT ''::text NOT NULL,
+    direction text DEFAULT 'outbound'::text NOT NULL,
+    source_revision bigint DEFAULT 0 NOT NULL,
+    pending_source_revision bigint DEFAULT 0 NOT NULL,
+    observed_state text DEFAULT ''::text NOT NULL,
+    last_successful_at timestamp with time zone,
+    CONSTRAINT issue_tracker_auto_sync_baseline_check CHECK ((jsonb_typeof(baseline) = 'object'::text)),
+    CONSTRAINT issue_tracker_auto_sync_binding_fingerprint_check CHECK ((binding_fingerprint ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT issue_tracker_auto_sync_direction_check CHECK ((direction = ANY (ARRAY['outbound'::text, 'inbound'::text, 'both'::text]))),
+    CONSTRAINT issue_tracker_auto_sync_linear_mapping_check CHECK ((((COALESCE((baseline ->> 'provider'::text), ''::text) = 'github'::text) AND (linear_open_state_id = ''::text) AND (linear_resolved_state_id = ''::text)) OR ((COALESCE((baseline ->> 'provider'::text), ''::text) = 'linear'::text) AND (linear_open_state_id ~ '^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$'::text) AND (linear_resolved_state_id ~ '^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$'::text) AND (linear_open_state_id <> '00000000-0000-0000-0000-000000000000'::text) AND (linear_resolved_state_id <> '00000000-0000-0000-0000-000000000000'::text) AND (linear_open_state_id <> linear_resolved_state_id)))),
+    CONSTRAINT issue_tracker_auto_sync_observed_state_check CHECK ((observed_state = ANY (ARRAY[''::text, 'open'::text, 'resolved'::text]))),
+    CONSTRAINT issue_tracker_auto_sync_outcome_check CHECK ((outcome = ANY (ARRAY['disabled'::text, 'matched'::text, 'pending'::text, 'applied'::text, 'error'::text, 'conflict'::text, 'blocked'::text]))),
+    CONSTRAINT issue_tracker_auto_sync_pending_source_revision_check CHECK ((pending_source_revision >= 0)),
+    CONSTRAINT issue_tracker_auto_sync_pending_state_check CHECK ((pending_state = ANY (ARRAY[''::text, 'open'::text, 'resolved'::text]))),
+    CONSTRAINT issue_tracker_auto_sync_reason_check CHECK ((octet_length(reason) <= 128)),
+    CONSTRAINT issue_tracker_auto_sync_revision_check CHECK ((revision > 0)),
+    CONSTRAINT issue_tracker_auto_sync_source_revision_check CHECK ((source_revision >= 0)),
+    CONSTRAINT issue_tracker_auto_sync_source_state_check CHECK ((source_state = ANY (ARRAY['open'::text, 'resolved'::text]))),
+    CONSTRAINT issue_tracker_inbound_revision_required CHECK (((direction = 'outbound'::text) OR (source_revision > 0)))
+);
+
+
+--
+-- Name: issue_tracker_callback_diagnostics; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.issue_tracker_callback_diagnostics (
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    connection_revision bigint NOT NULL,
+    invalid_signature bigint DEFAULT 0 NOT NULL,
+    wrong_scope bigint DEFAULT 0 NOT NULL,
+    stale_delivery bigint DEFAULT 0 NOT NULL,
+    invalid_payload bigint DEFAULT 0 NOT NULL,
+    delivery_conflict bigint DEFAULT 0 NOT NULL,
+    last_verified_at timestamp with time zone,
+    last_rejected_at timestamp with time zone,
+    CONSTRAINT issue_tracker_callback_diagnostics_connection_revision_check CHECK ((connection_revision > 0)),
+    CONSTRAINT issue_tracker_callback_diagnostics_delivery_conflict_check CHECK ((delivery_conflict >= 0)),
+    CONSTRAINT issue_tracker_callback_diagnostics_invalid_payload_check CHECK ((invalid_payload >= 0)),
+    CONSTRAINT issue_tracker_callback_diagnostics_invalid_signature_check CHECK ((invalid_signature >= 0)),
+    CONSTRAINT issue_tracker_callback_diagnostics_stale_delivery_check CHECK ((stale_delivery >= 0)),
+    CONSTRAINT issue_tracker_callback_diagnostics_wrong_scope_check CHECK ((wrong_scope >= 0))
+);
+
+
+--
+-- Name: issue_tracker_callbacks; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.issue_tracker_callbacks (
+    scope_key text NOT NULL,
+    delivery_id text NOT NULL,
+    provider text NOT NULL,
+    app_id uuid,
+    connection_revision bigint DEFAULT 0 NOT NULL,
+    installation_id bigint DEFAULT 0 NOT NULL,
+    repository_id bigint DEFAULT 0 NOT NULL,
+    workspace_id uuid,
+    team_id uuid,
+    ticket_id text NOT NULL,
+    ticket_url text DEFAULT ''::text NOT NULL,
+    payload_hash text NOT NULL,
+    received_at timestamp with time zone DEFAULT now() NOT NULL,
+    processed_at timestamp with time zone,
+    CONSTRAINT issue_tracker_callbacks_check CHECK ((((provider = 'github'::text) AND (app_id IS NULL) AND (installation_id > 0) AND (repository_id > 0) AND (connection_revision = 0) AND (workspace_id IS NULL) AND (team_id IS NULL) AND (ticket_url <> ''::text)) OR ((provider = 'linear'::text) AND (app_id IS NOT NULL) AND (connection_revision > 0) AND (installation_id = 0) AND (repository_id = 0) AND (workspace_id IS NOT NULL) AND (team_id IS NOT NULL) AND (ticket_url = ''::text)))),
+    CONSTRAINT issue_tracker_callbacks_delivery_id_check CHECK (((octet_length(delivery_id) >= 1) AND (octet_length(delivery_id) <= 128))),
+    CONSTRAINT issue_tracker_callbacks_payload_hash_check CHECK ((payload_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT issue_tracker_callbacks_provider_check CHECK ((provider = ANY (ARRAY['github'::text, 'linear'::text]))),
+    CONSTRAINT issue_tracker_callbacks_scope_key_check CHECK ((octet_length(scope_key) <= 128)),
+    CONSTRAINT issue_tracker_callbacks_ticket_id_check CHECK (((octet_length(ticket_id) >= 1) AND (octet_length(ticket_id) <= 128))),
+    CONSTRAINT issue_tracker_callbacks_ticket_url_check CHECK ((octet_length(ticket_url) <= 512))
+);
+
+
+--
+-- Name: issue_tracker_source_revision_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.issue_tracker_source_revision_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: issue_tracker_inbound_guards; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.issue_tracker_inbound_guards (
+    app_id uuid NOT NULL,
+    revision bigint DEFAULT 1 NOT NULL,
+    source_revision bigint DEFAULT nextval('public.issue_tracker_source_revision_seq'::regclass) NOT NULL,
+    CONSTRAINT issue_tracker_inbound_guards_revision_check CHECK ((revision > 0)),
+    CONSTRAINT issue_tracker_inbound_guards_source_revision_check CHECK ((source_revision > 0))
+);
+
+
+--
+-- Name: issue_tracker_linear_connections; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.issue_tracker_linear_connections (
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    revision bigint NOT NULL,
+    connected boolean NOT NULL,
+    workspace_id uuid,
+    team_id uuid,
+    viewer_id uuid,
+    sealed_credential bytea,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    webhook_enabled boolean DEFAULT false NOT NULL,
+    auth_method text DEFAULT 'api_key'::text NOT NULL,
+    oauth_status text DEFAULT ''::text NOT NULL,
+    access_token_expires_at timestamp with time zone,
+    credential_generation bigint DEFAULT 1 NOT NULL,
+    refresh_claim_id uuid,
+    refresh_claim_until timestamp with time zone,
+    refresh_started_at timestamp with time zone,
+    CONSTRAINT issue_tracker_linear_connections_auth_method_check CHECK ((auth_method = ANY (ARRAY['api_key'::text, 'oauth'::text]))),
+    CONSTRAINT issue_tracker_linear_connections_check CHECK (((connected AND (workspace_id IS NOT NULL) AND (team_id IS NOT NULL) AND (viewer_id IS NOT NULL) AND (octet_length(sealed_credential) > 0) AND (sealed_credential IS NOT NULL)) OR ((NOT connected) AND (workspace_id IS NULL) AND (team_id IS NULL) AND (viewer_id IS NULL) AND (sealed_credential IS NULL)))),
+    CONSTRAINT issue_tracker_linear_connections_credential_generation_check CHECK ((credential_generation > 0)),
+    CONSTRAINT issue_tracker_linear_connections_oauth_status_check CHECK ((oauth_status = ANY (ARRAY[''::text, 'ready'::text, 'refreshing'::text, 'reconnect_required'::text, 'revoking'::text]))),
+    CONSTRAINT issue_tracker_linear_connections_revision_check CHECK ((revision > 0)),
+    CONSTRAINT issue_tracker_linear_oauth_shape CHECK ((((auth_method = 'api_key'::text) AND (oauth_status = ''::text) AND (access_token_expires_at IS NULL)) OR ((auth_method = 'oauth'::text) AND connected AND (oauth_status <> ''::text) AND (access_token_expires_at IS NOT NULL)))),
+    CONSTRAINT issue_tracker_linear_webhook_connected CHECK (((NOT webhook_enabled) OR connected))
+);
+
+
+--
+-- Name: issue_tracker_linear_oauth_flows; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.issue_tracker_linear_oauth_flows (
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    issue_id uuid NOT NULL,
+    state_hash text NOT NULL,
+    expected_revision bigint NOT NULL,
+    phase text NOT NULL,
+    sealed_state bytea NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT issue_tracker_linear_oauth_flows_expected_revision_check CHECK ((expected_revision >= 0)),
+    CONSTRAINT issue_tracker_linear_oauth_flows_phase_check CHECK ((phase = ANY (ARRAY['authorizing'::text, 'exchanging'::text, 'choosing'::text, 'consuming'::text]))),
+    CONSTRAINT issue_tracker_linear_oauth_flows_sealed_state_check CHECK ((octet_length(sealed_state) > 0)),
+    CONSTRAINT issue_tracker_linear_oauth_flows_state_hash_check CHECK ((state_hash ~ '^[a-f0-9]{64}$'::text))
+);
+
+
+--
+-- Name: issue_tracker_links; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.issue_tracker_links (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    issue_id uuid NOT NULL,
+    provider text NOT NULL,
+    external_key text NOT NULL,
+    url text NOT NULL,
+    title text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_by_account_id uuid,
+    updated_by_account_id uuid,
+    CONSTRAINT issue_tracker_links_external_key_check CHECK (((octet_length(external_key) >= 1) AND (octet_length(external_key) <= 256))),
+    CONSTRAINT issue_tracker_links_provider_check CHECK ((provider = ANY (ARRAY['github'::text, 'linear'::text]))),
+    CONSTRAINT issue_tracker_links_title_check CHECK ((octet_length(title) <= 256)),
+    CONSTRAINT issue_tracker_links_url_check CHECK (((octet_length(url) >= 1) AND (octet_length(url) <= 512)))
+);
+
+
+--
+-- Name: issue_tracker_source_guards; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.issue_tracker_source_guards (
+    issue_id uuid NOT NULL,
+    revision bigint DEFAULT nextval('public.issue_tracker_source_revision_seq'::regclass) NOT NULL,
+    CONSTRAINT issue_tracker_source_guards_revision_check CHECK ((revision > 0))
+);
+
+
+--
+-- Name: issue_tracker_sync_escalation_policies; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.issue_tracker_sync_escalation_policies (
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    enabled boolean DEFAULT false NOT NULL,
+    team_id uuid,
+    delay_minutes integer NOT NULL,
+    revision bigint DEFAULT 1 NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT issue_tracker_sync_escalation_policies_check CHECK (((NOT enabled) OR (team_id IS NOT NULL))),
+    CONSTRAINT issue_tracker_sync_escalation_policies_delay_minutes_check CHECK (((delay_minutes >= 15) AND (delay_minutes <= 10080))),
+    CONSTRAINT issue_tracker_sync_escalation_policies_revision_check CHECK ((revision > 0))
+);
+
+
+--
+-- Name: issue_tracker_sync_history; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.issue_tracker_sync_history (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    link_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    source_issue_id uuid NOT NULL,
+    policy_revision bigint NOT NULL,
+    claim_id uuid,
+    event_type text NOT NULL,
+    direction text NOT NULL,
+    outcome text NOT NULL,
+    reason text DEFAULT ''::text NOT NULL,
+    source_state text NOT NULL,
+    observed_state text DEFAULT ''::text NOT NULL,
+    pending_state text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT issue_tracker_sync_history_direction_check CHECK ((direction = ANY (ARRAY['outbound'::text, 'inbound'::text, 'both'::text]))),
+    CONSTRAINT issue_tracker_sync_history_event_type_check CHECK ((event_type = ANY (ARRAY['enabled'::text, 'disabled'::text, 'checked'::text, 'pulled'::text, 'inspected'::text]))),
+    CONSTRAINT issue_tracker_sync_history_observed_state_check CHECK ((observed_state = ANY (ARRAY[''::text, 'open'::text, 'resolved'::text]))),
+    CONSTRAINT issue_tracker_sync_history_outcome_check CHECK ((outcome = ANY (ARRAY['matched'::text, 'pending'::text, 'applied'::text, 'error'::text, 'conflict'::text, 'blocked'::text, 'disabled'::text]))),
+    CONSTRAINT issue_tracker_sync_history_pending_state_check CHECK ((pending_state = ANY (ARRAY[''::text, 'open'::text, 'resolved'::text]))),
+    CONSTRAINT issue_tracker_sync_history_policy_revision_check CHECK ((policy_revision > 0)),
+    CONSTRAINT issue_tracker_sync_history_reason_check CHECK ((octet_length(reason) <= 128)),
+    CONSTRAINT issue_tracker_sync_history_source_state_check CHECK ((source_state = ANY (ARRAY['open'::text, 'resolved'::text])))
+);
+
+
+--
+-- Name: issue_tracker_sync_incidents; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.issue_tracker_sync_incidents (
+    link_id uuid NOT NULL,
+    settings_revision bigint NOT NULL,
+    failures integer DEFAULT 0 NOT NULL,
+    incident_id uuid,
+    announced_kind text DEFAULT ''::text NOT NULL,
+    issue_id uuid,
+    team_id uuid,
+    recipient_account_ids uuid[] DEFAULT '{}'::uuid[] NOT NULL,
+    opened_at timestamp with time zone,
+    reminder_count integer DEFAULT 0 NOT NULL,
+    last_reminded_at timestamp with time zone,
+    first_reminded_at timestamp with time zone,
+    escalated_at timestamp with time zone,
+    escalation_team_id uuid,
+    CONSTRAINT issue_tracker_incident_escalation_receipt CHECK ((((escalated_at IS NULL) = (escalation_team_id IS NULL)) AND ((escalated_at IS NULL) OR (first_reminded_at IS NOT NULL)))),
+    CONSTRAINT issue_tracker_incident_first_reminder CHECK (((reminder_count = 0) = (first_reminded_at IS NULL))),
+    CONSTRAINT issue_tracker_incident_reminder_receipt CHECK (((reminder_count = 0) = (last_reminded_at IS NULL))),
+    CONSTRAINT issue_tracker_sync_incidents_announced_kind_check CHECK ((announced_kind = ANY (ARRAY[''::text, 'paused'::text, 'closure'::text, 'failure'::text]))),
+    CONSTRAINT issue_tracker_sync_incidents_failures_check CHECK ((failures >= 0)),
+    CONSTRAINT issue_tracker_sync_incidents_reminder_count_check CHECK (((reminder_count >= 0) AND (reminder_count <= 3))),
+    CONSTRAINT issue_tracker_sync_incidents_settings_revision_check CHECK ((settings_revision > 0))
+);
+
+
+--
+-- Name: issue_tracker_sync_reminder_policies; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.issue_tracker_sync_reminder_policies (
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    enabled boolean DEFAULT false NOT NULL,
+    interval_minutes integer NOT NULL,
+    revision bigint DEFAULT 1 NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT issue_tracker_sync_reminder_policies_interval_minutes_check CHECK (((interval_minutes >= 15) AND (interval_minutes <= 10080))),
+    CONSTRAINT issue_tracker_sync_reminder_policies_revision_check CHECK ((revision > 0))
+);
+
+
+--
+-- Name: issue_tracker_sync_triage; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.issue_tracker_sync_triage (
+    incident_id uuid NOT NULL,
+    link_id uuid NOT NULL,
+    revision bigint NOT NULL,
+    acknowledged_by uuid,
+    claimed_by uuid,
+    snoozed_until timestamp with time zone,
+    snoozed_by uuid,
+    snooze_reason text DEFAULT ''::text NOT NULL,
+    CONSTRAINT issue_tracker_sync_triage_revision_check CHECK ((revision > 0)),
+    CONSTRAINT issue_tracker_triage_snooze_fields CHECK ((((snoozed_until IS NULL) = (snoozed_by IS NULL)) AND ((snoozed_until IS NOT NULL) OR (snooze_reason = ''::text)) AND (octet_length(snooze_reason) <= 512)))
+);
+
+
+--
+-- Name: issue_tracker_sync_triage_activity; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.issue_tracker_sync_triage_activity (
+    id uuid NOT NULL,
+    incident_id uuid NOT NULL,
+    actor_id uuid NOT NULL,
+    action text NOT NULL,
+    revision bigint NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    snoozed_until timestamp with time zone,
+    reason text DEFAULT ''::text NOT NULL,
+    CONSTRAINT issue_tracker_sync_triage_activity_action_check CHECK ((action = ANY (ARRAY['acknowledge'::text, 'claim'::text, 'release'::text, 'snooze'::text, 'unsnooze'::text]))),
+    CONSTRAINT issue_tracker_sync_triage_activity_revision_check CHECK ((revision > 0)),
+    CONSTRAINT issue_tracker_triage_activity_snooze_fields CHECK ((((action = 'snooze'::text) = (snoozed_until IS NOT NULL)) AND ((action = 'snooze'::text) OR (reason = ''::text)) AND (octet_length(reason) <= 512)))
 );
 
 
@@ -31663,6 +32742,33 @@ CREATE TABLE public.mirror_slot_leases (
 
 
 --
+-- Name: native_issue_ticket_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.native_issue_ticket_receipts (
+    account_id uuid NOT NULL,
+    request_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    issue_id uuid NOT NULL,
+    request_hash text NOT NULL,
+    state text DEFAULT 'ready'::text NOT NULL,
+    claim_id uuid,
+    recover_after timestamp with time zone,
+    ticket_url text DEFAULT ''::text NOT NULL,
+    provider_id text DEFAULT ''::text NOT NULL,
+    link_id uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT native_issue_ticket_receipts_check CHECK ((((state = ANY (ARRAY['ready'::text, 'dispatching'::text])) AND (ticket_url = ''::text) AND (provider_id = ''::text) AND (link_id IS NULL)) OR ((state = 'created'::text) AND (ticket_url <> ''::text) AND (provider_id <> ''::text) AND (link_id IS NULL)) OR ((state = 'linked'::text) AND (ticket_url <> ''::text) AND (provider_id <> ''::text) AND (link_id IS NOT NULL)))),
+    CONSTRAINT native_issue_ticket_receipts_check1 CHECK (((state <> 'dispatching'::text) OR ((claim_id IS NOT NULL) AND (recover_after IS NOT NULL)))),
+    CONSTRAINT native_issue_ticket_receipts_provider_id_check CHECK ((octet_length(provider_id) <= 256)),
+    CONSTRAINT native_issue_ticket_receipts_request_hash_check CHECK ((request_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT native_issue_ticket_receipts_state_check CHECK ((state = ANY (ARRAY['ready'::text, 'dispatching'::text, 'created'::text, 'linked'::text]))),
+    CONSTRAINT native_issue_ticket_receipts_ticket_url_check CHECK ((octet_length(ticket_url) <= 512))
+);
+
+
+--
 -- Name: node_join_jobs; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -32861,22 +33967,6 @@ CREATE TABLE public.org_invitations (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT org_invitations_role_chk CHECK ((role = ANY (ARRAY['admin'::text, 'developer'::text, 'viewer'::text, 'billing'::text]))),
     CONSTRAINT org_invitations_state_chk CHECK ((((consumed_at IS NULL) AND (revoked_at IS NULL)) OR ((consumed_at IS NOT NULL) AND (revoked_at IS NULL)) OR ((consumed_at IS NULL) AND (revoked_at IS NOT NULL))))
-);
-
-
---
--- Name: org_memberships; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.org_memberships (
-    org_id uuid NOT NULL,
-    account_id uuid NOT NULL,
-    role text NOT NULL,
-    invited_by_account_id uuid,
-    joined_at timestamp with time zone DEFAULT now() NOT NULL,
-    removed_at timestamp with time zone,
-    CONSTRAINT org_memberships_removed_role_chk CHECK (((removed_at IS NULL) OR (role = ANY (ARRAY['admin'::text, 'developer'::text, 'viewer'::text, 'billing'::text])))),
-    CONSTRAINT org_memberships_role_chk CHECK ((role = ANY (ARRAY['owner'::text, 'admin'::text, 'developer'::text, 'viewer'::text, 'billing'::text])))
 );
 
 
@@ -39832,6 +40922,14 @@ ALTER TABLE ONLY public.app_health_history
 
 
 --
+-- Name: app_issue_frequency_alert_policies app_issue_frequency_alert_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_issue_frequency_alert_policies
+    ADD CONSTRAINT app_issue_frequency_alert_policies_pkey PRIMARY KEY (app_id);
+
+
+--
 -- Name: app_issue_impact_alert_policies app_issue_impact_alert_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -39845,6 +40943,46 @@ ALTER TABLE ONLY public.app_issue_impact_alert_policies
 
 ALTER TABLE ONLY public.app_issue_ownership_rules
     ADD CONSTRAINT app_issue_ownership_rules_pkey PRIMARY KEY (app_id, rule_order);
+
+
+--
+-- Name: app_issue_saved_views app_issue_saved_views_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_issue_saved_views
+    ADD CONSTRAINT app_issue_saved_views_pkey PRIMARY KEY (app_id, view_key);
+
+
+--
+-- Name: app_issue_team_members app_issue_team_members_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_issue_team_members
+    ADD CONSTRAINT app_issue_team_members_pkey PRIMARY KEY (team_id, account_id);
+
+
+--
+-- Name: app_issue_teams app_issue_teams_app_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_issue_teams
+    ADD CONSTRAINT app_issue_teams_app_id_id_key UNIQUE (app_id, id);
+
+
+--
+-- Name: app_issue_teams app_issue_teams_app_id_team_key_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_issue_teams
+    ADD CONSTRAINT app_issue_teams_app_id_team_key_key UNIQUE (app_id, team_key);
+
+
+--
+-- Name: app_issue_teams app_issue_teams_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_issue_teams
+    ADD CONSTRAINT app_issue_teams_pkey PRIMARY KEY (id);
 
 
 --
@@ -43016,6 +44154,70 @@ ALTER TABLE ONLY public.issue_activity
 
 
 --
+-- Name: issue_application_escalation_policies issue_application_escalation_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_application_escalation_policies
+    ADD CONSTRAINT issue_application_escalation_policies_pkey PRIMARY KEY (app_id);
+
+
+--
+-- Name: issue_application_reminder_policies issue_application_reminder_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_application_reminder_policies
+    ADD CONSTRAINT issue_application_reminder_policies_pkey PRIMARY KEY (app_id);
+
+
+--
+-- Name: issue_application_reminders issue_application_reminders_issue_id_response_id_kind_seque_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_application_reminders
+    ADD CONSTRAINT issue_application_reminders_issue_id_response_id_kind_seque_key UNIQUE (issue_id, response_id, kind, sequence);
+
+
+--
+-- Name: issue_application_reminders issue_application_reminders_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_application_reminders
+    ADD CONSTRAINT issue_application_reminders_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: issue_application_slack_policies issue_application_slack_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_application_slack_policies
+    ADD CONSTRAINT issue_application_slack_policies_pkey PRIMARY KEY (app_id);
+
+
+--
+-- Name: issue_application_triage_activity issue_application_triage_activity_issue_id_revision_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_application_triage_activity
+    ADD CONSTRAINT issue_application_triage_activity_issue_id_revision_key UNIQUE (issue_id, revision);
+
+
+--
+-- Name: issue_application_triage_activity issue_application_triage_activity_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_application_triage_activity
+    ADD CONSTRAINT issue_application_triage_activity_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: issue_application_triage issue_application_triage_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_application_triage
+    ADD CONSTRAINT issue_application_triage_pkey PRIMARY KEY (issue_id);
+
+
+--
 -- Name: issue_events issue_events_id_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -43029,6 +44231,14 @@ ALTER TABLE ONLY public.issue_events
 
 ALTER TABLE ONLY public.issue_events
     ADD CONSTRAINT issue_events_pkey PRIMARY KEY (app_id, deployment_id, event_id);
+
+
+--
+-- Name: issue_frequency_alert_receipts issue_frequency_alert_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_frequency_alert_receipts
+    ADD CONSTRAINT issue_frequency_alert_receipts_pkey PRIMARY KEY (app_id, rule_key, issue_id);
 
 
 --
@@ -43072,6 +44282,94 @@ ALTER TABLE ONLY public.issue_resolutions
 
 
 --
+-- Name: issue_slack_action_messages issue_slack_action_messages_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_slack_action_messages
+    ADD CONSTRAINT issue_slack_action_messages_pkey PRIMARY KEY (delivery_id);
+
+
+--
+-- Name: issue_slack_identities issue_slack_identities_app_id_account_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_slack_identities
+    ADD CONSTRAINT issue_slack_identities_app_id_account_id_key UNIQUE (app_id, account_id);
+
+
+--
+-- Name: issue_slack_identities issue_slack_identities_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_slack_identities
+    ADD CONSTRAINT issue_slack_identities_pkey PRIMARY KEY (app_id, slack_user_id);
+
+
+--
+-- Name: issue_slack_installations issue_slack_installations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_slack_installations
+    ADD CONSTRAINT issue_slack_installations_pkey PRIMARY KEY (app_id);
+
+
+--
+-- Name: issue_slack_interaction_policies issue_slack_interaction_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_slack_interaction_policies
+    ADD CONSTRAINT issue_slack_interaction_policies_pkey PRIMARY KEY (app_id);
+
+
+--
+-- Name: issue_slack_link_challenges issue_slack_link_challenges_app_id_request_key_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_slack_link_challenges
+    ADD CONSTRAINT issue_slack_link_challenges_app_id_request_key_key UNIQUE (app_id, request_key);
+
+
+--
+-- Name: issue_slack_link_challenges issue_slack_link_challenges_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_slack_link_challenges
+    ADD CONSTRAINT issue_slack_link_challenges_pkey PRIMARY KEY (token);
+
+
+--
+-- Name: issue_slack_oauth_flows issue_slack_oauth_flows_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_slack_oauth_flows
+    ADD CONSTRAINT issue_slack_oauth_flows_pkey PRIMARY KEY (app_id);
+
+
+--
+-- Name: issue_slack_oauth_flows issue_slack_oauth_flows_state_hash_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_slack_oauth_flows
+    ADD CONSTRAINT issue_slack_oauth_flows_state_hash_key UNIQUE (state_hash);
+
+
+--
+-- Name: issue_slack_routing_policies issue_slack_routing_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_slack_routing_policies
+    ADD CONSTRAINT issue_slack_routing_policies_pkey PRIMARY KEY (app_id);
+
+
+--
+-- Name: issue_source_map_artifacts issue_source_map_artifacts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_source_map_artifacts
+    ADD CONSTRAINT issue_source_map_artifacts_pkey PRIMARY KEY (app_id, deployment_id);
+
+
+--
 -- Name: issue_split_rules issue_split_rules_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -43101,6 +44399,230 @@ ALTER TABLE ONLY public.issue_split_rules
 
 ALTER TABLE ONLY public.issue_split_rules
     ADD CONSTRAINT issue_split_rules_target_issue_id_key UNIQUE (target_issue_id);
+
+
+--
+-- Name: issue_team_slack_deliveries issue_team_slack_deliveries_delivery_seq_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_team_slack_deliveries
+    ADD CONSTRAINT issue_team_slack_deliveries_delivery_seq_key UNIQUE (delivery_seq);
+
+
+--
+-- Name: issue_team_slack_deliveries issue_team_slack_deliveries_destination_id_destination_revi_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_team_slack_deliveries
+    ADD CONSTRAINT issue_team_slack_deliveries_destination_id_destination_revi_key UNIQUE (destination_id, destination_revision, notification_id);
+
+
+--
+-- Name: issue_team_slack_deliveries issue_team_slack_deliveries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_team_slack_deliveries
+    ADD CONSTRAINT issue_team_slack_deliveries_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: issue_team_slack_destinations issue_team_slack_destinations_app_id_team_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_team_slack_destinations
+    ADD CONSTRAINT issue_team_slack_destinations_app_id_team_id_key UNIQUE (app_id, team_id);
+
+
+--
+-- Name: issue_team_slack_destinations issue_team_slack_destinations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_team_slack_destinations
+    ADD CONSTRAINT issue_team_slack_destinations_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: issue_team_slack_threads issue_team_slack_threads_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_team_slack_threads
+    ADD CONSTRAINT issue_team_slack_threads_pkey PRIMARY KEY (destination_id, destination_revision, incident_id, channel_id);
+
+
+--
+-- Name: issue_tracker_auto_sync issue_tracker_auto_sync_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_tracker_auto_sync
+    ADD CONSTRAINT issue_tracker_auto_sync_pkey PRIMARY KEY (link_id);
+
+
+--
+-- Name: issue_tracker_callback_diagnostics issue_tracker_callback_diagnostics_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_tracker_callback_diagnostics
+    ADD CONSTRAINT issue_tracker_callback_diagnostics_pkey PRIMARY KEY (app_id);
+
+
+--
+-- Name: issue_tracker_callbacks issue_tracker_callbacks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_tracker_callbacks
+    ADD CONSTRAINT issue_tracker_callbacks_pkey PRIMARY KEY (scope_key, delivery_id);
+
+
+--
+-- Name: issue_tracker_callbacks issue_tracker_callbacks_scope_key_payload_hash_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_tracker_callbacks
+    ADD CONSTRAINT issue_tracker_callbacks_scope_key_payload_hash_key UNIQUE (scope_key, payload_hash);
+
+
+--
+-- Name: issue_tracker_inbound_guards issue_tracker_inbound_guards_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_tracker_inbound_guards
+    ADD CONSTRAINT issue_tracker_inbound_guards_pkey PRIMARY KEY (app_id);
+
+
+--
+-- Name: issue_tracker_linear_connections issue_tracker_linear_connections_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_tracker_linear_connections
+    ADD CONSTRAINT issue_tracker_linear_connections_pkey PRIMARY KEY (app_id);
+
+
+--
+-- Name: issue_tracker_linear_oauth_flows issue_tracker_linear_oauth_flows_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_tracker_linear_oauth_flows
+    ADD CONSTRAINT issue_tracker_linear_oauth_flows_pkey PRIMARY KEY (app_id);
+
+
+--
+-- Name: issue_tracker_linear_oauth_flows issue_tracker_linear_oauth_flows_state_hash_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_tracker_linear_oauth_flows
+    ADD CONSTRAINT issue_tracker_linear_oauth_flows_state_hash_key UNIQUE (state_hash);
+
+
+--
+-- Name: issue_tracker_links issue_tracker_links_issue_id_provider_external_key_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_tracker_links
+    ADD CONSTRAINT issue_tracker_links_issue_id_provider_external_key_key UNIQUE (issue_id, provider, external_key);
+
+
+--
+-- Name: issue_tracker_links issue_tracker_links_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_tracker_links
+    ADD CONSTRAINT issue_tracker_links_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: issue_tracker_sync_notifications issue_tracker_notification_incident_kind_sequence; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_tracker_sync_notifications
+    ADD CONSTRAINT issue_tracker_notification_incident_kind_sequence UNIQUE (incident_id, kind, reminder_sequence);
+
+
+--
+-- Name: issue_tracker_source_guards issue_tracker_source_guards_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_tracker_source_guards
+    ADD CONSTRAINT issue_tracker_source_guards_pkey PRIMARY KEY (issue_id);
+
+
+--
+-- Name: issue_tracker_sync_escalation_policies issue_tracker_sync_escalation_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_tracker_sync_escalation_policies
+    ADD CONSTRAINT issue_tracker_sync_escalation_policies_pkey PRIMARY KEY (app_id);
+
+
+--
+-- Name: issue_tracker_sync_history issue_tracker_sync_history_claim_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_tracker_sync_history
+    ADD CONSTRAINT issue_tracker_sync_history_claim_key UNIQUE (link_id, claim_id);
+
+
+--
+-- Name: issue_tracker_sync_history issue_tracker_sync_history_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_tracker_sync_history
+    ADD CONSTRAINT issue_tracker_sync_history_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: issue_tracker_sync_incidents issue_tracker_sync_incidents_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_tracker_sync_incidents
+    ADD CONSTRAINT issue_tracker_sync_incidents_pkey PRIMARY KEY (link_id);
+
+
+--
+-- Name: issue_tracker_sync_notification_policies issue_tracker_sync_notification_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_tracker_sync_notification_policies
+    ADD CONSTRAINT issue_tracker_sync_notification_policies_pkey PRIMARY KEY (app_id);
+
+
+--
+-- Name: issue_tracker_sync_notifications issue_tracker_sync_notifications_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_tracker_sync_notifications
+    ADD CONSTRAINT issue_tracker_sync_notifications_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: issue_tracker_sync_reminder_policies issue_tracker_sync_reminder_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_tracker_sync_reminder_policies
+    ADD CONSTRAINT issue_tracker_sync_reminder_policies_pkey PRIMARY KEY (app_id);
+
+
+--
+-- Name: issue_tracker_sync_triage_activity issue_tracker_sync_triage_activity_incident_id_revision_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_tracker_sync_triage_activity
+    ADD CONSTRAINT issue_tracker_sync_triage_activity_incident_id_revision_key UNIQUE (incident_id, revision);
+
+
+--
+-- Name: issue_tracker_sync_triage_activity issue_tracker_sync_triage_activity_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_tracker_sync_triage_activity
+    ADD CONSTRAINT issue_tracker_sync_triage_activity_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: issue_tracker_sync_triage issue_tracker_sync_triage_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_tracker_sync_triage
+    ADD CONSTRAINT issue_tracker_sync_triage_pkey PRIMARY KEY (incident_id);
 
 
 --
@@ -43997,6 +45519,14 @@ ALTER TABLE ONLY public.mirror_rules
 
 ALTER TABLE ONLY public.mirror_slot_leases
     ADD CONSTRAINT mirror_slot_leases_pkey PRIMARY KEY (lease_id);
+
+
+--
+-- Name: native_issue_ticket_receipts native_issue_ticket_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.native_issue_ticket_receipts
+    ADD CONSTRAINT native_issue_ticket_receipts_pkey PRIMARY KEY (account_id, request_id);
 
 
 --
@@ -48011,6 +49541,13 @@ CREATE UNIQUE INDEX app_issues_scope_identity_idx ON public.app_issues USING btr
 
 
 --
+-- Name: app_issues_team_inbox_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX app_issues_team_inbox_idx ON public.app_issues USING btree (app_id, assignee_team_id, last_seen_at DESC, id DESC) WHERE (assignee_team_id IS NOT NULL);
+
+
+--
 -- Name: app_log_drain_delivery_analytics_retention_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -51462,6 +52999,139 @@ CREATE INDEX issue_ingest_tokens_app_idx ON public.issue_ingest_tokens USING btr
 
 
 --
+-- Name: issue_slack_activity_delivery; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX issue_slack_activity_delivery ON public.issue_team_slack_deliveries USING btree (activity_id) WHERE (activity_id IS NOT NULL);
+
+
+--
+-- Name: issue_slack_application_history; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX issue_slack_application_history ON public.issue_team_slack_deliveries USING btree (created_at, delivery_seq) WHERE (activity_id IS NOT NULL);
+
+
+--
+-- Name: issue_slack_identities_account; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX issue_slack_identities_account ON public.issue_slack_identities USING btree (account_id);
+
+
+--
+-- Name: issue_slack_installations_workspace; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX issue_slack_installations_workspace ON public.issue_slack_installations USING btree (slack_app_id, workspace_id);
+
+
+--
+-- Name: issue_slack_link_challenges_expiry; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX issue_slack_link_challenges_expiry ON public.issue_slack_link_challenges USING btree (app_id, expires_at);
+
+
+--
+-- Name: issue_slack_oauth_flows_expiry; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX issue_slack_oauth_flows_expiry ON public.issue_slack_oauth_flows USING btree (expires_at);
+
+
+--
+-- Name: issue_slack_reminder_once; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX issue_slack_reminder_once ON public.issue_team_slack_deliveries USING btree (reminder_id) WHERE (reminder_id IS NOT NULL);
+
+
+--
+-- Name: issue_team_slack_delivery_due; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX issue_team_slack_delivery_due ON public.issue_team_slack_deliveries USING btree (next_attempt_at, delivery_seq) WHERE (status = ANY (ARRAY['pending'::text, 'failed'::text, 'in_flight'::text]));
+
+
+--
+-- Name: issue_team_slack_delivery_thread; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX issue_team_slack_delivery_thread ON public.issue_team_slack_deliveries USING btree (destination_id, destination_revision, incident_id, channel_id, delivery_seq);
+
+
+--
+-- Name: issue_tracker_auto_sync_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX issue_tracker_auto_sync_due_idx ON public.issue_tracker_auto_sync USING btree (next_check_at, link_id) WHERE (enabled AND (outcome = ANY (ARRAY['matched'::text, 'pending'::text, 'applied'::text, 'error'::text])));
+
+
+--
+-- Name: issue_tracker_auto_sync_review_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX issue_tracker_auto_sync_review_idx ON public.issue_tracker_auto_sync USING btree (app_id, link_id) WHERE (enabled AND ((reason = 'fixing_deployment_required'::text) OR (outcome = ANY (ARRAY['blocked'::text, 'conflict'::text, 'error'::text])) OR (pending_state <> ''::text)));
+
+
+--
+-- Name: issue_tracker_callbacks_pending_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX issue_tracker_callbacks_pending_idx ON public.issue_tracker_callbacks USING btree (received_at) WHERE (processed_at IS NULL);
+
+
+--
+-- Name: issue_tracker_callbacks_retention_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX issue_tracker_callbacks_retention_idx ON public.issue_tracker_callbacks USING btree (processed_at) WHERE (processed_at IS NOT NULL);
+
+
+--
+-- Name: issue_tracker_linear_oauth_flows_expiry_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX issue_tracker_linear_oauth_flows_expiry_idx ON public.issue_tracker_linear_oauth_flows USING btree (expires_at);
+
+
+--
+-- Name: issue_tracker_links_page_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX issue_tracker_links_page_idx ON public.issue_tracker_links USING btree (issue_id, created_at DESC, id DESC);
+
+
+--
+-- Name: issue_tracker_sync_history_page_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX issue_tracker_sync_history_page_idx ON public.issue_tracker_sync_history USING btree (link_id, created_at DESC, id DESC);
+
+
+--
+-- Name: issue_tracker_sync_notifications_link_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX issue_tracker_sync_notifications_link_idx ON public.issue_tracker_sync_notifications USING btree (link_id, created_at DESC, id DESC);
+
+
+--
+-- Name: issue_tracker_sync_notifications_page_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX issue_tracker_sync_notifications_page_idx ON public.issue_tracker_sync_notifications USING btree (app_id, created_at DESC, id DESC);
+
+
+--
+-- Name: issue_tracker_sync_triage_link_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX issue_tracker_sync_triage_link_idx ON public.issue_tracker_sync_triage USING btree (link_id);
+
+
+--
 -- Name: job_registry_credentials_account_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -52404,6 +54074,13 @@ CREATE INDEX mirror_rules_source_idx ON public.mirror_rules USING btree (source_
 --
 
 CREATE INDEX mirror_slot_leases_rule_expiry_idx ON public.mirror_slot_leases USING btree (mirror_rule_id, expires_at);
+
+
+--
+-- Name: native_issue_ticket_receipts_issue_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX native_issue_ticket_receipts_issue_idx ON public.native_issue_ticket_receipts USING btree (issue_id);
 
 
 --
@@ -57888,6 +59565,125 @@ CREATE TRIGGER issue_group_link_guard BEFORE INSERT OR UPDATE ON public.issue_gr
 
 
 --
+-- Name: apps issue_inbound_app; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER issue_inbound_app AFTER UPDATE ON public.apps FOR EACH ROW WHEN ((((((((((old.account_id IS DISTINCT FROM new.account_id) OR (old.status IS DISTINCT FROM new.status)) OR (old.deleted_at IS DISTINCT FROM new.deleted_at)) OR (old.github_install_id IS DISTINCT FROM new.github_install_id)) OR (old.github_repo_full_name IS DISTINCT FROM new.github_repo_full_name)) OR (old.github_owner_id IS DISTINCT FROM new.github_owner_id)) OR (old.github_repo_id IS DISTINCT FROM new.github_repo_id)) OR (old.github_install_binding_id IS DISTINCT FROM new.github_install_binding_id)) OR (old.github_install_account_id IS DISTINCT FROM new.github_install_account_id))) EXECUTE FUNCTION public.issue_tracker_inbound_bump();
+
+
+--
+-- Name: issue_group_links issue_inbound_group; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER issue_inbound_group AFTER INSERT OR DELETE OR UPDATE ON public.issue_group_links FOR EACH ROW EXECUTE FUNCTION public.issue_tracker_inbound_bump();
+
+
+--
+-- Name: github_installations issue_inbound_install_delete; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER issue_inbound_install_delete AFTER DELETE ON public.github_installations FOR EACH ROW EXECUTE FUNCTION public.issue_tracker_inbound_install_bump();
+
+
+--
+-- Name: github_installations issue_inbound_install_insert; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER issue_inbound_install_insert AFTER INSERT ON public.github_installations FOR EACH ROW EXECUTE FUNCTION public.issue_tracker_inbound_install_bump();
+
+
+--
+-- Name: github_installations issue_inbound_install_update; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER issue_inbound_install_update AFTER UPDATE ON public.github_installations FOR EACH ROW WHEN ((((old.account_id IS DISTINCT FROM new.account_id) OR (old.installation_id IS DISTINCT FROM new.installation_id)) OR (old.org_id IS DISTINCT FROM new.org_id))) EXECUTE FUNCTION public.issue_tracker_inbound_install_bump();
+
+
+--
+-- Name: app_issues issue_inbound_intent_delete; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER issue_inbound_intent_delete AFTER DELETE ON public.app_issues FOR EACH ROW EXECUTE FUNCTION public.issue_tracker_inbound_bump();
+
+
+--
+-- Name: app_issues issue_inbound_intent_insert; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER issue_inbound_intent_insert AFTER INSERT ON public.app_issues FOR EACH ROW EXECUTE FUNCTION public.issue_tracker_inbound_bump();
+
+
+--
+-- Name: app_issues issue_inbound_intent_update; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER issue_inbound_intent_update AFTER UPDATE ON public.app_issues FOR EACH ROW WHEN ((((((((((((old.state IS DISTINCT FROM new.state) OR (old.assignee_account_id IS DISTINCT FROM new.assignee_account_id)) OR (old.assignee_team_id IS DISTINCT FROM new.assignee_team_id)) OR (old.resolved_at IS DISTINCT FROM new.resolved_at)) OR (old.fixed_deployment_id IS DISTINCT FROM new.fixed_deployment_id)) OR (old.fixed_deployment_created_at IS DISTINCT FROM new.fixed_deployment_created_at)) OR (old.ignored_until IS DISTINCT FROM new.ignored_until)) OR (old.fingerprint IS DISTINCT FROM new.fingerprint)) OR (old.grouping_version IS DISTINCT FROM new.grouping_version)) OR (old.environment IS DISTINCT FROM new.environment)) OR (old.split_source_issue_id IS DISTINCT FROM new.split_source_issue_id))) EXECUTE FUNCTION public.issue_tracker_inbound_bump();
+
+
+--
+-- Name: issue_tracker_linear_connections issue_inbound_linear_delete; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER issue_inbound_linear_delete AFTER DELETE ON public.issue_tracker_linear_connections FOR EACH ROW EXECUTE FUNCTION public.issue_tracker_inbound_bump();
+
+
+--
+-- Name: issue_tracker_linear_connections issue_inbound_linear_insert; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER issue_inbound_linear_insert AFTER INSERT ON public.issue_tracker_linear_connections FOR EACH ROW EXECUTE FUNCTION public.issue_tracker_inbound_bump();
+
+
+--
+-- Name: issue_tracker_linear_connections issue_inbound_linear_update; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER issue_inbound_linear_update AFTER UPDATE ON public.issue_tracker_linear_connections FOR EACH ROW WHEN (((((((((old.revision IS DISTINCT FROM new.revision) OR (old.account_id IS DISTINCT FROM new.account_id)) OR (old.connected IS DISTINCT FROM new.connected)) OR (old.workspace_id IS DISTINCT FROM new.workspace_id)) OR (old.team_id IS DISTINCT FROM new.team_id)) OR (old.viewer_id IS DISTINCT FROM new.viewer_id)) OR (old.auth_method IS DISTINCT FROM new.auth_method)) OR ((old.oauth_status = ANY (ARRAY['reconnect_required'::text, 'revoking'::text])) IS DISTINCT FROM (new.oauth_status = ANY (ARRAY['reconnect_required'::text, 'revoking'::text]))))) EXECUTE FUNCTION public.issue_tracker_inbound_bump();
+
+
+--
+-- Name: issue_tracker_links issue_inbound_links; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER issue_inbound_links AFTER INSERT OR DELETE OR UPDATE ON public.issue_tracker_links FOR EACH ROW EXECUTE FUNCTION public.issue_tracker_inbound_bump();
+
+
+--
+-- Name: issue_tracker_auto_sync issue_inbound_policy_delete; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER issue_inbound_policy_delete AFTER DELETE ON public.issue_tracker_auto_sync FOR EACH ROW EXECUTE FUNCTION public.issue_tracker_inbound_bump();
+
+
+--
+-- Name: issue_tracker_auto_sync issue_inbound_policy_insert; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER issue_inbound_policy_insert AFTER INSERT ON public.issue_tracker_auto_sync FOR EACH ROW EXECUTE FUNCTION public.issue_tracker_inbound_bump();
+
+
+--
+-- Name: issue_tracker_auto_sync issue_inbound_policy_update; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER issue_inbound_policy_update AFTER UPDATE ON public.issue_tracker_auto_sync FOR EACH ROW WHEN (((((((((((((((old.revision IS DISTINCT FROM new.revision) OR (old.enabled IS DISTINCT FROM new.enabled)) OR (old.source_issue_id IS DISTINCT FROM new.source_issue_id)) OR (old.binding_fingerprint IS DISTINCT FROM new.binding_fingerprint)) OR (old.baseline IS DISTINCT FROM new.baseline)) OR (old.source_state IS DISTINCT FROM new.source_state)) OR (old.pending_state IS DISTINCT FROM new.pending_state)) OR (old.outcome IS DISTINCT FROM new.outcome)) OR (old.reason IS DISTINCT FROM new.reason)) OR (old.claim_id IS DISTINCT FROM new.claim_id)) OR (old.direction IS DISTINCT FROM new.direction)) OR (old.source_revision IS DISTINCT FROM new.source_revision)) OR (old.pending_source_revision IS DISTINCT FROM new.pending_source_revision)) OR (old.observed_state IS DISTINCT FROM new.observed_state))) EXECUTE FUNCTION public.issue_tracker_inbound_bump();
+
+
+--
+-- Name: issue_split_rules issue_inbound_rules; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER issue_inbound_rules AFTER INSERT OR DELETE OR UPDATE ON public.issue_split_rules FOR EACH ROW EXECUTE FUNCTION public.issue_tracker_inbound_bump();
+
+
+--
+-- Name: accounts issue_slack_revoke_mfa_links; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER issue_slack_revoke_mfa_links AFTER UPDATE OF mfa_enrolled_at, mfa_required ON public.accounts FOR EACH ROW WHEN (((old.mfa_enrolled_at IS DISTINCT FROM new.mfa_enrolled_at) OR (old.mfa_required IS DISTINCT FROM new.mfa_required))) EXECUTE FUNCTION public.issue_slack_revoke_mfa_links();
+
+
+--
 -- Name: issue_split_rules issue_split_rule_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -60783,6 +62579,14 @@ ALTER TABLE ONLY public.app_health_history
 
 
 --
+-- Name: app_issue_frequency_alert_policies app_issue_frequency_alert_policies_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_issue_frequency_alert_policies
+    ADD CONSTRAINT app_issue_frequency_alert_policies_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
 -- Name: app_issue_impact_alert_policies app_issue_impact_alert_policies_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -60804,6 +62608,62 @@ ALTER TABLE ONLY public.app_issue_ownership_rules
 
 ALTER TABLE ONLY public.app_issue_ownership_rules
     ADD CONSTRAINT app_issue_ownership_rules_assignee_account_id_fkey FOREIGN KEY (assignee_account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_issue_ownership_rules app_issue_ownership_rules_team_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_issue_ownership_rules
+    ADD CONSTRAINT app_issue_ownership_rules_team_fkey FOREIGN KEY (app_id, assignee_team_id) REFERENCES public.app_issue_teams(app_id, id);
+
+
+--
+-- Name: app_issue_saved_views app_issue_saved_views_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_issue_saved_views
+    ADD CONSTRAINT app_issue_saved_views_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_issue_saved_views app_issue_saved_views_updated_by_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_issue_saved_views
+    ADD CONSTRAINT app_issue_saved_views_updated_by_account_id_fkey FOREIGN KEY (updated_by_account_id) REFERENCES public.accounts(id) ON DELETE SET NULL;
+
+
+--
+-- Name: app_issue_team_members app_issue_team_members_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_issue_team_members
+    ADD CONSTRAINT app_issue_team_members_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_issue_team_members app_issue_team_members_team_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_issue_team_members
+    ADD CONSTRAINT app_issue_team_members_team_id_fkey FOREIGN KEY (team_id) REFERENCES public.app_issue_teams(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_issue_teams app_issue_teams_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_issue_teams
+    ADD CONSTRAINT app_issue_teams_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_issue_teams app_issue_teams_updated_by_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_issue_teams
+    ADD CONSTRAINT app_issue_teams_updated_by_account_id_fkey FOREIGN KEY (updated_by_account_id) REFERENCES public.accounts(id) ON DELETE SET NULL;
 
 
 --
@@ -60836,6 +62696,14 @@ ALTER TABLE ONLY public.app_issues
 
 ALTER TABLE ONLY public.app_issues
     ADD CONSTRAINT app_issues_split_source_scope_fkey FOREIGN KEY (app_id, environment, split_source_issue_id) REFERENCES public.app_issues(app_id, environment, id) ON DELETE CASCADE;
+
+
+--
+-- Name: app_issues app_issues_team_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_issues
+    ADD CONSTRAINT app_issues_team_fkey FOREIGN KEY (app_id, assignee_team_id) REFERENCES public.app_issue_teams(app_id, id);
 
 
 --
@@ -64903,6 +66771,110 @@ ALTER TABLE ONLY public.issue_activity
 
 
 --
+-- Name: issue_application_escalation_policies issue_application_escalation_policies_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_application_escalation_policies
+    ADD CONSTRAINT issue_application_escalation_policies_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_application_escalation_policies issue_application_escalation_policies_team_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_application_escalation_policies
+    ADD CONSTRAINT issue_application_escalation_policies_team_id_fkey FOREIGN KEY (team_id) REFERENCES public.app_issue_teams(id) ON DELETE SET NULL;
+
+
+--
+-- Name: issue_application_reminder_policies issue_application_reminder_policies_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_application_reminder_policies
+    ADD CONSTRAINT issue_application_reminder_policies_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_application_reminders issue_application_reminders_issue_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_application_reminders
+    ADD CONSTRAINT issue_application_reminders_issue_id_fkey FOREIGN KEY (issue_id) REFERENCES public.app_issues(id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_application_reminders issue_application_reminders_responsibility_team_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_application_reminders
+    ADD CONSTRAINT issue_application_reminders_responsibility_team_id_fkey FOREIGN KEY (responsibility_team_id) REFERENCES public.app_issue_teams(id) ON DELETE SET NULL;
+
+
+--
+-- Name: issue_application_slack_policies issue_application_slack_policies_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_application_slack_policies
+    ADD CONSTRAINT issue_application_slack_policies_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_application_slack_policies issue_application_slack_policies_fallback_team_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_application_slack_policies
+    ADD CONSTRAINT issue_application_slack_policies_fallback_team_id_fkey FOREIGN KEY (fallback_team_id) REFERENCES public.app_issue_teams(id) ON DELETE SET NULL;
+
+
+--
+-- Name: issue_application_triage issue_application_triage_acknowledged_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_application_triage
+    ADD CONSTRAINT issue_application_triage_acknowledged_by_fkey FOREIGN KEY (acknowledged_by) REFERENCES public.accounts(id) ON DELETE SET NULL;
+
+
+--
+-- Name: issue_application_triage_activity issue_application_triage_activity_actor_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_application_triage_activity
+    ADD CONSTRAINT issue_application_triage_activity_actor_id_fkey FOREIGN KEY (actor_id) REFERENCES public.accounts(id) ON DELETE SET NULL;
+
+
+--
+-- Name: issue_application_triage_activity issue_application_triage_activity_issue_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_application_triage_activity
+    ADD CONSTRAINT issue_application_triage_activity_issue_id_fkey FOREIGN KEY (issue_id) REFERENCES public.app_issues(id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_application_triage issue_application_triage_escalation_team_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_application_triage
+    ADD CONSTRAINT issue_application_triage_escalation_team_id_fkey FOREIGN KEY (escalation_team_id) REFERENCES public.app_issue_teams(id) ON DELETE SET NULL;
+
+
+--
+-- Name: issue_application_triage issue_application_triage_issue_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_application_triage
+    ADD CONSTRAINT issue_application_triage_issue_id_fkey FOREIGN KEY (issue_id) REFERENCES public.app_issues(id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_application_triage issue_application_triage_snoozed_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_application_triage
+    ADD CONSTRAINT issue_application_triage_snoozed_by_fkey FOREIGN KEY (snoozed_by) REFERENCES public.accounts(id) ON DELETE SET NULL;
+
+
+--
 -- Name: issue_events issue_events_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -64924,6 +66896,22 @@ ALTER TABLE ONLY public.issue_events
 
 ALTER TABLE ONLY public.issue_events
     ADD CONSTRAINT issue_events_original_issue_id_fkey FOREIGN KEY (original_issue_id) REFERENCES public.app_issues(id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_frequency_alert_receipts issue_frequency_alert_receipts_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_frequency_alert_receipts
+    ADD CONSTRAINT issue_frequency_alert_receipts_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.app_issue_frequency_alert_policies(app_id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_frequency_alert_receipts issue_frequency_alert_receipts_issue_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_frequency_alert_receipts
+    ADD CONSTRAINT issue_frequency_alert_receipts_issue_id_fkey FOREIGN KEY (issue_id) REFERENCES public.app_issues(id) ON DELETE CASCADE;
 
 
 --
@@ -64991,6 +66979,134 @@ ALTER TABLE ONLY public.issue_resolutions
 
 
 --
+-- Name: issue_slack_action_messages issue_slack_action_messages_delivery_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_slack_action_messages
+    ADD CONSTRAINT issue_slack_action_messages_delivery_id_fkey FOREIGN KEY (delivery_id) REFERENCES public.issue_team_slack_deliveries(id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_slack_identities issue_slack_identities_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_slack_identities
+    ADD CONSTRAINT issue_slack_identities_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_slack_identities issue_slack_identities_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_slack_identities
+    ADD CONSTRAINT issue_slack_identities_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_slack_installations issue_slack_installations_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_slack_installations
+    ADD CONSTRAINT issue_slack_installations_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_slack_installations issue_slack_installations_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_slack_installations
+    ADD CONSTRAINT issue_slack_installations_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_slack_interaction_policies issue_slack_interaction_policies_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_slack_interaction_policies
+    ADD CONSTRAINT issue_slack_interaction_policies_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_slack_link_challenges issue_slack_link_challenges_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_slack_link_challenges
+    ADD CONSTRAINT issue_slack_link_challenges_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_slack_link_challenges issue_slack_link_challenges_delivery_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_slack_link_challenges
+    ADD CONSTRAINT issue_slack_link_challenges_delivery_id_fkey FOREIGN KEY (delivery_id) REFERENCES public.issue_slack_action_messages(delivery_id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_slack_oauth_flows issue_slack_oauth_flows_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_slack_oauth_flows
+    ADD CONSTRAINT issue_slack_oauth_flows_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_slack_oauth_flows issue_slack_oauth_flows_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_slack_oauth_flows
+    ADD CONSTRAINT issue_slack_oauth_flows_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_slack_routing_policies issue_slack_routing_policies_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_slack_routing_policies
+    ADD CONSTRAINT issue_slack_routing_policies_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_slack_routing_policies issue_slack_routing_policies_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_slack_routing_policies
+    ADD CONSTRAINT issue_slack_routing_policies_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_source_map_artifacts issue_source_map_artifacts_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_source_map_artifacts
+    ADD CONSTRAINT issue_source_map_artifacts_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_source_map_artifacts issue_source_map_artifacts_created_by_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_source_map_artifacts
+    ADD CONSTRAINT issue_source_map_artifacts_created_by_account_id_fkey FOREIGN KEY (created_by_account_id) REFERENCES public.accounts(id) ON DELETE SET NULL;
+
+
+--
+-- Name: issue_source_map_artifacts issue_source_map_artifacts_deployment_owner_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_source_map_artifacts
+    ADD CONSTRAINT issue_source_map_artifacts_deployment_owner_fkey FOREIGN KEY (deployment_id, app_id) REFERENCES public.deployments(id, app_id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_source_map_artifacts issue_source_map_artifacts_retired_by_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_source_map_artifacts
+    ADD CONSTRAINT issue_source_map_artifacts_retired_by_account_id_fkey FOREIGN KEY (retired_by_account_id) REFERENCES public.accounts(id) ON DELETE SET NULL;
+
+
+--
 -- Name: issue_split_rules issue_split_rules_app_id_environment_source_issue_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -65012,6 +67128,270 @@ ALTER TABLE ONLY public.issue_split_rules
 
 ALTER TABLE ONLY public.issue_split_rules
     ADD CONSTRAINT issue_split_rules_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_team_slack_deliveries issue_team_slack_deliveries_activity_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_team_slack_deliveries
+    ADD CONSTRAINT issue_team_slack_deliveries_activity_id_fkey FOREIGN KEY (activity_id) REFERENCES public.issue_activity(id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_team_slack_deliveries issue_team_slack_deliveries_destination_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_team_slack_deliveries
+    ADD CONSTRAINT issue_team_slack_deliveries_destination_id_fkey FOREIGN KEY (destination_id) REFERENCES public.issue_team_slack_destinations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_team_slack_deliveries issue_team_slack_deliveries_notification_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_team_slack_deliveries
+    ADD CONSTRAINT issue_team_slack_deliveries_notification_id_fkey FOREIGN KEY (notification_id) REFERENCES public.issue_tracker_sync_notifications(id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_team_slack_deliveries issue_team_slack_deliveries_reminder_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_team_slack_deliveries
+    ADD CONSTRAINT issue_team_slack_deliveries_reminder_id_fkey FOREIGN KEY (reminder_id) REFERENCES public.issue_application_reminders(id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_team_slack_destinations issue_team_slack_destinations_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_team_slack_destinations
+    ADD CONSTRAINT issue_team_slack_destinations_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_team_slack_destinations issue_team_slack_destinations_team_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_team_slack_destinations
+    ADD CONSTRAINT issue_team_slack_destinations_team_id_fkey FOREIGN KEY (team_id) REFERENCES public.app_issue_teams(id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_team_slack_threads issue_team_slack_threads_destination_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_team_slack_threads
+    ADD CONSTRAINT issue_team_slack_threads_destination_id_fkey FOREIGN KEY (destination_id) REFERENCES public.issue_team_slack_destinations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_tracker_auto_sync issue_tracker_auto_sync_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_tracker_auto_sync
+    ADD CONSTRAINT issue_tracker_auto_sync_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_tracker_auto_sync issue_tracker_auto_sync_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_tracker_auto_sync
+    ADD CONSTRAINT issue_tracker_auto_sync_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_tracker_auto_sync issue_tracker_auto_sync_link_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_tracker_auto_sync
+    ADD CONSTRAINT issue_tracker_auto_sync_link_id_fkey FOREIGN KEY (link_id) REFERENCES public.issue_tracker_links(id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_tracker_auto_sync issue_tracker_auto_sync_source_issue_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_tracker_auto_sync
+    ADD CONSTRAINT issue_tracker_auto_sync_source_issue_id_fkey FOREIGN KEY (source_issue_id) REFERENCES public.app_issues(id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_tracker_callback_diagnostics issue_tracker_callback_diagnostics_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_tracker_callback_diagnostics
+    ADD CONSTRAINT issue_tracker_callback_diagnostics_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_tracker_callback_diagnostics issue_tracker_callback_diagnostics_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_tracker_callback_diagnostics
+    ADD CONSTRAINT issue_tracker_callback_diagnostics_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.issue_tracker_linear_connections(app_id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_tracker_callbacks issue_tracker_callbacks_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_tracker_callbacks
+    ADD CONSTRAINT issue_tracker_callbacks_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_tracker_inbound_guards issue_tracker_inbound_guards_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_tracker_inbound_guards
+    ADD CONSTRAINT issue_tracker_inbound_guards_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_tracker_linear_connections issue_tracker_linear_connections_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_tracker_linear_connections
+    ADD CONSTRAINT issue_tracker_linear_connections_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_tracker_linear_connections issue_tracker_linear_connections_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_tracker_linear_connections
+    ADD CONSTRAINT issue_tracker_linear_connections_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_tracker_linear_oauth_flows issue_tracker_linear_oauth_flows_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_tracker_linear_oauth_flows
+    ADD CONSTRAINT issue_tracker_linear_oauth_flows_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_tracker_linear_oauth_flows issue_tracker_linear_oauth_flows_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_tracker_linear_oauth_flows
+    ADD CONSTRAINT issue_tracker_linear_oauth_flows_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_tracker_links issue_tracker_links_created_by_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_tracker_links
+    ADD CONSTRAINT issue_tracker_links_created_by_account_id_fkey FOREIGN KEY (created_by_account_id) REFERENCES public.accounts(id) ON DELETE SET NULL;
+
+
+--
+-- Name: issue_tracker_links issue_tracker_links_issue_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_tracker_links
+    ADD CONSTRAINT issue_tracker_links_issue_id_fkey FOREIGN KEY (issue_id) REFERENCES public.app_issues(id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_tracker_links issue_tracker_links_updated_by_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_tracker_links
+    ADD CONSTRAINT issue_tracker_links_updated_by_account_id_fkey FOREIGN KEY (updated_by_account_id) REFERENCES public.accounts(id) ON DELETE SET NULL;
+
+
+--
+-- Name: issue_tracker_source_guards issue_tracker_source_guards_issue_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_tracker_source_guards
+    ADD CONSTRAINT issue_tracker_source_guards_issue_id_fkey FOREIGN KEY (issue_id) REFERENCES public.app_issues(id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_tracker_sync_escalation_policies issue_tracker_sync_escalation_policies_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_tracker_sync_escalation_policies
+    ADD CONSTRAINT issue_tracker_sync_escalation_policies_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_tracker_sync_history issue_tracker_sync_history_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_tracker_sync_history
+    ADD CONSTRAINT issue_tracker_sync_history_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_tracker_sync_history issue_tracker_sync_history_link_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_tracker_sync_history
+    ADD CONSTRAINT issue_tracker_sync_history_link_id_fkey FOREIGN KEY (link_id) REFERENCES public.issue_tracker_links(id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_tracker_sync_incidents issue_tracker_sync_incidents_link_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_tracker_sync_incidents
+    ADD CONSTRAINT issue_tracker_sync_incidents_link_id_fkey FOREIGN KEY (link_id) REFERENCES public.issue_tracker_links(id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_tracker_sync_notification_policies issue_tracker_sync_notification_policies_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_tracker_sync_notification_policies
+    ADD CONSTRAINT issue_tracker_sync_notification_policies_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_tracker_sync_notifications issue_tracker_sync_notifications_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_tracker_sync_notifications
+    ADD CONSTRAINT issue_tracker_sync_notifications_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_tracker_sync_notifications issue_tracker_sync_notifications_link_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_tracker_sync_notifications
+    ADD CONSTRAINT issue_tracker_sync_notifications_link_id_fkey FOREIGN KEY (link_id) REFERENCES public.issue_tracker_links(id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_tracker_sync_reminder_policies issue_tracker_sync_reminder_policies_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_tracker_sync_reminder_policies
+    ADD CONSTRAINT issue_tracker_sync_reminder_policies_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_tracker_sync_triage_activity issue_tracker_sync_triage_activity_incident_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_tracker_sync_triage_activity
+    ADD CONSTRAINT issue_tracker_sync_triage_activity_incident_id_fkey FOREIGN KEY (incident_id) REFERENCES public.issue_tracker_sync_triage(incident_id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_tracker_sync_triage issue_tracker_sync_triage_link_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_tracker_sync_triage
+    ADD CONSTRAINT issue_tracker_sync_triage_link_id_fkey FOREIGN KEY (link_id) REFERENCES public.issue_tracker_links(id) ON DELETE CASCADE;
 
 
 --
@@ -66004,6 +68384,30 @@ ALTER TABLE ONLY public.mirror_rules
 
 ALTER TABLE ONLY public.mirror_slot_leases
     ADD CONSTRAINT mirror_slot_leases_mirror_rule_id_fkey FOREIGN KEY (mirror_rule_id) REFERENCES public.mirror_rules(id) ON DELETE CASCADE;
+
+
+--
+-- Name: native_issue_ticket_receipts native_issue_ticket_receipts_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.native_issue_ticket_receipts
+    ADD CONSTRAINT native_issue_ticket_receipts_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: native_issue_ticket_receipts native_issue_ticket_receipts_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.native_issue_ticket_receipts
+    ADD CONSTRAINT native_issue_ticket_receipts_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: native_issue_ticket_receipts native_issue_ticket_receipts_issue_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.native_issue_ticket_receipts
+    ADD CONSTRAINT native_issue_ticket_receipts_issue_id_fkey FOREIGN KEY (issue_id) REFERENCES public.app_issues(id) ON DELETE CASCADE;
 
 
 --

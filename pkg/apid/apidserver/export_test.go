@@ -13,6 +13,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"github.com/onebox-faas/faas/pkg/apid/issueslack"
 	"io"
 	"log/slog"
 	"net"
@@ -30,12 +31,14 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/appevents"
 	"github.com/onebox-faas/faas/pkg/apid/durable"
 	"github.com/onebox-faas/faas/pkg/apid/edgerules"
+	"github.com/onebox-faas/faas/pkg/apid/issuetrackers"
 	"github.com/onebox-faas/faas/pkg/apid/managedrealtime"
 	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/apid/operation"
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
+	"github.com/onebox-faas/faas/pkg/issuetracker"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/profiling"
@@ -1323,6 +1326,46 @@ func (r *fakeObjectProvider) CreateErr() *error  { return &r.createErr }
 func (r *fakeObjectProvider) DeleteErr() *error  { return &r.deleteErr }
 func (r *server) CleanupDevSessionResources(ctx context.Context, app state.App) error {
 	return r.cleanupDevSessionResources(ctx, app)
+}
+
+func IssueNativeSetClients(e pgHandlerEnv, gh GithubdClient, provider issuetracker.StatusProvider) {
+	e.s.githubd = gh
+	e.s.nativeTrackerProvider = provider
+}
+func IssueNativeStore(e pgHandlerEnv) state.Store     { return e.store }
+func IssueNativeAccount(e pgHandlerEnv) state.Account { return e.acct }
+
+func IssueNativeSetTicketProvider(e pgHandlerEnv, p issuetracker.Provider) {
+	e.s.nativeTicketProvider = p
+}
+
+func IssueNativeRunAutoSyncBatch(e pgHandlerEnv, ctx context.Context) {
+	e.s.runIssueTrackerAutoSyncBatch(ctx)
+}
+func IssueNativeAutoSyncDue(e pgHandlerEnv, ctx context.Context, link string) error {
+	_, err := e.pool.Exec(ctx, "UPDATE issue_tracker_auto_sync SET next_check_at=now(),claim_until=now()-interval '1 second' WHERE link_id=$1", link)
+	return err
+}
+
+func IssueNativeSetLinearVerifier(e pgHandlerEnv, p issuetrackers.LinearConnectionVerifier) {
+	e.s.nativeLinearVerifier = p
+}
+
+func IssueNativeTicketExpire(e pgHandlerEnv, ctx context.Context, account, request string) error {
+	_, err := e.pool.Exec(ctx, "UPDATE native_issue_ticket_receipts SET recover_after=now()-interval '1 second' WHERE account_id=$1 AND request_id=$2", account, request)
+	return err
+}
+
+func IssueNativeSetLinearOAuth(e pgHandlerEnv, cfg issuetracker.LinearOAuthConfig, provider issuetracker.LinearOAuthProvider) {
+	e.s.linearOAuthConfig = cfg
+	e.s.linearOAuthProvider = provider
+}
+
+func (r *server) IssueSlackResponses() **issueslack.Client { return &r.issueSlackResponses }
+
+func IssueSetSlackOAuth(e pgHandlerEnv, cfg issueslack.OAuthConfig, client *issueslack.Client) {
+	e.s.issueSlackOAuthConfig = cfg
+	e.s.issueSlackOAuthClient = client
 }
 
 func (s *server) ConfigureCheckedReleaseCatalog(t *testing.T, accountID string) {

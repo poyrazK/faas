@@ -98,6 +98,20 @@ const (
 // /dashboard/account/set-password into the public spec — the
 // dashboard auth surface is now real auth, not a backstop fallback.
 var routeExclude = map[string]bool{
+	"POST /integrations/slack/actions":                     true, // ADR-1497 signed managed Slack actions.
+	"POST /integrations/slack/events":                      true, // ADR-1497 signed Slack uninstall/revocation callbacks.
+	"POST /integrations/slack/issues/{app_id}":             true, // ADR-1496 Slack-signed provider callback; no account credentials
+	"GET /dashboard/apps/{slug}/issues/responses":          true, // ADR-1495 authenticated browser-only response inbox
+	"GET /dashboard/apps/{slug}/issues/{issue_id}/triage":  true, // ADR-1492 authenticated browser-only native response surface
+	"POST /dashboard/apps/{slug}/issues/{issue_id}/triage": true, // ADR-1492 authenticated browser-only native response surface
+
+	"GET /dashboard/apps/{slug}/issues/tracker-notifications":                           true, // authenticated browser-only tracker review/notification surface
+	"POST /dashboard/apps/{slug}/issues/tracker-notifications":                          true, // authenticated browser-only tracker review/notification surface
+	"GET /dashboard/apps/{slug}/issues/tracker-notifications/triage/{notification_id}":  true, // authenticated browser-only tracker review/notification surface
+	"POST /dashboard/apps/{slug}/issues/tracker-notifications/triage/{notification_id}": true, // authenticated browser-only tracker review/notification surface
+	"GET /dashboard/apps/{slug}/issues/tracker-review":                                  true, // authenticated browser-only tracker review/notification surface
+	"GET /dashboard/apps/{slug}/issues/{issue_id}/tracker-sync/{link_id}":               true, // authenticated browser-only tracker review/notification surface
+
 	"POST /dashboard/apps/{slug}/issues/{issue_id}/split-rules":                true, // session + CSRF adapter for the public split-rule creation API
 	"POST /dashboard/apps/{slug}/issues/{issue_id}/split-rules/{rule_id}":      true, // session + CSRF adapter for the public split-rule update API
 	"POST /dashboard/apps/{slug}/issues/{issue_id}/split-rules/{rule_id}/undo": true, // session + CSRF adapter for the public split-rule undo API
@@ -105,28 +119,39 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/apps/{slug}/profiles/investigations/{id}/check":           true, // session + CSRF adapter for the profiling regression API
 	"POST /dashboard/apps/{slug}/profiles/investigations":                      true, // session + CSRF adapter for the profiling investigation API
 	"POST /dashboard/apps/{slug}/issues/{issue_id}/actions":                    true, // scoped HTML/CSRF adapter for the public issue action API
+	"POST /dashboard/apps/{slug}/issues/frequency-alerts":                      true, // scoped HTML/CSRF frequency alert policy adapter
 	"POST /dashboard/apps/{slug}/issues/impact-alert-policy":                   true, // scoped HTML/CSRF adapter for issue impact alert policy updates
 	"POST /dashboard/apps/{slug}/issues/ownership-rules":                       true, // scoped HTML/CSRF adapter for issue ownership routing policy updates
+	"POST /dashboard/apps/{slug}/issues/bulk-actions":                          true, // session/CSRF HTML adapter for the corresponding public Issues API
+	"POST /dashboard/apps/{slug}/issues/saved-views":                           true, // session/CSRF HTML adapter for the corresponding public Issues API
+	"POST /dashboard/apps/{slug}/issues/teams":                                 true, // session/CSRF HTML adapter for the corresponding public Issues API
+	"POST /dashboard/apps/{slug}/issues/{issue_id}/tracker-links":              true, // session/CSRF HTML adapter for the corresponding public Issues API
 
-	"GET /v1/dev/bridges/{id}/connect":           true, // ADR-378 scoped WebSocket transport, described in docs/dev-bridge.md
-	"GET /v1/dev/bridges/{id}/status":            true, // attachment-authenticated CLI readiness protocol
-	"GET /v1/account/dpa":                        true, // public markdown (no auth)
-	"POST /v1/webhooks/stripe":                   true, // HMAC-signed webhook
-	"POST /v1/webhooks/paddle":                   true, // HMAC-signed webhook (PR #3 / ADR-025)
-	"POST /v1/webhooks/polar":                    true, // Standard Webhooks-signed webhook
-	"POST /v1/webhooks/resend":                   true, // Svix-signed webhook (issue #246 / ADR-115)
-	"GET /v1/compute-nodes":                      true, // operator-only (ADR-029)
-	"GET /v1/compute-nodes/{name}":               true, // operator-only node detail
-	"POST /v1/compute-nodes":                     true, // operator-only
-	"DELETE /v1/compute-nodes/{name}":            true, // operator-only
-	"GET /v1/compute-nodes/{name}/heartbeats":    true, // CP-1: operator-only (heartbeat history; schedd-owned)
-	"GET /v1/compute-nodes/events":               true, // CP-1: operator-only SSE on compute_node_changed
-	"GET /v1/internal/metrics/targets":           true, // issue #1219 — loopback Prometheus HTTP-SD endpoint
-	"GET /v1/internal/metrics/vmmd-targets":      true, // compute daemon metrics use the active node registry
-	"GET /v1/internal/metrics/imaged-targets":    true, // compute daemon metrics use the active node registry
-	"GET /v1/internal/metrics/builderd-targets":  true, // compute daemon metrics use the active node registry
-	"GET /v1/internal/metrics/realtimed-targets": true, // compute daemon metrics use the active node registry
-	"GET /v1/internal/metrics/promtail-targets":  true, // issue #274 — loopback Promtail HTTP-SD endpoint
+	"GET /v1/dev/bridges/{id}/connect":                                true, // ADR-378 scoped WebSocket transport, described in docs/dev-bridge.md
+	"GET /v1/dev/bridges/{id}/status":                                 true, // attachment-authenticated CLI readiness protocol
+	"GET /v1/account/dpa":                                             true, // public markdown (no auth)
+	"POST /dashboard/apps/{slug}/issues/{issue_id}/tracker-sync":      true, // ADR-1474: authenticated HTML review/recovery form with named CSRF.
+	"POST /dashboard/apps/{slug}/issues/{issue_id}/linear-connection": true, // ADR-1474: owner HTML credential form with session MFA and CSRF.
+	"POST /hooks/issue-trackers/linear/{app_id}":                      true, // ADR-1476: raw-body HMAC provider protocol, outside the Bearer-auth DTO/SDK surface.
+	"GET /dashboard/apps/{slug}/issues/slack-routing":                 true, // ADR-1498 owner-only Slack routing editor.
+	"GET /oauth/slack/callback":                                       true, // ADR-1497 owner session and one-use state confirmation.
+	"GET /oauth/linear/callback":                                      true, // ADR-1478: owner session OAuth callback and HTML team picker with PKCE and one-use state.
+	"POST /v1/webhooks/stripe":                                        true, // HMAC-signed webhook
+	"POST /v1/webhooks/paddle":                                        true, // HMAC-signed webhook (PR #3 / ADR-025)
+	"POST /v1/webhooks/polar":                                         true, // Standard Webhooks-signed webhook
+	"POST /v1/webhooks/resend":                                        true, // Svix-signed webhook (issue #246 / ADR-115)
+	"GET /v1/compute-nodes":                                           true, // operator-only (ADR-029)
+	"GET /v1/compute-nodes/{name}":                                    true, // operator-only node detail
+	"POST /v1/compute-nodes":                                          true, // operator-only
+	"DELETE /v1/compute-nodes/{name}":                                 true, // operator-only
+	"GET /v1/compute-nodes/{name}/heartbeats":                         true, // CP-1: operator-only (heartbeat history; schedd-owned)
+	"GET /v1/compute-nodes/events":                                    true, // CP-1: operator-only SSE on compute_node_changed
+	"GET /v1/internal/metrics/targets":                                true, // issue #1219 — loopback Prometheus HTTP-SD endpoint
+	"GET /v1/internal/metrics/vmmd-targets":                           true, // compute daemon metrics use the active node registry
+	"GET /v1/internal/metrics/imaged-targets":                         true, // compute daemon metrics use the active node registry
+	"GET /v1/internal/metrics/builderd-targets":                       true, // compute daemon metrics use the active node registry
+	"GET /v1/internal/metrics/realtimed-targets":                      true, // compute daemon metrics use the active node registry
+	"GET /v1/internal/metrics/promtail-targets":                       true, // issue #274 — loopback Promtail HTTP-SD endpoint
 	// Issue #777 / ADR-091: operator observability backend.
 	// Mirror the operator-only exclusion across both this list
 	// AND cmd/sdk-coverage/main.go::routeExclude. The two lists
@@ -363,6 +388,7 @@ func init() {
 // they cross the apid/CLI boundary — but they belong to non-public surfaces
 // (CLI device-code, public status page).
 var dtoExclude = map[string]bool{
+	"NormalizedIssueTrackerLink":     true, // internal provider identity canonicalizer; never a wire DTO
 	"EventSubscriptionDeadlineQuery": true, // client-only query builder; wire parameters are declared on the route
 
 	"DurableEntityInspectRequest": true, // Inspection selectors are query parameters declared on the route, not a JSON body.
@@ -666,6 +692,7 @@ var schemaSpecOnly = map[string]bool{
 	"DevBridgeWebhookReplay":                true,
 	"EdgeRuleMatchExpr":                     true, // ADR-962 condition type lives in pkg/api/edge_rule_match.go with its compiler
 	"ObjectStorageReleaseRequirements":      true, // Bounded prefix map, validated by pkg/api.ValidateObjectStorageRequirements; not a struct.
+	"BulkIssueLifecycleAction":              true, // restricted SDK shape of IssueActionRequest for the four supported bulk lifecycle operations
 	"QueueReleaseRequirements":              true, // Bounded binding-name map, validated by pkg/api.ValidateQueueReleaseRequirements.
 	// ADR-377: evaluator contracts live in pkg/flags; publication metadata
 	// lives in pkg/state/feature_flags.go and handler-local request/evidence
@@ -1189,6 +1216,20 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "app_operational_summary.go"),
 		filepath.Join(root, "pkg", "api", "commit.go"),
 		filepath.Join(root, "pkg", "api", "issues.go"),
+		filepath.Join(root, "pkg", "api", "issue_frequency_alerts.go"),
+		filepath.Join(root, "pkg", "api", "issue_context.go"),
+		filepath.Join(root, "pkg", "api", "issue_source_maps.go"),
+		filepath.Join(root, "pkg", "api", "issue_triage.go"),
+		filepath.Join(root, "pkg", "api", "issue_saved_views.go"),
+		filepath.Join(root, "pkg", "api", "issue_teams.go"),
+		filepath.Join(root, "pkg", "api", "issue_tracker_links.go"),
+		filepath.Join(root, "pkg", "api", "issue_tracker_native.go"),
+		filepath.Join(root, "pkg", "api", "issue_tracker_create_native.go"),
+		filepath.Join(root, "pkg", "api", "issue_tracker_auto_sync.go"),
+		filepath.Join(root, "pkg", "api", "issue_tracker_linear_connection.go"),
+		filepath.Join(root, "pkg", "api", "issue_tracker_linear_create_native.go"),
+		filepath.Join(root, "pkg", "api", "issue_tracker_linear_native.go"),
+
 		filepath.Join(root, "pkg", "api", "service_bindings.go"),
 		filepath.Join(root, "pkg", "api", "object_storage.go"),
 		filepath.Join(root, "pkg", "api", "object_versions.go"),

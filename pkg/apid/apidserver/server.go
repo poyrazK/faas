@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/onebox-faas/faas/pkg/apid/issueslack"
+
 	"github.com/onebox-faas/faas/pkg/apid/devloop"
 	"log/slog"
 	"net/http"
@@ -20,6 +22,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/durable"
 	"github.com/onebox-faas/faas/pkg/apid/edgerules"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
+	"github.com/onebox-faas/faas/pkg/apid/issuetrackers"
 	"github.com/onebox-faas/faas/pkg/apid/managedrealtime"
 	"github.com/onebox-faas/faas/pkg/apid/mcpadmission"
 	"github.com/onebox-faas/faas/pkg/apid/mcpcatalog"
@@ -37,6 +40,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/devbridge"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/httpsec"
+	"github.com/onebox-faas/faas/pkg/issuetracker"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/copycontents"
 	"github.com/onebox-faas/faas/pkg/middleware"
@@ -67,6 +71,14 @@ import (
 // wires a stub that returns 503 for every RPC; slices 7-8 replace with a
 // live socket-dialed client.
 type server struct {
+	issueSlackResponses                    *issueslack.Client
+	issueSlackOAuthConfig                  issueslack.OAuthConfig
+	issueSlackOAuthClient                  *issueslack.Client
+	linearOAuthConfig                      issuetracker.LinearOAuthConfig
+	linearOAuthProvider                    issuetracker.LinearOAuthProvider
+	nativeLinearVerifier                   issuetrackers.LinearConnectionVerifier
+	nativeTrackerProvider                  issuetracker.StatusProvider
+	nativeTicketProvider                   issuetracker.Provider
 	environmentGitOpsAcceptanceEnforcement atomic.Bool
 	profileBackend                         profiling.Backend
 	profileQuerySlots                      chan struct{}
@@ -1299,6 +1311,9 @@ func (noopNotifier) WaitFor(_ context.Context, _ string, _ func(payload string) 
 // New routes append here; do not introduce per-feature sub-muxes.
 func (s *server) handler() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("POST /integrations/slack/issues/{app_id}", s.issueSlackInteractionHandler)
+	mux.HandleFunc("POST /integrations/slack/actions", s.issueSlackManagedActions)
+	mux.HandleFunc("POST /integrations/slack/events", s.issueSlackManagedEvents)
 	mux.HandleFunc("GET /v1/apps/{slug}/operational-summary", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAppOperationalSummary))))
 	mux.HandleFunc("GET /v1/apps/{slug}/bindings", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAppBindingInventory))))
 	mux.HandleFunc("GET /v1/apps/{slug}/buckets", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageListSurface...)(s.object.ListBuckets))))
@@ -3881,6 +3896,7 @@ func (s *server) handler() http.Handler {
 	// 200'd. Mounted unconditionally so the same apid binary works
 	// on either provider; the handler's 503 covers the wrong-provider
 	// case.
+	mux.HandleFunc("POST /hooks/issue-trackers/linear/{app_id}", s.linearIssueTrackerCallback)
 	mux.HandleFunc("POST /v1/webhooks/paddle", s.paddleWebhook)
 	// Polar webhook (no auth — Standard Webhooks signs requests). Mounted
 	// unconditionally so one apid binary can serve any configured provider.
@@ -4317,7 +4333,27 @@ func (s *server) handler() http.Handler {
 	mux.Handle("POST /dashboard/apps/{slug}/issues/{issue_id}/split-rules/{rule_id}/undo", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIssueSplitRuleHandler))))
 	mux.Handle("POST /dashboard/apps/{slug}/issues/{issue_id}/split-rules", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIssueSplitRuleHandler))))
 	mux.Handle("POST /dashboard/apps/{slug}/issues/{issue_id}/split-rules/{rule_id}", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIssueSplitRuleHandler))))
+	mux.Handle("POST /dashboard/apps/{slug}/issues/saved-views", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIssueSavedViewHandler))))
+	mux.Handle("GET /oauth/slack/callback", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.slackOAuthCallback))))
+	mux.Handle("GET /oauth/linear/callback", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.linearOAuthCallback))))
+	mux.Handle("GET /dashboard/apps/{slug}/issues/{issue_id}/tracker-sync/{link_id}", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIssueTrackerHealthHandler))))
+	// ADR-1492: browser-only response state; deliberately excluded from public OpenAPI.
+	mux.Handle("GET /dashboard/apps/{slug}/issues/responses", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardResponseInboxHandler))))
+	mux.Handle("GET /dashboard/apps/{slug}/issues/{issue_id}/triage", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardApplicationTriageHandler))))
+	mux.Handle("POST /dashboard/apps/{slug}/issues/{issue_id}/triage", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardApplicationTriageActionHandler))))
+	mux.Handle("GET /dashboard/apps/{slug}/issues/tracker-notifications/triage/{notification_id}", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardTrackerTriageHandler))))
+	mux.Handle("POST /dashboard/apps/{slug}/issues/tracker-notifications/triage/{notification_id}", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardTrackerTriageActionHandler))))
+	mux.Handle("GET /dashboard/apps/{slug}/issues/slack-routing", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardSlackRoutingHandler))))
+	mux.Handle("GET /dashboard/apps/{slug}/issues/tracker-notifications", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardTrackerNotificationsHandler))))
+	mux.Handle("POST /dashboard/apps/{slug}/issues/tracker-notifications", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardTrackerNotificationPolicyHandler))))
+	mux.Handle("GET /dashboard/apps/{slug}/issues/tracker-review", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIssueTrackerReviewHandler))))
+	mux.Handle("POST /dashboard/apps/{slug}/issues/{issue_id}/tracker-sync", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIssueTrackerSyncHandler))))
+	mux.Handle("POST /dashboard/apps/{slug}/issues/{issue_id}/linear-connection", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIssueTrackerSyncHandler))))
+	mux.Handle("POST /dashboard/apps/{slug}/issues/{issue_id}/tracker-links", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIssueTrackerLinkHandler))))
+	mux.Handle("POST /dashboard/apps/{slug}/issues/teams", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIssueTeamHandler))))
+	mux.Handle("POST /dashboard/apps/{slug}/issues/bulk-actions", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIssueBulkActionHandler))))
 	mux.Handle("POST /dashboard/apps/{slug}/issues/{issue_id}/actions", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIssueActionHandler))))
+	mux.Handle("POST /dashboard/apps/{slug}/issues/frequency-alerts", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIssueFrequencyAlerts))))
 	mux.Handle("POST /dashboard/apps/{slug}/issues/impact-alert-policy", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIssueImpactAlertPolicyHandler))))
 	mux.Handle("POST /dashboard/apps/{slug}/issues/ownership-rules", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIssueOwnershipRulesHandler))))
 	mux.Handle("POST /dashboard/apps/{slug}/profiles/deployment-policy", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardSaveProfileDeploymentPolicy))))

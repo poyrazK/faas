@@ -1597,6 +1597,10 @@ check-operation-sdk-schema:
 check-durable-entity-sdk-contract:
 	python3 scripts/gen-durable-entity-contract.py --check
 
+.PHONY: issues-grouping-eval
+issues-grouping-eval: ## Compare grouping strategies against the labeled offline corpus
+	$(GO) run ./cmd/issues-grouping-eval
+
 .PHONY: check-binding-runner-sync
 check-binding-runner-sync:
 	python3 scripts/sync_binding_runner.py --check

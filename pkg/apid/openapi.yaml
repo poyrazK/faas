@@ -17635,6 +17635,63 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
+  /v1/apps/{slug}/issue-frequency-alert-policy:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getIssueFrequencyAlertPolicy
+      summary: Read application issue event-frequency rules.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Current policy. Unconfigured apps return revision zero and no rules.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IssueFrequencyAlertPolicy' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    put:
+      tags: [apps]
+      operationId: setIssueFrequencyAlertPolicy
+      summary: Replace application issue event-frequency rules.
+      description: >-
+        Requires the current revision (zero initially). Replaces up to ten named rules;
+        an empty array removes all rules. Stale writes return 409. Counts retained accepted
+        occurrences per canonical issue in (now-window, now]. Only a new capture inside
+        the window evaluates a rule. At or above threshold, the first eligible capture
+        after cooldown alerts again. Active ignore periods suppress alerts while collection
+        continues. Configuration edits do not send notifications. Changing a rule's
+        environment, threshold, window or cooldown starts a fresh cycle on the next capture;
+        unchanged rules and disable/re-enable retain cooldowns. Webhook event is
+        issue.frequency_threshold_reached. This policy does not alter customer-impact alerts.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateIssueFrequencyAlertPolicyRequest' }
+      responses:
+        '200':
+          description: Updated policy.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IssueFrequencyAlertPolicy' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '409':
+          description: Policy revision changed. Read the current policy and retry.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
   /v1/apps/{slug}/issue-impact-alert-policy:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -17723,6 +17780,683 @@ paths:
         '404': { $ref: '#/components/responses/AppNotFound' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
 
+  /v1/apps/{slug}/deployments/{deployment_id}/issue-source-maps:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: deployment_id
+        description: Deployment UUID whose source-map publication is being managed.
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    put:
+      tags: [apps]
+      operationId: publishIssueSourceMaps
+      summary: Publish immutable deployment-local source-map artifacts.
+      description: Requires deploy-write permission and session MFA. Source contents and extensions are discarded. Matching canonical manifests are idempotent; a different manifest for the deployment conflicts, including after retirement.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PublishIssueSourceMapsRequest' }
+      responses:
+        '200':
+          description: Artifact readiness and immutable identity.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IssueSourceMapsMetadata' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '409': { description: Immutable manifest conflict or active artifact quota exceeded. }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    get:
+      tags: [apps]
+      operationId: getIssueSourceMaps
+      summary: Inspect deployment source-map readiness without downloading mapping artifacts.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Read-only artifact metadata.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IssueSourceMapsMetadata' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    delete:
+      tags: [apps]
+      operationId: retireIssueSourceMaps
+      summary: Retire mapping blobs while preserving their immutable deployment identity.
+      description: Requires deploy-write permission and session MFA. New symbolicated captures require the same manifest to be restored; retained exact event retries remain idempotent.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Retired metadata, including the preserved manifest digest.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IssueSourceMapsMetadata' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/issue-saved-views:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: listIssueSavedViews
+      summary: List the app's shared named issue inbox filters.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Up to 20 shared saved views, ordered by name and key.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ListIssueSavedViewsResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/issue-saved-views/{view_key}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: view_key
+        description: Stable key of the shared issue query to read, replace or delete.
+        in: path
+        required: true
+        schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,47}$', maxLength: 48 }
+    get:
+      tags: [apps]
+      operationId: getIssueSavedView
+      summary: Read the latest shared view definition.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Named filters; me remains relative to the eventual authenticated reader.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IssueSavedView' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    put:
+      tags: [apps]
+      operationId: putIssueSavedView
+      summary: Save or replace a shared named issue inbox view.
+      description: Requires deploy-write permission and session MFA. Existing keys replace their definition; new keys consume the 20-view app quota. Filters are bounded known fields, not executable queries. UUID assignees must be currently eligible app owners or active organization members. Views confer no additional read permission.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PutIssueSavedViewRequest' }
+      responses:
+        '200':
+          description: Saved definition and editor metadata.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IssueSavedView' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '409': { description: Shared view quota reached. }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    delete:
+      tags: [apps]
+      operationId: deleteIssueSavedView
+      summary: Delete a shared view without changing any issues.
+      description: Requires deploy-write permission and session MFA.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '204': { description: Shared view deleted. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/issue-teams:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: listIssueTeams
+      summary: List app-scoped teams and their members.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Up to 20 teams, ordered by name and key.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ListIssueTeamsResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/issue-teams/{team_key}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: team_key
+        description: Stable application team key used to manage its identity and membership.
+        in: path
+        required: true
+        schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,47}$', maxLength: 48 }
+    get:
+      tags: [apps]
+      operationId: getIssueTeam
+      summary: Get a team by its stable key.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Team identity, name, member roster and editor metadata.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IssueTeam' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    put:
+      tags: [apps]
+      operationId: putIssueTeam
+      summary: Create or replace a team name and complete membership roster.
+      description: Membership grants no app access. Members must already be eligible app owners or active organization members. Mutations require deploy-write permission and session MFA. Teams referenced by issue assignments or routing rules cannot be deleted.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PutIssueTeamRequest' }
+      responses:
+        '200':
+          description: Team identity and complete member roster.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IssueTeam' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '409': { description: Team quota reached. }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    delete:
+      tags: [apps]
+      operationId: deleteIssueTeam
+      summary: Delete an unused team.
+      description: Deletes the unused application team after checking that no issue assignments or routing rules reference it. Requires deploy-write permission and session MFA.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '204': { description: Team deleted. }
+        '409': { description: Team still owns issues or routing rules. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+
+  /v1/apps/{slug}/issue-release-comparison:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: compareIssueReleases
+      summary: Compare observed release request health and issue signals over the last 24 hours.
+      description: Request counts expand telemetry row weights and span all traffic for each deployment. Issue signals use the selected environment. These are independent retained observations, not complete traffic, crash-free sessions, or a controlled experiment. Unknown request rates and deltas are null.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: baseline
+          description: Baseline deployment UUID for the issue health comparison.
+          in: query
+          required: true
+          schema: { type: string, format: uuid }
+        - name: candidate
+          description: Candidate deployment UUID compared with the selected baseline.
+          in: query
+          required: true
+          schema: { type: string, format: uuid }
+        - name: environment
+          description: Issue environment included in both deployment health observations.
+          in: query
+          schema: { type: string, default: application, pattern: '^[a-z0-9][a-z0-9-]{0,62}$' }
+      responses:
+        '200':
+          description: Both deployment observations from one consistent database snapshot.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IssueReleaseComparison' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/issues/{issue_id}/native-tickets:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: issue_id
+        in: path
+        required: true
+        description: Original Gregale issue identity retained across creation retries.
+        schema: { type: string, format: uuid }
+    post:
+      tags: [apps]
+      operationId: createNativeIssueTicket
+      summary: Create or recover a GitHub ticket through the owned app connection.
+      description: Requires Issues entitlement, deploy-write and session MFA. Pins the owned installation and bound repository identity. Retains a server receipt before dispatch; reusing request_id with different inputs or binding is refused. An unconfirmed dispatch can only recover a marker-verified existing ticket after the 15-second dispatch window. A created result means the ticket exists and attachment must be retried with identical inputs. At most 100 receipts are retained per original issue. Installation Issues write permission is required; credentials remain server-side.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        description: Explicit content, target repository and stable request identity for creation or recovery.
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateNativeIssueTicketRequest' }
+      responses:
+        '200':
+          description: Durable ticket evidence and attachment state; created requires retrying attachment.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NativeIssueTicketResult' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '409': { description: Request conflict or unconfirmed dispatch or retained receipt quota reached; preserve request inputs and recover the existing ticket. }
+        '502': { description: GitHub rejected creation or connected credentials are unavailable. }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/native-linear-status:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: issue_id
+        in: path
+        required: true
+        description: Gregale issue identity whose current group contains the Linear reference.
+        schema: { type: string, format: uuid }
+      - name: link_id
+        in: path
+        required: true
+        description: Stored Linear reference selected for explicit lifecycle synchronization.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [apps]
+      operationId: getNativeLinearIssueTrackerStatus
+      summary: Preview a linked Linear lifecycle using the stored owner connection.
+      description: Requires app read access and the app owner with Issues entitlement and deploy eligibility. Verifies the stored workspace/viewer/team and linked ticket identity. Returns status plus connection revision and group fingerprint for an explicit push. Archived and canceled or unfamiliar provider states require manual triage. No credentials are returned.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Verified linked Linear status and current preview scope.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NativeLinearIssueTrackerStatus' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '409': { description: Connection or group changed or provider state requires manual triage. }
+        '502': { description: Provider identity or credential availability could not be confirmed. }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    post:
+      tags: [apps]
+      operationId: updateNativeLinearIssueTrackerStatus
+      summary: Explicitly push the Gregale lifecycle to its linked Linear ticket.
+      description: Requires the app owner with Issues entitlement and deploy-write and session MFA. desired_state must match the current open/resolved Gregale lifecycle. Sends a known provider snapshot and preview connection revision/group fingerprint. A changing lifecycle additionally requires an explicit active same-team workflow state UUID of the matching type. Rechecks scope before dispatch and after the provider response. Aligned lifecycles remain unchanged. A provider write already dispatched cannot be recalled and the two systems do not share an atomic transaction.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        description: Explicit lifecycle push with observed provider and connection/group scope.
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateNativeLinearIssueTrackerStatusRequest' }
+      responses:
+        '200':
+          description: Confirmed provider lifecycle and unchanged preview scope.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NativeLinearIssueTrackerStatus' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '409': { description: Provider snapshot or connection or group changed or the lifecycle is unsupported. }
+        '502': { description: Provider operation or workflow selection could not be confirmed. }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/issues/{issue_id}/native-linear-tickets:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: issue_id
+        in: path
+        required: true
+        description: Original Gregale issue identity whose current group receives the confirmed Linear reference.
+        schema: { type: string, format: uuid }
+    post:
+      tags: [apps]
+      operationId: createNativeLinearIssueTicket
+      summary: Create or recover a Linear ticket using the owner's stored team connection.
+      description: Requires the app owner with Issues entitlement and deploy-write and session MFA. Verifies the stored workspace/viewer/team before dispatch. request_id must be UUID v4 and is used as the provider issue ID. A durable receipt fences concurrent dispatch and preserves uncertain outcomes. Retry identical inputs to finish attachment; after an uncertain create use recover=true to query the stable UUID without needing a URL. Same-identity credential replacement preserves recovery. Changed identity or inputs conflict. Responses never include credentials. A provider write already dispatched cannot be recalled by disconnect.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        description: Explicit ticket inputs and stable UUID; recovery is an explicit decision after an unconfirmed dispatch.
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateNativeLinearIssueTicketRequest' }
+      responses:
+        '200':
+          description: Durable creation evidence; created means attachment requires retry and linked means the reference is confirmed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NativeIssueTicketResult' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '409': { description: Connection or inputs changed or outcome is unconfirmed or request quota is exhausted. }
+        '502': { description: Provider verification or credential availability failed or creation was explicitly rejected. }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/issue-tracker-linear-connection:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getIssueTrackerLinearConnection
+      summary: Read the app owner's Linear connection metadata.
+      description: Requires app read access and the app owner. Returns only non-secret identity and revision. Unconfigured apps return disconnected with revision zero. Inspection remains available after an Issues plan downgrade.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Linear connection metadata without credentials.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IssueTrackerLinearConnection' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    put:
+      tags: [apps]
+      operationId: updateIssueTrackerLinearConnection
+      summary: Connect or disconnect an owner-scoped Linear personal API key.
+      description: Requires the app owner with deploy-write and session MFA. Connecting additionally requires Issues entitlement and an account eligible to deploy. Verifies workspace and viewer and active team before sealing credentials. expected_revision fences competing changes. Disconnect erases credentials without provider access and remains available after a plan downgrade. This does not enable automatic sync or perform provider writes.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        description: Explicit connection decision and known revision; personal API key is accepted only when connecting.
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateIssueTrackerLinearConnectionRequest' }
+      responses:
+        '200':
+          description: Updated non-secret connection metadata and revision.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IssueTrackerLinearConnection' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '409': { description: The connection revision changed; read metadata again. }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/auto-sync:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: issue_id
+        in: path
+        required: true
+        description: Gregale issue identity whose current group contains the automatic sync reference.
+        schema: { type: string, format: uuid }
+      - name: link_id
+        in: path
+        required: true
+        description: Stored GitHub or Linear reference whose automatic sync policy is inspected or configured.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [apps]
+      operationId: getIssueTrackerAutoSync
+      summary: Read an automatic native tracker lifecycle policy.
+      description: Requires app read access and Issues entitlement. Unconfigured references return disabled with revision zero. Conflicts and blocked outcomes pause the worker until an owner explicitly re-enables an aligned policy.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Opt-in policy and latest durable reconciliation outcome.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IssueTrackerAutoSync' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    put:
+      tags: [apps]
+      operationId: updateIssueTrackerAutoSync
+      summary: Enable or disable future Gregale-to-tracker lifecycle pushes.
+      description: Requires the app owner, Issues entitlement, deploy-write and session MFA. expected_revision fences competing policy changes. Enabling requires either expected_status for GitHub or expected_linear_status plus distinct linear_open_state_id and linear_resolved_state_id for Linear, and expected_issue_state; the lifecycles must already match. Verifies active Linear workflows in the connected team. Pins the canonical group and owned repository binding or Linear connection revision. The background worker preserves uncertain pending writes and pauses on provider edits or unsupported states or changed groups/connections. Disabling does not require live provider access. Linear pending writes with an unconfirmed outcome are observed without redispatch; explicitly align and re-enable to resume. A provider write already dispatched during disable cannot be recalled.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        description: Explicit delegation decision and observed policy/native snapshot for automatic sync.
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateIssueTrackerAutoSyncRequest' }
+      responses:
+        '200':
+          description: Persisted automatic sync policy with its new configuration revision.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IssueTrackerAutoSync' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '409': { description: Policy or native snapshot changed or lifecycle alignment is required before delegation. }
+        '502': { description: Native provider snapshot could not be confirmed. }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/native-status:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: issue_id
+        description: Gregale issue identity whose canonical group owns the tracker reference.
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+      - name: link_id
+        description: Tracker reference identity to read or synchronize through the native connection.
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [apps]
+      operationId: getNativeIssueTrackerStatus
+      summary: Read a linked GitHub issue through the app owner's native installation.
+      description: Requires Issues entitlement and app read access. Verifies the caller-owned installation, pinned bound repository identity, current repository visibility and issue-group reference membership. GitHub installation credentials stay server-side. Linear native connections are unsupported.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Canonical issue, reference, connection and observed provider status.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NativeIssueTrackerStatus' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '409': { description: "Native connection missing, unsupported status or changed binding/reference." }
+        '502': { description: "Provider status could not be confirmed." }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    post:
+      tags: [apps]
+      operationId: updateNativeIssueTrackerStatus
+      summary: Push the current Gregale lifecycle through the native GitHub connection.
+      description: Requires deploy-write and session MFA. desired_state must match the current canonical Gregale issue. expected must be the observed linked GitHub status. Rechecks reference membership, installation ownership, repository identity and visibility before using server credentials. Refuses changed snapshots and unsupported states. Separate APIs cannot provide an atomic cross-provider transaction; preview again after uncertain outcomes.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateNativeIssueTrackerStatusRequest' }
+      responses:
+        '200':
+          description: Verified native connection and resulting provider status.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NativeIssueTrackerStatus' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '409': { description: "Native connection missing, unsupported status or changed snapshot." }
+        '502': { description: "Provider update could not be confirmed; preview again." }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/issues/{issue_id}/tracker-links:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: issue_id
+        description: Issue group UUID that owns the external tracker references.
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      tags: [apps]
+      operationId: listIssueTrackerLinks
+      summary: List GitHub and Linear references across this canonical issue group.
+      description: Links remain attached to original issue identities through merges and splits. Returns at most 50 references per page; cursors are bound to the app and canonical issue.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: cursor
+          description: Opaque continuation token from the preceding tracker-reference page.
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: References and an optional continuation cursor.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ListIssueTrackerLinksResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    post:
+      tags: [apps]
+      operationId: putIssueTrackerLink
+      summary: Attach an existing tracker issue or update its display title.
+      description: Requires deploy-write and session MFA. Canonicalizes public GitHub issue and Linear URLs; ignores tracking queries, fragments and Linear title slugs. An existing group reference is reused. New references are capped at 20 per canonical group; existing references survive merges above that limit. Records actor activity. No provider request, ticket creation, access verification or status synchronization occurs.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PutIssueTrackerLinkRequest' }
+      responses:
+        '200':
+          description: Canonical reference and creation/update metadata.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IssueTrackerLink' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '409': { description: Tracker-reference quota reached. }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: issue_id
+        description: Issue group UUID whose selected tracker reference will be removed.
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+      - name: link_id
+        description: Stored tracker-reference UUID to detach from the selected issue group.
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    delete:
+      tags: [apps]
+      operationId: deleteIssueTrackerLink
+      summary: Remove a tracker reference from this issue group.
+      description: Requires deploy-write and session MFA. Records unlink activity; the provider ticket is unchanged.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '204': { description: Reference removed. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/issues/bulk-actions:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    post:
+      tags: [apps]
+      operationId: bulkActOnIssues
+      summary: Atomically assign, resolve, ignore, or reopen selected issue groups.
+      description: Requires deploy-write permission and session MFA. Up to 50 distinct issue UUIDs; merged aliases are acted on once and return one canonical issue. Any missing issue or invalid action rolls back the entire batch. Regrouping is excluded. Supports the standard Idempotency-Key header.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BulkIssueActionRequest' }
+      responses:
+        '200':
+          description: Canonical issue groups after the complete batch commits.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BulkIssueActionResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PlanFeatureGated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/AppNotFound' }
+        '409': { description: Idempotency conflict. }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
   /v1/apps/{slug}/issues:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -17740,6 +18474,10 @@ paths:
           description: Exact issue environment namespace.
           in: query
           schema: { type: string }
+        - name: team
+          description: Shared inbox for a team UUID in this app. Mutually exclusive with assignee.
+          in: query
+          schema: { type: string, format: uuid }
         - name: assignee
           description: Filter by me, unassigned, or an owner account UUID.
           in: query
@@ -17748,6 +18486,10 @@ paths:
           description: Issue ordering; impact ranks by verified distinct customers in the fixed 24-hour window.
           in: query
           schema: { type: string, enum: [recent, impact], default: recent }
+        - name: tag
+          description: Exact allowed operational key=value match on retained occurrences in the fixed 24-hour window.
+          in: query
+          schema: { type: string }
         - name: min_customers
           description: Return issues affecting at least this many verified distinct customers in the fixed 24-hour window.
           in: query
@@ -96899,6 +97641,9 @@ components:
               - issue.ignored
               - issue.regressed
               - issue.impact_threshold_reached
+              - issue.frequency_threshold_reached
+              - issue.tracker_sync.attention
+              - issue.tracker_sync.recovered
               - debug.regression.detected
               - debug.regression.resolved
               - routes.requirements.violated
@@ -97927,6 +98672,9 @@ components:
               - issue.ignored
               - issue.regressed
               - issue.impact_threshold_reached
+              - issue.frequency_threshold_reached
+              - issue.tracker_sync.attention
+              - issue.tracker_sync.recovered
               - debug.regression.detected
               - debug.regression.resolved
               - routes.requirements.violated
@@ -98102,6 +98850,9 @@ components:
               - issue.ignored
               - issue.regressed
               - issue.impact_threshold_reached
+              - issue.frequency_threshold_reached
+              - issue.tracker_sync.attention
+              - issue.tracker_sync.recovered
               - debug.regression.detected
               - debug.regression.resolved
               - routes.requirements.violated
@@ -99863,6 +100614,7 @@ components:
         file: { type: string }
         function: { type: string }
         line: { type: integer }
+        column: { type: integer, minimum: 0, maximum: 2147483647, description: One-based generated or original column; omitted when unknown. Excluded from grouping identity. }
         in_app: { type: boolean }
 
     IssueCause:
@@ -99876,11 +100628,72 @@ components:
         frames: { type: array, maxItems: 32, items: { $ref: '#/components/schemas/IssueFrame' } }
         frame_order: { type: string, enum: [newest-first, oldest-first] }
 
+    IssueSourceMapArtifact:
+      description: "One generated bundle and its bounded source-map metadata, without embedded source contents."
+      type: object
+      required: [generatedFile, sha256, payload]
+      properties:
+        generatedFile: { type: string, maxLength: 512, description: Portable relative bundle path from the Node build manifest. }
+        sha256: { type: string, pattern: '^[0-9a-f]{64}$', description: Producer-supplied bundle digest; the server does not retrieve bundle bytes to independently verify it. }
+        payload: { type: string, maxLength: 524288, description: Flat Source Map v3 JSON; byte and decoded limits are enforced before persistence. }
+    IssueSourceMapManifest:
+      description: "Portable source-map manifest with exact generated-bundle digests and original source locations."
+      type: object
+      required: [version, artifacts]
+      properties:
+        version: { type: integer, enum: [1] }
+        artifacts: { type: array, minItems: 1, maxItems: 32, items: { $ref: '#/components/schemas/IssueSourceMapArtifact' } }
+    PublishIssueSourceMapsRequest:
+      description: "Deployment source-map publication request containing the deployed directory and portable manifest."
+      type: object
+      required: [directory, manifest]
+      properties:
+        directory: { type: string, maxLength: 512, description: Absolute deployed directory corresponding to the manifest scan root. }
+        manifest: { $ref: '#/components/schemas/IssueSourceMapManifest' }
+    IssueSourceMapsMetadata:
+      description: "Read-only publication status, manifest digest and retained map count for one deployment."
+      type: object
+      required: [deployment_id, manifest_sha256, map_count, ready, created_at]
+      properties:
+        deployment_id: { type: string, format: uuid }
+        manifest_sha256: { type: string }
+        map_count: { type: integer }
+        ready: { type: boolean }
+        created_at: { type: string, format: date-time }
+        retired_at: { type: string, format: date-time }
+    IssueSymbolicationResult:
+      description: "Symbolication outcome and mapped frames for one reported exception in its deployment."
+      type: object
+      readOnly: true
+      required: [manifest_sha256, mapped_frames, unmapped_frames]
+      properties:
+        manifest_sha256: { type: string }
+        mapped_frames: { type: integer }
+        unmapped_frames: { type: integer }
+
+    IssueBreadcrumb:
+      description: "Bounded sanitized event context recorded before an issue occurrence."
+      type: object
+      required: [occurred_at, category, level, message]
+      properties:
+        occurred_at: { type: string, format: date-time }
+        category: { type: string, enum: [http, db, cache, workflow, log, custom] }
+        level: { type: string, enum: [debug, info, warning, error] }
+        message: { type: string, description: Sanitized and bounded to 256 UTF-8 bytes. }
     IssueEvent:
       description: "Structured exception evidence; credential-derived account and deployment identity cannot be overridden."
       type: object
       required: [event_id, occurred_at, exception_type, message]
       properties:
+        breadcrumbs: { type: array, maxItems: 16, items: { $ref: '#/components/schemas/IssueBreadcrumb' } }
+        breadcrumbs_dropped: { type: integer, minimum: 0, maximum: 2147483647 }
+        tags:
+          type: object
+          maxProperties: 16
+          additionalProperties: { type: string }
+          description: Sanitized operational dimensions; unknown keys are discarded. Allowed keys are component, operation, feature_flag, feature_variant, dependency, region, job_type, workflow, state, error_class, release_channel, runtime.
+        symbolication_strategy: { type: string, enum: [deployment-source-maps-v1], description: Opt-in server mapping against this credential's deployment artifacts; requires failure-site-v1 or cause-chain-v1. }
+        symbolication: { $ref: '#/components/schemas/IssueSymbolicationResult' }
         causes: { type: array, maxItems: 8, items: { $ref: '#/components/schemas/IssueCause' } }
         causes_incomplete: { type: boolean, description: "Incomplete or ambiguous chain; version 3 uses outer evidence instead of a partial cause." }
         event_id: { type: string, format: uuid }
@@ -99934,6 +100747,7 @@ components:
         fixed_deployment_id: { type: string, format: uuid }
         fixed_deployment_created_at: { type: string, format: date-time }
         ignored_until: { type: string, format: date-time }
+        assignee_team_id: { type: string, format: uuid, description: "Current team assignment within this app, mutually exclusive with the account assignee." }
 
     IssueImpactSummary:
       description: "Observed retained occurrences, verified distinct customers, and unattributed events from the previous 24 hours."
@@ -100023,6 +100837,43 @@ components:
         unattributed_events: { type: integer }
         coverage: { type: string }
 
+    IssueFrequencyAlertRule:
+      description: "Named event-frequency threshold with a bounded observation window, cooldown and optional filters."
+      type: object
+      additionalProperties: false
+      required: [key, enabled, environment, minimum_events, window_seconds, cooldown_seconds]
+      properties:
+        key: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,47}$', maxLength: 48 }
+        enabled: { type: boolean }
+        environment:
+          type: string
+          maxLength: 63
+          description: Exact issue environment. Empty string matches all environments.
+        minimum_events: { type: integer, format: int64, minimum: 1, maximum: 100000 }
+        window_seconds: { type: integer, format: int64, minimum: 60, maximum: 86400 }
+        cooldown_seconds: { type: integer, format: int64, minimum: 60, maximum: 604800 }
+    IssueFrequencyAlertPolicy:
+      description: "Current revision and complete ordered set of application frequency-alert rules."
+      type: object
+      additionalProperties: false
+      required: [revision, rules]
+      properties:
+        revision: { type: integer, format: int64, minimum: 0 }
+        rules:
+          type: array
+          maxItems: 10
+          items: { $ref: '#/components/schemas/IssueFrequencyAlertRule' }
+    UpdateIssueFrequencyAlertPolicyRequest:
+      description: "Replacement frequency-alert rules guarded by the expected policy revision."
+      type: object
+      additionalProperties: false
+      required: [expected_revision, rules]
+      properties:
+        expected_revision: { type: integer, format: int64, minimum: 0 }
+        rules:
+          type: array
+          maxItems: 10
+          items: { $ref: '#/components/schemas/IssueFrequencyAlertRule' }
     IssueImpactAlertPolicy:
       description: "App-level customer-impact threshold measured using verified distinct customers in a rolling 24-hour window."
       type: object
@@ -100040,16 +100891,264 @@ components:
       properties:
         minimum_customers: { type: integer, minimum: 0, maximum: 10000 }
 
-    IssueOwnershipRule:
-      description: "Provide at least one matcher. All populated matchers are ANDed; the first matching rule assigns a new issue to one eligible account."
+    PutIssueTrackerLinkRequest:
+      description: "Explicit provider ticket URL and optional title to attach to an issue group."
       type: object
       additionalProperties: false
-      required: [assignee_account_id]
+      required: [url]
       properties:
+        url: { type: string, format: uri, maxLength: 512, description: Public GitHub issue or Linear issue HTTPS URL; maximum 512 UTF-8 bytes. }
+        title: { type: string, maxLength: 256, description: Optional display title; maximum 256 UTF-8 bytes without control characters. }
+    CreateNativeIssueTicketRequest:
+      type: object
+      description: Explicit content and stable operation identity for native GitHub ticket creation or recovery.
+      additionalProperties: false
+      required: [request_id, repository, title]
+      properties:
+        request_id: { type: string, format: uuid }
+        repository: { type: string, maxLength: 256 }
+        title: { type: string, maxLength: 256 }
+        description: { type: string, maxLength: 16384 }
+        recovery_url: { type: string, format: uri, maxLength: 512 }
+    NativeIssueTicketResult:
+      type: object
+      description: Durable GitHub ticket evidence and Gregale attachment state for a native creation operation.
+      required: [request_id, state, ticket_url]
+      properties:
+        request_id: { type: string, format: uuid }
+        state: { type: string, enum: [created, linked] }
+        ticket_url: { type: string, format: uri }
+        link_id: { type: string, format: uuid }
+
+    NativeLinearIssueTrackerStatus:
+      type: object
+      description: Credential-free Linear lifecycle preview pinned to the current issue group and owner connection.
+      required: [issue_id, link_id, connection_revision, group_fingerprint, workspace_id, team_id, viewer_id, status]
+      properties:
+        issue_id: { type: string, format: uuid, description: Current canonical Gregale issue identity. }
+        link_id: { type: string, format: uuid, description: Stored Linear reference identity. }
+        connection_revision: { type: integer, format: int64, minimum: 1, description: Verified connection revision used to fence later pushes. }
+        group_fingerprint: { type: string, pattern: '^[a-f0-9]{64}$', description: Opaque scope fingerprint tracking canonical membership and grouping rules. }
+        workspace_id: { type: string, format: uuid, description: Verified Linear workspace identity. }
+        team_id: { type: string, format: uuid, description: Verified connected team matching the linked ticket. }
+        viewer_id: { type: string, format: uuid, description: Verified identity owning the stored API key. }
+        status: { $ref: '#/components/schemas/IssueTrackerProviderStatus', description: Supported linked Linear status including ticket and team and workflow UUIDs. }
+    UpdateNativeLinearIssueTrackerStatusRequest:
+      type: object
+      description: Explicit push against an observed provider snapshot and connection/group scope.
+      required: [desired_state, expected, expected_connection_revision, expected_group_fingerprint]
+      properties:
+        desired_state: { type: string, enum: [open, resolved], description: Lifecycle matching the current Gregale issue state. }
+        expected: { $ref: '#/components/schemas/IssueTrackerProviderStatus', description: Exact Linear status from the native preview. }
+        expected_connection_revision: { type: integer, format: int64, minimum: 1, description: Connection revision from the native preview. }
+        expected_group_fingerprint: { type: string, pattern: '^[a-f0-9]{64}$', description: Group fingerprint from the native preview. }
+        linear_state_id: { type: string, format: uuid, description: Explicit active same-team workflow state UUID required when the lifecycle changes. }
+    CreateNativeLinearIssueTicketRequest:
+      type: object
+      description: Explicit creation or UUID recovery through the app owner's connected Linear team.
+      required: [request_id, team_id, title]
+      properties:
+        request_id: { type: string, format: uuid, description: Stable UUID v4 used as the Linear issue ID and reused across retries. }
+        team_id: { type: string, format: uuid, description: Verified team UUID matching the stored app connection. }
+        title: { type: string, minLength: 1, maxLength: 256, description: Explicit ticket title bounded to 256 UTF-8 bytes. }
+        description: { type: string, maxLength: 16384, description: Optional description bounded to 16 KiB; no telemetry is copied automatically. }
+        recover: { type: boolean, default: false, description: Explicitly recover an unconfirmed dispatch by its stable request UUID after the dispatch lease expires. }
+        recovery_url: { type: string, maxLength: 512, description: Optional known Linear issue URL that also requests recovery and must match the UUID lookup. }
+    IssueTrackerLinearConnection:
+      type: object
+      description: Non-secret owner-scoped Linear connection metadata; disconnected records omit provider identity.
+      required: [connected, revision]
+      properties:
+        auth_method: { type: string, description: Stored credential kind (api_key or oauth). }
+        oauth_status: { type: string, description: "OAuth health (ready, refreshing, reconnect_required or revoking); absent for API keys." }
+        access_token_expires_at: { type: string, format: date-time, description: OAuth access token expiry; never includes credentials. }
+        webhook_enabled: { type: boolean, description: True when a scoped signing secret is stored for Linear issue callbacks. }
+        callback_path: { type: string, description: Provider callback path to append to the Gregale API origin when callbacks are enabled. }
+        connected: { type: boolean, description: Whether a verified API key or OAuth grant is stored. }
+        revision: { type: integer, format: int64, minimum: 0, description: Configuration revision used to fence concurrent changes. }
+        workspace_id: { type: string, format: uuid, description: Verified Linear organization identity. }
+        team_id: { type: string, format: uuid, description: Verified active Linear team identity. }
+        viewer_id: { type: string, format: uuid, description: Verified Linear user identity owning the credential. }
+    UpdateIssueTrackerLinearConnectionRequest:
+      type: object
+      description: Explicit connection or disconnection against a known revision.
+      required: [connected, expected_revision]
+      properties:
+        connected: { type: boolean, description: True connects a verified personal API key; false erases it. }
+        expected_revision: { type: integer, format: int64, minimum: 0, description: Revision from the latest connection metadata read. }
+        team_id: { type: string, format: uuid, description: Active team UUID required only when connecting. }
+        api_key: { type: string, maxLength: 4096, writeOnly: true, description: Personal API key required only when connecting; never returned or logged. }
+        webhook_secret: { type: string, minLength: 32, maxLength: 4096, writeOnly: true, description: Optional Linear webhook signing secret stored with the connection. Omission on replacement disables callbacks. Never returned or logged. }
+    IssueTrackerAutoSync:
+      type: object
+      description: Opt-in tracker direction and latest durable worker outcome. Inbound resolutions require explicit fixing-deployment evidence.
+      required: [link_id, enabled, revision, source_issue_id, outcome]
+      properties:
+        direction: { type: string, enum: [outbound, inbound, both], description: Outbound pushes Gregale lifecycle; inbound applies verified reopenings; both enables both behaviors. }
+        observed_state: { type: string, enum: [open, resolved], description: Last provider lifecycle observed by the worker including changes held for review. }
+        link_id: { type: string, format: uuid }
+        enabled: { type: boolean }
+        revision: { type: integer, format: int64, minimum: 0 }
+        source_issue_id: { type: string, format: uuid }
+        source_state: { type: string, enum: [open, resolved] }
+        provider_state: { type: string, enum: [open, resolved] }
+        pending_state: { type: string, enum: [open, resolved] }
+        outcome: { type: string, enum: [disabled, matched, pending, applied, error, conflict, blocked] }
+        reason: { type: string }
+        last_checked_at: { type: string, format: date-time }
+        next_check_at: { type: string, format: date-time }
+        linear_open_state_id: { type: string, format: uuid, description: Selected open workflow destination for Linear policies. }
+        linear_resolved_state_id: { type: string, format: uuid, description: Selected resolved workflow destination for Linear policies. }
+    UpdateIssueTrackerAutoSyncRequest:
+      type: object
+      description: Explicit direction delegation against a known policy revision and aligned native/source lifecycle snapshot. Inbound closures are held for fixing-deployment review.
+      additionalProperties: false
+      required: [enabled, expected_revision]
+      properties:
+        direction: { type: string, enum: [outbound, inbound, both], description: Defaults to outbound when omitted. Inbound and both require a fresh source intent baseline. }
+        enabled: { type: boolean }
+        expected_revision: { type: integer, format: int64, minimum: 0 }
+        expected_status: { $ref: '#/components/schemas/NativeIssueTrackerStatus' }
+        expected_issue_state: { type: string, enum: [open, resolved] }
+        expected_linear_status: { $ref: '#/components/schemas/NativeLinearIssueTrackerStatus' }
+        linear_open_state_id: { type: string, format: uuid, description: Active same-team open workflow required to enable Linear automatic sync. }
+        linear_resolved_state_id: { type: string, format: uuid, description: Active same-team completed workflow required to enable Linear automatic sync. }
+
+    IssueTrackerProviderStatus:
+      description: Observed lifecycle and identity of an external tracker issue.
+      type: object
+      required: [provider, url, id, state]
+      properties:
+        provider: { type: string, enum: [github, linear] }
+        url: { type: string, format: uri }
+        id: { type: string }
+        state: { type: string, enum: [open, resolved] }
+        team_id: { type: string, format: uuid }
+        state_id: { type: string, format: uuid }
+    NativeIssueTrackerStatus:
+      description: Verified native connection and observed status of a linked tracker issue.
+      type: object
+      required: [issue_id, link_id, installation_id, repository, repository_id, status]
+      properties:
+        issue_id: { type: string, format: uuid }
+        link_id: { type: string, format: uuid }
+        installation_id: { type: integer, format: int64 }
+        repository: { type: string }
+        repository_id: { type: integer, format: int64 }
+        status: { $ref: '#/components/schemas/IssueTrackerProviderStatus' }
+    UpdateNativeIssueTrackerStatusRequest:
+      description: Expected provider snapshot and current Gregale lifecycle to push through a native connection.
+      type: object
+      additionalProperties: false
+      required: [desired_state, expected]
+      properties:
+        desired_state: { type: string, enum: [open, resolved] }
+        expected: { $ref: '#/components/schemas/IssueTrackerProviderStatus' }
+
+    IssueTrackerLink:
+      description: "Stored external ticket reference with provider identity and editor metadata."
+      type: object
+      required: [id, original_issue_id, provider, external_key, url, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        original_issue_id: { type: string, format: uuid, description: Original identity owning this reference; retained through merge and split. }
+        provider: { type: string, enum: [github, linear] }
+        external_key: { type: string }
+        url: { type: string, format: uri }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        title: { type: string }
+        created_by_account_id: { type: string, format: uuid }
+        updated_by_account_id: { type: string, format: uuid }
+    ListIssueTrackerLinksResponse:
+      description: "Cursor-paginated tracker references attached to the selected issue group."
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, maxItems: 50, items: { $ref: '#/components/schemas/IssueTrackerLink' } }
+        next_cursor: { type: string }
+
+    IssueTeam:
+      description: "Application-scoped team identity, display name, complete member roster and editor metadata."
+      type: object
+      required: [id, key, name, member_account_ids, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        key: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,47}$' }
+        name: { type: string, minLength: 1, maxLength: 64 }
+        member_account_ids: { type: array, maxItems: 50, uniqueItems: true, items: { type: string, format: uuid } }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        updated_by_account_id: { type: string, format: uuid }
+    PutIssueTeamRequest:
+      description: "Replacement team display name and eligible account membership roster."
+      type: object
+      additionalProperties: false
+      required: [name, member_account_ids]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 64, description: Maximum 64 UTF-8 bytes without control characters. }
+        member_account_ids: { type: array, minItems: 1, maxItems: 50, uniqueItems: true, items: { type: string, format: uuid } }
+    ListIssueTeamsResponse:
+      description: "Teams available for issue assignment and response routing within an application."
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/IssueTeam' } }
+
+    IssueSavedViewFilters:
+      description: "Supported query filters retained by a shared application issue view."
+      type: object
+      additionalProperties: false
+      properties:
+        state: { type: string, enum: [open, resolved, ignored], description: Omit to include every state. }
+        environment: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$', description: Omit to include every issue environment. }
+        assignee: { type: string, description: 'me, unassigned, or an eligible account UUID. Omit for all owners. me resolves for each authenticated viewer.' }
+        sort: { type: string, enum: [recent, impact], default: recent }
+        min_customers: { type: integer, format: int64, minimum: 0, default: 0 }
+        tag: { type: string, maxLength: 193, description: Exact allowlisted operational key=value in retained occurrences over 24h; value is limited to 128 UTF-8 bytes. }
+        team: { type: string, format: uuid, description: App-scoped team inbox; mutually exclusive with assignee. }
+
+    PutIssueSavedViewRequest:
+      description: "Shared issue-view display name and validated replacement filter set."
+      type: object
+      additionalProperties: false
+      required: [name, filters]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 64, description: Trimmed display name, limited to 64 UTF-8 bytes without control characters. }
+        filters: { $ref: '#/components/schemas/IssueSavedViewFilters' }
+    IssueSavedView:
+      description: "Named shared issue query with its stable key and creation and editor metadata."
+      type: object
+      required: [key, name, filters, created_at, updated_at]
+      properties:
+        key: { type: string, maxLength: 48, pattern: '^[a-z0-9][a-z0-9-]{0,47}$' }
+        name: { type: string, maxLength: 64 }
+        filters: { $ref: '#/components/schemas/IssueSavedViewFilters' }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        updated_by_account_id: { type: string, format: uuid }
+    ListIssueSavedViewsResponse:
+      description: "Shared saved issue queries available within the selected application."
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          maxItems: 20
+          items: { $ref: '#/components/schemas/IssueSavedView' }
+
+    IssueOwnershipRule:
+      description: "Provide at least one matcher. All populated matchers are ANDed; the first matching rule assigns a new issue to one eligible account or team. Exactly one assignment target is required."
+      type: object
+      additionalProperties: false
+      properties:
+        assignee_account_id: { type: string, format: uuid }
         exception_type: { type: string, minLength: 1, maxLength: 256, description: Exact exception type match. }
         source_kind: { type: string, enum: [exception, http, runtime, worker] }
         route_prefix: { type: string, pattern: '^/', maxLength: 256, description: Path prefix; matches only at a path-segment boundary. }
-        assignee_account_id: { type: string, format: uuid }
+        source_path_prefix: { type: string, minLength: 1, maxLength: 256, description: 'Local source path prefix (256 UTF-8 bytes); matches any application frame in the exception or its causes at a path-segment boundary. Backslashes and dot segments normalize; parent traversal, URLs, queries, and fragments are rejected. No glob or filesystem access.' }
+        tag: { type: string, maxLength: 193, description: 'Exact allowlisted operational key=value matcher against sanitized reported tags; value <=128 UTF-8 bytes. Missing keys do not match an empty value.' }
+        assignee_team_id: { type: string, format: uuid, description: "Team selected by this ownership rule; cannot be combined with an account assignment." }
 
     IssueOwnershipRules:
       description: "Complete ordered app-level ownership policy. An empty rules list disables automatic assignment."
@@ -100156,6 +101255,75 @@ components:
       properties:
         enabled: { type: boolean }
 
+    IssueReleaseHealth:
+      description: "Observed issue and occurrence counts for one deployment within the requested environment."
+      type: object
+      required: [deployment_id, commit_sha, created_at, observed_requests, http_5xx_requests, http_5xx_rate, request_coverage, observed_issue_events, observed_issue_groups, new_issue_groups, regressed_issue_groups, identified_customers, unattributed_events]
+      properties:
+        deployment_id: { type: string, format: uuid }
+        commit_sha: { type: string }
+        created_at: { type: string, format: date-time }
+        observed_requests: { type: integer, format: int64, minimum: 0 }
+        http_5xx_requests: { type: integer, format: int64, minimum: 0 }
+        http_5xx_rate: { type: [number, 'null'], format: double, minimum: 0, maximum: 1 }
+        request_coverage: { type: string, enum: [observed, unknown] }
+        observed_issue_events: { type: integer, format: int64, minimum: 0 }
+        observed_issue_groups: { type: integer, format: int64, minimum: 0 }
+        new_issue_groups: { type: integer, format: int64, minimum: 0 }
+        regressed_issue_groups: { type: integer, format: int64, minimum: 0 }
+        identified_customers: { type: integer, format: int64, minimum: 0 }
+        unattributed_events: { type: integer, format: int64, minimum: 0 }
+    IssueReleaseComparison:
+      description: "Baseline and candidate deployment health with newly observed, recurring and resolved issue groups."
+      type: object
+      required: [window_start, window_end, environment, baseline, candidate, http_5xx_rate_delta]
+      properties:
+        window_start: { type: string, format: date-time }
+        window_end: { type: string, format: date-time }
+        environment: { type: string }
+        baseline: { $ref: '#/components/schemas/IssueReleaseHealth' }
+        candidate: { $ref: '#/components/schemas/IssueReleaseHealth' }
+        http_5xx_rate_delta:
+          type: [number, 'null']
+          format: double
+          minimum: -1
+          maximum: 1
+          description: Candidate minus baseline observed HTTP 5xx rate, expressed as a fraction. Null if either has no observed requests.
+    BulkIssueLifecycleAction:
+      description: "Lifecycle or assignment action applied atomically to the selected canonical issue groups."
+      type: object
+      additionalProperties: false
+      required: [action]
+      properties:
+        action: { type: string, enum: [assign, resolve, ignore, reopen] }
+        assignee_account_id: { type: string, format: uuid, description: Only for assign; omit both assignment targets to unassign. }
+        fixed_deployment_id: { type: string, format: uuid, description: Required only for resolve. }
+        ignored_until: { type: string, format: date-time, description: Required only for ignore; future and within 90 days. }
+        assignee_team_id: { type: string, format: uuid, description: Only for assign; mutually exclusive with assignee_account_id. }
+
+    BulkIssueActionRequest:
+      description: "Bounded issue selection and one lifecycle or assignment operation to apply atomically."
+      type: object
+      additionalProperties: false
+      required: [issue_ids, action]
+      properties:
+        issue_ids:
+          type: array
+          minItems: 1
+          maxItems: 50
+          uniqueItems: true
+          items: { type: string, format: uuid }
+        action:
+          $ref: '#/components/schemas/BulkIssueLifecycleAction'
+    BulkIssueActionResponse:
+      description: "Canonical issue groups updated by the completed atomic bulk action."
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          maxItems: 50
+          items: { $ref: '#/components/schemas/Issue' }
     IssueActionRequest:
       description: "Desired ownership, lifecycle, or reversible regrouping action within the app. Merge adopts the destination owner/state; split opens one linked original group. Merge/split responses identify the remaining canonical issue."
       type: object
@@ -100167,6 +101335,7 @@ components:
         assignee_account_id: { type: string, format: uuid }
         fixed_deployment_id: { type: string, format: uuid }
         ignored_until: { type: string, format: date-time }
+        assignee_team_id: { type: string, format: uuid, description: "Target team for this assignment action; clear the account assignee when selecting a team." }
 
     CreateIssueIngestTokenRequest:
       description: "Create a short-lived reporting credential for one existing deployment and environment."

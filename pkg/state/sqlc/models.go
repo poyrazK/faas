@@ -766,6 +766,13 @@ type AppIssue struct {
 	FixedDeploymentCreatedAt pgtype.Timestamptz
 	IgnoredUntil             pgtype.Timestamptz
 	SplitSourceIssueID       pgtype.UUID
+	AssigneeTeamID           pgtype.UUID
+}
+
+type AppIssueFrequencyAlertPolicy struct {
+	AppID    pgtype.UUID
+	Revision int64
+	Rules    []byte
 }
 
 type AppIssueImpactAlertPolicy struct {
@@ -781,6 +788,34 @@ type AppIssueOwnershipRule struct {
 	SourceKind        pgtype.Text
 	RoutePrefix       pgtype.Text
 	AssigneeAccountID pgtype.UUID
+	SourcePathPrefix  pgtype.Text
+	TagFilter         pgtype.Text
+	AssigneeTeamID    pgtype.UUID
+}
+
+type AppIssueSavedView struct {
+	AppID              pgtype.UUID
+	ViewKey            string
+	Name               string
+	Filters            []byte
+	CreatedAt          pgtype.Timestamptz
+	UpdatedAt          pgtype.Timestamptz
+	UpdatedByAccountID pgtype.UUID
+}
+
+type AppIssueTeam struct {
+	ID                 pgtype.UUID
+	AppID              pgtype.UUID
+	TeamKey            string
+	Name               string
+	CreatedAt          pgtype.Timestamptz
+	UpdatedAt          pgtype.Timestamptz
+	UpdatedByAccountID pgtype.UUID
+}
+
+type AppIssueTeamMember struct {
+	TeamID    pgtype.UUID
+	AccountID pgtype.UUID
 }
 
 type AppLogDrain struct {
@@ -4575,6 +4610,88 @@ type IssueActivity struct {
 	Details        []byte
 }
 
+type IssueApplicationEscalationPolicy struct {
+	AppID        pgtype.UUID
+	Enabled      bool
+	Revision     int64
+	DelayMinutes int32
+	TeamID       pgtype.UUID
+	UpdatedAt    pgtype.Timestamptz
+}
+
+type IssueApplicationReminder struct {
+	ID                       pgtype.UUID
+	IssueID                  pgtype.UUID
+	ResponseID               pgtype.UUID
+	Sequence                 int32
+	PolicyRevision           int64
+	Outcome                  string
+	CreatedAt                pgtype.Timestamptz
+	Kind                     string
+	EscalationPolicyRevision pgtype.Int8
+	ResponsibilityTeamID     pgtype.UUID
+	TargetTeamName           string
+}
+
+type IssueApplicationReminderPolicy struct {
+	AppID           pgtype.UUID
+	Enabled         bool
+	Revision        int64
+	IntervalMinutes int32
+	RepeatLimit     int32
+	UpdatedAt       pgtype.Timestamptz
+}
+
+type IssueApplicationResponseAccess struct {
+	IssueID           pgtype.UUID
+	AppID             pgtype.UUID
+	OwnerAccountID    pgtype.UUID
+	ActorAccountID    pgtype.UUID
+	OwnerPlan         string
+	ResponsibleTeamID interface{}
+	RoutedTeamID      pgtype.UUID
+}
+
+type IssueApplicationSlackPolicy struct {
+	AppID             pgtype.UUID
+	Enabled           bool
+	Revision          int64
+	Events            []string
+	FallbackTeamID    pgtype.UUID
+	SkippedDeliveries int64
+	UnroutedAlerts    int64
+}
+
+type IssueApplicationTriage struct {
+	IssueID               pgtype.UUID
+	IncidentID            pgtype.UUID
+	Revision              int64
+	AcknowledgedBy        pgtype.UUID
+	AcknowledgedAt        pgtype.Timestamptz
+	SnoozedUntil          pgtype.Timestamptz
+	SnoozedBy             pgtype.UUID
+	SnoozeReason          string
+	ReminderStartedAt     pgtype.Timestamptz
+	LastRemindedAt        pgtype.Timestamptz
+	ReminderCount         int32
+	FirstRemindedAt       pgtype.Timestamptz
+	EscalationAttemptedAt pgtype.Timestamptz
+	EscalatedAt           pgtype.Timestamptz
+	EscalationTeamID      pgtype.UUID
+}
+
+type IssueApplicationTriageActivity struct {
+	ID           pgtype.UUID
+	IssueID      pgtype.UUID
+	IncidentID   pgtype.UUID
+	Revision     int64
+	ActorID      pgtype.UUID
+	Action       string
+	CreatedAt    pgtype.Timestamptz
+	SnoozedUntil pgtype.Timestamptz
+	Reason       string
+}
+
 type IssueEvent struct {
 	ID                       pgtype.UUID
 	AppID                    pgtype.UUID
@@ -4589,6 +4706,14 @@ type IssueEvent struct {
 	VerifiedConsumerID       pgtype.UUID
 	VerifiedPlatformTenantID pgtype.UUID
 	OriginalIssueID          pgtype.UUID
+}
+
+type IssueFrequencyAlertReceipt struct {
+	AppID       pgtype.UUID
+	RuleKey     string
+	IssueID     pgtype.UUID
+	RuleHash    string
+	LastAlertAt pgtype.Timestamptz
 }
 
 type IssueGroupAssignment struct {
@@ -4623,6 +4748,7 @@ type IssueGroupRollup struct {
 	FixedDeploymentCreatedAt pgtype.Timestamptz
 	IgnoredUntil             pgtype.Timestamptz
 	SplitSourceIssueID       pgtype.UUID
+	AssigneeTeamID           pgtype.UUID
 }
 
 type IssueIngestToken struct {
@@ -4656,6 +4782,99 @@ type IssueResolution struct {
 	ActorAccountID    pgtype.UUID
 }
 
+type IssueSlackActionMessage struct {
+	DeliveryID       pgtype.UUID
+	PolicyRevision   int64
+	ResponseID       pgtype.UUID
+	ResponseRevision int64
+	MessageTs        string
+	ConsumedAt       pgtype.Timestamptz
+}
+
+type IssueSlackDeliverySource struct {
+	DeliveryID              pgtype.UUID
+	IssueID                 pgtype.UUID
+	LinkID                  pgtype.UUID
+	Kind                    string
+	Reason                  string
+	Details                 interface{}
+	Eligible                interface{}
+	ApplicationRetryAllowed interface{}
+}
+
+type IssueSlackIdentity struct {
+	AppID          pgtype.UUID
+	SlackUserID    string
+	AccountID      pgtype.UUID
+	PolicyRevision int64
+	MfaEnrolledAt  pgtype.Timestamptz
+	MfaRequired    bool
+	ExpiresAt      pgtype.Timestamptz
+}
+
+type IssueSlackInstallation struct {
+	AppID         pgtype.UUID
+	AccountID     pgtype.UUID
+	Revision      int64
+	Status        string
+	WorkspaceID   string
+	WorkspaceName string
+	SlackAppID    string
+	BotUserID     string
+	TokenSealed   []byte
+	InstalledAt   pgtype.Timestamptz
+}
+
+type IssueSlackInteractionPolicy struct {
+	AppID        pgtype.UUID
+	Enabled      bool
+	Revision     int64
+	WorkspaceID  string
+	SlackAppID   string
+	SecretSealed []byte
+}
+
+type IssueSlackLinkChallenge struct {
+	Token          string
+	AppID          pgtype.UUID
+	DeliveryID     pgtype.UUID
+	RequestKey     string
+	SlackUserID    string
+	PolicyRevision int64
+	ExpiresAt      pgtype.Timestamptz
+	ConsumedAt     pgtype.Timestamptz
+}
+
+type IssueSlackOauthFlow struct {
+	AppID            pgtype.UUID
+	AccountID        pgtype.UUID
+	StateHash        string
+	ExpectedRevision int64
+	Phase            string
+	Sealed           []byte
+	ExpiresAt        pgtype.Timestamptz
+}
+
+type IssueSlackRoutingPolicy struct {
+	AppID                pgtype.UUID
+	AccountID            pgtype.UUID
+	Revision             int64
+	InstallationRevision int64
+	Rules                []byte
+}
+
+type IssueSourceMapArtifact struct {
+	AppID              pgtype.UUID
+	DeploymentID       pgtype.UUID
+	ManifestSha256     string
+	CanonicalManifest  []byte
+	MapCount           int32
+	CreatedAt          pgtype.Timestamptz
+	CreatedByAccountID pgtype.UUID
+	RetiredAt          pgtype.Timestamptz
+	RetiredByAccountID pgtype.UUID
+}
+
 type IssueSplitRule struct {
 	ID                           pgtype.UUID
 	AppID                        pgtype.UUID
@@ -4672,6 +4891,273 @@ type IssueSplitRule struct {
 	UnavailableHistoryEventCount int64
 	CreatedAt                    pgtype.Timestamptz
 	UpdatedAt                    pgtype.Timestamptz
+}
+
+type IssueTeamSlackDelivery struct {
+	ID                        pgtype.UUID
+	DeliverySeq               int64
+	ChannelID                 string
+	DestinationID             pgtype.UUID
+	DestinationRevision       int64
+	NotificationID            pgtype.UUID
+	IncidentID                pgtype.UUID
+	Status                    string
+	Attempt                   int32
+	TotalAttempts             int64
+	NextAttemptAt             pgtype.Timestamptz
+	ExpiresAt                 pgtype.Timestamptz
+	ClaimID                   pgtype.UUID
+	ClaimUntil                pgtype.Timestamptz
+	LastError                 string
+	ResponseCode              int32
+	CreatedAt                 pgtype.Timestamptz
+	UpdatedAt                 pgtype.Timestamptz
+	ActivityID                pgtype.UUID
+	ApplicationPolicyRevision pgtype.Int8
+	RecipientAccountIds       []pgtype.UUID
+	AssignedTeamID            pgtype.UUID
+	AssignedAccountID         pgtype.UUID
+	ReminderID                pgtype.UUID
+	RoutingRevision           int64
+	RoutingRuleKey            string
+}
+
+type IssueTeamSlackDestination struct {
+	ID            pgtype.UUID
+	AppID         pgtype.UUID
+	AccountID     pgtype.UUID
+	TeamID        pgtype.UUID
+	ChannelID     string
+	TokenSealed   []byte
+	Enabled       bool
+	Revision      int64
+	NextSendAt    pgtype.Timestamptz
+	ClaimID       pgtype.UUID
+	ClaimUntil    pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
+	OauthRevision pgtype.Int8
+}
+
+type IssueTeamSlackThread struct {
+	DestinationID       pgtype.UUID
+	DestinationRevision int64
+	IncidentID          pgtype.UUID
+	RootTs              string
+	ChannelID           string
+}
+
+type IssueTrackerAutoSync struct {
+	LinkID                pgtype.UUID
+	AppID                 pgtype.UUID
+	AccountID             pgtype.UUID
+	SourceIssueID         pgtype.UUID
+	Enabled               bool
+	Revision              int64
+	BindingFingerprint    string
+	Baseline              []byte
+	SourceState           string
+	PendingState          string
+	Outcome               string
+	Reason                string
+	ClaimID               pgtype.UUID
+	ClaimUntil            pgtype.Timestamptz
+	LastCheckedAt         pgtype.Timestamptz
+	NextCheckAt           pgtype.Timestamptz
+	UpdatedAt             pgtype.Timestamptz
+	LinearOpenStateID     string
+	LinearResolvedStateID string
+	Direction             string
+	SourceRevision        int64
+	PendingSourceRevision int64
+	ObservedState         string
+	LastSuccessfulAt      pgtype.Timestamptz
+}
+
+type IssueTrackerCallback struct {
+	ScopeKey           string
+	DeliveryID         string
+	Provider           string
+	AppID              pgtype.UUID
+	ConnectionRevision int64
+	InstallationID     int64
+	RepositoryID       int64
+	WorkspaceID        pgtype.UUID
+	TeamID             pgtype.UUID
+	TicketID           string
+	TicketUrl          string
+	PayloadHash        string
+	ReceivedAt         pgtype.Timestamptz
+	ProcessedAt        pgtype.Timestamptz
+}
+
+type IssueTrackerCallbackDiagnostic struct {
+	AppID              pgtype.UUID
+	AccountID          pgtype.UUID
+	ConnectionRevision int64
+	InvalidSignature   int64
+	WrongScope         int64
+	StaleDelivery      int64
+	InvalidPayload     int64
+	DeliveryConflict   int64
+	LastVerifiedAt     pgtype.Timestamptz
+	LastRejectedAt     pgtype.Timestamptz
+}
+
+type IssueTrackerInboundGuard struct {
+	AppID          pgtype.UUID
+	Revision       int64
+	SourceRevision int64
+}
+
+type IssueTrackerLinearConnection struct {
+	AppID                pgtype.UUID
+	AccountID            pgtype.UUID
+	Revision             int64
+	Connected            bool
+	WorkspaceID          pgtype.UUID
+	TeamID               pgtype.UUID
+	ViewerID             pgtype.UUID
+	SealedCredential     []byte
+	UpdatedAt            pgtype.Timestamptz
+	WebhookEnabled       bool
+	AuthMethod           string
+	OauthStatus          string
+	AccessTokenExpiresAt pgtype.Timestamptz
+	CredentialGeneration int64
+	RefreshClaimID       pgtype.UUID
+	RefreshClaimUntil    pgtype.Timestamptz
+	RefreshStartedAt     pgtype.Timestamptz
+}
+
+type IssueTrackerLinearOauthFlow struct {
+	AppID            pgtype.UUID
+	AccountID        pgtype.UUID
+	IssueID          pgtype.UUID
+	StateHash        string
+	ExpectedRevision int64
+	Phase            string
+	SealedState      []byte
+	ExpiresAt        pgtype.Timestamptz
+}
+
+type IssueTrackerLink struct {
+	ID                 pgtype.UUID
+	IssueID            pgtype.UUID
+	Provider           string
+	ExternalKey        string
+	Url                string
+	Title              string
+	CreatedAt          pgtype.Timestamptz
+	UpdatedAt          pgtype.Timestamptz
+	CreatedByAccountID pgtype.UUID
+	UpdatedByAccountID pgtype.UUID
+}
+
+type IssueTrackerSourceGuard struct {
+	IssueID  pgtype.UUID
+	Revision int64
+}
+
+type IssueTrackerSyncEscalationPolicy struct {
+	AppID        pgtype.UUID
+	AccountID    pgtype.UUID
+	Enabled      bool
+	TeamID       pgtype.UUID
+	DelayMinutes int32
+	Revision     int64
+	UpdatedAt    pgtype.Timestamptz
+}
+
+type IssueTrackerSyncHistory struct {
+	ID             pgtype.UUID
+	LinkID         pgtype.UUID
+	AppID          pgtype.UUID
+	AccountID      pgtype.UUID
+	SourceIssueID  pgtype.UUID
+	PolicyRevision int64
+	ClaimID        pgtype.UUID
+	EventType      string
+	Direction      string
+	Outcome        string
+	Reason         string
+	SourceState    string
+	ObservedState  string
+	PendingState   string
+	CreatedAt      pgtype.Timestamptz
+}
+
+type IssueTrackerSyncIncident struct {
+	LinkID              pgtype.UUID
+	SettingsRevision    int64
+	Failures            int32
+	IncidentID          pgtype.UUID
+	AnnouncedKind       string
+	IssueID             pgtype.UUID
+	TeamID              pgtype.UUID
+	RecipientAccountIds []pgtype.UUID
+	OpenedAt            pgtype.Timestamptz
+	ReminderCount       int32
+	LastRemindedAt      pgtype.Timestamptz
+	FirstRemindedAt     pgtype.Timestamptz
+	EscalatedAt         pgtype.Timestamptz
+	EscalationTeamID    pgtype.UUID
+}
+
+type IssueTrackerSyncNotification struct {
+	ID                  pgtype.UUID
+	LinkID              pgtype.UUID
+	AppID               pgtype.UUID
+	AccountID           pgtype.UUID
+	IssueID             pgtype.UUID
+	IncidentID          pgtype.UUID
+	Kind                string
+	Outcome             string
+	Reason              string
+	TeamID              pgtype.UUID
+	RecipientAccountIds []pgtype.UUID
+	Payload             []byte
+	CreatedAt           pgtype.Timestamptz
+	ReminderSequence    int32
+}
+
+type IssueTrackerSyncNotificationPolicy struct {
+	AppID            pgtype.UUID
+	AccountID        pgtype.UUID
+	Enabled          bool
+	Revision         int64
+	FailureThreshold int32
+	UpdatedAt        pgtype.Timestamptz
+}
+
+type IssueTrackerSyncReminderPolicy struct {
+	AppID           pgtype.UUID
+	AccountID       pgtype.UUID
+	Enabled         bool
+	IntervalMinutes int32
+	Revision        int64
+	UpdatedAt       pgtype.Timestamptz
+}
+
+type IssueTrackerSyncTriage struct {
+	IncidentID     pgtype.UUID
+	LinkID         pgtype.UUID
+	Revision       int64
+	AcknowledgedBy pgtype.UUID
+	ClaimedBy      pgtype.UUID
+	SnoozedUntil   pgtype.Timestamptz
+	SnoozedBy      pgtype.UUID
+	SnoozeReason   string
+}
+
+type IssueTrackerSyncTriageActivity struct {
+	ID           pgtype.UUID
+	IncidentID   pgtype.UUID
+	ActorID      pgtype.UUID
+	Action       string
+	Revision     int64
+	CreatedAt    pgtype.Timestamptz
+	SnoozedUntil pgtype.Timestamptz
+	Reason       string
 }
 
 type Job struct {
@@ -6096,6 +6582,22 @@ type MirrorSlotLease struct {
 	MirrorRuleID pgtype.UUID
 	ExpiresAt    pgtype.Timestamptz
 	CreatedAt    pgtype.Timestamptz
+}
+
+type NativeIssueTicketReceipt struct {
+	AccountID    pgtype.UUID
+	RequestID    pgtype.UUID
+	AppID        pgtype.UUID
+	IssueID      pgtype.UUID
+	RequestHash  string
+	State        string
+	ClaimID      pgtype.UUID
+	RecoverAfter pgtype.Timestamptz
+	TicketUrl    string
+	ProviderID   string
+	LinkID       pgtype.UUID
+	CreatedAt    pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
 }
 
 type NodeJoinJob struct {

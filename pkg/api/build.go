@@ -125,4 +125,20 @@ type BuildDone struct {
 	// dependency cache instead of exporting it: its plan and install inputs
 	// matched the ones that produced it. builderd keeps the stored cache.
 	DependencyCacheUnchanged bool `json:"dependency_cache_unchanged,omitempty"`
+	// SharedRuntime records, for a successful Node source build of an app,
+	// whether its runtime artifact could run on the shared runner base
+	// (docs/adr/20261017-shared-runtime-source-apps.md). It is informational
+	// until imaged consumes it; older guests omit it.
+	SharedRuntime *SharedRuntimeVerdict `json:"shared_runtime,omitempty"`
+}
+
+// SharedRuntimeVerdict is the builder VM's classification of one Railpack
+// plan. An eligible build needs only its /app tree on top of the runner base:
+// Start is the resolved process argv and Env the plan's variables with
+// toolchain paths removed. An ineligible build names one Reason.
+type SharedRuntimeVerdict struct {
+	Eligible bool              `json:"eligible"`
+	Reason   string            `json:"reason,omitempty"`
+	Start    []string          `json:"start,omitempty"`
+	Env      map[string]string `json:"env,omitempty"`
 }

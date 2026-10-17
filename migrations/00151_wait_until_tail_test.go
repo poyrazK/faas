@@ -1,3 +1,5 @@
+//go:build !no_pg
+
 package migrations_test
 
 import (
@@ -30,8 +32,8 @@ import (
 //     truthiness check; NULL coalescing would force a `coalesce`
 //     per-row in the hot path.
 //   - All three columns are reachable via current_schema() (not
-//     hard-coded 'public') because pgtest.Open isolates each test
-//     into its own per-test schema (search_path=<schema>,public).
+//     hard-coded 'public') to keep lookups relative to the pool. Each
+//     test uses its own migrated database.
 //   - The replay guard: re-running the migration after a successful
 //     first run is a no-op (ADD COLUMN IF NOT EXISTS).
 //
@@ -40,12 +42,10 @@ import (
 // it (per migration-slot-renumber-at-pr-creation, ADR-041).
 func TestMigrations_00151_WaitUntilTail(t *testing.T) {
 	ctx := context.Background()
-	pool := pgtest.Open(t) // t.Skip-friendly on missing DATABASE_URL
+	pool := pgtest.OpenMigrated(t)
 
-	// Run the migration set against a fresh per-test schema so
-	// this test is independent of any other test that may have
-	// invoked MigrateUp against a different schema in the same
-	// DATABASE_URL (the pgtest default is one schema per test).
+	// Use a private migrated database: the complete migration set includes
+	// public-qualified objects. A separate database preserves test isolation.
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatalf("db.MigrateUp: %v", err)
 	}
