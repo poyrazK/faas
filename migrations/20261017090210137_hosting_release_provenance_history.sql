@@ -1,8 +1,8 @@
 -- +goose Up
 -- +goose StatementBegin
-ALTER TABLE hosting_releases ADD COLUMN provenance jsonb
+ALTER TABLE hosting_releases ADD COLUMN IF NOT EXISTS provenance jsonb
  CHECK (provenance IS NULL OR (jsonb_typeof(provenance)='object' AND octet_length(provenance::text)<=4096));
-CREATE TABLE hosting_promotion_events (
+CREATE TABLE IF NOT EXISTS hosting_promotion_events (
  site_id uuid NOT NULL REFERENCES hosting_sites(id) ON DELETE CASCADE,
  revision bigint NOT NULL CHECK (revision BETWEEN 2 AND 9007199254740991),
  previous_revision bigint NOT NULL CHECK (previous_revision=revision-1),

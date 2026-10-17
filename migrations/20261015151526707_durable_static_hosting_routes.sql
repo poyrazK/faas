@@ -3,12 +3,12 @@
 -- +goose Up
 -- +goose StatementBegin
 ALTER TABLE hosting_sites
-    ADD COLUMN durable_routing boolean NOT NULL DEFAULT false CHECK (durable_routing IN (true, false)),
-    ADD COLUMN suspended boolean NOT NULL DEFAULT false CHECK (NOT suspended OR durable_routing);
+    ADD COLUMN IF NOT EXISTS durable_routing boolean NOT NULL DEFAULT false CHECK (durable_routing IN (true, false)),
+    ADD COLUMN IF NOT EXISTS suspended boolean NOT NULL DEFAULT false CHECK (NOT suspended OR durable_routing);
 ALTER TABLE hosting_releases
-    ADD COLUMN retirement_generation bigint NOT NULL DEFAULT 0 CHECK (retirement_generation >= 0),
-    ADD COLUMN retirement_published_at timestamptz CHECK (retirement_published_at IS NULL OR (state IN ('retiring', 'deleted') AND retirement_generation > 0));
-CREATE TABLE hosting_route_publications (
+    ADD COLUMN IF NOT EXISTS retirement_generation bigint NOT NULL DEFAULT 0 CHECK (retirement_generation >= 0),
+    ADD COLUMN IF NOT EXISTS retirement_published_at timestamptz CHECK (retirement_published_at IS NULL OR (state IN ('retiring', 'deleted') AND retirement_generation > 0));
+CREATE TABLE IF NOT EXISTS hosting_route_publications (
     site_id uuid PRIMARY KEY REFERENCES hosting_sites(id) ON DELETE CASCADE,
     generation bigint NOT NULL DEFAULT 1 CHECK (generation > 0),
     published_generation bigint NOT NULL DEFAULT 0 CHECK (published_generation >= 0 AND published_generation <= generation),
@@ -16,7 +16,7 @@ CREATE TABLE hosting_route_publications (
     next_attempt_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     CHECK ((published_generation > 0) = (published_at IS NOT NULL))
 );
-CREATE INDEX hosting_route_publications_due ON hosting_route_publications(next_attempt_at, site_id);
+CREATE INDEX IF NOT EXISTS hosting_route_publications_due ON hosting_route_publications(next_attempt_at, site_id);
 -- +goose StatementEnd
 
 -- +goose Down

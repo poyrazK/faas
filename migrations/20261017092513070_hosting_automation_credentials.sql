@@ -1,6 +1,6 @@
 -- +goose Up
 -- +goose StatementBegin
-CREATE TABLE hosting_automation_credentials (
+CREATE TABLE IF NOT EXISTS hosting_automation_credentials (
  id uuid PRIMARY KEY,
  account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE RESTRICT,
  site_id uuid NOT NULL REFERENCES hosting_sites(id) ON DELETE CASCADE,
@@ -10,8 +10,8 @@ CREATE TABLE hosting_automation_credentials (
  created_at timestamptz NOT NULL DEFAULT clock_timestamp() CHECK (isfinite(created_at)),
  expires_at timestamptz NOT NULL CHECK (isfinite(expires_at) AND expires_at>created_at)
 );
-CREATE INDEX hosting_automation_credentials_site ON hosting_automation_credentials(site_id);
-CREATE TABLE hosting_ci_runs (
+CREATE INDEX IF NOT EXISTS hosting_automation_credentials_site ON hosting_automation_credentials(site_id);
+CREATE TABLE IF NOT EXISTS hosting_ci_runs (
  site_id uuid NOT NULL REFERENCES hosting_sites(id) ON DELETE CASCADE,
  id uuid NOT NULL,
  release_id uuid NOT NULL,

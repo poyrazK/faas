@@ -33,6 +33,17 @@ func TestHostingReleasePromotionHistoryMigration(t *testing.T) {
 	if _, err = pool.Exec(ctx, `INSERT INTO hosting_releases(id,state) VALUES (4,'ready')`); err != nil {
 		t.Fatal(err)
 	}
+	if _, err = pool.Exec(ctx, `UPDATE hosting_releases SET first_promoted_at=created_at+interval '1 second' WHERE id=1`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = pool.Exec(ctx, parts[0]); err != nil {
+		t.Fatal("ledger replay", err)
+	}
+	var preserved bool
+	if err = pool.QueryRow(ctx, `SELECT (SELECT first_promoted_at IS NULL FROM hosting_releases WHERE id=4)
+ AND (SELECT first_promoted_at=created_at+interval '1 second' FROM hosting_releases WHERE id=1)`).Scan(&preserved); err != nil || !preserved {
+		t.Fatal("replay changed staged visibility or accepted promotion time", preserved, err)
+	}
 	if _, err = pool.Exec(ctx, parts[1]); err == nil {
 		t.Fatal("downgrade exposed staged release")
 	}

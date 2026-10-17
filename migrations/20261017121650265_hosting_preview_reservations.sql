@@ -1,5 +1,5 @@
 -- +goose Up
-ALTER TABLE hosting_ci_runs ADD COLUMN preview_reserved boolean NOT NULL DEFAULT false
+ALTER TABLE hosting_ci_runs ADD COLUMN IF NOT EXISTS preview_reserved boolean NOT NULL DEFAULT false
  CHECK (preview_reserved IN (true,false));
 
 -- +goose Down

@@ -1,8 +1,8 @@
 -- +goose Up
 -- +goose StatementBegin
-ALTER TABLE hosting_releases ADD COLUMN last_activity_at timestamptz NOT NULL DEFAULT clock_timestamp() CHECK (isfinite(last_activity_at));
+ALTER TABLE hosting_releases ADD COLUMN IF NOT EXISTS last_activity_at timestamptz NOT NULL DEFAULT clock_timestamp() CHECK (isfinite(last_activity_at));
 -- Existing releases receive a fresh idle window, never a retroactive expiry.
-CREATE TABLE hosting_retention_policies (
+CREATE TABLE IF NOT EXISTS hosting_retention_policies (
  site_id uuid PRIMARY KEY REFERENCES hosting_sites(id) ON DELETE CASCADE,
  revision bigint NOT NULL CHECK (revision>0),
  enabled boolean NOT NULL DEFAULT false,
@@ -10,7 +10,7 @@ CREATE TABLE hosting_retention_policies (
  staged_age_seconds bigint NOT NULL CHECK (staged_age_seconds BETWEEN 3600 AND 2592000),
  updated_at timestamptz NOT NULL DEFAULT clock_timestamp() CHECK (isfinite(updated_at))
 );
-CREATE INDEX hosting_retention_enabled_sites ON hosting_retention_policies(site_id) WHERE enabled;
+CREATE INDEX IF NOT EXISTS hosting_retention_enabled_sites ON hosting_retention_policies(site_id) WHERE enabled;
 -- +goose StatementEnd
 
 -- +goose Down

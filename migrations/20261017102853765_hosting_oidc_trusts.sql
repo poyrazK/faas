@@ -1,6 +1,6 @@
 -- +goose Up
 -- +goose StatementBegin
-CREATE TABLE hosting_oidc_trusts (
+CREATE TABLE IF NOT EXISTS hosting_oidc_trusts (
  id uuid PRIMARY KEY,
  account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE RESTRICT,
  site_id uuid NOT NULL REFERENCES hosting_sites(id) ON DELETE CASCADE,
@@ -14,11 +14,15 @@ CREATE TABLE hosting_oidc_trusts (
  created_at timestamptz NOT NULL DEFAULT clock_timestamp() CHECK (isfinite(created_at)),
  UNIQUE(account_id,site_id,id)
 );
-CREATE INDEX hosting_oidc_trusts_site ON hosting_oidc_trusts(site_id);
-ALTER TABLE hosting_automation_credentials ADD COLUMN oidc_trust_id uuid;
-ALTER TABLE hosting_automation_credentials ADD CONSTRAINT hosting_credential_oidc_trust
- FOREIGN KEY(account_id,site_id,oidc_trust_id) REFERENCES hosting_oidc_trusts(account_id,site_id,id) ON DELETE CASCADE;
-CREATE INDEX hosting_credentials_oidc_trust ON hosting_automation_credentials(oidc_trust_id) WHERE oidc_trust_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS hosting_oidc_trusts_site ON hosting_oidc_trusts(site_id);
+ALTER TABLE hosting_automation_credentials ADD COLUMN IF NOT EXISTS oidc_trust_id uuid;
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'hosting_automation_credentials'::regclass AND conname = 'hosting_credential_oidc_trust') THEN
+        ALTER TABLE hosting_automation_credentials ADD CONSTRAINT hosting_credential_oidc_trust
+            FOREIGN KEY(account_id,site_id,oidc_trust_id) REFERENCES hosting_oidc_trusts(account_id,site_id,id) ON DELETE CASCADE;
+    END IF;
+END $$;
+CREATE INDEX IF NOT EXISTS hosting_credentials_oidc_trust ON hosting_automation_credentials(oidc_trust_id) WHERE oidc_trust_id IS NOT NULL;
 -- +goose StatementEnd
 
 -- +goose Down

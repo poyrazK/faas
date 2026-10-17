@@ -43,3 +43,9 @@ Register hosting tables in environment-clone schema inventory with their existin
 configuration/data, account-identity and operational boundaries. Known schema is
 not a qualified hosting-copy strategy: preserve the configuration and artifact
 strategy blockers, and do not clone credentials, domain claims or serving receipts.
+
+The pilot migrations must tolerate replay of their existing DDL after missing
+ledger receipts. Replay preserves accepted promotion times, private staged
+releases, reserved artifact bytes, durable publication generations and pending
+age, retry state and terminal CI cancellation. Guard legacy backfills and routing
+refreshes so they execute only during the original schema transition.

@@ -1,12 +1,12 @@
 -- +goose Up
 -- +goose StatementBegin
-CREATE TABLE hosting_domain_claims (
+CREATE TABLE IF NOT EXISTS hosting_domain_claims (
     hostname text PRIMARY KEY CHECK (length(hostname) BETWEEN 1 AND 64 AND hostname = lower(hostname)),
     domain_id uuid NOT NULL UNIQUE,
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     UNIQUE(hostname, domain_id)
 );
-CREATE TABLE hosting_domains (
+CREATE TABLE IF NOT EXISTS hosting_domains (
     id uuid PRIMARY KEY,
     account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE RESTRICT,
     site_id uuid NOT NULL REFERENCES hosting_sites(id) ON DELETE RESTRICT,
@@ -29,8 +29,8 @@ CREATE TABLE hosting_domains (
     CHECK ((published_generation > 0) = (published_at IS NOT NULL)),
     FOREIGN KEY (hostname, id) REFERENCES hosting_domain_claims(hostname, domain_id) ON DELETE RESTRICT
 );
-CREATE INDEX hosting_domains_due ON hosting_domains(next_attempt_at, id);
-CREATE INDEX hosting_domains_site ON hosting_domains(site_id, created_at);
+CREATE INDEX IF NOT EXISTS hosting_domains_due ON hosting_domains(next_attempt_at, id);
+CREATE INDEX IF NOT EXISTS hosting_domains_site ON hosting_domains(site_id, created_at);
 -- +goose StatementEnd
 
 -- +goose Down

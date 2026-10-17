@@ -1,5 +1,6 @@
 -- +goose Up
-CREATE TABLE hosting_sites (
+-- +goose StatementBegin
+CREATE TABLE IF NOT EXISTS hosting_sites (
     id uuid PRIMARY KEY,
     account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE RESTRICT,
     project_id uuid NOT NULL REFERENCES projects(id) ON DELETE RESTRICT,
@@ -15,7 +16,7 @@ CREATE TABLE hosting_sites (
     UNIQUE(account_id, project_id, environment, name)
 );
 
-CREATE TABLE hosting_releases (
+CREATE TABLE IF NOT EXISTS hosting_releases (
     id uuid PRIMARY KEY,
     site_id uuid NOT NULL REFERENCES hosting_sites(id) ON DELETE CASCADE,
     state text NOT NULL DEFAULT 'pending' CHECK (state IN ('pending', 'ready', 'retiring', 'deleted')),
@@ -25,9 +26,14 @@ CREATE TABLE hosting_releases (
     CHECK ((state IN ('retiring', 'deleted')) = (retired_at IS NOT NULL)),
     UNIQUE(site_id, id)
 );
-ALTER TABLE hosting_sites ADD CONSTRAINT hosting_sites_active_release_fk
-    FOREIGN KEY (id, active_release_id) REFERENCES hosting_releases(site_id, id) DEFERRABLE INITIALLY DEFERRED;
-CREATE INDEX hosting_releases_site ON hosting_releases(site_id, created_at DESC);
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'hosting_sites'::regclass AND conname = 'hosting_sites_active_release_fk') THEN
+        ALTER TABLE hosting_sites ADD CONSTRAINT hosting_sites_active_release_fk
+            FOREIGN KEY (id, active_release_id) REFERENCES hosting_releases(site_id, id) DEFERRABLE INITIALLY DEFERRED;
+    END IF;
+END $$;
+CREATE INDEX IF NOT EXISTS hosting_releases_site ON hosting_releases(site_id, created_at DESC);
+-- +goose StatementEnd
 
 -- +goose Down
 ALTER TABLE hosting_sites DROP CONSTRAINT hosting_sites_active_release_fk;

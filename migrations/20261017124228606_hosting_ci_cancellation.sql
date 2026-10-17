@@ -1,5 +1,5 @@
 -- +goose Up
-ALTER TABLE hosting_ci_runs ADD COLUMN canceled boolean NOT NULL DEFAULT false CHECK (canceled IN (true,false));
+ALTER TABLE hosting_ci_runs ADD COLUMN IF NOT EXISTS canceled boolean NOT NULL DEFAULT false CHECK (canceled IN (true,false));
 
 -- +goose Down
 -- +goose StatementBegin
