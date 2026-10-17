@@ -974,11 +974,11 @@ test('opt-in validators refresh on migrations, prevent form transport and suppor
   const goodImport=previewNotesCsv('body,priority,subject\nvalid,2,bob',{subject:'alice'})
   assert.equal(goodImport.ok,true);assert.deepEqual(goodImport.rows,[{body:'valid',priority:2,subject:'alice'}])
   let calls=0,tokens=0,keys=0
-  const client=notesClient({url:'https://notes.example',subject:'alice',accessToken:()=>{tokens++;return 'token'},fetch:async()=>{calls++;return new Response(JSON.stringify([{id:1,body:'valid',priority:0,version:1}]))}})
+  const client=notesClient({url:'https://notes.example',subject:'alice',accessToken:()=>{tokens++;return 'token'},fetch:async()=>{calls++;return new Response(JSON.stringify([{id:1,body:'valid',priority:0,version:1,subject:'alice'}]))}})
   const form=createNoteForm(client,{createKey:()=>{keys++;return '11111111-1111-4111-8111-111111111111'}})
   assert.deepEqual(await form.submit({body:'x'.repeat(129),tags:''}),{outcome:'validation_failed',fields:{body:'This note is too long.'}})
   assert.deepEqual([calls,tokens,keys],[0,0,0]);assert.equal(form.pending,null)
-  assert.equal((await form.submit({body:'valid',tags:''})).outcome,'saved')
+  assert.deepEqual(await form.submit({body:'valid',tags:''}),{outcome:'saved',note:{id:1,body:'valid',priority:0,version:1}})
   assert.deepEqual([calls,tokens,keys],[1,1,1])
   let guidedArtifact
   if(process.env.DATA_API_CHROMIUM_BIN){
