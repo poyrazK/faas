@@ -21,12 +21,13 @@ push:
 
 | Tier | Workflow | Runs on | Contents |
 |---|---|---|---|
-| Light | `ci-light.yml` | every pull request push, every merge to `main` | golangci-lint and `-race` tests for changed packages, the §6.2 invariant property tests when anything in their import tree changes, boot-contract, `go vet` of changed packages plus their direct importers (`scripts/ci/affected_packages.py`), generated-code drift, policy gates, migration ID hygiene plus apply/replay when migrations change |
+| Light | `ci-light.yml` | every pull request push, every merge to `main` | about 10 minutes per job: golangci-lint (govet included) and `-race` tests for changed packages (`scripts/ci/affected_packages.py`), the §6.2 invariant property tests when anything in their import tree changes, for `cmd/gregale`, `pkg/state` and `pkg/apid/apidserver` only the tests related to the change, capped and without `-race` (`scripts/ci/select_package_tests.py`), boot-contract, generated-code drift, policy gates, version-skew checks against the previous release and the migration expand/contract lint ([release-compatibility.md](release-compatibility.md)), migration ID hygiene plus apply/replay when migrations change |
 | Mega | `ci.yml` | nightly on `main`, `workflow_dispatch`, and from `release.yml` | the complete suite: every unit shard, e2e, migration history, container/UDP contracts, flags, load, SDK acceptance, ops/infra gates |
 
 `release.yml` calls `ci.yml` (`full-ci`) and every build/publish job depends
 on it, so no release tag publishes unless the full suite passed on the tagged
-commit. What the light tier deliberately skips (importers' tests, e2e,
+commit. What the light tier deliberately skips (importers' compilation and tests, the
+full `cmd/gregale`/`pkg/state`/`pkg/apid/apidserver` suites and their `-race` runs, e2e,
 migration history, container/UDP contracts, flags, load, SDK acceptance) is
 caught by the nightly run or, at the latest, the release gate.
 
@@ -41,18 +42,21 @@ gh api repos/poyrazK/faas/rulesets/19061133 \
 
 | Job name (exact) | Protects | Where |
 |---|---|---|
-| `light: lint, vet, build` | golangci-lint on changed packages (same rules and per-package invocation as the mega `Go lint` shards), gofmt, vet, repo-wide build, PR-4a fix-has-test | `ci-light.yml:lint` |
-| `light: codegen, policy, migrations` | sqlc/proto/spec/SDK/daemonunit drift, repo policy gates, migration ID hygiene, apply-and-walk and replay safety | `ci-light.yml:checks` |
-| `light: tests (shard 1)` | `-race` tests of changed packages and the §6.2 invariants (`pkg/state` split by test name across shards) | `ci-light.yml:tests` |
-| `light: tests (shard 2)` | `-race` tests of changed packages and the §6.2 invariants (`pkg/state` split by test name across shards) | `ci-light.yml:tests` |
-| `light: tests (shard 3)` | `-race` tests of changed packages and the §6.2 invariants (`pkg/state` split by test name across shards) | `ci-light.yml:tests` |
+| `light: lint, vet, build` | golangci-lint (govet included) on changed packages, `go vet` of the unchanged importers that use a changed exported name, gofmt, PR-4a fix-has-test | `ci-light.yml:lint` |
+| `light: codegen, policy, migrations` | sqlc/proto/spec/SDK/daemonunit drift, repo policy gates, version skew (protos and guest protocol vs the previous release), migration expand/contract lint, migration ID hygiene, apply-and-walk and replay safety | `ci-light.yml:checks` |
+| `light: tests (shard 1)` | `-race` tests of changed packages and the §6.2 invariants; when `cmd/gregale` changed, its tests related to the change (no `-race`) | `ci-light.yml:tests` |
+| `light: tests (shard 2)` | `-race` tests of changed packages and the §6.2 invariants; when `pkg/state` changed, its tests related to the change (no `-race`) | `ci-light.yml:tests` |
+| `light: tests (shard 3)` | `-race` tests of changed packages and the §6.2 invariants; when `pkg/apid/apidserver` changed, its tests related to the change (no `-race`) | `ci-light.yml:tests` |
 | `boot-contract (production config)` | Daemons boot from production-rendered config with production capabilities (issue #1529 / ADR-075) | `ci-light.yml:boot-contract` (same name in `ci.yml`) |
-| `runtime-contract-gate` | Runtime image, source-artifact, adapter, and operator-doc contracts | `images.yml` |
 
 A light test shard with no affected packages succeeds immediately, so a
 docs-only change still reports every required context.
 
 ## Not required (deliberately or not yet)
+
+`runtime-contract-gate` (`images.yml`: runtime image, source-artifact,
+adapter and operator-doc contracts) stopped being required on 2026-10-17 so
+pull requests do not wait for the images workflow; it still runs and reports.
 
 Every `ci.yml` job (`Go lint` shards, `lint + build`, the unit, state, e2e and
 migration-history shards, `checks (drift + contract gates)`, load, SDK and
@@ -64,9 +68,23 @@ contexts (`lint + build`, `unit tests (…)`, `e2e (shard N — …)`,
 the ruleset. `boot-contract (production config)` stays: the light tier
 reports it under the same name.
 
-`CodeQL` and the path-filtered acceptance workflows (`Data API acceptance`,
-`MCP contract`, `Customer platform starter`) run on pull requests but do not
+`CodeQL` no longer runs on pull requests: it scans every push to `main`, a
+weekly schedule, and any branch on demand (`workflow_dispatch`). The
+acceptance workflows (`Data API acceptance`, `MCP contract`, `Customer
+platform starter`, `durable-entity-developer-workflow`, `S3 multipart
+integrity`) run on a pull request only when their own code changes, never
+for shared paths such as `pkg/api`, `pkg/state`, `pkg/apid`, `migrations` or
+`go.mod`; `ci.yml` calls all five, so they run nightly and gate every
+release. `images.yml` builds `builder-base` for linux/amd64 only on pull
+requests (main pushes build and scan both architectures) and decides from
+the pull request's merge base whether an image input changed. None of these
 block a merge.
+
+`cancel conflicted PR runs` sweeps on every push to `main` and every 15
+minutes: it cancels the queued and running pull request runs of PRs that now
+conflict with their base (`scripts/ci/cancel_conflicted_pr_runs.py`). GitHub
+already skips starting runs for a conflicting PR; this catches runs that
+started while the PR was clean.
 
 The metal gates (`e2e-native`, `builder-native`) are deliberately excluded:
 they run on dedicated hardware, are dispatch-only, and cannot gate a PR.
@@ -77,8 +95,7 @@ The pull request that introduces `ci-light.yml` cannot report the old
 `ci.yml` contexts, so the switch is one coordinated ruleset edit:
 
 1. replace the old `ci.yml` contexts in ruleset `19061133` with the five
-   `light: …` contexts above (keep `boot-contract (production config)` and
-   `runtime-contract-gate`);
+   `light: …` contexts above (keep `boot-contract (production config)`);
 2. merge the pull request, whose own run reports exactly those contexts.
 
 ## Renaming a required job

@@ -24,6 +24,9 @@ func (m *MemStore) ListBindingVerificationTasks(_ context.Context, accountID, ap
 		if task.AccountID != accountID || task.AppID != appID || pin == nil || !allowed[pin.Type] {
 			continue
 		}
+		if pin.Type == "service" && pin.TargetDeploymentID != selection.ServiceTargets[pin.Binding] {
+			continue
+		}
 		matches := selection.DeploymentID != "" && sameDeploymentID(task.DeploymentID, selection.DeploymentID)
 		if selection.DeploymentID != "" && !selection.AllowFallback && !matches {
 			continue
@@ -53,7 +56,7 @@ func (m *MemStore) ListBindingVerificationTasks(_ context.Context, accountID, ap
 			value := *task.ExitCode
 			exit = &value
 		}
-		items = append(items, BindingVerificationTask{
+		items = append(items, BindingVerificationTask{TaskID: task.ID,
 			Pin: *cloneBindingVerificationPin(task.BindingVerification), DeploymentID: task.DeploymentID,
 			Scope: task.DeploymentScope, Status: string(task.Status), Stdout: output,
 			CreatedAt: task.CreatedAt, FinishedAt: cloneAppTaskTimePtr(task.FinishedAt), OutputTruncated: truncated, ExitCode: exit,

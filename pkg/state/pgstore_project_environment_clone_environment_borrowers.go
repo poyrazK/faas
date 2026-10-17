@@ -105,6 +105,7 @@ func cloneEnvironmentBorrowerCounts(row sqlc.ReadCloneEnvironmentMetadataBorrowe
 		"project_environment_route_policies":      row.ProjectEnvironmentRoutePolicies,
 		"project_environment_workload_specs":      row.ProjectEnvironmentWorkloadSpecs,
 		"project_release_sets":                    row.ProjectReleaseSets,
+		"project_release_stages":                  row.ProjectReleaseStages,
 		"runtime_environment_scaling_states":      row.RuntimeEnvironmentScalingStates,
 	}
 }

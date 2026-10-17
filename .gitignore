@@ -75,3 +75,5 @@ __pycache__/
 
 # Cloudflare Worker deploy copies (the pinned values live in wrangler.toml.example)
 deploy/cloudflare/*/wrangler.toml
+# Local owned-object-storage development data; never commit object bytes.
+/object-data/

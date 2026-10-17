@@ -31,10 +31,12 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/audit"
 	"github.com/onebox-faas/faas/pkg/capdecl/runtimecheck"
+	"github.com/onebox-faas/faas/pkg/ci"
 	"github.com/onebox-faas/faas/pkg/cosign"
 	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/durableentity/validatorbundle"
+	"github.com/onebox-faas/faas/pkg/eventrecording"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/heartbeatretention"
@@ -447,6 +449,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	vmmRotator.Set(vmmTLS)
 	store := state.NewPgStore(pool)
+	stopEventWriter, err := eventrecording.Start(ctx, store, "schedd", cfg.EventAcknowledgmentWriterSlot, cfg.EventAcknowledgmentWriterRoster, log)
+	if err != nil {
+		return err
+	}
+	defer stopEventWriter()
 
 	// Phase 2 / Gate A: resolve this schedd's owner node id at
 	// startup. Empty cfg.NodeName → empty owner (legacy
@@ -954,6 +961,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		log.Info("schedd jobs dispatch disabled — set FAAS_JOBS_DISPATCH=1 to enable (Mega-1 cluster-wide gate)")
 	}
 	engine.WithJobVmmClient(vmmRouter).WithJobExitWaiter(vmmRouter)
+	engine.WithCIJobsRuntime(ci.NewPostgresStore(pool), ci.ConfigFromEnv(os.Getenv), os.Getenv(ci.RuntimeURLEnv))
 	if leaser := sched.NewPgLeaserFromPool(pool, ownerNodeID, nil); leaser != nil {
 		engine.WithJobLeaser(sched.AdaptJobLeaser(leaser))
 	}

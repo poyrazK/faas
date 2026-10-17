@@ -88,6 +88,18 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_BUILD_PUBLISHER_NAME` | builderd | `default` |  |  | `` | explicit optional source-build publisher name paired with FAAS_BUILD_PUBLISHER_KEY; unset leaves publication disabled and required signature policies fail closed; public standards activation remains disabled (ADR-435) |
 | `FAAS_CANARY_PROGRESSION_TOKEN` | apid, meterd | `secrets-env` |  |  | `` | distinct random 32+ byte internal service token delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid); activates only with FAAS_SAFEDEPLOY_TOKEN |
 | `FAAS_CERT_EXPIRY_REFRESHER_INTERVAL` | meterd | `default` |  |  | `` |  |
+| `FAAS_CI_AUTOMATION_ENABLED` | apid, githubd, shared | `unit` |  | 0 | `` | ADR-1656 exact opt-in for new verified branch-push automation capture and profile admission; generated units keep 0; blocked receipts never promote |
+| `FAAS_CI_DISPATCH_ENABLED` | apid, schedd, shared | `unit` |  | 0 | `` | ADR-1651 internal CI Jobs launch gate; requires internal/GitHub gates and allowlist; execution admission also requires worker/storage/HTTPS; generated units keep 0 |
+| `FAAS_CI_EXECUTION_CHECKS_ENABLED` | apid, githubd, shared | `unit` |  | 0 | `` | ADR-1657 exact opt-in for fresh Jobs execution Check capture and publication; also requires GitHub Checks, internal/GitHub gates and allowlist; generated units keep 0; old executions never backfill |
+| `FAAS_CI_GCS_BUCKET` | apid, shared | `unit` |  |  | `` | ADR-1652 existing dedicated private GCS bucket for CI payloads; empty default, no provisioning; transport/retention/worker off avoids client discovery |
+| `FAAS_CI_GITHUB_CHECKS_ENABLED` | apid, githubd, shared | `unit` |  | 0 | `` | ADR-1572 internal CI Checks publication gate; also requires internal and GitHub admission gates and account allowlist; generated units keep 0 |
+| `FAAS_CI_GITHUB_ENABLED` | apid, githubd, schedd, shared | `unit` |  | 0 | `` | ADR-1572 internal CI GitHub bindings and authenticated trigger admission; generated units keep 0; does not enable compute |
+| `FAAS_CI_INTERNAL_ACCOUNTS` | apid, githubd, schedd, shared | `unit` |  |  | `` | ADR-1576 internal CI account UUID allowlist; generated units keep it empty and malformed lists fail closed |
+| `FAAS_CI_INTERNAL_ENABLED` | apid, githubd, schedd, shared | `unit` |  | 0 | `` | ADR-1576 internal CI metadata gate; generated units keep 0; enabling metadata never enables compute dispatch |
+| `FAAS_CI_RETENTION_ENABLED` | apid, shared | `unit` |  | 0 | `` | ADR-1652 independent exact opt-in for journaled CI payload retirement; generated units keep 0; may drain with admission and transport off |
+| `FAAS_CI_RUNTIME_URL` | apid, schedd, shared | `unit` |  |  | `url` | ADR-1652 credential-free HTTPS origin for CI-owned guest transfers and artifact downloads; empty default refuses transport/launch |
+| `FAAS_CI_TRANSPORT_ENABLED` | apid, schedd, shared | `unit` |  | 0 | `` | ADR-1652 independent exact opt-in for scoped HTTPS CI transport and scheduler grants; generated units keep 0; fresh execution admission also requires the worker gate |
+| `FAAS_CI_WORKER_ENABLED` | apid, shared | `unit` |  | 0 | `` | ADR-1654 exact opt-in for the bounded internal CI Jobs reconciler; off in shipped units; retain for cancellation and output drain when admission is disabled |
 | `FAAS_CLI_AUTH_URL_BASE` | apid | `default` |  |  | `` |  |
 | `FAAS_CLONE_WORKER_SPOOL_DIR` | apid | `unit` |  |  | `` | dedicated APID clone-worker mode; private 0700 spool with one OS-locked owner |
 | `FAAS_COMMIT_API_ENABLED` | apid | `default` |  |  | `` | opt-in Gregale Commit qualification gate; disabled unless explicitly set to true |
@@ -189,6 +201,8 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_E2E_ENTITY_ACCESS_KEY` | shared | `dev-only` |  |  | `` | ADR-712 fake credential for the isolated conditional S3 wire fixture; delivered only to the native harness's apid child; must never be set on a production host |
 | `FAAS_E2E_ENTITY_SECRET_KEY` | shared | `dev-only` |  |  | `` | ADR-712 fake credential for the isolated conditional S3 wire fixture; delivered only to the native harness's apid child; must never be set on a production host |
 | `FAAS_E2E_HELLO_SERVER_BINARY` | shared | `dev-only` |  |  | `` | test-harness only; prebuilt hello-server fixture binary so shared metal hosts need no Go toolchain; must never be set on a production host |
+| `FAAS_E2E_S3_ACCESS_KEY` | shared | `dev-only` |  |  | `` | disposable S3 provider access key for the isolated object-storage acceptance fixture; must never be set on a production host |
+| `FAAS_E2E_S3_SECRET_KEY` | shared | `dev-only` |  |  | `` | disposable S3 provider secret key for the isolated object-storage acceptance fixture; must never be set on a production host |
 | `FAAS_E2E_SERVICE_TCP` | shared | `dev-only` |  |  | `` | test-harness only; adds the gatewayd-internal private service TCP listener and service-address DNS (ADR-576) to the metal bridge config; must never be set on a production host |
 | `FAAS_E2E_TRACING_SERVER_BINARY` | shared | `dev-only` |  |  | `` | test-harness only; prebuilt ADR-958 tracing fixture for hosts without a matching Go toolchain |
 | `FAAS_E2E_VMMD_SOCKET` | shared | `dev-only` |  |  | `` | test-harness only; pre-bound VMMD socket used by KVM-free general-path acceptance; must never be set on a production host |
@@ -204,6 +218,8 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_ENVIRONMENT_GITOPS_QUALIFICATION_SERVICE_PROXY_HTTP_URL` | schedd | `default` |  |  | `url` | optional local private HTTP service proxy URL for qualification; unset rejects HTTP service-bound graphs before VM admission |
 | `FAAS_ENVIRONMENT_GIT_DRIFT_REPORTING_ENABLED` | apid | `default` |  | false | `` | ADR-568 opt-in continuous Git-owned environment drift reporting; disabled unless explicitly true; grants no intent execution or qualification dispatch |
 | `FAAS_ENVIRONMENT_GIT_SOURCE_POLLING_ENABLED` | apid | `default` |  | true | `` | ADR-568 immutable definition polling and reviewed source approval for registered sources; explicit false disables polling; grants no environment execution authority |
+| `FAAS_EVENT_ACK_WRITER_ROSTER` | apid, schedd | `default` |  |  | `` | optional JSON deployment inventory override for event_acknowledgment_writer_roster TOML; unset preserves TOML and absent inventory leaves recording coverage unverified |
+| `FAAS_EVENT_ACK_WRITER_SLOT` | apid, schedd | `default` |  |  | `` | optional override for event_acknowledgment_writer_slot TOML; absent slot defaults to role:hostname without an explicit roster; a configured roster requires a stable explicit slot |
 | `FAAS_EVENT_RECIPIENT_CLAIMS_ENABLED` | schedd | `default` |  | 1 | `` | ADR-647 independent event recipient routing defaults on when unset; explicit 1 also enables, other nonempty values disable adoption; set 0 during mixed-version API/scheduler upgrades; disabling continues draining adopted receipts |
 | `FAAS_EXECUTION_` | schedd | `default` |  |  | `` | prefix for release-pinned execution runtime metadata; only consulted when FAAS_EXECUTION_DISPATCH=1 |
 | `FAAS_EXECUTION_API_ENABLED` | apid | `unit` |  |  | `` | explicit 0 until the restore/execute/destroy isolation path is enabled; set to 1 only after the ADR-171 metal suite passes |
@@ -217,8 +233,41 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_FLEET_AGE_RECIPIENT_PATH` | apid | `unit` |  |  | `` |  |
 | `FAAS_FLOOR_INTERVAL_SECONDS` | schedd | `default` |  |  | `` |  |
 | `FAAS_FREE_PAGE_REPORTING` | vmmd | `default` |  |  | `` | optional boolean kill switch for the ADR-907 free-page-reporting balloon; production default is enabled on Firecracker 1.14+ |
+| `FAAS_FRONTEND_HOSTING_ACTIVITY_ENABLED` | apid, shared | `runtime-config` |  | 0 | `` | optional bootstrap default for internal hosting; persisted runtime configuration is authoritative; keep off for customer releases |
+| `FAAS_FRONTEND_HOSTING_ANALYTICS_CF_TOKEN` | apid, shared | `secrets-env` |  |  | `` | optional internal pilot credential delivered by /etc/faas/sealed.env; never required for disabled hosting |
+| `FAAS_FRONTEND_HOSTING_ANALYTICS_DATASET` | apid, shared | `default` |  |  | `` | optional internal hosting Analytics Engine dataset; collection has an independent default-off runtime gate |
+| `FAAS_FRONTEND_HOSTING_ANALYTICS_ENABLED` | apid, shared | `runtime-config` |  | 0 | `` | optional bootstrap default for internal hosting; persisted runtime configuration is authoritative; keep off for customer releases |
+| `FAAS_FRONTEND_HOSTING_AUTOMATION_ENABLED` | apid, shared | `runtime-config` |  | 0 | `` | optional bootstrap default for internal hosting; persisted runtime configuration is authoritative; keep off for customer releases |
+| `FAAS_FRONTEND_HOSTING_CANCELLATION_ENABLED` | apid, shared | `runtime-config` |  | 0 | `` | optional bootstrap default for internal hosting; persisted runtime configuration is authoritative; keep off for customer releases |
+| `FAAS_FRONTEND_HOSTING_CF_ACCOUNT_ID` | apid, shared | `default` |  |  | `` | Cloudflare account for the isolated internal hosting pilot |
+| `FAAS_FRONTEND_HOSTING_CF_TOKEN` | apid, shared | `secrets-env` |  |  | `` | optional internal pilot credential delivered by /etc/faas/sealed.env; never required for disabled hosting |
+| `FAAS_FRONTEND_HOSTING_CI_SETUP_ENABLED` | apid, shared | `runtime-config` |  | 0 | `` | optional bootstrap default for internal hosting; persisted runtime configuration is authoritative; keep off for customer releases |
+| `FAAS_FRONTEND_HOSTING_CONFIG_ENABLED` | apid, shared | `runtime-config` |  | 0 | `` | optional bootstrap default for internal hosting; persisted runtime configuration is authoritative; keep off for customer releases |
+| `FAAS_FRONTEND_HOSTING_DIAGNOSTICS_ENABLED` | apid, shared | `runtime-config` |  | 0 | `` | optional bootstrap default for internal hosting; persisted runtime configuration is authoritative; keep off for customer releases |
+| `FAAS_FRONTEND_HOSTING_DOMAIN` | apid, shared | `default` |  |  | `` | isolated internal hosting domain; empty leaves hosting providers unconfigured |
+| `FAAS_FRONTEND_HOSTING_DOMAINS_ACCESS_POLICY_ID` | apid, shared | `default` |  |  | `` | reviewed internal Cloudflare Access policy for custom hostnames |
+| `FAAS_FRONTEND_HOSTING_DOMAINS_CF_TOKEN` | apid, shared | `secrets-env` |  |  | `` | optional internal pilot credential delivered by /etc/faas/sealed.env; never required for disabled hosting |
+| `FAAS_FRONTEND_HOSTING_DOMAINS_CNAME_TARGET` | apid, shared | `default` |  |  | `` | Cloudflare for SaaS target within the isolated hosting zone |
+| `FAAS_FRONTEND_HOSTING_DOMAINS_ENABLED` | apid, shared | `runtime-config` |  | 0 | `` | optional bootstrap default for internal hosting; persisted runtime configuration is authoritative; keep off for customer releases |
+| `FAAS_FRONTEND_HOSTING_DOMAINS_ZONE_ID` | apid, shared | `default` |  |  | `` | isolated internal Cloudflare for SaaS zone; domain admission remains independently gated |
+| `FAAS_FRONTEND_HOSTING_DURABLE_ROUTING_ENABLED` | apid | `runtime-config` |  | 0 | `` | optional bootstrap default for internal hosting; persisted runtime configuration is authoritative; keep off for customer releases |
+| `FAAS_FRONTEND_HOSTING_ENABLED` | apid, shared | `runtime-config` |  | 0 | `` | optional bootstrap default for internal hosting; persisted runtime configuration is authoritative; keep off for customer releases |
+| `FAAS_FRONTEND_HOSTING_HISTORY_ENABLED` | apid, shared | `runtime-config` |  | 0 | `` | optional bootstrap default for internal hosting; persisted runtime configuration is authoritative; keep off for customer releases |
+| `FAAS_FRONTEND_HOSTING_KV_NAMESPACE_ID` | apid, shared | `default` |  |  | `` | isolated internal hosting route namespace |
+| `FAAS_FRONTEND_HOSTING_OIDC_ENABLED` | apid, shared | `runtime-config` |  | 0 | `` | optional bootstrap default for internal hosting; persisted runtime configuration is authoritative; keep off for customer releases |
+| `FAAS_FRONTEND_HOSTING_PILOT_ENABLED` | apid, shared | `dev-only` |  | 0 | `` | disposable internal qualification only; never configure on a customer production apid |
+| `FAAS_FRONTEND_HOSTING_PILOT_RELAY_SOCKET` | apid, shared | `dev-only` |  |  | `` | disposable internal qualification only; never configure on a customer production apid |
+| `FAAS_FRONTEND_HOSTING_PREVIEWS_ENABLED` | apid, shared | `runtime-config` |  | 0 | `` | optional bootstrap default for internal hosting; persisted runtime configuration is authoritative; keep off for customer releases |
+| `FAAS_FRONTEND_HOSTING_PREVIEW_RESERVATIONS_ENABLED` | apid, shared | `runtime-config` |  | 0 | `` | optional bootstrap default for internal hosting; persisted runtime configuration is authoritative; keep off for customer releases |
+| `FAAS_FRONTEND_HOSTING_R2_ACCESS_KEY` | apid, shared | `secrets-env` |  |  | `` | optional internal pilot credential delivered by /etc/faas/sealed.env; never required for disabled hosting |
+| `FAAS_FRONTEND_HOSTING_R2_BUCKET` | apid, shared | `default` |  |  | `` | private internal hosting artifact bucket; public access must remain disabled |
+| `FAAS_FRONTEND_HOSTING_R2_ENDPOINT` | apid, shared | `default` |  |  | `` | private R2 HTTPS endpoint for the isolated internal hosting pilot |
+| `FAAS_FRONTEND_HOSTING_R2_SECRET_KEY` | apid, shared | `secrets-env` |  |  | `` | optional internal pilot credential delivered by /etc/faas/sealed.env; never required for disabled hosting |
+| `FAAS_FRONTEND_HOSTING_RESERVED_DOMAINS` | apid, shared | `default` |  |  | `` | additional platform domains excluded from internal custom-hostname claims |
+| `FAAS_FRONTEND_HOSTING_RETENTION_ENABLED` | apid, shared | `runtime-config` |  | 0 | `` | optional bootstrap default for internal hosting; persisted runtime configuration is authoritative; keep off for customer releases |
 | `FAAS_FROZEN_TIER` | schedd | `default` |  |  | `` | optional boolean switch for the ADR-1151 frozen tier; production default is off |
 | `FAAS_FROZEN_TIER_APPS` | schedd | `default` |  |  | `` | optional boolean switch extending the ADR-1151 frozen tier to request-mode apps; needs FAAS_FROZEN_TIER; production default is off |
+| `FAAS_FUNCTION_CONCURRENCY` | guest, shared | `guest` |  |  | `` | stamped by imaged on function deployments whose function_concurrency is above one (ADR-1342) |
 | `FAAS_FUNCTION_RUNNER_GO124` | imaged | `unit` | yes |  | `path-exists` |  |
 | `FAAS_FUNCTION_RUNNER_GO124_ALPINE` | imaged | `unit` | yes |  | `path-exists` |  |
 | `FAAS_FUNCTION_RUNNER_NODE22` | imaged | `unit` | yes |  | `path-exists` |  |
@@ -299,11 +348,19 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_INTERNAL_SVC_KEY_SEALED_NAMESPACE` | schedd | `default` |  |  | `` |  |
 | `FAAS_INTERNAL_SVC_PUBKEYS` | gatewayd-internal | `default` |  |  | `` |  |
 | `FAAS_INTERNAL_TARGET` | gatewayd-public, shared | `unit` |  |  | `` |  |
+| `FAAS_ISSUE_SLACK_APP_ID` | apid, shared | `secrets-env` |  |  | `` | optional managed Issues Slack app identity; delivered by /etc/faas/sealed.env on apid (ADR-1497) |
+| `FAAS_ISSUE_SLACK_CLIENT_ID` | apid, shared | `secrets-env` |  |  | `` | optional managed Issues Slack OAuth client; delivered by /etc/faas/sealed.env on apid (ADR-1497) |
+| `FAAS_ISSUE_SLACK_CLIENT_SECRET` | apid, shared | `secrets-env` |  |  | `` | optional managed Issues Slack OAuth client secret; delivered by /etc/faas/sealed.env on apid (ADR-1497) |
+| `FAAS_ISSUE_SLACK_REDIRECT_URI` | apid, shared | `secrets-env` |  |  | `` | optional managed Issues Slack OAuth callback URI; delivered by /etc/faas/sealed.env on apid (ADR-1497) |
+| `FAAS_ISSUE_SLACK_SIGNING_SECRET` | apid, shared | `secrets-env` |  |  | `` | optional managed Issues Slack request signing secret; delivered by /etc/faas/sealed.env on apid (ADR-1497) |
 | `FAAS_JOB` | guest | `guest` |  |  | `` |  |
 | `FAAS_JOBS_DISPATCH` | schedd | `unit` |  |  | `` | public-beta unit enables queued job dispatch through the vmmd JobColdBoot RPC |
 | `FAAS_LEADER_REDIRECT_TLS_CA` | gatewayd-internal | `default` |  |  | `` |  |
 | `FAAS_LEADER_REDIRECT_TLS_CERT` | gatewayd-internal | `default` |  |  | `` |  |
 | `FAAS_LEADER_REDIRECT_TLS_KEY` | gatewayd-internal | `default` |  |  | `` |  |
+| `FAAS_LINEAR_OAUTH_CLIENT_ID` | apid, shared | `secrets-env` |  |  | `` | optional Issues Linear OAuth client; delivered by /etc/faas/sealed.env on apid (ADR-1478) |
+| `FAAS_LINEAR_OAUTH_CLIENT_SECRET` | apid, shared | `secrets-env` |  |  | `` | optional Issues Linear OAuth client secret; delivered by /etc/faas/sealed.env on apid (ADR-1478) |
+| `FAAS_LINEAR_OAUTH_REDIRECT_URI` | apid, shared | `secrets-env` |  |  | `` | optional Issues Linear OAuth callback URI; delivered by /etc/faas/sealed.env on apid (ADR-1478) |
 | `FAAS_LOG_ARCHIVE_AUTH_MODE` | shared | `default` |  |  | `` | optional environment override; production metadata auth is normally loaded from the archive credential envelope |
 | `FAAS_LOG_ARCHIVE_BUCKET` | shared | `default` |  |  | `` |  |
 | `FAAS_LOG_ARCHIVE_CREDS_PATH` | shared | `unit` |  |  | `` |  |
@@ -346,6 +403,13 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_NODE_NAME` | apid, builderd, gatewayd-internal, gatewayd-public, githubd, imaged, meterd, realtimed, schedd, vmmd, shared | `dropin` |  |  | `` |  |
 | `FAAS_NODE_PUBLIC_IP` | gatewayd-public | `default` |  |  | `` |  |
 | `FAAS_NOTIFICATIONS_UNSUBSCRIBE_URL` | meterd | `default` |  |  | `` |  |
+| `FAAS_OBJECT_NODE_ACCESS_KEY_ID` | shared | `dev-only` |  |  | `` | private development node credential; supplied only by the operator or disposable qualifier, never to customers or production units |
+| `FAAS_OBJECT_NODE_BACKENDS_ENABLED` | shared | `dev-only` |  | 0 | `` | ADR-1570 private backend-loading gate; also requires the master gate and explicit backend configuration; restart required |
+| `FAAS_OBJECT_NODE_ENABLED` | shared | `dev-only` |  | 0 | `` | ADR-1570 private object-node master gate; explicit capability opt-in also required; restart required |
+| `FAAS_OBJECT_NODE_SECRET_ACCESS_KEY` | shared | `dev-only` |  |  | `` | private development node secret; supplied only by the operator or disposable qualifier, never to customers or production units |
+| `FAAS_OBJECT_NODE_SERVER_ENABLED` | shared | `dev-only` |  | 0 | `` | ADR-1570 loopback development node startup gate; also requires the master gate; restart required |
+| `FAAS_OBJECT_NODE_SETTLEMENTS_ENABLED` | shared | `dev-only` |  | 0 | `` | ADR-1570 recovery settlement enrollment gate; also requires master/backend gates and the backend option; restart required |
+| `FAAS_OBJECT_NODE_USAGE_COUNTERS_ENABLED` | shared | `dev-only` |  | 0 | `` | ADR-1570 logical usage-counter integration gate; also requires master/backend gates and the backend option; restart required |
 | `FAAS_OBJECT_STORAGE_CONFIG` | apid, gatewayd-public, s3-gatewayd, shared | `unit` |  |  | `` | gatewayd-public and s3-gatewayd read /etc/faas/object-storage.json; apid uses the same optional drop-in; s3_enabled runtime config separately defaults off |
 | `FAAS_OCI_BLOB_CACHE_DIR` | imaged | `default` |  |  | `` | defaults to <FAAS_STORAGE_CACHE_DIR>/oci-blobs for OCI-backed deployments; local-storage deployments may opt in explicitly |
 | `FAAS_OCI_BLOB_CACHE_MAX_BYTES` | imaged | `default` |  |  | `` | 8 GiB byte budget for the node-local OCI blob cache; override when sizing compute-node disks |
@@ -420,8 +484,11 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_PROFILING_ENDPOINT` | guest, shared | `guest` |  |  | `` | loopback bridge stamped by guest-init for SDKs |
 | `FAAS_PROMETHEUS_URL` | apid, meterd | `default` |  |  | `` |  |
 | `FAAS_PUBLIC_CONTROL_ADDR` | gatewayd-public, shared | `unit` |  |  | `` |  |
+| `FAAS_PUBLIC_EDGE_CONTROL_PLANE_TARGET` | gatewayd-public | `dropin` |  |  | `` | ADR-1343; a compute-node edge forwards public object reads, uploads and the OTLP endpoint to this control-plane gatewayd-public URL (http://<private>:<port>); unset answers them 503 |
+| `FAAS_PUBLIC_EDGE_MODE` | gatewayd-public | `unit` |  |  | `` | ADR-1343; "compute" runs gatewayd-public as a compute-node app edge (app hosts only, node-local gateway first); unset is the control-plane edge |
 | `FAAS_PUBLIC_IFACE` | vmmd, shared | `dropin` |  |  | `` | vmmd egress drop-in; provider-specific outward NIC detected or overridden by Ansible; "shared" covers pkg/e2etest forwarding the host's NIC to a harness-booted vmmd (the row is not Required, so this adds no boot-time enforcement) |
 | `FAAS_PUBLIC_LISTEN_ADDR` | gatewayd-public | `unit` |  |  | `` | matches faas-gatewayd-public.socket ListenStream; explicit loopback satisfies ADR-126's multi-host check |
+| `FAAS_PUBLIC_PRIVATE_LISTEN_ADDR` | gatewayd-public | `dropin` |  |  | `` | ADR-1343; a second listener for the public handler on the control plane's private address, for compute-node edges; unset means none |
 | `FAAS_PUBLIC_STATUS_LAUNCH_AT` | apid | `dropin` |  |  | `` | public-beta launch boundary rendered by the control-plane deployment |
 | `FAAS_PYROSCOPE_TOKEN` | apid, profiled | `default` |  |  | `` | operator backend credential; never sent into guests |
 | `FAAS_PYROSCOPE_URL` | apid, profiled | `default` |  |  | `` | private tenant-enabled backend configured in /etc/faas/profiling.env |
@@ -518,6 +585,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_SKIP_SOCKET_GROUP` | shared | `dev-only` |  |  | `` | must never be set on a production host |
 | `FAAS_SNAPSHOT_FANOUT_INTERVAL` | vmmd | `default` |  |  | `` | defaults to 100ms to keep snapshot prepositioning inside the M9 200ms queue-wait budget; increase only for intentionally relaxed environments |
 | `FAAS_SNAPSHOT_MEMORY_SHARING` | vmmd | `default` |  |  | `` | ADR-956 snapshot memory page sharing with cached image blocks; on by default, `off` disables it |
+| `FAAS_SOURCE_APP_SHARED_RUNTIME` | builderd, shared | `default` |  |  | `` | opt-in; 1 builds Node source container apps on the shared runner base so drive1 holds only /app (docs/adr/20261017-shared-runtime-source-apps.md); off until the native-metal acceptance run passes |
 | `FAAS_SPOOL_ROOT` | apid, builderd | `default` |  |  | `` |  |
 | `FAAS_STANDBY_WARMUP_ENABLED` | gatewayd-public | `default` |  |  | `` |  |
 | `FAAS_STANDBY_WARMUP_INTERVAL_MS` | gatewayd-public | `default` |  |  | `` |  |

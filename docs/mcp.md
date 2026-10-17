@@ -55,6 +55,22 @@ failures are returned as MCP tool errors; the server never starts a login flow.
 | `gregale_get_deployment` | Build/deployment status, commit and image identifiers, and failure diagnostics. |
 | `gregale_get_logs` | Newest entries from a non-following log snapshot; optional deployment, level, literal substring, and RFC3339 timestamp filters. |
 | `gregale_get_metrics` | App metrics over the requested `range`; the API's default is `5m`. |
+| `gregale_get_request` | Exact retained public request, telemetry-row or trace ID: status, deployment, route, timing and bounded guest execution summary. Requires separate per-app diagnostic consent remotely. |
+| `gregale_list_requests` | One bounded retained-request page, filtered by lookback, route, HTTP status, deployment, minimum latency or cold boot. Reuses diagnostic consent; continue with `next_arguments`. |
+| `gregale_list_error_groups` | Bounded native error-fingerprint pages selected by inclusive last-seen windows, with separate group-history counters and explicit continuation context; excludes messages and raw samples. |
+| `gregale_list_error_requests` | Bounded linked public request IDs for an exact error fingerprint, with independent retained history and safe continuations; evidence availability remains unverified until an explicit lookup. |
+| `gregale_get_request_evidence` | Bounded timeline, correlation stages, dependency timings, selected request path, matching regression context, native dependency deployment comparison and structured findings with local references; no raw spans, native span IDs, SQL, headers or bodies. |
+| `gregale_get_request_analytics` | Bounded route/method traffic, HTTP 4xx/5xx errors, cold boots, latency percentiles and optional guest execution/CPU/RSS, with historical windows and explicit measurement limits. |
+| `gregale_get_request_analytics_timeseries` | Historical UTC hourly traffic, HTTP 4xx/5xx errors, cold boots and weighted latency percentiles, app-wide or for an exact route/method pair; preserves empty and partial buckets and output limits. |
+| `gregale_get_profiles` | Retained sampled CPU for an exact deployment/runtime/window, with bounded function labels and explicitly scoped capture/attribution summaries. Requires diagnostic consent; no collection or enablement. |
+| `gregale_get_wake_history` | Retained instance wake observations with explicit window-first keyset paging, triggers, readiness and admission measurements; older APIs retain latest-100 compatibility limits. |
+| `gregale_get_wake_timeline` | One bounded oldest-first stage read for an exact wake ID, with selected producer timings, admission presence and restore fallback category; explicit keyset continuation when supported, with bounded compatibility reads on older APIs. |
+| `gregale_get_debug_coverage` | Observed trace/span/wake/guest coverage within retained telemetry; full traffic collection completeness remains unknown. |
+| `gregale_get_dependency_latency` | Bounded sampled dependency percentiles, error rates, parent-child impact edges, representative request lookups and native split-window trends, with explicit completeness/truncation. |
+| `gregale_get_critical_paths` | Bounded native ordered path patterns, weighted latency/error trends and representative request lookups; sampled evidence and truncation remain explicit. |
+| `gregale_compare_deployments` | Retained per-route p50/p95/p99 and represented request counts for two exact deployments, with native effective window and explicit missing-side evidence. |
+| `gregale_list_regressions` | Bounded native-visible latency/error regression inbox with detection timestamps, deployment scopes, triage state and dependency hypotheses; excludes SQL/query text. |
+| `gregale_get_running_causes` | Observed scheduler residency causes, floor/idle settings and bounded history; observation age and freshness uncertainty remain explicit. |
 | `gregale_list_app_deployments` | App deployment history with `next_before` pagination. |
 | `gregale_list_instances` | Instance pages with optional history; host addresses are excluded. |
 | `gregale_get_health` | Current health, readiness checks, freshness, and serving releases. |
@@ -95,6 +111,1244 @@ App pagination is a fresh sorted snapshot on each call, so apps added or removed
 between pages can shift offsets. Deployment pagination uses the API's cursor.
 Metrics retain their `source` field; degraded telemetry is not proof of zero
 traffic or healthy service.
+
+## Diagnose a retained request
+
+Call `gregale_get_request` and `gregale_get_request_evidence` with `app` and
+`request_id`. Use an exact public `x-faas-request-id`, older telemetry-row ID or
+trace ID (at most 128 UTF-8 bytes, nonblank, without control characters or a
+standalone `.`/`..` path segment). The
+`gregale_request_diagnosis` prompt accepts these arguments for an exact lookup.
+Omit `request_id` to discover requests, optionally supplying `since`, `route`,
+`status`, `deployment_id`, `min_latency_ms`, `cold_boot` and `limit` as strings.
+Exact IDs and discovery filters cannot be combined. Retrieving the prompt
+provides a read-only recipe without fetching request evidence. Prompt app
+completion includes only currently consented identities; request IDs and filter
+values are never enumerated by completion.
+
+For example, to find slow HTTP 503 requests from a warm sandbox over the past
+hour, call `gregale_list_requests` with:
+
+```json
+{"app":"alpha","since":"1h","route":"/orders","status":503,"min_latency_ms":500,"cold_boot":false,"limit":20}
+```
+
+Discovery reads exactly one native page per call, with default 20 and maximum
+50 rows. Route filters are exact paths/templates without query or fragment,
+bounded to 256 bytes; `since` is a positive Go duration or whole-day alias such
+as `3d` (at most 64 bytes). Status is 100..599, minimum latency is
+0..86400000 ms and deployment filters are nonzero UUIDs belonging to the app.
+`cold_boot: false` filters warm requests; omission includes both kinds.
+Discovery retains the same app-wide consent as exact diagnostics, including
+deployment filters in named environments. Ordinary deployment/environment tools
+keep their own consent requirements.
+
+The result preserves effective `since`, `window_start`, `window_end`,
+`retention_clamped`, `complete` and the opaque native `next_cursor` (at most
+8192 bytes). To continue, pass the returned `next_arguments` unchanged to
+`gregale_list_requests`. It carries the original filters, requested lookback,
+page size and cursor. Native cursors pin the window and filters; native errors
+for changed filters, expiry or a changed retention horizon are returned without
+retrying a broader query or starting a fresh window. The bridge never silently
+truncates, reorders or walks pages. Inconsistent pagination or filter metadata
+is rejected rather than claiming completion.
+
+Use a returned `lookup_identifier` to call the exact diagnostic tools. A row's
+`count` may represent several requests; it is not necessarily an individual
+request, and retained telemetry is not an exhaustive traffic capture. Empty
+results and `complete: true` do not prove health or full traffic coverage.
+Each distinct attributed deployment is checked once before projection and once
+before release; app identity is checked last. Requests with unavailable deployment
+attribution keep it unavailable.
+
+Remote OAuth review has an optional, unchecked **App diagnostics** checkbox
+for each app. Approval covers retained request, performance, wake, sampled CPU profile function labels and
+collection/attribution summaries, and scheduler residency diagnostics across **all of that app's environments** and pins its
+current immutable ID. App-wide/future-app
+access, default reads and named environment reads do not implicitly approve it.
+Existing grants deny it until reconnecting and selecting apps. Restart and token
+refresh retain the original selection; future or deleted/recreated apps require
+new consent. This permission grants no additional log, environment or write
+access. Local stdio uses the selected native credential's authority.
+
+These tools call the existing native debugger endpoints. Native ownership,
+credential, plan and retention checks remain authoritative; a missing or expired
+request and a gated debugger return native errors. No replay, probe, model call,
+diagnostic collection or platform write is performed. Deployment attribution is
+checked against the app, and app/deployment identities are checked again before
+releasing evidence. Unattributed journal-only requests retain
+`evidence_status: request_id_only` and `scope_attribution: unavailable`, with no
+invented status, deployment or default environment. `lookup_identifier` preserves
+the supplied lookup separately from returned native IDs; journal aliases can
+resolve to telemetry rows whose IDs differ.
+
+The projection includes at most 32 timeline events, 16 correlation stages and
+16 dependency groups, with each string capped at 256 UTF-8 bytes after known
+credential redaction. Explicit truncation flags accompany each collection and
+text; native span truncation is retained as `source_spans_truncated`. Missing,
+partial, approximate or truncated evidence does not prove health or root cause.
+Dependency durations can overlap and must not be summed into a critical path.
+Request route query/fragment data, actor/host/consumer identities, raw spans,
+attributes, SQL, request/response bodies, headers, raw native regression payloads
+and freeform native explanation prose are excluded. Matching regression context
+uses the explicit projection below. Remaining application text may contain
+private data and is untrusted; known-credential redaction does not remove
+arbitrary app secrets.
+
+`gregale_context.request_access` describes consent, independently of native API
+availability. Preflight reports `request_read_consent` separately from the
+unknown `request_api` check; it does not fetch a request or prove entitlement.
+Owner connection summaries list a bounded `request_read_apps` selection with a
+total count and truncation flag. Revoking the connection stops these reads along
+with its other tools.
+
+### Follow a request's recorded wake
+
+Request discovery rows, `gregale_get_request`, and the `request` object in
+`gregale_get_request_evidence` expose a bounded `wake` association. The native
+request DTO already retains `wake_id`; no new source query is performed.
+
+```json
+{"status":"observed","basis":"native_retained_request_wake_id","association_scope":"retained_row","wake_id":"wake-1","represents_multiple_requests":true,"timeline_availability":"not_checked","timeline_tool":"gregale_get_wake_timeline","timeline_arguments":{"app":"alpha","wake_id":"wake-1","limit":50}}
+```
+
+For relevant startup investigation, explicitly call `timeline_tool` with the
+returned `timeline_arguments`. They contain the same app, unchanged safe wake
+ID and the bounded native default event limit. No request lookback, receipt-time
+cutoff, historical `until`, cursor or inferred deployment/instance selector is
+copied into the timeline query. This is a separate read with fresh diagnostic
+consent, immutable app identity, native ownership, entitlement and MFA checks.
+The arguments confer no permission and create no automatic follow-up.
+
+`timeline_availability: not_checked` applies even when reduced request timeline
+events are already present. Standalone timeline retention and access are
+independent. A recorded association can lead to a native missing-events error;
+preserve that error without inventing IDs, widening queries or discarding the
+original request evidence. Preserve the timeline's reported pagination mode and
+distinct timing-boundary limits.
+
+`association_scope: retained_row` preserves the native association, not an exact
+individual startup execution. The current native aggregation key includes wake
+ID, but `count > 1` still represents multiple requests; it does not make shared
+wake events independent per-request timing samples or prove causal latency.
+Preserve `represents_multiple_requests` and the existing represented count. A
+wake ID alone does not establish `cold_boot`; a cold-boot flag alone does not
+provide a wake ID. Do not derive one from request/trace/instance IDs or timestamps.
+
+Other statuses return no ID, tool or arguments:
+
+| Status | Meaning |
+|---|---|
+| `not_reported` | Usable retained request row has no native wake ID. |
+| `unavailable` | No retained row identity, a journal-only record or no positive represented count. |
+| `invalid_native_wake` | Native wake ID cannot be used unchanged as a safe bounded selector. |
+
+Unsafe IDs are withheld, never shortened or redacted into different identities.
+Other request evidence remains available. Missing/unavailable/invalid associations
+do not establish warm execution, no wake, failed startup or healthy operation.
+No instance, node or trace IDs are added to this projection.
+
+A supported native `inspect_wake_timeline` recommendation can include `tool`
+and `arguments` for the safe association, citing `/request/wake`. It remains an
+investigation suggestion. Without a safe association, the existing suggestion
+to review returned timeline/correlation evidence stays generic; the bridge does
+not invent a selector or a new recommendation. Request/performance prompt
+guidance includes this workflow and fetches no diagnostic evidence during
+retrieval. The bridge makes no extra wake-timeline API calls during projection,
+performs no probes/collection/replay/writes and grants no extra environment or
+log access.
+
+### Guest execution evidence
+
+Request projections in `gregale_get_request`, `gregale_get_request_evidence`
+and `gregale_list_requests` include a `guest` summary from the same native
+request row. This adds no query or permission. Retained request identity and a
+positive represented count are required; journal-only aliases retain
+`status: unavailable` without execution timing.
+
+The summary exposes closed runtime categories (`node22`, `node24`, `python312`,
+`python313`, `go124`, `binary`), runner outcomes (`ok`, `http_error`,
+`handler_error`, `timeout`, `canceled`, `missing`) and error classes (`http_5xx`,
+`handler_exec`, `handler_protocol`, `timeout`, `canceled`). An absent error class
+is `not_reported`, which does not establish success. Unreviewed category text
+becomes `unknown` and is never forwarded. No payload, error message, stack trace,
+CPU/RSS data or additional log access is exposed.
+
+`status` is `observed` for supported consistent evidence, `partial` for unknown
+categories, `unavailable` for absent/missing execution evidence, or
+`invalid_native_guest` for contradictory outcome/class pairs or invalid duration.
+Unavailable/invalid evidence has no `duration_ms`; observed zero duration is
+preserved. The transport duration bound is 0–86,400,000 ms in
+`pkg/api/limits.go`, matching existing native validation.
+
+`duration_precision: native_retained_may_be_bucketed` reports that the publisher
+can retain a bucket upper bound even for a row with count one. Exact preserved
+and bucketed rows are not distinguished by the API. Do not treat the value as
+exact execution time, subtract it from request/path latency, or sum it with
+other phase durations. `represents_multiple_requests` preserves a collapsed
+request row's count semantics. The runner outcome is independent of edge HTTP
+status, and neither outcome alone establishes root cause or application health.
+
+An approved native `guest_failure` finding requires a supported failed runner
+outcome and consistent exposed summary. It cites `/request/guest`, with native
+confidence remaining an uncalibrated label. Missing, successful, unknown or
+invalid guest evidence does not produce a failure finding. The existing
+`inspect_guest_failure` suggestion prefers this specific reference when present;
+otherwise a supported HTTP failure can retain its existing request-level
+reference. Returning the suggestion performs no additional read or action.
+
+### Request-linked regression context
+
+`gregale_get_request_evidence` includes `regression` from the native observation
+already attached to the request. It adds no native evidence query or permission.
+Its `basis` is `native_route_deployment_observation` and `source_completeness`
+remains `unknown`. The original native route and deployment must exactly match
+the retained request before redaction or truncation. Matching shortened or
+redacted labels does not establish association. Existing request-deployment
+ownership, scope and final consent checks protect the whole response.
+
+The summary's `status` distinguishes:
+
+- `observed`: a validated matched `observation` is present.
+- `no_matching_observation`: native `unobserved` with no returned observation.
+- `unavailable`: native enrichment failed, or the request lacks retained identity,
+  a positive represented count or an attributed deployment.
+- `unknown`: no observation and missing or unrecognized native availability metadata.
+- `invalid_native_regression`: contradictory metadata, mismatched identity,
+  unsupported kind/state, malformed metrics/timestamps, or a detected regression
+  claimed without its observation.
+
+Only `observed` includes an `observation`; all other states retain the remaining
+request evidence. None of these states establishes healthy traffic. Observed
+context reuses the inbox projection: baseline/current p95 and error rates,
+decimal `regression_factor`, affected/error counts, detection and triage
+timestamps, workflow state, deployment scope and an optional suspected dependency
+with `basis: hypothesis`. SQL/query text is excluded. Query strings/fragments are
+removed from route labels; `route_modified` labels cannot be used as exact filters.
+Text bounds/redaction apply, with `text_truncated` propagated to the response.
+
+The matched observation describes aggregate detector metrics for this route and
+deployment, not latency or error probability for this individual request.
+Detection timestamps are not sampling-window boundaries. There is no baseline
+deployment ID, exact observation window or completeness proof. Native visibility
+remains authoritative; MCP does not reinterpret dismissal timestamps using its
+clock. Triage state records workflow, not health, and association does not prove
+deployment causality. These sequential reads do not form an atomic snapshot.
+
+Supported native `error_regression` and `performance_regression` findings cite
+`/regression/observation`. They require the appropriate signal kind, increased
+metrics and positive supporting counts; unknown, contradictory or missing support
+is omitted. They remain aggregate approximations even when the request's count is
+one. Native confidence remains an uncalibrated rule label. An optional
+`compare_deployments` investigation suggestion requires user-supplied exact source
+and target IDs, without inferring a previous or healthy baseline. Retrieving it
+executes no comparison, triage update, replay, collection or rollback and grants no
+other access.
+
+### Request-linked dependency deployment comparison
+
+`gregale_get_request_evidence` includes `dependency_comparison` from the native
+request-evidence enrichment. It adds no evidence query or permission. The native
+current deployment and original route must exactly match the retained request
+before redaction or truncation, and the previous deployment must be distinct.
+Both deployments must belong to the selected app. The current request ownership
+lookup is reused, the previous deployment receives its own lookup, and both
+ownerships/scopes are rechecked before the response is returned. Native lookup or
+ownership failures remain tool errors. Invalid or missing enrichment makes no
+previous-deployment lookup and leaves other request evidence available.
+
+The object has `basis: native_route_deployment_dependency_comparison`,
+`source_completeness: unknown` and these `status` values:
+
+- `observed`: a validated pair and nonempty projected dependency metrics.
+- `partial`: native, projection or text truncation limits the comparison.
+- `no_retained_dependencies`: a validated pair with an empty native dependency list.
+- `unavailable`: missing native enrichment or insufficient retained request
+  identity/count/deployment; no pair or dependency records are exposed.
+- `invalid_native_comparison`: mismatched route/current deployment, invalid pair
+  identity or malformed projected dependency metrics; no pair or records are exposed.
+
+Missing enrichment cannot distinguish absent history from a failed best-effort
+native read. An empty, unavailable or invalid comparison does not prove health.
+The object preserves `current_deployment_id`, `previous_deployment_id` and their
+verified scopes. The native API selects the previous retained observed deployment;
+MCP does not independently choose it, and previous does not mean healthy or the
+immediately preceding release. This does not authorize another tool or an
+automatic comparison/rollback.
+
+Up to ten `dependencies` reuse the bounded dependency metric projection: weighted
+calls/errors, percentiles, baseline/current p95 and error rates, native regression
+flags and redacted category/name/error-type labels. SQL/query patterns, tags,
+commit metadata and raw spans remain excluded. `native_truncated`,
+`dependencies_truncated`, `text_truncated` and native/returned dependency counts
+remain separate. Route query/fragment text is removed; `route_modified` labels
+are not exact filters. Comparison text truncation propagates to the response and
+explanation uncertainty.
+
+These are sampled aggregates across deployments, distinct from time-split
+dependency history and this individual request's execution. The native object
+supplies no exact comparison window, per-side sample counts or complete-capture
+proof. False truncation flags do not prove an exhaustive read. Overlapping
+dependency durations cannot be summed, and metric changes establish neither
+deployment causality nor statistical significance. Reads and ownership rechecks
+are sequential, not an atomic snapshot.
+
+Supported native `dependency_regression` and `dependency_failure_regression`
+findings cite `/dependency_comparison/dependencies/N`. Canonical native labels
+must resolve uniquely before redaction, with matching native flags, increased
+metrics and positive supporting counts. Missing, ambiguous, contradictory or
+collection-truncated support is omitted. Descriptions use fixed templates;
+aggregate approximation and uncalibrated native confidence remain explicit.
+`inspect_dependency_change` prefers supported failure evidence and grants no
+additional logs, service access, collection, replay, triage change or writes.
+
+### Structured request explanations
+
+`gregale_get_request_evidence` includes an `explanation` projection from the same
+native response; it makes no additional evidence query. Native findings are
+accepted by approved code and checked against the structured facts actually
+exported in this tool response. Descriptions use fixed templates and safe numbers
+or phase names. Native headline, diagnosis, finding/recommendation prose,
+reference labels/values and primary spans are omitted because those fields can
+contain SQL, private labels or references outside the MCP projection.
+
+Supported findings cover retained HTTP server/client errors, a recorded cold
+boot, incomplete correlation stages and the longest observed stage. Status,
+count, cold-boot and stage facts must agree with the finding. Stage references
+must resolve to one known phase in the projected correlation list; duplicate,
+missing or truncated phase selections are omitted. A longest-stage finding also
+requires positive observed duration and no longer observed stage in the list.
+Durations can overlap, so this does not establish a causal critical path.
+Verified selected path segments can also support `slowest_span` and
+`dependency_failure` findings, and the exposed guest summary can support
+`guest_failure`. The matched regression context can support `error_regression`
+and `performance_regression`. The exposed dependency comparison can support
+`dependency_regression` and `dependency_failure_regression`. Other findings
+depending on hidden spans, unexposed guest outcomes, unexposed regression fields
+or unexposed deployment comparisons are omitted, as are
+unknown or contradictory rules.
+
+Each finding preserves the native `confidence` label (`high`, `medium`, `low`,
+otherwise `unknown`) with `confidence_basis: native_rule_label`. This is an
+uncalibrated label, not a probability or proof of root cause. `approximate`
+preserves stage approximation, a request row representing multiple requests or
+an aggregate regression observation.
+`evidence_refs` contains JSON Pointers such as `/request` or
+`/correlation/stages/0`, resolving within this response. They are not native span
+IDs, URLs, new tool selectors or additional permissions. Missing supporting
+references suppress the finding rather than leaving a dangling citation.
+
+Output budgets in `pkg/api/limits.go` allow at most eight findings, five native
+recommendation candidates and one supporting reference per finding. Native order
+is preserved within each projected prefix. `findings_truncated`,
+`recommendations_truncated`, `references_truncated`, native returned counts and
+`omitted_finding_count`/`omitted_recommendation_count` describe this projection;
+omitted counts include unsupported and unprojected rows. The native API does not
+report synthesis/capture completeness, so `source_completeness` remains
+`unknown`. `evidence_limited` reports incomplete correlation or truncation of
+correlation, timeline, dependency, span or text evidence, and unknown, unavailable
+or invalid regression enrichment, and unavailable, partial or invalid dependency
+comparison enrichment. Recognized `native_status` and
+`native_generator` values are preserved; other metadata becomes `unknown`.
+Native `unobserved` means no active regression observation, not healthy traffic.
+
+Explanation `status` is `available`, `partial`, `unavailable` for an absent/legacy
+explanation, or `no_supported_findings` when none can be projected. Findings and
+recommendations remain arrays even when empty. These statuses describe the
+projection and cannot prove health. No substitute diagnosis is invented when
+native findings are absent.
+
+Only reviewed investigation actions for a supported finding are suggested:
+`inspect_guest_failure`, `inspect_wake_timeline`, `inspect_stage_timeline` and
+`inspect_dependency_failure`, `compare_deployments` and `inspect_dependency_change`.
+Their descriptions use fixed text, duplicate actions are collapsed, and no
+action executes automatically. Collection, query-plan and unsupported actions
+are omitted. Suggestions grant no additional environment/log access or writes.
+Request and performance diagnosis prompts explain confidence, references,
+omissions and independent authorization. Existing app-wide consent, immutable
+app identity, deployment ownership/scope checks and final authorization apply
+to the complete response. No tool, prompt argument, API endpoint or migration is
+added.
+
+### Per-request critical path
+
+The evidence response also includes `critical_path`, using the native selected
+parent chain from the same request evidence query. It adds no native reads or
+permissions. Native parent order is preserved and capped at 16 projected
+segments, with validation bounded by the existing native 32-span path budget.
+
+Each segment exposes a response-local `ref`, optional `parent_ref`,
+`parent_status`, start/end timestamps, wall and exclusive durations, and reviewed
+span/dependency/status categories. Unknown categories become `unknown`; absent
+dependency classification is `unclassified`. Names, dependency names, trace/span
+IDs, SQL, attributes and error messages are omitted. References are JSON
+Pointers into this response, not stable native IDs or tool selectors.
+
+Validate unique bounded IDs internally, parent-chain ordering, timestamp and
+duration consistency, exclusive-duration bounds, declared segment count,
+overall path duration and slowest-exclusive metadata. Contradictory native
+paths return `status: invalid_native_path` with no segments, timing or references,
+while the remaining request evidence stays available. A missing native path is
+`unavailable`; an empty valid envelope is `no_retained_path`. Empty segment lists
+remain arrays. These statuses do not prove health or successful execution.
+
+`duration_ms` is reconstructed chain wall time, distinct from full request
+latency. Exclusive durations account for overlapping direct children, including
+children outside the selected chain; they must not be added into a request
+latency total. A request row can represent multiple requests, and one selected
+path cannot establish timing for every represented request.
+
+`native_complete` preserves the API's reconstruction flag. `complete` also
+requires retained root ancestry, untruncated source spans and an untruncated
+projection. Missing root ancestry is `parent_status: not_retained`, without an
+invented parent reference. Preserve `source_spans_truncated`,
+`segments_truncated`, `native_returned_segment_count`, `categories_limited` and
+`source_completeness: unknown`. Completeness describes reconstruction within
+retained evidence, not capture of all traffic. The path is `partial` if
+reconstruction/projection is incomplete or categories are unknown.
+
+`slowest_segment_ref` and `slowest_exclusive_ms` are present only when the
+native maximum-exclusive segment is included. If it falls beyond the projected
+prefix, `slowest_status` is `omitted_by_projection` and those fields are absent.
+Never substitute the largest visible segment for the native maximum. All-zero
+exclusive durations may have `slowest_status: not_reported`.
+
+Span-based explanation citations require a unique retained source span matching
+the projected segment's identity, parent, timing, duration and categories. The
+native `span:0` alias for a longest-duration retained span is resolved through
+the first source span, separately from literal span IDs, and suppressed when
+the source is truncated or ordering cannot be verified. A dependency failure
+requires an exposed error category, recognized dependency type and retained
+HTTP server-error outcome. Findings reference only included verified segments;
+unselected or unmatched support stays omitted. These are observations, not
+causal proof. The fixed investigation suggestion for a dependency error executes
+no action or additional read and grants no log/service permissions.
+
+## Review route analytics
+
+Use `gregale_get_request_analytics` to choose routes for further investigation:
+
+```json
+{"app":"alpha","since":"1h","until":"2026-10-16T11:00:03Z","limit":20}
+```
+
+The tool reuses separate per-app diagnostic consent across environments, native
+ownership/plan checks and app identity checks before and after retrieval. `since`
+accepts a positive Go duration, whole days (`3d`), or an RFC3339 start; omission
+uses the native 24-hour default. Optional `until` is an exclusive RFC3339 end at
+or before now. Time inputs are bounded to 64 bytes. Timestamp offsets are
+normalized to UTC; duration-only performance tools still require lookbacks.
+
+Report native effective `from`, `until`, `since`, query-time `as_of` and
+`window_clamped`. The native retention cap limits the duration ending at the
+selected `until`; a historical selection does not guarantee retained data.
+`source_completeness` and `freshness` remain `unknown`. Retained requests can be
+collapsed: counts and latency percentiles use represented request weights,
+rather than independent samples or a complete traffic denominator. Summary and
+route queries are sequential and their counts need not reconcile. An empty
+result means `status: no_retained_requests`, never healthy traffic.
+
+`summary` and each route expose requests, `error_requests`, `error_rate_pct`,
+`cold_boots` and p50/p95/p99 milliseconds. `error_basis: http_status_gte_400`
+includes HTTP **4xx and 5xx**; debugger regression tools use 5xx error signals.
+Positive counts keep observed zero latency. Without retained requests,
+`latency_status: no_retained_requests` omits percentiles instead of inventing
+measurements. Routes retain native order and separate method labels.
+
+Each route's `measurements` may include `cold_request_p95_ms`,
+`wake_boot_p95_ms`, `guest_execution_p50_ms`, `guest_execution_p95_ms`,
+`guest_cpu_avg_ms`, `guest_cpu_p95_ms` and `guest_peak_rss_max_mb`. An absent
+field differs from observed zero. `measurement_coverage: not_reported` means
+the native route aggregate supplies no measurement counts or coverage: do not
+assume every represented request was measured. Retained values can be rounded
+or bucketed. Guest execution is runner wall time. CPU measures supported
+one-shot child processes including startup; it can exceed wall time and is not
+available for every runtime. Peak RSS is their rounded/bucketed process
+high-water mark, not allocated app/VM memory. Cold request p95 includes handling;
+wake boot p95 covers the scheduler boot-start to RUNNING interval. These can
+represent different populations; never subtract or sum their percentiles or
+infer billing/resource changes.
+
+`limit` bounds only the projected route prefix (default 20, maximum 50), not
+native query size or pagination. Preserve `native_routes_limit`,
+`native_returned_route_count`, `returned_route_count`,
+`native_routes_truncated`, `native_groups_truncated`, `routes_truncated` and
+`text_truncated` independently. Omitted routes do not imply zero traffic.
+Route/method labels are bounded to 256 bytes with credential redaction and
+query/fragment removal from routes. Modified labels can collide; the
+`route_modified` and `method_modified` flags identify changes. `timeseries_filter_usable`
+identifies an unchanged supported route/method pair for the hourly trends tool;
+it can be true for a native method-prefixed route that discovery cannot accept.
+
+Only an unchanged `route_filter_usable` label may be copied into supported
+`gregale_list_requests` filters, as an independent read with its own window.
+Discovery has no method filter or historical `until`: it cannot reproduce a
+historical analytics route/method cohort. Do not strip a native method prefix
+such as `GET /orders` or rewrite modified labels to manufacture selectors;
+obtain the original safe selector from the user when needed.
+
+The explicit projection excludes native dimensions/consumer identities, all
+compute/deployment cost estimates, deployment observations/comparisons,
+dependency payloads, request IDs, spans, SQL, headers and bodies. Retrieval
+fetches no request examples and grants no extra environment/log/write access.
+Native errors are returned without fallback queries. Missing or inconsistent
+native window metadata fails the read; use a compatible API rather than
+silently widening the selection.
+
+## Review historical request trends
+
+Use `gregale_get_request_analytics_timeseries` to inspect when retained traffic,
+errors, cold boots or latency changed. Omit `route` and `method` together for an
+app-wide series, or supply an exact pair from an unchanged
+`timeseries_filter_usable` analytics row:
+
+```json
+{"app":"alpha","since":"24h","until":"2026-10-16T13:15:03Z","route":"GET /orders","method":"GET","limit":48}
+```
+
+Route labels are exact native data. Preserve a native method prefix such as
+`GET /orders` and supply the separate method; do not strip or reconstruct it.
+Route selectors are bounded to 256 bytes and reject query strings, fragments,
+controls, invalid UTF-8 and credentials. Methods accept GET, POST, PUT, PATCH,
+DELETE, HEAD and OPTIONS, normalized to uppercase. Changed labels are not safe
+selectors; obtain the original pair from the user when needed. The tool reuses
+per-app diagnostic consent across environments, native ownership/entitlement
+and final app identity checks. `scope: app_wide` describes diagnostic access;
+`series_scope` distinguishes `app_wide` from `route_method` observations.
+
+`since` accepts positive durations, whole days or an RFC3339 start; omission
+uses native 24h. Optional historical `until` is an exclusive RFC3339 end at or
+before now. Timestamp offsets are normalized to UTC and time inputs are bounded
+to 64 bytes. Preserve native effective `from`, `until`, `since`, `as_of` and
+`window_clamped`. Native retention caps the duration ending at `until`, without
+guaranteeing data at that historical time. `source_completeness` and `freshness`
+remain `unknown`; query time does not measure telemetry freshness.
+
+Each point has a UTC hourly `start`/`end`, and `window_from`/`window_until` clipped
+to the selected native range. `partial: true` identifies a first/last hour with
+less than a full hour selected. Counts apply only to that selected interval;
+do not treat partial-hour counts as full-hour volume or rates. The exclusive
+hour-aligned end contributes no additional bucket. The native PostgreSQL grid
+uses microsecond precision (`until` minus one microsecond for its last hour);
+sub-microsecond windows at an hour boundary can return no buckets. Such a
+response has `status: no_returned_buckets`. The bridge validates native grid
+ordering/continuity and never creates missing buckets or widens the window.
+
+Points expose represented requests, `error_requests`, `error_rate_pct`,
+`cold_boots`, `latency_status` and p50/p95/p99 milliseconds. Counts and percentile
+ranks use collapsed request weights. `error_basis: http_status_gte_400` includes
+4xx and 5xx, distinct from 5xx-only debugger regression signals. A native
+`zero_filled: true` bucket means no retained requests: its latency percentiles
+are omitted. Positive-count observed zero latency remains zero, with
+`latency_status: observed`. Empty buckets do not establish zero incoming traffic,
+complete capture or healthy performance. Guest execution/CPU/memory measurements
+are not supplied by this native timeseries.
+
+`limit` bounds only the oldest-first point prefix (default 48, maximum 168),
+without changing the native query, window or bucket width. Report
+`native_returned_point_count`, `returned_point_count`, `points_truncated` and
+`order: oldest_first`. Later omitted buckets are not zero traffic. Top-level
+`status: observed` or `no_retained_requests` describes the **full native series**,
+including omitted points; an empty projected prefix may omit retained traffic.
+To inspect a narrower period, make an explicit independent historical selection.
+Do not silently retrieve extra ranges, aggregate/average hourly percentiles into
+window percentiles, infer deployment causality or claim statistical significance.
+
+`gregale_performance_diagnosis` includes the trends recipe and fetches no trend
+data during prompt retrieval. Overview, trends and request discovery are
+independent reads; discovery has no method filter or historical `until` and
+cannot reproduce that route/method cohort automatically. Native errors or
+inconsistent selectors, windows, grouping, bucket grids or metrics fail the
+read without fallback queries. No grouped dimensions/consumer identities, raw
+requests, spans, SQL, headers, bodies, cost/deployment payloads or future native
+fields are forwarded. Retrieval fetches no examples, grants no extra
+permissions and performs no collection, probes, replay, model requests or writes.
+
+## Triage recurring errors
+
+Use `gregale_list_error_groups` to inspect recorded error fingerprints:
+
+```json
+{"app":"alpha","since":"2026-10-16T10:00:00Z","until":"2026-10-16T11:00:00Z","limit":20}
+```
+
+The tool reuses app-wide diagnostic consent across environments, immutable app
+identity checks and native ownership/policies. `since` and `until` accept
+RFC3339 timestamps, bounded to 64 bytes. This API does not accept duration/day
+aliases. Omitted `until` is resolved once to now; omitted `since` is that end
+minus 24h. Both are normalized to UTC and truncated to native PostgreSQL
+microsecond precision before querying, so returned `filters` and continuations
+show the actual selection. A range that collapses at that precision is rejected.
+Explicit `until` must be at or before now. Native maximum-window/retention caps
+remain authoritative and `window_clamped` records a narrowed range.
+
+`window_start` and `window_end` select **inclusive group last-seen timestamps**,
+reported as `window_basis: group_last_seen_at` and `window_bounds: inclusive`.
+They do not select individual error/request times. Each group exposes an exact
+64-character lowercase hexadecimal `fingerprint`, a closed native `error_class`,
+HTTP status, bounded route label, `count`, `request_count` and first/last-seen
+values. The native `count` is an issue/merge counter; `request_count` is the
+linked-request counter. `counts_basis: native_group_history_counters` makes
+explicit that these describe stored group history. Neither is a selected-window
+failure total, distinct incident count, current retained/page row count or
+error-rate denominator. The two counters may differ; do not assume a ratio or
+ordering. First-seen can predate the selected window. The SQL-backed native order
+is count DESC, last-seen DESC, fingerprint DESC.
+
+Use one returned fingerprint with `gregale_list_error_requests`:
+
+```json
+{"app":"alpha","fingerprint":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","limit":20}
+```
+
+This second read selects independent retained fingerprint history. It has no
+`since`/`until` filter and can return requests outside the summary range, with
+`selection_basis: retained_fingerprint_history_without_summary_window_filter`.
+Rows expose unchanged public `lookup_identifier` values, receipt timestamps,
+route, HTTP status and error class. `lookup_basis: public_request_id` and
+`evidence_availability: not_checked` mean no debugger lookup happened. An
+explicit `gregale_get_request` or `gregale_get_request_evidence` call for that
+same app retains its own native entitlement, retention, identity and deployment
+scope checks. It may return ID-only evidence or missing telemetry; that does
+not negate a recorded error. The request page's class/route/status header is
+`header_status: observed` when supplied, or `not_reported` on an empty terminal
+page; missing status is not HTTP zero.
+
+Both tools query one native page (default 20, maximum 50) and preserve native
+ordering. Request rows use receipt time DESC, public request ID DESC. Follow
+returned `next_arguments` unchanged; `next_cursor` is an opaque bounded MCP
+context envelope containing the unchanged native cursor. It pins app slug and
+identity, tool kind and page size, plus the summary's normalized requested and
+effective windows or the drill-down fingerprint. Changed selector contexts,
+changed app identities, changed effective windows, repeated native cursors or
+unsafe/oversized cursor strings fail without fallback queries. The envelope is
+selection data, not an authorization token: every page checks live consent and
+native ownership again. It is bounded to 8192 bytes and never decoded or edited
+by the user/client.
+
+The group API's native cursor does not carry its window, so continuing requires
+the explicit `since`/`until` from `next_arguments`. The bridge preserves requested
+and effective windows separately; a native policy change that changes the
+effective window requires a fresh first page. Native full-page cursor hints may
+lead to an **empty terminal page**. `page_complete` means no native continuation
+hint, not full error capture. Groups are live mutable data; concurrent updates
+can move entries between pages, so pagination is not a snapshot guarantee.
+Missing/purged fingerprints keep their native not-found response; the bridge
+never switches to a different group, broader window or sample endpoint.
+
+Empty results use `no_returned_groups` or `no_returned_error_requests`; they do
+not claim a healthy app. `source_completeness` and `freshness` remain `unknown`,
+and the summary's `generated_at` is query time. Native retention/cardinality and
+deduplication policies limit what remains. Route labels are redacted before
+bounding to 256 bytes and have query/fragment removed; `route_modified` and
+`text_truncated` expose changes. Modified labels may collide and must not be
+manufactured into exact selectors. Fingerprints and request lookup identifiers
+are validated and returned unchanged, never repaired into a new identity.
+
+Explicit projections exclude sample/error messages, stacks, headers, bodies,
+raw spans/SQL, instance/node/region and deployment/commit/image payloads, as well
+as future native DTO fields. Unknown native error classifications or inconsistent
+metadata fail the read. No automatic evidence reads, probes, collection, replay,
+model requests, extra environment/log permissions or platform writes are added.
+The read-only `gregale_performance_diagnosis` prompt includes this workflow and
+retrieves no error data during prompt retrieval.
+
+## Review retained wake observations
+
+Use `gregale_get_wake_history` to inspect retained instance starts:
+
+```json
+{"app":"alpha","since":"2026-10-16T10:00:00Z","until":"2026-10-16T11:00:00Z","limit":20}
+```
+
+The tool reuses app-wide diagnostic consent across environments, native
+ownership/read-surface policies and immutable app checks before and after the
+read. The native endpoint requires Hobby or above. Native plan and authorization
+errors remain authoritative. `since` and `until` are RFC3339 timestamps, each
+bounded to 64 bytes. Omitted `until` resolves once to now; omitted `since` is
+that end minus 24h. Explicit end times must be at or before now and start must
+precede end. Normalize to UTC and PostgreSQL microsecond precision.
+
+The bridge requests native `pagination=keyset_v1`. Validated modern responses
+report `pagination_status: keyset_started_at_instance_id_v1`. They filter app
+and inclusive original `since`/`until` before the page limit, seek in descending
+start-time/instance-ID order, preserve PostgreSQL microseconds and exclude
+missing start times. Instance IDs remain inside opaque cursors.
+
+Explicitly continue with `next_arguments`, preserving the exact app, original
+normalized bounds, limit and opaque MCP cursor. The envelope pins immutable app
+identity and preserves the native cursor unchanged. Each read rechecks consent
+and identity. `window_verification: native_window_echo` verifies the selection,
+not retention coverage. Modern row membership is `verified_native_window` with
+`observed_to_microsecond_precision` timestamps. No automatic paging occurs.
+
+`source_status: read_succeeded` means this database read succeeded. Backend and
+malformed-source failures return errors rather than successful empty or partial
+history. Boot/completion metadata is app-scoped; absent metadata remains unknown.
+Counters and summaries describe only this returned page, with
+`count_basis: returned_page_instance_records` and
+`at_capacity_denominator: returned_page_instances_with_meta`. They count instance
+records, not unique wakes or requests. Shared wake metadata is not exact instance
+attribution. `page_complete` marks the end of this live retained read, not capture
+completeness, freshness or a snapshot. Late inserts, retention, state and metadata
+can change independent pages; empty terminal pages remain valid.
+
+Older APIs may omit native page metadata. Such initial reads retain
+`pagination_status: latest_candidates_not_pageable` with no `next_arguments`
+and the compatibility limits below. A resumed downgrade returns
+`native_upgrade_required` without repeating or broadening the legacy query.
+
+For legacy compatibility reads, the native API selects the **latest 100 instance candidates before filtering**
+their start times. It provides no pagination or truncation flag. Historical
+selections can omit older records even when fewer than 100 rows are returned.
+Report `native_candidate_limit: 100`, `native_candidate_truncation: not_reported`,
+`native_selected_instance_count` and `native_returned_row_count`. These are
+selected instance records, not unique wake attempts or request counts. The
+misleading native `wake_count_24h` name is projected as the selected instance
+count for the actual requested range.
+
+`requested_since` and `requested_until` describe the submitted range;
+`window_verification: not_echoed_by_native` records that the endpoint does not
+return an effective window or retention clamp. Source filtering is inclusive
+for known start times. Native row timestamps lose fractional precision, so
+`window_membership: compatible_at_native_second_precision` establishes only
+that the timestamp's second overlaps the range. Legacy missing start times can
+bypass the native filter: those rows report
+`window_membership: unverified_missing_started_at`. Do not claim a verified
+effective range or reconstruct missing timestamps.
+
+Each `wakes` entry contains an unchanged safe `wake_id` when available, native
+`kind`, current retained instance `state`, start time, bounded trigger/class,
+boot or restore `method` and `tier`. Labels remain untrusted display data and
+can collide after redaction/truncation; `labels_modified` records changes.
+Missing wake IDs remain `wake_id_status: not_reported`. These observations are
+not a full wake-event timeline or a live outcome assessment. The bridge fetches
+no events, request evidence or extra ranges automatically.
+
+Positive `ready_in_ms` is an observed duration. Native -1/zero is omitted with
+`readiness_status: not_reported`; neither proves an unfinished/failed wake or
+zero latency. Positive `queued_count` and `concurrency_at_admit` are preserved.
+Both originate from the admission concurrency ledger, reported as
+`admission_count_basis: native_admission_concurrency_ledger`; the former's native
+name does not establish a waiting queue length or a queue waiting duration.
+Their native scalar zero values lose presence, so omit them with
+`zero_or_not_reported` status instead of inventing observed zero. A present
+false capacity flag is retained as observed false. Without a presence flag,
+capacity remains unknown even when the raw native boolean is true.
+
+`at_capacity_pct` uses `native_instances_with_meta` as its native denominator.
+Report `at_capacity_present_count` and `at_capacity_unknown_in_meta_count`:
+metadata rows can lack a capacity flag and still contribute to that denominator.
+Such a percentage has status `native_denominator_includes_unknown_capacity` and
+is not an all-wake saturation rate. With no metadata, omit the percentage and
+report `no_meta_rows`. Summaries describe all native rows, including rows omitted
+by the output prefix.
+
+For legacy reads, the newest-first output prefix defaults to 20 rows, maximum 50. It does not
+alter the native query. Preserve `returned_row_count`, `rows_truncated`,
+`text_truncated` and the native ordering at whole-second precision. All native
+rows are validated before projection, including omitted rows. Unknown capacity,
+missing readiness and zero-presence limits must remain explicit.
+
+The legacy endpoint can swallow backend read failures and return empty or partial data
+without a source flag. Therefore `source_status: not_reported`,
+`source_completeness: unknown` and `freshness: unknown` apply to every response.
+Native `as_of` is query time. `status: no_returned_wakes` does not prove zero
+wakes, complete history or healthy operation. App URLs, histograms, full events,
+infrastructure and deployment payloads are excluded. Do not infer restoration
+failure, resource changes or savings, add wake readiness to request latency, or
+perform probes, replay, diagnostic collection or writes. Performance prompt
+guidance includes these limits and fetches no wake evidence during retrieval.
+
+## Inspect one wake's stages
+
+Use an unchanged `wake_id` from a request's validated `wake` association, wake
+history or an exact ID supplied by the user:
+
+```json
+{"app":"alpha","wake_id":"wake-1","limit":50}
+```
+
+`gregale_get_wake_timeline` reads one native response. History never fetches
+stage evidence automatically, and event retention is independent of instance
+history. An ID visible in history can have no retained timeline. The tool reuses
+app-wide diagnostic consent across environments, native ownership, Hobby+
+entitlement and MFA/read-surface policies, and final immutable app checks.
+Native errors are returned without fallback reads or wider queries.
+
+Omitting `since` starts at the beginning of retained history, with no implicit
+24-hour cutoff. Optional `since` accepts a nonzero RFC3339 timestamp up to 64
+bytes, normalized to UTC and truncated to native PostgreSQL microseconds. The
+source lower bound is **exclusive**. The original normalized lower bound stays
+unchanged across pages; there is no historical `until` argument.
+
+The bridge requests the native API's opt-in `pagination=keyset_v1` mode. It
+scopes source rows to the app, selects the canonical boot marker, and then seeks
+in timestamp/event-ID order before limiting. Equal-timestamp events therefore
+continue on the next page. Native event IDs remain inside opaque cursors and
+are not exported as event fields. `pagination_status: keyset_at_id_v1` and
+`window_verification: native_since_echo` identify validated keyset support.
+The native event limit defaults to 50 and is capped at 100 for MCP.
+
+To continue, explicitly call `gregale_get_wake_timeline` with `next_arguments`:
+repeat the exact app, wake ID, normalized original `since` and page size, plus
+its opaque `cursor`. `next_cursor` is a bounded MCP context envelope containing
+an unchanged native cursor and the pinned immutable app ID. Context changes,
+unsafe cursors, app replacement, inconsistent native metadata and nonprogressing
+native continuations fail without retries or wider queries. Each page rechecks
+consent, live ownership and app identity. The envelope is data, not authorization.
+
+`page_complete: true` means the current native read found no further retained
+row. It does not establish complete capture, freshness or a snapshot. Pages are
+live: inserts behind the seek position, retention and a changed canonical boot
+observation can affect the visible set. Preserve returned/native event counts,
+`native_more_events_hint`, repeated kinds and tied timestamps. Stage summaries
+still describe each returned page only. Empty terminal pages remain valid if
+retained rows disappear between independent reads. The bridge never auto-pages.
+
+Older APIs may ignore the new mode and omit native `page` metadata. A first read
+then remains a bounded compatibility read with
+`pagination_status: timestamp_only_not_lossless`,
+`window_verification: not_echoed_by_native` and no `next_arguments`. Its optional
+`native_cursor_at` is only a diagnostic timestamp hint: the legacy source filters
+with `at > since`, so using it as a continuation can skip tied rows. Never invent
+a cursor or advance time by epsilon. A continuation against an API that no longer
+reports keyset support returns `native_upgrade_required` instead of repeating
+or broadening a legacy read. A missing legacy hint does not prove complete capture.
+
+Each `events` entry exposes recorded `at`, a recognized `kind`/`stage` and
+selected `details`. Queue acceptance, admission, boot start/observation/completion/
+failure, restore/cold-boot summaries, readiness, first byte/wake page and park
+start/completion/failure are recognized. Unknown kinds retain their timestamp
+with `kind: unrecognized_event` and `details.status: not_exposed_for_kind`.
+Arbitrary kind/actor strings and raw payloads are not forwarded. Tied times and
+repeated kinds remain separate events; one wake can serve multiple requests.
+
+Boot details include bounded method, tier, trigger and trigger class labels,
+with `labels_modified` and `text_truncated`. Labels remain untrusted display
+data. The closed restore fallback category `after_restore_failed` is exposed
+when recorded; unfamiliar values report `restore_fallback_status: unrecognized`
+without returning free text. Boot/park failure kinds record observations, not
+current app health or the outcome of every attempt.
+
+Selected timings retain distinct boundaries:
+
+| Field | Meaning |
+|---|---|
+| `at` | Native event recorded time; `event_time_basis: native_event_recorded_at`. |
+| `requested_at`, `observed_at`, `started_at`, `completed_at`, `failed_at` | Selected producer-supplied phase timestamps when present and nonzero. |
+| `readiness_elapsed_ms`, `probe_count` | Native readiness-loop measurement and attempt count. |
+| `acceptance_to_first_byte_ms` | Native gateway acceptance-to-first-byte observation. |
+| `post_wake_proxy_ms` | Separate native post-wake proxy timing. |
+| `native_call_total_ms`, `wait_ready_ms` | Selected native restore/cold-boot call summary with explicit `native_call_basis`; wait-ready can overlap the call total. |
+
+Do not derive queue waiting time from recorded-event differences or add/subtract
+these overlapping measurements to reconstruct a causal critical path. Queue
+acceptance has no `queue_wait_ms` payload. The tool computes no durations,
+percentiles, failure verdicts or resource/cost recommendations.
+
+Raw selected event keys preserve presence: numeric zero and capacity false are
+observed values; absent/null remains omitted and unknown. This differs from
+the flattened wake-history DTO, which loses queue/concurrency zero presence.
+`queued_count` and `concurrency_at_admit` use
+`admission_count_basis: native_admission_concurrency_ledger` and do not measure
+waiting queue length. Missing values cannot be inferred from a trigger, known
+capacity flag or a different event. Native selected measurements must be finite,
+nonnegative whole numbers within JSON's exact integer range.
+
+`stage_observations` counts queue, admission, boot, readiness, proxy and parking
+events on this returned page. `not_returned` means the page supplies no such
+event. It does not establish failure, an unfinished wake or a missing lifecycle
+transition. `status: no_returned_events` can describe an empty filtered read;
+unknown unfiltered IDs retain the native 404. Source completeness and freshness
+remain unknown; no native `as_of` metadata is available.
+
+Request/instance/node/deployment/snapshot/account IDs, actor labels, healthcheck
+paths, raw failure messages, CPU/billing data, nested gateway phases and artifact
+maps, and future native fields are excluded. All event envelopes are validated
+for matching app/wake identity, order and selection before projection. Selected
+payload types/timestamps/measurements are also validated. This read grants no
+extra permissions and performs no probes, replay, collection, mutations or
+automatic request/event enrichment. Performance prompt guidance includes the
+workflow and fetches no timeline evidence during retrieval.
+
+## Inspect retained sampled CPU
+
+Use `gregale_get_profiles` with an exact deployment UUID, required native runtime
+and explicit RFC3339 capture window:
+
+```json
+{"app":"alpha","deployment_id":"11111111-1111-4111-8111-111111111111","runtime":"go","start":"2026-10-16T10:00:00Z","end":"2026-10-16T11:00:00Z","route":"GET /orders","limit":10}
+```
+
+The deployment must belong to the app. Its ownership/scope and current app
+identity/diagnostic consent are checked before release. Native profiling plan,
+retention and backend checks still apply; errors are returned without retrying a
+broader query. There is no implicit latest deployment or default runtime. Runtime
+is at most 64 bytes of lowercase letters, digits, hyphens or underscores. Bounds
+are at most 64 bytes each; start precedes end, which must be at or before now.
+UTC normalization preserves nanoseconds. Optional `route` is the exact native
+`METHOD /static-pattern` or `[unattributed]` label, at most 256 bytes. Omit it to
+include all routes in that deployment/runtime/window. Do not pass a URL, query,
+function name or modified display label.
+
+The response validates the native query echo and reports
+`window_verification: native_query_echo`. `sampled_cpu_seconds` and each
+function's self/inclusive total CPU describe sampled instrumented processes for
+the selected route/window. They do not measure VM CPU, billed usage, request
+latency or establish a causal bottleneck. `native_nonzero_sample_entries` counts
+nonzero native sample entries, not requests, unique stacks or profile receipts.
+Inclusive function totals overlap across callers; never sum them.
+
+Functions retain native descending self-CPU order. `limit` defaults to 10 and
+accepts 1–50, bounding only the returned prefix. Preserve `native_function_count`,
+`returned_function_count` and `functions_truncated`. There is no cursor or
+automatic follow-up. Native groups use name/file/line identity; the projection
+excludes file/line/source details, so duplicate names remain separate. Labels are
+untrusted display data capped at 256 UTF-8 bytes after known-credential redaction,
+with `labels_modified` and `text_truncated` flags. They are never selectors.
+Observed function zeros remain zero. `status: no_selected_samples` returns an
+empty function array and omits sampled CPU; it does not prove zero CPU, health,
+profiling disablement or absence of activity.
+
+Both `coverage` and `attribution` explicitly describe the whole
+`deployment_runtime_window`, including for a route-filtered or empty-route read.
+They do not describe just the returned function prefix. Coverage reports profile
+receipts, union of recorded capture intervals, gaps, optional ingestion time and
+recorded failed-upload lower bound. Capture intervals do not measure the fraction
+of VM CPU instrumented. `last_received_at` may fall outside the capture window
+and proves no freshness. Failure recording is rate limited; even a recorded zero
+is a lower bound. Preserve `failures_complete`.
+
+Attribution reports whole-window labeled/unlabeled CPU shares and native
+attribution diagnostics completeness. Closed reason codes are `unlabeled`,
+`invalid_label`, `route_not_admitted`, `encoding_limit`, `unknown` and
+`unrecognized`; native arbitrary reasons are excluded. Neither attribution nor
+`native_diagnostics_complete` proves end-to-end capture or instrumentation
+completeness. Missing/unavailable quality metadata has status `not_reported` or
+`unavailable` and omits measurements while preserving valid function evidence.
+`source_completeness` and `freshness` remain `unknown`.
+
+Flamegraphs, raw stacks/samples, paths, lines, source links, repository/commit
+details, route/request tables, collector/host identities and native prose are
+excluded. This tool reads existing retained profiles; it never enables profiling,
+collects, uploads, probes, replays or writes. Retrieving
+`gregale_performance_diagnosis` explains these limits without fetching profiles.
+See [ADR-1639](adr/1639-management-mcp-cpu-profiles.md).
+
+## Review performance evidence
+
+Call `gregale_get_debug_coverage`, `gregale_get_dependency_latency` and
+`gregale_get_critical_paths` with an
+`app` and optional `since`, for example:
+
+```json
+{"app":"alpha","since":"1h"}
+```
+
+These tools reuse per-app diagnostic consent across all environments and preserve
+native ownership, entitlement and retention checks. They accept positive Go
+durations or whole-day aliases such as `3d`, bounded to 64 bytes. Omission keeps
+the native 24-hour default. Native aggregate queries select only app/lookback;
+route, status, deployment and latency filtering belongs to request discovery.
+The critical-path tool also accepts an output pattern `limit`, described below.
+App identity and the native response's app ID must match, and current consent
+and identity are checked again immediately before releasing the projection.
+
+Coverage returns retained telemetry rows, represented request counts, error
+counts and trace/span/wake/guest evidence counts/percentages. The denominator is
+**retained represented requests**, with collapsed-row weighting; it cannot count
+requests dropped before storage. `coverage_basis: retained_telemetry_only` and
+`collection_completeness: unknown` make that limitation explicit.
+`status: no_retained_telemetry` identifies an empty read; zero percentages do not
+establish full capture or health. Optional oldest/latest observations remain
+native timestamps, with no invented observation when absent.
+
+Each result retains its own effective `since`, `window_start`, `window_end` and
+`retention_clamped`. Dependency/path clamp information comes from the native response
+(`retention_clamped_basis: native_response`). The coverage API has no clamp flag,
+so its bridge indicator compares the requested/default lookback with effective
+lookback (`retention_clamped_basis: requested_and_effective_lookback`). The
+reads have independent clocks/windows; they are not an atomic snapshot.
+
+Dependency output includes at most 20 groups in native order: type/kind/name,
+calls/errors, p50/p95/p99 and exclusive percentiles, baseline/current p95 and
+error rates, and native latency/failure regression signals. Those comparisons
+split the dependency window into two halves; they do not prove a deployment
+regression or root cause. Span evidence remains sampled and weighted by retained
+request counts. `telemetry_rows`, `represented_requests` and `span_samples`
+preserve that basis. `status: no_retained_spans` identifies an empty span sample.
+
+`source_complete` and `source_truncated` preserve the native bounded-read state.
+`dependencies_truncated` reports bridge group omission, `text_truncated` reports
+strings bounded to 256 UTF-8 bytes after known-credential redaction, and `complete`
+is true only when the source and dependency/edge/exemplar/text projections are
+complete. `source_completeness: unknown` retains uncertainty about full capture. Returned/native
+group counts describe the native response, not a count of every dependency in
+all traffic. Complete bounded evidence never establishes full traffic capture.
+SQL/query fingerprints, raw spans, attributes, payloads, headers, separate trace IDs
+and deployment-comparison payloads are excluded. Remaining application names and
+error classes are untrusted data and can still be private.
+
+Dependency `edges` preserve the native ordered parent-to-child relationship
+prefix, capped at 20 records. `from`/`to` contain bounded type/kind/name display
+labels; `labels_modified` reports redaction, cleaning or truncation. Labels can
+collide and are not unique graph IDs, routes or tool selectors. A native
+`application`/`request` parent can be synthetic when the actual parent was absent
+or unretained. These links do not establish a complete service topology or a
+causal critical path, and an empty `edges: []` supplies no proof of absent
+dependencies or healthy traffic.
+
+Edge metrics describe weighted **child span samples**: calls/errors, latency and
+exclusive percentiles, baseline/current percentiles and error rates, signed
+deltas and the native latency regression flag. Multiple child calls per request
+can make edge calls exceed represented request counts. Do not count them as
+unique requests or sum overlapping edge timings. Trends split this dependency
+window in half; they do not compare deployments. Native edges provide no
+per-side call counts or failure-regression flag, and MCP does not infer them
+from dependency nodes. `side_sample_availability: not_reported` preserves that
+uncertainty: zero baseline/current metric scalars can mean absent side samples
+or observed zero. An exemplar establishes only its selected sample, not complete
+side coverage or a healthy baseline.
+
+Each edge returns up to three `exemplars` in native order, selected from current,
+baseline and failed samples with native selector deduplication. A representative
+is an aggregate sample, not a random independent request. `lookup_identifier`
+is the unchanged selector accepted by `gregale_get_request` and
+`gregale_get_request_evidence` for this same app; it can itself be a native trace
+alias. No separate trace ID or inferred deployment is exposed. Retrieval fetches
+no exemplar automatically, and follow-up request reads recheck consent,
+deployment ownership/scope and app identity independently.
+
+Preserve the exemplar's `window`, `received_at`, `count` and
+`duration_basis: child_span_sample`. Its `duration_ms` measures the selected child
+span, not full request latency, and zero duration with a positive count remains
+observed. `error` describes the child span independently of `http_status`.
+Timestamps must fall inside the labeled native half-window (inclusive start,
+exclusive end, midpoint in the current half). Invalid/rewritten selectors,
+malformed timestamps, contradictory counts or metrics return `invalid_response`
+without leaking partial results. Duplicate selectors within an exposed edge are
+rejected; reuse across edges remains possible and does not make independent
+evidence.
+
+`native_returned_edge_count`, `returned_edge_count` and `edges_truncated` describe
+this projection. Each edge has native/returned exemplar counts and
+`exemplars_truncated`; the result's `exemplars_truncated` combines the returned
+edge prefixes. These flags remain separate from native `source_complete` and
+`source_truncated`. Limits are applied after the same native app/lookback query;
+they add no query, argument, endpoint or permission. The shared 128-KiB response
+bound still applies. These independent reads do not form an atomic snapshot.
+
+Critical-path output preserves native order and projects up to `limit` patterns
+(default 5, maximum 10), 16 segments per pattern and 3 representative requests
+per pattern. This is a bridge output limit, not a native query/sample limit;
+it is never forwarded to the API. Reduce it if a result exceeds the shared
+128-KiB output bound. `returned_path_count` and `native_returned_path_count`
+describe this response, not every path in all traffic. `paths_truncated`, each
+pattern's `segments_truncated`/`exemplars_truncated`, and `text_truncated` report
+projection loss separately from native `source_complete`/`source_truncated`.
+`complete` requires both source and projection completeness. A bounded complete
+read still cannot establish full traffic capture.
+
+The native patterns come from retained span relationships; their duration is
+reconstructed path wall time, not full request latency. `path_samples` counts
+unweighted retained rows with a reconstructed path; calls and percentiles use
+represented request weights. Ordered segments, p50/p95/p99, error rates and
+baseline/current calls/p95 preserve the native values. Regressions compare the
+two halves of this path window and do not prove deployment causality.
+Aggregate `dominant_segment_exclusive_ms` is the **maximum observed sample**,
+not a percentile or typical bottleneck. Do not sum dependency percentiles to
+manufacture a path. Signatures and normalized segment names are bounded display
+labels, not guaranteed unique keys, routes or supported filters.
+
+Each exemplar exposes a safe `lookup_identifier`, baseline/current half,
+timestamp, path duration, HTTP status, error signal, represented `count` and
+optional dominant segment. Use that identifier with `gregale_get_request` and
+`gregale_get_request_evidence` for the same app. It can be a native trace alias
+or telemetry-row ID; no separate `trace_id`, raw spans/attributes or SQL fields
+are exported. Examples are selected aggregate representatives, not independent
+individual requests. Preserve weights and selection limits when citing them.
+Empty `critical_paths` are reported as `status: no_returned_paths`, including
+retained rows with no reconstructable path. Missing/empty paths do not prove
+healthy performance. Exemplar identities remain unchanged; unsafe or
+credential-shaped identities fail the read instead of becoming altered IDs.
+
+Use `gregale_performance_diagnosis` with `app` and optional string `since` for a
+read-only recipe: review route analytics, hourly trends, retained coverage and
+wake observations, inspect dependency and ordered-path trends, then drill into
+representative requests or discover relevant examples and inspect exact evidence.
+Wake history takes explicit RFC3339 timestamps rather than a lookback alias.
+It calls no performance API
+during prompt retrieval. App completion suggests currently consented identities;
+lookback values are not enumerated. Native errors are returned without broadening
+the query. No SQL, replay, probes, collection, model requests or platform writes
+are added by the tools or prompt.
+
+## Compare deployment performance
+
+Use `gregale_compare_deployments` when two exact deployment IDs are available:
+
+```json
+{"app":"alpha","source_deployment_id":"11111111-1111-4111-8111-111111111111","target_deployment_id":"22222222-2222-4222-8222-222222222222","since":"1h","until":"2026-10-16T11:00:00Z","limit":20}
+```
+
+The IDs must be different nonzero UUIDs belonging to the selected app. They are
+comparison labels; the tool does not infer release order. Optional `route` is
+an exact path/template without query/fragment or credentials (maximum 256 bytes).
+`since` accepts a positive duration or whole-day alias (maximum 64 bytes).
+Comparison and regression detection default to **1h**, while coverage,
+dependency and critical-path tools default to 24h.
+`until` is an optional RFC3339 timestamp at/before now (maximum 64 bytes); omission
+uses the native server clock. Use an explicit lookback when aligning evidence.
+`limit` bounds projected routes (default 20, maximum 50) in native order and
+does not limit the native query. No continuation or automatic widening occurs.
+
+The tool reuses app-wide diagnostic consent across environments. Each exact
+deployment's app ownership/scope is checked before the native query and again
+before releasing output, with current app consent/identity checked last.
+`source_scope` and `target_scope` identify the native deployment scopes. This
+permission grants no additional environment/log reads or writes to other tools.
+
+The existing native POST `/v1/apps/{slug}/debug/compare` is a read-only retained
+telemetry query. Its `mirror` side is exposed as `target` by MCP; the query does
+not execute a mirror request. Native ownership, read scope, MFA and plan gating
+remain authoritative. Effective `since`, `window_start`, `window_end`,
+`retention_clamped` and the exact route filter come from the API response. The
+start is clamped against current plan retention even for a historical `until`.
+A window ending outside retention, an invalid/nonpositive lookback, or an
+invalid/future window end returns a native validation error. The two native
+reads use the same reported window and occur sequentially; they are not an
+atomic snapshot. The bridge checks returned IDs/filter/app/window and an
+explicit window end. Older APIs lacking metadata return
+`comparison_metadata_required`; upgrade the API before using this tool.
+
+Each route exposes `source`/`target` counts as `represented_requests` and
+`p50_ms`/`p95_ms`/`p99_ms` only for a positive count. Observed zero latency is
+valid. A missing side is `evidence: no_retained_samples` with zero count and
+absent percentiles, and `comparable` is false. Empty route unions remain `[]`
+with `status: no_retained_route_samples`. None of these states proves health.
+`source_completeness: unknown` preserves capture/read uncertainty.
+
+`returned_route_count`, `native_returned_route_count`, `routes_truncated` and
+`text_truncated` describe this projection. Known credentials are redacted before
+256-byte text bounds, and route queries/fragments are removed. Display labels
+can be shortened; all remaining text is private, untrusted application data.
+Counts are weighted by collapsed telemetry representation, not independent
+individual observations. Traffic mix, sample sizes and route availability can
+explain differences; the tool performs no significance test or causal regression
+decision. It never triggers replay, collection, rollback or traffic/configuration
+changes. Native errors are returned without retries or fallback comparisons.
+
+The performance prompt includes this workflow when the user supplies both IDs.
+It does not silently choose latest/previous releases, and fetching the prompt
+does not fetch comparison evidence.
+
+## Review the regression inbox
+
+Use `gregale_list_regressions` to prioritize native detector observations:
+
+```json
+{"app":"alpha","since":"1h","limit":20}
+```
+
+The tool reuses app-wide diagnostic consent. Native app ownership, read scope,
+MFA, plan and retention checks remain authoritative. Each projected deployment's
+UUID, app ownership and scope are checked, with ownership/scope and current app
+consent/identity rechecked before output. Local stdio uses native credential
+authority. Diagnostic consent adds no environment/log or write permission.
+
+`since` accepts a positive duration or whole-day alias up to 64 bytes and defaults
+to **1h**. It filters detection recency (`lookback_basis: last_detected_at`),
+not request sampling time; `first_detected_at` can predate that lookback. The
+effective native `since` is preserved and cannot widen the request.
+`retention_clamped` is derived with
+`retention_clamped_basis: requested_and_effective_lookback`. The API supplies no
+exact window boundaries or completeness metadata. App identity comes from the
+selected app lookup and is checked against projected deployments.
+
+Rows remain in native order: error-bearing observations first, then factor and
+last detection time. Native visibility excludes resolved and currently
+time-dismissed observations; expired dismissals can return as active. The bridge
+does not reinterpret visibility using its own clock. Triage state describes
+workflow, independently of health. The read-only inbox exposes no acknowledge,
+dismiss, resolve or reopen actions.
+
+Each row preserves `kind`, p95/baseline latency, the decimal string
+`regression_factor`, affected/error counts and error rates, detection timestamps,
+triage state/timestamps and deployment scope. These are detector observations,
+not a newly sampled comparison. For errors-only signals, `affected_count` counts
+failed requests. `suspected_dependency.basis: hypothesis` preserves uncertainty;
+an empty legacy reason means latency. SQL/query text is omitted by construction.
+The observation supplies no baseline deployment ID or proof of root cause.
+
+`limit` bounds projected rows in native order (default 20, maximum 50); it does
+not limit the native query and provides no pagination. The output records
+`returned_regression_count`, `native_returned_regression_count`,
+`regressions_truncated` and `text_truncated`, with
+`source_completeness: unknown`. Empty results remain `regressions: []` and
+`status: no_visible_regressions`, which does not establish healthy traffic or
+complete capture. Native errors return without retry, fallback or wider reads.
+
+Known credentials are redacted before UTF-8-safe 256-byte text bounds. Route
+queries/fragments are stripped; `route_modified` flags any changed display label.
+Do not copy a modified label into an exact route filter. Remaining app text is
+private and untrusted, and redaction cannot recognize every arbitrary secret.
+The performance prompt guides request discovery/evidence followup and deployment
+comparison only when two exact deployment IDs are supplied. These independent
+reads do not form an atomic snapshot. Prompt retrieval fetches no regression
+evidence, and neither the prompt nor tool triggers replay, collection, rollback
+or other writes.
+
+## Explain app residency
+
+Use `gregale_get_running_causes` to inspect why the scheduler observed an app
+remaining resident. It accepts `app`, optional `since` (the same positive
+duration/day syntax as request discovery), and `limit` from 1 to 20 (default 10).
+The existing native `/v1/apps/{slug}/debug/running` API enforces ownership,
+debugger plan access and retention. The default lookback is 24 hours. Native
+errors are returned without retrying or widening the selection.
+
+This tool reuses the selected app-wide diagnostic consent across environments.
+The OAuth **App diagnostics** review explicitly includes request, performance
+and scheduler residency evidence. Local stdio uses the selected native
+credential. No additional log, environment or write access is granted.
+
+The result includes configuration floors/idle timeout, bounded `history`, and
+the native `current` causes with `current_observed_at`. Native `current` checks
+that an instance is resident and reuses the newest retained observation; it
+does not measure live blockers. `current_observation_age_seconds` is relative
+to the native `window_end`, and `freshness` is always `unknown`. `config_basis`
+identifies whether configuration came from the native app configuration or
+that retained observation. Historical observations retain their own settings.
+Report observation times and degraded flags when explaining causes.
+
+`history_truncated` preserves the native flag, including conservative truncation
+when the result reaches its requested limit. Each current/history observation
+projects at most 16 causes with a separate cause-truncation flag. Text is
+credential-redacted before the 256-byte field bound; `text_truncated` reports
+shortening. Connection endpoints/ports, flow topology and event/trace/wake/
+instance identities are excluded. Counts do not identify an application protocol.
+Known-credential redaction does not detect every arbitrary application secret;
+all remaining text is private, untrusted data.
+
+A cause's optional `request` is a **nearest retained aggregate**, not proof of
+one individual request causing residency. Preserve `count`, `match_delta_ms`
+and `basis` when citing it. Use `lookup_identifier` with `gregale_get_request`
+and `gregale_get_request_evidence` for the same app. Attributed deployment
+ownership/scope is checked before projection and again before output; current
+app consent/identity is checked last. Route queries/fragments are removed.
+
+`status: no_retained_observations` preserves empty history. Empty causes,
+`no_blocker_observed`, old observations and degraded/truncated evidence do not
+prove inactivity, health or scale-to-zero. Workload residency does not prove
+queue processing or readiness. This tool never estimates hypothetical savings.
+
+Use `gregale_residency_diagnosis` with `app` and optional `since` for guidance
+through causes, configuration basis, observation age and request evidence.
+Prompt retrieval fetches no scheduler/request evidence; app completion suggests
+only currently consented identities. These are independent reads, not an atomic
+snapshot. The tool and prompt add no probes, replay, collection, model requests
+or platform writes, and do not plan/apply configuration changes.
 
 ## Enable reviewed release actions
 
@@ -299,8 +1553,8 @@ optional project/environment selection. It reports each read compatibility and c
 check independently; unknown results do not grant write permission. It creates no
 plans or source reviews. Store status describes an open encrypted journal, not a
 restart qualification or a guarantee that future writes will succeed.
-The tool catalog has 29 read/planning tools, or
-37 with writes.
+The tool catalog has 45 read/planning tools, or
+53 with writes.
 
 To prepare a new staging release, call `gregale_plan_deploy` with `app`, `image`,
 `reason`, `project`, and `environment: "staging"`. Review the immutable registry

@@ -10,15 +10,17 @@ import (
 )
 
 type AutomationResponse struct {
-	FailurePaused    bool          `json:"failure_paused"`
-	Name             string        `json:"name"`
-	Version          int64         `json:"version"`
-	Source           string        `json:"source"`
-	Draft            WorkflowSpec  `json:"draft"`
-	Published        *WorkflowSpec `json:"published,omitempty"`
-	PublishedVersion int64         `json:"published_version,omitempty"`
-	Enabled          bool          `json:"enabled"`
-	UpdatedAt        *time.Time    `json:"updated_at,omitempty"`
+	FailurePaused    bool                  `json:"failure_paused"`
+	Name             string                `json:"name"`
+	Version          int64                 `json:"version"`
+	Source           string                `json:"source"`
+	Draft            WorkflowSpec          `json:"draft"`
+	Published        *WorkflowSpec         `json:"published,omitempty"`
+	PublishedVersion int64                 `json:"published_version,omitempty"`
+	Enabled          bool                  `json:"enabled"`
+	UpdatedAt        *time.Time            `json:"updated_at,omitempty"`
+	TestSuite        *AutomationTestSuite  `json:"test_suite,omitempty"`
+	TestReport       *AutomationTestReport `json:"test_report,omitempty"`
 }
 
 type ListAutomationsResponse struct {

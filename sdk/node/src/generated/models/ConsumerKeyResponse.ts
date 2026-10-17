@@ -13,7 +13,7 @@ export type ConsumerKeyResponse = {
    * Public lookup prefix; not secret.
    */
   prefix: string;
-  scopes: Array<'read' | 'write' | 'admin'>;
+  scopes: Array<'read' | 'write' | 'admin' | 'billing'>;
   created_at: string;
   expires_at?: string | null;
   last_used_at?: string | null;

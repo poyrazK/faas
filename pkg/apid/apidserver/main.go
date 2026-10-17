@@ -40,6 +40,8 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/issueslack"
+
 	"github.com/onebox-faas/faas/pkg/apid/apptaskattach"
 	"github.com/onebox-faas/faas/pkg/apid/imagerun"
 	"github.com/onebox-faas/faas/pkg/apid/managedrealtime"
@@ -53,15 +55,18 @@ import (
 	billingloader "github.com/onebox-faas/faas/pkg/billing/loader"
 	"github.com/onebox-faas/faas/pkg/billing/stripe"
 	"github.com/onebox-faas/faas/pkg/capdecl/runtimecheck"
+	"github.com/onebox-faas/faas/pkg/ci"
 	"github.com/onebox-faas/faas/pkg/cosign"
 	"github.com/onebox-faas/faas/pkg/daemonenv"
 	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/daemonunitspec"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/eventrecording"
 	"github.com/onebox-faas/faas/pkg/eventretention"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/grace"
 	"github.com/onebox-faas/faas/pkg/httpsec"
+	"github.com/onebox-faas/faas/pkg/issuetracker"
 	"github.com/onebox-faas/faas/pkg/logarchive"
 	"github.com/onebox-faas/faas/pkg/logintoken"
 	"github.com/onebox-faas/faas/pkg/mail"
@@ -710,6 +715,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// back listener confuses operators reading the headers.
 	httpsec.SetHSTSEnabled(httpsec.HSTSEnabledFromEnv(os.Getenv))
 
+	stopEventWriter, err := eventrecording.Start(ctx, state.NewPgStore(pool), "apid", cfg.EventAcknowledgmentWriterSlot, cfg.EventAcknowledgmentWriterRoster, log)
+	if err != nil {
+		return err
+	}
+	defer stopEventWriter()
 	deps.store = func() state.Store { return state.NewPgStore(pool) }
 	// Wire the canonical OpenAPI projector before any deployment can be
 	// promoted. state.MarkDeploymentLive invokes it inside the same Postgres
@@ -740,6 +750,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// block short-circuits to nil when pool is nil.
 	deps.pool = pool
 	deps.bgBefore = func(ctx context.Context, log *slog.Logger, srv *server) {
+		go srv.runHostingReconciler(ctx)
 		go srv.runSafeReleaseEmergencyAbort(ctx)
 		go srv.runServiceRolloutBindingWorker(ctx)
 		go srv.runCheckedRollbackWorker(ctx)
@@ -833,8 +844,16 @@ func run(ctx context.Context, log *slog.Logger) error {
 		// that the apid gRPC receiver (Stage 4) already honors.
 		startDebugRegressionCron(ctx, srv, log, deps.getenv)
 		startProfileDeploymentChecks(ctx, srv, log)
+		srv.billingRuns.Start(ctx, log)       // ADR-1503
+		srv.statementInvoices.Start(ctx, log) // ADR-1504
+		srv.consumerCredits.Start(ctx, log)   // ADR-1306
+		srv.consumerControls.Start(ctx, log)  // ADR-1315
 		startFeatureFlagAutoAdvancer(ctx, srv, log)
 		srv.startIssuesMaintenance(ctx)
+		srv.startIssueTrackerAutoSync(ctx)
+		srv.startIssueTrackerReminders(ctx)
+		srv.startIssueApplicationReminders(ctx)
+		srv.startIssueSlackDelivery(ctx)
 		// G6 grace timer (spec §17 G6, ADR-021): the 30-day deletion
 		// grace sweep lives in apid (not meterd) because the write
 		// side (DELETE /v1/account, POST /v1/account/restore) is here
@@ -1424,6 +1443,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// resolved config rides on *server via WithOAuthConfig so the
 	// handlers, /v1/auth/capabilities, and renderLoginForm share one
 	// source of truth (no os.Getenv at request time).
+	slackOAuthCfg, err := issueslack.LoadOAuthConfig(deps.getenv)
+	if err != nil {
+		return fmt.Errorf("apid Slack OAuth configuration: %w", err)
+	}
+	linearOAuthCfg, err := issuetracker.LoadLinearOAuthConfig(deps.getenv)
+	if err != nil {
+		return fmt.Errorf("apid Linear OAuth configuration: %w", err)
+	}
 	oauthCfg, err := auth.LoadSignInConfigFromEnv(deps.getenv)
 	if err != nil {
 		return fmt.Errorf("apid OAuth configuration: %w", err)
@@ -1445,11 +1472,19 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithAppTaskAPIEnabled(appTaskAPIEnabledFromEnv(deps.getenv)).
 		WithInteractiveAppTasksEnabled(apptaskattach.EnabledFromEnv(deps.getenv)).
 		WithImageRunsEnabled(imagerun.EnabledFromEnv(deps.getenv)).
+		WithInternalCIConfig(ci.ConfigFromEnv(deps.getenv)).
 		WithInteractiveImageRunsEnabled(imagerun.InteractiveEnabledFromEnv(deps.getenv)).
 		WithRealtimeHistoryPreviewEnabled(deps.getenv("FAAS_REALTIME_RETAINED_PREVIEW_ENABLED") == "1").
 		WithRealtimeTicketsPreviewEnabled(deps.getenv("FAAS_REALTIME_TICKETS_PREVIEW_ENABLED") == "1").
 		WithRealtimeAccessPreviewEnabled(deps.getenv("FAAS_REALTIME_ACCESS_PREVIEW_ENABLED") == "1").
 		WithGitHubDeploysAvailable(githubDeploysAvailabilityProbe(deps.getenv, resolveGithubdBridgeSock(deps.getenv, cfg)))
+	closeCIStorage, err := srv.configureInternalCIStorage(ctx, deps.getenv)
+	if err != nil {
+		return fmt.Errorf("apid internal CI storage: %w", err)
+	}
+	defer closeCIStorage()
+	srv.linearOAuthConfig = linearOAuthCfg
+	srv.issueSlackOAuthConfig = slackOAuthCfg
 	srv.guestTracingEnabled = deps.getenv("FAAS_GUEST_TRACING_ENABLED") == "1"
 	if err := srv.configureProfiles(deps.getenv); err != nil {
 		return fmt.Errorf("apid profiling: %w", err)
@@ -1487,6 +1522,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return fmt.Errorf("apid object storage configuration: %w", err)
 	}
 	srv.WithObjectStorage(objectRegistry)
+	if err := srv.configureHosting(deps.getenv); err != nil {
+		return fmt.Errorf("apid internal hosting configuration: %w", err)
+	}
 	if err := srv.configureDurableEntities(ctx, deps.getenv); err != nil {
 		return fmt.Errorf("apid durable entities configuration: %w", err)
 	}
@@ -2002,7 +2040,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				Store:        store,
 				Audit:        rekeyAudit,
 				Identities:   identities,
-				HostHMACKey:  hostHMACKey(),
+				HostHMACKey:  hostHMACKeyBytes(),
 				ProgressPath: progressPath,
 				Log:          log,
 			})
@@ -2438,6 +2476,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// reaching this point means the HTTP listener and its dependencies are
 	// fully constructed.
 	srv.startEnvironmentGitSourcePolling(ctx, deps.getenv)
+	defer srv.startInternalCIWorker(ctx, log)()
 	defer srv.startEnvironmentGitDriftReporting(ctx, deps.getenv)()
 	defer srv.startEnvironmentGitAcceptanceEnforcement(ctx, deps.getenv)()
 	notifyStop := daemonunit.NotifyReadyWhen(ctx, apidProbe.ReadyFunc())

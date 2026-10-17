@@ -54,6 +54,12 @@ func (p *S3) confirmTrackedObjectEncrypted(ctx context.Context, bucket, key, rec
 	if _, err := uuid.Parse(receipt); err != nil || !ValidKey(key) || size < 0 || size > api.MaxObjectSinglePutBytes {
 		return UploadResult{}, ErrInvalid
 	}
+	if p.ownedNodeReceipts {
+		if encryption != nil || !capturedWriteProtection(ctx).Empty() {
+			return UploadResult{}, ErrUnsupported
+		}
+		return p.confirmOwnedNodeReceipt(ctx, bucket, key, receipt, size)
+	}
 	out, err := p.client.HeadObject(ctx, &s3.HeadObjectInput{Bucket: aws.String(bucket), Key: aws.String(key)}, func(o *s3.Options) { o.RetryMaxAttempts = 1 })
 	if err != nil {
 		return UploadResult{}, normalize(err)

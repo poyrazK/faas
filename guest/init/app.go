@@ -18,16 +18,15 @@ import (
 )
 
 const (
-	SecretsFileEnv                  = "FAAS_SECRETS_FILE"
-	SecretsRevisionEnv              = "FAAS_SECRETS_REVISION_FILE"
-	SecretsSnapshotEnv              = "FAAS_SECRETS_SNAPSHOT_FILE"
-	SecretsReloadReadyEnv           = "FAAS_SECRETS_RELOAD_READY_FILE"
-	SecretsReloadGenerationEnv      = "FAAS_SECRETS_RELOAD_GENERATION"
-	SecretsReloadAckEnv             = "FAAS_SECRETS_RELOAD_ACK_ENDPOINT"
-	secretReloadFilePath            = "/tmp/gregale-secret-reload/secrets.json"
-	secretReloadRevisionFilePath    = "/tmp/gregale-secret-reload/revision"
-	secretReloadSnapshotFileName    = "snapshot.json"
-	metadataSecretReloadAckEndpoint = "http://169.254.169.254/v1/metadata/secrets/reload-ack"
+	SecretsFileEnv               = "FAAS_SECRETS_FILE"
+	SecretsRevisionEnv           = "FAAS_SECRETS_REVISION_FILE"
+	SecretsSnapshotEnv           = "FAAS_SECRETS_SNAPSHOT_FILE"
+	SecretsReloadReadyEnv        = "FAAS_SECRETS_RELOAD_READY_FILE"
+	SecretsReloadGenerationEnv   = "FAAS_SECRETS_RELOAD_GENERATION"
+	SecretsReloadAckEnv          = "FAAS_SECRETS_RELOAD_ACK_ENDPOINT"
+	secretReloadFilePath         = "/tmp/gregale-secret-reload/secrets.json"
+	secretReloadRevisionFilePath = "/tmp/gregale-secret-reload/revision"
+	secretReloadSnapshotFileName = "snapshot.json"
 )
 
 // MaxRestarts is the legacy/default supervisor crash-loop budget. New

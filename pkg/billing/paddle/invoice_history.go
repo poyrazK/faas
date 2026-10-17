@@ -84,7 +84,7 @@ func (p *Provider) FetchInvoiceHistory(ctx context.Context, acct state.Account, 
 			continue
 		}
 		currency := strings.ToLower(paddleString(data, "currency_code", "currency"))
-		if currency != "eur" {
+		if currency != api.BillingCurrencyLower {
 			continue
 		}
 		total, totalOK := billing.InvoiceMinorUnits(paddleValueAt(data, "details", "adjusted_totals", "total"))
@@ -114,7 +114,7 @@ func (p *Provider) FetchInvoiceHistory(ctx context.Context, acct state.Account, 
 			AccountID: acct.ID, Provider: "paddle", ProviderInvoiceID: invoiceID, ProviderChargeID: id,
 			Number: paddleString(data, "invoice_number", "number"), Status: normalized,
 			PeriodStart: periodStart, PeriodEnd: periodEnd, SubtotalCents: subtotal, TaxCents: tax,
-			TotalCents: total, AmountPaidCents: paid, Plan: state.InvoicePlanUnknown, Currency: "eur",
+			TotalCents: total, AmountPaidCents: paid, Plan: state.InvoicePlanUnknown, Currency: api.BillingCurrencyLower,
 			Details: paddleInvoiceDetails(data),
 		}
 		inv.PDFAvailable = inv.Number != ""

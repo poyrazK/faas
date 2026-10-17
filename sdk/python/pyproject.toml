@@ -10,6 +10,8 @@ packages = [
 include = [
     "faas_sdk/py.typed",
     { path = "faas_sdk/event_consumer_schema.sql", format = ["sdist", "wheel"] },
+    { path = "faas_sdk/event_consumer_processing_schema.sql", format = ["sdist", "wheel"] },
+    { path = "faas_sdk/event_acknowledgment_intent_schema.sql", format = ["sdist", "wheel"] },
     { path = "faas_sdk/operation_schema.sql", format = ["sdist", "wheel"] },
     { path = "faas_sdk/customer_operation_schema.sql", format = ["sdist", "wheel"] },
 ]

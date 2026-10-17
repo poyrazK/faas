@@ -1,0 +1,200 @@
+# Application-owned prepared Node or Python workers, using the default SDK prefix.
+# Evaluate locally with unique (job, instance) pairs and one collector per target.
+# See README.md for installation, threshold tuning and observation limitations.
+groups:
+  - name: gregale_event_preparation
+    interval: 30s
+    rules:
+      # Require a live target, a present unclipped collector, and no observed
+      # clipping in the whole rate window. This is not a coverage guarantee.
+      - record: gregale_event_preparation:window_healthy
+        expr: |
+          max by (job, instance) (up{gregale_event_preparation="true"} == 1)
+          and on (job, instance)
+          (max by (job, instance) (
+            gregale_event_acknowledgment_preparation_saturated{gregale_event_preparation="true",scope="collector"}
+          ) == 0)
+          and on (job, instance)
+          (max by (job, instance) (
+            max_over_time(gregale_event_acknowledgment_preparation_saturated{gregale_event_preparation="true",scope="collector"}[10m])
+          ) == 0)
+
+      - record: gregale_event_preparation:operations:increase10m
+        expr: |
+          sum by (job, instance, outcome) (
+            increase(gregale_event_acknowledgment_preparation_operations_total{gregale_event_preparation="true"}[10m])
+          )
+          and on (job, instance) gregale_event_preparation:window_healthy
+
+      - record: gregale_event_preparation:renewal_failures:increase10m
+        expr: |
+          sum by (job, instance, lease, reason) (
+            increase(gregale_event_acknowledgment_preparation_renewal_failures_total{gregale_event_preparation="true"}[10m])
+          )
+          and on (job, instance) gregale_event_preparation:window_healthy
+
+      - record: gregale_event_preparation:unknown_commits:increase10m
+        expr: |
+          sum by (job, instance, stage) (
+            increase(gregale_event_acknowledgment_preparation_unknown_commits_total{gregale_event_preparation="true"}[10m])
+          )
+          and on (job, instance) gregale_event_preparation:window_healthy
+
+      - record: gregale_event_preparation:failure_ratio10m
+        expr: |
+          (
+            sum by (job, instance) (gregale_event_preparation:operations:increase10m{outcome="failed"})
+            /
+            sum by (job, instance) (gregale_event_preparation:operations:increase10m)
+          )
+          and on (job, instance)
+          (sum by (job, instance) (gregale_event_preparation:operations:increase10m) >= 20)
+
+      - record: gregale_event_preparation:callback_duration:p95_10m
+        expr: |
+          histogram_quantile(0.95,
+            sum by (job, instance, le) (
+              rate(gregale_event_acknowledgment_preparation_callback_duration_seconds_bucket{gregale_event_preparation="true"}[10m])
+            )
+          )
+          and on (job, instance)
+          (sum by (job, instance) (
+            increase(gregale_event_acknowledgment_preparation_callback_duration_seconds_count{gregale_event_preparation="true"}[10m])
+          ) >= 20)
+          and on (job, instance) gregale_event_preparation:window_healthy
+
+      - record: gregale_event_preparation:operation_duration:p95_10m
+        expr: |
+          histogram_quantile(0.95,
+            sum by (job, instance, le) (
+              rate(gregale_event_acknowledgment_preparation_operation_duration_seconds_bucket{gregale_event_preparation="true"}[10m])
+            )
+          )
+          and on (job, instance)
+          (sum by (job, instance) (
+            increase(gregale_event_acknowledgment_preparation_operation_duration_seconds_count{gregale_event_preparation="true"}[10m])
+          ) >= 20)
+          and on (job, instance) gregale_event_preparation:window_healthy
+
+      - alert: GregaleEventPreparationCommitUnknown
+        expr: gregale_event_preparation:unknown_commits:increase10m > 0
+        labels:
+          severity: warn
+          component: event-preparation
+          family: event_preparation
+          public_status: internal
+        annotations:
+          summary: "A prepared worker observed an uncertain local commit"
+          description: "{{ $labels.job }} / {{ $labels.instance }} observed a commit with unknown outcome at stage {{ $labels.stage }} in the last ten minutes. Locate the owned job and reconcile its receipt and intent before choosing recovery. This alert does not identify an unresolved transaction."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/GregaleEventPreparation.md"
+
+      - alert: GregaleEventPreparationRenewalFailures
+        expr: |
+          sum by (job, instance, lease) (gregale_event_preparation:renewal_failures:increase10m) >= 3
+        for: 5m
+        labels:
+          severity: warn
+          component: event-preparation
+          family: event_preparation
+          public_status: internal
+        annotations:
+          summary: "Prepared workers repeatedly lose lease renewal"
+          description: "{{ $labels.job }} / {{ $labels.instance }} has at least three {{ $labels.lease }} renewal failure observations in a rolling ten-minute window, sustained for five minutes. Inspect fixed reason labels and local/platform dependencies, then inspect retained job evidence."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/GregaleEventPreparation.md"
+
+      - alert: GregaleEventPreparationFailures
+        expr: gregale_event_preparation:failure_ratio10m > 0.10
+        for: 5m
+        labels:
+          severity: warn
+          component: event-preparation
+          family: event_preparation
+          public_status: internal
+        annotations:
+          summary: "Prepared operation failures exceed the example threshold"
+          description: "{{ $labels.job }} / {{ $labels.instance }} has more than ten percent failed shutdown observations over ten minutes with at least twenty observed shutdowns, sustained for five minutes. Cancellation and unknown commit outcomes are separate."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/GregaleEventPreparation.md"
+
+      - alert: GregaleEventPreparationCallbackSlow
+        expr: gregale_event_preparation:callback_duration:p95_10m > 30
+        for: 10m
+        labels:
+          severity: warn
+          component: event-preparation
+          family: event_preparation
+          public_status: internal
+        annotations:
+          summary: "Preparation callback p95 exceeds thirty seconds"
+          description: "{{ $labels.job }} / {{ $labels.instance }} exceeds the example callback latency threshold with at least twenty callback settlements per rolling ten-minute window, sustained for ten minutes. This estimate does not measure an active job's remaining budget."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/GregaleEventPreparation.md"
+
+      - alert: GregaleEventPreparationOperationSlow
+        expr: gregale_event_preparation:operation_duration:p95_10m > 60
+        for: 10m
+        labels:
+          severity: warn
+          component: event-preparation
+          family: event_preparation
+          public_status: internal
+        annotations:
+          summary: "Prepared operation p95 exceeds sixty seconds"
+          description: "{{ $labels.job }} / {{ $labels.instance }} exceeds the example operation latency threshold with at least twenty shutdowns per rolling ten-minute window, sustained for ten minutes. Operation duration includes startup, claim, preparation, final transaction and cleanup."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/GregaleEventPreparation.md"
+
+      - alert: GregaleEventPreparationMetricsSaturated
+        expr: |
+          max by (job, instance) (
+            gregale_event_acknowledgment_preparation_saturated{gregale_event_preparation="true",scope="collector"}
+          ) == 1
+        for: 1m
+        labels:
+          severity: warn
+          component: event-preparation
+          family: event_preparation
+          public_status: internal
+        annotations:
+          summary: "Prepared worker metrics have clipped"
+          description: "{{ $labels.job }} / {{ $labels.instance }} reports safe-integer clipping. Affected counts and sums are lower bounds. Derived alerts and panels are suppressed until no clipping has been observed for ten minutes and the collector is present and unclipped."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/GregaleEventPreparation.md"
+
+      - alert: GregaleEventPreparationScrapeDown
+        expr: up{gregale_event_preparation="true"} == 0
+        for: 5m
+        labels:
+          severity: warn
+          component: event-preparation
+          family: event_preparation
+          public_status: internal
+        annotations:
+          summary: "Prepared worker metrics cannot be scraped"
+          description: "Prometheus cannot scrape {{ $labels.job }} / {{ $labels.instance }} for five minutes. Check the configured target, worker host, listener and protected transport. This does not prove delivery processing has stopped."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/GregaleEventPreparation.md"
+
+      - alert: GregaleEventPreparationMetricsMissing
+        expr: |
+          (up{gregale_event_preparation="true"} == 1)
+          unless on (job, instance)
+          gregale_event_acknowledgment_preparation_saturated{gregale_event_preparation="true",scope="collector"}
+        for: 5m
+        labels:
+          severity: warn
+          component: event-preparation
+          family: event_preparation
+          public_status: internal
+        annotations:
+          summary: "A scrape target omits the prepared worker collector"
+          description: "{{ $labels.job }} / {{ $labels.instance }} can be scraped but omits the expected collector saturation series for five minutes. Check the formatter prefix, route and collector wiring before interpreting missing derived series."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/GregaleEventPreparation.md"
+
+      - alert: GregaleEventPreparationTargetsMissing
+        expr: absent(up{gregale_event_preparation="true"})
+        for: 10m
+        labels:
+          severity: warn
+          component: event-preparation
+          family: event_preparation
+          public_status: internal
+        annotations:
+          summary: "No opted-in prepared worker targets are discovered"
+          description: "No scrape target carrying gregale_event_preparation=true has been present for ten minutes. Check discovery and the opt-in label. This pack assumes at least one expected target and cannot detect a single removed target while others remain."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/GregaleEventPreparation.md"

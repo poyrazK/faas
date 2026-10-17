@@ -20,7 +20,10 @@ def _get_kwargs(
     *,
     confirm: PostForceRestartInstanceConfirm,
     reason: str | Unset = UNSET,
+    idempotency_key: str,
 ) -> dict[str, Any]:
+    headers: dict[str, Any] = {}
+    headers["Idempotency-Key"] = idempotency_key
 
     params: dict[str, Any] = {}
 
@@ -39,6 +42,7 @@ def _get_kwargs(
         "params": params,
     }
 
+    _kwargs["headers"] = headers
     return _kwargs
 
 
@@ -103,6 +107,7 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     confirm: PostForceRestartInstanceConfirm,
     reason: str | Unset = UNSET,
+    idempotency_key: str,
 ) -> Response[OperatorIntentAcceptedResponse | Problem]:
     r"""Enqueue a force-restart intent for a wedged RUNNING instance (admin-only).
 
@@ -144,10 +149,27 @@ def sync_detailed(
     to `operator_force_restart`; values are clamped to the
     `[a-z0-9_]{1,64}` shape.
 
+    ADR-1524: requires an MFA-verified operator session with step-up in
+    the last five minutes, admin scope, the operator allowlist and same
+    origin. Bearer keys do not satisfy step-up. Requires one
+    Idempotency-Key (1-255 visible ASCII characters), an empty body,
+    exactly one confirm=true and at most one reason; other query
+    parameters are rejected. The key is scoped to the actor across all
+    three recovery routes. Intent, exact 202 response and attributed
+    request audit handoff commit atomically. Matching retries return
+    the original response before reading mutable target state, without
+    expiry; changed action, target or reason returns 409
+    operator_submission_conflict. Trace changes do not change identity.
+    An existing legacy recovery cache/reservation returns 409
+    operator_submission_legacy and requires reconciliation. Notification
+    after acceptance is best effort; the scheduler safety tick recovers
+    a lost notification.
+
     Args:
         id (UUID):
         confirm (PostForceRestartInstanceConfirm):
         reason (str | Unset):
+        idempotency_key (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -161,6 +183,7 @@ def sync_detailed(
         id=id,
         confirm=confirm,
         reason=reason,
+        idempotency_key=idempotency_key,
     )
 
     response = client.get_httpx_client().request(
@@ -176,6 +199,7 @@ def sync(
     client: AuthenticatedClient | Client,
     confirm: PostForceRestartInstanceConfirm,
     reason: str | Unset = UNSET,
+    idempotency_key: str,
 ) -> OperatorIntentAcceptedResponse | Problem | None:
     r"""Enqueue a force-restart intent for a wedged RUNNING instance (admin-only).
 
@@ -217,10 +241,27 @@ def sync(
     to `operator_force_restart`; values are clamped to the
     `[a-z0-9_]{1,64}` shape.
 
+    ADR-1524: requires an MFA-verified operator session with step-up in
+    the last five minutes, admin scope, the operator allowlist and same
+    origin. Bearer keys do not satisfy step-up. Requires one
+    Idempotency-Key (1-255 visible ASCII characters), an empty body,
+    exactly one confirm=true and at most one reason; other query
+    parameters are rejected. The key is scoped to the actor across all
+    three recovery routes. Intent, exact 202 response and attributed
+    request audit handoff commit atomically. Matching retries return
+    the original response before reading mutable target state, without
+    expiry; changed action, target or reason returns 409
+    operator_submission_conflict. Trace changes do not change identity.
+    An existing legacy recovery cache/reservation returns 409
+    operator_submission_legacy and requires reconciliation. Notification
+    after acceptance is best effort; the scheduler safety tick recovers
+    a lost notification.
+
     Args:
         id (UUID):
         confirm (PostForceRestartInstanceConfirm):
         reason (str | Unset):
+        idempotency_key (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -235,6 +276,7 @@ def sync(
         client=client,
         confirm=confirm,
         reason=reason,
+        idempotency_key=idempotency_key,
     ).parsed
 
 
@@ -244,6 +286,7 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     confirm: PostForceRestartInstanceConfirm,
     reason: str | Unset = UNSET,
+    idempotency_key: str,
 ) -> Response[OperatorIntentAcceptedResponse | Problem]:
     r"""Enqueue a force-restart intent for a wedged RUNNING instance (admin-only).
 
@@ -285,10 +328,27 @@ async def asyncio_detailed(
     to `operator_force_restart`; values are clamped to the
     `[a-z0-9_]{1,64}` shape.
 
+    ADR-1524: requires an MFA-verified operator session with step-up in
+    the last five minutes, admin scope, the operator allowlist and same
+    origin. Bearer keys do not satisfy step-up. Requires one
+    Idempotency-Key (1-255 visible ASCII characters), an empty body,
+    exactly one confirm=true and at most one reason; other query
+    parameters are rejected. The key is scoped to the actor across all
+    three recovery routes. Intent, exact 202 response and attributed
+    request audit handoff commit atomically. Matching retries return
+    the original response before reading mutable target state, without
+    expiry; changed action, target or reason returns 409
+    operator_submission_conflict. Trace changes do not change identity.
+    An existing legacy recovery cache/reservation returns 409
+    operator_submission_legacy and requires reconciliation. Notification
+    after acceptance is best effort; the scheduler safety tick recovers
+    a lost notification.
+
     Args:
         id (UUID):
         confirm (PostForceRestartInstanceConfirm):
         reason (str | Unset):
+        idempotency_key (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -302,6 +362,7 @@ async def asyncio_detailed(
         id=id,
         confirm=confirm,
         reason=reason,
+        idempotency_key=idempotency_key,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -315,6 +376,7 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     confirm: PostForceRestartInstanceConfirm,
     reason: str | Unset = UNSET,
+    idempotency_key: str,
 ) -> OperatorIntentAcceptedResponse | Problem | None:
     r"""Enqueue a force-restart intent for a wedged RUNNING instance (admin-only).
 
@@ -356,10 +418,27 @@ async def asyncio(
     to `operator_force_restart`; values are clamped to the
     `[a-z0-9_]{1,64}` shape.
 
+    ADR-1524: requires an MFA-verified operator session with step-up in
+    the last five minutes, admin scope, the operator allowlist and same
+    origin. Bearer keys do not satisfy step-up. Requires one
+    Idempotency-Key (1-255 visible ASCII characters), an empty body,
+    exactly one confirm=true and at most one reason; other query
+    parameters are rejected. The key is scoped to the actor across all
+    three recovery routes. Intent, exact 202 response and attributed
+    request audit handoff commit atomically. Matching retries return
+    the original response before reading mutable target state, without
+    expiry; changed action, target or reason returns 409
+    operator_submission_conflict. Trace changes do not change identity.
+    An existing legacy recovery cache/reservation returns 409
+    operator_submission_legacy and requires reconciliation. Notification
+    after acceptance is best effort; the scheduler safety tick recovers
+    a lost notification.
+
     Args:
         id (UUID):
         confirm (PostForceRestartInstanceConfirm):
         reason (str | Unset):
+        idempotency_key (str):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -375,5 +454,6 @@ async def asyncio(
             client=client,
             confirm=confirm,
             reason=reason,
+            idempotency_key=idempotency_key,
         )
     ).parsed

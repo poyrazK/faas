@@ -53,6 +53,10 @@ def test_tcp_patch_normalization_preserves_authoritative_spec(tmp_path):
     shape = {
         "components": {
             "schemas": {
+                "ManagedPostgresCutoverPreflight": {
+                    "type": "object",
+                    "properties": {"activation_allowed": {"type": "boolean", "enum": [False]}},
+                },
                 "UpdateTCPListenerRequest": {
                     "type": "object",
                     "additionalProperties": False,
@@ -123,7 +127,16 @@ def test_regen_is_deterministic(_regen_skip_reason: None, tmp_path: Path) -> Non
     )
     helpers = {
         name: (copied_sdk / "faas_sdk" / name).read_bytes()
-        for name in ("object_storage_runtime.py", "secret_reload_runtime.py")
+        for name in (
+            "object_storage_runtime.py",
+            "secret_reload_runtime.py",
+            "_binding_client_runtime.py",
+            "postgres_pool_runtime.py",
+            "async_postgres_pool_runtime.py",
+            "async_secret_reload_runtime.py",
+            "_async_binding_client_runtime.py",
+            "async_object_storage_runtime.py",
+        )
     }
     script = copied_sdk / "scripts" / "gen.py"
     env_args = {"cwd": str(copied_sdk), "env": {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}}
@@ -145,8 +158,18 @@ def _fixture_generator(tmp_path, monkeypatch):
     package.mkdir(parents=True)
     originals = {
         "faas_sdk/_wrapper.py": b"# existing custom wrapper\n",
+        "faas_sdk/_binding_runner.py": b"# uncommitted verification runner\n",
+        "faas_sdk/_binding_runner_diagnostics.py": b"# uncommitted automatic diagnostics\n",
+        "faas_sdk/_binding_creation.py": b"# uncommitted reviewed creation\n",
+        "faas_sdk/_binding_qualification.py": b"# uncommitted qualification waiting\n",
         "faas_sdk/operations_runtime.py": b"# uncommitted runtime authority\n",
         "faas_sdk/secret_reload_runtime.py": b"# uncommitted secret reload authority\n",
+        "faas_sdk/_binding_client_runtime.py": b"# shared owned-resource lifecycle\n",
+        "faas_sdk/postgres_pool_runtime.py": b"# PostgreSQL pool adoption\n",
+        "faas_sdk/async_postgres_pool_runtime.py": b"# async PostgreSQL pool adoption\n",
+        "faas_sdk/_async_binding_client_runtime.py": b"# async owned resource lifecycle\n",
+        "faas_sdk/async_object_storage_runtime.py": b"# async object storage adoption\n",
+        "faas_sdk/async_secret_reload_runtime.py": b"# async secret adoption\n",
         "faas_sdk/operations.py": b"# managed operation transaction helper\n",
         "faas_sdk/_operation_contract.py": b"# managed operation wire contract\n",
         "faas_sdk/operation_schema.sql": b"-- managed operation receipt schema\n",
@@ -233,6 +256,18 @@ def test_postprocessing_cannot_modify_preserved_handwritten_source(tmp_path, mon
     assert {name: (output / name).read_bytes() for name in originals} == originals
 
 
+def test_postprocessing_preserves_authored_test_bytes(tmp_path, monkeypatch):
+    """ADR-1623: SDK regeneration retains current handwritten test inputs."""
+    generator, output, _originals = _fixture_generator(tmp_path, monkeypatch)
+    authored = output / "tests" / "nested" / "test_local_edit.py"
+    authored.parent.mkdir(parents=True)
+    original = b"# uncommitted test input\nvalue= 'original'\n"
+    authored.write_bytes(original)
+    with generator._preserve_handwritten_sdk(output):
+        authored.write_text("# rewritten by import fixer/formatter\n")
+    assert authored.read_bytes() == original
+
+
 def test_restore_failure_retains_recoverable_source_backup(tmp_path, monkeypatch):
     """ADR-521: interrupted restoration must retain the original runtime bytes."""
     generator, output, originals = _fixture_generator(tmp_path, monkeypatch)
@@ -252,3 +287,16 @@ def test_restore_failure_retains_recoverable_source_backup(tmp_path, monkeypatch
             generator.shutil.rmtree(output / "faas_sdk")
     assert str(stash) in str(error.value)
     assert {name: (stash / name).read_bytes() for name in originals} == originals
+
+
+def test_regenerated_barrel_exports_binding_runner(tmp_path):
+    import importlib.util
+
+    script = Path(__file__).resolve().parents[1] / "scripts" / "gen.py"
+    spec = importlib.util.spec_from_file_location("sdk_generator_runner_exports", script)
+    generator = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(generator)
+    barrel = tmp_path / "__init__.py"
+    generator._rewrite_init_py(barrel)
+    assert "from ._binding_runner import" in barrel.read_text()
+    assert '"BindingVerificationRecoveryError"' in barrel.read_text()

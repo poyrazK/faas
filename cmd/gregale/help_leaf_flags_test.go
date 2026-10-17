@@ -28,6 +28,7 @@ func TestLeafHelpDocumentsRequiredArguments(t *testing.T) {
 		{"jobs run", []string{"gregale jobs run <job-name>"}},
 		{"data-api install", []string{"--bundle <MANIFEST>", "--restore", "--directory <DIR>", "--client-directory <DIR>", "--from <DIR>", "--base-url <HTTPS_URL>"}},
 		{"data-api refresh", []string{"gregale data-api refresh <name>", "--wait", "--timeout <DURATION>"}},
+		{"data-api health", []string{"gregale data-api health <name>", "--since <DURATION|RFC3339>", "--timeout <DURATION>"}},
 		{"data-api sync", []string{"gregale data-api sync --config <FILE> <name>", "--config <FILE>", "--timeout <DURATION>"}},
 		{"data-api dev", []string{"gregale data-api dev", "--directory <DIR>", "--config <FILE>", "--port <PORT>", "--check", "--once", "--watch", "--baseline <FILE>", "--check-breaking", "--replay <FILE>", "--scenario <NAME>"}},
 	}

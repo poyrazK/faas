@@ -143,6 +143,14 @@ func (j *nativeLaunchJournal) lock(ctx context.Context, instance string) (*os.Fi
 }
 
 func (j *nativeLaunchJournal) prepare(ctx context.Context, lease Lease) (err error) {
+	migrationLock, migrationErr := j.lockMigrationPreparation(ctx, lease.Instance)
+	if migrationErr != nil {
+		return migrationErr
+	}
+	if migrationLock != nil {
+		defer func() { err = errors.Join(err, migrationLock.Close()) }()
+	}
+
 	lock, incoming, err := j.lockQualificationProducer(ctx, lease.Instance)
 	if err != nil {
 		return err
@@ -157,6 +165,10 @@ func (j *nativeLaunchJournal) prepare(ctx context.Context, lease Lease) (err err
 			return err
 		}
 		generation = bound
+	}
+	generation, err = j.bindMigrationPhysical(ctx, lease, generation)
+	if err != nil {
+		return err
 	}
 	return j.prepareGeneration(ctx, lease, generation)
 }
