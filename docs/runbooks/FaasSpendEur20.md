@@ -7,7 +7,7 @@ Metric: `meterd_account_spend_eur{account_id}` — gauge rolled up
 from `meterd_invocations_billed_total` per the spec §4.7 billing
 formula (plan RAM + 8 MB × running seconds, integer cents).
 ADR: ADR-123 (alert_presets catalog). Catalog preset:
-`spend_eur_20`, window 24h, threshold 20.0 in the billing currency ($20; the id keeps `eur`, ADR-1350).
+`spend_eur_20`, window 24h, threshold 20.0 in the billing currency ($20; the id keeps `eur`, ADR-1501).
 Severity: warn (customer-facing catalog row).
 
 ## Symptom

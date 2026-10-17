@@ -78,6 +78,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_BRIDGE_URL` | vmmd-stream-bridge | `internal` |  |  | `` | set by vmmd for the per-request stream-bridge subprocess |
 | `FAAS_BROKER_EGRESS_IFNAME` | schedd | `default` |  |  | `` |  |
 | `FAAS_BROKER_EGRESS_MBIT` | schedd | `default` |  |  | `` |  |
+| `FAAS_BUDGET_NOTIFY_INTERVAL` | meterd | `default` |  | 5m | `` | ADR-1500 budget threshold notification cadence |
 | `FAAS_BUILDERD_CONFIG` | builderd, shared | `unit` |  |  | `` |  |
 | `FAAS_BUILDERD_ROLE` | builderd, shared | `dropin` |  |  | `` |  |
 | `FAAS_BUILDER_BASE_PATH` | imaged, shared | `default` |  |  | `` |  |

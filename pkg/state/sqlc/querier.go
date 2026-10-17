@@ -1143,6 +1143,14 @@ type Querier interface {
 	FinancialBudgetGet(ctx context.Context, db DBTX, arg FinancialBudgetGetParams) (FinancialBudgetPolicy, error)
 	FinancialBudgetInsert(ctx context.Context, db DBTX, arg FinancialBudgetInsertParams) (FinancialBudgetPolicy, error)
 	FinancialBudgetList(ctx context.Context, db DBTX, arg FinancialBudgetListParams) ([]FinancialBudgetPolicy, error)
+	// A threshold notifies at most once per budget and UTC month.
+	FinancialBudgetNotificationClaim(ctx context.Context, db DBTX, arg FinancialBudgetNotificationClaimParams) (int64, error)
+	FinancialBudgetNotificationsPending(ctx context.Context, db DBTX, pageSize int32) ([]FinancialBudgetNotification, error)
+	// One delivery outcome covers every pending threshold of a budget and month up
+	// to the one the email named. 'failed' counts the attempt and stays pending.
+	FinancialBudgetNotificationsRecord(ctx context.Context, db DBTX, arg FinancialBudgetNotificationsRecordParams) (int64, error)
+	// ADR-1500. Enabled monitored notify budgets across accounts, in a stable order.
+	FinancialBudgetNotifyPolicies(ctx context.Context, db DBTX, pageSize int32) ([]FinancialBudgetPolicy, error)
 	FinancialBudgetRevisionInsert(ctx context.Context, db DBTX, arg FinancialBudgetRevisionInsertParams) error
 	FinancialBudgetRevisionList(ctx context.Context, db DBTX, arg FinancialBudgetRevisionListParams) ([]FinancialBudgetRevision, error)
 	FinancialBudgetScopeOwned(ctx context.Context, db DBTX, arg FinancialBudgetScopeOwnedParams) (bool, error)

@@ -14,7 +14,7 @@ import (
 
 func cmdBillingBudgets(args []string) int {
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
-		if _, err := fmt.Fprintln(osStdout, "usage: gregale billing budgets <list|get|create|update|delete|history> [flags] [ID]\nBudget drafts do not enforce spending limits. Preview consequences with billing budget-preview."); err != nil {
+		if _, err := fmt.Fprintln(osStdout, "usage: gregale billing budgets <list|get|create|update|delete|history> [flags] [ID]\nEnabled notify budgets email the account at each threshold; no budget stops workloads. Preview consequences with billing budget-preview."); err != nil {
 			return printErr("Could not print budget help", err)
 		}
 		return 0
@@ -124,6 +124,10 @@ func printBillingBudgetResult(out any) error {
 		}
 		if !value.EnforcementReady {
 			_, err := fmt.Fprintln(osStdout, "Enforcement is unavailable; this policy does not protect spending.")
+			return err
+		}
+		if value.Status == "active" {
+			_, err := fmt.Fprintln(osStdout, "Active: the account email gets one message per threshold each month; workloads keep running.")
 			return err
 		}
 	case api.FinancialBudgetListResponse:

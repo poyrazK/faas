@@ -7,12 +7,12 @@ import "time"
 // these plan limits.
 type ManagedPostgresPlanLimits struct {
 	DatabasesMax int
-	// StorageLimitBytes is the account's pooled storage (ADR-1350): every
+	// StorageLimitBytes is the account's pooled storage (ADR-1501): every
 	// database together, and so also the most one database may use. The pool
 	// is held as the account's monthly storage byte-seconds ceiling.
 	StorageLimitBytes int64
 	// MonthlyComputeUnitSeconds is the account's included compute across all
-	// databases per UTC month (ADR-1350). Until compute overage is billed it is
+	// databases per UTC month (ADR-1501). Until compute overage is billed it is
 	// a ceiling; zero keeps the operator's.
 	MonthlyComputeUnitSeconds int64
 	RestoreWindowSeconds      int64
@@ -31,7 +31,7 @@ const (
 	managedPostgresRestoreWindowSecond int64 = 7 * 24 * 60 * 60
 )
 
-// managedPostgresPlanLimits follows the October 2026 COGS report (ADR-1350):
+// managedPostgresPlanLimits follows the October 2026 COGS report (ADR-1501):
 // databases, highest service class, pooled storage and monthly compute units.
 var managedPostgresPlanLimits = map[Plan]ManagedPostgresPlanLimits{
 	PlanFree: {DatabasesMax: 1, StorageLimitBytes: managedPostgresGiB / 2, MonthlyComputeUnitSeconds: 5 * managedPostgresComputeUnitHour,

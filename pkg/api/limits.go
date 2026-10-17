@@ -648,6 +648,17 @@ const (
 	FinancialAdjustmentReasonBytes   = 512
 )
 
+// ADR-1500 budget threshold notifications. A failed email is retried on later
+// meterd passes up to FinancialBudgetNotifyMaxAttempts, then abandoned. Each
+// pass reads at most FinancialBudgetNotifyBatch active budgets and pending
+// notifications; the rest wait for the next pass.
+const (
+	FinancialBudgetNotifyMaxAttempts = 10
+	FinancialBudgetNotifyBatch       = 1000
+	FinancialBudgetNotifyErrorBytes  = 512
+	FinancialBudgetNotifyInterval    = 5 * time.Minute
+)
+
 // OCI healthcheck image durations are nanoseconds. Docker permits zero for
 // inheritance and otherwise requires at least one millisecond.
 const (
@@ -1627,7 +1638,7 @@ type Limits struct {
 	Profiling    ProfilingLimits
 	EventStorage EventStorageLimits
 	// ObjectStorage is the plan's object-storage ceilings and allowances
-	// (ADR-1320). Plans include stored bytes per ADR-1350; request and egress
+	// (ADR-1320). Plans include stored bytes per ADR-1501; request and egress
 	// allowances wait for exporters that classify reads and writes.
 	ObjectStorage   ObjectStoragePlanLimits
 	EventDeliveries EventDeliveryLimits
@@ -3198,7 +3209,7 @@ var planLimits = map[Plan]Limits{
 		RequestBudgetMaxMs:    30_000, // request_timeout_s ceiling: 30 s (ADR-1150)
 		CertExpiryWarningDays: 30,
 		IncludedGBHours:       20,
-		// ADR-1350: 1 GiB included and Free's hard stop.
+		// ADR-1501: 1 GiB included and Free's hard stop.
 		ObjectStorage:                  ObjectStoragePlanLimits{MaxAccountBytes: 1 << 30, IncludedBytes: 1 << 30},
 		PriceMillicents:                0,
 		RateLimitRPS:                   5,
@@ -3593,9 +3604,9 @@ var planLimits = map[Plan]Limits{
 		RequestBudgetMaxMs:    60_000, // request_timeout_s ceiling: 60 s (ADR-1150)
 		CertExpiryWarningDays: 30,
 		IncludedGBHours:       200,
-		// ADR-1350: 10 GiB included; usage above it is priced at month close.
+		// ADR-1501: 10 GiB included; usage above it is priced at month close.
 		ObjectStorage:   ObjectStoragePlanLimits{IncludedBytes: 10 << 30},
-		PriceMillicents: 1_000_000, // $10.00 (ADR-1350)
+		PriceMillicents: 1_000_000, // $10.00 (ADR-1501)
 		// ConcurrencyPerVMBound (issue #559): Hobby = 5 — smallest
 		// paid tier, matches Cloud Run's framing. Spec §4.9.1.
 		ConcurrencyPerVMBound:          5,
@@ -4015,9 +4026,9 @@ var planLimits = map[Plan]Limits{
 		RequestBudgetMaxMs:    300_000, // request_timeout_s ceiling: 5 min (ADR-1150)
 		CertExpiryWarningDays: 30,
 		IncludedGBHours:       1000,
-		// ADR-1350: 50 GiB included; usage above it is priced at month close.
+		// ADR-1501: 50 GiB included; usage above it is priced at month close.
 		ObjectStorage:   ObjectStoragePlanLimits{IncludedBytes: 50 << 30},
-		PriceMillicents: 3_000_000, // $30.00 (ADR-1350)
+		PriceMillicents: 3_000_000, // $30.00 (ADR-1501)
 		// ConcurrencyPerVMBound (issue #559): Pro allows up to
 		// 25 concurrent in-flight requests per VM. Matches the
 		// typical SaaS-tier workload envelope (one Node/Python
@@ -4399,9 +4410,9 @@ var planLimits = map[Plan]Limits{
 		RequestBudgetMaxMs:    900_000, // request_timeout_s ceiling: 15 min (ADR-1150)
 		CertExpiryWarningDays: 30,
 		IncludedGBHours:       3000,
-		// ADR-1350: 200 GiB included; usage above it is priced at month close.
+		// ADR-1501: 200 GiB included; usage above it is priced at month close.
 		ObjectStorage:   ObjectStoragePlanLimits{IncludedBytes: 200 << 30},
-		PriceMillicents: 9_900_000, // $99.00 (ADR-1350)
+		PriceMillicents: 9_900_000, // $99.00 (ADR-1501)
 		// ConcurrencyPerVMBound (issue #559): Scale = 80 — same
 		// default as Cloud Run's `80 × vCPU` heuristic (the issue
 		// body cites this number directly). 80 concurrent requests
@@ -4915,7 +4926,7 @@ const (
 	VCPUSlots     = 160
 
 	// Metering (spec §1, §10).
-	OverageMillicentsPerGBHour = 1_000 // $0.01 per GB-RAM-hour (ADR-1350)
+	OverageMillicentsPerGBHour = 1_000 // $0.01 per GB-RAM-hour (ADR-1501)
 
 	// PreflightRateLimitPerHour bounds anonymous "would this run here" checks per
 	// client IP. The check is unauthenticated, so the ceiling exists to protect

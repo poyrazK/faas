@@ -3,6 +3,7 @@ package meter
 import (
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/billing/reconciler"
 )
 
@@ -133,6 +134,10 @@ type Config struct {
 	// default (6 h). Fail-soft per account: a transient
 	// provider error skips that account, the loop continues.
 	ReconcileInterval time.Duration
+	// BudgetNotifyInterval (ADR-1500) is how often meterd checks active
+	// notify budgets against known spending and sends threshold emails.
+	// Zero means api.FinancialBudgetNotifyInterval (5 min).
+	BudgetNotifyInterval time.Duration
 	// StorageRollupInterval (ADR-049 §B.3) is how often the
 	// storage rollup tick (pkg/meter/storage.go) populates
 	// snapshot_storage_daily. Zero means the production default
@@ -255,6 +260,9 @@ func (c *Config) Defaults() {
 	}
 	if c.ReconcileInterval == 0 {
 		c.ReconcileInterval = reconciler.DefaultInterval
+	}
+	if c.BudgetNotifyInterval == 0 {
+		c.BudgetNotifyInterval = api.FinancialBudgetNotifyInterval
 	}
 	if c.StorageRollupInterval == 0 {
 		c.StorageRollupInterval = DefaultStorageRollupInterval

@@ -179,6 +179,155 @@ func (q *Queries) FinancialBudgetList(ctx context.Context, db DBTX, arg Financia
 	return items, nil
 }
 
+const financialBudgetNotificationClaim = `-- name: FinancialBudgetNotificationClaim :execrows
+INSERT INTO financial_budget_notifications(account_id, policy_id, period_start, threshold_millicents, policy_revision, known_millicents, coverage_complete)
+VALUES($1::uuid, $2::uuid, $3::timestamptz,
+  $4::bigint, $5::bigint, $6::bigint,
+  $7::boolean)
+ON CONFLICT (policy_id, period_start, threshold_millicents) DO NOTHING
+`
+
+type FinancialBudgetNotificationClaimParams struct {
+	AccountID           pgtype.UUID
+	PolicyID            pgtype.UUID
+	PeriodStart         pgtype.Timestamptz
+	ThresholdMillicents int64
+	PolicyRevision      int64
+	KnownMillicents     int64
+	CoverageComplete    bool
+}
+
+// A threshold notifies at most once per budget and UTC month.
+func (q *Queries) FinancialBudgetNotificationClaim(ctx context.Context, db DBTX, arg FinancialBudgetNotificationClaimParams) (int64, error) {
+	result, err := db.Exec(ctx, financialBudgetNotificationClaim,
+		arg.AccountID,
+		arg.PolicyID,
+		arg.PeriodStart,
+		arg.ThresholdMillicents,
+		arg.PolicyRevision,
+		arg.KnownMillicents,
+		arg.CoverageComplete,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const financialBudgetNotificationsPending = `-- name: FinancialBudgetNotificationsPending :many
+SELECT account_id, policy_id, period_start, threshold_millicents, policy_revision, known_millicents,
+  coverage_complete, status, attempts, last_error, claimed_at, finished_at
+FROM financial_budget_notifications
+WHERE status = 'pending'
+ORDER BY claimed_at, policy_id, period_start, threshold_millicents LIMIT $1::integer
+`
+
+func (q *Queries) FinancialBudgetNotificationsPending(ctx context.Context, db DBTX, pageSize int32) ([]FinancialBudgetNotification, error) {
+	rows, err := db.Query(ctx, financialBudgetNotificationsPending, pageSize)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []FinancialBudgetNotification{}
+	for rows.Next() {
+		var i FinancialBudgetNotification
+		if err := rows.Scan(
+			&i.AccountID,
+			&i.PolicyID,
+			&i.PeriodStart,
+			&i.ThresholdMillicents,
+			&i.PolicyRevision,
+			&i.KnownMillicents,
+			&i.CoverageComplete,
+			&i.Status,
+			&i.Attempts,
+			&i.LastError,
+			&i.ClaimedAt,
+			&i.FinishedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const financialBudgetNotificationsRecord = `-- name: FinancialBudgetNotificationsRecord :execrows
+UPDATE financial_budget_notifications
+SET status = CASE WHEN $1::text = 'failed' THEN 'pending' ELSE $1::text END,
+  attempts = attempts + CASE WHEN $1::text = 'cancelled' THEN 0 ELSE 1 END,
+  last_error = $2::text,
+  finished_at = CASE WHEN $1::text = 'failed' THEN NULL ELSE clock_timestamp() END
+WHERE policy_id = $3::uuid AND period_start = $4::timestamptz
+  AND threshold_millicents <= $5::bigint AND status = 'pending'
+`
+
+type FinancialBudgetNotificationsRecordParams struct {
+	Outcome                string
+	LastError              string
+	PolicyID               pgtype.UUID
+	PeriodStart            pgtype.Timestamptz
+	MaxThresholdMillicents int64
+}
+
+// One delivery outcome covers every pending threshold of a budget and month up
+// to the one the email named. 'failed' counts the attempt and stays pending.
+func (q *Queries) FinancialBudgetNotificationsRecord(ctx context.Context, db DBTX, arg FinancialBudgetNotificationsRecordParams) (int64, error) {
+	result, err := db.Exec(ctx, financialBudgetNotificationsRecord,
+		arg.Outcome,
+		arg.LastError,
+		arg.PolicyID,
+		arg.PeriodStart,
+		arg.MaxThresholdMillicents,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const financialBudgetNotifyPolicies = `-- name: FinancialBudgetNotifyPolicies :many
+SELECT id, account_id, revision, spec, created_at, updated_at, deleted_at
+FROM financial_budget_policies
+WHERE deleted_at IS NULL
+  AND spec->>'enabled' = 'true'
+  AND spec->>'mode' = 'monitored'
+  AND spec->>'action' = 'notify'
+ORDER BY account_id, id LIMIT $1::integer
+`
+
+// ADR-1500. Enabled monitored notify budgets across accounts, in a stable order.
+func (q *Queries) FinancialBudgetNotifyPolicies(ctx context.Context, db DBTX, pageSize int32) ([]FinancialBudgetPolicy, error) {
+	rows, err := db.Query(ctx, financialBudgetNotifyPolicies, pageSize)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []FinancialBudgetPolicy{}
+	for rows.Next() {
+		var i FinancialBudgetPolicy
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.Revision,
+			&i.Spec,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const financialBudgetRevisionInsert = `-- name: FinancialBudgetRevisionInsert :exec
 INSERT INTO financial_budget_revisions(account_id, policy_id, revision, actor, mutation, spec)
 VALUES($1::uuid, $2::uuid, $3::bigint, $4::text, $5::text, $6::jsonb)

@@ -284,7 +284,7 @@ Events that email the user: email verification; deploy failed (with log link) â€
 
 ## 10. Billing & plan-change UX
 
-- **Plans are shown as the model prices them:** Free $0, Hobby $10, Pro $30, Scale $99 (USD, ADR-1350), with each plan's deployed/concurrent/RAM/GB-h limits stated plainly (from `pkg/api/limits.go`, the single source). No hidden asterisks. The same plan table publishes the canonical guest CPU/RAM shape used by the optional `gregale deploy --vcpu` assertion:
+- **Plans are shown as the model prices them:** Free $0, Hobby $10, Pro $30, Scale $99 (USD, ADR-1501), with each plan's deployed/concurrent/RAM/GB-h limits stated plainly (from `pkg/api/limits.go`, the single source). No hidden asterisks. The same plan table publishes the canonical guest CPU/RAM shape used by the optional `gregale deploy --vcpu` assertion:
 
   | Plan | Canonical RAM | Guest vCPU |
   |---|---:|---:|

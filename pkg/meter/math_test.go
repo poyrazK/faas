@@ -375,7 +375,7 @@ func TestMonthlyUsageGB(t *testing.T) {
 // runaway instance doesn't emit a 5-digit percentage into the
 // metric label set).
 func TestCheckQuota(t *testing.T) {
-	const freeQuota = 20   // GB-h (ADR-1350)
+	const freeQuota = 20   // GB-h (ADR-1501)
 	const hobbyQuota = 200 // GB-h
 	const proQuota = 1000  // GB-h
 

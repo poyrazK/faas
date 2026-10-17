@@ -1,8 +1,9 @@
 from typing import Literal
 
-FinancialBudgetResponseStatus = Literal["deleted", "draft", "unavailable"]
+FinancialBudgetResponseStatus = Literal["active", "deleted", "draft", "unavailable"]
 
 FINANCIAL_BUDGET_RESPONSE_STATUS_VALUES: set[FinancialBudgetResponseStatus] = {
+    "active",
     "deleted",
     "draft",
     "unavailable",

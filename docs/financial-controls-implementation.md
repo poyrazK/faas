@@ -12,15 +12,18 @@ on `codex/financial-controls-20261002` and is deferred for a later release.
   and console costs with explicit freshness and coverage gaps.
 - Disabled budget draft creation, editing, deletion, scope preview and retained
   revision history through the API, CLI and console.
+- Enabled monitored notify budgets (ADR-1500): meterd emails the account once
+  per crossed threshold each UTC month.
 - Account ownership, usage-read/admin authorization, MFA, bounded idempotency
   keys and optimistic revisions. Recovery reads remain available during billing
   suspension without changing payment status.
 
 ## Release limits
 
-Budget activation returns HTTP 422 `financial_budget_activation_unavailable`.
-Drafts neither stop workloads nor send spending notifications. Preview results
-report `enforcement_ready: false`. Financial totals cover recorded supported
+Activating any response other than a monitored notify budget returns HTTP 422
+`financial_budget_activation_unavailable`. Drafts neither stop workloads nor
+send spending notifications, and no budget stops workloads. Previews of stopping
+or strict responses report `enforcement_ready: false`. Financial totals cover recorded supported
 usage only; invoice reconciliation, fixed fees, credits/taxes, unsupported
 meters and uncovered history remain explicit gaps. Existing provider billing
 and payment, security and workload lifecycle behavior remain authoritative.
@@ -33,8 +36,8 @@ present an unallocated amount as complete zero spending. Account and app
 subtotals still include the retained charges.
 
 The release excludes new scheduler/gateway enforcement, monetary reservations,
-financial invocation/source claims, command VM ownership and teardown, budget
-notification delivery and budget runtime/action APIs. Those changes stay on the
+financial invocation/source claims, command VM ownership and teardown, and
+budget runtime/action APIs. Those changes stay on the
 full implementation branch.
 
 ## Rollout and rollback

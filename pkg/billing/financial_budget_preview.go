@@ -31,35 +31,26 @@ func PreviewFinancialBudget(ctx context.Context, store state.Store, account stri
 	if err != nil {
 		return api.FinancialBudgetPreviewResponse{}, err
 	}
-	out := api.FinancialBudgetPreviewResponse{Spec: spec, PeriodStart: start, PeriodEnd: report.PeriodEnd, AsOf: report.AsOf, CoverageComplete: true, Fresh: true, Reasons: []string{}, Targets: []api.FinancialBudgetTarget{}, ContinuingTargets: []api.FinancialBudgetTarget{}}
-	costs := []financial.ContractCosts{}
-	for _, meter := range report.Meters {
-		if !slices.Contains(spec.Meters, meter.Meter) {
-			continue
-		}
-		costs = append(costs, meter.Accrued)
-		out.CoverageComplete = out.CoverageComplete && meter.Coverage.Complete
-		out.Fresh = out.Fresh && meter.Coverage.Fresh
-		for _, reason := range meter.Coverage.Reasons {
-			out.Reasons = append(out.Reasons, meter.Meter+":"+reason)
-		}
-		if !financialBudgetAttributionComplete(spec.Scope, meter.Accrued) {
-			out.CoverageComplete = false
-			out.Reasons = append(out.Reasons, meter.Meter+":missing_scope_attribution")
-		}
-	}
-	out.KnownMillicents, err = financial.BudgetAmount(spec, costs)
+	out := api.FinancialBudgetPreviewResponse{Spec: spec, PeriodStart: start, PeriodEnd: report.PeriodEnd, AsOf: report.AsOf, Targets: []api.FinancialBudgetTarget{}, ContinuingTargets: []api.FinancialBudgetTarget{}}
+	known, err := financialBudgetKnown(spec, report)
+	out.CoverageComplete, out.Fresh, out.Reasons = known.complete, known.fresh, known.reasons
 	if err != nil {
 		return out, err
 	}
+	out.KnownMillicents = known.millicents
 	out.KnownLimitReached = out.KnownMillicents >= spec.LimitMillicents
-	// Promotion is pending the durable decisions, owner integrations and
-	// native lifecycle acceptance in ADR-566. A preview never activates intent.
-	out.EnforcementReady = false
-	out.Reasons = append(out.Reasons, "enforcement_integration_pending")
-	out.Guarantee = "monitored_after_retained_evidence; delayed_sources_and_drain_can_exceed_limit"
-	if spec.Mode == "strict" {
-		out.Guarantee = "strict_compute_pending_reservations_and_local_deadline_acceptance"
+	out.EnforcementReady = FinancialBudgetResponseIntegrated(spec)
+	if out.EnforcementReady {
+		// ADR-1500: meterd emails the account at each threshold.
+		out.Guarantee = "notify_after_retained_evidence; delayed_sources_can_delay_notification"
+	} else {
+		// Promotion is pending the durable decisions, owner integrations and
+		// native lifecycle acceptance in ADR-566. A preview never activates intent.
+		out.Reasons = append(out.Reasons, "enforcement_integration_pending")
+		out.Guarantee = "monitored_after_retained_evidence; delayed_sources_and_drain_can_exceed_limit"
+		if spec.Mode == "strict" {
+			out.Guarantee = "strict_compute_pending_reservations_and_local_deadline_acceptance"
+		}
 	}
 	members, err := financialBudgetMembers(ctx, store, account, spec.Scope)
 	if err != nil {
@@ -83,6 +74,46 @@ func PreviewFinancialBudget(ctx context.Context, store state.Store, account stri
 		out.Reasons = append(out.Reasons, "no_current_action_targets")
 	}
 	return out, nil
+}
+
+// FinancialBudgetResponseIntegrated reports whether a budget's selected
+// response is fully integrated and so may be enabled. Only monitored
+// notification budgets are (ADR-1500); stopping responses remain ADR-566
+// future work.
+func FinancialBudgetResponseIntegrated(spec financial.BudgetSpec) bool {
+	return spec.Mode == "monitored" && spec.Action == "notify"
+}
+
+type financialBudgetKnownAmount struct {
+	millicents      int64
+	complete, fresh bool
+	reasons         []string
+}
+
+// financialBudgetKnown computes a budget's known amount from one month's
+// cost report. The amount is a lower bound; complete and fresh say whether
+// the evidence behind it could still grow.
+func financialBudgetKnown(spec financial.BudgetSpec, report api.FinancialCostsResponse) (financialBudgetKnownAmount, error) {
+	out := financialBudgetKnownAmount{complete: true, fresh: true, reasons: []string{}}
+	costs := []financial.ContractCosts{}
+	for _, meter := range report.Meters {
+		if !slices.Contains(spec.Meters, meter.Meter) {
+			continue
+		}
+		costs = append(costs, meter.Accrued)
+		out.complete = out.complete && meter.Coverage.Complete
+		out.fresh = out.fresh && meter.Coverage.Fresh
+		for _, reason := range meter.Coverage.Reasons {
+			out.reasons = append(out.reasons, meter.Meter+":"+reason)
+		}
+		if !financialBudgetAttributionComplete(spec.Scope, meter.Accrued) {
+			out.complete = false
+			out.reasons = append(out.reasons, meter.Meter+":missing_scope_attribution")
+		}
+	}
+	var err error
+	out.millicents, err = financial.BudgetAmount(spec, costs)
+	return out, err
 }
 
 func financialBudgetAttributionComplete(scope financial.BudgetScope, costs financial.ContractCosts) bool {

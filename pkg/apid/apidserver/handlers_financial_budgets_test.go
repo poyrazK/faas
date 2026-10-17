@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -31,7 +32,10 @@ func decodeFinancialBudget(t *testing.T, rec *httptest.ResponseRecorder, status 
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
 	}
-	if rec.Header().Get("Cache-Control") != "private, no-store" || out.EnforcementReady {
+	// ADR-1500: only a live monitored notify budget is ready; nothing else
+	// may claim an integrated response.
+	notify := out.DeletedAt == nil && out.Spec.Mode == "monitored" && out.Spec.Action == "notify"
+	if rec.Header().Get("Cache-Control") != "private, no-store" || out.EnforcementReady != notify {
 		t.Fatalf("unsafe policy response: %+v", out)
 	}
 	return out
@@ -122,6 +126,30 @@ func TestFinancialBudgetCreateRetryWithoutReplayCache(t *testing.T) {
 				t.Fatalf("retry duplicated audit: %d %d", len(rows), len(history))
 			}
 		})
+	}
+}
+
+// adr: 1500 — a monitored notify budget can be enabled and reports itself
+// active and ready; enabling it into a stopping response is still refused.
+func TestFinancialBudgetNotifyActivation(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanHobby)
+	spec := financialDraftSpec()
+	spec.Action, spec.DrainSeconds, spec.Enabled = "notify", 0, true
+	p := decodeFinancialBudget(t, e.Do(t, "POST", "/v1/billing/budgets", api.CreateFinancialBudgetRequest{Spec: spec}, map[string]string{"Idempotency-Key": "notify"}), http.StatusCreated)
+	if p.Status != "active" || !p.EnforcementReady || len(p.Reasons) != 0 {
+		t.Fatalf("enabled notify budget = status %q ready %t reasons %v, want active/true/none", p.Status, p.EnforcementReady, p.Reasons)
+	}
+	stopping := spec
+	stopping.Action, stopping.DrainSeconds = "stop_previews", 30
+	rec := e.Do(t, "PUT", "/v1/billing/budgets/"+p.ID, api.UpdateFinancialBudgetRequest{ExpectedRevision: p.Revision, Spec: stopping}, map[string]string{"Idempotency-Key": "to-stopping"})
+	if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), "financial_budget_activation_unavailable") {
+		t.Fatalf("enabled stopping update: %d %s", rec.Code, rec.Body)
+	}
+	draft := stopping
+	draft.Enabled = false
+	updated := decodeFinancialBudget(t, e.Do(t, "PUT", "/v1/billing/budgets/"+p.ID, api.UpdateFinancialBudgetRequest{ExpectedRevision: p.Revision, Spec: draft}, map[string]string{"Idempotency-Key": "to-draft"}), http.StatusOK)
+	if updated.Status != "draft" || updated.EnforcementReady || !slices.Contains(updated.Reasons, "enforcement_integration_pending") {
+		t.Fatalf("stopping draft = %+v, want draft, not ready, integration pending", updated)
 	}
 }
 

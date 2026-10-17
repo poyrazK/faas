@@ -11,21 +11,32 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
+	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/financial"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// Activation is unavailable until ADR-566's component-owner acceptance gates
-// pass. Draft management must never promise that a saved policy stops usage.
+// Only monitored notify budgets can be enabled (ADR-1500). Stopping responses
+// stay unavailable until ADR-566's component-owner acceptance gates pass, so
+// a saved policy never promises that it stops usage.
 func financialBudgetResponse(p state.FinancialBudget) api.FinancialBudgetResponse {
+	integrated := billing.FinancialBudgetResponseIntegrated(p.Spec)
+	ready := integrated && p.DeletedAt == nil
 	status := "draft"
 	if p.Spec.Enabled {
 		status = "unavailable"
+		if integrated {
+			status = "active"
+		}
 	}
 	if p.DeletedAt != nil {
 		status = "deleted"
 	}
-	return api.FinancialBudgetResponse{ID: p.ID, AccountID: p.AccountID, Revision: p.Revision, Spec: p.Spec, CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt, DeletedAt: p.DeletedAt, Status: status, EnforcementReady: false, Reasons: []string{"enforcement_integration_pending"}}
+	reasons := []string{}
+	if !integrated {
+		reasons = append(reasons, "enforcement_integration_pending")
+	}
+	return api.FinancialBudgetResponse{ID: p.ID, AccountID: p.AccountID, Revision: p.Revision, Spec: p.Spec, CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt, DeletedAt: p.DeletedAt, Status: status, EnforcementReady: ready, Reasons: reasons}
 }
 
 func (s *server) financialBudgetStore(w http.ResponseWriter, r *http.Request, resource bool) (state.FinancialBudgetStore, bool) {
@@ -183,8 +194,8 @@ func validateFinancialBudgetActivation(w http.ResponseWriter, r *http.Request, s
 		api.WriteProblem(w, financialBudgetProblem(err))
 		return false
 	}
-	if spec.Enabled {
-		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, "financial_budget_activation_unavailable", "Budget activation unavailable", "Save enabled=false to retain a draft. Activation requires accepted gateway, scheduler and metering integrations; this deployment cannot enforce the selected response."))
+	if spec.Enabled && !billing.FinancialBudgetResponseIntegrated(spec) {
+		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, "financial_budget_activation_unavailable", "Budget activation unavailable", "Only budgets with mode=monitored and action=notify can be enabled. Save enabled=false to retain a draft of any other response; stopping responses need gateway and scheduler integrations this deployment does not have."))
 		return false
 	}
 	return true

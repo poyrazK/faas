@@ -27916,6 +27916,34 @@ CREATE TABLE public.feature_flag_versions (
 
 
 --
+-- Name: financial_budget_notifications; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.financial_budget_notifications (
+    account_id uuid NOT NULL,
+    policy_id uuid NOT NULL,
+    period_start timestamp with time zone NOT NULL,
+    threshold_millicents bigint NOT NULL,
+    policy_revision bigint NOT NULL,
+    known_millicents bigint NOT NULL,
+    coverage_complete boolean NOT NULL,
+    status text DEFAULT 'pending'::text NOT NULL,
+    attempts integer DEFAULT 0 NOT NULL,
+    last_error text DEFAULT ''::text NOT NULL,
+    claimed_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    finished_at timestamp with time zone,
+    CONSTRAINT financial_budget_notifications_attempts_check CHECK (((attempts >= 0) AND (attempts <= 1000))),
+    CONSTRAINT financial_budget_notifications_check CHECK (((known_millicents >= threshold_millicents) AND (known_millicents <= '9007199254740991'::bigint))),
+    CONSTRAINT financial_budget_notifications_check1 CHECK (((status = 'pending'::text) = (finished_at IS NULL))),
+    CONSTRAINT financial_budget_notifications_last_error_check CHECK ((octet_length(last_error) <= 512)),
+    CONSTRAINT financial_budget_notifications_period_start_check CHECK ((period_start = (date_trunc('month'::text, (period_start AT TIME ZONE 'UTC'::text)) AT TIME ZONE 'UTC'::text))),
+    CONSTRAINT financial_budget_notifications_policy_revision_check CHECK (((policy_revision >= 1) AND (policy_revision <= '9007199254740991'::bigint))),
+    CONSTRAINT financial_budget_notifications_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'sent'::text, 'abandoned'::text, 'cancelled'::text]))),
+    CONSTRAINT financial_budget_notifications_threshold_millicents_check CHECK (((threshold_millicents >= 0) AND (threshold_millicents <= '9007199254740991'::bigint)))
+);
+
+
+--
 -- Name: financial_budget_policies; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -42303,6 +42331,14 @@ ALTER TABLE ONLY public.feature_flag_versions
 
 
 --
+-- Name: financial_budget_notifications financial_budget_notifications_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_budget_notifications
+    ADD CONSTRAINT financial_budget_notifications_pkey PRIMARY KEY (policy_id, period_start, threshold_millicents);
+
+
+--
 -- Name: financial_budget_policies financial_budget_policies_account_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -50455,6 +50491,13 @@ CREATE INDEX executions_queue_account_idx ON public.executions USING btree (acco
 --
 
 CREATE INDEX feature_flag_versions_scope ON public.feature_flag_versions USING btree (account_id, project_id, environment_id, version DESC);
+
+
+--
+-- Name: financial_budget_notifications_pending_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX financial_budget_notifications_pending_idx ON public.financial_budget_notifications USING btree (claimed_at) WHERE (status = 'pending'::text);
 
 
 --
@@ -63906,6 +63949,14 @@ ALTER TABLE ONLY public.feature_flag_versions
 
 ALTER TABLE ONLY public.feature_flag_versions
     ADD CONSTRAINT feature_flag_versions_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
+
+
+--
+-- Name: financial_budget_notifications financial_budget_notifications_account_id_policy_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_budget_notifications
+    ADD CONSTRAINT financial_budget_notifications_account_id_policy_id_fkey FOREIGN KEY (account_id, policy_id) REFERENCES public.financial_budget_policies(account_id, id) ON DELETE CASCADE;
 
 
 --

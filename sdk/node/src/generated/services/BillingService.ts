@@ -229,12 +229,14 @@ export class BillingService {
     });
   }
   /**
-   * Save an account-owned budget draft with atomic revision audit.
+   * Save an account-owned budget with atomic revision audit.
    * Requires admin scope and session MFA. Idempotency-Key is required (1..255 bytes).
    * It fixes creation identity beyond replay-cache retention. Reusing an operation
-   * identity cannot overwrite a changed or deleted policy. Set enabled=false:
-   * activation currently returns 422 financial_budget_activation_unavailable.
-   * Saving a draft creates no holds, decisions, notifications or workload changes.
+   * identity cannot overwrite a changed or deleted policy. Only mode=monitored with
+   * action=notify can be enabled (ADR-1500): meterd then emails the account once per
+   * crossed threshold each UTC month. Enabling any other response returns 422
+   * financial_budget_activation_unavailable. A budget never creates holds or
+   * changes workloads.
    *
    * @returns FinancialBudgetResponse Saved draft with revision 1; retries retain its identity.
    * @throws ApiError
@@ -310,7 +312,7 @@ export class BillingService {
    * activation remains unavailable. Scope ownership and action eligibility are
    * revalidated. Payment, security and user holds are independent of this intent.
    *
-   * @returns FinancialBudgetResponse Updated draft and incremented revision.
+   * @returns FinancialBudgetResponse Updated budget and incremented revision.
    * @throws ApiError
    */
   public static updateFinancialBudget({

@@ -1,6 +1,10 @@
-# ADR-1350: USD pricing and plan entitlements from the October 2026 COGS report
+# ADR-1501: USD pricing and plan entitlements from the October 2026 COGS report
 
 Status: accepted.
+
+Renumbered from 1350, which belongs to the earlier-merged ADR-1350 (checked
+project graph deactivation). Migration `20261016100745318` keeps its original
+`ADR-1350` comment because merged migrations are immutable.
 
 Amends spec §4.7 (prices, included quotas and the overage meter), the
 CLAUDE.md hard limits (financial model §1), ADR-1320 (object-storage plan

@@ -44399,13 +44399,15 @@ paths:
     post:
       tags: [billing]
       operationId: createFinancialBudget
-      summary: Save an account-owned budget draft with atomic revision audit.
+      summary: Save an account-owned budget with atomic revision audit.
       description: |
         Requires admin scope and session MFA. Idempotency-Key is required (1..255 bytes).
         It fixes creation identity beyond replay-cache retention. Reusing an operation
-        identity cannot overwrite a changed or deleted policy. Set enabled=false:
-        activation currently returns 422 financial_budget_activation_unavailable.
-        Saving a draft creates no holds, decisions, notifications or workload changes.
+        identity cannot overwrite a changed or deleted policy. Only mode=monitored with
+        action=notify can be enabled (ADR-1500): meterd then emails the account once per
+        crossed threshold each UTC month. Enabling any other response returns 422
+        financial_budget_activation_unavailable. A budget never creates holds or
+        changes workloads.
       parameters:
         - name: Idempotency-Key
           in: header
@@ -44479,7 +44481,7 @@ paths:
             schema: { $ref: '#/components/schemas/UpdateFinancialBudgetRequest' }
       responses:
         '200':
-          description: Updated draft and incremented revision.
+          description: Updated budget and incremented revision.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/FinancialBudgetResponse' }
@@ -63285,7 +63287,7 @@ components:
         completed_at: { type: string, format: date-time }
     FinancialBudgetResponse:
       type: object
-      description: Saved policy intent; draft and unavailable policies do not protect workloads.
+      description: Saved policy intent. Active policies only notify (ADR-1500); no status stops or protects workloads.
       required: [id, account_id, revision, spec, created_at, updated_at, status, enforcement_ready, reasons]
       properties:
         id: { type: string, format: uuid }
@@ -63295,8 +63297,8 @@ components:
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
         deleted_at: { type: string, format: date-time }
-        status: { type: string, enum: [draft, unavailable, deleted] }
-        enforcement_ready: { type: boolean, description: False until runtime integrations and acceptance are complete. }
+        status: { type: string, enum: [draft, active, unavailable, deleted], description: active is an enabled notify budget; unavailable is enabled intent whose response is not integrated. }
+        enforcement_ready: { type: boolean, description: True when the selected response is integrated (monitored notify budgets); false for stopping responses until their runtime integrations and acceptance are complete. }
         reasons: { type: array, items: { type: string } }
     FinancialBudgetListResponse:
       type: object

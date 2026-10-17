@@ -157,6 +157,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_BRIDGE_URL", Owners: []string{"vmmd-stream-bridge"}, Source: EnvSourceInternal, Note: "set by vmmd for the per-request stream-bridge subprocess"},
 	{Name: "FAAS_BROKER_EGRESS_IFNAME", Owners: []string{"schedd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_BROKER_EGRESS_MBIT", Owners: []string{"schedd"}, Source: EnvSourceDefault},
+	{Name: "FAAS_BUDGET_NOTIFY_INTERVAL", Owners: []string{"meterd"}, Source: EnvSourceDefault, Default: "5m", Note: "ADR-1500 budget threshold notification cadence"},
 	{Name: "FAAS_BUILDERD_CONFIG", Owners: []string{"builderd", "shared"}, Source: EnvSourceUnit},
 	{Name: "FAAS_BUILDERD_ROLE", Owners: []string{"builderd", "shared"}, Source: EnvSourceDropin},
 	{Name: "FAAS_BUILDER_BASE_PATH", Owners: []string{"imaged", "shared"}, Source: EnvSourceDefault},

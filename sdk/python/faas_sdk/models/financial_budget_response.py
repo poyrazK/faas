@@ -23,7 +23,7 @@ T = TypeVar("T", bound="FinancialBudgetResponse")
 
 @_attrs_define
 class FinancialBudgetResponse:
-    """Saved policy intent; draft and unavailable policies do not protect workloads."""
+    """Saved policy intent. Active policies only notify (ADR-1500); no status stops or protects workloads."""
 
     id: UUID
     account_id: UUID
@@ -33,8 +33,10 @@ class FinancialBudgetResponse:
     created_at: datetime.datetime
     updated_at: datetime.datetime
     status: FinancialBudgetResponseStatus
+    """active is an enabled notify budget; unavailable is enabled intent whose response is not integrated."""
     enforcement_ready: bool
-    """False until runtime integrations and acceptance are complete."""
+    """True when the selected response is integrated (monitored notify budgets); false for stopping responses until
+    their runtime integrations and acceptance are complete."""
     reasons: list[str]
     deleted_at: datetime.datetime | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

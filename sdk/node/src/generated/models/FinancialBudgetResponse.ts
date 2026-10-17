@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { FinancialBudgetSpec } from './FinancialBudgetSpec.js';
 /**
- * Saved policy intent; draft and unavailable policies do not protect workloads.
+ * Saved policy intent. Active policies only notify (ADR-1500); no status stops or protects workloads.
  */
 export type FinancialBudgetResponse = {
   id: string;
@@ -14,9 +14,12 @@ export type FinancialBudgetResponse = {
   created_at: string;
   updated_at: string;
   deleted_at?: string;
-  status: 'draft' | 'unavailable' | 'deleted';
   /**
-   * False until runtime integrations and acceptance are complete.
+   * active is an enabled notify budget; unavailable is enabled intent whose response is not integrated.
+   */
+  status: 'draft' | 'active' | 'unavailable' | 'deleted';
+  /**
+   * True when the selected response is integrated (monitored notify budgets); false for stopping responses until their runtime integrations and acceptance are complete.
    */
   enforcement_ready: boolean;
   reasons: Array<string>;

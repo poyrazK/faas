@@ -46,10 +46,10 @@ a month, the month keeps the largest allowance any of its plans granted.
 
 ## Retained usage costs and forecasts
 
-This financial visibility preview reports supported usage costs and budget
-drafts. Budget enforcement is unavailable: drafts do not stop workloads or
-send spending notifications. Coverage and unavailable bill components are
-reported explicitly.
+This financial visibility preview reports supported usage costs and budgets.
+A budget can notify you when spending passes an amount you choose (see
+[Budget notifications](#budget-notifications)); no budget stops workloads yet.
+Coverage and unavailable bill components are reported explicitly.
 
 ```bash
 gregale billing costs --month 2026-10 --json
@@ -168,10 +168,10 @@ account allowance once; gross usage measures cost before that allowance.
 Strict resource scopes require gross compute, and a broad strict policy must
 stop every covered workload.
 
-Enforcement currently reports `enforcement_ready: false`. Policy activation,
-durable decisions, independent holds, stopping acknowledgements, and strict
-compute reservations are still under implementation. A successful preview does
-not activate a spending limit. Monitored responses can exceed a threshold while
+Notify budgets report `enforcement_ready: true`. Stopping responses and strict
+budgets report `false`: their durable decisions, independent holds, stopping
+acknowledgements, and strict compute reservations are still under
+implementation. A successful preview does not activate a spending limit. Monitored responses can exceed a threshold while
 usage arrives or workloads drain. Full-invoice hard limits are not implied by
 compute controls.
 
@@ -209,11 +209,13 @@ deletion retains that history, accessible through
 `next_revision` as the next cursor. A final full page can be followed by an empty
 page. At most 128 nondeleted policies are allowed per account.
 
-Activation currently returns 422 `financial_budget_activation_unavailable`
-without writing policy intent. Save `enabled=false` to retain a draft. A policy
-response separately reports `status`, `enforcement_ready` and readiness reasons.
-An internal enabled intent whose integrations are unavailable reports
-`unavailable`, never active protection. Cost reads, policy reads, updates and
+Only budgets with `mode: monitored` and `action: notify` can be enabled.
+Enabling any other response returns 422 `financial_budget_activation_unavailable`
+without writing policy intent; save `enabled=false` to keep it as a draft. A
+policy response separately reports `status`, `enforcement_ready` and readiness
+reasons. An enabled notify budget reports `active`. An internal enabled intent
+whose response is not integrated reports `unavailable`, never active
+protection. Cost reads, policy reads, updates and
 deletion remain reachable while an account is suspended for billing recovery;
 they do not change payment/security/deletion status or resume its workloads.
 
@@ -221,6 +223,45 @@ The Node and Python generated Billing clients expose the same operations,
 revision conditions, retry headers and readiness fields. Revision history is
 intent history; target stopping acknowledgements and action history are still
 under implementation.
+
+## Budget notifications
+
+An enabled budget with `mode: monitored` and `action: notify` emails the
+account address when its known spending in the current UTC month passes each
+`notify_millicents` threshold and the `limit_millicents` amount (ADR-1500).
+
+```json
+{
+  "name": "Monthly usage",
+  "scope": {"kind": "account"},
+  "currency": "USD",
+  "meters": ["compute", "egress"],
+  "basis": "net_usage",
+  "limit_millicents": 5000000,
+  "notify_millicents": [2500000, 4000000],
+  "mode": "monitored",
+  "action": "notify",
+  "drain_seconds": 0,
+  "resume_rule": "next_period",
+  "enabled": true
+}
+```
+
+This budget emails at $25, $40 and $50 of net usage. meterd checks every 5
+minutes (`FAAS_BUDGET_NOTIFY_INTERVAL`). Each threshold notifies at most once
+per budget and month; if several pass between checks, one email names the
+highest. Thresholds start again on the first of the next UTC month. A
+threshold of $0 notifies on the first known spending.
+
+Spending is the known amount from retained usage evidence, so a notification
+can arrive after the threshold was passed, never before. When some of the
+month's usage is not recorded yet, the email says the real amount may be
+higher. Plan fees, credits and taxes are not part of a budget's amount.
+
+Editing a budget keeps the thresholds it already notified this month; a new
+threshold amount notifies on its own. Disabling or deleting a budget cancels
+any notification that has not been sent. A failed email is retried for up to
+10 attempts. Notify budgets never stop or slow workloads.
 
 ## FOCUS invoice export
 

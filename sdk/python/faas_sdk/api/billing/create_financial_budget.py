@@ -98,13 +98,15 @@ def sync_detailed(
     body: CreateFinancialBudgetRequest,
     idempotency_key: str,
 ) -> Response[FinancialBudgetResponse | Problem]:
-    """Save an account-owned budget draft with atomic revision audit.
+    """Save an account-owned budget with atomic revision audit.
 
      Requires admin scope and session MFA. Idempotency-Key is required (1..255 bytes).
     It fixes creation identity beyond replay-cache retention. Reusing an operation
-    identity cannot overwrite a changed or deleted policy. Set enabled=false:
-    activation currently returns 422 financial_budget_activation_unavailable.
-    Saving a draft creates no holds, decisions, notifications or workload changes.
+    identity cannot overwrite a changed or deleted policy. Only mode=monitored with
+    action=notify can be enabled (ADR-1500): meterd then emails the account once per
+    crossed threshold each UTC month. Enabling any other response returns 422
+    financial_budget_activation_unavailable. A budget never creates holds or
+    changes workloads.
 
     Args:
         idempotency_key (str):
@@ -137,13 +139,15 @@ def sync(
     body: CreateFinancialBudgetRequest,
     idempotency_key: str,
 ) -> FinancialBudgetResponse | Problem | None:
-    """Save an account-owned budget draft with atomic revision audit.
+    """Save an account-owned budget with atomic revision audit.
 
      Requires admin scope and session MFA. Idempotency-Key is required (1..255 bytes).
     It fixes creation identity beyond replay-cache retention. Reusing an operation
-    identity cannot overwrite a changed or deleted policy. Set enabled=false:
-    activation currently returns 422 financial_budget_activation_unavailable.
-    Saving a draft creates no holds, decisions, notifications or workload changes.
+    identity cannot overwrite a changed or deleted policy. Only mode=monitored with
+    action=notify can be enabled (ADR-1500): meterd then emails the account once per
+    crossed threshold each UTC month. Enabling any other response returns 422
+    financial_budget_activation_unavailable. A budget never creates holds or
+    changes workloads.
 
     Args:
         idempotency_key (str):
@@ -171,13 +175,15 @@ async def asyncio_detailed(
     body: CreateFinancialBudgetRequest,
     idempotency_key: str,
 ) -> Response[FinancialBudgetResponse | Problem]:
-    """Save an account-owned budget draft with atomic revision audit.
+    """Save an account-owned budget with atomic revision audit.
 
      Requires admin scope and session MFA. Idempotency-Key is required (1..255 bytes).
     It fixes creation identity beyond replay-cache retention. Reusing an operation
-    identity cannot overwrite a changed or deleted policy. Set enabled=false:
-    activation currently returns 422 financial_budget_activation_unavailable.
-    Saving a draft creates no holds, decisions, notifications or workload changes.
+    identity cannot overwrite a changed or deleted policy. Only mode=monitored with
+    action=notify can be enabled (ADR-1500): meterd then emails the account once per
+    crossed threshold each UTC month. Enabling any other response returns 422
+    financial_budget_activation_unavailable. A budget never creates holds or
+    changes workloads.
 
     Args:
         idempotency_key (str):
@@ -208,13 +214,15 @@ async def asyncio(
     body: CreateFinancialBudgetRequest,
     idempotency_key: str,
 ) -> FinancialBudgetResponse | Problem | None:
-    """Save an account-owned budget draft with atomic revision audit.
+    """Save an account-owned budget with atomic revision audit.
 
      Requires admin scope and session MFA. Idempotency-Key is required (1..255 bytes).
     It fixes creation identity beyond replay-cache retention. Reusing an operation
-    identity cannot overwrite a changed or deleted policy. Set enabled=false:
-    activation currently returns 422 financial_budget_activation_unavailable.
-    Saving a draft creates no holds, decisions, notifications or workload changes.
+    identity cannot overwrite a changed or deleted policy. Only mode=monitored with
+    action=notify can be enabled (ADR-1500): meterd then emails the account once per
+    crossed threshold each UTC month. Enabling any other response returns 422
+    financial_budget_activation_unavailable. A budget never creates holds or
+    changes workloads.
 
     Args:
         idempotency_key (str):

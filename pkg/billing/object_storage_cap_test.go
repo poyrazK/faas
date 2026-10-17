@@ -38,7 +38,7 @@ func TestFinalizeObjectStoragePeriodsHoldsChargeUnderOverageCap(t *testing.T) {
 	shadowEgress.Mode = MeterDeliveryShadow
 	lateEgress := liveEgress
 	lateEgress.EffectiveFrom = period.AddDate(0, 0, 10)
-	// Usage is Hobby's included storage (ADR-1350) plus 9 GiB-months, which
+	// Usage is Hobby's included storage (ADR-1501) plus 9 GiB-months, which
 	// the record prices at 1000 millicents each: 9000 millicents.
 	hobbyIncluded := api.MustLimitsFor(api.PlanHobby).ObjectStorage.Allowance().StoredByteHours
 	for _, tc := range []struct {

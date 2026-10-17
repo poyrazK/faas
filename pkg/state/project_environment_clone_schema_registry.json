@@ -4698,6 +4698,24 @@
     "kind": "configuration"
   },
   {
+    "table": "financial_budget_notifications",
+    "columns": [
+      "account_id",
+      "attempts",
+      "claimed_at",
+      "coverage_complete",
+      "finished_at",
+      "known_millicents",
+      "last_error",
+      "period_start",
+      "policy_id",
+      "policy_revision",
+      "status",
+      "threshold_millicents"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "financial_budget_policies",
     "columns": [
       "account_id",

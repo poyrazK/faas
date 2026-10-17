@@ -4001,6 +4001,21 @@ type FeatureFlagVersion struct {
 	CreatedAt     pgtype.Timestamptz
 }
 
+type FinancialBudgetNotification struct {
+	AccountID           pgtype.UUID
+	PolicyID            pgtype.UUID
+	PeriodStart         pgtype.Timestamptz
+	ThresholdMillicents int64
+	PolicyRevision      int64
+	KnownMillicents     int64
+	CoverageComplete    bool
+	Status              string
+	Attempts            int32
+	LastError           string
+	ClaimedAt           pgtype.Timestamptz
+	FinishedAt          pgtype.Timestamptz
+}
+
 type FinancialBudgetPolicy struct {
 	ID        pgtype.UUID
 	AccountID pgtype.UUID

@@ -982,6 +982,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// and retention cadences. Defaults live in pkg/meter/{config,
 	// storage, retention}.go so cmd/meterd stays thin.
 	applyEnvTick("FAAS_RECONCILE_INTERVAL", &mc.ReconcileInterval, deps.getenv, log)
+	applyEnvTick("FAAS_BUDGET_NOTIFY_INTERVAL", &mc.BudgetNotifyInterval, deps.getenv, log)
 	applyEnvTick("FAAS_STORAGE_ROLLUP_INTERVAL", &mc.StorageRollupInterval, deps.getenv, log)
 	applyEnvTick("FAAS_RETENTION_INTERVAL", &mc.RetentionInterval, deps.getenv, log)
 	// ADR-098 PR-C: connection-aware probe + partition cadences.
@@ -1237,6 +1238,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	rec := reconciler.New(provName, store, pusher, log, recRegistry).WithMode(billingMode)
 	go rec.Loop(ctx, mc.ReconcileInterval)
+
+	// ADR-1500: budget threshold emails. Independent of the billing
+	// provider; it reads the financial ledger and owns its claim rows.
+	budgetNotifier := billing.NewBudgetNotifier(store, mailer, log, deps.now, recRegistry)
+	go budgetNotifier.Run(ctx, mc.BudgetNotifyInterval)
 
 	// ADR-049 §B.3: snapshot/app-layer storage rollup. The store
 	// interface (pkg/meter/storage.go) is a narrow projection over
