@@ -25,6 +25,7 @@ Master, operations, producer-outbox and outbox-reconciliation flags must be exac
 Verification intents also require FAAS_INTERNAL_MAIL_VERIFICATION_OUTBOX_ENABLED=1.
 Password-reset intents also require FAAS_INTERNAL_MAIL_PASSWORD_RESET_OUTBOX_ENABLED=1.
 Magic-link intents also require FAAS_INTERNAL_MAIL_MAGIC_LINK_OUTBOX_ENABLED=1.
+MFA recovery alerts also require FAAS_INTERNAL_MAIL_MFA_RECOVERY_ALERT_OUTBOX_ENABLED=1.
 First inspect mailctl outbox admission --id UUID on maild's private operator socket.
 Save the request UUID before writing; reuse identical arguments after a lost response.
 This command opens no listener and never admits or resends mail.
@@ -110,6 +111,7 @@ func RunOperator(ctx context.Context, args []string, getenv func(string) string,
 	reconciler = reconciler.WithVerification(func() bool { return internalmail.VerificationOutboxEnabled(getenv) })
 	reconciler = reconciler.WithPasswordReset(func() bool { return internalmail.PasswordResetOutboxEnabled(getenv) })
 	reconciler = reconciler.WithMagicLink(func() bool { return internalmail.MagicLinkOutboxEnabled(getenv) })
+	reconciler = reconciler.WithMFARecoveryAlert(func() bool { return internalmail.MFARecoveryAlertOutboxEnabled(getenv) })
 	var record ReconciliationRecord
 	if cmd.audit {
 		record, err = reconciler.Audit(pass, cmd.input.RequestID)

@@ -1,5 +1,5 @@
 -- name: Ready :exec
-SELECT o.id,o.recovery_id,o.template_version,o.recipient_address,o.revision,a.password_reset_revision,t.password_revision,m.password_revision
+SELECT o.id,o.recovery_id,o.template_version,o.recipient_address,o.revision,o.sealed_security_alert,o.security_alert_key_id,a.mfa_enrolled_at,a.mfa_recovery_codes_hash,a.password_reset_revision,t.password_revision,m.password_revision
 FROM platform_mail_producer_outbox o LEFT JOIN accounts a ON a.id=o.account_id
 LEFT JOIN password_reset_tokens t ON t.account_id=a.id
 LEFT JOIN magic_link_tokens m ON m.account_id=a.id LIMIT 0;
@@ -53,7 +53,7 @@ WITH candidates AS (
 )
 UPDATE platform_mail_producer_outbox o SET state=CASE WHEN expires_at<=clock_timestamp() THEN 'expired' ELSE 'failed' END,
     code=CASE WHEN expires_at<=clock_timestamp() THEN 'notification_expired' ELSE 'attempt_limit' END,
-    recipient_address='',lease_id=NULL,lease_until=NULL,verification_token_hash=NULL,sealed_verification='',verification_key_id='',verification_origin='',updated_at=clock_timestamp(),revision=o.revision+1
+    recipient_address='',lease_id=NULL,lease_until=NULL,verification_token_hash=NULL,sealed_verification='',verification_key_id='',verification_origin='',sealed_security_alert='',security_alert_key_id='',updated_at=clock_timestamp(),revision=o.revision+1
 FROM candidates c WHERE o.id=c.id;
 
 -- name: Claim :one
@@ -65,7 +65,9 @@ WITH candidate AS (
         OR (o.template='password_reset' AND sqlc.arg(password_reset_enabled)::boolean AND o.verification_origin=sqlc.arg(password_reset_origin)::text
           AND o.verification_key_id=ANY(sqlc.arg(password_reset_keys)::text[]))
         OR (o.template='magic_link' AND sqlc.arg(magic_link_enabled)::boolean AND o.verification_origin=sqlc.arg(magic_link_origin)::text
-          AND o.verification_key_id=ANY(sqlc.arg(magic_link_keys)::text[])))
+          AND o.verification_key_id=ANY(sqlc.arg(magic_link_keys)::text[]))
+        OR (o.template='mfa_recovery_used' AND sqlc.arg(mfa_recovery_alert_enabled)::boolean
+          AND o.security_alert_key_id=ANY(sqlc.arg(mfa_recovery_alert_keys)::text[])))
       AND o.attempts<sqlc.arg(max_attempts) AND o.expires_at>clock_timestamp()
       AND ((o.state='queued' AND o.next_attempt_at<=clock_timestamp()) OR (o.state='claimed' AND o.lease_until<=clock_timestamp()))
       AND NOT EXISTS(SELECT 1 FROM internal_mail_recovery_state s WHERE s.namespace=o.namespace AND (s.held OR s.recovery_id<>o.recovery_id))
@@ -96,6 +98,8 @@ UPDATE platform_mail_producer_outbox SET state=$4,code=$5,lease_id=NULL,lease_un
     sealed_verification=CASE WHEN $4='queued' THEN sealed_verification ELSE '' END,
     verification_key_id=CASE WHEN $4='queued' THEN verification_key_id ELSE '' END,
     verification_origin=CASE WHEN $4='queued' THEN verification_origin ELSE '' END,
+    sealed_security_alert=CASE WHEN $4='queued' THEN sealed_security_alert ELSE '' END,
+    security_alert_key_id=CASE WHEN $4='queued' THEN security_alert_key_id ELSE '' END,
     next_attempt_at=clock_timestamp()+sqlc.arg(retry_seconds)::integer*interval '1 second',updated_at=clock_timestamp(),revision=revision+1
 WHERE namespace=$1 AND id=$2 AND lease_id=$3 AND state='claimed';
 
@@ -133,7 +137,7 @@ SELECT o.id,o.revision,o.state,o.template,o.from_address,o.expires_at,o.recovery
     coalesce(m.sender_address,'')::text AS sender_address
 FROM platform_mail_producer_outbox o
 LEFT JOIN internal_mail_messages m ON m.namespace=o.namespace AND m.producer_id=o.producer_id
-    AND m.idempotency_key=(CASE o.template WHEN 'email_verification' THEN 'verify-email:' WHEN 'password_reset' THEN 'password-reset:' WHEN 'magic_link' THEN 'magic-link:' ELSE 'account-delete:' END)||o.id::text
+    AND m.idempotency_key=(CASE o.template WHEN 'email_verification' THEN 'verify-email:' WHEN 'password_reset' THEN 'password-reset:' WHEN 'magic_link' THEN 'magic-link:' WHEN 'mfa_recovery_used' THEN 'mfa-recovery-alert:' ELSE 'account-delete:' END)||o.id::text
 WHERE o.namespace=$1 AND o.id=$2;
 
 -- name: ReconciliationReady :exec
@@ -149,7 +153,7 @@ SELECT * FROM platform_mail_outbox_reconciliations WHERE namespace=$1 AND reques
 
 -- name: AcknowledgeAdmission :execrows
 UPDATE platform_mail_producer_outbox SET state='admitted',code='',recipient_address='',lease_id=NULL,lease_until=NULL,
-    verification_token_hash=NULL,sealed_verification='',verification_key_id='',verification_origin='',
+    verification_token_hash=NULL,sealed_verification='',verification_key_id='',verification_origin='',sealed_security_alert='',security_alert_key_id='',
     updated_at=clock_timestamp(),revision=revision+1
 WHERE namespace=$1 AND id=$2 AND revision=$3 AND state IN ('queued','claimed','failed','expired')
     AND (state<>'claimed' OR lease_until<=clock_timestamp());
@@ -285,3 +289,21 @@ WITH expired AS (
     ORDER BY expires_at,token_hash LIMIT $1 FOR UPDATE SKIP LOCKED
 )
 DELETE FROM magic_link_tokens t USING expired e WHERE t.token_hash=e.token_hash;
+
+
+-- Only apid owns recovery-code consumption and the paired notification intent.
+-- No presented/stored recovery hash is copied into that intent.
+-- name: LockMFARecoveryAlertAccount :one
+SELECT id,email,status,abuse_hold_at,mfa_enrolled_at,mfa_recovery_codes_hash FROM accounts WHERE id=$1 FOR UPDATE;
+
+-- name: ConsumeMFARecoveryAlertCode :exec
+UPDATE accounts SET mfa_recovery_codes_hash=sqlc.arg(recovery_hashes)::bytea[] WHERE id=$1;
+
+-- name: CreateMFARecoveryAlertIntent :exec
+INSERT INTO platform_mail_producer_outbox(id,account_id,namespace,producer_id,from_address,recipient_address,
+    template,template_version,expires_at,recovery_id,sealed_security_alert,security_alert_key_id)
+VALUES($1,$2,$3,$4,$5,$6,'mfa_recovery_used',1,$7,$8,$9,$10);
+
+-- name: MFARecoveryAlertKeyReferences :many
+SELECT DISTINCT security_alert_key_id FROM platform_mail_producer_outbox
+WHERE namespace=$1 AND producer_id=$2 AND template='mfa_recovery_used' AND state IN ('queued','claimed') AND expires_at>clock_timestamp();

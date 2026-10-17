@@ -15,6 +15,8 @@ type Account struct {
 	DeletionRequestedAt   pgtype.Timestamptz
 	EmailVerifiedAt       pgtype.Timestamptz
 	AbuseHoldAt           pgtype.Timestamptz
+	MfaEnrolledAt         pgtype.Timestamptz
+	MfaRecoveryCodesHash  [][]byte
 	PasswordResetRevision int64
 }
 
@@ -134,6 +136,8 @@ type PlatformMailProducerOutbox struct {
 	SealedVerification    []byte
 	VerificationKeyID     string
 	VerificationOrigin    string
+	SealedSecurityAlert   []byte
+	SecurityAlertKeyID    string
 }
 
 type Session struct {

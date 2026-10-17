@@ -27,6 +27,9 @@ func admitFixture(t *testing.T, f *fixture, intent q.PlatformMailProducerOutbox)
 	if intent.Template == VerificationTemplate {
 		keyPrefix = "verify-email:"
 	}
+	if intent.Template == MFARecoveryAlertTemplate {
+		keyPrefix = "mfa-recovery-alert:"
+	}
 	if intent.Template == MagicLinkTemplate {
 		keyPrefix = "magic-link:"
 	}

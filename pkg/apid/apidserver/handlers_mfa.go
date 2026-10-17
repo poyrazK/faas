@@ -423,10 +423,12 @@ func (s *server) refuseLastRecoveryCodeOrMatch(w http.ResponseWriter, r *http.Re
 // already reissued, so failing the response would force the
 // customer to re-authenticate. Same shape as the password-reset
 // mailer at handlers_auth_login.go:256-263.
+// With durable alerts enabled, storage failure leaves the code unused. Maild
+// availability is handled later by the worker and cannot fail this recovery.
 func (s *server) completeRecoveryCodeBurn(w http.ResponseWriter, r *http.Request, acct state.Account, presented []byte) {
-	matchedConsume, _, remaining, err := consumeRecoveryCode(r.Context(), s.store, acct.ID, presented)
+	matchedConsume, lastCode, remaining, outboxed, err := s.consumeMFARecoveryWithAlert(r.Context(), acct, presented)
 	if err != nil {
-		s.log.Error("mfa.recover.consume", "err", err.Error())
+		s.log.Error("mfa.recover.consume")
 		api.WriteProblem(w, api.ErrCapacity("could not consume recovery code"))
 		return
 	}
@@ -439,13 +441,20 @@ func (s *server) completeRecoveryCodeBurn(w http.ResponseWriter, r *http.Request
 			"Invalid code", "recovery code was already consumed"))
 		return
 	}
+	if lastCode {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
+			"Last recovery code", "burning the only remaining code would lock you out — disable MFA with your password instead"))
+		return
+	}
 	if err := s.reissueSessionCookie(w, r, acct, false); err != nil {
 		s.log.Error("mfa.recover.reissue_cookie", "err", err.Error())
 		api.WriteProblem(w, api.ErrCapacity("could not re-issue session cookie"))
 		return
 	}
 	s.audit.Emit(r.Context(), "account.mfa_recovered", &acct.ID, nil)
-	s.sendBurnEmail(r.Context(), acct, remaining)
+	if !outboxed {
+		s.sendBurnEmail(r.Context(), acct, remaining)
+	}
 	writeJSON(w, http.StatusOK, api.MFARecoverResponse{})
 }
 

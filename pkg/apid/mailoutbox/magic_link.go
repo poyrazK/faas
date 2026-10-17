@@ -91,7 +91,7 @@ func (s *Service) QueueMagicLink(ctx context.Context, accountID, expectedEmail s
 	return tx.Commit(ctx)
 }
 
-func (s *Service) magicLinkMessage(ctx context.Context, tx pgx.Tx, r q.PlatformMailProducerOutbox, account q.Account) (mail.Message, error) {
+func (s *Service) magicLinkMessage(ctx context.Context, tx pgx.Tx, r q.PlatformMailProducerOutbox, account q.ShareAccountRow) (mail.Message, error) {
 	if !s.magicLinkEnabled() || s.magicLink.origin != r.VerificationOrigin {
 		return mail.Message{}, internalmail.ErrDisabled
 	}

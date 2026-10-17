@@ -21,17 +21,18 @@ import (
 // InternalSender is an explicit opt-in for platform notifications. It speaks
 // only HTTP over the maild Unix socket and never changes the default transport.
 type InternalSender struct {
-	token                string
-	from                 string
-	route                string
-	enabled              func() bool
-	client               *http.Client
-	schedulingEnabled    func() bool
-	outboxEnabled        func() bool
-	recoveryGeneration   string
-	verificationEnabled  func() bool
-	passwordResetEnabled func() bool
-	magicLinkEnabled     func() bool
+	token                   string
+	from                    string
+	route                   string
+	enabled                 func() bool
+	client                  *http.Client
+	schedulingEnabled       func() bool
+	outboxEnabled           func() bool
+	recoveryGeneration      string
+	verificationEnabled     func() bool
+	passwordResetEnabled    func() bool
+	magicLinkEnabled        func() bool
+	mfaRecoveryAlertEnabled func() bool
 }
 
 func NewInternalSender(socket, token, from string, enabled func() bool) (*InternalSender, error) {

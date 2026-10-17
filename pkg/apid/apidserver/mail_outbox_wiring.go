@@ -16,6 +16,7 @@ func (s *server) configureMailOutbox(ctx context.Context, pool *pgxpool.Pool, ge
 	// Construction is pure and needs neither a feature flag nor encryption keys.
 	s.passwordResetCredentials = mailoutbox.NewResetCredentials(pool)
 	s.magicLinkCredentials = mailoutbox.NewMagicLinkCredentials(pool)
+	s.mfaRecoveryAlertOutboxRequested = func() bool { return getenv(internalmail.MFARecoveryAlertOutboxEnableEnv) == "1" }
 	s.magicLinkMailOutboxRequested = func() bool { return getenv(internalmail.MagicLinkOutboxEnableEnv) == "1" }
 	s.passwordResetMailOutboxRequested = func() bool { return getenv(internalmail.PasswordResetOutboxEnableEnv) == "1" }
 	outbox, err := mailoutbox.NewFromEnv(pool, getenv)
@@ -30,6 +31,9 @@ func (s *server) configureMailOutbox(ctx context.Context, pool *pgxpool.Pool, ge
 		return err
 	}
 	if err := outbox.ConfigureMagicLink(ctx, getenv); err != nil {
+		return err
+	}
+	if err := outbox.ConfigureMFARecoveryAlert(ctx, getenv); err != nil {
 		return err
 	}
 	if outbox != nil {

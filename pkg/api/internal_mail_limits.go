@@ -18,6 +18,8 @@ const (
 	InternalMailVerificationIdentityMaxBytes   = 4096
 	InternalMailVerificationCipherMaxBytes     = 4096
 	InternalMailVerificationOriginMaxBytes     = 2048
+	InternalMailMFARecoveryAlertTTL            = 24 * time.Hour
+	InternalMailMFARecoveryAlertMaxBytes       = 512
 
 	InternalMailMaxRequestBytes            = 1 << 20
 	InternalMailMaxDSNBytes                = 1 << 20

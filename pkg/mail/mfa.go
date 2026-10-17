@@ -66,6 +66,11 @@ import (
 // `burnedAt` is the moment the consume committed; rendered as UTC
 // so the customer doesn't have to do timezone arithmetic.
 func RecoveryCodeBurnedBody(email string, remaining int, burnedAt time.Time) (subject, body string) {
+	return RecoveryCodeBurnedBodyV1(email, remaining, burnedAt)
+}
+
+// RecoveryCodeBurnedBodyV1 is frozen for retries of saved security events.
+func RecoveryCodeBurnedBodyV1(email string, remaining int, burnedAt time.Time) (subject, body string) {
 	email = safeRecipient(email)
 	atStr := burnedAt.UTC().Format("2006-01-02 15:04 UTC")
 	subject = "Recovery code used on your Gregale account"

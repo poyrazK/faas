@@ -143,6 +143,7 @@ type server struct {
 	passwordResetMailOutboxRequested func() bool
 	passwordResetCredentials         *mailoutbox.ResetCredentials
 	magicLinkMailOutboxRequested     func() bool
+	mfaRecoveryAlertOutboxRequested  func() bool
 	magicLinkCredentials             *mailoutbox.MagicLinkCredentials
 	mailer                           Mailer
 	// mailBounce dispatches Resend bounce / complaint events into

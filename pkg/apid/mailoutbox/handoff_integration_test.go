@@ -35,7 +35,7 @@ func (s *fixtureSMTP) Submit(context.Context, internalmail.Envelope) (string, st
 
 func TestPGProducerOutboxRealMaildLostAcknowledgementDoesNotDuplicate(t *testing.T) {
 	pool := pgtest.Open(t)
-	if _, err := pool.Exec(t.Context(), `CREATE TABLE accounts(id uuid PRIMARY KEY,email text NOT NULL,status text NOT NULL,deletion_requested_at timestamptz,email_verified_at timestamptz,abuse_hold_at timestamptz);
+	if _, err := pool.Exec(t.Context(), `CREATE TABLE accounts(id uuid PRIMARY KEY,email text NOT NULL,status text NOT NULL,deletion_requested_at timestamptz,email_verified_at timestamptz,abuse_hold_at timestamptz,mfa_enrolled_at timestamptz,mfa_recovery_codes_hash bytea[]);
 CREATE TABLE email_verification_tokens(token_hash bytea PRIMARY KEY,account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,expires_at timestamptz NOT NULL,consumed_at timestamptz,created_at timestamptz NOT NULL DEFAULT now());
         CREATE TABLE account_passwords(account_id uuid PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,hash text NOT NULL,updated_at timestamptz NOT NULL DEFAULT now());
 CREATE TABLE mail_suppressions(email text NOT NULL,expires_at timestamptz)`); err != nil {
@@ -76,16 +76,18 @@ CREATE TABLE mail_suppressions(email text NOT NULL,expires_at timestamptz)`); er
 	var verificationGate atomic.Bool
 	var passwordResetGate atomic.Bool
 	var magicLinkGate atomic.Bool
+	var mfaAlertGate atomic.Bool
 	outboxGate.Store(true)
 	daemon := &internalmail.Service{Store: store, Codec: internalmail.AgeCodec{Identity: identity, Namespace: "platform"}, Resolver: resolver, SendingIP: netip.MustParseAddr("192.0.2.10"),
 		Enabled: func() bool { return true }, ProducersEnabled: func() bool { return true }, SchedulingEnabled: func() bool { return true }, DeliveryEnabled: func() bool { return true },
 		ProducerOutboxEnabled: outboxGate.Load, OperationsEnabled: func() bool { return true }, OperationsToken: operatorToken,
-		OutboxReconciliationEnabled: reconciliationGate.Load,
-		VerificationOutboxEnabled:   verificationGate.Load,
-		PasswordResetOutboxEnabled:  passwordResetGate.Load,
-		MagicLinkOutboxEnabled:      magicLinkGate.Load,
-		Producers:                   map[string]internalmail.Producer{"auth": {ID: "auth", Token: testProducerToken, From: []string{"notify@example.test"}, DailyRecipientLimit: 10, PendingRecipientLimit: 100}},
-		RecipientAllowed:            func(string) bool { return true }, Transport: smtp}
+		OutboxReconciliationEnabled:   reconciliationGate.Load,
+		VerificationOutboxEnabled:     verificationGate.Load,
+		PasswordResetOutboxEnabled:    passwordResetGate.Load,
+		MagicLinkOutboxEnabled:        magicLinkGate.Load,
+		MFARecoveryAlertOutboxEnabled: mfaAlertGate.Load,
+		Producers:                     map[string]internalmail.Producer{"auth": {ID: "auth", Token: testProducerToken, From: []string{"notify@example.test"}, DailyRecipientLimit: 10, PendingRecipientLimit: 100}},
+		RecipientAllowed:              func(string) bool { return true }, Transport: smtp}
 	domain, err := daemon.RegisterDomain(t.Context(), "example.test")
 	if err != nil {
 		t.Fatal(err)
@@ -430,6 +432,60 @@ CREATE TABLE mail_suppressions(email text NOT NULL,expires_at timestamptz)`); er
 	if smtp.accepted.Load() != 5 {
 		t.Fatal("magic-link replay duplicated SMTP custody")
 	}
+	// MFA recovery alerts have an independent remote gate. Lose one committed
+	// acknowledgement and replay the same event after restart.
+	env[internalmail.MFARecoveryAlertOutboxEnableEnv] = "1"
+	f.service = restarted
+	if err := restarted.ConfigureMFARecoveryAlert(t.Context(), func(k string) string { return env[k] }); err != nil {
+		t.Fatal(err)
+	}
+	accountID, hashes := mfaAlertAccount(t, f, 3)
+	alert := queueMFAAlert(t, f, accountID, hashes[0])
+	alertID := uuidString(alert.ID.Bytes)
+	if err := restarted.DeliverOne(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if got := row(t, f, alertID); got.State != "queued" || len(got.SealedSecurityAlert) == 0 {
+		t.Fatal("remote MFA recovery alert gate discarded its event")
+	}
+	mfaAlertGate.Store(true)
+	for attempt := 0; attempt < 2; attempt++ {
+		if _, err := pool.Exec(t.Context(), "UPDATE platform_mail_producer_outbox SET next_attempt_at=clock_timestamp() WHERE id=$1", alertID); err != nil {
+			t.Fatal(err)
+		}
+		restarted, err = NewFromEnv(pool, func(k string) string { return env[k] })
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := restarted.ConfigureVerification(t.Context(), func(k string) string { return env[k] }); err != nil {
+			t.Fatal(err)
+		}
+		if err := restarted.ConfigureMFARecoveryAlert(t.Context(), func(k string) string { return env[k] }); err != nil {
+			t.Fatal(err)
+		}
+		if attempt == 0 {
+			dropped.Store(false)
+		}
+		if err := restarted.DeliverOne(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if got := row(t, f, alertID); attempt == 0 && got.State != "queued" {
+			t.Fatal("MFA recovery alert admission acknowledgement was not lost")
+		}
+	}
+	if got := row(t, f, alertID); got.State != "admitted" {
+		t.Fatal("MFA recovery alert replay lost original admission")
+	} else {
+		assertMFAAlertErased(t, got)
+	}
+	for range 2 {
+		if err := daemon.DeliverOne(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if smtp.accepted.Load() != 6 {
+		t.Fatal("MFA recovery alert replay duplicated SMTP custody")
+	}
 	// The producer must retain no recovery advisory lock across HTTP. Start
 	// and release a new recovery after producer preflight but before maild
 	// admission: the owner's generation check must reject this stale request.
@@ -449,7 +505,7 @@ CREATE TABLE mail_suppressions(email text NOT NULL,expires_at timestamptz)`); er
 	if got := row(t, f, uuid.UUID(late.ID.Bytes).String()); got.State != "queued" {
 		t.Fatal("stale generation was admitted")
 	}
-	if err := pool.QueryRow(t.Context(), "SELECT count(*) FROM internal_mail_messages WHERE producer_id='auth'").Scan(&count); err != nil || count != 5 {
+	if err := pool.QueryRow(t.Context(), "SELECT count(*) FROM internal_mail_messages WHERE producer_id='auth'").Scan(&count); err != nil || count != 6 {
 		t.Fatal("stale generation created new mail after release", err)
 	}
 	// A remote management rollback keeps a generation-bound intent retryable.

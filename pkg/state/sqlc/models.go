@@ -7335,6 +7335,8 @@ type PlatformMailProducerOutbox struct {
 	SealedVerification    []byte
 	VerificationKeyID     string
 	VerificationOrigin    string
+	SealedSecurityAlert   []byte
+	SecurityAlertKeyID    string
 }
 
 type PlatformTenant struct {

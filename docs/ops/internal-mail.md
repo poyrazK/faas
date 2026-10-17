@@ -2628,3 +2628,68 @@ Bounded apid maintenance purges expired token hashes/address bindings even with
 the child flag off. Account erasure cascades credentials/intents. Migration Down
 refuses any magic-link token, intent or audit history. An expired or stale link
 requires a fresh user request; no forced replay or deadline extension is added.
+
+## Durable MFA recovery alerts
+
+`FAAS_INTERNAL_MAIL_MFA_RECOVERY_ALERT_OUTBOX_ENABLED=0` independently gates
+internal recovery-alert issuance/handoff in apid and admission in maild. Both
+units and all private examples default off. This moves the existing alert for
+`POST /v1/account/mfa/recover` into a durable transaction. It adds no public mail
+API or listener. Live qualification remains in the separate qualification work.
+
+Apply
+[`20261017084607182_platform_mail_mfa_recovery_alert_outbox.sql`](../../migrations/20261017084607182_platform_mail_mfa_recovery_alert_outbox.sql)
+through the migration owner before starting the new binary. Base producer outbox
+readiness checks the new event columns and existing MFA account dependencies.
+The decision is recorded in
+[ADR-20261017084607](../adr/20261017084607-mail-mfa-recovery-alert-outbox.md).
+
+The opted-in producer requires the existing master, producer, scheduling and
+producer-outbox gates, scoped `internal-producer` transport and dedicated apid
+current/previous credential readers. Their historical names remain
+`FAAS_INTERNAL_MAIL_VERIFICATION_IDENTITY_PATH` and
+`FAAS_INTERNAL_MAIL_VERIFICATION_PREVIOUS_IDENTITY_PATH`. This alert contains no
+authentication link and requires no origin. No apid key is supplied to maild or
+mailctl. Enabled startup requires readers for its live pending alert payloads;
+keep reader overlap across every enabled family. These alerts expire after 24
+hours, the same maximum pending lifetime as email verification.
+
+Code consumption and encrypted intent commit together. The encrypted event
+contains only its database timestamp and remaining-code count. Recovery codes,
+their HMAC hashes, HMAC keys and TOTP secrets never enter notification intent or
+email. The account's existing recovery-code array remains the authentication
+source. A last-code refusal, mismatch, already-used code, late disabled gate or
+failed intent save creates no event and consumes no code. The final-code rule is
+rechecked under the account lock, so concurrent recovery cannot burn the last
+backup. Queue saturation or recovery hold refuses the paired operation before
+consumption; the user retains the code for a retry.
+
+Maild downtime does not fail a recovery: the saved alert is retried separately.
+There is no inline fallback for failed enabled saves. Existing CSRF, MFA session
+clearance, enrollment, session-ID reuse and step-up rules stay in the existing
+handler. If session reissue fails after consumption commits, the code-use alert
+remains queued. This flag covers recovery alerts; the existing MFA disable and
+email-assisted disable flows keep their own behavior.
+
+Retries retain the original event time, remaining count, V1 body, producer,
+recipient, `mfa-recovery-alert:<intent UUID>` admission key and absolute 24-hour
+deadline. Later password changes, MFA disable or fresh recovery codes do not
+change the historical alert. Address changes or account deletion stop pending
+delivery; billing suspension or a later abuse hold does not suppress this
+historical security notification. Existing platform/maild suppressions, producer
+budgets and recovery-generation quarantine still apply. A global recovery release
+never rewrites an old intent's generation or authorizes replay.
+
+Use the existing private outbox metadata inspection and receipt reconciliation.
+Inspection omits the recipient, event time/count, ciphertext and reader identity.
+Admission reconciliation and exact audit replay require this alert's own child
+gate as well as the existing operator/reconciliation gates. Reconciliation only
+acknowledges an existing receipt and never sends an email or extends its deadline.
+Maild admission does not prove final delivery.
+
+Terminal settlement, admission reconciliation and bounded expiry maintenance
+erase event ciphertext, reader key and recipient. Disabling the child flag pauses
+its pending delivery and restores inline issuance for later recoveries; base
+maintenance can still expire and erase old payloads. Account erasure cascades
+intent while opaque reconciliation audit survives. Migration Down refuses alert
+intents or audit history. No forced replay or deadline extension is provided.

@@ -13,7 +13,7 @@ import (
 
 const acknowledgeAdmission = `-- name: AcknowledgeAdmission :execrows
 UPDATE platform_mail_producer_outbox SET state='admitted',code='',recipient_address='',lease_id=NULL,lease_until=NULL,
-    verification_token_hash=NULL,sealed_verification='',verification_key_id='',verification_origin='',
+    verification_token_hash=NULL,sealed_verification='',verification_key_id='',verification_origin='',sealed_security_alert='',security_alert_key_id='',
     updated_at=clock_timestamp(),revision=revision+1
 WHERE namespace=$1 AND id=$2 AND revision=$3 AND state IN ('queued','claimed','failed','expired')
     AND (state<>'claimed' OR lease_until<=clock_timestamp())
@@ -45,7 +45,7 @@ SELECT o.id,o.revision,o.state,o.template,o.from_address,o.expires_at,o.recovery
     coalesce(m.sender_address,'')::text AS sender_address
 FROM platform_mail_producer_outbox o
 LEFT JOIN internal_mail_messages m ON m.namespace=o.namespace AND m.producer_id=o.producer_id
-    AND m.idempotency_key=(CASE o.template WHEN 'email_verification' THEN 'verify-email:' WHEN 'password_reset' THEN 'password-reset:' WHEN 'magic_link' THEN 'magic-link:' ELSE 'account-delete:' END)||o.id::text
+    AND m.idempotency_key=(CASE o.template WHEN 'email_verification' THEN 'verify-email:' WHEN 'password_reset' THEN 'password-reset:' WHEN 'magic_link' THEN 'magic-link:' WHEN 'mfa_recovery_used' THEN 'mfa-recovery-alert:' ELSE 'account-delete:' END)||o.id::text
 WHERE o.namespace=$1 AND o.id=$2
 `
 
@@ -104,33 +104,37 @@ WITH candidate AS (
         OR (o.template='password_reset' AND $9::boolean AND o.verification_origin=$10::text
           AND o.verification_key_id=ANY($11::text[]))
         OR (o.template='magic_link' AND $12::boolean AND o.verification_origin=$13::text
-          AND o.verification_key_id=ANY($14::text[])))
-      AND o.attempts<$15 AND o.expires_at>clock_timestamp()
+          AND o.verification_key_id=ANY($14::text[]))
+        OR (o.template='mfa_recovery_used' AND $15::boolean
+          AND o.security_alert_key_id=ANY($16::text[])))
+      AND o.attempts<$17 AND o.expires_at>clock_timestamp()
       AND ((o.state='queued' AND o.next_attempt_at<=clock_timestamp()) OR (o.state='claimed' AND o.lease_until<=clock_timestamp()))
       AND NOT EXISTS(SELECT 1 FROM internal_mail_recovery_state s WHERE s.namespace=o.namespace AND (s.held OR s.recovery_id<>o.recovery_id))
     ORDER BY next_attempt_at,id LIMIT 1 FOR UPDATE SKIP LOCKED
 )
 UPDATE platform_mail_producer_outbox o SET state='claimed',attempts=attempts+1,lease_id=$1,
     lease_until=clock_timestamp()+$2::integer*interval '1 second',updated_at=clock_timestamp(),revision=o.revision+1
-FROM candidate c WHERE o.id=c.id RETURNING o.id, o.account_id, o.namespace, o.producer_id, o.from_address, o.recipient_address, o.template, o.template_version, o.deletion_requested_at, o.restore_until, o.expires_at, o.recovery_id, o.state, o.attempts, o.next_attempt_at, o.lease_id, o.lease_until, o.code, o.created_at, o.updated_at, o.revision, o.verification_token_hash, o.sealed_verification, o.verification_key_id, o.verification_origin
+FROM candidate c WHERE o.id=c.id RETURNING o.id, o.account_id, o.namespace, o.producer_id, o.from_address, o.recipient_address, o.template, o.template_version, o.deletion_requested_at, o.restore_until, o.expires_at, o.recovery_id, o.state, o.attempts, o.next_attempt_at, o.lease_id, o.lease_until, o.code, o.created_at, o.updated_at, o.revision, o.verification_token_hash, o.sealed_verification, o.verification_key_id, o.verification_origin, o.sealed_security_alert, o.security_alert_key_id
 `
 
 type ClaimParams struct {
-	LeaseID              pgtype.UUID
-	LeaseSeconds         int32
-	Namespace            string
-	ProducerID           string
-	FromAddress          string
-	VerificationEnabled  bool
-	VerificationOrigin   string
-	VerificationKeys     []string
-	PasswordResetEnabled bool
-	PasswordResetOrigin  string
-	PasswordResetKeys    []string
-	MagicLinkEnabled     bool
-	MagicLinkOrigin      string
-	MagicLinkKeys        []string
-	MaxAttempts          int32
+	LeaseID                 pgtype.UUID
+	LeaseSeconds            int32
+	Namespace               string
+	ProducerID              string
+	FromAddress             string
+	VerificationEnabled     bool
+	VerificationOrigin      string
+	VerificationKeys        []string
+	PasswordResetEnabled    bool
+	PasswordResetOrigin     string
+	PasswordResetKeys       []string
+	MagicLinkEnabled        bool
+	MagicLinkOrigin         string
+	MagicLinkKeys           []string
+	MfaRecoveryAlertEnabled bool
+	MfaRecoveryAlertKeys    []string
+	MaxAttempts             int32
 }
 
 func (q *Queries) Claim(ctx context.Context, db DBTX, arg ClaimParams) (PlatformMailProducerOutbox, error) {
@@ -149,6 +153,8 @@ func (q *Queries) Claim(ctx context.Context, db DBTX, arg ClaimParams) (Platform
 		arg.MagicLinkEnabled,
 		arg.MagicLinkOrigin,
 		arg.MagicLinkKeys,
+		arg.MfaRecoveryAlertEnabled,
+		arg.MfaRecoveryAlertKeys,
 		arg.MaxAttempts,
 	)
 	var i PlatformMailProducerOutbox
@@ -178,6 +184,8 @@ func (q *Queries) Claim(ctx context.Context, db DBTX, arg ClaimParams) (Platform
 		&i.SealedVerification,
 		&i.VerificationKeyID,
 		&i.VerificationOrigin,
+		&i.SealedSecurityAlert,
+		&i.SecurityAlertKeyID,
 	)
 	return i, err
 }
@@ -188,6 +196,20 @@ UPDATE accounts SET email_verified_at=clock_timestamp(),password_reset_revision=
 
 func (q *Queries) ClaimMagicLinkOwnership(ctx context.Context, db DBTX, id pgtype.UUID) error {
 	_, err := db.Exec(ctx, claimMagicLinkOwnership, id)
+	return err
+}
+
+const consumeMFARecoveryAlertCode = `-- name: ConsumeMFARecoveryAlertCode :exec
+UPDATE accounts SET mfa_recovery_codes_hash=$2::bytea[] WHERE id=$1
+`
+
+type ConsumeMFARecoveryAlertCodeParams struct {
+	ID             pgtype.UUID
+	RecoveryHashes [][]byte
+}
+
+func (q *Queries) ConsumeMFARecoveryAlertCode(ctx context.Context, db DBTX, arg ConsumeMFARecoveryAlertCodeParams) error {
+	_, err := db.Exec(ctx, consumeMFARecoveryAlertCode, arg.ID, arg.RecoveryHashes)
 	return err
 }
 
@@ -260,6 +282,41 @@ func (q *Queries) CreateIntent(ctx context.Context, db DBTX, arg CreateIntentPar
 		arg.RecoveryID,
 		arg.GraceSeconds,
 		arg.TtlSeconds,
+	)
+	return err
+}
+
+const createMFARecoveryAlertIntent = `-- name: CreateMFARecoveryAlertIntent :exec
+INSERT INTO platform_mail_producer_outbox(id,account_id,namespace,producer_id,from_address,recipient_address,
+    template,template_version,expires_at,recovery_id,sealed_security_alert,security_alert_key_id)
+VALUES($1,$2,$3,$4,$5,$6,'mfa_recovery_used',1,$7,$8,$9,$10)
+`
+
+type CreateMFARecoveryAlertIntentParams struct {
+	ID                  pgtype.UUID
+	AccountID           pgtype.UUID
+	Namespace           string
+	ProducerID          string
+	FromAddress         string
+	RecipientAddress    string
+	ExpiresAt           pgtype.Timestamptz
+	RecoveryID          pgtype.UUID
+	SealedSecurityAlert []byte
+	SecurityAlertKeyID  string
+}
+
+func (q *Queries) CreateMFARecoveryAlertIntent(ctx context.Context, db DBTX, arg CreateMFARecoveryAlertIntentParams) error {
+	_, err := db.Exec(ctx, createMFARecoveryAlertIntent,
+		arg.ID,
+		arg.AccountID,
+		arg.Namespace,
+		arg.ProducerID,
+		arg.FromAddress,
+		arg.RecipientAddress,
+		arg.ExpiresAt,
+		arg.RecoveryID,
+		arg.SealedSecurityAlert,
+		arg.SecurityAlertKeyID,
 	)
 	return err
 }
@@ -557,7 +614,7 @@ func (q *Queries) InsertReconciliation(ctx context.Context, db DBTX, arg InsertR
 }
 
 const intent = `-- name: Intent :one
-SELECT id, account_id, namespace, producer_id, from_address, recipient_address, template, template_version, deletion_requested_at, restore_until, expires_at, recovery_id, state, attempts, next_attempt_at, lease_id, lease_until, code, created_at, updated_at, revision, verification_token_hash, sealed_verification, verification_key_id, verification_origin FROM platform_mail_producer_outbox WHERE namespace=$1 AND id=$2
+SELECT id, account_id, namespace, producer_id, from_address, recipient_address, template, template_version, deletion_requested_at, restore_until, expires_at, recovery_id, state, attempts, next_attempt_at, lease_id, lease_until, code, created_at, updated_at, revision, verification_token_hash, sealed_verification, verification_key_id, verification_origin, sealed_security_alert, security_alert_key_id FROM platform_mail_producer_outbox WHERE namespace=$1 AND id=$2
 `
 
 type IntentParams struct {
@@ -594,6 +651,8 @@ func (q *Queries) Intent(ctx context.Context, db DBTX, arg IntentParams) (Platfo
 		&i.SealedVerification,
 		&i.VerificationKeyID,
 		&i.VerificationOrigin,
+		&i.SealedSecurityAlert,
+		&i.SecurityAlertKeyID,
 	)
 	return i, err
 }
@@ -649,7 +708,7 @@ func (q *Queries) LockAdmission(ctx context.Context, db DBTX, dollar_1 string) e
 }
 
 const lockIntent = `-- name: LockIntent :one
-SELECT id, account_id, namespace, producer_id, from_address, recipient_address, template, template_version, deletion_requested_at, restore_until, expires_at, recovery_id, state, attempts, next_attempt_at, lease_id, lease_until, code, created_at, updated_at, revision, verification_token_hash, sealed_verification, verification_key_id, verification_origin FROM platform_mail_producer_outbox WHERE namespace=$1 AND id=$2 FOR UPDATE
+SELECT id, account_id, namespace, producer_id, from_address, recipient_address, template, template_version, deletion_requested_at, restore_until, expires_at, recovery_id, state, attempts, next_attempt_at, lease_id, lease_until, code, created_at, updated_at, revision, verification_token_hash, sealed_verification, verification_key_id, verification_origin, sealed_security_alert, security_alert_key_id FROM platform_mail_producer_outbox WHERE namespace=$1 AND id=$2 FOR UPDATE
 `
 
 type LockIntentParams struct {
@@ -686,6 +745,37 @@ func (q *Queries) LockIntent(ctx context.Context, db DBTX, arg LockIntentParams)
 		&i.SealedVerification,
 		&i.VerificationKeyID,
 		&i.VerificationOrigin,
+		&i.SealedSecurityAlert,
+		&i.SecurityAlertKeyID,
+	)
+	return i, err
+}
+
+const lockMFARecoveryAlertAccount = `-- name: LockMFARecoveryAlertAccount :one
+SELECT id,email,status,abuse_hold_at,mfa_enrolled_at,mfa_recovery_codes_hash FROM accounts WHERE id=$1 FOR UPDATE
+`
+
+type LockMFARecoveryAlertAccountRow struct {
+	ID                   pgtype.UUID
+	Email                string
+	Status               string
+	AbuseHoldAt          pgtype.Timestamptz
+	MfaEnrolledAt        pgtype.Timestamptz
+	MfaRecoveryCodesHash [][]byte
+}
+
+// Only apid owns recovery-code consumption and the paired notification intent.
+// No presented/stored recovery hash is copied into that intent.
+func (q *Queries) LockMFARecoveryAlertAccount(ctx context.Context, db DBTX, id pgtype.UUID) (LockMFARecoveryAlertAccountRow, error) {
+	row := db.QueryRow(ctx, lockMFARecoveryAlertAccount, id)
+	var i LockMFARecoveryAlertAccountRow
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.Status,
+		&i.AbuseHoldAt,
+		&i.MfaEnrolledAt,
+		&i.MfaRecoveryCodesHash,
 	)
 	return i, err
 }
@@ -892,6 +982,36 @@ func (q *Queries) LockVerificationAccount(ctx context.Context, db DBTX, id pgtyp
 	return i, err
 }
 
+const mFARecoveryAlertKeyReferences = `-- name: MFARecoveryAlertKeyReferences :many
+SELECT DISTINCT security_alert_key_id FROM platform_mail_producer_outbox
+WHERE namespace=$1 AND producer_id=$2 AND template='mfa_recovery_used' AND state IN ('queued','claimed') AND expires_at>clock_timestamp()
+`
+
+type MFARecoveryAlertKeyReferencesParams struct {
+	Namespace  string
+	ProducerID string
+}
+
+func (q *Queries) MFARecoveryAlertKeyReferences(ctx context.Context, db DBTX, arg MFARecoveryAlertKeyReferencesParams) ([]string, error) {
+	rows, err := db.Query(ctx, mFARecoveryAlertKeyReferences, arg.Namespace, arg.ProducerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var security_alert_key_id string
+		if err := rows.Scan(&security_alert_key_id); err != nil {
+			return nil, err
+		}
+		items = append(items, security_alert_key_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const magicLinkKeyReferences = `-- name: MagicLinkKeyReferences :many
 SELECT DISTINCT verification_key_id FROM platform_mail_producer_outbox
 WHERE namespace=$1 AND producer_id=$2 AND template='magic_link' AND state IN ('queued','claimed') AND expires_at>clock_timestamp()
@@ -931,7 +1051,7 @@ WITH candidates AS (
 )
 UPDATE platform_mail_producer_outbox o SET state=CASE WHEN expires_at<=clock_timestamp() THEN 'expired' ELSE 'failed' END,
     code=CASE WHEN expires_at<=clock_timestamp() THEN 'notification_expired' ELSE 'attempt_limit' END,
-    recipient_address='',lease_id=NULL,lease_until=NULL,verification_token_hash=NULL,sealed_verification='',verification_key_id='',verification_origin='',updated_at=clock_timestamp(),revision=o.revision+1
+    recipient_address='',lease_id=NULL,lease_until=NULL,verification_token_hash=NULL,sealed_verification='',verification_key_id='',verification_origin='',sealed_security_alert='',security_alert_key_id='',updated_at=clock_timestamp(),revision=o.revision+1
 FROM candidates c WHERE o.id=c.id
 `
 
@@ -1179,7 +1299,7 @@ func (q *Queries) PurgeExpiredPasswordResetTokens(ctx context.Context, db DBTX, 
 }
 
 const ready = `-- name: Ready :exec
-SELECT o.id,o.recovery_id,o.template_version,o.recipient_address,o.revision,a.password_reset_revision,t.password_revision,m.password_revision
+SELECT o.id,o.recovery_id,o.template_version,o.recipient_address,o.revision,o.sealed_security_alert,o.security_alert_key_id,a.mfa_enrolled_at,a.mfa_recovery_codes_hash,a.password_reset_revision,t.password_revision,m.password_revision
 FROM platform_mail_producer_outbox o LEFT JOIN accounts a ON a.id=o.account_id
 LEFT JOIN password_reset_tokens t ON t.account_id=a.id
 LEFT JOIN magic_link_tokens m ON m.account_id=a.id LIMIT 0
@@ -1310,6 +1430,8 @@ UPDATE platform_mail_producer_outbox SET state=$4,code=$5,lease_id=NULL,lease_un
     sealed_verification=CASE WHEN $4='queued' THEN sealed_verification ELSE '' END,
     verification_key_id=CASE WHEN $4='queued' THEN verification_key_id ELSE '' END,
     verification_origin=CASE WHEN $4='queued' THEN verification_origin ELSE '' END,
+    sealed_security_alert=CASE WHEN $4='queued' THEN sealed_security_alert ELSE '' END,
+    security_alert_key_id=CASE WHEN $4='queued' THEN security_alert_key_id ELSE '' END,
     next_attempt_at=clock_timestamp()+$7::integer*interval '1 second',updated_at=clock_timestamp(),revision=revision+1
 WHERE namespace=$1 AND id=$2 AND lease_id=$3 AND state='claimed'
 `
@@ -1344,9 +1466,19 @@ const shareAccount = `-- name: ShareAccount :one
 SELECT id,email,status,deletion_requested_at,email_verified_at,abuse_hold_at,password_reset_revision FROM accounts WHERE id=$1 FOR SHARE
 `
 
-func (q *Queries) ShareAccount(ctx context.Context, db DBTX, id pgtype.UUID) (Account, error) {
+type ShareAccountRow struct {
+	ID                    pgtype.UUID
+	Email                 string
+	Status                string
+	DeletionRequestedAt   pgtype.Timestamptz
+	EmailVerifiedAt       pgtype.Timestamptz
+	AbuseHoldAt           pgtype.Timestamptz
+	PasswordResetRevision int64
+}
+
+func (q *Queries) ShareAccount(ctx context.Context, db DBTX, id pgtype.UUID) (ShareAccountRow, error) {
 	row := db.QueryRow(ctx, shareAccount, id)
-	var i Account
+	var i ShareAccountRow
 	err := row.Scan(
 		&i.ID,
 		&i.Email,

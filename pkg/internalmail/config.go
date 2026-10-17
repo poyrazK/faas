@@ -12,34 +12,35 @@ import (
 )
 
 const (
-	EnableEnv                     = "FAAS_INTERNAL_MAIL_ENABLED"
-	DeliveryEnableEnv             = "FAAS_INTERNAL_MAIL_DELIVERY_ENABLED"
-	ReportsEnableEnv              = "FAAS_INTERNAL_MAIL_REPORTS_ENABLED"
-	FeedbackEnableEnv             = "FAAS_INTERNAL_MAIL_FEEDBACK_ENABLED"
-	RetentionEnableEnv            = "FAAS_INTERNAL_MAIL_RETENTION_ENABLED"
-	OperationsEnableEnv           = "FAAS_INTERNAL_MAIL_OPERATIONS_ENABLED"
-	RotationEnableEnv             = "FAAS_INTERNAL_MAIL_DKIM_ROTATION_ENABLED"
-	ReverifyEnableEnv             = "FAAS_INTERNAL_MAIL_DOMAIN_REVERIFY_ENABLED"
-	ControlsEnableEnv             = "FAAS_INTERNAL_MAIL_DELIVERY_CONTROLS_ENABLED"
-	ProducersEnableEnv            = "FAAS_INTERNAL_MAIL_PRODUCERS_ENABLED"
-	SchedulingEnableEnv           = "FAAS_INTERNAL_MAIL_SCHEDULING_ENABLED"
-	PacingEnableEnv               = "FAAS_INTERNAL_MAIL_DOMAIN_PACING_ENABLED"
-	BackpressureEnableEnv         = "FAAS_INTERNAL_MAIL_RELAY_BACKPRESSURE_ENABLED"
-	ReputationEnableEnv           = "FAAS_INTERNAL_MAIL_REPUTATION_ENABLED"
-	EventFeedEnableEnv            = "FAAS_INTERNAL_MAIL_EVENT_FEED_ENABLED"
-	ProducerSchedulingEnableEnv   = "FAAS_INTERNAL_MAIL_PRODUCER_SCHEDULING_ENABLED"
-	ProducerLifecycleEnableEnv    = "FAAS_INTERNAL_MAIL_PRODUCER_LIFECYCLE_ENABLED"
-	EncryptionRotationEnableEnv   = "FAAS_INTERNAL_MAIL_ENCRYPTION_ROTATION_ENABLED"
-	SuppressionControlsEnableEnv  = "FAAS_INTERNAL_MAIL_SUPPRESSION_CONTROLS_ENABLED"
-	ProducerOutboxEnableEnv       = "FAAS_INTERNAL_MAIL_PRODUCER_OUTBOX_ENABLED"
-	OutboxReconciliationEnableEnv = "FAAS_INTERNAL_MAIL_OUTBOX_RECONCILIATION_ENABLED"
-	VerificationOutboxEnableEnv   = "FAAS_INTERNAL_MAIL_VERIFICATION_OUTBOX_ENABLED"
-	PasswordResetOutboxEnableEnv  = "FAAS_INTERNAL_MAIL_PASSWORD_RESET_OUTBOX_ENABLED"
-	MagicLinkOutboxEnableEnv      = "FAAS_INTERNAL_MAIL_MAGIC_LINK_OUTBOX_ENABLED"
-	RecoveryEnableEnv             = "FAAS_INTERNAL_MAIL_RECOVERY_ENABLED"
-	RecoveryIDEnv                 = "FAAS_INTERNAL_MAIL_RECOVERY_ID"
-	DefaultSocket                 = "/run/faas/maild.sock"
-	APIPath                       = "/internal/v1/mail"
+	EnableEnv                       = "FAAS_INTERNAL_MAIL_ENABLED"
+	DeliveryEnableEnv               = "FAAS_INTERNAL_MAIL_DELIVERY_ENABLED"
+	ReportsEnableEnv                = "FAAS_INTERNAL_MAIL_REPORTS_ENABLED"
+	FeedbackEnableEnv               = "FAAS_INTERNAL_MAIL_FEEDBACK_ENABLED"
+	RetentionEnableEnv              = "FAAS_INTERNAL_MAIL_RETENTION_ENABLED"
+	OperationsEnableEnv             = "FAAS_INTERNAL_MAIL_OPERATIONS_ENABLED"
+	RotationEnableEnv               = "FAAS_INTERNAL_MAIL_DKIM_ROTATION_ENABLED"
+	ReverifyEnableEnv               = "FAAS_INTERNAL_MAIL_DOMAIN_REVERIFY_ENABLED"
+	ControlsEnableEnv               = "FAAS_INTERNAL_MAIL_DELIVERY_CONTROLS_ENABLED"
+	ProducersEnableEnv              = "FAAS_INTERNAL_MAIL_PRODUCERS_ENABLED"
+	SchedulingEnableEnv             = "FAAS_INTERNAL_MAIL_SCHEDULING_ENABLED"
+	PacingEnableEnv                 = "FAAS_INTERNAL_MAIL_DOMAIN_PACING_ENABLED"
+	BackpressureEnableEnv           = "FAAS_INTERNAL_MAIL_RELAY_BACKPRESSURE_ENABLED"
+	ReputationEnableEnv             = "FAAS_INTERNAL_MAIL_REPUTATION_ENABLED"
+	EventFeedEnableEnv              = "FAAS_INTERNAL_MAIL_EVENT_FEED_ENABLED"
+	ProducerSchedulingEnableEnv     = "FAAS_INTERNAL_MAIL_PRODUCER_SCHEDULING_ENABLED"
+	ProducerLifecycleEnableEnv      = "FAAS_INTERNAL_MAIL_PRODUCER_LIFECYCLE_ENABLED"
+	EncryptionRotationEnableEnv     = "FAAS_INTERNAL_MAIL_ENCRYPTION_ROTATION_ENABLED"
+	SuppressionControlsEnableEnv    = "FAAS_INTERNAL_MAIL_SUPPRESSION_CONTROLS_ENABLED"
+	ProducerOutboxEnableEnv         = "FAAS_INTERNAL_MAIL_PRODUCER_OUTBOX_ENABLED"
+	OutboxReconciliationEnableEnv   = "FAAS_INTERNAL_MAIL_OUTBOX_RECONCILIATION_ENABLED"
+	VerificationOutboxEnableEnv     = "FAAS_INTERNAL_MAIL_VERIFICATION_OUTBOX_ENABLED"
+	PasswordResetOutboxEnableEnv    = "FAAS_INTERNAL_MAIL_PASSWORD_RESET_OUTBOX_ENABLED"
+	MagicLinkOutboxEnableEnv        = "FAAS_INTERNAL_MAIL_MAGIC_LINK_OUTBOX_ENABLED"
+	MFARecoveryAlertOutboxEnableEnv = "FAAS_INTERNAL_MAIL_MFA_RECOVERY_ALERT_OUTBOX_ENABLED"
+	RecoveryEnableEnv               = "FAAS_INTERNAL_MAIL_RECOVERY_ENABLED"
+	RecoveryIDEnv                   = "FAAS_INTERNAL_MAIL_RECOVERY_ID"
+	DefaultSocket                   = "/run/faas/maild.sock"
+	APIPath                         = "/internal/v1/mail"
 )
 
 // Enabled deliberately accepts only an explicit 1. An unset, malformed or
@@ -131,6 +132,10 @@ func PasswordResetOutboxEnabled(getenv func(string) string) bool {
 
 func MagicLinkOutboxEnabled(getenv func(string) string) bool {
 	return getenv(MagicLinkOutboxEnableEnv) == "1" && ProducerOutboxEnabled(getenv)
+}
+
+func MFARecoveryAlertOutboxEnabled(getenv func(string) string) bool {
+	return getenv(MFARecoveryAlertOutboxEnableEnv) == "1" && ProducerOutboxEnabled(getenv)
 }
 
 func RecoveryEnabled(getenv func(string) string) bool {

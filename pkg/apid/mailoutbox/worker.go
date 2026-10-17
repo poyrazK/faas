@@ -32,6 +32,7 @@ func (s *Service) claim(ctx context.Context) (q.PlatformMailProducerOutbox, erro
 	resetKeys := []string{}
 	magicOrigin := ""
 	magicKeys := []string{}
+	alertKeys := []string{}
 	if s.verificationEnabled() {
 		origin = s.verification.origin
 		for key := range s.verification.readers {
@@ -50,13 +51,18 @@ func (s *Service) claim(ctx context.Context) (q.PlatformMailProducerOutbox, erro
 			magicKeys = append(magicKeys, key)
 		}
 	}
+	if s.mfaRecoveryAlertEnabled() {
+		for key := range s.mfaRecoveryAlert.readers {
+			alertKeys = append(alertKeys, key)
+		}
+	}
 	if err := s.queries.PurgeExpiredMagicLinkTokens(ctx, tx, api.InternalMailProducerOutboxMaintenanceBatch); err != nil {
 		return q.PlatformMailProducerOutbox{}, err
 	}
 	if err := s.queries.PurgeExpiredPasswordResetTokens(ctx, tx, api.InternalMailProducerOutboxMaintenanceBatch); err != nil {
 		return q.PlatformMailProducerOutbox{}, err
 	}
-	r, err := s.queries.Claim(ctx, tx, q.ClaimParams{Namespace: s.namespace, ProducerID: s.producer, FromAddress: s.from, VerificationEnabled: s.verificationEnabled(), VerificationOrigin: origin, VerificationKeys: keys, PasswordResetEnabled: s.passwordResetEnabled(), PasswordResetOrigin: resetOrigin, PasswordResetKeys: resetKeys, MagicLinkEnabled: s.magicLinkEnabled(), MagicLinkOrigin: magicOrigin, MagicLinkKeys: magicKeys, MaxAttempts: api.InternalMailProducerOutboxMaxAttempts, LeaseID: pgID(uuid.NewString()), LeaseSeconds: int32(api.InternalMailProducerOutboxLease / time.Second)})
+	r, err := s.queries.Claim(ctx, tx, q.ClaimParams{Namespace: s.namespace, ProducerID: s.producer, FromAddress: s.from, VerificationEnabled: s.verificationEnabled(), VerificationOrigin: origin, VerificationKeys: keys, PasswordResetEnabled: s.passwordResetEnabled(), PasswordResetOrigin: resetOrigin, PasswordResetKeys: resetKeys, MagicLinkEnabled: s.magicLinkEnabled(), MagicLinkOrigin: magicOrigin, MagicLinkKeys: magicKeys, MfaRecoveryAlertEnabled: s.mfaRecoveryAlertEnabled(), MfaRecoveryAlertKeys: alertKeys, MaxAttempts: api.InternalMailProducerOutboxMaxAttempts, LeaseID: pgID(uuid.NewString()), LeaseSeconds: int32(api.InternalMailProducerOutboxLease / time.Second)})
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return r, err
 	}
@@ -138,6 +144,8 @@ func (s *Service) dispatch(ctx context.Context, claimed q.PlatformMailProducerOu
 		state, code = "cancelled", "token_unavailable"
 	case r.Template == MagicLinkTemplate && !magicLinkAccountAvailable(account.Status, account.AbuseHoldAt):
 		state, code = "cancelled", "token_unavailable"
+	case r.Template == MFARecoveryAlertTemplate && account.Status != "active" && account.Status != "past_due" && account.Status != "suspended":
+		state, code = "cancelled", "account_changed"
 	case !r.ExpiresAt.Time.After(time.Now()):
 		state, code = "expired", "notification_expired"
 	default:
@@ -167,13 +175,18 @@ func (s *Service) dispatch(ctx context.Context, claimed q.PlatformMailProducerOu
 	return tx.Commit(ctx)
 }
 
-func (s *Service) handoff(ctx context.Context, tx pgx.Tx, r q.PlatformMailProducerOutbox, account q.Account) (string, string, bool, error) {
+func (s *Service) handoff(ctx context.Context, tx pgx.Tx, r q.PlatformMailProducerOutbox, account q.ShareAccountRow) (string, string, bool, error) {
 	sender := s.sender
 	var message mail.Message
 	switch r.Template {
-	case VerificationTemplate, PasswordResetTemplate, MagicLinkTemplate:
+	case VerificationTemplate, PasswordResetTemplate, MagicLinkTemplate, MFARecoveryAlertTemplate:
 		var err error
 		switch r.Template {
+		case MFARecoveryAlertTemplate:
+			message, err = s.mfaRecoveryAlertMessage(r)
+			if s.mfaRecoveryAlert != nil {
+				sender = s.mfaRecoveryAlert.sender
+			}
 		case MagicLinkTemplate:
 			message, err = s.magicLinkMessage(ctx, tx, r, account)
 			if s.magicLink != nil {
