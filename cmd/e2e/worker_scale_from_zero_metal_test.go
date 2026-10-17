@@ -13,6 +13,10 @@
 //	send → running    a worker is RUNNING only after guest-init's
 //	                  characterization window (api.CharacterizationDeadline)
 //
+// vmmd mints tokens for booting instances (ADR-1141 amendment 2026-10-17),
+// so every worker must hold its token before it is RUNNING; before that
+// change a consumer waited out the whole characterization window.
+//
 // Workers and jobs never restore from a snapshot (ADR-138), so every scale
 // from zero is a cold boot. A burst of one message per pool slot then shows
 // how the pool admits several workers at once.
@@ -162,6 +166,12 @@ func TestWorkerScaleFromZeroMetal(t *testing.T) {
 	burst := measureWorkerScaleFromZero(t, h, key, slug, appID, poolMax)
 	logWorkerColdStarts(t, fmt.Sprintf("burst of %d", poolMax), burst)
 	logWorkerScaleFromZeroSummary(t, singles, burst)
+	for _, w := range append(singles, burst...) {
+		if w.token == 0 || w.running == 0 || w.token >= w.running {
+			t.Errorf("worker %s: token at %s, RUNNING at %s; a booting worker must get its queue token before readiness",
+				w.instanceID, msOrDash(w.token), msOrDash(w.running))
+		}
+	}
 }
 
 // measureWorkerScaleFromZero sends messages to an idle pool, leases each one

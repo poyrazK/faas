@@ -107,7 +107,7 @@ func (r *WorkloadIdentityReceiver) handleGuestStream(instance string, conn net.C
 	if r.mgr == nil {
 		return r.respond(conn, workloadIdentityInstanceNotFound, workloadIdentityResponse{Error: "instance_not_found"})
 	}
-	appID, accountID, err := r.mgr.InstanceIdentity(instance)
+	appID, accountID, err := r.mgr.WorkloadTokenIdentity(instance)
 	if err != nil || appID == "" || accountID == "" {
 		return r.respond(conn, workloadIdentityInstanceNotFound, workloadIdentityResponse{Error: "instance_not_found"})
 	}

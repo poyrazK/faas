@@ -7,9 +7,12 @@ GET $FAAS_WORKLOAD_IDENTITY_ENDPOINT?audience=sts.amazonaws.com
 ```
 
 `guest-init` forwards the request over the VM's AF_VSOCK channel. vmmd
-resolves the peer CID to the live instance and mints a five-minute RS256 JWT;
-no API key or provider secret is copied into the image. The endpoint returns
-the standard OAuth shape:
+resolves the stream to its instance and mints a five-minute RS256 JWT; no API
+key or provider secret is copied into the image. The instance may still be
+booting: an app's process runs before readiness (a worker for the whole
+characterization window), so it can take its token, and its first queue
+lease, without waiting to become RUNNING. The endpoint returns the standard
+OAuth shape:
 
 ```json
 {"access_token":"…","token_type":"Bearer","expires_in":300}

@@ -848,7 +848,7 @@ type Manager struct {
 	// ProcessExited records a pending marker only for this narrow phase;
 	// an exit observed after explicit Destroy has removed live must not
 	// be mistaken for a future Wake of the same id.
-	waking     map[string]struct{}
+	waking     map[string]wakingInstance
 	exportDirs map[string]string // instance -> host export dir (builder VMs only, M6)
 	// cidToID (issue #470 / PR #470-FU-B) is the reverse
 	// Firecracker-vsock-CID → instance id index the framework_ready
@@ -1244,7 +1244,7 @@ func NewManager(run Runner, vmm VMM, paths Paths, fcVersion string, log *slog.Lo
 		instanceFlights:                   make(map[string]*instanceFlight),
 		pendingProcessExits:               make(map[string]int),
 		processGenerations:                make(map[string]uint64),
-		waking:                            make(map[string]struct{}),
+		waking:                            make(map[string]wakingInstance),
 		exportDirs:                        make(map[string]string),
 		// Issue #470 / PR #470-FU-B: O(1) CID→instance lookup
 		// for the framework_ready DGRAM receipt path. See the
@@ -2782,6 +2782,32 @@ func (m *Manager) InstanceIdentity(instance string) (appID, accountID string, er
 	return inst.AppID, inst.AccountID, nil
 }
 
+// wakingInstance is the identity a wake fixed for its lease before the
+// instance is published live. Qualification restores leave it empty: their
+// candidates get no workload identity.
+type wakingInstance struct {
+	appID     string
+	accountID string
+}
+
+// WorkloadTokenIdentity resolves the identity a workload-identity token is
+// minted for: a live instance, or one still booting. A guest's workload runs
+// before readiness (a worker is characterized for the whole
+// CharacterizationDeadline), and the identity is fixed when the wake starts,
+// so a queue consumer can lease while it boots (ADR-1141 amendment
+// 2026-10-17). Other guest services keep InstanceIdentity's live-only rule.
+func (m *Manager) WorkloadTokenIdentity(instance string) (appID, accountID string, err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if inst, ok := m.live[instance]; ok {
+		return inst.AppID, inst.AccountID, nil
+	}
+	if booting, ok := m.waking[instance]; ok && booting.appID != "" && booting.accountID != "" {
+		return booting.appID, booting.accountID, nil
+	}
+	return "", "", fmt.Errorf("fcvm: WorkloadTokenIdentity %s: not live or booting", instance)
+}
+
 // HasInstanceOwnership gates recovered failure reports (ADR-471). An absent
 // entry after vmmd restart is not evidence that Firecracker or its resources
 // have gone. Include failed teardown ownership even when it is no longer live.
@@ -4260,9 +4286,9 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	lease.DisableStartupCPUBoost = req.DisableStartupCPUBoost
 	m.mu.Lock()
 	if m.waking == nil {
-		m.waking = make(map[string]struct{})
+		m.waking = make(map[string]wakingInstance)
 	}
-	m.waking[req.Instance] = struct{}{}
+	m.waking[req.Instance] = wakingInstance{appID: req.AppID, accountID: req.AccountID}
 	m.mu.Unlock()
 	lease = m.beginProcessAttempt(lease)
 	// Any failure from this point — Plan validation, wire-side
