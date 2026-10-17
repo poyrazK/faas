@@ -77,9 +77,11 @@
       "abuse_hold_at",
       "abuse_hold_reason",
       "billing_address",
+      "billing_mail_revision",
       "business_name",
       "created_at",
       "deletion_requested_at",
+      "deployment_mail_revision",
       "egress_allowlist_extra",
       "email",
       "email_verified_at",
@@ -89,13 +91,17 @@
       "mfa_enrolled_at",
       "mfa_recovery_codes_hash",
       "mfa_required",
+      "mfa_revision",
       "mfa_secret_encrypted",
       "overage_cap_cents",
+      "password_reset_revision",
       "past_due_at",
       "plan",
       "provider_customer_id",
+      "quota_mail_revision",
       "status",
       "stripe_subscription_item",
+      "subscription_mail_revision",
       "suspended_reason",
       "tax_id"
     ],
@@ -804,13 +810,13 @@
     "columns": [
       "app_id",
       "assignee_account_id",
+      "assignee_team_id",
       "exception_type",
       "route_prefix",
       "rule_order",
       "source_kind",
       "source_path_prefix",
-      "tag_filter",
-      "assignee_team_id"
+      "tag_filter"
     ],
     "kind": "configuration"
   },
@@ -833,6 +839,7 @@
       "account_id",
       "app_id",
       "assignee_account_id",
+      "assignee_team_id",
       "environment",
       "event_count",
       "fingerprint",
@@ -847,8 +854,7 @@
       "resolved_at",
       "split_source_issue_id",
       "state",
-      "title",
-      "assignee_team_id"
+      "title"
     ],
     "kind": "operational"
   },
@@ -1690,6 +1696,7 @@
       "declared_routes",
       "delete_grace_until",
       "deleted_at",
+      "deployment_mail_revision",
       "egress_allowlist",
       "egress_allowlist_revision",
       "egress_ports",
@@ -3286,6 +3293,12 @@
       "last_auto_rollback_reason",
       "liveness_restart_count",
       "log_path",
+      "mail_failed_at",
+      "mail_failure_account_id",
+      "mail_failure_account_revision",
+      "mail_failure_app_revision",
+      "mail_failure_revision",
+      "mail_failure_success_revision",
       "min_instances",
       "override_cmd",
       "override_entrypoint",
@@ -3584,6 +3597,7 @@
       "account_id",
       "consumed_at",
       "created_at",
+      "email_address",
       "expires_at",
       "token_hash"
     ],
@@ -4684,6 +4698,8 @@
       "name",
       "operation_id",
       "payload",
+      "receiver_sha256",
+      "rehearsal_run_id",
       "webhook_id"
     ],
     "kind": "operational"
@@ -9240,26 +9256,26 @@
   {
     "table": "project_environment_clone_checkpoint_capture_catalogues",
     "columns": [
-      "operation_id",
-      "source_kind",
-      "source_id",
       "capture_identity",
-      "source_resource_id",
       "observation_sha256",
-      "retired_at"
+      "operation_id",
+      "retired_at",
+      "source_id",
+      "source_kind",
+      "source_resource_id"
     ],
     "kind": "operational"
   },
   {
     "table": "project_environment_clone_checkpoint_capture_retirements",
     "columns": [
-      "operation_id",
-      "plan",
-      "state",
-      "requested_at",
       "observation",
       "observation_sha256",
-      "retired_at"
+      "operation_id",
+      "plan",
+      "requested_at",
+      "retired_at",
+      "state"
     ],
     "kind": "operational"
   },
@@ -11415,6 +11431,177 @@
     "kind": "operational"
   },
   {
+    "table": "scenario_cold_preparations",
+    "columns": [
+      "account_id",
+      "app_id",
+      "boot_instance_id",
+      "boot_recorder_session_id",
+      "created_at",
+      "deployment_id",
+      "id",
+      "instance_id",
+      "method",
+      "ready_at",
+      "recorder_session_id",
+      "run_id",
+      "startup_ms",
+      "state",
+      "wake_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "scenario_command_networks",
+    "columns": [
+      "active",
+      "host_ip",
+      "lease_token",
+      "node_id",
+      "task_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "scenario_managed_work",
+    "columns": [
+      "account_id",
+      "app_id",
+      "document",
+      "invocation_id",
+      "payload",
+      "run_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "scenario_object_fixtures",
+    "columns": [
+      "account_id",
+      "app_id",
+      "document",
+      "expires_at",
+      "id",
+      "run_id",
+      "status"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "scenario_postgres_fixtures",
+    "columns": [
+      "account_id",
+      "app_id",
+      "backend_sha256",
+      "database_name",
+      "evidence",
+      "expires_at",
+      "id",
+      "initial_snapshot",
+      "owner_id",
+      "role_name",
+      "run_id",
+      "spec",
+      "status"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "scenario_recorder_requests",
+    "columns": [
+      "attempt_id",
+      "id",
+      "session_id",
+      "status"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "scenario_recorder_sessions",
+    "columns": [
+      "app_id",
+      "command_result",
+      "created_at",
+      "deployment_id",
+      "id",
+      "instance_id",
+      "status"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "scenario_simulation_attempts",
+    "columns": [
+      "app_id",
+      "created_at",
+      "evidence",
+      "id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "scenario_suspend_resumes",
+    "columns": [
+      "account_id",
+      "app_id",
+      "checkpoint_attempt_id",
+      "created_at",
+      "deployment_id",
+      "id",
+      "instance_id",
+      "invocation_attempt",
+      "invocation_id",
+      "method",
+      "pause_ms",
+      "paused_at",
+      "recorder_session_id",
+      "resume_ms",
+      "run_id",
+      "state"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "scenario_test_action_policies",
+    "columns": [
+      "account_id",
+      "app_id",
+      "cold_start_spec",
+      "created_at",
+      "managed_work_closing",
+      "managed_work_failed",
+      "managed_work_plan",
+      "network_mode",
+      "recorder_closing",
+      "run_id",
+      "sealed_at",
+      "sealed_snapshot",
+      "simulation_failed",
+      "simulation_plan",
+      "suspend_resume_spec",
+      "webhook_mode",
+      "workload_name"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "scenario_worker_faults",
+    "columns": [
+      "account_id",
+      "app_id",
+      "checkpoint_attempt_id",
+      "created_at",
+      "deployment_id",
+      "id",
+      "instance_id",
+      "invocation_id",
+      "recorder_session_id",
+      "run_id",
+      "state"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "schedule_occurrences",
     "columns": [
       "account_id",
@@ -12186,6 +12373,8 @@
       "name",
       "operation_id",
       "payload",
+      "receiver_sha256",
+      "rehearsal_run_id",
       "run_id",
       "step_name",
       "webhook_id"
@@ -12503,11 +12692,11 @@
   {
     "table": "app_issue_teams",
     "columns": [
-      "id",
       "app_id",
-      "team_key",
-      "name",
       "created_at",
+      "id",
+      "name",
+      "team_key",
       "updated_at",
       "updated_by_account_id"
     ],
@@ -12516,24 +12705,24 @@
   {
     "table": "app_issue_team_members",
     "columns": [
-      "team_id",
-      "account_id"
+      "account_id",
+      "team_id"
     ],
     "kind": "operational"
   },
   {
     "table": "issue_tracker_links",
     "columns": [
+      "created_at",
+      "created_by_account_id",
+      "external_key",
       "id",
       "issue_id",
       "provider",
-      "external_key",
-      "url",
       "title",
-      "created_at",
       "updated_at",
-      "created_by_account_id",
-      "updated_by_account_id"
+      "updated_by_account_id",
+      "url"
     ],
     "kind": "operational"
   },
@@ -13069,9 +13258,9 @@
     "table": "app_issue_lifecycle_alert_policies",
     "columns": [
       "app_id",
-      "revision",
+      "cooldown_seconds",
       "environments",
-      "cooldown_seconds"
+      "revision"
     ],
     "kind": "configuration"
   },
@@ -13081,6 +13270,800 @@
       "app_id",
       "issue_id",
       "last_alert_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "billing_account_nonpayment_deletions",
+    "columns": [
+      "account_id",
+      "billing_revision",
+      "deletion_requested_at",
+      "followup_completed_at",
+      "intent_id",
+      "lease_id",
+      "lease_until",
+      "past_due_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "billing_account_suspensions",
+    "columns": [
+      "account_id",
+      "billing_revision",
+      "followup_completed_at",
+      "intent_id",
+      "lease_id",
+      "lease_until",
+      "past_due_at",
+      "suspended_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "billing_payment_failure_receipts",
+    "columns": [
+      "account_id",
+      "event_id",
+      "event_type",
+      "processed_at",
+      "provider"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "billing_payment_recovery_receipts",
+    "columns": [
+      "account_id",
+      "event_id",
+      "processed_at",
+      "provider"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "billing_quota_warnings",
+    "columns": [
+      "account_id",
+      "followup_completed_at",
+      "intent_id",
+      "lease_id",
+      "lease_until",
+      "observed_at",
+      "plan",
+      "quota_gb",
+      "quota_revision",
+      "used_mb_seconds",
+      "warning_day"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "billing_subscription_end_receipts",
+    "columns": [
+      "account_id",
+      "customer_hash",
+      "event_id",
+      "processed_at",
+      "provider",
+      "subscription_hash"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "billing_subscription_ends",
+    "columns": [
+      "account_id",
+      "ended_at",
+      "from_plan",
+      "intent_id",
+      "provider",
+      "subscription_hash"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "internal_mail_delivery_controls",
+    "columns": [
+      "domain_id",
+      "mode",
+      "namespace",
+      "request_id",
+      "revision",
+      "scope_id",
+      "updated_at"
+    ],
+    "kind": "platform_configuration"
+  },
+  {
+    "table": "internal_mail_dispatch_reservations",
+    "columns": [
+      "lease_id",
+      "namespace",
+      "producer_id",
+      "started_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "internal_mail_dkim_keys",
+    "columns": [
+      "activated_at",
+      "check_result",
+      "checked_at",
+      "created_at",
+      "deactivated_at",
+      "domain_id",
+      "first_verified_at",
+      "id",
+      "legacy",
+      "namespace",
+      "public_key",
+      "sealed_key",
+      "selector",
+      "state"
+    ],
+    "kind": "platform_configuration"
+  },
+  {
+    "table": "internal_mail_domain_pacing",
+    "columns": [
+      "namespace",
+      "next_allowed_at",
+      "recipient_domain",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "internal_mail_domains",
+    "columns": [
+      "authorization_state",
+      "check_result",
+      "created_at",
+      "dkim_key_id",
+      "dns_revision",
+      "failure_count",
+      "first_failure_at",
+      "id",
+      "last_checked_at",
+      "last_verified_at",
+      "name",
+      "namespace",
+      "public_key",
+      "sealed_key",
+      "selector",
+      "status",
+      "verification_token",
+      "verified_sending_ip"
+    ],
+    "kind": "platform_configuration"
+  },
+  {
+    "table": "internal_mail_encryption_keys",
+    "columns": [
+      "key_id",
+      "namespace",
+      "retired_at"
+    ],
+    "kind": "platform_configuration"
+  },
+  {
+    "table": "internal_mail_encryption_state",
+    "columns": [
+      "active_key_id",
+      "legacy_key_id",
+      "namespace",
+      "revision",
+      "updated_at"
+    ],
+    "kind": "platform_configuration"
+  },
+  {
+    "table": "internal_mail_event_consumers",
+    "columns": [
+      "checkpoint",
+      "created_at",
+      "generation",
+      "last_ack_at",
+      "last_pull_at",
+      "name",
+      "namespace",
+      "pending_receipt",
+      "producer_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "internal_mail_event_feed",
+    "columns": [
+      "domain_id",
+      "id",
+      "kind",
+      "message_id",
+      "namespace",
+      "occurred_at",
+      "position",
+      "producer_id",
+      "published_at",
+      "recipient_id",
+      "source_event_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "internal_mail_event_receipts",
+    "columns": [
+      "acknowledged_at",
+      "consumer",
+      "created_at",
+      "from_position",
+      "generation",
+      "id",
+      "namespace",
+      "producer_id",
+      "to_position"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "internal_mail_event_streams",
+    "columns": [
+      "last_position",
+      "namespace",
+      "producer_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "internal_mail_events",
+    "columns": [
+      "code",
+      "created_at",
+      "id",
+      "kind",
+      "namespace",
+      "recipient_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "internal_mail_messages",
+    "columns": [
+      "created_at",
+      "domain_id",
+      "expires_at",
+      "id",
+      "idempotency_key",
+      "namespace",
+      "payload_fingerprint",
+      "payload_pruned_at",
+      "producer_id",
+      "sealed_payload",
+      "send_at",
+      "sender_address"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "internal_mail_operations",
+    "columns": [
+      "action",
+      "actor",
+      "created_at",
+      "evidence",
+      "id",
+      "namespace",
+      "reason",
+      "request_hash",
+      "resource",
+      "result"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "internal_mail_producer_access",
+    "columns": [
+      "active_credential_id",
+      "namespace",
+      "producer_id",
+      "request_id",
+      "revision",
+      "suspended",
+      "updated_at"
+    ],
+    "kind": "platform_configuration"
+  },
+  {
+    "table": "internal_mail_producer_credentials",
+    "columns": [
+      "created_at",
+      "credential_id",
+      "namespace",
+      "producer_id",
+      "retires_at",
+      "revoked_at"
+    ],
+    "kind": "platform_configuration"
+  },
+  {
+    "table": "internal_mail_producer_dispatch",
+    "columns": [
+      "last_turn",
+      "namespace",
+      "producer_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "internal_mail_recipients",
+    "columns": [
+      "address",
+      "attempts",
+      "code",
+      "id",
+      "lease_id",
+      "lease_until",
+      "message_id",
+      "namespace",
+      "next_attempt_at",
+      "recovery_id",
+      "signing_selector",
+      "status",
+      "suppression_revision",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "internal_mail_recovery_runs",
+    "columns": [
+      "created_at",
+      "namespace",
+      "recovery_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "internal_mail_recovery_state",
+    "columns": [
+      "held",
+      "namespace",
+      "recovery_id",
+      "revision",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "internal_mail_relay_events",
+    "columns": [
+      "created_at",
+      "id",
+      "namespace",
+      "observation_id",
+      "reason",
+      "revision",
+      "state"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "internal_mail_relay_health",
+    "columns": [
+      "healthy_since",
+      "inventory_ok",
+      "namespace",
+      "observation_id",
+      "observed_at",
+      "oldest_seconds",
+      "queue_messages",
+      "reason",
+      "received_at",
+      "revision",
+      "smtp_up",
+      "state",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "internal_mail_reputation_events",
+    "columns": [
+      "created_at",
+      "evidence",
+      "held",
+      "id",
+      "namespace",
+      "reason",
+      "request_id",
+      "revision",
+      "scope",
+      "scope_key",
+      "sequence"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "internal_mail_reputation_feedback",
+    "columns": [
+      "bounce_event_id",
+      "bounced_at",
+      "complained_at",
+      "complaint_event_id",
+      "namespace",
+      "recipient_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "internal_mail_reputation_holds",
+    "columns": [
+      "bounces",
+      "complaints",
+      "held",
+      "namespace",
+      "reason",
+      "revision",
+      "samples",
+      "scope",
+      "scope_key",
+      "trigger_event_id",
+      "trigger_recipient_id",
+      "updated_at",
+      "window_end",
+      "window_start"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "internal_mail_suppression_events",
+    "columns": [
+      "address",
+      "blocked",
+      "cause",
+      "created_at",
+      "event_ref",
+      "namespace",
+      "reason",
+      "recipient_id",
+      "request_id",
+      "revision",
+      "source_id",
+      "source_kind"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "internal_mail_suppression_state",
+    "columns": [
+      "address",
+      "blocked",
+      "cause",
+      "created_at",
+      "event_ref",
+      "last_block_revision",
+      "namespace",
+      "reason",
+      "recipient_id",
+      "request_id",
+      "revision",
+      "source_id",
+      "source_kind",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "internal_mail_suppressions",
+    "columns": [
+      "address",
+      "created_at",
+      "namespace",
+      "reason"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "magic_link_tokens",
+    "columns": [
+      "account_id",
+      "consumed_at",
+      "created_at",
+      "email_address",
+      "email_verified_at",
+      "expires_at",
+      "namespace",
+      "password_revision",
+      "recovery_id",
+      "token_hash"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "mfa_disable_tokens",
+    "columns": [
+      "account_id",
+      "consumed_at",
+      "email_address",
+      "expires_at",
+      "mfa_enrolled_at",
+      "mfa_revision",
+      "namespace",
+      "password_revision",
+      "ready_at",
+      "recovery_id",
+      "requested_at",
+      "token_hash"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "password_reset_tokens",
+    "columns": [
+      "account_id",
+      "consumed_at",
+      "created_at",
+      "email_address",
+      "expires_at",
+      "namespace",
+      "password_revision",
+      "recovery_id",
+      "token_hash"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "platform_mail_deployment_capture",
+    "columns": [
+      "namespace",
+      "producer_id",
+      "recovery_id",
+      "started_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "platform_mail_deployment_fences",
+    "columns": [
+      "app_id",
+      "revision",
+      "scope",
+      "success_revision"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "platform_mail_deployment_observations",
+    "columns": [
+      "account_id",
+      "deployment_id",
+      "disposition",
+      "failure_revision",
+      "intent_id",
+      "observed_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "platform_mail_outbox_reconciliations",
+    "columns": [
+      "actor",
+      "created_at",
+      "evidence",
+      "expected_revision",
+      "intent_id",
+      "message_id",
+      "namespace",
+      "previous_state",
+      "reason",
+      "recovery_id",
+      "request_hash",
+      "request_id",
+      "resulting_revision",
+      "template"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "platform_mail_producer_outbox",
+    "columns": [
+      "account_id",
+      "account_restored_revision",
+      "account_suspended_revision",
+      "attempts",
+      "code",
+      "created_at",
+      "deletion_requested_at",
+      "deployment_failure_account_revision",
+      "deployment_failure_app_id",
+      "deployment_failure_app_revision",
+      "deployment_failure_at",
+      "deployment_failure_id",
+      "deployment_failure_revision",
+      "deployment_failure_scope",
+      "deployment_failure_success_revision",
+      "expires_at",
+      "from_address",
+      "id",
+      "lease_id",
+      "lease_until",
+      "namespace",
+      "next_attempt_at",
+      "nonpayment_deletion_at",
+      "nonpayment_deletion_revision",
+      "nonpayment_past_due_at",
+      "payment_past_due_at",
+      "producer_id",
+      "quota_warning_day",
+      "quota_warning_plan",
+      "quota_warning_revision",
+      "recipient_address",
+      "recovery_id",
+      "restore_until",
+      "revision",
+      "sealed_security_alert",
+      "sealed_verification",
+      "security_alert_key_id",
+      "state",
+      "subscription_ended_revision",
+      "suspension_past_due_at",
+      "template",
+      "template_version",
+      "updated_at",
+      "verification_key_id",
+      "verification_origin",
+      "verification_token_hash"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "instance_snapshot_recovery",
+    "columns": [
+      "generation",
+      "instance_id",
+      "snapshot_id",
+      "wake_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "migration_admissions",
+    "columns": [
+      "active_lease_token",
+      "adoption_receipt",
+      "cleanup_proof",
+      "cpu_millicores",
+      "destination_generation",
+      "destination_node_id",
+      "destination_wake_id",
+      "expires_at",
+      "id",
+      "instance_id",
+      "lease_token",
+      "mem_storage_key",
+      "phase",
+      "ram_mb",
+      "request_digest",
+      "source_node_id",
+      "source_wake_id",
+      "vcpu",
+      "vmstate_storage_key"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "migration_sources",
+    "columns": [
+      "active_lease_token",
+      "cpu_millicores",
+      "instance_id",
+      "lease_token",
+      "native_generation",
+      "phase",
+      "physical_binding",
+      "proof",
+      "ram_mb",
+      "source_node_id",
+      "source_wake_id",
+      "vcpu"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "node_lifecycle_completions",
+    "columns": [
+      "audit_outbox_id",
+      "completed_at",
+      "drained_count",
+      "initiated_at",
+      "migrated_count",
+      "node_id",
+      "node_name",
+      "recreated_count",
+      "result_generation",
+      "result_lifecycle",
+      "source_generation",
+      "source_lifecycle"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "operator_node_executions",
+    "columns": [
+      "audit_outbox_id",
+      "changed",
+      "claim_token",
+      "error",
+      "finished_at",
+      "intent_id",
+      "kind",
+      "previous_lifecycle",
+      "result_lifecycle",
+      "status",
+      "target_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "operator_park_executions",
+    "columns": [
+      "effect_token",
+      "intent_id",
+      "phase",
+      "receipt",
+      "stopped_at",
+      "target",
+      "terminal_state",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "operator_recovery_submissions",
+    "columns": [
+      "actor_id",
+      "audit_outbox_id",
+      "created_at",
+      "intent_id",
+      "key_digest",
+      "request_digest",
+      "response_body"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "operator_restart_executions",
+    "columns": [
+      "destroy_token",
+      "destroyed_at",
+      "intent_id",
+      "phase",
+      "target",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "object_node_settlement_outbox",
+    "columns": [
+      "account_id",
+      "app_id",
+      "attempts",
+      "backend_fingerprint",
+      "backend_id",
+      "bucket_id",
+      "created_at",
+      "id",
+      "kind",
+      "last_error",
+      "lease_token",
+      "lease_until",
+      "payload",
+      "physical_name",
+      "ready_at",
+      "retry_at"
     ],
     "kind": "operational"
   },
@@ -13468,155 +14451,6 @@
       "id",
       "key_digest",
       "requested_at"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "instance_snapshot_recovery",
-    "columns": [
-      "generation",
-      "instance_id",
-      "snapshot_id",
-      "wake_id"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "migration_admissions",
-    "columns": [
-      "active_lease_token",
-      "adoption_receipt",
-      "cleanup_proof",
-      "cpu_millicores",
-      "destination_generation",
-      "destination_node_id",
-      "destination_wake_id",
-      "expires_at",
-      "id",
-      "instance_id",
-      "lease_token",
-      "mem_storage_key",
-      "phase",
-      "ram_mb",
-      "request_digest",
-      "source_node_id",
-      "source_wake_id",
-      "vcpu",
-      "vmstate_storage_key"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "migration_sources",
-    "columns": [
-      "active_lease_token",
-      "cpu_millicores",
-      "instance_id",
-      "lease_token",
-      "native_generation",
-      "phase",
-      "physical_binding",
-      "proof",
-      "ram_mb",
-      "source_node_id",
-      "source_wake_id",
-      "vcpu"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "node_lifecycle_completions",
-    "columns": [
-      "audit_outbox_id",
-      "completed_at",
-      "drained_count",
-      "initiated_at",
-      "migrated_count",
-      "node_id",
-      "node_name",
-      "recreated_count",
-      "result_generation",
-      "result_lifecycle",
-      "source_generation",
-      "source_lifecycle"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "operator_node_executions",
-    "columns": [
-      "audit_outbox_id",
-      "changed",
-      "claim_token",
-      "error",
-      "finished_at",
-      "intent_id",
-      "kind",
-      "previous_lifecycle",
-      "result_lifecycle",
-      "status",
-      "target_id"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "operator_park_executions",
-    "columns": [
-      "effect_token",
-      "intent_id",
-      "phase",
-      "receipt",
-      "stopped_at",
-      "target",
-      "terminal_state",
-      "updated_at"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "operator_recovery_submissions",
-    "columns": [
-      "actor_id",
-      "audit_outbox_id",
-      "created_at",
-      "intent_id",
-      "key_digest",
-      "request_digest",
-      "response_body"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "operator_restart_executions",
-    "columns": [
-      "destroy_token",
-      "destroyed_at",
-      "intent_id",
-      "phase",
-      "target",
-      "updated_at"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "object_node_settlement_outbox",
-    "columns": [
-      "account_id",
-      "app_id",
-      "attempts",
-      "backend_fingerprint",
-      "backend_id",
-      "bucket_id",
-      "created_at",
-      "id",
-      "kind",
-      "last_error",
-      "lease_token",
-      "lease_until",
-      "payload",
-      "physical_name",
-      "ready_at",
-      "retry_at"
     ],
     "kind": "operational"
   }

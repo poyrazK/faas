@@ -1164,16 +1164,15 @@ func (s *PgStore) ReadMFASecret(ctx context.Context, id string) ([]byte, error) 
 }
 
 func (s *PgStore) SetMFASecret(ctx context.Context, id string, encrypted []byte, recoveryHashes [][]byte) error {
-	tag, err := s.pool.Exec(ctx,
-		`update accounts
-		    set mfa_secret_encrypted = $2,
-		        mfa_recovery_codes_hash = $3
-		  where id = $1`,
-		id, encrypted, recoveryHashes)
+	account, err := parsePgUUID(id)
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 0 {
+	n, err := sqlc.New().SetMFASecret(ctx, s.pool, sqlc.SetMFASecretParams{ID: account, MfaSecretEncrypted: encrypted, MfaRecoveryCodesHash: recoveryHashes})
+	if err != nil {
+		return mapErr(err)
+	}
+	if n == 0 {
 		return ErrNotFound
 	}
 	return nil
@@ -1205,15 +1204,15 @@ func (s *PgStore) UpdateAccountBillingInfo(ctx context.Context, id, businessName
 // the moment the row is visible — the audit Emit fires only after
 // this returns nil.
 func (s *PgStore) MarkMFAEnrolled(ctx context.Context, id string) error {
-	tag, err := s.pool.Exec(ctx,
-		`update accounts
-		    set mfa_enrolled_at = now(),
-		        mfa_required = false
-		  where id = $1`, id)
+	account, err := parsePgUUID(id)
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 0 {
+	n, err := sqlc.New().MarkMFAEnrolled(ctx, s.pool, account)
+	if err != nil {
+		return mapErr(err)
+	}
+	if n == 0 {
 		return ErrNotFound
 	}
 	return nil
@@ -1225,16 +1224,15 @@ func (s *PgStore) MarkMFAEnrolled(ctx context.Context, id string) error {
 // in the events table (handlers_mfa.go emits the `account.mfa_disabled`
 // row before/after this call).
 func (s *PgStore) ClearMFA(ctx context.Context, id string) error {
-	tag, err := s.pool.Exec(ctx,
-		`update accounts
-		    set mfa_secret_encrypted = null,
-		        mfa_recovery_codes_hash = null,
-		        mfa_enrolled_at = null
-		  where id = $1`, id)
+	account, err := parsePgUUID(id)
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 0 {
+	n, err := sqlc.New().ClearMFA(ctx, s.pool, account)
+	if err != nil {
+		return mapErr(err)
+	}
+	if n == 0 {
 		return ErrNotFound
 	}
 	return nil
@@ -1245,12 +1243,15 @@ func (s *PgStore) ClearMFA(ctx context.Context, id string) error {
 // account row is missing (UNKNOWN differs from a no-op — a missing
 // row is a 404, a no-op write is a 200 with no audit event).
 func (s *PgStore) SetMFARequired(ctx context.Context, id string, required bool) (changed bool, err error) {
-	tag, err := s.pool.Exec(ctx,
-		`update accounts set mfa_required = $2 where id = $1 and mfa_required <> $2`, id, required)
+	account, err := parsePgUUID(id)
 	if err != nil {
 		return false, err
 	}
-	if tag.RowsAffected() == 0 {
+	n, err := sqlc.New().SetMFARequired(ctx, s.pool, sqlc.SetMFARequiredParams{ID: account, MfaRequired: required})
+	if err != nil {
+		return false, err
+	}
+	if n == 0 {
 		// Either the row is missing OR the value was already what was
 		// requested. Distinguish with a follow-up existence check so
 		// the handler can 404 the missing case.
@@ -1350,7 +1351,15 @@ func (s *PgStore) UpsertBillingIdentity(ctx context.Context, identity BillingIde
 		value := identity.BillingFrom.UTC()
 		billingFrom = &value
 	}
-	_, err := s.pool.Exec(ctx,
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := sqlc.New().LockBillingIdentityAccount(ctx, tx, identity.AccountID); err != nil {
+		return mapErr(err)
+	}
+	_, err = tx.Exec(ctx,
 		`insert into billing_identities (account_id, provider, customer_id, subscription_id, billing_from)
 		 values ($1, $2, $3, $4, coalesce($5, now()))
 		 on conflict (account_id, provider) do update set
@@ -1358,7 +1367,10 @@ func (s *PgStore) UpsertBillingIdentity(ctx context.Context, identity BillingIde
 		   subscription_id = excluded.subscription_id,
 		   updated_at = now()`,
 		identity.AccountID, identity.Provider, identity.CustomerID, identity.SubscriptionID, billingFrom)
-	return err
+	if err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 // AccountByBillingCustomerID is the provider-qualified webhook reverse lookup.
@@ -26068,15 +26080,18 @@ func (s *PgStore) DeleteOldLoginTokens(ctx context.Context, before time.Time) (i
 // IssueMFADisableRequest invalidates any older pending request for the
 // account, then stores the new token hash and request timestamp.
 func (s *PgStore) IssueMFADisableRequest(ctx context.Context, tokenHash []byte, accountID string, requestedAt time.Time) error {
-	_, err := s.pool.Exec(ctx, `
-		with invalidated as (
-			update mfa_disable_requests
-			   set consumed_at = now()
-			 where account_id = $2 and consumed_at is null
-		)
-		insert into mfa_disable_requests (token_hash, account_id, requested_at)
-		values ($1, $2, $3)`, tokenHash, accountID, requestedAt)
-	return mapErr(err)
+	account, err := parsePgUUID(accountID)
+	if err != nil {
+		return err
+	}
+	n, err := sqlc.New().IssueMFADisableRequest(ctx, s.pool, sqlc.IssueMFADisableRequestParams{TokenHash: tokenHash, ID: account, RequestedAt: pgtype.Timestamptz{Time: requestedAt, Valid: true}})
+	if err != nil {
+		return mapErr(err)
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // GetMFADisableRequest reads a live request without consuming it. Consumed or
@@ -26117,43 +26132,25 @@ func (s *PgStore) ConsumeMFADisableRequest(ctx context.Context, tokenHash []byte
 	return accountID, nil
 }
 
-// IssueEmailVerificationToken persists only the SHA-256 token hash. The raw
-// token exists only in the email sent by apid.
+// IssueEmailVerificationToken is the legacy hash-only issuance path. Durable
+// private handoff stores its encrypted pending credential in apid's outbox.
 func (s *PgStore) IssueEmailVerificationToken(ctx context.Context, tokenHash []byte, accountID string, expiresAt time.Time) error {
-	_, err := s.pool.Exec(ctx,
-		`insert into email_verification_tokens (token_hash, account_id, expires_at)
-		 values ($1, $2, $3)
-		 on conflict (token_hash) do nothing`,
-		tokenHash, accountID, expiresAt)
-	return mapErr(err)
+	account, err := parsePgUUID(accountID)
+	if err != nil {
+		return err
+	}
+	return mapErr(sqlc.New().IssueEmailVerificationToken(ctx, s.pool, sqlc.IssueEmailVerificationTokenParams{TokenHash: tokenHash, AccountID: account, ExpiresAt: pgtype.Timestamptz{Time: expiresAt, Valid: true}}))
 }
 
-// ConsumeEmailVerificationToken consumes a live token and marks its account
-// verified in one SQL statement. A replay, expiry, or unknown token returns
-// ErrNotFound with the same shape.
+// ConsumeEmailVerificationToken locks account before token, matching private
+// handoff and account erasure. New bound tokens verify only their saved address;
+// the empty-address legacy token format retains its existing behavior.
 func (s *PgStore) ConsumeEmailVerificationToken(ctx context.Context, tokenHash []byte) (string, error) {
-	var accountID string
-	err := s.pool.QueryRow(ctx, `
-		with consumed as (
-			update email_verification_tokens
-			   set consumed_at = now()
-			 where token_hash = $1
-			   and consumed_at is null
-			   and expires_at > now()
-			 returning account_id
-		)
-		update accounts a
-		   set email_verified_at = coalesce(a.email_verified_at, now())
-		  from consumed c
-		 where a.id = c.account_id
-		 returning a.id`, tokenHash).Scan(&accountID)
+	account, err := sqlc.New().ConsumeEmailVerificationToken(ctx, s.pool, tokenHash)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return "", ErrNotFound
-		}
-		return "", err
+		return "", mapErr(err)
 	}
-	return accountID, nil
+	return uuidString(account), nil
 }
 
 // MarkAccountEmailVerified marks an account verified without changing an
@@ -26198,20 +26195,24 @@ func (s *PgStore) DeleteOldEvents(ctx context.Context, before time.Time) (int64,
 // the MemStore overwrite-under-lock).
 //
 // phc is the PHC wire format from pkg/auth.Encode. UpdatedAt is
-// stamped by `now()` so the "rotate hash on login" PR #2.5
-// hardening has a stable reference.
+// stamped by the database clock. Every write locks the account first and
+// advances its reset revision in the same statement, invalidating older links.
 func (s *PgStore) SetAccountPassword(ctx context.Context, accountID, phc string) error {
 	if accountID == "" || phc == "" {
 		return ErrInvalidArgument
 	}
-	_, err := s.pool.Exec(ctx,
-		`insert into account_passwords (account_id, hash, updated_at)
-		 values ($1, $2, now())
-		 on conflict (account_id) do update
-		   set hash = excluded.hash,
-		       updated_at = excluded.updated_at`,
-		accountID, phc)
-	return mapErr(err)
+	account, err := parsePgUUID(accountID)
+	if err != nil {
+		return err
+	}
+	n, err := sqlc.New().SetAccountPassword(ctx, s.pool, sqlc.SetAccountPasswordParams{ID: account, Hash: phc})
+	if err != nil {
+		return mapErr(err)
+	}
+	if n != 1 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // AccountPasswordByAccountID returns the stored Argon2id PHC hash
@@ -26236,9 +26237,11 @@ func (s *PgStore) DeleteAccountPassword(ctx context.Context, accountID string) e
 	if accountID == "" {
 		return ErrInvalidArgument
 	}
-	_, err := s.pool.Exec(ctx,
-		`delete from account_passwords where account_id = $1`, accountID)
-	return mapErr(err)
+	account, err := parsePgUUID(accountID)
+	if err != nil {
+		return err
+	}
+	return mapErr(sqlc.New().DeleteAccountPassword(ctx, s.pool, account))
 }
 
 // UpsertOAuthLink writes the (provider, provider_subject) → account

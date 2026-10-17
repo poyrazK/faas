@@ -1,0 +1,64 @@
+rule_files:
+  - faas.rules.yml
+evaluation_interval: 1m
+tests:
+  - name: disabled domain lifecycle stays quiet
+    interval: 1m
+    input_series:
+      - series: 'maild_mail_dkim_rotation_enabled{job="node",instance="pilot"}'
+        values: '0+0x10'
+      - series: 'maild_mail_domain_reverify_enabled{job="node",instance="pilot"}'
+        values: '0+0x10'
+      - series: 'maild_mail_dkim_failed_keys{job="node",instance="pilot"}'
+        values: '1+0x10'
+      - series: 'maild_mail_domain_paused{job="node",instance="pilot"}'
+        values: '1+0x10'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: InternalMailDKIMRotationFailed
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: InternalMailDomainAuthorizationFailed
+        exp_alerts: []
+  - name: failed staged key raises a durable internal warning
+    interval: 1m
+    input_series:
+      - series: 'maild_mail_dkim_rotation_enabled{job="node",instance="pilot"}'
+        values: '1+0x10'
+      - series: 'maild_mail_dkim_failed_keys{job="node",instance="pilot"}'
+        values: '1+0x10'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: InternalMailDKIMRotationFailed
+        exp_alerts:
+          - exp_labels:
+              job: node
+              instance: pilot
+              severity: warn
+              component: maild
+              family: internal_mail
+              public_status: internal
+            exp_annotations:
+              summary: "Internal mail DKIM rotation is failing or stalled"
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/internal-mail.md"
+  - name: confirmed authorization pause raises an internal warning
+    interval: 1m
+    input_series:
+      - series: 'maild_mail_domain_reverify_enabled{job="node",instance="pilot"}'
+        values: '1+0x10'
+      - series: 'maild_mail_domain_paused{job="node",instance="pilot"}'
+        values: '1+0x10'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: InternalMailDomainAuthorizationFailed
+        exp_alerts:
+          - exp_labels:
+              job: node
+              instance: pilot
+              severity: warn
+              component: maild
+              family: internal_mail
+              public_status: internal
+            exp_annotations:
+              summary: "Internal mail domain authorization is failing or stale"
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/internal-mail.md"

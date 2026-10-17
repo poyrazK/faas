@@ -1583,6 +1583,8 @@ var mfaAllowlist = []string{
 	"/v1/account/mfa/disable",
 	"/v1/account/mfa/disable-email",
 	"/v1/account/mfa/disable-email/confirm",
+	// The internal durable-mail confirmation page is gated before auth.
+	"/auth/reset/mfa",
 	// IAM-3 (ADR-039) — a customer whose session is mfa_pending
 	// must still be able to list / revoke their active sessions.
 	// The /v1/auth/sessions/{id} route is matched by the prefix

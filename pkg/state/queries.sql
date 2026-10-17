@@ -21733,6 +21733,11 @@ WHERE j.account_id = sqlc.arg(account_id)::uuid
   AND r.id = sqlc.arg(run_id)::uuid
   AND t.task_index = sqlc.arg(task_index)::int;
 
+-- Identity writes use the account lock before the provider-qualified row.
+-- This matches subscription termination and SMTP lifecycle fencing.
+-- name: LockBillingIdentityAccount :one
+SELECT id::text FROM accounts WHERE id=sqlc.arg(account_id)::text::uuid FOR UPDATE;
+
 -- name: EventAckPolicyGet :one
 SELECT acknowledgment_lease_seconds FROM event_subscriptions s JOIN apps a ON a.id=s.app_id AND a.account_id=s.account_id
 WHERE s.id=sqlc.arg(subscription_id)::uuid AND s.account_id=sqlc.arg(account_id)::uuid AND s.app_id=sqlc.arg(app_id)::uuid AND a.status<>'deleted';
