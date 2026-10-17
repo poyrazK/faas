@@ -182,7 +182,10 @@ func (s *Service) ScanObjectInventory(ctx context.Context, st state.ObjectStorag
 	if err != nil {
 		return err
 	}
-	bytes, objects, err := CompleteObjectInventory(ctx, backend.Provider, b.PhysicalName, s.inventoryRequestRecorder(b))
+	bytes, objects, counters, err := objectstorage.CompleteOwnedUsageCounters(ctx, backend.Provider, b.PhysicalName, s.inventoryRequestRecorder(b))
+	if !counters {
+		bytes, objects, err = CompleteObjectInventory(ctx, backend.Provider, b.PhysicalName, s.inventoryRequestRecorder(b))
+	}
 	if err != nil {
 		return err
 	}

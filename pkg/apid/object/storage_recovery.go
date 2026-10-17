@@ -221,8 +221,9 @@ func (s *Service) ReconcileObjectMultipartUploads(ctx context.Context, observe f
 
 func (s *Service) RunObjectStorageRecovery(ctx context.Context) {
 	attempts := prometheus.NewCounterVec(prometheus.CounterOpts{Name: "faas_object_storage_recovery_attempts_total", Help: "Claimed object-storage recovery attempts by operation and outcome."}, []string{"operation", "outcome"})
+	settlements := newNodeSettlementMetrics()
 	if s.Host.Ops() != nil {
-		s.Host.Ops().Registry().MustRegister(attempts)
+		s.Host.Ops().Registry().MustRegister(attempts, settlements.backlog, settlements.oldest)
 	}
 	observe := func(operation, outcome string) { attempts.WithLabelValues(operation, outcome).Inc() }
 	ticker := time.NewTicker(objectRecoveryInterval)
@@ -239,6 +240,12 @@ func (s *Service) RunObjectStorageRecovery(ctx context.Context) {
 		}
 		if err := s.ReconcileObjectUploads(ctx, observe); err != nil && ctx.Err() == nil {
 			s.Host.Logger().Warn("object upload recovery sweep failed")
+		}
+		if err := s.ReconcileObjectNodeSettlements(ctx, observe); err != nil && ctx.Err() == nil {
+			s.Host.Logger().Warn("object settlement acknowledgement sweep failed")
+		}
+		if err := s.observeNodeSettlementBacklog(ctx, settlements); err != nil && ctx.Err() == nil {
+			s.Host.Logger().Warn("object settlement backlog observation failed")
 		}
 		if err := s.ReconcileObjectDeletions(ctx, observe); err != nil && ctx.Err() == nil {
 			s.Host.Logger().Warn("object deletion recovery sweep failed")

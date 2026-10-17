@@ -55,7 +55,8 @@ func (s *Service) executeObjectMultipartResult(ctx context.Context, uploads stat
 		return s.deferObjectMultipartResult(ctx, store, u, proof, err)
 	}
 	if err = finishObjectMultipartOperation(ctx, func(ctx context.Context) error {
-		_, e := store.FinishObjectMultipartCompletion(ctx, u, proof)
+		var e error
+		_, e = store.FinishObjectMultipartCompletion(ctx, u, proof)
 		return e
 	}); err != nil {
 		return s.deferObjectMultipartResult(ctx, store, u, proof, err)

@@ -55,6 +55,7 @@ func (h *uploadHandler) beginTrackedUpload(w http.ResponseWriter, r *http.Reques
 		uploadProblem(w, http.StatusServiceUnavailable, "upload protection is temporarily unavailable")
 		return c, false
 	}
+	c.QueueNodeSettlement = QueueOwnedNodeSettlement(backend.Provider)
 	c.Protection.AdmitEventHolds = backend.ObjectLock.EventHolds
 	intent, created, err := st.BeginTrackedObjectUpload(r.Context(), c, h.registry.Accounting)
 	if err != nil {
