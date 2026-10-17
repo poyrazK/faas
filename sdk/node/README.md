@@ -3606,3 +3606,10 @@ and run `recoverNextEventAcknowledgmentIntent` from a durable recovery host.
 Recovery sends only the saved callback; inspect its returned `state` / `lastCode`.
 `listEventAcknowledgmentIntents` provides bounded metadata without tokens or results.
 See [transaction, recovery and retention details](../../docs/event-acknowledgment-node-intents.md).
+
+`getEventAcknowledgmentIntentHealth(pool, accountId, appId, { scanLimit, stallAfterMs, signal })`
+reads one owner-scoped database snapshot for pending/unconfirmed backlog, due work,
+live/expired claims, stalled recovery and oldest overdue age. Export `complete`,
+`truncated` and `coverage` with the counts; incomplete scans cannot establish
+healthy recovery. The helper reads metadata only and claims no work. See
+[options, coverage and cancellation](../../docs/event-acknowledgment-intent-health.md#node-summary).

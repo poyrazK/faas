@@ -108,3 +108,25 @@ still keeps consumers independent and prevents repeated committed writes.
 
 The module's concurrency/restart behavior requires hosted acceptance coverage
 before release. Local validation is generation, SDK build and static checks.
+
+## Observe recovery health
+
+The recovery host or an independent monitoring process can read a bounded summary:
+
+```js
+import { readAcknowledgmentRecoveryHealth } from './consumer.mjs';
+
+const health = await readAcknowledgmentRecoveryHealth({ app: appSlug, accountId, appId }, pool, signal);
+recordRecoveryHealth(health); // Include complete, truncated and coverage with every metric.
+```
+
+This reads one snapshot of retained unfinished intents; it does not claim work or
+send callbacks. Defaults are 1000 sampled rows and a five-minute stall interval.
+`due` excludes live claims, and `stalled` starts aging only after both the next
+retry time and any claim expiry. Future schedules and live leases are not stalls.
+An extra row marks `truncated`; invalid timestamp metadata makes `complete` false.
+A zero stalled count in an incomplete sample cannot establish healthy recovery.
+Oldest ages describe the sample and `observedAt` comes from the database clock.
+
+The host owns observation scheduling and metrics/notification transport. Nothing
+starts a poller or installs alerts. See the [Node health options and coverage](../../docs/event-acknowledgment-intent-health.md#node-summary).

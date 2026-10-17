@@ -64,7 +64,7 @@ export function intentInteger(value: unknown, maximum: bigint): string {
   if (typeof value !== 'string' || !/^(0|[1-9][0-9]{0,18})$/.test(value) || BigInt(value) > maximum) throw intentStoreError();
   return value;
 }
-function instant(value: unknown): string {
+export function intentInstant(value: unknown): string {
   const date = value instanceof Date ? value : typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(value) ? new Date(value) : undefined;
   if (!date || !Number.isFinite(date.getTime()) || date.getUTCFullYear() < 1 || date.getUTCFullYear() > 9999) throw intentStoreError();
   return date.toISOString();
@@ -80,9 +80,9 @@ export function intentStatus(row?: Record<string, unknown>): EventAcknowledgment
     replayGeneration: intentInteger(row.replay_generation, 9223372036854775807n), attempt: row.attempt,
     action: row.action as EventAcknowledgmentIntentStatus['action'], reason: row.reason,
     state: row.state as EventAcknowledgmentIntentStatus['state'],
-    deliveryAttempts: Number(intentInteger(row.delivery_attempts, 2147483647n)), nextAttemptAt: instant(row.next_attempt_at),
-    ...(row.claim_expires_at == null ? {} : { claimExpiresAt: instant(row.claim_expires_at) }),
-    lastCode: row.last_code as EventAcknowledgmentIntentStatus['lastCode'], createdAt: instant(row.created_at), updatedAt: instant(row.updated_at) });
+    deliveryAttempts: Number(intentInteger(row.delivery_attempts, 2147483647n)), nextAttemptAt: intentInstant(row.next_attempt_at),
+    ...(row.claim_expires_at == null ? {} : { claimExpiresAt: intentInstant(row.claim_expires_at) }),
+    lastCode: row.last_code as EventAcknowledgmentIntentStatus['lastCode'], createdAt: intentInstant(row.created_at), updatedAt: intentInstant(row.updated_at) });
 }
 export function intentHash(value: string): Buffer { return createHash('sha256').update(value).digest(); }
 export function intentBytes(value: unknown, expected: Buffer): boolean {

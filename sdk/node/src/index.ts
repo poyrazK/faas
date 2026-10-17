@@ -612,3 +612,6 @@ export { eventAcknowledgmentIntentSchema, EventAcknowledgmentIntentError, listEv
 export { EventAcknowledgmentIntentClaim, claimEventAcknowledgmentIntent, recoverNextEventAcknowledgmentIntent,
   type EventAcknowledgmentIntentClaimOptions, type EventAcknowledgmentIntentDeliveryOptions,
   type EventAcknowledgmentIntentRecoveryOptions } from './event-acknowledgment-intent-recovery.js';
+
+export { getEventAcknowledgmentIntentHealth, type EventAcknowledgmentIntentHealthOptions,
+  type EventAcknowledgmentIntentHealth } from './event-acknowledgment-intent-health.js';

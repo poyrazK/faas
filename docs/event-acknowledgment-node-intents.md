@@ -138,6 +138,10 @@ One claim object permits only one concurrent delivery operation.
 
 ## Diagnostics and retention
 
+For bounded backlog counts, expired claims and overdue ages, use the read-only
+[Node recovery health summary](event-acknowledgment-intent-health.md#node-summary).
+It does not claim work or execute callbacks.
+
 `listEventAcknowledgmentIntents(pool, accountId, appId, { invocationId, limit, signal })`
 returns at most 100 retained metadata rows, default 25. Omit `invocationId` to list
 the owner scope. Replay generations remain decimal int64 strings in diagnostics;

@@ -1,5 +1,7 @@
 # Architecture Decision Records
 
+- [Node acknowledgment intent recovery health](20261017110351-node-acknowledgment-intent-health.md)
+
 - [Durable Node acknowledgment intents](20261017105545-node-durable-acknowledgment-intents.md)
 
 - [Node deferred event acknowledgment worker](20261017-node-event-acknowledgment-worker.md)

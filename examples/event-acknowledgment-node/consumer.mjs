@@ -1,7 +1,7 @@
 // Integration functions for an application-owned durable queue. See README for
 // the adapter's persistence and exclusive-ownership requirements.
 import { randomUUID } from 'node:crypto';
-import { eventAcknowledgmentWorkerFromHeaders, recoverNextEventAcknowledgmentIntent, EventAcknowledgmentIntentError } from '@gregale/sdk-node';
+import { eventAcknowledgmentWorkerFromHeaders, recoverNextEventAcknowledgmentIntent, getEventAcknowledgmentIntentHealth, EventAcknowledgmentIntentError } from '@gregale/sdk-node';
 
 const names = new Set([
   'x-gregale-event-source', 'x-gregale-event-id', 'x-gregale-event-subscription-id',
@@ -67,4 +67,12 @@ export async function recoverOneAcknowledgment(scope, pool, signal) {
     if (error instanceof EventAcknowledgmentIntentError && error.code === 'event_acknowledgment_intent_empty') return undefined;
     throw error;
   }
+}
+
+/** A separate read-only observation. No queue job/intent is claimed or repaired. */
+export async function readAcknowledgmentRecoveryHealth(scope, pool, signal) {
+  const target = owner(scope);
+  return getEventAcknowledgmentIntentHealth(pool, target.accountId, target.appId, {
+    signal, scanLimit: 1000, stallAfterMs: 300000,
+  });
 }
