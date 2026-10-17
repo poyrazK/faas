@@ -16,7 +16,7 @@ func TestPGQuotaWarningAtomicFailures(t *testing.T) {
 	for _, mode := range []string{"intent", "stamp", "receipt", "cancel", "quota", "held"} {
 		t.Run(mode, func(t *testing.T) {
 			f := quotaFixture(t)
-			id, at := quotaAccount(t, f, api.PlanPro, 251*1024*3600)
+			id, at := quotaAccount(t, f, api.PlanPro, quotaWarningTestUsage(api.PlanPro))
 			var inject string
 			switch mode {
 			case "intent":
@@ -66,7 +66,7 @@ SELECT gen_random_uuid(),o.account_id,o.namespace,o.producer_id,o.from_address,o
 
 func TestPGQuotaWarningWithdrawalRollsBack(t *testing.T) {
 	f := quotaFixture(t)
-	id, at := quotaAccount(t, f, api.PlanPro, 251*1024*3600)
+	id, at := quotaAccount(t, f, api.PlanPro, quotaWarningTestUsage(api.PlanPro))
 	var on atomic.Bool
 	on.Store(true)
 	f.service.quotaWarning.enabled = on.Load

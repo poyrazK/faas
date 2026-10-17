@@ -28,5 +28,9 @@ export type Issue = {
   fixed_deployment_id?: string;
   fixed_deployment_created_at?: string;
   ignored_until?: string;
+  /**
+   * Current team assignment within this app, mutually exclusive with the account assignee.
+   */
+  assignee_team_id?: string;
 };
 

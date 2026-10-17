@@ -103,7 +103,7 @@ test('proxy closes canceled upstream requests and sanitizes unavailable and time
   const timeout = await fetch(url, { headers })
   assert.equal(timeout.status, 504)
   const timeoutBody = await timeout.text()
-  assert.equal(JSON.parse(timeoutBody).code, 'query_timeout')
+  assert.equal(JSON.parse(timeoutBody).code, 'request_deadline_exceeded')
   assert.doesNotMatch(timeoutBody, /credential-sentinel|token-sentinel|postgres:/)
   await new Promise(resolve => upstream.close(resolve))
   const unavailable = await fetch(url, { headers })

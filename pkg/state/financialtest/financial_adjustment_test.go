@@ -23,7 +23,7 @@ func financialAdjustmentSuite(t *testing.T, store financialTestStore) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	price := state.FinancialPriceSnapshot{AccountID: a.ID, PeriodStart: start, PeriodEnd: end, Plan: api.PlanHobby, EffectiveFrom: start, DeliveryMode: "live", Price: financial.Price{Version: "old-terms", Meter: "compute", Currency: "EUR", Unit: "mb_seconds", UnitQuantity: 1, MillicentsPerUnit: 1}}
+	price := state.FinancialPriceSnapshot{AccountID: a.ID, PeriodStart: start, PeriodEnd: end, Plan: api.PlanHobby, EffectiveFrom: start, DeliveryMode: "live", Price: financial.Price{Version: "old-terms", Meter: "compute", Currency: "USD", Unit: "mb_seconds", UnitQuantity: 1, MillicentsPerUnit: 1}}
 	if _, err := store.PutFinancialPriceSnapshot(t.Context(), price); err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +132,7 @@ func TestFinancialPostgresImmutableHistory(t *testing.T) {
 			t.Fatal("ledger rewrite accepted")
 		}
 	}
-	price := state.FinancialPriceSnapshot{AccountID: a.ID, PeriodStart: start, PeriodEnd: end, Plan: api.PlanHobby, EffectiveFrom: start, DeliveryMode: "live", Price: financial.Price{Version: "fixed", Meter: "compute", Currency: "EUR", Unit: "mb_seconds", UnitQuantity: 1, MillicentsPerUnit: 1}}
+	price := state.FinancialPriceSnapshot{AccountID: a.ID, PeriodStart: start, PeriodEnd: end, Plan: api.PlanHobby, EffectiveFrom: start, DeliveryMode: "live", Price: financial.Price{Version: "fixed", Meter: "compute", Currency: "USD", Unit: "mb_seconds", UnitQuantity: 1, MillicentsPerUnit: 1}}
 	if _, err := store.PutFinancialPriceSnapshot(ctx, price); err != nil {
 		t.Fatal(err)
 	}

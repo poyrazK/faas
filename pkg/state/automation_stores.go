@@ -86,7 +86,7 @@ func (m *MemStore) MutateAutomation(_ context.Context, appID, name string, mutat
 	if !ok {
 		return Automation{}, ErrNotFound
 	}
-	if err := automationAccountGate(account.Plan, account.Active(), mutation.Action); err != nil {
+	if err := automationMutationGate(account.Plan, account.Active(), mutation); err != nil {
 		return Automation{}, err
 	}
 	key := appID + "/" + name
@@ -141,11 +141,15 @@ func (m *MemStore) MutateAutomation(_ context.Context, appID, name string, mutat
 		m.automations = make(map[string]Automation)
 	}
 	if mutation.Action == "delete" {
+		m.clearAutomationLiveBaselinesLocked(appID, name)
 		delete(m.automations, key)
 	} else {
 		m.automations[key] = copyAutomation(next)
 	}
-	if mutation.Action != "save" {
+	if mutation.Action == "delete" || mutation.Action == "tests" && len(mutation.TestSuite) == 0 {
+		m.clearAutomationLiveLocked(appID, name)
+	}
+	if mutation.Action != "save" && mutation.Action != "tests" {
 		delete(m.workflowSchedules, key)
 		for key, cursor := range m.workflowTenantSchedules {
 			if cursor.AppID == appID && cursor.WorkflowName == name {
@@ -157,18 +161,25 @@ func (m *MemStore) MutateAutomation(_ context.Context, appID, name string, mutat
 	}
 	return next, nil
 }
+func automationMutationGate(plan api.Plan, active bool, mutation AutomationMutation) error {
+	action := mutation.Action
+	if action == "tests" && len(mutation.TestSuite) == 0 {
+		action = "clear-tests"
+	}
+	return automationAccountGate(plan, active, action)
+}
 func automationAccountGate(plan api.Plan, active bool, action string) error {
 	if !active {
 		return ErrWorkflowEventTargetUnavailable
 	}
 	// Removal and pausing remain possible after a downgrade.
-	if !plan.WorkflowsAllowed() && (action == "save" || action == "publish") {
+	if !plan.WorkflowsAllowed() && (action == "save" || action == "publish" || action == "tests") {
 		return api.ErrPlanWorkflowsNotAllowed(plan)
 	}
 	return nil
 }
 func automationFromSQL(row sqlc.WorkflowAutomationDefinition) Automation {
-	return Automation{AppID: uuidFromPgtype(row.AppID).String(), Name: row.Name, Version: row.Version, Draft: row.Draft, Published: row.Published, PublishedVersion: row.PublishedVersion, Enabled: row.Enabled, UpdatedAt: row.UpdatedAt.Time}
+	return Automation{TestSuite: row.TestSuite, TestReport: row.TestReport, AppID: uuidFromPgtype(row.AppID).String(), Name: row.Name, Version: row.Version, Draft: row.Draft, Published: row.Published, PublishedVersion: row.PublishedVersion, Enabled: row.Enabled, UpdatedAt: row.UpdatedAt.Time}
 }
 func automationRevisionFromSQL(row sqlc.WorkflowAutomationRevision) AutomationRevision {
 	revision := AutomationRevision{
@@ -247,7 +258,7 @@ func (s *PgStore) MutateAutomation(ctx context.Context, appID, name string, muta
 		return Automation{}, err
 	}
 	plan := api.Plan(target.Plan)
-	if err := automationAccountGate(plan, (target.AccountStatus == "active" || target.AccountStatus == "past_due") && !target.AbuseHoldAt.Valid, mutation.Action); err != nil {
+	if err := automationMutationGate(plan, (target.AccountStatus == "active" || target.AccountStatus == "past_due") && !target.AbuseHoldAt.Valid, mutation); err != nil {
 		return Automation{}, err
 	}
 	next, err := mutateAutomationTx(ctx, tx, q, appID, name, mutation, plan, pgUUIDString(target.AccountID))
@@ -307,7 +318,7 @@ func mutateAutomationTx(ctx context.Context, tx pgx.Tx, q *sqlc.Queries, appID, 
 	if mutation.Action == "delete" {
 		err = q.DeleteAutomation(ctx, tx, sqlc.DeleteAutomationParams{AppID: mustPgUUID(appID), Name: name})
 	} else {
-		err = q.SaveAutomation(ctx, tx, sqlc.SaveAutomationParams{AppID: mustPgUUID(appID), Name: name, Version: next.Version, Draft: next.Draft, Published: next.Published, PublishedVersion: next.PublishedVersion, Enabled: next.Enabled, UpdatedAt: pgtype.Timestamptz{Time: next.UpdatedAt, Valid: true}})
+		err = q.SaveAutomation(ctx, tx, sqlc.SaveAutomationParams{TestSuite: next.TestSuite, TestReport: next.TestReport, AppID: mustPgUUID(appID), Name: name, Version: next.Version, Draft: next.Draft, Published: next.Published, PublishedVersion: next.PublishedVersion, Enabled: next.Enabled, UpdatedAt: pgtype.Timestamptz{Time: next.UpdatedAt, Valid: true}})
 	}
 	if err != nil {
 		return Automation{}, err
@@ -326,7 +337,15 @@ func mutateAutomationTx(ctx context.Context, tx pgx.Tx, q *sqlc.Queries, appID, 
 			return Automation{}, err
 		}
 	}
-	if mutation.Action != "save" {
+	if mutation.Action == "tests" && len(mutation.TestSuite) == 0 {
+		if err := q.DeleteAutomationLiveSuites(ctx, tx, sqlc.DeleteAutomationLiveSuitesParams{AppID: mustPgUUID(appID), Name: name}); err != nil {
+			return Automation{}, err
+		}
+		if err := q.DeleteAutomationLiveVerifications(ctx, tx, sqlc.DeleteAutomationLiveVerificationsParams{AppID: mustPgUUID(appID), Name: name}); err != nil {
+			return Automation{}, err
+		}
+	}
+	if mutation.Action != "save" && mutation.Action != "tests" {
 		err = q.DeleteAutomationScheduleCursor(ctx, tx, sqlc.DeleteAutomationScheduleCursorParams{AppID: mustPgUUID(appID), WorkflowName: name})
 		if err == nil {
 			err = q.RearmTenantAutomationSchedules(ctx, tx, sqlc.RearmTenantAutomationSchedulesParams{AppID: mustPgUUID(appID), WorkflowName: name})

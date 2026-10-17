@@ -1,3 +1,5 @@
+// adr: 20261017125602
+// Non-payment deletion commands retain durable notices and follow-up receipts.
 package meter_test
 
 import (

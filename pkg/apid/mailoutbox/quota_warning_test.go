@@ -3,6 +3,7 @@ package mailoutbox
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"sync"
@@ -18,6 +19,11 @@ import (
 )
 
 const quotaMigration = "20261017133739854_platform_mail_quota_warning_outbox.sql"
+
+// Derive an over-quota fixture from the current plan contract.
+func quotaWarningTestUsage(plan api.Plan) int64 {
+	return int64(plan.PlanIncludedGBHours()+1) * 1024 * 3600
+}
 
 func quotaFixture(t *testing.T) *fixture {
 	t.Helper()
@@ -50,7 +56,7 @@ func quotaAccount(t *testing.T, f *fixture, plan api.Plan, used int64) (string, 
 
 func queueQuotaWarning(t *testing.T, f *fixture) (string, time.Time, q.PlatformMailProducerOutbox, api.InternalMailQuotaWarningResponse) {
 	t.Helper()
-	id, day := quotaAccount(t, f, api.PlanPro, 251*1024*3600)
+	id, day := quotaAccount(t, f, api.PlanPro, quotaWarningTestUsage(api.PlanPro))
 	result, err := f.service.WarnQuotaWithNotice(t.Context(), id, day, api.PlanPro, uuid.NewString())
 	if err != nil || !result.Followup {
 		t.Fatal(result, err)
@@ -82,7 +88,7 @@ func TestPGQuotaWarningSnapshotDailyDedupeAndDurableFollowup(t *testing.T) {
 	f := quotaFixture(t)
 	id, day, r, result := queueQuotaWarning(t, f)
 	payload, err := quotaWarningPayloadFor(f.service.quotaWarning, r)
-	if err != nil || payload.Plan != api.PlanPro || payload.UsedMBSeconds != 251*1024*3600 || payload.QuotaGB != api.PlanPro.PlanIncludedGBHours() || !payload.Day.Equal(day) || !payload.ObservedAt.Equal(result.ObservedAt) || !r.ExpiresAt.Time.Equal(day.Add(24*time.Hour)) || r.QuotaWarningRevision.Int64 != 3 {
+	if err != nil || payload.Plan != api.PlanPro || payload.UsedMBSeconds != quotaWarningTestUsage(api.PlanPro) || payload.QuotaGB != api.PlanPro.PlanIncludedGBHours() || !payload.Day.Equal(day) || !payload.ObservedAt.Equal(result.ObservedAt) || !r.ExpiresAt.Time.Equal(day.Add(24*time.Hour)) || r.QuotaWarningRevision.Int64 != 3 {
 		t.Fatal("lost authoritative snapshot", payload, err)
 	}
 	if strings.Contains(string(r.SealedSecurityAlert), "unsubscribe") {
@@ -126,7 +132,7 @@ func TestPGQuotaWarningEligibilityAndUTC(t *testing.T) {
 	for _, mode := range []string{"under", "rounds_to_threshold", "free", "stale_plan", "yesterday", "tomorrow", "non_midnight", "legacy_stamp", "future_stamp", "deleting", "unknown", "other_month", "timezone"} {
 		t.Run(mode, func(t *testing.T) {
 			f := quotaFixture(t)
-			used, plan := int64(250*1024*3600), api.PlanPro
+			used, plan := int64(api.PlanPro.PlanIncludedGBHours())*1024*3600, api.PlanPro
 			if mode == "under" {
 				used -= 2 // old six-decimal rounding remains just below quota
 			}
@@ -188,7 +194,7 @@ func TestPGQuotaWarningEligibilityAndUTC(t *testing.T) {
 
 func TestPGQuotaWarningConcurrentTicks(t *testing.T) {
 	f := quotaFixture(t)
-	id, day := quotaAccount(t, f, api.PlanScale, 1600*1024*3600)
+	id, day := quotaAccount(t, f, api.PlanScale, quotaWarningTestUsage(api.PlanScale))
 	var wg sync.WaitGroup
 	var claims atomic.Int32
 	for range 12 {
@@ -228,7 +234,7 @@ func TestPGQuotaWarningStableRetryIncludesBothAlternativesAndHeaders(t *testing.
 		t.Fatal("retry changed frozen notice")
 	}
 	message := f.sender.calls[1].message
-	if message.MessageID != "quota-warning:"+uuidString(r.ID.Bytes) || message.HTMLBody == "" || !strings.Contains(message.TextBody, "251.00") || !strings.Contains(message.HTMLBody, "251.00") || message.Headers["List-Unsubscribe"] != "<https://dashboard.example.test/notifications/unsubscribe>" || message.Headers["List-Unsubscribe-Post"] != "List-Unsubscribe=One-Click" {
+	if message.MessageID != "quota-warning:"+uuidString(r.ID.Bytes) || message.HTMLBody == "" || !strings.Contains(message.TextBody, fmt.Sprintf("%d.00", api.PlanPro.PlanIncludedGBHours()+1)) || !strings.Contains(message.HTMLBody, fmt.Sprintf("%d.00", api.PlanPro.PlanIncludedGBHours()+1)) || message.Headers["List-Unsubscribe"] != "<https://dashboard.example.test/notifications/unsubscribe>" || message.Headers["List-Unsubscribe-Post"] != "List-Unsubscribe=One-Click" {
 		t.Fatal("lost usage snapshot, alternatives or unsubscribe headers")
 	}
 	assertMFAAlertErased(t, row(t, f, uuidString(r.ID.Bytes)))

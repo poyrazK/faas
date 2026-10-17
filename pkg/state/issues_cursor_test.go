@@ -1,6 +1,8 @@
 package state_test
 
 import (
+	"github.com/onebox-faas/faas/pkg/api"
+	"strings"
 	"testing"
 	"time"
 
@@ -53,5 +55,45 @@ func TestDecodeIssueCursorRejectsInvalidImpactMetadata(t *testing.T) {
 		if _, err := state.DecodeIssueCursor(state.EncodeIssueCursor(cursor)); err == nil {
 			t.Fatalf("invalid impact cursor accepted: %+v", cursor)
 		}
+	}
+}
+
+func TestIssueTagCursorBindsFilterAndWindow(t *testing.T) {
+	now := time.Now().UTC()
+	end := now.Add(-time.Minute)
+	cursor := state.IssueCursor{Time: now, ID: uuid.NewString(), Sort: "recent", Tag: "component=payments", ImpactWindowEnd: &end}
+	decoded, err := state.DecodeIssueCursor(state.EncodeIssueCursor(cursor))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = state.ValidateIssueListCursor(state.IssueListFilter{Tag: "component=payments"}, decoded); err != nil {
+		t.Fatal(err)
+	}
+	for _, tag := range []string{"", "component=exports", "email=private@example.com"} {
+		if state.ValidateIssueListCursor(state.IssueListFilter{Tag: tag}, decoded) == nil {
+			t.Fatal("changed filter accepted")
+		}
+	}
+	cursor.Tag = "email=private@example.com"
+	if _, err = state.DecodeIssueCursor(state.EncodeIssueCursor(cursor)); err == nil {
+		t.Fatal("unknown tag accepted")
+	}
+}
+
+func TestIssueTagCursorAcceptsMaximumEscapedValue(t *testing.T) {
+	now := time.Now().UTC()
+	end := now.Add(-time.Minute)
+	tag := "component=" + strings.Repeat("<", api.IssueTagValueMaxBytes)
+	cursor := state.IssueCursor{Time: now, ID: uuid.NewString(), Sort: "impact", Tag: tag, ImpactWindowEnd: &end, MinCustomers: 9223372036854775807, ImpactCustomers: 9223372036854775807}
+	encoded := state.EncodeIssueCursor(cursor)
+	if len(encoded) > api.IssueCursorMaxBytes {
+		t.Fatal("encoder produced a cursor the decoder rejects")
+	}
+	decoded, err := state.DecodeIssueCursor(encoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = state.ValidateIssueListCursor(state.IssueListFilter{Sort: "impact", Tag: tag, MinCustomers: cursor.MinCustomers}, decoded); err != nil {
+		t.Fatal(err)
 	}
 }

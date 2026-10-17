@@ -34,12 +34,12 @@ func TestVerifyWebhook_ChargeRefunded(t *testing.T) {
 			"id": "ch_test_123",
 			"customer": "cus_test_alice",
 			"amount_refunded": 5000,
-			"currency": "eur",
+			"currency": "usd",
 			"refunded": true,
 			"refunds": {"data": [{
 				"id": "re_test_123",
 				"amount": 5000,
-				"currency": "eur",
+				"currency": "usd",
 				"status": "succeeded"
 			}]}
 		}}
@@ -66,7 +66,7 @@ func TestVerifyWebhook_ChargeRefunded(t *testing.T) {
 	if ev.AmountCents != 5000 {
 		t.Errorf("AmountCents = %d, want 5000", ev.AmountCents)
 	}
-	if ev.Currency != "eur" {
+	if ev.Currency != "usd" {
 		t.Errorf("Currency = %q, want eur", ev.Currency)
 	}
 }

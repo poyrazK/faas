@@ -41,7 +41,7 @@ func TestQuotaWarningOutboxPrivateCommandBoundaries(t *testing.T) {
 			s, pool := *e.S(), *e.Pool()
 			id := e.Acct().ID
 			var at time.Time
-			if err := pool.QueryRow(t.Context(), "INSERT INTO usage_minutes(account_id,app_id,instance_id,minute,mb_seconds) VALUES($1,$2,$3,date_trunc('day',clock_timestamp() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC',251*1024*3600) RETURNING minute", id, uuid.NewString(), uuid.NewString()).Scan(&at); err != nil {
+			if err := pool.QueryRow(t.Context(), "INSERT INTO usage_minutes(account_id,app_id,instance_id,minute,mb_seconds) VALUES($1,$2,$3,date_trunc('day',clock_timestamp() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC',$4) RETURNING minute", id, uuid.NewString(), uuid.NewString(), int64(api.PlanPro.PlanIncludedGBHours()+1)*1024*3600).Scan(&at); err != nil {
 				t.Fatal(err)
 			}
 			flags := quotaFlags(t)
@@ -147,7 +147,7 @@ func TestQuotaWarningOutboxLostPrivateReplyAndLeaseRecovery(t *testing.T) {
 	}
 	id := e.Acct().ID
 	var at time.Time
-	if err := pool.QueryRow(t.Context(), "INSERT INTO usage_minutes(account_id,app_id,instance_id,minute,mb_seconds) VALUES($1,$2,$3,date_trunc('day',clock_timestamp() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC',251*1024*3600) RETURNING minute", id, uuid.NewString(), uuid.NewString()).Scan(&at); err != nil {
+	if err := pool.QueryRow(t.Context(), "INSERT INTO usage_minutes(account_id,app_id,instance_id,minute,mb_seconds) VALUES($1,$2,$3,date_trunc('day',clock_timestamp() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC',$4) RETURNING minute", id, uuid.NewString(), uuid.NewString(), int64(api.PlanPro.PlanIncludedGBHours()+1)*1024*3600).Scan(&at); err != nil {
 		t.Fatal(err)
 	}
 	var drop atomic.Bool

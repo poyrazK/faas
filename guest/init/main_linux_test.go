@@ -737,3 +737,34 @@ func TestStopBuildDaemonReapsBeforeReturn(t *testing.T) {
 		t.Fatalf("daemon was not reaped before return: %v", err)
 	}
 }
+
+// H10-140: a shared-runtime build leaves system packages to the runner base,
+// so Railpack's default apt step does not put files outside /app.
+func TestPrepareRailpackConfig_SharedRuntimeClearsDefaultAptPackages(t *testing.T) {
+	workdir := t.TempDir()
+	restore, err := prepareRailpackConfig(api.BuildManifest{
+		Framework:      api.FrameworkRailpackNode,
+		Runtime:        "node24",
+		RuntimeBaseRef: "ghcr.io/poyrazk/runner-node24@sha256:" + strings.Repeat("c", 64),
+		SharedRuntime:  true,
+		Workdir:        workdir,
+	})
+	if err != nil {
+		t.Fatalf("prepareRailpackConfig: %v", err)
+	}
+	defer func() { _ = restore() }()
+	data, err := os.ReadFile(filepath.Join(workdir, "railpack.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var config map[string]any
+	if err := json.Unmarshal(data, &config); err != nil {
+		t.Fatal(err)
+	}
+	if got := config["deploy"].(map[string]any)["aptPackages"].([]any); len(got) != 0 {
+		t.Fatalf("shared runtime aptPackages = %v, want empty", got)
+	}
+	if got := config["packages"].(map[string]any)["node"]; got != "24" {
+		t.Fatalf("node package = %v, want the runner base's major", got)
+	}
+}

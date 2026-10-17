@@ -1,3 +1,5 @@
+// adr: 20261017133739
+// Durable quota warnings retain saved observations and independent follow-up gates.
 package meter_test
 
 import (
@@ -69,7 +71,7 @@ func TestQuotaWarningDurableSelectionAndSavedFollowup(t *testing.T) {
 			var on atomic.Bool
 			on.Store(mode != "off")
 			fake := &quotaCommandFake{store: store, mode: mode, on: &on, result: api.InternalMailQuotaWarningResponse{
-				IntentID: uuid.NewString(), LeaseID: uuid.NewString(), Day: now.Truncate(24 * time.Hour), ObservedAt: now.Add(-time.Hour), Plan: api.PlanPro, UsedMBSeconds: 251 * 1024 * 3600, QuotaGB: api.PlanPro.PlanIncludedGBHours(),
+				IntentID: uuid.NewString(), LeaseID: uuid.NewString(), Day: now.Truncate(24 * time.Hour), ObservedAt: now.Add(-time.Hour), Plan: api.PlanPro, UsedMBSeconds: int64(api.PlanPro.PlanIncludedGBHours()+1) * 1024 * 3600, QuotaGB: api.PlanPro.PlanIncludedGBHours(),
 			}}
 			var commands meter.QuotaWarningCommands = fake
 			if mode == "unconfigured" {
@@ -79,7 +81,7 @@ func TestQuotaWarningDurableSelectionAndSavedFollowup(t *testing.T) {
 			run := func() {
 				t.Helper()
 				// Current tick values differ from the persisted warning snapshot.
-				if _, err := p.Enforce(ctx, acct, 300, now); err != nil {
+				if _, err := p.Enforce(ctx, acct, float64(api.PlanPro.PlanIncludedGBHours()+50), now); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -129,7 +131,7 @@ func TestQuotaWarningDurableSelectionAndSavedFollowup(t *testing.T) {
 				QuotaGB int     `json:"quota_gb"`
 				Plan    string  `json:"plan"`
 			}
-			if err := json.Unmarshal([]byte(notices[0].Payload), &payload); err != nil || payload.At != fake.result.ObservedAt.UTC().Format(time.RFC3339Nano) || payload.UsedGB != 251 || payload.QuotaGB != 250 || payload.Plan != "pro" {
+			if err := json.Unmarshal([]byte(notices[0].Payload), &payload); err != nil || payload.At != fake.result.ObservedAt.UTC().Format(time.RFC3339Nano) || payload.UsedGB != float64(api.PlanPro.PlanIncludedGBHours()+1) || payload.QuotaGB != api.PlanPro.PlanIncludedGBHours() || payload.Plan != "pro" {
 				t.Fatal("follow-up replaced saved snapshot with current tick", payload, err)
 			}
 			if mailer.count() != 0 || !fake.done {

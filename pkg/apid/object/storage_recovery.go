@@ -90,6 +90,9 @@ func (s *Service) ExecuteBucketOperation(ctx context.Context, st state.ObjectBuc
 	if err == nil {
 		s.Host.EmitAudit(ctx, event, &b.AccountID, map[string]any{"app_id": b.AppID, "bucket_id": b.ID})
 	}
+	if err == nil && b.State == "provisioning" {
+		s.wakeObjectInventory()
+	}
 	return err
 }
 

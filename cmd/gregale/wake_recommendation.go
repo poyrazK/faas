@@ -97,11 +97,11 @@ func renderTriggerClassSummary(timeline api.AppWakeTimelineResponse, app api.App
 		}
 	}
 	_, _ = fmt.Fprintf(osStdout,
-		"  %d of your last %d wakes were monitors/crawlers (≈ €%.2f estimated resident cost)\n",
-		known, wakes, estimateCrawlerWakeCostEUR(known, app))
+		"  %d of your last %d wakes were monitors/crawlers (≈ $%.2f estimated resident cost)\n",
+		known, wakes, estimateCrawlerWakeCost(known, app))
 }
 
-func estimateCrawlerWakeCostEUR(wakes int, app api.AppResponse) float64 {
+func estimateCrawlerWakeCost(wakes int, app api.AppResponse) float64 {
 	if wakes <= 0 || app.RAMMB <= 0 || app.IdleTimeoutS <= 0 {
 		return 0
 	}

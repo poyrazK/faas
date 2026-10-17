@@ -270,3 +270,41 @@ const (
 	AppEventPublishStatusCursorMaxBytes    = 8192
 	AppEventPublishStatusRecipientsMax     = 200
 )
+
+const QueueReleaseRequirementsMax = 32
+const ProjectReleaseStageMaxTTLSeconds = 1800
+const QueueCanaryMaxTTLSeconds = 600
+
+const BindingVerificationRunMaxTTLSeconds = 600
+const BindingVerificationRunMaxSteps = 128
+const BindingVerificationRunMaxActive = 8
+const BindingVerificationRunRequestMaxBytes = 16384
+
+const BindingVerificationRunProbeTimeoutSeconds = 15
+const BindingVerificationRunProbeOutputBytes = 4096
+
+const ProjectBindingVerificationRunMaxActive = 8
+const ProjectBindingVerificationRunRequestMaxBytes = 1048576
+
+const BindingVerificationRunnerDefaultConcurrency = 2
+const BindingVerificationRunnerMaxConcurrency = 8
+
+const ProjectReleaseSetMaxMembers = 100
+
+// Automatic failure diagnostics never extend the original execution deadline.
+const BindingVerificationRunnerDiagnosticsTimeoutMilliseconds = 2000
+
+// Client-side retries apply only to existing verification status GETs.
+const BindingVerificationRunnerDefaultStatusReadRetries = 3
+const BindingVerificationRunnerMaxStatusReadRetries = 8
+const BindingVerificationRunnerStatusReadRetryInitialMilliseconds = 250
+const BindingVerificationRunnerStatusReadRetryMaxMilliseconds = 2000
+
+const BindingVerificationRunListDefaultLimit = 20
+const BindingVerificationRunListMaxLimit = 100
+const BindingVerificationRunListCursorMaxBytes = 2048
+
+const BindingVerificationQualificationMaxConditions = 12800
+
+// Read-after-error creation recovery has no confirmed receipt deadline yet.
+const BindingVerificationCreationReconcileTimeoutMilliseconds = 5000

@@ -74,7 +74,7 @@ func (p *Provider) FetchInvoiceHistory(ctx context.Context, acct state.Account, 
 			continue
 		}
 		currency := strings.ToLower(firstString(item, "currency", "price_currency"))
-		if currency != "eur" {
+		if currency != api.BillingCurrencyLower {
 			continue
 		}
 		total, totalOK := billing.InvoiceMinorUnits(item["total_amount"])
@@ -97,7 +97,7 @@ func (p *Provider) FetchInvoiceHistory(ctx context.Context, acct state.Account, 
 			AccountID: acct.ID, Provider: "polar", ProviderInvoiceID: id, ProviderChargeID: id,
 			Number: firstString(item, "invoice_number", "number"), Status: status,
 			PeriodStart: periodStart, PeriodEnd: periodEnd, SubtotalCents: subtotal, TaxCents: tax,
-			TotalCents: total, AmountPaidCents: paid, Plan: state.InvoicePlanUnknown, Currency: "eur",
+			TotalCents: total, AmountPaidCents: paid, Plan: state.InvoicePlanUnknown, Currency: api.BillingCurrencyLower,
 			PDFAvailable: boolValue(item["is_invoice_generated"]) || firstString(item, "invoice_pdf", "invoice_url", "pdf_url") != "",
 			Details:      polarInvoiceDetails(item),
 		}

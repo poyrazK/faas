@@ -16,20 +16,23 @@ import (
 // `gregale platform-tenants`, mapped to the flags each accepts.
 var platformTenantBillingVerbs = map[string][]string{
 	"rate-cards":         {"id"},
-	"rate-card-create":   {"id", "currency", "price-millicents", "included-units", "tier", "effective-from"},
+	"rate-card-create":   {"id", "currency", "price-millicents", "included-units", "tier", "weight", "effective-from", "unit", "tier-mode"},
 	"statements":         {"id", "month", "period-start", "period-end"},
 	"statement-draft":    {"id", "month", "period-start", "period-end"},
 	"statement-show":     {"id", "statement-id"},
 	"statement-finalize": {"id", "statement-id"},
 	"statement-handoff":  {"id", "statement-id", "invoice-id"},
+	"statement-export":   {"id", "statement-id", "customer", "provider"},
 }
 
 type platformTenantBillingFlags struct {
 	id, statementID, invoiceID    string
+	customer, provider            string
 	currency, effectiveFrom       string
+	unit, tierMode                string
 	priceMillicents               int64
 	includedUnits                 int64
-	tiers                         multiFlag
+	tiers, weights                multiFlag
 	month, periodStart, periodEnd string
 }
 
@@ -45,11 +48,16 @@ func cmdPlatformTenantBilling(verb string, args []string) (handled bool, code in
 	fs.StringVar(&f.id, "id", "", "platform tenant UUID")
 	fs.StringVar(&f.statementID, "statement-id", "", "statement revision UUID")
 	fs.StringVar(&f.invoiceID, "invoice-id", "", "your billing system's invoice reference")
+	fs.StringVar(&f.customer, "customer", "", "provider customer: Stripe cus_…, Paddle ctm_… or Lago external ID (statement-export; default: the tenant's external_ref)")
+	fs.StringVar(&f.provider, "provider", "", "billing provider: stripe, paddle or lago (statement-export; default stripe)")
 	fs.StringVar(&f.currency, "currency", "", "ISO-4217 currency, e.g. EUR")
 	fs.Int64Var(&f.priceMillicents, "price-millicents", -1, "price per request in millicents; 100000 = 1.00")
 	fs.Int64Var(&f.includedUnits, "included-units", 0, "free requests per tenant per UTC calendar month across all apps")
 	fs.Var(&f.tiers, "tier", "graduated step UP_TO:PRICE_MILLICENTS counted per tenant per UTC month, repeatable; the last step's UP_TO is inf")
+	fs.Var(&f.weights, "weight", "route weight \"METHOD /template=N\", repeatable; unlisted routes count 1")
 	fs.StringVar(&f.effectiveFrom, "effective-from", "", "UTC minute the price starts, RFC3339 (default: next minute)")
+	fs.StringVar(&f.unit, "unit", "", "what the card prices: request (default), compute_second or response_megabyte")
+	fs.StringVar(&f.tierMode, "tier-mode", "", "how --tier steps price a month: graduated (default) or volume")
 	fs.StringVar(&f.month, "month", "", "statement calendar month YYYY-MM")
 	fs.StringVar(&f.periodStart, "period-start", "", "statement period start, RFC3339 UTC minute")
 	fs.StringVar(&f.periodEnd, "period-end", "", "statement period end (exclusive), RFC3339 UTC minute")
@@ -97,6 +105,9 @@ func runPlatformTenantBilling(verb string, f platformTenantBillingFlags) int {
 	case "rate-card-create":
 		rateCard, err = buildPricingRequest(consumerFlags{currency: f.currency, priceMillicents: f.priceMillicents,
 			includedUnits: f.includedUnits, tiers: f.tiers, effectiveFrom: f.effectiveFrom})
+		if err == nil {
+			rateCard.RouteWeights, err = parseRouteWeights(f.weights)
+		}
 	case "statements", "statement-draft":
 		start, end, err = statementPeriod(f.periodStart, f.periodEnd, f.month)
 	case "statement-handoff":
@@ -119,7 +130,8 @@ func runPlatformTenantBilling(verb string, f platformTenantBillingFlags) int {
 	case "rate-card-create":
 		out, err = client.CreatePlatformTenantRateCard(ctx, f.id, api.CreatePlatformTenantRateCardRequest{
 			Currency: rateCard.Currency, PriceMillicentsPerUnit: rateCard.PriceMillicentsPerUnit, EffectiveFrom: rateCard.EffectiveFrom,
-			IncludedUnitsPerMonth: rateCard.IncludedUnitsPerMonth, Tiers: rateCard.Tiers,
+			IncludedUnitsPerMonth: rateCard.IncludedUnitsPerMonth, Tiers: rateCard.Tiers, RouteWeights: rateCard.RouteWeights,
+			Unit: strings.TrimSpace(f.unit), TierMode: strings.TrimSpace(f.tierMode),
 		})
 	case "statements":
 		out, err = client.ListPlatformTenantStatements(ctx, f.id, start, end)
@@ -131,6 +143,8 @@ func runPlatformTenantBilling(verb string, f platformTenantBillingFlags) int {
 		out, err = client.FinalizePlatformTenantStatement(ctx, f.id, f.statementID)
 	case "statement-handoff":
 		out, err = client.ClaimPlatformTenantStatement(ctx, f.id, f.statementID, api.ClaimAPIConsumerUsageStatementRequest{ExternalInvoiceID: f.invoiceID})
+	case "statement-export":
+		out, err = client.ExportPlatformTenantStatementInvoice(ctx, f.id, f.statementID, api.CreateStatementInvoiceRequest{Provider: strings.TrimSpace(f.provider), Customer: strings.TrimSpace(f.customer)})
 	}
 	if err != nil {
 		return printErr("Platform tenant "+verb+" failed", err)
@@ -167,6 +181,8 @@ func printPlatformTenantBilling(out any) error {
 		}
 	case api.PlatformTenantStatementResponse:
 		printStatementSummary(tw, v.ID, v.PeriodStart, v.PeriodEnd, v.Revision, v.Status, v.Currency, v.BillableUnits, v.UnpricedUnits, v.AmountMillicents)
+	case api.StatementInvoiceExportResponse:
+		printStatementInvoiceExport(tw, v)
 	case api.PlatformTenantStatementHandoffResponse:
 		_, _ = fmt.Fprintf(tw, "Statement\t%s\nInvoice\t%s\nAmount\t%s\n", v.StatementID, v.ExternalInvoiceID, formatMillicents(v.Currency, v.AmountMillicents))
 	default:

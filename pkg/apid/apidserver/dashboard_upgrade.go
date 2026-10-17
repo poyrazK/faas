@@ -73,7 +73,7 @@ func upgradeOptionsFor(acct state.Account) []dashboard.UpgradeOption {
 		l := api.MustLimitsFor(p)
 		out = append(out, dashboard.UpgradeOption{
 			Plan:            string(p),
-			PriceFormatted:  formatPriceEuros(l.PriceMillicents),
+			PriceFormatted:  formatPlanPrice(l.PriceMillicents),
 			IncludedGBHours: int64(l.IncludedGBHours),
 			RAMMB:           l.RAMMB,
 			MaxConcurrency:  l.MaxConcurrency,

@@ -60,8 +60,8 @@ func TestAppUsage_HobbyPlanReturns200(t *testing.T) {
 	if out.GBHours != 0 || out.MBSeconds != 0 {
 		t.Errorf("non-zero usage on empty fleet: %+v", out)
 	}
-	if out.PlanIncludedGBHours != 50 {
-		t.Errorf("plan_included_gb_hours = %v, want 50 (Hobby)", out.PlanIncludedGBHours)
+	if want := api.PlanHobby.PlanIncludedGBHours(); out.PlanIncludedGBHours != float64(want) {
+		t.Errorf("plan_included_gb_hours = %v, want %d (Hobby)", out.PlanIncludedGBHours, want)
 	}
 	if out.OverageGBHours != 0 {
 		t.Errorf("overage_gb_hours = %v, want 0 (under-band empty fleet)", out.OverageGBHours)

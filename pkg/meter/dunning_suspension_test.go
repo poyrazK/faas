@@ -1,3 +1,5 @@
+// adr: 20261017115753
+// Suspension mail commands retain paired transitions and exact opt-in behavior.
 package meter_test
 
 import (

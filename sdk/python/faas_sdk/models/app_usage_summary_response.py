@@ -27,7 +27,7 @@ class AppUsageSummaryResponse:
     rounding). `overage_gb_hours = max(0, gb_hours -
     plan_included_gb_hours)` — 0 when the customer is under
     their included band, the billable overage above the band
-    otherwise. The Stripe pusher bills overage at €0.01/GB-h
+    otherwise. The Stripe pusher bills overage at $0.01/GB-h
     (CLAUDE.md integer-cents-only rule).
 
     """

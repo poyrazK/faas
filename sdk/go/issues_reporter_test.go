@@ -382,3 +382,32 @@ type panickingError struct{}
 func (panickingError) Error() string {
 	panic("error formatter panic")
 }
+
+func TestIssueReporterCopiesOperationalContext(t *testing.T) {
+	var got faas.IssueEvent
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { json.NewDecoder(r.Body).Decode(&got); w.WriteHeader(202) }))
+	defer srv.Close()
+	reporter, err := faas.NewIssueReporter(faas.IssueReporterOptions{BaseURL: srv.URL, App: "worker", Token: "g_issue_test", GroupingStrategy: "failure-site-v1", SymbolicationStrategy: "deployment-source-maps-v1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries := []faas.IssueBreadcrumb{}
+	for i := 0; i < 20; i++ {
+		entries = append(entries, faas.IssueBreadcrumb{OccurredAt: time.Now(), Category: "workflow", Level: "info", Message: strings.Repeat("x", 300)})
+	}
+	tags := map[string]string{"component": "payments", "email": "private@example.com"}
+	if reporter.CaptureException(errors.New("failed"), faas.IssueContext{Breadcrumbs: entries, Tags: tags}) == "" {
+		t.Fatal("not queued")
+	}
+	tags["component"] = "later"
+	entries[19].Message = "later"
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
+	defer cancel()
+	if err = reporter.Flush(ctx); err != nil {
+		t.Fatal(err)
+	}
+	reporter.Close(ctx)
+	if len(got.Breadcrumbs) != 16 || got.BreadcrumbsDropped != 4 || len(got.Breadcrumbs[15].Message) != 256 || got.Tags["component"] != "payments" || len(got.Tags) != 1 || got.SymbolicationStrategy != "deployment-source-maps-v1" {
+		t.Fatalf("unexpected context: %+v", got)
+	}
+}
