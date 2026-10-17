@@ -295,8 +295,8 @@ BEGIN
  RETURN QUERY SELECT * FROM app_resource_accounts WHERE app_id=application_id;
 END $$;
 
--- The reviewed core FK list above is deliberately explicit. Unknown app-bound
--- account FKs fail erasure closed, including indirect children and new tables.
+-- The reviewed core FK list above is deliberately explicit. Unreviewed
+-- account-bound domains below block erasure, including indirect children.
 CREATE FUNCTION org_app_identity_erasure_blocked(identity_id uuid) RETURNS boolean LANGUAGE plpgsql STABLE AS $$
 DECLARE resource_table text; found boolean;
 BEGIN
@@ -347,6 +347,26 @@ BEGIN
         'application_standard_snapshot_captures',
         'automatic_route_checks',
         'canary_route_gates',
+        'ci_automation_branches',
+        'ci_automation_event_retries',
+        'ci_automation_events',
+        'ci_automation_path_checks',
+        'ci_automation_policies',
+        'ci_automation_pull_requests',
+        'ci_execution_archives',
+        'ci_execution_check_retries',
+        'ci_execution_checks',
+        'ci_execution_profiles',
+        'ci_executions',
+        'ci_github_bindings',
+        'ci_github_checks',
+        'ci_github_triggers',
+        'ci_job_attempts',
+        'ci_managed_objects',
+        'ci_pipeline_revisions',
+        'ci_run_events',
+        'ci_runs',
+        'ci_source_check_retries',
         'commit_sources',
         'consumer_keys',
         'cors_presets',

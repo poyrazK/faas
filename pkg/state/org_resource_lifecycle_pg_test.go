@@ -22,6 +22,37 @@ func TestPostgresOrgResourceBillingAdoption(t *testing.T) {
 	orgResourceBillingAdoption(t, state.NewPgStore(pgtest.OpenMigrated(t)))
 }
 
+func TestPostgresOrgResourceUnreviewedCIBlocksErasure(t *testing.T) {
+	pool := pgtest.OpenMigrated(t)
+	store := state.NewPgStore(pool)
+	f := setupOffboarding(t, store)
+	ctx := t.Context()
+	if err := store.UpdateAccountProviderCustomerID(ctx, f.org.ID, "cus_ci_guard"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdateAccountStripeSubscriptionItem(ctx, f.org.ID, "si_ci_guard"); err != nil {
+		t.Fatal(err)
+	}
+	id := uuid.NewString()
+	if _, err := pool.Exec(ctx, `INSERT INTO ci_pipeline_revisions(id,account_id,name,digest,definition)
+VALUES ($1,$2,'unreviewed','sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','{}'::jsonb)`, id, f.actor.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RemoveOrgMember(ctx, f.org.ID, f.actor.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkAccountDeletionPending(ctx, f.actor.ID); !errors.Is(err, state.ErrOrgAppOwnershipPending) {
+		t.Fatalf("unreviewed CI allowed erasure: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `DELETE FROM accounts WHERE id=$1`, f.actor.ID); err == nil {
+		t.Fatal("raw account deletion bypassed CI ownership guard")
+	}
+	var exists bool
+	if err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM ci_pipeline_revisions WHERE id=$1)`, id).Scan(&exists); err != nil || !exists {
+		t.Fatalf("CI ownership guard discarded the revision: %v", err)
+	}
+}
+
 func TestPostgresOrgResourceUnsupportedBindingBlocksErasure(t *testing.T) {
 	pool := pgtest.OpenMigrated(t)
 	store := state.NewPgStore(pool)

@@ -56,8 +56,8 @@ Completed checks:
   explicitly rejects a revoked authorization context before accepting the valid
   attempt; account export tests also pass.
 
-Changes remain local. Production deployment and native KVM acceptance are
-pending; the HTTP fixture creates a live worker record without booting a VM.
+Production deployment and native KVM acceptance are pending; the HTTP fixture
+creates a live worker record without booting a VM.
 Async admission and dispatch must be paused during the schema change, with all
 quota writers restarted together before resuming. Mixed old/new quota writers
 are unsupported; rollback must precede creator erasure.
@@ -130,3 +130,25 @@ The migration checks take 25.729s with session-scoped parallel query and index
 workers disabled: the local PostgreSQL 16 container's 64 MiB shared-memory mount
 was exhausted by the initial run. Final GitHub checks are tracked on
 [PR #4882](https://github.com/poyrazK/faas/pull/4882) and must pass before merge.
+
+## Integration with main's internal CI service
+
+Main through `c23392d9a` is integrated, preserving its default-off CI service,
+release units, diagnostics and runtime journals. The CI adapter uses the
+underlying PostgreSQL pool. All ownership migration definitions retain erasure
+blockers for the twenty account-scoped CI metadata tables; the new regression
+proves both account-erasure entry points refuse unreviewed CI revisions and
+retain the revision.
+
+Fresh canonical schema and SQL generation, deterministic SQL checks, migration
+lint against this base, OpenAPI parity with duplicate-key rejection, Node client
+generation and build, Python model export parsing, regression-test policy and
+whitespace checks pass. The clone registry retains both branches' entries and
+covers 848 migrated tables.
+
+PostgreSQL organization ownership, CI replay protection and clone-registry
+regressions pass (57.682s). Migration apply-and-walk, replay of all seven ownership
+migrations and ownership down/up recovery pass (30.472s). HTTP offboarding,
+project ownership, email verification and internal CI route regressions pass
+(54.311s). These integration reruns use Go 1.26.9 and PostgreSQL 16 without race
+detection; earlier race results above remain scoped to their recorded source.

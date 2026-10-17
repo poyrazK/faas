@@ -43,6 +43,10 @@ depends on the identity. A shared organization's sole owner must transfer
 ownership or delete the organization before deleting their account, even when
 no other members exist.
 
+Internal CI pipeline, run, execution-profile and automation metadata require
+separate ownership coverage. Creator erasure blocks while those unreviewed
+records still reference the identity.
+
 Denormalized core child organization references follow the app root. The
 migration repairs legacy personal-org references without changing billing
 subject UUIDs, encrypted bytes or usage quantities. New writes enforce the same

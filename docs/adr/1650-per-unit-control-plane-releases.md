@@ -1,0 +1,156 @@
+# ADR-1650 · Per-unit control-plane releases
+
+- **Status:** proposed
+- **Date:** 2026-10-17
+- **Related:** ADR-113 (canonical signed release), ADR-129 (deploy version gauge), ADR-580 (control-plane convergence in CD)
+
+## Context
+
+One signed tag (release.yml) ships every daemon, CLI, runner and the kernel
+(ADR-113). Building and signing takes 4-5 minutes, but a rollout takes 55-75
+minutes: the mega-tier gate, base prestage, compute drains and acceptance all
+run for every release, whatever it changed. A merge that touches one
+control-plane daemon waits for all of it.
+
+cd-platform run 38985388820 shows where the time goes:
+
+- In the control-plane stage, 30.7 of 43.3 min was the full Ansible
+  convergence of the control-plane roles, which runs whenever their inputs
+  changed since the last release, and nearly every release changes some.
+- Each compute node took 22-28 min, serially. About 720 of its 752 Ansible
+  tasks were small convergence tasks (about 12 min), and the runtime-base
+  pre-stage took 5.0 min.
+- The fleet convergence report took 16-20 min.
+
+Activating new binaries is entangled with configuring the host. The owner's target is a merged change
+in production within 30 minutes, deploying only what it touches, with zero
+downtime.
+
+The control plane has no vmmd. Its daemons (apid, meterd, githubd, outboundd
+and the optional s3-gatewayd and bridged) restart without touching customer
+VMs, and apid is socket-activated, so a restart queues rather than refuses
+connections.
+
+## Decision
+
+Add a second, narrower release lane for control-plane daemons. Full releases
+are unchanged and stay the only lane for everything else.
+
+**Selection (`scripts/ci/affected_units.py`).** A binary's inputs are the files
+`go build` reads for it under the release configuration (linux/amd64, CGO off,
+`-tags metal` for daemons): the Go, assembly and embedded files of every module
+package in its import closure, from `go list -deps`, plus go.mod, go.sum and
+the Makefile's release build recipe. Test files and files a build constraint
+excludes are not inputs. Each binary gets a **unit version**: the newest
+first-parent commit between the base full release and the head that changed one
+of its inputs. Lanes come from `scripts/ci/release_units.json`, which a test
+keeps in lockstep with `pkg/daemonunitspec` roles, units and readiness URLs.
+
+A range is eligible when at least one control-plane daemon changed and none of
+these did since the base: migrations, `deploy/` (units, roles, rules,
+manifests), go.mod/go.sum, the files cd-controlplane copies into its bundle,
+and the release tarball's own contents. Roles only the compute play runs
+(`compute_only_paths`, which a test checks against bootstrap.yml) wait instead
+of blocking. Blocking go.mod also means a unit release never changes a
+third-party dependency, so the release SBOM and its KGV baseline still
+describe the control plane. Shared daemons (schedd and
+gatewayd-public also run on compute hosts), compute daemons, CLIs, guest and
+image inputs do not block. They are reported as pending and wait at the base
+release, which is the mixed state every rolling rollout already runs while
+compute trails the control plane.
+
+**Build (`release-units.yml`).** On each push to main, build every eligible
+control-plane daemon changed since the newest full release tag. The build uses
+`make build-release-unit`, which has the same flags as `build-release-batch`, and
+stamps `pkg/wire.Version=unit-<unit version>`. The bytes therefore depend only
+on the source the daemon was built from. The workflow signs the tarball with
+GitHub OIDC (identity: release-units.yml on main) and uploads it as an artifact.
+A unit release is cumulative over its base, so a newer one supersedes an older
+one.
+
+**Deploy (`cd-controlplane.yml`, `deploy-units` job, `units_run_id`).**
+
+1. Verify the signature, the manifest and each binary's digest.
+2. Read the host's active release. The plan (`scripts/ci/plan_unit_deploy.py`)
+   refuses unless the host runs exactly the unit release's base full release,
+   or an earlier unit release over it. It restarts only daemons whose unit
+   version differs from the host's.
+3. `deployctl unit-overlay` assembles a new immutable release directory under
+   the deploy lock. Each file is a hard link to the active release, except the
+   replaced binaries, `bin/deployctl` and `unit-versions.json`. The id is
+   deterministic (40 hex), so a rerun reuses the directory and retention and
+   rollback treat it like any release.
+4. `deployctl deploy --only <services> --expect-current <base>` activates it.
+   The controller checks the active release under the lock (compare-and-swap),
+   then restarts and gates only the listed services. It rolls back to the base
+   on failure.
+5. `scripts/unit-release-verify.sh` checks each unit (active, running from the
+   new release, readiness 200) and restarts enabled optional units onto it. On
+   failure the workflow runs `deployctl rollback --only` and the units are back
+   on the previous release. All of this runs under the same public-path
+   availability observer as a full activation.
+
+The unit lane never runs migrations, role convergence, KGV rotation or
+fleet-seal steps. Those inputs are blocking, so they are unchanged since the
+base, which already ran them. This is the split between release activation
+and host configuration, for the control plane: no Ansible runs on the unit
+lane's critical path.
+
+## Consequences
+
+- A single-daemon merge reaches the control plane in about 10-15 minutes,
+  opt-in through `UNIT_RELEASE_AUTODEPLOY_ENVIRONMENT`. No full tag is cut,
+  and compute is untouched.
+- Daemons on the control plane can report different versions. Full releases
+  still converge to one version, and `FaasDeployVersionSkew` now ignores
+  `unit-*` versions.
+- The next full release replaces every overlay. Overlays need no extra disk,
+  because unchanged files are hard links. Retention keeps the active
+  overlay's base full release however many overlays follow it. That
+  directory holds the canonical binaries `gregalectl doctor` (and so
+  `fleet_verify`) verifies, and it stays a full rollback target.
+- The unit lane's gate is the merged pull request's light tier. The mega tier
+  still gates every full tag and runs nightly. This is a deliberate trade the
+  owner may tighten, for example by requiring a green nightly on an ancestor.
+- Measured on the last 300 merges, each taken on its own: 47% were eligible
+  (7% touched only control-plane daemons, 40% also touched shared or compute
+  daemons, which wait), 27% were blocked (18% migrations, 12% `deploy/`), and
+  26% changed no control-plane binary. Unit releases accumulate since the
+  base, though, so one blocking merge closes the lane until the next full
+  release. After each of the last 15 tags the lane stayed open for a median of
+  1 merge (range 0-8). Slice 1 is mechanically complete but rarely usable
+  until migrations stop blocking.
+
+## Still needed
+
+- **Migrations.** Most blocked ranges contain a migration. Allowing the lane to
+  run expand-only migrations ahead of restarts needs a machine-checkable
+  compatibility marker (owned by the release-safety-rails work).
+- **Compute lane.** schedd, gatewayd-public(-edge) and realtimed restart
+  without touching VMs, but they run on compute hosts and need a per-unit mode
+  in cd-compute.
+- **Build runner.** release-units.yml builds on a GitHub-hosted runner, so on
+  a busy CI day its job can queue 8-14 min before it starts. Building on the
+  dedicated fleet runner (warm Go cache, no queue) keeps merge-to-prod near 10
+  min, but puts builds of main on the host that holds deploy keys. That is the
+  owner's decision.
+- **Full lane, outside this ADR.** Run host configuration in its own lane,
+  keyed by a per-role content hash, instead of inside every activation.
+  Content-address runtime bases and pre-stage them off the critical path.
+  Roll compute as a canary node, then parallel waves, once activation is
+  per-unit without a drain.
+- **Base discovery.** The base defaults to the newest tag. When production
+  trails it, dispatch with `base`. Recording the deployed release (for example
+  in a GitHub deployment) would remove that step.
+
+## Rejected alternatives
+
+- **Faster full releases only.** Every release still drains compute and runs
+  acceptance for code it did not change.
+- **Swap a binary in place under `/opt/faas/current`.** This breaks
+  immutability, bundle verification and rollback, and a crash restart could
+  pick up half-written bytes.
+- **Per-merge, non-cumulative unit releases.** A skipped or failed deploy
+  would leave a later one unable to prove what the host runs.
+- **Stamp the merge commit as the version.** The bytes would change on every
+  merge, and a rebuild could not show the host already runs that code.
