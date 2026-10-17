@@ -41,6 +41,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/managedpostgres/copycontents"
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
+	"github.com/onebox-faas/faas/pkg/oidc"
 	"github.com/onebox-faas/faas/pkg/openapidiff"
 	"github.com/onebox-faas/faas/pkg/outbound"
 	"github.com/onebox-faas/faas/pkg/preflight"
@@ -1249,6 +1250,10 @@ func newServerWithDeps(
 	s.object.Host = objectHost{s}
 	s.authMw.HostingAutomationEnabled = func() bool { return (hostingHost{s}).HostingEnabled() && (hostingHost{s}).HostingAutomationEnabled() }
 	s.hosting.Host = hostingHost{s}
+	s.hosting.OIDCVerifier = oidc.NewVerifier(s.log)
+	s.authMw.HostingOIDCEnabled = func() bool {
+		return (hostingHost{s}).HostingOIDCEnabled() && (hostingHost{s}).HostingDurableRoutingEnabled()
+	}
 	s.operation.Host = operationHost{s}
 	s.edgeRules.Host = edgeRulesHost{s}
 	s.queueLeases.Host = queueLeasesHost{s}
@@ -1311,6 +1316,10 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/internal/hosting/sites/{site}/previews", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.requireOperator(s.hosting.ListPreviews)))))
 	mux.HandleFunc("GET /v1/internal/hosting/sites/{site}/cleanup", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.requireOperator(s.hosting.GetCleanupPlan))))
 	mux.HandleFunc("PUT /v1/internal/hosting/sites/{site}/retention", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireOperator(s.hosting.SetRetentionPolicy))))
+	mux.Handle("POST /v1/internal/hosting/oidc/exchange", middleware.AuthLimitWithLimiter(middleware.AuthLimitConfig{Log: s.log}, s.apiAuthLimiter)(http.HandlerFunc(s.hosting.ExchangeOIDC)))
+	mux.HandleFunc("GET /v1/internal/hosting/sites/{site}/oidc-trusts", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.requireOperator(s.hosting.ListOIDCTrusts))))
+	mux.HandleFunc("POST /v1/internal/hosting/sites/{site}/oidc-trusts", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireOperator(s.hosting.CreateOIDCTrust))))
+	mux.HandleFunc("DELETE /v1/internal/hosting/sites/{site}/oidc-trusts/{trust}", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireOperator(s.hosting.RevokeOIDCTrust))))
 	mux.HandleFunc("GET /v1/internal/hosting/sites/{site}/automation-credentials", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.requireOperator(s.hosting.ListAutomationCredentials))))
 	mux.HandleFunc("POST /v1/internal/hosting/sites/{site}/automation-credentials", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireOperator(s.hosting.CreateAutomationCredential))))
 	mux.HandleFunc("DELETE /v1/internal/hosting/sites/{site}/automation-credentials/{credential}", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.requireOperator(s.hosting.RevokeAutomationCredential))))

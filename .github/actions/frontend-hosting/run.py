@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""No builds, credential minting, GitHub API writes, or automatic promotion."""
+"""Stage prebuilt previews using a site token or explicitly trusted GitHub OIDC."""
 import json
 import os
 from pathlib import Path
@@ -28,7 +28,11 @@ def main():
     if env.get('HOSTING_ENABLED') != 'true':
         return fail('Internal frontend hosting Action is disabled; explicitly set enabled: true.')
     token = env.get('FAAS_TOKEN', '')
-    if not re.fullmatch(r'fp_host_[0-9a-f]{64}', token):
+    oidc = env.get('HOSTING_OIDC_ENABLED', 'false')
+    trust = env.get('HOSTING_OIDC_TRUST', '')
+    if oidc not in ('true', 'false') or (oidc == 'true' and (token or not canonical_uuid(trust))) or (oidc == 'false' and trust):
+        return fail('Select either a site token or explicitly enabled OIDC with a trust UUID; do not mix credentials.')
+    if oidc == 'false' and not re.fullmatch(r'fp_host_[0-9a-f]{64}', token):
         return fail('Provide a site-scoped automation credential, not an account or app-deploy token.')
     base = env.get('FAAS_API', '').rstrip('/')
     try:
@@ -57,6 +61,9 @@ def main():
     if spa not in ('true', 'false'):
         return fail('spa must be true or false.')
     args = [binary, 'sites', 'ci', '--site', site, '--run-id', run, '--path', env.get('HOSTING_PATH', 'dist'), '--preview-ttl', env.get('HOSTING_PREVIEW_TTL', '24h'), '--wait-timeout', env.get('HOSTING_WAIT_TIMEOUT', '2m')]
+    if oidc == 'true':
+        args.extend(['--oidc-trust', trust])
+        env['FAAS_FRONTEND_HOSTING_OIDC_ENABLED'] = '1'
     if spa == 'true':
         args.append('--spa')
     for flag, value in [('--source-repository', repository), ('--source-commit', env.get('GITHUB_SHA', '')), ('--source-branch', env.get('GITHUB_REF_NAME', '')), ('--description', env.get('HOSTING_DESCRIPTION', ''))]:

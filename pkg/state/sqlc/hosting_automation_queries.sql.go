@@ -101,7 +101,7 @@ func (q *Queries) HostingCIRunPreviewCreated(ctx context.Context, db DBTX, arg H
 }
 
 const hostingCredentialAuthenticate = `-- name: HostingCredentialAuthenticate :one
-SELECT c.id, c.account_id, c.site_id, c.token_hash, c.label, c.operations, c.created_at, c.expires_at FROM hosting_automation_credentials c JOIN hosting_sites s ON s.id=c.site_id
+SELECT c.id, c.account_id, c.site_id, c.token_hash, c.label, c.operations, c.created_at, c.expires_at, c.oidc_trust_id FROM hosting_automation_credentials c JOIN hosting_sites s ON s.id=c.site_id
 WHERE c.token_hash=$1 AND c.expires_at>clock_timestamp() AND s.account_id=c.account_id AND s.status='active' AND s.durable_routing
 `
 
@@ -117,12 +117,13 @@ func (q *Queries) HostingCredentialAuthenticate(ctx context.Context, db DBTX, to
 		&i.Operations,
 		&i.CreatedAt,
 		&i.ExpiresAt,
+		&i.OidcTrustID,
 	)
 	return i, err
 }
 
 const hostingCredentialCount = `-- name: HostingCredentialCount :one
-SELECT count(*)::bigint FROM hosting_automation_credentials WHERE site_id=$1
+SELECT count(*)::bigint FROM hosting_automation_credentials WHERE site_id=$1 AND oidc_trust_id IS NULL
 `
 
 func (q *Queries) HostingCredentialCount(ctx context.Context, db DBTX, siteID pgtype.UUID) (int64, error) {
@@ -133,7 +134,7 @@ func (q *Queries) HostingCredentialCount(ctx context.Context, db DBTX, siteID pg
 }
 
 const hostingCredentialCreate = `-- name: HostingCredentialCreate :one
-INSERT INTO hosting_automation_credentials(id,account_id,site_id,token_hash,label,operations,created_at,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id, account_id, site_id, token_hash, label, operations, created_at, expires_at
+INSERT INTO hosting_automation_credentials(id,account_id,site_id,token_hash,label,operations,created_at,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id, account_id, site_id, token_hash, label, operations, created_at, expires_at, oidc_trust_id
 `
 
 type HostingCredentialCreateParams struct {
@@ -168,12 +169,13 @@ func (q *Queries) HostingCredentialCreate(ctx context.Context, db DBTX, arg Host
 		&i.Operations,
 		&i.CreatedAt,
 		&i.ExpiresAt,
+		&i.OidcTrustID,
 	)
 	return i, err
 }
 
 const hostingCredentialList = `-- name: HostingCredentialList :many
-SELECT id, account_id, site_id, token_hash, label, operations, created_at, expires_at FROM hosting_automation_credentials WHERE account_id=$1 AND site_id=$2 ORDER BY created_at,id
+SELECT id, account_id, site_id, token_hash, label, operations, created_at, expires_at, oidc_trust_id FROM hosting_automation_credentials WHERE account_id=$1 AND site_id=$2 AND oidc_trust_id IS NULL ORDER BY created_at,id
 `
 
 type HostingCredentialListParams struct {
@@ -199,6 +201,7 @@ func (q *Queries) HostingCredentialList(ctx context.Context, db DBTX, arg Hostin
 			&i.Operations,
 			&i.CreatedAt,
 			&i.ExpiresAt,
+			&i.OidcTrustID,
 		); err != nil {
 			return nil, err
 		}
@@ -220,7 +223,7 @@ func (q *Queries) HostingCredentialPruneExpired(ctx context.Context, db DBTX, si
 }
 
 const hostingCredentialRevoke = `-- name: HostingCredentialRevoke :execrows
-DELETE FROM hosting_automation_credentials WHERE account_id=$1 AND site_id=$2 AND id=$3
+DELETE FROM hosting_automation_credentials WHERE account_id=$1 AND site_id=$2 AND id=$3 AND oidc_trust_id IS NULL
 `
 
 type HostingCredentialRevokeParams struct {

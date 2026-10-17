@@ -12,7 +12,7 @@ import (
 var _ HostingAutomationStore = (*MemStore)(nil)
 
 func (m *MemStore) CreateHostingAutomationCredential(_ context.Context, c api.HostingAutomationCredential) (api.HostingAutomationCredential, error) {
-	if !validHostingCredential(c) {
+	if c.OIDCTrustID != "" || !validHostingCredential(c) {
 		return c, ErrInvalidArgument
 	}
 	m.mu.Lock()
@@ -30,7 +30,7 @@ func (m *MemStore) CreateHostingAutomationCredential(_ context.Context, c api.Ho
 			delete(m.hostingCredentials, id)
 			continue
 		}
-		if old.SiteID == site.ID {
+		if old.SiteID == site.ID && old.OIDCTrustID == "" {
 			count++
 		}
 		if old.ID == c.ID || string(old.Hash) == string(c.Hash) {
@@ -54,7 +54,7 @@ func (m *MemStore) ListHostingAutomationCredentials(_ context.Context, account, 
 	}
 	out := []api.HostingAutomationCredential{}
 	for _, c := range m.hostingCredentials {
-		if c.SiteID == site {
+		if c.SiteID == site && c.OIDCTrustID == "" {
 			c = cloneHostingCredential(c)
 			c.Hash = nil
 			out = append(out, c)
@@ -67,7 +67,7 @@ func (m *MemStore) RevokeHostingAutomationCredential(_ context.Context, account,
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	c, ok := m.hostingCredentials[id]
-	if !ok || c.AccountID != account || c.SiteID != site {
+	if !ok || c.AccountID != account || c.SiteID != site || c.OIDCTrustID != "" {
 		return ErrNotFound
 	}
 	delete(m.hostingCredentials, id)

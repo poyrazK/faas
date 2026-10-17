@@ -45,6 +45,14 @@ class ActionContracts(unittest.TestCase):
  def test_success_requires_matching_identity_and_publication_receipt(self):
   for result in [{},[],{'run':{'id':RELEASE,'site_id':SITE}},{'run':{'id':str(uuid.uuid5(uuid.NAMESPACE_URL,'gregale-hosting:https://api.example.com/'+SITE+':org/site:12345')),'site_id':SITE},'state':'publication_pending','published':False}]:
    self.assertEqual(self.invoke(result=result)[0],1)
+ def test_oidc_is_explicit_and_preserves_identity_without_token_arguments(self):
+  overrides={'FAAS_TOKEN':'','HOSTING_OIDC_ENABLED':'true','HOSTING_OIDC_TRUST':RELEASE,'ACTIONS_ID_TOKEN_REQUEST_URL':'https://runner.actions.githubusercontent.com/job','ACTIONS_ID_TOKEN_REQUEST_TOKEN':'github-secret'}
+  code,text,output,args,calls=self.invoke(overrides)
+  self.assertEqual(code,0);self.assertIn('--oidc-trust',args.args[0]);self.assertIn(RELEASE,args.args[0]);self.assertNotIn('github-secret',str(args.args[0])+text+output)
+  self.assertEqual(args.kwargs['env']['FAAS_FRONTEND_HOSTING_OIDC_ENABLED'],'1');self.assertEqual(args.kwargs['env']['FAAS_TOKEN'],'')
+  self.assertEqual(output,self.invoke({**overrides,'GITHUB_RUN_ATTEMPT':'2'})[2])
+  for invalid in [{'HOSTING_OIDC_ENABLED':'false'},{'FAAS_TOKEN':TOKEN},{'HOSTING_OIDC_TRUST':'bad'},{'HOSTING_OIDC_ENABLED':'TRUE'}]:
+   self.assertEqual(self.invoke({**overrides,**invalid})[4],0)
  def test_malformed_private_url_is_rejected_without_echoing_it(self):
   run=str(uuid.uuid5(uuid.NAMESPACE_URL,'gregale-hosting:https://api.example.com/'+SITE+':org/site:12345'))
   for value in ['https://[invalid', {'secret':TOKEN}, 'https://user:'+TOKEN+'@hosting.example', 'https://p-'+PREVIEW+'.hosting.example/\\ninjected-output=yes']:

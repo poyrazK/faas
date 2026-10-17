@@ -22,6 +22,7 @@ func cmdSitesCI(args []string) int {
 		return printErr("Site automation is disabled", errors.New("set FAAS_FRONTEND_HOSTING_AUTOMATION_ENABLED=1"))
 	}
 	flags := newFlagSet("sites-ci", flag.ContinueOnError)
+	trust := flags.String("oidc-trust", "", "explicit GitHub OIDC trust binding; requires FAAS_FRONTEND_HOSTING_OIDC_ENABLED=1")
 	site := flags.String("site", "", "one site UUID")
 	runID := flags.String("run-id", "", "stable UUID for this CI intent, reused on every retry")
 	dir := flags.String("path", "dist", "prebuilt output directory")
@@ -38,11 +39,14 @@ func cmdSitesCI(args []string) int {
 	if uuid.Validate(*site) != nil || !hosting.ValidCIRunID(*runID) || *ttl < api.HostingPreviewTTLMin || *ttl > api.HostingPreviewTTLMax || *ttl%time.Second != 0 || *timeout <= 0 || *timeout > api.HostingCIWaitMax {
 		return printErr("Invalid CI intent", errors.New("site and stable run UUIDs, bounded preview TTL and wait timeout are required"))
 	}
-	token := loadToken()
+	token := ""
+	if *trust == "" {
+		token = loadToken()
+	}
 	base := apiBase()
 	u, err := url.Parse(base)
 	loopback := u != nil && (u.Hostname() == "localhost" || net.ParseIP(u.Hostname()).IsLoopback())
-	if err != nil || u == nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Path != "" && u.Path != "/" || u.Scheme != "https" && (u.Scheme != "http" || !loopback) || !api.ValidHostingAutomationToken(token) {
+	if err != nil || u == nil || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Path != "" && u.Path != "/" || u.Scheme != "https" && (u.Scheme != "http" || !loopback) || *trust == "" && !api.ValidHostingAutomationToken(token) {
 		return printErr("Invalid CI connection", errors.New("use a site-scoped automation credential and HTTPS API origin (loopback HTTP is allowed for local tests)"))
 	}
 	manifest, err := staticHostingManifest(*dir, *spa)
@@ -57,6 +61,16 @@ func cmdSitesCI(args []string) int {
 		}
 	}
 	client := api.NewHostingAutomationClient(strings.TrimSuffix(base, "/"), token)
+	if *trust != "" {
+		enabled := os.Getenv("FAAS_FRONTEND_HOSTING_OIDC_ENABLED")
+		if (enabled != "1" && enabled != "true") || os.Getenv("FAAS_TOKEN") != "" {
+			return printErr("OIDC is disabled or credentials are mixed", errors.New("explicitly enable hosting OIDC and omit FAAS_TOKEN"))
+		}
+		client, err = api.NewGitHubHostingOIDCClient(base, *site, *trust, os.Getenv("ACTIONS_ID_TOKEN_REQUEST_URL"), os.Getenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN"))
+		if err != nil {
+			return printErr("Invalid GitHub job identity", err)
+		}
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 	ctx, cancel := context.WithTimeout(ctx, api.HostingCIWorkflowTimeout)

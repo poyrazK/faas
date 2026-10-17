@@ -1,13 +1,13 @@
 -- name: HostingCredentialPruneExpired :exec
 DELETE FROM hosting_automation_credentials WHERE site_id=$1 AND expires_at<=clock_timestamp();
 -- name: HostingCredentialCount :one
-SELECT count(*)::bigint FROM hosting_automation_credentials WHERE site_id=$1;
+SELECT count(*)::bigint FROM hosting_automation_credentials WHERE site_id=$1 AND oidc_trust_id IS NULL;
 -- name: HostingCredentialCreate :one
 INSERT INTO hosting_automation_credentials(id,account_id,site_id,token_hash,label,operations,created_at,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *;
 -- name: HostingCredentialList :many
-SELECT * FROM hosting_automation_credentials WHERE account_id=$1 AND site_id=$2 ORDER BY created_at,id;
+SELECT * FROM hosting_automation_credentials WHERE account_id=$1 AND site_id=$2 AND oidc_trust_id IS NULL ORDER BY created_at,id;
 -- name: HostingCredentialRevoke :execrows
-DELETE FROM hosting_automation_credentials WHERE account_id=$1 AND site_id=$2 AND id=$3;
+DELETE FROM hosting_automation_credentials WHERE account_id=$1 AND site_id=$2 AND id=$3 AND oidc_trust_id IS NULL;
 -- name: HostingCredentialAuthenticate :one
 SELECT c.* FROM hosting_automation_credentials c JOIN hosting_sites s ON s.id=c.site_id
 WHERE c.token_hash=$1 AND c.expires_at>clock_timestamp() AND s.account_id=c.account_id AND s.status='active' AND s.durable_routing;

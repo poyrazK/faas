@@ -345,6 +345,11 @@ func (m *MemStore) PurgeHostingSite(_ context.Context, account, site string) err
 			delete(m.hostingReleases, id)
 		}
 	}
+	for id, trust := range m.hostingOIDCTrusts {
+		if trust.SiteID == site {
+			delete(m.hostingOIDCTrusts, id)
+		}
+	}
 	for id, c := range m.hostingCredentials {
 		if c.SiteID == site {
 			delete(m.hostingCredentials, id)

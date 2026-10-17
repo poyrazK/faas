@@ -20,7 +20,14 @@ type HostingAutomationStore interface {
 }
 
 func validHostingCredential(c api.HostingAutomationCredential) bool {
-	return uuid.Validate(c.ID) == nil && uuid.Validate(c.AccountID) == nil && uuid.Validate(c.SiteID) == nil && len(c.Hash) == 32 && hosting.ValidHostingAutomationLabel(c.Label) && hosting.ValidHostingAutomationOperations(c.Operations) && !c.CreatedAt.IsZero() && c.ExpiresAt.Sub(c.CreatedAt) >= api.HostingAutomationTTLMin && c.ExpiresAt.Sub(c.CreatedAt) <= api.HostingAutomationTTLMax
+	minTTL, maxTTL := api.HostingAutomationTTLMin, api.HostingAutomationTTLMax
+	if c.OIDCTrustID != "" {
+		if uuid.Validate(c.OIDCTrustID) != nil {
+			return false
+		}
+		minTTL, maxTTL = time.Second, api.HostingOIDCBearerTTL
+	}
+	return uuid.Validate(c.ID) == nil && uuid.Validate(c.AccountID) == nil && uuid.Validate(c.SiteID) == nil && len(c.Hash) == 32 && hosting.ValidHostingAutomationLabel(c.Label) && hosting.ValidHostingAutomationOperations(c.Operations) && !c.CreatedAt.IsZero() && c.ExpiresAt.Sub(c.CreatedAt) >= minTTL && c.ExpiresAt.Sub(c.CreatedAt) <= maxTTL
 }
 func cloneHostingCredential(c api.HostingAutomationCredential) api.HostingAutomationCredential {
 	c.Hash = append([]byte(nil), c.Hash...)
@@ -28,7 +35,7 @@ func cloneHostingCredential(c api.HostingAutomationCredential) api.HostingAutoma
 	return c
 }
 func hostingCredentialKey(c api.HostingAutomationCredential) APIKey {
-	return APIKey{ID: c.ID, AccountID: c.AccountID, HostingSiteID: c.SiteID, HostingOperations: append([]string(nil), c.Operations...), Scopes: []string{api.ScopeAppsRead, api.ScopeDeployWrite}, Status: string(APIKeyStatusActive)}
+	return APIKey{ID: c.ID, AccountID: c.AccountID, HostingSiteID: c.SiteID, HostingOIDCTrustID: c.OIDCTrustID, HostingOperations: append([]string(nil), c.Operations...), Scopes: []string{api.ScopeAppsRead, api.ScopeDeployWrite}, Status: string(APIKeyStatusActive)}
 }
 func ciPreview(run api.HostingCIRun, site api.HostingSite) api.HostingPreview {
 	return api.HostingPreview{ID: run.PreviewID, AccountID: site.AccountID, SiteID: site.ID, ReleaseID: run.ReleaseID, OriginID: site.OriginID, Hostname: "p-" + run.PreviewID + site.Hostname[len(site.ID):], CreatedAt: run.CreatedAt, ExpiresAt: run.PreviewExpiresAt}

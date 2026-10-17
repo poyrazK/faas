@@ -6,7 +6,13 @@ inputs:
     default: 'false'
   api-token:
     description: Site-scoped fp_host_ credential stored as a GitHub secret.
-    required: true
+    default: ''
+  oidc-enabled:
+    description: Explicit OIDC opt-in; omit api-token and grant the calling job id-token write permission.
+    default: 'false'
+  oidc-trust:
+    description: Explicit site trust UUID for GitHub identity exchange.
+    default: ''
   api-base:
     description: Gregale HTTPS API origin.
     default: https://api.gregale.dev
@@ -59,6 +65,8 @@ runs:
       env:
         ACTION_PATH: ${{ github.action_path }}
         HOSTING_ENABLED: ${{ inputs.enabled }}
+        HOSTING_OIDC_ENABLED: ${{ inputs.oidc-enabled }}
+        HOSTING_OIDC_TRUST: ${{ inputs.oidc-trust }}
         FAAS_TOKEN: ${{ inputs.api-token }}
         FAAS_API: ${{ inputs.api-base }}
         HOSTING_SITE: ${{ inputs.site }}

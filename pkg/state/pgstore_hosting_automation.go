@@ -14,13 +14,17 @@ import (
 var _ HostingAutomationStore = (*PgStore)(nil)
 
 func hostingCredentialRow(r sqlc.HostingAutomationCredential) api.HostingAutomationCredential {
-	return api.HostingAutomationCredential{ID: uuidString(r.ID), AccountID: uuidString(r.AccountID), SiteID: uuidString(r.SiteID), Label: r.Label, Operations: r.Operations, Hash: r.TokenHash, CreatedAt: r.CreatedAt.Time, ExpiresAt: r.ExpiresAt.Time}
+	c := api.HostingAutomationCredential{ID: uuidString(r.ID), AccountID: uuidString(r.AccountID), SiteID: uuidString(r.SiteID), Label: r.Label, Operations: r.Operations, Hash: r.TokenHash, CreatedAt: r.CreatedAt.Time, ExpiresAt: r.ExpiresAt.Time}
+	if r.OidcTrustID.Valid {
+		c.OIDCTrustID = uuidString(r.OidcTrustID)
+	}
+	return c
 }
 func hostingCIRunRow(r sqlc.HostingCiRun) api.HostingCIRun {
 	return api.HostingCIRun{ID: uuidString(r.ID), SiteID: uuidString(r.SiteID), ReleaseID: uuidString(r.ReleaseID), PreviewID: uuidString(r.PreviewID), PreviewCreated: r.PreviewCreated, PreviewExpiresAt: r.PreviewExpiresAt.Time, Fingerprint: r.Fingerprint, CreatedAt: r.CreatedAt.Time}
 }
 func (s *PgStore) CreateHostingAutomationCredential(ctx context.Context, c api.HostingAutomationCredential) (api.HostingAutomationCredential, error) {
-	if !validHostingCredential(c) {
+	if c.OIDCTrustID != "" || !validHostingCredential(c) {
 		return c, ErrInvalidArgument
 	}
 	tx, err := s.pool.Begin(ctx)

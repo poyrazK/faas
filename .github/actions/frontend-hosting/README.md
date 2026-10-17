@@ -1,8 +1,9 @@
 # Internal Gregale frontend preview Action
 
 Default-off composite Action for **already-built** static files. It requires a
-site-scoped `fp_host_` secret with `stage,preview` operations and a trusted pinned
-CLI containing `sites ci`. See the
+site-scoped `fp_host_` secret with `stage,preview` operations, or explicitly
+enabled GitHub OIDC with a reviewed site trust binding. Both require a trusted
+pinned CLI containing `sites ci`. See the
 [operator guide](../../../docs/internal-frontend-hosting-automation.md) for flags,
 credential issuance, limits and recovery.
 
@@ -38,9 +39,20 @@ Outputs are `run-id`, `release-id`, `preview-id`, `preview-url` and
 never prints CLI stderr or token values. Acknowledgment waits for provider
 publication receipts and still requires edge refresh and reviewer Access sign-in.
 It does not promote production, report serving health, post GitHub comments or
-checks, mint credentials, or build output.
+checks, create trust bindings, or build output.
 
 Default run identity is stable across GitHub reruns, with the original preview
 expiry. Retrying changed files, metadata or TTL conflicts. Specify `run-id` for a
 distinct same-site deployment within one GitHub run; never change it merely to
 hide an uncertain failure. Removed/expired previews are not recreated by retries.
+
+## GitHub identity without a Gregale secret
+
+See the [OIDC guide](../../../docs/internal-frontend-hosting-oidc.md) to create an
+explicit site trust binding and enable the independent API/CLI/dashboard flags.
+In a trusted job with `permissions: {contents: read, id-token: write}`, replace
+`api-token` with `oidc-enabled: 'true'` and `oidc-trust: TRUST_UUID`. Do not supply
+both. The job's repository IDs, branch, workflow, event and optional environment
+must match the binding. Pull request events are excluded. The CLI exchanges and
+renews short-lived stage/preview credentials before API calls while preserving
+the same run ID and original preview expiry. No credentials are printed or saved.

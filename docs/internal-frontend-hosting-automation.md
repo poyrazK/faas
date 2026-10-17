@@ -137,3 +137,5 @@ Local tests cover real API authorization/hot disable/revocation, memory/Postgres
 concurrency, atomic rollback, quota and catalog cleanup, lost CLI responses, exact
 upload grants, secret-safe Action outputs and stable GitHub reruns. Live
 Cloudflare qualification remains deferred; no live hosting resources are changed.
+
+For short-lived GitHub identity exchange and automatic renewal without stored Gregale secrets, see the separately gated [OIDC guide](internal-frontend-hosting-oidc.md).

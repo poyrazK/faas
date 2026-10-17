@@ -429,3 +429,5 @@ The [release source and history guide](internal-frontend-hosting-history.md) exp
 The [CI automation guide](internal-frontend-hosting-automation.md) covers site-scoped credentials, retained run identities and a default-off GitHub Action that stages prebuilt files into private previews.
 
 The [retention guide](internal-frontend-hosting-retention.md) covers default-off per-site cleanup policies, protected releases and safe retirement of abandoned uploads and expired CI releases.
+
+GitHub jobs can optionally use [explicit site OIDC trust](internal-frontend-hosting-oidc.md) instead of a stored Gregale CI secret. This requires its own default-off flag.

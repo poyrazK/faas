@@ -179,6 +179,7 @@ type AccountHandler func(w http.ResponseWriter, r *http.Request, acct state.Acco
 // across cases.
 type Middleware struct {
 	HostingAutomationEnabled func() bool
+	HostingOIDCEnabled       func() bool
 	Authn                    Authenticator
 	Sessions                 Sessions
 	Lookups                  SessionLookup       // live-session-row check; nil disables RequireSession's cookie branch

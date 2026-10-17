@@ -1401,6 +1401,14 @@ type Querier interface {
 	HostingDomainReleaseBatch(ctx context.Context, db DBTX, leaseToken pgtype.UUID) error
 	HostingDomainReserve(ctx context.Context, db DBTX, arg HostingDomainReserveParams) error
 	HostingDomainSave(ctx context.Context, db DBTX, arg HostingDomainSaveParams) (HostingDomain, error)
+	HostingOIDCSessionCount(ctx context.Context, db DBTX, siteID pgtype.UUID) (int64, error)
+	HostingOIDCSessionCreate(ctx context.Context, db DBTX, arg HostingOIDCSessionCreateParams) (HostingAutomationCredential, error)
+	HostingOIDCTrustCount(ctx context.Context, db DBTX, siteID pgtype.UUID) (int64, error)
+	HostingOIDCTrustCreate(ctx context.Context, db DBTX, arg HostingOIDCTrustCreateParams) (HostingOidcTrust, error)
+	HostingOIDCTrustGet(ctx context.Context, db DBTX, arg HostingOIDCTrustGetParams) (HostingOidcTrust, error)
+	HostingOIDCTrustList(ctx context.Context, db DBTX, arg HostingOIDCTrustListParams) ([]HostingOidcTrust, error)
+	HostingOIDCTrustLock(ctx context.Context, db DBTX, arg HostingOIDCTrustLockParams) (HostingOidcTrust, error)
+	HostingOIDCTrustRevoke(ctx context.Context, db DBTX, arg HostingOIDCTrustRevokeParams) (int64, error)
 	HostingPreviewCount(ctx context.Context, db DBTX, siteID pgtype.UUID) (int64, error)
 	HostingPreviewCreate(ctx context.Context, db DBTX, arg HostingPreviewCreateParams) (HostingPreview, error)
 	HostingPreviewDeleteSite(ctx context.Context, db DBTX, siteID pgtype.UUID) error

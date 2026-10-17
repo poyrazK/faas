@@ -76,3 +76,16 @@ func TestPreviewAdmissionRequiresProviderConfiguration(t *testing.T) {
 		}
 	}
 }
+
+func TestHostingOIDCOptInRequiresIsolatedProviders(t *testing.T) {
+	for _, enabled := range []string{"true", "1"} {
+		if _, err := Load(func(key string) string {
+			if key == "FAAS_FRONTEND_HOSTING_OIDC_ENABLED" {
+				return enabled
+			}
+			return ""
+		}, "gregale.dev"); err == nil {
+			t.Fatal("OIDC enabled without isolated providers")
+		}
+	}
+}

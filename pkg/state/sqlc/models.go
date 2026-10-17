@@ -4064,14 +4064,15 @@ type GooseDbVersion struct {
 }
 
 type HostingAutomationCredential struct {
-	ID         pgtype.UUID
-	AccountID  pgtype.UUID
-	SiteID     pgtype.UUID
-	TokenHash  []byte
-	Label      string
-	Operations []string
-	CreatedAt  pgtype.Timestamptz
-	ExpiresAt  pgtype.Timestamptz
+	ID          pgtype.UUID
+	AccountID   pgtype.UUID
+	SiteID      pgtype.UUID
+	TokenHash   []byte
+	Label       string
+	Operations  []string
+	CreatedAt   pgtype.Timestamptz
+	ExpiresAt   pgtype.Timestamptz
+	OidcTrustID pgtype.UUID
 }
 
 type HostingCiRun struct {
@@ -4110,6 +4111,20 @@ type HostingDomainClaim struct {
 	Hostname  string
 	DomainID  pgtype.UUID
 	CreatedAt pgtype.Timestamptz
+}
+
+type HostingOidcTrust struct {
+	ID                pgtype.UUID
+	AccountID         pgtype.UUID
+	SiteID            pgtype.UUID
+	RepositoryOwnerID string
+	RepositoryID      string
+	Repository        string
+	Ref               string
+	WorkflowRef       string
+	EventName         string
+	Environment       string
+	CreatedAt         pgtype.Timestamptz
 }
 
 type HostingPreview struct {

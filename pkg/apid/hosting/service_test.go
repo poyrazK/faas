@@ -19,6 +19,7 @@ import (
 )
 
 type testHost struct {
+	oidc                      bool
 	automation                bool
 	retention                 bool
 	enabled, allowed, durable bool
@@ -82,7 +83,7 @@ func (a *testArtifacts) Publish(context.Context, string, string, api.HostingMani
 func TestEveryHostingHandlerRequiresFlagAndOperator(t *testing.T) {
 	h := &testHost{store: state.NewMemStore(), artifacts: &testArtifacts{}}
 	s := Service{Host: h}
-	handlers := []httpkit.AccountHandler{s.ListAutomationCredentials, s.CreateAutomationCredential, s.RevokeAutomationCredential, s.CreateCIRun, s.GetCIRun, s.GetCleanupPlan, s.SetRetentionPolicy, s.CreateCIPreview, s.ListHistory, s.ListPreviews, s.CreatePreview, s.RevokePreview, s.ListDomains, s.CreateDomain, s.DeleteDomain, s.Capabilities, s.Usage, s.GetTraffic, s.RecoverDomain, s.CreateSite, s.ListSites, s.GetSite, s.GetStatus, s.CreateRelease, s.ListReleases, s.Uploads, s.Finalize, s.Promote, s.Retire, s.DeleteSite, s.SetSuspended}
+	handlers := []httpkit.AccountHandler{s.ListOIDCTrusts, s.CreateOIDCTrust, s.RevokeOIDCTrust, s.ListAutomationCredentials, s.CreateAutomationCredential, s.RevokeAutomationCredential, s.CreateCIRun, s.GetCIRun, s.GetCleanupPlan, s.SetRetentionPolicy, s.CreateCIPreview, s.ListHistory, s.ListPreviews, s.CreatePreview, s.RevokePreview, s.ListDomains, s.CreateDomain, s.DeleteDomain, s.Capabilities, s.Usage, s.GetTraffic, s.RecoverDomain, s.CreateSite, s.ListSites, s.GetSite, s.GetStatus, s.CreateRelease, s.ListReleases, s.Uploads, s.Finalize, s.Promote, s.Retire, s.DeleteSite, s.SetSuspended}
 	for index, handler := range handlers {
 		for _, check := range []struct {
 			enabled, allowed bool

@@ -34,7 +34,7 @@ func TestHostingAutomationExactPathsAndOperations(t *testing.T) {
 			t.Fatal("denied", r)
 		}
 	}
-	denied := []struct{ method, path string }{{"GET", "/v1/account"}, {"GET", "/v1/apps"}, {"POST", root + "/promotions"}, {"PUT", root + "/suspension"}, {"DELETE", root}, {"DELETE", root + "/releases/" + id}, {"DELETE", root + "/previews/" + id}, {"POST", root + "/domains"}, {"POST", root + "/automation-credentials"}, {"GET", root + "/history"}, {"GET", "/v1/internal/hosting/sites/" + id}, {"GET", root + "/releases/" + id}, {"GET", root + "/status/extra"}, {"POST", root + "/ci/" + id + "/preview/extra"}, {"GET", root + "/../" + id + "/status"}, {"GET", root + "/status%2fextra"}}
+	denied := []struct{ method, path string }{{"GET", "/v1/account"}, {"GET", "/v1/apps"}, {"POST", root + "/promotions"}, {"PUT", root + "/suspension"}, {"DELETE", root}, {"DELETE", root + "/releases/" + id}, {"DELETE", root + "/previews/" + id}, {"POST", root + "/domains"}, {"POST", root + "/automation-credentials"}, {"GET", root + "/oidc-trusts"}, {"POST", root + "/oidc-trusts"}, {"DELETE", root + "/oidc-trusts/" + id}, {"POST", "/v1/internal/hosting/oidc/exchange"}, {"GET", root + "/history"}, {"GET", "/v1/internal/hosting/sites/" + id}, {"GET", root + "/releases/" + id}, {"GET", root + "/status/extra"}, {"POST", root + "/ci/" + id + "/preview/extra"}, {"GET", root + "/../" + id + "/status"}, {"GET", root + "/status%2fextra"}}
 	for _, r := range denied {
 		if HostingAutomationRequestAllowed(httptest.NewRequest(r.method, r.path, nil), key) {
 			t.Fatal("escaped scope", r)
@@ -83,5 +83,36 @@ func TestHostingAutomationGateRevocationAndNoCookieFallback(t *testing.T) {
 	w = httptest.NewRecorder()
 	if !m.hostingAutomation(w, r, api.HostingAutomationTokenPrefix+"malformed", next) || w.Code != 401 {
 		t.Fatal("malformed prefix fell through")
+	}
+}
+
+func TestHostingOIDCSessionKillSwitchDoesNotDisableManualCredentials(t *testing.T) {
+	token, _, err := api.GenerateHostingAutomationToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	auth := &hostingAutomationAuth{key: state.APIKey{ID: "session", AccountID: "account", HostingSiteID: "11111111-1111-4111-8111-111111111111", HostingOperations: []string{"stage"}, HostingOIDCTrustID: "22222222-2222-4222-8222-222222222222"}, account: state.Account{ID: "account", Status: "active"}}
+	m := &Middleware{Authn: auth, HostingAutomationEnabled: func() bool { return true }}
+	next := func(w http.ResponseWriter, _ *http.Request, _ state.Account) { w.WriteHeader(204) }
+	request := func() int {
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest("GET", "/v1/internal/hosting/capabilities", nil)
+		m.hostingAutomation(w, r, token, next)
+		return w.Code
+	}
+	if code := request(); code != 503 {
+		t.Fatal("default off", code)
+	}
+	m.HostingOIDCEnabled = func() bool { return true }
+	if code := request(); code != 204 {
+		t.Fatal("enabled", code)
+	}
+	m.HostingOIDCEnabled = func() bool { return false }
+	if code := request(); code != 503 {
+		t.Fatal("kill switch", code)
+	}
+	auth.key.HostingOIDCTrustID = ""
+	if code := request(); code != 204 {
+		t.Fatal("manual credential blocked", code)
 	}
 }

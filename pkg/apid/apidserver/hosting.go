@@ -237,3 +237,14 @@ func (s *server) runHostingRetentionReconciler(ctx context.Context) {
 		}
 	}
 }
+
+func (h hostingHost) HostingOIDCEnabled() bool {
+	return h.s.runtimeBool(runtimeConfigFrontendHostingOIDC, false)
+}
+func (h hostingHost) HostingOIDCStore() state.HostingOIDCStore {
+	store, _ := h.s.store.(state.HostingOIDCStore)
+	return store
+}
+func (h hostingHost) HostingOIDCAccount(ctx context.Context, id string) (state.Account, error) {
+	return h.s.store.AccountByID(ctx, id)
+}

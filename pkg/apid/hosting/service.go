@@ -10,6 +10,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	artifacts "github.com/onebox-faas/faas/pkg/hosting"
+	"github.com/onebox-faas/faas/pkg/oidc"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -26,7 +27,10 @@ type Host interface {
 	HostingAudit(context.Context, string, string, map[string]any)
 }
 
-type Service struct{ Host Host }
+type Service struct {
+	Host         Host
+	OIDCVerifier oidc.Verifier
+}
 
 // Require must wrap idempotency replay as well as execution. Otherwise a
 // previously successful response could bypass a subsequently disabled flag.
@@ -72,6 +76,14 @@ func failure(w http.ResponseWriter, err error) {
 			if quota.Resource == "automation_credentials" {
 				p.Code = "hosting_automation_credential_quota_exceeded"
 				p.Detail = "revoke unused site automation credentials before issuing another"
+			}
+			if quota.Resource == "oidc_trusts" {
+				p.Code = "hosting_oidc_trust_quota_exceeded"
+				p.Detail = "revoke unused GitHub site trust bindings before creating another"
+			}
+			if quota.Resource == "oidc_sessions" {
+				p.Code = "hosting_oidc_session_quota_exceeded"
+				p.Detail = "wait for short-lived sessions to expire and reduce parallel GitHub jobs"
 			}
 			if quota.Resource == "ci_runs" {
 				p.Code = "hosting_ci_run_quota_exceeded"

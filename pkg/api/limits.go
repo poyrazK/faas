@@ -11346,6 +11346,17 @@ const HostingReleaseRequestMaxBytes = HostingManifestMaxBytes + HostingProvenanc
 // Internal site-scoped automation; credentials and run identity ledgers are bounded.
 const (
 	HostingAutomationCredentialsPerSite = 16
+	HostingOIDCRepositoryMaxBytes       = 200
+	HostingOIDCRefMaxBytes              = 255
+	HostingOIDCWorkflowMaxBytes         = 512
+	HostingOIDCEnvironmentMaxBytes      = 255
+	HostingOIDCTrustsPerSite            = 8
+	HostingOIDCSessionsPerSite          = 32
+	HostingOIDCBearerTTL                = 5 * time.Minute
+	HostingOIDCAssertionMaxTTL          = 10 * time.Minute
+	HostingOIDCRefreshMargin            = 30 * time.Second
+	HostingOIDCRequestTimeout           = 15 * time.Second
+	HostingOIDCRequestMaxBytes          = 32 << 10
 	HostingAutomationLabelMaxBytes      = 64
 	HostingAutomationTTLDefault         = 24 * time.Hour
 	HostingAutomationTTLMin             = 5 * time.Minute

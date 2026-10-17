@@ -27376,6 +27376,7 @@ CREATE TABLE public.hosting_automation_credentials (
     operations text[] NOT NULL,
     created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
     expires_at timestamp with time zone NOT NULL,
+    oidc_trust_id uuid,
     CONSTRAINT hosting_automation_credentials_check CHECK ((isfinite(expires_at) AND (expires_at > created_at))),
     CONSTRAINT hosting_automation_credentials_created_at_check CHECK (isfinite(created_at)),
     CONSTRAINT hosting_automation_credentials_label_check CHECK (((octet_length(label) >= 1) AND (octet_length(label) <= 64))),
@@ -27449,6 +27450,33 @@ CREATE TABLE public.hosting_domains (
     CONSTRAINT hosting_domains_provider_origin_id_check CHECK ((provider_origin_id ~ '^[0-9a-f]{64}$'::text)),
     CONSTRAINT hosting_domains_revision_check CHECK (((revision >= 1) AND (revision <= '9007199254740991'::bigint))),
     CONSTRAINT hosting_domains_state_check CHECK ((state = ANY (ARRAY['pending_dns'::text, 'pending_certificate'::text, 'active'::text, 'deleting'::text])))
+);
+
+
+--
+-- Name: hosting_oidc_trusts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.hosting_oidc_trusts (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    site_id uuid NOT NULL,
+    repository_owner_id text NOT NULL,
+    repository_id text NOT NULL,
+    repository text NOT NULL,
+    ref text NOT NULL,
+    workflow_ref text NOT NULL,
+    event_name text NOT NULL,
+    environment text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT hosting_oidc_trusts_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT hosting_oidc_trusts_environment_check CHECK ((octet_length(environment) <= 255)),
+    CONSTRAINT hosting_oidc_trusts_event_name_check CHECK ((event_name = ANY (ARRAY['push'::text, 'workflow_dispatch'::text, 'schedule'::text]))),
+    CONSTRAINT hosting_oidc_trusts_ref_check CHECK ((((octet_length(ref) >= 12) AND (octet_length(ref) <= 255)) AND (ref ~~ 'refs/heads/%'::text))),
+    CONSTRAINT hosting_oidc_trusts_repository_check CHECK (((octet_length(repository) >= 3) AND (octet_length(repository) <= 200))),
+    CONSTRAINT hosting_oidc_trusts_repository_id_check CHECK ((repository_id ~ '^[1-9][0-9]{0,19}$'::text)),
+    CONSTRAINT hosting_oidc_trusts_repository_owner_id_check CHECK ((repository_owner_id ~ '^[1-9][0-9]{0,19}$'::text)),
+    CONSTRAINT hosting_oidc_trusts_workflow_ref_check CHECK (((octet_length(workflow_ref) >= 1) AND (octet_length(workflow_ref) <= 512)))
 );
 
 
@@ -41546,6 +41574,22 @@ ALTER TABLE ONLY public.hosting_domains
 
 
 --
+-- Name: hosting_oidc_trusts hosting_oidc_trusts_account_id_site_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hosting_oidc_trusts
+    ADD CONSTRAINT hosting_oidc_trusts_account_id_site_id_id_key UNIQUE (account_id, site_id, id);
+
+
+--
+-- Name: hosting_oidc_trusts hosting_oidc_trusts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hosting_oidc_trusts
+    ADD CONSTRAINT hosting_oidc_trusts_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: hosting_previews hosting_previews_hostname_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -49596,6 +49640,13 @@ CREATE INDEX hosting_automation_credentials_site ON public.hosting_automation_cr
 
 
 --
+-- Name: hosting_credentials_oidc_trust; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX hosting_credentials_oidc_trust ON public.hosting_automation_credentials USING btree (oidc_trust_id) WHERE (oidc_trust_id IS NOT NULL);
+
+
+--
 -- Name: hosting_domains_due; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -49607,6 +49658,13 @@ CREATE INDEX hosting_domains_due ON public.hosting_domains USING btree (next_att
 --
 
 CREATE INDEX hosting_domains_site ON public.hosting_domains USING btree (site_id, created_at);
+
+
+--
+-- Name: hosting_oidc_trusts_site; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX hosting_oidc_trusts_site ON public.hosting_oidc_trusts USING btree (site_id);
 
 
 --
@@ -62681,6 +62739,14 @@ ALTER TABLE ONLY public.hosting_ci_runs
 
 
 --
+-- Name: hosting_automation_credentials hosting_credential_oidc_trust; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hosting_automation_credentials
+    ADD CONSTRAINT hosting_credential_oidc_trust FOREIGN KEY (account_id, site_id, oidc_trust_id) REFERENCES public.hosting_oidc_trusts(account_id, site_id, id) ON DELETE CASCADE;
+
+
+--
 -- Name: hosting_domains hosting_domains_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -62702,6 +62768,22 @@ ALTER TABLE ONLY public.hosting_domains
 
 ALTER TABLE ONLY public.hosting_domains
     ADD CONSTRAINT hosting_domains_site_id_fkey FOREIGN KEY (site_id) REFERENCES public.hosting_sites(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: hosting_oidc_trusts hosting_oidc_trusts_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hosting_oidc_trusts
+    ADD CONSTRAINT hosting_oidc_trusts_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: hosting_oidc_trusts hosting_oidc_trusts_site_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hosting_oidc_trusts
+    ADD CONSTRAINT hosting_oidc_trusts_site_id_fkey FOREIGN KEY (site_id) REFERENCES public.hosting_sites(id) ON DELETE CASCADE;
 
 
 --

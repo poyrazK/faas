@@ -32,14 +32,15 @@ func ValidHostingAutomationToken(token string) bool {
 }
 
 type HostingAutomationCredential struct {
-	ID         string    `json:"id"`
-	AccountID  string    `json:"account_id"`
-	SiteID     string    `json:"site_id"`
-	Label      string    `json:"label"`
-	Operations []string  `json:"operations"`
-	CreatedAt  time.Time `json:"created_at"`
-	ExpiresAt  time.Time `json:"expires_at"`
-	Hash       []byte    `json:"-"`
+	OIDCTrustID string    `json:"oidc_trust_id,omitempty"`
+	ID          string    `json:"id"`
+	AccountID   string    `json:"account_id"`
+	SiteID      string    `json:"site_id"`
+	Label       string    `json:"label"`
+	Operations  []string  `json:"operations"`
+	CreatedAt   time.Time `json:"created_at"`
+	ExpiresAt   time.Time `json:"expires_at"`
+	Hash        []byte    `json:"-"`
 }
 type CreateHostingAutomationCredentialRequest struct {
 	Label      string   `json:"label"`

@@ -5,6 +5,7 @@ import "time"
 // HostingCapabilities is an operator-only view of the enforced pilot limits.
 // UploadBaseURL identifies private storage; it conveys no access credentials.
 type HostingCapabilities struct {
+	OIDCEnabled                   bool     `json:"oidc_enabled"`
 	RetentionEnabled              bool     `json:"retention_enabled"`
 	RetentionAgeDefaultSeconds    int64    `json:"retention_age_default_seconds"`
 	RetentionAgeMinSeconds        int64    `json:"retention_age_min_seconds"`

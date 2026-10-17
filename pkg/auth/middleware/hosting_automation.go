@@ -75,6 +75,10 @@ func (m *Middleware) hostingAutomation(w http.ResponseWriter, r *http.Request, t
 		}
 		return true
 	}
+	if key.HostingOIDCTrustID != "" && (m.HostingOIDCEnabled == nil || !m.HostingOIDCEnabled()) {
+		api.WriteProblem(w, api.NewProblem(503, "frontend_hosting_oidc_disabled", "GitHub site identity unavailable", "internal hosting OIDC is disabled"))
+		return true
+	}
 	if key.AccountID != account.ID || key.ID == "" || !HostingAutomationRequestAllowed(r, key) {
 		api.WriteProblem(w, api.NewProblem(403, api.CodeForbidden, "Site credential scope is limited", "this credential cannot access this site or operation"))
 		return true

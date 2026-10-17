@@ -165,3 +165,29 @@ func TestHostingCIExpiredIntentStopsBeforeUploadsOrPreviewMutation(t *testing.T)
 		t.Fatal(result, err)
 	}
 }
+
+func TestSitesCIOIDCRequiresExplicitFlagAndNeverFallsBackToSavedCredentials(t *testing.T) {
+	t.Setenv("FAAS_FRONTEND_HOSTING_ENABLED", "1")
+	t.Setenv("FAAS_FRONTEND_HOSTING_AUTOMATION_ENABLED", "1")
+	t.Setenv("FAAS_API", "https://api.example.com")
+	t.Setenv("ACTIONS_ID_TOKEN_REQUEST_URL", "https://runner.actions.githubusercontent.com/job")
+	t.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "test-job-identity")
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("static"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	args := []string{"--site", reviewSiteID, "--run-id", reviewReleaseID, "--oidc-trust", reviewReleaseID, "--path", dir}
+	for _, settings := range []struct{ flag, token string }{{"", ""}, {"false", ""}, {"1", "fp_live_account_token"}, {"1", "fp_host_" + strings.Repeat("a", 64)}} {
+		t.Setenv("FAAS_FRONTEND_HOSTING_OIDC_ENABLED", settings.flag)
+		t.Setenv("FAAS_TOKEN", settings.token)
+		if code := cmdSitesCI(args); code == 0 {
+			t.Fatal("OIDC fallback or disabled flow succeeded")
+		}
+	}
+	t.Setenv("FAAS_TOKEN", "")
+	t.Setenv("FAAS_FRONTEND_HOSTING_OIDC_ENABLED", "1")
+	t.Setenv("ACTIONS_ID_TOKEN_REQUEST_URL", "https://attacker.example/job")
+	if code := cmdSitesCI(args); code == 0 {
+		t.Fatal("GitHub identity request credential sent to untrusted endpoint")
+	}
+}
