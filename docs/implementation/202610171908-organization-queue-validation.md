@@ -172,3 +172,17 @@ Changing the workflow intentionally selects full-module lint, so the lint job
 allows 60 minutes while retaining each package's existing lint timeout. A YAML
 semantic comparison verifies that only these job limits change executable
 workflow behavior. Fresh CI must qualify the resulting source before merge.
+
+Main through `8548096a3` is integrated, including the application Auth dark
+launch and shared-runner base fixes. No migrations or ownership tables changed.
+The shared PostgreSQL binding handler retains both the application namespace
+and database namespace while preserving the default-off Auth gate. The company
+HTTP regression also rejects an Auth binding while that feature is disabled.
+
+Organization PostgreSQL HTTP, manifest, capability, source-binding and email
+verification regressions pass (11.701s, without race detection). The full Go
+SDK tests and vet pass at its Go 1.23 module minimum. Node generation/build and
+OpenAPI duplicate-key/parity checks pass. Four credential-access models in each
+of the Node and Python clients are regenerated to match the public schema.
+Python Auth and organization PostgreSQL, storage and queue client tests pass
+(42 tests); only the four Python models were copied from isolated generation.

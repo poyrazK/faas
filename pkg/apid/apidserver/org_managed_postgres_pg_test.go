@@ -19,6 +19,8 @@ import (
 )
 
 func TestOrgManagedPostgresPostgresHTTP(t *testing.T) {
+	t.Setenv("FAAS_APPLICATION_AUTH_ENABLED", "")
+	t.Setenv("FAAS_APPLICATION_AUTH_ACCOUNTS", "")
 	e := apidserver.SetupPGHandler(t, api.PlanPro)
 	store, creator, ctx := *e.Store(), *e.Acct(), t.Context()
 	if err := store.MarkAccountEmailVerified(ctx, creator.ID); err != nil {
@@ -89,6 +91,8 @@ func TestOrgManagedPostgresPostgresHTTP(t *testing.T) {
 	}
 	base := "/v1/orgs/" + org.Slug + "/postgres"
 	request := api.CreateManagedPostgresBindingRequest{AppID: app.ID, Scope: "staging", EnvironmentKey: "DATABASE_URL", Access: "read_write"}
+	authRequest := request
+	authRequest.Access = "auth"
 	for _, tc := range []struct {
 		method, path string
 		body         any
@@ -106,6 +110,7 @@ func TestOrgManagedPostgresPostgresHTTP(t *testing.T) {
 		{"POST", base + "/bindings/" + binding.ID + "/rotate", nil, developerHeaders, 403},
 		{"POST", base + "/databases/" + database.ID + "/bindings", request, viewerHeaders, 403},
 		{"POST", base + "/databases/" + database.ID + "/bindings", request, readHeaders, 403},
+		{"POST", base + "/databases/" + database.ID + "/bindings", authRequest, developerHeaders, 400},
 		{"GET", base + "/databases/" + personal.ID, nil, adminHeaders, 404},
 		{"GET", "/v1/postgres/databases/" + personal.ID, nil, developerHeaders, 404},
 	} {

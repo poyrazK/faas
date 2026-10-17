@@ -493,8 +493,8 @@ jobs:
     name: "light: tests (shard ${{ matrix.shard }})"
     runs-on: ubuntu-latest
     # Changed packages run in full with -race; cmd/gregale, pkg/state and
-    # pkg/apid/apidserver (one per
-    # shard, see affected_packages.py SELECTIVE_SHARD) run only the tests
+    # pkg/apid/apidserver (one per shard, see affected_packages.py
+    # SELECTIVE_SHARD) run only the tests
     # related to the change, without -race. The mega tier (ci.yml) runs every
     # suite in full with -race nightly and before every release. Main pushes
     # also warm the large-package build for later pull requests.
