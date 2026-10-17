@@ -3670,3 +3670,8 @@ and saturation gauges. Serve with
 `EVENT_ACKNOWLEDGMENT_PREPARATION_PROMETHEUS_CONTENT_TYPE` on an application-owned
 scrape path. No registry, listener or network publication is added. See the
 [metric names and private scrape example](../../docs/event-acknowledgment-node-prometheus.md).
+
+The application-owned [monitoring pack](../../examples/event-acknowledgment-node/monitoring/README.md)
+includes opt-in Prometheus recording/alert rules, a Grafana dashboard and recovery
+runbook. Tune sample guards and thresholds for your worker workload and install
+it through your own monitoring deployment process.

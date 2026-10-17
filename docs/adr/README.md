@@ -1,5 +1,7 @@
 # Architecture Decision Records
 
+- [Opt-in Node preparation monitoring](20261017125950-node-preparation-monitoring.md)
+
 - [Node preparation Prometheus exposition](20261017124511-node-preparation-prometheus.md)
 
 - [Bounded Node preparation metrics](20261017122416-node-preparation-metrics.md)
