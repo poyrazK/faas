@@ -46,7 +46,7 @@ func (*consumeRefundProvider) Refund(_ context.Context, chargeID string, amountC
 		ProviderRefundID: "re_" + chargeID,
 		ChargeID:         chargeID,
 		AmountCents:      amountCents,
-		Currency:         "eur",
+		Currency:         "usd",
 		Status:           "succeeded",
 	}, nil
 }
@@ -111,7 +111,7 @@ func TestConsumeInvoice_HappyPath(t *testing.T) {
 		// past minute so the all-usage compatibility path picks it up.
 		// The reducer passes inv.PeriodStart = zero time, so all rows
 		// land in the window.
-		time.Now().UTC(), 300*api.SecondsPerGBHour, 0, 0, 0, 0, 0, 0, 0); err != nil {
+		time.Now().UTC(), api.IncludedMBSeconds(api.PlanHobby)+250*api.SecondsPerGBHour, 0, 0, 0, 0, 0, 0, 0); err != nil {
 		t.Fatalf("usage: %v", err)
 	}
 
@@ -187,7 +187,7 @@ func TestConsumeInvoice_IdempotentReplay(t *testing.T) {
 	}
 	e.store.SeedInvoiceForTest(inv)
 	if err := e.store.AppendUsage(context.Background(), target.ID, "app-1", "inst-1",
-		time.Now().UTC(), 300*api.SecondsPerGBHour, 0, 0, 0, 0, 0, 0, 0); err != nil {
+		time.Now().UTC(), api.IncludedMBSeconds(api.PlanHobby)+250*api.SecondsPerGBHour, 0, 0, 0, 0, 0, 0, 0); err != nil {
 		t.Fatalf("usage: %v", err)
 	}
 

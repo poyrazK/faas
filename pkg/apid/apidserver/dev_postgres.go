@@ -56,7 +56,7 @@ func (s *server) ensureDevPostgres(ctx context.Context, acct state.Account, app 
 		Class:                managedpostgres.ClassDevelopment,
 		Availability:         managedpostgres.AvailabilitySingleZone,
 		ScaleToZero:          true,
-		StorageLimitBytes:    devPostgresStorageLimitBytes,
+		StorageLimitBytes:    min(devPostgresStorageLimitBytes, limits.StorageLimitBytes),
 		RestoreWindowSeconds: 0,
 	}
 	if existing != nil {

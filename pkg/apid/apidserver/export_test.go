@@ -424,7 +424,7 @@ var ManagedPostgresView = managedPostgresView
 var ManagedWorkflowCanConsumeFailedDependencies = managedWorkflowCanConsumeFailedDependencies
 var MapReconcileError = mapReconcileError
 var MarshalAppRetryPolicy = marshalAppRetryPolicy
-var MillicentsAsEUR = millicentsAsEUR
+var MillicentsAsCurrency = millicentsAsCurrency
 var MintDashboardSession = mintDashboardSession
 var MustSeedApp = mustSeedApp
 var MustSeedAppFor = mustSeedAppFor
@@ -515,6 +515,7 @@ var ProjectRequest = projectRequest
 var ProjectWorkloadCrons = projectWorkloadCrons
 var ProjectedAppCount = projectedAppCount
 var PromotionFixture = promotionFixture
+var BindingPromotionDeadline = bindingPromotionDeadline
 var PromtailMetricsTarget = promtailMetricsTarget
 var PtrInt64 = ptrInt64
 var QualifyObjectAccounting = qualifyObjectAccounting
@@ -1312,6 +1313,10 @@ func (r *fakeObjectProvider) CreateErr() *error  { return &r.createErr }
 func (r *fakeObjectProvider) DeleteErr() *error  { return &r.deleteErr }
 func (r *server) CleanupDevSessionResources(ctx context.Context, app state.App) error {
 	return r.cleanupDevSessionResources(ctx, app)
+}
+
+func (s *server) ConfigureCheckedReleaseCatalog(t *testing.T, accountID string) {
+	configureSourceRefManagedPostgres(t, sourceRefTestEnv{acctID: accountID, srv: s})
 }
 
 // AddAuthBindingForTest gives appID an `auth` managed PostgreSQL binding,

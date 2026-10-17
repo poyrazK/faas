@@ -8,7 +8,776 @@ Create and manage definitions through the automation authoring API or generated
 SDKs. Save a draft with a trigger and steps, including input mapping, event filters,
 waits, and failure handlers as needed. Validate reports errors without executing
 or saving steps; publishing makes the saved draft available to future runs.
-This change contains backend APIs only; no dashboard editor is included.
+The app dashboard also offers starter forms and an advanced JSON editor, described below.
+
+## Start from the app dashboard
+
+Open **Build and manage automations** in the app's Workflows section, or visit
+`/dashboard/apps/APP_SLUG/automations`. Choose one of the same four starters
+available through `gregale automations init`. Selection does not save a draft
+or start a run. Deploy the starter's handler routes and configure its required
+integrations or event sources separately.
+
+1. Choose a unique automation name. Scheduled reports offer form fields for cron,
+   timezone, collect/deliver paths, overlap and missed-start recovery. Other
+   definitions use JSON; keep its name matched to the automation name. Validate
+   the configured definition before saving.
+2. Review the sample input and mock outcomes, then simulate. The trace shows step
+   decisions without calling handlers or connected services.
+3. Save the draft, then choose **Save test data** to retain the sample, mock
+   outcomes, and named test cases. Reopening the automation restores that saved
+   data, including for custom names. Draft saves alone keep test edits in the editor.
+4. Review the scenario JSON and choose **Check and publish**. The server checks
+   the saved draft and issues the receipt required by the app's publishing policy.
+   Unsaved changes, stale revisions, failing scenarios or missing required
+   coverage stop publication. Explicitly choose manifest takeover only when
+   API-managed publication should replace the deployed definition's ownership.
+5. After publication, confirm real side effects and choose **Run published
+   automation**. Only the sample's `input` is submitted. Mock results never
+   control real execution. Repeating the same form submission reuses its admitted
+   run through the existing idempotency mechanism.
+
+The page shows recent health, queue observations, run states, pinned deployments,
+and step attempts. Run input/output bodies and raw errors remain behind explicit
+API/CLI inspection. Run links are scoped to the selected app and automation.
+A failed history read is reported as unavailable instead of an empty history.
+
+Scheduled starters remain disabled after publication until **Enable automatic
+starts** is selected. Manual runs remain distinct from that setting. The console
+cannot enable a disabled workflow runtime, satisfy tenant admission requirements,
+configure outbound worker flags, or establish native KVM qualification. The
+existing permissions, publication policies and execution gates still apply.
+
+### Save and rerun reusable test cases
+
+Use **Guided test cases** to add, duplicate, rename, and remove cases. Open a
+case to edit its input/mocks and choose a workflow step assertion. Check the
+expected state, output, or attempt count, then **Apply case changes**. Loop action
+assertions select an item index starting at zero. An output of `null` asserts
+null; unchecking output omits that check. A blank attempt count omits it, while
+zero checks that no attempts occurred. New assertions require an explicit check.
+
+Case navigation applies pending edits locally. **Save test data** persists the
+sample and cases; adding or removing them in the editor alone makes no write.
+Apply changes before switching to **Advanced test JSON**, select that mode, and
+choose **Apply editor mode** to edit complete scenarios. Advanced condition,
+reason, detailed retry assertions and per-item mocks survive guided edits.
+Input, mocks, and expected output remain JSON so structured data stays exact.
+
+Edit **Sample and mocks** and the named cases, then choose **Save test data**. Use synthetic data: the sample, mock outcomes, and expected values
+are explicitly stored with the draft and are readable by authorized app readers.
+Credentials belong in managed integrations. Real run or webhook payloads are
+never automatically copied into saved tests.
+
+**Run saved test cases** simulates every saved case against the current saved
+draft. It reports each case and assertion, including the observed step state,
+and continues after failed cases. Unknown or removed step assertions are reported
+as `invalid_expectations`. Saved result summaries exclude inputs, outputs and raw
+errors. Failed step results identify mismatched fields: missing/ambiguous step,
+state, reason, condition result, output, attempt count, or retry outcomes. Expected
+and observed values are omitted. Older results can be rerun for field details.
+They survive reopening and are marked outdated when the displayed
+definition, sample, mocks, or expectations change. Publishing and pausing starts
+alone do not make unchanged results outdated. Results describe mock simulations;
+they do not prove deployed handlers, integrations or provider responses work.
+
+Save changed definitions first, then save changed test data before running saved
+tests or publishing. Suite saves advance the draft revision, reject stale writes,
+and invalidate older publishing receipts. Runs store observations without
+advancing the revision, changing schedule cursors or starting real actions.
+**Check and publish** still executes fresh server checks and obtains a new receipt;
+a retained report never grants publication authority.
+
+**Clear saved test data** requires confirmation and removes the saved sample,
+cases and report. The current editor retains its unsaved text until navigation.
+
+The API exposes `PUT /v1/apps/{slug}/automations/{name}/tests` with
+`{expected_version, suite: {sample, cases}}`; `suite: null` clears saved data.
+`POST /v1/apps/{slug}/automations/{name}/tests/run` takes `{expected_version}`.
+Automation reads return optional `test_suite` and `test_report` fields. Test
+inputs omit definitions; runs bind the authoritative saved draft. The suite is
+bounded to 32 uniquely named cases, 3 MiB per sample/simulation, 24 MiB for the
+combined cases, and 27 MiB overall. Each case accepts up to 4,096 assertions;
+reports retain up to 1,024 step summaries per case and indicate truncation.
+
+### Verify one saved case against real execution
+
+Live verification executes the **published** automation against the app's current
+live default deployment. Configure synthetic case input and appropriate test
+integration credentials before opting into real actions. This first version is
+app-scoped; apps requiring platform-tenant identity are blocked.
+
+In **Guided test cases**, use **Live expectations for this case** and choose
+**Add live assertion**. Select a workflow step and choose its expected real state,
+output, or attempt count. Loop actions also take an item index. Use **Open live
+assertion** to edit another assertion, or **Remove live assertion** to remove it.
+The **Expected live run state** defaults to succeeded and can explicitly expect
+failed or dead. New assertions have no checks until you choose one.
+
+These controls remain separate from the mock assertions. An output of `null`
+asserts null; unchecking output omits that check. Blank attempt counts omit the
+check; zero asserts no attempts. Counts include resumed attempts, up to 425.
+Invalid fields retain the selected assertion and submitted values for correction.
+Editing, duplicating or navigating cases does not start execution.
+
+Apply case changes and **Save test data** to persist the live checks. **Disable
+live verification for this case** removes its live expectations locally; save test
+data to persist that choice. It does not cancel a previously admitted run.
+
+For the complete object, apply changes before switching to **Advanced test JSON**
+and edit the case's `live` property. For example:
+
+```json
+{
+  "expected_run_status": "succeeded",
+  "expectations": [
+    {"step": "collect", "state": "succeeded", "attempt_count": 1},
+    {"step": "deliver", "state": "succeeded", "output": null}
+  ]
+}
+```
+
+Use `live: null` or omit it to disable live checks in advanced JSON. Switching back
+to guided cases preserves this object and loads fresh controls. Live step states
+are `succeeded`, `failed`, `dead`, or `skipped`;
+`mocked` is invalid. Expected run state defaults to `succeeded` and may explicitly
+be `failed` or `dead`. Cancellation always fails verification. The durable step
+attempt count includes attempts from resumed execution. Loop assertions use
+`step: "batch/action"`, `loop: "batch"` and a zero-based `item_index`. Output and
+attempt checks preserve explicit `null` and zero; omission skips that check.
+
+Under **Verify a saved case with real handlers**, review the published revision
+and deployment, choose a saved case, confirm real actions and select **Start live
+verification**. Unsaved test edits must be saved first. Admission freezes the case,
+assertions, published revision and code deployment together; stale target fences
+reject the request before any run is created. Only the case's `input` is used;
+mock outcomes never control real execution.
+
+While the selected verification is open, automatic updates show queued, running
+and waiting states and check its frozen assertions after execution finishes.
+Only the result panel changes; unsaved editor text stays intact, even when it is
+invalid JSON. Local edits keep a warning visible beside the historical result.
+
+Updates pause while the page is hidden and stop after completion or navigation.
+They also stop on authentication/permission failure, network failure, timeout,
+invalid results or the request limit. **Resume automatic updates** observes the
+same run with a fresh budget. Requests run at 3-second intervals, time out after
+10 seconds, and are limited to 100 reads/checks per observation session. Automatic
+checks send only a protected CSRF token, with a 4 KiB request-body limit.
+
+**Check live results** also refreshes the selected run without replacing editor
+fields when JavaScript is enabled. Without JavaScript it remains a manual form
+submission. Checks read recorded terminal outcomes against the frozen assertions
+and save safe results. They do not start a new run, retry a handler,
+or apply later expectation edits. Running and waiting workflows have no verdict.
+After a continuation/resume, check again once execution reaches a terminal state.
+Reports identify failed fields without returning expected/actual output or errors.
+The existing run inspector remains available for explicit diagnostics.
+
+Verification history survives reopening. Case, published revision or current
+code deployment changes mark results outdated. A current-target verdict requires
+both `outdated: false` and `report_current: true`; the latter means the report
+still describes the run's current status, update time and resume count. Draft or
+automatic-start changes alone do not invalidate unchanged published-case evidence.
+
+The API offers:
+
+- `GET /v1/apps/{slug}/automations/{name}/live-verifications` for current target IDs
+  and up to 20 recent verifications.
+- `POST` to that collection with a required stable `Idempotency-Key` and
+  `{expected_version, expected_published_version, expected_deployment_id, case_name,
+  confirm_real_actions: true}` to admit one case.
+- `GET /v1/apps/{slug}/automations/{name}/live-verifications/{run_id}` to read a
+  retained record, and `POST .../{run_id}/check` to evaluate its results.
+
+Identical retained requests return the original run, including after a publish,
+case edit or runtime outage. Changed requests with the same key conflict. History
+and idempotency follow workflow-run retention. Go, Node and Python SDKs expose all
+four operations. Live assertions are bounded to 128 entries and 3 MiB per spec,
+real input and each expected output to 1 MiB, start requests to 4 KiB, and reports
+to 128 KiB. Existing saved-suite totals and real execution quotas still apply.
+
+Clearing saved test data also removes frozen live expectations and verification
+summaries. It leaves admitted runs under the normal workflow controls and
+retention. Live reports are separate from publishing receipts and native runtime
+qualification.
+
+### Verify a deployed automation from CI
+
+`gregale automations live` exposes the same saved-case verification through the
+CLI. Authenticate the CI job with `FAAS_TOKEN`; use `FAAS_API` when selecting a
+different control-plane endpoint.
+Use `live list --app billing --name paid-invoice --json` to read the current
+published revision, default deployment and recent verification IDs. Read the
+saved automation version with `automations get`. Review the synthetic case and
+its integrations before confirming real actions.
+
+Start one case against explicitly selected target versions:
+
+```sh
+gregale automations live start --app billing --name paid-invoice \
+  --case synthetic --expected-version 7 --expected-published-version 4 \
+  --expected-deployment-id 00000000-0000-4000-8000-000000000002 \
+  --idempotency-key deploy-42-synthetic --confirm-real-actions \
+  --json > verification-start.json
+```
+
+The start command exits successfully when admission is confirmed. Save its JSON
+artifact before waiting; `.verification.run_id` identifies the admitted run.
+`live show --app billing --name paid-invoice --run RUN_UUID` inspects it. To require
+a current passing verdict in a later CI step, reconnect to that same run:
+
+```sh
+gregale automations live wait --app billing --name paid-invoice \
+  --run RUN_UUID --timeout 10m --poll-interval 3s \
+  --json > verification-result.json
+```
+
+For one-step jobs, add `--wait` and optional wait settings to `live start`.
+`live check --app billing --name paid-invoice --run RUN_UUID` performs a single
+result check; a queued/running/waiting run returns a pending result rather than
+waiting. Current terminal reports are reused. Wait follows a continuation seen
+during checking; a terminal report that remains stale stops as unavailable.
+
+`check` and waiting commands exit 0 only for a passing report with
+`report_current=true` and `outdated=false`. Failed assertions, pending checks,
+unavailable verdicts and outdated targets exit 1. A case deliberately expecting a
+failed/dead run can pass its assertions. `start` without waiting, `list` and `show`
+return success for their own admission/read operation and are not assertion gates.
+HTTP failures retain normal CLI exits: 2 authentication, 3 infrastructure,
+4 missing/expired record, 5 conflict, and 6 permission denied. Wait deadline expiry exits 124;
+SIGINT/SIGTERM interruption exits 130. A timed-out or interrupted run can continue;
+the result retains its last observation and a shell-quoted reconnect command.
+
+Wait defaults to 5 minutes, accepts a positive deadline up to 1 hour, polls every
+3 seconds (configurable from 1 second to 1 minute), and caps each HTTP request at
+10 seconds; an individual request timeout exits 3 as an infrastructure error.
+Timeout and poll flags on `start` require `--wait`. A failed request
+stops observation. Explicitly reconnect after resolving it. If start admission
+was not confirmed, retry with the **same original target flags and idempotency
+key**; the CLI does not refresh the target or generate a replacement key.
+
+JSON operation results use `schema_version: 1`, `app`, `name`, `outcome`,
+`exit_code`, `message`, and optional `run_id`, `verification` and `reconnect` fields.
+Known run IDs and reconnect commands survive even a failed initial read. Outcomes
+are `accepted`, `observed`, `passed`, `failed`, `pending`, `outdated`, `unavailable`,
+`error`, `timed_out`, or `interrupted`. List results include `app`, `name` and the
+existing collection fields. Standard error carries sanitized RFC 7807 diagnostics
+for request/protocol failures. Reports contain identifiers, states and mismatch
+field names; input/output bodies, expected values and raw errors are excluded.
+These observations do not grant publication receipts or authorize future targets.
+
+### Run a resumable live verification suite from CI
+
+Use `live suite` to run an explicitly ordered selection of up to 32 saved cases
+against one frozen target. Each case can execute real actions. Review the cases
+and integrations before confirming them:
+
+```sh
+gregale automations live suite --app billing --name paid-invoice \
+  --case happy --case expected-failure \
+  --expected-version 7 --expected-published-version 4 \
+  --expected-deployment-id 00000000-0000-4000-8000-000000000002 \
+  --idempotency-key deploy-42-suite --journal suite-progress.json \
+  --confirm-real-actions --timeout 15m --json > suite-result.json
+```
+
+The CLI validates all selected cases before execution, then admits them
+sequentially. A case must have a current passing assertion report before the next
+case starts. Failed assertions or an unavailable/outdated verdict stop the suite.
+A pending run is observed until the total invocation deadline. The final gate
+refreshes every run and the target; an earlier passing observation changed by an
+external continuation cannot establish overall success.
+
+Keep `suite-progress.json` as a private CI artifact, including after timeout or a
+failed request. It records the original selection and per-case admission keys,
+accepted run IDs and safe observations. Progress is persisted before admission
+and between cases. It contains no sample inputs, output values or credentials.
+Restore Unix permissions to `0600` if the artifact service changes them, and keep
+the journal and its adjacent `.lock` path stable while a command is running.
+Only one CLI process may own that journal at a time.
+
+Continue the original suite explicitly:
+
+```sh
+gregale automations live suite --resume suite-progress.json \
+  --confirm-real-actions --timeout 15m --json > suite-result.json
+```
+
+Resume rechecks recorded runs and can admit remaining selected cases. It requires
+the original API endpoint, app identity and target. It does not accept new case
+or target flags. Missing accepted runs stop rather than start replacements. When
+admission was unconfirmed, resume reuses the original request and key; it refuses
+to replay an uncertain admission after 24 hours. Preserve server verification
+records while recovering a suite: idempotent replay depends on their retention.
+Inspect older uncertain admissions before explicitly planning new work.
+
+The total invocation deadline defaults to 5 minutes and is configurable up to
+1 hour. Polling defaults to 3 seconds (allowed 1 second–1 minute); each request
+has a 10-second deadline. Timeout or interruption stops observation and does not
+cancel admitted work. The command never automatically retries workflow execution,
+continues a workflow or cancels it.
+
+After journal preparation, `--json` emits one `schema_version: 1` report with
+`outcome`, `exit_code`, target, `summary`, ordered `cases` and a shell-quoted
+`resume` command. Summary counts include `selected`, `passed`, `failed`, `pending`,
+`not_started` and `unresolved`; each case retains its last safe observation and
+timestamp when available. Historical passing rows in a stopped report are not an
+overall success: gate on the command exit and top-level outcome. Exit 0 means all
+selected cases passed; assertion outcomes use 1, HTTP failures retain exits 2–6,
+overall timeout uses 124 and interruption uses 130. Setup failures use ordinary
+CLI diagnostics. Reports omit keys, payloads and raw errors; observations do not
+provide publication receipts or an atomic server snapshot of every run.
+
+### Run a live verification suite from the dashboard
+
+After saving cases with live expectations, open **Shared live verification
+suites** and choose **Run saved cases as a live suite**. Select cases in the
+order shown and review the published revision and deployment displayed above.
+Save any editor changes first, then confirm real actions and select **Start live
+suite**. The suite calls real deployed handlers and connected services.
+
+The dashboard checks each completed case before starting the next. It stops on
+failed, outdated or unavailable results and waits for pending workflows. Progress
+and original run IDs are stored on the server; refreshing or reopening the suite
+only reads them. Confirm **Continue suite** to check those same runs and advance
+remaining cases. Failed or expired runs are never silently replaced. Any decision
+to resume an individual failed workflow uses that run's separate recovery controls.
+
+Keep the page visible for automatic advancement. Hiding or leaving it, selecting
+**Stop advancing this suite**, a request error or the 100-request polling limit
+stops further advancement. Already admitted workflows continue independently.
+Reopen the saved suite and confirm continuation when ready. Without JavaScript,
+each confirmed **Continue suite** submission checks results and admits at most
+one next case. Browser continuation never takes over a shared CLI journal.
+
+Clients can POST `live-suites/{suite_id}/start` with `expected_version`,
+`expected_published_version`, `expected_deployment_id`, ordered case names in
+`cases` and `confirm_real_actions: true`. Use a UUIDv7 generated within the last
+ten minutes and reuse its exact ID and body after a lost response. An identical
+retained start request reads progress without advancing it. POST
+`live-suites/{suite_id}/advance` with `confirm_real_actions: true` to continue.
+Each admission and its stored run link commit together; missing suites are never
+recreated by continuation. Go, Node and Python expose both operations.
+
+Suite history keeps at most 100 records per automation. Recent dashboard start
+receipts are protected for the creation window so history churn cannot erase
+recovery identity while the original creation request can still be admitted.
+When all slots are protected, new creation waits rather than displacing them.
+
+### Compare suites between deployments
+
+Open a retained suite under **Shared live verification suites**, then use
+**Compare live suites** to choose a baseline. The selected suite is the candidate;
+**Swap baseline and candidate** reverses the direction. Each side shows its saved
+revision, deployment and original verification run links. Comparison works for
+dashboard suites and shared CLI suites.
+
+Matching case names need equal frozen definition and saved-case hashes to compare
+results. Pass-to-fail is a **regression**, fail-to-pass a **recovery**, and equal
+passing or failing results are **unchanged**. Changes to definitions, inputs,
+mocks or assertions are **incompatible**, even if the name stayed the same.
+**Added** and **removed** describe which cases each suite selected.
+
+Older deployments are labelled historical without discarding valid recorded
+results. Pending, unstarted, missing, unchecked or stale reports are **unknown**;
+resuming a run invalidates its old report until explicitly checked again.
+Expired evidence keeps its original run link but cannot establish pass/fail.
+Zero regressions alone does not mean the candidate passed.
+
+Comparison and refresh only read retained records. They never execute handlers,
+check assertions, resume workflows or continue a suite. The dashboard's separate
+GET form sends only the automation and suite selectors. Clients can call:
+
+```text
+GET /v1/apps/{slug}/automations/{name}/live-suites/{candidate_id}/compare/{baseline_id}
+```
+
+Go `CompareAutomationLiveSuites`, Node `compareAutomationLiveSuites`, and Python
+`compare_automation_live_suites` expose the same read. Both suites and their
+linked runs are observed in one database snapshot. The response contains safe
+per-case observations and disjoint counts, with at most 64 case rows; no inputs,
+outputs, assertion values or admission keys are returned. Suite and verification
+retention still apply, so a removed suite returns not found. This feature does
+not enforce a CI or release gate.
+
+### Gate CI on retained suite evidence
+
+Use the read-only gate after explicitly running and checking a dashboard suite
+or a shared CLI suite. Pin the intended candidate's complete target:
+
+```sh
+gregale --non-interactive automations live gate --app billing --name paid-invoice \
+  --baseline 00000000-0000-4000-8000-000000000010 \
+  --candidate 00000000-0000-4000-8000-000000000011 \
+  --expected-version 7 --expected-published-version 4 \
+  --expected-deployment-id 00000000-0000-4000-8000-000000000002 \
+  --json > automation-gate.json
+```
+
+`strict_v1` passes only when every candidate case passed, the candidate is still
+current and matches the expected saved version, published revision and deployment,
+and the comparison has no regressions, unknown/incompatible matches or removed
+baseline cases. Recoveries and passed added cases are allowed. The historical
+baseline's original reports remain usable when they still describe their runs.
+
+| Exit | Meaning |
+| --- | --- |
+| 0 | The selected evidence satisfies the strict policy. |
+| 1 | The intended current candidate contains failed assertions, including unchanged failures; also used for invalid local options. |
+| 7 | Inconclusive: wrong/outdated candidate target, incomplete or incompatible evidence, or removed baseline coverage. |
+| 2 / 3 / 4 / 5 / 6 | Authentication / infrastructure or protocol / unavailable records / conflict / permission denied. |
+| 130 | Observation interrupted. |
+
+Wrong or outdated candidate targets take precedence over their old verdicts.
+For a matching current target, a known failure takes precedence over other gaps;
+all reasons stay visible. Pending added cases also block a pass, even though their
+comparison category is `added`. Malformed or inconsistent response counts cannot
+produce a pass. The gate reads the comparison once with a ten-second deadline.
+It never starts cases, checks assertions, resumes workflows or advances suites.
+
+JSON reports use `schema_version: 1` and include `policy`, `app`, `name`,
+`baseline_id`, `candidate_id`, `expected_target`, `outcome`, `exit_code`, `message`,
+`reasons`, `candidate_passed`, `candidate_failed` and a safe `comparison` when valid.
+Outcomes are `passed`, `failed`, `inconclusive`, `error` or `interrupted`.
+After valid options are parsed, request errors also emit this report, with a
+sanitized RFC 7807 diagnostic on stderr. Invalid local flags only emit the normal
+CLI diagnostic. Reports contain no private inputs, outputs or assertion values.
+
+The [GitHub Actions example](../examples/automation-ci/README.md) installs a
+pinned CLI, reads existing suite evidence with an app-read token, preserves
+nonzero exit codes and uploads the JSON artifact even when the gate fails. It is
+opt-in and does not execute real actions. Use a CLI release containing this
+command or build the current source. This observation does not enforce publishing
+or deployment, impose a maximum age by default, or certify cases that were never
+selected. Retention still applies to suites and their linked run records.
+
+To require coverage even when both suites omit the same saved case, commit a
+versioned JSON policy and add `--policy automation-gate-policy.json` to the gate:
+
+```json
+{"version":1,"required_cases":["paid-invoice","declined-payment"]}
+```
+
+Required names must match candidate selections exactly. A missing required case
+adds `required_cases_missing` and returns inconclusive (7); failed assertions in
+the intended current candidate still take precedence (1). Existing pending,
+incompatible and outdated evidence checks continue to apply. Policies allow 1–32
+unique case names and at most 16 KiB. Invalid policies fail locally before any
+API request. Unknown or duplicate fields and trailing JSON are rejected.
+
+The JSON report includes `coverage_policy`, `policy_hash` (SHA-256 of canonical
+JSON with sorted required names), and `missing_required_cases` when nonempty.
+Whitespace and case-list order do not change the hash. Request-error reports
+retain policy provenance. Omitting `--policy` preserves the original strict gate
+behavior; it does not require coverage beyond the selected suites. The gate
+still performs only one comparison read and never starts or checks executions.
+
+To bound evidence age, use policy version 2:
+
+```json
+{"version":2,"required_cases":["paid-invoice","declined-payment"],"max_candidate_age_seconds":3600}
+```
+
+Version 2 requires a positive integer `max_candidate_age_seconds` (at most
+9,223,372,036 seconds, the representable duration range). Version 1 rejects this
+field and retains its existing semantics and canonical hash. The limit is part
+of the version 2 policy hash.
+
+Age is measured from the oldest candidate run's `created_at` to the CLI evaluation
+clock, conservatively covering the whole suite. Checking assertions, updating
+suite links, grouping old runs, or obtaining a fresh comparison does not reset age. The gate uses
+its own clock rather than the response's observation timestamp. An age strictly
+greater than the limit adds `candidate_evidence_stale`; a run creation timestamp in
+the future adds `candidate_evidence_future`. Either returns inconclusive (7),
+even if the old candidate contains failed assertions; all reasons remain visible.
+Exactly the allowed age is accepted, subject to every other gate requirement.
+The historical baseline is not age-limited.
+
+Missing timestamps (including older servers or unstarted/unavailable runs) add
+`candidate_evidence_age_unavailable` and return inconclusive (7).
+
+When at least one run timestamp is available, version 2 reports include `evidence_age` with `evaluated_at`,
+`oldest_run_created_at`, `age_seconds` and `max_age_seconds`. Human output shows
+the same age information. Missing timestamps still block the gate even when
+other retained timestamps allow a partial age observation. Request/protocol errors do not invent an age; they
+retain the selected policy and hash. Version 1 and gates without a policy omit
+age information. Keep the CI host clock synchronized; future timestamps fail
+closed without a clock-skew allowance. A long-running suite may need a larger
+age budget or a newly executed suite. The gate remains a single read.
+
+
+### Promote and use a named baseline
+
+A baseline name such as `production` or `staging` identifies a release track within
+an app and automation. It does not select an execution environment or change
+routing. Promotion is a deliberate metadata write; it never starts workflows or
+checks assertions. It requires a token with deploy-write scope. Reading the head,
+history or gate requires app-read scope.
+
+Discover existing names and their current evidence health with:
+
+```sh
+gregale automations live baseline list --app billing --name paid-invoice --json
+```
+
+The dashboard's **Named baselines** catalog shows each head, policy and target,
+retained case results, renewal blockers and inspection links. **Prepare replacement
+suite** navigates to the saved-suite controls; starting real work and promoting
+replacement evidence still require their own confirmations. An empty catalog
+means this automation has no named baselines. Missing retained evidence leaves
+its audit receipt visible.
+
+Evidence availability and renewal readiness are separate. Passing retained
+reports can remain usable for a historical baseline even when its target is old
+or its runs exceed the policy's age limit for a new promotion. The catalog checks
+renewal with the original run timestamps; it does not refresh evidence or declare
+a CI gate verdict. CI still evaluates its distinct candidate and the named
+baseline through the gate command. Discovery requires app-read scope, returns at
+most 20 heads sorted by name in one coherent read, and works with execution off.
+
+In the dashboard, select a retained live suite and open **Named baselines**.
+Enter a baseline name to view its current receipt, policy and promotion history.
+Review the version 2 policy and choose **Preview promotion** to see qualification,
+blocking reasons, missing required cases and original-run age. This preview only
+reads recorded evidence. New names initially suggest all selected cases and a
+one-hour age limit; review these defaults for your release process.
+
+A passing preview offers a separate confirmation showing the exact suite,
+target and expected baseline revision. Confirming promotes through the same
+backend checks as the CLI. If the result is uncertain, retry the same form to
+preserve its promotion UUID and intent. A conflict requires reviewing the current
+head and preparing a new preview. The panel also provides a CI command for the
+selected candidate; select a different suite from the baseline before using it.
+Opening or refreshing the panel never promotes, starts runs or checks assertions.
+
+After explicitly running and checking a retained suite, promote it with a version
+2 policy. Use a new UUID for each deliberate promotion, and preserve it for retries:
+
+```sh
+gregale automations live baseline promote --app billing --name paid-invoice \
+  --baseline-name production --suite 00000000-0000-4000-8000-000000000010 \
+  --promotion-id 00000000-0000-4000-8000-000000000020 --expected-revision 0 \
+  --expected-version 7 --expected-published-version 4 \
+  --expected-deployment-id 00000000-0000-4000-8000-000000000002 \
+  --policy automation-gate-policy.json --json
+
+gregale automations live baseline show --app billing --name paid-invoice \
+  --baseline-name production --json
+gregale automations live baseline history --app billing --name paid-invoice \
+  --baseline-name production --json
+```
+
+`--expected-revision 0` explicitly creates a new name. For later promotions, read
+the current receipt and supply its revision. Concurrent writers cannot silently
+overwrite each other: a stale revision returns conflict (409; CLI exit 5).
+Promotion re-evaluates the exact target, every selected case, required coverage and
+original-run age from retained evidence. A failed, unchecked, incompatible,
+incomplete or outdated suite cannot be promoted. Reads and promotion work with
+the execution runtime disabled.
+
+Receipts record the promotion UUID, revision, predecessor, authenticated account
+and API-key ID, promotion time, suite target, policy/hash, passed count and oldest
+run age. They contain no run inputs, outputs or assertion values. An uncertain
+write must be retried only with its original promotion UUID, expected revision,
+suite, target, policy and authenticated actor/key. An identical retained retry
+returns the original receipt, even after a later promotion; it does not move the
+head back or renew evidence. A returned receipt certifies what happened at that
+promotion time, not current evidence availability.
+
+Use the name in CI instead of copying a baseline suite UUID:
+
+```sh
+gregale --non-interactive automations live gate --app billing --name paid-invoice \
+  --baseline-name production --candidate 00000000-0000-4000-8000-000000000011 \
+  --expected-version 7 --expected-published-version 4 \
+  --expected-deployment-id 00000000-0000-4000-8000-000000000002 --json
+```
+
+Choose exactly one of `--baseline` and `--baseline-name`. Named gates inherit the
+reviewed version 2 policy from the receipt. If `--policy` is also supplied, its
+canonical hash must match; otherwise `baseline_policy_mismatch` is inconclusive
+(7). Promote a policy change explicitly before gating by name. Existing UUID
+mode retains its original optional-policy behavior.
+
+The named gate makes two GETs under one ten-second budget: resolve the receipt,
+then compare its exact suite UUID. It never changes a baseline. Reports add
+`baseline_name` and `resolved_baseline` (the exact receipt), alongside the resolved
+`baseline_id` and evaluated policy hash. If another promotion happens between
+reads, the report still identifies the original resolved revision. A candidate
+must be distinct from that resolved baseline; otherwise the command exits 1.
+Invalid receipts fail as protocol errors (3), and missing heads or suite groups
+use normal not-found handling (4), without fallback to a different suite.
+
+There are at most 20 active and 100 lifetime baseline names per automation, and 100 retained promotion
+receipts per name, newest revision first. Names use 1–63 lowercase ASCII letters,
+digits or hyphens, beginning and ending with a letter or digit. Promotion requests
+are at most 20 KiB; stored receipts at most 32 KiB. Promotion policy JSON must
+fit the existing 16 KiB policy limit after canonical serialization as well as on input. Reuse an existing release-track
+name instead of creating a new name for each build. Automation deletion removes
+its history. Clearing saved cases retains audit receipts but removes evidence.
+Active current baseline suite groups are protected from normal suite pruning within the
+existing 100-group budget; linked run/report retention still applies. Replaced
+groups can be pruned normally. Missing or invalidated evidence blocks gates;
+receipts do not recreate or execute it.
+
+### Share suite results with your team
+
+Add `--share` when creating a new CLI suite to retain its selection and run links
+in the app dashboard:
+
+```sh
+gregale automations live suite --app billing --name paid-invoice \
+  --case happy --case expected-failure \
+  --expected-version 7 --expected-published-version 4 \
+  --expected-deployment-id 00000000-0000-4000-8000-000000000002 \
+  --idempotency-key deploy-42-suite --journal suite-progress.json \
+  --share --confirm-real-actions --json > suite-result.json
+```
+
+Open the automation and find **Shared live verification suites**. Select a suite
+to inspect its frozen target, observation time and ordered case results, then
+open an individual verification for details or an explicit result check.
+**Refresh suite results** reads current retained records. It does not start cases
+or evaluate assertions. A terminal run without a current assertion report appears
+unavailable until checked. Changed targets are marked outdated. Expired records
+keep their known run IDs and appear unavailable rather than passing.
+
+The journal remembers sharing automatically. Resume with the original
+`--resume suite-progress.json --confirm-real-actions` command; do not add new
+selection flags or `--share`. The private journal remains necessary for execution
+recovery. Shared history contains no admission keys, sample inputs, output values
+or frozen assertions. JSON CI results include the stable `shared_suite_id`.
+
+The CLI saves the shared selection before admission and links each accepted run
+after recording it privately. A sharing failure stops later admissions. An
+already admitted run may continue; keep the journal and resume explicitly after
+resolving the failure. Existing local-only suites do not contact these endpoints.
+
+Shared history retains 100 recent suites per automation and lists the newest 20.
+Older retained suites remain accessible by their suite ID. Workflow verification
+records have their own retention; a suite does not extend their lifetime. Clearing
+saved test data or deleting the automation also removes shared suite history.
+
+Clients can save metadata with
+`PUT /v1/apps/{slug}/automations/{name}/live-suites/{suite_id}`, read it with GET
+of the same path, or list the collection. Choose a stable UUID and send
+`expected_version`, `expected_published_version`, `expected_deployment_id` and
+ordered `cases: [{name, run_id?}]`. Requests are capped at 16 KiB and 32 distinct
+cases. Run IDs must reference existing verifications for the same frozen case and
+target. Selection and existing run links cannot be replaced; older partial saves
+preserve links already recorded. Saves never execute workflows or accept verdicts.
+The metadata APIs are available in the Go, Node and Python clients.
+
+### Configure and preview a scheduled report
+
+Choose **scheduled-report**, enter its schedule and an IANA timezone, and replace
+the collect/deliver paths with routes deployed by your app. Choose whether an
+active run skips a new occurrence or allows overlap. Missed starts can be skipped
+or recover only the latest occurrence within a bounded window (default 1h,
+allowed 1m–24h); leave the window empty when using skip.
+
+Select **Use report settings below** to apply these fields. They patch the
+submitted definition while preserving advanced inputs, retries and other
+options. Choose **Use the JSON editor** to edit those same fields directly.
+Different step graphs remain available through JSON rather than being replaced
+by a starter. New reports configured through the form have starts disabled.
+
+**Preview edited schedule** validates the submitted definition and shows five
+upcoming nominal times in local time with numeric UTC offsets and in UTC. It
+uses the scheduler's shared timing helper, including daylight-saving rules.
+It saves no draft, changes no durable cursor, enables no starts and calls no
+handlers. A separate **Published schedule preview** reads the effective published
+definition and its current cursor through the existing schedule preview API.
+Unsaved edits do not change that preview or the published definition. Preview
+times reserve no capacity and do not guarantee execution.
+
+The **Setup checklist** reports observed runtime availability, execution
+prerequisites, publication and enabled state. A successful prerequisite read
+confirms app eligibility and a live default deployment at that observation.
+When an earlier execution gate blocks the read, deployment readiness is shown
+as unverified. Handler routes and credentials always remain unverified by this
+page: mocked scenarios do not exercise a deployed handler. Test those routes
+before explicitly enabling automatic starts. Save and checked publication still
+require the submitted revision and definition to match the current saved draft.
+
+### Configure a verified webhook automation
+
+Choose **webhook-enrichment** to configure platform event source/type, event-filter
+JSON and lookup/record handler paths through form fields. The editor preserves
+advanced inputs and retries. New guided event starters publish with starts paused;
+JSON authoring retains its existing activation semantics. Saving can retain an
+incomplete draft; validation and publication checks still reject invalid execution
+definitions. Select the JSON editor for different graphs or input mappings.
+
+After publication, use **Connect a verified webhook** to select an existing Stripe
+or generic signed inbound endpoint on the same app. Endpoint metadata never exposes
+the one-time public routing token or signing secret. Create and enable endpoints
+through the existing inbound webhook API or CLI; this page does not create them,
+rotate secrets, change their enabled state or send a test event.
+
+Review the displayed binding target and revision. Set its verified-webhook event
+pattern/filter, confirm routing takeover, then choose **Save webhook binding**.
+This replaces ordinary app delivery or the displayed automation binding for future
+acceptance. A stale binding revision conflicts; repeated identical submitted binds
+reuse their result through API idempotency. Failed actions require reloading and
+confirming again. Callback/trigger ownership conflicts remain enforced by the API.
+
+The platform event trigger and verified webhook binding are separate routes.
+Verified ingress uses its endpoint's reserved event source and its binding's
+pattern/filter, independent of the authored platform trigger. Input data is the
+signed JSON body for generic endpoints, or the full Stripe event for Stripe
+endpoints, wrapped in a CloudEvents envelope. Review mappings for the chosen
+provider: a generic order ID might be `{{input.data.order_id}}`, while a Stripe
+object ID might be `{{input.data.data.object.id}}`.
+
+Enable automatic starts explicitly when ready. An enabled endpoint bound to an
+enabled automation can perform real actions immediately on matching deliveries.
+Pausing the automation makes future verified events receive ignored receipts.
+**Remove webhook binding** has its own confirmation and revision check, restores
+ordinary delivery for future events, and does not cancel accepted work. Bindings
+target a published automation name, so later publications affect future events;
+already accepted definitions and filters remain captured.
+
+Enter a **Provider event ID** to inspect acceptance, ignored reason and routing
+status. A resulting run link appears only after verifying its app and automation
+identity. Receipts from another automation are not shown. Read failures are reported
+as unavailable or not found, rather than as successful acceptance. Provider retries
+reuse the original receipt and accepted work; receipt lookup does not retain retry
+counts or delivery history. Real payloads and signing material stay out of this view.
+Native execution qualification remains separate from this dashboard acceptance.
+
+### Diagnose and recover a dashboard run
+
+Open a run from **Recent runs** to see its observed queue/wait reason, next wake,
+expired worker lease, deployment pin, and step kinds. Select a step to inspect
+its attempt states, HTTP statuses and timing. Attempt errors and managed-operation
+effect records are excluded from this page. Failed diagnostics or history reads
+are reported as unavailable, rather than as an eligible or empty result.
+
+The **Recovery preview** lists steps to reopen, steps to preserve and current
+blockers. When eligible, review that list, confirm that reopened steps may perform
+real actions again, and choose **Resume failed run**. The existing API rechecks
+eligibility, admission requirements and the preview's continuation count.
+Concurrent or stale requests cannot admit a second continuation. Repeating the
+same submitted form replays its original result through API idempotency.
+An unsuccessful action requires refreshing the run and confirming again.
+
+**Recovery history** shows continuation numbers, previous states, reopened step
+names and timestamps. It omits historical errors and account identifiers.
+Successful results and prior attempts remain retained by the workflow runtime;
+resuming keeps the captured definition, inputs and deployment routing rules.
+
+For an active run, expand **Cancel this run**, confirm, and choose **Cancel run**.
+Cancellation applies to that run's current state, including a continuation that
+may have been admitted since the page was loaded. Completed actions are not
+undone, and active work may need time to stop. A completed run is left unchanged
+by the existing cancellation API. Cancellation does not require the execution
+runtime to be enabled. Resume and cancellation require write permission,
+verified email, the app-bound CSRF envelope and a separate action confirmation.
+The run's app and automation identity are checked before requesting diagnostics,
+history, attempts or a mutation. These dashboard controls do not open native
+Customer Workflow Operations admission or establish KVM qualification.
 
 ## Start from a template
 
@@ -3078,3 +3847,28 @@ means durable outbox admission, while `no_receivers` never replays to subscriber
 added later. New transitions use current recipients. Automation history retains
 `polling_failed` and `polling_recovered` with their frozen receipts. Apply migration
 `20261014092444767` before deploying the worker.
+
+
+### Retire an unused baseline
+
+Use **Retire this baseline** in the dashboard, review the name and revision, then
+confirm permanent retirement. Or use an explicit stable UUID from the CLI:
+
+```bash
+gregale automations live baseline retire --app billing --name paid-invoice \
+  --baseline-name production --retirement-id 00000000-0000-4000-8000-000000000012 \
+  --expected-revision 3 --confirm-retirement --json
+```
+
+Retirement reserves the name permanently, frees one of the 20 active-name slots,
+and releases its suite retention pin. It does not immediately delete evidence;
+other active names or recovery windows can still pin the same suite. Each
+automation can have at most 100 lifetime names to bound retained audit data.
+
+Name lookup now returns HTTP 410. Named CI gates exit 4 with
+`baseline_retired`, so CI must explicitly choose another active baseline. A gate that resolved the old receipt before retirement keeps its
+snapshot. Active listings omit retired names. Read `baseline history` with the
+retired name to inspect its promotion receipts and attributed retirement receipt.
+Old promotion retries return their historical receipt without reactivation.
+Retry an uncertain retirement with the original UUID and expected revision. A
+revision conflict requires reviewing the new head before submitting a new intent.

@@ -36,7 +36,7 @@ func TestInvoiceRefreshStripePaginationAndPrices(t *testing.T) {
 	lines[1].Price = nil
 	lines[1].Pricing.PriceDetails.Price = json.RawMessage(`"price_usage"`)
 	zero := int64(0)
-	lines = append(lines, stripeInvoiceLine{ID: "il_zero", Currency: "eur", Amount: &zero, Price: json.RawMessage(`"price_plan"`)})
+	lines = append(lines, stripeInvoiceLine{ID: "il_zero", Currency: "usd", Amount: &zero, Price: json.RawMessage(`"price_plan"`)})
 	pages, prices := 0, map[string]int{}
 	mode := "ok"
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -98,7 +98,7 @@ func TestInvoiceRefreshStripePaginationAndPrices(t *testing.T) {
 	defer srv.Close()
 	c := &Client{apiKey: "test-key", invoiceBaseURL: srv.URL, invoiceHTTPClient: srv.Client()}
 	acct := state.Account{ID: "account", ProviderCustomerID: "cus_invoice"}
-	inv := state.Invoice{AccountID: acct.ID, Provider: "stripe", ProviderInvoiceID: "in_invoice", TotalCents: 1190, TaxCents: 190, Currency: "eur"}
+	inv := state.Invoice{AccountID: acct.ID, Provider: "stripe", ProviderInvoiceID: "in_invoice", TotalCents: 1190, TaxCents: 190, Currency: "usd"}
 	details, err := c.FetchInvoiceDetails(t.Context(), acct, inv)
 	if err != nil {
 		t.Fatal(err)

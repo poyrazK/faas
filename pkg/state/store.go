@@ -4051,7 +4051,7 @@ type Store interface {
 
 	// DailyCostCents returns the estimated raw usage cost for the UTC day that
 	// contains day, derived from usage_daily.mb_seconds. An empty appID scopes
-	// the sum to the account. The result is in integer EUR cents before any
+	// the sum to the account. The result is in integer billing-currency cents before any
 	// monthly included allowance is applied.
 	DailyCostCents(ctx context.Context, accountID, appID string, day time.Time) (int64, error)
 
@@ -5612,7 +5612,7 @@ type Store interface {
 	// CurrentMonthOverageCents returns the account's derived compute overage
 	// in integer cents for the current UTC month. The account plan's
 	// included calendar-month allowance is subtracted before the
-	// €0.01/GB-h conversion (CLAUDE.md: integer cents only, never float).
+	// $0.01/GB-h conversion (CLAUDE.md: integer cents only, never float).
 	// meterd consults this on every quota tick to decide whether the
 	// overage row should be capped. The PgStore implementation sums
 	// usage_minutes.mb_seconds since the UTC month start and converts

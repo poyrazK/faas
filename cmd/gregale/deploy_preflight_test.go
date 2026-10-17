@@ -126,6 +126,27 @@ func TestRenderDeployPreflightFunctionOmitsAppListener(t *testing.T) {
 	}
 }
 
+// H10-137: a worker has no listener, so the plan must not show :3000 /healthz.
+func TestRenderDeployPreflightWorkerOmitsListener(t *testing.T) {
+	for _, mode := range []string{api.ExecutionModeWorker, api.ExecutionModeJob} {
+		var out bytes.Buffer
+		renderDeployPreflight(&out, deployPreflightSummary{
+			Slug:          "wk",
+			Source:        "working tree",
+			ExecutionMode: mode,
+			BuildPlan:     &api.BuildPlan{Class: "app", Framework: "node", Entrypoint: "npm run start", Port: 3000, HealthPath: "/healthz"},
+			Release:       "standard · 100% after readiness",
+		})
+		got := out.String()
+		if strings.Contains(got, "listener:") {
+			t.Fatalf("%s preflight shows a listener:\n%s", mode, got)
+		}
+		if !strings.Contains(got, "· "+mode) {
+			t.Fatalf("%s preflight lost its mode in resources:\n%s", mode, got)
+		}
+	}
+}
+
 func TestRenderDeployPreflightShowsRemoteResolutionBoundary(t *testing.T) {
 	var out bytes.Buffer
 	renderDeployPreflight(&out, deployPreflightSummary{

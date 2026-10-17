@@ -128,15 +128,15 @@ var catalog = map[string]row{
 	},
 	"spend_eur_20": {
 		Explanation: Explanation{
-			Title:   "Daily spend exceeds €20",
-			Hint:    "your account's 24-hour rolling spend crossed the €20 threshold",
-			Why:     "meterd sums the per-instance RAM-seconds cost (plan RAM + 8 MB overhead, billed at the plan rate) for the last 24 hours; the total crossed the €20 threshold. Billing is plan RAM + 8 MB per running second (§4.7) — NOT sampled RSS",
-			Fix:     "• if the spend is unexpected, check the instances panel — a runaway loop or ungraceful crash can keep waking instances\n• consider raising idle timeout to park instances faster\n• for predictable workloads, the Scale plan's GB-h pool is the cheapest path (1500 GB-h included)",
+			Title:   "Daily spend exceeds $20",
+			Hint:    "your account's 24-hour rolling spend crossed the $20 threshold",
+			Why:     "meterd sums the per-instance RAM-seconds cost (plan RAM + 8 MB overhead, billed at the plan rate) for the last 24 hours; the total crossed the $20 threshold. Billing is plan RAM + 8 MB per running second (§4.7) — NOT sampled RSS",
+			Fix:     "• if the spend is unexpected, check the instances panel — a runaway loop or ungraceful crash can keep waking instances\n• consider raising idle timeout to park instances faster\n• for predictable workloads, the Scale plan's GB-h pool is the cheapest path (3000 GB-h included)",
 			DocsURL: "/docs/runbooks/FaasSpendEur20",
 		},
 		Observed: func(observed float64) (why, fix string) {
-			return fmt.Sprintf("meterd summed the per-instance RAM-seconds cost for the last 24 hours; the total landed at €%.2f, past the €20 threshold", observed),
-				fmt.Sprintf("• if the spend is unexpected (€%.2f is unusual for this app shape), check the instances panel — a runaway loop or ungraceful crash can keep waking instances\n• consider raising idle timeout to park instances faster\n• for predictable workloads, the Scale plan's GB-h pool is the cheapest path (1500 GB-h included)", observed)
+			return fmt.Sprintf("meterd summed the per-instance RAM-seconds cost for the last 24 hours; the total landed at $%.2f, past the $20 threshold", observed),
+				fmt.Sprintf("• if the spend is unexpected ($%.2f is unusual for this app shape), check the instances panel — a runaway loop or ungraceful crash can keep waking instances\n• consider raising idle timeout to park instances faster\n• for predictable workloads, the Scale plan's GB-h pool is the cheapest path (3000 GB-h included)", observed)
 		},
 	},
 	"deploy_failed": {
