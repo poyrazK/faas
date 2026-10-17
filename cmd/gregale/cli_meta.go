@@ -1245,6 +1245,7 @@ var cliCommands = []cliCommand{
 				{Name: "history", Short: "show recorded health changes; excludes --wait", Bool: true},
 				{Name: "limit", Short: "history page size", Value: "N"},
 				{Name: "before", Short: "history cursor", Value: "CURSOR"},
+				{Name: "environment", Short: "assess this project environment instead of the default scope; excludes history options", Value: "SLUG"},
 			}},
 			{Name: "scale", Short: "Preview, save, apply or update app resource and runtime settings", Examples: []string{
 				"gregale app my-api scale --interactive",
