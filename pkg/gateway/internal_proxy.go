@@ -461,7 +461,6 @@ func (p *InternalReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		done = p.Drain.Begin("http")
 	}
 	defer done()
-	r = r.WithContext(drain.WithShutdownNotice(r.Context(), p.Drain))
 
 	if p.Dialer == nil || p.Target == nil {
 		// Wiring bug — log at ERROR because the customer sees the
@@ -480,7 +479,8 @@ func (p *InternalReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		p.serveUpgrade(w, r)
 		return
 	}
-	streamCtx, detachBudget, touch, cancelStream := newStreamSession(r.Context(), 0, streamIdleTimeout)
+	// The shutdown notice lets a gateway restart end an SSE stream cleanly.
+	streamCtx, detachBudget, touch, cancelStream := newStreamSession(drain.WithShutdownNotice(r.Context(), p.Drain), 0, streamIdleTimeout)
 	defer cancelStream()
 	outReq := r.Clone(streamCtx)
 	outReq.URL.Scheme = p.Target.Scheme

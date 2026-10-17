@@ -27,7 +27,7 @@
     mode: "0644"
   register: realtimed_unit
 
-# Durable listeners (docs/adr/20261017-zero-downtime-daemon-restarts.md).
+# Durable listeners (docs/adr/1580-zero-downtime-daemon-restarts.md).
 # The sockets are only enabled here, never started: a pre-activation daemon
 # unlinks its socket path when it exits, so the socket must first bind inside
 # the notified service restart, after the old process is gone. Requires= in

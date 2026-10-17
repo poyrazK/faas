@@ -8,7 +8,7 @@ import (
 )
 
 // Daemons other services dial over a unix socket restart behind a systemd
-// socket that keeps the listener open (docs/adr/20261017-zero-downtime-daemon-restarts.md).
+// socket that keeps the listener open (docs/adr/1580-zero-downtime-daemon-restarts.md).
 func TestDurableListenerSocketsAreRequiredAndOrdered(t *testing.T) {
 	tests := []struct {
 		name   string

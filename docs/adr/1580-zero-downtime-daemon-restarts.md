@@ -1,4 +1,4 @@
-# Zero-downtime daemon restarts
+# ADR-1580: Zero-downtime daemon restarts
 
 Date: 2026-10-17
 Status: Accepted
@@ -75,6 +75,11 @@ daemons still refused connections, or failed requests, while they restarted:
 - A restart costs callers latency, not errors: new connections wait for the
   old process's drain plus the replacement's start-up. Most drains are now
   milliseconds.
+- With several compute nodes, the control plane's compute pool used to fail
+  over at once when a node's gatewayd-internal refused a dial; with the durable
+  data listener, requests routed to the restarting node wait for it instead.
+  `gatewayd_internal_durable_data_listener: false` restores failover for that
+  hop; schedd's synth target has no fallback and keeps queueing only with it on.
 - A request still running when the 25 s grace ends is cut, because systemd
   cannot start the replacement before the old process exits.
 - A request body larger than 64 KiB, or chunked, that crosses the GOAWAY

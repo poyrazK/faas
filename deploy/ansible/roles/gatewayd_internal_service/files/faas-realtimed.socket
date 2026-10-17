@@ -5,7 +5,7 @@ Before=faas-realtimed.service
 
 # Owns realtimed's unix socket across restarts so gatewayd-internal's
 # realtime connects and management calls wait for the replacement
-# (docs/adr/20261017-zero-downtime-daemon-restarts.md).
+# (docs/adr/1580-zero-downtime-daemon-restarts.md).
 [Socket]
 ListenStream=/run/faas/realtimed.sock
 SocketUser=faas

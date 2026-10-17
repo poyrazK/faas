@@ -1,13 +1,16 @@
 //go:build unix
 
+// spec: §4.1
+// adr: 1580
 // Zero-downtime gateway restarts
-// (docs/adr/20261017-zero-downtime-daemon-restarts.md).
+// (docs/adr/1580-zero-downtime-daemon-restarts.md).
 
 package gateway
 
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -273,8 +276,12 @@ func upgradeThrough(t *testing.T, addr string) net.Conn {
 	_, _ = io.WriteString(conn, "GET /socket HTTP/1.1\r\nHost: app.example\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n")
 	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
-	if err != nil || resp.StatusCode != http.StatusSwitchingProtocols {
-		t.Fatalf("upgrade response = %v, %v", resp, err)
+	if err != nil {
+		t.Fatalf("upgrade response: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusSwitchingProtocols {
+		t.Fatalf("upgrade status = %d, want 101", resp.StatusCode)
 	}
 	return conn
 }
@@ -287,7 +294,8 @@ func waitClosed(conn net.Conn, wait time.Duration) error {
 		if err == nil {
 			continue
 		}
-		if ne, ok := err.(net.Error); ok && ne.Timeout() {
+		var ne net.Error
+		if errors.As(err, &ne) && ne.Timeout() {
 			return fmt.Errorf("still open after %v", wait)
 		}
 		return nil
@@ -341,9 +349,9 @@ func TestForwarderEndsEventStreamOnShutdown(t *testing.T) {
 	serve := func(contentType string) string {
 		nodes := singleClientLookup{cli: &heldHTTPStreamClient{contentType: contentType}}
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			r = r.WithContext(drain.WithShutdownNotice(r.Context(), tracker))
-			cli, _, _ := nodes.ClientFor(r.Context(), "n1")
-			fwdStreamOnceWithEvents(flushEachWrite{w}, r, cli, discardLog(), Target{NodeID: "n1"}, nil)
+			ctx := drain.WithShutdownNotice(r.Context(), tracker)
+			cli, _, _ := nodes.ClientFor(ctx, "n1")
+			fwdStreamOnceWithEvents(flushEachWrite{w}, r.WithContext(ctx), cli, discardLog(), Target{NodeID: "n1"}, nil)
 		}))
 		t.Cleanup(srv.Close)
 		return srv.URL

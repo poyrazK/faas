@@ -34,7 +34,7 @@ func (s admitOnlySchedd) AdmitInstance(context.Context, *scheddpb.AdmitInstanceR
 // without socket activation (a compute node's TCP listener): the old process
 // stops gracefully and unlinks its socket, and the replacement binds a second
 // later. Wakes issued meanwhile wait for the new process instead of failing
-// with Unavailable (docs/adr/20261017-zero-downtime-daemon-restarts.md).
+// with Unavailable (docs/adr/1580-zero-downtime-daemon-restarts.md).
 func TestWakesRideThroughScheddRestart(t *testing.T) {
 	dir, err := os.MkdirTemp("", "sd")
 	if err != nil {

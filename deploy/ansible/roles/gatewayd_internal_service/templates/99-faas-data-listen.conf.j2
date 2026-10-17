@@ -6,6 +6,6 @@
 # refuses to start with an inherited listener it does not serve.
 {% set data_listen = faas_gateway_listen | default('off') %}
 [Socket]
-{% if data_listen not in ['off', ''] %}
+{% if data_listen not in ['off', ''] and (gatewayd_internal_durable_data_listener | bool) %}
 ListenStream={{ data_listen }}
 {% endif %}

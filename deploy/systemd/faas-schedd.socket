@@ -4,7 +4,7 @@ Documentation=https://gregale.dev/docs/ops/schedd
 Before=faas-schedd.service
 
 # Owns schedd's unix socket across restarts so apid's and the gateway's
-# calls wait for the replacement (docs/adr/20261017-zero-downtime-daemon-restarts.md).
+# calls wait for the replacement (docs/adr/1580-zero-downtime-daemon-restarts.md).
 # schedd must serve this address (socket_path, empty listen_addr); it refuses
 # to start with an inherited socket it does not serve. Compute-only nodes
 # listen on TCP and use their own unit without this socket.

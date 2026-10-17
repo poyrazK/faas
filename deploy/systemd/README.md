@@ -36,7 +36,7 @@ bootstrap and verification flow.
 `faas-realtimed.socket` and `faas-schedd.socket` hold their daemon's listening
 socket while the service restarts, so callers' connections wait in the backlog
 for the replacement instead of being refused
-(`docs/adr/20261017-zero-downtime-daemon-restarts.md`). Each service
+(`docs/adr/1580-zero-downtime-daemon-restarts.md`). Each service
 `Requires=` its socket, which therefore starts inside the service restart,
 after any pre-activation process has released the address. Do not start these
 sockets by hand while an older daemon that binds the address itself is

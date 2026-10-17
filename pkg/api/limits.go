@@ -6578,7 +6578,7 @@ const (
 	// graceful-restart GOAWAY was never processed; the transport retries it on
 	// a new connection only when it can rewind the body. Larger or chunked
 	// bodies keep streaming and can still fail in that window
-	// (docs/adr/20261017-zero-downtime-daemon-restarts.md).
+	// (docs/adr/1580-zero-downtime-daemon-restarts.md).
 	InternalHopReplayableBodyBytes = 64 << 10 // 64 KiB
 )
 

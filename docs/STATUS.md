@@ -16,7 +16,7 @@ SSE and WebSocket sessions at once instead of holding the restart for the
 25 s grace, gRPC servers end watch streams so GracefulStop finishes, the
 public-to-internal H2C hop resends requests that crossed a graceful GOAWAY,
 wake RPCs wait out a schedd restart, and outboundd drains before exiting
-([ADR](adr/20261017-zero-downtime-daemon-restarts.md)). Portable
+([ADR-1580](adr/1580-zero-downtime-daemon-restarts.md)). Portable
 restart-under-load tests show no failed requests. Open: a native systemd
 restart under load on a compute node and the control plane, the first
 socket conversion through `node_join` and deployctl, and the listeners the
