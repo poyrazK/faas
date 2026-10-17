@@ -209,6 +209,15 @@ func Start(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv ...string) *H
 
 	h := &Harness{T: t, Pool: pool, TmpDir: tmp, BinDir: bin, ImagedTmp: appsRoot, SockDir: sockDir, RecoveryHMACKeyHex: newRecoveryHMACKeyHex(t), HostHMACKeyPath: newHostHMACKeyFile(t, tmp)}
 	currentHarness = h
+	// Stop is registered with t.Cleanup only once every daemon is up. A
+	// t.Fatal part-way through (a daemon that never listens or subscribes)
+	// must not leave the daemons already started running on the host.
+	booted := false
+	defer func() {
+		if !booted {
+			h.stop()
+		}
+	}()
 	if which&Gatewayd != 0 {
 		reserveGatewayAddresses(t, h)
 		t.Cleanup(h.releaseGatewayAddressReservations)
@@ -398,6 +407,7 @@ failure_report_dir = %q
 	}
 
 	h.requireDaemonsAlive(t)
+	booted = true
 	t.Cleanup(h.stop)
 	return h
 }
@@ -729,6 +739,15 @@ func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []stri
 	sockDir := newHarnessSocketDir(t)
 	h := &Harness{T: t, Pool: pool, TmpDir: tmp, BinDir: bin, ImagedTmp: appsRoot, SockDir: sockDir, RecoveryHMACKeyHex: newRecoveryHMACKeyHex(t), HostHMACKeyPath: newHostHMACKeyFile(t, tmp)}
 	currentHarness = h
+	// Stop is registered with t.Cleanup only once every daemon is up. A
+	// t.Fatal part-way through (a daemon that never listens or subscribes)
+	// must not leave the daemons already started running on the host.
+	booted := false
+	defer func() {
+		if !booted {
+			h.stop()
+		}
+	}()
 	if which&Gatewayd != 0 {
 		reserveGatewayAddresses(t, h)
 		t.Cleanup(h.releaseGatewayAddressReservations)
@@ -855,6 +874,7 @@ func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []stri
 		startGatewaydPublic(t, h, bin, dbURL, extraEnv)
 	}
 	h.requireDaemonsAlive(t)
+	booted = true
 	t.Cleanup(h.stop)
 	return h
 }

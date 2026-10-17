@@ -85,6 +85,8 @@ func newCustomerHTTPFixture(t *testing.T) *customerHTTPFixture {
 	mustCustomerHTTP(t, err)
 	agePath := filepath.Join(t.TempDir(), "host.age")
 	mustCustomerHTTP(t, secretbox.WriteHostKeyAtPath(agePath, ageKey))
+	// imaged and apid load fleet.age beside host.age; the same key serves both.
+	mustCustomerHTTP(t, secretbox.WriteHostKeyAtPath(filepath.Join(filepath.Dir(agePath), "fleet.age"), ageKey))
 	receiver := f.webhookReceiver(t)
 	registry := e2etest.NewFakeRegistry()
 	t.Cleanup(registry.Close)
