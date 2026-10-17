@@ -103,6 +103,12 @@ func UnitSchedd() daemonunit.Unit {
 			// and CLI advertise. The vmmd JobColdBoot RPC and durable workflow
 			// executor are both wired before the loop starts.
 			{Key: "FAAS_JOBS_DISPATCH", Value: "1"},
+			{Key: "FAAS_CI_INTERNAL_ENABLED", Value: "0"},
+			{Key: "FAAS_CI_INTERNAL_ACCOUNTS", Value: ""},
+			{Key: "FAAS_CI_GITHUB_ENABLED", Value: "0"},
+			{Key: "FAAS_CI_DISPATCH_ENABLED", Value: "0"},
+			{Key: "FAAS_CI_TRANSPORT_ENABLED", Value: "0"},
+			{Key: "FAAS_CI_RUNTIME_URL", Value: ""},
 			{Key: "FAAS_WORKFLOWS_ENABLED", Value: "1"},
 		},
 		LoadCredential: []daemonunit.LoadCred{

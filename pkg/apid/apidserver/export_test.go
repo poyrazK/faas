@@ -1421,3 +1421,7 @@ func (r *server) ProductControl() *product.Service { return &r.productControl }
 func (r *server) ConfigureProductEmail(getenv func(string) string) error {
 	return r.configureProductEmail(getenv)
 }
+
+func (s *server) StartInternalCIWorker(ctx context.Context, log *slog.Logger) func() {
+	return s.startInternalCIWorker(ctx, log)
+}

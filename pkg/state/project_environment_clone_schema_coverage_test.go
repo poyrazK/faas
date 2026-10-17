@@ -1,4 +1,5 @@
 // adr: 590
+// adr: 1576 — CI configuration needs a strategy; execution authority stays with its source.
 // adr: 623 — pending resize intents belong only to their original database.
 // adr: 738
 // adr: 694
@@ -37,6 +38,32 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		"product_control_email_subscriptions": CloneSchemaIdentity,
 		"product_control_receipts":            CloneSchemaOperational,
 		"product_control_billing_documents":   CloneSchemaOperational,
+		// CI configuration stays scoped; execution authority remains at its source.
+		"ci_automation_event_retries": CloneSchemaOperational,
+		"ci_automation_branches":      CloneSchemaOperational,
+		"ci_automation_pull_requests": CloneSchemaOperational,
+		"ci_automation_events":        CloneSchemaOperational,
+		"ci_automation_path_checks":   CloneSchemaOperational,
+		"ci_source_check_retries":     CloneSchemaOperational,
+		"ci_automation_policies":      CloneSchemaConfiguration,
+		"ci_dispatch_budget":          CloneSchemaOperational,
+		"ci_execution_archives":       CloneSchemaOperational,
+		"ci_execution_check_retries":  CloneSchemaOperational,
+		"ci_execution_checks":         CloneSchemaOperational,
+		"ci_execution_profiles":       CloneSchemaConfiguration,
+		"ci_executions":               CloneSchemaOperational,
+		"ci_github_bindings":          CloneSchemaConfiguration,
+		"ci_github_checks":            CloneSchemaOperational,
+		"ci_github_triggers":          CloneSchemaOperational,
+		"ci_job_attempts":             CloneSchemaOperational,
+		"ci_job_runtime":              CloneSchemaOperational,
+		"ci_job_runtime_objects":      CloneSchemaOperational,
+		"ci_managed_objects":          CloneSchemaOperational,
+		"ci_pipeline_revisions":       CloneSchemaConfiguration,
+		"ci_run_events":               CloneSchemaOperational,
+		"ci_runs":                     CloneSchemaOperational,
+		"ci_storage_budget":           CloneSchemaOperational,
+		"ci_worker_health":            CloneSchemaOperational,
 		// ADR-202610171453: inventory internal hosting without copying identity or serving state.
 		"hosting_sites":                                 CloneSchemaConfiguration,
 		"hosting_domains":                               CloneSchemaConfiguration,
@@ -141,6 +168,7 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		"object_s3_copy_source_epochs":                       CloneSchemaConfiguration,
 		"object_version_references":                          CloneSchemaData,
 		"object_deletions":                                   CloneSchemaOperational,
+		"object_node_settlement_outbox":                      CloneSchemaOperational, // ADR-1562: source delivery authority.
 		"object_lifecycle_scans":                             CloneSchemaOperational,
 		"object_storage_capacity_reconciliations":            CloneSchemaOperational,
 		"object_storage_multipart_part_grants":               CloneSchemaOperational,
@@ -241,8 +269,17 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		"mcp_catalog_monitors":            CloneSchemaOperational,
 		"mcp_oauth_retirements":           CloneSchemaOperational,
 		"service_recovery":                CloneSchemaOperational,
-		"service_capacity_policy":         CloneSchemaPlatform,
-		"accounts":                        CloneSchemaIdentity, "orgs": CloneSchemaIdentity, "api_keys": CloneSchemaIdentity,
+		// ADR-1522–1530: recovery fences and receipts remain with their source.
+		"instance_snapshot_recovery":    CloneSchemaOperational,
+		"migration_admissions":          CloneSchemaOperational,
+		"migration_sources":             CloneSchemaOperational,
+		"node_lifecycle_completions":    CloneSchemaOperational,
+		"operator_node_executions":      CloneSchemaOperational,
+		"operator_park_executions":      CloneSchemaOperational,
+		"operator_recovery_submissions": CloneSchemaOperational,
+		"operator_restart_executions":   CloneSchemaOperational,
+		"service_capacity_policy":       CloneSchemaPlatform,
+		"accounts":                      CloneSchemaIdentity, "orgs": CloneSchemaIdentity, "api_keys": CloneSchemaIdentity,
 		"egress_policy": CloneSchemaPlatform, "compute_nodes": CloneSchemaPlatform,
 
 		"project_release_sets": CloneSchemaConfiguration,

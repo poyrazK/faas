@@ -15,16 +15,11 @@
 //     rate-limit budget with logs/metrics/wake — no special-case
 //     bucket.
 //
-//   - Cross-account invisibility is enforced at the SQL layer
-//     via the slug → app_id lookup followed by the
-//     forge-proof check on data.app_id: the read goes through
-//     store.ListEventsByWakeID(wake_id, since, limit) (the
-//     partial-index path on events_wake_id_idx), but the
-//     handler then verifies EVERY row's data.app_id matches
-//     the slug's resolved app. A row that mismatches is
-//     dropped (a malicious admin who forged data.app_id would
-//     never see their row surface in a foreign tenant's
-//     timeline).
+//   - Both modes resolve the slug to an app owned by the target
+//     account. Legacy reads use ListEventsByWakeID and drop rows
+//     whose data.app_id differs. Opt-in keyset reads scope app
+//     and wake before canonical boot selection, seeking and
+//     limiting, then validate every returned row's identity.
 //
 //   - Unknown wake_id 404s the same way a cross-account wake_id
 //     does — a customer cannot enumerate wake counts by ID
@@ -34,9 +29,9 @@
 //
 //   - No filter by free-text data payload (e.g. "any event where
 //     data.instance_id = X"). The wake_id filter is the only
-//     SQL-anchored filter because the events table is not
-//     indexed on data — only data.wake_id is indexed (partial
-//     index events_wake_id_idx).
+//     caller-supplied payload filter. Keyset reads also scope
+//     data.app_id to the app resolved through ownership checks.
+//     Only data.wake_id is indexed (events_wake_id_idx).
 //   - No PATCH / DELETE on individual rows. The events table is
 //     append-only (spec §5 / §6.1).
 package apidserver
@@ -48,12 +43,13 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/waketimeline"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 const (
-	wakeTimelineLimitDefault = 200
-	wakeTimelineLimitMax     = 1000
+	wakeTimelineLimitDefault = api.WakeTimelinePageDefault
+	wakeTimelineLimitMax     = api.WakeTimelinePageMax
 )
 
 // listWakeTimeline handles GET /v1/apps/{slug}/wakes/{wake_id}/timeline.
@@ -61,15 +57,17 @@ const (
 //
 // Query params (all optional):
 //
-//	since        RFC 3339 timestamp; rows strictly older are skipped
+//	since        RFC 3339 timestamp; rows at or before it are skipped
 //	limit        1..1000; defaults to 200
+//	pagination   keyset_v1 opts into lossless tied-time continuation
+//	cursor       opaque page.next_cursor; requires keyset_v1
 //	on_behalf_of <uuid-or-slug> — operator-as-tenant view (P1); see
 //	             handlers_obs_on_behalf_of.go. When set, the auth
 //	             context is the target's account; the slug →
 //	             account forge-proof check fires against the
 //	             target's account id (not the caller's).
 //
-// On any limit > Max we silently cap. On a malformed since we
+// On any limit > Max we return 400. On a malformed since we
 // return 400 invalid_since (not silently drop, per the convention
 // of listAuditEvents). On a slug that doesn't resolve to the
 // caller's account we 404 the same way unknown slugs do (forge-
@@ -97,6 +95,19 @@ func (s *server) listWakeTimeline(w http.ResponseWriter, r *http.Request, acct s
 	app, err := s.store.AppBySlug(r.Context(), slug)
 	if err != nil || app.AccountID != authAcct.ID {
 		s.notFound(w, "no such app")
+		return
+	}
+	if r.URL.Query().Get("pagination") != "" || r.URL.Query().Get("cursor") != "" {
+		out, problem := waketimeline.ReadPage(r.Context(), s.store, authAcct.ID, app.ID, wakeID, r.URL.Query())
+		if problem != nil {
+			api.WriteProblem(w, problem)
+			return
+		}
+		if target != nil {
+			emitOperatorActionView(r, s, acct, target.ID, "wake-timeline")
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		writeJSON(w, http.StatusOK, out)
 		return
 	}
 	var since time.Time
