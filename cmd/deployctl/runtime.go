@@ -231,9 +231,47 @@ func healthAddressForManifest(manifest releasebundle.Manifest) (string, error) {
 	return "", errors.New("release has no gateway health endpoint")
 }
 
+// hostManagedUnits reports whether a release ships no systemd units. A
+// compute host's release is installed by `gregalectl release install` and
+// its units are owned by the host's Ansible roles, so a per-unit release on
+// it (docs/adr/1650-per-unit-control-plane-releases.md) swaps binaries
+// only: no unit install, no migration, and --only is mandatory.
+func hostManagedUnits(releaseRoot string) bool {
+	_, err := os.Stat(filepath.Join(releaseRoot, "systemd"))
+	return errors.Is(err, os.ErrNotExist)
+}
+
+// preflightHostManaged checks a release without units: each --only service
+// is installed on the host and its binary is in the release.
+func (r hostRuntime) preflightHostManaged(releaseRoot string) error {
+	if r.only == nil {
+		return errors.New("release ships no systemd units: deploy it with --only")
+	}
+	for service := range r.only {
+		unit, err := daemonunitspec.UnitByName(service)
+		if err != nil {
+			return err
+		}
+		if _, err := os.Stat(filepath.Join(r.unitDir, serviceFilePrefix+service+serviceFileSuffix)); err != nil {
+			return fmt.Errorf("service %s is not installed on this host: %w", service, err)
+		}
+		exec := strings.Fields(unit.ExecStart)
+		if len(exec) == 0 {
+			return fmt.Errorf("service %s has no ExecStart", service)
+		}
+		if _, err := os.Stat(filepath.Join(releaseRoot, "bin", filepath.Base(exec[0]))); err != nil {
+			return fmt.Errorf("service %s binary: %w", service, err)
+		}
+	}
+	return nil
+}
+
 func (r hostRuntime) Preflight(_ context.Context, manifest releasebundle.Manifest, releaseRoot string) error {
 	if manifest.Target != "linux/amd64" {
 		return fmt.Errorf("unsupported release target %q", manifest.Target)
+	}
+	if hostManagedUnits(releaseRoot) {
+		return r.preflightHostManaged(releaseRoot)
 	}
 	services, err := servicesInUnitDir(filepath.Join(releaseRoot, "systemd"))
 	if err != nil {
@@ -265,6 +303,10 @@ func (r hostRuntime) Preflight(_ context.Context, manifest releasebundle.Manifes
 }
 
 func (r hostRuntime) Migrate(ctx context.Context, manifest releasebundle.Manifest, releaseRoot, _ string) error {
+	if hostManagedUnits(releaseRoot) {
+		// Compute hosts never migrate; the control plane owns the schema.
+		return nil
+	}
 	migrate := filepath.Join(releaseRoot, "bin", "migrate")
 	if _, err := os.Stat(migrate); err != nil {
 		return fmt.Errorf("migration binary: %w", err)
@@ -274,6 +316,18 @@ func (r hostRuntime) Migrate(ctx context.Context, manifest releasebundle.Manifes
 }
 
 func (r hostRuntime) Activate(ctx context.Context, releaseRoot string) error {
+	if hostManagedUnits(releaseRoot) {
+		// The host's units stay as its roles installed them. Restarted
+		// services still retire a canary override, as a full release does.
+		restarted, err := r.onlyServices(r.serviceOrder)
+		if err != nil {
+			return err
+		}
+		if err := removeCanaryExecOverrides(r.unitDir, restarted); err != nil {
+			return fmt.Errorf("remove canary exec overrides: %w", err)
+		}
+		return runCommand(ctx, "systemctl", "daemon-reload")
+	}
 	units := filepath.Join(releaseRoot, "systemd")
 	services, err := servicesInUnitDir(units)
 	if err != nil {

@@ -1,0 +1,138 @@
+#!/usr/bin/env bash
+# Hermetic tests for unit_deploy.sh. ssh and scp are stubbed to run on this
+# machine, and python3 inside the "remote" gate runner is stubbed per unit,
+# so no host, systemd or Prometheus is needed.
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+helper="$repo_root/scripts/ci/unit_deploy.sh"
+test_root="$(mktemp -d)"
+trap 'rm -rf "$test_root"' EXIT
+stub="$test_root/stub"
+mkdir -p "$stub"
+real_python="$(command -v python3)"
+
+# ssh [opts] TARGET COMMAND...: run COMMAND here, logging what ran as root.
+cat > "$stub/ssh" <<'EOF'
+#!/usr/bin/env bash
+while [[ "$1" == -* ]]; do
+  case "$1" in -i|-p|-o) shift 2 ;; *) shift ;; esac
+done
+target="$1"
+shift
+printf '%s\t%s\n' "$target" "$*" >> "$STUB_LOG"
+exec bash -c "$*"
+EOF
+# scp [opts] SRC... TARGET:DEST
+cat > "$stub/scp" <<'EOF'
+#!/usr/bin/env bash
+args=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in -i|-P|-o) shift 2 ;; -q) shift ;; *) args+=("$1"); shift ;; esac
+done
+last=$(( ${#args[@]} - 1 ))
+dest="${args[$last]#*:}"
+unset "args[$last]"
+cp "${args[@]}" "$dest"
+EOF
+# python3 slo_gate.py --unit NAME ...: exit with STUB_GATE_<NAME>.
+cat > "$stub/python3" <<EOF
+#!/usr/bin/env bash
+if [[ "\${1:-}" == */slo_gate.py ]]; then
+  shift
+  while [[ \$# -gt 0 ]]; do
+    if [[ "\$1" == --unit ]]; then unit="\${2//-/_}"; fi
+    if [[ "\$1" == --deployed-at ]]; then echo "deployed-at \$2" >> "\$STUB_LOG"; fi
+    shift
+  done
+  var="STUB_GATE_\${unit}"
+  exit "\${!var:-0}"
+fi
+exec "$real_python" "\$@"
+EOF
+chmod +x "$stub/"*
+
+export PATH="$stub:$PATH" STUB_LOG="$test_root/log" UNIT_SSH_TARGET=root@cp.example UNIT_SSH_KEY=/dev/null \
+  RUNNER_TEMP="$test_root"
+fail() { echo "FAIL: $*" >&2; exit 1; }
+
+plan="$test_root/plan.json"
+cat > "$plan" <<'EOF'
+{
+  "action": "deploy",
+  "release_id": "0123456789abcdef0123456789abcdef01234567",
+  "expect_current": "00000000000000000000000000000000000000b0",
+  "commit": "1111111111111111111111111111111111111111",
+  "units": ["apid", "meterd"],
+  "only": ["apid", "meterd"],
+  "verify": ["apid=http://127.0.0.1:9101/readyz", "?apid-clone-worker"],
+  "gate": [["--unit", "apid"], ["--unit", "meterd"]],
+  "replace": {"bin/apid": "bin/apid", "bin/deployctl": "bin/deployctl", "unit-versions.json": "unit-versions.json"}
+}
+EOF
+stage=/var/tmp/gregale-units.AbC123
+
+# 1. The activation script overlays, deploys only the plan's services with
+#    the compare-and-swap, gates each unit and rolls back on a failed gate.
+bash "$helper" script "$plan" "$stage" "$test_root/activate.sh"
+bash -n "$test_root/activate.sh" || fail "activation script does not parse"
+for want in \
+  "$stage/bin/deployctl unit-overlay --release-id 0123456789abcdef0123456789abcdef01234567 --expect-current 00000000000000000000000000000000000000b0 --commit 1111111111111111111111111111111111111111" \
+  "bin/apid=$stage/bin/apid" \
+  "/opt/faas/releases/0123456789abcdef0123456789abcdef01234567/bin/deployctl deploy --only 'apid,meterd' --expect-current 00000000000000000000000000000000000000b0 0123456789abcdef0123456789abcdef01234567" \
+  "unit-release-verify.sh /opt/faas/releases/0123456789abcdef0123456789abcdef01234567 apid=http://127.0.0.1:9101/readyz \\?apid-clone-worker" \
+  "deployctl rollback --only 'apid,meterd'"; do
+  grep -Fq -- "$want" "$test_root/activate.sh" || fail "activation script lacks: $want"
+done
+
+# 2. A converge plan re-activates the active overlay without assembling one.
+jq '.action = "converge" | .replace = {} | .release_id = .expect_current' "$plan" > "$test_root/converge.json"
+bash "$helper" script "$test_root/converge.json" "$stage" "$test_root/converge.sh"
+if grep -q unit-overlay "$test_root/converge.sh"; then fail "converge assembles an overlay"; fi
+grep -Fq "deploy --only 'apid,meterd'" "$test_root/converge.sh" || fail "converge does not re-run deploy"
+
+# 3. Unsafe plan values are refused.
+jq '.release_id = "../../etc"' "$plan" > "$test_root/bad.json"
+if bash "$helper" script "$test_root/bad.json" "$stage" "$test_root/x.sh" 2>/dev/null; then fail "bad release id accepted"; fi
+if bash "$helper" script "$plan" "/tmp/elsewhere" "$test_root/x.sh" 2>/dev/null; then fail "bad stage accepted"; fi
+
+# 4. The SLO gate: one process per unit, worst result wins.
+gate_dirs() { find /var/tmp -maxdepth 1 -name 'gregale-slo.*' 2>/dev/null | sort; }
+gate_dirs_before="$(gate_dirs)"
+gate() { env "$@" bash "$helper" gate "$plan" 1700000000 10s >/dev/null 2>&1; }
+gate STUB_GATE_apid=0 STUB_GATE_meterd=0 || fail "passing gates did not promote"
+grep -q "deployed-at 1700000000" "$STUB_LOG" || fail "gate did not pass --deployed-at"
+for case in "1 0 1" "0 3 3" "2 0 3" "1 3 1"; do
+  read -r apid meterd want <<<"$case"
+  status=0
+  gate STUB_GATE_apid="$apid" STUB_GATE_meterd="$meterd" || status=$?
+  [[ "$status" == "$want" ]] || fail "gate apid=$apid meterd=$meterd exited $status, want $want"
+done
+jq '.gate = []' "$plan" > "$test_root/nogate.json"
+bash "$helper" gate "$test_root/nogate.json" 1700000000 10s >/dev/null || fail "an empty gate did not pass"
+jq '.gate = [["--unit", "apid; rm -rf /"]]' "$plan" > "$test_root/evil.json"
+status=0
+bash "$helper" gate "$test_root/evil.json" 1700000000 10s >/dev/null 2>&1 || status=$?
+[[ "$status" == 2 ]] || fail "an unsafe gate argument was not refused (exit $status)"
+[[ "$(gate_dirs)" == "$gate_dirs_before" ]] \
+  || fail "the gate left its directory on the host"
+
+# 5. Rollback runs as root on the deploy host and re-verifies the units.
+: > "$STUB_LOG"
+# Capture the rollback script instead of running it against /opt/faas.
+cat > "$stub/bash-capture" <<'EOF'
+#!/usr/bin/env bash
+cat > "$CAPTURE"
+EOF
+chmod +x "$stub/bash-capture"
+# Literal $(...) on purpose: rewrite the helper's remote shell to the capture stub.
+# shellcheck disable=SC2016
+sed 's#"$(as_root "$target") -s"#"CAPTURE=$CAPTURE bash-capture"#' "$helper" > "$test_root/helper-capture.sh"
+CAPTURE="$test_root/rollback.sh" UNIT_SSH_TARGET=deploy@node.example \
+  bash "$test_root/helper-capture.sh" rollback "$plan" "$stage"
+grep -Fq "bin/deployctl\" rollback --only 'apid,meterd'" "$test_root/rollback.sh" || fail "rollback does not restore the plan's services"
+grep -Fq "unit-release-verify.sh \"\$(readlink -f /opt/faas/current)\" apid=http://127.0.0.1:9101/readyz" "$test_root/rollback.sh" \
+  || fail "rollback does not verify the restored release"
+grep -q "sudo -n bash" "$helper" || fail "non-root hosts must run through sudo"
+
+echo "unit_deploy tests passed"

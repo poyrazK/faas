@@ -64,6 +64,16 @@ on:
         required: false
         default: ""
         type: string
+      units_lane:
+        description: "Lane of the unit release to deploy on the control plane: control-plane, or edge (its own gatewayd-public)"
+        required: false
+        default: control-plane
+        type: string
+      slo_gate_duration:
+        description: "How long the SLO gate holds the restarted units before promoting them (scripts/ci/slo_gate.py --duration)"
+        required: false
+        default: 10m
+        type: string
       hosted_runner:
         description: >-
           Run this workflow's coordination job on a GitHub-hosted runner
@@ -103,6 +113,16 @@ on:
         description: "Optional guard: comma-separated control-plane units the unit release must restart"
         required: false
         default: ""
+        type: string
+      units_lane:
+        description: "Lane of the unit release to deploy on the control plane: control-plane, or edge (its own gatewayd-public)"
+        required: false
+        default: control-plane
+        type: string
+      slo_gate_duration:
+        description: "How long the SLO gate holds the restarted units before promoting them (scripts/ci/slo_gate.py --duration)"
+        required: false
+        default: 10m
         type: string
       hosted_runner:
         description: >-
@@ -1179,11 +1199,14 @@ jobs:
       # Legacy mutable upload/restart steps removed; deployment is handled by the immutable release controller above.
 
   # Per-unit releases (docs/adr/1650-per-unit-control-plane-releases.md).
-  # The unit release carries every control-plane daemon changed since its
-  # base full release; the host must run exactly that base (or an earlier
-  # unit release over it). The plan restarts only daemons whose unit version
-  # moved; everything else, including migrations, units, roles and compute
-  # daemons, stays as the base release left it.
+  # The unit release carries every daemon of an eligible lane changed since
+  # its base full release, which must be the previous full release (N±1) and
+  # what the host runs (or earlier unit releases over it). The plan restarts
+  # only daemons of units_lane whose unit version moved, then holds them on
+  # the SLO gate and rolls them back to the previous binaries on a breach.
+  # Everything else, including migrations, units, roles and compute daemons,
+  # stays as the base release left it. cd-edge-units.yml calls this job with
+  # units_lane=edge for the control plane's own gateway.
   deploy-units:
     name: Deploy unit release to Control Plane Host
     environment: ${{ inputs.deploy_environment }}
@@ -1196,11 +1219,13 @@ jobs:
     concurrency:
       group: cd-cp-units-${{ inputs.deploy_environment }}
       cancel-in-progress: false
-    timeout-minutes: 20
+    timeout-minutes: 40
     env:
       CP_HOST: ${{ secrets.CP_HOST || secrets.DO_HOST }}
       CP_SSH_KEY: ${{ secrets.CP_SSH_KEY || secrets.DO_SSH_KEY }}
       EXPECT_UNITS: ${{ inputs.units }}
+      UNITS_LANE: ${{ inputs.units_lane }}
+      SLO_GATE_DURATION: ${{ inputs.slo_gate_duration }}
     steps:
       - name: Require a unit release, not a tag
         env:
@@ -1208,6 +1233,10 @@ jobs:
         run: |
           [[ -z "$RELEASE_TAG" ]] || {
             echo "::error::set either release_tag or units_run_id, not both" >&2
+            exit 1
+          }
+          [[ "$UNITS_LANE" == control-plane || "$UNITS_LANE" == edge ]] || {
+            echo "::error::units_lane must be control-plane or edge" >&2
             exit 1
           }
 
@@ -1235,38 +1264,27 @@ jobs:
           github-token: ${{ github.token }}
           path: ${{ runner.temp }}/gregale-units
 
+      # The verifier comes from the workflow's own ref; the release commit's
+      # checkout below is only trusted once its signature verified.
+      - uses: actions/checkout@v7
+        with:
+          path: workflow-src
+          sparse-checkout: scripts/ci/verify_unit_release.sh
+          sparse-checkout-cone-mode: false
+
       - name: Verify unit release
         id: verify
         run: |
           set -euo pipefail
-          umask 0022
-          dir="$RUNNER_TEMP/gregale-units"
-          (cd "$dir" && sha256sum -c SHA256SUMS)
-          # Only release-units.yml on main signs deployable unit releases.
-          cosign verify-blob \
-            --bundle "$dir/units.cosign.bundle" \
-            --certificate-identity "https://github.com/poyrazK/faas/.github/workflows/release-units.yml@refs/heads/main" \
-            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-            "$dir/units.tar.gz"
-          rm -rf -- "$dir/unpacked"
-          mkdir -p "$dir/unpacked"
-          tar -xzf "$dir/units.tar.gz" -C "$dir/unpacked" --no-same-owner
-          manifest="$dir/unpacked/units-manifest.json"
-          cmp "$manifest" "$dir/units-manifest.json"
-          jq -e '.kind == "gregale-unit-release" and .format_version == 1 and .target == "linux/amd64"' "$manifest" >/dev/null
-          # The tarball holds exactly the binaries the signed manifest names.
-          jq -r '.units | to_entries[] | "\(.value.sha256)  bin/\(.key)"' "$manifest" | (cd "$dir/unpacked" && sha256sum -c -)
-          [[ "$(find "$dir/unpacked/bin" -type f | wc -l)" -eq "$(jq '.units | length' "$manifest")" ]]
-          git_sha="$(jq -er .git_sha "$manifest")"
-          [[ "$git_sha" =~ ^[0-9a-f]{40}$ ]]
+          git_sha="$(workflow-src/scripts/ci/verify_unit_release.sh "$RUNNER_TEMP/gregale-units")"
           echo "git_sha=$git_sha" >> "$GITHUB_OUTPUT"
-          echo "UNITS_DIR=$dir/unpacked" >> "$GITHUB_ENV"
+          echo "UNITS_DIR=$RUNNER_TEMP/gregale-units/unpacked" >> "$GITHUB_ENV"
           echo "UNITS_SHA=$git_sha" >> "$GITHUB_ENV"
 
       - uses: actions/checkout@v7
         with:
           # The planner and deployctl come from the unit release's commit;
-          # the planner's ancestry check needs first-parent history.
+          # the planner's ancestry and N±1 checks need history and tags.
           ref: ${{ steps.verify.outputs.git_sha }}
           fetch-depth: 0
 
@@ -1301,43 +1319,38 @@ jobs:
             exit 1
           }
           chmod 600 ~/.ssh/known_hosts
-
-      - name: Read the active control-plane release
-        run: |
-          set -euo pipefail
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
-            "root@${{ env.CP_HOST }}" 'bash -se' > "$RUNNER_TEMP/host-state.json" <<'REMOTE'
-          set -euo pipefail
-          current="$(readlink -f /opt/faas/current)"
-          test -s "$current/release-manifest.json"
-          versions=null
-          if [[ -s "$current/unit-versions.json" ]]; then
-            versions="$(cat "$current/unit-versions.json")"
-          fi
-          jq -n --arg current "$(basename "$current")" \
-            --argjson release "$(cat "$current/release-manifest.json")" \
-            --argjson versions "$versions" \
-            '{current: $current, base_git_sha: $release.git_sha, unit_versions: $versions}'
-          REMOTE
-          jq . "$RUNNER_TEMP/host-state.json"
+          {
+            echo "UNIT_SSH_TARGET=root@${CP_HOST}"
+            echo "UNIT_SSH_KEY=$HOME/.ssh/deploy_key"
+            echo "UNIT_SSH_KNOWN_HOSTS=$HOME/.ssh/known_hosts"
+          } >> "$GITHUB_ENV"
 
       - name: Plan the unit deploy
         id: plan
         run: |
           set -euo pipefail
+          scripts/ci/unit_deploy.sh state > "$RUNNER_TEMP/host-state.json"
+          jq . "$RUNNER_TEMP/host-state.json"
+          # N±1: the unit release must be built over the newest full release
+          # before its commit, the release CI checked these units against.
+          previous_tag="$(git describe --tags --abbrev=0 --match 'v[0-9]*.[0-9]*.[0-9]*' "$UNITS_SHA")"
+          previous="$(git rev-parse "${previous_tag}^{commit}")"
           out="$RUNNER_TEMP/unit-plan"
           python3 scripts/ci/plan_unit_deploy.py \
             --units-manifest "$UNITS_DIR/units-manifest.json" \
             --host-state "$RUNNER_TEMP/host-state.json" \
+            --lane "$UNITS_LANE" --host-role control-plane \
+            --previous-release "$previous" \
             --expect-units "$EXPECT_UNITS" \
             --out "$out"
           plan="$out/plan.json"
           action="$(jq -r .action "$plan")"
           echo "action=$action" >> "$GITHUB_OUTPUT"
+          echo "UNIT_PLAN=$plan" >> "$GITHUB_ENV"
           {
-            echo "## Unit release \`${UNITS_SHA:0:12}\` on the control plane"
+            echo "## Unit release \`${UNITS_SHA:0:12}\` ($UNITS_LANE lane) on the control plane"
             echo
-            echo "Plan: **${action}** over \`$(jq -r .current "$RUNNER_TEMP/host-state.json")\`."
+            echo "Plan: **${action}** over \`$(jq -r .current "$RUNNER_TEMP/host-state.json")\` (previous release \`${previous_tag}\`)."
             echo "Restart: $(jq -r '.only | join(", ") | if . == "" then "none" else . end' "$plan")."
             pending="$(jq -r '[.pending[][]] | join(", ")' "$UNITS_DIR/units-manifest.json")"
             [[ -z "$pending" ]] || echo "Waiting for the next full release: ${pending}."
@@ -1347,32 +1360,12 @@ jobs:
         if: steps.plan.outputs.action == 'deploy' || steps.plan.outputs.action == 'converge'
         run: |
           set -euo pipefail
-          umask 0022
-          plan="$RUNNER_TEMP/unit-plan/plan.json"
-          stage="$RUNNER_TEMP/unit-stage"
-          rm -rf -- "$stage"
-          install -d -m 0755 "$stage/bin"
-          while read -r unit; do
-            [[ -n "$unit" ]] || continue
-            install -m 0755 "$UNITS_DIR/bin/$unit" "$stage/bin/$unit"
-          done < <(jq -r '.changed // [] | .[]' "$plan")
-          if [[ -s "$RUNNER_TEMP/unit-plan/unit-versions.json" ]]; then
-            install -m 0644 "$RUNNER_TEMP/unit-plan/unit-versions.json" "$stage/unit-versions.json"
-          fi
           # deployctl is a controller tool built from the unit release's
           # commit, exactly as the full lane builds it from the tag.
           GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath \
             -ldflags "-s -w -X github.com/onebox-faas/faas/pkg/wire.Version=${UNITS_SHA}" \
-            -o "$stage/bin/deployctl" ./cmd/deployctl
-          install -m 0755 scripts/unit-release-verify.sh "$stage/unit-release-verify.sh"
-          tar --create --gzip --file "$RUNNER_TEMP/unit-stage.tar.gz" --directory "$stage" .
-          remote="$(ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
-            "root@${{ env.CP_HOST }}" 'mktemp -d /var/tmp/gregale-units.XXXXXXXX')"
-          [[ "$remote" =~ ^/var/tmp/gregale-units\.[A-Za-z0-9]+$ ]]
-          scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
-            "$RUNNER_TEMP/unit-stage.tar.gz" "root@${{ env.CP_HOST }}:${remote}/stage.tar.gz"
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
-            "root@${{ env.CP_HOST }}" "tar --extract --gzip --file '${remote}/stage.tar.gz' --directory '${remote}' --no-same-owner && rm -f -- '${remote}/stage.tar.gz'"
+            -o "$RUNNER_TEMP/deployctl" ./cmd/deployctl
+          remote="$(scripts/ci/unit_deploy.sh stage "$UNIT_PLAN" "$UNITS_DIR" "$RUNNER_TEMP/deployctl")"
           echo "REMOTE_STAGE=$remote" >> "$GITHUB_ENV"
 
       - name: Activate the unit release
@@ -1380,51 +1373,38 @@ jobs:
         if: steps.plan.outputs.action == 'deploy' || steps.plan.outputs.action == 'converge'
         run: |
           set -euo pipefail
-          plan="$RUNNER_TEMP/unit-plan/plan.json"
-          release_id="$(jq -er .release_id "$plan")"
-          expect="$(jq -er .expect_current "$plan")"
-          only="$(jq -r '.only | join(",")' "$plan")"
-          [[ "$release_id" =~ ^[0-9a-f]{40}$ && "$expect" =~ ^[0-9a-f]{40}$ ]]
-          release_dir="/opt/faas/releases/${release_id}"
-          files=""
-          while read -r rel source; do
-            files+=" $(printf '%q' "${rel}=${REMOTE_STAGE}/${source}")"
-          done < <(jq -r '.replace | to_entries[] | "\(.key) \(.value)"' "$plan")
-          specs=""
-          while read -r spec; do
-            specs+=" $(printf '%q' "$spec")"
-          done < <(jq -r '.verify[]' "$plan")
           activation_script="$RUNNER_TEMP/unit-activate.sh"
-          {
-            echo 'set -euo pipefail'
-            if [[ -n "$files" ]]; then
-              echo "${REMOTE_STAGE}/bin/deployctl unit-overlay --release-id ${release_id} --expect-current ${expect} --commit ${UNITS_SHA}${files}"
-            fi
-            echo "${release_dir}/bin/deployctl deploy --only '${only}' --expect-current ${expect} ${release_id}"
-            echo "touch \"\$ROLLOUT_ACTIVATION_MARKER\""
-            echo "if ! bash ${REMOTE_STAGE}/unit-release-verify.sh ${release_dir}${specs}; then"
-            echo "  ${release_dir}/bin/deployctl rollback --only '${only}'"
-            # Put optional units back on the release now active, too.
-            echo "  bash ${REMOTE_STAGE}/unit-release-verify.sh \"\$(readlink -f /opt/faas/current)\"${specs} || true"
-            echo '  exit 1'
-            echo 'fi'
-          } > "$activation_script"
+          scripts/ci/unit_deploy.sh script "$UNIT_PLAN" "$REMOTE_STAGE" "$activation_script"
           cat "$activation_script"
+          # The SLO gate ignores alerts that were already firing before this.
+          echo "DEPLOYED_AT=$(scripts/ci/unit_deploy.sh now)" >> "$GITHUB_ENV"
           ROLLOUT_BASELINE_SAMPLE_COUNT=3 \
             scripts/ci/observe_remote_rollout.sh \
             "root@${{ env.CP_HOST }}" ~/.ssh/deploy_key "$activation_script"
+
+      - name: Hold the units on the SLO gate
+        if: steps.plan.outputs.action == 'deploy' || steps.plan.outputs.action == 'converge'
+        run: |
+          set -euo pipefail
+          # 0 promotes. 1 (an SLO breached) and 3 (no evidence) roll the
+          # units back to the release that was active before them.
+          status=0
+          scripts/ci/unit_deploy.sh gate "$UNIT_PLAN" "$DEPLOYED_AT" "$SLO_GATE_DURATION" || status=$?
+          if (( status != 0 )); then
+            scripts/ci/unit_deploy.sh rollback "$UNIT_PLAN" "$REMOTE_STAGE"
+            echo "::error::rolled $(jq -r '.units | join(", ")' "$UNIT_PLAN") back after the SLO gate (exit $status)" >&2
+            exit 1
+          fi
 
       - name: Upload unit rollout probe evidence
         if: always()
         uses: actions/upload-artifact@v6
         with:
-          name: control-plane-unit-rollout-probes-${{ github.run_id }}-${{ github.run_attempt }}
+          name: control-plane-unit-rollout-probes-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.units_lane }}
           path: ${{ runner.temp }}/gregale-rollout-availability-${{ github.run_id }}-${{ github.run_attempt }}-*.tsv
           if-no-files-found: ignore
           retention-days: 14
 
       - name: Remove the staged unit release
         if: always() && env.REMOTE_STAGE != ''
-        run: |
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes \
-            "root@${{ env.CP_HOST }}" "rm -rf -- '${REMOTE_STAGE}'" || true
+        run: scripts/ci/unit_deploy.sh cleanup "$REMOTE_STAGE"

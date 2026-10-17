@@ -1,8 +1,8 @@
 # ADR-1650 · Per-unit control-plane releases
 
 - **Status:** proposed
-- **Date:** 2026-10-17
-- **Related:** ADR-113 (canonical signed release), ADR-129 (deploy version gauge), ADR-580 (control-plane convergence in CD)
+- **Date:** 2026-10-17 (slice 2: 2026-10-18)
+- **Related:** ADR-113 (canonical signed release), ADR-129 (deploy version gauge), ADR-580 (control-plane convergence in CD), ADR-1580 (zero-downtime restarts), ADR 202610171900 (release compatibility gates)
 
 ## Context
 
@@ -121,14 +121,85 @@ lane's critical path.
   1 merge (range 0-8). Slice 1 is mechanically complete but rarely usable
   until migrations stop blocking.
 
+## Slice 2: SLO gate, the edge lane, order and skew
+
+**SLO gate.** After a unit lane activates a host, `scripts/ci/unit_deploy.sh
+gate` runs `scripts/ci/slo_gate.py` (ADR 202610171900) for each restarted
+unit, in parallel on the control plane, where Prometheus listens at
+`127.0.0.1:9095`. Each gate watches for `slo_gate_duration`: 10 min on the
+control-plane lane, 5 min per host on the edge lane. `--deployed-at` is the
+control plane's clock right before activation. A pass (0) promotes the
+units. A breach (1), an inconclusive result (3) or a misconfigured gate (2)
+runs `deployctl rollback --only` on the plan's services, which restores the
+release that was active before them, and fails the run. A converge run (a
+rerun after an interrupted deploy) gates again. Gating per unit keeps each
+unit's own "still scraped" check.
+
+**Edge lane.** gatewayd-public and gatewayd-internal get the lane `edge` in
+`release_units.json`. Each of their services names the host role it runs on:
+gatewayd-public on the control plane and, where a cell enables it,
+gatewayd-public-edge on compute; gatewayd-internal on compute. The edge
+lane is blocked by everything that blocks the control-plane lane, and also
+by changes to roles only compute hosts run, because it lands on compute
+hosts without converging their roles. `cd-edge-units.yml` runs it:
+
+1. Verify the artifact. Refuse unless the control plane already runs the
+   unit release's control-plane units.
+2. Deploy the control plane's gatewayd-public, through cd-controlplane.yml
+   with `units_lane=edge`, and gate it.
+3. Deploy each compute node in turn (`max-parallel: 1`, `fail-fast`). A
+   node's run shares cd-compute.yml's per-node concurrency group, so a full
+   release never changes the same node at the same time.
+4. On each node: plan, assemble a hard-linked overlay, `deployctl deploy
+   --only gatewayd-internal`, check every unit, restart an enabled
+   gatewayd-public-edge onto the new binary, and gate the node. A failed
+   node is rolled back and the remaining nodes are left as they were.
+
+Compute nodes run releases installed by `gregalectl release install`, which
+ship no deployment manifest and no systemd units. Two changes cover that:
+
+- `deployctl unit-overlay` gives the base release a deployment manifest
+  built from exactly its files, without the host's SBOM sidecar. The overlay
+  can then inherit its hashes, and the base verifies as a rollback target.
+- `deployctl deploy` on a release without units requires `--only`. It checks
+  that each service is installed on the host and that its binary is in the
+  release, installs no units, and runs no migration.
+
+**Restart or reload.** deployctl decides how a service restarts. With
+ADR-1580's two-generation hand-off (#4898), it reloads a gateway when both the
+running and the new binary support the hand-off and nothing the unit read at
+start has changed, and restarts it otherwise. The lanes call `deployctl
+deploy --only` and inherit that choice.
+
+**Order and skew.**
+
+- *N±1:* every lane refuses a unit release that is not built over the newest
+  full release tag before its commit. That is the release CI compared each
+  merge against, so mixed units are at most one release apart.
+- *Order:* migrations block the unit lanes, so data changes go out only in a
+  full release. `release-units.yml` deploys the control-plane lane, then the
+  edge lane. The edge lane checks the control plane itself when it is run
+  alone. Runtime (guest, images) waits for a full release.
+
+The `base` dispatch input can no longer move a unit release onto an older
+production release. That combination is exactly what N±1 forbids.
+
 ## Still needed
 
 - **Migrations.** Most blocked ranges contain a migration. Allowing the lane to
   run expand-only migrations ahead of restarts needs a machine-checkable
   compatibility marker (owned by the release-safety-rails work).
-- **Compute lane.** schedd, gatewayd-public(-edge) and realtimed restart
-  without touching VMs, but they run on compute hosts and need a per-unit mode
-  in cd-compute.
+- **Compute daemons beyond the gateways.** schedd and realtimed restart
+  without touching VMs and could join the edge lane once their restarts are
+  covered (ADR-1580). vmmd needs the restart-adoption work.
+- **Edge target inventory.** The edge lane trusts `edge_targets` or
+  `UNIT_RELEASE_EDGE_TARGETS` to list the compute nodes. A node left out stays
+  on its current gateways, which N±1 allows. Reading the node list from the
+  compute registry would make the lane complete by construction.
+- **Gate time.** With 10 min on the control plane and 5 min per node, a
+  release that changes both lanes on three nodes takes about 45 min. Canary
+  the first node with a full gate and shorten it for later nodes, or gate
+  waves of nodes, to stay inside 30 min.
 - **Build runner.** release-units.yml builds on a GitHub-hosted runner, so on
   a busy CI day its job can queue 8-14 min before it starts. Building on the
   dedicated fleet runner (warm Go cache, no queue) keeps merge-to-prod near 10
@@ -139,9 +210,8 @@ lane's critical path.
   Content-address runtime bases and pre-stage them off the critical path.
   Roll compute as a canary node, then parallel waves, once activation is
   per-unit without a drain.
-- **Base discovery.** The base defaults to the newest tag. When production
-  trails it, dispatch with `base`. Recording the deployed release (for example
-  in a GitHub deployment) would remove that step.
+- **Base discovery.** The base is the newest tag. A production that trails
+  it must roll that full release out before unit releases resume.
 
 ## Rejected alternatives
 

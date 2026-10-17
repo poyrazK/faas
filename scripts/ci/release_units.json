@@ -1,5 +1,5 @@
 {
-  "_comment": "Per-unit release lanes (docs/adr/1650-per-unit-control-plane-releases.md). Every release binary (Makefile DAEMONS + CLIS) appears here. lane: control-plane = runs only on the control plane and deploys alone through cd-controlplane's unit lane; shared = also runs on compute hosts, so a change waits for the full release; compute = compute hosts only; tool = operator/customer CLI, never restarted. pkg/daemonunitspec/release_units_lane_test.go keeps lanes, services and readiness URLs in lockstep with the daemon registry; scripts/ci/affected_units_test.py keeps the binary set in lockstep with the Makefile.",
+  "_comment": "Per-unit release lanes (docs/adr/1650-per-unit-control-plane-releases.md). Every release binary (Makefile DAEMONS + CLIS) appears here. lane: control-plane = runs only on the control plane and deploys alone through cd-controlplane's unit lane; edge = the gateways, deployed after the control plane by cd-edge-units.yml one host at a time (services name the host role they run on); shared = also runs on compute hosts, so a change waits for the full release; compute = compute hosts only; tool = operator/customer CLI, never restarted. pkg/daemonunitspec/release_units_lane_test.go keeps lanes, services and readiness URLs in lockstep with the daemon registry; scripts/ci/affected_units_test.py keeps the binary set in lockstep with the Makefile.",
   "binaries": {
     "apid": {
       "lane": "control-plane",
@@ -29,9 +29,18 @@
       "services": [{"name": "bridged", "optional": true}]
     },
     "schedd": {"lane": "shared"},
-    "gatewayd-public": {"lane": "shared"},
+    "gatewayd-public": {
+      "lane": "edge",
+      "services": [
+        {"name": "gatewayd-public", "host": "control-plane", "readyz": "http://127.0.0.1:9092/readyz"},
+        {"name": "gatewayd-public-edge", "host": "compute-only", "optional": true, "readyz": "http://127.0.0.1:9092/readyz"}
+      ]
+    },
     "realtimed": {"lane": "compute"},
-    "gatewayd-internal": {"lane": "compute"},
+    "gatewayd-internal": {
+      "lane": "edge",
+      "services": [{"name": "gatewayd-internal", "host": "compute-only", "readyz": "http://127.0.0.1:9090/readyz"}]
+    },
     "vmmd": {"lane": "compute"},
     "vmmd-jail-helper": {"lane": "compute"},
     "vmmd-raw-bridge": {"lane": "compute"},

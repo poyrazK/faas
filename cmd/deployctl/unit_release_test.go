@@ -169,3 +169,58 @@ func writeFile(t *testing.T, path, body string) {
 		t.Fatal(err)
 	}
 }
+
+// A compute host's release ships no units: --only is mandatory, the
+// services must be installed on the host, and nothing migrates.
+func TestHostManagedReleaseSwapsBinariesOnly(t *testing.T) {
+	root := t.TempDir()
+	release := filepath.Join(root, "release")
+	unitDir := filepath.Join(root, "units")
+	writeFile(t, filepath.Join(release, "bin", "gatewayd-internal"), "binary")
+	writeFile(t, filepath.Join(unitDir, "faas-gatewayd-internal.service"), "[Unit]\n")
+	writeFile(t, filepath.Join(unitDir, "faas-gatewayd-internal.service.d", "zz-canary.conf"),
+		"[Service]\nExecStart=\nExecStart=/opt/faas/canaries/x/bin/gatewayd-internal\n")
+	if !hostManagedUnits(release) {
+		t.Fatal("a release without systemd/ is host-managed")
+	}
+	orig := runCommand
+	t.Cleanup(func() { runCommand = orig })
+	var calls []string
+	runCommand = func(_ context.Context, name string, args ...string) error {
+		calls = append(calls, name+" "+strings.Join(args, " "))
+		return nil
+	}
+	order, err := daemonunitspec.RestartOrder()
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest := releasebundle.Manifest{Target: "linux/amd64"}
+
+	all := hostRuntime{unitDir: unitDir, serviceOrder: order}
+	if err := all.Preflight(context.Background(), manifest, release); err == nil || !strings.Contains(err.Error(), "--only") {
+		t.Fatalf("Preflight without --only = %v", err)
+	}
+	r := hostRuntime{unitDir: unitDir, serviceOrder: order, only: set("gatewayd-internal")}
+	if err := r.Preflight(context.Background(), manifest, release); err != nil {
+		t.Fatalf("Preflight: %v", err)
+	}
+	missing := hostRuntime{unitDir: unitDir, serviceOrder: order, only: set("vmmd")}
+	if err := missing.Preflight(context.Background(), manifest, release); err == nil || !strings.Contains(err.Error(), "not installed") {
+		t.Fatalf("Preflight for an uninstalled service = %v", err)
+	}
+	if err := r.Migrate(context.Background(), manifest, release, ""); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	if err := r.Activate(context.Background(), release); err != nil {
+		t.Fatalf("Activate: %v", err)
+	}
+	if want := []string{"systemctl daemon-reload"}; !reflect.DeepEqual(calls, want) {
+		t.Fatalf("host-managed activation ran %v, want only %v (no unit install, no migration)", calls, want)
+	}
+	if _, err := os.Stat(filepath.Join(unitDir, "faas-gatewayd-internal.service.d", "zz-canary.conf")); !os.IsNotExist(err) {
+		t.Fatalf("restarted service kept its canary override: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(unitDir, "faas-gatewayd-internal.service")); err != nil {
+		t.Fatalf("host unit removed: %v", err)
+	}
+}

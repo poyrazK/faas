@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Build the unsigned part of a per-unit control-plane release
+# Build the unsigned part of a per-unit release
 # (docs/adr/1650-per-unit-control-plane-releases.md) from an
-# affected_units.py report: every deployable control-plane binary, built with
-# build-release-batch's flags and stamped with its unit version, plus
-# units-manifest.json describing them. release-units.yml signs the tarball.
+# affected_units.py report: every binary of an eligible lane (control-plane,
+# edge), built with build-release-batch's flags and stamped with its unit
+# version, plus units-manifest.json describing them. release-units.yml signs
+# the tarball.
 #
 #   REPORT=report.json OUT_DIR=out scripts/build-unit-release.sh
 #
@@ -65,6 +66,7 @@ for name in report["deployable"]:
         digest = hashlib.sha256(fh.read()).hexdigest()
     entry = report["binaries"][name]
     units[name] = {
+        "lane": entry["lane"],
         "version": entry["version"],
         "commit": entry["commit"],
         "sha256": digest,
@@ -72,13 +74,15 @@ for name in report["deployable"]:
         "services": lanes[name]["services"],
     }
 manifest = {
-    "format_version": 1,
+    "format_version": 2,
     "kind": "gregale-unit-release",
     "git_sha": report["head"],
     "base_sha": report["base"],
     "base_ref": report["base_ref"],
     "target": "linux/amd64",
     "units": units,
+    "lanes": {lane: {"eligible": v["eligible"], "units": v["changed"] if v["eligible"] else []}
+              for lane, v in report["lanes"].items()},
     "pending": report["pending"],
     "flags": report["flags"],
 }

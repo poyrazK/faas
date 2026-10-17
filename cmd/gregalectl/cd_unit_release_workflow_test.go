@@ -28,10 +28,27 @@ func jobBlock(t *testing.T, workflow, job string) string {
 	return rest[:end]
 }
 
-// TestUnitReleaseIsSignedOnlyByMainAndVerifiedBeforeUse: the unit lane
-// installs binaries as root on the control plane. They must come from
-// release-units.yml on main, match the signed manifest file by file, and be
-// verified before anything reaches the host.
+// orderedIn fails unless every needle occurs in text, in order.
+func orderedIn(t *testing.T, where, text string, needles ...string) {
+	t.Helper()
+	last := -1
+	for _, needle := range needles {
+		at := strings.Index(text, needle)
+		if at < 0 {
+			t.Fatalf("%s is missing %q", where, needle)
+		}
+		if at < last {
+			t.Fatalf("%s runs %q out of order", where, needle)
+		}
+		last = at
+	}
+}
+
+// TestUnitReleaseIsSignedOnlyByMainAndVerifiedBeforeUse: the unit lanes
+// install binaries as root on the control plane and compute nodes. They must
+// come from release-units.yml on main, match the signed manifest file by
+// file, and be verified, by the workflow's own copy of the verifier, before
+// the release commit is checked out or anything reaches a host.
 func TestUnitReleaseIsSignedOnlyByMainAndVerifiedBeforeUse(t *testing.T) {
 	release := readWorkflow(t, "release-units.yml")
 	for _, required := range []string{
@@ -49,49 +66,132 @@ func TestUnitReleaseIsSignedOnlyByMainAndVerifiedBeforeUse(t *testing.T) {
 		t.Error("only the build job may cancel in progress; a started deploy must finish")
 	}
 
-	units := jobBlock(t, readWorkflow(t, "cd-controlplane.yml"), "deploy-units")
-	verify := strings.Index(units, `--certificate-identity "https://github.com/poyrazK/faas/.github/workflows/release-units.yml@refs/heads/main"`)
-	digests := strings.Index(units, `(cd "$dir/unpacked" && sha256sum -c -)`)
-	count := strings.Index(units, `-eq "$(jq '.units | length' "$manifest")"`)
-	ssh := strings.Index(units, "ssh -i ~/.ssh/deploy_key")
-	if verify < 0 || digests < 0 || count < 0 || ssh < 0 {
-		t.Fatalf("deploy-units lacks verification steps: verify=%d digests=%d count=%d ssh=%d", verify, digests, count, ssh)
+	verifier := readRepoFile(t, "scripts", "ci", "verify_unit_release.sh")
+	if !strings.Contains(verifier, `identity="${UNIT_RELEASE_IDENTITY:-https://github.com/poyrazK/faas/.github/workflows/release-units.yml@refs/heads/main}"`) {
+		t.Error("verify_unit_release.sh must accept only release-units.yml on main")
 	}
-	if !(verify < digests && digests < count && count < ssh) {
-		t.Fatalf("deploy-units must verify the signature, each binary and the binary count before contacting the host")
+	orderedIn(t, "verify_unit_release.sh", verifier,
+		"sha256sum -c --quiet SHA256SUMS",
+		`--certificate-identity "$identity"`,
+		`cmp "$manifest" "$dir/units-manifest.json"`,
+		`(cd "$dir/unpacked" && sha256sum -c --quiet -)`,
+		`-ne "$(jq '.units | length' "$manifest")"`,
+	)
+
+	for _, job := range []struct{ file, name string }{
+		{"cd-controlplane.yml", "deploy-units"},
+		{"cd-edge-units.yml", "plan"},
+		{"cd-edge-units.yml", "nodes"},
+	} {
+		block := jobBlock(t, readWorkflow(t, job.file), job.name)
+		orderedIn(t, job.file+" "+job.name, block,
+			"sparse-checkout: scripts/ci/verify_unit_release.sh",
+			"workflow-src/scripts/ci/verify_unit_release.sh",
+			"ref: ${{ steps.verify.outputs.git_sha }}",
+			"scripts/ci/unit_deploy.sh state",
+		)
 	}
 }
 
 // TestUnitLaneRestartsOnlyPlannedServicesOverTheExpectedRelease: the host
 // step must compare-and-swap against the release the plan was made over,
 // restart only planned services, gate each one, and roll back on a failed
-// gate, all under the customer-path observer the full lane uses.
+// gate.
 func TestUnitLaneRestartsOnlyPlannedServicesOverTheExpectedRelease(t *testing.T) {
-	units := jobBlock(t, readWorkflow(t, "cd-controlplane.yml"), "deploy-units")
-	steps := []string{
-		"scripts/ci/plan_unit_deploy.py",
+	helper := readRepoFile(t, "scripts", "ci", "unit_deploy.sh")
+	orderedIn(t, "unit_deploy.sh activation script", helper,
 		"deployctl unit-overlay --release-id ${release_id} --expect-current ${expect}",
 		"deployctl deploy --only '${only}' --expect-current ${expect} ${release_id}",
-		`touch \"\$ROLLOUT_ACTIVATION_MARKER\"`,
+		"ROLLOUT_ACTIVATION_MARKER",
 		"unit-release-verify.sh ${release_dir}${specs}",
 		"deployctl rollback --only '${only}'",
-		"scripts/ci/observe_remote_rollout.sh",
-	}
-	last := -1
-	for _, step := range steps {
-		at := strings.Index(units, step)
-		if at < 0 {
-			t.Fatalf("deploy-units is missing %q", step)
-		}
-		if at < last {
-			t.Fatalf("deploy-units runs %q out of order", step)
-		}
-		last = at
-	}
+	)
 	for _, forbidden := range []string{"migrate", "converge-control-plane", "kgv rotate", "fleet-seal"} {
-		if strings.Contains(units, forbidden) {
-			t.Errorf("the unit lane must leave %q to the full lane", forbidden)
+		if strings.Contains(helper, forbidden) {
+			t.Errorf("the unit lanes must leave %q to the full lane", forbidden)
 		}
+	}
+}
+
+// TestUnitLanesGateEveryHostAndRollBack: a unit deploy is not promoted until
+// the SLO gate passes; a breach or an inconclusive gate (exit 1 or 3) puts
+// the plan's services back on the previous release and fails the run.
+func TestUnitLanesGateEveryHostAndRollBack(t *testing.T) {
+	for _, job := range []struct{ file, name, activate string }{
+		{"cd-controlplane.yml", "deploy-units", "scripts/ci/observe_remote_rollout.sh"},
+		{"cd-edge-units.yml", "nodes", `scripts/ci/unit_deploy.sh run "$activation_script"`},
+	} {
+		block := jobBlock(t, readWorkflow(t, job.file), job.name)
+		orderedIn(t, job.file+" "+job.name, block,
+			"scripts/ci/plan_unit_deploy.py",
+			`--previous-release "$`,
+			"scripts/ci/unit_deploy.sh stage",
+			"scripts/ci/unit_deploy.sh script",
+			`echo "DEPLOYED_AT=$(scripts/ci/unit_deploy.sh now)"`,
+			job.activate,
+			`scripts/ci/unit_deploy.sh gate "$UNIT_PLAN" "$DEPLOYED_AT" "$SLO_GATE_DURATION" || status=$?`,
+			`scripts/ci/unit_deploy.sh rollback "$UNIT_PLAN" "$REMOTE_STAGE"`,
+			"back after the SLO gate (exit $status)",
+		)
+	}
+	helper := readRepoFile(t, "scripts", "ci", "unit_deploy.sh")
+	for _, required := range []string{
+		`PROMETHEUS_URL:-http://127.0.0.1:9095`,
+		`python3 "$dir/slo_gate.py" "$@" --deployed-at "$deployed_at"`,
+		"1) worst=1 ;;",
+		`*) [[ "$worst" == 1 ]] || worst=3 ;;`,
+	} {
+		if !strings.Contains(helper, required) {
+			t.Errorf("unit_deploy.sh gate is missing %q", required)
+		}
+	}
+}
+
+// TestEdgeLaneFollowsTheControlPlaneOneHostAtATime: the edge lane deploys
+// only after the control-plane lane of the same unit release is on the
+// control plane (deploy order), the control plane's gateway first, then one
+// compute node at a time, stopping at the first failure, never alongside a
+// full compute rollout of the same node.
+func TestEdgeLaneFollowsTheControlPlaneOneHostAtATime(t *testing.T) {
+	release := readWorkflow(t, "release-units.yml")
+	edgeCall := jobBlock(t, release, "deploy-edge")
+	for _, required := range []string{"needs: [build, deploy]", "uses: ./.github/workflows/cd-edge-units.yml"} {
+		if !strings.Contains(edgeCall, required) {
+			t.Errorf("release-units deploy-edge is missing %q", required)
+		}
+	}
+	if !strings.Contains(jobBlock(t, release, "deploy"), "units_lane: control-plane") {
+		t.Error("release-units deploy must run the control-plane lane")
+	}
+
+	edge := readWorkflow(t, "cd-edge-units.yml")
+	orderedIn(t, "cd-edge-units plan", jobBlock(t, edge, "plan"),
+		"--lane control-plane --host-role control-plane",
+		`if [[ "$action" == deploy ]]; then`,
+		"deploy order: the control-plane lane of this unit release",
+	)
+	cp := jobBlock(t, edge, "control-plane")
+	for _, required := range []string{"needs: [plan]", "uses: ./.github/workflows/cd-controlplane.yml", "units_lane: edge"} {
+		if !strings.Contains(cp, required) {
+			t.Errorf("cd-edge-units control-plane is missing %q", required)
+		}
+	}
+	nodes := jobBlock(t, edge, "nodes")
+	for _, required := range []string{
+		"needs: [plan, control-plane]",
+		"needs.control-plane.result == 'success' || needs.control-plane.result == 'skipped'",
+		"max-parallel: 1",
+		"fail-fast: true",
+		"group: cd-compute-${{ inputs.deploy_environment }}-${{ matrix.target.node }}",
+		"--lane edge --host-role compute-only",
+		`[[ "$fingerprint" != "$SSH_HOST_KEY_SHA256" ]]`,
+	} {
+		if !strings.Contains(nodes, required) {
+			t.Errorf("cd-edge-units nodes is missing %q", required)
+		}
+	}
+	if strings.Contains(nodes, "StrictHostKeyChecking=no") || strings.Contains(edge, "StrictHostKeyChecking=no") {
+		t.Error("the edge lane must never disable host-key checking")
 	}
 }
 
