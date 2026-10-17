@@ -391,3 +391,23 @@ func NotifyReadyWhen(ctx context.Context, ready func() bool) func() {
 		return true
 	})
 }
+
+// ListenUDPInherited is net.ListenUDP preferring an inherited socket.
+func ListenUDPInherited(network string, laddr *net.UDPAddr) (*net.UDPConn, error) {
+	pc, ok, err := InheritedPacketConn(network, laddr.String())
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		if conn, isUDP := pc.(*net.UDPConn); isUDP {
+			return conn, nil
+		}
+		_ = pc.Close()
+		return nil, fmt.Errorf("wire: inherited %s socket for %s is not UDP", network, laddr)
+	}
+	conn, err := net.ListenUDP(network, laddr)
+	if err == nil {
+		Share(conn)
+	}
+	return conn, err
+}
