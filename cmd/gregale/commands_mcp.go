@@ -102,7 +102,7 @@ func cmdMCPInit(args []string) int {
 	jwks := fs.String("jwks-url", "", "HTTPS signing-key URL for private access")
 	resource := fs.String("resource", "", "canonical HTTPS MCP endpoint and token audience")
 	scopes := fs.String("scopes", "", "comma-separated required OAuth scopes")
-	authApp := fs.String("auth-app", "", "Gregale Auth app whose OAuth server issues the tokens; sets --auth external-oauth, --issuer and --jwks-url")
+	authApp := unreleasedStringFlag(fs, "auth-app", "Gregale Auth app whose OAuth server issues the tokens; sets --auth external-oauth, --issuer and --jwks-url")
 	tasks := fs.Bool("tasks", false, "create separate web, worker and observer projects with durable Tasks enabled")
 	name := fs.String("name", "", "app slug prefix and shared task namespace (required with --tasks)")
 	if err := fs.Parse(args); err != nil {

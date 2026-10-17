@@ -66,6 +66,7 @@ func TestCmdMCPInitRejectsUnknownLanguage(t *testing.T) {
 }
 
 func TestCmdMCPInitUsesAGregaleAuthApp(t *testing.T) {
+	t.Setenv("FAAS_APPLICATION_AUTH_ENABLED", "1")
 	resetJSONEnv(t)
 	authIssuerServer(t, func(http.ResponseWriter, *http.Request) bool { return false })
 	registration := false

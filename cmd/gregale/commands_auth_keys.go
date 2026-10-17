@@ -413,7 +413,7 @@ type authPublicSettings struct {
 		RetentionDays *int `json:"retention_days"`
 	} `json:"anonymous"`
 	IdentityLinking bool `json:"identity_linking"`
-	Keys struct {
+	Keys            struct {
 		Signing   string   `json:"signing"`
 		Verifying []string `json:"verifying"`
 	} `json:"keys"`
