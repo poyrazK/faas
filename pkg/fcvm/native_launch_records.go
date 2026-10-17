@@ -30,7 +30,7 @@ func (j *nativeLaunchJournal) records(ctx context.Context) ([]nativeLaunchRecord
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		if entry.Name() == "retired" || entry.Name() == "helpers" || entry.Name() == "loop-mounts" || entry.Name() == "image-sources" || entry.Name() == "tun-binds" || entry.Name() == "qualifications" || strings.HasPrefix(entry.Name(), ".launch-") || strings.HasSuffix(entry.Name(), ".lock") {
+		if entry.Name() == "retired" || entry.Name() == "helpers" || entry.Name() == "loop-mounts" || entry.Name() == "image-sources" || entry.Name() == "tun-binds" || entry.Name() == "qualifications" || entry.Name() == "migration-admissions" || entry.Name() == "migration-sources" || strings.HasPrefix(entry.Name(), ".launch-") || strings.HasSuffix(entry.Name(), ".lock") {
 			continue
 		}
 		instance, ok := strings.CutSuffix(entry.Name(), ".json")
@@ -123,6 +123,14 @@ func (j *nativeLaunchJournal) confirmResourcesRemoved(ctx context.Context, expec
 // but only the daemon holding this exact retired generation can replace it.
 // Completed prior generations remain immutable in the private archive.
 func (j *nativeLaunchJournal) replace(ctx context.Context, lease Lease, expectedGeneration string, requireResourcesRemoved bool) (record nativeLaunchRecord, err error) {
+	migrationLock, migrationErr := j.lockMigrationPreparation(ctx, lease.Instance)
+	if migrationErr != nil {
+		return record, migrationErr
+	}
+	if migrationLock != nil {
+		defer func() { err = errors.Join(err, migrationLock.Close()) }()
+	}
+
 	qualificationLock, incoming, err := j.lockQualificationProducer(ctx, lease.Instance)
 	if err != nil {
 		return record, err
@@ -195,6 +203,10 @@ func (j *nativeLaunchJournal) replace(ctx context.Context, lease Lease, expected
 			return record, errors.New("native journal: prior generation archive differs from retired ownership")
 		}
 	}
-	record = nativeLaunchRecord{Version: 1, Generation: uuid.NewString(), KernelBootID: old.KernelBootID, Lease: lease}
+	generation, err := j.bindMigrationPhysical(ctx, lease, uuid.NewString())
+	if err != nil {
+		return record, err
+	}
+	record = nativeLaunchRecord{Version: 1, Generation: generation, KernelBootID: old.KernelBootID, Lease: lease}
 	return record, j.write(record)
 }
