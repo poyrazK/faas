@@ -453,6 +453,10 @@ func TestNodeLedger_PerNodeCeiling_AdmitRefusesOverflowingNode(t *testing.T) {
 // the per-row value) would fail here.
 func TestNodeLedger_PerNodeCeiling_TwoNodesAdmitIndependently(t *testing.T) {
 	const halfCeiling = 23_800
+	// Instances are pinned at 1,024 MB rather than the Scale plan's RAM
+	// entitlement, which can grow (ADR-1350 raised it to 2,048 MB) and
+	// would overflow the half ceiling before the per-app cap.
+	const instanceRAMMB = 1024
 	scaleLimits := api.MustLimitsFor(api.PlanScale)
 	l := NewNodeLedger()
 
@@ -466,7 +470,7 @@ func TestNodeLedger_PerNodeCeiling_TwoNodesAdmitIndependently(t *testing.T) {
 			Instance:       fmt.Sprintf("node0-%d", i),
 			AppID:          "node0-app", // distinct appID so per-app cap is freshly applied
 			Plan:           api.PlanScale,
-			RAMMB:          scaleLimits.RAMMB,
+			RAMMB:          instanceRAMMB,
 			VCPU:           1, // 1 vCPU each so the global vCPU cap doesn't bite at 20 instances
 			MaxConcurrency: scaleLimits.MaxConcurrency,
 			NodeID:         "node-0",
@@ -493,7 +497,7 @@ func TestNodeLedger_PerNodeCeiling_TwoNodesAdmitIndependently(t *testing.T) {
 		Instance:       "node1-0",
 		AppID:          "node1-app", // distinct appID so per-app cap is freshly applied
 		Plan:           api.PlanScale,
-		RAMMB:          scaleLimits.RAMMB,
+		RAMMB:          instanceRAMMB,
 		VCPU:           1,
 		MaxConcurrency: scaleLimits.MaxConcurrency,
 		NodeID:         "node-1",
