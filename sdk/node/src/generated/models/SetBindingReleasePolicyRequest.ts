@@ -3,10 +3,12 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { ObjectStorageReleaseRequirements } from './ObjectStorageReleaseRequirements.js';
+import type { QueueReleaseRequirements } from './QueueReleaseRequirements.js';
 /**
  * Compare-and-set binding release enforcement for one deployment scope, including evidence age, application acknowledgements and an explicit change reason.
  */
 export type SetBindingReleasePolicyRequest = {
+  queue_requirements?: QueueReleaseRequirements;
   object_storage_requirements?: ObjectStorageReleaseRequirements;
   mode: 'off' | 'enforce';
   expected_revision: number;

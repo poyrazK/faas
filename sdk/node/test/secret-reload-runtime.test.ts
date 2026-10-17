@@ -71,6 +71,41 @@ test('managed leases survive partial adoption failure and coordinator shutdown',
   }finally{old.release();coordinator.stop();}
 });
 
+test('manual refresh cancellation fences adoption and permits a later refresh', {timeout: 3000}, async t => {
+  const entered = deferred(), finish = deferred(); let block = false;
+  const storage = new ObjectStorageBinding('ASSETS', config => config.credentials.secretAccessKey);
+  const {coordinator, receipts, publish} = fixture(t, {consumers: [storage.secretConsumer(), {
+    apply: async () => {if (block) {entered.resolve(); await finish.promise;}}, invalidate: () => {},
+  }]});
+  await coordinator.start();
+  block = true; publish(envelope('b', values('private-second')));
+  const cancel = new AbortController();
+  const refresh = coordinator.reload(cancel.signal); await entered.promise;
+  cancel.abort(); await assert.rejects(refresh, /cancelled/);
+  assert.throws(() => storage.current()); assert.equal(receipts.length, 1);
+  finish.resolve(); await nextTurn();
+  block = false; publish(envelope('c', values('private-recovered')));
+  await coordinator.reload();
+  assert.equal(storage.current().client, 'private-recovered');
+  assert.deepEqual(receipts.map(r => r.revision), [revision('a'), revision('c')]);
+});
+
+test('a queued cancelled refresh returns promptly without running or invalidating another refresh', {timeout: 3000}, async t => {
+  const entered = deferred(), finish = deferred(); let reads = 0;
+  const {coordinator, storage, receipts} = fixture(t, {io: {read: async () => {
+    if (++reads === 2) {entered.resolve(); await finish.promise;}
+    return envelope();
+  }}});
+  await coordinator.start();
+  const first = coordinator.reload(); await entered.promise;
+  const cancel = new AbortController(), queued = coordinator.reload(cancel.signal);
+  cancel.abort(); await assert.rejects(queued, /cancelled/);
+  finish.resolve(); await first; await nextTurn();
+  assert.equal(reads, 2); assert.equal(receipts.length, 2); assert.ok(storage.current());
+  await assert.rejects(coordinator.reload(AbortSignal.abort()), /cancelled/);
+  assert.ok(storage.current());
+});
+
 test('startup registers SIGHUP before readiness, waits for a version and fences exact ACKs after every consumer', async t => {
   const applied: string[] = [];
   let ready = false, reads = 0;

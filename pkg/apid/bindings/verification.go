@@ -7,8 +7,8 @@ import (
 )
 
 func NormalizeVerification(task state.BindingVerificationTask) *api.BindingVerification {
-	result := &api.BindingVerification{Result: "unknown", Source: "task_guest", DeploymentID: task.DeploymentID,
-		Scope: task.Scope, CheckedAt: task.FinishedAt, CredentialGeneration: task.Pin.CredentialGeneration}
+	result := &api.BindingVerification{TaskID: task.TaskID, Result: "unknown", Source: "task_guest", DeploymentID: task.DeploymentID,
+		Scope: task.Scope, TargetDeploymentID: task.Pin.TargetDeploymentID, CheckedAt: task.FinishedAt, CredentialGeneration: task.Pin.CredentialGeneration}
 	if !state.AppTaskStatus(task.Status).Terminal() {
 		result.Reason = "probe_pending"
 		return result
@@ -30,7 +30,7 @@ func NormalizeVerification(task state.BindingVerificationTask) *api.BindingVerif
 	switch task.Pin.Type {
 	case api.BindingTypeService:
 		var report api.ServiceBindingProbeReport
-		if json.Unmarshal([]byte(task.Stdout), &report) != nil || report.Service != task.Pin.Binding {
+		if json.Unmarshal([]byte(task.Stdout), &report) != nil || report.Service != task.Pin.Binding || report.TargetDeploymentID != task.Pin.TargetDeploymentID {
 			result.Reason = "report_invalid"
 			return result
 		}
