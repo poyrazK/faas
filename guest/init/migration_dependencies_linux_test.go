@@ -1,6 +1,6 @@
 //go:build linux
 
-// adr:1572 — migration probes reuse bounded guest dependency checks.
+// adr:1659 — migration probes reuse bounded guest dependency checks.
 package main
 
 import (

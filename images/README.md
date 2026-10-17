@@ -1,5 +1,12 @@
 # images/ — Dockerfiles for content-addressed base images (spec §4.6, §15)
 
+`ci-runner.Dockerfile` is an internal Jobs CI protocol image recipe, outside the
+publication matrix. It packages the guest-only `gregale-ci-runner` binary with a
+shell and CA trust. `make ci-runner-build` builds the binary without publishing an
+image or enabling CI. Run repository steps only in Jobs microVMs; a container
+image build or portable fake-executor test is not native execution acceptance.
+See [internal CI](../docs/ops/internal-ci.md#guest-runner-and-scoped-transfers).
+
 `base-debian-parent`, `base-minimal`, `runner-node22`, `runner-node24`, `runner-python312`, `runner-python313`, `runner-go124`, `runner-go124-alpine`, `builder-base`. Built in CI,
 staged to /srv/fc/base/ (inside the 60 GB reserve, counted once). drive0 is one of
 these shared read-only base rootfs; per-app layers stack over it via overlayfs.

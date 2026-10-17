@@ -1,4 +1,4 @@
-// adr:1574 — a cutover plan records customer intent, never edits provider DNS.
+// adr:1661 — a cutover plan records customer intent, never edits provider DNS.
 package migrationcutover
 
 import (

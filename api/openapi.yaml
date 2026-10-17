@@ -17942,6 +17942,18 @@ paths:
           required: false
           schema: { type: string, format: date-time }
           description: "Inclusive RFC3339 upper bound; defaults to now."
+        - name: pagination
+          in: query
+          schema: { type: string, enum: [keyset_v1] }
+          description: Opt in to window-first keyset paging. Legacy reads select 100 recent instance candidates before time filtering.
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+          description: Page size in keyset_v1 mode only; legacy requests ignore this parameter.
+        - name: cursor
+          in: query
+          schema: { type: string, maxLength: 2048 }
+          description: Opaque page.next_cursor. Repeat original normalized since/until and limit with keyset_v1. Bound to account and immutable app; grants no authority.
       description: |
         Wire-friendly mirror of the dashboard's per-app wake-timeline
         HTML page (`/dashboard/apps/{slug}/wake-timeline`,
@@ -17950,7 +17962,7 @@ paths:
         emits the same data as JSON so a separate frontend agent can
         render without re-parsing HTML.
 
-        Returns the 50 most-recent instance rows for the app, joined
+        Legacy requests select 100 recent candidates before time filtering, joined
         against the events table's `wake.boot_started` rows for the
         per-row telemetry (Trigger, QueuedCount, ConcurrencyAtAdmit,
         AtCapacity, ReadyInMS). The aggregation math is shared with
@@ -17968,6 +17980,17 @@ paths:
             (`wake_count_with_meta`). Pre-PR-A fleet rows contribute
             to `wake_count_24h` but not the denominator — same
             posture as the HTML page.
+
+        Opt-in keyset_v1 filters app and inclusive since/until before limiting
+        and seeking in descending (started_at, instance ID) order. Missing
+        start times are excluded. Bounds normalize to PostgreSQL microseconds;
+        default until resolves once to now and must not be in the future.
+        since must precede until. Repeat the original bounds/limit on every
+        page. Boot and completion metadata are app-scoped. Source failures
+        return errors, not successful empty/partial results. Page metadata
+        echoes selection and cursor; counts/histograms describe this page
+        only. Complete marks the end of this live retained read, not complete
+        capture or a snapshot. Inserts, retention and metadata can affect pages.
 
         Plan-gated Hobby+ (mirror of /v1/apps/{slug}/metrics —
         same `code` so a downgrade between the two endpoints flips
@@ -18008,6 +18031,8 @@ paths:
                     at_capacity_present: false
                     ready_in_ms: -1
                 as_of: "2026-07-28T13:00:00.123456Z"
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '402':
           description: |
@@ -20829,7 +20854,11 @@ paths:
         distributions in a shared time window. Body holds the
         two deployment ids + optional route filter + optional
         since/until bounds. Returns merged per-route stats with
-        per-deployment p50/p95/p99 + row counts. Plan-gated by
+        per-deployment p50/p95/p99 + represented request counts. Includes
+        the effective window and retention-clamping metadata (ADR-1623).
+        Invalid lookbacks, invalid/future until values, and windows wholly
+        outside current plan retention are rejected. Reads retained telemetry
+        without replaying requests or writing platform state. Plan-gated by
         DebugTelemetryEnabled.
       x-since: 2026-08
       requestBody:
@@ -46266,11 +46295,19 @@ paths:
         - name: since
           in: query
           schema: { type: string, format: date-time }
-          description: "Only return rows with `at >= since` (RFC 3339)."
+          description: "Exclusive at > since lower bound (RFC3339). Omission reads from retained history. keyset_v1 normalizes to UTC/PostgreSQL microseconds."
         - name: limit
           in: query
           schema: { type: integer, minimum: 1, maximum: 1000, default: 200 }
-          description: "Max frames to return. Silently capped at 1000."
+          description: "Max frames to return. Values outside 1..1000 are rejected."
+        - name: pagination
+          in: query
+          schema: { type: string, enum: [keyset_v1] }
+          description: Opt in to app-scoped timestamp/event-ID keyset pagination. Omit for the unchanged legacy timestamp-hint contract.
+        - name: cursor
+          in: query
+          schema: { type: string, maxLength: 2048 }
+          description: Opaque page.next_cursor from keyset_v1. Requires pagination=keyset_v1 and the same account, immutable app, wake, normalized since and limit. Selection data, not authorization; pages are live retained reads, not a snapshot.
       responses:
         '200':
           description: Wake-timeline frames.
@@ -91961,11 +91998,24 @@ components:
           items: { $ref: '#/components/schemas/WakeTimelineEvent' }
         next_cursor:
           type: string
-          description: "Opaque RFC 3339 cursor for the next page. Empty when this is the last page."
+          description: "Legacy timestamp hint, sent back as since. Can skip equal-time events. keyset_v1 uses page.next_cursor instead."
         limit:
           type: integer
           description: "Effective limit applied (always 1..1000)."
           example: 200
+        page:
+          $ref: "#/components/schemas/WakeTimelinePage"
+
+    WakeTimelinePage:
+      description: Opt-in keyset_v1 metadata. App scoping and canonical boot selection precede the exclusive timestamp/event-ID seek and page limit. Complete means no further retained row in this live read, not complete capture or a frozen snapshot. Native event IDs stay inside the opaque cursor.
+      type: object
+      required: [mode, complete]
+      properties:
+        mode: { type: string, enum: [keyset_v1] }
+        since: { type: string, format: date-time, description: Normalized original exclusive lower bound; omitted when no lower bound was supplied. }
+        cursor: { type: string, maxLength: 2048, description: Echo of the supplied opaque page cursor. }
+        next_cursor: { type: string, maxLength: 2048, description: Opaque continuation for the same account/app/wake/since/limit. Omitted on terminal retained pages. }
+        complete: { type: boolean }
 
     SidecarTimelineStatus:
       description: "Most recent health transition for a sidecar, if one has been recorded."
@@ -94229,10 +94279,11 @@ components:
       type: object
       required: [app, wake_count_24h, wake_count_with_meta, at_capacity_count, at_capacity_pct, trigger_histogram, trigger_class_histogram, rows, as_of]
       properties:
+        page: { $ref: '#/components/schemas/AppWakeHistoryPage' }
         app: { $ref: '#/components/schemas/WakeTimelineApp' }
         wake_count_24h:
           type: integer
-          description: "Number of instance rows in the trailing 24h window (after the descending-cutoff break; the endpoint examines up to 100 recent rows)."
+          description: "Selected retained instance count; keyset_v1 counts only this page. Legacy mode examines 100 recent candidates before filtering."
         wake_count_with_meta:
           type: integer
           description: "Denominator for at_capacity_pct — count of rows where the events.wake.boot_started LEFT JOIN succeeded."
@@ -94254,12 +94305,27 @@ components:
           description: "trigger_class → N count of known user/monitor/crawler/preview_bot/unknown classifications. Empty {} on a fresh app, never null."
         rows:
           type: array
-          description: "Wake rows in DESC StartedAt order, truncated at the 24h cutoff (descending-cutoff break) and capped at 100 recent rows."
+          description: "Retained instance records in descending started_at order. keyset_v1 breaks ties by instance ID and filters before limiting; legacy mode filters 100 recent candidates."
           items: { $ref: '#/components/schemas/WakeTimelineJSONRow' }
         as_of:
           type: string
           format: date-time
           description: "RFC3339Nano UTC timestamp marking the JSON envelope's authoritative 'as of' instant."
+
+    AppWakeHistoryPage:
+      type: object
+      description: Live retained instance-history page. App/window filtering precedes the bound; missing start times are excluded. Counts describe this page only. Source success does not prove capture completeness, freshness or a snapshot. Instance IDs stay in opaque cursors.
+      required: [mode, since, until, limit, complete, source_status, count_scope]
+      properties:
+        mode: { type: string, enum: [keyset_v1] }
+        since: { type: string, format: date-time }
+        until: { type: string, format: date-time }
+        limit: { type: integer, minimum: 1, maximum: 100 }
+        cursor: { type: string, maxLength: 2048 }
+        next_cursor: { type: string, maxLength: 2048 }
+        complete: { type: boolean }
+        source_status: { type: string, enum: [read_succeeded] }
+        count_scope: { type: string, enum: [returned_page] }
 
     AppUsageSummaryResponse:
       description: |
@@ -102430,6 +102496,12 @@ components:
       description: "POST response from /v1/apps/{slug}/debug/compare (ADR-127 / PR-B)."
       required: [source, mirror, routes]
       properties:
+        app_id: { type: string, format: uuid, description: "App identity; present on servers supporting comparison-window metadata (ADR-1623)." }
+        since: { type: string, description: "Effective lookback after the current retention cutoff; native default is 1h." }
+        window_start: { type: string, format: date-time }
+        window_end: { type: string, format: date-time }
+        retention_clamped: { type: boolean, description: "Whether the requested start was moved to the current plan-retention cutoff." }
+        route_filter: { type: string, description: "Applied exact route filter; omitted for all routes." }
         source: { type: string, format: uuid }
         mirror: { type: string, format: uuid }
         routes:

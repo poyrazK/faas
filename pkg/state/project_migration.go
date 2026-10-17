@@ -1,4 +1,4 @@
-// adr:1575 — account-owned multi-service migration journal.
+// adr:1662 — account-owned multi-service migration journal.
 package state
 
 import (

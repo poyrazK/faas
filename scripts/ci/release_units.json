@@ -1,0 +1,77 @@
+{
+  "_comment": "Per-unit release lanes (docs/adr/1650-per-unit-control-plane-releases.md). Every release binary (Makefile DAEMONS + CLIS) appears here. lane: control-plane = runs only on the control plane and deploys alone through cd-controlplane's unit lane; shared = also runs on compute hosts, so a change waits for the full release; compute = compute hosts only; tool = operator/customer CLI, never restarted. pkg/daemonunitspec/release_units_lane_test.go keeps lanes, services and readiness URLs in lockstep with the daemon registry; scripts/ci/affected_units_test.py keeps the binary set in lockstep with the Makefile.",
+  "binaries": {
+    "apid": {
+      "lane": "control-plane",
+      "services": [
+        {"name": "apid", "readyz": "http://127.0.0.1:9101/readyz"},
+        {"name": "apid-clone-worker", "optional": true}
+      ]
+    },
+    "meterd": {
+      "lane": "control-plane",
+      "services": [{"name": "meterd", "readyz": "http://127.0.0.1:9106/readyz"}]
+    },
+    "githubd": {
+      "lane": "control-plane",
+      "services": [{"name": "githubd", "readyz": "http://127.0.0.1:8083/readyz"}]
+    },
+    "outboundd": {
+      "lane": "control-plane",
+      "services": [{"name": "outboundd", "readyz": "http://127.0.0.1:8095/readyz"}]
+    },
+    "s3-gatewayd": {
+      "lane": "control-plane",
+      "services": [{"name": "s3-gatewayd", "optional": true, "readyz": "http://127.0.0.1:9096/readyz"}]
+    },
+    "bridged": {
+      "lane": "control-plane",
+      "services": [{"name": "bridged", "optional": true}]
+    },
+    "schedd": {"lane": "shared"},
+    "gatewayd-public": {"lane": "shared"},
+    "realtimed": {"lane": "compute"},
+    "gatewayd-internal": {"lane": "compute"},
+    "vmmd": {"lane": "compute"},
+    "vmmd-jail-helper": {"lane": "compute"},
+    "vmmd-raw-bridge": {"lane": "compute"},
+    "vmmd-tcp-bridge": {"lane": "compute"},
+    "vmmd-udp-bridge": {"lane": "compute"},
+    "vmmd-stream-bridge": {"lane": "compute"},
+    "builderd": {"lane": "compute"},
+    "imaged": {"lane": "compute"},
+    "profiled": {"lane": "compute"},
+    "hostage-gen": {"lane": "compute"},
+    "gregale": {"lane": "tool"},
+    "gregalectl": {"lane": "tool"}
+  },
+  "global_inputs": ["go.mod", "go.sum"],
+  "blocking_paths": {
+    "go_modules": ["go.mod", "go.sum"],
+    "migrations": ["migrations/"],
+    "deploy": ["deploy/"],
+    "control_plane_bundle": ["pkg/promqlrules/data_placement.yaml", "docs/DPA.md"],
+    "release_contents": [
+      "scripts/build-canonical-tarball.sh",
+      "scripts/materialize-release-manifest.sh",
+      "scripts/schedd-brokerq-apply",
+      "cmd/release-artifact/"
+    ]
+  },
+  "compute_only_paths": [
+    "deploy/ansible/roles/builderd_service/",
+    "deploy/ansible/roles/compute_admission/",
+    "deploy/ansible/roles/compute_only_service/",
+    "deploy/ansible/roles/gatewayd_internal_service/",
+    "deploy/ansible/roles/gatewayd_public_edge_service/",
+    "deploy/ansible/roles/geoip/",
+    "deploy/ansible/roles/profiled_service/",
+    "deploy/ansible/roles/tenant_egress_client/",
+    "deploy/ansible/roles/vmmd_service/"
+  ],
+  "pending_paths": {
+    "guest": ["guest/"],
+    "images": ["images/"],
+    "kernel": ["scripts/build-firecracker-kernel.sh", "scripts/reuse-release-kernel.sh"]
+  }
+}

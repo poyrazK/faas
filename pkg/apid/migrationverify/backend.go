@@ -1,4 +1,4 @@
-// adr:1572 — resumable migration evidence over existing runtime owners.
+// adr:1659 — resumable migration evidence over existing runtime owners.
 // Package migrationverify coordinates existing task, park, wake and hosting
 // verification owners. A bounded server worker advances durable steps.
 package migrationverify

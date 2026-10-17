@@ -1,4 +1,4 @@
-// adr:1572 — resumable migration evidence over existing runtime owners.
+// adr:1659 — resumable migration evidence over existing runtime owners.
 //go:build !no_pg
 
 package state_test

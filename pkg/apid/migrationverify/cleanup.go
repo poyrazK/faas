@@ -1,4 +1,4 @@
-// adr:1573 — server-driven migration checks and durable restoration.
+// adr:1660 — server-driven migration checks and durable restoration.
 package migrationverify
 
 import (

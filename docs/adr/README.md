@@ -1,5 +1,63 @@
 # Architecture Decision Records
 
+- [Restart-safe Go acknowledgment recovery alerts](20261017182028-go-recovery-alert-checkpoints.md)
+
+- [Bounded Go acknowledgment intent recovery passes](20261017181200-bounded-go-intent-recovery.md)
+
+- [Bounded Node acknowledgment intent recovery passes](20261017171806-bounded-node-intent-recovery.md)
+
+- [Bounded Python acknowledgment intent recovery passes](20261017170311-bounded-python-intent-recovery.md)
+
+- [Shared Node and Python preparation monitoring](20261017165449-shared-preparation-monitoring.md)
+
+- [Prometheus exposition for Python preparation metrics](20261017164707-python-preparation-prometheus.md)
+
+- [Bounded Python preparation metrics](20261017164105-python-preparation-metrics.md)
+
+- [Python preparation lifecycle telemetry](20261017161548-python-preparation-lifecycle-telemetry.md)
+
+- [Python processing recovery inspection](20261017155904-python-processing-recovery-inspection.md)
+
+- [Coordinated Python event preparation](20261017154707-coordinated-python-event-preparation.md)
+
+- [Python consumer processing leases](20261017152929-python-consumer-processing-leases.md)
+
+- [Python recovery alert checkpoints](20261017145402-python-recovery-alert-checkpoints.md)
+
+- [Python sustained acknowledgment recovery alerts](20261017144446-python-sustained-acknowledgment-recovery-alerts.md)
+
+- [Python acknowledgment recovery health](20261017143147-python-acknowledgment-recovery-health.md)
+
+- [Python durable retry and dead-letter intents](20261017142209-python-durable-negative-acknowledgments.md)
+
+- [Python durable acknowledgment intents](20261017140016-python-durable-acknowledgment-intents.md)
+
+- [Python async event acknowledgment worker](20261017131506-python-async-event-acknowledgment-worker.md)
+
+- [Opt-in Node preparation monitoring](20261017125950-node-preparation-monitoring.md)
+
+- [Node preparation Prometheus exposition](20261017124511-node-preparation-prometheus.md)
+
+- [Bounded Node preparation metrics](20261017122416-node-preparation-metrics.md)
+
+- [Node preparation lifecycle telemetry](20261017121310-node-preparation-lifecycle-telemetry.md)
+
+- [Node processing recovery inspection](20261017115623-node-processing-recovery-inspection.md)
+
+- [Coordinated Node event preparation](20261017114800-coordinated-node-event-preparation.md)
+
+- [Node consumer processing leases](20261017114009-node-consumer-processing-leases.md)
+
+- [Restart-safe Node recovery alert checkpoints](20261017112428-node-recovery-alert-checkpoints.md)
+
+- [Node sustained acknowledgment recovery alerts](20261017111119-node-acknowledgment-recovery-watch.md)
+
+- [Node acknowledgment intent recovery health](20261017110351-node-acknowledgment-intent-health.md)
+
+- [Durable Node acknowledgment intents](20261017105545-node-durable-acknowledgment-intents.md)
+
+- [Node deferred event acknowledgment worker](20261017-node-event-acknowledgment-worker.md)
+
 ADR-001 through ADR-010 are **accepted and locked for v1**; they live inline in
 [`../faas_implementation_spec.md`](../faas_implementation_spec.md) §3, not as
 separate files here. This directory holds ADRs made *after* the spec.
@@ -63,6 +121,33 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
+| 1576 | [Internal CI control plane with compute admission closed](1576-internal-ci-control-plane.md) | accepted for internal implementation; native acceptance pending | Default-off Gregale CI; account-scoped operator admission and separate compute/provider qualification |
+| 1571 | [Durable CI execution engine qualification without compute dispatch](1571-ci-execution-engine-qualification.md) | accepted for internal implementation; native acceptance pending | Default-off Gregale CI; account-scoped operator admission and separate compute/provider qualification |
+| 1572 | [Account-owned GitHub sources for blocked CI admission](1572-internal-ci-github-sources.md) | accepted for internal implementation; native acceptance pending | Default-off Gregale CI; account-scoped operator admission and separate compute/provider qualification |
+| 1573 | [Dormant CI adapter to Gregale Jobs](1573-dormant-ci-jobs-adapter.md) | accepted for internal implementation; native acceptance pending | Default-off Gregale CI; account-scoped operator admission and separate compute/provider qualification |
+| 1574 | [CI guest runner and task-scoped transfers](1574-ci-guest-runner-and-scoped-transfers.md) | accepted for internal implementation; native acceptance pending | Default-off Gregale CI; account-scoped operator admission and separate compute/provider qualification |
+| 1651 | [Disabled CI scheduler boundary and incomplete-output recovery](1651-disabled-ci-scheduler-boundary.md) | accepted for internal implementation; native acceptance pending | Default-off Gregale CI; account-scoped operator admission and separate compute/provider qualification |
+| 1652 | [Disabled CI HTTPS transport, private storage and retention](1652-ci-private-storage-and-retention.md) | accepted for internal implementation; native acceptance pending | Default-off Gregale CI; account-scoped operator admission and separate compute/provider qualification |
+| 1653 | [Opt-in CI native acceptance harness](1653-ci-native-acceptance-harness.md) | accepted for internal implementation; native acceptance pending | Default-off Gregale CI; account-scoped operator admission and separate compute/provider qualification |
+| 1654 | [Disabled internal CI execution service](1654-internal-ci-execution-service.md) | accepted for internal implementation; native acceptance pending | Default-off Gregale CI; account-scoped operator admission and separate compute/provider qualification |
+| 1655 | [Internal CI execution profiles](1655-internal-ci-execution-profiles.md) | accepted for internal implementation; native acceptance pending | Default-off Gregale CI; account-scoped operator admission and separate compute/provider qualification |
+| 1656 | [Default-off GitHub push automation for internal CI](1656-internal-ci-github-automation.md) | accepted for internal implementation; native acceptance pending | Default-off Gregale CI; account-scoped operator admission and separate compute/provider qualification |
+| 1657 | [Default-off GitHub Checks for internal CI executions](1657-internal-ci-execution-checks.md) | accepted for internal implementation; native acceptance pending | Default-off Gregale CI; account-scoped operator admission and separate compute/provider qualification |
+| 1577 | [Internal CI Check delivery diagnostics and bounded recovery](1577-internal-ci-check-delivery-recovery.md) | accepted for internal implementation; native acceptance pending | Default-off Gregale CI; account-scoped operator admission and separate compute/provider qualification |
+| 1578 | [Internal CI execution archival and reusable history slots](1578-internal-ci-execution-archival.md) | accepted for internal implementation; native acceptance pending | Default-off Gregale CI; account-scoped operator admission and separate compute/provider qualification |
+| 1584 | [Explicit internal CI execution reruns](1584-internal-ci-execution-reruns.md) | implemented behind default-off CI gates; native qualification pending | Fresh whole-pipeline executions with frozen configuration, parent/root lineage, idempotency and confirmed cleanup |
+| 1585 | [Internal CI automation path filters](1585-internal-ci-automation-path-filters.md) | implemented behind default-off CI gates; native qualification pending | Pinned bounded comparisons, conservative run fallback, recorded skips and source-only Checks |
+| 1586 | [Internal CI skipped-source Check recovery](1586-internal-ci-source-check-recovery.md) | implemented behind default-off CI gates; native qualification pending | Scoped delivery diagnostics and bounded durable feedback retries that preserve skipped sources |
+| 1587 | [Bounded internal CI live progress and log following](1587-internal-ci-live-progress.md) | implemented behind default-off CI gates; native qualification pending | Attempt-scoped progress checkpoints, step timings and resumable log following with sealed native completion |
+| 1588 | [Explicit internal CI dependency artifact inputs](1588-internal-ci-dependency-artifact-inputs.md) | implemented behind default-off CI gates; native qualification pending | Named dependency artifacts pinned to sealed producer attempts, verified guest downloads and execution-scoped retention |
+| 1589 | [Explicit internal CI environment and working directories](1589-internal-ci-step-configuration.md) | implemented behind default-off CI gates; native qualification pending | Frozen literal job/step environments, reserved runner settings and descriptor-bound checkout directories |
+| 1590 | [Bounded named matrices for internal CI](1590-internal-ci-named-matrix-jobs.md) | implemented behind default-off CI gates; native qualification pending | Deterministic concrete variants, exact image/template binding, dependency barriers and explicit producer inputs |
+| 1583 | [Default-off same-repository PR execution automation](1583-internal-ci-pull-request-automation.md) | implemented behind default-off CI gates; native qualification pending | Explicit PR target filters, fresh source verification, per-PR slots and existing cleanup fences |
+| 1582 | [Bounded internal CI JUnit diagnostics](1582-internal-ci-junit-reports.md) | implemented behind default-off CI gates; native qualification pending | Verified attempt-bound reports, bounded failure detail and aggregate-only GitHub Checks |
+| 1581 | [Internal CI branch serialization and verified-head supersession](1581-internal-ci-branch-concurrency.md) | implemented behind default-off CI gates; native qualification pending | One automatic branch slot, verified-head opt-in supersession, durable cancellation and cleanup fencing |
+| 1580 | [Bounded recovery for internal CI automation admission](1580-internal-ci-automation-admission-recovery.md) | implemented behind default-off CI gates; native qualification pending | Explicit account-scoped recovery of never-admitted authenticated pushes; permanent bounded audit receipts |
+| 1579 | [Internal CI health and bounded worker observations](1579-internal-ci-health-observability.md) | accepted for internal implementation; native acceptance pending | Default-off Gregale CI; account-scoped operator admission and separate compute/provider qualification |
+| 1575 | [Internal CI operational alerts and dashboard](1575-internal-ci-alerts-and-dashboard.md) | accepted for internal implementation; native acceptance pending | Default-off Gregale CI; account-scoped operator admission and separate compute/provider qualification |
 | 1289 | [Reusable automation test cases](1289-reusable-automation-test-cases.md) | accepted | Automation authoring, verification and trust lifecycle |
 | 1290 | [Guided automation test case editor](1290-guided-automation-test-editor.md) | accepted | Automation authoring, verification and trust lifecycle |
 | 1291 | [Single-case live automation verification](1291-single-case-live-automation-verification.md) | accepted | Automation authoring, verification and trust lifecycle |
@@ -1143,6 +1228,28 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-1258: Graceful management MCP drain and journal cleanup](1258-management-mcp-graceful-drain.md)
 
 - [ADR-1259: Owner-protected management MCP connection controls](1259-management-mcp-local-connection-controls.md)
+- [ADR-1618: Exact retained request diagnostics through management MCP](1618-management-mcp-request-diagnostics.md)
+- [ADR-1619: Filtered retained request discovery through management MCP](1619-management-mcp-request-discovery.md)
+- [ADR-1620: Retained performance evidence through management MCP](1620-management-mcp-performance-evidence.md)
+- [ADR-1621: Observed residency diagnostics through management MCP](1621-management-mcp-residency-diagnostics.md)
+- [ADR-1622: Critical-path history through management MCP](1622-management-mcp-critical-path-history.md)
+- [ADR-1623: Retained deployment comparison through management MCP](1623-management-mcp-deployment-comparison.md)
+- [ADR-1624: Read-only regression inbox through management MCP](1624-management-mcp-regression-inbox.md)
+- [ADR-1625: Structured request explanations through management MCP](1625-management-mcp-request-explanations.md)
+- [ADR-1626: Per-request critical path through management MCP](1626-management-mcp-request-critical-path.md)
+- [ADR-1627: Guest execution evidence through management MCP](1627-management-mcp-guest-execution.md)
+- [ADR-1628: Request-linked regression evidence through management MCP](1628-management-mcp-request-regression.md)
+- [ADR-1629: Request-linked dependency deployment comparisons through management MCP](1629-management-mcp-request-dependency-comparison.md)
+- [ADR-1630: Dependency impact edges through management MCP](1630-management-mcp-dependency-impact.md)
+- [ADR-1631: Route request analytics through management MCP](1631-management-mcp-request-analytics.md)
+- [ADR-1632: Historical hourly request trends through management MCP](1632-management-mcp-request-timeseries.md)
+- [ADR-1633: Grouped error triage through management MCP](1633-management-mcp-error-triage.md)
+- [ADR-1634: Retained wake observations through management MCP](1634-management-mcp-wake-history.md)
+- [ADR-1635: Exact wake-stage inspection through management MCP](1635-management-mcp-wake-timeline.md)
+- [ADR-1636: Request-to-wake drill-down through management MCP](1636-management-mcp-request-wake-association.md)
+- [ADR-1637: Lossless retained wake-timeline continuation](1637-management-mcp-wake-timeline-pagination.md)
+- [ADR-1638: Window-first wake-history pagination](1638-management-mcp-wake-history-pagination.md)
+- [ADR-1639: Read-only sampled CPU profiles through management MCP](1639-management-mcp-cpu-profiles.md)
 
 - [ADR-1260: Authorization-bounded management MCP request leases](1260-management-mcp-authorization-request-leases.md)
 
@@ -1252,15 +1359,15 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-1380: Python PostgreSQL native acceptance](1380-python-postgres-native-acceptance.md)
 - [ADR-1381: Queue worker completion acceptance](1381-queue-worker-completion-acceptance.md)
 
-- [ADR-1571: Guided migration of an existing service](1571-guided-service-migration.md)
-- [ADR-1572: Resumable migration verification](1572-resumable-migration-verification.md)
-- [ADR-1573: Background migration verification and service recovery](1573-background-migration-verification.md)
-- [ADR-1574: Saved production cutover and DNS recovery](1574-guided-production-cutover.md)
-- [ADR-1575: Saved multi-service migration progress](1575-project-migration-journal.md)
-- [ADR-1576: Separate migration service names from app names](1576-migration-service-app-names.md)
-- [ADR-1577: Map migration runtime variables to selected services](1577-migration-runtime-connections.md)
-- [ADR-1578: Configure public frontend URLs before migration builds](1578-public-frontend-migration-urls.md)
-- [ADR-1579: Wait for selected APIs before migration builds](1579-migration-build-dependency-waits.md)
+- [ADR-1658: Guided migration of an existing service](1658-guided-service-migration.md)
+- [ADR-1659: Resumable migration verification](1659-resumable-migration-verification.md)
+- [ADR-1660: Background migration verification and service recovery](1660-background-migration-verification.md)
+- [ADR-1661: Saved production cutover and DNS recovery](1661-guided-production-cutover.md)
+- [ADR-1662: Saved multi-service migration progress](1662-project-migration-journal.md)
+- [ADR-1663: Separate migration service names from app names](1663-migration-service-app-names.md)
+- [ADR-1664: Map migration runtime variables to selected services](1664-migration-runtime-connections.md)
+- [ADR-1665: Configure public frontend URLs before migration builds](1665-public-frontend-migration-urls.md)
+- [ADR-1666: Wait for selected APIs before migration builds](1666-migration-build-dependency-waits.md)
 
 - [ADR-1260: Initial-failure policy dry run](1260-initial-failure-policy-dry-run.md)
 - [ADR-1261: Durable first-recovery reviews](1261-durable-initial-recovery-reviews.md)
@@ -1373,3 +1480,5 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-1500: Source-built apps run on the shared runtime base](1500-shared-runtime-source-apps.md)
 - [ADR-1501: Reconcile worker pools once at scheduler start](1501-worker-startup-reconcile.md)
 - [ADR 202610171900: Release compatibility gates (N±1, deploy order, skew and migration checks, SLO gate)](202610171900-release-compatibility-gates.md)
+
+- [ADR-1650: Per-unit control-plane releases](1650-per-unit-control-plane-releases.md)

@@ -4236,10 +4236,9 @@ func (c *Client) RotateDeployToken(ctx context.Context, slug, id string, req Rot
 // reads it as a forward narrative (queue_accepted → admitted →
 // boot_started → boot_completed → readiness_200 → proxy_first_byte).
 //
-// since is an RFC 3339 timestamp; rows strictly older are skipped
-// (the dashboard's "load older" infinite-scroll). limit is bounded
-// server-side at 1000; values larger are silently capped per the
-// same convention as ListSecrets / ListAuditEvents.
+// since is an exclusive RFC3339 lower bound (at > since). The legacy
+// timestamp hint can skip equal-time events; use ListWakeTimelinePage for
+// keyset continuation. limit is bounded to 1..1000; larger values are rejected.
 //
 // Cross-account visibility is enforced server-side: the slug must
 // resolve to the caller's account, and each row's data.app_id is

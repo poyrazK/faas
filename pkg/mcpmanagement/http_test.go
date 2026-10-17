@@ -1,3 +1,4 @@
+// adr: 1618
 package mcpmanagement
 
 import (
@@ -36,6 +37,7 @@ type remoteFixture struct {
 	clientID   string
 	mu         sync.Mutex
 	accounts   map[string]string
+	apiHook    func(http.ResponseWriter, *http.Request, string) bool
 	opts       HTTPOptions
 	setHandler func(http.Handler)
 }
@@ -66,9 +68,13 @@ func newRemoteFixtureWithOptions(t *testing.T, writes bool, options HTTPOptions)
 		}
 		f.mu.Lock()
 		account := f.accounts[strings.TrimPrefix(req.Header.Get("Authorization"), "Bearer ")]
+		hook := f.apiHook
 		f.mu.Unlock()
 		if account == "" {
 			api.WriteProblem(w, api.NewProblem(401, "unauthorized", "Invalid credential", "Credential revoked"))
+			return
+		}
+		if hook != nil && hook(w, req, account) {
 			return
 		}
 		switch req.URL.Path {
@@ -255,6 +261,11 @@ func (f *remoteFixture) consent(flow browserFlow, decision, key, origin, csrf st
 		form.Set("allow_writes", "yes")
 		form.Set("default_write", "yes")
 	}
+	return f.submitConsent(flow, form, origin)
+}
+
+func (f *remoteFixture) submitConsent(flow browserFlow, form url.Values, origin string) *http.Response {
+	f.t.Helper()
 	req, err := http.NewRequest(http.MethodPost, f.server.URL+"/oauth/consent", strings.NewReader(form.Encode()))
 	if err != nil {
 		f.t.Fatal(err)
@@ -339,11 +350,11 @@ func TestRemoteManagementOAuthAccountIsolation(t *testing.T) {
 			aliceSession, ctx := f.connect(alice, version)
 			bobSession, _ := f.connect(bob, version)
 			aliceCatalog, err := aliceSession.ListTools(ctx, nil)
-			if err != nil || len(aliceCatalog.Tools) != 37 {
+			if err != nil || len(aliceCatalog.Tools) != 53 {
 				t.Fatalf("alice tools=%+v error=%v", aliceCatalog, err)
 			}
 			bobCatalog, err := bobSession.ListTools(ctx, nil)
-			if err != nil || len(bobCatalog.Tools) != 29 {
+			if err != nil || len(bobCatalog.Tools) != 45 {
 				t.Fatalf("bob tools=%+v error=%v", bobCatalog, err)
 			}
 			aliceContext := callTool(t, ctx, aliceSession, "gregale_context", map[string]any{}, false)

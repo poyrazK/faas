@@ -11,7 +11,7 @@ import (
 )
 
 func TestMigrationReplayPreservesSavedProgress(t *testing.T) {
-	// adr:1573,1575,1578,1579 — ledger recovery preserves accepted work and fixed deadlines.
+	// adr:1660,1662,1665,1666 — ledger recovery preserves accepted work and fixed deadlines.
 	versions := []int64{
 		20261017190925552, 20261017190925559, 20261017190925564,
 		20261017190925569, 20261017190925575, 20261017190925580, 20261017190925585,
