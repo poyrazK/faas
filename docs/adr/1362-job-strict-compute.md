@@ -13,7 +13,8 @@ leases carry mutually exclusive app or job identities. A job lease also binds
 the run, task index, scheduler lease token and physical instance. An immutable
 claim receipt records these fields before the boot RPC, including for legacy
 schedulers. Admission verifies the current claimed task, active run and job,
-node incarnation and exact billable RAM. A replacement native incarnation cannot
+node incarnation and exact billable RAM. Job and run ownership must both match
+the immutable claim account, including legacy and bulk-copy writers. A replacement native incarnation cannot
 fund a prior unstarted claim; schedd must create a new attempt. A late boot after cancellation, retry or retirement
 cannot use a previous claim. Cancellation can resolve the immutable receipt by
 instance even after task projection changes or the native owner restarts.
@@ -48,7 +49,7 @@ serialized with activation. Do not roll back these migrations while caps exist.
 ## Holds, billing and visibility
 
 Queued tasks held by either account or job policies are deferred without
-consuming an attempt. A policy that cannot fund a new window persists a hold;
+consuming an attempt. Their existing submission and start deadlines still apply. A policy that cannot fund a new window persists a hold;
 existing jobs stop renewing and retire at their funded deadlines. Customer
 cancellation, payment, security and ordinary job pause state remain independent.
 Manual and next-period holds follow the existing revision and UTC rules.

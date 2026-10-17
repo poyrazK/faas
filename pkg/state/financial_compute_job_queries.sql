@@ -26,7 +26,8 @@ WHERE run_id=sqlc.arg(run_id)::uuid AND task_index=sqlc.arg(task_index)::integer
 -- name: FinancialComputeJobAttemptCurrent :one
 SELECT EXISTS(SELECT 1 FROM financial_compute_job_attempts a
  JOIN job_tasks t ON t.run_id=a.run_id AND t.task_index=a.task_index
- JOIN job_runs r ON r.id=a.run_id JOIN jobs j ON j.id=a.job_id
+ JOIN job_runs r ON r.id=a.run_id AND r.job_id=a.job_id AND r.account_id=a.account_id
+ JOIN jobs j ON j.id=a.job_id AND j.account_id=a.account_id
  JOIN instances i ON i.id=a.instance_id
  WHERE a.instance_id=sqlc.arg(instance_id)::uuid AND a.account_id=sqlc.arg(account_id)::uuid
  AND t.status='claimed' AND t.instance_id=a.instance_id AND t.lease_token=a.lease_token

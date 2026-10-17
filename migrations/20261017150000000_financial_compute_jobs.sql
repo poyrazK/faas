@@ -36,7 +36,9 @@ CREATE TABLE financial_compute_job_attempts (
 );
 INSERT INTO financial_compute_job_attempts(instance_id,account_id,job_id,run_id,task_index,lease_token,node_id,incarnation,ram_mb)
  SELECT i.id,r.account_id,r.job_id,t.run_id,t.task_index,t.lease_token,i.node_id,n.vmmd_incarnation,i.ram_mb
- FROM job_tasks t JOIN job_runs r ON r.id=t.run_id JOIN instances i ON i.id=t.instance_id LEFT JOIN compute_nodes n ON n.id=i.node_id
+ FROM job_tasks t JOIN job_runs r ON r.id=t.run_id
+ JOIN jobs j ON j.id=r.job_id AND j.account_id=r.account_id
+ JOIN instances i ON i.id=t.instance_id AND i.job_id=j.id LEFT JOIN compute_nodes n ON n.id=i.node_id
  WHERE t.status='claimed' AND t.lease_token IS NOT NULL AND i.node_id IS NOT NULL;
 
 -- Queue and definition writes are safe, but must still serialize with policy
@@ -61,6 +63,7 @@ BEGIN
  PERFORM financial_compute_require_job_support(target_account);
  IF NEW.status!='claimed' THEN RETURN NEW; END IF;
  SELECT i.node_id,n.vmmd_incarnation,i.ram_mb INTO target_node,target_incarnation,target_ram FROM instances i
+ JOIN jobs j ON j.id=i.job_id AND j.account_id=target_account
  LEFT JOIN compute_nodes n ON n.id=i.node_id
  WHERE i.id=NEW.instance_id AND i.job_id=target_job AND i.kind='job_task';
  IF EXISTS(SELECT 1 FROM financial_budget_policies p WHERE p.account_id=target_account

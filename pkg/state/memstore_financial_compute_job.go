@@ -17,13 +17,16 @@ func (t *memFinancialComputeTxn) jobCurrent(l financial.ComputeLease) (bool, err
 	run := t.m.jobRuns[a.RunID]
 	task := t.m.jobTasks[a.RunID][a.TaskIndex]
 	i := t.m.instances[a.InstanceID]
-	return (run.AggregateStatus == "queued" || run.AggregateStatus == "running") && t.m.jobs[a.JobID].Status == "active" &&
+	return run.AccountID == a.AccountID && run.JobID == a.JobID && t.m.jobs[a.JobID].AccountID == a.AccountID && (run.AggregateStatus == "queued" || run.AggregateStatus == "running") && t.m.jobs[a.JobID].Status == "active" &&
 		task.Status == "claimed" && task.InstanceID != nil && *task.InstanceID == a.InstanceID &&
 		task.LeaseToken != nil && *task.LeaseToken == a.LeaseToken && task.LeaseExpiresAt != nil && task.LeaseExpiresAt.After(t.now) &&
 		i.JobID == a.JobID && i.NodeID == a.NodeID && i.RAMMB == a.RAMMB && State(i.State).CountsForRAM(), nil
 }
 
 func (m *MemStore) recordFinancialJobClaimLocked(a financialComputeJobAttempt) error {
+	if m.jobs[a.JobID].AccountID != a.AccountID || m.jobRuns[a.RunID].AccountID != a.AccountID || m.jobRuns[a.RunID].JobID != a.JobID {
+		return financial.ErrComputeFence
+	}
 	a.Incarnation = m.computeNodeRuntimeIncarnations[a.NodeID]
 	if old, ok := m.financialComputeJobAttempts[a.InstanceID]; ok && old != a {
 		return financial.ErrComputeFence

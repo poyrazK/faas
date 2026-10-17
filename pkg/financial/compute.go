@@ -64,7 +64,8 @@ type ComputeBook struct {
 	PeriodEnd   time.Time `json:"period_end"`
 	Committed   int64     `json:"committed"`
 	Reserved    int64     `json:"reserved"`
-	// Quantity fields apply only to the shared account book (AppID empty).
+	// Quantity fields apply only to the shared account book, where both
+	// resource IDs are empty.
 	QuantityCommitted int64 `json:"quantity_committed"`
 	QuantityReserved  int64 `json:"quantity_reserved"`
 	AllowanceGranted  int64 `json:"allowance_granted"`
