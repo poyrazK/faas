@@ -120,3 +120,14 @@ func TestMarkdownReferenceEscapesPlaceholdersAndFlagValues(t *testing.T) {
 		}
 	}
 }
+
+// TestMarkdownReferenceListsAppsRmConfirmation pins H10-117: `apps rm`
+// refused in non-interactive mode without --yes while its help listed no
+// flags at all.
+func TestMarkdownReferenceListsAppsRmConfirmation(t *testing.T) {
+	var buf bytes.Buffer
+	renderMarkdownReference(&buf, customerCliCommands())
+	if !strings.Contains(buf.String(), "`gregale apps rm [--dry-run] [--yes] [--quiet] [-q] <slug>`") {
+		t.Error("apps rm reference omits its confirmation flags")
+	}
+}

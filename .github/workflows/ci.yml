@@ -1051,6 +1051,22 @@ jobs:
         run: |
           go test -race -p 1 -tags metal,managed_postgres_native ./pkg/apid/apidserver -run '^TestManagedPostgresFixturePublicRotation$' -count=1 -v -timeout=180s
           go test -race -p 1 -tags metal,managed_postgres_native -c -o "$RUNNER_TEMP/managed-postgres-native.test" ./cmd/e2e
+      # Moved from ci-light, which no longer builds cmd/e2e with extra tags.
+      # The acceptance test skips unless GREGALE_GITOPS_ACCEPTANCE=1, so the
+      # e2e shards never run it.
+      - name: GitOps source approval and native graph compilation (no KVM)
+        if: matrix.id == 'b'
+        env:
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-dwarf=false -c=1"'
+          GOGC: 10
+          GOMEMLIMIT: 2GiB
+          GOMAXPROCS: 2
+          GREGALE_GITOPS_ACCEPTANCE: '1'
+        run: |
+          # TestMain prepares the shared daemons before the HTTP case starts.
+          go test -race -p 1 ./cmd/e2e -run '^TestE2E_GitOpsSourceRevisionReviewAndRollback$' -count=1 -v -timeout=15m
+          go test -race -p 1 -tags metal -c -o "$RUNNER_TEMP/gitops-native.test" ./cmd/e2e
+          rm -f "$RUNNER_TEMP/gitops-native.test"
       - name: unit tests (pg shard 2${{ matrix.id }})
         env:
           GOGC: 10

@@ -191,6 +191,7 @@ func open(ctx context.Context, dsnOverride, appName string, readOnly ...bool) (*
 	}
 	// Safe under a transaction-mode pooler; a no-op without one.
 	applyPooledExecMode(cfg, dsn)
+	instrumentAcquires(cfg)
 
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
