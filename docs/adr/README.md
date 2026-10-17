@@ -1,5 +1,7 @@
 # Architecture Decision Records
 
+- [Bounded Python acknowledgment intent recovery passes](20261017170311-bounded-python-intent-recovery.md)
+
 - [Shared Node and Python preparation monitoring](20261017165449-shared-preparation-monitoring.md)
 
 - [Prometheus exposition for Python preparation metrics](20261017164707-python-preparation-prometheus.md)

@@ -2796,6 +2796,14 @@ app_id, ...)` claims one due intent and sends only its saved callback. Separate
 own polling, protected storage, driver timeouts and retention. See the
 [durable Python protocol](../../docs/event-acknowledgment-python-intents.md).
 
+`arecover_event_acknowledgment_intents(client.inner, connection_factory, account_id,
+app_id, EventAcknowledgmentIntentRecoveryPassOptions(...), stop_event=...)` runs one
+finite concurrent pass. Each admission leases an exclusive connection scope and
+uses existing intent fences. Empty probes/hard failures stop admission; active
+work and cleanup join. Frozen aggregate `.result` progress accompanies failure,
+native cancellation and uncertain-COMMIT exceptions. The host schedules later
+passes. See [budgets, ownership and progress](../../docs/event-acknowledgment-python-recovery-pass.md).
+
 `save_retry_intent(connection, reason)` and `save_dead_letter_intent(connection,
 reason)` stage explicit failure decisions for the same recovery host. Establish
 known rollback, stopped work and exclusive ownership first, and persist the chosen

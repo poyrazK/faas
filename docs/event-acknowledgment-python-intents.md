@@ -143,6 +143,11 @@ See the [persisted failure-decision example](../examples/event-acknowledgment-py
 
 ## Recover one saved callback
 
+For finite catch-up with controlled concurrency, use the separate
+[bounded recovery pass](event-acknowledgment-python-recovery-pass.md). It composes
+this same primitive with exclusive per-iteration connection scopes and frozen
+partial progress; the host still chooses when another pass runs.
+
 ```python
 from faas_sdk import EventAcknowledgmentIntentError, arecover_next_event_acknowledgment_intent
 
@@ -227,7 +232,7 @@ limit=25, stop_event=None)` returns immutable metadata, at most 100 rows. It doe
 not claim work or return raw results/tokens. Generations/counters are native
 integers; timestamps are UTC RFC 3339 strings with microseconds.
 
-The application owns polling, concurrency, retention and host/client lifetime.
+The application owns scheduling, concurrency policy, retention and host/client lifetime.
 Keep receipts through the retry/replay horizon and intent metadata while stale
 jobs/restores can return. Deleting the newest intent removes the supersession
 fence. No pruning, platform migration, route, global ordering or external

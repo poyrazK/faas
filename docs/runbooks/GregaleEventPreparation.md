@@ -65,6 +65,14 @@ uses the saved callback through `arecover_next_event_acknowledgment_intent` or
 `recover_one_saved_callback`, with its own exclusive connection and owner policy.
 Use health/listing independently to inspect unfinished retained intents.
 
+For an owner-scheduled catch-up of already saved callbacks, the explicit
+[bounded Python recovery pass](../event-acknowledgment-python-recovery-pass.md)
+adds controlled concurrent iterations and exclusive connection scopes. Inspect
+its frozen aggregate result after all work/cleanup joins. Empty probes do not
+prove the backlog drained, and uncertain COMMIT remains its existing error
+category even during cancellation. The pass neither acknowledges ingestion jobs
+nor executes business work; an alert never starts it automatically.
+
 An uncertain COMMIT closes the exclusively owned connection; discard it through
 the pool and reconcile on a fresh idle autocommit connection. Cancellation joins
 active SQL and cleanup, so bound driver calls and drain operations before closing

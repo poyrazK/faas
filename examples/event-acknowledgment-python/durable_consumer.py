@@ -12,10 +12,12 @@ from faas_sdk import (
     EventAcknowledgmentIntentCheckpointWatchOptions,
     EventAcknowledgmentIntentError,
     EventAcknowledgmentIntentHealthOptions,
+    EventAcknowledgmentIntentRecoveryPassOptions,
     EventAcknowledgmentIntentWatchOptions,
     EventAcknowledgmentWorkerCancelled,
     EventAcknowledgmentWorkerResult,
     aget_event_acknowledgment_intent_health,
+    arecover_event_acknowledgment_intents,
     arecover_next_event_acknowledgment_intent,
     awatch_event_acknowledgment_intent_health,
     awatch_event_acknowledgment_intent_health_with_checkpoint,
@@ -166,6 +168,20 @@ async def read_acknowledgment_recovery_health(
         scope["account_id"],
         scope["app_id"],
         EventAcknowledgmentIntentHealthOptions(scan_limit=1000, stall_after_ms=300000),
+        stop_event=stop_event,
+    )
+
+
+async def recover_saved_callbacks_pass(
+    client: Any, connection_factory: Any, scope: Mapping[str, str], stop_event: Any
+) -> Any:
+    """One finite host-scheduled pass; no queue/job mutation or business work."""
+    return await arecover_event_acknowledgment_intents(
+        client,
+        connection_factory,
+        scope["account_id"],
+        scope["app_id"],
+        EventAcknowledgmentIntentRecoveryPassOptions(max_attempts=100, concurrency=4),
         stop_event=stop_event,
     )
 

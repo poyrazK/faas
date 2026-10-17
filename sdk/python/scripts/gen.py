@@ -237,6 +237,8 @@ WRAPPER_MODULES = (
     "_event_acknowledgment_preparation_runtime.py",
     "event_acknowledgment_intents.py",
     "event_acknowledgment_intent_recovery.py",
+    "event_acknowledgment_intent_recovery_pass.py",
+    "_event_acknowledgment_intent_recovery_pass_runtime.py",
     "event_acknowledgment_intent_health.py",
     "event_acknowledgment_intent_watch.py",
     "_event_acknowledgment_intent_watch_policy.py",
@@ -1519,6 +1521,21 @@ from .event_acknowledgment_preparation_prometheus import (
 
 __all__ += (
     "EVENT_ACKNOWLEDGMENT_PREPARATION_PROMETHEUS_CONTENT_TYPE", "format_event_acknowledgment_preparation_metrics",
+)
+
+from .event_acknowledgment_intent_recovery_pass import (
+    EventAcknowledgmentIntentRecoveryPassCancelled,
+    EventAcknowledgmentIntentRecoveryPassCommitUnknownError,
+    EventAcknowledgmentIntentRecoveryPassError,
+    EventAcknowledgmentIntentRecoveryPassOptions,
+    EventAcknowledgmentIntentRecoveryPassResult,
+    arecover_event_acknowledgment_intents,
+)
+
+__all__ += (
+    "EventAcknowledgmentIntentRecoveryPassCancelled", "EventAcknowledgmentIntentRecoveryPassCommitUnknownError",
+    "EventAcknowledgmentIntentRecoveryPassError", "EventAcknowledgmentIntentRecoveryPassOptions",
+    "EventAcknowledgmentIntentRecoveryPassResult", "arecover_event_acknowledgment_intents",
 )
 '''
 

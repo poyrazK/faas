@@ -613,3 +613,56 @@ pairs distinct. The guide preserves low-volume, saturation and missing-data guar
 the [Python recovery guidance](../../docs/runbooks/GregaleEventPreparation.md#python-job-and-connection-ownership)
 uses retained receipt/claim/intent evidence. Install and tune the pack explicitly
 through the application's monitoring process.
+
+## Recover a bounded callback pass
+
+`durable_consumer.recover_saved_callbacks_pass` invokes one explicit pass for the
+trusted account/app scope, with at most 100 admitted iterations and concurrency 4.
+It processes existing saved callback intents for durable job modes, without
+reading/changing job records or acknowledging ingestion jobs.
+
+```python
+from dataclasses import asdict
+from durable_consumer import recover_saved_callbacks_pass
+from faas_sdk import (
+    EventAcknowledgmentIntentRecoveryPassCancelled,
+    EventAcknowledgmentIntentRecoveryPassCommitUnknownError,
+    EventAcknowledgmentIntentRecoveryPassError,
+)
+
+try:
+    result = await recover_saved_callbacks_pass(
+        client.inner, connection_scope, scope, shutdown,
+    )
+except EventAcknowledgmentIntentRecoveryPassCommitUnknownError as error:
+    record_recovery_progress(asdict(error.result))
+    raise  # Preserve uncertainty and reconcile retained intents on fresh connections.
+except EventAcknowledgmentIntentRecoveryPassCancelled as error:
+    record_recovery_progress(asdict(error.result))
+    raise  # Host cancellation remains cancellation after cleanup joins.
+except EventAcknowledgmentIntentRecoveryPassError as error:
+    record_recovery_progress(asdict(error.result))
+    raise
+else:
+    record_recovery_progress(asdict(result))
+```
+
+The host's synchronous zero-argument `connection_scope` returns a fresh async
+connection context manager for each admission, supplying exclusively leased idle
+autocommit psycopg connections. Concurrent scopes must never share a connection.
+It owns bounded acquisition/driver/cleanup calls, pool release and discarding
+closed connections. Use the same available event loop and long-lived authenticated
+client, and finish joining the pass before shutting either down.
+
+The pass returns for a used budget or an empty probe. An empty probe can miss
+claimed rows and says nothing about future due work. Unconfirmed callbacks retain
+their existing persisted backoff; they can be admitted again if due within a pass.
+There is no idle wait, automatic polling or new per-job deduplication. The host
+decides when to run another pass, using its independent retained-health evidence.
+
+Progress contains fixed aggregate counts, without IDs, protected inputs, tokens,
+raw errors or per-job statuses. Confirmed settlement observations survive late
+scope failure; cleanup and uncertainty counts can overlap them. Pass exceptions
+do not establish rollback/callback failure or permit re-running business work,
+changing intent actions or deleting fences. See the
+[bounded pass contract](../../docs/event-acknowledgment-python-recovery-pass.md).

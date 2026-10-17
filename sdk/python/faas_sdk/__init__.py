@@ -769,3 +769,18 @@ from .event_acknowledgment_preparation_prometheus import (
 __all__ += (
     "EVENT_ACKNOWLEDGMENT_PREPARATION_PROMETHEUS_CONTENT_TYPE", "format_event_acknowledgment_preparation_metrics",
 )
+
+from .event_acknowledgment_intent_recovery_pass import (
+    EventAcknowledgmentIntentRecoveryPassCancelled,
+    EventAcknowledgmentIntentRecoveryPassCommitUnknownError,
+    EventAcknowledgmentIntentRecoveryPassError,
+    EventAcknowledgmentIntentRecoveryPassOptions,
+    EventAcknowledgmentIntentRecoveryPassResult,
+    arecover_event_acknowledgment_intents,
+)
+
+__all__ += (
+    "EventAcknowledgmentIntentRecoveryPassCancelled", "EventAcknowledgmentIntentRecoveryPassCommitUnknownError",
+    "EventAcknowledgmentIntentRecoveryPassError", "EventAcknowledgmentIntentRecoveryPassOptions",
+    "EventAcknowledgmentIntentRecoveryPassResult", "arecover_event_acknowledgment_intents",
+)
