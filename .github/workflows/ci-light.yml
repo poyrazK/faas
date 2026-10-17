@@ -8,11 +8,12 @@ name: ci-light
 # runner pool and pushing PR feedback past 90 minutes):
 #
 #   ci-light.yml (this file)  golangci-lint (govet included) of changed
-#                             packages; -race tests of changed packages and
-#                             the §6.2 invariants; for cmd/gregale, pkg/state
-#                             and pkg/apid/apidserver only the tests related
-#                             to the change, without -race
-#                             (scripts/ci/select_package_tests.py);
+#                             packages and `go vet` of the importers that use
+#                             a changed exported name; -race tests of changed
+#                             packages and the §6.2 invariants; for
+#                             cmd/gregale, pkg/state and pkg/apid/apidserver
+#                             only the tests related to the change, without
+#                             -race (scripts/ci/select_package_tests.py);
 #                             boot-contract, generated-code drift, policy
 #                             gates and migration ID/apply/replay checks.
 #                             Three test shards, no gate job.
@@ -172,6 +173,30 @@ jobs:
             echo "::error::lint failed for: ${failed[*]}"
             exit 1
           fi
+      # golangci-lint compiles only the changed packages. An unchanged
+      # importer breaks when an exported name it uses changes under it (a
+      # signature, a field, a constant), so vet exactly those importers
+      # (scripts/ci/select_importers.py); a body edit selects none. The mega
+      # tier vets every package nightly and before every release.
+      - name: compile importers that use changed exported names
+        if: steps.select.outputs.changed != ''
+        env:
+          BASE: ${{ steps.select.outputs.base }}
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver_test=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
+          GOMEMLIMIT: 10GiB
+          GOGC: 100
+          GOMAXPROCS: 4
+        run: |
+          set -euo pipefail
+          pkgs="$(python3 scripts/ci/select_importers.py --base "$BASE" < "$RUNNER_TEMP/changed-paths.txt")"
+          [[ -z "$pkgs" ]] && exit 0
+          # apidserver's external tests import its internal test variant, so
+          # vetting it holds about 5 GB: it goes alone, before the rest.
+          rest=()
+          for pkg in $pkgs; do
+            if [[ "$pkg" == ./pkg/apid/apidserver ]]; then go vet "$pkg"; else rest+=("$pkg"); fi
+          done
+          if (( ${#rest[@]} )); then go vet "${rest[@]}"; fi
       # Main pushes lint cmd/gregale, pkg/state and pkg/apid/apidserver even
       # when unchanged, so the saved cache holds their dependencies' export
       # data and analysis facts: a pull request touching one of them then
@@ -248,7 +273,10 @@ jobs:
 
       # ---- policy gates (static, seconds each) ----
       - name: light-tier package selector tests
-        run: python3 scripts/ci/affected_packages_test.py
+        run: |
+          python3 scripts/ci/affected_packages_test.py
+          python3 scripts/ci/select_package_tests_test.py
+          python3 scripts/ci/select_importers_test.py
       - name: MemStore stub guard
         run: make memstore-stubs-check
       - name: daemon environment contract
