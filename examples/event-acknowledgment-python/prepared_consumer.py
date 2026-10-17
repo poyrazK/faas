@@ -7,7 +7,11 @@ from typing import Any
 
 from consumer import _enqueue_authenticated_delivery, _owned_delivery
 from durable_consumer import _ack
-from faas_sdk import EventAcknowledgmentPreparedOptions
+from faas_sdk import (
+    EventAcknowledgmentPreparedOptions,
+    ainspect_event_consumer_processing,
+    event_consumer_request_from_headers,
+)
 
 
 async def accept_authenticated_prepared_delivery(
@@ -63,3 +67,16 @@ async def save_owned_prepared_completion_intent(
     result = await worker.save_completion_intent(connection, stop_event=job.stop_event)
     await _ack(job, result)
     return result
+
+
+async def inspect_owned_prepared_delivery(
+    client: Any, job: Any, scope: Mapping[str, str], connection: Any
+) -> Any:
+    """Read metadata only; neither claims, prepares, reconciles callbacks nor acks the job."""
+    _worker, body = _prepared_delivery(client, job, scope)
+    request = event_consumer_request_from_headers(
+        job.record["headers"], body, scope["account_id"], scope["app_id"]
+    )
+    return await ainspect_event_consumer_processing(
+        connection, request, stop_event=job.stop_event
+    )

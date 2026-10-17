@@ -457,3 +457,39 @@ rollback nor ownership. No automatic retry/dead-letter or claim release is chose
 Confirmed intent commit remains confirmed after late cancellation/renewal/cleanup
 failure; failed job ack can safely replay the receipt/intent handoff. See the
 [coordinated Python lifecycle](../../docs/event-acknowledgment-python-preparation.md).
+
+## Inspect a processing job
+
+The example provides `processing_consumer.inspect_owned_processing_delivery` for
+version-4 manually leased jobs and
+`prepared_consumer.inspect_owned_prepared_delivery` for version-5 coordinated jobs.
+Each validates its existing protected record and trusted owner scope, constructs
+the original consumer request and performs one read-only inspection. No helper
+claims, renews, prepares, sends callbacks, stages intents or acknowledges the job.
+
+```python
+from dataclasses import asdict
+from prepared_consumer import inspect_owned_prepared_delivery
+
+async with diagnostic_pool.connection() as connection:
+    evidence = await inspect_owned_prepared_delivery(
+        client.inner, job, scope, connection,
+    )
+record_processing_evidence(asdict(evidence))
+```
+
+Supply a separately leased idle autocommit async connection with bounded driver
+calls. Use a read-authorized role and authorize diagnostic access to protected
+original inputs. The public SDK inspector itself needs no platform client or
+acknowledgment token; the example retains its normal protected-job validation.
+Each helper rejects other job versions/modes and failure decisions. It does not
+change the record or silently select an execution phase.
+
+Matching receipt metadata is not saved-result validation. Reconcile through the
+appropriate existing receipt-only helper before callback handoff. Active/expired/
+absent/conflicting snapshots are operator evidence, never admission or proof of
+rollback/stopped work. Keep jobs and immutable evidence, use live claim/complete
+fences and persist recovery decisions under current ownership. No automatic retry,
+dead-letter, release or repair is selected. Query failures discard the connection;
+unavailable evidence is never an `absent` observation. See the
+[snapshot and cancellation contract](../../docs/event-consumer-processing-inspection.md#python-inspection).

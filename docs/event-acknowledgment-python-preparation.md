@@ -164,3 +164,8 @@ compilation/lint, Python 3.11 syntax, generation, packaging and static checks. N
 tests/assertions are added/changed and no local tests run. Hosted concurrency,
 lease loss, expiry/takeover, callbacks, rollback, cancellation and uncertain-commit
 qualification remains pending before release.
+
+For read-only diagnostics after busy or interrupted preparation, use
+[`ainspect_event_consumer_processing`](event-consumer-processing-inspection.md#python-inspection).
+Its metadata snapshot grants no ownership, validates no saved result and never
+chooses recovery. Unknown commits still require the existing receipt protocol.

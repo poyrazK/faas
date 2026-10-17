@@ -180,3 +180,12 @@ jobs or replay remain possible. No platform migration, endpoint or service is
 added. Local validation covers generation, compilation, packaging and static
 checks. Hosted concurrency, takeover, rollback, timing, cancellation, callbacks and
 shared Go/Node/Python state acceptance remains pending before release.
+
+## Inspect recovery evidence
+
+[`ainspect_event_consumer_processing`](event-consumer-processing-inspection.md#python-inspection)
+reads one original request's receipt/claim metadata with a single snapshot and
+database clock, without tokens/results or ownership/mutations. Use it to diagnose
+busy or interrupted jobs before the owner's explicit recovery decision. Matching
+receipt metadata still requires ordinary receipt validation; absence/expiry proves
+neither rollback nor stopped work.

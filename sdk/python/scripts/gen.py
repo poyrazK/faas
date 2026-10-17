@@ -224,6 +224,7 @@ WRAPPER_MODULES = (
     "operations.py",
     "event_consumer_transactions.py",
     "event_consumer_processing.py",
+    "event_consumer_processing_inspection.py",
     "_event_consumer_processing_store.py",
     "event_consumer_delivery_context.py",
     "event_acknowledgment_worker.py",
@@ -1474,6 +1475,13 @@ __all__ += (
 from .event_acknowledgment_preparation import EventAcknowledgmentPreparedOptions
 
 __all__ += ("EventAcknowledgmentPreparedOptions",)
+
+from .event_consumer_processing_inspection import (
+    EventConsumerProcessingInspection,
+    ainspect_event_consumer_processing,
+)
+
+__all__ += ("EventConsumerProcessingInspection", "ainspect_event_consumer_processing")
 '''
 
 

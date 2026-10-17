@@ -1,5 +1,7 @@
 # Architecture Decision Records
 
+- [Python processing recovery inspection](20261017155904-python-processing-recovery-inspection.md)
+
 - [Coordinated Python event preparation](20261017154707-coordinated-python-event-preparation.md)
 
 - [Python consumer processing leases](20261017152929-python-consumer-processing-leases.md)

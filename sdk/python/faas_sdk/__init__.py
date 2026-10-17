@@ -729,3 +729,10 @@ __all__ += (
 from .event_acknowledgment_preparation import EventAcknowledgmentPreparedOptions
 
 __all__ += ("EventAcknowledgmentPreparedOptions",)
+
+from .event_consumer_processing_inspection import (
+    EventConsumerProcessingInspection,
+    ainspect_event_consumer_processing,
+)
+
+__all__ += ("EventConsumerProcessingInspection", "ainspect_event_consumer_processing")

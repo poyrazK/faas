@@ -2748,6 +2748,14 @@ scopes for each operation. Existing receipts skip preparation and new claims;
 local renewal is joined before completion while platform renewal continues.
 See [budgets, cleanup and uncertain commits](../../docs/event-acknowledgment-python-preparation.md).
 
+`ainspect_event_consumer_processing(connection, request, stop_event=...)` reads
+frozen receipt/claim metadata for one original consumer request in one statement.
+It reports matching/completed, active, expired, absent or conflicting evidence and
+matching claim timing without selecting tokens, original bodies or saved results.
+Use a separately leased idle autocommit async connection. Inspection grants no
+ownership or acknowledgment proof; use existing live fences/receipt reconciliation
+for recovery. See [Python inspection](../../docs/event-consumer-processing-inspection.md#python-inspection).
+
 `run_durable` commits business SQL, the receipt and a completion intent together;
 `save_completion_intent` stages a saved receipt without business work. Explicitly
 install `event_acknowledgment_intent_schema` beside the inbox. A confirmed local
