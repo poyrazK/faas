@@ -178,7 +178,7 @@ func exportStatement(t *testing.T, f billingRunFixture, path string, req api.Cre
 	return out
 }
 
-// adr: 1305 — billing runs and statement exports target Paddle and Lago:
+// adr: 1507 — billing runs and statement exports target Paddle and Lago:
 // Paddle gets a manual draft transaction, Lago an issued one-off invoice; a
 // statement exports to one provider only, a Lago invoice an interrupted
 // export left untagged blocks a second one, and payment status syncs back.

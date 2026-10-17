@@ -169,3 +169,17 @@ func TestPgSourceBuildRootfsSharedRuntime(t *testing.T) {
 	s, _ := registryVerificationPGStore(t)
 	sourceBuildRootfsSharedRuntime(t, s)
 }
+
+func TestPgSetDeploymentRuntimeBase(t *testing.T) {
+	s, _ := registryVerificationPGStore(t)
+	_, _, dep, _, _ := buildExportFixtureClaim(t, s, AppTypeApp, "", "")
+	if err := s.SetDeploymentRuntimeBase(t.Context(), dep.ID, "node22"); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.DeploymentByID(t.Context(), dep.ID); err != nil || got.RuntimeBase != "node22" {
+		t.Fatalf("runtime base = %q (%v), want node22", got.RuntimeBase, err)
+	}
+	if err := s.SetDeploymentRuntimeBase(t.Context(), dep.ID, "python312"); !errors.Is(err, ErrInvalidArgument) {
+		t.Fatalf("non-shared runtime accepted: %v", err)
+	}
+}

@@ -1,4 +1,4 @@
-# ADR-1304: Consumer billing self-service
+# ADR-1506: Consumer billing self-service
 
 - **Status:** accepted
 - **Date:** 2026-10-14
@@ -7,7 +7,7 @@
   - **Endpoints.** Three read-only apid endpoints take `Authorization: Bearer ck_…`. The app is named by its slug, because consumer keys are looked up per app:
     - `GET /v1/consumer-billing/{slug}`: the consumer's identity; month-to-date billable and unpriced units; the month-to-date amount priced exactly like a statement (ADR-949–953); and the current plan's monthly cap with its use.
     - `GET /v1/consumer-billing/{slug}/usage?since=&until=`: daily requests and billable units, at most 31 days per call (default: the current month).
-    - `GET /v1/consumer-billing/{slug}/statements`: the latest 24 finalized statements with their exported invoice's payment status, amounts, due and paid dates, and Stripe's customer-facing hosted invoice URL (ADR-1302). It never includes the operator's dashboard URL, other consumers, or rate-card internals.
+    - `GET /v1/consumer-billing/{slug}/statements`: the latest 24 finalized statements with their exported invoice's payment status, amounts, due and paid dates, and Stripe's customer-facing hosted invoice URL (ADR-1504). It never includes the operator's dashboard URL, other consumers, or rate-card internals.
 - **Why:** Consumers could not see what they owed until an invoice arrived. Owners had to proxy Gregale's account API, which needs an operator credential and exposes every consumer, to show usage in their own product.
 - **Consequences:**
   - **Authentication.** It reuses the gateway's key model (ADR-120). The key must be well-formed, match the app's prefix row and hash in constant time, be neither revoked nor expired, belong to a live consumer, and carry `billing`. Every failure is the same 401, except a valid key without `billing`, which gets 403. Requests are limited per key prefix (`ConsumerBillingRequestsPerMinute`, burst `ConsumerBillingBurst`), checked before any database lookup.

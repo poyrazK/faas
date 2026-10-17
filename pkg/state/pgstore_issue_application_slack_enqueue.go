@@ -36,6 +36,19 @@ func enqueueApplicationIssueSlack(ctx context.Context, q *sqlc.Queries, tx pgx.T
 	if !policy.Enabled || !slices.Contains(policy.Events, action) {
 		return nil
 	}
+	if issueLifecycleEvent(action) {
+		lifecycle, e := issueLifecyclePolicy(ctx, q, tx, issueID(row.AppID), issueID(row.AccountID))
+		if e != nil {
+			return e
+		}
+		reason, _, e := issueLifecycleDecision(ctx, q, tx, row, lifecycle, now)
+		if e != nil {
+			return e
+		}
+		if reason != "eligible" {
+			return nil
+		}
+	}
 	route, err := q.IssueApplicationSlackRoute(ctx, tx, sqlc.IssueApplicationSlackRouteParams{AppID: row.AppID, AccountID: row.AccountID, AssignedTeamID: row.AssigneeTeamID, FallbackTeamID: issueUUID(policy.FallbackTeamID)})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return q.IssueApplicationSlackMissed(ctx, tx, sqlc.IssueApplicationSlackMissedParams{AppID: row.AppID, Capacity: false})
@@ -63,6 +76,13 @@ func enqueueApplicationIssueSlack(ctx context.Context, q *sqlc.Queries, tx pgx.T
 	}
 	if err = q.IssueApplicationReminderStart(ctx, tx, sqlc.IssueApplicationReminderStartParams{IssueID: row.ID, AppID: row.AppID}); err != nil {
 		return err
+	}
+	// A cooldown is consumed only by actual queue admission, never by a missing
+	// route, a full queue, a preview, a retry or a threshold/reminder alert.
+	if issueLifecycleEvent(action) {
+		if err = q.IssueLifecycleRecordAlert(ctx, tx, sqlc.IssueLifecycleRecordAlertParams{AppID: row.AppID, IssueID: row.ID, Now: issueTime(now)}); err != nil {
+			return err
+		}
 	}
 	id := uuid.NewSHA1(uuid.UUID(activityID.Bytes), []byte("application-slack"))
 	return q.IssueApplicationSlackEnqueue(ctx, tx, sqlc.IssueApplicationSlackEnqueueParams{ID: issueUUID(id.String()), DestinationID: route.ID, DestinationRevision: route.Revision, ActivityID: activityID, IssueID: row.ID, ChannelID: channel, RoutingRevision: routing.Revision, RoutingRuleKey: ruleKey, PolicyRevision: pgtype.Int8{Int64: policy.Revision, Valid: true}, Recipients: route.Recipients, AssignedTeamID: row.AssigneeTeamID, AssignedAccountID: row.AssigneeAccountID})

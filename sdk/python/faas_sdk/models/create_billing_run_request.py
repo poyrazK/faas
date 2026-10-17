@@ -15,7 +15,7 @@ T = TypeVar("T", bound="CreateBillingRunRequest")
 
 @_attrs_define
 class CreateBillingRunRequest:
-    """A month-end billing run (ADR-1301). Omitted options bill both sources, finalize, do not export, and hold consumers
+    """A month-end billing run (ADR-1503). Omitted options bill both sources, finalize, do not export, and hold consumers
     with completeness gaps.
 
     """
@@ -28,7 +28,7 @@ class CreateBillingRunRequest:
     finalize: bool | Unset = UNSET
     """Finalize each drafted statement (default true)."""
     export: BillingRunExport | Unset = UNSET
-    """Where finalized statements go: none, or invoices in the account's Stripe, Paddle or Lago (ADR-1305; requires
+    """Where finalized statements go: none, or invoices in the account's Stripe, Paddle or Lago (ADR-1507; requires
     finalize and a connected key)."""
     hold_on_gaps: bool | Unset = UNSET
     """Hold an app consumer whose usage ledger misses requests telemetry saw (default true)."""

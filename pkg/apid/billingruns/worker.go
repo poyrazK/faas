@@ -61,7 +61,7 @@ func (s *Service) RunOnce(ctx context.Context) error {
 }
 
 // notifyRuns emails the account about completed runs that need attention,
-// and about every scheduled run (ADR-1302). A run is marked notified only
+// and about every scheduled run (ADR-1504). A run is marked notified only
 // after the mailer accepts the message; a failed send retries next tick.
 func (s *Service) notifyRuns(ctx context.Context) error {
 	store, ok := s.Host.Store().(state.BillingRunNotificationStore)

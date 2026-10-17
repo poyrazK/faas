@@ -1,5 +1,5 @@
 // Package stripeinvoice creates draft invoices in a customer's own Stripe
-// account from finalized usage statements (ADR-1300). It is separate from
+// account from finalized usage statements (ADR-1502). It is separate from
 // pkg/billing/stripe, which bills Gregale's own customers with Gregale's
 // key: every call here takes the customer's key explicitly and never logs it.
 package stripeinvoice
@@ -251,7 +251,7 @@ func (c *Client) FinalizeInvoice(ctx context.Context, key, idempotencyKey, invoi
 	return c.do(ctx, key, http.MethodPost, "/v1/invoices/"+url.PathEscape(invoiceID)+"/finalize", idempotencyKey, form, nil)
 }
 
-// InvoiceState is the payment state of an invoice (ADR-1302). Deleted is
+// InvoiceState is the payment state of an invoice (ADR-1504). Deleted is
 // true when Stripe no longer has the invoice (a deleted draft).
 type InvoiceState struct {
 	Status          string

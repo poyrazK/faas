@@ -8,7 +8,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// MaxStatementInvoiceLines bounds one exported invoice (ADR-1300); Stripe
+// MaxStatementInvoiceLines bounds one exported invoice (ADR-1502); Stripe
 // invoices hold at most 250 line items, one of which may be rounding.
 const MaxStatementInvoiceLines = 249
 

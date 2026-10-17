@@ -17,7 +17,7 @@ T = TypeVar("T", bound="PutBillingConnectionRequest")
 
 @_attrs_define
 class PutBillingConnectionRequest:
-    """The account's own key for one billing provider (ADR-1300, ADR-1305)."""
+    """The account's own key for one billing provider (ADR-1502, ADR-1507)."""
 
     secret_key: str
     """A Stripe secret or restricted key (sk_… or rk_…), a Paddle API key (pdl_…), or a Lago API key."""

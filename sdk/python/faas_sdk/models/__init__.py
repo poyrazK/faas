@@ -1997,6 +1997,10 @@ from .issue_impact import IssueImpact
 from .issue_impact_alert_policy import IssueImpactAlertPolicy
 from .issue_impact_summary import IssueImpactSummary
 from .issue_ingest_token import IssueIngestToken
+from .issue_lifecycle_alert_policy import IssueLifecycleAlertPolicy
+from .issue_lifecycle_alert_preview import IssueLifecycleAlertPreview
+from .issue_lifecycle_alert_preview_event import IssueLifecycleAlertPreviewEvent
+from .issue_lifecycle_alert_preview_reason import IssueLifecycleAlertPreviewReason
 from .issue_occurrence import IssueOccurrence
 from .issue_ownership_rule import IssueOwnershipRule
 from .issue_ownership_rule_source_kind import IssueOwnershipRuleSourceKind
@@ -3623,6 +3627,8 @@ from .preview_event_request import PreviewEventRequest
 from .preview_event_request_data_content_type import PreviewEventRequestDataContentType
 from .preview_event_request_datacontenttype import PreviewEventRequestDatacontenttype
 from .preview_event_response import PreviewEventResponse
+from .preview_issue_lifecycle_alert_request import PreviewIssueLifecycleAlertRequest
+from .preview_issue_lifecycle_alert_request_event import PreviewIssueLifecycleAlertRequestEvent
 from .preview_platform_tenant_self_workflow_actions_body import PreviewPlatformTenantSelfWorkflowActionsBody
 from .preview_production_changes_response import PreviewProductionChangesResponse
 from .preview_production_changes_response_configuration_changed_groups_item import (
@@ -4789,6 +4795,7 @@ from .update_financial_budget_request import UpdateFinancialBudgetRequest
 from .update_inbound_webhook_endpoint_request import UpdateInboundWebhookEndpointRequest
 from .update_issue_frequency_alert_policy_request import UpdateIssueFrequencyAlertPolicyRequest
 from .update_issue_impact_alert_policy_request import UpdateIssueImpactAlertPolicyRequest
+from .update_issue_lifecycle_alert_policy_request import UpdateIssueLifecycleAlertPolicyRequest
 from .update_issue_tracker_auto_sync_request import UpdateIssueTrackerAutoSyncRequest
 from .update_issue_tracker_auto_sync_request_direction import UpdateIssueTrackerAutoSyncRequestDirection
 from .update_issue_tracker_auto_sync_request_expected_issue_state import (
@@ -7045,6 +7052,10 @@ __all__ = (
     "IssueImpactAlertPolicy",
     "IssueImpactSummary",
     "IssueIngestToken",
+    "IssueLifecycleAlertPolicy",
+    "IssueLifecycleAlertPreview",
+    "IssueLifecycleAlertPreviewEvent",
+    "IssueLifecycleAlertPreviewReason",
     "IssueOccurrence",
     "IssueOwnershipRule",
     "IssueOwnershipRules",
@@ -8485,6 +8496,8 @@ __all__ = (
     "PreviewEventRequestDatacontenttype",
     "PreviewEventRequestDataContentType",
     "PreviewEventResponse",
+    "PreviewIssueLifecycleAlertRequest",
+    "PreviewIssueLifecycleAlertRequestEvent",
     "PreviewPlatformTenantSelfWorkflowActionsBody",
     "PreviewProductionChangesResponse",
     "PreviewProductionChangesResponseConfigurationChangedGroupsItem",
@@ -9591,6 +9604,7 @@ __all__ = (
     "UpdateInboundWebhookEndpointRequest",
     "UpdateIssueFrequencyAlertPolicyRequest",
     "UpdateIssueImpactAlertPolicyRequest",
+    "UpdateIssueLifecycleAlertPolicyRequest",
     "UpdateIssueTrackerAutoSyncRequest",
     "UpdateIssueTrackerAutoSyncRequestDirection",
     "UpdateIssueTrackerAutoSyncRequestExpectedIssueState",

@@ -10,7 +10,7 @@ import (
 
 func charged(n int64) *int64 { return &n }
 
-// adr: 1300
+// adr: 1502
 func TestAppStatementInvoiceLinesAndRounding(t *testing.T) {
 	minute := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
 	five := int64(5)
@@ -47,7 +47,7 @@ func TestAppStatementInvoiceLinesAndRounding(t *testing.T) {
 	}
 }
 
-// adr: 1300
+// adr: 1502
 func TestTenantStatementInvoiceRoundingAndCurrency(t *testing.T) {
 	line := func(card string, units, price int64) state.PlatformTenantStatementLine {
 		return state.PlatformTenantStatementLine{AppID: "a", PlatformTenantRateCardID: card, BillableUnits: units,

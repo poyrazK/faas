@@ -10,7 +10,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// adr: 1302 — invoices pages through every exported invoice with its
+// adr: 1504 — invoices pages through every exported invoice with its
 // payment status, marking overdue ones.
 func TestCmdAccountInvoices(t *testing.T) {
 	var statuses []string

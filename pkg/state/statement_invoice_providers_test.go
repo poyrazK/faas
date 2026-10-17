@@ -10,7 +10,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// checkBillingProviders runs the ADR-1305 store contract: Lago connections
+// checkBillingProviders runs the ADR-1507 store contract: Lago connections
 // keep their API URL, unknown providers are refused, and a statement's
 // export cannot switch provider.
 func checkBillingProviders(t *testing.T, ctx context.Context, store state.StatementInvoiceExportStore, accountID string) {
@@ -43,7 +43,7 @@ func checkBillingProviders(t *testing.T, ctx context.Context, store state.Statem
 	}
 }
 
-// adr: 1305
+// adr: 1507
 func TestMemStoreBillingProviders(t *testing.T) {
 	ctx := context.Background()
 	checkBillingProviders(t, ctx, state.NewMemStore(), uuid.NewString())

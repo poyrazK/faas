@@ -1,5 +1,5 @@
 // Package consumerbilling lets an app's customers read their own usage,
-// spend and invoices with their own consumer key (ADR-1304). Like the other
+// spend and invoices with their own consumer key (ADR-1506). Like the other
 // apid domains (ADR-982), it reaches apid only through Host; apidserver keeps
 // the route table.
 package consumerbilling

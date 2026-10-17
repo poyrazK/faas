@@ -12,5 +12,5 @@
   - **Quotes differ.** Quotes, spend caps and self-service views still price the month by its total, so they can show less than finalized revisions billed for a month with late usage.
   - **Other cards unchanged.** A graduated card whose re-rating would lower a total (a mid-month card change with unusual prices, ADR-951) still returns 409.
 - **Rejected alternatives:**
-  - Issuing credit notes would make Gregale move money back, which ADR-1300 rules out.
+  - Issuing credit notes would make Gregale move money back, which ADR-1502 rules out.
   - Locking the step at the first finalization even when the month later grows into a step with a higher total would undercharge growth the ladder prices.

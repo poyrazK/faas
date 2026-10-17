@@ -423,7 +423,7 @@ groups:
           family: consumer_usage_delivery
         annotations:
           summary: "Monetized responses withheld: usage could not be made durable"
-          description: "The gateway aborted billable responses because their usage events could not be fsynced to the local outbox (ADR-1303). Clients saw failed requests. Check outbox capacity and disk health; readiness should already be draining the node."
+          description: "The gateway aborted billable responses because their usage events could not be fsynced to the local outbox (ADR-1505). Clients saw failed requests. Check outbox capacity and disk health; readiness should already be draining the node."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasConsumerUsageDelivery.md"
 
       - alert: FaasConsumerUsageOutboxNearCapacity

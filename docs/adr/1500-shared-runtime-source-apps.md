@@ -1,8 +1,10 @@
-# Source-built apps run on the shared runtime base
+# ADR-1500: Source-built apps run on the shared runtime base
 
 Date: 2026-10-17
 Status: Accepted (owner chose option A for H10-140; rollout gated by a node flag)
 Related: spec §4.6 (two-drive rootfs), ADR-595 (application standards; its source-rootfs intent SQL derives the layer kind from `app.runtime` and needs a migration for slice 2), H10-139, H10-140
+
+Historical filename: merged migration comments retain `20261017-shared-runtime-source-apps.md`; this decision is now ADR-1500.
 
 ## Context
 

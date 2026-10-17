@@ -131,6 +131,8 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/apps/{slug}/issues/{issue_id}/tracker-sync":      true, // ADR-1474: authenticated HTML review/recovery form with named CSRF.
 	"POST /dashboard/apps/{slug}/issues/{issue_id}/linear-connection": true, // ADR-1474: owner HTML credential form with session MFA and CSRF.
 	"POST /hooks/issue-trackers/linear/{app_id}":                      true, // ADR-1476: raw-body HMAC provider protocol, outside the Bearer-auth DTO/SDK surface.
+	"GET /dashboard/apps/{slug}/issues/lifecycle-alerts":              true, // ADR-1499: authenticated HTML policy editor; JSON API remains checked.
+	"POST /dashboard/apps/{slug}/issues/lifecycle-alerts":             true, // ADR-1499: session/MFA/CSRF HTML adapter for public update/preview APIs.
 	"GET /dashboard/apps/{slug}/issues/slack-routing":                 true, // ADR-1498 owner-only Slack routing editor.
 	"GET /oauth/slack/callback":                                       true, // ADR-1497 owner session and one-use state confirmation.
 	"GET /oauth/linear/callback":                                      true, // ADR-1478: owner session OAuth callback and HTML team picker with PKCE and one-use state.
@@ -751,9 +753,9 @@ var schemaSpecOnly = map[string]bool{
 	"ServiceReliabilityPolicies": true, // Named map schema for the per-binding policy object.
 	"PreviewServiceCallsPolicy":  true, // Typed-string enum in pkg/api/preview_service_calls.go; the schema is still part of the wire contract.
 	"ServiceCallerScopes":        true, // Named map DTO; its additionalProperties shape is documented directly in OpenAPI.
-	"BillingRunExport":           true, // ADR-1301: enum shared by run and schedule DTOs, which carry it as a string field.
-	"BillingRunSources":          true, // ADR-1301: array enum shared by run and schedule DTOs, which carry it as []string.
-	"BillingProvider":            true, // ADR-1305: enum shared by connection and export DTOs, which carry it as a string field.
+	"BillingRunExport":           true, // ADR-1503: enum shared by run and schedule DTOs, which carry it as a string field.
+	"BillingRunSources":          true, // ADR-1503: array enum shared by run and schedule DTOs, which carry it as []string.
+	"BillingProvider":            true, // ADR-1507: enum shared by connection and export DTOs, which carry it as a string field.
 	// Scheduled-work policy structs live in pkg/workpolicy and are embedded
 	// in the pkg/api request/response DTOs. This scanner only indexes structs
 	// declared directly in pkg/api; request field parity still checks them.
@@ -1216,6 +1218,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "commit.go"),
 		filepath.Join(root, "pkg", "api", "issues.go"),
 		filepath.Join(root, "pkg", "api", "issue_frequency_alerts.go"),
+		filepath.Join(root, "pkg", "api", "issue_lifecycle_alerts.go"),
 		filepath.Join(root, "pkg", "api", "issue_context.go"),
 		filepath.Join(root, "pkg", "api", "issue_source_maps.go"),
 		filepath.Join(root, "pkg", "api", "issue_triage.go"),
@@ -1397,9 +1400,9 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "platform_tenant_consumer_policy.go"),
 		filepath.Join(root, "pkg", "api", "consumer_plans.go"),        // ADR-953 consumer plan DTOs
 		filepath.Join(root, "pkg", "api", "consumer_completeness.go"), // ADR-954 usage completeness DTO
-		filepath.Join(root, "pkg", "api", "statement_invoices.go"),    // ADR-1300, ADR-1305 statement invoice exports
-		filepath.Join(root, "pkg", "api", "billing_runs.go"),          // ADR-1301 month-end billing runs
-		filepath.Join(root, "pkg", "api", "consumer_billing.go"),      // ADR-1304 consumer billing self-service
+		filepath.Join(root, "pkg", "api", "statement_invoices.go"),    // ADR-1502, ADR-1507 statement invoice exports
+		filepath.Join(root, "pkg", "api", "billing_runs.go"),          // ADR-1503 month-end billing runs
+		filepath.Join(root, "pkg", "api", "consumer_billing.go"),      // ADR-1506 consumer billing self-service
 		filepath.Join(root, "pkg", "api", "consumer_credits.go"),      // ADR-1306 prepaid credit and spend caps
 		filepath.Join(root, "pkg", "api", "platform_tenant_plans.go"), // ADR-1307 tenant plans
 		filepath.Join(root, "pkg", "api", "platform_tenant_invocations.go"),

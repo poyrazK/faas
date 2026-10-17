@@ -30,7 +30,7 @@ class ConsumerBillingStatement:
     amount_millicents: int
     finalized_at: datetime.datetime | Unset = UNSET
     invoice: ConsumerBillingInvoice | Unset = UNSET
-    """The customer-facing view of a statement's exported invoice (ADR-1302)."""
+    """The customer-facing view of a statement's exported invoice (ADR-1504)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

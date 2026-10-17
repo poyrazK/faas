@@ -12,7 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// Payment statuses of an exported provider invoice (ADR-1302). Paid, void and
+// Payment statuses of an exported provider invoice (ADR-1504). Paid, void and
 // deleted are final; deleted means the provider no longer has the draft.
 const (
 	InvoicePaymentDraft         = "draft"

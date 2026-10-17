@@ -11701,6 +11701,21 @@ Publish, inspect or retire deployment mapping artifacts
 | `--directory <PATH>` | deployed directory corresponding to the build scan root |  |
 | `--manifest-file <PATH>` | portable source-map manifest file |  |
 
+### issues lifecycle-alerts
+
+Read, save or preview new-issue/regression alert filters
+
+`gregale issues lifecycle-alerts --app <SLUG> [--environments <ENVS>] [--cooldown-seconds <N>] [--expected-revision <N>] [--issue <UUID>] [--event <EVENT>] <get|save|preview>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` |  | required |
+| `--environments <ENVS>` | comma-separated exact names; empty means all |  |
+| `--cooldown-seconds <N>` | shared cooldown; zero disables throttling |  |
+| `--expected-revision <N>` | required when saving |  |
+| `--issue <UUID>` | existing issue for draft preview |  |
+| `--event <EVENT>` | created or regressed for preview |  |
+
 ### issues ownership-rules
 
 Read or replace automatic assignment rules

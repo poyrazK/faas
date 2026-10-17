@@ -11,7 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 1302 — completed exports are claimed for payment syncs, recorded
+// adr: 1504 — completed exports are claimed for payment syncs, recorded
 // statuses drive the unpaid/overdue filters and the once-only digest, and a
 // final status stops syncing.
 func TestPgStatementInvoicePaymentLifecycle(t *testing.T) {
@@ -85,7 +85,7 @@ func TestPgStatementInvoicePaymentLifecycle(t *testing.T) {
 	}
 }
 
-// adr: 1305
+// adr: 1507
 func TestPgStoreBillingProviders(t *testing.T) {
 	store, _, ctx := pgStoreWithPool(t)
 	accountID, _ := seedConsumerKeyAccountApp(t, ctx, store)

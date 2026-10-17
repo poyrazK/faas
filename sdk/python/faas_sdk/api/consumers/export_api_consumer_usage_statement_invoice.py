@@ -106,7 +106,7 @@ def sync_detailed(
 
      Exports one finalized app consumer statement revision to the
     provider in the body (default stripe; connect it with
-    PUT /v1/account/billing-connections/{provider}), ADR-1300 and ADR-1305.
+    PUT /v1/account/billing-connections/{provider}), ADR-1502 and ADR-1507.
     Stripe and Paddle receive drafts that Gregale never finalizes or
     sends; Lago issues its one-off invoice immediately but never charges
     it. One item per rate card and unit price, plus a rounding item, makes
@@ -160,7 +160,7 @@ def sync(
 
      Exports one finalized app consumer statement revision to the
     provider in the body (default stripe; connect it with
-    PUT /v1/account/billing-connections/{provider}), ADR-1300 and ADR-1305.
+    PUT /v1/account/billing-connections/{provider}), ADR-1502 and ADR-1507.
     Stripe and Paddle receive drafts that Gregale never finalizes or
     sends; Lago issues its one-off invoice immediately but never charges
     it. One item per rate card and unit price, plus a rounding item, makes
@@ -209,7 +209,7 @@ async def asyncio_detailed(
 
      Exports one finalized app consumer statement revision to the
     provider in the body (default stripe; connect it with
-    PUT /v1/account/billing-connections/{provider}), ADR-1300 and ADR-1305.
+    PUT /v1/account/billing-connections/{provider}), ADR-1502 and ADR-1507.
     Stripe and Paddle receive drafts that Gregale never finalizes or
     sends; Lago issues its one-off invoice immediately but never charges
     it. One item per rate card and unit price, plus a rounding item, makes
@@ -261,7 +261,7 @@ async def asyncio(
 
      Exports one finalized app consumer statement revision to the
     provider in the body (default stripe; connect it with
-    PUT /v1/account/billing-connections/{provider}), ADR-1300 and ADR-1305.
+    PUT /v1/account/billing-connections/{provider}), ADR-1502 and ADR-1507.
     Stripe and Paddle receive drafts that Gregale never finalizes or
     sends; Lago issues its one-off invoice immediately but never charges
     it. One item per rate card and unit price, plus a rounding item, makes
