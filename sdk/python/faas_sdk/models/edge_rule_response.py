@@ -18,6 +18,7 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.edge_rule_async_action import EdgeRuleAsyncAction
     from ..models.edge_rule_budget_action import EdgeRuleBudgetAction
+    from ..models.edge_rule_cache_action import EdgeRuleCacheAction
     from ..models.edge_rule_circuit_breaker_action import EdgeRuleCircuitBreakerAction
     from ..models.edge_rule_cors_action import EdgeRuleCORSAction
     from ..models.edge_rule_geo_action import EdgeRuleGeoAction
@@ -66,6 +67,7 @@ class EdgeRuleResponse:
     action: (
         EdgeRuleAsyncAction
         | EdgeRuleBudgetAction
+        | EdgeRuleCacheAction
         | EdgeRuleCircuitBreakerAction
         | EdgeRuleCORSAction
         | EdgeRuleGeoAction
@@ -124,6 +126,7 @@ class EdgeRuleResponse:
     def to_dict(self) -> dict[str, Any]:
         from ..models.edge_rule_async_action import EdgeRuleAsyncAction
         from ..models.edge_rule_budget_action import EdgeRuleBudgetAction
+        from ..models.edge_rule_cache_action import EdgeRuleCacheAction
         from ..models.edge_rule_circuit_breaker_action import EdgeRuleCircuitBreakerAction
         from ..models.edge_rule_cors_action import EdgeRuleCORSAction
         from ..models.edge_rule_geo_action import EdgeRuleGeoAction
@@ -186,6 +189,8 @@ class EdgeRuleResponse:
         elif isinstance(self.action, EdgeRuleThrottleAction):
             action = self.action.to_dict()
         elif isinstance(self.action, EdgeRuleBudgetAction):
+            action = self.action.to_dict()
+        elif isinstance(self.action, EdgeRuleCacheAction):
             action = self.action.to_dict()
         elif isinstance(self.action, EdgeRuleRespondAction):
             action = self.action.to_dict()
@@ -264,6 +269,7 @@ class EdgeRuleResponse:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.edge_rule_async_action import EdgeRuleAsyncAction
         from ..models.edge_rule_budget_action import EdgeRuleBudgetAction
+        from ..models.edge_rule_cache_action import EdgeRuleCacheAction
         from ..models.edge_rule_circuit_breaker_action import EdgeRuleCircuitBreakerAction
         from ..models.edge_rule_cors_action import EdgeRuleCORSAction
         from ..models.edge_rule_geo_action import EdgeRuleGeoAction
@@ -309,6 +315,7 @@ class EdgeRuleResponse:
         ) -> (
             EdgeRuleAsyncAction
             | EdgeRuleBudgetAction
+            | EdgeRuleCacheAction
             | EdgeRuleCircuitBreakerAction
             | EdgeRuleCORSAction
             | EdgeRuleGeoAction
@@ -433,7 +440,7 @@ class EdgeRuleResponse:
             try:
                 if not isinstance(data, dict):
                     raise TypeError()
-                action_type_13 = EdgeRuleRespondAction.from_dict(data)
+                action_type_13 = EdgeRuleCacheAction.from_dict(data)
 
                 return action_type_13
             except (TypeError, ValueError, AttributeError, KeyError):
@@ -441,7 +448,7 @@ class EdgeRuleResponse:
             try:
                 if not isinstance(data, dict):
                     raise TypeError()
-                action_type_14 = EdgeRuleRetryAction.from_dict(data)
+                action_type_14 = EdgeRuleRespondAction.from_dict(data)
 
                 return action_type_14
             except (TypeError, ValueError, AttributeError, KeyError):
@@ -449,7 +456,7 @@ class EdgeRuleResponse:
             try:
                 if not isinstance(data, dict):
                     raise TypeError()
-                action_type_15 = EdgeRuleCircuitBreakerAction.from_dict(data)
+                action_type_15 = EdgeRuleRetryAction.from_dict(data)
 
                 return action_type_15
             except (TypeError, ValueError, AttributeError, KeyError):
@@ -457,16 +464,24 @@ class EdgeRuleResponse:
             try:
                 if not isinstance(data, dict):
                     raise TypeError()
-                action_type_16 = EdgeRuleAsyncAction.from_dict(data)
+                action_type_16 = EdgeRuleCircuitBreakerAction.from_dict(data)
 
                 return action_type_16
             except (TypeError, ValueError, AttributeError, KeyError):
                 pass
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                action_type_17 = EdgeRuleAsyncAction.from_dict(data)
+
+                return action_type_17
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
             if not isinstance(data, dict):
                 raise TypeError()
-            action_type_17 = EdgeRuleWAFAction.from_dict(data)
+            action_type_18 = EdgeRuleWAFAction.from_dict(data)
 
-            return action_type_17
+            return action_type_18
 
         action = _parse_action(d.pop("action"))
 

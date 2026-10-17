@@ -84548,6 +84548,7 @@ components:
             - { $ref: '#/components/schemas/EdgeRuleGeoAction' }
             - { $ref: '#/components/schemas/EdgeRuleThrottleAction' }
             - { $ref: '#/components/schemas/EdgeRuleBudgetAction' }
+            - { $ref: '#/components/schemas/EdgeRuleCacheAction' }
             - { $ref: '#/components/schemas/EdgeRuleRespondAction' }
             - { $ref: '#/components/schemas/EdgeRuleRetryAction' }
             - { $ref: '#/components/schemas/EdgeRuleCircuitBreakerAction' }
@@ -84620,6 +84621,7 @@ components:
             - { $ref: '#/components/schemas/EdgeRuleGeoAction' }
             - { $ref: '#/components/schemas/EdgeRuleThrottleAction' }
             - { $ref: '#/components/schemas/EdgeRuleBudgetAction' }
+            - { $ref: '#/components/schemas/EdgeRuleCacheAction' }
             - { $ref: '#/components/schemas/EdgeRuleRespondAction' }
             - { $ref: '#/components/schemas/EdgeRuleRetryAction' }
             - { $ref: '#/components/schemas/EdgeRuleCircuitBreakerAction' }
@@ -84669,6 +84671,7 @@ components:
             - { $ref: '#/components/schemas/EdgeRuleGeoAction' }
             - { $ref: '#/components/schemas/EdgeRuleThrottleAction' }
             - { $ref: '#/components/schemas/EdgeRuleBudgetAction' }
+            - { $ref: '#/components/schemas/EdgeRuleCacheAction' }
             - { $ref: '#/components/schemas/EdgeRuleRespondAction' }
             - { $ref: '#/components/schemas/EdgeRuleRetryAction' }
             - { $ref: '#/components/schemas/EdgeRuleCircuitBreakerAction' }
@@ -85565,7 +85568,9 @@ components:
             gateway request refreshes the key in the background. Default
             0 (disabled); absolute cap 300.
           * `stale_if_error_seconds` — required. Stale-on-error window
-            in seconds. Default 300; absolute cap 300
+            in seconds; 0 disables it (apid does not replace 0 with a
+            default, so send 300 explicitly for the recommended
+            window). Absolute cap 300
             (`api.ResponseCacheStaleIfErrorMaxSeconds`). During an
             upstream error the gateway returns the cached body within
             this window instead of 502/504.
@@ -85590,8 +85595,8 @@ components:
           default: 60
           description: |
             Fresh window in seconds. 0 = inherit the apid-side default
-            (60s). Positive values are clamped to the platform cap
-            (3600s = 1 hour).
+            (60s). Values above the platform cap
+            (3600s = 1 hour) are rejected with 422.
         stale_while_revalidate_seconds:
           type: integer
           minimum: 0
@@ -85608,8 +85613,8 @@ components:
           default: 300
           description: |
             Stale-on-error window in seconds. 0 = no stale-on-error
-            (errors return 502/504 directly). Positive values are
-            clamped to the platform cap (300s = 5 minutes).
+            (errors return 502/504 directly). Values above the
+            platform cap (300s = 5 minutes) are rejected with 422.
         vary_on:
           type: array
           description: |

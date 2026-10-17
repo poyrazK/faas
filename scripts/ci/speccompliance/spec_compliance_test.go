@@ -768,6 +768,9 @@ func TestSpecCompliance(t *testing.T) {
 	t.Run("ErrorCodes", func(t *testing.T) {
 		testErrorCodesParity(t, root, spec)
 	})
+	t.Run("EdgeRuleKinds", func(t *testing.T) {
+		testEdgeRuleKindsParity(t, root, spec)
+	})
 }
 
 // --- Spec loader -----------------------------------------------------------
