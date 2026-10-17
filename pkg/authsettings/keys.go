@@ -3,6 +3,8 @@ package authsettings
 import (
 	"crypto/ecdh"
 	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -88,4 +90,20 @@ func SignerMarkers(names []string) []string {
 		}
 	}
 	return markers
+}
+
+// SAMLKeySecret holds the RSA key GoTrue's SAML service provider signs with
+// and publishes in its metadata. It is created once, when SSO is first turned
+// on, and kept when SSO is turned off: a new key would make every identity
+// provider distrust the app.
+const SAMLKeySecret = "AUTH_SAML_PRIVATE_KEY"
+
+// NewSAMLKey returns a new SAML signing key in the form GoTrue requires:
+// base64 PKCS#1 DER, RSA 2048 with exponent 65537.
+func NewSAMLKey() (string, error) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return "", fmt.Errorf("generate SAML key: %w", err)
+	}
+	return base64.StdEncoding.EncodeToString(x509.MarshalPKCS1PrivateKey(key)), nil
 }

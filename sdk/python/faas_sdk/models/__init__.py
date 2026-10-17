@@ -636,6 +636,10 @@ from .configure_managed_realtime_push_provider_response_200 import ConfigureMana
 from .configure_managed_realtime_push_provider_response_200_provider import (
     ConfigureManagedRealtimePushProviderResponse200Provider,
 )
+from .connection_budget_capacity import ConnectionBudgetCapacity
+from .connection_budget_capacity_state import ConnectionBudgetCapacityState
+from .connection_budget_demand import ConnectionBudgetDemand
+from .connection_budget_inventory import ConnectionBudgetInventory
 from .consume_invoice_response import ConsumeInvoiceResponse
 from .consumed_credit_row import ConsumedCreditRow
 from .consumer_key_list_response import ConsumerKeyListResponse
@@ -844,6 +848,9 @@ from .dashboard_discard_failed_event_body import DashboardDiscardFailedEventBody
 from .dashboard_replay_account_failed_event_body import DashboardReplayAccountFailedEventBody
 from .dashboard_replay_app_debug_request_body import DashboardReplayAppDebugRequestBody
 from .dashboard_replay_failed_event_body import DashboardReplayFailedEventBody
+from .data_api_connection_budgets import DataAPIConnectionBudgets
+from .data_api_connection_budgets_state import DataAPIConnectionBudgetsState
+from .data_api_connection_budgets_version import DataAPIConnectionBudgetsVersion
 from .data_upstream_history_bucket import DataUpstreamHistoryBucket
 from .data_upstream_history_response import DataUpstreamHistoryResponse
 from .data_upstream_history_response_kind import DataUpstreamHistoryResponseKind
@@ -2054,11 +2061,26 @@ from .managed_postgres_capabilities_credential_access_item import ManagedPostgre
 from .managed_postgres_capabilities_service_classes_item import ManagedPostgresCapabilitiesServiceClassesItem
 from .managed_postgres_compute_policy_change import ManagedPostgresComputePolicyChange
 from .managed_postgres_compute_policy_change_state import ManagedPostgresComputePolicyChangeState
+from .managed_postgres_connection_budget import ManagedPostgresConnectionBudget
+from .managed_postgres_connection_budget_model import ManagedPostgresConnectionBudgetModel
+from .managed_postgres_connection_budget_state import ManagedPostgresConnectionBudgetState
+from .managed_postgres_connection_budget_version import ManagedPostgresConnectionBudgetVersion
 from .managed_postgres_cutover import ManagedPostgresCutover
 from .managed_postgres_cutover_member import ManagedPostgresCutoverMember
 from .managed_postgres_cutover_member_access import ManagedPostgresCutoverMemberAccess
 from .managed_postgres_cutover_member_state import ManagedPostgresCutoverMemberState
+from .managed_postgres_cutover_preflight import ManagedPostgresCutoverPreflight
+from .managed_postgres_cutover_preflight_blockers_item import ManagedPostgresCutoverPreflightBlockersItem
+from .managed_postgres_cutover_preflight_state import ManagedPostgresCutoverPreflightState
+from .managed_postgres_cutover_runtime_drain import ManagedPostgresCutoverRuntimeDrain
+from .managed_postgres_cutover_runtime_drain_member import ManagedPostgresCutoverRuntimeDrainMember
+from .managed_postgres_cutover_runtime_drain_member_state import ManagedPostgresCutoverRuntimeDrainMemberState
+from .managed_postgres_cutover_runtime_drain_state import ManagedPostgresCutoverRuntimeDrainState
+from .managed_postgres_cutover_source_sessions import ManagedPostgresCutoverSourceSessions
+from .managed_postgres_cutover_source_sessions_state import ManagedPostgresCutoverSourceSessionsState
 from .managed_postgres_cutover_state import ManagedPostgresCutoverState
+from .managed_postgres_cutover_writer_isolation import ManagedPostgresCutoverWriterIsolation
+from .managed_postgres_cutover_writer_isolation_state import ManagedPostgresCutoverWriterIsolationState
 from .managed_postgres_database import ManagedPostgresDatabase
 from .managed_postgres_database_availability import ManagedPostgresDatabaseAvailability
 from .managed_postgres_database_list import ManagedPostgresDatabaseList
@@ -5460,6 +5482,10 @@ __all__ = (
     "ConfigureManagedRealtimePushProviderProvider",
     "ConfigureManagedRealtimePushProviderResponse200",
     "ConfigureManagedRealtimePushProviderResponse200Provider",
+    "ConnectionBudgetCapacity",
+    "ConnectionBudgetCapacityState",
+    "ConnectionBudgetDemand",
+    "ConnectionBudgetInventory",
     "ConsumedCreditRow",
     "ConsumeInvoiceResponse",
     "ConsumerKeyListResponse",
@@ -5652,6 +5678,9 @@ __all__ = (
     "DashboardReplayAccountFailedEventBody",
     "DashboardReplayAppDebugRequestBody",
     "DashboardReplayFailedEventBody",
+    "DataAPIConnectionBudgets",
+    "DataAPIConnectionBudgetsState",
+    "DataAPIConnectionBudgetsVersion",
     "DataUpstreamHistoryBucket",
     "DataUpstreamHistoryResponse",
     "DataUpstreamHistoryResponseKind",
@@ -6792,11 +6821,26 @@ __all__ = (
     "ManagedPostgresCapabilitiesServiceClassesItem",
     "ManagedPostgresComputePolicyChange",
     "ManagedPostgresComputePolicyChangeState",
+    "ManagedPostgresConnectionBudget",
+    "ManagedPostgresConnectionBudgetModel",
+    "ManagedPostgresConnectionBudgetState",
+    "ManagedPostgresConnectionBudgetVersion",
     "ManagedPostgresCutover",
     "ManagedPostgresCutoverMember",
     "ManagedPostgresCutoverMemberAccess",
     "ManagedPostgresCutoverMemberState",
+    "ManagedPostgresCutoverPreflight",
+    "ManagedPostgresCutoverPreflightBlockersItem",
+    "ManagedPostgresCutoverPreflightState",
+    "ManagedPostgresCutoverRuntimeDrain",
+    "ManagedPostgresCutoverRuntimeDrainMember",
+    "ManagedPostgresCutoverRuntimeDrainMemberState",
+    "ManagedPostgresCutoverRuntimeDrainState",
+    "ManagedPostgresCutoverSourceSessions",
+    "ManagedPostgresCutoverSourceSessionsState",
     "ManagedPostgresCutoverState",
+    "ManagedPostgresCutoverWriterIsolation",
+    "ManagedPostgresCutoverWriterIsolationState",
     "ManagedPostgresDatabase",
     "ManagedPostgresDatabaseAvailability",
     "ManagedPostgresDatabaseList",

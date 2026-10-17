@@ -206,6 +206,7 @@ func renderManifestAnsibleFiles(m *manifest.Manifest, outputDir string) ([]manif
 		if host.Role == roleControlPlane {
 			body += renderCustomDomainEdgeVars(m.PublicEdge.CustomDomains)
 		}
+		body += renderComputeEdgeVars(m.PublicEdge.ComputeNodes, host.Role, postgresListenAddress, computeAllowedCIDRs)
 		if host.Role == roleComputeOnly && m.Egress.TenantGateway != nil {
 			gatewayVars, gwErr := renderTenantEgressGatewayVars(m.Egress.TenantGateway, canonicalComputeNodeName(host.Name, roleTemplating.Role(host.Role)))
 			if gwErr != nil {
@@ -578,6 +579,34 @@ func renderCustomDomainEdgeVars(c manifest.CustomDomainsEdge) string {
 	fmt.Fprintf(&b, "faas_custom_domain_target: %q\n", c.Target)
 	fmt.Fprintf(&b, "faas_custom_domain_addresses: [%s]\n", quotedYAMLList(c.Addresses))
 	fmt.Fprintf(&b, "faas_custom_domain_acme_email: %q\n", c.ACMEEmail)
+	return b.String()
+}
+
+// computeEdgePrivatePort is the control plane's private gatewayd-public port
+// that compute-node app edges forward credential-bound routes to (ADR-1343).
+const computeEdgePrivatePort = "8090"
+
+// renderComputeEdgeVars turns on the compute-node app edge (ADR-1343). The
+// control plane listens privately for the edges' forwarded routes; each
+// compute node gets that listener as its target, and admits its peers' edges
+// to gatewayd-internal for the compute-pool fallback. Nothing is rendered
+// while the manifest leaves the edge off, so the roles' defaults remove it.
+func renderComputeEdgeVars(enabled bool, role, controlPlaneAddress string, computeCIDRs []string) string {
+	if !enabled || controlPlaneAddress == "" {
+		return ""
+	}
+	listen := net.JoinHostPort(controlPlaneAddress, computeEdgePrivatePort)
+	var b strings.Builder
+	b.WriteString("faas_edge_on_compute_nodes: true\n")
+	switch role {
+	case roleControlPlane:
+		fmt.Fprintf(&b, "faas_edge_private_listen_addr: %q\n", listen)
+	case roleComputeOnly:
+		fmt.Fprintf(&b, "faas_edge_control_plane_target: %q\n", "http://"+listen)
+		if len(computeCIDRs) > 0 {
+			fmt.Fprintf(&b, "faas_edge_peer_cidrs: [%s]\n", quotedYAMLList(computeCIDRs))
+		}
+	}
 	return b.String()
 }
 

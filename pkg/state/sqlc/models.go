@@ -1740,9 +1740,9 @@ type ComputeNode struct {
 	LastRecoveryOutcome pgtype.Text
 	// vmmd-registered IPv4 address on the operator-managed regional overlay
 	OverlayIp             *netip.Addr
-	ServiceAddressReadyAt pgtype.Timestamptz
 	VmmdIncarnation       pgtype.UUID
 	VmmdAdmissionProtocol int16
+	ServiceAddressReadyAt pgtype.Timestamptz
 }
 
 type ComputeNodeHeartbeat struct {
@@ -4173,11 +4173,11 @@ type Instance struct {
 	MigrationStartedAt                pgtype.Timestamptz
 	StartupCpuBoostUntil              pgtype.Timestamptz
 	ExclusiveCaptureBlocked           bool
+	ApplicationStandardBootToken      pgtype.UUID
+	ApplicationStandardPromotionToken pgtype.UUID
 	CapacityRamMb                     int64
 	CapacityCpuMillicores             int64
 	CapacityVcpu                      int32
-	ApplicationStandardBootToken      pgtype.UUID
-	ApplicationStandardPromotionToken pgtype.UUID
 }
 
 type InstanceApplicationStandardAdmission struct {
@@ -4870,6 +4870,7 @@ type ManagedPostgresCheckpointMaintenance struct {
 	ReadyAt                  pgtype.Timestamptz
 	CreatedAt                pgtype.Timestamptz
 	UpdatedAt                pgtype.Timestamptz
+	ReservedByCutoverID      pgtype.UUID
 }
 
 type ManagedPostgresCreationReceipt struct {
@@ -4974,6 +4975,60 @@ type ManagedPostgresCutoverDrainPlanMember struct {
 	QualificationLive  bool
 	DrainID            pgtype.UUID
 	BlockerCode        string
+}
+
+type ManagedPostgresCutoverPreflight struct {
+	CutoverID                 pgtype.UUID
+	State                     string
+	Revision                  int64
+	BindingIds                []string
+	Blockers                  []string
+	VerificationFresh         bool
+	SourceMatches             bool
+	TargetMatches             bool
+	BindingsMatch             bool
+	CutoverUpdatedAt          pgtype.Timestamptz
+	CheckedAt                 pgtype.Timestamptz
+	ExpiresAt                 pgtype.Timestamptz
+	CreatedAt                 pgtype.Timestamptz
+	UpdatedAt                 pgtype.Timestamptz
+	RuntimeDrain              []byte
+	RuntimeDrainFingerprint   string
+	SourceSessions            []byte
+	SourceSessionsFingerprint string
+}
+
+type ManagedPostgresCutoverSourceFence struct {
+	CutoverID                pgtype.UUID
+	OwnerToken               pgtype.UUID
+	MaintenanceID            pgtype.UUID
+	SourceDatabaseID         pgtype.UUID
+	BackendID                string
+	BackendFingerprint       string
+	SourceProviderResourceID string
+	SourceDataResourceID     string
+	SourceGeneration         int64
+	SourceSpec               []byte
+	OwnerNodeID              pgtype.UUID
+	OwnerRevision            int64
+	AdmissionFencedAt        pgtype.Timestamptz
+	RuntimeFingerprint       string
+	State                    string
+	DatabaseNames            []string
+	CloseRequestedAt         pgtype.Timestamptz
+	Closure                  []byte
+	ObservedAt               pgtype.Timestamptz
+	LastErrorCode            string
+	RemoteTerminalState      pgtype.Text
+	RemoteReleasedAt         pgtype.Timestamptz
+	LeaseToken               pgtype.Text
+	LeaseUntil               pgtype.Timestamptz
+	AttemptCount             int32
+	RetryAt                  pgtype.Timestamptz
+	CreatedAt                pgtype.Timestamptz
+	UpdatedAt                pgtype.Timestamptz
+	CatalogFingerprint       string
+	CatalogInvalidatedAt     pgtype.Timestamptz
 }
 
 type ManagedPostgresDatabase struct {

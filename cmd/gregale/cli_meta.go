@@ -1216,7 +1216,12 @@ var cliCommands = []cliCommand{
 		Examples: []string{"gregale apps", "gregale apps --json", "gregale apps rm my-api --dry-run", "gregale apps rm my-api --yes"},
 		Subcommands: []cliSub{
 			{Name: "ls", Short: "Alias for the default list action"},
-			{Name: "rm", Short: "Delete an app (alias: delete); restore it within the deletion grace window", Positionals: []string{"<slug>"}},
+			{Name: "rm", Short: "Delete an app (alias: delete); restore it within the deletion grace window", Positionals: []string{"<slug>"}, Flags: []cliFlag{
+				{Name: "dry-run", Short: "preview deletion without changing resources", Bool: true},
+				{Name: "yes", Short: "confirm deletion without prompting; required in non-interactive and JSON mode", Bool: true},
+				{Name: "quiet", Short: "confirm deletion without prompting (alias of --yes)", Bool: true},
+				{Name: "q", ShortName: "q", Short: "confirm deletion without prompting (alias of --yes)", Bool: true},
+			}},
 			{Name: "restore", Short: "Restore an app during its deletion grace window", Positionals: []string{"<slug>"}},
 			{Name: "routes", Short: "List admitted per-route labels for one app", Positionals: []string{"<slug>"}},
 			appTCPListenerCLISubcommand(true),
@@ -1245,6 +1250,7 @@ var cliCommands = []cliCommand{
 				{Name: "history", Short: "show recorded health changes; excludes --wait", Bool: true},
 				{Name: "limit", Short: "history page size", Value: "N"},
 				{Name: "before", Short: "history cursor", Value: "CURSOR"},
+				{Name: "environment", Short: "assess this project environment instead of the default scope; excludes history options", Value: "SLUG"},
 			}},
 			{Name: "scale", Short: "Preview, save, apply or update app resource and runtime settings", Examples: []string{
 				"gregale app my-api scale --interactive",
@@ -4166,6 +4172,11 @@ var cliCommands = []cliCommand{
 				{Name: "captcha-site-key", Value: "KEY", Short: "the CAPTCHA provider's site key (public)"},
 				{Name: "captcha-secret-stdin", Short: "read the CAPTCHA provider's secret key from stdin (prompted on a terminal)"},
 				{Name: "activity-retention", Value: "DAYS", Short: "days to keep sign-in activity, or forever"},
+				{Name: "sms", Value: "PROVIDER", Short: "phone sign-in by text message through your own SMS account, or off", ClosedSet: []string{"twilio", "twilio_verify", "messagebird", "textlocal", "vonage", "off"}},
+				{Name: "sms-account", Value: "ID", Short: "Twilio account SID or Vonage API key"},
+				{Name: "sms-sender", Value: "SENDER", Short: "Twilio messaging or Verify service SID (or phone number), MessageBird originator, Textlocal sender or Vonage from"},
+				{Name: "sms-secret-stdin", Short: "read the Twilio auth token, MessageBird access key, Textlocal API key or Vonage API secret from stdin"},
+				{Name: "sso", Value: "on|off", Short: "organization single sign-on (SAML); manage identity providers with gregale auth sso", ClosedSet: []string{"on", "off"}},
 				{Name: "scope", Value: "SCOPE", Short: "environment scope"},
 			}, Examples: []string{"gregale auth config shop-auth", "gregale auth config shop-auth --events on", "gregale auth config shop-auth --password-min-length 12 --password-require lower,upper,digit --mfa on"}},
 			{Name: "providers", Short: "Manage OAuth sign-in providers such as Google or GitHub", Subcommands: []cliSub{
@@ -4201,6 +4212,26 @@ var cliCommands = []cliCommand{
 				{Name: "limit", Value: "N", Short: "entries to show (1-100)"},
 				{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"},
 			}, Examples: []string{"printf '%s' \"$ADMIN_KEY\" | gregale auth activity shop-auth --search login --admin-key-stdin"}},
+			{Name: "sso", Short: "Register SAML identity providers for organization single sign-on", Subcommands: []cliSub{
+				{Name: "list", Short: "List identity providers and the organizations their users join", Positionals: []string{"<name>"}, Flags: []cliFlag{{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"}}},
+				{Name: "add", Short: "Register an identity provider for email domains, optionally joining its users to an organization", Positionals: []string{"<name>"}, Flags: []cliFlag{
+					{Name: "metadata-url", Value: "URL", Short: "the identity provider's HTTPS SAML metadata URL"},
+					{Name: "metadata-file", Value: "FILE", Short: "a file holding the identity provider's SAML metadata XML"},
+					{Name: "domains", Value: "DOMAINS", Req: true, Short: "comma-separated email domains whose users sign in through this provider"},
+					{Name: "org", Value: "ORG", Short: "organization (ID or slug) its users join"},
+					{Name: "role", Value: "ROLE", Short: "role its users join the organization with (not owner)"},
+					{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"},
+				}, Examples: []string{"printf '%s' \"$ADMIN_KEY\" | gregale auth sso add shop-auth --metadata-url https://acme.okta.com/app/abc/sso/saml/metadata --domains acme.com --org acme --admin-key-stdin"}},
+				{Name: "update", Short: "Change a provider's metadata, domains or organization", Positionals: []string{"<name>", "<provider-id>"}, Flags: []cliFlag{
+					{Name: "metadata-url", Value: "URL", Short: "the identity provider's HTTPS SAML metadata URL"},
+					{Name: "metadata-file", Value: "FILE", Short: "a file holding the identity provider's SAML metadata XML"},
+					{Name: "domains", Value: "DOMAINS", Short: "comma-separated email domains; replaces the list"},
+					{Name: "org", Value: "ORG", Short: "organization (ID or slug) its users join, or none"},
+					{Name: "role", Value: "ROLE", Short: "role its users join the organization with (not owner)"},
+					{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"},
+				}},
+				{Name: "remove", Short: "Remove an identity provider; its users keep their memberships", Positionals: []string{"<name>", "<provider-id>"}, Flags: []cliFlag{{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"}}},
+			}},
 		},
 	},
 	{
@@ -4342,11 +4373,16 @@ var cliCommands = []cliCommand{
 				{Name: "refresh-token-env", Value: "ENV", Short: "optional private refresh token environment variable"},
 				{Name: "timeout", Value: "DURATION", Short: "replay deadline (default 5m, maximum 1h)"},
 			}, Examples: []string{"gregale data-api replay notes-data --collection data-api.requests.json --identities data-api.identities.json --scenario notes-rls"}},
+			{Name: "health", Short: "Check current Data API health and recent request failures", Positionals: []string{"<name>"}, Flags: []cliFlag{
+				{Name: "since", Value: "DURATION|RFC3339", Short: "retained request log window (default 15m)"},
+				{Name: "timeout", Value: "DURATION", Short: "entire report deadline (default 30s, maximum 1h)"},
+			}, Examples: []string{"gregale data-api health notes-data", "gregale --json data-api health notes-data --since 15m"}},
 			{Name: "diagnostics", Short: "Summarize retained request logs and look up request IDs", Positionals: []string{"[<name>]"}, Flags: []cliFlag{
 				{Name: "file", Value: "FILE", Short: "saved runtime NDJSON or JSON log envelopes; omit the app name"},
 				{Name: "since", Value: "DURATION|RFC3339", Short: "request time lower bound (for example 15m)"},
 				{Name: "deployment", Value: "ID", Short: "restrict hosted logs to a deployment"},
 				{Name: "request-id", Value: "UUID", Short: "look up one gateway-generated request ID"},
+				{Name: "sort", Value: "requests|p95|errors", Short: "query shape ranking (default requests; p95 uses gateway latency)"},
 				{Name: "timeout", Value: "DURATION", Short: "read deadline (default 2m, maximum 1h)"},
 			}, Examples: []string{"gregale --json data-api diagnostics notes-data --since 15m", "gregale data-api diagnostics --file request-logs.ndjson"}},
 			{Name: "status", Short: "Inspect serving contracts and durable refresh state", Positionals: []string{"<name>"}, Flags: []cliFlag{

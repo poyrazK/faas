@@ -31,6 +31,12 @@ realtime endpoints created with `gregale realtime create APP --auth`; and
 `POST /authz/v1/workflows/{name}/start` publishes an `auth.workflow.start`
 event with the `events:publish` key from `gregale auth create --workflows`.
 
+Realtime callbacks must include the verified token's UUID `session_id` and user
+ID. The callback scopes `gregale_auth.authorize` to that exact session, so a
+signed-out device cannot borrow another device's session. Deploy a daemon with
+the verified session handoff before updating an existing Auth app, then reconnect
+clients. No SQL migration is needed for this change.
+
 The create command seals these values: `AUTH_EXTERNAL_URL`, `AUTH_SITE_URL`,
 `AUTH_REDIRECT_URLS`, `AUTH_AUTOCONFIRM`, `AUTH_DISABLE_SIGNUP`, `AUTH_AUTHZ`,
 `AUTH_JWT_SECRET`, an ES256 key as `AUTH_JWT_KEY_<ID>` and `AUTH_JWT_SIGNER_<ID>`.

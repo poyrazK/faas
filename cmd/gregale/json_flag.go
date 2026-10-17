@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -109,12 +110,38 @@ func rejectUnexpectedFlagArgs(fs *flag.FlagSet) bool {
 	if fs.NArg() == 0 {
 		return false
 	}
-	topic := fs.Name()
+	name := flagSetCommandName(fs.Name())
+	topic := name
 	if fields := strings.Fields(topic); len(fields) > 0 {
 		topic = fields[0]
 	}
-	printUsage(osStderr, "usage: gregale "+fs.Name()+" [flags]; unexpected positional argument(s): "+strings.Join(fs.Args(), " "), topic)
+	printUsage(osStderr, "usage: gregale "+name+" [flags]; unexpected positional argument(s): "+strings.Join(fs.Args(), " "), topic)
 	return true
+}
+
+// flagSetCommandName turns a hyphenated flag-set name such as
+// "workflows-list" into the command a customer types ("workflows list").
+// Hyphens inside a real command name ("wake-timeline", "edge-rules") stay:
+// only a split where the prefix is a manifest command and the rest is one
+// of its subcommands is rewritten (hunt #10, H10-123).
+func flagSetCommandName(name string) string {
+	if strings.Contains(name, " ") {
+		return name
+	}
+	parts := strings.Split(name, "-")
+	for i := len(parts) - 1; i > 0; i-- {
+		cmd, ok := lookupCliCommand(strings.Join(parts[:i], "-"))
+		if !ok {
+			continue
+		}
+		sub := strings.Join(parts[i:], "-")
+		for _, s := range cmd.Subcommands {
+			if s.Name == sub || slices.Contains(s.Aliases, sub) {
+				return cmd.Name + " " + s.Name
+			}
+		}
+	}
+	return name
 }
 
 func setFlagOutput(fs *flag.FlagSet, human io.Writer) {

@@ -1,4 +1,4 @@
-# ADR-1345 · Guided webhook automation setup
+# ADR-1386 · Guided webhook automation setup
 
 - **Status:** accepted
 - **Date:** 2026-10-15

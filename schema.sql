@@ -7336,11 +7336,11 @@ CREATE TABLE public.instances (
     migration_started_at timestamp with time zone,
     startup_cpu_boost_until timestamp with time zone,
     exclusive_capture_blocked boolean DEFAULT false NOT NULL,
+    application_standard_boot_token uuid,
+    application_standard_promotion_token uuid,
     capacity_ram_mb bigint DEFAULT 0 NOT NULL,
     capacity_cpu_millicores bigint DEFAULT 0 NOT NULL,
     capacity_vcpu integer DEFAULT 0 NOT NULL,
-    application_standard_boot_token uuid,
-    application_standard_promotion_token uuid,
     CONSTRAINT instances_app_or_job_chk CHECK ((((kind = ANY (ARRAY['wake'::text, 'build'::text])) AND (app_id IS NOT NULL) AND (job_id IS NULL)) OR ((kind = 'job_task'::text) AND (app_id IS NULL) AND (job_id IS NOT NULL)))),
     CONSTRAINT instances_capacity_cpu_millicores_check CHECK ((capacity_cpu_millicores >= 0)),
     CONSTRAINT instances_capacity_ram_mb_check CHECK ((capacity_ram_mb >= 0)),
@@ -13646,6 +13646,105 @@ BEGIN
     RETURN NEW;
 END;
 $$;
+
+
+--
+-- Name: guard_managed_postgres_source_fence_cancellation(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_managed_postgres_source_fence_cancellation() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF NEW.state='cancelling' AND OLD.state<>'cancelling' THEN
+  UPDATE managed_postgres_cutover_source_fences SET state='abandoning',lease_token=NULL,lease_until=NULL,
+   retry_at=clock_timestamp(),updated_at=clock_timestamp() WHERE cutover_id=NEW.id AND state<>'released';
+ END IF;
+ IF NEW.state='cancelled' AND EXISTS(SELECT 1 FROM managed_postgres_cutover_source_fences WHERE cutover_id=NEW.id AND state<>'released') THEN
+  RAISE EXCEPTION 'source SQL fence cleanup is incomplete' USING ERRCODE='55000';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: guard_managed_postgres_source_fence_evidence(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_managed_postgres_source_fence_evidence() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP IN ('DELETE','TRUNCATE') THEN
+  RAISE EXCEPTION 'source fence recovery evidence is retained' USING ERRCODE='55000';
+ END IF;
+ IF OLD.state='released' OR ROW(NEW.cutover_id,NEW.owner_token,NEW.maintenance_id,NEW.source_database_id,
+   NEW.backend_id,NEW.backend_fingerprint,NEW.source_provider_resource_id,NEW.source_data_resource_id,NEW.source_generation,
+   NEW.source_spec,NEW.owner_node_id,NEW.owner_revision,NEW.admission_fenced_at,NEW.runtime_fingerprint,NEW.created_at)
+  IS DISTINCT FROM ROW(OLD.cutover_id,OLD.owner_token,OLD.maintenance_id,OLD.source_database_id,
+   OLD.backend_id,OLD.backend_fingerprint,OLD.source_provider_resource_id,OLD.source_data_resource_id,OLD.source_generation,
+   OLD.source_spec,OLD.owner_node_id,OLD.owner_revision,OLD.admission_fenced_at,OLD.runtime_fingerprint,OLD.created_at)
+  OR (cardinality(OLD.database_names)>0 AND NEW.database_names IS DISTINCT FROM OLD.database_names)
+  OR (OLD.close_requested_at IS NOT NULL AND NEW.close_requested_at IS DISTINCT FROM OLD.close_requested_at)
+  OR (OLD.state='abandoning' AND NEW.state NOT IN ('abandoning','released'))
+  OR (OLD.state IN ('closing','closed') AND NEW.state='pending') THEN
+  RAISE EXCEPTION 'source fence identity or terminal state changed' USING ERRCODE='55000';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: guard_managed_postgres_source_fence_owner(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_managed_postgres_source_fence_owner() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF NEW.state='released' THEN RETURN NEW; END IF;
+ IF current_setting('transaction_isolation')<>'read committed' THEN
+  RAISE EXCEPTION 'source fence insertion requires read committed' USING ERRCODE='55000';
+ END IF;
+ PERFORM pg_advisory_xact_lock(hashtextextended(NEW.backend_id||':'||NEW.backend_fingerprint||':'||NEW.source_data_resource_id,1334));
+ IF TG_TABLE_NAME='managed_postgres_cutover_source_fences' THEN
+  IF EXISTS(SELECT 1 FROM project_environment_clone_postgres_write_fences
+    WHERE backend_id=NEW.backend_id AND backend_fingerprint=NEW.backend_fingerprint
+      AND source_data_resource_id=NEW.source_data_resource_id AND state<>'released') THEN
+   RAISE EXCEPTION 'source dataset already held' USING ERRCODE='55000';
+  END IF;
+ ELSE
+  IF EXISTS(SELECT 1 FROM managed_postgres_cutover_source_fences
+    WHERE backend_id=NEW.backend_id AND backend_fingerprint=NEW.backend_fingerprint
+      AND source_data_resource_id=NEW.source_data_resource_id AND state<>'released') THEN
+   RAISE EXCEPTION 'source dataset already held' USING ERRCODE='55000';
+  END IF;
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: guard_managed_postgres_writer_catalog_baseline(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_managed_postgres_writer_catalog_baseline() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='UPDATE' AND ((OLD.catalog_fingerprint<>'' AND NEW.catalog_fingerprint IS DISTINCT FROM OLD.catalog_fingerprint)
+  OR (OLD.catalog_invalidated_at IS NOT NULL AND NEW.catalog_invalidated_at IS DISTINCT FROM OLD.catalog_invalidated_at)) THEN
+  RAISE EXCEPTION 'original source writer catalog is retained' USING ERRCODE='55000';
+ END IF;
+ IF NEW.catalog_fingerprint<>'' AND (TG_OP='INSERT' OR OLD.catalog_fingerprint='') AND (
+  NEW.state<>'closed' OR NEW.closure IS NULL OR
+  NEW.closure->'writer_inventory'->>'catalog_fingerprint' IS DISTINCT FROM NEW.catalog_fingerprint OR
+  NEW.closure->'writer_inventory'->>'catalog_complete' IS DISTINCT FROM 'true' OR
+  NEW.closure->>'unselected_databases' IS DISTINCT FROM '0') THEN
+  RAISE EXCEPTION 'original source writer catalog is incomplete' USING ERRCODE='55000';
+ END IF;
+ RETURN NEW;
+END $$;
 
 
 --
@@ -23337,9 +23436,9 @@ CREATE TABLE public.compute_nodes (
     recovery_initiated_at timestamp with time zone,
     last_recovery_outcome text,
     overlay_ip inet,
-    service_address_ready_at timestamp with time zone,
     vmmd_incarnation uuid,
     vmmd_admission_protocol smallint DEFAULT 1 NOT NULL,
+    service_address_ready_at timestamp with time zone,
     CONSTRAINT compute_nodes_admission_ceiling_mb_check CHECK ((admission_ceiling_mb > 0)),
     CONSTRAINT compute_nodes_gateway_target_url_scheme_chk CHECK (((gateway_target_url IS NULL) OR (gateway_target_url ~ '^tcp://[^/:][^/]*:[0-9]+$'::text))),
     CONSTRAINT compute_nodes_last_recovery_outcome_chk CHECK (((last_recovery_outcome IS NULL) OR (last_recovery_outcome = ANY (ARRAY['succeeded'::text, 'failed'::text, 'partial'::text])))),
@@ -29094,7 +29193,7 @@ CREATE TABLE public.managed_postgres_bindings (
 CREATE TABLE public.managed_postgres_checkpoint_maintenance (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     source_database_id uuid NOT NULL,
-    reserved_by_operation_id uuid NOT NULL,
+    reserved_by_operation_id uuid,
     backend_id text NOT NULL,
     backend_fingerprint text NOT NULL,
     source_provider_resource_id text NOT NULL,
@@ -29108,6 +29207,7 @@ CREATE TABLE public.managed_postgres_checkpoint_maintenance (
     ready_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
     updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    reserved_by_cutover_id uuid,
     CONSTRAINT managed_postgres_checkpoint_m_source_provider_resource_id_check CHECK (((source_provider_resource_id <> ''::text) AND (length(source_provider_resource_id) <= 255))),
     CONSTRAINT managed_postgres_checkpoint_maint_source_data_resource_id_check CHECK (((source_data_resource_id <> ''::text) AND (length(source_data_resource_id) <= 255))),
     CONSTRAINT managed_postgres_checkpoint_maintenan_backend_fingerprint_check CHECK ((backend_fingerprint ~ '^[a-f0-9]{64}$'::text)),
@@ -29115,7 +29215,8 @@ CREATE TABLE public.managed_postgres_checkpoint_maintenance (
     CONSTRAINT managed_postgres_checkpoint_maintenance_check CHECK ((((state = 'reserved'::text) AND (role_requested_at IS NULL) AND (owner_oid IS NULL) AND (database_requested_at IS NULL) AND (database_oid IS NULL) AND (activation_requested_at IS NULL) AND (ready_at IS NULL)) OR ((state = 'role_requested'::text) AND (role_requested_at IS NOT NULL) AND (owner_oid IS NULL) AND (database_requested_at IS NULL) AND (database_oid IS NULL) AND (activation_requested_at IS NULL) AND (ready_at IS NULL)) OR ((state = 'role_reserved'::text) AND (role_requested_at IS NOT NULL) AND (owner_oid IS NOT NULL) AND (database_requested_at IS NULL) AND (database_oid IS NULL) AND (activation_requested_at IS NULL) AND (ready_at IS NULL)) OR ((state = 'database_requested'::text) AND (role_requested_at IS NOT NULL) AND (owner_oid IS NOT NULL) AND (database_requested_at IS NOT NULL) AND (database_oid IS NULL) AND (activation_requested_at IS NULL) AND (ready_at IS NULL)) OR ((state = 'database_created'::text) AND (role_requested_at IS NOT NULL) AND (owner_oid IS NOT NULL) AND (database_requested_at IS NOT NULL) AND (database_oid IS NOT NULL) AND (activation_requested_at IS NULL) AND (ready_at IS NULL)) OR ((state = 'activation_requested'::text) AND (role_requested_at IS NOT NULL) AND (owner_oid IS NOT NULL) AND (database_requested_at IS NOT NULL) AND (database_oid IS NOT NULL) AND (activation_requested_at IS NOT NULL) AND (ready_at IS NULL)) OR ((state = 'ready'::text) AND (role_requested_at IS NOT NULL) AND (owner_oid IS NOT NULL) AND (database_requested_at IS NOT NULL) AND (database_oid IS NOT NULL) AND (activation_requested_at IS NOT NULL) AND (ready_at IS NOT NULL)))),
     CONSTRAINT managed_postgres_checkpoint_maintenance_database_oid_check CHECK (((database_oid > 0) AND (database_oid <= '4294967295'::bigint))),
     CONSTRAINT managed_postgres_checkpoint_maintenance_owner_oid_check CHECK (((owner_oid > 0) AND (owner_oid <= '4294967295'::bigint))),
-    CONSTRAINT managed_postgres_checkpoint_maintenance_state_check CHECK ((state = ANY (ARRAY['reserved'::text, 'role_requested'::text, 'role_reserved'::text, 'database_requested'::text, 'database_created'::text, 'activation_requested'::text, 'ready'::text])))
+    CONSTRAINT managed_postgres_checkpoint_maintenance_state_check CHECK ((state = ANY (ARRAY['reserved'::text, 'role_requested'::text, 'role_reserved'::text, 'database_requested'::text, 'database_created'::text, 'activation_requested'::text, 'ready'::text]))),
+    CONSTRAINT managed_postgres_maintenance_original_owner CHECK (((((reserved_by_operation_id IS NOT NULL))::integer + ((reserved_by_cutover_id IS NOT NULL))::integer) = 1))
 );
 
 
@@ -29251,6 +29352,98 @@ CREATE TABLE public.managed_postgres_cutover_drains (
     CONSTRAINT managed_postgres_cutover_drains_native_generation_check CHECK (((native_generation IS NULL) OR (native_generation <> '00000000-0000-0000-0000-000000000000'::uuid))),
     CONSTRAINT managed_postgres_cutover_drains_owner_revision_check CHECK ((owner_revision > 0)),
     CONSTRAINT managed_postgres_cutover_drains_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'retired'::text])))
+);
+
+
+--
+-- Name: managed_postgres_cutover_preflights; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_postgres_cutover_preflights (
+    cutover_id uuid NOT NULL,
+    state text NOT NULL,
+    revision bigint NOT NULL,
+    binding_ids text[] DEFAULT '{}'::text[] NOT NULL,
+    blockers text[] DEFAULT '{}'::text[] NOT NULL,
+    verification_fresh boolean DEFAULT false NOT NULL,
+    source_matches boolean DEFAULT false NOT NULL,
+    target_matches boolean DEFAULT false NOT NULL,
+    bindings_match boolean DEFAULT false NOT NULL,
+    cutover_updated_at timestamp with time zone,
+    checked_at timestamp with time zone,
+    expires_at timestamp with time zone,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    runtime_drain jsonb,
+    runtime_drain_fingerprint text DEFAULT ''::text NOT NULL,
+    source_sessions jsonb,
+    source_sessions_fingerprint text DEFAULT ''::text NOT NULL,
+    CONSTRAINT managed_postgres_cutover_preflights_check CHECK ((((state = 'pending'::text) AND (checked_at IS NULL) AND (expires_at IS NULL) AND (cutover_updated_at IS NULL) AND (cardinality(blockers) = 0)) OR ((state = 'blocked'::text) AND (checked_at IS NOT NULL) AND (expires_at IS NOT NULL) AND (cutover_updated_at IS NOT NULL) AND (cardinality(blockers) > 0)))),
+    CONSTRAINT managed_postgres_cutover_preflights_check1 CHECK (((state <> 'blocked'::text) OR ('activation_disabled'::text = ANY (blockers)))),
+    CONSTRAINT managed_postgres_cutover_preflights_revision_check CHECK ((revision > 0)),
+    CONSTRAINT managed_postgres_cutover_preflights_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'blocked'::text]))),
+    CONSTRAINT managed_postgres_preflight_pending_runtime CHECK (((state <> 'pending'::text) OR (runtime_drain IS NULL))),
+    CONSTRAINT managed_postgres_preflight_pending_source_sessions CHECK (((state <> 'pending'::text) OR (source_sessions IS NULL))),
+    CONSTRAINT managed_postgres_preflight_runtime_evidence CHECK ((((runtime_drain IS NULL) AND (runtime_drain_fingerprint = ''::text)) OR ((runtime_drain IS NOT NULL) AND (jsonb_typeof(runtime_drain) = 'object'::text) AND (runtime_drain_fingerprint ~ '^[0-9a-f]{64}$'::text)))),
+    CONSTRAINT managed_postgres_preflight_source_sessions CHECK ((((source_sessions IS NULL) AND (source_sessions_fingerprint = ''::text)) OR ((source_sessions IS NOT NULL) AND (jsonb_typeof(source_sessions) = 'object'::text) AND (source_sessions_fingerprint ~ '^[a-f0-9]{64}$'::text))))
+);
+
+
+--
+-- Name: managed_postgres_cutover_source_fences; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_postgres_cutover_source_fences (
+    cutover_id uuid NOT NULL,
+    owner_token uuid NOT NULL,
+    maintenance_id uuid NOT NULL,
+    source_database_id uuid NOT NULL,
+    backend_id text NOT NULL,
+    backend_fingerprint text NOT NULL,
+    source_provider_resource_id text NOT NULL,
+    source_data_resource_id text NOT NULL,
+    source_generation bigint NOT NULL,
+    source_spec jsonb NOT NULL,
+    owner_node_id uuid NOT NULL,
+    owner_revision bigint NOT NULL,
+    admission_fenced_at timestamp with time zone NOT NULL,
+    runtime_fingerprint text NOT NULL,
+    state text DEFAULT 'pending'::text NOT NULL,
+    database_names text[] DEFAULT '{}'::text[] NOT NULL,
+    close_requested_at timestamp with time zone,
+    closure jsonb,
+    observed_at timestamp with time zone,
+    last_error_code text DEFAULT ''::text NOT NULL,
+    remote_terminal_state text,
+    remote_released_at timestamp with time zone,
+    lease_token text,
+    lease_until timestamp with time zone,
+    attempt_count integer DEFAULT 0 NOT NULL,
+    retry_at timestamp with time zone NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    catalog_fingerprint text DEFAULT ''::text NOT NULL,
+    catalog_invalidated_at timestamp with time zone,
+    CONSTRAINT managed_postgres_cutover_sour_source_provider_resource_id_check CHECK ((source_provider_resource_id <> ''::text)),
+    CONSTRAINT managed_postgres_cutover_source_f_source_data_resource_id_check CHECK ((source_data_resource_id <> ''::text)),
+    CONSTRAINT managed_postgres_cutover_source_fen_remote_terminal_state_check CHECK ((remote_terminal_state = ANY (ARRAY['released'::text, 'abandoned'::text, 'not_dispatched'::text]))),
+    CONSTRAINT managed_postgres_cutover_source_fence_backend_fingerprint_check CHECK ((backend_fingerprint ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT managed_postgres_cutover_source_fence_catalog_fingerprint_check CHECK (((catalog_fingerprint = ''::text) OR (catalog_fingerprint ~ '^[a-f0-9]{64}$'::text))),
+    CONSTRAINT managed_postgres_cutover_source_fence_runtime_fingerprint_check CHECK ((runtime_fingerprint ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT managed_postgres_cutover_source_fences_attempt_count_check CHECK ((attempt_count >= 0)),
+    CONSTRAINT managed_postgres_cutover_source_fences_backend_id_check CHECK ((backend_id <> ''::text)),
+    CONSTRAINT managed_postgres_cutover_source_fences_check CHECK (((lease_token IS NULL) = (lease_until IS NULL))),
+    CONSTRAINT managed_postgres_cutover_source_fences_check1 CHECK (((closure IS NULL) = (observed_at IS NULL))),
+    CONSTRAINT managed_postgres_cutover_source_fences_check2 CHECK (((state <> 'closed'::text) OR ((close_requested_at IS NOT NULL) AND (closure IS NOT NULL)))),
+    CONSTRAINT managed_postgres_cutover_source_fences_check3 CHECK (((close_requested_at IS NULL) OR (cardinality(database_names) > 0))),
+    CONSTRAINT managed_postgres_cutover_source_fences_check4 CHECK ((((state = 'released'::text) AND (remote_terminal_state IS NOT NULL) AND (((remote_terminal_state = 'not_dispatched'::text) AND (close_requested_at IS NULL) AND (remote_released_at IS NULL)) OR ((remote_terminal_state = ANY (ARRAY['released'::text, 'abandoned'::text])) AND (close_requested_at IS NOT NULL) AND (remote_released_at IS NOT NULL)))) OR ((state <> 'released'::text) AND (remote_terminal_state IS NULL) AND (remote_released_at IS NULL)))),
+    CONSTRAINT managed_postgres_cutover_source_fences_closure_check CHECK (((closure IS NULL) OR (jsonb_typeof(closure) = 'object'::text))),
+    CONSTRAINT managed_postgres_cutover_source_fences_last_error_code_check CHECK ((last_error_code ~ '^[a-z_]*$'::text)),
+    CONSTRAINT managed_postgres_cutover_source_fences_owner_revision_check CHECK ((owner_revision > 0)),
+    CONSTRAINT managed_postgres_cutover_source_fences_owner_token_check CHECK ((owner_token <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT managed_postgres_cutover_source_fences_source_generation_check CHECK ((source_generation > 0)),
+    CONSTRAINT managed_postgres_cutover_source_fences_source_spec_check CHECK ((jsonb_typeof(source_spec) = 'object'::text)),
+    CONSTRAINT managed_postgres_cutover_source_fences_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'closing'::text, 'closed'::text, 'abandoning'::text, 'released'::text])))
 );
 
 
@@ -42428,6 +42621,30 @@ ALTER TABLE ONLY public.managed_postgres_cutover_drains
 
 
 --
+-- Name: managed_postgres_cutover_preflights managed_postgres_cutover_preflights_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_cutover_preflights
+    ADD CONSTRAINT managed_postgres_cutover_preflights_pkey PRIMARY KEY (cutover_id);
+
+
+--
+-- Name: managed_postgres_cutover_source_fences managed_postgres_cutover_source_fences_owner_token_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_cutover_source_fences
+    ADD CONSTRAINT managed_postgres_cutover_source_fences_owner_token_key UNIQUE (owner_token);
+
+
+--
+-- Name: managed_postgres_cutover_source_fences managed_postgres_cutover_source_fences_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_cutover_source_fences
+    ADD CONSTRAINT managed_postgres_cutover_source_fences_pkey PRIMARY KEY (cutover_id);
+
+
+--
 -- Name: managed_postgres_cutovers managed_postgres_cutovers_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -50828,6 +51045,27 @@ CREATE INDEX managed_postgres_cutover_drains_pending_idx ON public.managed_postg
 
 
 --
+-- Name: managed_postgres_cutover_preflights_pending; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_postgres_cutover_preflights_pending ON public.managed_postgres_cutover_preflights USING btree (updated_at, cutover_id) WHERE (state = 'pending'::text);
+
+
+--
+-- Name: managed_postgres_cutover_source_fence_dataset; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX managed_postgres_cutover_source_fence_dataset ON public.managed_postgres_cutover_source_fences USING btree (backend_id, backend_fingerprint, source_data_resource_id) WHERE (state <> 'released'::text);
+
+
+--
+-- Name: managed_postgres_cutover_source_fence_due; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX managed_postgres_cutover_source_fence_due ON public.managed_postgres_cutover_source_fences USING btree (retry_at, cutover_id) WHERE (state <> 'released'::text);
+
+
+--
 -- Name: managed_postgres_cutovers_active_app_scope_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -55206,7 +55444,7 @@ CREATE TRIGGER binding_promotion_revision AFTER INSERT OR DELETE OR UPDATE ON pu
 -- Name: trigger_consumer_health binding_promotion_revision; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER binding_promotion_revision AFTER INSERT OR DELETE OR UPDATE ON public.trigger_consumer_health FOR EACH ROW EXECUTE FUNCTION public.capture_binding_promotion_revision('trigger_id,last_poll_at,last_success_at,last_error_at');
+CREATE TRIGGER binding_promotion_revision AFTER INSERT OR DELETE OR UPDATE ON public.trigger_consumer_health FOR EACH ROW EXECUTE FUNCTION public.capture_binding_promotion_revision('trigger_id,last_error_at');
 
 
 --
@@ -56841,6 +57079,13 @@ CREATE TRIGGER managed_postgres_binding_owner_guard BEFORE INSERT OR UPDATE OF a
 
 
 --
+-- Name: project_environment_clone_postgres_write_fences managed_postgres_clone_sql_owner; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER managed_postgres_clone_sql_owner BEFORE INSERT OR UPDATE OF state, backend_id, backend_fingerprint, source_data_resource_id ON public.project_environment_clone_postgres_write_fences FOR EACH ROW EXECUTE FUNCTION public.guard_managed_postgres_source_fence_owner();
+
+
+--
 -- Name: managed_postgres_bindings managed_postgres_cutover_binding_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -56859,6 +57104,13 @@ CREATE TRIGGER managed_postgres_cutover_database_guard BEFORE DELETE OR UPDATE O
 --
 
 CREATE TRIGGER managed_postgres_cutover_drain_guard BEFORE UPDATE ON public.managed_postgres_cutover_drains FOR EACH ROW EXECUTE FUNCTION public.guard_managed_postgres_cutover_drain();
+
+
+--
+-- Name: managed_postgres_cutover_source_fences managed_postgres_cutover_sql_owner; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER managed_postgres_cutover_sql_owner BEFORE INSERT OR UPDATE OF state, backend_id, backend_fingerprint, source_data_resource_id ON public.managed_postgres_cutover_source_fences FOR EACH ROW EXECUTE FUNCTION public.guard_managed_postgres_source_fence_owner();
 
 
 --
@@ -56946,10 +57198,38 @@ CREATE TRIGGER managed_postgres_restore_sources_guard BEFORE UPDATE OF state ON 
 
 
 --
+-- Name: managed_postgres_cutovers managed_postgres_source_fence_cancellation; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER managed_postgres_source_fence_cancellation BEFORE UPDATE ON public.managed_postgres_cutovers FOR EACH ROW EXECUTE FUNCTION public.guard_managed_postgres_source_fence_cancellation();
+
+
+--
+-- Name: managed_postgres_cutover_source_fences managed_postgres_source_fence_evidence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER managed_postgres_source_fence_evidence BEFORE DELETE OR UPDATE ON public.managed_postgres_cutover_source_fences FOR EACH ROW EXECUTE FUNCTION public.guard_managed_postgres_source_fence_evidence();
+
+
+--
+-- Name: managed_postgres_cutover_source_fences managed_postgres_source_fence_truncate; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER managed_postgres_source_fence_truncate BEFORE TRUNCATE ON public.managed_postgres_cutover_source_fences FOR EACH STATEMENT EXECUTE FUNCTION public.guard_managed_postgres_source_fence_evidence();
+
+
+--
 -- Name: managed_postgres_usage_imports managed_postgres_usage_import_immutable; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER managed_postgres_usage_import_immutable BEFORE DELETE OR UPDATE ON public.managed_postgres_usage_imports FOR EACH ROW EXECUTE FUNCTION public.protect_managed_postgres_usage_import();
+
+
+--
+-- Name: managed_postgres_cutover_source_fences managed_postgres_writer_catalog_baseline; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER managed_postgres_writer_catalog_baseline BEFORE INSERT OR UPDATE ON public.managed_postgres_cutover_source_fences FOR EACH ROW EXECUTE FUNCTION public.guard_managed_postgres_writer_catalog_baseline();
 
 
 --
@@ -63789,6 +64069,14 @@ ALTER TABLE ONLY public.managed_postgres_checkpoint_maintenance
 
 
 --
+-- Name: managed_postgres_checkpoint_maintenance managed_postgres_checkpoint_mainten_reserved_by_cutover_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_checkpoint_maintenance
+    ADD CONSTRAINT managed_postgres_checkpoint_mainten_reserved_by_cutover_id_fkey FOREIGN KEY (reserved_by_cutover_id) REFERENCES public.managed_postgres_cutovers(id) ON DELETE RESTRICT;
+
+
+--
 -- Name: managed_postgres_checkpoint_maintenance managed_postgres_checkpoint_maintenance_source_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -63842,6 +64130,38 @@ ALTER TABLE ONLY public.managed_postgres_cutover_drain_plan_members
 
 ALTER TABLE ONLY public.managed_postgres_cutover_drain_plan_members
     ADD CONSTRAINT managed_postgres_cutover_drain_plan_members_plan_id_fkey FOREIGN KEY (plan_id) REFERENCES public.managed_postgres_cutover_drain_plans(id);
+
+
+--
+-- Name: managed_postgres_cutover_preflights managed_postgres_cutover_preflights_cutover_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_cutover_preflights
+    ADD CONSTRAINT managed_postgres_cutover_preflights_cutover_id_fkey FOREIGN KEY (cutover_id) REFERENCES public.managed_postgres_cutovers(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_postgres_cutover_source_fences managed_postgres_cutover_source_fences_cutover_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_cutover_source_fences
+    ADD CONSTRAINT managed_postgres_cutover_source_fences_cutover_id_fkey FOREIGN KEY (cutover_id) REFERENCES public.managed_postgres_cutovers(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: managed_postgres_cutover_source_fences managed_postgres_cutover_source_fences_maintenance_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_cutover_source_fences
+    ADD CONSTRAINT managed_postgres_cutover_source_fences_maintenance_id_fkey FOREIGN KEY (maintenance_id) REFERENCES public.managed_postgres_checkpoint_maintenance(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: managed_postgres_cutover_source_fences managed_postgres_cutover_source_fences_source_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_cutover_source_fences
+    ADD CONSTRAINT managed_postgres_cutover_source_fences_source_database_id_fkey FOREIGN KEY (source_database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE RESTRICT;
 
 
 --

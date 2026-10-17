@@ -4317,7 +4317,7 @@ WHERE m.source_database_id=$2::uuid AND m.state=$3::text
   WHERE f.operation_id=$4::uuid AND f.source_database_id=m.source_database_id
    AND ((o.status='capturing' AND f.state='held') OR (o.status='compensating' AND f.state='abandoning'))
    AND o.revision=$5::bigint AND o.lease_token::text=$6::text AND o.lease_until>clock_timestamp())
-RETURNING m.id, m.source_database_id, m.reserved_by_operation_id, m.backend_id, m.backend_fingerprint, m.source_provider_resource_id, m.source_data_resource_id, m.state, m.owner_oid, m.database_oid, m.role_requested_at, m.database_requested_at, m.activation_requested_at, m.ready_at, m.created_at, m.updated_at
+RETURNING m.id, m.source_database_id, m.reserved_by_operation_id, m.backend_id, m.backend_fingerprint, m.source_provider_resource_id, m.source_data_resource_id, m.state, m.owner_oid, m.database_oid, m.role_requested_at, m.database_requested_at, m.activation_requested_at, m.ready_at, m.created_at, m.updated_at, m.reserved_by_cutover_id
 `
 
 type ClaimClonePostgresMaintenanceDispatchParams struct {
@@ -4356,6 +4356,7 @@ func (q *Queries) ClaimClonePostgresMaintenanceDispatch(ctx context.Context, db 
 		&i.ReadyAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ReservedByCutoverID,
 	)
 	return i, err
 }
@@ -10047,7 +10048,7 @@ func (q *Queries) CreateEnvironmentGitSource(ctx context.Context, db DBTX, arg C
 const createEnvironmentQualificationInstance = `-- name: CreateEnvironmentQualificationInstance :one
 INSERT INTO instances(id,app_id,deployment_id,state,ram_mb,node_id,wake_id,started_at,mode)
 VALUES($1::uuid,$2::uuid,$3::uuid,'cold_booting',$4::integer,
- $5::uuid,$6::uuid,clock_timestamp(),$7::text) RETURNING id, app_id, deployment_id, state, netns, guest_uid, host_ip, ram_mb, started_at, last_request_at, parked_at, terminal_at, node_id, wake_id, org_id, migrated_from_node_id, migrated_at, lease_token, framework_ready_at, tail_count, request_count, kind, job_id, mode, migration_started_at, startup_cpu_boost_until, exclusive_capture_blocked, capacity_ram_mb, capacity_cpu_millicores, capacity_vcpu, application_standard_boot_token, application_standard_promotion_token
+ $5::uuid,$6::uuid,clock_timestamp(),$7::text) RETURNING id, app_id, deployment_id, state, netns, guest_uid, host_ip, ram_mb, started_at, last_request_at, parked_at, terminal_at, node_id, wake_id, org_id, migrated_from_node_id, migrated_at, lease_token, framework_ready_at, tail_count, request_count, kind, job_id, mode, migration_started_at, startup_cpu_boost_until, exclusive_capture_blocked, application_standard_boot_token, application_standard_promotion_token, capacity_ram_mb, capacity_cpu_millicores, capacity_vcpu
 `
 
 type CreateEnvironmentQualificationInstanceParams struct {
@@ -10099,11 +10100,11 @@ func (q *Queries) CreateEnvironmentQualificationInstance(ctx context.Context, db
 		&i.MigrationStartedAt,
 		&i.StartupCpuBoostUntil,
 		&i.ExclusiveCaptureBlocked,
+		&i.ApplicationStandardBootToken,
+		&i.ApplicationStandardPromotionToken,
 		&i.CapacityRamMb,
 		&i.CapacityCpuMillicores,
 		&i.CapacityVcpu,
-		&i.ApplicationStandardBootToken,
-		&i.ApplicationStandardPromotionToken,
 	)
 	return i, err
 }
@@ -13837,7 +13838,7 @@ func (q *Queries) EnvironmentQualificationFrameworkReadyReceipt(ctx context.Cont
 }
 
 const environmentQualificationInstance = `-- name: EnvironmentQualificationInstance :one
-SELECT id, app_id, deployment_id, state, netns, guest_uid, host_ip, ram_mb, started_at, last_request_at, parked_at, terminal_at, node_id, wake_id, org_id, migrated_from_node_id, migrated_at, lease_token, framework_ready_at, tail_count, request_count, kind, job_id, mode, migration_started_at, startup_cpu_boost_until, exclusive_capture_blocked, capacity_ram_mb, capacity_cpu_millicores, capacity_vcpu, application_standard_boot_token, application_standard_promotion_token FROM instances WHERE id=$1::uuid
+SELECT id, app_id, deployment_id, state, netns, guest_uid, host_ip, ram_mb, started_at, last_request_at, parked_at, terminal_at, node_id, wake_id, org_id, migrated_from_node_id, migrated_at, lease_token, framework_ready_at, tail_count, request_count, kind, job_id, mode, migration_started_at, startup_cpu_boost_until, exclusive_capture_blocked, application_standard_boot_token, application_standard_promotion_token, capacity_ram_mb, capacity_cpu_millicores, capacity_vcpu FROM instances WHERE id=$1::uuid
 `
 
 func (q *Queries) EnvironmentQualificationInstance(ctx context.Context, db DBTX, instanceID pgtype.UUID) (Instance, error) {
@@ -13871,11 +13872,11 @@ func (q *Queries) EnvironmentQualificationInstance(ctx context.Context, db DBTX,
 		&i.MigrationStartedAt,
 		&i.StartupCpuBoostUntil,
 		&i.ExclusiveCaptureBlocked,
+		&i.ApplicationStandardBootToken,
+		&i.ApplicationStandardPromotionToken,
 		&i.CapacityRamMb,
 		&i.CapacityCpuMillicores,
 		&i.CapacityVcpu,
-		&i.ApplicationStandardBootToken,
-		&i.ApplicationStandardPromotionToken,
 	)
 	return i, err
 }
@@ -25685,7 +25686,7 @@ FROM project_environment_clone_postgres_write_fences f JOIN project_environment_
 WHERE f.operation_id=$1::uuid AND f.source_database_id=$2::uuid
  AND ((o.status='capturing' AND f.state='held') OR (o.status='compensating' AND f.state='abandoning'))
  AND o.revision=$3::bigint AND o.lease_token::text=$4::text
- AND o.lease_until>clock_timestamp() RETURNING id, source_database_id, reserved_by_operation_id, backend_id, backend_fingerprint, source_provider_resource_id, source_data_resource_id, state, owner_oid, database_oid, role_requested_at, database_requested_at, activation_requested_at, ready_at, created_at, updated_at
+ AND o.lease_until>clock_timestamp() RETURNING id, source_database_id, reserved_by_operation_id, backend_id, backend_fingerprint, source_provider_resource_id, source_data_resource_id, state, owner_oid, database_oid, role_requested_at, database_requested_at, activation_requested_at, ready_at, created_at, updated_at, reserved_by_cutover_id
 `
 
 type InsertClonePostgresMaintenanceParams struct {
@@ -25720,6 +25721,7 @@ func (q *Queries) InsertClonePostgresMaintenance(ctx context.Context, db DBTX, a
 		&i.ReadyAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ReservedByCutoverID,
 	)
 	return i, err
 }
@@ -47029,7 +47031,7 @@ func (q *Queries) LockEnvironmentQualificationNode(ctx context.Context, db DBTX,
 }
 
 const lockEnvironmentQualificationRuntimeInstance = `-- name: LockEnvironmentQualificationRuntimeInstance :one
-SELECT id, app_id, deployment_id, state, netns, guest_uid, host_ip, ram_mb, started_at, last_request_at, parked_at, terminal_at, node_id, wake_id, org_id, migrated_from_node_id, migrated_at, lease_token, framework_ready_at, tail_count, request_count, kind, job_id, mode, migration_started_at, startup_cpu_boost_until, exclusive_capture_blocked, capacity_ram_mb, capacity_cpu_millicores, capacity_vcpu, application_standard_boot_token, application_standard_promotion_token FROM instances WHERE id=$1::uuid FOR UPDATE
+SELECT id, app_id, deployment_id, state, netns, guest_uid, host_ip, ram_mb, started_at, last_request_at, parked_at, terminal_at, node_id, wake_id, org_id, migrated_from_node_id, migrated_at, lease_token, framework_ready_at, tail_count, request_count, kind, job_id, mode, migration_started_at, startup_cpu_boost_until, exclusive_capture_blocked, application_standard_boot_token, application_standard_promotion_token, capacity_ram_mb, capacity_cpu_millicores, capacity_vcpu FROM instances WHERE id=$1::uuid FOR UPDATE
 `
 
 func (q *Queries) LockEnvironmentQualificationRuntimeInstance(ctx context.Context, db DBTX, id pgtype.UUID) (Instance, error) {
@@ -47063,11 +47065,11 @@ func (q *Queries) LockEnvironmentQualificationRuntimeInstance(ctx context.Contex
 		&i.MigrationStartedAt,
 		&i.StartupCpuBoostUntil,
 		&i.ExclusiveCaptureBlocked,
+		&i.ApplicationStandardBootToken,
+		&i.ApplicationStandardPromotionToken,
 		&i.CapacityRamMb,
 		&i.CapacityCpuMillicores,
 		&i.CapacityVcpu,
-		&i.ApplicationStandardBootToken,
-		&i.ApplicationStandardPromotionToken,
 	)
 	return i, err
 }
@@ -50980,7 +50982,7 @@ WHERE i.id = $7::uuid AND i.state = 'migrating'
     AND i.node_id = $2::uuid AND i.lease_token = $8::text
     AND (NOT $9::boolean OR i.wake_id IS NOT DISTINCT FROM $10::uuid)
     AND (NOT $11::boolean OR EXISTS (SELECT 1 FROM deployments d WHERE d.id = i.deployment_id AND d.scope = $12::text))
-RETURNING i.id, i.app_id, i.deployment_id, i.state, i.netns, i.guest_uid, i.host_ip, i.ram_mb, i.started_at, i.last_request_at, i.parked_at, i.terminal_at, i.node_id, i.wake_id, i.org_id, i.migrated_from_node_id, i.migrated_at, i.lease_token, i.framework_ready_at, i.tail_count, i.request_count, i.kind, i.job_id, i.mode, i.migration_started_at, i.startup_cpu_boost_until, i.exclusive_capture_blocked, i.capacity_ram_mb, i.capacity_cpu_millicores, i.capacity_vcpu, i.application_standard_boot_token, i.application_standard_promotion_token
+RETURNING i.id, i.app_id, i.deployment_id, i.state, i.netns, i.guest_uid, i.host_ip, i.ram_mb, i.started_at, i.last_request_at, i.parked_at, i.terminal_at, i.node_id, i.wake_id, i.org_id, i.migrated_from_node_id, i.migrated_at, i.lease_token, i.framework_ready_at, i.tail_count, i.request_count, i.kind, i.job_id, i.mode, i.migration_started_at, i.startup_cpu_boost_until, i.exclusive_capture_blocked, i.application_standard_boot_token, i.application_standard_promotion_token, i.capacity_ram_mb, i.capacity_cpu_millicores, i.capacity_vcpu
 `
 
 type MigrateInstanceRuntimeConfigParams struct {
@@ -51042,11 +51044,11 @@ func (q *Queries) MigrateInstanceRuntimeConfig(ctx context.Context, db DBTX, arg
 		&i.MigrationStartedAt,
 		&i.StartupCpuBoostUntil,
 		&i.ExclusiveCaptureBlocked,
+		&i.ApplicationStandardBootToken,
+		&i.ApplicationStandardPromotionToken,
 		&i.CapacityRamMb,
 		&i.CapacityCpuMillicores,
 		&i.CapacityVcpu,
-		&i.ApplicationStandardBootToken,
-		&i.ApplicationStandardPromotionToken,
 	)
 	return i, err
 }
@@ -61595,7 +61597,7 @@ func (q *Queries) PublishDeploymentRegistrySidecarRootfs(ctx context.Context, db
 const publishEnvironmentQualificationRuntime = `-- name: PublishEnvironmentQualificationRuntime :one
 UPDATE instances SET state='running',started_at=clock_timestamp(),netns=$1::text,
  host_ip=$2::text::inet,guest_uid=$3::integer
-WHERE id=$4::uuid AND state='cold_booting' RETURNING id, app_id, deployment_id, state, netns, guest_uid, host_ip, ram_mb, started_at, last_request_at, parked_at, terminal_at, node_id, wake_id, org_id, migrated_from_node_id, migrated_at, lease_token, framework_ready_at, tail_count, request_count, kind, job_id, mode, migration_started_at, startup_cpu_boost_until, exclusive_capture_blocked, capacity_ram_mb, capacity_cpu_millicores, capacity_vcpu, application_standard_boot_token, application_standard_promotion_token
+WHERE id=$4::uuid AND state='cold_booting' RETURNING id, app_id, deployment_id, state, netns, guest_uid, host_ip, ram_mb, started_at, last_request_at, parked_at, terminal_at, node_id, wake_id, org_id, migrated_from_node_id, migrated_at, lease_token, framework_ready_at, tail_count, request_count, kind, job_id, mode, migration_started_at, startup_cpu_boost_until, exclusive_capture_blocked, application_standard_boot_token, application_standard_promotion_token, capacity_ram_mb, capacity_cpu_millicores, capacity_vcpu
 `
 
 type PublishEnvironmentQualificationRuntimeParams struct {
@@ -61641,11 +61643,11 @@ func (q *Queries) PublishEnvironmentQualificationRuntime(ctx context.Context, db
 		&i.MigrationStartedAt,
 		&i.StartupCpuBoostUntil,
 		&i.ExclusiveCaptureBlocked,
+		&i.ApplicationStandardBootToken,
+		&i.ApplicationStandardPromotionToken,
 		&i.CapacityRamMb,
 		&i.CapacityCpuMillicores,
 		&i.CapacityVcpu,
-		&i.ApplicationStandardBootToken,
-		&i.ApplicationStandardPromotionToken,
 	)
 	return i, err
 }
@@ -61743,7 +61745,7 @@ UPDATE instances i SET netns = $1, host_ip = $2::text::inet,
     guest_uid = $3, started_at = clock_timestamp(), state = 'running'
 WHERE i.id = $4::uuid AND i.state = $5::text AND i.wake_id = $6::uuid
 AND EXISTS (SELECT 1 FROM deployments d WHERE d.id = i.deployment_id AND d.scope = $7::text)
-RETURNING i.id, i.app_id, i.deployment_id, i.state, i.netns, i.guest_uid, i.host_ip, i.ram_mb, i.started_at, i.last_request_at, i.parked_at, i.terminal_at, i.node_id, i.wake_id, i.org_id, i.migrated_from_node_id, i.migrated_at, i.lease_token, i.framework_ready_at, i.tail_count, i.request_count, i.kind, i.job_id, i.mode, i.migration_started_at, i.startup_cpu_boost_until, i.exclusive_capture_blocked, i.capacity_ram_mb, i.capacity_cpu_millicores, i.capacity_vcpu, i.application_standard_boot_token, i.application_standard_promotion_token
+RETURNING i.id, i.app_id, i.deployment_id, i.state, i.netns, i.guest_uid, i.host_ip, i.ram_mb, i.started_at, i.last_request_at, i.parked_at, i.terminal_at, i.node_id, i.wake_id, i.org_id, i.migrated_from_node_id, i.migrated_at, i.lease_token, i.framework_ready_at, i.tail_count, i.request_count, i.kind, i.job_id, i.mode, i.migration_started_at, i.startup_cpu_boost_until, i.exclusive_capture_blocked, i.application_standard_boot_token, i.application_standard_promotion_token, i.capacity_ram_mb, i.capacity_cpu_millicores, i.capacity_vcpu
 `
 
 type PublishInstanceRuntimeConfigParams struct {
@@ -61795,11 +61797,11 @@ func (q *Queries) PublishInstanceRuntimeConfig(ctx context.Context, db DBTX, arg
 		&i.MigrationStartedAt,
 		&i.StartupCpuBoostUntil,
 		&i.ExclusiveCaptureBlocked,
+		&i.ApplicationStandardBootToken,
+		&i.ApplicationStandardPromotionToken,
 		&i.CapacityRamMb,
 		&i.CapacityCpuMillicores,
 		&i.CapacityVcpu,
-		&i.ApplicationStandardBootToken,
-		&i.ApplicationStandardPromotionToken,
 	)
 	return i, err
 }
@@ -65702,7 +65704,7 @@ func (q *Queries) ReadClonePostgresCheckpointSelection(ctx context.Context, db D
 }
 
 const readClonePostgresMaintenance = `-- name: ReadClonePostgresMaintenance :one
-SELECT id, source_database_id, reserved_by_operation_id, backend_id, backend_fingerprint, source_provider_resource_id, source_data_resource_id, state, owner_oid, database_oid, role_requested_at, database_requested_at, activation_requested_at, ready_at, created_at, updated_at FROM managed_postgres_checkpoint_maintenance WHERE source_database_id=$1 FOR UPDATE
+SELECT id, source_database_id, reserved_by_operation_id, backend_id, backend_fingerprint, source_provider_resource_id, source_data_resource_id, state, owner_oid, database_oid, role_requested_at, database_requested_at, activation_requested_at, ready_at, created_at, updated_at, reserved_by_cutover_id FROM managed_postgres_checkpoint_maintenance WHERE source_database_id=$1 FOR UPDATE
 `
 
 // ADR-531: resource ownership is separate from an operation's writer barrier.
@@ -65726,6 +65728,7 @@ func (q *Queries) ReadClonePostgresMaintenance(ctx context.Context, db DBTX, sou
 		&i.ReadyAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ReservedByCutoverID,
 	)
 	return i, err
 }
@@ -72222,7 +72225,7 @@ WHERE m.source_database_id=$4::uuid AND m.state=$5::text
   WHERE f.operation_id=$6::uuid AND f.source_database_id=m.source_database_id
    AND ((o.status='capturing' AND f.state='held') OR (o.status='compensating' AND f.state='abandoning'))
    AND o.revision=$7::bigint AND o.lease_token::text=$8::text AND o.lease_until>clock_timestamp())
-RETURNING m.id, m.source_database_id, m.reserved_by_operation_id, m.backend_id, m.backend_fingerprint, m.source_provider_resource_id, m.source_data_resource_id, m.state, m.owner_oid, m.database_oid, m.role_requested_at, m.database_requested_at, m.activation_requested_at, m.ready_at, m.created_at, m.updated_at
+RETURNING m.id, m.source_database_id, m.reserved_by_operation_id, m.backend_id, m.backend_fingerprint, m.source_provider_resource_id, m.source_data_resource_id, m.state, m.owner_oid, m.database_oid, m.role_requested_at, m.database_requested_at, m.activation_requested_at, m.ready_at, m.created_at, m.updated_at, m.reserved_by_cutover_id
 `
 
 type RecordClonePostgresMaintenanceParams struct {
@@ -72265,6 +72268,7 @@ func (q *Queries) RecordClonePostgresMaintenance(ctx context.Context, db DBTX, a
 		&i.ReadyAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ReservedByCutoverID,
 	)
 	return i, err
 }
@@ -81660,7 +81664,7 @@ func (q *Queries) StartCustomerOperationWorkflowStep(ctx context.Context, db DBT
 const stopEnvironmentQualificationInstance = `-- name: StopEnvironmentQualificationInstance :one
 UPDATE instances i SET state=CASE WHEN i.state IN ('parked','stopped','failed','evicting_account_deleting') THEN i.state ELSE 'stopped' END,
 terminal_at=e.retired_at FROM environment_qualification_executions e
-WHERE i.id=$1::uuid AND e.instance_id=i.id AND e.retired_at IS NOT NULL RETURNING i.id, i.app_id, i.deployment_id, i.state, i.netns, i.guest_uid, i.host_ip, i.ram_mb, i.started_at, i.last_request_at, i.parked_at, i.terminal_at, i.node_id, i.wake_id, i.org_id, i.migrated_from_node_id, i.migrated_at, i.lease_token, i.framework_ready_at, i.tail_count, i.request_count, i.kind, i.job_id, i.mode, i.migration_started_at, i.startup_cpu_boost_until, i.exclusive_capture_blocked, i.capacity_ram_mb, i.capacity_cpu_millicores, i.capacity_vcpu, i.application_standard_boot_token, i.application_standard_promotion_token
+WHERE i.id=$1::uuid AND e.instance_id=i.id AND e.retired_at IS NOT NULL RETURNING i.id, i.app_id, i.deployment_id, i.state, i.netns, i.guest_uid, i.host_ip, i.ram_mb, i.started_at, i.last_request_at, i.parked_at, i.terminal_at, i.node_id, i.wake_id, i.org_id, i.migrated_from_node_id, i.migrated_at, i.lease_token, i.framework_ready_at, i.tail_count, i.request_count, i.kind, i.job_id, i.mode, i.migration_started_at, i.startup_cpu_boost_until, i.exclusive_capture_blocked, i.application_standard_boot_token, i.application_standard_promotion_token, i.capacity_ram_mb, i.capacity_cpu_millicores, i.capacity_vcpu
 `
 
 func (q *Queries) StopEnvironmentQualificationInstance(ctx context.Context, db DBTX, instanceID pgtype.UUID) (Instance, error) {
@@ -81694,11 +81698,11 @@ func (q *Queries) StopEnvironmentQualificationInstance(ctx context.Context, db D
 		&i.MigrationStartedAt,
 		&i.StartupCpuBoostUntil,
 		&i.ExclusiveCaptureBlocked,
+		&i.ApplicationStandardBootToken,
+		&i.ApplicationStandardPromotionToken,
 		&i.CapacityRamMb,
 		&i.CapacityCpuMillicores,
 		&i.CapacityVcpu,
-		&i.ApplicationStandardBootToken,
-		&i.ApplicationStandardPromotionToken,
 	)
 	return i, err
 }

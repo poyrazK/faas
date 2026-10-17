@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	authConfigUsage    = "usage: gregale auth config NAME [--site-url URL] [--redirect-urls URLS] [--signup on|off] [--autoconfirm on|off] [--password-min-length N] [--password-require CLASSES] [--leaked-password-check on|off] [--mfa on|off] [--email-provider resend|postmark|none --email-from FROM --email-api-key-stdin] [--authz FILE] [--events on|off] [--passkeys on|off] [--passkey-rp-id DOMAIN|none] [--brand-name NAME] [--brand-color #RRGGBB] [--brand-logo-url URL] [--captcha turnstile|hcaptcha|off --captcha-site-key KEY --captcha-secret-stdin] [--activity-retention DAYS|forever]"
+	authConfigUsage    = "usage: gregale auth config NAME [--site-url URL] [--redirect-urls URLS] [--signup on|off] [--autoconfirm on|off] [--password-min-length N] [--password-require CLASSES] [--leaked-password-check on|off] [--mfa on|off] [--email-provider resend|postmark|none --email-from FROM --email-api-key-stdin] [--authz FILE] [--events on|off] [--passkeys on|off] [--passkey-rp-id DOMAIN|none] [--brand-name NAME] [--brand-color #RRGGBB] [--brand-logo-url URL] [--captcha turnstile|hcaptcha|off --captcha-site-key KEY --captcha-secret-stdin] [--activity-retention DAYS|forever] [--sms twilio|twilio_verify|messagebird|textlocal|vonage|off --sms-account ID --sms-sender SENDER --sms-secret-stdin] [--sso on|off]"
 	authProvidersUsage = "usage: gregale auth providers list NAME | gregale auth providers enable NAME PROVIDER --client-id ID [--client-secret-stdin] [--url URL] | gregale auth providers disable NAME PROVIDER"
 )
 
@@ -55,6 +55,13 @@ func cmdAuthConfig(args []string) int {
 	emailKeyStdin := fs.Bool("email-api-key-stdin", false, "read the email provider API key from stdin (prompted on a terminal)")
 	authzFile := fs.String("authz", "", "JSON file declaring custom roles and policies (applied on restart)")
 	events := fs.String("events", "", "on or off: publish user lifecycle events (auth.user.*) to Gregale's event bus")
+	sso := fs.String("sso", "", "on or off: organization single sign-on (SAML); manage identity providers with `gregale auth sso`")
+	sms := authSMSFlags{
+		provider: fs.String("sms", "", "phone sign-in by text message through your own SMS account: twilio, twilio_verify, messagebird, textlocal, vonage, or off"),
+		account:  fs.String("sms-account", "", "Twilio account SID or Vonage API key"),
+		sender:   fs.String("sms-sender", "", "Twilio messaging or Verify service SID (or phone number), MessageBird originator, Textlocal sender or Vonage from"),
+		secretIn: fs.Bool("sms-secret-stdin", false, "read the Twilio auth token, MessageBird access key, Textlocal API key or Vonage API secret from stdin"),
+	}
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
@@ -70,6 +77,16 @@ func cmdAuthConfig(args []string) int {
 	}
 	if err := extras.apply(given, &change); err != nil {
 		return printErr("Invalid Auth settings", err)
+	}
+	if err := sms.apply(given, &change); err != nil {
+		return printErr("Invalid Auth settings", err)
+	}
+	if given["sso"] {
+		on, err := parseOnOff("sso", *sso)
+		if err != nil {
+			return printErr("Invalid Auth settings", err)
+		}
+		change.SSO = &on
 	}
 	if given["passkey-rp-id"] {
 		rpID := *passkeyRPID
@@ -105,6 +122,11 @@ func cmdAuthConfig(args []string) int {
 	if len(set) == 0 && len(unset) == 0 {
 		return showAuthConfig(ctx, app)
 	}
+	if set["AUTH_SSO"] == "1" {
+		if err := ensureAuthSAMLKey(ctx, client, app.Slug, *scope, set); err != nil {
+			return printErr("Could not create the SAML key", err)
+		}
+	}
 	// Lifecycle events publish with the same events:publish key as workflow
 	// starts; the key is minted once and kept when events are turned off.
 	if set["AUTH_LIFECYCLE_EVENTS"] == "1" {
@@ -121,7 +143,58 @@ func cmdAuthConfig(args []string) int {
 		return jsonOut(writeJSON(map[string]any{"app": app.Slug, "updated": names}))
 	}
 	PrintOK(osStdout, "Updated %d Auth settings for %s; it restarts to apply them", len(set)+len(unset), app.Slug)
+	if set["GOTRUE_EXTERNAL_PHONE_ENABLED"] == "true" && !given["captcha"] {
+		if running, err := fetchAuthSettings(ctx, app); err == nil && running.Captcha == nil {
+			PrintWarn(osStderr, "CAPTCHA is off: anyone can make %s text codes at your SMS account's expense. Turn it on with --captcha.", app.Slug)
+		}
+	}
 	return 0
+}
+
+// ensureAuthSAMLKey adds the SAML signing key the first time SSO is turned
+// on. An existing key is kept, so identity providers keep trusting the app.
+func ensureAuthSAMLKey(ctx context.Context, client *api.Client, app, scope string, set map[string]string) error {
+	list, err := client.ListSecretsWithScope(ctx, app, scope)
+	if err != nil {
+		return err
+	}
+	for _, secret := range list.Secrets {
+		if secret.Key == authsettings.SAMLKeySecret && (secret.Scope == "" || secret.Scope == scope) {
+			return nil
+		}
+	}
+	key, err := authsettings.NewSAMLKey()
+	if err != nil {
+		return err
+	}
+	set[authsettings.SAMLKeySecret] = key
+	return nil
+}
+
+// authSMSFlags are phone sign-in's settings. The provider's secret comes
+// only from stdin or a terminal prompt.
+type authSMSFlags struct {
+	provider, account, sender *string
+	secretIn                  *bool
+}
+
+func (f authSMSFlags) apply(given map[string]bool, change *authsettings.Change) error {
+	switch {
+	case given["sms"] && *f.provider == "off":
+		if given["sms-account"] || given["sms-sender"] || *f.secretIn {
+			return errors.New("--sms off takes no account, sender or secret")
+		}
+		change.SMS = &authsettings.SMS{}
+	case given["sms"]:
+		secret, _, err := readRealtimeEndpointSecret("", *f.secretIn, "sms-secret", "SMS provider secret: ", api.AuthProviderSecretMaxBytes, true)
+		if err != nil {
+			return err
+		}
+		change.SMS = &authsettings.SMS{Provider: *f.provider, Account: *f.account, Sender: *f.sender, Secret: secret}
+	case given["sms-account"] || given["sms-sender"] || *f.secretIn:
+		return errors.New("--sms-account, --sms-sender and --sms-secret-stdin need --sms PROVIDER")
+	}
+	return nil
 }
 
 func parseAuthChange(given map[string]bool, change *authsettings.Change, siteURL, redirects, signup, autoconfirm string, minLength int, require, leaked, mfa, passkeys string) error {
@@ -256,11 +329,18 @@ func applyAuthSecrets(ctx context.Context, client *api.Client, app, scope string
 		}
 	}
 	for _, name := range unset {
-		if err := client.UnsetSecretWithScope(ctx, app, name, scope); err != nil && !isNotFound(err) {
+		if err := client.UnsetSecretWithScope(ctx, app, name, scope); err != nil && !secretAbsent(err) {
 			return fmt.Errorf("remove %s: %w", name, err)
 		}
 	}
 	return nil
+}
+
+// secretAbsent reports a removal of a secret the app does not have, which
+// apid answers with 400 secret_not_found; removing it is then already done.
+func secretAbsent(err error) bool {
+	var apiErr *api.APIError
+	return isNotFound(err) || (errors.As(err, &apiErr) && apiErr.Problem.Code == api.CodeSecretNotFound)
 }
 
 func sortedKeys(m map[string]string) []string {
@@ -330,6 +410,14 @@ func showAuthConfig(ctx context.Context, app api.AppResponse) int {
 			email = settings.Email.Provider + ", from " + settings.Email.From
 		}
 	}
+	sso := "off"
+	if settings.SSO.Enabled {
+		sso = "on; identity providers trust entity ID " + settings.SSO.EntityID + " with ACS URL " + settings.SSO.ACSURL
+	}
+	phone := "off"
+	if settings.Phone.Enabled {
+		phone = "on, through " + settings.Phone.Provider
+	}
 	keys := settings.Keys.Signing
 	if n := len(settings.Keys.Verifying); n > 0 {
 		keys += fmt.Sprintf(" (%d more verifying)", n)
@@ -338,7 +426,7 @@ func showAuthConfig(ctx context.Context, app api.AppResponse) int {
 	for _, row := range [][2]string{
 		{"site URL", settings.SiteURL}, {"redirect URLs", redirects}, {"sign-up", signup},
 		{"sign-in methods", strings.Join(providers, ", ")}, {"passwords", passwords},
-		{"MFA (TOTP)", onOff(settings.MFA.TOTP)}, {"passkeys", passkeys}, {"CAPTCHA", captchaState}, {"hosted pages", branding},
+		{"MFA (TOTP)", onOff(settings.MFA.TOTP)}, {"passkeys", passkeys}, {"phone (SMS)", phone}, {"organization SSO", sso}, {"CAPTCHA", captchaState}, {"hosted pages", branding},
 		{"email delivery", email}, {"lifecycle events", events}, {"activity kept", retention}, {"signing key", keys},
 	} {
 		_, _ = fmt.Fprintf(osStdout, "  %-16s %s\n", row[0]+":", row[1])

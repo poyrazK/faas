@@ -3869,7 +3869,14 @@ Alias for the default list action
 
 Delete an app (alias: delete); restore it within the deletion grace window
 
-`gregale apps rm <slug>`
+`gregale apps rm [--dry-run] [--yes] [--quiet] [-q] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--dry-run` | preview deletion without changing resources |  |
+| `--yes` | confirm deletion without prompting; required in non-interactive and JSON mode |  |
+| `--quiet` | confirm deletion without prompting (alias of --yes) |  |
+| `-q` | confirm deletion without prompting (alias of --yes) |  |
 
 ### apps restore
 
@@ -4082,7 +4089,7 @@ gregale app my-api --consumer-auth-mode required --json
 
 Explain default-scope serving health and missing evidence
 
-`gregale app <slug> health [--check] [--wait] [--timeout <DURATION>] [--poll-interval <DURATION>] [--history] [--limit <N>] [--before <CURSOR>]`
+`gregale app <slug> health [--check] [--wait] [--timeout <DURATION>] [--poll-interval <DURATION>] [--history] [--limit <N>] [--before <CURSOR>] [--environment <SLUG>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -4093,6 +4100,7 @@ Explain default-scope serving health and missing evidence
 | `--history` | show recorded health changes; excludes --wait |  |
 | `--limit <N>` | history page size |  |
 | `--before <CURSOR>` | history cursor |  |
+| `--environment <SLUG>` | assess this project environment instead of the default scope; excludes history options |  |
 
 Examples:
 
@@ -13240,7 +13248,7 @@ Show the issuer, JWKS URL and readiness of an Auth app
 
 Show the running Auth settings, or change them and restart the app
 
-`gregale auth config [--site-url <URL>] [--redirect-urls <URLS>] [--signup <on|off>] [--autoconfirm <on|off>] [--password-min-length <N>] [--password-require <CLASSES>] [--leaked-password-check <on|off>] [--mfa <on|off>] [--email-provider <PROVIDER>] [--email-from <SENDER>] [--email-api-key-stdin] [--authz <FILE>] [--events <on|off>] [--passkeys <on|off>] [--passkey-rp-id <DOMAIN>] [--brand-name <NAME>] [--brand-color <#RRGGBB>] [--brand-logo-url <URL>] [--captcha <PROVIDER>] [--captcha-site-key <KEY>] [--captcha-secret-stdin] [--activity-retention <DAYS>] [--scope <SCOPE>] <name>`
+`gregale auth config [--site-url <URL>] [--redirect-urls <URLS>] [--signup <on|off>] [--autoconfirm <on|off>] [--password-min-length <N>] [--password-require <CLASSES>] [--leaked-password-check <on|off>] [--mfa <on|off>] [--email-provider <PROVIDER>] [--email-from <SENDER>] [--email-api-key-stdin] [--authz <FILE>] [--events <on|off>] [--passkeys <on|off>] [--passkey-rp-id <DOMAIN>] [--brand-name <NAME>] [--brand-color <#RRGGBB>] [--brand-logo-url <URL>] [--captcha <PROVIDER>] [--captcha-site-key <KEY>] [--captcha-secret-stdin] [--activity-retention <DAYS>] [--sms <PROVIDER>] [--sms-account <ID>] [--sms-sender <SENDER>] [--sms-secret-stdin] [--sso <on|off>] [--scope <SCOPE>] <name>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -13266,6 +13274,11 @@ Show the running Auth settings, or change them and restart the app
 | `--captcha-site-key <KEY>` | the CAPTCHA provider&#39;s site key (public) |  |
 | `--captcha-secret-stdin` | read the CAPTCHA provider&#39;s secret key from stdin (prompted on a terminal) |  |
 | `--activity-retention <DAYS>` | days to keep sign-in activity, or forever |  |
+| `--sms <PROVIDER>` | phone sign-in by text message through your own SMS account, or off | one of `twilio` · `twilio_verify` · `messagebird` · `textlocal` · `vonage` · `off` |
+| `--sms-account <ID>` | Twilio account SID or Vonage API key |  |
+| `--sms-sender <SENDER>` | Twilio messaging or Verify service SID (or phone number), MessageBird originator, Textlocal sender or Vonage from |  |
+| `--sms-secret-stdin` | read the Twilio auth token, MessageBird access key, Textlocal API key or Vonage API secret from stdin |  |
+| `--sso <on|off>` | organization single sign-on (SAML); manage identity providers with gregale auth sso | one of `on` · `off` |
 | `--scope <SCOPE>` | environment scope |  |
 
 Examples:
@@ -13444,6 +13457,66 @@ Examples:
 ```sh
 printf '%s' "$ADMIN_KEY" | gregale auth activity shop-auth --search login --admin-key-stdin
 ```
+
+### auth sso
+
+Register SAML identity providers for organization single sign-on
+
+#### auth sso list
+
+List identity providers and the organizations their users join
+
+`gregale auth sso list [--admin-key-stdin] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--admin-key-stdin` | read the admin key from stdin (prompted on a terminal) |  |
+
+#### auth sso add
+
+Register an identity provider for email domains, optionally joining its users to an organization
+
+`gregale auth sso add [--metadata-url <URL>] [--metadata-file <FILE>] --domains <DOMAINS> [--org <ORG>] [--role <ROLE>] [--admin-key-stdin] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--metadata-url <URL>` | the identity provider&#39;s HTTPS SAML metadata URL |  |
+| `--metadata-file <FILE>` | a file holding the identity provider&#39;s SAML metadata XML |  |
+| `--domains <DOMAINS>` | comma-separated email domains whose users sign in through this provider | required |
+| `--org <ORG>` | organization (ID or slug) its users join |  |
+| `--role <ROLE>` | role its users join the organization with (not owner) |  |
+| `--admin-key-stdin` | read the admin key from stdin (prompted on a terminal) |  |
+
+Examples:
+
+```sh
+printf '%s' "$ADMIN_KEY" | gregale auth sso add shop-auth --metadata-url https://acme.okta.com/app/abc/sso/saml/metadata --domains acme.com --org acme --admin-key-stdin
+```
+
+#### auth sso update
+
+Change a provider&#39;s metadata, domains or organization
+
+`gregale auth sso update [--metadata-url <URL>] [--metadata-file <FILE>] [--domains <DOMAINS>] [--org <ORG>] [--role <ROLE>] [--admin-key-stdin] <name> <provider-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--metadata-url <URL>` | the identity provider&#39;s HTTPS SAML metadata URL |  |
+| `--metadata-file <FILE>` | a file holding the identity provider&#39;s SAML metadata XML |  |
+| `--domains <DOMAINS>` | comma-separated email domains; replaces the list |  |
+| `--org <ORG>` | organization (ID or slug) its users join, or none |  |
+| `--role <ROLE>` | role its users join the organization with (not owner) |  |
+| `--admin-key-stdin` | read the admin key from stdin (prompted on a terminal) |  |
+
+#### auth sso remove
+
+Remove an identity provider; its users keep their memberships
+
+`gregale auth sso remove [--admin-key-stdin] <name> <provider-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--admin-key-stdin` | read the admin key from stdin (prompted on a terminal) |  |
 
 
 ## data-api
@@ -13799,11 +13872,29 @@ Examples:
 gregale data-api replay notes-data --collection data-api.requests.json --identities data-api.identities.json --scenario notes-rls
 ```
 
+### data-api health
+
+Check current Data API health and recent request failures
+
+`gregale data-api health [--since <DURATION|RFC3339>] [--timeout <DURATION>] <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--since <DURATION|RFC3339>` | retained request log window (default 15m) |  |
+| `--timeout <DURATION>` | entire report deadline (default 30s, maximum 1h) |  |
+
+Examples:
+
+```sh
+gregale data-api health notes-data
+gregale --json data-api health notes-data --since 15m
+```
+
 ### data-api diagnostics
 
 Summarize retained request logs and look up request IDs
 
-`gregale data-api diagnostics [--file <FILE>] [--since <DURATION|RFC3339>] [--deployment <ID>] [--request-id <UUID>] [--timeout <DURATION>] [<name>]`
+`gregale data-api diagnostics [--file <FILE>] [--since <DURATION|RFC3339>] [--deployment <ID>] [--request-id <UUID>] [--sort <requests|p95|errors>] [--timeout <DURATION>] [<name>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -13811,6 +13902,7 @@ Summarize retained request logs and look up request IDs
 | `--since <DURATION|RFC3339>` | request time lower bound (for example 15m) |  |
 | `--deployment <ID>` | restrict hosted logs to a deployment |  |
 | `--request-id <UUID>` | look up one gateway-generated request ID |  |
+| `--sort <requests|p95|errors>` | query shape ranking (default requests; p95 uses gateway latency) |  |
 | `--timeout <DURATION>` | read deadline (default 2m, maximum 1h) |  |
 
 Examples:

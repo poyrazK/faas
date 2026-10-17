@@ -107,3 +107,46 @@ func TestIssueCSRFToken_ConnectBinding(t *testing.T) {
 		})
 	}
 }
+
+func TestIssueCSRFToken_RepositoryBinding(t *testing.T) {
+	env := newSessionEnv(t)
+	req := httptest.NewRequest(http.MethodGet, "/v1/auth/csrf?action=bind_app_to_repo", nil)
+	req.AddCookie(env.cookie)
+	rec := httptest.NewRecorder()
+	env.h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body)
+	}
+	var payload api.CSRFTokenResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	var cookie *http.Cookie
+	for _, value := range rec.Result().Cookies() {
+		if value.Name == apidserver.GithubBindCSRFCookie {
+			cookie = value
+		}
+	}
+	if cookie == nil || cookie.Value != payload.CSRFToken || !cookie.HttpOnly || cookie.SameSite != http.SameSiteLaxMode {
+		t.Fatal("missing named HttpOnly binding cookie")
+	}
+	for _, tc := range []struct {
+		name, action, account, cookieName string
+		valid                             bool
+	}{
+		{"binding", apidserver.GithubBindAction, env.acct.ID, apidserver.GithubBindCSRFCookie, true},
+		{"wrong action", apidserver.GithubConnectAction, env.acct.ID, apidserver.GithubBindCSRFCookie, false},
+		{"wrong account", apidserver.GithubBindAction, "another-account", apidserver.GithubBindCSRFCookie, false},
+		{"wrong cookie", apidserver.GithubBindAction, env.acct.ID, middleware.CookieNameAuthenticated, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			verify := httptest.NewRequest(http.MethodPost, "/v1/apps/test/install/bind", strings.NewReader(`{"csrf_token":"`+payload.CSRFToken+`"}`))
+			verify.Header.Set("Content-Type", "application/json")
+			verify.AddCookie(cookie)
+			err := middleware.VerifyAuthenticatedNamed(env.mgr, verify, tc.action, tc.account, tc.cookieName)
+			if (err == nil) != tc.valid {
+				t.Fatalf("valid=%v err=%v", tc.valid, err)
+			}
+		})
+	}
+}
