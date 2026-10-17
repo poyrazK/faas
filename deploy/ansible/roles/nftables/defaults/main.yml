@@ -78,6 +78,9 @@ faas_control_plane_allowed_ports:
 # The manifest sets faas_edge_peer_cidrs to the compute nodes' addresses.
 faas_edge_peer_cidrs: []
 faas_edge_peer_gateway_port: 8080
+# The edge's Cloudflare Tunnel connector exposes its metrics here; the control
+# plane scrapes it per node (gatewayd_public_edge_service).
+faas_edge_connector_metrics_port: 20241
 
 # Raw TCP app listeners are opt-in and fail closed. When enabled, only the
 # explicitly listed client CIDRs can reach the reserved public range.

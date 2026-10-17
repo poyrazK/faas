@@ -3130,6 +3130,7 @@ CREATE TABLE public.deployments (
     serving_ended_at timestamp with time zone,
     runtime_upgrade_routing_token uuid DEFAULT gen_random_uuid() NOT NULL,
     environment_workload_held boolean DEFAULT false NOT NULL,
+    snapshot_recovery_generation bigint DEFAULT 0 NOT NULL,
     runtime_base text DEFAULT ''::text NOT NULL,
     CONSTRAINT deployments_canary_preset_chk CHECK ((canary_preset = ANY (ARRAY['none'::text, 'slow'::text, 'balanced'::text, 'aggressive'::text, '1-10-50-100'::text, 'custom'::text]))),
     CONSTRAINT deployments_canary_stages_shape CHECK (((canary_preset <> 'custom'::text) OR ((canary_stages IS NOT NULL) AND (jsonb_typeof(canary_stages) = 'array'::text) AND (jsonb_array_length(canary_stages) > 0)))),
@@ -3165,6 +3166,7 @@ CREATE TABLE public.deployments (
     CONSTRAINT deployments_service_rollout_handoff_size_chk CHECK ((octet_length((service_rollout_handoff)::text) <= 16384)),
     CONSTRAINT deployments_service_rollout_handoff_state_chk CHECK (((service_rollout_handoff = '{}'::jsonb) OR (((service_rollout_handoff ->> 'action'::text) = ANY (ARRAY['promote'::text, 'abort'::text])) AND ((service_rollout_handoff ->> 'phase'::text) = ANY (ARRAY['pending'::text, 'routing'::text, 'draining'::text, 'complete'::text])) AND (COALESCE(((service_rollout_handoff ->> 'retry_count'::text))::integer, 0) >= 0)))),
     CONSTRAINT deployments_sidecars_cap_chk CHECK ((jsonb_array_length(sidecars) <= 5)),
+    CONSTRAINT deployments_snapshot_recovery_generation_check CHECK ((snapshot_recovery_generation >= 0)),
     CONSTRAINT deployments_source_root_shape_chk CHECK (((source_root IS NULL) OR (source_root = ''::text) OR (source_root = '.'::text) OR ((source_root !~ '^/'::text) AND (source_root !~ '(^|/)\.\.(/|$)'::text)))),
     CONSTRAINT deployments_source_sha256_shape_chk CHECK (((source_sha256 IS NULL) OR (source_sha256 ~ '^[0-9a-f]{64}$'::text))),
     CONSTRAINT deployments_stage_state_current_check CHECK ((((stage_state ->> 'current'::text) IS NULL) OR ((stage_state ->> 'current'::text) = ''::text) OR ((stage_state ->> 'current'::text) = ANY (ARRAY['source_download'::text, 'dependency_restore'::text, 'image_build'::text, 'security_scan'::text, 'snapshot_prepare'::text, 'readiness'::text])))),
@@ -3569,6 +3571,8 @@ CREATE TABLE public.snapshots (
     base_image_version text DEFAULT ''::text NOT NULL,
     delete_pending boolean DEFAULT false NOT NULL,
     application_standard_capture_token uuid,
+    recovery_generation bigint DEFAULT 0 NOT NULL,
+    CONSTRAINT snapshots_recovery_generation_check CHECK ((recovery_generation >= 0)),
     CONSTRAINT snapshots_stored_bytes_nonnegative CHECK ((stored_bytes >= 0)),
     CONSTRAINT snapshots_tier_check CHECK ((tier = ANY (ARRAY['init'::text, 'warm'::text])))
 );
@@ -5259,6 +5263,24 @@ $$;
 
 
 --
+-- Name: commit_migration_source_retirement(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.commit_migration_source_retirement() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE changed bigint;
+BEGIN
+ IF NEW.node_id IS DISTINCT FROM OLD.node_id AND EXISTS(SELECT 1 FROM migration_sources WHERE instance_id=OLD.id AND source_node_id=OLD.node_id AND source_wake_id=OLD.wake_id AND phase='bound') THEN
+  UPDATE migration_sources SET phase='retiring' WHERE instance_id=OLD.id AND source_node_id=OLD.node_id AND source_wake_id=OLD.wake_id AND lease_token=NEW.lease_token AND phase='bound';
+  GET DIAGNOSTICS changed = ROW_COUNT;
+  IF changed<>1 THEN RAISE EXCEPTION 'migration source retirement was not recorded' USING ERRCODE='23514',CONSTRAINT='migration_source_current'; END IF;
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: compose_object_multipart_initiation_dispatch(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -5363,6 +5385,37 @@ $$;
 
 
 --
+-- Name: compute_node_lifecycle_generation_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.compute_node_lifecycle_generation_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='INSERT' THEN
+  NEW.lifecycle_generation:=1;
+ ELSE
+  IF NEW.lifecycle IS DISTINCT FROM OLD.lifecycle
+   OR NEW.drain_initiated_at IS DISTINCT FROM OLD.drain_initiated_at
+   OR NEW.recovery_initiated_at IS DISTINCT FROM OLD.recovery_initiated_at THEN
+   NEW.lifecycle_generation:=OLD.lifecycle_generation+1;
+  ELSIF NEW.lifecycle_generation IS DISTINCT FROM OLD.lifecycle_generation THEN
+   RAISE EXCEPTION 'Node lifecycle generation is database-owned' USING ERRCODE='23514';
+  END IF;
+  IF ((OLD.lifecycle IN ('draining','force_draining') AND NEW.lifecycle='maintenance')
+   OR (OLD.lifecycle='recovering' AND NEW.lifecycle='active')) AND NOT EXISTS (
+   SELECT 1 FROM node_lifecycle_completions c WHERE c.node_id=OLD.id
+    AND c.source_generation=OLD.lifecycle_generation AND c.result_generation=NEW.lifecycle_generation
+    AND c.source_lifecycle=OLD.lifecycle::text AND c.result_lifecycle=NEW.lifecycle::text
+  ) THEN
+   RAISE EXCEPTION 'Node lifecycle completion requires a generation-bound receipt' USING ERRCODE='23514';
+  END IF;
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: compute_node_notify(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -5387,6 +5440,26 @@ BEGIN
     RETURN NEW;
 END;
 $$;
+
+
+--
+-- Name: consume_migration_admission(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.consume_migration_admission() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE changed bigint;
+BEGIN
+ IF NEW.node_id IS DISTINCT FROM OLD.node_id AND EXISTS(
+  SELECT 1 FROM migration_admissions WHERE instance_id=NEW.id AND source_node_id=OLD.node_id AND destination_node_id=NEW.node_id AND lease_token=NEW.lease_token
+ ) THEN
+  UPDATE migration_admissions SET phase='committed' WHERE instance_id=NEW.id AND source_node_id=OLD.node_id AND destination_node_id=NEW.node_id AND source_wake_id=OLD.wake_id AND destination_wake_id=NEW.wake_id AND lease_token=NEW.lease_token AND phase='adopted';
+  GET DIAGNOSTICS changed = ROW_COUNT;
+  IF changed<>1 THEN RAISE EXCEPTION 'migration admission was not consumed' USING ERRCODE='23514',CONSTRAINT='migration_admission_current'; END IF;
+ END IF;
+ RETURN NEW;
+END $$;
 
 
 --
@@ -13160,6 +13233,90 @@ $$;
 
 
 --
+-- Name: guard_instance_migration_admission(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_instance_migration_admission() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE r migration_admissions%ROWTYPE; n compute_nodes%ROWTYPE; used record; pending boolean;
+BEGIN
+ IF TG_OP IN ('UPDATE','DELETE') THEN
+  SELECT * INTO r FROM migration_admissions WHERE instance_id=OLD.id AND phase NOT IN ('cleaned','committed') FOR UPDATE;
+  IF FOUND THEN
+   IF TG_OP='DELETE' THEN
+    RAISE EXCEPTION 'instance has unresolved incoming migration' USING ERRCODE='23514',CONSTRAINT='migration_admission_current';
+   END IF;
+   IF (NEW.node_id,NEW.wake_id,NEW.state,NEW.lease_token,NEW.app_id,NEW.deployment_id) IS DISTINCT FROM (OLD.node_id,OLD.wake_id,OLD.state,OLD.lease_token,OLD.app_id,OLD.deployment_id)
+    AND NOT (r.phase='adopted' AND OLD.node_id=r.source_node_id AND OLD.wake_id=r.source_wake_id AND NEW.node_id=r.destination_node_id AND NEW.wake_id=r.destination_wake_id AND NEW.state='running' AND NEW.lease_token IS NOT DISTINCT FROM r.lease_token AND NEW.app_id IS NOT DISTINCT FROM OLD.app_id AND NEW.deployment_id IS NOT DISTINCT FROM OLD.deployment_id) THEN
+    RAISE EXCEPTION 'source has unresolved incoming migration' USING ERRCODE='23514',CONSTRAINT='migration_admission_current';
+   END IF;
+  END IF;
+  IF TG_OP='DELETE' THEN RETURN OLD; END IF;
+ END IF;
+ IF TG_OP='UPDATE' AND NEW.node_id IS DISTINCT FROM OLD.node_id THEN
+  SELECT * INTO r FROM migration_admissions WHERE instance_id=OLD.id AND source_node_id=OLD.node_id AND destination_node_id=NEW.node_id AND lease_token=OLD.lease_token FOR UPDATE;
+  IF FOUND THEN
+   SELECT * INTO n FROM compute_nodes WHERE id=NEW.node_id FOR SHARE;
+   IF r.phase<>'adopted' OR OLD.wake_id<>r.source_wake_id OR NEW.wake_id<>r.destination_wake_id OR NEW.state<>'running' OR n.lifecycle_generation<>r.destination_generation THEN
+    RAISE EXCEPTION 'migration adoption is not current' USING ERRCODE='23514',CONSTRAINT='migration_admission_current';
+   END IF;
+   NEW.capacity_ram_mb=greatest(NEW.capacity_ram_mb,r.ram_mb);
+   NEW.capacity_cpu_millicores=greatest(NEW.capacity_cpu_millicores,r.cpu_millicores);
+   NEW.capacity_vcpu=greatest(NEW.capacity_vcpu,r.vcpu);
+  END IF;
+ END IF;
+ IF NEW.state NOT IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm','frozen') THEN RETURN NEW; END IF;
+ IF TG_OP='UPDATE' AND NEW.node_id=OLD.node_id AND OLD.state IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm','frozen')
+  AND NEW.ram_mb<=OLD.ram_mb AND NEW.capacity_ram_mb<=OLD.capacity_ram_mb AND NEW.capacity_cpu_millicores<=OLD.capacity_cpu_millicores AND NEW.capacity_vcpu<=OLD.capacity_vcpu THEN RETURN NEW; END IF;
+ SELECT EXISTS(SELECT 1 FROM migration_admissions WHERE destination_node_id=NEW.node_id AND phase NOT IN ('cleaned','committed')) OR EXISTS(SELECT 1 FROM migration_sources WHERE source_node_id=NEW.node_id AND phase IN ('bound','retiring')) INTO pending;
+ IF NOT pending THEN RETURN NEW; END IF;
+ SELECT * INTO n FROM compute_nodes WHERE id=NEW.node_id FOR SHARE;
+ PERFORM pg_advisory_xact_lock(1852793957,hashtext(NEW.node_id::text));
+ SELECT * INTO used FROM migration_admission_node_usage(NEW.node_id,NEW.id);
+ IF (n.admission_ceiling_mb>0 AND used.ram+greatest(NEW.capacity_ram_mb,NEW.ram_mb+(SELECT overhead_mb FROM service_capacity_policy WHERE singleton))>n.admission_ceiling_mb)
+  OR (n.vpcpus>0 AND used.cpu+NEW.capacity_cpu_millicores>n.vpcpus::bigint*1000)
+  OR (n.vcpu_budget>0 AND used.vcpu+NEW.capacity_vcpu>n.vcpu_budget) THEN
+  RAISE EXCEPTION 'capacity reserved for incoming migration' USING ERRCODE='23514',CONSTRAINT='migration_admission_capacity';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: guard_instance_migration_source(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_instance_migration_source() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE r migration_sources%ROWTYPE;
+BEGIN
+ IF NEW.state='migrating' AND (OLD.state,OLD.lease_token) IS DISTINCT FROM (NEW.state,NEW.lease_token) THEN
+  SELECT * INTO r FROM migration_sources WHERE lease_token=NEW.lease_token FOR SHARE;
+  IF FOUND THEN
+   IF r.phase<>'bound' OR r.instance_id<>NEW.id OR r.source_node_id<>NEW.node_id OR r.source_wake_id<>NEW.wake_id THEN
+    RAISE EXCEPTION 'migration source dispatch authority ended' USING ERRCODE='23514',CONSTRAINT='migration_source_current';
+   END IF;
+   PERFORM 1 FROM migration_leases WHERE lease_token=r.lease_token AND NOT resume_fenced AND lease_expires_at>clock_timestamp() FOR SHARE;
+   IF NOT FOUND THEN RAISE EXCEPTION 'migration source dispatch lease ended' USING ERRCODE='23514',CONSTRAINT='migration_source_current'; END IF;
+  END IF;
+ END IF;
+ SELECT * INTO r FROM migration_sources WHERE instance_id=OLD.id AND source_node_id=OLD.node_id AND source_wake_id=OLD.wake_id AND phase='bound' FOR UPDATE;
+ IF NOT FOUND THEN RETURN NEW; END IF;
+ IF NEW.node_id IS DISTINCT FROM OLD.node_id OR NEW.wake_id IS DISTINCT FROM OLD.wake_id THEN
+  IF NEW.node_id=OLD.node_id OR NEW.state<>'running' OR NEW.lease_token IS DISTINCT FROM r.lease_token OR NOT EXISTS(
+   SELECT 1 FROM migration_admissions WHERE instance_id=OLD.id AND lease_token=r.lease_token AND source_node_id=r.source_node_id AND source_wake_id=r.source_wake_id AND destination_node_id=NEW.node_id AND destination_wake_id=NEW.wake_id AND phase='adopted'
+  ) THEN RAISE EXCEPTION 'migration source physical owner cannot change' USING ERRCODE='23514',CONSTRAINT='migration_source_current'; END IF;
+ END IF;
+ NEW.capacity_ram_mb=greatest(NEW.capacity_ram_mb,r.ram_mb);
+ NEW.capacity_cpu_millicores=greatest(NEW.capacity_cpu_millicores,r.cpu_millicores);
+ NEW.capacity_vcpu=greatest(NEW.capacity_vcpu,r.vcpu);
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: guard_invocation_deployment_scope(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -13836,6 +13993,172 @@ BEGIN
   NEW.closure->>'unselected_databases' IS DISTINCT FROM '0') THEN
   RAISE EXCEPTION 'original source writer catalog is incomplete' USING ERRCODE='55000';
  END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: guard_migration_admission(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_migration_admission() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE n compute_nodes%ROWTYPE; source_instance instances%ROWTYPE; used record;
+BEGIN
+ IF TG_OP='DELETE' THEN RAISE EXCEPTION 'migration admission receipts must be retained' USING ERRCODE='23514',CONSTRAINT='migration_admission_current'; END IF;
+ IF TG_OP='INSERT' THEN
+  IF NEW.phase<>'reserved' OR NEW.adoption_receipt<>''::bytea OR NEW.cleanup_proof<>'' OR NEW.expires_at<=clock_timestamp() THEN
+   RAISE EXCEPTION 'invalid initial migration admission' USING ERRCODE='23514',CONSTRAINT='migration_admission_current';
+  END IF;
+  SELECT * INTO n FROM compute_nodes WHERE id=NEW.destination_node_id FOR SHARE;
+  IF NOT FOUND OR n.lifecycle NOT IN ('active','recovering') OR n.lifecycle_generation<>NEW.destination_generation THEN
+   RAISE EXCEPTION 'stale migration destination' USING ERRCODE='23514',CONSTRAINT='instance_node_admission_current';
+  END IF;
+  PERFORM pg_advisory_xact_lock(1852793957,hashtext(NEW.destination_node_id::text));
+  SELECT * INTO source_instance FROM instances WHERE id=NEW.instance_id FOR UPDATE;
+  IF NOT FOUND OR source_instance.node_id<>NEW.source_node_id OR source_instance.wake_id<>NEW.source_wake_id OR source_instance.state<>'migrating' OR source_instance.lease_token IS DISTINCT FROM NEW.lease_token
+   OR NEW.ram_mb<greatest(source_instance.ram_mb+(SELECT overhead_mb FROM service_capacity_policy WHERE singleton),source_instance.capacity_ram_mb)
+   OR NEW.cpu_millicores<source_instance.capacity_cpu_millicores OR NEW.vcpu<source_instance.capacity_vcpu THEN
+   RAISE EXCEPTION 'migration source or resource shape changed' USING ERRCODE='23514',CONSTRAINT='migration_admission_current';
+  END IF;
+  IF EXISTS(SELECT 1 FROM migration_admissions WHERE instance_id=NEW.instance_id AND phase NOT IN ('cleaned','committed')) THEN
+   RAISE EXCEPTION 'instance already has an incoming migration' USING ERRCODE='23514',CONSTRAINT='migration_admission_current';
+  END IF;
+  PERFORM 1 FROM migration_leases l WHERE l.instance_id=NEW.instance_id AND l.lease_token=NEW.lease_token
+   AND l.source_node_id=NEW.source_node_id::text AND NOT l.pending AND NOT l.resume_fenced AND l.lease_expires_at>clock_timestamp() AND NEW.expires_at<=l.lease_expires_at
+   AND l.mem_storage_key=NEW.mem_storage_key AND l.vmstate_storage_key=NEW.vmstate_storage_key FOR SHARE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'migration source lease is not current' USING ERRCODE='23514',CONSTRAINT='migration_admission_current'; END IF;
+  PERFORM 1 FROM migration_sources WHERE lease_token=NEW.lease_token AND instance_id=NEW.instance_id AND source_node_id=NEW.source_node_id AND source_wake_id=NEW.source_wake_id AND phase='bound' FOR SHARE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'migration source physical binding is unavailable' USING ERRCODE='23514',CONSTRAINT='migration_source_current'; END IF;
+  SELECT * INTO used FROM migration_admission_node_usage(NEW.destination_node_id);
+  IF (n.admission_ceiling_mb>0 AND used.ram+NEW.ram_mb>n.admission_ceiling_mb) OR
+     (n.vpcpus>0 AND used.cpu+NEW.cpu_millicores>n.vpcpus::bigint*1000) OR
+     (n.vcpu_budget>0 AND used.vcpu+NEW.vcpu>n.vcpu_budget) THEN
+   RAISE EXCEPTION 'migration destination capacity exhausted' USING ERRCODE='23514',CONSTRAINT='migration_admission_capacity';
+  END IF;
+  RETURN NEW;
+ END IF;
+ IF (to_jsonb(NEW)-ARRAY['phase','adoption_receipt','cleanup_proof','active_lease_token']) IS DISTINCT FROM (to_jsonb(OLD)-ARRAY['phase','adoption_receipt','cleanup_proof','active_lease_token'])
+  OR (OLD.adoption_receipt<>''::bytea AND OLD.adoption_receipt IS DISTINCT FROM NEW.adoption_receipt)
+  OR (OLD.cleanup_proof<>'' AND OLD.cleanup_proof IS DISTINCT FROM NEW.cleanup_proof) THEN
+  RAISE EXCEPTION 'migration admission identity and receipts are immutable' USING ERRCODE='23514',CONSTRAINT='migration_admission_current';
+ END IF;
+ IF NEW.phase=OLD.phase THEN
+  IF NEW.adoption_receipt IS DISTINCT FROM OLD.adoption_receipt OR NEW.cleanup_proof IS DISTINCT FROM OLD.cleanup_proof THEN RAISE EXCEPTION 'migration receipt requires its phase transition' USING ERRCODE='23514',CONSTRAINT='migration_admission_current'; END IF;
+  RETURN NEW;
+ END IF;
+ IF NOT ((OLD.phase='reserved' AND NEW.phase IN ('adopting','cleaned')) OR
+         (OLD.phase='adopting' AND NEW.phase IN ('adopted','cleaning')) OR
+         (OLD.phase='adopted' AND NEW.phase IN ('cleaning','committed')) OR
+         (OLD.phase='cleaning' AND NEW.phase='cleaned')) THEN
+  RAISE EXCEPTION 'invalid migration admission transition' USING ERRCODE='23514',CONSTRAINT='migration_admission_current';
+ END IF;
+ IF NEW.phase='adopting' THEN
+  SELECT * INTO n FROM compute_nodes WHERE id=NEW.destination_node_id FOR SHARE;
+  IF NOT FOUND OR n.lifecycle NOT IN ('active','recovering') OR n.lifecycle_generation<>NEW.destination_generation OR NEW.expires_at<=clock_timestamp() THEN
+   RAISE EXCEPTION 'stale migration destination' USING ERRCODE='23514',CONSTRAINT='instance_node_admission_current';
+  END IF;
+ END IF;
+ IF OLD.phase='reserved' AND NEW.phase='cleaned' AND NEW.cleanup_proof<>'no_dispatch' THEN
+  RAISE EXCEPTION 'unstarted cancellation requires no-dispatch proof' USING ERRCODE='23514',CONSTRAINT='migration_admission_current';
+ END IF;
+ IF NEW.phase='committed' AND NOT EXISTS(SELECT 1 FROM instances owned WHERE owned.id=NEW.instance_id AND owned.node_id=NEW.destination_node_id AND owned.wake_id=NEW.destination_wake_id AND owned.lease_token=NEW.lease_token AND owned.state='running') THEN
+  RAISE EXCEPTION 'migration admission has no committed owner' USING ERRCODE='23514',CONSTRAINT='migration_admission_current';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: guard_migration_source(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_migration_source() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE i instances%ROWTYPE; l migration_leases%ROWTYPE; n compute_nodes%ROWTYPE;
+BEGIN
+ IF TG_OP='DELETE' THEN RAISE EXCEPTION 'migration source receipts must be retained' USING ERRCODE='23514',CONSTRAINT='migration_source_current'; END IF;
+ IF TG_OP='INSERT' THEN
+  SELECT * INTO n FROM compute_nodes WHERE id=NEW.source_node_id FOR SHARE;
+  IF NOT FOUND OR n.lifecycle IN ('maintenance','retired') THEN
+   RAISE EXCEPTION 'migration source node is closed' USING ERRCODE='23514',CONSTRAINT='migration_source_current';
+  END IF;
+  PERFORM pg_advisory_xact_lock(1852793957,hashtext(NEW.source_node_id::text));
+  SELECT * INTO i FROM instances WHERE id=NEW.instance_id FOR UPDATE;
+  IF NOT FOUND OR i.node_id<>NEW.source_node_id OR i.wake_id<>NEW.source_wake_id
+   OR i.state NOT IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm','frozen') THEN
+   RAISE EXCEPTION 'migration source wake changed' USING ERRCODE='23514',CONSTRAINT='migration_source_current';
+  END IF;
+  SELECT * INTO l FROM migration_leases WHERE lease_token=NEW.lease_token FOR UPDATE;
+  IF NOT FOUND OR l.instance_id<>NEW.instance_id OR l.source_node_id<>NEW.source_node_id::text OR l.resume_fenced OR NEW.phase<>'bound' OR NEW.proof<>''
+   OR NEW.ram_mb<greatest(i.capacity_ram_mb,i.ram_mb+(SELECT overhead_mb FROM service_capacity_policy WHERE singleton))
+   OR NEW.cpu_millicores<i.capacity_cpu_millicores OR NEW.vcpu<i.capacity_vcpu THEN
+   RAISE EXCEPTION 'migration source lease changed' USING ERRCODE='23514',CONSTRAINT='migration_source_current';
+  END IF;
+  RETURN NEW;
+ END IF;
+ IF (to_jsonb(NEW)-ARRAY['phase','proof','active_lease_token']) IS DISTINCT FROM (to_jsonb(OLD)-ARRAY['phase','proof','active_lease_token']) THEN
+  RAISE EXCEPTION 'migration source identity is immutable' USING ERRCODE='23514',CONSTRAINT='migration_source_current';
+ END IF;
+ IF NEW.phase=OLD.phase THEN
+  IF NEW.proof<>OLD.proof THEN RAISE EXCEPTION 'migration source receipt changed' USING ERRCODE='23514',CONSTRAINT='migration_source_current'; END IF;
+  RETURN NEW;
+ END IF;
+ IF NOT ((OLD.phase='bound' AND NEW.phase IN ('retiring','resumed','retired')) OR (OLD.phase='retiring' AND NEW.phase='retired')) THEN
+  RAISE EXCEPTION 'invalid migration source transition' USING ERRCODE='23514',CONSTRAINT='migration_source_current';
+ END IF;
+ IF OLD.phase='bound' THEN
+  SELECT * INTO l FROM migration_leases WHERE lease_token=NEW.lease_token FOR UPDATE;
+  IF NEW.phase='resumed' AND (NOT l.resume_fenced OR EXISTS(SELECT 1 FROM migration_admissions WHERE lease_token=NEW.lease_token AND phase<>'cleaned')) THEN
+   RAISE EXCEPTION 'migration source resume is not fenced' USING ERRCODE='23514',CONSTRAINT='migration_source_current';
+  END IF;
+  IF NEW.phase='resumed' AND NOT EXISTS(SELECT 1 FROM instances WHERE id=NEW.instance_id AND node_id=NEW.source_node_id AND wake_id=NEW.source_wake_id AND state IN ('running','draining')) THEN
+   RAISE EXCEPTION 'migration source has no serving owner to resume' USING ERRCODE='23514',CONSTRAINT='migration_source_current';
+  END IF;
+  IF NEW.phase='retired' AND NOT l.resume_fenced THEN
+   RAISE EXCEPTION 'migration source retirement is not fenced' USING ERRCODE='23514',CONSTRAINT='migration_source_current';
+  END IF;
+  IF NEW.phase='retiring' THEN
+   IF EXISTS(SELECT 1 FROM migration_admissions WHERE lease_token=NEW.lease_token AND phase NOT IN ('cleaned','committed'))
+    OR EXISTS(SELECT 1 FROM instances WHERE id=NEW.instance_id AND node_id=NEW.source_node_id AND wake_id=NEW.source_wake_id AND state IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm','frozen')) THEN
+    RAISE EXCEPTION 'migration source still owns its wake' USING ERRCODE='23514',CONSTRAINT='migration_source_current';
+   END IF;
+  END IF;
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: guard_node_migration_admissions(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_node_migration_admissions() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF (TG_OP='DELETE' OR NEW.lifecycle IN ('maintenance','retired')) AND EXISTS(SELECT 1 FROM migration_admissions WHERE destination_node_id=OLD.id AND phase NOT IN ('cleaned','committed')) THEN
+  RAISE EXCEPTION 'node has unresolved incoming migrations' USING ERRCODE='23514',CONSTRAINT='migration_admission_current';
+ END IF;
+ IF TG_OP='DELETE' THEN RETURN OLD; END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: guard_node_migration_sources(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_node_migration_sources() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF (TG_OP='DELETE' OR NEW.lifecycle IN ('maintenance','retired')) AND (EXISTS(SELECT 1 FROM migration_sources WHERE source_node_id=OLD.id AND phase IN ('bound','retiring')) OR EXISTS(SELECT 1 FROM migration_leases WHERE source_node_id=OLD.id::text)) THEN
+  RAISE EXCEPTION 'node has unresolved source migrations' USING ERRCODE='23514',CONSTRAINT='migration_source_current';
+ END IF;
+ IF TG_OP='DELETE' THEN RETURN OLD; END IF;
  RETURN NEW;
 END $$;
 
@@ -14926,6 +15249,48 @@ $$;
 
 
 --
+-- Name: guard_source_migration_admissions(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_source_migration_admissions() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF (TG_OP='DELETE' OR NEW.lease_token IS DISTINCT FROM OLD.lease_token) AND EXISTS(SELECT 1 FROM migration_admissions WHERE instance_id=OLD.instance_id AND lease_token=OLD.lease_token AND phase NOT IN ('cleaned','committed')) THEN
+  RAISE EXCEPTION 'source lease has unresolved incoming migrations' USING ERRCODE='23514',CONSTRAINT='migration_admission_current';
+ END IF;
+ IF TG_OP='DELETE' THEN RETURN OLD; END IF;
+ IF NEW.lease_token IS DISTINCT FROM OLD.lease_token THEN NEW.resume_fenced=false; END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: guard_source_migration_lease_node(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_source_migration_lease_node() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE n compute_nodes%ROWTYPE;
+BEGIN
+ IF TG_OP='UPDATE' AND EXISTS(SELECT 1 FROM migration_sources WHERE lease_token=OLD.lease_token) AND (
+  (NEW.lease_token,NEW.instance_id,NEW.source_node_id) IS DISTINCT FROM (OLD.lease_token,OLD.instance_id,OLD.source_node_id)
+  OR NEW.created_at IS DISTINCT FROM OLD.created_at OR NOT OLD.pending AND NEW.pending
+  OR OLD.mem_storage_key<>'' AND NEW.mem_storage_key<>OLD.mem_storage_key
+  OR OLD.vmstate_storage_key<>'' AND NEW.vmstate_storage_key<>OLD.vmstate_storage_key
+ ) THEN RAISE EXCEPTION 'source lease identity and cleanup handles must be retained' USING ERRCODE='23514',CONSTRAINT='migration_source_current'; END IF;
+ IF NEW.source_node_id<>'' THEN
+  SELECT * INTO n FROM compute_nodes WHERE id::text=NEW.source_node_id FOR SHARE;
+  IF NOT FOUND OR n.lifecycle IN ('maintenance','retired') THEN
+   RAISE EXCEPTION 'migration source node is closed' USING ERRCODE='23514',CONSTRAINT='migration_source_current';
+  END IF;
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: guard_worker_admission_identity(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -15065,6 +15430,30 @@ BEGIN
     RETURN NEW;
 END;
 $$;
+
+
+--
+-- Name: instance_node_admission_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.instance_node_admission_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE current_lifecycle compute_node_lifecycle;
+BEGIN
+ IF NEW.state NOT IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm','frozen') THEN
+  RETURN NEW;
+ END IF;
+ IF TG_OP='UPDATE' AND NEW.node_id IS NOT DISTINCT FROM OLD.node_id
+  AND OLD.state IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm','frozen') THEN
+  RETURN NEW;
+ END IF;
+ SELECT lifecycle INTO current_lifecycle FROM compute_nodes WHERE id=NEW.node_id FOR SHARE;
+ IF NOT FOUND OR current_lifecycle NOT IN ('active','recovering') THEN
+  RAISE EXCEPTION 'node is not admitting resident work' USING ERRCODE='23514',CONSTRAINT='instance_node_admission_current';
+ END IF;
+ RETURN NEW;
+END $$;
 
 
 --
@@ -16428,6 +16817,29 @@ END $$;
 
 
 --
+-- Name: migration_admission_node_usage(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.migration_admission_node_usage(target uuid, omit_instance uuid DEFAULT NULL::uuid) RETURNS TABLE(ram bigint, cpu bigint, vcpu bigint)
+    LANGUAGE sql
+    AS $$
+ SELECT coalesce(sum(u.ram),0)::bigint,coalesce(sum(u.cpu),0)::bigint,coalesce(sum(u.vcpu),0)::bigint FROM (
+  SELECT greatest(i.capacity_ram_mb,i.ram_mb+p.overhead_mb)::bigint AS ram,
+   greatest(i.capacity_cpu_millicores,coalesce(nullif(a.cpu_millicores,0),p.startup_cpu))::bigint AS cpu,
+   greatest(i.capacity_vcpu,CASE WHEN i.app_id IS NULL THEN 1 ELSE coalesce((p.plan_vcpus->>ac.plan)::integer,4) END)::bigint AS vcpu
+  FROM instances i LEFT JOIN apps a ON a.id=i.app_id LEFT JOIN accounts ac ON ac.id=a.account_id CROSS JOIN service_capacity_policy p
+  WHERE p.singleton AND i.node_id=target AND (omit_instance IS NULL OR i.id<>omit_instance)
+   AND i.state IN ('waking','cold_booting','running','draining','snapshotting','migrating','warm','frozen')
+  UNION ALL SELECT r.ram_mb::bigint,r.cpu_millicores::bigint,r.vcpu::bigint FROM migration_admissions r
+  WHERE r.destination_node_id=target AND r.phase NOT IN ('cleaned','committed')
+   AND (omit_instance IS NULL OR r.instance_id<>omit_instance)
+   AND NOT EXISTS(SELECT 1 FROM instances i WHERE i.id=r.instance_id AND i.node_id=r.destination_node_id AND i.wake_id=r.destination_wake_id AND i.state='running')
+  UNION ALL SELECT * FROM migration_source_node_usage(target)
+ ) u;
+$$;
+
+
+--
 -- Name: migration_notify(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -16444,6 +16856,25 @@ $$;
 
 
 --
+-- Name: migration_source_node_usage(uuid, boolean); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.migration_source_node_usage(target uuid, legacy boolean DEFAULT false) RETURNS TABLE(ram bigint, cpu bigint, vcpu bigint)
+    LANGUAGE sql
+    AS $$
+ SELECT coalesce(sum(CASE WHEN i.id IS NULL THEN r.ram_mb ELSE greatest(0,r.ram_mb-greatest(i.ram_mb+p.overhead_mb,CASE WHEN NOT legacy OR owned.present THEN i.capacity_ram_mb ELSE 0 END)) END),0)::bigint,
+  coalesce(sum(CASE WHEN i.id IS NULL THEN r.cpu_millicores ELSE greatest(0,r.cpu_millicores-greatest(coalesce(nullif(a.cpu_millicores,0),p.startup_cpu),CASE WHEN NOT legacy OR owned.present THEN i.capacity_cpu_millicores ELSE CASE WHEN i.startup_cpu_boost_until>now() THEN p.startup_cpu ELSE 0 END END)) END),0)::bigint,
+  coalesce(sum(CASE WHEN i.id IS NULL THEN r.vcpu ELSE greatest(0,r.vcpu-i.capacity_vcpu) END),0)::bigint
+ FROM migration_sources r CROSS JOIN service_capacity_policy p
+ LEFT JOIN instances i ON r.phase='bound' AND i.id=r.instance_id AND i.node_id=r.source_node_id AND i.wake_id=r.source_wake_id
+  AND (i.state IN ('waking','cold_booting','running','draining','warm') OR NOT legacy AND i.state IN ('snapshotting','migrating','frozen'))
+ LEFT JOIN apps a ON a.id=i.app_id
+ LEFT JOIN LATERAL (SELECT EXISTS(SELECT 1 FROM migration_admissions d WHERE d.phase='committed' AND d.instance_id=i.id AND d.destination_node_id=i.node_id AND d.destination_wake_id=i.wake_id) OR EXISTS(SELECT 1 FROM migration_sources s WHERE s.phase='resumed' AND s.instance_id=i.id AND s.source_node_id=i.node_id AND s.source_wake_id=i.wake_id) AS present) owned ON true
+ WHERE p.singleton AND r.source_node_id=target AND r.phase IN ('bound','retiring');
+$$;
+
+
+--
 -- Name: mirror_rules_set_updated_at(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -16455,6 +16886,39 @@ BEGIN
     RETURN NEW;
 END;
 $$;
+
+
+--
+-- Name: node_admission_lock_capacity(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.node_admission_lock_capacity() RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+DECLARE is_enabled boolean;
+BEGIN
+ LOOP
+  SELECT enabled INTO is_enabled FROM service_capacity_policy WHERE singleton AND enabled FOR UPDATE;
+  EXIT WHEN FOUND;
+  SELECT enabled INTO is_enabled FROM service_capacity_policy WHERE singleton AND NOT enabled FOR SHARE;
+  EXIT WHEN FOUND;
+  IF NOT EXISTS (SELECT 1 FROM service_capacity_policy WHERE singleton) THEN
+   RAISE EXCEPTION 'service capacity policy is missing';
+  END IF;
+ END LOOP;
+END $$;
+
+
+--
+-- Name: node_lifecycle_completion_immutable(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.node_lifecycle_completion_immutable() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ RAISE EXCEPTION 'Node lifecycle completion receipts are immutable' USING ERRCODE='23514';
+END $$;
 
 
 --
@@ -17175,6 +17639,45 @@ BEGIN
   PERFORM record_realtime_delivery_history(NEW.group_id,NEW.sequence,CASE WHEN lease_expired THEN 'lease_expired' ELSE 'retried' END,NEW.attempts,NEW.fencing_token,NEW.failure_code);
  END IF;
  RETURN NEW;
+END $$;
+
+
+--
+-- Name: operator_node_completion_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.operator_node_completion_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE receipt operator_node_executions%ROWTYPE;
+BEGIN
+ IF OLD.kind IN ('node_drain','node_force_drain','node_activate','node_retire') THEN
+  SELECT * INTO receipt FROM operator_node_executions WHERE intent_id=OLD.id;
+  IF FOUND THEN
+   IF (OLD.status IN ('succeeded','failed') AND NEW IS DISTINCT FROM OLD)
+    OR (NEW.kind,NEW.target_id,NEW.actor_id,NEW.account_id,NEW.reason,NEW.metadata,NEW.trace_id)
+       IS DISTINCT FROM (OLD.kind,OLD.target_id,OLD.actor_id,OLD.account_id,OLD.reason,OLD.metadata,OLD.trace_id)
+    OR (NEW.kind,NEW.target_id,NEW.claim_token,NEW.status,coalesce(NEW.error,''),NEW.finished_at,NEW.completion_audit_outbox_id)
+       IS DISTINCT FROM (receipt.kind,receipt.target_id,receipt.claim_token,receipt.status,receipt.error,receipt.finished_at,receipt.audit_outbox_id) THEN
+    RAISE EXCEPTION 'Operator node completion does not match immutable receipt' USING ERRCODE='23514';
+   END IF;
+  ELSIF NEW.status IN ('succeeded','failed') THEN
+   RAISE EXCEPTION 'Operator node completion requires an atomic receipt' USING ERRCODE='23514';
+  END IF;
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: operator_node_receipt_immutable(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.operator_node_receipt_immutable() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ RAISE EXCEPTION 'Operator node execution receipts are immutable' USING ERRCODE='23514';
 END $$;
 
 
@@ -19868,6 +20371,13 @@ eligible AS (
       FROM instances i LEFT JOIN apps a ON a.id=i.app_id LEFT JOIN accounts ac ON ac.id=a.account_id
       LEFT JOIN deployments d ON d.id=i.deployment_id CROSS JOIN policy p
      WHERE i.state IN ('waking','cold_booting','running','draining','warm','snapshotting','migrating')
+    UNION ALL
+    SELECT r.destination_node_id,NULL::text,r.ram_mb::bigint,r.cpu_millicores::bigint,r.vcpu::bigint,false
+      FROM migration_admissions r WHERE r.phase NOT IN ('cleaned','committed')
+       AND NOT EXISTS(SELECT 1 FROM instances i WHERE i.id=r.instance_id AND i.node_id=r.destination_node_id AND i.wake_id=r.destination_wake_id AND i.state='running')
+    UNION ALL
+    SELECT n.id,NULL::text,u.ram,u.cpu,u.vcpu,false FROM compute_nodes n CROSS JOIN LATERAL migration_source_node_usage(n.id) u
+      WHERE u.ram>0 OR u.cpu>0 OR u.vcpu>0
 ), shape AS (
     SELECT greatest(coalesce((SELECT max(ram) FROM demand WHERE count>0),0),coalesce((SELECT max(ram) FROM resident WHERE service),0),1) AS ram,
            greatest(coalesce((SELECT max(cpu) FROM demand WHERE count>0),0),coalesce((SELECT max(cpu) FROM resident WHERE service),0),1) AS cpu,
@@ -19952,6 +20462,27 @@ BEGIN
     RETURN NEW;
 END;
 $$;
+
+
+--
+-- Name: snapshot_recovery_generation_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.snapshot_recovery_generation_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE current_generation bigint;
+BEGIN
+    IF NOT NEW.stale THEN
+        SELECT snapshot_recovery_generation INTO current_generation
+          FROM deployments WHERE id = NEW.deployment_id FOR SHARE NOWAIT;
+        IF NEW.recovery_generation IS DISTINCT FROM current_generation THEN
+            RAISE EXCEPTION 'snapshot recovery generation changed'
+                USING ERRCODE = '23514', CONSTRAINT = 'snapshots_recovery_generation_current';
+        END IF;
+    END IF;
+    RETURN NEW;
+END $$;
 
 
 --
@@ -24221,9 +24752,11 @@ CREATE TABLE public.compute_nodes (
     vmmd_incarnation uuid,
     vmmd_admission_protocol smallint DEFAULT 1 NOT NULL,
     service_address_ready_at timestamp with time zone,
+    lifecycle_generation bigint DEFAULT 1 NOT NULL,
     CONSTRAINT compute_nodes_admission_ceiling_mb_check CHECK ((admission_ceiling_mb > 0)),
     CONSTRAINT compute_nodes_gateway_target_url_scheme_chk CHECK (((gateway_target_url IS NULL) OR (gateway_target_url ~ '^tcp://[^/:][^/]*:[0-9]+$'::text))),
     CONSTRAINT compute_nodes_last_recovery_outcome_chk CHECK (((last_recovery_outcome IS NULL) OR (last_recovery_outcome = ANY (ARRAY['succeeded'::text, 'failed'::text, 'partial'::text])))),
+    CONSTRAINT compute_nodes_lifecycle_generation_check CHECK ((lifecycle_generation > 0)),
     CONSTRAINT compute_nodes_max_concurrency_check CHECK ((max_concurrency > 0)),
     CONSTRAINT compute_nodes_mem_mb_check CHECK ((mem_mb > 0)),
     CONSTRAINT compute_nodes_overlay_ip_family_chk CHECK (((overlay_ip IS NULL) OR (family(overlay_ip) = 4))),
@@ -28859,6 +29392,277 @@ ALTER TABLE public.goose_db_version ALTER COLUMN id ADD GENERATED BY DEFAULT AS 
 
 
 --
+-- Name: hosting_automation_credentials; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.hosting_automation_credentials (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    site_id uuid NOT NULL,
+    token_hash bytea NOT NULL,
+    label text NOT NULL,
+    operations text[] NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    oidc_trust_id uuid,
+    CONSTRAINT hosting_automation_credentials_check CHECK ((isfinite(expires_at) AND (expires_at > created_at))),
+    CONSTRAINT hosting_automation_credentials_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT hosting_automation_credentials_label_check CHECK (((octet_length(label) >= 1) AND (octet_length(label) <= 64))),
+    CONSTRAINT hosting_automation_credentials_operations_check CHECK ((((cardinality(operations) >= 1) AND (cardinality(operations) <= 2)) AND (operations <@ ARRAY['stage'::text, 'preview'::text]))),
+    CONSTRAINT hosting_automation_credentials_token_hash_check CHECK ((octet_length(token_hash) = 32))
+);
+
+
+--
+-- Name: hosting_ci_runs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.hosting_ci_runs (
+    site_id uuid NOT NULL,
+    id uuid NOT NULL,
+    release_id uuid NOT NULL,
+    preview_id uuid NOT NULL,
+    preview_created boolean DEFAULT false NOT NULL,
+    fingerprint text NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    preview_expires_at timestamp with time zone NOT NULL,
+    preview_reserved boolean DEFAULT false NOT NULL,
+    canceled boolean DEFAULT false NOT NULL,
+    CONSTRAINT hosting_ci_runs_canceled_check CHECK ((canceled = ANY (ARRAY[true, false]))),
+    CONSTRAINT hosting_ci_runs_check CHECK ((isfinite(preview_expires_at) AND (preview_expires_at > created_at))),
+    CONSTRAINT hosting_ci_runs_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT hosting_ci_runs_fingerprint_check CHECK ((fingerprint ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT hosting_ci_runs_preview_reserved_check CHECK ((preview_reserved = ANY (ARRAY[true, false])))
+);
+
+
+--
+-- Name: hosting_domain_claims; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.hosting_domain_claims (
+    hostname text NOT NULL,
+    domain_id uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT hosting_domain_claims_hostname_check CHECK ((((length(hostname) >= 1) AND (length(hostname) <= 64)) AND (hostname = lower(hostname))))
+);
+
+
+--
+-- Name: hosting_domains; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.hosting_domains (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    site_id uuid NOT NULL,
+    hostname text NOT NULL,
+    provider_origin_id text NOT NULL,
+    challenge text NOT NULL,
+    state text DEFAULT 'pending_dns'::text NOT NULL,
+    revision bigint DEFAULT 1 NOT NULL,
+    generation bigint DEFAULT 1 NOT NULL,
+    published_generation bigint DEFAULT 0 NOT NULL,
+    published_at timestamp with time zone,
+    details jsonb NOT NULL,
+    next_attempt_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    attempts bigint DEFAULT 0 NOT NULL,
+    last_error_code text DEFAULT ''::text NOT NULL,
+    lease_token uuid,
+    lease_until timestamp with time zone,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT hosting_domains_attempts_check CHECK ((attempts >= 0)),
+    CONSTRAINT hosting_domains_challenge_check CHECK ((challenge ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT hosting_domains_check CHECK (((published_generation >= 0) AND (published_generation <= generation))),
+    CONSTRAINT hosting_domains_check1 CHECK (((lease_token IS NULL) = (lease_until IS NULL))),
+    CONSTRAINT hosting_domains_check2 CHECK (((published_generation > 0) = (published_at IS NOT NULL))),
+    CONSTRAINT hosting_domains_details_check CHECK (((jsonb_typeof(details) = 'object'::text) AND (octet_length((details)::text) <= 16384))),
+    CONSTRAINT hosting_domains_generation_check CHECK (((generation >= 1) AND (generation <= '9007199254740991'::bigint))),
+    CONSTRAINT hosting_domains_last_error_code_check CHECK ((last_error_code = ANY (ARRAY[''::text, 'dns_pending'::text, 'provider_unavailable'::text, 'provider_conflict'::text, 'publication_unavailable'::text, 'origin_unavailable'::text]))),
+    CONSTRAINT hosting_domains_provider_origin_id_check CHECK ((provider_origin_id ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT hosting_domains_revision_check CHECK (((revision >= 1) AND (revision <= '9007199254740991'::bigint))),
+    CONSTRAINT hosting_domains_state_check CHECK ((state = ANY (ARRAY['pending_dns'::text, 'pending_certificate'::text, 'active'::text, 'deleting'::text])))
+);
+
+
+--
+-- Name: hosting_oidc_trusts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.hosting_oidc_trusts (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    site_id uuid NOT NULL,
+    repository_owner_id text NOT NULL,
+    repository_id text NOT NULL,
+    repository text NOT NULL,
+    ref text NOT NULL,
+    workflow_ref text NOT NULL,
+    event_name text NOT NULL,
+    environment text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT hosting_oidc_trusts_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT hosting_oidc_trusts_environment_check CHECK ((octet_length(environment) <= 255)),
+    CONSTRAINT hosting_oidc_trusts_event_name_check CHECK ((event_name = ANY (ARRAY['push'::text, 'workflow_dispatch'::text, 'schedule'::text]))),
+    CONSTRAINT hosting_oidc_trusts_ref_check CHECK ((((octet_length(ref) >= 12) AND (octet_length(ref) <= 255)) AND (ref ~~ 'refs/heads/%'::text))),
+    CONSTRAINT hosting_oidc_trusts_repository_check CHECK (((octet_length(repository) >= 3) AND (octet_length(repository) <= 200))),
+    CONSTRAINT hosting_oidc_trusts_repository_id_check CHECK ((repository_id ~ '^[1-9][0-9]{0,19}$'::text)),
+    CONSTRAINT hosting_oidc_trusts_repository_owner_id_check CHECK ((repository_owner_id ~ '^[1-9][0-9]{0,19}$'::text)),
+    CONSTRAINT hosting_oidc_trusts_workflow_ref_check CHECK (((octet_length(workflow_ref) >= 1) AND (octet_length(workflow_ref) <= 512)))
+);
+
+
+--
+-- Name: hosting_previews; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.hosting_previews (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    site_id uuid NOT NULL,
+    release_id uuid NOT NULL,
+    hostname text NOT NULL,
+    origin_id text NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    revoked boolean DEFAULT false NOT NULL,
+    generation bigint DEFAULT 1 NOT NULL,
+    published_generation bigint DEFAULT 0 NOT NULL,
+    published_at timestamp with time zone,
+    next_attempt_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    last_error_code text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT hosting_previews_check CHECK (((published_generation >= 0) AND (published_generation <= generation))),
+    CONSTRAINT hosting_previews_check1 CHECK ((expires_at > created_at)),
+    CONSTRAINT hosting_previews_check2 CHECK ((revoked = (generation = 2))),
+    CONSTRAINT hosting_previews_check3 CHECK (((published_generation > 0) = (published_at IS NOT NULL))),
+    CONSTRAINT hosting_previews_generation_check CHECK ((generation = ANY (ARRAY[(1)::bigint, (2)::bigint]))),
+    CONSTRAINT hosting_previews_hostname_check CHECK ((((length(hostname) >= 40) AND (length(hostname) <= 253)) AND (hostname = lower(hostname)))),
+    CONSTRAINT hosting_previews_last_error_code_check CHECK ((last_error_code = ANY (ARRAY[''::text, 'publication_unavailable'::text, 'origin_unavailable'::text]))),
+    CONSTRAINT hosting_previews_origin_id_check CHECK ((origin_id ~ '^[0-9a-f]{64}$'::text))
+);
+
+
+--
+-- Name: hosting_promotion_events; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.hosting_promotion_events (
+    site_id uuid NOT NULL,
+    revision bigint NOT NULL,
+    previous_revision bigint NOT NULL,
+    release_id uuid NOT NULL,
+    previous_release_id uuid,
+    actor_account_id uuid NOT NULL,
+    actor_key_id uuid,
+    accepted_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    provenance jsonb,
+    CONSTRAINT hosting_promotion_events_accepted_at_check CHECK (isfinite(accepted_at)),
+    CONSTRAINT hosting_promotion_events_check CHECK ((previous_revision = (revision - 1))),
+    CONSTRAINT hosting_promotion_events_provenance_check CHECK (((provenance IS NULL) OR ((jsonb_typeof(provenance) = 'object'::text) AND (octet_length((provenance)::text) <= 4096)))),
+    CONSTRAINT hosting_promotion_events_revision_check CHECK (((revision >= 2) AND (revision <= '9007199254740991'::bigint)))
+);
+
+
+--
+-- Name: hosting_releases; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.hosting_releases (
+    id uuid NOT NULL,
+    site_id uuid NOT NULL,
+    state text DEFAULT 'pending'::text NOT NULL,
+    manifest jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    retired_at timestamp with time zone,
+    retirement_generation bigint DEFAULT 0 NOT NULL,
+    retirement_published_at timestamp with time zone,
+    artifact_bytes bigint NOT NULL,
+    first_promoted_at timestamp with time zone,
+    provenance jsonb,
+    last_activity_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT hosting_releases_artifact_bytes_check CHECK (((artifact_bytes >= 0) AND (artifact_bytes <= 104857600))),
+    CONSTRAINT hosting_releases_check CHECK (((state = ANY (ARRAY['retiring'::text, 'deleted'::text])) = (retired_at IS NOT NULL))),
+    CONSTRAINT hosting_releases_check1 CHECK (((retirement_published_at IS NULL) OR ((state = ANY (ARRAY['retiring'::text, 'deleted'::text])) AND (retirement_generation > 0)))),
+    CONSTRAINT hosting_releases_check2 CHECK (((first_promoted_at IS NULL) OR (isfinite(first_promoted_at) AND (first_promoted_at >= created_at)))),
+    CONSTRAINT hosting_releases_last_activity_at_check CHECK (isfinite(last_activity_at)),
+    CONSTRAINT hosting_releases_manifest_check CHECK (((jsonb_typeof(manifest) = 'object'::text) AND (octet_length((manifest)::text) <= 1048576))),
+    CONSTRAINT hosting_releases_provenance_check CHECK (((provenance IS NULL) OR ((jsonb_typeof(provenance) = 'object'::text) AND (octet_length((provenance)::text) <= 4096)))),
+    CONSTRAINT hosting_releases_retirement_generation_check CHECK ((retirement_generation >= 0)),
+    CONSTRAINT hosting_releases_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'ready'::text, 'retiring'::text, 'deleted'::text])))
+);
+
+
+--
+-- Name: hosting_retention_policies; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.hosting_retention_policies (
+    site_id uuid NOT NULL,
+    revision bigint NOT NULL,
+    enabled boolean DEFAULT false NOT NULL,
+    pending_age_seconds bigint NOT NULL,
+    staged_age_seconds bigint NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT hosting_retention_policies_pending_age_seconds_check CHECK (((pending_age_seconds >= 3600) AND (pending_age_seconds <= 2592000))),
+    CONSTRAINT hosting_retention_policies_revision_check CHECK ((revision > 0)),
+    CONSTRAINT hosting_retention_policies_staged_age_seconds_check CHECK (((staged_age_seconds >= 3600) AND (staged_age_seconds <= 2592000))),
+    CONSTRAINT hosting_retention_policies_updated_at_check CHECK (isfinite(updated_at))
+);
+
+
+--
+-- Name: hosting_route_publications; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.hosting_route_publications (
+    site_id uuid NOT NULL,
+    generation bigint DEFAULT 1 NOT NULL,
+    published_generation bigint DEFAULT 0 NOT NULL,
+    published_at timestamp with time zone,
+    next_attempt_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    pending_since timestamp with time zone DEFAULT clock_timestamp(),
+    last_attempt_at timestamp with time zone,
+    retry_count bigint DEFAULT 0 NOT NULL,
+    last_error_code text DEFAULT ''::text NOT NULL,
+    CONSTRAINT hosting_route_publications_check CHECK (((published_generation >= 0) AND (published_generation <= generation))),
+    CONSTRAINT hosting_route_publications_check1 CHECK (((published_generation > 0) = (published_at IS NOT NULL))),
+    CONSTRAINT hosting_route_publications_generation_check CHECK ((generation > 0)),
+    CONSTRAINT hosting_route_publications_last_error_code_check CHECK ((last_error_code = ANY (ARRAY[''::text, 'origin_unavailable'::text, 'publication_unavailable'::text, 'stale_generation'::text]))),
+    CONSTRAINT hosting_route_publications_pending CHECK (((generation > published_generation) = (pending_since IS NOT NULL))),
+    CONSTRAINT hosting_route_publications_retry_count_check CHECK ((retry_count >= 0))
+);
+
+
+--
+-- Name: hosting_sites; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.hosting_sites (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    project_id uuid NOT NULL,
+    environment text NOT NULL,
+    name text NOT NULL,
+    hostname text NOT NULL,
+    origin_id text NOT NULL,
+    status text DEFAULT 'active'::text NOT NULL,
+    active_release_id uuid,
+    revision bigint DEFAULT 1 NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    durable_routing boolean DEFAULT false NOT NULL,
+    suspended boolean DEFAULT false NOT NULL,
+    CONSTRAINT hosting_sites_check CHECK (((NOT suspended) OR durable_routing)),
+    CONSTRAINT hosting_sites_durable_routing_check CHECK ((durable_routing = ANY (ARRAY[true, false]))),
+    CONSTRAINT hosting_sites_environment_check CHECK (((length(environment) >= 1) AND (length(environment) <= 63))),
+    CONSTRAINT hosting_sites_hostname_check CHECK ((((length(hostname) >= 1) AND (length(hostname) <= 253)) AND (hostname = lower(hostname)))),
+    CONSTRAINT hosting_sites_name_check CHECK ((name ~ '^[a-z0-9]([a-z0-9-]{0,46}[a-z0-9])?$'::text)),
+    CONSTRAINT hosting_sites_origin_id_check CHECK ((origin_id ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT hosting_sites_revision_check CHECK ((revision > 0)),
+    CONSTRAINT hosting_sites_status_check CHECK ((status = ANY (ARRAY['active'::text, 'deleting'::text])))
+);
+
+
+--
 -- Name: idempotency_keys; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -28980,6 +29784,21 @@ CREATE SEQUENCE public.instance_billing_intervals_id_seq
 --
 
 ALTER SEQUENCE public.instance_billing_intervals_id_seq OWNED BY public.instance_billing_intervals.id;
+
+
+--
+-- Name: instance_snapshot_recovery; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.instance_snapshot_recovery (
+    instance_id uuid NOT NULL,
+    wake_id uuid NOT NULL,
+    generation bigint NOT NULL,
+    snapshot_id uuid,
+    CONSTRAINT instance_snapshot_recovery_generation_check CHECK ((generation >= 0)),
+    CONSTRAINT instance_snapshot_recovery_snapshot_id_check CHECK (((snapshot_id IS NULL) OR (snapshot_id <> '00000000-0000-0000-0000-000000000000'::uuid))),
+    CONSTRAINT instance_snapshot_recovery_wake_id_check CHECK ((wake_id <> '00000000-0000-0000-0000-000000000000'::uuid))
+);
 
 
 --
@@ -32937,6 +33756,51 @@ CREATE TABLE public.mfa_disable_requests (
 
 
 --
+-- Name: migration_admissions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.migration_admissions (
+    id uuid NOT NULL,
+    instance_id uuid NOT NULL,
+    source_node_id uuid NOT NULL,
+    destination_node_id uuid NOT NULL,
+    source_wake_id uuid NOT NULL,
+    destination_wake_id uuid NOT NULL,
+    destination_generation bigint NOT NULL,
+    lease_token text NOT NULL,
+    mem_storage_key text NOT NULL,
+    vmstate_storage_key text NOT NULL,
+    request_digest text NOT NULL,
+    ram_mb integer NOT NULL,
+    cpu_millicores integer NOT NULL,
+    vcpu integer NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    phase text DEFAULT 'reserved'::text NOT NULL,
+    active_lease_token text GENERATED ALWAYS AS (
+CASE
+    WHEN (phase <> ALL (ARRAY['cleaned'::text, 'committed'::text])) THEN lease_token
+    ELSE NULL::text
+END) STORED,
+    adoption_receipt bytea DEFAULT '\x'::bytea NOT NULL,
+    cleanup_proof text DEFAULT ''::text NOT NULL,
+    CONSTRAINT migration_admissions_adoption_receipt_check CHECK ((octet_length(adoption_receipt) <= 65536)),
+    CONSTRAINT migration_admissions_check CHECK (((source_node_id <> destination_node_id) AND (source_wake_id <> destination_wake_id))),
+    CONSTRAINT migration_admissions_check1 CHECK (((phase <> ALL (ARRAY['adopted'::text, 'committed'::text])) OR (octet_length(adoption_receipt) > 0))),
+    CONSTRAINT migration_admissions_check2 CHECK (((phase = 'cleaned'::text) = (cleanup_proof <> ''::text))),
+    CONSTRAINT migration_admissions_cleanup_proof_check CHECK ((octet_length(cleanup_proof) <= 1024)),
+    CONSTRAINT migration_admissions_cpu_millicores_check CHECK ((cpu_millicores > 0)),
+    CONSTRAINT migration_admissions_destination_generation_check CHECK ((destination_generation > 0)),
+    CONSTRAINT migration_admissions_lease_token_check CHECK ((lease_token <> ''::text)),
+    CONSTRAINT migration_admissions_mem_storage_key_check CHECK ((mem_storage_key <> ''::text)),
+    CONSTRAINT migration_admissions_phase_check CHECK ((phase = ANY (ARRAY['reserved'::text, 'adopting'::text, 'adopted'::text, 'cleaning'::text, 'cleaned'::text, 'committed'::text]))),
+    CONSTRAINT migration_admissions_ram_mb_check CHECK ((ram_mb > 0)),
+    CONSTRAINT migration_admissions_request_digest_check CHECK ((request_digest ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT migration_admissions_vcpu_check CHECK ((vcpu > 0)),
+    CONSTRAINT migration_admissions_vmstate_storage_key_check CHECK ((vmstate_storage_key <> ''::text))
+);
+
+
+--
 -- Name: migration_leases; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -32948,7 +33812,40 @@ CREATE TABLE public.migration_leases (
     lease_expires_at timestamp with time zone NOT NULL,
     mem_storage_key text DEFAULT ''::text NOT NULL,
     vmstate_storage_key text DEFAULT ''::text NOT NULL,
-    pending boolean DEFAULT true NOT NULL
+    pending boolean DEFAULT true NOT NULL,
+    resume_fenced boolean DEFAULT false NOT NULL
+);
+
+
+--
+-- Name: migration_sources; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.migration_sources (
+    lease_token text NOT NULL,
+    instance_id uuid NOT NULL,
+    source_node_id uuid NOT NULL,
+    source_wake_id uuid NOT NULL,
+    native_generation uuid NOT NULL,
+    physical_binding text NOT NULL,
+    ram_mb integer NOT NULL,
+    cpu_millicores integer NOT NULL,
+    vcpu integer NOT NULL,
+    phase text DEFAULT 'bound'::text NOT NULL,
+    proof text DEFAULT ''::text NOT NULL,
+    active_lease_token text GENERATED ALWAYS AS (
+CASE
+    WHEN (phase = ANY (ARRAY['bound'::text, 'retiring'::text])) THEN lease_token
+    ELSE NULL::text
+END) STORED,
+    CONSTRAINT migration_sources_check CHECK (((phase = ANY (ARRAY['retired'::text, 'resumed'::text])) = (proof <> ''::text))),
+    CONSTRAINT migration_sources_cpu_millicores_check CHECK ((cpu_millicores > 0)),
+    CONSTRAINT migration_sources_lease_token_check CHECK (((lease_token <> ''::text) AND (octet_length(lease_token) <= 128))),
+    CONSTRAINT migration_sources_phase_check CHECK ((phase = ANY (ARRAY['bound'::text, 'retiring'::text, 'retired'::text, 'resumed'::text]))),
+    CONSTRAINT migration_sources_physical_binding_check CHECK ((physical_binding ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT migration_sources_proof_check CHECK ((octet_length(proof) <= 1024)),
+    CONSTRAINT migration_sources_ram_mb_check CHECK ((ram_mb > 0)),
+    CONSTRAINT migration_sources_vcpu_check CHECK ((vcpu > 0))
 );
 
 
@@ -33089,6 +33986,37 @@ CREATE TABLE public.node_join_jobs (
     completed_at timestamp with time zone,
     CONSTRAINT node_join_jobs_attempt_check CHECK ((attempt >= 0)),
     CONSTRAINT node_join_jobs_phase_check CHECK ((phase = ANY (ARRAY['planned'::text, 'preflight'::text, 'converging'::text, 'prepared'::text, 'verifying'::text, 'active'::text, 'failed'::text, 'rolled_back'::text])))
+);
+
+
+--
+-- Name: node_lifecycle_completions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.node_lifecycle_completions (
+    node_id uuid NOT NULL,
+    source_generation bigint NOT NULL,
+    result_generation bigint NOT NULL,
+    source_lifecycle text NOT NULL,
+    result_lifecycle text NOT NULL,
+    node_name text NOT NULL,
+    initiated_at timestamp with time zone NOT NULL,
+    completed_at timestamp with time zone NOT NULL,
+    drained_count bigint NOT NULL,
+    migrated_count bigint NOT NULL,
+    recreated_count bigint NOT NULL,
+    audit_outbox_id bigint NOT NULL,
+    CONSTRAINT node_lifecycle_completions_audit_outbox_id_check CHECK ((audit_outbox_id > 0)),
+    CONSTRAINT node_lifecycle_completions_check CHECK ((result_generation > source_generation)),
+    CONSTRAINT node_lifecycle_completions_check1 CHECK ((result_generation = (source_generation + 1))),
+    CONSTRAINT node_lifecycle_completions_check2 CHECK ((((source_lifecycle = 'recovering'::text) AND (result_lifecycle = 'active'::text)) OR ((source_lifecycle = ANY (ARRAY['draining'::text, 'force_draining'::text])) AND (result_lifecycle = 'maintenance'::text)))),
+    CONSTRAINT node_lifecycle_completions_drained_count_check CHECK ((drained_count >= 0)),
+    CONSTRAINT node_lifecycle_completions_migrated_count_check CHECK ((migrated_count >= 0)),
+    CONSTRAINT node_lifecycle_completions_node_id_check CHECK ((node_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT node_lifecycle_completions_recreated_count_check CHECK ((recreated_count >= 0)),
+    CONSTRAINT node_lifecycle_completions_result_lifecycle_check CHECK ((result_lifecycle = ANY (ARRAY['maintenance'::text, 'active'::text]))),
+    CONSTRAINT node_lifecycle_completions_source_generation_check CHECK ((source_generation > 0)),
+    CONSTRAINT node_lifecycle_completions_source_lifecycle_check CHECK ((source_lifecycle = ANY (ARRAY['draining'::text, 'force_draining'::text, 'recovering'::text])))
 );
 
 
@@ -34166,9 +35094,117 @@ CREATE TABLE public.operator_intents (
     error text,
     snap_ids_marked_stale text[],
     trace_id text,
+    claim_token uuid,
+    completion_audit_outbox_id bigint,
+    cold_boot_generation bigint,
+    CONSTRAINT operator_intents_claim_token_check CHECK (((claim_token IS NULL) OR (claim_token <> '00000000-0000-0000-0000-000000000000'::uuid))),
+    CONSTRAINT operator_intents_cold_boot_generation_check CHECK ((cold_boot_generation > 0)),
+    CONSTRAINT operator_intents_completion_audit_outbox_id_check CHECK (((completion_audit_outbox_id IS NULL) OR (completion_audit_outbox_id > 0))),
     CONSTRAINT operator_intents_kind_check CHECK ((kind = ANY (ARRAY['force_park'::text, 'force_cold_boot'::text, 'force_restart'::text, 'node_drain'::text, 'node_force_drain'::text, 'node_activate'::text, 'node_retire'::text]))),
-    CONSTRAINT operator_intents_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'running'::text, 'succeeded'::text, 'failed'::text, 'cancelled'::text]))),
+    CONSTRAINT operator_intents_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'running'::text, 'succeeded'::text, 'failed'::text, 'cancelled'::text, 'outcome_unknown'::text]))),
     CONSTRAINT operator_intents_trace_id_check CHECK (((trace_id IS NULL) OR (trace_id ~ '^[0-9a-f]{32}$'::text)))
+);
+
+
+--
+-- Name: operator_node_executions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.operator_node_executions (
+    intent_id uuid NOT NULL,
+    claim_token uuid NOT NULL,
+    kind text NOT NULL,
+    target_id text NOT NULL,
+    previous_lifecycle text NOT NULL,
+    result_lifecycle text NOT NULL,
+    changed boolean NOT NULL,
+    status text NOT NULL,
+    error text NOT NULL,
+    finished_at timestamp with time zone NOT NULL,
+    audit_outbox_id bigint NOT NULL,
+    CONSTRAINT operator_node_executions_audit_outbox_id_check CHECK ((audit_outbox_id > 0)),
+    CONSTRAINT operator_node_executions_check CHECK (((status = 'succeeded'::text) = (error = ''::text))),
+    CONSTRAINT operator_node_executions_check1 CHECK (((NOT changed) OR ((status = 'succeeded'::text) AND (previous_lifecycle <> ''::text) AND (previous_lifecycle <> result_lifecycle)))),
+    CONSTRAINT operator_node_executions_check2 CHECK ((changed OR (previous_lifecycle = result_lifecycle))),
+    CONSTRAINT operator_node_executions_claim_token_check CHECK ((claim_token <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT operator_node_executions_error_check CHECK ((octet_length(error) <= 1024)),
+    CONSTRAINT operator_node_executions_kind_check CHECK ((kind = ANY (ARRAY['node_drain'::text, 'node_force_drain'::text, 'node_activate'::text, 'node_retire'::text]))),
+    CONSTRAINT operator_node_executions_previous_lifecycle_check CHECK ((previous_lifecycle = ANY (ARRAY[''::text, 'active'::text, 'draining'::text, 'force_draining'::text, 'unavailable'::text, 'recovering'::text, 'maintenance'::text, 'retired'::text]))),
+    CONSTRAINT operator_node_executions_result_lifecycle_check CHECK ((result_lifecycle = ANY (ARRAY[''::text, 'active'::text, 'draining'::text, 'force_draining'::text, 'unavailable'::text, 'recovering'::text, 'maintenance'::text, 'retired'::text]))),
+    CONSTRAINT operator_node_executions_status_check CHECK ((status = ANY (ARRAY['succeeded'::text, 'failed'::text])))
+);
+
+
+--
+-- Name: operator_park_executions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.operator_park_executions (
+    intent_id uuid NOT NULL,
+    target jsonb NOT NULL,
+    phase text NOT NULL,
+    effect_token uuid,
+    receipt jsonb,
+    stopped_at timestamp with time zone,
+    terminal_state text,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT operator_park_executions_check CHECK (((receipt IS NULL) = (stopped_at IS NULL))),
+    CONSTRAINT operator_park_executions_check1 CHECK (((receipt IS NULL) OR (effect_token IS NOT NULL))),
+    CONSTRAINT operator_park_executions_check2 CHECK (((phase <> ALL (ARRAY['acknowledged'::text, 'completed'::text])) OR (receipt IS NOT NULL))),
+    CONSTRAINT operator_park_executions_check3 CHECK (((phase <> 'started'::text) OR (effect_token IS NOT NULL))),
+    CONSTRAINT operator_park_executions_check4 CHECK (((phase = 'completed'::text) = (terminal_state IS NOT NULL))),
+    CONSTRAINT operator_park_executions_effect_token_check CHECK (((effect_token IS NULL) OR (effect_token <> '00000000-0000-0000-0000-000000000000'::uuid))),
+    CONSTRAINT operator_park_executions_phase_check CHECK ((phase = ANY (ARRAY['prepared'::text, 'started'::text, 'acknowledged'::text, 'outcome_unknown'::text, 'completed'::text, 'failed'::text, 'cancelled'::text]))),
+    CONSTRAINT operator_park_executions_receipt_check CHECK (((receipt IS NULL) OR (jsonb_typeof(receipt) = 'object'::text))),
+    CONSTRAINT operator_park_executions_target_check CHECK ((jsonb_typeof(target) = 'object'::text)),
+    CONSTRAINT operator_park_executions_terminal_state_check CHECK (((terminal_state IS NULL) OR (terminal_state = ANY (ARRAY['parked'::text, 'stopped'::text]))))
+);
+
+
+--
+-- Name: operator_recovery_submissions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.operator_recovery_submissions (
+    actor_id uuid NOT NULL,
+    key_digest text NOT NULL,
+    request_digest text NOT NULL,
+    intent_id uuid NOT NULL,
+    response_body bytea NOT NULL,
+    audit_outbox_id bigint NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT operator_recovery_submissions_actor_id_check CHECK ((actor_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT operator_recovery_submissions_audit_outbox_id_check CHECK ((audit_outbox_id > 0)),
+    CONSTRAINT operator_recovery_submissions_key_digest_check CHECK ((key_digest ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT operator_recovery_submissions_request_digest_check CHECK ((request_digest ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT operator_recovery_submissions_response_body_check CHECK ((octet_length(response_body) > 0))
+);
+
+
+--
+-- Name: TABLE operator_recovery_submissions; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.operator_recovery_submissions IS 'ADR-1524: retained acceptance boundary; no TTL. audit_outbox_id survives queue pruning.';
+
+
+--
+-- Name: operator_restart_executions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.operator_restart_executions (
+    intent_id uuid NOT NULL,
+    target jsonb NOT NULL,
+    phase text NOT NULL,
+    destroy_token uuid,
+    destroyed_at timestamp with time zone,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT operator_restart_executions_check CHECK (((destroyed_at IS NULL) OR (destroy_token IS NOT NULL))),
+    CONSTRAINT operator_restart_executions_check1 CHECK (((phase <> ALL (ARRAY['destroyed'::text, 'completed'::text])) OR (destroyed_at IS NOT NULL))),
+    CONSTRAINT operator_restart_executions_check2 CHECK (((phase <> 'started'::text) OR (destroy_token IS NOT NULL))),
+    CONSTRAINT operator_restart_executions_destroy_token_check CHECK (((destroy_token IS NULL) OR (destroy_token <> '00000000-0000-0000-0000-000000000000'::uuid))),
+    CONSTRAINT operator_restart_executions_phase_check CHECK ((phase = ANY (ARRAY['prepared'::text, 'started'::text, 'destroyed'::text, 'outcome_unknown'::text, 'completed'::text, 'failed'::text]))),
+    CONSTRAINT operator_restart_executions_target_check CHECK ((jsonb_typeof(target) = 'object'::text))
 );
 
 
@@ -44386,6 +45422,174 @@ ALTER TABLE ONLY public.goose_db_version
 
 
 --
+-- Name: hosting_automation_credentials hosting_automation_credentials_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hosting_automation_credentials
+    ADD CONSTRAINT hosting_automation_credentials_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: hosting_automation_credentials hosting_automation_credentials_token_hash_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hosting_automation_credentials
+    ADD CONSTRAINT hosting_automation_credentials_token_hash_key UNIQUE (token_hash);
+
+
+--
+-- Name: hosting_ci_runs hosting_ci_runs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hosting_ci_runs
+    ADD CONSTRAINT hosting_ci_runs_pkey PRIMARY KEY (site_id, id);
+
+
+--
+-- Name: hosting_ci_runs hosting_ci_runs_preview_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hosting_ci_runs
+    ADD CONSTRAINT hosting_ci_runs_preview_id_key UNIQUE (preview_id);
+
+
+--
+-- Name: hosting_domain_claims hosting_domain_claims_domain_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hosting_domain_claims
+    ADD CONSTRAINT hosting_domain_claims_domain_id_key UNIQUE (domain_id);
+
+
+--
+-- Name: hosting_domain_claims hosting_domain_claims_hostname_domain_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hosting_domain_claims
+    ADD CONSTRAINT hosting_domain_claims_hostname_domain_id_key UNIQUE (hostname, domain_id);
+
+
+--
+-- Name: hosting_domain_claims hosting_domain_claims_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hosting_domain_claims
+    ADD CONSTRAINT hosting_domain_claims_pkey PRIMARY KEY (hostname);
+
+
+--
+-- Name: hosting_domains hosting_domains_hostname_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hosting_domains
+    ADD CONSTRAINT hosting_domains_hostname_key UNIQUE (hostname);
+
+
+--
+-- Name: hosting_domains hosting_domains_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hosting_domains
+    ADD CONSTRAINT hosting_domains_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: hosting_oidc_trusts hosting_oidc_trusts_account_id_site_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hosting_oidc_trusts
+    ADD CONSTRAINT hosting_oidc_trusts_account_id_site_id_id_key UNIQUE (account_id, site_id, id);
+
+
+--
+-- Name: hosting_oidc_trusts hosting_oidc_trusts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hosting_oidc_trusts
+    ADD CONSTRAINT hosting_oidc_trusts_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: hosting_previews hosting_previews_hostname_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hosting_previews
+    ADD CONSTRAINT hosting_previews_hostname_key UNIQUE (hostname);
+
+
+--
+-- Name: hosting_previews hosting_previews_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hosting_previews
+    ADD CONSTRAINT hosting_previews_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: hosting_promotion_events hosting_promotion_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hosting_promotion_events
+    ADD CONSTRAINT hosting_promotion_events_pkey PRIMARY KEY (site_id, revision);
+
+
+--
+-- Name: hosting_releases hosting_releases_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hosting_releases
+    ADD CONSTRAINT hosting_releases_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: hosting_releases hosting_releases_site_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hosting_releases
+    ADD CONSTRAINT hosting_releases_site_id_id_key UNIQUE (site_id, id);
+
+
+--
+-- Name: hosting_retention_policies hosting_retention_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hosting_retention_policies
+    ADD CONSTRAINT hosting_retention_policies_pkey PRIMARY KEY (site_id);
+
+
+--
+-- Name: hosting_route_publications hosting_route_publications_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hosting_route_publications
+    ADD CONSTRAINT hosting_route_publications_pkey PRIMARY KEY (site_id);
+
+
+--
+-- Name: hosting_sites hosting_sites_account_id_project_id_environment_name_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hosting_sites
+    ADD CONSTRAINT hosting_sites_account_id_project_id_environment_name_key UNIQUE (account_id, project_id, environment, name);
+
+
+--
+-- Name: hosting_sites hosting_sites_hostname_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hosting_sites
+    ADD CONSTRAINT hosting_sites_hostname_key UNIQUE (hostname);
+
+
+--
+-- Name: hosting_sites hosting_sites_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hosting_sites
+    ADD CONSTRAINT hosting_sites_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: idempotency_keys idempotency_keys_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -44463,6 +45667,14 @@ ALTER TABLE ONLY public.instance_billing_intervals
 
 ALTER TABLE ONLY public.instance_runtime_config_receipts
     ADD CONSTRAINT instance_runtime_config_receipts_pkey PRIMARY KEY (instance_id);
+
+
+--
+-- Name: instance_snapshot_recovery instance_snapshot_recovery_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.instance_snapshot_recovery
+    ADD CONSTRAINT instance_snapshot_recovery_pkey PRIMARY KEY (instance_id);
 
 
 --
@@ -45970,6 +47182,22 @@ ALTER TABLE ONLY public.mfa_disable_requests
 
 
 --
+-- Name: migration_admissions migration_admissions_instance_id_lease_token_destination_no_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.migration_admissions
+    ADD CONSTRAINT migration_admissions_instance_id_lease_token_destination_no_key UNIQUE (instance_id, lease_token, destination_node_id);
+
+
+--
+-- Name: migration_admissions migration_admissions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.migration_admissions
+    ADD CONSTRAINT migration_admissions_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: migration_leases migration_leases_lease_token_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -45983,6 +47211,14 @@ ALTER TABLE ONLY public.migration_leases
 
 ALTER TABLE ONLY public.migration_leases
     ADD CONSTRAINT migration_leases_pkey PRIMARY KEY (instance_id);
+
+
+--
+-- Name: migration_sources migration_sources_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.migration_sources
+    ADD CONSTRAINT migration_sources_pkey PRIMARY KEY (lease_token);
 
 
 --
@@ -46039,6 +47275,14 @@ ALTER TABLE ONLY public.node_join_jobs
 
 ALTER TABLE ONLY public.node_join_jobs
     ADD CONSTRAINT node_join_jobs_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: node_lifecycle_completions node_lifecycle_completions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.node_lifecycle_completions
+    ADD CONSTRAINT node_lifecycle_completions_pkey PRIMARY KEY (node_id, source_generation);
 
 
 --
@@ -46495,6 +47739,46 @@ ALTER TABLE ONLY public.oidc_trust_policies
 
 ALTER TABLE ONLY public.operator_intents
     ADD CONSTRAINT operator_intents_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: operator_node_executions operator_node_executions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.operator_node_executions
+    ADD CONSTRAINT operator_node_executions_pkey PRIMARY KEY (intent_id);
+
+
+--
+-- Name: operator_park_executions operator_park_executions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.operator_park_executions
+    ADD CONSTRAINT operator_park_executions_pkey PRIMARY KEY (intent_id);
+
+
+--
+-- Name: operator_recovery_submissions operator_recovery_submissions_intent_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.operator_recovery_submissions
+    ADD CONSTRAINT operator_recovery_submissions_intent_id_key UNIQUE (intent_id);
+
+
+--
+-- Name: operator_recovery_submissions operator_recovery_submissions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.operator_recovery_submissions
+    ADD CONSTRAINT operator_recovery_submissions_pkey PRIMARY KEY (actor_id, key_digest);
+
+
+--
+-- Name: operator_restart_executions operator_restart_executions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.operator_restart_executions
+    ADD CONSTRAINT operator_restart_executions_pkey PRIMARY KEY (intent_id);
 
 
 --
@@ -53091,6 +54375,90 @@ CREATE INDEX github_webhook_deliveries_due_idx ON public.github_webhook_deliveri
 
 
 --
+-- Name: hosting_automation_credentials_site; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX hosting_automation_credentials_site ON public.hosting_automation_credentials USING btree (site_id);
+
+
+--
+-- Name: hosting_credentials_oidc_trust; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX hosting_credentials_oidc_trust ON public.hosting_automation_credentials USING btree (oidc_trust_id) WHERE (oidc_trust_id IS NOT NULL);
+
+
+--
+-- Name: hosting_domains_due; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX hosting_domains_due ON public.hosting_domains USING btree (next_attempt_at, id);
+
+
+--
+-- Name: hosting_domains_site; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX hosting_domains_site ON public.hosting_domains USING btree (site_id, created_at);
+
+
+--
+-- Name: hosting_oidc_trusts_site; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX hosting_oidc_trusts_site ON public.hosting_oidc_trusts USING btree (site_id);
+
+
+--
+-- Name: hosting_previews_due; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX hosting_previews_due ON public.hosting_previews USING btree (next_attempt_at, id);
+
+
+--
+-- Name: hosting_previews_release; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX hosting_previews_release ON public.hosting_previews USING btree (release_id);
+
+
+--
+-- Name: hosting_previews_site; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX hosting_previews_site ON public.hosting_previews USING btree (site_id);
+
+
+--
+-- Name: hosting_releases_site; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX hosting_releases_site ON public.hosting_releases USING btree (site_id, created_at DESC);
+
+
+--
+-- Name: hosting_retention_enabled_sites; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX hosting_retention_enabled_sites ON public.hosting_retention_policies USING btree (site_id) WHERE enabled;
+
+
+--
+-- Name: hosting_route_publications_due; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX hosting_route_publications_due ON public.hosting_route_publications USING btree (next_attempt_at, site_id);
+
+
+--
+-- Name: hosting_route_publications_pending_since; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX hosting_route_publications_pending_since ON public.hosting_route_publications USING btree (pending_since) WHERE (generation > published_generation);
+
+
+--
 -- Name: idempotency_keys_publish_receipts_created_at_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -54582,10 +55950,59 @@ CREATE INDEX mfa_disable_requests_account_idx ON public.mfa_disable_requests USI
 
 
 --
+-- Name: migration_admissions_destination_pending; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX migration_admissions_destination_pending ON public.migration_admissions USING btree (destination_node_id, id) WHERE (phase <> ALL (ARRAY['cleaned'::text, 'committed'::text]));
+
+
+--
+-- Name: migration_admissions_one_pending; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX migration_admissions_one_pending ON public.migration_admissions USING btree (instance_id) WHERE (phase <> ALL (ARRAY['cleaned'::text, 'committed'::text]));
+
+
+--
+-- Name: migration_admissions_owned_wake; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX migration_admissions_owned_wake ON public.migration_admissions USING btree (instance_id, destination_node_id, destination_wake_id) WHERE (phase = 'committed'::text);
+
+
+--
 -- Name: migration_leases_expiry_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX migration_leases_expiry_idx ON public.migration_leases USING btree (lease_expires_at, instance_id);
+
+
+--
+-- Name: migration_leases_source_recovery; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX migration_leases_source_recovery ON public.migration_leases USING btree (source_node_id, lease_token);
+
+
+--
+-- Name: migration_sources_one_pending; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX migration_sources_one_pending ON public.migration_sources USING btree (instance_id, source_node_id) WHERE (phase = ANY (ARRAY['bound'::text, 'retiring'::text]));
+
+
+--
+-- Name: migration_sources_recovery; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX migration_sources_recovery ON public.migration_sources USING btree (source_node_id, lease_token) WHERE (phase = ANY (ARRAY['bound'::text, 'retiring'::text]));
+
+
+--
+-- Name: migration_sources_resumed_wake; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX migration_sources_resumed_wake ON public.migration_sources USING btree (instance_id, source_node_id, source_wake_id) WHERE (phase = 'resumed'::text);
 
 
 --
@@ -55041,6 +56458,20 @@ CREATE INDEX operator_intents_target_idx ON public.operator_intents USING btree 
 --
 
 CREATE INDEX operator_intents_trace_idx ON public.operator_intents USING btree (trace_id) WHERE (trace_id IS NOT NULL);
+
+
+--
+-- Name: operator_intents_unknown_park_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX operator_intents_unknown_park_idx ON public.operator_intents USING btree (requested_at, id) WHERE ((status = 'outcome_unknown'::text) AND (kind = 'force_park'::text));
+
+
+--
+-- Name: operator_intents_unknown_restart_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX operator_intents_unknown_restart_idx ON public.operator_intents USING btree (requested_at, id) WHERE ((status = 'outcome_unknown'::text) AND (kind = 'force_restart'::text));
 
 
 --
@@ -59153,6 +60584,13 @@ CREATE TRIGGER compute_node_keys_changed_trg AFTER INSERT OR DELETE OR UPDATE ON
 
 
 --
+-- Name: compute_nodes compute_node_lifecycle_generation_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER compute_node_lifecycle_generation_guard BEFORE INSERT OR UPDATE OF lifecycle, lifecycle_generation, drain_initiated_at, recovery_initiated_at ON public.compute_nodes FOR EACH ROW EXECUTE FUNCTION public.compute_node_lifecycle_generation_guard();
+
+
+--
 -- Name: consumer_keys consumer_keys_set_updated_at_trg; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -60049,10 +61487,45 @@ CREATE TRIGGER instance_layer_artifact_guard BEFORE INSERT OR UPDATE OF deployme
 
 
 --
+-- Name: instances instance_migration_admission_consume; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER instance_migration_admission_consume AFTER UPDATE OF node_id ON public.instances FOR EACH ROW EXECUTE FUNCTION public.consume_migration_admission();
+
+
+--
+-- Name: instances instance_migration_admission_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER instance_migration_admission_guard BEFORE INSERT OR DELETE OR UPDATE OF node_id, state, wake_id, lease_token, app_id, deployment_id, ram_mb, capacity_ram_mb, capacity_cpu_millicores, capacity_vcpu ON public.instances FOR EACH ROW EXECUTE FUNCTION public.guard_instance_migration_admission();
+
+
+--
+-- Name: instances instance_migration_source_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER instance_migration_source_guard BEFORE UPDATE ON public.instances FOR EACH ROW EXECUTE FUNCTION public.guard_instance_migration_source();
+
+
+--
+-- Name: instances instance_node_admission_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER instance_node_admission_guard BEFORE INSERT OR UPDATE OF state, node_id ON public.instances FOR EACH ROW EXECUTE FUNCTION public.instance_node_admission_guard();
+
+
+--
 -- Name: events instance_readiness_notify_trg; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER instance_readiness_notify_trg AFTER INSERT ON public.events FOR EACH ROW EXECUTE FUNCTION public.instance_readiness_notify();
+
+
+--
+-- Name: instances instance_source_retirement_commit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER instance_source_retirement_commit AFTER UPDATE OF node_id ON public.instances FOR EACH ROW EXECUTE FUNCTION public.commit_migration_source_retirement();
 
 
 --
@@ -60728,6 +62201,13 @@ CREATE TRIGGER mcp_oauth_secret_credential_change BEFORE INSERT OR DELETE OR UPD
 
 
 --
+-- Name: migration_admissions migration_admission_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER migration_admission_guard BEFORE INSERT OR DELETE OR UPDATE ON public.migration_admissions FOR EACH ROW EXECUTE FUNCTION public.guard_migration_admission();
+
+
+--
 -- Name: goose_db_version migration_notify_trg; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -60735,10 +62215,38 @@ CREATE TRIGGER migration_notify_trg AFTER INSERT ON public.goose_db_version FOR 
 
 
 --
+-- Name: migration_sources migration_source_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER migration_source_guard BEFORE INSERT OR DELETE OR UPDATE ON public.migration_sources FOR EACH ROW EXECUTE FUNCTION public.guard_migration_source();
+
+
+--
 -- Name: mirror_rules mirror_rules_set_updated_at_trg; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER mirror_rules_set_updated_at_trg BEFORE UPDATE ON public.mirror_rules FOR EACH ROW EXECUTE FUNCTION public.mirror_rules_set_updated_at();
+
+
+--
+-- Name: node_lifecycle_completions node_lifecycle_completion_immutable; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER node_lifecycle_completion_immutable BEFORE DELETE OR UPDATE ON public.node_lifecycle_completions FOR EACH ROW EXECUTE FUNCTION public.node_lifecycle_completion_immutable();
+
+
+--
+-- Name: compute_nodes node_migration_admission_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER node_migration_admission_guard BEFORE DELETE OR UPDATE OF lifecycle ON public.compute_nodes FOR EACH ROW EXECUTE FUNCTION public.guard_node_migration_admissions();
+
+
+--
+-- Name: compute_nodes node_migration_source_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER node_migration_source_guard BEFORE DELETE OR UPDATE OF lifecycle ON public.compute_nodes FOR EACH ROW EXECUTE FUNCTION public.guard_node_migration_sources();
 
 
 --
@@ -61379,6 +62887,20 @@ CREATE TRIGGER object_write_bucket_cleanup_fence BEFORE INSERT ON public.object_
 
 
 --
+-- Name: operator_intents operator_node_completion_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER operator_node_completion_guard BEFORE UPDATE ON public.operator_intents FOR EACH ROW EXECUTE FUNCTION public.operator_node_completion_guard();
+
+
+--
+-- Name: operator_node_executions operator_node_receipt_immutable; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER operator_node_receipt_immutable BEFORE DELETE OR UPDATE ON public.operator_node_executions FOR EACH ROW EXECUTE FUNCTION public.operator_node_receipt_immutable();
+
+
+--
 -- Name: outbound_app_bindings outbound_app_binding_owner_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -62016,6 +63538,27 @@ CREATE TRIGGER service_capacity_after AFTER INSERT OR DELETE OR UPDATE OF state,
 
 
 --
+-- Name: migration_admissions service_capacity_after; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER service_capacity_after AFTER INSERT OR DELETE OR UPDATE ON public.migration_admissions FOR EACH STATEMENT EXECUTE FUNCTION public.service_capacity_after_write();
+
+
+--
+-- Name: migration_leases service_capacity_after; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER service_capacity_after AFTER INSERT OR DELETE OR UPDATE ON public.migration_leases FOR EACH STATEMENT EXECUTE FUNCTION public.service_capacity_after_write();
+
+
+--
+-- Name: migration_sources service_capacity_after; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER service_capacity_after AFTER INSERT OR DELETE OR UPDATE ON public.migration_sources FOR EACH STATEMENT EXECUTE FUNCTION public.service_capacity_after_write();
+
+
+--
 -- Name: apps service_capacity_before; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -62034,6 +63577,27 @@ CREATE TRIGGER service_capacity_before BEFORE INSERT OR DELETE OR UPDATE OF stat
 --
 
 CREATE TRIGGER service_capacity_before BEFORE INSERT OR DELETE OR UPDATE OF state, ram_mb, node_id, app_id, deployment_id, mode, capacity_ram_mb, capacity_cpu_millicores, capacity_vcpu ON public.instances FOR EACH STATEMENT EXECUTE FUNCTION public.service_capacity_before_write();
+
+
+--
+-- Name: migration_admissions service_capacity_before; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER service_capacity_before BEFORE INSERT OR DELETE OR UPDATE ON public.migration_admissions FOR EACH STATEMENT EXECUTE FUNCTION public.service_capacity_before_write();
+
+
+--
+-- Name: migration_leases service_capacity_before; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER service_capacity_before BEFORE INSERT OR DELETE OR UPDATE ON public.migration_leases FOR EACH STATEMENT EXECUTE FUNCTION public.service_capacity_before_write();
+
+
+--
+-- Name: migration_sources service_capacity_before; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER service_capacity_before BEFORE INSERT OR DELETE OR UPDATE ON public.migration_sources FOR EACH STATEMENT EXECUTE FUNCTION public.service_capacity_before_write();
 
 
 --
@@ -62076,6 +63640,13 @@ CREATE TRIGGER snapshot_fanout_event_after_snapshot AFTER INSERT OR UPDATE OF st
 --
 
 CREATE TRIGGER snapshot_layer_artifact_guard BEFORE INSERT OR UPDATE OF deployment_id, stale ON public.snapshots FOR EACH ROW EXECUTE FUNCTION public.guard_snapshot_layer_artifacts();
+
+
+--
+-- Name: snapshots snapshot_recovery_generation_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER snapshot_recovery_generation_guard BEFORE INSERT OR UPDATE OF stale, recovery_generation, deployment_id ON public.snapshots FOR EACH ROW EXECUTE FUNCTION public.snapshot_recovery_generation_guard();
 
 
 --
@@ -62132,6 +63703,20 @@ CREATE TRIGGER source_build_rootfs_current_private BEFORE INSERT OR DELETE OR UP
 --
 
 CREATE TRIGGER source_build_rootfs_private BEFORE INSERT OR DELETE OR UPDATE ON public.source_build_rootfs FOR EACH ROW EXECUTE FUNCTION public.source_build_rootfs_guard();
+
+
+--
+-- Name: migration_leases source_migration_admission_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER source_migration_admission_guard BEFORE DELETE OR UPDATE ON public.migration_leases FOR EACH ROW EXECUTE FUNCTION public.guard_source_migration_admissions();
+
+
+--
+-- Name: migration_leases source_migration_lease_node_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER source_migration_lease_node_guard BEFORE INSERT OR UPDATE OF instance_id, source_node_id, lease_token, mem_storage_key, vmstate_storage_key ON public.migration_leases FOR EACH ROW EXECUTE FUNCTION public.guard_source_migration_lease_node();
 
 
 --
@@ -67062,6 +68647,166 @@ ALTER TABLE ONLY public.gitlab_oauth_connections
 
 
 --
+-- Name: hosting_automation_credentials hosting_automation_credentials_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hosting_automation_credentials
+    ADD CONSTRAINT hosting_automation_credentials_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: hosting_automation_credentials hosting_automation_credentials_site_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hosting_automation_credentials
+    ADD CONSTRAINT hosting_automation_credentials_site_id_fkey FOREIGN KEY (site_id) REFERENCES public.hosting_sites(id) ON DELETE CASCADE;
+
+
+--
+-- Name: hosting_ci_runs hosting_ci_runs_site_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hosting_ci_runs
+    ADD CONSTRAINT hosting_ci_runs_site_id_fkey FOREIGN KEY (site_id) REFERENCES public.hosting_sites(id) ON DELETE CASCADE;
+
+
+--
+-- Name: hosting_automation_credentials hosting_credential_oidc_trust; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hosting_automation_credentials
+    ADD CONSTRAINT hosting_credential_oidc_trust FOREIGN KEY (account_id, site_id, oidc_trust_id) REFERENCES public.hosting_oidc_trusts(account_id, site_id, id) ON DELETE CASCADE;
+
+
+--
+-- Name: hosting_domains hosting_domains_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hosting_domains
+    ADD CONSTRAINT hosting_domains_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: hosting_domains hosting_domains_hostname_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hosting_domains
+    ADD CONSTRAINT hosting_domains_hostname_id_fkey FOREIGN KEY (hostname, id) REFERENCES public.hosting_domain_claims(hostname, domain_id) ON DELETE RESTRICT;
+
+
+--
+-- Name: hosting_domains hosting_domains_site_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hosting_domains
+    ADD CONSTRAINT hosting_domains_site_id_fkey FOREIGN KEY (site_id) REFERENCES public.hosting_sites(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: hosting_oidc_trusts hosting_oidc_trusts_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hosting_oidc_trusts
+    ADD CONSTRAINT hosting_oidc_trusts_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: hosting_oidc_trusts hosting_oidc_trusts_site_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hosting_oidc_trusts
+    ADD CONSTRAINT hosting_oidc_trusts_site_id_fkey FOREIGN KEY (site_id) REFERENCES public.hosting_sites(id) ON DELETE CASCADE;
+
+
+--
+-- Name: hosting_previews hosting_previews_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hosting_previews
+    ADD CONSTRAINT hosting_previews_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: hosting_previews hosting_previews_release_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hosting_previews
+    ADD CONSTRAINT hosting_previews_release_id_fkey FOREIGN KEY (release_id) REFERENCES public.hosting_releases(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: hosting_previews hosting_previews_site_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hosting_previews
+    ADD CONSTRAINT hosting_previews_site_id_fkey FOREIGN KEY (site_id) REFERENCES public.hosting_sites(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: hosting_promotion_events hosting_promotion_events_site_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hosting_promotion_events
+    ADD CONSTRAINT hosting_promotion_events_site_id_fkey FOREIGN KEY (site_id) REFERENCES public.hosting_sites(id) ON DELETE CASCADE;
+
+
+--
+-- Name: hosting_releases hosting_releases_site_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hosting_releases
+    ADD CONSTRAINT hosting_releases_site_id_fkey FOREIGN KEY (site_id) REFERENCES public.hosting_sites(id) ON DELETE CASCADE;
+
+
+--
+-- Name: hosting_retention_policies hosting_retention_policies_site_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hosting_retention_policies
+    ADD CONSTRAINT hosting_retention_policies_site_id_fkey FOREIGN KEY (site_id) REFERENCES public.hosting_sites(id) ON DELETE CASCADE;
+
+
+--
+-- Name: hosting_route_publications hosting_route_publications_site_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hosting_route_publications
+    ADD CONSTRAINT hosting_route_publications_site_id_fkey FOREIGN KEY (site_id) REFERENCES public.hosting_sites(id) ON DELETE CASCADE;
+
+
+--
+-- Name: hosting_sites hosting_sites_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hosting_sites
+    ADD CONSTRAINT hosting_sites_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: hosting_sites hosting_sites_active_release_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hosting_sites
+    ADD CONSTRAINT hosting_sites_active_release_fk FOREIGN KEY (id, active_release_id) REFERENCES public.hosting_releases(site_id, id) DEFERRABLE INITIALLY DEFERRED;
+
+
+--
+-- Name: hosting_sites hosting_sites_environment_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hosting_sites
+    ADD CONSTRAINT hosting_sites_environment_fk FOREIGN KEY (project_id, environment) REFERENCES public.project_environments(project_id, slug) ON DELETE RESTRICT;
+
+
+--
+-- Name: hosting_sites hosting_sites_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.hosting_sites
+    ADD CONSTRAINT hosting_sites_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE RESTRICT;
+
+
+--
 -- Name: idempotency_keys idempotency_keys_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -67131,6 +68876,14 @@ ALTER TABLE ONLY public.instance_billing_intervals
 
 ALTER TABLE ONLY public.instance_runtime_config_receipts
     ADD CONSTRAINT instance_runtime_config_receipts_instance_id_fkey FOREIGN KEY (instance_id) REFERENCES public.instances(id) ON DELETE CASCADE;
+
+
+--
+-- Name: instance_snapshot_recovery instance_snapshot_recovery_instance_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.instance_snapshot_recovery
+    ADD CONSTRAINT instance_snapshot_recovery_instance_id_fkey FOREIGN KEY (instance_id) REFERENCES public.instances(id) ON DELETE CASCADE;
 
 
 --
@@ -69062,11 +70815,27 @@ ALTER TABLE ONLY public.mfa_disable_requests
 
 
 --
+-- Name: migration_admissions migration_admissions_active_lease_token_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.migration_admissions
+    ADD CONSTRAINT migration_admissions_active_lease_token_fkey FOREIGN KEY (active_lease_token) REFERENCES public.migration_leases(lease_token);
+
+
+--
 -- Name: migration_leases migration_leases_instance_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.migration_leases
     ADD CONSTRAINT migration_leases_instance_id_fkey FOREIGN KEY (instance_id) REFERENCES public.instances(id) ON DELETE CASCADE;
+
+
+--
+-- Name: migration_sources migration_sources_active_lease_token_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.migration_sources
+    ADD CONSTRAINT migration_sources_active_lease_token_fkey FOREIGN KEY (active_lease_token) REFERENCES public.migration_leases(lease_token);
 
 
 --
@@ -69699,6 +71468,38 @@ ALTER TABLE ONLY public.oidc_exchanged_tokens
 
 ALTER TABLE ONLY public.oidc_trust_policies
     ADD CONSTRAINT oidc_trust_policies_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: operator_node_executions operator_node_executions_intent_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.operator_node_executions
+    ADD CONSTRAINT operator_node_executions_intent_id_fkey FOREIGN KEY (intent_id) REFERENCES public.operator_intents(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: operator_park_executions operator_park_executions_intent_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.operator_park_executions
+    ADD CONSTRAINT operator_park_executions_intent_id_fkey FOREIGN KEY (intent_id) REFERENCES public.operator_intents(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: operator_recovery_submissions operator_recovery_submissions_intent_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.operator_recovery_submissions
+    ADD CONSTRAINT operator_recovery_submissions_intent_id_fkey FOREIGN KEY (intent_id) REFERENCES public.operator_intents(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: operator_restart_executions operator_restart_executions_intent_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.operator_restart_executions
+    ADD CONSTRAINT operator_restart_executions_intent_id_fkey FOREIGN KEY (intent_id) REFERENCES public.operator_intents(id) ON DELETE RESTRICT;
 
 
 --

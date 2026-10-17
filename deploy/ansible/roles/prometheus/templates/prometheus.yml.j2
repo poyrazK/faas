@@ -109,6 +109,22 @@ scrape_configs:
         refresh_interval: "{{ prom_compute_metrics_discovery_refresh_interval }}"
     target_limit: {{ prom_compute_metrics_target_limit }}
     metrics_path: "/metrics"
+{% if faas_edge_on_compute_nodes | default(false) | bool %}
+  # ADR-1343 §5: the app edge on every active compute node — gatewayd-public
+  # in compute edge mode and its Cloudflare Tunnel connector.
+  - job_name: "gatewayd-public-edge"
+    http_sd_configs:
+      - url: "{{ prom_compute_edge_discovery_url }}"
+        refresh_interval: "{{ prom_compute_metrics_discovery_refresh_interval }}"
+    target_limit: {{ prom_compute_metrics_target_limit }}
+    metrics_path: "/metrics"
+  - job_name: "cloudflared"
+    http_sd_configs:
+      - url: "{{ prom_compute_cloudflared_discovery_url }}"
+        refresh_interval: "{{ prom_compute_metrics_discovery_refresh_interval }}"
+    target_limit: {{ prom_compute_metrics_target_limit }}
+    metrics_path: "/metrics"
+{% endif %}
 {% if prom_promtail_enabled | default(false) | bool %}
   # Issue #274: discover every compute-host Promtail endpoint from the same
   # active registry, but through a separate HTTP-SD endpoint so the gateway

@@ -36,6 +36,7 @@ var updateAppRequestCLISurfaces = map[string]updateAppCLISurface{
 	"stop_grace_period_s":                  {Path: "gregale.yaml lifecycle.stop_grace_period_s"},
 	"stop_signal":                          {Path: "gregale.yaml lifecycle.stop_signal"},
 	"request_timeout_s":                    {Path: "gregale app <slug> --request-timeout", AppFlags: []string{"request-timeout"}},
+	"function_concurrency":                 {Path: "gregale app <slug> --function-concurrency / gregale.yaml functions[].concurrency", AppFlags: []string{"function-concurrency"}},
 	"request_rate_limit_rps":               {KnownGap: "no customer CLI setter; API-only today"},
 	"request_rate_limit_burst":             {KnownGap: "no customer CLI setter; API-only today"},
 	"retry_policy":                         {Path: "gregale.yaml retry_policy"},
