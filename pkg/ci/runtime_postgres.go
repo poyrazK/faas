@@ -67,7 +67,11 @@ func (s *PostgresStore) runtimeState(ctx context.Context, runID string) (runtime
 	if json.Unmarshal(attempt.Source, &source) != nil {
 		return failed(ErrRuntimeAuthority)
 	}
-	raw, err := jobsManifest(req, source)
+	inputs, err := resolveArtifactInputs(row.Execution, req.Job)
+	if err != nil {
+		return failed(err)
+	}
+	raw, err := jobsManifest(req, source, inputs...)
 	if err != nil {
 		return failed(err)
 	}
@@ -194,15 +198,19 @@ func (s *PostgresStore) AuthorizeJobsRuntime(ctx context.Context, cfg Config, pr
 		return RuntimeView{}, err
 	}
 	defer func() { _ = state.tx.Rollback(ctx) }()
-	if action != RuntimeSource && action != RuntimeControl && action != RuntimeUpload {
+	if action != RuntimeSource && action != RuntimeControl && action != RuntimeUpload && action != RuntimeProgress && action != RuntimeInput {
 		return RuntimeView{}, ErrRuntimeAuthority
 	}
 	// A grant may be staged before boot, but source cannot leave until schedd
 	// has verified the held-start acknowledgement and published VM identity.
-	if action == RuntimeSource && (cancelled || state.grant.SealedAt.Valid || state.task.InstanceState.String != "running") {
+	if (action == RuntimeSource || action == RuntimeInput) && (!cfg.TransportEnabled || cancelled || state.grant.SealedAt.Valid || state.task.InstanceState.String != "running") {
 		return RuntimeView{}, ErrRuntimeAuthority
 	}
-	view := RuntimeView{Manifest: state.manifest, CancelRequested: cancelled, Sealed: state.grant.SealedAt.Valid}
+	progress := progressAllowed(state, cfg, cancelled)
+	if action == RuntimeProgress && !progress {
+		return RuntimeView{}, ErrRuntimeAuthority
+	}
+	view := RuntimeView{Manifest: state.manifest, CancelRequested: cancelled, Sealed: state.grant.SealedAt.Valid, ProgressEnabled: progress}
 	return view, storeError(state.tx.Commit(ctx))
 }
 
@@ -327,6 +335,18 @@ func (s *PostgresStore) SealJobsRuntime(ctx context.Context, proof RuntimeProof,
 	}
 	if err := validateJobsOutput(state.manifest.Job, jobsTask{Status: result.Status, ExitCode: result.ExitCode, Stopped: true}, observation); err != nil {
 		return err
+	}
+	if len(state.attempt.Progress) > 0 {
+		progress, err := decodeJobsProgress(state.attempt.Progress, state.manifest.Job)
+		if err != nil {
+			return err
+		}
+		if int64(len(progress.Logs)) > result.Logs.Bytes || progress.LogTruncated && !result.LogTruncated {
+			return ErrBackendProtocol
+		}
+		if err := validateSteps(progress.Steps, observation); err != nil {
+			return err
+		}
 	}
 	canonical, err := json.Marshal(result)
 	if err != nil {

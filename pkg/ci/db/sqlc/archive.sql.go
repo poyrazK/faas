@@ -93,7 +93,7 @@ func (q *Queries) CIArchiveRetries(ctx context.Context, db DBTX, arg CIArchiveRe
 }
 
 const compactCIArchiveAttempts = `-- name: CompactCIArchiveAttempts :exec
-UPDATE ci_job_attempts SET source=CASE WHEN run_id IS NULL THEN NULL ELSE '{}'::jsonb END,output=NULL
+UPDATE ci_job_attempts SET source=CASE WHEN run_id IS NULL THEN NULL ELSE '{}'::jsonb END,output=NULL,progress=NULL
 WHERE account_id=$1 AND execution_id=$2
 `
 
@@ -110,6 +110,7 @@ func (q *Queries) CompactCIArchiveAttempts(ctx context.Context, db DBTX, arg Com
 
 const compactCIExecution = `-- name: CompactCIExecution :execrows
 UPDATE ci_executions SET archived_at=$3,snapshot=jsonb_build_object('mode','jobs','status',status,'compute','{}'::jsonb)
+ || CASE WHEN rerun_parent_id IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('rerun',snapshot->'rerun') END
 WHERE account_id=$1 AND id=$2 AND mode='jobs' AND archived_at IS NULL
  AND status IN ('succeeded','failed','cancelled') AND lease_until IS NULL
 `

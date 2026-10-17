@@ -29,6 +29,6 @@ UPDATE ci_executions SET reconcile_failures=CASE WHEN sqlc.arg(failed)::boolean 
 WHERE id=$1 AND fence=$2 AND version=sqlc.arg(expected_version)::bigint;
 
 -- name: ListCIJobsExecutions :many
-SELECT id,revision_id,commit_sha,status,created_at,finished_at,(snapshot->>'pipeline')::text AS pipeline
+SELECT id,revision_id,commit_sha,status,created_at,finished_at,rerun_parent_id,rerun_root_id,(snapshot->>'pipeline')::text AS pipeline
 FROM ci_executions WHERE account_id=$1 AND mode='jobs' AND archived_at IS NULL
 ORDER BY created_at DESC,id LIMIT sqlc.arg(max_rows)::integer;

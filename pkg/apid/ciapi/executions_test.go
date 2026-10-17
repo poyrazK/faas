@@ -43,7 +43,7 @@ func TestCIExecutionAPIAdmissionOwnershipAndReadAfterDisable(t *testing.T) {
  VALUES ($1,$2,'batch','api-test',$3,$4,600,1,0,'{}',$5,'ready',$6,'private/rootfs.ext4')`, job, account, image, api.CIJobsRAMMB, []string{ci.JobsRunnerPath, ci.JobsRunnerProtocol}, strings.Split(image, "@")[1]); err != nil {
 		t.Fatal(err)
 	}
-	revision, err := store.PutRevision(t.Context(), account, "api", ci.Definition{Version: 1, Repository: "gregale/api", Jobs: map[string]ci.Job{"test": {Image: image, Steps: []ci.Step{{Name: "unit", Run: "stored, never executed"}}}}})
+	revision, err := store.PutRevision(t.Context(), account, "api", ci.Definition{Version: 1, Repository: "gregale/api", Jobs: map[string]ci.Job{"test": {Image: image, Steps: []ci.Step{{Name: "unit", Run: "stored, never executed"}}, Artifacts: []string{"reports/**"}, JUnit: []string{"reports/unit.xml"}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,6 +131,20 @@ func TestCIExecutionAPIAdmissionOwnershipAndReadAfterDisable(t *testing.T) {
 	if w := call(ciapi.Handler.Execution, other, row.ID, "", "", nil, ""); w.Code != http.StatusNotFound {
 		t.Fatal("execution ownership escaped")
 	}
+	beforeReports := verified
+	reportResponse := call(ciapi.Handler.TestReports, account, row.ID, "", "", nil, "")
+	var reports ci.ExecutionTestReports
+	if reportResponse.Code != http.StatusOK || json.Unmarshal(reportResponse.Body.Bytes(), &reports) != nil || reports.ExecutionID != row.ID || reports.Totals.Expected != 1 || reports.Jobs[0].State != "pending" || verified != beforeReports {
+		t.Fatal("report read required provider access or lost execution identity")
+	}
+	for _, private := range []string{"stored, never executed", "private/rootfs.ext4", "installation_id", "lease_token"} {
+		if strings.Contains(reportResponse.Body.String(), private) {
+			t.Fatal("report projection exposed private execution authority")
+		}
+	}
+	if w := call(ciapi.Handler.TestReports, other, row.ID, "", "", nil, ""); w.Code != http.StatusNotFound {
+		t.Fatal("report read crossed account boundary")
+	}
 	page := call(ciapi.Handler.ExecutionLogs, account, row.ID, row.Jobs[0].Attempt.ID, "?offset=1&limit=1", nil, "")
 	var result ci.LogPage
 	if page.Code != http.StatusOK || json.Unmarshal(page.Body.Bytes(), &result) != nil || !bytes.Equal(result.Data, []byte{255}) || result.NextOffset != 2 {
@@ -149,6 +163,9 @@ func TestCIExecutionAPIAdmissionOwnershipAndReadAfterDisable(t *testing.T) {
 	if w := call(ciapi.Handler.Execution, account, qualification.ID, "", "", nil, ""); w.Code != http.StatusNotFound {
 		t.Fatal("qualification exposed as service execution")
 	}
+	if w := call(ciapi.Handler.TestReports, account, qualification.ID, "", "", nil, ""); w.Code != http.StatusNotFound {
+		t.Fatal("qualification exposed as service test reports")
+	}
 	list := call(ciapi.Handler.ListExecutions, account, "", "", "", nil, "")
 	if list.Code != http.StatusOK || strings.Contains(list.Body.String(), qualification.ID) || !strings.Contains(list.Body.String(), row.ID) {
 		t.Fatal("execution list crossed its mode boundary")
@@ -166,6 +183,11 @@ func testCIArchiveAPI(t *testing.T, h *ciapi.Handler, account, other, id, qualif
 	cfg.GitHubEnabled, cfg.GitHubChecksEnabled, cfg.ExecutionChecksEnabled = true, true, true
 	if _, err := (ci.Engine{Store: h.Store.(*ci.PostgresStore), Backend: executionAPIBackend{stopped: true}}).Tick(t.Context(), account, id); err != nil {
 		t.Fatal(err)
+	}
+	reportResponse := call(ciapi.Handler.TestReports, account, id, "", "", nil, "")
+	var reports ci.ExecutionTestReports
+	if reportResponse.Code != http.StatusOK || json.Unmarshal(reportResponse.Body.Bytes(), &reports) != nil || reports.Totals.Problems != 1 || reports.Jobs[0].State != "incomplete" || reports.Jobs[0].Reports[0].Status != ci.ReportMissing {
+		t.Fatal("cancelled execution lost missing-report diagnostics")
 	}
 	if _, err := ci.PublishExecutionCheckOnce(t.Context(), cfg, h.Store.(*ci.PostgresStore), h.VerifyGitHub, func(context.Context, ci.ExecutionCheck) (int64, error) { return 77, nil }); err != nil {
 		t.Fatal(err)
@@ -202,6 +224,9 @@ func testCIArchiveAPI(t *testing.T, h *ciapi.Handler, account, other, id, qualif
 	if w := call(ciapi.Handler.Execution, account, id, "", "", nil, ""); w.Code != http.StatusGone || !strings.Contains(w.Body.String(), "ci_execution_archived") {
 		t.Fatal("compacted detail did not return stable gone response")
 	}
+	if w := call(ciapi.Handler.TestReports, account, id, "", "", nil, ""); w.Code != http.StatusGone {
+		t.Fatal("archived report details remained available")
+	}
 	h.Config = cfg
 	h.Config.DispatchEnabled, h.Config.WorkerEnabled, h.Config.TransportEnabled, h.ExecutionReady = true, true, true, true
 	if w := call(ciapi.Handler.SubmitExecution, account, "", "", "", request, "fresh"); w.Code != http.StatusGone {
@@ -210,6 +235,9 @@ func testCIArchiveAPI(t *testing.T, h *ciapi.Handler, account, other, id, qualif
 	h.Config.Enabled = false
 	if w := call(ciapi.Handler.ExecutionArchives, account, "", "", "", nil, ""); w.Code != http.StatusNotFound {
 		t.Fatal("disabled internal gate exposed archive")
+	}
+	if w := call(ciapi.Handler.TestReports, account, id, "", "", nil, ""); w.Code != http.StatusNotFound {
+		t.Fatal("disabled internal gate exposed reports")
 	}
 }
 

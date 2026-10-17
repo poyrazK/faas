@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"slices"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -34,9 +33,6 @@ func (s *PostgresStore) gitHubEventRecorded(ctx context.Context, tx pgx.Tx, acco
 }
 
 func (s *PostgresStore) captureAutomation(ctx context.Context, tx pgx.Tx, binding GitHubBinding, event GitHubEvent, delivery string) (bool, error) {
-	if event.Kind != "push" {
-		return false, nil
-	}
 	record, err := s.q.GetCIAutomationPolicy(ctx, tx, sqlc.GetCIAutomationPolicyParams{AccountID: dbUUID(binding.AccountID), BindingID: dbUUID(binding.ID)})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
@@ -48,7 +44,7 @@ func (s *PostgresStore) captureAutomation(ctx context.Context, tx pgx.Tx, bindin
 	if err != nil {
 		return false, err
 	}
-	if !policy.Enabled || policy.BindingGeneration != binding.Generation || !slices.Contains(policy.PushBranches, event.Branch) {
+	if !policy.Enabled || policy.BindingGeneration != binding.Generation || !automationPolicyMatches(policy, event) {
 		return false, nil
 	}
 	profile, err := s.q.GetCIExecutionProfile(ctx, tx, sqlc.GetCIExecutionProfileParams{AccountID: dbUUID(binding.AccountID), ID: dbUUID(policy.ProfileID)})

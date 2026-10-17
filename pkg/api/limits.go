@@ -11304,21 +11304,29 @@ const (
 
 // Internal CI metadata bounds. No production compute dispatcher is wired.
 const (
-	CIDefinitionMaxBytes     = 64 << 10
-	CIRequestMaxBytes        = 2 * CIDefinitionMaxBytes
-	CIRepositoryMaxBytes     = 200
-	CIImageMaxBytes          = 512
-	CIMaxJobs                = 16
-	CIMaxStepsPerJob         = 32
-	CIMaxCommandBytes        = 4096
-	CIMaxArtifactsPerJob     = 16
-	CIArtifactPathMaxBytes   = 256
-	CIDefaultTimeoutSeconds  = 600
-	CIMaxTimeoutSeconds      = 3600
-	CIMaxRevisionsPerAccount = 64
-	CIMaxRunsPerAccount      = 256
-	CIIdempotencyKeyMaxBytes = 128
-	CIEventListMax           = 2
+	CIDefinitionMaxBytes           = 64 << 10
+	CIRequestMaxBytes              = 2 * CIDefinitionMaxBytes
+	CIRepositoryMaxBytes           = 200
+	CIImageMaxBytes                = 512
+	CIMaxJobs                      = 16
+	CIMaxMatrixVariantsPerJob      = 8
+	CIMaxStepsPerJob               = 32
+	CIMaxCommandBytes              = 4096
+	CIMaxEnvironmentVariables      = 32
+	CIEnvironmentNameMaxBytes      = 64
+	CIEnvironmentValueMaxBytes     = 1024
+	CIEnvironmentMaxBytes          = 8 << 10
+	CIWorkingDirectoryMaxBytes     = 256
+	CIMaxArtifactsPerJob           = 16
+	CIMaxArtifactInputsPerJob      = 8
+	CIArtifactInputsMaxBytesPerJob = 64 << 20
+	CIArtifactPathMaxBytes         = 256
+	CIDefaultTimeoutSeconds        = 600
+	CIMaxTimeoutSeconds            = 3600
+	CIMaxRevisionsPerAccount       = 64
+	CIMaxRunsPerAccount            = 256
+	CIIdempotencyKeyMaxBytes       = 128
+	CIEventListMax                 = 2
 )
 
 // CI execution qualification bounds. No production dispatcher is installed.
@@ -11353,8 +11361,47 @@ const (
 // Internal execution Check summaries contain states and counts only (ADR-1342).
 const CIExecutionCheckSummaryMaxBytes = 8 << 10
 
-// Operator recovery is bounded for each retained execution (ADR-1348).
+// Operator recovery is bounded for each retained execution or skipped source
+// (ADR-1348, ADR-1357). Each delivery has its own lifetime budget.
 const CICheckRetryMaxGenerations = 3
+
+// Explicit recovery of a retained, never-admitted automatic source (ADR-1351).
+const CIAutomationRetryMaxGenerations = 3
+
+// Automatic runs serialize per account, binding and branch (ADR-1352).
+const CIAutomationActivePerBranch = 1
+
+// PR automation always verifies its current head and serializes each PR.
+const CIAutomationActivePerPullRequest = 1
+const CIGitHubPullRequestMaxBytes = 256 << 10
+const CIGitHubPullRequestJSONMaxDepth = 32
+
+// Internal CI automation path filters (ADR-1356). At provider boundaries a
+// capped or incomplete comparison always means run the full pipeline.
+const (
+	CIAutomationMaxPathFilters       = 16
+	CIAutomationPathPatternMaxBytes  = 256
+	CIAutomationChangedPathMaxBytes  = 1024
+	CIAutomationCompareMaxFiles      = 300
+	CIAutomationCompareMaxCommits    = 100
+	CIAutomationCompareMaxBytes      = 2 << 20
+	CIAutomationPathDecisionMaxBytes = 2048
+)
+
+// Opt-in JUnit diagnostics use existing artifact and execution retention.
+const (
+	CIJUnitMaxReportsPerJob = 2
+	CIJUnitMaxBytes         = 1 << 20
+	CIJUnitMaxCases         = 5000
+	CIJUnitMaxDepth         = 16
+	CIJUnitMaxTokens        = 100000
+	CIJUnitMaxAttributes    = 64
+	CIJUnitMaxFailures      = 20
+	CIJUnitNameMaxBytes     = 256
+	CIJUnitMessageMaxBytes  = 512
+	CIJUnitDetailMaxBytes   = 1024
+	CIJUnitSnapshotMaxBytes = 32 << 10
+)
 
 // CI observability is bounded independently of execution admission. Slots are
 // diagnostic only; exhausting them never stops a worker from reconciling.
@@ -11403,23 +11450,31 @@ const (
 	CIJobsFinalizeSeconds         = 20
 	CIJobsTransferSeconds         = 15
 	CIJobsControlPollMillis       = 1000
-	CIJobsStepStopGraceMillis     = 500
-	CIJobsTransferMaxAttempts     = 3
-	CIStorageMaxBytesPerAccount   = 2 << 30
-	CIStorageMaxBytesGlobal       = 8 << 30
-	CIStorageMaxObjectsPerAccount = 1024
-	CIStorageMaxObjectsGlobal     = 8192
-	CIStorageMaxJournalPerAccount = 16384
-	CIStorageMaxJournalGlobal     = 131072
-	CIStorageMaxIOPerAccount      = 2
-	CIStorageMaxIOGlobal          = 8
-	CIStorageOperationSeconds     = 30
-	CIStorageRetentionDays        = 7
-	CIStorageOrphanHours          = 2
-	CIStorageCleanupBatch         = 16
-	CIStorageCleanupSeconds       = 60
-	CIStorageKeyMaxBytes          = 1024
-	CIStorageWriterChunkBytes     = 256 << 10
+	// Live diagnostics share the existing retained log prefix and page bounds.
+	CIJobsProgressPollMillis       = 1000
+	CIJobsProgressSeconds          = 2
+	CIJobsProgressMaxUpdates       = 4096
+	CIJobsProgressRequestMaxBytes  = 32 << 10
+	CIJobsProgressSnapshotMaxBytes = 128 << 10
+	CILogFollowPollMillis          = 1000
+	CILogFollowMaxRetries          = 3
+	CIJobsStepStopGraceMillis      = 500
+	CIJobsTransferMaxAttempts      = 3
+	CIStorageMaxBytesPerAccount    = 2 << 30
+	CIStorageMaxBytesGlobal        = 8 << 30
+	CIStorageMaxObjectsPerAccount  = 1024
+	CIStorageMaxObjectsGlobal      = 8192
+	CIStorageMaxJournalPerAccount  = 16384
+	CIStorageMaxJournalGlobal      = 131072
+	CIStorageMaxIOPerAccount       = 2
+	CIStorageMaxIOGlobal           = 8
+	CIStorageOperationSeconds      = 30
+	CIStorageRetentionDays         = 7
+	CIStorageOrphanHours           = 2
+	CIStorageCleanupBatch          = 16
+	CIStorageCleanupSeconds        = 60
+	CIStorageKeyMaxBytes           = 1024
+	CIStorageWriterChunkBytes      = 256 << 10
 )
 
 // ServiceMapMaxEdges caps the caller → target edges returned by

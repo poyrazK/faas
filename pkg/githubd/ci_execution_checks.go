@@ -12,8 +12,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/ci"
 )
 
-// WriteExecutionCICheck belongs exclusively to the gated execution outbox.
-// Discovery recovers lost POST acknowledgements by the stable execution ID.
+// WriteExecutionCICheck belongs to the gated CI Check worker, for executions
+// and skipped sources. Stable external IDs recover lost POST acknowledgements.
 func (c *ChecksAPI) WriteExecutionCICheck(ctx context.Context, check ci.ExecutionCheck) (int64, error) {
 	if c == nil || c.Tokens == nil || c.HTTP == nil {
 		return 0, ci.ErrGitHubUnavailable

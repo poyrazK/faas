@@ -143,6 +143,14 @@ func (s *PostgresStore) recordGitHubDelivery(ctx context.Context, account, deliv
 	}
 	for _, b := range bindings {
 		if !bindingMatches(b, event) {
+			// A retarget to an unlisted base still invalidates an in-flight
+			// observation for this PR. It creates no source or observation row.
+			if b.Enabled && event.Kind == "pull_request" && b.InstallationID == event.InstallationID &&
+				b.RepositoryID == event.RepositoryID && strings.EqualFold(b.Repository, event.Repository) {
+				if err := s.q.InvalidateCIAutomationPullRequest(ctx, tx, sqlc.InvalidateCIAutomationPullRequestParams{AccountID: dbUUID(account), BindingID: dbUUID(b.ID), PrNumber: int64(event.PRNumber)}); err != nil {
+					return storeError(err)
+				}
+			}
 			continue
 		}
 		recorded, err := s.gitHubEventRecorded(ctx, tx, account, b.ID, event.Key())
@@ -155,6 +163,16 @@ func (s *PostgresStore) recordGitHubDelivery(ctx context.Context, account, deliv
 		count++
 		if count > api.CIGitHubMaxTriggersPerAccount {
 			return &LimitError{Resource: "github_triggers", Limit: api.CIGitHubMaxTriggersPerAccount, Observed: int(count)}
+		}
+		switch event.Kind {
+		case "push":
+			if err := s.q.InvalidateCIAutomationHead(ctx, tx, sqlc.InvalidateCIAutomationHeadParams{AccountID: dbUUID(account), BindingID: dbUUID(b.ID), Branch: event.Branch}); err != nil {
+				return storeError(err)
+			}
+		case "pull_request":
+			if err := s.q.InvalidateCIAutomationPullRequest(ctx, tx, sqlc.InvalidateCIAutomationPullRequestParams{AccountID: dbUUID(account), BindingID: dbUUID(b.ID), PrNumber: int64(event.PRNumber)}); err != nil {
+				return storeError(err)
+			}
 		}
 		if automation {
 			captured, err := s.captureAutomation(ctx, tx, b, event, deliveryID)

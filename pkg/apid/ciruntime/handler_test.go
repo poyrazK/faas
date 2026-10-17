@@ -89,7 +89,9 @@ type runtimeHarness struct {
 	server  *httptest.Server
 }
 
-func fixture(t *testing.T) *runtimeHarness {
+func fixture(t *testing.T) *runtimeHarness { return fixtureDefinition(t, nil) }
+
+func fixtureDefinition(t *testing.T, override *ci.Definition) *runtimeHarness {
 	t.Helper()
 	pool := pgtest.OpenMigrated(t)
 	h := &runtimeHarness{pool: pool, store: ci.NewPostgresStore(pool), account: uuid.NewString(), objects: &blobs{data: map[string][]byte{}, writes: map[string]int{}}}
@@ -106,6 +108,17 @@ func fixture(t *testing.T) *runtimeHarness {
 		t.Fatal(err)
 	}
 	definition := ci.Definition{Version: 1, Repository: "gregale/runtime", Jobs: map[string]ci.Job{"test": {Image: image, TimeoutSeconds: 60, Steps: []ci.Step{{Name: "prepare", Run: "synthetic prepare"}, {Name: "unit", Run: "synthetic unit"}}, Artifacts: []string{"reports/**"}}}}
+	if override != nil {
+		definition = *override
+	}
+	templates := make(map[string]string)
+	plan, _, err := ci.Compile(definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, planned := range plan.Jobs {
+		templates[planned.Name] = job
+	}
 	revision, err := h.store.PutRevision(ctx, h.account, "runtime", definition)
 	if err != nil {
 		t.Fatal(err)
@@ -124,7 +137,7 @@ func fixture(t *testing.T) *runtimeHarness {
 		return ""
 	})
 	verify := func(context.Context, string, int64, int64, string) error { return nil }
-	h.row, _, err = ci.AdmitJobs(ctx, h.cfg, h.store, verify, h.account, "fresh", ci.JobsSubmitRequest{SubmitRequest: ci.SubmitRequest{RevisionID: revision.ID, CommitSHA: strings.Repeat("a", 40)}, BindingID: binding.ID, Templates: map[string]string{"test": job}})
+	h.row, _, err = ci.AdmitJobs(ctx, h.cfg, h.store, verify, h.account, "fresh", ci.JobsSubmitRequest{SubmitRequest: ci.SubmitRequest{RevisionID: revision.ID, CommitSHA: strings.Repeat("a", 40)}, BindingID: binding.ID, Templates: templates})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,7 +190,8 @@ type fakeExecutor struct {
 	logs     int
 }
 
-func (e *fakeExecutor) Run(ctx context.Context, step ci.Step, dir string, logs io.Writer) (int, error) {
+func (e *fakeExecutor) Run(ctx context.Context, launch cirunner.StepExecution, logs io.Writer) (int, error) {
+	step, dir := launch.Step, launch.Directory.Name()
 	e.calls = append(e.calls, step.Name)
 	if step.Name == "prepare" {
 		raw, err := os.ReadFile(filepath.Join(dir, "source.txt"))

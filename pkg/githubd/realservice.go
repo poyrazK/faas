@@ -103,7 +103,9 @@ type RealService struct {
 	Streamer SourceRefStreamer
 	// BranchHeads resolves branch refs for webhook freshness checks and the
 	// source-ref promotion guard.
-	BranchHeads BranchHeadClient
+	BranchHeads    BranchHeadClient
+	CIPullRequests CIPullRequestClient
+	CIChanges      CIChangedFilesClient
 	// ProtectedBranches observes policy evidence without approving revisions.
 	ProtectedBranches ProtectedBranchClient
 	ReviewedMerges    ReviewedMergeClient

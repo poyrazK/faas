@@ -46,6 +46,8 @@ const (
 	Githubd_MintInstallationToken_FullMethodName      = "/onebox.faas.githubd.v1.Githubd/MintInstallationToken"
 	Githubd_StreamSourceRef_FullMethodName            = "/onebox.faas.githubd.v1.Githubd/StreamSourceRef"
 	Githubd_GetBranchHead_FullMethodName              = "/onebox.faas.githubd.v1.Githubd/GetBranchHead"
+	Githubd_GetCIPullRequest_FullMethodName           = "/onebox.faas.githubd.v1.Githubd/GetCIPullRequest"
+	Githubd_GetCIChangedFiles_FullMethodName          = "/onebox.faas.githubd.v1.Githubd/GetCIChangedFiles"
 	Githubd_GetProtectedBranchEvidence_FullMethodName = "/onebox.faas.githubd.v1.Githubd/GetProtectedBranchEvidence"
 	Githubd_GetReviewedMergeEvidence_FullMethodName   = "/onebox.faas.githubd.v1.Githubd/GetReviewedMergeEvidence"
 	Githubd_ListRecoveryQueueItems_FullMethodName     = "/onebox.faas.githubd.v1.Githubd/ListRecoveryQueueItems"
@@ -188,6 +190,12 @@ type GithubdClient interface {
 	// requested ref is not a branch (source-ref also accepts tags and SHAs).
 	// imaged uses this immediately before promoting branch-backed deployments.
 	GetBranchHead(ctx context.Context, in *GetBranchHeadRequest, opts ...grpc.CallOption) (*GetBranchHeadResponse, error)
+	// Fresh PR identity for internal CI admission. Account installation authority
+	// is verified by githubd. This read is served only on the local socket.
+	GetCIPullRequest(ctx context.Context, in *GetCIPullRequestRequest, opts ...grpc.CallOption) (*GetCIPullRequestResponse, error)
+	// Bounded exact-commit comparison for internal CI path filters. Local socket
+	// only; incomplete evidence always falls back to running CI.
+	GetCIChangedFiles(ctx context.Context, in *GetCIChangedFilesRequest, opts ...grpc.CallOption) (*GetCIChangedFilesResponse, error)
 	// Read-only qualification of a classic review protection policy for an
 	// exact repository ID and current branch head. This is not approval of a
 	// merge or environment revision. Served on the local control-plane socket.
@@ -361,6 +369,26 @@ func (c *githubdClient) GetBranchHead(ctx context.Context, in *GetBranchHeadRequ
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(GetBranchHeadResponse)
 	err := c.cc.Invoke(ctx, Githubd_GetBranchHead_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *githubdClient) GetCIPullRequest(ctx context.Context, in *GetCIPullRequestRequest, opts ...grpc.CallOption) (*GetCIPullRequestResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetCIPullRequestResponse)
+	err := c.cc.Invoke(ctx, Githubd_GetCIPullRequest_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *githubdClient) GetCIChangedFiles(ctx context.Context, in *GetCIChangedFilesRequest, opts ...grpc.CallOption) (*GetCIChangedFilesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetCIChangedFilesResponse)
+	err := c.cc.Invoke(ctx, Githubd_GetCIChangedFiles_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -561,6 +589,12 @@ type GithubdServer interface {
 	// requested ref is not a branch (source-ref also accepts tags and SHAs).
 	// imaged uses this immediately before promoting branch-backed deployments.
 	GetBranchHead(context.Context, *GetBranchHeadRequest) (*GetBranchHeadResponse, error)
+	// Fresh PR identity for internal CI admission. Account installation authority
+	// is verified by githubd. This read is served only on the local socket.
+	GetCIPullRequest(context.Context, *GetCIPullRequestRequest) (*GetCIPullRequestResponse, error)
+	// Bounded exact-commit comparison for internal CI path filters. Local socket
+	// only; incomplete evidence always falls back to running CI.
+	GetCIChangedFiles(context.Context, *GetCIChangedFilesRequest) (*GetCIChangedFilesResponse, error)
 	// Read-only qualification of a classic review protection policy for an
 	// exact repository ID and current branch head. This is not approval of a
 	// merge or environment revision. Served on the local control-plane socket.
@@ -632,6 +666,12 @@ func (UnimplementedGithubdServer) StreamSourceRef(*StreamSourceRefRequest, grpc.
 }
 func (UnimplementedGithubdServer) GetBranchHead(context.Context, *GetBranchHeadRequest) (*GetBranchHeadResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetBranchHead not implemented")
+}
+func (UnimplementedGithubdServer) GetCIPullRequest(context.Context, *GetCIPullRequestRequest) (*GetCIPullRequestResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetCIPullRequest not implemented")
+}
+func (UnimplementedGithubdServer) GetCIChangedFiles(context.Context, *GetCIChangedFilesRequest) (*GetCIChangedFilesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetCIChangedFiles not implemented")
 }
 func (UnimplementedGithubdServer) GetProtectedBranchEvidence(context.Context, *GetProtectedBranchEvidenceRequest) (*GetProtectedBranchEvidenceResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetProtectedBranchEvidence not implemented")
@@ -917,6 +957,42 @@ func _Githubd_GetBranchHead_Handler(srv interface{}, ctx context.Context, dec fu
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Githubd_GetCIPullRequest_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetCIPullRequestRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GithubdServer).GetCIPullRequest(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Githubd_GetCIPullRequest_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GithubdServer).GetCIPullRequest(ctx, req.(*GetCIPullRequestRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Githubd_GetCIChangedFiles_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetCIChangedFilesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GithubdServer).GetCIChangedFiles(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Githubd_GetCIChangedFiles_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GithubdServer).GetCIChangedFiles(ctx, req.(*GetCIChangedFilesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Githubd_GetProtectedBranchEvidence_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(GetProtectedBranchEvidenceRequest)
 	if err := dec(in); err != nil {
@@ -1083,6 +1159,14 @@ var Githubd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetBranchHead",
 			Handler:    _Githubd_GetBranchHead_Handler,
+		},
+		{
+			MethodName: "GetCIPullRequest",
+			Handler:    _Githubd_GetCIPullRequest_Handler,
+		},
+		{
+			MethodName: "GetCIChangedFiles",
+			Handler:    _Githubd_GetCIChangedFiles_Handler,
 		},
 		{
 			MethodName: "GetProtectedBranchEvidence",

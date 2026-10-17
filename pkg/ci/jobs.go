@@ -32,8 +32,12 @@ type JobsTemplate struct {
 }
 
 type JobsSubmitRequest struct {
-	automation    *AutomationEvent
-	captureChecks bool // set only by fresh, gated admission; never client JSON
+	automation      *AutomationEvent
+	automationHead  *automationHead
+	automationPR    *automationPullRequest
+	automationPaths *AutomationPathDecision
+	rerun           *executionRerunRequest
+	captureChecks   bool // set only by fresh, gated admission; never client JSON
 	SubmitRequest
 	ProfileID string            `json:"profile_id,omitempty"`
 	BindingID string            `json:"binding_id"`
@@ -138,6 +142,7 @@ type jobsIntent struct {
 	RunID           string
 	Cancelled       bool
 	Output          *Observation
+	Progress        *JobsProgress
 	RuntimeUnsealed bool
 	RuntimeSealed   bool
 }
@@ -150,6 +155,7 @@ type jobsTask struct {
 }
 
 type JobsManifest struct {
+	Inputs       []JobsInput   `json:"inputs,omitempty"`
 	Version      int           `json:"version"`
 	AccountID    string        `json:"account_id"`
 	ExecutionID  string        `json:"execution_id"`
@@ -162,10 +168,16 @@ type JobsManifest struct {
 	OutputPrefix string        `json:"output_prefix"`
 }
 
-func jobsManifest(req StartRequest, source SourceArchive) ([]byte, error) {
-	manifest := JobsManifest{Version: 1, AccountID: req.Key.AccountID, ExecutionID: req.Key.ExecutionID,
+func jobsManifest(req StartRequest, source SourceArchive, inputs ...JobsInput) ([]byte, error) {
+	if req.Job.Matrix != nil {
+		return nil, ErrBackendProtocol
+	}
+	manifest := JobsManifest{Version: jobsManifestVersion(req.Job.Job), AccountID: req.Key.AccountID, ExecutionID: req.Key.ExecutionID,
 		AttemptID: req.Key.AttemptID, Repository: req.Repository, CommitSHA: req.CommitSHA,
 		Deadline: req.Deadline, Source: source, Job: req.Job, OutputPrefix: jobsObjectPrefix(req.Key) + "output/"}
+	manifest.Inputs = inputs
+	// Report selectors belong to the controller; guests publish normal artifacts.
+	manifest.Job.JUnit = nil
 	raw, err := json.Marshal(manifest)
 	if err != nil {
 		return nil, err
@@ -181,7 +193,7 @@ func (b JobsBackend) Start(ctx context.Context, req StartRequest) error {
 		return ErrDispatchDisabled
 	}
 	intent, err := b.Store.prepareJobsAttempt(ctx, req)
-	if err != nil || intent.Cancelled || intent.RunID != "" {
+	if err != nil || intent.Cancelled || intent.RunID != "" || intent.Output != nil {
 		return err
 	}
 	source, err := b.Source.Stage(ctx, jobsSourceRequest(intent))
@@ -218,6 +230,9 @@ func (b JobsBackend) Observe(ctx context.Context, req ObserveRequest) (Observati
 		return Observation{Status: StatusCancelled, LogOffset: req.LogOffset}, nil
 	}
 	if !task.Stopped {
+		if intent.Progress != nil {
+			return progressPage(*intent.Progress, req)
+		}
 		steps := make([]StepResult, len(intent.Request.Job.Steps))
 		for i, step := range intent.Request.Job.Steps {
 			steps[i] = StepResult{Name: step.Name, Status: StatusQueued}
@@ -225,9 +240,13 @@ func (b JobsBackend) Observe(ctx context.Context, req ObserveRequest) (Observati
 		return Observation{Status: StatusRunning, Steps: steps, LogOffset: req.LogOffset}, nil
 	}
 	if task.Status == StatusCancelled && !task.HadInstance {
-		// Persist the no-VM terminal receipt so staged source can retire through
-		// the same storage safety gate as other completed attempts.
-		output, err := b.Store.finishJobsOutput(ctx, req.Key, Observation{Status: StatusCancelled})
+		// Native cleanup may already have cleared a former instance reference.
+		// Retain any live prefix before freezing the cancellation receipt.
+		result := Observation{Status: StatusCancelled}
+		if intent.Progress != nil {
+			result = incompleteProgressOutput(intent.Request.Job, task, intent.Progress, time.Now().UTC())
+		}
+		output, err := b.Store.finishJobsOutput(ctx, req.Key, result)
 		if err != nil {
 			return Observation{}, err
 		}
@@ -237,7 +256,7 @@ func (b JobsBackend) Observe(ctx context.Context, req ObserveRequest) (Observati
 		// Once native cleanup is certified, the guest can no longer seal.
 		// Persist a platform failure instead of waiting forever or accepting
 		// an unsealed success. Partial blobs remain available for recovery.
-		output := incompleteRuntimeOutput(intent.Request.Job, task)
+		output := incompleteProgressOutput(intent.Request.Job, task, intent.Progress, time.Now().UTC())
 		output, err := b.Store.finishJobsOutput(ctx, req.Key, output)
 		if err != nil {
 			return Observation{}, err
@@ -311,6 +330,7 @@ func validateJobsOutput(plan PlannedJob, task jobsTask, result Observation) erro
 	// Validate all output using the engine contract; log paging is checked separately.
 	page := result
 	page.Logs, page.MoreLogs = nil, false
+	page = completeObservationReports(plan, page)
 	return validateObservation(plan, previous, page)
 }
 

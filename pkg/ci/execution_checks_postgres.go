@@ -21,7 +21,7 @@ func (s *PostgresStore) claimExecutionCheck(ctx context.Context, account string)
 	}
 	c, err := s.q.ClaimCIExecutionCheck(ctx, s.pool, sqlc.ClaimCIExecutionCheckParams{AccountID: dbUUID(account), MaxAttempts: api.CIGitHubMaxAttempts, Token: dbUUID(uuid.NewString()), LeaseSeconds: api.CIGitHubLeaseSeconds})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return executionCheckClaim{}, ErrNoGitHubWork
+		return s.claimAutomationPathCheck(ctx, account)
 	}
 	return executionCheckClaim{account: account, execution: uuidString(c.ExecutionID), token: uuidString(c.LeaseToken)}, storeError(err)
 }
@@ -30,6 +30,9 @@ func (s *PostgresStore) claimExecutionCheck(ctx context.Context, account string)
 // acquire this row, and other publishers use SKIP LOCKED. The claim was already
 // committed, so a crash consumes its retry and can recover after lease expiry.
 func (s *PostgresStore) deliverExecutionCheck(ctx context.Context, claim executionCheckClaim, verify GitHubVerifier, publish ExecutionCheckPublisher) error {
+	if claim.source {
+		return s.deliverAutomationPathCheck(ctx, claim, verify, publish)
+	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return storeError(err)

@@ -11733,11 +11733,16 @@
       "lease_token",
       "lease_until",
       "next_attempt_at",
+      "path_decision",
       "policy_generation",
       "policy_id",
       "profile_id",
+      "retry_generation",
       "snapshot",
-      "status"
+      "status",
+      "superseded_at",
+      "superseded_by",
+      "superseded_sha"
     ],
     "kind": "operational"
   },
@@ -11749,8 +11754,12 @@
       "binding_id",
       "created_at",
       "enabled",
+      "exclude_paths",
       "generation",
       "id",
+      "include_paths",
+      "latest_only",
+      "pr_branches",
       "profile_id",
       "push_branches"
     ],
@@ -11837,6 +11846,8 @@
       "mode",
       "next_reconcile_at",
       "reconcile_failures",
+      "rerun_parent_id",
+      "rerun_root_id",
       "revision_id",
       "snapshot",
       "status",
@@ -11908,6 +11919,9 @@
       "fence",
       "job_name",
       "output",
+      "progress",
+      "progress_digest",
+      "progress_sequence",
       "run_id",
       "source"
     ],
@@ -12024,6 +12038,71 @@
       "success_at",
       "token",
       "worker"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "ci_automation_branches",
+    "columns": [
+      "account_id",
+      "binding_id",
+      "branch",
+      "head_fence"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "ci_automation_event_retries",
+    "columns": [
+      "account_id",
+      "event_id",
+      "generation",
+      "id",
+      "key_digest",
+      "previous_attempts",
+      "previous_error",
+      "requested_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "ci_automation_path_checks",
+    "columns": [
+      "account_id",
+      "attempts",
+      "check_id",
+      "created_at",
+      "event_id",
+      "last_error",
+      "lease_token",
+      "lease_until",
+      "next_attempt_at",
+      "retry_generation",
+      "snapshot",
+      "status"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "ci_automation_pull_requests",
+    "columns": [
+      "account_id",
+      "binding_id",
+      "head_fence",
+      "pr_number"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "ci_source_check_retries",
+    "columns": [
+      "account_id",
+      "applied_at",
+      "event_id",
+      "generation",
+      "id",
+      "key_digest",
+      "requested_at"
     ],
     "kind": "operational"
   }

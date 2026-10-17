@@ -26,6 +26,7 @@ func DecodeGitHubEvent(kind string, body []byte) (GitHubEvent, error) {
 	var payload struct {
 		Ref          string             `json:"ref"`
 		After        string             `json:"after"`
+		Before       string             `json:"before"`
 		Deleted      bool               `json:"deleted"`
 		Action       string             `json:"action"`
 		Number       int                `json:"number"`
@@ -33,6 +34,13 @@ func DecodeGitHubEvent(kind string, body []byte) (GitHubEvent, error) {
 		Installation struct {
 			ID int64 `json:"id"`
 		} `json:"installation"`
+		Changes struct {
+			Base struct {
+				Ref struct {
+					From *string `json:"from"`
+				} `json:"ref"`
+			} `json:"base"`
+		} `json:"changes"`
 		PullRequest struct {
 			State string `json:"state"`
 			Draft bool   `json:"draft"`
@@ -55,9 +63,16 @@ func DecodeGitHubEvent(kind string, body []byte) (GitHubEvent, error) {
 			return GitHubEvent{}, ErrGitHubIgnored
 		}
 		event.Branch, event.CommitSHA = strings.TrimPrefix(payload.Ref, "refs/heads/"), payload.After
+		if ValidCommitSHA(payload.Before) && payload.Before != strings.Repeat("0", 40) {
+			event.BeforeSHA = payload.Before
+		}
 	} else {
 		switch payload.Action {
 		case "opened", "reopened", "synchronize", "ready_for_review":
+		case "edited":
+			if payload.Changes.Base.Ref.From == nil {
+				return GitHubEvent{}, ErrGitHubIgnored
+			}
 		default:
 			return GitHubEvent{}, ErrGitHubIgnored
 		}

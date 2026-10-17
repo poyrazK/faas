@@ -12,6 +12,7 @@ var (
 )
 
 type ExecutionArchive struct {
+	Rerun            *ExecutionRerun       `json:"rerun,omitempty"`
 	ExecutionID      string                `json:"execution_id"`
 	RevisionID       string                `json:"revision_id"`
 	Pipeline         string                `json:"pipeline"`
@@ -28,9 +29,10 @@ type ExecutionArchive struct {
 }
 
 type ArchivedJob struct {
-	Name      string `json:"name"`
-	Status    string `json:"status"`
-	AttemptID string `json:"attempt_id,omitempty"`
+	Name        string            `json:"name"`
+	Status      string            `json:"status"`
+	AttemptID   string            `json:"attempt_id,omitempty"`
+	TestReports *TestReportTotals `json:"test_reports,omitempty"`
 }
 
 type ArchivedCheck struct {

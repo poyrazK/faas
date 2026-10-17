@@ -36,18 +36,31 @@ type streamSvc struct {
 	streamTotal int64
 	streamErr   error
 
-	mintToken         string
-	mintExpires       time.Time
-	mintErr           error
-	branchSHA         string
-	branchFound       bool
-	branchErr         error
-	mergeEvidence     gitapproval.MergeEvidence
-	mergeErr          error
-	mergeRequest      chan *githubdpb.GetProtectedBranchEvidenceRequest
-	protectedEvidence githubdgrpc.ProtectedBranchEvidence
-	protectedErr      error
-	protectedRequest  chan *githubdpb.GetProtectedBranchEvidenceRequest
+	mintToken          string
+	mintExpires        time.Time
+	mintErr            error
+	branchSHA          string
+	branchFound        bool
+	branchErr          error
+	mergeEvidence      gitapproval.MergeEvidence
+	mergeErr           error
+	mergeRequest       chan *githubdpb.GetProtectedBranchEvidenceRequest
+	protectedEvidence  githubdgrpc.ProtectedBranchEvidence
+	protectedErr       error
+	protectedRequest   chan *githubdpb.GetProtectedBranchEvidenceRequest
+	ciPullRequest      githubdgrpc.CIPullRequest
+	ciPullRequestErr   error
+	ciPullRequestInput chan *githubdpb.GetCIPullRequestRequest
+	ciChanges          githubdgrpc.CIChangedFiles
+	ciChangesErr       error
+	ciChangesInput     chan *githubdpb.GetCIChangedFilesRequest
+}
+
+func (s *streamSvc) GetCIPullRequest(_ context.Context, account string, installation int64, repository string, number int64) (githubdgrpc.CIPullRequest, error) {
+	if s.ciPullRequestInput != nil {
+		s.ciPullRequestInput <- &githubdpb.GetCIPullRequestRequest{AccountId: account, InstallationId: installation, RepoFullName: repository, Number: number}
+	}
+	return s.ciPullRequest, s.ciPullRequestErr
 }
 
 func (s *streamSvc) MintInstallationToken(accountID string, installationID int64) (string, time.Time, error) {

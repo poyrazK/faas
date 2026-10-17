@@ -43,12 +43,26 @@ func (s *server) startInternalCIWorker(ctx context.Context, log *slog.Logger) fu
 	})
 	automationStore, automationReady := store.(ci.AutomationStore)
 	launch(ci.WorkerAutomationAdmission, configured[ci.WorkerAutomationAdmission], automationReady && s.internalCIExecutionReady(), func(ctx context.Context) {
-		ci.RunAutomationAdmissionWorker(ctx, s.ciConfig, automationStore, s.verifyCIGitHubRepository, log)
+		ci.RunAutomationWorkerWithResolvers(ctx, s.ciConfig, automationStore, s.verifyCIGitHubRepository, log, ci.AutomationResolvers{Branch: s.resolveCIAutomationHead, PullRequest: s.resolveCIAutomationPullRequest, Changes: s.resolveCIAutomationChanges})
 	})
 	launch(ci.WorkerRetention, configured[ci.WorkerRetention], blobsReady, func(ctx context.Context) {
 		ci.RunStorageRetention(ctx, s.ciConfig, s.ciBlobs, log)
 	})
 	return func() { cancel(); workers.Wait() }
+}
+
+func (s *server) resolveCIAutomationHead(ctx context.Context, binding ci.GitHubBinding, branch string) (string, bool, error) {
+	branches, ok := s.githubd.(interface {
+		GetBranchHead(context.Context, string, int64, string, string) (string, bool, error)
+	})
+	if !ok {
+		return "", false, ci.ErrGitHubUnavailable
+	}
+	sha, found, err := branches.GetBranchHead(ctx, binding.AccountID, binding.InstallationID, binding.Repository, branch)
+	if err != nil {
+		return "", false, ci.ErrGitHubUnavailable
+	}
+	return sha, found, nil
 }
 
 func (s *server) configureInternalCIHealthMetrics(ctx context.Context) {

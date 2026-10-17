@@ -72,7 +72,7 @@ func (q *Queries) FinishCIDispatchSchedule(ctx context.Context, db DBTX, arg Fin
 }
 
 const listCIJobsExecutions = `-- name: ListCIJobsExecutions :many
-SELECT id,revision_id,commit_sha,status,created_at,finished_at,(snapshot->>'pipeline')::text AS pipeline
+SELECT id,revision_id,commit_sha,status,created_at,finished_at,rerun_parent_id,rerun_root_id,(snapshot->>'pipeline')::text AS pipeline
 FROM ci_executions WHERE account_id=$1 AND mode='jobs' AND archived_at IS NULL
 ORDER BY created_at DESC,id LIMIT $2::integer
 `
@@ -83,13 +83,15 @@ type ListCIJobsExecutionsParams struct {
 }
 
 type ListCIJobsExecutionsRow struct {
-	ID         pgtype.UUID
-	RevisionID pgtype.UUID
-	CommitSha  string
-	Status     string
-	CreatedAt  pgtype.Timestamptz
-	FinishedAt pgtype.Timestamptz
-	Pipeline   string
+	ID            pgtype.UUID
+	RevisionID    pgtype.UUID
+	CommitSha     string
+	Status        string
+	CreatedAt     pgtype.Timestamptz
+	FinishedAt    pgtype.Timestamptz
+	RerunParentID pgtype.UUID
+	RerunRootID   pgtype.UUID
+	Pipeline      string
 }
 
 func (q *Queries) ListCIJobsExecutions(ctx context.Context, db DBTX, arg ListCIJobsExecutionsParams) ([]ListCIJobsExecutionsRow, error) {
@@ -108,6 +110,8 @@ func (q *Queries) ListCIJobsExecutions(ctx context.Context, db DBTX, arg ListCIJ
 			&i.Status,
 			&i.CreatedAt,
 			&i.FinishedAt,
+			&i.RerunParentID,
+			&i.RerunRootID,
 			&i.Pipeline,
 		); err != nil {
 			return nil, err
@@ -132,7 +136,7 @@ func (q *Queries) LockCIDispatchBudget(ctx context.Context, db DBTX) (bool, erro
 }
 
 const nextCIDispatchExecution = `-- name: NextCIDispatchExecution :one
-SELECT e.id, e.account_id, e.revision_id, e.commit_sha, e.idempotency_key, e.mode, e.status, e.snapshot, e.version, e.fence, e.lease_until, e.created_at, e.finished_at, e.next_reconcile_at, e.reconcile_failures, e.archived_at FROM ci_executions e
+SELECT e.id, e.account_id, e.revision_id, e.commit_sha, e.idempotency_key, e.mode, e.status, e.snapshot, e.version, e.fence, e.lease_until, e.created_at, e.finished_at, e.next_reconcile_at, e.reconcile_failures, e.archived_at, e.rerun_parent_id, e.rerun_root_id FROM ci_executions e
 WHERE e.mode='jobs' AND e.status IN ('queued','running','cancelling')
  AND e.next_reconcile_at <= $1::timestamptz
  AND (e.lease_until IS NULL OR e.lease_until <= $1::timestamptz)
@@ -166,6 +170,8 @@ func (q *Queries) NextCIDispatchExecution(ctx context.Context, db DBTX, arg Next
 		&i.NextReconcileAt,
 		&i.ReconcileFailures,
 		&i.ArchivedAt,
+		&i.RerunParentID,
+		&i.RerunRootID,
 	)
 	return i, err
 }

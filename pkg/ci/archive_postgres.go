@@ -12,7 +12,7 @@ import (
 
 func archiveRow(row sqlc.CiExecutionArchive) (ExecutionArchive, error) {
 	var out ExecutionArchive
-	if json.Unmarshal(row.Receipt, &out) != nil || out.ExecutionID != uuidString(row.ExecutionID) || !out.ArchivedAt.Equal(row.ArchivedAt.Time) {
+	if json.Unmarshal(row.Receipt, &out) != nil || out.ExecutionID != uuidString(row.ExecutionID) || !out.ArchivedAt.Equal(row.ArchivedAt.Time) || !out.Rerun.valid(out.ExecutionID) {
 		return out, errors.New("CI archive receipt identity mismatch")
 	}
 	return out, nil
@@ -99,12 +99,22 @@ func (s *PostgresStore) ArchiveExecution(ctx context.Context, account, id string
 	}
 	e := row.Execution
 	receipt := ExecutionArchive{ExecutionID: e.ID, RevisionID: e.RevisionID, Pipeline: e.Pipeline, CommitSHA: e.CommitSHA, Status: e.Status, DefinitionDigest: e.Plan.DefinitionDigest,
-		ProfileID: e.ProfileID, Automation: e.Automation, CreatedAt: e.CreatedAt, FinishedAt: *e.FinishedAt, ArchivedAt: now.Time, Check: check, Jobs: make([]ArchivedJob, 0, len(e.Jobs))}
+		ProfileID: e.ProfileID, Automation: e.Automation, Rerun: e.Rerun, CreatedAt: e.CreatedAt, FinishedAt: *e.FinishedAt, ArchivedAt: now.Time, Check: check, Jobs: make([]ArchivedJob, 0, len(e.Jobs))}
+	reports, err := ExecutionReports(e)
+	if err != nil {
+		return ExecutionArchive{}, false, err
+	}
 	for _, job := range e.Jobs {
 		if !terminal(job.Status) {
 			return ExecutionArchive{}, false, ErrArchiveUnsafe
 		}
 		item := ArchivedJob{Name: job.Name, Status: job.Status}
+		for _, report := range reports.Jobs {
+			if report.Job == job.Name {
+				totals := report.Totals
+				item.TestReports = &totals
+			}
+		}
 		if job.Attempt != nil {
 			item.AttemptID = job.Attempt.ID
 		}

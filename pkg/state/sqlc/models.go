@@ -1624,6 +1624,13 @@ type CanaryRouteGate struct {
 	UpdatedAt pgtype.Timestamptz
 }
 
+type CiAutomationBranch struct {
+	AccountID pgtype.UUID
+	BindingID pgtype.UUID
+	Branch    string
+	HeadFence int64
+}
+
 type CiAutomationEvent struct {
 	ID               pgtype.UUID
 	AccountID        pgtype.UUID
@@ -1641,6 +1648,37 @@ type CiAutomationEvent struct {
 	LastError        string
 	ExecutionID      pgtype.UUID
 	CreatedAt        pgtype.Timestamptz
+	RetryGeneration  int32
+	SupersededBy     pgtype.UUID
+	SupersededSha    pgtype.Text
+	SupersededAt     pgtype.Timestamptz
+	PathDecision     []byte
+}
+
+type CiAutomationEventRetry struct {
+	ID               pgtype.UUID
+	AccountID        pgtype.UUID
+	EventID          pgtype.UUID
+	Generation       int32
+	KeyDigest        string
+	PreviousAttempts int32
+	PreviousError    string
+	RequestedAt      pgtype.Timestamptz
+}
+
+type CiAutomationPathCheck struct {
+	AccountID       pgtype.UUID
+	EventID         pgtype.UUID
+	Snapshot        []byte
+	Status          string
+	Attempts        int32
+	LeaseToken      pgtype.UUID
+	LeaseUntil      pgtype.Timestamptz
+	NextAttemptAt   pgtype.Timestamptz
+	CheckID         int64
+	LastError       string
+	CreatedAt       pgtype.Timestamptz
+	RetryGeneration int32
 }
 
 type CiAutomationPolicy struct {
@@ -1653,6 +1691,17 @@ type CiAutomationPolicy struct {
 	Enabled           bool
 	Generation        int64
 	CreatedAt         pgtype.Timestamptz
+	LatestOnly        bool
+	PrBranches        []byte
+	IncludePaths      []byte
+	ExcludePaths      []byte
+}
+
+type CiAutomationPullRequest struct {
+	AccountID pgtype.UUID
+	BindingID pgtype.UUID
+	PrNumber  int64
+	HeadFence int64
 }
 
 type CiDispatchBudget struct {
@@ -1676,6 +1725,8 @@ type CiExecution struct {
 	NextReconcileAt   pgtype.Timestamptz
 	ReconcileFailures int32
 	ArchivedAt        pgtype.Timestamptz
+	RerunParentID     pgtype.UUID
+	RerunRootID       pgtype.UUID
 }
 
 type CiExecutionArchive struct {
@@ -1770,16 +1821,19 @@ type CiGithubTrigger struct {
 }
 
 type CiJobAttempt struct {
-	AttemptID       pgtype.UUID
-	AccountID       pgtype.UUID
-	ExecutionID     pgtype.UUID
-	JobName         string
-	Fence           int64
-	CancelRequested bool
-	RunID           pgtype.UUID
-	Source          []byte
-	Output          []byte
-	CreatedAt       pgtype.Timestamptz
+	AttemptID        pgtype.UUID
+	AccountID        pgtype.UUID
+	ExecutionID      pgtype.UUID
+	JobName          string
+	Fence            int64
+	CancelRequested  bool
+	RunID            pgtype.UUID
+	Source           []byte
+	Output           []byte
+	CreatedAt        pgtype.Timestamptz
+	Progress         []byte
+	ProgressSequence int32
+	ProgressDigest   string
 }
 
 type CiJobRuntime struct {
@@ -1852,6 +1906,16 @@ type CiRunEvent struct {
 	Sequence  int32
 	EventType string
 	CreatedAt pgtype.Timestamptz
+}
+
+type CiSourceCheckRetry struct {
+	ID          pgtype.UUID
+	AccountID   pgtype.UUID
+	EventID     pgtype.UUID
+	Generation  int32
+	KeyDigest   string
+	RequestedAt pgtype.Timestamptz
+	AppliedAt   pgtype.Timestamptz
 }
 
 type CiStorageBudget struct {

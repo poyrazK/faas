@@ -177,8 +177,8 @@ SELECT * FROM jobs WHERE account_id = $1 AND id = $2 FOR SHARE;
 SELECT count(*) FROM ci_executions WHERE account_id = $1 AND mode = 'jobs' AND archived_at IS NULL;
 
 -- name: InsertCIJobsExecution :one
-INSERT INTO ci_executions (id, account_id, revision_id, commit_sha, idempotency_key, mode, status, snapshot, created_at)
-VALUES ($1, $2, $3, $4, $5, 'jobs', 'queued', $6, $7) RETURNING *;
+INSERT INTO ci_executions (id, account_id, revision_id, commit_sha, idempotency_key, mode, status, snapshot, created_at, rerun_parent_id, rerun_root_id)
+VALUES ($1, $2, $3, $4, $5, 'jobs', 'queued', $6, $7, sqlc.narg(rerun_parent_id)::uuid, sqlc.narg(rerun_root_id)::uuid) RETURNING *;
 
 -- name: EnsureCIJobsAttempt :exec
 INSERT INTO ci_job_attempts (attempt_id, account_id, execution_id, job_name, fence)

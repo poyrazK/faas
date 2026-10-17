@@ -20,13 +20,14 @@ type DispatchStore interface {
 }
 
 type ExecutionSummary struct {
-	ID         string     `json:"id"`
-	RevisionID string     `json:"revision_id"`
-	Pipeline   string     `json:"pipeline"`
-	CommitSHA  string     `json:"commit_sha"`
-	Status     string     `json:"status"`
-	CreatedAt  time.Time  `json:"created_at"`
-	FinishedAt *time.Time `json:"finished_at,omitempty"`
+	Rerun      *ExecutionRerun `json:"rerun,omitempty"`
+	ID         string          `json:"id"`
+	RevisionID string          `json:"revision_id"`
+	Pipeline   string          `json:"pipeline"`
+	CommitSHA  string          `json:"commit_sha"`
+	Status     string          `json:"status"`
+	CreatedAt  time.Time       `json:"created_at"`
+	FinishedAt *time.Time      `json:"finished_at,omitempty"`
 }
 
 // Dispatcher reconciles persisted intent through Jobs; schedd still owns task

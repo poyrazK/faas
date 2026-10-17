@@ -612,7 +612,7 @@ func (q *Queries) FinishCIJobsOutput(ctx context.Context, db DBTX, arg FinishCIJ
 }
 
 const getCIExecution = `-- name: GetCIExecution :one
-SELECT id, account_id, revision_id, commit_sha, idempotency_key, mode, status, snapshot, version, fence, lease_until, created_at, finished_at, next_reconcile_at, reconcile_failures, archived_at FROM ci_executions WHERE account_id = $1 AND id = $2
+SELECT id, account_id, revision_id, commit_sha, idempotency_key, mode, status, snapshot, version, fence, lease_until, created_at, finished_at, next_reconcile_at, reconcile_failures, archived_at, rerun_parent_id, rerun_root_id FROM ci_executions WHERE account_id = $1 AND id = $2
 `
 
 type GetCIExecutionParams struct {
@@ -640,12 +640,14 @@ func (q *Queries) GetCIExecution(ctx context.Context, db DBTX, arg GetCIExecutio
 		&i.NextReconcileAt,
 		&i.ReconcileFailures,
 		&i.ArchivedAt,
+		&i.RerunParentID,
+		&i.RerunRootID,
 	)
 	return i, err
 }
 
 const getCIExecutionByKey = `-- name: GetCIExecutionByKey :one
-SELECT id, account_id, revision_id, commit_sha, idempotency_key, mode, status, snapshot, version, fence, lease_until, created_at, finished_at, next_reconcile_at, reconcile_failures, archived_at FROM ci_executions WHERE account_id = $1 AND idempotency_key = $2
+SELECT id, account_id, revision_id, commit_sha, idempotency_key, mode, status, snapshot, version, fence, lease_until, created_at, finished_at, next_reconcile_at, reconcile_failures, archived_at, rerun_parent_id, rerun_root_id FROM ci_executions WHERE account_id = $1 AND idempotency_key = $2
 `
 
 type GetCIExecutionByKeyParams struct {
@@ -673,6 +675,8 @@ func (q *Queries) GetCIExecutionByKey(ctx context.Context, db DBTX, arg GetCIExe
 		&i.NextReconcileAt,
 		&i.ReconcileFailures,
 		&i.ArchivedAt,
+		&i.RerunParentID,
+		&i.RerunRootID,
 	)
 	return i, err
 }
@@ -884,7 +888,7 @@ func (q *Queries) InsertCIEvent(ctx context.Context, db DBTX, arg InsertCIEventP
 
 const insertCIExecution = `-- name: InsertCIExecution :one
 INSERT INTO ci_executions (id, account_id, revision_id, commit_sha, idempotency_key, status, snapshot, created_at)
-VALUES ($1, $2, $3, $4, $5, 'queued', $6, $7) RETURNING id, account_id, revision_id, commit_sha, idempotency_key, mode, status, snapshot, version, fence, lease_until, created_at, finished_at, next_reconcile_at, reconcile_failures, archived_at
+VALUES ($1, $2, $3, $4, $5, 'queued', $6, $7) RETURNING id, account_id, revision_id, commit_sha, idempotency_key, mode, status, snapshot, version, fence, lease_until, created_at, finished_at, next_reconcile_at, reconcile_failures, archived_at, rerun_parent_id, rerun_root_id
 `
 
 type InsertCIExecutionParams struct {
@@ -925,6 +929,8 @@ func (q *Queries) InsertCIExecution(ctx context.Context, db DBTX, arg InsertCIEx
 		&i.NextReconcileAt,
 		&i.ReconcileFailures,
 		&i.ArchivedAt,
+		&i.RerunParentID,
+		&i.RerunRootID,
 	)
 	return i, err
 }
@@ -967,8 +973,8 @@ func (q *Queries) InsertCIGitHubTrigger(ctx context.Context, db DBTX, arg Insert
 }
 
 const insertCIJobsExecution = `-- name: InsertCIJobsExecution :one
-INSERT INTO ci_executions (id, account_id, revision_id, commit_sha, idempotency_key, mode, status, snapshot, created_at)
-VALUES ($1, $2, $3, $4, $5, 'jobs', 'queued', $6, $7) RETURNING id, account_id, revision_id, commit_sha, idempotency_key, mode, status, snapshot, version, fence, lease_until, created_at, finished_at, next_reconcile_at, reconcile_failures, archived_at
+INSERT INTO ci_executions (id, account_id, revision_id, commit_sha, idempotency_key, mode, status, snapshot, created_at, rerun_parent_id, rerun_root_id)
+VALUES ($1, $2, $3, $4, $5, 'jobs', 'queued', $6, $7, $8::uuid, $9::uuid) RETURNING id, account_id, revision_id, commit_sha, idempotency_key, mode, status, snapshot, version, fence, lease_until, created_at, finished_at, next_reconcile_at, reconcile_failures, archived_at, rerun_parent_id, rerun_root_id
 `
 
 type InsertCIJobsExecutionParams struct {
@@ -979,6 +985,8 @@ type InsertCIJobsExecutionParams struct {
 	IdempotencyKey string
 	Snapshot       []byte
 	CreatedAt      pgtype.Timestamptz
+	RerunParentID  pgtype.UUID
+	RerunRootID    pgtype.UUID
 }
 
 func (q *Queries) InsertCIJobsExecution(ctx context.Context, db DBTX, arg InsertCIJobsExecutionParams) (CiExecution, error) {
@@ -990,6 +998,8 @@ func (q *Queries) InsertCIJobsExecution(ctx context.Context, db DBTX, arg Insert
 		arg.IdempotencyKey,
 		arg.Snapshot,
 		arg.CreatedAt,
+		arg.RerunParentID,
+		arg.RerunRootID,
 	)
 	var i CiExecution
 	err := row.Scan(
@@ -1009,6 +1019,8 @@ func (q *Queries) InsertCIJobsExecution(ctx context.Context, db DBTX, arg Insert
 		&i.NextReconcileAt,
 		&i.ReconcileFailures,
 		&i.ArchivedAt,
+		&i.RerunParentID,
+		&i.RerunRootID,
 	)
 	return i, err
 }
@@ -1358,7 +1370,7 @@ func (q *Queries) LockCIAccount(ctx context.Context, db DBTX, id pgtype.UUID) (p
 }
 
 const lockCIExecution = `-- name: LockCIExecution :one
-SELECT id, account_id, revision_id, commit_sha, idempotency_key, mode, status, snapshot, version, fence, lease_until, created_at, finished_at, next_reconcile_at, reconcile_failures, archived_at FROM ci_executions WHERE account_id = $1 AND id = $2 FOR UPDATE
+SELECT id, account_id, revision_id, commit_sha, idempotency_key, mode, status, snapshot, version, fence, lease_until, created_at, finished_at, next_reconcile_at, reconcile_failures, archived_at, rerun_parent_id, rerun_root_id FROM ci_executions WHERE account_id = $1 AND id = $2 FOR UPDATE
 `
 
 type LockCIExecutionParams struct {
@@ -1386,6 +1398,8 @@ func (q *Queries) LockCIExecution(ctx context.Context, db DBTX, arg LockCIExecut
 		&i.NextReconcileAt,
 		&i.ReconcileFailures,
 		&i.ArchivedAt,
+		&i.RerunParentID,
+		&i.RerunRootID,
 	)
 	return i, err
 }
@@ -1421,7 +1435,7 @@ func (q *Queries) LockCIGitHubTrigger(ctx context.Context, db DBTX, arg LockCIGi
 }
 
 const lockCIJobsAttempt = `-- name: LockCIJobsAttempt :one
-SELECT attempt_id, account_id, execution_id, job_name, fence, cancel_requested, run_id, source, output, created_at FROM ci_job_attempts WHERE account_id = $1 AND execution_id = $2 AND attempt_id = $3 FOR UPDATE
+SELECT attempt_id, account_id, execution_id, job_name, fence, cancel_requested, run_id, source, output, created_at, progress, progress_sequence, progress_digest FROM ci_job_attempts WHERE account_id = $1 AND execution_id = $2 AND attempt_id = $3 FOR UPDATE
 `
 
 type LockCIJobsAttemptParams struct {
@@ -1444,6 +1458,9 @@ func (q *Queries) LockCIJobsAttempt(ctx context.Context, db DBTX, arg LockCIJobs
 		&i.Source,
 		&i.Output,
 		&i.CreatedAt,
+		&i.Progress,
+		&i.ProgressSequence,
+		&i.ProgressDigest,
 	)
 	return i, err
 }
@@ -1689,7 +1706,7 @@ func (q *Queries) SetCIRunGitHubSource(ctx context.Context, db DBTX, arg SetCIRu
 const updateCIExecution = `-- name: UpdateCIExecution :one
 UPDATE ci_executions SET status = $3, snapshot = $4, version = $5, fence = $6, lease_until = $7, finished_at = $8,
  next_reconcile_at = CASE WHEN ($4::jsonb->>'cancel_requested')='true' THEN least(next_reconcile_at,clock_timestamp()) ELSE next_reconcile_at END
-WHERE account_id = $1 AND id = $2 RETURNING id, account_id, revision_id, commit_sha, idempotency_key, mode, status, snapshot, version, fence, lease_until, created_at, finished_at, next_reconcile_at, reconcile_failures, archived_at
+WHERE account_id = $1 AND id = $2 RETURNING id, account_id, revision_id, commit_sha, idempotency_key, mode, status, snapshot, version, fence, lease_until, created_at, finished_at, next_reconcile_at, reconcile_failures, archived_at, rerun_parent_id, rerun_root_id
 `
 
 type UpdateCIExecutionParams struct {
@@ -1732,6 +1749,8 @@ func (q *Queries) UpdateCIExecution(ctx context.Context, db DBTX, arg UpdateCIEx
 		&i.NextReconcileAt,
 		&i.ReconcileFailures,
 		&i.ArchivedAt,
+		&i.RerunParentID,
+		&i.RerunRootID,
 	)
 	return i, err
 }

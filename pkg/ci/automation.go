@@ -11,8 +11,12 @@ import (
 )
 
 type AutomationRequest struct {
-	ProfileID    string   `json:"profile_id"`
-	PushBranches []string `json:"push_branches"`
+	ProfileID           string   `json:"profile_id"`
+	PushBranches        []string `json:"push_branches"`
+	PullRequestBranches []string `json:"pull_request_branches,omitempty"`
+	LatestOnly          bool     `json:"latest_only"`
+	IncludePaths        []string `json:"include_paths,omitempty"`
+	ExcludePaths        []string `json:"exclude_paths,omitempty"`
 }
 
 type AutomationPolicy struct {
@@ -43,20 +47,35 @@ type AutomationProvenance struct {
 	EventID          string `json:"event_id"`
 	PolicyID         string `json:"policy_id"`
 	PolicyGeneration int64  `json:"policy_generation"`
+	Kind             string `json:"kind,omitempty"`
+	PRNumber         int    `json:"pr_number,omitempty"`
 }
 
 type AutomationEventSummary struct {
-	ID               string    `json:"id"`
-	PolicyID         string    `json:"policy_id"`
-	PolicyGeneration int64     `json:"policy_generation"`
-	ProfileID        string    `json:"profile_id"`
-	CommitSHA        string    `json:"commit_sha"`
-	Branch           string    `json:"branch"`
-	Status           string    `json:"status"`
-	Attempts         int       `json:"attempts"`
-	LastError        string    `json:"last_error,omitempty"`
-	ExecutionID      string    `json:"execution_id,omitempty"`
-	CreatedAt        time.Time `json:"created_at"`
+	ID               string                  `json:"id"`
+	PolicyID         string                  `json:"policy_id"`
+	PolicyGeneration int64                   `json:"policy_generation"`
+	ProfileID        string                  `json:"profile_id"`
+	CommitSHA        string                  `json:"commit_sha"`
+	Branch           string                  `json:"branch"`
+	Kind             string                  `json:"kind"`
+	PRNumber         int64                   `json:"pr_number,omitempty"`
+	Status           string                  `json:"status"`
+	Attempts         int                     `json:"attempts"`
+	LastError        string                  `json:"last_error,omitempty"`
+	ExecutionID      string                  `json:"execution_id,omitempty"`
+	CreatedAt        time.Time               `json:"created_at"`
+	RetryGeneration  int32                   `json:"retry_generation"`
+	MaxRetries       int                     `json:"max_retry_generations"`
+	Retryable        bool                    `json:"retryable"`
+	NextAttemptAt    *time.Time              `json:"next_attempt_at,omitempty"`
+	LeaseExpiresAt   *time.Time              `json:"lease_expires_at,omitempty"`
+	LastRetry        *AutomationRetry        `json:"last_retry,omitempty"`
+	SupersededBy     string                  `json:"superseded_by,omitempty"`
+	SupersededSHA    string                  `json:"superseded_sha,omitempty"`
+	SupersededAt     *time.Time              `json:"superseded_at,omitempty"`
+	PathDecision     *AutomationPathDecision `json:"path_decision,omitempty"`
+	CheckDelivery    *SourceCheckDelivery    `json:"check_delivery,omitempty"`
 }
 
 type AutomationStore interface {
@@ -71,17 +90,23 @@ type AutomationStore interface {
 }
 
 func NormalizeAutomationRequest(req AutomationRequest) (AutomationRequest, error) {
-	if !ValidID(req.ProfileID) || len(req.PushBranches) < 1 || len(req.PushBranches) > api.CIGitHubMaxBranches {
+	if !ValidID(req.ProfileID) || len(req.PushBranches)+len(req.PullRequestBranches) == 0 {
 		return req, ErrConflict
 	}
 	req.PushBranches = slices.Clone(req.PushBranches)
-	slices.Sort(req.PushBranches)
-	for i, branch := range req.PushBranches {
-		if !validGitHubBranch(branch) || i > 0 && branch == req.PushBranches[i-1] {
+	req.PullRequestBranches = slices.Clone(req.PullRequestBranches)
+	for _, branches := range [][]string{req.PushBranches, req.PullRequestBranches} {
+		if len(branches) > api.CIGitHubMaxBranches {
 			return req, ErrConflict
 		}
+		slices.Sort(branches)
+		for i, branch := range branches {
+			if !validGitHubBranch(branch) || i > 0 && branch == branches[i-1] {
+				return req, ErrConflict
+			}
+		}
 	}
-	return req, nil
+	return normalizeAutomationPaths(req)
 }
 
 // Saving policy needs source authority, but does not require or enable compute.
@@ -118,6 +143,11 @@ func SaveAutomationPolicy(ctx context.Context, cfg Config, store AutomationStore
 				return AutomationPolicy{}, ErrConflict
 			}
 		}
+		for _, branch := range req.PullRequestBranches {
+			if !slices.Contains(binding.PullRequestBranches, branch) {
+				return AutomationPolicy{}, ErrConflict
+			}
+		}
 		if err := verify(ctx, account, binding.InstallationID, binding.RepositoryID, binding.Repository); err != nil {
 			return AutomationPolicy{}, err
 		}
@@ -130,10 +160,18 @@ func automationProvenance(event *AutomationEvent) *AutomationProvenance {
 	if event == nil {
 		return nil
 	}
-	return &AutomationProvenance{EventID: event.ID, PolicyID: event.Policy.ID, PolicyGeneration: event.Policy.Generation}
+	provenance := &AutomationProvenance{EventID: event.ID, PolicyID: event.Policy.ID, PolicyGeneration: event.Policy.Generation}
+	if event.Source.Kind == "pull_request" {
+		provenance.Kind, provenance.PRNumber = event.Source.Kind, event.Source.PRNumber
+	}
+	return provenance
 }
 
-func AdmitAutomationOnce(ctx context.Context, cfg Config, store AutomationStore, verify GitHubVerifier) (bool, error) {
+func AdmitAutomationOnce(ctx context.Context, cfg Config, store AutomationStore, verify GitHubVerifier, heads ...AutomationHeadVerifier) (bool, error) {
+	return AdmitAutomationWithResolvers(ctx, cfg, store, verify, automationBranchResolvers(heads))
+}
+
+func AdmitAutomationWithResolvers(ctx context.Context, cfg Config, store AutomationStore, verify GitHubVerifier, resolvers AutomationResolvers) (bool, error) {
 	if store == nil || verify == nil {
 		return false, nil
 	}
@@ -152,11 +190,21 @@ func AdmitAutomationOnce(ctx context.Context, cfg Config, store AutomationStore,
 		}
 		worked = true
 		req := JobsSubmitRequest{ProfileID: event.Policy.ProfileID, SubmitRequest: SubmitRequest{CommitSHA: event.Source.CommitSHA}, automation: &event}
-		_, _, err = AdmitJobs(ctx, cfg, store, verify, account, "github-auto:"+event.ID, req)
+		if event.Source.Kind == "pull_request" {
+			req.automationPR, err = prepareAutomationPullRequest(ctx, store, verify, event, resolvers.PullRequest)
+		} else {
+			req.automationHead, err = prepareAutomationHead(ctx, store, verify, event, []AutomationHeadVerifier{resolvers.Branch})
+		}
+		if err == nil {
+			req.automationPaths, err = prepareAutomationPaths(ctx, verify, event, req.automationPR, resolvers.Changes)
+		}
+		if err == nil {
+			_, _, err = AdmitJobs(ctx, cfg, store, verify, account, "github-auto:"+event.ID, req)
+		}
 		if err == nil {
 			return true, nil
 		}
-		if errors.Is(err, ErrLeaseLost) {
+		if errors.Is(err, errAutomationDeferred) || errors.Is(err, ErrLeaseLost) {
 			continue
 		}
 		reason, permanent := "unavailable", false
@@ -183,12 +231,16 @@ func AdmitAutomationOnce(ctx context.Context, cfg Config, store AutomationStore,
 	return worked, failures
 }
 
-func RunAutomationAdmissionWorker(ctx context.Context, cfg Config, store AutomationStore, verify GitHubVerifier, log *slog.Logger) {
+func RunAutomationAdmissionWorker(ctx context.Context, cfg Config, store AutomationStore, verify GitHubVerifier, log *slog.Logger, heads ...AutomationHeadVerifier) {
+	RunAutomationWorkerWithResolvers(ctx, cfg, store, verify, log, automationBranchResolvers(heads))
+}
+
+func RunAutomationWorkerWithResolvers(ctx context.Context, cfg Config, store AutomationStore, verify GitHubVerifier, log *slog.Logger, resolvers AutomationResolvers) {
 	if !cfg.AutomationEnabled || !cfg.WorkerEnabled || !cfg.TransportEnabled || !cfg.DispatchEnabled {
 		return
 	}
 	runGitHubWorker(ctx, func(ctx context.Context) (bool, error) {
-		worked, err := AdmitAutomationOnce(ctx, cfg, store, verify)
+		worked, err := AdmitAutomationWithResolvers(ctx, cfg, store, verify, resolvers)
 		if err != nil {
 			// Provider/DB error strings can contain connection details or URLs.
 			return worked, errors.New("CI automation admission unavailable")

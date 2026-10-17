@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
-	"slices"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -22,8 +21,8 @@ func automationEventRow(row sqlc.CiAutomationEvent) (AutomationEvent, error) {
 		event.Policy.Generation != row.PolicyGeneration || event.Policy.ProfileID != uuidString(row.ProfileID) ||
 		event.Binding.ID != uuidString(row.BindingID) || event.Binding.AccountID != event.AccountID || event.Policy.AccountID != event.AccountID ||
 		event.Policy.BindingID != event.Binding.ID || event.Policy.BindingGeneration != event.Binding.Generation ||
-		event.Source.BindingID != event.Binding.ID || event.Source.Generation != event.Binding.Generation || event.Source.Kind != "push" ||
-		!bindingMatches(event.Binding, event.Source.GitHubEvent) || !slices.Contains(event.Policy.PushBranches, event.Source.Branch) || event.Source.Key() != row.EventKey {
+		event.Source.BindingID != event.Binding.ID || event.Source.Generation != event.Binding.Generation ||
+		!bindingMatches(event.Binding, event.Source.GitHubEvent) || !automationPolicyMatches(event.Policy, event.Source.GitHubEvent) || event.Source.Key() != row.EventKey {
 		return AutomationEvent{}, errors.New("CI automation source identity mismatch")
 	}
 	event.Status, event.Attempts = row.Status, int(row.Attempts)
@@ -73,6 +72,7 @@ func (s *PostgresStore) jobsAutomation(ctx context.Context, tx pgx.Tx, account, 
 		return storeError(err)
 	}
 	if !policy.Enabled || uuidString(policy.ID) != event.Policy.ID || policy.Generation != event.Policy.Generation || policy.BindingGeneration != binding.Generation ||
+		policy.LatestOnly != event.Policy.LatestOnly || !reflect.DeepEqual(claim.Policy, event.Policy) ||
 		uuidString(policy.ProfileID) != req.ProfileID || req.ProfileID != event.Policy.ProfileID || req.CommitSHA != event.Source.CommitSHA ||
 		key != "github-auto:"+event.ID || !sameJobsBinding(binding, event.Binding) || !sameJobsBinding(claim.Binding, event.Binding) ||
 		!reflect.DeepEqual(claim.Source, event.Source) || !reflect.DeepEqual(automationProvenance(claim), automationProvenance(&event)) {
@@ -81,12 +81,16 @@ func (s *PostgresStore) jobsAutomation(ctx context.Context, tx pgx.Tx, account, 
 	return nil
 }
 
-func (s *PostgresStore) finishAutomationAdmission(ctx context.Context, tx pgx.Tx, claim *AutomationEvent, executionID string) error {
+func (s *PostgresStore) finishAutomationAdmission(ctx context.Context, tx pgx.Tx, claim *AutomationEvent, executionID string, decision *AutomationPathDecision) error {
 	if claim == nil {
 		return nil
 	}
+	var raw []byte
+	if decision != nil {
+		raw, _ = json.Marshal(decision)
+	}
 	count, err := s.q.AdmitCIAutomationEvent(ctx, tx, sqlc.AdmitCIAutomationEventParams{AccountID: dbUUID(claim.AccountID), ID: dbUUID(claim.ID),
-		LeaseToken: dbUUID(claim.LeaseToken), ExecutionID: dbUUID(executionID)})
+		LeaseToken: dbUUID(claim.LeaseToken), ExecutionID: dbUUID(executionID), PathDecision: raw})
 	if err != nil {
 		return storeError(err)
 	}
@@ -126,11 +130,38 @@ func (s *PostgresStore) AutomationEvents(ctx context.Context, account, binding s
 	out := make([]AutomationEventSummary, 0, len(rows))
 	for _, row := range rows {
 		event := AutomationEventSummary{ID: uuidString(row.ID), PolicyID: uuidString(row.PolicyID), PolicyGeneration: row.PolicyGeneration,
-			ProfileID: uuidString(row.ProfileID), CommitSHA: row.CommitSha, Branch: row.Branch, Status: row.Status, Attempts: int(row.Attempts), LastError: row.LastError, CreatedAt: row.CreatedAt.Time}
+			ProfileID: uuidString(row.ProfileID), CommitSHA: row.CommitSha, Branch: row.Branch, Kind: row.Kind, PRNumber: row.PrNumber, Status: row.Status, Attempts: int(row.Attempts), LastError: row.LastError, CreatedAt: row.CreatedAt.Time}
 		if row.ExecutionID.Valid {
 			event.ExecutionID = uuidString(row.ExecutionID)
 		}
+		if len(row.PathDecision) > 0 {
+			if json.Unmarshal(row.PathDecision, &event.PathDecision) != nil {
+				return nil, errors.New("decode CI path decision")
+			}
+		}
+		event.RetryGeneration, event.MaxRetries = row.RetryGeneration, api.CIAutomationRetryMaxGenerations
+		if row.SupersededBy.Valid {
+			event.SupersededBy = uuidString(row.SupersededBy)
+		}
+		if row.SupersededSha.Valid {
+			event.SupersededSHA = row.SupersededSha.String
+		}
+		if row.SupersededAt.Valid {
+			event.SupersededAt = &row.SupersededAt.Time
+		}
+		event.Retryable = automationAdmissionExhausted(row.Status, row.LastError, int(row.Attempts)) && !row.ExecutionID.Valid && !row.HasExecution && !row.LeaseUntil.Valid && row.RetryGeneration < api.CIAutomationRetryMaxGenerations
+		if row.Status == "pending" || row.Status == "processing" {
+			event.NextAttemptAt = &row.NextAttemptAt.Time
+		}
+		if row.LeaseUntil.Valid {
+			event.LeaseExpiresAt = &row.LeaseUntil.Time
+		}
+		if row.RetryID.Valid {
+			retry := automationRetryRow(sqlc.CiAutomationEventRetry{ID: row.RetryID, EventID: row.ID, Generation: row.LastRetryGeneration,
+				PreviousAttempts: row.PreviousAttempts, PreviousError: row.PreviousError, RequestedAt: row.RequestedAt})
+			event.LastRetry = &retry
+		}
 		out = append(out, event)
 	}
-	return out, nil
+	return s.attachSourceCheckDeliveries(ctx, account, binding, out)
 }

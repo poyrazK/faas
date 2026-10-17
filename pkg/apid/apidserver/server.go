@@ -16,6 +16,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid"
 	"github.com/onebox-faas/faas/pkg/apid/appevents"
+	"github.com/onebox-faas/faas/pkg/apid/ciapi"
 	"github.com/onebox-faas/faas/pkg/apid/durable"
 	"github.com/onebox-faas/faas/pkg/apid/edgerules"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
@@ -4399,7 +4400,9 @@ func (s *server) handler() http.Handler {
 	// + JSON so the gate is unconditionally true.
 	return middleware.RequestID(httpsec.Static(httpsec.Nonce(
 		func(*http.Request) bool { return true },
-		s.observeWrap(operation.OperationCustomerCORS(apiContractHandler(mux, s.durable.Hidden))),
+		s.observeWrap(operation.OperationCustomerCORS(ciapi.HideDisabledRoutes(
+			func() ci.Config { return s.ciConfig }, apiContractHandler(mux, s.durable.Hidden),
+		))),
 	)))
 }
 

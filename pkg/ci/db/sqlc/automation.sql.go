@@ -12,15 +12,16 @@ import (
 )
 
 const admitCIAutomationEvent = `-- name: AdmitCIAutomationEvent :execrows
-UPDATE ci_automation_events SET status='admitted',execution_id=$4,lease_token=NULL,lease_until=NULL,last_error=''
+UPDATE ci_automation_events SET status='admitted',execution_id=$4,lease_token=NULL,lease_until=NULL,last_error='',path_decision=$5
 WHERE account_id=$1 AND id=$2 AND lease_token=$3 AND status='processing' AND lease_until>clock_timestamp()
 `
 
 type AdmitCIAutomationEventParams struct {
-	AccountID   pgtype.UUID
-	ID          pgtype.UUID
-	LeaseToken  pgtype.UUID
-	ExecutionID pgtype.UUID
+	AccountID    pgtype.UUID
+	ID           pgtype.UUID
+	LeaseToken   pgtype.UUID
+	ExecutionID  pgtype.UUID
+	PathDecision []byte
 }
 
 func (q *Queries) AdmitCIAutomationEvent(ctx context.Context, db DBTX, arg AdmitCIAutomationEventParams) (int64, error) {
@@ -29,6 +30,7 @@ func (q *Queries) AdmitCIAutomationEvent(ctx context.Context, db DBTX, arg Admit
 		arg.ID,
 		arg.LeaseToken,
 		arg.ExecutionID,
+		arg.PathDecision,
 	)
 	if err != nil {
 		return 0, err
@@ -44,7 +46,7 @@ WITH candidate AS (
 )
 UPDATE ci_automation_events e SET status='processing',attempts=e.attempts+1,lease_token=$2::uuid,
  lease_until=clock_timestamp()+make_interval(secs=>$3::integer)
-FROM candidate c WHERE e.id=c.id RETURNING e.id, e.account_id, e.binding_id, e.policy_id, e.policy_generation, e.profile_id, e.event_key, e.snapshot, e.status, e.attempts, e.lease_token, e.lease_until, e.next_attempt_at, e.last_error, e.execution_id, e.created_at
+FROM candidate c WHERE e.id=c.id RETURNING e.id, e.account_id, e.binding_id, e.policy_id, e.policy_generation, e.profile_id, e.event_key, e.snapshot, e.status, e.attempts, e.retry_generation, e.lease_token, e.lease_until, e.next_attempt_at, e.last_error, e.execution_id, e.superseded_by, e.superseded_sha, e.superseded_at, e.created_at, e.path_decision
 `
 
 type ClaimCIAutomationEventParams struct {
@@ -73,19 +75,24 @@ func (q *Queries) ClaimCIAutomationEvent(ctx context.Context, db DBTX, arg Claim
 		&i.Snapshot,
 		&i.Status,
 		&i.Attempts,
+		&i.RetryGeneration,
 		&i.LeaseToken,
 		&i.LeaseUntil,
 		&i.NextAttemptAt,
 		&i.LastError,
 		&i.ExecutionID,
+		&i.SupersededBy,
+		&i.SupersededSha,
+		&i.SupersededAt,
 		&i.CreatedAt,
+		&i.PathDecision,
 	)
 	return i, err
 }
 
 const disableCIAutomationPolicy = `-- name: DisableCIAutomationPolicy :one
 UPDATE ci_automation_policies SET enabled=false,generation=generation+CASE WHEN enabled THEN 1 ELSE 0 END
-WHERE account_id=$1 AND binding_id=$2 RETURNING id, account_id, binding_id, binding_generation, profile_id, push_branches, enabled, generation, created_at
+WHERE account_id=$1 AND binding_id=$2 RETURNING id, account_id, binding_id, binding_generation, profile_id, push_branches, pr_branches, latest_only, enabled, generation, created_at, include_paths, exclude_paths
 `
 
 type DisableCIAutomationPolicyParams struct {
@@ -103,15 +110,19 @@ func (q *Queries) DisableCIAutomationPolicy(ctx context.Context, db DBTX, arg Di
 		&i.BindingGeneration,
 		&i.ProfileID,
 		&i.PushBranches,
+		&i.PrBranches,
+		&i.LatestOnly,
 		&i.Enabled,
 		&i.Generation,
 		&i.CreatedAt,
+		&i.IncludePaths,
+		&i.ExcludePaths,
 	)
 	return i, err
 }
 
 const expireCIAutomationEvents = `-- name: ExpireCIAutomationEvents :exec
-UPDATE ci_automation_events SET status='dead',last_error=CASE WHEN last_error='' THEN 'unavailable' ELSE last_error END,
+UPDATE ci_automation_events SET status='dead',last_error=CASE WHEN last_error IN ('','branch_wait','pr_wait') THEN 'unavailable' ELSE last_error END,
  lease_token=NULL,lease_until=NULL
 WHERE account_id=$1 AND attempts>=$2::integer
  AND (status='pending' OR (status='processing' AND lease_until<=clock_timestamp()))
@@ -157,7 +168,7 @@ func (q *Queries) FailCIAutomationEvent(ctx context.Context, db DBTX, arg FailCI
 }
 
 const getCIAutomationEventByKey = `-- name: GetCIAutomationEventByKey :one
-SELECT id, account_id, binding_id, policy_id, policy_generation, profile_id, event_key, snapshot, status, attempts, lease_token, lease_until, next_attempt_at, last_error, execution_id, created_at FROM ci_automation_events WHERE account_id=$1 AND binding_id=$2 AND event_key=$3
+SELECT id, account_id, binding_id, policy_id, policy_generation, profile_id, event_key, snapshot, status, attempts, retry_generation, lease_token, lease_until, next_attempt_at, last_error, execution_id, superseded_by, superseded_sha, superseded_at, created_at, path_decision FROM ci_automation_events WHERE account_id=$1 AND binding_id=$2 AND event_key=$3
 `
 
 type GetCIAutomationEventByKeyParams struct {
@@ -180,18 +191,23 @@ func (q *Queries) GetCIAutomationEventByKey(ctx context.Context, db DBTX, arg Ge
 		&i.Snapshot,
 		&i.Status,
 		&i.Attempts,
+		&i.RetryGeneration,
 		&i.LeaseToken,
 		&i.LeaseUntil,
 		&i.NextAttemptAt,
 		&i.LastError,
 		&i.ExecutionID,
+		&i.SupersededBy,
+		&i.SupersededSha,
+		&i.SupersededAt,
 		&i.CreatedAt,
+		&i.PathDecision,
 	)
 	return i, err
 }
 
 const getCIAutomationPolicy = `-- name: GetCIAutomationPolicy :one
-SELECT id, account_id, binding_id, binding_generation, profile_id, push_branches, enabled, generation, created_at FROM ci_automation_policies WHERE account_id=$1 AND binding_id=$2
+SELECT id, account_id, binding_id, binding_generation, profile_id, push_branches, pr_branches, latest_only, enabled, generation, created_at, include_paths, exclude_paths FROM ci_automation_policies WHERE account_id=$1 AND binding_id=$2
 `
 
 type GetCIAutomationPolicyParams struct {
@@ -209,9 +225,13 @@ func (q *Queries) GetCIAutomationPolicy(ctx context.Context, db DBTX, arg GetCIA
 		&i.BindingGeneration,
 		&i.ProfileID,
 		&i.PushBranches,
+		&i.PrBranches,
+		&i.LatestOnly,
 		&i.Enabled,
 		&i.Generation,
 		&i.CreatedAt,
+		&i.IncludePaths,
+		&i.ExcludePaths,
 	)
 	return i, err
 }
@@ -278,10 +298,19 @@ func (q *Queries) InsertCIAutomationEvent(ctx context.Context, db DBTX, arg Inse
 }
 
 const listCIAutomationEvents = `-- name: ListCIAutomationEvents :many
-SELECT id,policy_id,policy_generation,profile_id,status,attempts,last_error,execution_id,created_at,
- (snapshot->'source'->>'commit_sha')::text AS commit_sha,(snapshot->'source'->>'branch')::text AS branch
-FROM ci_automation_events WHERE account_id=$1 AND binding_id=$2
-ORDER BY created_at DESC,id LIMIT $3::integer
+SELECT e.id,e.policy_id,e.policy_generation,e.profile_id,e.status,e.attempts,e.last_error,e.execution_id,e.created_at,
+ (e.snapshot->'source'->>'commit_sha')::text AS commit_sha,(e.snapshot->'source'->>'branch')::text AS branch,
+ (e.snapshot->'source'->>'kind')::text AS kind,coalesce((e.snapshot->'source'->>'pr_number')::bigint,0)::bigint AS pr_number,
+ e.retry_generation,e.next_attempt_at,e.lease_until,e.superseded_by,e.superseded_sha,e.superseded_at,e.path_decision,
+ EXISTS(SELECT 1 FROM ci_executions x WHERE x.account_id=e.account_id AND x.idempotency_key='github-auto:' || e.id::text) AS has_execution,
+ r.id AS retry_id,coalesce(r.generation,0)::integer AS last_retry_generation,
+ coalesce(r.previous_attempts,0)::integer AS previous_attempts,coalesce(r.previous_error,'')::text AS previous_error,r.requested_at
+FROM ci_automation_events e LEFT JOIN LATERAL (
+ SELECT id,generation,previous_attempts,previous_error,requested_at FROM ci_automation_event_retries
+ WHERE account_id=e.account_id AND event_id=e.id ORDER BY generation DESC LIMIT 1
+) r ON true
+WHERE e.account_id=$1 AND e.binding_id=$2
+ORDER BY e.created_at DESC,e.id LIMIT $3::integer
 `
 
 type ListCIAutomationEventsParams struct {
@@ -291,17 +320,32 @@ type ListCIAutomationEventsParams struct {
 }
 
 type ListCIAutomationEventsRow struct {
-	ID               pgtype.UUID
-	PolicyID         pgtype.UUID
-	PolicyGeneration int64
-	ProfileID        pgtype.UUID
-	Status           string
-	Attempts         int32
-	LastError        string
-	ExecutionID      pgtype.UUID
-	CreatedAt        pgtype.Timestamptz
-	CommitSha        string
-	Branch           string
+	ID                  pgtype.UUID
+	PolicyID            pgtype.UUID
+	PolicyGeneration    int64
+	ProfileID           pgtype.UUID
+	Status              string
+	Attempts            int32
+	LastError           string
+	ExecutionID         pgtype.UUID
+	CreatedAt           pgtype.Timestamptz
+	CommitSha           string
+	Branch              string
+	Kind                string
+	PrNumber            int64
+	RetryGeneration     int32
+	NextAttemptAt       pgtype.Timestamptz
+	LeaseUntil          pgtype.Timestamptz
+	SupersededBy        pgtype.UUID
+	SupersededSha       pgtype.Text
+	SupersededAt        pgtype.Timestamptz
+	PathDecision        []byte
+	HasExecution        bool
+	RetryID             pgtype.UUID
+	LastRetryGeneration int32
+	PreviousAttempts    int32
+	PreviousError       string
+	RequestedAt         pgtype.Timestamptz
 }
 
 func (q *Queries) ListCIAutomationEvents(ctx context.Context, db DBTX, arg ListCIAutomationEventsParams) ([]ListCIAutomationEventsRow, error) {
@@ -325,6 +369,21 @@ func (q *Queries) ListCIAutomationEvents(ctx context.Context, db DBTX, arg ListC
 			&i.CreatedAt,
 			&i.CommitSha,
 			&i.Branch,
+			&i.Kind,
+			&i.PrNumber,
+			&i.RetryGeneration,
+			&i.NextAttemptAt,
+			&i.LeaseUntil,
+			&i.SupersededBy,
+			&i.SupersededSha,
+			&i.SupersededAt,
+			&i.PathDecision,
+			&i.HasExecution,
+			&i.RetryID,
+			&i.LastRetryGeneration,
+			&i.PreviousAttempts,
+			&i.PreviousError,
+			&i.RequestedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -337,7 +396,7 @@ func (q *Queries) ListCIAutomationEvents(ctx context.Context, db DBTX, arg ListC
 }
 
 const listCIAutomationPolicies = `-- name: ListCIAutomationPolicies :many
-SELECT id, account_id, binding_id, binding_generation, profile_id, push_branches, enabled, generation, created_at FROM ci_automation_policies WHERE account_id=$1 ORDER BY created_at DESC,id LIMIT $2::integer
+SELECT id, account_id, binding_id, binding_generation, profile_id, push_branches, pr_branches, latest_only, enabled, generation, created_at, include_paths, exclude_paths FROM ci_automation_policies WHERE account_id=$1 ORDER BY created_at DESC,id LIMIT $2::integer
 `
 
 type ListCIAutomationPoliciesParams struct {
@@ -361,9 +420,13 @@ func (q *Queries) ListCIAutomationPolicies(ctx context.Context, db DBTX, arg Lis
 			&i.BindingGeneration,
 			&i.ProfileID,
 			&i.PushBranches,
+			&i.PrBranches,
+			&i.LatestOnly,
 			&i.Enabled,
 			&i.Generation,
 			&i.CreatedAt,
+			&i.IncludePaths,
+			&i.ExcludePaths,
 		); err != nil {
 			return nil, err
 		}
@@ -376,7 +439,7 @@ func (q *Queries) ListCIAutomationPolicies(ctx context.Context, db DBTX, arg Lis
 }
 
 const lockCIAutomationEvent = `-- name: LockCIAutomationEvent :one
-SELECT id, account_id, binding_id, policy_id, policy_generation, profile_id, event_key, snapshot, status, attempts, lease_token, lease_until, next_attempt_at, last_error, execution_id, created_at FROM ci_automation_events WHERE account_id=$1 AND id=$2 FOR UPDATE
+SELECT id, account_id, binding_id, policy_id, policy_generation, profile_id, event_key, snapshot, status, attempts, retry_generation, lease_token, lease_until, next_attempt_at, last_error, execution_id, superseded_by, superseded_sha, superseded_at, created_at, path_decision FROM ci_automation_events WHERE account_id=$1 AND id=$2 FOR UPDATE
 `
 
 type LockCIAutomationEventParams struct {
@@ -398,22 +461,28 @@ func (q *Queries) LockCIAutomationEvent(ctx context.Context, db DBTX, arg LockCI
 		&i.Snapshot,
 		&i.Status,
 		&i.Attempts,
+		&i.RetryGeneration,
 		&i.LeaseToken,
 		&i.LeaseUntil,
 		&i.NextAttemptAt,
 		&i.LastError,
 		&i.ExecutionID,
+		&i.SupersededBy,
+		&i.SupersededSha,
+		&i.SupersededAt,
 		&i.CreatedAt,
+		&i.PathDecision,
 	)
 	return i, err
 }
 
 const upsertCIAutomationPolicy = `-- name: UpsertCIAutomationPolicy :one
-INSERT INTO ci_automation_policies(id,account_id,binding_id,binding_generation,profile_id,push_branches)
-VALUES($1,$2,$3,$4,$5,$6)
+INSERT INTO ci_automation_policies(id,account_id,binding_id,binding_generation,profile_id,push_branches,latest_only,pr_branches,include_paths,exclude_paths)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
 ON CONFLICT(account_id,binding_id) DO UPDATE SET binding_generation=EXCLUDED.binding_generation,
- profile_id=EXCLUDED.profile_id,push_branches=EXCLUDED.push_branches,enabled=true,generation=ci_automation_policies.generation+1
-RETURNING id, account_id, binding_id, binding_generation, profile_id, push_branches, enabled, generation, created_at
+ profile_id=EXCLUDED.profile_id,push_branches=EXCLUDED.push_branches,pr_branches=EXCLUDED.pr_branches,latest_only=EXCLUDED.latest_only,
+ include_paths=EXCLUDED.include_paths,exclude_paths=EXCLUDED.exclude_paths,enabled=true,generation=ci_automation_policies.generation+1
+RETURNING id, account_id, binding_id, binding_generation, profile_id, push_branches, pr_branches, latest_only, enabled, generation, created_at, include_paths, exclude_paths
 `
 
 type UpsertCIAutomationPolicyParams struct {
@@ -423,6 +492,10 @@ type UpsertCIAutomationPolicyParams struct {
 	BindingGeneration int64
 	ProfileID         pgtype.UUID
 	PushBranches      []byte
+	LatestOnly        bool
+	PrBranches        []byte
+	IncludePaths      []byte
+	ExcludePaths      []byte
 }
 
 func (q *Queries) UpsertCIAutomationPolicy(ctx context.Context, db DBTX, arg UpsertCIAutomationPolicyParams) (CiAutomationPolicy, error) {
@@ -433,6 +506,10 @@ func (q *Queries) UpsertCIAutomationPolicy(ctx context.Context, db DBTX, arg Ups
 		arg.BindingGeneration,
 		arg.ProfileID,
 		arg.PushBranches,
+		arg.LatestOnly,
+		arg.PrBranches,
+		arg.IncludePaths,
+		arg.ExcludePaths,
 	)
 	var i CiAutomationPolicy
 	err := row.Scan(
@@ -442,9 +519,13 @@ func (q *Queries) UpsertCIAutomationPolicy(ctx context.Context, db DBTX, arg Ups
 		&i.BindingGeneration,
 		&i.ProfileID,
 		&i.PushBranches,
+		&i.PrBranches,
+		&i.LatestOnly,
 		&i.Enabled,
 		&i.Generation,
 		&i.CreatedAt,
+		&i.IncludePaths,
+		&i.ExcludePaths,
 	)
 	return i, err
 }

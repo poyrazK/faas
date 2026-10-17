@@ -31,6 +31,8 @@ func (h Handler) Routes() http.Handler {
 	mux.HandleFunc("GET /v1/internal/ci/runtime/{run}/source", h.Source)
 	mux.HandleFunc("PUT /v1/internal/ci/runtime/{run}/objects", h.Upload)
 	mux.HandleFunc("PUT /v1/internal/ci/runtime/{run}/result", h.Seal)
+	mux.HandleFunc("PUT /v1/internal/ci/runtime/{run}/progress", h.Progress)
+	mux.HandleFunc("GET /v1/internal/ci/runtime/{run}/inputs/{input}", h.Input)
 	return mux
 }
 
@@ -232,7 +234,7 @@ func (r contextReader) Read(p []byte) (int, error) {
 func writeError(w http.ResponseWriter, err error) {
 	status, code := http.StatusServiceUnavailable, "ci_runtime_unavailable"
 	switch {
-	case errors.Is(err, ci.ErrRuntimeAuthority), errors.Is(err, ci.ErrNotFound):
+	case errors.Is(err, ci.ErrRuntimeAuthority), errors.Is(err, ci.ErrNotFound), errors.Is(err, ci.ErrArtifactInput):
 		status, code = http.StatusNotFound, "ci_runtime_unavailable"
 	case errors.Is(err, ci.ErrConflict):
 		status, code = http.StatusConflict, "ci_runtime_conflict"

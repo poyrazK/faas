@@ -61,6 +61,12 @@ func TestGitHubEventsRejectForksMissingIdentityAndUnsupportedTriggers(t *testing
 	if err != nil || first != event.Key() {
 		t.Fatal("same PR head created different semantic identities")
 	}
+	payload["action"] = "edited"
+	payload["changes"] = map[string]any{"base": map[string]any{"ref": map[string]any{"from": "release"}}}
+	body, _ = json.Marshal(payload)
+	if edited, err := DecodeGitHubEvent("pull_request", body); err != nil || edited.Key() != first {
+		t.Fatal("retarget event lost the PR's semantic head/base identity")
+	}
 	for _, ref := range []string{"refs/tags/v1", "refs/pull/9/merge"} {
 		body, _ := json.Marshal(map[string]any{"ref": ref, "after": strings.Repeat("a", 40)})
 		if _, err := DecodeGitHubEvent("push", body); !errors.Is(err, ErrGitHubIgnored) {

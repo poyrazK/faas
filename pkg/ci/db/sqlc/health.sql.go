@@ -54,8 +54,16 @@ WITH work AS (
  FROM ci_execution_checks c JOIN ci_executions e ON e.id=c.execution_id AND e.account_id=c.account_id
  WHERE e.archived_at IS NULL AND ($1::boolean OR c.account_id=$2::uuid)
  UNION ALL
+ SELECT 'execution_checks',status='pending',status='sending',status='dead',
+  (status='pending' AND next_attempt_at<=now()) OR (status='sending' AND lease_until<=now()),
+  status='sending' AND lease_until<=now(),created_at
+ FROM ci_automation_path_checks WHERE $1::boolean OR account_id=$2::uuid
+ UNION ALL
  SELECT 'check_retries',true,false,false,true,false,requested_at
  FROM ci_execution_check_retries WHERE applied_at IS NULL AND ($1::boolean OR account_id=$2::uuid)
+ UNION ALL
+ SELECT 'check_retries',true,false,false,true,false,requested_at
+ FROM ci_source_check_retries WHERE applied_at IS NULL AND ($1::boolean OR account_id=$2::uuid)
  UNION ALL
  SELECT 'retirement',true,op_until>now(),false,op_until IS NULL OR op_until<=now(),op_until<=now(),created_at
  FROM ci_managed_objects WHERE state!='deleted' AND (state='deleting' OR (state='ready' AND expires_at<=now())

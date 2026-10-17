@@ -23108,6 +23108,40 @@ CREATE TABLE public.canary_route_gates (
 
 
 --
+-- Name: ci_automation_branches; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.ci_automation_branches (
+    account_id uuid NOT NULL,
+    binding_id uuid NOT NULL,
+    branch text NOT NULL,
+    head_fence bigint NOT NULL,
+    CONSTRAINT ci_automation_branches_branch_check CHECK (((octet_length(branch) >= 1) AND (octet_length(branch) <= 255))),
+    CONSTRAINT ci_automation_branches_head_fence_check CHECK ((head_fence > 0))
+);
+
+
+--
+-- Name: ci_automation_event_retries; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.ci_automation_event_retries (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    event_id uuid NOT NULL,
+    generation integer NOT NULL,
+    key_digest text NOT NULL,
+    previous_attempts integer NOT NULL,
+    previous_error text NOT NULL,
+    requested_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT ci_automation_event_retries_generation_check CHECK (((generation >= 1) AND (generation <= 3))),
+    CONSTRAINT ci_automation_event_retries_key_digest_check CHECK ((key_digest ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT ci_automation_event_retries_previous_attempts_check CHECK ((previous_attempts = 8)),
+    CONSTRAINT ci_automation_event_retries_previous_error_check CHECK ((previous_error = ANY (ARRAY['unavailable'::text, 'capacity'::text])))
+);
+
+
+--
 -- Name: ci_automation_events; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -23128,14 +23162,50 @@ CREATE TABLE public.ci_automation_events (
     last_error text DEFAULT ''::text NOT NULL,
     execution_id uuid,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    retry_generation integer DEFAULT 0 NOT NULL,
+    superseded_by uuid,
+    superseded_sha text,
+    superseded_at timestamp with time zone,
+    path_decision jsonb,
     CONSTRAINT ci_automation_events_attempts_check CHECK (((attempts >= 0) AND (attempts <= 8))),
     CONSTRAINT ci_automation_events_check CHECK ((((status = 'processing'::text) AND (lease_token IS NOT NULL) AND (lease_until IS NOT NULL)) OR ((status <> 'processing'::text) AND (lease_token IS NULL) AND (lease_until IS NULL)))),
     CONSTRAINT ci_automation_events_check1 CHECK ((((status = 'admitted'::text) AND (execution_id IS NOT NULL)) OR ((status <> 'admitted'::text) AND (execution_id IS NULL)))),
+    CONSTRAINT ci_automation_events_check2 CHECK (((path_decision IS NULL) OR ((jsonb_typeof(path_decision) = 'object'::text) AND (octet_length((path_decision)::text) <= 2048) AND ((path_decision ->> 'head_sha'::text) IS NOT NULL) AND ((path_decision ->> 'head_sha'::text) = ((snapshot -> 'source'::text) ->> 'commit_sha'::text)) AND ((path_decision ->> 'outcome'::text) IS NOT NULL) AND ((path_decision ->> 'reason'::text) IS NOT NULL) AND ((((path_decision ->> 'outcome'::text) = 'run'::text) AND ((path_decision ->> 'reason'::text) = ANY (ARRAY['paths_matched'::text, 'changes_unavailable'::text, 'prior_source_unsettled'::text]))) OR (((path_decision ->> 'outcome'::text) = 'skip'::text) AND ((path_decision ->> 'reason'::text) = 'paths_filtered'::text) AND (status = 'ignored'::text) AND (last_error = 'paths_filtered'::text)))))),
     CONSTRAINT ci_automation_events_event_key_check CHECK ((event_key ~ '^[0-9a-f]{64}$'::text)),
-    CONSTRAINT ci_automation_events_last_error_check CHECK ((last_error = ANY (ARRAY[''::text, 'unavailable'::text, 'capacity'::text, 'authority_revoked'::text, 'policy_disabled'::text, 'profile_disabled'::text, 'binding_disabled'::text]))),
+    CONSTRAINT ci_automation_events_last_error_check CHECK ((last_error = ANY (ARRAY[''::text, 'unavailable'::text, 'capacity'::text, 'authority_revoked'::text, 'policy_disabled'::text, 'profile_disabled'::text, 'binding_disabled'::text, 'branch_wait'::text, 'head_changed'::text, 'branch_deleted'::text, 'pr_wait'::text, 'pr_closed'::text, 'pr_draft'::text, 'pr_changed'::text, 'paths_filtered'::text]))),
     CONSTRAINT ci_automation_events_policy_generation_check CHECK ((policy_generation > 0)),
+    CONSTRAINT ci_automation_events_retry_generation_check CHECK (((retry_generation >= 0) AND (retry_generation <= 3))),
     CONSTRAINT ci_automation_events_snapshot_check CHECK (((jsonb_typeof(snapshot) = 'object'::text) AND (octet_length((snapshot)::text) <= 65536))),
-    CONSTRAINT ci_automation_events_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'processing'::text, 'admitted'::text, 'ignored'::text, 'dead'::text])))
+    CONSTRAINT ci_automation_events_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'processing'::text, 'admitted'::text, 'ignored'::text, 'dead'::text]))),
+    CONSTRAINT ci_automation_superseded_identity CHECK ((((superseded_sha IS NULL) AND (superseded_at IS NULL) AND (superseded_by IS NULL)) OR ((superseded_sha IS NOT NULL) AND (superseded_sha ~ '^[0-9a-f]{40}$'::text) AND (superseded_at IS NOT NULL) AND ((superseded_by IS NULL) OR (superseded_by <> id)))))
+);
+
+
+--
+-- Name: ci_automation_path_checks; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.ci_automation_path_checks (
+    account_id uuid NOT NULL,
+    event_id uuid NOT NULL,
+    snapshot jsonb NOT NULL,
+    status text DEFAULT 'pending'::text NOT NULL,
+    attempts integer DEFAULT 0 NOT NULL,
+    lease_token uuid,
+    lease_until timestamp with time zone,
+    next_attempt_at timestamp with time zone DEFAULT now() NOT NULL,
+    check_id bigint DEFAULT 0 NOT NULL,
+    last_error text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    retry_generation integer DEFAULT 0 NOT NULL,
+    CONSTRAINT ci_automation_path_checks_attempts_check CHECK (((attempts >= 0) AND (attempts <= 8))),
+    CONSTRAINT ci_automation_path_checks_check CHECK ((((status = 'sending'::text) AND (lease_token IS NOT NULL) AND (lease_until IS NOT NULL)) OR ((status <> 'sending'::text) AND (lease_token IS NULL) AND (lease_until IS NULL)))),
+    CONSTRAINT ci_automation_path_checks_check1 CHECK (((status <> 'sent'::text) OR (check_id > 0))),
+    CONSTRAINT ci_automation_path_checks_check_id_check CHECK ((check_id >= 0)),
+    CONSTRAINT ci_automation_path_checks_last_error_check CHECK ((last_error = ANY (ARRAY[''::text, 'publish_failed'::text, 'access_denied'::text, 'unavailable'::text, 'attempts_exhausted'::text]))),
+    CONSTRAINT ci_automation_path_checks_retry_generation_check CHECK (((retry_generation >= 0) AND (retry_generation <= 3))),
+    CONSTRAINT ci_automation_path_checks_snapshot_check CHECK (((jsonb_typeof(snapshot) = 'object'::text) AND (octet_length((snapshot)::text) <= 2048))),
+    CONSTRAINT ci_automation_path_checks_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'sending'::text, 'sent'::text, 'ignored'::text, 'dead'::text])))
 );
 
 
@@ -23153,9 +23223,31 @@ CREATE TABLE public.ci_automation_policies (
     enabled boolean DEFAULT true NOT NULL,
     generation bigint DEFAULT 1 NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    latest_only boolean DEFAULT false NOT NULL,
+    pr_branches jsonb DEFAULT '[]'::jsonb NOT NULL,
+    include_paths jsonb DEFAULT '[]'::jsonb NOT NULL,
+    exclude_paths jsonb DEFAULT '[]'::jsonb NOT NULL,
     CONSTRAINT ci_automation_policies_binding_generation_check CHECK ((binding_generation > 0)),
+    CONSTRAINT ci_automation_policies_exclude_paths_check CHECK (((jsonb_typeof(exclude_paths) = 'array'::text) AND ((jsonb_array_length(exclude_paths) >= 0) AND (jsonb_array_length(exclude_paths) <= 16)))),
     CONSTRAINT ci_automation_policies_generation_check CHECK ((generation > 0)),
-    CONSTRAINT ci_automation_policies_push_branches_check CHECK (((jsonb_typeof(push_branches) = 'array'::text) AND ((jsonb_array_length(push_branches) >= 1) AND (jsonb_array_length(push_branches) <= 16))))
+    CONSTRAINT ci_automation_policies_include_paths_check CHECK (((jsonb_typeof(include_paths) = 'array'::text) AND ((jsonb_array_length(include_paths) >= 0) AND (jsonb_array_length(include_paths) <= 16)))),
+    CONSTRAINT ci_automation_policies_pr_branches_check CHECK (((jsonb_typeof(pr_branches) = 'array'::text) AND ((jsonb_array_length(pr_branches) >= 0) AND (jsonb_array_length(pr_branches) <= 16)))),
+    CONSTRAINT ci_automation_policies_push_branches_check CHECK (((jsonb_typeof(push_branches) = 'array'::text) AND ((jsonb_array_length(push_branches) >= 0) AND (jsonb_array_length(push_branches) <= 16)))),
+    CONSTRAINT ci_automation_policy_event_filters CHECK (((jsonb_array_length(push_branches) + jsonb_array_length(pr_branches)) > 0))
+);
+
+
+--
+-- Name: ci_automation_pull_requests; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.ci_automation_pull_requests (
+    account_id uuid NOT NULL,
+    binding_id uuid NOT NULL,
+    pr_number bigint NOT NULL,
+    head_fence bigint NOT NULL,
+    CONSTRAINT ci_automation_pull_requests_head_fence_check CHECK ((head_fence > 0)),
+    CONSTRAINT ci_automation_pull_requests_pr_number_check CHECK ((pr_number > 0))
 );
 
 
@@ -23277,7 +23369,10 @@ CREATE TABLE public.ci_executions (
     next_reconcile_at timestamp with time zone DEFAULT now() NOT NULL,
     reconcile_failures integer DEFAULT 0 NOT NULL,
     archived_at timestamp with time zone,
+    rerun_parent_id uuid,
+    rerun_root_id uuid,
     CONSTRAINT ci_execution_archive_valid CHECK (((archived_at IS NULL) OR ((mode = 'jobs'::text) AND (status = ANY (ARRAY['succeeded'::text, 'failed'::text, 'cancelled'::text])) AND (finished_at IS NOT NULL) AND (lease_until IS NULL) AND (octet_length((snapshot)::text) <= 1024)))),
+    CONSTRAINT ci_execution_rerun_identity CHECK ((((rerun_parent_id IS NULL) AND (rerun_root_id IS NULL) AND (((snapshot -> 'rerun'::text) IS NULL) OR ((snapshot -> 'rerun'::text) = 'null'::jsonb))) OR ((rerun_parent_id IS NOT NULL) AND (rerun_root_id IS NOT NULL) AND (mode = 'jobs'::text) AND (id <> rerun_parent_id) AND (id <> rerun_root_id) AND (jsonb_typeof((snapshot -> 'rerun'::text)) = 'object'::text) AND (((snapshot -> 'rerun'::text) ->> 'parent_execution_id'::text) IS NOT NULL) AND (((snapshot -> 'rerun'::text) ->> 'root_execution_id'::text) IS NOT NULL) AND (((snapshot -> 'rerun'::text) ->> 'parent_execution_id'::text) = (rerun_parent_id)::text) AND (((snapshot -> 'rerun'::text) ->> 'root_execution_id'::text) = (rerun_root_id)::text)))),
     CONSTRAINT ci_executions_check CHECK ((((snapshot ->> 'status'::text) IS NOT NULL) AND (status = (snapshot ->> 'status'::text)))),
     CONSTRAINT ci_executions_check1 CHECK ((((snapshot ->> 'mode'::text) IS NOT NULL) AND (mode = (snapshot ->> 'mode'::text)))),
     CONSTRAINT ci_executions_check2 CHECK ((((status = ANY (ARRAY['queued'::text, 'running'::text, 'cancelling'::text])) AND (finished_at IS NULL)) OR ((status = ANY (ARRAY['succeeded'::text, 'failed'::text, 'cancelled'::text])) AND (finished_at IS NOT NULL) AND (lease_until IS NULL)))),
@@ -23388,12 +23483,18 @@ CREATE TABLE public.ci_job_attempts (
     source jsonb,
     output jsonb,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    progress jsonb,
+    progress_sequence integer DEFAULT 0 NOT NULL,
+    progress_digest text DEFAULT ''::text NOT NULL,
     CONSTRAINT ci_job_attempts_check CHECK ((((run_id IS NULL) AND (source IS NULL)) OR ((run_id IS NOT NULL) AND (source IS NOT NULL)))),
     CONSTRAINT ci_job_attempts_check1 CHECK (((run_id IS NULL) OR (run_id = attempt_id))),
     CONSTRAINT ci_job_attempts_check2 CHECK (((output IS NULL) OR (run_id IS NOT NULL))),
     CONSTRAINT ci_job_attempts_fence_check CHECK ((fence > 0)),
     CONSTRAINT ci_job_attempts_job_name_check CHECK ((job_name ~ '^[a-z][a-z0-9-]{0,39}$'::text)),
     CONSTRAINT ci_job_attempts_output_check CHECK (((output IS NULL) OR ((jsonb_typeof(output) = 'object'::text) AND (octet_length((output)::text) <= 262144)))),
+    CONSTRAINT ci_job_attempts_progress_check CHECK (((progress IS NULL) OR ((jsonb_typeof(progress) = 'object'::text) AND (octet_length((progress)::text) <= 131072)))),
+    CONSTRAINT ci_job_attempts_progress_digest_check CHECK (((progress_digest = ''::text) OR (progress_digest ~ '^[0-9a-f]{64}$'::text))),
+    CONSTRAINT ci_job_attempts_progress_sequence_check CHECK (((progress_sequence >= 0) AND (progress_sequence <= 4096))),
     CONSTRAINT ci_job_attempts_source_check CHECK (((source IS NULL) OR ((jsonb_typeof(source) = 'object'::text) AND (octet_length((source)::text) <= 16384))))
 );
 
@@ -23528,6 +23629,24 @@ CREATE TABLE public.ci_runs (
     CONSTRAINT ci_runs_pipeline_check CHECK ((pipeline ~ '^[a-z][a-z0-9-]{0,39}$'::text)),
     CONSTRAINT ci_runs_plan_check CHECK (((jsonb_typeof(plan) = 'object'::text) AND (octet_length((plan)::text) <= 131072))),
     CONSTRAINT ci_runs_status_check CHECK ((status = ANY (ARRAY['blocked'::text, 'cancelled'::text])))
+);
+
+
+--
+-- Name: ci_source_check_retries; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.ci_source_check_retries (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    event_id uuid NOT NULL,
+    generation integer NOT NULL,
+    key_digest text NOT NULL,
+    requested_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    applied_at timestamp with time zone,
+    CONSTRAINT ci_source_check_retries_check CHECK (((applied_at IS NULL) OR (applied_at >= requested_at))),
+    CONSTRAINT ci_source_check_retries_generation_check CHECK (((generation >= 1) AND (generation <= 3))),
+    CONSTRAINT ci_source_check_retries_key_digest_check CHECK ((key_digest ~ '^[0-9a-f]{64}$'::text))
 );
 
 
@@ -40153,6 +40272,38 @@ ALTER TABLE ONLY public.canary_route_gates
 
 
 --
+-- Name: ci_automation_branches ci_automation_branches_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.ci_automation_branches
+    ADD CONSTRAINT ci_automation_branches_pkey PRIMARY KEY (account_id, binding_id, branch);
+
+
+--
+-- Name: ci_automation_event_retries ci_automation_event_retries_account_id_key_digest_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.ci_automation_event_retries
+    ADD CONSTRAINT ci_automation_event_retries_account_id_key_digest_key UNIQUE (account_id, key_digest);
+
+
+--
+-- Name: ci_automation_event_retries ci_automation_event_retries_event_id_generation_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.ci_automation_event_retries
+    ADD CONSTRAINT ci_automation_event_retries_event_id_generation_key UNIQUE (event_id, generation);
+
+
+--
+-- Name: ci_automation_event_retries ci_automation_event_retries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.ci_automation_event_retries
+    ADD CONSTRAINT ci_automation_event_retries_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: ci_automation_events ci_automation_events_account_id_binding_id_event_key_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -40169,11 +40320,35 @@ ALTER TABLE ONLY public.ci_automation_events
 
 
 --
+-- Name: ci_automation_events ci_automation_events_account_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.ci_automation_events
+    ADD CONSTRAINT ci_automation_events_account_id_id_key UNIQUE (account_id, id);
+
+
+--
 -- Name: ci_automation_events ci_automation_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.ci_automation_events
     ADD CONSTRAINT ci_automation_events_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: ci_automation_path_checks ci_automation_path_checks_account_event_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.ci_automation_path_checks
+    ADD CONSTRAINT ci_automation_path_checks_account_event_key UNIQUE (account_id, event_id);
+
+
+--
+-- Name: ci_automation_path_checks ci_automation_path_checks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.ci_automation_path_checks
+    ADD CONSTRAINT ci_automation_path_checks_pkey PRIMARY KEY (event_id);
 
 
 --
@@ -40198,6 +40373,14 @@ ALTER TABLE ONLY public.ci_automation_policies
 
 ALTER TABLE ONLY public.ci_automation_policies
     ADD CONSTRAINT ci_automation_policies_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: ci_automation_pull_requests ci_automation_pull_requests_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.ci_automation_pull_requests
+    ADD CONSTRAINT ci_automation_pull_requests_pkey PRIMARY KEY (account_id, binding_id, pr_number);
 
 
 --
@@ -40470,6 +40653,30 @@ ALTER TABLE ONLY public.ci_runs
 
 ALTER TABLE ONLY public.ci_runs
     ADD CONSTRAINT ci_runs_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: ci_source_check_retries ci_source_check_retries_account_id_key_digest_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.ci_source_check_retries
+    ADD CONSTRAINT ci_source_check_retries_account_id_key_digest_key UNIQUE (account_id, key_digest);
+
+
+--
+-- Name: ci_source_check_retries ci_source_check_retries_event_id_generation_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.ci_source_check_retries
+    ADD CONSTRAINT ci_source_check_retries_event_id_generation_key UNIQUE (event_id, generation);
+
+
+--
+-- Name: ci_source_check_retries ci_source_check_retries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.ci_source_check_retries
+    ADD CONSTRAINT ci_source_check_retries_pkey PRIMARY KEY (id);
 
 
 --
@@ -48431,6 +48638,13 @@ CREATE INDEX builds_running_started_idx ON public.builds USING btree (started_at
 --
 
 CREATE INDEX ci_automation_events_due_idx ON public.ci_automation_events USING btree (account_id, next_attempt_at, created_at, id) WHERE (status = ANY (ARRAY['pending'::text, 'processing'::text]));
+
+
+--
+-- Name: ci_automation_path_checks_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX ci_automation_path_checks_due_idx ON public.ci_automation_path_checks USING btree (account_id, next_attempt_at, created_at, event_id) WHERE (status = ANY (ARRAY['pending'::text, 'sending'::text]));
 
 
 --
@@ -61254,6 +61468,22 @@ ALTER TABLE ONLY public.canary_route_gates
 
 
 --
+-- Name: ci_automation_branches ci_automation_branches_account_id_binding_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.ci_automation_branches
+    ADD CONSTRAINT ci_automation_branches_account_id_binding_id_fkey FOREIGN KEY (account_id, binding_id) REFERENCES public.ci_github_bindings(account_id, id) ON DELETE CASCADE;
+
+
+--
+-- Name: ci_automation_event_retries ci_automation_event_retries_account_id_event_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.ci_automation_event_retries
+    ADD CONSTRAINT ci_automation_event_retries_account_id_event_id_fkey FOREIGN KEY (account_id, event_id) REFERENCES public.ci_automation_events(account_id, id) ON DELETE CASCADE;
+
+
+--
 -- Name: ci_automation_events ci_automation_events_account_id_binding_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -61294,6 +61524,14 @@ ALTER TABLE ONLY public.ci_automation_events
 
 
 --
+-- Name: ci_automation_path_checks ci_automation_path_checks_account_id_event_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.ci_automation_path_checks
+    ADD CONSTRAINT ci_automation_path_checks_account_id_event_id_fkey FOREIGN KEY (account_id, event_id) REFERENCES public.ci_automation_events(account_id, id) ON DELETE CASCADE;
+
+
+--
 -- Name: ci_automation_policies ci_automation_policies_account_id_binding_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -61315,6 +61553,22 @@ ALTER TABLE ONLY public.ci_automation_policies
 
 ALTER TABLE ONLY public.ci_automation_policies
     ADD CONSTRAINT ci_automation_policies_account_id_profile_id_fkey FOREIGN KEY (account_id, profile_id) REFERENCES public.ci_execution_profiles(account_id, id) ON DELETE CASCADE;
+
+
+--
+-- Name: ci_automation_pull_requests ci_automation_pull_requests_account_id_binding_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.ci_automation_pull_requests
+    ADD CONSTRAINT ci_automation_pull_requests_account_id_binding_id_fkey FOREIGN KEY (account_id, binding_id) REFERENCES public.ci_github_bindings(account_id, id) ON DELETE CASCADE;
+
+
+--
+-- Name: ci_automation_events ci_automation_superseded_event; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.ci_automation_events
+    ADD CONSTRAINT ci_automation_superseded_event FOREIGN KEY (account_id, superseded_by) REFERENCES public.ci_automation_events(account_id, id);
 
 
 --
@@ -61363,6 +61617,22 @@ ALTER TABLE ONLY public.ci_execution_profiles
 
 ALTER TABLE ONLY public.ci_execution_profiles
     ADD CONSTRAINT ci_execution_profiles_account_id_revision_id_fkey FOREIGN KEY (account_id, revision_id) REFERENCES public.ci_pipeline_revisions(account_id, id) ON DELETE CASCADE;
+
+
+--
+-- Name: ci_executions ci_execution_rerun_parent_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.ci_executions
+    ADD CONSTRAINT ci_execution_rerun_parent_fk FOREIGN KEY (account_id, rerun_parent_id) REFERENCES public.ci_executions(account_id, id) ON DELETE CASCADE;
+
+
+--
+-- Name: ci_executions ci_execution_rerun_root_fk; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.ci_executions
+    ADD CONSTRAINT ci_execution_rerun_root_fk FOREIGN KEY (account_id, rerun_root_id) REFERENCES public.ci_executions(account_id, id) ON DELETE CASCADE;
 
 
 --
@@ -61507,6 +61777,14 @@ ALTER TABLE ONLY public.ci_runs
 
 ALTER TABLE ONLY public.ci_runs
     ADD CONSTRAINT ci_runs_account_id_revision_id_fkey FOREIGN KEY (account_id, revision_id) REFERENCES public.ci_pipeline_revisions(account_id, id) ON DELETE CASCADE;
+
+
+--
+-- Name: ci_source_check_retries ci_source_check_retries_account_id_event_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.ci_source_check_retries
+    ADD CONSTRAINT ci_source_check_retries_account_id_event_id_fkey FOREIGN KEY (account_id, event_id) REFERENCES public.ci_automation_path_checks(account_id, event_id) ON DELETE CASCADE;
 
 
 --

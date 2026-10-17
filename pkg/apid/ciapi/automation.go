@@ -35,7 +35,7 @@ func (h Handler) PutAutomationPolicy(w http.ResponseWriter, r *http.Request, acc
 	}
 	req, err := ci.NormalizeAutomationRequest(req)
 	if err != nil || !ci.ValidID(r.PathValue("binding")) {
-		api.WriteProblem(w, api.ErrValidation("automation requires binding/profile UUIDs and explicit exact push branches"))
+		api.WriteProblem(w, api.ErrValidation("automation requires binding/profile UUIDs, exact push or PR base branches, and valid optional path filters"))
 		return
 	}
 	row, err := ci.SaveAutomationPolicy(r.Context(), h.Config, store, h.VerifyGitHub, acct.ID, r.PathValue("binding"), req)

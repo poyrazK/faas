@@ -28,6 +28,13 @@ func TestCIExecutionRequestsKeepFreshIdentityAndBoundedPaths(t *testing.T) {
 	if err != nil || !strings.HasSuffix(path, "/reports/unit%20file.txt") {
 		t.Fatal("artifact URL was not escaped per path segment")
 	}
+	method, path, body, headers, err = ciExecutionRequest("reports", ciExecutionOptions{id: o.id})
+	if err != nil || method != http.MethodGet || path != "/v1/internal/ci/executions/"+o.id+"/reports" || body != nil || len(headers) != 0 {
+		t.Fatal("report read requested compute work or lost execution scope")
+	}
+	if _, _, _, _, err := ciExecutionRequest("reports", ciExecutionOptions{id: "../outside"}); err == nil {
+		t.Fatal("report read accepted an invalid execution identity")
+	}
 	for _, name := range []string{"", "/absolute", "../outside", "reports/../outside", "reports//file", "reports\\file", "reports/\nfile"} {
 		if validCIArtifactPath(name) {
 			t.Fatalf("unsafe artifact path accepted: %q", name)

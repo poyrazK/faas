@@ -12,7 +12,6 @@ import (
 	"io"
 	"path"
 	"regexp"
-	"slices"
 	"sort"
 	"strings"
 	"unicode/utf8"
@@ -37,16 +36,23 @@ type Definition struct {
 }
 
 type Job struct {
-	Image          string   `json:"image" yaml:"image"`
-	Needs          []string `json:"needs,omitempty" yaml:"needs,omitempty"`
-	TimeoutSeconds int      `json:"timeout_seconds" yaml:"timeout_seconds"`
-	Steps          []Step   `json:"steps" yaml:"steps"`
-	Artifacts      []string `json:"artifacts,omitempty" yaml:"artifacts,omitempty"`
+	Matrix           map[string]MatrixVariant `json:"matrix,omitempty" yaml:"matrix,omitempty"`
+	Env              map[string]string        `json:"env,omitempty" yaml:"env,omitempty"`
+	WorkingDirectory string                   `json:"working_directory,omitempty" yaml:"working_directory,omitempty"`
+	Inputs           []ArtifactInput          `json:"inputs,omitempty" yaml:"inputs,omitempty"`
+	Image            string                   `json:"image" yaml:"image"`
+	Needs            []string                 `json:"needs,omitempty" yaml:"needs,omitempty"`
+	TimeoutSeconds   int                      `json:"timeout_seconds" yaml:"timeout_seconds"`
+	Steps            []Step                   `json:"steps" yaml:"steps"`
+	Artifacts        []string                 `json:"artifacts,omitempty" yaml:"artifacts,omitempty"`
+	JUnit            []string                 `json:"junit,omitempty" yaml:"junit,omitempty"`
 }
 
 type Step struct {
-	Name string `json:"name" yaml:"name"`
-	Run  string `json:"run" yaml:"run"`
+	Name             string            `json:"name" yaml:"name"`
+	Run              string            `json:"run" yaml:"run"`
+	Env              map[string]string `json:"env,omitempty" yaml:"env,omitempty"`
+	WorkingDirectory string            `json:"working_directory,omitempty" yaml:"working_directory,omitempty"`
 }
 
 // Plan is a deterministic, immutable description of future compute work.
@@ -75,6 +81,9 @@ func Parse(data []byte) (Definition, error) {
 		return Definition{}, fmt.Errorf("decode CI definition: %w", err)
 	}
 	if err := uniqueKeys(&node); err != nil {
+		return Definition{}, err
+	}
+	if err := stringConfigurationNodes(&node); err != nil {
 		return Definition{}, err
 	}
 	var extra yaml.Node
@@ -122,13 +131,13 @@ func Normalize(def Definition) (Definition, error) {
 	// Copy before applying defaults or sorting so caller-owned definitions stay immutable.
 	out := Definition{Version: def.Version, Repository: def.Repository, Jobs: make(map[string]Job, len(def.Jobs))}
 	for name, job := range def.Jobs {
-		job.Needs, job.Steps, job.Artifacts = slices.Clone(job.Needs), slices.Clone(job.Steps), slices.Clone(job.Artifacts)
-		if err := normalizeJob(name, &job, def.Jobs); err != nil {
+		job = cloneJob(job)
+		if err := normalizeJobBody(name, &job); err != nil {
 			return Definition{}, err
 		}
 		out.Jobs[name] = job
 	}
-	if _, err := jobOrder(out.Jobs); err != nil {
+	if _, err := expandJobs(out.Jobs); err != nil {
 		return Definition{}, err
 	}
 	raw, err := json.Marshal(out)
@@ -139,6 +148,20 @@ func Normalize(def Definition) (Definition, error) {
 }
 
 func normalizeJob(name string, job *Job, jobs map[string]Job) error {
+	if err := normalizeJobBody(name, job); err != nil {
+		return err
+	}
+	seen := make(map[string]bool)
+	for _, dependency := range job.Needs {
+		if _, ok := jobs[dependency]; !ok || dependency == name || seen[dependency] {
+			return fmt.Errorf("job %q has invalid or duplicate dependency %q", name, dependency)
+		}
+		seen[dependency] = true
+	}
+	return normalizeArtifactInputs(name, job, jobs)
+}
+
+func normalizeJobBody(name string, job *Job) error {
 	if !ValidName(name) || !imagePattern.MatchString(job.Image) || len(job.Image) > api.CIImageMaxBytes || strings.Contains(job.Image, "://") {
 		return fmt.Errorf("job %q requires a valid name and a digest-pinned OCI image", name)
 	}
@@ -148,19 +171,15 @@ func normalizeJob(name string, job *Job, jobs map[string]Job) error {
 	if job.TimeoutSeconds < 1 || job.TimeoutSeconds > api.CIMaxTimeoutSeconds || len(job.Steps) == 0 || len(job.Steps) > api.CIMaxStepsPerJob {
 		return fmt.Errorf("job %q has invalid timeout or step count", name)
 	}
+	if err := validateJobConfiguration(*job); err != nil {
+		return fmt.Errorf("job %q: %w", name, err)
+	}
 	seen := make(map[string]bool)
 	for _, step := range job.Steps {
 		if !ValidName(step.Name) || seen[step.Name] || strings.TrimSpace(step.Run) == "" || len(step.Run) > api.CIMaxCommandBytes || !utf8.ValidString(step.Run) || strings.ContainsRune(step.Run, 0) {
 			return fmt.Errorf("job %q has invalid or duplicate steps", name)
 		}
 		seen[step.Name] = true
-	}
-	seen = make(map[string]bool)
-	for _, dependency := range job.Needs {
-		if _, ok := jobs[dependency]; !ok || dependency == name || seen[dependency] {
-			return fmt.Errorf("job %q has invalid or duplicate dependency %q", name, dependency)
-		}
-		seen[dependency] = true
 	}
 	if len(job.Artifacts) > api.CIMaxArtifactsPerJob {
 		return fmt.Errorf("job %q has too many artifact paths", name)
@@ -175,7 +194,8 @@ func normalizeJob(name string, job *Job, jobs map[string]Job) error {
 	}
 	sort.Strings(job.Needs)
 	sort.Strings(job.Artifacts)
-	return nil
+	sort.Slice(job.Inputs, func(i, j int) bool { return job.Inputs[i].Name < job.Inputs[j].Name })
+	return normalizeJUnit(job)
 }
 
 func validArtifact(value string) bool {
@@ -237,13 +257,17 @@ func Compile(def Definition) (Plan, []byte, error) {
 		return Plan{}, nil, fmt.Errorf("encode CI definition: %w", err)
 	}
 	digest := sha256.Sum256(canonical)
-	plan := Plan{Version: 1, Repository: def.Repository, DefinitionDigest: "sha256:" + hex.EncodeToString(digest[:]), Jobs: make([]PlannedJob, 0, len(def.Jobs))}
-	order, err := jobOrder(def.Jobs)
+	jobs, err := expandJobs(def.Jobs)
+	if err != nil {
+		return Plan{}, nil, err
+	}
+	plan := Plan{Version: 1, Repository: def.Repository, DefinitionDigest: "sha256:" + hex.EncodeToString(digest[:]), Jobs: make([]PlannedJob, 0, len(jobs))}
+	order, err := jobOrder(jobs)
 	if err != nil {
 		return Plan{}, nil, err
 	}
 	for _, name := range order {
-		plan.Jobs = append(plan.Jobs, PlannedJob{Name: name, Job: def.Jobs[name]})
+		plan.Jobs = append(plan.Jobs, PlannedJob{Name: name, Job: jobs[name]})
 	}
 	return plan, canonical, nil
 }

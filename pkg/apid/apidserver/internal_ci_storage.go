@@ -50,10 +50,12 @@ func (s *server) registerInternalCIRuntime(mux *http.ServeMux) {
 	}
 	enabled := s.ciConfig.TransportEnabled && ready
 	for pattern, action := range map[string]http.HandlerFunc{
-		"GET /v1/internal/ci/runtime/{run}/control": handler.Control,
-		"GET /v1/internal/ci/runtime/{run}/source":  handler.Source,
-		"PUT /v1/internal/ci/runtime/{run}/objects": handler.Upload,
-		"PUT /v1/internal/ci/runtime/{run}/result":  handler.Seal,
+		"GET /v1/internal/ci/runtime/{run}/control":        handler.Control,
+		"GET /v1/internal/ci/runtime/{run}/source":         handler.Source,
+		"PUT /v1/internal/ci/runtime/{run}/objects":        handler.Upload,
+		"PUT /v1/internal/ci/runtime/{run}/result":         handler.Seal,
+		"PUT /v1/internal/ci/runtime/{run}/progress":       handler.Progress,
+		"GET /v1/internal/ci/runtime/{run}/inputs/{input}": handler.Input,
 	} {
 		mux.HandleFunc(pattern, ciruntime.SecureTransport(s.ciRuntimeOrigin, enabled, action))
 	}

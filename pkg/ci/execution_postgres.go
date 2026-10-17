@@ -36,6 +36,10 @@ func executionRow(row sqlc.CiExecution) (executionRecord, error) {
 		return executionRecord{}, fmt.Errorf("decode CI execution: %w", err)
 	}
 	e := out.Execution
+	if !e.Rerun.valid(e.ID) || (e.Rerun != nil) != row.RerunParentID.Valid || (e.Rerun != nil) != row.RerunRootID.Valid ||
+		e.Rerun != nil && (e.Rerun.ParentExecutionID != uuidString(row.RerunParentID) || e.Rerun.RootExecutionID != uuidString(row.RerunRootID) || e.Mode != ExecutionJobs) {
+		return executionRecord{}, fmt.Errorf("CI execution rerun identity mismatch")
+	}
 	if (e.Mode == ExecutionJobs) != (e.Compute != nil) {
 		return executionRecord{}, fmt.Errorf("CI execution compute provenance mismatch")
 	}

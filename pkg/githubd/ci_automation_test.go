@@ -17,6 +17,15 @@ import (
 )
 
 func TestCIAutomationSignedHTTPPushCapturesExactlyOneExecution(t *testing.T) {
+	testCIAutomationSignedSource(t, false)
+}
+
+func TestCIAutomationSignedHTTPPullRequestCapturesExactlyOneExecution(t *testing.T) {
+	testCIAutomationSignedSource(t, true)
+}
+
+func testCIAutomationSignedSource(t *testing.T, pullRequest bool) {
+	t.Helper()
 	pool := pgtest.OpenMigrated(t)
 	store := ci.NewPostgresStore(pool)
 	account, jobID := uuid.NewString(), uuid.NewString()
@@ -32,7 +41,11 @@ func TestCIAutomationSignedHTTPPushCapturesExactlyOneExecution(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	binding, err := store.PutGitHubBinding(t.Context(), account, "source", ci.GitHubBindingRequest{RevisionID: revision.ID, InstallationID: 12, RepositoryID: 34, PushBranches: []string{"main"}})
+	bindingRequest := ci.GitHubBindingRequest{RevisionID: revision.ID, InstallationID: 12, RepositoryID: 34, PushBranches: []string{"main"}}
+	if pullRequest {
+		bindingRequest.PullRequestBranches = []string{"main"}
+	}
+	binding, err := store.PutGitHubBinding(t.Context(), account, "source", bindingRequest)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,18 +69,27 @@ func TestCIAutomationSignedHTTPPushCapturesExactlyOneExecution(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ci.SaveAutomationPolicy(t.Context(), cfg, store, verify, account, binding.ID, ci.AutomationRequest{ProfileID: profile.ID, PushBranches: []string{"main"}}); err != nil {
+	policy := ci.AutomationRequest{ProfileID: profile.ID, PushBranches: []string{"main"}}
+	if pullRequest {
+		policy.PushBranches, policy.PullRequestBranches = nil, []string{"main"}
+	}
+	if _, err := ci.SaveAutomationPolicy(t.Context(), cfg, store, verify, account, binding.ID, policy); err != nil {
 		t.Fatal(err)
 	}
 	secret := []byte("synthetic app webhook secret")
 	body := []byte(`{"ref":"refs/heads/main","after":"` + strings.Repeat("b", 40) + `","installation":{"id":12},"repository":{"id":34,"full_name":"gregale/ci"}}`)
+	kind := "push"
+	if pullRequest {
+		kind = "pull_request"
+		body = []byte(`{"action":"opened","number":9,"installation":{"id":12},"repository":{"id":34,"full_name":"gregale/ci"},"pull_request":{"state":"open","draft":false,"head":{"sha":"` + strings.Repeat("b", 40) + `","repo":{"id":34,"full_name":"gregale/ci"}},"base":{"ref":"main","repo":{"id":34,"full_name":"gregale/ci"}}}}`)
+	}
 	srv := &Server{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), WebhookSecret: secret, Deliveries: &recordingDeliveryStore{}, RecordCI: func(ctx context.Context, d WebhookDelivery) error {
 		return ci.RecordVerifiedGitHubDelivery(ctx, cfg, store, d.DeliveryID, d.EventType, d.Payload)
 	}}
 	for _, signed := range []bool{false, true, true, true} {
 		r := httptest.NewRequest(http.MethodPost, "/webhooks/github", strings.NewReader(string(body)))
 		r.Header.Set("X-GitHub-Delivery", uuid.NewString())
-		r.Header.Set("X-GitHub-Event", "push")
+		r.Header.Set("X-GitHub-Event", kind)
 		if signed {
 			r.Header.Set("X-Hub-Signature-256", SignForTest(body, secret))
 		}
@@ -83,7 +105,10 @@ func TestCIAutomationSignedHTTPPushCapturesExactlyOneExecution(t *testing.T) {
 			}
 		}
 	}
-	if worked, err := ci.AdmitAutomationOnce(t.Context(), cfg, store, verify); err != nil || !worked {
+	resolvers := ci.AutomationResolvers{PullRequest: func(_ context.Context, b ci.GitHubBinding, number int) (ci.PullRequestState, error) {
+		return ci.PullRequestState{Number: int64(number), State: "open", HeadSHA: strings.Repeat("b", 40), BaseBranch: "main", HeadRepositoryID: b.RepositoryID, BaseRepositoryID: b.RepositoryID, HeadRepository: b.Repository, BaseRepository: b.Repository}, nil
+	}}
+	if worked, err := ci.AdmitAutomationWithResolvers(t.Context(), cfg, store, verify, resolvers); err != nil || !worked {
 		t.Fatalf("signed source admission: %v", err)
 	}
 	events, err := store.AutomationEvents(t.Context(), account, binding.ID)

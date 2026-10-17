@@ -32,11 +32,12 @@ type ciExecutionOptions struct {
 	id, revision, commit, key, binding, attempt, job, artifact, output string
 	templates                                                          ciTemplates
 	offset, limit                                                      int
+	follow                                                             bool
 }
 
 func cmdCIExecution(args []string) int {
 	if len(args) == 0 {
-		_, _ = fmt.Fprintln(osStderr, "usage: gregalectl ci execution <submit|list|status|cancel|logs|artifact|archive|archives|archive-status>")
+		_, _ = fmt.Fprintln(osStderr, "usage: gregalectl ci execution <submit|rerun|list|status|reports|cancel|logs|artifact|archive|archives|archive-status>")
 		return 2
 	}
 	fs := flag.NewFlagSet("ci execution "+args[0], flag.ContinueOnError)
@@ -52,6 +53,7 @@ func cmdCIExecution(args []string) int {
 	fs.StringVar(&o.attempt, "attempt", "", "attempt UUID (logs)")
 	fs.IntVar(&o.offset, "offset", 0, "retained log byte offset")
 	fs.IntVar(&o.limit, "limit", api.CILogPageMaxBytes, "maximum log bytes in this page")
+	fs.BoolVar(&o.follow, "follow", false, "follow attempt logs; resume with --offset")
 	fs.StringVar(&o.job, "job", "", "CI job name (artifact)")
 	fs.StringVar(&o.artifact, "path", "", "artifact path from execution status")
 	fs.StringVar(&o.output, "output", "", "new local artifact file; never overwritten")
@@ -82,6 +84,9 @@ func cmdCIExecution(args []string) int {
 		return 0
 	}
 	if args[0] == "logs" {
+		if o.follow {
+			return runCILogFollow(client, o)
+		}
 		var page ci.LogPage
 		if err := client.doJSONWithHeaders(context.Background(), method, path, body, &page, false, nil, headers); err != nil {
 			_, _ = fmt.Fprintln(osStderr, "internal CI:", err)
@@ -106,6 +111,9 @@ func cmdCIExecution(args []string) int {
 }
 
 func ciExecutionRequest(command string, o ciExecutionOptions) (string, string, any, http.Header, error) {
+	if o.follow && command != "logs" {
+		return "", "", nil, nil, fmt.Errorf("--follow requires the logs command")
+	}
 	const base = "/v1/internal/ci/executions"
 	headers := make(http.Header)
 	if command == "archives" {
@@ -133,8 +141,17 @@ func ciExecutionRequest(command string, o ciExecutionOptions) (string, string, a
 	}
 	path := base + "/" + o.id
 	switch command {
+	case "rerun":
+		if !ci.ValidIdempotencyKey(o.key) || o.profile != "" || o.revision != "" || o.commit != "" || o.binding != "" || len(o.templates) != 0 ||
+			o.attempt != "" || o.job != "" || o.artifact != "" || o.output != "" || o.offset != 0 {
+			return "", "", nil, nil, fmt.Errorf("rerun requires --id UUID --key STABLE_KEY and no configuration, job or attempt overrides")
+		}
+		headers.Set("Idempotency-Key", o.key)
+		return http.MethodPost, path + "/rerun", struct{}{}, headers, nil
 	case "status":
 		return http.MethodGet, path, nil, headers, nil
+	case "reports":
+		return http.MethodGet, path + "/reports", nil, headers, nil
 	case "cancel":
 		return http.MethodPost, path + "/cancel", nil, headers, nil
 	case "archive":

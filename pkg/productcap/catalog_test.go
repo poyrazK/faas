@@ -51,3 +51,15 @@ func TestJSONReturnsCopy(t *testing.T) {
 		t.Fatal("JSON returned the embedded backing slice")
 	}
 }
+
+func TestInternalCIIsAbsentFromProductCatalog(t *testing.T) {
+	catalog, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, capability := range catalog.Capabilities {
+		if capability.ID == "ci" || strings.Contains(strings.ToLower(capability.Name), "gregale ci") || capability.OperatorFlag == "FAAS_CI_INTERNAL_ENABLED" {
+			t.Fatal("internal CI must not be advertised in the product catalog or generated customer documentation")
+		}
+	}
+}

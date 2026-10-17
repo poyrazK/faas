@@ -36,6 +36,7 @@ var (
 // Execution is separate from blocked metadata receipts. Jobs admission requires
 // a fresh explicit request; qualification records never authorize compute.
 type Execution struct {
+	Rerun           *ExecutionRerun       `json:"rerun,omitempty"`
 	Automation      *AutomationProvenance `json:"automation,omitempty"`
 	ProfileID       string                `json:"profile_id,omitempty"`
 	ID              string                `json:"id"`
@@ -63,25 +64,29 @@ type JobExecution struct {
 // One attempt is permitted per job. Controller recovery always
 // reuses its ID; it never retries user commands as a new attempt.
 type Attempt struct {
-	ID            string        `json:"id"`
-	Number        int           `json:"number"`
-	Status        string        `json:"status"`
-	BackendStatus string        `json:"backend_status,omitempty"`
-	StartedAt     time.Time     `json:"started_at"`
-	Deadline      time.Time     `json:"deadline"`
-	FinishedAt    *time.Time    `json:"finished_at,omitempty"`
-	CancelReason  string        `json:"cancel_reason,omitempty"`
-	Steps         []StepResult  `json:"steps"`
-	ExitCode      *int          `json:"exit_code,omitempty"`
-	Logs          []byte        `json:"logs,omitempty"`
-	LogTruncated  bool          `json:"log_truncated"`
-	Artifacts     []ArtifactRef `json:"artifacts,omitempty"`
+	ID               string        `json:"id"`
+	Number           int           `json:"number"`
+	Status           string        `json:"status"`
+	BackendStatus    string        `json:"backend_status,omitempty"`
+	StartedAt        time.Time     `json:"started_at"`
+	Deadline         time.Time     `json:"deadline"`
+	FinishedAt       *time.Time    `json:"finished_at,omitempty"`
+	CancelReason     string        `json:"cancel_reason,omitempty"`
+	Steps            []StepResult  `json:"steps"`
+	ExitCode         *int          `json:"exit_code,omitempty"`
+	Logs             []byte        `json:"logs,omitempty"`
+	LogTruncated     bool          `json:"log_truncated"`
+	OutputIncomplete bool          `json:"output_incomplete,omitempty"`
+	Artifacts        []ArtifactRef `json:"artifacts,omitempty"`
+	TestReports      []TestReport  `json:"test_reports,omitempty"`
 }
 
 type StepResult struct {
-	Name     string `json:"name"`
-	Status   string `json:"status"`
-	ExitCode *int   `json:"exit_code,omitempty"`
+	Name       string     `json:"name"`
+	Status     string     `json:"status"`
+	ExitCode   *int       `json:"exit_code,omitempty"`
+	StartedAt  *time.Time `json:"started_at,omitempty"`
+	FinishedAt *time.Time `json:"finished_at,omitempty"`
 }
 
 // ArtifactRef contains metadata only, never an upload URL, credential, host path,

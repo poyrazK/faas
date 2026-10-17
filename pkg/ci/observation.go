@@ -3,9 +3,11 @@ package ci
 import (
 	"fmt"
 	"path"
+	"reflect"
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -33,7 +35,7 @@ func validateObservation(plan PlannedJob, previous Attempt, report Observation) 
 		return protocolError("unsupported attempt state")
 	}
 	if terminal(previous.BackendStatus) && (report.Status != previous.BackendStatus ||
-		!sameExit(previous.ExitCode, report.ExitCode) || !slices.Equal(previous.Artifacts, report.Artifacts)) {
+		!sameExit(previous.ExitCode, report.ExitCode) || previous.OutputIncomplete != report.OutputIncomplete || !slices.Equal(previous.Artifacts, report.Artifacts) || !reflect.DeepEqual(previous.TestReports, report.TestReports)) {
 		return protocolError("terminal backend result changed while draining output")
 	}
 	if len(report.Steps) != len(plan.Steps) || len(previous.Steps) != len(plan.Steps) {
@@ -54,7 +56,10 @@ func validateObservation(plan PlannedJob, previous Attempt, report Observation) 
 	if report.Status == StatusRunning && report.ExitCode != nil {
 		return protocolError("running attempt has an exit code")
 	}
-	return validateArtifacts(plan.Artifacts, report)
+	if err := validateArtifacts(plan.Artifacts, report); err != nil {
+		return err
+	}
+	return validateTestReports(plan, report)
 }
 
 func validateSteps(previous []StepResult, report Observation) error {
@@ -63,6 +68,9 @@ func validateSteps(previous []StepResult, report Observation) error {
 		before := previous[i]
 		if step.Name != before.Name || !validStepState(step.Status) {
 			return protocolError("unknown step or state")
+		}
+		if err := validateStepTiming(before, step); err != nil {
+			return err
 		}
 		if terminal(before.Status) && (step.Status != before.Status || !sameExit(step.ExitCode, before.ExitCode)) {
 			return protocolError("terminal step changed")
@@ -85,6 +93,29 @@ func validateSteps(previous []StepResult, report Observation) error {
 		if terminal(report.Status) && !terminal(step.Status) {
 			return protocolError("finished attempt contains unfinished steps")
 		}
+	}
+	return nil
+}
+
+func sameStepTime(a, b *time.Time) bool {
+	return a == nil && b == nil || a != nil && b != nil && a.Equal(*b)
+}
+
+// Guest clocks are diagnostic only. Native deadlines, leases and stop receipts
+// remain authoritative. Old runner results without timestamps remain valid.
+func validateStepTiming(before, step StepResult) error {
+	if before.StartedAt != nil && !sameStepTime(before.StartedAt, step.StartedAt) || terminal(before.Status) && (!sameStepTime(before.StartedAt, step.StartedAt) || !sameStepTime(before.FinishedAt, step.FinishedAt)) {
+		return protocolError("step timing changed")
+	}
+	if step.StartedAt != nil && step.StartedAt.IsZero() || step.FinishedAt != nil && step.FinishedAt.IsZero() {
+		return protocolError("invalid step time")
+	}
+	if (step.Status == StatusQueued || step.Status == StatusSkipped) && (step.StartedAt != nil || step.FinishedAt != nil) || step.Status == StatusRunning && step.FinishedAt != nil ||
+		(step.Status == StatusSucceeded || step.Status == StatusFailed) && step.StartedAt != nil && step.FinishedAt == nil {
+		return protocolError("step timing disagrees with state")
+	}
+	if step.FinishedAt != nil && (step.StartedAt == nil || step.FinishedAt.Before(*step.StartedAt) || step.FinishedAt.Sub(*step.StartedAt) > time.Duration(api.CIMaxTimeoutSeconds+api.CIJobsFinalizeSeconds)*time.Second) {
+		return protocolError("invalid step duration")
 	}
 	return nil
 }

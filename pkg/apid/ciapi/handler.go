@@ -25,7 +25,7 @@ type Action func(Handler, http.ResponseWriter, *http.Request, state.Account)
 
 func (h Handler) available(w http.ResponseWriter, acct state.Account) bool {
 	if !h.Config.Allows(acct.ID) || h.Store == nil {
-		httpkit.NotFound(w, "CI is not available")
+		httpkit.NoSuchRoute(w)
 		return false
 	}
 	return true
@@ -42,8 +42,9 @@ func (h Handler) Capabilities(w http.ResponseWriter, _ *http.Request, acct state
 		"github_enabled":        h.Config.GitHubEnabled,
 		"github_checks_enabled": h.Config.GitHubEnabled && h.Config.GitHubChecksEnabled,
 		"max_jobs":              api.CIMaxJobs, "max_steps_per_job": api.CIMaxStepsPerJob,
-		"max_definition_bytes": api.CIDefinitionMaxBytes,
-		"max_revisions":        api.CIMaxRevisionsPerAccount, "max_runs": api.CIMaxRunsPerAccount,
+		"max_matrix_variants_per_job": api.CIMaxMatrixVariantsPerJob,
+		"max_definition_bytes":        api.CIDefinitionMaxBytes,
+		"max_revisions":               api.CIMaxRevisionsPerAccount, "max_runs": api.CIMaxRunsPerAccount,
 	})
 }
 
@@ -56,10 +57,19 @@ func definition(w http.ResponseWriter, r *http.Request) (ci.Definition, bool) {
 	}
 	def, err := ci.Parse([]byte(req.Definition))
 	if err != nil {
-		api.WriteProblem(w, api.ErrValidation(err.Error()))
+		writeDefinitionError(w, err)
 		return ci.Definition{}, false
 	}
 	return def, true
+}
+
+func writeDefinitionError(w http.ResponseWriter, err error) {
+	problem := api.ErrValidation(err.Error())
+	var limit *ci.LimitError
+	if errors.As(err, &limit) {
+		problem = problem.WithLimit(int64(limit.Limit), int64(limit.Observed)).WithDocs("/docs/ops/internal-ci")
+	}
+	api.WriteProblem(w, problem)
 }
 
 func (h Handler) Validate(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -72,7 +82,7 @@ func (h Handler) Validate(w http.ResponseWriter, r *http.Request, acct state.Acc
 	}
 	plan, _, err := ci.Compile(def)
 	if err != nil {
-		api.WriteProblem(w, api.ErrValidation(err.Error()))
+		writeDefinitionError(w, err)
 		return
 	}
 	httpkit.WriteJSON(w, http.StatusOK, plan)
@@ -240,12 +250,16 @@ func writeError(w http.ResponseWriter, err error) {
 		httpkit.NotFound(w, "CI resource not found")
 	case errors.Is(err, ci.ErrConflict):
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "ci_identity_conflict", "CI request conflict", "CI revision, profile, repository binding, job template or request identity conflicts with this request"))
+	case errors.Is(err, ci.ErrAutomationRetryConflict):
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "ci_automation_retry_conflict", "CI automation retry conflict", "retry requires a never-admitted exhausted source, unchanged active policy and profile, current retry generation and a unique request identity"))
 	case errors.Is(err, ci.ErrCheckRetryConflict):
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "ci_check_retry_conflict", "CI Check retry conflict", "retry requires an exhausted delivery, the current retry generation and a unique request identity; active publication or pending recovery prevents retry"))
 	case errors.Is(err, ci.ErrExecutionArchived):
 		api.WriteProblem(w, api.NewProblem(http.StatusGone, "ci_execution_archived", "CI execution archived", "execution detail was compacted; its identity remains reserved and its receipt is available in CI archives"))
 	case errors.Is(err, ci.ErrArchiveUnsafe):
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "ci_archive_not_ready", "CI execution cannot be archived yet", "archive requires a terminal execution, confirmed task cleanup, retired payloads and settled Check delivery with no pending retry"))
+	case errors.Is(err, ci.ErrRerunNotReady):
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "ci_rerun_not_ready", "CI execution cannot be rerun yet", "rerun requires a terminal execution, confirmed native stop, collected output and no live runtime transfers"))
 	case errors.Is(err, ci.ErrGitHubAccess):
 		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, "ci_github_access_denied", "CI repository unavailable", "the repository is not available to this account and installation"))
 	case errors.Is(err, ci.ErrGitHubUnavailable):

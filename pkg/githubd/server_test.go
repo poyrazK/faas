@@ -184,6 +184,12 @@ func TestServerSplitBoxListenerPreservesLocalSocketAndRestrictsRemoteMethods(t *
 	if _, err := remoteClient.GetInstallState(callCtx, &githubdpb.GetInstallStateRequest{AccountId: "acct"}); status.Code(err) != codes.PermissionDenied {
 		t.Fatalf("remote GetInstallState status = %v, want PermissionDenied", status.Code(err))
 	}
+	if _, err := remoteClient.GetCIPullRequest(callCtx, &githubdpb.GetCIPullRequestRequest{AccountId: "acct", InstallationId: 42, RepoFullName: "owner/repo", Number: 42}); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("remote CI pull request lookup status = %v, want PermissionDenied", status.Code(err))
+	}
+	if _, err := remoteClient.GetCIChangedFiles(callCtx, &githubdpb.GetCIChangedFilesRequest{AccountId: "acct", InstallationId: 42, RepoFullName: "owner/repo", BaseSha: strings.Repeat("a", 40), HeadSha: strings.Repeat("b", 40)}); status.Code(err) != codes.PermissionDenied {
+		t.Fatalf("remote CI comparison status = %v, want PermissionDenied", status.Code(err))
+	}
 	if _, err := remoteClient.GetProtectedBranchEvidence(callCtx, &githubdpb.GetProtectedBranchEvidenceRequest{AccountId: "acct"}); status.Code(err) != codes.PermissionDenied {
 		t.Fatalf("remote policy evidence status = %v, want PermissionDenied", status.Code(err))
 	}

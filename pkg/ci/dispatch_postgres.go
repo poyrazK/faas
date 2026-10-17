@@ -89,6 +89,9 @@ func (s *PostgresStore) ListJobsExecutions(ctx context.Context, account string) 
 	out := make([]ExecutionSummary, 0, len(rows))
 	for _, row := range rows {
 		item := ExecutionSummary{ID: uuidString(row.ID), RevisionID: uuidString(row.RevisionID), Pipeline: row.Pipeline, CommitSHA: row.CommitSha, Status: row.Status, CreatedAt: row.CreatedAt.Time}
+		if row.RerunParentID.Valid {
+			item.Rerun = &ExecutionRerun{ParentExecutionID: uuidString(row.RerunParentID), RootExecutionID: uuidString(row.RerunRootID)}
+		}
 		if row.FinishedAt.Valid {
 			item.FinishedAt = &row.FinishedAt.Time
 		}

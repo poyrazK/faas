@@ -16,23 +16,29 @@ import (
 // ExecutionCheck is a deliberately narrow, credential-free projection. Neither
 // repository commands nor guest logs, artifact paths or provider errors fit here.
 type ExecutionCheck struct {
-	AccountID      string
-	ExecutionID    string
-	BindingID      string
-	Pipeline       string
-	InstallationID int64
-	RepositoryID   int64
-	Repository     string
-	CommitSHA      string
-	Version        int64
-	Status         string
-	Conclusion     string
-	Summary        string
-	CheckID        int64
+	AccountID         string
+	ExecutionID       string
+	AutomationEventID string // skipped source only; mutually exclusive with ExecutionID
+	BindingID         string
+	Pipeline          string
+	InstallationID    int64
+	RepositoryID      int64
+	Repository        string
+	CommitSHA         string
+	Version           int64
+	Status            string
+	Conclusion        string
+	Summary           string
+	CheckID           int64
 }
 
-func (c ExecutionCheck) Name() string       { return "gregale-ci / " + c.Pipeline + " / " + c.BindingID }
-func (c ExecutionCheck) ExternalID() string { return "gregale-ci-execution:" + c.ExecutionID }
+func (c ExecutionCheck) Name() string { return "gregale-ci / " + c.Pipeline + " / " + c.BindingID }
+func (c ExecutionCheck) ExternalID() string {
+	if c.AutomationEventID != "" {
+		return "gregale-ci-source:" + c.AutomationEventID
+	}
+	return "gregale-ci-execution:" + c.ExecutionID
+}
 func (c ExecutionCheck) Title() string {
 	return fmt.Sprintf("Gregale CI: %s (version %d)", c.Status, c.Version)
 }
@@ -40,7 +46,12 @@ func (c ExecutionCheck) Title() string {
 func (c ExecutionCheck) Valid() bool {
 	validState := (c.Status == "queued" || c.Status == "in_progress") && c.Conclusion == "" ||
 		c.Status == "completed" && (c.Conclusion == "success" || c.Conclusion == "failure" || c.Conclusion == "cancelled" || c.Conclusion == "timed_out")
-	return ValidID(c.AccountID) && ValidID(c.ExecutionID) && ValidID(c.BindingID) && ValidName(c.Pipeline) &&
+	identity := ValidID(c.ExecutionID) && c.AutomationEventID == ""
+	if c.AutomationEventID != "" {
+		identity = c.ExecutionID == "" && ValidID(c.AutomationEventID) && c.Version == 1
+		validState = c.Status == "completed" && c.Conclusion == "skipped"
+	}
+	return ValidID(c.AccountID) && identity && ValidID(c.BindingID) && ValidName(c.Pipeline) &&
 		c.InstallationID > 0 && c.RepositoryID > 0 && repoPattern.MatchString(c.Repository) && len(c.Repository) <= api.CIRepositoryMaxBytes &&
 		ValidCommitSHA(c.CommitSHA) && c.Version > 0 && c.CheckID >= 0 && validState && len(c.Summary) <= api.CIExecutionCheckSummaryMaxBytes
 }
@@ -89,6 +100,14 @@ func executionCheck(row executionRecord) (ExecutionCheck, error) {
 		}
 		fmt.Fprintf(&summary, "- %s: %s; steps completed: %d/%d.\n", job.Name, job.Status, completed, total)
 	}
+	reports, err := ExecutionReports(e)
+	if err != nil {
+		return c, err
+	}
+	if totals := reports.Totals; totals.Expected > 0 {
+		fmt.Fprintf(&summary, "\nTest reports parsed: %d/%d. Diagnostic totals from parsed reports: tests=%d, passed=%d, failed=%d, errors=%d, skipped=%d. Report problems=%d.\n",
+			totals.Parsed, totals.Expected, totals.Tests, totals.Passed, totals.Failed, totals.Errors, totals.Skipped, totals.Problems)
+	}
 	c.Summary = summary.String()
 	if !c.Valid() {
 		return c, ErrConflict
@@ -108,7 +127,10 @@ func (c ExecutionCheck) digest() string {
 	return hex.EncodeToString(sum[:])
 }
 
-type executionCheckClaim struct{ account, execution, token string }
+type executionCheckClaim struct {
+	account, execution, token string
+	source                    bool
+}
 type ExecutionCheckPublisher func(context.Context, ExecutionCheck) (int64, error)
 
 type ExecutionCheckStore interface {

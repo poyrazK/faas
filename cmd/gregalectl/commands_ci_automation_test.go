@@ -31,4 +31,23 @@ func TestCIAutomationRequestsRequireExactScope(t *testing.T) {
 	if method, _, _, err := ciAutomationRequest("disable", binding, req); err != nil || method != http.MethodDelete {
 		t.Fatal("automation disable request malformed")
 	}
+	req.PushBranches, req.LatestOnly = []string{"main"}, true
+	_, _, body, err = ciAutomationRequest("put", binding, req)
+	if err != nil || !body.(ci.AutomationRequest).LatestOnly {
+		t.Fatal("explicit latest-only policy was lost")
+	}
+	req.PushBranches, req.PullRequestBranches, req.LatestOnly = nil, []string{"release", "main"}, false
+	_, _, body, err = ciAutomationRequest("put", binding, req)
+	if err != nil || body.(ci.AutomationRequest).PullRequestBranches[0] != "main" || len(body.(ci.AutomationRequest).PushBranches) != 0 || body.(ci.AutomationRequest).LatestOnly {
+		t.Fatal("PR-only automation lost its explicit base filters or changed push policy")
+	}
+	req.IncludePaths, req.ExcludePaths = []string{"src/**", "go.mod"}, []string{"src/docs/**"}
+	_, _, body, err = ciAutomationRequest("put", binding, req)
+	if err != nil || body.(ci.AutomationRequest).IncludePaths[0] != "go.mod" || body.(ci.AutomationRequest).ExcludePaths[0] != "src/docs/**" {
+		t.Fatal("CLI dropped normalized path filters")
+	}
+	req.IncludePaths = []string{"../outside/**"}
+	if _, _, _, err := ciAutomationRequest("put", binding, req); err == nil {
+		t.Fatal("CLI accepted unsafe path pattern")
+	}
 }

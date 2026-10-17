@@ -18,7 +18,16 @@ import (
 )
 
 type StepExecutor interface {
-	Run(context.Context, ci.Step, string, io.Writer) (int, error)
+	Run(context.Context, StepExecution, io.Writer) (int, error)
+}
+
+// StepExecution contains only a prepared step's explicit environment and pinned
+// checkout directory. The directory is valid until Run returns; executors must
+// not retain it or inherit their own process environment.
+type StepExecution struct {
+	Step        ci.Step
+	Directory   *os.File
+	Environment []string
 }
 
 // Runner requires an explicit executor. Only the guest entrypoint constructs the
@@ -60,9 +69,31 @@ func (r Runner) Run(ctx context.Context) (ci.JobsResultManifest, error) {
 		err = r.checkout(workCtx, root)
 	}
 	if err == nil {
-		result = r.execute(workCtx, cancel, work, logs, result)
+		err = r.prepareInputs(workCtx, root)
+	}
+	if err == nil && len(r.Manifest.Inputs) > 0 {
+		// Observe cancellation or a replaced runtime lease received while input
+		// bytes were arriving, before the first repository command can start.
+		latest, controlErr := r.Transport.Control(workCtx)
+		if controlErr != nil || !sameManifest(latest.Manifest, r.Manifest) || latest.CancelRequested || latest.Sealed {
+			err = errTransfer
+		}
+	}
+	if err == nil {
+		var progress *liveProgress
+		if view.ProgressEnabled {
+			progress = startLiveProgress(workCtx, r.Transport, r.Manifest.Job, logs)
+		}
+		result = r.execute(workCtx, cancel, root, logs, result, progress)
+		// Stop the sender before final output; a lost final progress response can
+		// be retried, while the independent seal still decides output completeness.
+		if progress != nil {
+			finalCtx, finish := context.WithTimeout(context.WithoutCancel(ctx), time.Duration(api.CIJobsProgressSeconds)*time.Second)
+			progress.finish(finalCtx, result.Steps)
+			finish()
+		}
 	} else {
-		_, _ = logs.Write([]byte("CI source/control preparation failed\n"))
+		_, _ = logs.Write([]byte("CI source/control/input preparation failed\n"))
 	}
 	// The existing guest supervisor permits 30 seconds after SIGTERM. Final
 	// output gets a smaller independent deadline so cancelled steps can publish.
@@ -102,7 +133,7 @@ func (r Runner) checkout(ctx context.Context, root *os.Root) error {
 	return extract(ctx, archive, root)
 }
 
-func (r Runner) execute(ctx context.Context, cancel context.CancelFunc, work string, logs *prefixLog, result ci.JobsResultManifest) ci.JobsResultManifest {
+func (r Runner) execute(ctx context.Context, cancel context.CancelFunc, root *os.Root, logs *prefixLog, result ci.JobsResultManifest, progress *liveProgress) ci.JobsResultManifest {
 	pollCtx, stop := context.WithCancel(ctx)
 	done := make(chan struct{})
 	var controlFailed atomic.Bool
@@ -138,7 +169,13 @@ func (r Runner) execute(ctx context.Context, cancel context.CancelFunc, work str
 			result.ExitCode = &code
 			break
 		}
-		code, err := r.Executor.Run(ctx, step, work, logs)
+		var started *time.Time
+		if progress != nil {
+			at := time.Now().UTC()
+			started = &at
+			progress.set(index, ci.StepResult{Name: step.Name, Status: ci.StatusRunning, StartedAt: started})
+		}
+		code, err := r.runStep(ctx, root, step, logs)
 		state := ci.StatusSucceeded
 		if ctx.Err() != nil {
 			state = ci.StatusCancelled
@@ -149,10 +186,15 @@ func (r Runner) execute(ctx context.Context, cancel context.CancelFunc, work str
 		} else if code != 0 {
 			state = ci.StatusFailed
 		}
-		result.Steps[index] = ci.StepResult{Name: step.Name, Status: state}
+		result.Steps[index] = ci.StepResult{Name: step.Name, Status: state, StartedAt: started}
+		if progress != nil {
+			at := time.Now().UTC()
+			result.Steps[index].FinishedAt = &at
+		}
 		if state != ci.StatusCancelled {
 			result.Steps[index].ExitCode = &code
 		}
+		progress.set(index, result.Steps[index])
 		if state != ci.StatusSucceeded {
 			result.Status = state
 			result.ExitCode = &code

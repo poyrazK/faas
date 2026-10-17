@@ -152,6 +152,20 @@ func TestInternalCIStorageRoutes(t *testing.T) {
 	if disabled.Code != http.StatusNotFound {
 		t.Fatal("disabled CI transport exposed a mounted route")
 	}
+	disabledProgress := httptest.NewRecorder()
+	disabledProgressRequest := httptest.NewRequest(http.MethodPut, origin+"/v1/internal/ci/runtime/"+run+"/progress", strings.NewReader(`{}`))
+	disabledProgressRequest.Header.Set(ci.RuntimeInstanceHeader, proof.InstanceID)
+	disabledProgressRequest.Header.Set(ci.RuntimeCapabilityHeader, proof.Capability)
+	(*e.S()).Handler().ServeHTTP(disabledProgress, disabledProgressRequest)
+	if disabledProgress.Code != http.StatusNotFound {
+		t.Fatal("disabled CI transport exposed progress")
+	}
+	disabledInput := httptest.NewRecorder()
+	disabledInputRequest := httptest.NewRequest(http.MethodGet, origin+"/v1/internal/ci/runtime/"+run+"/inputs/report", nil)
+	(*e.S()).Handler().ServeHTTP(disabledInput, disabledInputRequest)
+	if disabledInput.Code != http.StatusNotFound {
+		t.Fatal("disabled CI transport exposed dependency inputs")
+	}
 	(*e.S()).WithInternalCIConfig(cfg).WithInternalCIStorage(blobs, origin)
 	server.Config.Handler = (*e.S()).Handler()
 	server.StartTLS()
@@ -186,6 +200,40 @@ func TestInternalCIStorageRoutes(t *testing.T) {
 	_ = response.Body.Close()
 	if response.StatusCode != http.StatusNotFound {
 		t.Fatal("guest route accepted mixed account authority")
+	}
+	progressRaw, _ := json.Marshal(ci.ProgressUpdate{Sequence: 1, Logs: []byte("wire "), Steps: []ci.StepResult{{Name: "unit", Status: ci.StatusRunning}}})
+	for range 2 {
+		response, err = server.Client().Do(request(http.MethodPut, "progress", "application/json", progressRaw))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var receipt ci.ProgressReceipt
+		decodeErr := json.NewDecoder(response.Body).Decode(&receipt)
+		_ = response.Body.Close()
+		if decodeErr != nil || response.StatusCode != http.StatusOK || receipt.Sequence != 1 || receipt.NextOffset != 5 || response.Header.Get("Cache-Control") != "no-store" {
+			t.Fatalf("mounted HTTPS progress: %d %+v %v", response.StatusCode, receipt, decodeErr)
+		}
+	}
+	row, err = (ci.Engine{Store: ciStore, Backend: backend}).Tick(ctx, row.AccountID, row.ID)
+	if err != nil || row.Status != ci.StatusRunning || string(row.Jobs[0].Attempt.Logs) != "wire " {
+		t.Fatalf("live progress did not reconcile: %v", err)
+	}
+	liveURL := origin + "/v1/internal/ci/executions/" + row.ID + "/attempts/" + run + "/logs?offset=0&limit=16"
+	liveRequest, err := http.NewRequestWithContext(ctx, http.MethodGet, liveURL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	liveRequest.Header.Set("Authorization", "Bearer "+*e.Key())
+	e.AddAdminSession(t, liveRequest)
+	response, err = server.Client().Do(liveRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var livePage ci.LogPage
+	decodeErr := json.NewDecoder(response.Body).Decode(&livePage)
+	_ = response.Body.Close()
+	if decodeErr != nil || response.StatusCode != http.StatusOK || livePage.Complete || livePage.NextOffset != 5 || string(livePage.Data) != "wire " {
+		t.Fatal("authenticated live logs missing or claimed completion")
 	}
 	prefix, _, _ := strings.Cut(view.Manifest.Source.Key, "source/")
 	zero := 0

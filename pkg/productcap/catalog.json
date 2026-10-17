@@ -45,17 +45,6 @@
       "acceptance_test": "pkg/apid/apidserver/handlers_application_messaging_test.go::TestSendAppMessageEnqueuesCloudEvent"
     },
     {
-      "id": "ci",
-      "name": "Gregale CI",
-      "category": "delivery",
-      "description": "Validate native pipelines, retain blocked run receipts, and opt in to account-owned GitHub triggers and blocked-admission Checks. Disabled Jobs, guest, scheduler, HTTPS transfer, private storage and artifact routes have portable qualification; native and real-provider acceptance are pending, and CI execution admission and dispatch are unavailable.",
-      "maturity": "internal",
-      "plans": [],
-      "docs_url": "/docs/ops/internal-ci",
-      "operator_flag": "FAAS_CI_INTERNAL_ENABLED",
-      "acceptance_test": "pkg/githubd/ci_test.go::TestCISignedEventCreatesExactlyOneBlockedReceipt"
-    },
-    {
       "id": "circuit-breaking",
       "name": "Circuit breaking",
       "category": "edge",

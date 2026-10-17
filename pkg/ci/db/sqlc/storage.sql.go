@@ -67,7 +67,7 @@ func (q *Queries) CIStorageActivity(ctx context.Context, db DBTX, arg CIStorageA
 }
 
 const cIStorageAttempt = `-- name: CIStorageAttempt :one
-SELECT attempt_id, account_id, execution_id, job_name, fence, cancel_requested, run_id, source, output, created_at FROM ci_job_attempts WHERE account_id=$1 AND execution_id=$2 AND attempt_id=$3
+SELECT attempt_id, account_id, execution_id, job_name, fence, cancel_requested, run_id, source, output, created_at, progress, progress_sequence, progress_digest FROM ci_job_attempts WHERE account_id=$1 AND execution_id=$2 AND attempt_id=$3
 `
 
 type CIStorageAttemptParams struct {
@@ -90,6 +90,9 @@ func (q *Queries) CIStorageAttempt(ctx context.Context, db DBTX, arg CIStorageAt
 		&i.Source,
 		&i.Output,
 		&i.CreatedAt,
+		&i.Progress,
+		&i.ProgressSequence,
+		&i.ProgressDigest,
 	)
 	return i, err
 }

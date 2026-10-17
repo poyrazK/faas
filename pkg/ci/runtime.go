@@ -23,6 +23,8 @@ const (
 	RuntimeSource           = "source"
 	RuntimeControl          = "control"
 	RuntimeUpload           = "upload"
+	RuntimeProgress         = "progress"
+	RuntimeInput            = "input"
 )
 
 var ErrRuntimeAuthority = errors.New("CI runtime authority unavailable")
@@ -52,6 +54,7 @@ type RuntimeView struct {
 	Manifest        JobsManifest `json:"manifest"`
 	CancelRequested bool         `json:"cancel_requested"`
 	Sealed          bool         `json:"sealed"`
+	ProgressEnabled bool         `json:"progress_enabled,omitempty"`
 }
 
 type RuntimeObject struct {
@@ -100,8 +103,11 @@ func DecodeJobsManifest(encoded string) (JobsManifest, error) {
 }
 
 func ValidateJobsManifest(m JobsManifest) error {
+	if m.Job.Matrix != nil {
+		return ErrBackendProtocol
+	}
 	key := AttemptKey{AccountID: m.AccountID, ExecutionID: m.ExecutionID, AttemptID: m.AttemptID, JobName: m.Job.Name, Fence: 1}
-	if m.Version != 1 || !ValidID(m.AccountID) || !ValidID(m.ExecutionID) || !ValidID(m.AttemptID) || !shaPattern.MatchString(m.CommitSHA) ||
+	if validateJobsInputs(m) != nil || !ValidID(m.AccountID) || !ValidID(m.ExecutionID) || !ValidID(m.AttemptID) || !shaPattern.MatchString(m.CommitSHA) ||
 		!repoPattern.MatchString(m.Repository) || m.Deadline.IsZero() || m.OutputPrefix != jobsObjectPrefix(key)+"output/" {
 		return ErrBackendProtocol
 	}
@@ -109,6 +115,7 @@ func ValidateJobsManifest(m JobsManifest) error {
 	// Dependencies have already been satisfied by the controller, outside this VM.
 	job := def.Jobs[m.Job.Name]
 	job.Needs = nil
+	job.Inputs = nil
 	def.Jobs[m.Job.Name] = job
 	if _, err := Normalize(def); err != nil {
 		return ErrBackendProtocol

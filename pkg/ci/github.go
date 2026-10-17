@@ -52,6 +52,7 @@ type GitHubEvent struct {
 	CommitSHA      string `json:"commit_sha"`
 	Branch         string `json:"branch"` // push branch or PR base branch
 	PRNumber       int    `json:"pr_number,omitempty"`
+	BeforeSHA      string `json:"before_sha,omitempty"` // comparison evidence; never part of logical dedup identity
 }
 
 type GitHubSource struct {
@@ -143,6 +144,7 @@ func validGitHubBranch(branch string) bool {
 func (e GitHubEvent) Key() string {
 	canonical := e
 	canonical.Repository = strings.ToLower(canonical.Repository)
+	canonical.BeforeSHA = ""
 	data, _ := json.Marshal(canonical)
 	digest := sha256.Sum256(data)
 	return hex.EncodeToString(digest[:])

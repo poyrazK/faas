@@ -42,13 +42,15 @@ type ObserveRequest struct {
 // is drained or the retained-prefix bound is reached. Artifacts are collected on
 // failure/cancellation too; only complete terminal manifests are accepted.
 type Observation struct {
-	Status    string
-	Steps     []StepResult
-	ExitCode  *int
-	LogOffset int
-	Logs      []byte
-	MoreLogs  bool
-	Artifacts []ArtifactRef
+	Status           string
+	Steps            []StepResult
+	ExitCode         *int
+	LogOffset        int
+	Logs             []byte
+	MoreLogs         bool
+	Artifacts        []ArtifactRef
+	TestReports      []TestReport
+	OutputIncomplete bool
 }
 
 // Backend is a compute-owner contract, not a host command runner.
@@ -107,14 +109,21 @@ func (e Engine) observeJobs(ctx context.Context, lease executionLease) ([]attemp
 		}
 		a := job.Attempt
 		key := AttemptKey{AccountID: row.AccountID, ExecutionID: row.ID, JobName: job.Name, AttemptID: a.ID, Fence: lease.Fence}
-		if err := e.ensureIntent(ctx, row, row.Plan.Jobs[i], a, key); err != nil {
-			return observations, err
-		}
-		observation, err := e.Backend.Observe(ctx, ObserveRequest{Key: key, LogOffset: len(a.Logs), LogLimit: logLimit(a)})
-		if err != nil {
-			return observations, fmt.Errorf("observe CI attempt %s: %w", a.ID, err)
+		err := e.ensureIntent(ctx, row, row.Plan.Jobs[i], a, key)
+		var observation Observation
+		if errors.Is(err, ErrArtifactInput) && a.CancelReason == "" {
+			observation = unavailableArtifactInputs(row.Plan.Jobs[i])
+		} else {
+			if err != nil {
+				return observations, err
+			}
+			observation, err = e.Backend.Observe(ctx, ObserveRequest{Key: key, LogOffset: len(a.Logs), LogLimit: logLimit(a)})
+			if err != nil {
+				return observations, fmt.Errorf("observe CI attempt %s: %w", a.ID, err)
+			}
 		}
 		observation = cancelledSteps(*a, observation)
+		observation = completeObservationReports(row.Plan.Jobs[i], observation)
 		if err := validateObservation(row.Plan.Jobs[i], *a, observation); err != nil {
 			return observations, err
 		}
@@ -165,6 +174,7 @@ func applyObservations(row *Execution, observations []attemptObservation, now ti
 		}
 		delete(byID, a.ID)
 		report = cancelledSteps(*a, report)
+		report = completeObservationReports(row.Plan.Jobs[i], report)
 		if terminal(job.Status) {
 			return fmt.Errorf("%w: attempt already finished", ErrBackendProtocol)
 		}
@@ -177,8 +187,10 @@ func applyObservations(row *Execution, observations []attemptObservation, now ti
 		a.Steps, a.ExitCode, a.BackendStatus = clone(report.Steps), clone(report.ExitCode), report.Status
 		a.Logs = append(a.Logs, report.Logs...)
 		a.LogTruncated = a.LogTruncated || (len(a.Logs) == api.CILogMaxBytesPerAttempt && report.MoreLogs)
+		a.OutputIncomplete = a.OutputIncomplete || report.OutputIncomplete
 		if terminal(report.Status) {
 			a.Artifacts = clone(report.Artifacts)
+			a.TestReports = clone(report.TestReports)
 		}
 		if !terminal(report.Status) || (report.MoreLogs && !a.LogTruncated) {
 			job.Status, a.Status = StatusRunning, StatusRunning

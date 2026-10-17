@@ -285,14 +285,17 @@ CREATE TABLE ci_automation_policies (
  binding_id uuid NOT NULL,
  binding_generation bigint NOT NULL CHECK(binding_generation>0),
  profile_id uuid NOT NULL,
- push_branches jsonb NOT NULL CHECK(jsonb_typeof(push_branches)='array' AND jsonb_array_length(push_branches) BETWEEN 1 AND 16),
+ push_branches jsonb NOT NULL CHECK(jsonb_typeof(push_branches)='array' AND jsonb_array_length(push_branches) BETWEEN 0 AND 16),
+ pr_branches jsonb NOT NULL DEFAULT '[]' CHECK(jsonb_typeof(pr_branches)='array' AND jsonb_array_length(pr_branches) BETWEEN 0 AND 16),
+ latest_only boolean NOT NULL DEFAULT false,
  enabled boolean NOT NULL DEFAULT true,
  generation bigint NOT NULL DEFAULT 1 CHECK(generation>0),
  created_at timestamptz NOT NULL DEFAULT now(),
  FOREIGN KEY(account_id,binding_id) REFERENCES ci_github_bindings(account_id,id) ON DELETE CASCADE,
  FOREIGN KEY(account_id,profile_id) REFERENCES ci_execution_profiles(account_id,id) ON DELETE CASCADE,
  UNIQUE(account_id,binding_id),
- UNIQUE(account_id,id)
+ UNIQUE(account_id,id),
+ CHECK(jsonb_array_length(push_branches)+jsonb_array_length(pr_branches)>0)
 );
 
 CREATE TABLE ci_automation_events (
@@ -306,24 +309,65 @@ CREATE TABLE ci_automation_events (
  snapshot jsonb NOT NULL CHECK(jsonb_typeof(snapshot)='object' AND octet_length(snapshot::text)<=65536),
  status text NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','processing','admitted','ignored','dead')),
  attempts integer NOT NULL DEFAULT 0 CHECK(attempts BETWEEN 0 AND 8),
+ retry_generation integer NOT NULL DEFAULT 0 CHECK(retry_generation BETWEEN 0 AND 3),
  lease_token uuid,
  lease_until timestamptz,
  next_attempt_at timestamptz NOT NULL DEFAULT now(),
- last_error text NOT NULL DEFAULT '' CHECK(last_error IN ('','unavailable','capacity','authority_revoked','policy_disabled','profile_disabled','binding_disabled')),
+ last_error text NOT NULL DEFAULT '' CHECK(last_error IN ('','unavailable','capacity','authority_revoked','policy_disabled','profile_disabled','binding_disabled','branch_wait','head_changed','branch_deleted','pr_wait','pr_closed','pr_draft','pr_changed')),
  execution_id uuid,
+ superseded_by uuid,
+ superseded_sha text,
+ superseded_at timestamptz,
  created_at timestamptz NOT NULL DEFAULT now(),
  FOREIGN KEY(account_id,binding_id) REFERENCES ci_github_bindings(account_id,id) ON DELETE CASCADE,
  FOREIGN KEY(account_id,policy_id) REFERENCES ci_automation_policies(account_id,id) ON DELETE CASCADE,
  FOREIGN KEY(account_id,profile_id) REFERENCES ci_execution_profiles(account_id,id) ON DELETE CASCADE,
  FOREIGN KEY(account_id,execution_id) REFERENCES ci_executions(account_id,id),
+ UNIQUE(account_id,id),
  UNIQUE(account_id,binding_id,event_key),
  UNIQUE(account_id,execution_id),
+ FOREIGN KEY(account_id,superseded_by) REFERENCES ci_automation_events(account_id,id),
+ CHECK((superseded_sha IS NULL AND superseded_at IS NULL AND superseded_by IS NULL)
+ OR (superseded_sha IS NOT NULL AND superseded_sha ~ '^[0-9a-f]{40}$' AND superseded_at IS NOT NULL AND (superseded_by IS NULL OR superseded_by<>id))),
  CHECK((status='processing' AND lease_token IS NOT NULL AND lease_until IS NOT NULL)
     OR (status<>'processing' AND lease_token IS NULL AND lease_until IS NULL)),
  CHECK((status='admitted' AND execution_id IS NOT NULL) OR (status<>'admitted' AND execution_id IS NULL))
 );
 CREATE INDEX ci_automation_events_due_idx ON ci_automation_events(account_id,next_attempt_at,created_at,id)
  WHERE status IN ('pending','processing');
+
+CREATE TABLE ci_automation_branches (
+ account_id uuid NOT NULL,
+ binding_id uuid NOT NULL,
+ branch text NOT NULL CHECK(octet_length(branch) BETWEEN 1 AND 255),
+ head_fence bigint NOT NULL CHECK(head_fence>0),
+ PRIMARY KEY(account_id,binding_id,branch),
+ FOREIGN KEY(account_id,binding_id) REFERENCES ci_github_bindings(account_id,id) ON DELETE CASCADE
+);
+
+CREATE TABLE ci_automation_pull_requests (
+ account_id uuid NOT NULL,
+ binding_id uuid NOT NULL,
+ pr_number bigint NOT NULL CHECK(pr_number>0),
+ head_fence bigint NOT NULL CHECK(head_fence>0),
+ PRIMARY KEY(account_id,binding_id,pr_number),
+ FOREIGN KEY(account_id,binding_id) REFERENCES ci_github_bindings(account_id,id) ON DELETE CASCADE
+);
+
+CREATE TABLE ci_automation_event_retries (
+ id uuid PRIMARY KEY,
+ account_id uuid NOT NULL,
+ event_id uuid NOT NULL,
+ generation integer NOT NULL CHECK(generation BETWEEN 1 AND 3),
+ key_digest text NOT NULL CHECK(key_digest ~ '^[0-9a-f]{64}$'),
+ previous_attempts integer NOT NULL CHECK(previous_attempts=8),
+ previous_error text NOT NULL CHECK(previous_error IN ('unavailable','capacity')),
+ requested_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ FOREIGN KEY(account_id,event_id) REFERENCES ci_automation_events(account_id,id) ON DELETE CASCADE,
+ UNIQUE(account_id,key_digest),
+ UNIQUE(event_id,generation)
+);
+
 
 -- githubd owns delivery bookkeeping. apid owns execution versions and intent.
 CREATE TABLE ci_execution_checks (
@@ -397,3 +441,92 @@ CREATE TABLE ci_worker_health (
  PRIMARY KEY(worker,slot),
  CHECK(success_at IS NULL OR cycle_at IS NOT NULL)
 );
+
+-- ADR-1355: explicit whole-pipeline rerun lineage.
+ALTER TABLE ci_executions ADD COLUMN IF NOT EXISTS rerun_parent_id uuid;
+ALTER TABLE ci_executions ADD COLUMN IF NOT EXISTS rerun_root_id uuid;
+-- +goose StatementBegin
+DO $$ BEGIN
+ IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='ci_executions'::regclass AND conname='ci_execution_rerun_parent_fk') THEN
+  ALTER TABLE ci_executions ADD CONSTRAINT ci_execution_rerun_parent_fk FOREIGN KEY(account_id,rerun_parent_id)
+   REFERENCES ci_executions(account_id,id) ON DELETE CASCADE;
+ END IF;
+ IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='ci_executions'::regclass AND conname='ci_execution_rerun_root_fk') THEN
+  ALTER TABLE ci_executions ADD CONSTRAINT ci_execution_rerun_root_fk FOREIGN KEY(account_id,rerun_root_id)
+   REFERENCES ci_executions(account_id,id) ON DELETE CASCADE;
+ END IF;
+ IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='ci_executions'::regclass AND conname='ci_execution_rerun_identity') THEN
+  ALTER TABLE ci_executions ADD CONSTRAINT ci_execution_rerun_identity CHECK(
+   (rerun_parent_id IS NULL AND rerun_root_id IS NULL AND (snapshot->'rerun' IS NULL OR snapshot->'rerun'='null'::jsonb)) OR
+   (rerun_parent_id IS NOT NULL AND rerun_root_id IS NOT NULL AND mode='jobs'
+    AND id<>rerun_parent_id AND id<>rerun_root_id AND jsonb_typeof(snapshot->'rerun')='object'
+    AND snapshot->'rerun'->>'parent_execution_id' IS NOT NULL AND snapshot->'rerun'->>'root_execution_id' IS NOT NULL
+    AND snapshot->'rerun'->>'parent_execution_id'=rerun_parent_id::text AND snapshot->'rerun'->>'root_execution_id'=rerun_root_id::text));
+ END IF;
+END $$;
+-- +goose StatementEnd
+
+ALTER TABLE ci_automation_policies ADD COLUMN IF NOT EXISTS include_paths jsonb NOT NULL DEFAULT '[]'
+ CHECK(jsonb_typeof(include_paths)='array' AND jsonb_array_length(include_paths) BETWEEN 0 AND 16);
+ALTER TABLE ci_automation_policies ADD COLUMN IF NOT EXISTS exclude_paths jsonb NOT NULL DEFAULT '[]'
+ CHECK(jsonb_typeof(exclude_paths)='array' AND jsonb_array_length(exclude_paths) BETWEEN 0 AND 16);
+ALTER TABLE ci_automation_events ADD COLUMN IF NOT EXISTS path_decision jsonb
+ CHECK(path_decision IS NULL OR (jsonb_typeof(path_decision)='object' AND octet_length(path_decision::text)<=2048
+ AND path_decision->>'head_sha' IS NOT NULL AND path_decision->>'head_sha'=snapshot->'source'->>'commit_sha'
+ AND path_decision->>'outcome' IS NOT NULL AND path_decision->>'reason' IS NOT NULL
+ AND ((path_decision->>'outcome'='run' AND path_decision->>'reason' IN ('paths_matched','changes_unavailable','prior_source_unsettled'))
+ OR (path_decision->>'outcome'='skip' AND path_decision->>'reason'='paths_filtered' AND status='ignored' AND last_error='paths_filtered'))));
+ALTER TABLE ci_automation_events DROP CONSTRAINT IF EXISTS ci_automation_events_last_error_check;
+ALTER TABLE ci_automation_events ADD CONSTRAINT ci_automation_events_last_error_check CHECK(last_error IN
+ ('','unavailable','capacity','authority_revoked','policy_disabled','profile_disabled','binding_disabled',
+  'branch_wait','head_changed','branch_deleted','pr_wait','pr_closed','pr_draft','pr_changed','paths_filtered'));
+-- One immutable projection per retained skipped event; no execution or native work.
+CREATE TABLE IF NOT EXISTS ci_automation_path_checks (
+ account_id uuid NOT NULL,
+ event_id uuid PRIMARY KEY,
+ snapshot jsonb NOT NULL CHECK(jsonb_typeof(snapshot)='object' AND octet_length(snapshot::text)<=2048),
+ status text NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','sending','sent','ignored','dead')),
+ attempts integer NOT NULL DEFAULT 0 CHECK(attempts BETWEEN 0 AND 8),
+ lease_token uuid,
+ lease_until timestamptz,
+ next_attempt_at timestamptz NOT NULL DEFAULT now(),
+ check_id bigint NOT NULL DEFAULT 0 CHECK(check_id>=0),
+ last_error text NOT NULL DEFAULT '' CHECK(last_error IN ('','publish_failed','access_denied','unavailable','attempts_exhausted')),
+ created_at timestamptz NOT NULL DEFAULT now(),
+ FOREIGN KEY(account_id,event_id) REFERENCES ci_automation_events(account_id,id) ON DELETE CASCADE,
+ CHECK((status='sending' AND lease_token IS NOT NULL AND lease_until IS NOT NULL)
+ OR (status<>'sending' AND lease_token IS NULL AND lease_until IS NULL)),
+ CHECK(status<>'sent' OR check_id>0)
+);
+CREATE INDEX IF NOT EXISTS ci_automation_path_checks_due_idx ON ci_automation_path_checks(account_id,next_attempt_at,created_at,event_id)
+ WHERE status IN ('pending','sending');
+
+ALTER TABLE ci_automation_path_checks ADD COLUMN IF NOT EXISTS retry_generation integer NOT NULL DEFAULT 0
+ CHECK(retry_generation BETWEEN 0 AND 3);
+-- +goose StatementBegin
+DO $$ BEGIN
+ IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='ci_automation_path_checks'::regclass AND conname='ci_automation_path_checks_account_event_key') THEN
+  ALTER TABLE ci_automation_path_checks ADD CONSTRAINT ci_automation_path_checks_account_event_key UNIQUE(account_id,event_id);
+ END IF;
+END $$;
+-- +goose StatementEnd
+CREATE TABLE IF NOT EXISTS ci_source_check_retries (
+ id uuid PRIMARY KEY,
+ account_id uuid NOT NULL,
+ event_id uuid NOT NULL,
+ generation integer NOT NULL CHECK(generation BETWEEN 1 AND 3),
+ key_digest text NOT NULL CHECK(key_digest ~ '^[0-9a-f]{64}$'),
+ requested_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ applied_at timestamptz,
+ FOREIGN KEY(account_id,event_id) REFERENCES ci_automation_path_checks(account_id,event_id) ON DELETE CASCADE,
+ UNIQUE(account_id,key_digest),
+ UNIQUE(event_id,generation),
+ CHECK(applied_at IS NULL OR applied_at>=requested_at)
+);
+
+ALTER TABLE ci_job_attempts ADD COLUMN IF NOT EXISTS progress jsonb
+ CHECK(progress IS NULL OR (jsonb_typeof(progress)='object' AND octet_length(progress::text)<=131072));
+ALTER TABLE ci_job_attempts ADD COLUMN IF NOT EXISTS progress_sequence integer NOT NULL DEFAULT 0
+ CHECK(progress_sequence BETWEEN 0 AND 4096);
+ALTER TABLE ci_job_attempts ADD COLUMN IF NOT EXISTS progress_digest text NOT NULL DEFAULT ''
+ CHECK(progress_digest='' OR progress_digest ~ '^[0-9a-f]{64}$');

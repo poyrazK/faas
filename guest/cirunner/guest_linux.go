@@ -67,15 +67,11 @@ func sameGuestID(a, b string) bool {
 
 type guestExecutor struct{}
 
-func (guestExecutor) Run(ctx context.Context, step ci.Step, dir string, logs io.Writer) (int, error) {
+func (guestExecutor) Run(ctx context.Context, launch StepExecution, logs io.Writer) (int, error) {
 	if ctx.Err() != nil {
 		return 143, ctx.Err()
 	}
-	// #nosec G204 -- explicit CI shell text runs only inside the verified Jobs guest.
-	command := exec.Command("/bin/sh", "-e", "-c", step.Run)
-	command.Dir = dir
-	command.Env = []string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "HOME=" + dir, "LANG=C.UTF-8", "CI=true"}
-	command.Stdout, command.Stderr = logs, logs
+	command := guestCommand(launch, logs)
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	command.WaitDelay = time.Duration(api.CIJobsStepStopGraceMillis) * time.Millisecond
 	if err := command.Start(); err != nil {
@@ -120,4 +116,16 @@ func (guestExecutor) Run(ctx context.Context, step ci.Step, dir string, logs io.
 		return code, nil
 	}
 	return 125, errors.New("CI step wait failed: " + strconv.Itoa(pid))
+}
+
+func guestCommand(launch StepExecution, logs io.Writer) *exec.Cmd {
+	// #nosec G204 -- explicit CI shell text runs only inside the verified Jobs guest.
+	command := exec.Command("/bin/sh", "-e", "-c", launch.Step.Run)
+	// Linux chdirs before descriptor remapping/exec. This descriptor is kept
+	// open through Start, and CLOEXEC keeps it out of the workload. Resolving a
+	// pathname here would let an earlier step replace it with an escaping link.
+	command.Dir = "/proc/self/fd/" + strconv.FormatUint(uint64(launch.Directory.Fd()), 10)
+	command.Env = append([]string(nil), launch.Environment...)
+	command.Stdout, command.Stderr = logs, logs
+	return command
 }

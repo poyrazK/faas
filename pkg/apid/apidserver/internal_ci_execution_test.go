@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -28,6 +29,22 @@ type ciServiceGitHub struct{ apidserver.StubGithubdClient }
 func (ciServiceGitHub) ListInstallableRepos(context.Context, string, int64) ([]apidserver.Repo, error) {
 	return []apidserver.Repo{{ID: 34, FullName: "gregale/service", DefaultBranch: "main"}}, nil
 }
+func (ciServiceGitHub) GetBranchHead(context.Context, string, int64, string, string) (string, bool, error) {
+	return strings.Repeat("a", 40), true, nil
+}
+
+func (ciServiceGitHub) GetCIPullRequest(_ context.Context, _ string, installation int64, repository string, number int64) (ci.PullRequestState, error) {
+	if installation != 12 || repository != "gregale/service" || number != 9 {
+		return ci.PullRequestState{}, ci.ErrGitHubAccess
+	}
+	return ci.PullRequestState{Number: number, State: "open", HeadSHA: strings.Repeat("a", 40), BaseSHA: strings.Repeat("b", 40), BaseBranch: "main", HeadRepositoryID: 34, BaseRepositoryID: 34, HeadRepository: repository, BaseRepository: repository}, nil
+}
+func (ciServiceGitHub) GetCIChangedFiles(_ context.Context, _ string, installation int64, repository, base, head string) (ci.ChangedFiles, error) {
+	if installation != 12 || repository != "gregale/service" || base != strings.Repeat("b", 40) || head != strings.Repeat("a", 40) {
+		return ci.ChangedFiles{}, ci.ErrGitHubAccess
+	}
+	return ci.ChangedFiles{BaseSHA: base, HeadSHA: head, MergeBaseSHA: base, Complete: true, Files: []ci.ChangedFile{{Path: "docs/README.md", Status: "modified"}}}, nil
+}
 func (ciServiceGitHub) StreamSourceRef(_ context.Context, _ string, _ int64, _ string, sha string, _ int64) (*apidserver.StreamSourceRefResult, error) {
 	stats := &apidserver.StreamSourceRefStats{}
 	return &apidserver.StreamSourceRefResult{Body: &ciServiceStream{Reader: strings.NewReader("opaque synthetic archive, never extracted"), receipt: func() { stats.ResolvedCommitSHA = sha }}, Stats: stats}, nil
@@ -42,14 +59,22 @@ type ciServiceStream struct {
 func (b *ciServiceStream) Close() error { b.once.Do(b.receipt); return nil }
 
 func TestInternalCIExecutionServiceWorkerAndHTTPSGates(t *testing.T) {
-	testInternalCIService(t, false)
+	testInternalCIService(t, false, false, false)
 }
 
 func TestInternalCIAutomationWorkerAndHTTPSGates(t *testing.T) {
-	testInternalCIService(t, true)
+	testInternalCIService(t, true, false, false)
 }
 
-func testInternalCIService(t *testing.T, automatic bool) {
+func TestInternalCIPullRequestWorkerAndHTTPSGates(t *testing.T) {
+	testInternalCIService(t, true, true, false)
+}
+
+func TestInternalCIPathFilteredPullRequestWorkerAndHTTPS(t *testing.T) {
+	testInternalCIService(t, true, true, true)
+}
+
+func testInternalCIService(t *testing.T, automatic, pullRequest, filtered bool) {
 	e := apidserver.SetupPGHandler(t, api.PlanPro)
 	store := (*e.Store()).(*state.PgStore)
 	pool := *e.Pool()
@@ -68,11 +93,15 @@ func testInternalCIService(t *testing.T, automatic bool) {
 		t.Fatal(err)
 	}
 	intent := ci.NewPostgresStore(pool)
-	revision, err := intent.PutRevision(t.Context(), account, "service", ci.Definition{Version: 1, Repository: "gregale/service", Jobs: map[string]ci.Job{"test": {Image: image, Steps: []ci.Step{{Name: "unit", Run: "synthetic, never executed"}}}}})
+	revision, err := intent.PutRevision(t.Context(), account, "service", ci.Definition{Version: 1, Repository: "gregale/service", Jobs: map[string]ci.Job{"test": {Image: image, Steps: []ci.Step{{Name: "unit", Run: "synthetic, never executed"}}, Artifacts: []string{"reports/**"}, JUnit: []string{"reports/unit.xml"}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	binding, err := intent.PutGitHubBinding(t.Context(), account, "service", ci.GitHubBindingRequest{RevisionID: revision.ID, InstallationID: 12, RepositoryID: 34, PushBranches: []string{"main"}})
+	bindingReq := ci.GitHubBindingRequest{RevisionID: revision.ID, InstallationID: 12, RepositoryID: 34, PushBranches: []string{"main"}}
+	if pullRequest {
+		bindingReq.PullRequestBranches = []string{"main"}
+	}
+	binding, err := intent.PutGitHubBinding(t.Context(), account, "service", bindingReq)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,13 +161,47 @@ func testInternalCIService(t *testing.T, automatic bool) {
 	var row ci.Execution
 	var stop func()
 	if automatic {
-		policyRaw, _ := json.Marshal(ci.AutomationRequest{ProfileID: profile.ID, PushBranches: []string{"main"}})
+		policy := ci.AutomationRequest{ProfileID: profile.ID, PushBranches: []string{"main"}, LatestOnly: true}
+		policy.IncludePaths = []string{"**"}
+		if filtered {
+			policy.IncludePaths = []string{"src/**"}
+		}
+		if pullRequest {
+			policy.PushBranches, policy.PullRequestBranches, policy.LatestOnly = nil, []string{"main"}, false
+		}
+		policyRaw, _ := json.Marshal(policy)
 		if got := do(http.MethodPut, "github/automation/"+binding.ID, "", policyRaw, nil); got != http.StatusOK {
 			t.Fatalf("HTTP automation setup: %d", got)
 		}
-		body := []byte(`{"ref":"refs/heads/main","after":"` + request.CommitSHA + `","installation":{"id":12},"repository":{"id":34,"full_name":"gregale/service"}}`)
-		if err := ci.RecordVerifiedGitHubDelivery(t.Context(), cfg, intent, uuid.NewString(), "push", body); err != nil {
+		body := []byte(`{"ref":"refs/heads/main","before":"` + strings.Repeat("b", 40) + `","after":"` + request.CommitSHA + `","installation":{"id":12},"repository":{"id":34,"full_name":"gregale/service"}}`)
+		kind := "push"
+		if pullRequest {
+			kind = "pull_request"
+			body = []byte(`{"action":"opened","number":9,"installation":{"id":12},"repository":{"id":34,"full_name":"gregale/service"},"pull_request":{"state":"open","draft":false,"head":{"sha":"` + request.CommitSHA + `","repo":{"id":34,"full_name":"gregale/service"}},"base":{"ref":"main","repo":{"id":34,"full_name":"gregale/service"}}}}`)
+		}
+		if err := ci.RecordVerifiedGitHubDelivery(t.Context(), cfg, intent, uuid.NewString(), kind, body); err != nil {
 			t.Fatal(err)
+		}
+		// ADR-1351: recover the original source over authenticated HTTPS before
+		// the normal worker can create its single execution and Jobs intent.
+		var eventID string
+		if err := pool.QueryRow(t.Context(), "UPDATE ci_automation_events SET status='dead',attempts=$2,last_error='unavailable' WHERE account_id=$1 RETURNING id", account, api.CIGitHubMaxAttempts).Scan(&eventID); err != nil {
+			t.Fatal(err)
+		}
+		eventPath := "github/automation/" + binding.ID + "/events/" + eventID
+		var event ci.AutomationEventSummary
+		if got := do(http.MethodGet, eventPath, "", nil, &event); got != http.StatusOK || !event.Retryable {
+			t.Fatalf("authenticated source diagnostics: %d %+v", got, event)
+		}
+		for range 2 {
+			var retry ci.AutomationRetry
+			if got := do(http.MethodPost, eventPath+"/retry", "service-automation-retry", []byte(`{"expected_retry_generation":0}`), &retry); got != http.StatusAccepted || retry.EventID != eventID || retry.Generation != 1 {
+				t.Fatalf("authenticated source recovery: %d %+v", got, retry)
+			}
+		}
+		var retryCount int
+		if err := pool.QueryRow(t.Context(), "SELECT count(*) FROM ci_automation_event_retries").Scan(&retryCount); err != nil || retryCount != 1 {
+			t.Fatal("HTTPS response retry duplicated source recovery")
 		}
 		stop = server.StartInternalCIWorker(t.Context(), log)
 		defer stop()
@@ -148,9 +211,61 @@ func testInternalCIService(t *testing.T, automatic bool) {
 			if err != nil || len(events) != 1 {
 				t.Fatalf("automation history: %v", err)
 			}
+			if filtered && events[0].LastError == "paths_filtered" {
+				stop()
+				if got := do(http.MethodGet, eventPath, "", nil, &event); got != http.StatusOK || event.PathDecision == nil || event.PathDecision.Outcome != "skip" || event.Retryable || event.ExecutionID != "" {
+					t.Fatalf("HTTPS skipped source diagnostics: %d %+v", got, event)
+				}
+				if got := do(http.MethodPost, eventPath+"/retry", "must-not-promote-filtered-source", []byte(`{"expected_retry_generation":1}`), nil); got != http.StatusConflict {
+					t.Fatalf("HTTPS recovery promoted skipped source: %d", got)
+				}
+				var executions, runs, instances int
+				if err := pool.QueryRow(t.Context(), "SELECT (SELECT count(*) FROM ci_executions),(SELECT count(*) FROM job_runs),(SELECT count(*) FROM instances)").Scan(&executions, &runs, &instances); err != nil || executions != 0 || runs != 0 || instances != 0 {
+					t.Fatal("skipped source allocated compute")
+				}
+				checkPath := eventPath + "/check"
+				var feedback ci.SourceCheckDelivery
+				if got := do(http.MethodGet, checkPath, "", nil, &feedback); got != http.StatusOK || feedback.DeliveryStatus != "pending" {
+					t.Fatalf("HTTPS source Check status: %d %+v", got, feedback)
+				}
+				if _, err := pool.Exec(t.Context(), "UPDATE ci_automation_path_checks SET status='dead',attempts=8,last_error='unavailable',check_id=77 WHERE event_id=$1", event.ID); err != nil {
+					t.Fatal(err)
+				}
+				for range 2 {
+					var retry ci.SourceCheckRetry
+					if got := do(http.MethodPost, checkPath+"/retry", "source-check-response-loss", []byte(`{"expected_retry_generation":0}`), &retry); got != http.StatusAccepted || retry.EventID != event.ID || retry.Generation != 1 {
+						t.Fatalf("HTTPS source Check retry: %d %+v", got, retry)
+					}
+				}
+				if got := do(http.MethodGet, eventPath, "", nil, &event); got != http.StatusOK || event.CheckDelivery == nil || !event.CheckDelivery.RetryPending || event.Retryable || event.ExecutionID != "" {
+					t.Fatal("source retry changed skip decision or lost pending feedback")
+				}
+				if worked, err := ci.PublishExecutionCheckOnce(t.Context(), cfg, intent, func(context.Context, string, int64, int64, string) error { return nil }, func(_ context.Context, check ci.ExecutionCheck) (int64, error) {
+					if check.AutomationEventID != event.ID || check.ExecutionID != "" || check.Conclusion != "skipped" || check.CheckID != 77 || check.ExternalID() != "gregale-ci-source:"+event.ID {
+						t.Fatal("skip reported a native execution")
+					}
+					return 77, nil
+				}); err != nil || !worked {
+					t.Fatal("skip Check not queued atomically")
+				}
+				if got := do(http.MethodGet, checkPath, "", nil, &feedback); got != http.StatusOK || feedback.DeliveryStatus != "sent" || feedback.RetryGeneration != 1 || feedback.LastRetry == nil || feedback.LastRetry.AppliedAt == nil {
+					t.Fatalf("HTTPS source Check application: %d %+v", got, feedback)
+				}
+				var receipts int
+				if err := pool.QueryRow(t.Context(), "SELECT count(*) FROM ci_source_check_retries").Scan(&receipts); err != nil || receipts != 1 {
+					t.Fatal("HTTPS duplicate retry created multiple source receipts")
+				}
+				if err := pool.QueryRow(t.Context(), "SELECT (SELECT count(*) FROM ci_executions),(SELECT count(*) FROM job_runs),(SELECT count(*) FROM instances)").Scan(&executions, &runs, &instances); err != nil || executions != 0 || runs != 0 || instances != 0 {
+					t.Fatal("source Check recovery allocated compute")
+				}
+				return
+			}
 			if events[0].ExecutionID != "" {
 				if got := do(http.MethodGet, "executions/"+events[0].ExecutionID, "", nil, &row); got != http.StatusOK {
 					t.Fatalf("automated execution read: %d", got)
+				}
+				if pullRequest && (row.Automation == nil || row.Automation.Kind != "pull_request" || row.Automation.PRNumber != 9) {
+					t.Fatal("worker lost freshly verified PR provenance")
 				}
 			}
 			if time.Now().After(until) {
@@ -178,8 +293,10 @@ func testInternalCIService(t *testing.T, automatic bool) {
 	if row.ProfileID != profile.ID {
 		t.Fatal("HTTP execution lost saved profile identity")
 	}
-	if got := do(http.MethodDelete, "profiles/"+profile.ID, "", nil, nil); got != http.StatusOK {
-		t.Fatalf("HTTP profile disable: %d", got)
+	if automatic {
+		if got := do(http.MethodDelete, "profiles/"+profile.ID, "", nil, nil); got != http.StatusOK {
+			t.Fatalf("HTTP profile disable: %d", got)
+		}
 	}
 	deadline := time.Now().Add(10 * time.Second)
 	for {
@@ -232,6 +349,30 @@ func testInternalCIService(t *testing.T, automatic bool) {
 	if runs != 1 || instances != 0 {
 		t.Fatal("service duplicated intent or allocated native compute in portable test")
 	}
+	if !automatic {
+		stop()
+		var rerun ci.Execution
+		for range 2 {
+			var current ci.Execution
+			if got := do(http.MethodPost, "executions/"+row.ID+"/rerun", "service-execution-rerun", []byte(`{}`), &current); got != http.StatusAccepted || current.Rerun == nil || current.Rerun.ParentExecutionID != row.ID || current.Rerun.RootExecutionID != row.ID || current.Compute != nil {
+				t.Fatalf("HTTPS execution rerun: %d", got)
+			}
+			if rerun.ID != "" && rerun.ID != current.ID {
+				t.Fatal("HTTPS response retry duplicated a rerun")
+			}
+			rerun = current
+		}
+		if got := do(http.MethodPost, "executions/"+rerun.ID+"/cancel", "", nil, nil); got != http.StatusOK {
+			t.Fatalf("cancel queued rerun: %d", got)
+		}
+		if got := do(http.MethodDelete, "profiles/"+profile.ID, "", nil, nil); got != http.StatusOK {
+			t.Fatalf("HTTP profile disable after rerun: %d", got)
+		}
+	}
+	var reports ci.ExecutionTestReports
+	if got := do(http.MethodGet, "executions/"+row.ID+"/reports", "", nil, &reports); got != http.StatusOK || reports.ExecutionID != row.ID || reports.Totals.Expected != 1 || reports.Totals.Problems != 1 || len(reports.Jobs) != 1 || reports.Jobs[0].Reports[0].Status != ci.ReportMissing {
+		t.Fatalf("HTTPS report diagnostics: %d %+v", got, reports)
+	}
 	if got := do(http.MethodGet, "checks/"+row.ID, "", nil, nil); got != http.StatusOK {
 		t.Fatalf("delivery diagnostics: %d", got)
 	}
@@ -250,8 +391,15 @@ func testInternalCIService(t *testing.T, automatic bool) {
 		t.Fatal("HTTP retry repeated audit intent")
 	}
 	stop()
-	if _, err := ci.PublishExecutionCheckOnce(t.Context(), cfg, intent, func(context.Context, string, int64, int64, string) error { return nil }, func(context.Context, ci.ExecutionCheck) (int64, error) { return 77, nil }); err != nil {
-		t.Fatal(err)
+	for range 2 {
+		if _, err := ci.PublishExecutionCheckOnce(t.Context(), cfg, intent, func(context.Context, string, int64, int64, string) error { return nil }, func(_ context.Context, check ci.ExecutionCheck) (int64, error) {
+			if check.ExecutionID == row.ID {
+				return 77, nil
+			}
+			return 78, nil
+		}); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if got := do(http.MethodPost, "executions/"+row.ID+"/archive", "", nil, nil); got != http.StatusConflict {
 		t.Fatalf("ready source allowed archive: %d", got)
@@ -325,9 +473,11 @@ func testInternalCIService(t *testing.T, automatic bool) {
 
 func testInternalCICheckHTTPGuards(t *testing.T, handler http.Handler, origin, key, readKey, id string) {
 	t.Helper()
-	for _, route := range []struct{ method, path string }{{http.MethodGet, "health"}, {http.MethodGet, "checks"}, {http.MethodGet, "checks/" + id}, {http.MethodPost, "checks/" + id + "/retry"}, {http.MethodGet, "archives"}, {http.MethodGet, "archives/" + id}, {http.MethodPost, "executions/" + id + "/archive"}} {
-		for _, mode := range []string{"plaintext", "anonymous", "read_scope", "mfa_pending"} {
+	for routeIndex, route := range []struct{ method, path string }{{http.MethodGet, "github/automation/" + id + "/events/" + id}, {http.MethodPost, "github/automation/" + id + "/events/" + id + "/retry"}, {http.MethodGet, "github/automation/" + id + "/checks"}, {http.MethodGet, "github/automation/" + id + "/events/" + id + "/check"}, {http.MethodPost, "github/automation/" + id + "/events/" + id + "/check/retry"}, {http.MethodGet, "executions/" + id + "/reports"}, {http.MethodGet, "health"}, {http.MethodGet, "checks"}, {http.MethodGet, "checks/" + id}, {http.MethodPost, "checks/" + id + "/retry"}, {http.MethodGet, "archives"}, {http.MethodGet, "archives/" + id}, {http.MethodPost, "executions/" + id + "/archive"}, {http.MethodPost, "executions/" + id + "/rerun"}} {
+		for modeIndex, mode := range []string{"plaintext", "anonymous", "read_scope", "mfa_pending"} {
 			r := httptest.NewRequest(route.method, origin+"/v1/internal/ci/"+route.path, strings.NewReader(`{"expected_retry_generation":0}`))
+			// Isolate the route guards from the shared unauthenticated IP budget.
+			r.RemoteAddr = fmt.Sprintf("203.0.113.%d:5555", 20+routeIndex*4+modeIndex)
 			r.Header.Set("Content-Type", "application/json")
 			r.Header.Set("Idempotency-Key", "guarded-retry")
 			want := http.StatusNotFound

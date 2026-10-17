@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -171,17 +172,42 @@ func (s BlobJobsOutput) Collect(ctx context.Context, req JobsSourceRequest, job 
 		return Observation{}, err
 	}
 	out.Logs = logs
-	if err := validateJobsOutput(job, jobsTask{Status: status, ExitCode: exit, Stopped: true}, out); err != nil {
+	ordinary := job
+	ordinary.JUnit = nil // Report diagnostics are computed after artifact verification.
+	if err := validateJobsOutput(ordinary, jobsTask{Status: status, ExitCode: exit, Stopped: true}, out); err != nil {
 		return Observation{}, err
 	}
+	reports := make(map[string]TestReport, len(job.JUnit))
 	for _, artifact := range result.Artifacts {
 		expected := jobsObjectPrefix(req.Key) + "output/artifacts/" + artifact.Path
 		if artifact.Key != expected {
 			return Observation{}, protocolError("CI artifact object is outside attempt scope")
 		}
-		if err := s.verifyArtifact(ctx, artifact); err != nil {
-			return Observation{}, err
+		if slices.Contains(job.JUnit, artifact.Path) && artifact.Bytes <= api.CIJUnitMaxBytes {
+			raw, err := s.readVerified(ctx, SourceArchive{Key: artifact.Key, Digest: artifact.Digest, Bytes: artifact.Bytes}, api.CIJUnitMaxBytes)
+			if err != nil {
+				return Observation{}, err
+			}
+			report, err := parseJUnit(ctx, raw, artifact.ArtifactRef)
+			if err != nil {
+				return Observation{}, err
+			}
+			reports[artifact.Path] = report
+		} else {
+			if err := s.verifyArtifact(ctx, artifact); err != nil {
+				return Observation{}, err
+			}
+			if slices.Contains(job.JUnit, artifact.Path) {
+				reports[artifact.Path] = TestReport{ArtifactRef: artifact.ArtifactRef, Status: ReportLimit}
+			}
 		}
+	}
+	for _, name := range job.JUnit {
+		report, ok := reports[name]
+		if !ok {
+			report = TestReport{ArtifactRef: ArtifactRef{Path: name}, Status: ReportMissing}
+		}
+		out.TestReports = append(out.TestReports, report)
 	}
 	return out, nil
 }

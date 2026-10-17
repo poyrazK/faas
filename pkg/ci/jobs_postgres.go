@@ -40,6 +40,11 @@ func (s *PostgresStore) submitJobs(ctx context.Context, account, key string, req
 	if err := s.jobsAccount(ctx, tx, account); err != nil {
 		return Execution{}, false, err
 	}
+	if req.rerun != nil {
+		if row, replay, err := s.rerunReplay(ctx, tx, account, req.rerun.Parent.ID, key); replay || err != nil {
+			return row, replay, err
+		}
+	}
 	if err := s.jobsBinding(ctx, tx, binding); err != nil {
 		return Execution{}, false, err
 	}
@@ -64,7 +69,7 @@ func (s *PostgresStore) submitJobs(ctx context.Context, account, key string, req
 			return Execution{}, false, ErrConflict
 		}
 		if req.automation != nil {
-			if err := s.finishAutomationAdmission(ctx, tx, req.automation, row.ID); err != nil {
+			if err := s.finishAutomationAdmission(ctx, tx, req.automation, row.ID, req.automationPaths); err != nil {
 				return Execution{}, false, err
 			}
 			if err := tx.Commit(ctx); err != nil {
@@ -75,6 +80,28 @@ func (s *PostgresStore) submitJobs(ctx context.Context, account, key string, req
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return Execution{}, false, storeError(err)
+	}
+	if err := s.jobsRerunParent(ctx, tx, account, req, binding); err != nil {
+		return Execution{}, false, err
+	}
+	proceed, err := s.automationBranchAdmission(ctx, tx, req)
+	if err != nil {
+		return Execution{}, false, err
+	}
+	if !proceed {
+		if err := tx.Commit(ctx); err != nil {
+			return Execution{}, false, storeError(err)
+		}
+		return Execution{}, false, errAutomationDeferred
+	}
+	if req.automationPaths != nil && req.automationPaths.Outcome == "skip" {
+		if err := s.skipAutomationPaths(ctx, tx, req, binding); err != nil {
+			return Execution{}, false, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return Execution{}, false, storeError(err)
+		}
+		return Execution{}, false, errAutomationDeferred
 	}
 	if err := s.jobsAdmissionBudget(ctx, tx, account); err != nil {
 		return Execution{}, false, err
@@ -108,6 +135,9 @@ func (s *PostgresStore) submitJobs(ctx context.Context, account, key string, req
 	row.Mode = ExecutionJobs
 	row.ProfileID = req.ProfileID
 	row.Automation = automationProvenance(req.automation)
+	if req.rerun != nil {
+		row.Rerun = rerunLineage(req.rerun.Parent)
+	}
 	row.Compute = &JobsExecution{Binding: clone(binding), Templates: make(map[string]JobsTemplate, len(req.Templates))}
 	for _, job := range row.Plan.Jobs {
 		template, err := s.jobsTemplate(ctx, tx, account, req.Templates[job.Name], job)
@@ -125,15 +155,22 @@ func (s *PostgresStore) submitJobs(ctx context.Context, account, key string, req
 			return Execution{}, false, err
 		}
 	}
+	if req.rerun != nil && !sameRerunConfiguration(row, req.rerun.Parent) {
+		return Execution{}, false, ErrConflict
+	}
 	raw, err := executionJSON(row)
 	if err != nil {
 		return Execution{}, false, err
 	}
-	_, err = s.q.InsertCIJobsExecution(ctx, tx, sqlc.InsertCIJobsExecutionParams{ID: dbUUID(row.ID), AccountID: dbUUID(account), RevisionID: dbUUID(row.RevisionID), CommitSha: row.CommitSHA, IdempotencyKey: key, Snapshot: raw, CreatedAt: timestamp(now)})
+	var parentID, rootID pgtype.UUID
+	if row.Rerun != nil {
+		parentID, rootID = dbUUID(row.Rerun.ParentExecutionID), dbUUID(row.Rerun.RootExecutionID)
+	}
+	_, err = s.q.InsertCIJobsExecution(ctx, tx, sqlc.InsertCIJobsExecutionParams{ID: dbUUID(row.ID), AccountID: dbUUID(account), RevisionID: dbUUID(row.RevisionID), CommitSha: row.CommitSHA, IdempotencyKey: key, Snapshot: raw, CreatedAt: timestamp(now), RerunParentID: parentID, RerunRootID: rootID})
 	if err != nil {
 		return Execution{}, false, storeError(err)
 	}
-	if err := s.finishAutomationAdmission(ctx, tx, req.automation, row.ID); err != nil {
+	if err := s.finishAutomationAdmission(ctx, tx, req.automation, row.ID, req.automationPaths); err != nil {
 		return Execution{}, false, err
 	}
 	if req.captureChecks {
@@ -148,8 +185,12 @@ func (s *PostgresStore) submitJobs(ctx context.Context, account, key string, req
 }
 
 func sameJobsSubmission(row Execution, req JobsSubmitRequest, binding GitHubBinding) bool {
+	var lineage *ExecutionRerun
+	if req.rerun != nil {
+		lineage = rerunLineage(req.rerun.Parent)
+	}
 	if row.Mode != ExecutionJobs || row.Compute == nil || row.ProfileID != req.ProfileID || row.RevisionID != req.RevisionID || row.CommitSHA != req.CommitSHA ||
-		!sameJobsBinding(row.Compute.Binding, binding) || !reflect.DeepEqual(row.Automation, automationProvenance(req.automation)) || len(row.Compute.Templates) != len(req.Templates) {
+		!sameJobsBinding(row.Compute.Binding, binding) || !reflect.DeepEqual(row.Rerun, lineage) || !reflect.DeepEqual(row.Automation, automationProvenance(req.automation)) || len(row.Compute.Templates) != len(req.Templates) {
 		return false
 	}
 	for name, template := range row.Compute.Templates {
@@ -260,6 +301,13 @@ func (s *PostgresStore) jobsAttemptTx(ctx context.Context, key AttemptKey) (pgx.
 		return failed(storeError(err))
 	}
 	intent := jobsIntent{Request: req, Template: template, Binding: row.Execution.Compute.Binding, Cancelled: attempt.CancelRequested || row.Execution.CancelRequested}
+	if len(attempt.Progress) > 0 {
+		progress, err := decodeJobsProgress(attempt.Progress, req.Job)
+		if err != nil {
+			return failed(err)
+		}
+		intent.Progress = &progress
+	}
 	for _, job := range row.Execution.Jobs {
 		if job.Name == key.JobName && job.Attempt.CancelReason != "" {
 			intent.Cancelled = true
@@ -305,7 +353,7 @@ func (s *PostgresStore) dispatchJobsAttempt(ctx context.Context, key AttemptKey,
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if intent.Cancelled || intent.RunID != "" {
+	if intent.Cancelled || intent.RunID != "" || intent.Output != nil {
 		return storeError(tx.Commit(ctx))
 	}
 	if err := s.jobsAccount(ctx, tx, key.AccountID); err != nil {
@@ -328,7 +376,11 @@ func (s *PostgresStore) dispatchJobsAttempt(ctx context.Context, key AttemptKey,
 	if !now.Before(intent.Request.Deadline) {
 		return ErrLeaseLost
 	}
-	manifest, err := jobsManifest(intent.Request, source)
+	inputs, err := s.dispatchArtifactInputs(ctx, tx, intent.Request)
+	if err != nil {
+		return err
+	}
+	manifest, err := jobsManifest(intent.Request, source, inputs...)
 	if err != nil {
 		return err
 	}
@@ -414,6 +466,10 @@ func (s *PostgresStore) finishJobsOutput(ctx context.Context, key AttemptKey, ou
 	}
 	if intent.RunID == "" {
 		return Observation{}, ErrConflict
+	}
+	output, err = reconcileProgressOutput(intent.Progress, output)
+	if err != nil {
+		return Observation{}, err
 	}
 	raw, err := json.Marshal(output)
 	if err != nil {
