@@ -24,3 +24,9 @@ faas_cloudflared_token_path: /etc/faas/secrets/cloudflared/tunnel-token
 
 # Prometheus endpoint of the connector, loopback until per-node scraping lands.
 faas_cloudflared_metrics_addr: 127.0.0.1:20241
+
+# ADR-1343 §6: how long a stopping connector serves its in-flight requests
+# after it withdraws from the tunnel (matches the edge's 25 s drain grace
+# with margin), and how long systemd waits for it.
+faas_cloudflared_grace_period: 30s
+faas_cloudflared_stop_timeout: 45s
