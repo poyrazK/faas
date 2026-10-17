@@ -442,3 +442,53 @@ func TestSQLOrganizationSSOJoinsLinkedProvidersAndBoundsInvitations(t *testing.T
 		t.Fatalf("runtime credential linked a provider: %s", code)
 	}
 }
+
+func TestSQLSCIMLinksProvisionedPeopleOnFirstSignIn(t *testing.T) {
+	f := newCredentialFixture(t)
+	ctx := context.Background()
+	_, owner := installAuthorization(t, f)
+	alice := newAuthUser(t, owner, "alice@example.test")
+	actAs(ctx, t, owner, alice)
+	var org uuid.UUID
+	if err := owner.QueryRow(ctx, `SELECT id FROM gregale_auth.create_organization('acme', 'Acme')`).Scan(&org); err != nil {
+		t.Fatal(err)
+	}
+	provider := uuid.New()
+	executeSQL(t, owner, `INSERT INTO auth.sso_providers (id) VALUES ($1)`, provider)
+	executeSQL(t, owner, `SELECT gregale_auth.link_sso_organization($1, $2, 'member')`, provider, org)
+	executeSQL(t, owner, `INSERT INTO gregale_auth.scim_users (provider_id, user_name, active) VALUES ($1, 'Ada@Acme.com', true), ($1, 'gone@acme.com', false)`, provider)
+	signIn := func(email string) uuid.UUID {
+		id := uuid.New()
+		executeSQL(t, owner, `INSERT INTO auth.users (id, email, email_confirmed_at, is_sso_user) VALUES ($1, $2, now(), true)`, id, email)
+		executeSQL(t, owner, `INSERT INTO auth.identities (user_id, provider, provider_id) VALUES ($1, $2, $3)`, id, "sso:"+provider.String(), email)
+		return id
+	}
+	state := func(user uuid.UUID) (linked, banned, member bool) {
+		if err := owner.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM gregale_auth.scim_users WHERE user_id = $1),
+			coalesce((SELECT banned_until > now() FROM auth.users WHERE id = $1), false),
+			EXISTS (SELECT 1 FROM gregale_auth.memberships WHERE user_id = $1 AND org_id = $2)`, user, org).Scan(&linked, &banned, &member); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	// An active provisioned person is linked by email and joins.
+	if linked, banned, member := state(signIn("ada@acme.com")); !linked || banned || !member {
+		t.Fatalf("active person: linked %v banned %v member %v", linked, banned, member)
+	}
+	// A deprovisioned person is linked, banned and joins nothing.
+	if linked, banned, member := state(signIn("gone@acme.com")); !linked || !banned || member {
+		t.Fatalf("deprovisioned person: linked %v banned %v member %v", linked, banned, member)
+	}
+	// Someone the identity provider never provisioned is unaffected.
+	if linked, banned, member := state(signIn("walk-in@acme.com")); linked || banned || !member {
+		t.Fatalf("unprovisioned person: linked %v banned %v member %v", linked, banned, member)
+	}
+	if code, _ := sqlCode(t, owner, `INSERT INTO gregale_auth.scim_users (provider_id, user_name) VALUES ($1, 'ADA@acme.com')`, provider); code != "23505" {
+		t.Fatalf("duplicate user name: %s", code)
+	}
+	executeSQL(t, owner, `DELETE FROM auth.sso_providers WHERE id = $1`, provider)
+	var left int
+	if err := owner.QueryRow(ctx, `SELECT count(*) FROM gregale_auth.scim_users`).Scan(&left); err != nil || left != 0 {
+		t.Fatalf("records left after the provider was removed: %d %v", left, err)
+	}
+}

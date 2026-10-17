@@ -403,6 +403,32 @@ they sign in, and the provider's existing users join when you link it.
 page, which uses the same admin key as the users screens. Identity providers live in your database, like
 your users.
 
+### Provisioning with SCIM
+
+Let the identity provider add and remove people for you. Create a SCIM token
+for a provider and enter it, with the SCIM base URL, in the identity
+provider's provisioning settings (Okta: SCIM 2.0 with header auth; Entra ID:
+"Non-gallery application", provisioning mode Automatic):
+
+```sh
+printf '%s' "$ADMIN_KEY" | gregale auth sso scim-token shop-auth PROVIDER_ID --admin-key-stdin
+```
+
+The token is shown once; creating another replaces it, and `--revoke` removes
+it. The Auth app then serves `/scim/v2/Users` for that provider's people:
+
+- **Provisioning** records a person; their first SSO sign-in links the record
+  to their account by user name or email. A person who already signed in
+  through the provider is linked at once.
+- **Deprovisioning** (`active: false`, or deleting the person) bans the linked
+  account, ends its sessions and removes it from the provider's organization
+  (never its last owner). Reactivating lifts the ban and returns the person
+  to the organization. A deprovisioned person who has never signed in is
+  banned on their first sign-in.
+- Lookups by `userName eq` and `externalId eq`, replace (`PUT`) and both Okta
+  and Entra ID `PATCH` forms are supported. Groups are not: the provider's
+  `--org` and `--role` decide membership.
+
 An SSO user is a separate account from a password or OAuth account with the
 same address. Because an identity provider vouches only for its own domains,
 an SSO user can accept an organization invitation only for an address in one

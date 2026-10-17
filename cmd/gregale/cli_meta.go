@@ -4379,6 +4379,10 @@ var cliCommands = []cliCommand{
 					{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"},
 				}},
 				{Name: "remove", Short: "Remove an identity provider; its users keep their memberships", Positionals: []string{"<name>", "<provider-id>"}, Flags: []cliFlag{{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"}}},
+				{Name: "scim-token", Short: "Create the token an identity provider uses to provision people through SCIM, or revoke it", Positionals: []string{"<name>", "<provider-id>"}, Flags: []cliFlag{
+					{Name: "revoke", Short: "revoke the token instead of creating one"},
+					{Name: "admin-key-stdin", Short: "read the admin key from stdin (prompted on a terminal)"},
+				}},
 			}},
 		},
 	},

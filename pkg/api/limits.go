@@ -10780,6 +10780,10 @@ const (
 	// AuthSMSMaxCountries bounds the country calling codes phone sign-in may
 	// text (AUTH_SMS_COUNTRIES).
 	AuthSMSMaxCountries = 50
+	// AuthSCIMPageSize bounds one SCIM list page, and AuthSCIMBodyBytes a
+	// SCIM request body.
+	AuthSCIMPageSize  = 100
+	AuthSCIMBodyBytes = 64 << 10
 	// AuthUINameMaxChars bounds the hosted pages' display name.
 	AuthUINameMaxChars = 60
 	// AuthAuditRetentionMaxDays bounds activity retention. The Auth app
