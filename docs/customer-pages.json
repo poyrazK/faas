@@ -8,7 +8,6 @@
     {"path": "api-hosting", "source": "docs/api-hosting-roadmap.md"},
     {"path": "api-hosting-openapi", "source": "docs/api-hosting-openapi.md"},
     {"path": "api-monetization", "source": "docs/api-monetization.md"},
-    {"path": "application-auth", "source": "docs/application-auth.md"},
     {"path": "apps", "source": "docs/apps.md"},
     {"path": "automations", "source": "docs/automation-authoring.md"},
     {"path": "auth", "source": "docs/auth.md"},
