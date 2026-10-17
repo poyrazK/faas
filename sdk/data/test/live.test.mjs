@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { createElement } from 'react'
 import { renderToString } from 'react-dom/server'
-import { sql, toPostgresText, createLiveSealer, LiveSealError, LiveConnection, LiveResult, LiveProtocolError, parseLiveServerFrame, LiveSnapshot } from '../dist/live/index.js'
+import { sql, toPostgresText, createLiveSealer, LiveSealError, LiveConnection, LiveResult, LiveProtocolError, parseLiveServerFrame, LiveSnapshot, liveRead } from '../dist/live/index.js'
 import { sealWithFixedNonceForTest } from '../dist/live/seal.js'
 import { useLiveQuery } from '../dist/live/react.js'
 
@@ -216,5 +216,42 @@ test('useLiveQuery renders the server rows until the live result arrives', () =>
   assert.equal(html, '<ul data-status="connecting"><li>first</li><li>second</li></ul>')
   const conn = new LiveConnection({ connect: () => new FakeSocket() })
   assert.equal(renderToString(createElement(Feed, { connection: conn, sealed: 'gls1.x.y' })), html)
+  conn.close()
+})
+
+test('liveRead turns a Data API query into the read a live query sends', async () => {
+  const { createDataClient } = await import('../dist/index.js')
+  const data = createDataClient({ url: 'https://db.example.test', accessToken: 'tok' })
+  const read = liveRead(data.from('messages').select('id, body, author:users(name)').eq('channel_id', 1).order('id', { ascending: false }).limit(5))
+  assert.equal(read.schema, undefined)
+  const url = new URL('https://x/' + read.read)
+  assert.equal(url.pathname, '/messages')
+  assert.equal(url.searchParams.get('select'), 'id,body,author:users(name)')
+  assert.equal(url.searchParams.get('channel_id'), 'eq.1')
+  assert.equal(url.searchParams.get('order'), 'id.desc')
+  assert.equal(url.searchParams.get('limit'), '5')
+  assert.equal(liveRead(data.schema('api').from('notes').select('id')).schema, 'api')
+  assert.throws(() => liveRead(data.from('messages').insert({ id: 1 })), TypeError)
+  assert.throws(() => liveRead('messages?select=id'), TypeError)
+})
+
+test('an RLS-mode query subscribes with its read and the user token, and renews with a fresh token', async () => {
+  const clock = new FakeClock()
+  const sockets = []
+  const conn = new LiveConnection({ connect: () => { const s = new FakeSocket(); sockets.push(s); return s }, clock })
+  await settle()
+  const tokens = ['t1', 't2', 't3']
+  const q = conn.query({ database: 'db_1', read: 'messages?select=id', schema: 'api', token: async () => tokens.shift() })
+  sockets[0].open(); await settle()
+  assert.deepEqual(sockets[0].sent, [{ type: 'live.subscribe', subscription: q.id, database: 'db_1', rest: 'messages?select=id', schema: 'api', token: 't1' }])
+  sockets[0].deliver(rows(q.id, 1, '100:104:', [{ id: 'a', values: ['1', '7', 'null', 't'] }]))
+  assert.equal(q.getSnapshot().status, 'live')
+  clock.advance(49_000); await settle()
+  assert.deepEqual(sockets[0].sent.at(-1), { type: 'live.renew', subscription: q.id, token: 't2' })
+  // A token that lapsed while away: stale, then renewed with a fresh one.
+  sockets[0].deliver({ type: 'live.error', subscription: q.id, code: 'seal_expired', message: 'expired', closed: false })
+  await settle()
+  assert.deepEqual(sockets[0].sent.at(-1), { type: 'live.renew', subscription: q.id, token: 't3' })
+  q.close()
   conn.close()
 })

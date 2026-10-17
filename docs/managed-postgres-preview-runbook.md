@@ -476,6 +476,25 @@ An app reaches a database's live queries only through its own realtime
 endpoints, and only while it holds a ready binding to that database. Other
 seals are refused with `forbidden` in realtimed.
 
+### RLS mode
+
+Browsers can also subscribe to a Data API read as the signed-in user. Row-level
+security then decides the rows, with no backend seal.
+
+- **livequeryd**
+  - Give it `-rls-roles` (for example `authenticated,anon`) and, if
+    anonymous reads are wanted, `-rls-anon-role`.
+  - Its database login must be a member of every listed role.
+  - It accepts RLS reads only from a client certificate that `-client-ca`
+    verified (realtimed's).
+- **Endpoint.** The app's realtime endpoint must use `oidc_jwt`. realtimed
+  verifies each token against that endpoint's issuer and JWKS before the
+  database sees its claims.
+- **Cost.** Each distinct set of claims is maintained separately. A change
+  to a table that a policy reads re-reads the sessions it affects, and a
+  policy calling a plpgsql function re-reads its sessions on every write.
+  Prefer SQL functions in policies.
+
 ### Customer commands
 
 ```sh

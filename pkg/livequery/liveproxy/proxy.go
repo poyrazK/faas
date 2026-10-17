@@ -43,8 +43,15 @@ type Route struct {
 // ErrNoRoute means no database is known for a seal's key.
 var ErrNoRoute = errors.New("liveproxy: no route for the seal's key")
 
-// Router finds the route for a seal's key ID.
-type Router func(ctx context.Context, kid string) (Route, error)
+// RouteKey is what a subscription is routed by: a seal's key ID, or for an
+// RLS-mode read the database it names.
+type RouteKey struct {
+	KID      string
+	Database string
+}
+
+// Router finds the route for a key.
+type Router func(ctx context.Context, key RouteKey) (Route, error)
 
 // Proxy carries live frames for many client sessions.
 type Proxy struct {
@@ -98,7 +105,9 @@ type sub struct {
 	session *Session
 	client  string
 	up      *upstream
-	sealed  string
+	// cred is the latest credential and query: a seal, or an RLS-mode read
+	// with its verified claims. A resubscription sends it again.
+	cred liveproto.ClientFrame
 	// offset maps upstream versions to the client's: an upstream session
 	// that starts over must not move the client's version backwards.
 	offset    uint64
@@ -182,7 +191,7 @@ func (s *Session) refuse(id, code, msg string, closed bool) {
 }
 
 func (s *Session) subscribe(ctx context.Context, f liveproto.ClientFrame) {
-	route, code, msg := s.route(ctx, f.Sealed)
+	route, code, msg := s.route(ctx, f)
 	if code != "" {
 		s.refuse(f.Subscription, code, msg, true)
 		return
@@ -206,7 +215,7 @@ func (s *Session) subscribe(ctx context.Context, f liveproto.ClientFrame) {
 		return
 	}
 	// A client resuming from a version continues above it.
-	sb := &sub{session: s, client: f.Subscription, up: up, sealed: f.Sealed, offset: f.Version, version: f.Version}
+	sb := &sub{session: s, client: f.Subscription, up: up, cred: credential(f), offset: f.Version, version: f.Version}
 	s.subs[f.Subscription] = sb
 	s.mu.Unlock()
 	up.add(sb)
@@ -221,32 +230,49 @@ func (s *Session) renew(ctx context.Context, f liveproto.ClientFrame) {
 		return
 	}
 	// A renewal may use a rotated key, but it must still route to the
-	// subscription's database through this endpoint.
-	route, code, msg := s.route(ctx, f.Sealed)
+	// subscription's database through this endpoint; an RLS-mode renewal
+	// renews the read it subscribed.
+	if f.RLS() {
+		f.Database = sb.cred.Database
+	}
+	route, code, msg := s.route(ctx, f)
 	if code == "" && route.Database != sb.up.route.Database {
 		code, msg = liveproto.CodeForbidden, "the renewal seals a query for another database"
+	}
+	if f.RLS() != (sb.cred.Sealed == "") {
+		code, msg = liveproto.CodeRenewMismatch, "a renewal keeps the subscription's mode"
 	}
 	if code != "" {
 		s.refuse(f.Subscription, code, msg, false)
 		return
 	}
-	sb.up.renew(sb, f.Sealed)
+	sb.up.renew(sb, f)
 }
 
-// route finds where a seal is served, or the live.error code refusing it.
-func (s *Session) route(ctx context.Context, sealed string) (Route, string, string) {
-	kid := seal.KeyID(sealed)
-	if kid == "" {
-		return Route{}, liveproto.CodeSealRejected, "malformed seal"
+// route finds where a subscription is served, or the live.error code
+// refusing it.
+func (s *Session) route(ctx context.Context, f liveproto.ClientFrame) (Route, string, string) {
+	key := RouteKey{Database: f.Database}
+	if !f.RLS() {
+		if key.KID = seal.KeyID(f.Sealed); key.KID == "" {
+			return Route{}, liveproto.CodeSealRejected, "malformed seal"
+		}
+		key.Database = ""
 	}
 	if s.router == nil {
 		return Route{}, liveproto.CodeForbidden, "this endpoint serves no live database"
 	}
-	route, err := s.router(ctx, kid)
+	route, err := s.router(ctx, key)
 	if err != nil {
-		return Route{}, liveproto.CodeForbidden, "this endpoint's app is not bound to a live database for this seal"
+		return Route{}, liveproto.CodeForbidden, "this endpoint's app is not bound to a live database for this query"
 	}
 	return route, "", ""
+}
+
+// credential keeps what a subscribe or renew frame authorizes with.
+func credential(f liveproto.ClientFrame) liveproto.ClientFrame {
+	return liveproto.ClientFrame{Sealed: f.Sealed, Database: f.Database, Rest: f.Rest, Schema: f.Schema,
+		Claims: f.Claims, ClaimsExpires: f.ClaimsExpires}
 }
 
 // upstream returns the database's upstream, dialing it when new.
@@ -347,14 +373,19 @@ func (u *upstream) attach(sb *sub) {
 	u.mu.Lock()
 	sb.attached = true
 	sb.resubbing = true
-	sealed := sb.sealed
+	frame := sb.cred
 	u.mu.Unlock()
-	u.write(liveproto.ClientFrame{Type: liveproto.TypeSubscribe, Subscription: sb.upstreamID(), Sealed: sealed})
+	frame.Type, frame.Subscription = liveproto.TypeSubscribe, sb.upstreamID()
+	u.write(frame)
 }
 
-func (u *upstream) renew(sb *sub, sealed string) {
+func (u *upstream) renew(sb *sub, f liveproto.ClientFrame) {
 	u.mu.Lock()
-	sb.sealed = sealed
+	if f.RLS() {
+		sb.cred.Claims, sb.cred.ClaimsExpires = f.Claims, f.ClaimsExpires
+	} else {
+		sb.cred.Sealed = f.Sealed
+	}
 	attached := sb.attached
 	connected := u.conn != nil
 	u.mu.Unlock()
@@ -362,7 +393,8 @@ func (u *upstream) renew(sb *sub, sealed string) {
 	case !connected:
 		// Kept for the resubscription.
 	case attached:
-		u.write(liveproto.ClientFrame{Type: liveproto.TypeRenew, Subscription: sb.upstreamID(), Sealed: sealed})
+		u.write(liveproto.ClientFrame{Type: liveproto.TypeRenew, Subscription: sb.upstreamID(), Sealed: f.Sealed,
+			Claims: f.Claims, ClaimsExpires: f.ClaimsExpires})
 	default:
 		// The upstream refused the last seal (it had expired across a
 		// reconnect): subscribe with the fresh one.
@@ -551,13 +583,18 @@ func frameSubscription(frame any) string {
 	return ""
 }
 
-// StaticRouter routes from a fixed table of key IDs.
+// StaticRouter routes from a fixed table of key IDs; an RLS-mode read
+// routes to any of the table's routes for its database.
 func StaticRouter(routes map[string]Route) Router {
-	return func(_ context.Context, kid string) (Route, error) {
-		r, ok := routes[kid]
-		if !ok {
-			return Route{}, fmt.Errorf("%w %s", ErrNoRoute, kid)
+	return func(_ context.Context, key RouteKey) (Route, error) {
+		if r, ok := routes[key.KID]; ok && key.KID != "" {
+			return r, nil
 		}
-		return r, nil
+		for _, r := range routes {
+			if key.KID == "" && key.Database != "" && r.Database == key.Database {
+				return r, nil
+			}
+		}
+		return Route{}, fmt.Errorf("%w %+v", ErrNoRoute, key)
 	}
 }

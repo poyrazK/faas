@@ -23,15 +23,59 @@ export type LiveQueryState<Row> = Readonly<{
   error: LiveErrorFrame | undefined
 }>
 
-export type LiveQueryOptions<Row> = {
-  /** A sealed query from the app's backend. */
-  sealed: string
-  /** Fetches a fresh seal for the same query: before expiry, and to resume after a reconnect. */
-  refresh?: () => Promise<string>
+type LiveRowOptions<Row> = {
   /** Rows rendered on the server, shown until the live result arrives. */
   initialRows?: ReadonlyArray<Row>
   /** Turns a row's PostgreSQL text values into a row; defaults to parseLiveRow. */
   parse?: (values: ReadonlyArray<string | null>, columns: ReadonlyArray<LiveColumn>) => Row
+}
+
+/** Sealed mode: a query the app's backend sealed. */
+export type LiveSealedOptions<Row> = LiveRowOptions<Row> & {
+  /** A sealed query from the app's backend. */
+  sealed: string
+  /** Fetches a fresh seal for the same query: before expiry, and to resume after a reconnect. */
+  refresh?: () => Promise<string>
+}
+
+/**
+ * RLS mode: a Data API read as the signed-in user. The realtime endpoint
+ * verifies the user's token and the database's row-level security decides
+ * every row, as for the Data API itself.
+ */
+export type LiveReadOptions<Row> = LiveRowOptions<Row> & {
+  /** The database the read is from, as bound to the app. */
+  database: string
+  /** The PostgREST read ("messages?select=id,body&order=id.desc&limit=50"); see liveRead for a query builder. */
+  read: string
+  /** The schema the read is in; defaults to public. */
+  schema?: string
+  /** The user's access token: called to subscribe, again before it expires, and after a reconnect. */
+  token: () => string | Promise<string>
+}
+
+export type LiveQueryOptions<Row> = LiveSealedOptions<Row> | LiveReadOptions<Row>
+
+/**
+ * The Data API read a postgrest-js query (from createDataClient) would send,
+ * for a live query in RLS mode:
+ *   connection.query({ database, token, ...liveRead(data.from('messages').select('id, body').eq('channel_id', 1)) })
+ */
+export function liveRead(query: unknown): { read: string; schema?: string } {
+  const q = query as { url?: unknown; method?: unknown; headers?: unknown; schema?: unknown }
+  if (!(q?.url instanceof URL)) throw new TypeError('liveRead takes a query built with createDataClient')
+  if (q.method !== undefined && q.method !== 'GET') throw new TypeError('a live query reads: build it with select()')
+  const path = q.url.pathname
+  const at = path.indexOf('/rest/v1/')
+  const relation = at >= 0 ? path.slice(at + '/rest/v1/'.length) : path.replace(/^\//, '')
+  const headers = q.headers instanceof Headers ? q.headers : new Headers((q.headers ?? {}) as Record<string, string>)
+  // postgrest-js keeps .schema() on the builder and sets the header when it runs.
+  const schema = typeof q.schema === 'string' ? q.schema : headers.get('Accept-Profile')
+  return { read: relation + q.url.search, ...(schema ? { schema } : {}) }
+}
+
+function isRead<Row>(options: LiveQueryOptions<Row>): options is LiveReadOptions<Row> {
+  return 'read' in options
 }
 
 export type LiveConnectionOptions = {
@@ -105,7 +149,7 @@ export class LiveConnection {
     void this.connect()
   }
 
-  /** Subscribes to a sealed query. */
+  /** Subscribes to a sealed query, or (RLS mode) a Data API read as the user. */
   query<Row = Record<string, unknown>>(options: LiveQueryOptions<Row>): LiveQuery<Row> {
     if (this.closed) throw new Error('live connection is closed')
     const handle = new LiveQueryHandle<Row>(this, `q${++nextID}`, options)
@@ -226,7 +270,7 @@ class LiveQueryHandle<Row> implements LiveQuery<Row> {
   private readonly conn: LiveConnection
   private readonly options: LiveQueryOptions<Row>
   private result = new LiveResult()
-  private sealed: string
+  private sealed: string | undefined
   private state: LiveQueryState<Row>
   private readonly listeners = new Set<() => void>()
   private waiters: { xid: bigint; resolve: () => void; reject: (e: unknown) => void }[] = []
@@ -238,7 +282,7 @@ class LiveQueryHandle<Row> implements LiveQuery<Row> {
     this.conn = conn
     this.id = id
     this.options = options
-    this.sealed = options.sealed
+    this.sealed = isRead(options) ? undefined : options.sealed
     this.state = Object.freeze({
       status: 'connecting', rows: options.initialRows ?? [], keys: [], columns: [], snapshot: null, error: undefined,
     })
@@ -259,9 +303,12 @@ class LiveQueryHandle<Row> implements LiveQuery<Row> {
     if (again) this.result.resubscribe()
     this.attached = true
     // A held seal may have expired while the socket was down.
-    void this.withFreshSeal(again).then((sealed) => {
-      if (this.finished || !this.conn.isOpen) return
-      this.conn.send({ type: LIVE_TYPES.subscribe, subscription: this.id, sealed, ...(resume > 0 ? { version: resume } : {}) })
+    void this.credential(again).then((credential) => {
+      if (this.finished || !this.conn.isOpen || !credential) return
+      const query = isRead(this.options)
+        ? { database: this.options.database, rest: this.options.read, ...(this.options.schema ? { schema: this.options.schema } : {}) }
+        : {}
+      this.conn.send({ type: LIVE_TYPES.subscribe, subscription: this.id, ...query, ...credential, ...(resume > 0 ? { version: resume } : {}) })
     })
   }
 
@@ -328,32 +375,36 @@ class LiveQueryHandle<Row> implements LiveQuery<Row> {
     this.setState({ ...this.state, status: 'closed', error: frame })
   }
 
-  private async withFreshSeal(fresh: boolean): Promise<string> {
-    if (fresh && this.options.refresh) {
-      try { this.sealed = await this.options.refresh() } catch { /* the held seal may still be valid */ }
+  /** The frame fields that authorize: a seal (fresh when asked), or the user's current token. */
+  private async credential(fresh: boolean): Promise<{ sealed: string } | { token: string } | undefined> {
+    const o = this.options
+    if (isRead(o)) {
+      try { return { token: await o.token() } } catch { return undefined /* retried at the next reconnect */ }
     }
-    return this.sealed
+    if (fresh && o.refresh) {
+      try { this.sealed = await o.refresh() } catch { /* the held seal may still be valid */ }
+    }
+    return this.sealed === undefined ? undefined : { sealed: this.sealed }
+  }
+
+  private renewable(): boolean {
+    return isRead(this.options) || this.options.refresh !== undefined
   }
 
   private scheduleRenewal(): void {
     this.conn.timers.clearTimeout(this.renewTimer)
-    if (!this.options.refresh || this.result.expires <= 0) return
+    if (!this.renewable() || this.result.expires <= 0) return
     const left = this.result.expires * 1000 - this.conn.timers.now()
     const early = this.conn.renewEarlyMs ?? Math.min(15_000, Math.max(1_000, left / 5))
     this.renewTimer = this.conn.timers.setTimeout(() => { void this.renew() }, Math.max(0, left - early))
   }
 
   private async renew(): Promise<void> {
-    if (!this.options.refresh || this.finished) return
-    let sealed: string
-    try {
-      sealed = await this.options.refresh()
-    } catch {
-      return // stays live until expiry, then stale; the next renewal retries
-    }
-    if (this.finished) return
-    this.sealed = sealed
-    this.conn.send({ type: LIVE_TYPES.renew, subscription: this.id, sealed })
+    if (!this.renewable() || this.finished) return
+    const credential = await this.credential(true)
+    // Without one it stays live until expiry, then stale; the next renewal retries.
+    if (!credential || this.finished) return
+    this.conn.send({ type: LIVE_TYPES.renew, subscription: this.id, ...credential })
   }
 
   private publish(): void {

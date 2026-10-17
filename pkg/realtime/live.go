@@ -12,6 +12,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/livequery/liveproto"
 	"github.com/onebox-faas/faas/pkg/livequery/seal"
 )
 
@@ -59,20 +60,62 @@ func validLiveRoutes(routes []LiveRoute) ([]LiveRoute, error) {
 	return append([]LiveRoute(nil), routes...), nil
 }
 
-// liveRoutes returns the connection's endpoint's current live routes.
-func (c *connection) liveRoutes() []LiveRoute {
+// verifyLiveToken replaces an RLS-mode frame's token with its verified
+// claims, so the hub reads as the user without ever seeing the token. A
+// sealed frame passes through; claims sent by a client are refused.
+func (m *Manager) verifyLiveToken(ctx context.Context, c *connection, data []byte) ([]byte, string, string) {
+	f, err := liveproto.ParseClientFrame(data)
+	if err != nil || !f.RLS() {
+		return data, "", "" // the hub answers a malformed frame
+	}
+	if len(f.Claims) > 0 {
+		return nil, liveproto.CodeProtocol, "send the user's token; realtimed adds its claims"
+	}
+	policy := c.endpointConfig().ClientAuth
+	if policy.Mode != AuthModeOIDCJWT {
+		return nil, liveproto.CodeForbidden, "RLS-mode live queries need a realtime endpoint that verifies OIDC tokens"
+	}
+	verifier, ok := m.cfg.JWTAuthorizer.(ClaimsAuthorizer)
+	if !ok {
+		return nil, liveproto.CodeUnavailable, "this realtime node cannot verify tokens for live queries"
+	}
+	claims, expires, err := verifier.AuthorizeClaims(ctx, f.Token, policy)
+	if err != nil {
+		return nil, liveproto.CodeSealRejected, "the token was not accepted"
+	}
+	f.Token, f.Claims, f.ClaimsExpires = "", claims, expires.Unix()
+	out, err := json.Marshal(f)
+	if err != nil {
+		return nil, liveproto.CodeInternal, "encode the verified frame"
+	}
+	return out, "", ""
+}
+
+// endpointConfig returns the connection's endpoint as currently registered.
+func (c *connection) endpointConfig() Endpoint {
 	if c.state != nil {
 		if e := c.state.config.Load(); e != nil {
-			return e.LiveRoutes
+			return *e
 		}
 	}
-	return c.endpoint.LiveRoutes
+	return c.endpoint
 }
+
+// liveRoutes returns the connection's endpoint's current live routes.
+func (c *connection) liveRoutes() []LiveRoute { return c.endpointConfig().LiveRoutes }
 
 // LiveSession is one connection's live queries.
 type LiveSession interface {
 	Receive(ctx context.Context, frame []byte)
 	Close()
+}
+
+// ClaimsAuthorizer is an optional JWTAuthorizer extension for RLS-mode live
+// queries: it verifies a user's token against the endpoint's policy and
+// returns the token's claims (a JSON object) and expiry, which the database
+// reads as the user.
+type ClaimsAuthorizer interface {
+	AuthorizeClaims(ctx context.Context, token string, policy AuthPolicy) (json.RawMessage, time.Time, error)
 }
 
 // liveFrameType returns the type of a live.* frame, or "".
@@ -96,6 +139,14 @@ func (m *Manager) handleLive(ctx context.Context, c *connection, data []byte, su
 		frame, _ := json.Marshal(map[string]any{
 			"type": "live.error", "subscription": subscription, "code": "unavailable",
 			"message": "live queries are not enabled on this endpoint", "closed": true,
+		})
+		_ = m.queueLive(ctx, c, frame)
+		return
+	}
+	data, code, msg := m.verifyLiveToken(ctx, c, data)
+	if code != "" {
+		frame, _ := json.Marshal(map[string]any{
+			"type": "live.error", "subscription": subscription, "code": code, "message": msg, "closed": true,
 		})
 		_ = m.queueLive(ctx, c, frame)
 		return

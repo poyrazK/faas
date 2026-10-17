@@ -24,6 +24,9 @@ type Session struct {
 	id   uint64
 	conn Conn
 	out  chan []byte
+	// trusted sessions come from realtimed, which verified the user's token
+	// of an RLS-mode read; only they may present claims.
+	trusted bool
 
 	// Owned by the hub's loop.
 	subs    map[string]*sub
@@ -35,8 +38,18 @@ type Session struct {
 
 // Attach serves a new client connection.
 func (h *Hub) Attach(ctx context.Context, conn Conn) *Session {
+	return h.attach(ctx, conn, false)
+}
+
+// AttachTrusted serves a connection from realtimed: one whose RLS-mode
+// claims were verified from the user's token.
+func (h *Hub) AttachTrusted(ctx context.Context, conn Conn) *Session {
+	return h.attach(ctx, conn, true)
+}
+
+func (h *Hub) attach(ctx context.Context, conn Conn, trusted bool) *Session {
 	s := &Session{hub: h, id: sessionIDs.Add(1), conn: conn, out: make(chan []byte, h.cfg.QueueFrames),
-		subs: map[string]*sub{}, done: make(chan struct{})}
+		subs: map[string]*sub{}, done: make(chan struct{}), trusted: trusted}
 	h.do(ctx, func(context.Context) { h.sessions[s] = true })
 	go s.write() //nolint:contextcheck // the writer lives as long as the session's queue, not the attaching request
 	return s

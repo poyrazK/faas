@@ -17,12 +17,13 @@ func (a realtimeAdapter) Attach(routes func() []realtime.LiveRoute, send func([]
 	return a.proxy.Attach(EndpointRouter(routes), send)
 }
 
-// EndpointRouter routes a seal's key through a realtime endpoint's current
-// live routes.
+// EndpointRouter routes through a realtime endpoint's current live routes: a
+// seal by its key, an RLS-mode read by its database. Either way only the
+// databases bound to the endpoint's app are reachable.
 func EndpointRouter(routes func() []realtime.LiveRoute) Router {
-	return func(_ context.Context, kid string) (Route, error) {
+	return func(_ context.Context, key RouteKey) (Route, error) {
 		for _, r := range routes() {
-			if r.KID == kid {
+			if key.KID != "" && r.KID == key.KID || key.KID == "" && key.Database != "" && r.Database == key.Database {
 				return Route{Database: r.Database, URL: r.URL}, nil
 			}
 		}

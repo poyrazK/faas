@@ -74,7 +74,24 @@ type ClientFrame struct {
 	// resubscribes after a reconnect. realtimed sends the changes since then
 	// when it still holds them, and a full live.rows otherwise.
 	Version uint64 `json:"version,omitempty"`
+
+	// RLS mode: a Data API read as the signed-in user. Database names the
+	// database, Rest the PostgREST read ("messages?select=…"), Schema its
+	// schema (default public), and Token the user's JWT, which the realtime
+	// endpoint verifies; a renewal carries a fresh Token.
+	Database string `json:"database,omitempty"`
+	Rest     string `json:"rest,omitempty"`
+	Schema   string `json:"schema,omitempty"`
+	Token    string `json:"token,omitempty"`
+	// Claims and ClaimsExpires are the verified token's claims and expiry.
+	// realtimed puts them in place of Token on the way to the hub; a client
+	// never sends them.
+	Claims        json.RawMessage `json:"claims,omitempty"`
+	ClaimsExpires int64           `json:"claims_expires,omitempty"`
 }
+
+// RLS reports whether the frame is RLS mode rather than sealed.
+func (f ClientFrame) RLS() bool { return f.Sealed == "" && (f.Token != "" || len(f.Claims) > 0) }
 
 // ParseClientFrame decodes and validates a client frame.
 func ParseClientFrame(data []byte) (ClientFrame, error) {
@@ -95,17 +112,46 @@ func ParseClientFrame(data []byte) (ClientFrame, error) {
 			return ClientFrame{}, fmt.Errorf("%w: %s carries no version", ErrProtocol, f.Type)
 		}
 	case TypeUnsubscribe:
-		if f.Sealed != "" || f.Version != 0 {
+		if f.Sealed != "" || f.Version != 0 || f.Database != "" || f.Rest != "" || f.Schema != "" || f.Token != "" || len(f.Claims) > 0 {
 			return ClientFrame{}, fmt.Errorf("%w: %s carries only the subscription", ErrProtocol, f.Type)
 		}
 		return f, nil
 	default:
 		return ClientFrame{}, fmt.Errorf("%w: unknown frame type %q", ErrProtocol, f.Type)
 	}
-	if f.Sealed == "" {
-		return ClientFrame{}, fmt.Errorf("%w: %s needs a sealed query", ErrProtocol, f.Type)
+	if err := f.checkCredential(); err != nil {
+		return ClientFrame{}, err
 	}
 	return f, nil
+}
+
+// checkCredential checks that a subscribe or renew carries one credential,
+// a seal or a user's token (or claims), and the query it needs.
+func (f ClientFrame) checkCredential() error {
+	sealed, user := f.Sealed != "", f.Token != "" || len(f.Claims) > 0
+	switch {
+	case sealed == user:
+		return fmt.Errorf("%w: %s needs a sealed query or a user's token", ErrProtocol, f.Type)
+	case sealed && (f.Database != "" || f.Rest != "" || f.Schema != ""):
+		return fmt.Errorf("%w: a sealed query names its own database and query", ErrProtocol)
+	case sealed:
+		return nil
+	case f.Token != "" && len(f.Claims) > 0:
+		return fmt.Errorf("%w: a token or its claims, not both", ErrProtocol)
+	case len(f.Token) > api.LiveQueryTokenMaxBytes || len(f.Claims) > api.LiveQueryTokenMaxBytes:
+		return fmt.Errorf("%w: the token is over %d bytes", ErrProtocol, api.LiveQueryTokenMaxBytes)
+	case f.Type == TypeRenew && (f.Database != "" || f.Rest != "" || f.Schema != ""):
+		return fmt.Errorf("%w: a renewal carries only the fresh token", ErrProtocol)
+	case f.Type == TypeRenew:
+		return nil
+	case f.Database == "" || len(f.Database) > api.LiveQueryDatabaseIDMaxBytes:
+		return fmt.Errorf("%w: an RLS-mode subscription names its database", ErrProtocol)
+	case f.Rest == "" || len(f.Rest) > api.LiveQueryRESTMaxBytes:
+		return fmt.Errorf("%w: an RLS-mode subscription carries a Data API read of 1-%d bytes", ErrProtocol, api.LiveQueryRESTMaxBytes)
+	case len(f.Schema) > 63:
+		return fmt.Errorf("%w: schema name too long", ErrProtocol)
+	}
+	return nil
 }
 
 func validSubscription(s string) bool {

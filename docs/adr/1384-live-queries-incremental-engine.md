@@ -916,6 +916,42 @@ Phase 0 did not cover:
       writes to the queried, embedded and policy tables, with
       `VerifyEachRound`;
     - an array-parameter regression test.
+- **RLS mode, end to end** (2026-10-17).
+  - **Frames.** `live.subscribe` carries `database`, `rest` (the Data API
+    read), an optional `schema` and the user's `token`. `live.renew` carries
+    a fresh `token`.
+  - **realtimed** accepts these only on `oidc_jwt` endpoints. It verifies
+    the token against the endpoint's issuer, JWKS and audience through
+    `ClaimsAuthorizer`, and replaces it with its claims and expiry. A client
+    may not send claims. Routing is by database through the endpoint's live
+    routes, so the binding check applies to RLS mode too.
+  - **The hub** believes claims only from a peer whose client certificate
+    livequeryd verified (`-client-ca`), that is realtimed.
+    - It picks the role from the token's `role` claim. The role must be in
+      `-rls-roles`; `-rls-anon-role` covers tokens that name none.
+    - It drops `exp`, `iat`, `nbf` and `jti` from the claims, so a refreshed
+      token keeps its plan group.
+    - It compiles the read against the database's catalog.
+    - A subscription goes stale at the token's expiry until renewed. A
+      renewal whose claims differ is a `renew_mismatch`.
+    - RLS-mode subscriptions have their own limit,
+      `LiveQueryRLSSubscriptionsPerDatabase` (2,000), and seal revocation
+      does not touch them.
+  - **SDK.** `connection.query({ database, token, ...liveRead(dataQuery) })`
+    and the React hook `useLiveRead`. `liveRead` takes a query built with
+    `createDataClient`, so the same builder serves a request and a live
+    read.
+  - **Tests:**
+    - a full-path test with a browser connection, realtimed, the proxy, the
+      hub and PostgreSQL row-level security: per-user rows, a membership
+      change, renewal and mismatch, and claims refused from an untrusted
+      peer;
+    - realtime's token-to-claims swap;
+    - SDK framing and `liveRead` over a real postgrest-js builder.
+  - **Not yet:**
+    - apid configuring `-rls-roles` from the database's Data API binding;
+    - per-plan-group `SET ROLE` for sealed queries, which still run as the
+      engine login.
 
 ## Consequences
 

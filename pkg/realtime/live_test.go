@@ -123,6 +123,82 @@ func TestLiveRoutesFollowRegistration(t *testing.T) {
 	}
 }
 
+// claimsJWT verifies tokens of the form "user:<sub>".
+type claimsJWT struct{ recordingJWTAuthorizer }
+
+func (claimsJWT) AuthorizeClaims(_ context.Context, token string, _ AuthPolicy) (json.RawMessage, time.Time, error) {
+	sub, ok := strings.CutPrefix(token, "user:")
+	if !ok {
+		return nil, time.Time{}, errors.New("bad token")
+	}
+	return json.RawMessage(`{"sub":"` + sub + `","role":"authenticated","exp":4102444800}`), time.Unix(4102444800, 0), nil
+}
+
+// adr: 1384 — an RLS-mode frame reaches the live session with the token's
+// verified claims in place of the token; a client may not send claims, and
+// a token the endpoint cannot verify is refused.
+func TestLiveTokensBecomeClaims(t *testing.T) {
+	live := &fakeLive{got: make(chan struct{}, 4)}
+	m := NewManager(Config{
+		JWTAuthorizer: &claimsJWT{}, ResumePreview: true,
+		HistoryReader: &testResumeHistory{}, ResumePollInterval: 15 * time.Millisecond, Live: live,
+	}, &testChannelHooks{})
+	if err := m.RegisterEndpoint(Endpoint{
+		ID: "resume-endpoint", AppID: "app-1", AccountID: "acct-1", CallbackURL: "https://app.example",
+		AllowedOrigins: []string{"https://app.example"},
+		ClientAuth: AuthPolicy{
+			Mode: AuthModeOIDCJWT, Issuer: "https://issuer.example",
+			JWKSURL: "https://issuer.example/.well-known/jwks.json", Algorithms: []string{"RS256"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(m.Handler())
+	t.Cleanup(func() { server.Close(); _ = m.Close() })
+	client := dialResumeTest(t, server)
+	read := `"database":"db","rest":"messages?select=id"`
+	if err := client.WriteMessage(1, []byte(`{"type":"live.subscribe","subscription":"feed",`+read+`,"token":"user:alice"}`)); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-live.got:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the live session never received the frame")
+	}
+	live.mu.Lock()
+	forwarded := string(live.received[0])
+	live.mu.Unlock()
+	if strings.Contains(forwarded, "token") || !strings.Contains(forwarded, `"claims":{"sub":"alice"`) || !strings.Contains(forwarded, `"claims_expires":4102444800`) {
+		t.Fatalf("forwarded %s", forwarded)
+	}
+	for _, tc := range []struct{ frame, code string }{
+		{`{"type":"live.subscribe","subscription":"forged",` + read + `,"claims":{"sub":"admin"}}`, "protocol_error"},
+		{`{"type":"live.subscribe","subscription":"bad",` + read + `,"token":"nonsense"}`, "seal_rejected"},
+	} {
+		if err := client.WriteMessage(1, []byte(tc.frame)); err != nil {
+			t.Fatal(err)
+		}
+		_ = client.SetReadDeadline(time.Now().Add(5 * time.Second))
+		_, data, err := client.ReadMessage()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var refusal struct {
+			Code   string
+			Closed bool
+		}
+		if json.Unmarshal(data, &refusal) != nil || refusal.Code != tc.code || !refusal.Closed {
+			t.Fatalf("%s: refusal %s", tc.frame, data)
+		}
+	}
+	live.mu.Lock()
+	n := len(live.received)
+	live.mu.Unlock()
+	if n != 1 {
+		t.Fatalf("refused frames reached the live session (%d frames)", n)
+	}
+}
+
 // adr: 1384 — live frames count against the connection's outbound queue like
 // any other traffic (ADR-1323): a client too slow for them is closed with
 // 1013 so it reconnects, rather than growing realtimed's memory.

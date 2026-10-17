@@ -125,6 +125,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	hub := liveserver.New(liveserver.Config{
 		Database: *databaseID, Keyring: keyring, Engine: engine, Checkpoint: *checkpointPath,
 		CheckpointEvery: *checkpointEvery, Metrics: metrics, Logger: log, MaxPerConnection: *perConnection,
+		RLSRoles: rlsRoleList(), RLSAnonRole: *rlsAnonRole, Pool: pool,
 	})
 
 	var servers []*http.Server

@@ -19,9 +19,12 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/livequery"
 	"github.com/onebox-faas/faas/pkg/livequery/liveproto"
+	"github.com/onebox-faas/faas/pkg/livequery/rest"
 	"github.com/onebox-faas/faas/pkg/livequery/seal"
 )
 
@@ -45,6 +48,14 @@ type Config struct {
 	Logger  *slog.Logger
 	// Limits; zero means the pkg/api default.
 	MaxSubscriptions, MaxQueries, MaxPerConnection, QueueFrames int
+	// RLS mode: the roles a user's token may name (none disables RLS mode),
+	// the role for a token naming none, and the pool Data API reads are
+	// compiled against. MaxRLSSubscriptions bounds RLS-mode subscriptions,
+	// which share maintenance only with identical claims.
+	RLSRoles            []string
+	RLSAnonRole         string
+	Pool                *pgxpool.Pool
+	MaxRLSSubscriptions int
 	// RestoredGrace is how long subscriptions restored from a checkpoint
 	// stay registered (default two minutes). Their connections are gone,
 	// but reconnecting clients that subscribe to the same queries join the
@@ -64,13 +75,16 @@ type Hub struct {
 	dirty    bool          // registrations changed since the last round
 	done     chan struct{} // closed when Run returns
 	prefix   string        // of this hub's engine subscription IDs
+	rlsSubs  int           // RLS-mode subscriptions
 }
 
 // sub is one client subscription.
 type sub struct {
 	session     *Session
-	client      string // the client's subscription ID
-	kid         string // key ID of the latest seal
+	client      string                // the client's subscription ID
+	kid         string                // key ID of the latest seal
+	rls         bool                  // an RLS-mode read, authorized by claims, not a seal
+	rest        liveproto.ClientFrame // an RLS-mode read: its database, schema and read
 	engineID    string
 	fingerprint string
 	expires     time.Time
@@ -102,6 +116,7 @@ func New(cfg Config) *Hub {
 	def(&cfg.MaxQueries, api.LiveQueryCompiledQueriesPerDatabase)
 	def(&cfg.MaxPerConnection, api.LiveQuerySubscriptionsPerConnection)
 	def(&cfg.QueueFrames, api.LiveQueryConnectionQueueFrames)
+	def(&cfg.MaxRLSSubscriptions, api.LiveQueryRLSSubscriptionsPerDatabase)
 	if cfg.RestoredGrace <= 0 {
 		cfg.RestoredGrace = 2 * time.Minute
 	}
@@ -299,7 +314,7 @@ func (h *Hub) SetKeyring(ctx context.Context, ring *seal.Keyring) {
 		h.keys = ring
 		now := h.cfg.Now()
 		for _, s := range h.subs {
-			if s.session == nil || h.keys.Opens(s.kid, now) {
+			if s.session == nil || s.rls || h.keys.Opens(s.kid, now) {
 				continue
 			}
 			s.session.send(&liveproto.Error{Type: liveproto.TypeError, Subscription: s.client, Code: liveproto.CodeSealRejected,
@@ -313,6 +328,9 @@ func (h *Hub) SetKeyring(ctx context.Context, ring *seal.Keyring) {
 func (h *Hub) forget(s *sub, unregister bool) {
 	if unregister {
 		_ = h.engine.Unregister(s.engineID)
+	}
+	if s.rls && h.subs[s.engineID] == s {
+		h.rlsSubs--
 	}
 	delete(h.subs, s.engineID)
 	delete(s.session.subs, s.client)
@@ -349,6 +367,10 @@ func (h *Hub) subscribe(ctx context.Context, sess *Session, f liveproto.ClientFr
 		sess.send(&liveproto.Error{Type: liveproto.TypeError, Subscription: f.Subscription, Code: code, Message: msg,
 			Closed: true, Limit: int64(limit), Observed: int64(observed)})
 	}
+	if f.RLS() {
+		h.subscribeRLS(ctx, sess, f, refuse)
+		return
+	}
 	q, err := h.keys.Open(f.Sealed, h.cfg.Now())
 	if err != nil {
 		refuse(seal.Code(err), err.Error(), 0, 0)
@@ -358,6 +380,12 @@ func (h *Hub) subscribe(ctx context.Context, sess *Session, f liveproto.ClientFr
 		refuse(liveproto.CodeForbidden, "the seal names another database", 0, 0)
 		return
 	}
+	h.register(ctx, sess, f, q.SQL, q.Args(), nil, q.Fingerprint(), q.ExpiresAt(), refuse)
+}
+
+// register subscribes a client to sql, read as session (nil: sealed mode).
+func (h *Hub) register(ctx context.Context, sess *Session, f liveproto.ClientFrame, sql string, args []any,
+	session *livequery.Session, fingerprint string, expires time.Time, refuse func(code, msg string, limit, observed int)) {
 	// A subscription ID used again replaces the earlier subscription.
 	if old := sess.subs[f.Subscription]; old != nil {
 		h.forget(old, true)
@@ -369,13 +397,16 @@ func (h *Hub) subscribe(ctx context.Context, sess *Session, f liveproto.ClientFr
 	case h.engine.Subscriptions() >= h.cfg.MaxSubscriptions:
 		refuse(liveproto.CodeLimit, "too many live queries on this database", h.cfg.MaxSubscriptions, h.engine.Subscriptions()+1)
 		return
-	case !h.engine.Compiled(q.SQL) && h.engine.Queries() >= h.cfg.MaxQueries:
+	case !h.engine.Compiled(sql) && h.engine.Queries() >= h.cfg.MaxQueries:
 		refuse(liveproto.CodeLimit, "too many distinct live queries on this database", h.cfg.MaxQueries, h.engine.Queries()+1)
+		return
+	case session != nil && h.rlsSubs >= h.cfg.MaxRLSSubscriptions:
+		refuse(liveproto.CodeLimit, "too many RLS-mode live queries on this database", h.cfg.MaxRLSSubscriptions, h.rlsSubs+1)
 		return
 	}
 	h.nextID++
 	engineID := h.prefix + strconv.FormatUint(sess.id, 10) + "." + strconv.FormatUint(h.nextID, 10)
-	if _, err := h.engine.Register(ctx, engineID, q.SQL, q.Args()...); err != nil {
+	if _, err := h.engine.RegisterAs(ctx, engineID, sql, session, args...); err != nil {
 		code := liveproto.CodeInvalidQuery
 		if errors.Is(err, livequery.ErrUnsupported) {
 			code = liveproto.CodeUnsupported
@@ -383,8 +414,12 @@ func (h *Hub) subscribe(ctx context.Context, sess *Session, f liveproto.ClientFr
 		refuse(code, err.Error(), 0, 0)
 		return
 	}
-	h.cfg.Logger.Debug("live subscribe", "session", sess.id, "subscription", f.Subscription, "engine", engineID)
-	s := &sub{session: sess, client: f.Subscription, kid: seal.KeyID(f.Sealed), engineID: engineID, fingerprint: q.Fingerprint(), expires: q.ExpiresAt()}
+	h.cfg.Logger.Debug("live subscribe", "session", sess.id, "subscription", f.Subscription, "engine", engineID, "rls", session != nil)
+	s := &sub{session: sess, client: f.Subscription, kid: seal.KeyID(f.Sealed), engineID: engineID, fingerprint: fingerprint, expires: expires}
+	if session != nil {
+		s.rls, s.rest = true, liveproto.ClientFrame{Database: f.Database, Schema: f.Schema, Rest: f.Rest}
+		h.rlsSubs++
+	}
 	h.subs[engineID] = s
 	sess.subs[f.Subscription] = s
 	h.dirty = true
@@ -399,16 +434,33 @@ func (h *Hub) renew(sess *Session, f liveproto.ClientFrame) {
 		refuse(liveproto.CodeProtocol, "no such subscription")
 		return
 	}
-	q, err := h.keys.Open(f.Sealed, h.cfg.Now())
-	switch {
-	case err != nil:
-		refuse(seal.Code(err), err.Error())
-		return
-	case q.Fingerprint() != s.fingerprint:
-		refuse(liveproto.CodeRenewMismatch, "the renewal seals a different query")
+	if f.RLS() != s.rls {
+		refuse(liveproto.CodeRenewMismatch, "a renewal keeps the subscription's mode")
 		return
 	}
-	s.expires, s.kid = q.ExpiresAt(), seal.KeyID(f.Sealed)
+	if s.rls {
+		session, expires, no := h.session(sess, f)
+		switch {
+		case no != nil:
+			refuse(no.code, no.msg)
+			return
+		case rlsFingerprint(liveproto.ClientFrame{Database: s.rest.Database, Schema: s.rest.Schema, Rest: s.rest.Rest}, session) != s.fingerprint:
+			refuse(liveproto.CodeRenewMismatch, "the renewed token carries different claims; subscribe again")
+			return
+		}
+		s.expires = expires
+	} else {
+		q, err := h.keys.Open(f.Sealed, h.cfg.Now())
+		switch {
+		case err != nil:
+			refuse(seal.Code(err), err.Error())
+			return
+		case q.Fingerprint() != s.fingerprint:
+			refuse(liveproto.CodeRenewMismatch, "the renewal seals a different query")
+			return
+		}
+		s.expires, s.kid = q.ExpiresAt(), seal.KeyID(f.Sealed)
+	}
 	sess.send(&liveproto.Renewed{Type: liveproto.TypeRenewed, Subscription: s.client, Expires: s.expires.Unix()})
 	if !s.stale {
 		return
@@ -419,6 +471,19 @@ func (h *Hub) renew(sess *Session, f liveproto.ClientFrame) {
 	if d, ok := h.engine.Current(s.engineID); ok {
 		h.deliver(s, d)
 	}
+}
+
+// subscribeRLS registers an RLS-mode read as its user's session.
+func (h *Hub) subscribeRLS(ctx context.Context, sess *Session, f liveproto.ClientFrame, refuse func(code, msg string, limit, observed int)) {
+	session, expires, no := h.session(sess, f)
+	if no == nil {
+		var compiled *rest.Compiled
+		if compiled, no = h.compileREST(ctx, f); no == nil {
+			h.register(ctx, sess, f, compiled.SQL, compiled.Args, session, rlsFingerprint(f, session), expires, refuse)
+			return
+		}
+	}
+	refuse(no.code, no.msg, 0, 0)
 }
 
 // oversized reports a live.changes frame larger than a frame may be.

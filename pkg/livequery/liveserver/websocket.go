@@ -15,6 +15,16 @@ import (
 // connection. It is livequeryd's development transport; realtimed brings
 // its own. checkOrigin decides which browser origins may connect.
 func WebSocket(h *Hub, checkOrigin func(*http.Request) bool) http.Handler {
+	return WebSocketTrusting(h, checkOrigin, nil)
+}
+
+// VerifiedPeer trusts a connection whose TLS client certificate the server
+// verified: realtimed's, under livequeryd's -client-ca.
+func VerifiedPeer(r *http.Request) bool { return r.TLS != nil && len(r.TLS.VerifiedChains) > 0 }
+
+// WebSocketTrusting is WebSocket where trust decides which connections may
+// present the verified claims of RLS-mode reads (nil trusts none).
+func WebSocketTrusting(h *Hub, checkOrigin func(*http.Request) bool, trust func(*http.Request) bool) http.Handler {
 	up := websocket.Upgrader{CheckOrigin: checkOrigin, ReadBufferSize: 16 << 10, WriteBufferSize: 64 << 10}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ws, err := up.Upgrade(w, r, nil)
@@ -22,7 +32,7 @@ func WebSocket(h *Hub, checkOrigin func(*http.Request) bool) http.Handler {
 			return // the upgrader has answered
 		}
 		ws.SetReadLimit(api.LiveQueryClientFrameMaxBytes)
-		sess := h.Attach(r.Context(), &wsConn{ws: ws})
+		sess := h.attach(r.Context(), &wsConn{ws: ws}, trust != nil && trust(r))
 		defer sess.Close(context.WithoutCancel(r.Context()))
 		for {
 			kind, data, err := ws.ReadMessage()

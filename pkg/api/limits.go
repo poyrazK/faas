@@ -11610,6 +11610,10 @@ const (
 	LiveQueryClientFrameMaxBytes = 80 << 10
 	LiveQueryServerFrameMaxBytes = 256 << 10
 	LiveQueryResultRowsMax       = 10000
+	// RLS mode (ADR-1384): a Data API read is at most LiveQueryRESTMaxBytes
+	// and a user's token (or its claims) at most LiveQueryTokenMaxBytes.
+	LiveQueryRESTMaxBytes  = 8 << 10
+	LiveQueryTokenMaxBytes = 8 << 10
 	// A result sent whole (a new subscriber, a reset, a resubscription) is at
 	// most this many bytes of rows: half of realtimed's per-connection
 	// outbound queue, so delivering it cannot close the connection as a slow
@@ -11620,6 +11624,9 @@ const (
 	LiveQuerySubscriptionsPerDatabase   = 10000
 	LiveQueryCompiledQueriesPerDatabase = 1000
 	LiveQuerySubscriptionsPerConnection = 64
+	// RLS-mode subscriptions share maintenance only with identical claims,
+	// so they have their own, lower, per-database limit.
+	LiveQueryRLSSubscriptionsPerDatabase = 2000
 	// A connection whose outbound queue holds this many frames is closed as
 	// a slow consumer.
 	LiveQueryConnectionQueueFrames = 1024

@@ -28,7 +28,19 @@ var (
 	keysDSNFile  = flag.String("keys-dsn-file", "", "file holding a read-only control-plane connection string; the database's live keys are read there")
 	keysIdentity = flag.String("keys-identity", "", "age identity that opens the live keys apid sealed (the pair of apid's FAAS_APID_LIVE_KEY_RECIPIENT_FILE)")
 	keysRefresh  = flag.Duration("keys-refresh", 0, "how often to read the live keys (default 5s); revocations apply within it")
+	rlsRoles     = flag.String("rls-roles", "", "comma-separated roles an RLS-mode read may run as (a user's token names one in its role claim); empty disables RLS mode. The live-query login must be a member of each")
+	rlsAnonRole  = flag.String("rls-anon-role", "", "the role for a token that names none; empty refuses such tokens")
 )
+
+func rlsRoleList() []string {
+	var out []string
+	for _, r := range strings.Split(*rlsRoles, ",") {
+		if r = strings.TrimSpace(r); r != "" {
+			out = append(out, r)
+		}
+	}
+	return out
+}
 
 // watchKeys starts reading the database's live keys from the control plane.
 // The returned function closes the control-plane pool.
@@ -63,7 +75,9 @@ func watchKeys(ctx context.Context, hub *liveserver.Hub, log *slog.Logger) (func
 // origins: browsers reach live queries through realtimed.
 func serveRealtimed(hub *liveserver.Hub, log *slog.Logger) (*http.Server, error) {
 	mux := http.NewServeMux()
-	mux.Handle("/live", liveserver.WebSocket(hub, func(r *http.Request) bool { return r.Header.Get("Origin") == "" }))
+	// RLS-mode claims are believed only from a peer whose client
+	// certificate -client-ca verified: realtimed.
+	mux.Handle("/live", liveserver.WebSocketTrusting(hub, func(r *http.Request) bool { return r.Header.Get("Origin") == "" }, liveserver.VerifiedPeer))
 	if *tlsCert == "" {
 		if *clientCA != "" || *tlsKey != "" {
 			return nil, errors.New("livequeryd: -tls-key and -client-ca need -tls-cert")
