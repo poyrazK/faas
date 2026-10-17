@@ -20,6 +20,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/appevents"
 	"github.com/onebox-faas/faas/pkg/apid/automationconsole"
 	"github.com/onebox-faas/faas/pkg/apid/billingruns"
+	"github.com/onebox-faas/faas/pkg/apid/ciapi"
 	"github.com/onebox-faas/faas/pkg/apid/consumerbilling"
 	"github.com/onebox-faas/faas/pkg/apid/consumercontrols"
 	"github.com/onebox-faas/faas/pkg/apid/consumercredits"
@@ -44,6 +45,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/authz"
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/bindinghash"
+	"github.com/onebox-faas/faas/pkg/ci"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/devbridge"
 	"github.com/onebox-faas/faas/pkg/events"
@@ -81,6 +83,10 @@ import (
 // wires a stub that returns 503 for every RPC; slices 7-8 replace with a
 // live socket-dialed client.
 type server struct {
+	ciConfig                               ci.Config
+	ciBlobs                                *ci.ManagedBlobs
+	ciRuntimeOrigin                        string
+	ciHealthMetrics                        *ci.HealthMetrics
 	hostingConfig                          *hosting.Config
 	hostingMetrics                         *hostingapi.Metrics
 	hosting                                hostingapi.Service
@@ -553,6 +559,7 @@ const anonymousAccountLabel = "anonymous"
 // through drainFlusher/flushOne).
 func (s *server) WithOpsMetrics(ctx context.Context, ops *wire.OpsMetrics) *server {
 	s.ops = ops
+	s.configureInternalCIHealthMetrics(ctx)
 	if ops == nil {
 		s.domainVerificationMetrics = nil
 		s.metricsDiscoveryMetrics = nil
@@ -1351,6 +1358,8 @@ func (noopNotifier) WaitFor(_ context.Context, _ string, _ func(payload string) 
 // New routes append here; do not introduce per-feature sub-muxes.
 func (s *server) handler() http.Handler {
 	mux := http.NewServeMux()
+	s.registerInternalCI(mux)
+	s.registerInternalCIRuntime(mux)
 	mux.HandleFunc("POST /integrations/slack/issues/{app_id}", s.issueSlackInteractionHandler)
 	mux.HandleFunc("POST /integrations/slack/actions", s.issueSlackManagedActions)
 	mux.HandleFunc("POST /integrations/slack/events", s.issueSlackManagedEvents)
@@ -4649,7 +4658,9 @@ func (s *server) handler() http.Handler {
 	// + JSON so the gate is unconditionally true.
 	return middleware.RequestID(httpsec.Static(httpsec.Nonce(
 		func(*http.Request) bool { return true },
-		s.observeWrap(s.hosting.HideDisabled(operation.OperationCustomerCORS(apiContractHandler(mux, s.durable.Hidden)))),
+		s.observeWrap(s.hosting.HideDisabled(operation.OperationCustomerCORS(ciapi.HideDisabledRoutes(
+			func() ci.Config { return s.ciConfig }, apiContractHandler(mux, s.durable.Hidden),
+		)))),
 	)))
 }
 

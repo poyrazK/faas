@@ -6202,6 +6202,193 @@ groups:
           summary: "schedd instance-stats collection on {{ $labels.instance }} is slow"
           description: "Collecting per-instance stats from vmmd has taken more than 200 ms at p95 for 10m, which points at dialer saturation; scale signals read stale data until it recovers."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasScheddInstanceStatsPartialErrors.md"
+  # ADR-1575: internal CI operational evidence. Fleet gauges repeat across daemons;
+  # aggregate only readable targets with max usage/counts and min limits.
+  # Boot worker switches are independent of heartbeat freshness. All alerts
+  # are internal warnings; disabled worker paths stay quiet. No state is mutated.
+  - name: faas_internal_ci
+    interval: 30s
+    rules:
+      - record: faas_ci:observation_enabled:by_daemon
+        expr: |-
+          max by (daemon) (
+          label_replace(
+          {__name__=~"(apid|githubd)_ci_health_enabled"} and on (job, instance) (up{job=~"apid|githubd"} == 1),
+          "daemon", "$1", "__name__", "(apid|githubd)_ci_health_enabled")
+          )
+      - record: faas_ci:observation_up:by_daemon
+        expr: |-
+          max by (daemon) (
+          label_replace(
+          {__name__=~"(apid|githubd)_ci_health_up"} == 1
+          and on (job, instance) ({__name__=~"(apid|githubd)_ci_health_enabled"} == 1)
+          and on (job, instance) (up{job=~"apid|githubd"} == 1),
+          "daemon", "$1", "__name__", "(apid|githubd)_ci_health_up")
+          )
+          or on (daemon) ((faas_ci:observation_enabled:by_daemon == 1) * 0)
+      - record: faas_ci:health_readable
+        expr: max(faas_ci:observation_up:by_daemon)
+      - record: faas_ci:observation_status:by_daemon
+        expr: |-
+          ((faas_ci:observation_enabled:by_daemon == 0)) * 0 + 0
+          or on (daemon) ((faas_ci:observation_up:by_daemon == 1)) * 0 + 1
+          or on (daemon) (((faas_ci:observation_enabled:by_daemon == 1) unless on (daemon) (faas_ci:observation_up:by_daemon == 1))) * 0 + 2
+          or on (daemon) label_replace(vector(3), "daemon", "apid", "", "")
+          or on (daemon) label_replace(vector(3), "daemon", "githubd", "", "")
+      - record: faas_ci:worker_enabled:by_worker
+        expr: |-
+          max by (worker) (
+          {__name__=~"(apid|githubd)_ci_worker_enabled"} and on (job, instance) (up{job=~"apid|githubd"} == 1)
+          )
+      - record: faas_ci:queue_worker_enabled:by_queue
+        expr: |-
+          max by (queue) (
+          label_replace(faas_ci:worker_enabled:by_worker{worker="dispatcher"}, "queue", "executions", "", "")
+          or
+          label_replace(faas_ci:worker_enabled:by_worker{worker="retention"}, "queue", "retirement", "", "")
+          or
+          label_replace(faas_ci:worker_enabled:by_worker{worker="execution_checks"}, "queue", "check_retries", "", "")
+          or
+          label_replace(faas_ci:worker_enabled:by_worker{worker=~"metadata_admission|automation_admission|metadata_checks|execution_checks"}, "queue", "$1", "worker", "(.+)")
+          )
+      - record: faas_ci:queue_items:by_queue_condition
+        expr: |-
+          max by (queue, condition) (
+          {__name__=~"(apid|githubd)_ci_queue_items"}
+          and on (job, instance) ({__name__=~"(apid|githubd)_ci_health_enabled"} == 1)
+          and on (job, instance) (up{job=~"apid|githubd"} == 1)
+          and on (job, instance) ({__name__=~"(apid|githubd)_ci_health_up"} == 1)
+          )
+      - record: faas_ci:queue_oldest_item_age_seconds:by_queue
+        expr: |-
+          max by (queue) (
+          {__name__=~"(apid|githubd)_ci_queue_oldest_item_age_seconds"}
+          and on (job, instance) ({__name__=~"(apid|githubd)_ci_health_enabled"} == 1)
+          and on (job, instance) (up{job=~"apid|githubd"} == 1)
+          and on (job, instance) ({__name__=~"(apid|githubd)_ci_health_up"} == 1)
+          )
+      - record: faas_ci:resource_used:by_resource
+        expr: |-
+          max by (resource) (
+          {__name__=~"(apid|githubd)_ci_resource_used"}
+          and on (job, instance) ({__name__=~"(apid|githubd)_ci_health_enabled"} == 1)
+          and on (job, instance) (up{job=~"apid|githubd"} == 1)
+          and on (job, instance) ({__name__=~"(apid|githubd)_ci_health_up"} == 1)
+          )
+      - record: faas_ci:resource_limit:by_resource
+        expr: |-
+          min by (resource) (
+          {__name__=~"(apid|githubd)_ci_resource_limit"}
+          and on (job, instance) ({__name__=~"(apid|githubd)_ci_health_enabled"} == 1)
+          and on (job, instance) (up{job=~"apid|githubd"} == 1)
+          and on (job, instance) ({__name__=~"(apid|githubd)_ci_health_up"} == 1)
+          )
+      - record: faas_ci:worker_replicas:by_worker_condition
+        expr: |-
+          max by (worker, condition) (
+          {__name__=~"(apid|githubd)_ci_worker_replicas"}
+          and on (job, instance) ({__name__=~"(apid|githubd)_ci_health_enabled"} == 1)
+          and on (job, instance) (up{job=~"apid|githubd"} == 1)
+          and on (job, instance) ({__name__=~"(apid|githubd)_ci_health_up"} == 1)
+          )
+      - record: faas_ci:resource_headroom:by_resource
+        expr: clamp_min(faas_ci:resource_limit:by_resource - faas_ci:resource_used:by_resource, 0)
+      - record: faas_ci:resource_utilization:by_resource
+        expr: faas_ci:resource_used:by_resource / (faas_ci:resource_limit:by_resource > 0)
+      - record: faas_ci:worker_available:by_worker
+        expr: |-
+          ((sum by (worker) (faas_ci:worker_replicas:by_worker_condition{condition=~"healthy|starting"}) > bool 0)
+          or on (worker) ((faas_ci:worker_enabled:by_worker == 1) * 0))
+          and on () (faas_ci:health_readable == 1)
+      - record: faas_ci:worker_status:by_worker
+        expr: |-
+          (faas_ci:worker_enabled:by_worker == 0)
+          or on (worker) ((faas_ci:worker_enabled:by_worker == 1) and on (worker) (faas_ci:worker_replicas:by_worker_condition{condition="healthy"} > 0)) * 0 + 1
+          or on (worker) ((faas_ci:worker_enabled:by_worker == 1) and on (worker) (faas_ci:worker_replicas:by_worker_condition{condition="starting"} > 0)) * 0 + 2
+          or on (worker) ((faas_ci:worker_enabled:by_worker == 1) and on (worker) (faas_ci:worker_replicas:by_worker_condition{condition="degraded"} > 0)) * 0 + 3
+          or on (worker) ((faas_ci:worker_enabled:by_worker == 1) and on (worker) (faas_ci:worker_replicas:by_worker_condition{condition="blocked"} > 0)) * 0 + 4
+          or on (worker) ((faas_ci:worker_enabled:by_worker == 1) and on (worker) (faas_ci:worker_replicas:by_worker_condition{condition="stalled"} > 0)) * 0 + 5
+          or on (worker) ((faas_ci:worker_enabled:by_worker == 1) and on (worker) (faas_ci:worker_replicas:by_worker_condition{condition="stale"} > 0)) * 0 + 6
+          or on (worker) (faas_ci:worker_enabled:by_worker == 1) * 0 + 7
+          or on (worker) label_replace(vector(7), "worker", "dispatcher", "", "")
+          or on (worker) label_replace(vector(7), "worker", "metadata_admission", "", "")
+          or on (worker) label_replace(vector(7), "worker", "automation_admission", "", "")
+          or on (worker) label_replace(vector(7), "worker", "metadata_checks", "", "")
+          or on (worker) label_replace(vector(7), "worker", "execution_checks", "", "")
+          or on (worker) label_replace(vector(7), "worker", "retention", "", "")
+      - alert: FaasCIHealthUnavailable
+        expr: |-
+          (faas_ci:observation_enabled:by_daemon == 1)
+          unless on (daemon) (faas_ci:observation_up:by_daemon == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: platform
+          family: internal_ci
+          public_status: internal
+        annotations:
+          summary: Internal CI health cannot be read
+          description: An observed daemon is configured for CI monitoring but has no successful durable health read. Inspect database access and CI migrations; unavailable evidence must not be interpreted as an empty queue.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasInternalCIOperations.md
+      - alert: FaasCIWorkerUnavailable
+        expr: |-
+          (faas_ci:worker_enabled:by_worker == 1)
+          and on (worker) (faas_ci:worker_available:by_worker == 0)
+        for: 5m
+        labels:
+          severity: warn
+          component: platform
+          family: internal_ci
+          public_status: internal
+        annotations:
+          summary: An enabled internal CI worker has no available observation
+          description: No healthy or starting group is observed for an enabled worker. Inspect unknown, stale, stalled, blocked and degraded states, dependency wiring and diagnostic slot capacity before changing work intent.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasInternalCIOperations.md
+      - alert: FaasCILeaseRecoveryStalled
+        expr: |-
+          (faas_ci:queue_items:by_queue_condition{condition="stale_leases"} > 0)
+          and on (queue) (faas_ci:queue_worker_enabled:by_queue == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: platform
+          family: internal_ci
+          public_status: internal
+        annotations:
+          summary: Internal CI expired leases are not recovering
+          description: Expired work leases remain while their owning worker is enabled. Inspect worker health and durable execution or delivery state. Preserve attempt identity, fences and native retirement safety; do not force lease or object deletion.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasInternalCIOperations.md
+      - alert: FaasCICheckDeliveryDead
+        expr: |-
+          (faas_ci:queue_items:by_queue_condition{queue=~"metadata_checks|execution_checks",condition="dead"} > 0)
+          and on (queue) (faas_ci:queue_worker_enabled:by_queue == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: platform
+          family: internal_ci
+          public_status: internal
+        annotations:
+          summary: Internal CI Check delivery exhausted its retry budget
+          description: A Check outbox contains dead delivery while publication is enabled. Inspect repository authority and the safe failure code. For eligible execution Checks use the bounded audited retry API after fixing the cause; execution work must not be replayed.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasInternalCIOperations.md
+      - alert: FaasCIQuotaPressure
+        expr: |-
+          ((faas_ci:resource_utilization:by_resource{resource=~"active_executions|dispatch_leases"} >= 0.8)
+          and on () (max(faas_ci:worker_enabled:by_worker{worker="dispatcher"}) == 1))
+          or
+          ((faas_ci:resource_utilization:by_resource{resource=~"storage_bytes|storage_objects|storage_journal|storage_io"} >= 0.8)
+          and on () (max(faas_ci:worker_enabled:by_worker{worker=~"dispatcher|retention"}) == 1))
+        for: 10m
+        labels:
+          severity: warn
+          component: platform
+          family: internal_ci
+          public_status: internal
+        annotations:
+          summary: Internal CI global quota is under sustained pressure
+          description: At least 80 percent of an existing global budget is used while its execution or retention path is enabled. Inspect usage and headroom. Permanent storage tombstones remain charged; never delete deduplication or retirement evidence to manufacture capacity.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasInternalCIOperations.md
 
   - name: faas_app_tasks
     rules:
