@@ -21,6 +21,7 @@ on:
       - "examples/data-api-bulk/**"
       - "examples/data-api-import-preview/**"
       - "scripts/test-data-api.sh"
+      - "scripts/test-data-api-load.sh"
       - "scripts/*data-api*bundle*"
       - "scripts/test-data-api-packaging.sh"
       - "scripts/data-api-release*"
@@ -140,7 +141,17 @@ jobs:
       - name: Locate Chromium for real browser acceptance
         run: echo "DATA_API_CHROMIUM_BIN=$(command -v google-chrome)" >> "$GITHUB_ENV"
       - name: Verify generated API, JWT RLS and client contract
+        env:
+          DATA_API_LOAD_REPORT: ${{ runner.temp }}/data-api-load-report.json
         run: make data-api-acceptance
+      - name: Retain redacted local load and recovery evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gregale-data-api-load-${{ github.sha }}
+          path: ${{ runner.temp }}/data-api-load-report.json
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Verify portable hosted canary and contract rollout harness
         run: make data-api-staging-check
       - name: Enable TLS for durable SQL credential acceptance

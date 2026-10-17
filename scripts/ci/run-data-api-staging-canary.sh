@@ -12,7 +12,7 @@ FAAS_DATA_API_SOURCE_COMMIT="$(git rev-parse HEAD)"
 node tests/data-api/staging/canary.mjs --check-config
 git diff --quiet
 git diff --cached --quiet
-untracked_source="$(git ls-files --others --exclude-standard -- cmd/gregale sdk/data tests/data-api/staging scripts/ci/run-data-api-staging-canary.sh)"
+untracked_source="$(git ls-files --others --exclude-standard -- cmd/gregale sdk/data tests/data-api/staging tests/data-api/load scripts/ci/run-data-api-staging-canary.sh)"
 [[ -z "$untracked_source" ]] || { echo 'Commit the canary and CLI sources before claiming source-commit evidence.' >&2; exit 1; }
 work_dir="$(mktemp -d "${TMPDIR:-/tmp}/gregale-data-api-staging.XXXXXX")"
 trap 'rm -rf -- "$work_dir"' EXIT

@@ -42,7 +42,7 @@ gh api repos/poyrazK/faas/rulesets/19061133 \
 
 | Job name (exact) | Protects | Where |
 |---|---|---|
-| `light: lint, vet, build` | golangci-lint (govet included) on changed packages, gofmt, PR-4a fix-has-test | `ci-light.yml:lint` |
+| `light: lint, vet, build` | golangci-lint (govet included) on changed packages, `go vet` of the unchanged importers that use a changed exported name, gofmt, PR-4a fix-has-test | `ci-light.yml:lint` |
 | `light: codegen, policy, migrations` | sqlc/proto/spec/SDK/daemonunit drift, repo policy gates, migration ID hygiene, apply-and-walk and replay safety | `ci-light.yml:checks` |
 | `light: tests (shard 1)` | `-race` tests of changed packages and the §6.2 invariants; when `cmd/gregale` changed, its tests related to the change (no `-race`) | `ci-light.yml:tests` |
 | `light: tests (shard 2)` | `-race` tests of changed packages and the §6.2 invariants; when `pkg/state` changed, its tests related to the change (no `-race`) | `ci-light.yml:tests` |

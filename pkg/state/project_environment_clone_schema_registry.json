@@ -451,6 +451,7 @@
       "max_age_seconds",
       "mode",
       "object_storage_requirements",
+      "queue_requirements",
       "reason",
       "require_application_ack",
       "revision",
@@ -1760,6 +1761,32 @@
       "mb_seconds",
       "provider",
       "window_start"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "binding_verification_run_steps",
+    "columns": [
+      "resource_id",
+      "resource_kind",
+      "run_id",
+      "step_index"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "binding_verification_runs",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "deployment_id",
+      "expires_at",
+      "graph_run_id",
+      "id",
+      "scope",
+      "snapshot",
+      "status"
     ],
     "kind": "operational"
   },
@@ -3827,6 +3854,78 @@
     "kind": "operational"
   },
   {
+    "table": "event_acknowledgment_metric_buckets",
+    "columns": [
+      "account_id",
+      "app_id",
+      "bucket_start",
+      "kind",
+      "occurrences",
+      "retain_until",
+      "saturated",
+      "subscription_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "event_acknowledgment_outcomes",
+    "columns": [
+      "attempt",
+      "first_at",
+      "invocation_id",
+      "kind",
+      "last_at",
+      "occurrences",
+      "replay_generation",
+      "retain_until"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "event_acknowledgment_recording_coverage",
+    "columns": [
+      "continuous_since",
+      "inventory_revision",
+      "singleton",
+      "updated_at",
+      "verified_through"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "event_acknowledgment_writers",
+    "columns": [
+      "capability_version",
+      "continuous_since",
+      "expires_at",
+      "inventory",
+      "inventory_revision",
+      "role",
+      "seen_at",
+      "session_id",
+      "slot",
+      "started_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "event_delivery_acknowledgments",
+    "columns": [
+      "attempt",
+      "completion_digest",
+      "deadline_at",
+      "invocation_id",
+      "lease_seconds",
+      "max_attempts",
+      "phase",
+      "rejection_status",
+      "replay_generation",
+      "retry_delay_ms",
+      "token_digest"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "event_delivery_capacity",
     "columns": [
       "account_id",
@@ -4297,11 +4396,33 @@
       "max_pending_deliveries",
       "paused",
       "paused_at",
+      "rate_burst",
+      "rate_credit_ms",
+      "rate_enabled",
+      "rate_interval_ms",
       "rate_per_second",
+      "rate_refilled_at",
+      "rate_revision",
+      "rate_sequence",
       "subscription_id",
       "updated_at",
       "window_count",
       "window_started_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "event_subscription_rate_commands",
+    "columns": [
+      "account_id",
+      "app_id",
+      "command_id",
+      "receipt",
+      "recorded_at",
+      "request",
+      "retain_until",
+      "sequence",
+      "subscription_id"
     ],
     "kind": "operational"
   },
@@ -4322,6 +4443,7 @@
     "table": "event_subscriptions",
     "columns": [
       "account_id",
+      "acknowledgment_lease_seconds",
       "app_id",
       "created_at",
       "enabled",
@@ -5627,6 +5749,7 @@
       "id",
       "owner_oid",
       "ready_at",
+      "reserved_by_cutover_id",
       "reserved_by_operation_id",
       "role_requested_at",
       "source_data_resource_id",
@@ -5727,6 +5850,66 @@
       "retired_at",
       "state",
       "wake_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "managed_postgres_cutover_preflights",
+    "columns": [
+      "binding_ids",
+      "bindings_match",
+      "blockers",
+      "checked_at",
+      "created_at",
+      "cutover_id",
+      "cutover_updated_at",
+      "expires_at",
+      "revision",
+      "runtime_drain",
+      "runtime_drain_fingerprint",
+      "source_matches",
+      "source_sessions",
+      "source_sessions_fingerprint",
+      "state",
+      "target_matches",
+      "updated_at",
+      "verification_fresh"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "managed_postgres_cutover_source_fences",
+    "columns": [
+      "admission_fenced_at",
+      "attempt_count",
+      "backend_fingerprint",
+      "backend_id",
+      "catalog_fingerprint",
+      "catalog_invalidated_at",
+      "close_requested_at",
+      "closure",
+      "created_at",
+      "cutover_id",
+      "database_names",
+      "last_error_code",
+      "lease_token",
+      "lease_until",
+      "maintenance_id",
+      "observed_at",
+      "owner_node_id",
+      "owner_revision",
+      "owner_token",
+      "remote_released_at",
+      "remote_terminal_state",
+      "retry_at",
+      "runtime_fingerprint",
+      "source_data_resource_id",
+      "source_database_id",
+      "source_generation",
+      "source_provider_resource_id",
+      "source_spec",
+      "state",
+      "updated_at"
     ],
     "kind": "operational"
   },
@@ -8556,6 +8739,20 @@
     "kind": "operational"
   },
   {
+    "table": "project_binding_verification_runs",
+    "columns": [
+      "account_id",
+      "created_at",
+      "environment_slug",
+      "expires_at",
+      "id",
+      "project_id",
+      "snapshot",
+      "status"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "project_environment_approvals",
     "columns": [
       "account_id",
@@ -9875,13 +10072,31 @@
       "account_id",
       "active",
       "created_at",
+      "deactivation",
       "environment_slug",
       "expires_at",
       "id",
       "project_id",
+      "rollback_previous_release_id",
+      "rollback_source_release_id",
       "ttl_seconds"
     ],
     "kind": "configuration"
+  },
+  {
+    "table": "project_release_stages",
+    "columns": [
+      "account_id",
+      "cancelled",
+      "created_at",
+      "environment_slug",
+      "expires_at",
+      "id",
+      "manifest",
+      "project_id",
+      "targets"
+    ],
+    "kind": "operational"
   },
   {
     "table": "projects",
@@ -9907,6 +10122,25 @@
       "customer_ip"
     ],
     "kind": "configuration"
+  },
+  {
+    "table": "queue_binding_canaries",
+    "columns": [
+      "account_id",
+      "app_id",
+      "binding_id",
+      "cancelled",
+      "completed_attempt",
+      "completed_deployment_id",
+      "completed_generation",
+      "deployment_id",
+      "expires_at",
+      "id",
+      "published_at",
+      "snapshot",
+      "trigger_id"
+    ],
+    "kind": "operational"
   },
   {
     "table": "queue_bindings",

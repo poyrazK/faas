@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/onebox-faas/faas/pkg/managedpostgres/checkpoint"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/connectionfence/sqlc"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/pgerrors"
 )
@@ -48,7 +49,8 @@ type Observation struct {
 	// True only for a closed, independently rechecked selected database set
 	// with no observed sessions or unresolved prepared transactions. The provider
 	// must also justify complete database/background coverage and source identity.
-	Drained bool
+	Drained         bool
+	WriterInventory *checkpoint.WriterInventory
 }
 
 type Config struct {
@@ -217,6 +219,10 @@ func (c *Controller) Observe(ctx context.Context, identity Identity) (Observatio
 		out.Databases = append(out.Databases, Database{OID: db.DatabaseOid.Uint32, OwnerOID: db.OwnerOid.Uint32, Name: db.DatabaseName,
 			OriginalAllowConnections: db.OriginalAllowConnections, Sessions: db.Sessions, PreparedTransactions: db.PreparedTransactions})
 		out.Drained = out.Drained && db.Sessions == 0 && db.PreparedTransactions == 0
+	}
+	out.WriterInventory, err = readWriterInventory(ctx, tx, q)
+	if err != nil {
+		return Observation{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return Observation{}, classifyError(err)

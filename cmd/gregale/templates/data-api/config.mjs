@@ -1,7 +1,23 @@
 import { randomBytes } from 'node:crypto'
 
 // Mirrors pkg/api/limits.go; TestDataAPIRuntimeBounds checks this contract.
-export const limits = Object.freeze({ pool: 2, rows: 1000, bodyBytes: 1048576, outputBytes: 1048576, queryMs: 15000, relations: 1000, columns: 10000, types: 20000 })
+export const limits = Object.freeze({ pool: 2, rows: 1000, bodyBytes: 1048576, responseBytes: 16777216, outputBytes: 1048576, queryMs: 15000, relations: 1000, columns: 10000, types: 20000, queuedRequests: 8, admissionWaitMs: 1000, overloadRetrySeconds: 1, healthProbeMs: 2000, healthBytes: 8192, rateLimitDefaultPerSecond: 10, rateLimitDefaultBurst: 20, rateLimitMaxPerSecond: 1000, rateLimitMaxBurst: 1000, rateLimitMaxSubjects: 4096, rateLimitSweepMs: 1000 })
+
+export function rateLimitPolicy(value) {
+  if (value === undefined || value === null) return null
+  if (!Number.isInteger(value.perSecond) || value.perSecond < 1 || value.perSecond > limits.rateLimitMaxPerSecond || !Number.isInteger(value.burst) || value.burst < 1 || value.burst > limits.rateLimitMaxBurst) throw new Error('Invalid Data API rate-limit policy')
+  return Object.freeze({ perSecond: value.perSecond, burst: value.burst })
+}
+
+function rateLimitConfig(env) {
+  if (env.DATA_API_RATE_LIMIT_PER_SECOND === undefined && env.DATA_API_RATE_LIMIT_BURST === undefined) return null
+  const setting = (value, fallback) => {
+    if (value === undefined) return fallback
+    if (typeof value !== 'string' || !/^[1-9]\d*$/.test(value)) throw new Error('Invalid Data API rate-limit policy')
+    return Number(value)
+  }
+  return rateLimitPolicy({ perSecond: setting(env.DATA_API_RATE_LIMIT_PER_SECOND, limits.rateLimitDefaultPerSecond), burst: setting(env.DATA_API_RATE_LIMIT_BURST, limits.rateLimitDefaultBurst) })
+}
 
 export function databaseURL(value) {
   const url = new URL(value)
@@ -55,7 +71,7 @@ export function runtimeConfig(env) {
   const coordinatedRefresh = env.DATA_API_COORDINATED_REFRESH === '1'
   if (schemas.includes('gregale_data_api')) throw new Error('Refresh control schema cannot be exposed')
   const secret = randomBytes(32)
-  return { connection, role, schemas, auth, secret, coordinatedRefresh, queryShapes, acceptedContracts: acceptedContracts(env.DATA_API_ACCEPTED_CONTRACTS), origins: (env.DATA_API_ALLOWED_ORIGINS ?? '').split(',').filter(Boolean),
+  return { connection, role, schemas, auth, secret, coordinatedRefresh, queryShapes, rateLimit: rateLimitConfig(env), acceptedContracts: acceptedContracts(env.DATA_API_ACCEPTED_CONTRACTS), origins: (env.DATA_API_ALLOWED_ORIGINS ?? '').split(',').filter(Boolean),
     postgrestEnv: { PGRST_DB_URI: connection, PGRST_DB_SCHEMAS: schemas.join(','), PGRST_JWT_SECRET: secret.toString('base64url'),
       PGRST_SERVER_HOST: '127.0.0.1', PGRST_SERVER_PORT: '3000', PGRST_ADMIN_SERVER_PORT: '3001',
       PGRST_DB_POOL: String(coordinatedRefresh ? limits.pool - 1 : limits.pool), PGRST_DB_MAX_ROWS: String(limits.rows), ...(coordinatedRefresh ? { PGRST_DB_PRE_REQUEST: 'gregale_data_api.check_request' } : {}), PGRST_DB_CHANNEL_ENABLED: 'false', PGRST_DB_PREPARED_STATEMENTS: 'false' } }

@@ -140,6 +140,15 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
+	eventAcknowledgmentWriters                 map[string]eventAcknowledgmentWriter
+	eventAcknowledgmentCoverageHead            eventAcknowledgmentCoverageHead
+	eventAcknowledgmentMetrics                 map[eventAcknowledgmentMetricKey]eventAcknowledgmentMetric
+	eventAcknowledgments                       map[string]eventAcknowledgment
+	eventAcknowledgmentOutcomes                map[eventAcknowledgmentOutcomeKey]api.EventAcknowledgmentOutcome
+	projectReleaseStages                       map[string]projectReleaseStage
+	bindingVerificationRuns                    map[string]verificationRunRecord
+	graphVerificationRuns                      map[string]graphVerificationRecord
+	queueBindingCanaries                       map[string]queueCanaryRecord
 	baseImageProducers                         map[string]BaseImageProducer
 	baseImageProducerCurrent                   map[string]string
 	deploymentRegistryVerifications            map[string]DeploymentRegistryVerification
@@ -261,6 +270,7 @@ type MemStore struct {
 
 	eventCircuitBreakers              map[string]*eventCircuitRecord
 	eventSubscriptionControls         map[string]*memEventSubscriptionControl
+	eventSubscriptionRateCommands     map[string]memSubscriptionRateCommand
 	eventSubscriptionCapacityCommands map[string]memSubscriptionCapacityCommand
 	eventRecoveryJobs                 map[string]*memEventRecoveryJob
 	workflowCodePins                  map[string]time.Time
@@ -6313,11 +6323,16 @@ func (m *MemStore) updateAppWithActivity(_ context.Context, id string, p UpdateA
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	defer m.invalidateChangedLifecycleSuccessorsLocked()
 	a, ok := m.apps[id]
 	if !ok {
 		return App{}, ErrNotFound
 	}
+	var guardErr error
+	p, guardErr = prepareServiceBindingPlanUpdate(a, p)
+	if guardErr != nil {
+		return App{}, guardErr
+	}
+	defer m.invalidateChangedLifecycleSuccessorsLocked()
 	if (p.SetRequireSigned && boolOrFalse(p.RequireSigned) != a.RequireSigned && m.standardManagedControlLocked(a.ID, appstandards.RequireSigned)) ||
 		(p.SetSecurityPolicy && p.SecurityPolicy != nil && *p.SecurityPolicy != a.SecurityPolicy && m.standardManagedControlLocked(a.ID, appstandards.SecurityPolicy)) ||
 		(p.SetEgressAllowlist && !slices.Equal(derefPrefixes(p.EgressAllowlist), a.EgressAllowlist) && m.standardManagedControlLocked(a.ID, appstandards.EgressCIDRs)) ||
@@ -13609,6 +13624,9 @@ func (m *MemStore) RequeueExpiredInvocations(_ context.Context, now time.Time, l
 	defer m.mu.Unlock()
 	ids := make([]string, 0)
 	for id, inv := range m.invocations {
+		if ack, ok := m.eventAcknowledgments[id]; ok && ack.phase == "awaiting" && ack.claim.Attempt == inv.Attempts && ack.claim.ReplayGeneration == inv.ReplayGeneration {
+			continue
+		}
 		if inv.State != InvocationDispatching || inv.LeaseExpiresAt == nil || inv.LeaseExpiresAt.After(now) {
 			continue
 		}
@@ -13692,6 +13710,9 @@ func (m *MemStore) completeInvocationAndQueueServingAck(id string, attempt int, 
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.completeInvocationAndQueueServingAckLocked(id, attempt, claim, result, queueServingAck, classification...)
+}
+func (m *MemStore) completeInvocationAndQueueServingAckLocked(id string, attempt int, claim *InvocationClaim, result json.RawMessage, queueServingAck *EnvironmentWorkloadQueueServingAcknowledgement, classification ...InvocationWorkClassification) error {
 	inv, ok := m.invocations[id]
 	if !ok || inv.State != InvocationDispatching {
 		return ErrNotFound

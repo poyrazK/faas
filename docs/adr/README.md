@@ -57,6 +57,11 @@ its baseline line in the same change (the gate fails on a stale entry).
 | ADR | Title | Status | Source |
 |---|---|---|---|
 | 1190 | [Application Auth on a pinned GoTrue server](1190-application-auth.md) | proposed | Ordinary auth app on the customer database, `auth` credential mode, organizations and one SQL authorization function shared by data, storage, realtime and workflows |
+| 1385 | [Refresh authorization for retained WebSocket channels](1385-retained-channel-authorization-refresh.md) | accepted for implementation; deployed qualification pending | Share SSE's bounded channel grants with WebSocket history and buffered delivery; remove denied subscriptions and reconnect after callback outages |
+| 1332 | [Bind retained realtime to the verified login session](1332-session-bound-retained-realtime.md) | accepted for implementation; deployed qualification pending | Verified session/expiry handoff, periodic WebSocket JWT checks and session-aware Auth channel callbacks |
+| 1333 | [Durable managed PostgreSQL activation preflight](1333-managed-postgres-activation-preflight.md) | accepted for catalog inspection; customer activation disabled | Recoverable preflight revisions check restored targets, staged SQL verification and source bindings without publishing credentials |
+| 1334 | [Durable cutover source SQL connection fences](1334-managed-postgres-cutover-source-fences.md) | accepted for internal controller plumbing; customer activation disabled | Owned SQL fences share maintenance authority, survive lost replies and retain pins until confirmed cancellation cleanup |
+| 1335 | [Source writer inventory and provider isolation evidence](1335-managed-postgres-source-writer-isolation.md) | accepted for internal recovery plumbing; customer activation disabled | Immutable catalog baselines, writer diagnostics and expiring provider evidence fail closed on drift or unsupported guarantees |
 | 1170 | [Developer watch mode for apps with a build step](1170-developer-watch-mode.md) | proposed | Opt-in `gregale dev --watch`: a builder-made developer image runs the framework's dev server and ADR-740 patches reach its own hot reload |
 | 1114 | [Reversible issue group links](1114-reversible-issue-group-links.md) | accepted | Merge fingerprint groups without moving evidence; split an original group back out with its lifetime history |
 | 1113 | [Deployment-local issue source maps](1113-deployment-local-issue-source-maps.md) | accepted | Node reporters map bounded local artifacts to original frames while preserving generated stack evidence |
@@ -862,6 +867,8 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-903: Gregale route sunset report](829-route-sunset-report.md)
 - [ADR-906: Frozen instances](906-frozen-instances.md)
 - [ADR-1151: Pause tiers — quiet pause between requests, frozen after idle](1151-pause-tiers.md)
+- [ADR-1346: Runtime binding audiences and explicit queue release requirements](1346-binding-runtime-audiences-and-queue-release-requirements.md)
+- [ADR-1347: Unified binding-policy verification](1347-unified-binding-policy-verification.md)
 - [ADR-830: Saved sunset report comparisons](830-route-sunset-regression-tracking.md)
 - [ADR-831: Deployment-specific route lifecycle metadata](831-deployment-route-lifecycle.md)
 - [ADR-842: Lifecycle guidance on cached responses](842-cached-route-lifecycle.md)
@@ -1104,6 +1111,60 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-909: Admission by measured memory](909-measured-memory-admission.md)
 
 - [ADR-910: Per-plan block rate limits](910-block-rate-limits.md)
+
+- [ADR-1348: Checked project binding release graphs](1348-checked-project-binding-release-graphs.md)
+
+- [ADR-1352: Push queue binding handler completion canaries](1352-push-queue-binding-completion-canaries.md)
+
+- [ADR-1353: Bounded parallel binding verification](1353-bounded-parallel-binding-verification.md)
+
+- [ADR-1354: Ledger-backed canary dispatch authority](1354-ledger-backed-canary-dispatch-authority.md)
+
+- [ADR-1355: Durable single-app binding verification runs](1355-durable-single-app-binding-verification-runs.md)
+
+- [ADR-1356: Durable project binding verification runs](1356-durable-project-binding-verification-runs.md)
+
+- [ADR-1357: Server-generated binding verification reviews](1357-server-generated-binding-verification-reviews.md)
+
+- [ADR-1358: Reusable binding verification runners](1358-reusable-binding-verification-runners.md)
+
+- [ADR-1359: Binding verification run diagnostics](1359-binding-verification-run-diagnostics.md)
+
+- [ADR-1360: Shared verification admission budgets](1360-shared-verification-admission-budgets.md)
+
+- [ADR-1361: Automatic verification recovery diagnostics](1361-automatic-verification-recovery-diagnostics.md)
+
+- [ADR-1365: Verification qualification waiting](1365-verification-qualification-waiting.md)
+
+- [ADR-1366: Verification write reconciliation](1366-verification-write-reconciliation.md)
+
+- [ADR-1367: Binding CLI progress and recovery summaries](1367-binding-cli-progress.md)
+
+- [ADR-1368: Verification creation reconciliation](1368-verification-creation-reconciliation.md)
+
+- [ADR-1369: PostgreSQL pool runtime bindings](1369-postgres-pool-runtime-bindings.md)
+
+- [ADR-1370: Canonical PostgreSQL starter bindings](1370-canonical-postgres-starter-bindings.md)
+
+- [ADR-1371: Async Python PostgreSQL bindings](1371-async-python-postgres-bindings.md)
+
+- [ADR-1372: Python PostgreSQL starter recovery](1372-python-postgres-starter-recovery.md)
+
+- [ADR-1373: Async Python object-storage bindings](1373-async-python-object-storage-bindings.md)
+
+- [ADR-1374: Python object-storage starter recovery](1374-python-object-storage-starter-recovery.md)
+
+- [ADR-1375: Node object-storage starter recovery](1375-node-object-storage-starter-recovery.md)
+
+- [ADR-1376: Native object-storage starter acceptance](1376-native-object-storage-starter-acceptance.md)
+
+- [ADR-1377: Python storage explicit TLS trust](1377-python-storage-explicit-tls-trust.md)
+
+- [ADR-1378: Native storage starter runtime matrix](1378-native-storage-starter-runtime-matrix.md)
+
+- [ADR-1379: PostgreSQL native acceptance repair](1379-postgres-native-acceptance-repair.md)
+- [ADR-1380: Python PostgreSQL native acceptance](1380-python-postgres-native-acceptance.md)
+- [ADR-1381: Queue worker completion acceptance](1381-queue-worker-completion-acceptance.md)
 
 - [ADR-1260: Initial-failure policy dry run](1260-initial-failure-policy-dry-run.md)
 - [ADR-1261: Durable first-recovery reviews](1261-durable-initial-recovery-reviews.md)

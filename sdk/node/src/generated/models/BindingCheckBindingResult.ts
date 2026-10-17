@@ -8,6 +8,10 @@ import type { BindingApplicationAdoption } from './BindingApplicationAdoption.js
  */
 export type BindingCheckBindingResult = {
   /**
+   * Explicit scheduler readiness requirement; a passed policy result does not imply queue connectivity.
+   */
+  required_queue_evidence?: 'consumer_readiness' | 'handler_completion';
+  /**
    * Exact admitted canary mode. Older evidence with no mode is listing-only and cannot satisfy write requirements.
    */
   object_storage_mode?: 'read' | 'write' | 'read_write';
