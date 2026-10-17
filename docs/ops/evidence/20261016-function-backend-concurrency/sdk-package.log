@@ -1,0 +1,13 @@
+
+> @gregale/sdk-node@0.1.0 build
+> tsc -p tsconfig.json
+
+✔ packed PostgreSQL runtime imports and typechecks without pg or control-plane SDK dependencies (6323.407625ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 1
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 6401.599201

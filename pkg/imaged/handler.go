@@ -2962,7 +2962,7 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 		_ = h.markDeployFailed(ctx, dep.ID, err, "manifest overrides: decode failed")
 		return fmt.Errorf("imaged: apply overrides: %w", err)
 	}
-	manifest = applyAppLifecycle(manifest, app)
+	manifest = applyFunctionConcurrency(applyAppLifecycle(manifest, app), app)
 	manifest, err = state.ApplyDeploymentRuntime(manifest, dep)
 	if err != nil {
 		return fmt.Errorf("imaged: scoped runtime: %w", err)

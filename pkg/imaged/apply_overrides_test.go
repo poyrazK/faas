@@ -346,3 +346,22 @@ func TestApplyOverridesRejectsGraceDurationOverflow(t *testing.T) {
 		}
 	}
 }
+
+// ADR-1342: a function app's function_concurrency reaches its adapter as
+// FAAS_FUNCTION_CONCURRENCY; one, the default, leaves the env untouched.
+func TestApplyFunctionConcurrency(t *testing.T) {
+	base := api.AppManifest{Env: map[string]string{"A": "1"}}
+	for _, n := range []int{0, 1} {
+		got := applyFunctionConcurrency(base, state.App{Manifest: state.AppManifest{FunctionConcurrency: n}})
+		if !reflect.DeepEqual(got.Env, base.Env) {
+			t.Fatalf("concurrency %d changed env: %v", n, got.Env)
+		}
+	}
+	got := applyFunctionConcurrency(base, state.App{Manifest: state.AppManifest{FunctionConcurrency: 16}})
+	if want := map[string]string{"A": "1", api.FunctionConcurrencyEnv: "16"}; !reflect.DeepEqual(got.Env, want) {
+		t.Fatalf("env = %v, want %v", got.Env, want)
+	}
+	if _, shared := base.Env[api.FunctionConcurrencyEnv]; shared {
+		t.Fatal("stamp mutated the input manifest's env")
+	}
+}
