@@ -85,6 +85,7 @@ type Account struct {
 	AbuseHoldAt            pgtype.Timestamptz
 	AbuseHoldReason        pgtype.Text
 	PasswordResetRevision  int64
+	MfaRevision            int64
 }
 
 type AccountAsyncQuotum struct {
@@ -6172,6 +6173,21 @@ type MfaDisableRequest struct {
 	AccountID   pgtype.UUID
 	RequestedAt pgtype.Timestamptz
 	ConsumedAt  pgtype.Timestamptz
+}
+
+type MfaDisableToken struct {
+	TokenHash        []byte
+	AccountID        pgtype.UUID
+	EmailAddress     string
+	PasswordRevision int64
+	MfaRevision      int64
+	MfaEnrolledAt    pgtype.Timestamptz
+	Namespace        string
+	RecoveryID       pgtype.UUID
+	RequestedAt      pgtype.Timestamptz
+	ReadyAt          pgtype.Timestamptz
+	ExpiresAt        pgtype.Timestamptz
+	ConsumedAt       pgtype.Timestamptz
 }
 
 type MigrationLease struct {

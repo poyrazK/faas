@@ -145,6 +145,8 @@ type server struct {
 	magicLinkMailOutboxRequested     func() bool
 	mfaRecoveryAlertOutboxRequested  func() bool
 	magicLinkCredentials             *mailoutbox.MagicLinkCredentials
+	mfaDisableMailOutboxRequested    func() bool
+	mfaDisableCredentials            *mailoutbox.MFADisableCredentials
 	mailer                           Mailer
 	// mailBounce dispatches Resend bounce / complaint events into
 	// the suppression + dunning pipeline (issue #246 acceptance
@@ -3781,6 +3783,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/account/mfa/recover", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.idempotent(s.mfaRecover)))))
 	mux.HandleFunc("POST /v1/account/mfa/disable", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.idempotent(s.mfaDisable)))))
 	mux.HandleFunc("POST /v1/account/mfa/disable-email", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.mfaDisableEmail))))
+	mux.HandleFunc("/auth/reset/mfa", s.mfaDisableEmailPageRoute())
 	mux.HandleFunc("POST /v1/account/mfa/disable-email/confirm", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.mfaDisableEmailConfirm))))
 
 	// Stripe webhook (no auth — Stripe signs requests; for M5 we accept

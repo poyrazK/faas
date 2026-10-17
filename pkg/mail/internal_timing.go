@@ -29,6 +29,7 @@ func (s *InternalSender) WithOutbox(enabled func() bool) *InternalSender {
 func (s *InternalSender) WithVerificationOutbox(enabled func() bool) *InternalSender {
 	copy := *s
 	copy.verificationEnabled = enabled
+	copy.mfaDisableEnabled = nil
 	copy.mfaRecoveryAlertEnabled = nil
 	copy.passwordResetEnabled = nil
 	copy.magicLinkEnabled = nil
@@ -38,6 +39,7 @@ func (s *InternalSender) WithVerificationOutbox(enabled func() bool) *InternalSe
 func (s *InternalSender) WithPasswordResetOutbox(enabled func() bool) *InternalSender {
 	copy := *s
 	copy.passwordResetEnabled = enabled
+	copy.mfaDisableEnabled = nil
 	copy.mfaRecoveryAlertEnabled = nil
 	copy.magicLinkEnabled = nil
 	copy.verificationEnabled = nil
@@ -47,6 +49,7 @@ func (s *InternalSender) WithPasswordResetOutbox(enabled func() bool) *InternalS
 func (s *InternalSender) WithMagicLinkOutbox(enabled func() bool) *InternalSender {
 	copy := *s
 	copy.magicLinkEnabled = enabled
+	copy.mfaDisableEnabled = nil
 	copy.mfaRecoveryAlertEnabled = nil
 	copy.verificationEnabled = nil
 	copy.passwordResetEnabled = nil
@@ -55,6 +58,7 @@ func (s *InternalSender) WithMagicLinkOutbox(enabled func() bool) *InternalSende
 
 func (s *InternalSender) WithMFARecoveryAlertOutbox(enabled func() bool) *InternalSender {
 	copy := *s
+	copy.mfaDisableEnabled = nil
 	copy.mfaRecoveryAlertEnabled = enabled
 	copy.verificationEnabled = nil
 	copy.passwordResetEnabled = nil
@@ -62,7 +66,20 @@ func (s *InternalSender) WithMFARecoveryAlertOutbox(enabled func() bool) *Intern
 	return &copy
 }
 
+func (s *InternalSender) WithMFADisableOutbox(enabled func() bool) *InternalSender {
+	copy := *s
+	copy.mfaDisableEnabled = enabled
+	copy.mfaRecoveryAlertEnabled = nil
+	copy.verificationEnabled = nil
+	copy.passwordResetEnabled = nil
+	copy.magicLinkEnabled = nil
+	return &copy
+}
+
 func (s *InternalSender) credentialOutboxGate() (string, func() bool) {
+	if s.mfaDisableEnabled != nil {
+		return internalmail.ProducerOutboxMFADisableTemplate, s.mfaDisableEnabled
+	}
 	if s.mfaRecoveryAlertEnabled != nil {
 		return internalmail.ProducerOutboxMFARecoveryAlertTemplate, s.mfaRecoveryAlertEnabled
 	}

@@ -28,6 +28,7 @@ type Service struct {
 	verification              *credentialConfig
 	passwordReset             *credentialConfig
 	magicLink                 *credentialConfig
+	mfaDisable                *credentialConfig
 	mfaRecoveryAlert          *credentialConfig
 	requested, enabled        func() bool
 }

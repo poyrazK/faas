@@ -48,7 +48,8 @@ func migrationParts(t *testing.T) (string, string) {
 	resetUp, resetDown := migrationFileParts(t, "20261017073748949_platform_mail_password_reset_outbox.sql")
 	magicUp, magicDown := migrationFileParts(t, "20261017082032672_platform_mail_magic_link_outbox.sql")
 	alertUp, alertDown := migrationFileParts(t, "20261017084607182_platform_mail_mfa_recovery_alert_outbox.sql")
-	return up + "\n" + reconcileUp + "\n" + verificationUp + "\n" + resetUp + "\n" + magicUp + "\n" + alertUp, alertDown + "\n" + magicDown + "\n" + resetDown + "\n" + verificationDown + "\n" + reconcileDown + "\n" + down
+	disableUp, disableDown := migrationFileParts(t, "20261017091735652_platform_mail_mfa_disable_outbox.sql")
+	return up + "\n" + reconcileUp + "\n" + verificationUp + "\n" + resetUp + "\n" + magicUp + "\n" + alertUp + "\n" + disableUp, disableDown + "\n" + alertDown + "\n" + magicDown + "\n" + resetDown + "\n" + verificationDown + "\n" + reconcileDown + "\n" + down
 }
 
 type fixture struct {

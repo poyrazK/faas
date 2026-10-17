@@ -39,6 +39,8 @@ package mail
 import (
 	"fmt"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // RecoveryCodeBurnedBody renders the "you used one of your MFA
@@ -165,5 +167,37 @@ password and contact support@gregale.dev so we can investigate.
 
 — Gregale
 `, email, atStr, confirmAfter, confirmURL)
+	return
+}
+
+// MFADisableEmailRequestedBodyV1 is frozen for durable requests. The delivery
+// deadline is independent of the one-day confirmation window after cooldown.
+func MFADisableEmailRequestedBodyV1(email, confirmURL string, requestedAt time.Time) (subject, body string) {
+	email = safeRecipient(email)
+	requested := requestedAt.UTC().Format("2006-01-02 15:04 UTC")
+	ready := requestedAt.UTC().Add(api.MFADisableEmailCooldown).Format("2006-01-02 15:04 UTC")
+	expiry := requestedAt.UTC().Add(api.MFADisableEmailCooldown + api.MFADisableEmailConfirmWindow).Format("2006-01-02 15:04 UTC")
+	subject = "Confirm MFA disable on your Gregale account (24h wait)"
+	body = fmt.Sprintf(`Hi,
+
+Someone — hopefully you — requested to disable MFA on your Gregale
+account (%s) at %s.
+
+This is the only path that works when you've lost BOTH your
+authenticator device AND all your recovery codes. The 24-hour wait is
+deliberate friction: an attacker who controls your account still has
+to hold it for a day before MFA turns off.
+
+You can confirm the disable after %s by opening this link from a
+trusted device:
+
+    %s
+
+If you did not request this, do nothing — the request expires at
+%s and no action is taken. You should also change your
+password and contact support@gregale.dev so we can investigate.
+
+— Gregale
+`, email, requested, ready, confirmURL, expiry)
 	return
 }

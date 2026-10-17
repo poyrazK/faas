@@ -1164,16 +1164,15 @@ func (s *PgStore) ReadMFASecret(ctx context.Context, id string) ([]byte, error) 
 }
 
 func (s *PgStore) SetMFASecret(ctx context.Context, id string, encrypted []byte, recoveryHashes [][]byte) error {
-	tag, err := s.pool.Exec(ctx,
-		`update accounts
-		    set mfa_secret_encrypted = $2,
-		        mfa_recovery_codes_hash = $3
-		  where id = $1`,
-		id, encrypted, recoveryHashes)
+	account, err := parsePgUUID(id)
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 0 {
+	n, err := sqlc.New().SetMFASecret(ctx, s.pool, sqlc.SetMFASecretParams{ID: account, MfaSecretEncrypted: encrypted, MfaRecoveryCodesHash: recoveryHashes})
+	if err != nil {
+		return mapErr(err)
+	}
+	if n == 0 {
 		return ErrNotFound
 	}
 	return nil
@@ -1205,15 +1204,15 @@ func (s *PgStore) UpdateAccountBillingInfo(ctx context.Context, id, businessName
 // the moment the row is visible — the audit Emit fires only after
 // this returns nil.
 func (s *PgStore) MarkMFAEnrolled(ctx context.Context, id string) error {
-	tag, err := s.pool.Exec(ctx,
-		`update accounts
-		    set mfa_enrolled_at = now(),
-		        mfa_required = false
-		  where id = $1`, id)
+	account, err := parsePgUUID(id)
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 0 {
+	n, err := sqlc.New().MarkMFAEnrolled(ctx, s.pool, account)
+	if err != nil {
+		return mapErr(err)
+	}
+	if n == 0 {
 		return ErrNotFound
 	}
 	return nil
@@ -1225,16 +1224,15 @@ func (s *PgStore) MarkMFAEnrolled(ctx context.Context, id string) error {
 // in the events table (handlers_mfa.go emits the `account.mfa_disabled`
 // row before/after this call).
 func (s *PgStore) ClearMFA(ctx context.Context, id string) error {
-	tag, err := s.pool.Exec(ctx,
-		`update accounts
-		    set mfa_secret_encrypted = null,
-		        mfa_recovery_codes_hash = null,
-		        mfa_enrolled_at = null
-		  where id = $1`, id)
+	account, err := parsePgUUID(id)
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 0 {
+	n, err := sqlc.New().ClearMFA(ctx, s.pool, account)
+	if err != nil {
+		return mapErr(err)
+	}
+	if n == 0 {
 		return ErrNotFound
 	}
 	return nil
@@ -1245,12 +1243,15 @@ func (s *PgStore) ClearMFA(ctx context.Context, id string) error {
 // account row is missing (UNKNOWN differs from a no-op — a missing
 // row is a 404, a no-op write is a 200 with no audit event).
 func (s *PgStore) SetMFARequired(ctx context.Context, id string, required bool) (changed bool, err error) {
-	tag, err := s.pool.Exec(ctx,
-		`update accounts set mfa_required = $2 where id = $1 and mfa_required <> $2`, id, required)
+	account, err := parsePgUUID(id)
 	if err != nil {
 		return false, err
 	}
-	if tag.RowsAffected() == 0 {
+	n, err := sqlc.New().SetMFARequired(ctx, s.pool, sqlc.SetMFARequiredParams{ID: account, MfaRequired: required})
+	if err != nil {
+		return false, err
+	}
+	if n == 0 {
 		// Either the row is missing OR the value was already what was
 		// requested. Distinguish with a follow-up existence check so
 		// the handler can 404 the missing case.
@@ -26043,15 +26044,18 @@ func (s *PgStore) DeleteOldLoginTokens(ctx context.Context, before time.Time) (i
 // IssueMFADisableRequest invalidates any older pending request for the
 // account, then stores the new token hash and request timestamp.
 func (s *PgStore) IssueMFADisableRequest(ctx context.Context, tokenHash []byte, accountID string, requestedAt time.Time) error {
-	_, err := s.pool.Exec(ctx, `
-		with invalidated as (
-			update mfa_disable_requests
-			   set consumed_at = now()
-			 where account_id = $2 and consumed_at is null
-		)
-		insert into mfa_disable_requests (token_hash, account_id, requested_at)
-		values ($1, $2, $3)`, tokenHash, accountID, requestedAt)
-	return mapErr(err)
+	account, err := parsePgUUID(accountID)
+	if err != nil {
+		return err
+	}
+	n, err := sqlc.New().IssueMFADisableRequest(ctx, s.pool, sqlc.IssueMFADisableRequestParams{TokenHash: tokenHash, ID: account, RequestedAt: pgtype.Timestamptz{Time: requestedAt, Valid: true}})
+	if err != nil {
+		return mapErr(err)
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // GetMFADisableRequest reads a live request without consuming it. Consumed or

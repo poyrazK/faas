@@ -45,7 +45,7 @@ SELECT o.id,o.revision,o.state,o.template,o.from_address,o.expires_at,o.recovery
     coalesce(m.sender_address,'')::text AS sender_address
 FROM platform_mail_producer_outbox o
 LEFT JOIN internal_mail_messages m ON m.namespace=o.namespace AND m.producer_id=o.producer_id
-    AND m.idempotency_key=(CASE o.template WHEN 'email_verification' THEN 'verify-email:' WHEN 'password_reset' THEN 'password-reset:' WHEN 'magic_link' THEN 'magic-link:' WHEN 'mfa_recovery_used' THEN 'mfa-recovery-alert:' ELSE 'account-delete:' END)||o.id::text
+    AND m.idempotency_key=(CASE o.template WHEN 'email_verification' THEN 'verify-email:' WHEN 'password_reset' THEN 'password-reset:' WHEN 'magic_link' THEN 'magic-link:' WHEN 'mfa_recovery_used' THEN 'mfa-recovery-alert:' WHEN 'mfa_disable_request' THEN 'mfa-disable:' ELSE 'account-delete:' END)||o.id::text
 WHERE o.namespace=$1 AND o.id=$2
 `
 
@@ -105,9 +105,11 @@ WITH candidate AS (
           AND o.verification_key_id=ANY($11::text[]))
         OR (o.template='magic_link' AND $12::boolean AND o.verification_origin=$13::text
           AND o.verification_key_id=ANY($14::text[]))
-        OR (o.template='mfa_recovery_used' AND $15::boolean
-          AND o.security_alert_key_id=ANY($16::text[])))
-      AND o.attempts<$17 AND o.expires_at>clock_timestamp()
+        OR (o.template='mfa_disable_request' AND $15::boolean AND o.verification_origin=$16::text
+          AND o.verification_key_id=ANY($17::text[]))
+        OR (o.template='mfa_recovery_used' AND $18::boolean
+          AND o.security_alert_key_id=ANY($19::text[])))
+      AND o.attempts<$20 AND o.expires_at>clock_timestamp()
       AND ((o.state='queued' AND o.next_attempt_at<=clock_timestamp()) OR (o.state='claimed' AND o.lease_until<=clock_timestamp()))
       AND NOT EXISTS(SELECT 1 FROM internal_mail_recovery_state s WHERE s.namespace=o.namespace AND (s.held OR s.recovery_id<>o.recovery_id))
     ORDER BY next_attempt_at,id LIMIT 1 FOR UPDATE SKIP LOCKED
@@ -132,6 +134,9 @@ type ClaimParams struct {
 	MagicLinkEnabled        bool
 	MagicLinkOrigin         string
 	MagicLinkKeys           []string
+	MfaDisableEnabled       bool
+	MfaDisableOrigin        string
+	MfaDisableKeys          []string
 	MfaRecoveryAlertEnabled bool
 	MfaRecoveryAlertKeys    []string
 	MaxAttempts             int32
@@ -153,6 +158,9 @@ func (q *Queries) Claim(ctx context.Context, db DBTX, arg ClaimParams) (Platform
 		arg.MagicLinkEnabled,
 		arg.MagicLinkOrigin,
 		arg.MagicLinkKeys,
+		arg.MfaDisableEnabled,
+		arg.MfaDisableOrigin,
+		arg.MfaDisableKeys,
 		arg.MfaRecoveryAlertEnabled,
 		arg.MfaRecoveryAlertKeys,
 		arg.MaxAttempts,
@@ -197,6 +205,35 @@ UPDATE accounts SET email_verified_at=clock_timestamp(),password_reset_revision=
 func (q *Queries) ClaimMagicLinkOwnership(ctx context.Context, db DBTX, id pgtype.UUID) error {
 	_, err := db.Exec(ctx, claimMagicLinkOwnership, id)
 	return err
+}
+
+const clearMFADisableFactor = `-- name: ClearMFADisableFactor :exec
+UPDATE accounts SET mfa_secret_encrypted=NULL,mfa_recovery_codes_hash=NULL,mfa_enrolled_at=NULL,mfa_revision=mfa_revision+1 WHERE id=$1
+`
+
+// These writes share the account lock; the final token CAS checks cooldown and
+// expiry after all waits and failure rolls back the MFA clear and revision.
+func (q *Queries) ClearMFADisableFactor(ctx context.Context, db DBTX, id pgtype.UUID) error {
+	_, err := db.Exec(ctx, clearMFADisableFactor, id)
+	return err
+}
+
+const consumeMFADisableToken = `-- name: ConsumeMFADisableToken :execrows
+UPDATE mfa_disable_tokens SET consumed_at=clock_timestamp()
+WHERE token_hash=$1 AND account_id=$2 AND consumed_at IS NULL AND ready_at<=clock_timestamp() AND expires_at>clock_timestamp()
+`
+
+type ConsumeMFADisableTokenParams struct {
+	TokenHash []byte
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) ConsumeMFADisableToken(ctx context.Context, db DBTX, arg ConsumeMFADisableTokenParams) (int64, error) {
+	result, err := db.Exec(ctx, consumeMFADisableToken, arg.TokenHash, arg.AccountID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const consumeMFARecoveryAlertCode = `-- name: ConsumeMFARecoveryAlertCode :exec
@@ -282,6 +319,81 @@ func (q *Queries) CreateIntent(ctx context.Context, db DBTX, arg CreateIntentPar
 		arg.RecoveryID,
 		arg.GraceSeconds,
 		arg.TtlSeconds,
+	)
+	return err
+}
+
+const createMFADisableIntent = `-- name: CreateMFADisableIntent :exec
+INSERT INTO platform_mail_producer_outbox(id,account_id,namespace,producer_id,from_address,recipient_address,
+    template,template_version,expires_at,recovery_id,verification_token_hash,sealed_verification,verification_key_id,verification_origin)
+VALUES($1,$2,$3,$4,$5,$6,'mfa_disable_request',1,$7,$8,$9,$10,$11,$12)
+`
+
+type CreateMFADisableIntentParams struct {
+	ID                    pgtype.UUID
+	AccountID             pgtype.UUID
+	Namespace             string
+	ProducerID            string
+	FromAddress           string
+	RecipientAddress      string
+	ExpiresAt             pgtype.Timestamptz
+	RecoveryID            pgtype.UUID
+	VerificationTokenHash []byte
+	SealedVerification    []byte
+	VerificationKeyID     string
+	VerificationOrigin    string
+}
+
+func (q *Queries) CreateMFADisableIntent(ctx context.Context, db DBTX, arg CreateMFADisableIntentParams) error {
+	_, err := db.Exec(ctx, createMFADisableIntent,
+		arg.ID,
+		arg.AccountID,
+		arg.Namespace,
+		arg.ProducerID,
+		arg.FromAddress,
+		arg.RecipientAddress,
+		arg.ExpiresAt,
+		arg.RecoveryID,
+		arg.VerificationTokenHash,
+		arg.SealedVerification,
+		arg.VerificationKeyID,
+		arg.VerificationOrigin,
+	)
+	return err
+}
+
+const createMFADisableToken = `-- name: CreateMFADisableToken :exec
+INSERT INTO mfa_disable_tokens(token_hash,account_id,email_address,password_revision,mfa_revision,mfa_enrolled_at,namespace,recovery_id,requested_at,ready_at,expires_at)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+`
+
+type CreateMFADisableTokenParams struct {
+	TokenHash        []byte
+	AccountID        pgtype.UUID
+	EmailAddress     string
+	PasswordRevision int64
+	MfaRevision      int64
+	MfaEnrolledAt    pgtype.Timestamptz
+	Namespace        string
+	RecoveryID       pgtype.UUID
+	RequestedAt      pgtype.Timestamptz
+	ReadyAt          pgtype.Timestamptz
+	ExpiresAt        pgtype.Timestamptz
+}
+
+func (q *Queries) CreateMFADisableToken(ctx context.Context, db DBTX, arg CreateMFADisableTokenParams) error {
+	_, err := db.Exec(ctx, createMFADisableToken,
+		arg.TokenHash,
+		arg.AccountID,
+		arg.EmailAddress,
+		arg.PasswordRevision,
+		arg.MfaRevision,
+		arg.MfaEnrolledAt,
+		arg.Namespace,
+		arg.RecoveryID,
+		arg.RequestedAt,
+		arg.ReadyAt,
+		arg.ExpiresAt,
 	)
 	return err
 }
@@ -657,6 +769,26 @@ func (q *Queries) Intent(ctx context.Context, db DBTX, arg IntentParams) (Platfo
 	return i, err
 }
 
+const invalidateLegacyMFADisableRequests = `-- name: InvalidateLegacyMFADisableRequests :exec
+UPDATE mfa_disable_requests SET consumed_at=clock_timestamp() WHERE account_id=$1 AND consumed_at IS NULL
+`
+
+func (q *Queries) InvalidateLegacyMFADisableRequests(ctx context.Context, db DBTX, accountID pgtype.UUID) error {
+	_, err := db.Exec(ctx, invalidateLegacyMFADisableRequests, accountID)
+	return err
+}
+
+const invalidateMFADisableTokens = `-- name: InvalidateMFADisableTokens :exec
+UPDATE mfa_disable_tokens SET consumed_at=clock_timestamp() WHERE account_id=$1 AND consumed_at IS NULL
+`
+
+// Account lock always precedes pending token rows. This also invalidates old
+// inline requests; the flag-off writer follows the same order and revocation.
+func (q *Queries) InvalidateMFADisableTokens(ctx context.Context, db DBTX, accountID pgtype.UUID) error {
+	_, err := db.Exec(ctx, invalidateMFADisableTokens, accountID)
+	return err
+}
+
 const liveLease = `-- name: LiveLease :one
 SELECT EXISTS(SELECT 1 FROM platform_mail_producer_outbox WHERE namespace=$1 AND id=$2 AND lease_id=$3
     AND state='claimed' AND lease_until>clock_timestamp())
@@ -747,6 +879,94 @@ func (q *Queries) LockIntent(ctx context.Context, db DBTX, arg LockIntentParams)
 		&i.VerificationOrigin,
 		&i.SealedSecurityAlert,
 		&i.SecurityAlertKeyID,
+	)
+	return i, err
+}
+
+const lockMFADisableAccount = `-- name: LockMFADisableAccount :one
+SELECT id,email,status,abuse_hold_at,password_reset_revision,mfa_revision,mfa_enrolled_at FROM accounts WHERE id=$1 FOR UPDATE
+`
+
+type LockMFADisableAccountRow struct {
+	ID                    pgtype.UUID
+	Email                 string
+	Status                string
+	AbuseHoldAt           pgtype.Timestamptz
+	PasswordResetRevision int64
+	MfaRevision           int64
+	MfaEnrolledAt         pgtype.Timestamptz
+}
+
+func (q *Queries) LockMFADisableAccount(ctx context.Context, db DBTX, id pgtype.UUID) (LockMFADisableAccountRow, error) {
+	row := db.QueryRow(ctx, lockMFADisableAccount, id)
+	var i LockMFADisableAccountRow
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.Status,
+		&i.AbuseHoldAt,
+		&i.PasswordResetRevision,
+		&i.MfaRevision,
+		&i.MfaEnrolledAt,
+	)
+	return i, err
+}
+
+const lockMFADisableCredentialAccount = `-- name: LockMFADisableCredentialAccount :one
+SELECT a.id,a.email,a.status,a.abuse_hold_at,a.password_reset_revision,a.mfa_revision,a.mfa_enrolled_at
+FROM accounts a JOIN mfa_disable_tokens t ON t.account_id=a.id WHERE t.token_hash=$1 FOR UPDATE OF a
+`
+
+type LockMFADisableCredentialAccountRow struct {
+	ID                    pgtype.UUID
+	Email                 string
+	Status                string
+	AbuseHoldAt           pgtype.Timestamptz
+	PasswordResetRevision int64
+	MfaRevision           int64
+	MfaEnrolledAt         pgtype.Timestamptz
+}
+
+func (q *Queries) LockMFADisableCredentialAccount(ctx context.Context, db DBTX, tokenHash []byte) (LockMFADisableCredentialAccountRow, error) {
+	row := db.QueryRow(ctx, lockMFADisableCredentialAccount, tokenHash)
+	var i LockMFADisableCredentialAccountRow
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.Status,
+		&i.AbuseHoldAt,
+		&i.PasswordResetRevision,
+		&i.MfaRevision,
+		&i.MfaEnrolledAt,
+	)
+	return i, err
+}
+
+const lockMFADisableToken = `-- name: LockMFADisableToken :one
+SELECT token_hash, account_id, email_address, password_revision, mfa_revision, mfa_enrolled_at, namespace, recovery_id, requested_at, ready_at, expires_at, consumed_at FROM mfa_disable_tokens WHERE token_hash=$1 AND account_id=$2 FOR UPDATE
+`
+
+type LockMFADisableTokenParams struct {
+	TokenHash []byte
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) LockMFADisableToken(ctx context.Context, db DBTX, arg LockMFADisableTokenParams) (MfaDisableToken, error) {
+	row := db.QueryRow(ctx, lockMFADisableToken, arg.TokenHash, arg.AccountID)
+	var i MfaDisableToken
+	err := row.Scan(
+		&i.TokenHash,
+		&i.AccountID,
+		&i.EmailAddress,
+		&i.PasswordRevision,
+		&i.MfaRevision,
+		&i.MfaEnrolledAt,
+		&i.Namespace,
+		&i.RecoveryID,
+		&i.RequestedAt,
+		&i.ReadyAt,
+		&i.ExpiresAt,
+		&i.ConsumedAt,
 	)
 	return i, err
 }
@@ -980,6 +1200,36 @@ func (q *Queries) LockVerificationAccount(ctx context.Context, db DBTX, id pgtyp
 		&i.EmailVerifiedAt,
 	)
 	return i, err
+}
+
+const mFADisableKeyReferences = `-- name: MFADisableKeyReferences :many
+SELECT DISTINCT verification_key_id FROM platform_mail_producer_outbox
+WHERE namespace=$1 AND producer_id=$2 AND template='mfa_disable_request' AND state IN ('queued','claimed') AND expires_at>clock_timestamp()
+`
+
+type MFADisableKeyReferencesParams struct {
+	Namespace  string
+	ProducerID string
+}
+
+func (q *Queries) MFADisableKeyReferences(ctx context.Context, db DBTX, arg MFADisableKeyReferencesParams) ([]string, error) {
+	rows, err := db.Query(ctx, mFADisableKeyReferences, arg.Namespace, arg.ProducerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var verification_key_id string
+		if err := rows.Scan(&verification_key_id); err != nil {
+			return nil, err
+		}
+		items = append(items, verification_key_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const mFARecoveryAlertKeyReferences = `-- name: MFARecoveryAlertKeyReferences :many
@@ -1270,6 +1520,19 @@ func (q *Queries) Pending(ctx context.Context, db DBTX, namespace string) (int64
 	return column_1, err
 }
 
+const purgeExpiredMFADisableTokens = `-- name: PurgeExpiredMFADisableTokens :exec
+WITH expired AS (
+    SELECT token_hash FROM mfa_disable_tokens WHERE expires_at<=clock_timestamp()
+    ORDER BY expires_at,token_hash LIMIT $1 FOR UPDATE SKIP LOCKED
+)
+DELETE FROM mfa_disable_tokens t USING expired e WHERE t.token_hash=e.token_hash
+`
+
+func (q *Queries) PurgeExpiredMFADisableTokens(ctx context.Context, db DBTX, limit int32) error {
+	_, err := db.Exec(ctx, purgeExpiredMFADisableTokens, limit)
+	return err
+}
+
 const purgeExpiredMagicLinkTokens = `-- name: PurgeExpiredMagicLinkTokens :exec
 WITH expired AS (
     SELECT token_hash FROM magic_link_tokens WHERE expires_at<=clock_timestamp()
@@ -1299,10 +1562,11 @@ func (q *Queries) PurgeExpiredPasswordResetTokens(ctx context.Context, db DBTX, 
 }
 
 const ready = `-- name: Ready :exec
-SELECT o.id,o.recovery_id,o.template_version,o.recipient_address,o.revision,o.sealed_security_alert,o.security_alert_key_id,a.mfa_enrolled_at,a.mfa_recovery_codes_hash,a.password_reset_revision,t.password_revision,m.password_revision
+SELECT o.id,o.recovery_id,o.template_version,o.recipient_address,o.revision,o.sealed_security_alert,o.security_alert_key_id,a.mfa_enrolled_at,a.mfa_recovery_codes_hash,a.password_reset_revision,t.password_revision,m.password_revision,d.mfa_revision,a.mfa_revision
 FROM platform_mail_producer_outbox o LEFT JOIN accounts a ON a.id=o.account_id
 LEFT JOIN password_reset_tokens t ON t.account_id=a.id
-LEFT JOIN magic_link_tokens m ON m.account_id=a.id LIMIT 0
+LEFT JOIN magic_link_tokens m ON m.account_id=a.id
+LEFT JOIN mfa_disable_tokens d ON d.account_id=a.id LIMIT 0
 `
 
 func (q *Queries) Ready(ctx context.Context, db DBTX) error {
@@ -1463,7 +1727,7 @@ func (q *Queries) Settle(ctx context.Context, db DBTX, arg SettleParams) (int64,
 }
 
 const shareAccount = `-- name: ShareAccount :one
-SELECT id,email,status,deletion_requested_at,email_verified_at,abuse_hold_at,password_reset_revision FROM accounts WHERE id=$1 FOR SHARE
+SELECT id,email,status,deletion_requested_at,email_verified_at,abuse_hold_at,password_reset_revision,mfa_enrolled_at,mfa_revision FROM accounts WHERE id=$1 FOR SHARE
 `
 
 type ShareAccountRow struct {
@@ -1474,6 +1738,8 @@ type ShareAccountRow struct {
 	EmailVerifiedAt       pgtype.Timestamptz
 	AbuseHoldAt           pgtype.Timestamptz
 	PasswordResetRevision int64
+	MfaEnrolledAt         pgtype.Timestamptz
+	MfaRevision           int64
 }
 
 func (q *Queries) ShareAccount(ctx context.Context, db DBTX, id pgtype.UUID) (ShareAccountRow, error) {
@@ -1487,6 +1753,37 @@ func (q *Queries) ShareAccount(ctx context.Context, db DBTX, id pgtype.UUID) (Sh
 		&i.EmailVerifiedAt,
 		&i.AbuseHoldAt,
 		&i.PasswordResetRevision,
+		&i.MfaEnrolledAt,
+		&i.MfaRevision,
+	)
+	return i, err
+}
+
+const shareMFADisableToken = `-- name: ShareMFADisableToken :one
+SELECT token_hash, account_id, email_address, password_revision, mfa_revision, mfa_enrolled_at, namespace, recovery_id, requested_at, ready_at, expires_at, consumed_at FROM mfa_disable_tokens WHERE token_hash=$1 AND account_id=$2 FOR SHARE
+`
+
+type ShareMFADisableTokenParams struct {
+	TokenHash []byte
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) ShareMFADisableToken(ctx context.Context, db DBTX, arg ShareMFADisableTokenParams) (MfaDisableToken, error) {
+	row := db.QueryRow(ctx, shareMFADisableToken, arg.TokenHash, arg.AccountID)
+	var i MfaDisableToken
+	err := row.Scan(
+		&i.TokenHash,
+		&i.AccountID,
+		&i.EmailAddress,
+		&i.PasswordRevision,
+		&i.MfaRevision,
+		&i.MfaEnrolledAt,
+		&i.Namespace,
+		&i.RecoveryID,
+		&i.RequestedAt,
+		&i.ReadyAt,
+		&i.ExpiresAt,
+		&i.ConsumedAt,
 	)
 	return i, err
 }

@@ -62,7 +62,7 @@ var mfaRecipient func() *age.X25519Recipient
 // that the next request would 401 out of (a UX cliff).
 var errSessionMissingFromContext = errors.New("reissueSessionCookie: no session in request context — wiring broken")
 
-const mfaDisableEmailCooldown = 24 * time.Hour
+const mfaDisableEmailCooldown = api.MFADisableEmailCooldown
 
 // SetMFARecipient is the boot-time wire-up called by the apid
 // main() once the host age key has loaded. Tests call this
@@ -567,6 +567,12 @@ func (s *server) mfaDisableEmail(w http.ResponseWriter, r *http.Request, acct st
 			"Invalid request", "malformed JSON body"))
 		return
 	}
+	if !s.queueMFADisableEmail(w, r, acct) {
+		s.issueInlineMFADisableEmail(w, r, acct)
+	}
+}
+
+func (s *server) issueInlineMFADisableEmail(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
 		s.log.Error("mfa.disable_email.rand", "err", err.Error())
@@ -625,6 +631,12 @@ func (s *server) mfaDisableEmailConfirm(w http.ResponseWriter, r *http.Request, 
 		s.writeMFADisableEmailInvalid(w, r, acct, "token_malformed")
 		return
 	}
+	if !s.consumeDurableMFADisableEmail(w, r, acct, sealed) {
+		s.confirmInlineMFADisableEmail(w, r, acct, sealed)
+	}
+}
+
+func (s *server) confirmInlineMFADisableEmail(w http.ResponseWriter, r *http.Request, acct state.Account, sealed []byte) {
 	idents := s.mfaDisableTokenIdentities()
 	if len(idents) == 0 {
 		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity,

@@ -127,3 +127,12 @@ const (
 	InternalMailRetryBase                  = time.Minute
 	InternalMailRetryMax                   = time.Hour
 )
+
+// MFA disable links allow one confirmation day after the existing one-day
+// cooldown. Delivery stops at that original cooldown; retries extend neither.
+const (
+	MFADisableTokenBytes         = 32
+	MFADisableEmailCooldown      = 24 * time.Hour
+	MFADisableEmailConfirmWindow = 24 * time.Hour
+	InternalMailMFADisableTTL    = 24 * time.Hour
+)

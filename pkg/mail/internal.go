@@ -33,6 +33,7 @@ type InternalSender struct {
 	passwordResetEnabled    func() bool
 	magicLinkEnabled        func() bool
 	mfaRecoveryAlertEnabled func() bool
+	mfaDisableEnabled       func() bool
 }
 
 func NewInternalSender(socket, token, from string, enabled func() bool) (*InternalSender, error) {

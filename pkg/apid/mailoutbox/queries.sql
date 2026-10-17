@@ -1,8 +1,9 @@
 -- name: Ready :exec
-SELECT o.id,o.recovery_id,o.template_version,o.recipient_address,o.revision,o.sealed_security_alert,o.security_alert_key_id,a.mfa_enrolled_at,a.mfa_recovery_codes_hash,a.password_reset_revision,t.password_revision,m.password_revision
+SELECT o.id,o.recovery_id,o.template_version,o.recipient_address,o.revision,o.sealed_security_alert,o.security_alert_key_id,a.mfa_enrolled_at,a.mfa_recovery_codes_hash,a.password_reset_revision,t.password_revision,m.password_revision,d.mfa_revision,a.mfa_revision
 FROM platform_mail_producer_outbox o LEFT JOIN accounts a ON a.id=o.account_id
 LEFT JOIN password_reset_tokens t ON t.account_id=a.id
-LEFT JOIN magic_link_tokens m ON m.account_id=a.id LIMIT 0;
+LEFT JOIN magic_link_tokens m ON m.account_id=a.id
+LEFT JOIN mfa_disable_tokens d ON d.account_id=a.id LIMIT 0;
 
 -- Match maild's recovery fence without retaining it across HTTP. Claims take
 -- this before outbox rows; scheduling takes admission/account locks first so
@@ -26,7 +27,7 @@ SELECT count(*)::bigint FROM platform_mail_producer_outbox WHERE namespace=$1 AN
 SELECT id,email,status,deletion_requested_at FROM accounts WHERE id=$1 FOR UPDATE;
 
 -- name: ShareAccount :one
-SELECT id,email,status,deletion_requested_at,email_verified_at,abuse_hold_at,password_reset_revision FROM accounts WHERE id=$1 FOR SHARE;
+SELECT id,email,status,deletion_requested_at,email_verified_at,abuse_hold_at,password_reset_revision,mfa_enrolled_at,mfa_revision FROM accounts WHERE id=$1 FOR SHARE;
 
 -- name: ScheduleDeletion :one
 UPDATE accounts SET status='deleted_pending',deletion_requested_at=coalesce(deletion_requested_at,clock_timestamp())
@@ -66,6 +67,8 @@ WITH candidate AS (
           AND o.verification_key_id=ANY(sqlc.arg(password_reset_keys)::text[]))
         OR (o.template='magic_link' AND sqlc.arg(magic_link_enabled)::boolean AND o.verification_origin=sqlc.arg(magic_link_origin)::text
           AND o.verification_key_id=ANY(sqlc.arg(magic_link_keys)::text[]))
+        OR (o.template='mfa_disable_request' AND sqlc.arg(mfa_disable_enabled)::boolean AND o.verification_origin=sqlc.arg(mfa_disable_origin)::text
+          AND o.verification_key_id=ANY(sqlc.arg(mfa_disable_keys)::text[]))
         OR (o.template='mfa_recovery_used' AND sqlc.arg(mfa_recovery_alert_enabled)::boolean
           AND o.security_alert_key_id=ANY(sqlc.arg(mfa_recovery_alert_keys)::text[])))
       AND o.attempts<sqlc.arg(max_attempts) AND o.expires_at>clock_timestamp()
@@ -137,7 +140,7 @@ SELECT o.id,o.revision,o.state,o.template,o.from_address,o.expires_at,o.recovery
     coalesce(m.sender_address,'')::text AS sender_address
 FROM platform_mail_producer_outbox o
 LEFT JOIN internal_mail_messages m ON m.namespace=o.namespace AND m.producer_id=o.producer_id
-    AND m.idempotency_key=(CASE o.template WHEN 'email_verification' THEN 'verify-email:' WHEN 'password_reset' THEN 'password-reset:' WHEN 'magic_link' THEN 'magic-link:' WHEN 'mfa_recovery_used' THEN 'mfa-recovery-alert:' ELSE 'account-delete:' END)||o.id::text
+    AND m.idempotency_key=(CASE o.template WHEN 'email_verification' THEN 'verify-email:' WHEN 'password_reset' THEN 'password-reset:' WHEN 'magic_link' THEN 'magic-link:' WHEN 'mfa_recovery_used' THEN 'mfa-recovery-alert:' WHEN 'mfa_disable_request' THEN 'mfa-disable:' ELSE 'account-delete:' END)||o.id::text
 WHERE o.namespace=$1 AND o.id=$2;
 
 -- name: ReconciliationReady :exec
@@ -307,3 +310,53 @@ VALUES($1,$2,$3,$4,$5,$6,'mfa_recovery_used',1,$7,$8,$9,$10);
 -- name: MFARecoveryAlertKeyReferences :many
 SELECT DISTINCT security_alert_key_id FROM platform_mail_producer_outbox
 WHERE namespace=$1 AND producer_id=$2 AND template='mfa_recovery_used' AND state IN ('queued','claimed') AND expires_at>clock_timestamp();
+
+-- name: LockMFADisableAccount :one
+SELECT id,email,status,abuse_hold_at,password_reset_revision,mfa_revision,mfa_enrolled_at FROM accounts WHERE id=$1 FOR UPDATE;
+
+-- Account lock always precedes pending token rows. This also invalidates old
+-- inline requests; the flag-off writer follows the same order and revocation.
+-- name: InvalidateMFADisableTokens :exec
+UPDATE mfa_disable_tokens SET consumed_at=clock_timestamp() WHERE account_id=$1 AND consumed_at IS NULL;
+
+-- name: InvalidateLegacyMFADisableRequests :exec
+UPDATE mfa_disable_requests SET consumed_at=clock_timestamp() WHERE account_id=$1 AND consumed_at IS NULL;
+
+-- name: CreateMFADisableToken :exec
+INSERT INTO mfa_disable_tokens(token_hash,account_id,email_address,password_revision,mfa_revision,mfa_enrolled_at,namespace,recovery_id,requested_at,ready_at,expires_at)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11);
+
+-- name: CreateMFADisableIntent :exec
+INSERT INTO platform_mail_producer_outbox(id,account_id,namespace,producer_id,from_address,recipient_address,
+    template,template_version,expires_at,recovery_id,verification_token_hash,sealed_verification,verification_key_id,verification_origin)
+VALUES($1,$2,$3,$4,$5,$6,'mfa_disable_request',1,$7,$8,$9,$10,$11,$12);
+
+-- name: ShareMFADisableToken :one
+SELECT * FROM mfa_disable_tokens WHERE token_hash=$1 AND account_id=$2 FOR SHARE;
+
+-- name: MFADisableKeyReferences :many
+SELECT DISTINCT verification_key_id FROM platform_mail_producer_outbox
+WHERE namespace=$1 AND producer_id=$2 AND template='mfa_disable_request' AND state IN ('queued','claimed') AND expires_at>clock_timestamp();
+
+-- name: LockMFADisableCredentialAccount :one
+SELECT a.id,a.email,a.status,a.abuse_hold_at,a.password_reset_revision,a.mfa_revision,a.mfa_enrolled_at
+FROM accounts a JOIN mfa_disable_tokens t ON t.account_id=a.id WHERE t.token_hash=$1 FOR UPDATE OF a;
+
+-- name: LockMFADisableToken :one
+SELECT * FROM mfa_disable_tokens WHERE token_hash=$1 AND account_id=$2 FOR UPDATE;
+
+-- These writes share the account lock; the final token CAS checks cooldown and
+-- expiry after all waits and failure rolls back the MFA clear and revision.
+-- name: ClearMFADisableFactor :exec
+UPDATE accounts SET mfa_secret_encrypted=NULL,mfa_recovery_codes_hash=NULL,mfa_enrolled_at=NULL,mfa_revision=mfa_revision+1 WHERE id=$1;
+
+-- name: ConsumeMFADisableToken :execrows
+UPDATE mfa_disable_tokens SET consumed_at=clock_timestamp()
+WHERE token_hash=$1 AND account_id=$2 AND consumed_at IS NULL AND ready_at<=clock_timestamp() AND expires_at>clock_timestamp();
+
+-- name: PurgeExpiredMFADisableTokens :exec
+WITH expired AS (
+    SELECT token_hash FROM mfa_disable_tokens WHERE expires_at<=clock_timestamp()
+    ORDER BY expires_at,token_hash LIMIT $1 FOR UPDATE SKIP LOCKED
+)
+DELETE FROM mfa_disable_tokens t USING expired e WHERE t.token_hash=e.token_hash;

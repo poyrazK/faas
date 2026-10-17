@@ -17,7 +17,10 @@ type Account struct {
 	AbuseHoldAt           pgtype.Timestamptz
 	MfaEnrolledAt         pgtype.Timestamptz
 	MfaRecoveryCodesHash  [][]byte
+	MfaSecretEncrypted    []byte
+	MfaRequired           bool
 	PasswordResetRevision int64
+	MfaRevision           int64
 }
 
 type AccountPassword struct {
@@ -79,6 +82,28 @@ type MagicLinkToken struct {
 type MailSuppression struct {
 	Email     string
 	ExpiresAt pgtype.Timestamptz
+}
+
+type MfaDisableRequest struct {
+	TokenHash   []byte
+	AccountID   pgtype.UUID
+	RequestedAt pgtype.Timestamptz
+	ConsumedAt  pgtype.Timestamptz
+}
+
+type MfaDisableToken struct {
+	TokenHash        []byte
+	AccountID        pgtype.UUID
+	EmailAddress     string
+	PasswordRevision int64
+	MfaRevision      int64
+	MfaEnrolledAt    pgtype.Timestamptz
+	Namespace        string
+	RecoveryID       pgtype.UUID
+	RequestedAt      pgtype.Timestamptz
+	ReadyAt          pgtype.Timestamptz
+	ExpiresAt        pgtype.Timestamptz
+	ConsumedAt       pgtype.Timestamptz
 }
 
 type PasswordResetToken struct {

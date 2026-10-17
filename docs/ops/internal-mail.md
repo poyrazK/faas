@@ -2693,3 +2693,82 @@ its pending delivery and restores inline issuance for later recoveries; base
 maintenance can still expire and erase old payloads. Account erasure cascades
 intent while opaque reconciliation audit survives. Migration Down refuses alert
 intents or audit history. No forced replay or deadline extension is provided.
+
+## Durable MFA disable-email requests
+
+`FAAS_INTERNAL_MAIL_MFA_DISABLE_OUTBOX_ENABLED=0` independently gates durable
+issuance/handoff for the existing authenticated MFA disable-email request and
+private maild admission/reconciliation. Units and private examples keep it off.
+Live delivery qualification remains separate; this adds no customer mail API.
+
+Apply
+[`20261017091735652_platform_mail_mfa_disable_outbox.sql`](../../migrations/20261017091735652_platform_mail_mfa_disable_outbox.sql)
+before the new binary. The decision and locking rules are recorded in
+[ADR-20261017091735](../adr/20261017091735-mail-mfa-disable-outbox.md).
+The enabled producer requires master, producer, scheduling and producer-outbox
+gates, scoped `internal-producer` transport, dedicated apid credential readers,
+and a canonical HTTPS `FAAS_INTERNAL_MAIL_MFA_DISABLE_ORIGIN`. Request Host and
+forwarding headers never choose the confirmation destination. The fixed V1 path
+is `/auth/reset/mfa`.
+
+Opening the link renders a small authenticated confirmation page behind the same
+child gate. GET and email prefetch cannot consume the token or disable MFA. Only
+the explicit button obtains the existing action-bound CSRF token and sends the
+authenticated confirmation POST. The page uses no-store, no-referrer and CSP
+nonces, with no external resources or token in browser history after rendering.
+Pending MFA sessions can open this recovery page. Turning the child or base gate
+off hides the new page; the existing confirmation POST retains saved credential
+checks for clients after rollback.
+
+The existing historical `FAAS_INTERNAL_MAIL_VERIFICATION_IDENTITY_PATH` and
+`FAAS_INTERNAL_MAIL_VERIFICATION_PREVIOUS_IDENTITY_PATH` identify the dedicated
+apid current/previous readers. Keep overlap for every enabled pending family;
+enabled startup rejects a missing reader for live disable-email payloads.
+Maild and mailctl receive no apid encryption identities. Changed origins pause
+claims for old saved links rather than rewriting them.
+
+Credential hash and encrypted intent commit together. The raw 32-byte token
+never enters inline request, sign-in, reset or verification tables. No MFA secret,
+recovery code or recovery HMAC enters mail intent. A failed save, full queue,
+recovery hold or late disabled gate leaves no orphan new token and preserves
+any older request. Maild downtime is retried after the successful request.
+Enabled save failure does not fall back to another transport.
+
+All times come from the database. Delivery expires at request +24 hours;
+confirmation is allowed from request +24 hours until request +48 hours. The V1
+email prints both confirmation and expiration times. Retries preserve the same
+token/link, requested time, cooldown, credential expiry, mail deadline, body and
+`mfa-disable:<intent UUID>` admission key. A deliberate new user request
+supersedes older durable and inline requests and starts a new cooldown. Inline
+reissuance after rollback also invalidates pending durable links.
+
+Confirmation requires the same authenticated account, current address, password
+revision, MFA revision/enrollment and recovery generation. Secret replacement,
+enrollment, clear and actual MFA policy changes advance a persistent revision;
+restoring prior secret bytes does not restore an old request. Recovery-code burns
+retain the factor and do not reset a pending request. Before the cooldown, the
+existing 425 problem and Retry-After leave the token unused. At confirmation,
+factor clear and single-use token consumption commit together; concurrent
+confirmation has one winner. Failure leaves both unchanged. Explicit MFA policy
+is retained, and confirmation grants no session or step-up proof.
+
+Saved credential checks remain active when issuance/delivery flags are off and
+need no mail key, host MFA identity or origin. Keep the schema and original
+bindings during rollback. Only unknown hashes in the legacy sealed-token format can enter the legacy
+inline reader; unknown raw 32-byte tokens stay invalid after pruning without host
+keys; recognized expired, consumed, foreign-account or stale tokens
+never fall back. The old inline format keeps its existing behavior.
+
+Changed account/address/password/MFA state cancels pending link delivery.
+Suppressions, producer budgets, recovery holds and generation quarantine remain
+in force. Global recovery release does not authorize old restored links. Private
+metadata inspection omits recipients, raw token, ciphertext and reader identity.
+Receipt reconciliation and exact audit replay require this own child gate as
+well as operator/reconciliation gates; acknowledgement creates no mail and
+changes no cooldown or expiry. Admission is not final delivery evidence.
+
+Terminal settlement and bounded expiry maintenance erase recipient and sealed
+credential fields. Base maintenance can expire mail and purge expired token
+bindings while the child gate is off. Hard account deletion cascades both;
+opaque reconciliation audit survives. Migration Down refuses any disable-token,
+intent or audit history. No resend override or cooldown bypass is provided.

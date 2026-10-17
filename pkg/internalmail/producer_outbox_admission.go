@@ -74,6 +74,10 @@ func (s *Service) ProducerOutboxAdmission(ctx context.Context, id string) (Produ
 		review.CanAcknowledge = false
 		review.BlockReason = "mfa_recovery_alert_disabled"
 	}
+	if review.Template == ProducerOutboxMFADisableTemplate && !s.mfaDisableOutboxEnabled() {
+		review.CanAcknowledge = false
+		review.BlockReason = "mfa_disable_disabled"
+	}
 	return review, err
 }
 

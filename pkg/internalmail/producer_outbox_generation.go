@@ -13,6 +13,7 @@ const ProducerOutboxTemplateHeader = "X-Gregale-Mail-Outbox-Template"
 const ProducerOutboxVerificationTemplate = "email_verification"
 const ProducerOutboxPasswordResetTemplate = "password_reset"
 const ProducerOutboxMagicLinkTemplate = "magic_link"
+const ProducerOutboxMFADisableTemplate = "mfa_disable_request"
 const ProducerOutboxMFARecoveryAlertTemplate = "mfa_recovery_used"
 
 func (s *Service) verificationOutboxEnabled() bool {
@@ -29,6 +30,10 @@ func (s *Service) magicLinkOutboxEnabled() bool {
 
 func (s *Service) mfaRecoveryAlertOutboxEnabled() bool {
 	return s.producerOutboxEnabled() && s.MFARecoveryAlertOutboxEnabled != nil && s.MFARecoveryAlertOutboxEnabled()
+}
+
+func (s *Service) mfaDisableOutboxEnabled() bool {
+	return s.producerOutboxEnabled() && s.MFADisableOutboxEnabled != nil && s.MFADisableOutboxEnabled()
 }
 
 type producerOutboxGenerationKey struct{}
@@ -56,10 +61,12 @@ func (s *Service) producerOutboxContext(ctx context.Context, header http.Header)
 			gate = s.passwordResetOutboxEnabled
 		case ProducerOutboxMagicLinkTemplate:
 			gate = s.magicLinkOutboxEnabled
+		case ProducerOutboxMFADisableTemplate:
+			gate = s.mfaDisableOutboxEnabled
 		case ProducerOutboxMFARecoveryAlertTemplate:
 			gate = s.mfaRecoveryAlertOutboxEnabled
 		default:
-			if !s.verificationOutboxEnabled() && !s.passwordResetOutboxEnabled() && !s.magicLinkOutboxEnabled() && !s.mfaRecoveryAlertOutboxEnabled() {
+			if !s.verificationOutboxEnabled() && !s.passwordResetOutboxEnabled() && !s.magicLinkOutboxEnabled() && !s.mfaRecoveryAlertOutboxEnabled() && !s.mfaDisableOutboxEnabled() {
 				return ctx, ErrDisabled
 			}
 			return ctx, ErrInvalid

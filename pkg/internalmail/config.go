@@ -36,6 +36,7 @@ const (
 	VerificationOutboxEnableEnv     = "FAAS_INTERNAL_MAIL_VERIFICATION_OUTBOX_ENABLED"
 	PasswordResetOutboxEnableEnv    = "FAAS_INTERNAL_MAIL_PASSWORD_RESET_OUTBOX_ENABLED"
 	MagicLinkOutboxEnableEnv        = "FAAS_INTERNAL_MAIL_MAGIC_LINK_OUTBOX_ENABLED"
+	MFADisableOutboxEnableEnv       = "FAAS_INTERNAL_MAIL_MFA_DISABLE_OUTBOX_ENABLED"
 	MFARecoveryAlertOutboxEnableEnv = "FAAS_INTERNAL_MAIL_MFA_RECOVERY_ALERT_OUTBOX_ENABLED"
 	RecoveryEnableEnv               = "FAAS_INTERNAL_MAIL_RECOVERY_ENABLED"
 	RecoveryIDEnv                   = "FAAS_INTERNAL_MAIL_RECOVERY_ID"
@@ -338,4 +339,8 @@ func validNamespace(v string) bool {
 
 func lowerAlphaNumeric(c rune) bool {
 	return c >= 'a' && c <= 'z' || c >= '0' && c <= '9'
+}
+
+func MFADisableOutboxEnabled(getenv func(string) string) bool {
+	return getenv(MFADisableOutboxEnableEnv) == "1" && ProducerOutboxEnabled(getenv)
 }

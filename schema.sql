@@ -20550,12 +20550,14 @@ CREATE TABLE public.accounts (
     abuse_hold_at timestamp with time zone,
     abuse_hold_reason text,
     password_reset_revision bigint DEFAULT 1 NOT NULL,
+    mfa_revision bigint DEFAULT 1 NOT NULL,
     CONSTRAINT accounts_abuse_hold_valid CHECK ((((abuse_hold_at IS NULL) = (abuse_hold_reason IS NULL)) AND ((abuse_hold_reason IS NULL) OR (abuse_hold_reason = ANY (ARRAY['egress_fanout'::text, 'egress_flood'::text, 'operator'::text]))))),
     CONSTRAINT accounts_billing_address_length_chk CHECK (((billing_address IS NULL) OR ((char_length(billing_address) >= 1) AND (char_length(billing_address) <= 1000)))),
     CONSTRAINT accounts_business_name_length_chk CHECK (((business_name IS NULL) OR ((char_length(business_name) >= 1) AND (char_length(business_name) <= 256)))),
     CONSTRAINT accounts_egress_allowlist_extra_check CHECK ((egress_allowlist_extra >= 0)),
     CONSTRAINT accounts_key_grace_window_days_check CHECK (((key_grace_window_days IS NULL) OR (key_grace_window_days >= 0))),
     CONSTRAINT accounts_mfa_enrolled_shape_chk CHECK (((mfa_enrolled_at IS NULL) OR ((mfa_secret_encrypted IS NOT NULL) AND ((mfa_recovery_codes_hash IS NULL) OR (array_length(mfa_recovery_codes_hash, 1) >= 0))))),
+    CONSTRAINT accounts_mfa_revision_check CHECK ((mfa_revision > 0)),
     CONSTRAINT accounts_overage_cap_cents_chk CHECK (((overage_cap_cents IS NULL) OR (overage_cap_cents >= 0))),
     CONSTRAINT accounts_password_reset_revision_check CHECK ((password_reset_revision > 0)),
     CONSTRAINT accounts_plan_check CHECK ((plan = ANY (ARRAY['free'::text, 'hobby'::text, 'pro'::text, 'scale'::text]))),
@@ -31539,6 +31541,36 @@ CREATE TABLE public.mfa_disable_requests (
 
 
 --
+-- Name: mfa_disable_tokens; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.mfa_disable_tokens (
+    token_hash bytea NOT NULL,
+    account_id uuid NOT NULL,
+    email_address text NOT NULL,
+    password_revision bigint NOT NULL,
+    mfa_revision bigint NOT NULL,
+    mfa_enrolled_at timestamp with time zone NOT NULL,
+    namespace text NOT NULL,
+    recovery_id uuid NOT NULL,
+    requested_at timestamp with time zone NOT NULL,
+    ready_at timestamp with time zone NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    consumed_at timestamp with time zone,
+    CONSTRAINT mfa_disable_tokens_check CHECK ((isfinite(ready_at) AND (ready_at = (requested_at + '24:00:00'::interval)))),
+    CONSTRAINT mfa_disable_tokens_check1 CHECK ((isfinite(expires_at) AND (expires_at = (ready_at + '24:00:00'::interval)))),
+    CONSTRAINT mfa_disable_tokens_consumed_at_check CHECK (((consumed_at IS NULL) OR isfinite(consumed_at))),
+    CONSTRAINT mfa_disable_tokens_email_address_check CHECK ((((length(email_address) >= 3) AND (length(email_address) <= 254)) AND (email_address = lower(email_address)) AND (POSITION((chr(10)) IN (email_address)) = 0) AND (POSITION((chr(13)) IN (email_address)) = 0))),
+    CONSTRAINT mfa_disable_tokens_mfa_enrolled_at_check CHECK (isfinite(mfa_enrolled_at)),
+    CONSTRAINT mfa_disable_tokens_mfa_revision_check CHECK ((mfa_revision > 0)),
+    CONSTRAINT mfa_disable_tokens_namespace_check CHECK ((namespace ~ '^[a-z][a-z0-9_-]{0,63}$'::text)),
+    CONSTRAINT mfa_disable_tokens_password_revision_check CHECK ((password_revision > 0)),
+    CONSTRAINT mfa_disable_tokens_requested_at_check CHECK (isfinite(requested_at)),
+    CONSTRAINT mfa_disable_tokens_token_hash_check CHECK ((octet_length(token_hash) = 32))
+);
+
+
+--
 -- Name: migration_leases; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -33437,7 +33469,7 @@ CREATE TABLE public.platform_mail_outbox_reconciliations (
     CONSTRAINT platform_mail_outbox_reconciliations_reason_check CHECK ((reason ~ '^[a-z][a-z0-9_]{0,63}$'::text)),
     CONSTRAINT platform_mail_outbox_reconciliations_request_hash_check CHECK ((octet_length(request_hash) = 32)),
     CONSTRAINT platform_mail_outbox_reconciliations_request_id_check CHECK ((request_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
-    CONSTRAINT platform_mail_outbox_reconciliations_template_check CHECK ((template = ANY (ARRAY['account_deletion_pending'::text, 'email_verification'::text, 'password_reset'::text, 'magic_link'::text, 'mfa_recovery_used'::text])))
+    CONSTRAINT platform_mail_outbox_reconciliations_template_check CHECK ((template = ANY (ARRAY['account_deletion_pending'::text, 'email_verification'::text, 'password_reset'::text, 'magic_link'::text, 'mfa_recovery_used'::text, 'mfa_disable_request'::text])))
 );
 
 
@@ -33491,10 +33523,10 @@ CREATE TABLE public.platform_mail_producer_outbox (
     CONSTRAINT platform_mail_producer_outbox_revision_check CHECK ((revision > 0)),
     CONSTRAINT platform_mail_producer_outbox_security_alert_check CHECK ((((template <> 'mfa_recovery_used'::text) AND (octet_length(sealed_security_alert) = 0) AND (security_alert_key_id = ''::text)) OR ((template = 'mfa_recovery_used'::text) AND (((state = ANY (ARRAY['queued'::text, 'claimed'::text])) AND ((octet_length(sealed_security_alert) >= 64) AND (octet_length(sealed_security_alert) <= 4096)) AND (security_alert_key_id ~ '^[0-9a-f]{64}$'::text)) OR ((state <> ALL (ARRAY['queued'::text, 'claimed'::text])) AND (octet_length(sealed_security_alert) = 0) AND (security_alert_key_id = ''::text)))))),
     CONSTRAINT platform_mail_producer_outbox_state_check CHECK ((state = ANY (ARRAY['queued'::text, 'claimed'::text, 'admitted'::text, 'failed'::text, 'expired'::text, 'cancelled'::text, 'suppressed'::text]))),
-    CONSTRAINT platform_mail_producer_outbox_template_check CHECK ((template = ANY (ARRAY['account_deletion_pending'::text, 'email_verification'::text, 'password_reset'::text, 'magic_link'::text, 'mfa_recovery_used'::text]))),
+    CONSTRAINT platform_mail_producer_outbox_template_check CHECK ((template = ANY (ARRAY['account_deletion_pending'::text, 'email_verification'::text, 'password_reset'::text, 'magic_link'::text, 'mfa_recovery_used'::text, 'mfa_disable_request'::text]))),
     CONSTRAINT platform_mail_producer_outbox_template_version_check CHECK ((template_version = 1)),
     CONSTRAINT platform_mail_producer_outbox_updated_at_check CHECK (isfinite(updated_at)),
-    CONSTRAINT platform_mail_producer_outbox_verification_check CHECK ((((template = 'account_deletion_pending'::text) AND (deletion_requested_at IS NOT NULL) AND (restore_until IS NOT NULL) AND (verification_token_hash IS NULL) AND (octet_length(sealed_verification) = 0) AND (verification_key_id = ''::text) AND (verification_origin = ''::text)) OR ((template = 'mfa_recovery_used'::text) AND (deletion_requested_at IS NULL) AND (restore_until IS NULL) AND (verification_token_hash IS NULL) AND (octet_length(sealed_verification) = 0) AND (verification_key_id = ''::text) AND (verification_origin = ''::text)) OR ((template = ANY (ARRAY['email_verification'::text, 'password_reset'::text, 'magic_link'::text])) AND (deletion_requested_at IS NULL) AND (restore_until IS NULL) AND (((state = ANY (ARRAY['queued'::text, 'claimed'::text])) AND (verification_token_hash IS NOT NULL) AND (octet_length(verification_token_hash) = 32) AND ((octet_length(sealed_verification) >= 64) AND (octet_length(sealed_verification) <= 4096)) AND (verification_key_id ~ '^[0-9a-f]{64}$'::text) AND ((length(verification_origin) >= 9) AND (length(verification_origin) <= 2048)) AND (verification_origin ~ '^https://[^/?#[:space:]]+$'::text)) OR ((state <> ALL (ARRAY['queued'::text, 'claimed'::text])) AND (verification_token_hash IS NULL) AND (octet_length(sealed_verification) = 0) AND (verification_key_id = ''::text) AND (verification_origin = ''::text))))))
+    CONSTRAINT platform_mail_producer_outbox_verification_check CHECK ((((template = 'account_deletion_pending'::text) AND (deletion_requested_at IS NOT NULL) AND (restore_until IS NOT NULL) AND (verification_token_hash IS NULL) AND (octet_length(sealed_verification) = 0) AND (verification_key_id = ''::text) AND (verification_origin = ''::text)) OR ((template = 'mfa_recovery_used'::text) AND (deletion_requested_at IS NULL) AND (restore_until IS NULL) AND (verification_token_hash IS NULL) AND (octet_length(sealed_verification) = 0) AND (verification_key_id = ''::text) AND (verification_origin = ''::text)) OR ((template = ANY (ARRAY['email_verification'::text, 'password_reset'::text, 'magic_link'::text, 'mfa_disable_request'::text])) AND (deletion_requested_at IS NULL) AND (restore_until IS NULL) AND (((state = ANY (ARRAY['queued'::text, 'claimed'::text])) AND (verification_token_hash IS NOT NULL) AND (octet_length(verification_token_hash) = 32) AND ((octet_length(sealed_verification) >= 64) AND (octet_length(sealed_verification) <= 4096)) AND (verification_key_id ~ '^[0-9a-f]{64}$'::text) AND ((length(verification_origin) >= 9) AND (length(verification_origin) <= 2048)) AND (verification_origin ~ '^https://[^/?#[:space:]]+$'::text)) OR ((state <> ALL (ARRAY['queued'::text, 'claimed'::text])) AND (verification_token_hash IS NULL) AND (octet_length(sealed_verification) = 0) AND (verification_key_id = ''::text) AND (verification_origin = ''::text))))))
 );
 
 
@@ -44004,6 +44036,14 @@ ALTER TABLE ONLY public.mfa_disable_requests
 
 
 --
+-- Name: mfa_disable_tokens mfa_disable_tokens_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mfa_disable_tokens
+    ADD CONSTRAINT mfa_disable_tokens_pkey PRIMARY KEY (token_hash);
+
+
+--
 -- Name: migration_leases migration_leases_lease_token_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -52295,6 +52335,20 @@ CREATE INDEX mfa_disable_requests_account_idx ON public.mfa_disable_requests USI
 
 
 --
+-- Name: mfa_disable_tokens_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX mfa_disable_tokens_account_idx ON public.mfa_disable_tokens USING btree (account_id) WHERE (consumed_at IS NULL);
+
+
+--
+-- Name: mfa_disable_tokens_expiry_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX mfa_disable_tokens_expiry_idx ON public.mfa_disable_tokens USING btree (expires_at, token_hash);
+
+
+--
 -- Name: migration_leases_expiry_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -52985,6 +53039,13 @@ CREATE INDEX platform_mail_producer_outbox_magic_keys_idx ON public.platform_mai
 --
 
 CREATE INDEX platform_mail_producer_outbox_mfa_alert_keys_idx ON public.platform_mail_producer_outbox USING btree (namespace, producer_id, security_alert_key_id) WHERE ((template = 'mfa_recovery_used'::text) AND (state = ANY (ARRAY['queued'::text, 'claimed'::text])));
+
+
+--
+-- Name: platform_mail_producer_outbox_mfa_disable_keys_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX platform_mail_producer_outbox_mfa_disable_keys_idx ON public.platform_mail_producer_outbox USING btree (namespace, producer_id, verification_key_id) WHERE ((template = 'mfa_disable_request'::text) AND (state = ANY (ARRAY['queued'::text, 'claimed'::text])));
 
 
 --
@@ -65778,6 +65839,14 @@ ALTER TABLE ONLY public.meterd_tenant_surface_cert_expiry_state
 
 ALTER TABLE ONLY public.mfa_disable_requests
     ADD CONSTRAINT mfa_disable_requests_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: mfa_disable_tokens mfa_disable_tokens_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mfa_disable_tokens
+    ADD CONSTRAINT mfa_disable_tokens_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --
