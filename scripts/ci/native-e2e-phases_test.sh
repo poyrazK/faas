@@ -152,7 +152,8 @@ native_e2e_lane_tests customer-job-operations-only "${customer_job_probe}" | gre
 
 customer_workflow_tests="$(native_e2e_lane_tests customer-workflow-operations-only "${repo_root}")"
 for required in TestCustomerWorkflowOperationResultMetal TestCustomerWorkflowOperationRecoveryMetal \
-  TestCustomerWorkflowOperationCancellationMetal TestCustomerWorkflowOperationDeadlineMetal TestCustomerWorkflowOperationOwnerRevocationMetal; do
+  TestCustomerWorkflowOperationCancellationMetal TestCustomerWorkflowOperationDeadlineMetal TestCustomerWorkflowOperationOwnerRevocationMetal \
+  TestCustomerWorkflowOperationWaitsAndSignalsMetal TestCustomerWorkflowOperationEventTimeoutMetal TestCustomerWorkflowOperationBudgetCutMetal; do
   grep -qx "${required}" <<<"${customer_workflow_tests}" || fail "customer Workflow lane lost ${required}"
 done
 native_e2e_is_lane customer-workflow-operations-only || fail "customer Workflow selector is not a lane"

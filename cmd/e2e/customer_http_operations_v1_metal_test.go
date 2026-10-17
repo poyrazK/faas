@@ -23,6 +23,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	stripex "github.com/onebox-faas/faas/pkg/billing/stripe"
+	"github.com/onebox-faas/faas/pkg/e2etest"
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -40,17 +41,22 @@ func (f *customerHTTPFixture) defineHTTP(t *testing.T, name, path string, input 
 	return def
 }
 
-// postProviderEvent delivers one Stripe-signed event to the endpoint, as the
-// provider would, and returns the receipt.
 func (f *customerHTTPFixture) postProviderEvent(t *testing.T, endpointURL string, body []byte) api.InboundWebhookReceiptResponse {
+	t.Helper()
+	return postNativeProviderEvent(t, f.h, endpointURL, customerHTTPProviderSecret, body)
+}
+
+// postNativeProviderEvent delivers one Stripe-signed event to an inbound
+// webhook endpoint, as the provider would, and returns the 202 receipt.
+func postNativeProviderEvent(t *testing.T, h *e2etest.Harness, endpointURL, secret string, body []byte) api.InboundWebhookReceiptResponse {
 	t.Helper()
 	u, err := url.Parse(endpointURL)
 	mustCustomerHTTP(t, err)
-	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, f.h.APIDURL+u.Path, bytes.NewReader(body))
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, h.APIDURL+u.Path, bytes.NewReader(body))
 	mustCustomerHTTP(t, err)
 	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("Stripe-Signature", stripex.SignForTest(body, customerHTTPProviderSecret, time.Now()))
-	response, err := f.h.HTTPClient().Do(request)
+	request.Header.Set("Stripe-Signature", stripex.SignForTest(body, secret, time.Now()))
+	response, err := h.HTTPClient().Do(request)
 	mustCustomerHTTP(t, err)
 	defer func() { _ = response.Body.Close() }()
 	var receipt api.InboundWebhookReceiptResponse

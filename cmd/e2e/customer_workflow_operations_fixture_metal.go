@@ -54,6 +54,7 @@ type customerWorkflowFixture struct {
 	app                            state.App
 	tenantID, policyPath, imageRef string
 	definition                     api.OperationDefinitionResponse
+	deployment                     api.DeploymentResponse
 	workflow                       api.WorkflowSpec
 	verifier                       *workloadidentity.Verifier
 	relay                          *customerWorkflowRelay
@@ -129,6 +130,7 @@ func newCustomerWorkflowFixture(t *testing.T, finalTimeout time.Duration) *custo
 		{Name: "finish", Path: "/finish", DependsOn: []string{"transform"}, Input: json.RawMessage(`{"mode":"{{steps.transform.output.mode}}","rows":"{{steps.transform.output.rows}}"}`), Timeout: finalTimeout},
 	}}
 	dep := f.deploy(t, "original")
+	f.deployment = dep
 	sealed, err := secretbox.SealBytes(ageKey.Recipient(), "APP_WEBHOOK", []byte(customerWorkflowWebhookSecret), api.AppWebhookSecretMaxBytes)
 	mustCustomerWorkflow(t, err)
 	hook, err := f.store.CreateAppWebhook(t.Context(), state.AppWebhook{Scope: state.AppWebhookScopeApp, AccountID: f.account.ID, AppID: f.app.ID, TargetURL: receiver.URL, SecretSealed: sealed, EventFilter: []string{string(state.AppWebhookEventOperationFinished)}, DeliveryFormat: state.AppWebhookDeliveryFormatCloudEvents, Enabled: true})
@@ -228,7 +230,7 @@ func customerWorkflowAccounting(t *testing.T) (string, objectstorage.Backend) {
 
 func (f *customerWorkflowFixture) deploy(t *testing.T, version string) api.DeploymentResponse {
 	t.Helper()
-	dep, err := f.owner.Deploy(t.Context(), f.app.Slug, api.CreateDeploymentRequest{Image: f.imageRef, Workflows: []api.WorkflowSpec{f.workflow}, Overrides: &api.CreateDeploymentOverrides{Env: map[string]string{"FIXTURE_VERSION": version}, Healthcheck: &api.DeploymentHealthcheck{Path: "/healthz"}}})
+	dep, err := f.owner.Deploy(t.Context(), f.app.Slug, api.CreateDeploymentRequest{Image: f.imageRef, Workflows: append([]api.WorkflowSpec{f.workflow}, customerWorkflowWaitChains()...), Overrides: &api.CreateDeploymentOverrides{Env: map[string]string{"FIXTURE_VERSION": version}, Healthcheck: &api.DeploymentHealthcheck{Path: "/healthz"}}})
 	mustCustomerWorkflow(t, err)
 	_, err = e2etest.WaitForDeploymentLive(t.Context(), t, f.h.Pool, dep.ID, 3*time.Minute)
 	mustCustomerWorkflow(t, err)
@@ -351,5 +353,24 @@ func assertCustomerWorkflowFence(t *testing.T, err error) {
 	var problem *api.APIError
 	if !errors.As(err, &problem) || (problem.Problem.Status != http.StatusConflict && problem.Problem.Status != http.StatusNotFound) {
 		t.Fatal("old native file proof was not fenced")
+	}
+}
+
+// customerWorkflowWaitChains are the ADR-1287 Stage 2 workflows deployed beside
+// export-chain. Step names equal the guest's routes; waits have no route.
+func customerWorkflowWaitChains() []api.WorkflowSpec {
+	finish := json.RawMessage(`{"mode":"{{steps.collect.output.mode}}","rows":"{{steps.collect.output.rows}}"}`)
+	return []api.WorkflowSpec{
+		{Name: "wait-chain", Steps: []api.WorkflowStepSpec{
+			{Name: "collect", Path: "/collect", Timeout: 2 * time.Minute},
+			{Name: "review", WaitForCallback: true, Timeout: 30 * time.Minute, DependsOn: []string{"collect"}},
+			{Name: "payment", WaitForEvent: "payment.succeeded", Timeout: 30 * time.Minute, DependsOn: []string{"review"}},
+			{Name: "finish", Path: "/finish", DependsOn: []string{"payment"}, Input: finish, Timeout: 2 * time.Minute},
+		}},
+		{Name: "timeout-chain", Steps: []api.WorkflowStepSpec{
+			{Name: "collect", Path: "/collect", Timeout: 2 * time.Minute},
+			{Name: "payment", WaitForEvent: "payment.succeeded", Timeout: 15 * time.Second, DependsOn: []string{"collect"}},
+			{Name: "finish", Path: "/finish", DependsOn: []string{"payment"}, Input: finish, Timeout: 2 * time.Minute},
+		}},
 	}
 }

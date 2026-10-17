@@ -23,6 +23,9 @@ const workflowFixtureCSV = "id,count\nalice,1\n"
 type workflowFixtureInput struct {
 	Mode string `json:"mode"`
 	Rows int    `json:"rows,omitempty"`
+	// OrderID is the business subject of the ADR-1287 wait scenarios; the
+	// steps ignore it.
+	OrderID string `json:"order_id,omitempty"`
 }
 
 type workflowFixtureServer struct {
