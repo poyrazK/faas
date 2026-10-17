@@ -110,6 +110,7 @@ export {
   RealtimeResyncRequiredError,
   type ConsumeRealtimeChannelOptions,
   type ConsumeRealtimeChannelsOptions,
+  type RealtimeChannelController,
   type RealtimeChannelConsumerOptions,
   type RealtimeChannelActions,
   type RealtimeConnectionOptions,
