@@ -45,3 +45,29 @@ func (e StorageResizeEvidence) Validate() error {
 type StorageResizeProber interface {
 	ProbeStorageResize(context.Context, string, Spec) (StorageResizeEvidence, error)
 }
+
+// MajorUpgradeEvidence proves an in-place major upgrade, to TargetMajor,
+// keeps the database whole and lands the new major. Like storage growth it
+// cannot be undone on the qualification resource.
+type MajorUpgradeEvidence struct {
+	TargetMajor          int  `json:"target_major"`
+	IdentityPreserved    bool `json:"identity_preserved"`
+	DataPreserved        bool `json:"data_preserved"`
+	CredentialsPreserved bool `json:"credentials_preserved"`
+	ReplayStable         bool `json:"replay_stable"`
+	MajorApplied         bool `json:"major_applied"`
+}
+
+func (e MajorUpgradeEvidence) Validate() error {
+	if e.TargetMajor <= 0 || !e.IdentityPreserved || !e.DataPreserved || !e.CredentialsPreserved || !e.ReplayStable || !e.MajorApplied {
+		return ErrUnavailable
+	}
+	return nil
+}
+
+// MajorUpgradeProber is called only on disposable qualification resources,
+// after every probe that expects the qualification spec. It upgrades the
+// resource to the next major its backend offers above the spec's.
+type MajorUpgradeProber interface {
+	ProbeMajorUpgrade(context.Context, string, Spec) (MajorUpgradeEvidence, error)
+}

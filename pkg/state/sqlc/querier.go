@@ -927,6 +927,12 @@ type Querier interface {
 	ExtendWorkflowRunLeaseFenced(ctx context.Context, db DBTX, arg ExtendWorkflowRunLeaseFencedParams) (int64, error)
 	FailAutomaticRouteCheck(ctx context.Context, db DBTX, arg FailAutomaticRouteCheckParams) (int64, error)
 	FailCheckedRollbackTarget(ctx context.Context, db DBTX, targetID pgtype.UUID) error
+	// Ends a pending major upgrade without its change: the provider refused it
+	// or it broke the cluster. Only an upgrade can fail.
+	FailManagedPostgresResize(ctx context.Context, db DBTX, arg FailManagedPostgresResizeParams) (int64, error)
+	// Puts the database back to ready on its source spec at the failed
+	// change's generation.
+	FailManagedPostgresResizeDatabase(ctx context.Context, db DBTX, arg FailManagedPostgresResizeDatabaseParams) (ManagedPostgresDatabase, error)
 	FailNotificationClaim(ctx context.Context, db DBTX, arg FailNotificationClaimParams) (int64, error)
 	FailedCheckedRollbackTarget(ctx context.Context, db DBTX, targetID pgtype.UUID) (bool, error)
 	// A synchronized standby's node becomes the database's: running if its

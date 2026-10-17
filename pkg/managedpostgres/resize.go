@@ -14,6 +14,10 @@ type ResizeState string
 const (
 	ResizePending   ResizeState = "pending"
 	ResizeSucceeded ResizeState = "succeeded"
+	// ResizeFailed ends a major upgrade the provider rejected for good
+	// (ErrorCode); the database is back on its source spec. Only upgrades
+	// fail.
+	ResizeFailed ResizeState = "failed"
 )
 
 // ResizeOperation journals a class, storage or idle-policy request and its
@@ -28,10 +32,15 @@ type ResizeOperation struct {
 	TargetStorageLimitBytes int64
 	PolicyChange            bool
 	TargetScaleToZero       bool
-	Generation              int64
-	State                   ResizeState
-	LastErrorCode           string
-	CreatedAt, CompletedAt  time.Time
+	// TargetPostgresMajor upgrades the major in place (upgrade.go); zero
+	// keeps it. An upgrade changes nothing else.
+	TargetPostgresMajor int
+	// ErrorCode is why a failed upgrade failed (ResizeFailed).
+	ErrorCode              string
+	Generation             int64
+	State                  ResizeState
+	LastErrorCode          string
+	CreatedAt, CompletedAt time.Time
 }
 
 func (r ResizeOperation) TargetSpec() Spec {
@@ -43,8 +52,14 @@ func (r ResizeOperation) TargetSpec() Spec {
 	if r.TargetStorageLimitBytes != 0 {
 		target.StorageLimitBytes = r.TargetStorageLimitBytes
 	}
+	if r.TargetPostgresMajor != 0 {
+		target.PostgresMajor = r.TargetPostgresMajor
+	}
 	return target
 }
+
+// MajorUpgrade reports whether the change is an in-place major upgrade.
+func (r ResizeOperation) MajorUpgrade() bool { return r.TargetPostgresMajor != 0 }
 
 // ResizeDatabaseRequest changes the class, the storage limit or both. An
 // empty class keeps the class; a zero or unchanged storage limit keeps the
@@ -53,6 +68,8 @@ type ResizeDatabaseRequest struct {
 	AccountID, DatabaseID, RequestID string
 	TargetClass                      ServiceClass
 	TargetStorageLimitBytes          int64
+	// TargetPostgresMajor is set only by UpgradeMajor.
+	TargetPostgresMajor int
 }
 
 // resizeTarget resolves a resize request against the source spec: the
@@ -79,6 +96,9 @@ type ResizeStore interface {
 	GetResize(context.Context, string, string) (ResizeOperation, error)
 	ActiveResize(context.Context, string, string) (ResizeOperation, error)
 	FinishResize(context.Context, Database, ResizeOperation, ObservedDatabase, time.Time) (Database, error)
+	// FailResize ends the claimed pending major upgrade as failed with a
+	// stable code and puts the database back to ready on its source spec.
+	FailResize(context.Context, Database, ResizeOperation, string, time.Time) (Database, error)
 }
 
 func validResizeRequestID(value string) bool {
@@ -92,6 +112,8 @@ func validResizeOperation(r ResizeOperation) bool {
 		validDataResourceID(r.DataResourceID) && r.SourceSpec.Validate() == nil && r.TargetSpec().Validate() == nil &&
 		(r.PolicyChange && r.TargetClass == r.SourceSpec.Class && r.TargetStorageLimitBytes == 0 || !r.PolicyChange && !r.TargetScaleToZero) &&
 		(r.TargetStorageLimitBytes == 0 || r.SourceSpec.StorageLimitBytes > 0 && r.TargetStorageLimitBytes > r.SourceSpec.StorageLimitBytes) &&
+		(!r.MajorUpgrade() || !r.PolicyChange && r.TargetClass == r.SourceSpec.Class && r.TargetStorageLimitBytes == 0 &&
+			r.TargetPostgresMajor > r.SourceSpec.PostgresMajor) &&
 		r.Generation > 1 && r.State == ResizePending && !r.CreatedAt.IsZero() && r.CompletedAt.IsZero()
 }
 
@@ -114,6 +136,9 @@ func validateResizeObservation(r ResizeOperation, observed ObservedDatabase) err
 // Resize commits customer intent only. Recovery is owned by the existing
 // reconciler and never depends on the lifetime of the HTTP request.
 func (s *Service) Resize(ctx context.Context, request ResizeDatabaseRequest) (ResizeOperation, error) {
+	if request.TargetPostgresMajor != 0 {
+		return ResizeOperation{}, ErrInvalid
+	}
 	return s.reserveComputeChange(ctx, request, nil)
 }
 
@@ -144,11 +169,17 @@ func (s *Service) reserveComputeChange(ctx context.Context, request ResizeDataba
 		BackendID: database.BackendID, BackendFingerprint: database.BackendFingerprint, ProviderResourceID: database.ProviderResourceID,
 		DataResourceID: database.DataResourceID, SourceSpec: database.Spec, TargetClass: database.Spec.Class,
 		Generation: database.DesiredGeneration + 1, State: ResizePending, CreatedAt: now}
-	if scaleToZero == nil {
+	switch {
+	case scaleToZero == nil && request.TargetPostgresMajor != 0:
+		if request.TargetClass != "" || request.TargetStorageLimitBytes != 0 || request.TargetPostgresMajor <= database.Spec.PostgresMajor {
+			return ResizeOperation{}, ErrInvalid
+		}
+		operation.TargetPostgresMajor = request.TargetPostgresMajor
+	case scaleToZero == nil:
 		if operation.TargetClass, operation.TargetStorageLimitBytes, err = resizeTarget(database.Spec, request); err != nil {
 			return ResizeOperation{}, err
 		}
-	} else {
+	default:
 		operation.PolicyChange, operation.TargetScaleToZero = true, *scaleToZero
 	}
 	target := operation.TargetSpec()
@@ -196,7 +227,7 @@ func (s *Service) GetResize(ctx context.Context, account, database, id string) (
 		return ResizeOperation{}, ErrInvalid
 	}
 	operation, err := store.GetResize(ctx, account, id)
-	if err == nil && (operation.DatabaseID != database || operation.PolicyChange) {
+	if err == nil && (operation.DatabaseID != database || operation.PolicyChange || operation.MajorUpgrade()) {
 		return ResizeOperation{}, ErrNotFound
 	}
 	return operation, err
@@ -229,6 +260,10 @@ func (s *Service) reconcileResize(ctx context.Context, database Database) (Datab
 		DataResourceID: operation.DataResourceID, PreviousSpec: operation.SourceSpec, Spec: operation.TargetSpec(),
 		Generation: operation.Generation, IdempotencyKey: "resize-" + operation.ID})
 	if err != nil {
+		var rejected *ChangeRejectedError
+		if operation.MajorUpgrade() && errors.As(err, &rejected) && validRejectionCode(rejected.Code) {
+			return s.failResize(ctx, store, claimed, operation, rejected.Code)
+		}
 		return Database{}, s.releaseProviderError(ctx, claimed, StateUpdating, err)
 	}
 	if err := validateResizeObservation(operation, observed); err != nil {
@@ -252,11 +287,40 @@ func (s *Service) reconcileResize(ctx context.Context, database Database) (Datab
 	return s.store.Get(ctx, claimed.AccountID, claimed.ID)
 }
 
-// computeChangeSupported: a storage target needs StorageResize, and
-// anything but a storage-only change needs ClassResize.
+// failResize ends a major upgrade the provider rejected for good: the
+// database is back to ready on its source spec, and the change records why.
+func (s *Service) failResize(ctx context.Context, store ResizeStore, claimed Database, operation ResizeOperation, code string) (Database, error) {
+	finishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), defaultStoreTimeout)
+	defer cancel()
+	result, err := store.FailResize(finishCtx, claimed, operation, code, s.now())
+	if err != nil {
+		return Database{}, s.releaseProviderError(ctx, claimed, StateUpdating, err)
+	}
+	return result, nil
+}
+
+// validRejectionCode matches a failed change's stable reason (the journal's CHECK).
+func validRejectionCode(code string) bool {
+	if code == "" || len(code) > 64 {
+		return false
+	}
+	for _, c := range code {
+		if (c < 'a' || c > 'z') && c != '_' {
+			return false
+		}
+	}
+	return true
+}
+
+// computeChangeSupported: an upgrade needs MajorUpgrade, a storage target
+// needs StorageResize, and anything but a storage-only change needs
+// ClassResize.
 func computeChangeSupported(c Capabilities, operation ResizeOperation) bool {
 	if operation.PolicyChange {
 		return c.ScaleToZeroUpdate
+	}
+	if operation.MajorUpgrade() {
+		return c.MajorUpgrade
 	}
 	storage := operation.TargetStorageLimitBytes != 0
 	if storage && !c.StorageResize {
@@ -272,7 +336,7 @@ func sameComputeChangeRequest(a, b ResizeOperation) bool {
 	if a.PolicyChange {
 		return a.TargetScaleToZero == b.TargetScaleToZero
 	}
-	return a.TargetClass == b.TargetClass && a.TargetStorageLimitBytes == b.TargetStorageLimitBytes
+	return a.TargetClass == b.TargetClass && a.TargetStorageLimitBytes == b.TargetStorageLimitBytes && a.TargetPostgresMajor == b.TargetPostgresMajor
 }
 
 // sameComputeChangeIntent reports whether a replayed request asks for what
@@ -283,6 +347,9 @@ func sameComputeChangeIntent(existing ResizeOperation, request ResizeDatabaseReq
 	}
 	if scaleToZero != nil {
 		return existing.TargetScaleToZero == *scaleToZero
+	}
+	if existing.MajorUpgrade() || request.TargetPostgresMajor != 0 {
+		return existing.TargetPostgresMajor == request.TargetPostgresMajor && request.TargetClass == "" && request.TargetStorageLimitBytes == 0
 	}
 	class, storage, err := resizeTarget(existing.SourceSpec, request)
 	return err == nil && existing.TargetClass == class && existing.TargetStorageLimitBytes == storage

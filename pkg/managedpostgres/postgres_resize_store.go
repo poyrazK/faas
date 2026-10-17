@@ -17,6 +17,7 @@ func resizeFromSQL(row sqlc.ManagedPostgresResize) (ResizeOperation, error) {
 	operation := ResizeOperation{ID: cutoverUUID(row.ID), AccountID: cutoverUUID(row.AccountID), DatabaseID: cutoverUUID(row.DatabaseID),
 		BackendID: row.BackendID, BackendFingerprint: row.BackendFingerprint, ProviderResourceID: row.ProviderResourceID,
 		PolicyChange: row.TargetScaleToZero.Valid, TargetScaleToZero: row.TargetScaleToZero.Bool, TargetStorageLimitBytes: row.TargetStorageLimitBytes.Int64,
+		TargetPostgresMajor: int(row.TargetPostgresMajor.Int32), ErrorCode: row.ErrorCode.String,
 		DataResourceID: row.DataResourceID, TargetClass: ServiceClass(row.TargetClass), Generation: row.Generation, State: ResizeState(row.State),
 		CreatedAt: bindingDeliveryTime(row.CreatedAt), CompletedAt: bindingDeliveryTime(row.CompletedAt)}
 	if json.Unmarshal(row.SourceSpec, &operation.SourceSpec) != nil || operation.SourceSpec.Validate() != nil || operation.TargetSpec().Validate() != nil {
@@ -136,7 +137,9 @@ func (s *PostgresStore) ReserveResize(ctx context.Context, expected Database, op
 	row, err = q.InsertManagedPostgresResize(ctx, tx, sqlc.InsertManagedPostgresResizeParams{ID: requestID, AccountID: account, DatabaseID: id,
 		BackendID: operation.BackendID, BackendFingerprint: operation.BackendFingerprint, ProviderResourceID: operation.ProviderResourceID,
 		DataResourceID: operation.DataResourceID, SourceSpec: source, TargetClass: string(operation.TargetClass), TargetScaleToZero: pgtype.Bool{Bool: operation.TargetScaleToZero, Valid: operation.PolicyChange},
-		TargetStorageLimitBytes: pgtype.Int8{Int64: operation.TargetStorageLimitBytes, Valid: operation.TargetStorageLimitBytes != 0}, Generation: operation.Generation, CreatedAt: clock})
+		TargetStorageLimitBytes: pgtype.Int8{Int64: operation.TargetStorageLimitBytes, Valid: operation.TargetStorageLimitBytes != 0},
+		TargetPostgresMajor:     pgtype.Int4{Int32: int32(operation.TargetPostgresMajor), Valid: operation.MajorUpgrade()}, //nolint:gosec // validated: a major
+		Generation:              operation.Generation, CreatedAt: clock})
 	if err != nil {
 		return ResizeOperation{}, mapPostgresError(err)
 	}
@@ -240,7 +243,75 @@ func (s *PostgresStore) FinishResize(ctx context.Context, expected Database, ope
 		return Database{}, ErrConflict
 	}
 	row, err = q.FinishManagedPostgresResizeDatabase(ctx, tx, sqlc.FinishManagedPostgresResizeDatabaseParams{ID: id, Account: account, Token: expected.LeaseToken, Generation: actual.Generation, TargetClass: string(actual.TargetClass), TargetScaleToZero: actual.TargetSpec().ScaleToZero,
-		TargetStorageLimitBytes: actual.TargetSpec().StorageLimitBytes, At: clock})
+		TargetStorageLimitBytes: actual.TargetSpec().StorageLimitBytes, TargetPostgresMajor: int16(actual.TargetSpec().PostgresMajor), At: clock}) //nolint:gosec // validated: a major
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Database{}, ErrConflict
+	}
+	if err != nil {
+		return Database{}, mapPostgresError(err)
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return Database{}, mapPostgresError(err)
+	}
+	return databaseFromSQL(row), nil
+}
+
+func (s *PostgresStore) FailResize(ctx context.Context, expected Database, operation ResizeOperation, code string, now time.Time) (Database, error) {
+	if now.IsZero() || expected.LeaseToken == "" || !operation.MajorUpgrade() || !validRejectionCode(code) {
+		return Database{}, ErrInvalid
+	}
+	account, err := postgresUUID(expected.AccountID)
+	if err != nil {
+		return Database{}, err
+	}
+	id, err := postgresUUID(expected.ID)
+	if err != nil {
+		return Database{}, err
+	}
+	requestID, err := postgresUUID(operation.ID)
+	if err != nil {
+		return Database{}, err
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return Database{}, err
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	q := sqlc.New()
+	row, err := q.LockManagedPostgresLifecycleDatabase(ctx, tx, sqlc.LockManagedPostgresLifecycleDatabaseParams{AccountID: account, ID: id})
+	if err != nil {
+		return Database{}, mapPostgresError(err)
+	}
+	clock, err := q.ReadProjectEnvironmentCloneDatabaseReservationTime(ctx, tx)
+	if err != nil {
+		return Database{}, err
+	}
+	active, err := q.ActiveManagedPostgresResize(ctx, tx, sqlc.ActiveManagedPostgresResizeParams{AccountID: account, DatabaseID: id})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Database{}, ErrConflict
+	}
+	if err != nil {
+		return Database{}, mapPostgresError(err)
+	}
+	actual, err := resizeFromSQL(active)
+	if err != nil {
+		return Database{}, err
+	}
+	database := databaseFromSQL(row)
+	if actual.ID != operation.ID || !actual.MajorUpgrade() || !sameComputeChangeRequest(actual, operation) || actual.Generation != operation.Generation ||
+		!resizeSourceMatches(database, actual) || !resizeSourceMatches(expected, actual) || database.State != StateUpdating ||
+		database.DesiredGeneration != actual.Generation || expected.DesiredGeneration != actual.Generation || database.ObservedGeneration != actual.Generation-1 ||
+		database.LeaseToken != expected.LeaseToken || !database.LeaseUntil.After(clock.Time) {
+		return Database{}, ErrConflict
+	}
+	changed, err := q.FailManagedPostgresResize(ctx, tx, sqlc.FailManagedPostgresResizeParams{ID: requestID, Database: id, Generation: actual.Generation, At: clock, ErrorCode: code})
+	if err != nil {
+		return Database{}, mapPostgresError(err)
+	}
+	if changed != 1 {
+		return Database{}, ErrConflict
+	}
+	row, err = q.FailManagedPostgresResizeDatabase(ctx, tx, sqlc.FailManagedPostgresResizeDatabaseParams{ID: id, Account: account, Token: expected.LeaseToken, Generation: actual.Generation, At: clock})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Database{}, ErrConflict
 	}

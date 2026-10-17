@@ -714,6 +714,56 @@ func (p *Provider) ProbeStorageResize(ctx context.Context, id string, spec manag
 	return evidence, err
 }
 
+// ProbeMajorUpgrade upgrades the qualification database in place to the
+// next major the backend offers above spec's, keeping a marker row and its
+// credentials across it, and replays the upgrade. The resource stays on the
+// new major.
+func (p *Provider) ProbeMajorUpgrade(ctx context.Context, id string, spec managedpostgres.Spec) (evidence managedpostgres.MajorUpgradeEvidence, err error) {
+	target := spec
+	for _, major := range p.cfg.Majors {
+		if major > spec.PostgresMajor && (target.PostgresMajor == spec.PostgresMajor || major < target.PostgresMajor) {
+			target.PostgresMajor = major
+		}
+	}
+	observed, err := p.Inspect(ctx, id)
+	if err != nil || observed.Status != managedpostgres.ProviderStatusReady || observed.Spec != spec || target.PostgresMajor == spec.PostgresMajor {
+		return evidence, managedpostgres.ErrUnavailable
+	}
+	evidence.TargetMajor = target.PostgresMajor
+	err = p.withMarker(ctx, id, "qualification-upgrade-", "gregale_upgrade_", func(key string, markersIntact func() bool) error {
+		request := managedpostgres.UpdateRequest{ResourceID: id, DataResourceID: observed.DataResourceID, PreviousSpec: spec, Spec: target, Generation: 2, IdempotencyKey: key}
+		upgraded, err := p.Update(ctx, request)
+		// Update reads the upgrade's outcome, a rejection included.
+		for err == nil && upgraded.Status == managedpostgres.ProviderStatusPending {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(p.poll):
+			}
+			upgraded, err = p.Update(ctx, request)
+		}
+		if err != nil || upgraded.Status != managedpostgres.ProviderStatusReady || upgraded.Spec != target {
+			return errors.Join(managedpostgres.ErrUnavailable, err)
+		}
+		replayed, err := p.Update(ctx, request)
+		if err != nil || replayed.Status != managedpostgres.ProviderStatusReady || replayed.Spec != target || replayed.DataResourceID != upgraded.DataResourceID {
+			return managedpostgres.ErrUnavailable
+		}
+		evidence.ReplayStable = true
+		if !markersIntact() || upgraded.DataResourceID != observed.DataResourceID || upgraded.ProviderResourceID != id {
+			return managedpostgres.ErrUnavailable
+		}
+		evidence.IdentityPreserved, evidence.DataPreserved, evidence.CredentialsPreserved = true, true, true
+		inspected, err := p.Inspect(ctx, id)
+		if err != nil || inspected.Spec.PostgresMajor != target.PostgresMajor {
+			return managedpostgres.ErrUnavailable
+		}
+		evidence.MajorApplied = true
+		return nil
+	})
+	return evidence, err
+}
+
 // withMarker writes a marker row through fresh migration credentials and
 // runs fn with a check that the writer and a read-only login still see it.
 // It then drops the fixture and revokes both credentials.

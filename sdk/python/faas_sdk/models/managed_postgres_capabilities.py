@@ -51,6 +51,9 @@ class ManagedPostgresCapabilities:
     storage_resize: bool
     """Growing the storage limit of existing databases is supported by the configured regional backend, up to
     storage_limit_bytes. Storage never shrinks."""
+    major_upgrade: bool
+    """Upgrading existing databases in place to a later major in postgres_majors is supported by the configured
+    regional backend."""
     storage_limit_bytes: int
     restore_window_seconds: int
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -95,6 +98,8 @@ class ManagedPostgresCapabilities:
 
         storage_resize = self.storage_resize
 
+        major_upgrade = self.major_upgrade
+
         storage_limit_bytes = self.storage_limit_bytes
 
         restore_window_seconds = self.restore_window_seconds
@@ -118,6 +123,7 @@ class ManagedPostgresCapabilities:
                 "scale_to_zero_update": scale_to_zero_update,
                 "class_resize": class_resize,
                 "storage_resize": storage_resize,
+                "major_upgrade": major_upgrade,
                 "storage_limit_bytes": storage_limit_bytes,
                 "restore_window_seconds": restore_window_seconds,
             }
@@ -175,6 +181,8 @@ class ManagedPostgresCapabilities:
 
         storage_resize = d.pop("storage_resize")
 
+        major_upgrade = d.pop("major_upgrade")
+
         storage_limit_bytes = d.pop("storage_limit_bytes")
 
         restore_window_seconds = d.pop("restore_window_seconds")
@@ -195,6 +203,7 @@ class ManagedPostgresCapabilities:
             scale_to_zero_update=scale_to_zero_update,
             class_resize=class_resize,
             storage_resize=storage_resize,
+            major_upgrade=major_upgrade,
             storage_limit_bytes=storage_limit_bytes,
             restore_window_seconds=restore_window_seconds,
         )

@@ -3,6 +3,7 @@ package firecracker
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/hmac"
 	"crypto/pbkdf2"
@@ -55,10 +56,12 @@ type fakeScheduler struct {
 	importRequired int64
 	// snapshots are held snapshots by database/name.
 	snapshots map[string]*scheddpb.DatabaseSnapshot
-	// upgrades are the upgrade requests; upgradeOutcome is what a running
-	// upgrade ends in when asked again (empty: it keeps running).
+	// upgrades are the upgrade requests. A running upgrade ends when asked
+	// again, in upgradeOutcome (empty: ok), unless upgradeHeld keeps it
+	// running.
 	upgrades       []*scheddpb.UpgradeDatabaseRequest
 	upgradeOutcome string
+	upgradeHeld    bool
 }
 
 // UpgradeDatabase models schedd's: a new operation starts an upgrade, the
@@ -73,9 +76,9 @@ func (f *fakeScheduler) UpgradeDatabase(_ context.Context, in *scheddpb.UpgradeD
 	}
 	up := rt.GetUpgrade()
 	switch {
-	case up.GetOperationId() == in.GetOperationId() && up.GetState() == "running" && f.upgradeOutcome != "":
-		up.State, rt.State = f.upgradeOutcome, "parked"
-		switch f.upgradeOutcome {
+	case up.GetOperationId() == in.GetOperationId() && up.GetState() == "running" && !f.upgradeHeld:
+		up.State, rt.State = cmp.Or(f.upgradeOutcome, "ok"), "parked"
+		switch up.State {
 		case "ok":
 			rt.PostgresMajor = up.GetToMajor()
 		case "failed":
@@ -956,6 +959,7 @@ func TestResourceUUIDIsStable(t *testing.T) {
 // refusal or a broken cluster is a final rejection.
 func TestUpdateUpgradesTheMajor(t *testing.T) {
 	p, sched, _ := newTestProvider(t)
+	sched.upgradeHeld = true
 	ctx := context.Background()
 	spec := devSpec()
 	spec.PostgresMajor = 14
@@ -976,7 +980,7 @@ func TestUpdateUpgradesTheMajor(t *testing.T) {
 	if _, err := p.Update(ctx, req); err != nil || sched.upgrades[1].GetOperationId() != first.GetOperationId() {
 		t.Fatalf("a repeat named another upgrade: %v, %v", sched.upgrades, err)
 	}
-	sched.upgradeOutcome = "ok"
+	sched.upgradeHeld = false
 	if obs, err := p.Update(ctx, req); err != nil || obs.Status != managedpostgres.ProviderStatusReady || obs.Spec != target {
 		t.Fatalf("finished upgrade = %+v, %v", obs, err)
 	}
@@ -996,13 +1000,13 @@ func TestUpdateUpgradesTheMajor(t *testing.T) {
 
 	for _, outcome := range []string{"refused", "failed"} {
 		sched.vms[resourceUUID(testDatabaseID)].State = "parked"
-		sched.upgradeOutcome = ""
+		sched.upgradeHeld = true
 		next := managedpostgres.UpdateRequest{ResourceID: testDatabaseID, PreviousSpec: target, Spec: target, Generation: 4, IdempotencyKey: "resize-" + outcome}
 		next.Spec.PostgresMajor = 18
 		if _, err := p.Update(ctx, next); err != nil {
 			t.Fatal(err)
 		}
-		sched.upgradeOutcome = outcome
+		sched.upgradeHeld, sched.upgradeOutcome = false, outcome
 		_, err := p.Update(ctx, next)
 		var rejected *managedpostgres.ChangeRejectedError
 		if !errors.As(err, &rejected) || rejected.Code != "upgrade_"+outcome || !errors.Is(err, managedpostgres.ErrConflict) {

@@ -357,7 +357,8 @@ func TestQualifyProviderPasses(t *testing.T) {
 		t.Fatalf("QualifyProvider = %v", err)
 	}
 	if report.ScaleToZero == nil || report.CredentialPrivileges == nil || report.ReadOnlyCredentials == nil || report.DataAPICredentials == nil || report.ComputePolicy == nil ||
-		report.StorageGrowth == nil || report.StorageGrowth.Validate() != nil {
+		report.StorageGrowth == nil || report.StorageGrowth.Validate() != nil || report.Upgrade == nil || report.Upgrade.Validate() != nil ||
+		report.Upgrade.TargetMajor <= devSpec().PostgresMajor {
 		t.Fatalf("report lacks prober evidence: %+v", report)
 	}
 }

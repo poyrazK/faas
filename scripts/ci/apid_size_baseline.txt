@@ -5,4 +5,7 @@
 # ADR-1027 native managed PostgreSQL adds 21 lines of wiring: the native
 # backend's factories, resize and capability glue, and the registration of
 # the database move and restart routes (pkg/apid/managedpg serves them).
-155957
+# In-place major upgrades add 18 lines: their two routes, the handler glue
+# that reads the configured service per request, and the capability (the
+# handlers live in pkg/apid/managedpg).
+155975

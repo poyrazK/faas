@@ -539,6 +539,10 @@ var dtoExclude = map[string]bool{
 	"ObsNodeDetailResponse":   true,
 	"ObsNodeDrainStatus":      true,
 	"ObsNodeMutationResponse": true,
+	// ADR-1027 operator moves and restarts of native databases
+	// (/v1/admin/ops/databases/*): admin-only, like the node mutations.
+	"ObsDatabaseMoveResponse":    true,
+	"ObsDatabaseRestartResponse": true,
 	// ObsTenant360Response / ObsTenantBilling / ObsTenantUsage*:
 	// PR #1099 P4 (post-PR #1111); admin-only tenant 360 + billing
 	// + usage shapes; intentionally undocumented.
@@ -1193,6 +1197,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "managed_postgres_capabilities.go"),
 		filepath.Join(root, "pkg", "api", "managed_postgres_resize.go"),
 		filepath.Join(root, "pkg", "api", "managed_postgres_compute_policy.go"),
+		filepath.Join(root, "pkg", "api", "managed_postgres_upgrade.go"),
 		filepath.Join(root, "pkg", "api", "managed_postgres_usage_import.go"),
 		filepath.Join(root, "pkg", "api", "managed_postgres_accounting_reconciliation.go"),
 		filepath.Join(root, "pkg", "api", openapiContractFile),

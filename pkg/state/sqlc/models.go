@@ -4375,6 +4375,8 @@ type ManagedPostgresResize struct {
 	CompletedAt             pgtype.Timestamptz
 	TargetScaleToZero       pgtype.Bool
 	TargetStorageLimitBytes pgtype.Int8
+	TargetPostgresMajor     pgtype.Int4
+	ErrorCode               pgtype.Text
 }
 
 type ManagedPostgresRestoreProof struct {

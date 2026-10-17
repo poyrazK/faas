@@ -232,6 +232,7 @@ func (p *Provider) Capabilities() managedpostgres.Capabilities {
 		PooledConnections:       true,
 		ClassResize:             len(classes) > 1,
 		StorageResize:           true,
+		MajorUpgrade:            len(p.cfg.Majors) > 1,
 		MaxStorageBytes:         p.cfg.MaxStorageBytes,
 		PointInTimeRestore:      p.cfg.MaxRestoreWindowSeconds > 0,
 		MaxRestoreWindowSeconds: p.cfg.MaxRestoreWindowSeconds,

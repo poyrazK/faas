@@ -300,6 +300,12 @@ type metalStack struct {
 
 func newMetalStack(t *testing.T, workdir, base string) *metalStack {
 	t.Helper()
+	return newMetalStackWith(t, workdir, map[int]string{17: base})
+}
+
+// newMetalStackWith is newMetalStack with a base per major.
+func newMetalStackWith(t *testing.T, workdir string, bases map[int]string) *metalStack {
+	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	parent := "dbdriver-metal-test"
@@ -330,7 +336,7 @@ func newMetalStack(t *testing.T, workdir, base string) *metalStack {
 	}()
 	rt, err := dbvm.NewRuntime(dbvm.RuntimeConfig{
 		JailBase: filepath.Join(workdir, "djail"), VolumeRoot: filepath.Join(workdir, "drivervolumes"),
-		KernelPath: "/srv/fc/kernel/1.7.0", Bases: map[int]string{17: base}, ParentCgroup: parent,
+		KernelPath: "/srv/fc/kernel/1.7.0", Bases: bases, ParentCgroup: parent,
 		JailerBin: "/usr/local/bin/jailer", FirecrackerBin: "/usr/local/bin/firecracker", Leases: &driverLeaser{},
 		ArchiveSocket: archiveSock,
 	})

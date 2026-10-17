@@ -1308,6 +1308,9 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/postgres/databases/{id}/compute-policy-changes/{change_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.getManagedPostgresComputePolicyChange))))
 	mux.HandleFunc("POST /v1/postgres/databases/{id}/resize", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.resizeManagedPostgresDatabase)))))
 	mux.HandleFunc("GET /v1/postgres/databases/{id}/resizes/{resize_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.getManagedPostgresResize))))
+	// ADR-1027 in-place major upgrades; pkg/apid/managedpg serves them.
+	mux.HandleFunc("POST /v1/postgres/databases/{id}/upgrade", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.managedPostgresUpgrade(managedpg.Upgrades.Post))))))
+	mux.HandleFunc("GET /v1/postgres/databases/{id}/upgrades/{upgrade_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.managedPostgresUpgrade(managedpg.Upgrades.Get)))))
 	mux.HandleFunc("GET /v1/postgres/databases/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.getManagedPostgresDatabase))))
 	mux.HandleFunc("DELETE /v1/postgres/databases/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.idempotent(s.deleteManagedPostgresDatabase)))))
 	mux.HandleFunc("POST /v1/postgres/databases/{id}/restore", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.idempotent(s.restoreManagedPostgresDatabase))))))

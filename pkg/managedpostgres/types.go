@@ -668,6 +668,10 @@ type Capabilities struct {
 	// StorageResize means Update grows StorageLimitBytes in place. Storage
 	// never shrinks.
 	StorageResize bool
+	// MajorUpgrade means Update upgrades PostgresMajor in place to a later
+	// one of PostgresMajors, and may reject it for good with a
+	// *ChangeRejectedError.
+	MajorUpgrade bool
 	// RestoreUsageIsolated means a provider can meter a restored target
 	// independently of its source. It must not also be counted in the source
 	// resource's Usage response.
@@ -691,7 +695,7 @@ func (c Capabilities) Validate() error {
 	if c.ScaleToZeroUpdate && !c.ScaleToZero {
 		return ErrInvalid
 	}
-	if c.ClassResize && len(c.ServiceClasses) < 2 {
+	if c.ClassResize && len(c.ServiceClasses) < 2 || c.MajorUpgrade && len(c.PostgresMajors) < 2 {
 		return ErrInvalid
 	}
 	hasRestoreUsageAccounting := c.RestoreUsageIsolated || c.RestoreUsageIncludedInSource

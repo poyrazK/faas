@@ -19,6 +19,8 @@ type resizeTestProvider struct {
 	patches      int
 	calls        int
 	drift        bool
+	// reject, when set, rejects the change for good with this code.
+	reject string
 }
 
 func (p *resizeTestProvider) Provision(ctx context.Context, r ProvisionRequest) (ObservedDatabase, error) {
@@ -36,6 +38,9 @@ func (p *resizeTestProvider) Update(_ context.Context, r UpdateRequest) (Observe
 	if p.lostResponse {
 		p.lostResponse = false
 		return ObservedDatabase{}, ErrUnavailable
+	}
+	if p.reject != "" {
+		return ObservedDatabase{}, &ChangeRejectedError{Code: p.reject}
 	}
 	result := ObservedDatabase{ProviderResourceID: r.ResourceID, DataResourceID: r.DataResourceID, Spec: r.Spec, Status: ProviderStatusReady}
 	if p.pending {

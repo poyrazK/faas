@@ -15032,8 +15032,8 @@ WHERE id=sqlc.arg(id)::uuid AND state='ready' AND desired_generation=sqlc.arg(so
 
 -- name: InsertManagedPostgresResize :one
 INSERT INTO managed_postgres_resizes(id,account_id,database_id,backend_id,backend_fingerprint,provider_resource_id,data_resource_id,
-    source_spec,target_class,target_scale_to_zero,target_storage_limit_bytes,generation,state,created_at)
-VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,'pending',$13) RETURNING *;
+    source_spec,target_class,target_scale_to_zero,target_storage_limit_bytes,target_postgres_major,generation,state,created_at)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'pending',$14) RETURNING *;
 
 -- name: ClaimManagedPostgresResize :one
 UPDATE managed_postgres_databases SET lease_token=sqlc.arg(lease_token)::text,lease_until=sqlc.arg(until)::timestamptz,
@@ -15049,7 +15049,24 @@ WHERE id=sqlc.arg(id)::uuid AND database_id=sqlc.arg(database)::uuid AND generat
 
 -- name: FinishManagedPostgresResizeDatabase :one
 UPDATE managed_postgres_databases SET state='ready',service_class=sqlc.arg(target_class)::text,scale_to_zero=sqlc.arg(target_scale_to_zero)::boolean,
-    storage_limit_bytes=sqlc.arg(target_storage_limit_bytes)::bigint,observed_generation=desired_generation,
+    storage_limit_bytes=sqlc.arg(target_storage_limit_bytes)::bigint,postgres_major=sqlc.arg(target_postgres_major)::smallint,
+    observed_generation=desired_generation,
+    last_error_code=NULL,lease_token=NULL,lease_until=NULL,attempt_count=0,retry_at=sqlc.arg(at)::timestamptz,updated_at=sqlc.arg(at)::timestamptz
+WHERE id=sqlc.arg(id)::uuid AND account_id=sqlc.arg(account)::uuid AND state='updating'
+    AND desired_generation=sqlc.arg(generation)::bigint AND observed_generation=desired_generation-1
+    AND lease_token=sqlc.arg(token)::text AND lease_until>sqlc.arg(at)::timestamptz AND lease_until>clock_timestamp() RETURNING *;
+
+-- name: FailManagedPostgresResize :execrows
+-- Ends a pending major upgrade without its change: the provider refused it
+-- or it broke the cluster. Only an upgrade can fail.
+UPDATE managed_postgres_resizes SET state='failed',completed_at=sqlc.arg(at)::timestamptz,error_code=sqlc.arg(error_code)::text
+WHERE id=sqlc.arg(id)::uuid AND database_id=sqlc.arg(database)::uuid AND generation=sqlc.arg(generation)::bigint
+    AND state='pending' AND target_postgres_major IS NOT NULL;
+
+-- name: FailManagedPostgresResizeDatabase :one
+-- Puts the database back to ready on its source spec at the failed
+-- change's generation.
+UPDATE managed_postgres_databases SET state='ready',observed_generation=desired_generation,
     last_error_code=NULL,lease_token=NULL,lease_until=NULL,attempt_count=0,retry_at=sqlc.arg(at)::timestamptz,updated_at=sqlc.arg(at)::timestamptz
 WHERE id=sqlc.arg(id)::uuid AND account_id=sqlc.arg(account)::uuid AND state='updating'
     AND desired_generation=sqlc.arg(generation)::bigint AND observed_generation=desired_generation-1

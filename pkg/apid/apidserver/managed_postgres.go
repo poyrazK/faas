@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"math"
+	"net/http"
 	"time"
 
 	"filippo.io/age"
@@ -12,6 +13,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/managedpg"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -212,6 +214,18 @@ func managedPostgresUsageCeilings(limits api.ManagedPostgresPlanLimits) managedp
 		return managedpostgres.UsageCeilings{}
 	}
 	return managedpostgres.UsageCeilings{MaxMonthlyStorageByteSeconds: accountStorageBytes * secondsPerBillingMonth}
+}
+
+// managedPostgresUpgrade serves a major-upgrade route with the service as
+// configured when the request arrives.
+func (s *server) managedPostgresUpgrade(serve func(managedpg.Upgrades, http.ResponseWriter, *http.Request, state.Account)) accountHandler {
+	return func(w http.ResponseWriter, r *http.Request, acct state.Account) {
+		u := managedpg.Upgrades{Problem: managedPostgresProblem, NotConfigured: managedPostgresNotConfiguredProblem, Audit: s.audit}
+		if s.managedPostgres != nil {
+			u.Service = s.managedPostgres
+		}
+		serve(u, w, r, acct)
+	}
 }
 
 func (s *server) WithManagedPostgres(service *managedpostgres.Service, reconciler *managedpostgres.Reconciler, bindingService *managedpostgres.BindingService, bindingReconciler *managedpostgres.BindingReconciler, usageCollector *managedpostgres.UsageCollector, healthCollector *managedpostgres.HealthCollector) *server {

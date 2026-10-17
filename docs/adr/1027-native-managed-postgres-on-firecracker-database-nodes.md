@@ -1297,12 +1297,36 @@ An upgrade must change apid's catalog too. A major changed only in schedd
 would read as `spec_mismatch` to the health collector and block resizes,
 so there is no schedd-only operator path.
 
-Not yet done: the customer surface. That is apid's journaled compute
-change (`managed_postgres_resizes`) with a target major and a final
-`failed` state for `ChangeRejectedError` (the journal now knows only
-`pending` and `succeeded`, retried hourly), a `MajorUpgrade` capability,
-the API and CLI, and docs. Operators would use the same path on a
-customer's behalf.
+**The customer surface.** An upgrade is apid's journaled compute change,
+in the same journal (`managed_postgres_resizes`) as resizes and
+compute-policy changes, so one change runs at a time and the reconciler
+drives it (migration `20261017145204318_managed_postgres_major_upgrade`):
+
+- **The journal.** `target_postgres_major` names the major. A CHECK keeps it
+  above the source's and every other target unchanged.
+- **Failure.** An upgrade is the one change that can end `failed`, with a
+  stable `error_code`. The reconciler ends it so on a `ChangeRejectedError`
+  instead of retrying. The catalog database goes back to `ready` on its
+  source spec at the change's generation. It stays `ready` even for
+  `upgrade_failed`, so a point-in-time restore from it still works. The
+  health collector reports schedd's failed VM.
+- **Guards.** The receipt trigger checks a failed change's database against
+  the source spec, and an outcome is final (the intent guard).
+- **Admission.** `Resize` refuses a major, and `UpgradeMajor` changes only
+  the major. Admission needs the backend's `MajorUpgrade` capability
+  (native: when it offers two majors or more) and the target in its
+  majors.
+- **API.** `POST /v1/postgres/databases/{id}/upgrade` and `GET
+  .../upgrades/{upgrade_id}` (served from `pkg/apid/managedpg`), `gregale
+  postgres upgrade|upgrade-status`, the SDKs, and `major_upgrade` in
+  capabilities. Every plan may upgrade.
+- **Qualification.** A backend that advertises it must pass
+  `major_upgrade_probe` (`MajorUpgradeEvidence`). The disposable
+  qualification database is upgraded to the next offered major above its
+  spec's, with its marker data, credentials, identity and a stable replay
+  intact. A backend's capability that differs from its qualification report
+  (`major_upgrade_capabilities_mismatch`) fences provisioning until it is
+  requalified.
 
 ### Spares
 

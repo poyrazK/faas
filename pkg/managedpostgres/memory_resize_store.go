@@ -46,6 +46,29 @@ func (s *MemoryStore) ReserveResize(_ context.Context, expected Database, operat
 	return operation, nil
 }
 
+func (s *MemoryStore) FailResize(_ context.Context, expected Database, operation ResizeOperation, code string, now time.Time) (Database, error) {
+	if !operation.MajorUpgrade() || !validRejectionCode(code) {
+		return Database{}, ErrInvalid
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	database, ok := s.databases[expected.ID]
+	actual, found := s.resizes[operation.ID]
+	if !ok || !found || !actual.MajorUpgrade() || !sameComputeChangeRequest(actual, operation) || actual.State != ResizePending ||
+		actual.Generation != operation.Generation || !resizeSourceMatches(database, actual) || !resizeSourceMatches(expected, actual) ||
+		database.State != StateUpdating || database.DesiredGeneration != actual.Generation || expected.DesiredGeneration != actual.Generation ||
+		database.ObservedGeneration != actual.Generation-1 || database.LeaseToken == "" || database.LeaseToken != expected.LeaseToken ||
+		now.IsZero() || !database.LeaseUntil.After(now) {
+		return Database{}, ErrConflict
+	}
+	database.State, database.ObservedGeneration = StateReady, database.DesiredGeneration
+	database.LastErrorCode, database.LeaseToken, database.AttemptCount = "", "", 0
+	database.LeaseUntil, database.RetryAt, database.UpdatedAt = time.Time{}, now, now
+	actual.State, actual.CompletedAt, actual.ErrorCode = ResizeFailed, now, code
+	s.databases[database.ID], s.resizes[actual.ID] = database, actual
+	return cloneDatabase(database), nil
+}
+
 func (s *MemoryStore) resizeView(operation ResizeOperation) ResizeOperation {
 	if operation.State == ResizePending {
 		operation.LastErrorCode = s.databases[operation.DatabaseID].LastErrorCode

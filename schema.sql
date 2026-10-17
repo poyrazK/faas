@@ -1297,10 +1297,14 @@ BEGIN
  IF r.target_storage_limit_bytes IS NOT NULL THEN
   target_spec := target_spec || jsonb_build_object('StorageLimitBytes',r.target_storage_limit_bytes);
  END IF;
+ IF r.target_postgres_major IS NOT NULL THEN
+  target_spec := target_spec || jsonb_build_object('PostgresMajor',r.target_postgres_major);
+ END IF;
  actual_spec := jsonb_build_object('Region',d.region,'PostgresMajor',d.postgres_major,'Class',d.service_class,
   'Availability',d.availability,'ScaleToZero',d.scale_to_zero,'StorageLimitBytes',d.storage_limit_bytes,'RestoreWindowSeconds',d.restore_window_seconds);
- IF r.account_id<>d.account_id OR (r.state='succeeded' AND d.observed_generation<r.generation)
-  OR (r.state='succeeded' AND d.observed_generation=r.generation AND (target_spec IS DISTINCT FROM actual_spec
+ IF r.account_id<>d.account_id OR (r.state IN ('succeeded','failed') AND d.observed_generation<r.generation)
+  OR (r.state IN ('succeeded','failed') AND d.observed_generation=r.generation
+   AND ((CASE WHEN r.state='succeeded' THEN target_spec ELSE r.source_spec END) IS DISTINCT FROM actual_spec
     OR r.backend_id<>d.backend_id OR r.backend_fingerprint<>d.backend_fingerprint
     OR r.provider_resource_id IS DISTINCT FROM d.provider_resource_id OR r.data_resource_id IS DISTINCT FROM d.data_resource_id))
   OR (r.state='pending' AND (d.state<>'updating' OR d.desired_generation<>r.generation OR d.observed_generation<>r.generation-1
@@ -8648,8 +8652,8 @@ BEGIN
   END IF;
   RETURN OLD;
  END IF;
- IF (to_jsonb(NEW)-'state'-'completed_at') IS DISTINCT FROM (to_jsonb(OLD)-'state'-'completed_at')
-  OR (OLD.state='succeeded' AND NEW IS DISTINCT FROM OLD) THEN
+ IF (to_jsonb(NEW)-'state'-'completed_at'-'error_code') IS DISTINCT FROM (to_jsonb(OLD)-'state'-'completed_at'-'error_code')
+  OR (OLD.state<>'pending' AND NEW IS DISTINCT FROM OLD) THEN
   RAISE EXCEPTION 'resize intent is immutable' USING ERRCODE='23514', CONSTRAINT='managed_postgres_resize_conflict';
  END IF;
  RETURN NEW;
@@ -22178,16 +22182,20 @@ CREATE TABLE public.managed_postgres_resizes (
     completed_at timestamp with time zone,
     target_scale_to_zero boolean,
     target_storage_limit_bytes bigint,
+    target_postgres_major integer,
+    error_code text,
     CONSTRAINT managed_postgres_compute_policy_target_check CHECK (((target_scale_to_zero IS NULL) OR ((NOT (target_class IS DISTINCT FROM (source_spec ->> 'Class'::text))) AND (NOT (jsonb_typeof((source_spec -> 'ScaleToZero'::text)) IS DISTINCT FROM 'boolean'::text))))),
     CONSTRAINT managed_postgres_resizes_backend_fingerprint_check CHECK ((backend_fingerprint ~ '^[a-f0-9]{64}$'::text)),
     CONSTRAINT managed_postgres_resizes_backend_id_check CHECK ((length(backend_id) > 0)),
-    CONSTRAINT managed_postgres_resizes_check CHECK ((((state = 'pending'::text) AND (completed_at IS NULL)) OR ((state = 'succeeded'::text) AND (completed_at IS NOT NULL) AND (completed_at >= created_at)))),
+    CONSTRAINT managed_postgres_major_upgrade_target_check CHECK (((target_postgres_major IS NULL) OR ((target_scale_to_zero IS NULL) AND (target_storage_limit_bytes IS NULL) AND (target_class = (source_spec ->> 'Class'::text)) AND (jsonb_typeof((source_spec -> 'PostgresMajor'::text)) = 'number'::text) AND ((target_postgres_major)::numeric > ((source_spec ->> 'PostgresMajor'::text))::numeric) AND (target_postgres_major <= 99)))),
+    CONSTRAINT managed_postgres_resize_outcome_check CHECK ((((state = 'failed'::text) = (error_code IS NOT NULL)) AND ((error_code IS NULL) OR (error_code ~ '^[a-z_]{1,64}$'::text)) AND ((state <> 'failed'::text) OR (target_postgres_major IS NOT NULL)))),
+    CONSTRAINT managed_postgres_resizes_check CHECK ((((state = 'pending'::text) AND (completed_at IS NULL)) OR ((state = ANY (ARRAY['succeeded'::text, 'failed'::text])) AND (completed_at IS NOT NULL) AND (completed_at >= created_at)))),
     CONSTRAINT managed_postgres_resizes_data_resource_id_check CHECK (((length(data_resource_id) >= 1) AND (length(data_resource_id) <= 255))),
     CONSTRAINT managed_postgres_resizes_generation_check CHECK ((generation > 1)),
     CONSTRAINT managed_postgres_resizes_provider_resource_id_check CHECK (((length(provider_resource_id) >= 1) AND (length(provider_resource_id) <= 255))),
     CONSTRAINT managed_postgres_resizes_source_spec_check CHECK ((jsonb_typeof(source_spec) = 'object'::text)),
     CONSTRAINT managed_postgres_storage_resize_target_check CHECK (((target_storage_limit_bytes IS NULL) OR ((target_scale_to_zero IS NULL) AND (jsonb_typeof((source_spec -> 'StorageLimitBytes'::text)) = 'number'::text) AND (((source_spec ->> 'StorageLimitBytes'::text))::numeric > (0)::numeric) AND ((target_storage_limit_bytes)::numeric > ((source_spec ->> 'StorageLimitBytes'::text))::numeric)))),
-    CONSTRAINT managed_postgres_resizes_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'succeeded'::text]))),
+    CONSTRAINT managed_postgres_resizes_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'succeeded'::text, 'failed'::text]))),
     CONSTRAINT managed_postgres_resizes_target_class_check CHECK ((target_class = ANY (ARRAY['development'::text, 'burstable'::text, 'production'::text])))
 );
 
