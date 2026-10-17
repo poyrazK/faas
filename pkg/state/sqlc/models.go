@@ -3972,6 +3972,13 @@ type FinancialBudgetStopTarget struct {
 	LastError     string
 }
 
+type FinancialComputeAccountBook struct {
+	AccountID   pgtype.UUID
+	PeriodStart pgtype.Timestamptz
+	PeriodEnd   pgtype.Timestamptz
+	Payload     []byte
+}
+
 type FinancialComputeBook struct {
 	AccountID   pgtype.UUID
 	AppID       pgtype.UUID

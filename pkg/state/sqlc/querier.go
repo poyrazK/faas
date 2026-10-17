@@ -1102,9 +1102,18 @@ type Querier interface {
 	FinancialBudgetStopTargetPut(ctx context.Context, db DBTX, arg FinancialBudgetStopTargetPutParams) (int64, error)
 	FinancialBudgetUpdate(ctx context.Context, db DBTX, arg FinancialBudgetUpdateParams) (FinancialBudgetPolicy, error)
 	FinancialCompletedComputeMinutes(ctx context.Context, db DBTX, arg FinancialCompletedComputeMinutesParams) ([]pgtype.Timestamptz, error)
+	FinancialComputeAccountActivationSafe(ctx context.Context, db DBTX, accountID pgtype.UUID) (pgtype.Bool, error)
+	// All account compute, including deleted apps and former jobs, consumes the
+	// same quantity allowance. Missing or above-ceiling contracts fail closed.
+	FinancialComputeAccountBaseline(ctx context.Context, db DBTX, arg FinancialComputeAccountBaselineParams) (FinancialComputeAccountBaselineRow, error)
+	FinancialComputeAccountBookGet(ctx context.Context, db DBTX, arg FinancialComputeAccountBookGetParams) ([]byte, error)
+	FinancialComputeAccountBookPut(ctx context.Context, db DBTX, arg FinancialComputeAccountBookPutParams) error
+	FinancialComputeAccountLeases(ctx context.Context, db DBTX, accountID pgtype.UUID) ([][]byte, error)
+	FinancialComputeAccountSamplingReady(ctx context.Context, db DBTX, arg FinancialComputeAccountSamplingReadyParams) (pgtype.Bool, error)
+	FinancialComputeAccountStrictEnabled(ctx context.Context, db DBTX, accountID pgtype.UUID) (bool, error)
 	FinancialComputeActivationSafe(ctx context.Context, db DBTX, arg FinancialComputeActivationSafeParams) (bool, error)
 	FinancialComputeAppLeases(ctx context.Context, db DBTX, arg FinancialComputeAppLeasesParams) ([][]byte, error)
-	FinancialComputeAppManaged(ctx context.Context, db DBTX, arg FinancialComputeAppManagedParams) (bool, error)
+	FinancialComputeAppManaged(ctx context.Context, db DBTX, arg FinancialComputeAppManagedParams) (pgtype.Bool, error)
 	FinancialComputeAppOwned(ctx context.Context, db DBTX, arg FinancialComputeAppOwnedParams) (bool, error)
 	// Positive retained charges seed admission conservatively. Corrections cannot
 	// grant execution authority, and missing contracts must fail activation.

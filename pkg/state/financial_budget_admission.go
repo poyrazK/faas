@@ -61,7 +61,7 @@ func CheckFinancialBudgetAdmission(ctx context.Context, store Store, app App, de
 			return errors.Join(err, api.ErrCapacity("compute budget admission unavailable"))
 		}
 		for _, p := range policies {
-			if !p.Spec.Enabled || !financial.StrictAppCompute(p.Spec) {
+			if !p.Spec.Enabled || !financial.StrictCompute(p.Spec) {
 				continue
 			}
 			balance, err := compute.FinancialComputeBalance(ctx, p, now)
@@ -69,7 +69,7 @@ func CheckFinancialBudgetAdmission(ctx context.Context, store Store, app App, de
 				return errors.Join(err, api.ErrCapacity("compute budget authority unavailable"))
 			}
 			if balance.Held {
-				return errors.Join(ErrFinancialBudgetHeld, api.NewProblem(402, "financial_budget_held", "Compute budget held", "This app's strict compute budget cannot fund another execution window. Change its policy or wait for its configured UTC reset."))
+				return errors.Join(ErrFinancialBudgetHeld, api.NewProblem(402, "financial_budget_held", "Compute budget held", "A strict compute budget cannot fund another execution window. Change its policy or wait for its configured UTC reset."))
 			}
 		}
 	}

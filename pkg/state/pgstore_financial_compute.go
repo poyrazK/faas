@@ -40,6 +40,9 @@ type pgFinancialComputeTxn struct {
 
 func (t *pgFinancialComputeTxn) clock() time.Time { return t.now }
 func (t *pgFinancialComputeTxn) book(app string, month time.Time) (financial.ComputeBook, error) {
+	if app == "" {
+		return t.accountBook(month)
+	}
 	id, _ := parsePgUUID(app)
 	raw, err := t.q.FinancialComputeBookGet(t.ctx, t.db, sqlc.FinancialComputeBookGetParams{AccountID: t.account, AppID: id, PeriodStart: pgTime(month)})
 	var b financial.ComputeBook
@@ -52,6 +55,9 @@ func (t *pgFinancialComputeTxn) book(app string, month time.Time) (financial.Com
 	return b, err
 }
 func (t *pgFinancialComputeTxn) putBook(b financial.ComputeBook) error {
+	if b.AppID == "" {
+		return t.putAccountBook(b)
+	}
 	id, _ := parsePgUUID(b.AppID)
 	raw, err := json.Marshal(b)
 	if err != nil {
@@ -111,6 +117,9 @@ func decodeComputeLeases(rows [][]byte, err error) ([]financial.ComputeLease, er
 	return out, nil
 }
 func (t *pgFinancialComputeTxn) active(app string) ([]financial.ComputeLease, error) {
+	if app == "" {
+		return decodeComputeLeases(t.q.FinancialComputeAccountLeases(t.ctx, t.db, t.account))
+	}
 	id, _ := parsePgUUID(app)
 	return decodeComputeLeases(t.q.FinancialComputeAppLeases(t.ctx, t.db, sqlc.FinancialComputeAppLeasesParams{AccountID: t.account, AppID: id}))
 }
@@ -125,7 +134,7 @@ func (t *pgFinancialComputeTxn) policies(app string) ([]FinancialBudget, error) 
 		if err != nil {
 			return nil, err
 		}
-		if p.Spec.Scope.Kind == "app" && p.Spec.Scope.ID == app {
+		if p.Spec.Scope.Kind == "account" || p.Spec.Scope.Kind == "app" && p.Spec.Scope.ID == app {
 			out = append(out, p)
 		}
 	}
@@ -198,6 +207,9 @@ func (s *PgStore) AcquireFinancialCompute(ctx context.Context, r financial.Compu
 			return err
 		}
 		if len(strictComputePolicies(policies, r.AppID)) > 0 {
+			if err := tx.ensureAccount(policies); err != nil {
+				return err
+			}
 			if _, err = tx.book(r.AppID, financial.ComputeMonth(tx.now)); errors.Is(err, ErrNotFound) {
 				err = tx.initialize(r.AppID, false)
 			}
@@ -276,7 +288,8 @@ func (s *PgStore) FinancialComputeInstanceLease(ctx context.Context, account, ap
 func (s *PgStore) FinancialComputeAppManaged(ctx context.Context, account, app string) (bool, error) {
 	a, _ := parsePgUUID(account)
 	p, _ := parsePgUUID(app)
-	return sqlc.New().FinancialComputeAppManaged(ctx, s.pool, sqlc.FinancialComputeAppManagedParams{AccountID: a, AppID: p})
+	managed, err := sqlc.New().FinancialComputeAppManaged(ctx, s.pool, sqlc.FinancialComputeAppManagedParams{AccountID: a, AppID: p})
+	return managed.Valid && managed.Bool, err
 }
 func (s *PgStore) FinancialComputeNodeLeases(ctx context.Context, node string) ([]financial.ComputeLease, error) {
 	if uuid.Validate(node) != nil {
@@ -334,7 +347,10 @@ func (s *PgStore) FinancialComputeBillingSeconds(ctx context.Context, account, a
 func (s *PgStore) FinancialComputeFloorCovered(ctx context.Context, account, app string, at time.Time) (bool, error) {
 	a, _ := parsePgUUID(account)
 	reader := &pgFinancialComputeTxn{ctx: ctx, db: s.pool, q: sqlc.New(), account: a}
-	_, err := reader.book(app, financial.ComputeMonth(at))
+	_, err := reader.book("", financial.ComputeMonth(at))
+	if errors.Is(err, ErrNotFound) {
+		_, err = reader.book(app, financial.ComputeMonth(at))
+	}
 	if err == nil {
 		return true, nil
 	}
@@ -358,6 +374,9 @@ func (s *PgStore) FinancialComputeReady(ctx context.Context, account, app string
 	return tx.ready(app, true)
 }
 func (t *pgFinancialComputeTxn) ready(app string, quiet bool) (bool, error) {
+	if app == "" {
+		return t.accountReady()
+	}
 	ready, err := t.q.FinancialComputeOwnersReady(t.ctx, t.db, 3*api.FinancialComputeOwnerHeartbeat.Seconds())
 	if err != nil || !ready.Valid || !ready.Bool {
 		return false, err
@@ -378,6 +397,9 @@ func (t *pgFinancialComputeTxn) ready(app string, quiet bool) (bool, error) {
 	return readySampling.Valid && readySampling.Bool, err
 }
 func (t *pgFinancialComputeTxn) initialize(app string, quiet bool) error {
+	if app == "" {
+		return t.initializeAccount()
+	}
 	ready, err := t.ready(app, quiet)
 	if err != nil {
 		return err

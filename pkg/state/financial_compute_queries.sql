@@ -46,7 +46,8 @@ SELECT payload FROM financial_compute_leases
  ORDER BY started_at DESC,(payload->>'granted_at')::timestamptz DESC LIMIT 1;
 
 -- name: FinancialComputeAppManaged :one
-SELECT EXISTS(SELECT 1 FROM financial_compute_books WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid) AS managed;
+SELECT EXISTS(SELECT 1 FROM financial_compute_books WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid)
+ OR EXISTS(SELECT 1 FROM financial_compute_account_books WHERE account_id=sqlc.arg(account_id)::uuid) AS managed;
 
 -- name: FinancialComputeRetired :one
 SELECT COALESCE((SELECT settled_at IS NOT NULL FROM financial_compute_leases
@@ -109,3 +110,51 @@ FROM financial_usage_evidence e LEFT JOIN financial_price_snapshots p
  ON p.account_id=e.account_id AND p.version=e.price_version AND p.meter=e.meter AND p.period_start=sqlc.arg(period_start)::timestamptz
 WHERE e.account_id=sqlc.arg(account_id)::uuid AND e.attribution->>'app_id'=sqlc.arg(app_id)::text AND e.meter='compute'
  AND e.source_start>=sqlc.arg(period_start)::timestamptz AND e.source_start<sqlc.arg(period_end)::timestamptz AND e.quantity>0;
+
+-- name: FinancialComputeAccountBookGet :one
+SELECT payload FROM financial_compute_account_books WHERE account_id=sqlc.arg(account_id)::uuid AND period_start=sqlc.arg(period_start)::timestamptz;
+
+-- name: FinancialComputeAccountBookPut :exec
+INSERT INTO financial_compute_account_books(account_id,period_start,period_end,payload)
+VALUES(sqlc.arg(account_id)::uuid,sqlc.arg(period_start)::timestamptz,sqlc.arg(period_end)::timestamptz,sqlc.arg(payload)::jsonb)
+ON CONFLICT(account_id,period_start) DO UPDATE SET payload=EXCLUDED.payload;
+
+-- name: FinancialComputeAccountLeases :many
+SELECT payload FROM financial_compute_leases WHERE account_id=sqlc.arg(account_id)::uuid AND settled_at IS NULL ORDER BY id LIMIT 10001;
+
+-- All account compute, including deleted apps and former jobs, consumes the
+-- same quantity allowance. Missing or above-ceiling contracts fail closed.
+-- name: FinancialComputeAccountBaseline :one
+SELECT COALESCE(sum(e.quantity::numeric),0)::text AS quantity,
+ COALESCE(bool_or(p.price IS NULL OR p.price->>'meter'!='compute' OR p.price->>'currency'!='EUR'
+ OR p.price->>'unit'!='mb_seconds' OR (p.price->>'unit_quantity')::numeric<=0
+ OR (p.price->>'millicents_per_unit')::numeric<0
+ OR (p.price->>'millicents_per_unit')::numeric*sqlc.arg(upper_quantity)::bigint::numeric > sqlc.arg(upper_rate)::bigint::numeric*(p.price->>'unit_quantity')::numeric),false)::boolean AS incomplete
+FROM financial_usage_evidence e LEFT JOIN financial_price_snapshots p
+ ON p.account_id=e.account_id AND p.version=e.price_version AND p.meter=e.meter AND p.period_start=sqlc.arg(period_start)::timestamptz
+WHERE e.account_id=sqlc.arg(account_id)::uuid AND e.meter='compute' AND e.quantity>0
+ AND e.source_start>=sqlc.arg(period_start)::timestamptz AND e.source_start<sqlc.arg(period_end)::timestamptz;
+
+-- name: FinancialComputeAccountActivationSafe :one
+SELECT NOT EXISTS(SELECT 1 FROM jobs WHERE account_id=sqlc.arg(account_id)::uuid AND status!='deleted')
+ AND NOT EXISTS(SELECT 1 FROM financial_compute_leases WHERE account_id=sqlc.arg(account_id)::uuid AND settled_at IS NULL)
+ AND NOT EXISTS(SELECT 1 FROM job_tasks t JOIN job_runs r ON r.id=t.run_id WHERE r.account_id=sqlc.arg(account_id)::uuid AND t.status IN ('queued','claimed'))
+ AND NOT EXISTS(SELECT 1 FROM instances i LEFT JOIN apps a ON a.id=i.app_id LEFT JOIN jobs j ON j.id=i.job_id
+ WHERE (a.account_id=sqlc.arg(account_id)::uuid OR j.account_id=sqlc.arg(account_id)::uuid)
+ AND i.state NOT IN ('STOPPED','PARKED','FAILED'))
+ AND NOT EXISTS(SELECT 1 FROM app_tasks t JOIN apps a ON a.id=t.app_id WHERE a.account_id=sqlc.arg(account_id)::uuid AND t.status IN ('restoring','running'))
+ AND NOT EXISTS(SELECT 1 FROM instance_billing_intervals b JOIN instances i ON i.id=b.instance_id
+ LEFT JOIN apps a ON a.id=i.app_id LEFT JOIN jobs j ON j.id=i.job_id
+ WHERE (a.account_id=sqlc.arg(account_id)::uuid OR j.account_id=sqlc.arg(account_id)::uuid)
+ AND (b.ended_at IS NULL OR b.ended_at>date_trunc('minute',clock_timestamp())-interval '1 minute')) AS safe;
+
+-- name: FinancialComputeAccountSamplingReady :one
+WITH since AS (SELECT greatest(created_at,sqlc.arg(period_start)::timestamptz) AS at FROM accounts WHERE id=sqlc.arg(account_id)::uuid)
+SELECT (SELECT retained_from <= since.at FROM financial_evidence_coverage WHERE singleton)
+ AND (SELECT count(*) FROM financial_sampling_windows WHERE minute>=date_trunc('minute',since.at)
+ AND minute<date_trunc('minute',clock_timestamp()) AND compute_complete)
+ =extract(epoch FROM date_trunc('minute',clock_timestamp())-date_trunc('minute',since.at))::bigint/60 AS ready FROM since;
+
+-- name: FinancialComputeAccountStrictEnabled :one
+SELECT EXISTS(SELECT 1 FROM financial_budget_policies WHERE account_id=sqlc.arg(account_id)::uuid
+ AND deleted_at IS NULL AND spec->>'enabled'='true' AND spec->>'mode'='strict' AND spec->'scope'->>'kind'='account') AS enabled;

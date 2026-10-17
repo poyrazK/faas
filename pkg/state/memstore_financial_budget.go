@@ -161,7 +161,7 @@ func (m *MemStore) UpdateFinancialBudget(_ context.Context, account, id string, 
 		return FinancialBudget{}, err
 	}
 	compute := newMemComputeTxn(m, account)
-	continuing := p.Spec.Enabled && financial.StrictAppCompute(p.Spec) && p.Spec.Scope == spec.Scope
+	continuing := p.Spec.Enabled && financial.StrictCompute(p.Spec) && p.Spec.Scope == spec.Scope
 	if err := memFinancialComputeActivation(compute, spec, continuing); err != nil {
 		return FinancialBudget{}, err
 	}
@@ -175,7 +175,7 @@ func memFinancialComputeActivation(t *memFinancialComputeTxn, spec financial.Bud
 	if !spec.Enabled || spec.Mode != "strict" {
 		return nil
 	}
-	if !financial.StrictAppCompute(spec) {
+	if !financial.StrictCompute(spec) {
 		return ErrInvalidArgument
 	}
 	if !continuing {

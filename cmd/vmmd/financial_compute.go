@@ -30,7 +30,7 @@ func wireFinancialCompute(ctx context.Context, mgr *fcvm.Manager, store state.St
 			return errors.Join(financial.ErrComputeUnavailable, err)
 		}
 		for _, p := range policies {
-			if p.Spec.Enabled && financial.StrictAppCompute(p.Spec) {
+			if p.Spec.Enabled && financial.StrictCompute(p.Spec) {
 				return financial.ErrComputeUnavailable
 			}
 		}

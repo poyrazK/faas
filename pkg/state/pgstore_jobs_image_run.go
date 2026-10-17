@@ -79,6 +79,9 @@ func touchImageRunJob(ctx context.Context, tx pgx.Tx, job Job, in ImageRunEnsure
 }
 
 func createImageRunJob(ctx context.Context, tx pgx.Tx, in ImageRunEnsure) (ImageRunEnsureResult, error) {
+	if err := financialComputeJobCreationAllowed(ctx, tx, in.AccountID); err != nil {
+		return ImageRunEnsureResult{}, err
+	}
 	var count int
 	if err := tx.QueryRow(ctx, `select count(*) from jobs
 		 where account_id = $1::uuid and kind = 'image_run' and status <> 'deleted'`, in.AccountID).Scan(&count); err != nil {

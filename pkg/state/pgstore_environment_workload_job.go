@@ -147,6 +147,9 @@ func syncEnvironmentGitOpsJobTx(ctx context.Context, tx pgx.Tx, source Environme
 	jobName := environmentGitOpsJobName(source.EnvironmentID, app.ID)
 	envOverrides := json.RawMessage(variables)
 	if intent.JobID == "" {
+		if err := financialComputeJobCreationAllowed(ctx, tx, source.AccountID); err != nil {
+			return intent, err
+		}
 		var count int
 		if err := tx.QueryRow(ctx, `SELECT count(*) FROM jobs WHERE account_id=$1::uuid AND status<>'deleted'`, source.AccountID).Scan(&count); err != nil {
 			return intent, mapErr(err)

@@ -10413,7 +10413,8 @@ CREATE FUNCTION public.financial_app_command_held(target_app uuid, target_deploy
  SELECT 1 FROM apps a JOIN financial_budget_policies p ON p.account_id=a.account_id
  JOIN financial_compute_holds h ON h.account_id=p.account_id AND h.policy_id=p.id AND h.revision=p.revision
  WHERE a.id=target_app AND p.deleted_at IS NULL AND p.spec->>'enabled'='true'
-  AND p.spec->>'mode'='strict' AND p.spec->'scope'->>'kind'='app' AND p.spec->'scope'->>'id'=a.id::text
+  AND p.spec->>'mode'='strict' AND (p.spec->'scope'->>'kind'='account'
+    OR p.spec->'scope'->>'kind'='app' AND p.spec->'scope'->>'id'=a.id::text)
   AND (p.spec->>'resume_rule'='manual' OR h.period_start=date_trunc('month',observed_at AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'))
 $$;
 
@@ -27567,6 +27568,22 @@ CREATE TABLE public.financial_budget_stops (
 
 
 --
+-- Name: financial_compute_account_books; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.financial_compute_account_books (
+    account_id uuid NOT NULL,
+    period_start timestamp with time zone NOT NULL,
+    period_end timestamp with time zone NOT NULL,
+    payload jsonb NOT NULL,
+    CONSTRAINT financial_compute_account_books_check CHECK ((period_end > period_start)),
+    CONSTRAINT financial_compute_account_books_payload_check CHECK ((jsonb_typeof(payload) = 'object'::text)),
+    CONSTRAINT financial_compute_account_books_payload_check1 CHECK (COALESCE(((((payload ->> 'committed'::text))::numeric >= (0)::numeric) AND (((payload ->> 'reserved'::text))::numeric >= (0)::numeric) AND ((((payload ->> 'committed'::text))::numeric + ((payload ->> 'reserved'::text))::numeric) <= ('9007199254740991'::bigint)::numeric)), false)),
+    CONSTRAINT financial_compute_account_books_payload_check2 CHECK (COALESCE(((((payload ->> 'quantity_committed'::text))::numeric >= (0)::numeric) AND (((payload ->> 'quantity_reserved'::text))::numeric >= (0)::numeric) AND ((((payload ->> 'quantity_committed'::text))::numeric + ((payload ->> 'quantity_reserved'::text))::numeric) <= ('9007199254740991'::bigint)::numeric) AND ((((payload ->> 'allowance_granted'::text))::numeric >= (0)::numeric) AND (((payload ->> 'allowance_granted'::text))::numeric <= ('9007199254740991'::bigint)::numeric))), false))
+);
+
+
+--
 -- Name: financial_compute_books; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -27612,6 +27629,7 @@ CREATE TABLE public.financial_compute_leases (
     funded_until timestamp with time zone NOT NULL,
     settled_at timestamp with time zone,
     payload jsonb NOT NULL,
+    CONSTRAINT financial_compute_account_quantity_check CHECK (((COALESCE(((payload ->> 'account_funded'::text))::boolean, false) = false) OR (strict AND COALESCE(((((payload ->> 'quantity_committed'::text))::numeric >= (0)::numeric) AND (((payload ->> 'quantity_reserved'::text))::numeric >= (0)::numeric) AND ((((payload ->> 'quantity_committed'::text))::numeric + ((payload ->> 'quantity_reserved'::text))::numeric) <= ('9007199254740991'::bigint)::numeric)), false)))),
     CONSTRAINT financial_compute_leases_check CHECK ((funded_until >= started_at)),
     CONSTRAINT financial_compute_leases_check1 CHECK ((settled_at >= started_at)),
     CONSTRAINT financial_compute_leases_instance_id_check CHECK (((length(instance_id) >= 1) AND (length(instance_id) <= 128))),
@@ -41839,6 +41857,14 @@ ALTER TABLE ONLY public.financial_budget_stops
 
 
 --
+-- Name: financial_compute_account_books financial_compute_account_books_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_compute_account_books
+    ADD CONSTRAINT financial_compute_account_books_pkey PRIMARY KEY (account_id, period_start);
+
+
+--
 -- Name: financial_compute_books financial_compute_books_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -49917,6 +49943,13 @@ CREATE INDEX financial_budget_policies_account_idx ON public.financial_budget_po
 --
 
 CREATE INDEX financial_budget_stops_account_idx ON public.financial_budget_stops USING btree (account_id, policy_id, revision);
+
+
+--
+-- Name: financial_compute_account_active; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX financial_compute_account_active ON public.financial_compute_leases USING btree (account_id) WHERE (settled_at IS NULL);
 
 
 --
@@ -63223,6 +63256,14 @@ ALTER TABLE ONLY public.financial_budget_stop_targets
 
 ALTER TABLE ONLY public.financial_budget_stops
     ADD CONSTRAINT financial_budget_stops_account_id_policy_id_revision_fkey FOREIGN KEY (account_id, policy_id, revision) REFERENCES public.financial_budget_revisions(account_id, policy_id, revision) ON DELETE CASCADE;
+
+
+--
+-- Name: financial_compute_account_books financial_compute_account_books_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.financial_compute_account_books
+    ADD CONSTRAINT financial_compute_account_books_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --

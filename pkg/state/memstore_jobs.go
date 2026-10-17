@@ -23,6 +23,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/exclusivework"
+	"github.com/onebox-faas/faas/pkg/financial"
 	"github.com/onebox-faas/faas/pkg/jobresult"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
@@ -162,6 +163,11 @@ func (m *MemStore) JobCreateScheduledIfUnderQuota(_ context.Context, job Job, li
 }
 
 func (m *MemStore) jobCreateLocked(accountID, name, kind, imageRef string, command []string, ramMB, taskTimeoutSec, maxParallelism, retryMax int, envOverrides json.RawMessage) (Job, error) {
+	for _, p := range m.financialBudgets {
+		if p.AccountID == accountID && p.DeletedAt == nil && p.Spec.Enabled && financial.StrictAccountCompute(p.Spec) {
+			return Job{}, financial.ErrComputeUnavailable
+		}
+	}
 	// Soft-tombstone invisibility — match pgstore's WHERE status<>'deleted'.
 	for _, j := range m.jobs {
 		if j.AccountID == accountID && j.Name == name && j.Status != "deleted" {

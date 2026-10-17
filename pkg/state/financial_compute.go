@@ -52,6 +52,7 @@ type financialComputeTxn interface {
 	holds() ([]financialComputeHold, error)
 	putHold(financialComputeHold) error
 	owner(string, string) (bool, error)
+	allowance(time.Time) (int64, error)
 }
 
 func validateComputeRequest(r financial.ComputeRequest, mutate bool) bool {
@@ -68,7 +69,7 @@ func computeLeaseRequest(l financial.ComputeLease, r financial.ComputeRequest) b
 func strictComputePolicies(rows []FinancialBudget, app string) []FinancialBudget {
 	out := []FinancialBudget{}
 	for _, p := range rows {
-		if p.DeletedAt == nil && p.Spec.Enabled && p.Spec.Scope.ID == app && financial.StrictAppCompute(p.Spec) {
+		if p.DeletedAt == nil && p.Spec.Enabled && (financial.StrictAccountCompute(p.Spec) || p.Spec.Scope.ID == app && financial.StrictAppCompute(p.Spec)) {
 			out = append(out, p)
 		}
 	}
@@ -171,12 +172,17 @@ func computeAcquire(tx financialComputeTxn, r financial.ComputeRequest) (financi
 	if err != nil {
 		return financial.ComputeLease{}, errors.Join(financial.ErrComputeUnavailable, err)
 	}
-	if err = computeFund(tx, &b, &l, policies); err != nil {
+	account, err := computeAccountFundingBook(tx, &l, policies)
+	if err != nil {
+		return financial.ComputeLease{}, err
+	}
+	if err = computeFund(tx, &b, account, &l, policies); err != nil {
 		if errors.Is(err, financial.ErrComputeBudget) {
 			// This committed negative receipt authorizes a fresh native
 			// absence audit after a lost reply or daemon restart. It grants
 			// no execution window and never frees another attempt's money.
 			l.Denied = true
+			l.QuantityCommitted, l.QuantityReserved = 0, 0
 			l.RunUntil = l.StartedAt
 			l.FundedUntil = l.StartedAt
 			l.SettledAt = &l.StartedAt
@@ -190,6 +196,11 @@ func computeAcquire(tx financialComputeTxn, r financial.ComputeRequest) (financi
 	}
 	if err = tx.putBook(b); err != nil {
 		return financial.ComputeLease{}, err
+	}
+	if account != nil {
+		if err = tx.putBook(*account); err != nil {
+			return financial.ComputeLease{}, err
+		}
 	}
 	return l, tx.putLease(l)
 }
@@ -225,7 +236,7 @@ func computeCancel(tx financialComputeTxn, r financial.ComputeRequest) (financia
 	return l, tx.putLease(l)
 }
 
-func computeFund(tx financialComputeTxn, b *financial.ComputeBook, l *financial.ComputeLease, policies []FinancialBudget) error {
+func computeFund(tx financialComputeTxn, b, account *financial.ComputeBook, l *financial.ComputeLease, policies []FinancialBudget) error {
 	if l.FundedUntil.After(b.PeriodEnd) {
 		l.FundedUntil = b.PeriodEnd
 		l.RunUntil = b.PeriodEnd.Add(-api.FinancialComputeTeardownReserve)
@@ -247,30 +258,16 @@ func computeFund(tx financialComputeTxn, b *financial.ComputeBook, l *financial.
 	if wanted > api.FinancialBudgetMoneyMax-b.Committed || without > api.FinancialBudgetMoneyMax-b.Committed-wanted {
 		return financial.ErrComputeBudget
 	}
-	used := b.Committed + without + wanted
-	holds, err := tx.holds()
-	if err != nil {
+	b.Reserved = without + wanted
+	appErr := computeCheckPolicies(tx, *b, policies)
+	var accountErr error
+	if account != nil {
+		accountErr = computeFundAccount(tx, account, l, policies)
+	}
+	if err := errors.Join(appErr, accountErr); err != nil {
 		return err
 	}
-	denied := false
-	for _, p := range policies {
-		held := false
-		for _, h := range holds {
-			if h.PolicyID == p.ID && h.Revision == p.Revision && (p.Spec.ResumeRule == "manual" || h.PeriodStart.Equal(b.PeriodStart)) {
-				held = true
-			}
-		}
-		if held || used > p.Spec.LimitMillicents {
-			denied = true
-			if err := tx.putHold(financialComputeHold{p.ID, p.Revision, b.PeriodStart}); err != nil {
-				return err
-			}
-		}
-	}
-	if denied {
-		return financial.ErrComputeBudget
-	}
-	b.Reserved, l.Reserved = without+wanted, wanted
+	l.Reserved = wanted
 	return nil
 }
 
@@ -309,6 +306,10 @@ func computeMutate(tx financialComputeTxn, r financial.ComputeRequest, settle bo
 		return financial.ComputeLease{}, financial.ErrComputeBudget
 	}
 	if l.Strict {
+		account, err := computeProgressAccount(tx, &l, minComputeTime(now, l.FundedUntil), settle)
+		if err != nil {
+			return l, err
+		}
 		b, err := tx.book(l.AppID, l.PeriodStart)
 		if err != nil {
 			return l, err
@@ -336,12 +337,17 @@ func computeMutate(tx financialComputeTxn, r financial.ComputeRequest, settle bo
 			}
 			l.RunUntil = now.Add(api.FinancialComputeLeaseDuration).Truncate(time.Second)
 			l.FundedUntil = l.RunUntil.Add(api.FinancialComputeTeardownReserve)
-			if err = computeFund(tx, &b, &l, strictComputePolicies(policies, l.AppID)); err != nil {
+			if err = computeFund(tx, &b, account, &l, strictComputePolicies(policies, l.AppID)); err != nil {
 				return financial.ComputeLease{}, err
 			}
 		}
 		if err = tx.putBook(b); err != nil {
 			return l, err
+		}
+		if account != nil {
+			if err = tx.putBook(*account); err != nil {
+				return l, err
+			}
 		}
 	} else if !settle {
 		policies, err := tx.policies(l.AppID)
@@ -374,7 +380,7 @@ func minComputeTime(a, b time.Time) time.Time {
 
 func computeBalance(tx financialComputeTxn, p FinancialBudget, now time.Time) (financial.ComputeBalance, error) {
 	month := financial.ComputeMonth(now)
-	out := financial.ComputeBalance{AppID: p.Spec.Scope.ID, PeriodStart: month, PeriodEnd: month.AddDate(0, 1, 0), ObservedAt: tx.clock()}
+	out := financial.ComputeBalance{AccountID: p.AccountID, ScopeKind: p.Spec.Scope.Kind, Basis: p.Spec.Basis, AppID: p.Spec.Scope.ID, PeriodStart: month, PeriodEnd: month.AddDate(0, 1, 0), ObservedAt: tx.clock()}
 	b, err := tx.book(out.AppID, month)
 	if errors.Is(err, ErrNotFound) {
 		out.RemainingMillicents = p.Spec.LimitMillicents
@@ -384,6 +390,12 @@ func computeBalance(tx financialComputeTxn, p FinancialBudget, now time.Time) (f
 		out.Initialized = true
 	}
 	out.CommittedMillicents, out.ReservedMillicents = b.Committed, b.Reserved
+	if out.ScopeKind == "account" {
+		out.AllowanceGranted = b.AllowanceGranted
+		out.AllowanceCommitted = min(b.AllowanceGranted, b.QuantityCommitted)
+		out.AllowanceReserved = min(b.AllowanceGranted-out.AllowanceCommitted, b.QuantityReserved)
+		out.AllowanceRemaining = b.AllowanceGranted - out.AllowanceCommitted - out.AllowanceReserved
+	}
 	out.RemainingMillicents = max(int64(0), p.Spec.LimitMillicents-b.Committed-b.Reserved)
 	active, err := tx.active(out.AppID)
 	if err != nil {

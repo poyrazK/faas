@@ -25,7 +25,7 @@ func (r *VMMRouter) checkFinancialComputeOwner(ctx context.Context, node string,
 	}
 	strict := false
 	for _, p := range policies {
-		strict = strict || p.Spec.Enabled && financial.StrictAppCompute(p.Spec)
+		strict = strict || p.Spec.Enabled && financial.StrictCompute(p.Spec)
 	}
 	if !strict {
 		return nil

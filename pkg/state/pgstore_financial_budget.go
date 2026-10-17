@@ -64,14 +64,14 @@ func (s *PgStore) mutateFinancialBudget(ctx context.Context, account, id string,
 		if err != nil {
 			return FinancialBudget{}, err
 		}
-		continuingStrict = previous.Spec.Enabled && financial.StrictAppCompute(previous.Spec) && previous.Spec.Scope == spec.Scope
+		continuingStrict = previous.Spec.Enabled && financial.StrictCompute(previous.Spec) && previous.Spec.Scope == spec.Scope
 	}
 	if mutation != "deleted" {
 		if err := financialBudgetScopeOwned(ctx, tx, q, accountID, spec); err != nil {
 			return FinancialBudget{}, err
 		}
 		if spec.Enabled && spec.Mode == "strict" {
-			if !financial.StrictAppCompute(spec) {
+			if !financial.StrictCompute(spec) {
 				return FinancialBudget{}, ErrInvalidArgument
 			}
 			clock, err := q.FinancialComputeClock(ctx, tx)

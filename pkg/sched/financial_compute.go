@@ -11,7 +11,7 @@ import (
 
 // The scheduler reflects a monetary hold through its existing instance owner.
 // vmmd's local deadline is independently authoritative during control-plane loss.
-func (e *Engine) reconcileStrictAppCompute(ctx context.Context, app state.App, now time.Time) error {
+func (e *Engine) reconcileStrictCompute(ctx context.Context, app state.App, now time.Time) error {
 	compute, ok := e.store.(state.FinancialComputeStore)
 	if !ok {
 		return nil
@@ -22,7 +22,7 @@ func (e *Engine) reconcileStrictAppCompute(ctx context.Context, app state.App, n
 	}
 	held := false
 	for _, p := range policies {
-		if !p.Spec.Enabled || !financial.StrictAppCompute(p.Spec) {
+		if !p.Spec.Enabled || !financial.StrictCompute(p.Spec) {
 			continue
 		}
 		balance, err := compute.FinancialComputeBalance(ctx, p, now)

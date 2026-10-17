@@ -68,7 +68,7 @@ func (e *Engine) ReconcileFinancialBudgetStops(ctx context.Context, appID string
 		return err
 	}
 	now := e.financialBudgetNow()
-	if err := e.reconcileStrictAppCompute(ctx, app, now); err != nil {
+	if err := e.reconcileStrictCompute(ctx, app, now); err != nil {
 		return err
 	}
 	if app.PreviewOfSlug == "" {

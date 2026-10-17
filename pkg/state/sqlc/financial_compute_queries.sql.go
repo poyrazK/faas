@@ -11,6 +11,162 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const financialComputeAccountActivationSafe = `-- name: FinancialComputeAccountActivationSafe :one
+SELECT NOT EXISTS(SELECT 1 FROM jobs WHERE account_id=$1::uuid AND status!='deleted')
+ AND NOT EXISTS(SELECT 1 FROM financial_compute_leases WHERE account_id=$1::uuid AND settled_at IS NULL)
+ AND NOT EXISTS(SELECT 1 FROM job_tasks t JOIN job_runs r ON r.id=t.run_id WHERE r.account_id=$1::uuid AND t.status IN ('queued','claimed'))
+ AND NOT EXISTS(SELECT 1 FROM instances i LEFT JOIN apps a ON a.id=i.app_id LEFT JOIN jobs j ON j.id=i.job_id
+ WHERE (a.account_id=$1::uuid OR j.account_id=$1::uuid)
+ AND i.state NOT IN ('STOPPED','PARKED','FAILED'))
+ AND NOT EXISTS(SELECT 1 FROM app_tasks t JOIN apps a ON a.id=t.app_id WHERE a.account_id=$1::uuid AND t.status IN ('restoring','running'))
+ AND NOT EXISTS(SELECT 1 FROM instance_billing_intervals b JOIN instances i ON i.id=b.instance_id
+ LEFT JOIN apps a ON a.id=i.app_id LEFT JOIN jobs j ON j.id=i.job_id
+ WHERE (a.account_id=$1::uuid OR j.account_id=$1::uuid)
+ AND (b.ended_at IS NULL OR b.ended_at>date_trunc('minute',clock_timestamp())-interval '1 minute')) AS safe
+`
+
+func (q *Queries) FinancialComputeAccountActivationSafe(ctx context.Context, db DBTX, accountID pgtype.UUID) (pgtype.Bool, error) {
+	row := db.QueryRow(ctx, financialComputeAccountActivationSafe, accountID)
+	var safe pgtype.Bool
+	err := row.Scan(&safe)
+	return safe, err
+}
+
+const financialComputeAccountBaseline = `-- name: FinancialComputeAccountBaseline :one
+SELECT COALESCE(sum(e.quantity::numeric),0)::text AS quantity,
+ COALESCE(bool_or(p.price IS NULL OR p.price->>'meter'!='compute' OR p.price->>'currency'!='EUR'
+ OR p.price->>'unit'!='mb_seconds' OR (p.price->>'unit_quantity')::numeric<=0
+ OR (p.price->>'millicents_per_unit')::numeric<0
+ OR (p.price->>'millicents_per_unit')::numeric*$1::bigint::numeric > $2::bigint::numeric*(p.price->>'unit_quantity')::numeric),false)::boolean AS incomplete
+FROM financial_usage_evidence e LEFT JOIN financial_price_snapshots p
+ ON p.account_id=e.account_id AND p.version=e.price_version AND p.meter=e.meter AND p.period_start=$3::timestamptz
+WHERE e.account_id=$4::uuid AND e.meter='compute' AND e.quantity>0
+ AND e.source_start>=$3::timestamptz AND e.source_start<$5::timestamptz
+`
+
+type FinancialComputeAccountBaselineParams struct {
+	UpperQuantity int64
+	UpperRate     int64
+	PeriodStart   pgtype.Timestamptz
+	AccountID     pgtype.UUID
+	PeriodEnd     pgtype.Timestamptz
+}
+
+type FinancialComputeAccountBaselineRow struct {
+	Quantity   string
+	Incomplete bool
+}
+
+// All account compute, including deleted apps and former jobs, consumes the
+// same quantity allowance. Missing or above-ceiling contracts fail closed.
+func (q *Queries) FinancialComputeAccountBaseline(ctx context.Context, db DBTX, arg FinancialComputeAccountBaselineParams) (FinancialComputeAccountBaselineRow, error) {
+	row := db.QueryRow(ctx, financialComputeAccountBaseline,
+		arg.UpperQuantity,
+		arg.UpperRate,
+		arg.PeriodStart,
+		arg.AccountID,
+		arg.PeriodEnd,
+	)
+	var i FinancialComputeAccountBaselineRow
+	err := row.Scan(&i.Quantity, &i.Incomplete)
+	return i, err
+}
+
+const financialComputeAccountBookGet = `-- name: FinancialComputeAccountBookGet :one
+SELECT payload FROM financial_compute_account_books WHERE account_id=$1::uuid AND period_start=$2::timestamptz
+`
+
+type FinancialComputeAccountBookGetParams struct {
+	AccountID   pgtype.UUID
+	PeriodStart pgtype.Timestamptz
+}
+
+func (q *Queries) FinancialComputeAccountBookGet(ctx context.Context, db DBTX, arg FinancialComputeAccountBookGetParams) ([]byte, error) {
+	row := db.QueryRow(ctx, financialComputeAccountBookGet, arg.AccountID, arg.PeriodStart)
+	var payload []byte
+	err := row.Scan(&payload)
+	return payload, err
+}
+
+const financialComputeAccountBookPut = `-- name: FinancialComputeAccountBookPut :exec
+INSERT INTO financial_compute_account_books(account_id,period_start,period_end,payload)
+VALUES($1::uuid,$2::timestamptz,$3::timestamptz,$4::jsonb)
+ON CONFLICT(account_id,period_start) DO UPDATE SET payload=EXCLUDED.payload
+`
+
+type FinancialComputeAccountBookPutParams struct {
+	AccountID   pgtype.UUID
+	PeriodStart pgtype.Timestamptz
+	PeriodEnd   pgtype.Timestamptz
+	Payload     []byte
+}
+
+func (q *Queries) FinancialComputeAccountBookPut(ctx context.Context, db DBTX, arg FinancialComputeAccountBookPutParams) error {
+	_, err := db.Exec(ctx, financialComputeAccountBookPut,
+		arg.AccountID,
+		arg.PeriodStart,
+		arg.PeriodEnd,
+		arg.Payload,
+	)
+	return err
+}
+
+const financialComputeAccountLeases = `-- name: FinancialComputeAccountLeases :many
+SELECT payload FROM financial_compute_leases WHERE account_id=$1::uuid AND settled_at IS NULL ORDER BY id LIMIT 10001
+`
+
+func (q *Queries) FinancialComputeAccountLeases(ctx context.Context, db DBTX, accountID pgtype.UUID) ([][]byte, error) {
+	rows, err := db.Query(ctx, financialComputeAccountLeases, accountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := [][]byte{}
+	for rows.Next() {
+		var payload []byte
+		if err := rows.Scan(&payload); err != nil {
+			return nil, err
+		}
+		items = append(items, payload)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const financialComputeAccountSamplingReady = `-- name: FinancialComputeAccountSamplingReady :one
+WITH since AS (SELECT greatest(created_at,$1::timestamptz) AS at FROM accounts WHERE id=$2::uuid)
+SELECT (SELECT retained_from <= since.at FROM financial_evidence_coverage WHERE singleton)
+ AND (SELECT count(*) FROM financial_sampling_windows WHERE minute>=date_trunc('minute',since.at)
+ AND minute<date_trunc('minute',clock_timestamp()) AND compute_complete)
+ =extract(epoch FROM date_trunc('minute',clock_timestamp())-date_trunc('minute',since.at))::bigint/60 AS ready FROM since
+`
+
+type FinancialComputeAccountSamplingReadyParams struct {
+	PeriodStart pgtype.Timestamptz
+	AccountID   pgtype.UUID
+}
+
+func (q *Queries) FinancialComputeAccountSamplingReady(ctx context.Context, db DBTX, arg FinancialComputeAccountSamplingReadyParams) (pgtype.Bool, error) {
+	row := db.QueryRow(ctx, financialComputeAccountSamplingReady, arg.PeriodStart, arg.AccountID)
+	var ready pgtype.Bool
+	err := row.Scan(&ready)
+	return ready, err
+}
+
+const financialComputeAccountStrictEnabled = `-- name: FinancialComputeAccountStrictEnabled :one
+SELECT EXISTS(SELECT 1 FROM financial_budget_policies WHERE account_id=$1::uuid
+ AND deleted_at IS NULL AND spec->>'enabled'='true' AND spec->>'mode'='strict' AND spec->'scope'->>'kind'='account') AS enabled
+`
+
+func (q *Queries) FinancialComputeAccountStrictEnabled(ctx context.Context, db DBTX, accountID pgtype.UUID) (bool, error) {
+	row := db.QueryRow(ctx, financialComputeAccountStrictEnabled, accountID)
+	var enabled bool
+	err := row.Scan(&enabled)
+	return enabled, err
+}
+
 const financialComputeActivationSafe = `-- name: FinancialComputeActivationSafe :one
 SELECT EXISTS(SELECT 1 FROM apps a WHERE a.id=$1::uuid AND a.account_id=$2::uuid
  AND a.status!='deleted'
@@ -63,7 +219,8 @@ func (q *Queries) FinancialComputeAppLeases(ctx context.Context, db DBTX, arg Fi
 }
 
 const financialComputeAppManaged = `-- name: FinancialComputeAppManaged :one
-SELECT EXISTS(SELECT 1 FROM financial_compute_books WHERE account_id=$1::uuid AND app_id=$2::uuid) AS managed
+SELECT EXISTS(SELECT 1 FROM financial_compute_books WHERE account_id=$1::uuid AND app_id=$2::uuid)
+ OR EXISTS(SELECT 1 FROM financial_compute_account_books WHERE account_id=$1::uuid) AS managed
 `
 
 type FinancialComputeAppManagedParams struct {
@@ -71,9 +228,9 @@ type FinancialComputeAppManagedParams struct {
 	AppID     pgtype.UUID
 }
 
-func (q *Queries) FinancialComputeAppManaged(ctx context.Context, db DBTX, arg FinancialComputeAppManagedParams) (bool, error) {
+func (q *Queries) FinancialComputeAppManaged(ctx context.Context, db DBTX, arg FinancialComputeAppManagedParams) (pgtype.Bool, error) {
 	row := db.QueryRow(ctx, financialComputeAppManaged, arg.AccountID, arg.AppID)
-	var managed bool
+	var managed pgtype.Bool
 	err := row.Scan(&managed)
 	return managed, err
 }

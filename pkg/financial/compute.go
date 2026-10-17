@@ -14,17 +14,31 @@ var (
 	ErrComputeUnavailable = errors.New("financial: compute authority unavailable")
 )
 
-// StrictAppCompute is the supported strict policy contract. Other strict
-// policies can be saved as drafts, but cannot authorize execution.
+// StrictAppCompute caps gross compute for one app, independently of allowance.
 func StrictAppCompute(p BudgetSpec) bool {
 	return p.Mode == "strict" && p.Scope.Kind == "app" && p.Basis == "gross_usage" && p.Action == "suspend_workloads" && len(p.Meters) == 1 && p.Meters[0] == "compute" && p.DrainSeconds == 0 && len(p.NotifyMillicents) == 0
 }
+
+// StrictAccountCompute shares one allowance and paid compute ceiling across
+// every app in the account. Unsupported producers must be fenced at activation.
+func StrictAccountCompute(p BudgetSpec) bool {
+	return p.Mode == "strict" && p.Scope.Kind == "account" && p.Basis == "net_usage" && p.Action == "suspend_workloads" && len(p.Meters) == 1 && p.Meters[0] == "compute" && p.DrainSeconds == 0 && len(p.NotifyMillicents) == 0
+}
+
+func StrictCompute(p BudgetSpec) bool { return StrictAppCompute(p) || StrictAccountCompute(p) }
 
 // ComputeBalance is a conservative admission ledger, not an invoice. Committed
 // includes startup and rounds upwards; refunds/corrections never erase it.
 type ComputeBalance struct {
 	Initialized         bool      `json:"initialized"`
-	AppID               string    `json:"app_id"`
+	AppID               string    `json:"app_id,omitempty"`
+	AccountID           string    `json:"account_id"`
+	ScopeKind           string    `json:"scope_kind"`
+	Basis               string    `json:"basis"`
+	AllowanceGranted    int64     `json:"allowance_granted_mb_seconds"`
+	AllowanceCommitted  int64     `json:"allowance_committed_mb_seconds"`
+	AllowanceReserved   int64     `json:"allowance_reserved_mb_seconds"`
+	AllowanceRemaining  int64     `json:"allowance_remaining_mb_seconds"`
 	PeriodStart         time.Time `json:"period_start"`
 	PeriodEnd           time.Time `json:"period_end"`
 	CommittedMillicents int64     `json:"committed_millicents"`
@@ -42,39 +56,46 @@ type ComputeBook struct {
 	PeriodEnd   time.Time `json:"period_end"`
 	Committed   int64     `json:"committed"`
 	Reserved    int64     `json:"reserved"`
+	// Quantity fields apply only to the shared account book (AppID empty).
+	QuantityCommitted int64 `json:"quantity_committed"`
+	QuantityReserved  int64 `json:"quantity_reserved"`
+	AllowanceGranted  int64 `json:"allowance_granted"`
 }
 
 // ComputeLease pins a single physical attempt to a node incarnation. An expired
 // lease remains funded until its owner confirms physical retirement. Strict
 // billing can consume only [StartedAt, FundedUntil), even after a daemon crash.
 type ComputeLease struct {
-	ID               string     `json:"id"`
-	Fence            string     `json:"fence"`
-	RequestID        string     `json:"request_id"`
-	RequestOperation string     `json:"request_operation"`
-	RequestRevision  int64      `json:"request_revision"`
-	Revision         int64      `json:"revision"`
-	AccountID        string     `json:"account_id"`
-	AppID            string     `json:"app_id"`
-	InstanceID       string     `json:"instance_id"`
-	NodeID           string     `json:"node_id"`
-	Incarnation      string     `json:"incarnation"`
-	Strict           bool       `json:"strict"`
-	Denied           bool       `json:"denied"`
-	AttemptID        string     `json:"attempt_id"`
-	Fenced           bool       `json:"fenced"`
-	DenialReason     string     `json:"denial_reason,omitempty"`
-	BillableMB       int        `json:"billable_mb"`
-	RateMillicents   int64      `json:"rate_millicents"`
-	RateQuantity     int64      `json:"rate_quantity"`
-	PeriodStart      time.Time  `json:"period_start"`
-	StartedAt        time.Time  `json:"started_at"`
-	GrantedAt        time.Time  `json:"granted_at"`
-	RunUntil         time.Time  `json:"run_until"`
-	FundedUntil      time.Time  `json:"funded_until"`
-	Committed        int64      `json:"committed"`
-	Reserved         int64      `json:"reserved"`
-	SettledAt        *time.Time `json:"settled_at,omitempty"`
+	ID                string     `json:"id"`
+	Fence             string     `json:"fence"`
+	RequestID         string     `json:"request_id"`
+	RequestOperation  string     `json:"request_operation"`
+	RequestRevision   int64      `json:"request_revision"`
+	Revision          int64      `json:"revision"`
+	AccountID         string     `json:"account_id"`
+	AppID             string     `json:"app_id"`
+	InstanceID        string     `json:"instance_id"`
+	NodeID            string     `json:"node_id"`
+	Incarnation       string     `json:"incarnation"`
+	Strict            bool       `json:"strict"`
+	AccountFunded     bool       `json:"account_funded"`
+	QuantityCommitted int64      `json:"quantity_committed"`
+	QuantityReserved  int64      `json:"quantity_reserved"`
+	Denied            bool       `json:"denied"`
+	AttemptID         string     `json:"attempt_id"`
+	Fenced            bool       `json:"fenced"`
+	DenialReason      string     `json:"denial_reason,omitempty"`
+	BillableMB        int        `json:"billable_mb"`
+	RateMillicents    int64      `json:"rate_millicents"`
+	RateQuantity      int64      `json:"rate_quantity"`
+	PeriodStart       time.Time  `json:"period_start"`
+	StartedAt         time.Time  `json:"started_at"`
+	GrantedAt         time.Time  `json:"granted_at"`
+	RunUntil          time.Time  `json:"run_until"`
+	FundedUntil       time.Time  `json:"funded_until"`
+	Committed         int64      `json:"committed"`
+	Reserved          int64      `json:"reserved"`
+	SettledAt         *time.Time `json:"settled_at,omitempty"`
 }
 
 type ComputeRequest struct {

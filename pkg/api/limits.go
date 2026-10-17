@@ -4926,6 +4926,7 @@ const (
 	FinancialComputeInstanceBytes    = 128
 	FinancialComputeRAMMaxMB         = 131_072
 	FinancialComputeActiveMax        = 10_000
+	FinancialComputeQuantityMax      = int64(9007199254740991)
 
 	// PreflightRateLimitPerHour bounds anonymous "would this run here" checks per
 	// client IP. The check is unauthenticated, so the ceiling exists to protect

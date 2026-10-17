@@ -81,7 +81,7 @@ func (t *memFinancialComputeTxn) putLease(l financial.ComputeLease) error {
 func (t *memFinancialComputeTxn) active(app string) ([]financial.ComputeLease, error) {
 	out := []financial.ComputeLease{}
 	for _, l := range t.m.financialComputeLeases {
-		if l.AccountID == t.account && l.AppID == app && l.SettledAt == nil {
+		if l.AccountID == t.account && (app == "" || l.AppID == app) && l.SettledAt == nil {
 			out = append(out, l)
 		}
 	}
@@ -93,7 +93,7 @@ func (t *memFinancialComputeTxn) active(app string) ([]financial.ComputeLease, e
 func (t *memFinancialComputeTxn) policies(app string) ([]FinancialBudget, error) {
 	out := []FinancialBudget{}
 	for _, p := range t.m.financialBudgets {
-		if p.AccountID == t.account && p.Spec.Scope.Kind == "app" && p.Spec.Scope.ID == app && p.DeletedAt == nil {
+		if p.AccountID == t.account && (p.Spec.Scope.Kind == "account" || p.Spec.Scope.Kind == "app" && p.Spec.Scope.ID == app) && p.DeletedAt == nil {
 			out = append(out, cloneFinancialBudget(p))
 		}
 	}
@@ -169,6 +169,9 @@ func (m *MemStore) AcquireFinancialCompute(ctx context.Context, r financial.Comp
 		}
 		policies, _ := t.policies(r.AppID)
 		if len(strictComputePolicies(policies, r.AppID)) > 0 {
+			if err := t.ensureAccount(policies); err != nil {
+				return err
+			}
 			if _, err = t.book(r.AppID, financial.ComputeMonth(t.now)); errors.Is(err, ErrNotFound) {
 				err = t.initialize(r.AppID, false)
 			}
@@ -319,7 +322,7 @@ func (m *MemStore) FinancialComputeAppManaged(ctx context.Context, account, app 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, b := range m.financialComputeBooks {
-		if b.AccountID == account && b.AppID == app {
+		if b.AccountID == account && (b.AppID == app || b.AppID == "") {
 			return true, nil
 		}
 	}
@@ -334,6 +337,9 @@ func (m *MemStore) FinancialComputeFloorCovered(ctx context.Context, account, ap
 	return m.computeMonthCoveredLocked(account, app, at), nil
 }
 func (m *MemStore) computeMonthCoveredLocked(account, app string, at time.Time) bool {
+	if _, ok := m.financialComputeBooks[computeBookKey(account, "", financial.ComputeMonth(at))]; ok {
+		return true
+	}
 	if _, ok := m.financialComputeBooks[computeBookKey(account, app, financial.ComputeMonth(at))]; ok {
 		return true
 	}
@@ -351,6 +357,9 @@ func (m *MemStore) FinancialComputeReady(ctx context.Context, account, app strin
 	return ready, err
 }
 func (t *memFinancialComputeTxn) ready(app string, quiet bool) bool {
+	if app == "" {
+		return t.accountReady()
+	}
 	m := t.m
 	month := financial.ComputeMonth(t.now)
 	since := month
@@ -395,6 +404,9 @@ func (t *memFinancialComputeTxn) ready(app string, quiet bool) bool {
 	return err == nil && len(active) == 0
 }
 func (t *memFinancialComputeTxn) initialize(app string, quiet bool) error {
+	if app == "" {
+		return t.initializeAccount()
+	}
 	if !t.ready(app, quiet) {
 		return financial.ErrComputeUnavailable
 	}
