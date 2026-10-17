@@ -4,7 +4,7 @@
   "sets": [
     {
       "id": "gregale-core-v1",
-      "revision": "d471ef85a54d122e2eb27508c6f5413d7d9950a36602bc4a7fc1d1483022059b",
+      "revision": "763284aa5250f7f128ef6ad486776ac3edee09a8a36c78ec0713a2be5239eee1",
       "files": [
         "faas.rules.yml"
       ],
@@ -119,11 +119,11 @@
           "group_name": "faas_compute_metrics_discovery",
           "rule_name": "FaasComputeMetricsDiscoveryEmpty",
           "definition": {
-            "expression_hash": "201a3d1ae47e6f85dabd680d04bf3ab1bdc0a6ecec4f44ca231083cb8c76a92f",
+            "expression_hash": "4c58b8767b55909c0f37559f7ac8299d365d8ca7611c710c48093b71d3cc80a5",
             "labels_hash": "e8d1c4ff39464f9c53b4e12de4880bd569130286f5621fa262716a03edd5d7c1",
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "c7eb900f36973ce9b7739f036fe7ffff279a4cd963319d3658c364122f4fafb1"
+            "fingerprint": "eddc1cad7d1ddc2e100a0da00f5b4c9897db44f196d2a41c46377cc8a0709616"
           }
         },
         {
@@ -327,11 +327,11 @@
           "group_name": "faas_compute_metrics_discovery",
           "rule_name": "FaasComputeMetricsScrapeTargetDown",
           "definition": {
-            "expression_hash": "ebd8ea23856b49cb8de01eed3da1f4e0d0cddeedd2c59919b584973c4b71c9d6",
+            "expression_hash": "a994e0711874f34ae75bace0fa1878d350bec8660ed6106e4d54b15bd3ae6a38",
             "labels_hash": "822918b1c604c77f6329f24845cba93e605639aa4fde6ad207b06597622d7e30",
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "2cd4a9f23c84c015d04b347cbeecfa67faf95615f1c3ba322fb88ffb09a4a119"
+            "fingerprint": "963415dc067dcff1f361cdecd300cdb9fcd6c67853e107b4b822e1634c4fa041"
           }
         },
         {
@@ -358,6 +358,19 @@
             "for_seconds": 600,
             "keep_firing_for_seconds": 0,
             "fingerprint": "7497946d2f57608aec764d116e9d6b4f41dbbbd5afac0c0b89bb2f6d921109a1"
+          }
+        },
+        {
+          "id": "192222681ef85076b0467acf2d0d97235c21431ef68f26624e5a165e8d9d5911",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_compute_metrics_discovery",
+          "rule_name": "FaasComputeMetricsDiscoveryAmbiguous",
+          "definition": {
+            "expression_hash": "b76dd1a4e527d433ceadb8c6b604ada3459153339059ff81f4b9b6a11c3fa9ff",
+            "labels_hash": "e8d1c4ff39464f9c53b4e12de4880bd569130286f5621fa262716a03edd5d7c1",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "f1dcf8eacd89b2b89d8c5681800ed87879d70f9d665bc13c270976886ed92020"
           }
         },
         {
@@ -1692,11 +1705,11 @@
           "group_name": "faas_compute_metrics_discovery",
           "rule_name": "FaasComputeMetricsDiscoveryStale",
           "definition": {
-            "expression_hash": "c90c3d9ca53ca17f10e3bd53b07d7a9b448a07038d72b257317faf98167c4e86",
+            "expression_hash": "015b762de5fee39975e7ec189e608e07a99992234d579d4b17d1c30d08b035f5",
             "labels_hash": "e8d1c4ff39464f9c53b4e12de4880bd569130286f5621fa262716a03edd5d7c1",
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "fd58efd6d1f3114fdc2c22f1f6e89f4d1f982c807aad207c1f6ecac81df33b5d"
+            "fingerprint": "97906fdccbdc9d60f52b4fc7ea4ad7916478fe90b1717753b011eae9f15a6664"
           }
         },
         {
@@ -2004,11 +2017,11 @@
           "group_name": "faas_compute_metrics_discovery",
           "rule_name": "FaasComputeMetricsScrapeCoverageLow",
           "definition": {
-            "expression_hash": "f0fb3463728ce3fed863320be50066ce97f89d48a984737a572c95a8528584a0",
+            "expression_hash": "0a9aabc1ddc2b36e48e1285fa1ef99b012795f061f4fa797c90cb01f67c99dcf",
             "labels_hash": "822918b1c604c77f6329f24845cba93e605639aa4fde6ad207b06597622d7e30",
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "ea6afdcbdc0e9c2d3d5744c9e176924a64897f0e6fe4baee214cde27412c7a5c"
+            "fingerprint": "3e1b3cfdc6cb491f830c78930e60b9f491b11b5525934641be9c03ad556c914f"
           }
         },
         {
@@ -2082,11 +2095,11 @@
           "group_name": "faas_compute_metrics_discovery",
           "rule_name": "FaasComputeMetricsDiscoveryInvalidTargets",
           "definition": {
-            "expression_hash": "83440c2d088256059ce56b76fb48bb6b4d025a7643f84595870f11d224f7b7a2",
+            "expression_hash": "14050acd749c002334e0aaf48a7f084e06d2ae86c3f4129beea823358f3fcaee",
             "labels_hash": "e8d1c4ff39464f9c53b4e12de4880bd569130286f5621fa262716a03edd5d7c1",
             "for_seconds": 600,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "45e0dcaa9ef73d078b5f4695919ad65ff58350e76659aae1b9bd9196605f06b9"
+            "fingerprint": "05476daa5d1fe339b302710d6f6370d2ae46f0cfc950ae34835547e84d964908"
           }
         },
         {
@@ -3627,7 +3640,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "38729a23298b4be3befcb507d654ae8ed9f448f623ff3937bac79ff225b2a5f6",
+      "revision": "8505f7cdb284109c6784dcae30b80df50a425b990f11b81b61f22d72d0cec6e9",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -3745,11 +3758,11 @@
           "group_name": "faas_compute_metrics_discovery",
           "rule_name": "FaasComputeMetricsDiscoveryEmpty",
           "definition": {
-            "expression_hash": "201a3d1ae47e6f85dabd680d04bf3ab1bdc0a6ecec4f44ca231083cb8c76a92f",
+            "expression_hash": "4c58b8767b55909c0f37559f7ac8299d365d8ca7611c710c48093b71d3cc80a5",
             "labels_hash": "e8d1c4ff39464f9c53b4e12de4880bd569130286f5621fa262716a03edd5d7c1",
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "c7eb900f36973ce9b7739f036fe7ffff279a4cd963319d3658c364122f4fafb1"
+            "fingerprint": "eddc1cad7d1ddc2e100a0da00f5b4c9897db44f196d2a41c46377cc8a0709616"
           }
         },
         {
@@ -3953,11 +3966,11 @@
           "group_name": "faas_compute_metrics_discovery",
           "rule_name": "FaasComputeMetricsScrapeTargetDown",
           "definition": {
-            "expression_hash": "ebd8ea23856b49cb8de01eed3da1f4e0d0cddeedd2c59919b584973c4b71c9d6",
+            "expression_hash": "a994e0711874f34ae75bace0fa1878d350bec8660ed6106e4d54b15bd3ae6a38",
             "labels_hash": "822918b1c604c77f6329f24845cba93e605639aa4fde6ad207b06597622d7e30",
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "2cd4a9f23c84c015d04b347cbeecfa67faf95615f1c3ba322fb88ffb09a4a119"
+            "fingerprint": "963415dc067dcff1f361cdecd300cdb9fcd6c67853e107b4b822e1634c4fa041"
           }
         },
         {
@@ -3984,6 +3997,19 @@
             "for_seconds": 600,
             "keep_firing_for_seconds": 0,
             "fingerprint": "7497946d2f57608aec764d116e9d6b4f41dbbbd5afac0c0b89bb2f6d921109a1"
+          }
+        },
+        {
+          "id": "192222681ef85076b0467acf2d0d97235c21431ef68f26624e5a165e8d9d5911",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_compute_metrics_discovery",
+          "rule_name": "FaasComputeMetricsDiscoveryAmbiguous",
+          "definition": {
+            "expression_hash": "b76dd1a4e527d433ceadb8c6b604ada3459153339059ff81f4b9b6a11c3fa9ff",
+            "labels_hash": "e8d1c4ff39464f9c53b4e12de4880bd569130286f5621fa262716a03edd5d7c1",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "f1dcf8eacd89b2b89d8c5681800ed87879d70f9d665bc13c270976886ed92020"
           }
         },
         {
@@ -5383,11 +5409,11 @@
           "group_name": "faas_compute_metrics_discovery",
           "rule_name": "FaasComputeMetricsDiscoveryStale",
           "definition": {
-            "expression_hash": "c90c3d9ca53ca17f10e3bd53b07d7a9b448a07038d72b257317faf98167c4e86",
+            "expression_hash": "015b762de5fee39975e7ec189e608e07a99992234d579d4b17d1c30d08b035f5",
             "labels_hash": "e8d1c4ff39464f9c53b4e12de4880bd569130286f5621fa262716a03edd5d7c1",
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "fd58efd6d1f3114fdc2c22f1f6e89f4d1f982c807aad207c1f6ecac81df33b5d"
+            "fingerprint": "97906fdccbdc9d60f52b4fc7ea4ad7916478fe90b1717753b011eae9f15a6664"
           }
         },
         {
@@ -5734,11 +5760,11 @@
           "group_name": "faas_compute_metrics_discovery",
           "rule_name": "FaasComputeMetricsScrapeCoverageLow",
           "definition": {
-            "expression_hash": "f0fb3463728ce3fed863320be50066ce97f89d48a984737a572c95a8528584a0",
+            "expression_hash": "0a9aabc1ddc2b36e48e1285fa1ef99b012795f061f4fa797c90cb01f67c99dcf",
             "labels_hash": "822918b1c604c77f6329f24845cba93e605639aa4fde6ad207b06597622d7e30",
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "ea6afdcbdc0e9c2d3d5744c9e176924a64897f0e6fe4baee214cde27412c7a5c"
+            "fingerprint": "3e1b3cfdc6cb491f830c78930e60b9f491b11b5525934641be9c03ad556c914f"
           }
         },
         {
@@ -5812,11 +5838,11 @@
           "group_name": "faas_compute_metrics_discovery",
           "rule_name": "FaasComputeMetricsDiscoveryInvalidTargets",
           "definition": {
-            "expression_hash": "83440c2d088256059ce56b76fb48bb6b4d025a7643f84595870f11d224f7b7a2",
+            "expression_hash": "14050acd749c002334e0aaf48a7f084e06d2ae86c3f4129beea823358f3fcaee",
             "labels_hash": "e8d1c4ff39464f9c53b4e12de4880bd569130286f5621fa262716a03edd5d7c1",
             "for_seconds": 600,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "45e0dcaa9ef73d078b5f4695919ad65ff58350e76659aae1b9bd9196605f06b9"
+            "fingerprint": "05476daa5d1fe339b302710d6f6370d2ae46f0cfc950ae34835547e84d964908"
           }
         },
         {

@@ -1,7 +1,8 @@
 # Synthetic rule-engine coverage for the downstream side of compute metrics
 # HTTP-SD (issue #1219 follow-up). The producer-side discovery metrics can be
 # healthy while Prometheus has zero or only a partial set of `up` series, so
-# this fixture pins both the recording rules and the two scrape alerts.
+# this fixture uses the real apid scrape labels and pins recording rules,
+# discovery alerts, and downstream scrape alerts without dropping hold times.
 
 rule_files:
   - ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
@@ -19,10 +20,12 @@ tests:
         values: '1x31'
       - series: 'up{job="gatewayd-internal",instance="fsn-2.gregale.dev:8080",node="fsn-2.faas",node_id="node-2",region="eu-fsn1",zone="b"}'
         values: '0x31'
-      - series: 'apid_metrics_discovery_targets{job="gatewayd-internal"}'
+      - series: 'apid_metrics_discovery_targets{job="apid",instance="127.0.0.1:9101",exported_job="gatewayd-internal"}'
         values: '2x31'
-      - series: 'apid_metrics_discovery_last_success_timestamp_seconds{job="gatewayd-internal"}'
-        values: '600x31'
+      - series: 'apid_metrics_discovery_last_success_timestamp_seconds{job="apid",instance="127.0.0.1:9101",exported_job="gatewayd-internal"}'
+        values: '0+30x31'
+      - series: apid_metrics_discovery_requests_total{job="apid",instance="127.0.0.1:9101",exported_job="gatewayd-internal",outcome="success"}
+        values: 0+1x41
     promql_expr_test:
       - expr: faas_compute_metrics_healthy_targets:by_job{job="gatewayd-internal"}
         eval_time: 10m
@@ -71,10 +74,12 @@ tests:
   - interval: 30s
     name: "all discovered targets absent from scrape series -> zero coverage"
     input_series:
-      - series: 'apid_metrics_discovery_targets{job="promtail-compute"}'
+      - series: 'apid_metrics_discovery_targets{job="apid",instance="127.0.0.1:9101",exported_job="promtail-compute"}'
         values: '2x31'
-      - series: 'apid_metrics_discovery_last_success_timestamp_seconds{job="promtail-compute"}'
-        values: '600x31'
+      - series: 'apid_metrics_discovery_last_success_timestamp_seconds{job="apid",instance="127.0.0.1:9101",exported_job="promtail-compute"}'
+        values: '0+30x31'
+      - series: apid_metrics_discovery_requests_total{job="apid",instance="127.0.0.1:9101",exported_job="promtail-compute",outcome="success"}
+        values: 0+1x41
     promql_expr_test:
       - expr: faas_compute_metrics_healthy_targets:by_job{job="promtail-compute"}
         eval_time: 10m
@@ -107,10 +112,12 @@ tests:
     input_series:
       - series: 'up{job="gatewayd-internal",instance="fsn-2.gregale.dev:8080",node="fsn-2.faas",node_id="node-2"}'
         values: '0x31'
-      - series: 'apid_metrics_discovery_targets{job="gatewayd-internal"}'
+      - series: 'apid_metrics_discovery_targets{job="apid",instance="127.0.0.1:9101",exported_job="gatewayd-internal"}'
         values: '1x31'
-      - series: 'apid_metrics_discovery_last_success_timestamp_seconds{job="gatewayd-internal"}'
+      - series: 'apid_metrics_discovery_last_success_timestamp_seconds{job="apid",instance="127.0.0.1:9101",exported_job="gatewayd-internal"}'
         values: '0x31'
+      - series: apid_metrics_discovery_requests_total{job="apid",instance="127.0.0.1:9101",exported_job="gatewayd-internal",outcome="success"}
+        values: 0+1x41
     alert_rule_test:
       - eval_time: 10m
         alertname: FaasComputeMetricsDiscoveryStale
@@ -122,9 +129,838 @@ tests:
               family: compute_metrics_discovery
             exp_annotations:
               summary: "Compute metrics discovery is stale for gatewayd-internal"
-              description: "apid has not completed a successful registry-backed HTTP-SD snapshot for gatewayd-internal within 120s. Prometheus may still be healthy while compute-node metrics coverage is frozen or missing. Check apid availability, its database pool, and the discovery runbook."
+              description: "apid has not completed a successful registry-backed HTTP-SD snapshot for gatewayd-internal within the past 120s, or its refresh timestamp is in the future. Prometheus may still be healthy while compute-node metrics coverage is frozen or missing. Check apid availability, its database pool, and the discovery runbook."
               runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeMetricsDiscoveryDegraded.md"
       - eval_time: 10m
         alertname: FaasComputeMetricsScrapeCoverageLow
       - eval_time: 10m
         alertname: FaasComputeMetricsScrapeTargetDown
+
+  # Additional real-wire states and production hold-time boundaries.
+  - interval: 30s
+    name: fresh empty registry is legitimate idle
+    input_series:
+    - series: apid_metrics_discovery_targets{job="apid",instance="127.0.0.1:9101",exported_job="vmmd"}
+      values: '0x41'
+    - series: apid_metrics_discovery_registry_nodes{job="apid",instance="127.0.0.1:9101",exported_job="vmmd"}
+      values: '0x41'
+    - series: apid_metrics_discovery_invalid_targets{job="apid",instance="127.0.0.1:9101",exported_job="vmmd"}
+      values: '0x41'
+    - series: apid_metrics_discovery_last_success_timestamp_seconds{job="apid",instance="127.0.0.1:9101",exported_job="vmmd"}
+      values: 0+30x41
+    - series: apid_metrics_discovery_requests_total{job="apid",instance="127.0.0.1:9101",exported_job="vmmd",outcome="success"}
+      values: 0+1x41
+    promql_expr_test:
+    - expr: faas_compute_metrics_discovery_targets:by_job{job="vmmd"}
+      eval_time: 12m
+      exp_samples:
+      - labels: '{__name__="faas_compute_metrics_discovery_targets:by_job",job="vmmd"}'
+        value: 0
+    - expr: faas_compute_metrics_scrape_coverage:by_job{job="vmmd"}
+      eval_time: 12m
+      exp_samples:
+      - labels: '{__name__="faas_compute_metrics_scrape_coverage:by_job",job="vmmd"}'
+        value: 0
+    alert_rule_test:
+    - eval_time: 12m
+      alertname: FaasComputeMetricsScrapeCoverageLow
+    - eval_time: 12m
+      alertname: FaasComputeMetricsScrapeTargetDown
+    - eval_time: 12m
+      alertname: FaasComputeMetricsDiscoveryStale
+    - eval_time: 12m
+      alertname: FaasComputeMetricsDiscoveryEmpty
+    - eval_time: 12m
+      alertname: FaasComputeMetricsDiscoveryInvalidTargets
+    - eval_time: 12m
+      alertname: FaasComputeMetricsDiscoveryAmbiguous
+  - interval: 30s
+    name: registered nodes entirely filtered -> empty and invalid alerts
+    input_series:
+    - series: apid_metrics_discovery_targets{job="apid",instance="127.0.0.1:9101",exported_job="vmmd"}
+      values: '0x41'
+    - series: apid_metrics_discovery_registry_nodes{job="apid",instance="127.0.0.1:9101",exported_job="vmmd"}
+      values: 2x41
+    - series: apid_metrics_discovery_invalid_targets{job="apid",instance="127.0.0.1:9101",exported_job="vmmd"}
+      values: 2x41
+    - series: apid_metrics_discovery_last_success_timestamp_seconds{job="apid",instance="127.0.0.1:9101",exported_job="vmmd"}
+      values: 0+30x41
+    - series: apid_metrics_discovery_requests_total{job="apid",instance="127.0.0.1:9101",exported_job="vmmd",outcome="success"}
+      values: 0+1x41
+    promql_expr_test:
+    - expr: faas_compute_metrics_discovery_registry_nodes:by_job{job="vmmd"}
+      eval_time: 12m
+      exp_samples:
+      - labels: '{__name__="faas_compute_metrics_discovery_registry_nodes:by_job",job="vmmd"}'
+        value: 2
+    - expr: faas_compute_metrics_discovery_invalid_targets:by_job{job="vmmd"}
+      eval_time: 12m
+      exp_samples:
+      - labels: '{__name__="faas_compute_metrics_discovery_invalid_targets:by_job",job="vmmd"}'
+        value: 2
+    alert_rule_test:
+    - eval_time: 12m
+      alertname: FaasComputeMetricsScrapeCoverageLow
+    - eval_time: 12m
+      alertname: FaasComputeMetricsScrapeTargetDown
+    - eval_time: 12m
+      alertname: FaasComputeMetricsDiscoveryStale
+    - eval_time: 12m
+      alertname: FaasComputeMetricsDiscoveryEmpty
+      exp_alerts:
+      - exp_labels:
+          job: vmmd
+          severity: warn
+          component: apid
+          family: compute_metrics_discovery
+        exp_annotations:
+          summary: Compute metrics discovery returned no targets for vmmd
+          description: The active compute registry contains scrape-ready nodes, but the latest successful HTTP-SD response for
+            vmmd returned zero targets. Check invalid gateway_target_url values, stable node names, and the apid registry rows
+            before changing Prometheus configuration.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeMetricsDiscoveryDegraded.md
+    - eval_time: 12m
+      alertname: FaasComputeMetricsDiscoveryInvalidTargets
+      exp_alerts:
+      - exp_labels:
+          job: vmmd
+          severity: warn
+          component: apid
+          family: compute_metrics_discovery
+        exp_annotations:
+          summary: Compute metrics discovery is filtering invalid targets for vmmd
+          description: apid omitted one or more active compute registry rows from the vmmd HTTP-SD response because the gateway
+            target or stable node name failed validation. Metrics coverage is partial; repair the registry row and verify the
+            next refresh.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeMetricsDiscoveryDegraded.md
+    - eval_time: 12m
+      alertname: FaasComputeMetricsDiscoveryAmbiguous
+  - interval: 30s
+    name: partially invalid registry -> invalid alert with valid scrape coverage
+    input_series:
+    - series: apid_metrics_discovery_targets{job="apid",instance="127.0.0.1:9101",exported_job="vmmd"}
+      values: 1x41
+    - series: apid_metrics_discovery_registry_nodes{job="apid",instance="127.0.0.1:9101",exported_job="vmmd"}
+      values: 2x41
+    - series: apid_metrics_discovery_invalid_targets{job="apid",instance="127.0.0.1:9101",exported_job="vmmd"}
+      values: 1x41
+    - series: apid_metrics_discovery_last_success_timestamp_seconds{job="apid",instance="127.0.0.1:9101",exported_job="vmmd"}
+      values: 0+30x41
+    - &id001
+      series: up{job="vmmd",instance="node:9104",node="compute-1"}
+      values: 1x41
+    - series: apid_metrics_discovery_requests_total{job="apid",instance="127.0.0.1:9101",exported_job="vmmd",outcome="success"}
+      values: 0+1x41
+    promql_expr_test:
+    - expr: faas_compute_metrics_scrape_coverage:by_job{job="vmmd"}
+      eval_time: 12m
+      exp_samples:
+      - labels: '{__name__="faas_compute_metrics_scrape_coverage:by_job",job="vmmd"}'
+        value: 1
+    alert_rule_test:
+    - eval_time: 12m
+      alertname: FaasComputeMetricsScrapeCoverageLow
+    - eval_time: 12m
+      alertname: FaasComputeMetricsScrapeTargetDown
+    - eval_time: 12m
+      alertname: FaasComputeMetricsDiscoveryStale
+    - eval_time: 12m
+      alertname: FaasComputeMetricsDiscoveryEmpty
+    - eval_time: 12m
+      alertname: FaasComputeMetricsDiscoveryInvalidTargets
+      exp_alerts:
+      - exp_labels:
+          job: vmmd
+          severity: warn
+          component: apid
+          family: compute_metrics_discovery
+        exp_annotations:
+          summary: Compute metrics discovery is filtering invalid targets for vmmd
+          description: apid omitted one or more active compute registry rows from the vmmd HTTP-SD response because the gateway
+            target or stable node name failed validation. Metrics coverage is partial; repair the registry row and verify the
+            next refresh.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeMetricsDiscoveryDegraded.md
+    - eval_time: 12m
+      alertname: FaasComputeMetricsDiscoveryAmbiguous
+  - interval: 30s
+    name: unrefreshed bootstrap zero does not enable downstream alerts
+    input_series:
+    - series: apid_metrics_discovery_targets{job="apid",instance="127.0.0.1:9101",exported_job="vmmd"}
+      values: 2x41
+    - series: apid_metrics_discovery_registry_nodes{job="apid",instance="127.0.0.1:9101",exported_job="vmmd"}
+      values: 2x41
+    - series: apid_metrics_discovery_invalid_targets{job="apid",instance="127.0.0.1:9101",exported_job="vmmd"}
+      values: '0x41'
+    - series: apid_metrics_discovery_last_success_timestamp_seconds{job="apid",instance="127.0.0.1:9101",exported_job="vmmd"}
+      values: '0x41'
+    - series: apid_metrics_discovery_requests_total{job="apid",instance="127.0.0.1:9101",exported_job="vmmd",outcome="success"}
+      values: 0+1x41
+    promql_expr_test: []
+    alert_rule_test:
+    - eval_time: 12m
+      alertname: FaasComputeMetricsScrapeCoverageLow
+    - eval_time: 12m
+      alertname: FaasComputeMetricsScrapeTargetDown
+    - eval_time: 12m
+      alertname: FaasComputeMetricsDiscoveryStale
+      exp_alerts:
+      - exp_labels:
+          job: vmmd
+          severity: warn
+          component: apid
+          family: compute_metrics_discovery
+        exp_annotations:
+          summary: Compute metrics discovery is stale for vmmd
+          description: apid has not completed a successful registry-backed HTTP-SD snapshot for vmmd within the past 120s, or
+            its refresh timestamp is in the future. Prometheus may still be healthy while compute-node metrics coverage is frozen
+            or missing. Check apid availability, its database pool, and the discovery runbook.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeMetricsDiscoveryDegraded.md
+    - eval_time: 12m
+      alertname: FaasComputeMetricsDiscoveryEmpty
+    - eval_time: 12m
+      alertname: FaasComputeMetricsDiscoveryInvalidTargets
+    - eval_time: 12m
+      alertname: FaasComputeMetricsDiscoveryAmbiguous
+  - interval: 30s
+    name: nonzero frozen refresh is stale despite fresh apid samples
+    input_series:
+    - series: apid_metrics_discovery_targets{job="apid",instance="127.0.0.1:9101",exported_job="vmmd"}
+      values: 2x41
+    - series: apid_metrics_discovery_registry_nodes{job="apid",instance="127.0.0.1:9101",exported_job="vmmd"}
+      values: 2x41
+    - series: apid_metrics_discovery_invalid_targets{job="apid",instance="127.0.0.1:9101",exported_job="vmmd"}
+      values: '0x41'
+    - series: apid_metrics_discovery_last_success_timestamp_seconds{job="apid",instance="127.0.0.1:9101",exported_job="vmmd"}
+      values: 1x41
+    - series: apid_metrics_discovery_requests_total{job="apid",instance="127.0.0.1:9101",exported_job="vmmd",outcome="success"}
+      values: 0+1x41
+    promql_expr_test: []
+    alert_rule_test:
+    - eval_time: 12m
+      alertname: FaasComputeMetricsScrapeCoverageLow
+    - eval_time: 12m
+      alertname: FaasComputeMetricsScrapeTargetDown
+    - eval_time: 12m
+      alertname: FaasComputeMetricsDiscoveryStale
+      exp_alerts:
+      - exp_labels:
+          job: vmmd
+          severity: warn
+          component: apid
+          family: compute_metrics_discovery
+        exp_annotations:
+          summary: Compute metrics discovery is stale for vmmd
+          description: apid has not completed a successful registry-backed HTTP-SD snapshot for vmmd within the past 120s, or
+            its refresh timestamp is in the future. Prometheus may still be healthy while compute-node metrics coverage is frozen
+            or missing. Check apid availability, its database pool, and the discovery runbook.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeMetricsDiscoveryDegraded.md
+    - eval_time: 12m
+      alertname: FaasComputeMetricsDiscoveryEmpty
+    - eval_time: 12m
+      alertname: FaasComputeMetricsDiscoveryInvalidTargets
+    - eval_time: 12m
+      alertname: FaasComputeMetricsDiscoveryAmbiguous
+  - interval: 30s
+    name: future refresh cannot enable downstream alerts
+    input_series:
+    - series: apid_metrics_discovery_targets{job="apid",instance="127.0.0.1:9101",exported_job="vmmd"}
+      values: 2x41
+    - series: apid_metrics_discovery_registry_nodes{job="apid",instance="127.0.0.1:9101",exported_job="vmmd"}
+      values: 2x41
+    - series: apid_metrics_discovery_invalid_targets{job="apid",instance="127.0.0.1:9101",exported_job="vmmd"}
+      values: '0x41'
+    - series: apid_metrics_discovery_last_success_timestamp_seconds{job="apid",instance="127.0.0.1:9101",exported_job="vmmd"}
+      values: 3600+30x41
+    - series: apid_metrics_discovery_requests_total{job="apid",instance="127.0.0.1:9101",exported_job="vmmd",outcome="success"}
+      values: 0+1x41
+    promql_expr_test: []
+    alert_rule_test:
+    - eval_time: 12m
+      alertname: FaasComputeMetricsScrapeCoverageLow
+    - eval_time: 12m
+      alertname: FaasComputeMetricsScrapeTargetDown
+    - eval_time: 12m
+      alertname: FaasComputeMetricsDiscoveryStale
+      exp_alerts:
+      - exp_labels:
+          job: vmmd
+          severity: warn
+          component: apid
+          family: compute_metrics_discovery
+        exp_annotations:
+          summary: Compute metrics discovery is stale for vmmd
+          description: apid has not completed a successful registry-backed HTTP-SD snapshot for vmmd within the past 120s, or
+            its refresh timestamp is in the future. Prometheus may still be healthy while compute-node metrics coverage is frozen
+            or missing. Check apid availability, its database pool, and the discovery runbook.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeMetricsDiscoveryDegraded.md
+    - eval_time: 12m
+      alertname: FaasComputeMetricsDiscoveryEmpty
+    - eval_time: 12m
+      alertname: FaasComputeMetricsDiscoveryInvalidTargets
+    - eval_time: 12m
+      alertname: FaasComputeMetricsDiscoveryAmbiguous
+  - interval: 30s
+    name: multiple apid producers cannot be summed into a false expectation
+    input_series:
+    - series: apid_metrics_discovery_targets{job="apid",instance="127.0.0.1:9101",exported_job="vmmd"}
+      values: 1x41
+    - series: apid_metrics_discovery_registry_nodes{job="apid",instance="127.0.0.1:9101",exported_job="vmmd"}
+      values: 1x41
+    - series: apid_metrics_discovery_invalid_targets{job="apid",instance="127.0.0.1:9101",exported_job="vmmd"}
+      values: '0x41'
+    - series: apid_metrics_discovery_last_success_timestamp_seconds{job="apid",instance="127.0.0.1:9101",exported_job="vmmd"}
+      values: 0+30x41
+    - series: apid_metrics_discovery_targets{job="apid",instance="127.0.0.2:9101",exported_job="vmmd"}
+      values: 2x41
+    - series: apid_metrics_discovery_registry_nodes{job="apid",instance="127.0.0.2:9101",exported_job="vmmd"}
+      values: 2x41
+    - series: apid_metrics_discovery_invalid_targets{job="apid",instance="127.0.0.2:9101",exported_job="vmmd"}
+      values: '0x41'
+    - series: apid_metrics_discovery_last_success_timestamp_seconds{job="apid",instance="127.0.0.2:9101",exported_job="vmmd"}
+      values: 0+30x41
+    - *id001
+    - series: apid_metrics_discovery_requests_total{job="apid",instance="127.0.0.1:9101",exported_job="vmmd",outcome="success"}
+      values: 0+1x41
+    - series: apid_metrics_discovery_requests_total{job="apid",instance="127.0.0.2:9101",exported_job="vmmd",outcome="success"}
+      values: 0+1x41
+    promql_expr_test:
+    - expr: faas_compute_metrics_discovery_targets:by_job{job="vmmd"}
+      eval_time: 12m
+      exp_samples: []
+    - expr: faas_compute_metrics_scrape_coverage:by_job{job="vmmd"}
+      eval_time: 12m
+      exp_samples: []
+    alert_rule_test:
+    - eval_time: 12m
+      alertname: FaasComputeMetricsScrapeCoverageLow
+    - eval_time: 12m
+      alertname: FaasComputeMetricsScrapeTargetDown
+    - eval_time: 12m
+      alertname: FaasComputeMetricsDiscoveryStale
+    - eval_time: 12m
+      alertname: FaasComputeMetricsDiscoveryEmpty
+    - eval_time: 12m
+      alertname: FaasComputeMetricsDiscoveryInvalidTargets
+    - eval_time: 12m
+      alertname: FaasComputeMetricsDiscoveryAmbiguous
+      exp_alerts:
+      - exp_labels:
+          job: vmmd
+          severity: warn
+          component: apid
+          family: compute_metrics_discovery
+        exp_annotations:
+          summary: Compute metrics discovery has multiple sources for vmmd
+          description: More than one apid discovery gauge series reports the vmmd snapshot. Per-job counts are unavailable because
+            summing or choosing between producers could misstate scrape coverage. Check duplicate apid scrape targets and producer
+            labels in the discovery runbook.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeMetricsDiscoveryDegraded.md
+  - interval: 30s
+    name: 'gatewayd-internal: normalized minimum cannot depend on up series'
+    input_series:
+    - series: apid_metrics_discovery_targets{job="apid",instance="127.0.0.1:9101",exported_job="gatewayd-internal"}
+      values: 2x41
+    - series: apid_metrics_discovery_registry_nodes{job="apid",instance="127.0.0.1:9101",exported_job="gatewayd-internal"}
+      values: 2x41
+    - series: apid_metrics_discovery_invalid_targets{job="apid",instance="127.0.0.1:9101",exported_job="gatewayd-internal"}
+      values: '0x41'
+    - series: apid_metrics_discovery_last_success_timestamp_seconds{job="apid",instance="127.0.0.1:9101",exported_job="gatewayd-internal"}
+      values: 0+30x41
+    - series: apid_metrics_discovery_requests_total{job="apid",instance="127.0.0.1:9101",exported_job="gatewayd-internal",outcome="success"}
+      values: 0+1x41
+    promql_expr_test:
+    - expr: faas_compute_metrics_discovery_targets:by_job{job="gatewayd-internal"}
+      eval_time: 12m
+      exp_samples:
+      - labels: '{__name__="faas_compute_metrics_discovery_targets:by_job",job="gatewayd-internal"}'
+        value: 2
+    - expr: faas_compute_metrics_healthy_targets:by_job{job="gatewayd-internal"}
+      eval_time: 12m
+      exp_samples:
+      - labels: '{__name__="faas_compute_metrics_healthy_targets:by_job",job="gatewayd-internal"}'
+        value: 0
+    - expr: faas_compute_metrics_scrape_coverage:by_job{job="gatewayd-internal"}
+      eval_time: 12m
+      exp_samples:
+      - labels: '{__name__="faas_compute_metrics_scrape_coverage:by_job",job="gatewayd-internal"}'
+        value: 0
+    alert_rule_test:
+    - eval_time: 12m
+      alertname: FaasComputeMetricsScrapeCoverageLow
+      exp_alerts:
+      - exp_labels:
+          job: gatewayd-internal
+          severity: warn
+          component: prometheus
+          family: compute_metrics_scrape
+        exp_annotations:
+          summary: Compute metrics scrape coverage is incomplete for gatewayd-internal
+          description: Prometheus is scraping fewer compute targets than the latest healthy apid HTTP-SD snapshot reports for
+            gatewayd-internal. Discovery itself is healthy, but one or more node metrics endpoints are unreachable or not producing
+            a scrape series. Check the per-node up status and scrape errors in the discovery runbook.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeMetricsDiscoveryDegraded.md
+  - interval: 30s
+    name: 'vmmd: normalized minimum cannot depend on up series'
+    input_series:
+    - series: apid_metrics_discovery_targets{job="apid",instance="127.0.0.1:9101",exported_job="vmmd"}
+      values: 2x41
+    - series: apid_metrics_discovery_registry_nodes{job="apid",instance="127.0.0.1:9101",exported_job="vmmd"}
+      values: 2x41
+    - series: apid_metrics_discovery_invalid_targets{job="apid",instance="127.0.0.1:9101",exported_job="vmmd"}
+      values: '0x41'
+    - series: apid_metrics_discovery_last_success_timestamp_seconds{job="apid",instance="127.0.0.1:9101",exported_job="vmmd"}
+      values: 0+30x41
+    - series: apid_metrics_discovery_requests_total{job="apid",instance="127.0.0.1:9101",exported_job="vmmd",outcome="success"}
+      values: 0+1x41
+    promql_expr_test:
+    - expr: faas_compute_metrics_discovery_targets:by_job{job="vmmd"}
+      eval_time: 12m
+      exp_samples:
+      - labels: '{__name__="faas_compute_metrics_discovery_targets:by_job",job="vmmd"}'
+        value: 2
+    - expr: faas_compute_metrics_healthy_targets:by_job{job="vmmd"}
+      eval_time: 12m
+      exp_samples:
+      - labels: '{__name__="faas_compute_metrics_healthy_targets:by_job",job="vmmd"}'
+        value: 0
+    - expr: faas_compute_metrics_scrape_coverage:by_job{job="vmmd"}
+      eval_time: 12m
+      exp_samples:
+      - labels: '{__name__="faas_compute_metrics_scrape_coverage:by_job",job="vmmd"}'
+        value: 0
+    alert_rule_test:
+    - eval_time: 12m
+      alertname: FaasComputeMetricsScrapeCoverageLow
+      exp_alerts:
+      - exp_labels:
+          job: vmmd
+          severity: warn
+          component: prometheus
+          family: compute_metrics_scrape
+        exp_annotations:
+          summary: Compute metrics scrape coverage is incomplete for vmmd
+          description: Prometheus is scraping fewer compute targets than the latest healthy apid HTTP-SD snapshot reports for
+            vmmd. Discovery itself is healthy, but one or more node metrics endpoints are unreachable or not producing a scrape
+            series. Check the per-node up status and scrape errors in the discovery runbook.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeMetricsDiscoveryDegraded.md
+  - interval: 30s
+    name: 'imaged: normalized minimum cannot depend on up series'
+    input_series:
+    - series: apid_metrics_discovery_targets{job="apid",instance="127.0.0.1:9101",exported_job="imaged"}
+      values: 2x41
+    - series: apid_metrics_discovery_registry_nodes{job="apid",instance="127.0.0.1:9101",exported_job="imaged"}
+      values: 2x41
+    - series: apid_metrics_discovery_invalid_targets{job="apid",instance="127.0.0.1:9101",exported_job="imaged"}
+      values: '0x41'
+    - series: apid_metrics_discovery_last_success_timestamp_seconds{job="apid",instance="127.0.0.1:9101",exported_job="imaged"}
+      values: 0+30x41
+    - series: apid_metrics_discovery_requests_total{job="apid",instance="127.0.0.1:9101",exported_job="imaged",outcome="success"}
+      values: 0+1x41
+    promql_expr_test:
+    - expr: faas_compute_metrics_discovery_targets:by_job{job="imaged"}
+      eval_time: 12m
+      exp_samples:
+      - labels: '{__name__="faas_compute_metrics_discovery_targets:by_job",job="imaged"}'
+        value: 2
+    - expr: faas_compute_metrics_healthy_targets:by_job{job="imaged"}
+      eval_time: 12m
+      exp_samples:
+      - labels: '{__name__="faas_compute_metrics_healthy_targets:by_job",job="imaged"}'
+        value: 0
+    - expr: faas_compute_metrics_scrape_coverage:by_job{job="imaged"}
+      eval_time: 12m
+      exp_samples:
+      - labels: '{__name__="faas_compute_metrics_scrape_coverage:by_job",job="imaged"}'
+        value: 0
+    alert_rule_test:
+    - eval_time: 12m
+      alertname: FaasComputeMetricsScrapeCoverageLow
+      exp_alerts:
+      - exp_labels:
+          job: imaged
+          severity: warn
+          component: prometheus
+          family: compute_metrics_scrape
+        exp_annotations:
+          summary: Compute metrics scrape coverage is incomplete for imaged
+          description: Prometheus is scraping fewer compute targets than the latest healthy apid HTTP-SD snapshot reports for
+            imaged. Discovery itself is healthy, but one or more node metrics endpoints are unreachable or not producing a scrape
+            series. Check the per-node up status and scrape errors in the discovery runbook.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeMetricsDiscoveryDegraded.md
+  - interval: 30s
+    name: 'builderd: normalized minimum cannot depend on up series'
+    input_series:
+    - series: apid_metrics_discovery_targets{job="apid",instance="127.0.0.1:9101",exported_job="builderd"}
+      values: 2x41
+    - series: apid_metrics_discovery_registry_nodes{job="apid",instance="127.0.0.1:9101",exported_job="builderd"}
+      values: 2x41
+    - series: apid_metrics_discovery_invalid_targets{job="apid",instance="127.0.0.1:9101",exported_job="builderd"}
+      values: '0x41'
+    - series: apid_metrics_discovery_last_success_timestamp_seconds{job="apid",instance="127.0.0.1:9101",exported_job="builderd"}
+      values: 0+30x41
+    - series: apid_metrics_discovery_requests_total{job="apid",instance="127.0.0.1:9101",exported_job="builderd",outcome="success"}
+      values: 0+1x41
+    promql_expr_test:
+    - expr: faas_compute_metrics_discovery_targets:by_job{job="builderd"}
+      eval_time: 12m
+      exp_samples:
+      - labels: '{__name__="faas_compute_metrics_discovery_targets:by_job",job="builderd"}'
+        value: 2
+    - expr: faas_compute_metrics_healthy_targets:by_job{job="builderd"}
+      eval_time: 12m
+      exp_samples:
+      - labels: '{__name__="faas_compute_metrics_healthy_targets:by_job",job="builderd"}'
+        value: 0
+    - expr: faas_compute_metrics_scrape_coverage:by_job{job="builderd"}
+      eval_time: 12m
+      exp_samples:
+      - labels: '{__name__="faas_compute_metrics_scrape_coverage:by_job",job="builderd"}'
+        value: 0
+    alert_rule_test:
+    - eval_time: 12m
+      alertname: FaasComputeMetricsScrapeCoverageLow
+      exp_alerts:
+      - exp_labels:
+          job: builderd
+          severity: warn
+          component: prometheus
+          family: compute_metrics_scrape
+        exp_annotations:
+          summary: Compute metrics scrape coverage is incomplete for builderd
+          description: Prometheus is scraping fewer compute targets than the latest healthy apid HTTP-SD snapshot reports for
+            builderd. Discovery itself is healthy, but one or more node metrics endpoints are unreachable or not producing a
+            scrape series. Check the per-node up status and scrape errors in the discovery runbook.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeMetricsDiscoveryDegraded.md
+  - interval: 30s
+    name: 'node-compute: normalized minimum cannot depend on up series'
+    input_series:
+    - series: apid_metrics_discovery_targets{job="apid",instance="127.0.0.1:9101",exported_job="node-compute"}
+      values: 2x41
+    - series: apid_metrics_discovery_registry_nodes{job="apid",instance="127.0.0.1:9101",exported_job="node-compute"}
+      values: 2x41
+    - series: apid_metrics_discovery_invalid_targets{job="apid",instance="127.0.0.1:9101",exported_job="node-compute"}
+      values: '0x41'
+    - series: apid_metrics_discovery_last_success_timestamp_seconds{job="apid",instance="127.0.0.1:9101",exported_job="node-compute"}
+      values: 0+30x41
+    - series: apid_metrics_discovery_requests_total{job="apid",instance="127.0.0.1:9101",exported_job="node-compute",outcome="success"}
+      values: 0+1x41
+    promql_expr_test:
+    - expr: faas_compute_metrics_discovery_targets:by_job{job="node-compute"}
+      eval_time: 12m
+      exp_samples:
+      - labels: '{__name__="faas_compute_metrics_discovery_targets:by_job",job="node-compute"}'
+        value: 2
+    - expr: faas_compute_metrics_healthy_targets:by_job{job="node-compute"}
+      eval_time: 12m
+      exp_samples:
+      - labels: '{__name__="faas_compute_metrics_healthy_targets:by_job",job="node-compute"}'
+        value: 0
+    - expr: faas_compute_metrics_scrape_coverage:by_job{job="node-compute"}
+      eval_time: 12m
+      exp_samples:
+      - labels: '{__name__="faas_compute_metrics_scrape_coverage:by_job",job="node-compute"}'
+        value: 0
+    alert_rule_test:
+    - eval_time: 12m
+      alertname: FaasComputeMetricsScrapeCoverageLow
+      exp_alerts:
+      - exp_labels:
+          job: node-compute
+          severity: warn
+          component: prometheus
+          family: compute_metrics_scrape
+        exp_annotations:
+          summary: Compute metrics scrape coverage is incomplete for node-compute
+          description: Prometheus is scraping fewer compute targets than the latest healthy apid HTTP-SD snapshot reports for
+            node-compute. Discovery itself is healthy, but one or more node metrics endpoints are unreachable or not producing
+            a scrape series. Check the per-node up status and scrape errors in the discovery runbook.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeMetricsDiscoveryDegraded.md
+  - interval: 30s
+    name: 'realtimed: normalized minimum cannot depend on up series'
+    input_series:
+    - series: apid_metrics_discovery_targets{job="apid",instance="127.0.0.1:9101",exported_job="realtimed"}
+      values: 2x41
+    - series: apid_metrics_discovery_registry_nodes{job="apid",instance="127.0.0.1:9101",exported_job="realtimed"}
+      values: 2x41
+    - series: apid_metrics_discovery_invalid_targets{job="apid",instance="127.0.0.1:9101",exported_job="realtimed"}
+      values: '0x41'
+    - series: apid_metrics_discovery_last_success_timestamp_seconds{job="apid",instance="127.0.0.1:9101",exported_job="realtimed"}
+      values: 0+30x41
+    - series: apid_metrics_discovery_requests_total{job="apid",instance="127.0.0.1:9101",exported_job="realtimed",outcome="success"}
+      values: 0+1x41
+    promql_expr_test:
+    - expr: faas_compute_metrics_discovery_targets:by_job{job="realtimed"}
+      eval_time: 12m
+      exp_samples:
+      - labels: '{__name__="faas_compute_metrics_discovery_targets:by_job",job="realtimed"}'
+        value: 2
+    - expr: faas_compute_metrics_healthy_targets:by_job{job="realtimed"}
+      eval_time: 12m
+      exp_samples:
+      - labels: '{__name__="faas_compute_metrics_healthy_targets:by_job",job="realtimed"}'
+        value: 0
+    - expr: faas_compute_metrics_scrape_coverage:by_job{job="realtimed"}
+      eval_time: 12m
+      exp_samples:
+      - labels: '{__name__="faas_compute_metrics_scrape_coverage:by_job",job="realtimed"}'
+        value: 0
+    alert_rule_test:
+    - eval_time: 12m
+      alertname: FaasComputeMetricsScrapeCoverageLow
+      exp_alerts:
+      - exp_labels:
+          job: realtimed
+          severity: warn
+          component: prometheus
+          family: compute_metrics_scrape
+        exp_annotations:
+          summary: Compute metrics scrape coverage is incomplete for realtimed
+          description: Prometheus is scraping fewer compute targets than the latest healthy apid HTTP-SD snapshot reports for
+            realtimed. Discovery itself is healthy, but one or more node metrics endpoints are unreachable or not producing
+            a scrape series. Check the per-node up status and scrape errors in the discovery runbook.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeMetricsDiscoveryDegraded.md
+  - interval: 30s
+    name: 'schedd-compute: normalized minimum cannot depend on up series'
+    input_series:
+    - series: apid_metrics_discovery_targets{job="apid",instance="127.0.0.1:9101",exported_job="schedd-compute"}
+      values: 2x41
+    - series: apid_metrics_discovery_registry_nodes{job="apid",instance="127.0.0.1:9101",exported_job="schedd-compute"}
+      values: 2x41
+    - series: apid_metrics_discovery_invalid_targets{job="apid",instance="127.0.0.1:9101",exported_job="schedd-compute"}
+      values: '0x41'
+    - series: apid_metrics_discovery_last_success_timestamp_seconds{job="apid",instance="127.0.0.1:9101",exported_job="schedd-compute"}
+      values: 0+30x41
+    - series: apid_metrics_discovery_requests_total{job="apid",instance="127.0.0.1:9101",exported_job="schedd-compute",outcome="success"}
+      values: 0+1x41
+    promql_expr_test:
+    - expr: faas_compute_metrics_discovery_targets:by_job{job="schedd-compute"}
+      eval_time: 12m
+      exp_samples:
+      - labels: '{__name__="faas_compute_metrics_discovery_targets:by_job",job="schedd-compute"}'
+        value: 2
+    - expr: faas_compute_metrics_healthy_targets:by_job{job="schedd-compute"}
+      eval_time: 12m
+      exp_samples:
+      - labels: '{__name__="faas_compute_metrics_healthy_targets:by_job",job="schedd-compute"}'
+        value: 0
+    - expr: faas_compute_metrics_scrape_coverage:by_job{job="schedd-compute"}
+      eval_time: 12m
+      exp_samples:
+      - labels: '{__name__="faas_compute_metrics_scrape_coverage:by_job",job="schedd-compute"}'
+        value: 0
+    alert_rule_test:
+    - eval_time: 12m
+      alertname: FaasComputeMetricsScrapeCoverageLow
+      exp_alerts:
+      - exp_labels:
+          job: schedd-compute
+          severity: warn
+          component: prometheus
+          family: compute_metrics_scrape
+        exp_annotations:
+          summary: Compute metrics scrape coverage is incomplete for schedd-compute
+          description: Prometheus is scraping fewer compute targets than the latest healthy apid HTTP-SD snapshot reports for
+            schedd-compute. Discovery itself is healthy, but one or more node metrics endpoints are unreachable or not producing
+            a scrape series. Check the per-node up status and scrape errors in the discovery runbook.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeMetricsDiscoveryDegraded.md
+  - interval: 30s
+    name: 'promtail-compute: normalized minimum cannot depend on up series'
+    input_series:
+    - series: apid_metrics_discovery_targets{job="apid",instance="127.0.0.1:9101",exported_job="promtail-compute"}
+      values: 2x41
+    - series: apid_metrics_discovery_registry_nodes{job="apid",instance="127.0.0.1:9101",exported_job="promtail-compute"}
+      values: 2x41
+    - series: apid_metrics_discovery_invalid_targets{job="apid",instance="127.0.0.1:9101",exported_job="promtail-compute"}
+      values: '0x41'
+    - series: apid_metrics_discovery_last_success_timestamp_seconds{job="apid",instance="127.0.0.1:9101",exported_job="promtail-compute"}
+      values: 0+30x41
+    - series: apid_metrics_discovery_requests_total{job="apid",instance="127.0.0.1:9101",exported_job="promtail-compute",outcome="success"}
+      values: 0+1x41
+    promql_expr_test:
+    - expr: faas_compute_metrics_discovery_targets:by_job{job="promtail-compute"}
+      eval_time: 12m
+      exp_samples:
+      - labels: '{__name__="faas_compute_metrics_discovery_targets:by_job",job="promtail-compute"}'
+        value: 2
+    - expr: faas_compute_metrics_healthy_targets:by_job{job="promtail-compute"}
+      eval_time: 12m
+      exp_samples:
+      - labels: '{__name__="faas_compute_metrics_healthy_targets:by_job",job="promtail-compute"}'
+        value: 0
+    - expr: faas_compute_metrics_scrape_coverage:by_job{job="promtail-compute"}
+      eval_time: 12m
+      exp_samples:
+      - labels: '{__name__="faas_compute_metrics_scrape_coverage:by_job",job="promtail-compute"}'
+        value: 0
+    alert_rule_test:
+    - eval_time: 12m
+      alertname: FaasComputeMetricsScrapeCoverageLow
+      exp_alerts:
+      - exp_labels:
+          job: promtail-compute
+          severity: warn
+          component: prometheus
+          family: compute_metrics_scrape
+        exp_annotations:
+          summary: Compute metrics scrape coverage is incomplete for promtail-compute
+          description: Prometheus is scraping fewer compute targets than the latest healthy apid HTTP-SD snapshot reports for
+            promtail-compute. Discovery itself is healthy, but one or more node metrics endpoints are unreachable or not producing
+            a scrape series. Check the per-node up status and scrape errors in the discovery runbook.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeMetricsDiscoveryDegraded.md
+  - interval: 30s
+    name: an idle job cannot satisfy another jobs freshness or counts
+    input_series:
+    - series: apid_metrics_discovery_targets{job="apid",instance="127.0.0.1:9101",exported_job="vmmd"}
+      values: '0x41'
+    - series: apid_metrics_discovery_registry_nodes{job="apid",instance="127.0.0.1:9101",exported_job="vmmd"}
+      values: '0x41'
+    - series: apid_metrics_discovery_invalid_targets{job="apid",instance="127.0.0.1:9101",exported_job="vmmd"}
+      values: '0x41'
+    - series: apid_metrics_discovery_last_success_timestamp_seconds{job="apid",instance="127.0.0.1:9101",exported_job="vmmd"}
+      values: 0+30x41
+    - series: apid_metrics_discovery_targets{job="apid",instance="127.0.0.1:9101",exported_job="gatewayd-internal"}
+      values: 2x41
+    - series: apid_metrics_discovery_registry_nodes{job="apid",instance="127.0.0.1:9101",exported_job="gatewayd-internal"}
+      values: 2x41
+    - series: apid_metrics_discovery_invalid_targets{job="apid",instance="127.0.0.1:9101",exported_job="gatewayd-internal"}
+      values: '0x41'
+    - series: apid_metrics_discovery_last_success_timestamp_seconds{job="apid",instance="127.0.0.1:9101",exported_job="gatewayd-internal"}
+      values: 0+30x41
+    - series: apid_metrics_discovery_requests_total{job="apid",instance="127.0.0.1:9101",exported_job="gatewayd-internal",outcome="success"}
+      values: 0+1x41
+    - series: apid_metrics_discovery_requests_total{job="apid",instance="127.0.0.1:9101",exported_job="vmmd",outcome="success"}
+      values: 0+1x41
+    promql_expr_test:
+    - expr: faas_compute_metrics_scrape_coverage:by_job{job="vmmd"}
+      eval_time: 12m
+      exp_samples:
+      - labels: '{__name__="faas_compute_metrics_scrape_coverage:by_job",job="vmmd"}'
+        value: 0
+    - expr: faas_compute_metrics_scrape_coverage:by_job{job="gatewayd-internal"}
+      eval_time: 12m
+      exp_samples:
+      - labels: '{__name__="faas_compute_metrics_scrape_coverage:by_job",job="gatewayd-internal"}'
+        value: 0
+    alert_rule_test:
+    - eval_time: 12m
+      alertname: FaasComputeMetricsScrapeCoverageLow
+      exp_alerts:
+      - exp_labels:
+          job: gatewayd-internal
+          severity: warn
+          component: prometheus
+          family: compute_metrics_scrape
+        exp_annotations:
+          summary: Compute metrics scrape coverage is incomplete for gatewayd-internal
+          description: Prometheus is scraping fewer compute targets than the latest healthy apid HTTP-SD snapshot reports for
+            gatewayd-internal. Discovery itself is healthy, but one or more node metrics endpoints are unreachable or not producing
+            a scrape series. Check the per-node up status and scrape errors in the discovery runbook.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeMetricsDiscoveryDegraded.md
+    - eval_time: 12m
+      alertname: FaasComputeMetricsDiscoveryEmpty
+  - interval: 30s
+    name: scrape warning retains its five minute hold
+    input_series:
+    - series: apid_metrics_discovery_targets{job="apid",instance="127.0.0.1:9101",exported_job="vmmd"}
+      values: 2x41
+    - series: apid_metrics_discovery_registry_nodes{job="apid",instance="127.0.0.1:9101",exported_job="vmmd"}
+      values: 2x41
+    - series: apid_metrics_discovery_invalid_targets{job="apid",instance="127.0.0.1:9101",exported_job="vmmd"}
+      values: '0x41'
+    - series: apid_metrics_discovery_last_success_timestamp_seconds{job="apid",instance="127.0.0.1:9101",exported_job="vmmd"}
+      values: 0+30x41
+    - series: apid_metrics_discovery_requests_total{job="apid",instance="127.0.0.1:9101",exported_job="vmmd",outcome="success"}
+      values: 0+1x41
+    alert_rule_test:
+    - eval_time: 5m
+      alertname: FaasComputeMetricsScrapeCoverageLow
+    - eval_time: 5m30s
+      alertname: FaasComputeMetricsScrapeCoverageLow
+      exp_alerts:
+      - exp_labels:
+          job: vmmd
+          severity: warn
+          component: prometheus
+          family: compute_metrics_scrape
+        exp_annotations:
+          summary: Compute metrics scrape coverage is incomplete for vmmd
+          description: Prometheus is scraping fewer compute targets than the latest healthy apid HTTP-SD snapshot reports for
+            vmmd. Discovery itself is healthy, but one or more node metrics endpoints are unreachable or not producing a scrape
+            series. Check the per-node up status and scrape errors in the discovery runbook.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeMetricsDiscoveryDegraded.md
+  - interval: 30s
+    name: invalid target warning retains its ten minute hold
+    input_series:
+    - series: apid_metrics_discovery_targets{job="apid",instance="127.0.0.1:9101",exported_job="vmmd"}
+      values: 1x41
+    - series: apid_metrics_discovery_registry_nodes{job="apid",instance="127.0.0.1:9101",exported_job="vmmd"}
+      values: 2x41
+    - series: apid_metrics_discovery_invalid_targets{job="apid",instance="127.0.0.1:9101",exported_job="vmmd"}
+      values: 1x41
+    - series: apid_metrics_discovery_last_success_timestamp_seconds{job="apid",instance="127.0.0.1:9101",exported_job="vmmd"}
+      values: 0+30x41
+    - *id001
+    - series: apid_metrics_discovery_requests_total{job="apid",instance="127.0.0.1:9101",exported_job="vmmd",outcome="success"}
+      values: 0+1x41
+    alert_rule_test:
+    - eval_time: 9m30s
+      alertname: FaasComputeMetricsDiscoveryInvalidTargets
+    - eval_time: 10m
+      alertname: FaasComputeMetricsDiscoveryInvalidTargets
+      exp_alerts:
+      - exp_labels:
+          job: vmmd
+          severity: warn
+          component: apid
+          family: compute_metrics_discovery
+        exp_annotations:
+          summary: Compute metrics discovery is filtering invalid targets for vmmd
+          description: apid omitted one or more active compute registry rows from the vmmd HTTP-SD response because the gateway
+            target or stable node name failed validation. Metrics coverage is partial; repair the registry row and verify the
+            next refresh.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeMetricsDiscoveryDegraded.md
+
+  # Disabled optional jobs and single-box preinitialization are not failures.
+  - interval: 30s
+    name: unused preinitialized discovery job does not raise a stale warning
+    input_series:
+    - series: apid_metrics_discovery_targets{job="apid",instance="127.0.0.1:9101",exported_job="promtail-compute"}
+      values: '0x41'
+    - series: apid_metrics_discovery_registry_nodes{job="apid",instance="127.0.0.1:9101",exported_job="promtail-compute"}
+      values: '0x41'
+    - series: apid_metrics_discovery_invalid_targets{job="apid",instance="127.0.0.1:9101",exported_job="promtail-compute"}
+      values: '0x41'
+    - series: apid_metrics_discovery_last_success_timestamp_seconds{job="apid",instance="127.0.0.1:9101",exported_job="promtail-compute"}
+      values: '0x41'
+    - series: apid_metrics_discovery_requests_total{job="apid",instance="127.0.0.1:9101",exported_job="promtail-compute",outcome="success"}
+      values: '0x41'
+    alert_rule_test:
+    - eval_time: 12m
+      alertname: FaasComputeMetricsDiscoveryStale
+    - eval_time: 12m
+      alertname: FaasComputeMetricsDiscoveryEmpty
+    - eval_time: 12m
+      alertname: FaasComputeMetricsScrapeCoverageLow
+
+  - interval: 30s
+    name: single-box static vmmd does not enable HTTP-SD bootstrap warnings
+    input_series:
+    - series: apid_metrics_discovery_targets{job="apid",instance="127.0.0.1:9101",exported_job="vmmd"}
+      values: '0x41'
+    - series: apid_metrics_discovery_registry_nodes{job="apid",instance="127.0.0.1:9101",exported_job="vmmd"}
+      values: '0x41'
+    - series: apid_metrics_discovery_invalid_targets{job="apid",instance="127.0.0.1:9101",exported_job="vmmd"}
+      values: '0x41'
+    - series: apid_metrics_discovery_last_success_timestamp_seconds{job="apid",instance="127.0.0.1:9101",exported_job="vmmd"}
+      values: '0x41'
+    - series: apid_metrics_discovery_requests_total{job="apid",instance="127.0.0.1:9101",exported_job="vmmd",outcome="success"}
+      values: '0x41'
+    - series: up{job="vmmd",instance="localhost:9104"}
+      values: 1x41
+    alert_rule_test:
+    - eval_time: 12m
+      alertname: FaasComputeMetricsDiscoveryStale
+    - eval_time: 12m
+      alertname: FaasComputeMetricsDiscoveryEmpty
+    - eval_time: 12m
+      alertname: FaasComputeMetricsScrapeCoverageLow

@@ -3,10 +3,10 @@
   "fingerprint_algorithm": "promql_ast_v1",
   "sets": [
     {
-      "revision": "20d4e30009c5e373442f4619af7857d57cf0965d6e7b589ea280dd91b5fe35d5",
+      "revision": "65c60d1a017bd0bc268b6f28ac87b9da35ba034f85b3e1067bfe9251d735a83f",
       "expected": {
         "id": "gregale-core-v1",
-        "revision": "3cc6780ef9455fb060ecea08408436f99a4590df87ab5b3222f35fb3b805af16",
+        "revision": "e4753bd317e1ab11d385fbfefa39ba4ff4536e865ac2f440ec65ecb0cb9115d9",
         "files": [
           "faas.rules.yml"
         ],
@@ -22,6 +22,19 @@
               "for_seconds": 0,
               "keep_firing_for_seconds": 0,
               "fingerprint": "5edb3cd243091ffe6135d2dafc0fc5d83b0592a4c8fbb970eec71ca42ba8d791"
+            }
+          },
+          {
+            "id": "0a454d6a201ad8138a9b731b4472705643bddd8fc491a900593c535cc12f22fd",
+            "file_name": "faas.rules.yml",
+            "group_name": "faas_compute_metrics_discovery",
+            "rule_name": "faas_compute_metrics_discovery_last_success_timestamp_seconds:by_job",
+            "definition": {
+              "expression_hash": "c41070ac0a3759075a79be7db3679ca82303fd4640b3347591381fe559bc2a7a",
+              "labels_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "for_seconds": 0,
+              "keep_firing_for_seconds": 0,
+              "fingerprint": "0f891313599c27137e2d2d201f5fd4f4b3f2ed07ac2a59453e3250c3e5fc5169"
             }
           },
           {
@@ -77,16 +90,29 @@
             }
           },
           {
+            "id": "2d0ede559fdb6c02dba1bed71408ffc4177112d120bf85f97acaa046fc2fb4d0",
+            "file_name": "faas.rules.yml",
+            "group_name": "faas_compute_metrics_discovery",
+            "rule_name": "faas_compute_metrics_discovery_targets:by_job",
+            "definition": {
+              "expression_hash": "9bf04146450015144fd453afefc6506358342a0eedface410c4478c13566baa7",
+              "labels_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "for_seconds": 0,
+              "keep_firing_for_seconds": 0,
+              "fingerprint": "f375199f29eea06649d6cbc223cd7019dd5f3d4e98b1f4d685faa44d83b32f89"
+            }
+          },
+          {
             "id": "30ac84f5b5a23043c18d18e76a554aa1a882bf554b2ae639413b7339ce0fcac2",
             "file_name": "faas.rules.yml",
             "group_name": "faas_compute_metrics_discovery",
             "rule_name": "faas_compute_metrics_healthy_targets:by_job",
             "definition": {
-              "expression_hash": "5865e8bff10612db434e3bc5a84799873bcf2594fea7c6d975e2a4cc7360ad51",
+              "expression_hash": "12cca59071d708ae08aed650884084d5d8d333aaf86e0a1d296fde430c1aa8ea",
               "labels_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
               "for_seconds": 0,
               "keep_firing_for_seconds": 0,
-              "fingerprint": "ce91fd78994a3fde11e5cb4b912278603f3d67d26accd6911928f569bd44acf0"
+              "fingerprint": "6912817ca0947d4995e27ab5f9f921dce48dd2b65fe9fb0f4c4c5ef5a25f488c"
             }
           },
           {
@@ -126,6 +152,19 @@
               "for_seconds": 0,
               "keep_firing_for_seconds": 0,
               "fingerprint": "c0cef78b8d01ace8272f5ff42ef2e921298f8b065cdf4bb2cec9dab3f742df76"
+            }
+          },
+          {
+            "id": "43f384aa9a7e5200607b6d350a41727a61737d53fc73bceb2f98130e11e2866b",
+            "file_name": "faas.rules.yml",
+            "group_name": "faas_compute_metrics_discovery",
+            "rule_name": "faas_compute_metrics_discovery_invalid_targets:by_job",
+            "definition": {
+              "expression_hash": "eceb28080686083a2b92241c209a4b2a8651fdf0467d211c6e7cee56deb44b50",
+              "labels_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "for_seconds": 0,
+              "keep_firing_for_seconds": 0,
+              "fingerprint": "fde0e319c20f82cafb16fdd54940a23c887a0c7e083bc5d31a99fa0a52299d36"
             }
           },
           {
@@ -264,11 +303,11 @@
             "group_name": "faas_compute_metrics_discovery",
             "rule_name": "faas_compute_metrics_scrape_coverage:by_job",
             "definition": {
-              "expression_hash": "20bbb83966f9f4812f5b51abf6eafac89f45530f1b50b91ec3cc84e887823096",
+              "expression_hash": "e2f2f0b86a4023d3b5809f4ea729c48fcdb70dd534976cd9563ac66cf45961d4",
               "labels_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
               "for_seconds": 0,
               "keep_firing_for_seconds": 0,
-              "fingerprint": "2474145ba0a65a1cc77e8152688002a9fdb8d74cebd17c220f19dcd49b8a30bf"
+              "fingerprint": "418b78bf495cba14a01f894a7f896f0d0ed550832a6d4d000848b996a58f3ab4"
             }
           },
           {
@@ -282,6 +321,19 @@
               "for_seconds": 0,
               "keep_firing_for_seconds": 0,
               "fingerprint": "d3163aa50f3fd6257fcd30d0192a062551d24d83778f51134672f69b7a58e681"
+            }
+          },
+          {
+            "id": "c353cbba78e762b5013c7f4614dc8666c0ebba7a19edf9c327b7777df8b0b662",
+            "file_name": "faas.rules.yml",
+            "group_name": "faas_compute_metrics_discovery",
+            "rule_name": "faas_compute_metrics_discovery_registry_nodes:by_job",
+            "definition": {
+              "expression_hash": "0bac25d7791ce9d18924a0f8f4d3f4e56cce17fd888fbb4782f088507f2f6da4",
+              "labels_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "for_seconds": 0,
+              "keep_firing_for_seconds": 0,
+              "fingerprint": "a85a77335223ca6136463f400699a0037f4c6d139864ff8cf4667437e82cbf80"
             }
           },
           {
@@ -390,8 +442,8 @@
           }
         ]
       },
-      "alert_set_revision": "d471ef85a54d122e2eb27508c6f5413d7d9950a36602bc4a7fc1d1483022059b",
-      "alert_count": 278,
+      "alert_set_revision": "763284aa5250f7f128ef6ad486776ac3edee09a8a36c78ec0713a2be5239eee1",
+      "alert_count": 279,
       "dependents": [
         {
           "rule_id": "04e71a8f5cf3db701f2c7083e95693cd02058aa3b83e91279b44abcac2192ea5",
@@ -413,6 +465,35 @@
               "file_name": "faas.rules.yml",
               "group_name": "faas_slo",
               "rule_name": "FaasTrafficDropAccount"
+            }
+          ]
+        },
+        {
+          "rule_id": "0a454d6a201ad8138a9b731b4472705643bddd8fc491a900593c535cc12f22fd",
+          "alerts": [
+            {
+              "id": "0378e6cc2e15736faf8dd4f4c8d01fde67e6d2550e7d8d34a664d78fbf4477cc",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_compute_metrics_discovery",
+              "rule_name": "FaasComputeMetricsDiscoveryEmpty"
+            },
+            {
+              "id": "145e2f031d12ff1c2f821ce616a04f7d2edbfad7f2a2443d9c011dcec96a9c78",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_compute_metrics_discovery",
+              "rule_name": "FaasComputeMetricsScrapeTargetDown"
+            },
+            {
+              "id": "716640590c375d1c9c8ece071a58b668ea3fd979dfb591637ee55c9aa2510b12",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_compute_metrics_discovery",
+              "rule_name": "FaasComputeMetricsDiscoveryStale"
+            },
+            {
+              "id": "93b09f55c5efa6fc047ccfea9897659453ce200dd84745cb8a81dd76810ef0b2",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_compute_metrics_discovery",
+              "rule_name": "FaasComputeMetricsScrapeCoverageLow"
             }
           ]
         },
@@ -485,6 +566,29 @@
           ]
         },
         {
+          "rule_id": "2d0ede559fdb6c02dba1bed71408ffc4177112d120bf85f97acaa046fc2fb4d0",
+          "alerts": [
+            {
+              "id": "0378e6cc2e15736faf8dd4f4c8d01fde67e6d2550e7d8d34a664d78fbf4477cc",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_compute_metrics_discovery",
+              "rule_name": "FaasComputeMetricsDiscoveryEmpty"
+            },
+            {
+              "id": "145e2f031d12ff1c2f821ce616a04f7d2edbfad7f2a2443d9c011dcec96a9c78",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_compute_metrics_discovery",
+              "rule_name": "FaasComputeMetricsScrapeTargetDown"
+            },
+            {
+              "id": "93b09f55c5efa6fc047ccfea9897659453ce200dd84745cb8a81dd76810ef0b2",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_compute_metrics_discovery",
+              "rule_name": "FaasComputeMetricsScrapeCoverageLow"
+            }
+          ]
+        },
+        {
           "rule_id": "30ac84f5b5a23043c18d18e76a554aa1a882bf554b2ae639413b7339ce0fcac2",
           "alerts": [
             {
@@ -518,6 +622,17 @@
               "file_name": "faas.rules.yml",
               "group_name": "faas_alert_preset_signals",
               "rule_name": "FaasSLOBurnRateHigh"
+            }
+          ]
+        },
+        {
+          "rule_id": "43f384aa9a7e5200607b6d350a41727a61737d53fc73bceb2f98130e11e2866b",
+          "alerts": [
+            {
+              "id": "94feeca171a610240564b5c1e62a7e8a95fc87edf7d86bbddfd21efbe9224d0a",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_compute_metrics_discovery",
+              "rule_name": "FaasComputeMetricsDiscoveryInvalidTargets"
             }
           ]
         },
@@ -660,6 +775,17 @@
               "file_name": "faas.rules.yml",
               "group_name": "faas_slo",
               "rule_name": "FaasTrafficSpike"
+            }
+          ]
+        },
+        {
+          "rule_id": "c353cbba78e762b5013c7f4614dc8666c0ebba7a19edf9c327b7777df8b0b662",
+          "alerts": [
+            {
+              "id": "0378e6cc2e15736faf8dd4f4c8d01fde67e6d2550e7d8d34a664d78fbf4477cc",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_compute_metrics_discovery",
+              "rule_name": "FaasComputeMetricsDiscoveryEmpty"
             }
           ]
         },
@@ -848,10 +974,10 @@
       ]
     },
     {
-      "revision": "96fe0e843c916656089146041613d52756fea800014c21da89106bce682000e4",
+      "revision": "23dd09f3a8e7a3ca128874cb5ab0a4e1e54f5a36dc0ca50b5e4dce540c9fa803",
       "expected": {
         "id": "gregale-full-v1",
-        "revision": "531f500b5225c6ee5670bc9cce8974b75c0cf9a09d4c7f419deb10fa270a494b",
+        "revision": "dbbff9d8b9503db0fbcd85045fc0706a7e381c7e5726dd5c83ad0d259565239f",
         "files": [
           "bridge.rules.yml",
           "data_placement.yaml",
@@ -870,6 +996,19 @@
               "for_seconds": 0,
               "keep_firing_for_seconds": 0,
               "fingerprint": "5edb3cd243091ffe6135d2dafc0fc5d83b0592a4c8fbb970eec71ca42ba8d791"
+            }
+          },
+          {
+            "id": "0a454d6a201ad8138a9b731b4472705643bddd8fc491a900593c535cc12f22fd",
+            "file_name": "faas.rules.yml",
+            "group_name": "faas_compute_metrics_discovery",
+            "rule_name": "faas_compute_metrics_discovery_last_success_timestamp_seconds:by_job",
+            "definition": {
+              "expression_hash": "c41070ac0a3759075a79be7db3679ca82303fd4640b3347591381fe559bc2a7a",
+              "labels_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "for_seconds": 0,
+              "keep_firing_for_seconds": 0,
+              "fingerprint": "0f891313599c27137e2d2d201f5fd4f4b3f2ed07ac2a59453e3250c3e5fc5169"
             }
           },
           {
@@ -925,16 +1064,29 @@
             }
           },
           {
+            "id": "2d0ede559fdb6c02dba1bed71408ffc4177112d120bf85f97acaa046fc2fb4d0",
+            "file_name": "faas.rules.yml",
+            "group_name": "faas_compute_metrics_discovery",
+            "rule_name": "faas_compute_metrics_discovery_targets:by_job",
+            "definition": {
+              "expression_hash": "9bf04146450015144fd453afefc6506358342a0eedface410c4478c13566baa7",
+              "labels_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "for_seconds": 0,
+              "keep_firing_for_seconds": 0,
+              "fingerprint": "f375199f29eea06649d6cbc223cd7019dd5f3d4e98b1f4d685faa44d83b32f89"
+            }
+          },
+          {
             "id": "30ac84f5b5a23043c18d18e76a554aa1a882bf554b2ae639413b7339ce0fcac2",
             "file_name": "faas.rules.yml",
             "group_name": "faas_compute_metrics_discovery",
             "rule_name": "faas_compute_metrics_healthy_targets:by_job",
             "definition": {
-              "expression_hash": "5865e8bff10612db434e3bc5a84799873bcf2594fea7c6d975e2a4cc7360ad51",
+              "expression_hash": "12cca59071d708ae08aed650884084d5d8d333aaf86e0a1d296fde430c1aa8ea",
               "labels_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
               "for_seconds": 0,
               "keep_firing_for_seconds": 0,
-              "fingerprint": "ce91fd78994a3fde11e5cb4b912278603f3d67d26accd6911928f569bd44acf0"
+              "fingerprint": "6912817ca0947d4995e27ab5f9f921dce48dd2b65fe9fb0f4c4c5ef5a25f488c"
             }
           },
           {
@@ -974,6 +1126,19 @@
               "for_seconds": 0,
               "keep_firing_for_seconds": 0,
               "fingerprint": "c0cef78b8d01ace8272f5ff42ef2e921298f8b065cdf4bb2cec9dab3f742df76"
+            }
+          },
+          {
+            "id": "43f384aa9a7e5200607b6d350a41727a61737d53fc73bceb2f98130e11e2866b",
+            "file_name": "faas.rules.yml",
+            "group_name": "faas_compute_metrics_discovery",
+            "rule_name": "faas_compute_metrics_discovery_invalid_targets:by_job",
+            "definition": {
+              "expression_hash": "eceb28080686083a2b92241c209a4b2a8651fdf0467d211c6e7cee56deb44b50",
+              "labels_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "for_seconds": 0,
+              "keep_firing_for_seconds": 0,
+              "fingerprint": "fde0e319c20f82cafb16fdd54940a23c887a0c7e083bc5d31a99fa0a52299d36"
             }
           },
           {
@@ -1112,11 +1277,11 @@
             "group_name": "faas_compute_metrics_discovery",
             "rule_name": "faas_compute_metrics_scrape_coverage:by_job",
             "definition": {
-              "expression_hash": "20bbb83966f9f4812f5b51abf6eafac89f45530f1b50b91ec3cc84e887823096",
+              "expression_hash": "e2f2f0b86a4023d3b5809f4ea729c48fcdb70dd534976cd9563ac66cf45961d4",
               "labels_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
               "for_seconds": 0,
               "keep_firing_for_seconds": 0,
-              "fingerprint": "2474145ba0a65a1cc77e8152688002a9fdb8d74cebd17c220f19dcd49b8a30bf"
+              "fingerprint": "418b78bf495cba14a01f894a7f896f0d0ed550832a6d4d000848b996a58f3ab4"
             }
           },
           {
@@ -1130,6 +1295,19 @@
               "for_seconds": 0,
               "keep_firing_for_seconds": 0,
               "fingerprint": "d3163aa50f3fd6257fcd30d0192a062551d24d83778f51134672f69b7a58e681"
+            }
+          },
+          {
+            "id": "c353cbba78e762b5013c7f4614dc8666c0ebba7a19edf9c327b7777df8b0b662",
+            "file_name": "faas.rules.yml",
+            "group_name": "faas_compute_metrics_discovery",
+            "rule_name": "faas_compute_metrics_discovery_registry_nodes:by_job",
+            "definition": {
+              "expression_hash": "0bac25d7791ce9d18924a0f8f4d3f4e56cce17fd888fbb4782f088507f2f6da4",
+              "labels_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+              "for_seconds": 0,
+              "keep_firing_for_seconds": 0,
+              "fingerprint": "a85a77335223ca6136463f400699a0037f4c6d139864ff8cf4667437e82cbf80"
             }
           },
           {
@@ -1238,8 +1416,8 @@
           }
         ]
       },
-      "alert_set_revision": "38729a23298b4be3befcb507d654ae8ed9f448f623ff3937bac79ff225b2a5f6",
-      "alert_count": 290,
+      "alert_set_revision": "8505f7cdb284109c6784dcae30b80df50a425b990f11b81b61f22d72d0cec6e9",
+      "alert_count": 291,
       "dependents": [
         {
           "rule_id": "04e71a8f5cf3db701f2c7083e95693cd02058aa3b83e91279b44abcac2192ea5",
@@ -1261,6 +1439,35 @@
               "file_name": "faas.rules.yml",
               "group_name": "faas_slo",
               "rule_name": "FaasTrafficDropAccount"
+            }
+          ]
+        },
+        {
+          "rule_id": "0a454d6a201ad8138a9b731b4472705643bddd8fc491a900593c535cc12f22fd",
+          "alerts": [
+            {
+              "id": "0378e6cc2e15736faf8dd4f4c8d01fde67e6d2550e7d8d34a664d78fbf4477cc",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_compute_metrics_discovery",
+              "rule_name": "FaasComputeMetricsDiscoveryEmpty"
+            },
+            {
+              "id": "145e2f031d12ff1c2f821ce616a04f7d2edbfad7f2a2443d9c011dcec96a9c78",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_compute_metrics_discovery",
+              "rule_name": "FaasComputeMetricsScrapeTargetDown"
+            },
+            {
+              "id": "716640590c375d1c9c8ece071a58b668ea3fd979dfb591637ee55c9aa2510b12",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_compute_metrics_discovery",
+              "rule_name": "FaasComputeMetricsDiscoveryStale"
+            },
+            {
+              "id": "93b09f55c5efa6fc047ccfea9897659453ce200dd84745cb8a81dd76810ef0b2",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_compute_metrics_discovery",
+              "rule_name": "FaasComputeMetricsScrapeCoverageLow"
             }
           ]
         },
@@ -1333,6 +1540,29 @@
           ]
         },
         {
+          "rule_id": "2d0ede559fdb6c02dba1bed71408ffc4177112d120bf85f97acaa046fc2fb4d0",
+          "alerts": [
+            {
+              "id": "0378e6cc2e15736faf8dd4f4c8d01fde67e6d2550e7d8d34a664d78fbf4477cc",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_compute_metrics_discovery",
+              "rule_name": "FaasComputeMetricsDiscoveryEmpty"
+            },
+            {
+              "id": "145e2f031d12ff1c2f821ce616a04f7d2edbfad7f2a2443d9c011dcec96a9c78",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_compute_metrics_discovery",
+              "rule_name": "FaasComputeMetricsScrapeTargetDown"
+            },
+            {
+              "id": "93b09f55c5efa6fc047ccfea9897659453ce200dd84745cb8a81dd76810ef0b2",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_compute_metrics_discovery",
+              "rule_name": "FaasComputeMetricsScrapeCoverageLow"
+            }
+          ]
+        },
+        {
           "rule_id": "30ac84f5b5a23043c18d18e76a554aa1a882bf554b2ae639413b7339ce0fcac2",
           "alerts": [
             {
@@ -1366,6 +1596,17 @@
               "file_name": "faas.rules.yml",
               "group_name": "faas_alert_preset_signals",
               "rule_name": "FaasSLOBurnRateHigh"
+            }
+          ]
+        },
+        {
+          "rule_id": "43f384aa9a7e5200607b6d350a41727a61737d53fc73bceb2f98130e11e2866b",
+          "alerts": [
+            {
+              "id": "94feeca171a610240564b5c1e62a7e8a95fc87edf7d86bbddfd21efbe9224d0a",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_compute_metrics_discovery",
+              "rule_name": "FaasComputeMetricsDiscoveryInvalidTargets"
             }
           ]
         },
@@ -1508,6 +1749,17 @@
               "file_name": "faas.rules.yml",
               "group_name": "faas_slo",
               "rule_name": "FaasTrafficSpike"
+            }
+          ]
+        },
+        {
+          "rule_id": "c353cbba78e762b5013c7f4614dc8666c0ebba7a19edf9c327b7777df8b0b662",
+          "alerts": [
+            {
+              "id": "0378e6cc2e15736faf8dd4f4c8d01fde67e6d2550e7d8d34a664d78fbf4477cc",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_compute_metrics_discovery",
+              "rule_name": "FaasComputeMetricsDiscoveryEmpty"
             }
           ]
         },

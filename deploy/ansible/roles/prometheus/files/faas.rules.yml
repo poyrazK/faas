@@ -1188,6 +1188,55 @@ groups:
   - name: faas_compute_metrics_discovery
     interval: 30s
     rules:
+      # apid exports the intended compute job as a metric label. Default
+      # honor_labels=false scraping preserves it as exported_job and replaces
+      # job with apid. Normalize to job-only series before downstream joins.
+      # A gauge must have exactly one source per compute job: adding multiple
+      # apid snapshots would overcount targets and hide missing scrape series.
+      - record: faas_compute_metrics_discovery_targets:by_job
+        expr: |
+          sum by (job) (
+            label_replace(
+              apid_metrics_discovery_targets{job="apid",exported_job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|realtimed|schedd-compute|promtail-compute"}
+              and on (exported_job)
+              (count by (exported_job) (apid_metrics_discovery_targets{job="apid",exported_job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|realtimed|schedd-compute|promtail-compute"}) == 1),
+              "job", "$1", "exported_job", "(.+)"
+            )
+          )
+
+      - record: faas_compute_metrics_discovery_registry_nodes:by_job
+        expr: |
+          sum by (job) (
+            label_replace(
+              apid_metrics_discovery_registry_nodes{job="apid",exported_job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|realtimed|schedd-compute|promtail-compute"}
+              and on (exported_job)
+              (count by (exported_job) (apid_metrics_discovery_registry_nodes{job="apid",exported_job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|realtimed|schedd-compute|promtail-compute"}) == 1),
+              "job", "$1", "exported_job", "(.+)"
+            )
+          )
+
+      - record: faas_compute_metrics_discovery_invalid_targets:by_job
+        expr: |
+          sum by (job) (
+            label_replace(
+              apid_metrics_discovery_invalid_targets{job="apid",exported_job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|realtimed|schedd-compute|promtail-compute"}
+              and on (exported_job)
+              (count by (exported_job) (apid_metrics_discovery_invalid_targets{job="apid",exported_job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|realtimed|schedd-compute|promtail-compute"}) == 1),
+              "job", "$1", "exported_job", "(.+)"
+            )
+          )
+
+      - record: faas_compute_metrics_discovery_last_success_timestamp_seconds:by_job
+        expr: |
+          sum by (job) (
+            label_replace(
+              apid_metrics_discovery_last_success_timestamp_seconds{job="apid",exported_job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|realtimed|schedd-compute|promtail-compute"}
+              and on (exported_job)
+              (count by (exported_job) (apid_metrics_discovery_last_success_timestamp_seconds{job="apid",exported_job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|realtimed|schedd-compute|promtail-compute"}) == 1),
+              "job", "$1", "exported_job", "(.+)"
+            )
+          )
+
       # `up` is the downstream truth: the HTTP-SD endpoint can return a
       # healthy snapshot while one or more discovered compute endpoints are
       # unreachable. The `or ... * 0` branch preserves a zero-valued job when
@@ -1200,7 +1249,7 @@ groups:
           )
           or on (job)
           (
-            apid_metrics_discovery_targets{job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|realtimed|schedd-compute|promtail-compute"} * 0
+            faas_compute_metrics_discovery_targets:by_job * 0
           )
 
       - record: faas_compute_metrics_scrape_coverage:by_job
@@ -1209,7 +1258,7 @@ groups:
           /
           on (job)
           clamp_min(
-            apid_metrics_discovery_targets{job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|realtimed|schedd-compute|promtail-compute"},
+            faas_compute_metrics_discovery_targets:by_job,
             1
           )
 
@@ -1220,11 +1269,13 @@ groups:
           )
           and on (job)
           (
-            apid_metrics_discovery_targets{job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|realtimed|schedd-compute|promtail-compute"} > 0
+            faas_compute_metrics_discovery_targets:by_job > 0
           )
           and on (job)
           (
-            time() - apid_metrics_discovery_last_success_timestamp_seconds{job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|realtimed|schedd-compute|promtail-compute"} <= 120
+            (time() - faas_compute_metrics_discovery_last_success_timestamp_seconds:by_job >= 0)
+            and (time() - faas_compute_metrics_discovery_last_success_timestamp_seconds:by_job <= 120)
+            and (faas_compute_metrics_discovery_last_success_timestamp_seconds:by_job > 0)
           )
         for: 5m
         labels:
@@ -1243,11 +1294,13 @@ groups:
           )
           and on (job)
           (
-            apid_metrics_discovery_targets{job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|realtimed|schedd-compute|promtail-compute"} > 0
+            faas_compute_metrics_discovery_targets:by_job > 0
           )
           and on (job)
           (
-            time() - apid_metrics_discovery_last_success_timestamp_seconds{job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|realtimed|schedd-compute|promtail-compute"} <= 120
+            (time() - faas_compute_metrics_discovery_last_success_timestamp_seconds:by_job >= 0)
+            and (time() - faas_compute_metrics_discovery_last_success_timestamp_seconds:by_job <= 120)
+            and (faas_compute_metrics_discovery_last_success_timestamp_seconds:by_job > 0)
           )
         for: 5m
         labels:
@@ -1259,14 +1312,31 @@ groups:
           description: "Prometheus cannot scrape the discovered {{ $labels.job }} endpoint for node {{ $labels.node }}. Discovery is still returning a fresh target, so check the node's gateway or Promtail metrics listener, private route, firewall, and service readiness."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeMetricsDiscoveryDegraded.md"
 
+      # apid preinitializes zero snapshots even for unused HTTP-SD jobs.
+      # Bootstrap zero is a failure only after an observed discovery attempt;
+      # previously successful snapshots retain the normal staleness check.
       - alert: FaasComputeMetricsDiscoveryStale
         expr: |
           (
-            apid_metrics_discovery_last_success_timestamp_seconds{job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|realtimed|schedd-compute|promtail-compute"} == 0
+            (faas_compute_metrics_discovery_last_success_timestamp_seconds:by_job == 0)
+            and on (job)
+            (
+              sum by (job) (
+                label_replace(
+                  apid_metrics_discovery_requests_total{job="apid",exported_job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|realtimed|schedd-compute|promtail-compute"},
+                  "job", "$1", "exported_job", "(.+)"
+                )
+              ) > 0
+            )
           )
           or
           (
-            time() - apid_metrics_discovery_last_success_timestamp_seconds{job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|realtimed|schedd-compute|promtail-compute"} > 120
+            (faas_compute_metrics_discovery_last_success_timestamp_seconds:by_job > 0)
+            and (time() - faas_compute_metrics_discovery_last_success_timestamp_seconds:by_job > 120)
+          )
+          or
+          (
+            faas_compute_metrics_discovery_last_success_timestamp_seconds:by_job > time()
           )
         for: 5m
         labels:
@@ -1275,21 +1345,23 @@ groups:
           family: compute_metrics_discovery
         annotations:
           summary: "Compute metrics discovery is stale for {{ $labels.job }}"
-          description: "apid has not completed a successful registry-backed HTTP-SD snapshot for {{ $labels.job }} within 120s. Prometheus may still be healthy while compute-node metrics coverage is frozen or missing. Check apid availability, its database pool, and the discovery runbook."
+          description: "apid has not completed a successful registry-backed HTTP-SD snapshot for {{ $labels.job }} within the past 120s, or its refresh timestamp is in the future. Prometheus may still be healthy while compute-node metrics coverage is frozen or missing. Check apid availability, its database pool, and the discovery runbook."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeMetricsDiscoveryDegraded.md"
 
       - alert: FaasComputeMetricsDiscoveryEmpty
         expr: |
           (
-            apid_metrics_discovery_registry_nodes{job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|realtimed|schedd-compute|promtail-compute"} > 0
+            faas_compute_metrics_discovery_registry_nodes:by_job > 0
           )
           and on (job)
           (
-            apid_metrics_discovery_targets{job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|realtimed|schedd-compute|promtail-compute"} == 0
+            faas_compute_metrics_discovery_targets:by_job == 0
           )
           and on (job)
           (
-            time() - apid_metrics_discovery_last_success_timestamp_seconds{job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|realtimed|schedd-compute|promtail-compute"} <= 120
+            (time() - faas_compute_metrics_discovery_last_success_timestamp_seconds:by_job >= 0)
+            and (time() - faas_compute_metrics_discovery_last_success_timestamp_seconds:by_job <= 120)
+            and (faas_compute_metrics_discovery_last_success_timestamp_seconds:by_job > 0)
           )
         for: 5m
         labels:
@@ -1302,7 +1374,7 @@ groups:
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeMetricsDiscoveryDegraded.md"
 
       - alert: FaasComputeMetricsDiscoveryInvalidTargets
-        expr: apid_metrics_discovery_invalid_targets{job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|realtimed|schedd-compute|promtail-compute"} > 0
+        expr: faas_compute_metrics_discovery_invalid_targets:by_job > 0
         for: 10m
         labels:
           severity: warn
@@ -1311,6 +1383,27 @@ groups:
         annotations:
           summary: "Compute metrics discovery is filtering invalid targets for {{ $labels.job }}"
           description: "apid omitted one or more active compute registry rows from the {{ $labels.job }} HTTP-SD response because the gateway target or stable node name failed validation. Metrics coverage is partial; repair the registry row and verify the next refresh."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeMetricsDiscoveryDegraded.md"
+
+      - alert: FaasComputeMetricsDiscoveryAmbiguous
+        expr: |
+          max by (job) (
+            label_replace(
+              (count by (exported_job) (apid_metrics_discovery_targets{job="apid",exported_job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|realtimed|schedd-compute|promtail-compute"}) > 1)
+              or (count by (exported_job) (apid_metrics_discovery_registry_nodes{job="apid",exported_job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|realtimed|schedd-compute|promtail-compute"}) > 1)
+              or (count by (exported_job) (apid_metrics_discovery_invalid_targets{job="apid",exported_job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|realtimed|schedd-compute|promtail-compute"}) > 1)
+              or (count by (exported_job) (apid_metrics_discovery_last_success_timestamp_seconds{job="apid",exported_job=~"gatewayd-internal|vmmd|imaged|builderd|node-compute|realtimed|schedd-compute|promtail-compute"}) > 1),
+              "job", "$1", "exported_job", "(.+)"
+            )
+          )
+        for: 5m
+        labels:
+          severity: warn
+          component: apid
+          family: compute_metrics_discovery
+        annotations:
+          summary: "Compute metrics discovery has multiple sources for {{ $labels.job }}"
+          description: "More than one apid discovery gauge series reports the {{ $labels.job }} snapshot. Per-job counts are unavailable because summing or choosing between producers could misstate scrape coverage. Check duplicate apid scrape targets and producer labels in the discovery runbook."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasComputeMetricsDiscoveryDegraded.md"
 
   # ────────────────────────────────────────────────────────────────────
