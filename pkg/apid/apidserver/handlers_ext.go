@@ -24,7 +24,9 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/appaccess"
 	"github.com/onebox-faas/faas/pkg/apid/object"
+	"github.com/onebox-faas/faas/pkg/apid/orgbilling"
 	"github.com/onebox-faas/faas/pkg/apid/trafficguard"
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/billing/stripe"
@@ -1986,7 +1988,11 @@ func (s *server) restoreApp(w http.ResponseWriter, r *http.Request, acct state.A
 	if err != nil {
 		var qe *state.QuotaError
 		if errors.As(err, &qe) {
-			api.WriteProblem(w, api.ErrPlanLimitApps(limits, qe.Observed))
+			api.WriteProblem(w, appaccess.QuotaProblem(qe, limits))
+			return
+		}
+		if errors.Is(err, state.ErrOrgAppAdmissionUnavailable) {
+			api.WriteProblem(w, appaccess.AdmissionUnavailableProblem())
 			return
 		}
 		if errors.Is(err, state.ErrConflict) {
@@ -3349,6 +3355,9 @@ func (s *server) wildcardTenantSurfaceOverlap(ctx context.Context, accountID, do
 
 func (s *server) listDomains(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	domains, err := s.store.ListDomainsForAccount(r.Context(), acct.ID)
+	if err == nil {
+		domains, err = appaccess.VisibleResources(r, s.store, actorAccount(r, acct), domains, func(d state.CustomDomain) string { return d.AppID })
+	}
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not list domains"))
 		return
@@ -4085,6 +4094,11 @@ func (s *server) listCrons(w http.ResponseWriter, r *http.Request, acct state.Ac
 			return
 		}
 		apps = all
+	}
+	apps, err := appaccess.VisibleApps(r, s.store, actorAccount(r, acct), apps)
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not authorize cron inventory"))
+		return
 	}
 	out := make([]api.CronResponse, 0)
 	for _, app := range apps {
@@ -4924,7 +4938,7 @@ func (s *server) changePlan(w http.ResponseWriter, r *http.Request, acct state.A
 	// so the provider can change the product without creating a duplicate
 	// subscription; a customer without one gets a hosted checkout when the
 	// active provider supports it.
-	if acct.Plan.RequiresBillingUpgradeTo(plan) {
+	if acct.Plan.RequiresBillingUpgradeTo(plan) || (acct.ResourceOrgID != "" && plan != api.PlanFree && acct.StripeSubscriptionItem == "") {
 		// CodeQL go/log-injection (CWE-117): plan was enum-validated
 		// against the 4 Plan constants (free|hobby|pro|scale) by
 		// plan.Valid() in this handler, but CodeQL's taint engine
@@ -5031,7 +5045,7 @@ func (s *server) changePlan(w http.ResponseWriter, r *http.Request, acct state.A
 				"the provider could not schedule this plan change; the current plan remains active"))
 			return
 		}
-		updated, err := s.store.AccountByID(r.Context(), acct.ID)
+		updated, err := state.BillingResourceAccount(r.Context(), s.store, acct.ID)
 		if err != nil {
 			updated = acct
 		}
@@ -5042,14 +5056,14 @@ func (s *server) changePlan(w http.ResponseWriter, r *http.Request, acct state.A
 		if !effectiveAt.IsZero() {
 			response.EffectiveAt = &effectiveAt
 		}
-		writeJSON(w, http.StatusAccepted, response)
+		writeJSON(w, http.StatusAccepted, orgbilling.PlanResponse(updated, response))
 		return
 	}
 	if err := s.setAccountPlan(r.Context(), acct, plan); err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not update plan"))
 		return
 	}
-	updated, err := s.store.AccountByID(r.Context(), acct.ID)
+	updated, err := state.BillingResourceAccount(r.Context(), s.store, acct.ID)
 	if err != nil {
 		updated = acct
 		updated.Plan = plan
@@ -5069,7 +5083,7 @@ func (s *server) changePlan(w http.ResponseWriter, r *http.Request, acct state.A
 		"from": string(acct.Plan),
 		"to":   string(plan),
 	})
-	writeJSON(w, http.StatusOK, s.accountResponse(r.Context(), updated, r))
+	writeJSON(w, http.StatusOK, orgbilling.PlanResponse(updated, s.accountResponse(r.Context(), updated, r)))
 }
 
 // --- spend cap raise (issue #561) --------------------------------------------
@@ -6374,6 +6388,7 @@ func cronResponse(c state.Cron) api.CronResponse {
 // account owns, in created_at DESC order. Cursor pagination via
 // ?before=<RFC3339Nano>; limit defaults to 50, capped at 200.
 func (s *server) listDeployments(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	requestCtx := r.Context()
 	limit := 50
 	if v := r.URL.Query().Get("limit"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
@@ -6398,7 +6413,26 @@ func (s *server) listDeployments(w http.ResponseWriter, r *http.Request, acct st
 			return
 		}
 	}
-	rows, err := s.store.ListDeploymentsForAccount(r.Context(), acct.ID, before, limit)
+	cursor := ""
+	if !before.IsZero() {
+		cursor = before.UTC().Format(time.RFC3339Nano)
+	}
+	rows, nextBefore, err := appaccess.VisiblePage(requestCtx, cursor, limit,
+		func(cursor string) ([]state.Deployment, error) {
+			var anchor time.Time
+			if cursor != "" {
+				parsed, err := time.Parse(time.RFC3339Nano, cursor)
+				if err != nil {
+					return nil, err
+				}
+				anchor = parsed
+			}
+			return s.store.ListDeploymentsForAccount(requestCtx, acct.ID, anchor, limit)
+		},
+		func(rows []state.Deployment) ([]state.Deployment, error) {
+			return appaccess.VisibleResources(r, s.store, actorAccount(r, acct), rows, func(row state.Deployment) string { return row.AppID })
+		},
+		func(row state.Deployment) string { return row.CreatedAt.UTC().Format(time.RFC3339Nano) })
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not list deployments"))
 		return
@@ -6409,22 +6443,24 @@ func (s *server) listDeployments(w http.ResponseWriter, r *http.Request, acct st
 	// per-plan deployed cap (pkg/api/limits.go) so the in-memory map
 	// is small. AppByID failures fall through to a zero-value App
 	// (BuildPlan.Class is empty), which the wire renders as missing.
-	apps, _ := s.store.ListApps(r.Context(), acct.ID)
+	apps, err := s.store.ListApps(requestCtx, acct.ID)
+	if err == nil {
+		apps, err = appaccess.VisibleApps(r, s.store, actorAccount(r, acct), apps)
+	}
+	if err != nil {
+		api.WriteProblem(w, api.ErrCapacity("could not authorize deployment inventory"))
+		return
+	}
 	appByID := make(map[string]state.App, len(apps))
 	for _, a := range apps {
 		appByID[a.ID] = a
 	}
-	resp := api.DeploymentListResponse{Items: make([]api.DeploymentResponse, 0, len(rows))}
+	resp := api.DeploymentListResponse{NextBefore: nextBefore, Items: make([]api.DeploymentResponse, 0, len(rows))}
 	for _, d := range rows {
-		resp.Items = append(resp.Items, s.deploymentResponse(r.Context(), d, appByID[d.AppID]))
-	}
-	if len(rows) == limit && limit > 0 && len(resp.Items) > 0 {
-		// NextBefore = CreatedAt of the LAST row (the oldest on this
-		// page). Pass it back as `before` to fetch the next page.
-		last := resp.Items[len(resp.Items)-1].CreatedAt
-		if t, err := time.Parse(time.RFC3339, last); err == nil {
-			resp.NextBefore = t.UTC().Format(time.RFC3339Nano)
+		if _, visible := appByID[d.AppID]; !visible {
+			continue
 		}
+		resp.Items = append(resp.Items, s.deploymentResponse(requestCtx, d, appByID[d.AppID]))
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -6517,6 +6553,7 @@ func formatBuildCursorNano(b state.Build, id string) string {
 // the builds family does not — see ADR-089 §6). The route mount
 // in cmd/apid/server.go calls this out.
 func (s *server) listBuilds(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	requestCtx := r.Context()
 	limit := 50
 	if v := r.URL.Query().Get("limit"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
@@ -6526,8 +6563,6 @@ func (s *server) listBuilds(w http.ResponseWriter, r *http.Request, acct state.A
 			limit = n
 		}
 	}
-	var before time.Time
-	var beforeID string
 	if v := r.URL.Query().Get("before"); v != "" {
 		// Cursor is "<started_at_rfc3339nano>|<id_hex>" — opaque
 		// token, pipe-separated so URL encoding stays simple.
@@ -6538,13 +6573,12 @@ func (s *server) listBuilds(w http.ResponseWriter, r *http.Request, acct state.A
 		// wall-clock second were silently dropped past page 1.
 		// The id tiebreaker solves both — see ADR-091 §3 + the
 		// code-review follow-up.
-		t, id, ok := parseBuildCursor(v)
+		_, _, ok := parseBuildCursor(v)
 		if !ok {
 			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 				"Bad cursor", "expected '<rfc3339nano>|<id_hex>' (opaque)"))
 			return
 		}
-		before, beforeID = t, id
 	}
 	statusFilter := r.URL.Query().Get("status")
 	if statusFilter != "" {
@@ -6567,48 +6601,30 @@ func (s *server) listBuilds(w http.ResponseWriter, r *http.Request, acct state.A
 		}
 		appIDFilter = app.ID
 	}
-	rows, err := s.store.ListBuildsForAccountPaged(
-		r.Context(), acct.ID, statusFilter, appIDFilter, before, beforeID, limit)
+	rows, nextBefore, err := appaccess.VisiblePage(requestCtx, r.URL.Query().Get("before"), limit,
+		func(cursor string) ([]state.Build, error) {
+			var anchor time.Time
+			var anchorID string
+			if cursor != "" {
+				var ok bool
+				anchor, anchorID, ok = parseBuildCursor(cursor)
+				if !ok {
+					return nil, state.ErrInvalidArgument
+				}
+			}
+			return s.store.ListBuildsForAccountPaged(requestCtx, acct.ID, statusFilter, appIDFilter, anchor, anchorID, limit)
+		},
+		func(rows []state.Build) ([]state.Build, error) {
+			return appaccess.VisibleBuilds(r, s.store, actorAccount(r, acct), rows)
+		},
+		func(row state.Build) string { return formatBuildCursorNano(row, row.ID) })
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not list builds"))
 		return
 	}
-	resp := api.BuildListResponse{Items: make([]api.BuildResponse, 0, len(rows))}
+	resp := api.BuildListResponse{Items: make([]api.BuildResponse, 0, len(rows)), NextBefore: nextBefore}
 	for _, b := range rows {
 		resp.Items = append(resp.Items, s.buildResponse(b))
-	}
-	if len(rows) == limit && limit > 0 && len(resp.Items) > 0 {
-		// NextBefore = opaque cursor pointing at the LAST row
-		// on this page. The cursor anchor uses the SOURCE
-		// `state.Build.StartedAt` (NOT `BuildResponse.StartedAt`)
-		// so we preserve DB precision. BuildResponse emits
-		// RFC3339 (whole-second) for backward-compat with the
-		// single-id endpoint at GET /v1/builds/{id}; the
-		// cursor's started_at segment, by contrast, MUST be
-		// RFC3339Nano so the keyset sub-second comparison
-		// `(b.started_at = $4 AND b.id < $5)` is reachable on
-		// rows whose sub-second started_at falls between the
-		// cursor's nanosecond and the next whole second (this
-		// was code-review Finding 2 — see ADR-091 §3).
-		//
-		// The cursor segment is opaque to clients per the
-		// `before` query-parameter docstring; only the SDK
-		// `GetBuilds` + CLI `gregale build list --before`
-		// thread it verbatim. No backward-compat impact on
-		// the wire response (BuildResponse.StartedAt is
-		// unchanged at whole-second RFC3339).
-		//
-		// Caveat (intentional, documented in ADR-091): when
-		// the page exactly fills to the last row in the
-		// dataset, the next-page request returns 0 rows but the
-		// client has already received a cursor. Clients should
-		// treat an empty items[] as the terminal signal and
-		// NOT continue to next_page with the cursor. The fix
-		// here matches ListDeploymentsForAccount's behavior
-		// (no peek-trim); introducing one would require an
-		// extra DB roundtrip per page.
-		last := rows[len(rows)-1]
-		resp.NextBefore = formatBuildCursorNano(last, last.ID)
 	}
 	writeJSON(w, http.StatusOK, resp)
 }

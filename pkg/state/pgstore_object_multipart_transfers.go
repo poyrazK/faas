@@ -81,7 +81,7 @@ func (s *PgStore) FinishVerifiedObjectMultipartAbort(ctx context.Context, id, to
 		return err
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
-	if _, err = q.ObjectUsageLockAccount(ctx, tx, owner.AccountID); err != nil {
+	if _, err = lockObjectUsageScope(ctx, tx, owner.AccountID, owner.BucketID); err != nil {
 		return mapErr(err)
 	}
 	row, err := q.ObjectMultipartCapacityLock(ctx, tx, sqlc.ObjectMultipartCapacityLockParams{ID: mustPgUUID(id), AccountID: owner.AccountID, BucketID: owner.BucketID})

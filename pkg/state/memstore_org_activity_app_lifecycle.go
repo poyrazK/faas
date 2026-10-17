@@ -11,9 +11,12 @@ import (
 
 var _ OrgActivityAppLifecycleMutationStore = (*MemStore)(nil)
 
-func (m *MemStore) CreateAppIfUnderQuotaWithActivity(_ context.Context, app App, limits api.Limits, entry OrgActivity) (App, int64, error) {
+func (m *MemStore) CreateAppIfUnderQuotaWithActivity(ctx context.Context, app App, limits api.Limits, entry OrgActivity) (App, int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return App{}, 0, err
+	}
 	created, err := m.createAppIfUnderQuotaLocked(app, limits)
 	if err != nil {
 		return App{}, 0, err
@@ -35,13 +38,16 @@ func (m *MemStore) CreateAppIfUnderQuotaWithActivity(_ context.Context, app App,
 	return created, m.enqueueOrgActivityOutboxLocked(entry), nil
 }
 
-func (m *MemStore) ScheduleAppDeletionWithActivity(_ context.Context, id string, graceUntil time.Time, entry OrgActivity) (App, int64, error) {
-	return m.scheduleAppDeletion(id, graceUntil, &entry)
+func (m *MemStore) ScheduleAppDeletionWithActivity(ctx context.Context, id string, graceUntil time.Time, entry OrgActivity) (App, int64, error) {
+	return m.scheduleAppDeletion(ctx, id, graceUntil, &entry)
 }
 
-func (m *MemStore) scheduleAppDeletion(id string, graceUntil time.Time, entry *OrgActivity) (App, int64, error) {
+func (m *MemStore) scheduleAppDeletion(ctx context.Context, id string, graceUntil time.Time, entry *OrgActivity) (App, int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return App{}, 0, err
+	}
 	a, ok := m.apps[id]
 	if !ok {
 		return App{}, 0, ErrNotFound
@@ -105,9 +111,12 @@ func (m *MemStore) scheduleAppDeletion(id string, graceUntil time.Time, entry *O
 	return a, outboxID, nil
 }
 
-func (m *MemStore) RestoreAppWithActivity(_ context.Context, id string, limits api.Limits, entry OrgActivity) (App, int64, error) {
+func (m *MemStore) RestoreAppWithActivity(ctx context.Context, id string, limits api.Limits, entry OrgActivity) (App, int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return App{}, 0, err
+	}
 	a, ok := m.apps[id]
 	if !ok {
 		return App{}, 0, ErrNotFound

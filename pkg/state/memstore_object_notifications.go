@@ -24,9 +24,14 @@ func (m *MemStore) ownedNotificationsLocked(account, app, bucket string) (Object
 	p.ManagedRuleIDs = append([]string(nil), p.ManagedRuleIDs...)
 	return b, p, nil
 }
-func (m *MemStore) GetObjectBucketNotifications(_ context.Context, account, app, bucket string) (api.ObjectBucketNotifications, error) {
+func (m *MemStore) GetObjectBucketNotifications(ctx context.Context, account, app, bucket string) (api.ObjectBucketNotifications, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 api.ObjectBucketNotifications
+		return zero0, err
+	}
+
 	_, p, err := m.ownedNotificationsLocked(account, app, bucket)
 	return p, err
 }
@@ -44,13 +49,18 @@ func (m *MemStore) SetObjectBucketNotifications(ctx context.Context, account, ap
 func (m *MemStore) ReconcileObjectBucketComputeTriggers(ctx context.Context, account, app, bucket string, request api.ReconcileObjectStorageComputeTriggersRequest) (api.ObjectBucketNotifications, error) {
 	return m.changeObjectBucketNotifications(ctx, account, app, bucket, nil, &request)
 }
-func (m *MemStore) changeObjectBucketNotifications(_ context.Context, account, app, bucket string, rules []api.ObjectNotificationRule, request *api.ReconcileObjectStorageComputeTriggersRequest) (api.ObjectBucketNotifications, error) {
+func (m *MemStore) changeObjectBucketNotifications(ctx context.Context, account, app, bucket string, rules []api.ObjectNotificationRule, request *api.ReconcileObjectStorageComputeTriggersRequest) (api.ObjectBucketNotifications, error) {
 	normal, err := api.NormalizeObjectNotificationRules(rules)
 	if err != nil {
 		return api.ObjectBucketNotifications{}, ErrObjectNotificationInvalid
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 api.ObjectBucketNotifications
+		return zero0, err
+	}
+
 	b, p, err := m.ownedNotificationsLocked(account, app, bucket)
 	if err != nil {
 		return p, err
@@ -94,13 +104,17 @@ func (m *MemStore) changeObjectBucketNotifications(_ context.Context, account, a
 	p.ManagedRuleIDs = append([]string(nil), p.ManagedRuleIDs...)
 	return p, nil
 }
-func (m *MemStore) EnqueueObjectNotification(_ context.Context, in Invocation, s ObjectNotificationSnapshot) error {
+func (m *MemStore) EnqueueObjectNotification(ctx context.Context, in Invocation, s ObjectNotificationSnapshot) error {
 	t, err := validateNotificationInvocation(in, s)
 	if err != nil {
 		return err
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return err
+	}
+
 	if old, ok := m.invocations[in.ID]; ok {
 		if old.AppID == in.AppID && old.AccountID == in.AccountID && old.Source == in.Source && old.QueueName == in.QueueName && jsonEqual(old.Payload, in.Payload) {
 			return nil

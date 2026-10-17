@@ -486,17 +486,17 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 			if err != nil {
 				if errors.Is(err, state.ErrAPIKeyExpired) {
 					setBearerChallenge(w, "invalid_token")
-					m.Audit.Emit(r.Context(), "key.expired", nil, map[string]any{
-						"key_id": key.ID,
-					})
+					if m.Audit != nil {
+						m.Audit.Emit(r.Context(), "key.expired", nil, map[string]any{"key_id": key.ID})
+					}
 					api.WriteProblem(w, api.ErrAPIKeyExpired())
 					return
 				}
 				if errors.Is(err, state.ErrAPIKeyRevoked) {
 					setBearerChallenge(w, "invalid_token")
-					m.Audit.Emit(r.Context(), "key.auth_rejected_revoked", nil, map[string]any{
-						"key_id": key.ID,
-					})
+					if m.Audit != nil {
+						m.Audit.Emit(r.Context(), "key.auth_rejected_revoked", nil, map[string]any{"key_id": key.ID})
+					}
 					api.WriteProblem(w, api.ErrAPIKeyRevoked())
 					return
 				}

@@ -12,7 +12,7 @@ import (
 var _ ObjectBucketStore = (*PgStore)(nil)
 
 func objectBucketFromSQL(b sqlc.ObjectBucket) ObjectBucket {
-	return ObjectBucket{ID: pgUUIDString(b.ID), AccountID: pgUUIDString(b.AccountID), AppID: pgUUIDString(b.AppID), Name: b.Name, Scope: b.Scope, Region: b.Region, BackendID: b.BackendID, BackendFingerprint: b.BackendFingerprint, PhysicalName: b.PhysicalName, State: b.State, PublicRead: b.PublicRead, ServeAt: b.ServeAt.String, EnvironmentCloneSourceBucketID: pgUUIDString(b.EnvironmentCloneSourceBucketID), EnvironmentCloneOperationID: pgUUIDString(b.EnvironmentCloneOperationID), CreatedAt: b.CreatedAt.Time, UpdatedAt: b.UpdatedAt.Time, LeaseToken: b.LeaseToken.String, LeaseUntil: b.LeaseUntil.Time, AttemptCount: b.AttemptCount, RetryAt: b.RetryAt.Time, LastErrorCode: b.LastErrorCode}
+	return ObjectBucket{ID: pgUUIDString(b.ID), OrgID: pgUUIDString(b.OrgID), AccountID: pgUUIDString(b.AccountID), AppID: pgUUIDString(b.AppID), Name: b.Name, Scope: b.Scope, Region: b.Region, BackendID: b.BackendID, BackendFingerprint: b.BackendFingerprint, PhysicalName: b.PhysicalName, State: b.State, PublicRead: b.PublicRead, ServeAt: b.ServeAt.String, EnvironmentCloneSourceBucketID: pgUUIDString(b.EnvironmentCloneSourceBucketID), EnvironmentCloneOperationID: pgUUIDString(b.EnvironmentCloneOperationID), CreatedAt: b.CreatedAt.Time, UpdatedAt: b.UpdatedAt.Time, LeaseToken: b.LeaseToken.String, LeaseUntil: b.LeaseUntil.Time, AttemptCount: b.AttemptCount, RetryAt: b.RetryAt.Time, LastErrorCode: b.LastErrorCode}
 }
 
 func (s *PgStore) ReserveObjectBucket(ctx context.Context, b ObjectBucket, limit int) (ObjectBucket, error) {
@@ -38,14 +38,23 @@ func (s *PgStore) ReserveObjectBucketWithResult(ctx context.Context, b ObjectBuc
 
 func reserveObjectBucketTx(ctx context.Context, tx pgx.Tx, b ObjectBucket, limit int) (ObjectBucket, bool, error) {
 	q := sqlc.New()
-	if _, err := q.ObjectBucketReserveLockAccount(ctx, tx, mustPgUUID(b.AccountID)); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return ObjectBucket{}, false, ErrConflict
-		}
+	owner, err := q.ObjectStorageReserveOwner(ctx, tx, sqlc.ObjectStorageReserveOwnerParams{AppID: mustPgUUID(b.AppID), AccountID: mustPgUUID(b.AccountID)})
+	if err != nil {
 		return ObjectBucket{}, false, mapErr(err)
 	}
+	if b.OrgID != "" && b.OrgID != pgUUIDString(owner.ID) {
+		return ObjectBucket{}, false, ErrConflict
+	}
+	if owner.PersonalOrg || !owner.ResourceOwnershipEnabled {
+		if _, err := q.ObjectBucketReserveLockAccount(ctx, tx, mustPgUUID(b.AccountID)); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ObjectBucket{}, false, ErrConflict
+			}
+			return ObjectBucket{}, false, mapErr(err)
+		}
+	}
 	// Serializes quota/name checks across replicas and with app deletion.
-	_, err := q.ObjectBucketLockApp(ctx, tx, sqlc.ObjectBucketLockAppParams{ID: mustPgUUID(b.AppID), AccountID: mustPgUUID(b.AccountID)})
+	_, err = q.ObjectBucketLockApp(ctx, tx, sqlc.ObjectBucketLockAppParams{ID: mustPgUUID(b.AppID), AccountID: mustPgUUID(b.AccountID)})
 	if err != nil {
 		return ObjectBucket{}, false, mapErr(err)
 	}
@@ -119,7 +128,7 @@ func (s *PgStore) claimObjectBucket(ctx context.Context, accountID, appID, id, t
 	// Write admission locks the account before the source bucket. After the
 	// bucket lock, evaluate both pending-write and clone-fence dependencies
 	// in a new statement so evidence committed during the wait is visible.
-	if _, err = q.ObjectUsageLockAccount(ctx, tx, mustPgUUID(accountID)); err != nil {
+	if _, err = lockObjectUsageScope(ctx, tx, mustPgUUID(accountID), mustPgUUID(id)); err != nil {
 		return ObjectBucket{}, mapErr(err)
 	}
 	if _, err := q.ObjectBucketMutationLock(ctx, tx, sqlc.ObjectBucketMutationLockParams{

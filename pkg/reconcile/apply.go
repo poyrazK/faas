@@ -97,7 +97,7 @@ func (s *Service) applyActions(
 	// 1. Resolve the authoritative plan from the account. The
 	// project does not carry a plan today; the limits table is
 	// keyed on Account.Plan (single source of truth for quotas).
-	acct, err := s.Store.AccountByID(ctx, project.AccountID)
+	acct, err := state.ProjectResourceAccount(ctx, s.Store, project)
 	if err != nil {
 		return out, err
 	}
@@ -385,6 +385,7 @@ func workloadToDraftApp(project state.Project, w reposcan.Workload, startCmd str
 	transport := serviceBindingTransportForNewWorkload(w)
 	app := state.App{
 		AccountID:     project.AccountID,
+		OrgID:         project.OrgID,
 		ProjectID:     project.ID,
 		Slug:          w.Name,
 		RootDir:       w.RootDir,

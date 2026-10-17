@@ -36,7 +36,13 @@ func (s *PgStore) admitMultipartCapacity(ctx context.Context, account, bucket, i
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
 	q := sqlc.New()
-	if _, err = q.ObjectUsageLockAccount(ctx, tx, mustPgUUID(account)); err != nil {
+	owner, ownerErr := q.ObjectStorageLockOwner(ctx, tx, sqlc.ObjectStorageLockOwnerParams{BucketID: mustPgUUID(bucket), AccountID: mustPgUUID(account)})
+	if ownerErr != nil {
+		return mapErr(ownerErr)
+	}
+	subject := pgUUIDString(owner.Subject)
+
+	if _, err = lockObjectUsageScope(ctx, tx, mustPgUUID(account), mustPgUUID(bucket)); err != nil {
 		return mapErr(err)
 	}
 	if source != nil {
@@ -83,7 +89,7 @@ func (s *PgStore) admitMultipartCapacity(ctx context.Context, account, bucket, i
 	if err != nil {
 		return err
 	}
-	snapshot, err := readObjectUsage(ctx, tx, account, now)
+	snapshot, err := readObjectUsage(ctx, tx, subject, now)
 	if err != nil {
 		return err
 	}
@@ -162,7 +168,7 @@ func (s *PgStore) admitMultipartCapacity(ctx context.Context, account, bucket, i
 		}
 	}
 	if !completion || !u.FixedAdmission {
-		if err = q.ObjectUsageAuthorize(ctx, tx, sqlc.ObjectUsageAuthorizeParams{AccountID: mustPgUUID(account), PeriodStart: objectUsageTime(ObjectStoragePeriod(now))}); err != nil {
+		if err = q.ObjectUsageAuthorize(ctx, tx, sqlc.ObjectUsageAuthorizeParams{AccountID: mustPgUUID(subject), PeriodStart: objectUsageTime(ObjectStoragePeriod(now))}); err != nil {
 			return err
 		}
 	}

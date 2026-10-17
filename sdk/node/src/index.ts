@@ -46,6 +46,7 @@ export { ProjectsService } from './generated/services/ProjectsService.js';
 export { RealtimeService } from './generated/services/RealtimeService.js';
 export { RunsService } from './generated/services/RunsService.js';
 export { SecretsService } from './generated/services/SecretsService.js';
+export { StorageService } from './generated/services/StorageService.js';
 export { UsageService } from './generated/services/UsageService.js';
 export { WebhooksService } from './generated/services/WebhooksService.js';
 export { WorkflowsService } from './generated/services/WorkflowsService.js';
@@ -613,6 +614,19 @@ export { EVENT_DEADLINE_RATIO_BASIS_POINTS_MAX, type EventDeadlineRatioOptions,
 
 export { investigateEventDeadlineAlert, type EventDeadlineInvestigationOptions,
   type EventDeadlineInvestigationQuery, type EventDeadlineInvestigation } from './event-deadline-investigation.js';
+export type { ObjectBucket } from './generated/models/ObjectBucket.js';
+export type { ObjectBucketList } from './generated/models/ObjectBucketList.js';
+export type { ObjectBucketAccessGrant } from './generated/models/ObjectBucketAccessGrant.js';
+export type { ObjectBucketAccessGrantList } from './generated/models/ObjectBucketAccessGrantList.js';
+export type { SetObjectBucketAccessGrantRequest } from './generated/models/SetObjectBucketAccessGrantRequest.js';
+export type { ObjectS3Credential } from './generated/models/ObjectS3Credential.js';
+export type { ObjectS3CredentialList } from './generated/models/ObjectS3CredentialList.js';
+export type { ObjectS3CredentialSecret } from './generated/models/ObjectS3CredentialSecret.js';
+export type { CreateObjectS3CredentialRequest } from './generated/models/CreateObjectS3CredentialRequest.js';
+export type { ObjectStorageComputeBinding } from './generated/models/ObjectStorageComputeBinding.js';
+export type { ObjectStorageComputeBindingList } from './generated/models/ObjectStorageComputeBindingList.js';
+export type { CreateObjectStorageComputeBindingRequest } from './generated/models/CreateObjectStorageComputeBindingRequest.js';
+export type { ObjectStorageComputeBindingSecretKeys } from './generated/models/ObjectStorageComputeBindingSecretKeys.js';
 
 export { eventAcknowledgmentIntentSchema, EventAcknowledgmentIntentError, listEventAcknowledgmentIntents,
   type EventAcknowledgmentIntentErrorCode, type EventAcknowledgmentIntentStatus,

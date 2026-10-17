@@ -46,6 +46,7 @@ const (
 	wakeTLFile                       = "wake_timeline.go"    // issue #517 PR-C / ADR-064
 	sidecarTimelineFile              = "sidecar_timeline.go" // issue #463 / ADR-069 — sidecar lifecycle timeline DTOs
 	orgsFile                         = "orgs.go"             // issue #190 / IAM-6 / ADR-061 PR 5
+	orgBillingFile                   = "org_billing.go"      // ADR-202610171904 organization financial subject DTO
 	scanFile                         = "dto_scan.go"         // issue #464 / ADR-055 — per-deploy grype CVE scan DTOs
 	webhooksFile                     = "webhooks.go"         // issue #476 / ADR-076
 	inboundWebhooksFile              = "inbound_webhooks.go" // ADR-212 — durable provider webhook ingress DTOs
@@ -1055,6 +1056,10 @@ func testRoutesParity(t *testing.T, root string, spec *specDoc) {
 	// daemons share today.
 	sources := []string{
 		filepath.Join(root, "pkg/apid/apidserver", serverSrcPath),
+		filepath.Join(root, "pkg/apid/apidserver", "org_project_routes.go"),
+		filepath.Join(root, "pkg/apid/apidserver", "org_postgres_routes.go"),
+		filepath.Join(root, "pkg/apid/apidserver", "org_object_routes.go"),
+		filepath.Join(root, "pkg/apid/apidserver", "org_queue_routes.go"),
 		filepath.Join(root, "pkg/apid/apidserver", "handlers_issues.go"),
 		filepath.Join(root, "cmd/gatewayd-internal", "run.go"),
 	}
@@ -1394,6 +1399,8 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", wakeTLFile),
 		filepath.Join(root, "pkg", "api", sidecarTimelineFile),
 		filepath.Join(root, "pkg", "api", orgsFile),
+		filepath.Join(root, "pkg", "api", orgBillingFile),
+		filepath.Join(root, "pkg", "api", "org_queues.go"),
 		filepath.Join(root, "pkg", "api", scanFile),
 		filepath.Join(root, "pkg", "api", webhooksFile),
 		filepath.Join(root, "pkg", "api", inboundWebhooksFile),

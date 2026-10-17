@@ -2364,7 +2364,7 @@ func (e *Engine) ensureWake(ctx context.Context, appID, deploymentID string, wak
 			out.Err = fmt.Errorf("sched: EnsureWake: verify app lifecycle after boot: %w", readErr)
 			return out, out.Err
 		}
-		latestAccount, accountErr := e.store.AccountByID(leaderCtx, latestApp.AccountID)
+		latestAccount, accountErr := state.AppResourceAccount(leaderCtx, e.store, latestApp)
 		if accountErr != nil {
 			out.Err = fmt.Errorf("sched: EnsureWake: verify account lifecycle after boot: %w", accountErr)
 			return out, out.Err
@@ -4924,7 +4924,7 @@ func (e *Engine) ClaimUnplaced(ctx context.Context, appID string) error {
 			"app_id", appID, "ram_mb", app.RAMMB)
 		return nil
 	}
-	acct, err := e.store.AccountByID(ctx, app.AccountID)
+	acct, err := state.AppResourceAccount(ctx, e.store, app)
 	if err != nil {
 		return fmt.Errorf("sched: claim unplaced: lookup account: %w", err)
 	}
@@ -5423,7 +5423,7 @@ func (e *Engine) buildAppSpecForMigrationWithValues(ctx context.Context, instanc
 			return AppSpec{}, state.RuntimeAppValuesSnapshot{}, fmt.Errorf("sched: build app spec: live deployment: %w", err)
 		}
 	}
-	acct, err := e.store.AccountByID(ctx, app.AccountID)
+	acct, err := state.AppResourceAccount(ctx, e.store, app)
 	if err != nil {
 		return AppSpec{}, state.RuntimeAppValuesSnapshot{}, fmt.Errorf("sched: build app spec: account by id: %w", err)
 	}
@@ -6657,7 +6657,7 @@ func (e *Engine) ParkApp(ctx context.Context, appID string) (int, error) {
 	if !e.ownsApp(app) {
 		return 0, nil
 	}
-	account, accountErr := e.store.AccountByID(ctx, app.AccountID)
+	account, accountErr := state.AppResourceAccount(ctx, e.store, app)
 	if accountErr != nil {
 		return 0, fmt.Errorf("sched: park app: load account %s: %w", app.AccountID, accountErr)
 	}
@@ -6677,7 +6677,7 @@ func (e *Engine) ParkApp(ctx context.Context, appID string) (int, error) {
 	if !e.ownsApp(app) {
 		return 0, nil
 	}
-	account, accountErr = e.store.AccountByID(ctx, app.AccountID)
+	account, accountErr = state.AppResourceAccount(ctx, e.store, app)
 	if accountErr != nil {
 		return 0, fmt.Errorf("sched: park app: reload account %s: %w", app.AccountID, accountErr)
 	}
@@ -6841,7 +6841,7 @@ func (e *Engine) ReconcileLifecycleInstance(ctx context.Context, instanceID stri
 	// removed. That preserves the account-deletion terminal state expected by
 	// the grace-period hard-delete walk.
 	accountDeleting := false
-	account, accountErr := e.store.AccountByID(ctx, app.AccountID)
+	account, accountErr := state.AppResourceAccount(ctx, e.store, app)
 	if accountErr != nil && !errors.Is(accountErr, state.ErrNotFound) {
 		return false, fmt.Errorf("sched: lifecycle reconcile: load account %s: %w", app.AccountID, accountErr)
 	}
@@ -7429,7 +7429,7 @@ func (e *Engine) SeedLedger(ctx context.Context) error {
 		if !e.ownsApp(app) {
 			continue
 		}
-		acct, err := e.store.AccountByID(ctx, app.AccountID)
+		acct, err := state.AppResourceAccount(ctx, e.store, app)
 		if err != nil {
 			continue
 		}
@@ -7994,7 +7994,7 @@ func (e *Engine) captureWarmSnapshotLocked(ctx context.Context, ins state.Instan
 	if !app.WarmSnapshotEnabled {
 		return SnapshotBytes{}, nil
 	}
-	acct, err := e.store.AccountByID(ctx, app.AccountID)
+	acct, err := state.AppResourceAccount(ctx, e.store, app)
 	if err != nil {
 		return SnapshotBytes{}, fmt.Errorf("sched: warm capture: load account: %w", err)
 	}
@@ -8187,7 +8187,7 @@ func (e *Engine) resolveAppAccount(ctx context.Context, appID string) (state.App
 	if err := e.checkApplicationStandardAdmission(ctx, app); err != nil {
 		return state.App{}, state.Account{}, api.Limits{}, err
 	}
-	acct, err := e.store.AccountByID(ctx, app.AccountID)
+	acct, err := state.AppResourceAccount(ctx, e.store, app)
 	if err != nil {
 		return state.App{}, state.Account{}, api.Limits{}, fmt.Errorf("sched: resolve app: account: %w", err)
 	}

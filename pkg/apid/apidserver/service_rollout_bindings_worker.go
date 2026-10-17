@@ -33,7 +33,7 @@ func (s *server) serviceRolloutBindingCheck(ctx context.Context, candidate state
 	if err != nil {
 		return nil, err
 	}
-	acct, err := s.store.AccountByID(ctx, app.AccountID)
+	acct, err := state.AppResourceAccount(ctx, s.store, app)
 	if err != nil {
 		return nil, err
 	}

@@ -1,0 +1,212 @@
+# Organization queue validation
+
+Local implementation of [ADR-202610171908](../adr/202610171908-organization-queue-ownership.md),
+2026-10-17, using Go 1.26.9 and PostgreSQL 16.
+
+The implementation retains queue, private consumer and environment runtime
+identities, messages, receipt hashes and dead-letter history. Reservations
+capture the organization's financial subject; adoption moves only the company
+contributions of existing counters. The twenty reviewed organization operations
+are available in OpenAPI and the Go, Node and Python SDKs.
+
+Completed checks:
+
+- The migration applies to a disposable PostgreSQL database and canonical
+  schema generation succeeds.
+- Memory/PostgreSQL state regressions pass with race detection: stable bindings,
+  accepted messages, held receipts, stage runtime identity, retry and replay
+  history through creator erasure; personal queue erasure; revoked request
+  fences; quota adoption, shared cap boundaries and concurrent trigger admission
+  across creator/organization namespaces. Unreviewed external triggers continue
+  to block erasure. Related queue, receipt, offboarding and ownership regressions
+  also pass.
+- Backfill tests retain roots and counter contributions, reject mixed ownership
+  and inconsistent counters, enforce immutable binding ownership and reject
+  rollback while company reservations remain outstanding.
+- Memory/PostgreSQL HTTP acceptance passes with race detection: an existing
+  worker token and teammate acknowledge pre-erasure receipts and consume the
+  retained backlog. A human enqueue paused after authorization returns 403 after
+  removal and creates no message. Role/scope boundaries, organization aliases,
+  aggregate usage and stage configuration remain enforced. Legacy trigger APIs
+  cannot expose company projections through personal creator credentials.
+- API clients, authorization, application access, lease service and account
+  exports pass their component suites with race detection. All twenty-five
+  queue action/role combinations and the complete action inventory are checked.
+- Existing personal-account cap and reservation-release conformance cases pass
+  in both stores. OpenAPI lint reports zero errors, with existing repository-wide
+  warnings; route/schema parity and typed SDK coverage pass.
+- Deterministic SQL generation and focused migration schema isolation and issued
+  source adaptation checks pass. The disposable schema database was removed;
+  the shared fixture database's public schema still has zero application tables.
+- The complete Go SDK suite passes with race detection.
+- Node: build plus 419 client tests and eight generator postprocessor tests.
+- Python: organization queue, object storage and PostgreSQL client tests pass.
+  Generation ran in an isolated temporary directory; only newly generated
+  modules and the generated model barrel were copied back, preserving existing
+  handwritten files and tests.
+- Runtime documentation, ADR numbering, sealed-environment scope, text encoding,
+  shell quoting, runbook SQL, durable-entity SDK contracts and whitespace checks
+  pass. The previous workspace changes remain present.
+- All configured Go static checks ran across the eleven changed packages.
+  Focused context and export reruns pass after forwarding worker completion's
+  authorization context and documenting intentional exclusion of malformed
+  historical queue references.
+- Focused race regressions pass after the context fix: worker serving receipts,
+  pull completion and retained organization ownership. The pull completion test
+  explicitly rejects a revoked authorization context before accepting the valid
+  attempt; account export tests also pass.
+
+Production deployment and native KVM acceptance are pending; the HTTP fixture
+creates a live worker record without booting a VM.
+Async admission and dispatch must be paused during the schema change, with all
+quota writers restarted together before resuming. Mixed old/new quota writers
+are unsupported; rollback must precede creator erasure.
+
+## Release branch verification
+
+[PR #4882](https://github.com/poyrazK/faas/pull/4882) combines the eight enterprise
+slices with main at `28cd8cb3c`. Their ADR identifiers are now
+`202610171901` through `202610171908`, avoiding concurrent decision numbers.
+The seven ownership migrations follow main's migration tail and recognize
+completed schema expansions during replay without overwriting later functions.
+
+Fresh PostgreSQL 16 schema generation, deterministic SQL bindings, apply-and-walk
+and replay of all seven migrations pass. The three historical migration fixtures
+previously rejected by membership/project guards now create valid personal
+organization parents and pass. A new race regression rolls all seven ownership
+migrations down and up, preserving main's incoming migration capacity accounting,
+restoring organization policy and retaining identical constraint definitions.
+The complete historical migration package has not been rerun.
+
+All seven affected daemon entry points build with the metal tag. Node build and
+the three organization client tests pass, as do the three Python organization
+client tests, ADR uniqueness, core test citations, Go formatting, embedded
+OpenAPI parity and whitespace checks. Production rollout and native runtime
+acceptance remain pending.
+
+Organization state and HTTP regressions also pass with race detection on
+`a23dea529`, including current membership, shared quotas, retained worker
+receipts and creator erasure. OpenAPI route/schema compliance and typed SDK
+coverage pass on that source, as do repository policy and runtime documentation
+contracts. Main's subsequent storage and release-compatibility changes are
+integrated from `5f10b1f27`. The ownership migrations now bound lock waits to five
+seconds and document their atomic-maintenance exceptions; production sizing
+and pause-duration qualification remain deployment prerequisites.
+
+The final integration also includes main's event SDK changes at `80ce06bad`;
+both SDK export sets are retained and the Node build passes. Migration apply,
+replay and the complete ownership down/up recovery regression pass after the
+compatibility updates. The protocol check matches all ten services, 296 messages,
+five enums and 156 guest JSON keys against this base. No ancestor `v*` release
+tag was available, so that comparison does not establish compatibility with an
+independently identified deployed release.
+
+## PR #4882 CI follow-up
+
+The first CI run exposed row locks against the nullable creator join in
+`app_resource_accounts`. Admission and logging observation queries now lock the
+actual organization or legacy personal account, then recheck the app namespace.
+PostgreSQL regressions cover personal billing, adopted company billing, erased
+creators, competing owner updates, and independent creator billing. Focused
+state and workflow recovery tests pass (174.248s, without race detection).
+
+Gateway logging (9.416s), managed PostgreSQL cutover schema coverage (8.106s),
+scheduler workflow and application-standard regressions (30.630s), and log
+retention (15.560s) pass. Retention preserves the account-plan fallback for
+missing apps and the company plan after creator erasure. Nine runtime journal
+tables and seven fencing columns are explicitly classified in the clone schema
+registry. Project publishing checks human email verification before project
+resolution; verification and organization-project HTTP regressions pass (10.235s).
+
+The Go SDK's full tests and `go vet` pass after replacing Go 1.24-only test
+contexts with APIs supported by its Go 1.23 module minimum. The storage starter
+job keeps every qualification command and now allows 20 minutes after its first
+run reached the 15-minute deadline just after the final test command reported
+success.
+
+Fresh schema generation, SQL binding generation, migration lint, apply-and-walk,
+replay of all seven ownership migrations, and ownership down/up recovery pass.
+The migration checks take 25.729s with session-scoped parallel query and index
+workers disabled: the local PostgreSQL 16 container's 64 MiB shared-memory mount
+was exhausted by the initial run. Final GitHub checks are tracked on
+[PR #4882](https://github.com/poyrazK/faas/pull/4882) and must pass before merge.
+
+## Integration with main's internal CI service
+
+Main through `c23392d9a` is integrated, preserving its default-off CI service,
+release units, diagnostics and runtime journals. The CI adapter uses the
+underlying PostgreSQL pool. All ownership migration definitions retain erasure
+blockers for the twenty account-scoped CI metadata tables; the new regression
+proves both account-erasure entry points refuse unreviewed CI revisions and
+retain the revision.
+
+Fresh canonical schema and SQL generation, deterministic SQL checks, migration
+lint against this base, OpenAPI parity with duplicate-key rejection, Node client
+generation and build, Python model export parsing, regression-test policy and
+whitespace checks pass. The clone registry retains both branches' entries and
+covers 848 migrated tables.
+
+PostgreSQL organization ownership, CI replay protection and clone-registry
+regressions pass (57.682s). Migration apply-and-walk, replay of all seven ownership
+migrations and ownership down/up recovery pass (30.472s). HTTP offboarding,
+project ownership, email verification and internal CI route regressions pass
+(54.311s). These integration reruns use Go 1.26.9 and PostgreSQL 16 without race
+detection; earlier race results above remain scoped to their recorded source.
+
+The fresh GitHub run on `9c67c466d` passed all changed-package lint checks, then
+reached the 20-minute job timeout during importer selection. Selection started
+after the existing 13-minute importer budget had already expired and was still
+fetching Git blobs when canceled. The selector now applies that same budget to
+package discovery and selection, terminates its subprocess group on expiry,
+and warns that unchanged importers are deferred to the mega tier. Changed-package
+lint coverage and the existing vet-batch budget remain intact. All 36 selector
+and affected-package regressions pass, including real subprocess timeout,
+expired-budget, successful-output and error-propagation cases.
+
+The same run passed required shards 2 and 3, while shard 1 exhausted its
+20-minute allowance after cold race compilation and successful gateway, API,
+authorization, database and managed PostgreSQL tests. Its scheduler and related
+CLI tests had not finished. The PR shard allowance is now 30 minutes; main keeps
+40 minutes. Every test command, race setting and per-test timeout is retained.
+Changing the workflow intentionally selects full-module lint, so the lint job
+allows 60 minutes while retaining each package's existing lint timeout. A YAML
+semantic comparison verifies that only these job limits change executable
+workflow behavior. Fresh CI must qualify the resulting source before merge.
+
+Main through `8548096a3` is integrated, including the application Auth dark
+launch and shared-runner base fixes. No migrations or ownership tables changed.
+The shared PostgreSQL binding handler retains both the application namespace
+and database namespace while preserving the default-off Auth gate. The company
+HTTP regression also rejects an Auth binding while that feature is disabled.
+
+Organization PostgreSQL HTTP, manifest, capability, source-binding and email
+verification regressions pass (11.701s, without race detection). The full Go
+SDK tests and vet pass at its Go 1.23 module minimum. Node generation/build and
+OpenAPI duplicate-key/parity checks pass. Four credential-access models in each
+of the Node and Python clients are regenerated to match the public schema.
+Python Auth and organization PostgreSQL, storage and queue client tests pass
+(42 tests); only the four Python models were copied from isolated generation.
+
+## Integration with backend rehearsals
+
+Main through `49ecac58d` is integrated. The seven unreleased ownership migrations
+are now `20261018003100001` through `20261018003100007`, after main's rehearsal
+migration tail. Their dependent source adapters and recovery fixtures use those
+identifiers. The new main migrations do not overwrite the runtime functions
+adapted by ownership. Invocation claiming retains the organization queue-policy
+lock before resetting a rehearsal binding.
+
+All nine erasure-guard definitions retain the seven new account-scoped rehearsal
+tables. A completed PostgreSQL rehearsal fixture blocks both erasure entry
+points and retains its evidence. Existing organization/rehearsal state cases
+passed; the new fixture case was corrected to supply its required backend
+identity, and focused erasure plus clone-catalogue checks pass (10.860s).
+The clone registry explicitly classifies eleven rehearsal tables and four new
+effect fields, covering 859 migrated tables.
+
+Fresh canonical schema and SQL generation/checks, migration lint, apply-and-walk,
+replay of the seven renumbered migrations and ownership down/up recovery pass
+(27.578s for the migration suite). OpenAPI duplicate-key/parity checks, Node
+generation/build, full Go SDK tests/vet, 42 Python Auth/organization client tests
+and 36 CI selector tests pass. These local reruns use Go 1.26.9 and PostgreSQL 16
+without race detection. The fresh GitHub checks must pass before merge.

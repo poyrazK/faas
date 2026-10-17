@@ -40,10 +40,15 @@ func (m *MemStore) queueLeaseRowLocked(inv Invocation, appID string, binding Que
 	return inv.QueueBindingID == binding.ID || (inv.QueueBindingID == "" && inv.QueueName == binding.QueueName)
 }
 
-func (m *MemStore) LeaseQueueMessages(_ context.Context, req QueueLeaseRequest) ([]QueueLease, error) {
+func (m *MemStore) LeaseQueueMessages(ctx context.Context, req QueueLeaseRequest) ([]QueueLease, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	account, ok := m.accounts[req.AccountID]
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 []QueueLease
+		return zero0, err
+	}
+
+	account, ok := m.queuePolicyAccountLocked(req.AccountID, req.AppID)
 	if !ok {
 		return nil, ErrNotFound
 	}
@@ -123,16 +128,20 @@ func (m *MemStore) heldQueueLeaseLocked(accountID, appID, queueName, receipt str
 	return inv, ""
 }
 
-func (m *MemStore) AckQueueLeases(_ context.Context, accountID, appID, queueName string, receipts []string) (QueueLeaseOutcome, error) {
+func (m *MemStore) AckQueueLeases(ctx context.Context, accountID, appID, queueName string, receipts []string) (QueueLeaseOutcome, error) {
 	return m.settleQueueLeases(receipts, func(receipt string) (string, error) {
 		m.mu.Lock()
+		if err := m.checkOrgAccessLocked(ctx); err != nil {
+			m.mu.Unlock()
+			return "", err
+		}
 		inv, reason := m.heldQueueLeaseLocked(accountID, appID, queueName, receipt, time.Now().UTC())
 		m.mu.Unlock()
 		if reason != "" {
 			return reason, nil
 		}
 		claim := InvocationClaim{Attempt: inv.Attempts, ReplayGeneration: inv.ReplayGeneration}
-		if err := m.completeInvocation(inv.ID, inv.Attempts, &claim, nil); err != nil {
+		if err := m.completeInvocationContext(ctx, inv.ID, inv.Attempts, &claim, nil); err != nil {
 			if errors.Is(err, ErrNotFound) {
 				return QueueLeaseReasonExpired, nil
 			}
@@ -145,16 +154,23 @@ func (m *MemStore) AckQueueLeases(_ context.Context, accountID, appID, queueName
 	})
 }
 
-func (m *MemStore) NackQueueLeases(_ context.Context, accountID, appID, queueName string, receipts []string, delay time.Duration, lastError string) (QueueLeaseOutcome, error) {
+func (m *MemStore) NackQueueLeases(ctx context.Context, accountID, appID, queueName string, receipts []string, delay time.Duration, lastError string) (QueueLeaseOutcome, error) {
 	return m.settleQueueLeases(receipts, func(receipt string) (string, error) {
 		m.mu.Lock()
 		defer m.mu.Unlock()
+		if err := m.checkOrgAccessLocked(ctx); err != nil {
+			return "", err
+		}
 		now := time.Now().UTC().Truncate(time.Microsecond)
 		inv, reason := m.heldQueueLeaseLocked(accountID, appID, queueName, receipt, now)
 		if reason != "" {
 			return reason, nil
 		}
-		next, err := queueLeaseRetry(inv, m.accounts[accountID].Plan, now, delay, lastError)
+		account, ok := m.queuePolicyAccountLocked(accountID, appID)
+		if !ok {
+			return "", ErrNotFound
+		}
+		next, err := queueLeaseRetry(inv, account.Plan, now, delay, lastError)
 		if err != nil {
 			return "", err
 		}
@@ -164,9 +180,13 @@ func (m *MemStore) NackQueueLeases(_ context.Context, accountID, appID, queueNam
 	})
 }
 
-func (m *MemStore) ExtendQueueLeases(_ context.Context, accountID, appID, queueName string, receipts []string, visibilitySeconds int) (QueueLeaseOutcome, error) {
+func (m *MemStore) ExtendQueueLeases(ctx context.Context, accountID, appID, queueName string, receipts []string, visibilitySeconds int) (QueueLeaseOutcome, error) {
 	m.mu.Lock()
-	account, ok := m.accounts[accountID]
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		m.mu.Unlock()
+		return QueueLeaseOutcome{}, err
+	}
+	account, ok := m.queuePolicyAccountLocked(accountID, appID)
 	m.mu.Unlock()
 	if !ok {
 		return QueueLeaseOutcome{}, ErrNotFound
@@ -178,6 +198,9 @@ func (m *MemStore) ExtendQueueLeases(_ context.Context, accountID, appID, queueN
 	return m.settleQueueLeases(receipts, func(receipt string) (string, error) {
 		m.mu.Lock()
 		defer m.mu.Unlock()
+		if err := m.checkOrgAccessLocked(ctx); err != nil {
+			return "", err
+		}
 		now := time.Now().UTC().Truncate(time.Microsecond)
 		inv, reason := m.heldQueueLeaseLocked(accountID, appID, queueName, receipt, now)
 		if reason != "" {
@@ -209,9 +232,14 @@ func (m *MemStore) settleQueueLeases(receipts []string, apply func(string) (stri
 	return out, nil
 }
 
-func (m *MemStore) QueueLeasesByInstance(_ context.Context, appID string) (map[string]int, error) {
+func (m *MemStore) QueueLeasesByInstance(ctx context.Context, appID string) (map[string]int, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 map[string]int
+		return zero0, err
+	}
+
 	now := time.Now().UTC()
 	out := map[string]int{}
 	for _, inv := range m.invocations {
