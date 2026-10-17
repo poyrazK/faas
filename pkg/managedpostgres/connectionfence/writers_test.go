@@ -45,10 +45,29 @@ func TestConnectionFenceWriterInventoryDetectsCatalogBypassAndHiddenSessions(t *
 			t.Error(err)
 		}
 	})
+	// Other packages create and drop their own databases on this cluster. Hold
+	// catalog DDL while checking against the current set, rather than assuming
+	// the count from Close can only have changed because of our new database.
+	catalog, err := f.root.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = catalog.Rollback(context.Background()) }()
+	if _, err = catalog.Exec(t.Context(), "LOCK TABLE pg_catalog.pg_database IN SHARE MODE"); err != nil {
+		t.Fatal(err)
+	}
+	var unselected int64
+	if err = catalog.QueryRow(t.Context(), "SELECT count(*) FROM pg_catalog.pg_database WHERE datname<>$1 AND datname<>ALL($2::text[])",
+		f.config.MaintenanceDatabase, f.request.DatabaseNames).Scan(&unselected); err != nil {
+		t.Fatal(err)
+	}
 	changed, err := f.c.Observe(t.Context(), f.request.Identity)
 	if err != nil || changed.WriterInventory.CatalogFingerprint == closed.WriterInventory.CatalogFingerprint ||
-		changed.UnselectedDatabases != closed.UnselectedDatabases+1 {
-		t.Fatal("new database hid behind a frozen selected set", err)
+		changed.UnselectedDatabases != unselected {
+		t.Fatalf("new database hid behind a frozen selected set: observation=%+v want_unselected=%d err=%v", changed, unselected, err)
+	}
+	if err = catalog.Commit(t.Context()); err != nil {
+		t.Fatal(err)
 	}
 	if _, err = f.root.Exec(t.Context(), "ALTER DATABASE "+pgx.Identifier{name}.Sanitize()+" CONNECTION LIMIT 7"); err != nil {
 		t.Fatal(err)
