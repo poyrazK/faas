@@ -124,7 +124,7 @@ func newCustomerHTTPFixture(t *testing.T) *customerHTTPFixture {
 	_, err = f.store.LinkPlatformTenantSurface(t.Context(), f.account.ID, tenant.ID, surface.ID)
 	mustCustomerHTTP(t, err)
 	mustCustomerHTTP(t, f.store.UpdateTenantSurfaceStatus(t.Context(), surface.ID, state.SurfaceStatusActive))
-	mustCustomerHTTP(t, f.store.RecordObjectUsageReport(t.Context(), api.ObjectStorageUsageReport{AccountID: f.account.ID, BackendID: backend.ID, BackendFingerprint: backend.Fingerprint, Source: "native-http-fixture", PeriodStart: state.ObjectStoragePeriod(time.Now()), ObservedAt: time.Now().Add(-time.Second)}))
+	mustCustomerHTTP(t, seedOperationObjectAccounting(t.Context(), f.store, f.account.ID, f.app.ID, backend))
 	runtime, err := f.store.UpsertRuntimeConfig(t.Context(), state.RuntimeConfigUpdate{Key: "s3_enabled", Scope: state.RuntimeConfigScopeGlobal, DesiredValue: json.RawMessage(`true`), ApplyMode: state.RuntimeConfigApplyHot, ActorID: f.account.ID, Reason: "isolated native HTTP operation file fixture"})
 	mustCustomerHTTP(t, err)
 	mustCustomerHTTP(t, f.store.MarkRuntimeConfigApplied(t.Context(), runtime.Key, runtime.Scope, "", runtime.Version, json.RawMessage(`true`), ""))

@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"filippo.io/age"
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
@@ -123,7 +124,7 @@ func newCustomerWorkflowFixture(t *testing.T, finalTimeout time.Duration) *custo
 	_, err = f.store.LinkPlatformTenantSurface(t.Context(), f.account.ID, tenant.ID, surface.ID)
 	mustCustomerWorkflow(t, err)
 	mustCustomerWorkflow(t, f.store.UpdateTenantSurfaceStatus(t.Context(), surface.ID, state.SurfaceStatusActive))
-	mustCustomerWorkflow(t, f.store.RecordObjectUsageReport(t.Context(), api.ObjectStorageUsageReport{AccountID: f.account.ID, BackendID: backend.ID, BackendFingerprint: backend.Fingerprint, Source: "native-workflow-fixture", PeriodStart: state.ObjectStoragePeriod(time.Now()), ObservedAt: time.Now().Add(-time.Second)}))
+	mustCustomerWorkflow(t, seedOperationObjectAccounting(t.Context(), f.store, f.account.ID, f.app.ID, backend))
 	runtime, err := f.store.UpsertRuntimeConfig(t.Context(), state.RuntimeConfigUpdate{Key: "s3_enabled", Scope: state.RuntimeConfigScopeGlobal, DesiredValue: json.RawMessage(`true`), ApplyMode: state.RuntimeConfigApplyHot, ActorID: f.account.ID, Reason: "isolated native workflow file fixture"})
 	mustCustomerWorkflow(t, err)
 	mustCustomerWorkflow(t, f.store.MarkRuntimeConfigApplied(t.Context(), runtime.Key, runtime.Scope, "", runtime.Version, json.RawMessage(`true`), ""))
@@ -383,4 +384,28 @@ func customerWorkflowWaitChains() []api.WorkflowSpec {
 			{Name: "finish", Path: "/finish", DependsOn: []string{"payment"}, Input: finish, Timeout: 2 * time.Minute},
 		}},
 	}
+}
+
+// seedOperationObjectAccounting gives the account healthy object-storage
+// accounting: a usage report is accepted only for a backend that holds one of
+// the account's buckets, so reserve a ready, inventoried bucket first, as the
+// Job fixture does.
+func seedOperationObjectAccounting(ctx context.Context, store *state.PgStore, accountID, appID string, backend objectstorage.Backend) error {
+	bucket, err := store.ReserveObjectBucket(ctx, state.ObjectBucket{ID: uuid.NewString(), AccountID: accountID, AppID: appID, Scope: state.DefaultEnvScope, Name: "operation-files", Region: backend.Region, BackendID: backend.ID, BackendFingerprint: backend.Fingerprint, PhysicalName: "operation-files"}, api.DefaultObjectBucketsPerApp)
+	if err != nil {
+		return fmt.Errorf("reserve accounting bucket: %w", err)
+	}
+	if _, err := store.ClaimObjectBucket(ctx, accountID, appID, bucket.ID, "native-fixture", "provisioning"); err != nil {
+		return fmt.Errorf("claim accounting bucket: %w", err)
+	}
+	if err := store.FinishObjectBucket(ctx, bucket.ID, "native-fixture", "ready"); err != nil {
+		return fmt.Errorf("finish accounting bucket: %w", err)
+	}
+	if err := store.ClaimObjectInventory(ctx, bucket.ID, "native-fixture"); err != nil {
+		return fmt.Errorf("claim accounting inventory: %w", err)
+	}
+	if err := store.FinishObjectInventory(ctx, bucket.ID, "native-fixture", 0, 0); err != nil {
+		return fmt.Errorf("finish accounting inventory: %w", err)
+	}
+	return store.RecordObjectUsageReport(ctx, api.ObjectStorageUsageReport{AccountID: accountID, BackendID: backend.ID, BackendFingerprint: backend.Fingerprint, Source: "native-fixture", PeriodStart: state.ObjectStoragePeriod(time.Now()), ObservedAt: time.Now().Add(-time.Second)})
 }
