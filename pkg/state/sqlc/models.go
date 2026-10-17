@@ -86,6 +86,7 @@ type Account struct {
 	AbuseHoldReason        pgtype.Text
 	PasswordResetRevision  int64
 	MfaRevision            int64
+	BillingMailRevision    int64
 }
 
 type AccountAsyncQuotum struct {
@@ -1541,6 +1542,13 @@ type BillingPaymentFailureReceipt struct {
 	EventID     string
 	AccountID   pgtype.UUID
 	EventType   string
+	ProcessedAt pgtype.Timestamptz
+}
+
+type BillingPaymentRecoveryReceipt struct {
+	Provider    string
+	EventID     string
+	AccountID   pgtype.UUID
 	ProcessedAt pgtype.Timestamptz
 }
 
@@ -7334,34 +7342,35 @@ type PlatformMailOutboxReconciliation struct {
 }
 
 type PlatformMailProducerOutbox struct {
-	ID                    pgtype.UUID
-	AccountID             pgtype.UUID
-	Namespace             string
-	ProducerID            string
-	FromAddress           string
-	RecipientAddress      string
-	Template              string
-	TemplateVersion       int32
-	DeletionRequestedAt   pgtype.Timestamptz
-	RestoreUntil          pgtype.Timestamptz
-	ExpiresAt             pgtype.Timestamptz
-	RecoveryID            pgtype.UUID
-	State                 string
-	Attempts              int32
-	NextAttemptAt         pgtype.Timestamptz
-	LeaseID               pgtype.UUID
-	LeaseUntil            pgtype.Timestamptz
-	Code                  string
-	CreatedAt             pgtype.Timestamptz
-	UpdatedAt             pgtype.Timestamptz
-	Revision              int64
-	VerificationTokenHash []byte
-	SealedVerification    []byte
-	VerificationKeyID     string
-	VerificationOrigin    string
-	SealedSecurityAlert   []byte
-	SecurityAlertKeyID    string
-	PaymentPastDueAt      pgtype.Timestamptz
+	ID                      pgtype.UUID
+	AccountID               pgtype.UUID
+	Namespace               string
+	ProducerID              string
+	FromAddress             string
+	RecipientAddress        string
+	Template                string
+	TemplateVersion         int32
+	DeletionRequestedAt     pgtype.Timestamptz
+	RestoreUntil            pgtype.Timestamptz
+	ExpiresAt               pgtype.Timestamptz
+	RecoveryID              pgtype.UUID
+	State                   string
+	Attempts                int32
+	NextAttemptAt           pgtype.Timestamptz
+	LeaseID                 pgtype.UUID
+	LeaseUntil              pgtype.Timestamptz
+	Code                    string
+	CreatedAt               pgtype.Timestamptz
+	UpdatedAt               pgtype.Timestamptz
+	Revision                int64
+	VerificationTokenHash   []byte
+	SealedVerification      []byte
+	VerificationKeyID       string
+	VerificationOrigin      string
+	SealedSecurityAlert     []byte
+	SecurityAlertKeyID      string
+	PaymentPastDueAt        pgtype.Timestamptz
+	AccountRestoredRevision pgtype.Int8
 }
 
 type PlatformTenant struct {

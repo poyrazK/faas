@@ -37,6 +37,7 @@ const (
 	PasswordResetOutboxEnableEnv        = "FAAS_INTERNAL_MAIL_PASSWORD_RESET_OUTBOX_ENABLED"
 	MagicLinkOutboxEnableEnv            = "FAAS_INTERNAL_MAIL_MAGIC_LINK_OUTBOX_ENABLED"
 	MFADisableOutboxEnableEnv           = "FAAS_INTERNAL_MAIL_MFA_DISABLE_OUTBOX_ENABLED"
+	AccountRestoredOutboxEnableEnv      = "FAAS_INTERNAL_MAIL_ACCOUNT_RESTORED_OUTBOX_ENABLED"
 	PaymentFailedOutboxEnableEnv        = "FAAS_INTERNAL_MAIL_PAYMENT_FAILED_OUTBOX_ENABLED"
 	MFAEnabledAlertOutboxEnableEnv      = "FAAS_INTERNAL_MAIL_MFA_ENABLED_ALERT_OUTBOX_ENABLED"
 	PasswordChangedAlertOutboxEnableEnv = "FAAS_INTERNAL_MAIL_PASSWORD_CHANGED_ALERT_OUTBOX_ENABLED"
@@ -363,4 +364,8 @@ func MFAEnabledAlertOutboxEnabled(getenv func(string) string) bool {
 
 func PaymentFailedOutboxEnabled(getenv func(string) string) bool {
 	return getenv(PaymentFailedOutboxEnableEnv) == "1" && ProducerOutboxEnabled(getenv)
+}
+
+func AccountRestoredOutboxEnabled(getenv func(string) string) bool {
+	return getenv(AccountRestoredOutboxEnableEnv) == "1" && ProducerOutboxEnabled(getenv)
 }

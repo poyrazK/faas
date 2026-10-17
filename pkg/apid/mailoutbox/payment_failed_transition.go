@@ -79,10 +79,13 @@ func (s *Service) commitPaymentFailureIntent(ctx context.Context, tx pgx.Tx, a q
 	return s.savePaymentFailed(ctx, tx, a.ID, a.Email, recovery.RecoveryID, at.Time)
 }
 
-func validBillingFailure(provider, eventID, customerID string, kind billing.EventType) bool {
+func validBillingDelivery(provider, eventID, customerID string) bool {
 	return (provider == "stripe" || provider == "paddle" || provider == "polar") &&
-		len(eventID) > 0 && len(eventID) <= api.InternalMailPaymentFailureEventIDMaxBytes && !strings.ContainsAny(eventID, "\r\n\x00") && customerID != "" &&
-		(kind == billing.EventPaymentFailed || kind == billing.EventSubscriptionPastDue)
+		len(eventID) > 0 && len(eventID) <= api.InternalMailPaymentFailureEventIDMaxBytes && !strings.ContainsAny(eventID, "\r\n\x00") && customerID != ""
+}
+
+func validBillingFailure(provider, eventID, customerID string, kind billing.EventType) bool {
+	return validBillingDelivery(provider, eventID, customerID) && (kind == billing.EventPaymentFailed || kind == billing.EventSubscriptionPastDue)
 }
 
 // RestorePaymentAfterFailure reviews current status under the same account
@@ -93,7 +96,7 @@ func (s *Service) RestorePaymentAfterFailure(ctx context.Context, id, provider, 
 	if !s.paymentFailedEnabled() {
 		return false, internalmail.ErrDisabled
 	}
-	if !validID(id) || !validBillingFailure(provider, "recovery", customerID, billing.EventPaymentFailed) {
+	if !validID(id) || !validBillingDelivery(provider, "recovery", customerID) {
 		return false, internalmail.ErrInvalid
 	}
 	tx, err := s.pool.Begin(ctx)

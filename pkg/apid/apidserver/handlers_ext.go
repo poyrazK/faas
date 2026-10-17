@@ -5238,6 +5238,9 @@ func (s *server) stripeWebhook(w http.ResponseWriter, r *http.Request) {
 	// row carries the resolved account id as the subject (matching
 	// the refund.processed precedent at spec §5.7 line 336).
 	//
+	if s.handleAccountRestoredOutbox(w, r, "stripe", normalized, acct) {
+		return
+	}
 	if s.handlePaymentFailedOutbox(w, r, "stripe", normalized, acct) {
 		return
 	}
@@ -5458,6 +5461,9 @@ func (s *server) paddleWebhook(w http.ResponseWriter, r *http.Request) {
 	// the check — pre-#294 behaviour. Claim failures are retryable because
 	// acknowledging without replay protection could duplicate money-related
 	// audit/state side effects.
+	if s.handleAccountRestoredOutbox(w, r, "paddle", ev, acct) {
+		return
+	}
 	if s.handlePaymentFailedOutbox(w, r, "paddle", ev, acct) {
 		return
 	}
@@ -5678,51 +5684,7 @@ func (s *server) handleBillingEventWithOptions(ctx context.Context, ev billing.E
 			}
 		}
 	case billing.EventPaymentSucceeded:
-		if err := s.applyInvoiceCredits(ctx, providerName(s.billingProvider), acct, ev.Invoice); err != nil {
-			return fmt.Errorf("apply invoice credits: %w", err)
-		}
-		if ev.SubscriptionID != "" {
-			if err := s.stampActiveBillingSubscription(ctx, acct, ev.SubscriptionID); err != nil {
-				return fmt.Errorf("store payment subscription id: %w", err)
-			}
-		}
-		if plan := billingPlanFromProviderID(ev.PlanID); plan != "" {
-			if err := s.setAccountPlan(ctx, acct, plan); err != nil {
-				return fmt.Errorf("store payment plan: %w", err)
-			}
-		}
-		// Restore the account if it was past_due. meterd will refresh
-		// quota state on its next tick. We also clear the dedupe stamp
-		// on last_quota_warning_at so the next quota tick (if the
-		// customer is still over quota from a prior cycle) emits a
-		// fresh warning — otherwise the stamp from the previous day
-		// would suppress it (spec §4.7).
-		//
-		// A dunning suspension (suspended with past_due_at still set) is
-		// lifted too: the suspension email tells the customer that paying
-		// — `gregale billing retry` — restores service, but only past_due
-		// was restored, so a customer who paid stayed suspended and the
-		// dunning timer went on to schedule the account for deletion.
-		// Operator suspensions carry no past_due_at and stay in place.
-		// A dunning deletion (deleted_pending with past_due_at) is
-		// undone by paying within its grace window as well.
-		restored, err := s.restoreBillingPayment(ctx, ev, acct)
-		if err != nil {
-			return fmt.Errorf("restore account: %w", err)
-		}
-		if restored {
-			s.notifyAccountLifecycle(ctx, acct.ID, "account_reactivated")
-			subject, body := mail.AccountRestoredBody(acct.Email, time.Now().UTC())
-			s.sendBillingTransitionMail(ctx, acct, subject, body, asyncBillingMail, "payment_succeeded")
-		}
-		// Clear the dedupe stamp on every payment_succeeded, not just
-		// past_due → active flips: a fresh signup's first provider
-		// confirmation shouldn't wait until the next UTC midnight to
-		// hear about a quota they crossed during the trial, and the
-		// cost of an extra pg_notify on a no-op event is nil.
-		if err := s.store.ClearQuotaWarning(ctx, acct.ID); err != nil {
-			return fmt.Errorf("clear quota warning: %w", err)
-		}
+		return s.handleSuccessfulPayment(ctx, ev, acct, asyncBillingMail, providerName(s.billingProvider), s.accountRestoredRequested())
 	case billing.EventSubscriptionUpdated:
 		if ev.SubscriptionID != "" {
 			if err := s.stampActiveBillingSubscription(ctx, acct, ev.SubscriptionID); err != nil {

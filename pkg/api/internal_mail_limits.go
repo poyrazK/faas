@@ -138,6 +138,8 @@ const (
 )
 
 const (
+	InternalMailAccountRestoredTTL            = 24 * time.Hour
+	InternalMailAccountRestoredMaxBytes       = 512
 	InternalMailPaymentFailureEventIDMaxBytes = 256
 	InternalMailPaymentFailedTTL              = 24 * time.Hour
 	InternalMailPaymentFailedMaxBytes         = 512

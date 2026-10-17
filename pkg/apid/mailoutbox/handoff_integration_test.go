@@ -22,6 +22,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/internalmail"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 type fixtureTXT map[string][]string
@@ -86,6 +87,7 @@ CREATE TABLE mail_suppressions(email text NOT NULL,expires_at timestamptz)`); er
 	var mfaDisableGate atomic.Bool
 	var mfaDisabledAlertGate atomic.Bool
 	var passwordChangedAlertGate atomic.Bool
+	var accountRestoredGate atomic.Bool
 	var paymentFailedGate atomic.Bool
 	var mfaEnabledAlertGate atomic.Bool
 	outboxGate.Store(true)
@@ -100,6 +102,7 @@ CREATE TABLE mail_suppressions(email text NOT NULL,expires_at timestamptz)`); er
 		MFADisableOutboxEnabled:           mfaDisableGate.Load,
 		MFADisabledAlertOutboxEnabled:     mfaDisabledAlertGate.Load,
 		PasswordChangedAlertOutboxEnabled: passwordChangedAlertGate.Load,
+		AccountRestoredOutboxEnabled:      accountRestoredGate.Load,
 		PaymentFailedOutboxEnabled:        paymentFailedGate.Load,
 		MFAEnabledAlertOutboxEnabled:      mfaEnabledAlertGate.Load,
 		Producers:                         map[string]internalmail.Producer{"auth": {ID: "auth", Token: testProducerToken, From: []string{"notify@example.test"}, DailyRecipientLimit: 30, PendingRecipientLimit: 100}},
@@ -709,6 +712,7 @@ CREATE TABLE mail_suppressions(email text NOT NULL,expires_at timestamptz)`); er
 	}
 	f.service = restarted
 	expectedMailCount := 10 + exercisePaymentHandoff(t, f, daemon, smtp, &paymentFailedGate, &dropped)
+	expectedMailCount += exerciseRestoredHandoff(t, f, daemon, smtp, &accountRestoredGate, &dropped)
 	// The producer must retain no recovery advisory lock across HTTP. Start
 	// and release a new recovery after producer preflight but before maild
 	// admission: the owner's generation check must reject this stale request.
@@ -879,5 +883,146 @@ func exercisePaymentHandoff(t *testing.T, f *fixture, daemon *internalmail.Servi
 		}
 	}
 	f.env[internalmail.PaymentFailedOutboxEnableEnv] = "0"
+	return admitted
+}
+
+func exerciseRestoredHandoff(t *testing.T, f *fixture, daemon *internalmail.Service, smtp *fixtureSMTP, gate, dropped *atomic.Bool) int {
+	t.Helper()
+	f.env[internalmail.AccountRestoredOutboxEnableEnv] = "1"
+	if err := f.service.ConfigureAccountRestored(t.Context(), func(k string) string { return f.env[k] }); err != nil {
+		t.Fatal(err)
+	}
+	_, _, first := queueRestored(t, f)
+	if err := f.service.DeliverOne(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if got := row(t, f, uuidString(first.ID.Bytes)); got.State != "queued" || len(got.SealedSecurityAlert) == 0 {
+		t.Fatal("remote pause lost committed recovery")
+	}
+	gate.Store(true)
+	for attempt := 0; attempt < 2; attempt++ {
+		if _, err := f.pool.Exec(t.Context(), "UPDATE platform_mail_producer_outbox SET next_attempt_at=clock_timestamp() WHERE id=$1", first.ID); err != nil {
+			t.Fatal(err)
+		}
+		next, err := NewFromEnv(f.pool, func(k string) string { return f.env[k] })
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := next.ConfigureAccountRestored(t.Context(), func(k string) string { return f.env[k] }); err != nil {
+			t.Fatal(err)
+		}
+		f.service = next
+		if attempt == 0 {
+			dropped.Store(false)
+		}
+		if err := next.DeliverOne(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if got := row(t, f, uuidString(first.ID.Bytes)); attempt == 0 && got.State != "queued" {
+			t.Fatal("recovery admission acknowledgement was not lost")
+		}
+	}
+	if got := row(t, f, uuidString(first.ID.Bytes)); got.State != "admitted" {
+		t.Fatal("recovery retry lost admission")
+	} else {
+		assertMFAAlertErased(t, got)
+	}
+	before := smtp.accepted.Load()
+	gate.Store(false)
+	if err := daemon.DeliverOne(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if smtp.accepted.Load() != before {
+		t.Fatal("disabled recovery template reached SMTP")
+	}
+	gate.Store(true)
+	for range 2 {
+		if err := daemon.DeliverOne(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if smtp.accepted.Load() != before+1 {
+		t.Fatal("recovery retry duplicated SMTP custody")
+	}
+	store := state.NewPgStore(f.pool)
+	admitted := 1
+	for _, mode := range []string{"status_aba", "address_aba", "deleted", "erasure", "status_wait", "flag_wait"} {
+		id, _, intent := queueRestored(t, f)
+		if err := f.service.DeliverOne(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if row(t, f, uuidString(intent.ID.Bytes)).State != "admitted" {
+			t.Fatal("recovery confirmation not admitted", mode)
+		}
+		admitted++
+		var err error
+		switch mode {
+		case "status_aba":
+			err = store.MarkDunningStep(t.Context(), id, state.AccountActive, state.AccountPastDue)
+			if err == nil {
+				err = store.UpdateAccountStatus(t.Context(), id, state.AccountActive)
+			}
+		case "address_aba":
+			_, err = f.pool.Exec(t.Context(), "UPDATE accounts SET email='other@example.net' WHERE id=$1", id)
+			if err == nil {
+				_, err = f.pool.Exec(t.Context(), "UPDATE accounts SET email='one@example.net' WHERE id=$1", id)
+			}
+		case "deleted":
+			_, err = f.pool.Exec(t.Context(), "UPDATE accounts SET status='deleted_pending',deletion_requested_at=clock_timestamp() WHERE id=$1", id)
+		case "erasure":
+			_, err = f.pool.Exec(t.Context(), "DELETE FROM accounts WHERE id=$1", id)
+		case "status_wait", "flag_wait":
+			tx, beginErr := f.pool.Begin(t.Context())
+			if beginErr != nil {
+				t.Fatal(beginErr)
+			}
+			defer rollback(t.Context(), tx)
+			if _, err := tx.Exec(t.Context(), "SELECT id FROM accounts WHERE id=$1 FOR UPDATE", id); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			done := make(chan error, 1)
+			go func() { done <- daemon.DeliverOne(ctx) }()
+			waitForReconciliationBlock(t, f, ctx, tx.Conn().PgConn().PID())
+			if mode == "status_wait" {
+				if _, err := tx.Exec(ctx, "UPDATE accounts SET status='past_due',past_due_at=clock_timestamp() WHERE id=$1", id); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				gate.Store(false)
+			}
+			if err := tx.Commit(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if err := <-done; err != nil {
+				t.Fatal(err)
+			}
+			if mode == "flag_wait" {
+				var status string
+				if err := f.pool.QueryRow(ctx, "SELECT r.status FROM internal_mail_recipients r JOIN internal_mail_messages m ON m.id=r.message_id WHERE m.idempotency_key=$1", "account-restored:"+uuidString(intent.ID.Bytes)).Scan(&status); err != nil || status != "queued" {
+					t.Fatal("late gate withdrawal did not hold confirmation", status, err)
+				}
+				gate.Store(true)
+				err = store.UpdateAccountStatus(t.Context(), id, state.AccountSuspended)
+			}
+		}
+		if err != nil {
+			t.Fatal(mode, err)
+		}
+		for range 2 {
+			if err := daemon.DeliverOne(t.Context()); err != nil {
+				t.Fatal(mode, err)
+			}
+		}
+		if smtp.accepted.Load() != before+1 {
+			t.Fatal("stale recovery reached SMTP", mode)
+		}
+		var status string
+		if err := f.pool.QueryRow(t.Context(), "SELECT r.status FROM internal_mail_recipients r JOIN internal_mail_messages m ON m.id=r.message_id WHERE m.idempotency_key=$1", "account-restored:"+uuidString(intent.ID.Bytes)).Scan(&status); err != nil || status != "cancelled" {
+			t.Fatal("maild did not cancel stale recovery", mode, status, err)
+		}
+	}
+	f.env[internalmail.AccountRestoredOutboxEnableEnv] = "0"
 	return admitted
 }

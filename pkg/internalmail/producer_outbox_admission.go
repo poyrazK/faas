@@ -94,6 +94,10 @@ func (s *Service) ProducerOutboxAdmission(ctx context.Context, id string) (Produ
 		review.CanAcknowledge = false
 		review.BlockReason = "payment_failed_disabled"
 	}
+	if review.Template == ProducerOutboxAccountRestoredTemplate && !s.accountRestoredOutboxEnabled() {
+		review.CanAcknowledge = false
+		review.BlockReason = "account_restored_disabled"
+	}
 	return review, err
 }
 

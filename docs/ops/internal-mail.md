@@ -3028,3 +3028,79 @@ requires this capability to remain selected. Retain durable receipts and
 evaluate provider redelivery before switching to legacy processing. Admission
 does not establish SMTP custody or destination delivery; live qualification
 remains separate. No activation, deployment or real email is part of this change.
+
+## Durable payment-recovery confirmations
+
+`FAAS_INTERNAL_MAIL_ACCOUNT_RESTORED_OUTBOX_ENABLED=0` independently gates
+internal recovery confirmations in apid, maild and private reconciliation. Units
+and examples keep it off. Apply
+[`20261017112923185_platform_mail_account_restored_outbox.sql`](../../migrations/20261017112923185_platform_mail_account_restored_outbox.sql)
+before opting in. See
+[ADR-20261017112923](../adr/20261017112923-mail-account-restored-confirmations.md).
+
+It requires the existing master, producer, scheduling and producer-outbox gates,
+scoped `internal-producer` transport and dedicated apid readers under
+`FAAS_INTERNAL_MAIL_VERIFICATION_IDENTITY_PATH` and
+`FAAS_INTERNAL_MAIL_VERIFICATION_PREVIOUS_IDENTITY_PATH`. No origin is required.
+Keep readers needed by every enabled family's unexpired pending payloads.
+Maild and mailctl receive neither reader. Payment-failure issuance can remain
+independently off. Enabled startup checks the schema, lifecycle trigger and
+pending reader references; maild checks its metadata projection and trigger.
+
+After existing signature checks, customer binding and invoice persistence,
+normalized payment-success events select this path before the legacy replay
+claim. A bounded nonempty provider event ID is mandatory. Apid commits a real
+dunning restoration, personal-org mirror, pending failure-warning cancellation,
+encrypted confirmation and permanent success-event receipt together. A failed
+paired write, held recovery, unavailable capacity or late gate withdrawal leaves
+that restoration retryable without inline-mail fallback. Cancelled failure
+warnings release their pending slots before confirmation capacity is checked.
+
+Duplicate successes and distinct successes on an already-active account create
+no extra confirmation. A saved receipt prevents an old success from restoring a
+later overdue period. Receipts have no expiry and must not be pruned. They retain
+only provider, event ID, account ID and processing time and cascade on erasure.
+They do not order distinct events or backfill historical legacy deliveries.
+
+The current account row decides recovery; an earlier active snapshot cannot
+miss a concurrent failure. Dunning suspensions and dunning deletions retain
+their existing recovery rules. Operator suspensions and voluntary deletion stay
+in place. Credit, subscription, plan, quota and lifecycle follow-up keep their
+existing ordering. If quota follow-up fails after the paired commit, webhook
+retry uses the saved receipt and cannot enqueue another confirmation. Polar PDF
+generation remains asynchronous and does not block acknowledgement.
+
+The account's billing-mail revision advances on status, overdue timestamp,
+deletion stamp or email changes through all existing database writers, including
+meterd and legacy billing. Unrelated password/MFA changes and no-op lifecycle
+updates do not advance it. This metadata fence remains active with the flag off
+to protect saved confirmations through rollback. It creates no mail work.
+
+The encrypted payload contains only the original database recovery timestamp.
+The intent also binds the post-recovery lifecycle revision. Retries preserve
+that time, the frozen V1 body, original 24-hour delivery deadline and
+`account-restored:<intent UUID>` admission key. Shared suppression, budgets,
+leases and recovery quarantine remain in force.
+
+Apid checks current address, active status, absence of overdue/deletion stamps
+and exact lifecycle revision before handoff. Maild checks the same metadata
+under the account lock before committing SMTP submission start. A later failure,
+status/address cycle or erasure therefore cancels stale confirmations even when
+the account has become active again, including confirmations admitted to maild.
+The maild recipient becomes `cancelled` with `account_changed`, without an SMTP
+call. The own gate is checked again after lock waits. Once submission start
+commits, later changes cannot recall custody. Submitted/uncertain work is never
+automatically resent.
+
+Private acknowledgement, receipt review and exact audit replay require the own
+flag and existing operator/reconciliation gates. Acknowledgement cannot send or
+extend a deadline. Terminal outbox settlement erases address/ciphertext; erasure
+cascades intents/receipts while opaque audit survives. Migration Down refuses
+notification, receipt or reconciliation history.
+
+Flag rollback pauses handoff and maild delivery; base maintenance may still
+expire and erase pending payloads. Later webhooks use the legacy recovery path
+and its replay window. Retain durable receipts and evaluate provider redelivery
+before switching. Admission does not establish SMTP custody or destination
+delivery. No activation, deployment or real email is part of this change; live
+qualification remains separate.

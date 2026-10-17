@@ -15,6 +15,7 @@ const ProducerOutboxPasswordResetTemplate = "password_reset"
 const ProducerOutboxMagicLinkTemplate = "magic_link"
 const ProducerOutboxMFADisableTemplate = "mfa_disable_request"
 const ProducerOutboxMFADisabledAlertTemplate = "mfa_disabled"
+const ProducerOutboxAccountRestoredTemplate = "account_restored"
 const ProducerOutboxPaymentFailedTemplate = "payment_failed"
 const ProducerOutboxMFAEnabledAlertTemplate = "mfa_enabled"
 const ProducerOutboxPasswordChangedAlertTemplate = "password_changed"
@@ -38,6 +39,10 @@ func (s *Service) mfaRecoveryAlertOutboxEnabled() bool {
 
 func (s *Service) mfaDisableOutboxEnabled() bool {
 	return s.producerOutboxEnabled() && s.MFADisableOutboxEnabled != nil && s.MFADisableOutboxEnabled()
+}
+
+func (s *Service) accountRestoredOutboxEnabled() bool {
+	return s.producerOutboxEnabled() && s.AccountRestoredOutboxEnabled != nil && s.AccountRestoredOutboxEnabled()
 }
 
 func (s *Service) paymentFailedOutboxEnabled() bool {
@@ -83,6 +88,8 @@ func (s *Service) producerOutboxContext(ctx context.Context, header http.Header)
 			gate = s.magicLinkOutboxEnabled
 		case ProducerOutboxMFADisableTemplate:
 			gate = s.mfaDisableOutboxEnabled
+		case ProducerOutboxAccountRestoredTemplate:
+			gate = s.accountRestoredOutboxEnabled
 		case ProducerOutboxPaymentFailedTemplate:
 			gate = s.paymentFailedOutboxEnabled
 		case ProducerOutboxMFAEnabledAlertTemplate:
@@ -94,7 +101,7 @@ func (s *Service) producerOutboxContext(ctx context.Context, header http.Header)
 		case ProducerOutboxMFARecoveryAlertTemplate:
 			gate = s.mfaRecoveryAlertOutboxEnabled
 		default:
-			if !s.verificationOutboxEnabled() && !s.passwordResetOutboxEnabled() && !s.magicLinkOutboxEnabled() && !s.mfaRecoveryAlertOutboxEnabled() && !s.mfaDisableOutboxEnabled() && !s.mfaDisabledAlertOutboxEnabled() && !s.passwordChangedAlertOutboxEnabled() && !s.mfaEnabledAlertOutboxEnabled() && !s.paymentFailedOutboxEnabled() {
+			if !s.verificationOutboxEnabled() && !s.passwordResetOutboxEnabled() && !s.magicLinkOutboxEnabled() && !s.mfaRecoveryAlertOutboxEnabled() && !s.mfaDisableOutboxEnabled() && !s.mfaDisabledAlertOutboxEnabled() && !s.passwordChangedAlertOutboxEnabled() && !s.mfaEnabledAlertOutboxEnabled() && !s.paymentFailedOutboxEnabled() && !s.accountRestoredOutboxEnabled() {
 				return ctx, ErrDisabled
 			}
 			return ctx, ErrInvalid
