@@ -671,3 +671,14 @@ __all__ += (
     "arecover_next_event_acknowledgment_intent", "alist_event_acknowledgment_intents",
     "event_acknowledgment_intent_schema",
 )
+
+from .event_acknowledgment_intent_health import (
+    EventAcknowledgmentIntentHealth,
+    EventAcknowledgmentIntentHealthOptions,
+    aget_event_acknowledgment_intent_health,
+)
+
+__all__ += (
+    "EventAcknowledgmentIntentHealth", "EventAcknowledgmentIntentHealthOptions",
+    "aget_event_acknowledgment_intent_health",
+)

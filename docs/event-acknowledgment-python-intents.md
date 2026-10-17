@@ -194,6 +194,13 @@ necessary at the server.
 
 ## Diagnostics and retention
 
+`aget_event_acknowledgment_intent_health(connection, account_id, app_id, options,
+stop_event=...)` returns a bounded read-only summary of unfinished callback intents:
+due/leased/scheduled/stalled counts, expired claims, oldest ages and explicit
+coverage/completeness. It uses one database snapshot/clock and exposes no capability
+or payload. Always export `complete`/`truncated` with its metrics. See the
+[Python recovery health contract](event-acknowledgment-intent-health.md#python-summary).
+
 `alist_event_acknowledgment_intents(connection, account_id, app_id, invocation_id=None,
 limit=25, stop_event=None)` returns immutable metadata, at most 100 rows. It does
 not claim work or return raw results/tokens. Generations/counters are native

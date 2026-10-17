@@ -227,6 +227,7 @@ WRAPPER_MODULES = (
     "event_acknowledgment_worker.py",
     "event_acknowledgment_intents.py",
     "event_acknowledgment_intent_recovery.py",
+    "event_acknowledgment_intent_health.py",
     "event_acknowledgment_intent_schema.sql",
     "_event_acknowledgment_protocol.py",
     "_event_acknowledgment_callbacks.py",
@@ -1404,6 +1405,17 @@ __all__ += (
     "EventAcknowledgmentIntentClaim", "aclaim_event_acknowledgment_intent",
     "arecover_next_event_acknowledgment_intent", "alist_event_acknowledgment_intents",
     "event_acknowledgment_intent_schema",
+)
+
+from .event_acknowledgment_intent_health import (
+    EventAcknowledgmentIntentHealth,
+    EventAcknowledgmentIntentHealthOptions,
+    aget_event_acknowledgment_intent_health,
+)
+
+__all__ += (
+    "EventAcknowledgmentIntentHealth", "EventAcknowledgmentIntentHealthOptions",
+    "aget_event_acknowledgment_intent_health",
 )
 '''
 

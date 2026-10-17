@@ -2747,3 +2747,13 @@ known rollback, stopped work and exclusive ownership first, and persist the chos
 action/reason before staging. Receipt presence blocks rejection; identical saves
 retain their claims/counters, and unknown COMMIT requires fresh-connection
 reconciliation. See [failure decisions](../../docs/event-acknowledgment-python-intents.md#persist-explicit-failure-decisions).
+
+### Acknowledgment recovery health
+
+`aget_event_acknowledgment_intent_health(connection, account_id, app_id,
+EventAcknowledgmentIntentHealthOptions(...), stop_event=...)` reads a bounded
+summary of unfinished intents using one database snapshot/clock. The immutable
+result includes due/leased/scheduled/stalled counts, expired claims, oldest ages
+and explicit completeness. Use an exclusively leased idle autocommit async
+connection, bounded driver calls, and always export `complete`/`truncated` alongside
+metrics. See [Python recovery health](../../docs/event-acknowledgment-intent-health.md#python-summary).

@@ -10,8 +10,10 @@ from typing import Any
 from consumer import _enqueue_authenticated_delivery, _owned_delivery
 from faas_sdk import (
     EventAcknowledgmentIntentError,
+    EventAcknowledgmentIntentHealthOptions,
     EventAcknowledgmentWorkerCancelled,
     EventAcknowledgmentWorkerResult,
+    aget_event_acknowledgment_intent_health,
     arecover_next_event_acknowledgment_intent,
 )
 
@@ -149,3 +151,16 @@ async def recover_one_saved_callback(
         if error.code != "event_acknowledgment_intent_empty":
             raise
         return None
+
+
+async def read_acknowledgment_recovery_health(
+    connection: Any, scope: Mapping[str, str], stop_event: Any
+) -> Any:
+    """One metadata observation; use a separately leased connection from active recovery/business work."""
+    return await aget_event_acknowledgment_intent_health(
+        connection,
+        scope["account_id"],
+        scope["app_id"],
+        EventAcknowledgmentIntentHealthOptions(scan_limit=1000, stall_after_ms=300000),
+        stop_event=stop_event,
+    )

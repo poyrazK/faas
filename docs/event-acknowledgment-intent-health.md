@@ -1,9 +1,10 @@
 # Acknowledgment intent recovery health
 
-The Go and Node SDKs inspect the application-owned acknowledgment intent store and
-watch for sustained recovery backlog. Install the schema and
-configure recovery with [Go intents](event-acknowledgment-intents.md) or
-[Node intents](event-acknowledgment-node-intents.md) first.
+The Go, Node and Python SDKs inspect the application-owned acknowledgment intent
+store. Go and Node also watch for sustained recovery backlog. Install the schema
+and configure recovery with [Go intents](event-acknowledgment-intents.md),
+[Node intents](event-acknowledgment-node-intents.md) or
+[Python intents](event-acknowledgment-python-intents.md) first.
 These helpers only read local metadata: they do not claim work, send callbacks,
 repair rows, or install tables.
 
@@ -83,6 +84,70 @@ stalled callback backlog grows. This summary describes that local backlog; it do
 not confirm platform delivery or prove the recovery host's availability. For
 sustained alerts, use the [Node watch](#node-watch). See the
 [read-only example](../examples/event-acknowledgment-node/README.md#observe-recovery-health).
+
+## Python summary
+
+```python
+from dataclasses import asdict
+from faas_sdk import (
+    EventAcknowledgmentIntentHealthOptions,
+    aget_event_acknowledgment_intent_health,
+)
+
+health = await aget_event_acknowledgment_intent_health(
+    connection, account_id, app_id,
+    EventAcknowledgmentIntentHealthOptions(scan_limit=1000, stall_after_ms=300000),
+    stop_event=shutdown,
+)
+record_recovery_health(asdict(health))
+# Export complete/truncated/coverage with every count and age.
+```
+
+Use trusted owner UUIDs and an exclusively leased, idle autocommit psycopg async
+connection. No platform client or platform credentials are needed. Keep monitoring
+connections separate from active business or recovery operations. The options
+dataclass is immutable; values are copied before the first await. `None` chooses
+defaults. `scan_limit` accepts native integers 1..10000, default 1000;
+`stall_after_ms` accepts whole milliseconds 1000..86400000, default 300000. Zero,
+booleans, floats and invalid option objects are rejected before database access.
+
+The frozen `EventAcknowledgmentIntentHealth` uses snake_case fields matching the
+same Go/Node classification: `outstanding`, `pending`, `unconfirmed`, `due`,
+`leased`, `scheduled`, `expired_claims`, `stalled`, `invalid_rows`,
+`oldest_outstanding_at`, `oldest_outstanding_age_seconds`, `oldest_eligible_at`,
+and `oldest_overdue_age_seconds`. It includes normalized `account_id`/`app_id`,
+database `observed_at`, `scan_limit`, `stall_after_seconds`, `coverage`, `complete`
+and `truncated`. Timestamps are UTC RFC 3339 strings with microseconds; absent
+oldest timestamps are `None`. Counts are native integers and ages are finite,
+nonnegative seconds. An empty complete sample has zero counts/ages.
+
+The helper runs one metadata SELECT with the same snapshot/clock, deterministic
+sampling and limit-plus-one truncation evidence as Node. It selects no platform
+tokens, claim secrets, results or original events. Invocation/generation/attempt
+columns order the sample and are not returned. No explicit transaction commands,
+advisory locks, claim updates, callbacks or business work are performed.
+
+Malformed counts, inconsistent aggregates, nonfinite ages or unrepresentable
+timestamps raise the sanitized `EventAcknowledgmentIntentError` with code
+`event_acknowledgment_intent_store`. Invalid timestamp metadata detected by the
+query makes `complete=False`. Finite aggregate timestamps that the Python driver
+cannot represent also fail the read; the helper never fabricates healthy evidence.
+Driver/cursor failures close the exclusively leased connection; use the pool's
+discard path. Driver diagnostics and arbitrary causes are not retained.
+
+`stop_event` and native task cancellation use the worker's cooperative cancellation
+category, `EventAcknowledgmentWorkerCancelled`. Active SQL/cursor cleanup is
+shielded and joined before cancellation returns. Cancellation checks before/after
+driver awaits do not impose a hard SQL timeout. Configure bounded acquisition,
+query, PostgreSQL statement and close timeouts; drain the operation before
+closing its connection/event loop. A failed driver cancellation also discards
+the connection. The helper installs no schema or polling loop.
+
+Always retain coverage/completeness alongside the values. A truncated or invalid
+sample cannot establish health, even if `stalled` is zero. This summary concerns
+retained local callback recovery, not business success or platform completion.
+Python polling and alert policy remain application-owned. See the
+[Python observation example](../examples/event-acknowledgment-python/README.md#observe-recovery-health).
 
 ## Reading the summary
 

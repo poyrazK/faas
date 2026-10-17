@@ -209,3 +209,30 @@ without resetting its recovery claim, counters or due time. Callback delivery
 uses the existing recovery host and rechecks receipts. No schema change, platform
 endpoint, automatic polling or external exactly-once guarantee is added. See the
 [failure-intent contract](../../docs/event-acknowledgment-python-intents.md#persist-explicit-failure-decisions).
+
+## Observe recovery health
+
+Run a single observation explicitly from the monitoring host:
+
+```python
+from dataclasses import asdict
+from durable_consumer import read_acknowledgment_recovery_health
+
+# Separately leased idle autocommit psycopg async connection; no platform client.
+health = await read_acknowledgment_recovery_health(monitoring_connection, scope, shutdown)
+record_recovery_health(asdict(health))
+```
+
+The helper samples up to 1000 unfinished intents plus one truncation-evidence row,
+using a five-minute stall threshold and one database snapshot/clock. Always export
+`coverage`, `complete` and `truncated` with counts/ages. Stalled work excludes live
+claims and future retries. Incomplete coverage cannot establish health when the
+sample reports zero stalled rows. The frozen summary contains owner identifiers
+and aggregate metadata, with no invocation IDs, tokens, results or original bodies.
+
+No callback, claim, business operation or polling loop starts. The application
+owns polling, alert policy, connection acquisition and driver/statement timeouts.
+Native/event cancellation joins active SQL/cursor cleanup before returning. A
+driver/cursor failure closes the leased connection; discard it through the pool.
+Do not share monitoring connections with active processing or recovery. See the
+[Python summary contract](../../docs/event-acknowledgment-intent-health.md#python-summary).
