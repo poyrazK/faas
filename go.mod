@@ -51,9 +51,9 @@ require (
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	github.com/segmentio/kafka-go v0.4.51
 	github.com/stripe/stripe-go v70.15.0+incompatible
-	go.etcd.io/bbolt v1.5.0
 	github.com/testcontainers/testcontainers-go/modules/kafka v0.44.0
 	github.com/zalando/go-keyring v0.2.8
+	go.etcd.io/bbolt v1.5.0
 	go.opentelemetry.io/collector/pdata v1.60.0
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.71.0
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.71.0
