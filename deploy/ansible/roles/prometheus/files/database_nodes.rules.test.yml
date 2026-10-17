@@ -333,4 +333,25 @@ tests:
               summary: pgproxyd's certificate on db-3 expires in 2d 11h 49m 0s
               description: The public certificate pgproxyd serves on db-3 expires within 72 hours; after that every client connection to the node's databases fails verification.
               runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md
-
+  - name: a read-only database warns after five minutes, not before
+    interval: 1m
+    input_series:
+      - series: schedd_database_storage{level="read_only",instance="10.42.0.2:9102"}
+        values: 0 0 1+0x10
+      - series: schedd_database_storage{level="read_only",instance="10.42.0.3:9102"}
+        values: 0 0 0+0x10
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: FaasDatabaseStorageReadOnly
+        exp_alerts: []
+      - eval_time: 8m
+        alertname: FaasDatabaseStorageReadOnly
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: schedd
+              family: database_nodes
+            exp_annotations:
+              summary: 1 native database(s) read-only, short of storage
+              description: "The storage guard turned these primaries read-only before their volumes filled; their apps' writes fail with SQLSTATE 25006. schedd logs each database_id ('database is read-only, short of storage'). The customer frees space or grows storage; the guard turns the database writable again on its own."
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md

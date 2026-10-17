@@ -197,6 +197,9 @@ type Config struct {
 	// and is not being attached by this process is given up after this
 	// long (default 15 min); another replica may still be seeding it.
 	StandbyStaleClaim time.Duration
+	// StorageSampleInterval spaces the idle sweep's storage samples of
+	// running databases (default 2 min).
+	StorageSampleInterval time.Duration
 	// AutoFailoverAfter fails a running replicated database over to its
 	// synchronized standby once its primary's node has not answered for
 	// this long (default 30 s; negative leaves failover to the operator's
@@ -320,6 +323,9 @@ func New(store Store, vmm VMM, cfg Config, log *slog.Logger) *Scheduler {
 	}
 	if cfg.StandbyStaleClaim <= 0 {
 		cfg.StandbyStaleClaim = 15 * time.Minute
+	}
+	if cfg.StorageSampleInterval <= 0 {
+		cfg.StorageSampleInterval = 2 * time.Minute
 	}
 	if cfg.AutoFailoverAfter == 0 {
 		cfg.AutoFailoverAfter = 30 * time.Second
@@ -1054,11 +1060,18 @@ func (s *Scheduler) RunIdleLoop(ctx context.Context, interval time.Duration) {
 	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+	var sampled time.Time
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			if now := s.now(); now.Sub(sampled) >= s.cfg.StorageSampleInterval {
+				sampled = now
+				if _, err := s.SampleStorage(ctx); err != nil {
+					s.log.Warn("dbsched: storage sample failed", "err", err)
+				}
+			}
 			if _, err := s.SettleLostNodes(ctx); err != nil {
 				s.log.Warn("dbsched: lost-node sweep failed", "err", err)
 			}

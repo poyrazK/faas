@@ -1632,6 +1632,51 @@ databases (copy readers and targets over the restored database, and
 checkpoint connections and maintenance on the source). Until they exist,
 a clone of a native database stops after the fork.
 
+### Storage guard
+
+A database's volume is its storage limit. When it fills, PostgreSQL
+PANICs on its next WAL write and crash-loops. A stalled WAL archive
+fills a busy volume the same way, because WAL stays until it is
+archived. guest-init guards a ready primary every 10 s:
+
+- **Read-only before full.** Under `max(5%, 128 MiB)` free (capped at
+  2 GiB) it sets `ALTER SYSTEM SET default_transaction_read_only = on`
+  and reloads. Every session without its own override follows: writes
+  fail with `25006` and reads work. At twice that free it resets the
+  setting. The hysteresis keeps it from flapping. Supabase uses the same
+  mode for the same reason. It's cooperative, not enforced: a session can
+  `SET default_transaction_read_only = off` to delete data, which is how
+  a customer gets out without a resize. The setting lives in
+  `postgresql.auto.conf`, and the guard takes it over at each boot or
+  promotion from `pg_file_settings`, so a storage resize (a restart onto
+  a larger volume) ends read-only within one pass.
+- **Platform sessions are exempt.** guest-init's superuser psql runs with
+  `PGOPTIONS=-c default_transaction_read_only=off`, so credentials,
+  replication settings and import bookkeeping still work.
+- **Ballast.** A file of `min(volume/32, 64 MiB)` holds back space. If
+  free space falls under 32 MiB anyway (a session that overrode read-only
+  kept writing), the guard deletes it so PostgreSQL can keep writing
+  WAL. It lays the ballast again once the database could turn writable
+  with it in place. The ballast is at most half the read-only threshold,
+  so laying it never turns the database back.
+- **Visibility.** A ready guest's status carries its volume
+  (`StorageStatus`: total, free, read-only, low). schedd samples every
+  running database every 2 minutes without waking any, sets
+  `schedd_database_storage{level}` (counts only), logs each read-only
+  `database_id`, and `FaasDatabaseStorageReadOnly` warns after 5 minutes.
+
+On metal (1 GiB volume), the guard turned the database read-only at
+100 MiB free: inserts got `25006`, reads and an admin `CREATE ROLE`
+worked. A session that overrode read-only filled the volume to 19 MiB
+free. The guard released the ballast (50 MiB free), and the database kept
+answering. After `TRUNCATE` it was writable again at 881 MiB free, with
+the ballast laid back.
+
+Not yet done: customers see the read-only mode only through `25006` and
+the docs. schedd keeps the sample in memory, so the health collector
+does not report it yet. Standbys have no guard; their volume matches the
+primary's, which turns read-only first.
+
 ### Usage metering
 
 schedd keeps a usage ledger per database (`database_usage`) that outlives

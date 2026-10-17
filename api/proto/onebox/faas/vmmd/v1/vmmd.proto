@@ -2841,6 +2841,17 @@ message DatabaseControlResponse {
   DatabaseReplicationStatus replication = 7;
   // import and import_status only.
   DatabaseImportStatus import = 8;
+  // A ready database's volume (ADR-1027 storage guard).
+  DatabaseStorage storage = 9;
+}
+
+message DatabaseStorage {
+  int64 total_bytes = 1;
+  int64 free_bytes = 2;
+  // The storage guard turned the primary read-only.
+  bool read_only = 3;
+  // Short of the space that would end read-only.
+  bool low = 4;
 }
 
 message DatabaseReplicationStatus {

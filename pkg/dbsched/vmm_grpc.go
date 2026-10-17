@@ -296,6 +296,9 @@ func (g *GRPCVMM) Control(ctx context.Context, node Node, id string, req dbguest
 		status := importStatus(resp.GetImport())
 		out.Import = &status
 	}
+	if st := resp.GetStorage(); st != nil {
+		out.Storage = &dbguest.StorageStatus{TotalBytes: st.GetTotalBytes(), FreeBytes: st.GetFreeBytes(), ReadOnly: st.GetReadOnly(), Low: st.GetLow()}
+	}
 	return out, nil
 }
 

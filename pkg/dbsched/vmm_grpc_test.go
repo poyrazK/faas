@@ -118,3 +118,13 @@ func TestGRPCVMMImportUnderAnotherOperationIsAConflict(t *testing.T) {
 		t.Fatalf("import under its own operation = %+v, %v", got, err)
 	}
 }
+
+func TestGRPCVMMControlCarriesStorage(t *testing.T) {
+	srv := &scriptedVmmd{control: &vmmdpb.DatabaseControlResponse{State: "ready",
+		Storage: &vmmdpb.DatabaseStorage{TotalBytes: 1 << 30, FreeBytes: 100 << 20, ReadOnly: true, Low: true}}}
+	g, ctx, node := scriptedAdapter(t, srv), context.Background(), Node{ID: "db-a", TargetURL: "unix:///run/faas/vmmd.sock"}
+	resp, err := g.Control(ctx, node, "id", dbguest.Request{Op: dbguest.OpStatus})
+	if err != nil || resp.Storage == nil || *resp.Storage != (dbguest.StorageStatus{TotalBytes: 1 << 30, FreeBytes: 100 << 20, ReadOnly: true, Low: true}) {
+		t.Fatalf("control = %+v, %v", resp, err)
+	}
+}

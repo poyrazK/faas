@@ -388,6 +388,9 @@ func (s *Server) DatabaseControl(ctx context.Context, req *vmmdpb.DatabaseContro
 	if !resp.RecoveredTo.IsZero() {
 		out.RecoveredTo = timestamppb.New(resp.RecoveredTo)
 	}
+	if st := resp.Storage; st != nil {
+		out.Storage = &vmmdpb.DatabaseStorage{TotalBytes: st.TotalBytes, FreeBytes: st.FreeBytes, ReadOnly: st.ReadOnly, Low: st.Low}
+	}
 	if r := resp.Replication; r != nil {
 		out.Replication = &vmmdpb.DatabaseReplicationStatus{Mode: string(r.Mode), Streaming: r.Streaming, Synchronous: r.Synchronous, LagBytes: r.LagBytes}
 	}

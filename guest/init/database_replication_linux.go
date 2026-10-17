@@ -333,7 +333,7 @@ func (g *databaseGuest) exec(ctx context.Context, statements ...string) error {
 	for _, statement := range statements {
 		args = append(args, "-c", statement)
 	}
-	cmd := g.asDatabaseUser(exec.CommandContext(ctx, args[0], args[1:]...))
+	cmd := g.asSuperuser(exec.CommandContext(ctx, args[0], args[1:]...))
 	cmd.Stdout = io.Discard
 	var stderr bytes.Buffer
 	cmd.Stderr = &limitedWriter{w: &stderr, n: 4096}
@@ -348,7 +348,7 @@ func (g *databaseGuest) exec(ctx context.Context, statements ...string) error {
 func (g *databaseGuest) queryRow(ctx context.Context, sql string) (string, error) {
 	args := databasePsqlArgs(g.major)
 	args = append(args[:len(args)-2], "-tA", "-F", "|", "-c", sql)
-	cmd := g.asDatabaseUser(exec.CommandContext(ctx, args[0], args[1:]...))
+	cmd := g.asSuperuser(exec.CommandContext(ctx, args[0], args[1:]...))
 	out, err := cmd.Output()
 	return strings.TrimSpace(string(out)), err
 }

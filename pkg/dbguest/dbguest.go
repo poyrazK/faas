@@ -322,6 +322,18 @@ type Response struct {
 	Replication *ReplicationStatus `json:"replication,omitempty"`
 	// Import answers OpImport and OpImportStatus.
 	Import *ImportStatus `json:"import,omitempty"`
+	// Storage is the volume's use, on a ready database.
+	Storage *StorageStatus `json:"storage,omitempty"`
+}
+
+// StorageStatus reports a database's volume. ReadOnly is the storage
+// guard's read-only mode (a primary short of space); Low is space below
+// the level at which the guard would turn it writable again.
+type StorageStatus struct {
+	TotalBytes int64 `json:"total_bytes"`
+	FreeBytes  int64 `json:"free_bytes"`
+	ReadOnly   bool  `json:"read_only,omitempty"`
+	Low        bool  `json:"low,omitempty"`
 }
 
 // Validate rejects malformed requests before the guest acts on them.

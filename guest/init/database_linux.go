@@ -89,6 +89,7 @@ type databaseGuest struct {
 	importErr  error
 
 	mu         sync.Mutex
+	storage    storageGuard
 	state      dbguest.State
 	errCode    string
 	postmaster *os.Process
@@ -144,6 +145,7 @@ func runDatabaseGuest(log *slog.Logger, boot databaseBoot) error {
 	go g.serveControl(control)
 	go g.serveData(data)
 	go g.serveReplication(replication)
+	go g.guardStorage()
 	state := g.currentState()
 	switch {
 	case g.standby && (state == dbguest.StateNeedsBootstrap || state == dbguest.StateStarting):
@@ -469,7 +471,7 @@ func (g *databaseGuest) adminSQL(sql string) dbguest.Response {
 	ctx, cancel := context.WithTimeout(context.Background(), databaseAdminSQLTimeout)
 	defer cancel()
 	args := databasePsqlArgs(g.major)
-	cmd := g.asDatabaseUser(exec.CommandContext(ctx, args[0], args[1:]...))
+	cmd := g.asSuperuser(exec.CommandContext(ctx, args[0], args[1:]...))
 	cmd.Stdin = strings.NewReader(sql)
 	cmd.Stdout = io.Discard
 	var stderr bytes.Buffer
@@ -510,6 +512,14 @@ func (g *databaseGuest) asDatabaseUser(cmd *exec.Cmd) *exec.Cmd {
 		Credential: &syscall.Credential{Uid: uint32(g.uid), Gid: uint32(g.gid)},
 		Setsid:     true,
 	}
+	return cmd
+}
+
+// asSuperuser is asDatabaseUser for the guest's own superuser psql, which
+// the storage guard's read-only default never applies to.
+func (g *databaseGuest) asSuperuser(cmd *exec.Cmd) *exec.Cmd {
+	cmd = g.asDatabaseUser(cmd)
+	cmd.Env = append(cmd.Env, databaseAdminOptions)
 	return cmd
 }
 
@@ -758,7 +768,7 @@ func (g *databaseGuest) flushArchive(after time.Time) dbguest.Response {
 func (g *databaseGuest) query(ctx context.Context, sql string) (string, error) {
 	args := databasePsqlArgs(g.major)
 	args = append(args[:len(args)-2], "-tA", "-c", sql)
-	cmd := g.asDatabaseUser(exec.CommandContext(ctx, args[0], args[1:]...))
+	cmd := g.asSuperuser(exec.CommandContext(ctx, args[0], args[1:]...))
 	out, err := cmd.Output()
 	return strings.TrimSpace(string(out)), err
 }
@@ -808,8 +818,12 @@ func (g *databaseGuest) setState(state dbguest.State) {
 
 func (g *databaseGuest) response() dbguest.Response {
 	g.mu.Lock()
-	defer g.mu.Unlock()
-	return dbguest.Response{State: g.state, Major: g.major, Error: g.errCode, RecoveredTo: g.recoveredTo}
+	resp := dbguest.Response{State: g.state, Major: g.major, Error: g.errCode, RecoveredTo: g.recoveredTo}
+	g.mu.Unlock()
+	if resp.State == dbguest.StateReady {
+		resp.Storage = g.storageStatus()
+	}
+	return resp
 }
 
 // fail records a stable error code. The detail goes to the guest console

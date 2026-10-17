@@ -359,3 +359,15 @@ func TestImportStatusForwardsOnlyReportableExtensions(t *testing.T) {
 		t.Fatalf("import status = %+v, %v", resp, err)
 	}
 }
+
+// A ready guest's storage reaches schedd as reported.
+func TestStatusForwardsStorage(t *testing.T) {
+	rt := &fakeDatabaseRuntime{controlRs: dbguest.Response{State: dbguest.StateReady,
+		Storage: &dbguest.StorageStatus{TotalBytes: 1 << 30, FreeBytes: 100 << 20, ReadOnly: true, Low: true}}}
+	s := New(vmmStubBase{}, nil, "test", nil).WithDatabases(rt)
+	resp, err := s.DatabaseControl(unixCaller(), &vmmdpb.DatabaseControlRequest{DatabaseId: replicaDB, Op: "status"})
+	st := resp.GetStorage()
+	if err != nil || st.GetTotalBytes() != 1<<30 || st.GetFreeBytes() != 100<<20 || !st.GetReadOnly() || !st.GetLow() {
+		t.Fatalf("status = %+v, %v", resp, err)
+	}
+}

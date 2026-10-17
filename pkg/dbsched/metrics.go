@@ -16,6 +16,7 @@ type Metrics struct {
 	failovers    *prometheus.CounterVec
 	standbyDrops *prometheus.CounterVec
 	moves        *prometheus.CounterVec
+	storage      *prometheus.GaugeVec
 	catalog      *catalogCollector
 }
 
@@ -51,9 +52,13 @@ func NewMetrics(reg prometheus.Registerer, prefix string) *Metrics {
 			Name: prefix + "_database_moves_total",
 			Help: "Database moves between nodes by result (ok, failed).",
 		}, []string{"result"}),
+		storage: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: prefix + "_database_storage",
+			Help: "Running native databases at the last storage sample, by level: sampled, low (short of the space that would end read-only), read_only (the storage guard turned the primary read-only).",
+		}, []string{"level"}),
 		catalog: newCatalogCollector(prefix),
 	}
-	reg.MustRegister(m.failovers, m.standbyDrops, m.moves, m.catalog)
+	reg.MustRegister(m.failovers, m.standbyDrops, m.moves, m.storage, m.catalog)
 	return m
 }
 
@@ -72,6 +77,15 @@ func (m *Metrics) standbyDropped(reason string) {
 	if m != nil {
 		m.standbyDrops.WithLabelValues(reason).Inc()
 	}
+}
+
+func (m *Metrics) sampledStorage(s StorageSample) {
+	if m == nil {
+		return
+	}
+	m.storage.WithLabelValues("sampled").Set(float64(s.Sampled))
+	m.storage.WithLabelValues("low").Set(float64(s.Low))
+	m.storage.WithLabelValues("read_only").Set(float64(s.ReadOnly))
 }
 
 func (m *Metrics) moved(err error) {

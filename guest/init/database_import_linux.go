@@ -444,7 +444,7 @@ func (g *databaseGuest) queryIn(ctx context.Context, database, sql string) (stri
 			args[i+1] = database
 		}
 	}
-	cmd := g.asDatabaseUser(exec.CommandContext(ctx, args[0], args[1:]...))
+	cmd := g.asSuperuser(exec.CommandContext(ctx, args[0], args[1:]...))
 	out, err := cmd.Output()
 	return strings.TrimSpace(string(out)), err
 }

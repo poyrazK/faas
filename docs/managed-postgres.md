@@ -1115,6 +1115,15 @@ a parked database grows before its next wake. Storage is billed by the
 provisioned limit, so the larger limit is metered from completion on. Neon
 does not advertise `storage_resize`.
 
+A native database that nearly fills its limit turns read-only rather than
+crash. Below 5% free space (at least 128 MiB, at most 2 GiB), writes fail
+with SQLSTATE `25006` ("cannot execute … in a read-only transaction"), and
+reads keep working. Growing the storage ends it at the next wake. Freeing
+space ends it within seconds once twice that much is free: run `SET
+default_transaction_read_only = off` in a session, then `TRUNCATE`, `DROP`,
+or `DELETE` plus `VACUUM FULL`. A plain `VACUUM` keeps the space inside the
+table.
+
 Qualification artifacts record `storage_resize`. A backend that advertises it
 must pass `storage_resize_probe`: the limit grows on the disposable
 qualification database with its identity, data, credentials and a stable

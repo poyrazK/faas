@@ -156,6 +156,35 @@ take `sum`.
 | `schedd_database_failovers_total{trigger,result}` | Failovers by `lost_node`, `running` or `parked`. |
 | `schedd_database_standby_drops_total{reason}` | Standbys given up (`lagging`, `node_gone`, `stale_claim`). |
 | `schedd_database_moves_total{result}` | Moves between nodes. |
+| `schedd_database_storage{level}` | Running databases at the last storage sample (every 2 min): `sampled`, `low` (short of the space that ends read-only), `read_only`. |
+
+### FaasDatabaseStorageReadOnly (warn)
+
+A database's volume is its storage limit. When a primary's free space
+falls under 5% of the volume (at least 128 MiB, at most 2 GiB), the
+guest's storage guard sets `default_transaction_read_only = on` and
+reloads. Writes fail with SQLSTATE 25006, and reads still work.
+Otherwise PostgreSQL would PANIC on its next WAL write once the volume
+filled. The guard turns the database writable again once free space is
+twice that threshold. Platform sessions (credentials, replication, the
+import's bookkeeping) are exempt.
+
+1. Find the databases: `journalctl -u faas-schedd | grep 'short of
+   storage'` gives each `database_id` with its free and total bytes.
+2. The customer either grows storage (`PATCH` storage; the restart onto
+   the larger volume ends read-only at boot), or deletes data. A session
+   that runs `SET default_transaction_read_only = off` can DELETE or
+   TRUNCATE, and the guard turns writable once space comes back.
+   `VACUUM` returns deleted rows' space to the database, not to the
+   volume; `TRUNCATE`, `DROP` or `VACUUM FULL` (which needs room for the
+   table's copy) free volume space.
+3. If a session overrode read-only and kept writing, the guard releases
+   a ballast file (up to 64 MiB, under 32 MiB free) so PostgreSQL can
+   keep running. It lays the ballast again once the database is writable.
+
+A stalled WAL archive fills a busy volume too, because WAL stays until
+it is archived. Check `FaasDatabaseArchiveKeeperDown` first when several
+databases turn read-only together.
 
 ### FaasDatabaseStandbyMissing (warn)
 

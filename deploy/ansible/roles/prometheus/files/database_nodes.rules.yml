@@ -178,6 +178,18 @@ groups:
           description: "Databases, standbys and incoming moves on {{ $labels.node }} have reserved over 90% of its volume_capacity_bytes. New databases, storage growth and standbys go elsewhere or fail with no capacity."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md"
 
+      - alert: FaasDatabaseStorageReadOnly
+        expr: max(schedd_database_storage{level="read_only"}) > 0
+        for: 5m
+        labels:
+          severity: warn
+          component: schedd
+          family: database_nodes
+        annotations:
+          summary: "{{ $value }} native database(s) read-only, short of storage"
+          description: "The storage guard turned these primaries read-only before their volumes filled; their apps' writes fail with SQLSTATE 25006. schedd logs each database_id ('database is read-only, short of storage'). The customer frees space or grows storage; the guard turns the database writable again on its own."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDatabaseNodes.md"
+
       - alert: FaasDatabaseMoveFailed
         expr: sum(increase(schedd_database_moves_total{result="failed"}[1h])) > 0
         labels:
