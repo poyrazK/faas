@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -27,6 +28,11 @@ func (s *PgStore) PreviewEnvironmentGitOpsRollback(ctx context.Context, source E
 	if err != nil {
 		return zero, err
 	}
+	return s.previewEnvironmentGitOpsRollbackTx(ctx, tx, source, request, desired, time.Now().UTC())
+}
+
+func (s *PgStore) previewEnvironmentGitOpsRollbackTx(ctx context.Context, tx pgx.Tx, source EnvironmentGitSource, request api.PreviewEnvironmentGitRollbackRequest, desired environmentsync.DesiredState, now time.Time) (api.PreviewEnvironmentGitRollbackResponse, error) {
+	var zero api.PreviewEnvironmentGitRollbackResponse
 	q := sqlc.New()
 	raw, err := q.ReadProjectReleaseSet(ctx, tx, sqlc.ReadProjectReleaseSetParams{AccountID: mustPgUUID(source.AccountID), ProjectID: mustPgUUID(source.ProjectID), Environment: source.EnvironmentSlug, ReleaseID: mustPgUUID(request.ReleaseSetID)})
 	if err != nil {
@@ -56,6 +62,7 @@ func (s *PgStore) PreviewEnvironmentGitOpsRollback(ctx context.Context, source E
 	if err != nil {
 		return zero, err
 	}
+	input.Now = now
 	active, err := q.ReadProjectReleaseSet(ctx, tx, sqlc.ReadProjectReleaseSetParams{AccountID: mustPgUUID(source.AccountID), ProjectID: mustPgUUID(source.ProjectID), Environment: source.EnvironmentSlug})
 	if err == nil {
 		r, e := decodeProjectReleaseSet(active)

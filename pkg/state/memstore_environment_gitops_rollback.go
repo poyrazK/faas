@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/environmentgitops/rollback"
@@ -27,7 +28,12 @@ func (m *MemStore) PreviewEnvironmentGitOpsRollback(ctx context.Context, source 
 	if !promotionSourceMatches(memory.source, source) {
 		return zero, ErrConflict
 	}
-	source = memory.source
+	return m.previewEnvironmentGitOpsRollbackLocked(memory, request, desired, time.Now().UTC())
+}
+
+func (m *MemStore) previewEnvironmentGitOpsRollbackLocked(memory *environmentGitOpsMemory, request api.PreviewEnvironmentGitRollbackRequest, desired environmentsync.DesiredState, now time.Time) (api.PreviewEnvironmentGitRollbackResponse, error) {
+	var zero api.PreviewEnvironmentGitRollbackResponse
+	source := memory.source
 	release, exists := m.projectReleaseSets[request.ReleaseSetID]
 	if !exists || release.AccountID != source.AccountID || release.ProjectID != source.ProjectID || release.EnvironmentSlug != source.EnvironmentSlug {
 		return zero, ErrNotFound
@@ -49,6 +55,7 @@ func (m *MemStore) PreviewEnvironmentGitOpsRollback(ctx context.Context, source 
 	if err != nil {
 		return zero, err
 	}
+	input.Now = now
 	input.CurrentReleaseSetID = m.activeProjectReleaseSets[releaseKey(source.ProjectID, source.EnvironmentSlug)]
 	observed, err := compileGitOpsObservation(m.gitOpsSnapshotLocked(memory), desired)
 	if err != nil {

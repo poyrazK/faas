@@ -133,6 +133,9 @@ type EnvironmentGitOpsData struct {
 	CSRFToken               string
 	Status                  *api.EnvironmentGitOpsStatusResponse
 	Review                  *api.PreviewEnvironmentGitRevisionResponse
+	Recovery                *api.ListEnvironmentGitReleasesResponse
+	RecoveryError           string
+	RecoveryCommit          string
 	PlanPreview             *api.PreviewEnvironmentGitPlanResponse
 	Definition              string
 	Adoption                *api.EnvironmentGitOpsPlan

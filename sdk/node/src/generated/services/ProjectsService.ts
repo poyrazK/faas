@@ -22,6 +22,7 @@ import type { EnvironmentGitOpsPlan } from '../models/EnvironmentGitOpsPlan.js';
 import type { EnvironmentGitOpsStatusResponse } from '../models/EnvironmentGitOpsStatusResponse.js';
 import type { EnvironmentGitSource } from '../models/EnvironmentGitSource.js';
 import type { EnvironmentGitSourceUpdate } from '../models/EnvironmentGitSourceUpdate.js';
+import type { ListEnvironmentGitReleasesResponse } from '../models/ListEnvironmentGitReleasesResponse.js';
 import type { PlanResponse } from '../models/PlanResponse.js';
 import type { PreviewEnvironmentGitPlanResponse } from '../models/PreviewEnvironmentGitPlanResponse.js';
 import type { PreviewEnvironmentGitPromotionRequest } from '../models/PreviewEnvironmentGitPromotionRequest.js';
@@ -1058,6 +1059,64 @@ export class ProjectsService {
       },
       body: requestBody,
       mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
+      },
+    });
+  }
+  /**
+   * List retained GitOps serving releases and current rollback eligibility.
+   * Verifies the immutable target manifest commit through the bound provider and assesses each release using the rollback planner on one scoped observation snapshot per page. Only completed serving history of the current source is listed. Eligibility can change after observation. Release compatibility deadlines do not guarantee artifact retention. This read-only catalog never pins artifacts or authorizes rollback execution.
+   * @returns ListEnvironmentGitReleasesResponse Bounded recovery catalog with current eligibility and public artifact identities.
+   * @throws ApiError
+   */
+  public static listEnvironmentGitReleases({
+    slug,
+    environment,
+    targetCommitSha,
+    before,
+  }: {
+    /**
+     * Project owning the environment Git authority.
+     */
+    slug: string,
+    /**
+     * Registered environment selected for Git intent management.
+     */
+    environment: string,
+    /**
+     * Immutable commit containing the target manifest whose configuration will be preserved.
+     */
+    targetCommitSha: string,
+    /**
+     * next_before release UUID from the previous recovery page in this Git source scope.
+     */
+    before?: string,
+  }): CancelablePromise<ListEnvironmentGitReleasesResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/projects/{slug}/environments/{environment}/gitops/releases',
+      path: {
+        'slug': slug,
+        'environment': environment,
+      },
+      query: {
+        'target_commit_sha': targetCommitSha,
+        'before': before,
+      },
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,

@@ -5,6 +5,7 @@ import httpx
 
 from faas_sdk import FaaSClient
 from faas_sdk.api.projects import (
+    list_environment_git_releases,
     preview_environment_git_plan,
     preview_environment_git_promotion,
     preview_environment_git_rollback,
@@ -260,5 +261,55 @@ def test_candidate_preview_preserves_read_only_observation() -> None:
         assert preview.values_redacted is True
         assert preview.plan.generation == 0
         assert preview.plan.observed_version == 7
+    finally:
+        client.close()
+
+
+def test_recovery_catalog_keeps_target_cursor_and_eligibility_typed() -> None:
+    sha = "a" * 40
+    cursor = UUID("2ba0aa40-2362-4c0e-aeb1-6381666bb514")
+    body = {
+        "project": "shop",
+        "environment": "production",
+        "source_id": "11111111-2222-4333-8444-555555555555",
+        "target_commit_sha": sha,
+        "observed_at": "2026-10-17T12:00:00+00:00",
+        "read_only": True,
+        "values_redacted": True,
+        "requires_target_qualification": True,
+        "releases": [
+            {
+                "release_set_id": str(cursor),
+                "active": False,
+                "created_at": "2026-10-16T12:00:00+00:00",
+                "expires_at": "2026-10-16T13:00:00+00:00",
+                "retention_status": "compatibility_window_elapsed",
+                "commit_sha": "b" * 40,
+                "eligibility": "blocked",
+                "blocking_reasons": ["workload/api: rollback_artifact_replaced"],
+                "artifacts": [],
+            }
+        ],
+        "next_before": str(cursor),
+    }
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        assert request.method == "GET"
+        assert request.url.path == "/v1/projects/shop/environments/production/gitops/releases"
+        assert request.url.params["target_commit_sha"] == sha
+        assert request.url.params["before"] == str(cursor)
+        assert request.content == b""
+        assert request.headers["Authorization"] == "Bearer token"
+        return httpx.Response(200, json=body)
+
+    client = FaaSClient(
+        base_url="https://api.example.test", token="token", httpx_args={"transport": httpx.MockTransport(handle)}
+    )
+    try:
+        catalog = list_environment_git_releases.sync(
+            slug="shop", environment="production", target_commit_sha=sha, before=cursor, client=client.inner
+        )
+        assert catalog is not None
+        assert catalog.to_dict() == body
     finally:
         client.close()

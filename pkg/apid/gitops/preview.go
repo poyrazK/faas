@@ -50,14 +50,18 @@ func (s PreviewService) Preview(w http.ResponseWriter, r *http.Request, account 
 }
 
 func writePreviewError(w http.ResponseWriter, err error) {
+	api.WriteProblem(w, previewProblem(err))
+}
+
+func previewProblem(err error) *api.Problem {
 	switch {
 	case errors.Is(err, state.ErrConflict):
-		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "environment_gitops_stale_plan", "Source changed", "Request a fresh plan for the current binding."))
+		return api.NewProblem(http.StatusConflict, "environment_gitops_stale_plan", "Source changed", "Request a fresh plan for the current binding.")
 	case errors.Is(err, state.ErrNotFound):
-		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, "environment_git_source_not_found", "Git source not found", "No active source exists in this environment."))
+		return api.NewProblem(http.StatusNotFound, "environment_git_source_not_found", "Git source not found", "No active source exists in this environment.")
 	case errors.Is(err, state.ErrInvalidArgument):
-		api.WriteProblem(w, api.ErrValidation("Invalid candidate plan."))
+		return api.ErrValidation("Invalid candidate plan.")
 	default:
-		api.WriteProblem(w, api.ErrCapacity("Could not observe the environment."))
+		return api.ErrCapacity("Could not observe the environment.")
 	}
 }

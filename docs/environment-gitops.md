@@ -366,9 +366,26 @@ enforcement and dedicated native acceptance retain their existing gates. See
 
 ## Prepare a reviewed code rollback
 
-Use `gregale projects environments release-sets shop production` to find retained
-release UUIDs. Select one previously served by this Git source in this
-environment. The read-only plan identifies its manifest commit, graph, exact
+Find retained releases and current eligibility for your target manifest:
+
+```sh
+gregale projects environments gitops releases shop production \
+  --target-commit "$TARGET_COMMIT"
+```
+
+Add `--json` for automation, or `--before UUID` using `next_before` for older
+history. A successful listing exits zero even when releases are blocked; automation
+must inspect each release's `eligibility` and `blocking_reasons`. The GitOps
+dashboard offers the same explicit recovery check. Each page
+verifies the target commit once and assesses all releases on one database snapshot
+using the rollback planner. Only completed serving history of the current binding
+is listed; expired release compatibility windows remain visible. The release
+window is a routing deadline, not an artifact retention guarantee. Listing grants
+no pins or execution authority. Blockers explain current artifact trust, mapping,
+source freshness and ownership failures. Request a fresh individual plan before
+reviewing/exporting. See [ADR-1348](adr/1348-gitops-recovery-catalog.md).
+
+Select a release previously served by this Git source in this environment. The read-only plan identifies its manifest commit, graph, exact
 image/build artifact and historical serving time:
 
 ```sh

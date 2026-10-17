@@ -1165,6 +1165,9 @@ from .environment_git_promotion_origin import EnvironmentGitPromotionOrigin
 from .environment_git_promotion_origin_provider import EnvironmentGitPromotionOriginProvider
 from .environment_git_promotion_target import EnvironmentGitPromotionTarget
 from .environment_git_protected_branch_evidence import EnvironmentGitProtectedBranchEvidence
+from .environment_git_recovery_release import EnvironmentGitRecoveryRelease
+from .environment_git_recovery_release_eligibility import EnvironmentGitRecoveryReleaseEligibility
+from .environment_git_recovery_release_retention_status import EnvironmentGitRecoveryReleaseRetentionStatus
 from .environment_git_review_evidence import EnvironmentGitReviewEvidence
 from .environment_git_reviewed_merge_evidence import EnvironmentGitReviewedMergeEvidence
 from .environment_git_revision_approval import EnvironmentGitRevisionApproval
@@ -1893,6 +1896,8 @@ from .list_dev_bridges_response import ListDevBridgesResponse
 from .list_durable_entity_registry_response_200 import ListDurableEntityRegistryResponse200
 from .list_edge_rule_events_outcome import ListEdgeRuleEventsOutcome
 from .list_edge_rule_lists_response import ListEdgeRuleListsResponse
+from .list_environment_git_releases_request import ListEnvironmentGitReleasesRequest
+from .list_environment_git_releases_response import ListEnvironmentGitReleasesResponse
 from .list_event_deliveries_state import ListEventDeliveriesState
 from .list_event_execution_lineage_retry_job_controls_action import ListEventExecutionLineageRetryJobControlsAction
 from .list_event_execution_lineage_retry_job_controls_credential_type import (
@@ -5935,6 +5940,9 @@ __all__ = (
     "EnvironmentGitPromotionOriginProvider",
     "EnvironmentGitPromotionTarget",
     "EnvironmentGitProtectedBranchEvidence",
+    "EnvironmentGitRecoveryRelease",
+    "EnvironmentGitRecoveryReleaseEligibility",
+    "EnvironmentGitRecoveryReleaseRetentionStatus",
     "EnvironmentGitReviewedMergeEvidence",
     "EnvironmentGitReviewEvidence",
     "EnvironmentGitRevisionApproval",
@@ -6629,6 +6637,8 @@ __all__ = (
     "ListDurableEntityRegistryResponse200",
     "ListEdgeRuleEventsOutcome",
     "ListEdgeRuleListsResponse",
+    "ListEnvironmentGitReleasesRequest",
+    "ListEnvironmentGitReleasesResponse",
     "ListEventDeliveriesState",
     "ListEventExecutionLineageRetryJobControlsAction",
     "ListEventExecutionLineageRetryJobControlsCredentialType",

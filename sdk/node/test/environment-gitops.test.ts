@@ -191,3 +191,29 @@ test('GitLab protected approval uses OAuth repository identity', async () => {
     assert.equal(source.source.installation_id, 0);
   } finally { client.uninstall(); }
 });
+
+
+test('recovery catalog binds the immutable target and source-scoped cursor using GET', async () => {
+  const sha = 'a'.repeat(40);
+  const cursor = '2ba0aa40-2362-4c0e-aeb1-6381666bb514';
+  const body = { project: 'shop', environment: 'production', source_id: 'source', target_commit_sha: sha,
+    observed_at: '2026-10-17T12:00:00Z', read_only: true, values_redacted: true,
+    requires_target_qualification: true, releases: [{ release_set_id: cursor, active: false,
+      created_at: '2026-10-16T12:00:00Z', expires_at: '2026-10-16T13:00:00Z',
+      retention_status: 'compatibility_window_elapsed', commit_sha: 'b'.repeat(40),
+      eligibility: 'blocked', blocking_reasons: ['workload/api: rollback_artifact_replaced'], artifacts: [] }], next_before: cursor };
+  const client = new FaaSClient('https://api.example.test', { token: 'token', fetch: async (input, init) => {
+    const url = new URL(input instanceof Request ? input.url : String(input));
+    assert.equal(init?.method, 'GET');
+    assert.equal(url.pathname, '/v1/projects/shop/environments/production/gitops/releases');
+    assert.equal(url.searchParams.get('target_commit_sha'), sha);
+    assert.equal(url.searchParams.get('before'), cursor);
+    assert.equal(init?.body, undefined);
+    assert.equal(new Headers(init?.headers).get('Authorization'), 'Bearer token');
+    return Response.json(body);
+  } });
+  try {
+    const result = await ProjectsService.listEnvironmentGitReleases({ slug: 'shop', environment: 'production', targetCommitSha: sha, before: cursor });
+    assert.deepEqual(result, body);
+  } finally { client.uninstall(); }
+});

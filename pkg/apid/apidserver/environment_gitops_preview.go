@@ -24,3 +24,12 @@ func (s *server) previewEnvironmentGitRollback(w http.ResponseWriter, r *http.Re
 	service := gitops.RollbackService{Store: store, Source: s.environmentGitSourceForRequest, Revision: s.readEnvironmentGitRevision, Decode: decodeJSON}
 	service.Preview(w, r, account)
 }
+
+func (s *server) recoveryService() gitops.RecoveryService {
+	store, _ := s.store.(state.EnvironmentGitOpsRecoveryStore)
+	return gitops.RecoveryService{Store: store, Source: s.environmentGitSourceForRequest, Revision: s.readEnvironmentGitRevision}
+}
+
+func (s *server) listEnvironmentGitReleases(w http.ResponseWriter, r *http.Request, account state.Account) {
+	s.recoveryService().List(w, r, account)
+}

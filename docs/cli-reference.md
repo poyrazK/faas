@@ -14378,7 +14378,7 @@ gregale projects environments queues set shop staging shop-worker --file queues.
 
 Review Git definitions, adopt owned fields, and inspect reconciliation
 
-`gregale projects environments gitops <status|explain|bind|rebind|unbind|review|plan|promotion-plan|rollback-plan|approve|adoption-preview|adopt|controls|override|remove-override>`
+`gregale projects environments gitops <status|explain|bind|rebind|unbind|review|plan|promotion-plan|releases|rollback-plan|approve|adoption-preview|adopt|controls|override|remove-override>`
 
 ##### projects environments gitops status
 
@@ -14490,6 +14490,24 @@ Examples:
 
 ```sh
 gregale projects environments gitops promotion-plan shop production --from staging --target-commit COMMIT_SHA
+```
+
+##### projects environments gitops releases
+
+List retained GitOps serving releases and current rollback eligibility
+
+`gregale projects environments gitops releases --target-commit <SHA> [--before <UUID>] [--json] <project> <environment>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--target-commit <SHA>` | Immutable commit containing the target manifest | required |
+| `--before <UUID>` | Next page cursor from the previous listing |  |
+| `--json` | Emit the read-only recovery catalog as JSON |  |
+
+Examples:
+
+```sh
+gregale projects environments gitops releases shop production --target-commit COMMIT_SHA
 ```
 
 ##### projects environments gitops rollback-plan

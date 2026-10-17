@@ -39809,6 +39809,59 @@ func (q *Queries) ListEnvironmentGitOpsRuns(ctx context.Context, db DBTX, arg Li
 	return items, nil
 }
 
+const listEnvironmentGitRecoveryReleases = `-- name: ListEnvironmentGitRecoveryReleases :many
+SELECT rs.id::text FROM project_release_sets rs
+WHERE rs.account_id=$1::uuid AND rs.project_id=$2::uuid
+ AND rs.environment_slug=$3::text
+ AND EXISTS (SELECT 1 FROM environment_workload_graphs g
+  JOIN environment_workload_serving_receipts r ON r.graph_id=g.id
+  WHERE g.source_id=$4::uuid AND g.environment_id=$5::uuid
+   AND r.release_set_id=rs.id AND r.served_at IS NOT NULL)
+ AND ($6::timestamptz IS NULL OR (rs.created_at,rs.id)<($6::timestamptz,$7::uuid))
+ORDER BY rs.created_at DESC,rs.id DESC LIMIT $8
+`
+
+type ListEnvironmentGitRecoveryReleasesParams struct {
+	AccountID     pgtype.UUID
+	ProjectID     pgtype.UUID
+	Environment   string
+	SourceID      pgtype.UUID
+	EnvironmentID pgtype.UUID
+	BeforeAt      pgtype.Timestamptz
+	BeforeID      pgtype.UUID
+	PageLimit     int32
+}
+
+// Include expired release windows, but only completed serving history of this binding.
+func (q *Queries) ListEnvironmentGitRecoveryReleases(ctx context.Context, db DBTX, arg ListEnvironmentGitRecoveryReleasesParams) ([]string, error) {
+	rows, err := db.Query(ctx, listEnvironmentGitRecoveryReleases,
+		arg.AccountID,
+		arg.ProjectID,
+		arg.Environment,
+		arg.SourceID,
+		arg.EnvironmentID,
+		arg.BeforeAt,
+		arg.BeforeID,
+		arg.PageLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var rs_id string
+		if err := rows.Scan(&rs_id); err != nil {
+			return nil, err
+		}
+		items = append(items, rs_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listEnvironmentQualificationExecutionsForRecovery = `-- name: ListEnvironmentQualificationExecutionsForRecovery :many
 SELECT e.instance_id, e.request_id, e.frame, e.cleanup_token, e.dispatch_started, e.retirement, e.created_at, e.retired_at, e.capture_instance_id FROM environment_qualification_executions e
 WHERE e.frame->>'node_id'=$1::text AND e.retired_at IS NULL

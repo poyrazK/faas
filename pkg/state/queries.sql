@@ -21606,3 +21606,15 @@ SELECT g.* FROM environment_workload_graphs g
 JOIN environment_workload_serving_receipts r ON r.graph_id=g.id
 WHERE g.source_id=sqlc.arg(source_id)::uuid AND g.environment_id=sqlc.arg(environment_id)::uuid
  AND r.release_set_id=sqlc.arg(release_id)::uuid;
+
+-- name: ListEnvironmentGitRecoveryReleases :many
+-- Include expired release windows, but only completed serving history of this binding.
+SELECT rs.id::text FROM project_release_sets rs
+WHERE rs.account_id=sqlc.arg(account_id)::uuid AND rs.project_id=sqlc.arg(project_id)::uuid
+ AND rs.environment_slug=sqlc.arg(environment)::text
+ AND EXISTS (SELECT 1 FROM environment_workload_graphs g
+  JOIN environment_workload_serving_receipts r ON r.graph_id=g.id
+  WHERE g.source_id=sqlc.arg(source_id)::uuid AND g.environment_id=sqlc.arg(environment_id)::uuid
+   AND r.release_set_id=rs.id AND r.served_at IS NOT NULL)
+ AND (sqlc.narg(before_at)::timestamptz IS NULL OR (rs.created_at,rs.id)<(sqlc.narg(before_at)::timestamptz,sqlc.narg(before_id)::uuid))
+ORDER BY rs.created_at DESC,rs.id DESC LIMIT sqlc.arg(page_limit);

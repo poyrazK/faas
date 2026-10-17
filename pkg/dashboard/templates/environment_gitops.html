@@ -70,6 +70,31 @@
             <button type="submit">Preview field changes</button>
           </form>
         </section>
+        <section>
+          <h2>Recovery releases</h2>
+          <p>Check retained serving releases against the target manifest you intend to keep.</p>
+          <form method="GET" action="{{$target}}">
+            <label>Target manifest commit <input type="text" name="target_commit_sha" pattern="[a-f0-9]{40}" minlength="40" maxlength="40" required value="{{if .RecoveryCommit}}{{.RecoveryCommit}}{{else}}{{$source.SourceCommitSHA}}{{end}}"></label>
+            <button type="submit">Check recovery eligibility</button>
+          </form>
+          {{with .RecoveryError}}<p class="blocked">{{.}}</p>{{end}}
+          {{with .Recovery}}
+            {{$catalog := .}}
+            <p>Observed {{.ObservedAt.Format "2006-01-02 15:04:05 MST"}} for <code>{{.TargetCommitSHA}}</code>. Eligibility is an observation; fresh Git review and qualification remain required.</p>
+            <p>Release deadlines describe routing compatibility windows. They do not guarantee artifact retention or extend it.</p>
+            <table><thead><tr><th>Release / manifest commit</th><th>Previously served</th><th>Release window</th><th>Rollback eligibility</th></tr></thead><tbody>
+            {{range .Releases}}<tr>
+              <td><code>{{.ReleaseSetID}}</code>{{if .Active}} · active{{end}}<br><code>{{.CommitSHA}}</code></td>
+              <td>{{if .ServedAt}}{{.ServedAt.Format "2006-01-02 15:04:05 MST"}}{{else}}Unknown{{end}}</td>
+              <td>{{.RetentionStatus}}{{if .ExpiresAt}}<br>{{.ExpiresAt.Format "2006-01-02 15:04:05 MST"}}{{end}}</td>
+              <td>{{if eq .Eligibility "eligible"}}Eligible to propose{{else}}Blocked{{end}}<ul>{{range .BlockingReasons}}<li>{{.}}</li>{{end}}</ul>
+              {{range .Artifacts}}<p><code>{{.Resource}}</code> · <code>{{.ImageDigest}}{{.ArtifactDigest}}</code>{{if .BuildID}} · build <code>{{.BuildID}}</code>{{end}}{{if .BuildCommitSHA}} · code commit <code>{{.BuildCommitSHA}}</code>{{end}}</p>{{end}}
+              <pre>gregale projects environments gitops rollback-plan {{$catalog.Project}} {{$catalog.Environment}} --to-release {{.ReleaseSetID}} --target-commit {{$catalog.TargetCommitSHA}}</pre></td>
+            </tr>{{else}}<tr><td colspan="4">No retained serving releases for this Git binding.</td></tr>{{end}}
+            </tbody></table>
+            {{if .NextBefore}}<a href="{{$target}}?target_commit_sha={{.TargetCommitSHA}}&amp;before={{.NextBefore}}">Older recovery releases</a>{{end}}
+          {{end}}
+        </section>
         {{with .PlanPreview}}
           <section class="{{if .Plan.BlockingReasons}}blocked{{end}}">
             <h2>Candidate plan</h2>

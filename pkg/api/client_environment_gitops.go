@@ -98,3 +98,13 @@ func (c *Client) ReleaseEnvironmentFieldOwnership(ctx context.Context, request E
 	err := c.do(ctx, http.MethodDelete, "/v1/environment-field-ownership", request, &out)
 	return out, err
 }
+
+func (c *Client) ListEnvironmentGitReleases(ctx context.Context, project, environment string, request ListEnvironmentGitReleasesRequest) (ListEnvironmentGitReleasesResponse, error) {
+	var out ListEnvironmentGitReleasesResponse
+	query := url.Values{"target_commit_sha": {request.TargetCommitSHA}}
+	if request.Before != "" {
+		query.Set("before", request.Before)
+	}
+	err := c.do(ctx, http.MethodGet, environmentGitOpsPath(project, environment)+"/releases?"+query.Encode(), nil, &out)
+	return out, err
+}

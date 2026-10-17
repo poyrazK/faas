@@ -50,6 +50,15 @@ func (s *server) environmentGitOpsDashboardData(r *http.Request, acct state.Acco
 	if err != nil {
 		return data, err
 	}
+	if commit := r.URL.Query().Get("target_commit_sha"); commit != "" {
+		data.RecoveryCommit = commit
+		recovery, problem := s.recoveryService().Observe(r, acct)
+		if problem != nil {
+			data.RecoveryError = "Recovery eligibility could not be checked. Verify the target commit and Git provider access, then refresh."
+		} else {
+			data.Recovery = &recovery
+		}
+	}
 	data.Status = &api.EnvironmentGitOpsStatusResponse{Source: source, Runs: runs}
 	data.Status.Approval, err = s.environmentGitApprovalForSource(r.Context(), source)
 	if err != nil {

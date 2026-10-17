@@ -477,6 +477,9 @@ const QueueBindingRetryMaxSeconds = 86400
 // independently of the smaller non-secret configuration object it may contain.
 const EnvironmentGitOpsMaxDefinitionBytes = 1 << 20
 
+// EnvironmentGitRecoveryPageSize bounds per-request historical rollback assessments.
+const EnvironmentGitRecoveryPageSize = 10
+
 // EnvironmentGitOpsMaxQueueSmokePayloadBytes bounds one customer-authored
 // synthetic queue message before it is stored with frozen candidate inputs.
 const EnvironmentGitOpsMaxQueueSmokePayloadBytes = 64 << 10

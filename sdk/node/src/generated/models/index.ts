@@ -586,6 +586,7 @@ export type { EnvironmentGitPromotionChange } from './EnvironmentGitPromotionCha
 export type { EnvironmentGitPromotionOrigin } from './EnvironmentGitPromotionOrigin.js';
 export type { EnvironmentGitPromotionTarget } from './EnvironmentGitPromotionTarget.js';
 export type { EnvironmentGitProtectedBranchEvidence } from './EnvironmentGitProtectedBranchEvidence.js';
+export type { EnvironmentGitRecoveryRelease } from './EnvironmentGitRecoveryRelease.js';
 export type { EnvironmentGitReviewEvidence } from './EnvironmentGitReviewEvidence.js';
 export type { EnvironmentGitReviewedMergeEvidence } from './EnvironmentGitReviewedMergeEvidence.js';
 export type { EnvironmentGitRevisionApproval } from './EnvironmentGitRevisionApproval.js';
@@ -907,6 +908,8 @@ export type { ListDeployTokensResponse } from './ListDeployTokensResponse.js';
 export type { ListDeploymentAuditResponse } from './ListDeploymentAuditResponse.js';
 export type { ListDevBridgesResponse } from './ListDevBridgesResponse.js';
 export type { ListEdgeRuleListsResponse } from './ListEdgeRuleListsResponse.js';
+export type { ListEnvironmentGitReleasesRequest } from './ListEnvironmentGitReleasesRequest.js';
+export type { ListEnvironmentGitReleasesResponse } from './ListEnvironmentGitReleasesResponse.js';
 export type { ListInstancesResponse } from './ListInstancesResponse.js';
 export type { ListInvocationsResponse } from './ListInvocationsResponse.js';
 export type { ListIssueIngestTokensResponse } from './ListIssueIngestTokensResponse.js';
