@@ -1,0 +1,34 @@
+--- a/deps/v8/src/utils/identity-map.cc
++++ b/deps/v8/src/utils/identity-map.cc
+@@ -41 +41,2 @@
+-  CHECK(!is_iterable());
++  CHECK_WITH_MSG(!is_iterable(),
++                 "!is_iterable() [IdentityMapBase::EnableIteration]");
+@@ -195 +196,3 @@
+-  CHECK(!is_iterable());  // Don't allow insertion while iterable.
++  // Don't allow insertion while iterable.
++  CHECK_WITH_MSG(!is_iterable(),
++                 "!is_iterable() [IdentityMapBase::FindOrInsertEntry]");
+@@ -210 +213,2 @@
+-  CHECK(!is_iterable());
++  CHECK_WITH_MSG(!is_iterable(),
++                 "!is_iterable() [IdentityMapBase::FindEntry]");
+@@ -221 +225,2 @@
+-  CHECK(!is_iterable());
++  CHECK_WITH_MSG(!is_iterable(),
++                 "!is_iterable() [IdentityMapBase::InsertEntry]");
+@@ -252 +257,3 @@
+-  CHECK(!is_iterable());  // Don't allow deletion by key while iterable.
++  // Don't allow deletion by key while iterable.
++  CHECK_WITH_MSG(!is_iterable(),
++                 "!is_iterable() [IdentityMapBase::DeleteEntry]");
+@@ -290 +297,3 @@
+-  CHECK(!is_iterable());  // Can't rehash while iterating.
++  // Can't rehash while iterating.
++  CHECK_WITH_MSG(!is_iterable(),
++                 "!is_iterable() [IdentityMapBase::Rehash]");
+@@ -324 +333,3 @@
+-  CHECK(!is_iterable());  // Can't resize while iterating.
++  // Can't resize while iterating.
++  CHECK_WITH_MSG(!is_iterable(),
++                 "!is_iterable() [IdentityMapBase::Resize]");
