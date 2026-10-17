@@ -484,6 +484,9 @@ export type { DailyUsageListResponse } from './models/DailyUsageListResponse.js'
 export type { DailyUsagePoint } from './models/DailyUsagePoint.js';
 export type { DailyUsageResponse } from './models/DailyUsageResponse.js';
 export type { DataAPIConnectionBudgets } from './models/DataAPIConnectionBudgets.js';
+export type { DataRepairHealth } from './models/DataRepairHealth.js';
+export type { DataRepairHealthItem } from './models/DataRepairHealthItem.js';
+export type { DataRepairPhaseHealth } from './models/DataRepairPhaseHealth.js';
 export type { DataUpstreamHistoryBucket } from './models/DataUpstreamHistoryBucket.js';
 export type { DataUpstreamHistoryResponse } from './models/DataUpstreamHistoryResponse.js';
 export type { DataUpstreamListResponse } from './models/DataUpstreamListResponse.js';
@@ -1341,6 +1344,7 @@ export type { OperationBusinessEffectReference } from './models/OperationBusines
 export type { OperationBusinessInvariant } from './models/OperationBusinessInvariant.js';
 export type { OperationBusinessInvariantPayload } from './models/OperationBusinessInvariantPayload.js';
 export type { OperationCancellationRequest } from './models/OperationCancellationRequest.js';
+export type { OperationDataRepair } from './models/OperationDataRepair.js';
 export type { OperationDefinitionResponse } from './models/OperationDefinitionResponse.js';
 export type { OperationDefinitionSpec } from './models/OperationDefinitionSpec.js';
 export type { OperationDefinitionsResponse } from './models/OperationDefinitionsResponse.js';
