@@ -10496,6 +10496,95 @@ $$;
 
 
 --
+-- Name: financial_egress_preserve_book(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.financial_egress_preserve_book() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE old_egress jsonb := OLD.payload->'egress'; new_egress jsonb := NEW.payload->'egress';
+BEGIN
+ IF COALESCE((old_egress->>'initialized')::boolean,false) AND NOT COALESCE(
+  (new_egress->>'initialized')::boolean
+  AND (new_egress->>'quantity_committed')::numeric>=(old_egress->>'quantity_committed')::numeric
+  AND (new_egress->>'quantity_committed')::numeric+(new_egress->>'quantity_reserved')::numeric
+   >=(old_egress->>'quantity_committed')::numeric+(old_egress->>'quantity_reserved')::numeric
+  AND (new_egress->>'allowance_granted')::numeric>=(old_egress->>'allowance_granted')::numeric
+  AND (new_egress->>'committed')::numeric>=(old_egress->>'committed')::numeric
+  AND new_egress->'rate_millicents'=old_egress->'rate_millicents'
+  AND new_egress->'rate_quantity'=old_egress->'rate_quantity',false) THEN
+  RAISE EXCEPTION 'egress book authority cannot be discarded or reduced' USING ERRCODE='23514',CONSTRAINT='financial_egress_book_monotonic';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: financial_egress_preserve_lease(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.financial_egress_preserve_lease() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF COALESCE((OLD.payload->>'egress_funded')::boolean,false) AND NOT COALESCE(
+  (NEW.payload->>'egress_funded')::boolean
+  AND (NEW.payload->>'egress_granted_bytes')::numeric>=(OLD.payload->>'egress_granted_bytes')::numeric
+  AND (NEW.payload->>'egress_sequence')::numeric>=(OLD.payload->>'egress_sequence')::numeric,false) THEN
+  RAISE EXCEPTION 'egress attempt receipt cannot discard funded bytes' USING ERRCODE='23514',CONSTRAINT='financial_egress_lease_monotonic';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: financial_egress_price_ceiling(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.financial_egress_price_ceiling() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE b jsonb;
+BEGIN
+ IF NEW.meter!='egress' THEN RETURN NEW; END IF;
+ PERFORM 1 FROM accounts WHERE id=NEW.account_id FOR UPDATE;
+ SELECT payload->'egress' INTO b FROM financial_compute_account_books
+ WHERE account_id=NEW.account_id AND period_start=NEW.period_start;
+ IF COALESCE((b->>'initialized')::boolean,false) AND
+  (NEW.price->>'currency' IS DISTINCT FROM 'EUR' OR NEW.price->>'unit' IS DISTINCT FROM 'interface_bytes'
+   OR NOT COALESCE((NEW.price->>'unit_quantity')::numeric>0 AND (NEW.price->>'millicents_per_unit')::numeric>=0
+    AND (NEW.price->>'millicents_per_unit')::numeric*(b->>'rate_quantity')::numeric
+     <=(b->>'rate_millicents')::numeric*(NEW.price->>'unit_quantity')::numeric,false)) THEN
+  RAISE EXCEPTION 'egress price exceeds funded period ceiling' USING ERRCODE='23514',CONSTRAINT='financial_egress_price_ceiling';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: financial_egress_require_funding(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.financial_egress_require_funding() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ PERFORM 1 FROM accounts WHERE id=NEW.account_id FOR UPDATE;
+ IF NEW.settled_at IS NULL AND EXISTS(SELECT 1 FROM financial_budget_policies p
+  WHERE p.account_id=NEW.account_id AND p.deleted_at IS NULL AND p.spec->>'enabled'='true'
+  AND p.spec->>'mode'='strict' AND p.spec->'scope'->>'kind'='account' AND p.spec->'meters' ? 'egress') THEN
+  IF NOT COALESCE((NEW.payload->>'egress_funded')::boolean,false)
+   OR NOT EXISTS(SELECT 1 FROM financial_compute_owners o JOIN compute_nodes n ON n.id=o.node_id
+    WHERE o.node_id=NEW.node_id AND o.incarnation=NEW.incarnation
+    AND o.egress_budget_incarnation=NEW.incarnation AND n.vmmd_incarnation=NEW.incarnation AND n.active) THEN
+   RAISE EXCEPTION 'strict egress requires funded byte-capable owner' USING ERRCODE='23514',CONSTRAINT='financial_egress_owner_funded';
+  END IF;
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
 -- Name: financial_preview_command_held(uuid, uuid, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -27655,7 +27744,8 @@ CREATE TABLE public.financial_compute_account_books (
     CONSTRAINT financial_compute_account_books_check CHECK ((period_end > period_start)),
     CONSTRAINT financial_compute_account_books_payload_check CHECK ((jsonb_typeof(payload) = 'object'::text)),
     CONSTRAINT financial_compute_account_books_payload_check1 CHECK (COALESCE(((((payload ->> 'committed'::text))::numeric >= (0)::numeric) AND (((payload ->> 'reserved'::text))::numeric >= (0)::numeric) AND ((((payload ->> 'committed'::text))::numeric + ((payload ->> 'reserved'::text))::numeric) <= ('9007199254740991'::bigint)::numeric)), false)),
-    CONSTRAINT financial_compute_account_books_payload_check2 CHECK (COALESCE(((((payload ->> 'quantity_committed'::text))::numeric >= (0)::numeric) AND (((payload ->> 'quantity_reserved'::text))::numeric >= (0)::numeric) AND ((((payload ->> 'quantity_committed'::text))::numeric + ((payload ->> 'quantity_reserved'::text))::numeric) <= ('9007199254740991'::bigint)::numeric) AND ((((payload ->> 'allowance_granted'::text))::numeric >= (0)::numeric) AND (((payload ->> 'allowance_granted'::text))::numeric <= ('9007199254740991'::bigint)::numeric))), false))
+    CONSTRAINT financial_compute_account_books_payload_check2 CHECK (COALESCE(((((payload ->> 'quantity_committed'::text))::numeric >= (0)::numeric) AND (((payload ->> 'quantity_reserved'::text))::numeric >= (0)::numeric) AND ((((payload ->> 'quantity_committed'::text))::numeric + ((payload ->> 'quantity_reserved'::text))::numeric) <= ('9007199254740991'::bigint)::numeric) AND ((((payload ->> 'allowance_granted'::text))::numeric >= (0)::numeric) AND (((payload ->> 'allowance_granted'::text))::numeric <= ('9007199254740991'::bigint)::numeric))), false)),
+    CONSTRAINT financial_egress_book_bounds CHECK (((NOT COALESCE((((payload -> 'egress'::text) ->> 'initialized'::text))::boolean, false)) OR COALESCE((((((payload -> 'egress'::text) ->> 'quantity_committed'::text))::numeric >= (0)::numeric) AND ((((payload -> 'egress'::text) ->> 'quantity_reserved'::text))::numeric >= (0)::numeric) AND (((((payload -> 'egress'::text) ->> 'quantity_committed'::text))::numeric + (((payload -> 'egress'::text) ->> 'quantity_reserved'::text))::numeric) <= ('9007199254740991'::bigint)::numeric) AND (((((payload -> 'egress'::text) ->> 'allowance_granted'::text))::numeric >= (0)::numeric) AND ((((payload -> 'egress'::text) ->> 'allowance_granted'::text))::numeric <= ('9007199254740991'::bigint)::numeric)) AND ((((payload -> 'egress'::text) ->> 'committed'::text))::numeric >= (0)::numeric) AND ((((payload -> 'egress'::text) ->> 'reserved'::text))::numeric >= (0)::numeric) AND (((((payload -> 'egress'::text) ->> 'committed'::text))::numeric + (((payload -> 'egress'::text) ->> 'reserved'::text))::numeric) <= ('9007199254740991'::bigint)::numeric) AND ((((payload -> 'egress'::text) ->> 'rate_millicents'::text))::numeric >= (0)::numeric) AND ((((payload -> 'egress'::text) ->> 'rate_quantity'::text))::numeric > (0)::numeric)), false)))
 );
 
 
@@ -27749,7 +27839,8 @@ CREATE TABLE public.financial_compute_leases (
     CONSTRAINT financial_compute_leases_check1 CHECK ((settled_at >= started_at)),
     CONSTRAINT financial_compute_leases_instance_id_check CHECK (((length(instance_id) >= 1) AND (length(instance_id) <= 128))),
     CONSTRAINT financial_compute_leases_payload_check CHECK ((jsonb_typeof(payload) = 'object'::text)),
-    CONSTRAINT financial_compute_workload_identity CHECK ((((app_id IS NOT NULL) AND (job_id IS NULL) AND (job_run_id IS NULL) AND (job_task_index IS NULL)) OR ((app_id IS NULL) AND (job_id IS NOT NULL) AND (job_run_id IS NOT NULL) AND (job_task_index IS NOT NULL) AND (job_task_index >= 0))))
+    CONSTRAINT financial_compute_workload_identity CHECK ((((app_id IS NOT NULL) AND (job_id IS NULL) AND (job_run_id IS NULL) AND (job_task_index IS NULL)) OR ((app_id IS NULL) AND (job_id IS NOT NULL) AND (job_run_id IS NOT NULL) AND (job_task_index IS NOT NULL) AND (job_task_index >= 0)))),
+    CONSTRAINT financial_egress_lease_bounds CHECK (((NOT COALESCE(((payload ->> 'egress_funded'::text))::boolean, false)) OR COALESCE((strict AND ((payload ->> 'account_funded'::text))::boolean AND ((((payload ->> 'egress_granted_bytes'::text))::numeric >= (0)::numeric) AND (((payload ->> 'egress_granted_bytes'::text))::numeric <= ('9007199254740991'::bigint)::numeric)) AND ((((payload ->> 'egress_grant_bytes'::text))::numeric >= (0)::numeric) AND (((payload ->> 'egress_grant_bytes'::text))::numeric <= ((payload ->> 'egress_granted_bytes'::text))::numeric)) AND ((((payload ->> 'egress_sequence'::text))::numeric >= (0)::numeric) AND (((payload ->> 'egress_sequence'::text))::numeric <= ('9007199254740991'::bigint)::numeric))), false)))
 );
 
 
@@ -27764,9 +27855,11 @@ CREATE TABLE public.financial_compute_owners (
     observed_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
     account_compute_incarnation uuid,
     job_compute_incarnation uuid,
+    egress_budget_incarnation uuid,
     CONSTRAINT financial_compute_job_owner_incarnation CHECK (((job_compute_incarnation IS NULL) OR (job_compute_incarnation = incarnation))),
     CONSTRAINT financial_compute_owner_account_incarnation_check CHECK (((account_compute_incarnation IS NULL) OR (account_compute_incarnation = incarnation))),
-    CONSTRAINT financial_compute_owners_protocol_check CHECK ((protocol = 1))
+    CONSTRAINT financial_compute_owners_protocol_check CHECK ((protocol = 1)),
+    CONSTRAINT financial_egress_owner_incarnation CHECK (((egress_budget_incarnation IS NULL) OR (egress_budget_incarnation = incarnation)))
 );
 
 
@@ -56814,6 +56907,34 @@ CREATE TRIGGER financial_compute_job_definition_guard BEFORE INSERT OR UPDATE OF
 --
 
 CREATE TRIGGER financial_compute_job_task_guard BEFORE INSERT OR UPDATE OF status, run_id, instance_id, lease_token ON public.job_tasks FOR EACH ROW EXECUTE FUNCTION public.financial_compute_guard_job_task();
+
+
+--
+-- Name: financial_compute_account_books financial_egress_preserve_book; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER financial_egress_preserve_book BEFORE UPDATE ON public.financial_compute_account_books FOR EACH ROW EXECUTE FUNCTION public.financial_egress_preserve_book();
+
+
+--
+-- Name: financial_compute_leases financial_egress_preserve_lease; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER financial_egress_preserve_lease BEFORE UPDATE ON public.financial_compute_leases FOR EACH ROW EXECUTE FUNCTION public.financial_egress_preserve_lease();
+
+
+--
+-- Name: financial_price_snapshots financial_egress_price_ceiling; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER financial_egress_price_ceiling BEFORE INSERT OR UPDATE ON public.financial_price_snapshots FOR EACH ROW EXECUTE FUNCTION public.financial_egress_price_ceiling();
+
+
+--
+-- Name: financial_compute_leases financial_egress_require_funding; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER financial_egress_require_funding BEFORE INSERT OR UPDATE ON public.financial_compute_leases FOR EACH ROW EXECUTE FUNCTION public.financial_egress_require_funding();
 
 
 --

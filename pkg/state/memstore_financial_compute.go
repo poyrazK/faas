@@ -37,8 +37,9 @@ func (m *MemStore) CancelFinancialCompute(ctx context.Context, r financial.Compu
 type financialComputeBook = financial.ComputeBook
 type financialComputeLease = financial.ComputeLease
 type financialComputeOwner struct {
-	Incarnation string
-	ObservedAt  time.Time
+	Incarnation       string
+	ObservedAt        time.Time
+	EgressIncarnation string
 }
 type memFinancialComputeTxn struct {
 	m            *MemStore
@@ -234,7 +235,7 @@ func (m *MemStore) RegisterFinancialComputeOwner(ctx context.Context, node, inca
 	if m.financialComputeOwners == nil {
 		m.financialComputeOwners = map[string]financialComputeOwner{}
 	}
-	m.financialComputeOwners[node] = financialComputeOwner{incarnation, time.Now().UTC()}
+	m.financialComputeOwners[node] = financialComputeOwner{Incarnation: incarnation, ObservedAt: time.Now().UTC(), EgressIncarnation: incarnation}
 	return nil
 }
 

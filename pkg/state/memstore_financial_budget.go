@@ -2,6 +2,7 @@ package state
 
 import (
 	"context"
+	"slices"
 	"sort"
 	"time"
 
@@ -161,7 +162,7 @@ func (m *MemStore) UpdateFinancialBudget(_ context.Context, account, id string, 
 		return FinancialBudget{}, err
 	}
 	compute := newMemComputeTxn(m, account)
-	continuing := p.Spec.Enabled && financial.StrictCompute(p.Spec) && p.Spec.Scope == spec.Scope
+	continuing := p.Spec.Enabled && financial.StrictCompute(p.Spec) && p.Spec.Scope == spec.Scope && slices.Equal(p.Spec.Meters, spec.Meters)
 	if err := memFinancialComputeActivation(compute, spec, continuing); err != nil {
 		return FinancialBudget{}, err
 	}
@@ -183,7 +184,15 @@ func memFinancialComputeActivation(t *memFinancialComputeTxn, spec financial.Bud
 			return err
 		}
 	}
+	if financial.StrictAccountEgress(spec) && !continuing {
+		if err := t.initializeEgress(); err != nil {
+			return err
+		}
+	}
 	b, err := t.book(financial.ComputeScopeKey(spec.Scope), financial.ComputeMonth(t.now))
+	if err == nil {
+		b.Committed, b.Reserved, err = computePolicyMoney(b, spec)
+	}
 	return validateComputePolicyFunding(b, err, continuing, spec.LimitMillicents)
 }
 

@@ -25,7 +25,11 @@ func computeCheckPolicies(tx financialComputeTxn, b financial.ComputeBook, polic
 				held = true
 			}
 		}
-		if held || b.Committed+b.Reserved > p.Spec.LimitMillicents {
+		committed, reserved, amountErr := computePolicyMoney(b, p.Spec)
+		if amountErr != nil {
+			return amountErr
+		}
+		if held || committed+reserved > p.Spec.LimitMillicents {
 			denied = true
 			if err := tx.putHold(financialComputeHold{p.ID, p.Revision, b.PeriodStart}); err != nil {
 				return err
@@ -39,6 +43,10 @@ func computeCheckPolicies(tx financialComputeTxn, b financial.ComputeBook, polic
 }
 
 func computeAccountFundingBook(tx financialComputeTxn, l *financial.ComputeLease, policies []FinancialBudget) (*financial.ComputeBook, error) {
+	combined := false
+	for _, p := range policies {
+		combined = combined || financial.StrictAccountEgress(p.Spec)
+	}
 	for _, p := range policies {
 		if financial.StrictAccountCompute(p.Spec) {
 			b, err := tx.book("", l.PeriodStart)
@@ -53,6 +61,18 @@ func computeAccountFundingBook(tx financialComputeTxn, l *financial.ComputeLease
 				if !old.AccountFunded || !old.PeriodStart.Equal(l.PeriodStart) {
 					return nil, financial.ErrComputeUnavailable
 				}
+			}
+			if combined {
+				valid, err := tx.egressOwner(l.NodeID, l.Incarnation)
+				if err != nil || !valid || !b.Egress.Initialized {
+					return nil, errors.Join(financial.ErrComputeUnavailable, err)
+				}
+				for _, old := range active {
+					if !old.EgressFunded {
+						return nil, financial.ErrComputeUnavailable
+					}
+				}
+				l.EgressFunded = true
 			}
 			l.AccountFunded = true
 			return &b, nil
@@ -84,7 +104,7 @@ func computeAccountReprice(b *financial.ComputeBook) error {
 	return nil
 }
 
-func computeFundAccount(tx financialComputeTxn, b *financial.ComputeBook, l *financial.ComputeLease, policies []FinancialBudget) error {
+func computeFundAccount(tx financialComputeTxn, b *financial.ComputeBook, l *financial.ComputeLease, policies []FinancialBudget, refill bool) error {
 	grant, err := tx.allowance(b.PeriodStart)
 	if err != nil {
 		return err
@@ -105,6 +125,11 @@ func computeFundAccount(tx financialComputeTxn, b *financial.ComputeBook, l *fin
 	b.QuantityReserved = without + wanted
 	if err := computeAccountReprice(b); err != nil {
 		return err
+	}
+	if l.EgressFunded {
+		if err := computeFundEgress(tx, b, l, policies, refill); err != nil {
+			return err
+		}
 	}
 	if err := computeCheckPolicies(tx, *b, policies); err != nil {
 		return err
@@ -136,6 +161,16 @@ func computeProgressAccount(tx financialComputeTxn, l *financial.ComputeLease, u
 	if settle {
 		b.QuantityReserved -= l.QuantityReserved
 		l.QuantityReserved = 0
+		if l.EgressFunded {
+			if l.EgressGranted < 0 || b.Egress.QuantityReserved < l.EgressGranted {
+				return nil, financial.ErrComputeUnavailable
+			}
+			b.Egress.QuantityReserved -= l.EgressGranted
+			b.Egress.QuantityCommitted += l.EgressGranted
+			if err := computeEgressReprice(&b.Egress); err != nil {
+				return nil, err
+			}
+		}
 	}
 	if err := computeAccountReprice(&b); err != nil {
 		return nil, err

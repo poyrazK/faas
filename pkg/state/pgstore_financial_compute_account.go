@@ -51,11 +51,21 @@ func (t *pgFinancialComputeTxn) allowance(month time.Time) (int64, error) {
 func (t *pgFinancialComputeTxn) ensureAccount(policies []FinancialBudget) error {
 	for _, p := range policies {
 		if p.Spec.Enabled && financial.StrictAccountCompute(p.Spec) {
-			if _, err := t.book("", financial.ComputeMonth(t.now)); errors.Is(err, ErrNotFound) {
-				return t.initializeAccount()
-			} else {
+			b, err := t.book("", financial.ComputeMonth(t.now))
+			if errors.Is(err, ErrNotFound) {
+				if err = t.initializeAccount(); err != nil {
+					return err
+				}
+				b, err = t.book("", financial.ComputeMonth(t.now))
+			}
+			if err != nil {
 				return err
 			}
+			if financial.StrictAccountEgress(p.Spec) && !b.Egress.Initialized {
+				return t.initializeEgress()
+			}
+			// Another account policy may add the egress meter.
+			continue
 		}
 	}
 	return nil

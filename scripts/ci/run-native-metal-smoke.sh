@@ -220,12 +220,12 @@ if [[ "${FAAS_FINANCIAL_COMPUTE_ACCEPTANCE:-0}" == 1 ]]; then
     printf 'kernel=%s\ngo=%s\nfirecracker=%s\n' "$(uname -srmo)" "$("${FAAS_METAL_GO}" version)" "$(firecracker --version)"
     printf 'scope=two logical native owners on one dedicated host; private PostgreSQL\n'
     printf 'persistent_root=%s\n' "${FAAS_FINANCIAL_ACCEPTANCE_ROOT}"
-    printf 'postgres_command=go test -race -count=1 -timeout=10m -v -run ^TestFinancialCompute ./pkg/state/financialtest\n'
+    printf 'postgres_command=go test -race -count=1 -timeout=10m -v -run ^TestFinancial(Compute|Egress) ./pkg/state/financialtest\n'
     printf 'native_command=make test-metal PKGS=./pkg/fcvm RUN_ARGS=-timeout=30m,-v; namespace batch; final leakcheck\n'
   } > "${financial_evidence}"
   set +e
   "${FAAS_METAL_GO}" test -race -count=1 -timeout=10m -v \
-    -run '^TestFinancialCompute' ./pkg/state/financialtest 2>&1 | tee "${financial_pg_log}"
+    -run '^TestFinancial(Compute|Egress)' ./pkg/state/financialtest 2>&1 | tee "${financial_pg_log}"
   financial_pg_rc="${PIPESTATUS[0]}"
   set -e
   financial_compute_verdict "${repo_root}" postgres "${financial_pg_log}" || financial_pg_rc=1

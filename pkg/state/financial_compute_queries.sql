@@ -65,11 +65,12 @@ SELECT policy_id, revision, period_start FROM financial_compute_holds WHERE acco
 INSERT INTO financial_compute_holds(account_id,policy_id,revision,period_start) VALUES(sqlc.arg(account_id)::uuid,sqlc.arg(policy_id)::uuid,sqlc.arg(revision)::bigint,sqlc.arg(period_start)::timestamptz) ON CONFLICT DO NOTHING;
 
 -- name: FinancialComputeOwnerPut :exec
-INSERT INTO financial_compute_owners(node_id,incarnation,protocol,account_compute_incarnation,job_compute_incarnation)
-SELECT id,sqlc.arg(incarnation)::uuid,1,sqlc.narg(account_compute_incarnation)::uuid,sqlc.narg(job_compute_incarnation)::uuid FROM compute_nodes WHERE id=sqlc.arg(node_id)::uuid AND vmmd_incarnation=sqlc.arg(incarnation)::uuid AND active
+INSERT INTO financial_compute_owners(node_id,incarnation,protocol,account_compute_incarnation,job_compute_incarnation,egress_budget_incarnation)
+SELECT id,sqlc.arg(incarnation)::uuid,1,sqlc.narg(account_compute_incarnation)::uuid,sqlc.narg(job_compute_incarnation)::uuid,sqlc.narg(egress_budget_incarnation)::uuid FROM compute_nodes WHERE id=sqlc.arg(node_id)::uuid AND vmmd_incarnation=sqlc.arg(incarnation)::uuid AND active
 ON CONFLICT(node_id) DO UPDATE SET incarnation=EXCLUDED.incarnation,observed_at=clock_timestamp(),
  account_compute_incarnation=COALESCE(EXCLUDED.account_compute_incarnation,financial_compute_owners.account_compute_incarnation),
- job_compute_incarnation=COALESCE(EXCLUDED.job_compute_incarnation,financial_compute_owners.job_compute_incarnation);
+ job_compute_incarnation=COALESCE(EXCLUDED.job_compute_incarnation,financial_compute_owners.job_compute_incarnation),
+ egress_budget_incarnation=COALESCE(EXCLUDED.egress_budget_incarnation,financial_compute_owners.egress_budget_incarnation);
 
 -- name: FinancialComputeOwnersReady :one
 SELECT EXISTS(SELECT 1 FROM compute_nodes WHERE active) AND NOT EXISTS (

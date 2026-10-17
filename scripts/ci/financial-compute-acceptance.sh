@@ -8,7 +8,7 @@ financial_compute_required_tests() {
   case "${lane}" in
     postgres)
       files=("${repo_root}"/pkg/state/financialtest/financial_compute*_test.go)
-      pattern='^func TestFinancialCompute[A-Za-z0-9_]+\('
+      pattern='^func TestFinancial(Compute|Egress)[A-Za-z0-9_]+\('
       ;;
     native)
       files=("${repo_root}"/pkg/fcvm/financial_compute*metal_test.go)

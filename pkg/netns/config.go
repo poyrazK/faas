@@ -90,12 +90,15 @@ func SetDefaultHostBridgeIP(addr netip.Addr) {
 //	                                  │  (veth pair)
 //	netns fc-<instance>:  vethPeer(10.100.x.y/16) ── [route/DNAT] ── tap0(10.0.0.1) ── guest(10.0.0.2)
 type Config struct {
-	Instance string     // instance id
-	Netns    string     // fc-<instance>
-	Tap      string     // tap0 (identical in every netns)
-	VethHost string     // root-ns end, enslaved to br-tenants
-	VethPeer string     // netns end, holds HostIP
-	HostIP   netip.Addr // routable identity, 10.100.x.y
+	// EgressBudgetBytes bounds this network generation before any peer is up.
+	EgressBudgetBytes int64
+	EgressBudgetUntil time.Time
+	Instance          string     // instance id
+	Netns             string     // fc-<instance>
+	Tap               string     // tap0 (identical in every netns)
+	VethHost          string     // root-ns end, enslaved to br-tenants
+	VethPeer          string     // netns end, holds HostIP
+	HostIP            netip.Addr // routable identity, 10.100.x.y
 	// PrivateVethHost/PrivateVethPeer are an additive side-link for a
 	// Gregale-owned network. The public veth above remains attached to
 	// br-tenants; this pair is attached to the account-scoped gpn-* bridge.
@@ -354,6 +357,12 @@ func (c Config) SetupCommands() [][]string {
 		inNetns(tap...),
 		inNetns("ip", "addr", "add", TapPrefix, "dev", c.Tap),
 		inNetns("ip", "link", "set", c.Tap, "up"),
+	}
+	// Install the monetary gate before raising the peer: even ARP and IPv6
+	// autoconfiguration must fit its financed interface-byte bound.
+	if c.EgressBudgetBytes > 0 {
+		gate := c.EgressBudgetSetupCommands()
+		cmds = append(cmds[:6], append(gate, cmds[6:]...)...)
 	}
 	cmds = append(cmds, c.PrivateNetworkSetupCommands()...)
 	// Provider-verified private destinations get an explicit route so they

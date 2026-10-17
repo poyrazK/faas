@@ -4040,6 +4040,7 @@ type FinancialComputeOwner struct {
 	ObservedAt                pgtype.Timestamptz
 	AccountComputeIncarnation pgtype.UUID
 	JobComputeIncarnation     pgtype.UUID
+	EgressBudgetIncarnation   pgtype.UUID
 }
 
 type FinancialEvidenceCoverage struct {

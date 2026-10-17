@@ -22,7 +22,7 @@ func StrictAppCompute(p BudgetSpec) bool {
 // StrictAccountCompute shares one allowance and paid compute ceiling across
 // every app in the account. Unsupported producers must be fenced at activation.
 func StrictAccountCompute(p BudgetSpec) bool {
-	return p.Mode == "strict" && p.Scope.Kind == "account" && p.Basis == "net_usage" && p.Action == "suspend_workloads" && len(p.Meters) == 1 && p.Meters[0] == "compute" && p.DrainSeconds == 0 && len(p.NotifyMillicents) == 0
+	return p.Mode == "strict" && p.Scope.Kind == "account" && p.Basis == "net_usage" && p.Action == "suspend_workloads" && (len(p.Meters) == 1 && p.Meters[0] == "compute" || len(p.Meters) == 2 && p.Meters[0] == "compute" && p.Meters[1] == "egress") && p.DrainSeconds == 0 && len(p.NotifyMillicents) == 0
 }
 
 func StrictJobCompute(p BudgetSpec) bool {
@@ -36,34 +36,36 @@ func StrictCompute(p BudgetSpec) bool {
 // ComputeBalance is a conservative admission ledger, not an invoice. Committed
 // includes startup and rounds upwards; refunds/corrections never erase it.
 type ComputeBalance struct {
-	Initialized         bool      `json:"initialized"`
-	AppID               string    `json:"app_id,omitempty"`
-	JobID               string    `json:"job_id,omitempty"`
-	AccountID           string    `json:"account_id"`
-	ScopeKind           string    `json:"scope_kind"`
-	Basis               string    `json:"basis"`
-	AllowanceGranted    int64     `json:"allowance_granted_mb_seconds"`
-	AllowanceCommitted  int64     `json:"allowance_committed_mb_seconds"`
-	AllowanceReserved   int64     `json:"allowance_reserved_mb_seconds"`
-	AllowanceRemaining  int64     `json:"allowance_remaining_mb_seconds"`
-	PeriodStart         time.Time `json:"period_start"`
-	PeriodEnd           time.Time `json:"period_end"`
-	CommittedMillicents int64     `json:"committed_millicents"`
-	ReservedMillicents  int64     `json:"reserved_millicents"`
-	RemainingMillicents int64     `json:"remaining_millicents"`
-	UnconfirmedLeases   int       `json:"unconfirmed_leases"`
-	Held                bool      `json:"held"`
-	ObservedAt          time.Time `json:"observed_at"`
+	Egress              *EgressBalance `json:"egress,omitempty"`
+	Initialized         bool           `json:"initialized"`
+	AppID               string         `json:"app_id,omitempty"`
+	JobID               string         `json:"job_id,omitempty"`
+	AccountID           string         `json:"account_id"`
+	ScopeKind           string         `json:"scope_kind"`
+	Basis               string         `json:"basis"`
+	AllowanceGranted    int64          `json:"allowance_granted_mb_seconds"`
+	AllowanceCommitted  int64          `json:"allowance_committed_mb_seconds"`
+	AllowanceReserved   int64          `json:"allowance_reserved_mb_seconds"`
+	AllowanceRemaining  int64          `json:"allowance_remaining_mb_seconds"`
+	PeriodStart         time.Time      `json:"period_start"`
+	PeriodEnd           time.Time      `json:"period_end"`
+	CommittedMillicents int64          `json:"committed_millicents"`
+	ReservedMillicents  int64          `json:"reserved_millicents"`
+	RemainingMillicents int64          `json:"remaining_millicents"`
+	UnconfirmedLeases   int            `json:"unconfirmed_leases"`
+	Held                bool           `json:"held"`
+	ObservedAt          time.Time      `json:"observed_at"`
 }
 
 type ComputeBook struct {
-	AccountID   string    `json:"account_id"`
-	AppID       string    `json:"app_id"`
-	JobID       string    `json:"job_id,omitempty"`
-	PeriodStart time.Time `json:"period_start"`
-	PeriodEnd   time.Time `json:"period_end"`
-	Committed   int64     `json:"committed"`
-	Reserved    int64     `json:"reserved"`
+	Egress      EgressBook `json:"egress"`
+	AccountID   string     `json:"account_id"`
+	AppID       string     `json:"app_id"`
+	JobID       string     `json:"job_id,omitempty"`
+	PeriodStart time.Time  `json:"period_start"`
+	PeriodEnd   time.Time  `json:"period_end"`
+	Committed   int64      `json:"committed"`
+	Reserved    int64      `json:"reserved"`
 	// Quantity fields apply only to the shared account book, where both
 	// resource IDs are empty.
 	QuantityCommitted int64 `json:"quantity_committed"`
@@ -75,42 +77,48 @@ type ComputeBook struct {
 // lease remains funded until its owner confirms physical retirement. Strict
 // billing can consume only [StartedAt, FundedUntil), even after a daemon crash.
 type ComputeLease struct {
-	ID                string     `json:"id"`
-	Fence             string     `json:"fence"`
-	RequestID         string     `json:"request_id"`
-	RequestOperation  string     `json:"request_operation"`
-	RequestRevision   int64      `json:"request_revision"`
-	Revision          int64      `json:"revision"`
-	AccountID         string     `json:"account_id"`
-	AppID             string     `json:"app_id"`
-	JobID             string     `json:"job_id,omitempty"`
-	JobRunID          string     `json:"job_run_id,omitempty"`
-	JobTaskIndex      int        `json:"job_task_index,omitempty"`
-	InstanceID        string     `json:"instance_id"`
-	NodeID            string     `json:"node_id"`
-	Incarnation       string     `json:"incarnation"`
-	Strict            bool       `json:"strict"`
-	AccountFunded     bool       `json:"account_funded"`
-	QuantityCommitted int64      `json:"quantity_committed"`
-	QuantityReserved  int64      `json:"quantity_reserved"`
-	Denied            bool       `json:"denied"`
-	AttemptID         string     `json:"attempt_id"`
-	Fenced            bool       `json:"fenced"`
-	DenialReason      string     `json:"denial_reason,omitempty"`
-	BillableMB        int        `json:"billable_mb"`
-	RateMillicents    int64      `json:"rate_millicents"`
-	RateQuantity      int64      `json:"rate_quantity"`
-	PeriodStart       time.Time  `json:"period_start"`
-	StartedAt         time.Time  `json:"started_at"`
-	GrantedAt         time.Time  `json:"granted_at"`
-	RunUntil          time.Time  `json:"run_until"`
-	FundedUntil       time.Time  `json:"funded_until"`
-	Committed         int64      `json:"committed"`
-	Reserved          int64      `json:"reserved"`
-	SettledAt         *time.Time `json:"settled_at,omitempty"`
+	EgressFunded        bool       `json:"egress_funded"`
+	EgressGranted       int64      `json:"egress_granted_bytes"`
+	EgressGrant         int64      `json:"egress_grant_bytes"`
+	EgressSequence      int64      `json:"egress_sequence"`
+	ID                  string     `json:"id"`
+	Fence               string     `json:"fence"`
+	RequestID           string     `json:"request_id"`
+	RequestOperation    string     `json:"request_operation"`
+	RequestEgressRefill bool       `json:"request_egress_refill"`
+	RequestRevision     int64      `json:"request_revision"`
+	Revision            int64      `json:"revision"`
+	AccountID           string     `json:"account_id"`
+	AppID               string     `json:"app_id"`
+	JobID               string     `json:"job_id,omitempty"`
+	JobRunID            string     `json:"job_run_id,omitempty"`
+	JobTaskIndex        int        `json:"job_task_index,omitempty"`
+	InstanceID          string     `json:"instance_id"`
+	NodeID              string     `json:"node_id"`
+	Incarnation         string     `json:"incarnation"`
+	Strict              bool       `json:"strict"`
+	AccountFunded       bool       `json:"account_funded"`
+	QuantityCommitted   int64      `json:"quantity_committed"`
+	QuantityReserved    int64      `json:"quantity_reserved"`
+	Denied              bool       `json:"denied"`
+	AttemptID           string     `json:"attempt_id"`
+	Fenced              bool       `json:"fenced"`
+	DenialReason        string     `json:"denial_reason,omitempty"`
+	BillableMB          int        `json:"billable_mb"`
+	RateMillicents      int64      `json:"rate_millicents"`
+	RateQuantity        int64      `json:"rate_quantity"`
+	PeriodStart         time.Time  `json:"period_start"`
+	StartedAt           time.Time  `json:"started_at"`
+	GrantedAt           time.Time  `json:"granted_at"`
+	RunUntil            time.Time  `json:"run_until"`
+	FundedUntil         time.Time  `json:"funded_until"`
+	Committed           int64      `json:"committed"`
+	Reserved            int64      `json:"reserved"`
+	SettledAt           *time.Time `json:"settled_at,omitempty"`
 }
 
 type ComputeRequest struct {
+	EgressRefill                                      bool // native owner requests one additional bounded byte credit
 	AttemptID                                         string
 	Fenced                                            bool
 	LeaseID, Fence, RequestID                         string

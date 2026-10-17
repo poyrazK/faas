@@ -12,8 +12,13 @@ import (
 	"github.com/onebox-faas/faas/pkg/financial"
 )
 
-// FinancialComputeStore is an internal execution-authority seam. Customer APIs
-// can read balances and edit policies; they cannot mint or settle VM leases.
+// FinancialEgressReadinessStore supplies a read-only activation preflight.
+type FinancialEgressReadinessStore interface {
+	FinancialEgressReady(context.Context, string) (bool, error)
+}
+
+// FinancialComputeStore is internal execution authority. Customer APIs cannot
+// mint, renew or settle native funding receipts.
 type FinancialComputeStore interface {
 	CancelFinancialCompute(context.Context, financial.ComputeRequest) (financial.ComputeLease, error)
 	RegisterFinancialComputeOwner(context.Context, string, string) error
@@ -56,6 +61,8 @@ type financialComputeTxn interface {
 	owner(string, string) (bool, error)
 	jobCurrent(financial.ComputeLease) (bool, error)
 	allowance(time.Time) (int64, error)
+	egressPrices(time.Time) ([]FinancialPriceSnapshot, error)
+	egressOwner(string, string) (bool, error)
 }
 
 func validateComputeRequest(r financial.ComputeRequest, mutate bool) bool {
@@ -102,6 +109,9 @@ func computeAcquire(tx financialComputeTxn, r financial.ComputeRequest) (financi
 		return financial.ComputeLease{}, bindErr
 	}
 	if !validateComputeRequest(r, false) || r.Revision != 0 || r.BillableMB <= 0 || r.BillableMB > api.FinancialComputeRAMMaxMB {
+		return financial.ComputeLease{}, ErrInvalidArgument
+	}
+	if r.EgressRefill {
 		return financial.ComputeLease{}, ErrInvalidArgument
 	}
 	if old, err := tx.lease(r.LeaseID); err == nil {
@@ -179,13 +189,14 @@ func computeAcquire(tx financialComputeTxn, r financial.ComputeRequest) (financi
 	if err != nil {
 		return financial.ComputeLease{}, err
 	}
-	if err = computeFund(tx, &b, account, &l, policies); err != nil {
+	if err = computeFund(tx, &b, account, &l, policies, true); err != nil {
 		if errors.Is(err, financial.ErrComputeBudget) {
 			// This committed negative receipt authorizes a fresh native
 			// absence audit after a lost reply or daemon restart. It grants
 			// no execution window and never frees another attempt's money.
 			l.Denied = true
 			l.QuantityCommitted, l.QuantityReserved = 0, 0
+			l.EgressGranted, l.EgressGrant, l.EgressSequence = 0, 0, 0
 			l.RunUntil = l.StartedAt
 			l.FundedUntil = l.StartedAt
 			l.SettledAt = &l.StartedAt
@@ -239,7 +250,7 @@ func computeCancel(tx financialComputeTxn, r financial.ComputeRequest) (financia
 	return l, tx.putLease(l)
 }
 
-func computeFund(tx financialComputeTxn, b, account *financial.ComputeBook, l *financial.ComputeLease, policies []FinancialBudget) error {
+func computeFund(tx financialComputeTxn, b, account *financial.ComputeBook, l *financial.ComputeLease, policies []FinancialBudget, refill bool) error {
 	if l.FundedUntil.After(b.PeriodEnd) {
 		l.FundedUntil = b.PeriodEnd
 		l.RunUntil = b.PeriodEnd.Add(-api.FinancialComputeTeardownReserve)
@@ -265,7 +276,7 @@ func computeFund(tx financialComputeTxn, b, account *financial.ComputeBook, l *f
 	appErr := computeCheckPolicies(tx, *b, policies)
 	var accountErr error
 	if account != nil {
-		accountErr = computeFundAccount(tx, account, l, policies)
+		accountErr = computeFundAccount(tx, account, l, policies, refill)
 	}
 	if err := errors.Join(appErr, accountErr); err != nil {
 		return err
@@ -290,7 +301,7 @@ func computeMutate(tx financialComputeTxn, r financial.ComputeRequest, settle bo
 		operation = "settle"
 	}
 	if l.RequestID == r.RequestID {
-		if l.RequestOperation != operation || l.RequestRevision != r.Revision {
+		if l.RequestOperation != operation || l.RequestRevision != r.Revision || l.RequestEgressRefill != r.EgressRefill {
 			return financial.ComputeLease{}, financial.ErrComputeFence
 		}
 		return l, nil
@@ -346,7 +357,7 @@ func computeMutate(tx financialComputeTxn, r financial.ComputeRequest, settle bo
 			}
 			l.RunUntil = now.Add(api.FinancialComputeLeaseDuration).Truncate(time.Second)
 			l.FundedUntil = l.RunUntil.Add(api.FinancialComputeTeardownReserve)
-			if err = computeFund(tx, &b, account, &l, strictComputePolicies(policies, l.WorkloadKey())); err != nil {
+			if err = computeFund(tx, &b, account, &l, strictComputePolicies(policies, l.WorkloadKey()), r.EgressRefill); err != nil {
 				return financial.ComputeLease{}, err
 			}
 		}
@@ -373,6 +384,7 @@ func computeMutate(tx financialComputeTxn, r financial.ComputeRequest, settle bo
 		l.SettledAt = &now
 	}
 	l.RequestOperation = operation
+	l.RequestEgressRefill = r.EgressRefill
 	l.RequestRevision = r.Revision
 	l.Revision++
 	l.RequestID = r.RequestID
@@ -409,7 +421,18 @@ func computeBalance(tx financialComputeTxn, p FinancialBudget, now time.Time) (f
 		out.AllowanceReserved = min(b.AllowanceGranted-out.AllowanceCommitted, b.QuantityReserved)
 		out.AllowanceRemaining = b.AllowanceGranted - out.AllowanceCommitted - out.AllowanceReserved
 	}
-	out.RemainingMillicents = max(int64(0), p.Spec.LimitMillicents-b.Committed-b.Reserved)
+	if financial.StrictAccountEgress(p.Spec) {
+		e := b.Egress
+		out.Initialized = out.Initialized && e.Initialized
+		out.Egress = &financial.EgressBalance{Initialized: e.Initialized, CommittedBytes: e.QuantityCommitted, ReservedBytes: e.QuantityReserved, AllowanceGranted: e.AllowanceGranted, AllowanceCommitted: min(e.AllowanceGranted, e.QuantityCommitted), CommittedMillicents: e.Committed, ReservedMillicents: e.Reserved}
+		out.Egress.AllowanceReserved = min(e.AllowanceGranted-out.Egress.AllowanceCommitted, e.QuantityReserved)
+		out.Egress.AllowanceRemaining = e.AllowanceGranted - out.Egress.AllowanceCommitted - out.Egress.AllowanceReserved
+		out.CommittedMillicents, out.ReservedMillicents, err = computePolicyMoney(b, p.Spec)
+		if err != nil {
+			return out, err
+		}
+	}
+	out.RemainingMillicents = max(int64(0), p.Spec.LimitMillicents-out.CommittedMillicents-out.ReservedMillicents)
 	active, err := tx.active(key)
 	if err != nil {
 		return out, err

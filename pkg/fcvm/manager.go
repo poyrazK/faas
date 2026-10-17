@@ -768,6 +768,7 @@ func ClassifyDiskPressure(used, capacity int64) DiskPressure {
 // Manager tracks live instances and serialises nothing on the hot path beyond a
 // short-held map lock. Safe for concurrent Wake/Destroy.
 type Manager struct {
+	financialEgressRead             func(string) (uint64, error)
 	computeAuthority                FinancialComputeAuthority
 	computeNode, computeIncarnation string
 	computeLeases                   map[string]*localComputeLease
@@ -3972,6 +3973,15 @@ func (m *Manager) BootJob(ctx context.Context, req JobBootRequest) (_ *Instance,
 	// Same shape as Wake's netns setup — every VM gets one
 	// (ADR-009, identical inner network world).
 	nc := netns.NewConfig(lease.Instance, lease.Netns, lease.VethHost, lease.VethPeer, lease.HostIP)
+	if computeLease != nil {
+		computeLease.mu.Lock()
+		if computeLease.lease.EgressFunded {
+			nc.EgressBudgetBytes = computeLease.lease.EgressGrant
+			nc.EgressBudgetUntil = computeLease.lease.RunUntil.Add(-2 * api.FinancialComputeAuthorityTimeout)
+			computeLease.egressApplied = computeLease.lease.EgressSequence
+		}
+		computeLease.mu.Unlock()
+	}
 	nc.TapUID = lease.UID
 	// Job VMs run tenant code with the same network policy as app
 	// instances: the plan's bandwidth cap, the conntrack cap and the
@@ -4342,6 +4352,15 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		// Keep the allocator-derived identity on Instance for diagnostics, but
 		// never pass a tenant network plan to setup/teardown or host policy.
 		nc = netns.Config{Instance: lease.Instance}
+	}
+	if computeLease != nil {
+		computeLease.mu.Lock()
+		if computeLease.lease.EgressFunded {
+			nc.EgressBudgetBytes = computeLease.lease.EgressGrant
+			nc.EgressBudgetUntil = computeLease.lease.RunUntil.Add(-2 * api.FinancialComputeAuthorityTimeout)
+			computeLease.egressApplied = computeLease.lease.EgressSequence
+		}
+		computeLease.mu.Unlock()
 	}
 	nc.TapUID = lease.UID
 	nc.EgressMbit = req.EgressMbit

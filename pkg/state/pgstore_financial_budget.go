@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -64,7 +65,7 @@ func (s *PgStore) mutateFinancialBudget(ctx context.Context, account, id string,
 		if err != nil {
 			return FinancialBudget{}, err
 		}
-		continuingStrict = previous.Spec.Enabled && financial.StrictCompute(previous.Spec) && previous.Spec.Scope == spec.Scope
+		continuingStrict = previous.Spec.Enabled && financial.StrictCompute(previous.Spec) && previous.Spec.Scope == spec.Scope && slices.Equal(previous.Spec.Meters, spec.Meters)
 	}
 	if mutation != "deleted" {
 		if err := financialBudgetScopeOwned(ctx, tx, q, accountID, spec); err != nil {
@@ -84,7 +85,15 @@ func (s *PgStore) mutateFinancialBudget(ctx context.Context, account, id string,
 					return FinancialBudget{}, err
 				}
 			}
+			if financial.StrictAccountEgress(spec) && !continuingStrict {
+				if err := compute.initializeEgress(); err != nil {
+					return FinancialBudget{}, err
+				}
+			}
 			b, err := compute.book(financial.ComputeScopeKey(spec.Scope), financial.ComputeMonth(clock.Time))
+			if err == nil {
+				b.Committed, b.Reserved, err = computePolicyMoney(b, spec)
+			}
 			if err := validateComputePolicyFunding(b, err, continuingStrict, spec.LimitMillicents); err != nil {
 				return FinancialBudget{}, err
 			}

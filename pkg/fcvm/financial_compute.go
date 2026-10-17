@@ -25,13 +25,16 @@ type FinancialComputeAuthority interface {
 }
 
 type localComputeLease struct {
-	mu         sync.Mutex
-	lease      financial.ComputeLease
-	request    financial.ComputeRequest
-	deadline   time.Time // derived from a monotonic request-start time
-	cancelBoot context.CancelFunc
-	done       chan struct{}
-	once       sync.Once
+	egressObserved uint64
+	egressApplied  int64
+	egressBroken   bool
+	mu             sync.Mutex
+	lease          financial.ComputeLease
+	request        financial.ComputeRequest
+	deadline       time.Time // derived from a monotonic request-start time
+	cancelBoot     context.CancelFunc
+	done           chan struct{}
+	once           sync.Once
 }
 
 // Configure only after native recovery and durable node registration. The
@@ -97,6 +100,11 @@ func (m *Manager) beginComputeRequest(ctx context.Context, r financial.ComputeRe
 	}
 	local.mu.Lock()
 	local.lease = l
+	if l.EgressFunded && !financialEgressClockFits(l, started) {
+		local.egressBroken = true
+		local.mu.Unlock()
+		return local, financial.ErrComputeUnavailable
+	}
 	local.deadline = started.Add(l.RunUntil.Sub(l.GrantedAt))
 	local.mu.Unlock()
 	if l.Strict {
@@ -114,7 +122,14 @@ func computeRequest(l financial.ComputeLease) financial.ComputeRequest {
 }
 
 func (m *Manager) watchFinancialCompute(ctx context.Context, local *localComputeLease) {
-	tick := time.NewTicker(api.FinancialComputeRenewInterval)
+	interval := api.FinancialComputeRenewInterval
+	local.mu.Lock()
+	if local.lease.EgressFunded {
+		interval = api.FinancialEgressPollInterval
+	}
+	local.mu.Unlock()
+	lastRenew := time.Now()
+	tick := time.NewTicker(interval)
 	defer tick.Stop()
 	local.mu.Lock()
 	deadline := local.deadline
@@ -131,10 +146,19 @@ func (m *Manager) watchFinancialCompute(ctx context.Context, local *localCompute
 			if !renew {
 				continue
 			}
-			if !m.renewFinancialCompute(ctx, local) {
+			refill, err := m.financialEgressLow(local)
+			if err != nil {
 				renew = false
 				continue
 			}
+			if !refill && time.Since(lastRenew) < api.FinancialComputeRenewInterval {
+				continue
+			}
+			if !m.renewFinancialComputeCredit(ctx, local, refill) {
+				renew = false
+				continue
+			}
+			lastRenew = time.Now()
 			local.mu.Lock()
 			deadline = local.deadline
 			local.mu.Unlock()
@@ -170,6 +194,10 @@ func (m *Manager) watchFinancialCompute(ctx context.Context, local *localCompute
 }
 
 func (m *Manager) renewFinancialCompute(ctx context.Context, local *localComputeLease) bool {
+	return m.renewFinancialComputeCredit(ctx, local, false)
+}
+
+func (m *Manager) renewFinancialComputeCredit(ctx context.Context, local *localComputeLease, refill bool) bool {
 	local.mu.Lock()
 	defer local.mu.Unlock()
 	select {
@@ -177,10 +205,11 @@ func (m *Manager) renewFinancialCompute(ctx context.Context, local *localCompute
 		return false
 	default:
 	}
-	if !time.Now().Add(api.FinancialComputeRenewMargin).Before(local.deadline) {
+	if local.egressBroken || !time.Now().Add(api.FinancialComputeRenewMargin).Before(local.deadline) {
 		return false
 	}
 	r := computeRequest(local.lease)
+	r.EgressRefill = refill
 	started := time.Now()
 	callCtx, cancel := context.WithTimeout(ctx, api.FinancialComputeAuthorityTimeout)
 	defer cancel()
@@ -192,7 +221,17 @@ func (m *Manager) renewFinancialCompute(ctx context.Context, local *localCompute
 	if !time.Now().Before(local.deadline) {
 		return false
 	}
-	local.lease = l
+	old := local.lease
+	local.lease = l // retain even when the network helper outcome is uncertain
+	if l.EgressFunded {
+		if !financialEgressClockFits(l, started) {
+			local.egressBroken = true
+			return false
+		}
+		if !m.syncFinancialEgress(ctx, local, l, refill && l.EgressSequence > old.EgressSequence) {
+			return false
+		}
+	}
 	local.deadline = started.Add(l.RunUntil.Sub(l.GrantedAt))
 	return true
 }

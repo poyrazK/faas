@@ -4917,16 +4917,22 @@ const (
 	// Metering (spec §1, §10).
 	OverageMillicentsPerGBHour = 1_000 // €0.01 per GB-RAM-hour
 	// ADR-566: strict compute reserves startup, execution, and bounded teardown.
-	FinancialComputeLeaseDuration    = 2 * time.Minute
-	FinancialComputeTeardownReserve  = 30 * time.Second
-	FinancialComputeRenewInterval    = 20 * time.Second
-	FinancialComputeRenewMargin      = 5 * time.Second
-	FinancialComputeAuthorityTimeout = 3 * time.Second
-	FinancialComputeOwnerHeartbeat   = 10 * time.Second
-	FinancialComputeInstanceBytes    = 128
-	FinancialComputeRAMMaxMB         = 131_072
-	FinancialComputeActiveMax        = 10_000
-	FinancialComputeQuantityMax      = int64(9007199254740991)
+	// Strict egress credits are conservative interface-byte bounds, not invoice usage.
+	FinancialEgressMinimumCreditBytes = int64(4096)
+	FinancialEgressCreditBytes        = int64(8 * 1024 * 1024)
+	FinancialEgressPollInterval       = 250 * time.Millisecond
+	FinancialEgressFramingFactor      = int64(2)
+	FinancialEgressMinimumPacketBytes = 20
+	FinancialComputeLeaseDuration     = 2 * time.Minute
+	FinancialComputeTeardownReserve   = 30 * time.Second
+	FinancialComputeRenewInterval     = 20 * time.Second
+	FinancialComputeRenewMargin       = 5 * time.Second
+	FinancialComputeAuthorityTimeout  = 3 * time.Second
+	FinancialComputeOwnerHeartbeat    = 10 * time.Second
+	FinancialComputeInstanceBytes     = 128
+	FinancialComputeRAMMaxMB          = 131_072
+	FinancialComputeActiveMax         = 10_000
+	FinancialComputeQuantityMax       = int64(9007199254740991)
 
 	// PreflightRateLimitPerHour bounds anonymous "would this run here" checks per
 	// client IP. The check is unauthenticated, so the ceiling exists to protect

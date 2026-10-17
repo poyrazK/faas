@@ -152,6 +152,10 @@ func (s *PgStore) PutFinancialPriceSnapshot(ctx context.Context, p FinancialPric
 		return FinancialPriceSnapshot{}, ErrNotFound
 	}
 	if err != nil {
+		var priceErr *pgconn.PgError
+		if errors.As(err, &priceErr) && priceErr.ConstraintName == "financial_egress_price_ceiling" {
+			return FinancialPriceSnapshot{}, financial.ErrComputeUnavailable
+		}
 		return FinancialPriceSnapshot{}, fmt.Errorf("financial price snapshot: %w", err)
 	}
 	p.PeriodStart = p.PeriodStart.UTC()

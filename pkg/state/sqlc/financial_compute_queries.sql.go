@@ -568,17 +568,19 @@ func (q *Queries) FinancialComputeNodeLeases(ctx context.Context, db DBTX, nodeI
 }
 
 const financialComputeOwnerPut = `-- name: FinancialComputeOwnerPut :exec
-INSERT INTO financial_compute_owners(node_id,incarnation,protocol,account_compute_incarnation,job_compute_incarnation)
-SELECT id,$1::uuid,1,$2::uuid,$3::uuid FROM compute_nodes WHERE id=$4::uuid AND vmmd_incarnation=$1::uuid AND active
+INSERT INTO financial_compute_owners(node_id,incarnation,protocol,account_compute_incarnation,job_compute_incarnation,egress_budget_incarnation)
+SELECT id,$1::uuid,1,$2::uuid,$3::uuid,$4::uuid FROM compute_nodes WHERE id=$5::uuid AND vmmd_incarnation=$1::uuid AND active
 ON CONFLICT(node_id) DO UPDATE SET incarnation=EXCLUDED.incarnation,observed_at=clock_timestamp(),
  account_compute_incarnation=COALESCE(EXCLUDED.account_compute_incarnation,financial_compute_owners.account_compute_incarnation),
- job_compute_incarnation=COALESCE(EXCLUDED.job_compute_incarnation,financial_compute_owners.job_compute_incarnation)
+ job_compute_incarnation=COALESCE(EXCLUDED.job_compute_incarnation,financial_compute_owners.job_compute_incarnation),
+ egress_budget_incarnation=COALESCE(EXCLUDED.egress_budget_incarnation,financial_compute_owners.egress_budget_incarnation)
 `
 
 type FinancialComputeOwnerPutParams struct {
 	Incarnation               pgtype.UUID
 	AccountComputeIncarnation pgtype.UUID
 	JobComputeIncarnation     pgtype.UUID
+	EgressBudgetIncarnation   pgtype.UUID
 	NodeID                    pgtype.UUID
 }
 
@@ -587,6 +589,7 @@ func (q *Queries) FinancialComputeOwnerPut(ctx context.Context, db DBTX, arg Fin
 		arg.Incarnation,
 		arg.AccountComputeIncarnation,
 		arg.JobComputeIncarnation,
+		arg.EgressBudgetIncarnation,
 		arg.NodeID,
 	)
 	return err
