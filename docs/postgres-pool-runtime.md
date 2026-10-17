@@ -220,6 +220,38 @@ Failures remain sticky and sanitized; optional retirement-error observers cannot
 poison cleanup. A future successful adoption can restore acquisition, but does
 not erase a prior cleanup failure.
 
+## Snapshots: checkpoint and restore
+
+A snapshot captures every open pool connection. The first capture of a
+deployment happens right after readiness, while your validator's connection is
+usually still idle in the pool. A restored guest then holds dead sockets, and
+the captured server session lingers until TCP keepalive closes it. Declare both
+lifecycle hooks and serve them only to loopback requests carrying the exact
+marker header (`X-Faas-Before-Checkpoint: 1` or `X-Faas-After-Restore: 1`):
+
+```yaml
+lifecycle:
+  before_checkpoint: {path: /internal/before-checkpoint, timeout_ms: 2000}
+  after_restore: {path: /internal/after-restore, timeout_ms: 2000}
+```
+
+- **before_checkpoint** stops request admission, cancels in-flight work, calls
+  `invalidate()` and waits for retirement (Node `waitForRetirement(signal)`, Go
+  `WaitForRetirement(ctx)`, Python `wait_for_retirement(timeout)`) within the
+  hook budget. Answer 2xx only after retirement finishes. Refuse secret reloads
+  until restore, since a pool built after the drain would be captured. A failed
+  capture may be retried, so make the callback idempotent.
+- **after_restore** (also called on frozen thaw) cancels captured work,
+  invalidates, rereads the latest secret snapshot even at the same revision
+  (`coordinator.reload(...)`), waits for retirement, and only then reopens
+  admission.
+
+Declaring `before_checkpoint` disables warm captures for the app (ADR-351). If
+you omit it, `after_restore` still replaces captured pools, but a capture can
+strand a server session. A lifecycle hook reaches one interpreter process: a
+function running several workers cannot drain every worker's pool this way
+(ADR-1540).
+
 ## Built-in PostgreSQL starters
 
 Python's `rest-api-postgres-python` starter vendors the complete canonical async
@@ -232,9 +264,11 @@ for deployment and exact-artifact PostgreSQL acceptance.
 
 `rest-api-postgres` and `secret-reload-node` vendor these canonical runtime
 modules and use the same database adapter. Their image labels enable SIGHUP and
-required startup readiness. The REST starter validates the notes schema, retains
-its restore hook and migration isolation, and reloads the latest atomic snapshot
-on restore. Managed deployments require the complete modern guest contract;
+required startup readiness. Both declare the checkpoint and restore hooks above:
+the adapter's `checkpoint()` drains every session and `restore()` reloads the
+latest atomic snapshot. The REST starter also validates the notes schema and
+keeps migration isolation. The Python starter's adapter implements the same
+`checkpoint()` and `restore()`. Managed deployments require the complete modern guest contract;
 local REST startup still accepts an explicit `DATABASE_URL` without guest fields.
 
 Node `coordinator.reload(signal)` can bound one manual refresh, including queue

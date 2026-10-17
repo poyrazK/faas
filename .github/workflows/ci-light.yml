@@ -8,11 +8,12 @@ name: ci-light
 # runner pool and pushing PR feedback past 90 minutes):
 #
 #   ci-light.yml (this file)  golangci-lint (govet included) of changed
-#                             packages; -race tests of changed packages and
-#                             the §6.2 invariants; for cmd/gregale, pkg/state
-#                             and pkg/apid/apidserver only the tests related
-#                             to the change, without -race
-#                             (scripts/ci/select_package_tests.py);
+#                             packages and `go vet` of the importers that use
+#                             a changed exported name; -race tests of changed
+#                             packages and the §6.2 invariants; for
+#                             cmd/gregale, pkg/state and pkg/apid/apidserver
+#                             only the tests related to the change, without
+#                             -race (scripts/ci/select_package_tests.py);
 #                             boot-contract, generated-code drift, policy
 #                             gates and migration ID/apply/replay checks.
 #                             Three test shards, no gate job.
@@ -166,6 +167,7 @@ jobs:
           fi
           git diff --name-only "$base" HEAD > "$RUNNER_TEMP/changed-paths.txt"
           python3 scripts/ci/affected_packages.py summary < "$RUNNER_TEMP/changed-paths.txt"
+          echo "LINT_SELECTED_AT=$(date +%s)" >> "$GITHUB_ENV"
           {
             echo "base=$base"
             echo "changed=$(python3 scripts/ci/affected_packages.py changed < "$RUNNER_TEMP/changed-paths.txt")"
@@ -221,6 +223,56 @@ jobs:
           if (( ${#failed[@]} )); then
             echo "::error::lint failed for: ${failed[*]}"
             exit 1
+          fi
+      # golangci-lint compiles only the changed packages. An unchanged
+      # importer breaks when an exported name it uses changes under it (a
+      # signature, a field, a constant), so vet exactly those importers
+      # (scripts/ci/select_importers.py); a body edit selects none. The mega
+      # tier vets every package nightly and before every release.
+      #
+      # A change to a widely used API can select ~100 importers and recompile
+      # most of the module (11 minutes at 4 cores for #4809). The check runs
+      # most specific importers first, in batches, and stops 13 minutes after
+      # package selection so the job stays under 15; any importers left over
+      # are named in a warning and left to the mega tier.
+      - name: compile importers that use changed exported names
+        if: steps.select.outputs.changed != ''
+        env:
+          BASE: ${{ steps.select.outputs.base }}
+          BUDGET_SECONDS: "780"
+          GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver_test=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
+          GOMEMLIMIT: 10GiB
+          GOGC: 100
+          GOMAXPROCS: 4
+        run: |
+          set -euo pipefail
+          read -r -a pkgs <<<"$(python3 scripts/ci/select_importers.py --base "$BASE" < "$RUNNER_TEMP/changed-paths.txt")"
+          (( ${#pkgs[@]} )) || exit 0
+          deadline=$((SECONDS + LINT_SELECTED_AT + BUDGET_SECONDS - $(date +%s)))
+          i=0
+          while (( i < ${#pkgs[@]} )) && (( SECONDS < deadline )); do
+            # apidserver's external tests import its internal test variant,
+            # so vetting it holds about 5 GB: it goes alone.
+            if [[ "${pkgs[i]}" == ./pkg/apid/apidserver ]]; then
+              batch=("${pkgs[i]}"); i=$((i + 1))
+            else
+              batch=()
+              while (( i < ${#pkgs[@]} && ${#batch[@]} < 8 )) && [[ "${pkgs[i]}" != ./pkg/apid/apidserver ]]; do
+                batch+=("${pkgs[i]}"); i=$((i + 1))
+              done
+            fi
+            # A batch cut off by the budget is unchecked, not failed.
+            status=0
+            timeout "$((deadline - SECONDS))" go vet "${batch[@]}" || status=$?
+            if (( status == 124 )); then
+              i=$((i - ${#batch[@]}))
+              break
+            elif (( status != 0 )); then
+              exit "$status"
+            fi
+          done
+          if (( i < ${#pkgs[@]} )); then
+            echo "::warning::importer compile check reached the job's 15-minute budget; not checked here (the mega tier vets them): ${pkgs[*]:i}"
           fi
       # Main pushes lint cmd/gregale, pkg/state and pkg/apid/apidserver even
       # when unchanged, so the saved cache holds their dependencies' export
@@ -298,7 +350,11 @@ jobs:
 
       # ---- policy gates (static, seconds each) ----
       - name: light-tier package selector tests
-        run: python3 scripts/ci/affected_packages_test.py
+        run: |
+          python3 scripts/ci/affected_packages_test.py
+          python3 scripts/ci/select_package_tests_test.py
+          python3 scripts/ci/select_importers_test.py
+          python3 scripts/ci/cancel_conflicted_pr_runs_test.py
       - name: MemStore stub guard
         run: make memstore-stubs-check
       - name: daemon environment contract

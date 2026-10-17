@@ -1432,7 +1432,7 @@ on conflict (app_id, source, type, filter) do update
 set enabled = true,
     updated_at = now()
 returning id, account_id, app_id, source, type, filter, enabled,
-          created_at, updated_at, routing_retry_policy, schema_versions, (xmax = 0) as inserted;
+          created_at, updated_at, routing_retry_policy, schema_versions, acknowledgment_lease_seconds, (xmax = 0) as inserted;
 
 -- name: DeleteEventSubscription :exec
 delete from event_subscriptions
@@ -4350,7 +4350,7 @@ SELECT
     release_id, manifest_hash, host_certificate, cert_fingerprint, role,
     generation, gateway_target_url,
     drain_initiated_at, drain_completed_at, recovery_initiated_at,
-    last_recovery_outcome
+    last_recovery_outcome, lifecycle_generation
 FROM compute_nodes
 WHERE id = $1;
 
@@ -4367,7 +4367,7 @@ SELECT
     release_id, manifest_hash, host_certificate, cert_fingerprint, role,
     generation, gateway_target_url,
     drain_initiated_at, drain_completed_at, recovery_initiated_at,
-    last_recovery_outcome
+    last_recovery_outcome, lifecycle_generation
 FROM compute_nodes
 WHERE name = $1;
 
@@ -4385,7 +4385,7 @@ SELECT
     release_id, manifest_hash, host_certificate, cert_fingerprint, role,
     generation, gateway_target_url,
     drain_initiated_at, drain_completed_at, recovery_initiated_at,
-    last_recovery_outcome
+    last_recovery_outcome, lifecycle_generation
 FROM compute_nodes
 WHERE ($1 = '' OR lifecycle::text = $1)
 ORDER BY name;
@@ -4452,7 +4452,7 @@ SELECT
     release_id, manifest_hash, host_certificate, cert_fingerprint, role,
     generation, gateway_target_url,
     drain_initiated_at, drain_completed_at, recovery_initiated_at,
-    last_recovery_outcome
+    last_recovery_outcome, lifecycle_generation
 FROM compute_nodes
 WHERE lifecycle = 'recovering'
    OR (lifecycle = 'unavailable' AND coalesce(last_heartbeat_at, created_at) >= now() - interval '24 hours')
@@ -4472,7 +4472,7 @@ SELECT
     release_id, manifest_hash, host_certificate, cert_fingerprint, role,
     generation, gateway_target_url,
     drain_initiated_at, drain_completed_at, recovery_initiated_at,
-    last_recovery_outcome
+    last_recovery_outcome, lifecycle_generation
 FROM compute_nodes
 WHERE lifecycle = 'active'
   AND NOT EXISTS (
@@ -6064,7 +6064,8 @@ WHERE deployment_id = sqlc.arg(deployment_id)::uuid ORDER BY sidecar_name;
 -- name: SetProjectEnvironmentCloneDeploymentArtifact :exec
 UPDATE deployments SET rootfs_path = nullif(sqlc.arg(rootfs_path)::text, ''), rootfs_key = nullif(sqlc.arg(rootfs_key)::text, ''),
        rootfs_bytes = sqlc.arg(rootfs_bytes)::bigint,
-       secret_reload_signal = CASE WHEN sqlc.arg(signal_known)::boolean THEN sqlc.arg(signal)::text ELSE NULL END
+       secret_reload_signal = CASE WHEN sqlc.arg(signal_known)::boolean THEN sqlc.arg(signal)::text ELSE NULL END,
+       runtime_base = sqlc.arg(runtime_base)::text
 WHERE id = sqlc.arg(deployment_id)::uuid;
 
 -- name: InsertProjectEnvironmentCloneSidecarLayer :exec
@@ -7751,18 +7752,26 @@ SELECT * FROM issue_group_rollups WHERE app_id = sqlc.arg(app_id)
 AND (sqlc.arg(state)::text = '' OR state = sqlc.arg(state))
 AND (sqlc.arg(environment)::text = '' OR environment = sqlc.arg(environment))
 AND (sqlc.narg(assignee_account_id)::uuid IS NULL OR assignee_account_id = sqlc.narg(assignee_account_id))
-AND (NOT sqlc.arg(unassigned)::bool OR assignee_account_id IS NULL)
+AND (sqlc.narg(assignee_team_id)::uuid IS NULL OR assignee_team_id = sqlc.narg(assignee_team_id))
+AND (NOT sqlc.arg(unassigned)::bool OR (assignee_account_id IS NULL AND assignee_team_id IS NULL))
 AND (sqlc.narg(cursor_time)::timestamptz IS NULL OR (last_seen_at,id) < (sqlc.narg(cursor_time),sqlc.narg(cursor_id)::uuid))
 ORDER BY last_seen_at DESC,id DESC LIMIT sqlc.arg(page_limit);
 
 -- name: IssueListByImpact :many
 WITH candidate_issues AS MATERIALIZED (
-    SELECT i.id,i.account_id,i.app_id,i.environment,i.fingerprint,i.grouping_version,i.title,i.state,i.assignee_account_id,i.first_seen_at::timestamptz AS first_seen_at,i.last_seen_at::timestamptz AS last_seen_at,i.event_count,i.regression_count,i.resolved_at,i.fixed_deployment_id,i.fixed_deployment_created_at,i.ignored_until,i.split_source_issue_id FROM issue_group_rollups i
+    SELECT i.id,i.account_id,i.app_id,i.environment,i.fingerprint,i.grouping_version,i.title,i.state,i.assignee_account_id,i.first_seen_at::timestamptz AS first_seen_at,i.last_seen_at::timestamptz AS last_seen_at,i.event_count,i.regression_count,i.resolved_at,i.fixed_deployment_id,i.fixed_deployment_created_at,i.ignored_until,i.split_source_issue_id,i.assignee_team_id FROM issue_group_rollups i
     WHERE i.app_id = sqlc.arg(app_id)
       AND (sqlc.arg(state)::text = '' OR i.state = sqlc.arg(state))
       AND (sqlc.arg(environment)::text = '' OR i.environment = sqlc.arg(environment))
       AND (sqlc.narg(assignee_account_id)::uuid IS NULL OR i.assignee_account_id = sqlc.narg(assignee_account_id))
-      AND (NOT sqlc.arg(unassigned)::bool OR i.assignee_account_id IS NULL)
+      AND (sqlc.narg(assignee_team_id)::uuid IS NULL OR i.assignee_team_id = sqlc.narg(assignee_team_id))
+      AND (NOT sqlc.arg(unassigned)::bool OR (i.assignee_account_id IS NULL AND i.assignee_team_id IS NULL))
+      AND (sqlc.arg(tag_filter)::jsonb='{}'::jsonb OR EXISTS(
+        SELECT 1 FROM issue_events tagged JOIN issue_group_assignments assigned ON assigned.original_issue_id=tagged.issue_id
+        WHERE assigned.canonical_issue_id=i.id AND tagged.app_id=sqlc.arg(app_id)
+          AND tagged.occurred_at>=sqlc.arg(since)::timestamptz AND tagged.occurred_at<=sqlc.arg(until)::timestamptz
+          AND (tagged.payload->'tags') @> sqlc.arg(tag_filter)::jsonb
+      ))
 ), issue_impact AS (
     SELECT a.canonical_issue_id AS issue_id,
            count(DISTINCT COALESCE(e.verified_platform_tenant_id,e.verified_consumer_id)) AS identified_customers,
@@ -7872,17 +7881,17 @@ ON CONFLICT(app_id) DO UPDATE SET minimum_customers=excluded.minimum_customers,u
 -- name: IssueDeleteImpactAlertPolicy :exec
 DELETE FROM app_issue_impact_alert_policies WHERE app_id=sqlc.arg(app_id);
 -- name: IssueListOwnershipRules :many
-SELECT rule_order, exception_type, source_kind, route_prefix, assignee_account_id
+SELECT rule_order, exception_type, source_kind, route_prefix, source_path_prefix, tag_filter, assignee_account_id, assignee_team_id
   FROM app_issue_ownership_rules
  WHERE app_id=sqlc.arg(app_id)
  ORDER BY rule_order;
 -- name: IssueDeleteOwnershipRules :exec
 DELETE FROM app_issue_ownership_rules WHERE app_id=sqlc.arg(app_id);
 -- name: IssueInsertOwnershipRule :exec
-INSERT INTO app_issue_ownership_rules(app_id,rule_order,exception_type,source_kind,route_prefix,assignee_account_id)
-VALUES(sqlc.arg(app_id),sqlc.arg(rule_order),sqlc.narg(exception_type),sqlc.narg(source_kind),sqlc.narg(route_prefix),sqlc.arg(assignee_account_id));
+INSERT INTO app_issue_ownership_rules(app_id,rule_order,exception_type,source_kind,route_prefix,source_path_prefix,tag_filter,assignee_account_id,assignee_team_id)
+VALUES(sqlc.arg(app_id),sqlc.arg(rule_order),sqlc.narg(exception_type),sqlc.narg(source_kind),sqlc.narg(route_prefix),sqlc.narg(source_path_prefix),sqlc.narg(tag_filter),sqlc.narg(assignee_account_id),sqlc.narg(assignee_team_id));
 -- name: IssueSetNewIssueAssignee :one
-UPDATE app_issues SET assignee_account_id=sqlc.arg(assignee_account_id)
+UPDATE app_issues SET assignee_account_id=sqlc.narg(assignee_account_id),assignee_team_id=sqlc.narg(assignee_team_id)
  WHERE id=sqlc.arg(id) RETURNING *;
 -- name: IssueAttribution :many
 SELECT DISTINCT consumer_id,platform_tenant_id FROM request_telemetry
@@ -7891,7 +7900,7 @@ AND trace_id=sqlc.arg(trace_id) AND count=1 AND received_at >= sqlc.arg(since) A
 -- name: IssueInvocationScope :one
 SELECT id,platform_tenant_id FROM invocations WHERE id=sqlc.arg(id) AND app_id=sqlc.arg(app_id) AND account_id=sqlc.arg(account_id);
 -- name: IssueUpdateAction :one
-UPDATE app_issues SET state=sqlc.arg(state),assignee_account_id=sqlc.narg(assignee),resolved_at=sqlc.narg(resolved_at),
+UPDATE app_issues SET state=sqlc.arg(state),assignee_account_id=sqlc.narg(assignee),assignee_team_id=sqlc.narg(assignee_team_id),resolved_at=sqlc.narg(resolved_at),
 fixed_deployment_id=sqlc.narg(fixed_deployment_id),fixed_deployment_created_at=sqlc.narg(fixed_deployment_created_at),ignored_until=sqlc.narg(ignored_until) WHERE id=sqlc.arg(id) RETURNING *;
 -- name: IssueAddActivity :one
 INSERT INTO issue_activity(issue_id,action,actor_account_id,created_at,details) VALUES(sqlc.arg(issue_id),sqlc.arg(action),sqlc.narg(actor_account_id),sqlc.arg(created_at),sqlc.arg(details)) RETURNING *;
@@ -9790,18 +9799,20 @@ SELECT app_id::text,deployment_id::text,started_at FROM instances WHERE id=sqlc.
 SELECT changed_at FROM app_runtime_config_changes WHERE app_id=sqlc.arg(app_id)::uuid;
 
 -- name: CreateSnapshot :one
-INSERT INTO snapshots(deployment_id,fc_version,base_image_version,mem_bytes,disk_bytes,stored_bytes,storage_key,stale,tier,application_standard_capture_token)
+INSERT INTO snapshots(deployment_id,fc_version,base_image_version,mem_bytes,disk_bytes,stored_bytes,storage_key,stale,tier,application_standard_capture_token,recovery_generation)
 VALUES(sqlc.arg(deployment_id)::uuid,sqlc.arg(fc_version)::text,sqlc.arg(base_image_version)::text,
  sqlc.arg(mem_bytes)::bigint,sqlc.arg(disk_bytes)::bigint,sqlc.arg(stored_bytes)::bigint,
- sqlc.arg(storage_key)::text,sqlc.arg(stale)::boolean,sqlc.arg(tier)::text,sqlc.narg(application_standard_capture_token)::uuid)
+ sqlc.arg(storage_key)::text,sqlc.arg(stale)::boolean,sqlc.arg(tier)::text,sqlc.narg(application_standard_capture_token)::uuid,sqlc.arg(recovery_generation)::bigint)
 RETURNING *;
 
 -- name: LatestSnapshot :one
 SELECT * FROM snapshots WHERE deployment_id=sqlc.arg(deployment_id)::uuid AND stale=false
+AND recovery_generation=(SELECT snapshot_recovery_generation FROM deployments WHERE id=sqlc.arg(deployment_id)::uuid)
 ORDER BY (tier='warm') DESC,created_at DESC LIMIT 1;
 
 -- name: LatestSnapshotForTier :one
 SELECT * FROM snapshots WHERE deployment_id=sqlc.arg(deployment_id)::uuid AND tier=sqlc.arg(tier)::text AND stale=false
+AND recovery_generation=(SELECT snapshot_recovery_generation FROM deployments WHERE id=sqlc.arg(deployment_id)::uuid)
 ORDER BY created_at DESC LIMIT 1;
 
 -- name: LockInstanceApplicationStandardBoot :one
@@ -10013,9 +10024,13 @@ WHERE a.account_id=sqlc.arg(account_id)::uuid AND a.id=sqlc.arg(app_id)::uuid AN
  AND f.input_snapshot->>'publication_hash'=p.input_hash AND p.input_snapshot->'claims'->>'org_id'=coalesce(a.org_id::text,'')
  AND d.kind IN ('tarball','dockerfile','github','preview')
  AND (coalesce(d.source_sha256,'')='' OR p.input_snapshot->'claims'->>'source_sha256'=d.source_sha256)
- AND p.input_snapshot->'claims'->>'runtime'=coalesce(a.runtime,'')
+ AND (p.input_snapshot->'claims'->>'runtime'=coalesce(a.runtime,'')
+  OR (a.type<>'function' AND coalesce(a.runtime,'')='' AND f.input_snapshot->>'kind'='source-app-layer'
+   AND p.input_snapshot->'claims'->>'runtime' IN ('node22','node24')
+   AND f.input_snapshot->>'runtime'=p.input_snapshot->'claims'->>'runtime'))
  AND f.input_snapshot->>'storage_key'=d.rootfs_key AND f.input_snapshot->>'rootfs_path'=d.rootfs_path
- AND (f.input_snapshot->>'content_bytes')::bigint=d.rootfs_bytes;
+ AND (f.input_snapshot->>'content_bytes')::bigint=d.rootfs_bytes
+ AND d.runtime_base=CASE WHEN f.input_snapshot->>'kind'='source-app-layer' THEN f.input_snapshot->>'runtime' ELSE '' END;
 
 -- name: AuthorizeDeploymentRegistryVerificationInsert :exec
 SELECT set_config('gregale.registry_verification_insert',sqlc.arg(id)::uuid::text,true);
@@ -10078,6 +10093,10 @@ ON CONFLICT(deployment_id,workload_name) DO UPDATE SET artifact_id=EXCLUDED.arti
 
 -- name: PublishDeploymentRegistryMainRootfs :execrows
 UPDATE deployments SET rootfs_path=sqlc.arg(rootfs_path)::text,rootfs_key=sqlc.arg(storage_key)::text,rootfs_bytes=sqlc.arg(content_bytes)::bigint
+WHERE id=sqlc.arg(deployment_id)::uuid AND status IN ('pending','building','imaging','snapshotting');
+
+-- name: StampDeploymentRuntimeBase :exec
+UPDATE deployments SET runtime_base=sqlc.arg(runtime_base)::text
 WHERE id=sqlc.arg(deployment_id)::uuid AND status IN ('pending','building','imaging','snapshotting');
 
 -- name: PublishDeploymentRegistrySidecarRootfs :exec
@@ -15640,10 +15659,11 @@ INSERT INTO workflow_automation_revisions(
 ) VALUES($1,$2,$3,$4,$5,false,$6,$7,$8);
 
 -- name: SaveAutomation :exec
-INSERT INTO workflow_automation_definitions(app_id,name,version,draft,published,published_version,enabled,updated_at)
-VALUES($1,$2,$3,$4,$5,$6,$7,$8)
+INSERT INTO workflow_automation_definitions(app_id,name,version,draft,published,published_version,enabled,updated_at,test_suite,test_report)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
 ON CONFLICT(app_id,name) DO UPDATE SET version=excluded.version,draft=excluded.draft,
- published=excluded.published,published_version=excluded.published_version,enabled=excluded.enabled,updated_at=excluded.updated_at;
+ published=excluded.published,published_version=excluded.published_version,enabled=excluded.enabled,updated_at=excluded.updated_at,
+ test_suite=excluded.test_suite,test_report=excluded.test_report;
 
 -- name: DeleteAutomation :exec
 DELETE FROM workflow_automation_definitions WHERE app_id=$1 AND name=$2;
@@ -18413,6 +18433,7 @@ SELECT (jsonb_build_object(
     'github_deployments_deployment_id_fkey', (SELECT count(*) FROM github_deployments WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
     'instances_deployment_id_fkey', (SELECT count(*) FROM instances WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
     'invocation_environment_queue_admissions_deployment_id_fkey', (SELECT count(*) FROM invocation_environment_queue_admissions WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
+    'issue_source_map_artifacts_deployment_owner_fkey', (SELECT count(*) FROM issue_source_map_artifacts WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
     'issue_ingest_tokens_deployment_id_fkey', (SELECT count(*) FROM issue_ingest_tokens WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
     'mirror_rules_mirror_deployment_id_fkey', (SELECT count(*) FROM mirror_rules WHERE mirror_deployment_id = sqlc.arg(deployment_id)::uuid),
     'mirror_rules_source_deployment_id_fkey', (SELECT count(*) FROM mirror_rules WHERE source_deployment_id = sqlc.arg(deployment_id)::uuid),
@@ -18485,6 +18506,8 @@ SELECT jsonb_build_object(
  'route_probe_observations.deployment_id', (SELECT count(*) FROM route_probe_observations WHERE deployment_id::text=sqlc.arg(deployment_id)::uuid::text),
  'runtime_upgrade_gateway_drains.deployment_id', (SELECT count(*) FROM runtime_upgrade_gateway_drains WHERE deployment_id::text=sqlc.arg(deployment_id)::uuid::text),
  'runtime_upgrade_gateway_receipts.deployment_id', (SELECT count(*) FROM runtime_upgrade_gateway_receipts WHERE deployment_id::text=sqlc.arg(deployment_id)::uuid::text),
+ 'workflow_automation_live_suites.deployment_id', (SELECT count(*) FROM workflow_automation_live_suites WHERE deployment_id=sqlc.arg(deployment_id)::uuid),
+ 'workflow_automation_live_verifications.deployment_id', (SELECT count(*) FROM workflow_automation_live_verifications WHERE deployment_id=sqlc.arg(deployment_id)::uuid),
  'workflow_schedule_occurrences.deployment_id', (SELECT count(*) FROM workflow_schedule_occurrences WHERE deployment_id::text=sqlc.arg(deployment_id)::uuid::text),
  'app_issues.fixed_deployment_id', (SELECT count(*) FROM app_issues WHERE fixed_deployment_id=sqlc.arg(deployment_id)::uuid),
  'debug_regression_observations.deployment_id', (SELECT count(*) FROM debug_regression_observations WHERE deployment_id=sqlc.arg(deployment_id)::uuid),
@@ -21189,7 +21212,7 @@ VALUES(sqlc.arg(source_id),sqlc.arg(target_id),sqlc.arg(app_id),sqlc.arg(environ
 -- name: IssueUnlinkGroup :execrows
 DELETE FROM issue_group_links WHERE issue_id=sqlc.arg(member_id) AND canonical_issue_id=sqlc.arg(id);
 -- name: IssueSyncGroupAction :exec
-UPDATE app_issues i SET state=r.state,assignee_account_id=r.assignee_account_id,resolved_at=r.resolved_at,
+UPDATE app_issues i SET state=r.state,assignee_account_id=r.assignee_account_id,assignee_team_id=r.assignee_team_id,resolved_at=r.resolved_at,
 fixed_deployment_id=r.fixed_deployment_id,fixed_deployment_created_at=r.fixed_deployment_created_at,ignored_until=r.ignored_until
 FROM app_issues r WHERE r.id=sqlc.arg(id) AND i.id IN (SELECT issue_id FROM issue_group_links WHERE canonical_issue_id=r.id);
 -- name: IssueReopenGroup :exec
@@ -21231,8 +21254,8 @@ ORDER BY source_issue_id,priority;
 -- name: IssueGetSplitRule :one
 SELECT * FROM issue_split_rules WHERE app_id=sqlc.arg(app_id) AND source_issue_id=sqlc.arg(source_issue_id) AND id=sqlc.arg(id);
 -- name: IssueCreateSplitGroup :one
-INSERT INTO app_issues(account_id,app_id,environment,fingerprint,grouping_version,title,first_seen_at,last_seen_at,assignee_account_id,split_source_issue_id)
-VALUES(sqlc.arg(account_id),sqlc.arg(app_id),sqlc.arg(environment),sqlc.arg(fingerprint),sqlc.arg(grouping_version),sqlc.arg(title),sqlc.arg(now),sqlc.arg(now),sqlc.narg(assignee_account_id),sqlc.arg(source_issue_id)) RETURNING *;
+INSERT INTO app_issues(account_id,app_id,environment,fingerprint,grouping_version,title,first_seen_at,last_seen_at,assignee_account_id,split_source_issue_id,assignee_team_id)
+VALUES(sqlc.arg(account_id),sqlc.arg(app_id),sqlc.arg(environment),sqlc.arg(fingerprint),sqlc.arg(grouping_version),sqlc.arg(title),sqlc.arg(now),sqlc.arg(now),sqlc.narg(assignee_account_id),sqlc.arg(source_issue_id),sqlc.narg(assignee_team_id)) RETURNING *;
 -- name: IssueCreateSplitRule :one
 INSERT INTO issue_split_rules(id,app_id,environment,source_issue_id,target_issue_id,priority,exception_type,error_code,route,source_kind,initial_moved_event_count,unavailable_history_event_count,created_at,updated_at)
 VALUES(sqlc.arg(id),sqlc.arg(app_id),sqlc.arg(environment),sqlc.arg(source_issue_id),sqlc.arg(target_issue_id),sqlc.arg(priority),sqlc.arg(exception_type),sqlc.arg(error_code),sqlc.arg(route),sqlc.arg(source_kind),sqlc.arg(moved_count),sqlc.arg(unavailable_count),sqlc.arg(now),sqlc.arg(now)) RETURNING *;
@@ -21605,6 +21628,11 @@ WHERE j.account_id = sqlc.arg(account_id)::uuid
   AND r.id = sqlc.arg(run_id)::uuid
   AND t.task_index = sqlc.arg(task_index)::int;
 
+-- Observation only: suite/definition changes advance version through SaveAutomation.
+-- name: SaveAutomationTestReport :execrows
+UPDATE workflow_automation_definitions SET test_report=$4
+WHERE app_id=$1 AND name=$2 AND version=$3;
+
 -- name: JobRunAttachSession :one
 -- ADR-1330: an interactive image run's session, read by schedd at dispatch.
 SELECT tty, attach_token_sha256, attach_timeout_s
@@ -21657,3 +21685,179 @@ RETURNING created_at;
 
 -- name: AuthorizeEnvironmentBindingTraffic :one
 SELECT authorize_environment_binding_traffic(sqlc.arg(graph_id)::uuid,sqlc.arg(release_id)::uuid)::boolean;
+
+-- name: EventAckPolicyGet :one
+SELECT acknowledgment_lease_seconds FROM event_subscriptions s JOIN apps a ON a.id=s.app_id AND a.account_id=s.account_id
+WHERE s.id=sqlc.arg(subscription_id)::uuid AND s.account_id=sqlc.arg(account_id)::uuid AND s.app_id=sqlc.arg(app_id)::uuid AND a.status<>'deleted';
+
+-- name: EventAckPolicySet :execrows
+UPDATE event_subscriptions s SET acknowledgment_lease_seconds=sqlc.arg(lease_seconds)::integer,updated_at=clock_timestamp()
+FROM apps a WHERE a.id=s.app_id AND a.account_id=s.account_id AND a.status<>'deleted'
+AND s.id=sqlc.arg(subscription_id)::uuid AND s.account_id=sqlc.arg(account_id)::uuid AND s.app_id=sqlc.arg(app_id)::uuid;
+
+-- name: EventAckInvocationLock :one
+SELECT i.id,i.account_id,i.app_id,i.source,i.state,i.attempts,i.replay_generation,i.headers,i.operation_id,i.on_success_destination_id,i.on_failure_destination_id,i.lease_expires_at,i.result,i.quota_reserved FROM invocations i JOIN apps a ON a.id=i.app_id AND a.account_id=i.account_id
+WHERE i.id=sqlc.arg(invocation_id)::uuid AND i.account_id=sqlc.arg(account_id)::uuid AND i.app_id=sqlc.arg(app_id)::uuid AND a.status<>'deleted' FOR UPDATE OF i;
+
+-- name: EventAckGet :one
+SELECT * FROM event_delivery_acknowledgments WHERE invocation_id=$1;
+
+-- name: EventAckOffer :exec
+INSERT INTO event_delivery_acknowledgments (invocation_id,attempt,replay_generation,token_digest,phase,lease_seconds,deadline_at,max_attempts,retry_delay_ms)
+VALUES ($1,$2,$3,$4,'offered',$5,clock_timestamp()+sqlc.arg(lifetime_seconds)::integer*interval '1 second',$6,$7)
+ON CONFLICT (invocation_id) DO UPDATE SET attempt=excluded.attempt,replay_generation=excluded.replay_generation,token_digest=excluded.token_digest,phase='offered',completion_digest=NULL,rejection_status=NULL,lease_seconds=excluded.lease_seconds,deadline_at=excluded.deadline_at,max_attempts=excluded.max_attempts,retry_delay_ms=excluded.retry_delay_ms;
+
+-- name: EventAckPhase :exec
+UPDATE event_delivery_acknowledgments SET phase=sqlc.arg(phase)::text,completion_digest=sqlc.narg(completion_digest)::bytea WHERE invocation_id=sqlc.arg(invocation_id)::uuid;
+
+-- name: EventAckExtend :one
+UPDATE invocations i SET lease_expires_at=least(clock_timestamp()+a.lease_seconds*interval '1 second',a.deadline_at)
+FROM event_delivery_acknowledgments a WHERE a.invocation_id=i.id AND i.id=sqlc.arg(invocation_id)::uuid
+RETURNING i.lease_expires_at;
+
+-- name: EventAckNow :one
+SELECT clock_timestamp()::timestamptz;
+
+-- name: EventAckExpired :many
+SELECT i.id,i.account_id,i.app_id,i.attempts,i.replay_generation,i.quota_reserved,a.max_attempts,a.retry_delay_ms,coalesce(i.headers->>'x-gregale-event-subscription-id','')::text AS subscription_id FROM invocations i JOIN event_delivery_acknowledgments a ON a.invocation_id=i.id AND a.attempt=i.attempts AND a.replay_generation=i.replay_generation
+WHERE i.state='dispatching' AND a.phase='awaiting' AND i.lease_expires_at<=clock_timestamp()
+ORDER BY i.lease_expires_at,i.id LIMIT sqlc.arg(batch_limit)::integer FOR UPDATE OF i SKIP LOCKED;
+
+-- name: EventAckExpire :exec
+UPDATE invocations SET state=CASE WHEN attempts>=sqlc.arg(max_attempts)::integer THEN 'dead_letter' ELSE 'pending' END,
+ outcome=CASE WHEN attempts>=sqlc.arg(max_attempts)::integer THEN 'dead_letter' ELSE NULL END,
+ completed_at=CASE WHEN attempts>=sqlc.arg(max_attempts)::integer THEN clock_timestamp() ELSE completed_at END,
+ due_at=clock_timestamp()+sqlc.arg(retry_delay_ms)::bigint*interval '1 millisecond',
+ lease_expires_at=NULL,quota_reserved=false,instance_id=NULL,last_error='event acknowledgment lease expired'
+WHERE id=sqlc.arg(invocation_id)::uuid;
+
+-- name: EventConsumerProcessingHealth :one
+WITH clock AS MATERIALIZED (SELECT clock_timestamp() AS observed_at), scoped AS (
+ SELECT i.state,i.lease_expires_at,i.completed_at,a.phase,a.lease_seconds,
+ (a.attempt=i.attempts AND a.replay_generation=i.replay_generation) AS matching,
+ a.deadline_at-sqlc.arg(lifetime_seconds)::integer*interval '1 second' AS offered_at,
+ c.observed_at
+ FROM invocations i CROSS JOIN clock c LEFT JOIN event_delivery_acknowledgments a ON a.invocation_id=i.id
+ WHERE i.account_id=sqlc.arg(account_id)::uuid AND i.app_id=sqlc.arg(app_id)::uuid
+ AND i.source IN ('async_invoke','replay')
+ AND i.headers->>'x-gregale-event-subscription-id'=sqlc.arg(subscription_id)::text
+ AND CASE WHEN i.headers->>'x-gregale-event-acknowledgment-lease-seconds' ~ '^[1-9][0-9]{0,2}$' THEN (i.headers->>'x-gregale-event-acknowledgment-lease-seconds')::integer<=300 ELSE false END
+), classified AS (
+ SELECT *,CASE WHEN state='expired' THEN 'other' WHEN state='pending' THEN 'waiting'
+ WHEN state='dispatching' AND (lease_expires_at IS NULL OR lease_expires_at<=observed_at) THEN 'expired'
+ WHEN state='dispatching' AND phase='awaiting' AND matching THEN 'processing'
+ WHEN state='dispatching' THEN 'delivering' ELSE state END AS processing_state FROM scoped
+)
+SELECT c.observed_at::timestamptz AS observed_at,
+ count(*) FILTER (WHERE processing_state='waiting')::bigint AS waiting,
+ count(*) FILTER (WHERE processing_state='delivering')::bigint AS delivering,
+ count(*) FILTER (WHERE processing_state='processing')::bigint AS processing,
+ count(*) FILTER (WHERE processing_state='expired')::bigint AS expired,
+ count(*) FILTER (WHERE processing_state='completed')::bigint AS completed,
+ count(*) FILTER (WHERE processing_state='dead_letter')::bigint AS dead_lettered,
+ count(*) FILTER (WHERE processing_state='failed')::bigint AS failed,
+ count(*) FILTER (WHERE processing_state NOT IN ('waiting','delivering','processing','expired','completed','dead_letter','failed'))::bigint AS other,
+ count(*) FILTER (WHERE processing_state='processing' AND lease_expires_at<=c.observed_at+least(sqlc.arg(near_expiry_seconds)::double precision,lease_seconds::double precision/3)*interval '1 second')::bigint AS near_expiry,
+ min(offered_at) FILTER (WHERE processing_state='processing')::timestamptz AS oldest_processing_offered_at,
+ count(*) FILTER (WHERE processing_state='completed' AND matching AND phase='completed' AND completed_at>=offered_at AND completed_at<=c.observed_at AND completed_at>=c.observed_at-sqlc.arg(window_seconds)::integer*interval '1 second')::bigint AS acknowledgment_samples,
+ coalesce(max(extract(epoch FROM completed_at-offered_at)) FILTER (WHERE processing_state='completed' AND matching AND phase='completed' AND completed_at>=offered_at AND completed_at<=c.observed_at AND completed_at>=c.observed_at-sqlc.arg(window_seconds)::integer*interval '1 second'),0)::double precision AS acknowledgment_latency_max_seconds
+FROM clock c LEFT JOIN classified ON true
+WHERE EXISTS(SELECT 1 FROM apps WHERE id=sqlc.arg(app_id)::uuid AND account_id=sqlc.arg(account_id)::uuid AND status<>'deleted')
+GROUP BY c.observed_at;
+
+-- name: EventAckOutcomeRecord :exec
+INSERT INTO event_acknowledgment_outcomes (invocation_id,attempt,replay_generation,kind,first_at,last_at,occurrences,retain_until)
+SELECT i.id,a.attempt,a.replay_generation,sqlc.arg(kind)::text,clock_timestamp(),clock_timestamp(),1,
+ a.deadline_at+sqlc.arg(retention_seconds)::integer*interval '1 second'
+FROM invocations i JOIN event_delivery_acknowledgments a ON a.invocation_id=i.id
+WHERE i.id=sqlc.arg(invocation_id)::uuid AND a.attempt=i.attempts AND a.replay_generation=i.replay_generation
+ AND a.deadline_at+sqlc.arg(retention_seconds)::integer*interval '1 second'>clock_timestamp()
+ON CONFLICT (invocation_id,attempt,replay_generation,kind) DO UPDATE
+SET last_at=clock_timestamp(),occurrences=least(event_acknowledgment_outcomes.occurrences+1,2147483647);
+
+-- name: EventAckOutcomePrune :exec
+DELETE FROM event_acknowledgment_outcomes WHERE (invocation_id,attempt,replay_generation,kind) IN (
+ SELECT invocation_id,attempt,replay_generation,kind FROM event_acknowledgment_outcomes
+ WHERE retain_until<=clock_timestamp() ORDER BY retain_until LIMIT sqlc.arg(batch_limit)::integer FOR UPDATE SKIP LOCKED
+);
+
+-- name: EventAckOutcomeHistory :many
+SELECT o.* FROM event_acknowledgment_outcomes o JOIN invocations i ON i.id=o.invocation_id
+JOIN apps a ON a.id=i.app_id AND a.account_id=i.account_id
+WHERE i.account_id=sqlc.arg(account_id)::uuid AND i.app_id=sqlc.arg(app_id)::uuid AND a.status<>'deleted'
+AND i.headers->>'x-gregale-event-subscription-id'=sqlc.arg(subscription_id)::text
+AND (sqlc.arg(delivery_id)::text='' OR i.id::text=sqlc.arg(delivery_id)::text)
+AND o.retain_until>clock_timestamp()
+ORDER BY o.last_at DESC,o.invocation_id,o.attempt,o.replay_generation,o.kind LIMIT sqlc.arg(row_limit)::integer;
+
+-- name: EventAckOutcomeHistoryPage :many
+SELECT o.* FROM event_acknowledgment_outcomes o JOIN invocations i ON i.id=o.invocation_id
+JOIN apps a ON a.id=i.app_id AND a.account_id=i.account_id
+WHERE i.account_id=sqlc.arg(account_id)::uuid AND i.app_id=sqlc.arg(app_id)::uuid AND a.status<>'deleted'
+AND i.headers->>'x-gregale-event-subscription-id'=sqlc.arg(subscription_id)::text
+AND (sqlc.arg(delivery_id)::text='' OR i.id::text=sqlc.arg(delivery_id)::text)
+AND (sqlc.arg(kind_filter)::text='' OR o.kind=sqlc.arg(kind_filter)::text)
+AND o.retain_until>clock_timestamp() AND o.first_at<=sqlc.arg(cutoff)::timestamptz
+AND (sqlc.narg(from_at)::timestamptz IS NULL OR o.first_at>=sqlc.narg(from_at)::timestamptz)
+AND (sqlc.narg(until_at)::timestamptz IS NULL OR o.first_at<sqlc.narg(until_at)::timestamptz)
+AND (NOT sqlc.arg(has_after)::boolean OR (o.first_at,o.invocation_id,o.attempt,o.replay_generation,o.kind)<(sqlc.arg(after_at)::timestamptz,sqlc.arg(after_id)::uuid,sqlc.arg(after_attempt)::integer,sqlc.arg(after_generation)::bigint,sqlc.arg(after_kind)::text))
+ORDER BY o.first_at DESC,o.invocation_id DESC,o.attempt DESC,o.replay_generation DESC,o.kind DESC LIMIT sqlc.arg(row_limit)::integer;
+
+-- name: EventAckMetricRecord :exec
+WITH clock AS MATERIALIZED (SELECT date_trunc('minute',clock_timestamp(),'UTC')::timestamptz AS bucket_start)
+INSERT INTO event_acknowledgment_metric_buckets AS b (account_id,app_id,subscription_id,bucket_start,kind,occurrences,saturated,retain_until)
+SELECT i.account_id,i.app_id,(i.headers->>'x-gregale-event-subscription-id')::uuid,c.bucket_start,sqlc.arg(kind)::text,1,false,c.bucket_start+sqlc.arg(retention_seconds)::integer*interval '1 second'
+FROM invocations i CROSS JOIN clock c WHERE i.id=sqlc.arg(invocation_id)::uuid
+ON CONFLICT(account_id,app_id,subscription_id,bucket_start,kind) DO UPDATE
+SET occurrences=least(b.occurrences+1,2147483647),saturated=b.saturated OR b.occurrences>=2147483647;
+
+-- name: EventAckMetricPrune :exec
+DELETE FROM event_acknowledgment_metric_buckets WHERE (account_id,app_id,subscription_id,bucket_start,kind) IN (
+ SELECT account_id,app_id,subscription_id,bucket_start,kind FROM event_acknowledgment_metric_buckets
+ WHERE retain_until<=clock_timestamp() ORDER BY retain_until LIMIT sqlc.arg(batch_limit)::integer FOR UPDATE SKIP LOCKED
+);
+
+-- name: EventAckMetricHealth :one
+SELECT coalesce(sum(occurrences) FILTER (WHERE kind='renewed'),0)::bigint AS renewal_successes,
+ coalesce(sum(occurrences) FILTER (WHERE kind='renewal_rejected'),0)::bigint AS renewal_rejections,
+ coalesce(sum(occurrences) FILTER (WHERE kind='expired'),0)::bigint AS lease_expiries,
+ coalesce(bool_or(saturated),false)::boolean AS saturated
+FROM event_acknowledgment_metric_buckets
+WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid AND subscription_id=sqlc.arg(subscription_id)::uuid
+ AND bucket_start>=sqlc.arg(window_start)::timestamptz AND bucket_start<sqlc.arg(window_end)::timestamptz
+ AND retain_until>clock_timestamp()
+ AND EXISTS(SELECT 1 FROM apps WHERE id=sqlc.arg(app_id)::uuid AND account_id=sqlc.arg(account_id)::uuid AND status<>'deleted');
+
+-- name: EventAckMetricQuotaLock :exec
+SELECT account_id FROM account_async_quota WHERE account_id=sqlc.arg(account_id)::uuid FOR UPDATE;
+
+-- name: EventAckWriterCoverageEnsure :exec
+INSERT INTO event_acknowledgment_recording_coverage(singleton,inventory_revision,updated_at) VALUES(true,'',clock_timestamp()) ON CONFLICT DO NOTHING;
+-- name: EventAckWriterCoverageLock :one
+SELECT * FROM event_acknowledgment_recording_coverage WHERE singleton=true FOR UPDATE;
+-- name: EventAckWriterCoverageGet :one
+SELECT * FROM event_acknowledgment_recording_coverage WHERE singleton=true;
+-- name: EventAckWriterCoverageSet :exec
+UPDATE event_acknowledgment_recording_coverage SET inventory_revision=sqlc.arg(inventory_revision)::text,continuous_since=sqlc.narg(continuous_since)::timestamptz,verified_through=sqlc.narg(verified_through)::timestamptz,updated_at=clock_timestamp() WHERE singleton=true;
+-- name: EventAckWriterBeat :execrows
+WITH clock AS MATERIALIZED (SELECT clock_timestamp() AS now_at)
+INSERT INTO event_acknowledgment_writers AS w(session_id,role,slot,capability_version,inventory,inventory_revision,started_at,seen_at,continuous_since,expires_at)
+SELECT sqlc.arg(session_id)::uuid,sqlc.arg(role)::text,sqlc.arg(slot)::text,sqlc.arg(capability_version)::integer,sqlc.arg(inventory)::jsonb,sqlc.arg(inventory_revision)::text,c.now_at,c.now_at,c.now_at,c.now_at+sqlc.arg(lease_seconds)::integer*interval '1 second' FROM clock c
+ON CONFLICT(session_id) DO UPDATE SET capability_version=excluded.capability_version,inventory=excluded.inventory,inventory_revision=excluded.inventory_revision,
+ seen_at=excluded.seen_at,expires_at=excluded.expires_at,
+ continuous_since=CASE WHEN w.expires_at<=excluded.seen_at OR w.capability_version<>excluded.capability_version OR w.inventory_revision<>excluded.inventory_revision THEN excluded.seen_at ELSE w.continuous_since END
+WHERE w.role=excluded.role AND w.slot=excluded.slot;
+-- name: EventAckWritersLive :many
+SELECT * FROM event_acknowledgment_writers WHERE expires_at>sqlc.arg(now_at)::timestamptz ORDER BY session_id LIMIT sqlc.arg(row_limit)::integer;
+-- name: EventAckWritersPrune :exec
+DELETE FROM event_acknowledgment_writers WHERE session_id IN(SELECT session_id FROM event_acknowledgment_writers WHERE seen_at<clock_timestamp()-sqlc.arg(retention_seconds)::integer*interval '1 second' ORDER BY seen_at LIMIT sqlc.arg(batch_limit)::integer FOR UPDATE SKIP LOCKED);
+
+-- name: EventAckReject :one
+UPDATE invocations i SET state=CASE WHEN sqlc.arg(permanent)::boolean OR attempts>=a.max_attempts THEN 'dead_letter' ELSE 'pending' END,
+ outcome=CASE WHEN sqlc.arg(permanent)::boolean OR attempts>=a.max_attempts THEN 'dead_letter' ELSE NULL END,
+ completed_at=CASE WHEN sqlc.arg(permanent)::boolean OR attempts>=a.max_attempts THEN sqlc.arg(now_at)::timestamptz ELSE NULL END,
+ due_at=sqlc.arg(now_at)::timestamptz+a.retry_delay_ms*interval '1 millisecond',
+ lease_expires_at=NULL,quota_reserved=false,instance_id=NULL,last_error=sqlc.arg(failure_reason)::text
+FROM event_delivery_acknowledgments a WHERE i.id=sqlc.arg(invocation_id)::uuid AND a.invocation_id=i.id RETURNING i.state,i.due_at;
+-- name: EventAckRejectReceipt :exec
+UPDATE event_delivery_acknowledgments SET phase='rejected',completion_digest=sqlc.arg(request_digest)::bytea,rejection_status=sqlc.arg(rejection_status)::jsonb WHERE invocation_id=sqlc.arg(invocation_id)::uuid;

@@ -606,3 +606,32 @@ from .event_consumer_delivery_context import (
 )
 
 __all__ += ("EventConsumerDeliveryContext", "EventConsumerDeliveryContextUnavailableError", "event_consumer_delivery_context_from_headers")
+
+from ._event_deadline_policy import EVENT_DEADLINE_REASONS, EventDeadlinePolicyOptions, EventDeadlineTarget
+from .event_deadline_checkpoint import acknowledge_event_deadline_alerts, validate_event_deadline_checkpoint
+from .event_deadline_watch import (
+    EventDeadlineWatchCallbackError,
+    EventDeadlineWatchCancelled,
+    EventDeadlineWatchOptions,
+    awatch_event_subscription_deadlines,
+)
+
+__all__ += (
+    "EVENT_DEADLINE_REASONS", "EventDeadlinePolicyOptions", "EventDeadlineTarget",
+    "EventDeadlineWatchOptions", "EventDeadlineWatchCallbackError", "EventDeadlineWatchCancelled",
+    "awatch_event_subscription_deadlines", "validate_event_deadline_checkpoint", "acknowledge_event_deadline_alerts",
+)
+
+from ._event_deadline_policy import EVENT_DEADLINE_RATIO_BASIS_POINTS_MAX, EventDeadlineRatioOptions
+
+__all__ += ("EVENT_DEADLINE_RATIO_BASIS_POINTS_MAX", "EventDeadlineRatioOptions")
+
+from .event_deadline_investigation import (
+    EventDeadlineInvestigationOptions,
+    EventDeadlineInvestigationReadError,
+    ainvestigate_event_deadline_alert,
+)
+
+__all__ += (
+    "EventDeadlineInvestigationOptions", "EventDeadlineInvestigationReadError", "ainvestigate_event_deadline_alert",
+)

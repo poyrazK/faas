@@ -136,6 +136,11 @@ type PlatformTenantStatementInput struct {
 	// carry offsetting lines without new usage. Totals, per-subject units,
 	// and units × price per line still hold, and the amount is never negative.
 	Repriced bool `json:"-"`
+	// Weighted marks a re-priced revision whose lines count route-weighted
+	// units (ADR-1307) or compute seconds or response megabytes (ADR-1310):
+	// coverage stays in raw request units, so line units no longer equal it
+	// per subject or in total.
+	Weighted bool `json:"-"`
 }
 
 type PlatformTenantStatementHandoff struct {
@@ -285,11 +290,18 @@ func validatePlatformTenantStatementInput(in PlatformTenantStatementInput) error
 		}
 		coverageWindows[subject] = window
 	}
-	if lineUnits != in.BillableUnits || lineUnpriced != in.UnpricedUnits || lineAmount != in.AmountMillicents || coverageUnits != in.BillableUnits {
+	if lineUnits != in.BillableUnits || lineUnpriced != in.UnpricedUnits || lineAmount != in.AmountMillicents ||
+		(!in.Weighted && coverageUnits != in.BillableUnits) {
 		return fmt.Errorf("platform tenant statement: line totals do not match statement totals")
 	}
 	if (lineUnpriced == lineUnits && in.Currency != "") || (lineUnpriced < lineUnits && in.Currency == "") {
 		return ErrInvalidArgument
+	}
+	if in.Weighted {
+		if !in.Repriced || len(in.Coverage) == 0 {
+			return ErrInvalidArgument
+		}
+		return nil
 	}
 	for subject, units := range lineUnitsBySubject {
 		if coverageUnitsBySubject[subject] != units || (!in.Repriced && lineWindows[subject] != coverageWindows[subject]) {

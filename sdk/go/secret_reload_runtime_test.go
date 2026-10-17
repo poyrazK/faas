@@ -450,6 +450,10 @@ func TestSecretReloadCancellationFencesLateFactoryAndQueuedRequests(t *testing.T
 	if _, _, err := f.storage.Current(); err == nil {
 		t.Fatal("shutdown blocked invalidation")
 	}
+	// Stop fences consumers promptly; wait for the cancelled worker's final
+	// invalidation before starting an independent reload. The factory is still
+	// blocked here, so coordinator shutdown must not depend on its completion.
+	waitSecret(t, f.runtime.workerDone)
 	close(release)
 	// A fresh factory can only run after the late one drains; it cannot overlap.
 	if err := f.storage.Reload(context.Background(), runtimeStorageValues()); err != nil {

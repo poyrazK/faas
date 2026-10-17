@@ -31,6 +31,11 @@ func TestPythonPostgresStarterManifest(t *testing.T) {
 	if hook == nil || hook.Path != "/internal/after-restore" || hook.TimeoutMS != 2000 {
 		t.Fatalf("restore hook = %#v", hook)
 	}
+	// The drain keeps SQL sessions out of every capture (ADR-351).
+	drain := manifest.Lifecycle.ToAPI().BeforeCheckpoint
+	if drain == nil || drain.Path != "/internal/before-checkpoint" || drain.TimeoutMS != 2000 {
+		t.Fatalf("checkpoint hook = %#v", drain)
+	}
 	for _, name := range []string{"runtime/__init__.py", "runtime/_binding_client_runtime.py", "runtime/async_postgres_pool_runtime.py", "runtime/async_secret_reload_runtime.py", "runtime/postgres_pool_runtime.py", "runtime/secret_reload_runtime.py", ".gregaleignore"} {
 		if _, err := os.Stat(filepath.Join(dest, name)); err != nil {
 			t.Fatalf("self-contained runtime missing %s: %v", name, err)

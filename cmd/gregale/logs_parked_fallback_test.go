@@ -79,3 +79,30 @@ func TestNormalizeLogsSinceRejectsFutureRuntimeTimestamp(t *testing.T) {
 		t.Fatalf("past runtime --since = %q, %v", got, err)
 	}
 }
+
+// TestParkedArchivePendingNote pins H10-122: for a few minutes after a park
+// the archive does not exist yet, and the reply read like data loss.
+func TestParkedArchivePendingNote(t *testing.T) {
+	now := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
+	cases := map[string]struct {
+		ins  api.InstanceResponse
+		want bool
+	}{
+		"parked two minutes ago":  {ins: api.InstanceResponse{ParkedAt: now.Add(-2 * time.Minute).Format(time.RFC3339)}, want: true},
+		"parked an hour ago":      {ins: api.InstanceResponse{ParkedAt: now.Add(-time.Hour).Format(time.RFC3339)}, want: false},
+		"no park, recent request": {ins: api.InstanceResponse{LastRequestAt: now.Add(-3 * time.Minute).Format(time.RFC3339)}, want: true},
+		"no timestamps":           {ins: api.InstanceResponse{}, want: false},
+		"park time in the future": {ins: api.InstanceResponse{ParkedAt: now.Add(time.Minute).Format(time.RFC3339)}, want: false},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			note := parkedArchivePendingNote(tc.ins, now)
+			if got := note != ""; got != tc.want {
+				t.Fatalf("note = %q, want present=%v", note, tc.want)
+			}
+			if tc.want && !strings.Contains(note, "retry shortly") {
+				t.Fatalf("note does not say to retry: %q", note)
+			}
+		})
+	}
+}

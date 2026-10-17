@@ -1,0 +1,259 @@
+---
+# postgres_standby — the warm standby's streaming replica (ADR-1344 §8).
+#
+# Runs after the postgres role (in standby mode) on the postgres_standby
+# host. The primary must already be converged with the standby declared, so
+# its replicator role, slot and pg_hba line exist.
+#
+# The replica copies the primary's data directory with pg_basebackup and then
+# streams WAL from the faas_standby slot. It serves read-only connections and
+# nothing else until an operator promotes it (docs/runbooks/FaasPostgresStandby.md).
+
+- name: postgres_standby — check the topology and the replication secret
+  ansible.builtin.assert:
+    that:
+      - groups['control_plane'] | default([]) | length == 1
+      - faas_postgres_replication_password is defined
+      - faas_postgres_replication_password | string | length >= 16
+      - postgres_major_version is defined
+    fail_msg: >-
+      The warm standby needs exactly one control-plane host to replicate,
+      faas_postgres_replication_password (Ansible Vault, at least 16
+      characters), and the postgres role run first in this play.
+    quiet: true
+
+- name: postgres_standby — read the primary's version and hot-standby limits
+  ansible.builtin.command:
+    argv:
+      - psql
+      - -X
+      - -A
+      - -t
+      - -F
+      - "="
+      - -c
+      - >-
+        SELECT name, setting FROM pg_settings
+        WHERE name = ANY (ARRAY['server_version_num', '{{ faas_postgres_standby_mirrored_settings | join("', '") }}'])
+  delegate_to: "{{ faas_postgres_primary_inventory_host }}"
+  become: true
+  become_user: postgres
+  register: postgres_standby_primary_settings_raw
+  changed_when: false
+
+- name: postgres_standby — parse the primary's settings
+  ansible.builtin.set_fact:
+    postgres_standby_primary_settings: "{{ dict(postgres_standby_primary_settings_raw.stdout_lines | map('split', '=') | list) }}"
+
+- name: postgres_standby — require the primary's major version and every mirrored setting
+  ansible.builtin.assert:
+    that:
+      - (postgres_standby_primary_settings['server_version_num'] | int) // 10000 == (postgres_major_version | int)
+      - faas_postgres_standby_mirrored_settings | difference(postgres_standby_primary_settings.keys() | list) | length == 0
+    fail_msg: >-
+      Physical replication needs the same PostgreSQL major version on both
+      hosts: the primary runs {{ (postgres_standby_primary_settings['server_version_num'] | default('0') | int) // 10000 }},
+      this host {{ postgres_major_version }}.
+    quiet: true
+
+# libpq reads the password from here for both pg_basebackup and the WAL
+# receiver, so it is never on a command line or in primary_conninfo.
+- name: postgres_standby — install the replication password file
+  ansible.builtin.copy:
+    dest: /var/lib/postgresql/.pgpass
+    owner: postgres
+    group: postgres
+    mode: "0600"
+    content: |
+      {{ faas_postgres_primary_host }}:{{ faas_postgres_primary_port }}:replication:replicator:{{ faas_postgres_replication_password | replace('\\', '\\\\') | replace(':', '\\:') }}
+  no_log: true
+
+- name: postgres_standby — keep the distro conf.d include
+  ansible.builtin.lineinfile:
+    path: "{{ postgres_config_dir }}/postgresql.conf"
+    regexp: "^#?include_dir\\s*="
+    line: "include_dir = 'conf.d'"
+    create: false
+  notify: restart postgresql
+
+- name: postgres_standby — create conf.d
+  ansible.builtin.file:
+    path: "{{ postgres_config_dir }}/conf.d"
+    state: directory
+    owner: postgres
+    group: postgres
+    mode: "0755"
+
+- name: postgres_standby — render the standby settings
+  ansible.builtin.template:
+    src: 90-faas-standby.conf.j2
+    dest: "{{ postgres_config_dir }}/conf.d/90-faas-standby.conf"
+    owner: postgres
+    group: postgres
+    mode: "0644"
+  notify: restart postgresql
+
+- name: postgres_standby — inspect the local cluster
+  ansible.builtin.stat:
+    path: "{{ faas_postgres_standby_data_dir }}/standby.signal"
+  register: postgres_standby_signal
+
+- name: postgres_standby — check whether the local cluster looks like a primary
+  ansible.builtin.command:
+    argv:
+      - psql
+      - -X
+      - -A
+      - -t
+      - -c
+      - "SELECT pg_is_in_recovery()::int || ':' || (SELECT count(*) FROM pg_database WHERE datname = 'faas')"
+  become: true
+  become_user: postgres
+  register: postgres_standby_local_state
+  changed_when: false
+  failed_when: false  # a stopped or broken cluster is checked by stat above
+
+- name: postgres_standby — list the local data directory
+  ansible.builtin.find:
+    paths: "{{ faas_postgres_standby_data_dir }}"
+    file_type: any
+    hidden: true
+  register: postgres_standby_data_entries
+
+- name: postgres_standby — decide whether to seed
+  ansible.builtin.set_fact:
+    postgres_standby_needs_seed: "{{ (not postgres_standby_signal.stat.exists) or (faas_postgres_standby_reseed | bool) }}"
+    # Wiping needs positive evidence: an empty directory, or a running
+    # cluster that is in recovery or has no faas database. A cluster that
+    # does not answer could be a crashed primary.
+    postgres_standby_safe_to_wipe: >-
+      {{ postgres_standby_data_entries.matched == 0
+         or (postgres_standby_local_state.rc == 0
+             and (postgres_standby_local_state.stdout | trim) != '0:1')
+         or faas_postgres_standby_wipe_primary == inventory_hostname }}
+
+# The guard that keeps a promoted standby, now the only copy of the data,
+# from being wiped by a routine converge.
+- name: postgres_standby — refuse to wipe a cluster that may be a primary
+  ansible.builtin.assert:
+    that:
+      - not (postgres_standby_needs_seed | bool) or (postgres_standby_safe_to_wipe | bool)
+    fail_msg: >-
+      {{ inventory_hostname }}'s cluster is either not in recovery and holding
+      the faas database, or not answering: it may be a promoted primary, and
+      seeding would delete it. If this host really is to become a standby
+      again, rerun with -e faas_postgres_standby_wipe_primary={{ inventory_hostname }}.
+    quiet: true
+
+- name: postgres_standby — seed the replica from the primary
+  when: postgres_standby_needs_seed | bool
+  block:
+    - name: postgres_standby — confirm the replicator can reach the primary
+      ansible.builtin.command:
+        argv:
+          - psql
+          - -X
+          # dbname=replication is what .pgpass matches for a physical
+          # replication connection (pg_basebackup and the WAL receiver set it).
+          - "host={{ faas_postgres_primary_host }} port={{ faas_postgres_primary_port }} user=replicator dbname=replication replication=true connect_timeout=10"
+          - -c
+          - IDENTIFY_SYSTEM
+      become: true
+      become_user: postgres
+      environment:
+        PGPASSFILE: /var/lib/postgresql/.pgpass
+      changed_when: false
+
+    - name: postgres_standby — confirm the primary's slot is free
+      ansible.builtin.command:
+        argv:
+          - psql
+          - -X
+          - -A
+          - -t
+          - -c
+          - "SELECT active FROM pg_replication_slots WHERE slot_name = '{{ faas_postgres_standby_slot }}' AND slot_type = 'physical'"
+      delegate_to: "{{ faas_postgres_primary_inventory_host }}"
+      become: true
+      become_user: postgres
+      register: postgres_standby_primary_slot
+      changed_when: false
+      failed_when: (postgres_standby_primary_slot.stdout | trim) != 'f'
+
+    # Never point find -delete at something that is not a PostgreSQL data
+    # directory; an empty one is a retry after a failed copy.
+    - name: postgres_standby — require a PostgreSQL data directory at the wipe path
+      ansible.builtin.stat:
+        path: "{{ faas_postgres_standby_data_dir }}/PG_VERSION"
+      register: postgres_standby_pg_version
+      failed_when: not postgres_standby_pg_version.stat.exists and postgres_standby_data_entries.matched > 0
+
+    - name: postgres_standby — stop the local cluster
+      ansible.builtin.service:
+        name: "postgresql@{{ postgres_major_version }}-main.service"
+        state: stopped
+
+    - name: postgres_standby — empty the local data directory
+      ansible.builtin.command:
+        argv: [find, "{{ faas_postgres_standby_data_dir }}", -mindepth, "1", -delete]
+      changed_when: true
+
+    - name: postgres_standby — copy the primary with pg_basebackup
+      ansible.builtin.command:
+        argv:
+          - pg_basebackup
+          - --host={{ faas_postgres_primary_host }}
+          - --port={{ faas_postgres_primary_port }}
+          - --username=replicator
+          - --no-password
+          - --pgdata={{ faas_postgres_standby_data_dir }}
+          - --wal-method=stream
+          - --slot={{ faas_postgres_standby_slot }}
+          - --checkpoint=fast
+      become: true
+      become_user: postgres
+      environment:
+        PGPASSFILE: /var/lib/postgresql/.pgpass
+      async: "{{ faas_postgres_standby_seed_timeout }}"
+      poll: 30
+      changed_when: true
+
+    - name: postgres_standby — mark the copy as a standby
+      ansible.builtin.copy:
+        dest: "{{ faas_postgres_standby_data_dir }}/standby.signal"
+        content: ""
+        owner: postgres
+        group: postgres
+        mode: "0600"
+
+    # postgres_promote.yml masks PostgreSQL on a primary it retires; seeding
+    # that host as the new standby is the deliberate way back.
+    - name: postgres_standby — unmask a retired primary's cluster
+      ansible.builtin.systemd_service:
+        name: "postgresql@{{ postgres_major_version }}-main.service"
+        masked: false
+
+    - name: postgres_standby — start the replica
+      ansible.builtin.service:
+        name: "postgresql@{{ postgres_major_version }}-main.service"
+        state: started
+
+- name: postgres_standby — apply changed standby settings
+  ansible.builtin.meta: flush_handlers
+
+- name: postgres_standby — keep the replica running across reboots
+  ansible.builtin.service:
+    name: "postgresql@{{ postgres_major_version }}-main.service"
+    state: started
+    enabled: true
+
+- name: postgres_standby — wait until WAL is streaming from the primary
+  ansible.builtin.command:
+    argv: [psql, -X, -A, -t, -c, "SELECT status FROM pg_stat_wal_receiver"]
+  become: true
+  become_user: postgres
+  register: postgres_standby_receiver
+  changed_when: false
+  until: (postgres_standby_receiver.stdout | default('') | trim) == 'streaming'
+  retries: 30
+  delay: 10

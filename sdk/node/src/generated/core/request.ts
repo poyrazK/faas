@@ -82,7 +82,7 @@ export const getQueryString = (params: Record<string, any>): string => {
 };
 
 const getUrl = (config: OpenAPIConfig, options: ApiRequestOptions): string => {
-  const encoder = config.ENCODE_PATH || encodeURI;
+  const encoder = config.ENCODE_PATH || (options.url.startsWith('/v1/apps/{slug}/automations/') ? encodeURIComponent : encodeURI);
 
   const path = options.url
     .replace('{api-version}', config.VERSION)

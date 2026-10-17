@@ -1,4 +1,5 @@
 // adr: 137
+// adr: 1528
 // deadnode_reconciler_test.go — engine-level tests for the
 // stale-RUNNING billing-leak self-healer.
 //
@@ -211,8 +212,11 @@ func TestReconcileDeadNodeInstances_PeerRaceWinner(t *testing.T) {
 	ops := wire.NewOpsMetrics("schedd")
 	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
 	e.WithOpsMetrics(ops)
-	nodeID := seedComputeNodeForReconcile(t, store, false)
+	nodeID := seedComputeNodeForReconcile(t, store, true)
 	_, insID := seedRunningInstance(t, store, nodeID)
+	if err := store.NodeSetLifecycle(t.Context(), nodeID, state.NodeLifecycleActive, state.NodeLifecycleUnavailable); err != nil {
+		t.Fatal(err)
+	}
 
 	// Peer wins: park the row before the reconciler ticks. We use
 	// UpdateInstanceState directly to skip the full snapshot path
@@ -306,7 +310,7 @@ func TestReconcileDeadNodeInstances_RecoveryManagedAppRowsUntouched(t *testing.T
 		t.Run(string(lifecycle), func(t *testing.T) {
 			store := state.NewMemStore()
 			node, err := store.CreateComputeNode(context.Background(), state.ComputeNode{
-				Name: "managed-" + uuid.NewString(), Lifecycle: lifecycle,
+				Name: "managed-" + uuid.NewString(), Lifecycle: state.NodeLifecycleActive,
 				LastHeartbeatAt: time.Now().UTC().Add(-10 * time.Minute),
 				MemMB:           8192, MaxConcurrency: 16,
 			})
@@ -314,6 +318,9 @@ func TestReconcileDeadNodeInstances_RecoveryManagedAppRowsUntouched(t *testing.T
 				t.Fatalf("CreateComputeNode: %v", err)
 			}
 			appID, insID := seedRunningInstance(t, store, node.ID)
+			if err := store.NodeSetLifecycle(t.Context(), node.ID, state.NodeLifecycleActive, lifecycle); err != nil {
+				t.Fatal(err)
+			}
 			threshold := time.Now().UTC().Add(-2 * time.Minute)
 			rows, err := store.ListRunningInstancesOnDeadNodes(context.Background(), threshold, 50)
 			if err != nil {
@@ -336,7 +343,7 @@ func TestReconcileDeadNodeInstances_RecoveryManagedAppRowsUntouched(t *testing.T
 func TestReconcileDeadNodeInstances_JobTaskEligibleDuringDrain(t *testing.T) {
 	store := state.NewMemStore()
 	node, err := store.CreateComputeNode(context.Background(), state.ComputeNode{
-		Name: "job-drain-" + uuid.NewString(), Lifecycle: state.NodeLifecycleDraining,
+		Name: "job-drain-" + uuid.NewString(), Lifecycle: state.NodeLifecycleActive,
 		MemMB: 8192, MaxConcurrency: 16,
 	})
 	if err != nil {
@@ -347,6 +354,9 @@ func TestReconcileDeadNodeInstances_JobTaskEligibleDuringDrain(t *testing.T) {
 		string(state.StateRunning), 256, node.ID, uuid.NewString())
 	if err != nil {
 		t.Fatalf("CreateJobInstance: %v", err)
+	}
+	if err := store.NodeSetLifecycle(t.Context(), node.ID, state.NodeLifecycleActive, state.NodeLifecycleDraining); err != nil {
+		t.Fatal(err)
 	}
 	threshold := time.Now().UTC().Add(-2 * time.Minute)
 	rows, err := store.ListRunningInstancesOnDeadNodes(context.Background(), threshold, 50)

@@ -174,6 +174,7 @@ func renderSuccessfulDeploymentWithOptions(ctx context.Context, c *Client, dep a
 	if appOK {
 		appURL = canonicalAppURL(app)
 	}
+	noHTTP := appOK && servesNoHTTP(app.Manifest.ExecutionMode)
 	if final.CanaryTotalSteps > 0 && final.RolloutState == rolloutStateAborted {
 		reason := final.RolloutAbortedReason
 		if reason == "" {
@@ -221,15 +222,27 @@ func renderSuccessfulDeploymentWithOptions(ctx context.Context, c *Client, dep a
 		} else {
 			PrintProgress(osStdout, "Promotion: inspect current traffic with gregale traffic status %s", appSlug)
 		}
+	} else if noHTTP {
+		// A worker or job has no URL to visit; the cold-wake and access
+		// lines describe request apps only (H10-137).
+		if label := renderRevision(final.Revision); label != "" {
+			PrintOK(osStdout, "Deployed %s.", label)
+		} else {
+			PrintOK(osStdout, "Deployed.")
+		}
 	} else if label := renderRevision(final.Revision); label != "" {
 		PrintOK(osStdout, "Deployed %s. %s", label, appURL)
 	} else {
 		PrintOK(osStdout, "Deployed. %s", appURL)
 	}
-	if !darkDeploy {
+	switch {
+	case darkDeploy:
+	case noHTTP:
+		printDeployNoHTTPSentence(app.Manifest.ExecutionMode, appSlug)
+	default:
 		printDeployColdWakeSentence()
 	}
-	if appOK {
+	if appOK && !noHTTP {
 		renderDeploymentAccess(osStdout, app, appSlug)
 	}
 	if cache := formatArtifactCacheSummary(final.BuildCacheStatus, final.CacheKeySHA256); cache != "" {

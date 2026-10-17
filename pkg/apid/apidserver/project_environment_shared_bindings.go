@@ -332,7 +332,7 @@ func (s *server) cloneSharedObjectStorageBinding(r *http.Request, acct state.Acc
 	if !s.object.ObjectStorageSecretSealReady() {
 		return errors.New("object storage secret sealing is unavailable")
 	}
-	recipient := setSecretRecipient()
+	recipient := hostSecretRecipient()
 	accessKeyID, secretAccessKey, err := api.GenerateObjectS3Credential()
 	if err != nil {
 		return fmt.Errorf("generate isolated object storage credential: %w", err)

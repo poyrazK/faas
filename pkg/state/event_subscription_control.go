@@ -40,6 +40,12 @@ func getSubscriptionControl(ctx context.Context, q *sqlc.Queries, db sqlc.DBTX, 
 		return out, err
 	}
 	if err == nil {
+		stamp, clockErr := q.EventSubscriptionRateClock(ctx, db)
+		if clockErr != nil {
+			return out, clockErr
+		}
+		status, _, _ := subscriptionRateSQL(row, timeFromPgtype(stamp))
+		out.RateLimit = &status
 		out.Paused = row.Paused
 		out.RatePerSecond = int(row.RatePerSecond)
 		out.UpdatedAt = timestamptzToTimePtr(row.UpdatedAt)
@@ -150,7 +156,11 @@ func eventSubscriptionGateTx(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, p 
 	if err != nil {
 		return "", time.Time{}, err
 	}
-	now := time.Now().UTC()
+	stamp, err := q.EventSubscriptionRateClock(ctx, tx)
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	now := timeFromPgtype(stamp)
 	until := timeFromPgtype(row.WindowStartedAt).Add(time.Second)
 	if row.Paused {
 		return "subscription_paused", now.Add(api.EventSubscriptionControlRetryDelay), nil
@@ -158,11 +168,20 @@ func eventSubscriptionGateTx(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, p 
 	if reason, next := circuitAdmissionReason(r, p.claim, time.Now().UTC()); reason != "" {
 		return reason, next, nil
 	}
+	rateStatus, credit, anchor := subscriptionRateSQL(row, now)
+	if rateStatus.RateLimited {
+		return "subscription_rate_limited", subscriptionRateRetry(now, *rateStatus.NextAvailableAt), nil
+	}
 	if row.RatePerSecond > 0 {
 		if row.WindowCount >= row.RatePerSecond && until.After(now) {
 			return "subscription_rate_limited", until, nil
 		}
 		if err = q.EventSubscriptionControlUsePermit(ctx, tx, sqlc.EventSubscriptionControlUsePermitParams{SubscriptionID: row.SubscriptionID, NowAt: pgtypeFromTime(now)}); err != nil {
+			return "", time.Time{}, err
+		}
+	}
+	if row.RateEnabled {
+		if err = q.EventSubscriptionRateConsume(ctx, tx, sqlc.EventSubscriptionRateConsumeParams{SubscriptionID: row.SubscriptionID, CreditMs: credit - row.RateIntervalMs, RefilledAt: pgtypeFromTime(anchor)}); err != nil {
 			return "", time.Time{}, err
 		}
 	}
@@ -173,15 +192,18 @@ func eventSubscriptionControlProgress(previous PublishedEventRecipientProgress, 
 }
 
 type memEventSubscriptionControl struct {
-	MaxPendingDeliveries int
-	AccountID            string
-	AppID                string
-	Paused               bool
-	Rate                 int
-	WindowAt             time.Time
-	WindowCount          int
-	PausedAt             time.Time
-	UpdatedAt            time.Time
+	RateEnabled                                                         bool
+	RateIntervalMS, RateBurst, RateCreditMS, RateRevision, RateSequence int64
+	RateRefilledAt                                                      time.Time
+	MaxPendingDeliveries                                                int
+	AccountID                                                           string
+	AppID                                                               string
+	Paused                                                              bool
+	Rate                                                                int
+	WindowAt                                                            time.Time
+	WindowCount                                                         int
+	PausedAt                                                            time.Time
+	UpdatedAt                                                           time.Time
 }
 
 func (m *MemStore) eventSubscriptionControlTargetLocked(account, app, sub string) bool {
@@ -200,6 +222,8 @@ func (m *MemStore) eventSubscriptionControlTargetLocked(account, app, sub string
 func (m *MemStore) eventSubscriptionControlResponseLocked(account, app, sub string) api.EventSubscriptionDeliveryControl {
 	out := api.EventSubscriptionDeliveryControl{SubscriptionID: canonicalMemUUID(sub), AppID: canonicalMemUUID(app)}
 	if c := m.eventSubscriptionControls[out.SubscriptionID]; c != nil && sameMemUUID(c.AccountID, account) && sameMemUUID(c.AppID, app) {
+		status, _, _ := subscriptionRateMem(c, time.Now().UTC())
+		out.RateLimit = &status
 		out.Paused = c.Paused
 		out.MaxPendingDeliveries = c.MaxPendingDeliveries
 		out.RatePerSecond = c.Rate
@@ -315,6 +339,10 @@ func (m *MemStore) eventSubscriptionWaitingReasonLocked(account, app, sub string
 			return reason
 		}
 	}
+	status, _, _ := subscriptionRateMem(c, now)
+	if status.RateLimited {
+		return "subscription_rate_limited"
+	}
 	if c.Rate > 0 && c.WindowCount >= c.Rate && c.WindowAt.Add(time.Second).After(now) {
 		return "subscription_rate_limited"
 	}
@@ -343,6 +371,14 @@ func (m *MemStore) eventSubscriptionGateLocked(p eventAdmissionPlan) (string, ti
 	}
 	if reason == "subscription_rate_limited" {
 		return reason, c.WindowAt.Add(time.Second)
+	}
+	status, credit, anchor := subscriptionRateMem(c, now)
+	if status.RateLimited {
+		return "subscription_rate_limited", subscriptionRateRetry(now, *status.NextAvailableAt)
+	}
+	if c != nil && c.RateEnabled {
+		c.RateCreditMS = credit - c.RateIntervalMS
+		c.RateRefilledAt = anchor
 	}
 	if c != nil && c.Rate > 0 {
 		if !c.WindowAt.Add(time.Second).After(now) {

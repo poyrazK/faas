@@ -1,36 +1,28 @@
 name: durable-entity-developer-workflow
 on:
   pull_request:
+    # Only this suite's own code. Shared hot paths (pkg/api, pkg/state,
+    # pkg/apid, migrations, go.mod, cmd/gregale) changed on nearly every
+    # pull request; ci.yml runs this suite nightly and in the release gate.
     paths:
       - 'sdk/node/**'
       - 'cmd/gregale/templates/durable-entity-node/**'
       - 'cmd/gregale/durable_entity_project*'
-      - 'cmd/gregale/commands*.go'
-      - 'cmd/gregale/templates/embed.go'
       - 'pkg/durableentity/**'
       - 'cmd/apid/durable_entities*'
       - 'pkg/apid/durable/**'
-      - 'pkg/apid/apidserver/**'
-      - 'cmd/apid/server.go'
       - 'scripts/gen-durable-entity-contract.py'
       - '.github/workflows/durable-entity-developer-workflow.yml'
-  push:
-    branches: [main, codex/durable-entity-developer-workflow]
-    paths:
-      - 'sdk/node/**'
-      - 'cmd/gregale/templates/durable-entity-node/**'
-      - 'pkg/durableentity/**'
-      - 'cmd/apid/durable_entities*'
-      - 'pkg/apid/durable/**'
-      - 'pkg/apid/apidserver/**'
-      - 'cmd/apid/server.go'
-      - '.github/workflows/durable-entity-developer-workflow.yml'
+  # Nightly and release gate: ci.yml calls this workflow.
+  workflow_call:
   workflow_dispatch:
 permissions:
   contents: read
 concurrency:
+  # A literal name: when ci.yml calls this workflow, github.workflow is the
+  # caller's name, which the other called suites would share.
   group: durable-entity-developer-workflow-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   node-starter:
     runs-on: ubuntu-latest

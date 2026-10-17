@@ -58,7 +58,7 @@ func lifecycleFixture(t *testing.T, s state.Store, suffix string) state.Invoice 
 		t.Fatal(err)
 	}
 	return state.Invoice{AccountID: acct.ID, Provider: "polar", ProviderInvoiceID: "order-" + suffix,
-		Status: "paid", Currency: "eur", Plan: api.PlanPro, TotalCents: 1000,
+		Status: "paid", Currency: "usd", Plan: api.PlanPro, TotalCents: 1000,
 		PeriodStart: time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC), PeriodEnd: time.Date(2026, 9, 30, 0, 0, 0, 0, time.UTC),
 		Details: &state.InvoiceDetails{IssuerName: "Invoice seller", PaymentTerms: "Net 30", IssuedAt: "2026-09-30T00:00:00Z", DueAt: "2026-10-30T00:00:00Z",
 			Lines: &state.InvoiceLines{Complete: true, Items: []state.InvoiceLineItem{{ID: "plan", Description: "Plan", ChargeCategory: "Purchase", NetCents: 1000}}}}}
@@ -188,7 +188,7 @@ func testInvoiceLifecycle(t *testing.T, s state.Store) {
 		})
 	}
 	before := lifecycleRecords(t, inv)
-	inv.Currency, inv.Details.IssuedAt = "EUR", "2026-09-29T03:00:00+03:00"
+	inv.Currency, inv.Details.IssuedAt = "USD", "2026-09-29T03:00:00+03:00"
 	inv = deliverLifecycle(t, s, inv)
 	if !reflect.DeepEqual(before, lifecycleRecords(t, inv)) {
 		t.Fatal("equivalent normalized values changed dates")
