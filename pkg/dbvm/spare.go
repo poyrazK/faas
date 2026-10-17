@@ -125,7 +125,8 @@ func (r *Runtime) bootSpare(ctx context.Context, shape SpareShape) (err error) {
 		return err
 	}
 	vm.base = base
-	if err = r.recordVM(vm, vmRecord{DatabaseID: id, Spare: true, Slot: vm.lease.Slot, Major: shape.Major, Base: base, BootedAt: time.Now().UTC()}); err != nil {
+	if err = r.recordVM(vm, vmRecord{DatabaseID: id, Spare: true, Slot: vm.lease.Slot, Major: shape.Major, Base: base,
+		LaunchVersion: launchVersion, BootedAt: time.Now().UTC()}); err != nil {
 		return err
 	}
 	waitCtx, cancel := context.WithTimeout(ctx, r.cfg.BootTimeout)
@@ -245,7 +246,8 @@ func (r *Runtime) adopt(ctx context.Context, vm *databaseVM, spareID string, req
 	vm.header.Store(&header)
 	// From here a restarted vmmd adopts this VM as the database's.
 	if err := r.recordVM(vm, vmRecord{DatabaseID: req.ID, Slot: vm.lease.Slot, Major: req.Major, Base: vm.base, Volume: volume,
-		SpareDir: vm.spareDir, RestoreWindowSeconds: req.RestoreWindowSeconds, BootedAt: time.Now().UTC()}); err != nil {
+		SpareDir: vm.spareDir, RestoreWindowSeconds: req.RestoreWindowSeconds, LaunchVersion: vm.record.LaunchVersion,
+		BootedAt: vm.record.BootedAt}); err != nil {
 		return req.ID, err
 	}
 	if err := patchDrive(ctx, filepath.Join(vm.root, fcvm.APISockName), driveUpdate{

@@ -29,6 +29,11 @@ const vmRecordName = "gregale-vm.json"
 // vmRecordVersion is the record's format.
 const vmRecordVersion = 1
 
+// launchVersion counts changes to how the runtime launches a VM that only
+// a restart applies; a VM recorded with an older one is stale (Stale).
+// 1: memory.high with the writeback burst, the console FIFO, the record.
+const launchVersion = 1
+
 // vmRecord is what a restarted vmmd needs to adopt a running VM.
 type vmRecord struct {
 	Version int `json:"version"`
@@ -52,8 +57,10 @@ type vmRecord struct {
 	PrimaryTarget string `json:"primary_target,omitempty"`
 	// StandbyNode is, on a primary, the node whose standby may stream its
 	// replication (SetStandbyNode).
-	StandbyNode string    `json:"standby_node,omitempty"`
-	BootedAt    time.Time `json:"booted_at"`
+	StandbyNode string `json:"standby_node,omitempty"`
+	// LaunchVersion is the launchVersion the VM was started with.
+	LaunchVersion int       `json:"launch_version"`
+	BootedAt      time.Time `json:"booted_at"`
 }
 
 func (rec vmRecord) validate() error {
@@ -76,6 +83,23 @@ func (rec vmRecord) validate() error {
 		return errors.New("dbvm: record standby node")
 	}
 	return nil
+}
+
+// Stale reports whether a running VM runs an outdated base (a newer
+// PostgreSQL minor or guest-init for its major) or launch, which only a
+// restart replaces (ADR-1027). Unknown VMs and majors are not stale.
+func (r *Runtime) Stale(id string) bool {
+	vm, err := r.running(id)
+	if err != nil {
+		return false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if vm.waiting || vm.record.DatabaseID != id {
+		return false
+	}
+	current, ok := r.cfg.Bases[vm.record.Major]
+	return ok && (vm.base != current || vm.record.LaunchVersion < launchVersion)
 }
 
 // SetStandbyNode records which node's standby may stream this running

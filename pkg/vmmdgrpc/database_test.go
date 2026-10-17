@@ -46,6 +46,8 @@ type fakeDatabaseRuntime struct {
 	holds map[string]dbarchive.Hold
 	// standbyNodes is what SetStandbyNode recorded.
 	standbyNodes map[string]string
+	// stale is what Stale reports.
+	stale bool
 }
 
 func (f *fakeDatabaseRuntime) PutArchiveHold(_ context.Context, id, name string, point time.Time) (dbarchive.Hold, error) {
@@ -140,6 +142,7 @@ func (f *fakeDatabaseRuntime) SetStandbyNode(id, node string) error {
 	return nil
 }
 func (f *fakeDatabaseRuntime) StandbyNodes() map[string]string { return f.standbyNodes }
+func (f *fakeDatabaseRuntime) Stale(string) bool               { return f.stale }
 func (f *fakeDatabaseRuntime) Stop(_ context.Context, id string) error {
 	f.stopped = id
 	return f.err

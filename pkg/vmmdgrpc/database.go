@@ -53,6 +53,8 @@ type DatabaseRuntime interface {
 	SyncArchive(ctx context.Context, id string) (int64, error)
 	ReleaseArchive(ctx context.Context, id string) error
 	Start(ctx context.Context, req dbvm.BootRequest) error
+	// Stale reports a running VM on an outdated base or launch.
+	Stale(id string) bool
 	// SetStandbyNode and StandbyNodes keep a primary's standby node in its
 	// VM's record, which outlives vmmd (ADR-1027).
 	SetStandbyNode(id, node string) error
@@ -403,6 +405,9 @@ func (s *Server) DatabaseControl(ctx context.Context, req *vmmdpb.DatabaseContro
 	}
 	if st := resp.Storage; st != nil {
 		out.Storage = &vmmdpb.DatabaseStorage{TotalBytes: st.TotalBytes, FreeBytes: st.FreeBytes, ReadOnly: st.ReadOnly, Low: st.Low}
+	}
+	if control.Op == dbguest.OpStatus {
+		out.Stale = rt.Stale(req.GetDatabaseId())
 	}
 	if r := resp.Replication; r != nil {
 		out.Replication = &vmmdpb.DatabaseReplicationStatus{Mode: string(r.Mode), Streaming: r.Streaming, Synchronous: r.Synchronous, LagBytes: r.LagBytes}

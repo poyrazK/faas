@@ -2843,6 +2843,9 @@ message DatabaseControlResponse {
   DatabaseImportStatus import = 8;
   // A ready database's volume (ADR-1027 storage guard).
   DatabaseStorage storage = 9;
+  // The VM runs an outdated base or launch, which a restart replaces;
+  // vmmd sets it, never the guest.
+  bool stale = 10;
 }
 
 message DatabaseStorage {

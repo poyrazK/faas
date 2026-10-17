@@ -179,6 +179,21 @@ func TestMetalRuntimeAdoptsVMsAfterARestart(t *testing.T) {
 	}
 	_ = conn.Close(ctx)
 
+	// A new base for its major makes it stale until it restarts.
+	if rt2.Stale(id) {
+		t.Fatal("an adopted VM on the current base is stale")
+	}
+	newBase := filepath.Join(env.workdir, "base-postgres-17-next.ext4")
+	_ = os.Remove(newBase)
+	if err := os.Link(env.base, newBase); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Remove(newBase) })
+	rt2.SetBase(17, newBase)
+	if !rt2.Stale(id) {
+		t.Fatal("a VM on the previous base is not stale")
+	}
+
 	// The new vmmd stops it cleanly and leaves nothing behind.
 	if err := rt2.Stop(ctx, id); err != nil {
 		t.Fatal(err)
@@ -201,6 +216,9 @@ func TestMetalRuntimeAdoptsVMsAfterARestart(t *testing.T) {
 	rt2.mu.Unlock()
 	if _, err := rt2.WaitState(ctx, id, dbguest.StateReady); err != nil {
 		t.Fatal(err)
+	}
+	if rt2.Stale(id) {
+		t.Fatal("a VM booted on the current base is stale")
 	}
 	conn = connectRuntime(ctx, t, rt2, id, password)
 	defer func() { _ = conn.Close(ctx) }()

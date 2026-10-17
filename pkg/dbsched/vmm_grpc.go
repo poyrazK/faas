@@ -288,7 +288,8 @@ func (g *GRPCVMM) Control(ctx context.Context, node Node, id string, req dbguest
 	if err != nil {
 		return dbguest.Response{}, err
 	}
-	out := dbguest.Response{State: dbguest.State(resp.GetState()), Major: int(resp.GetPostgresMajor()), Error: resp.GetErrorCode(), SQLState: resp.GetSqlstate(), Backup: resp.GetBackup()}
+	out := dbguest.Response{State: dbguest.State(resp.GetState()), Major: int(resp.GetPostgresMajor()), Error: resp.GetErrorCode(), SQLState: resp.GetSqlstate(), Backup: resp.GetBackup(),
+		Stale: resp.GetStale()}
 	if resp.GetRecoveredTo() != nil {
 		out.RecoveredTo = resp.GetRecoveredTo().AsTime()
 	}

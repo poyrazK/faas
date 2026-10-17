@@ -257,11 +257,23 @@ func NewRuntime(cfg RuntimeConfig) (*Runtime, error) {
 }
 
 // SetBase makes path the base image for new boots of major. Running VMs
-// keep the base they booted from: it is bind-mounted into their jail.
+// keep the base they booted from (it is bind-mounted into their jail) and
+// report Stale until they restart. Waiting spares on another base would
+// hand it to the next wake, so they stop, and the pool refills.
 func (r *Runtime) SetBase(major int, path string) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	r.cfg.Bases[major] = path
+	var retired []string
+	for id, vm := range r.vms {
+		if vm.waiting && vm.spare.Major == major && vm.base != path {
+			vm.waiting = false
+			retired = append(retired, id)
+		}
+	}
+	r.mu.Unlock()
+	for _, id := range retired {
+		go func() { _ = r.Stop(context.Background(), id) }()
+	}
 }
 
 func (r *Runtime) base(major int) (string, bool) {
@@ -435,7 +447,7 @@ func (r *Runtime) Start(ctx context.Context, req BootRequest) (err error) {
 	}
 	if err = r.recordVM(vm, vmRecord{DatabaseID: req.ID, Slot: vm.lease.Slot, Major: req.Major, Base: base, Volume: volume,
 		RestoreSource: req.RestoreSource, RestoreWindowSeconds: req.RestoreWindowSeconds,
-		PrimaryNode: req.PrimaryNode, PrimaryTarget: req.PrimaryTarget, BootedAt: time.Now().UTC()}); err != nil {
+		PrimaryNode: req.PrimaryNode, PrimaryTarget: req.PrimaryTarget, LaunchVersion: launchVersion, BootedAt: time.Now().UTC()}); err != nil {
 		return err
 	}
 	waitCtx, cancel := context.WithTimeout(ctx, r.cfg.BootTimeout)

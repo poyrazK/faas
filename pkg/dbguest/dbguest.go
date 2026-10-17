@@ -324,6 +324,9 @@ type Response struct {
 	Import *ImportStatus `json:"import,omitempty"`
 	// Storage is the volume's use, on a ready database.
 	Storage *StorageStatus `json:"storage,omitempty"`
+	// Stale is set by the host, never the guest: the VM runs an outdated
+	// base or launch, which a restart replaces.
+	Stale bool `json:"-"`
 }
 
 // StorageStatus reports a database's volume. ReadOnly is the storage

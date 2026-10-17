@@ -12192,7 +12192,10 @@ type DatabaseControlResponse struct {
 	// import and import_status only.
 	Import *DatabaseImportStatus `protobuf:"bytes,8,opt,name=import,proto3" json:"import,omitempty"`
 	// A ready database's volume (ADR-1027 storage guard).
-	Storage       *DatabaseStorage `protobuf:"bytes,9,opt,name=storage,proto3" json:"storage,omitempty"`
+	Storage *DatabaseStorage `protobuf:"bytes,9,opt,name=storage,proto3" json:"storage,omitempty"`
+	// The VM runs an outdated base or launch, which a restart replaces;
+	// vmmd sets it, never the guest.
+	Stale         bool `protobuf:"varint,10,opt,name=stale,proto3" json:"stale,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -12288,6 +12291,13 @@ func (x *DatabaseControlResponse) GetStorage() *DatabaseStorage {
 		return x.Storage
 	}
 	return nil
+}
+
+func (x *DatabaseControlResponse) GetStale() bool {
+	if x != nil {
+		return x.Stale
+	}
+	return false
 }
 
 type DatabaseStorage struct {
@@ -13421,7 +13431,7 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\fsource_major\x18\x05 \x01(\x05R\vsourceMajor\x12!\n" +
 	"\foperation_id\x18\x06 \x01(\tR\voperationId\x12-\n" +
 	"\x12missing_extensions\x18\a \x03(\tR\x11missingExtensions\x122\n" +
-	"\x15required_volume_bytes\x18\b \x01(\x03R\x13requiredVolumeBytes\"\xbd\x03\n" +
+	"\x15required_volume_bytes\x18\b \x01(\x03R\x13requiredVolumeBytes\"\xd3\x03\n" +
 	"\x17DatabaseControlResponse\x12\x14\n" +
 	"\x05state\x18\x01 \x01(\tR\x05state\x12%\n" +
 	"\x0epostgres_major\x18\x02 \x01(\x05R\rpostgresMajor\x12\x1d\n" +
@@ -13432,7 +13442,9 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\frecovered_to\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\vrecoveredTo\x12P\n" +
 	"\vreplication\x18\a \x01(\v2..onebox.faas.vmmd.v1.DatabaseReplicationStatusR\vreplication\x12A\n" +
 	"\x06import\x18\b \x01(\v2).onebox.faas.vmmd.v1.DatabaseImportStatusR\x06import\x12>\n" +
-	"\astorage\x18\t \x01(\v2$.onebox.faas.vmmd.v1.DatabaseStorageR\astorage\"\x80\x01\n" +
+	"\astorage\x18\t \x01(\v2$.onebox.faas.vmmd.v1.DatabaseStorageR\astorage\x12\x14\n" +
+	"\x05stale\x18\n" +
+	" \x01(\bR\x05stale\"\x80\x01\n" +
 	"\x0fDatabaseStorage\x12\x1f\n" +
 	"\vtotal_bytes\x18\x01 \x01(\x03R\n" +
 	"totalBytes\x12\x1d\n" +

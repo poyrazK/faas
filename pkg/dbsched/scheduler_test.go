@@ -40,8 +40,10 @@ type fakeVMM struct {
 	restoreFail  bool
 	restoreHold  chan struct{}
 	flushes      map[string]time.Time
-	// storage is what a ready guest reports about its volume.
+	// storage is what a ready guest reports about its volume; stale marks
+	// "node/id" VMs on an outdated base.
 	storage map[string]*dbguest.StorageStatus
+	stale   map[string]bool
 	// onNode records node-scoped calls as "op@node"; volNode is where each
 	// volume was created.
 	onNode       []string
@@ -125,7 +127,7 @@ func (f *fakeVMM) DeleteHold(_ context.Context, node Node, id, name string) erro
 }
 
 func newFakeVMM() *fakeVMM {
-	return &fakeVMM{volumes: map[string]bool{}, running: map[string]bool{}, restoring: map[string]bool{}, flushes: map[string]time.Time{}, volNode: map[string]string{}, storage: map[string]*dbguest.StorageStatus{},
+	return &fakeVMM{volumes: map[string]bool{}, running: map[string]bool{}, restoring: map[string]bool{}, flushes: map[string]time.Time{}, volNode: map[string]string{}, storage: map[string]*dbguest.StorageStatus{}, stale: map[string]bool{},
 		primaryOn: map[string]string{}, standbyOn: map[string]string{}, standbyVol: map[string]string{}, replMode: map[string]dbguest.ReplicationMode{},
 		unsynced: map[string]bool{}, promoted: map[string]string{}, imports: map[string]dbguest.ImportStatus{}, down: map[string]bool{}}
 }
@@ -277,7 +279,9 @@ func (f *fakeVMM) Control(_ context.Context, node Node, id string, req dbguest.R
 		return dbguest.Response{}, errNodeDown
 	}
 	if f.standbyOn[id] == node.ID && f.primaryOn[id] != node.ID {
-		return f.standbyControl(node, id, req), nil
+		resp := f.standbyControl(node, id, req)
+		resp.Stale = f.stale[node.ID+"/"+id]
+		return resp, nil
 	}
 	if !f.running[id] {
 		return dbguest.Response{}, ErrVMNotRunning
@@ -328,7 +332,7 @@ func (f *fakeVMM) Control(_ context.Context, node Node, id string, req dbguest.R
 	if !f.volumes[id] {
 		return dbguest.Response{State: dbguest.StateNeedsBootstrap}, nil
 	}
-	return dbguest.Response{State: dbguest.StateReady, Storage: f.storage[id]}, nil
+	return dbguest.Response{State: dbguest.StateReady, Storage: f.storage[id], Stale: f.stale[node.ID+"/"+id]}, nil
 }
 
 func (f *fakeVMM) callCount(call string) int {

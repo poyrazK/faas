@@ -17,6 +17,8 @@ type Metrics struct {
 	standbyDrops *prometheus.CounterVec
 	moves        *prometheus.CounterVec
 	storage      *prometheus.GaugeVec
+	stale        prometheus.Gauge
+	staleRestart *prometheus.CounterVec
 	catalog      *catalogCollector
 }
 
@@ -56,9 +58,17 @@ func NewMetrics(reg prometheus.Registerer, prefix string) *Metrics {
 			Name: prefix + "_database_storage",
 			Help: "Running native databases at the last storage sample, by level: sampled, low (short of the space that would end read-only), read_only (the storage guard turned the primary read-only).",
 		}, []string{"level"}),
+		stale: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: prefix + "_database_stale_vms",
+			Help: "Running native databases on an outdated base (PostgreSQL minor, guest-init) or launch at the last sample, their standbys included; only a restart replaces either.",
+		}),
+		staleRestart: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: prefix + "_database_stale_restarts_total",
+			Help: "Idle always-on databases restarted onto the current base, by result (ok, failed).",
+		}, []string{"result"}),
 		catalog: newCatalogCollector(prefix),
 	}
-	reg.MustRegister(m.failovers, m.standbyDrops, m.moves, m.storage, m.catalog)
+	reg.MustRegister(m.failovers, m.standbyDrops, m.moves, m.storage, m.stale, m.staleRestart, m.catalog)
 	return m
 }
 
@@ -86,6 +96,18 @@ func (m *Metrics) sampledStorage(s StorageSample) {
 	m.storage.WithLabelValues("sampled").Set(float64(s.Sampled))
 	m.storage.WithLabelValues("low").Set(float64(s.Low))
 	m.storage.WithLabelValues("read_only").Set(float64(s.ReadOnly))
+	m.stale.Set(float64(s.Stale))
+}
+
+func (m *Metrics) restartedStale(err error) {
+	if m == nil {
+		return
+	}
+	result := "ok"
+	if err != nil {
+		result = "failed"
+	}
+	m.staleRestart.WithLabelValues(result).Inc()
 }
 
 func (m *Metrics) moved(err error) {

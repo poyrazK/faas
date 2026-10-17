@@ -189,10 +189,28 @@ the adopted relay after its walsender was cut: a held synchronous commit
 finished in 263 ms. A spare-born database VM was adopted through its spare
 directory, while the waiting spare was stopped and its directory removed.
 
-Not yet done: an adopted VM keeps the base and guest-init it booted from
-(both are recorded) until it next stops. A scale-to-zero database picks up
-a new base at its next wake, but an always-on one does not. Rolling stale
-bases is the follow-up.
+### Rolling stale VMs
+
+Because VMs outlive vmmd, a release reaches a running database only
+through a restart. That covers a new PostgreSQL minor (the image digest
+for its major), a new guest-init (both name the base), and launch
+settings such as the cgroup limits. vmmd's status reports `stale` for a
+VM whose base differs from its major's current one, or whose record
+carries an older `launchVersion`. When the base changes, waiting spares
+on the old one stop, so a wake never adopts an outdated spare.
+
+schedd's 2-minute sample counts stale databases, a replicated one's
+standby node included (`schedd_database_stale_vms`). It restarts up to
+two always-on databases per sample, each idle for 2 minutes and not
+importing: a park, which stops a standby after its primary, then a wake
+on the current base. A scale-to-zero database picks the base up at its
+next idle park. `FaasDatabaseStaleVMs` warns when some stayed stale for a
+day because they never went idle. Today an operator restarts those only
+by moving them to another node. On metal, an adopted VM turned stale when its major's base
+changed and was current again after a restart.
+
+Not yet done: an operator restart in place, and a planned switchover
+that patches a busy production database without stopping it.
 
 ### schedd surface
 

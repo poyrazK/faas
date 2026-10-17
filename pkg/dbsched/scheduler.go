@@ -200,6 +200,12 @@ type Config struct {
 	// StorageSampleInterval spaces the idle sweep's storage samples of
 	// running databases (default 2 min).
 	StorageSampleInterval time.Duration
+	// StaleIdle is how long a stale always-on database must have been
+	// idle before a sample restarts it onto the current base (default
+	// 2 min); StaleRestarts caps the restarts per sample (default 2;
+	// negative restarts none).
+	StaleIdle     time.Duration
+	StaleRestarts int
 	// AutoFailoverAfter fails a running replicated database over to its
 	// synchronized standby once its primary's node has not answered for
 	// this long (default 30 s; negative leaves failover to the operator's
@@ -326,6 +332,12 @@ func New(store Store, vmm VMM, cfg Config, log *slog.Logger) *Scheduler {
 	}
 	if cfg.StorageSampleInterval <= 0 {
 		cfg.StorageSampleInterval = 2 * time.Minute
+	}
+	if cfg.StaleIdle <= 0 {
+		cfg.StaleIdle = 2 * time.Minute
+	}
+	if cfg.StaleRestarts == 0 {
+		cfg.StaleRestarts = 2
 	}
 	if cfg.AutoFailoverAfter == 0 {
 		cfg.AutoFailoverAfter = 30 * time.Second

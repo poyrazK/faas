@@ -156,7 +156,30 @@ take `sum`.
 | `schedd_database_failovers_total{trigger,result}` | Failovers by `lost_node`, `running` or `parked`. |
 | `schedd_database_standby_drops_total{reason}` | Standbys given up (`lagging`, `node_gone`, `stale_claim`). |
 | `schedd_database_moves_total{result}` | Moves between nodes. |
+| `schedd_database_stale_vms` | Running databases (or their standbys) on an outdated base or launch at the last sample. |
+| `schedd_database_stale_restarts_total{result}` | Idle always-on databases schedd restarted onto the current base. |
 | `schedd_database_storage{level}` | Running databases at the last storage sample (every 2 min): `sampled`, `low` (short of the space that ends read-only), `read_only`. |
+
+### FaasDatabaseStaleVMs (warn)
+
+Database VMs survive vmmd restarts, so a release changes a running
+database only when it restarts. That covers a new PostgreSQL minor (the
+image digest for its major), a new guest-init, or launch settings such as
+the cgroup limits. vmmd reports a VM as stale while it runs a base or
+launch older than the node's current one. Every 2 minutes schedd restarts
+up to two stale always-on databases that have been idle for 2 minutes:
+it parks them and wakes them on the current base, standby included. A
+scale-to-zero database picks the new base up at its next idle park.
+
+The alert fires when some stayed stale for a day, because they never went
+idle. A security minor should not wait for that.
+
+1. `journalctl -u faas-schedd | grep 'stale'` lists the restarts schedd
+   made. The databases still stale are the running ones that vmmd's
+   status reports `stale` for.
+2. There is no in-place restart command yet. A database move restarts the
+   database on its target node, copying its volume (see "Moving one
+   database"). Otherwise the database restarts at its next idle moment.
 
 ### FaasDatabaseStorageReadOnly (warn)
 
