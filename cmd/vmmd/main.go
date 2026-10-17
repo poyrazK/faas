@@ -938,6 +938,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if cfg.NativeProcessRecovery {
 		jailer.WithNativeProcessRecovery()
 	}
+	admissionNodeID, err := runtimeAdmissionNodeID(ctx, store, nodeID)
+	if err != nil {
+		return err
+	}
 	mgr := fcvm.NewManager(
 		wire.ExecRunner{},
 		jailer,
@@ -946,7 +950,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		log,
 		cbm,
 	).WithFrameworkReady(frm).
-		WithRuntimeAdmissionNodeID(nodeID).
+		WithRuntimeAdmissionNodeID(admissionNodeID).
 		WithCaptureRunner(wire.ExecRunner{}).
 		WithPrivateNetworkTransport(privateNetworkTransport).
 		WithDiskMetrics(dsm).
