@@ -447,3 +447,6 @@ See [preview admission reservations](internal-frontend-hosting-preview-reservati
 See [terminal CI cancellation](internal-frontend-hosting-cancellation.md) for default-off operator recovery of abandoned runs.
 
 See [local frontend serving preview](internal-frontend-hosting-local-preview.md) for default-off, credential-free build inspection before upload.
+
+See [deployment planning](internal-frontend-hosting-planning.md) for a default-off,
+read-only comparison of local output and prospective capacity before upload.

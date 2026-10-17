@@ -12,7 +12,7 @@ import (
 // ReviewRelease binds immutable manifests to the observed site's active release
 // and revision. Missing baselines are errors, never interpreted as an empty site.
 func ReviewRelease(site api.HostingSite, releases []api.HostingRelease, target string) (api.HostingReleaseReview, error) {
-	out := api.HostingReleaseReview{SiteID: site.ID, ExpectedRevision: site.Revision, BaseReleaseID: site.ActiveReleaseID, ReleaseID: target, Files: []api.HostingFileChange{}}
+	out := api.HostingReleaseReview{SiteID: site.ID, ExpectedRevision: site.Revision, BaseReleaseID: site.ActiveReleaseID, ReleaseID: target}
 	invalid := errors.New("release comparison unavailable: refresh the active site and verified releases")
 	if site.Status != "active" || site.Revision < 1 {
 		return out, invalid
@@ -35,26 +35,40 @@ func ReviewRelease(site api.HostingSite, releases []api.HostingRelease, target s
 	if after == nil || after.State != "ready" || site.ActiveReleaseID != "" && (before == nil || before.State != "ready") {
 		return out, invalid
 	}
-	old := map[string]api.HostingFile{}
+	var baseline *api.HostingManifest
 	if before != nil {
-		if ValidateManifest(before.Manifest) != nil {
-			return out, invalid
-		}
-		out.BeforeSettings = api.HostingReleaseSettings{SPAFallback: before.Manifest.SPAFallback, Config: before.Manifest.Config}
-		for _, f := range before.Manifest.Files {
-			old[f.Path] = f
-			out.BeforeBytes += f.Size
-		}
-	}
-	if ValidateManifest(after.Manifest) != nil {
-		return out, invalid
+		baseline = &before.Manifest
 	}
 	if after.Provenance != nil {
 		p := *after.Provenance
 		out.Provenance = &p
 	}
-	out.AfterSettings = api.HostingReleaseSettings{SPAFallback: after.Manifest.SPAFallback, Config: after.Manifest.Config}
-	for _, f := range after.Manifest.Files {
+	var err error
+	out.HostingManifestDiff, err = compareManifests(baseline, after.Manifest)
+	if err != nil {
+		return out, invalid
+	}
+	return out, nil
+}
+
+func compareManifests(before *api.HostingManifest, after api.HostingManifest) (api.HostingManifestDiff, error) {
+	out := api.HostingManifestDiff{Files: []api.HostingFileChange{}}
+	if err := ValidateManifest(after); err != nil {
+		return out, err
+	}
+	old := map[string]api.HostingFile{}
+	if before != nil {
+		if err := ValidateManifest(*before); err != nil {
+			return out, err
+		}
+		out.BeforeSettings = api.HostingReleaseSettings{SPAFallback: before.SPAFallback, Config: before.Config}
+		for _, f := range before.Files {
+			old[f.Path] = f
+			out.BeforeBytes += f.Size
+		}
+	}
+	out.AfterSettings = api.HostingReleaseSettings{SPAFallback: after.SPAFallback, Config: after.Config}
+	for _, f := range after.Files {
 		out.AfterBytes += f.Size
 		prev, exists := old[f.Path]
 		delete(old, f.Path)

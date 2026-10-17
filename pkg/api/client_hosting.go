@@ -94,6 +94,12 @@ func (c *Client) GetHostingCapabilities(ctx context.Context) (HostingCapabilitie
 	return out, err
 }
 
+func (c *Client) GetHostingUsage(ctx context.Context) (HostingUsage, error) {
+	var out HostingUsage
+	err := c.do(ctx, http.MethodGet, "/v1/internal/hosting/usage", nil, &out)
+	return out, err
+}
+
 func (c *Client) ListHostingPreviews(ctx context.Context, site string) ([]HostingPreview, error) {
 	var out []HostingPreview
 	err := c.do(ctx, http.MethodGet, hostingSitePath(site)+"/previews", nil, &out)

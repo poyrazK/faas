@@ -4,6 +4,10 @@ This workflow uses the existing default-off internal hosting API, CLI and
 dashboard gates. It adds no public entitlement, provider provisioning or new
 serving service. See [ADR-202610161920](adr/202610161920-staged-internal-hosting-releases.md).
 
+Before allocating a release, use the independently gated
+[local deployment planner](internal-frontend-hosting-planning.md) to compare built
+output with production and inspect prospective quota usage without uploading.
+
 ## Stage a verified release
 
 After upgrading all writers and publishers as described below:
