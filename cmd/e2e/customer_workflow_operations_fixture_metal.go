@@ -18,6 +18,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -325,10 +326,13 @@ func (f *customerWorkflowFixture) cleanResultFiles(t *testing.T) {
 	}
 }
 
+// mustCustomerWorkflow names its caller's line: fixture setup runs inside helpers, so
+// t.Helper alone would attribute every setup failure to the test function.
 func mustCustomerWorkflow(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {
-		t.Fatal(err)
+		_, file, line, _ := runtime.Caller(1)
+		t.Fatalf("%s:%d: %v", filepath.Base(file), line, err)
 	}
 }
 func customerWorkflowEventually(t *testing.T, budget time.Duration, label string, ready func() bool) {
