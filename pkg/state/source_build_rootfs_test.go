@@ -429,3 +429,20 @@ func TestSourceRuntimeClaimAllowed(t *testing.T) {
 		}
 	}
 }
+
+// H10-140: an unsigned build stamps the runner base while the deployment is
+// in flight, and only a shared runner base.
+func TestMemSetDeploymentRuntimeBase(t *testing.T) {
+	s := NewMemStore()
+	_, app, dep, _, _ := buildExportFixtureClaim(t, s, AppTypeApp, "", "")
+	if err := s.SetDeploymentRuntimeBase(t.Context(), dep.ID, "python312"); !errors.Is(err, ErrInvalidArgument) {
+		t.Fatalf("non-shared runtime accepted: %v", err)
+	}
+	if err := s.SetDeploymentRuntimeBase(t.Context(), dep.ID, "node24"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.DeploymentByID(t.Context(), dep.ID)
+	if err != nil || got.RuntimeBase != "node24" || got.AppID != app.ID {
+		t.Fatalf("runtime base = %q (%v), want node24", got.RuntimeBase, err)
+	}
+}

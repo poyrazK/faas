@@ -4,7 +4,7 @@
 /* eslint-disable */
 import type { BillingProvider } from './BillingProvider.js';
 /**
- * A finalized statement's invoice in the account's billing provider (ADR-1300, ADR-1305).
+ * A finalized statement's invoice in the account's billing provider (ADR-1502, ADR-1507).
  */
 export type StatementInvoiceExportResponse = {
   statement_id: string;
@@ -34,7 +34,7 @@ export type StatementInvoiceExportResponse = {
   completed_at?: string;
   source_kind?: 'app_consumer' | 'platform_tenant';
   /**
-   * The provider invoice's status as last read by Gregale (ADR-1302, ADR-1305); deleted means the provider no longer has it. Absent until the first sync.
+   * The provider invoice's status as last read by Gregale (ADR-1504, ADR-1507); deleted means the provider no longer has it. Absent until the first sync.
    */
   payment_status?: 'draft' | 'open' | 'paid' | 'void' | 'uncollectible' | 'deleted';
   amount_paid_minor?: number;

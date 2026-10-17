@@ -29,7 +29,7 @@ type fakeStripe struct {
 	amounts     []string
 	failNextAdd bool
 	// payments maps an invoice ID to the invoice JSON GET /v1/invoices/{id}
-	// returns (ADR-1302); unknown invoices are 404.
+	// returns (ADR-1504); unknown invoices are 404.
 	payments map[string]string
 	// trackDrafts reports created invoices as drafts until finalized
 	// (ADR-1311); collection and finalized record what Stripe was asked.
@@ -134,7 +134,7 @@ func withBillingKeys(t *testing.T) {
 	t.Cleanup(func() { *apidserver.MfaRecipient, *apidserver.MfaIdentities = prevRecipient, prevIdentities })
 }
 
-// adr: 1300 — a finalized statement becomes one draft Stripe invoice; a
+// adr: 1502 — a finalized statement becomes one draft Stripe invoice; a
 // failed export resumes the same invoice and never duplicates items.
 func TestExportAPIConsumerUsageStatementToStripe(t *testing.T) {
 	withBillingKeys(t)

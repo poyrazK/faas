@@ -1,0 +1,29 @@
+# ADR-1507: Paddle and Lago statement exports
+
+- **Status:** accepted
+- **Date:** 2026-10-14
+- **Decision:** Statement exports, billing runs and payment status (ADR-1502–1504) work with Paddle Billing and Lago as well as Stripe. Each provider implements one interface: check a key, create or resume an invoice for a statement, read its payment status, and link to it. The API and CLI name the provider instead of hard-coding Stripe.
+  - **Connections.** `PUT/GET/DELETE /v1/account/billing-connections/{provider}` stores one sealed key per provider (`stripe`, `paddle`, `lago`). A Lago connection also stores the API URL: `https://api.getlago.com` by default, the EU region, or a self-hosted HTTPS URL.
+  - **Exports.** `POST /…/usage-statements/{id}/invoice` takes `provider` (default `stripe`) and `customer`, and `GET /…/invoice` returns the export. They replace the unreleased `/stripe-invoice` paths. A statement still has at most one export, whichever provider took it, so it can never be invoiced twice across providers. Billing runs and schedules accept `export: stripe|paddle|lago`.
+  - **Paddle.** An export creates a manually collected transaction: non-catalog items, `billing_details.payment_terms` of 30 days, and `custom_data` naming the export and statement.
+    - **Drafts only.** It carries no address and is never marked `billed`, so it stays `draft` until the operator completes and bills it in Paddle, matching Stripe's drafts-only rule.
+    - **Customers and currencies.** Customers are `ctm_…` IDs. Paddle only allows USD, EUR and GBP for manual collection.
+    - **Status.** `draft` and `ready` map to draft, `billed` and `past_due` to open, `paid` and `completed` to paid, and `canceled` to void. The due date is `billed_at` plus the payment terms. The hosted URL is the transaction's checkout URL.
+  - **Lago.** An export creates a one-off invoice from fees on the add-on `gregale_usage`, which Gregale creates if it is missing. `skip_psp` is set, so Lago never sends the invoice to a payment provider.
+    - **Issued, not drafted.** Lago finalizes one-off invoices at creation; Lago has no draft one-off invoices. Choosing Lago means the invoice is issued at export. Whether Lago emails it depends on the operator's Lago settings.
+    - **Customers.** The customer is the Lago `external_customer_id`.
+    - **Status.** Lago's `status` and `payment_status` map to draft, open, paid, void or deleted. `payment_due_date` and `web_url` fill the due date and hosted URL.
+- **Why:** Many API businesses bill through Paddle (merchant of record) or run Lago (open-source usage billing). Exports, runs and payment tracking were Stripe-only.
+- **Consequences:**
+  - **Lines.** Every provider gets one item per statement line, priced in the minor unit, plus Stripe's rounding item where needed. Paddle and Lago reject negative amounts, so a re-rated adjustment with negative lines, a negative rounding item, or a statement with more than 100 lines exports as one summary item for the statement total. A statement whose total is negative cannot go to Paddle or Lago; issue a credit note there instead. Totals always equal the statement total rounded to the cent.
+  - **Self-hosted Lago.** Lago calls go through the same egress guard as outbound webhooks, so an `api_url` cannot reach loopback, private or metadata addresses. Lago has no test mode, so a Lago connection is always live.
+  - **Resuming without duplicates.**
+    - **Stripe:** unchanged; idempotency keys and per-line metadata.
+    - **Paddle:** it has no idempotency keys. A retry lists the customer's recent transactions and adopts the one whose `custom_data.gregale_export_id` matches before creating another. Creation is a single request, so the transaction is complete when it exists.
+    - **Lago:** a retry looks up `metadata[gregale_export_id]` first. Gregale sets that metadata right after creating the invoice. A crash between Lago's response and that update can leave one unlinked invoice; the export then reports it as a conflict for the operator to void, rather than issue a second one.
+  - **Verification.** The clients follow Paddle's and Lago's published API references (Paddle API version 1; Lago OpenAPI 1.55). Tests run against recorded-shape fakes. No live sandbox account was available while building this.
+  - **Migration.** The provider checks on connections, exports, billing runs and schedules allow `paddle` and `lago`. Connections gain a nullable `api_url`.
+- **Rejected alternatives:**
+  - Sending usage events to Lago and letting Lago price them would bypass statements, ADR-949's revisions and the handoff rules, and bill twice when other providers are used.
+  - Marking Paddle transactions `billed` would make Gregale issue invoices on the operator's behalf, which ADR-1502 rules out.
+  - Chargebee and other providers can follow the same interface when asked for.

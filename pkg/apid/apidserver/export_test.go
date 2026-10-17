@@ -211,6 +211,8 @@ const RuntimeConfigS3 = runtimeConfigS3
 const SafeReleaseEmergencyGrace = safeReleaseEmergencyGrace
 const ScanSpoolRootEnv = scanSpoolRootEnv
 const ScheddMetricsDiscoveryPath = scheddMetricsDiscoveryPath
+const GatewaydPublicEdgeMetricsDiscoveryPath = gatewaydPublicEdgeMetricsDiscoveryPath
+const CloudflaredMetricsDiscoveryPath = cloudflaredMetricsDiscoveryPath
 const ServiceCallerKeysCacheControl = serviceCallerKeysCacheControl
 const SessionCookie = sessionCookie
 const SessionCookieLifetime = sessionCookieLifetime
@@ -458,6 +460,11 @@ var NewPgBackupPushedSampler = newPgBackupPushedSampler
 var NewPreviewJanitor = newPreviewJanitor
 var NewProjectLifecycleFixture = newProjectLifecycleFixture
 var NewRuntimeConfigManager = newRuntimeConfigManager
+
+func (s *server) ConfigureHostingForTest(getenv func(string) string) error {
+	return s.configureHosting(getenv)
+}
+
 var NewSafeReleaseLeaseMetrics = newSafeReleaseLeaseMetrics
 var NewServer = newServer
 var NewServerWithDeps = newServerWithDeps
@@ -1212,6 +1219,12 @@ func (r *server) SavedProfilePage(p0 http.ResponseWriter, p1 *http.Request, p2 s
 }
 func (r *server) ScheddMetricsDiscovery(p0 http.ResponseWriter, p1 *http.Request) {
 	r.scheddMetricsDiscovery(p0, p1)
+}
+func (r *server) GatewaydPublicEdgeMetricsDiscovery(p0 http.ResponseWriter, p1 *http.Request) {
+	r.gatewaydPublicEdgeMetricsDiscovery(p0, p1)
+}
+func (r *server) CloudflaredMetricsDiscovery(p0 http.ResponseWriter, p1 *http.Request) {
+	r.cloudflaredMetricsDiscovery(p0, p1)
 }
 func (r *server) SendTestAlertPresetCore(p0 context.Context, p1 state.Account, p2 string, p3 string) (api.TestAlertPresetResponse, *api.Problem) {
 	return r.sendTestAlertPresetCore(p0, p1, p2, p3)

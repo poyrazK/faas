@@ -11,7 +11,7 @@ import (
 )
 
 // billConsumer drafts, checks, finalizes and exports one app consumer's
-// month (ADR-1301). It sets the item's outcome, or returns a transient
+// month (ADR-1503). It sets the item's outcome, or returns a transient
 // problem to retry.
 func (s *Service) billConsumer(ctx context.Context, acct state.Account, run state.BillingRun, item *state.BillingRunItem) *api.Problem {
 	consumer, err := s.Host.Store().GetAPIConsumerByID(ctx, acct.ID, item.SourceID)

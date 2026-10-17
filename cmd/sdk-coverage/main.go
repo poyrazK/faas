@@ -47,6 +47,48 @@ const (
 // Mirror logic in cmd/apid/spec_compliance_test.go::routeExclude;
 // keep both in sync.
 var routeExclude = map[string]bool{
+	// ADR-202610171453: default-off internal hosting is absent from public OpenAPI/SDK discovery.
+	"DELETE /v1/internal/hosting/sites/{site}":                                     true,
+	"DELETE /v1/internal/hosting/sites/{site}/automation-credentials/{credential}": true,
+	"DELETE /v1/internal/hosting/sites/{site}/domains/{domain}":                    true,
+	"DELETE /v1/internal/hosting/sites/{site}/oidc-trusts/{trust}":                 true,
+	"DELETE /v1/internal/hosting/sites/{site}/previews/{preview}":                  true,
+	"DELETE /v1/internal/hosting/sites/{site}/releases/{release}":                  true,
+	"GET /v1/internal/hosting/capabilities":                                        true,
+	"GET /v1/internal/hosting/sites":                                               true,
+	"GET /v1/internal/hosting/sites/{site}":                                        true,
+	"GET /v1/internal/hosting/sites/{site}/automation-credentials":                 true,
+	"GET /v1/internal/hosting/sites/{site}/ci/{run}":                               true,
+	"GET /v1/internal/hosting/sites/{site}/cleanup":                                true,
+	"GET /v1/internal/hosting/sites/{site}/diagnostics":                            true,
+	"GET /v1/internal/hosting/sites/{site}/domains":                                true,
+	"GET /v1/internal/hosting/sites/{site}/history":                                true,
+	"GET /v1/internal/hosting/sites/{site}/oidc-trusts":                            true,
+	"GET /v1/internal/hosting/sites/{site}/preview-capacity":                       true,
+	"GET /v1/internal/hosting/sites/{site}/previews":                               true,
+	"GET /v1/internal/hosting/sites/{site}/releases":                               true,
+	"GET /v1/internal/hosting/sites/{site}/runs":                                   true,
+	"GET /v1/internal/hosting/sites/{site}/status":                                 true,
+	"GET /v1/internal/hosting/sites/{site}/traffic":                                true,
+	"GET /v1/internal/hosting/usage":                                               true,
+	"POST /v1/internal/hosting/oidc/exchange":                                      true,
+	"POST /v1/internal/hosting/sites":                                              true,
+	"POST /v1/internal/hosting/sites/{site}/automation-credentials":                true,
+	"POST /v1/internal/hosting/sites/{site}/ci-setup":                              true,
+	"POST /v1/internal/hosting/sites/{site}/ci/{run}/cancel":                       true,
+	"POST /v1/internal/hosting/sites/{site}/ci/{run}/preview":                      true,
+	"POST /v1/internal/hosting/sites/{site}/domains":                               true,
+	"POST /v1/internal/hosting/sites/{site}/domains/{domain}/recover":              true,
+	"POST /v1/internal/hosting/sites/{site}/oidc-trusts":                           true,
+	"POST /v1/internal/hosting/sites/{site}/previews":                              true,
+	"POST /v1/internal/hosting/sites/{site}/promotions":                            true,
+	"POST /v1/internal/hosting/sites/{site}/releases":                              true,
+	"POST /v1/internal/hosting/sites/{site}/releases/{release}/finalize":           true,
+	"POST /v1/internal/hosting/sites/{site}/releases/{release}/uploads":            true,
+	"PUT /v1/internal/hosting/sites/{site}/ci/{run}":                               true,
+	"PUT /v1/internal/hosting/sites/{site}/retention":                              true,
+	"PUT /v1/internal/hosting/sites/{site}/suspension":                             true,
+
 	"POST /integrations/slack/actions":                                                  true, // ADR-1497 signed managed Slack actions.
 	"POST /integrations/slack/events":                                                   true, // ADR-1497 signed Slack uninstall/revocation callbacks.
 	"POST /integrations/slack/issues/{app_id}":                                          true, // ADR-1496 Slack-signed provider callback.
@@ -82,6 +124,8 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/apps/{slug}/issues/{issue_id}/tracker-sync":      true, // ADR-1474: authenticated HTML review/recovery form with named CSRF.
 	"POST /dashboard/apps/{slug}/issues/{issue_id}/linear-connection": true, // ADR-1474: owner HTML credential form with session MFA and CSRF.
 	"POST /hooks/issue-trackers/linear/{app_id}":                      true, // ADR-1476: raw-body HMAC provider protocol, outside the Bearer-auth DTO/SDK surface.
+	"GET /dashboard/apps/{slug}/issues/lifecycle-alerts":              true, // ADR-1499: authenticated HTML policy editor; JSON API remains checked.
+	"POST /dashboard/apps/{slug}/issues/lifecycle-alerts":             true, // ADR-1499: session/MFA/CSRF HTML adapter for public update/preview APIs.
 	"GET /dashboard/apps/{slug}/issues/slack-routing":                 true, // ADR-1498 owner-only Slack routing editor.
 	"GET /oauth/slack/callback":                                       true, // ADR-1497 owner session and one-use state confirmation.
 	"GET /oauth/linear/callback":                                      true, // ADR-1478: owner session OAuth callback and HTML team picker with PKCE and one-use state.
@@ -474,6 +518,9 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/deployments/{deployment_id}/issue-source-maps":        "GetIssueSourceMaps",
 	"DELETE /v1/apps/{slug}/deployments/{deployment_id}/issue-source-maps":     "RetireIssueSourceMaps",
 	"GET /v1/apps/{slug}/issues":                                               "ListIssues",
+	"GET /v1/apps/{slug}/issue-lifecycle-alert-policy":                         "GetIssueLifecycleAlertPolicy",
+	"PUT /v1/apps/{slug}/issue-lifecycle-alert-policy":                         "SetIssueLifecycleAlertPolicy",
+	"POST /v1/apps/{slug}/issue-lifecycle-alert-policy/preview":                "PreviewIssueLifecycleAlert",
 	"GET /v1/apps/{slug}/issue-frequency-alert-policy":                         "GetIssueFrequencyAlertPolicy",
 	"PUT /v1/apps/{slug}/issue-frequency-alert-policy":                         "SetIssueFrequencyAlertPolicy",
 	"GET /v1/apps/{slug}/issue-impact-alert-policy":                            "GetIssueImpactAlertPolicy",

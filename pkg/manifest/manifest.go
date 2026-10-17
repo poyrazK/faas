@@ -726,6 +726,84 @@ type PostgreSQL struct {
 	// `on-boot-offline`). `on-boot-offline` is the single-box dev
 	// default; the multi-box fleet convention is `on-boot`.
 	Policy string `yaml:"policy"`
+	// Standby is the warm standby of ADR-1344 §8: an asynchronous streaming
+	// replica of the control plane's cluster on a host outside the fleet.
+	// It is not a control-plane host, so the singleton leases stay off and
+	// it serves nothing until an operator promotes it. Absent means none.
+	Standby *PostgresStandby `yaml:"standby,omitempty"`
+}
+
+// PostgresStandby is the host that runs the warm-standby replica.
+type PostgresStandby struct {
+	// Name is the standby's inventory host name. It must not collide with a
+	// fleet host, because a promotion turns it into the control-plane host.
+	Name string `yaml:"name"`
+	// Address is the private IP the standby replicates from. The primary
+	// admits replication from this address only, and it must lie inside
+	// overlay.cidr so WAL never crosses the public internet unencrypted.
+	Address string `yaml:"address"`
+	// SSHHost is the address Ansible uses to converge the standby. Empty
+	// means Address.
+	SSHHost string `yaml:"ssh_host,omitempty"`
+}
+
+// AnsibleHost is the inventory address of the standby.
+func (s *PostgresStandby) AnsibleHost() string {
+	if s.SSHHost != "" {
+		return s.SSHHost
+	}
+	return s.Address
+}
+
+// cgnatPrefix is RFC 6598 shared address space, where Tailscale assigns
+// overlay addresses; netip's IsPrivate does not cover it.
+var cgnatPrefix = netip.MustParsePrefix("100.64.0.0/10")
+
+// validatePostgresStandby checks the warm standby (ADR-1344 §8). It needs
+// exactly one control-plane host to replicate, a name that no fleet host
+// uses, and an address on the private overlay.
+func (m *Manifest) validatePostgresStandby() Errors {
+	s := m.PostgreSQL.Standby
+	if s == nil {
+		return nil
+	}
+	var errs Errors
+	add := func(field, msg string) { errs = append(errs, Error{"postgresql.standby." + field, msg}) }
+	switch {
+	case s.Name == "":
+		add("name", "is required")
+	case !validNodeName(s.Name):
+		add("name", fmt.Sprintf("invalid host name %q (use lowercase letters, digits, dots, or dashes)", s.Name))
+	default:
+		for _, h := range m.Fleet.Hosts {
+			if h.Name == s.Name {
+				add("name", fmt.Sprintf("%q is already a fleet host; the standby must be a separate host", s.Name))
+			}
+		}
+	}
+	addr, err := netip.ParseAddr(s.Address)
+	overlay, overlayErr := netip.ParsePrefix(m.Overlay.CIDR)
+	switch {
+	case err != nil || addr.Zone() != "":
+		add("address", fmt.Sprintf("%q must be an IP address (the primary admits replication from it)", s.Address))
+	case overlayErr == nil && !overlay.Contains(addr):
+		add("address", fmt.Sprintf("%q is outside overlay.cidr %s; replication must stay on the private overlay", s.Address, overlay))
+	case overlayErr != nil && !addr.IsPrivate() && !cgnatPrefix.Contains(addr):
+		add("address", fmt.Sprintf("%q must be a private address; replication must not cross the public internet", s.Address))
+	}
+	if s.SSHHost != "" && strings.ContainsAny(s.SSHHost, " \t\n/") {
+		add("ssh_host", fmt.Sprintf("%q must be a host name or address", s.SSHHost))
+	}
+	controlPlanes := 0
+	for _, h := range m.Fleet.Hosts {
+		if h.Role == "control-plane" {
+			controlPlanes++
+		}
+	}
+	if controlPlanes != 1 {
+		add("name", fmt.Sprintf("needs exactly one control-plane host to replicate, found %d", controlPlanes))
+	}
+	return errs
 }
 
 // Release is the immutable release-tuple anchor. PR-0 only validates
@@ -942,6 +1020,7 @@ func (m *Manifest) Validate() Errors {
 	errs = append(errs, m.PublicEdge.validate(m.Fleet.Hosts)...)
 	errs = append(errs, m.validatePrivateResolution()...)
 	errs = append(errs, m.PostgreSQL.validate()...)
+	errs = append(errs, m.validatePostgresStandby()...)
 	errs = append(errs, m.Release.validate()...)
 	errs = append(errs, m.Storage.validate()...)
 	errs = append(errs, m.Cgroups.validate()...)

@@ -14,7 +14,7 @@ import (
 // (worker_boot_backoff.go) is an in-memory timer, so a schedd restart while
 // it was pending left the pool empty until another event arrived
 // (production-us hunt #10, H10-136). Once per start, schedd reconciles every
-// active worker app it owns (ADR docs/adr/20261017-worker-startup-reconcile.md).
+// active worker app it owns (ADR docs/adr/1501-worker-startup-reconcile.md).
 
 // workerStartupReconcileDelay lets vmmd and node presence settle after a
 // rollout restarts them alongside schedd.

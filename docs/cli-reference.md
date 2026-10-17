@@ -4311,7 +4311,7 @@ Show app streaming classification
 
 Get/update one app or run a deployment-attached command
 
-`gregale app <slug> [<subcommand>] [--concurrency] [--environment <SLUG>] [--visibility <public|internal>] [--profile <micro|small|medium|large|xlarge>] [--ram <MB>] [--cpu-millicores <250|500|1000>] [--max-concurrency <N>] [--concurrency-overflow <value>] [--max-queue-depth <N>] [--max-queue-wait <DURATION>] [--max-queue-wait-ms <N>] [--wake-max-queue-depth <N>] [--wake-max-queue-wait-seconds <N>] [--idle <SEC>] [--request-timeout <SEC>] [--revision-pin-ttl <DURATION>] [--require-signed <value>] [--security-policy <value>] [--basic-user <USER>] [--basic-pass <PASS>] [--min <N>] [--autoscale-target-rps <N>] [--autoscale-target-cpu-pct <1..100>] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests <N>] [--warm-snapshot-min-ms <MS>] [--warm-pool-size <N>] [--eviction-priority <best_effort|reserved>] [--require-authn] [--no-require-authn] [--platform-tenant-required] [--no-platform-tenant-required] [--maintenance] [--no-maintenance] [--streaming-enabled] [--no-streaming-enabled] [--websocket-enabled] [--no-websocket] [--route-metrics] [--no-route-metrics] [--consumer-auth-mode <optional|required>] [--only-declared-routes] [--no-only-declared-routes] [--head-wakes[=true|false]] [--crawler-policy <wake|cached|block>] [--pre-auth <off|observe|enforce>] [--pre-auth-rps <N>] [--pre-auth-burst <N>] [--health-path <PATH>] [--health-path-wakes] [--no-health-path-wakes] [--app-protocol <http1|http2|grpc>] [--public-auth <open|bearer|basic|ip_allowlist|internal_only>] [--ip-allowlist <CIDR>]... [--overflow-node <NAME>]`
+`gregale app <slug> [<subcommand>] [--concurrency] [--environment <SLUG>] [--visibility <public|internal>] [--profile <micro|small|medium|large|xlarge>] [--ram <MB>] [--cpu-millicores <250|500|1000>] [--max-concurrency <N>] [--concurrency-overflow <value>] [--max-queue-depth <N>] [--max-queue-wait <DURATION>] [--max-queue-wait-ms <N>] [--wake-max-queue-depth <N>] [--wake-max-queue-wait-seconds <N>] [--idle <SEC>] [--request-timeout <SEC>] [--function-concurrency <N>] [--revision-pin-ttl <DURATION>] [--require-signed <value>] [--security-policy <value>] [--basic-user <USER>] [--basic-pass <PASS>] [--min <N>] [--autoscale-target-rps <N>] [--autoscale-target-cpu-pct <1..100>] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests <N>] [--warm-snapshot-min-ms <MS>] [--warm-pool-size <N>] [--eviction-priority <best_effort|reserved>] [--require-authn] [--no-require-authn] [--platform-tenant-required] [--no-platform-tenant-required] [--maintenance] [--no-maintenance] [--streaming-enabled] [--no-streaming-enabled] [--websocket-enabled] [--no-websocket] [--route-metrics] [--no-route-metrics] [--consumer-auth-mode <optional|required>] [--only-declared-routes] [--no-only-declared-routes] [--head-wakes[=true|false]] [--crawler-policy <wake|cached|block>] [--pre-auth <off|observe|enforce>] [--pre-auth-rps <N>] [--pre-auth-burst <N>] [--health-path <PATH>] [--health-path-wakes] [--no-health-path-wakes] [--app-protocol <http1|http2|grpc>] [--public-auth <open|bearer|basic|ip_allowlist|internal_only>] [--ip-allowlist <CIDR>]... [--overflow-node <NAME>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -4330,6 +4330,7 @@ Get/update one app or run a deployment-attached command
 | `--wake-max-queue-wait-seconds <N>` | set per-app cold-wake wait budget |  |
 | `--idle <SEC>` | set idle timeout in seconds |  |
 | `--request-timeout <SEC>` | set per-app request timeout in seconds |  |
+| `--function-concurrency <N>` | set requests one Node/Python function worker serves at once |  |
 | `--revision-pin-ttl <DURATION>` | revision pin lifetime; 0 disables, maximum 168h |  |
 | `--require-signed <value>` | toggle require_signed | one of `true` · `false` |
 | `--security-policy <value>` | deploy posture policy | one of `off` · `warn` · `enforce` |
@@ -11700,6 +11701,21 @@ Publish, inspect or retire deployment mapping artifacts
 | `--deployment <UUID>` |  | required |
 | `--directory <PATH>` | deployed directory corresponding to the build scan root |  |
 | `--manifest-file <PATH>` | portable source-map manifest file |  |
+
+### issues lifecycle-alerts
+
+Read, save or preview new-issue/regression alert filters
+
+`gregale issues lifecycle-alerts --app <SLUG> [--environments <ENVS>] [--cooldown-seconds <N>] [--expected-revision <N>] [--issue <UUID>] [--event <EVENT>] <get|save|preview>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` |  | required |
+| `--environments <ENVS>` | comma-separated exact names; empty means all |  |
+| `--cooldown-seconds <N>` | shared cooldown; zero disables throttling |  |
+| `--expected-revision <N>` | required when saving |  |
+| `--issue <UUID>` | existing issue for draft preview |  |
+| `--event <EVENT>` | created or regressed for preview |  |
 
 ### issues ownership-rules
 

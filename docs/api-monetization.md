@@ -21,7 +21,12 @@ gregale consumers key-create my-api CONSUMER_ID --name production --scopes read,
 The key secret is shown once. Your customer sends it as
 `Authorization: Bearer ck_...`. Scopes limit methods: `read` allows `GET`,
 while `write` and `admin` allow every method. To require a key on every
-request, run `gregale app my-api --consumer-auth-mode required`. Revoking a
+request, run `gregale app my-api --consumer-auth-mode required`.
+Gregale reserves only `Bearer ck_...`: in the default optional mode, any
+other `Authorization` value (`Basic ...`, `Token ...`, or a Bearer token
+without the `ck_` prefix) reaches your app unchanged. Required mode rejects
+anything but a valid consumer key, and an app with `require_authn` on still
+needs a Gregale API token. Revoking a
 consumer makes all of its keys stop authenticating.
 
 ## 2. Meter requests
@@ -671,12 +676,12 @@ See [ADR-949](adr/949-app-consumer-statement-revisions-and-platform-failure-bill
 [ADR-954](adr/954-api-consumer-usage-completeness.md),
 [ADR-849](adr/849-api-consumer-usage-alerts.md),
 [ADR-975](adr/975-platform-tenant-allowances-and-tiers.md),
-[ADR-1300](adr/1300-stripe-statement-invoice-exports.md),
-[ADR-1301](adr/1301-month-end-billing-runs.md),
-[ADR-1302](adr/1302-statement-invoice-payment-status.md),
-[ADR-1303](adr/1303-usage-durable-before-response-completes.md),
-[ADR-1304](adr/1304-consumer-billing-self-service.md),
-[ADR-1305](adr/1305-paddle-and-lago-statement-exports.md),
+[ADR-1502](adr/1502-stripe-statement-invoice-exports.md),
+[ADR-1503](adr/1503-month-end-billing-runs.md),
+[ADR-1504](adr/1504-statement-invoice-payment-status.md),
+[ADR-1505](adr/1505-usage-durable-before-response-completes.md),
+[ADR-1506](adr/1506-consumer-billing-self-service.md),
+[ADR-1507](adr/1507-paddle-and-lago-statement-exports.md),
 [ADR-1306](adr/1306-consumer-prepaid-credit-and-spend-caps.md),
 [ADR-1307](adr/1307-platform-tenant-route-weights-and-plans.md),
 [ADR-1308](adr/1308-consumer-compute-and-response-size-pricing.md),

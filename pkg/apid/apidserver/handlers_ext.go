@@ -1180,7 +1180,7 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	// a previous PATCH doesn't reach a fresh request.
 	var publicAuthSealed []byte
 	if req.PublicAuth != nil && req.PublicAuth.Mode == api.AppPublicAuthModeBasic {
-		recipient := setSecretRecipient()
+		recipient := hostSecretRecipient()
 		if recipient == nil {
 			api.WriteProblem(w, customerCapacityProblem(s.log, "update app public authentication", "App settings temporarily unavailable",
 				"Gregale could not securely update these app settings.",

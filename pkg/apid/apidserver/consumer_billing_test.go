@@ -15,7 +15,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// adr: 1304 — a consumer key with the billing scope reads its own month to
+// adr: 1506 — a consumer key with the billing scope reads its own month to
 // date, daily usage and finalized statements; other keys are refused.
 func TestConsumerBillingSelfService(t *testing.T) {
 	e := apidserver.Setup(t, api.PlanHobby)

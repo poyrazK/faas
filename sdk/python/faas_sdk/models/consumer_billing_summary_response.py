@@ -21,7 +21,7 @@ T = TypeVar("T", bound="ConsumerBillingSummaryResponse")
 
 @_attrs_define
 class ConsumerBillingSummaryResponse:
-    """A consumer's own month to date (ADR-1304), priced like its next statement."""
+    """A consumer's own month to date (ADR-1506), priced like its next statement."""
 
     consumer_id: UUID
     external_ref: str

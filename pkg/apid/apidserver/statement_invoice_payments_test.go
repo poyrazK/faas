@@ -23,7 +23,7 @@ func listInvoices(t *testing.T, f billingRunFixture, status string) api.Statemen
 	return out
 }
 
-// adr: 1302 — exported invoices follow Stripe until paid, unpaid and overdue
+// adr: 1504 — exported invoices follow Stripe until paid, unpaid and overdue
 // lists show them, a run needing attention emails the account, and the daily
 // digest reports an overdue invoice once.
 func TestStatementInvoicePaymentStatusAndNotifications(t *testing.T) {

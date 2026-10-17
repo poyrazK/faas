@@ -63,6 +63,11 @@ type BuildManifest struct {
 	// deterministic copy-only plan for handler-only Node/Python sources that
 	// intentionally have no package manifest for Railpack to detect.
 	Function bool `json:"function,omitempty"`
+	// SharedRuntime marks a container app's source build on a shared runner
+	// base (docs/adr/20261017-shared-runtime-source-apps.md): Runtime and
+	// RuntimeBaseRef name that base, and the guest leaves system packages to
+	// it instead of running Railpack's default apt step.
+	SharedRuntime bool `json:"shared_runtime,omitempty"`
 	// DependencyCache enables the app-scoped BuildKit cache exporter. Import is
 	// set only when builderd successfully staged a prior cache into this
 	// otherwise-ephemeral builder VM.
@@ -127,7 +132,7 @@ type BuildDone struct {
 	DependencyCacheUnchanged bool `json:"dependency_cache_unchanged,omitempty"`
 	// SharedRuntime records, for a successful Node source build of an app,
 	// whether its runtime artifact could run on the shared runner base
-	// (docs/adr/20261017-shared-runtime-source-apps.md). It is informational
+	// (docs/adr/1500-shared-runtime-source-apps.md). It is informational
 	// until imaged consumes it; older guests omit it.
 	SharedRuntime *SharedRuntimeVerdict `json:"shared_runtime,omitempty"`
 }

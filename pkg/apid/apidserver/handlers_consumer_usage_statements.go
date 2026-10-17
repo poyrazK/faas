@@ -103,7 +103,7 @@ func (s *server) createAPIConsumerUsageStatement(w http.ResponseWriter, r *http.
 // (ADR-949). Unchanged usage replays the latest revision (created is false).
 // A changed draft is superseded by a new draft, and usage that arrives after
 // finalization becomes a new revision holding only the uncovered units. The
-// handler and billing runs (ADR-1301) share it.
+// handler and billing runs (ADR-1503) share it.
 func (s *server) draftAPIConsumerStatement(ctx context.Context, acct state.Account, appID, consumerID string,
 	store state.APIConsumerUsageStatementStore, start, end time.Time) (state.APIConsumerUsageStatement, bool, error) {
 	revisions, err := store.ListAPIConsumerUsageStatementRevisions(ctx, acct.ID, appID, consumerID, start, end)
@@ -347,7 +347,7 @@ func (s *server) finalizeAPIConsumerUsageStatement(w http.ResponseWriter, r *htt
 
 // finalizeAPIConsumerStatement freezes a statement. The first finalization
 // is audited and relays the usage_statement.finalized webhook; finalizing
-// again is a no-op. The handler and billing runs (ADR-1301) share it.
+// again is a no-op. The handler and billing runs (ADR-1503) share it.
 func (s *server) finalizeAPIConsumerStatement(ctx context.Context, acct state.Account, appID, consumerID string,
 	store state.APIConsumerUsageStatementStore, statementID string) (state.APIConsumerUsageStatement, error) {
 	statement, changed, err := store.FinalizeAPIConsumerUsageStatement(ctx, acct.ID, appID, consumerID, statementID)

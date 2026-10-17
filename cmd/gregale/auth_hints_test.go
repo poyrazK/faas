@@ -49,3 +49,14 @@ func TestOpenPublicAuthAfterTokenRemovalKeepsOtherModes(t *testing.T) {
 		}
 	}
 }
+
+// ADR-1342: function_concurrency reaches workers only through a new build.
+func TestFunctionConcurrencyDeployHint(t *testing.T) {
+	eight := 8
+	if got := functionConcurrencyDeployHint(api.UpdateAppRequest{FunctionConcurrency: &eight}, api.AppResponse{Slug: "shop-users", Type: "function"}); got != "function_concurrency=8 applies from the next deploy; run `gregale deploy` to rebuild shop-users with it." {
+		t.Fatalf("hint = %q", got)
+	}
+	if got := functionConcurrencyDeployHint(api.UpdateAppRequest{}, api.AppResponse{Slug: "shop-users", Type: "function"}); got != "" {
+		t.Fatalf("hint without the flag = %q", got)
+	}
+}

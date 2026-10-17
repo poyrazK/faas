@@ -238,6 +238,12 @@ postgresql:
   database: faas
   migration_max_slot: 265
   policy: on-boot
+  # ADR-1344 §8 warm standby: an async streaming replica on a host outside
+  # the fleet, promoted by hand. The address must lie inside overlay.cidr.
+  # standby:
+  #   name: standby-1
+  #   address: 10.42.0.20
+  #   ssh_host: 198.51.100.20
 
 # Release — the immutable release-tuple anchor. PR-0 validates
 # the shape; PR-3 ships the bundle/install path that materialises

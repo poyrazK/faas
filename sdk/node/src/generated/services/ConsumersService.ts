@@ -47,7 +47,7 @@ import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
 export class ConsumersService {
   /**
-   * Read your own month-to-date usage and spend with your consumer key (ADR-1304).
+   * Read your own month-to-date usage and spend with your consumer key (ADR-1506).
    * For an app's customers, not operators. Authenticate with a consumer
    * key that carries the billing scope. The amount is priced like the
    * next statement, but late usage can still change it.
@@ -715,7 +715,7 @@ export class ConsumersService {
    * Export a finalized app consumer statement as an invoice in Stripe, Paddle or Lago.
    * Exports one finalized app consumer statement revision to the
    * provider in the body (default stripe; connect it with
-   * PUT /v1/account/billing-connections/{provider}), ADR-1300 and ADR-1305.
+   * PUT /v1/account/billing-connections/{provider}), ADR-1502 and ADR-1507.
    * Stripe and Paddle receive drafts that Gregale never finalizes or
    * sends; Lago issues its one-off invoice immediately but never charges
    * it. One item per rate card and unit price, plus a rounding item, makes

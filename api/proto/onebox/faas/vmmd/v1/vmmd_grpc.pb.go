@@ -54,6 +54,9 @@ const (
 	Vmmd_DeleteWarmSnapshot_FullMethodName                      = "/onebox.faas.vmmd.v1.Vmmd/DeleteWarmSnapshot"
 	Vmmd_FrameworkReady_FullMethodName                          = "/onebox.faas.vmmd.v1.Vmmd/FrameworkReady"
 	Vmmd_Destroy_FullMethodName                                 = "/onebox.faas.vmmd.v1.Vmmd/Destroy"
+	Vmmd_GetOperatorRestartGeneration_FullMethodName            = "/onebox.faas.vmmd.v1.Vmmd/GetOperatorRestartGeneration"
+	Vmmd_ExecuteOperatorRestartDestroy_FullMethodName           = "/onebox.faas.vmmd.v1.Vmmd/ExecuteOperatorRestartDestroy"
+	Vmmd_ExecuteOperatorPark_FullMethodName                     = "/onebox.faas.vmmd.v1.Vmmd/ExecuteOperatorPark"
 	Vmmd_StopInstance_FullMethodName                            = "/onebox.faas.vmmd.v1.Vmmd/StopInstance"
 	Vmmd_Stats_FullMethodName                                   = "/onebox.faas.vmmd.v1.Vmmd/Stats"
 	Vmmd_Ping_FullMethodName                                    = "/onebox.faas.vmmd.v1.Vmmd/Ping"
@@ -83,6 +86,7 @@ const (
 	Vmmd_UmountOverlayParent_FullMethodName                     = "/onebox.faas.vmmd.v1.Vmmd/UmountOverlayParent"
 	Vmmd_PrepareLiveMigration_FullMethodName                    = "/onebox.faas.vmmd.v1.Vmmd/PrepareLiveMigration"
 	Vmmd_AdoptMigratedInstance_FullMethodName                   = "/onebox.faas.vmmd.v1.Vmmd/AdoptMigratedInstance"
+	Vmmd_RetireMigrationAdoption_FullMethodName                 = "/onebox.faas.vmmd.v1.Vmmd/RetireMigrationAdoption"
 	Vmmd_AcknowledgeMigration_FullMethodName                    = "/onebox.faas.vmmd.v1.Vmmd/AcknowledgeMigration"
 	Vmmd_CancelLiveMigration_FullMethodName                     = "/onebox.faas.vmmd.v1.Vmmd/CancelLiveMigration"
 	Vmmd_RetireManagedPostgresDrain_FullMethodName              = "/onebox.faas.vmmd.v1.Vmmd/RetireManagedPostgresDrain"
@@ -258,6 +262,12 @@ type VmmdClient interface {
 	FrameworkReady(ctx context.Context, in *FrameworkReadyRequest, opts ...grpc.CallOption) (*FrameworkReadyResponse, error)
 	// Destroy tears down a running instance. Idempotent on unknown instances.
 	Destroy(ctx context.Context, in *DestroyRequest, opts ...grpc.CallOption) (*DestroyResponse, error)
+	// Operator restart uses a durable operation identity and exact physical VM
+	// generation. Re-entering an uncertain attempt never repeats Destroy.
+	GetOperatorRestartGeneration(ctx context.Context, in *GetOperatorRestartGenerationRequest, opts ...grpc.CallOption) (*GetOperatorRestartGenerationResponse, error)
+	ExecuteOperatorRestartDestroy(ctx context.Context, in *ExecuteOperatorRestartDestroyRequest, opts ...grpc.CallOption) (*ExecuteOperatorRestartDestroyResponse, error)
+	// ADR-1525: one journal-authorized capture/stop of the original VM generation.
+	ExecuteOperatorPark(ctx context.Context, in *ExecuteOperatorParkRequest, opts ...grpc.CallOption) (*ExecuteOperatorParkResponse, error)
 	// StopInstance is the M-2 / ADR-138 graceful stop sequence: send
 	// `signal` to the guest's PID 1, wait up to `grace_period_s`
 	// seconds for it to exit cleanly, then SIGKILL on deadline.
@@ -559,6 +569,8 @@ type VmmdClient interface {
 	// instance's HostIP + GuestUID so schedd can carry them
 	// through to the conditional UPDATE at Phase 3.
 	AdoptMigratedInstance(ctx context.Context, in *AdoptMigratedInstanceRequest, opts ...grpc.CallOption) (*AdoptMigratedInstanceResponse, error)
+	// Retires only the original admission-backed destination and retains proof.
+	RetireMigrationAdoption(ctx context.Context, in *RetireMigrationAdoptionRequest, opts ...grpc.CallOption) (*RetireMigrationAdoptionResponse, error)
 	// AcknowledgeMigration (Tier A5 / ADR-065) is Phase 3.5 of
 	// the four-phase handoff. Called by the new owner vmmd's
 	// schedd against the DYING vmmd AFTER the conditional UPDATE
@@ -933,6 +945,36 @@ func (c *vmmdClient) Destroy(ctx context.Context, in *DestroyRequest, opts ...gr
 	return out, nil
 }
 
+func (c *vmmdClient) GetOperatorRestartGeneration(ctx context.Context, in *GetOperatorRestartGenerationRequest, opts ...grpc.CallOption) (*GetOperatorRestartGenerationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetOperatorRestartGenerationResponse)
+	err := c.cc.Invoke(ctx, Vmmd_GetOperatorRestartGeneration_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *vmmdClient) ExecuteOperatorRestartDestroy(ctx context.Context, in *ExecuteOperatorRestartDestroyRequest, opts ...grpc.CallOption) (*ExecuteOperatorRestartDestroyResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ExecuteOperatorRestartDestroyResponse)
+	err := c.cc.Invoke(ctx, Vmmd_ExecuteOperatorRestartDestroy_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *vmmdClient) ExecuteOperatorPark(ctx context.Context, in *ExecuteOperatorParkRequest, opts ...grpc.CallOption) (*ExecuteOperatorParkResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ExecuteOperatorParkResponse)
+	err := c.cc.Invoke(ctx, Vmmd_ExecuteOperatorPark_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *vmmdClient) StopInstance(ctx context.Context, in *StopInstanceRequest, opts ...grpc.CallOption) (*StopInstanceResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(StopInstanceResponse)
@@ -1244,6 +1286,16 @@ func (c *vmmdClient) AdoptMigratedInstance(ctx context.Context, in *AdoptMigrate
 	return out, nil
 }
 
+func (c *vmmdClient) RetireMigrationAdoption(ctx context.Context, in *RetireMigrationAdoptionRequest, opts ...grpc.CallOption) (*RetireMigrationAdoptionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RetireMigrationAdoptionResponse)
+	err := c.cc.Invoke(ctx, Vmmd_RetireMigrationAdoption_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *vmmdClient) AcknowledgeMigration(ctx context.Context, in *AcknowledgeMigrationRequest, opts ...grpc.CallOption) (*AcknowledgeMigrationResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(AcknowledgeMigrationResponse)
@@ -1444,6 +1496,12 @@ type VmmdServer interface {
 	FrameworkReady(context.Context, *FrameworkReadyRequest) (*FrameworkReadyResponse, error)
 	// Destroy tears down a running instance. Idempotent on unknown instances.
 	Destroy(context.Context, *DestroyRequest) (*DestroyResponse, error)
+	// Operator restart uses a durable operation identity and exact physical VM
+	// generation. Re-entering an uncertain attempt never repeats Destroy.
+	GetOperatorRestartGeneration(context.Context, *GetOperatorRestartGenerationRequest) (*GetOperatorRestartGenerationResponse, error)
+	ExecuteOperatorRestartDestroy(context.Context, *ExecuteOperatorRestartDestroyRequest) (*ExecuteOperatorRestartDestroyResponse, error)
+	// ADR-1525: one journal-authorized capture/stop of the original VM generation.
+	ExecuteOperatorPark(context.Context, *ExecuteOperatorParkRequest) (*ExecuteOperatorParkResponse, error)
 	// StopInstance is the M-2 / ADR-138 graceful stop sequence: send
 	// `signal` to the guest's PID 1, wait up to `grace_period_s`
 	// seconds for it to exit cleanly, then SIGKILL on deadline.
@@ -1745,6 +1803,8 @@ type VmmdServer interface {
 	// instance's HostIP + GuestUID so schedd can carry them
 	// through to the conditional UPDATE at Phase 3.
 	AdoptMigratedInstance(context.Context, *AdoptMigratedInstanceRequest) (*AdoptMigratedInstanceResponse, error)
+	// Retires only the original admission-backed destination and retains proof.
+	RetireMigrationAdoption(context.Context, *RetireMigrationAdoptionRequest) (*RetireMigrationAdoptionResponse, error)
 	// AcknowledgeMigration (Tier A5 / ADR-065) is Phase 3.5 of
 	// the four-phase handoff. Called by the new owner vmmd's
 	// schedd against the DYING vmmd AFTER the conditional UPDATE
@@ -1871,6 +1931,15 @@ func (UnimplementedVmmdServer) FrameworkReady(context.Context, *FrameworkReadyRe
 func (UnimplementedVmmdServer) Destroy(context.Context, *DestroyRequest) (*DestroyResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Destroy not implemented")
 }
+func (UnimplementedVmmdServer) GetOperatorRestartGeneration(context.Context, *GetOperatorRestartGenerationRequest) (*GetOperatorRestartGenerationResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetOperatorRestartGeneration not implemented")
+}
+func (UnimplementedVmmdServer) ExecuteOperatorRestartDestroy(context.Context, *ExecuteOperatorRestartDestroyRequest) (*ExecuteOperatorRestartDestroyResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ExecuteOperatorRestartDestroy not implemented")
+}
+func (UnimplementedVmmdServer) ExecuteOperatorPark(context.Context, *ExecuteOperatorParkRequest) (*ExecuteOperatorParkResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ExecuteOperatorPark not implemented")
+}
 func (UnimplementedVmmdServer) StopInstance(context.Context, *StopInstanceRequest) (*StopInstanceResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method StopInstance not implemented")
 }
@@ -1957,6 +2026,9 @@ func (UnimplementedVmmdServer) PrepareLiveMigration(context.Context, *PrepareLiv
 }
 func (UnimplementedVmmdServer) AdoptMigratedInstance(context.Context, *AdoptMigratedInstanceRequest) (*AdoptMigratedInstanceResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method AdoptMigratedInstance not implemented")
+}
+func (UnimplementedVmmdServer) RetireMigrationAdoption(context.Context, *RetireMigrationAdoptionRequest) (*RetireMigrationAdoptionResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RetireMigrationAdoption not implemented")
 }
 func (UnimplementedVmmdServer) AcknowledgeMigration(context.Context, *AcknowledgeMigrationRequest) (*AcknowledgeMigrationResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method AcknowledgeMigration not implemented")
@@ -2528,6 +2600,60 @@ func _Vmmd_Destroy_Handler(srv interface{}, ctx context.Context, dec func(interf
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Vmmd_GetOperatorRestartGeneration_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetOperatorRestartGenerationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).GetOperatorRestartGeneration(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_GetOperatorRestartGeneration_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).GetOperatorRestartGeneration(ctx, req.(*GetOperatorRestartGenerationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Vmmd_ExecuteOperatorRestartDestroy_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ExecuteOperatorRestartDestroyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).ExecuteOperatorRestartDestroy(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_ExecuteOperatorRestartDestroy_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).ExecuteOperatorRestartDestroy(ctx, req.(*ExecuteOperatorRestartDestroyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Vmmd_ExecuteOperatorPark_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ExecuteOperatorParkRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).ExecuteOperatorPark(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_ExecuteOperatorPark_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).ExecuteOperatorPark(ctx, req.(*ExecuteOperatorParkRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Vmmd_StopInstance_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(StopInstanceRequest)
 	if err := dec(in); err != nil {
@@ -2999,6 +3125,24 @@ func _Vmmd_AdoptMigratedInstance_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Vmmd_RetireMigrationAdoption_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RetireMigrationAdoptionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).RetireMigrationAdoption(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_RetireMigrationAdoption_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).RetireMigrationAdoption(ctx, req.(*RetireMigrationAdoptionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Vmmd_AcknowledgeMigration_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(AcknowledgeMigrationRequest)
 	if err := dec(in); err != nil {
@@ -3173,6 +3317,18 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _Vmmd_Destroy_Handler,
 		},
 		{
+			MethodName: "GetOperatorRestartGeneration",
+			Handler:    _Vmmd_GetOperatorRestartGeneration_Handler,
+		},
+		{
+			MethodName: "ExecuteOperatorRestartDestroy",
+			Handler:    _Vmmd_ExecuteOperatorRestartDestroy_Handler,
+		},
+		{
+			MethodName: "ExecuteOperatorPark",
+			Handler:    _Vmmd_ExecuteOperatorPark_Handler,
+		},
+		{
 			MethodName: "StopInstance",
 			Handler:    _Vmmd_StopInstance_Handler,
 		},
@@ -3267,6 +3423,10 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "AdoptMigratedInstance",
 			Handler:    _Vmmd_AdoptMigratedInstance_Handler,
+		},
+		{
+			MethodName: "RetireMigrationAdoption",
+			Handler:    _Vmmd_RetireMigrationAdoption_Handler,
 		},
 		{
 			MethodName: "AcknowledgeMigration",
