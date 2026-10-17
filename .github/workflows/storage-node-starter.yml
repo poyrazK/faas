@@ -10,7 +10,9 @@ jobs:
   qualify:
     name: managed storage Node (embedded app + gateway journey)
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Cold-cache race builds include the full e2etest dependency graph.
+    # Keep the fixture and gateway assertions within one bounded job.
+    timeout-minutes: 30
     env:
       GOMEMLIMIT: 2GiB
       GOGC: 10
