@@ -1,4 +1,4 @@
-// Package rehearsalcold defines bounded cold-start evidence (ADR-1357).
+// Package rehearsalcold defines bounded cold-start evidence (ADR-20261017201013).
 package rehearsalcold
 
 import (

@@ -1,4 +1,4 @@
-// Package rehearsalobj defines bounded independent object rehearsal evidence (ADR-1354).
+// Package rehearsalobj defines bounded independent object rehearsal evidence (ADR-20261017201010).
 package rehearsalobj
 
 import (

@@ -1,4 +1,4 @@
-// Package rehearsal validates contained command capabilities (ADR-1352).
+// Package rehearsal validates contained command capabilities (ADR-20261017201008).
 package rehearsal
 
 import (

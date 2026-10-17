@@ -252,6 +252,10 @@ func appScaleHasSettingFlags(explicit map[string]bool) bool {
 }
 
 func writeAppScaleSavedPlan(path string, plan appScaleSavedPlan) error {
+	return writeSavedJSONPlan(path, plan)
+}
+
+func writeSavedJSONPlan(path string, plan any) error {
 	absPath, err := filepath.Abs(path)
 	if err != nil {
 		return fmt.Errorf("resolve plan path: %w", err)
@@ -261,7 +265,7 @@ func writeAppScaleSavedPlan(path string, plan appScaleSavedPlan) error {
 		return fmt.Errorf("encode plan: %w", err)
 	}
 	body = append(body, '\n')
-	file, err := os.CreateTemp(filepath.Dir(absPath), ".gregale-app-scale-plan-*.tmp")
+	file, err := os.CreateTemp(filepath.Dir(absPath), ".gregale-plan-*.tmp")
 	if err != nil {
 		return fmt.Errorf("create temporary plan: %w", err)
 	}

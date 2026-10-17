@@ -49,12 +49,46 @@ func TestParsePublicEdgeMode(t *testing.T) {
 }
 
 // adr: 1343
-func TestComputeOnlyRoleNeedsComputeEdgeMode(t *testing.T) {
-	if err := role.Require("gatewayd-public", role.RoleComputeOnly, edgeModeControlPlane.allowedRoles()...); err == nil {
-		t.Fatal("a control-plane edge started on a compute-only box")
+func TestPublicEdgeModeRoleGuard(t *testing.T) {
+	for _, tc := range []struct {
+		mode        publicEdgeMode
+		observed    role.Role
+		wantAllowed bool
+	}{
+		{edgeModeControlPlane, role.RoleSingleBox, true},
+		{edgeModeControlPlane, role.RoleControlPlane, true},
+		{edgeModeControlPlane, role.RoleComputeOnly, false},
+		{edgeModeControlPlane, role.Role("invalid"), false},
+		{edgeModeCompute, role.RoleSingleBox, true},
+		{edgeModeCompute, role.RoleControlPlane, true},
+		{edgeModeCompute, role.RoleComputeOnly, true},
+		{edgeModeCompute, role.Role("invalid"), false},
+	} {
+		modeName := string(tc.mode)
+		if modeName == "" {
+			modeName = "default"
+		}
+		t.Run(modeName+"/"+string(tc.observed), func(t *testing.T) {
+			err := tc.mode.requireRole(tc.observed)
+			if (err == nil) != tc.wantAllowed {
+				t.Fatalf("requireRole(%q) = %v, want allowed=%v", tc.observed, err, tc.wantAllowed)
+			}
+		})
 	}
-	if err := role.Require("gatewayd-public", role.RoleComputeOnly, edgeModeCompute.allowedRoles()...); err != nil {
-		t.Fatalf("compute edge refused the compute-only role: %v", err)
+}
+
+// adr: 1343
+func TestControlPlaneEdgeRefusesComputeRoleBeforeDatabase(t *testing.T) {
+	t.Setenv(publicEdgeModeEnv, "")
+	t.Setenv("FAAS_GATEWAYD_PUBLIC_ROLE", string(role.RoleComputeOnly))
+	previous := gatewaydPublicCapCheck
+	gatewaydPublicCapCheck = func() error { return nil }
+	t.Cleanup(func() { gatewaydPublicCapCheck = previous })
+
+	err := run(context.Background(), quietEdgeLog())
+	var refused *role.ErrRefused
+	if !errors.As(err, &refused) || refused.Daemon != "gatewayd-public" || refused.Observed != role.RoleComputeOnly {
+		t.Fatalf("run() = %v, want compute-only role refusal before opening the database", err)
 	}
 }
 

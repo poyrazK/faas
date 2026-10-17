@@ -30,6 +30,8 @@ export function previewQuery(config,definition,action,r,keys){
 export const sessionBinding=token=>createHash('sha256').update(token).digest('hex')
 export async function actionDatabase(url){
  const {default:pg}=await import('pg'),pool=new pg.Pool({connectionString:url,max:2,connectionTimeoutMillis:3000,query_timeout:5000,statement_timeout:5000})
+ // An idle client dropped by a database restart must not crash the console; driver errors can carry connection details.
+ pool.on('error',()=>console.error('support action database connection unavailable'))
  try{const {rows}=await pool.query("SELECT r.rolsuper,r.rolbypassrls,p.proowner=r.oid AS owner,to_regprocedure('support_actions.recent(uuid)') IS NOT NULL AS recovery FROM pg_roles r JOIN pg_proc p ON p.oid='support_actions.execute(text,integer,integer,text,uuid,timestamptz)'::regprocedure WHERE r.rolname=current_user")
  if(!rows.length||rows[0].rolsuper||rows[0].rolbypassrls||rows[0].owner||!rows[0].recovery)throw new Error('Use a dedicated non-owner support action login.')}catch(error){await pool.end();throw error}
 

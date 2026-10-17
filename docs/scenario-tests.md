@@ -1261,7 +1261,7 @@ email/payment SDKs and workload network containment are separate capabilities.
 A passing action comparison applies to the declared scope; existing `behavior`
 observations remain application-reported. Hosted/native qualification requires
 the supported acceptance hosts. See the
-[sealed comparison decision](adr/1348-sealed-rehearsal-action-comparison.md).
+[sealed comparison decision](adr/20261017201004-sealed-rehearsal-action-comparison.md).
 
 ### Contain serving-VM outbound traffic
 
@@ -1305,7 +1305,7 @@ or coverage of every integration.
 
 Run `scripts/ci/rehearsal-network-acceptance.sh` on the dedicated native x86_64
 Linux KVM host before enabling enrollment. See the
-[containment decision and rollout boundary](adr/1349-rehearsal-network-containment.md)
+[containment decision and rollout boundary](adr/20261017201005-rehearsal-network-containment.md)
 for supported paths, required assets and lifecycle acceptance. Portable checks
 and metal compilation do not qualify a production fleet.
 
@@ -1402,14 +1402,14 @@ integration outcomes in the recipe, including client failures before that
 boundary and expected injected faults. General external queues and timers still
 need application completion checks. Host shell commands and separate job/Run
 executions do not acquire this serving-VM recorder coverage. See the
-[recorder session and closing decision](adr/1351-rehearsal-recorder-sessions.md).
+[recorder session and closing decision](adr/20261017201007-rehearsal-recorder-sessions.md).
 
 Bounds are 64 fixtures/64 KiB per plan, 16 responses per fixture, 8 KiB response
 bodies, 2-second delays, 64 KiB request bodies, 256 attempts, 256 recorder
 sessions and 256 request obligations per run. Existing
 combined payload and snapshot bounds still apply. Enrollment remains disabled
 until the native qualification gate passes. See the
-[outbound simulation decision](adr/1350-rehearsal-outbound-simulation.md).
+[outbound simulation decision](adr/20261017201006-rehearsal-outbound-simulation.md).
 
 ### Execute rehearsal commands in microVMs
 
@@ -1480,7 +1480,7 @@ Detached processes are terminated with the command VM. The explicit managed-work
 adapter below tracks supported async work; other delegation still needs recipe
 completion checks and assertions for failures before the host relay.
 
-See [ADR-1352](adr/1352-contained-rehearsal-commands.md) for rollout and native
+See [ADR-20261017201008](adr/20261017201008-contained-rehearsal-commands.md) for rollout and native
 qualification requirements.
 
 ### Observe isolated PostgreSQL effects
@@ -1576,7 +1576,7 @@ This acceptance does not qualify KVM, private bridge isolation, guest secret
 delivery or native VM cleanup. Native qualification must exercise the contained
 import command, both revisions, cross-run/database/login rejection, lock waits,
 cancellation, collector failure, cleanup failure and leakcheck before enabling
-the gate. See [ADR-1353](adr/1353-rehearsal-postgres-fixtures.md).
+the gate. See [ADR-20261017201009](adr/20261017201009-rehearsal-postgres-fixtures.md).
 
 ### Observe isolated object-storage effects
 
@@ -1691,7 +1691,7 @@ the guest SDK/secret delivery, both firewall hooks with real packets, cross-run
 and ordinary-caller denial, an upload racing sealing, cancellation, collector
 restart, expired-resource cleanup, both revision reports and leakcheck. Portable
 acceptance does not establish those native properties. See
-[ADR-1354](adr/1354-rehearsal-object-fixtures.md).
+[ADR-20261017201010](adr/20261017201010-rehearsal-object-fixtures.md).
 
 ## Native HTTP workflows
 
@@ -1886,7 +1886,7 @@ admission is disabled. Cleanup removes participant database roles and isolated
 object data; existing expiry cleanup stays available with admission disabled.
 Contained cold starts use the separate preparation and boot protocol below;
 snapshot restore remains unsupported. The separately qualified in-place suspend/resume checkpoint below uses warm execution. The worker-termination extension uses warm execution.
-See [ADR-1355](adr/1355-rehearsal-managed-workers.md).
+See [ADR-20261017201011](adr/20261017201011-rehearsal-managed-workers.md).
 
 Portable acceptance (the fixture URL must name a separate disposable cluster):
 
@@ -1959,7 +1959,7 @@ termination and dependency faults remain unsupported by this contract.
 After native qualification, `FAAS_REHEARSAL_WORKER_FAULTS=1` on apid enables new
 fault enrollment alongside all preceding rehearsal gates. Existing enrolled fault
 cleanup and receipt reconciliation continue when new admission is disabled.
-See [ADR-1356](adr/1356-rehearsal-worker-termination.md).
+See [ADR-20261017201012](adr/20261017201012-rehearsal-worker-termination.md).
 
 The native VM cleanup component gate is
 `scripts/ci/rehearsal-worker-fault-acceptance.sh`. It requires the dedicated root
@@ -2031,7 +2031,7 @@ budgets and duplicate notifications. The native component gate is
 `scripts/ci/rehearsal-cold-start-acceptance.sh`; run it only on the dedicated root
 x86 KVM host with the staged metal-test images. It complements the required
 containment, credential-delivery and fixture qualifications. See
-[ADR-1357](adr/1357-rehearsal-cold-start-parity.md).
+[ADR-20261017201013](adr/20261017201013-rehearsal-cold-start-parity.md).
 
 ### Rehearse contained suspend/resume
 
@@ -2103,7 +2103,7 @@ notification multiplicity. Before rollout, run
 `scripts/ci/rehearsal-suspend-resume-acceptance.sh` on the dedicated native root
 x86 Linux KVM host with staged V6 guest images, and satisfy the existing network,
 credential-delivery and cleanup gates. Compilation and portable tests do not
-replace those gates. See [ADR-1358](adr/1358-rehearsal-suspend-resume.md).
+replace those gates. See [ADR-20261017201014](adr/20261017201014-rehearsal-suspend-resume.md).
 
 
 #### Pause a running managed job
@@ -2175,7 +2175,7 @@ operation, including retries. A retry that replaces that VM remains inconclusive
 and needs a separate ownership protocol. The CLI polls this lifecycle while draining and sealing managed work;
 JSON and HTML retain its identities for inspection. Missing evidence cannot be
 replaced by a fresh VM or a reconstructed collector. See
-[ADR-1359](adr/1359-rehearsal-running-job-suspend.md).
+[ADR-20261017201015](adr/20261017201015-rehearsal-running-job-suspend.md).
 
 
 ### Start and stop the app with the test

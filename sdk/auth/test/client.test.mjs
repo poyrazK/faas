@@ -221,3 +221,13 @@ test('phone sign-in texts a code and verifies it', async () => {
   await auth.signInWithPhone({ phone: '+15555550100', createUser: true })
   assert.equal(api.calls[3].body.create_user, true)
 })
+
+test('organization single sign-on returns the identity provider URL', async () => {
+  const api = server({ 'POST /auth/v1/sso': call => call.body.domain === 'acme.com' || call.body.provider_id ? [200, { url: 'https://idp.example.com/sso?SAMLRequest=x' }] : [404, { error_code: 'sso_provider_not_found' }] })
+  const auth = createAuthClient({ url: origin, fetch: api.fetch, store: null })
+  assert.deepEqual(await auth.signInWithSSO({ domain: ' Acme.com ', redirectTo: 'https://shop.example.com/', captchaToken: 't1' }), { url: 'https://idp.example.com/sso?SAMLRequest=x' })
+  assert.deepEqual(api.calls[0].body, { domain: 'acme.com', redirect_to: 'https://shop.example.com/', skip_http_redirect: true, gotrue_meta_security: { captcha_token: 't1' } })
+  await auth.signInWithSSO({ providerId: 'p1' })
+  assert.deepEqual(api.calls[1].body, { provider_id: 'p1', skip_http_redirect: true })
+  await assert.rejects(auth.signInWithSSO({ domain: 'globex.com' }), { status: 404, code: 'sso_provider_not_found' })
+})

@@ -317,6 +317,11 @@ func (d *Drain) Tick(ctx context.Context) {
 	// work so the next scheduler tick can make progress. The store update is
 	// conditional on the expired lease and bounded to the same batch size as
 	// the hot queue walk.
+	if acknowledgments, ok := d.store.(state.EventAcknowledgmentStore); ok {
+		if _, err := acknowledgments.ExpireEventAcknowledgments(ctx, d.batchSize); err != nil {
+			d.log.Warn("drain: expire event acknowledgments", "err", err)
+		}
+	}
 	if reclaimer, ok := d.store.(expiredInvocationReclaimer); ok {
 		reclaimed, err := reclaimer.RequeueExpiredInvocations(ctx, d.now(), d.batchSize)
 		if err != nil {
@@ -913,6 +918,7 @@ func (d *Drain) acquireLongDispatch(inv state.Invocation) (func(), bool) {
 // deliverClaimed wakes the app, delivers a claimed invocation and records
 // its outcome. timeout is how long the invocation may run (ADR-1180).
 func (d *Drain) deliverClaimed(ctx context.Context, inv state.Invocation, timeout time.Duration) {
+	stopLease := func() {}
 	claimCtx, stopClaim := d.operationClaimContext(ctx, inv)
 	defer stopClaim()
 	if timeout > api.AsyncInvocationTimeoutFloor {
@@ -922,7 +928,6 @@ func (d *Drain) deliverClaimed(ctx context.Context, inv state.Invocation, timeou
 		var cancelDispatch context.CancelFunc
 		claimCtx, cancelDispatch = context.WithTimeout(withLongDispatch(claimCtx), api.AsyncInvocationDispatchTimeout(timeout))
 		defer cancelDispatch()
-		var stopLease func()
 		claimCtx, stopLease = d.keepInvocationLease(claimCtx, inv)
 		defer stopLease()
 	}
@@ -1051,6 +1056,20 @@ func (d *Drain) deliverClaimed(ctx context.Context, inv state.Invocation, timeou
 		d.emitDone(ctx, inv)
 		return
 	}
+	acknowledgmentToken, ackErr := d.prepareEventAcknowledgment(ctx, inv)
+	if ackErr != nil {
+		if failErr := d.store.FailInvocation(ctx, inv.ID, "prepare event acknowledgment: "+ackErr.Error(), d.invocationRetryDelay(inv), d.invocationAttemptBudget(ctx, inv), failOutcome(ackErr), state.WithInvocationClaim(inv)); failErr != nil {
+			d.log.Warn("drain: event acknowledgment preparation failed", "inv", inv.ID, "err", failErr)
+		}
+		return
+	}
+	if acknowledgmentToken != "" {
+		inv, ackErr = state.WithEventAcknowledgmentToken(inv, acknowledgmentToken)
+		if ackErr != nil {
+			d.log.Warn("drain: encode event acknowledgment", "inv", inv.ID, "err", ackErr)
+			return
+		}
+	}
 	var dispatched state.Invocation
 	if prewoken, ok := d.gateway.(prewokenGatewaySynth); ok {
 		dispatched, err = prewoken.InvokeWithWake(claimCtx, inv.AppID, inv, wakeRes)
@@ -1088,6 +1107,14 @@ func (d *Drain) deliverClaimed(ctx context.Context, inv state.Invocation, timeou
 			d.emitDeadLetter(ctx, inv, "dead_letter")
 		}
 		d.log.Warn("drain: invoke", "inv", inv.ID, "inst", wakeRes.InstanceID, "err", err, "permanent", retryAfter == 0)
+		return
+	}
+	if acknowledgmentToken != "" && dispatched.ResponseStatusCode == http.StatusAccepted {
+		// Stop scheduler renewal before handing the lease to the consumer.
+		stopLease()
+		if _, err := d.store.(state.EventAcknowledgmentStore).AcceptEventAcknowledgment(ctx, inv, acknowledgmentToken); err != nil {
+			d.log.Warn("drain: event acknowledgment handoff uncertain", "inv", inv.ID, "err", err)
+		}
 		return
 	}
 	// 6. Complete.

@@ -26,7 +26,7 @@ import (
 func cmdAccount(args []string) int {
 	parent, _ := lookupCliCommand("account")
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale account {export|delete|restore|status|dpa|slo}", "account")
+		PrintUsage(os.Stderr, "usage: gregale account {export|delete|restore|status|dpa|slo|stripe|billing-run|invoices}", "account")
 		return 1
 	}
 	switch args[0] {
@@ -45,6 +45,16 @@ func cmdAccount(args []string) int {
 		// CLI surfaces the same body so operators can `curl`-equiv
 		// from a CI box or pin the response in a contract test.
 		return cmdAccountDPA(args[1:])
+	case "billing-connection":
+		// ADR-1502, ADR-1507: the account's billing provider keys for
+		// statement invoice exports.
+		return cmdAccountBillingConnection(args[1:])
+	case "billing-run":
+		// ADR-1503: bill a month for every customer, or schedule it.
+		return cmdAccountBillingRun(args[1:])
+	case "invoices":
+		// ADR-1504: exported invoices and their payment status.
+		return cmdAccountInvoices(args[1:])
 	case "slo":
 		// Move 2 PR-A: CLI twin for GET /v1/account/slo
 		// (issue #696 / ADR-082). Account-wide SLO rollup.

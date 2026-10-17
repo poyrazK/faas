@@ -1,4 +1,4 @@
-// Package rehearsalresume defines in-place lifecycle evidence (ADR-1358).
+// Package rehearsalresume defines in-place lifecycle evidence (ADR-20261017201014).
 package rehearsalresume
 
 import (

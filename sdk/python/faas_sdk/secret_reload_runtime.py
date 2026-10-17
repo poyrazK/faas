@@ -161,6 +161,39 @@ class SecretReloadIO:
     sleep: Callable[[float, SecretReloadCancellation], None] = _sleep
 
 
+def _reload_settings(env: Mapping[str, str] | None, startup_timeout: float) -> tuple[str, str, str, str]:
+    settings = os.environ if env is None else env
+    snapshot, ready = (
+        settings.get(key, "") for key in ("FAAS_SECRETS_SNAPSHOT_FILE", "FAAS_SECRETS_RELOAD_READY_FILE")
+    )
+    if any(
+        not isinstance(path, str) or not os.path.isabs(path) or re.search(r"[\x00\r\n]", path)
+        for path in (snapshot, ready)
+    ):
+        raise SecretReloadError("Atomic secret reload paths are unavailable")
+    endpoint, generation = (
+        settings.get(key, "") for key in ("FAAS_SECRETS_RELOAD_ACK_ENDPOINT", "FAAS_SECRETS_RELOAD_GENERATION")
+    )
+    try:
+        url = urlsplit(endpoint)
+        valid = (
+            url.scheme in ("http", "https")
+            and url.hostname
+            and not (url.username or url.password or url.fragment)
+            and not re.search(r"[\x00\r\n]", endpoint)
+        )
+        _ = url.port
+    except (ValueError, TypeError):
+        valid = False
+    if not valid:
+        raise SecretReloadError("Secret acknowledgement endpoint is unavailable")
+    if not isinstance(generation, str) or not re.fullmatch(r"[0-9a-f]{32}", generation):
+        raise SecretReloadError("Secret execution identity is unavailable")
+    if not isinstance(startup_timeout, (float, int)) or not math.isfinite(startup_timeout) or startup_timeout <= 0:
+        raise SecretReloadError("Initial secret wait deadline is invalid")
+    return snapshot, ready, endpoint, generation
+
+
 class SecretReloadCoordinator:
     """One coordinator per workload. Start/stop on the main thread to install
     and restore SIGHUP. Application work is serialized on a daemon worker; stop
@@ -183,35 +216,7 @@ class SecretReloadCoordinator:
         ):
             raise SecretReloadError("Secret consumers are unavailable")
         self._consumers = tuple(consumers)
-        settings = os.environ if env is None else env
-        self._snapshot, self._ready = (
-            settings.get(key, "") for key in ("FAAS_SECRETS_SNAPSHOT_FILE", "FAAS_SECRETS_RELOAD_READY_FILE")
-        )
-        if any(
-            not isinstance(path, str) or not os.path.isabs(path) or re.search(r"[\x00\r\n]", path)
-            for path in (self._snapshot, self._ready)
-        ):
-            raise SecretReloadError("Atomic secret reload paths are unavailable")
-        self._endpoint, self._generation = (
-            settings.get(key, "") for key in ("FAAS_SECRETS_RELOAD_ACK_ENDPOINT", "FAAS_SECRETS_RELOAD_GENERATION")
-        )
-        try:
-            url = urlsplit(self._endpoint)
-            valid = (
-                url.scheme in ("http", "https")
-                and url.hostname
-                and not (url.username or url.password or url.fragment)
-                and not re.search(r"[\x00\r\n]", self._endpoint)
-            )
-            _ = url.port
-        except (ValueError, TypeError):
-            valid = False
-        if not valid:
-            raise SecretReloadError("Secret acknowledgement endpoint is unavailable")
-        if not isinstance(self._generation, str) or not re.fullmatch(r"[0-9a-f]{32}", self._generation):
-            raise SecretReloadError("Secret execution identity is unavailable")
-        if not isinstance(startup_timeout, (float, int)) or not math.isfinite(startup_timeout) or startup_timeout <= 0:
-            raise SecretReloadError("Initial secret wait deadline is invalid")
+        self._snapshot, self._ready, self._endpoint, self._generation = _reload_settings(env, startup_timeout)
         self._startup_timeout, self._on_error, self._io = startup_timeout, on_error, io or SecretReloadIO()
         self._shutdown, self._hangup = threading.Event(), threading.Event()
         self._cancel = SecretReloadCancellation([self._shutdown] + ([] if cancel is None else [cancel]))

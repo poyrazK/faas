@@ -16,7 +16,7 @@ import type { TracingConfig } from './TracingConfig.js';
 import type { WorkerScaling } from './WorkerScaling.js';
 import type { WorkloadPort } from './WorkloadPort.js';
 /**
- * App creation payload: slug, type (app|function), runtime (only for function), RAM MB, max concurrency, idle timeout, and optional manifest.
+ * App creation payload: slug, type (app|function), runtime (required for function; must be omitted for app), RAM MB, max concurrency, idle timeout, and optional manifest.
  */
 export type CreateAppRequest = {
   profiling?: ProfilingConfig;
@@ -74,6 +74,10 @@ export type CreateAppRequest = {
    * Per-app request wall-clock timeout in seconds. 0 inherits the plan/type default; the current platform ceiling is 30 seconds.
    */
   request_timeout_s?: number;
+  /**
+   * Requests one Node or Python function worker may serve at once (ADR-1342). Omitted, 0 or 1 keeps one request per worker; the plan's concurrency_per_vm bound caps it. Python runs sync handlers on threads.
+   */
+  function_concurrency?: number;
   /**
    * Lifecycle contract for the app. Default is request; service/worker/job are plan-gated.
    */

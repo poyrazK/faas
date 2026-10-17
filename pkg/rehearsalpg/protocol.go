@@ -1,4 +1,4 @@
-// Package rehearsalpg defines independent PostgreSQL rehearsal evidence (ADR-1353).
+// Package rehearsalpg defines independent PostgreSQL rehearsal evidence (ADR-20261017201009).
 package rehearsalpg
 
 import (

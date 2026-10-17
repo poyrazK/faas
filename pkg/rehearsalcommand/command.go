@@ -1,5 +1,5 @@
 // Package rehearsalcommand defines the bounded, deployment-attached command
-// protocol for contained rehearsals (ADR-1352).
+// protocol for contained rehearsals (ADR-20261017201008).
 package rehearsalcommand
 
 import (

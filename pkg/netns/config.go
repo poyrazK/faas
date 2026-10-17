@@ -90,7 +90,7 @@ func SetDefaultHostBridgeIP(addr netip.Addr) {
 //	                                  │  (veth pair)
 //	netns fc-<instance>:  vethPeer(10.100.x.y/16) ── [route/DNAT] ── tap0(10.0.0.1) ── guest(10.0.0.2)
 type Config struct {
-	RehearsalRunID string     // immutable, retained run-scoped outbound containment (ADR-1349)
+	RehearsalRunID string     // immutable, retained run-scoped outbound containment (ADR-20261017201005)
 	Instance       string     // instance id
 	Netns          string     // fc-<instance>
 	Tap            string     // tap0 (identical in every netns)

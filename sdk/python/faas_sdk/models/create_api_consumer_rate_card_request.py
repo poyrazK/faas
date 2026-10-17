@@ -8,6 +8,10 @@ from uuid import UUID
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.create_api_consumer_rate_card_request_tier_mode import (
+    CreateAPIConsumerRateCardRequestTierMode,
+    check_create_api_consumer_rate_card_request_tier_mode,
+)
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
@@ -41,6 +45,18 @@ class CreateAPIConsumerRateCardRequest:
     plan_id: UUID | Unset = UNSET
     """Adds the version to a consumer plan's price history; omitted prices the app default plan. Plan cards cannot
     be backdated."""
+    unit: str | Unset = "request"
+    """What the card prices (ADR-1308, ADR-1318): requests; compute_second or response_megabyte, rounded per
+    consumer minute; or app:<meter>, the units the app reports in its Gregale-Usage header. Cards of different units
+    price side by side (ADR-1317); non-request cards take no route weights and cannot be backdated."""
+    base_fee_millicents_per_month: int | Unset = UNSET
+    """Fixed charge per consumer per UTC month while this card is in force when the consumer's month starts
+    (ADR-1316)."""
+    minimum_millicents_per_month: int | Unset = UNSET
+    """Minimum usage charge per consumer per UTC month; statements top up the difference (ADR-1316)."""
+    tier_mode: CreateAPIConsumerRateCardRequestTierMode | Unset = "graduated"
+    """How tiers price a consumer's month (ADR-1309): graduated prices each unit at the step its position falls in;
+    volume prices every unit of the month at the step the month's total reaches. volume needs tiers."""
     effective_from: datetime.datetime | None | Unset = UNSET
     """UTC minute at which this version starts; omitted means the next UTC minute."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -67,6 +83,16 @@ class CreateAPIConsumerRateCardRequest:
         if not isinstance(self.plan_id, Unset):
             plan_id = str(self.plan_id)
 
+        unit = self.unit
+
+        base_fee_millicents_per_month = self.base_fee_millicents_per_month
+
+        minimum_millicents_per_month = self.minimum_millicents_per_month
+
+        tier_mode: str | Unset = UNSET
+        if not isinstance(self.tier_mode, Unset):
+            tier_mode = self.tier_mode
+
         effective_from: None | str | Unset
         if isinstance(self.effective_from, Unset):
             effective_from = UNSET
@@ -92,6 +118,14 @@ class CreateAPIConsumerRateCardRequest:
             field_dict["route_weights"] = route_weights
         if plan_id is not UNSET:
             field_dict["plan_id"] = plan_id
+        if unit is not UNSET:
+            field_dict["unit"] = unit
+        if base_fee_millicents_per_month is not UNSET:
+            field_dict["base_fee_millicents_per_month"] = base_fee_millicents_per_month
+        if minimum_millicents_per_month is not UNSET:
+            field_dict["minimum_millicents_per_month"] = minimum_millicents_per_month
+        if tier_mode is not UNSET:
+            field_dict["tier_mode"] = tier_mode
         if effective_from is not UNSET:
             field_dict["effective_from"] = effective_from
 
@@ -134,6 +168,19 @@ class CreateAPIConsumerRateCardRequest:
         else:
             plan_id = UUID(_plan_id)
 
+        unit = d.pop("unit", UNSET)
+
+        base_fee_millicents_per_month = d.pop("base_fee_millicents_per_month", UNSET)
+
+        minimum_millicents_per_month = d.pop("minimum_millicents_per_month", UNSET)
+
+        _tier_mode = d.pop("tier_mode", UNSET)
+        tier_mode: CreateAPIConsumerRateCardRequestTierMode | Unset
+        if isinstance(_tier_mode, Unset):
+            tier_mode = UNSET
+        else:
+            tier_mode = check_create_api_consumer_rate_card_request_tier_mode(_tier_mode)
+
         def _parse_effective_from(data: object) -> datetime.datetime | None | Unset:
             if data is None:
                 return data
@@ -158,6 +205,10 @@ class CreateAPIConsumerRateCardRequest:
             tiers=tiers,
             route_weights=route_weights,
             plan_id=plan_id,
+            unit=unit,
+            base_fee_millicents_per_month=base_fee_millicents_per_month,
+            minimum_millicents_per_month=minimum_millicents_per_month,
+            tier_mode=tier_mode,
             effective_from=effective_from,
         )
 

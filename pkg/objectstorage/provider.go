@@ -120,6 +120,8 @@ type ObjectWriter interface {
 
 // ObjectWriteConfirmer requires the exact private receipt, size and a valid ETag.
 // Absence or elapsed time cannot prove settlement.
+// ErrWriteRejected is permitted only for an exact, durable terminal rejection;
+// a missing receipt, timeout or unavailable provider must remain uncertain.
 type ObjectWriteConfirmer interface {
 	ConfirmTrackedObject(context.Context, string, string, string, int64) (UploadResult, error)
 }
@@ -658,6 +660,9 @@ func fingerprint(c BackendConfig) string {
 			storageClass = "STANDARD"
 		}
 		identity += "\x00" + c.GCSLocation + "\x00" + storageClass
+	}
+	if c.OwnedNodeReceipts {
+		identity += "\x00owned-node-receipts-v1"
 	}
 	sum := sha256.Sum256([]byte(identity))
 	return hex.EncodeToString(sum[:])

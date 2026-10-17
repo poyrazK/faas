@@ -59,7 +59,7 @@ func (s *MemoryStore) ReserveCutover(_ context.Context, r PrepareCutoverRequest,
 			return cloneCutover(c), false, nil
 		}
 	}
-	if source.State != StateReady || target.State != StateReady || source.ProviderResourceID == "" || target.ProviderResourceID == "" || target.RestoreSourceDatabaseID != source.ID || target.RestoreSourceResourceID != source.ProviderResourceID || s.databaseCutoverPinned(source.ID) || s.databaseCutoverPinned(target.ID) {
+	if source.State != StateReady || target.State != StateReady || source.ProviderResourceID == "" || target.ProviderResourceID == "" || target.RestoreSourceDatabaseID != source.ID || target.RestoreSourceResourceID != databaseDataResource(source) || s.databaseCutoverPinned(source.ID) || s.databaseCutoverPinned(target.ID) {
 		return Cutover{}, false, ErrConflict
 	}
 	c := Cutover{ID: r.ID, AccountID: r.AccountID, AppID: r.AppID, Scope: r.Scope, Source: source, Target: target, State: CutoverPreparing, RetryAt: now, CreatedAt: now, UpdatedAt: now}

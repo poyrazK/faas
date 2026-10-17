@@ -1,0 +1,281 @@
+{
+  "cases": [
+    {
+      "name": "task",
+      "actions": [
+        "probe"
+      ],
+      "passed": true,
+      "admits": 1
+    },
+    {
+      "name": "queue",
+      "actions": [
+        "queue-canary"
+      ],
+      "passed": true,
+      "admits": 1
+    },
+    {
+      "name": "graph_budget",
+      "graph": true,
+      "actions": [
+        "probe",
+        "queue-canary",
+        "probe",
+        "probe"
+      ],
+      "concurrency": 2,
+      "passed": true,
+      "admits": 4
+    },
+    {
+      "name": "reused_evidence",
+      "actions": [
+        "reuse"
+      ],
+      "passed": true,
+      "admits": 0
+    },
+    {
+      "name": "existing_task",
+      "actions": [
+        "wait"
+      ],
+      "passed": true,
+      "admits": 0
+    },
+    {
+      "name": "existing_queue",
+      "actions": [
+        "wait-queue"
+      ],
+      "passed": true,
+      "admits": 0
+    },
+    {
+      "name": "lost_admission",
+      "actions": [
+        "probe"
+      ],
+      "fault": "admit_once",
+      "resume": true,
+      "passed": true,
+      "admits": 1
+    },
+    {
+      "name": "lost_graph_admission",
+      "graph": true,
+      "actions": [
+        "probe",
+        "queue-canary"
+      ],
+      "fault": "admit_once",
+      "resume": true,
+      "passed": true,
+      "admits": 2
+    },
+    {
+      "name": "lost_completion",
+      "actions": [
+        "probe"
+      ],
+      "fault": "complete_once",
+      "resume": true,
+      "passed": true,
+      "admits": 1
+    },
+    {
+      "name": "lost_graph_completion",
+      "graph": true,
+      "actions": [
+        "probe",
+        "queue-canary"
+      ],
+      "fault": "complete_once",
+      "resume": true,
+      "passed": true,
+      "admits": 2
+    },
+    {
+      "name": "blocked_poll",
+      "actions": [
+        "probe"
+      ],
+      "fault": "blocked",
+      "passed": false,
+      "admits": 1
+    },
+    {
+      "name": "failed_resource",
+      "actions": [
+        "probe"
+      ],
+      "fault": "failed",
+      "passed": false,
+      "admits": 1
+    },
+    {
+      "name": "changed_resource",
+      "actions": [
+        "probe"
+      ],
+      "fault": "resource_changed",
+      "passed": false,
+      "admits": 1
+    },
+    {
+      "name": "changed_review",
+      "actions": [
+        "probe"
+      ],
+      "fault": "digest_changed",
+      "passed": false,
+      "admits": 1
+    },
+    {
+      "name": "changed_deadline",
+      "actions": [
+        "probe"
+      ],
+      "fault": "deadline_changed",
+      "passed": false,
+      "admits": 1
+    },
+    {
+      "name": "false_completion",
+      "actions": [
+        "probe"
+      ],
+      "fault": "false_complete",
+      "passed": false,
+      "admits": 1
+    },
+    {
+      "name": "unqualified_graph_member",
+      "graph": true,
+      "actions": [
+        "probe",
+        "probe"
+      ],
+      "fault": "member_pending",
+      "passed": false,
+      "admits": 2
+    },
+    {
+      "name": "unknown_status",
+      "actions": [
+        "probe"
+      ],
+      "fault": "unknown_status",
+      "passed": false,
+      "admits": 1
+    },
+    {
+      "name": "expired",
+      "actions": [
+        "probe"
+      ],
+      "fault": "expired",
+      "passed": false,
+      "admits": 0
+    },
+    {
+      "name": "compact_deployment",
+      "actions": [
+        "probe"
+      ],
+      "compact": true,
+      "passed": true,
+      "admits": 1
+    },
+    {
+      "name": "compact_graph_deployment",
+      "graph": true,
+      "actions": [
+        "probe",
+        "probe"
+      ],
+      "compact": true,
+      "passed": true,
+      "admits": 2
+    },
+    {
+      "name": "existing_work_over_budget",
+      "graph": true,
+      "actions": [
+        "wait",
+        "wait-queue",
+        "wait",
+        "probe"
+      ],
+      "concurrency": 1,
+      "passed": true,
+      "admits": 1
+    },
+    {
+      "name": "changed_graph_selection",
+      "graph": true,
+      "actions": [
+        "probe",
+        "probe"
+      ],
+      "fault": "selection_changed",
+      "passed": false,
+      "admits": 2
+    },
+    {
+      "name": "app_server_budget_full",
+      "actions": [
+        "probe",
+        "queue-canary"
+      ],
+      "fault": "budget_once",
+      "passed": true,
+      "admits": 2
+    },
+    {
+      "name": "graph_server_budget_full",
+      "graph": true,
+      "actions": [
+        "probe",
+        "queue-canary",
+        "probe"
+      ],
+      "fault": "budget_once",
+      "passed": true,
+      "admits": 3
+    },
+    {
+      "name": "unrelated_capacity_stops",
+      "actions": [
+        "probe"
+      ],
+      "fault": "capacity",
+      "passed": false,
+      "admits": 0
+    },
+    {
+      "name": "app_budget_full_after_admission",
+      "actions": [
+        "probe",
+        "queue-canary"
+      ],
+      "fault": "budget_after_admit",
+      "passed": true,
+      "admits": 2
+    },
+    {
+      "name": "graph_budget_full_after_admission",
+      "graph": true,
+      "actions": [
+        "probe",
+        "queue-canary",
+        "probe"
+      ],
+      "fault": "budget_after_admit",
+      "passed": true,
+      "admits": 3
+    }
+  ]
+}

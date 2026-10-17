@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ADR-1358: run only on a dedicated native x86 Linux KVM qualification host.
+# ADR-20261017201014: run only on a dedicated native x86 Linux KVM qualification host.
 set -euo pipefail
 
 if [[ $(uname -s) != Linux || $(uname -m) != x86_64 || $EUID != 0 || ! -c /dev/kvm ]]; then

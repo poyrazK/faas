@@ -12,7 +12,7 @@ func (m *MemStore) sourceRuntimeCaptureRootLocked(app App, dep Deployment) (Sour
 		!sameStandardUUID(m.latestSourceBuildLocked(dep.ID).ID, origin.Input.Claims.BuildID) {
 		return SourceBuildRootfs{}, ErrApplicationStandardRuntimeStale
 	}
-	kind, runtime := SourceBuildRootfsKind(app, dep)
+	kind, runtime := SourceBuildRootfsKindForClaim(app, dep, origin.Input.Claims.Runtime)
 	if root.Input.Kind != kind || root.Input.Runtime != runtime {
 		return SourceBuildRootfs{}, ErrApplicationStandardRuntimeStale
 	}

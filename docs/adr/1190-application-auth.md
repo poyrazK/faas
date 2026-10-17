@@ -1,6 +1,6 @@
 # ADR-1190: Application Auth on a pinned GoTrue server
 
-- **Status:** proposed; phases 1–6 implemented (the `auth` credential mode; the template and `gregale auth create|status`; organizations, roles, `authorize()` and `--auth`; email, hosted pages and `@gregale/auth`; storage, realtime and workflow checks; owner administration, the dashboard screens and user import; signing-key rotation and typed settings; lifecycle events and the activity view; passkeys, branded hosted pages, CAPTCHA and activity retention; Go and Python backend SDKs; phone sign-in by SMS), not yet qualified on a live backend or native builder
+- **Status:** proposed; phases 1–6 implemented (the `auth` credential mode; the template and `gregale auth create|status`; organizations, roles, `authorize()` and `--auth`; email, hosted pages and `@gregale/auth`; storage, realtime and workflow checks; owner administration, the dashboard screens and user import; signing-key rotation and typed settings; lifecycle events and the activity view; passkeys, branded hosted pages, CAPTCHA and activity retention; Go and Python backend SDKs; phone sign-in by SMS; organization SAML single sign-on), not yet qualified on a live backend or native builder
 - **Date:** 2026-10-13
 - **Decision:** Package a pinned Supabase Auth (GoTrue) server with a Gregale front process as an ordinary Gregale app bound to the customer's managed PostgreSQL. Add Gregale-owned organizations, invitations, roles and one SQL authorization function that the Data API, object downloads, realtime channels and workflow starts all use.
 - **Why:** Gregale authenticates its own accounts, and its gateway, Data API and realtime service verify tokens from an identity provider the customer brings. Gregale issues no tokens for an application's own users, so every customer must still design sign-up, sessions, recovery, membership and permissions alone.
@@ -385,6 +385,29 @@ when phone sign-in is on without CAPTCHA; GoTrue's per-instance limit of 30
 messages an hour and one code a minute per number also apply. A confirmed
 phone number publishes `auth.user.confirmed` with `channel: phone`; the
 number itself is never in an event.
+
+### Organization single sign-on
+
+Organization SSO uses GoTrue's SAML 2.0 service provider. `AUTH_SSO` turns it
+on; `AUTH_SAML_PRIVATE_KEY` is the RSA key GoTrue signs with and publishes in
+its metadata. The CLI or dashboard creates the key the first time SSO is
+turned on and never replaces it, because a new key would make every
+identity provider distrust the app; turning SSO off keeps it sealed. The owner
+registers identity providers with an admin key through `/admin/v1/sso`, which
+calls GoTrue's admin API, so provider records stay in the customer's
+database like users. Each provider must name its email domains, and may be
+linked to one organization (`gregale_auth.sso_organizations`) with a role
+other than owner: a trigger on `auth.identities` adds a user who signs in
+through it for the first time, and linking adds its existing users. Members
+keep their memberships when a link changes or ends.
+
+GoTrue keeps SSO accounts separate from other accounts with the same address,
+so an identity provider cannot sign in as an existing password or OAuth user.
+It could still assert any address for its own users, so an SSO user may
+accept an organization invitation only for an address in one of its
+provider's domains. Self-service SSO for an organization's own admins is
+rejected for now: it needs domain ownership proof, without which one
+organization could claim another's domain.
 
 ### Scale to zero
 

@@ -30,7 +30,7 @@ jobs:
           config_path="$RUNNER_TEMP/data-api-staging-config.json"
           node --input-type=module -e 'import fs from "node:fs"; fs.writeFileSync(process.argv[1], process.env.STAGING_CONFIG_JSON, {mode: 0o600})' "$config_path"
           echo "FAAS_DATA_API_STAGING_CONFIG=$config_path" >> "$GITHUB_ENV"
-      - name: Deploy fixtures and verify the customer workflow
+      - name: Deploy fixtures and verify the customer workflow, load and recovery
         run: make data-api-staging-canary
       - name: Upload canary evidence
         if: always()

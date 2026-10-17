@@ -13,6 +13,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"github.com/onebox-faas/faas/pkg/apid/issueslack"
 	"io"
 	"log/slog"
 	"net"
@@ -28,14 +29,22 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/appevents"
+	"github.com/onebox-faas/faas/pkg/apid/billingruns"
+	"github.com/onebox-faas/faas/pkg/apid/consumerbilling"
+	"github.com/onebox-faas/faas/pkg/apid/consumercontrols"
+	"github.com/onebox-faas/faas/pkg/apid/consumercredits"
 	"github.com/onebox-faas/faas/pkg/apid/durable"
 	"github.com/onebox-faas/faas/pkg/apid/edgerules"
+	"github.com/onebox-faas/faas/pkg/apid/issuetrackers"
 	"github.com/onebox-faas/faas/pkg/apid/managedrealtime"
 	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/apid/operation"
+	"github.com/onebox-faas/faas/pkg/apid/statementinvoices"
+	"github.com/onebox-faas/faas/pkg/apid/tenantplans"
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
+	"github.com/onebox-faas/faas/pkg/issuetracker"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/profiling"
@@ -204,6 +213,8 @@ const RuntimeConfigS3 = runtimeConfigS3
 const SafeReleaseEmergencyGrace = safeReleaseEmergencyGrace
 const ScanSpoolRootEnv = scanSpoolRootEnv
 const ScheddMetricsDiscoveryPath = scheddMetricsDiscoveryPath
+const GatewaydPublicEdgeMetricsDiscoveryPath = gatewaydPublicEdgeMetricsDiscoveryPath
+const CloudflaredMetricsDiscoveryPath = cloudflaredMetricsDiscoveryPath
 const ServiceCallerKeysCacheControl = serviceCallerKeysCacheControl
 const SessionCookie = sessionCookie
 const SessionCookieLifetime = sessionCookieLifetime
@@ -235,6 +246,7 @@ var HostHMACKey = &hostHMACKey
 var HostIdentitiesForUnseal = &hostIdentitiesForUnseal
 var MfaIdentities = &mfaIdentities
 var MfaIdentity = &mfaIdentity
+var MfaRecipient = &mfaRecipient
 var ObsJailInternalMarkers = &obsJailInternalMarkers
 var ObsSealedBlobMarkers = &obsSealedBlobMarkers
 var OutboundCredentialRecipient = &outboundCredentialRecipient
@@ -426,7 +438,7 @@ var ManagedPostgresView = managedPostgresView
 var ManagedWorkflowCanConsumeFailedDependencies = managedWorkflowCanConsumeFailedDependencies
 var MapReconcileError = mapReconcileError
 var MarshalAppRetryPolicy = marshalAppRetryPolicy
-var MillicentsAsEUR = millicentsAsEUR
+var MillicentsAsCurrency = millicentsAsCurrency
 var MintDashboardSession = mintDashboardSession
 var MustSeedApp = mustSeedApp
 var MustSeedAppFor = mustSeedAppFor
@@ -450,6 +462,11 @@ var NewPgBackupPushedSampler = newPgBackupPushedSampler
 var NewPreviewJanitor = newPreviewJanitor
 var NewProjectLifecycleFixture = newProjectLifecycleFixture
 var NewRuntimeConfigManager = newRuntimeConfigManager
+
+func (s *server) ConfigureHostingForTest(getenv func(string) string) error {
+	return s.configureHosting(getenv)
+}
+
 var NewSafeReleaseLeaseMetrics = newSafeReleaseLeaseMetrics
 var NewServer = newServer
 var NewServerWithDeps = newServerWithDeps
@@ -517,6 +534,7 @@ var ProjectRequest = projectRequest
 var ProjectWorkloadCrons = projectWorkloadCrons
 var ProjectedAppCount = projectedAppCount
 var PromotionFixture = promotionFixture
+var BindingPromotionDeadline = bindingPromotionDeadline
 var PromtailMetricsTarget = promtailMetricsTarget
 var PtrInt64 = ptrInt64
 var QualifyObjectAccounting = qualifyObjectAccounting
@@ -852,22 +870,28 @@ func (r *server) ManagedPostgresBindings() **managedpostgres.BindingService {
 func (r *server) ManagedPostgresCutovers() **managedpostgres.CutoverService {
 	return &r.managedPostgresCutovers
 }
-func (r *server) Notif() *Notifier                        { return &r.notif }
-func (r *server) Object() *object.Service                 { return &r.object }
-func (r *server) ObjectStorage() **objectstorage.Registry { return &r.objectStorage }
-func (r *server) Operation() *operation.Service           { return &r.operation }
-func (r *server) Ops() **wire.OpsMetrics                  { return &r.ops }
-func (r *server) OutboundProbeGatewayURL() *string        { return &r.outboundProbeGatewayURL }
-func (r *server) ProfileBackend() *profiling.Backend      { return &r.profileBackend }
-func (r *server) ProfileQuerySlots() *chan struct{}       { return &r.profileQuerySlots }
-func (r *server) PromqlClient() **promql.Client           { return &r.promqlClient }
-func (r *server) Realtime() *managedrealtime.Service      { return &r.realtime }
-func (r *server) ResendWebhookSecret() *string            { return &r.resendWebhookSecret }
-func (r *server) RuntimeConfig() **runtimeConfigManager   { return &r.runtimeConfig }
-func (r *server) Sessions() **session.Manager             { return &r.sessions }
-func (r *server) Store() *state.Store                     { return &r.store }
-func (r *server) StripeWebhookSecret() *string            { return &r.stripeWebhookSecret }
-func (r *server) WorkflowRuntimeEnabled() *bool           { return &r.workflowRuntimeEnabled }
+func (r *server) Notif() *Notifier                              { return &r.notif }
+func (r *server) Object() *object.Service                       { return &r.object }
+func (r *server) ObjectStorage() **objectstorage.Registry       { return &r.objectStorage }
+func (r *server) Operation() *operation.Service                 { return &r.operation }
+func (r *server) Ops() **wire.OpsMetrics                        { return &r.ops }
+func (r *server) OutboundProbeGatewayURL() *string              { return &r.outboundProbeGatewayURL }
+func (r *server) ProfileBackend() *profiling.Backend            { return &r.profileBackend }
+func (r *server) ProfileQuerySlots() *chan struct{}             { return &r.profileQuerySlots }
+func (r *server) PromqlClient() **promql.Client                 { return &r.promqlClient }
+func (r *server) Realtime() *managedrealtime.Service            { return &r.realtime }
+func (r *server) ResendWebhookSecret() *string                  { return &r.resendWebhookSecret }
+func (r *server) RuntimeConfig() **runtimeConfigManager         { return &r.runtimeConfig }
+func (r *server) Sessions() **session.Manager                   { return &r.sessions }
+func (r *server) StatementInvoices() *statementinvoices.Service { return &r.statementInvoices }
+func (r *server) BillingRuns() *billingruns.Service             { return &r.billingRuns }
+func (r *server) ConsumerBilling() *consumerbilling.Service     { return &r.consumerBilling }
+func (r *server) ConsumerCredits() *consumercredits.Service     { return &r.consumerCredits }
+func (r *server) ConsumerControls() *consumercontrols.Service   { return &r.consumerControls }
+func (r *server) TenantPlans() *tenantplans.Service             { return &r.tenantPlans }
+func (r *server) Store() *state.Store                           { return &r.store }
+func (r *server) StripeWebhookSecret() *string                  { return &r.stripeWebhookSecret }
+func (r *server) WorkflowRuntimeEnabled() *bool                 { return &r.workflowRuntimeEnabled }
 func (r *server) AbandonProjectEnvironmentCloneConfigurationFence(p0 context.Context, p1 state.ProjectEnvironmentCloneLease) (state.ProjectEnvironmentCloneLease, error) {
 	return r.abandonProjectEnvironmentCloneConfigurationFence(p0, p1)
 }
@@ -1198,6 +1222,12 @@ func (r *server) SavedProfilePage(p0 http.ResponseWriter, p1 *http.Request, p2 s
 func (r *server) ScheddMetricsDiscovery(p0 http.ResponseWriter, p1 *http.Request) {
 	r.scheddMetricsDiscovery(p0, p1)
 }
+func (r *server) GatewaydPublicEdgeMetricsDiscovery(p0 http.ResponseWriter, p1 *http.Request) {
+	r.gatewaydPublicEdgeMetricsDiscovery(p0, p1)
+}
+func (r *server) CloudflaredMetricsDiscovery(p0 http.ResponseWriter, p1 *http.Request) {
+	r.cloudflaredMetricsDiscovery(p0, p1)
+}
 func (r *server) SendTestAlertPresetCore(p0 context.Context, p1 state.Account, p2 string, p3 string) (api.TestAlertPresetResponse, *api.Problem) {
 	return r.sendTestAlertPresetCore(p0, p1, p2, p3)
 }
@@ -1314,6 +1344,50 @@ func (r *fakeObjectProvider) CreateErr() *error  { return &r.createErr }
 func (r *fakeObjectProvider) DeleteErr() *error  { return &r.deleteErr }
 func (r *server) CleanupDevSessionResources(ctx context.Context, app state.App) error {
 	return r.cleanupDevSessionResources(ctx, app)
+}
+
+func IssueNativeSetClients(e pgHandlerEnv, gh GithubdClient, provider issuetracker.StatusProvider) {
+	e.s.githubd = gh
+	e.s.nativeTrackerProvider = provider
+}
+func IssueNativeStore(e pgHandlerEnv) state.Store     { return e.store }
+func IssueNativeAccount(e pgHandlerEnv) state.Account { return e.acct }
+
+func IssueNativeSetTicketProvider(e pgHandlerEnv, p issuetracker.Provider) {
+	e.s.nativeTicketProvider = p
+}
+
+func IssueNativeRunAutoSyncBatch(e pgHandlerEnv, ctx context.Context) {
+	e.s.runIssueTrackerAutoSyncBatch(ctx)
+}
+func IssueNativeAutoSyncDue(e pgHandlerEnv, ctx context.Context, link string) error {
+	_, err := e.pool.Exec(ctx, "UPDATE issue_tracker_auto_sync SET next_check_at=now(),claim_until=now()-interval '1 second' WHERE link_id=$1", link)
+	return err
+}
+
+func IssueNativeSetLinearVerifier(e pgHandlerEnv, p issuetrackers.LinearConnectionVerifier) {
+	e.s.nativeLinearVerifier = p
+}
+
+func IssueNativeTicketExpire(e pgHandlerEnv, ctx context.Context, account, request string) error {
+	_, err := e.pool.Exec(ctx, "UPDATE native_issue_ticket_receipts SET recover_after=now()-interval '1 second' WHERE account_id=$1 AND request_id=$2", account, request)
+	return err
+}
+
+func IssueNativeSetLinearOAuth(e pgHandlerEnv, cfg issuetracker.LinearOAuthConfig, provider issuetracker.LinearOAuthProvider) {
+	e.s.linearOAuthConfig = cfg
+	e.s.linearOAuthProvider = provider
+}
+
+func (r *server) IssueSlackResponses() **issueslack.Client { return &r.issueSlackResponses }
+
+func IssueSetSlackOAuth(e pgHandlerEnv, cfg issueslack.OAuthConfig, client *issueslack.Client) {
+	e.s.issueSlackOAuthConfig = cfg
+	e.s.issueSlackOAuthClient = client
+}
+
+func (s *server) ConfigureCheckedReleaseCatalog(t *testing.T, accountID string) {
+	configureSourceRefManagedPostgres(t, sourceRefTestEnv{acctID: accountID, srv: s})
 }
 
 // AddAuthBindingForTest gives appID an `auth` managed PostgreSQL binding,

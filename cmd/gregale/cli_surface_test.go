@@ -55,6 +55,7 @@ func TestTopLevelUsageAllKeepsCompatibilityAliasesDiscoverable(t *testing.T) {
 }
 
 func TestCliAudienceFiltersOnlyDiscoverySurfaces(t *testing.T) {
+	t.Setenv("FAAS_FRONTEND_HOSTING_ENABLED", "1")
 	for _, command := range cliCommands {
 		if command.Audience == cliAudienceCustomer {
 			continue
@@ -266,6 +267,17 @@ func TestDeployManifestIncludesEveryParserFlag(t *testing.T) {
 			}
 			receiver, ok := sel.X.(*ast.Ident)
 			if !ok || receiver.Name != "fs" {
+				return true
+			}
+			if sel.Sel.Name == "Var" && len(call.Args) > 1 {
+				if literal, ok := call.Args[1].(*ast.BasicLit); ok {
+					name, err := strconv.Unquote(literal.Value)
+					if err != nil {
+						t.Error(err)
+					} else {
+						parsed[name] = true
+					}
+				}
 				return true
 			}
 			switch sel.Sel.Name {

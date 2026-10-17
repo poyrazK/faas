@@ -105,6 +105,9 @@ export async function changeRefreshBarrier(client, action, role, token, fingerpr
 
 export function refreshStatusReader(connection) {
   const pool = new pg.Pool({ connectionString: connection, max: 1, connectionTimeoutMillis: 3000, query_timeout: 3000 })
+  // An idle client dropped by a database restart must not crash the server;
+  // driver errors can carry connection details, so report a fixed message.
+  pool.on('error', () => console.error('refresh status database connection unavailable'))
   return {
     async read(token) {
       const result = await pool.query('SELECT * FROM gregale_data_api.refresh_status($1)', [refreshTokenHash(token)])

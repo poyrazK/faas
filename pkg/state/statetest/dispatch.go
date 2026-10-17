@@ -25,6 +25,16 @@ import (
 // memDispatched lists the methods Mem forwards to its override.
 var memDispatched = map[string]bool{
 	"ScenarioWebhookDeliveryBlocked":                          true,
+	"CreateInstanceWithMode":                                  true,
+	"CreateAndClaimJobInstance":                               true,
+	"CompleteNodeLifecycle":                                   true,
+	"DeliverAuditEvent":                                       true,
+	"ExecuteOperatorNode":                                     true,
+	"SubmitOperatorRecovery":                                  true,
+	"ExecuteOperatorColdBoot":                                 true,
+	"BindInstanceSnapshotRecovery":                            true,
+	"CompleteOperatorPark":                                    true,
+	"CompleteOperatorRestart":                                 true,
 	"ProcessNextWorkflowInitialManualCompletion":              true,
 	"AcceptEntityOutboxDelivery":                              true,
 	"AccountPasswordByAccountID":                              true,
@@ -123,6 +133,15 @@ var memDispatched = map[string]bool{
 	"StampOperationExecutionAttempt":                          true,
 	"UpdateAccountProviderCustomerID":                         true,
 	"WarmPoolReconciliationAppIDs":                            true,
+}
+
+func (s *Mem) CompleteOperatorRestart(ctx context.Context, completion state.OperatorRestartCompletion) (state.OperatorRestartResult, error) {
+	if override, ok := s.over.(interface {
+		CompleteOperatorRestart(context.Context, state.OperatorRestartCompletion) (state.OperatorRestartResult, error)
+	}); ok {
+		return override.CompleteOperatorRestart(ctx, completion)
+	}
+	return s.MemStore.CompleteOperatorRestart(ctx, completion)
 }
 
 func (s *Mem) AcceptEntityOutboxDelivery(p0 context.Context, p1 state.AppWebhookDelivery) (string, error) {
@@ -1010,6 +1029,7 @@ func (s *Mem) WarmPoolReconciliationAppIDs(p0 context.Context, p1 string) ([]str
 // pgDispatched lists the methods Pg forwards to its override.
 var pgDispatched = map[string]bool{
 	"ScenarioWebhookDeliveryBlocked":                                     true,
+	"SubmitOperatorRecovery":                                             true,
 	"AbandonProjectEnvironmentCloneConfigurationFence":                   true,
 	"AbandonProjectEnvironmentCloneObjectWriteFences":                    true,
 	"AcquireProjectEnvironmentCloneConfigurationFence":                   true,
@@ -2345,6 +2365,7 @@ func (s *Pg) WithdrawProjectEnvironmentCloneCheckpointPgBindings(p0 context.Cont
 // storeDispatched lists the methods Store forwards to its override.
 var storeDispatched = map[string]bool{
 	"ScenarioWebhookDeliveryBlocked":                true,
+	"SubmitOperatorRecovery":                        true,
 	"MCPPolicyConvergenceSnapshot":                  true,
 	"LatestAccountEdgeRulePolicyPosition":           true,
 	"LatestEdgeRuleChangeID":                        true,
@@ -2928,4 +2949,93 @@ func (s *Store) ScenarioWebhookDeliveryBlocked(ctx context.Context, appID, webho
 		return f.ScenarioWebhookDeliveryBlocked(ctx, appID, webhookID)
 	}
 	return s.Store.ScenarioWebhookDeliveryBlocked(ctx, appID, webhookID)
+}
+
+func (s *Mem) CompleteNodeLifecycle(ctx context.Context, in state.NodeLifecycleCompletion) (state.NodeLifecycleCompletionResult, error) {
+	if override, ok := s.over.(state.NodeLifecycleCompletionStore); ok {
+		return override.CompleteNodeLifecycle(ctx, in)
+	}
+	return s.MemStore.CompleteNodeLifecycle(ctx, in)
+}
+
+func (s *Mem) CreateInstanceWithMode(ctx context.Context, appID, deploymentID, current string, ramMB int, nodeID, wakeID, mode string) (state.Instance, error) {
+	if override, ok := s.over.(interface {
+		CreateInstanceWithMode(context.Context, string, string, string, int, string, string, string) (state.Instance, error)
+	}); ok {
+		return override.CreateInstanceWithMode(ctx, appID, deploymentID, current, ramMB, nodeID, wakeID, mode)
+	}
+	return s.MemStore.CreateInstanceWithMode(ctx, appID, deploymentID, current, ramMB, nodeID, wakeID, mode)
+}
+
+func (s *Mem) CreateAndClaimJobInstance(ctx context.Context, id, job, run string, index int, current string, ramMB int, node, wake, token string, expires time.Time, owner string) (state.Instance, error) {
+	if override, ok := s.over.(interface {
+		CreateAndClaimJobInstance(context.Context, string, string, string, int, string, int, string, string, string, time.Time, string) (state.Instance, error)
+	}); ok {
+		return override.CreateAndClaimJobInstance(ctx, id, job, run, index, current, ramMB, node, wake, token, expires, owner)
+	}
+	return s.MemStore.CreateAndClaimJobInstance(ctx, id, job, run, index, current, ramMB, node, wake, token, expires, owner)
+}
+
+func (s *Mem) DeliverAuditEvent(ctx context.Context, id int64) (bool, error) {
+	if override, ok := s.over.(interface {
+		DeliverAuditEvent(context.Context, int64) (bool, error)
+	}); ok {
+		return override.DeliverAuditEvent(ctx, id)
+	}
+	return s.MemStore.DeliverAuditEvent(ctx, id)
+}
+
+func (s *Mem) ExecuteOperatorNode(ctx context.Context, id, token string) (state.OperatorNodeResult, error) {
+	if override, ok := s.over.(state.OperatorNodeStore); ok {
+		return override.ExecuteOperatorNode(ctx, id, token)
+	}
+	return s.MemStore.ExecuteOperatorNode(ctx, id, token)
+}
+
+func (s *Mem) ExecuteOperatorColdBoot(ctx context.Context, id, token string) (state.OperatorColdBootResult, error) {
+	if override, ok := s.over.(state.OperatorColdBootStore); ok {
+		return override.ExecuteOperatorColdBoot(ctx, id, token)
+	}
+	return s.MemStore.ExecuteOperatorColdBoot(ctx, id, token)
+}
+func (s *Mem) BindInstanceSnapshotRecovery(ctx context.Context, id, wake, snapshot string) error {
+	if override, ok := s.over.(interface {
+		BindInstanceSnapshotRecovery(context.Context, string, string, string) error
+	}); ok {
+		return override.BindInstanceSnapshotRecovery(ctx, id, wake, snapshot)
+	}
+	return s.MemStore.BindInstanceSnapshotRecovery(ctx, id, wake, snapshot)
+}
+
+func (s *Mem) SubmitOperatorRecovery(ctx context.Context, in state.OperatorRecoverySubmission) (state.OperatorRecoveryReceipt, error) {
+	if override, ok := s.over.(state.OperatorRecoverySubmissionStore); ok {
+		return override.SubmitOperatorRecovery(ctx, in)
+	}
+	return s.MemStore.SubmitOperatorRecovery(ctx, in)
+}
+
+func (s *Pg) SubmitOperatorRecovery(ctx context.Context, in state.OperatorRecoverySubmission) (state.OperatorRecoveryReceipt, error) {
+	if override, ok := s.over.(state.OperatorRecoverySubmissionStore); ok {
+		return override.SubmitOperatorRecovery(ctx, in)
+	}
+	return s.PgStore.SubmitOperatorRecovery(ctx, in)
+}
+
+func (s *Store) SubmitOperatorRecovery(ctx context.Context, in state.OperatorRecoverySubmission) (state.OperatorRecoveryReceipt, error) {
+	if override, ok := s.over.(state.OperatorRecoverySubmissionStore); ok {
+		return override.SubmitOperatorRecovery(ctx, in)
+	}
+	if store, ok := s.Store.(state.OperatorRecoverySubmissionStore); ok {
+		return store.SubmitOperatorRecovery(ctx, in)
+	}
+	return state.OperatorRecoveryReceipt{}, state.ErrInvalidArgument
+}
+
+func (s *Mem) CompleteOperatorPark(ctx context.Context, completion state.OperatorParkCompletion) (state.OperatorParkResult, error) {
+	if override, ok := s.over.(interface {
+		CompleteOperatorPark(context.Context, state.OperatorParkCompletion) (state.OperatorParkResult, error)
+	}); ok {
+		return override.CompleteOperatorPark(ctx, completion)
+	}
+	return s.MemStore.CompleteOperatorPark(ctx, completion)
 }

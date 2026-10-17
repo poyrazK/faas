@@ -71,7 +71,7 @@ func (s Status) Terminal() bool {
 }
 
 // Request contains dispatch-time command data. Deployment artifacts, sealed
-// secrets and network policy are staged during VM preparation. ADR-1352 adds
+// secrets and network policy are staged during VM preparation. ADR-20261017201008 adds
 // bounded command environment overrides and regular-file inputs through the
 // reserved rehearsal envelope; it cannot replace those platform bindings.
 //

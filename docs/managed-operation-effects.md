@@ -167,6 +167,6 @@ completion/dispatch workers for complete evidence; older workers remain fenced
 from external delivery but can show suppressed ledger rows or lack fingerprints.
 See
 [scenario testing](scenario-tests.md#capture-managed-webhook-actions) for setup
-and the [capture decision](adr/1347-rehearsal-webhook-capture.md) for the consistency
+and the [capture decision](adr/20261017201003-rehearsal-webhook-capture.md) for the consistency
 and qualification boundaries, extended by
-[sealed action comparison](adr/1348-sealed-rehearsal-action-comparison.md).
+[sealed action comparison](adr/20261017201004-sealed-rehearsal-action-comparison.md).

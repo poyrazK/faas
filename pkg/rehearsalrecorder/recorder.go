@@ -1,5 +1,5 @@
 // Package rehearsalrecorder owns the host-side closing barrier for supported
-// rehearsal relay executions (ADR-1351). It has no provider or guest authority.
+// rehearsal relay executions (ADR-20261017201007). It has no provider or guest authority.
 package rehearsalrecorder
 
 import (
