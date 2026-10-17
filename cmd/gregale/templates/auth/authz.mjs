@@ -16,7 +16,7 @@ const codes = new Map([
   ['28000', 401], ['42501', 403], ['P0002', 404], ['23505', 409], ['23514', 409], ['23503', 409], ['54000', 409], ['22023', 400], ['22P02', 400],
 ])
 // Messages raised by gregale_auth functions; anything else is never echoed.
-const stableMessages = new Set(['not_authenticated', 'forbidden', 'not_found', 'slug_taken', 'invalid_organization', 'organization_limit',
+const stableMessages = new Set(['not_authenticated', 'forbidden', 'not_found', 'slug_taken', 'invalid_organization', 'organization_limit', 'anonymous_user',
   'unknown_role', 'invalid_invitation', 'invitation_limit', 'invitation_invalid', 'invitation_email_mismatch', 'already_member', 'last_owner',
   'domain_taken', 'domain_limit', 'invalid_domain', 'domain_in_use', 'domain_not_verified', 'sso_provider_limit'])
 

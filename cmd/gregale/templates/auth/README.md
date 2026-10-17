@@ -67,3 +67,10 @@ clients with `gregale auth oauth-clients`. A client's access token carries
 (or `oauth-client`), so verifiers of `aud=authenticated` refuse it. On this
 host it reaches only `/auth/v1/oauth/userinfo`, `POST /auth/v1/logout?scope=local`
 and `POST /authz/v1/authorize`.
+
+`gregale auth config NAME --anonymous on` lets people start without an
+account (`signInAnonymously`); their tokens carry `is_anonymous`, they cannot
+create organizations, and `--anonymous-retention DAYS` deletes those idle
+that long (`AUTH_ANONYMOUS_RETENTION_DAYS`). `--identity-linking on`
+(`AUTH_IDENTITY_LINKING`) lets users link a provider account, which also
+makes an anonymous user permanent, and unlink sign-in methods.

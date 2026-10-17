@@ -64,6 +64,9 @@ const (
 	secretCaptchaSecret   = "GOTRUE_SECURITY_CAPTCHA_SECRET"
 	secretCaptchaSiteKey  = "AUTH_CAPTCHA_SITE_KEY"
 	secretAuditRetention  = "AUTH_AUDIT_RETENTION_DAYS"
+	secretAnonymous       = "GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED"
+	secretAnonRetention   = "AUTH_ANONYMOUS_RETENTION_DAYS"
+	secretIdentityLinking = "AUTH_IDENTITY_LINKING"
 )
 
 // CaptchaProviders are the CAPTCHA services GoTrue verifies and the hosted
@@ -134,6 +137,14 @@ type Change struct {
 	// clients do; it takes effect only while the server is on.
 	OAuthServer       *bool
 	OAuthRegistration *bool
+	// Anonymous lets people start without an account (signInAnonymously);
+	// AnonymousRetentionDays deletes anonymous users idle that long, 0 keeps
+	// them. IdentityLinking lets signed-in users link and unlink sign-in
+	// methods, which is how an anonymous user becomes permanent with a
+	// provider account.
+	Anonymous              *bool
+	AnonymousRetentionDays *int
+	IdentityLinking        *bool
 }
 
 // Captcha is a CAPTCHA provider and its keys; the secret stays in the app.
@@ -254,6 +265,23 @@ func (c Change) Secrets() (map[string]string, []string, error) {
 	}
 	if c.OAuthRegistration != nil {
 		set["AUTH_OAUTH_REGISTRATION"] = flag(*c.OAuthRegistration)
+	}
+	if c.Anonymous != nil {
+		set[secretAnonymous] = strconv.FormatBool(*c.Anonymous)
+	}
+	if c.IdentityLinking != nil {
+		set[secretIdentityLinking] = flag(*c.IdentityLinking)
+	}
+	if c.AnonymousRetentionDays != nil {
+		days := *c.AnonymousRetentionDays
+		switch {
+		case days == 0:
+			unset = append(unset, secretAnonRetention)
+		case days < 0 || days > api.AuthAnonymousRetentionMaxDays:
+			return nil, nil, fmt.Errorf("anonymous user retention must be 1 to %d days, or 0 to keep them; got %d", api.AuthAnonymousRetentionMaxDays, days)
+		default:
+			set[secretAnonRetention] = strconv.Itoa(days)
+		}
 	}
 	if c.SMS != nil {
 		sms, removed, err := c.SMS.secrets()

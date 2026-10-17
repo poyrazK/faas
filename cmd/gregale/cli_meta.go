@@ -4328,6 +4328,9 @@ var cliCommands = []cliCommand{
 				{Name: "org-sso", Value: "on|off", Short: "let organizations verify their email domains and connect their own identity provider (needs --sso on)", ClosedSet: []string{"on", "off"}},
 				{Name: "oauth-server", Value: "on|off", Short: "the OAuth 2.1 authorization server, for third-party apps and MCP clients; manage clients with gregale auth oauth-clients", ClosedSet: []string{"on", "off"}},
 				{Name: "oauth-registration", Value: "on|off", Short: "let OAuth clients register themselves (RFC 7591), as MCP clients do", ClosedSet: []string{"on", "off"}},
+				{Name: "anonymous", Value: "on|off", Short: "let people start without an account (anonymous users); turn on CAPTCHA with it", ClosedSet: []string{"on", "off"}},
+				{Name: "anonymous-retention", Value: "DAYS", Short: "days an anonymous user may stay idle before it is deleted, or forever"},
+				{Name: "identity-linking", Value: "on|off", Short: "let signed-in users link and unlink sign-in methods", ClosedSet: []string{"on", "off"}},
 				{Name: "scope", Value: "SCOPE", Short: "environment scope"},
 			}, Examples: []string{"gregale auth config shop-auth", "gregale auth config shop-auth --events on", "gregale auth config shop-auth --password-min-length 12 --password-require lower,upper,digit --mfa on"}},
 			{Name: "providers", Short: "Manage OAuth sign-in providers such as Google or GitHub", Subcommands: []cliSub{

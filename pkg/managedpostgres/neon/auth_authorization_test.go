@@ -8,6 +8,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -22,11 +23,11 @@ const authorizationSQLDir = "../../../cmd/gregale/templates/auth/sql"
 
 // The tables and columns of GoTrue's schema that the helpers read. The
 // template's end-to-end run applies the real migrations.
-const goTrueStub = `CREATE TABLE auth.users (id uuid PRIMARY KEY, email varchar(255), email_confirmed_at timestamptz, phone text, phone_confirmed_at timestamptz, banned_until timestamptz, deleted_at timestamptz, raw_app_meta_data jsonb, is_anonymous boolean NOT NULL DEFAULT false, is_sso_user boolean NOT NULL DEFAULT false);
+const goTrueStub = `CREATE TABLE auth.users (id uuid PRIMARY KEY, email varchar(255), email_confirmed_at timestamptz, phone text, phone_confirmed_at timestamptz, banned_until timestamptz, deleted_at timestamptz, raw_app_meta_data jsonb, is_anonymous boolean NOT NULL DEFAULT false, is_sso_user boolean NOT NULL DEFAULT false, created_at timestamptz DEFAULT now());
 CREATE TABLE auth.identities (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id uuid NOT NULL REFERENCES auth.users ON DELETE CASCADE, provider text NOT NULL, provider_id text NOT NULL);
 CREATE TABLE auth.sso_providers (id uuid PRIMARY KEY);
 CREATE TABLE auth.sso_domains (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), sso_provider_id uuid NOT NULL REFERENCES auth.sso_providers ON DELETE CASCADE, domain text NOT NULL);
-CREATE TABLE auth.sessions (id uuid PRIMARY KEY, user_id uuid NOT NULL REFERENCES auth.users ON DELETE CASCADE, not_after timestamptz, aal text);
+CREATE TABLE auth.sessions (id uuid PRIMARY KEY, user_id uuid NOT NULL REFERENCES auth.users ON DELETE CASCADE, not_after timestamptz, aal text, created_at timestamptz DEFAULT now(), updated_at timestamptz DEFAULT now(), refreshed_at timestamp);
 CREATE TABLE auth.audit_log_entries (instance_id uuid, id uuid PRIMARY KEY, payload json, created_at timestamptz, ip_address varchar(64) NOT NULL DEFAULT '');`
 
 type authUser struct{ id, session uuid.UUID }
@@ -561,5 +562,42 @@ func TestSQLOAuthSessionResourcesEndWithTheirSessions(t *testing.T) {
 	executeSQL(t, owner, `DELETE FROM auth.users WHERE id = $1`, bob.id)
 	if remembered(alice) || remembered(bob) {
 		t.Fatal("an ended session kept its resource")
+	}
+}
+
+func TestSQLAnonymousUsersCannotOwnOrganizationsAndIdleOnesArePruned(t *testing.T) {
+	f := newCredentialFixture(t)
+	ctx := context.Background()
+	_, owner := installAuthorization(t, f)
+	guest, person := newAuthUser(t, owner, ""), newAuthUser(t, owner, "ada@example.test")
+	executeSQL(t, owner, `UPDATE auth.users SET email = NULL, is_anonymous = true WHERE id = $1`, guest.id)
+	actAs(ctx, t, owner, guest)
+	wantSQLError(t, owner, "42501", "anonymous_user", `SELECT gregale_auth.create_organization('guests', 'Guests')`)
+	actAs(ctx, t, owner, person)
+	executeSQL(t, owner, `SELECT gregale_auth.create_organization('acme', 'Acme')`)
+	// The template's own pruning statement, run with 30 days.
+	source, err := os.ReadFile(filepath.Join(authorizationSQLDir, "..", "retention.mjs"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	statement := regexp.MustCompile("(?s)const anonymousStatement = `([^`]+)`").FindSubmatch(source)
+	if statement == nil {
+		t.Fatal("no anonymousStatement in retention.mjs")
+	}
+	idle, active, refreshed := newAuthUser(t, owner, ""), newAuthUser(t, owner, ""), newAuthUser(t, owner, "")
+	for _, u := range []authUser{guest, idle, active, refreshed} {
+		executeSQL(t, owner, `UPDATE auth.users SET email = NULL, is_anonymous = true, created_at = now() - interval '40 days' WHERE id = $1`, u.id)
+		executeSQL(t, owner, `UPDATE auth.sessions SET created_at = now() - interval '40 days', updated_at = now() - interval '40 days' WHERE user_id = $1`, u.id)
+	}
+	executeSQL(t, owner, `UPDATE auth.users SET created_at = now() - interval '40 days' WHERE id = $1`, person.id)
+	executeSQL(t, owner, `UPDATE auth.sessions SET updated_at = now() - interval '2 days' WHERE user_id = $1`, active.id)
+	executeSQL(t, owner, `UPDATE auth.sessions SET refreshed_at = (now() - interval '1 day') AT TIME ZONE 'UTC' WHERE user_id = $1`, refreshed.id)
+	executeSQL(t, owner, `DELETE FROM auth.sessions WHERE user_id = $1`, guest.id)
+	executeSQL(t, owner, string(statement[1]), 30, 1000)
+	exists := func(u authUser) bool {
+		return queryBool(t, owner, `SELECT EXISTS (SELECT 1 FROM auth.users WHERE id = $1)`, u.id)
+	}
+	if exists(guest) || exists(idle) || !exists(active) || !exists(refreshed) || !exists(person) {
+		t.Fatalf("after pruning: guest %v idle %v active %v refreshed %v person %v", exists(guest), exists(idle), exists(active), exists(refreshed), exists(person))
 	}
 }

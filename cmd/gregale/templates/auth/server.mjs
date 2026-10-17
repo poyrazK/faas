@@ -11,7 +11,7 @@ import { callbackTokens, createRealtimeAuthorizer } from './realtime.mjs'
 import { storageBindings } from './storage.mjs'
 import { createWorkflowStarter, workflowsConfig } from './workflows.mjs'
 import { createEventPublisher, lifecycleConfig, publishesAfter, setLifecycleEvents } from './events.mjs'
-import { createAuditPruner } from './retention.mjs'
+import { createAnonymousPruner, createAuditPruner } from './retention.mjs'
 import { bodyAllowed, smsSendPath } from './sms.mjs'
 import { createScimHandler } from './scim.mjs'
 import { goMemoryLimit, gotrue, limits, pagePolicy, runtimeConfig } from './config.mjs'
@@ -247,10 +247,10 @@ export function start(env = process.env) {
     console.error(JSON.stringify({ level: 'error', event: 'lifecycle_events_setup_failed', sqlstate: err?.code ?? null }))
   })
   // Activity retention prunes on the same request-driven schedule.
-  const pruner = createAuditPruner({ pool, days: config.auditRetentionDays })
-  pruner.poke()
+  const pruners = [createAuditPruner({ pool, days: config.auditRetentionDays }), createAnonymousPruner({ pool, days: config.anonymousRetentionDays })]
+  for (const pruner of pruners) pruner.poke()
   server.on('request', (req, res) => {
-    if (publishesAfter(req)) res.on('finish', () => { events?.poke(); pruner.poke() })
+    if (publishesAfter(req)) res.on('finish', () => { events?.poke(); for (const pruner of pruners) pruner.poke() })
   })
   child.on('exit', code => {
     console.error(JSON.stringify({ level: 'error', event: 'gotrue_exit', code }))

@@ -1,6 +1,6 @@
 # ADR-1190: Application Auth on a pinned GoTrue server
 
-- **Status:** proposed; phases 1–6 implemented (the `auth` credential mode; the template and `gregale auth create|status`; organizations, roles, `authorize()` and `--auth`; email, hosted pages and `@gregale/auth`; storage, realtime and workflow checks; owner administration, the dashboard screens and user import; signing-key rotation and typed settings; lifecycle events and the activity view; passkeys, branded hosted pages, CAPTCHA and activity retention; Go, Python and Node backend SDKs; phone sign-in by SMS; organization SAML single sign-on; Go and Python backend SDKs; SMS and recovery-code second factors with a hosted verification step; SCIM provisioning; self-service organization SSO with DNS domain verification; the OAuth 2.1 authorization server), not yet qualified on a live backend or native builder
+- **Status:** proposed; phases 1–6 implemented (the `auth` credential mode; the template and `gregale auth create|status`; organizations, roles, `authorize()` and `--auth`; email, hosted pages and `@gregale/auth`; storage, realtime and workflow checks; owner administration, the dashboard screens and user import; signing-key rotation and typed settings; lifecycle events and the activity view; passkeys, branded hosted pages, CAPTCHA and activity retention; Go, Python and Node backend SDKs; phone sign-in by SMS; organization SAML single sign-on; Go and Python backend SDKs; SMS and recovery-code second factors with a hosted verification step; SCIM provisioning; self-service organization SSO with DNS domain verification; the OAuth 2.1 authorization server; anonymous users and identity linking), not yet qualified on a live backend or native builder
 - **Date:** 2026-10-13
 - **Decision:** Package a pinned Supabase Auth (GoTrue) server with a Gregale front process as an ordinary Gregale app bound to the customer's managed PostgreSQL. Add Gregale-owned organizations, invitations, roles and one SQL authorization function that the Data API, object downloads, realtime channels and workflow starts all use.
 - **Why:** Gregale authenticates its own accounts, and its gateway, Data API and realtime service verify tokens from an identity provider the customer brings. Gregale issues no tokens for an application's own users, so every customer must still design sign-up, sessions, recovery, membership and permissions alone.
@@ -508,6 +508,27 @@ edge rules, realtime and the SDKs by default) never accepts a client's
 token; an API or MCP server accepts one for its own resource
 (`gregale mcp init --auth-app`, the SDKs' audience option). GoTrue issues
 only the OpenID scopes, so finer permissions come from `authorize()`.
+
+### Anonymous users and identity linking
+
+GoTrue's anonymous users let people start, for example fill a cart, before
+creating an account. They are a typed setting
+(`GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED`); GoTrue rate-limits them per
+client address and checks CAPTCHA on their sign-up, and the CLI advises
+turning CAPTCHA on with them. Their tokens carry `is_anonymous`, which the
+SDKs expose and RLS policies can read. Anyone can become one without an
+address, so `create_organization` refuses them (`anonymous_user`); they hold
+no memberships, so `authorize()` grants them nothing.
+
+An anonymous user becomes permanent, keeping its ID and data, by adding an
+email address and password, a phone, or a provider account. Linking a
+provider, like unlinking any sign-in method, needs `AUTH_IDENTITY_LINKING`
+(GoTrue's manual linking), which Gregale owns. GoTrue never deletes anonymous
+users, and on a database the customer pays for they accumulate; with
+`AUTH_ANONYMOUS_RETENTION_DAYS` the front deletes those created, and with no
+session refreshed, within that many days, in the same request-driven batches
+as activity retention. Deleting one ends its sessions, identities and
+memberships; the application's own tables decide through their foreign keys.
 
 ### Scale to zero
 

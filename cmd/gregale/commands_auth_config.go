@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	authConfigUsage    = "usage: gregale auth config NAME [--site-url URL] [--redirect-urls URLS] [--signup on|off] [--autoconfirm on|off] [--password-min-length N] [--password-require CLASSES] [--leaked-password-check on|off] [--mfa on|off] [--mfa-phone on|off] [--recovery-codes on|off] [--email-provider resend|postmark|none --email-from FROM --email-api-key-stdin] [--authz FILE] [--events on|off] [--passkeys on|off] [--passkey-rp-id DOMAIN|none] [--brand-name NAME] [--brand-color #RRGGBB] [--brand-logo-url URL] [--captcha turnstile|hcaptcha|off --captcha-site-key KEY --captcha-secret-stdin] [--activity-retention DAYS|forever] [--sms twilio|twilio_verify|messagebird|textlocal|vonage|off --sms-account ID --sms-sender SENDER --sms-secret-stdin] [--sms-countries CODES|all] [--sso on|off] [--oauth-server on|off] [--oauth-registration on|off] [--org-sso on|off]"
+	authConfigUsage    = "usage: gregale auth config NAME [--site-url URL] [--redirect-urls URLS] [--signup on|off] [--autoconfirm on|off] [--password-min-length N] [--password-require CLASSES] [--leaked-password-check on|off] [--mfa on|off] [--mfa-phone on|off] [--recovery-codes on|off] [--email-provider resend|postmark|none --email-from FROM --email-api-key-stdin] [--authz FILE] [--events on|off] [--passkeys on|off] [--passkey-rp-id DOMAIN|none] [--brand-name NAME] [--brand-color #RRGGBB] [--brand-logo-url URL] [--captcha turnstile|hcaptcha|off --captcha-site-key KEY --captcha-secret-stdin] [--activity-retention DAYS|forever] [--sms twilio|twilio_verify|messagebird|textlocal|vonage|off --sms-account ID --sms-sender SENDER --sms-secret-stdin] [--sms-countries CODES|all] [--sso on|off] [--anonymous on|off] [--anonymous-retention DAYS|forever] [--identity-linking on|off] [--oauth-server on|off] [--oauth-registration on|off] [--org-sso on|off]"
 	authProvidersUsage = "usage: gregale auth providers list NAME | gregale auth providers enable NAME PROVIDER --client-id ID [--client-secret-stdin] [--url URL] | gregale auth providers disable NAME PROVIDER"
 )
 
@@ -61,6 +61,9 @@ func cmdAuthConfig(args []string) int {
 	orgSSO := fs.String("org-sso", "", "on or off: let organizations verify their email domains and connect their own identity provider (needs --sso on)")
 	oauthServer := fs.String("oauth-server", "", "on or off: the OAuth 2.1 authorization server, for third-party apps and MCP clients; manage clients with `gregale auth oauth-clients`")
 	oauthRegistration := fs.String("oauth-registration", "", "on or off: let OAuth clients register themselves (RFC 7591), as MCP clients do")
+	anonymous := fs.String("anonymous", "", "on or off: let people start without an account (anonymous users); turn on CAPTCHA with it")
+	anonymousRetention := fs.String("anonymous-retention", "", "days an anonymous user may stay idle before it is deleted, or forever")
+	identityLinking := fs.String("identity-linking", "", "on or off: let signed-in users link and unlink sign-in methods")
 	sms := authSMSFlags{
 		provider:  fs.String("sms", "", "phone sign-in by text message through your own SMS account: twilio, twilio_verify, messagebird, textlocal, vonage, or off"),
 		account:   fs.String("sms-account", "", "Twilio account SID or Vonage API key"),
@@ -91,7 +94,8 @@ func cmdAuthConfig(args []string) int {
 		value *string
 		field **bool
 	}{"sso": {sso, &change.SSO}, "org-sso": {orgSSO, &change.OrgSSO}, "oauth-server": {oauthServer, &change.OAuthServer}, "oauth-registration": {oauthRegistration, &change.OAuthRegistration},
-		"mfa-phone": {mfaPhone, &change.MFAPhone}, "recovery-codes": {recoveryCodes, &change.RecoveryCodes}} {
+		"mfa-phone": {mfaPhone, &change.MFAPhone}, "recovery-codes": {recoveryCodes, &change.RecoveryCodes},
+		"anonymous": {anonymous, &change.Anonymous}, "identity-linking": {identityLinking, &change.IdentityLinking}} {
 		if !given[name] {
 			continue
 		}
@@ -100,6 +104,16 @@ func cmdAuthConfig(args []string) int {
 			return printErr("Invalid Auth settings", err)
 		}
 		*target.field = &on
+	}
+	if given["anonymous-retention"] {
+		days, err := parseRetentionDays("anonymous-retention", *anonymousRetention)
+		if err != nil {
+			return printErr("Invalid Auth settings", err)
+		}
+		change.AnonymousRetentionDays = &days
+	}
+	if change.Anonymous != nil && *change.Anonymous && !given["captcha"] {
+		PrintWarn(osStderr, "anyone can now create users in %s; turn on CAPTCHA (--captcha) unless it already is", fs.Arg(0))
 	}
 	if given["passkey-rp-id"] {
 		rpID := *passkeyRPID
@@ -309,17 +323,25 @@ func (f authHostedFlags) apply(given map[string]bool, change *authsettings.Chang
 		return errors.New("--captcha-site-key and --captcha-secret-stdin need --captcha turnstile or hcaptcha")
 	}
 	if given["activity-retention"] {
-		days := 0
-		if *f.retention != "forever" {
-			n, err := strconv.Atoi(*f.retention)
-			if err != nil || n < 1 {
-				return errors.New("--activity-retention must be a number of days or forever")
-			}
-			days = n
+		days, err := parseRetentionDays("activity-retention", *f.retention)
+		if err != nil {
+			return err
 		}
 		change.ActivityRetentionDays = &days
 	}
 	return nil
+}
+
+// parseRetentionDays reads a number of days, or forever as 0.
+func parseRetentionDays(name, value string) (int, error) {
+	if value == "forever" {
+		return 0, nil
+	}
+	n, err := strconv.Atoi(value)
+	if err != nil || n < 1 {
+		return 0, fmt.Errorf("--%s must be a number of days or forever", name)
+	}
+	return n, nil
 }
 
 func parseOnOff(name, value string) (bool, error) {
@@ -457,6 +479,13 @@ func showAuthConfig(ctx context.Context, app api.AppResponse) int {
 	if settings.OAuth.Enabled {
 		oauth = "on; issuer " + settings.OAuth.Issuer + ", clients register themselves: " + onOff(settings.OAuth.DynamicRegistration)
 	}
+	anonymousUsers := "off"
+	if settings.Anonymous.Enabled {
+		anonymousUsers = "on, kept forever"
+		if settings.Anonymous.RetentionDays != nil {
+			anonymousUsers = fmt.Sprintf("on, deleted after %d idle days", *settings.Anonymous.RetentionDays)
+		}
+	}
 	phone := "off"
 	if settings.Phone.Enabled {
 		phone = "on, through " + settings.Phone.Provider + "; texts any country"
@@ -472,7 +501,7 @@ func showAuthConfig(ctx context.Context, app api.AppResponse) int {
 	for _, row := range [][2]string{
 		{"site URL", settings.SiteURL}, {"redirect URLs", redirects}, {"sign-up", signup},
 		{"sign-in methods", strings.Join(providers, ", ")}, {"passwords", passwords},
-		{"MFA", authMFASummary(settings)}, {"passkeys", passkeys}, {"phone (SMS)", phone}, {"organization SSO", sso}, {"OAuth server", oauth}, {"CAPTCHA", captchaState}, {"hosted pages", branding},
+		{"MFA", authMFASummary(settings)}, {"passkeys", passkeys}, {"phone (SMS)", phone}, {"organization SSO", sso}, {"OAuth server", oauth}, {"anonymous users", anonymousUsers}, {"identity linking", onOff(settings.IdentityLinking)}, {"CAPTCHA", captchaState}, {"hosted pages", branding},
 		{"email delivery", email}, {"lifecycle events", events}, {"activity kept", retention}, {"signing key", keys},
 	} {
 		_, _ = fmt.Fprintf(osStdout, "  %-16s %s\n", row[0]+":", row[1])

@@ -131,7 +131,7 @@ func authSettingsChange(form url.Values) (authsettings.Change, error) {
 	if err := hostedPageChange(form, &change); err != nil {
 		return change, err
 	}
-	for name, target := range map[string]**bool{"signup": &change.Signup, "autoconfirm": &change.Autoconfirm, "leaked_password_check": &change.LeakedPasswordCheck, "mfa": &change.MFA, "mfa_phone": &change.MFAPhone, "recovery_codes": &change.RecoveryCodes, "passkeys": &change.Passkeys, "sso": &change.SSO, "org_sso": &change.OrgSSO, "oauth_server": &change.OAuthServer, "oauth_registration": &change.OAuthRegistration} {
+	for name, target := range map[string]**bool{"signup": &change.Signup, "autoconfirm": &change.Autoconfirm, "leaked_password_check": &change.LeakedPasswordCheck, "mfa": &change.MFA, "mfa_phone": &change.MFAPhone, "recovery_codes": &change.RecoveryCodes, "passkeys": &change.Passkeys, "sso": &change.SSO, "org_sso": &change.OrgSSO, "oauth_server": &change.OAuthServer, "oauth_registration": &change.OAuthRegistration, "anonymous": &change.Anonymous, "identity_linking": &change.IdentityLinking} {
 		if !form.Has(name) {
 			continue
 		}
@@ -168,16 +168,19 @@ func hostedPageChange(form url.Values, change *authsettings.Change) error {
 	if form.Has("email_provider") {
 		change.Email = &authsettings.Email{Provider: form.Get("email_provider"), From: strings.TrimSpace(form.Get("email_from")), APIKey: strings.TrimSpace(form.Get("email_api_key"))}
 	}
-	if form.Has("activity_retention_days") {
+	for name, target := range map[string]**int{"activity_retention_days": &change.ActivityRetentionDays, "anonymous_retention_days": &change.AnonymousRetentionDays} {
+		if !form.Has(name) {
+			continue
+		}
 		days := 0
-		if value := form.Get("activity_retention_days"); value != "" {
+		if value := form.Get(name); value != "" {
 			n, err := strconv.Atoi(value)
 			if err != nil {
-				return errors.New("activity retention must be a number of days")
+				return errors.New(strings.ReplaceAll(strings.TrimSuffix(name, "_days"), "_", " ") + " must be a number of days")
 			}
 			days = n
 		}
-		change.ActivityRetentionDays = &days
+		*target = &days
 	}
 	return nil
 }

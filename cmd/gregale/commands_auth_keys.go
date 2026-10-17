@@ -408,6 +408,11 @@ type authPublicSettings struct {
 		MetadataURL         string `json:"metadata_url"`
 		DefaultAudience     string `json:"default_audience"`
 	} `json:"oauth"`
+	Anonymous struct {
+		Enabled       bool `json:"enabled"`
+		RetentionDays *int `json:"retention_days"`
+	} `json:"anonymous"`
+	IdentityLinking bool `json:"identity_linking"`
 	Keys struct {
 		Signing   string   `json:"signing"`
 		Verifying []string `json:"verifying"`

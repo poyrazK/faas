@@ -49,6 +49,9 @@
 <label>OAuth 2.1 server, for third-party apps and MCP clients<select name="oauth_server"><option value="off">Off</option><option value="on">On (register clients with gregale auth oauth-clients add)</option></select></label>
 <label>Clients register themselves (RFC 7591), as MCP clients do<select name="oauth_registration"><option value="off">Off</option><option value="on">On</option></select></label>
 <p id="oauth-status" class="muted"></p>
+<label>Anonymous users (people start without an account; turn on CAPTCHA with it)<select name="anonymous"><option value="off">Off</option><option value="on">On</option></select></label>
+<label>Delete anonymous users idle this many days (empty keeps them)<input name="anonymous_retention_days" type="number" min="1" max="3650"></label>
+<label>Users link and unlink sign-in methods<select name="identity_linking"><option value="off">Off</option><option value="on">On</option></select></label>
 <button type="submit">Save and restart</button>
 </form>
 <h3>Sign-in providers</h3>
@@ -499,6 +502,8 @@
       sms_provider: settings.phone?.enabled ? settings.phone.provider : '', sms_account: '', sms_sender: '', sms_secret: '',
       sso: settings.sso?.enabled ? 'on' : 'off', sms_countries: (settings.phone?.countries ?? []).join(','), org_sso: settings.sso?.self_service ? 'on' : 'off',
       oauth_server: settings.oauth?.enabled ? 'on' : 'off', oauth_registration: settings.oauth?.dynamic_registration ? 'on' : 'off',
+      anonymous: settings.anonymous?.enabled ? 'on' : 'off', anonymous_retention_days: settings.anonymous?.retention_days ? String(settings.anonymous.retention_days) : '',
+      identity_linking: settings.identity_linking ? 'on' : 'off',
     }
     for (const box of classes) box.checked = settings.password.required.includes(box.value)
     values.password_require = requireValue()

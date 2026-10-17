@@ -236,6 +236,14 @@ export function createAuthClient(options: AuthClientOptions) {
       // Email confirmation is pending; GoTrue returns the user only.
       return { session: null, user: body ?? null }
     },
+    /**
+     * Starts a session for an anonymous user, when the Auth app allows them.
+     * The user becomes permanent, keeping its ID and data, by adding an email
+     * address and password with updateUser or a provider with linkIdentity.
+     */
+    async signInAnonymously(input: Captcha = {}): Promise<Session> {
+      return save(toSession(await call<TokenResponse>('POST', '/auth/v1/signup', { body: captcha(input) })), 'SIGNED_IN')
+    },
     async signInWithPassword(input: { email: string; password: string } & Captcha): Promise<Session> {
       return save(toSession(await call<TokenResponse>('POST', '/auth/v1/token?grant_type=password', { body: { email: input.email, password: input.password, ...captcha(input) } })), 'SIGNED_IN')
     },
@@ -328,6 +336,19 @@ export function createAuthClient(options: AuthClientOptions) {
     connectedApps: {
       list: async (): Promise<ConnectedApp[]> => (await call<ConnectedApp[] | null>('GET', '/auth/v1/user/oauth/grants', { token: await bearer() })) ?? [],
       revoke: async (clientId: string): Promise<void> => { await call('DELETE', `/auth/v1/user/oauth/grants?client_id=${id(clientId)}`, { token: await bearer() }) },
+    },
+    /**
+     * Links an OAuth provider account to the signed-in user, when the Auth app
+     * allows identity linking. Navigate the browser to the returned URL; the
+     * Auth app returns to redirectTo with the session in the URL fragment.
+     */
+    async linkIdentity(input: { provider: string; redirectTo?: string }): Promise<{ url: string }> {
+      const query = new URLSearchParams({ provider: input.provider, skip_http_redirect: 'true', ...(input.redirectTo ? { redirect_to: input.redirectTo } : {}) })
+      return call<{ url: string }>('GET', `/auth/v1/user/identities/authorize?${query}`, { token: await bearer() })
+    },
+    /** Removes a sign-in method from the signed-in user; one must remain. */
+    async unlinkIdentity(identityId: string): Promise<void> {
+      await call('DELETE', `/auth/v1/user/identities/${id(identityId)}`, { token: await bearer() })
     },
     /** Navigate the browser here to sign in with an OAuth provider. */
     oauthUrl(input: { provider: string; redirectTo: string }): string {

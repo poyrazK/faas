@@ -298,3 +298,23 @@ test('lists and revokes the apps a user connected through the OAuth server', asy
   assert.equal(revoke.url.searchParams.get('client_id'), 'c1')
   assert.equal(revoke.headers.Authorization, 'Bearer access-1')
 })
+
+test('anonymous users sign in, link a provider and unlink a sign-in method', async () => {
+  const api = server({
+    'POST /auth/v1/signup': () => [200, { ...tokens(1), user: { id: 'u1', is_anonymous: true } }],
+    'GET /auth/v1/user/identities/authorize': () => [200, { url: 'https://github.com/login/oauth/authorize?x=1' }],
+    'DELETE /auth/v1/user/identities/i1': () => [204, undefined],
+  })
+  const auth = createAuthClient({ url: origin, fetch: api.fetch, store: null })
+  const session = await auth.signInAnonymously({ captchaToken: 'cap' })
+  assert.equal(session.accessToken, 'access-1')
+  assert.deepEqual(api.calls[0].body, { gotrue_meta_security: { captcha_token: 'cap' } })
+  assert.deepEqual(await auth.linkIdentity({ provider: 'github', redirectTo: 'https://shop.example.com/app' }), { url: 'https://github.com/login/oauth/authorize?x=1' })
+  const link = api.calls.at(-1)
+  assert.equal(link.url.searchParams.get('provider'), 'github')
+  assert.equal(link.url.searchParams.get('skip_http_redirect'), 'true')
+  assert.equal(link.url.searchParams.get('redirect_to'), 'https://shop.example.com/app')
+  assert.equal(link.headers.Authorization, 'Bearer access-1')
+  await auth.unlinkIdentity('i1')
+  assert.equal(api.calls.at(-1).key, 'DELETE /auth/v1/user/identities/i1')
+})

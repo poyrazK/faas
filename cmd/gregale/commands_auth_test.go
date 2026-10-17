@@ -2,6 +2,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/ecdh"
 	"encoding/base64"
 	"encoding/json"
@@ -10,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -233,7 +235,7 @@ func TestAuthTemplateRuntimeBounds(t *testing.T) {
 		"auditPruneBatches": api.AuthAuditPruneBatches, "auditPruneIntervalSeconds": api.AuthAuditPruneIntervalSeconds,
 		"eventBatch": api.AuthEventBatch, "eventLeaseSeconds": api.AuthEventLeaseSeconds, "eventMaxBackoffSeconds": api.AuthEventMaxBackoffSeconds, "eventRetentionSeconds": api.AuthEventRetentionSeconds, "smsCodeSeconds": api.AuthSMSCodeSeconds,
 		"ssoMetadataBytes": api.AuthSSOMetadataBytes, "ssoDomains": api.AuthSSOMaxDomains, "smsCountries": api.AuthSMSMaxCountries,
-		"scimPageSize": api.AuthSCIMPageSize, "scimBodyBytes": api.AuthSCIMBodyBytes, "oauthClients": api.AuthOAuthMaxClients} {
+		"scimPageSize": api.AuthSCIMPageSize, "scimBodyBytes": api.AuthSCIMBodyBytes, "oauthClients": api.AuthOAuthMaxClients, "anonymousRetentionMaxDays": api.AuthAnonymousRetentionMaxDays} {
 		if !strings.Contains(string(config), fmt.Sprintf("%s: %d", name, bound)) {
 			t.Fatalf("runtime %s differs from canonical limit", name)
 		}
@@ -241,6 +243,11 @@ func TestAuthTemplateRuntimeBounds(t *testing.T) {
 	authorization, err := os.ReadFile("templates/auth/sql/0001_authorization.sql")
 	if err != nil {
 		t.Fatal(err)
+	}
+	// 0009 replaces create_organization; both must keep the bound.
+	anonymous, err := os.ReadFile("templates/auth/sql/0009_anonymous_users.sql")
+	if err != nil || !strings.Contains(string(anonymous), fmt.Sprintf("WHERE created_by = caller) >= %d", api.AuthMaxOrganizationsPerUser)) {
+		t.Fatalf("anonymous-user SQL differs from the canonical organization limit: %v", err)
 	}
 	for _, bound := range []string{
 		fmt.Sprintf("WHERE created_by = caller) >= %d", api.AuthMaxOrganizationsPerUser),
@@ -521,5 +528,31 @@ func TestRealtimeCreateWithAuthWiresCallbackAndOIDC(t *testing.T) {
 		if code := cmdRealtimeCreate(append([]string{"shop", "--auth", "shop-auth"}, extra...)); code == 0 {
 			t.Fatalf("--auth accepted with %v", extra)
 		}
+	}
+}
+
+func TestAuthConfigAnonymousUsersAndLinking(t *testing.T) {
+	resetJSONEnv(t)
+	sealed, removed, _ := authSettingsWorld(t, nil, nil)
+	captureAuthStdout(t)
+	var stderr bytes.Buffer
+	oldErr := osStderr
+	osStderr = &stderr
+	t.Cleanup(func() { osStderr = oldErr })
+	if code := cmdAuth([]string{"config", "shop-auth", "--anonymous", "on", "--anonymous-retention", "30", "--identity-linking", "on"}); code != 0 ||
+		sealed["GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED"] != "true" || sealed["AUTH_ANONYMOUS_RETENTION_DAYS"] != "30" || sealed["AUTH_IDENTITY_LINKING"] != "1" {
+		t.Fatalf("config = %d, sealed %v", code, sortedKeys(sealed))
+	}
+	if !strings.Contains(stderr.String(), "turn on CAPTCHA") {
+		t.Fatalf("no CAPTCHA advice: %q", stderr.String())
+	}
+	if code := cmdAuth([]string{"config", "shop-auth", "--anonymous-retention", "forever"}); code != 0 {
+		t.Fatalf("forever = %d", code)
+	}
+	if !slices.Contains(*removed, "AUTH_ANONYMOUS_RETENTION_DAYS") {
+		t.Fatalf("forever kept the retention secret; removed %v", *removed)
+	}
+	if code := cmdAuth([]string{"config", "shop-auth", "--anonymous-retention", "0"}); code == 0 {
+		t.Fatal("accepted zero days")
 	}
 }

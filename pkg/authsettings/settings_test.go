@@ -177,3 +177,20 @@ func TestOAuthServerSwitches(t *testing.T) {
 		t.Fatal("a registration change is not empty")
 	}
 }
+
+func TestAnonymousUsersAndIdentityLinking(t *testing.T) {
+	set, unset, err := Change{Anonymous: ptr(true), AnonymousRetentionDays: ptr(30), IdentityLinking: ptr(true)}.Secrets()
+	want := map[string]string{"GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED": "true", "AUTH_ANONYMOUS_RETENTION_DAYS": "30", "AUTH_IDENTITY_LINKING": "1"}
+	if err != nil || !reflect.DeepEqual(set, want) || len(unset) != 0 {
+		t.Fatalf("set = %v unset = %v err = %v", set, unset, err)
+	}
+	set, unset, err = Change{Anonymous: ptr(false), AnonymousRetentionDays: ptr(0)}.Secrets()
+	if err != nil || set["GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED"] != "false" || !reflect.DeepEqual(unset, []string{"AUTH_ANONYMOUS_RETENTION_DAYS"}) {
+		t.Fatalf("off: set = %v unset = %v err = %v", set, unset, err)
+	}
+	for _, days := range []int{-1, 3651} {
+		if _, _, err := (Change{AnonymousRetentionDays: ptr(days)}).Secrets(); err == nil {
+			t.Fatalf("accepted %d days", days)
+		}
+	}
+}

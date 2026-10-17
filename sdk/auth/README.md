@@ -41,3 +41,8 @@ JWT rules honour it when the access token expires.
 When the Auth app's OAuth server is on, `connectedApps.list()` shows the
 third-party apps the user allowed and `connectedApps.revoke(clientId)` ends
 their access; they must ask the user again.
+
+When the Auth app allows anonymous users, `signInAnonymously()` starts a
+session without an account. Make the user permanent, keeping its data, with
+`updateUser({ email, password })` or `linkIdentity({ provider, redirectTo })`
+(identity linking must be on); `unlinkIdentity(id)` removes a sign-in method.
