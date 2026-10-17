@@ -14,6 +14,7 @@ import { withEventConsumerProcessingLease, processingStoreError, type EventConsu
 import { coordinateEventAcknowledgmentPreparation, preparationSettings,
   type EventAcknowledgmentPreparedOptions } from './event-acknowledgment-preparation.js';
 export type { EventAcknowledgmentPreparedOptions } from './event-acknowledgment-preparation.js';
+import { observePreparation } from './event-acknowledgment-preparation-events.js';
 import { saveIntent, saveNegativeIntent, intentStoreError, type EventAcknowledgmentIntentResult,
   type EventAcknowledgmentIntentStatus, type IntentInput } from './event-acknowledgment-intent-store.js';
 
@@ -97,17 +98,27 @@ export class EventAcknowledgmentWorker {
     options: EventAcknowledgmentPreparedOptions): Promise<EventAcknowledgmentIntentResult> {
     const preparation = preparationSettings(options);
     if (typeof prepare !== 'function' || typeof handler !== 'function') throw new TypeError('invalid event preparation callbacks');
-    return this.#operate(pool, options, async signal => {
-      try { return await this.#durable(pool, signal); }
+    return this.#operate(pool, options, signal => observePreparation(preparation.onEvent, signal, async events => {
+      const committed = async (operation: () => Promise<EventAcknowledgmentIntentResult>) => {
+        const result = await operation(); events.intentCommitted(result.receipt.replayed); return result;
+      };
+      try { return await committed(() => this.#durable(pool, signal)); }
       catch (error) { if (!missing(error)) throw error; }
       return coordinateEventAcknowledgmentPreparation(pool, this.#input, signal, preparation, prepare, {
-        start: async work => { await this.#startLease(work.signal); return this.#monitor(work); },
-        replay: workSignal => this.#durable(pool, workSignal),
-        complete: (lease, prepared, workSignal) => withEventConsumerProcessingLease(lease, this.#input,
+        start: async work => {
+          try { await this.#startLease(work.signal); }
+          catch (error) {
+            const alreadyAborted = work.signal.aborted; work.abort(error);
+            events.renewalFailed('platform', error, alreadyAborted); throw error;
+          }
+          return this.#monitor(work, error => events.renewalFailed('platform', error));
+        },
+        replay: workSignal => committed(() => this.#durable(pool, workSignal)),
+        complete: (lease, prepared, workSignal) => committed(() => withEventConsumerProcessingLease(lease, this.#input,
           processingHooks => this.#withIntent(hooks => eventConsumerTransaction(pool, this.#input,
-            tx => handler(tx, workSignal, prepared), { signal: workSignal }, hooks), processingHooks)),
-      });
-    });
+            tx => handler(tx, workSignal, prepared), { signal: workSignal }, hooks), processingHooks))),
+      }, events);
+    }));
   }
   /** Receipt-only staging after uncertain COMMIT. Never invokes business code. */
   async saveCompletionIntent(pool: EventConsumerPool, options: EventAcknowledgmentWorkerOperationOptions = {}): Promise<EventAcknowledgmentIntentResult> {
@@ -236,7 +247,7 @@ export class EventAcknowledgmentWorker {
       return;
     }
   }
-  #monitor(work: AbortController): () => Promise<void> {
+  #monitor(work: AbortController, onFailure?: (error: EventAcknowledgmentWorkerError) => void): () => Promise<void> {
     const monitor = new AbortController();
     const abort = () => monitor.abort();
     work.signal.addEventListener('abort', abort, { once: true });
@@ -247,7 +258,12 @@ export class EventAcknowledgmentWorker {
           await acknowledgmentWait(this.#settings.renewalIntervalMs, monitor.signal);
           this.#renewed(await acknowledgmentCall(this.#scope, this.#settings, 'renew', monitor.signal));
         }
-      } catch (error) { if (!monitor.signal.aborted) work.abort(callbackError(error)); }
+      } catch (error) {
+        if (!monitor.signal.aborted) {
+          const failure = callbackError(error); work.abort(failure);
+          try { onFailure?.(failure); } catch { /* Telemetry cannot alter renewal cancellation. */ }
+        }
+      }
     })();
     return async () => { monitor.abort(); await done; work.signal.removeEventListener('abort', abort); };
   }

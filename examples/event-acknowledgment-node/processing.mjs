@@ -50,7 +50,8 @@ export async function processOwnedPreparedDelivery(job, scope, pool, prepare, ha
   await job.ack(); // The durable intent host now owns platform callback delivery.
   return result;
 }
-/** The coordinator owns both renewal loops. Preparation must join its work and observe signal. */
+/** The coordinator owns renewal; options.onEvent observes bounded metadata only.
+ * Preparation must join its work and observe signal. */
 export async function processOwnedCoordinatedDelivery(job, scope, pool, prepare, handler, options) {
   if (typeof prepare !== 'function' || typeof handler !== 'function') throw new TypeError('invalid owned processing callbacks');
   const { original, signal, target } = ownedProcessingDelivery(job, scope, 4, 'durable-intent-prepared');

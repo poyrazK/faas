@@ -635,3 +635,5 @@ export { eventConsumerProcessingSchema, claimEventConsumerProcessing, EventConsu
 export type { EventAcknowledgmentPreparedOptions } from './event-acknowledgment-preparation.js';
 export { inspectEventConsumerProcessing, type EventConsumerProcessingInspection,
   type EventConsumerProcessingInspectionState } from './event-consumer-processing-inspection.js';
+export type { EventAcknowledgmentPreparationEvent, EventAcknowledgmentPreparationStage,
+  EventAcknowledgmentPreparationOutcome, EventAcknowledgmentPreparationReason } from './event-acknowledgment-preparation-events.js';

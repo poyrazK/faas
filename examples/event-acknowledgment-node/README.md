@@ -309,3 +309,29 @@ An active/expired/absent observation does not prove work stopped, a transaction
 rolled back or a restart may commit. Conflicts require investigation. The owner
 chooses recovery explicitly, and live claim/completion fences decide admission.
 See [inspection states and snapshot limits](../../docs/event-consumer-processing-inspection.md).
+
+## Observe coordinated preparation
+
+`processOwnedCoordinatedDelivery` forwards `onEvent` in its options while retaining
+the owned job's cancellation signal. Existing version 4 records need no change:
+
+```js
+await processOwnedCoordinatedDelivery(job, scope, pool, prepare, handler, {
+  preparationTimeoutMs: 60000,
+  processingLeaseMs: 30000,
+  onEvent: event => { diagnosticQueue.tryEnqueue(event); },
+});
+```
+
+`diagnosticQueue` is your bounded, synchronous adapter; a full queue may drop an
+event. Drain it independently. The callback must return promptly and remain
+passive: do not ack the job, renew claims, close resources or start recovery from
+it. Events contain only fixed phase/outcome metadata and monotonic durations,
+including first renewal failure per lease and confirmed or unknown local commits.
+No protected record, identity, token, prepared value, result or raw error is passed.
+
+Observer throws and accidental promise rejections are ignored; notification is
+never awaited or retried. A confirmed receipt/intent commit remains confirmed
+after late cancellation or platform renewal loss. `shutdown` means internal
+renewal work joined, not that observer promises or the platform callback finished.
+Use retained receipt/intent evidence for recovery. See [the lifecycle contract](../../docs/event-acknowledgment-node-telemetry.md).

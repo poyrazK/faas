@@ -3651,3 +3651,9 @@ expired, absent or conflict evidence plus database observation/expiry times and
 rounded-down remaining lease milliseconds. It selects no token or response body,
 makes no mutation and grants no processing ownership or acknowledgment proof.
 See [snapshot boundaries and explicit recovery](../../docs/event-consumer-processing-inspection.md).
+
+Prepared operations accept optional `onEvent(event)` for bounded phase, duration,
+renewal-failure and commit-outcome telemetry. Events exclude identities, tokens,
+payloads, prepared data, results and raw errors. Use a passive synchronous adapter;
+throws and accidental async rejections are ignored without changing processing
+outcomes. See [event ordering and observer limits](../../docs/event-acknowledgment-node-telemetry.md).

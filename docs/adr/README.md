@@ -1,5 +1,7 @@
 # Architecture Decision Records
 
+- [Node preparation lifecycle telemetry](20261017121310-node-preparation-lifecycle-telemetry.md)
+
 - [Node processing recovery inspection](20261017115623-node-processing-recovery-inspection.md)
 
 - [Coordinated Node event preparation](20261017114800-coordinated-node-event-preparation.md)

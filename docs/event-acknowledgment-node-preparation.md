@@ -86,6 +86,7 @@ boundaries. Each consumer keeps its independent acceptance/receipt identity.
 | `preparationTimeoutMs` | Required whole milliseconds, 1–2,147,483,647. Covers platform startup, processing claim, preparation, joining local renewal and the final local refresh. |
 | `processingLeaseMs` | Whole milliseconds, 3–2,147,483,647; default 30,000. Local renewal waits `floor(duration / 3)` between completed calls. |
 | `signal` | Optional parent cancellation/deadline for the whole operation, including receipt reconciliation and the final transaction. |
+| `onEvent` | Optional synchronous, nonblocking observer of [bounded lifecycle metadata](event-acknowledgment-node-telemetry.md). Observer failures are isolated. |
 
 The preparation budget starts after the initial receipt-only probe and ends before
 the final transaction. A timer aborts preparation, with monotonic budget checks at
@@ -127,6 +128,12 @@ operation guard spans receipt reconciliation, acquisition, preparation, commit
 and cleanup, but separate instances still require exclusive durable-job ownership.
 Use the leased protocol consistently for a consumer and retain receipts while
 retry/replay remains possible.
+
+For live phase and duration diagnostics, use optional
+[`onEvent` lifecycle telemetry](event-acknowledgment-node-telemetry.md). Events
+contain fixed metadata only and do not choose recovery. Confirmed local
+receipt/intent commit remains confirmed after a late renewal failure; shutdown
+is emitted after owned renewal work joins. Keep observers passive and nonblocking.
 
 For read-only diagnostics after a busy or interrupted job, use
 [`inspectEventConsumerProcessing`](event-consumer-processing-inspection.md).

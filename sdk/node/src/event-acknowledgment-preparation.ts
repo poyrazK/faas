@@ -3,28 +3,44 @@ import { acknowledgmentWait } from './event-acknowledgment-callbacks.js';
 import { EventAcknowledgmentWorkerError, type EventAcknowledgmentWorkerOperationOptions } from './event-acknowledgment-protocol.js';
 import { claimEventConsumerProcessing, type EventConsumerProcessingLease } from './event-consumer-processing.js';
 import { EventConsumerCommitUnknownError, type EventConsumerPool, type EventConsumerRequest } from './event-consumer-transactions.js';
+import type { EventAcknowledgmentPreparationEvent, PreparationEvents } from './event-acknowledgment-preparation-events.js';
 
 export interface EventAcknowledgmentPreparedOptions extends EventAcknowledgmentWorkerOperationOptions {
   /** Required whole milliseconds, 1..2147483647. Covers platform startup, claim and preparation, before the final transaction. */
   preparationTimeoutMs: number;
   /** Whole milliseconds, 3..2147483647; default 30000. Renewed serially at one third of this duration. */
   processingLeaseMs?: number;
+  /** Synchronous, nonblocking best-effort observer. Throws and accidental async rejections are ignored. */
+  onEvent?: (event: EventAcknowledgmentPreparationEvent) => void;
 }
-export interface PreparationSettings { readonly timeoutMs: number; readonly leaseMs: number; readonly intervalMs: number }
+export interface PreparationSettings { readonly timeoutMs: number; readonly leaseMs: number; readonly intervalMs: number;
+  readonly onEvent?: (event: EventAcknowledgmentPreparationEvent) => void }
 export function preparationSettings(options: EventAcknowledgmentPreparedOptions): PreparationSettings {
   if (!options || typeof options !== 'object' || Array.isArray(options)) throw new TypeError('invalid acknowledgment preparation options');
   const timeoutMs = options.preparationTimeoutMs, leaseMs = options.processingLeaseMs === undefined ? 30000 : options.processingLeaseMs;
+  const onEvent = options.onEvent;
   if (!Number.isInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 2147483647
     || !Number.isInteger(leaseMs) || leaseMs < 3 || leaseMs > 2147483647) throw new TypeError('invalid acknowledgment preparation budget');
-  return Object.freeze({ timeoutMs, leaseMs, intervalMs: Math.floor(leaseMs / 3) });
+  if (onEvent !== undefined && typeof onEvent !== 'function') throw new TypeError('invalid acknowledgment preparation observer');
+  return Object.freeze({ timeoutMs, leaseMs, intervalMs: Math.floor(leaseMs / 3), onEvent });
 }
 interface PreparationHost<T, R> {
   start(work: AbortController): Promise<() => Promise<void>>;
   replay(signal: AbortSignal): Promise<R>;
   complete(lease: EventConsumerProcessingLease, prepared: T, signal: AbortSignal): Promise<R>;
 }
+async function renewLocal(pool: EventConsumerPool, lease: EventConsumerProcessingLease, work: AbortController,
+  settings: PreparationSettings, events: PreparationEvents): Promise<void> {
+  try { await lease.renew(pool, settings.leaseMs, { signal: work.signal }); }
+  catch (error) {
+    const alreadyAborted = work.signal.aborted;
+    work.abort(error);
+    events.renewalFailed('local', error, alreadyAborted);
+    throw error;
+  }
+}
 function renewProcessing(pool: EventConsumerPool, lease: EventConsumerProcessingLease, work: AbortController,
-  settings: PreparationSettings): () => Promise<void> {
+  settings: PreparationSettings, events: PreparationEvents): () => Promise<void> {
   const waiting = new AbortController();
   const abort = () => waiting.abort();
   work.signal.addEventListener('abort', abort, { once: true });
@@ -37,7 +53,7 @@ function renewProcessing(pool: EventConsumerPool, lease: EventConsumerProcessing
         catch (error) { if (waiting.signal.aborted) return; throw error; }
         if (waiting.signal.aborted) return;
         // Stopping the loop cancels waits, never an active renewal. Join it before completion.
-        await lease.renew(pool, settings.leaseMs, { signal: work.signal });
+        await renewLocal(pool, lease, work, settings, events);
       }
     } catch (error) { failure = { error }; work.abort(error); }
   })();
@@ -49,7 +65,7 @@ function renewProcessing(pool: EventConsumerPool, lease: EventConsumerProcessing
 }
 export async function coordinateEventAcknowledgmentPreparation<T, R>(pool: EventConsumerPool, input: EventConsumerRequest,
   parent: AbortSignal | undefined, settings: PreparationSettings, prepare: (signal: AbortSignal) => Promise<T>,
-  host: PreparationHost<T, R>): Promise<R> {
+  host: PreparationHost<T, R>, events: PreparationEvents): Promise<R> {
   const work = new AbortController();
   const abort = () => work.abort(parent?.reason);
   parent?.addEventListener('abort', abort, { once: true });
@@ -61,24 +77,33 @@ export async function coordinateEventAcknowledgmentPreparation<T, R>(pool: Event
   let stopLocal = async (): Promise<void> => {}, stopPlatform = async (): Promise<void> => {};
   try {
     check();
+    events.stage('platform_start');
     stopPlatform = await host.start(work);
     check();
+    events.stage('claim');
     const lease = await claimEventConsumerProcessing(pool, input, settings.leaseMs, { signal: work.signal });
+    if (!lease.completed) events.claimAcquired();
     check();
     if (lease.completed) {
       clearTimeout(timer);
+      events.stage('receipt_reconciliation');
       return await host.replay(work.signal);
     }
-    await lease.renew(pool, settings.leaseMs, { signal: work.signal });
+    events.stage('local_renewal');
+    await renewLocal(pool, lease, work, settings, events);
     check();
-    stopLocal = renewProcessing(pool, lease, work, settings);
-    const prepared = await prepare(work.signal);
+    stopLocal = renewProcessing(pool, lease, work, settings, events);
+    events.stage('preparation');
+    const prepared = await events.prepare(() => prepare(work.signal));
     check();
+    events.stage('local_handoff');
     await stopLocal();
     check();
-    await lease.renew(pool, settings.leaseMs, { signal: work.signal });
+    events.stage('local_renewal');
+    await renewLocal(pool, lease, work, settings, events);
     check();
     clearTimeout(timer);
+    events.stage('completion');
     // Platform renewal continues; local renewal has joined before the row-locking transaction.
     return await host.complete(lease, prepared, work.signal);
   } catch (error) {
