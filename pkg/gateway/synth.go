@@ -147,8 +147,8 @@ type SynthServer struct {
 	srv        *http.Server
 	// drain lets connections accepted before Stop deliver their requests.
 	drain *wire.HTTPDrain
-	mux        *http.ServeMux
-	calls      atomic.Int64
+	mux   *http.ServeMux
+	calls atomic.Int64
 	// internalSvcVerifier (ADR-119) is the per-service
 	// public-key allowlist consulted by the synth-side gate
 	// (synth_internal_only.go). nil = gate disabled; an

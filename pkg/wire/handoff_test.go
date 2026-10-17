@@ -62,6 +62,7 @@ func TestHandoffHelperProcess(t *testing.T) {
 	})}
 	drain := wire.NewHTTPDrain(server)
 	go func() { _ = server.Serve(drain.Listener(l)) }()
+	fmt.Fprintf(os.Stderr, "helper %s: serving (successor=%v)\n", pid, wire.IsHandoffSuccessor())
 	defer wire.NotifyReadyWhen(ctx, func() bool { return true })()
 
 	requests := wire.HandoffRequests(ctx)
@@ -73,14 +74,18 @@ func TestHandoffHelperProcess(t *testing.T) {
 				continue
 			}
 			// Old generation: stop accepting, finish what is in flight.
+			fmt.Fprintf(os.Stderr, "helper %s: handed off; draining\n", pid)
 			drainCtx, cancel := context.WithTimeout(context.Background(), 2*long+10*time.Second)
-			_ = drain.Shutdown(drainCtx, server)
+			err := drain.Shutdown(drainCtx, server)
 			cancel()
+			fmt.Fprintf(os.Stderr, "helper %s: drained (%v)\n", pid, err)
 			os.Exit(0)
 		case <-ctx.Done():
+			fmt.Fprintf(os.Stderr, "helper %s: stopping\n", pid)
 			drainCtx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
-			_ = drain.Shutdown(drainCtx, server)
+			err := drain.Shutdown(drainCtx, server)
 			cancel()
+			fmt.Fprintf(os.Stderr, "helper %s: stopped (%v)\n", pid, err)
 			os.Exit(0)
 		}
 	}

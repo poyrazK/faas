@@ -246,10 +246,16 @@ func waitSuccessorReady(ctx context.Context, ready *os.File, exited *exitWatch, 
 	defer timer.Stop()
 	select {
 	case got := <-line:
-		if got != daemonunit.HandoffReadyMessage {
-			return fmt.Errorf("exited or closed its ready pipe before ready (read %q)", got)
+		if got == daemonunit.HandoffReadyMessage {
+			return nil
 		}
-		return nil
+		// The pipe usually closes because the successor exited; report how.
+		select {
+		case <-exited.done:
+			return fmt.Errorf("exited before ready: %v", exited.err)
+		case <-time.After(2 * time.Second):
+			return fmt.Errorf("closed its ready pipe before ready (read %q)", got)
+		}
 	case <-exited.done:
 		return fmt.Errorf("exited before ready: %w", exited.err)
 	case <-timer.C:

@@ -22,9 +22,10 @@ func TestHandoffListenerAcceptsOnlyOnceReady(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer func() { _ = f.Close() }()
 	ready := make(chan struct{})
 	defer wire.UseHandoffReadyForTest(ready)()
-	defer wire.UseHandoffListenersForTest([]int{int(f.Fd())})()
+	defer wire.UseHandoffListenersForTest([]int{dupFD(t, f)})()
 
 	l, err := wire.ListenInherited("tcp", src.Addr().String())
 	if err != nil {
@@ -68,8 +69,9 @@ func TestHandoffListenerCloseBeforeReady(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer func() { _ = f.Close() }()
 	defer wire.UseHandoffReadyForTest(make(chan struct{}))()
-	defer wire.UseHandoffListenersForTest([]int{int(f.Fd())})()
+	defer wire.UseHandoffListenersForTest([]int{dupFD(t, f)})()
 	l, err := wire.ListenInherited("tcp", src.Addr().String())
 	if err != nil {
 		t.Fatal(err)
