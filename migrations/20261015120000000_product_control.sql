@@ -1,18 +1,18 @@
 -- +goose Up
-CREATE TABLE product_control_revisions (
+CREATE TABLE IF NOT EXISTS product_control_revisions (
     account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
     revision text NOT NULL,
     spec jsonb NOT NULL,
     PRIMARY KEY (app_id, revision)
 );
-CREATE TABLE product_control_heads (
+CREATE TABLE IF NOT EXISTS product_control_heads (
     account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     app_id uuid PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE,
     revision text NOT NULL,
     FOREIGN KEY (app_id, revision) REFERENCES product_control_revisions(app_id, revision)
 );
-CREATE TABLE product_control_customers (
+CREATE TABLE IF NOT EXISTS product_control_customers (
     account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
     tenant_id uuid NOT NULL REFERENCES platform_tenants(id) ON DELETE CASCADE,
@@ -24,7 +24,7 @@ CREATE TABLE product_control_customers (
 );
 -- Independent of operation result/event retention. One immutable admission per
 -- logical operation; settlement only records its first verified success.
-CREATE TABLE product_control_receipts (
+CREATE TABLE IF NOT EXISTS product_control_receipts (
     operation_id uuid PRIMARY KEY,
     account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
@@ -39,7 +39,7 @@ CREATE TABLE product_control_receipts (
     succeeded_at timestamptz,
     FOREIGN KEY (app_id, revision) REFERENCES product_control_revisions(app_id, revision)
 );
-CREATE INDEX product_control_quota ON product_control_receipts(app_id, tenant_id, feature, period);
+CREATE INDEX IF NOT EXISTS product_control_quota ON product_control_receipts(app_id, tenant_id, feature, period);
 
 -- +goose Down
 DROP TABLE product_control_receipts;

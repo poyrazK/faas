@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE product_control_plan_changes (
+CREATE TABLE IF NOT EXISTS product_control_plan_changes (
     id uuid PRIMARY KEY CHECK (id <> '00000000-0000-0000-0000-000000000000'),
     account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
@@ -8,7 +8,7 @@ CREATE TABLE product_control_plan_changes (
     receipt jsonb NOT NULL CHECK (jsonb_typeof(receipt) = 'object'),
     created_at timestamptz NOT NULL CHECK (isfinite(created_at))
 );
-CREATE INDEX product_control_plan_changes_history
+CREATE INDEX IF NOT EXISTS product_control_plan_changes_history
 ON product_control_plan_changes(account_id, app_id, tenant_id, created_at DESC, id DESC);
 
 -- +goose Down

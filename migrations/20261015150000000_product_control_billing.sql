@@ -1,20 +1,28 @@
 -- +goose Up
-ALTER TABLE product_control_receipts
-    ADD COLUMN resolved_state text NOT NULL DEFAULT '' CHECK (resolved_state IN ('','succeeded','failed','cancelled')),
-    ADD COLUMN resolved_at timestamptz,
-    ADD CONSTRAINT product_receipt_resolution CHECK ((resolved_state = '') = (resolved_at IS NULL));
--- Only verified successes have independent historical evidence. Missing
--- operation records never imply failure; older unresolved receipts need review.
-UPDATE product_control_receipts SET resolved_state='succeeded', resolved_at=succeeded_at WHERE succeeded_at IS NOT NULL;
-CREATE INDEX product_control_billing_period ON product_control_receipts(account_id,app_id,tenant_id,period,operation_id);
+-- +goose StatementBegin
+DO $product_control_replay$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='product_control_receipts' AND column_name='resolved_state') THEN
+        ALTER TABLE product_control_receipts
+            ADD COLUMN resolved_state text NOT NULL DEFAULT '' CHECK (resolved_state IN ('','succeeded','failed','cancelled')),
+            ADD COLUMN resolved_at timestamptz,
+            ADD CONSTRAINT product_receipt_resolution CHECK ((resolved_state = '') = (resolved_at IS NULL));
+        -- Only verified successes have independent historical evidence. Missing
+        -- operation records never imply failure; older unresolved receipts need review.
+        UPDATE product_control_receipts SET resolved_state='succeeded', resolved_at=succeeded_at WHERE succeeded_at IS NOT NULL;
+    END IF;
+END;
+$product_control_replay$;
+-- +goose StatementEnd
+CREATE INDEX IF NOT EXISTS product_control_billing_period ON product_control_receipts(account_id,app_id,tenant_id,period,operation_id);
 
-CREATE TABLE product_control_waivers (
+CREATE TABLE IF NOT EXISTS product_control_waivers (
     operation_id uuid PRIMARY KEY REFERENCES product_control_receipts(operation_id) ON DELETE CASCADE,
     reason text NOT NULL CHECK (octet_length(reason) BETWEEN 1 AND 512),
     created_at timestamptz NOT NULL DEFAULT now()
 );
 
-CREATE TABLE product_control_billing_documents (
+CREATE TABLE IF NOT EXISTS product_control_billing_documents (
     id uuid PRIMARY KEY,
     account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
@@ -32,11 +40,11 @@ CREATE TABLE product_control_billing_documents (
         (kind='statement' AND amount_millicents>=0 AND statement_id IS NULL AND operation_id IS NULL AND reason='') OR
         (kind='credit_note' AND amount_millicents<0 AND statement_id IS NOT NULL AND operation_id IS NOT NULL AND reason<>''))
 );
-CREATE UNIQUE INDEX product_control_finalized_month ON product_control_billing_documents(app_id,tenant_id,period) WHERE kind='statement';
-CREATE INDEX product_control_credit_operation ON product_control_billing_documents(operation_id) WHERE kind='credit_note';
-CREATE INDEX product_control_documents_page ON product_control_billing_documents(account_id,app_id,tenant_id,period,id);
+CREATE UNIQUE INDEX IF NOT EXISTS product_control_finalized_month ON product_control_billing_documents(app_id,tenant_id,period) WHERE kind='statement';
+CREATE INDEX IF NOT EXISTS product_control_credit_operation ON product_control_billing_documents(operation_id) WHERE kind='credit_note';
+CREATE INDEX IF NOT EXISTS product_control_documents_page ON product_control_billing_documents(account_id,app_id,tenant_id,period,id);
 
-CREATE TABLE product_control_invoice_handoffs (
+CREATE TABLE IF NOT EXISTS product_control_invoice_handoffs (
     document_id uuid PRIMARY KEY REFERENCES product_control_billing_documents(id) ON DELETE CASCADE,
     account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     external_invoice_id text NOT NULL CHECK (octet_length(external_invoice_id) BETWEEN 1 AND 255),

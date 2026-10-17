@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE product_control_help_requests (
+CREATE TABLE IF NOT EXISTS product_control_help_requests (
     id uuid PRIMARY KEY CHECK (id <> '00000000-0000-0000-0000-000000000000'),
     account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
     app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
@@ -16,9 +16,9 @@ CREATE TABLE product_control_help_requests (
     created_at timestamptz NOT NULL CHECK (isfinite(created_at)),
     updated_at timestamptz NOT NULL CHECK (isfinite(updated_at) AND updated_at >= created_at)
 );
-CREATE INDEX product_control_help_owner_queue
+CREATE INDEX IF NOT EXISTS product_control_help_owner_queue
 ON product_control_help_requests(account_id, app_id, created_at DESC, id DESC);
-CREATE INDEX product_control_help_customer_history
+CREATE INDEX IF NOT EXISTS product_control_help_customer_history
 ON product_control_help_requests(account_id, app_id, tenant_id, created_at DESC, id DESC);
 
 -- +goose Down

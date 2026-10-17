@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE product_control_email_subscriptions (
+CREATE TABLE IF NOT EXISTS product_control_email_subscriptions (
  id uuid PRIMARY KEY,
  account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
  app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
@@ -21,7 +21,7 @@ CREATE TABLE product_control_email_subscriptions (
  CHECK(expires_at IS NULL OR (isfinite(expires_at) AND octet_length(grant_sealed)>0)),
  UNIQUE(account_id,app_id,tenant_id,auth_app_id,organization_id,actor_id)
 );
-CREATE TABLE product_control_email_deliveries (
+CREATE TABLE IF NOT EXISTS product_control_email_deliveries (
  id uuid PRIMARY KEY,
  subscription_id uuid NOT NULL REFERENCES product_control_email_subscriptions(id) ON DELETE CASCADE,
  preference_version bigint NOT NULL CHECK(preference_version BETWEEN 1 AND 1000000),
@@ -36,11 +36,11 @@ CREATE TABLE product_control_email_deliveries (
  deadline timestamptz NOT NULL CHECK(isfinite(deadline) AND deadline>created_at),
  UNIQUE(subscription_id,source_revision)
 );
-CREATE INDEX product_control_email_subscribers ON product_control_email_subscriptions(id) WHERE work_outcomes OR help_replies;
-CREATE INDEX product_control_email_due ON product_control_email_deliveries(next_at,id) WHERE status IN ('queued','leased');
-CREATE INDEX product_control_email_recent ON product_control_email_deliveries(subscription_id,created_at DESC,id DESC);
+CREATE INDEX IF NOT EXISTS product_control_email_subscribers ON product_control_email_subscriptions(id) WHERE work_outcomes OR help_replies;
+CREATE INDEX IF NOT EXISTS product_control_email_due ON product_control_email_deliveries(next_at,id) WHERE status IN ('queued','leased');
+CREATE INDEX IF NOT EXISTS product_control_email_recent ON product_control_email_deliveries(subscription_id,created_at DESC,id DESC);
 
-CREATE INDEX product_control_email_expiry ON product_control_email_deliveries(created_at,id);
+CREATE INDEX IF NOT EXISTS product_control_email_expiry ON product_control_email_deliveries(created_at,id);
 
 -- +goose Down
 DROP TABLE product_control_email_deliveries;

@@ -49,5 +49,11 @@ request-based monetization has a separate charging basis; this pilot does not
 combine or automatically invoice both. Global rollout flags are independent of
 commercial entitlements. Product maturity stays internal pending qualification.
 
+Environment cloning classifies catalogs and customer assignments as configuration
+and help requests as customer data. Full clones retain explicit isolation blockers
+until those strategies exist; they cannot silently share product terms or help
+content. Financial/action journals are operational history, and personal email
+consent is account identity. Neither is copied into another environment.
+
 See [the service contract](../ops/product-control.md) for API, CLI, accounting and
 rollback details.

@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE product_control_notification_reads (
+CREATE TABLE IF NOT EXISTS product_control_notification_reads (
  account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
  app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
  tenant_id uuid NOT NULL REFERENCES platform_tenants(id) ON DELETE CASCADE,
@@ -14,9 +14,9 @@ CREATE TABLE product_control_notification_reads (
  expires_at timestamptz NOT NULL CHECK(isfinite(expires_at) AND expires_at>updated_at),
  PRIMARY KEY(account_id,app_id,tenant_id,auth_app_id,auth_organization_id,source_kind,source_id)
 );
-CREATE INDEX product_control_notification_expiry ON product_control_notification_reads(account_id,app_id,tenant_id,expires_at);
-CREATE INDEX product_control_notification_outcomes ON product_control_receipts(account_id,app_id,tenant_id,resolved_at DESC,operation_id DESC) WHERE resolved_state<>'';
-CREATE INDEX product_control_notification_pending ON product_control_receipts(account_id,app_id,tenant_id,operation_id) WHERE resolved_state='';
+CREATE INDEX IF NOT EXISTS product_control_notification_expiry ON product_control_notification_reads(account_id,app_id,tenant_id,expires_at);
+CREATE INDEX IF NOT EXISTS product_control_notification_outcomes ON product_control_receipts(account_id,app_id,tenant_id,resolved_at DESC,operation_id DESC) WHERE resolved_state<>'';
+CREATE INDEX IF NOT EXISTS product_control_notification_pending ON product_control_receipts(account_id,app_id,tenant_id,operation_id) WHERE resolved_state='';
 
 -- +goose Down
 DROP INDEX product_control_notification_pending;

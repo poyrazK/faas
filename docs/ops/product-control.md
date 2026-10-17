@@ -14,6 +14,14 @@ within its namespaces. The Product Control email worker does not start.
 Internal capabilities are omitted from the customer capabilities API and
 generated capability matrix; default CLI help and completions omit `product`.
 
+The additive migrations support replay against their existing effects. Column
+groups and their initial backfills run only when their new columns are absent;
+replay preserves later email constraints and recorded commercial evidence.
+The environment clone registry identifies catalogs/customer assignments as
+configuration and help as customer data, with explicit isolation blockers until
+qualified strategies exist. Financial/action history and personal email consent
+are not copied between environments.
+
 Product Control connects a customer's product features to Gregale Operations:
 
 | Product concern | Internal implementation |
