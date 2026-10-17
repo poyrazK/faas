@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -117,6 +118,16 @@ func TestGatewaydPublicEdgeRoleContract(t *testing.T) {
 		Version string            `yaml:"faas_cloudflared_version"`
 		SHA256  map[string]string `yaml:"faas_cloudflared_sha256"`
 		Token   string            `yaml:"faas_cloudflared_token_path"`
+		Grace   string            `yaml:"faas_cloudflared_grace_period"`
+		Stop    string            `yaml:"faas_cloudflared_stop_timeout"`
+	}
+	if err := yaml.Unmarshal([]byte(read("defaults/main.yml")), &defaults); err != nil {
+		t.Fatal(err)
+	}
+	grace, graceErr := time.ParseDuration(defaults.Grace)
+	stop, stopErr := time.ParseDuration(defaults.Stop)
+	if graceErr != nil || stopErr != nil || stop <= grace || grace < 25*time.Second {
+		t.Errorf("connector grace %q / stop timeout %q: the grace must cover the edge's 25 s drain and systemd must outwait it", defaults.Grace, defaults.Stop)
 	}
 	if err := yaml.Unmarshal([]byte(read("defaults/main.yml")), &defaults); err != nil {
 		t.Fatal(err)
@@ -217,6 +228,11 @@ func TestGatewaydPublicEdgeRoleContract(t *testing.T) {
 		"--no-autoupdate",
 		"User=cloudflared",
 		"NoNewPrivileges=yes",
+		// ADR-1343 §6: on a stop or reboot the connector withdraws before
+		// the edge and drains through it, and systemd outwaits the drain.
+		"After=network-online.target faas-gatewayd-public-edge.socket faas-gatewayd-public-edge.service",
+		"--grace-period {{ faas_cloudflared_grace_period }}",
+		"TimeoutStopSec={{ faas_cloudflared_stop_timeout }}",
 	} {
 		if !strings.Contains(connector, want) {
 			t.Errorf("connector unit missing %q", want)
