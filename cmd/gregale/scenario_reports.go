@@ -127,8 +127,27 @@ func collectTestValidationForEngine(scenarios map[string]testScenario, manifestD
 	results := make([]testValidationResult, 0, len(names))
 	for _, name := range names {
 		scenario := scenarios[name]
+		if err := validateTestCommandExecution(scenario, engine, "warm"); err != nil {
+			return nil, fmt.Errorf("scenario %q: %w", name, err)
+		}
+		if scenario.Actions != nil && engine != "real-vm" {
+			return nil, fmt.Errorf("scenario %q: webhook action capture requires the real-vm engine", name)
+		}
 		if scenario.Chaos != nil && engine != "real-vm" {
 			return nil, fmt.Errorf("scenario %q declares chaos rules, which require the real-vm engine", name)
+		}
+		if scenario.CommandExecution != nil {
+			source := scenario.Source
+			if source == "" {
+				source = "."
+			}
+			dir, err := resolveDeploySourceDir(manifestDir, source)
+			if err != nil {
+				return nil, err
+			}
+			if _, err := prepareTestCommandFiles(dir, scenario); err != nil {
+				return nil, err
+			}
 		}
 		source := scenario.Source
 		if source == "" {
