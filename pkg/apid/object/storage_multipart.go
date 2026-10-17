@@ -519,7 +519,8 @@ func (s *Service) executeObjectMultipartAbort(ctx context.Context, store state.O
 	if err = objectstorage.VerifyMultipartAbort(ctx, provider, bucket.PhysicalName, request); err != nil {
 		return err
 	}
-	return finishObjectMultipartOperation(ctx, func(finishCtx context.Context) error {
+	err = finishObjectMultipartOperation(ctx, func(finishCtx context.Context) error {
 		return transfers.FinishVerifiedObjectMultipartAbort(finishCtx, u.ID, u.LeaseToken)
 	})
+	return err
 }
