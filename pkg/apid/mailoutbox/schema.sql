@@ -73,6 +73,7 @@ CREATE TABLE IF NOT EXISTS platform_mail_outbox_reconciliations (
     UNIQUE(namespace,intent_id)
 );
 
+SET LOCAL lock_timeout = '5s';
 -- apid binds new private-outbox tokens to the address observed at issuance.
 -- Empty preserves the existing legacy hash-only token behavior.
 ALTER TABLE email_verification_tokens ADD COLUMN IF NOT EXISTS email_address text NOT NULL DEFAULT ''
@@ -108,6 +109,7 @@ CREATE INDEX IF NOT EXISTS platform_mail_producer_outbox_verification_keys_idx
 ALTER TABLE platform_mail_outbox_reconciliations ADD COLUMN IF NOT EXISTS template text NOT NULL DEFAULT 'account_deletion_pending'
     CHECK (template IN ('account_deletion_pending','email_verification'));
 
+SET LOCAL lock_timeout = '5s';
 -- Only apid writes passwords. Account-first password writes advance this
 -- revision atomically, invalidating every reset issued for an older credential.
 ALTER TABLE accounts ADD COLUMN IF NOT EXISTS password_reset_revision bigint NOT NULL DEFAULT 1 CHECK (password_reset_revision>0);
@@ -217,6 +219,7 @@ ALTER TABLE platform_mail_outbox_reconciliations DROP CONSTRAINT IF EXISTS platf
 ALTER TABLE platform_mail_outbox_reconciliations ADD CONSTRAINT platform_mail_outbox_reconciliations_template_check
     CHECK (template IN ('account_deletion_pending','email_verification','password_reset','magic_link','mfa_recovery_used'));
 
+SET LOCAL lock_timeout = '5s';
 -- MFA enrollment/secret/policy mutations advance this counter even with mail
 -- flags off. Recovery-code burns do not change the enrolled factor.
 ALTER TABLE accounts ADD COLUMN IF NOT EXISTS mfa_revision bigint NOT NULL DEFAULT 1 CHECK (mfa_revision>0);
@@ -399,6 +402,7 @@ CREATE TABLE IF NOT EXISTS billing_payment_failure_receipts (
 );
 CREATE INDEX IF NOT EXISTS billing_payment_failure_receipts_account_idx ON billing_payment_failure_receipts(account_id);
 
+SET LOCAL lock_timeout = '5s';
 ALTER TABLE platform_mail_producer_outbox DROP CONSTRAINT IF EXISTS platform_mail_producer_outbox_template_check;
 ALTER TABLE platform_mail_producer_outbox ADD CONSTRAINT platform_mail_producer_outbox_template_check
     CHECK (template IN ('account_deletion_pending','email_verification','password_reset','magic_link','mfa_recovery_used','mfa_disable_request','mfa_disabled','password_changed','mfa_enabled','payment_failed','account_restored'));
@@ -574,6 +578,7 @@ CREATE TABLE IF NOT EXISTS billing_account_nonpayment_deletions (
     CHECK(followup_completed_at IS NULL OR lease_id IS NOT NULL)
 );
 
+SET LOCAL lock_timeout = '5s';
 ALTER TABLE platform_mail_producer_outbox DROP CONSTRAINT IF EXISTS platform_mail_producer_outbox_template_check;
 ALTER TABLE platform_mail_producer_outbox ADD CONSTRAINT platform_mail_producer_outbox_template_check
     CHECK (template IN ('account_deletion_pending','email_verification','password_reset','magic_link','mfa_recovery_used','mfa_disable_request','mfa_disabled','password_changed','mfa_enabled','payment_failed','account_restored','account_suspended','nonpayment_deletion','quota_warning'));
@@ -651,6 +656,7 @@ CREATE TABLE IF NOT EXISTS billing_quota_warnings (
     CHECK(followup_completed_at IS NULL OR lease_id IS NOT NULL)
 );
 
+SET LOCAL lock_timeout = '5s';
 ALTER TABLE platform_mail_producer_outbox DROP CONSTRAINT IF EXISTS platform_mail_producer_outbox_template_check;
 ALTER TABLE platform_mail_producer_outbox ADD CONSTRAINT platform_mail_producer_outbox_template_check
     CHECK (template IN ('account_deletion_pending','email_verification','password_reset','magic_link','mfa_recovery_used','mfa_disable_request','mfa_disabled','password_changed','mfa_enabled','payment_failed','account_restored','account_suspended','nonpayment_deletion','quota_warning','subscription_ended'));
@@ -749,6 +755,7 @@ CREATE TABLE IF NOT EXISTS billing_subscription_ends (
     PRIMARY KEY(account_id,provider,subscription_hash)
 );
 
+SET LOCAL lock_timeout = '5s';
 ALTER TABLE platform_mail_producer_outbox DROP CONSTRAINT IF EXISTS platform_mail_producer_outbox_template_check;
 ALTER TABLE platform_mail_producer_outbox ADD CONSTRAINT platform_mail_producer_outbox_template_check
     CHECK (template IN ('account_deletion_pending','email_verification','password_reset','magic_link','mfa_recovery_used','mfa_disable_request','mfa_disabled','password_changed','mfa_enabled','payment_failed','account_restored','account_suspended','nonpayment_deletion','quota_warning','subscription_ended','deployment_failed'));
@@ -883,8 +890,7 @@ CREATE TRIGGER deployments_mail_failure_guard
     BEFORE INSERT OR DELETE OR UPDATE OF status,app_id,scope,deployed_by_user_id,deleted_at,mail_failure_revision,mail_failed_at,
         mail_failure_account_id,mail_failure_account_revision,mail_failure_app_revision,mail_failure_success_revision ON deployments
     FOR EACH ROW EXECUTE FUNCTION stamp_deployment_mail_failure();
-CREATE INDEX IF NOT EXISTS deployments_mail_failures_pending_idx ON deployments(mail_failed_at,id)
-    WHERE status='failed' AND deleted_at IS NULL AND mail_failed_at IS NOT NULL;
+-- The pending-failure index is built concurrently by the following index migration.
 CREATE TABLE IF NOT EXISTS platform_mail_deployment_capture (
     namespace text NOT NULL CHECK(namespace ~ '^[a-z][a-z0-9_-]{0,63}$'),
     producer_id text NOT NULL CHECK(producer_id ~ '^[a-z][a-z0-9_-]{0,31}$'),

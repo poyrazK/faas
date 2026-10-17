@@ -62,6 +62,24 @@ func migrationParts(t *testing.T) (string, string) {
 	return up + "\n" + reconcileUp + "\n" + verificationUp + "\n" + resetUp + "\n" + magicUp + "\n" + alertUp + "\n" + disableUp + "\n" + disabledUp + "\n" + changedUp + "\n" + enabledUp + "\n" + paymentUp + "\n" + restoredUp + "\n" + suspendedUp + "\n" + nonpaymentUp + "\n" + quotaUp + "\n" + endedUp + "\n" + deployUp, deployDown + "\n" + endedDown + "\n" + quotaDown + "\n" + nonpaymentDown + "\n" + suspendedDown + "\n" + restoredDown + "\n" + paymentDown + "\n" + enabledDown + "\n" + changedDown + "\n" + disabledDown + "\n" + disableDown + "\n" + alertDown + "\n" + magicDown + "\n" + resetDown + "\n" + verificationDown + "\n" + reconcileDown + "\n" + down
 }
 
+func outboxSchema(t *testing.T) (string, string) {
+	t.Helper()
+	projection, err := os.ReadFile("schema.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	up, _ := migrationParts(t)
+	if !strings.HasSuffix(string(projection), up) {
+		t.Fatal("outbox sqlc schema differs from migration")
+	}
+	return string(projection), up
+}
+
+// Check source drift even when the PostgreSQL fixtures are skipped locally.
+func TestSchemaProjectionMatchesMigrations(t *testing.T) {
+	outboxSchema(t)
+}
+
 type fixture struct {
 	service *Service
 	pool    *pgxpool.Pool
@@ -72,15 +90,8 @@ type fixture struct {
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
 	pool := pgtest.Open(t)
-	projection, err := os.ReadFile("schema.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	up, _ := migrationParts(t)
-	if !strings.HasSuffix(string(projection), up) {
-		t.Fatal("outbox sqlc schema differs from migration")
-	}
-	if _, err := pool.Exec(t.Context(), string(projection)); err != nil {
+	projection, up := outboxSchema(t)
+	if _, err := pool.Exec(t.Context(), projection); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := pool.Exec(t.Context(), up); err != nil {

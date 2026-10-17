@@ -206,7 +206,7 @@ ALTER TABLE platform_mail_producer_outbox DROP COLUMN deployment_failure_id,DROP
     DROP COLUMN deployment_failure_app_revision,DROP COLUMN deployment_failure_success_revision,DROP COLUMN deployment_failure_at;
 DROP TRIGGER deployments_mail_failure_guard ON deployments;
 DROP FUNCTION stamp_deployment_mail_failure();
-DROP INDEX deployments_mail_failures_pending_idx;
+-- The separate concurrent-index migration removes its index first.
 ALTER TABLE deployments DROP COLUMN mail_failure_revision,DROP COLUMN mail_failed_at,DROP COLUMN mail_failure_account_id,
     DROP COLUMN mail_failure_account_revision,DROP COLUMN mail_failure_app_revision,DROP COLUMN mail_failure_success_revision;
 DROP TABLE platform_mail_deployment_fences;
