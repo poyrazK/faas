@@ -1,4 +1,4 @@
-# ADR-1598 · Product Control customer permissions
+# ADR-1708 · Product Control customer permissions
 
 - **Status:** accepted for internal implementation
 - **Date:** 2026-10-16
@@ -7,9 +7,9 @@
   catalog; use its latest revision for customer authorization while commercial
   assignments retain their pinned revisions. Keep the default-off feature flag.
 
-[ADR-1599](1599-product-control-self-service-plans.md) adds a fourth, explicitly
+[ADR-1709](1709-product-control-self-service-plans.md) adds a fourth, explicitly
 granted Manage plan permission. The original three-permission defaults below
-remain unchanged. [ADR-1600](1600-product-control-customer-teams.md) adds the fifth,
+remain unchanged. [ADR-1710](1710-product-control-customer-teams.md) adds the fifth,
 explicit Manage team permission and reviewed Auth-backed customer team actions.
 
 ## Roles and authority
@@ -27,7 +27,7 @@ owner privileges, changes Auth membership, or supplies Auth permissions.
 
 When `access` is omitted, owners and admins receive all three permissions and
 members receive only `work:read`. This deliberately narrows the earlier internal
-all-members behavior in ADR-1593/1337, including for existing catalogs that omit
+all-members behavior in ADR-1703/1337, including for existing catalogs that omit
 the field. Operators must review their roles before enabling an existing internal
 deployment. Unknown custom roles require an explicit product grant. Omitting the
 field does not rewrite old catalog hashes. The default mapping is shown in the

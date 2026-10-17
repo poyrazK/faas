@@ -169,7 +169,7 @@ var routeExclude = map[string]bool{
 	"POST /v1/apps/{slug}/product/billing/documents/{document}/handoff":      true,
 	"POST /v1/apps/{slug}/product/billing/receipts/{operation}/waive":        true,
 	"POST /v1/apps/{slug}/product/billing/statements/finalize":               true,
-	// ADR-1591: internal Product Control pilot; mirror spec compliance exclusions.
+	// ADR-1701: internal Product Control pilot; mirror spec compliance exclusions.
 	"POST /v1/platform-tenant-self/product/start":                                  true,
 	"GET /v1/apps/{slug}/product":                                                  true,
 	"PUT /v1/apps/{slug}/product":                                                  true,

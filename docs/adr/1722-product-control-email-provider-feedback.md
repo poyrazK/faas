@@ -1,4 +1,4 @@
-# ADR-1612 · Product Control email delivery feedback
+# ADR-1722 · Product Control email delivery feedback
 
 - **Status:** accepted for internal implementation
 - **Date:** 2026-10-17
@@ -77,5 +77,5 @@ and real sending keeps its independent switch. Signed loopback fixtures and
 disposable PostgreSQL verify implementation without provider credentials,
 external messages, deployment or live provider qualification.
 
-See [ADR-1611](1611-product-control-owner-email-controls.md) and the
+See [ADR-1721](1721-product-control-owner-email-controls.md) and the
 [feedback runbook](../ops/product-control.md#provider-delivery-feedback-and-paused-subscriptions).

@@ -1,4 +1,4 @@
-// ADR-1604: guidance is a live, customer-scoped, read-only allowance projection.
+// ADR-1714: guidance is a live, customer-scoped, read-only allowance projection.
 package apidserver_test
 
 import (

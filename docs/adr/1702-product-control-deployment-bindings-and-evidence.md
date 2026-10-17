@@ -1,4 +1,4 @@
-# ADR-1592 · Product Control deployment bindings and admission evidence
+# ADR-1702 · Product Control deployment bindings and admission evidence
 
 - **Status:** accepted for internal implementation
 - **Date:** 2026-10-15

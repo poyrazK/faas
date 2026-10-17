@@ -1,4 +1,4 @@
-# ADR-1611 · Product Control owner email controls
+# ADR-1721 · Product Control owner email controls
 
 - **Status:** accepted for internal implementation
 - **Date:** 2026-10-17
@@ -65,5 +65,5 @@ credentials, flag enablement or real email is necessary for local verification.
 Provider acceptance remains distinct from delivered mail; webhooks and bounces
 are outside this increment.
 
-See [ADR-1610](1610-product-control-personal-notification-email.md) and the
+See [ADR-1720](1720-product-control-personal-notification-email.md) and the
 [owner email runbook](../ops/product-control.md#owner-notification-email-controls).

@@ -1,4 +1,4 @@
-# ADR-1600 · Product Control customer teams
+# ADR-1710 · Product Control customer teams
 
 - **Status:** accepted for internal implementation
 - **Date:** 2026-10-16
@@ -9,7 +9,7 @@
 
 ## Authority and ownership
 
-This extends ADR-1598 with **Manage team** (`team:manage`), granted to no role by
+This extends ADR-1708 with **Manage team** (`team:manage`), granted to no role by
 default, including owner/admin. It implies no work, billing or plan permission.
 The latest catalog's `team.delegations` maps a manager role to roles it may
 assign, change, remove or revoke invitations for. Both a member's existing role

@@ -1,4 +1,4 @@
-// ADR-1605: shared customer help retains scoped observations and never repairs work.
+// ADR-1715: shared customer help retains scoped observations and never repairs work.
 package state
 
 import (

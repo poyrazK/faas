@@ -1,4 +1,4 @@
-# ADR-1617 · Product Control customer work history
+# ADR-1727 · Product Control customer work history
 
 - **Status:** accepted for internal implementation
 - **Date:** 2026-10-17

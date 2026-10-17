@@ -1,4 +1,4 @@
-# ADR-1614 · Product Control notification unsubscribe
+# ADR-1724 · Product Control notification unsubscribe
 
 - **Status:** accepted for internal implementation
 - **Date:** 2026-10-17

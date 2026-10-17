@@ -1,10 +1,10 @@
-# ADR-1595 · Internal Product Control owner console
+# ADR-1705 · Internal Product Control owner console
 
 - **Status:** accepted for internal implementation
 - **Date:** 2026-10-15
 - **Decision:** Integrate Product Control with the existing server-rendered owner
   dashboard, behind the existing default-off flag, using the execution and billing
-  safeguards in ADRs 1591–1594.
+  safeguards in ADRs 1701–1704.
 
 ## Customer management
 

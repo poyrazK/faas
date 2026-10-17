@@ -1,4 +1,4 @@
-# ADR-1616 · Product Control customer run details
+# ADR-1726 · Product Control customer run details
 
 - **Status:** accepted for internal implementation
 - **Date:** 2026-10-17

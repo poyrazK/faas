@@ -1,4 +1,4 @@
-# ADR-1605 · Product Control Customer Help
+# ADR-1715 · Product Control Customer Help
 
 - **Status:** accepted for internal implementation
 - **Date:** 2026-10-17

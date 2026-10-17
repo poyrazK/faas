@@ -1,4 +1,4 @@
-// ADR-1598: policy-only updates must keep the resulting catalog within bounds.
+// ADR-1708: policy-only updates must keep the resulting catalog within bounds.
 package product
 
 import (

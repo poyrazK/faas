@@ -1,4 +1,4 @@
-// ADR-1605: help messages remain bounded plain text and context follows current permissions.
+// ADR-1715: help messages remain bounded plain text and context follows current permissions.
 package productcontrol
 
 import (

@@ -1,4 +1,4 @@
-// ADR-1600: delegated team control stays scoped to live Application Auth authority.
+// ADR-1710: delegated team control stays scoped to live Application Auth authority.
 package apidserver_test
 
 import (

@@ -1,4 +1,4 @@
-// ADR-1597: verified workspace onboarding, retained setup and activation evidence.
+// ADR-1707: verified workspace onboarding, retained setup and activation evidence.
 package main
 
 import (

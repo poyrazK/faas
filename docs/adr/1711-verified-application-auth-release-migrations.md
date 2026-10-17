@@ -1,4 +1,4 @@
-# ADR-1601 · Verified Application Auth release migrations
+# ADR-1711 · Verified Application Auth release migrations
 
 - **Status:** accepted for internal implementation
 - **Date:** 2026-10-16

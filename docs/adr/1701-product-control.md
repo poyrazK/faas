@@ -1,4 +1,4 @@
-# ADR-1591 · Internal Product Control above Operations
+# ADR-1701 · Internal Product Control above Operations
 
 - **Status:** accepted for internal implementation
 - **Date:** 2026-10-15

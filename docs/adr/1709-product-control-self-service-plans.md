@@ -1,4 +1,4 @@
-# ADR-1599 · Product Control self-service plans
+# ADR-1709 · Product Control self-service plans
 
 - **Status:** accepted for internal implementation
 - **Date:** 2026-10-16
@@ -16,7 +16,7 @@ latest catalog. A same-name transition can migrate pinned older terms, but the
 exact current plan and revision is never offered as a change. The map allows
 at most 32 sources and 32 distinct targets per source. It grants no permission.
 
-This extends ADR-1598 with **Manage plan** (`plans:manage`). The original defaults
+This extends ADR-1708 with **Manage plan** (`plans:manage`). The original defaults
 remain: owner/admin receive work and billing permissions, member receives View
 work. No role receives Manage plan by default. An owner explicitly grants it
 in the existing role policy. It implies neither billing nor work access; a plan

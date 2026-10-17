@@ -1,4 +1,4 @@
-// ADR-1599: self-service transitions are explicit and separate from permissions.
+// ADR-1709: self-service transitions are explicit and separate from permissions.
 package productcontrol
 
 import (

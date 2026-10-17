@@ -1,4 +1,4 @@
-// ADR-1599: a customer confirms reviewed terms without resetting consumed starts.
+// ADR-1709: a customer confirms reviewed terms without resetting consumed starts.
 package state
 
 import (

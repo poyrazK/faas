@@ -1,4 +1,4 @@
-# ADR-1593 · Product Control customer identity, consent and browser recovery
+# ADR-1703 · Product Control customer identity, consent and browser recovery
 
 - **Status:** accepted for internal implementation
 - **Date:** 2026-10-15

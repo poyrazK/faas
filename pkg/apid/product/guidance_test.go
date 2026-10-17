@@ -1,4 +1,4 @@
-// ADR-1604: guidance fails changed source reads and preserves role privacy.
+// ADR-1714: guidance fails changed source reads and preserves role privacy.
 package product
 
 import (

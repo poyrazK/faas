@@ -1,4 +1,4 @@
-# ADR-1603 · Product Control customer activity timeline
+# ADR-1713 · Product Control customer activity timeline
 
 - **Status:** accepted for internal implementation
 - **Date:** 2026-10-16

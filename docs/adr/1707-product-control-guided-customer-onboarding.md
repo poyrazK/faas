@@ -1,4 +1,4 @@
-# ADR-1597 · Product Control guided customer onboarding
+# ADR-1707 · Product Control guided customer onboarding
 
 - **Status:** accepted for internal implementation
 - **Date:** 2026-10-16
@@ -21,7 +21,7 @@ The Auth app verifies the live session and returns organization memberships.
 Only explicit `owner` and `admin` roles may link a workspace. Both preview and
 initial confirmation recheck membership; JWT claims alone grant no authority.
 All members of a linked workspace retain the portal access already defined by
-ADR-1593. Review makes that access explicit before confirmation.
+ADR-1703. Review makes that access explicit before confirmation.
 
 API/CLI user access tokens are transient POST body fields. The CLI reads a
 bounded private token file instead of accepting token values in arguments and

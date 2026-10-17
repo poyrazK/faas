@@ -1,4 +1,4 @@
-# ADR-1610 · Product Control personal notification email
+# ADR-1720 · Product Control personal notification email
 
 - **Status:** accepted for internal implementation
 - **Date:** 2026-10-17
@@ -90,4 +90,4 @@ flag change or real provider call is required for local implementation tests.
 Deployed Auth migration/flag setup and real acceptance are later release work.
 
 See the [email runbook](../ops/product-control.md#personal-notification-email)
-and [ADR-1607](1607-product-control-customer-notifications.md).
+and [ADR-1717](1717-product-control-customer-notifications.md).

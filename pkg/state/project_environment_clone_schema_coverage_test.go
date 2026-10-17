@@ -5,7 +5,7 @@
 // adr: 694
 // adr: 695
 // adr: 708
-// adr: 1591 — commercial configuration needs isolation; user email consent is not copied.
+// adr: 1701 — commercial configuration needs isolation; user email consent is not copied.
 package state
 
 import (
