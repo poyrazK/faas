@@ -384,6 +384,8 @@ export { decodeDurableEntityRestoreValidationRequest, encodeDurableEntityRestore
 export { validateDurableEntityRestore, type DurableEntityRestoreValidationOptions } from './durable-entities.js';
 
 export { subscribeRealtimeSSE, RealtimeSSEError } from './realtime-sse.js';
+export { createRealtimeClient } from './realtime-client.js';
+export type { RealtimeClient, RealtimeClientOptions, RealtimeChannelHandle, RealtimeChannelView, RealtimeChannelStatus, RealtimeChannelWatchOptions } from './realtime-client.js';
 export type { RealtimeSSEOptions, RealtimeSSEMessage } from './realtime-sse.js';
 
 export type { RealtimeChannelWebhookFilter } from './generated/models/RealtimeChannelWebhookFilter.js';

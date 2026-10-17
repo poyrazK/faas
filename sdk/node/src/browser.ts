@@ -107,6 +107,8 @@ export {
 } from './realtime-activity-summary.js';
 
 export { subscribeRealtimeSSE, RealtimeSSEError } from './realtime-sse.js';
+export { createRealtimeClient } from './realtime-client.js';
+export type { RealtimeClient, RealtimeClientOptions, RealtimeChannelHandle, RealtimeChannelView, RealtimeChannelStatus, RealtimeChannelWatchOptions } from './realtime-client.js';
 export type { RealtimeSSEOptions, RealtimeSSEMessage } from './realtime-sse.js';
 
 export { createBrowserRealtimeTicketSocketFactory } from './browser-realtime.js';
