@@ -6,10 +6,13 @@ on:
       - 'guest/runners/**'
       - 'pkg/rootfs/**'
       - 'sdk/node/src/postgres-pool-runtime.ts'
+      - 'sdk/node/src/binding-client-runtime.ts'
+      - 'sdk/node/src/secret-reload-runtime.ts'
       - 'sdk/node/test/postgres-pool*'
-      - 'sdk/node/scripts/sync-postgres-starter.mjs'
+      - 'sdk/node/scripts/sync-binding-starters.mjs'
       - 'sdk/node/package*.json'
       - 'cmd/gregale/templates/rest-api-postgres/**'
+      - 'cmd/gregale/templates/secret-reload-node/**'
       - 'go.mod'
       - 'go.sum'
       - '.github/workflows/function-backends.yml'
@@ -91,8 +94,9 @@ jobs:
         run: |
           npm ci --ignore-scripts --no-audit --no-fund
           npm run build
-          node scripts/sync-postgres-starter.mjs --check
-          node --test test/postgres-pool-package.test.mjs
+          npm run starter:sync -- --check
+          npm run test:build
+          node --test dist-test/test/postgres-pool-runtime.test.js
       - name: runner, adapter and real SQL race checks
         env:
           DATABASE_URL: postgres://faas:function_fixture@127.0.0.1:5432/faas?sslmode=require

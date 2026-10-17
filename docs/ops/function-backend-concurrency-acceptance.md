@@ -29,9 +29,10 @@ FAAS_TEST_FUNCTION_POSTGRES=1 go test -race ./guest/runners/internal \
   -run '^TestConcurrentFunctionPostgres$' -count=1 -v -timeout=2m
 ```
 
-The test creates a private database and a restricted SELECT/INSERT role, installs
-the starter's locked `pg` dependency with lifecycle scripts disabled, generates
-the production adapter, and starts the actual HTTP runner. All four phases must
+The test creates a private database and a restricted SELECT/INSERT role, copies
+the PostgreSQL starter's database adapter and vendored runtime, installs its
+locked `pg` dependency with lifecycle scripts disabled, generates the
+production function adapter, and starts the actual HTTP runner. All four phases must
 pass:
 
 1. Two SQL requests blocked by an independent table lock exhaust admission;

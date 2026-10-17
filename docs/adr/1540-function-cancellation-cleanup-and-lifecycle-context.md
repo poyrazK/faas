@@ -17,7 +17,7 @@
   task cancellation before cleanup finished. A database request could still be
   running when the runner admitted replacement work or recycled its worker.
 - **Consequences:** Pass the Node signal to `fetch` or
-  `RestoreAwarePostgresPool.query`. Python sync cancellation is cooperative;
+  the PostgreSQL starter adapter's `query`. Python sync cancellation is cooperative;
   blocking code is bounded by worker retirement. Arbitrary detached work is
   outside this completion fence. In particular this change does not qualify
   the generated adapter's `waitUntil` scaffold as durable post-response work.

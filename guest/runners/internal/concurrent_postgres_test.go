@@ -26,7 +26,8 @@ import (
 )
 
 // This opt-in test uses the production HTTP runner, generated Node adapter,
-// shipped SDK runtime, pg driver and independent SQL witnesses. It requires a
+// the PostgreSQL starter's shipped database adapter and SDK runtime, the pg
+// driver and independent SQL witnesses. It requires a
 // disposable TLS/SCRAM PostgreSQL cluster with CREATEDB/CREATEROLE privileges;
 // only the test process gets that authority. No Firecracker evidence is implied.
 func TestConcurrentFunctionPostgres(t *testing.T) {
@@ -246,7 +247,8 @@ func startPostgresFunction(t *testing.T, dsn string) (*httptest.Server, ServeCon
 		t.Fatal("SQL integration requires Node")
 	}
 	dir := t.TempDir()
-	for _, file := range []string{"package.json", "package-lock.json", "runtime/postgres-pool-runtime.js"} {
+	for _, file := range []string{"package.json", "package-lock.json", "database.js",
+		"runtime/binding-client-runtime.js", "runtime/postgres-pool-runtime.js", "runtime/secret-reload-runtime.js"} {
 		content, err := templates.FS.ReadFile("rest-api-postgres/" + file)
 		if err != nil {
 			t.Fatal(err)
@@ -364,17 +366,20 @@ func waitSQLCount(t *testing.T, admin *pgxpool.Pool, role, predicate string, wan
 }
 
 const postgresFunctionHandler = `import pg from "pg";
-import {createPostgresPool,postgresPoolConfig} from "./runtime/postgres-pool-runtime.js";
-const db=createPostgresPool(()=>new pg.Pool({...postgresPoolConfig(process.env.DATABASE_URL),max:2}),{
-  maxInFlight:2,timeoutMs:8000,lifecycleTimeoutMs:1500,readinessQuery:{text:"SELECT id FROM notes LIMIT 1"}
+import {createDatabase,poolConfig} from "./database.js";
+const db=createDatabase(config=>new pg.Pool({...poolConfig(config.connectionString),max:2}),{
+  maxInFlight:2,timeoutMS:8000,restoreTimeoutMS:1500,readinessQuery:"SELECT id FROM notes LIMIT 1",log:()=>{}
 });
+const started=db.start();
+started.catch(()=>{});
 export async function handler(event,ctx) {
   const base={pid:process.pid,invocation:ctx.invocation_id,token:event.headers["x-token"]};
   try {
+    await started;
     if(event.path==="/internal/before-checkpoint"||event.path==="/internal/after-restore") {
       const before=event.path.endsWith("before-checkpoint");
       if(ctx.lifecycle_hook!==(before?"before_checkpoint":"after_restore")) return {statusCode:403,body:{error:"forbidden"}};
-      if(before) await db.beforeCheckpoint({signal:ctx.signal}); else await db.afterRestore({signal:ctx.signal});
+      if(before) await db.checkpoint({signal:ctx.signal}); else await db.restore({signal:ctx.signal});
       return {body:{...base,...db.diagnostics}};
     }
     if(event.path==="/crash") process.exit(17);

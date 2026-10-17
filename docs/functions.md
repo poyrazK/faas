@@ -274,18 +274,22 @@ See [ADR-1342](adr/1342-function-settings-and-concurrent-workers.md).
 
 ### Database requests and cancellation
 
-Keep a pool at module scope and pass each request's own signal:
+Keep one database adapter at module scope and pass each request's own signal.
+`gregale init --template rest-api-postgres` provides `database.js` and its
+vendored `runtime/` (the SDK's `PostgresPoolBinding` and secret coordinator):
 
 ```js
 import pg from 'pg';
-import {createPostgresPool, postgresPoolConfig} from '@gregale/sdk-node/postgres/runtime';
+import {createDatabase, poolConfig} from './database.js';
 
-const db = createPostgresPool(
-  () => new pg.Pool({...postgresPoolConfig(process.env.DATABASE_URL), max: 4}),
-  {maxInFlight: 4},
+const db = createDatabase(
+  config => new pg.Pool({...poolConfig(config.connectionString), max: 4}),
+  {maxInFlight: 4, readinessQuery: 'SELECT 1'},
 );
+const started = db.start();
 
 export async function handler(event, ctx) {
+  await started;
   const result = await db.query('SELECT id FROM notes LIMIT 20', [], {signal: ctx.signal});
   return {body: result.rows};
 }
@@ -303,9 +307,11 @@ Configured function lifecycle endpoints can inspect `ctx.lifecycle_hook`,
 which is `before_checkpoint`, `after_restore` or an empty string. The runner
 derives it from guest-init's loopback socket and marker; event headers and
 request bodies cannot set it. Match both this context and your configured
-hook path before calling a resource hook. A hook runs in one worker, so it
-cannot prove that pools in every worker have drained. The single HTTP-process
-PostgreSQL starter remains the reference for checkpoint pool ownership.
+hook path before calling `db.checkpoint({signal: ctx.signal})` or
+`db.restore({signal: ctx.signal})`. A hook runs in one worker, so it cannot
+prove that pools in every worker have drained. The single HTTP-process
+PostgreSQL starter remains the reference for checkpoint pool ownership; see
+[PostgreSQL pool adoption and rotation](postgres-pool-runtime.md#snapshots-checkpoint-and-restore).
 
 The completion fence covers the handler and its response stream. Await work
 that must finish with the invocation; the generated Node `waitUntil` scaffold
