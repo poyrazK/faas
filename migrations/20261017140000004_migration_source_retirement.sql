@@ -1,7 +1,7 @@
 -- filename: 20261017140000004_migration_source_retirement.sql
 -- +goose Up
 
-CREATE TABLE migration_sources (
+CREATE TABLE IF NOT EXISTS migration_sources (
  lease_token text PRIMARY KEY CHECK(lease_token<>'' AND octet_length(lease_token)<=128),
  instance_id uuid NOT NULL,
  source_node_id uuid NOT NULL,
@@ -16,12 +16,15 @@ CREATE TABLE migration_sources (
  active_lease_token text GENERATED ALWAYS AS (CASE WHEN phase IN ('bound','retiring') THEN lease_token ELSE NULL END) STORED REFERENCES migration_leases(lease_token),
  CHECK((phase IN ('retired','resumed'))=(proof<>''))
 );
-CREATE UNIQUE INDEX migration_sources_one_pending ON migration_sources(instance_id,source_node_id) WHERE phase IN ('bound','retiring');
-CREATE INDEX migration_sources_recovery ON migration_sources(source_node_id,lease_token) WHERE phase IN ('bound','retiring');
-CREATE INDEX migration_sources_resumed_wake ON migration_sources(instance_id,source_node_id,source_wake_id) WHERE phase='resumed';
-CREATE INDEX migration_leases_source_recovery ON migration_leases(source_node_id,lease_token);
+CREATE UNIQUE INDEX IF NOT EXISTS migration_sources_one_pending ON migration_sources(instance_id,source_node_id) WHERE phase IN ('bound','retiring');
+CREATE INDEX IF NOT EXISTS migration_sources_recovery ON migration_sources(source_node_id,lease_token) WHERE phase IN ('bound','retiring');
+CREATE INDEX IF NOT EXISTS migration_sources_resumed_wake ON migration_sources(instance_id,source_node_id,source_wake_id) WHERE phase='resumed';
+CREATE INDEX IF NOT EXISTS migration_leases_source_recovery ON migration_leases(source_node_id,lease_token);
 
 -- +goose StatementBegin
+DO $replay$
+BEGIN
+ IF to_regprocedure(format('%I.guard_migration_source()',current_schema())) IS NULL THEN
 CREATE FUNCTION guard_migration_source() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE i instances%ROWTYPE; l migration_leases%ROWTYPE; n compute_nodes%ROWTYPE;
 BEGIN
@@ -75,14 +78,44 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
+ END IF;
+END
+$replay$;
 -- +goose StatementEnd
+-- +goose StatementBegin
+DO $replay$
+BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid='migration_sources'::regclass AND tgname='migration_source_guard') THEN
 CREATE TRIGGER migration_source_guard BEFORE INSERT OR UPDATE OR DELETE ON migration_sources FOR EACH ROW EXECUTE FUNCTION guard_migration_source();
+ END IF;
+END
+$replay$;
+-- +goose StatementEnd
+-- +goose StatementBegin
+DO $replay$
+BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid='migration_sources'::regclass AND tgname='service_capacity_before') THEN
 CREATE TRIGGER service_capacity_before BEFORE INSERT OR UPDATE OR DELETE ON migration_sources FOR EACH STATEMENT EXECUTE FUNCTION service_capacity_before_write();
+ END IF;
+END
+$replay$;
+-- +goose StatementEnd
+-- +goose StatementBegin
+DO $replay$
+BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid='migration_sources'::regclass AND tgname='service_capacity_after') THEN
 CREATE TRIGGER service_capacity_after AFTER INSERT OR UPDATE OR DELETE ON migration_sources FOR EACH STATEMENT EXECUTE FUNCTION service_capacity_after_write();
+ END IF;
+END
+$replay$;
+-- +goose StatementEnd
 
 -- Ownership commit has already consumed its incoming receipt. A suppressed or
 -- failed source transition must roll back that entire ownership transaction.
 -- +goose StatementBegin
+DO $replay$
+BEGIN
+ IF to_regprocedure(format('%I.commit_migration_source_retirement()',current_schema())) IS NULL THEN
 CREATE FUNCTION commit_migration_source_retirement() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE changed bigint;
 BEGIN
@@ -93,10 +126,24 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
+ END IF;
+END
+$replay$;
 -- +goose StatementEnd
+-- +goose StatementBegin
+DO $replay$
+BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid='instances'::regclass AND tgname='instance_source_retirement_commit') THEN
 CREATE TRIGGER instance_source_retirement_commit AFTER UPDATE OF node_id ON instances FOR EACH ROW EXECUTE FUNCTION commit_migration_source_retirement();
+ END IF;
+END
+$replay$;
+-- +goose StatementEnd
 
 -- +goose StatementBegin
+DO $replay$
+BEGIN
+ IF to_regprocedure(format('%I.guard_node_migration_sources()',current_schema())) IS NULL THEN
 CREATE FUNCTION guard_node_migration_sources() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF (TG_OP='DELETE' OR NEW.lifecycle IN ('maintenance','retired')) AND (EXISTS(SELECT 1 FROM migration_sources WHERE source_node_id=OLD.id AND phase IN ('bound','retiring')) OR EXISTS(SELECT 1 FROM migration_leases WHERE source_node_id=OLD.id::text)) THEN
@@ -105,12 +152,26 @@ BEGIN
  IF TG_OP='DELETE' THEN RETURN OLD; END IF;
  RETURN NEW;
 END $$;
+ END IF;
+END
+$replay$;
 -- +goose StatementEnd
+-- +goose StatementBegin
+DO $replay$
+BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid='compute_nodes'::regclass AND tgname='node_migration_source_guard') THEN
 CREATE TRIGGER node_migration_source_guard BEFORE UPDATE OF lifecycle OR DELETE ON compute_nodes FOR EACH ROW EXECUTE FUNCTION guard_node_migration_sources();
+ END IF;
+END
+$replay$;
+-- +goose StatementEnd
 
 -- A pending source is counted once while its original live row still represents
 -- it. After movement it remains ordinary physical usage, independent of routing.
 -- +goose StatementBegin
+DO $replay$
+BEGIN
+ IF to_regprocedure(format('%I.migration_source_node_usage(uuid,boolean)',current_schema())) IS NULL THEN
 CREATE FUNCTION migration_source_node_usage(target uuid,legacy boolean DEFAULT false) RETURNS TABLE(ram bigint,cpu bigint,vcpu bigint) LANGUAGE sql AS $$
  SELECT coalesce(sum(CASE WHEN i.id IS NULL THEN r.ram_mb ELSE greatest(0,r.ram_mb-greatest(i.ram_mb+p.overhead_mb,CASE WHEN NOT legacy OR owned.present THEN i.capacity_ram_mb ELSE 0 END)) END),0)::bigint,
   coalesce(sum(CASE WHEN i.id IS NULL THEN r.cpu_millicores ELSE greatest(0,r.cpu_millicores-greatest(coalesce(nullif(a.cpu_millicores,0),p.startup_cpu),CASE WHEN NOT legacy OR owned.present THEN i.capacity_cpu_millicores ELSE CASE WHEN i.startup_cpu_boost_until>now() THEN p.startup_cpu ELSE 0 END END)) END),0)::bigint,
@@ -122,10 +183,16 @@ CREATE FUNCTION migration_source_node_usage(target uuid,legacy boolean DEFAULT f
  LEFT JOIN LATERAL (SELECT EXISTS(SELECT 1 FROM migration_admissions d WHERE d.phase='committed' AND d.instance_id=i.id AND d.destination_node_id=i.node_id AND d.destination_wake_id=i.wake_id) OR EXISTS(SELECT 1 FROM migration_sources s WHERE s.phase='resumed' AND s.instance_id=i.id AND s.source_node_id=i.node_id AND s.source_wake_id=i.wake_id) AS present) owned ON true
  WHERE p.singleton AND r.source_node_id=target AND r.phase IN ('bound','retiring');
 $$;
+ END IF;
+END
+$replay$;
 -- +goose StatementEnd
 
 -- Reservations share node-completion serialization even before physical binding.
 -- +goose StatementBegin
+DO $replay$
+BEGIN
+ IF to_regprocedure(format('%I.guard_source_migration_lease_node()',current_schema())) IS NULL THEN
 CREATE FUNCTION guard_source_migration_lease_node() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE n compute_nodes%ROWTYPE;
 BEGIN
@@ -143,10 +210,37 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
+ END IF;
+END
+$replay$;
 -- +goose StatementEnd
+-- +goose StatementBegin
+DO $replay$
+BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid='migration_leases'::regclass AND tgname='source_migration_lease_node_guard') THEN
 CREATE TRIGGER source_migration_lease_node_guard BEFORE INSERT OR UPDATE OF instance_id,source_node_id,lease_token,mem_storage_key,vmstate_storage_key ON migration_leases FOR EACH ROW EXECUTE FUNCTION guard_source_migration_lease_node();
+ END IF;
+END
+$replay$;
+-- +goose StatementEnd
+-- +goose StatementBegin
+DO $replay$
+BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid='migration_leases'::regclass AND tgname='service_capacity_before') THEN
 CREATE TRIGGER service_capacity_before BEFORE INSERT OR UPDATE OR DELETE ON migration_leases FOR EACH STATEMENT EXECUTE FUNCTION service_capacity_before_write();
+ END IF;
+END
+$replay$;
+-- +goose StatementEnd
+-- +goose StatementBegin
+DO $replay$
+BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid='migration_leases'::regclass AND tgname='service_capacity_after') THEN
 CREATE TRIGGER service_capacity_after AFTER INSERT OR UPDATE OR DELETE ON migration_leases FOR EACH STATEMENT EXECUTE FUNCTION service_capacity_after_write();
+ END IF;
+END
+$replay$;
+-- +goose StatementEnd
 
 -- The definitions extended below are restored verbatim by Down.
 
@@ -388,6 +482,9 @@ $$;
 -- +goose StatementEnd
 
 -- +goose StatementBegin
+DO $replay$
+BEGIN
+ IF to_regprocedure(format('%I.guard_instance_migration_source()',current_schema())) IS NULL THEN
 CREATE FUNCTION guard_instance_migration_source() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE r migration_sources%ROWTYPE;
 BEGIN
@@ -413,8 +510,19 @@ BEGIN
  NEW.capacity_vcpu=greatest(NEW.capacity_vcpu,r.vcpu);
  RETURN NEW;
 END $$;
+ END IF;
+END
+$replay$;
 -- +goose StatementEnd
+-- +goose StatementBegin
+DO $replay$
+BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid='instances'::regclass AND tgname='instance_migration_source_guard') THEN
 CREATE TRIGGER instance_migration_source_guard BEFORE UPDATE ON instances FOR EACH ROW EXECUTE FUNCTION guard_instance_migration_source();
+ END IF;
+END
+$replay$;
+-- +goose StatementEnd
 
 -- +goose Down
 -- +goose StatementBegin

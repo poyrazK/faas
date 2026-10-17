@@ -2625,8 +2625,8 @@ type Deployment struct {
 	ServingEndedAt             pgtype.Timestamptz
 	RuntimeUpgradeRoutingToken pgtype.UUID
 	EnvironmentWorkloadHeld    bool
-	RuntimeBase                string
 	SnapshotRecoveryGeneration int64
+	RuntimeBase                string
 }
 
 type DeploymentAlias struct {

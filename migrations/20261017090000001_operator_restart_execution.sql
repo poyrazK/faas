@@ -1,17 +1,33 @@
 -- +goose Up
 ALTER TABLE operator_intents
-    ADD COLUMN claim_token uuid CHECK (claim_token IS NULL OR claim_token <> '00000000-0000-0000-0000-000000000000'),
-    ADD COLUMN completion_audit_outbox_id bigint CHECK (completion_audit_outbox_id IS NULL OR completion_audit_outbox_id > 0);
-ALTER TABLE operator_intents DROP CONSTRAINT operator_intents_status_check;
+    ADD COLUMN IF NOT EXISTS claim_token uuid CHECK (claim_token IS NULL OR claim_token <> '00000000-0000-0000-0000-000000000000'),
+    ADD COLUMN IF NOT EXISTS completion_audit_outbox_id bigint CHECK (completion_audit_outbox_id IS NULL OR completion_audit_outbox_id > 0);
+-- +goose StatementBegin
+DO $replay$
+BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='operator_intents'::regclass AND conname='operator_intents_status_check' AND position('outcome_unknown' in pg_get_constraintdef(oid))>0) THEN
+ALTER TABLE operator_intents DROP CONSTRAINT IF EXISTS operator_intents_status_check;
 ALTER TABLE operator_intents ADD CONSTRAINT operator_intents_status_check
     CHECK (status IN ('pending', 'running', 'succeeded', 'failed', 'cancelled', 'outcome_unknown'));
+ END IF;
+END
+$replay$;
+-- +goose StatementEnd
 
 -- A legacy running restart may already have destroyed its VM. Never redispatch it.
+-- +goose StatementBegin
+DO $replay$
+BEGIN
+ IF to_regclass('operator_restart_executions') IS NULL THEN
 UPDATE operator_intents SET status = 'outcome_unknown', finished_at = now(),
     error = 'Legacy restart execution requires operator reconciliation before another action.'
 WHERE kind = 'force_restart' AND status = 'running';
+ END IF;
+END
+$replay$;
+-- +goose StatementEnd
 
-CREATE TABLE operator_restart_executions (
+CREATE TABLE IF NOT EXISTS operator_restart_executions (
     intent_id uuid PRIMARY KEY REFERENCES operator_intents(id) ON DELETE RESTRICT,
     target jsonb NOT NULL CHECK (jsonb_typeof(target) = 'object'),
     phase text NOT NULL CHECK (phase IN ('prepared', 'started', 'destroyed', 'outcome_unknown', 'completed', 'failed')),
@@ -23,7 +39,7 @@ CREATE TABLE operator_restart_executions (
     CHECK (phase <> 'started' OR destroy_token IS NOT NULL)
 );
 
-CREATE INDEX operator_intents_unknown_restart_idx ON operator_intents (requested_at, id)
+CREATE INDEX IF NOT EXISTS operator_intents_unknown_restart_idx ON operator_intents (requested_at, id)
     WHERE status = 'outcome_unknown' AND kind = 'force_restart';
 
 -- +goose Down

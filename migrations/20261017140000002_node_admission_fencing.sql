@@ -3,6 +3,9 @@
 -- +goose Up
 -- Quiesce old schedd admission/migration dispatchers before applying (ADR-1528).
 -- +goose StatementBegin
+DO $replay$
+BEGIN
+ IF to_regprocedure(format('%I.node_admission_lock_capacity()',current_schema())) IS NULL THEN
 CREATE FUNCTION node_admission_lock_capacity() RETURNS void LANGUAGE plpgsql AS $$
 DECLARE is_enabled boolean;
 BEGIN
@@ -16,11 +19,17 @@ BEGIN
   END IF;
  END LOOP;
 END $$;
+ END IF;
+END
+$replay$;
 -- +goose StatementEnd
 
 -- Existing service_capacity_before statement triggers acquire policy first.
 -- The share lock also conflicts with non-key lifecycle updates, unlike an FK.
 -- +goose StatementBegin
+DO $replay$
+BEGIN
+ IF to_regprocedure(format('%I.instance_node_admission_guard()',current_schema())) IS NULL THEN
 CREATE FUNCTION instance_node_admission_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE current_lifecycle compute_node_lifecycle;
 BEGIN
@@ -37,9 +46,20 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
+ END IF;
+END
+$replay$;
 -- +goose StatementEnd
+-- +goose StatementBegin
+DO $replay$
+BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid='instances'::regclass AND tgname='instance_node_admission_guard') THEN
 CREATE TRIGGER instance_node_admission_guard BEFORE INSERT OR UPDATE OF state,node_id ON instances
  FOR EACH ROW EXECUTE FUNCTION instance_node_admission_guard();
+ END IF;
+END
+$replay$;
+-- +goose StatementEnd
 
 -- +goose Down
 -- Stop all admission/migration writers before removing enforcement.

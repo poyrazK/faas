@@ -23,6 +23,11 @@ fixtures, targeted races, SQL generation, schema restore/down/up parity and
 scoped lint are verified. Failed preparation cannot erase uncertain binding
 commits or pin an unstarted lease; parked rollback never resumes an unaccounted VM.
 
+Release preparation also verifies replay of all nine recovery migrations against
+existing DDL. Replay preserves current operator claims and the newer source
+guards when an earlier incoming migration is replayed alone. The canonical schema
+and its migration-source checksum are regenerated from fresh PostgreSQL 16.
+
 Dedicated x86_64 KVM migration/process-death and leak qualification remains
 pending: this environment has no `/dev/kvm`, and leakcheck cannot inspect its
 kernel loop devices. The broader portable VM suite excludes the same 21 existing

@@ -1,12 +1,20 @@
 -- +goose Up
 -- Quiesce old schedd writers before applying. Pending rows can be reclaimed
 -- legacy executions; no status alone proves whether their effect happened.
+-- +goose StatementBegin
+DO $replay$
+BEGIN
+ IF to_regclass('operator_node_executions') IS NULL THEN
 UPDATE operator_intents SET status='outcome_unknown', finished_at=now(), claim_token=NULL,
  error='Legacy node maintenance requires operator reconciliation before another action.'
 WHERE kind IN ('node_drain','node_force_drain','node_activate','node_retire')
  AND status IN ('pending','running');
+ END IF;
+END
+$replay$;
+-- +goose StatementEnd
 
-CREATE TABLE operator_node_executions (
+CREATE TABLE IF NOT EXISTS operator_node_executions (
  intent_id uuid PRIMARY KEY REFERENCES operator_intents(id) ON DELETE RESTRICT,
  claim_token uuid NOT NULL CHECK (claim_token <> '00000000-0000-0000-0000-000000000000'),
  kind text NOT NULL CHECK (kind IN ('node_drain','node_force_drain','node_activate','node_retire')),
@@ -24,15 +32,32 @@ CREATE TABLE operator_node_executions (
 );
 
 -- +goose StatementBegin
+DO $replay$
+BEGIN
+ IF to_regprocedure(format('%I.operator_node_receipt_immutable()',current_schema())) IS NULL THEN
 CREATE FUNCTION operator_node_receipt_immutable() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  RAISE EXCEPTION 'Operator node execution receipts are immutable' USING ERRCODE='23514';
 END $$;
+ END IF;
+END
+$replay$;
 -- +goose StatementEnd
+-- +goose StatementBegin
+DO $replay$
+BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid='operator_node_executions'::regclass AND tgname='operator_node_receipt_immutable') THEN
 CREATE TRIGGER operator_node_receipt_immutable BEFORE UPDATE OR DELETE ON operator_node_executions
  FOR EACH ROW EXECUTE FUNCTION operator_node_receipt_immutable();
+ END IF;
+END
+$replay$;
+-- +goose StatementEnd
 
 -- +goose StatementBegin
+DO $replay$
+BEGIN
+ IF to_regprocedure(format('%I.operator_node_completion_guard()',current_schema())) IS NULL THEN
 CREATE FUNCTION operator_node_completion_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE receipt operator_node_executions%ROWTYPE;
 BEGIN
@@ -52,9 +77,20 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
+ END IF;
+END
+$replay$;
 -- +goose StatementEnd
+-- +goose StatementBegin
+DO $replay$
+BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid='operator_intents'::regclass AND tgname='operator_node_completion_guard') THEN
 CREATE TRIGGER operator_node_completion_guard BEFORE UPDATE ON operator_intents
  FOR EACH ROW EXECUTE FUNCTION operator_node_completion_guard();
+ END IF;
+END
+$replay$;
+-- +goose StatementEnd
 
 -- +goose Down
 -- +goose StatementBegin

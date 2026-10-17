@@ -1,10 +1,10 @@
 -- +goose Up
 -- Quiesce old recovery controllers before applying; unfenced completion writes
 -- are rejected once the guard is installed. Existing cycles start at 1.
-ALTER TABLE compute_nodes ADD COLUMN lifecycle_generation bigint NOT NULL DEFAULT 1
+ALTER TABLE compute_nodes ADD COLUMN IF NOT EXISTS lifecycle_generation bigint NOT NULL DEFAULT 1
  CONSTRAINT compute_nodes_lifecycle_generation_check CHECK (lifecycle_generation > 0);
 
-CREATE TABLE node_lifecycle_completions (
+CREATE TABLE IF NOT EXISTS node_lifecycle_completions (
  node_id uuid NOT NULL CHECK (node_id <> '00000000-0000-0000-0000-000000000000'),
  source_generation bigint NOT NULL CHECK (source_generation > 0),
  result_generation bigint NOT NULL CHECK (result_generation > source_generation),
@@ -24,15 +24,32 @@ CREATE TABLE node_lifecycle_completions (
 );
 
 -- +goose StatementBegin
+DO $replay$
+BEGIN
+ IF to_regprocedure(format('%I.node_lifecycle_completion_immutable()',current_schema())) IS NULL THEN
 CREATE FUNCTION node_lifecycle_completion_immutable() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  RAISE EXCEPTION 'Node lifecycle completion receipts are immutable' USING ERRCODE='23514';
 END $$;
+ END IF;
+END
+$replay$;
 -- +goose StatementEnd
+-- +goose StatementBegin
+DO $replay$
+BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid='node_lifecycle_completions'::regclass AND tgname='node_lifecycle_completion_immutable') THEN
 CREATE TRIGGER node_lifecycle_completion_immutable BEFORE UPDATE OR DELETE ON node_lifecycle_completions
  FOR EACH ROW EXECUTE FUNCTION node_lifecycle_completion_immutable();
+ END IF;
+END
+$replay$;
+-- +goose StatementEnd
 
 -- +goose StatementBegin
+DO $replay$
+BEGIN
+ IF to_regprocedure(format('%I.compute_node_lifecycle_generation_guard()',current_schema())) IS NULL THEN
 CREATE FUNCTION compute_node_lifecycle_generation_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF TG_OP='INSERT' THEN
@@ -56,10 +73,21 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
+ END IF;
+END
+$replay$;
 -- +goose StatementEnd
+-- +goose StatementBegin
+DO $replay$
+BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid='compute_nodes'::regclass AND tgname='compute_node_lifecycle_generation_guard') THEN
 CREATE TRIGGER compute_node_lifecycle_generation_guard
  BEFORE INSERT OR UPDATE OF lifecycle,lifecycle_generation,drain_initiated_at,recovery_initiated_at ON compute_nodes
  FOR EACH ROW EXECUTE FUNCTION compute_node_lifecycle_generation_guard();
+ END IF;
+END
+$replay$;
+-- +goose StatementEnd
 
 -- +goose Down
 -- +goose StatementBegin

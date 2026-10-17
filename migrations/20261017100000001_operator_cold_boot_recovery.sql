@@ -1,14 +1,14 @@
 -- +goose Up
-ALTER TABLE deployments ADD COLUMN snapshot_recovery_generation bigint NOT NULL DEFAULT 0
+ALTER TABLE deployments ADD COLUMN IF NOT EXISTS snapshot_recovery_generation bigint NOT NULL DEFAULT 0
     CONSTRAINT deployments_snapshot_recovery_generation_check CHECK (snapshot_recovery_generation >= 0);
-ALTER TABLE snapshots ADD COLUMN recovery_generation bigint NOT NULL DEFAULT 0
+ALTER TABLE snapshots ADD COLUMN IF NOT EXISTS recovery_generation bigint NOT NULL DEFAULT 0
     CONSTRAINT snapshots_recovery_generation_check CHECK (recovery_generation >= 0);
-ALTER TABLE operator_intents ADD COLUMN cold_boot_generation bigint
+ALTER TABLE operator_intents ADD COLUMN IF NOT EXISTS cold_boot_generation bigint
     CONSTRAINT operator_intents_cold_boot_generation_check CHECK (cold_boot_generation > 0);
 
 -- This is boot admission lineage, not a timestamp inferred from readiness.
 -- Keep snapshot_id as evidence even after ordinary snapshot GC removes its row.
-CREATE TABLE instance_snapshot_recovery (
+CREATE TABLE IF NOT EXISTS instance_snapshot_recovery (
     instance_id uuid PRIMARY KEY REFERENCES instances(id) ON DELETE CASCADE,
     wake_id uuid NOT NULL CHECK (wake_id <> '00000000-0000-0000-0000-000000000000'),
     generation bigint NOT NULL CHECK (generation >= 0),
@@ -18,6 +18,9 @@ CREATE TABLE instance_snapshot_recovery (
 -- Fence legacy and direct cache writers as well as the normal imaged publisher.
 -- The deployment lock serializes insertion with generation change/invalidation.
 -- +goose StatementBegin
+DO $replay$
+BEGIN
+ IF to_regprocedure(format('%I.snapshot_recovery_generation_guard()',current_schema())) IS NULL THEN
 CREATE FUNCTION snapshot_recovery_generation_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE current_generation bigint;
 BEGIN
@@ -31,10 +34,21 @@ BEGIN
     END IF;
     RETURN NEW;
 END $$;
+ END IF;
+END
+$replay$;
 -- +goose StatementEnd
+-- +goose StatementBegin
+DO $replay$
+BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid='snapshots'::regclass AND tgname='snapshot_recovery_generation_guard') THEN
 CREATE TRIGGER snapshot_recovery_generation_guard
     BEFORE INSERT OR UPDATE OF stale, recovery_generation, deployment_id ON snapshots
     FOR EACH ROW EXECUTE FUNCTION snapshot_recovery_generation_guard();
+ END IF;
+END
+$replay$;
+-- +goose StatementEnd
 
 -- +goose Down
 -- +goose StatementBegin

@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE operator_recovery_submissions (
+CREATE TABLE IF NOT EXISTS operator_recovery_submissions (
     actor_id uuid NOT NULL CHECK (actor_id <> '00000000-0000-0000-0000-000000000000'),
     key_digest text NOT NULL CHECK (key_digest ~ '^[0-9a-f]{64}$'),
     request_digest text NOT NULL CHECK (request_digest ~ '^[0-9a-f]{64}$'),

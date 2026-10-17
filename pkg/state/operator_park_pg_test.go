@@ -127,8 +127,13 @@ func TestOperatorParkMigrationQuarantinesLegacy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	up := strings.Split(strings.Split(string(raw), "-- +goose Down")[0], "CREATE TABLE")[0]
-	if _, err := p.Exec(t.Context(), strings.ReplaceAll(up, "-- +goose Up", "")); err != nil {
+	parts := strings.SplitN(string(raw), "-- +goose Down", 2)
+	// Recreate the actual pre-upgrade schema. Replaying an already installed
+	// migration must preserve requests accepted by the durable executor.
+	if _, err := p.Exec(t.Context(), parts[1]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Exec(t.Context(), parts[0]); err != nil {
 		t.Fatal(err)
 	}
 	row, err := s.GetOperatorIntent(t.Context(), f.intent.ID)

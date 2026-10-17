@@ -1,9 +1,9 @@
 -- filename: 20261017140000003_inbound_migration_reservations.sql
 -- +goose Up
 
-ALTER TABLE migration_leases ADD COLUMN resume_fenced boolean NOT NULL DEFAULT false;
+ALTER TABLE migration_leases ADD COLUMN IF NOT EXISTS resume_fenced boolean NOT NULL DEFAULT false;
 
-CREATE TABLE migration_admissions (
+CREATE TABLE IF NOT EXISTS migration_admissions (
  id uuid PRIMARY KEY,
  instance_id uuid NOT NULL,
  source_node_id uuid NOT NULL,
@@ -28,11 +28,14 @@ CREATE TABLE migration_admissions (
  CHECK((phase='cleaned')=(cleanup_proof<>'')),
  UNIQUE(instance_id,lease_token,destination_node_id)
 );
-CREATE UNIQUE INDEX migration_admissions_one_pending ON migration_admissions(instance_id) WHERE phase NOT IN ('cleaned','committed');
-CREATE INDEX migration_admissions_destination_pending ON migration_admissions(destination_node_id,id) WHERE phase NOT IN ('cleaned','committed');
-CREATE INDEX migration_admissions_owned_wake ON migration_admissions(instance_id,destination_node_id,destination_wake_id) WHERE phase='committed';
+CREATE UNIQUE INDEX IF NOT EXISTS migration_admissions_one_pending ON migration_admissions(instance_id) WHERE phase NOT IN ('cleaned','committed');
+CREATE INDEX IF NOT EXISTS migration_admissions_destination_pending ON migration_admissions(destination_node_id,id) WHERE phase NOT IN ('cleaned','committed');
+CREATE INDEX IF NOT EXISTS migration_admissions_owned_wake ON migration_admissions(instance_id,destination_node_id,destination_wake_id) WHERE phase='committed';
 
 -- +goose StatementBegin
+DO $replay$
+BEGIN
+ IF to_regprocedure(format('%I.migration_admission_node_usage(uuid,uuid)',current_schema())) IS NULL THEN
 CREATE FUNCTION migration_admission_node_usage(target uuid,omit_instance uuid DEFAULT NULL) RETURNS TABLE(ram bigint,cpu bigint,vcpu bigint) LANGUAGE sql AS $$
  SELECT coalesce(sum(u.ram),0)::bigint,coalesce(sum(u.cpu),0)::bigint,coalesce(sum(u.vcpu),0)::bigint FROM (
   SELECT greatest(i.capacity_ram_mb,i.ram_mb+p.overhead_mb)::bigint AS ram,
@@ -47,9 +50,15 @@ CREATE FUNCTION migration_admission_node_usage(target uuid,omit_instance uuid DE
    AND NOT EXISTS(SELECT 1 FROM instances i WHERE i.id=r.instance_id AND i.node_id=r.destination_node_id AND i.wake_id=r.destination_wake_id AND i.state='running')
  ) u;
 $$;
+ END IF;
+END
+$replay$;
 -- +goose StatementEnd
 
 -- +goose StatementBegin
+DO $replay$
+BEGIN
+ IF to_regprocedure(format('%I.guard_migration_admission()',current_schema())) IS NULL THEN
 CREATE FUNCTION guard_migration_admission() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE n compute_nodes%ROWTYPE; source_instance instances%ROWTYPE; used record;
 BEGIN
@@ -113,12 +122,42 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
+ END IF;
+END
+$replay$;
 -- +goose StatementEnd
+-- +goose StatementBegin
+DO $replay$
+BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid='migration_admissions'::regclass AND tgname='migration_admission_guard') THEN
 CREATE TRIGGER migration_admission_guard BEFORE INSERT OR UPDATE OR DELETE ON migration_admissions FOR EACH ROW EXECUTE FUNCTION guard_migration_admission();
+ END IF;
+END
+$replay$;
+-- +goose StatementEnd
+-- +goose StatementBegin
+DO $replay$
+BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid='migration_admissions'::regclass AND tgname='service_capacity_before') THEN
 CREATE TRIGGER service_capacity_before BEFORE INSERT OR UPDATE OR DELETE ON migration_admissions FOR EACH STATEMENT EXECUTE FUNCTION service_capacity_before_write();
+ END IF;
+END
+$replay$;
+-- +goose StatementEnd
+-- +goose StatementBegin
+DO $replay$
+BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid='migration_admissions'::regclass AND tgname='service_capacity_after') THEN
 CREATE TRIGGER service_capacity_after AFTER INSERT OR UPDATE OR DELETE ON migration_admissions FOR EACH STATEMENT EXECUTE FUNCTION service_capacity_after_write();
+ END IF;
+END
+$replay$;
+-- +goose StatementEnd
 
 -- +goose StatementBegin
+DO $replay$
+BEGIN
+ IF to_regprocedure(format('%I.guard_instance_migration_admission()',current_schema())) IS NULL THEN
 CREATE FUNCTION guard_instance_migration_admission() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE r migration_admissions%ROWTYPE; n compute_nodes%ROWTYPE; used record; pending boolean;
 BEGIN
@@ -162,10 +201,24 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
+ END IF;
+END
+$replay$;
 -- +goose StatementEnd
+-- +goose StatementBegin
+DO $replay$
+BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid='instances'::regclass AND tgname='instance_migration_admission_guard') THEN
 CREATE TRIGGER instance_migration_admission_guard BEFORE INSERT OR DELETE OR UPDATE OF node_id,state,wake_id,lease_token,app_id,deployment_id,ram_mb,capacity_ram_mb,capacity_cpu_millicores,capacity_vcpu ON instances FOR EACH ROW EXECUTE FUNCTION guard_instance_migration_admission();
+ END IF;
+END
+$replay$;
+-- +goose StatementEnd
 
 -- +goose StatementBegin
+DO $replay$
+BEGIN
+ IF to_regprocedure(format('%I.consume_migration_admission()',current_schema())) IS NULL THEN
 CREATE FUNCTION consume_migration_admission() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE changed bigint;
 BEGIN
@@ -178,10 +231,24 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
+ END IF;
+END
+$replay$;
 -- +goose StatementEnd
+-- +goose StatementBegin
+DO $replay$
+BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid='instances'::regclass AND tgname='instance_migration_admission_consume') THEN
 CREATE TRIGGER instance_migration_admission_consume AFTER UPDATE OF node_id ON instances FOR EACH ROW EXECUTE FUNCTION consume_migration_admission();
+ END IF;
+END
+$replay$;
+-- +goose StatementEnd
 
 -- +goose StatementBegin
+DO $replay$
+BEGIN
+ IF to_regprocedure(format('%I.guard_node_migration_admissions()',current_schema())) IS NULL THEN
 CREATE FUNCTION guard_node_migration_admissions() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF (TG_OP='DELETE' OR NEW.lifecycle IN ('maintenance','retired')) AND EXISTS(SELECT 1 FROM migration_admissions WHERE destination_node_id=OLD.id AND phase NOT IN ('cleaned','committed')) THEN
@@ -190,10 +257,24 @@ BEGIN
  IF TG_OP='DELETE' THEN RETURN OLD; END IF;
  RETURN NEW;
 END $$;
+ END IF;
+END
+$replay$;
 -- +goose StatementEnd
+-- +goose StatementBegin
+DO $replay$
+BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid='compute_nodes'::regclass AND tgname='node_migration_admission_guard') THEN
 CREATE TRIGGER node_migration_admission_guard BEFORE UPDATE OF lifecycle OR DELETE ON compute_nodes FOR EACH ROW EXECUTE FUNCTION guard_node_migration_admissions();
+ END IF;
+END
+$replay$;
+-- +goose StatementEnd
 
 -- +goose StatementBegin
+DO $replay$
+BEGIN
+ IF to_regprocedure(format('%I.guard_source_migration_admissions()',current_schema())) IS NULL THEN
 CREATE FUNCTION guard_source_migration_admissions() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
  IF (TG_OP='DELETE' OR NEW.lease_token IS DISTINCT FROM OLD.lease_token) AND EXISTS(SELECT 1 FROM migration_admissions WHERE instance_id=OLD.instance_id AND lease_token=OLD.lease_token AND phase NOT IN ('cleaned','committed')) THEN
@@ -203,10 +284,24 @@ BEGIN
  IF NEW.lease_token IS DISTINCT FROM OLD.lease_token THEN NEW.resume_fenced=false; END IF;
  RETURN NEW;
 END $$;
+ END IF;
+END
+$replay$;
 -- +goose StatementEnd
+-- +goose StatementBegin
+DO $replay$
+BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid='migration_leases'::regclass AND tgname='source_migration_admission_guard') THEN
 CREATE TRIGGER source_migration_admission_guard BEFORE UPDATE OR DELETE ON migration_leases FOR EACH ROW EXECUTE FUNCTION guard_source_migration_admissions();
+ END IF;
+END
+$replay$;
+-- +goose StatementEnd
 
 -- +goose StatementBegin
+DO $replay$
+BEGIN
+ IF to_regprocedure(format('%I.migration_source_node_usage(uuid,boolean)',current_schema())) IS NULL THEN
 CREATE OR REPLACE FUNCTION public.service_capacity_snapshot() RETURNS jsonb
     LANGUAGE sql
     SET jit TO 'off'
@@ -306,6 +401,9 @@ projection AS (
     ) AS data FROM policy p CROSS JOIN totals t CROSS JOIN required r CROSS JOIN shape sh
 ) SELECT data FROM projection;
 $$;
+ END IF;
+END
+$replay$;
 -- +goose StatementEnd
 
 -- +goose Down
