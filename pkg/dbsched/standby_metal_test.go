@@ -10,6 +10,7 @@ package dbsched
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -33,6 +34,11 @@ type rangeLeaser struct {
 	mu   sync.Mutex
 	next int
 	held map[string]fcvm.Lease
+}
+
+// Adopt is not exercised here: no VM outlives this test's runtime.
+func (_ *rangeLeaser) Adopt(string, int) (fcvm.Lease, error) {
+	return fcvm.Lease{}, errors.New("adopt: not used in this test")
 }
 
 func (l *rangeLeaser) Acquire(instance string) (fcvm.Lease, error) {

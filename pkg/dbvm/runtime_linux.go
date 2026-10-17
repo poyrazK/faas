@@ -5,15 +5,20 @@ package dbvm
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"golang.org/x/sys/unix"
+
+	"github.com/onebox-faas/faas/pkg/dbguest"
 )
 
 const cgroupMount = "/sys/fs/cgroup"
@@ -104,51 +109,112 @@ func removeJailCgroup(parent, jailID string) {
 // jail directories and cgroups. Volumes are untouched; PostgreSQL recovers
 // from its WAL on the next boot.
 func (r *Runtime) Recover() error {
-	if err := r.recoverJails(); err != nil {
+	kept, err := r.recoverJails()
+	if err != nil {
 		return err
 	}
-	// Spare directories hold only placeholders and links to volumes; the
-	// spares that used them are gone.
-	if err := os.RemoveAll(filepath.Join(r.cfg.VolumeRoot, spareRoot)); err != nil {
+	// Spare directories hold only placeholders and links to volumes; only
+	// adopted VMs that a spare served still use theirs.
+	spares := filepath.Join(r.cfg.VolumeRoot, spareRoot)
+	entries, err := os.ReadDir(spares)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("dbvm: recover spares: %w", err)
+	}
+	for _, e := range entries {
+		dir := filepath.Join(spares, e.Name())
+		if !kept[dir] {
+			if err := os.RemoveAll(dir); err != nil {
+				return fmt.Errorf("dbvm: recover spares: %w", err)
+			}
+		}
 	}
 	return nil
 }
 
-func (r *Runtime) recoverJails() error {
+// recoverJails adopts every running database VM a previous vmmd left
+// (recovery.go) and cleans up every other jail. It returns the spare
+// directories the adopted VMs use.
+func (r *Runtime) recoverJails() (map[string]bool, error) {
+	kept := map[string]bool{}
 	parent := filepath.Join(r.cfg.JailBase, filepath.Base(r.fcReal))
 	entries, err := os.ReadDir(parent)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil
+		return kept, nil
 	}
 	if err != nil {
-		return fmt.Errorf("dbvm: recover: %w", err)
+		return nil, fmt.Errorf("dbvm: recover: %w", err)
 	}
 	for _, e := range entries {
 		if !e.IsDir() || !strings.HasPrefix(e.Name(), jailIDPrefix) {
 			continue
 		}
 		dir := filepath.Join(parent, e.Name())
-		killJailProcesses(e.Name())
+		id, vm, err := r.adoptJail(e.Name(), dir)
+		if err == nil {
+			r.mu.Lock()
+			_, dup := r.vms[id]
+			if !dup {
+				r.vms[id] = vm
+			}
+			r.mu.Unlock()
+			if !dup {
+				if vm.spareDir != "" {
+					kept[vm.spareDir] = true
+				}
+				continue
+			}
+			err = errors.New("a second VM for the database")
+		}
+		if vm != nil {
+			// Adopted halfway: stop it like any VM of ours, cleanly first.
+			r.logWarn("dbvm: recover: stopping a VM it could not adopt", "jail", e.Name(), "err", err)
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			_, _ = Control(ctx, r.udsPath(vm), dbguest.Request{Op: dbguest.OpStop})
+			cancel()
+			select {
+			case <-vm.exited:
+			case <-time.After(r.cfg.StopTimeout):
+			}
+			r.teardown(id, vm)
+			continue
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			r.logWarn("dbvm: recover: cleaning up a jail", "jail", e.Name(), "reason", err)
+		}
+		killJailProcesses(r.cfg.ParentCgroup, e.Name())
 		unmountJail(mountsUnder(dir))
 		if err := os.RemoveAll(dir); err != nil {
-			return fmt.Errorf("dbvm: recover %s: %w", e.Name(), err)
+			return nil, fmt.Errorf("dbvm: recover %s: %w", e.Name(), err)
 		}
 		removeJailCgroup(r.cfg.ParentCgroup, e.Name())
 	}
-	return nil
+	return kept, nil
 }
 
 // killJailProcesses kills the Firecracker process of a jail. Jailer pivots
 // into a private mount namespace, so /proc/<pid>/root does not identify the
-// jail from the host; the jail id on the command line does.
-func killJailProcesses(jailID string) {
-	for _, pid := range jailProcesses(jailID) {
+// jail from the host; the jail id on the command line, in the jail's own
+// cgroup under parent, does. The cgroup keeps another runtime's VM of the
+// same database (a primary and its standby on one test host) out.
+func killJailProcesses(parent, jailID string) {
+	for _, pid := range jailProcesses(parent, jailID) {
 		_ = unix.Kill(pid, unix.SIGKILL)
 	}
 }
 
-func jailProcesses(jailID string) []int {
+func jailProcesses(parent, jailID string) []int {
+	var out []int
+	want := "0::/" + strings.Trim(parent, "/") + "/" + jailID
+	for _, pid := range jailIDProcesses(jailID) {
+		raw, err := os.ReadFile(filepath.Join("/proc", strconv.Itoa(pid), "cgroup"))
+		if err == nil && slices.Contains(strings.Split(strings.TrimSpace(string(raw)), "\n"), want) {
+			out = append(out, pid)
+		}
+	}
+	return out
+}
+
+func jailIDProcesses(jailID string) []int {
 	procs, err := os.ReadDir("/proc")
 	if err != nil {
 		return nil

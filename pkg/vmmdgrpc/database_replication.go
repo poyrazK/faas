@@ -104,23 +104,25 @@ func databaseNodeCN(node string) (string, error) {
 
 // noteStandby records which node may stream a database's replication from
 // here: the replication op sets it with async or sync and forgets it with
-// off.
-func (p *databasePeers) noteStandby(id string, req dbguest.Request, standbyNode string) error {
+// off. It returns the standby's CN ("" when forgotten) and whether the op
+// changed it, for the VM's record.
+func (p *databasePeers) noteStandby(id string, req dbguest.Request, standbyNode string) (string, bool, error) {
 	if req.Op != dbguest.OpReplication || req.Replication == "" || req.Replication == dbguest.ReplicationOff {
 		if standbyNode != "" {
-			return status.Error(codes.InvalidArgument, "standby_node goes with replication async or sync")
+			return "", false, status.Error(codes.InvalidArgument, "standby_node goes with replication async or sync")
 		}
 		if req.Op == dbguest.OpReplication && req.Replication == dbguest.ReplicationOff {
 			p.forget(id)
+			return "", true, nil
 		}
-		return nil
+		return "", false, nil
 	}
 	if standbyNode == "" {
-		return status.Error(codes.InvalidArgument, "replication async and sync name the standby's node")
+		return "", false, status.Error(codes.InvalidArgument, "replication async and sync name the standby's node")
 	}
 	cn, err := databaseNodeCN(standbyNode)
 	if err != nil {
-		return err
+		return "", false, err
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -128,7 +130,27 @@ func (p *databasePeers) noteStandby(id string, req dbguest.Request, standbyNode 
 		p.standbys = map[string]string{}
 	}
 	p.standbys[id] = cn
-	return nil
+	return cn, true, nil
+}
+
+// restore admits the standbys recorded by VMs a previous vmmd started.
+func (p *databasePeers) restore(standbys map[string]string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.standbys == nil {
+		p.standbys = map[string]string{}
+	}
+	for id, cn := range standbys {
+		if _, err := databaseNodeCN(cn); err == nil {
+			p.standbys[id] = cn
+		}
+	}
+}
+
+// ReplicationDialer builds a standby's way to its primary, for standbys a
+// previous vmmd started (dbvm.Runtime.SetReplicationDialer).
+func (s *Server) ReplicationDialer(id, primaryNode, target string) (dbvm.ReplicationDialer, error) {
+	return s.databasePeers.dialer(id, primaryNode, target)
 }
 
 func (p *databasePeers) forget(id string) {

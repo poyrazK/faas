@@ -432,7 +432,7 @@ func assertJailedProcess(t *testing.T, rt *Runtime, id, parent string) {
 	rt.mu.Lock()
 	vm := rt.vms[id]
 	rt.mu.Unlock()
-	pid := vm.cmd.Process.Pid
+	pid := vm.proc.Pid
 	status, err := os.ReadFile(fmt.Sprintf("/proc/%d/status", pid))
 	if err != nil {
 		t.Fatal(err)
@@ -443,14 +443,21 @@ func assertJailedProcess(t *testing.T, rt *Runtime, id, parent string) {
 	if cmdline, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid)); err != nil || !cmdlineHasJailID(cmdline, vm.jailID) {
 		t.Fatalf("firecracker cmdline lacks --id %s: %q, %v", vm.jailID, cmdline, err)
 	}
-	if pids := jailProcesses(vm.jailID); len(pids) != 1 || pids[0] != pid {
+	if pids := jailProcesses(parent, vm.jailID); len(pids) != 1 || pids[0] != pid {
 		t.Fatalf("jail process scan = %v, want [%d]", pids, pid)
 	}
-	memMax, err := os.ReadFile(filepath.Join("/sys/fs/cgroup", parent, vm.jailID, "memory.max"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if want := fmt.Sprintf("%d", int64(api.BillableRAMMB(384))<<20); strings.TrimSpace(string(memMax)) != want {
-		t.Fatalf("memory.max = %s, want %s", memMax, want)
+	// memory.high holds the VM at its billable RAM; memory.max leaves the
+	// writeback burst above it (api.DatabaseVMWritebackBurstMB).
+	for file, want := range map[string]int64{
+		"memory.high": int64(api.BillableRAMMB(384)) << 20,
+		"memory.max":  databaseMemoryMaxBytes(384),
+	} {
+		got, err := os.ReadFile(filepath.Join("/sys/fs/cgroup", parent, vm.jailID, file))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.TrimSpace(string(got)) != fmt.Sprintf("%d", want) {
+			t.Fatalf("%s = %s, want %d", file, got, want)
+		}
 	}
 }

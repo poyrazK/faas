@@ -25,6 +25,11 @@ import (
 
 type nopLeaser struct{}
 
+// Adopt is not exercised here: no VM outlives this test's runtime.
+func (_ nopLeaser) Adopt(string, int) (fcvm.Lease, error) {
+	return fcvm.Lease{}, errors.New("adopt: not used in this test")
+}
+
 func (nopLeaser) Acquire(instance string) (fcvm.Lease, error) {
 	return fcvm.Lease{Instance: instance, UID: 29999, GID: 29999}, nil
 }

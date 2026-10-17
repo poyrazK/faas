@@ -44,6 +44,8 @@ type fakeDatabaseRuntime struct {
 	// vols serves ExportVolume and ImportVolume from real volume files.
 	vols  *dbvm.Runtime
 	holds map[string]dbarchive.Hold
+	// standbyNodes is what SetStandbyNode recorded.
+	standbyNodes map[string]string
 }
 
 func (f *fakeDatabaseRuntime) PutArchiveHold(_ context.Context, id, name string, point time.Time) (dbarchive.Hold, error) {
@@ -126,6 +128,18 @@ func (f *fakeDatabaseRuntime) Start(_ context.Context, req dbvm.BootRequest) err
 	f.started = req
 	return f.err
 }
+func (f *fakeDatabaseRuntime) SetStandbyNode(id, node string) error {
+	if f.standbyNodes == nil {
+		f.standbyNodes = map[string]string{}
+	}
+	if node == "" {
+		delete(f.standbyNodes, id)
+	} else {
+		f.standbyNodes[id] = node
+	}
+	return nil
+}
+func (f *fakeDatabaseRuntime) StandbyNodes() map[string]string { return f.standbyNodes }
 func (f *fakeDatabaseRuntime) Stop(_ context.Context, id string) error {
 	f.stopped = id
 	return f.err

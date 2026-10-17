@@ -153,7 +153,7 @@ func runDatabaseNode(ctx context.Context, cfg *Config, ops *wire.OpsMetrics, log
 	if leases == nil {
 		leases = fcvm.NewAllocator()
 	}
-	rt, images, err := newDatabaseRuntime(cfg.DatabaseVMs, leases)
+	rt, images, err := newDatabaseRuntime(cfg.DatabaseVMs, leases, log) //nolint:contextcheck // adopted VMs' relays outlive startup
 	if err != nil {
 		return err
 	}
@@ -172,6 +172,8 @@ func runDatabaseNode(ctx context.Context, cfg *Config, ops *wire.OpsMetrics, log
 	}
 	if peerDial != nil {
 		server.WithDatabasePeers(peerDial)
+		// Standbys adopted from the last vmmd dial their primaries again.
+		rt.SetReplicationDialer(server.ReplicationDialer)
 	}
 	serverTLS, err := databaseServerTLS(ctx, cfg, databaseNodeVerifier(server), log)
 	if err != nil {
@@ -232,8 +234,8 @@ func runDatabaseNode(ctx context.Context, cfg *Config, ops *wire.OpsMetrics, log
 	case <-time.After(10 * time.Second):
 		gsrv.Stop()
 	}
-	// Database VMs keep running across a vmmd restart; Recover adopts or
-	// cleans them on the next start.
+	// Database VMs keep running across a vmmd restart; the next vmmd's
+	// Recover adopts them (dbvm recovery.go).
 	return nil
 }
 

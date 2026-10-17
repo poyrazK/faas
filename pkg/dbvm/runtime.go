@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"os"
 	"os/exec"
@@ -62,6 +63,9 @@ var databaseIDPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}
 type Leaser interface {
 	Acquire(instance string) (fcvm.Lease, error)
 	Release(instance string) error
+	// Adopt leases slot to instance again, for a VM a previous vmmd
+	// started (recovery.go).
+	Adopt(instance string, slot int) (fcvm.Lease, error)
 }
 
 // RuntimeConfig wires the database VM runtime into vmmd.
@@ -96,6 +100,8 @@ type RuntimeConfig struct {
 	// addresses. Both exist for tests (import_relay.go).
 	ImportRoots        *x509.CertPool
 	ImportAllowPrivate bool
+	// Log receives recovery's warnings (default: discarded).
+	Log *slog.Logger
 }
 
 // defaultArchiveQuotaFactor allows a restore window's worth of churn: a
@@ -138,8 +144,11 @@ type BootRequest struct {
 	RestoreUntilEnd bool
 	// Primary, when set, boots a standby: each replication stream the
 	// guest opens is relayed to the stream Primary dials, on the node
-	// running the database's primary (replication.go).
-	Primary ReplicationDialer
+	// running the database's primary (replication.go). PrimaryNode and
+	// PrimaryTarget name it, so a restarted vmmd can dial it again
+	// (recovery.go).
+	Primary                    ReplicationDialer
+	PrimaryNode, PrimaryTarget string
 	// Promote boots a standby volume without a primary and promotes it as
 	// soon as it replays: a failover while parked.
 	Promote bool
@@ -158,6 +167,11 @@ type Runtime struct {
 	// under it, ends filling for good.
 	filling       sync.Mutex
 	sparesStopped bool
+	// replicationDialer rebuilds an adopted standby's way to its primary
+	// (SetReplicationDialer); vmmd sets it once its peer identity exists.
+	replicationDialer atomic.Pointer[func(id, node, target string) (ReplicationDialer, error)]
+	// recordMu serializes record writes.
+	recordMu sync.Mutex
 }
 
 type databaseVM struct {
@@ -183,6 +197,14 @@ type databaseVM struct {
 	spare    SpareShape
 	waiting  bool
 	spareDir string
+	// proc is the Firecracker process: launched by this vmmd, or adopted
+	// from a previous one (recovery.go), which cannot wait for it.
+	proc *os.Process
+	// console is the console FIFO's read end; base the image the VM
+	// booted from; record what its jail records for a restarted vmmd.
+	console *os.File
+	base    string
+	record  vmRecord
 }
 
 // NewRuntime validates cfg and resolves the Firecracker binary, whose real
@@ -395,7 +417,7 @@ func (r *Runtime) Start(ctx context.Context, req BootRequest) (err error) {
 			r.teardown(req.ID, vm)
 		}
 	}()
-	vm.volume = volume
+	vm.volume, vm.base = volume, base
 	if err = r.prepareJail(vm, base); err != nil {
 		return err
 	}
@@ -409,6 +431,11 @@ func (r *Runtime) Start(ctx context.Context, req BootRequest) (err error) {
 		return err
 	}
 	if err = r.launch(vm, req); err != nil {
+		return err
+	}
+	if err = r.recordVM(vm, vmRecord{DatabaseID: req.ID, Slot: vm.lease.Slot, Major: req.Major, Base: base, Volume: volume,
+		RestoreSource: req.RestoreSource, RestoreWindowSeconds: req.RestoreWindowSeconds,
+		PrimaryNode: req.PrimaryNode, PrimaryTarget: req.PrimaryTarget, BootedAt: time.Now().UTC()}); err != nil {
 		return err
 	}
 	waitCtx, cancel := context.WithTimeout(ctx, r.cfg.BootTimeout)
@@ -497,28 +524,70 @@ func (r *Runtime) launch(vm *databaseVM, req BootRequest) error {
 		MemoryMaxBytes:  databaseMemoryMaxBytes(req.MemSizeMiB),
 		MemoryHighBytes: int64(api.BillableRAMMB(req.MemSizeMiB)) << 20,
 	}), "--config-file", fcvm.VMConfigName)
-	console, err := os.OpenFile(filepath.Join(vm.dir, "console.log"), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
-	if err != nil {
-		return fmt.Errorf("dbvm: console log: %w", err)
-	}
-	// The VM outlives the RPC that started it, so the command is not bound
-	// to the caller's context; Stop and teardown end it.
-	cmd := exec.Command(r.cfg.JailerBin, argv[1:]...)
 	// The guest writes to its console at will; the log keeps only its
-	// latest output, so it cannot fill the jail filesystem.
-	capped := &consoleLog{f: console, max: consoleMaxBytes}
-	cmd.Stdout, cmd.Stderr = capped, capped
-	if err := cmd.Start(); err != nil {
-		_ = console.Close()
+	// latest output, so it cannot fill the jail filesystem. Firecracker
+	// writes it to a FIFO, which outlives this vmmd (recovery.go).
+	console, err := r.startConsole(vm)
+	if err != nil {
+		return err
+	}
+	// The VM outlives the RPC that started it, and this vmmd: the command
+	// is not bound to the caller's context; Stop and teardown end it.
+	cmd := exec.Command(r.cfg.JailerBin, argv[1:]...)
+	cmd.Stdout, cmd.Stderr = console, console
+	err = cmd.Start()
+	// Firecracker holds its own copy of the write end now.
+	_ = console.Close()
+	if err != nil {
 		return fmt.Errorf("dbvm: start jailer: %w", err)
 	}
-	vm.cmd = cmd
+	vm.cmd, vm.proc = cmd, cmd.Process
 	go func() {
 		_ = cmd.Wait()
-		_ = console.Close()
 		close(vm.exited)
 	}()
 	return nil
+}
+
+// recordVM writes the jail's record (recovery.go).
+func (r *Runtime) recordVM(vm *databaseVM, rec vmRecord) error {
+	r.recordMu.Lock()
+	defer r.recordMu.Unlock()
+	if err := writeRecord(vm.dir, rec); err != nil {
+		return err
+	}
+	r.mu.Lock()
+	vm.record = rec
+	r.mu.Unlock()
+	return nil
+}
+
+// SetReplicationDialer lets adopted standbys dial their primaries again:
+// dial builds a ReplicationDialer from what a boot named (vmmd's peers).
+func (r *Runtime) SetReplicationDialer(dial func(id, node, target string) (ReplicationDialer, error)) {
+	r.replicationDialer.Store(&dial)
+}
+
+// lateReplicationDialer resolves an adopted standby's dialer when its guest
+// first dials, since vmmd's peer identity may arrive after recovery.
+func (r *Runtime) lateReplicationDialer(id, node, target string) ReplicationDialer {
+	return func(ctx context.Context) (io.ReadWriteCloser, error) {
+		dial := r.replicationDialer.Load()
+		if dial == nil {
+			return nil, errors.New("dbvm: no replication dialer yet")
+		}
+		d, err := (*dial)(id, node, target)
+		if err != nil {
+			return nil, err
+		}
+		return d(ctx)
+	}
+}
+
+func (r *Runtime) logWarn(msg string, args ...any) {
+	if r.cfg.Log != nil {
+		r.cfg.Log.Warn(msg, args...)
+	}
 }
 
 // Control sends one control request to a running database VM.
@@ -578,7 +647,7 @@ func (r *Runtime) Stop(ctx context.Context, id string) error {
 		select {
 		case <-vm.exited:
 		case <-time.After(r.cfg.StopTimeout):
-			_ = vm.cmd.Process.Kill()
+			_ = vm.proc.Kill()
 			<-vm.exited
 		}
 	}
@@ -601,11 +670,11 @@ func (r *Runtime) teardown(id string, vm *databaseVM) {
 	if importLn != nil {
 		_ = importLn.Close()
 	}
-	if vm.cmd != nil && vm.cmd.Process != nil {
+	if vm.proc != nil {
 		select {
 		case <-vm.exited:
 		default:
-			_ = vm.cmd.Process.Kill()
+			_ = vm.proc.Kill()
 			<-vm.exited
 		}
 	}

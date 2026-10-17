@@ -198,13 +198,14 @@ func orDefault(v, fallback string) string {
 	return v
 }
 
-// newDatabaseRuntime builds the runtime and cleans up jails a previous vmmd
-// left behind.
-func newDatabaseRuntime(cfg *DatabaseVMConfig, leases dbvm.Leaser) (*dbvm.Runtime, []databaseImage, error) {
+// newDatabaseRuntime builds the runtime, adopts the database VMs a previous
+// vmmd left running and cleans up the rest of its jails (ADR-1027).
+func newDatabaseRuntime(cfg *DatabaseVMConfig, leases dbvm.Leaser, log *slog.Logger) (*dbvm.Runtime, []databaseImage, error) {
 	rcfg, images, err := cfg.runtimeConfig(leases)
 	if err != nil {
 		return nil, nil, fmt.Errorf("vmmd: %w", err)
 	}
+	rcfg.Log = log
 	rt, err := dbvm.NewRuntime(rcfg)
 	if err != nil {
 		return nil, nil, fmt.Errorf("vmmd: database runtime: %w", err)
@@ -272,7 +273,7 @@ func enableDatabaseVMs(ctx context.Context, impl *vmmdgrpc.Server, cfg *Database
 	if cfg == nil {
 		return nil
 	}
-	rt, images, err := newDatabaseRuntime(cfg, leases)
+	rt, images, err := newDatabaseRuntime(cfg, leases, log) //nolint:contextcheck // adopted VMs' relays outlive startup
 	if err != nil {
 		return err
 	}

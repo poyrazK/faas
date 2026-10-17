@@ -33,6 +33,11 @@ type topRangeLeaser struct {
 	held map[string]fcvm.Lease
 }
 
+// Adopt is not exercised here: no VM outlives this test's runtime.
+func (_ *topRangeLeaser) Adopt(string, int) (fcvm.Lease, error) {
+	return fcvm.Lease{}, errors.New("adopt: not used in this test")
+}
+
 func (l *topRangeLeaser) Acquire(instance string) (fcvm.Lease, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()

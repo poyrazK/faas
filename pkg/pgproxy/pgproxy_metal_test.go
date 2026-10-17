@@ -8,6 +8,7 @@ package pgproxy
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -35,6 +36,11 @@ import (
 type metalLeaser struct {
 	mu   sync.Mutex
 	held map[string]fcvm.Lease
+}
+
+// Adopt is not exercised here: no VM outlives this test's runtime.
+func (_ *metalLeaser) Adopt(string, int) (fcvm.Lease, error) {
+	return fcvm.Lease{}, errors.New("adopt: not used in this test")
 }
 
 func (l *metalLeaser) Acquire(instance string) (fcvm.Lease, error) {

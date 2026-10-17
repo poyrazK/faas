@@ -144,8 +144,55 @@ Without it the database RPCs return UNIMPLEMENTED. vmmd exposes
 `StopDatabase` and `DatabaseControl` (status and bootstrap only; stop always
 goes through `StopDatabase` so the jail is torn down with the VM). Database
 jails take their uid from the same allocator as app VMs, live under their
-own chroot base so the app-VM orphan sweep never touches them, and are
-recovered by jail id after a vmmd restart.
+own chroot base so the app-VM orphan sweep never touches them, and outlive
+vmmd (below).
+
+### vmmd restarts keep databases running
+
+A vmmd restart (every release on a database node, a config change, a
+crash) used to SIGKILL every database VM: `Recover` killed whatever
+Firecracker it found in the jails and deleted them. Every database on the
+node lost its sessions and replayed its WAL. A production database's
+standby node saw its primary go silent, and automatic failover fires after
+30 s. Now the next vmmd adopts them:
+
+- **Record.** Each jail holds `gregale-vm.json` beside the chroot, where
+  neither Firecracker nor the guest can reach it. It records the database
+  id (a spare-born VM's jail is named after the spare), slot, major, base,
+  volume and spare directory, the archive header's fields, a standby's
+  primary node and target, and a primary's admitted standby node. It is
+  written at boot, rewritten when a spare is adopted, and updated by the
+  replication op.
+- **Adoption.** `Recover` adopts a jail whose record is valid and whose
+  one Firecracker process (matched by `--id` and by its own cgroup under
+  the runtime's parent) runs as the slot's uid. It re-leases that exact
+  slot (`fcvm.Allocator.Adopt`), tracks the exit through a pidfd (vmmd is
+  no longer the parent), and listens again on the archive and replication
+  relay sockets. An adopted standby's dialer is resolved when its guest
+  first dials, since vmmd's peer identity arrives after recovery.
+  Everything else is cleaned up as before: waiting spares, jails without
+  a record, half-adopted VMs (stopped cleanly first).
+- **Console.** Firecracker writes its console to a FIFO in the jail, not a
+  pipe from vmmd's process, and each vmmd reads it into the capped
+  `console.log`. While no vmmd reads it, a console write raises SIGPIPE.
+  Firecracker handles SIGPIPE (it is in `SigCgt`) and survives it. The
+  metal test raises one.
+- **Primary side.** The standby a primary admits (`noteStandby`) is kept
+  in the primary's record, and a restarted vmmd admits it before any
+  replication op arrives.
+
+On metal, a database adopted after its runtime was abandoned kept the
+same postmaster (`pg_postmaster_start_time`), its rows and its slot, and
+took writes. The new vmmd stopped it cleanly, leaving no jail, cgroup or
+lease, and booted it again. An adopted standby resumed streaming through
+the adopted relay after its walsender was cut: a held synchronous commit
+finished in 263 ms. A spare-born database VM was adopted through its spare
+directory, while the waiting spare was stopped and its directory removed.
+
+Not yet done: an adopted VM keeps the base and guest-init it booted from
+(both are recorded) until it next stops. A scale-to-zero database picks up
+a new base at its next wake, but an always-on one does not. Rolling stale
+bases is the follow-up.
 
 ### schedd surface
 

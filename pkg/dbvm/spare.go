@@ -124,6 +124,10 @@ func (r *Runtime) bootSpare(ctx context.Context, shape SpareShape) (err error) {
 	if err = r.launch(vm, req); err != nil {
 		return err
 	}
+	vm.base = base
+	if err = r.recordVM(vm, vmRecord{DatabaseID: id, Spare: true, Slot: vm.lease.Slot, Major: shape.Major, Base: base, BootedAt: time.Now().UTC()}); err != nil {
+		return err
+	}
 	waitCtx, cancel := context.WithTimeout(ctx, r.cfg.BootTimeout)
 	defer cancel()
 	alive, stop := context.WithCancel(waitCtx)
@@ -239,6 +243,11 @@ func (r *Runtime) adopt(ctx context.Context, vm *databaseVM, spareID string, req
 		return req.ID, err
 	}
 	vm.header.Store(&header)
+	// From here a restarted vmmd adopts this VM as the database's.
+	if err := r.recordVM(vm, vmRecord{DatabaseID: req.ID, Slot: vm.lease.Slot, Major: req.Major, Base: vm.base, Volume: volume,
+		SpareDir: vm.spareDir, RestoreWindowSeconds: req.RestoreWindowSeconds, BootedAt: time.Now().UTC()}); err != nil {
+		return req.ID, err
+	}
 	if err := patchDrive(ctx, filepath.Join(vm.root, fcvm.APISockName), driveUpdate{
 		DriveID: DriveVolume, PathOnHost: spareJailDir + "/" + link, RateLimiter: req.VolumeRateLimiter,
 	}); err != nil {

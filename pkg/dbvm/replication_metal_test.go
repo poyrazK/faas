@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -29,6 +30,15 @@ import (
 type offsetLeaser struct {
 	fakeLeaser
 	offset int
+}
+
+// Adopt mirrors Acquire's offset.
+func (o *offsetLeaser) Adopt(instance string, slot int) (fcvm.Lease, error) {
+	l, err := o.fakeLeaser.Adopt(instance, slot-o.offset)
+	l.Slot += o.offset
+	l.UID -= o.offset
+	l.GID -= o.offset
+	return l, err
 }
 
 func (o *offsetLeaser) Acquire(instance string) (fcvm.Lease, error) {
@@ -51,6 +61,7 @@ func metalNodeRuntime(t *testing.T, env metalEnv, name string, leases Leaser) *R
 		JailBase: filepath.Join(env.workdir, "rj"+name), VolumeRoot: filepath.Join(env.workdir, "repl-volumes-"+name),
 		KernelPath: env.kernel, Bases: map[int]string{17: env.base}, ParentCgroup: parent,
 		JailerBin: envOr("FAAS_JAILER", "jailer"), FirecrackerBin: env.firecracker, Leases: leases,
+		Log: slog.New(slog.NewTextHandler(os.Stderr, nil)),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -240,7 +251,7 @@ func killVM(t *testing.T, rt *Runtime, id string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := vm.cmd.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+	if err := vm.proc.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
 		t.Fatal(err)
 	}
 	<-vm.exited

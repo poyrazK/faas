@@ -57,11 +57,17 @@ func TestReplicationControlRecordsTheStandbyNode(t *testing.T) {
 	if !s.AdmitsDatabasePeer("db-2.faas") || s.AdmitsDatabasePeer("db-3.faas") {
 		t.Fatal("only the named standby's node is admitted")
 	}
+	if rt.standbyNodes[replicaDB] != "db-2.faas" {
+		t.Fatalf("the VM's record holds standby %q, want db-2.faas", rt.standbyNodes[replicaDB])
+	}
 	if _, err := s.DatabaseControl(ctx, &vmmdpb.DatabaseControlRequest{DatabaseId: replicaDB, Op: "replication", Replication: "off"}); err != nil {
 		t.Fatal(err)
 	}
 	if s.AdmitsDatabasePeer("db-2.faas") {
 		t.Fatal("off kept the standby admitted")
+	}
+	if _, kept := rt.standbyNodes[replicaDB]; kept {
+		t.Fatal("off kept the standby in the VM's record")
 	}
 	if _, err := s.DatabaseControl(ctx, &vmmdpb.DatabaseControlRequest{DatabaseId: replicaDB, Op: "replication", Replication: "async", StandbyNode: "db-2.faas"}); err != nil {
 		t.Fatal(err)
@@ -71,6 +77,19 @@ func TestReplicationControlRecordsTheStandbyNode(t *testing.T) {
 	}
 	if s.AdmitsDatabasePeer("db-2.faas") {
 		t.Fatal("a stopped primary kept its standby admitted")
+	}
+}
+
+// A primary that outlived the last vmmd still admits the standby its
+// record names, before any replication op arrives.
+func TestRestartedVmmdAdmitsRecordedStandbys(t *testing.T) {
+	rt := &fakeDatabaseRuntime{standbyNodes: map[string]string{replicaDB: "db-4.faas", "4e5f6a7b-8c9d-4e0f-9a1b-2c3d4e5f6a7b": "NOT A CN"}}
+	s := New(vmmStubBase{}, nil, "test", nil).WithDatabases(rt)
+	if !s.AdmitsDatabasePeer("db-4.faas") {
+		t.Fatal("the recorded standby is not admitted after a restart")
+	}
+	if s.AdmitsDatabasePeer("NOT A CN") {
+		t.Fatal("an invalid recorded node was admitted")
 	}
 }
 

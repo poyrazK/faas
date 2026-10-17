@@ -53,6 +53,10 @@ type DatabaseRuntime interface {
 	SyncArchive(ctx context.Context, id string) (int64, error)
 	ReleaseArchive(ctx context.Context, id string) error
 	Start(ctx context.Context, req dbvm.BootRequest) error
+	// SetStandbyNode and StandbyNodes keep a primary's standby node in its
+	// VM's record, which outlives vmmd (ADR-1027).
+	SetStandbyNode(id, node string) error
+	StandbyNodes() map[string]string
 	Stop(ctx context.Context, id string) error
 	Control(ctx context.Context, id string, req dbguest.Request) (dbguest.Response, error)
 	// Dial opens a stream to the VM's PostgreSQL data port only.
@@ -92,6 +96,8 @@ func requireDatabaseCaller(ctx context.Context, allowed ...string) error {
 // WithDatabases enables the database VM RPCs on a database node.
 func (s *Server) WithDatabases(rt DatabaseRuntime) *Server {
 	s.databases = rt
+	// Primaries that outlived the last vmmd still admit their standbys.
+	s.databasePeers.restore(rt.StandbyNodes())
 	return s
 }
 
@@ -269,6 +275,7 @@ func (s *Server) StartDatabase(ctx context.Context, req *vmmdpb.StartDatabaseReq
 		if boot.Primary, err = s.databasePeers.dialer(req.GetDatabaseId(), req.GetPrimaryNode(), req.GetPrimaryTarget()); err != nil {
 			return nil, err
 		}
+		boot.PrimaryNode, boot.PrimaryTarget = req.GetPrimaryNode(), req.GetPrimaryTarget()
 	}
 	if err := rt.Start(ctx, boot); err != nil {
 		return nil, s.databaseStatus("start", err)
@@ -369,8 +376,14 @@ func (s *Server) DatabaseControl(ctx context.Context, req *vmmdpb.DatabaseContro
 	if err := control.Validate(); err != nil {
 		return nil, status.Error(codes.InvalidArgument, "invalid database control request")
 	}
-	if err := s.databasePeers.noteStandby(req.GetDatabaseId(), control, req.GetStandbyNode()); err != nil {
+	standby, noted, err := s.databasePeers.noteStandby(req.GetDatabaseId(), control, req.GetStandbyNode())
+	if err != nil {
 		return nil, err
+	}
+	if noted {
+		if err := rt.SetStandbyNode(req.GetDatabaseId(), standby); err != nil {
+			return nil, s.databaseStatus("record standby", err)
+		}
 	}
 	if in := req.GetImport(); in != nil {
 		// The host side of the import: where the guest's connections go.

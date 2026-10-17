@@ -3,6 +3,7 @@ package fcvm
 import (
 	"fmt"
 	"net/netip"
+	"slices"
 	"sync"
 	"time"
 
@@ -287,6 +288,34 @@ func (a *Allocator) Release(instance string) error {
 	delete(a.byInstance, instance)
 	a.free = append(a.free, slot)
 	return nil
+}
+
+// Adopt leases slot to instance again: a VM that outlived the process
+// which acquired its lease (a database VM across a vmmd restart, ADR-1027)
+// keeps its uid and every resource derived from its slot. The slot must be
+// free; Release returns it as usual.
+func (a *Allocator) Adopt(instance string, slot int) (Lease, error) {
+	if instance == "" {
+		return Lease{}, fmt.Errorf("fcvm: adopt: empty instance id")
+	}
+	if slot < 0 || slot >= MaxSlots {
+		return Lease{}, fmt.Errorf("fcvm: adopt: slot %d out of range", slot)
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if _, dup := a.byInstance[instance]; dup {
+		return Lease{}, fmt.Errorf("fcvm: adopt: instance %q already holds a lease", instance)
+	}
+	if _, dup := a.reserved[instance]; dup || a.hasRecoveredInstance(instance) {
+		return Lease{}, fmt.Errorf("fcvm: adopt: instance %q is reserved", instance)
+	}
+	i := slices.Index(a.free, slot)
+	if i < 0 {
+		return Lease{}, fmt.Errorf("fcvm: adopt: slot %d is not free", slot)
+	}
+	a.free = slices.Delete(a.free, i, i+1)
+	a.byInstance[instance] = slot
+	return leaseForSlot(instance, slot), nil
 }
 
 // leaseForSlot deterministically derives every resource from the slot. Given a

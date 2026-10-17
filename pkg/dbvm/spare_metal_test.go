@@ -60,9 +60,10 @@ func TestMetalSpareAdoption(t *testing.T) {
 	if err := rt.CreateVolume(ctx, id, 1<<30); err != nil {
 		t.Fatal(err)
 	}
+	owner := rt
 	t.Cleanup(func() {
-		_ = rt.Stop(context.Background(), id)
-		rt.StopSpares(context.Background())
+		_ = owner.Stop(context.Background(), id)
+		owner.StopSpares(context.Background())
 		_ = rt.DeleteVolume(context.Background(), id)
 	})
 	boot := BootRequest{ID: id, Major: 17, VcpuCount: 1, MemSizeMiB: 384}
@@ -164,6 +165,62 @@ func TestMetalSpareAdoption(t *testing.T) {
 		t.Fatalf("rows after a second adoption = %d, %v", n, err)
 	}
 	_ = conn.Close(ctx)
+
+	// vmmd restarts with a spare-born database VM and a waiting spare: the
+	// next vmmd adopts the database through its spare directory and stops
+	// the waiting spare.
+	deadline = time.Now().Add(time.Minute)
+	for rt.waitingSpares(shape) != 1 {
+		if time.Now().After(deadline) {
+			t.Fatal("the pool never refilled")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	rt.mu.Lock()
+	served := rt.vms[id]
+	var waiting *databaseVM
+	for _, vm := range rt.vms {
+		if vm.waiting {
+			waiting = vm
+		}
+	}
+	rt.mu.Unlock()
+	if served == nil || served.spareDir == "" || waiting == nil {
+		t.Fatalf("before the restart: served %+v, waiting %+v", served, waiting)
+	}
+	rt.abandon()
+	rt2, err := NewRuntime(rt.cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rt2.cfg.Leases = &fakeLeaser{}
+	if err := rt2.Recover(); err != nil {
+		t.Fatal(err)
+	}
+	owner = rt2
+	rt2.mu.Lock()
+	adopted, vms := rt2.vms[id], len(rt2.vms)
+	rt2.mu.Unlock()
+	if adopted == nil || vms != 1 || adopted.spareDir != served.spareDir {
+		t.Fatalf("after the restart: %d VMs, database VM %+v", vms, adopted)
+	}
+	if _, err := os.Stat(waiting.dir); !os.IsNotExist(err) {
+		t.Fatalf("the waiting spare's jail survived the restart: %v", err)
+	}
+	if _, err := os.Stat(waiting.spareDir); !os.IsNotExist(err) {
+		t.Fatalf("the waiting spare's directory survived the restart: %v", err)
+	}
+	conn = connectRuntime(ctx, t, rt2, id, password)
+	if err := conn.QueryRow(ctx, "select count(*) from kept").Scan(&n); err != nil || n != 2 {
+		t.Fatalf("rows in the adopted spare-born VM = %d, %v", n, err)
+	}
+	_ = conn.Close(ctx)
+	if err := rt2.Stop(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(served.spareDir); !os.IsNotExist(err) {
+		t.Fatalf("the adopted VM's spare directory survived its stop: %v", err)
+	}
 	t.Logf("cold wake to ready %v; spare boot %v; wake into a spare to ready %v",
 		cold.Round(time.Millisecond), spareBoot.Round(time.Millisecond), warm.Round(time.Millisecond))
 }

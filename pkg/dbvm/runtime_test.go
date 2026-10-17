@@ -42,6 +42,23 @@ func (f *fakeLeaser) Release(instance string) error {
 	return nil
 }
 
+// Adopt mirrors Acquire's uid for the slot.
+func (f *fakeLeaser) Adopt(instance string, slot int) (fcvm.Lease, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.held == nil {
+		f.held = map[string]fcvm.Lease{}
+	}
+	for id, l := range f.held {
+		if id == instance || l.Slot == slot {
+			return fcvm.Lease{}, errors.New("already leased")
+		}
+	}
+	l := fcvm.Lease{Instance: instance, Slot: slot, UID: 29990 + slot, GID: 29990 + slot}
+	f.held[instance] = l
+	return l, nil
+}
+
 const testID = "0f8fad5b-d9cb-469f-a165-70867728950e"
 
 func testRuntime(t *testing.T, leases *fakeLeaser) *Runtime {
