@@ -966,6 +966,34 @@ func (q *Queries) OperatorAuditTraceCoverage(ctx context.Context, db DBTX, since
 	return ratio, err
 }
 
+const operatorBuildImageHandoffSnapshot = `-- name: OperatorBuildImageHandoffSnapshot :one
+SELECT count(*)::bigint AS pending,
+       count(*) FILTER (WHERE b.finished_at IS NULL OR NOT isfinite(b.finished_at))::bigint AS missing_finished_at,
+       min(b.finished_at)::timestamptz AS oldest_finished_at
+FROM deployments d JOIN builds b ON b.deployment_id = d.id
+JOIN build_provenance p ON p.build_id = b.id
+WHERE d.status IN ('pending', 'building') AND b.status = 'succeeded'
+  AND COALESCE(d.rootfs_path, '') <> ''
+  AND NOT EXISTS (SELECT 1 FROM deployment_image_preparations i WHERE i.deployment_id = d.id)
+  AND ($1::text = '' OR COALESCE(p.builder_node_id, '') = '' OR p.builder_node_id = $1::text)
+`
+
+type OperatorBuildImageHandoffSnapshotRow struct {
+	Pending           int64
+	MissingFinishedAt int64
+	OldestFinishedAt  pgtype.Timestamptz
+}
+
+// Same eligibility and owner compatibility as ListBuildsAwaitingImage, without
+// its recovery batch limit. Checkpointed preparations are active/resumable work,
+// not unconsumed build handoffs.
+func (q *Queries) OperatorBuildImageHandoffSnapshot(ctx context.Context, db DBTX, nodeID string) (OperatorBuildImageHandoffSnapshotRow, error) {
+	row := db.QueryRow(ctx, operatorBuildImageHandoffSnapshot, nodeID)
+	var i OperatorBuildImageHandoffSnapshotRow
+	err := row.Scan(&i.Pending, &i.MissingFinishedAt, &i.OldestFinishedAt)
+	return i, err
+}
+
 const operatorBuildRecoverySnapshot = `-- name: OperatorBuildRecoverySnapshot :one
 WITH running AS (
     SELECT count(*)::bigint AS running,

@@ -20,6 +20,20 @@ WITH running AS (
 )
 SELECT running.*, cleanup.* FROM running CROSS JOIN cleanup;
 
+-- Same eligibility and owner compatibility as ListBuildsAwaitingImage, without
+-- its recovery batch limit. Checkpointed preparations are active/resumable work,
+-- not unconsumed build handoffs.
+-- name: OperatorBuildImageHandoffSnapshot :one
+SELECT count(*)::bigint AS pending,
+       count(*) FILTER (WHERE b.finished_at IS NULL OR NOT isfinite(b.finished_at))::bigint AS missing_finished_at,
+       min(b.finished_at)::timestamptz AS oldest_finished_at
+FROM deployments d JOIN builds b ON b.deployment_id = d.id
+JOIN build_provenance p ON p.build_id = b.id
+WHERE d.status IN ('pending', 'building') AND b.status = 'succeeded'
+  AND COALESCE(d.rootfs_path, '') <> ''
+  AND NOT EXISTS (SELECT 1 FROM deployment_image_preparations i WHERE i.deployment_id = d.id)
+  AND (sqlc.arg(node_id)::text = '' OR COALESCE(p.builder_node_id, '') = '' OR p.builder_node_id = sqlc.arg(node_id)::text);
+
 -- name: OperatorOverviewTotals :one
 WITH accounts_summary AS (
     SELECT count(*) FILTER (WHERE status = 'active')::bigint AS accounts_active,

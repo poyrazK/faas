@@ -24,6 +24,9 @@ import (
 
 // memDispatched lists the methods Mem forwards to its override.
 var memDispatched = map[string]bool{
+	"ListBuildsAwaitingImage":                                 true,
+	"ListResumableImagePreparations":                          true,
+	"PublishImagePreparationLayer":                            true,
 	"ClaimQueuedBuild":                                        true,
 	"ClaimNextQueuedBuild":                                    true,
 	"RequeueBuildIfClaim":                                     true,
@@ -123,6 +126,33 @@ var memDispatched = map[string]bool{
 	"StampOperationExecutionAttempt":                          true,
 	"UpdateAccountProviderCustomerID":                         true,
 	"WarmPoolReconciliationAppIDs":                            true,
+}
+
+func (s *Mem) ListBuildsAwaitingImage(ctx context.Context, node string, limit int) ([]state.BuildImageWork, error) {
+	if o, ok := s.over.(interface {
+		ListBuildsAwaitingImage(context.Context, string, int) ([]state.BuildImageWork, error)
+	}); ok {
+		return o.ListBuildsAwaitingImage(ctx, node, limit)
+	}
+	return s.MemStore.ListBuildsAwaitingImage(ctx, node, limit)
+}
+
+func (s *Mem) ListResumableImagePreparations(ctx context.Context, node string, limit int) ([]state.BuildImageWork, error) {
+	if o, ok := s.over.(interface {
+		ListResumableImagePreparations(context.Context, string, int) ([]state.BuildImageWork, error)
+	}); ok {
+		return o.ListResumableImagePreparations(ctx, node, limit)
+	}
+	return s.MemStore.ListResumableImagePreparations(ctx, node, limit)
+}
+
+func (s *Mem) PublishImagePreparationLayer(ctx context.Context, id, token, path, key string, bytes int64) error {
+	if o, ok := s.over.(interface {
+		PublishImagePreparationLayer(context.Context, string, string, string, string, int64) error
+	}); ok {
+		return o.PublishImagePreparationLayer(ctx, id, token, path, key, bytes)
+	}
+	return s.MemStore.PublishImagePreparationLayer(ctx, id, token, path, key, bytes)
 }
 
 func (s *Mem) AcceptEntityOutboxDelivery(p0 context.Context, p1 state.AppWebhookDelivery) (string, error) {

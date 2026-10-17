@@ -4,7 +4,7 @@
   "sets": [
     {
       "id": "gregale-core-v1",
-      "revision": "a4f6fbfe5936638493258cf72e3ba029f1b6306e4ac8bc0e3362edb7af90b18c",
+      "revision": "9e2fe4c82ff358ed9d201f5df303c3415628f08f0e950740f84f94af9aa405d4",
       "files": [
         "faas.rules.yml"
       ],
@@ -296,6 +296,19 @@
           }
         },
         {
+          "id": "1220d7f2bd42a480cf8785d8f711119ef55464c7a929d9df20ede25c6bfc4881",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_billing",
+          "rule_name": "FaasBuildImageHandoffTelemetryUnavailable",
+          "definition": {
+            "expression_hash": "328f32cf8af643332003fe22397e4b6ca4d4834a67c9dca3738ca47ac03351cb",
+            "labels_hash": "edcebc9add096791035352ad1c46f7cae8c7d1e18e01ea212b20370ced63ce68",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "11ae0b6636df25dfc384e3b9f0e17ea5b35fb2dd5a1e772512670b62fd902948"
+          }
+        },
+        {
           "id": "126714aa77a5dd99b412a1b950e0623dddabfacfe09cb1ed220ff61250f1c86e",
           "file_name": "faas.rules.yml",
           "group_name": "faas_commit",
@@ -374,6 +387,19 @@
           }
         },
         {
+          "id": "18966f6ef15975a56c75ff1a334a56f1bb2d15b5332b5312fdbda407f98dd529",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_billing",
+          "rule_name": "FaasImageHandoffRecoveryQueriesFailing",
+          "definition": {
+            "expression_hash": "96b6b43aaa62c845f859a1ed84f1b9cf78b83b33bc32bfd459f02217558becd6",
+            "labels_hash": "c015dd2107245469fa233095182fb674f3c150f98de029f4d25c97bc77a9fa32",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "37efc195d76d16d8267a7961d532620bdeee80de5cf61316319b59fb69d1792b"
+          }
+        },
+        {
           "id": "192222681ef85076b0467acf2d0d97235c21431ef68f26624e5a165e8d9d5911",
           "file_name": "faas.rules.yml",
           "group_name": "faas_compute_metrics_discovery",
@@ -436,6 +462,19 @@
             "for_seconds": 900,
             "keep_firing_for_seconds": 0,
             "fingerprint": "2b0af7c85b41cb1b3374ff75065b46b20efa40326261dac6dfc3fc3bdcdc48c4"
+          }
+        },
+        {
+          "id": "1c942cc02b8277aa7dc021a9736839066879fd0e6dd5cd887ea42f547879d405",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_billing",
+          "rule_name": "FaasBuildImageHandoffWaiting",
+          "definition": {
+            "expression_hash": "6b5591712f8254299c57796f133f05bc60f848c5d841ec63ddbc8256f601033c",
+            "labels_hash": "c015dd2107245469fa233095182fb674f3c150f98de029f4d25c97bc77a9fa32",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "50971d1feeaacfbe87c41f038f3e04704b3a066a48a1534994e54b8ce4dc75a1"
           }
         },
         {
@@ -3835,7 +3874,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "1964ebe132b9d65a9070f86f30fa089d2beeb01f5af86e6fa726216381685194",
+      "revision": "921e283f26d486b5a37c182f33258dd272ff34cc8f2098015df6e1458e370dda",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -4130,6 +4169,19 @@
           }
         },
         {
+          "id": "1220d7f2bd42a480cf8785d8f711119ef55464c7a929d9df20ede25c6bfc4881",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_billing",
+          "rule_name": "FaasBuildImageHandoffTelemetryUnavailable",
+          "definition": {
+            "expression_hash": "328f32cf8af643332003fe22397e4b6ca4d4834a67c9dca3738ca47ac03351cb",
+            "labels_hash": "edcebc9add096791035352ad1c46f7cae8c7d1e18e01ea212b20370ced63ce68",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "11ae0b6636df25dfc384e3b9f0e17ea5b35fb2dd5a1e772512670b62fd902948"
+          }
+        },
+        {
           "id": "126714aa77a5dd99b412a1b950e0623dddabfacfe09cb1ed220ff61250f1c86e",
           "file_name": "faas.rules.yml",
           "group_name": "faas_commit",
@@ -4205,6 +4257,19 @@
             "for_seconds": 600,
             "keep_firing_for_seconds": 0,
             "fingerprint": "7497946d2f57608aec764d116e9d6b4f41dbbbd5afac0c0b89bb2f6d921109a1"
+          }
+        },
+        {
+          "id": "18966f6ef15975a56c75ff1a334a56f1bb2d15b5332b5312fdbda407f98dd529",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_billing",
+          "rule_name": "FaasImageHandoffRecoveryQueriesFailing",
+          "definition": {
+            "expression_hash": "96b6b43aaa62c845f859a1ed84f1b9cf78b83b33bc32bfd459f02217558becd6",
+            "labels_hash": "c015dd2107245469fa233095182fb674f3c150f98de029f4d25c97bc77a9fa32",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "37efc195d76d16d8267a7961d532620bdeee80de5cf61316319b59fb69d1792b"
           }
         },
         {
@@ -4296,6 +4361,19 @@
             "for_seconds": 900,
             "keep_firing_for_seconds": 0,
             "fingerprint": "2b0af7c85b41cb1b3374ff75065b46b20efa40326261dac6dfc3fc3bdcdc48c4"
+          }
+        },
+        {
+          "id": "1c942cc02b8277aa7dc021a9736839066879fd0e6dd5cd887ea42f547879d405",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_billing",
+          "rule_name": "FaasBuildImageHandoffWaiting",
+          "definition": {
+            "expression_hash": "6b5591712f8254299c57796f133f05bc60f848c5d841ec63ddbc8256f601033c",
+            "labels_hash": "c015dd2107245469fa233095182fb674f3c150f98de029f4d25c97bc77a9fa32",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "50971d1feeaacfbe87c41f038f3e04704b3a066a48a1534994e54b8ce4dc75a1"
           }
         },
         {

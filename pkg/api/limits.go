@@ -8904,6 +8904,11 @@ const (
 	ObsBuildRecoveryCollectionBudget   = 3 * time.Second
 	ObsBuildRecoveryFreshnessMaxAge    = 2 * time.Minute
 
+	// Image-handoff observations run independently of synchronous image work.
+	ObsBuildImageHandoffCollectionInterval = 30 * time.Second
+	ObsBuildImageHandoffCollectionBudget   = 3 * time.Second
+	ObsBuildImageHandoffFreshnessMaxAge    = 2 * time.Minute
+
 	// Evidence reads over-fetch one row to make history truncation explicit.
 	ObsIncidentEvidenceLimitDefault = 25
 	ObsIncidentEvidenceLimitMax     = 100

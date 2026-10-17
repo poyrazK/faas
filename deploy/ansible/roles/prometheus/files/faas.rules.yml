@@ -3798,6 +3798,106 @@ groups:
             does not establish a lost durable build, a stalled worker or a VM that is still alive.
           runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildNotifications.md
 
+      # Build success is not image preparation. Observe unconsumed handoffs
+      # independently of synchronous imaging/recovery work. Empty identities
+      # retain legacy routing compatibility, so never sum imaged replicas.
+      - record: imaged_build_handoff_observation_healthy
+        expr: |
+          (imaged_build_handoff_collection_success{job="imaged"} == 1)
+          and on (job, instance) (up{job="imaged"} == 1)
+          and on (job, instance) (imaged_build_handoff_collection_last_success_timestamp_seconds{job="imaged"} > 0)
+          and on (job, instance) (time() - imaged_build_handoff_collection_last_success_timestamp_seconds{job="imaged"} >= 0)
+          and on (job, instance) (time() - imaged_build_handoff_collection_last_success_timestamp_seconds{job="imaged"} <= 120)
+          and on (job, instance) (imaged_build_handoff_pending{job="imaged"} >= 0)
+          and on (job, instance) (imaged_build_handoff_pending{job="imaged"} == floor(imaged_build_handoff_pending{job="imaged"}))
+          and on (job, instance) (imaged_build_handoff_oldest_finished_timestamp_seconds{job="imaged"} <= time())
+          and on (job, instance)
+            (((imaged_build_handoff_pending{job="imaged"} == 0)
+              and on (job, instance) (imaged_build_handoff_oldest_finished_timestamp_seconds{job="imaged"} == 0))
+             or ((imaged_build_handoff_pending{job="imaged"} > 0)
+                 and on (job, instance) (imaged_build_handoff_oldest_finished_timestamp_seconds{job="imaged"} > 0)))
+          and on (job, instance) ((imaged_build_handoff_recovery_enabled{job="imaged"} == 0) or (imaged_build_handoff_recovery_enabled{job="imaged"} == 1))
+          and on (job, instance) ((imaged_build_handoff_recovery_inflight{job="imaged"} == 0) or (imaged_build_handoff_recovery_inflight{job="imaged"} == 1))
+          and on (job, instance) (imaged_build_handoff_recovery_last_attempt_timestamp_seconds{job="imaged"} >= 0)
+          and on (job, instance) (imaged_build_handoff_recovery_last_attempt_timestamp_seconds{job="imaged"} <= time())
+          and on (job, instance) (imaged_build_handoff_recovery_last_completed_timestamp_seconds{job="imaged"} >= 0)
+          and on (job, instance) (imaged_build_handoff_recovery_last_completed_timestamp_seconds{job="imaged"} <= time())
+          and on (job, instance)
+            (((imaged_build_handoff_recovery_inflight{job="imaged"} == 1)
+              and on (job, instance) (imaged_build_handoff_recovery_last_attempt_timestamp_seconds{job="imaged"} > 0)
+              and on (job, instance) (imaged_build_handoff_recovery_last_completed_timestamp_seconds{job="imaged"} <= imaged_build_handoff_recovery_last_attempt_timestamp_seconds{job="imaged"}))
+             or ((imaged_build_handoff_recovery_inflight{job="imaged"} == 0)
+                 and on (job, instance)
+                   (((imaged_build_handoff_recovery_last_attempt_timestamp_seconds{job="imaged"} == 0)
+                     and on (job, instance) (imaged_build_handoff_recovery_last_completed_timestamp_seconds{job="imaged"} == 0))
+                    or ((imaged_build_handoff_recovery_last_attempt_timestamp_seconds{job="imaged"} > 0)
+                        and on (job, instance) (imaged_build_handoff_recovery_last_completed_timestamp_seconds{job="imaged"} >= imaged_build_handoff_recovery_last_attempt_timestamp_seconds{job="imaged"})))))
+          and on (job, instance) (count by (job, instance) (imaged_build_handoff_recovery_queries_total{job="imaged",source=~"resume|awaiting",outcome=~"success|error|canceled"} >= 0) == 6)
+          and on (job, instance) (count by (job, instance) (imaged_build_handoff_recovery_work_total{job="imaged",source=~"resume|awaiting",outcome=~"returned|retryable|deferred|not_owned|error|canceled"} >= 0) == 12)
+          and on (job, instance) (count by (job, instance) (imaged_image_preparation_commits_total{job="imaged",transition=~"claimed|layer_published|scan_complete|handed_off"} >= 0) == 4)
+      - record: imaged_build_handoff_oldest_wait_seconds
+        expr: |
+          (((time() - imaged_build_handoff_oldest_finished_timestamp_seconds{job="imaged"})
+             and on (job, instance) (imaged_build_handoff_pending{job="imaged"} > 0))
+           or ((imaged_build_handoff_pending{job="imaged"} == 0) * 0))
+          and on (job, instance) (imaged_build_handoff_observation_healthy == 1)
+      - alert: FaasBuildImageHandoffTelemetryUnavailable
+        expr: |
+          (up{job="imaged"} == 1)
+          unless on (job, instance)
+            ((imaged_build_handoff_observation_healthy == 1)
+             or (imaged_build_handoff_recovery_enabled{job="imaged"} == 0))
+        for: 5m
+        labels:
+          severity: warn
+          component: imaged
+          family: build_image_handoff_telemetry
+          public_status: internal
+        annotations:
+          summary: Build-to-image handoff diagnostics are unavailable
+          description: Imaged is scraped but its handoff snapshot is failed, missing, inconsistent or older than two
+            minutes, or its initialized recovery diagnostics are incomplete. Handoff health is unknown; inspect the
+            database reader, clocks, deployed binary and scrape configuration. Intentional loop shutdown is excluded.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildImageHandoff.md
+      - alert: FaasBuildImageHandoffWaiting
+        expr: |
+          (imaged_build_handoff_oldest_wait_seconds > 300)
+          and on (job, instance) (imaged_build_handoff_recovery_enabled{job="imaged"} == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: imaged
+          family: build_image_handoff
+          public_status: internal
+        annotations:
+          summary: Successful builds are waiting for image preparation
+          description: The oldest eligible succeeded build in this imaged recovery scope has waited more than five
+            minutes since build completion, sustained for five minutes. Checkpointed active or resumable preparations
+            are excluded. This measures unconsumed handoff delay, including backlog behind legitimate synchronous work;
+            it does not establish a stalled daemon or deployment readiness failure.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildImageHandoff.md
+      - alert: FaasImageHandoffRecoveryQueriesFailing
+        expr: |
+          (sum by (job, instance, source) (rate(imaged_build_handoff_recovery_queries_total{job="imaged",source=~"resume|awaiting",outcome="error"}[5m]))
+           / sum by (job, instance, source) (rate(imaged_build_handoff_recovery_queries_total{job="imaged",source=~"resume|awaiting",outcome=~"success|error"}[5m])) > 0.1)
+          and on (job, instance, source)
+            (sum by (job, instance, source) (increase(imaged_build_handoff_recovery_queries_total{job="imaged",outcome="error"}[5m])) >= 3)
+          and on (job, instance) (imaged_build_handoff_observation_healthy == 1)
+          and on (job, instance) (imaged_build_handoff_recovery_enabled{job="imaged"} == 1)
+        for: 5m
+        labels:
+          severity: warn
+          component: imaged
+          family: build_image_handoff
+          public_status: internal
+        annotations:
+          summary: Image handoff recovery queries are persistently failing
+          description: Errors exceed 10% of non-canceled {{ $labels.source }} recovery list calls, with at least three
+            errors in each rolling five-minute window, sustained for five minutes. The independent observation reader
+            does not establish that recovery queries work. Busy leases, claim fences and customer image failures are
+            separate handler outcomes and do not trigger this warning.
+          runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildImageHandoff.md
+
       # Recovery is observed separately from queue wait. Fleet gauges are
       # coherent per apid; never sum replicas. Timing uses effective config
       # from every discovered builder. Age warnings measure overdue work;

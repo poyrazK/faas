@@ -184,7 +184,8 @@ type Handler struct {
 	// OCI pull sites inside aboveBaseLayers + the legacy
 	// PullLayers path, plus imaged_oci_pull_duration_seconds
 	// per-pull op{manifest,config,blob,above_base}.
-	ops *wire.OpsMetrics
+	ops            *wire.OpsMetrics
+	handoffMetrics *buildImageHandoffMetrics
 	// audit (issue #470 / PR C / ADR-074) is the imaged-side
 	// audit-log seam used to emit app.warm_snapshot_stale from the
 	// MarkFCSnapshotsStale path. Wired via WithAudit; nil opts
@@ -650,8 +651,19 @@ func (h *Handler) replicateLayer(ctx context.Context, layerKey string) error {
 // PullLayers. Nil-safe (Observe* is no-op on a nil receiver).
 // Mirrors pkg/builderd/builderd.go's WithOpsMetrics (PR #124,
 // ADR-030) and cmd/apid/server.go's WithOpsMetrics (this PR).
+// Wire before Loop.Run; one handler owns handoff diagnostics per registry.
 func (h *Handler) WithOpsMetrics(ops *wire.OpsMetrics) *Handler {
+	if h.ops == ops {
+		return h
+	}
+	if h.handoffMetrics != nil && h.ops != nil && h.ops.Registry() != nil {
+		h.ops.Registry().Unregister(h.handoffMetrics)
+	}
 	h.ops = ops
+	h.handoffMetrics = nil
+	if ops != nil && ops.Registry() != nil {
+		h.handoffMetrics = newBuildImageHandoffMetrics(ops.Registry())
+	}
 	return h
 }
 

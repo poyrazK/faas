@@ -1,0 +1,2369 @@
+# Untouched successful-build handoffs; shared anchors repeat healthy initialized diagnostics.
+rule_files:
+- ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+evaluation_interval: 1m
+tests:
+- name: known empty recovery scope is zero
+  interval: 1m
+  input_series:
+  - &id001
+    series: up{job="imaged",instance="i"}
+    values: 1x60
+  - &id030
+    series: imaged_build_handoff_pending{job="imaged",instance="i"}
+    values: '0x60'
+  - &id031
+    series: imaged_build_handoff_oldest_finished_timestamp_seconds{job="imaged",instance="i"}
+    values: '0x60'
+  - &id002
+    series: imaged_build_handoff_collection_success{job="imaged",instance="i"}
+    values: 1x60
+  - &id003
+    series: imaged_build_handoff_collection_last_success_timestamp_seconds{job="imaged",instance="i"}
+    values: 0+60x60
+  - &id004
+    series: imaged_build_handoff_recovery_enabled{job="imaged",instance="i"}
+    values: 1x60
+  - &id005
+    series: imaged_build_handoff_recovery_inflight{job="imaged",instance="i"}
+    values: '0x60'
+  - &id006
+    series: imaged_build_handoff_recovery_last_attempt_timestamp_seconds{job="imaged",instance="i"}
+    values: 0+60x60
+  - &id007
+    series: imaged_build_handoff_recovery_last_completed_timestamp_seconds{job="imaged",instance="i"}
+    values: 0+60x60
+  - &id008
+    series: imaged_build_handoff_recovery_queries_total{job="imaged",instance="i",source="resume",outcome="success"}
+    values: '0x60'
+  - &id009
+    series: imaged_build_handoff_recovery_queries_total{job="imaged",instance="i",source="resume",outcome="error"}
+    values: '0x60'
+  - &id010
+    series: imaged_build_handoff_recovery_queries_total{job="imaged",instance="i",source="resume",outcome="canceled"}
+    values: '0x60'
+  - &id011
+    series: imaged_build_handoff_recovery_work_total{job="imaged",instance="i",source="resume",outcome="returned"}
+    values: '0x60'
+  - &id012
+    series: imaged_build_handoff_recovery_work_total{job="imaged",instance="i",source="resume",outcome="retryable"}
+    values: '0x60'
+  - &id013
+    series: imaged_build_handoff_recovery_work_total{job="imaged",instance="i",source="resume",outcome="deferred"}
+    values: '0x60'
+  - &id014
+    series: imaged_build_handoff_recovery_work_total{job="imaged",instance="i",source="resume",outcome="not_owned"}
+    values: '0x60'
+  - &id015
+    series: imaged_build_handoff_recovery_work_total{job="imaged",instance="i",source="resume",outcome="error"}
+    values: '0x60'
+  - &id016
+    series: imaged_build_handoff_recovery_work_total{job="imaged",instance="i",source="resume",outcome="canceled"}
+    values: '0x60'
+  - &id017
+    series: imaged_build_handoff_recovery_queries_total{job="imaged",instance="i",source="awaiting",outcome="success"}
+    values: '0x60'
+  - &id018
+    series: imaged_build_handoff_recovery_queries_total{job="imaged",instance="i",source="awaiting",outcome="error"}
+    values: '0x60'
+  - &id019
+    series: imaged_build_handoff_recovery_queries_total{job="imaged",instance="i",source="awaiting",outcome="canceled"}
+    values: '0x60'
+  - &id020
+    series: imaged_build_handoff_recovery_work_total{job="imaged",instance="i",source="awaiting",outcome="returned"}
+    values: '0x60'
+  - &id021
+    series: imaged_build_handoff_recovery_work_total{job="imaged",instance="i",source="awaiting",outcome="retryable"}
+    values: '0x60'
+  - &id022
+    series: imaged_build_handoff_recovery_work_total{job="imaged",instance="i",source="awaiting",outcome="deferred"}
+    values: '0x60'
+  - &id023
+    series: imaged_build_handoff_recovery_work_total{job="imaged",instance="i",source="awaiting",outcome="not_owned"}
+    values: '0x60'
+  - &id024
+    series: imaged_build_handoff_recovery_work_total{job="imaged",instance="i",source="awaiting",outcome="error"}
+    values: '0x60'
+  - &id025
+    series: imaged_build_handoff_recovery_work_total{job="imaged",instance="i",source="awaiting",outcome="canceled"}
+    values: '0x60'
+  - &id026
+    series: imaged_image_preparation_commits_total{job="imaged",instance="i",transition="claimed"}
+    values: '0x60'
+  - &id027
+    series: imaged_image_preparation_commits_total{job="imaged",instance="i",transition="layer_published"}
+    values: '0x60'
+  - &id028
+    series: imaged_image_preparation_commits_total{job="imaged",instance="i",transition="scan_complete"}
+    values: '0x60'
+  - &id029
+    series: imaged_image_preparation_commits_total{job="imaged",instance="i",transition="handed_off"}
+    values: '0x60'
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasBuildImageHandoffTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasBuildImageHandoffWaiting
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasImageHandoffRecoveryQueriesFailing
+    exp_alerts: []
+  promql_expr_test:
+  - expr: imaged_build_handoff_oldest_wait_seconds{job="imaged",instance="i"}
+    eval_time: 20m
+    exp_samples:
+    - labels: imaged_build_handoff_oldest_wait_seconds{job="imaged",instance="i"}
+      value: 0
+  - expr: imaged_build_handoff_observation_healthy{job="imaged",instance="i"}
+    eval_time: 20m
+    exp_samples:
+    - labels: imaged_build_handoff_observation_healthy{job="imaged",instance="i"}
+      value: 1
+- name: one waiting build grows in age without fresh arrivals
+  interval: 1m
+  input_series:
+  - *id001
+  - &id032
+    series: imaged_build_handoff_pending{job="imaged",instance="i"}
+    values: 1x60
+  - &id033
+    series: imaged_build_handoff_oldest_finished_timestamp_seconds{job="imaged",instance="i"}
+    values: 60x60
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  alert_rule_test:
+  - eval_time: 11m
+    alertname: FaasBuildImageHandoffWaiting
+    exp_alerts: []
+  - eval_time: 12m
+    alertname: FaasBuildImageHandoffWaiting
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: build_image_handoff
+        public_status: internal
+        job: imaged
+        instance: i
+      exp_annotations:
+        summary: Successful builds are waiting for image preparation
+        description: The oldest eligible succeeded build in this imaged recovery scope has waited more than five
+          minutes since build completion, sustained for five minutes. Checkpointed active or resumable preparations
+          are excluded. This measures unconsumed handoff delay, including backlog behind legitimate synchronous
+          work; it does not establish a stalled daemon or deployment readiness failure.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildImageHandoff.md
+  - eval_time: 20m
+    alertname: FaasBuildImageHandoffTelemetryUnavailable
+    exp_alerts: []
+  promql_expr_test:
+  - expr: imaged_build_handoff_oldest_wait_seconds{job="imaged",instance="i"}
+    eval_time: 6m
+    exp_samples:
+    - labels: imaged_build_handoff_oldest_wait_seconds{job="imaged",instance="i"}
+      value: 300
+  - expr: imaged_build_handoff_oldest_wait_seconds{job="imaged",instance="i"}
+    eval_time: 10m
+    exp_samples:
+    - labels: imaged_build_handoff_oldest_wait_seconds{job="imaged",instance="i"}
+      value: 540
+- name: healthy forty five minute checkpointed preparation is not untouched waiting
+  interval: 1m
+  input_series:
+  - *id001
+  - *id030
+  - *id031
+  - *id002
+  - *id003
+  - *id004
+  - &id034
+    series: imaged_build_handoff_recovery_inflight{job="imaged",instance="i"}
+    values: 1x60
+  - &id035
+    series: imaged_build_handoff_recovery_last_attempt_timestamp_seconds{job="imaged",instance="i"}
+    values: 60x60
+  - &id036
+    series: imaged_build_handoff_recovery_last_completed_timestamp_seconds{job="imaged",instance="i"}
+    values: '0x60'
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  alert_rule_test:
+  - eval_time: 45m
+    alertname: FaasBuildImageHandoffWaiting
+    exp_alerts: []
+  - eval_time: 45m
+    alertname: FaasBuildImageHandoffTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 45m
+    alertname: FaasImageHandoffRecoveryQueriesFailing
+    exp_alerts: []
+  promql_expr_test:
+  - expr: imaged_build_handoff_oldest_wait_seconds{job="imaged",instance="i"}
+    eval_time: 45m
+    exp_samples:
+    - labels: imaged_build_handoff_oldest_wait_seconds{job="imaged",instance="i"}
+      value: 0
+- name: legitimate serial work can still leave untouched build handoffs overdue
+  interval: 1m
+  input_series:
+  - *id001
+  - *id032
+  - *id033
+  - *id002
+  - *id003
+  - *id004
+  - *id034
+  - *id035
+  - *id036
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  alert_rule_test:
+  - eval_time: 12m
+    alertname: FaasBuildImageHandoffWaiting
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: build_image_handoff
+        public_status: internal
+        job: imaged
+        instance: i
+      exp_annotations:
+        summary: Successful builds are waiting for image preparation
+        description: The oldest eligible succeeded build in this imaged recovery scope has waited more than five
+          minutes since build completion, sustained for five minutes. Checkpointed active or resumable preparations
+          are excluded. This measures unconsumed handoff delay, including backlog behind legitimate synchronous
+          work; it does not establish a stalled daemon or deployment readiness failure.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildImageHandoff.md
+  - eval_time: 20m
+    alertname: FaasBuildImageHandoffTelemetryUnavailable
+    exp_alerts: []
+- name: claim and unrelated checkpoint progress cannot renew waiting build age
+  interval: 1m
+  input_series:
+  - *id001
+  - *id032
+  - *id033
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - series: imaged_image_preparation_commits_total{job="imaged",instance="i",transition="claimed"}
+    values: 0+100x60
+  - *id027
+  - *id028
+  - *id029
+  alert_rule_test:
+  - eval_time: 12m
+    alertname: FaasBuildImageHandoffWaiting
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: build_image_handoff
+        public_status: internal
+        job: imaged
+        instance: i
+      exp_annotations:
+        summary: Successful builds are waiting for image preparation
+        description: The oldest eligible succeeded build in this imaged recovery scope has waited more than five
+          minutes since build completion, sustained for five minutes. Checkpointed active or resumable preparations
+          are excluded. This measures unconsumed handoff delay, including backlog behind legitimate synchronous
+          work; it does not establish a stalled daemon or deployment readiness failure.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildImageHandoff.md
+  - eval_time: 20m
+    alertname: FaasBuildImageHandoffTelemetryUnavailable
+    exp_alerts: []
+- name: expired observation is unknown at exact freshness and hold boundaries
+  interval: 1m
+  input_series:
+  - *id001
+  - *id032
+  - *id033
+  - *id002
+  - &id038
+    series: imaged_build_handoff_collection_last_success_timestamp_seconds{job="imaged",instance="i"}
+    values: 60x60
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  alert_rule_test:
+  - eval_time: 8m
+    alertname: FaasBuildImageHandoffTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 9m
+    alertname: FaasBuildImageHandoffTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: build_image_handoff_telemetry
+        public_status: internal
+        job: imaged
+        instance: i
+      exp_annotations:
+        summary: Build-to-image handoff diagnostics are unavailable
+        description: Imaged is scraped but its handoff snapshot is failed, missing, inconsistent or older than two
+          minutes, or its initialized recovery diagnostics are incomplete. Handoff health is unknown; inspect the
+          database reader, clocks, deployed binary and scrape configuration. Intentional loop shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildImageHandoff.md
+  - eval_time: 20m
+    alertname: FaasBuildImageHandoffWaiting
+    exp_alerts: []
+  promql_expr_test:
+  - expr: imaged_build_handoff_observation_healthy{job="imaged",instance="i"}
+    eval_time: 3m
+    exp_samples:
+    - labels: imaged_build_handoff_observation_healthy{job="imaged",instance="i"}
+      value: 1
+  - expr: imaged_build_handoff_oldest_wait_seconds{job="imaged",instance="i"}
+    eval_time: 4m
+    exp_samples: []
+- name: failed read cannot fabricate an empty set
+  interval: 1m
+  input_series:
+  - *id001
+  - *id030
+  - *id031
+  - &id037
+    series: imaged_build_handoff_collection_success{job="imaged",instance="i"}
+    values: '0x60'
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: FaasBuildImageHandoffTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasBuildImageHandoffTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: build_image_handoff_telemetry
+        public_status: internal
+        job: imaged
+        instance: i
+      exp_annotations:
+        summary: Build-to-image handoff diagnostics are unavailable
+        description: Imaged is scraped but its handoff snapshot is failed, missing, inconsistent or older than two
+          minutes, or its initialized recovery diagnostics are incomplete. Handoff health is unknown; inspect the
+          database reader, clocks, deployed binary and scrape configuration. Intentional loop shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildImageHandoff.md
+  - eval_time: 20m
+    alertname: FaasBuildImageHandoffWaiting
+    exp_alerts: []
+  promql_expr_test:
+  - expr: imaged_build_handoff_oldest_wait_seconds{job="imaged",instance="i"}
+    eval_time: 20m
+    exp_samples: []
+- name: missing count remains unknown
+  interval: 1m
+  input_series:
+  - *id001
+  - *id031
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: FaasBuildImageHandoffTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: build_image_handoff_telemetry
+        public_status: internal
+        job: imaged
+        instance: i
+      exp_annotations:
+        summary: Build-to-image handoff diagnostics are unavailable
+        description: Imaged is scraped but its handoff snapshot is failed, missing, inconsistent or older than two
+          minutes, or its initialized recovery diagnostics are incomplete. Handoff health is unknown; inspect the
+          database reader, clocks, deployed binary and scrape configuration. Intentional loop shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildImageHandoff.md
+  - eval_time: 20m
+    alertname: FaasBuildImageHandoffWaiting
+    exp_alerts: []
+  promql_expr_test:
+  - expr: imaged_build_handoff_oldest_wait_seconds{job="imaged",instance="i"}
+    eval_time: 20m
+    exp_samples: []
+- name: missing oldest time remains unknown
+  interval: 1m
+  input_series:
+  - *id001
+  - *id030
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: FaasBuildImageHandoffTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: build_image_handoff_telemetry
+        public_status: internal
+        job: imaged
+        instance: i
+      exp_annotations:
+        summary: Build-to-image handoff diagnostics are unavailable
+        description: Imaged is scraped but its handoff snapshot is failed, missing, inconsistent or older than two
+          minutes, or its initialized recovery diagnostics are incomplete. Handoff health is unknown; inspect the
+          database reader, clocks, deployed binary and scrape configuration. Intentional loop shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildImageHandoff.md
+  - eval_time: 20m
+    alertname: FaasBuildImageHandoffWaiting
+    exp_alerts: []
+  promql_expr_test:
+  - expr: imaged_build_handoff_oldest_wait_seconds{job="imaged",instance="i"}
+    eval_time: 20m
+    exp_samples: []
+- name: missing read outcome remains unknown
+  interval: 1m
+  input_series:
+  - *id001
+  - *id030
+  - *id031
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: FaasBuildImageHandoffTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: build_image_handoff_telemetry
+        public_status: internal
+        job: imaged
+        instance: i
+      exp_annotations:
+        summary: Build-to-image handoff diagnostics are unavailable
+        description: Imaged is scraped but its handoff snapshot is failed, missing, inconsistent or older than two
+          minutes, or its initialized recovery diagnostics are incomplete. Handoff health is unknown; inspect the
+          database reader, clocks, deployed binary and scrape configuration. Intentional loop shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildImageHandoff.md
+  - eval_time: 20m
+    alertname: FaasBuildImageHandoffWaiting
+    exp_alerts: []
+  promql_expr_test:
+  - expr: imaged_build_handoff_oldest_wait_seconds{job="imaged",instance="i"}
+    eval_time: 20m
+    exp_samples: []
+- name: missing expectation remains unknown
+  interval: 1m
+  input_series:
+  - *id001
+  - *id030
+  - *id031
+  - *id002
+  - *id003
+  - *id005
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: FaasBuildImageHandoffTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: build_image_handoff_telemetry
+        public_status: internal
+        job: imaged
+        instance: i
+      exp_annotations:
+        summary: Build-to-image handoff diagnostics are unavailable
+        description: Imaged is scraped but its handoff snapshot is failed, missing, inconsistent or older than two
+          minutes, or its initialized recovery diagnostics are incomplete. Handoff health is unknown; inspect the
+          database reader, clocks, deployed binary and scrape configuration. Intentional loop shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildImageHandoff.md
+  - eval_time: 20m
+    alertname: FaasBuildImageHandoffWaiting
+    exp_alerts: []
+  promql_expr_test:
+  - expr: imaged_build_handoff_oldest_wait_seconds{job="imaged",instance="i"}
+    eval_time: 20m
+    exp_samples: []
+- name: negative count cannot be healthy evidence
+  interval: 1m
+  input_series:
+  - *id001
+  - series: imaged_build_handoff_pending{job="imaged",instance="i"}
+    values: -1x60
+  - *id031
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasBuildImageHandoffTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: build_image_handoff_telemetry
+        public_status: internal
+        job: imaged
+        instance: i
+      exp_annotations:
+        summary: Build-to-image handoff diagnostics are unavailable
+        description: Imaged is scraped but its handoff snapshot is failed, missing, inconsistent or older than two
+          minutes, or its initialized recovery diagnostics are incomplete. Handoff health is unknown; inspect the
+          database reader, clocks, deployed binary and scrape configuration. Intentional loop shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildImageHandoff.md
+  - eval_time: 20m
+    alertname: FaasBuildImageHandoffWaiting
+    exp_alerts: []
+  promql_expr_test:
+  - expr: imaged_build_handoff_oldest_wait_seconds{job="imaged",instance="i"}
+    eval_time: 20m
+    exp_samples: []
+- name: fractional count cannot be healthy evidence
+  interval: 1m
+  input_series:
+  - *id001
+  - series: imaged_build_handoff_pending{job="imaged",instance="i"}
+    values: 0.5x60
+  - *id031
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasBuildImageHandoffTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: build_image_handoff_telemetry
+        public_status: internal
+        job: imaged
+        instance: i
+      exp_annotations:
+        summary: Build-to-image handoff diagnostics are unavailable
+        description: Imaged is scraped but its handoff snapshot is failed, missing, inconsistent or older than two
+          minutes, or its initialized recovery diagnostics are incomplete. Handoff health is unknown; inspect the
+          database reader, clocks, deployed binary and scrape configuration. Intentional loop shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildImageHandoff.md
+  - eval_time: 20m
+    alertname: FaasBuildImageHandoffWaiting
+    exp_alerts: []
+  promql_expr_test:
+  - expr: imaged_build_handoff_oldest_wait_seconds{job="imaged",instance="i"}
+    eval_time: 20m
+    exp_samples: []
+- name: nonbinary phase cannot be healthy evidence
+  interval: 1m
+  input_series:
+  - *id001
+  - *id030
+  - *id031
+  - *id002
+  - *id003
+  - *id004
+  - series: imaged_build_handoff_recovery_inflight{job="imaged",instance="i"}
+    values: 0.5x60
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasBuildImageHandoffTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: build_image_handoff_telemetry
+        public_status: internal
+        job: imaged
+        instance: i
+      exp_annotations:
+        summary: Build-to-image handoff diagnostics are unavailable
+        description: Imaged is scraped but its handoff snapshot is failed, missing, inconsistent or older than two
+          minutes, or its initialized recovery diagnostics are incomplete. Handoff health is unknown; inspect the
+          database reader, clocks, deployed binary and scrape configuration. Intentional loop shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildImageHandoff.md
+  - eval_time: 20m
+    alertname: FaasBuildImageHandoffWaiting
+    exp_alerts: []
+  promql_expr_test:
+  - expr: imaged_build_handoff_oldest_wait_seconds{job="imaged",instance="i"}
+    eval_time: 20m
+    exp_samples: []
+- name: nonbinary expectation cannot be healthy evidence
+  interval: 1m
+  input_series:
+  - *id001
+  - *id030
+  - *id031
+  - *id002
+  - *id003
+  - series: imaged_build_handoff_recovery_enabled{job="imaged",instance="i"}
+    values: 0.5x60
+  - *id005
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasBuildImageHandoffTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: build_image_handoff_telemetry
+        public_status: internal
+        job: imaged
+        instance: i
+      exp_annotations:
+        summary: Build-to-image handoff diagnostics are unavailable
+        description: Imaged is scraped but its handoff snapshot is failed, missing, inconsistent or older than two
+          minutes, or its initialized recovery diagnostics are incomplete. Handoff health is unknown; inspect the
+          database reader, clocks, deployed binary and scrape configuration. Intentional loop shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildImageHandoff.md
+  - eval_time: 20m
+    alertname: FaasBuildImageHandoffWaiting
+    exp_alerts: []
+  promql_expr_test:
+  - expr: imaged_build_handoff_oldest_wait_seconds{job="imaged",instance="i"}
+    eval_time: 20m
+    exp_samples: []
+- name: future observation cannot be healthy evidence
+  interval: 1m
+  input_series:
+  - *id001
+  - *id030
+  - *id031
+  - *id002
+  - series: imaged_build_handoff_collection_last_success_timestamp_seconds{job="imaged",instance="i"}
+    values: 5000x60
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasBuildImageHandoffTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: build_image_handoff_telemetry
+        public_status: internal
+        job: imaged
+        instance: i
+      exp_annotations:
+        summary: Build-to-image handoff diagnostics are unavailable
+        description: Imaged is scraped but its handoff snapshot is failed, missing, inconsistent or older than two
+          minutes, or its initialized recovery diagnostics are incomplete. Handoff health is unknown; inspect the
+          database reader, clocks, deployed binary and scrape configuration. Intentional loop shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildImageHandoff.md
+  - eval_time: 20m
+    alertname: FaasBuildImageHandoffWaiting
+    exp_alerts: []
+  promql_expr_test:
+  - expr: imaged_build_handoff_oldest_wait_seconds{job="imaged",instance="i"}
+    eval_time: 20m
+    exp_samples: []
+- name: future attempt cannot be healthy evidence
+  interval: 1m
+  input_series:
+  - *id001
+  - *id030
+  - *id031
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - series: imaged_build_handoff_recovery_last_attempt_timestamp_seconds{job="imaged",instance="i"}
+    values: 5000x60
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasBuildImageHandoffTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: build_image_handoff_telemetry
+        public_status: internal
+        job: imaged
+        instance: i
+      exp_annotations:
+        summary: Build-to-image handoff diagnostics are unavailable
+        description: Imaged is scraped but its handoff snapshot is failed, missing, inconsistent or older than two
+          minutes, or its initialized recovery diagnostics are incomplete. Handoff health is unknown; inspect the
+          database reader, clocks, deployed binary and scrape configuration. Intentional loop shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildImageHandoff.md
+  - eval_time: 20m
+    alertname: FaasBuildImageHandoffWaiting
+    exp_alerts: []
+  promql_expr_test:
+  - expr: imaged_build_handoff_oldest_wait_seconds{job="imaged",instance="i"}
+    eval_time: 20m
+    exp_samples: []
+- name: nonzero oldest for empty count cannot be healthy evidence
+  interval: 1m
+  input_series:
+  - *id001
+  - *id030
+  - *id033
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasBuildImageHandoffTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: build_image_handoff_telemetry
+        public_status: internal
+        job: imaged
+        instance: i
+      exp_annotations:
+        summary: Build-to-image handoff diagnostics are unavailable
+        description: Imaged is scraped but its handoff snapshot is failed, missing, inconsistent or older than two
+          minutes, or its initialized recovery diagnostics are incomplete. Handoff health is unknown; inspect the
+          database reader, clocks, deployed binary and scrape configuration. Intentional loop shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildImageHandoff.md
+  - eval_time: 20m
+    alertname: FaasBuildImageHandoffWaiting
+    exp_alerts: []
+  promql_expr_test:
+  - expr: imaged_build_handoff_oldest_wait_seconds{job="imaged",instance="i"}
+    eval_time: 20m
+    exp_samples: []
+- name: positive count requires an actual oldest finish time
+  interval: 1m
+  input_series:
+  - *id001
+  - *id032
+  - *id031
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: FaasBuildImageHandoffTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: build_image_handoff_telemetry
+        public_status: internal
+        job: imaged
+        instance: i
+      exp_annotations:
+        summary: Build-to-image handoff diagnostics are unavailable
+        description: Imaged is scraped but its handoff snapshot is failed, missing, inconsistent or older than two
+          minutes, or its initialized recovery diagnostics are incomplete. Handoff health is unknown; inspect the
+          database reader, clocks, deployed binary and scrape configuration. Intentional loop shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildImageHandoff.md
+  - eval_time: 20m
+    alertname: FaasBuildImageHandoffWaiting
+    exp_alerts: []
+- name: future build finish time is not clamped to healthy zero
+  interval: 1m
+  input_series:
+  - *id001
+  - *id032
+  - series: imaged_build_handoff_oldest_finished_timestamp_seconds{job="imaged",instance="i"}
+    values: 5000x60
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasBuildImageHandoffTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: build_image_handoff_telemetry
+        public_status: internal
+        job: imaged
+        instance: i
+      exp_annotations:
+        summary: Build-to-image handoff diagnostics are unavailable
+        description: Imaged is scraped but its handoff snapshot is failed, missing, inconsistent or older than two
+          minutes, or its initialized recovery diagnostics are incomplete. Handoff health is unknown; inspect the
+          database reader, clocks, deployed binary and scrape configuration. Intentional loop shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildImageHandoff.md
+  - eval_time: 20m
+    alertname: FaasBuildImageHandoffWaiting
+    exp_alerts: []
+- name: inflight recovery requires an attempt
+  interval: 1m
+  input_series:
+  - *id001
+  - *id030
+  - *id031
+  - *id002
+  - *id003
+  - *id004
+  - *id034
+  - series: imaged_build_handoff_recovery_last_attempt_timestamp_seconds{job="imaged",instance="i"}
+    values: '0x60'
+  - *id036
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: FaasBuildImageHandoffTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: build_image_handoff_telemetry
+        public_status: internal
+        job: imaged
+        instance: i
+      exp_annotations:
+        summary: Build-to-image handoff diagnostics are unavailable
+        description: Imaged is scraped but its handoff snapshot is failed, missing, inconsistent or older than two
+          minutes, or its initialized recovery diagnostics are incomplete. Handoff health is unknown; inspect the
+          database reader, clocks, deployed binary and scrape configuration. Intentional loop shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildImageHandoff.md
+- name: idle recovery cannot contain an uncompleted attempt
+  interval: 1m
+  input_series:
+  - *id001
+  - *id030
+  - *id031
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - series: imaged_build_handoff_recovery_last_attempt_timestamp_seconds{job="imaged",instance="i"}
+    values: 120x60
+  - series: imaged_build_handoff_recovery_last_completed_timestamp_seconds{job="imaged",instance="i"}
+    values: 60x60
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasBuildImageHandoffTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: build_image_handoff_telemetry
+        public_status: internal
+        job: imaged
+        instance: i
+      exp_annotations:
+        summary: Build-to-image handoff diagnostics are unavailable
+        description: Imaged is scraped but its handoff snapshot is failed, missing, inconsistent or older than two
+          minutes, or its initialized recovery diagnostics are incomplete. Handoff health is unknown; inspect the
+          database reader, clocks, deployed binary and scrape configuration. Intentional loop shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildImageHandoff.md
+- name: incomplete query counter is independently unknown
+  interval: 1m
+  input_series:
+  - *id001
+  - *id030
+  - *id031
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: FaasBuildImageHandoffTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: build_image_handoff_telemetry
+        public_status: internal
+        job: imaged
+        instance: i
+      exp_annotations:
+        summary: Build-to-image handoff diagnostics are unavailable
+        description: Imaged is scraped but its handoff snapshot is failed, missing, inconsistent or older than two
+          minutes, or its initialized recovery diagnostics are incomplete. Handoff health is unknown; inspect the
+          database reader, clocks, deployed binary and scrape configuration. Intentional loop shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildImageHandoff.md
+  - eval_time: 20m
+    alertname: FaasBuildImageHandoffWaiting
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasImageHandoffRecoveryQueriesFailing
+    exp_alerts: []
+- name: incomplete handler counter is independently unknown
+  interval: 1m
+  input_series:
+  - *id001
+  - *id030
+  - *id031
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: FaasBuildImageHandoffTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: build_image_handoff_telemetry
+        public_status: internal
+        job: imaged
+        instance: i
+      exp_annotations:
+        summary: Build-to-image handoff diagnostics are unavailable
+        description: Imaged is scraped but its handoff snapshot is failed, missing, inconsistent or older than two
+          minutes, or its initialized recovery diagnostics are incomplete. Handoff health is unknown; inspect the
+          database reader, clocks, deployed binary and scrape configuration. Intentional loop shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildImageHandoff.md
+  - eval_time: 20m
+    alertname: FaasBuildImageHandoffWaiting
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasImageHandoffRecoveryQueriesFailing
+    exp_alerts: []
+- name: incomplete commit counter is independently unknown
+  interval: 1m
+  input_series:
+  - *id001
+  - *id030
+  - *id031
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: FaasBuildImageHandoffTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: build_image_handoff_telemetry
+        public_status: internal
+        job: imaged
+        instance: i
+      exp_annotations:
+        summary: Build-to-image handoff diagnostics are unavailable
+        description: Imaged is scraped but its handoff snapshot is failed, missing, inconsistent or older than two
+          minutes, or its initialized recovery diagnostics are incomplete. Handoff health is unknown; inspect the
+          database reader, clocks, deployed binary and scrape configuration. Intentional loop shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildImageHandoff.md
+  - eval_time: 20m
+    alertname: FaasBuildImageHandoffWaiting
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasImageHandoffRecoveryQueriesFailing
+    exp_alerts: []
+- name: resume query failures retain source identity and exclude cancellation
+  interval: 1m
+  input_series:
+  - *id001
+  - *id030
+  - *id031
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - series: imaged_build_handoff_recovery_queries_total{job="imaged",instance="i",source="resume",outcome="success"}
+    values: 0+1x60
+  - &id039
+    series: imaged_build_handoff_recovery_queries_total{job="imaged",instance="i",source="resume",outcome="error"}
+    values: 0+10x60
+  - series: imaged_build_handoff_recovery_queries_total{job="imaged",instance="i",source="resume",outcome="canceled"}
+    values: 0+10000x60
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - series: imaged_build_handoff_recovery_queries_total{job="imaged",instance="i",source="awaiting",outcome="success"}
+    values: 0+10000x60
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: FaasImageHandoffRecoveryQueriesFailing
+    exp_alerts: []
+  - eval_time: 6m
+    alertname: FaasImageHandoffRecoveryQueriesFailing
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: build_image_handoff
+        public_status: internal
+        job: imaged
+        instance: i
+        source: resume
+      exp_annotations:
+        summary: Image handoff recovery queries are persistently failing
+        description: Errors exceed 10% of non-canceled resume recovery list calls, with at least three errors in
+          each rolling five-minute window, sustained for five minutes. The independent observation reader does not
+          establish that recovery queries work. Busy leases, claim fences and customer image failures are separate
+          handler outcomes and do not trigger this warning.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildImageHandoff.md
+  - eval_time: 20m
+    alertname: FaasBuildImageHandoffTelemetryUnavailable
+    exp_alerts: []
+- name: awaiting query failures retain source identity and exclude cancellation
+  interval: 1m
+  input_series:
+  - *id001
+  - *id030
+  - *id031
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - series: imaged_build_handoff_recovery_queries_total{job="imaged",instance="i",source="resume",outcome="success"}
+    values: 0+10000x60
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - series: imaged_build_handoff_recovery_queries_total{job="imaged",instance="i",source="awaiting",outcome="success"}
+    values: 0+1x60
+  - series: imaged_build_handoff_recovery_queries_total{job="imaged",instance="i",source="awaiting",outcome="error"}
+    values: 0+10x60
+  - series: imaged_build_handoff_recovery_queries_total{job="imaged",instance="i",source="awaiting",outcome="canceled"}
+    values: 0+10000x60
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: FaasImageHandoffRecoveryQueriesFailing
+    exp_alerts: []
+  - eval_time: 6m
+    alertname: FaasImageHandoffRecoveryQueriesFailing
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: build_image_handoff
+        public_status: internal
+        job: imaged
+        instance: i
+        source: awaiting
+      exp_annotations:
+        summary: Image handoff recovery queries are persistently failing
+        description: Errors exceed 10% of non-canceled awaiting recovery list calls, with at least three errors
+          in each rolling five-minute window, sustained for five minutes. The independent observation reader does
+          not establish that recovery queries work. Busy leases, claim fences and customer image failures are separate
+          handler outcomes and do not trigger this warning.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildImageHandoff.md
+  - eval_time: 20m
+    alertname: FaasBuildImageHandoffTelemetryUnavailable
+    exp_alerts: []
+- name: transient list failure burst does not survive the hold
+  interval: 1m
+  input_series:
+  - *id001
+  - *id030
+  - *id031
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id008
+  - series: imaged_build_handoff_recovery_queries_total{job="imaged",instance="i",source="resume",outcome="error"}
+    values: 0 10x59
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  alert_rule_test:
+  - eval_time: 6m
+    alertname: FaasImageHandoffRecoveryQueriesFailing
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasImageHandoffRecoveryQueriesFailing
+    exp_alerts: []
+- name: exactly ten percent list errors stay quiet
+  interval: 1m
+  input_series:
+  - *id001
+  - *id030
+  - *id031
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - series: imaged_build_handoff_recovery_queries_total{job="imaged",instance="i",source="resume",outcome="success"}
+    values: 0+9x60
+  - series: imaged_build_handoff_recovery_queries_total{job="imaged",instance="i",source="resume",outcome="error"}
+    values: 0+1x60
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasBuildImageHandoffTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasBuildImageHandoffWaiting
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasImageHandoffRecoveryQueriesFailing
+    exp_alerts: []
+- name: low volume list errors require at least three per rolling window
+  interval: 1m
+  input_series:
+  - *id001
+  - *id030
+  - *id031
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id008
+  - series: imaged_build_handoff_recovery_queries_total{job="imaged",instance="i",source="resume",outcome="error"}
+    values: 0x5 1x5 2x5 3x5 4x40
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasBuildImageHandoffTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasBuildImageHandoffWaiting
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasImageHandoffRecoveryQueriesFailing
+    exp_alerts: []
+- name: handler errors retries busy leases noops and cancellations are not query failures
+  interval: 1m
+  input_series:
+  - *id001
+  - *id030
+  - *id031
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - series: imaged_build_handoff_recovery_work_total{job="imaged",instance="i",source="resume",outcome="returned"}
+    values: 0+100x60
+  - series: imaged_build_handoff_recovery_work_total{job="imaged",instance="i",source="resume",outcome="retryable"}
+    values: 0+100x60
+  - series: imaged_build_handoff_recovery_work_total{job="imaged",instance="i",source="resume",outcome="deferred"}
+    values: 0+100x60
+  - series: imaged_build_handoff_recovery_work_total{job="imaged",instance="i",source="resume",outcome="not_owned"}
+    values: 0+100x60
+  - series: imaged_build_handoff_recovery_work_total{job="imaged",instance="i",source="resume",outcome="error"}
+    values: 0+100x60
+  - series: imaged_build_handoff_recovery_work_total{job="imaged",instance="i",source="resume",outcome="canceled"}
+    values: 0+100x60
+  - *id017
+  - *id018
+  - *id019
+  - series: imaged_build_handoff_recovery_work_total{job="imaged",instance="i",source="awaiting",outcome="returned"}
+    values: 0+100x60
+  - series: imaged_build_handoff_recovery_work_total{job="imaged",instance="i",source="awaiting",outcome="retryable"}
+    values: 0+100x60
+  - series: imaged_build_handoff_recovery_work_total{job="imaged",instance="i",source="awaiting",outcome="deferred"}
+    values: 0+100x60
+  - series: imaged_build_handoff_recovery_work_total{job="imaged",instance="i",source="awaiting",outcome="not_owned"}
+    values: 0+100x60
+  - series: imaged_build_handoff_recovery_work_total{job="imaged",instance="i",source="awaiting",outcome="error"}
+    values: 0+100x60
+  - series: imaged_build_handoff_recovery_work_total{job="imaged",instance="i",source="awaiting",outcome="canceled"}
+    values: 0+100x60
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasBuildImageHandoffTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasBuildImageHandoffWaiting
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasImageHandoffRecoveryQueriesFailing
+    exp_alerts: []
+- name: completed recovery clears an overdue wait
+  interval: 1m
+  input_series:
+  - *id001
+  - series: imaged_build_handoff_pending{job="imaged",instance="i"}
+    values: 1x13 0x47
+  - series: imaged_build_handoff_oldest_finished_timestamp_seconds{job="imaged",instance="i"}
+    values: 60x13 0x47
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  alert_rule_test:
+  - eval_time: 12m
+    alertname: FaasBuildImageHandoffWaiting
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: build_image_handoff
+        public_status: internal
+        job: imaged
+        instance: i
+      exp_annotations:
+        summary: Successful builds are waiting for image preparation
+        description: The oldest eligible succeeded build in this imaged recovery scope has waited more than five
+          minutes since build completion, sustained for five minutes. Checkpointed active or resumable preparations
+          are excluded. This measures unconsumed handoff delay, including backlog behind legitimate synchronous
+          work; it does not establish a stalled daemon or deployment readiness failure.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildImageHandoff.md
+  - eval_time: 14m
+    alertname: FaasBuildImageHandoffWaiting
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasBuildImageHandoffTelemetryUnavailable
+    exp_alerts: []
+  promql_expr_test:
+  - expr: imaged_build_handoff_oldest_wait_seconds{job="imaged",instance="i"}
+    eval_time: 14m
+    exp_samples:
+    - labels: imaged_build_handoff_oldest_wait_seconds{job="imaged",instance="i"}
+      value: 0
+- name: restored collection clears telemetry warning
+  interval: 1m
+  input_series:
+  - *id001
+  - *id030
+  - *id031
+  - series: imaged_build_handoff_collection_success{job="imaged",instance="i"}
+    values: 0x9 1x50
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: FaasBuildImageHandoffTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: build_image_handoff_telemetry
+        public_status: internal
+        job: imaged
+        instance: i
+      exp_annotations:
+        summary: Build-to-image handoff diagnostics are unavailable
+        description: Imaged is scraped but its handoff snapshot is failed, missing, inconsistent or older than two
+          minutes, or its initialized recovery diagnostics are incomplete. Handoff health is unknown; inspect the
+          database reader, clocks, deployed binary and scrape configuration. Intentional loop shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildImageHandoff.md
+  - eval_time: 10m
+    alertname: FaasBuildImageHandoffTelemetryUnavailable
+    exp_alerts: []
+- name: intentional shutdown suppresses warnings without claiming a fresh read
+  interval: 1m
+  input_series:
+  - *id001
+  - *id032
+  - *id033
+  - *id037
+  - *id038
+  - series: imaged_build_handoff_recovery_enabled{job="imaged",instance="i"}
+    values: '0x60'
+  - *id005
+  - *id006
+  - *id007
+  - *id008
+  - *id039
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasBuildImageHandoffTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasBuildImageHandoffWaiting
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasImageHandoffRecoveryQueriesFailing
+    exp_alerts: []
+- name: shutdown clears already firing wait and query warnings
+  interval: 1m
+  input_series:
+  - *id001
+  - *id032
+  - *id033
+  - *id002
+  - *id003
+  - series: imaged_build_handoff_recovery_enabled{job="imaged",instance="i"}
+    values: 1x13 0x47
+  - *id005
+  - *id006
+  - *id007
+  - *id008
+  - *id039
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  alert_rule_test:
+  - eval_time: 12m
+    alertname: FaasBuildImageHandoffWaiting
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: build_image_handoff
+        public_status: internal
+        job: imaged
+        instance: i
+      exp_annotations:
+        summary: Successful builds are waiting for image preparation
+        description: The oldest eligible succeeded build in this imaged recovery scope has waited more than five
+          minutes since build completion, sustained for five minutes. Checkpointed active or resumable preparations
+          are excluded. This measures unconsumed handoff delay, including backlog behind legitimate synchronous
+          work; it does not establish a stalled daemon or deployment readiness failure.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildImageHandoff.md
+  - eval_time: 12m
+    alertname: FaasImageHandoffRecoveryQueriesFailing
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: build_image_handoff
+        public_status: internal
+        job: imaged
+        instance: i
+        source: resume
+      exp_annotations:
+        summary: Image handoff recovery queries are persistently failing
+        description: Errors exceed 10% of non-canceled resume recovery list calls, with at least three errors in
+          each rolling five-minute window, sustained for five minutes. The independent observation reader does not
+          establish that recovery queries work. Busy leases, claim fences and customer image failures are separate
+          handler outcomes and do not trigger this warning.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildImageHandoff.md
+  - eval_time: 14m
+    alertname: FaasBuildImageHandoffWaiting
+    exp_alerts: []
+  - eval_time: 14m
+    alertname: FaasImageHandoffRecoveryQueriesFailing
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasBuildImageHandoffTelemetryUnavailable
+    exp_alerts: []
+- name: healthy sibling cannot repair a missing count
+  interval: 1m
+  input_series:
+  - *id001
+  - *id031
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - &id040
+    series: up{job="imaged",instance="sibling"}
+    values: 1x60
+  - &id041
+    series: imaged_build_handoff_pending{job="imaged",instance="sibling"}
+    values: '0x60'
+  - &id042
+    series: imaged_build_handoff_oldest_finished_timestamp_seconds{job="imaged",instance="sibling"}
+    values: '0x60'
+  - &id043
+    series: imaged_build_handoff_collection_success{job="imaged",instance="sibling"}
+    values: 1x60
+  - &id044
+    series: imaged_build_handoff_collection_last_success_timestamp_seconds{job="imaged",instance="sibling"}
+    values: 0+60x60
+  - &id045
+    series: imaged_build_handoff_recovery_enabled{job="imaged",instance="sibling"}
+    values: 1x60
+  - &id046
+    series: imaged_build_handoff_recovery_inflight{job="imaged",instance="sibling"}
+    values: '0x60'
+  - &id047
+    series: imaged_build_handoff_recovery_last_attempt_timestamp_seconds{job="imaged",instance="sibling"}
+    values: 0+60x60
+  - &id048
+    series: imaged_build_handoff_recovery_last_completed_timestamp_seconds{job="imaged",instance="sibling"}
+    values: 0+60x60
+  - series: imaged_build_handoff_recovery_queries_total{job="imaged",instance="sibling",source="resume",outcome="success"}
+    values: '0x60'
+  - &id049
+    series: imaged_build_handoff_recovery_queries_total{job="imaged",instance="sibling",source="resume",outcome="error"}
+    values: '0x60'
+  - &id050
+    series: imaged_build_handoff_recovery_queries_total{job="imaged",instance="sibling",source="resume",outcome="canceled"}
+    values: '0x60'
+  - &id051
+    series: imaged_build_handoff_recovery_work_total{job="imaged",instance="sibling",source="resume",outcome="returned"}
+    values: '0x60'
+  - &id052
+    series: imaged_build_handoff_recovery_work_total{job="imaged",instance="sibling",source="resume",outcome="retryable"}
+    values: '0x60'
+  - &id053
+    series: imaged_build_handoff_recovery_work_total{job="imaged",instance="sibling",source="resume",outcome="deferred"}
+    values: '0x60'
+  - &id054
+    series: imaged_build_handoff_recovery_work_total{job="imaged",instance="sibling",source="resume",outcome="not_owned"}
+    values: '0x60'
+  - &id055
+    series: imaged_build_handoff_recovery_work_total{job="imaged",instance="sibling",source="resume",outcome="error"}
+    values: '0x60'
+  - &id056
+    series: imaged_build_handoff_recovery_work_total{job="imaged",instance="sibling",source="resume",outcome="canceled"}
+    values: '0x60'
+  - &id057
+    series: imaged_build_handoff_recovery_queries_total{job="imaged",instance="sibling",source="awaiting",outcome="success"}
+    values: '0x60'
+  - &id058
+    series: imaged_build_handoff_recovery_queries_total{job="imaged",instance="sibling",source="awaiting",outcome="error"}
+    values: '0x60'
+  - &id059
+    series: imaged_build_handoff_recovery_queries_total{job="imaged",instance="sibling",source="awaiting",outcome="canceled"}
+    values: '0x60'
+  - &id060
+    series: imaged_build_handoff_recovery_work_total{job="imaged",instance="sibling",source="awaiting",outcome="returned"}
+    values: '0x60'
+  - &id061
+    series: imaged_build_handoff_recovery_work_total{job="imaged",instance="sibling",source="awaiting",outcome="retryable"}
+    values: '0x60'
+  - &id062
+    series: imaged_build_handoff_recovery_work_total{job="imaged",instance="sibling",source="awaiting",outcome="deferred"}
+    values: '0x60'
+  - &id063
+    series: imaged_build_handoff_recovery_work_total{job="imaged",instance="sibling",source="awaiting",outcome="not_owned"}
+    values: '0x60'
+  - &id064
+    series: imaged_build_handoff_recovery_work_total{job="imaged",instance="sibling",source="awaiting",outcome="error"}
+    values: '0x60'
+  - &id065
+    series: imaged_build_handoff_recovery_work_total{job="imaged",instance="sibling",source="awaiting",outcome="canceled"}
+    values: '0x60'
+  - &id066
+    series: imaged_image_preparation_commits_total{job="imaged",instance="sibling",transition="claimed"}
+    values: '0x60'
+  - &id067
+    series: imaged_image_preparation_commits_total{job="imaged",instance="sibling",transition="layer_published"}
+    values: '0x60'
+  - &id068
+    series: imaged_image_preparation_commits_total{job="imaged",instance="sibling",transition="scan_complete"}
+    values: '0x60'
+  - &id069
+    series: imaged_image_preparation_commits_total{job="imaged",instance="sibling",transition="handed_off"}
+    values: '0x60'
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: FaasBuildImageHandoffTelemetryUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: build_image_handoff_telemetry
+        public_status: internal
+        job: imaged
+        instance: i
+      exp_annotations:
+        summary: Build-to-image handoff diagnostics are unavailable
+        description: Imaged is scraped but its handoff snapshot is failed, missing, inconsistent or older than two
+          minutes, or its initialized recovery diagnostics are incomplete. Handoff health is unknown; inspect the
+          database reader, clocks, deployed binary and scrape configuration. Intentional loop shutdown is excluded.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildImageHandoff.md
+- name: healthy sibling throughput cannot dilute local query errors
+  interval: 1m
+  input_series:
+  - *id001
+  - *id030
+  - *id031
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id008
+  - *id039
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  - *id040
+  - *id041
+  - *id042
+  - *id043
+  - *id044
+  - *id045
+  - *id046
+  - *id047
+  - *id048
+  - series: imaged_build_handoff_recovery_queries_total{job="imaged",instance="sibling",source="resume",outcome="success"}
+    values: 0+10000x60
+  - *id049
+  - *id050
+  - *id051
+  - *id052
+  - *id053
+  - *id054
+  - *id055
+  - *id056
+  - *id057
+  - *id058
+  - *id059
+  - *id060
+  - *id061
+  - *id062
+  - *id063
+  - *id064
+  - *id065
+  - *id066
+  - *id067
+  - *id068
+  - *id069
+  alert_rule_test:
+  - eval_time: 6m
+    alertname: FaasImageHandoffRecoveryQueriesFailing
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: imaged
+        family: build_image_handoff
+        public_status: internal
+        job: imaged
+        instance: i
+        source: resume
+      exp_annotations:
+        summary: Image handoff recovery queries are persistently failing
+        description: Errors exceed 10% of non-canceled resume recovery list calls, with at least three errors in
+          each rolling five-minute window, sustained for five minutes. The independent observation reader does not
+          establish that recovery queries work. Busy leases, claim fences and customer image failures are separate
+          handler outcomes and do not trigger this warning.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBuildImageHandoff.md
+- name: failed scrape supplies no handoff health
+  interval: 1m
+  input_series:
+  - series: up{job="imaged",instance="i"}
+    values: '0x60'
+  - *id030
+  - *id031
+  - *id002
+  - *id003
+  - *id004
+  - *id005
+  - *id006
+  - *id007
+  - *id008
+  - *id009
+  - *id010
+  - *id011
+  - *id012
+  - *id013
+  - *id014
+  - *id015
+  - *id016
+  - *id017
+  - *id018
+  - *id019
+  - *id020
+  - *id021
+  - *id022
+  - *id023
+  - *id024
+  - *id025
+  - *id026
+  - *id027
+  - *id028
+  - *id029
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasBuildImageHandoffTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasBuildImageHandoffWaiting
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasImageHandoffRecoveryQueriesFailing
+    exp_alerts: []
+  promql_expr_test:
+  - expr: imaged_build_handoff_observation_healthy{job="imaged",instance="i"}
+    eval_time: 20m
+    exp_samples: []
+  - expr: imaged_build_handoff_oldest_wait_seconds{job="imaged",instance="i"}
+    eval_time: 20m
+    exp_samples: []
+- name: no imaged installation creates no synthetic alerts
+  interval: 1m
+  input_series: []
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasBuildImageHandoffTelemetryUnavailable
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasBuildImageHandoffWaiting
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasImageHandoffRecoveryQueriesFailing
+    exp_alerts: []

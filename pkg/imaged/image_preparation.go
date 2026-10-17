@@ -84,6 +84,7 @@ func (h *Handler) handleSnapshotBoot(ctx context.Context, payload snapshotBootPa
 	if err != nil {
 		return imageRecoveryError(err)
 	}
+	h.handoffMetrics.commit("claimed")
 	defer func() {
 		if ctx.Err() == nil && !errors.Is(err, errImagePreparationRecovery) &&
 			!errors.Is(err, state.ErrConflict) && !errors.Is(err, state.ErrInvalidStateTransition) {
@@ -166,6 +167,7 @@ func (h *Handler) prepareImageLayer(ctx context.Context, images state.Deployment
 	if err := images.PublishImagePreparationLayer(ctx, dep.ID, p.ClaimToken, publication.path, publication.key, publication.bytes); err != nil {
 		return imageRecoveryError(err)
 	}
+	h.handoffMetrics.commit("layer_published")
 	return nil
 }
 
@@ -238,6 +240,7 @@ func (h *Handler) prepareImageScan(ctx context.Context, images state.DeploymentI
 	if err := images.AdvanceImagePreparation(ctx, dep.ID, p.ClaimToken, state.ImageLayerPublished, state.ImageScanComplete); err != nil {
 		return imageRecoveryError(err)
 	}
+	h.handoffMetrics.commit("scan_complete")
 	return nil
 }
 
@@ -293,6 +296,7 @@ func (h *Handler) finishImageHandoff(ctx context.Context, images state.Deploymen
 	if err := images.AdvanceImagePreparation(ctx, dep.ID, p.ClaimToken, state.ImageScanComplete, state.ImageHandedOff); err != nil {
 		return imageRecoveryError(err)
 	}
+	h.handoffMetrics.commit("handed_off")
 	return nil
 }
 

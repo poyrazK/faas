@@ -2841,6 +2841,10 @@ type Querier interface {
 	OperatorAlertUpsertEpisodes(ctx context.Context, db DBTX, arg OperatorAlertUpsertEpisodesParams) error
 	OperatorAlertWorkloadBuckets(ctx context.Context, db DBTX, arg OperatorAlertWorkloadBucketsParams) ([]OperatorAlertWorkloadBucketsRow, error)
 	OperatorAuditTraceCoverage(ctx context.Context, db DBTX, since pgtype.Timestamptz) (float64, error)
+	// Same eligibility and owner compatibility as ListBuildsAwaitingImage, without
+	// its recovery batch limit. Checkpointed preparations are active/resumable work,
+	// not unconsumed build handoffs.
+	OperatorBuildImageHandoffSnapshot(ctx context.Context, db DBTX, nodeID string) (OperatorBuildImageHandoffSnapshotRow, error)
 	OperatorBuildRecoverySnapshot(ctx context.Context, db DBTX) (OperatorBuildRecoverySnapshotRow, error)
 	// The API catalog is the single source of named shapes. Unmatched shapes
 	// share one custom bucket, keeping the result bounded as the fleet grows.
