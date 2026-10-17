@@ -826,13 +826,8 @@ type Engine struct {
 	// themselves are pinned directly by TestBootTimeout_SpecBudgets.
 	bootBudget func(state.State) time.Duration
 
-	// workerBoots counts consecutive failed worker instances per deployment
-	// so worker.singleton backs off instead of re-admitting at once
-	// (worker_boot_backoff.go). The zero value is ready to use.
-	workerBoots workerBootFailures
-	// workerRetryAfter schedules a delayed worker reconcile. nil uses
-	// time.AfterFunc; tests record the delay instead of waiting for it.
-	workerRetryAfter func(time.Duration, func())
+	// Worker event callbacks share the bounded recovery pool with sweeps.
+	workerReconcileSubmit func(context.Context, string)
 }
 
 // budgetFor returns the vmmd call budget for a row in state s: the
@@ -9620,12 +9615,10 @@ func (e *Engine) transitionWithKindCAS(ctx context.Context, instanceID, appID st
 	if to == state.StateParked && ins.Mode == string(state.InstanceModeService) {
 		e.scheduleServiceReconcile(ctx, ins.DeploymentID)
 	}
-	// A worker pool has no periodic floor unless it scales on a queue
-	// signal, so a worker parked here never came back: h8-worker sat at
-	// zero replicas for 42 h after a heartbeat blip (production-us hunt #9,
-	// H9-171).
+	// Recovery parking can leave a worker pool below its target. Submit
+	// through the same bounded reconciler as the durable safety sweep.
 	if to == state.StateParked && ins.Mode == string(state.InstanceModeWorker) {
-		go e.ReconcileWorkerApp(detachedServiceContext(ctx), appID)
+		e.scheduleWorkerAppReconcile(ctx, appID)
 	}
 	return true, nil
 }
@@ -9686,17 +9679,15 @@ func (e *Engine) recordCommittedInstanceTransition(ctx context.Context, ins stat
 }
 
 // reconcileAfterInstanceTransition restores service and worker allocations
-// after a committed edge. A failed worker is replaced with backoff
-// (worker_boot_backoff.go); a running one clears that backoff.
+// after a committed edge. Worker retry deadlines and failure counts are
+// completed by the durable app reconciliation, rather than individual replicas.
 func (e *Engine) reconcileAfterInstanceTransition(ctx context.Context, ins state.Instance, to state.State) {
 	switch {
 	case (to == state.StateRunning || to == state.StateStopped || to == state.StateFailed) &&
 		ins.Mode == string(state.InstanceModeService):
 		e.scheduleServiceReconcile(ctx, ins.DeploymentID)
 	case to == state.StateFailed && ins.Mode == string(state.InstanceModeWorker):
-		e.scheduleWorkerReconcileAfterFailure(ctx, ins.DeploymentID)
-	case to == state.StateRunning && ins.Mode == string(state.InstanceModeWorker):
-		e.workerBoots.reset(ins.DeploymentID)
+		e.scheduleWorkerAppReconcile(ctx, ins.AppID)
 	}
 }
 

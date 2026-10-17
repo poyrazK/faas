@@ -1091,6 +1091,15 @@ App timers: WAKING ≤ 5 s then fallback to cold boot; COLD_BOOTING ≤ 30 s the
 4. A parked app consumes zero resident RAM (verify: cgroup gone).
 5. Two concurrent instances restored from one snapshot never share an IP, netns, jail uid, or RNG stream. **ADR-680:** "RNG stream" includes userspace generators: guest-init reseeds registered Node and Python processes before the resume ACK and fails the resume closed (cold boot) when one cannot confirm. **Issue #168:** `gatewayd-internal` picks per-instance `x-faas-instance` (overwriting inbound) so the per-node vmmd forwarder attributes every byte to the correct microVM even when multiple restored siblings share one compute_node.
 
+Worker pools also have scheduler-owned durable recovery. A bounded startup and
+five-second sweep retries due active owned worker apps through the scoped
+planner, including captured environment settings. Persist retry deadlines,
+failure counts and expiring app leases independently of desired capacity.
+Failure backoff is 5–300 seconds; full healthy pools are checked every 30 seconds.
+Events honor admission cooldown while permitting scale-in and zero floors.
+Suspension, abuse holds, ownership and existing account/node admission fences
+remain authoritative. See [durable worker recovery](adr/20261017221000-durable-worker-recovery.md).
+
 ### 6.3 Wake latency budget (p50 targets)
 
 | Step | ms |

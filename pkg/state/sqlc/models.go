@@ -11360,6 +11360,17 @@ type WebhookDelivery struct {
 	ExpiresAt  pgtype.Timestamptz
 }
 
+type WorkerRecovery struct {
+	AppID         pgtype.UUID
+	Revision      string
+	ClaimToken    pgtype.UUID
+	LeaseUntil    pgtype.Timestamptz
+	Status        string
+	Failures      int32
+	NextAttemptAt pgtype.Timestamptz
+	UpdatedAt     pgtype.Timestamptz
+}
+
 type WorkflowAutomationDefinition struct {
 	AppID            pgtype.UUID
 	Name             string

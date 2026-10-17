@@ -7,6 +7,21 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Durable worker-pool recovery — 2026-10-17
+
+Worker recovery now persists retry deadlines, failure counts and app leases.
+Bounded startup and periodic sweeps restore pools after capacity returns without
+another event. Existing scoped demand, account and node admission remain
+authoritative; cooldown still permits scale-in and zero floors. Captured worker
+environments and unfinished mode-change cleanup remain discoverable.
+
+Validation includes 64 scheduler checks with no skips, PostgreSQL restart
+recovery, and the shared worker/service recovery contracts on memory and
+PostgreSQL stores. Generated SQL, schema replay, migration compatibility and
+protocol compatibility against the branch base are checked. Apply the additive
+migration before upgrading schedd. Native KVM availability qualification remains
+separate and pending; this change is not deployed.
+
 ## Native M9 automatic drain gate — 2026-10-18
 
 The [automatic drain drill](ops/native-m9-acceptance.md#automatic-node-drain-and-controller-restart)
