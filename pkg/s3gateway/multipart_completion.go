@@ -47,6 +47,9 @@ func (h *Handler) completeMultipart(w http.ResponseWriter, r *http.Request, req 
 		if !valid {
 			return
 		}
+		if !h.checkWritePressure(w, r, req, "complete", total) {
+			return
+		}
 		upload.CompletionConditions = writeConditions(r)
 		claimed, err = transfers.PrepareObjectMultipartCompletion(r.Context(), upload, token, total, parts, h.registry.Accounting)
 	} else {

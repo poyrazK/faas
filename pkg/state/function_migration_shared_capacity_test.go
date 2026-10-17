@@ -1,6 +1,6 @@
 package state
 
-// adr: 1547. Independent migration protocols must not spend the same capacity.
+// adr: 1577. Independent migration protocols must not spend the same capacity.
 
 import (
 	"errors"

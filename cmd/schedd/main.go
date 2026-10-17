@@ -963,7 +963,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if leaser := sched.NewPgLeaserFromPool(pool, ownerNodeID, nil); leaser != nil {
 		engine.WithJobLeaser(sched.AdaptJobLeaser(leaser))
 	}
-	// adr: 1548
+	// adr: 1578
 	// Reconstruct measured destination work before ledger seeding and serving.
 	// Failures retain durable capacity/ownership for the fenced expiry path.
 	migrationRecoveryReady := true

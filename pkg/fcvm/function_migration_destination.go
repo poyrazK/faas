@@ -1,6 +1,6 @@
 package fcvm
 
-// adr: 1547. A destination stays closed until schedd's ownership commit.
+// adr: 1577. A destination stays closed until schedd's ownership commit.
 
 import (
 	"context"

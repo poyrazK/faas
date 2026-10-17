@@ -299,7 +299,11 @@ func (s *Server) PrepareLiveMigration(ctx context.Context, req *vmmdpb.PrepareLi
 		s.ops.Observe(op, time.Since(start), err)
 		return nil, grpcerr.ToStatus(err)
 	}
-	if s.durableMigrationSource() {
+	qualifiedSource := false
+	if vmm, ok := s.vmm.(functionMigrationVMM); ok {
+		qualifiedSource = vmm.FunctionMigrationSourceRequired(req.GetInstanceId())
+	}
+	if s.durableMigrationSource() && !qualifiedSource {
 		vmm, ok := s.vmm.(migrationSourceVMM)
 		if !ok || s.migrationSources == nil || s.migrationLeases == nil || !vmm.MigrationAdmissionAvailable(s.nodeID) {
 			err := api.NewProblem(int(codes.FailedPrecondition), api.CodeConflict, "Migration unavailable", "durable native source ownership is required")
@@ -328,10 +332,6 @@ func (s *Server) PrepareLiveMigration(ctx context.Context, req *vmmdpb.PrepareLi
 
 	// Reserve the instance before touching Firecracker. A second Prepare
 	// must not snapshot the same VM while the first call is in flight.
-	qualifiedSource := false
-	if vmm, ok := s.vmm.(functionMigrationVMM); ok {
-		qualifiedSource = vmm.FunctionMigrationSourceRequired(req.GetInstanceId())
-	}
 	m, err := s.migrations.reserveSource(req.GetInstanceId(), start, qualifiedSource)
 	if err != nil {
 		err2 := api.NewProblem(int(codes.AlreadyExists), api.CodeConflict,
@@ -378,7 +378,7 @@ func (s *Server) PrepareLiveMigration(ctx context.Context, req *vmmdpb.PrepareLi
 			if s.migrationLeases != nil {
 				_ = s.migrationLeases.CompleteMigrationLease(cleanupCtx, m.leaseToken, memKey, vmstateKey)
 			}
-		} else if s.durableMigrationSource() {
+		} else if s.durableMigrationSource() && !qualifiedSource {
 			// Generic native sources retain main's generation-bound journal.
 			s.releaseUnboundMigrationPrepare(cleanupCtx, m.leaseToken)
 		} else {
@@ -722,7 +722,7 @@ func (s *Server) AcknowledgeMigration(ctx context.Context, req *vmmdpb.Acknowled
 		s.ops.Observe(op, time.Since(start), nil)
 		return &vmmdpb.AcknowledgeMigrationResponse{}, nil //nolint:nilerr
 	}
-	if m.pending {
+	if m.pending && !s.durableMigrationSource() {
 		return nil, grpcerr.ToStatus(toProblem(runtimeadmission.ErrUnavailable))
 	}
 
@@ -838,7 +838,7 @@ func (s *Server) CancelLiveMigration(ctx context.Context, req *vmmdpb.CancelLive
 	if vmm, ok := s.vmm.(functionMigrationVMM); ok && vmm.FunctionMigrationSourceRequired(m.instanceID) {
 		return nil, grpcerr.ToStatus(toProblem(runtimeadmission.ErrUnavailable))
 	}
-	if m.pending {
+	if m.pending && !s.durableMigrationSource() {
 		return nil, grpcerr.ToStatus(toProblem(runtimeadmission.ErrUnavailable))
 	}
 	attempted, err := s.resumeMigrationVM(ctx, req.GetInstanceId(), req.GetLeaseToken())

@@ -1,6 +1,6 @@
 package state
 
-// adr: 1546. Permission issuance reuses the complete native input fences.
+// adr: 1576. Permission issuance reuses the complete native input fences.
 
 import (
 	"bytes"

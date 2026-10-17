@@ -2756,7 +2756,7 @@ type Querier interface {
 	// partition, then interleaved so one high-volume revision cannot crowd all
 	// prior deployments out of the bounded comparison window.
 	ListRequestTelemetryDependencySpans(ctx context.Context, db DBTX, arg ListRequestTelemetryDependencySpansParams) ([]ListRequestTelemetryDependencySpansRow, error)
-	// adr: 1548
+	// adr: 1578
 	ListRestartFunctionMigrationDestinations(ctx context.Context, db DBTX, arg ListRestartFunctionMigrationDestinationsParams) ([]FunctionMigrationDestination, error)
 	ListResumableImagePreparations(ctx context.Context, db DBTX, arg ListResumableImagePreparationsParams) ([]ListResumableImagePreparationsRow, error)
 	ListRetainedServiceReleases(ctx context.Context, db DBTX, arg ListRetainedServiceReleasesParams) ([]ListRetainedServiceReleasesRow, error)
@@ -2946,7 +2946,7 @@ type Querier interface {
 	LockExpiredRevisionPinApps(ctx context.Context, db DBTX, pageLimit int32) ([]pgtype.UUID, error)
 	LockFeatureFlagEnvironment(ctx context.Context, db DBTX, arg LockFeatureFlagEnvironmentParams) (pgtype.UUID, error)
 	LockFeatureFlagProject(ctx context.Context, db DBTX, arg LockFeatureFlagProjectParams) (pgtype.UUID, error)
-	// ADR-1546: lock current native inputs/instance first, then the parent lease and source.
+	// ADR-1576: lock current native inputs/instance first, then the parent lease and source.
 	LockFunctionMigrationAdmissionLease(ctx context.Context, db DBTX, arg LockFunctionMigrationAdmissionLeaseParams) (MigrationLease, error)
 	LockFunctionMigrationDestination(ctx context.Context, db DBTX, arg LockFunctionMigrationDestinationParams) (FunctionMigrationDestination, error)
 	LockFunctionMigrationSource(ctx context.Context, db DBTX, arg LockFunctionMigrationSourceParams) (FunctionMigrationSource, error)
@@ -3420,6 +3420,14 @@ type Querier interface {
 	ObjectMultipartTransfersPending(ctx context.Context, db DBTX, uploadID pgtype.UUID) (bool, error)
 	ObjectMultipartURLPartBegin(ctx context.Context, db DBTX, arg ObjectMultipartURLPartBeginParams) error
 	ObjectMutationEventAppend(ctx context.Context, db DBTX, arg ObjectMutationEventAppendParams) error
+	ObjectNodeSettlementClaim(ctx context.Context, db DBTX, arg ObjectNodeSettlementClaimParams) ([]ObjectNodeSettlementOutbox, error)
+	ObjectNodeSettlementDiscard(ctx context.Context, db DBTX, id pgtype.UUID) (int64, error)
+	ObjectNodeSettlementEnroll(ctx context.Context, db DBTX, arg ObjectNodeSettlementEnrollParams) (int64, error)
+	ObjectNodeSettlementFinish(ctx context.Context, db DBTX, arg ObjectNodeSettlementFinishParams) (int64, error)
+	ObjectNodeSettlementLock(ctx context.Context, db DBTX, id pgtype.UUID) (ObjectNodeSettlementOutbox, error)
+	ObjectNodeSettlementReady(ctx context.Context, db DBTX, arg ObjectNodeSettlementReadyParams) (int64, error)
+	ObjectNodeSettlementRetry(ctx context.Context, db DBTX, arg ObjectNodeSettlementRetryParams) (int64, error)
+	ObjectNodeSettlementStats(ctx context.Context, db DBTX) (ObjectNodeSettlementStatsRow, error)
 	ObjectNotificationInvocationExisting(ctx context.Context, db DBTX, id pgtype.UUID) (ObjectNotificationInvocationExistingRow, error)
 	ObjectNotificationInvocationInsert(ctx context.Context, db DBTX, arg ObjectNotificationInvocationInsertParams) error
 	ObjectNotificationLockAccount(ctx context.Context, db DBTX, id pgtype.UUID) (string, error)
@@ -4152,7 +4160,7 @@ type Querier interface {
 	RecordEnvironmentQualificationSnapshot(ctx context.Context, db DBTX, arg RecordEnvironmentQualificationSnapshotParams) error
 	RecordEventExecutionLineageCase(ctx context.Context, db DBTX, arg RecordEventExecutionLineageCaseParams) (int64, error)
 	RecordEventExecutionLineageRetryControlReceipt(ctx context.Context, db DBTX, arg RecordEventExecutionLineageRetryControlReceiptParams) error
-	// adr: 1547
+	// adr: 1577
 	RecordFunctionMigrationCapture(ctx context.Context, db DBTX, arg RecordFunctionMigrationCaptureParams) (int64, error)
 	RecordInstanceApplicationStandardPromotionReceipt(ctx context.Context, db DBTX, arg RecordInstanceApplicationStandardPromotionReceiptParams) (int64, error)
 	RecordInstanceApplicationStandardReceipt(ctx context.Context, db DBTX, arg RecordInstanceApplicationStandardReceiptParams) (int64, error)
@@ -4241,7 +4249,7 @@ type Querier interface {
 	RecoverLegacyWorkflowSteps(ctx context.Context, db DBTX, runID pgtype.UUID) error
 	RegisterApplicationStandardLogConsumer(ctx context.Context, db DBTX, arg RegisterApplicationStandardLogConsumerParams) ([]byte, error)
 	RegisterComputeNodeRuntimeIdentity(ctx context.Context, db DBTX, arg RegisterComputeNodeRuntimeIdentityParams) (int64, error)
-	// ADR-1545: schedd fences rollback before vmmd can reopen a function source.
+	// ADR-1575: schedd fences rollback before vmmd can reopen a function source.
 	RegisterFunctionMigrationSource(ctx context.Context, db DBTX, arg RegisterFunctionMigrationSourceParams) (int64, error)
 	RegisterGatewayUsageEvent(ctx context.Context, db DBTX, arg RegisterGatewayUsageEventParams) (bool, error)
 	RegisterInvocationWorkEnvironmentDomain(ctx context.Context, db DBTX, arg RegisterInvocationWorkEnvironmentDomainParams) (pgtype.UUID, error)

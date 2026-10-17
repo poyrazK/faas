@@ -1,5 +1,6 @@
--- ADR-1545: retain source ownership until pool recovery or retirement is confirmed.
+-- ADR-1575: retain source ownership until pool recovery or retirement is confirmed.
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 CREATE TABLE IF NOT EXISTS function_migration_sources (
     instance_id uuid PRIMARY KEY REFERENCES migration_leases(instance_id) ON DELETE CASCADE,
     lease_token text NOT NULL UNIQUE REFERENCES migration_leases(lease_token) ON DELETE CASCADE,

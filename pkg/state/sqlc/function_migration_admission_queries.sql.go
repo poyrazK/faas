@@ -21,7 +21,7 @@ type LockFunctionMigrationAdmissionLeaseParams struct {
 	LeaseToken string
 }
 
-// ADR-1546: lock current native inputs/instance first, then the parent lease and source.
+// ADR-1576: lock current native inputs/instance first, then the parent lease and source.
 func (q *Queries) LockFunctionMigrationAdmissionLease(ctx context.Context, db DBTX, arg LockFunctionMigrationAdmissionLeaseParams) (MigrationLease, error) {
 	row := db.QueryRow(ctx, lockFunctionMigrationAdmissionLease, arg.InstanceID, arg.LeaseToken)
 	var i MigrationLease

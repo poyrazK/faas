@@ -1,7 +1,8 @@
 -- filename: 20261017190000002_function_migration_admission.sql
--- adr: 1546. Fresh permissions remain attached to the original durable source.
+-- adr: 1576. Fresh permissions remain attached to the original durable source.
 
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 ALTER TABLE function_migration_sources
  ADD COLUMN IF NOT EXISTS capture_token uuid UNIQUE,

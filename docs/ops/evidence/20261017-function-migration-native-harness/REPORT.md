@@ -2,7 +2,7 @@
 
 Date: 2026-10-17. Parent revision: `531ff85827d6dbdf452a91fbd530e567b62ec66c`.
 Scope: first successful-migration slice of
-[ADR-1352](../../../adr/1547-function-migration-destination.md).
+[ADR-1352](../../../adr/1577-function-migration-destination.md).
 
 The harness and portable rejection tests are implemented. No native migration
 was executed, no native acceptance is claimed and production remains off.

@@ -2,7 +2,7 @@
 
 Date: 2026-10-17. Branch: `codex/function-postgres-lifecycle`, based on
 `170c5af02f40a8f1a74e2d3b918c1bd5c13cd556`. Scope:
-[ADR-1349](../../../adr/1544-function-warm-snapshot-resource-recovery.md).
+[ADR-1349](../../../adr/1574-function-warm-snapshot-resource-recovery.md).
 This report is committed with the implementation; Git history identifies the revision.
 PR #4768 remains closed and unmerged; its merge automation remains paused.
 No deployment or production activation is included.

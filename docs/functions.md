@@ -347,11 +347,11 @@ lifetime guarantee. Use a durable queue for work that must survive worker or
 VM replacement; bounded post-response work does not provide durable execution.
 
 See [ADR-1540](adr/1540-function-cancellation-cleanup-and-lifecycle-context.md),
-[ADR-1541](adr/1541-function-background-completion-protocol.md),
-[ADR-1542](adr/1542-function-vm-execution-lifetime.md),
-[ADR-1543](adr/1543-function-postgres-resource-lifecycle.md),
-[ADR-1544](adr/1544-function-warm-snapshot-resource-recovery.md),
-[ADR-1545](adr/1545-function-migration-source-rollback.md),
-[ADR-1546](adr/1546-function-migration-admission.md),
-[ADR-1547](adr/1547-function-migration-destination.md)
+[ADR-1571](adr/1571-function-background-completion-protocol.md),
+[ADR-1572](adr/1572-function-vm-execution-lifetime.md),
+[ADR-1573](adr/1573-function-postgres-resource-lifecycle.md),
+[ADR-1574](adr/1574-function-warm-snapshot-resource-recovery.md),
+[ADR-1575](adr/1575-function-migration-source-rollback.md),
+[ADR-1576](adr/1576-function-migration-admission.md),
+[ADR-1577](adr/1577-function-migration-destination.md)
 and [backend concurrency acceptance](ops/function-backend-concurrency-acceptance.md).

@@ -2,7 +2,7 @@
 
 package e2e_test
 
-// adr: 1546
+// adr: 1576
 // Run only with measured admission and actual native SQL witnesses.
 
 import (

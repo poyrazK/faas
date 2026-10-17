@@ -2,7 +2,7 @@
 
 package e2e_test
 
-// adr: 1548
+// adr: 1578
 
 import (
 	"bufio"

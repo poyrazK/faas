@@ -690,6 +690,35 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 
 ## S3 service decisions
 
+- [ADR-1542: First Gregale-owned object storage node](1542-owned-object-storage-first-node.md) — private single-node disk prototype behind the existing S3 driver; no production enrollment.
+- [ADR-1543: Durable owned-node write receipts](1543-owned-object-storage-write-receipts.md) — exact committed/rejected outcomes survive overwrite, deletion and restart; signed private recovery and replay fencing.
+- [ADR-1544: Durable owned-node multipart uploads](1544-owned-object-storage-multipart.md) — restartable parts, frozen completion manifests, atomic assembly, safe abort/expiry and exact completion recovery.
+- [ADR-1545: Owned-node inventory and reconciliation](1545-owned-object-storage-inventory.md) — coherent private capacity pages, read-only disk diagnostics, preserved admission holds and cached operational metrics.
+- [ADR-1546: Resumable owned-node checksum scrubbing](1546-owned-object-storage-scrubbing.md) — bounded SHA256 verification, durable checkpoints and findings bound to immutable blobs, private status and operational metrics.
+- [ADR-1547: Verified offline owned-node backups](1547-owned-object-storage-backups.md) — consistent recovered snapshots, catalog-verified manifests, atomic restore to a new directory and recovery drills after source loss.
+- [ADR-1548: Owned-node replication journal and catch-up](1548-owned-object-storage-replication-journal.md) — opt-in ordered mutation capture, retained replay bytes, authenticated transfer and fenced asynchronous followers.
+- [ADR-1549: Planned owned-node primary switchover](1549-owned-object-storage-primary-switchover.md) — irreversible source fencing, one-follower checkpoint grants, verified promotion with a new authority epoch and safe gateway recovery.
+- [ADR-1550: Replica-confirmed owned-node acknowledgements](1550-owned-object-storage-replica-durability.md) — persisted optional replica policy, authenticated applied confirmations, gated S3 outcomes and recovery, and preserved capacity holds.
+- [ADR-1551: Owned-node journal retention and compaction](1551-owned-object-storage-journal-compaction.md) — sealed offline floor checkpoints, registered follower cursors, bounded replay retention and explicit reseeding.
+- [ADR-1552: Repeatable local object-service qualification](1552-owned-object-storage-local-qualification.md) — bounded mixed gateway traffic, real process failures and maintenance drills, exact correctness checks and JSON performance reports.
+- [ADR-1553: Bounded replication change waits](1553-owned-object-storage-replication-waits.md) — immediate backlog draining, authenticated bounded idle waits and reconnect observations without changing durability.
+- [ADR-1554: Prepare replay payloads outside catalog publication](1554-owned-object-storage-publication-preparation.md) — immutable file proofs, bounded preparation and paced follower replay with preserved crash boundaries.
+- [ADR-1555: Qualify disposable object nodes across SSH hosts](1555-owned-object-storage-ssh-qualification.md) — private remote lifecycle and maintenance, host identity evidence, configurable network/work profiles and measured recovery.
+- [ADR-1556: Bounded automatic journal compaction](1556-owned-object-storage-automatic-compaction.md) — live primary/follower retention, checkpointed batches, pending-proof pins and cached cleanup metrics.
+- [ADR-1557: Bounded object-storage soak qualification](1557-owned-object-storage-soak-qualification.md) — sustained traffic, interval evidence, disk/work limits and follower interruptions during cleanup.
+- [ADR-1558: Profile replication and fetch bounded journal pages](1558-owned-object-storage-replication-profiling.md) — attempt timings and authenticated bounded prefetch with individual durable checkpoints.
+- [ADR-1559: Admit new object writes within retention and disk headroom](1559-owned-object-storage-write-admission.md) — conservative concurrent reservations, pressure hysteresis and advisory gateway checks that preserve uncertain holds.
+- [ADR-1560: Inspect qualification hosts and storage before creating node data](1560-owned-object-storage-host-storage-preflight.md) — read-only SSH inspection, exact mount observations and an optional guard for dedicated local filesystems.
+- [ADR-1561: Settled recovery proof collection on the owned object node](1561-owned-object-storage-recovery-retention.md) — durable settlement acknowledgements, bounded request identities and journaled receipt/tombstone maintenance.
+- [ADR-1562: Durable owned-node settlement acknowledgement delivery](1562-owned-object-storage-settlement-outbox.md) — transactional terminal outbox, fenced asynchronous delivery and preserved recovery placement.
+- [ADR-1563: Indexed online recovery cleanup on the owned object node](1563-owned-object-storage-indexed-recovery-cleanup.md) — persistent local eligibility, bounded online retirement and cached maintenance metrics.
+- [ADR-1564: Qualify format-5 recovery protection with built object nodes](1564-owned-object-storage-retention-qualification.md) — lost settlement replies, fresh-proof protection and acknowledgement persistence through restart and promotion.
+- [ADR-1565: Indexed object listings and bounded multipart expiry](1565-owned-object-storage-indexed-listing-expiry.md) — generation-scoped key seeks, persistent expiry scheduling and bounded part reclamation.
+- [ADR-1566: Journal-backed logical usage counters on owned object nodes](1566-owned-object-storage-usage-counters.md) — coherent bucket totals, audited projections and opt-in ordinary accounting with preserved capacity fences.
+- [ADR-1567: Bounded, resumable source inventory audits](1567-owned-object-storage-incremental-audits.md) — checkpointed work budgets, source-revision restarts and conservative coverage freshness.
+- [ADR-1568: Source coverage during concurrent object mutations](1568-owned-object-storage-mutation-aware-audits.md) — independent coverage, bounded change reconciliation and conservative overflow recovery.
+- [ADR-1569: Keep self-hosted object storage behind a development gate](1569-owned-object-storage-development-gate.md) — default-off private startup and backend loading, separate from customer S3 availability.
+- [ADR-1570: Separate private object-storage capability gates](1570-owned-object-storage-capability-gates.md) — default-off server, backend, settlement and usage-counter controls under the private master gate.
 - [ADR-530: S3 compatibility and multipart capacity admission](530-s003-compatibility-and-multipart-capacity.md)
 - [ADR-531: S3 multipart transfer fencing and cleanup](531-s003-multipart-transfer-fencing-and-cleanup.md)
 - [ADR-532: Conditional S3 multipart completion](532-conditional-s003-multipart-completion.md)
@@ -1335,11 +1364,11 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-1501: Reconcile worker pools once at scheduler start](1501-worker-startup-reconcile.md)
 - [ADR 202610171900: Release compatibility gates (N±1, deploy order, skew and migration checks, SLO gate)](202610171900-release-compatibility-gates.md)
 
-| 1541 | [Negotiated Node post-response execution completion](1541-function-background-completion-protocol.md) | implementation for qualification | Function execution/resource lifecycle and fenced migration; native acceptance pending, production off |
-| 1542 | [Acknowledged function VM execution lifetime](1542-function-vm-execution-lifetime.md) | implementation for qualification | Function execution/resource lifecycle and fenced migration; native acceptance pending, production off |
-| 1543 | [Automatic PostgreSQL ownership in Node functions](1543-function-postgres-resource-lifecycle.md) | implementation for qualification | Function execution/resource lifecycle and fenced migration; native acceptance pending, production off |
-| 1544 | [Recover Node resources after warm capture](1544-function-warm-snapshot-resource-recovery.md) | implementation for qualification | Function execution/resource lifecycle and fenced migration; native acceptance pending, production off |
-| 1545 | [Recover a function migration source after rollback](1545-function-migration-source-rollback.md) | implementation for qualification | Function execution/resource lifecycle and fenced migration; native acceptance pending, production off |
-| 1546 | [Admit function migration capture and source recovery](1546-function-migration-admission.md) | implementation for qualification | Function execution/resource lifecycle and fenced migration; native acceptance pending, production off |
-| 1547 | [Restore and publish a measured function migration destination](1547-function-migration-destination.md) | implementation for qualification | Function execution/resource lifecycle and fenced migration; native acceptance pending, production off |
-| 1548 | [Reconstruct measured function handoffs at scheduler startup](1548-function-migration-scheduler-restart.md) | implementation for qualification | Function execution/resource lifecycle and fenced migration; native acceptance pending, production off |
+| 1571 | [Negotiated Node post-response execution completion](1571-function-background-completion-protocol.md) | implementation for qualification | Function execution/resource lifecycle and fenced migration; native acceptance pending, production off |
+| 1572 | [Acknowledged function VM execution lifetime](1572-function-vm-execution-lifetime.md) | implementation for qualification | Function execution/resource lifecycle and fenced migration; native acceptance pending, production off |
+| 1573 | [Automatic PostgreSQL ownership in Node functions](1573-function-postgres-resource-lifecycle.md) | implementation for qualification | Function execution/resource lifecycle and fenced migration; native acceptance pending, production off |
+| 1574 | [Recover Node resources after warm capture](1574-function-warm-snapshot-resource-recovery.md) | implementation for qualification | Function execution/resource lifecycle and fenced migration; native acceptance pending, production off |
+| 1575 | [Recover a function migration source after rollback](1575-function-migration-source-rollback.md) | implementation for qualification | Function execution/resource lifecycle and fenced migration; native acceptance pending, production off |
+| 1576 | [Admit function migration capture and source recovery](1576-function-migration-admission.md) | implementation for qualification | Function execution/resource lifecycle and fenced migration; native acceptance pending, production off |
+| 1577 | [Restore and publish a measured function migration destination](1577-function-migration-destination.md) | implementation for qualification | Function execution/resource lifecycle and fenced migration; native acceptance pending, production off |
+| 1578 | [Reconstruct measured function handoffs at scheduler startup](1578-function-migration-scheduler-restart.md) | implementation for qualification | Function execution/resource lifecycle and fenced migration; native acceptance pending, production off |

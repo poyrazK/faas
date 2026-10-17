@@ -1,6 +1,6 @@
 package fcvm
 
-// adr: 1544. A continuing VM must rebuild resources before admission reopens.
+// adr: 1574. A continuing VM must rebuild resources before admission reopens.
 
 import (
 	"context"

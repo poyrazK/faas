@@ -93,6 +93,6 @@ do not update `instances.tail_count`. The legacy host terminal path is not
 used to imply that a VM is pinned. VM-wide pool draining and checkpoint
 quiescence remain unqualified. Activation requires the owner-mediated,
 acknowledged registration and native gate described in
-[ADR-1346](../../../adr/1541-function-background-completion-protocol.md).
+[ADR-1346](../../../adr/1571-function-background-completion-protocol.md).
 No production activation, deployment, durable execution, performance parity
 or native snapshot acceptance is claimed.

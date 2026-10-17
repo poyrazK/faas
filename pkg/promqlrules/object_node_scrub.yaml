@@ -1,0 +1,44 @@
+# Optional owned-node prototype alerts. Loading these does not enroll a node
+# or add a scrape target. Keep host/key/blob identities out of alert labels.
+groups:
+  - name: object_node_scrub
+    rules:
+      - alert: ObjectNodeScrubFailures
+        expr: max by (job, node_id) (faas_object_node_scrub_targets{outcome="failed"}) > 0
+        for: 1m
+        labels:
+          severity: warn
+          component: object-storaged
+          family: object_storage
+        annotations:
+          summary: "An owned-node checksum scan reported failed targets"
+          description: "Inspect signed scrub findings and their current/current_known fields. Counts describe the current or last worklist; they do not establish that a replacement blob is corrupt."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/owned-object-storage.md#checksum-scrubbing"
+      - alert: ObjectNodeScrubWorkerError
+        expr: |
+          (max by (job, node_id) (faas_object_node_scrub_worker_ok) == 0)
+          and on (job, node_id)
+          (sum by (job, node_id) (faas_object_node_scrub_steps_total) > 0)
+        for: 2m
+        labels:
+          severity: warn
+          component: object-storaged
+          family: object_storage
+        annotations:
+          summary: "An owned-node checksum worker cannot make a successful step"
+          description: "Check node logs, disk space, permissions and durable scrub state. Operational errors retain the last acknowledged checkpoint and do not declare bytes verified."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/owned-object-storage.md#checksum-scrubbing"
+      - alert: ObjectNodeScrubStalled
+        expr: |
+          (max by (job, node_id) (faas_object_node_scrub_running) == 1)
+          and on (job, node_id)
+          (time() - max by (job, node_id) (faas_object_node_scrub_timestamp_seconds{event="progress"}) > 300)
+        for: 2m
+        labels:
+          severity: warn
+          component: object-storaged
+          family: object_storage
+        annotations:
+          summary: "An owned-node checksum scan has stopped checkpointing"
+          description: "A running worklist has made no durable progress for more than five minutes. Check whether the worker was disabled or is retrying an unreadable target."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/owned-object-storage.md#checksum-scrubbing"

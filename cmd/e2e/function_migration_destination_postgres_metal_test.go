@@ -2,7 +2,7 @@
 
 package e2e_test
 
-// adr: 1547
+// adr: 1577
 // Successful migrations, controlled replies and coordinator process loss.
 // Native service/host restart and production activation remain separate gates.
 

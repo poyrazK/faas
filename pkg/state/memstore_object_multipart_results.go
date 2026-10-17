@@ -43,6 +43,10 @@ func (m *MemStore) FinishObjectMultipartCompletion(_ context.Context, u ObjectMu
 	old.State, old.LeaseToken, old.LeaseUntil = ObjectMultipartCompleted, "", time.Time{}
 	old.AttemptCount, old.LastErrorCode = 0, ""
 	old.UpdatedAt, old.RetryAt = m.clock().UTC(), m.clock().UTC()
+	commitSettlement, err := m.prepareMultipartNodeSettlementLocked(old)
+	if err != nil {
+		return ObjectMultipartUpload{}, err
+	}
 	if err := m.publishObjectEventLocked(old.AccountID, "multipart:"+old.ID, api.ObjectEventCreated, multipartCompletionEvent(old), old.UpdatedAt); err != nil {
 		return ObjectMultipartUpload{}, err
 	}
@@ -50,6 +54,7 @@ func (m *MemStore) FinishObjectMultipartCompletion(_ context.Context, u ObjectMu
 		m.commitObjectVersionLocked(old.BucketID, version)
 	}
 	m.objectMultipartUploads[u.ID] = old
+	commitSettlement()
 	m.retireMultipartMutationLocked(u.ID)
 	old.Parts, old.Metadata = cloneMultipartParts(old.Parts), cloneObjectMultipartMetadata(old.Metadata)
 	return cloneObjectMultipartUpload(old), nil

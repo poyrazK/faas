@@ -1,4 +1,4 @@
--- ADR-1546: lock current native inputs/instance first, then the parent lease and source.
+-- ADR-1576: lock current native inputs/instance first, then the parent lease and source.
 -- name: LockFunctionMigrationAdmissionLease :one
 SELECT * FROM migration_leases
 WHERE instance_id=sqlc.arg(instance_id)::uuid AND lease_token=sqlc.arg(lease_token)::text FOR UPDATE;

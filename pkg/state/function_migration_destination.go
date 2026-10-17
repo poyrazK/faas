@@ -1,6 +1,6 @@
 package state
 
-// adr: 1547. Destination readiness and ownership are separate durable phases.
+// adr: 1577. Destination readiness and ownership are separate durable phases.
 
 import (
 	"context"
