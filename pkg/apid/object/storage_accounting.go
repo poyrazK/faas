@@ -35,7 +35,7 @@ func ValidateObjectStorageBillingSetup(provider billing.Provider, registry *obje
 	if !registry.Pricing.Valid() {
 		return errors.New("apid: object storage billing requires a valid object-storage rate card")
 	}
-	// Every Gregale charge is in the billing currency (ADR-1350).
+	// Every Gregale charge is in the billing currency (ADR-1430).
 	if registry.Pricing.Currency != api.BillingCurrency {
 		return fmt.Errorf("apid: object storage billing requires %s pricing, got %q", api.BillingCurrency, registry.Pricing.Currency)
 	}

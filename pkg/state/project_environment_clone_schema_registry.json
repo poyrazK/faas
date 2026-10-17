@@ -11497,6 +11497,8 @@
       "name",
       "published",
       "published_version",
+      "test_report",
+      "test_suite",
       "updated_at",
       "version"
     ],
@@ -11542,6 +11544,66 @@
       "window_seconds"
     ],
     "kind": "configuration"
+  },
+  {
+    "table": "workflow_automation_live_baseline_promotions",
+    "columns": [
+      "app_id",
+      "baseline_name",
+      "name",
+      "promoted_at",
+      "promotion_id",
+      "receipt",
+      "revision",
+      "suite_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "workflow_automation_live_baseline_retirements",
+    "columns": [
+      "app_id",
+      "baseline_name",
+      "name",
+      "receipt",
+      "retirement_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "workflow_automation_live_suites",
+    "columns": [
+      "app_id",
+      "automation_version",
+      "cases",
+      "created_at",
+      "deployment_id",
+      "id",
+      "managed",
+      "name",
+      "published_version",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "workflow_automation_live_verifications",
+    "columns": [
+      "app_id",
+      "automation_version",
+      "case_name",
+      "created_at",
+      "deployment_id",
+      "idempotency_key",
+      "inputs_hash",
+      "live_test",
+      "name",
+      "published_version",
+      "report",
+      "request_fingerprint",
+      "run_id"
+    ],
+    "kind": "operational"
   },
   {
     "table": "workflow_automation_publish_policies",

@@ -76,7 +76,7 @@ actual UTC-month close and event delivery:
 | `FAAS_POLAR_OBJECT_STORAGE_USAGE_EVENT_NAME` | Event filter; default `faas_object_storage_usage` |
 
 The object-storage rate card remains in the object-storage registry and must
-use USD, the billing currency (ADR-1350). At month close Gregale freezes exact storage, request, and egress
+use USD, the billing currency (ADR-1430). At month close Gregale freezes exact storage, request, and egress
 components, then sends their total as an integer `charge_millicents` quantity.
 The Polar metered price must be USD `0.001` cents per unit. Each product can
 therefore show one Object storage usage line while Gregale retains the detailed

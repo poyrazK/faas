@@ -1,0 +1,18 @@
+{{define "automation-live-verification"}}
+<section id="automation-live-verification"><h2>Verify a saved case with real handlers</h2>
+<p>Live verification calls the published automation and its deployed handlers. Choose a saved case with synthetic input and separate live expectations. Mocks are ignored. Configure live expectations in the case editor, then save test data.</p>
+{{if .Data.LiveError}}<p class="notice">{{.Data.LiveError}}</p>{{end}}
+{{if .Data.LiveEditorChanged}}<p class="notice">The editor has unsaved test data. Save it before starting verification. Existing live results describe their frozen saved case.</p>{{end}}
+{{if and .Data.Published .Data.LiveHistory}}{{with .Data.LiveHistory}}
+<p>Published revision: <strong>{{.PublishedVersion}}</strong>. Deployment: <code>{{if .DeploymentID}}{{.DeploymentID}}{{else}}Unavailable{{end}}</code>.</p>
+<input type="hidden" name="live_published_version" value="{{.PublishedVersion}}"><input type="hidden" name="live_deployment_id" value="{{.DeploymentID}}">
+{{end}}{{if .Data.LiveCases}}<label for="live-case">Saved case to verify</label><select id="live-case" name="live_case">{{range .Data.LiveCases}}<option value="{{.}}" {{if eq . $.Data.LiveCase}}selected{{end}}>{{.}}</option>{{end}}</select>
+<label class="check"><input type="checkbox" name="confirm_live" value="yes">I confirm this case may perform real actions in my app and connected services.</label>
+<button type="submit" formaction="{{.Data.BaseURL}}/start-live" {{if or (not .Data.RuntimeEnabled) .Data.UnavailableReason .Data.LiveError (not .Data.LiveHistory.DeploymentID)}}disabled{{end}}>Start live verification</button>
+{{else}}<p>No saved case has live expectations. Configure and save one before starting.</p>{{end}}{{else}}<p>Save and publish this automation before starting live verification.</p>{{end}}
+{{with .Data.LiveHistory}}{{if .Verifications}}<details><summary>Recent live verifications</summary><ul>{{range .Verifications}}<li><a href="{{$.Data.BaseURL}}?name={{$.Data.Name}}&amp;verification={{.RunID}}">{{.CaseName}} · {{.RunStatus}} · {{.CreatedAt.UTC.Format "2006-01-02 15:04:05 UTC"}}</a>{{if .Outdated}} (outdated){{end}}</li>{{end}}</ul></details>{{end}}{{end}}
+{{template "automation-live-result" .}}
+{{template "automation-live-progress" .}}
+</section>
+{{template "automation-live-suites" .}}
+{{end}}

@@ -54,9 +54,13 @@ var jsonOutput bool
 // reliably translate those errors after Parse. This writer emits the first
 // diagnostic as one Problem object and discards FlagSet's follow-on usage
 // fragments; human mode retains the standard flag package output.
-func newFlagSet(name string, handling flag.ErrorHandling) *flag.FlagSet {
+func newFlagSet(name string, handling flag.ErrorHandling, output ...io.Writer) *flag.FlagSet {
 	fs := flag.NewFlagSet(name, handling)
-	setFlagOutput(fs, os.Stderr)
+	var writer io.Writer = os.Stderr
+	if len(output) > 0 {
+		writer = output[0]
+	}
+	setFlagOutput(fs, writer)
 	return fs
 }
 

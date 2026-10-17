@@ -10391,6 +10391,8 @@ type WorkflowAutomationDefinition struct {
 	PublishedVersion int64
 	Enabled          bool
 	UpdatedAt        pgtype.Timestamptz
+	TestSuite        []byte
+	TestReport       []byte
 }
 
 type WorkflowAutomationFailureGuard struct {
@@ -10423,6 +10425,54 @@ type WorkflowAutomationFailurePolicy struct {
 	FailureThreshold int32
 	MinCompletedRuns int32
 	WindowSeconds    int32
+}
+
+type WorkflowAutomationLiveBaselinePromotion struct {
+	PromotionID  pgtype.UUID
+	AppID        pgtype.UUID
+	Name         string
+	BaselineName string
+	Revision     int64
+	SuiteID      pgtype.UUID
+	Receipt      []byte
+	PromotedAt   pgtype.Timestamptz
+}
+
+type WorkflowAutomationLiveBaselineRetirement struct {
+	RetirementID pgtype.UUID
+	AppID        pgtype.UUID
+	Name         string
+	BaselineName string
+	Receipt      []byte
+}
+
+type WorkflowAutomationLiveSuite struct {
+	ID                pgtype.UUID
+	AppID             pgtype.UUID
+	Name              string
+	AutomationVersion int64
+	PublishedVersion  int64
+	DeploymentID      pgtype.UUID
+	Cases             []byte
+	CreatedAt         pgtype.Timestamptz
+	UpdatedAt         pgtype.Timestamptz
+	Managed           bool
+}
+
+type WorkflowAutomationLiveVerification struct {
+	RunID              pgtype.UUID
+	AppID              pgtype.UUID
+	Name               string
+	CaseName           string
+	AutomationVersion  int64
+	PublishedVersion   int64
+	DeploymentID       pgtype.UUID
+	InputsHash         string
+	LiveTest           []byte
+	IdempotencyKey     string
+	RequestFingerprint []byte
+	Report             []byte
+	CreatedAt          pgtype.Timestamptz
 }
 
 type WorkflowAutomationPublishPolicy struct {

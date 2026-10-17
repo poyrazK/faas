@@ -7,7 +7,7 @@ import (
 )
 
 // Gregale bills every plan fee, overage, credit, refund, invoice and budget in
-// one currency (ADR-1350). Money stays integer cents or millicents of it.
+// one currency (ADR-1430). Money stays integer cents or millicents of it.
 const (
 	// BillingCurrency is the ISO 4217 code of every Gregale charge.
 	BillingCurrency = financial.BillingCurrency
