@@ -18,6 +18,7 @@ func (s *server) configureMailOutbox(ctx context.Context, pool *pgxpool.Pool, ge
 	s.mfaDisableCredentials = mailoutbox.NewMFADisableCredentials(pool)
 	s.mfaDisableMailOutboxRequested = func() bool { return getenv(internalmail.MFADisableOutboxEnableEnv) == "1" }
 	s.magicLinkCredentials = mailoutbox.NewMagicLinkCredentials(pool)
+	s.mfaEnabledAlertOutboxRequested = func() bool { return getenv(internalmail.MFAEnabledAlertOutboxEnableEnv) == "1" }
 	s.passwordChangedAlertOutboxRequested = func() bool { return getenv(internalmail.PasswordChangedAlertOutboxEnableEnv) == "1" }
 	s.mfaDisabledAlertOutboxRequested = func() bool { return getenv(internalmail.MFADisabledAlertOutboxEnableEnv) == "1" }
 	s.mfaRecoveryAlertOutboxRequested = func() bool { return getenv(internalmail.MFARecoveryAlertOutboxEnableEnv) == "1" }
@@ -38,6 +39,9 @@ func (s *server) configureMailOutbox(ctx context.Context, pool *pgxpool.Pool, ge
 		return err
 	}
 	if err := outbox.ConfigureMFADisable(ctx, getenv); err != nil {
+		return err
+	}
+	if err := outbox.ConfigureMFAEnabledAlert(ctx, getenv); err != nil {
 		return err
 	}
 	if err := outbox.ConfigurePasswordChangedAlert(ctx, getenv); err != nil {

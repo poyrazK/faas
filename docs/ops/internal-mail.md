@@ -2895,3 +2895,65 @@ pending alerts. Base maintenance can still expire and erase them. Terminal
 settlement and reconciliation erase recipient and ciphertext; account erasure
 cascades intent while opaque audit survives. Migration Down refuses intent or
 audit history. No resend override or deadline extension is provided.
+
+## Durable MFA-enabled security alerts
+
+`FAAS_INTERNAL_MAIL_MFA_ENABLED_ALERT_OUTBOX_ENABLED=0` independently gates
+internal activation alerts in apid, maild and private reconciliation. Units and
+examples keep it off. Apply
+[`20261017102802761_platform_mail_mfa_enabled_alert_outbox.sql`](../../migrations/20261017102802761_platform_mail_mfa_enabled_alert_outbox.sql)
+before opting in. Enabled startup checks the migrated constraint and all live
+pending reader references. See
+[ADR-20261017102802](../adr/20261017102802-mail-mfa-enabled-alerts.md).
+
+It requires the existing master, producer, scheduling and producer-outbox gates,
+scoped `internal-producer` transport and dedicated apid readers under
+`FAAS_INTERNAL_MAIL_VERIFICATION_IDENTITY_PATH` and
+`FAAS_INTERNAL_MAIL_VERIFICATION_PREVIOUS_IDENTITY_PATH`. No origin is required.
+Keep current/previous readers needed by every enabled family's pending payloads.
+These readers remain separate from host MFA identities. Neither identity family
+is supplied to maild or mailctl.
+
+Enabled confirmation verifies the locked authenticator and saves activation,
+policy clear, revision and encrypted alert in one transaction. Queue saturation,
+recovery hold, failed persistence or late gate withdrawal rolls back all changes;
+there is no fallback to confirmation without an alert. TOTP is checked after
+owner waits and again after saving intent, so a blocked insert cannot extend
+the proof window. Recovery hashes remain unchanged and are not read during
+confirmation. No secret, code or QR URL enters the alert payload or logs.
+
+Enabled setup keeps the once-only secret/recovery-code response and emits no
+activation event until confirmation. A conditional pending-only write prevents
+a setup request started earlier from replacing a confirmed authenticator or its
+recovery codes. Unconfirmed setup can still be deliberately replaced. Both
+setup and new activation refuse a held recovery generation.
+
+Repeated confirmation verifies the current TOTP before returning success. It
+retains activation time/revision, creates no duplicate event and does not
+backfill old enrollment after opt-in. It also preserves any later explicit
+policy change. An explicit disable followed by new setup and confirmation
+creates a new event. Existing authentication, CSRF, TOTP limits, response shapes
+and audit aliases stay in place.
+
+Post-commit cookie reissue retains the same SID, clears `mfa_pending` and grants
+no step-up stamp or new session row. Its existing non-fatal failure contract
+remains: committed enrollment and alert survive a cookie reissue failure.
+
+The encrypted event contains only database activation time. Retries retain that
+time, the frozen V1 body, original 24-hour deadline and
+`mfa-enabled:<intent UUID>` admission key. Later MFA/password changes, suspension
+or abuse holds do not rewrite history. Changed address or account deletion stops
+pending delivery. Shared suppression, producer budgets, leases and recovery
+quarantine remain in force.
+
+Private inspection exposes existing bounded metadata only. Receipt
+acknowledgement and exact audit replay require this own flag plus existing
+reconciliation/operator gates. Acknowledgement cannot send mail or reset a
+deadline. Admission is separate from destination delivery evidence; live
+qualification remains separate.
+
+Flag rollback restores the previous setup/confirmation flows for later calls
+and pauses pending alert handoff. Base maintenance still expires and erases
+payloads. Terminal settlement and reconciliation erase recipient/ciphertext;
+hard account erasure cascades intent while opaque audit survives. Migration Down
+refuses activation intent or audit history. No forced resend is provided.

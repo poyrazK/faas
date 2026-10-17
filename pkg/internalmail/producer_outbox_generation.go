@@ -15,6 +15,7 @@ const ProducerOutboxPasswordResetTemplate = "password_reset"
 const ProducerOutboxMagicLinkTemplate = "magic_link"
 const ProducerOutboxMFADisableTemplate = "mfa_disable_request"
 const ProducerOutboxMFADisabledAlertTemplate = "mfa_disabled"
+const ProducerOutboxMFAEnabledAlertTemplate = "mfa_enabled"
 const ProducerOutboxPasswordChangedAlertTemplate = "password_changed"
 const ProducerOutboxMFARecoveryAlertTemplate = "mfa_recovery_used"
 
@@ -36,6 +37,10 @@ func (s *Service) mfaRecoveryAlertOutboxEnabled() bool {
 
 func (s *Service) mfaDisableOutboxEnabled() bool {
 	return s.producerOutboxEnabled() && s.MFADisableOutboxEnabled != nil && s.MFADisableOutboxEnabled()
+}
+
+func (s *Service) mfaEnabledAlertOutboxEnabled() bool {
+	return s.producerOutboxEnabled() && s.MFAEnabledAlertOutboxEnabled != nil && s.MFAEnabledAlertOutboxEnabled()
 }
 
 func (s *Service) passwordChangedAlertOutboxEnabled() bool {
@@ -73,6 +78,8 @@ func (s *Service) producerOutboxContext(ctx context.Context, header http.Header)
 			gate = s.magicLinkOutboxEnabled
 		case ProducerOutboxMFADisableTemplate:
 			gate = s.mfaDisableOutboxEnabled
+		case ProducerOutboxMFAEnabledAlertTemplate:
+			gate = s.mfaEnabledAlertOutboxEnabled
 		case ProducerOutboxPasswordChangedAlertTemplate:
 			gate = s.passwordChangedAlertOutboxEnabled
 		case ProducerOutboxMFADisabledAlertTemplate:
@@ -80,7 +87,7 @@ func (s *Service) producerOutboxContext(ctx context.Context, header http.Header)
 		case ProducerOutboxMFARecoveryAlertTemplate:
 			gate = s.mfaRecoveryAlertOutboxEnabled
 		default:
-			if !s.verificationOutboxEnabled() && !s.passwordResetOutboxEnabled() && !s.magicLinkOutboxEnabled() && !s.mfaRecoveryAlertOutboxEnabled() && !s.mfaDisableOutboxEnabled() && !s.mfaDisabledAlertOutboxEnabled() && !s.passwordChangedAlertOutboxEnabled() {
+			if !s.verificationOutboxEnabled() && !s.passwordResetOutboxEnabled() && !s.magicLinkOutboxEnabled() && !s.mfaRecoveryAlertOutboxEnabled() && !s.mfaDisableOutboxEnabled() && !s.mfaDisabledAlertOutboxEnabled() && !s.passwordChangedAlertOutboxEnabled() && !s.mfaEnabledAlertOutboxEnabled() {
 				return ctx, ErrDisabled
 			}
 			return ctx, ErrInvalid

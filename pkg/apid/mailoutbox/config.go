@@ -31,6 +31,7 @@ type Service struct {
 	mfaDisable                *credentialConfig
 	mfaRecoveryAlert          *credentialConfig
 	mfaDisabledAlert          *credentialConfig
+	mfaEnabledAlert           *credentialConfig
 	passwordChangedAlert      *credentialConfig
 	requested, enabled        func() bool
 }

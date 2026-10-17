@@ -65,6 +65,7 @@ type Reconciler struct {
 	magicLinkEnabled            func() bool
 	mfaRecoveryAlertEnabled     func() bool
 	mfaDisabledAlertEnabled     func() bool
+	mfaEnabledAlertEnabled      func() bool
 	passwordChangedAlertEnabled func() bool
 	mfaDisableEnabled           func() bool
 }
@@ -90,6 +91,8 @@ func (s *Reconciler) templateEnabled(template string) bool {
 		return s.magicLinkEnabled != nil && s.magicLinkEnabled()
 	case MFADisableTemplate:
 		return s.mfaDisableEnabled != nil && s.mfaDisableEnabled()
+	case MFAEnabledAlertTemplate:
+		return s.mfaEnabledAlertEnabled != nil && s.mfaEnabledAlertEnabled()
 	case PasswordChangedAlertTemplate:
 		return s.passwordChangedAlertEnabled != nil && s.passwordChangedAlertEnabled()
 	case MFADisabledAlertTemplate:
@@ -261,5 +264,11 @@ func reconciliationError(err error) error {
 func (s *Reconciler) WithPasswordChangedAlert(enabled func() bool) *Reconciler {
 	copy := *s
 	copy.passwordChangedAlertEnabled = enabled
+	return &copy
+}
+
+func (s *Reconciler) WithMFAEnabledAlert(enabled func() bool) *Reconciler {
+	copy := *s
+	copy.mfaEnabledAlertEnabled = enabled
 	return &copy
 }

@@ -59,6 +59,7 @@ type Service struct {
 	MagicLinkOutboxEnabled            func() bool
 	MFARecoveryAlertOutboxEnabled     func() bool
 	MFADisabledAlertOutboxEnabled     func() bool
+	MFAEnabledAlertOutboxEnabled      func() bool
 	PasswordChangedAlertOutboxEnabled func() bool
 	MFADisableOutboxEnabled           func() bool
 	OnDomainCheck                     func(error)

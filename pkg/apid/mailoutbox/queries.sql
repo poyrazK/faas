@@ -69,6 +69,8 @@ WITH candidate AS (
           AND o.verification_key_id=ANY(sqlc.arg(magic_link_keys)::text[]))
         OR (o.template='mfa_disable_request' AND sqlc.arg(mfa_disable_enabled)::boolean AND o.verification_origin=sqlc.arg(mfa_disable_origin)::text
           AND o.verification_key_id=ANY(sqlc.arg(mfa_disable_keys)::text[]))
+        OR (o.template='mfa_enabled' AND sqlc.arg(mfa_enabled_alert_enabled)::boolean
+          AND o.security_alert_key_id=ANY(sqlc.arg(mfa_enabled_alert_keys)::text[]))
         OR (o.template='password_changed' AND sqlc.arg(password_changed_alert_enabled)::boolean
           AND o.security_alert_key_id=ANY(sqlc.arg(password_changed_alert_keys)::text[]))
         OR (o.template='mfa_disabled' AND sqlc.arg(mfa_disabled_alert_enabled)::boolean
@@ -144,7 +146,7 @@ SELECT o.id,o.revision,o.state,o.template,o.from_address,o.expires_at,o.recovery
     coalesce(m.sender_address,'')::text AS sender_address
 FROM platform_mail_producer_outbox o
 LEFT JOIN internal_mail_messages m ON m.namespace=o.namespace AND m.producer_id=o.producer_id
-    AND m.idempotency_key=(CASE o.template WHEN 'email_verification' THEN 'verify-email:' WHEN 'password_reset' THEN 'password-reset:' WHEN 'magic_link' THEN 'magic-link:' WHEN 'mfa_recovery_used' THEN 'mfa-recovery-alert:' WHEN 'password_changed' THEN 'password-changed:' WHEN 'mfa_disabled' THEN 'mfa-disabled:' WHEN 'mfa_disable_request' THEN 'mfa-disable:' ELSE 'account-delete:' END)||o.id::text
+    AND m.idempotency_key=(CASE o.template WHEN 'email_verification' THEN 'verify-email:' WHEN 'password_reset' THEN 'password-reset:' WHEN 'magic_link' THEN 'magic-link:' WHEN 'mfa_recovery_used' THEN 'mfa-recovery-alert:' WHEN 'mfa_enabled' THEN 'mfa-enabled:' WHEN 'password_changed' THEN 'password-changed:' WHEN 'mfa_disabled' THEN 'mfa-disabled:' WHEN 'mfa_disable_request' THEN 'mfa-disable:' ELSE 'account-delete:' END)||o.id::text
 WHERE o.namespace=$1 AND o.id=$2;
 
 -- name: ReconciliationReady :exec
@@ -438,3 +440,37 @@ SELECT token_hash,expires_at,consumed_at FROM login_tokens WHERE token_hash=$1 A
 -- name: ConsumeLegacyPasswordResetToken :execrows
 UPDATE login_tokens SET consumed_at=clock_timestamp()
 WHERE token_hash=$1 AND account_id=$2 AND consumed_at IS NULL AND expires_at>clock_timestamp();
+
+-- name: MFAEnabledAlertReady :one
+SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_constraint c
+    JOIN pg_catalog.pg_class t ON t.oid=c.conrelid JOIN pg_catalog.pg_namespace n ON n.oid=t.relnamespace
+    WHERE n.nspname=current_schema() AND t.relname='platform_mail_producer_outbox'
+      AND c.conname='platform_mail_producer_outbox_security_alert_check'
+      AND position('mfa_enabled' in pg_catalog.pg_get_constraintdef(c.oid))>0)::boolean AS ready;
+
+-- name: MFAEnabledAlertKeyReferences :many
+SELECT DISTINCT security_alert_key_id FROM platform_mail_producer_outbox
+WHERE namespace=$1 AND producer_id=$2 AND template='mfa_enabled' AND state IN ('queued','claimed') AND expires_at>clock_timestamp();
+
+-- name: CreateMFAEnabledAlertIntent :exec
+INSERT INTO platform_mail_producer_outbox(id,account_id,namespace,producer_id,from_address,recipient_address,
+    template,template_version,expires_at,recovery_id,sealed_security_alert,security_alert_key_id)
+VALUES($1,$2,$3,$4,$5,$6,'mfa_enabled',1,$7,$8,$9,$10);
+
+
+
+-- Confirmation verifies the secret only after acquiring the account lock;
+-- no recovery-code hashes or password material are needed in this projection.
+-- name: LockMFAEnabledEnrollmentAccount :one
+SELECT id,email,status,abuse_hold_at,mfa_enrolled_at,mfa_secret_encrypted FROM accounts WHERE id=$1 FOR UPDATE;
+
+-- Conditional preparation prevents an enrollment request that started earlier
+-- from replacing a factor after another request has confirmed it.
+-- name: SavePendingMFAEnrollment :execrows
+UPDATE accounts SET mfa_secret_encrypted=$2,mfa_recovery_codes_hash=$3,mfa_revision=mfa_revision+1
+WHERE id=$1 AND mfa_enrolled_at IS NULL;
+
+-- name: ConfirmMFAEnabledEnrollment :one
+UPDATE accounts SET mfa_enrolled_at=clock_timestamp(),mfa_required=false,mfa_revision=mfa_revision+1
+WHERE id=$1 AND mfa_enrolled_at IS NULL AND mfa_secret_encrypted IS NOT NULL
+RETURNING mfa_enrolled_at;

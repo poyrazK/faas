@@ -45,7 +45,7 @@ SELECT o.id,o.revision,o.state,o.template,o.from_address,o.expires_at,o.recovery
     coalesce(m.sender_address,'')::text AS sender_address
 FROM platform_mail_producer_outbox o
 LEFT JOIN internal_mail_messages m ON m.namespace=o.namespace AND m.producer_id=o.producer_id
-    AND m.idempotency_key=(CASE o.template WHEN 'email_verification' THEN 'verify-email:' WHEN 'password_reset' THEN 'password-reset:' WHEN 'magic_link' THEN 'magic-link:' WHEN 'mfa_recovery_used' THEN 'mfa-recovery-alert:' WHEN 'password_changed' THEN 'password-changed:' WHEN 'mfa_disabled' THEN 'mfa-disabled:' WHEN 'mfa_disable_request' THEN 'mfa-disable:' ELSE 'account-delete:' END)||o.id::text
+    AND m.idempotency_key=(CASE o.template WHEN 'email_verification' THEN 'verify-email:' WHEN 'password_reset' THEN 'password-reset:' WHEN 'magic_link' THEN 'magic-link:' WHEN 'mfa_recovery_used' THEN 'mfa-recovery-alert:' WHEN 'mfa_enabled' THEN 'mfa-enabled:' WHEN 'password_changed' THEN 'password-changed:' WHEN 'mfa_disabled' THEN 'mfa-disabled:' WHEN 'mfa_disable_request' THEN 'mfa-disable:' ELSE 'account-delete:' END)||o.id::text
 WHERE o.namespace=$1 AND o.id=$2
 `
 
@@ -107,13 +107,15 @@ WITH candidate AS (
           AND o.verification_key_id=ANY($14::text[]))
         OR (o.template='mfa_disable_request' AND $15::boolean AND o.verification_origin=$16::text
           AND o.verification_key_id=ANY($17::text[]))
-        OR (o.template='password_changed' AND $18::boolean
+        OR (o.template='mfa_enabled' AND $18::boolean
           AND o.security_alert_key_id=ANY($19::text[]))
-        OR (o.template='mfa_disabled' AND $20::boolean
+        OR (o.template='password_changed' AND $20::boolean
           AND o.security_alert_key_id=ANY($21::text[]))
-        OR (o.template='mfa_recovery_used' AND $22::boolean
-          AND o.security_alert_key_id=ANY($23::text[])))
-      AND o.attempts<$24 AND o.expires_at>clock_timestamp()
+        OR (o.template='mfa_disabled' AND $22::boolean
+          AND o.security_alert_key_id=ANY($23::text[]))
+        OR (o.template='mfa_recovery_used' AND $24::boolean
+          AND o.security_alert_key_id=ANY($25::text[])))
+      AND o.attempts<$26 AND o.expires_at>clock_timestamp()
       AND ((o.state='queued' AND o.next_attempt_at<=clock_timestamp()) OR (o.state='claimed' AND o.lease_until<=clock_timestamp()))
       AND NOT EXISTS(SELECT 1 FROM internal_mail_recovery_state s WHERE s.namespace=o.namespace AND (s.held OR s.recovery_id<>o.recovery_id))
     ORDER BY next_attempt_at,id LIMIT 1 FOR UPDATE SKIP LOCKED
@@ -141,6 +143,8 @@ type ClaimParams struct {
 	MfaDisableEnabled           bool
 	MfaDisableOrigin            string
 	MfaDisableKeys              []string
+	MfaEnabledAlertEnabled      bool
+	MfaEnabledAlertKeys         []string
 	PasswordChangedAlertEnabled bool
 	PasswordChangedAlertKeys    []string
 	MfaDisabledAlertEnabled     bool
@@ -169,6 +173,8 @@ func (q *Queries) Claim(ctx context.Context, db DBTX, arg ClaimParams) (Platform
 		arg.MfaDisableEnabled,
 		arg.MfaDisableOrigin,
 		arg.MfaDisableKeys,
+		arg.MfaEnabledAlertEnabled,
+		arg.MfaEnabledAlertKeys,
 		arg.PasswordChangedAlertEnabled,
 		arg.PasswordChangedAlertKeys,
 		arg.MfaDisabledAlertEnabled,
@@ -228,6 +234,19 @@ UPDATE accounts SET mfa_secret_encrypted=NULL,mfa_recovery_codes_hash=NULL,mfa_e
 func (q *Queries) ClearMFADisableFactor(ctx context.Context, db DBTX, id pgtype.UUID) error {
 	_, err := db.Exec(ctx, clearMFADisableFactor, id)
 	return err
+}
+
+const confirmMFAEnabledEnrollment = `-- name: ConfirmMFAEnabledEnrollment :one
+UPDATE accounts SET mfa_enrolled_at=clock_timestamp(),mfa_required=false,mfa_revision=mfa_revision+1
+WHERE id=$1 AND mfa_enrolled_at IS NULL AND mfa_secret_encrypted IS NOT NULL
+RETURNING mfa_enrolled_at
+`
+
+func (q *Queries) ConfirmMFAEnabledEnrollment(ctx context.Context, db DBTX, id pgtype.UUID) (pgtype.Timestamptz, error) {
+	row := db.QueryRow(ctx, confirmMFAEnabledEnrollment, id)
+	var mfa_enrolled_at pgtype.Timestamptz
+	err := row.Scan(&mfa_enrolled_at)
+	return mfa_enrolled_at, err
 }
 
 const consumeLegacyMFADisableRequest = `-- name: ConsumeLegacyMFADisableRequest :execrows
@@ -467,6 +486,41 @@ type CreateMFADisabledAlertIntentParams struct {
 
 func (q *Queries) CreateMFADisabledAlertIntent(ctx context.Context, db DBTX, arg CreateMFADisabledAlertIntentParams) error {
 	_, err := db.Exec(ctx, createMFADisabledAlertIntent,
+		arg.ID,
+		arg.AccountID,
+		arg.Namespace,
+		arg.ProducerID,
+		arg.FromAddress,
+		arg.RecipientAddress,
+		arg.ExpiresAt,
+		arg.RecoveryID,
+		arg.SealedSecurityAlert,
+		arg.SecurityAlertKeyID,
+	)
+	return err
+}
+
+const createMFAEnabledAlertIntent = `-- name: CreateMFAEnabledAlertIntent :exec
+INSERT INTO platform_mail_producer_outbox(id,account_id,namespace,producer_id,from_address,recipient_address,
+    template,template_version,expires_at,recovery_id,sealed_security_alert,security_alert_key_id)
+VALUES($1,$2,$3,$4,$5,$6,'mfa_enabled',1,$7,$8,$9,$10)
+`
+
+type CreateMFAEnabledAlertIntentParams struct {
+	ID                  pgtype.UUID
+	AccountID           pgtype.UUID
+	Namespace           string
+	ProducerID          string
+	FromAddress         string
+	RecipientAddress    string
+	ExpiresAt           pgtype.Timestamptz
+	RecoveryID          pgtype.UUID
+	SealedSecurityAlert []byte
+	SecurityAlertKeyID  string
+}
+
+func (q *Queries) CreateMFAEnabledAlertIntent(ctx context.Context, db DBTX, arg CreateMFAEnabledAlertIntentParams) error {
+	_, err := db.Exec(ctx, createMFAEnabledAlertIntent,
 		arg.ID,
 		arg.AccountID,
 		arg.Namespace,
@@ -1193,6 +1247,35 @@ func (q *Queries) LockMFADisabledAccount(ctx context.Context, db DBTX, id pgtype
 	return i, err
 }
 
+const lockMFAEnabledEnrollmentAccount = `-- name: LockMFAEnabledEnrollmentAccount :one
+SELECT id,email,status,abuse_hold_at,mfa_enrolled_at,mfa_secret_encrypted FROM accounts WHERE id=$1 FOR UPDATE
+`
+
+type LockMFAEnabledEnrollmentAccountRow struct {
+	ID                 pgtype.UUID
+	Email              string
+	Status             string
+	AbuseHoldAt        pgtype.Timestamptz
+	MfaEnrolledAt      pgtype.Timestamptz
+	MfaSecretEncrypted []byte
+}
+
+// Confirmation verifies the secret only after acquiring the account lock;
+// no recovery-code hashes or password material are needed in this projection.
+func (q *Queries) LockMFAEnabledEnrollmentAccount(ctx context.Context, db DBTX, id pgtype.UUID) (LockMFAEnabledEnrollmentAccountRow, error) {
+	row := db.QueryRow(ctx, lockMFAEnabledEnrollmentAccount, id)
+	var i LockMFAEnabledEnrollmentAccountRow
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.Status,
+		&i.AbuseHoldAt,
+		&i.MfaEnrolledAt,
+		&i.MfaSecretEncrypted,
+	)
+	return i, err
+}
+
 const lockMFARecoveryAlertAccount = `-- name: LockMFARecoveryAlertAccount :one
 SELECT id,email,status,abuse_hold_at,mfa_enrolled_at,mfa_recovery_codes_hash FROM accounts WHERE id=$1 FOR UPDATE
 `
@@ -1543,6 +1626,51 @@ func (q *Queries) MFADisabledPasswordProof(ctx context.Context, db DBTX, id pgty
 	var i MFADisabledPasswordProofRow
 	err := row.Scan(&i.PasswordResetRevision, &i.MfaRevision, &i.Hash)
 	return i, err
+}
+
+const mFAEnabledAlertKeyReferences = `-- name: MFAEnabledAlertKeyReferences :many
+SELECT DISTINCT security_alert_key_id FROM platform_mail_producer_outbox
+WHERE namespace=$1 AND producer_id=$2 AND template='mfa_enabled' AND state IN ('queued','claimed') AND expires_at>clock_timestamp()
+`
+
+type MFAEnabledAlertKeyReferencesParams struct {
+	Namespace  string
+	ProducerID string
+}
+
+func (q *Queries) MFAEnabledAlertKeyReferences(ctx context.Context, db DBTX, arg MFAEnabledAlertKeyReferencesParams) ([]string, error) {
+	rows, err := db.Query(ctx, mFAEnabledAlertKeyReferences, arg.Namespace, arg.ProducerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var security_alert_key_id string
+		if err := rows.Scan(&security_alert_key_id); err != nil {
+			return nil, err
+		}
+		items = append(items, security_alert_key_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const mFAEnabledAlertReady = `-- name: MFAEnabledAlertReady :one
+SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_constraint c
+    JOIN pg_catalog.pg_class t ON t.oid=c.conrelid JOIN pg_catalog.pg_namespace n ON n.oid=t.relnamespace
+    WHERE n.nspname=current_schema() AND t.relname='platform_mail_producer_outbox'
+      AND c.conname='platform_mail_producer_outbox_security_alert_check'
+      AND position('mfa_enabled' in pg_catalog.pg_get_constraintdef(c.oid))>0)::boolean AS ready
+`
+
+func (q *Queries) MFAEnabledAlertReady(ctx context.Context, db DBTX) (bool, error) {
+	row := db.QueryRow(ctx, mFAEnabledAlertReady)
+	var ready bool
+	err := row.Scan(&ready)
+	return ready, err
 }
 
 const mFARecoveryAlertKeyReferences = `-- name: MFARecoveryAlertKeyReferences :many
@@ -2060,6 +2188,27 @@ UPDATE sessions SET revoked_at=clock_timestamp() WHERE account_id=$1 AND revoked
 
 func (q *Queries) RevokeMagicLinkSessions(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error) {
 	result, err := db.Exec(ctx, revokeMagicLinkSessions, accountID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const savePendingMFAEnrollment = `-- name: SavePendingMFAEnrollment :execrows
+UPDATE accounts SET mfa_secret_encrypted=$2,mfa_recovery_codes_hash=$3,mfa_revision=mfa_revision+1
+WHERE id=$1 AND mfa_enrolled_at IS NULL
+`
+
+type SavePendingMFAEnrollmentParams struct {
+	ID                   pgtype.UUID
+	MfaSecretEncrypted   []byte
+	MfaRecoveryCodesHash [][]byte
+}
+
+// Conditional preparation prevents an enrollment request that started earlier
+// from replacing a factor after another request has confirmed it.
+func (q *Queries) SavePendingMFAEnrollment(ctx context.Context, db DBTX, arg SavePendingMFAEnrollmentParams) (int64, error) {
+	result, err := db.Exec(ctx, savePendingMFAEnrollment, arg.ID, arg.MfaSecretEncrypted, arg.MfaRecoveryCodesHash)
 	if err != nil {
 		return 0, err
 	}
