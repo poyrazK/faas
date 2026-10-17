@@ -37,10 +37,6 @@ type hooks struct{ realtime.NopHooks }
 
 func (hooks) AuthorizeChannel(context.Context, realtime.Event) (bool, error) { return true, nil }
 
-type adapter struct{ p *Proxy }
-
-func (a adapter) Attach(send func([]byte) error) realtime.LiveSession { return a.p.Attach(send) }
-
 // adr: 1384 — the whole path: a browser's v2 realtime connection carries a
 // sealed live query through realtimed's proxy to the database's hub and
 // back, with every frame checked by the reference client.
@@ -80,15 +76,16 @@ func TestRealtimeCarriesLiveQueries(t *testing.T) {
 	hubSrv := httptest.NewServer(hubMux)
 	defer hubSrv.Close()
 
-	proxy := New(StaticRouter(map[string]Route{secret.KID: {Database: "db_1", URL: "ws" + strings.TrimPrefix(hubSrv.URL, "http") + "/live"}}), nil)
+	proxy := New(nil, nil)
 	defer proxy.Close()
-	m := realtime.NewManager(realtime.Config{JWTAuthorizer: allowJWT{}, ResumePreview: true, HistoryReader: noHistory{}, Live: adapter{proxy}}, hooks{})
+	m := realtime.NewManager(realtime.Config{JWTAuthorizer: allowJWT{}, ResumePreview: true, HistoryReader: noHistory{}, Live: ForRealtime(proxy)}, hooks{})
 	defer func() { _ = m.Close() }()
 	if err := m.RegisterEndpoint(realtime.Endpoint{
 		ID: "ep", AppID: "app-1", AccountID: "acct-1", CallbackURL: "https://app.example",
 		AllowedOrigins: []string{"https://app.example"},
 		ClientAuth: realtime.AuthPolicy{Mode: realtime.AuthModeOIDCJWT, Issuer: "https://issuer.example",
 			JWKSURL: "https://issuer.example/.well-known/jwks.json", Algorithms: []string{"RS256"}},
+		LiveRoutes: []realtime.LiveRoute{{KID: secret.KID, Database: "db_1", URL: "ws" + strings.TrimPrefix(hubSrv.URL, "http") + "/live"}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -159,5 +156,59 @@ func TestRealtimeCarriesLiveQueries(t *testing.T) {
 	}
 	if strings.Join(got, ",") != "3:c,2:b" {
 		t.Fatalf("feed %v", got)
+	}
+
+	// An endpoint whose app is not bound to the database has no route for
+	// the seal's key: the subscription is refused in realtimed.
+	unbound := realtime.Endpoint{
+		ID: "unbound", AppID: "app-2", AccountID: "acct-1", CallbackURL: "https://app.example",
+		AllowedOrigins: []string{"https://app.example"},
+		ClientAuth: realtime.AuthPolicy{Mode: realtime.AuthModeOIDCJWT, Issuer: "https://issuer.example",
+			JWKSURL: "https://issuer.example/.well-known/jwks.json", Algorithms: []string{"RS256"}},
+	}
+	if err := m.RegisterEndpoint(unbound); err != nil {
+		t.Fatal(err)
+	}
+	other, resp, err := dialer.Dial("ws"+strings.TrimPrefix(rtSrv.URL, "http")+realtime.ManagedPathPrefix+"unbound",
+		http.Header{"Authorization": {"Bearer test-jwt"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	defer other.Close()
+	frameOn := func(conn *websocket.Conn, subscription string) map[string]any {
+		t.Helper()
+		_ = conn.SetReadDeadline(time.Now().Add(30 * time.Second))
+		for {
+			_, data, err := conn.ReadMessage()
+			if err != nil {
+				t.Fatalf("waiting for %s: %v", subscription, err)
+			}
+			var f map[string]any
+			if json.Unmarshal(data, &f) == nil && f["subscription"] == subscription {
+				return f
+			}
+		}
+	}
+	data, _ = json.Marshal(liveproto.ClientFrame{Type: liveproto.TypeSubscribe, Subscription: "unbound", Sealed: sealed})
+	if err := other.WriteMessage(websocket.TextMessage, data); err != nil {
+		t.Fatal(err)
+	}
+	if f := frameOn(other, "unbound"); f["type"] != liveproto.TypeError || f["code"] != liveproto.CodeForbidden || f["closed"] != true {
+		t.Fatalf("unbound endpoint: %v", f)
+	}
+
+	// Binding the app (apid re-registers the endpoint with the route) applies
+	// to the open connection.
+	unbound.LiveRoutes = []realtime.LiveRoute{{KID: secret.KID, Database: "db_1", URL: "ws" + strings.TrimPrefix(hubSrv.URL, "http") + "/live"}}
+	if err := m.RegisterEndpoint(unbound); err != nil {
+		t.Fatal(err)
+	}
+	data, _ = json.Marshal(liveproto.ClientFrame{Type: liveproto.TypeSubscribe, Subscription: "bound", Sealed: sealed})
+	if err := other.WriteMessage(websocket.TextMessage, data); err != nil {
+		t.Fatal(err)
+	}
+	if f := frameOn(other, "bound"); f["type"] != liveproto.TypeRows {
+		t.Fatalf("after binding: %v", f)
 	}
 }

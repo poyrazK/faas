@@ -1,10 +1,19 @@
 -- Compile-time projection of the tables the live-query key queries read.
 -- Runtime schema is owned by migration 20261017121336518 (and, for
--- managed_postgres_databases, earlier managed Postgres migrations). This file
--- never executes against a database.
+-- managed_postgres_databases and managed_postgres_bindings, earlier managed
+-- Postgres migrations). This file never executes against a database.
 CREATE TABLE managed_postgres_databases (
  id uuid NOT NULL,
  account_id uuid NOT NULL,
+ state text NOT NULL,
+ backend_id text NOT NULL,
+ backend_fingerprint text NOT NULL,
+ deleted_at timestamptz
+);
+CREATE TABLE managed_postgres_bindings (
+ account_id uuid NOT NULL,
+ database_id uuid NOT NULL,
+ app_id uuid NOT NULL,
  state text NOT NULL,
  deleted_at timestamptz
 );

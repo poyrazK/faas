@@ -13,14 +13,15 @@ import (
 type fakeLive struct {
 	mu       sync.Mutex
 	received [][]byte
+	routes   func() []LiveRoute
 	send     func([]byte) error
 	closed   bool
 	got      chan struct{}
 }
 
-func (f *fakeLive) Attach(send func([]byte) error) LiveSession {
+func (f *fakeLive) Attach(routes func() []LiveRoute, send func([]byte) error) LiveSession {
 	f.mu.Lock()
-	f.send = send
+	f.routes, f.send = routes, send
 	f.mu.Unlock()
 	return f
 }
@@ -57,6 +58,65 @@ func newLiveTestManager(t *testing.T, live LiveQueries) *httptest.Server {
 	server := httptest.NewServer(m.Handler())
 	t.Cleanup(func() { server.Close(); _ = m.Close() })
 	return server
+}
+
+// adr: 1384 — an endpoint's live routes are checked when it registers, and
+// a live session reads them as they are now, so a re-registration reaches
+// connections already open.
+func TestLiveRoutesFollowRegistration(t *testing.T) {
+	route := LiveRoute{KID: "0123456789abcdef", Database: "db_1", URL: "wss://live.internal/db_1/live"}
+	for name, routes := range map[string][]LiveRoute{
+		"bad key":     {{KID: "XYZ", Database: "db_1", URL: route.URL}},
+		"repeated":    {route, route},
+		"no database": {{KID: route.KID, URL: route.URL}},
+		"http hub":    {{KID: route.KID, Database: "db_1", URL: "https://live.internal/live"}},
+		"credentials": {{KID: route.KID, Database: "db_1", URL: "wss://u:p@live.internal/live"}},
+	} {
+		if _, err := validLiveRoutes(routes); err == nil {
+			t.Errorf("%s: accepted %v", name, routes)
+		}
+	}
+
+	live := &fakeLive{got: make(chan struct{}, 4)}
+	m := NewManager(Config{
+		JWTAuthorizer: &recordingJWTAuthorizer{}, ResumePreview: true,
+		HistoryReader: &testResumeHistory{}, ResumePollInterval: 15 * time.Millisecond, Live: live,
+	}, &testChannelHooks{})
+	endpoint := Endpoint{
+		ID: "resume-endpoint", AppID: "app-1", AccountID: "acct-1", CallbackURL: "https://app.example",
+		AllowedOrigins: []string{"https://app.example"},
+		ClientAuth: AuthPolicy{
+			Mode: AuthModeOIDCJWT, Issuer: "https://issuer.example",
+			JWKSURL: "https://issuer.example/.well-known/jwks.json", Algorithms: []string{"RS256"},
+		},
+	}
+	if err := m.RegisterEndpoint(endpoint); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(m.Handler())
+	t.Cleanup(func() { server.Close(); _ = m.Close() })
+	client := dialResumeTest(t, server)
+	if err := client.WriteMessage(1, []byte(`{"type":"live.subscribe","subscription":"feed","sealed":"gls1.0123456789abcdef.x"}`)); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-live.got:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the live session never received the frame")
+	}
+	live.mu.Lock()
+	routes := live.routes
+	live.mu.Unlock()
+	if got := routes(); len(got) != 0 {
+		t.Fatalf("routes before binding = %v", got)
+	}
+	endpoint.LiveRoutes = []LiveRoute{route}
+	if err := m.RegisterEndpoint(endpoint); err != nil {
+		t.Fatal(err)
+	}
+	if got := routes(); len(got) != 1 || got[0] != route {
+		t.Fatalf("routes after re-registration = %v", got)
+	}
 }
 
 // adr: 1384 — v2 connections carry live.* frames to the live-query proxy

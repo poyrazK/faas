@@ -35,3 +35,17 @@ SELECT k.kid,k.sealed_secret,k.recipient,k.retires_at FROM managed_postgres_live
  WHERE k.database_id=sqlc.arg(database_id)::text::uuid AND d.deleted_at IS NULL AND d.state NOT IN ('deleting','deleted')
  AND (k.retires_at IS NULL OR k.retires_at>clock_timestamp())
  ORDER BY k.created_at, k.kid;
+
+-- name: AppLiveRoutes :many
+SELECT DISTINCT k.kid,d.id::text AS database_id,d.backend_id,d.backend_fingerprint FROM managed_postgres_bindings b
+ JOIN managed_postgres_databases d ON d.id=b.database_id AND d.account_id=b.account_id
+ JOIN managed_postgres_live_keys k ON k.database_id=d.id
+ WHERE b.app_id=sqlc.arg(app_id)::text::uuid AND b.account_id=sqlc.arg(account_id)::text::uuid AND b.state IN ('ready','retiring')
+ AND d.deleted_at IS NULL AND d.state NOT IN ('deleting','deleted')
+ AND (k.retires_at IS NULL OR k.retires_at>clock_timestamp())
+ ORDER BY k.kid;
+
+-- name: LiveDatabaseApps :many
+SELECT DISTINCT b.app_id::text AS app_id FROM managed_postgres_bindings b
+ WHERE b.database_id=sqlc.arg(database_id)::text::uuid AND b.state IN ('ready','retiring')
+ ORDER BY 1;

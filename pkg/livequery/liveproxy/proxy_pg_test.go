@@ -106,9 +106,9 @@ type client struct {
 	errs    []*liveproto.Error
 }
 
-func newClient(t *testing.T, p *Proxy) *client {
+func newClient(t *testing.T, p *Proxy, router Router) *client {
 	c := &client{t: t, frames: make(chan []byte, 1024), results: map[string]*liveproto.Result{}}
-	c.session = p.Attach(func(frame []byte) error { c.frames <- append([]byte(nil), frame...); return nil })
+	c.session = p.Attach(router, func(frame []byte) error { c.frames <- append([]byte(nil), frame...); return nil })
 	return c
 }
 
@@ -238,7 +238,8 @@ func TestProxyCarriesLiveQueries(t *testing.T) {
 	go func() { _ = srv.Serve(tl) }()
 	defer srv.Close()
 
-	proxy := New(StaticRouter(map[string]Route{secret.KID: {Database: "db_1", URL: "ws://" + ln.Addr().String() + "/live"}}), nil)
+	router := StaticRouter(map[string]Route{secret.KID: {Database: "db_1", URL: "ws://" + ln.Addr().String() + "/live"}})
+	proxy := New(nil, nil)
 	defer proxy.Close()
 	sealFor := func(channel string, ttl time.Duration) string {
 		q := seal.Query{Database: "db_1", SQL: `SELECT id, body FROM messages WHERE channel_id = $1`, Params: []*string{&channel}}
@@ -249,7 +250,7 @@ func TestProxyCarriesLiveQueries(t *testing.T) {
 		return token
 	}
 
-	a, b := newClient(t, proxy), newClient(t, proxy)
+	a, b := newClient(t, proxy, router), newClient(t, proxy, router)
 	a.subscribe("feed", sealFor("1", time.Minute))
 	b.subscribe("feed", sealFor("2", time.Minute)) // the same client ID on another session
 	b.subscribe("other", sealFor("1", time.Minute))

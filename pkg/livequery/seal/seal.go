@@ -321,6 +321,10 @@ func KeyID(token string) string {
 	return parts[1]
 }
 
+// ValidKeyID reports whether kid is a well-formed key ID: 16 lowercase hex
+// digits.
+func ValidKeyID(kid string) bool { return validKID(kid) }
+
 // Opens reports whether the ring holds key ID kid and it has not retired.
 func (k *Keyring) Opens(kid string, now time.Time) bool {
 	key, ok := k.keys[kid]

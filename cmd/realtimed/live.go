@@ -1,55 +1,46 @@
 package main
 
 import (
-	"encoding/json"
+	"crypto/tls"
+	"crypto/x509"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
-	"strings"
 
 	"github.com/onebox-faas/faas/pkg/livequery/liveproxy"
-	"github.com/onebox-faas/faas/pkg/realtime"
 )
 
-// liveRoutes is FAAS_REALTIME_LIVE_ROUTES_FILE: which database each live
-// secret's key belongs to, and where that database's hub listens. Key IDs
-// are not secret; the secrets stay with the hubs.
-type liveRoutes struct {
-	Routes []struct {
-		KID      string `json:"kid"`
-		Database string `json:"database"`
-		URL      string `json:"url"`
-	} `json:"routes"`
-}
-
-// liveProxy builds the live-query proxy from the routes file, or returns
-// nil when live queries are off.
-func liveProxy(path string, log *slog.Logger) (*liveproxy.Proxy, error) {
-	if path == "" {
-		return nil, nil
+// liveProxy builds the live-query proxy (ADR-1384). Routes come with each
+// endpoint's registration; the environment only configures how hubs are
+// dialed. FAAS_REALTIME_LIVE_TLS_CA_FILE verifies wss:// hubs, and
+// FAAS_REALTIME_LIVE_TLS_CERT_FILE with _KEY_FILE is realtimed's client
+// certificate for them.
+func liveProxy(getenv func(string) string, log *slog.Logger) (*liveproxy.Proxy, error) {
+	caFile, certFile, keyFile := getenv("FAAS_REALTIME_LIVE_TLS_CA_FILE"), getenv("FAAS_REALTIME_LIVE_TLS_CERT_FILE"), getenv("FAAS_REALTIME_LIVE_TLS_KEY_FILE")
+	if (certFile == "") != (keyFile == "") {
+		return nil, errors.New("realtimed: FAAS_REALTIME_LIVE_TLS_CERT_FILE and FAAS_REALTIME_LIVE_TLS_KEY_FILE go together")
 	}
-	data, err := os.ReadFile(path) //nolint:forbidigo // operator-provisioned routes file named by the daemon's environment
-	if err != nil {
-		return nil, fmt.Errorf("realtimed: read live routes: %w", err)
+	if caFile == "" && certFile == "" {
+		return liveproxy.New(log, nil), nil
 	}
-	var file liveRoutes
-	if err := json.Unmarshal(data, &file); err != nil {
-		return nil, fmt.Errorf("realtimed: parse live routes: %w", err)
-	}
-	routes := map[string]liveproxy.Route{}
-	for _, r := range file.Routes {
-		if len(r.KID) != 16 || r.Database == "" || (!strings.HasPrefix(r.URL, "ws://") && !strings.HasPrefix(r.URL, "wss://")) {
-			return nil, fmt.Errorf("realtimed: live route %q: want a 16-character kid, a database and a ws:// or wss:// url", r.KID)
+	conf := &tls.Config{MinVersion: tls.VersionTLS13}
+	if caFile != "" {
+		pem, err := os.ReadFile(caFile) //nolint:forbidigo // operator-provisioned CA named by the daemon's environment
+		if err != nil {
+			return nil, fmt.Errorf("realtimed: read live hub CA: %w", err)
 		}
-		routes[r.KID] = liveproxy.Route{Database: r.Database, URL: r.URL}
+		conf.RootCAs = x509.NewCertPool()
+		if !conf.RootCAs.AppendCertsFromPEM(pem) {
+			return nil, errors.New("realtimed: FAAS_REALTIME_LIVE_TLS_CA_FILE holds no certificate")
+		}
 	}
-	log.Info("realtimed: live queries enabled", "routes", len(routes))
-	return liveproxy.New(liveproxy.StaticRouter(routes), log), nil
-}
-
-// liveAdapter gives the proxy the realtime package's interface.
-type liveAdapter struct{ proxy *liveproxy.Proxy }
-
-func (a liveAdapter) Attach(send func([]byte) error) realtime.LiveSession {
-	return a.proxy.Attach(send)
+	if certFile != "" {
+		cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+		if err != nil {
+			return nil, fmt.Errorf("realtimed: live hub client certificate: %w", err)
+		}
+		conf.Certificates = []tls.Certificate{cert}
+	}
+	return liveproxy.New(log, conf), nil
 }

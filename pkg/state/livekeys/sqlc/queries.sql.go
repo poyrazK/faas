@@ -11,6 +11,53 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const appLiveRoutes = `-- name: AppLiveRoutes :many
+SELECT DISTINCT k.kid,d.id::text AS database_id,d.backend_id,d.backend_fingerprint FROM managed_postgres_bindings b
+ JOIN managed_postgres_databases d ON d.id=b.database_id AND d.account_id=b.account_id
+ JOIN managed_postgres_live_keys k ON k.database_id=d.id
+ WHERE b.app_id=$1::text::uuid AND b.account_id=$2::text::uuid AND b.state IN ('ready','retiring')
+ AND d.deleted_at IS NULL AND d.state NOT IN ('deleting','deleted')
+ AND (k.retires_at IS NULL OR k.retires_at>clock_timestamp())
+ ORDER BY k.kid
+`
+
+type AppLiveRoutesParams struct {
+	AppID     string
+	AccountID string
+}
+
+type AppLiveRoutesRow struct {
+	Kid                string
+	DatabaseID         string
+	BackendID          string
+	BackendFingerprint string
+}
+
+func (q *Queries) AppLiveRoutes(ctx context.Context, db DBTX, arg AppLiveRoutesParams) ([]AppLiveRoutesRow, error) {
+	rows, err := db.Query(ctx, appLiveRoutes, arg.AppID, arg.AccountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AppLiveRoutesRow{}
+	for rows.Next() {
+		var i AppLiveRoutesRow
+		if err := rows.Scan(
+			&i.Kid,
+			&i.DatabaseID,
+			&i.BackendID,
+			&i.BackendFingerprint,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const deleteActiveLiveKey = `-- name: DeleteActiveLiveKey :execrows
 DELETE FROM managed_postgres_live_keys WHERE database_id=$1::text::uuid AND retires_at IS NULL
 `
@@ -115,6 +162,32 @@ func (q *Queries) ListLiveKeys(ctx context.Context, db DBTX, arg ListLiveKeysPar
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const liveDatabaseApps = `-- name: LiveDatabaseApps :many
+SELECT DISTINCT b.app_id::text AS app_id FROM managed_postgres_bindings b
+ WHERE b.database_id=$1::text::uuid AND b.state IN ('ready','retiring')
+ ORDER BY 1
+`
+
+func (q *Queries) LiveDatabaseApps(ctx context.Context, db DBTX, databaseID string) ([]string, error) {
+	rows, err := db.Query(ctx, liveDatabaseApps, databaseID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var app_id string
+		if err := rows.Scan(&app_id); err != nil {
+			return nil, err
+		}
+		items = append(items, app_id)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

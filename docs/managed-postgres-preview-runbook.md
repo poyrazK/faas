@@ -466,6 +466,15 @@ databases.
    revocations reach open subscriptions within that. The metrics
    `livequery_keys` and `livequery_key_refreshes_total{result}` show the
    ring and its reads.
+5. Give realtimed `FAAS_REALTIME_LIVE_TLS_CA_FILE`. When livequeryd sets
+   `-client-ca`, also give it `FAAS_REALTIME_LIVE_TLS_CERT_FILE` and
+   `FAAS_REALTIME_LIVE_TLS_KEY_FILE`. Roll realtimed out before apid.
+   apid registers each endpoint with the live routes of databases bound to
+   its app, and an older realtimed rejects that field.
+
+An app reaches a database's live queries only through its own realtime
+endpoints, and only while it holds a ready binding to that database. Other
+seals are refused with `forbidden` in realtimed.
 
 ### Customer commands
 

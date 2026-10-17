@@ -8,11 +8,21 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+type ManagedPostgresBinding struct {
+	AccountID  pgtype.UUID
+	DatabaseID pgtype.UUID
+	AppID      pgtype.UUID
+	State      string
+	DeletedAt  pgtype.Timestamptz
+}
+
 type ManagedPostgresDatabase struct {
-	ID        pgtype.UUID
-	AccountID pgtype.UUID
-	State     string
-	DeletedAt pgtype.Timestamptz
+	ID                 pgtype.UUID
+	AccountID          pgtype.UUID
+	State              string
+	BackendID          string
+	BackendFingerprint string
+	DeletedAt          pgtype.Timestamptz
 }
 
 type ManagedPostgresLiveKey struct {

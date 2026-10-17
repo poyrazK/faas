@@ -198,6 +198,11 @@ type Endpoint struct {
 	MaxConnections   int
 	MaxMessageBytes  int64
 	MaxConnectionAge time.Duration
+
+	// LiveRoutes are the live-query keys this endpoint's connections may use
+	// (ADR-1384): those of databases bound to the endpoint's app. A seal
+	// whose key is not listed is refused before it reaches a hub.
+	LiveRoutes []LiveRoute
 }
 
 // Hooks receives connection lifecycle events. Connect is synchronous with
@@ -612,6 +617,11 @@ func (m *Manager) RegisterEndpoint(e Endpoint) error {
 		allowedOrigins = append(allowedOrigins, normalized)
 	}
 	e.AllowedOrigins = allowedOrigins
+	routes, err := validLiveRoutes(e.LiveRoutes)
+	if err != nil {
+		return err
+	}
+	e.LiveRoutes = routes
 	if e.MaxConnections <= 0 || e.MaxConnections > m.cfg.MaxConnections {
 		e.MaxConnections = m.cfg.MaxConnections
 	}

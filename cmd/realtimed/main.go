@@ -18,6 +18,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/apidgrpc"
 	"github.com/onebox-faas/faas/pkg/genslot"
+	"github.com/onebox-faas/faas/pkg/livequery/liveproxy"
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/realtime"
 	"github.com/onebox-faas/faas/pkg/role"
@@ -134,19 +135,15 @@ func run(ctx context.Context, log *slog.Logger) error {
 		routeReporter = reader
 		fleetClient = reader
 	}
-	// Live queries (ADR-1384): an operator preview routed by a static file
-	// until apid distributes routes with endpoint registrations.
-	proxy, err := liveProxy(os.Getenv("FAAS_REALTIME_LIVE_ROUTES_FILE"), log)
+	// Live queries (ADR-1384): apid registers each endpoint with the live
+	// routes of databases bound to its app.
+	proxy, err := liveProxy(os.Getenv, log)
 	if err != nil {
 		return err
 	}
-	var live realtime.LiveQueries
-	if proxy != nil {
-		defer proxy.Close()
-		live = liveAdapter{proxy: proxy}
-	}
+	defer proxy.Close()
 	manager := realtime.NewManager(realtime.Config{
-		Live:                 live,
+		Live:                 liveproxy.ForRealtime(proxy),
 		MaxConnections:       envInt("FAAS_REALTIME_MAX_CONNECTIONS", 10_000),
 		MaxMessageBytes:      int64(envInt("FAAS_REALTIME_MAX_MESSAGE_BYTES", 1<<20)),
 		OutboundQueue:        envInt("FAAS_REALTIME_OUTBOUND_QUEUE", 64),

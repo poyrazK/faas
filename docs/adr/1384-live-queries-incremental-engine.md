@@ -764,8 +764,8 @@ Phase 0 did not cover:
       sessions.
     - A seal that expired while the upstream was away becomes a renewable
       `seal_expired`.
-  - **Routing preview.** `FAAS_REALTIME_LIVE_ROUTES_FILE` routes key IDs to
-    hubs until apid distributes routes with endpoint registrations.
+  - **Routing.** Routes arrive with each endpoint's registration (see "apid
+    enablement" below). The preview's static routes file is gone.
   - **Hub additions:**
     - a per-connection limit for trusted proxies (`livequeryd
       -max-per-connection`);
@@ -807,10 +807,30 @@ Phase 0 did not cover:
       stop live queries. apid is down with it, so no revocation is lost.
     - `-listen` serves realtimed; `-tls-cert` with `-client-ca` requires its
       client certificate. Browser origins are refused there.
+  - **Routes and the binding check.**
+    - apid registers each realtime endpoint with `LiveRoutes`. Each route
+      gives a key ID, its database and the database's hub, for every
+      unretired key of a live database that the endpoint's app holds a
+      ready or retiring binding to. An endpoint holds at most
+      `LiveQueryRoutesPerEndpoint` (64) routes.
+    - A live session reads its endpoint's routes at every subscribe and
+      renewal. Re-registration therefore reaches open connections, and a
+      seal whose key is not routed is refused in realtimed with
+      `forbidden`.
+    - A renewal must route to the subscription's own database.
+    - Enabling, rotating or disabling re-registers the endpoints of the
+      database's bound apps at once. Binding changes reach realtimed with
+      the 30-second endpoint reconciliation.
+    - realtimed dials hubs with `FAAS_REALTIME_LIVE_TLS_CA_FILE` and an
+      optional client certificate (`_CERT_FILE`, `_KEY_FILE`). A hub whose
+      URL changes is redialed and its subscriptions are resubscribed.
+    - Rollout order: realtimed before apid. An older realtimed rejects a
+      registration carrying `live_routes`, because the field is unknown to
+      it.
   - **Not yet:**
-    - route distribution to realtimed with endpoint registrations, and the
-      endpoint-must-be-bound-to-the-database check;
-    - ADR-1323 budget accounting for live bytes.
+    - ADR-1323 budget accounting for live bytes;
+    - realtimed's live connections and bytes in the per-account connection
+      limits.
 
 ## Consequences
 

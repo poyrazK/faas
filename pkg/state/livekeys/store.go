@@ -52,6 +52,14 @@ type NewKey struct {
 	Recipient string
 }
 
+// Route is one live key an app may route: a key of a database bound to it.
+type Route struct {
+	KID                string
+	DatabaseID         string
+	BackendID          string
+	BackendFingerprint string
+}
+
 // Store reads and writes managed_postgres_live_keys.
 type Store struct {
 	pool *pgxpool.Pool
@@ -144,6 +152,29 @@ func (s *Store) Ring(ctx context.Context, databaseID string) ([]SealedKey, error
 		keys = append(keys, SealedKey{KID: r.Kid, Sealed: r.SealedSecret, Recipient: r.Recipient, RetiresAt: timeOrZero(r.RetiresAt)})
 	}
 	return keys, nil
+}
+
+// AppRoutes lists the unretired keys of live databases the app is bound to
+// (a ready or retiring binding), ordered by key ID.
+func (s *Store) AppRoutes(ctx context.Context, accountID, appID string) ([]Route, error) {
+	rows, err := s.q.AppLiveRoutes(ctx, s.pool, sqlc.AppLiveRoutesParams{AppID: appID, AccountID: accountID})
+	if err != nil {
+		return nil, fmt.Errorf("livekeys: list app routes: %w", err)
+	}
+	routes := make([]Route, 0, len(rows))
+	for _, r := range rows {
+		routes = append(routes, Route{KID: r.Kid, DatabaseID: r.DatabaseID, BackendID: r.BackendID, BackendFingerprint: r.BackendFingerprint})
+	}
+	return routes, nil
+}
+
+// DatabaseApps lists the apps bound to a database.
+func (s *Store) DatabaseApps(ctx context.Context, databaseID string) ([]string, error) {
+	apps, err := s.q.LiveDatabaseApps(ctx, s.pool, databaseID)
+	if err != nil {
+		return nil, fmt.Errorf("livekeys: list bound apps: %w", err)
+	}
+	return apps, nil
 }
 
 // locked runs fn in a transaction holding the database row, so enabling,

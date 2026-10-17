@@ -11604,9 +11604,12 @@ const (
 	// A rotation may keep the previous secret for at most this long.
 	LiveQuerySecretRotationOverlapMax = 7 * 24 * time.Hour
 	LiveQuerySubscriptionIDMax        = 64
-	LiveQueryClientFrameMaxBytes   = 80 << 10
-	LiveQueryServerFrameMaxBytes   = 256 << 10
-	LiveQueryResultRowsMax         = 10000
+	// A realtime endpoint routes at most this many live secrets: two per
+	// live database its app is bound to.
+	LiveQueryRoutesPerEndpoint   = 64
+	LiveQueryClientFrameMaxBytes = 80 << 10
+	LiveQueryServerFrameMaxBytes = 256 << 10
+	LiveQueryResultRowsMax       = 10000
 	// Starting values for the operator preview, to be set per database class
 	// from measurements before general availability.
 	LiveQuerySubscriptionsPerDatabase   = 10000

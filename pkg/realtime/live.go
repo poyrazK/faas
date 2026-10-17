@@ -4,10 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
 	"github.com/gorilla/websocket"
+
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/livequery/seal"
 )
 
 // Live queries (ADR-1384) ride v2 connections as live.* frames. realtimed
@@ -19,9 +24,49 @@ import (
 
 // LiveQueries carries a connection's live frames.
 type LiveQueries interface {
-	// Attach starts a connection's live session. send queues a frame to the
-	// client and may be called from any goroutine.
-	Attach(send func(frame []byte) error) LiveSession
+	// Attach starts a connection's live session. routes returns the
+	// endpoint's current live routes; it is read at each subscription and
+	// renewal, so a re-registration applies to open connections. send queues
+	// a frame to the client and may be called from any goroutine.
+	Attach(routes func() []LiveRoute, send func(frame []byte) error) LiveSession
+}
+
+// LiveRoute is where seals made with one live secret are served.
+type LiveRoute struct {
+	KID      string `json:"kid"`      // the secret's key ID
+	Database string `json:"database"` // the database its seals name
+	URL      string `json:"url"`      // the hub, ws:// or wss://
+}
+
+// validLiveRoutes checks an endpoint's live routes.
+func validLiveRoutes(routes []LiveRoute) ([]LiveRoute, error) {
+	if len(routes) > api.LiveQueryRoutesPerEndpoint {
+		return nil, fmt.Errorf("realtime: %d live routes, at most %d", len(routes), api.LiveQueryRoutesPerEndpoint)
+	}
+	seen := make(map[string]bool, len(routes))
+	for _, r := range routes {
+		if !seal.ValidKeyID(r.KID) || seen[r.KID] {
+			return nil, fmt.Errorf("realtime: invalid or repeated live route key %q", r.KID)
+		}
+		if r.Database == "" || len(r.Database) > api.LiveQueryDatabaseIDMaxBytes {
+			return nil, fmt.Errorf("realtime: live route %s: invalid database", r.KID)
+		}
+		if u, err := url.Parse(r.URL); err != nil || (u.Scheme != "ws" && u.Scheme != "wss") || u.Host == "" || u.User != nil {
+			return nil, fmt.Errorf("realtime: live route %s: the hub must be a ws:// or wss:// URL", r.KID)
+		}
+		seen[r.KID] = true
+	}
+	return append([]LiveRoute(nil), routes...), nil
+}
+
+// liveRoutes returns the connection's endpoint's current live routes.
+func (c *connection) liveRoutes() []LiveRoute {
+	if c.state != nil {
+		if e := c.state.config.Load(); e != nil {
+			return e.LiveRoutes
+		}
+	}
+	return c.endpoint.LiveRoutes
 }
 
 // LiveSession is one connection's live queries.
@@ -57,7 +102,7 @@ func (m *Manager) handleLive(ctx context.Context, c *connection, data []byte, su
 	}
 	// The session's frames arrive from the hub, outside this frame's context.
 	c.liveOnce.Do(func() { //nolint:contextcheck // queued frames outlive the client frame that started the session
-		c.live = m.cfg.Live.Attach(func(frame []byte) error { return m.queueLive(context.Background(), c, frame) })
+		c.live = m.cfg.Live.Attach(c.liveRoutes, func(frame []byte) error { return m.queueLive(context.Background(), c, frame) })
 	})
 	c.live.Receive(ctx, data)
 }

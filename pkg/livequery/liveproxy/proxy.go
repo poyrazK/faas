@@ -3,7 +3,9 @@
 // owns client connections; each database's hub runs in livequeryd beside the
 // database and opens seals itself, so live secrets never leave the database
 // node. The proxy needs only routing: a seal's clear header names its key,
-// and the router maps the key to the database and its hub.
+// and the session's router maps the key to the database and its hub. A
+// realtime endpoint's router knows only the keys of databases bound to its
+// app, so a seal for any other database is refused before it reaches a hub.
 //
 // One upstream WebSocket per database carries every client subscription to
 // that database, each under an ID unique to its client session. The proxy
@@ -15,12 +17,12 @@ package liveproxy
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -29,6 +31,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/livequery/liveproto"
+	"github.com/onebox-faas/faas/pkg/livequery/seal"
 )
 
 // Route is where a database's live queries are served.
@@ -45,7 +48,6 @@ type Router func(ctx context.Context, kid string) (Route, error)
 
 // Proxy carries live frames for many client sessions.
 type Proxy struct {
-	router Router
 	dialer *websocket.Dialer
 	log    *slog.Logger
 
@@ -55,13 +57,14 @@ type Proxy struct {
 	closed    bool
 }
 
-// New creates a proxy.
-func New(router Router, log *slog.Logger) *Proxy {
+// New creates a proxy. tlsConfig, when set, is used to dial wss:// hubs:
+// its root CAs verify them and its certificate is presented to them.
+func New(log *slog.Logger, tlsConfig *tls.Config) *Proxy {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Proxy{router: router, log: log, upstreams: map[string]*upstream{},
-		dialer: &websocket.Dialer{HandshakeTimeout: 10 * time.Second}}
+	return &Proxy{log: log, upstreams: map[string]*upstream{},
+		dialer: &websocket.Dialer{HandshakeTimeout: 10 * time.Second, TLSClientConfig: tlsConfig}}
 }
 
 // Close drops every upstream.
@@ -78,9 +81,10 @@ func (p *Proxy) Close() {
 
 // Session is one client connection's live queries.
 type Session struct {
-	proxy *Proxy
-	id    uint64
-	send  func(frame []byte) error
+	proxy  *Proxy
+	router Router
+	id     uint64
+	send   func(frame []byte) error
 
 	mu     sync.Mutex
 	subs   map[string]*sub // by client subscription ID
@@ -105,10 +109,11 @@ func (s *sub) upstreamID() string {
 	return strconv.FormatUint(s.session.id, 10) + "-" + s.client
 }
 
-// Attach starts a client session. send queues a frame to the client; it must
-// be safe for concurrent use.
-func (p *Proxy) Attach(send func(frame []byte) error) *Session {
-	return &Session{proxy: p, id: p.nextID.Add(1), send: send, subs: map[string]*sub{}}
+// Attach starts a client session that may reach the databases router
+// routes to. send queues a frame to the client; it must be safe for
+// concurrent use.
+func (p *Proxy) Attach(router Router, send func(frame []byte) error) *Session {
+	return &Session{proxy: p, router: router, id: p.nextID.Add(1), send: send, subs: map[string]*sub{}}
 }
 
 // Receive handles one client frame.
@@ -168,14 +173,9 @@ func (s *Session) refuse(id, code, msg string, closed bool) {
 }
 
 func (s *Session) subscribe(ctx context.Context, f liveproto.ClientFrame) {
-	kid, ok := sealKID(f.Sealed)
-	if !ok {
-		s.refuse(f.Subscription, liveproto.CodeSealRejected, "malformed seal", true)
-		return
-	}
-	route, err := s.proxy.router(ctx, kid)
-	if err != nil {
-		s.refuse(f.Subscription, liveproto.CodeForbidden, "no live database for this seal", true)
+	route, code, msg := s.route(ctx, f.Sealed)
+	if code != "" {
+		s.refuse(f.Subscription, code, msg, true)
 		return
 	}
 	up, err := s.proxy.upstream(route) //nolint:contextcheck // the upstream outlives the client frame that dialed it
@@ -211,16 +211,33 @@ func (s *Session) renew(ctx context.Context, f liveproto.ClientFrame) {
 		s.refuse(f.Subscription, liveproto.CodeProtocol, "no such subscription", false)
 		return
 	}
+	// A renewal may use a rotated key, but it must still route to the
+	// subscription's database through this endpoint.
+	route, code, msg := s.route(ctx, f.Sealed)
+	if code == "" && route.Database != sb.up.route.Database {
+		code, msg = liveproto.CodeForbidden, "the renewal seals a query for another database"
+	}
+	if code != "" {
+		s.refuse(f.Subscription, code, msg, false)
+		return
+	}
 	sb.up.renew(sb, f.Sealed)
 }
 
-// sealKID reads the key ID from a seal's clear header, gls1.<kid>.<body>.
-func sealKID(sealed string) (string, bool) {
-	parts := strings.SplitN(sealed, ".", 3)
-	if len(parts) != 3 || parts[0] != "gls1" || len(parts[1]) != 16 {
-		return "", false
+// route finds where a seal is served, or the live.error code refusing it.
+func (s *Session) route(ctx context.Context, sealed string) (Route, string, string) {
+	kid := seal.KeyID(sealed)
+	if kid == "" {
+		return Route{}, liveproto.CodeSealRejected, "malformed seal"
 	}
-	return parts[1], true
+	if s.router == nil {
+		return Route{}, liveproto.CodeForbidden, "this endpoint serves no live database"
+	}
+	route, err := s.router(ctx, kid)
+	if err != nil {
+		return Route{}, liveproto.CodeForbidden, "this endpoint's app is not bound to a live database for this seal"
+	}
+	return route, "", ""
 }
 
 // upstream returns the database's upstream, dialing it when new.
@@ -231,6 +248,7 @@ func (p *Proxy) upstream(route Route) (*upstream, error) {
 		return nil, errors.New("liveproxy: closed")
 	}
 	if up := p.upstreams[route.Database]; up != nil {
+		up.retarget(route.URL)
 		return up, nil
 	}
 	up := &upstream{proxy: p, route: route, subs: map[string]*sub{}, wake: make(chan struct{}, 1), done: make(chan struct{})}
@@ -251,6 +269,21 @@ type upstream struct {
 	wake    chan struct{}
 	done    chan struct{}
 	once    sync.Once
+}
+
+// retarget points the upstream at a moved hub: the current connection is
+// dropped, and the redial subscribes everything again at the new URL.
+func (u *upstream) retarget(url string) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if u.route.URL == url {
+		return
+	}
+	u.proxy.log.Info("liveproxy: hub moved", "database", u.route.Database, "url", url)
+	u.route.URL = url
+	if u.conn != nil {
+		_ = u.conn.Close()
+	}
 }
 
 func (u *upstream) stop() {
@@ -340,8 +373,11 @@ func (u *upstream) run() {
 			return
 		default:
 		}
+		u.mu.Lock()
+		target := u.route.URL
+		u.mu.Unlock()
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		conn, resp, err := u.proxy.dialer.DialContext(ctx, u.route.URL, nil)
+		conn, resp, err := u.proxy.dialer.DialContext(ctx, target, nil)
 		cancel()
 		if resp != nil {
 			_ = resp.Body.Close()
