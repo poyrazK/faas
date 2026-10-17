@@ -181,7 +181,9 @@ function proxy(req, res, token, port, config, restBasePath, deadline) {
   })
   req.on('aborted', () => upstream.destroy())
   res.on('close', () => { if (!res.writableEnded) upstream.destroy() })
-  upstream.on('timeout', () => { if (deadline.check()) problem(res, 504, 'query_timeout'); upstream.destroy() })
+  // Socket timers may fire just before the monotonic request budget expires.
+  // Let the total deadline decide when to respond and abort upstream work.
+  upstream.on('timeout', () => deadline.check())
   upstream.on('error', () => { if (deadline.check()) problem(res, 503, 'data_api_unavailable') })
   req.pipe(upstream)
 }
