@@ -27,7 +27,7 @@ SELECT count(*)::bigint FROM platform_mail_producer_outbox WHERE namespace=$1 AN
 SELECT id,email,status,deletion_requested_at FROM accounts WHERE id=$1 FOR UPDATE;
 
 -- name: ShareAccount :one
-SELECT plan,last_quota_warning_at,quota_mail_revision,id,email,status,deletion_requested_at,email_verified_at,abuse_hold_at,password_reset_revision,mfa_enrolled_at,mfa_revision,past_due_at,billing_mail_revision FROM accounts WHERE id=$1 FOR SHARE;
+SELECT subscription_mail_revision,coalesce(stripe_subscription_item,'')::text AS stripe_subscription_item,plan,last_quota_warning_at,quota_mail_revision,id,email,status,deletion_requested_at,email_verified_at,abuse_hold_at,password_reset_revision,mfa_enrolled_at,mfa_revision,past_due_at,billing_mail_revision FROM accounts WHERE id=$1 FOR SHARE;
 
 -- name: ScheduleDeletion :one
 UPDATE accounts SET status='deleted_pending',deletion_requested_at=coalesce(deletion_requested_at,clock_timestamp())
@@ -69,6 +69,8 @@ WITH candidate AS (
           AND o.verification_key_id=ANY(sqlc.arg(magic_link_keys)::text[]))
         OR (o.template='mfa_disable_request' AND sqlc.arg(mfa_disable_enabled)::boolean AND o.verification_origin=sqlc.arg(mfa_disable_origin)::text
           AND o.verification_key_id=ANY(sqlc.arg(mfa_disable_keys)::text[]))
+        OR (o.template='subscription_ended' AND sqlc.arg(subscription_ended_enabled)::boolean
+          AND o.security_alert_key_id=ANY(sqlc.arg(subscription_ended_keys)::text[]))
         OR (o.template='quota_warning' AND sqlc.arg(quota_warning_enabled)::boolean
           AND o.security_alert_key_id=ANY(sqlc.arg(quota_warning_keys)::text[]))
         OR (o.template='nonpayment_deletion' AND sqlc.arg(nonpayment_deletion_enabled)::boolean
@@ -156,7 +158,7 @@ SELECT o.id,o.revision,o.state,o.template,o.from_address,o.expires_at,o.recovery
     coalesce(m.sender_address,'')::text AS sender_address
 FROM platform_mail_producer_outbox o
 LEFT JOIN internal_mail_messages m ON m.namespace=o.namespace AND m.producer_id=o.producer_id
-    AND m.idempotency_key=(CASE o.template WHEN 'email_verification' THEN 'verify-email:' WHEN 'password_reset' THEN 'password-reset:' WHEN 'magic_link' THEN 'magic-link:' WHEN 'mfa_recovery_used' THEN 'mfa-recovery-alert:' WHEN 'quota_warning' THEN 'quota-warning:' WHEN 'nonpayment_deletion' THEN 'nonpayment-deletion:' WHEN 'account_suspended' THEN 'account-suspended:' WHEN 'account_restored' THEN 'account-restored:' WHEN 'payment_failed' THEN 'payment-failed:' WHEN 'mfa_enabled' THEN 'mfa-enabled:' WHEN 'password_changed' THEN 'password-changed:' WHEN 'mfa_disabled' THEN 'mfa-disabled:' WHEN 'mfa_disable_request' THEN 'mfa-disable:' ELSE 'account-delete:' END)||o.id::text
+    AND m.idempotency_key=(CASE o.template WHEN 'email_verification' THEN 'verify-email:' WHEN 'password_reset' THEN 'password-reset:' WHEN 'magic_link' THEN 'magic-link:' WHEN 'mfa_recovery_used' THEN 'mfa-recovery-alert:' WHEN 'subscription_ended' THEN 'subscription-ended:' WHEN 'quota_warning' THEN 'quota-warning:' WHEN 'nonpayment_deletion' THEN 'nonpayment-deletion:' WHEN 'account_suspended' THEN 'account-suspended:' WHEN 'account_restored' THEN 'account-restored:' WHEN 'payment_failed' THEN 'payment-failed:' WHEN 'mfa_enabled' THEN 'mfa-enabled:' WHEN 'password_changed' THEN 'password-changed:' WHEN 'mfa_disabled' THEN 'mfa-disabled:' WHEN 'mfa_disable_request' THEN 'mfa-disable:' ELSE 'account-delete:' END)||o.id::text
 WHERE o.namespace=$1 AND o.id=$2;
 
 -- name: ReconciliationReady :exec
@@ -873,4 +875,94 @@ WHERE m.namespace=$1 AND m.id=$2 FOR SHARE OF a;
 
 -- name: QuotaWarningDeliveryReady :exec
 SELECT a.plan,a.status,a.last_quota_warning_at,a.quota_mail_revision,o.quota_warning_day,o.quota_warning_plan,o.quota_warning_revision
+FROM accounts a JOIN platform_mail_producer_outbox o ON o.account_id=a.id LIMIT 0;
+
+-- name: SubscriptionEndedReady :one
+WITH own_constraint AS MATERIALIZED (
+    SELECT c.oid FROM pg_catalog.pg_constraint c
+    JOIN pg_catalog.pg_class t ON t.oid=c.conrelid JOIN pg_catalog.pg_namespace n ON n.oid=t.relnamespace
+    WHERE n.nspname=current_schema() AND t.relname='platform_mail_producer_outbox'
+      AND c.conname='platform_mail_producer_outbox_security_alert_check'
+)
+SELECT EXISTS(SELECT 1 FROM own_constraint c
+    WHERE position('subscription_ended' in pg_catalog.pg_get_constraintdef(c.oid))>0)::boolean AS ready;
+
+-- name: SubscriptionEndedLifecycleReady :one
+SELECT (count(*)=2)::boolean AS ready
+FROM pg_catalog.pg_trigger g JOIN pg_catalog.pg_class t ON t.oid=g.tgrelid
+JOIN pg_catalog.pg_namespace n ON n.oid=t.relnamespace
+WHERE n.nspname=current_schema() AND g.tgenabled IN ('O','A')
+    AND ((t.relname='accounts' AND g.tgname='accounts_subscription_mail_revision_guard')
+        OR (t.relname='billing_identities' AND g.tgname='billing_identities_subscription_mail_revision_guard'));
+
+-- name: SubscriptionEndedSchemaReady :exec
+SELECT a.subscription_mail_revision,a.plan,a.stripe_subscription_item,b.subscription_id,
+    o.subscription_ended_revision,r.subscription_hash,e.ended_at,p.streaming_enabled,g.plan,g.stripe_subscription_item
+FROM accounts a JOIN billing_identities b ON b.account_id=a.id
+JOIN platform_mail_producer_outbox o ON o.account_id=a.id
+JOIN billing_subscription_end_receipts r ON r.account_id=a.id
+JOIN billing_subscription_ends e ON e.account_id=a.id
+LEFT JOIN apps p ON p.account_id=a.id LEFT JOIN orgs g ON g.personal_owner_account_id=a.id LIMIT 0;
+
+-- name: SubscriptionEndedKeyReferences :many
+SELECT DISTINCT security_alert_key_id FROM platform_mail_producer_outbox
+WHERE namespace=$1 AND producer_id=$2 AND template='subscription_ended' AND state IN ('queued','claimed') AND expires_at>clock_timestamp();
+
+-- name: LockSubscriptionEndedAccount :one
+SELECT id,email,status,plan,past_due_at,deletion_requested_at FROM accounts WHERE id=$1 FOR UPDATE;
+
+-- name: LockSubscriptionEndedIdentity :one
+SELECT subscription_id FROM billing_identities WHERE account_id=$1 AND provider=$2 AND customer_id=$3 FOR UPDATE;
+
+-- name: RecordSubscriptionEndReceipt :execrows
+INSERT INTO billing_subscription_end_receipts(provider,event_id,account_id,customer_hash,subscription_hash)
+VALUES($1,$2,$3,$4,$5) ON CONFLICT(provider,event_id) DO NOTHING;
+
+-- name: SubscriptionEndReceipt :one
+SELECT account_id,customer_hash,subscription_hash FROM billing_subscription_end_receipts WHERE provider=$1 AND event_id=$2;
+
+-- name: SubscriptionAlreadyEnded :one
+SELECT EXISTS(SELECT 1 FROM billing_subscription_ends WHERE account_id=$1 AND provider=$2 AND subscription_hash=$3)::boolean;
+
+-- name: ClearSubscriptionEndedIdentity :execrows
+UPDATE billing_identities SET subscription_id='',updated_at=clock_timestamp()
+WHERE account_id=$1 AND provider=$2 AND customer_id=$3 AND subscription_id=$4;
+
+-- name: ClearSubscriptionEndedStreaming :exec
+UPDATE apps SET streaming_enabled=false WHERE account_id=$1 AND streaming_enabled;
+
+-- name: DowngradeEndedSubscription :one
+UPDATE accounts SET plan='free',provider_customer_id=$2,stripe_subscription_item='' WHERE id=$1
+RETURNING subscription_mail_revision,clock_timestamp()::timestamptz AS ended_at;
+
+-- name: MirrorEndedSubscription :exec
+UPDATE orgs SET plan='free',provider_customer_id=$2,stripe_subscription_item='',updated_at=clock_timestamp()
+WHERE personal_org AND personal_owner_account_id=$1;
+
+-- The edge invalidation commits with the plan. A crash after commit cannot
+-- lose this notification or cause a duplicate on provider redelivery.
+-- name: NotifySubscriptionEndedPlan :exec
+SELECT pg_notify('app_changed',json_build_object('kind','account_plan_changed','account_id',account_id::text,'app_id',id::text)::text)
+FROM apps WHERE account_id=$1;
+
+-- name: RecordSubscriptionEnd :exec
+INSERT INTO billing_subscription_ends(account_id,provider,subscription_hash,ended_at,from_plan,intent_id)
+VALUES($1,$2,$3,$4,$5,$6);
+
+-- name: CreateSubscriptionEndedIntent :exec
+INSERT INTO platform_mail_producer_outbox(id,account_id,namespace,producer_id,from_address,recipient_address,
+    template,template_version,expires_at,recovery_id,sealed_security_alert,security_alert_key_id,subscription_ended_revision)
+VALUES($1,$2,$3,$4,$5,$6,'subscription_ended',1,$7,$8,$9,$10,$11);
+
+-- name: ShareSubscriptionEndedSubmissionAccount :one
+SELECT a.email,a.status,a.plan,a.past_due_at,a.deletion_requested_at,a.subscription_mail_revision,
+    coalesce(a.stripe_subscription_item,'')::text AS subscription_id,o.subscription_ended_revision,o.from_address,m.sender_address
+FROM internal_mail_messages m JOIN platform_mail_producer_outbox o
+    ON o.namespace=m.namespace AND o.producer_id=m.producer_id
+    AND m.idempotency_key='subscription-ended:'||o.id::text AND o.template='subscription_ended' AND o.expires_at=m.expires_at
+JOIN accounts a ON a.id=o.account_id
+WHERE m.namespace=$1 AND m.id=$2 FOR SHARE OF a;
+
+-- name: SubscriptionEndedDeliveryReady :exec
+SELECT a.subscription_mail_revision,a.plan,a.stripe_subscription_item,o.subscription_ended_revision
 FROM accounts a JOIN platform_mail_producer_outbox o ON o.account_id=a.id LIMIT 0;

@@ -1351,7 +1351,15 @@ func (s *PgStore) UpsertBillingIdentity(ctx context.Context, identity BillingIde
 		value := identity.BillingFrom.UTC()
 		billingFrom = &value
 	}
-	_, err := s.pool.Exec(ctx,
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := sqlc.New().LockBillingIdentityAccount(ctx, tx, identity.AccountID); err != nil {
+		return mapErr(err)
+	}
+	_, err = tx.Exec(ctx,
 		`insert into billing_identities (account_id, provider, customer_id, subscription_id, billing_from)
 		 values ($1, $2, $3, $4, coalesce($5, now()))
 		 on conflict (account_id, provider) do update set
@@ -1359,7 +1367,10 @@ func (s *PgStore) UpsertBillingIdentity(ctx context.Context, identity BillingIde
 		   subscription_id = excluded.subscription_id,
 		   updated_at = now()`,
 		identity.AccountID, identity.Provider, identity.CustomerID, identity.SubscriptionID, billingFrom)
-	return err
+	if err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 // AccountByBillingCustomerID is the provider-qualified webhook reverse lookup.

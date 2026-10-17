@@ -74,6 +74,15 @@ func (s *PGStore) beginScheduled(ctx context.Context, r Recipient, selector stri
 			return err
 		}
 	}
+	endedGate, endedBound := ctx.Value(subscriptionEndedSubmissionGateKey{}).(func() bool)
+	if endedBound {
+		if endedGate == nil || !endedGate() {
+			return ErrDisabled
+		}
+		if err := s.shareSubscriptionEndedAccount(ctx, tx, r); err != nil {
+			return err
+		}
+	}
 	quotaGate, quotaBound := ctx.Value(quotaWarningSubmissionGateKey{}).(func() bool)
 	if quotaBound {
 		if quotaGate == nil || !quotaGate() {
@@ -188,6 +197,9 @@ func (s *PGStore) beginScheduled(ctx context.Context, r Recipient, selector stri
 			}
 		}
 		return ErrLeaseLost
+	}
+	if endedBound && !endedGate() {
+		return ErrDisabled
 	}
 	if quotaBound && !quotaGate() {
 		return ErrDisabled

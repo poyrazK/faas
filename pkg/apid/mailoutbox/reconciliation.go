@@ -65,6 +65,7 @@ type Reconciler struct {
 	magicLinkEnabled            func() bool
 	mfaRecoveryAlertEnabled     func() bool
 	mfaDisabledAlertEnabled     func() bool
+	subscriptionEndedEnabled    func() bool
 	quotaWarningEnabled         func() bool
 	nonpaymentDeletionEnabled   func() bool
 	accountSuspendedEnabled     func() bool
@@ -96,6 +97,8 @@ func (s *Reconciler) templateEnabled(template string) bool {
 		return s.magicLinkEnabled != nil && s.magicLinkEnabled()
 	case MFADisableTemplate:
 		return s.mfaDisableEnabled != nil && s.mfaDisableEnabled()
+	case SubscriptionEndedTemplate:
+		return s.subscriptionEndedEnabled != nil && s.subscriptionEndedEnabled()
 	case QuotaWarningTemplate:
 		return s.quotaWarningEnabled != nil && s.quotaWarningEnabled()
 	case NonpaymentDeletionTemplate:
@@ -315,5 +318,11 @@ func (s *Reconciler) WithNonpaymentDeletion(enabled func() bool) *Reconciler {
 func (s *Reconciler) WithQuotaWarning(enabled func() bool) *Reconciler {
 	copy := *s
 	copy.quotaWarningEnabled = enabled
+	return &copy
+}
+
+func (s *Reconciler) WithSubscriptionEnded(enabled func() bool) *Reconciler {
+	copy := *s
+	copy.subscriptionEndedEnabled = enabled
 	return &copy
 }

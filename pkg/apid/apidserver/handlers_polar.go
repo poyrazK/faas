@@ -64,6 +64,9 @@ func (s *server) polarWebhook(w http.ResponseWriter, r *http.Request) {
 		api.WriteProblem(w, api.ErrCapacity("billing webhook temporarily unavailable"))
 		return
 	}
+	if s.handleSubscriptionEndedOutbox(w, r, "polar", ev, acct) {
+		return
+	}
 	if s.handleAccountRestoredOutbox(w, r, "polar", ev, acct) {
 		return
 	}

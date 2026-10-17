@@ -251,6 +251,11 @@ sort it out.
 // Free. It is deliberately not sent on the non-payment path — that
 // customer already received the past_due / suspended emails.
 func SubscriptionEndedBody(email, fromPlan string, endedAt time.Time) (subject, body string) {
+	return SubscriptionEndedBodyV1(email, fromPlan, endedAt)
+}
+
+// SubscriptionEndedBodyV1 is frozen for durable retries of subscription termination.
+func SubscriptionEndedBodyV1(email, fromPlan string, endedAt time.Time) (subject, body string) {
 	email = safeRecipient(email)
 	atStr := endedAt.UTC().Format("2006-01-02 15:04 UTC")
 	subject = "Your Gregale subscription has ended — you are now on the Free plan"

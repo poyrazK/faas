@@ -5238,6 +5238,9 @@ func (s *server) stripeWebhook(w http.ResponseWriter, r *http.Request) {
 	// row carries the resolved account id as the subject (matching
 	// the refund.processed precedent at spec §5.7 line 336).
 	//
+	if s.handleSubscriptionEndedOutbox(w, r, "stripe", normalized, acct) {
+		return
+	}
 	if s.handleAccountRestoredOutbox(w, r, "stripe", normalized, acct) {
 		return
 	}
@@ -5461,6 +5464,9 @@ func (s *server) paddleWebhook(w http.ResponseWriter, r *http.Request) {
 	// the check — pre-#294 behaviour. Claim failures are retryable because
 	// acknowledging without replay protection could duplicate money-related
 	// audit/state side effects.
+	if s.handleSubscriptionEndedOutbox(w, r, "paddle", ev, acct) {
+		return
+	}
 	if s.handleAccountRestoredOutbox(w, r, "paddle", ev, acct) {
 		return
 	}

@@ -34,6 +34,7 @@ type InternalSender struct {
 	magicLinkEnabled            func() bool
 	mfaRecoveryAlertEnabled     func() bool
 	mfaDisabledAlertEnabled     func() bool
+	subscriptionEndedEnabled    func() bool
 	quotaWarningEnabled         func() bool
 	nonpaymentDeletionEnabled   func() bool
 	accountSuspendedEnabled     func() bool

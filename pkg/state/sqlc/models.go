@@ -60,34 +60,35 @@ func (ns NullComputeNodeLifecycle) Value() (driver.Value, error) {
 }
 
 type Account struct {
-	ID                     pgtype.UUID
-	Email                  interface{}
-	Plan                   string
-	Status                 string
-	ProviderCustomerID     pgtype.Text
-	CreatedAt              pgtype.Timestamptz
-	DeletionRequestedAt    pgtype.Timestamptz
-	StripeSubscriptionItem pgtype.Text
-	LastQuotaWarningAt     pgtype.Timestamptz
-	PastDueAt              pgtype.Timestamptz
-	MfaEnrolledAt          pgtype.Timestamptz
-	MfaSecretEncrypted     []byte
-	MfaRecoveryCodesHash   [][]byte
-	MfaRequired            bool
-	OverageCapCents        pgtype.Int8
-	KeyGraceWindowDays     pgtype.Int4
-	EgressAllowlistExtra   int32
-	EmailVerifiedAt        pgtype.Timestamptz
-	BusinessName           pgtype.Text
-	BillingAddress         pgtype.Text
-	TaxID                  pgtype.Text
-	SuspendedReason        pgtype.Text
-	AbuseHoldAt            pgtype.Timestamptz
-	AbuseHoldReason        pgtype.Text
-	PasswordResetRevision  int64
-	MfaRevision            int64
-	BillingMailRevision    int64
-	QuotaMailRevision      int64
+	ID                       pgtype.UUID
+	Email                    interface{}
+	Plan                     string
+	Status                   string
+	ProviderCustomerID       pgtype.Text
+	CreatedAt                pgtype.Timestamptz
+	DeletionRequestedAt      pgtype.Timestamptz
+	StripeSubscriptionItem   pgtype.Text
+	LastQuotaWarningAt       pgtype.Timestamptz
+	PastDueAt                pgtype.Timestamptz
+	MfaEnrolledAt            pgtype.Timestamptz
+	MfaSecretEncrypted       []byte
+	MfaRecoveryCodesHash     [][]byte
+	MfaRequired              bool
+	OverageCapCents          pgtype.Int8
+	KeyGraceWindowDays       pgtype.Int4
+	EgressAllowlistExtra     int32
+	EmailVerifiedAt          pgtype.Timestamptz
+	BusinessName             pgtype.Text
+	BillingAddress           pgtype.Text
+	TaxID                    pgtype.Text
+	SuspendedReason          pgtype.Text
+	AbuseHoldAt              pgtype.Timestamptz
+	AbuseHoldReason          pgtype.Text
+	PasswordResetRevision    int64
+	MfaRevision              int64
+	BillingMailRevision      int64
+	QuotaMailRevision        int64
+	SubscriptionMailRevision int64
 }
 
 type AccountAsyncQuotum struct {
@@ -1587,6 +1588,24 @@ type BillingQuotaWarning struct {
 	FollowupCompletedAt pgtype.Timestamptz
 	LeaseID             pgtype.UUID
 	LeaseUntil          pgtype.Timestamptz
+}
+
+type BillingSubscriptionEnd struct {
+	AccountID        pgtype.UUID
+	Provider         string
+	SubscriptionHash []byte
+	EndedAt          pgtype.Timestamptz
+	FromPlan         string
+	IntentID         pgtype.UUID
+}
+
+type BillingSubscriptionEndReceipt struct {
+	Provider         string
+	EventID          string
+	AccountID        pgtype.UUID
+	CustomerHash     []byte
+	SubscriptionHash []byte
+	ProcessedAt      pgtype.Timestamptz
 }
 
 type BillingUsageDelivery struct {
@@ -7416,6 +7435,7 @@ type PlatformMailProducerOutbox struct {
 	QuotaWarningDay            pgtype.Timestamptz
 	QuotaWarningPlan           pgtype.Text
 	QuotaWarningRevision       pgtype.Int8
+	SubscriptionEndedRevision  pgtype.Int8
 }
 
 type PlatformTenant struct {

@@ -98,6 +98,10 @@ func (s *Service) ProducerOutboxAdmission(ctx context.Context, id string) (Produ
 		review.CanAcknowledge = false
 		review.BlockReason = "account_restored_disabled"
 	}
+	if review.Template == ProducerOutboxSubscriptionEndedTemplate && !s.subscriptionEndedOutboxEnabled() {
+		review.CanAcknowledge = false
+		review.BlockReason = "subscription_ended_disabled"
+	}
 	if review.Template == ProducerOutboxQuotaWarningTemplate && !s.quotaWarningOutboxEnabled() {
 		review.CanAcknowledge = false
 		review.BlockReason = "quota_warning_disabled"

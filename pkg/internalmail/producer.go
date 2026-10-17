@@ -69,6 +69,9 @@ func (s *Service) allowedProducerSenders() []string {
 }
 
 func (s *Service) producerMessagePermitted(m Message) bool {
+	if subscriptionEndedMessage(m) && !s.subscriptionEndedOutboxEnabled() {
+		return false
+	}
 	if quotaWarningMessage(m) && !s.quotaWarningOutboxEnabled() {
 		return false
 	}

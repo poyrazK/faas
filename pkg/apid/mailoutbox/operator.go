@@ -26,6 +26,7 @@ Verification intents also require FAAS_INTERNAL_MAIL_VERIFICATION_OUTBOX_ENABLED
 Password-reset intents also require FAAS_INTERNAL_MAIL_PASSWORD_RESET_OUTBOX_ENABLED=1.
 Magic-link intents also require FAAS_INTERNAL_MAIL_MAGIC_LINK_OUTBOX_ENABLED=1.
 MFA disable requests also require FAAS_INTERNAL_MAIL_MFA_DISABLE_OUTBOX_ENABLED=1.
+Subscription-ended confirmations also require FAAS_INTERNAL_MAIL_SUBSCRIPTION_ENDED_OUTBOX_ENABLED=1.
 Account suspension notices also require FAAS_INTERNAL_MAIL_ACCOUNT_SUSPENDED_OUTBOX_ENABLED=1.
 Account restoration confirmations also require FAAS_INTERNAL_MAIL_ACCOUNT_RESTORED_OUTBOX_ENABLED=1.
 Payment failure warnings also require FAAS_INTERNAL_MAIL_PAYMENT_FAILED_OUTBOX_ENABLED=1.
@@ -119,6 +120,7 @@ func RunOperator(ctx context.Context, args []string, getenv func(string) string,
 	reconciler = reconciler.WithPasswordReset(func() bool { return internalmail.PasswordResetOutboxEnabled(getenv) })
 	reconciler = reconciler.WithMagicLink(func() bool { return internalmail.MagicLinkOutboxEnabled(getenv) })
 	reconciler = reconciler.WithMFADisable(func() bool { return internalmail.MFADisableOutboxEnabled(getenv) })
+	reconciler = reconciler.WithSubscriptionEnded(func() bool { return internalmail.SubscriptionEndedOutboxEnabled(getenv) })
 	reconciler = reconciler.WithQuotaWarning(func() bool { return internalmail.QuotaWarningOutboxEnabled(getenv) })
 	reconciler = reconciler.WithNonpaymentDeletion(func() bool { return internalmail.NonpaymentDeletionOutboxEnabled(getenv) })
 	reconciler = reconciler.WithAccountSuspended(func() bool { return internalmail.AccountSuspendedOutboxEnabled(getenv) })

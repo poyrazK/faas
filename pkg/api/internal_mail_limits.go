@@ -138,6 +138,9 @@ const (
 )
 
 const (
+	InternalMailSubscriptionEndedTTL              = 24 * time.Hour
+	InternalMailSubscriptionEndedMaxBytes         = 512
+	InternalMailSubscriptionEndedIDMaxBytes       = 256
 	InternalMailQuotaWarningTTL                   = 24 * time.Hour
 	InternalMailQuotaWarningMaxBytes              = 3072
 	InternalMailQuotaWarningUnsubscribeMaxBytes   = 2048

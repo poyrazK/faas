@@ -249,7 +249,7 @@ SELECT o.id,o.revision,o.state,o.template,o.from_address,o.expires_at,o.recovery
     coalesce(m.sender_address,'')::text AS sender_address
 FROM platform_mail_producer_outbox o
 LEFT JOIN internal_mail_messages m ON m.namespace=o.namespace AND m.producer_id=o.producer_id
-    AND m.idempotency_key=(CASE o.template WHEN 'email_verification' THEN 'verify-email:' WHEN 'password_reset' THEN 'password-reset:' WHEN 'magic_link' THEN 'magic-link:' WHEN 'mfa_recovery_used' THEN 'mfa-recovery-alert:' WHEN 'quota_warning' THEN 'quota-warning:' WHEN 'nonpayment_deletion' THEN 'nonpayment-deletion:' WHEN 'account_suspended' THEN 'account-suspended:' WHEN 'account_restored' THEN 'account-restored:' WHEN 'payment_failed' THEN 'payment-failed:' WHEN 'mfa_enabled' THEN 'mfa-enabled:' WHEN 'password_changed' THEN 'password-changed:' WHEN 'mfa_disabled' THEN 'mfa-disabled:' WHEN 'mfa_disable_request' THEN 'mfa-disable:' ELSE 'account-delete:' END)||o.id::text
+    AND m.idempotency_key=(CASE o.template WHEN 'email_verification' THEN 'verify-email:' WHEN 'password_reset' THEN 'password-reset:' WHEN 'magic_link' THEN 'magic-link:' WHEN 'mfa_recovery_used' THEN 'mfa-recovery-alert:' WHEN 'subscription_ended' THEN 'subscription-ended:' WHEN 'quota_warning' THEN 'quota-warning:' WHEN 'nonpayment_deletion' THEN 'nonpayment-deletion:' WHEN 'account_suspended' THEN 'account-suspended:' WHEN 'account_restored' THEN 'account-restored:' WHEN 'payment_failed' THEN 'payment-failed:' WHEN 'mfa_enabled' THEN 'mfa-enabled:' WHEN 'password_changed' THEN 'password-changed:' WHEN 'mfa_disabled' THEN 'mfa-disabled:' WHEN 'mfa_disable_request' THEN 'mfa-disable:' ELSE 'account-delete:' END)||o.id::text
 WHERE o.namespace=$1 AND o.id=$2
 `
 
@@ -351,32 +351,34 @@ WITH candidate AS (
           AND o.verification_key_id=ANY($14::text[]))
         OR (o.template='mfa_disable_request' AND $15::boolean AND o.verification_origin=$16::text
           AND o.verification_key_id=ANY($17::text[]))
-        OR (o.template='quota_warning' AND $18::boolean
+        OR (o.template='subscription_ended' AND $18::boolean
           AND o.security_alert_key_id=ANY($19::text[]))
-        OR (o.template='nonpayment_deletion' AND $20::boolean
+        OR (o.template='quota_warning' AND $20::boolean
           AND o.security_alert_key_id=ANY($21::text[]))
-        OR (o.template='account_suspended' AND $22::boolean
+        OR (o.template='nonpayment_deletion' AND $22::boolean
           AND o.security_alert_key_id=ANY($23::text[]))
-        OR (o.template='account_restored' AND $24::boolean
+        OR (o.template='account_suspended' AND $24::boolean
           AND o.security_alert_key_id=ANY($25::text[]))
-        OR (o.template='payment_failed' AND $26::boolean
+        OR (o.template='account_restored' AND $26::boolean
           AND o.security_alert_key_id=ANY($27::text[]))
-        OR (o.template='mfa_enabled' AND $28::boolean
+        OR (o.template='payment_failed' AND $28::boolean
           AND o.security_alert_key_id=ANY($29::text[]))
-        OR (o.template='password_changed' AND $30::boolean
+        OR (o.template='mfa_enabled' AND $30::boolean
           AND o.security_alert_key_id=ANY($31::text[]))
-        OR (o.template='mfa_disabled' AND $32::boolean
+        OR (o.template='password_changed' AND $32::boolean
           AND o.security_alert_key_id=ANY($33::text[]))
-        OR (o.template='mfa_recovery_used' AND $34::boolean
-          AND o.security_alert_key_id=ANY($35::text[])))
-      AND o.attempts<$36 AND o.expires_at>clock_timestamp()
+        OR (o.template='mfa_disabled' AND $34::boolean
+          AND o.security_alert_key_id=ANY($35::text[]))
+        OR (o.template='mfa_recovery_used' AND $36::boolean
+          AND o.security_alert_key_id=ANY($37::text[])))
+      AND o.attempts<$38 AND o.expires_at>clock_timestamp()
       AND ((o.state='queued' AND o.next_attempt_at<=clock_timestamp()) OR (o.state='claimed' AND o.lease_until<=clock_timestamp()))
       AND NOT EXISTS(SELECT 1 FROM internal_mail_recovery_state s WHERE s.namespace=o.namespace AND (s.held OR s.recovery_id<>o.recovery_id))
     ORDER BY next_attempt_at,id LIMIT 1 FOR UPDATE SKIP LOCKED
 )
 UPDATE platform_mail_producer_outbox o SET state='claimed',attempts=attempts+1,lease_id=$1,
     lease_until=clock_timestamp()+$2::integer*interval '1 second',updated_at=clock_timestamp(),revision=o.revision+1
-FROM candidate c WHERE o.id=c.id RETURNING o.id, o.account_id, o.namespace, o.producer_id, o.from_address, o.recipient_address, o.template, o.template_version, o.deletion_requested_at, o.restore_until, o.expires_at, o.recovery_id, o.state, o.attempts, o.next_attempt_at, o.lease_id, o.lease_until, o.code, o.created_at, o.updated_at, o.revision, o.verification_token_hash, o.sealed_verification, o.verification_key_id, o.verification_origin, o.sealed_security_alert, o.security_alert_key_id, o.payment_past_due_at, o.account_restored_revision, o.suspension_past_due_at, o.account_suspended_revision, o.nonpayment_past_due_at, o.nonpayment_deletion_revision, o.nonpayment_deletion_at, o.quota_warning_day, o.quota_warning_plan, o.quota_warning_revision
+FROM candidate c WHERE o.id=c.id RETURNING o.id, o.account_id, o.namespace, o.producer_id, o.from_address, o.recipient_address, o.template, o.template_version, o.deletion_requested_at, o.restore_until, o.expires_at, o.recovery_id, o.state, o.attempts, o.next_attempt_at, o.lease_id, o.lease_until, o.code, o.created_at, o.updated_at, o.revision, o.verification_token_hash, o.sealed_verification, o.verification_key_id, o.verification_origin, o.sealed_security_alert, o.security_alert_key_id, o.payment_past_due_at, o.account_restored_revision, o.suspension_past_due_at, o.account_suspended_revision, o.nonpayment_past_due_at, o.nonpayment_deletion_revision, o.nonpayment_deletion_at, o.quota_warning_day, o.quota_warning_plan, o.quota_warning_revision, o.subscription_ended_revision
 `
 
 type ClaimParams struct {
@@ -397,6 +399,8 @@ type ClaimParams struct {
 	MfaDisableEnabled           bool
 	MfaDisableOrigin            string
 	MfaDisableKeys              []string
+	SubscriptionEndedEnabled    bool
+	SubscriptionEndedKeys       []string
 	QuotaWarningEnabled         bool
 	QuotaWarningKeys            []string
 	NonpaymentDeletionEnabled   bool
@@ -437,6 +441,8 @@ func (q *Queries) Claim(ctx context.Context, db DBTX, arg ClaimParams) (Platform
 		arg.MfaDisableEnabled,
 		arg.MfaDisableOrigin,
 		arg.MfaDisableKeys,
+		arg.SubscriptionEndedEnabled,
+		arg.SubscriptionEndedKeys,
 		arg.QuotaWarningEnabled,
 		arg.QuotaWarningKeys,
 		arg.NonpaymentDeletionEnabled,
@@ -496,6 +502,7 @@ func (q *Queries) Claim(ctx context.Context, db DBTX, arg ClaimParams) (Platform
 		&i.QuotaWarningDay,
 		&i.QuotaWarningPlan,
 		&i.QuotaWarningRevision,
+		&i.SubscriptionEndedRevision,
 	)
 	return i, err
 }
@@ -577,6 +584,40 @@ UPDATE accounts SET mfa_secret_encrypted=NULL,mfa_recovery_codes_hash=NULL,mfa_e
 // expiry after all waits and failure rolls back the MFA clear and revision.
 func (q *Queries) ClearMFADisableFactor(ctx context.Context, db DBTX, id pgtype.UUID) error {
 	_, err := db.Exec(ctx, clearMFADisableFactor, id)
+	return err
+}
+
+const clearSubscriptionEndedIdentity = `-- name: ClearSubscriptionEndedIdentity :execrows
+UPDATE billing_identities SET subscription_id='',updated_at=clock_timestamp()
+WHERE account_id=$1 AND provider=$2 AND customer_id=$3 AND subscription_id=$4
+`
+
+type ClearSubscriptionEndedIdentityParams struct {
+	AccountID      pgtype.UUID
+	Provider       string
+	CustomerID     string
+	SubscriptionID string
+}
+
+func (q *Queries) ClearSubscriptionEndedIdentity(ctx context.Context, db DBTX, arg ClearSubscriptionEndedIdentityParams) (int64, error) {
+	result, err := db.Exec(ctx, clearSubscriptionEndedIdentity,
+		arg.AccountID,
+		arg.Provider,
+		arg.CustomerID,
+		arg.SubscriptionID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const clearSubscriptionEndedStreaming = `-- name: ClearSubscriptionEndedStreaming :exec
+UPDATE apps SET streaming_enabled=false WHERE account_id=$1 AND streaming_enabled
+`
+
+func (q *Queries) ClearSubscriptionEndedStreaming(ctx context.Context, db DBTX, accountID pgtype.UUID) error {
+	_, err := db.Exec(ctx, clearSubscriptionEndedStreaming, accountID)
 	return err
 }
 
@@ -1365,6 +1406,43 @@ func (q *Queries) CreateQuotaWarningIntent(ctx context.Context, db DBTX, arg Cre
 	return err
 }
 
+const createSubscriptionEndedIntent = `-- name: CreateSubscriptionEndedIntent :exec
+INSERT INTO platform_mail_producer_outbox(id,account_id,namespace,producer_id,from_address,recipient_address,
+    template,template_version,expires_at,recovery_id,sealed_security_alert,security_alert_key_id,subscription_ended_revision)
+VALUES($1,$2,$3,$4,$5,$6,'subscription_ended',1,$7,$8,$9,$10,$11)
+`
+
+type CreateSubscriptionEndedIntentParams struct {
+	ID                        pgtype.UUID
+	AccountID                 pgtype.UUID
+	Namespace                 string
+	ProducerID                string
+	FromAddress               string
+	RecipientAddress          string
+	ExpiresAt                 pgtype.Timestamptz
+	RecoveryID                pgtype.UUID
+	SealedSecurityAlert       []byte
+	SecurityAlertKeyID        string
+	SubscriptionEndedRevision pgtype.Int8
+}
+
+func (q *Queries) CreateSubscriptionEndedIntent(ctx context.Context, db DBTX, arg CreateSubscriptionEndedIntentParams) error {
+	_, err := db.Exec(ctx, createSubscriptionEndedIntent,
+		arg.ID,
+		arg.AccountID,
+		arg.Namespace,
+		arg.ProducerID,
+		arg.FromAddress,
+		arg.RecipientAddress,
+		arg.ExpiresAt,
+		arg.RecoveryID,
+		arg.SealedSecurityAlert,
+		arg.SecurityAlertKeyID,
+		arg.SubscriptionEndedRevision,
+	)
+	return err
+}
+
 const createVerificationIntent = `-- name: CreateVerificationIntent :exec
 INSERT INTO platform_mail_producer_outbox(id,account_id,namespace,producer_id,from_address,recipient_address,
     template,template_version,expires_at,recovery_id,verification_token_hash,sealed_verification,verification_key_id,verification_origin)
@@ -1446,6 +1524,28 @@ DELETE FROM account_passwords WHERE account_id=$1
 func (q *Queries) DeleteMagicLinkPassword(ctx context.Context, db DBTX, accountID pgtype.UUID) error {
 	_, err := db.Exec(ctx, deleteMagicLinkPassword, accountID)
 	return err
+}
+
+const downgradeEndedSubscription = `-- name: DowngradeEndedSubscription :one
+UPDATE accounts SET plan='free',provider_customer_id=$2,stripe_subscription_item='' WHERE id=$1
+RETURNING subscription_mail_revision,clock_timestamp()::timestamptz AS ended_at
+`
+
+type DowngradeEndedSubscriptionParams struct {
+	ID                 pgtype.UUID
+	ProviderCustomerID pgtype.Text
+}
+
+type DowngradeEndedSubscriptionRow struct {
+	SubscriptionMailRevision int64
+	EndedAt                  pgtype.Timestamptz
+}
+
+func (q *Queries) DowngradeEndedSubscription(ctx context.Context, db DBTX, arg DowngradeEndedSubscriptionParams) (DowngradeEndedSubscriptionRow, error) {
+	row := db.QueryRow(ctx, downgradeEndedSubscription, arg.ID, arg.ProviderCustomerID)
+	var i DowngradeEndedSubscriptionRow
+	err := row.Scan(&i.SubscriptionMailRevision, &i.EndedAt)
+	return i, err
 }
 
 const enterPaymentPastDue = `-- name: EnterPaymentPastDue :one
@@ -1535,7 +1635,7 @@ func (q *Queries) InsertReconciliation(ctx context.Context, db DBTX, arg InsertR
 }
 
 const intent = `-- name: Intent :one
-SELECT id, account_id, namespace, producer_id, from_address, recipient_address, template, template_version, deletion_requested_at, restore_until, expires_at, recovery_id, state, attempts, next_attempt_at, lease_id, lease_until, code, created_at, updated_at, revision, verification_token_hash, sealed_verification, verification_key_id, verification_origin, sealed_security_alert, security_alert_key_id, payment_past_due_at, account_restored_revision, suspension_past_due_at, account_suspended_revision, nonpayment_past_due_at, nonpayment_deletion_revision, nonpayment_deletion_at, quota_warning_day, quota_warning_plan, quota_warning_revision FROM platform_mail_producer_outbox WHERE namespace=$1 AND id=$2
+SELECT id, account_id, namespace, producer_id, from_address, recipient_address, template, template_version, deletion_requested_at, restore_until, expires_at, recovery_id, state, attempts, next_attempt_at, lease_id, lease_until, code, created_at, updated_at, revision, verification_token_hash, sealed_verification, verification_key_id, verification_origin, sealed_security_alert, security_alert_key_id, payment_past_due_at, account_restored_revision, suspension_past_due_at, account_suspended_revision, nonpayment_past_due_at, nonpayment_deletion_revision, nonpayment_deletion_at, quota_warning_day, quota_warning_plan, quota_warning_revision, subscription_ended_revision FROM platform_mail_producer_outbox WHERE namespace=$1 AND id=$2
 `
 
 type IntentParams struct {
@@ -1584,6 +1684,7 @@ func (q *Queries) Intent(ctx context.Context, db DBTX, arg IntentParams) (Platfo
 		&i.QuotaWarningDay,
 		&i.QuotaWarningPlan,
 		&i.QuotaWarningRevision,
+		&i.SubscriptionEndedRevision,
 	)
 	return i, err
 }
@@ -1712,7 +1813,7 @@ func (q *Queries) LockAdmission(ctx context.Context, db DBTX, dollar_1 string) e
 }
 
 const lockIntent = `-- name: LockIntent :one
-SELECT id, account_id, namespace, producer_id, from_address, recipient_address, template, template_version, deletion_requested_at, restore_until, expires_at, recovery_id, state, attempts, next_attempt_at, lease_id, lease_until, code, created_at, updated_at, revision, verification_token_hash, sealed_verification, verification_key_id, verification_origin, sealed_security_alert, security_alert_key_id, payment_past_due_at, account_restored_revision, suspension_past_due_at, account_suspended_revision, nonpayment_past_due_at, nonpayment_deletion_revision, nonpayment_deletion_at, quota_warning_day, quota_warning_plan, quota_warning_revision FROM platform_mail_producer_outbox WHERE namespace=$1 AND id=$2 FOR UPDATE
+SELECT id, account_id, namespace, producer_id, from_address, recipient_address, template, template_version, deletion_requested_at, restore_until, expires_at, recovery_id, state, attempts, next_attempt_at, lease_id, lease_until, code, created_at, updated_at, revision, verification_token_hash, sealed_verification, verification_key_id, verification_origin, sealed_security_alert, security_alert_key_id, payment_past_due_at, account_restored_revision, suspension_past_due_at, account_suspended_revision, nonpayment_past_due_at, nonpayment_deletion_revision, nonpayment_deletion_at, quota_warning_day, quota_warning_plan, quota_warning_revision, subscription_ended_revision FROM platform_mail_producer_outbox WHERE namespace=$1 AND id=$2 FOR UPDATE
 `
 
 type LockIntentParams struct {
@@ -1761,6 +1862,7 @@ func (q *Queries) LockIntent(ctx context.Context, db DBTX, arg LockIntentParams)
 		&i.QuotaWarningDay,
 		&i.QuotaWarningPlan,
 		&i.QuotaWarningRevision,
+		&i.SubscriptionEndedRevision,
 	)
 	return i, err
 }
@@ -2298,6 +2400,50 @@ func (q *Queries) LockReconciliation(ctx context.Context, db DBTX, arg LockRecon
 	return err
 }
 
+const lockSubscriptionEndedAccount = `-- name: LockSubscriptionEndedAccount :one
+SELECT id,email,status,plan,past_due_at,deletion_requested_at FROM accounts WHERE id=$1 FOR UPDATE
+`
+
+type LockSubscriptionEndedAccountRow struct {
+	ID                  pgtype.UUID
+	Email               string
+	Status              string
+	Plan                string
+	PastDueAt           pgtype.Timestamptz
+	DeletionRequestedAt pgtype.Timestamptz
+}
+
+func (q *Queries) LockSubscriptionEndedAccount(ctx context.Context, db DBTX, id pgtype.UUID) (LockSubscriptionEndedAccountRow, error) {
+	row := db.QueryRow(ctx, lockSubscriptionEndedAccount, id)
+	var i LockSubscriptionEndedAccountRow
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.Status,
+		&i.Plan,
+		&i.PastDueAt,
+		&i.DeletionRequestedAt,
+	)
+	return i, err
+}
+
+const lockSubscriptionEndedIdentity = `-- name: LockSubscriptionEndedIdentity :one
+SELECT subscription_id FROM billing_identities WHERE account_id=$1 AND provider=$2 AND customer_id=$3 FOR UPDATE
+`
+
+type LockSubscriptionEndedIdentityParams struct {
+	AccountID  pgtype.UUID
+	Provider   string
+	CustomerID string
+}
+
+func (q *Queries) LockSubscriptionEndedIdentity(ctx context.Context, db DBTX, arg LockSubscriptionEndedIdentityParams) (string, error) {
+	row := db.QueryRow(ctx, lockSubscriptionEndedIdentity, arg.AccountID, arg.Provider, arg.CustomerID)
+	var subscription_id string
+	err := row.Scan(&subscription_id)
+	return subscription_id, err
+}
+
 const lockVerificationAccount = `-- name: LockVerificationAccount :one
 SELECT id,email,status,email_verified_at FROM accounts WHERE id=$1 FOR UPDATE
 `
@@ -2556,6 +2702,21 @@ func (q *Queries) Maintain(ctx context.Context, db DBTX, arg MaintainParams) err
 	return err
 }
 
+const mirrorEndedSubscription = `-- name: MirrorEndedSubscription :exec
+UPDATE orgs SET plan='free',provider_customer_id=$2,stripe_subscription_item='',updated_at=clock_timestamp()
+WHERE personal_org AND personal_owner_account_id=$1
+`
+
+type MirrorEndedSubscriptionParams struct {
+	PersonalOwnerAccountID pgtype.UUID
+	ProviderCustomerID     pgtype.Text
+}
+
+func (q *Queries) MirrorEndedSubscription(ctx context.Context, db DBTX, arg MirrorEndedSubscriptionParams) error {
+	_, err := db.Exec(ctx, mirrorEndedSubscription, arg.PersonalOwnerAccountID, arg.ProviderCustomerID)
+	return err
+}
+
 const nonpaymentDeletionDeliveryReady = `-- name: NonpaymentDeletionDeliveryReady :exec
 SELECT a.email,a.status,a.past_due_at,a.deletion_requested_at,a.billing_mail_revision,o.nonpayment_deletion_revision,o.nonpayment_past_due_at,o.nonpayment_deletion_at
 FROM accounts a JOIN platform_mail_producer_outbox o ON o.account_id=a.id LIMIT 0
@@ -2670,6 +2831,18 @@ JOIN billing_account_nonpayment_deletions p ON p.intent_id=o.id LIMIT 0
 
 func (q *Queries) NonpaymentDeletionSchemaReady(ctx context.Context, db DBTX) error {
 	_, err := db.Exec(ctx, nonpaymentDeletionSchemaReady)
+	return err
+}
+
+const notifySubscriptionEndedPlan = `-- name: NotifySubscriptionEndedPlan :exec
+SELECT pg_notify('app_changed',json_build_object('kind','account_plan_changed','account_id',account_id::text,'app_id',id::text)::text)
+FROM apps WHERE account_id=$1
+`
+
+// The edge invalidation commits with the plan. A crash after commit cannot
+// lose this notification or cause a duplicate on provider redelivery.
+func (q *Queries) NotifySubscriptionEndedPlan(ctx context.Context, db DBTX, accountID pgtype.UUID) error {
+	_, err := db.Exec(ctx, notifySubscriptionEndedPlan, accountID)
 	return err
 }
 
@@ -3457,6 +3630,59 @@ func (q *Queries) RecordQuotaWarning(ctx context.Context, db DBTX, arg RecordQuo
 	return err
 }
 
+const recordSubscriptionEnd = `-- name: RecordSubscriptionEnd :exec
+INSERT INTO billing_subscription_ends(account_id,provider,subscription_hash,ended_at,from_plan,intent_id)
+VALUES($1,$2,$3,$4,$5,$6)
+`
+
+type RecordSubscriptionEndParams struct {
+	AccountID        pgtype.UUID
+	Provider         string
+	SubscriptionHash []byte
+	EndedAt          pgtype.Timestamptz
+	FromPlan         string
+	IntentID         pgtype.UUID
+}
+
+func (q *Queries) RecordSubscriptionEnd(ctx context.Context, db DBTX, arg RecordSubscriptionEndParams) error {
+	_, err := db.Exec(ctx, recordSubscriptionEnd,
+		arg.AccountID,
+		arg.Provider,
+		arg.SubscriptionHash,
+		arg.EndedAt,
+		arg.FromPlan,
+		arg.IntentID,
+	)
+	return err
+}
+
+const recordSubscriptionEndReceipt = `-- name: RecordSubscriptionEndReceipt :execrows
+INSERT INTO billing_subscription_end_receipts(provider,event_id,account_id,customer_hash,subscription_hash)
+VALUES($1,$2,$3,$4,$5) ON CONFLICT(provider,event_id) DO NOTHING
+`
+
+type RecordSubscriptionEndReceiptParams struct {
+	Provider         string
+	EventID          string
+	AccountID        pgtype.UUID
+	CustomerHash     []byte
+	SubscriptionHash []byte
+}
+
+func (q *Queries) RecordSubscriptionEndReceipt(ctx context.Context, db DBTX, arg RecordSubscriptionEndReceiptParams) (int64, error) {
+	result, err := db.Exec(ctx, recordSubscriptionEndReceipt,
+		arg.Provider,
+		arg.EventID,
+		arg.AccountID,
+		arg.CustomerHash,
+		arg.SubscriptionHash,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const recovery = `-- name: Recovery :one
 SELECT coalesce((SELECT r.recovery_id FROM internal_mail_recovery_state r WHERE r.namespace=$1),
     '00000000-0000-0000-0000-000000000000'::uuid)::uuid AS recovery_id,
@@ -3651,30 +3877,34 @@ func (q *Queries) Settle(ctx context.Context, db DBTX, arg SettleParams) (int64,
 }
 
 const shareAccount = `-- name: ShareAccount :one
-SELECT plan,last_quota_warning_at,quota_mail_revision,id,email,status,deletion_requested_at,email_verified_at,abuse_hold_at,password_reset_revision,mfa_enrolled_at,mfa_revision,past_due_at,billing_mail_revision FROM accounts WHERE id=$1 FOR SHARE
+SELECT subscription_mail_revision,coalesce(stripe_subscription_item,'')::text AS stripe_subscription_item,plan,last_quota_warning_at,quota_mail_revision,id,email,status,deletion_requested_at,email_verified_at,abuse_hold_at,password_reset_revision,mfa_enrolled_at,mfa_revision,past_due_at,billing_mail_revision FROM accounts WHERE id=$1 FOR SHARE
 `
 
 type ShareAccountRow struct {
-	Plan                  string
-	LastQuotaWarningAt    pgtype.Timestamptz
-	QuotaMailRevision     int64
-	ID                    pgtype.UUID
-	Email                 string
-	Status                string
-	DeletionRequestedAt   pgtype.Timestamptz
-	EmailVerifiedAt       pgtype.Timestamptz
-	AbuseHoldAt           pgtype.Timestamptz
-	PasswordResetRevision int64
-	MfaEnrolledAt         pgtype.Timestamptz
-	MfaRevision           int64
-	PastDueAt             pgtype.Timestamptz
-	BillingMailRevision   int64
+	SubscriptionMailRevision int64
+	StripeSubscriptionItem   string
+	Plan                     string
+	LastQuotaWarningAt       pgtype.Timestamptz
+	QuotaMailRevision        int64
+	ID                       pgtype.UUID
+	Email                    string
+	Status                   string
+	DeletionRequestedAt      pgtype.Timestamptz
+	EmailVerifiedAt          pgtype.Timestamptz
+	AbuseHoldAt              pgtype.Timestamptz
+	PasswordResetRevision    int64
+	MfaEnrolledAt            pgtype.Timestamptz
+	MfaRevision              int64
+	PastDueAt                pgtype.Timestamptz
+	BillingMailRevision      int64
 }
 
 func (q *Queries) ShareAccount(ctx context.Context, db DBTX, id pgtype.UUID) (ShareAccountRow, error) {
 	row := db.QueryRow(ctx, shareAccount, id)
 	var i ShareAccountRow
 	err := row.Scan(
+		&i.SubscriptionMailRevision,
+		&i.StripeSubscriptionItem,
 		&i.Plan,
 		&i.LastQuotaWarningAt,
 		&i.QuotaMailRevision,
@@ -4034,6 +4264,52 @@ func (q *Queries) ShareRecovery(ctx context.Context, db DBTX, dollar_1 string) e
 	return err
 }
 
+const shareSubscriptionEndedSubmissionAccount = `-- name: ShareSubscriptionEndedSubmissionAccount :one
+SELECT a.email,a.status,a.plan,a.past_due_at,a.deletion_requested_at,a.subscription_mail_revision,
+    coalesce(a.stripe_subscription_item,'')::text AS subscription_id,o.subscription_ended_revision,o.from_address,m.sender_address
+FROM internal_mail_messages m JOIN platform_mail_producer_outbox o
+    ON o.namespace=m.namespace AND o.producer_id=m.producer_id
+    AND m.idempotency_key='subscription-ended:'||o.id::text AND o.template='subscription_ended' AND o.expires_at=m.expires_at
+JOIN accounts a ON a.id=o.account_id
+WHERE m.namespace=$1 AND m.id=$2 FOR SHARE OF a
+`
+
+type ShareSubscriptionEndedSubmissionAccountParams struct {
+	Namespace string
+	ID        pgtype.UUID
+}
+
+type ShareSubscriptionEndedSubmissionAccountRow struct {
+	Email                     string
+	Status                    string
+	Plan                      string
+	PastDueAt                 pgtype.Timestamptz
+	DeletionRequestedAt       pgtype.Timestamptz
+	SubscriptionMailRevision  int64
+	SubscriptionID            string
+	SubscriptionEndedRevision pgtype.Int8
+	FromAddress               string
+	SenderAddress             string
+}
+
+func (q *Queries) ShareSubscriptionEndedSubmissionAccount(ctx context.Context, db DBTX, arg ShareSubscriptionEndedSubmissionAccountParams) (ShareSubscriptionEndedSubmissionAccountRow, error) {
+	row := db.QueryRow(ctx, shareSubscriptionEndedSubmissionAccount, arg.Namespace, arg.ID)
+	var i ShareSubscriptionEndedSubmissionAccountRow
+	err := row.Scan(
+		&i.Email,
+		&i.Status,
+		&i.Plan,
+		&i.PastDueAt,
+		&i.DeletionRequestedAt,
+		&i.SubscriptionMailRevision,
+		&i.SubscriptionID,
+		&i.SubscriptionEndedRevision,
+		&i.FromAddress,
+		&i.SenderAddress,
+	)
+	return i, err
+}
+
 const shareVerificationToken = `-- name: ShareVerificationToken :one
 SELECT token_hash,account_id,expires_at,consumed_at,email_address FROM email_verification_tokens
 WHERE token_hash=$1 AND account_id=$2 FOR SHARE
@@ -4086,6 +4362,134 @@ func (q *Queries) StampQuotaWarning(ctx context.Context, db DBTX, arg StampQuota
 	var i StampQuotaWarningRow
 	err := row.Scan(&i.QuotaMailRevision, &i.ObservedAt)
 	return i, err
+}
+
+const subscriptionAlreadyEnded = `-- name: SubscriptionAlreadyEnded :one
+SELECT EXISTS(SELECT 1 FROM billing_subscription_ends WHERE account_id=$1 AND provider=$2 AND subscription_hash=$3)::boolean
+`
+
+type SubscriptionAlreadyEndedParams struct {
+	AccountID        pgtype.UUID
+	Provider         string
+	SubscriptionHash []byte
+}
+
+func (q *Queries) SubscriptionAlreadyEnded(ctx context.Context, db DBTX, arg SubscriptionAlreadyEndedParams) (bool, error) {
+	row := db.QueryRow(ctx, subscriptionAlreadyEnded, arg.AccountID, arg.Provider, arg.SubscriptionHash)
+	var column_1 bool
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const subscriptionEndReceipt = `-- name: SubscriptionEndReceipt :one
+SELECT account_id,customer_hash,subscription_hash FROM billing_subscription_end_receipts WHERE provider=$1 AND event_id=$2
+`
+
+type SubscriptionEndReceiptParams struct {
+	Provider string
+	EventID  string
+}
+
+type SubscriptionEndReceiptRow struct {
+	AccountID        pgtype.UUID
+	CustomerHash     []byte
+	SubscriptionHash []byte
+}
+
+func (q *Queries) SubscriptionEndReceipt(ctx context.Context, db DBTX, arg SubscriptionEndReceiptParams) (SubscriptionEndReceiptRow, error) {
+	row := db.QueryRow(ctx, subscriptionEndReceipt, arg.Provider, arg.EventID)
+	var i SubscriptionEndReceiptRow
+	err := row.Scan(&i.AccountID, &i.CustomerHash, &i.SubscriptionHash)
+	return i, err
+}
+
+const subscriptionEndedDeliveryReady = `-- name: SubscriptionEndedDeliveryReady :exec
+SELECT a.subscription_mail_revision,a.plan,a.stripe_subscription_item,o.subscription_ended_revision
+FROM accounts a JOIN platform_mail_producer_outbox o ON o.account_id=a.id LIMIT 0
+`
+
+func (q *Queries) SubscriptionEndedDeliveryReady(ctx context.Context, db DBTX) error {
+	_, err := db.Exec(ctx, subscriptionEndedDeliveryReady)
+	return err
+}
+
+const subscriptionEndedKeyReferences = `-- name: SubscriptionEndedKeyReferences :many
+SELECT DISTINCT security_alert_key_id FROM platform_mail_producer_outbox
+WHERE namespace=$1 AND producer_id=$2 AND template='subscription_ended' AND state IN ('queued','claimed') AND expires_at>clock_timestamp()
+`
+
+type SubscriptionEndedKeyReferencesParams struct {
+	Namespace  string
+	ProducerID string
+}
+
+func (q *Queries) SubscriptionEndedKeyReferences(ctx context.Context, db DBTX, arg SubscriptionEndedKeyReferencesParams) ([]string, error) {
+	rows, err := db.Query(ctx, subscriptionEndedKeyReferences, arg.Namespace, arg.ProducerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var security_alert_key_id string
+		if err := rows.Scan(&security_alert_key_id); err != nil {
+			return nil, err
+		}
+		items = append(items, security_alert_key_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const subscriptionEndedLifecycleReady = `-- name: SubscriptionEndedLifecycleReady :one
+SELECT (count(*)=2)::boolean AS ready
+FROM pg_catalog.pg_trigger g JOIN pg_catalog.pg_class t ON t.oid=g.tgrelid
+JOIN pg_catalog.pg_namespace n ON n.oid=t.relnamespace
+WHERE n.nspname=current_schema() AND g.tgenabled IN ('O','A')
+    AND ((t.relname='accounts' AND g.tgname='accounts_subscription_mail_revision_guard')
+        OR (t.relname='billing_identities' AND g.tgname='billing_identities_subscription_mail_revision_guard'))
+`
+
+func (q *Queries) SubscriptionEndedLifecycleReady(ctx context.Context, db DBTX) (bool, error) {
+	row := db.QueryRow(ctx, subscriptionEndedLifecycleReady)
+	var ready bool
+	err := row.Scan(&ready)
+	return ready, err
+}
+
+const subscriptionEndedReady = `-- name: SubscriptionEndedReady :one
+WITH own_constraint AS MATERIALIZED (
+    SELECT c.oid FROM pg_catalog.pg_constraint c
+    JOIN pg_catalog.pg_class t ON t.oid=c.conrelid JOIN pg_catalog.pg_namespace n ON n.oid=t.relnamespace
+    WHERE n.nspname=current_schema() AND t.relname='platform_mail_producer_outbox'
+      AND c.conname='platform_mail_producer_outbox_security_alert_check'
+)
+SELECT EXISTS(SELECT 1 FROM own_constraint c
+    WHERE position('subscription_ended' in pg_catalog.pg_get_constraintdef(c.oid))>0)::boolean AS ready
+`
+
+func (q *Queries) SubscriptionEndedReady(ctx context.Context, db DBTX) (bool, error) {
+	row := db.QueryRow(ctx, subscriptionEndedReady)
+	var ready bool
+	err := row.Scan(&ready)
+	return ready, err
+}
+
+const subscriptionEndedSchemaReady = `-- name: SubscriptionEndedSchemaReady :exec
+SELECT a.subscription_mail_revision,a.plan,a.stripe_subscription_item,b.subscription_id,
+    o.subscription_ended_revision,r.subscription_hash,e.ended_at,p.streaming_enabled,g.plan,g.stripe_subscription_item
+FROM accounts a JOIN billing_identities b ON b.account_id=a.id
+JOIN platform_mail_producer_outbox o ON o.account_id=a.id
+JOIN billing_subscription_end_receipts r ON r.account_id=a.id
+JOIN billing_subscription_ends e ON e.account_id=a.id
+LEFT JOIN apps p ON p.account_id=a.id LEFT JOIN orgs g ON g.personal_owner_account_id=a.id LIMIT 0
+`
+
+func (q *Queries) SubscriptionEndedSchemaReady(ctx context.Context, db DBTX) error {
+	_, err := db.Exec(ctx, subscriptionEndedSchemaReady)
+	return err
 }
 
 const suppressed = `-- name: Suppressed :one

@@ -38,14 +38,15 @@ func (s *fixtureSMTP) Submit(context.Context, internalmail.Envelope) (string, st
 
 func TestPGProducerOutboxRealMaildLostAcknowledgementDoesNotDuplicate(t *testing.T) {
 	pool := pgtest.Open(t)
-	if _, err := pool.Exec(t.Context(), `CREATE TABLE accounts(id uuid PRIMARY KEY,email text NOT NULL,status text NOT NULL,plan text NOT NULL DEFAULT 'free',last_quota_warning_at timestamptz,deletion_requested_at timestamptz,email_verified_at timestamptz,abuse_hold_at timestamptz,mfa_enrolled_at timestamptz,mfa_recovery_codes_hash bytea[],mfa_secret_encrypted bytea,mfa_required boolean NOT NULL DEFAULT false,past_due_at timestamptz,suspended_reason text);
+	if _, err := pool.Exec(t.Context(), `CREATE TABLE accounts(id uuid PRIMARY KEY,email text NOT NULL,status text NOT NULL,plan text NOT NULL DEFAULT 'free',provider_customer_id text,stripe_subscription_item text,last_quota_warning_at timestamptz,deletion_requested_at timestamptz,email_verified_at timestamptz,abuse_hold_at timestamptz,mfa_enrolled_at timestamptz,mfa_recovery_codes_hash bytea[],mfa_secret_encrypted bytea,mfa_required boolean NOT NULL DEFAULT false,past_due_at timestamptz,suspended_reason text);
 CREATE TABLE usage_minutes(account_id uuid NOT NULL,minute timestamptz NOT NULL,mb_seconds bigint NOT NULL);
 CREATE TABLE login_tokens(token_hash bytea PRIMARY KEY,account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,expires_at timestamptz NOT NULL,consumed_at timestamptz);
 CREATE TABLE mfa_disable_requests(token_hash bytea PRIMARY KEY,account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,requested_at timestamptz NOT NULL,consumed_at timestamptz);
 CREATE TABLE email_verification_tokens(token_hash bytea PRIMARY KEY,account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,expires_at timestamptz NOT NULL,consumed_at timestamptz,created_at timestamptz NOT NULL DEFAULT now());
         CREATE TABLE account_passwords(account_id uuid PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,hash text NOT NULL,updated_at timestamptz NOT NULL DEFAULT now());
-CREATE TABLE orgs(id uuid PRIMARY KEY,personal_org boolean NOT NULL DEFAULT false,personal_owner_account_id uuid,status text NOT NULL DEFAULT 'active',updated_at timestamptz NOT NULL DEFAULT now());
-CREATE TABLE billing_identities(account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,provider text NOT NULL,customer_id text NOT NULL,PRIMARY KEY(account_id,provider),UNIQUE(provider,customer_id));
+CREATE TABLE orgs(id uuid PRIMARY KEY,personal_org boolean NOT NULL DEFAULT false,personal_owner_account_id uuid,status text NOT NULL DEFAULT 'active',plan text NOT NULL DEFAULT 'free',provider_customer_id text,stripe_subscription_item text,updated_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE billing_identities(account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,provider text NOT NULL,customer_id text NOT NULL,subscription_id text NOT NULL DEFAULT '',billing_from timestamptz NOT NULL DEFAULT now(),updated_at timestamptz NOT NULL DEFAULT now(),PRIMARY KEY(account_id,provider),UNIQUE(provider,customer_id));
+CREATE TABLE apps(id uuid PRIMARY KEY,account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,streaming_enabled boolean NOT NULL DEFAULT false);
 CREATE TABLE mail_suppressions(email text NOT NULL,expires_at timestamptz)`); err != nil {
 		t.Fatal(err)
 	}
@@ -90,6 +91,7 @@ CREATE TABLE mail_suppressions(email text NOT NULL,expires_at timestamptz)`); er
 	var passwordChangedAlertGate atomic.Bool
 	var nonpaymentDeletionGate atomic.Bool
 	var quotaWarningGate atomic.Bool
+	var subscriptionEndedGate atomic.Bool
 	var accountSuspendedGate atomic.Bool
 	var accountRestoredGate atomic.Bool
 	var paymentFailedGate atomic.Bool
@@ -108,11 +110,12 @@ CREATE TABLE mail_suppressions(email text NOT NULL,expires_at timestamptz)`); er
 		PasswordChangedAlertOutboxEnabled: passwordChangedAlertGate.Load,
 		NonpaymentDeletionOutboxEnabled:   nonpaymentDeletionGate.Load,
 		QuotaWarningOutboxEnabled:         quotaWarningGate.Load,
+		SubscriptionEndedOutboxEnabled:    subscriptionEndedGate.Load,
 		AccountSuspendedOutboxEnabled:     accountSuspendedGate.Load,
 		AccountRestoredOutboxEnabled:      accountRestoredGate.Load,
 		PaymentFailedOutboxEnabled:        paymentFailedGate.Load,
 		MFAEnabledAlertOutboxEnabled:      mfaEnabledAlertGate.Load,
-		Producers:                         map[string]internalmail.Producer{"auth": {ID: "auth", Token: testProducerToken, From: []string{"notify@example.test"}, DailyRecipientLimit: 60, PendingRecipientLimit: 100}},
+		Producers:                         map[string]internalmail.Producer{"auth": {ID: "auth", Token: testProducerToken, From: []string{"notify@example.test"}, DailyRecipientLimit: 80, PendingRecipientLimit: 100}},
 		RecipientAllowed:                  func(string) bool { return true }, Transport: smtp}
 	domain, err := daemon.RegisterDomain(t.Context(), "example.test")
 	if err != nil {
@@ -723,6 +726,7 @@ CREATE TABLE mail_suppressions(email text NOT NULL,expires_at timestamptz)`); er
 	expectedMailCount += exerciseSuspendedHandoff(t, f, daemon, smtp, &accountSuspendedGate, &dropped)
 	expectedMailCount += exerciseNonpaymentDeletionHandoff(t, f, daemon, smtp, &nonpaymentDeletionGate, &dropped)
 	expectedMailCount += exerciseQuotaWarningHandoff(t, f, daemon, smtp, &quotaWarningGate, &dropped)
+	expectedMailCount += exerciseSubscriptionEndedHandoff(t, f, daemon, smtp, &subscriptionEndedGate, &dropped)
 	// The producer must retain no recovery advisory lock across HTTP. Start
 	// and release a new recovery after producer preflight but before maild
 	// admission: the owner's generation check must reject this stale request.
@@ -1480,5 +1484,169 @@ func exerciseQuotaWarningHandoff(t *testing.T, f *fixture, daemon *internalmail.
 		}
 	}
 	f.env[internalmail.QuotaWarningOutboxEnableEnv] = "0"
+	return admitted
+}
+
+func exerciseSubscriptionEndedHandoff(t *testing.T, f *fixture, daemon *internalmail.Service, smtp *fixtureSMTP, gate, dropped *atomic.Bool) int {
+	t.Helper()
+	if err := daemon.Store.(*internalmail.PGStore).SubscriptionEndedOutboxReady(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	f.env[internalmail.SubscriptionEndedOutboxEnableEnv] = "1"
+	if err := f.service.ConfigureSubscriptionEnded(t.Context(), func(k string) string { return f.env[k] }); err != nil {
+		t.Fatal(err)
+	}
+	_, _, _, first := queueEnded(t, f)
+	if err := f.service.DeliverOne(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if got := row(t, f, uuidString(first.ID.Bytes)); got.State != "queued" || len(got.SealedSecurityAlert) == 0 {
+		t.Fatal("remote pause lost committed subscription-ended confirmation")
+	}
+	gate.Store(true)
+	for attempt := 0; attempt < 2; attempt++ {
+		if _, err := f.pool.Exec(t.Context(), "UPDATE platform_mail_producer_outbox SET next_attempt_at=clock_timestamp() WHERE id=$1", first.ID); err != nil {
+			t.Fatal(err)
+		}
+		next, err := NewFromEnv(f.pool, func(k string) string { return f.env[k] })
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := next.ConfigureSubscriptionEnded(t.Context(), func(k string) string { return f.env[k] }); err != nil {
+			t.Fatal(err)
+		}
+		f.service = next
+		if attempt == 0 {
+			dropped.Store(false)
+		}
+		if err := next.DeliverOne(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if got := row(t, f, uuidString(first.ID.Bytes)); attempt == 0 && got.State != "queued" {
+			t.Fatal("subscription-ended confirmation admission acknowledgement was not lost")
+		}
+	}
+	if got := row(t, f, uuidString(first.ID.Bytes)); got.State != "admitted" {
+		t.Fatal("subscription-ended confirmation retry lost admission")
+	} else {
+		assertMFAAlertErased(t, got)
+	}
+	before := smtp.accepted.Load()
+	gate.Store(false)
+	if err := daemon.DeliverOne(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if smtp.accepted.Load() != before {
+		t.Fatal("disabled subscription-ended confirmation template reached SMTP")
+	}
+	gate.Store(true)
+	for range 2 {
+		if err := daemon.DeliverOne(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if smtp.accepted.Load() != before+1 {
+		t.Fatal("subscription-ended confirmation retry duplicated SMTP custody")
+	}
+	admitted := 1
+	for _, mode := range []string{"plan_aba", "status_aba", "address_aba", "identity_aba", "identity_reinsert", "other_provider", "deleting", "erasure", "plan_wait", "identity_wait", "flag_wait"} {
+		id, customer, _, intent := queueEnded(t, f)
+		if err := f.service.DeliverOne(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if row(t, f, uuidString(intent.ID.Bytes)).State != "admitted" {
+			t.Fatal("subscription-ended confirmation notice not admitted", mode)
+		}
+		admitted++
+		var err error
+		switch mode {
+		case "plan_aba":
+			_, err = f.pool.Exec(t.Context(), "UPDATE accounts SET plan='scale' WHERE id=$1", id)
+			if err == nil {
+				_, err = f.pool.Exec(t.Context(), "UPDATE accounts SET plan='free' WHERE id=$1", id)
+			}
+		case "status_aba":
+			_, err = f.pool.Exec(t.Context(), "UPDATE accounts SET status='suspended' WHERE id=$1", id)
+			if err == nil {
+				_, err = f.pool.Exec(t.Context(), "UPDATE accounts SET status='active' WHERE id=$1", id)
+			}
+		case "address_aba":
+			_, err = f.pool.Exec(t.Context(), "UPDATE accounts SET email='other@example.net' WHERE id=$1", id)
+			if err == nil {
+				_, err = f.pool.Exec(t.Context(), "UPDATE accounts SET email='one@example.net' WHERE id=$1", id)
+			}
+		case "identity_aba":
+			_, err = f.pool.Exec(t.Context(), "UPDATE billing_identities SET subscription_id='new-sub' WHERE account_id=$1", id)
+			if err == nil {
+				_, err = f.pool.Exec(t.Context(), "UPDATE billing_identities SET subscription_id='' WHERE account_id=$1", id)
+			}
+		case "identity_reinsert":
+			_, err = f.pool.Exec(t.Context(), "DELETE FROM billing_identities WHERE account_id=$1", id)
+			if err == nil {
+				_, err = f.pool.Exec(t.Context(), "INSERT INTO billing_identities(account_id,provider,customer_id) VALUES($1,'stripe',$2)", id, customer)
+			}
+		case "other_provider":
+			_, err = f.pool.Exec(t.Context(), "INSERT INTO billing_identities(account_id,provider,customer_id,subscription_id) VALUES($1,'polar',$2,'new-sub')", id, "new-"+customer)
+		case "deleting":
+			_, err = f.pool.Exec(t.Context(), "UPDATE accounts SET deletion_requested_at=clock_timestamp() WHERE id=$1", id)
+		case "erasure":
+			_, err = f.pool.Exec(t.Context(), "DELETE FROM accounts WHERE id=$1", id)
+		case "plan_wait", "identity_wait", "flag_wait":
+			tx, beginErr := f.pool.Begin(t.Context())
+			if beginErr != nil {
+				t.Fatal(beginErr)
+			}
+			defer rollback(t.Context(), tx)
+			if _, err := tx.Exec(t.Context(), "SELECT id FROM accounts WHERE id=$1 FOR UPDATE", id); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+			defer cancel()
+			done := make(chan error, 1)
+			go func() { done <- daemon.DeliverOne(ctx) }()
+			waitForReconciliationBlock(t, f, ctx, tx.Conn().PgConn().PID())
+			if mode == "plan_wait" {
+				if _, err := tx.Exec(ctx, "UPDATE accounts SET plan='scale' WHERE id=$1", id); err != nil {
+					t.Fatal(err)
+				}
+			} else if mode == "identity_wait" {
+				if _, err := tx.Exec(ctx, "UPDATE billing_identities SET subscription_id='new-sub' WHERE account_id=$1", id); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				gate.Store(false)
+			}
+			if err := tx.Commit(ctx); err != nil {
+				t.Fatal(err)
+			}
+			if err := <-done; err != nil {
+				t.Fatal(err)
+			}
+			if mode == "flag_wait" {
+				var status string
+				if err := f.pool.QueryRow(ctx, "SELECT r.status FROM internal_mail_recipients r JOIN internal_mail_messages m ON m.id=r.message_id WHERE m.idempotency_key=$1", "subscription-ended:"+uuidString(intent.ID.Bytes)).Scan(&status); err != nil || status != "queued" {
+					t.Fatal("late gate withdrawal did not hold notice", status, err)
+				}
+				gate.Store(true)
+				_, err = f.pool.Exec(t.Context(), "UPDATE accounts SET plan='scale' WHERE id=$1", id)
+			}
+		}
+		if err != nil {
+			t.Fatal(mode, err)
+		}
+		for range 2 {
+			if err := daemon.DeliverOne(t.Context()); err != nil {
+				t.Fatal(mode, err)
+			}
+		}
+		if smtp.accepted.Load() != before+1 {
+			t.Fatal("stale subscription-ended confirmation reached SMTP", mode)
+		}
+		var status string
+		if err := f.pool.QueryRow(t.Context(), "SELECT r.status FROM internal_mail_recipients r JOIN internal_mail_messages m ON m.id=r.message_id WHERE m.idempotency_key=$1", "subscription-ended:"+uuidString(intent.ID.Bytes)).Scan(&status); err != nil || status != "cancelled" {
+			t.Fatal("maild did not cancel stale subscription-ended confirmation", mode, status, err)
+		}
+	}
+	f.env[internalmail.SubscriptionEndedOutboxEnableEnv] = "0"
 	return admitted
 }

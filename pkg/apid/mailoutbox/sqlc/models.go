@@ -9,24 +9,27 @@ import (
 )
 
 type Account struct {
-	ID                    pgtype.UUID
-	Email                 string
-	Status                string
-	Plan                  string
-	LastQuotaWarningAt    pgtype.Timestamptz
-	DeletionRequestedAt   pgtype.Timestamptz
-	EmailVerifiedAt       pgtype.Timestamptz
-	AbuseHoldAt           pgtype.Timestamptz
-	MfaEnrolledAt         pgtype.Timestamptz
-	MfaRecoveryCodesHash  [][]byte
-	MfaSecretEncrypted    []byte
-	MfaRequired           bool
-	PastDueAt             pgtype.Timestamptz
-	SuspendedReason       pgtype.Text
-	PasswordResetRevision int64
-	MfaRevision           int64
-	BillingMailRevision   int64
-	QuotaMailRevision     int64
+	ID                       pgtype.UUID
+	Email                    string
+	Status                   string
+	Plan                     string
+	ProviderCustomerID       pgtype.Text
+	StripeSubscriptionItem   pgtype.Text
+	LastQuotaWarningAt       pgtype.Timestamptz
+	DeletionRequestedAt      pgtype.Timestamptz
+	EmailVerifiedAt          pgtype.Timestamptz
+	AbuseHoldAt              pgtype.Timestamptz
+	MfaEnrolledAt            pgtype.Timestamptz
+	MfaRecoveryCodesHash     [][]byte
+	MfaSecretEncrypted       []byte
+	MfaRequired              bool
+	PastDueAt                pgtype.Timestamptz
+	SuspendedReason          pgtype.Text
+	PasswordResetRevision    int64
+	MfaRevision              int64
+	BillingMailRevision      int64
+	QuotaMailRevision        int64
+	SubscriptionMailRevision int64
 }
 
 type AccountPassword struct {
@@ -38,6 +41,12 @@ type AccountPassword struct {
 type ApiKey struct {
 	ID        pgtype.UUID
 	AccountID pgtype.UUID
+}
+
+type App struct {
+	ID               pgtype.UUID
+	AccountID        pgtype.UUID
+	StreamingEnabled bool
 }
 
 type BillingAccountNonpaymentDeletion struct {
@@ -63,9 +72,12 @@ type BillingAccountSuspension struct {
 }
 
 type BillingIdentity struct {
-	AccountID  pgtype.UUID
-	Provider   string
-	CustomerID string
+	AccountID      pgtype.UUID
+	Provider       string
+	CustomerID     string
+	SubscriptionID string
+	BillingFrom    pgtype.Timestamptz
+	UpdatedAt      pgtype.Timestamptz
 }
 
 type BillingPaymentFailureReceipt struct {
@@ -95,6 +107,24 @@ type BillingQuotaWarning struct {
 	FollowupCompletedAt pgtype.Timestamptz
 	LeaseID             pgtype.UUID
 	LeaseUntil          pgtype.Timestamptz
+}
+
+type BillingSubscriptionEnd struct {
+	AccountID        pgtype.UUID
+	Provider         string
+	SubscriptionHash []byte
+	EndedAt          pgtype.Timestamptz
+	FromPlan         string
+	IntentID         pgtype.UUID
+}
+
+type BillingSubscriptionEndReceipt struct {
+	Provider         string
+	EventID          string
+	AccountID        pgtype.UUID
+	CustomerHash     []byte
+	SubscriptionHash []byte
+	ProcessedAt      pgtype.Timestamptz
 }
 
 type EmailVerificationToken struct {
@@ -181,6 +211,9 @@ type Org struct {
 	PersonalOrg            bool
 	PersonalOwnerAccountID pgtype.UUID
 	Status                 string
+	Plan                   string
+	ProviderCustomerID     pgtype.Text
+	StripeSubscriptionItem pgtype.Text
 	UpdatedAt              pgtype.Timestamptz
 }
 
@@ -251,6 +284,7 @@ type PlatformMailProducerOutbox struct {
 	QuotaWarningDay            pgtype.Timestamptz
 	QuotaWarningPlan           pgtype.Text
 	QuotaWarningRevision       pgtype.Int8
+	SubscriptionEndedRevision  pgtype.Int8
 }
 
 type Session struct {

@@ -3313,3 +3313,71 @@ recovery generations cannot be replayed. Account erasure cascades intent and
 receipt; terminal settlement erases address/ciphertext. Opaque audit survives,
 and Down refuses used history. Deployment, activation, credential enrollment and
 live delivery qualification remain separate work.
+
+## Durable subscription-ended confirmations
+
+`FAAS_INTERNAL_MAIL_SUBSCRIPTION_ENDED_OUTBOX_ENABLED=0` independently gates
+subscription-ended confirmations in apid, maild and private reconciliation.
+Units and examples keep it off. Apply
+[`20261017142138994_platform_mail_subscription_ended_outbox.sql`](../../migrations/20261017142138994_platform_mail_subscription_ended_outbox.sql)
+before opting in; see
+[ADR-20261017142138](../adr/20261017142138-mail-subscription-ended-confirmations.md).
+
+Only existing signed Stripe, Paddle and Polar webhooks select this path. It adds
+no listener, customer mail API, SDK method, meterd command or service credential.
+Enabled apid requires the existing producer outbox, internal-producer transport,
+parent gates and dedicated current/previous payload readers. No origin is needed.
+Disabled setup reads only the exact own flag; late enablement requires complete
+configuration/restart and cannot fall back to inline mail.
+
+A termination must carry a bounded event ID and actual subscription handle for
+the current provider-qualified customer. Stripe subscription-deleted deliveries
+use their signed object ID when the invoice-style subscription field is absent.
+A different nonempty binding is stale and receives no downgrade. A paid account
+with a missing current binding returns a retryable failure. Qualify existing
+provider bindings before opting in. Already-Free accounts without a binding
+receive no historical backfill.
+
+Apid locks the account and provider row, then commits the exact binding clear,
+Free downgrade, legacy customer/subscription cache, personal-org mirror,
+streaming opt-in removal, permanent delivery/business receipts and any encrypted
+confirmation together. It preserves status and dunning/deletion anchors. Only
+an active paid account with no overdue/deletion anchor receives the voluntary
+notice. Other qualified providers' bindings remain intact. Failures in paired
+writes, mirrors, streaming cleanup, capacity, recovery or final gating leave a
+notice-producing transition retryable. Non-mail revocations retain their existing
+billing semantics. Free-tier quota and VM lifecycle rules are unchanged.
+
+Receipts permanently deduplicate both provider delivery ID and ended subscription
+identity. Replaying a delivery or sending another event for an already-ended
+subscription cannot downgrade a later subscription or create another email.
+Receipt identity uses hashes rather than raw customer/subscription handles.
+Plan-change app notifications commit through transactional `pg_notify` with the
+downgrade. Audit remains best effort after the business commit.
+
+The original paid plan and database end time are encrypted in the frozen V1
+payload. Retries retain the same content, `subscription-ended:<intent UUID>` and
+24-hour expiry. Keep readers covering all enabled families' unexpired pending
+payloads. Shared suppression, budgets, lease/retry and recovery controls apply.
+
+Always-active account and qualified-identity triggers advance a separate
+subscription-mail revision for plan, address, status, overdue/deletion anchor or
+provider-binding changes, including changes while issuance is off. Identity
+insert/delete cycles and another provider's binding changes also invalidate
+pending mail. Platform writers take the account lock before the provider row;
+use the same lock order for operator identity edits. Both lifecycle triggers
+must remain enabled. Password, MFA and quota-warning stamps do not alter this
+revision.
+
+Apid and maild check current active/Free state, empty subscription cache, address,
+anchors and exact subscription revision before handoff/SMTP submission start.
+Re-subscription, address/status/plan/binding cycles, deletion or erasure that
+commit first cancel stale mail, including admitted messages. After submission
+start, SMTP custody cannot be recalled or automatically resent.
+
+Rollback pauses pending durable mail and private reconciliation; future events
+use the legacy path. Already-ended accounts do not send replacement inline
+confirmations. Re-enable to resume current, unexpired notices. Account erasure
+cascades intents and receipts; terminal settlement erases address/ciphertext.
+Opaque audit survives and Down refuses used history. Activation, deployment,
+credential enrollment and live qualification remain separate work.

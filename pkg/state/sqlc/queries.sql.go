@@ -45670,6 +45670,19 @@ func (q *Queries) LockApplicationStandardWorkerOperation(ctx context.Context, db
 	return id, err
 }
 
+const lockBillingIdentityAccount = `-- name: LockBillingIdentityAccount :one
+SELECT id::text FROM accounts WHERE id=$1::text::uuid FOR UPDATE
+`
+
+// Identity writes use the account lock before the provider-qualified row.
+// This matches subscription termination and SMTP lifecycle fencing.
+func (q *Queries) LockBillingIdentityAccount(ctx context.Context, db DBTX, accountID string) (string, error) {
+	row := db.QueryRow(ctx, lockBillingIdentityAccount, accountID)
+	var id string
+	err := row.Scan(&id)
+	return id, err
+}
+
 const lockBindingPromotionRevision = `-- name: LockBindingPromotionRevision :one
 SELECT (r.epoch::text || ':' || r.revision::text)::text AS revision
 FROM app_binding_promotion_revisions r JOIN apps a ON a.id=r.app_id
