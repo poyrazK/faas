@@ -82,17 +82,25 @@
       "cmd/release-artifact/"
     ]
   },
-  "compute_only_paths": [
-    "deploy/ansible/roles/builderd_service/",
-    "deploy/ansible/roles/compute_admission/",
-    "deploy/ansible/roles/compute_only_service/",
-    "deploy/ansible/roles/gatewayd_internal_service/",
-    "deploy/ansible/roles/gatewayd_public_edge_service/",
-    "deploy/ansible/roles/geoip/",
-    "deploy/ansible/roles/profiled_service/",
-    "deploy/ansible/roles/tenant_egress_client/",
-    "deploy/ansible/roles/vmmd_service/"
-  ],
+  "_host_config_comment": "Host configuration (docs/adr/20261018133100-host-configuration-lane.md). A deploy/ path a control-plane host role reads (scripts/ci/host_roles.py: the role's files and every path it names) no longer blocks the control-plane lane, which converges the roles whose content hash changed before it restarts anything (cd-controlplane.yml converge-host-config). A path a compute host role reads waits for the full release and holds the edge lane (compute_deploy). release_units are the files cd-controlplane's bundle installs through deployctl at activation (systemd/, optional-systemd/, tmpfiles.d/): a unit release reuses the base's copies, so a change to one still needs a full release. outside_releases are trees no release installs, so a change there maps to nothing unless a host role names the file: deploy/systemd/ is deployctl generate's legacy and dev-VM tree, deploy/grafana/ mirrors the grafana role's dashboards (make grafana-mirror-check), and deploy/cloudflare/ workers deploy through their own workflows.",
+  "host_config": {
+    "converged_groups": ["control_plane"],
+    "release_units": [
+      "deploy/ansible/roles/control_plane_service/files/faas-apid.service",
+      "deploy/ansible/roles/control_plane_service/files/faas-apid.socket",
+      "deploy/ansible/roles/control_plane_service/files/faas-cp.slice",
+      "deploy/ansible/roles/control_plane_service/files/faas-meterd.service",
+      "deploy/ansible/roles/control_plane_service/files/faas-outboundd.service",
+      "deploy/ansible/roles/control_plane_service/files/faas-schedd.service",
+      "deploy/ansible/roles/control_plane_service/files/faas-schedd.socket",
+      "deploy/ansible/roles/control_plane_service/files/faas.conf",
+      "deploy/ansible/roles/gatewayd_public_service/files/faas-gatewayd-public.service",
+      "deploy/ansible/roles/gatewayd_public_service/files/faas-gatewayd-public.socket",
+      "deploy/ansible/roles/githubd_service/files/faas-githubd.service",
+      "deploy/ansible/roles/s3_gateway_service/files/faas-s3-gatewayd.service"
+    ],
+    "outside_releases": ["deploy/systemd/", "deploy/grafana/", "deploy/cloudflare/"]
+  },
   "pending_paths": {
     "guest": ["guest/"],
     "images": ["images/"],
