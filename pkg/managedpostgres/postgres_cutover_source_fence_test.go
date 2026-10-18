@@ -382,23 +382,24 @@ func TestPostgresCutoverSourceFenceExclusionAndNeverDispatchedCancellation(t *te
 			t.Fatal("private recovery table is cloneable", name)
 		}
 	}
-	// ADR-20261017191509/20261017191518: readiness policy needs an isolated
-	// copy strategy; deployment proofs, leases and incident receipts stay at source.
+	// ADR-20261017191509/20261017191518 (classified by #4912): readiness policy
+	// and overrides need an isolated copy strategy; incident history is customer
+	// data; deployment proofs, monitors and cursors stay at source.
 	mcpCloneKinds := map[string]string{
 		"app_mcp_readiness_policies":               state.CloneSchemaConfiguration,
 		"app_mcp_readiness_policy_history":         state.CloneSchemaConfiguration,
 		"deployment_mcp_readiness_evidence":        state.CloneSchemaOperational,
 		"deployment_mcp_readiness_monitors":        state.CloneSchemaOperational,
-		"deployment_mcp_readiness_overrides":       state.CloneSchemaOperational,
-		"mcp_readiness_attention_actions":          state.CloneSchemaOperational,
+		"deployment_mcp_readiness_overrides":       state.CloneSchemaConfiguration,
+		"mcp_readiness_attention_actions":          state.CloneSchemaData,
 		"mcp_readiness_fallback_policies":          state.CloneSchemaConfiguration,
-		"mcp_readiness_incident_attention":         state.CloneSchemaOperational,
+		"mcp_readiness_incident_attention":         state.CloneSchemaData,
 		"mcp_readiness_incident_cursors":           state.CloneSchemaOperational,
-		"mcp_readiness_incident_events":            state.CloneSchemaOperational,
-		"mcp_readiness_incidents":                  state.CloneSchemaOperational,
+		"mcp_readiness_incident_events":            state.CloneSchemaData,
+		"mcp_readiness_incidents":                  state.CloneSchemaData,
 		"mcp_readiness_maintenance_windows":        state.CloneSchemaConfiguration,
-		"mcp_readiness_notification_actions":       state.CloneSchemaOperational,
-		"mcp_readiness_pagerduty_ack_events":       state.CloneSchemaOperational,
+		"mcp_readiness_notification_actions":       state.CloneSchemaData,
+		"mcp_readiness_pagerduty_ack_events":       state.CloneSchemaData,
 		"mcp_readiness_pagerduty_acknowledgements": state.CloneSchemaConfiguration,
 		"mcp_readiness_pagerduty_policies":         state.CloneSchemaConfiguration,
 		"mcp_readiness_reminder_defaults":          state.CloneSchemaConfiguration,
