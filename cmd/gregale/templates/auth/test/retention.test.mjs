@@ -51,6 +51,12 @@ test('retention days are validated and reported', () => {
   assert.equal(runtimeConfig(env).gotrueEnv.GOTRUE_SECURITY_MANUAL_LINKING_ENABLED, 'false')
   for (const bad of ['0', '3651', '30d']) assert.throws(() => runtimeConfig({ ...env, AUTH_ANONYMOUS_RETENTION_DAYS: bad }), /AUTH_ANONYMOUS_RETENTION_DAYS/, bad)
   assert.throws(() => runtimeConfig({ ...env, AUTH_IDENTITY_LINKING: 'yes' }), /AUTH_IDENTITY_LINKING/)
+  assert.equal(runtimeConfig({ ...env, AUTH_SELF_DELETION: '1' }).settings.self_deletion, true)
+  assert.equal(runtimeConfig(env).settings.self_deletion, false)
+  assert.throws(() => runtimeConfig({ ...env, AUTH_SELF_DELETION: 'on' }), /AUTH_SELF_DELETION/)
+  assert.equal(runtimeConfig({ ...env, AUTH_ORG_CLAIMS: '1' }).settings.organization_claims, true)
+  assert.equal(runtimeConfig(env).orgClaims, false)
+  assert.throws(() => runtimeConfig({ ...env, AUTH_ORG_CLAIMS: 'on' }), /AUTH_ORG_CLAIMS/)
   assert.throws(() => runtimeConfig({ ...env, GOTRUE_SECURITY_MANUAL_LINKING_ENABLED: 'true' }), /managed by Gregale/, 'linking is a typed setting, not a raw secret')
 })
 

@@ -326,7 +326,7 @@ func TestFullAndUnitLanesAreExclusive(t *testing.T) {
 	if !strings.Contains(full, "if: github.repository == 'poyrazK/faas' && inputs.units_run_id == ''") {
 		t.Error("the full lane must not run for a unit release")
 	}
-	if !strings.Contains(units, "if: github.repository == 'poyrazK/faas' && inputs.units_run_id != ''") {
+	if !strings.Contains(units, "!cancelled() && github.repository == 'poyrazK/faas' && inputs.units_run_id != ''") {
 		t.Error("the unit lane must run only for a unit release")
 	}
 	if !strings.Contains(full, "set release_tag (a full release) or units_run_id (a unit release)") {

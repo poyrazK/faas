@@ -73,7 +73,7 @@ func (s *Service) GetObjectStorageUsage(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	now := time.Now().UTC()
-	snapshot, err := st.ObjectUsage(r.Context(), acct.ID, now)
+	snapshot, err := st.ObjectUsage(r.Context(), acct.ResourceOwnerID(), now)
 	if err != nil {
 		BucketProblem(w, err)
 		return
@@ -286,5 +286,5 @@ func (s *Service) finalizeObjectStorageBilling(ctx context.Context, pricing api.
 	if candidate, ok := s.Host.BillingProvider().(billing.ObjectStorageLineItemSink); ok {
 		sink = candidate
 	}
-	return billing.FinalizeObjectStoragePeriods(ctx, runner, runner, pricing, periodStart, now, sink)
+	return billing.FinalizeObjectStoragePeriods(ctx, storageBillingAccounts{store: runner}, runner, pricing, periodStart, now, sink)
 }

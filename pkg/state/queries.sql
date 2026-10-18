@@ -183,7 +183,7 @@ SELECT jsonb_build_object(
             FROM deployments d WHERE d.app_id = a.id AND (d.status NOT IN ('failed', 'superseded', 'cancelled')
                 OR EXISTS (SELECT 1 FROM instances i WHERE i.deployment_id = d.id AND i.terminal_at IS NULL
                     AND i.state NOT IN ('stopped', 'failed')))), '[]'::jsonb)) ORDER BY a.id)
-        FROM apps a JOIN accounts acct ON acct.id = a.account_id LEFT JOIN app_application_standards e ON e.app_id = a.id
+        FROM apps a JOIN app_resource_accounts acct ON acct.app_id = a.id LEFT JOIN app_application_standards e ON e.app_id = a.id
         WHERE a.org_id = o.id AND a.status <> 'deleted'
           AND ((sqlc.arg(scope)::text = 'organization' AND sqlc.arg(scope_id)::uuid = o.id)
             OR (sqlc.arg(scope)::text = 'project' AND a.project_id = sqlc.arg(scope_id)::uuid)
@@ -1690,7 +1690,7 @@ from instances where app_id = $1 order by started_at desc;
 select a.account_id, min(i.last_request_at)::timestamptz as first_success_at
 from instances i
 join apps a on a.id = i.app_id
-join accounts acct on acct.id = a.account_id
+join app_resource_accounts acct ON acct.app_id = a.id
 where acct.created_at >= $1
   and i.last_request_at is not null
 group by a.account_id
@@ -2674,8 +2674,8 @@ and (t.queue_binding_id is null or exists (
 
 -- name: CountTriggersByAccount :one
 select count(*) from triggers t
-join apps a on a.id = t.app_id
-where a.account_id = $1 and a.status <> 'deleted'
+join apps a on a.id = t.app_id join orgs o on o.id=a.org_id
+where (case when not o.personal_org and o.resource_ownership_enabled then o.id else a.account_id end) = sqlc.arg(subject)::uuid and a.status <> 'deleted'
 and (t.queue_binding_id is null or exists (
   select 1 from queue_bindings b where b.id=t.queue_binding_id and b.retired_at is null and b.mode='push'));
 
@@ -2949,9 +2949,9 @@ having count(distinct a.github_install_account_id) = 1;
 -- Fresh-token insert. The id is server-minted by sqlc (gen_random_uuid).
 -- Returns the full row (with created_at server-stamped).
 insert into oidc_exchanged_tokens
-    (account_id, token_hash, expires_at, issuer_url, subject,
+    (id, account_id, token_hash, expires_at, issuer_url, subject,
      audience, jti, scopes)
-values ($1, $2, $3, $4, $5, $6, $7, $8)
+values (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8)
 returning id, account_id, token_hash, expires_at, issuer_url,
           subject, audience, coalesce(jti, '') as jti, scopes,
           created_at;
@@ -4814,10 +4814,10 @@ SELECT * FROM object_buckets WHERE app_id = $1 AND account_id = $2 AND name = $3
 SELECT count(*) FROM object_buckets WHERE app_id = $1 AND state <> 'deleted';
 
 -- name: ObjectBucketCountForAccount :one
-SELECT count(*) FROM object_buckets WHERE account_id = $1 AND state <> 'deleted';
+SELECT count(*) FROM object_buckets WHERE account_id = $1 AND org_id IN (SELECT id FROM orgs WHERE personal_org) AND state <> 'deleted';
 
 -- name: ObjectBucketPruneTombstones :exec
-DELETE FROM object_buckets WHERE account_id = $1 AND state = 'deleted';
+DELETE FROM object_buckets WHERE account_id = $1 AND org_id IN (SELECT id FROM orgs WHERE personal_org) AND state = 'deleted';
 
 -- name: ObjectBucketInsert :one
 INSERT INTO object_buckets (id, account_id, app_id, name, scope, region, backend_id, backend_fingerprint, physical_name, public_read, serve_at, environment_clone_source_bucket_id, environment_clone_operation_id)
@@ -4837,7 +4837,7 @@ SELECT b.* FROM object_buckets b WHERE b.account_id = $1 AND b.app_id = $2 AND b
 ORDER BY b.created_at, b.id;
 
 -- name: ObjectAccountBucketCleanupList :many
-SELECT * FROM object_buckets WHERE account_id=$1 AND state<>'deleted' ORDER BY created_at,id LIMIT $2;
+SELECT * FROM object_buckets WHERE account_id=$1 AND org_id IN(SELECT id FROM orgs WHERE personal_org) AND state<>'deleted' ORDER BY created_at,id LIMIT $2;
 
 -- name: ObjectBucketGet :one
 SELECT b.* FROM object_buckets b WHERE b.account_id = $1 AND b.app_id = $2 AND b.id = $3 AND b.state <> 'deleted'
@@ -4853,8 +4853,8 @@ SELECT g.account_id, g.bucket_id, g.api_key_id, g.permission,
        coalesce(k.label, '')::text AS key_label, k.status AS key_status,
        g.created_at, g.updated_at
 FROM object_storage_access_grants g
-JOIN api_keys k ON k.id = g.api_key_id AND k.account_id = g.account_id
 JOIN object_buckets b ON b.id = g.bucket_id AND b.account_id = g.account_id
+JOIN api_keys k ON k.id = g.api_key_id AND k.org_id = b.org_id
 WHERE g.account_id = $1 AND g.bucket_id = $2 AND b.state <> 'deleted'
 ORDER BY g.created_at, g.api_key_id;
 
@@ -4863,8 +4863,8 @@ SELECT g.account_id, g.bucket_id, g.api_key_id, g.permission,
        coalesce(k.label, '')::text AS key_label, k.status AS key_status,
        g.created_at, g.updated_at
 FROM object_storage_access_grants g
-JOIN api_keys k ON k.id = g.api_key_id AND k.account_id = g.account_id
 JOIN object_buckets b ON b.id = g.bucket_id AND b.account_id = g.account_id
+JOIN api_keys k ON k.id = g.api_key_id AND k.org_id = b.org_id
 WHERE g.account_id = $1 AND g.bucket_id = $2 AND g.api_key_id = $3
   AND b.state <> 'deleted';
 
@@ -4872,7 +4872,7 @@ WHERE g.account_id = $1 AND g.bucket_id = $2 AND g.api_key_id = $3
 INSERT INTO object_storage_access_grants (account_id, bucket_id, api_key_id, permission)
 SELECT b.account_id, b.id, k.id, sqlc.arg(permission)::text
 FROM object_buckets b
-JOIN api_keys k ON k.account_id = b.account_id
+JOIN api_keys k ON object_storage_key_live(k.id,b.id)
 WHERE b.account_id = sqlc.arg(account_id) AND b.id = sqlc.arg(bucket_id)
   AND b.state <> 'deleted'
   AND (b.environment_clone_operation_id IS NULL OR EXISTS (
@@ -4891,17 +4891,16 @@ SET permission = EXCLUDED.permission, updated_at = now();
 
 -- name: ObjectBucketAccessGrantDelete :execrows
 DELETE FROM object_storage_access_grants g
-USING object_buckets b, api_keys k
+USING object_buckets b
 WHERE g.account_id = $1 AND g.bucket_id = $2 AND g.api_key_id = $3
-  AND b.id = g.bucket_id AND b.account_id = g.account_id AND b.state <> 'deleted'
-  AND k.id = g.api_key_id AND k.account_id = g.account_id;
+  AND b.id = g.bucket_id AND b.account_id = g.account_id AND b.state <> 'deleted';
 
 -- name: ObjectBucketAccessCheck :one
 SELECT EXISTS (
     SELECT 1
     FROM object_storage_access_grants g
     JOIN object_buckets b ON b.id = g.bucket_id AND b.account_id = g.account_id
-    JOIN api_keys k ON k.id = g.api_key_id AND k.account_id = g.account_id
+    JOIN api_keys k ON k.id = g.api_key_id AND object_storage_key_live(k.id,g.bucket_id)
     WHERE g.account_id = $1 AND g.bucket_id = $2 AND g.api_key_id = $3
       AND b.state <> 'deleted'
   AND (b.environment_clone_operation_id IS NULL OR EXISTS (
@@ -4921,7 +4920,7 @@ SELECT b.*
 FROM object_buckets b
 JOIN object_storage_access_grants g
   ON g.bucket_id = b.id AND g.account_id = b.account_id
-JOIN api_keys k ON k.id = g.api_key_id AND k.account_id = g.account_id
+JOIN api_keys k ON k.id = g.api_key_id AND object_storage_key_live(k.id,g.bucket_id)
 WHERE b.account_id = $1 AND b.app_id = $2 AND g.api_key_id = $3
   AND b.state <> 'deleted'
   AND (b.environment_clone_operation_id IS NULL OR EXISTS (
@@ -4991,10 +4990,10 @@ WHERE snapshot_id = $1::uuid AND state = 'ready'
 ORDER BY node_id, is_origin DESC;
 
 -- name: ObjectUsageLockAccount :one
-SELECT id FROM accounts WHERE id = $1 FOR UPDATE;
+SELECT id FROM resource_namespaces WHERE id = $1 FOR UPDATE;
 
 -- name: ObjectUsageAccountPlan :one
-SELECT plan FROM accounts WHERE id = $1;
+SELECT a.plan FROM accounts a WHERE a.id=$1 UNION ALL SELECT o.plan FROM orgs o WHERE o.id=$1 AND NOT o.personal_org AND o.resource_ownership_enabled;
 
 -- name: ObjectUsageBucketAccount :one
 SELECT account_id FROM object_buckets WHERE id=$1;
@@ -5009,7 +5008,7 @@ COALESCE(r.request_count, 0)::bigint AS gateway_request_count,
 COALESCE(r.egress_bytes, 0)::bigint AS gateway_egress_bytes
 FROM object_buckets b LEFT JOIN object_storage_bucket_usage u ON u.bucket_id = b.id
 LEFT JOIN object_storage_request_metrics r ON r.bucket_id = b.id AND r.period_start = sqlc.arg(period_start)
-WHERE b.account_id = sqlc.arg(account_id);
+WHERE object_storage_usage_subject(b.org_id,b.account_id,sqlc.arg(period_start)) = sqlc.arg(account_id);
 
 -- name: ObjectUsageGrant :one
 SELECT max_bytes FROM object_storage_key_grants WHERE bucket_id = $1 AND key_hash = $2;
@@ -5041,7 +5040,7 @@ ON CONFLICT (bucket_id, period_start) DO UPDATE
 SET egress_bytes = object_storage_request_metrics.egress_bytes + EXCLUDED.egress_bytes;
 
 -- name: ObjectStorageProviderRequestMetrics :many
-SELECT b.id, b.account_id, b.backend_id, b.backend_fingerprint, b.physical_name,
+SELECT b.id, object_storage_usage_subject(b.org_id,b.account_id,sqlc.arg(period_start)::timestamptz)::uuid AS account_id, b.backend_id, b.backend_fingerprint, b.physical_name,
        sqlc.arg(period_start)::timestamptz AS period_start, COALESCE(m.request_count, 0)::bigint AS request_count,
        COALESCE(m.egress_bytes, 0)::bigint AS egress_bytes
 FROM object_buckets b
@@ -5051,7 +5050,7 @@ WHERE b.backend_id = $1 AND b.backend_fingerprint = $2
 ORDER BY b.physical_name, b.id;
 
 -- name: ObjectStorageProviderBuckets :many
-SELECT * FROM object_buckets
+SELECT sqlc.embed(b),object_storage_usage_subject(b.org_id,b.account_id,sqlc.arg(period_start)::timestamptz)::uuid AS billing_subject_id FROM object_buckets b
 WHERE backend_id = $1 AND backend_fingerprint = $2
 ORDER BY physical_name, id;
 
@@ -5290,8 +5289,8 @@ DELETE FROM app_secrets WHERE managed_object_storage_credential_id=$1;
 
 -- name: ObjectS3CredentialInsert :one
 INSERT INTO object_storage_s3_credentials
-(id,account_id,bucket_id,access_key_id,secret_sealed,kid,label,permission,status,managed_app_id,managed_scope,managed_prefix)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'active',NULLIF($9::text,'')::uuid,NULLIF($10,''),NULLIF($11,'')) RETURNING *;
+(id,account_id,bucket_id,access_key_id,secret_sealed,kid,label,permission,status,managed_app_id,managed_scope,managed_prefix,issuer_account_id,issuer_access_revision)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'active',NULLIF($9::text,'')::uuid,NULLIF($10,''),NULLIF($11,''),sqlc.narg(issuer_account_id)::uuid,sqlc.narg(issuer_access_revision)::bigint) RETURNING *;
 
 -- name: ObjectS3CredentialList :many
 SELECT * FROM object_storage_s3_credentials
@@ -5360,13 +5359,13 @@ WHERE account_id=$1 AND app_id=$2 AND scope=$3
   AND managed_object_storage_credential_id=$4 AND key=$5;
 
 -- name: ObjectS3CredentialResolve :one
-SELECT c.*, b.app_id, b.name AS bucket_name, b.scope AS bucket_scope,
+SELECT c.*, b.app_id, b.org_id, b.name AS bucket_name, b.scope AS bucket_scope,
        b.region AS bucket_region, b.backend_id, b.backend_fingerprint,
        b.physical_name, b.state AS bucket_state, b.created_at AS bucket_created_at,
        b.updated_at AS bucket_updated_at
 FROM object_storage_s3_credentials c
 JOIN object_buckets b ON b.id=c.bucket_id AND b.account_id=c.account_id
-WHERE c.access_key_id=$1 AND c.status='active' AND b.state='ready'
+WHERE c.access_key_id=$1 AND c.status='active' AND b.state='ready' AND object_storage_credential_live(c.id)
   AND (b.environment_clone_operation_id IS NULL OR EXISTS (
       SELECT 1 FROM project_environment_clone_operations clone_owner
       WHERE clone_owner.id = b.environment_clone_operation_id
@@ -6323,7 +6322,7 @@ SELECT jsonb_build_object(
     'storage_limit_bytes', d.storage_limit_bytes, 'restore_window_seconds', d.restore_window_seconds
 ) AS definition,
     (b.state = 'ready' AND d.state = 'ready' AND b.provider_identity_id IS NOT NULL
-     AND d.observed_generation = d.desired_generation AND d.account_id = b.account_id)::boolean AS ready
+     AND d.observed_generation = d.desired_generation AND d.account_id = b.database_account_id)::boolean AS ready
 FROM managed_postgres_bindings b JOIN managed_postgres_databases d ON d.id = b.database_id
 WHERE b.account_id = sqlc.arg(account_id)::uuid AND b.app_id = sqlc.arg(app_id)::uuid
   AND b.scope = sqlc.arg(source_scope)::text AND b.state <> 'deleted'
@@ -6467,7 +6466,7 @@ WHERE d.account_id=$1 AND d.id=$2 AND d.clone_resource_role='target'
 
 -- name: ListManagedPostgresCustomerDatabases :many
 SELECT d.* FROM managed_postgres_databases d
-WHERE d.account_id=$1 AND d.state<>'deleted' AND d.clone_resource_role='target'
+WHERE (CASE WHEN sqlc.narg(owner_org_id)::uuid IS NULL THEN d.account_id=$1 ELSE d.org_id=sqlc.narg(owner_org_id)::uuid END) AND d.state<>'deleted' AND d.clone_resource_role='target'
   AND NOT EXISTS(SELECT 1 FROM project_environment_clone_postgres_copy_targets c WHERE c.target_database_id=d.id AND c.state<>'retired') AND (
     d.environment_clone_operation_id IS NULL OR EXISTS (
         SELECT 1 FROM project_environment_clone_operations o
@@ -6510,8 +6509,12 @@ SELECT d.* FROM managed_postgres_databases d WHERE d.account_id=$1 AND d.id=$2 F
 SELECT clock_timestamp()::timestamptz AS observed_at;
 
 -- name: CountProjectEnvironmentCloneDatabaseAccount :one
-SELECT ((SELECT count(*) FROM managed_postgres_databases d WHERE d.account_id=$1 AND d.state<>'deleted')
-    + (SELECT count(*) FROM project_environment_clone_postgres_snapshot_restores r WHERE r.account_id=$1 AND r.state<>'deleted' AND r.adopted_database_id IS NULL))::bigint AS count;
+SELECT ((SELECT count(*) FROM managed_postgres_databases d
+ WHERE managed_postgres_usage_subject(d.org_id,d.account_id)=sqlc.arg(account_id)::uuid AND d.state<>'deleted')
+ + (SELECT count(*) FROM project_environment_clone_postgres_snapshot_restores r
+ JOIN project_environment_clone_operations c ON c.id=r.operation_id JOIN projects p ON p.id=c.project_id
+ WHERE managed_postgres_usage_subject(p.org_id,r.account_id)=sqlc.arg(account_id)::uuid
+ AND r.state<>'deleted' AND r.adopted_database_id IS NULL))::bigint AS count;
 
 -- name: InsertProjectEnvironmentCloneDatabase :one
 INSERT INTO managed_postgres_databases(id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero,
@@ -6554,7 +6557,7 @@ SELECT pg_advisory_xact_lock(managed_secret_target_lock_key(sqlc.arg(app_id)::uu
 SELECT EXISTS(SELECT 1 FROM app_secrets WHERE app_id=$1 AND scope=$2 AND key=$3)::boolean;
 
 -- name: ManagedPostgresBindingDatabaseID :one
-SELECT database_id FROM managed_postgres_bindings WHERE id=$1 AND account_id=$2;
+SELECT database_id,database_account_id FROM managed_postgres_bindings WHERE id=$1 AND account_id=$2;
 
 -- name: ManagedPostgresDueBindings :many
 SELECT b.* FROM managed_postgres_bindings b JOIN managed_postgres_databases d ON d.id=b.database_id
@@ -8024,7 +8027,7 @@ AND request_id=sqlc.arg(request_id) LIMIT 2;
 SELECT EXISTS(SELECT 1 FROM issue_ingest_tokens WHERE id=sqlc.arg(id) AND app_id=sqlc.arg(app_id) AND deployment_id=sqlc.arg(deployment_id) AND revoked_at IS NULL AND expires_at>sqlc.arg(now));
 -- name: IssuePurgePlanEvents :execrows
 WITH expired AS (
- SELECT e.app_id,e.deployment_id,e.event_id FROM issue_events e JOIN apps a ON a.id=e.app_id JOIN accounts c ON c.id=a.account_id
+ SELECT e.app_id,e.deployment_id,e.event_id FROM issue_events e JOIN apps a ON a.id=e.app_id JOIN app_resource_accounts c ON c.app_id = a.id
  WHERE c.plan=sqlc.arg(plan) AND e.received_at<sqlc.arg(before) ORDER BY e.received_at LIMIT sqlc.arg(batch_limit) FOR UPDATE OF e SKIP LOCKED
 )
 DELETE FROM issue_events e USING expired x WHERE e.app_id=x.app_id AND e.deployment_id=x.deployment_id AND e.event_id=x.event_id;
@@ -9029,7 +9032,7 @@ AND (stale_residents > 0 OR starting_residents > 0 OR stale_snapshots > 0)
  AND (field_path='source' OR starts_with(field_path,'runtime/'))) AS drifted;
 
 -- name: ListServiceRecoveryApps :many
-SELECT a.id FROM apps a JOIN accounts ac ON ac.id = a.account_id
+SELECT a.id FROM apps a JOIN app_resource_accounts ac ON ac.app_id = a.id
 LEFT JOIN service_recovery r ON r.app_id = a.id
 WHERE a.status = 'active' AND a.manifest->>'execution_mode' = 'service'
   AND ac.status IN ('active', 'past_due') AND ac.abuse_hold_at IS NULL
@@ -9043,7 +9046,7 @@ LIMIT sqlc.arg(batch_limit)::integer;
 INSERT INTO service_recovery(app_id, revision, claim_token, lease_until, status, next_attempt_at, updated_at)
 SELECT a.id, sqlc.arg(revision)::text, sqlc.arg(claim_token)::uuid, sqlc.arg(lease_until)::timestamptz,
        'reconciling', sqlc.arg(sampled_at)::timestamptz, sqlc.arg(sampled_at)::timestamptz
-FROM apps a JOIN accounts ac ON ac.id = a.account_id
+FROM apps a JOIN app_resource_accounts ac ON ac.app_id = a.id
 WHERE a.id = sqlc.arg(app_id)::uuid AND a.status = 'active' AND a.manifest->>'execution_mode' = 'service'
   AND ac.status IN ('active', 'past_due') AND ac.abuse_hold_at IS NULL
 ON CONFLICT (app_id) DO UPDATE SET
@@ -11052,8 +11055,8 @@ DELETE FROM object_storage_s3_credentials WHERE id IN (
 
 -- name: ObjectURLCredentialInsert :one
 INSERT INTO object_storage_s3_credentials
-(id,account_id,bucket_id,access_key_id,secret_sealed,kid,label,permission,url_request,url_api_key_id,url_expires_at,url_receipt_id)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,sqlc.arg(url_request)::jsonb,sqlc.narg(url_api_key_id)::uuid,sqlc.arg(url_expires_at)::timestamptz,sqlc.narg(url_receipt_id)::uuid) RETURNING *;
+(id,account_id,bucket_id,access_key_id,secret_sealed,kid,label,permission,url_request,url_api_key_id,url_expires_at,url_receipt_id,issuer_account_id,issuer_access_revision)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,sqlc.arg(url_request)::jsonb,sqlc.narg(url_api_key_id)::uuid,sqlc.arg(url_expires_at)::timestamptz,sqlc.narg(url_receipt_id)::uuid,sqlc.narg(issuer_account_id)::uuid,sqlc.narg(issuer_access_revision)::bigint) RETURNING *;
 
 -- name: ObjectUploadRoutesList :many
 SELECT * FROM object_upload_routes WHERE account_id=$1 AND app_id=$2 ORDER BY name;
@@ -11180,7 +11183,7 @@ WHERE binding.id = sqlc.arg(id)::uuid AND binding.state = 'provisioning'
   AND secret.managed_credential_ref = sqlc.arg(credential_ref)
   AND secret.managed_credential_generation = binding.credential_generation)
 RETURNING id::text AS id, account_id::text AS account_id, database_id::text AS database_id,
- app_id::text AS app_id, scope, environment_key, access,
+ app_id::text AS app_id, database_account_id::text AS database_account_id, scope, environment_key, access,
  coalesce(provider_identity_id, '')::text AS provider_identity_id,
  coalesce(credential_ref, '')::text AS credential_ref, credential_generation,
  coalesce(rotation_previous_generation, 0)::bigint AS rotation_previous_generation,
@@ -11203,7 +11206,7 @@ WHERE binding.account_id = sqlc.arg(account_id)::uuid AND binding.id = sqlc.arg(
  AND task.app_id = binding.app_id AND task.deployment_scope = binding.scope
  AND task.status IN ('restoring','running')))
 RETURNING id::text AS id, account_id::text AS account_id, database_id::text AS database_id,
- app_id::text AS app_id, scope, environment_key, access,
+ app_id::text AS app_id, database_account_id::text AS database_account_id, scope, environment_key, access,
  coalesce(provider_identity_id, '')::text AS provider_identity_id,
  coalesce(credential_ref, '')::text AS credential_ref, credential_generation,
  coalesce(rotation_previous_generation, 0)::bigint AS rotation_previous_generation,
@@ -11214,7 +11217,7 @@ RETURNING id::text AS id, account_id::text AS account_id, database_id::text AS d
 
 -- name: ListDueManagedPostgresBindings :many
 SELECT id::text AS id, account_id::text AS account_id, database_id::text AS database_id,
- app_id::text AS app_id, scope, environment_key, access,
+ app_id::text AS app_id, database_account_id::text AS database_account_id, scope, environment_key, access,
  coalesce(provider_identity_id, '')::text AS provider_identity_id,
  coalesce(credential_ref, '')::text AS credential_ref, credential_generation,
  coalesce(rotation_previous_generation, 0)::bigint AS rotation_previous_generation,
@@ -11466,8 +11469,10 @@ WHERE id=sqlc.arg(id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uui
 
 -- name: CancelDeletedOwnerManagedPostgresCutovers :exec
 UPDATE managed_postgres_cutovers c SET state='cancelling',verified_at=NULL,retry_at=sqlc.arg(now)::timestamptz,updated_at=sqlc.arg(now)
-FROM accounts a, apps app WHERE a.id=c.account_id AND app.id=c.app_id
-AND (a.status='deleted_pending' OR app.status='deleted') AND c.state IN ('preparing','prepared','verifying','verified');
+FROM apps app LEFT JOIN orgs o ON o.id=app.org_id LEFT JOIN accounts a ON a.id=app.account_id
+WHERE app.id=c.app_id AND (app.status='deleted' OR o.deleted_pending
+ OR ((o.personal_org OR NOT coalesce(o.resource_ownership_enabled,false)) AND a.status='deleted_pending'))
+AND c.state IN ('preparing','prepared','verifying','verified');
 
 -- name: ListDueManagedPostgresCutovers :many
 SELECT * FROM managed_postgres_cutovers WHERE (state='cancelling' OR (state IN ('preparing','verifying') AND sqlc.arg(include_preparing)::boolean))
@@ -11721,9 +11726,9 @@ FOR UPDATE;
 
 -- name: ManagedWorkflowEffectAppScope :one
 SELECT a.account_id::text AS account_id, ac.status AS account_status
-FROM apps a JOIN accounts ac ON ac.id=a.account_id
+FROM apps a JOIN LATERAL lock_app_resource_account(a.id,false,false) ac ON true
 WHERE a.id=sqlc.arg(app_id)::text::uuid AND a.status<>'deleted'
-FOR SHARE OF a, ac;
+FOR SHARE OF a;
 
 -- name: InsertWorkflowOperationEffect :exec
 INSERT INTO workflow_operation_effects(
@@ -11989,7 +11994,7 @@ with config as (select (json_populate_record(null::apps, sqlc.arg(settings)::jso
 SELECT id FROM accounts WHERE id=$1 AND status<>'deleted_pending' FOR UPDATE;
 
 -- name: FindManagedPostgresLifecycleDatabase :one
-SELECT * FROM managed_postgres_databases WHERE account_id=$1 AND name=$2 AND state<>'deleted';
+SELECT * FROM managed_postgres_databases WHERE (CASE WHEN sqlc.narg(owner_org_id)::uuid IS NULL THEN account_id=$1 ELSE org_id=sqlc.narg(owner_org_id)::uuid END) AND name=$2 AND state<>'deleted';
 
 -- name: GetManagedPostgresLifecycleDatabase :one
 SELECT * FROM managed_postgres_databases WHERE account_id=$1 AND id=$2;
@@ -12006,8 +12011,12 @@ WHERE clone_resource_role='target' AND (state IN ('deleting','updating') OR (sql
 ORDER BY retry_at,id LIMIT sqlc.arg(row_limit)::integer;
 
 -- name: CountManagedPostgresLifecycleDatabases :one
-SELECT ((SELECT count(*) FROM managed_postgres_databases d WHERE d.account_id=$1 AND d.state<>'deleted')
-    + (SELECT count(*) FROM project_environment_clone_postgres_snapshot_restores r WHERE r.account_id=$1 AND r.state<>'deleted' AND r.adopted_database_id IS NULL))::bigint AS count;
+SELECT ((SELECT count(*) FROM managed_postgres_databases d
+ WHERE managed_postgres_usage_subject(d.org_id,d.account_id)=sqlc.arg(account_id)::uuid AND d.state<>'deleted')
+ + (SELECT count(*) FROM project_environment_clone_postgres_snapshot_restores r
+ JOIN project_environment_clone_operations c ON c.id=r.operation_id JOIN projects p ON p.id=c.project_id
+ WHERE managed_postgres_usage_subject(p.org_id,r.account_id)=sqlc.arg(account_id)::uuid
+ AND r.state<>'deleted' AND r.adopted_database_id IS NULL))::bigint AS count;
 
 -- name: ReadManagedPostgresLifecycleRestoreSource :one
 SELECT * FROM managed_postgres_databases WHERE id=$1 FOR KEY SHARE;
@@ -12015,8 +12024,8 @@ SELECT * FROM managed_postgres_databases WHERE id=$1 FOR KEY SHARE;
 -- name: InsertManagedPostgresLifecycleDatabase :one
 INSERT INTO managed_postgres_databases(id,account_id,name,region,postgres_major,service_class,availability,scale_to_zero,
     storage_limit_bytes,restore_window_seconds,backend_id,backend_fingerprint,restore_source_database_id,restore_source_resource_id,
-    restore_point_in_time,state,desired_generation,observed_generation,retry_at,created_at,updated_at,accounting_required)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,false) RETURNING *;
+    restore_point_in_time,state,desired_generation,observed_generation,retry_at,created_at,updated_at,accounting_required,org_id)
+VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,false,sqlc.narg(org_id)::uuid) RETURNING *;
 
 -- name: ClaimManagedPostgresLifecycleProvision :one
 UPDATE managed_postgres_databases SET state='provisioning',lease_token=sqlc.arg(lease_token)::text,
@@ -13102,9 +13111,9 @@ SELECT id FROM active_environment_git_sources WHERE account_id=sqlc.arg(account_
 -- name: EnvironmentWorkloadIntentContext :one
 SELECT jsonb_build_object('type',a.type,'runtime',coalesce(a.runtime,''),'manifest',a.manifest,'workload_class',a.workload_class,'environment',e.slug,'plan',c.plan)::jsonb AS context
 FROM apps a JOIN project_environments e ON e.project_id=a.project_id AND e.account_id=a.account_id
-JOIN accounts c ON c.id=a.account_id
+JOIN LATERAL lock_app_resource_account(a.id,true,false) c ON true
 WHERE a.id=sqlc.arg(app_id)::uuid AND a.account_id=sqlc.arg(account_id)::uuid AND e.id=sqlc.arg(environment_id)::uuid AND a.status<>'deleted'
-FOR UPDATE OF a,c;
+FOR UPDATE OF a;
 
 -- name: EnvironmentGitOpsUnqualifiedWorkloads :many
 SELECT r.app_id,r.logical_name FROM environment_gitops_resources r
@@ -13282,7 +13291,7 @@ WHERE id=sqlc.arg(id)::uuid AND phase='claimed' AND lease_token=sqlc.arg(token):
  AND lease_until>clock_timestamp() RETURNING *;
 
 -- name: EnvironmentQualificationAdmissionInputs :one
-SELECT a.ram_mb,n.admission_ceiling_mb FROM apps a JOIN accounts c ON c.id=a.account_id
+SELECT a.ram_mb,n.admission_ceiling_mb FROM apps a JOIN app_resource_accounts c ON c.app_id = a.id
 CROSS JOIN compute_nodes n WHERE a.id=sqlc.arg(app_id)::uuid AND n.id=sqlc.arg(node_id)::uuid
  AND c.status='active' AND c.abuse_hold_at IS NULL AND n.active AND n.lifecycle='active' FOR SHARE OF n;
 
@@ -13490,10 +13499,23 @@ SELECT count(*)::bigint AS enabled_sources,
 FROM snapshots;
 -- Route policy snapshots, locked batches, and receipts (ADR-438).
 -- name: ReadRoutePolicyAccount :one
-SELECT jsonb_build_object('ID', id, 'Plan', plan, 'Status', status, 'AbuseHoldAt', abuse_hold_at) AS snapshot FROM accounts WHERE id = sqlc.arg(account_id)::text::uuid;
+SELECT jsonb_build_object('ID', id, 'Plan', plan, 'Status', status, 'AbuseHoldAt', abuse_hold_at) AS snapshot
+FROM app_resource_accounts WHERE id=sqlc.arg(account_id)::text::uuid AND app_id=sqlc.arg(app_id)::text::uuid;
 
 -- name: LockRoutePolicyAccount :one
-SELECT jsonb_build_object('ID', id, 'Plan', plan, 'Status', status, 'AbuseHoldAt', abuse_hold_at) AS snapshot FROM accounts WHERE id = sqlc.arg(account_id)::text::uuid FOR UPDATE;
+WITH namespace AS MATERIALIZED (
+ SELECT id FROM resource_namespaces WHERE id=sqlc.arg(account_id)::text::uuid FOR UPDATE
+), owner AS MATERIALIZED (
+ SELECT o.id,o.personal_org,o.resource_ownership_enabled FROM orgs o JOIN apps a ON a.org_id=o.id
+ JOIN namespace n ON n.id=a.account_id WHERE a.id=sqlc.arg(app_id)::text::uuid FOR SHARE OF o
+), legacy AS MATERIALIZED (
+ SELECT ac.id FROM accounts ac JOIN namespace n ON n.id=ac.id
+ JOIN owner o ON o.personal_org OR NOT o.resource_ownership_enabled FOR UPDATE OF ac
+)
+SELECT jsonb_build_object('ID', a.id, 'Plan', a.plan, 'Status', a.status, 'AbuseHoldAt', a.abuse_hold_at) AS snapshot
+FROM app_resource_accounts a JOIN namespace n ON n.id=a.id JOIN owner o ON true
+WHERE a.app_id=sqlc.arg(app_id)::text::uuid AND
+ (NOT o.personal_org AND o.resource_ownership_enabled OR EXISTS(SELECT 1 FROM legacy));
 
 -- name: ReadRoutePolicyApp :one
 SELECT jsonb_build_object('ID', id, 'AccountID', account_id, 'Slug', slug, 'Type', type, 'Status', status, 'RAMMB', ram_mb, 'CPUMillicores', cpu_millicores, 'MaxConcurrency', max_concurrency, 'RequestRateLimitRPS', request_rate_limit_rps, 'RequestRateLimitBurst', request_rate_limit_burst, 'ConsumerAuthMode', consumer_auth_mode, 'MaintenanceMode', maintenance_mode, 'Manifest', manifest, 'ScalingPolicy', scaling_policy) AS snapshot FROM apps WHERE id = sqlc.arg(app_id)::text::uuid AND account_id = sqlc.arg(account_id)::text::uuid AND status <> 'deleted';
@@ -14416,7 +14438,7 @@ FROM app_log_drains d WHERE d.enabled ORDER BY d.created_at,d.id;
 WITH guarded AS MATERIALIZED (
  SELECT d.id
 FROM app_log_drains d
- JOIN apps a ON a.id=d.app_id JOIN orgs o ON o.id=a.org_id JOIN accounts acct ON acct.id=a.account_id
+ JOIN apps a ON a.id=d.app_id JOIN orgs o ON o.id=a.org_id JOIN LATERAL lock_app_resource_account(a.id,false,true) acct ON true
  JOIN app_application_standards e ON e.app_id=a.id
  JOIN application_standard_control_bindings b ON b.app_id=a.id AND b.field='log_destinations' AND b.physical_id=d.id::text
  JOIN application_standard_log_destinations r ON r.id=b.resource_id
@@ -14434,7 +14456,7 @@ FROM app_log_drains d
  AND r.id=sqlc.arg(resource_id)::uuid AND e.desired_revision=sqlc.arg(desired_revision)::bigint
  AND e.effective_hash=sqlc.arg(effective_hash)::text AND r.config_hash=sqlc.arg(resource_config_hash)::text
  AND application_standard_log_drain_hash(d)=sqlc.arg(drain_config_hash)::text
- FOR SHARE OF d,a,o,acct,e,b,r,i NOWAIT
+ FOR SHARE OF d,a,o,e,b,r,i NOWAIT
 ), inserted AS (
  INSERT INTO application_standard_log_deliveries(app_id,org_id,drain_id,resource_id,desired_revision,effective_hash,resource_config_hash,drain_config_hash,source_instance_id,sequence,observed_at)
  SELECT sqlc.arg(app_id)::uuid,sqlc.arg(org_id)::uuid,sqlc.arg(drain_id)::uuid,sqlc.arg(resource_id)::uuid,
@@ -14496,10 +14518,10 @@ SELECT c.node_id FROM application_standard_log_consumers c JOIN compute_nodes n 
  FOR SHARE OF c,n NOWAIT;
 
 -- name: LockApplicationStandardLogInventoryParents :one
-SELECT a.id FROM apps a JOIN orgs o ON o.id=a.org_id JOIN accounts acct ON acct.id=a.account_id
+SELECT a.id FROM apps a JOIN orgs o ON o.id=a.org_id JOIN LATERAL lock_app_resource_account(a.id,false,true) acct ON true
  JOIN app_application_standards e ON e.app_id=a.id
  WHERE a.id=sqlc.arg(app_id)::uuid AND a.org_id=sqlc.arg(org_id)::uuid
- FOR SHARE OF a,o,acct,e NOWAIT;
+ FOR SHARE OF a,o,e NOWAIT;
 
 -- name: RecordApplicationStandardLogInventory :one
 WITH recorded AS (
@@ -14732,7 +14754,7 @@ SELECT b.id AS binding_id, d.name AS database_name, b.scope, b.environment_key, 
        b.credential_generation, (COALESCE(b.rotation_previous_generation, 0) > 0) AS rotation_pending,
        COALESCE(b.rotation_wake_id::text, '')::text AS rotation_wake_id
 FROM managed_postgres_bindings b
-JOIN managed_postgres_databases d ON d.id = b.database_id AND d.account_id = b.account_id
+JOIN managed_postgres_databases d ON d.id = b.database_id AND d.account_id = b.database_account_id
 WHERE b.account_id = sqlc.arg(account_id) AND b.app_id = sqlc.arg(app_id)
   AND b.state <> 'deleted' AND d.state <> 'deleted'
   AND (sqlc.arg(scope_filter)::text = '' OR b.scope = sqlc.arg(scope_filter)::text)
@@ -15295,7 +15317,7 @@ LEFT JOIN LATERAL (SELECT * FROM managed_postgres_usage_coverage WHERE database_
  ORDER BY updated_at DESC, window_seconds DESC LIMIT 1) c ON true
 LEFT JOIN managed_postgres_databases source ON source.id = c.source_database_id
 LEFT JOIN managed_postgres_usage_coverage s ON s.database_id = c.source_database_id AND s.window_seconds = c.window_seconds
-WHERE d.account_id = sqlc.arg(account_id)::uuid AND (d.state = 'ready' OR NULLIF(d.provider_resource_id, '') IS NOT NULL OR d.accounting_required)
+WHERE managed_postgres_usage_subject(d.org_id,d.account_id) = sqlc.arg(account_id)::uuid AND (d.state = 'ready' OR NULLIF(d.provider_resource_id, '') IS NOT NULL OR d.accounting_required)
 AND (sqlc.narg(after_id)::uuid IS NULL OR d.id > sqlc.narg(after_id)::uuid)
 ORDER BY d.id LIMIT sqlc.narg(page_limit)::integer;
 
@@ -15415,7 +15437,7 @@ RETURNING *;
 -- name: ListWorkflowScheduleCandidates :many
 SELECT a.id AS app_id, d.id AS deployment_id, d.workflows
 FROM apps a
-JOIN accounts ac ON ac.id = a.account_id
+JOIN app_resource_accounts ac ON ac.app_id = a.id
 JOIN LATERAL (
     SELECT dep.id, app_workflow_definitions(a.id,dep.workflows)::jsonb AS workflows FROM deployments dep
     WHERE dep.app_id = a.id AND dep.status = 'live' AND dep.scope = 'default'
@@ -15430,7 +15452,7 @@ ORDER BY a.id LIMIT sqlc.arg(batch_limit);
 
 -- name: LockWorkflowScheduleTarget :one
 SELECT a.account_id, d.id AS deployment_id, app_workflow_definitions(a.id,d.workflows)::jsonb AS workflows, ac.plan
-FROM apps a JOIN accounts ac ON ac.id = a.account_id
+FROM apps a JOIN LATERAL lock_app_resource_account(a.id,false,false) ac ON true
 JOIN deployments d ON d.app_id = a.id
 WHERE a.id = sqlc.arg(app_id) AND a.status <> 'deleted' AND NOT a.maintenance_mode AND NOT a.platform_tenant_required
   AND ac.status IN ('active', 'past_due') AND ac.abuse_hold_at IS NULL
@@ -15439,7 +15461,7 @@ WHERE a.id = sqlc.arg(app_id) AND a.status <> 'deleted' AND NOT a.maintenance_mo
       WHERE dep.app_id = a.id AND dep.status = 'live' AND dep.scope = 'default'
       ORDER BY (dep.traffic_percent > 0) DESC, dep.created_at DESC, dep.id DESC LIMIT 1
   )
-FOR SHARE OF a, ac, d;
+FOR SHARE OF a,d;
 
 -- Replay reads and locks one retained occurrence inside the app admission lock.
 -- The replay run identity is separate from the original skipped outcome.
@@ -15473,7 +15495,7 @@ WHERE app_id = sqlc.arg(app_id)::uuid AND platform_tenant_id = sqlc.arg(tenant_i
 
 -- name: LockWorkflowResumeTarget :one
 SELECT d.id AS deployment_id, app_workflow_definitions(a.id,d.workflows)::jsonb AS workflows, ac.plan
-FROM apps a JOIN accounts ac ON ac.id = a.account_id
+FROM apps a JOIN LATERAL lock_app_resource_account(a.id,false,false) ac ON true
 JOIN deployments d ON d.app_id = a.id
 WHERE a.id = sqlc.arg(app_id) AND a.status <> 'deleted' AND NOT a.maintenance_mode
   AND ac.status IN ('active', 'past_due') AND ac.abuse_hold_at IS NULL
@@ -15482,7 +15504,7 @@ WHERE a.id = sqlc.arg(app_id) AND a.status <> 'deleted' AND NOT a.maintenance_mo
       WHERE dep.app_id = a.id AND dep.status = 'live' AND dep.scope = 'default'
       ORDER BY (dep.traffic_percent > 0) DESC, dep.created_at DESC, dep.id DESC LIMIT 1
   )
-FOR SHARE OF a, ac, d;
+FOR SHARE OF a,d;
 
 -- name: LockWorkflowRunAdmission :exec
 -- Canonicalize UUID spelling. Take both historic forms in a fixed order so
@@ -15541,7 +15563,7 @@ RETURNING *;
 SELECT a.id AS app_id, t.id AS platform_tenant_id, d.id AS deployment_id,
        app_workflow_definitions(a.id, d.workflows)::jsonb AS workflows
 FROM apps a
-JOIN accounts ac ON ac.id = a.account_id
+JOIN app_resource_accounts ac ON ac.app_id = a.id
 JOIN platform_tenants t ON t.account_id = a.account_id AND t.status = 'active'
 JOIN deployments d ON d.app_id = a.id
 WHERE a.status <> 'deleted' AND NOT a.maintenance_mode AND a.platform_tenant_required
@@ -15562,7 +15584,7 @@ ORDER BY a.id, t.id LIMIT sqlc.arg(batch_limit);
 -- name: LockTenantWorkflowScheduleTarget :one
 SELECT a.account_id, d.id AS deployment_id, app_workflow_definitions(a.id, d.workflows)::jsonb AS workflows, ac.plan
 FROM apps a
-JOIN accounts ac ON ac.id = a.account_id
+JOIN LATERAL lock_app_resource_account(a.id,false,false) ac ON true
 JOIN platform_tenants t ON t.id = sqlc.arg(tenant_id)::uuid AND t.account_id = a.account_id
 JOIN deployments d ON d.app_id = a.id
 WHERE a.id = sqlc.arg(app_id)::uuid AND a.status <> 'deleted' AND NOT a.maintenance_mode
@@ -15571,7 +15593,7 @@ WHERE a.id = sqlc.arg(app_id)::uuid AND a.status <> 'deleted' AND NOT a.maintena
   AND d.id = (SELECT dep.id FROM deployments dep WHERE dep.app_id = a.id
       AND dep.status = 'live' AND dep.scope = 'default'
       ORDER BY (dep.traffic_percent > 0) DESC, dep.created_at DESC, dep.id DESC LIMIT 1)
-FOR SHARE OF a, ac, t, d;
+FOR SHARE OF a,t,d;
 
 -- Link rows are locked separately so unlink/revocation cannot race a schedule
 -- admission after the target and tenant have been checked.
@@ -15639,8 +15661,8 @@ SELECT run_id FROM workflow_event_receipts WHERE outbox_id = $1 AND recipient_id
 -- name: LockEventWorkflowTarget :one
 SELECT a.account_id, a.status AS app_status, a.maintenance_mode, a.platform_tenant_required,
  ac.plan, ac.status AS account_status, ac.abuse_hold_at
-FROM apps a JOIN accounts ac ON ac.id = a.account_id
-WHERE a.id = sqlc.arg(app_id) FOR SHARE OF a, ac;
+FROM apps a JOIN LATERAL lock_app_resource_account(a.id,false,false) ac ON true
+WHERE a.id = sqlc.arg(app_id) FOR SHARE OF a;
 
 -- name: InsertEventWorkflowRun :exec
 INSERT INTO workflow_runs(id, app_id, platform_tenant_id, deployment_id, workflow_name, status, input, definition_snapshot)
@@ -15763,7 +15785,7 @@ SELECT key_id, public_key_pem FROM cluster_signing_keys WHERE id=1 AND retired_a
 -- name: WorkflowOutboundAttempt :one
 SELECT a.account_id, r.app_id, r.platform_tenant_id, s.outbound_attempt_token
 FROM workflow_runs r JOIN workflow_steps s ON s.run_id=r.id
-JOIN apps a ON a.id=r.app_id JOIN accounts ac ON ac.id=a.account_id
+JOIN apps a ON a.id=r.app_id JOIN app_resource_accounts ac ON ac.app_id = a.id
 WHERE r.id=sqlc.arg(run_id) AND s.step_name=sqlc.arg(step_name) AND s.attempt=sqlc.arg(attempt)
 AND r.status='running' AND r.lease_until>clock_timestamp() AND s.status='running'
 AND s.outbound_attempt_token IS NOT NULL AND a.status<>'deleted'
@@ -15780,7 +15802,7 @@ AND (r.platform_tenant_id IS NULL OR EXISTS (
 -- name: AuthorizeWorkflowOutbound :one
 SELECT EXISTS(
  SELECT 1 FROM workflow_runs r JOIN workflow_steps s ON s.run_id=r.id
- JOIN apps a ON a.id=r.app_id JOIN accounts ac ON ac.id=a.account_id
+ JOIN apps a ON a.id=r.app_id JOIN app_resource_accounts ac ON ac.app_id = a.id
  JOIN outbound_app_bindings b ON b.app_id=a.id AND b.account_id=a.account_id
  JOIN outbound_integrations i ON i.id=b.integration_id AND i.account_id=a.account_id
  JOIN outbound_integration_credentials c ON c.integration_id=i.id AND c.account_id=a.account_id
@@ -16551,7 +16573,7 @@ ORDER BY a.id,d.id LIMIT sqlc.arg(member_limit)::integer;
 -- name: ReadCustomerOperationWorkflowTarget :one
 SELECT a.account_id, a.status AS app_status, a.maintenance_mode, a.platform_tenant_required,
  ac.plan, ac.status AS account_status, ac.abuse_hold_at
-FROM apps a JOIN accounts ac ON ac.id = a.account_id
+FROM apps a JOIN app_resource_accounts ac ON ac.app_id = a.id
 WHERE a.id = sqlc.arg(app_id);
 
 -- name: ReadCustomerOperationWorkflowSteps :many
@@ -17240,7 +17262,7 @@ sqlc.arg(capability_digest)::text,sqlc.arg(deadline_at)::timestamptz);
 -- name: CustomerOperationWorkflowGuestInstance :one
 SELECT i.id,i.app_id,i.deployment_id,i.state,i.node_id,i.wake_id FROM instances i
 JOIN apps a ON a.id=i.app_id AND a.status<>'deleted'
-JOIN accounts c ON c.id=a.account_id AND c.status IN ('active','past_due') AND c.abuse_hold_at IS NULL
+JOIN app_resource_accounts c ON c.app_id = a.id AND c.status IN ('active','past_due') AND c.abuse_hold_at IS NULL
 WHERE i.id=sqlc.arg(instance_id)::uuid AND a.account_id=sqlc.arg(account_id)::uuid;
 
 -- The parent run lock serializes this consumption with guest reporting and
@@ -17438,6 +17460,7 @@ WHERE kind=$1 AND backend_id=$2 AND resource_id=$3 AND provider_resource_id=$4 A
 -- name: PurgeAccountManagedPostgresCreationReceipts :exec
 DELETE FROM managed_postgres_creation_receipts c
 WHERE c.account_id=sqlc.arg(account_id)::uuid
+    AND (c.database_id IS NULL OR EXISTS(SELECT 1 FROM managed_postgres_databases d JOIN orgs o ON o.id=d.org_id WHERE d.id=c.database_id AND o.personal_org))
     AND EXISTS(SELECT 1 FROM accounts a WHERE a.id=c.account_id AND a.status='deleted_pending')
     AND ((c.kind='restore' AND EXISTS(SELECT 1 FROM managed_postgres_databases d
         WHERE d.id=c.database_id AND d.account_id=c.account_id AND d.state='deleted'))
@@ -18795,7 +18818,7 @@ SELECT id FROM instances WHERE id=sqlc.arg(instance_id)::uuid FOR UPDATE;
 SELECT a.id AS app_id, t.id AS platform_tenant_id, d.id AS deployment_id,
        jsonb_build_array(w.definition)::jsonb AS workflows
 FROM apps a
-JOIN accounts ac ON ac.id = a.account_id
+JOIN app_resource_accounts ac ON ac.app_id = a.id
 JOIN platform_tenants t ON t.account_id = a.account_id AND t.status = 'active'
 JOIN deployments d ON d.app_id = a.id
 CROSS JOIN LATERAL jsonb_array_elements(app_workflow_definitions(a.id, d.workflows)::jsonb) w(definition)
@@ -19040,7 +19063,7 @@ SELECT now()::timestamptz AS observed_at,ac.plan,
  (SELECT count(*) FROM app_runs WHERE live AND operation_id IS NULL AND platform_tenant_id=selected.platform_tenant_id)::bigint AS tenant_running,
  (SELECT count(*) FROM app_runs WHERE workflow_name=selected.workflow_name AND
   (live OR status='awaiting_event' OR (status='pending' AND started_at IS NOT NULL)))::bigint AS workflow_active
-FROM current_run selected JOIN apps a ON a.id=selected.app_id JOIN accounts ac ON ac.id=a.account_id;
+FROM current_run selected JOIN apps a ON a.id=selected.app_id JOIN app_resource_accounts ac ON ac.app_id = a.id;
 
 -- name: ClaimAppHealth :one
 -- Lock order matches ApplyProjectPlan (account, then its apps). The insert's
@@ -19049,14 +19072,14 @@ FROM current_run selected JOIN apps a ON a.id=selected.app_id JOIN accounts ac O
 -- holding the app row while waiting for the account (deadlock 40P01).
 WITH candidate AS (
  SELECT a.id, a.account_id FROM apps a
- JOIN accounts acct ON acct.id = a.account_id
+ JOIN app_resource_accounts acct ON acct.app_id = a.id
  LEFT JOIN app_health_collection_state h ON h.app_id = a.id
  WHERE a.status <> 'deleted' AND a.deleted_at IS NULL
  AND COALESCE(a.manifest->>'execution_mode', '') IN ('', 'request', 'service')
  AND (h.next_check_at IS NULL OR h.next_check_at <= sqlc.arg(checked_now)::timestamptz)
  AND (h.lease_until IS NULL OR h.lease_until <= sqlc.arg(checked_now)::timestamptz)
  ORDER BY COALESCE(h.next_check_at, '-infinity'::timestamptz), a.id
- LIMIT 1 FOR UPDATE OF a SKIP LOCKED FOR KEY SHARE OF acct SKIP LOCKED
+ LIMIT 1 FOR UPDATE OF a SKIP LOCKED
 )
 INSERT INTO app_health_collection_state(app_id, account_id, next_check_at, lease_token, lease_started_at, lease_until)
 SELECT id, account_id, sqlc.arg(checked_now)::timestamptz, sqlc.arg(token)::text, sqlc.arg(checked_now)::timestamptz, sqlc.arg(expires_at)::timestamptz FROM candidate
@@ -19442,7 +19465,7 @@ SELECT sqlc.arg(deployment_id)::uuid,d.app_id,d.scope,d.kind,'','pending',sqlc.a
  d.override_liveness_probe,d.override_readiness_probe,d.override_main_depends_on,d.sidecars,d.workflows,
  d.full_rootfs_allow_auto,d.full_rootfs_override,d.release_command,d.release_command_shell,d.disable_startup_cpu_boost,
  d.min_instances,d.rollback_on_5xx,0,true,'runtime-upgrade:'||sqlc.arg(operation_id)::text,'api'
-FROM deployments d JOIN apps a ON a.id=d.app_id JOIN accounts ac ON ac.id=a.account_id
+FROM deployments d JOIN apps a ON a.id=d.app_id JOIN app_resource_accounts ac ON ac.app_id = a.id
 WHERE d.id=sqlc.arg(serving_id)::uuid AND d.app_id=sqlc.arg(app_id)::uuid AND a.account_id=sqlc.arg(account_id)::uuid
  AND a.status='active' AND a.deleted_at IS NULL AND a.type='function' AND COALESCE(a.manifest->>'build_dockerfile','')=''
  AND COALESCE(a.manifest->>'execution_mode','') NOT IN ('job','service')
@@ -21253,7 +21276,7 @@ AND NOT EXISTS(SELECT 1 FROM workflow_event_receipts x WHERE x.outbox_id=o.id AN
 
 -- name: ListAutomationFailurePolicyCandidates :many
 SELECT p.app_id::text AS app_id,p.name FROM workflow_automation_failure_policies p JOIN apps a ON a.id=p.app_id
-JOIN accounts ac ON ac.id=a.account_id
+JOIN app_resource_accounts ac ON ac.app_id = a.id
 WHERE p.enabled AND a.status<>'deleted' AND (sqlc.narg(owner_node_id)::uuid IS NULL OR a.node_id=sqlc.narg(owner_node_id)::uuid)
 AND ac.status IN ('active','past_due') AND ac.abuse_hold_at IS NULL AND ac.plan IN ('hobby','pro','scale')
 AND p.app_id::text||'/'||p.name>sqlc.arg(after_key)::text
@@ -21326,6 +21349,37 @@ WHERE app_id = sqlc.arg(app_id)::text::uuid AND account_id = sqlc.arg(account_id
  AND deployment_id IN (sqlc.arg(candidate_id)::text::uuid, sqlc.arg(stable_id)::text::uuid)
  AND window_start >= sqlc.arg(since) AND window_start < sqlc.arg(until)
 ORDER BY window_start, method, path;
+
+-- name: ListDefaultRouteProbeTargets :many
+-- ADR-1446: request apps on the safe release policy with an in-flight
+-- default-scope canary and a serving predecessor. apid probes the default
+-- path on both so a quiet canary is judged on evidence. An app with several
+-- serving predecessors returns several rows and is skipped by the caller.
+SELECT a.id::text AS app_id, a.account_id::text AS account_id, a.slug::text AS slug,
+ d.id::text AS candidate_id, s.id::text AS stable_id,
+ coalesce(a.manifest->'release_probe_paths', '[]'::jsonb)::jsonb AS probe_paths
+FROM apps a
+JOIN deployments d ON d.app_id = a.id AND d.status = 'live' AND d.deleted_at IS NULL AND d.traffic_percent > 0
+ AND d.canary_total_steps > 0 AND d.canary_step < d.canary_total_steps
+ AND coalesce(nullif(d.scope, ''), 'default') = 'default'
+JOIN deployments s ON s.app_id = a.id AND s.id <> d.id AND s.status = 'live' AND s.deleted_at IS NULL
+ AND s.traffic_percent > 0 AND coalesce(nullif(s.scope, ''), 'default') = 'default'
+WHERE a.status <> 'deleted' AND a.preview_of_slug IS NULL
+ AND coalesce(a.manifest->>'release_policy', '') <> 'immediate'
+ AND coalesce(a.manifest->>'execution_mode', '') IN ('', 'request')
+ORDER BY a.id, d.id, s.id
+LIMIT sqlc.arg(batch_limit)::int;
+
+-- name: RouteProbeTotalsByDeployment :many
+-- ADR-1446: probe totals per deployment over a canary stage, for meterd's
+-- circuit breaker.
+SELECT deployment_id::text AS deployment_id, sum(requests)::bigint AS requests,
+ sum(server_errors)::bigint AS server_errors, sum(unauthenticated)::bigint AS unauthenticated
+FROM route_probe_observations
+WHERE app_id = sqlc.arg(app_id)::text::uuid
+ AND deployment_id IN (sqlc.arg(candidate_id)::text::uuid, sqlc.arg(stable_id)::text::uuid)
+ AND window_start >= sqlc.arg(since) AND window_start < sqlc.arg(until)
+GROUP BY deployment_id;
 
 -- name: PruneRouteProbeObservations :exec
 DELETE FROM route_probe_observations WHERE window_start < sqlc.arg(before);
@@ -21955,6 +22009,34 @@ WHERE j.account_id = sqlc.arg(account_id)::uuid
   AND r.id = sqlc.arg(run_id)::uuid
   AND t.task_index = sqlc.arg(task_index)::int;
 
+-- name: ReleaseRunsCrossedBy :many
+-- ADR-1448: release tasks of other deployments in a rollback target's scope
+-- that started after the target last served (serving_ended_at), or after it
+-- was created if it never served. Any started task counts: a failed migration
+-- may still have committed changes.
+SELECT t.deployment_id::text AS deployment_id, d.revision, t.status, t.started_at::timestamptz AS started_at
+FROM deployments target
+JOIN app_tasks t ON t.app_id = target.app_id
+  AND t.kind = 'release'
+  AND t.started_at IS NOT NULL
+  AND t.deployment_id <> target.id
+  AND coalesce(nullif(t.deployment_scope, ''), 'default') = coalesce(nullif(target.scope, ''), 'default')
+  AND t.started_at > coalesce(target.serving_ended_at, target.created_at)
+JOIN deployments d ON d.id = t.deployment_id
+WHERE target.id = sqlc.arg(target_id)::text::uuid AND target.app_id = sqlc.arg(app_id)::text::uuid
+ORDER BY t.started_at, t.id;
+
+-- name: ReleaseMigrationDatabases :many
+-- ADR-1448: managed PostgreSQL databases whose migration binding delivers a
+-- secret into this app scope, the rows a release task receives.
+SELECT DISTINCT db.id::text AS database_id, db.name
+FROM app_secrets s
+JOIN managed_postgres_bindings b ON b.id = s.managed_postgres_binding_id
+  AND b.access = 'migration' AND b.deleted_at IS NULL
+JOIN managed_postgres_databases db ON db.id = b.database_id AND db.deleted_at IS NULL
+WHERE s.app_id = sqlc.arg(app_id)::text::uuid AND s.scope = sqlc.arg(scope)::text
+ORDER BY db.name, database_id;
+
 -- Identity writes use the account lock before the provider-qualified row.
 -- This matches subscription termination and SMTP lifecycle fencing.
 -- name: LockBillingIdentityAccount :one
@@ -22135,6 +22217,49 @@ UPDATE invocations i SET state=CASE WHEN sqlc.arg(permanent)::boolean OR attempt
 FROM event_delivery_acknowledgments a WHERE i.id=sqlc.arg(invocation_id)::uuid AND a.invocation_id=i.id RETURNING i.state,i.due_at;
 -- name: EventAckRejectReceipt :exec
 UPDATE event_delivery_acknowledgments SET phase='rejected',completion_digest=sqlc.arg(request_digest)::bytea,rejection_status=sqlc.arg(rejection_status)::jsonb WHERE invocation_id=sqlc.arg(invocation_id)::uuid;
+-- name: ReadManagedPostgresOwnership :one
+SELECT * FROM managed_postgres_databases WHERE id=$1;
+
+-- name: ReadManagedPostgresBindingOwnership :one
+SELECT * FROM managed_postgres_bindings WHERE id=$1;
+
+-- name: CountManagedPostgresOrgDatabases :one
+SELECT ((SELECT count(*) FROM managed_postgres_databases d WHERE d.org_id=sqlc.arg(org_id)::uuid AND state<>'deleted')
+ + (SELECT count(*) FROM project_environment_clone_postgres_snapshot_restores r JOIN project_environment_clone_operations c ON c.id=r.operation_id JOIN projects p ON p.id=c.project_id
+ WHERE p.org_id=sqlc.arg(org_id)::uuid AND r.state<>'deleted' AND r.adopted_database_id IS NULL))::bigint AS count;
+
+-- name: LockManagedPostgresBindingAppOwner :one
+SELECT a.account_id FROM apps a
+WHERE a.id=sqlc.arg(app_id)::uuid AND a.status<>'deleted'
+ AND a.org_id=(SELECT d.org_id FROM managed_postgres_databases d WHERE d.id=sqlc.arg(database_id)::uuid)
+ AND EXISTS(SELECT 1 FROM orgs o WHERE o.id=a.org_id AND NOT o.deleted_pending AND o.status='active'
+  AND (NOT o.personal_org AND o.resource_ownership_enabled OR EXISTS(SELECT 1 FROM accounts h WHERE h.id=a.account_id AND h.status<>'deleted_pending')))
+FOR KEY SHARE OF a;
+
+-- name: ManagedPostgresPersonalDatabaseReference :one
+SELECT EXISTS(SELECT 1 FROM managed_postgres_databases d JOIN orgs o ON o.id=d.org_id
+ WHERE d.id=$1 AND d.account_id=$2 AND o.personal_org)::boolean;
+
+-- name: ManagedPostgresPersonalBindingReference :one
+SELECT EXISTS(SELECT 1 FROM managed_postgres_bindings b JOIN managed_postgres_databases d ON d.id=b.database_id JOIN orgs o ON o.id=d.org_id
+ WHERE b.id=$1 AND b.account_id=$2 AND o.personal_org)::boolean;
+
+-- name: ManagedPostgresUsageForSubject :one
+SELECT
+ COALESCE(sum(u.quantity) FILTER (WHERE u.meter='compute_unit_seconds'),0)::bigint AS compute_unit_seconds,
+ COALESCE(sum(u.quantity) FILTER (WHERE u.meter='storage_byte_seconds'),0)::bigint AS storage_byte_seconds,
+ COALESCE(sum(u.quantity) FILTER (WHERE u.meter='history_byte_seconds'),0)::bigint AS history_byte_seconds,
+ COALESCE(sum(u.quantity) FILTER (WHERE u.meter='egress_bytes'),0)::bigint AS egress_bytes,
+ COALESCE(sum(u.cost_millicents),0)::bigint AS cost_millicents
+FROM managed_postgres_usage u JOIN managed_postgres_databases d ON d.id=u.database_id
+WHERE managed_postgres_usage_subject(d.org_id,d.account_id)=sqlc.arg(subject_id)::uuid
+AND u.window_from>=sqlc.arg(period_start)::timestamptz AND u.window_from<sqlc.arg(period_end)::timestamptz;
+
+-- name: LockManagedPostgresReservationOwner :one
+SELECT o.id,o.personal_org,o.resource_ownership_enabled FROM orgs o
+WHERE o.id=coalesce(sqlc.narg(org_id)::uuid,(SELECT p.id FROM orgs p WHERE p.personal_org AND p.personal_owner_account_id=sqlc.arg(account_id)::uuid))
+AND NOT o.deleted_pending AND o.status='active' FOR UPDATE OF o;
+
 
 -- name: ReadMCPNotificationOwnedApp :one
 SELECT id FROM apps WHERE id=sqlc.arg(app_id) AND account_id=sqlc.arg(account_id) AND status<>'deleted';

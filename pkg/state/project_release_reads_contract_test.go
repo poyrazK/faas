@@ -11,11 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-type releaseInventoryStore interface {
-	state.Store
-	state.ProjectReleaseSetStore
-	state.ProjectReleaseSetReader
-}
+type releaseInventoryStore = contractTestStore
 
 func TestMemProjectReleaseReadContract(t *testing.T) {
 	testProjectReleaseReadContract(t, state.NewMemStore())

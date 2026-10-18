@@ -112,10 +112,15 @@ class TextContractTest(unittest.TestCase):
                 'func b() { readWorkflow(t, "release-units.yml"); readWorkflow(t, name) }\n'
                 'func c() { os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "roles", role, "main.yml")) }\n'
                 'func d() { filepath.Join(repoRoot, "deploy", "manifest", "x.yaml"); filepath.Join(dir, "tmp.txt") }\n'
-                'func e() { filepath.Join("..", "testdata", "x") }\n')
+                'func e() { filepath.Join("..", "testdata", "x") }\n'
+                'func f() { filepath.Join(repoRoot(t), "deploy", "ansible", "bootstrap.yml") }\n'
+                'func g() { filepath.Join(root, "deploy", "ansible", "roles", "*", "tasks", "*.yml") }\n'
+                'func h() { filepath.Join("..", "..", "deploy", "ansible", "roles", "postgres") }\n')
+            pathlib.Path(root, "deploy", "ansible", "roles", "postgres").mkdir(parents=True)
             self.assertEqual(ap.text_inputs("cmd/tool", root), {
                 "scripts/ci/unit_deploy.sh", ".github/workflows/release-units.yml", ".github/workflows/",
-                "deploy/ansible/roles/", "deploy/manifest/x.yaml"})
+                "deploy/ansible/roles/", "deploy/manifest/x.yaml", "deploy/ansible/bootstrap.yml",
+                "deploy/ansible/roles/postgres/"})
 
     def test_gregalectl_reads_the_unit_lane_scripts(self):
         # The regression: a change to these scripts must run cmd/gregalectl.
@@ -124,6 +129,23 @@ class TextContractTest(unittest.TestCase):
                      ".github/workflows/release-units.yml", ".github/workflows/cd-edge-units.yml"):
             with self.subTest(path):
                 self.assertTrue(ap.reads(path, inputs), path)
+
+
+    def test_role_tests_run_when_the_roles_they_read_change(self):
+        # The #4950 regression: postgres_capacity's tasks changed and
+        # pkg/daemonunitspec's role test was not selected.
+        repo = str(pathlib.Path(__file__).parents[2])
+        for pkg, paths in (
+            ("pkg/daemonunitspec", ("deploy/ansible/roles/postgres_capacity/tasks/main.yml",
+                                    "deploy/ansible/bootstrap.yml", "scripts/ci/release_units.json",
+                                    "deploy/ansible/roles/control_plane_service/defaults/main.yml")),
+            ("pkg/db", ("deploy/ansible/roles/postgres_capacity/defaults/main.yml",)),
+        ):
+            self.assertIn(pkg, ap.TEXT_CONTRACT_PACKAGES)
+            inputs = ap.text_inputs(pkg, repo)
+            for path in paths:
+                with self.subTest(pkg=pkg, path=path):
+                    self.assertTrue(ap.reads(path, inputs), path)
 
 
 class ShardTest(unittest.TestCase):

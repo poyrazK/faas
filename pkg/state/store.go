@@ -372,7 +372,8 @@ type CanaryAdvanceParams struct {
 	// durable meterd lease and rechecks it inside the transaction.
 	RequireSafeReleaseLease bool
 	// RequireCanaryStageElapsed makes the store compare the persisted stage
-	// start against its duration using the store clock before any traffic write.
+	// start against CanaryStageDuration (the stage timer, or its evidence-paced
+	// minimum, ADR-1321) using the store clock before any traffic write.
 	// Customer-requested manual advances leave this disabled.
 	RequireCanaryStageElapsed bool
 	CanaryStageDuration       time.Duration
@@ -380,6 +381,10 @@ type CanaryAdvanceParams struct {
 	RouteCheckFingerprint     RouteCheckFingerprinter
 	RouteGateDecision         *api.RouteGateDecision
 	RouteHealthDecision       *api.RouteHealthDecision
+	// Decision is the validated api.RolloutDecision behind this advance
+	// (ADR-1447). It is written to deployments.rollout_decision in the same
+	// UPDATE as the traffic change; nil clears the column.
+	Decision json.RawMessage
 }
 
 // CanaryAdvancer is intentionally separate from Store so existing narrow test
@@ -538,6 +543,7 @@ const (
 
 type QuotaError struct {
 	Kind       QuotaErrorKind // "apps" | "preview_apps" | "developer_apps" | "crons" | "memory" | "mirror" | "openapi_imports"
+	Plan       api.Plan       // authoritative plan for organization app admission; empty for legacy errors
 	Limit      int            // caps at the time of the call
 	Observed   int            // count(*) observed inside the same critical section
 	NotAllowed bool           // true when the plan tier forbids the entity entirely (e.g. Free cron)
@@ -1004,6 +1010,7 @@ type DeploymentActivationLocker interface {
 // narrow keeps the ownership rules enforceable — apid only touches
 // customer-intent tables through the methods it is given.
 type Store interface {
+	OrgAccessStore
 	OperatorObservabilityReader
 	RecordMCPTaskPromotionHold(context.Context, string, string, MCPTaskPromotionRecovery) error
 	ClaimMCPTaskPromotionRecovery(context.Context, string) (*MCPTaskPromotionRecovery, error)
@@ -1869,13 +1876,11 @@ type Store interface {
 	SetServiceCapacityProtection(ctx context.Context, enabled bool) (api.ServiceCapacityProtection, error)
 	// Apps (apid is the only writer, spec §Component ownership).
 	CreateApp(ctx context.Context, app App) (App, error)
-	// CreateAppIfUnderQuota inserts app iff the account currently holds
-	// fewer than limits.DeployedApps live apps (active + evicted_cold).
-	// The count + insert happen under a single critical section — PgStore
-	// opens a transaction that SELECT … FOR UPDATE locks the parent
-	// accounts row, MemStore holds m.mu — so two concurrent createApp
-	// calls on a Free account cannot both pass the cap check (spec §4.2,
-	// PR fix for the TOCTOU in handlers.go::createApp).
+	// CreateAppIfUnderQuota reserves a slot in the app's persisted org pool.
+	// All creators share the organization's stored plan caps. Personal pools
+	// exclude company apps. PgStore holds an org advisory lock across count
+	// and insert; an org row SHARE lock keeps plan/status stable. MemStore
+	// holds m.mu.
 	//
 	// Returns:
 	//   - (App, nil) on success
@@ -1885,9 +1890,9 @@ type Store interface {
 	//   - (App{}, ErrNotFound) when the account row is gone
 	//   - (App{}, other) on transport / SQL errors
 	//
-	// limits.DeployedApps is the per-plan cap (api.MustLimitsFor(plan)).
-	// Implementations enforce it authoritatively; callers MUST NOT also
-	// call CountDeployedApps before this method (that's the bug).
+	// The limits argument is retained for personal/internal compatibility;
+	// a shared organization always uses its persisted plan. Callers MUST NOT
+	// perform an independent CountDeployedApps admission check.
 	CreateAppIfUnderQuota(ctx context.Context, app App, limits api.Limits) (App, error)
 	AppByID(ctx context.Context, id string) (App, error)
 	// PreviewAppsByParent (ADR-095 / issue #272) lists every
@@ -2294,10 +2299,11 @@ type Store interface {
 	// Returns ErrConflict on RowsAffected()==0 — peer already
 	// committed, peer rolled back, lease expired, or row gone.
 	AbortMigratingInstance(ctx context.Context, instanceID, leaseToken string) error
-	// CountDeployedApps counts apps that occupy a deploy slot (active or
-	// evicted_cold) for quota enforcement (spec §4.2).
+	// CountDeployedApps counts the account's personal deploy slots (active or
+	// evicted_cold), excluding company apps. It is a display/preflight count;
+	// admission must use CreateAppIfUnderQuota's transaction (spec §4.2).
 	CountDeployedApps(ctx context.Context, accountID string) (int, error)
-	// CountDeveloperApps counts live `gregale dev` environments. These are
+	// CountDeveloperApps counts personal live `gregale dev` environments. These are
 	// deliberately separate from the deployed-app quota so local development
 	// cannot consume production or preview slots.
 	CountDeveloperApps(ctx context.Context, accountID string) (int, error)
@@ -2460,6 +2466,7 @@ type Store interface {
 	// when the project doesn't exist. Used by cmd/apid's
 	// scan_service to roll back a half-created project when the
 	// subsequent reconcile errors out (PR-GH.6 review H9).
+	ProjectOwnershipStore
 	CreateProject(ctx context.Context, p Project) (Project, error)
 	ProjectByID(ctx context.Context, projectID string) (Project, error)
 	ProjectBySlug(ctx context.Context, accountID, slug string) (Project, error)

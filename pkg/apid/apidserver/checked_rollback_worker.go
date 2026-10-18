@@ -63,7 +63,7 @@ func (s *server) checkedRollbackCheck(ctx context.Context, operation api.Rollbac
 		return "failed", problem.Code, nil, nil
 	}
 
-	acct, err := s.store.AccountByID(ctx, app.AccountID)
+	acct, err := state.AppResourceAccount(ctx, s.store, app)
 	if err != nil {
 		return "", "", nil, err
 	}

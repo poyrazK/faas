@@ -112,7 +112,7 @@ func routeKindForRequest(r *http.Request) string {
 // path coalesces them to NULL/” via the migrations/00305 SQL
 // shape (nullif() + coalesce() chain).
 func stampDeploymentActor(d *state.Deployment, acct state.Account, r *http.Request) {
-	d.DeployedByUserID = acct.ID
+	d.DeployedByUserID = actorAccount(r, acct).ID
 	d.DeployedVia = routeKindForRequest(r)
 	if ip := middleware.ClientIP(r); ip != "" {
 		d.DeployedFromIP = ip

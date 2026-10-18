@@ -56,11 +56,28 @@ type AppReader interface {
 	AppByID(context.Context, string) (state.App, error)
 }
 
+// Account-level diagnostics retain their personal-resource boundary. A company
+// namespace can preserve the UUID of its original creator after adoption.
+func personalNamespace(ctx context.Context, store AppReader, app state.App, accountID string) bool {
+	if app.OrgID == "" {
+		return true
+	}
+	orgs, ok := store.(interface {
+		OrgByID(context.Context, string) (state.Org, error)
+	})
+	if !ok {
+		return false
+	}
+	org, err := orgs.OrgByID(ctx, app.OrgID)
+	return err == nil && org.Personal && equalID(org.ID, app.OrgID) &&
+		org.PersonalOwnerAccountID != nil && equalID(*org.PersonalOwnerAccountID, accountID)
+}
+
 func resolve(ctx context.Context, store AppReader, accountID string, ids []string) ([]api.SelectedTraceApp, *api.Problem) {
 	apps := make([]api.SelectedTraceApp, 0, len(ids))
 	for _, id := range ids {
 		app, err := store.AppByID(ctx, id)
-		if err != nil || !equalID(app.ID, id) || !equalID(app.AccountID, accountID) || app.Status == state.AppDeleted {
+		if err != nil || !equalID(app.ID, id) || !equalID(app.AccountID, accountID) || app.Status == state.AppDeleted || !personalNamespace(ctx, store, app, accountID) {
 			return nil, api.NewProblem(404, api.CodeNotFound, "Not found", "selected app is unavailable")
 		}
 		apps = append(apps, api.SelectedTraceApp{ID: id, Slug: app.Slug})

@@ -2402,7 +2402,7 @@ func (l *Loop) runReaper(ctx context.Context) {
 	for _, app := range apps {
 		mustPark := app.Status == state.AppEvictedCold
 		if !mustPark {
-			if account, accountErr := store.AccountByID(ctx, app.AccountID); accountErr == nil {
+			if account, accountErr := state.AppResourceAccount(ctx, store, app); accountErr == nil {
 				mustPark = l.engine.appMustPark(ctx, app, account)
 			} else {
 				l.log.Warn("reaper: account lifecycle lookup", "app", app.ID, "account", app.AccountID, "err", accountErr)
@@ -2511,7 +2511,7 @@ func (l *Loop) runReaper(ctx context.Context) {
 	}
 	for _, a := range apps {
 		plan := api.Plan("")
-		if acct, err := store.AccountByID(ctx, a.AccountID); err == nil {
+		if acct, err := state.AppResourceAccount(ctx, store, a); err == nil {
 			plan = acct.Plan
 		}
 		instances, err := store.ListInstancesForApp(ctx, a.ID)
@@ -4384,7 +4384,7 @@ func (l *Loop) dispatchScheduledHTTPCron(ctx context.Context, c state.Cron, due 
 		l.log.Warn("cron: resolve scheduled app", "cron_id", c.ID, "err", err)
 		return
 	}
-	account, err := store.AccountByID(ctx, app.AccountID)
+	account, err := state.AppResourceAccount(ctx, store, app)
 	if err != nil {
 		l.log.Warn("cron: resolve scheduled account", "cron_id", c.ID, "err", err)
 		return
@@ -4505,7 +4505,7 @@ func (l *Loop) dispatchScheduledCommandCron(ctx context.Context, c state.Cron, d
 		l.log.Warn("cron command: resolve app", "cron_id", c.ID, "err", err)
 		return
 	}
-	account, err := store.AccountByID(ctx, app.AccountID)
+	account, err := state.AppResourceAccount(ctx, store, app)
 	if err != nil {
 		l.log.Warn("cron command: resolve account", "cron_id", c.ID, "err", err)
 		return
@@ -4749,7 +4749,7 @@ func (l *Loop) dispatchCronLocked(ctx context.Context, c state.Cron, now time.Ti
 		l.log.Warn("cron: app", "cron_id", c.ID, "err", err)
 		return CronRun{}, false
 	}
-	acctRec, err := l.engine.Store().AccountByID(ctx, app.AccountID)
+	acctRec, err := state.AppResourceAccount(ctx, l.engine.Store(), app)
 	if err != nil {
 		l.log.Warn("cron: account", "cron_id", c.ID, "err", err)
 		return CronRun{}, false

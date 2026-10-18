@@ -13,10 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 )
 
-type sourceNativeTestStore interface {
-	sourceRuntimeTestStore
-	nativeArtifactTestStore
-}
+type sourceNativeTestStore = contractTestStore
 
 func sourceNativeFixture(t *testing.T, s sourceNativeTestStore, runtime string, scan bool) (sourceRootfsFixture, Instance, runtimeadmission.Binding, InstanceApplicationStandardAdmission) {
 	t.Helper()

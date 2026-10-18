@@ -114,6 +114,9 @@ func Compare(before, after *Evidence) *Comparison {
 		newCount += len(after.Snapshot.ManagedWork.Jobs)
 	}
 	result.Status, result.BeforeCount, result.AfterCount = "passed", &oldCount, &newCount
+	if postgresFaultBudgetExceeded(before.Snapshot) || postgresFaultBudgetExceeded(after.Snapshot) {
+		result.Status, result.Reason = "failed", "PostgreSQL recovery budget exceeded"
+	}
 	if suspendResumeBudgetExceeded(before.Snapshot) || suspendResumeBudgetExceeded(after.Snapshot) {
 		result.Status, result.Reason = "failed", "suspend/resume readiness budget exceeded"
 	}

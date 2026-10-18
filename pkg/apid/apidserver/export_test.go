@@ -50,6 +50,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/profiling"
 	"github.com/onebox-faas/faas/pkg/promql"
+	"github.com/onebox-faas/faas/pkg/realtime"
 	objruntime "github.com/onebox-faas/faas/pkg/rehearsalobj/runtime"
 	pgruntime "github.com/onebox-faas/faas/pkg/rehearsalpg/runtime"
 	"github.com/onebox-faas/faas/pkg/session"
@@ -262,6 +263,7 @@ var PlanCacheRoot = &planCacheRoot
 var PlanCacheRootErr = &planCacheRootErr
 var PlanCacheRootOnce = &planCacheRootOnce
 var PlanSourceCache = &planSourceCache
+var RouteProbeChallengeDelay = &routeProbeChallengeDelay
 var SetSecretRecipient = &setSecretRecipient
 var SseChannels = &sseChannels
 var TimeNow = &timeNow
@@ -597,6 +599,7 @@ var SeedSharedOrgWithOwner = seedSharedOrgWithOwner
 var SeedTenantSurface = seedTenantSurface
 var SelectDebugReplayMirrorRule = selectDebugReplayMirrorRule
 var SetS3Flag = setS3Flag
+var SeedCanaryFixture = seedCanaryFixture
 var Setup = setup
 var SetupAlerts = setupAlerts
 var SetupChangePlan = setupChangePlan
@@ -880,6 +883,9 @@ func (r *server) ManagedPostgresBindings() **managedpostgres.BindingService {
 }
 func (r *server) ManagedPostgresCutovers() **managedpostgres.CutoverService {
 	return &r.managedPostgresCutovers
+}
+func (r *server) DrainRouteProbes(ctx context.Context) error {
+	return r.drainRouteProbes(ctx)
 }
 func (r *server) Notif() *Notifier                              { return &r.notif }
 func (r *server) Object() *object.Service                       { return &r.object }
@@ -1227,6 +1233,22 @@ func (r *server) RevokeDevBridgeDashboard(p0 http.ResponseWriter, p1 *http.Reque
 func (r *server) RollbackOn5xxSweep(p0 context.Context, p1 time.Time) error {
 	return r.rollbackOn5xxSweep(p0, p1)
 }
+func (r *server) ConfigGuardSweep(p0 context.Context, p1 time.Time) error {
+	return r.configGuardSweep(p0, p1)
+}
+func (r *server) SetConfigGuardTelemetry(t state.ConfigGuardTelemetryStore) {
+	r.configGuardTelemetry = t
+}
+func (r *server) PostReleaseWatchSweep(p0 context.Context, p1 time.Time) error {
+	return r.postReleaseWatchSweep(p0, p1)
+}
+
+// PostReleaseTelemetry is the request summary the post-release watch reads.
+type PostReleaseTelemetry = rollbackOn5xxTelemetry
+
+func (r *server) SetPostReleaseTelemetry(t PostReleaseTelemetry) {
+	r.postReleaseTelemetry = t
+}
 func (r *server) RollbackProjectEnvironmentPromotion(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.rollbackProjectEnvironmentPromotion(p0, p1, p2)
 }
@@ -1485,4 +1507,17 @@ func (s *server) RehearsalWorkerFaultsEnabled() *bool   { return &s.rehearsalWor
 
 func (s *server) StartInternalCIWorker(ctx context.Context, log *slog.Logger) func() {
 	return s.startInternalCIWorker(ctx, log)
+}
+
+// ConfigureLiveQueriesForTest wires live queries without managed Postgres:
+// the rollout gate applies, and admitted accounts meet
+// live_queries_unavailable.
+func (s *server) ConfigureLiveQueriesForTest(getenv func(string) string) error {
+	return s.configureLiveQueries(nil, getenv)
+}
+
+// LiveRoutesForTest lists an app's live routes; accounts outside the rollout
+// get none before the store is read.
+func (s *server) LiveRoutesForTest(ctx context.Context, accountID, appID string) ([]realtime.LiveRoute, error) {
+	return s.liveRoutes(ctx, nil, accountID, appID)
 }

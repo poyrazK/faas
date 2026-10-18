@@ -2,13 +2,12 @@
 
 // Postgres integration tests for pkg/reconcile. Run via
 // `go test ./pkg/reconcile -tags=!no_pg` or via `make test`.
-// Mirrors the pgStore helper from pkg/state/pgstore_test.go so
-// the schema lifecycle is identical to the state package's
-// integration suite. Each test stands up a fresh schema, runs
-// the migrations, and exercises the reconcile Service against
-// the real PgStore.
+// Each test receives isolated, migrated state from pgtest.OpenMigrated
+// and exercises the reconcile Service against the real PgStore. Template
+// mode provides a private database so unrelated suites' open transactions
+// cannot block concurrent index builds during fixture setup.
 //
-// pgtest.Open() skips the test when Postgres is unreachable so
+// pgtest.OpenMigrated() skips the test when Postgres is unreachable so
 // the file is safe to compile + run on a CI runner without
 // needing a local Postgres on the dev box.
 
@@ -25,25 +24,21 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/audit"
-	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/reconcile"
 	"github.com/onebox-faas/faas/pkg/reposcan"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// pgReconcileStore sets up a fresh Postgres schema, migrates it,
-// and returns a PgStore + audit auditor + reconcile Service wired
+// pgReconcileStore obtains fresh migrated state and returns a
+// PgStore + audit auditor + reconcile Service wired
 // together. The auditor uses real pkg/audit (best-effort) against
 // the events table; the pg tests assert on the events table
 // directly, not on counters.
 func pgReconcileStore(t *testing.T) (*state.PgStore, *reconcile.Service, *pgxpool.Pool, context.Context) {
 	t.Helper()
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	ctx := context.Background()
-	if err := db.MigrateUp(ctx, pool); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
 	store := state.NewPgStore(pool)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	aud := audit.New(store, log, pgNoopOps{}, "reconcile")
