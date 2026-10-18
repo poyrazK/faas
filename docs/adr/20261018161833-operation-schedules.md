@@ -59,8 +59,16 @@ at `/v1/apps/{slug}/operation-schedules`.
 **Gated.** `FAAS_OPERATION_SCHEDULES_ACCOUNTS` (apid) names the accounts that
 may use schedules; empty, the default, admits none, and every schedule route
 is indistinguishable from an absent one. The routes stay out of the OpenAPI
-document and SDKs until launch. Existing schedules of an account removed from
-the list stop firing.
+document and SDKs until launch. Schedules of an account removed from the list
+refuse their fires: a cron schedule skips each time, a once schedule fails.
+
+**Firing.** Every apid replica runs the firer every 10 seconds. It leases up
+to 100 due schedules for one minute, so another replica skips them; a replica
+that dies mid-batch delays those fires until the lease lapses. apid checks its
+own gates (the rollout list and the preview admission policy) and passes a
+refusal to the store; the store checks the rest inside the admission.
+`<prefix>_customer_operation_schedule_fires_total{result}` counts `admitted`,
+`refused` and `error` fires.
 
 **Limits** (`pkg/api/limits.go`): schedules per account by plan (Hobby 10,
 Pro 100, Scale 1,000), minimum cron interval by plan (Hobby 5 minutes, Pro and
