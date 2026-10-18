@@ -68,7 +68,6 @@ var memDispatched = map[string]bool{
 	"FinalizeObjectS3CredentialRotationsForApp":               true,
 	"GetAppErrorSample":                                       true,
 	"GetFeatureFlags":                                         true,
-	"GetFreshDeploymentRuntimeProducerInputs":                 true,
 	"GetObjectBucketObjectLock":                               true,
 	"GetRouteHealthReport":                                    true,
 	"HasSnapshotHistory":                                      true,
@@ -396,13 +395,6 @@ func (s *Mem) DeploymentByID(p0 context.Context, p1 string) (state.Deployment, e
 		return o.DeploymentByID(p0, p1)
 	}
 	return s.MemStore.DeploymentByID(p0, p1)
-}
-
-func (s *Mem) GetFreshDeploymentRuntimeProducerInputs(ctx context.Context, account, app, deployment string) (state.DeploymentRuntimeProducerInputs, error) {
-	if o, ok := s.over.(state.DeploymentRuntimeProducerInputStore); ok {
-		return o.GetFreshDeploymentRuntimeProducerInputs(ctx, account, app, deployment)
-	}
-	return s.MemStore.GetFreshDeploymentRuntimeProducerInputs(ctx, account, app, deployment)
 }
 
 func (s *Mem) DeploymentSnapshotBackoffActive(p0 context.Context, p1 string) (state.Deployment, bool, error) {
