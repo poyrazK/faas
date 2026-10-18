@@ -219,6 +219,9 @@ func StartWithAPIDEnv(t *testing.T, pool *pgxpool.Pool, which Which, apidOnlyEnv
 	currentHarness = h
 	if which&Gatewayd != 0 {
 		reserveGatewayAddresses(t, h)
+		// APID starts first, but its probes must target this reserved control
+		// port rather than another gateway's default localhost listener.
+		extraEnv = append([]string{"FAAS_GATEWAYD_CONTROL_URL=http://" + h.gatewayControlAddr}, extraEnv...)
 		t.Cleanup(h.releaseGatewayAddressReservations)
 	}
 	if which&GatewaySynthStub != 0 {
@@ -742,6 +745,7 @@ func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []stri
 	currentHarness = h
 	if which&Gatewayd != 0 {
 		reserveGatewayAddresses(t, h)
+		extraEnv = append([]string{"FAAS_GATEWAYD_CONTROL_URL=http://" + h.gatewayControlAddr}, extraEnv...)
 		t.Cleanup(h.releaseGatewayAddressReservations)
 	}
 	if which&GatewaySynthStub != 0 {

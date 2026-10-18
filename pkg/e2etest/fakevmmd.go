@@ -305,6 +305,8 @@ func (s *FakeVMMD) SetResponse(instanceID string, response FakeResponse) {
 // SetForwardHandler lets process acceptance reach a real HTTP application
 // through the production scheduler/gateway stream without requiring KVM.
 // It runs outside the fixture mutex, with the stream's cancellation context.
+// An empty instanceID supplies the fallback for newly admitted instances;
+// an explicit instance handler takes precedence.
 func (s *FakeVMMD) SetForwardHandler(instanceID string, handler func(context.Context, RequestCapture) (FakeResponse, error)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -850,6 +852,9 @@ func (s *FakeVMMD) ForwardHTTPStream(stream vmmdpb.Vmmd_ForwardHTTPStreamServer)
 	}
 	gate := s.gates[init.Instance]
 	handler := s.forwardHandlers[init.Instance]
+	if handler == nil {
+		handler = s.forwardHandlers[""]
+	}
 	delete(s.failNext, init.Instance)
 	s.mu.Unlock()
 	if gate != nil {

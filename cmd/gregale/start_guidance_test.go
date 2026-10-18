@@ -128,6 +128,7 @@ func TestStartGuidedSecretsStayOutOfSourceUploadAndSession(t *testing.T) {
 	var created atomic.Bool
 	var secrets, deployments atomic.Int32
 	public := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set(api.DeploymentIDHeader, "d1")
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer public.Close()
@@ -330,7 +331,7 @@ func TestStartRequestUsesAcceptedPreviewInsteadOfCurrentTraffic(t *testing.T) {
 		case "/v1/apps/first-app":
 			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: "app-1", Slug: "first-app", CanonicalURL: current.URL})
 		case "/v1/deployments/accepted-deploy/url":
-			_ = json.NewEncoder(w).Encode(api.DeploymentPreviewURL{URL: preview.URL, Alive: true})
+			_ = json.NewEncoder(w).Encode(api.DeploymentPreviewURL{AppID: "app-1", DeploymentID: "accepted-deploy", URL: preview.URL, Alive: true})
 		default:
 			http.NotFound(w, r)
 		}
@@ -432,6 +433,7 @@ func TestStartDeclinedGreetingEditDoesNotDeploy(t *testing.T) {
 	})
 	runner := startTestRunner(t, source, "new greeting\nn\n")
 	runner.session.Template = "hello-node"
+	runner.session.AppID = "app-1"
 	runner.deploy = func(context.Context, []string, bool, ...deployExecution) int {
 		t.Fatal("declined greeting triggered deployment")
 		return 1

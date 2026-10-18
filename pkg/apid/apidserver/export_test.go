@@ -39,6 +39,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/managedrealtime"
 	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/apid/operation"
+	"github.com/onebox-faas/faas/pkg/apid/product"
 	"github.com/onebox-faas/faas/pkg/apid/statementinvoices"
 	"github.com/onebox-faas/faas/pkg/apid/tenantplans"
 	"github.com/onebox-faas/faas/pkg/billing"
@@ -1432,6 +1433,12 @@ func (s *server) PrepareGitOpsSourceForTest(ctx context.Context, lease state.Env
 
 func (s *server) ReadGitOpsSourceForTest(ctx context.Context, source state.EnvironmentGitSource) (state.EnvironmentGitSourcePollResult, error) {
 	return (&environmentGitSourceReader{server: s}).ReadEnvironmentGitSource(ctx, source)
+}
+
+func (r *server) ProductControl() *product.Service { return &r.productControl }
+
+func (r *server) ConfigureProductEmail(getenv func(string) string) error {
+	return r.configureProductEmail(getenv)
 }
 
 func (s *server) RehearsalNetworkEnabled() *bool { return &s.rehearsalNetworkEnabled }
