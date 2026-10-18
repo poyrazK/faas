@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/signal"
@@ -13,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/cmd/gregale/templates"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/reposcan"
@@ -20,18 +22,25 @@ import (
 )
 
 type startRunner struct {
-	ctx            context.Context
-	prompt         startPrompt
-	secretsFile    string
-	waitTimeout    time.Duration
-	client         *Client
-	account        api.AccountResponse
-	session        startSession
-	statePath      string
-	startedAt      time.Time
-	lastRequest    *startRequestResult
-	requestFailure *startRequestFailure
-	progress       *startProgress
+	ctx                 context.Context
+	prompt              startPrompt
+	secretsFile         string
+	waitTimeout         time.Duration
+	client              *Client
+	account             api.AccountResponse
+	session             startSession
+	statePath           string
+	startedAt           time.Time
+	lastRequest         *startRequestResult
+	requestFailure      *startRequestFailure
+	progress            *startProgress
+	target              *startTarget
+	configuration       *envRequiredConfiguration
+	secretKeys          []string
+	sourceBaseline      *startSourceSnapshot
+	reviewedSource      *startSourceSnapshot
+	projectUpdates      bool
+	cancelPendingUpload bool
 	// Use the same deploy implementation as deploy/dev. The local seam lets
 	// recovery tests observe acceptance without running a remote build.
 	deploy func(context.Context, []string, bool, ...deployExecution) int
@@ -75,32 +84,20 @@ func cmdStart(args []string) (code int) {
 		startedAt: time.Now(),
 	}
 	_, _ = fmt.Fprintln(osStdout, "\nGregale · Let's get your app live")
-	saved, found, err := loadStartSession(statePath)
-	if err != nil {
-		return printErr("Could not recover session", err)
-	}
-	if found && saved.APIBase != apiBase() {
-		return printErr("Session belongs to another API", fmt.Errorf("restore the API configuration for %s before continuing", saved.APIBase))
-	}
-	if savedScope, scopeErr := canonicalStartScope(saved.ScopePath); found && (scopeErr != nil || savedScope != scope) {
-		return printErr("Session directory does not match", errors.New("the saved session belongs to another directory"))
-	}
 	if code := runner.authenticate(); code != 0 {
 		return code
 	}
-	if found && saved.AccountID != runner.account.ID {
-		return printErr("Session belongs to another account", errors.New("log in to the account that created this session before continuing"))
-	}
-	resume := false
-	if found && saved.DeploymentID != "" {
-		choice, err := runner.prompt.choose(ctx, "Welcome back.", []string{"Continue " + saved.AppSlug, "Start a new launch"}, 0)
-		if err != nil {
+	resume, proceed, err := runner.chooseRecovery()
+	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, io.EOF) {
 			return startInputExit(err)
 		}
-		resume = choice == 0
+		return printErr("Could not recover session", err)
+	}
+	if !proceed {
+		return 0
 	}
 	if resume {
-		runner.session = saved
 		if code := runner.resume(); code != 0 {
 			if result, ready := runner.recoverFailure(code); !ready {
 				return result
@@ -315,29 +312,35 @@ func (r *startRunner) reviewAndDeploy() (int, bool) {
 }
 
 func (r *startRunner) reviewLaunch(edit *startFileEdit) (int, bool) {
+	if r.session.PendingSubmission != nil {
+		return printErr("A source submission still needs recovery", errors.New("run gregale start again to recover the pending launch before deploying another revision")), false
+	}
 	PrintProgress(osStdout, "3/4 · Check source and review deployment")
+	if err := r.requireStartCompatibility(r.ctx, r.client); err != nil {
+		return printErr("Server compatibility check failed", err), false
+	}
+	r.target = nil // Refresh app identity and configuration for every reviewed deploy.
+	r.reviewedSource = nil
 	report, ready, err := r.sourcePreflight()
 	if err != nil {
-		return startInputExit(err), false
+		if errors.Is(err, context.Canceled) || errors.Is(err, io.EOF) {
+			return startInputExit(err), false
+		}
+		return printErr("Could not prepare launch", err), false
 	}
 	if !ready {
 		return 0, false
+	}
+	if r.session.Template == "" {
+		if err := r.prepareSourceReview(); err != nil {
+			return printErr("Could not review project files", err), false
+		}
 	}
 	r.session.HealthPath = ""
 	if report.Profile != nil && safeStartHealthPath(report.Profile.HealthPath) {
 		r.session.HealthPath = report.Profile.HealthPath
 	}
-	if r.session.AppSlug == "" {
-		r.session.AppSlug = sanitizeProjectSlug(sourceNameForPath(r.session.SourcePath))
-	}
-	app, err := r.client.GetApp(r.ctx, r.session.AppSlug)
-	exists := err == nil
-	if err != nil {
-		var problem *APIError
-		if !errors.As(err, &problem) || problem.Problem.Status != http.StatusNotFound {
-			return printErr("Could not check app name", err), false
-		}
-	}
+	app, exists := r.target.app, r.target.exists
 	if edit != nil && (!exists || (r.session.AppID != "" && app.ID != r.session.AppID)) {
 		return printErr("App identity changed", errors.New("the starter update must target the app recorded by this session")), false
 	}
@@ -347,22 +350,26 @@ func (r *startRunner) reviewLaunch(edit *startFileEdit) (int, bool) {
 	}
 	if exists {
 		accessLabel = "Preserve existing access settings"
-		if edit == nil {
-			PrintWarn(osStdout, "App %s already exists. This will deploy a new revision to it.", r.session.AppSlug)
-		}
 	}
 	action := "Create app and deploy"
 	if exists {
 		action = "Deploy new revision to existing app"
 	}
 	_, _ = fmt.Fprintf(osStdout, "\nReady to launch %s\n  Source   %s\n  Account  %s (%s plan)\n  Action   %s\n  Access   %s\n", r.session.AppSlug, r.session.SourcePath, r.account.Email, r.account.Plan, action, accessLabel)
+	if r.session.Project != "" {
+		_, _ = fmt.Fprintf(osStdout, "  Project  %s (linked)\n", r.session.Project)
+	}
+	_, _ = fmt.Fprintf(osStdout, "  Environment  %s\n", scopeOrDefault(r.session.Environment))
 	if exists {
 		renderDeploymentAccess(osStdout, app, r.session.AppSlug)
 	}
 	if r.secretsFile != "" {
-		_, _ = fmt.Fprintln(osStdout, "  Secrets  Seal values from the supplied secrets file before deployment")
+		_, _ = fmt.Fprintf(osStdout, "  Secrets  Seal these keys before deployment: %s\n", strings.Join(r.secretKeys, ", "))
 	}
-	_, _ = fmt.Fprintln(osStdout, "  Billing  Uses your current plan and normal deployment limits.")
+	if r.configuration != nil && len(r.configuration.ExistingValuesUnverified) > 0 {
+		_, _ = fmt.Fprintf(osStdout, "  Config   Existing remote keys: %s (values and delivery unverified)\n", strings.Join(r.configuration.ExistingValuesUnverified, ", "))
+	}
+	r.renderAllowance(exists)
 	_, _ = fmt.Fprintln(osStdout, "  Files    Includes your uncommitted changes; normal source exclusions apply.")
 	confirmation := "Deploy this app"
 	if edit != nil {
@@ -383,6 +390,9 @@ func (r *startRunner) reviewLaunch(edit *startFileEdit) (int, bool) {
 		}
 		PrintOK(osStdout, "Updated %s", edit.path)
 	}
+	if err := r.verifyReviewedSource(r.ctx); err != nil {
+		return printErr("Project files changed after review", err), false
+	}
 	// Verify local persistence works before the first remote mutation. Keep
 	// the last accepted ID during a redeploy until its replacement is accepted.
 	if r.session.DeploymentID == "" {
@@ -392,20 +402,26 @@ func (r *startRunner) reviewLaunch(edit *startFileEdit) (int, bool) {
 		return printErr("Could not save deployment session", err), false
 	}
 	PrintProgress(osStdout, "4/4 · Build, boot and verify readiness")
-	args := []string{"--path", r.session.SourcePath, "--source=worktree", "--name", r.session.AppSlug, "--timeout", strconv.Itoa(int(r.waitTimeout / time.Second))}
+	// An explicit empty flag also matters: deploy must not inherit an
+	// environment from the original cwd after another source was selected.
+	args := []string{"--path", r.session.SourcePath, "--source=worktree", "--name", r.session.AppSlug, "--environment=" + r.session.Environment, "--timeout", strconv.Itoa(int(r.waitTimeout / time.Second)), "--idempotency-key", uuid.NewString()}
 	if r.secretsFile != "" {
 		args = append(args, "--secrets-file", r.secretsFile)
 	}
 	deployCtx, cancel := context.WithCancel(r.ctx)
 	defer cancel()
-	var saveErr error
+	var saveErr, identityErr error
 	defer func() {
 		r.progress.Close()
 		r.progress = nil
 	}()
 	execution := deployExecution{
+		resolveApp:             r.resolveDeployTarget,
 		sourcePreflightChecked: true,
 		compactProgress:        true,
+		onSubmission:           r.recordStartSubmission,
+		onUploadSession:        r.recordStartUpload,
+		onError:                r.recordStartSubmissionFailure,
 		onWaitEnd: func() {
 			r.progress.Close()
 		},
@@ -415,14 +431,22 @@ func (r *startRunner) reviewLaunch(edit *startFileEdit) (int, bool) {
 			}
 		},
 		onQueued: func(dep api.DeploymentResponse) {
+			expectedAppID := r.session.AppID
 			r.session.DeploymentID, r.session.AppID, r.session.Status = dep.ID, dep.AppID, dep.Status
 			r.session.Revision, r.lastRequest = dep.Revision, nil
+			r.session.RequireDeploymentEvidence = true
+			if (expectedAppID != "" && expectedAppID != dep.AppID) || !r.deploymentScopeMatches(dep) {
+				identityErr = errors.New("accepted deployment does not match the reviewed app and environment; inspect its saved ID before continuing")
+			}
+			if dep.ID != "" && identityErr == nil {
+				r.session.PendingSubmission = nil
+			}
 			if dep.ID == "" {
 				saveErr = errors.New("API accepted a deployment without an ID")
 			} else {
 				saveErr = saveStartSession(r.statePath, r.session)
 			}
-			if saveErr != nil {
+			if saveErr != nil || identityErr != nil {
 				cancel()
 				return
 			}
@@ -440,9 +464,12 @@ func (r *startRunner) reviewLaunch(edit *startFileEdit) (int, bool) {
 	}
 	code := r.deploy(deployCtx, args, false, execution)
 	r.progress.Close()
-	if saveErr != nil {
+	if saveErr != nil || identityErr != nil {
 		PrintProgress(osStdout, "Inspect accepted deployment directly: gregale deployment wait %s", safetext.ShellSingleQuote(r.session.DeploymentID))
-		return printErr("Deployment accepted but recovery state could not be saved", saveErr), false
+		if saveErr != nil {
+			return printErr("Deployment accepted but recovery state could not be saved", saveErr), false
+		}
+		return printErr("Deployment accepted for an unexpected target", identityErr), false
 	}
 	if code != 0 {
 		r.printRecovery()
@@ -451,6 +478,7 @@ func (r *startRunner) reviewLaunch(edit *startFileEdit) (int, bool) {
 	if r.session.Status != statusLive {
 		return printErr("Readiness was not confirmed", errors.New("resume the accepted deployment to check its final state")), false
 	}
+	r.sourceBaseline = r.reviewedSource
 	return 0, true
 }
 
@@ -460,7 +488,7 @@ func (r *startRunner) terminal(dep api.DeploymentResponse) int {
 		return printErr("Readiness was not confirmed", errors.New("deployment is still undergoing verification; resume to follow it"))
 	}
 	dep = deploymentWithReceipt(r.ctx, r.client, dep)
-	if dep.ID != r.session.DeploymentID || (r.session.AppID != "" && dep.AppID != "" && dep.AppID != r.session.AppID) {
+	if dep.ID != r.session.DeploymentID || (r.session.AppID != "" && dep.AppID != "" && dep.AppID != r.session.AppID) || !r.deploymentScopeMatches(dep) {
 		return printErr("Deployment identity changed", errors.New("the deployment result does not match the accepted session record"))
 	}
 	if !isCompletedDeployment(dep) {
@@ -490,8 +518,17 @@ func (r *startRunner) terminal(dep api.DeploymentResponse) int {
 }
 
 func (r *startRunner) resume() int {
+	if r.session.PendingSubmission != nil {
+		if err := r.recoverStartSubmission(); err != nil {
+			r.printRecovery()
+			return printErr("Could not recover source submission", err)
+		}
+	}
 	PrintProgress(osStdout, "Resume · %s (deployment %s)", r.session.AppSlug, r.session.DeploymentID)
-	app, err := r.client.GetApp(r.ctx, r.session.AppSlug)
+	if err := r.verifyStartProject(r.ctx, r.client); err != nil {
+		return printErr("Could not recover linked target", err)
+	}
+	app, err := r.getLaunchApp(r.ctx, r.client, r.session.AppSlug)
 	if err != nil {
 		return printErr("Could not recover app", err)
 	}
@@ -499,7 +536,7 @@ func (r *startRunner) resume() int {
 	if err != nil {
 		return printErr("Could not recover deployment", err)
 	}
-	if dep.AppID != app.ID || (r.session.AppID != "" && r.session.AppID != app.ID) {
+	if dep.AppID != app.ID || (r.session.AppID != "" && r.session.AppID != app.ID) || !r.deploymentScopeMatches(dep) {
 		return printErr("Saved deployment does not belong to this app", errors.New("inspect the saved session before starting a new deployment"))
 	}
 	r.progress = newStartProgress(osStdout, Enabled(), "Waiting for deployment")
@@ -525,11 +562,21 @@ func (r *startRunner) resume() int {
 }
 
 func (r *startRunner) printRecovery() {
+	if pending := r.session.PendingSubmission; pending != nil {
+		PrintProgress(osStdout, "Run gregale start again from %s to check the pending launch.", r.session.ScopePath)
+		PrintProgress(osStdout, "Inspect app history: gregale deployments --app %s", safetext.ShellSingleQuote(r.session.AppSlug))
+		if r.session.DeploymentID != "" {
+			PrintProgress(osStdout, "Previously accepted deployment: gregale deployment %s", safetext.ShellSingleQuote(r.session.DeploymentID))
+		}
+		r.printPreviouslyVerified()
+		return
+	}
 	if r.session.DeploymentID == "" {
 		return
 	}
 	PrintProgress(osStdout, "Run gregale start again from %s to continue this launch.", r.session.ScopePath)
 	PrintProgress(osStdout, "Inspect directly: gregale deployment wait %s", safetext.ShellSingleQuote(r.session.DeploymentID))
+	r.printPreviouslyVerified()
 }
 
 func (r *startRunner) completeLaunch() int {
@@ -538,15 +585,22 @@ func (r *startRunner) completeLaunch() int {
 	if code == 130 {
 		return code
 	}
-	if code == 0 && startTemplateAllowed(r.session.Template) {
-		code = r.starterWalkthrough()
+	if code == 0 {
+		code = r.rememberVerifiedDeployment()
+	}
+	if code == 0 {
+		if startTemplateAllowed(r.session.Template) {
+			code = r.starterWalkthrough()
+		} else {
+			code = r.projectWalkthrough()
+		}
 	}
 	r.finish()
 	return code
 }
 
 func (r *startRunner) recoverFailure(code int) (int, bool) {
-	for code != 130 && code != 3 && r.session.Status == deploymentStatusFailed {
+	for code != 130 && code != 3 && r.session.Status == deploymentStatusFailed && r.session.PendingSubmission == nil {
 		choice, err := r.prompt.choose(r.ctx, "The deployment failed. Your source and deployment ID are saved.", []string{"I've fixed the code — review and retry", "Show deployment logs", "Finish", "Configure secrets from a file and review retry"}, 0)
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
@@ -580,5 +634,13 @@ func (r *startRunner) recoverFailure(code int) (int, bool) {
 }
 
 func (r *startRunner) finish() {
-	_, _ = fmt.Fprintf(osStdout, "\nKeep building\n  Deploy: gregale deploy --path %s --source=worktree --name %s\n  Logs:   gregale logs %s --follow\n  Open:   gregale open %s\n", safetext.ShellSingleQuote(r.session.SourcePath), safetext.ShellSingleQuote(r.session.AppSlug), safetext.ShellSingleQuote(r.session.AppSlug), safetext.ShellSingleQuote(r.session.AppSlug))
+	_, _ = fmt.Fprintf(osStdout, "\nKeep building\n  Deploy: gregale deploy --path %s --source=worktree --name %s --environment=%s\n  Logs:   gregale logs %s --deployment %s --follow\n", safetext.ShellSingleQuote(r.session.SourcePath), safetext.ShellSingleQuote(r.session.AppSlug), safetext.ShellSingleQuote(r.session.Environment), safetext.ShellSingleQuote(r.session.AppSlug), safetext.ShellSingleQuote(r.session.DeploymentID))
+	if r.session.Environment == "" {
+		_, _ = fmt.Fprintf(osStdout, "  Open:   gregale open %s\n", safetext.ShellSingleQuote(r.session.AppSlug))
+	} else if r.lastRequest != nil && r.lastRequest.httpStatus != 0 && !r.lastRequest.private {
+		_, _ = fmt.Fprintf(osStdout, "  Open URL: %s\n", startResponseText(r.lastRequest.appURL))
+	} else {
+		_, _ = fmt.Fprintf(osStdout, "  Inspect: gregale deployment %s\n", safetext.ShellSingleQuote(r.session.DeploymentID))
+	}
+	r.printPreviouslyVerified()
 }

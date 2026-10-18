@@ -3774,6 +3774,17 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// reads from the same *Limiter the public edge uses (handler.Limiter()
 	// is the seam) so the snapshot agrees with what Allow consumed.
 	controlMux.HandleFunc("/v1/internal/quota", internalQuotaHandler(handler, log))
+	responsePicker, _ := deps.backend.(deploymentResponsePicker)
+	var responseStore state.Store
+	if deps.pgStore != nil {
+		responseStore = deps.pgStore
+	}
+	var responseForward func(gateway.Target) http.Handler
+	if deps.nodeCache != nil {
+		responseForward = deps.nodeCache.Forwarding()
+	}
+	responseChecker := deploymentResponseChecker{store: responseStore, picker: responsePicker, ensure: handler.EnsureServiceDeploymentCapacity, forward: responseForward, appsDomain: deps.appsDomain}
+	controlMux.HandleFunc(api.DeploymentResponseCheckCapabilitiesControlPath, responseChecker.Capabilities)
 	// ADR-093: mount the per-route observability reader on the
 	// control mux so apid can reverse-proxy
 	// /v1/apps/{slug}/routes → /v1/internal/apps/{slug}/routes
@@ -3806,6 +3817,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			})
 			if strings.HasSuffix(r.URL.Path, "/streaming-cap") {
 				internalStreamingCapHandler(deps.edgeRulesMatcher, resolve, log).ServeHTTP(w, r)
+				return
+			}
+			if strings.HasSuffix(r.URL.Path, "/response-check") {
+				responseChecker.ServeHTTP(w, r)
 				return
 			}
 			if strings.HasSuffix(r.URL.Path, "/service-endpoints") {
