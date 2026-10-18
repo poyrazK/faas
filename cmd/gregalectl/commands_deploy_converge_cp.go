@@ -13,6 +13,13 @@ package main
 // reads, including the rendered inventory and the operator vars file, so a
 // variable-only change converges too. control_plane_converge.yml ends early
 // on an unchanged contract and records the hash only after success.
+//
+// --roles is the host-configuration lane's mode
+// (docs/adr/20261018133100-host-configuration-lane.md): only the named
+// roles of the control-plane play run, unless the host's operator
+// variables or rendered inventory changed since its role record, and the
+// playbook records nothing; the lane records the contract and the role
+// hashes after its SLO gate.
 
 import (
 	"context"
@@ -25,6 +32,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -34,6 +42,9 @@ import (
 
 const controlPlaneConvergePlaybook = "control_plane_converge.yml"
 
+// controlPlaneRoleName is a role directory name under deploy/ansible/roles.
+var controlPlaneRoleName = regexp.MustCompile(`^[a-z0-9_]+$`)
+
 type deployConvergeControlPlaneOptions struct {
 	ManifestFile      string
 	SSHKnownHostsFile string
@@ -41,12 +52,20 @@ type deployConvergeControlPlaneOptions struct {
 	SSHKey            string
 	AnsibleVarsFile   string
 	RepoRoot          string
+	// Roles selects the host-configuration lane's mode: converge only these
+	// control-plane roles and record nothing. Empty runs the whole play.
+	Roles []string
 }
 
 type deployConvergeControlPlaneReport struct {
-	Host       string `json:"host"`
-	Contract   string `json:"contract_sha256"`
-	DurationMS int64  `json:"duration_ms"`
+	Host     string `json:"host"`
+	Contract string `json:"contract_sha256"`
+	// Environment hashes the inputs outside the repository: the rendered
+	// inventory and the operator variables. The lane records it with the
+	// role hashes, and a later lane run converges every role when it moved.
+	Environment string   `json:"environment_sha256"`
+	Roles       []string `json:"roles,omitempty"`
+	DurationMS  int64    `json:"duration_ms"`
 }
 
 func cmdDeployConvergeControlPlane(args []string) int {
@@ -58,6 +77,7 @@ func cmdDeployConvergeControlPlane(args []string) int {
 	sshKey := fs.String("ssh-key", "", "SSH private key (default: Ansible's own selection)")
 	varsFile := fs.String("ansible-vars-file", "", "control-plane Ansible variables, e.g. prod-vars.yml (required)")
 	repoRoot := fs.String("repo-root", "", "repository root containing deploy/ansible (default: detected)")
+	roles := fs.String("roles", "", "converge only these comma-separated control-plane roles and record nothing (host-configuration lane)")
 	jsonOut := fs.Bool("json", false, "emit structured JSON")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -69,6 +89,9 @@ func cmdDeployConvergeControlPlane(args []string) int {
 		SSHKey:            strings.TrimSpace(*sshKey),
 		AnsibleVarsFile:   strings.TrimSpace(*varsFile),
 		RepoRoot:          strings.TrimSpace(*repoRoot),
+	}
+	if strings.TrimSpace(*roles) != "" {
+		opts.Roles = strings.Split(strings.TrimSpace(*roles), ",")
 	}
 	if err := opts.validate(); err != nil {
 		fmt.Fprintf(os.Stderr, "gregalectl deploy converge-control-plane: %v\n", err)
@@ -83,7 +106,8 @@ func cmdDeployConvergeControlPlane(args []string) int {
 		jsonEmit(os.Stdout, report)
 		return 0
 	}
-	_, _ = fmt.Fprintf(os.Stdout, "deploy converge-control-plane: host=%s contract=%s duration=%dms\n", report.Host, report.Contract, report.DurationMS)
+	_, _ = fmt.Fprintf(os.Stdout, "deploy converge-control-plane: host=%s contract=%s environment=%s roles=%s duration=%dms\n",
+		report.Host, report.Contract, report.Environment, strings.Join(report.Roles, ","), report.DurationMS)
 	return 0
 }
 
@@ -107,6 +131,11 @@ func (o deployConvergeControlPlaneOptions) validate() error {
 	}
 	if o.SSHUser == "" {
 		return errors.New("--ssh-user must not be empty")
+	}
+	for _, role := range o.Roles {
+		if !controlPlaneRoleName.MatchString(role) {
+			return fmt.Errorf("--roles: %q is not a role name", role)
+		}
 	}
 	return nil
 }
@@ -165,6 +194,16 @@ func convergeControlPlane(ctx context.Context, opts deployConvergeControlPlaneOp
 	if err != nil {
 		return report, err
 	}
+	report.Environment, err = controlPlaneEnvironmentHash(tempRoot, files, opts.AnsibleVarsFile)
+	if err != nil {
+		return report, err
+	}
+	if len(opts.Roles) > 0 {
+		if err := requireControlPlaneRoles(ansibleDir, opts.Roles); err != nil {
+			return report, err
+		}
+		report.Roles = append([]string(nil), opts.Roles...)
+	}
 	convergeVars := map[string]any{
 		"faas_cp_bootstrap_contract_sha256": report.Contract,
 		// The deploy stage restarts and verifies every FaaS daemon after it
@@ -178,6 +217,11 @@ func convergeControlPlane(ctx context.Context, opts deployConvergeControlPlaneOp
 		// candidate release had already fixed. Release drift is verified
 		// after activation; node_join.yml skips this doctor pass the same way.
 		"faas_verify_run_doctor": false,
+	}
+	if len(opts.Roles) > 0 {
+		convergeVars["faas_cp_converge_roles_requested"] = opts.Roles
+		convergeVars["faas_cp_environment_sha256"] = report.Environment
+		convergeVars["faas_cp_record_contract"] = false
 	}
 	convergeVarsPath := filepath.Join(tempRoot, "converge-vars.json")
 	body, err := json.Marshal(convergeVars)
@@ -207,6 +251,54 @@ func convergeControlPlane(ctx context.Context, opts deployConvergeControlPlaneOp
 	}
 	report.DurationMS = time.Since(started).Milliseconds()
 	return report, nil
+}
+
+// requireControlPlaneRoles refuses a role the control-plane play does not
+// run: bootstrap.yml would skip it silently and the lane would record it as
+// converged.
+func requireControlPlaneRoles(ansibleDir string, roles []string) error {
+	body, err := os.ReadFile(filepath.Join(ansibleDir, "bootstrap.yml"))
+	if err != nil {
+		return fmt.Errorf("read control-plane bootstrap playbook: %w", err)
+	}
+	_, known, err := bootstrapPlayContract(body, "control_plane")
+	if err != nil {
+		return fmt.Errorf("select control-plane bootstrap contract: %w", err)
+	}
+	for _, role := range roles {
+		if i := sort.SearchStrings(known, role); i == len(known) || known[i] != role {
+			return fmt.Errorf("--roles: the control-plane play does not run role %q", role)
+		}
+	}
+	return nil
+}
+
+// controlPlaneEnvironmentHash covers the convergence inputs that are not
+// repository content: the manifest-rendered inventory and the operator vars
+// file. The host-configuration lane records it with the role hashes.
+func controlPlaneEnvironmentHash(inventoryRoot string, inventory []manifestAnsibleFile, varsFile string) (string, error) {
+	hash := sha256.New()
+	writeField := func(name string, body []byte) {
+		_, _ = io.WriteString(hash, name)
+		_, _ = hash.Write([]byte{0})
+		_, _ = hash.Write(body)
+		_, _ = hash.Write([]byte{0})
+	}
+	rendered := append([]manifestAnsibleFile(nil), inventory...)
+	sort.Slice(rendered, func(i, j int) bool { return rendered[i].Path < rendered[j].Path })
+	for _, file := range rendered {
+		rel, err := filepath.Rel(inventoryRoot, file.Path)
+		if err != nil {
+			return "", fmt.Errorf("relativize rendered inventory %s: %w", file.Path, err)
+		}
+		writeField("rendered/"+filepath.ToSlash(rel), file.Body)
+	}
+	vars, err := os.ReadFile(varsFile)
+	if err != nil {
+		return "", fmt.Errorf("read control-plane Ansible variables: %w", err)
+	}
+	writeField("operator-vars", vars)
+	return "sha256:" + hex.EncodeToString(hash.Sum(nil)), nil
 }
 
 func soleControlPlaneHost(m *manifest.Manifest) (manifest.Host, error) {

@@ -174,9 +174,16 @@ class ChangedTest(unittest.TestCase):
          edit("deploy/ansible/group_vars/control_plane/backup.yml", "faas_backup: false\n"), True, None),
         ("another group's vars are not", "control_plane",
          edit("deploy/ansible/group_vars/compute_nodes/log.yml", "faas_log: false\n"), False, []),
-        ("the converge playbook is a globals change", "control_plane",
+        ("the converge playbook is not role content", "control_plane",
          edit("deploy/ansible/control_plane_converge.yml", "- import_playbook: bootstrap.yml\n# x\n- hosts: all\n"),
-         True, None),
+         False, []),
+        ("the role selection condition is not role content", "control_plane",
+         edit("deploy/ansible/bootstrap.yml", BOOTSTRAP
+              .replace("    - role: nftables\n    - role: postgres\n      when: faas_postgres_enabled | default(true) | bool\n",
+                       "    - role: nftables\n      when: faas_cp_converge_roles is none or 'nftables' in faas_cp_converge_roles\n"
+                       "    - role: postgres\n      when:\n        - faas_postgres_enabled | default(true) | bool\n"
+                       "        - faas_cp_converge_roles is none or 'postgres' in faas_cp_converge_roles\n")),
+         False, []),
         ("an included role's change selects its includer", "compute_nodes",
          edit("deploy/ansible/roles/vmmd_jail/tasks/main.yml", "- debug: {msg: jail2}\n"), False, ["vmmd_service"]),
         ("a role shared by both plays changes in both", "compute_nodes",

@@ -20,11 +20,13 @@ does when it runs the role on a host:
 
 What every role of a group shares are the group's globals: the bodies of
 the bootstrap.yml plays that target the group, without their roles:
-lists; ansible.cfg; requirements.yml (collection pins); the group's
-converge playbook; group_vars and host_vars. A globals change changes
-every role. The rendered inventory and the operator variables are not in
-the repository: `gregalectl deploy converge-control-plane` hashes those
-(ADR-580).
+lists; ansible.cfg; requirements.yml (collection pins); group_vars and
+host_vars. A globals change changes every role. The rendered inventory and
+the operator variables are not in the repository: `gregalectl deploy
+converge-control-plane` hashes those (ADR-580). The converge playbooks
+themselves (control_plane_converge.yml, node_join.yml) are the lanes'
+machinery, not role content, and neither is the role selection condition
+(SELECTION) every role entry carries.
 
 A hash is sha256 over a preamble, the role name, its entries and every
 input's path and bytes in path order. It depends on content only, so two
@@ -51,11 +53,10 @@ ANSIBLE = "deploy/ansible"
 ROLES = ANSIBLE + "/roles"
 BOOTSTRAP = ANSIBLE + "/bootstrap.yml"
 GROUPS = ("control_plane", "compute_nodes")
-# The playbook each group converges through, on top of bootstrap.yml.
-CONVERGE_PLAYBOOK = {
-    "control_plane": ANSIBLE + "/control_plane_converge.yml",
-    "compute_nodes": ANSIBLE + "/node_join.yml",
-}
+# The role selection condition a play's role entries carry: lets a
+# converge run apply only the roles whose content changed. It is not role
+# content, so it is dropped before hashing.
+SELECTION = re.compile(r"faas_cp_converge_roles")
 COMMON_FILES = (ANSIBLE + "/ansible.cfg", ANSIBLE + "/requirements.yml")
 # Role subdirectories whose YAML Ansible executes or loads; files/ and
 # templates/ are data a task names, scanned for nothing.
@@ -200,11 +201,38 @@ def split_roles(play):
     for chunk in re.split(r"(?m)^(?=    - )", section):
         if not chunk.startswith("    - "):
             continue
-        body = uncomment(chunk)
+        body = entry_content(uncomment(chunk))
         name = re.match(r"\s*-\s*(?:role:\s*)?[\"']?([\w.-]+)", body)
         if name:
             entries.append((name.group(1), body))
     return play[:m.start()] + play[stop:], entries
+
+
+def entry_content(entry):
+    """A role entry without the selection condition, its when: in one
+    form: `when: a` and `when: [a, SELECTION]` as a list are the same
+    entry."""
+    out, lines, i = [], entry.split("\n"), 0
+    while i < len(lines):
+        line = lines[i]
+        m = re.match(r"^(\s*)when:\s*(.*)$", line)
+        if not m:
+            out.append(line)
+            i += 1
+            continue
+        conditions = [m.group(2).strip()] if m.group(2).strip() else []
+        listed = not conditions
+        i += 1
+        while listed and i < len(lines) and re.match(r"^\s+-\s+", lines[i]) \
+                and len(lines[i]) - len(lines[i].lstrip()) > len(m.group(1)):
+            conditions.append(re.sub(r"^\s+-\s+", "", lines[i]).strip())
+            i += 1
+        if len(conditions) == 1 and conditions[0].startswith("["):
+            conditions = [c.strip() for c in conditions[0][1:-1].split(",")]
+        conditions = [c for c in conditions if not SELECTION.search(c)]
+        if conditions:
+            out.append(f"{m.group(1)}when: " + (conditions[0] if len(conditions) == 1 else "[" + ", ".join(conditions) + "]"))
+    return "\n".join(out)
 
 
 def group_plays(tree, group):
@@ -309,7 +337,7 @@ class Roles:
 
 
 def globals_inputs(tree, group):
-    paths = [p for p in (*COMMON_FILES, CONVERGE_PLAYBOOK.get(group, "")) if p and tree.is_file(p)]
+    paths = [p for p in COMMON_FILES if tree.is_file(p)]
     for d in (f"{ANSIBLE}/group_vars/{group}", f"{ANSIBLE}/group_vars/all", f"{ANSIBLE}/host_vars"):
         paths.extend(p for p in tree.walk(d) if not NOT_CONTENT.search(p))
     return sorted(set(paths))
