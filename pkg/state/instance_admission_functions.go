@@ -83,7 +83,8 @@ func reserveNodeDB(ctx context.Context, tx pgx.Tx, nodeID, newState string, ramM
 // the database lacks the functions or the request needs the transaction
 // (another app's guard), and the caller admits as before.
 func (s *PgStore) admitWakeInstance(ctx context.Context, appID, deploymentID, newState string, ramMB int, nodeID, wakeID, mode string) (Instance, bool, error) {
-	if _, err := uuid.Parse(nodeID); err != nil {
+	// An unparsable node id is the transaction path's to refuse.
+	if !validUUID(nodeID) {
 		return Instance{}, false, nil
 	}
 	guard, guarded := runtimeGenerationGuardFrom(ctx)
@@ -127,7 +128,7 @@ func (s *PgStore) admitWakeInstance(ctx context.Context, appID, deploymentID, ne
 		if err == nil {
 			return inst, nil
 		}
-		if mapped := admissionFunctionError(err, nodeID); mapped != err {
+		if mapped, ok := mapAdmissionFunctionError(err, nodeID); ok {
 			return Instance{}, mapped
 		}
 		return scanCreatedInstance(errorRow{err}, wakeID, appID)
@@ -146,24 +147,32 @@ func (s *PgStore) admitWakeInstance(ctx context.Context, appID, deploymentID, ne
 // the errors the statement-by-statement transaction returned; any other
 // error is returned as it is.
 func admissionFunctionError(err error, nodeID string) error {
-	var pgErr *pgconn.PgError
-	if err == nil || !errors.As(err, &pgErr) {
-		return err
-	}
-	switch pgErr.ConstraintName {
-	case "instance_publication_current", "instance_runtime_config_receipt_current":
-		return ErrConflict
-	case "instance_node_admission_current":
-		return ErrNodeAdmissionStale
-	case "instance_node_capacity":
-		return fmt.Errorf("state: %w: node=%s %s", ErrNodeCapacity, nodeID, strings.TrimSpace(pgErr.Detail))
-	case "instance_snapshot_recovery_current":
-		return ErrConflict
-	case "app_runtime_generation_current":
-		return ErrRuntimeGenerationMoved
+	if mapped, ok := mapAdmissionFunctionError(err, nodeID); ok {
+		return mapped
 	}
 	return err
 }
+
+// mapAdmissionFunctionError reports whether err is one of the admission
+// functions' refusals, and the error it stands for.
+func mapAdmissionFunctionError(err error, nodeID string) (error, bool) {
+	var pgErr *pgconn.PgError
+	if err == nil || !errors.As(err, &pgErr) {
+		return nil, false
+	}
+	switch pgErr.ConstraintName {
+	case "instance_publication_current", "instance_runtime_config_receipt_current", "instance_snapshot_recovery_current":
+		return ErrConflict, true
+	case "instance_node_admission_current":
+		return ErrNodeAdmissionStale, true
+	case "instance_node_capacity":
+		return fmt.Errorf("state: %w: node=%s %s", ErrNodeCapacity, nodeID, strings.TrimSpace(pgErr.Detail)), true
+	case "app_runtime_generation_current":
+		return ErrRuntimeGenerationMoved, true
+	}
+	return nil, false
+}
+
 
 func undefinedFunction(err error) bool {
 	var pgErr *pgconn.PgError
@@ -219,7 +228,7 @@ func (s *PgStore) publishOnGenerationFunction(ctx context.Context, p RuntimeInst
 		guard.generation)
 	instance, err := scanInstanceCols(func(dest ...any) error { return row.Scan(append(dest, &backoffRecorded)...) })
 	if err != nil {
-		if mapped := admissionFunctionError(err, p.NodeID); mapped != err {
+		if mapped, ok := mapAdmissionFunctionError(err, p.NodeID); ok {
 			return Instance{}, mapped
 		}
 		return Instance{}, runtimeSecretFenceError(err)

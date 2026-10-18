@@ -106,13 +106,13 @@ func TestPgAdmissionFunctionsRefuseLikeTheStatements(t *testing.T) {
 			}
 			admit := func(t *testing.T, ctx context.Context, node state.ComputeNode, ramMB int) (state.Instance, error) {
 				t.Helper()
-				before, err := store.ListInstancesForApp(t.Context(), f.app.ID)
+				before, err := store.ListInstancesForApp(ctx, f.app.ID)
 				if err != nil {
 					t.Fatal(err)
 				}
 				ins, admitErr := s.CreateInstanceWithMode(ctx, f.app.ID, dep.ID, string(state.StateWaking), ramMB, node.ID, uuid.NewString(), string(state.InstanceModeNormal))
 				if admitErr != nil {
-					if after, err := store.ListInstancesForApp(t.Context(), f.app.ID); err != nil || len(after) != len(before) {
+					if after, err := store.ListInstancesForApp(ctx, f.app.ID); err != nil || len(after) != len(before) {
 						t.Fatalf("refused admission (%v) left %d instances, want %d", admitErr, len(after), len(before))
 					}
 				}

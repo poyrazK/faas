@@ -1,4 +1,10 @@
 -- filename: 20261018153840637_instance_admission_functions.sql
+-- ADR-1741: instance admission and publication in one round trip each.
+-- The previous release calls none of these functions.
+-- migration-compat: expand
+
+-- +goose Up
+SET LOCAL lock_timeout = '5s';
 -- ADR-1741: instance admission in one round trip.
 --
 -- admission_reserve_node holds the node checks every instance admission
@@ -17,11 +23,6 @@
 -- the matching publication after the boot. Each refusal raises with a
 -- constraint name pkg/state maps to the error the Go transaction returned.
 --
--- The previous release calls neither function.
--- migration-compat: expand
-
--- +goose Up
-SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 CREATE OR REPLACE FUNCTION admission_reserve_node(
     p_node_id uuid, p_expected_generation bigint, p_ram_mb integer, p_counts boolean, p_overhead_mb integer
