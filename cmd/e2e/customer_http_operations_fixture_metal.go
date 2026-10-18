@@ -213,7 +213,7 @@ func (f *customerHTTPFixture) deploy(t *testing.T, version string) api.Deploymen
 	mustCustomerHTTP(t, err)
 	// The per-deploy image scan alone takes over two minutes on a two-vCPU
 	// acceptance host; three minutes was not enough headroom.
-	_, err = e2etest.WaitForDeploymentLive(t.Context(), t, f.h.Pool, dep.ID, 8*time.Minute)
+	_, err = e2etest.WaitForDeploymentLive(t.Context(), t, f.h.Pool, dep.ID, 12*time.Minute)
 	mustCustomerHTTP(t, err)
 	return dep
 }

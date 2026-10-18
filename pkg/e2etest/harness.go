@@ -3056,7 +3056,7 @@ func startImaged(t *testing.T, h *Harness, bin, dbURL, tmp, appsRoot string, ext
 	// changed takes close to three minutes on a two-vCPU shared host, so the
 	// wait leaves headroom beyond that.
 	imagedStart := time.Now()
-	if err := h.waitImagedListens(6 * time.Minute); err != nil {
+	if err := h.waitImagedListens(10 * time.Minute); err != nil {
 		// Say why: an imaged that exited (metrics port taken, base
 		// staging failed) is otherwise reported only as "never
 		// subscribed", with its last words lost — smoke run

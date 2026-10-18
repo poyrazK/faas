@@ -3,6 +3,7 @@ package state
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strconv"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -27,7 +28,7 @@ func resolveWorkflowOperationInvocationVersion(ctx context.Context, store invoca
 		DeploymentByID(context.Context, string) (Deployment, error)
 	})
 	if !ok {
-		return inv, InvocationVersion{}, true, ErrConflict
+		return inv, InvocationVersion{}, true, fmt.Errorf("%w: workflow operation reader unavailable", ErrConflict)
 	}
 	run, err := reader.GetWorkflowRun(ctx, runID)
 	if err != nil {
@@ -47,7 +48,7 @@ func resolveWorkflowOperationInvocationVersion(ctx context.Context, store invoca
 	}
 	spec := api.WorkflowRuntimeStep(run.DefinitionSnapshot, name)
 	if spec == nil {
-		return inv, InvocationVersion{}, true, ErrConflict
+		return inv, InvocationVersion{}, true, fmt.Errorf("%w: workflow step %q is not in the run's definition", ErrConflict, name)
 	}
 	path, method := spec.Path, spec.Method
 	if path == "" {
@@ -57,7 +58,7 @@ func resolveWorkflowOperationInvocationVersion(ctx context.Context, store invoca
 		method = "POST"
 	}
 	if inv.Path != path || inv.Method != method {
-		return inv, InvocationVersion{}, true, ErrConflict
+		return inv, InvocationVersion{}, true, fmt.Errorf("%w: workflow step %q route %s %s does not match %s %s", ErrConflict, name, inv.Method, inv.Path, method, path)
 	}
 	steps, err := reader.GetWorkflowSteps(ctx, runID)
 	if err != nil {
@@ -70,15 +71,15 @@ func resolveWorkflowOperationInvocationVersion(ctx context.Context, store invoca
 		}
 	}
 	if !matched {
-		return inv, InvocationVersion{}, true, ErrConflict
+		return inv, InvocationVersion{}, true, fmt.Errorf("%w: workflow step %q attempt %d input does not match its recorded step", ErrConflict, name, attempt)
 	}
 	revision, release, err := invocationPinHeaders(headers)
 	if err != nil || (op.ReleaseID != "" && (release != op.ReleaseID || revision != "")) || (op.ReleaseID == "" && (revision != op.DeploymentID || release != "")) {
-		return inv, InvocationVersion{}, true, ErrConflict
+		return inv, InvocationVersion{}, true, fmt.Errorf("%w: workflow step version pin does not match the operation", ErrConflict)
 	}
 	deployment, err := reader.DeploymentByID(ctx, op.DeploymentID)
 	if err != nil || deployment.AppID != app.ID || deployment.Scope != op.Scope || deployment.Status != DeployLive {
-		return inv, InvocationVersion{}, true, ErrConflict
+		return inv, InvocationVersion{}, true, fmt.Errorf("%w: operation deployment %s is not live in its environment (status %q)", ErrConflict, op.DeploymentID, deployment.Status)
 	}
 	inv.AccountID, inv.DeploymentScope = op.AccountID, op.Scope
 	inv.Headers, err = json.Marshal(headers)

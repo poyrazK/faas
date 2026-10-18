@@ -245,7 +245,7 @@ func (f *customerWorkflowFixture) deploy(t *testing.T, version string) api.Deplo
 	mustCustomerWorkflow(t, err)
 	// The per-deploy image scan alone takes over two minutes on a two-vCPU
 	// acceptance host; three minutes was not enough headroom.
-	_, err = e2etest.WaitForDeploymentLive(t.Context(), t, f.h.Pool, dep.ID, 8*time.Minute)
+	_, err = e2etest.WaitForDeploymentLive(t.Context(), t, f.h.Pool, dep.ID, 12*time.Minute)
 	mustCustomerWorkflow(t, err)
 	return dep
 }
