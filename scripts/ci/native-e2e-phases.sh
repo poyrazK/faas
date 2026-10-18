@@ -49,7 +49,8 @@ native_e2e_phase_files() {
     # phase by far (a stalled build rides out its 10-minute budget), and the
     # one everything below depends on.
     build) printf '%s\n' build_metal_test.go catalog_runtime_metal_test.go binary_function_metal_test.go ;;
-    # Deploy paths: image, source tarball, healthcheck, port override, secrets.
+    # Deploy and safe-release paths: image, canary progression, healthcheck,
+    # rollback, port override and secrets.
     deploy) printf '%s\n' \
       app_task_interactive_metal_test.go \
       deploy_healthcheck_metal_test.go \
@@ -58,6 +59,7 @@ native_e2e_phase_files() {
       environment_gitops_native_metal_test.go \
       deploy_override_port_metal_test.go \
       deploy_wake_metal_test.go \
+      safe_release_drill_metal_test.go \
       dev_loop_metal_test.go \
       direct_oci_autoscale_metal_test.go \
       direct_oci_fullrootfs_metal_test.go \
