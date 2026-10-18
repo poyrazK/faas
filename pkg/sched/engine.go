@@ -3412,8 +3412,11 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 	}
 	var placement Placement
 	var ins state.Instance
+	// ADR-1741: the admission insert binds the snapshot-recovery lineage in
+	// its own transaction; a store that cannot is bound separately below.
+	recovery := &state.SnapshotRecoveryAdmission{SnapshotID: snap.ID}
 	ins, placement, releaseRestorePressure, err = e.createWithNodePlacement(ctx, placementRequest, haveSnap && snap.StorageKey != "", func(admitCtx context.Context, p Placement) (state.Instance, error) {
-		return e.store.CreateInstanceWithMode(admitCtx, appID, dep.ID, string(initState), app.RAMMB, p.NodeID, wakeID, mode)
+		return e.store.CreateInstanceWithMode(state.WithSnapshotRecoveryAdmission(admitCtx, recovery), appID, dep.ID, string(initState), app.RAMMB, p.NodeID, wakeID, mode)
 	})
 	if err != nil {
 		release()
@@ -3432,10 +3435,12 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		}
 		return WakeResult{}, fmt.Errorf("sched: wake: create instance: %w", applicationStandardRuntimeProblem(err))
 	}
-	if err := e.bindSnapshotRecovery(ctx, ins, snap.ID); err != nil {
-		_ = e.store.DeleteInstance(context.WithoutCancel(ctx), ins.ID)
-		release()
-		return WakeResult{}, err
+	if !recovery.Bound() {
+		if err := e.bindSnapshotRecovery(ctx, ins, snap.ID); err != nil {
+			_ = e.store.DeleteInstance(context.WithoutCancel(ctx), ins.ID)
+			release()
+			return WakeResult{}, err
+		}
 	}
 	var provisionalCPUBoostUntil time.Time
 	if err := e.checkCapturedApplicationStandardAdmission(ctx, ins.ID, app, acct, dep); err != nil {

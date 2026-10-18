@@ -144,7 +144,11 @@ func (s *PgStore) insertInstanceWithReservationsOnce(
 	reserve func(pgx.Tx) error, insert func(instanceInserter) (Instance, error),
 ) (Instance, error) {
 	guard, guarded := runtimeGenerationGuardFrom(ctx)
-	if !IsLive(strings.ToLower(newState)) && reserve == nil && !guarded {
+	recovery, binding := snapshotRecoveryAdmissionFrom(ctx)
+	if binding {
+		recovery.bound = false
+	}
+	if !IsLive(strings.ToLower(newState)) && reserve == nil && !guarded && !binding {
 		return insert(s.pool)
 	}
 
@@ -213,6 +217,12 @@ func (s *PgStore) insertInstanceWithReservationsOnce(
 	if err != nil {
 		return Instance{}, mapErr(err)
 	}
+	if binding {
+		if err := bindSnapshotRecoveryAtAdmissionDB(ctx, tx, inst, recovery.SnapshotID); err != nil {
+			return Instance{}, err
+		}
+	}
+	// The generation is taken last, after every row lock above (ADR-1741).
 	if guarded {
 		if err := checkRuntimeGenerationTx(ctx, tx, guard); err != nil {
 			return Instance{}, err
@@ -220,6 +230,9 @@ func (s *PgStore) insertInstanceWithReservationsOnce(
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return Instance{}, fmt.Errorf("state: node reservation: commit (node=%s): %w", nodeID, mapErr(err))
+	}
+	if binding {
+		recovery.bound = true
 	}
 	return inst, nil
 }
