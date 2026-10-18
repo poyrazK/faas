@@ -186,6 +186,8 @@ const (
 	// ledger after a restart: Request.FrozenChargeMB of RAM, no vCPU, CPU or
 	// concurrency. A live freeze converts a reservation with Freeze instead.
 	KindFrozen
+	// A private rehearsal consumes node capacity independently of app replicas.
+	KindDataRepairRehearsal
 )
 
 // kindCountsConcurrency reports whether a reservation consumes the app's
@@ -193,7 +195,7 @@ const (
 // that must overlap the old live revision; migration destinations and jobs
 // have the same non-serving accounting semantics for different reasons.
 func kindCountsConcurrency(kind Kind) bool {
-	return kind != KindMigration && kind != KindJob && kind != KindSnapshotPrime && kind != KindWarmPool && kind != KindAppTask && kind != KindFrozen
+	return kind != KindMigration && kind != KindJob && kind != KindSnapshotPrime && kind != KindWarmPool && kind != KindAppTask && kind != KindFrozen && kind != KindDataRepairRehearsal
 }
 
 // Request is an admission request for one instance (a wake or a build).

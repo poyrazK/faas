@@ -79,6 +79,9 @@ func (m *MemStore) OperationExecutions(_ context.Context, account, id string, af
 	if !operationRetained(op, time.Now().UTC()) {
 		return api.OperationExecutionsResponse{}, ErrOperationExpired
 	}
+	if op.DataRepair != nil {
+		return dataRepairExecutionPage(op, int(afterGeneration)), nil
+	}
 	rows := []api.OperationExecution{}
 	for generation, row := range data.jobExecutions[id] {
 		if generation > int(afterGeneration) {
@@ -120,6 +123,9 @@ func (s *PgStore) OperationExecutions(ctx context.Context, account, id string, a
 	if err != nil {
 		return api.OperationExecutionsResponse{}, err
 	}
+	if op.DataRepair != nil {
+		return dataRepairExecutionPage(op, int(afterGeneration)), nil
+	}
 	if op.WorkflowRunID != "" {
 		return s.operationWorkflowExecutions(ctx, op, afterGeneration, limit)
 	}
@@ -142,4 +148,21 @@ func (s *PgStore) OperationExecutions(ctx context.Context, account, id string, a
 		rows = append(rows, api.OperationExecution{Generation: int(row.Generation), InvocationID: row.InvocationID, State: row.State, Attempts: int(row.Attempts), CreatedAt: row.CreatedAt.Time, CompletedAt: completed})
 	}
 	return operationExecutionPage(rows, limit), nil
+}
+
+func dataRepairExecutionPage(op Operation, after int) api.OperationExecutionsResponse {
+	page := api.OperationExecutionsResponse{Executions: []api.OperationExecution{}}
+	if after >= 1 {
+		return page
+	}
+	row := api.OperationExecution{Generation: 1, DataRepairID: op.ID, State: string(op.State), CreatedAt: op.CreatedAt}
+	if op.State.Terminal() {
+		at := op.UpdatedAt
+		row.CompletedAt = &at
+	}
+	if op.DataRepair.Phase == api.DataRepairApplying || op.DataRepair.Phase == api.DataRepairUnknown || op.DataRepair.Phase == api.DataRepairSucceeded {
+		row.Attempts = 1
+	}
+	page.Executions = append(page.Executions, row)
+	return page
 }
