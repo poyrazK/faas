@@ -19,6 +19,7 @@ from ._event_acknowledgment_protocol import (
     EventAcknowledgmentWorkerError,
 )
 from ._event_consumer_processing_store import _store_error as processing_store_error
+from .event_acknowledgment_intent_retry_policy import EventAcknowledgmentIntentStoredRetryPolicy
 from .event_acknowledgment_intents import EventAcknowledgmentIntentResult
 from .event_acknowledgment_intents import _store_error as intent_store_error
 from .event_acknowledgment_preparation_events import EventAcknowledgmentPreparationEvent, PreparationEvents
@@ -64,6 +65,7 @@ async def _run_prepared(
     options: EventAcknowledgmentPreparedOptions,
     parent: Control,
     events: PreparationEvents,
+    policy: EventAcknowledgmentIntentStoredRetryPolicy | None = None,
 ) -> EventAcknowledgmentIntentResult:
     async def stage(
         control: Control,
@@ -71,7 +73,10 @@ async def _run_prepared(
         hooks: _EventConsumerTransactionHooks | None = None,
     ) -> EventAcknowledgmentIntentResult:
         result = await connection_operation(
-            factory, control, lambda connection: worker._stage(connection, callback, control, hooks), intent_store_error
+            factory,
+            control,
+            lambda connection: worker._stage(connection, callback, control, hooks, policy),
+            intent_store_error,
         )
         events.intent_committed(result.receipt.replayed)
         return result

@@ -20,10 +20,11 @@ export interface EventAcknowledgmentIntentNotification {
   threshold: number;
 }
 export interface EventAcknowledgmentIntentAcknowledgment { incidentId: string; sequence: number }
-/** Application-persisted metadata. Timers and unfinished confirmation proof are never serialized. */
+/** Application-persisted metadata. Version 2 requires parked alerts enabled; version 1 omits them.
+ * Timers and unfinished confirmation proof are never serialized. */
 export interface EventAcknowledgmentIntentCheckpoint {
   kind: 'gregale.node.event-acknowledgment-intent-watch';
-  version: 1;
+  version: 1 | 2;
   target: { accountId: string; appId: string };
   policy: IntentWatchPolicy;
   session: string;
@@ -54,7 +55,11 @@ export function intentCheckpointRules(policy: IntentWatchPolicy): { metric: Even
   const rules: { metric: EventAcknowledgmentIntentWatchMetric; threshold: number }[] = [];
   if (policy.dueThreshold > 0) rules.push({ metric: 'due_backlog', threshold: policy.dueThreshold });
   if (policy.stalledThreshold > 0) rules.push({ metric: 'stalled_recovery', threshold: policy.stalledThreshold });
+  if (policy.parkedThreshold !== undefined) rules.push({ metric: 'parked_intents', threshold: policy.parkedThreshold });
   return rules;
+}
+export function intentCheckpointVersion(policy: IntentWatchPolicy): 1 | 2 {
+  return policy.parkedThreshold === undefined ? 1 : 2;
 }
 function checkpointPolicy(input: unknown): IntentWatchPolicy {
   if (!record(input)) return fail();
@@ -63,6 +68,7 @@ function checkpointPolicy(input: unknown): IntentWatchPolicy {
     || !['dueThreshold', 'stalledThreshold', 'pollIntervalMs', 'queryTimeoutMs', 'maxAgeMs', 'sustainMs'].every(k => typeof input[k] === 'number')) return fail();
   return intentWatchPolicy({ health: { scanLimit: health.scanLimit as number, stallAfterMs: health.stallAfterMs as number },
     dueThreshold: input.dueThreshold as number, stalledThreshold: input.stalledThreshold as number,
+    parkedThreshold: input.parkedThreshold as number | undefined,
     pollIntervalMs: input.pollIntervalMs as number, queryTimeoutMs: input.queryTimeoutMs as number,
     maxAgeMs: input.maxAgeMs as number, sustainMs: input.sustainMs as number });
 }
@@ -71,12 +77,13 @@ export function validateEventAcknowledgmentIntentCheckpoint(input: unknown): Eve
   try { return validate(input); } catch { return fail(); }
 }
 function validate(input: unknown): EventAcknowledgmentIntentCheckpoint {
-  if (!record(input) || input.kind !== 'gregale.node.event-acknowledgment-intent-watch' || input.version !== 1
+  if (!record(input) || input.kind !== 'gregale.node.event-acknowledgment-intent-watch' || input.version !== 1 && input.version !== 2
     || !record(input.target) || typeof input.session !== 'string' || input.session.length !== 36 || input.session !== input.session.toLowerCase()
     || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(input.session)
     || input.session === '00000000-0000-0000-0000-000000000000' || !integer(input.sequence)) return fail();
   const [accountId, appId] = intentScope(input.target.accountId as string, input.target.appId as string);
   const policy = checkpointPolicy(input.policy), rules = intentCheckpointRules(policy), session = input.session, sequence = input.sequence;
+  if (input.version !== intentCheckpointVersion(policy)) return fail();
   const lastObserved = input.lastObservedAt === undefined ? undefined : intentCheckpointTime(input.lastObservedAt);
   if (sequence > 0 && lastObserved === undefined) return fail();
   if (!Array.isArray(input.conditions) || input.conditions.length !== rules.length || !Array.isArray(input.pending)
@@ -131,7 +138,7 @@ function validate(input: unknown): EventAcknowledgmentIntentCheckpoint {
     const first = seen.get(opening(id, session));
     if (first && (first.incidentId !== id || first.transition !== 'opened')) return fail();
   }
-  return { kind: 'gregale.node.event-acknowledgment-intent-watch', version: 1, target: { accountId, appId },
+  return { kind: 'gregale.node.event-acknowledgment-intent-watch', version: intentCheckpointVersion(policy), target: { accountId, appId },
     policy, session, sequence, ...(lastObserved === undefined ? {} : { lastObservedAt: input.lastObservedAt as string }),
     conditions, pending, acknowledged };
 }
