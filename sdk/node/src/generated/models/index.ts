@@ -530,6 +530,7 @@ export type { DebugGuestExecutionEvidence } from './DebugGuestExecutionEvidence.
 export type { DebugRegressionActionRequest } from './DebugRegressionActionRequest.js';
 export type { DebugRegressionActionResponse } from './DebugRegressionActionResponse.js';
 export type { DebugRegressionItem } from './DebugRegressionItem.js';
+export type { DebugRegressionReview } from './DebugRegressionReview.js';
 export type { DebugRegressionsResponse } from './DebugRegressionsResponse.js';
 export type { DebugReplayComparison } from './DebugReplayComparison.js';
 export type { DebugReplayRequest } from './DebugReplayRequest.js';
@@ -950,6 +951,7 @@ export type { GithubWebhookDeliveryRecord } from './GithubWebhookDeliveryRecord.
 export type { GraceWindowResponse } from './GraceWindowResponse.js';
 export type { GregaleRelease } from './GregaleRelease.js';
 export type { GregaleRevision } from './GregaleRevision.js';
+export type { GuardedDebugRegressionActionRequest } from './GuardedDebugRegressionActionRequest.js';
 export type { Id32 } from './Id32.js';
 export type { IdempotencyKey } from './IdempotencyKey.js';
 export type { ImageRunResponse } from './ImageRunResponse.js';
@@ -2446,6 +2448,10 @@ export type { SecretRuntimeReloadObservation } from './SecretRuntimeReloadObserv
 export type { SecretScanResult } from './SecretScanResult.js';
 export type { SecurityQuarantineRecoveryRequest } from './SecurityQuarantineRecoveryRequest.js';
 export type { SecurityQuarantineRecoveryResponse } from './SecurityQuarantineRecoveryResponse.js';
+export type { SelectedTraceApp } from './SelectedTraceApp.js';
+export type { SelectedTraceInvocation } from './SelectedTraceInvocation.js';
+export type { SelectedTraceLookupResponse } from './SelectedTraceLookupResponse.js';
+export type { SelectedTraceRequest } from './SelectedTraceRequest.js';
 export type { SendAppMessageRequest } from './SendAppMessageRequest.js';
 export type { SendAppMessageResponse } from './SendAppMessageResponse.js';
 export type { ServiceBindingPolicy } from './ServiceBindingPolicy.js';

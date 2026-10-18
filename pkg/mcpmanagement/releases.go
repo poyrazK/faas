@@ -20,6 +20,8 @@ const releasePlanTTL = 15 * time.Minute
 const maxReleasePlans = 256
 
 type releasePlan struct {
+	Regression              *regressionActionPlan `json:"regression_triage,omitempty"`
+	regressionResult        *api.DebugRegressionReview
 	Budgets                 *routeBudgetPlan `json:"route_budgets,omitempty"`
 	budgetResult            *api.EnvironmentRouteBudgets
 	ID                      string                             `json:"plan_id"`
