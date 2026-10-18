@@ -49,6 +49,12 @@ func (s *PgStore) publishOwnedInstanceRuntimeOnce(ctx context.Context, p Runtime
 	if err != nil {
 		return Instance{}, err
 	}
+	// ADR-1741: a boot's guarded publication is one statement when the
+	// database has the admission functions.
+	if guarded && p.RuntimeUpgradeColdBoot == nil && p.ExpectedState != string(StateWarm) &&
+		p.ExpectedState != string(StateFrozen) && s.admissionFunctionsUsable(ctx) {
+		return s.publishOnGenerationFunction(ctx, p, guard)
+	}
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return Instance{}, err

@@ -18,7 +18,17 @@ func TestPgRuntimeInstancePublicationOwnership(t *testing.T) {
 
 func TestPgGenerationGuardedPublication(t *testing.T) {
 	store, _, _ := pgWithPool(t)
+	if !state.AdmissionFunctionsUsable(t.Context(), store) {
+		t.Fatal("migrated database lacks the publication function")
+	}
 	testGenerationGuardedPublication(t, store)
+}
+
+// The statement-by-statement transaction, as on a database without the
+// ADR-1741 functions, behaves the same.
+func TestPgGenerationGuardedPublicationStatements(t *testing.T) {
+	store, _, _ := pgWithPool(t)
+	testGenerationGuardedPublication(t, state.StatementAdmissionStore(store))
 }
 
 func TestPgRuntimeInstancePublicationLifetime(t *testing.T) {

@@ -6,6 +6,7 @@ package state_test
 import (
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -60,10 +61,22 @@ func testGenerationGuardedPublication(t *testing.T, store runtimeAppEnvTestStore
 	t.Run("held generation publishes", func(t *testing.T) {
 		p := seedRuntimeInstancePublication(t, store, f, f.deployments["stage"], node)
 		p.GenerationGuarded = true
+		// A boot publishes the inputs it delivered; the receipt commits with it.
+		inputs := state.RuntimeConfigInputs{Scope: "stage", Boundary: time.Now().UTC().Truncate(time.Microsecond),
+			Variables: map[string]string{"MODE": "guarded"}, SecretVersions: map[string]int64{}, SecretRefs: map[string]string{}, AllSecrets: true}
+		p.Inputs = &inputs
 		ctx := state.WithRuntimeGenerationGuard(t.Context(), f.app.ID, generation(t))
 		published, err := store.PublishOwnedInstanceRuntime(ctx, p)
-		if err != nil || published.State != string(state.StateRunning) || published.Netns != p.Netns {
+		if err != nil || published.State != string(state.StateRunning) || published.Netns != p.Netns || published.GuestUID != p.GuestUID {
 			t.Fatalf("guarded publication = %+v, %v; want RUNNING with its runtime", published, err)
+		}
+		receipt, exists, err := store.(state.RuntimeConfigReceiptStore).InstanceRuntimeConfigReceipt(t.Context(), p.InstanceID)
+		if err != nil || !exists || receipt.Variables["MODE"] != "guarded" {
+			t.Fatalf("receipt after a guarded publication = %+v, %v, %v", receipt, exists, err)
+		}
+		// Publishing the same instance again finds it RUNNING and changes nothing.
+		if _, err := store.PublishOwnedInstanceRuntime(ctx, p); !errors.Is(err, state.ErrConflict) {
+			t.Fatalf("second guarded publication = %v, want ErrConflict", err)
 		}
 	})
 }

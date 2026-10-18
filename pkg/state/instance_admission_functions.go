@@ -40,7 +40,8 @@ func (s *PgStore) admissionFunctionsUsable(ctx context.Context) bool {
 	}
 	var ok bool
 	err := s.pool.QueryRow(ctx, `select to_regprocedure('admit_wake_instance(uuid,text,text,integer,uuid,text,text,bigint,boolean,integer,boolean,uuid,bigint)') is not null
-		and to_regprocedure('admission_reserve_node(uuid,bigint,integer,boolean,integer)') is not null`).Scan(&ok)
+		and to_regprocedure('admission_reserve_node(uuid,bigint,integer,boolean,integer)') is not null
+		and to_regprocedure('publish_instance_on_generation(uuid,uuid,uuid,uuid,uuid,text,text,text,inet,integer,text,uuid,text,text,text,jsonb,text,text,boolean,text,timestamptz,jsonb,jsonb,boolean,jsonb,jsonb,bigint)') is not null`).Scan(&ok)
 	if err != nil {
 		return false
 	}
@@ -149,6 +150,8 @@ func admissionFunctionError(err error, nodeID string) error {
 		return err
 	}
 	switch pgErr.ConstraintName {
+	case "instance_publication_current", "instance_runtime_config_receipt_current":
+		return ErrConflict
 	case "instance_node_admission_current":
 		return ErrNodeAdmissionStale
 	case "instance_node_capacity":
@@ -170,3 +173,58 @@ func undefinedFunction(err error) bool {
 type errorRow struct{ err error }
 
 func (r errorRow) Scan(...any) error { return r.err }
+
+// publishOnGenerationFunction is the guarded publication in one statement
+// (publish_instance_on_generation): the compare-and-swap, the config proof
+// with the wake's event and notification, the runtime-config receipt and
+// the runtime-generation check, taken last.
+func (s *PgStore) publishOnGenerationFunction(ctx context.Context, p RuntimeInstancePublication, guard runtimeGenerationGuard) (Instance, error) {
+	var eventKind, notifyChannel, notifyPayload *string
+	var eventData []byte
+	if b := p.Bookkeeping; b != nil {
+		if b.EventKind != "" {
+			eventKind, eventData = &b.EventKind, b.EventData
+		}
+		if b.NotifyChannel != "" {
+			notifyChannel, notifyPayload = &b.NotifyChannel, &b.NotifyPayload
+		}
+	}
+	var environmentID *string
+	if p.Fence.EnvironmentID != "" {
+		environmentID = &p.Fence.EnvironmentID
+	}
+	recordReceipt := p.Inputs != nil && p.targetState() == string(StateRunning)
+	var receiptScope string
+	var boundary any
+	variables, secrets, refs, sidecars := []byte(`{}`), []byte(`{}`), []byte(`{}`), []byte(`{}`)
+	allSecrets := false
+	if recordReceipt {
+		receiptScope, boundary, allSecrets = p.Inputs.Scope, gitOpsTime(p.Inputs.Boundary), p.Inputs.AllSecrets
+		variables, secrets, refs, sidecars = runtimeConfigInputsJSON(*p.Inputs)
+	}
+	var backoffRecorded bool
+	row := s.pool.QueryRow(ctx, `
+	select (r.published).id, coalesce((r.published).app_id::text, ''), coalesce((r.published).deployment_id::text, ''), (r.published).state,
+	       coalesce((r.published).netns,''), coalesce((r.published).guest_uid,0), coalesce(host((r.published).host_ip),''), (r.published).ram_mb,
+	       (r.published).started_at, (r.published).last_request_at, (r.published).parked_at, (r.published).node_id, (r.published).wake_id,
+	       (r.published).framework_ready_at, (r.published).tail_count, (r.published).mode, (r.published).request_count,
+	       r.snapshot_backoff_recorded
+	  from publish_instance_on_generation($1::uuid, $2::uuid, $3::uuid, $4::uuid, $5::uuid, $6::text, $7::text, $8::text, $9::inet,
+	       $10::integer, $11::text, $12::uuid, $13::text, $14::text, $15::text, $16::jsonb, $17::text, $18::text, $19::boolean,
+	       $20::text, $21::timestamptz, $22::jsonb, $23::jsonb, $24::boolean, $25::jsonb, $26::jsonb, $27::bigint) r`,
+		p.InstanceID, p.AppID, p.Fence.DeploymentID, p.NodeID, p.WakeID, p.ExpectedState, p.targetState(), p.Netns, p.HostIP,
+		p.GuestUID, p.ConfigFence.Fingerprint, environmentID, p.Fence.Scope, p.Fence.Fingerprint, eventKind, eventData,
+		notifyChannel, notifyPayload, recordReceipt, receiptScope, boundary, variables, secrets, allSecrets, refs, sidecars,
+		guard.generation)
+	instance, err := scanInstanceCols(func(dest ...any) error { return row.Scan(append(dest, &backoffRecorded)...) })
+	if err != nil {
+		if mapped := admissionFunctionError(err, p.NodeID); mapped != err {
+			return Instance{}, mapped
+		}
+		return Instance{}, runtimeSecretFenceError(err)
+	}
+	if p.Bookkeeping != nil {
+		p.Bookkeeping.SnapshotBackoffRecorded = backoffRecorded
+	}
+	return instance, nil
+}

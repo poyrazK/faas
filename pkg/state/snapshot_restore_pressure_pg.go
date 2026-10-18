@@ -88,12 +88,16 @@ func (s *pgSnapshotRestorePressureSession) ReserveSnapshotRestore(ctx context.Co
 	var once sync.Once
 	return func() { //nolint:contextcheck // Lease cleanup must outlive the canceled request context; cleanup is bounded below.
 		once.Do(func() {
-			// Cleanup is best-effort because expiry is authoritative; bound the
-			// RPC completion path if the pool is contended or the database is down.
-			deleteCtx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-			defer cancel()
-			_, _ = s.store.pool.Exec(deleteCtx,
-				`delete from snapshot_restore_pressure_leases where lease_id = $1::uuid`, leaseID)
+			// Cleanup is best-effort because expiry is authoritative, so it runs
+			// in the background: the wake that releases the lease does not wait
+			// a control-plane round trip before publishing (ADR-1741). The bound
+			// keeps a contended pool or a down database from piling up deletes.
+			go func() {
+				deleteCtx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+				defer cancel()
+				_, _ = s.store.pool.Exec(deleteCtx,
+					`delete from snapshot_restore_pressure_leases where lease_id = $1::uuid`, leaseID)
+			}()
 		})
 	}, nil
 }
