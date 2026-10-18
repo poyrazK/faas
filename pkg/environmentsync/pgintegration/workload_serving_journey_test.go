@@ -423,7 +423,7 @@ func completePushServingTestDelivery(t *testing.T, store *state.PgStore, account
 	return invocation.ID
 }
 
-func registerServingGateway(t *testing.T, store *state.PgStore, name string) {
+func registerServingGateway(t *testing.T, store state.Store, name string) {
 	t.Helper()
 	role, target := "compute-only", "tcp://127.0.0.1:8080"
 	if _, err := store.CreateComputeNode(t.Context(), state.ComputeNode{Name: name, Active: true,
@@ -433,7 +433,22 @@ func registerServingGateway(t *testing.T, store *state.PgStore, name string) {
 	}
 }
 
-func completeRequestQualificationReceipts(t *testing.T, store *state.PgStore, request state.EnvironmentWorkloadQualificationRequest) {
+type requestQualificationReceiptStore interface {
+	state.Store
+	state.EnvironmentGitOpsQualificationStore
+	state.EnvironmentGitOpsQualificationInstanceStore
+	state.EnvironmentQualificationExecutionStore
+	state.EnvironmentGitOpsQualificationRuntimeStore
+	state.EnvironmentQualificationConfigReceiptStore
+	state.EnvironmentQualificationSnapshotStore
+	state.EnvironmentQualificationRestoreStore
+	state.EnvironmentQualificationRestoreRuntimeStore
+	state.EnvironmentQualificationFrameworkReadyReceiptStore
+	state.EnvironmentQualificationRestoreReceiptStore
+	state.EnvironmentQualificationSmokeReceiptStore
+}
+
+func completeRequestQualificationReceipts(t *testing.T, store requestQualificationReceiptStore, request state.EnvironmentWorkloadQualificationRequest) {
 	t.Helper()
 	claimed, err := store.ClaimEnvironmentWorkloadQualification(t.Context(), request.ID, "scheduler", time.Minute)
 	if err != nil {

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from typing import Any, TypeVar
+from uuid import UUID
 
 from attrs import define as _attrs_define
 
@@ -27,6 +28,19 @@ class EnvironmentWorkloadSource:
     """
 
     kind: EnvironmentWorkloadSourceKind
+    reuse_unchanged_build: bool | Unset = False
+    """Opt into isolated canonical Git context and same-app signed build reuse. A fresh target candidate and
+    qualification are always required. An explicit build_artifact_id takes precedence. Link entries in the context
+    are unsupported."""
+    build_context: str | Unset = UNSET
+    """Repository-relative context directory; defaults to the entire repository when reuse is enabled. Must contain
+    source.directory and all shared build inputs. Files outside this directory are not delivered to the builder.
+    Requires reuse_unchanged_build."""
+    build_artifact_id: UUID | Unset = UNSET
+    """Existing signed source-build producer. Requires build_artifact_hash; same mapped app only. Unsupported for
+    images and scheduled Jobs."""
+    build_artifact_hash: str | Unset = UNSET
+    """Exact immutable producer input hash. Retention does not grant qualification or activation authority."""
     runtime: EnvironmentWorkloadSourceRuntime | Unset = UNSET
     """Supported runner; required only when kind is function."""
     directory: str | Unset = UNSET
@@ -37,6 +51,16 @@ class EnvironmentWorkloadSource:
 
     def to_dict(self) -> dict[str, Any]:
         kind: str = self.kind
+
+        reuse_unchanged_build = self.reuse_unchanged_build
+
+        build_context = self.build_context
+
+        build_artifact_id: str | Unset = UNSET
+        if not isinstance(self.build_artifact_id, Unset):
+            build_artifact_id = str(self.build_artifact_id)
+
+        build_artifact_hash = self.build_artifact_hash
 
         runtime: str | Unset = UNSET
         if not isinstance(self.runtime, Unset):
@@ -57,6 +81,14 @@ class EnvironmentWorkloadSource:
                 "kind": kind,
             }
         )
+        if reuse_unchanged_build is not UNSET:
+            field_dict["reuse_unchanged_build"] = reuse_unchanged_build
+        if build_context is not UNSET:
+            field_dict["build_context"] = build_context
+        if build_artifact_id is not UNSET:
+            field_dict["build_artifact_id"] = build_artifact_id
+        if build_artifact_hash is not UNSET:
+            field_dict["build_artifact_hash"] = build_artifact_hash
         if runtime is not UNSET:
             field_dict["runtime"] = runtime
         if directory is not UNSET:
@@ -75,6 +107,19 @@ class EnvironmentWorkloadSource:
         d = dict(src_dict)
         kind = check_environment_workload_source_kind(d.pop("kind"))
 
+        reuse_unchanged_build = d.pop("reuse_unchanged_build", UNSET)
+
+        build_context = d.pop("build_context", UNSET)
+
+        _build_artifact_id = d.pop("build_artifact_id", UNSET)
+        build_artifact_id: UUID | Unset
+        if isinstance(_build_artifact_id, Unset):
+            build_artifact_id = UNSET
+        else:
+            build_artifact_id = UUID(_build_artifact_id)
+
+        build_artifact_hash = d.pop("build_artifact_hash", UNSET)
+
         _runtime = d.pop("runtime", UNSET)
         runtime: EnvironmentWorkloadSourceRuntime | Unset
         if isinstance(_runtime, Unset):
@@ -92,6 +137,10 @@ class EnvironmentWorkloadSource:
 
         environment_workload_source = cls(
             kind=kind,
+            reuse_unchanged_build=reuse_unchanged_build,
+            build_context=build_context,
+            build_artifact_id=build_artifact_id,
+            build_artifact_hash=build_artifact_hash,
             runtime=runtime,
             directory=directory,
             dockerfile=dockerfile,

@@ -30,6 +30,9 @@ func (m *MemStore) UpdateEnvironmentGitSource(_ context.Context, accountID, sour
 	source.Generation++
 	memory.source = source
 	touchGitOpsMemoryIntent(memory)
+	if err := m.environmentGitRolloutNotificationLocked(memory, nil, "", time.Now().UTC()); err != nil {
+		return EnvironmentGitSource{}, err
+	}
 	return memory.source, nil
 }
 

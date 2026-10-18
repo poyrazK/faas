@@ -22,6 +22,9 @@ const buildCacheRecipeVersion = 4
 // The build environment partitions toolchain and platform changes separately
 // from the runtime base consumed by the produced application layer.
 type BuildCacheRecipe struct {
+	// GitOpsReuseScope partitions opt-in contexts by account, app, repository,
+	// reviewed source recipe, and all app/deployment build intent.
+	GitOpsReuseScope    string    `json:"gitops_reuse_scope,omitempty"`
 	SourceSHA256        string    `json:"source_sha256"`
 	SourceRoot          string    `json:"source_root"`
 	DockerfilePath      string    `json:"dockerfile_path,omitempty"`
@@ -160,5 +163,5 @@ func (c *Cache) storeBuild(recipe BuildCacheRecipe, layerPath string, bytes int6
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.storeKey(key, recipe.Framework, recipe.Plan, layerPath, bytes, toolchain)
+	return c.storeKey(key, recipe.Framework, recipe.Plan, layerPath, bytes, toolchain, recipe.GitOpsReuseScope != "")
 }

@@ -10344,7 +10344,7 @@ func (s *PgStore) ClearDeployment(ctx context.Context, id, principal string) err
 		 WHERE id = $1`,
 		id, now, principal,
 	); err != nil {
-		return fmt.Errorf("ClearDeployment: update: %w", err)
+		return fmt.Errorf("ClearDeployment: update: %w", mapErr(err))
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("ClearDeployment: commit: %w", err)
@@ -10376,32 +10376,12 @@ func (s *PgStore) ClearObsoleteDeployments(ctx context.Context, appID string, ol
 	// column — `deployments` carries `created_at` as its FIFO
 	// tiebreaker. (Surfaced in CI round-5 dispatch 32671691532
 	// pg-shard-2 — SQLSTATE 42703 column does not exist.)
-	tag, err := tx.Exec(ctx, `
-		UPDATE deployments
-		   SET deleted_at = $3,
-		       deleted_by_principal = 'system'
-		 WHERE app_id = $1
-		   AND status IN ('superseded', 'failed', 'cancelled')
-		   AND created_at < $2
-		   AND deleted_at IS NULL
-		   AND id NOT IN (
-		         SELECT id FROM (
-		           SELECT id,
-		                  ROW_NUMBER() OVER (
-		                    PARTITION BY app_id
-		                    ORDER BY created_at DESC, id
-		                  ) AS rn
-		             FROM deployments
-		            WHERE app_id = $1
-		         ) t
-		        WHERE t.rn <= 2
-		   )`,
-		appID, olderThan, now,
-	)
+	countRows, err := sqlc.New().ClearObsoleteDeploymentsRetainingRecovery(ctx, tx, sqlc.ClearObsoleteDeploymentsRetainingRecoveryParams{AppID: mustPgUUID(appID), OlderThan: gitOpsTime(olderThan), DeletedAt: gitOpsTime(now)})
+
 	if err != nil {
 		return 0, fmt.Errorf("ClearObsoleteDeployments: bulk update: %w", err)
 	}
-	count := int(tag.RowsAffected())
+	count := int(countRows)
 	if err := tx.Commit(ctx); err != nil {
 		return 0, fmt.Errorf("ClearObsoleteDeployments: commit: %w", err)
 	}
@@ -25697,6 +25677,13 @@ func mapErr(err error) error {
 	var admission *pgconn.PgError
 	if errors.As(err, &admission) {
 		switch admission.ConstraintName {
+		case "environment_recovery_budget":
+			observed, _ := strconv.ParseInt(admission.Detail, 10, 64)
+			return &EnvironmentRecoveryQuotaError{Observed: observed}
+		case "environment_recovery_retained":
+			return ErrConflict
+		case "environment_recovery_artifact_unavailable":
+			return ErrLayerArtifactRetired
 		case "migration_admission_current", "migration_source_current":
 			return ErrConflict
 		case "migration_admission_capacity":

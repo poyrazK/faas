@@ -35,8 +35,11 @@ type CacheEntry struct {
 // cache artifact. It is optional so cache entries written before provenance
 // metadata was introduced remain readable.
 type CacheToolchain struct {
-	BuildkitVer string `json:"buildkit_version,omitempty"`
-	RailpackVer string `json:"railpack_version,omitempty"`
+	// Unchanged GitOps reuse requires this origin to remain currently signed.
+	OriginDeploymentID string `json:"origin_deployment_id,omitempty"`
+	OriginBuildID      string `json:"origin_build_id,omitempty"`
+	BuildkitVer        string `json:"buildkit_version,omitempty"`
+	RailpackVer        string `json:"railpack_version,omitempty"`
 	// DevPatch keeps the producing build's ADR-740 source map so a cache hit
 	// reports the same map as the build it reuses.
 	DevPatch *api.DevPatchSourceMap `json:"dev_patch,omitempty"`
@@ -237,10 +240,10 @@ func (c *Cache) Store(sourceHash string, fw Framework, plan api.Plan, layerPath 
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.storeKey(sourceHash, fw, plan, layerPath, bytes, CacheToolchain{})
+	return c.storeKey(sourceHash, fw, plan, layerPath, bytes, CacheToolchain{}, false)
 }
 
-func (c *Cache) storeKey(sourceHash string, fw Framework, plan api.Plan, layerPath string, bytes int64, toolchain CacheToolchain) error {
+func (c *Cache) storeKey(sourceHash string, fw Framework, plan api.Plan, layerPath string, bytes int64, toolchain CacheToolchain, replace bool) error {
 	if c == nil || c.root == "" {
 		return errors.New("cache: not configured")
 	}
@@ -250,13 +253,13 @@ func (c *Cache) storeKey(sourceHash string, fw Framework, plan api.Plan, layerPa
 	}
 	// Keep only an intact entry. A corrupt or legacy entry is rebuilt from
 	// the newly produced artifact, including all its integrity metadata.
-	if _, ok := c.lookupKey(sourceHash, fw, plan); ok {
+	if _, ok := c.lookupKey(sourceHash, fw, plan); ok && !replace {
 		for _, path := range []string{dst, c.checksumPath(sourceHash, fw, plan), filepath.Join(filepath.Dir(dst), "artifact.sha256")} {
 			if err := os.Chmod(path, cacheArtifactMode); err != nil {
 				return err
 			}
 		}
-		if toolchain.BuildkitVer != "" || toolchain.RailpackVer != "" || toolchain.DevPatch != nil {
+		if toolchain.BuildkitVer != "" || toolchain.RailpackVer != "" || toolchain.DevPatch != nil || toolchain.OriginDeploymentID != "" {
 			if err := writeCacheMetadata(filepath.Join(filepath.Dir(dst), "toolchain.json"), toolchain); err != nil {
 				return err
 			}
@@ -335,7 +338,7 @@ func (c *Cache) storeKey(sourceHash string, fw Framework, plan api.Plan, layerPa
 	if err := writeCacheSidecar(filepath.Join(filepath.Dir(dst), "artifact.sha256"), hex.EncodeToString(digest.Sum(nil))); err != nil {
 		return err
 	}
-	if toolchain.BuildkitVer != "" || toolchain.RailpackVer != "" || toolchain.DevPatch != nil {
+	if toolchain.BuildkitVer != "" || toolchain.RailpackVer != "" || toolchain.DevPatch != nil || toolchain.OriginDeploymentID != "" {
 		if err := writeCacheMetadata(filepath.Join(filepath.Dir(dst), "toolchain.json"), toolchain); err != nil {
 			return err
 		}

@@ -491,13 +491,14 @@ jobs:
   tests:
     name: "light: tests (shard ${{ matrix.shard }})"
     runs-on: ubuntu-latest
-    # Light-tier budget: about 10 minutes per shard. Changed packages run in
-    # full with -race; cmd/gregale, pkg/state and pkg/apid/apidserver (one per
-    # shard, see affected_packages.py SELECTIVE_SHARD) run only the tests
-    # related to the change, without -race. The mega tier (ci.yml) runs every
-    # suite in full with -race nightly and before every release. Main pushes
-    # also warm the large-package build for later pull requests.
-    timeout-minutes: ${{ github.ref == 'refs/heads/main' && 40 || 20 }}
+    # Warm-cache target: about 10 minutes per shard. Allow 30 minutes for
+    # changed-package race builds plus the pinned large-package link and
+    # related tests after a broad change. Changed packages run in full with
+    # -race; cmd/gregale, pkg/state and pkg/apid/apidserver (one per shard,
+    # see affected_packages.py SELECTIVE_SHARD) run only related tests without
+    # -race. The mega tier (ci.yml) runs every suite in full with -race nightly
+    # and before every release. Main pushes also warm the large-package build.
+    timeout-minutes: ${{ github.ref == 'refs/heads/main' && 40 || 30 }}
     strategy:
       fail-fast: false
       matrix:
@@ -648,6 +649,14 @@ jobs:
             exit 0
           fi
           bash scripts/ci/test_python_storage_starter.sh
+      - name: GitOps report and provider fixture contracts (no KVM)
+        if: matrix.shard == 1
+        run: |
+          if ! grep -qE '^(cmd/e2e/environment_gitops|pkg/e2etest/(gitarchive/|gitlabfixture/|builderbase|harness|testdata/gitopsjob/)|scripts/(test-environment-gitops-native|gitops_native_report|ci/(gitops.native|run-gitops-native))|\.github/workflows/(ci(-light)?|gitops-native)\.yml)' "$RUNNER_TEMP/changed-paths.txt"; then
+            exit 0
+          fi
+          make test-environment-gitops-report
+          go test -race -p 1 ./pkg/e2etest/gitarchive ./pkg/e2etest/gitlabfixture -count=1 -v -timeout=2m
       # The managed-Postgres fixture API check and the GitOps native e2e
       # compile build apidserver and cmd/e2e under extra build tags, which
       # nothing caches: 18 minutes on their own. The mega tier runs both (pg

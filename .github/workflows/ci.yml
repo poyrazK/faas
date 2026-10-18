@@ -1104,10 +1104,13 @@ jobs:
           GOMAXPROCS: 2
           GREGALE_GITOPS_ACCEPTANCE: '1'
         run: |
+          make test-environment-gitops-report
+          go test -race -p 1 ./pkg/e2etest/gitarchive ./pkg/e2etest/gitlabfixture -count=1 -v -timeout=2m
           # TestMain prepares the shared daemons before the HTTP case starts.
           go test -race -p 1 ./cmd/e2e -run '^TestE2E_GitOpsSourceRevisionReviewAndRollback$' -count=1 -v -timeout=15m
           go test -race -p 1 -tags metal -c -o "$RUNNER_TEMP/gitops-native.test" ./cmd/e2e
-          rm -f "$RUNNER_TEMP/gitops-native.test"
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o "$RUNNER_TEMP/gitops-source-job" ./pkg/e2etest/testdata/gitopsjob
+          rm -f "$RUNNER_TEMP/gitops-native.test" "$RUNNER_TEMP/gitops-source-job"
       - name: unit tests (pg shard 2${{ matrix.id }})
         env:
           GOGC: 10
@@ -2295,7 +2298,9 @@ jobs:
   sdk-python:
     name: sdk-python (gen-check + smoke + unit)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # Fixture acceptance and three generations consume most of ten minutes.
+    # Leave time for the complete smoke and unit suite on hosted runners.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7

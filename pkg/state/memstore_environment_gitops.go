@@ -139,6 +139,12 @@ func (m *MemStore) ApproveEnvironmentDesiredRevision(_ context.Context, input Ap
 	if desired.Definition.Project != project.Slug || desired.Definition.Environment != source.EnvironmentSlug {
 		return EnvironmentGitSource{}, EnvironmentDesiredRevision{}, ErrInvalidArgument
 	}
+	if err := m.validateRecoveryRetentionApprovalLocked(source, desired.Definition); err != nil {
+		return EnvironmentGitSource{}, EnvironmentDesiredRevision{}, err
+	}
+	if err := m.validateBuildArtifactApprovalLocked(source, desired.Definition); err != nil {
+		return EnvironmentGitSource{}, EnvironmentDesiredRevision{}, err
+	}
 	var revision EnvironmentDesiredRevision
 	for _, existing := range memory.revisions {
 		if existing.CommitSHA == input.CommitSHA && existing.Digest == desired.Digest {
@@ -157,6 +163,9 @@ func (m *MemStore) ApproveEnvironmentDesiredRevision(_ context.Context, input Ap
 		source.UpdatedAt = time.Now().UTC()
 		memory.source = source
 		memory.next = source.UpdatedAt
+	}
+	if err := m.environmentGitRolloutNotificationLocked(memory, nil, "", time.Now().UTC()); err != nil {
+		return EnvironmentGitSource{}, EnvironmentDesiredRevision{}, err
 	}
 	return source, cloneEnvironmentRevision(revision), nil
 }
@@ -295,6 +304,17 @@ func (m *MemStore) FinishEnvironmentGitOps(_ context.Context, lease EnvironmentG
 	completed := now.UTC()
 	var notificationPlan api.EnvironmentGitOpsPlan
 	_ = json.Unmarshal(plan, &notificationPlan)
+	if memory.source.Spec.Mode == "enforce" && environmentGitRolloutReportCurrent(memory.source, memory.revisions[memory.source.ApprovedRevisionID], notificationPlan) {
+		evidence, err := m.currentEnvironmentGitOpsWorkloadEvidenceLocked(memory.source.AccountID, memory.source.ID)
+		if err != nil {
+			return err
+		}
+		if evidence == nil || evidence.PlanHash == notificationPlan.Hash {
+			if err := m.environmentGitRolloutNotificationLocked(memory, evidence, run.ID, now); err != nil {
+				return err
+			}
+		}
+	}
 	if err := m.environmentGitNotificationLocked(memory, "drift", environmentGitReportNotificationStatus(status, notificationPlan), run.ID, errorCode, notificationPlan, now); err != nil {
 		return err
 	}

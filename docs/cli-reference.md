@@ -15222,15 +15222,50 @@ gregale projects environments queues set shop staging shop-worker --file queues.
 
 #### projects environments gitops
 
-Review Git definitions, adopt owned fields, and inspect reconciliation (JSON output)
+Review Git definitions, adopt owned fields, and inspect reconciliation
 
-`gregale projects environments gitops <status|bind|rebind|unbind|review|plan|approve|adoption-preview|adopt|controls|override|remove-override>`
+`gregale projects environments gitops <status|explain|wait|bind|rebind|unbind|review|plan|promotion-plan|promotion-pr|releases|rollback-plan|rollback-pr|approve|adoption-preview|adopt|controls|override|remove-override>`
 
 ##### projects environments gitops status
 
 Inspect the source and recent reconciliation attempts
 
 `gregale projects environments gitops status <project> <environment>`
+
+##### projects environments gitops explain
+
+Explain recorded workload progress and safe next actions
+
+`gregale projects environments gitops explain [--json] <project> <environment>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--json` | Output the read-only assessment as JSON |  |
+
+Examples:
+
+```sh
+gregale projects environments gitops explain shop production
+```
+
+##### projects environments gitops wait
+
+Wait for recorded serving evidence for an exact merged Git commit
+
+`gregale projects environments gitops wait --commit <SHA> [--timeout <DURATION>] [--poll-interval <DURATION>] [--json] <project> <environment>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--commit <SHA>` | Exact merged lowercase Git commit to wait for | required |
+| `--timeout <DURATION>` | Overall deadline (default 15m, maximum 24h) |  |
+| `--poll-interval <DURATION>` | Status read delay (default 2s, from 1s to 1m) |  |
+| `--json` | Emit one final read-only rollout receipt as JSON |  |
+
+Examples:
+
+```sh
+gregale projects environments gitops wait shop production --commit MERGED_SHA --timeout 15m --json
+```
 
 ##### projects environments gitops bind
 
@@ -15299,6 +15334,106 @@ Examples:
 
 ```sh
 gregale projects environments gitops plan shop staging --commit COMMIT_SHA --format markdown --fail-on-blocked
+```
+
+##### projects environments gitops promotion-plan
+
+Preview reviewed image promotion and export a target manifest proposal
+
+`gregale projects environments gitops promotion-plan --from <ENV> --target-commit <SHA> [--format <FORMAT>] [--expected-plan-hash <HASH>] [--manifest <PATH>] [--fail-on-blocked] <project> <environment>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--from <ENV>` | Source environment with a proven serving release | required |
+| `--target-commit <SHA>` | Immutable commit containing the target manifest | required |
+| `--format <FORMAT>` | json (default), markdown, patch or manifest |  |
+| `--expected-plan-hash <HASH>` | Reviewed observation hash; required for patch or manifest export |  |
+| `--manifest <PATH>` | Local target YAML/JSON file; required only for manifest export |  |
+| `--fail-on-blocked` | Exit 2 after printing a blocked plan |  |
+
+Examples:
+
+```sh
+gregale projects environments gitops promotion-plan shop production --from staging --target-commit COMMIT_SHA
+```
+
+##### projects environments gitops promotion-pr
+
+Open a draft promotion PR or MR from a freshly checked reviewed plan
+
+`gregale projects environments gitops promotion-pr --from <ENV> --target-commit <SHA> --expected-plan-hash <HASH> [--yes] [--json] <project> <environment>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--from <ENV>` | Source environment with a proven serving release | required |
+| `--target-commit <SHA>` | Reviewed current target branch commit | required |
+| `--expected-plan-hash <HASH>` | Reviewed promotion observation hash | required |
+| `--yes` | Create the draft proposal; default is a read-only preview |  |
+| `--json` | Emit the proposal receipt as JSON |  |
+
+Examples:
+
+```sh
+gregale projects environments gitops promotion-pr shop production --from staging --target-commit COMMIT_SHA --expected-plan-hash PLAN_HASH --yes
+```
+
+##### projects environments gitops releases
+
+List retained GitOps serving releases and current rollback eligibility
+
+`gregale projects environments gitops releases --target-commit <SHA> [--before <UUID>] [--json] <project> <environment>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--target-commit <SHA>` | Immutable commit containing the target manifest | required |
+| `--before <UUID>` | Next page cursor from the previous listing |  |
+| `--json` | Emit the read-only recovery catalog as JSON |  |
+
+Examples:
+
+```sh
+gregale projects environments gitops releases shop production --target-commit COMMIT_SHA
+```
+
+##### projects environments gitops rollback-plan
+
+Preview code rollback from a retained serving release and export a Git proposal
+
+`gregale projects environments gitops rollback-plan --to-release <UUID> --target-commit <SHA> [--format <FORMAT>] [--expected-plan-hash <HASH>] [--manifest <PATH>] [--fail-on-blocked] <project> <environment>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--to-release <UUID>` | Retained GitOps serving release in this environment | required |
+| `--target-commit <SHA>` | Immutable commit containing the target manifest | required |
+| `--format <FORMAT>` | json (default), markdown, patch or manifest |  |
+| `--expected-plan-hash <HASH>` | Reviewed observation hash; required for patch or manifest export |  |
+| `--manifest <PATH>` | Local target YAML/JSON file; required only for manifest export |  |
+| `--fail-on-blocked` | Exit 2 after printing a blocked plan |  |
+
+Examples:
+
+```sh
+gregale projects environments gitops rollback-plan shop production --to-release RELEASE_UUID --target-commit COMMIT_SHA
+```
+
+##### projects environments gitops rollback-pr
+
+Open a draft recovery PR or MR for an explicitly selected served release
+
+`gregale projects environments gitops rollback-pr --to-release <UUID> --target-commit <SHA> --expected-plan-hash <HASH> [--yes] [--json] <project> <environment>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--to-release <UUID>` | Explicit retained serving release in this environment | required |
+| `--target-commit <SHA>` | Reviewed current target branch commit | required |
+| `--expected-plan-hash <HASH>` | Reviewed rollback observation hash | required |
+| `--yes` | Create the draft recovery proposal; default is a read-only preview |  |
+| `--json` | Emit the recovery proposal receipt as JSON |  |
+
+Examples:
+
+```sh
+gregale projects environments gitops rollback-pr shop production --to-release RELEASE_UUID --target-commit COMMIT_SHA --expected-plan-hash PLAN_HASH --yes
 ```
 
 ##### projects environments gitops approve

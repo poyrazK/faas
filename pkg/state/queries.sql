@@ -427,13 +427,23 @@ SELECT EXISTS (
     JOIN apps a ON a.id = p.app_id
     WHERE p.storage_key = sqlc.arg(storage_key)::text AND a.status <> 'deleted'
       AND op.status NOT IN ('ready', 'compensated')
-) AS referenced;
+) OR EXISTS (
+    SELECT 1 FROM jobs j WHERE j.status<>'deleted' AND j.image_ref LIKE 'gregale-source://%'
+        AND j.image_materialization_status='ready' AND j.image_storage_key=sqlc.arg(storage_key)::text
+) OR EXISTS (
+    SELECT 1 FROM job_runs r WHERE r.image_ref_snapshot LIKE 'gregale-source://%'
+        AND r.aggregate_status IN ('queued','running') AND r.image_storage_key_snapshot=sqlc.arg(storage_key)::text
+ ) OR EXISTS (
+ SELECT 1 FROM environment_build_artifact_pins p JOIN source_build_rootfs f ON f.id=p.artifact_id
+ WHERE f.input_snapshot->>'storage_key'=sqlc.arg(storage_key)::text
+ ) OR EXISTS (SELECT 1 FROM environment_recovery_retained_keys p WHERE p.storage_key=sqlc.arg(storage_key)::text) AS referenced;
 
 -- name: RetainedLayerBytesWithClonePins :one
 WITH retained_deployments AS (
     SELECT d.* FROM deployments d JOIN apps a ON a.id = d.app_id
     WHERE d.app_id = sqlc.arg(app_id)::uuid AND a.status <> 'deleted'
       AND (d.deleted_at IS NULL
+           OR EXISTS (SELECT 1 FROM environment_recovery_retained_deployments p WHERE p.deployment_id=d.id)
            OR EXISTS (SELECT 1 FROM snapshots sn WHERE sn.deployment_id = d.id AND NOT sn.stale)
            OR EXISTS (SELECT 1 FROM instances i WHERE i.deployment_id = d.id AND i.state IN ('pending', 'waking', 'cold_booting', 'running', 'snapshotting', 'migrating', 'warm', 'frozen', 'draining'))
            OR EXISTS (SELECT 1 FROM deployment_aliases al WHERE al.deployment_id = d.id)
@@ -10035,7 +10045,7 @@ SELECT lock_source_build_rootfs(sqlc.arg(input)::jsonb)::jsonb AS inputs;
 SELECT lock_source_build_runtime_rootfs(sqlc.arg(input)::jsonb,sqlc.arg(id)::uuid)::jsonb AS inputs;
 
 -- name: HasSourceBuildRootfs :one
-SELECT EXISTS(SELECT 1 FROM source_build_rootfs WHERE deployment_id=sqlc.arg(deployment_id)::uuid)::boolean AS present;
+SELECT EXISTS(SELECT 1 FROM source_build_rootfs WHERE deployment_id=sqlc.arg(deployment_id)::uuid UNION ALL SELECT 1 FROM deployments d WHERE d.id=sqlc.arg(deployment_id)::uuid AND (d.environment_workload_runtime ? 'built_artifact' OR d.environment_workload_runtime->'source' ? 'build_artifact_id'))::boolean AS present;
 
 -- name: AuthorizeSourceBuildRootfsInsert :exec
 SELECT set_config('gregale.source_build_rootfs_insert',sqlc.arg(id)::uuid::text,true);
@@ -10283,7 +10293,7 @@ WHERE a.account_id=sqlc.arg(account_id)::uuid AND a.id=sqlc.arg(app_id)::uuid AN
 
 -- name: GetDeploymentArtifactWorkloads :one
 SELECT d.sidecars, (EXISTS(SELECT 1 FROM deployment_registry_rootfs f WHERE f.deployment_id=d.id)
- OR EXISTS(SELECT 1 FROM source_build_rootfs f WHERE f.deployment_id=d.id))::boolean AS has_registry_producers
+ OR EXISTS(SELECT 1 FROM source_build_rootfs f WHERE f.deployment_id=d.id UNION ALL SELECT 1 WHERE d.environment_workload_runtime ? 'built_artifact' OR d.environment_workload_runtime->'source' ? 'build_artifact_id'))::boolean AS has_registry_producers
 FROM deployments d JOIN apps a ON a.id=d.app_id
 WHERE d.id=sqlc.arg(deployment_id)::uuid AND a.id=sqlc.arg(app_id)::uuid
  AND a.account_id=sqlc.arg(account_id)::uuid AND a.status<>'deleted';
@@ -13344,7 +13354,7 @@ RETURNING id;
 -- name: CreateEnvironmentGitOpsSourceBuild :exec
 WITH queued AS (
  INSERT INTO builds(id,deployment_id,kind,source_bytes,status,log_path)
- VALUES(sqlc.arg(build_id)::uuid,sqlc.arg(deployment_id)::uuid,'github',sqlc.arg(source_bytes)::bigint,'queued',sqlc.arg(log_path)::text)
+ VALUES(sqlc.arg(build_id)::uuid,sqlc.arg(deployment_id)::uuid,sqlc.arg(kind)::text,sqlc.arg(source_bytes)::bigint,'queued',sqlc.arg(log_path)::text)
  RETURNING id,deployment_id
 )
 UPDATE deployments d SET status='building',build_id=queued.id FROM queued
@@ -18365,6 +18375,7 @@ SELECT
  (SELECT count(*) FROM environment_workload_graphs p WHERE p.environment_id=sqlc.arg(environment_id)::uuid) AS environment_workload_graphs,
  (SELECT count(*) FROM environment_workload_retirements p WHERE p.environment_id=sqlc.arg(environment_id)::uuid) AS environment_workload_retirements,
  (SELECT count(*) FROM feature_flag_versions p WHERE p.environment_id=sqlc.arg(environment_id)::uuid) AS feature_flag_versions,
+ (SELECT count(*) FROM hosting_sites p WHERE p.project_id=sqlc.arg(project_id)::uuid AND p.environment=sqlc.arg(environment)::text) AS hosting_sites,
  (SELECT count(*) FROM invocation_environment_queue_admissions p WHERE p.environment_id=sqlc.arg(environment_id)::uuid) AS invocation_environment_queue_admissions,
  (SELECT count(*) FROM invocation_work_environment_admissions p WHERE p.environment_id=sqlc.arg(environment_id)::uuid) AS invocation_work_environment_admissions,
  (SELECT count(*) FROM invocation_work_environment_domains p WHERE p.environment_id=sqlc.arg(environment_id)::uuid) AS invocation_work_environment_domains,
@@ -18538,7 +18549,8 @@ SELECT (jsonb_build_object(
     'deployment_runtime_scan_current_deployment_id_fkey', (SELECT count(*) FROM deployment_runtime_scan_current WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
     'deployment_runtime_scans_deployment_id_fkey', (SELECT count(*) FROM deployment_runtime_scans WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
     'source_build_rootfs_current_deployment_id_fkey', (SELECT count(*) FROM source_build_rootfs_current WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
-    'source_build_rootfs_deployment_id_fkey', (SELECT count(*) FROM source_build_rootfs WHERE deployment_id = sqlc.arg(deployment_id)::uuid)
+    'source_build_rootfs_deployment_id_fkey', (SELECT count(*) FROM source_build_rootfs WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
+    'environment_build_artifact_pins_candidate_id_fkey', (SELECT count(*) FROM environment_build_artifact_pins WHERE candidate_id = sqlc.arg(deployment_id)::uuid)
 ))::jsonb AS borrowers;
 
 -- name: ReadCloneDeploymentCleanup :one
@@ -18553,7 +18565,7 @@ SELECT lock_clone_deployment_cleanup_borrower_writers();
 
 -- name: LockCloneDeploymentCleanupRetirementWriters :exec
 -- Deployment UUID arrays retain original artifacts without a foreign-key lock.
-LOCK TABLE environment_workload_retirements IN SHARE MODE;
+LOCK TABLE environment_workload_retirements,environment_build_artifact_pins IN SHARE MODE;
 
 -- name: DeleteCloneOwnedDeployments :execrows
 DELETE FROM deployments d USING project_environment_clone_workloads w
@@ -21733,6 +21745,61 @@ WHERE j.account_id = sqlc.arg(account_id)::uuid
   AND r.id = sqlc.arg(run_id)::uuid
   AND t.task_index = sqlc.arg(task_index)::int;
 
+-- name: MaterializeEnvironmentBuildArtifact :exec
+UPDATE deployments SET rootfs_path=environment_workload_runtime->'built_artifact'->>'rootfs_path',
+ rootfs_key=environment_workload_runtime->'built_artifact'->>'storage_key',rootfs_bytes=(environment_workload_runtime->'built_artifact'->>'bytes')::bigint,
+ status='snapshotting' WHERE id=sqlc.arg(id)::uuid AND status='pending' AND environment_workload_held;
+
+-- name: EnvironmentBuildArtifactOrigin :one
+SELECT f.deployment_id::text FROM deployments d JOIN apps a ON a.id=d.app_id
+ JOIN environment_build_artifact_pins p ON p.candidate_id=d.id
+ JOIN source_build_rootfs f ON f.id=p.artifact_id
+WHERE d.id=sqlc.arg(deployment_id)::uuid AND d.app_id=sqlc.arg(app_id)::uuid AND a.account_id=sqlc.arg(account_id)::uuid
+ AND environment_build_artifact_valid(d,true);
+
+-- Retained serving receipts select historical graphs without requiring them to
+-- remain active or to match the source's current approved revision.
+-- name: EnvironmentWorkloadGraphsForRollback :many
+SELECT g.* FROM environment_workload_graphs g
+JOIN environment_workload_serving_receipts r ON r.graph_id=g.id
+WHERE g.source_id=sqlc.arg(source_id)::uuid AND g.environment_id=sqlc.arg(environment_id)::uuid
+ AND r.release_set_id=sqlc.arg(release_id)::uuid;
+
+-- name: ListEnvironmentGitRecoveryReleases :many
+-- Include expired release windows, but only completed serving history of this binding.
+SELECT rs.id::text FROM project_release_sets rs
+WHERE rs.account_id=sqlc.arg(account_id)::uuid AND rs.project_id=sqlc.arg(project_id)::uuid
+ AND rs.environment_slug=sqlc.arg(environment)::text
+ AND EXISTS (SELECT 1 FROM environment_workload_graphs g
+  JOIN environment_recovery_serving_history r ON r.graph_id=g.id
+  WHERE r.source_id=sqlc.arg(source_id)::uuid AND g.source_id=sqlc.arg(source_id)::uuid AND g.environment_id=sqlc.arg(environment_id)::uuid
+   AND r.release_set_id=rs.id AND r.served_at IS NOT NULL)
+ AND (sqlc.narg(before_at)::timestamptz IS NULL OR (rs.created_at,rs.id)<(sqlc.narg(before_at)::timestamptz,sqlc.narg(before_id)::uuid))
+ORDER BY rs.created_at DESC,rs.id DESC LIMIT sqlc.arg(page_limit);
+
+-- name: ListEnvironmentRecoveryProtection :many
+SELECT release_set_id::text,graph_id::text,protected_until::timestamptz,bytes::bigint,coalesce(available,false)::boolean AS available,
+ CASE WHEN position>max_releases THEN 'outside_policy' WHEN charged_bytes>max_bytes THEN 'budget_exceeded' ELSE 'protected' END::text AS status
+FROM environment_recovery_candidates WHERE source_id=sqlc.arg(source_id)::uuid AND (position<=max_releases OR release_set_id=ANY(sqlc.arg(release_ids)::uuid[])) ORDER BY served_at DESC,release_set_id DESC;
+
+-- name: ReadEnvironmentRecoveryPolicy :one
+SELECT coalesce(v.definition->'recovery_retention','null'::jsonb)::jsonb FROM environment_git_sources s
+LEFT JOIN environment_desired_revisions v ON v.id=s.approved_revision_id
+WHERE s.id=sqlc.arg(source_id)::uuid AND NOT s.detached;
+
+-- name: ClearObsoleteDeploymentsRetainingRecovery :execrows
+UPDATE deployments SET deleted_at=sqlc.arg(deleted_at)::timestamptz,deleted_by_principal='system'
+WHERE app_id=sqlc.arg(app_id)::uuid AND status IN ('superseded','failed','cancelled')
+ AND created_at<sqlc.arg(older_than)::timestamptz AND deleted_at IS NULL
+ AND NOT EXISTS(SELECT 1 FROM environment_recovery_retained_deployments p WHERE p.deployment_id=deployments.id)
+ AND id NOT IN (SELECT id FROM (SELECT id,row_number() OVER(PARTITION BY app_id ORDER BY created_at DESC,id) rn FROM deployments WHERE app_id=sqlc.arg(app_id)::uuid) recent WHERE rn<=2);
+
+-- name: ReadEnvironmentRecoveryServingHistory :one
+SELECT served_at FROM environment_recovery_serving_history WHERE graph_id=sqlc.arg(graph_id)::uuid;
+
+-- name: EnvironmentRecoveryReleaseFirstServing :one
+SELECT min(h.served_at)::timestamptz AS served_at FROM environment_recovery_serving_history h
+WHERE h.source_id=sqlc.arg(source_id)::uuid AND h.release_set_id=sqlc.arg(release_id)::uuid;
 -- name: EventAckPolicyGet :one
 SELECT acknowledgment_lease_seconds FROM event_subscriptions s JOIN apps a ON a.id=s.app_id AND a.account_id=s.account_id
 WHERE s.id=sqlc.arg(subscription_id)::uuid AND s.account_id=sqlc.arg(account_id)::uuid AND s.app_id=sqlc.arg(app_id)::uuid AND a.status<>'deleted';

@@ -297,6 +297,8 @@ func TestPgCloneEnvironmentCleanupScopeColumnInventory(t *testing.T) {
 		"exclusive_work_keys.environment_id",
 		"feature_flag_versions.environment_id",
 		"github_deploy_branches.scope",
+		"hosting_oidc_trusts.environment", // External GitHub claim; its site FK retains the actual Gregale environment.
+		"hosting_sites.environment",       // Composite environment FK blocks cleanup until hosting retirement.
 		"instance_runtime_config_receipts.scope",
 		"invocation_environment_queue_admissions.environment_id",
 		"invocation_work_environment_admissions.environment_id",
@@ -410,7 +412,7 @@ func TestPgCloneEnvironmentCleanupBlocksConcurrentBorrowers(t *testing.T) {
 		case <-ticker.C:
 		}
 	}
-	for _, borrower := range []string{"foreign_key", "scope", "workflow_state", "workflow_readiness", "binding_verification", "project_binding_verification", "release_stage"} {
+	for _, borrower := range []string{"foreign_key", "hosting", "scope", "workflow_state", "workflow_readiness", "binding_verification", "project_binding_verification", "release_stage"} {
 		tx, err := pool.Begin(ctx)
 		if err != nil {
 			t.Fatal(err)
@@ -421,6 +423,8 @@ func TestPgCloneEnvironmentCleanupBlocksConcurrentBorrowers(t *testing.T) {
 		}
 		if borrower == "foreign_key" {
 			_, err = tx.Exec(ctx, "INSERT INTO custom_domains(domain,app_id,environment_id) VALUES('racing.example.com',$1,$2)", appID, native.Plan.EnvironmentID)
+		} else if borrower == "hosting" {
+			_, err = tx.Exec(ctx, "INSERT INTO hosting_sites(id,account_id,project_id,environment,name,hostname,origin_id) VALUES(gen_random_uuid(),$1,$2,$3,'racing','racing.example.com',$4)", l.Operation.AccountID, l.Operation.ProjectID, l.Operation.TargetEnvironment, strings.Repeat("a", 64))
 		} else if borrower == "workflow_readiness" {
 			_, err = tx.Exec(ctx, "LOCK TABLE customer_workflow_readiness_subscriptions IN ROW EXCLUSIVE MODE")
 		} else if borrower == "workflow_state" {

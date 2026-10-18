@@ -755,6 +755,9 @@ const QueueBindingRetryMaxSeconds = 86400
 // independently of the smaller non-secret configuration object it may contain.
 const EnvironmentGitOpsMaxDefinitionBytes = 1 << 20
 
+// EnvironmentGitRecoveryPageSize bounds per-request historical rollback assessments.
+const EnvironmentGitRecoveryPageSize = 10
+
 // EnvironmentGitOpsMaxQueueSmokePayloadBytes bounds one customer-authored
 // synthetic queue message before it is stored with frozen candidate inputs.
 const EnvironmentGitOpsMaxQueueSmokePayloadBytes = 64 << 10
@@ -12644,3 +12647,12 @@ const ServiceMapDefaultRange = "1h"
 
 // ServiceMapHighErrorRatePct is the edge error rate the dashboard highlights.
 const ServiceMapHighErrorRatePct = 5.0
+
+// ADR-20261017190807: conservative opt-in artifact retention ceilings, independent of
+// routing TTL and snapshots. Account reservations prevent environment fan-out.
+const (
+	EnvironmentRecoveryMaxReleases           = 5
+	EnvironmentRecoveryMaxSeconds            = 7 * 24 * 60 * 60
+	EnvironmentRecoveryMaxBytes        int64 = 1 << 30
+	EnvironmentRecoveryAccountMaxBytes int64 = 2 << 30
+)

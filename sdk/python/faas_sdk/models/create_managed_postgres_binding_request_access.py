@@ -1,9 +1,8 @@
 from typing import Literal
 
-CreateManagedPostgresBindingRequestAccess = Literal["auth", "data_api", "migration", "read_only", "read_write"]
+CreateManagedPostgresBindingRequestAccess = Literal["data_api", "migration", "read_only", "read_write"]
 
 CREATE_MANAGED_POSTGRES_BINDING_REQUEST_ACCESS_VALUES: set[CreateManagedPostgresBindingRequestAccess] = {
-    "auth",
     "data_api",
     "migration",
     "read_only",

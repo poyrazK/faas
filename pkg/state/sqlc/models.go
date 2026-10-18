@@ -3425,6 +3425,12 @@ type EntityOutboxAcceptance struct {
 	CreatedAt   pgtype.Timestamptz
 }
 
+type EnvironmentBuildArtifactPin struct {
+	SourceID    pgtype.UUID
+	CandidateID pgtype.UUID
+	ArtifactID  pgtype.UUID
+}
+
 type EnvironmentDesiredRevision struct {
 	ID               pgtype.UUID
 	SourceID         pgtype.UUID
@@ -3689,6 +3695,66 @@ type EnvironmentQualificationSnapshotReceipt struct {
 	Snapshot   []byte
 	Inputs     []byte
 	RecordedAt pgtype.Timestamptz
+}
+
+type EnvironmentRecoveryCandidate struct {
+	SourceID        pgtype.UUID
+	AccountID       pgtype.UUID
+	ProjectID       pgtype.UUID
+	EnvironmentID   pgtype.UUID
+	EnvironmentSlug string
+	MaxReleases     int32
+	Seconds         int32
+	MaxBytes        int64
+	ReleaseSetID    pgtype.UUID
+	ServedAt        interface{}
+	GraphID         pgtype.UUID
+	GraphCount      int64
+	ProtectedUntil  int32
+	Bytes           interface{}
+	Available       pgtype.Bool
+	Position        int64
+	ChargedBytes    int64
+}
+
+type EnvironmentRecoveryRetainedDeployment struct {
+	SourceID     pgtype.UUID
+	AccountID    pgtype.UUID
+	ReleaseSetID pgtype.UUID
+	DeploymentID pgtype.UUID
+}
+
+type EnvironmentRecoveryRetainedKey struct {
+	AccountID    pgtype.UUID
+	ReleaseSetID pgtype.UUID
+	StorageKey   string
+}
+
+type EnvironmentRecoveryRetainedRelease struct {
+	SourceID        pgtype.UUID
+	AccountID       pgtype.UUID
+	ProjectID       pgtype.UUID
+	EnvironmentID   pgtype.UUID
+	EnvironmentSlug string
+	MaxReleases     int32
+	Seconds         int32
+	MaxBytes        int64
+	ReleaseSetID    pgtype.UUID
+	ServedAt        interface{}
+	GraphID         pgtype.UUID
+	GraphCount      int64
+	ProtectedUntil  int32
+	Bytes           interface{}
+	Available       pgtype.Bool
+	Position        int64
+	ChargedBytes    int64
+}
+
+type EnvironmentRecoveryServingHistory struct {
+	GraphID      pgtype.UUID
+	SourceID     pgtype.UUID
+	ReleaseSetID pgtype.UUID
+	ServedAt     pgtype.Timestamptz
 }
 
 type EnvironmentRouteBudgetReceipt struct {

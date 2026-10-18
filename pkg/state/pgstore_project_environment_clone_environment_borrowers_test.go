@@ -66,7 +66,7 @@ func TestPgCloneEnvironmentBorrowersAuthenticationAndCleanup(t *testing.T) {
 				}
 				return
 			}
-			if err != nil || report.OperationID != l.Operation.ID || report.EnvironmentID != original.Plan.EnvironmentID || len(report.OwnershipSHA256) != 64 || report.NativePlanSHA256 != state.ProjectEnvironmentCloneCheckpointWorkloadRetirementPlanSHA256(original.Plan) || len(report.NativeObservationSHA256) != 64 || len(report.References) != 24 || report.OwnedDeployments != 1 || report.ForeignDeployments != 0 {
+			if err != nil || report.OperationID != l.Operation.ID || report.EnvironmentID != original.Plan.EnvironmentID || len(report.OwnershipSHA256) != 64 || report.NativePlanSHA256 != state.ProjectEnvironmentCloneCheckpointWorkloadRetirementPlanSHA256(original.Plan) || len(report.NativeObservationSHA256) != 64 || len(report.References) != 25 || report.OwnedDeployments != 1 || report.ForeignDeployments != 0 {
 				t.Fatal("inventory lost original authority", report, err)
 			}
 			specs := int64(1)
@@ -252,9 +252,65 @@ func TestPgCloneEnvironmentBorrowerForeignKeyInventory(t *testing.T) {
 		t.Fatal(err)
 	}
 	expected := []string{
-		"app_environment_route_budgets(environment_id)", "app_environment_secret_ref_suppressions(environment_id)", "app_environment_secret_refs(environment_id)", "app_environment_workload_intents(environment_id)", "custom_domains(environment_id)", "dev_bridge_sessions(environment_id)", "environment_external_field_owners(environment_id)", "environment_git_sources(account_id,project_id,environment_id)", "environment_managed_fields(environment_id)", "environment_workload_graphs(environment_id)", "environment_workload_retirements(environment_id)", "feature_flag_versions(environment_id)", "invocation_environment_queue_admissions(environment_id)", "invocation_work_environment_admissions(environment_id)", "invocation_work_environment_domains(environment_id)", "invocations(environment_id)", "project_environment_edge_policies(project_id,environment_slug)", "project_environment_qualifications(project_id,environment_slug)", "project_environment_queue_runtime_sets(environment_id)", "project_environment_route_policies(project_id,environment_slug)", "project_environment_workload_specs(environment_id)", "project_release_sets(project_id,environment_slug)", "project_release_stages(project_id,environment_slug)", "runtime_environment_scaling_states(environment_id)",
+		"app_environment_route_budgets(environment_id)", "app_environment_secret_ref_suppressions(environment_id)", "app_environment_secret_refs(environment_id)", "app_environment_workload_intents(environment_id)", "custom_domains(environment_id)", "dev_bridge_sessions(environment_id)", "environment_external_field_owners(environment_id)", "environment_git_sources(account_id,project_id,environment_id)", "environment_managed_fields(environment_id)", "environment_workload_graphs(environment_id)", "environment_workload_retirements(environment_id)", "feature_flag_versions(environment_id)", "hosting_sites(project_id,environment)", "invocation_environment_queue_admissions(environment_id)", "invocation_work_environment_admissions(environment_id)", "invocation_work_environment_domains(environment_id)", "invocations(environment_id)", "project_environment_edge_policies(project_id,environment_slug)", "project_environment_qualifications(project_id,environment_slug)", "project_environment_queue_runtime_sets(environment_id)", "project_environment_route_policies(project_id,environment_slug)", "project_environment_workload_specs(environment_id)", "project_release_sets(project_id,environment_slug)", "project_release_stages(project_id,environment_slug)", "runtime_environment_scaling_states(environment_id)",
 	}
 	if !reflect.DeepEqual(actual, expected) {
 		t.Fatal("environment borrower inventory changed; review explicit counts before metadata retirement", actual)
+	}
+}
+
+func TestPgCloneEnvironmentHostingBorrowers(t *testing.T) {
+	for _, status := range []string{"active", "suspended", "deleting"} {
+		t.Run(status, func(t *testing.T) {
+			s, pool, l, _ := configurationCleanupFixtureForPhase(t, true, "materialized")
+			native, err := s.ReserveProjectEnvironmentCloneCheckpointWorkloadRetirement(t.Context(), l)
+			if err != nil {
+				t.Fatal(err)
+			}
+			retireConfigurationCleanupFixture(t, s, l)
+			if err = s.CleanupProjectEnvironmentCloneConfigurationForLease(t.Context(), l); err != nil {
+				t.Fatal(err)
+			}
+			if err = s.CleanupProjectEnvironmentCloneWorkloadsForLease(t.Context(), l); err != nil {
+				t.Fatal(err)
+			}
+			targetID, sourceID := uuid.NewString(), uuid.NewString()
+			for _, site := range []struct{ id, environment string }{{targetID, l.Operation.TargetEnvironment}, {sourceID, l.Operation.SourceEnvironment}} {
+				storedStatus := status
+				if status == "suspended" {
+					storedStatus = "active"
+				}
+				if _, err = pool.Exec(t.Context(), `INSERT INTO hosting_sites(id,account_id,project_id,environment,name,hostname,origin_id,status,durable_routing,suspended) VALUES($1,$2,$3,$4,'retained',$5,$6,$7,true,$8)`, site.id, l.Operation.AccountID, l.Operation.ProjectID, site.environment, site.id+".example.com", strings.Repeat("a", 64), storedStatus, status == "suspended"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			// A trust's environment is a GitHub claim, independent of the
+			// site's Gregale environment. Matching its text grants no ownership.
+			if _, err = pool.Exec(t.Context(), `INSERT INTO hosting_oidc_trusts(id,account_id,site_id,repository_owner_id,repository_id,repository,ref,workflow_ref,event_name,environment) VALUES(gen_random_uuid(),$1,$2,'1','1','test/repository','refs/heads/main','test/repository/.github/workflows/ci.yml@refs/heads/main','workflow_dispatch',$3)`, l.Operation.AccountID, sourceID, l.Operation.TargetEnvironment); err != nil {
+				t.Fatal(err)
+			}
+			report, err := s.ProjectEnvironmentCloneEnvironmentBorrowersForLease(t.Context(), l)
+			if err != nil || report.References["hosting_sites"] != 1 {
+				t.Fatal("hosting inventory lost a retained site or included another environment", report, err)
+			}
+			if err = s.CleanupProjectEnvironmentCloneEnvironmentForLease(t.Context(), l); !errors.Is(err, state.ErrConflict) || !strings.Contains(err.Error(), "hosting_sites") {
+				t.Fatal("hosting borrower did not block cleanup before deletion", err)
+			}
+			var retained bool
+			if err = pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM hosting_sites WHERE id=$1) AND EXISTS(SELECT 1 FROM project_environments WHERE id=$2) AND NOT EXISTS(SELECT 1 FROM project_environment_clone_environment_cleanups WHERE operation_id=$3)`, targetID, native.Plan.EnvironmentID, l.Operation.ID).Scan(&retained); err != nil || !retained {
+				t.Fatal("blocked hosting cleanup changed retained metadata", err)
+			}
+			// Simulate the separate hosting owner's completed retirement. A site
+			// in the source environment must not block or be removed by recovery.
+			if _, err = pool.Exec(t.Context(), "DELETE FROM hosting_sites WHERE id=$1", targetID); err != nil {
+				t.Fatal(err)
+			}
+			if err = s.CleanupProjectEnvironmentCloneEnvironmentForLease(t.Context(), l); err != nil {
+				t.Fatal("cleanup after hosting retirement", err)
+			}
+			if err = pool.QueryRow(t.Context(), "SELECT EXISTS(SELECT 1 FROM hosting_sites WHERE id=$1) AND EXISTS(SELECT 1 FROM hosting_oidc_trusts WHERE site_id=$1)", sourceID).Scan(&retained); err != nil || !retained {
+				t.Fatal("source hosting site or external trust was removed", err)
+			}
+		})
 	}
 }

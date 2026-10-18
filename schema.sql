@@ -2488,6 +2488,9 @@ BEGIN
   AND artifact=application_standard_source_runtime_producer(a,d)) IS NOT TRUE THEN
   RAISE EXCEPTION 'native source identity changed' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
  END IF;
+ IF d.environment_workload_runtime ? 'built_artifact' THEN
+  SELECT * INTO d FROM deployments WHERE id=(d.environment_workload_runtime->'built_artifact'->>'deployment_id')::uuid FOR SHARE NOWAIT;
+ END IF;
  SELECT r.* INTO f FROM source_build_rootfs_current c JOIN source_build_rootfs r ON r.id=c.artifact_id
  WHERE c.deployment_id=d.id FOR SHARE OF c,r NOWAIT;
  SELECT * INTO origin FROM build_export_publications WHERE id=f.publication_id FOR SHARE NOWAIT;
@@ -3185,7 +3188,7 @@ CREATE FUNCTION public.application_standard_runtime_producers(a public.apps, d p
     AS $_$
 DECLARE workloads text[]; workload text; root_producer jsonb; base_producer jsonb; artifacts jsonb:='[]'::jsonb;
 BEGIN
- IF NOT EXISTS(SELECT 1 FROM source_build_rootfs WHERE deployment_id=d.id)
+ IF NOT (coalesce(d.environment_workload_runtime ? 'built_artifact',false) OR coalesce(d.environment_workload_runtime->'source' ? 'build_artifact_id',false) OR EXISTS(SELECT 1 FROM source_build_rootfs WHERE deployment_id=d.id))
   AND NOT EXISTS(SELECT 1 FROM deployment_registry_rootfs WHERE deployment_id=d.id) THEN RETURN NULL; END IF;
  IF jsonb_typeof(d.sidecars) IS DISTINCT FROM 'array' OR EXISTS(
   SELECT 1 FROM jsonb_array_elements(d.sidecars) x GROUP BY x->>'name'
@@ -3194,7 +3197,7 @@ BEGIN
  END IF;
  workloads:=ARRAY[''] || ARRAY(SELECT x->>'name' FROM jsonb_array_elements(d.sidecars) x WHERE coalesce(x->>'image','')<>'' ORDER BY x->>'name');
  FOREACH workload IN ARRAY workloads LOOP
-  IF workload='' AND EXISTS(SELECT 1 FROM source_build_rootfs WHERE deployment_id=d.id) THEN
+  IF workload='' AND (coalesce(d.environment_workload_runtime ? 'built_artifact',false) OR coalesce(d.environment_workload_runtime->'source' ? 'build_artifact_id',false) OR EXISTS(SELECT 1 FROM source_build_rootfs WHERE deployment_id=d.id)) THEN
    root_producer:=application_standard_source_runtime_producer(a,d);
   ELSE root_producer:=application_standard_runtime_root_producer(a,d,workload); END IF;
   artifacts:=artifacts || jsonb_build_array(root_producer);
@@ -3864,11 +3867,17 @@ CREATE FUNCTION public.application_standard_source_runtime_producer(a public.app
     LANGUAGE plpgsql
     AS $_$
 DECLARE f source_build_rootfs%ROWTYPE; origin build_export_publications%ROWTYPE;
- base jsonb; b base_image_producers%ROWTYPE; runtime text; kind text;
+ base jsonb; b base_image_producers%ROWTYPE; runtime text; kind text; borrowed_id uuid;
 BEGIN
+ -- ADR-20261017190804: validate the target's pin before following its immutable producer.
+ IF d.environment_workload_runtime ? 'built_artifact' THEN
+  borrowed_id:=(d.environment_workload_runtime->'built_artifact'->>'id')::uuid;
+  IF NOT environment_build_artifact_valid(d,true) THEN RAISE EXCEPTION 'borrowed source runtime changed' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale'; END IF;
+  SELECT * INTO d FROM deployments WHERE id=(d.environment_workload_runtime->'built_artifact'->>'deployment_id')::uuid FOR SHARE NOWAIT;
+ END IF;
  SELECT r.* INTO f FROM source_build_rootfs_current c JOIN source_build_rootfs r ON r.id=c.artifact_id
  WHERE c.deployment_id=d.id FOR SHARE OF c,r NOWAIT;
- IF NOT FOUND THEN
+ IF NOT FOUND OR (borrowed_id IS NOT NULL AND f.id IS DISTINCT FROM borrowed_id) THEN
   RAISE EXCEPTION 'source runtime selection missing' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
  END IF;
  PERFORM application_standard_lock_source_runtime_rootfs(f.input_snapshot,f.id);
@@ -7248,6 +7257,146 @@ $$;
 
 
 --
+-- Name: environment_build_artifact_app_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.environment_build_artifact_app_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF (TG_OP='DELETE' OR NEW.status='deleted') AND EXISTS(SELECT 1 FROM source_build_rootfs f JOIN environment_build_artifact_pins p ON p.artifact_id=f.id
+  WHERE f.input_snapshot->>'app_id'=OLD.id::text AND p.source_id IS NOT NULL) THEN RAISE EXCEPTION 'app has manifest-pinned build artifacts' USING ERRCODE='23514'; END IF;
+ IF TG_OP='DELETE' THEN
+  -- Explicit owner erasure may release same-app history only after retirement.
+  -- Foreign/corrupt borrowers remain and the origin/FK guards still reject.
+  IF OLD.status<>'deleted' OR EXISTS(SELECT 1 FROM instances WHERE app_id=OLD.id AND state IN ('pending','waking','cold_booting','running','draining','snapshotting','migrating','warm','frozen','evicting_account_deleting')) THEN
+   IF EXISTS(SELECT 1 FROM environment_build_artifact_pins p JOIN deployments d ON d.id=p.candidate_id WHERE d.app_id=OLD.id) THEN
+    RAISE EXCEPTION 'build artifact owner has not retired' USING ERRCODE='23514';
+   END IF;
+  END IF;
+  DELETE FROM environment_build_artifact_pins p USING deployments d,source_build_rootfs f
+   WHERE p.candidate_id=d.id AND p.artifact_id=f.id AND d.app_id=OLD.id AND f.input_snapshot->>'app_id'=OLD.id::text;
+  RETURN OLD;
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: environment_build_artifact_candidate_pin(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.environment_build_artifact_candidate_pin() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE b jsonb:=NEW.environment_workload_runtime->'built_artifact'; a apps%ROWTYPE;
+BEGIN
+ IF b IS NOT NULL THEN
+  IF (TG_OP='INSERT' OR ROW(NEW.rootfs_path,NEW.rootfs_key,NEW.rootfs_bytes) IS DISTINCT FROM ROW(OLD.rootfs_path,OLD.rootfs_key,OLD.rootfs_bytes)) AND NOT environment_build_artifact_valid(NEW,TG_OP='UPDATE') THEN RAISE EXCEPTION 'borrowed build artifact changed' USING ERRCODE='23514'; END IF;
+  IF TG_OP='INSERT' THEN
+   SELECT * INTO a FROM apps WHERE id=NEW.app_id;
+   PERFORM environment_pin_build_artifact((b->>'id')::uuid,b->>'input_hash',a.account_id,a.project_id);
+   INSERT INTO environment_build_artifact_pins(candidate_id,artifact_id) VALUES(NEW.id,(b->>'id')::uuid);
+  END IF;
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: environment_build_artifact_matches(public.deployments, boolean); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.environment_build_artifact_matches(d public.deployments, materialized boolean) RETURNS boolean
+    LANGUAGE plpgsql STABLE
+    AS $$
+DECLARE b jsonb:=d.environment_workload_runtime->'built_artifact'; f source_build_rootfs%ROWTYPE; origin deployments%ROWTYPE; a apps%ROWTYPE; src environment_git_sources%ROWTYPE;
+BEGIN
+ SELECT * INTO f FROM source_build_rootfs WHERE id=(b->>'id')::uuid;
+ SELECT * INTO origin FROM deployments WHERE id=f.deployment_id;
+ SELECT * INTO a FROM apps WHERE id=d.app_id;
+ SELECT * INTO src FROM environment_git_sources WHERE id=(d.environment_workload_runtime->>'source_id')::uuid;
+ RETURN (b IS NOT NULL AND d.environment_workload_runtime->'source_archive' IS NULL
+  AND d.environment_workload_runtime->'source'->>'build_artifact_id'=f.id::text AND d.environment_workload_runtime->'source'->>'build_artifact_hash'=f.input_hash
+  AND EXISTS(SELECT 1 FROM source_build_rootfs_current c WHERE c.deployment_id=origin.id AND c.artifact_id=f.id)
+  AND b->>'input_hash'=f.input_hash AND b->>'deployment_id'=origin.id::text AND b->>'build_id'=origin.build_id::text AND b->>'commit_sha'=origin.commit_sha
+  AND b->>'digest'=f.input_snapshot->>'artifact_digest' AND b->>'storage_key'=f.input_snapshot->>'storage_key'
+  AND b->>'rootfs_path'=f.input_snapshot->>'rootfs_path' AND b->'bytes'=f.input_snapshot->'content_bytes'
+  AND origin.app_id=d.app_id AND origin.id<>d.id AND origin.deleted_at IS NULL AND a.status<>'deleted'
+  AND a.account_id=src.account_id AND a.project_id=src.project_id AND f.input_snapshot->>'app_id'=a.id::text
+  AND origin.environment_workload_runtime->'source_archive' IS NOT NULL AND origin.environment_workload_runtime->'built_artifact' IS NULL
+  AND ((d.environment_workload_runtime->'source') - 'build_artifact_id'::text - 'build_artifact_hash'::text)=origin.environment_workload_runtime->'source'
+  AND coalesce(d.environment_workload_runtime->>'source_provider','')=coalesce(origin.environment_workload_runtime->>'source_provider','')
+  AND d.environment_workload_runtime->>'source_repository_id'=origin.environment_workload_runtime->>'source_repository_id'
+  AND d.environment_workload_runtime->>'source_repository'=origin.environment_workload_runtime->>'source_repository'
+  AND coalesce(d.sidecars,'[]'::jsonb)='[]'::jsonb
+  AND d.build_id IS NULL AND coalesce(d.image_digest,'')='' AND coalesce(d.source_path,'')='' AND coalesce(d.source_sha256,'')='' AND d.source_bytes=0 AND coalesce(d.log_path,'')=''
+  AND (NOT materialized OR (d.rootfs_key=b->>'storage_key' AND d.rootfs_path=b->>'rootfs_path' AND d.rootfs_bytes=(b->>'bytes')::bigint
+   AND EXISTS(SELECT 1 FROM environment_build_artifact_pins p WHERE p.candidate_id=d.id AND p.artifact_id=f.id)))) IS TRUE;
+END $$;
+
+
+--
+-- Name: environment_build_artifact_origin_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.environment_build_artifact_origin_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF EXISTS(SELECT 1 FROM source_build_rootfs f JOIN environment_build_artifact_pins p ON p.artifact_id=f.id WHERE f.deployment_id=OLD.id) THEN
+  IF TG_OP='DELETE' THEN RAISE EXCEPTION 'build artifact provenance is pinned' USING ERRCODE='23514'; END IF;
+  IF ROW(NEW.app_id,NEW.scope,NEW.deleted_at,NEW.rootfs_path,NEW.rootfs_key,NEW.rootfs_bytes,NEW.build_id,NEW.commit_sha,NEW.environment_workload_runtime)
+   IS DISTINCT FROM ROW(OLD.app_id,OLD.scope,OLD.deleted_at,OLD.rootfs_path,OLD.rootfs_key,OLD.rootfs_bytes,OLD.build_id,OLD.commit_sha,OLD.environment_workload_runtime) THEN
+   RAISE EXCEPTION 'build artifact provenance is pinned' USING ERRCODE='23514';
+  END IF;
+ END IF;
+ IF TG_OP='DELETE' THEN RETURN OLD; END IF; RETURN NEW;
+END $$;
+
+
+--
+-- Name: environment_build_artifact_source_pins(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.environment_build_artifact_source_pins() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $_$
+DECLARE w jsonb; wanted jsonb;
+BEGIN
+ -- Serialize the pin writer with origin deletion/update and the GC key fence.
+ DELETE FROM environment_build_artifact_pins WHERE source_id=NEW.id;
+ IF NOT NEW.detached AND NEW.approved_revision_id IS NOT NULL THEN
+  SELECT definition INTO wanted FROM environment_desired_revisions WHERE id=NEW.approved_revision_id AND source_id=NEW.id;
+  FOR w IN SELECT value->'source' FROM jsonb_each(wanted->'workloads') WHERE value->'source' ? 'build_artifact_id' LOOP
+   IF w->>'kind' NOT IN ('source','dockerfile','function') OR w->>'build_artifact_hash' !~ '^[a-f0-9]{64}$' THEN
+    RAISE EXCEPTION 'invalid build artifact reference' USING ERRCODE='23514';
+   END IF;
+   PERFORM environment_pin_build_artifact((w->>'build_artifact_id')::uuid,w->>'build_artifact_hash',NEW.account_id,NEW.project_id);
+   INSERT INTO environment_build_artifact_pins(source_id,artifact_id) VALUES(NEW.id,(w->>'build_artifact_id')::uuid) ON CONFLICT DO NOTHING;
+  END LOOP;
+ END IF;
+ RETURN NEW;
+END $_$;
+
+
+--
+-- Name: environment_build_artifact_valid(public.deployments, boolean); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.environment_build_artifact_valid(d public.deployments, materialized boolean) RETURNS boolean
+    LANGUAGE plpgsql
+    AS $$
+DECLARE f source_build_rootfs%ROWTYPE;
+BEGIN
+ SELECT * INTO f FROM source_build_rootfs WHERE id=(d.environment_workload_runtime->'built_artifact'->>'id')::uuid FOR SHARE NOWAIT;
+ PERFORM 1 FROM deployments WHERE id=f.deployment_id FOR SHARE NOWAIT;
+ PERFORM 1 FROM apps WHERE id=d.app_id FOR SHARE NOWAIT;
+ RETURN environment_build_artifact_matches(d,materialized);
+END $$;
+
+
+--
 -- Name: environment_gitops_guard_app_presence(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -7438,6 +7587,30 @@ $$;
 
 
 --
+-- Name: environment_pin_build_artifact(uuid, text, uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.environment_pin_build_artifact(artifact uuid, expected_hash text, account uuid, project uuid) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+DECLARE f source_build_rootfs%ROWTYPE; d deployments%ROWTYPE; a apps%ROWTYPE; retained text;
+BEGIN
+ SELECT * INTO f FROM source_build_rootfs WHERE id=artifact FOR SHARE;
+ SELECT * INTO d FROM deployments WHERE id=f.deployment_id FOR SHARE;
+ SELECT * INTO a FROM apps WHERE id=d.app_id FOR SHARE;
+ IF (f.input_hash=expected_hash AND a.account_id=account AND a.project_id=project AND a.status<>'deleted'
+  AND d.deleted_at IS NULL AND f.input_snapshot->>'storage_key'=d.rootfs_key
+  AND f.input_snapshot->>'rootfs_path'=d.rootfs_path AND (f.input_snapshot->>'content_bytes')::bigint=d.rootfs_bytes
+  AND d.environment_workload_runtime->'source_archive' IS NOT NULL) IS NOT TRUE THEN
+  RAISE EXCEPTION 'build artifact is unavailable' USING ERRCODE='23514';
+ END IF;
+ INSERT INTO layer_artifact_retention(storage_key) VALUES(f.input_snapshot->>'storage_key') ON CONFLICT DO NOTHING;
+ SELECT state INTO retained FROM layer_artifact_retention WHERE storage_key=f.input_snapshot->>'storage_key' FOR UPDATE;
+ IF retained IS DISTINCT FROM 'retained' THEN RAISE EXCEPTION 'build artifact is retiring' USING ERRCODE='23514'; END IF;
+END $$;
+
+
+--
 -- Name: environment_workload_qualification_requests; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -7465,7 +7638,7 @@ CREATE TABLE public.environment_workload_qualification_requests (
     CONSTRAINT environment_workload_qualification_requests_phase_check CHECK ((phase = ANY (ARRAY['queued'::text, 'claimed'::text]))),
     CONSTRAINT environment_workload_qualification_requests_resource_check CHECK ((resource ~ '^workload/[a-z0-9][a-z0-9-]*$'::text)),
     CONSTRAINT environment_workload_qualification_requests_worker_id_check CHECK ((octet_length(worker_id) <= 256)),
-    CONSTRAINT environment_workload_qualification_reserved_instance_shape CHECK ((((phase = 'queued'::text) AND (reserved_instance_id IS NULL)) OR ((phase = 'claimed'::text) AND (((execution_mode = 'job'::text) AND (reserved_instance_id IS NULL)) OR ((execution_mode <> 'job'::text) AND (reserved_instance_id IS NOT NULL))))))
+    CONSTRAINT environment_workload_qualification_reserved_instance_shape CHECK ((((phase = 'queued'::text) AND (reserved_instance_id IS NULL)) OR ((phase = 'claimed'::text) AND (reserved_instance_id IS NOT NULL))))
 );
 
 
@@ -7552,6 +7725,180 @@ CREATE FUNCTION public.environment_qualification_restore_current(request uuid, c
    AND environment_runtime_inputs_fresh(q.app_id,r.inputs->>'scope',(r.inputs->>'boundary')::timestamptz,
     r.inputs->'variables',r.inputs->'secret_versions',(r.inputs->>'all_secrets')::boolean,r.inputs->'secret_refs',coalesce(r.inputs->'sidecar_secret_versions','{}')));
 $$;
+
+
+--
+-- Name: environment_recovery_capture(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.environment_recovery_capture() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ INSERT INTO environment_recovery_serving_history(graph_id,source_id,release_set_id,served_at)
+ VALUES(NEW.graph_id,NEW.source_id,NEW.release_set_id,NEW.served_at) ON CONFLICT(graph_id) DO NOTHING;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: environment_recovery_fence(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.environment_recovery_fence() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE account uuid; k text; state text; reserved numeric;
+BEGIN
+ IF TG_TABLE_NAME='environment_git_sources' THEN account:=NEW.account_id;
+ ELSE SELECT account_id INTO account FROM environment_git_sources WHERE id=NEW.source_id; END IF;
+ PERFORM id FROM accounts WHERE id=account FOR UPDATE;
+ SELECT coalesce(sum((v.definition->'recovery_retention'->>'max_bytes')::numeric),0) INTO reserved
+ FROM environment_git_sources s JOIN environment_desired_revisions v ON v.id=s.approved_revision_id
+ WHERE s.account_id=account AND NOT s.detached AND v.definition ? 'recovery_retention';
+ IF reserved>2147483648 THEN RAISE EXCEPTION 'account recovery retention reservation exceeded' USING ERRCODE='23514',CONSTRAINT='environment_recovery_budget',DETAIL=reserved::text; END IF;
+ IF EXISTS(SELECT 1 FROM environment_recovery_retained_releases WHERE account_id=account AND NOT available) THEN
+  RAISE EXCEPTION 'recovery artifact inventory unavailable' USING ERRCODE='23514',CONSTRAINT='environment_recovery_artifact_unavailable';
+ END IF;
+ FOR k IN SELECT DISTINCT storage_key FROM environment_recovery_retained_keys WHERE account_id=account ORDER BY storage_key LOOP
+  INSERT INTO layer_artifact_retention(storage_key) VALUES(k) ON CONFLICT DO NOTHING;
+  SELECT r.state INTO state FROM layer_artifact_retention r WHERE r.storage_key=k FOR UPDATE;
+  IF state<>'retained' THEN RAISE EXCEPTION 'recovery artifact already retired' USING ERRCODE='23514',CONSTRAINT='environment_recovery_artifact_unavailable'; END IF;
+ END LOOP;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: environment_recovery_history_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.environment_recovery_history_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ IF TG_OP='UPDATE' THEN
+  IF NEW IS DISTINCT FROM OLD THEN RAISE EXCEPTION 'recovery serving history is immutable' USING ERRCODE='23514'; END IF;
+  RETURN NEW;
+ END IF;
+ IF NOT EXISTS(SELECT 1 FROM environment_workload_serving_receipts r WHERE r.graph_id=NEW.graph_id AND r.source_id=NEW.source_id AND r.release_set_id=NEW.release_set_id AND r.served_at=NEW.served_at) OR
+ EXISTS(SELECT 1 FROM environment_recovery_serving_history h WHERE h.graph_id=NEW.graph_id AND (h.source_id,h.release_set_id) IS DISTINCT FROM (NEW.source_id,NEW.release_set_id)) THEN
+  RAISE EXCEPTION 'recovery history requires matching completed serving evidence' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END $$;
+
+
+--
+-- Name: environment_recovery_metadata_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.environment_recovery_metadata_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE account uuid; identity uuid; blocked boolean:=false;
+BEGIN
+ IF TG_OP='INSERT' THEN
+  IF TG_TABLE_NAME='project_release_members' THEN
+   SELECT account_id INTO account FROM project_release_sets WHERE id=NEW.release_id;
+   PERFORM id FROM accounts WHERE id=account FOR UPDATE;
+   SELECT EXISTS(SELECT 1 FROM environment_recovery_retained_releases WHERE release_set_id=NEW.release_id) INTO blocked;
+  ELSE
+   SELECT a.account_id INTO account FROM deployments d JOIN apps a ON a.id=d.app_id WHERE d.id=NEW.deployment_id;
+   PERFORM id FROM accounts WHERE id=account FOR UPDATE;
+   SELECT EXISTS(SELECT 1 FROM environment_recovery_retained_deployments WHERE deployment_id=NEW.deployment_id) INTO blocked;
+   IF blocked AND EXISTS(SELECT 1 FROM deployment_sidecar_layers l WHERE l.deployment_id=NEW.deployment_id AND l.sidecar_name=NEW.sidecar_name
+    AND (l.storage_key,l.bytes,l.content_digest) IS NOT DISTINCT FROM (NEW.storage_key,NEW.bytes,NEW.content_digest)) THEN RETURN NEW; END IF;
+  END IF;
+  IF blocked THEN RAISE EXCEPTION 'release protected by recovery retention' USING ERRCODE='23514',CONSTRAINT='environment_recovery_retained'; END IF;
+  RETURN NEW;
+ END IF;
+ IF TG_OP='UPDATE' THEN
+  IF TG_TABLE_NAME='environment_workload_serving_receipts' THEN
+   IF (NEW.graph_id,NEW.source_id,NEW.release_set_id) IS NOT DISTINCT FROM (OLD.graph_id,OLD.source_id,OLD.release_set_id) THEN RETURN NEW; END IF;
+  END IF;
+  IF TG_TABLE_NAME='apps' THEN
+   IF (NEW.status<>'deleted' OR OLD.status=NEW.status) AND (NEW.account_id,NEW.project_id) IS NOT DISTINCT FROM (OLD.account_id,OLD.project_id) THEN RETURN NEW; END IF;
+  END IF;
+  IF TG_TABLE_NAME='deployment_sidecar_layers' THEN
+   IF (NEW.deployment_id,NEW.sidecar_name,NEW.storage_key,NEW.bytes,NEW.content_digest) IS NOT DISTINCT FROM (OLD.deployment_id,OLD.sidecar_name,OLD.storage_key,OLD.bytes,OLD.content_digest) THEN RETURN NEW; END IF;
+  END IF;
+  IF TG_TABLE_NAME='deployments' THEN
+   IF (NEW.rootfs_path,NEW.rootfs_key,NEW.rootfs_bytes,NEW.deleted_at,NEW.environment_workload_runtime,NEW.app_id,NEW.scope,NEW.build_id,NEW.commit_sha,NEW.source_sha256,NEW.sidecars) IS NOT DISTINCT FROM
+      (OLD.rootfs_path,OLD.rootfs_key,OLD.rootfs_bytes,OLD.deleted_at,OLD.environment_workload_runtime,OLD.app_id,OLD.scope,OLD.build_id,OLD.commit_sha,OLD.source_sha256,OLD.sidecars) THEN RETURN NEW; END IF;
+  END IF;
+  IF OLD IS NOT DISTINCT FROM NEW THEN RETURN NEW; END IF;
+ END IF;
+ IF TG_TABLE_NAME='accounts' THEN account:=OLD.id;
+ ELSIF TG_TABLE_NAME='projects' THEN account:=OLD.account_id;
+ ELSIF TG_TABLE_NAME='project_environments' THEN account:=OLD.account_id;
+ ELSIF TG_TABLE_NAME='apps' THEN account:=OLD.account_id;
+ ELSIF TG_TABLE_NAME='environment_git_sources' THEN account:=OLD.account_id;
+ ELSIF TG_TABLE_NAME='project_release_sets' THEN account:=OLD.account_id;
+ ELSIF TG_TABLE_NAME='environment_workload_graphs' THEN SELECT account_id INTO account FROM environment_git_sources WHERE id=OLD.source_id;
+ ELSIF TG_TABLE_NAME IN ('environment_workload_serving_receipts','environment_recovery_serving_history') THEN SELECT account_id INTO account FROM environment_git_sources WHERE id=OLD.source_id;
+ ELSIF TG_TABLE_NAME='environment_desired_revisions' THEN SELECT account_id INTO account FROM environment_git_sources WHERE id=OLD.source_id;
+ ELSIF TG_TABLE_NAME='project_release_members' THEN SELECT account_id INTO account FROM project_release_sets WHERE id=OLD.release_id;
+ ELSE
+  IF TG_TABLE_NAME='deployments' THEN identity:=OLD.id; ELSE identity:=OLD.deployment_id; END IF;
+  SELECT a.account_id INTO account FROM deployments d JOIN apps a ON a.id=d.app_id WHERE d.id=identity;
+ END IF;
+ PERFORM id FROM accounts WHERE id=account FOR UPDATE;
+ IF TG_TABLE_NAME='accounts' THEN
+  SELECT EXISTS(SELECT 1 FROM environment_recovery_retained_releases WHERE account_id=OLD.id) INTO blocked;
+ ELSIF TG_TABLE_NAME='projects' THEN
+  SELECT EXISTS(SELECT 1 FROM environment_recovery_retained_releases WHERE project_id=OLD.id) INTO blocked;
+ ELSIF TG_TABLE_NAME='project_environments' THEN
+  SELECT EXISTS(SELECT 1 FROM environment_recovery_retained_releases WHERE environment_id=OLD.id) INTO blocked;
+ ELSIF TG_TABLE_NAME='apps' THEN
+  SELECT EXISTS(SELECT 1 FROM environment_recovery_retained_deployments p JOIN deployments d ON d.id=p.deployment_id WHERE d.app_id=OLD.id) INTO blocked;
+ ELSIF TG_TABLE_NAME='environment_git_sources' THEN
+  SELECT EXISTS(SELECT 1 FROM environment_recovery_retained_releases WHERE source_id=OLD.id) INTO blocked;
+ ELSIF TG_TABLE_NAME='project_release_sets' THEN
+  SELECT EXISTS(SELECT 1 FROM environment_recovery_retained_releases WHERE release_set_id=OLD.id) INTO blocked;
+ ELSIF TG_TABLE_NAME='environment_desired_revisions' THEN
+  IF TG_OP='UPDATE' THEN
+   SELECT EXISTS(SELECT 1 FROM environment_git_sources s WHERE s.approved_revision_id=OLD.id AND NOT s.detached AND (OLD.definition ? 'recovery_retention' OR NEW.definition ? 'recovery_retention')) INTO blocked;
+  ELSE
+   SELECT EXISTS(SELECT 1 FROM environment_git_sources s WHERE s.approved_revision_id=OLD.id AND NOT s.detached AND OLD.definition ? 'recovery_retention') INTO blocked;
+  END IF;
+  blocked:=blocked OR EXISTS(SELECT 1 FROM environment_recovery_retained_releases p JOIN environment_workload_graphs g ON g.id=p.graph_id WHERE g.revision_id=OLD.id);
+ ELSIF TG_TABLE_NAME='project_release_members' THEN
+  SELECT EXISTS(SELECT 1 FROM environment_recovery_retained_releases WHERE release_set_id=OLD.release_id) INTO blocked;
+ ELSIF TG_TABLE_NAME='environment_workload_graphs' THEN
+  SELECT EXISTS(SELECT 1 FROM environment_recovery_retained_releases WHERE graph_id=OLD.id) INTO blocked;
+ ELSIF TG_TABLE_NAME IN ('environment_workload_serving_receipts','environment_recovery_serving_history') THEN
+  SELECT EXISTS(SELECT 1 FROM environment_recovery_retained_releases WHERE graph_id=OLD.graph_id) INTO blocked;
+ ELSE SELECT EXISTS(SELECT 1 FROM environment_recovery_retained_deployments WHERE deployment_id=identity) INTO blocked;
+ END IF;
+ IF blocked THEN RAISE EXCEPTION 'release protected by recovery retention' USING ERRCODE='23514',CONSTRAINT='environment_recovery_retained'; END IF;
+ IF TG_OP='UPDATE' THEN RETURN NEW; END IF;
+ RETURN OLD;
+END $$;
+
+
+--
+-- Name: environment_recovery_policy_valid(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.environment_recovery_policy_valid() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $_$
+DECLARE p jsonb:=NEW.definition->'recovery_retention';
+BEGIN
+ IF p IS NULL THEN RETURN NEW; END IF;
+ IF jsonb_typeof(p->'releases')<>'number' OR jsonb_typeof(p->'seconds')<>'number' OR jsonb_typeof(p->'max_bytes')<>'number' OR
+ jsonb_typeof(p)<>'object' OR NOT (p ?& ARRAY['releases','seconds','max_bytes']) OR
+   (SELECT count(*) FROM jsonb_object_keys(p))<>3 OR
+   coalesce(p->>'releases','') !~ '^[0-9]+$' OR coalesce(p->>'seconds','') !~ '^[0-9]+$' OR coalesce(p->>'max_bytes','') !~ '^[0-9]+$' THEN
+  RAISE EXCEPTION 'invalid recovery retention policy' USING ERRCODE='23514';
+ END IF;
+ -- Mirrors api.EnvironmentRecovery* ceilings; exercised by the migration test.
+ IF (p->>'releases')::numeric NOT BETWEEN 1 AND 5 OR (p->>'seconds')::numeric NOT BETWEEN 1 AND 604800 OR (p->>'max_bytes')::numeric NOT BETWEEN 1 AND 1073741824 THEN
+  RAISE EXCEPTION 'recovery retention limit exceeded' USING ERRCODE='23514';
+ END IF;
+ RETURN NEW;
+END $_$;
 
 
 --
@@ -8448,14 +8795,20 @@ WHERE graph.id=target_graph AND graph.phase='prepared'
     AND managed_job.account_id=source.account_id AND managed_job.kind='recurring' AND managed_job.status='active'
     AND managed_job.image_materialization_status='ready'
     AND coalesce(managed_job.image_storage_key,'')<>''
-    AND managed_job.image_resolved_digest=substring(intent.source->>'image' FROM '@(sha256:[a-f0-9]{64})$')
-    AND intent.source->>'kind'='image' AND managed_job.image_ref=intent.source->>'image'
+    AND (
+        (intent.source->>'kind'='image' AND managed_job.image_ref=intent.source->>'image'
+         AND managed_job.image_resolved_digest=substring(intent.source->>'image' FROM '@(sha256:[a-f0-9]{64})$')) OR
+        (environment_workload_source_job_deployment_matches(managed_job.id,deployment.id)
+         AND managed_job.image_resolved_digest='gregale-deployment:' || deployment.id::text
+         AND managed_job.image_storage_key=deployment.rootfs_key)
+    )
     AND intent.schedule IS NOT NULL AND managed_job.cron_schedule=intent.schedule->>'cron'
     AND managed_job.cron_timezone=intent.schedule->>'timezone'
     AND managed_job.schedule_policy IS NOT DISTINCT FROM NULLIF(intent.schedule->'schedule_policy','null'::jsonb)
     AND managed_job.failure_rules IS NOT DISTINCT FROM NULLIF(intent.schedule->'failure_rules','null'::jsonb)
     AND managed_job.max_parallelism=1 AND managed_job.retry_max=0
-    AND managed_job.ram_mb>0 AND managed_job.task_timeout_s>0 AND cardinality(managed_job.command)=0
+    AND managed_job.ram_mb>0 AND managed_job.task_timeout_s>0
+    AND to_jsonb(managed_job.command)=coalesce(nullif(intent.runtime->'entrypoint','null'::jsonb),'[]'::jsonb)
     AND managed_job.env_overrides=coalesce(nullif(member.value->'variables','null'::jsonb),'{}'::jsonb)
     AND coalesce(nullif(intent.variables,'null'::jsonb),'{}'::jsonb)=coalesce(nullif(member.value->'variables','null'::jsonb),'{}'::jsonb)
     AND coalesce(nullif(member.value->'service_bindings','null'::jsonb),'{}'::jsonb)=coalesce(intent.service_bindings,'{}'::jsonb)
@@ -8726,6 +9079,66 @@ CREATE FUNCTION public.environment_workload_serving_traffic_authorized(target_ap
          (target_deployment<>route.deployment_id AND target_traffic=0))
  )
 $$;
+
+
+--
+-- Name: environment_workload_source_job_deployment_matches(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.environment_workload_source_job_deployment_matches(target_job uuid, target_deployment uuid) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $$
+SELECT EXISTS (
+    SELECT 1 FROM jobs j
+    JOIN app_environment_workload_intents i ON i.job_id=j.id AND i.account_id=j.account_id
+    JOIN active_environment_git_sources s ON s.account_id=i.account_id AND s.environment_id=i.environment_id
+    JOIN project_environments e ON e.id=i.environment_id
+    JOIN deployments d ON d.id=target_deployment AND d.app_id=i.app_id AND d.scope=e.slug
+    WHERE j.id=target_job AND i.source->>'kind' IN ('source','dockerfile')
+        AND j.image_ref=environment_workload_source_job_reference(i.environment_id,i.app_id,i.source,i.source_revision)
+        AND d.status IN ('snapshotting','live') AND d.rootfs_key IS NOT NULL AND d.rootfs_key<>'' AND d.rootfs_bytes>0
+        AND d.environment_workload_runtime->'source'=i.source
+        AND d.environment_workload_runtime->'runtime'->'entrypoint'=i.runtime->'entrypoint'
+        AND jsonb_typeof(i.runtime->'entrypoint')='array' AND jsonb_array_length(i.runtime->'entrypoint') BETWEEN 1 AND 64
+        AND to_jsonb(j.command)=i.runtime->'entrypoint'
+        AND d.environment_workload_runtime->>'source_id'=s.id::text
+        AND d.environment_workload_runtime->>'environment_id'=i.environment_id::text
+        AND d.environment_workload_runtime->>'app_id'=i.app_id::text
+        AND (
+          (NOT (i.source ? 'build_artifact_id' OR i.source ? 'build_artifact_hash')
+           AND d.commit_sha=i.source_revision
+           AND d.environment_workload_runtime->'built_artifact' IS NULL
+           AND d.environment_workload_runtime->'source_archive'->>'commit_sha'=i.source_revision
+           AND d.environment_workload_runtime->'source_archive'->>'build_id'=d.build_id::text
+           AND d.environment_workload_runtime->'source_archive'->>'sha256'=d.source_sha256
+           AND d.environment_workload_runtime->'source_archive'->>'path'=d.source_path)
+          OR (i.source_revision IS NULL AND i.source ? 'build_artifact_id'
+              AND environment_build_artifact_matches(d,true))
+        )
+        AND d.environment_workload_runtime->>'workload_class'='job'
+)
+$$;
+
+
+--
+-- Name: environment_workload_source_job_reference(uuid, uuid, jsonb, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.environment_workload_source_job_reference(environment uuid, app uuid, source jsonb, revision text) RETURNS text
+    LANGUAGE sql IMMUTABLE
+    AS $_$
+SELECT CASE WHEN environment IS NULL OR app IS NULL OR
+    environment='00000000-0000-0000-0000-000000000000'::uuid OR app='00000000-0000-0000-0000-000000000000'::uuid OR
+    coalesce(source->>'kind','') NOT IN ('source','dockerfile') THEN NULL
+ WHEN source ? 'build_artifact_id' OR source ? 'build_artifact_hash' THEN
+  CASE WHEN revision IS NULL
+    AND source->>'build_artifact_id' ~ '^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$'
+    AND source->>'build_artifact_id'<>'00000000-0000-0000-0000-000000000000'
+    AND source->>'build_artifact_hash' ~ '^[a-f0-9]{64}$'
+   THEN 'gregale-source://' || environment::text || '/' || app::text || '/artifact/' || (source->>'build_artifact_id') || '/' || (source->>'build_artifact_hash') END
+ WHEN revision ~ '^([a-f0-9]{40}|[a-f0-9]{64})$'
+  THEN 'gregale-source://' || environment::text || '/' || app::text || '/' || revision END
+$_$;
 
 
 --
@@ -11328,10 +11741,11 @@ BEGIN
     OR NEW.definition_digest <> rev.definition_digest OR rev.commit_sha !~ '^[a-f0-9]{40}$'
     OR NEW.approved_generation NOT IN (src.generation, src.generation+1)
     OR proof->>'qualified' IS DISTINCT FROM 'true' OR coalesce(proof->>'reason','') <> ''
-    OR proof->>'profile' IS DISTINCT FROM 'reviewed_merge/v1'
+    OR proof->>'profile' IS DISTINCT FROM (CASE src.provider WHEN 'gitlab' THEN 'gitlab_reviewed_merge/v1' ELSE 'reviewed_merge/v1' END)
     OR policy->>'qualified' IS DISTINCT FROM 'true' OR coalesce(policy->>'reason','') <> ''
-    OR policy->>'profile' IS DISTINCT FROM 'classic_reviewed_branch/v1'
-    OR policy->>'installation_id' IS DISTINCT FROM src.installation_id::text
+    OR policy->>'profile' IS DISTINCT FROM (CASE src.provider WHEN 'gitlab' THEN 'gitlab_reviewed_branch/v1' ELSE 'classic_reviewed_branch/v1' END)
+    OR (src.provider='github' AND policy->>'installation_id' IS DISTINCT FROM src.installation_id::text)
+    OR (src.provider='gitlab' AND coalesce(policy->>'installation_id','0') <> '0')
     OR policy->>'repository_id' IS DISTINCT FROM src.repository_id::text
     OR policy->>'repository' IS DISTINCT FROM src.repository
     OR src.source_ref NOT LIKE 'refs/heads/%'
@@ -11344,7 +11758,7 @@ BEGIN
     OR coalesce((proof->>'author_id')::bigint,0) <= 0
     OR checked IS NULL OR policy_checked IS NULL OR merged IS NULL
     OR checked > observed OR policy_checked > checked OR merged > checked
-    OR policy_checked < observed-interval '1 minute'
+    OR policy_checked < observed-interval '1 minute' OR checked < observed-interval '1 minute'
     OR coalesce(required_reviews,0) <= 0
     OR jsonb_typeof(proof->'reviews') IS DISTINCT FROM 'array'
     OR NOT EXISTS (SELECT 1 FROM environment_git_source_polls WHERE source_id=src.id
@@ -11371,6 +11785,22 @@ BEGIN
   RETURN NEW;
 END;
 $_$;
+
+
+--
+-- Name: guard_environment_git_source_provider(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_environment_git_source_provider() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+    BEGIN
+      IF NEW.provider IS DISTINCT FROM OLD.provider THEN
+        RAISE EXCEPTION 'Git source provider identity is immutable; rebind instead' USING ERRCODE='23514';
+      END IF;
+      RETURN NEW;
+    END;
+    $$;
 
 
 --
@@ -12276,6 +12706,35 @@ END $$;
 
 
 --
+-- Name: guard_environment_source_job_artifact(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_environment_source_job_artifact() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF (OLD.image_ref LIKE 'gregale-source://%' OR NEW.image_ref LIKE 'gregale-source://%') AND
+       ROW(NEW.image_resolved_digest,NEW.image_storage_key,NEW.image_materialization_status,
+           NEW.image_materialization_attempts,NEW.schedule_revision)
+       IS DISTINCT FROM ROW(OLD.image_resolved_digest,OLD.image_storage_key,OLD.image_materialization_status,
+           OLD.image_materialization_attempts,OLD.schedule_revision) AND NOT EXISTS (
+        SELECT 1 FROM app_environment_workload_intents i
+        JOIN active_environment_git_sources s ON s.account_id=i.account_id AND s.environment_id=i.environment_id
+        JOIN environment_gitops_jobs work ON work.source_id=s.id
+        WHERE i.job_id=OLD.id AND s.mode='enforce' AND NOT s.suspended
+            AND work.desired_generation=s.generation AND work.claimed_generation=s.generation
+            AND work.lease_until>clock_timestamp() AND work.lease_token<>''
+            AND work.lease_token=current_setting('gregale.gitops_lease',true)
+    ) THEN
+        RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='environment_gitops_job_managed',
+            MESSAGE='Source Job artifacts require the environment controller lease';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: guard_environment_workload_candidate(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -12309,11 +12768,11 @@ BEGIN
  END IF;
  IF TG_OP='UPDATE' AND OLD.environment_workload_runtime IS NOT NULL THEN
   IF NEW.environment_workload_runtime IS DISTINCT FROM OLD.environment_workload_runtime OR
-   (OLD.environment_workload_runtime ? 'source_archive' AND ROW(NEW.source_bytes,NEW.source_url,NEW.log_path,NEW.inferred_profile,NEW.github_source_ref,NEW.github_installation_id)
+   ((OLD.environment_workload_runtime ? 'source_archive' OR OLD.environment_workload_runtime ? 'built_artifact') AND ROW(NEW.source_bytes,NEW.source_url,NEW.log_path,NEW.inferred_profile,NEW.github_source_ref,NEW.github_installation_id)
     IS DISTINCT FROM ROW(OLD.source_bytes,OLD.source_url,OLD.log_path,OLD.inferred_profile,OLD.github_source_ref,OLD.github_installation_id)) OR
    (NEW.build_id IS DISTINCT FROM OLD.build_id AND (OLD.build_id IS NOT NULL OR frozen->'source_archive' IS NULL OR
     NEW.build_id IS DISTINCT FROM (frozen->'source_archive'->>'build_id')::uuid OR NOT EXISTS(
-     SELECT 1 FROM builds b WHERE b.id=NEW.build_id AND b.deployment_id=NEW.id AND b.kind='github' AND b.source_bytes=NEW.source_bytes))) OR
+     SELECT 1 FROM builds b WHERE b.id=NEW.build_id AND b.deployment_id=NEW.id AND b.kind=NEW.kind AND b.source_bytes=NEW.source_bytes))) OR
    environment_workload_deployment_inputs(NEW) IS DISTINCT FROM environment_workload_deployment_inputs(OLD) OR
    ROW(NEW.app_id,NEW.scope,NEW.kind,NEW.image_digest,NEW.commit_sha,NEW.source_path,NEW.source_root,NEW.source_sha256,NEW.handler,
        NEW.override_entrypoint,NEW.override_cmd,NEW.override_env,NEW.override_env_secrets,NEW.override_port,NEW.override_healthcheck,
@@ -12326,7 +12785,7 @@ BEGIN
   END IF;
  ELSIF frozen IS NOT NULL THEN
   IF TG_OP<>'INSERT' THEN RAISE EXCEPTION 'environment workload inputs must be created atomically' USING ERRCODE='23514'; END IF;
-  SELECT * INTO src FROM active_environment_git_sources WHERE id=(frozen->>'source_id')::uuid FOR UPDATE;
+  SELECT * INTO src FROM environment_git_sources WHERE NOT detached AND id=(frozen->>'source_id')::uuid FOR UPDATE;
   allowed:=src.id IS NOT NULL AND src.mode='enforce' AND NOT src.suspended AND src.generation=(frozen->>'generation')::bigint
    AND src.intent_version=(frozen->>'intent_version')::bigint AND src.environment_id=(frozen->>'environment_id')::uuid
    AND src.approved_revision_id=(frozen->>'revision_id')::uuid AND EXISTS(SELECT 1 FROM environment_gitops_jobs j
@@ -12344,7 +12803,8 @@ BEGIN
         AND NOT EXISTS(SELECT 1 FROM deployments d WHERE d.app_id=a.id AND d.scope=e.slug AND d.status='live'
          AND (d.kind<>'image' OR d.image_digest IS DISTINCT FROM NEW.image_digest))))
       AND NEW.image_digest ~ '^[^[:space:]]+@sha256:[a-f0-9]{64}$') OR
-     (NEW.kind='github' AND w.source->>'kind' IN ('source','dockerfile','function') AND
+     (((src.provider='github' AND NEW.kind='github') OR (src.provider='gitlab' AND NEW.kind='tarball')) AND NEW.source_root=w.source->>'directory' AND NEW.source_url=CASE src.provider WHEN 'gitlab' THEN 'gitlab://'||src.repository_id::text||'/'||src.repository||'@'||rev.commit_sha ELSE 'github://'||src.repository||'@'||rev.commit_sha END AND environment_build_artifact_valid(NEW,false) AND frozen->'source'=w.source AND w.source_revision IS NULL AND frozen->>'definition_digest'=rev.definition_digest AND NEW.build_id IS NULL) OR
+     (((src.provider='github' AND NEW.kind='github') OR (src.provider='gitlab' AND NEW.kind='tarball')) AND w.source->>'kind' IN ('source','dockerfile','function') AND NOT (w.source ? 'build_artifact_id') AND
       (w.source->>'kind'<>'function' OR a.type='function' AND a.runtime=w.source->>'runtime') AND w.source_revision=rev.commit_sha
       AND EXISTS(SELECT 1 FROM environment_managed_fields f WHERE f.source_id=src.id AND f.resource=r.logical_name AND f.field_path='source') AND frozen->'source'=w.source AND
       jsonb_typeof(frozen->'source_archive')='object' AND frozen->'source_archive' ?& ARRAY['build_id','path','sha256','bytes','log_path','revision_id','commit_sha','definition_digest'] AND
@@ -12355,7 +12815,8 @@ BEGIN
       NEW.source_sha256=frozen->'source_archive'->>'sha256' AND NEW.source_sha256 ~ '^[a-f0-9]{64}$' AND
       NEW.source_bytes=(frozen->'source_archive'->>'bytes')::bigint AND NEW.source_bytes>0 AND
       NEW.log_path=frozen->'source_archive'->>'log_path' AND NEW.log_path LIKE '/%' AND
-      NEW.source_url='github://'||src.repository||'@'||rev.commit_sha AND NEW.build_id IS NULL AND NEW.inferred_profile IS NULL AND
+      NEW.source_url=CASE src.provider WHEN 'gitlab' THEN 'gitlab://'||src.repository_id::text||'/'||src.repository||'@'||rev.commit_sha ELSE 'github://'||src.repository||'@'||rev.commit_sha END
+      AND (src.provider<>'gitlab' OR (frozen->>'source_provider'='gitlab' AND frozen->>'source_repository_id'=src.repository_id::text AND frozen->>'source_repository'=src.repository)) AND NEW.build_id IS NULL AND NEW.inferred_profile IS NULL AND
       coalesce(NEW.github_source_ref,'')='' AND coalesce(NEW.image_digest,'')=''))
     AND NEW.commit_sha=rev.commit_sha AND frozen->'runtime'=coalesce(w.runtime,'{}'::jsonb) AND coalesce(frozen->'service_bindings','{}'::jsonb)=coalesce(w.service_bindings,'{}'::jsonb)
     AND coalesce(frozen->'variables','{}'::jsonb)=coalesce(w.variables,'{}'::jsonb)
@@ -12797,8 +13258,12 @@ BEGIN
         SELECT 1 FROM jobs j
         WHERE j.id=NEW.job_id AND j.account_id=NEW.account_id
           AND j.kind='recurring' AND j.status IN ('paused','active')
-          AND NEW.schedule IS NOT NULL AND NEW.source->>'kind'='image'
-          AND j.image_ref=NEW.source->>'image'
+          AND NEW.schedule IS NOT NULL AND (
+              (NEW.source->>'kind'='image' AND j.image_ref=NEW.source->>'image') OR
+              (NEW.source->>'kind' IN ('source','dockerfile')
+               AND j.image_ref=environment_workload_source_job_reference(NEW.environment_id,NEW.app_id,NEW.source,NEW.source_revision))
+          )
+          AND to_jsonb(j.command)=coalesce(nullif(NEW.runtime->'entrypoint','null'::jsonb),'[]'::jsonb)
           AND j.env_overrides=NEW.variables
           AND j.cron_schedule=NEW.schedule->>'cron'
           AND j.cron_timezone=NEW.schedule->>'timezone'
@@ -12806,7 +13271,7 @@ BEGIN
           AND j.failure_rules IS NOT DISTINCT FROM NULLIF(NEW.schedule->'failure_rules','null'::jsonb)
     ) THEN
         RAISE EXCEPTION USING ERRCODE='23514', CONSTRAINT='environment_gitops_job_link_contract',
-            MESSAGE='GitOps Job binding does not match the reviewed image and schedule';
+            MESSAGE='GitOps Job binding does not match the reviewed source and schedule';
     END IF;
     RETURN NEW;
 END;
@@ -22443,7 +22908,7 @@ CREATE TABLE public.environment_git_sources (
     CONSTRAINT environment_git_sources_approval_policy_check CHECK ((approval_policy = ANY (ARRAY['manual'::text, 'protected_branch'::text]))),
     CONSTRAINT environment_git_sources_detached_suspended CHECK (((NOT detached) OR (suspended AND (mode = 'report'::text)))),
     CONSTRAINT environment_git_sources_generation_check CHECK ((generation >= 0)),
-    CONSTRAINT environment_git_sources_gitlab_policy_check CHECK (((provider <> 'gitlab'::text) OR ((mode = 'report'::text) AND (approval_policy = 'manual'::text) AND (NOT prune)))),
+    CONSTRAINT environment_git_sources_gitlab_policy_check CHECK (((provider <> 'gitlab'::text) OR ((installation_id = 0) AND (approval_policy = ANY (ARRAY['manual'::text, 'protected_branch'::text]))))),
     CONSTRAINT environment_git_sources_installation_id_check CHECK ((((provider = 'github'::text) AND (installation_id > 0)) OR ((provider = 'gitlab'::text) AND (installation_id = 0)))),
     CONSTRAINT environment_git_sources_intent_version_check CHECK ((intent_version >= 0)),
     CONSTRAINT environment_git_sources_manifest_path_check CHECK (((manifest_path <> ''::text) AND (manifest_path !~ '^/'::text) AND (manifest_path !~ '(^|/)\.\.(/|$)'::text) AND (POSITION((chr(92)) IN (manifest_path)) = 0))),
@@ -23443,6 +23908,7 @@ CREATE TABLE public.app_environment_workload_intents (
     CONSTRAINT app_environment_workload_intents_service_bindings_check CHECK ((jsonb_typeof(service_bindings) = 'object'::text)),
     CONSTRAINT app_environment_workload_intents_source_check CHECK (((source IS NULL) OR (jsonb_typeof(source) = 'object'::text))),
     CONSTRAINT app_environment_workload_intents_variables_check CHECK ((jsonb_typeof(variables) = 'object'::text)),
+    CONSTRAINT environment_build_artifact_revision_exclusive CHECK (((source_revision IS NULL) OR (NOT (source ? 'build_artifact_id'::text)))),
     CONSTRAINT environment_workload_job_schedule_shape CHECK (((schedule IS NULL) OR ((jsonb_typeof(schedule) = 'object'::text) AND (jsonb_typeof((schedule -> 'cron'::text)) = 'string'::text) AND (btrim((schedule ->> 'cron'::text)) <> ''::text) AND (jsonb_typeof((schedule -> 'timezone'::text)) = 'string'::text) AND (btrim((schedule ->> 'timezone'::text)) <> ''::text)))),
     CONSTRAINT environment_workload_source_revision_shape CHECK (((source_revision IS NULL) OR ((source_revision ~ '^([a-f0-9]{40}|[a-f0-9]{64})$'::text) AND (source IS NOT NULL) AND ((source ->> 'kind'::text) = ANY (ARRAY['source'::text, 'dockerfile'::text, 'function'::text])))))
 );
@@ -28350,6 +28816,18 @@ CREATE TABLE public.entity_outbox_acceptances (
 
 
 --
+-- Name: environment_build_artifact_pins; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.environment_build_artifact_pins (
+    source_id uuid,
+    candidate_id uuid,
+    artifact_id uuid NOT NULL,
+    CONSTRAINT environment_build_artifact_pins_check CHECK (((source_id IS NULL) <> (candidate_id IS NULL)))
+);
+
+
+--
 -- Name: environment_desired_revisions; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -28810,7 +29288,7 @@ CREATE TABLE public.environment_qualification_job_smoke_receipts (
     CONSTRAINT environment_qualification_job_smoke_receipts_attempt_check CHECK ((attempt > 0)),
     CONSTRAINT environment_qualification_job_smoke_receipts_error_class_check CHECK ((error_class = 'succeeded'::text)),
     CONSTRAINT environment_qualification_job_smoke_receipts_exit_code_check CHECK ((exit_code = 0)),
-    CONSTRAINT environment_qualification_job_smoke_receipts_policy_id_check CHECK ((policy_id = 'job-exit-v2'::text)),
+    CONSTRAINT environment_qualification_job_smoke_receipts_policy_id_check CHECK ((policy_id = ANY (ARRAY['job-exit-v2'::text, 'job-exit-v3'::text]))),
     CONSTRAINT environment_qualification_job_smoke_receipts_resource_check CHECK ((resource ~ '^workload/[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text)),
     CONSTRAINT environment_qualification_job_smoke_receipts_signal_check CHECK ((signal = 0))
 );
@@ -28888,17 +29366,18 @@ CREATE TABLE public.environment_qualification_snapshot_receipts (
 
 
 --
--- Name: environment_route_budget_receipts; Type: TABLE; Schema: public; Owner: -
+-- Name: environment_recovery_serving_history; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.environment_route_budget_receipts (
-    account_id uuid NOT NULL,
-    request_id uuid NOT NULL,
-    app_id uuid NOT NULL,
-    request_hash text NOT NULL,
-    response jsonb NOT NULL,
-    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
-    CONSTRAINT environment_route_budget_receipts_request_hash_check CHECK ((length(request_hash) = 64))
+CREATE TABLE public.environment_recovery_serving_history (
+    graph_id uuid NOT NULL,
+    source_id uuid NOT NULL,
+    release_set_id uuid NOT NULL,
+    served_at timestamp with time zone NOT NULL,
+    CONSTRAINT environment_recovery_serving_history_graph_id_check CHECK ((graph_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT environment_recovery_serving_history_release_set_id_check CHECK ((release_set_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT environment_recovery_serving_history_served_at_check CHECK (isfinite(served_at)),
+    CONSTRAINT environment_recovery_serving_history_source_id_check CHECK ((source_id <> '00000000-0000-0000-0000-000000000000'::uuid))
 );
 
 
@@ -28931,6 +29410,209 @@ CREATE TABLE public.environment_workload_graphs (
     CONSTRAINT environment_workload_graphs_phase_check CHECK ((phase = ANY (ARRAY['preparing'::text, 'prepared'::text, 'failed'::text]))),
     CONSTRAINT environment_workload_graphs_plan_hash_check CHECK ((plan_hash ~ '^[a-f0-9]{64}$'::text)),
     CONSTRAINT environment_workload_graphs_resource_ids_check CHECK ((jsonb_typeof(resource_ids) = 'object'::text))
+);
+
+
+--
+-- Name: environment_recovery_candidates; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.environment_recovery_candidates AS
+ WITH policies AS (
+         SELECT s.id AS source_id,
+            s.account_id,
+            s.project_id,
+            s.environment_id,
+            e.slug AS environment_slug,
+            (((v.definition -> 'recovery_retention'::text) ->> 'releases'::text))::integer AS max_releases,
+            (((v.definition -> 'recovery_retention'::text) ->> 'seconds'::text))::integer AS seconds,
+            (((v.definition -> 'recovery_retention'::text) ->> 'max_bytes'::text))::bigint AS max_bytes
+           FROM ((public.environment_git_sources s
+             JOIN public.environment_desired_revisions v ON (((v.id = s.approved_revision_id) AND (v.source_id = s.id))))
+             JOIN public.project_environments e ON (((e.id = s.environment_id) AND (e.project_id = s.project_id))))
+          WHERE ((NOT s.detached) AND (v.definition ? 'recovery_retention'::text))
+        ), history AS (
+         SELECT p.source_id,
+            p.account_id,
+            p.project_id,
+            p.environment_id,
+            p.environment_slug,
+            p.max_releases,
+            p.seconds,
+            p.max_bytes,
+            r.release_set_id,
+            max(r.served_at) AS served_at,
+            (min((g.id)::text))::uuid AS graph_id,
+            count(*) AS graph_count
+           FROM (((policies p
+             JOIN public.environment_workload_graphs g ON (((g.source_id = p.source_id) AND (g.environment_id = p.environment_id))))
+             JOIN public.environment_recovery_serving_history r ON (((r.graph_id = g.id) AND (r.source_id = p.source_id))))
+             JOIN public.project_release_sets rs ON (((rs.id = r.release_set_id) AND (rs.account_id = p.account_id) AND (rs.project_id = p.project_id) AND (rs.environment_slug = p.environment_slug))))
+          WHERE ((r.served_at IS NOT NULL) AND (EXISTS ( SELECT 1
+                   FROM public.project_release_members rm
+                  WHERE (rm.release_id = r.release_set_id))))
+          GROUP BY p.source_id, p.account_id, p.project_id, p.environment_id, p.environment_slug, p.max_releases, p.seconds, p.max_bytes, r.release_set_id
+        ), inventory AS (
+         SELECT h.source_id,
+            h.account_id,
+            h.project_id,
+            h.environment_id,
+            h.environment_slug,
+            h.max_releases,
+            h.seconds,
+            h.max_bytes,
+            h.release_set_id,
+            h.served_at,
+            h.graph_id,
+            h.graph_count,
+            (h.served_at + make_interval(secs => (h.seconds)::double precision)) AS protected_until,
+            COALESCE(( SELECT (sum(k.bytes))::bigint AS sum
+                   FROM ( SELECT parts.key,
+                            max(parts.bytes) AS bytes
+                           FROM ( SELECT d.rootfs_key AS key,
+                                    d.rootfs_bytes AS bytes
+                                   FROM (public.project_release_members rm
+                                     JOIN public.deployments d ON ((d.id = rm.deployment_id)))
+                                  WHERE (rm.release_id = h.release_set_id)
+                                UNION ALL
+                                 SELECT l.storage_key,
+                                    l.bytes
+                                   FROM (public.project_release_members rm
+                                     JOIN public.deployment_sidecar_layers l ON ((l.deployment_id = rm.deployment_id)))
+                                  WHERE (rm.release_id = h.release_set_id)) parts
+                          GROUP BY parts.key) k), (0)::bigint) AS bytes,
+            ((h.graph_count = 1) AND (EXISTS ( SELECT 1
+                   FROM public.project_release_members rm
+                  WHERE (rm.release_id = h.release_set_id))) AND (NOT (EXISTS ( SELECT 1
+                   FROM ((public.project_release_members rm
+                     JOIN public.deployments d ON ((d.id = rm.deployment_id)))
+                     JOIN public.apps a ON ((a.id = d.app_id)))
+                  WHERE ((rm.release_id = h.release_set_id) AND ((a.account_id <> h.account_id) OR (a.project_id <> h.project_id) OR (d.app_id <> rm.app_id) OR (d.scope <> h.environment_slug) OR (COALESCE(d.rootfs_key, ''::text) = ''::text) OR (COALESCE(d.rootfs_bytes, (0)::bigint) <= 0) OR (d.deleted_at IS NOT NULL) OR (a.status = 'deleted'::text)))))) AND (NOT (EXISTS ( SELECT 1
+                   FROM (public.project_release_members rm
+                     JOIN public.deployment_sidecar_layers l ON ((l.deployment_id = rm.deployment_id)))
+                  WHERE ((rm.release_id = h.release_set_id) AND ((l.storage_key = ''::text) OR (l.bytes <= 0))))))) AS available
+           FROM history h
+        ), ranked AS (
+         SELECT i.source_id,
+            i.account_id,
+            i.project_id,
+            i.environment_id,
+            i.environment_slug,
+            i.max_releases,
+            i.seconds,
+            i.max_bytes,
+            i.release_set_id,
+            i.served_at,
+            i.graph_id,
+            i.graph_count,
+            i.protected_until,
+            i.bytes,
+            i.available,
+            row_number() OVER (PARTITION BY i.source_id ORDER BY i.served_at DESC, i.release_set_id DESC) AS "position",
+            (sum(i.bytes) OVER (PARTITION BY i.source_id ORDER BY i.served_at DESC, i.release_set_id DESC ROWS UNBOUNDED PRECEDING))::bigint AS charged_bytes
+           FROM inventory i
+          WHERE (i.protected_until > clock_timestamp())
+        )
+ SELECT source_id,
+    account_id,
+    project_id,
+    environment_id,
+    environment_slug,
+    max_releases,
+    seconds,
+    max_bytes,
+    release_set_id,
+    served_at,
+    graph_id,
+    graph_count,
+    protected_until,
+    bytes,
+    available,
+    "position",
+    charged_bytes
+   FROM ranked;
+
+
+--
+-- Name: environment_recovery_retained_releases; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.environment_recovery_retained_releases AS
+ SELECT source_id,
+    account_id,
+    project_id,
+    environment_id,
+    environment_slug,
+    max_releases,
+    seconds,
+    max_bytes,
+    release_set_id,
+    served_at,
+    graph_id,
+    graph_count,
+    protected_until,
+    bytes,
+    available,
+    "position",
+    charged_bytes
+   FROM public.environment_recovery_candidates
+  WHERE (("position" <= max_releases) AND (charged_bytes <= max_bytes));
+
+
+--
+-- Name: environment_recovery_retained_deployments; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.environment_recovery_retained_deployments AS
+ SELECT p.source_id,
+    p.account_id,
+    p.release_set_id,
+    rm.deployment_id
+   FROM (public.environment_recovery_retained_releases p
+     JOIN public.project_release_members rm ON ((rm.release_id = p.release_set_id)))
+UNION
+ SELECT p.source_id,
+    p.account_id,
+    p.release_set_id,
+    (((d.environment_workload_runtime -> 'built_artifact'::text) ->> 'deployment_id'::text))::uuid AS deployment_id
+   FROM ((public.environment_recovery_retained_releases p
+     JOIN public.project_release_members rm ON ((rm.release_id = p.release_set_id)))
+     JOIN public.deployments d ON ((d.id = rm.deployment_id)))
+  WHERE (d.environment_workload_runtime ? 'built_artifact'::text);
+
+
+--
+-- Name: environment_recovery_retained_keys; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.environment_recovery_retained_keys AS
+ SELECT p.account_id,
+    p.release_set_id,
+    d.rootfs_key AS storage_key
+   FROM ((public.environment_recovery_retained_releases p
+     JOIN public.project_release_members rm ON ((rm.release_id = p.release_set_id)))
+     JOIN public.deployments d ON ((d.id = rm.deployment_id)))
+UNION
+ SELECT p.account_id,
+    p.release_set_id,
+    l.storage_key
+   FROM ((public.environment_recovery_retained_releases p
+     JOIN public.project_release_members rm ON ((rm.release_id = p.release_set_id)))
+     JOIN public.deployment_sidecar_layers l ON ((l.deployment_id = rm.deployment_id)));
+
+
+--
+-- Name: environment_route_budget_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.environment_route_budget_receipts (
+    account_id uuid NOT NULL,
+    request_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    request_hash text NOT NULL,
+    response jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT environment_route_budget_receipts_request_hash_check CHECK ((length(request_hash) = 64))
 );
 
 
@@ -46798,6 +47480,22 @@ ALTER TABLE ONLY public.entity_outbox_acceptances
 
 
 --
+-- Name: environment_build_artifact_pins environment_build_artifact_pins_candidate_id_artifact_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_build_artifact_pins
+    ADD CONSTRAINT environment_build_artifact_pins_candidate_id_artifact_id_key UNIQUE (candidate_id, artifact_id);
+
+
+--
+-- Name: environment_build_artifact_pins environment_build_artifact_pins_source_id_artifact_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_build_artifact_pins
+    ADD CONSTRAINT environment_build_artifact_pins_source_id_artifact_id_key UNIQUE (source_id, artifact_id);
+
+
+--
 -- Name: environment_desired_revisions environment_desired_revisions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -47107,6 +47805,14 @@ ALTER TABLE ONLY public.environment_qualification_smoke_receipts
 
 ALTER TABLE ONLY public.environment_qualification_snapshot_receipts
     ADD CONSTRAINT environment_qualification_snapshot_receipts_pkey PRIMARY KEY (instance_id);
+
+
+--
+-- Name: environment_recovery_serving_history environment_recovery_serving_history_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_recovery_serving_history
+    ADD CONSTRAINT environment_recovery_serving_history_pkey PRIMARY KEY (graph_id);
 
 
 --
@@ -56412,6 +57118,20 @@ CREATE UNIQUE INDEX environment_qualification_reserved_instance_unique_idx ON pu
 
 
 --
+-- Name: environment_recovery_serving_history_release; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX environment_recovery_serving_history_release ON public.environment_recovery_serving_history USING btree (release_set_id, source_id, served_at);
+
+
+--
+-- Name: environment_recovery_serving_history_source; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX environment_recovery_serving_history_source ON public.environment_recovery_serving_history USING btree (source_id, served_at DESC, release_set_id);
+
+
+--
 -- Name: environment_workload_retirement_active_scope; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -64056,6 +64776,34 @@ CREATE TRIGGER egress_policy_changed_trg AFTER INSERT OR UPDATE ON public.egress
 
 
 --
+-- Name: apps environment_build_artifact_app_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_build_artifact_app_guard BEFORE DELETE OR UPDATE OF status ON public.apps FOR EACH ROW EXECUTE FUNCTION public.environment_build_artifact_app_guard();
+
+
+--
+-- Name: deployments environment_build_artifact_candidate_pin; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_build_artifact_candidate_pin AFTER INSERT OR UPDATE ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.environment_build_artifact_candidate_pin();
+
+
+--
+-- Name: deployments environment_build_artifact_origin_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_build_artifact_origin_guard BEFORE DELETE OR UPDATE ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.environment_build_artifact_origin_guard();
+
+
+--
+-- Name: environment_git_sources environment_build_artifact_source_pins; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_build_artifact_source_pins AFTER INSERT OR UPDATE OF approved_revision_id, detached ON public.environment_git_sources FOR EACH ROW EXECUTE FUNCTION public.environment_build_artifact_source_pins();
+
+
+--
 -- Name: environment_external_field_owners environment_external_field_owner_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -64067,6 +64815,13 @@ CREATE TRIGGER environment_external_field_owner_guard BEFORE INSERT OR UPDATE ON
 --
 
 CREATE TRIGGER environment_git_field_foreign_owner_guard BEFORE INSERT OR UPDATE ON public.environment_managed_fields FOR EACH ROW EXECUTE FUNCTION public.guard_environment_git_field_foreign_owner();
+
+
+--
+-- Name: environment_git_sources environment_git_provider_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_git_provider_guard BEFORE UPDATE ON public.environment_git_sources FOR EACH ROW EXECUTE FUNCTION public.guard_environment_git_source_provider();
 
 
 --
@@ -64242,6 +64997,146 @@ CREATE TRIGGER environment_qualification_smoke_receipt_guard BEFORE INSERT OR DE
 --
 
 CREATE TRIGGER environment_qualification_snapshot_receipt_guard BEFORE INSERT OR DELETE OR UPDATE ON public.environment_qualification_snapshot_receipts FOR EACH ROW EXECUTE FUNCTION public.guard_environment_qualification_snapshot_receipt();
+
+
+--
+-- Name: environment_workload_serving_receipts environment_recovery_capture; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_recovery_capture AFTER INSERT OR UPDATE OF served_at ON public.environment_workload_serving_receipts FOR EACH ROW WHEN ((new.served_at IS NOT NULL)) EXECUTE FUNCTION public.environment_recovery_capture();
+
+
+--
+-- Name: environment_git_sources environment_recovery_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_recovery_fence AFTER INSERT OR UPDATE OF approved_revision_id, detached ON public.environment_git_sources FOR EACH ROW EXECUTE FUNCTION public.environment_recovery_fence();
+
+
+--
+-- Name: environment_recovery_serving_history environment_recovery_history_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_recovery_history_guard BEFORE INSERT OR UPDATE ON public.environment_recovery_serving_history FOR EACH ROW EXECUTE FUNCTION public.environment_recovery_history_guard();
+
+
+--
+-- Name: accounts environment_recovery_metadata_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_recovery_metadata_guard BEFORE DELETE ON public.accounts FOR EACH ROW EXECUTE FUNCTION public.environment_recovery_metadata_guard();
+
+
+--
+-- Name: apps environment_recovery_metadata_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_recovery_metadata_guard BEFORE DELETE OR UPDATE OF status, account_id, project_id ON public.apps FOR EACH ROW EXECUTE FUNCTION public.environment_recovery_metadata_guard();
+
+
+--
+-- Name: deployment_registry_rootfs environment_recovery_metadata_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_recovery_metadata_guard BEFORE DELETE ON public.deployment_registry_rootfs FOR EACH ROW EXECUTE FUNCTION public.environment_recovery_metadata_guard();
+
+
+--
+-- Name: deployment_sidecar_layers environment_recovery_metadata_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_recovery_metadata_guard BEFORE INSERT OR DELETE OR UPDATE ON public.deployment_sidecar_layers FOR EACH ROW EXECUTE FUNCTION public.environment_recovery_metadata_guard();
+
+
+--
+-- Name: deployments environment_recovery_metadata_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_recovery_metadata_guard BEFORE DELETE OR UPDATE OF rootfs_path, rootfs_key, rootfs_bytes, deleted_at, environment_workload_runtime, app_id, scope, build_id, commit_sha, source_sha256, sidecars ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.environment_recovery_metadata_guard();
+
+
+--
+-- Name: environment_desired_revisions environment_recovery_metadata_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_recovery_metadata_guard BEFORE DELETE OR UPDATE ON public.environment_desired_revisions FOR EACH ROW EXECUTE FUNCTION public.environment_recovery_metadata_guard();
+
+
+--
+-- Name: environment_git_sources environment_recovery_metadata_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_recovery_metadata_guard BEFORE DELETE OR UPDATE OF account_id, project_id, environment_id ON public.environment_git_sources FOR EACH ROW EXECUTE FUNCTION public.environment_recovery_metadata_guard();
+
+
+--
+-- Name: environment_recovery_serving_history environment_recovery_metadata_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_recovery_metadata_guard BEFORE DELETE ON public.environment_recovery_serving_history FOR EACH ROW EXECUTE FUNCTION public.environment_recovery_metadata_guard();
+
+
+--
+-- Name: environment_workload_graphs environment_recovery_metadata_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_recovery_metadata_guard BEFORE DELETE ON public.environment_workload_graphs FOR EACH ROW EXECUTE FUNCTION public.environment_recovery_metadata_guard();
+
+
+--
+-- Name: environment_workload_serving_receipts environment_recovery_metadata_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_recovery_metadata_guard BEFORE DELETE OR UPDATE OF graph_id, source_id, release_set_id ON public.environment_workload_serving_receipts FOR EACH ROW EXECUTE FUNCTION public.environment_recovery_metadata_guard();
+
+
+--
+-- Name: project_environments environment_recovery_metadata_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_recovery_metadata_guard BEFORE DELETE ON public.project_environments FOR EACH ROW EXECUTE FUNCTION public.environment_recovery_metadata_guard();
+
+
+--
+-- Name: project_release_members environment_recovery_metadata_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_recovery_metadata_guard BEFORE INSERT OR DELETE OR UPDATE ON public.project_release_members FOR EACH ROW EXECUTE FUNCTION public.environment_recovery_metadata_guard();
+
+
+--
+-- Name: project_release_sets environment_recovery_metadata_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_recovery_metadata_guard BEFORE DELETE OR UPDATE OF account_id, project_id, environment_slug ON public.project_release_sets FOR EACH ROW EXECUTE FUNCTION public.environment_recovery_metadata_guard();
+
+
+--
+-- Name: projects environment_recovery_metadata_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_recovery_metadata_guard BEFORE DELETE ON public.projects FOR EACH ROW EXECUTE FUNCTION public.environment_recovery_metadata_guard();
+
+
+--
+-- Name: source_build_rootfs environment_recovery_metadata_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_recovery_metadata_guard BEFORE DELETE ON public.source_build_rootfs FOR EACH ROW EXECUTE FUNCTION public.environment_recovery_metadata_guard();
+
+
+--
+-- Name: environment_desired_revisions environment_recovery_policy_valid; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_recovery_policy_valid BEFORE INSERT OR UPDATE OF definition ON public.environment_desired_revisions FOR EACH ROW EXECUTE FUNCTION public.environment_recovery_policy_valid();
+
+
+--
+-- Name: environment_workload_serving_receipts environment_recovery_served_fence; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER environment_recovery_served_fence AFTER INSERT OR UPDATE OF served_at ON public.environment_workload_serving_receipts FOR EACH ROW WHEN ((new.served_at IS NOT NULL)) EXECUTE FUNCTION public.environment_recovery_fence();
 
 
 --
@@ -64564,6 +65459,13 @@ CREATE TRIGGER guard_environment_qualification_physical_retirement BEFORE DELETE
 --
 
 CREATE TRIGGER guard_environment_qualification_runtime_receipt BEFORE INSERT OR UPDATE ON public.instance_runtime_config_receipts FOR EACH ROW EXECUTE FUNCTION public.guard_environment_qualification_runtime_receipt();
+
+
+--
+-- Name: jobs guard_environment_source_job_artifact; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER guard_environment_source_job_artifact BEFORE UPDATE ON public.jobs FOR EACH ROW EXECUTE FUNCTION public.guard_environment_source_job_artifact();
 
 
 --
@@ -71092,6 +71994,30 @@ ALTER TABLE ONLY public.entity_outbox_acceptances
 
 
 --
+-- Name: environment_build_artifact_pins environment_build_artifact_pins_artifact_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_build_artifact_pins
+    ADD CONSTRAINT environment_build_artifact_pins_artifact_id_fkey FOREIGN KEY (artifact_id) REFERENCES public.source_build_rootfs(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: environment_build_artifact_pins environment_build_artifact_pins_candidate_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_build_artifact_pins
+    ADD CONSTRAINT environment_build_artifact_pins_candidate_id_fkey FOREIGN KEY (candidate_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_build_artifact_pins environment_build_artifact_pins_source_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_build_artifact_pins
+    ADD CONSTRAINT environment_build_artifact_pins_source_id_fkey FOREIGN KEY (source_id) REFERENCES public.environment_git_sources(id) ON DELETE CASCADE;
+
+
+--
 -- Name: environment_desired_revisions environment_desired_revisions_source_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -71433,6 +72359,30 @@ ALTER TABLE ONLY public.environment_qualification_smoke_receipts
 
 ALTER TABLE ONLY public.environment_qualification_snapshot_receipts
     ADD CONSTRAINT environment_qualification_snapshot_receipts_instance_id_fkey FOREIGN KEY (instance_id) REFERENCES public.environment_qualification_executions(instance_id);
+
+
+--
+-- Name: environment_recovery_serving_history environment_recovery_serving_history_graph_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_recovery_serving_history
+    ADD CONSTRAINT environment_recovery_serving_history_graph_id_fkey FOREIGN KEY (graph_id) REFERENCES public.environment_workload_graphs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_recovery_serving_history environment_recovery_serving_history_release_set_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_recovery_serving_history
+    ADD CONSTRAINT environment_recovery_serving_history_release_set_id_fkey FOREIGN KEY (release_set_id) REFERENCES public.project_release_sets(id) ON DELETE CASCADE;
+
+
+--
+-- Name: environment_recovery_serving_history environment_recovery_serving_history_source_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.environment_recovery_serving_history
+    ADD CONSTRAINT environment_recovery_serving_history_source_id_fkey FOREIGN KEY (source_id) REFERENCES public.environment_git_sources(id) ON DELETE CASCADE;
 
 
 --

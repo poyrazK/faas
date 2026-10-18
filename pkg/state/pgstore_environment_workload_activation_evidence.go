@@ -43,6 +43,10 @@ func (s *PgStore) CurrentEnvironmentGitOpsWorkloadEvidence(ctx context.Context, 
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	return currentEnvironmentGitOpsWorkloadEvidenceTx(ctx, tx, accountID, sourceID)
+}
+
+func currentEnvironmentGitOpsWorkloadEvidenceTx(ctx context.Context, tx sqlc.DBTX, accountID, sourceID string) (*EnvironmentWorkloadActivationEvidence, error) {
 	q := sqlc.New()
 	rawSource, err := q.GetEnvironmentGitSourceByID(ctx, tx, mustPgUUID(sourceID))
 	if errors.Is(err, pgx.ErrNoRows) || err == nil && pgUUIDString(rawSource.AccountID) != accountID {
@@ -95,14 +99,15 @@ func (s *PgStore) CurrentEnvironmentGitOpsWorkloadEvidence(ctx context.Context, 
 		row.IntentVersion != source.IntentVersion || row.DefinitionDigest != revision.Digest || row.PlanHash != plan.Hash {
 		return nil, nil
 	}
-	evidence, err := environmentWorkloadActivationEvidenceTx(ctx, tx, row)
+	evidence, err := environmentWorkloadActivationEvidenceTx(ctx, tx, row, true)
 	if err != nil {
 		return nil, err
 	}
+	evidence.CommitSHA = revision.CommitSHA
 	return &evidence, nil
 }
 
-func environmentWorkloadActivationEvidenceTx(ctx context.Context, tx sqlc.DBTX, row sqlc.EnvironmentWorkloadGraph) (EnvironmentWorkloadActivationEvidence, error) {
+func environmentWorkloadActivationEvidenceTx(ctx context.Context, tx sqlc.DBTX, row sqlc.EnvironmentWorkloadGraph, diagnostics ...bool) (EnvironmentWorkloadActivationEvidence, error) {
 	var zero EnvironmentWorkloadActivationEvidence
 	q := sqlc.New()
 	requests, err := q.EnvironmentWorkloadQualificationsByGraph(ctx, tx, row.ID)
@@ -266,7 +271,75 @@ func environmentWorkloadActivationEvidenceTx(ctx context.Context, tx sqlc.DBTX, 
 		return zero, err
 	}
 	applyEnvironmentWorkloadServingEvidence(&evidence, serving)
+	if len(diagnostics) > 0 && diagnostics[0] {
+		evidence.Workloads, err = environmentWorkloadProgress(graph, captures, restores, smokes, configs, frameworkReady, jobSmokes, activeTargets, serving,
+			func(member EnvironmentWorkloadGraphMember) (string, string, error) {
+				return environmentWorkloadPreparationStatusTx(ctx, tx, member)
+			})
+		if err != nil {
+			return zero, err
+		}
+		for i := range evidence.Workloads {
+			progress := &evidence.Workloads[i]
+			if progress.DeploymentID == "" {
+				continue
+			}
+			dep, err := q.DeploymentByID(ctx, tx, mustPgUUID(progress.DeploymentID))
+			if errors.Is(err, pgx.ErrNoRows) {
+				continue
+			}
+			if err != nil {
+				return zero, mapErr(err)
+			}
+			buildID, _ := dep.Coalesce.(string)
+			if buildID == "" || pgUUIDString(dep.AppID) != progress.AppID {
+				continue
+			}
+			build, err := q.BuildByID(ctx, tx, mustPgUUID(buildID))
+			if errors.Is(err, pgx.ErrNoRows) {
+				continue
+			}
+			if err != nil {
+				return zero, mapErr(err)
+			}
+			if pgUUIDString(build.DeploymentID) == progress.DeploymentID {
+				environmentBuildCacheProgress(progress, Build{CacheStatus: build.CacheStatus.String, CacheKeySHA256: build.CacheKeySha256.String})
+			}
+		}
+	}
 	return evidence, nil
+}
+
+func environmentWorkloadPreparationStatusTx(ctx context.Context, tx sqlc.DBTX, member EnvironmentWorkloadGraphMember) (string, string, error) {
+	if member.CandidateDeploymentID == "" {
+		return "", "", nil
+	}
+	q := sqlc.New()
+	deployment, err := q.DeploymentByID(ctx, tx, mustPgUUID(member.CandidateDeploymentID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", "", nil
+	}
+	if err != nil {
+		return "", "", mapErr(err)
+	}
+	if pgUUIDString(deployment.AppID) != member.AppID {
+		return "", "", nil
+	}
+	buildID, _ := deployment.Coalesce.(string)
+	if buildID == "" {
+		return deployment.Status, "", nil
+	}
+	build, err := q.BuildByID(ctx, tx, mustPgUUID(buildID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return deployment.Status, "", nil
+	}
+	if err != nil {
+		return "", "", mapErr(err)
+	}
+	if pgUUIDString(build.DeploymentID) != member.CandidateDeploymentID {
+		return deployment.Status, "", nil
+	}
+	return deployment.Status, build.Status, nil
 }
 
 func environmentWorkloadServingEvidenceTx(ctx context.Context, tx sqlc.DBTX, graph EnvironmentWorkloadGraph,

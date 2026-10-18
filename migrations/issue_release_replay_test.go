@@ -16,6 +16,11 @@ import (
 func TestIssueReleaseWebhookVocabularyAndRoutingReplay(t *testing.T) {
 	pool := pgtest.OpenMigrated(t)
 	ctx := t.Context()
+	// OpenMigrated falls back to an empty private schema when the template
+	// optimization is disabled in the migration-history tier.
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
 	var definition string
 	if err := pool.QueryRow(ctx, `SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conrelid='app_webhook_event_outbox'::regclass AND conname='app_webhook_event_outbox_event_chk'`).Scan(&definition); err != nil {
 		t.Fatal(err)

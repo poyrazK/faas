@@ -120,3 +120,14 @@ func PointDeployBaseAtUnreachable(t *testing.T, ref string) {
 	t.Helper()
 	t.Setenv("FAAS_TEST_DEPLOY_BASE_REF", ref)
 }
+
+// ConfigureNativeBaseImages stages pinned real base images in private test
+// storage through imaged's verified producer path. It never imports an ext4 as
+// image provenance or writes the operator's shared builder file.
+func ConfigureNativeBaseImages(t *testing.T, builderRef, runtimeRef, builderPath string) {
+	t.Helper()
+	t.Setenv("FAAS_TEST_BUILDER_BASE_REF", builderRef)
+	t.Setenv("FAAS_TEST_DEPLOY_BASE_REF", runtimeRef)
+	t.Setenv("FAAS_BUILDER_BASE_PATH", builderPath)
+	t.Setenv("FAAS_TEST_BUILDER_BASE_PATH", builderPath)
+}

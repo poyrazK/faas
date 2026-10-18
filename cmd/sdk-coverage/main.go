@@ -642,6 +642,9 @@ var methodRouteMap = map[string]string{
 
 	"POST /v1/projects/{slug}/environments/{environment}/gitops/revisions/preview": "PreviewEnvironmentGitRevision",
 	"POST /v1/projects/{slug}/environments/{environment}/gitops/plan":              "PreviewEnvironmentGitPlan",
+	"POST /v1/projects/{slug}/environments/{environment}/gitops/promotion-plan":    "PreviewEnvironmentGitPromotion",
+	"POST /v1/projects/{slug}/environments/{environment}/gitops/rollback-plan":     "PreviewEnvironmentGitRollback",
+	"GET /v1/projects/{slug}/environments/{environment}/gitops/releases":           "ListEnvironmentGitReleases",
 	"POST /v1/projects/{slug}/environments/{environment}/gitops/revisions/approve": "ApproveEnvironmentGitRevision",
 	"GET /v1/projects/{slug}/environments/{environment}/gitops/adoption-preview":   "PreviewEnvironmentGitOpsAdoption",
 	"POST /v1/projects/{slug}/environments/{environment}/gitops/adopt":             "AdoptEnvironmentGitOps",
