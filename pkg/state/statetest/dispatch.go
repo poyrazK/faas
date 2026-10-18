@@ -2491,6 +2491,8 @@ var storeDispatched = map[string]bool{
 	"ListAppEnvInScope":                             true,
 	"ListAppTrustedSignersForApp":                   true,
 	"ListDeploymentsForOperator":                    true,
+	"ProjectByOrgSlug":                              true,
+	"ListProjectsForOrg":                            true,
 }
 
 func (s *Store) AccountByID(p0 context.Context, p1 string) (state.Account, error) {
