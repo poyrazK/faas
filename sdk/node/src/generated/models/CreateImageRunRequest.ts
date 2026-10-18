@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { ImageRunRegistryAuth } from './ImageRunRegistryAuth.js';
 /**
  * Body of POST /v1/image-runs (ADR-1161).
  */
@@ -42,5 +43,14 @@ export type CreateImageRunRequest = {
    * Give the interactive command a pseudo-terminal. Requires interactive.
    */
   tty?: boolean;
+  /**
+   * ADR-1790: run as name|uid[:group|gid], resolved in the image's passwd and group files, instead of the image USER (docker run -u).
+   */
+  user?: string;
+  /**
+   * ADR-1790: absolute working directory instead of the image WORKDIR (docker run -w); created when missing.
+   */
+  workdir?: string;
+  registry_auth?: ImageRunRegistryAuth;
 };
 
