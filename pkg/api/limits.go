@@ -6718,7 +6718,7 @@ const (
 	HandoffMemoryWaitSeconds = 60
 	// APIDMemoryMaxMB is faas-apid.service's MemoryMax, and APIDGoMemLimitMB
 	// its GOMEMLIMIT, a soft per-process bound. A reload runs two apid
-	// generations in one cgroup (ADR-1580). Production over 14 days
+	// generations in one cgroup (ADR-1736). Production over 14 days
 	// (2026-10-18): steady state 51-94 MB per process, spikes to 257 MB, and
 	// two OOM kills at the previous 256 MB cap (ADR 20261018132058).
 	APIDMemoryMaxMB                 = 512

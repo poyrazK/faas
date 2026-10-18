@@ -73,7 +73,7 @@ func UnitApid() daemonunit.Unit {
 		// watchdog (gated on pkg/wire.Liveness).
 		WatchdogSec: "90s",
 
-		// A reload runs two apid generations in this cgroup (ADR-1580); the
+		// A reload runs two apid generations in this cgroup (ADR-1736); the
 		// cap fits a spiking successor beside a draining predecessor, and
 		// GOMEMLIMIT keeps each process near half (ADR 20261018132058).
 		Slice:     "faas-cp.slice",
