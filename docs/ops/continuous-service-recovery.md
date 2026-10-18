@@ -141,8 +141,8 @@ candidate remains due and is retried by discovery; it does not acquire a lease.
 ## Qualify a release
 
 Apply migration `20260930211607857_service_recovery.sql` before schedd.
-For workers, also apply `20261017221000000_worker_recovery.sql` and
-`20261017223000000_worker_recovery_observations.sql` before upgrading schedd.
+For workers, also apply `20261018013953553_worker_recovery.sql` and
+`20261018013954350_worker_recovery_observations.sql` before upgrading schedd.
 Leave the additive observation column in place during an older-binary rollback;
 older schedulers do not refresh it, so its evidence eventually becomes unknown.
 Run portable tests against a disposable Postgres cluster:
