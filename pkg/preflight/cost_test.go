@@ -14,10 +14,12 @@ func TestPlanBudgets_ConvertAllowanceToRunningTime(t *testing.T) {
 		billedMB int
 		minutes  int
 	}{
-		api.PlanFree:  {billedMB: 136, minutes: 2258},
-		api.PlanHobby: {billedMB: 264, minutes: 11636},
-		api.PlanPro:   {billedMB: 520, minutes: 29538},
-		api.PlanScale: {billedMB: 1032, minutes: 89302},
+		// ADR-1430 plan table (financial model §1 as amended by the October
+		// 2026 COGS report): plan RAM + 8 MB billed per running second.
+		api.PlanFree:  {billedMB: 264, minutes: 4654},
+		api.PlanHobby: {billedMB: 520, minutes: 23630},
+		api.PlanPro:   {billedMB: 1032, minutes: 59534},
+		api.PlanScale: {billedMB: 2056, minutes: 89649},
 	}
 
 	budgets := PlanBudgets()

@@ -6,7 +6,7 @@
  * Create a provider-neutral runtime log destination.
  */
 export type CreateAppLogDrainRequest = {
-  kind: 'http_json' | 'otlp';
+  kind: 'http_json' | 'otlp' | 'datadog';
   target_url: string;
   /**
    * One Name: value pair; sealed at rest and never returned.
