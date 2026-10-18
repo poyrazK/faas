@@ -1360,5 +1360,56 @@
     "http_documentation_fixtures_passed": 4,
     "native_physical_acceptance": false,
     "production_activation": false
+  },
+  "mail_schema_main_integration": {
+    "integrated_main": "53116be8b3417a7124b46fcc2849e567066cb853",
+    "checked_tree_before_evidence": "aaa7fe9e6fa78bec19fc480945bfa4fb0f38cfcf",
+    "reference_function_source": "93e20dda43c0115dab97bea40ca7fa52d12d526c",
+    "function_host_scheduler_queries_proto_openapi_sdk_unchanged": true,
+    "published_mail_migrations_preserved": 34,
+    "migration_source_digest": "5043510cb3989f8ae58d42d2f5086ef2e188554e6d0928fd8955b883729f1a70",
+    "schema_sha256": "8239e4ac5de809f81fbe12276ff268f4f327c40e7f0d9110173783e81b64f47a",
+    "sqlc_blocks": 18,
+    "published_query_sources_preserved": true,
+    "function_query_sources_preserved": 3,
+    "sqlc_drift": "pass",
+    "clone_registry": {
+      "published_main_records_preserved": 945,
+      "operational_function_journals": 2,
+      "duplicates": 0
+    },
+    "generated_daemons": "pass",
+    "environment_contract": "pass",
+    "documentation_links": "pass",
+    "http_documentation_fixtures_passed": 4,
+    "adr_correction": {
+      "decisions": [
+        {
+          "old_id": "20261015",
+          "new_id": "20261018085140",
+          "stem": "internal-mail-service"
+        },
+        {
+          "old_id": "20261016",
+          "new_id": "20261018085141",
+          "stem": "mail-producer-outbox"
+        }
+      ],
+      "changed_citation_files": [
+        "docs/adr/20261016-mail-producer-outbox.md",
+        "docs/adr/20261016192204-mail-outbox-reconciliation.md",
+        "docs/adr/20261016195608-mail-verification-outbox.md",
+        "docs/ops/env-contract.md",
+        "pkg/api/limits.go",
+        "pkg/daemonunitspec/envcontract.go"
+      ],
+      "older_static_hosting_and_repair_preserved": true,
+      "duplicate_baseline_unchanged": true
+    },
+    "adr_uniqueness": "1806 decisions,1602 distinct,unchanged164-entry baseline",
+    "function_migration_expand_contract": "pass",
+    "fresh_hosted_current_head_checks": "required",
+    "native_physical_acceptance": false,
+    "production_activation": false
   }
 }

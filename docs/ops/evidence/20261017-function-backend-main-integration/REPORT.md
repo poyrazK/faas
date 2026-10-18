@@ -454,6 +454,24 @@ threshold, assertion or deadline was changed. Generation, environment-contract
 and documentation checks pass, including four HTTP fixtures. Fresh hosted checks
 on the published exact head remain required.
 
+## Mail-service schema coexistence (2026-10-18)
+
+Main `53116be8b3417a7124b46fcc2849e567066cb853` adds the default-off mail
+service and 34 migrations. A clean disposable schema replay produces migration
+digest `5043510cb3989f8ae58d42d2f5086ef2e188554e6d0928fd8955b883729f1a70`.
+All eighteen SQLC blocks and every published query source are retained alongside
+the three function sources; generation and drift checks pass. All 945 published
+clone policies are preserved, plus the two operational function journals.
+
+Function host/scheduler/query sources, protobufs, OpenAPI and SDKs match the
+validated `93e20dda4` tree. Generated daemon, environment and documentation checks
+pass, including four HTTP fixtures. The new mail decisions collided with older
+static-hosting and data-repair IDs; only the two mail decisions and their six
+documentation citations move to ADR-20261018085140/20261018085141. Older decisions,
+published migration bytes and the 164-entry duplicate baseline remain intact.
+ADR uniqueness and the three function migration expand/contract checks pass.
+Fresh exact-head hosted checks remain required; native activation remains off.
+
 ## Qualification boundary
 
 Production activation remains disabled. This managed container has no supported

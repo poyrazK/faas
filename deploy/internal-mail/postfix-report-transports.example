@@ -1,0 +1,4 @@
+# Install as /etc/postfix/gregale-report-transports after substituting each
+# verified sending domain. Use an anchored, escaped domain; never a wildcard
+# over arbitrary addresses or domains. No postmap database build for regexp.
+/^bounce\+[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}@example\.com$/ gregale-report:

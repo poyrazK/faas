@@ -22198,7 +22198,7 @@ func (m *MemStore) CountAppTrustedSigners(_ context.Context, accountID, appID st
 // DeletionGraceDuration returns the customer-visible grace window the
 // customer has to restore their account. MemStore and PgStore share
 // the constant so handler tests don't drift from production behavior.
-func DeletionGraceDuration() time.Duration { return 30 * 24 * time.Hour }
+func DeletionGraceDuration() time.Duration { return api.AccountDeletionGraceDays * 24 * time.Hour }
 
 // AppDeleteGraceDuration is the customer-visible restore window for app
 // tombstones. Keep the duration in state so apid, pkg/grace, and both store

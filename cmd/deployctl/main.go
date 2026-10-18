@@ -166,6 +166,7 @@ var defaultTargets = []target{
 	{dir: "deploy/ansible/roles/gatewayd_public_edge_service/files", skip: only("gatewayd-public-edge")},
 	{dir: "deploy/ansible/roles/builderd_service/files", skip: only("builderd")},
 	{dir: "deploy/ansible/roles/s3_gateway_service/files", skip: only("s3-gatewayd")},
+	{dir: "deploy/ansible/roles/internal_mail_service/files", skip: only("maild")},
 	{dir: "deploy/ansible/roles/profiled_service/files", skip: only("profiled")},
 }
 
@@ -182,6 +183,7 @@ func ansibleRoleSkips() map[string]bool {
 		"gatewayd-public-edge": true,
 		"gatewayd-internal":    true,
 		"s3-gatewayd":          true,
+		"maild":                true,
 		"realtimed":            true,
 		"profiled":             true,
 	}
@@ -206,6 +208,7 @@ func only(name string) map[string]bool {
 // ship githubd or meterd (those only exist on the control plane).
 func legacySkips() map[string]bool {
 	return map[string]bool{
+		"maild":                true,
 		"githubd":              true,
 		"meterd":               true,
 		"s3-gatewayd":          true,
