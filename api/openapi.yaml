@@ -56250,6 +56250,7 @@ components:
 
   schemas:
     SelectedTraceApp:
+      description: App identity pinned to an explicit selected-app trace lookup.
       type: object
       required: [id, slug]
       properties:

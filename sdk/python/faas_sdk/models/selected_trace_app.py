@@ -12,6 +12,8 @@ T = TypeVar("T", bound="SelectedTraceApp")
 
 @_attrs_define
 class SelectedTraceApp:
+    """App identity pinned to an explicit selected-app trace lookup."""
+
     id: UUID
     slug: str
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)

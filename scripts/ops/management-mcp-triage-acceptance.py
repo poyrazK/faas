@@ -2,6 +2,7 @@
 """Isolated pinned Codex acceptance, invoked only by the Go triage fixture."""
 import importlib.util
 import json
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -12,57 +13,69 @@ spec.loader.exec_module(acceptance)
 
 
 def main():
-    test_binary, api_base, codex_binary, state_path, key_path = sys.argv[1:]
-    if not api_base.startswith("http://127.0.0.1:"):
+    phase, mcp_base, codex_binary, phase_path = sys.argv[1:]
+    if not mcp_base.startswith("http://127.0.0.1:"):
         raise RuntimeError("Only the isolated loopback fixture is supported")
-    env = {"GREGALE_TEST_TRIAGE_API": api_base, "GREGALE_TEST_TRIAGE_STATE": state_path, "GREGALE_TEST_TRIAGE_KEY": key_path}
-    env_toml = ",".join(k + "=" + acceptance.toml_string(v) for k, v in env.items())
-    config = "mcp_servers={gregale={command=" + acceptance.toml_string(test_binary) + ',args=["-test.run=^TestRegressionTriageCodexSubprocess$"],env={' + env_toml + "},startup_timeout_sec=20,tool_timeout_sec=20}}"
+    if phase not in {"lost-response", "recover", "replay"}:
+        raise RuntimeError("Unknown triage acceptance phase")
+    config = "mcp_servers={gregale={url=" + acceptance.toml_string(mcp_base) + ",startup_timeout_sec=20,tool_timeout_sec=20}}"
     with tempfile.TemporaryDirectory(prefix="gregale-codex-triage-") as workdir:
-        rpc = None
-        def start():
-            client = acceptance.CodexRPC(codex_binary, config, workdir)
-            client.request("initialize", {"clientInfo": {"name": "gregale-triage-acceptance", "version": "1"}, "capabilities": {"experimentalApi": True}})
-            client.send({"method": "initialized"})
-            thread = client.request("thread/start", {"cwd": workdir, "ephemeral": True, "approvalPolicy": "never", "sandbox": "read-only"})
-            return client, thread["thread"]["id"]
-
-        def invoke(tool, arguments, error=False):
-            result = rpc.request("mcpServer/tool/call", {"threadId": thread_id, "server": "gregale", "tool": tool, "arguments": arguments})
-            value = result.get("structuredContent")
-            if not isinstance(value, dict):
-                value = json.loads(next(c["text"] for c in result["content"] if c["type"] == "text"))
-            if bool(result.get("isError")) != error:
-                raise RuntimeError("Unexpected triage tool result: " + tool)
-            return value
-
+        rpc = acceptance.CodexRPC(codex_binary, config, workdir)
         try:
-            rpc, thread_id = start()
+            rpc.request("initialize", {"clientInfo": {"name": "gregale-triage-acceptance", "version": "1"}, "capabilities": {"experimentalApi": True}})
+            rpc.send({"method": "initialized"})
+            thread = rpc.request("thread/start", {"cwd": workdir, "ephemeral": True, "approvalPolicy": "never", "sandbox": "read-only"})
+            thread_id = thread["thread"]["id"]
+            status = rpc.request("mcpServerStatus/list", {"threadId": thread_id})
+            server = next((item for item in status["data"] if item["name"] == "gregale"), None)
+            if not server or server.get("toolsError"):
+                raise RuntimeError("Codex could not discover Gregale triage tools")
+            inventory = server["tools"]
+            names = set(inventory) if isinstance(inventory, dict) else {tool["name"] for tool in inventory}
+            if not {"gregale_plan_regression_action", "gregale_apply_regression_action"} <= names:
+                raise RuntimeError("Gregale triage tool inventory is incomplete")
+
+            def invoke(tool, arguments, error=False):
+                result = rpc.request("mcpServer/tool/call", {"threadId": thread_id, "server": "gregale", "tool": tool, "arguments": arguments})
+                value = result.get("structuredContent")
+                if not isinstance(value, dict):
+                    value = json.loads(next(c["text"] for c in result["content"] if c["type"] == "text"))
+                if bool(result.get("isError")) != error:
+                    raise RuntimeError("Unexpected triage tool result: " + tool)
+                return value
+
+            def save(value):
+                fd = os.open(phase_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                with os.fdopen(fd, "w") as stream:
+                    json.dump(value, stream)
+
             selector = {"app": "alpha", "deployment_id": "11111111-1111-4111-8111-111111111111", "route": "GET /orders", "action": "acknowledge", "reason": "Investigate retained latency"}
-            plan = invoke("gregale_plan_regression_action", selector)
-            # The native fixture commits this first write then drops the response.
-            invoke("gregale_apply_regression_action", {"plan_id": plan["plan_id"]}, error=True)
-            rpc.close()
-            rpc, thread_id = start()
-            receipt = invoke("gregale_apply_regression_action", {"plan_id": plan["plan_id"]})
-            if receipt["state"] != "acknowledged":
-                raise RuntimeError("Lost response did not recover its committed receipt")
-            if invoke("gregale_apply_regression_action", {"plan_id": plan["plan_id"]}) != receipt:
-                raise RuntimeError("Cached receipt changed")
-            for action, state in [("dismiss", "dismissed"), ("resolve", "resolved"), ("reopen", "active")]:
-                selector["action"] = action
+            if phase == "lost-response":
                 plan = invoke("gregale_plan_regression_action", selector)
-                result = invoke("gregale_apply_regression_action", {"plan_id": plan["plan_id"]})
-                if result["state"] != state or "PRIVATE_SQL" in json.dumps(result):
-                    raise RuntimeError("Incorrect or unsafe workflow receipt")
-            rpc.close()
-            rpc, thread_id = start()
-            if invoke("gregale_apply_regression_action", {"plan_id": plan["plan_id"]}) != result:
-                raise RuntimeError("Successful receipt did not survive restart")
-            print(json.dumps({"client": "codex", "fixture": True, "triage_actions": 4, "lost_response": "passed", "encrypted_restart": "passed", "cached_receipt": "passed", "model_requests": 0, "deployment_writes": 0}))
+                # The native fixture commits this write, then drops its response.
+                invoke("gregale_apply_regression_action", {"plan_id": plan["plan_id"]}, error=True)
+                save({"plan_id": plan["plan_id"]})
+            elif phase == "recover":
+                saved = json.loads(Path(phase_path).read_text())
+                receipt = invoke("gregale_apply_regression_action", {"plan_id": saved["plan_id"]})
+                if receipt["state"] != "acknowledged":
+                    raise RuntimeError("Lost response did not recover its committed receipt")
+                if invoke("gregale_apply_regression_action", {"plan_id": saved["plan_id"]}) != receipt:
+                    raise RuntimeError("Cached receipt changed")
+                for action, state in [("dismiss", "dismissed"), ("resolve", "resolved"), ("reopen", "active")]:
+                    selector["action"] = action
+                    plan = invoke("gregale_plan_regression_action", selector)
+                    receipt = invoke("gregale_apply_regression_action", {"plan_id": plan["plan_id"]})
+                    if receipt["state"] != state or "PRIVATE_SQL" in json.dumps(receipt):
+                        raise RuntimeError("Incorrect or unsafe workflow receipt")
+                save({"plan_id": plan["plan_id"], "receipt": receipt})
+            else:
+                saved = json.loads(Path(phase_path).read_text())
+                if invoke("gregale_apply_regression_action", {"plan_id": saved["plan_id"]}) != saved["receipt"]:
+                    raise RuntimeError("Successful receipt did not survive bridge restart")
+            print(json.dumps({"client": "codex", "fixture": True, "phase": phase, "result": "passed", "model_requests": 0, "deployment_writes": 0}))
         finally:
-            if rpc:
-                rpc.close()
+            rpc.close()
 
 
 if __name__ == "__main__":

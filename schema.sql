@@ -45,6 +45,20 @@ CREATE TYPE public.compute_node_lifecycle AS ENUM (
 
 
 --
+-- Name: advance_regression_review_version(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.advance_regression_review_version() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    NEW.review_version := gen_random_uuid();
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: alert_presets_set_updated_at(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -27236,7 +27250,6 @@ CREATE TABLE public.debug_regression_observations (
     error_rate_base_pct numeric(5,2) DEFAULT 0 NOT NULL,
     error_count integer DEFAULT 0 NOT NULL,
     review_version uuid DEFAULT '00000000-0000-0000-0000-000000000001'::uuid NOT NULL,
-    CONSTRAINT debug_regression_review_version_nonzero CHECK ((review_version <> '00000000-0000-0000-0000-000000000000'::uuid)),
     CONSTRAINT debug_regression_observations_affected_count_check CHECK ((affected_count >= 0)),
     CONSTRAINT debug_regression_observations_error_count_check CHECK ((error_count >= 0)),
     CONSTRAINT debug_regression_observations_error_rate_base_pct_check CHECK (((error_rate_base_pct >= (0)::numeric) AND (error_rate_base_pct <= (100)::numeric))),
@@ -27247,7 +27260,8 @@ CREATE TABLE public.debug_regression_observations (
     CONSTRAINT debug_regression_observations_regression_factor_check CHECK ((regression_factor >= 1.0)),
     CONSTRAINT debug_regression_observations_route_check CHECK (((length(route) >= 1) AND (length(route) <= 256))),
     CONSTRAINT debug_regression_observations_state_check CHECK ((state = ANY (ARRAY['active'::text, 'acknowledged'::text, 'dismissed'::text, 'resolved'::text]))),
-    CONSTRAINT debug_regression_observations_suspected_dependency_check CHECK (((suspected_dependency IS NULL) OR ((jsonb_typeof(suspected_dependency) = 'object'::text) AND (octet_length((suspected_dependency)::text) <= 1024))))
+    CONSTRAINT debug_regression_observations_suspected_dependency_check CHECK (((suspected_dependency IS NULL) OR ((jsonb_typeof(suspected_dependency) = 'object'::text) AND (octet_length((suspected_dependency)::text) <= 1024)))),
+    CONSTRAINT debug_regression_review_version_nonzero CHECK ((review_version <> '00000000-0000-0000-0000-000000000000'::uuid))
 );
 
 
@@ -66368,6 +66382,13 @@ CREATE TRIGGER registry_rootfs_private_guard BEFORE INSERT OR DELETE OR UPDATE O
 
 
 --
+-- Name: debug_regression_observations regression_review_version; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER regression_review_version BEFORE INSERT OR UPDATE ON public.debug_regression_observations FOR EACH ROW EXECUTE FUNCTION public.advance_regression_review_version();
+
+
+--
 -- Name: reserved_ip_inventory reserved_ip_inventory_set_updated_at_trg; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -79655,14 +79676,3 @@ ALTER TABLE ONLY public.workflow_webhook_receipts
 
 --
 --
-
--- Management regression review invalidation (ADR-20261017210000).
-CREATE FUNCTION public.advance_regression_review_version() RETURNS trigger
-LANGUAGE plpgsql AS $$
-BEGIN
-    NEW.review_version := gen_random_uuid();
-    RETURN NEW;
-END;
-$$;
-CREATE TRIGGER regression_review_version BEFORE INSERT OR UPDATE ON public.debug_regression_observations
-    FOR EACH ROW EXECUTE FUNCTION public.advance_regression_review_version();

@@ -3,7 +3,8 @@ package mcpmanagement
 
 import (
 	"bytes"
-	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,27 +13,6 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/onebox-faas/faas/pkg/api"
 )
-
-func TestRegressionTriageCodexSubprocess(t *testing.T) {
-	base := os.Getenv("GREGALE_TEST_TRIAGE_API")
-	if base == "" {
-		t.Skip("isolated Codex fixture subprocess only")
-	}
-	store, err := OpenStateStore(os.Getenv("GREGALE_TEST_TRIAGE_STATE"), os.Getenv("GREGALE_TEST_TRIAGE_KEY"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	s, err := NewServer(api.NewClient(base, testToken), Options{APIBase: base, Token: testToken, AllowWrites: true, planStore: store, planNamespace: "codex-triage"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = s.Run(context.Background(), &mcp.StdioTransport{})
-	_ = store.Close()
-	if err != nil {
-		t.Fatal(err)
-	}
-	os.Exit(0)
-}
 
 func TestCodexRegressionTriageAcceptance(t *testing.T) {
 	binary := os.Getenv("GREGALE_MCP_CODEX_BINARY")
@@ -44,25 +24,46 @@ func TestCodexRegressionTriageAcceptance(t *testing.T) {
 	f.lost = true
 	f.mu.Unlock()
 	dir := t.TempDir()
+	if err := os.Chmod(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
 	key := filepath.Join(dir, "key")
 	statePath := filepath.Join(dir, "state")
 	if err := os.WriteFile(key, bytes.Repeat([]byte{41}, 32), 0600); err != nil {
-		t.Fatal(err)
-	}
-	executable, err := os.Executable()
-	if err != nil {
 		t.Fatal(err)
 	}
 	script, err := filepath.Abs("../../scripts/ops/management-mcp-triage-acceptance.py")
 	if err != nil {
 		t.Fatal(err)
 	}
-	command := exec.CommandContext(t.Context(), "python3", script, executable, b.URL, binary, statePath, key)
-	output, err := command.CombinedOutput()
-	if err != nil {
-		t.Fatalf("Codex triage acceptance: %v\n%s", err, output)
+	// Durable state belongs to one HTTP bridge, as in the CLI. Codex can open
+	// both global and thread clients; separate stdio children cannot share its
+	// exclusive journal lease. Reopen the bridge itself between client phases.
+	for _, phase := range []string{"lost-response", "recover", "replay"} {
+		store, err := OpenStateStore(statePath, key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		server, err := NewServer(api.NewClient(b.URL, testToken), Options{APIBase: b.URL, Token: testToken, AllowWrites: true, planStore: store, planNamespace: "codex-triage"})
+		if err != nil {
+			_ = store.Close()
+			t.Fatal(err)
+		}
+		handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, nil)
+		bridge := httptest.NewServer(handler)
+		command := exec.CommandContext(t.Context(), "python3", script, phase, bridge.URL, binary, filepath.Join(dir, "client-phase.json"))
+		output, err := command.CombinedOutput()
+		bridge.CloseClientConnections()
+		bridge.Close()
+		closeErr := store.Close()
+		if err != nil {
+			t.Fatalf("Codex triage %s: %v\n%s", phase, err, output)
+		}
+		if closeErr != nil {
+			t.Fatal(closeErr)
+		}
+		t.Log(string(output))
 	}
-	t.Log(string(output))
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.writes != 4 {
