@@ -106,6 +106,7 @@ func TruncateRunes(s string, maxRunes int) string {
 // metrics-stale alerting detects missing, expired, or invalid task gauges and,
 // for min=0 worker apps, the dedicated observer heartbeat.
 var AllowedAlertRuleMetrics = []string{
+	MetricMCPProtocolErrorRate, MetricMCPProtocolP95,
 	"event_recovery_notification_admission_overdue_jobs",
 	"event_recovery_notification_admission_dead_jobs",
 	"event_recovery_notification_admission_unknown_jobs",
@@ -184,7 +185,7 @@ var AllowedAlertRuleMetrics = []string{
 	"mcp_task_promotion_hold_age_seconds",
 	"mcp_policy_unconverged_gateways",
 	"mcp_policy_unverified",
-	MetricMCPCatalogDrift, MetricMCPCatalogMonitorUnavailable,
+	MetricMCPReadinessUnhealthy, MetricMCPCatalogDrift, MetricMCPCatalogMonitorUnavailable,
 	MetricMCPOAuthReauthorization, MetricMCPOAuthRenewalFailed, MetricMCPOAuthRetirementExpiring, MetricMCPOAuthIssuanceUnknown,
 }
 
@@ -244,7 +245,7 @@ func AlertRuleActionAllowedForMetric(metric, action string) bool {
 		IsEdgeRuleAlertMetric(metric) {
 		return action == "" || action == "webhook"
 	}
-	if IsMCPConnectionHealthMetric(metric) || IsMCPCatalogMonitorMetric(metric) || IsMCPPolicyConvergenceMetric(metric) || metric == "mcp_tasks_oldest_age_seconds" || metric == "mcp_tasks_metrics_stale" || metric == "mcp_task_promotion_hold_age_seconds" {
+	if metric == MetricMCPReadinessUnhealthy || IsMCPProtocolMetric(metric) || IsMCPConnectionHealthMetric(metric) || IsMCPCatalogMonitorMetric(metric) || IsMCPPolicyConvergenceMetric(metric) || metric == "mcp_tasks_oldest_age_seconds" || metric == "mcp_tasks_metrics_stale" || metric == "mcp_task_promotion_hold_age_seconds" {
 		return action == "" || action == "webhook"
 	}
 	return true
@@ -254,6 +255,9 @@ func AlertRuleActionAllowedForMetric(metric, action string) bool {
 // AppID is the URL slug, not the body — same shape as the per-app
 // custom-domain and metric routes.
 type CreateAlertRuleRequest struct {
+	MCPReadinessScope               string  `json:"mcp_readiness_scope,omitempty"`
+	MCPMinCalls                     *int    `json:"mcp_min_calls,omitempty"`
+	MCPForMinutes                   *int    `json:"mcp_for_minutes,omitempty"`
 	EventSubscriptionID             string  `json:"event_subscription_id,omitempty"`
 	EdgeRuleID                      string  `json:"edge_rule_id,omitempty"` // ADR-1192
 	PostDeployRollbackWindowSeconds *int    `json:"post_deploy_rollback_window_seconds,omitempty"`
@@ -282,6 +286,9 @@ type CreateAlertRuleRequest struct {
 // handler rejects metric-family swaps with 400
 // ErrAlertRuleInvalid("metric family cannot change; delete and recreate").
 type UpdateAlertRuleRequest struct {
+	MCPReadinessScope               *string  `json:"mcp_readiness_scope,omitempty"`
+	MCPMinCalls                     *int     `json:"mcp_min_calls,omitempty"`
+	MCPForMinutes                   *int     `json:"mcp_for_minutes,omitempty"`
 	PostDeployRollbackWindowSeconds *int     `json:"post_deploy_rollback_window_seconds,omitempty"`
 	Name                            *string  `json:"name,omitempty"`
 	Enabled                         *bool    `json:"enabled,omitempty"`
@@ -313,6 +320,9 @@ type RotateAlertRuleSecretRequest struct {
 // state.* typed values at the boundary (handles the import cycle
 // for us).
 type AlertRuleResponse struct {
+	MCPReadinessScope               string  `json:"mcp_readiness_scope,omitempty"`
+	MCPMinCalls                     int     `json:"mcp_min_calls,omitempty"`
+	MCPForMinutes                   int     `json:"mcp_for_minutes,omitempty"`
 	EventSubscriptionID             string  `json:"event_subscription_id,omitempty"`
 	EdgeRuleID                      string  `json:"edge_rule_id,omitempty"`
 	PostDeployRollbackWindowSeconds int     `json:"post_deploy_rollback_window_seconds,omitempty"`
@@ -343,6 +353,9 @@ type AlertRuleResponse struct {
 // handler test can pin the mapping without dragging pkg/state into
 // pkg/api_test.
 type AlertRuleRow struct {
+	MCPReadinessScope               string
+	MCPMinCalls                     int
+	MCPForMinutes                   int
 	EventSubscriptionID             string
 	EdgeRuleID                      string
 	PostDeployRollbackWindowSeconds int
@@ -376,6 +389,7 @@ type AlertRuleRow struct {
 // at the seam so neither side imports the other (precedent: PR #327).
 func AlertRuleResponseFromRow(r AlertRuleRow) AlertRuleResponse {
 	return AlertRuleResponse{
+		MCPReadinessScope: r.MCPReadinessScope, MCPMinCalls: r.MCPMinCalls, MCPForMinutes: r.MCPForMinutes,
 		EventSubscriptionID:             r.EventSubscriptionID,
 		EdgeRuleID:                      r.EdgeRuleID,
 		PostDeployRollbackWindowSeconds: r.PostDeployRollbackWindowSeconds,
@@ -502,6 +516,12 @@ func IsEventConsumerAlertMetric(metric string) bool {
 // AlertMetricActionRestriction explains why an observation-only metric cannot
 // run a deployment action.
 func AlertMetricActionRestriction(metric string) string {
+	if metric == MetricMCPReadinessUnhealthy {
+		return "MCP readiness alerts support webhook action only"
+	}
+	if IsMCPProtocolMetric(metric) {
+		return "MCP performance alerts support webhook action only"
+	}
 	if IsMCPConnectionHealthMetric(metric) {
 		return "MCP connection health alerts support webhook action only"
 	}

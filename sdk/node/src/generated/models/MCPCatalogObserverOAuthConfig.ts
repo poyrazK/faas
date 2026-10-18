@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Explicit OAuth refresh grant for one app and role; credentials are app default-scope secret references.
+ * Explicit OAuth refresh grant for one app and role; credentials are app secret references in the connection environment.
  */
 export type MCPCatalogObserverOAuthConfig = {
   /**
@@ -44,6 +44,10 @@ export type MCPCatalogObserverOAuthConfig = {
    * Explicit token authentication; defaults to public none or confidential basic except Google confidential post
    */
   token_auth_method?: 'none' | 'client_secret_basic' | 'client_secret_post';
+  /**
+   * Registered HTTPS console callback for guided browser authorization; omitted for loopback flows
+   */
+  browser_redirect_uri?: string;
   /**
    * Guided loopback callback port; 0 chooses a dynamic port
    */

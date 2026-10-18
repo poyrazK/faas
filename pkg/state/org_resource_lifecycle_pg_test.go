@@ -54,6 +54,38 @@ VALUES ($1,$2,'unreviewed','sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 	}
 }
 
+func TestPostgresOrgResourceUnreviewedMCPBlocksErasure(t *testing.T) {
+	pool := pgtest.OpenMigrated(t)
+	store := state.NewPgStore(pool)
+	f := setupOffboarding(t, store)
+	ctx := t.Context()
+	if err := store.UpdateAccountProviderCustomerID(ctx, f.org.ID, "cus_mcp_guard"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdateAccountStripeSubscriptionItem(ctx, f.org.ID, "si_mcp_guard"); err != nil {
+		t.Fatal(err)
+	}
+	id := uuid.NewString()
+	if _, err := pool.Exec(ctx, `INSERT INTO mcp_readiness_maintenance_windows
+(id,account_id,app_id,scope,starts_at,ends_at,reason,created_by,created_at)
+VALUES ($1,$2,$3,'production',now(),now()+interval '1 hour','unreviewed',$2,now())`, id, f.actor.ID, f.app.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RemoveOrgMember(ctx, f.org.ID, f.actor.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkAccountDeletionPending(ctx, f.actor.ID); !errors.Is(err, state.ErrOrgAppOwnershipPending) {
+		t.Fatalf("unreviewed MCP maintenance allowed erasure: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `DELETE FROM accounts WHERE id=$1`, f.actor.ID); err == nil {
+		t.Fatal("raw account deletion bypassed MCP maintenance ownership guard")
+	}
+	var exists bool
+	if err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM mcp_readiness_maintenance_windows WHERE id=$1)`, id).Scan(&exists); err != nil || !exists {
+		t.Fatalf("MCP maintenance ownership guard discarded the record: %v", err)
+	}
+}
+
 func TestPostgresOrgResourceUnreviewedConnectionCapacityBlocksErasure(t *testing.T) {
 	pool := pgtest.OpenMigrated(t)
 	store := state.NewPgStore(pool)

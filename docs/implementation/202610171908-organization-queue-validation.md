@@ -275,3 +275,34 @@ successful jobs and one intentional image-matrix skip. The actual main branch
 had advanced while the PR's base-SHA field remained stale. Subsequent
 mergeability checks must inspect the current branch ref directly. Production
 deployment and native KVM acceptance remain pending.
+
+## Integration with MCP readiness and operations
+
+Main through `637ef59e8` is integrated. Both sides' SQL query sets are retained
+and generated bindings are rebuilt. Eight MCP restart fixtures use the
+underlying PostgreSQL pool required by the existing store constructor. Main's
+parallel starter qualification and trusted main race-cache restore families
+are retained, together with every qualification command.
+
+The twenty-three new MCP migrations precede the ownership range and do not
+replace its runtime functions. All nine erasure-guard definitions retain the
+four new account-linked MCP incident, maintenance and operator-action tables.
+A new regression verifies that both identity-erasure entry points preserve an
+unreviewed maintenance window after offboarding.
+
+The clone registry explicitly classifies seventeen new MCP tables and six
+additional alert fields. Configuration and customer-data records retain their
+isolation blockers; deployment observations and cursors retain reset boundaries.
+The registry's 896 unique policies match the migrated table and column inventory.
+Existing organization state cases and the new MCP erasure case pass in the
+broader run. Following registry-category corrections, focused unreviewed-resource
+erasure and clone-schema checks pass (12.489s), including the new MCP blockers.
+
+Fresh canonical schema/SQL generation and deterministic SQL checks, migration
+lint and OpenAPI duplicate-key/parity checks pass. Migration apply-and-walk,
+replay of all seven ownership migrations and ownership down/up recovery pass
+(25.876s). Full Go SDK tests/vet, Node generation/build and full Python generation
+with the pinned 0.29.0 generator pass; 61 Python Auth, organization and MCP
+readiness client tests pass. These local reruns use Go 1.26.9 and PostgreSQL 16
+without race detection. Fresh PR checks must qualify the integrated source
+before merge; production deployment and native KVM acceptance remain pending.

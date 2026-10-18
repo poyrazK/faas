@@ -55,6 +55,10 @@ Internal Product Control revisions, customer/billing records, onboarding,
 notifications and email preferences also require separate ownership coverage.
 Their account references block erasure while that coverage remains unreviewed.
 
+MCP readiness incidents, maintenance windows and operator-action receipts also
+retain account references. They block identity erasure until their organization
+ownership and recovery paths receive separate review.
+
 Denormalized core child organization references follow the app root. The
 migration repairs legacy personal-org references without changing billing
 subject UUIDs, encrypted bytes or usage quantities. New writes enforce the same

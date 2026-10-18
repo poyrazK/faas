@@ -35,6 +35,7 @@ export { InstancesService } from './generated/services/InstancesService.js';
 export { InvocationsService } from './generated/services/InvocationsService.js';
 export { KeysService } from './generated/services/KeysService.js';
 export { ManagedPostgresService } from './generated/services/ManagedPostgresService.js';
+export { McpService } from './generated/services/McpService.js';
 export { MetaService } from './generated/services/MetaService.js';
 export { MfaService } from './generated/services/MfaService.js';
 export { OperationsService } from './generated/services/OperationsService.js';

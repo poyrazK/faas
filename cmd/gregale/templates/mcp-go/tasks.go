@@ -421,10 +421,13 @@ func startMCPTaskRuntime(config mcpConfig, role string) (*mcpTaskRuntime, error)
 				runtime.payloadEncryptionVersion = 1
 			}
 		}
-		if err := runtime.initialize(ctx); err != nil {
+		if err := checkTaskSchema(ctx, runtime.pool); err != nil {
 			pool.Close()
-			return nil, errors.New("could not initialize the durable MCP task table")
+			return nil, errors.New("MCP Task schema is unavailable or incompatible; run tasks-migrate apply with the migration account")
 		}
+	} else if err := checkTaskSchema(ctx, pool); err != nil {
+		pool.Close()
+		return nil, errors.New("MCP Task observer schema is unavailable or incompatible; run tasks-migrate apply")
 	} else if _, err := runtime.queueMetrics(ctx); err != nil {
 		pool.Close()
 		return nil, errors.New("MCP task observer health check failed; verify its read-only database grants")
@@ -548,8 +551,8 @@ func (runtime *mcpTaskRuntime) close() {
 	})
 }
 
-func (runtime *mcpTaskRuntime) initialize(ctx context.Context) error {
-	tx, err := runtime.pool.Begin(ctx)
+func migrateTaskSchema(ctx context.Context, pool *pgxpool.Pool) error {
+	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
@@ -557,7 +560,22 @@ func (runtime *mcpTaskRuntime) initialize(ctx context.Context) error {
 	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, taskTable); err != nil {
 		return err
 	}
+	if err := checkTaskMigrationSchema(ctx, tx); err != nil {
+		return err
+	}
+	var installed bool
+	if err := tx.QueryRow(ctx, `SELECT to_regclass('gregale_mcp_task_starter_schema') IS NOT NULL`).Scan(&installed); err != nil {
+		return err
+	}
+	if installed {
+		var version int
+		if err := tx.QueryRow(ctx, `SELECT version FROM gregale_mcp_task_starter_schema WHERE id=1`).Scan(&version); err != nil || version != 1 {
+			return errors.New("unsupported MCP Task starter schema version")
+		}
+	}
 	statements := []string{
+		`CREATE TABLE IF NOT EXISTS gregale_mcp_task_starter_schema (id integer PRIMARY KEY CHECK (id=1), version integer NOT NULL CHECK (version>0))`,
+		`INSERT INTO gregale_mcp_task_starter_schema (id,version) VALUES (1,1) ON CONFLICT (id) DO NOTHING`,
 		`CREATE TABLE IF NOT EXISTS gregale_mcp_tasks (
 			namespace text NOT NULL, task_id uuid NOT NULL, owner_hash bytea NOT NULL,
 			tool_name text NOT NULL, handler_version text NOT NULL, arguments_encrypted bytea NOT NULL,

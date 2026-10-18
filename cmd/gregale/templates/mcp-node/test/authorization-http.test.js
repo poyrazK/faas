@@ -107,7 +107,7 @@ for (const version of ['2026-07-28', '2025-11-25']) test(`${version}: caller-spe
   ]) {
     const denied = await request(endpoint, version, reader, 'tools/call', { name, arguments: arguments_ }, headers);
     assert.equal(denied.response.status, 403);
-    assert.equal(logs.length, 0, 'denied tool callback must never execute');
+    assert.equal(logs.filter(event => event.event === 'mcp_tool_call').length, 0, 'denied tool callback must never execute');
     if (name === 'add') {
       assert.match(denied.response.headers.get('www-authenticate'), /error="insufficient_scope"/);
       assert.match(denied.response.headers.get('www-authenticate'), /scope="mcp:tools math:read math:write"/);
@@ -121,12 +121,12 @@ for (const version of ['2026-07-28', '2025-11-25']) test(`${version}: caller-spe
   const add = await request(endpoint, version, writer, 'tools/call', { name: 'add', arguments: { a: 7, b: 5 } });
   assert.equal(add.response.status, 200);
   assert.match(add.text, /"sum":12/);
-  assert.deepEqual(logs.map(log => log.tool), ['greet', 'add']);
+  assert.deepEqual(logs.filter(event => event.event === 'mcp_tool_call').map(log => log.tool), ['greet', 'add']);
   for (const value of [reader, writer, 'private argument', 'private-customer-identity']) assert.ok(!JSON.stringify(logs).includes(value));
   for (const credential of [undefined, 'forged-token', await token('math:read math:write')]) {
     const denied = await request(endpoint, version, credential, 'tools/call', { name: 'add', arguments: { a: 1, b: 2 } });
     assert.equal(denied.response.status, credential?.includes('.') ? 403 : 401);
-    assert.equal(logs.length, 2);
+    assert.equal(logs.filter(event => event.event === 'mcp_tool_call').length, 2);
   }
 });
 test('empty policy produces an empty catalog and rejects all execution', async t => {
@@ -139,7 +139,7 @@ test('empty policy produces an empty catalog and rejects all execution', async t
   assert.equal((await request(endpoint, '2026-07-28', credential, 'tools/call', { name: 'greet', arguments: { name: 'visitor' } })).response.status, 403);
   assert.equal((await request(endpoint, '2026-07-28', credential, 'resources/read', { uri: 'greeting://welcome' })).response.status, 403);
   assert.equal((await request(endpoint, '2026-07-28', credential, 'prompts/get', { name: 'summarize', arguments: { text: 'visitor' } })).response.status, 403);
-  assert.equal(logs.length, 0);
+  assert.equal(logs.filter(event => event.event === 'mcp_tool_call').length, 0);
 });
 test('legacy batched requests cannot bypass disabled tool registration', async t => {
   const { endpoint, logs } = await serve(t);
@@ -149,5 +149,5 @@ test('legacy batched requests cannot bypass disabled tool registration', async t
     body: JSON.stringify([envelope('tools/call', { name: 'add', arguments: { a: 1, b: 2 } }, '2025-11-25')]),
   });
   assert.match(await response.text(), /"error"/);
-  assert.equal(logs.length, 0);
+  assert.equal(logs.filter(event => event.event === 'mcp_tool_call').length, 0);
 });

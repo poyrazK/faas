@@ -38,6 +38,7 @@ func (f *nativeArtifactRetirementRecoveryFake) RecoverNativeQualificationArtifac
 
 func TestNativeArtifactRetirementRecoveryRetriesAfterFailureAndStopsOnShutdown(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
 	recoverer := &nativeArtifactRetirementRecoveryFake{cancel: cancel}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	done := make(chan struct{})
@@ -59,5 +60,18 @@ func TestNativeArtifactRetirementRecoveryRetriesAfterFailureAndStopsOnShutdown(t
 	}
 	if len(recoverer.limits) != 3 || recoverer.limits[0] != api.NativeSnapshotPublicationRecoveryBatchMax || recoverer.limits[1] != api.NativeSnapshotPublicationRecoveryBatchMax || recoverer.limits[2] != api.NativeSnapshotPublicationRecoveryBatchMax {
 		t.Fatalf("retirement recovery limits = %v", recoverer.limits)
+	}
+}
+
+func TestNativeArtifactRetirementRecoveryAlreadyCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	recoverer := &nativeArtifactRetirementRecoveryFake{cancel: cancel}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	// The tiny interval makes a tick ready alongside cancellation. Selecting
+	// that tick must still leave storage untouched during shutdown.
+	runNativeArtifactRetirementRecovery(ctx, recoverer, time.Nanosecond, log)
+	if recoverer.calls != 0 {
+		t.Fatalf("retirement recovery made %d calls after cancellation", recoverer.calls)
 	}
 }

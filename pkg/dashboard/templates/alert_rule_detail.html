@@ -62,6 +62,7 @@
         <dt>Metric</dt><dd><code>{{.Data.Rule.Metric}}</code></dd>
         <dt>Comparison</dt><dd><code>{{.Data.Rule.Comparison}}</code> <code>{{.Data.Rule.Threshold}}</code></dd>
         <dt>Window</dt><dd><code>{{.Data.Rule.WindowSpec}}</code></dd>
+        {{if .Data.Rule.MCPMinCalls}}<dt>Minimum observations</dt><dd>{{.Data.Rule.MCPMinCalls}}</dd><dt>Sustained duration</dt><dd>{{.Data.Rule.MCPForMinutes}} minutes</dd>{{end}}
         <dt>Action</dt><dd><code>{{.Data.Rule.Action}}</code></dd>
         <dt>State</dt><dd>{{if eq .Data.Rule.State "firing"}}<span class="badge critical">firing</span>{{else if eq .Data.Rule.State "pending"}}<span class="badge warning">pending</span>{{else}}<span class="badge info">{{.Data.Rule.State}}</span>{{end}}</dd>
         <dt>Enabled</dt><dd>{{if .Data.Rule.Enabled}}<span class="badge info">enabled</span>{{else}}<span class="badge warning">disabled</span>{{end}}</dd>
@@ -114,10 +115,10 @@
         <tbody>
           {{range .Data.Deliveries}}
           <tr>
-            <td>{{.At.Format "2006-01-02 15:04:05 UTC"}}</td>
-            <td><code>{{.Status}}</code></td>
-            <td><code>{{.Channel}}</code></td>
-            <td>{{if .Error}}<code>{{.Error}}</code>{{else}}<span class="empty">∅</span>{{end}}</td>
+            <td>{{.FiredAt.Format "2006-01-02 15:04:05 UTC"}}</td>
+            <td><code>{{.Status}}</code>{{if .LastStatusCode}} · HTTP {{.LastStatusCode}}{{end}} · {{.AttemptCount}} attempts</td>
+            <td>{{if .ReadinessEventID}}readiness notification{{else}}webhook{{end}}{{if .ReadinessDestination}} · {{.ReadinessDestination}}{{end}}{{if .ReadinessFailoverReason}}<br>{{.ReadinessFailoverReason}}{{end}}{{if .ReadinessEventID}}<br>Event: <code>{{.ReadinessEventID}}</code>{{end}}</td>
+            <td>{{if .LastError}}<code>{{.LastError}}</code>{{else}}<span class="empty">∅</span>{{end}}</td>
           </tr>
           {{end}}
         </tbody>

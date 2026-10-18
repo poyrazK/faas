@@ -16924,14 +16924,15 @@ INSERT INTO alert_historical_rollback_claims(deployment_id,fire_id)
 
 -- name: InsertCustomerAlertRule :one
 INSERT INTO alert_rules(account_id,app_id,name,enabled,metric,comparison,threshold,window_spec,failure_source,event_subscription_id,
- edge_rule_id,action,webhook_url,webhook_secret_sealed,cooldown_minutes,state,post_deploy_rollback_window_seconds)
+ edge_rule_id,action,webhook_url,webhook_secret_sealed,cooldown_minutes,state,post_deploy_rollback_window_seconds,mcp_min_calls,mcp_for_minutes,mcp_readiness_scope)
 VALUES(sqlc.arg(account_id),sqlc.narg(app_id),sqlc.arg(name),sqlc.arg(enabled),sqlc.arg(metric),sqlc.arg(comparison),
  sqlc.arg(threshold),sqlc.arg(window_spec),sqlc.narg(failure_source),sqlc.narg(event_subscription_id),sqlc.narg(edge_rule_id),sqlc.arg(action),sqlc.arg(webhook_url),
- sqlc.arg(webhook_secret_sealed),sqlc.arg(cooldown_minutes),sqlc.arg(state),sqlc.arg(post_deploy_rollback_window_seconds))
+ sqlc.arg(webhook_secret_sealed),sqlc.arg(cooldown_minutes),sqlc.arg(state),sqlc.arg(post_deploy_rollback_window_seconds),sqlc.arg(mcp_min_calls),sqlc.arg(mcp_for_minutes),sqlc.arg(mcp_readiness_scope))
 RETURNING *;
 
 -- name: UpdateCustomerAlertRule :one
-UPDATE alert_rules SET name=coalesce(sqlc.narg(name)::text,name),enabled=coalesce(sqlc.narg(enabled)::boolean,enabled),
+UPDATE alert_rules SET mcp_min_calls=coalesce(sqlc.narg(mcp_min_calls)::integer,mcp_min_calls),
+ mcp_for_minutes=coalesce(sqlc.narg(mcp_for_minutes)::integer,mcp_for_minutes), name=coalesce(sqlc.narg(name)::text,name),enabled=coalesce(sqlc.narg(enabled)::boolean,enabled),
  metric=coalesce(sqlc.narg(metric)::text,metric),comparison=coalesce(sqlc.narg(comparison)::text,comparison),
  threshold=coalesce(sqlc.narg(threshold)::double precision,threshold),window_spec=coalesce(sqlc.narg(window_spec)::text,window_spec),
  action=coalesce(sqlc.narg(action)::text,action),webhook_url=coalesce(sqlc.narg(webhook_url)::text,webhook_url),
@@ -21973,3 +21974,174 @@ AND u.window_from>=sqlc.arg(period_start)::timestamptz AND u.window_from<sqlc.ar
 SELECT o.id,o.personal_org,o.resource_ownership_enabled FROM orgs o
 WHERE o.id=coalesce(sqlc.narg(org_id)::uuid,(SELECT p.id FROM orgs p WHERE p.personal_org AND p.personal_owner_account_id=sqlc.arg(account_id)::uuid))
 AND NOT o.deleted_pending AND o.status='active' FOR UPDATE OF o;
+
+
+-- name: ReadMCPNotificationOwnedApp :one
+SELECT id FROM apps WHERE id=sqlc.arg(app_id) AND account_id=sqlc.arg(account_id) AND status<>'deleted';
+
+-- name: ListMCPNotificationRules :many
+SELECT * FROM alert_rules WHERE account_id=sqlc.arg(account_id) AND app_id=sqlc.arg(app_id)
+ AND metric='mcp_readiness_unhealthy' AND action='webhook'
+ AND (sqlc.arg(scope)::text='' OR mcp_readiness_scope='' OR mcp_readiness_scope=sqlc.arg(scope))
+ AND (sqlc.narg(after_id)::uuid IS NULL OR id>sqlc.narg(after_id))
+ ORDER BY id LIMIT sqlc.arg(page_limit);
+
+-- name: ReadMCPNotificationHead :one
+SELECT sqlc.embed(e), count(*) OVER() AS outstanding_count,
+ (min(e.occurred_at) OVER())::timestamptz AS oldest_at,i.resolved_at
+FROM mcp_readiness_incident_events e JOIN mcp_readiness_incidents i ON i.id=e.incident_id
+WHERE e.rule_id=sqlc.arg(rule_id) AND i.account_id=sqlc.arg(account_id) AND i.app_id=sqlc.arg(app_id)
+ AND e.delivery_status NOT IN ('delivered','suppressed','abandoned')
+ORDER BY e.sequence LIMIT 1;
+
+-- name: ReadMCPNotificationAction :one
+SELECT * FROM mcp_readiness_notification_actions WHERE app_id=sqlc.arg(app_id) AND request_id=sqlc.arg(request_id);
+
+-- name: ReadMCPNotificationEventRule :one
+SELECT e.rule_id FROM mcp_readiness_incident_events e JOIN mcp_readiness_incidents i ON i.id=e.incident_id
+WHERE e.id=sqlc.arg(event_id) AND i.account_id=sqlc.arg(account_id) AND i.app_id=sqlc.arg(app_id);
+
+-- name: LockMCPNotificationEvent :one
+SELECT * FROM mcp_readiness_incident_events WHERE id=sqlc.arg(event_id) FOR UPDATE;
+
+-- name: HasEarlierMCPNotification :one
+SELECT EXISTS(SELECT 1 FROM mcp_readiness_incident_events e JOIN mcp_readiness_incidents i ON i.id=e.incident_id
+WHERE e.rule_id=sqlc.arg(rule_id) AND e.sequence<sqlc.arg(sequence)
+ AND e.delivery_status NOT IN ('delivered','suppressed','abandoned')
+ AND i.account_id=sqlc.arg(account_id) AND i.app_id=sqlc.arg(app_id));
+
+-- name: ApplyMCPNotificationAction :exec
+UPDATE mcp_readiness_incident_events SET delivery_version=sqlc.arg(delivery_version),delivery_status=sqlc.arg(delivery_status),
+ available_at=sqlc.arg(available_at),lease_token=NULL,lease_until=NULL,last_operator_action=sqlc.arg(receipt)
+WHERE id=sqlc.arg(event_id);
+
+-- name: InsertMCPNotificationAction :exec
+INSERT INTO mcp_readiness_notification_actions(app_id,account_id,request_id,event_id,action,expected_version,reason,receipt,destination)
+VALUES(sqlc.arg(app_id),sqlc.arg(account_id),sqlc.arg(request_id),sqlc.arg(event_id),sqlc.arg(action),sqlc.arg(expected_version),sqlc.arg(reason),sqlc.arg(receipt),sqlc.arg(destination));
+
+-- name: ReadMCPAttentionSnapshot :one
+SELECT snapshot FROM mcp_readiness_incident_attention WHERE incident_id=sqlc.arg(incident_id);
+
+-- name: SaveMCPAttentionSnapshot :exec
+INSERT INTO mcp_readiness_incident_attention(incident_id,snapshot) VALUES(sqlc.arg(incident_id),sqlc.arg(snapshot))
+ON CONFLICT(incident_id) DO UPDATE SET snapshot=excluded.snapshot;
+
+-- name: ReadMCPAttentionIncident :one
+SELECT * FROM mcp_readiness_incidents WHERE id=sqlc.arg(incident_id) AND account_id=sqlc.arg(account_id) AND app_id=sqlc.arg(app_id);
+
+-- name: ListMCPAttentionIncidents :many
+SELECT sqlc.embed(i),r.name,r.enabled,coalesce(a.snapshot,'{}'::jsonb)::jsonb AS snapshot
+FROM mcp_readiness_incidents i JOIN alert_rules r ON r.id=i.rule_id AND r.account_id=i.account_id AND r.app_id=i.app_id LEFT JOIN mcp_readiness_incident_attention a ON a.incident_id=i.id
+WHERE i.account_id=sqlc.arg(account_id) AND i.app_id=sqlc.arg(app_id)
+AND (sqlc.arg(include_resolved)::boolean OR i.resolved_at IS NULL)
+AND (sqlc.arg(scope)::text='' OR i.scope='' OR i.scope=sqlc.arg(scope))
+AND (sqlc.narg(after_id)::uuid IS NULL OR i.id>sqlc.narg(after_id)) ORDER BY i.id LIMIT sqlc.arg(page_limit);
+
+-- name: ReadMCPAttentionAction :one
+SELECT * FROM mcp_readiness_attention_actions WHERE app_id=sqlc.arg(app_id) AND request_id=sqlc.arg(request_id);
+
+-- name: InsertMCPAttentionAction :exec
+INSERT INTO mcp_readiness_attention_actions(app_id,account_id,request_id,incident_id,request,receipt,created_at)
+VALUES(sqlc.arg(app_id),sqlc.arg(account_id),sqlc.arg(request_id),sqlc.arg(incident_id),sqlc.arg(request),sqlc.arg(receipt),sqlc.arg(created_at));
+
+-- name: ListMCPAttentionActions :many
+SELECT receipt FROM mcp_readiness_attention_actions WHERE account_id=sqlc.arg(account_id) AND app_id=sqlc.arg(app_id) AND incident_id=sqlc.arg(incident_id)
+AND (sqlc.narg(before_at)::timestamptz IS NULL OR (created_at,request_id)<(sqlc.narg(before_at),sqlc.narg(before_id)::uuid))
+ORDER BY created_at DESC,request_id DESC LIMIT sqlc.arg(page_limit);
+
+-- name: ListMCPQueuedReminders :many
+SELECT sqlc.embed(e),sqlc.embed(i),coalesce(a.snapshot,'{}'::jsonb)::jsonb AS snapshot
+FROM mcp_readiness_incident_events e JOIN mcp_readiness_incidents i ON i.id=e.incident_id
+LEFT JOIN mcp_readiness_incident_attention a ON a.incident_id=i.id
+WHERE e.rule_id=sqlc.arg(rule_id) AND i.account_id=sqlc.arg(account_id) AND i.app_id=sqlc.arg(app_id)
+AND e.notification_reason='reminder' AND e.delivery_status NOT IN ('delivered','suppressed','abandoned') ORDER BY e.sequence FOR UPDATE OF e;
+
+-- name: SuppressMCPReminder :exec
+UPDATE mcp_readiness_incident_events SET delivery_version=delivery_version+1,delivery_status='suppressed',suppression_reason=sqlc.arg(reason),lease_token=NULL,lease_until=NULL WHERE id=sqlc.arg(event_id);
+
+-- name: HasPendingMCPIncidentNotification :one
+SELECT EXISTS(SELECT 1 FROM mcp_readiness_incident_events e JOIN mcp_readiness_incidents i ON i.id=e.incident_id
+WHERE e.rule_id=sqlc.arg(rule_id) AND e.incident_id=sqlc.arg(incident_id) AND i.account_id=sqlc.arg(account_id) AND i.app_id=sqlc.arg(app_id) AND e.delivery_status NOT IN ('delivered','suppressed','abandoned'));
+
+-- name: InsertMCPReadinessReminder :exec
+INSERT INTO mcp_readiness_incident_events(id,incident_id,rule_id,kind,occurred_at,payload,observed_value,available_at,notification_reason,reminder_number)
+VALUES(sqlc.arg(id),sqlc.arg(incident_id),sqlc.arg(rule_id),'alert.fired',sqlc.arg(occurred_at),sqlc.arg(payload),sqlc.arg(observed_value),sqlc.arg(occurred_at),'reminder',sqlc.arg(reminder_number));
+
+-- name: MarkMCPReadinessReminderFired :exec
+UPDATE alert_rules SET last_fired_at=sqlc.arg(fired_at) WHERE id=sqlc.arg(rule_id);
+
+-- name: ReadMCPFallbackPolicy :one
+SELECT * FROM mcp_readiness_fallback_policies WHERE rule_id=$1;
+-- name: SaveMCPFallbackPolicy :exec
+INSERT INTO mcp_readiness_fallback_policies(rule_id,version,enabled,webhook_url,webhook_secret_sealed,after_failures,provider,region,integration_key_sealed,fingerprint)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT(rule_id) DO UPDATE SET version=excluded.version,enabled=excluded.enabled,webhook_url=excluded.webhook_url,webhook_secret_sealed=excluded.webhook_secret_sealed,after_failures=excluded.after_failures,provider=excluded.provider,region=excluded.region,integration_key_sealed=excluded.integration_key_sealed,fingerprint=excluded.fingerprint;
+-- name: ReadMCPIncidentRouting :one
+SELECT delivery_routing FROM mcp_readiness_incidents WHERE id=$1;
+-- name: SaveMCPIncidentRouting :exec
+UPDATE mcp_readiness_incidents SET delivery_routing=$2 WHERE id=$1;
+-- name: ReadMCPDeliveryHead :one
+SELECT e.* FROM mcp_readiness_incident_events e WHERE e.rule_id=$1 AND e.delivery_status NOT IN ('delivered','suppressed','abandoned')
+AND e.incident_id IN(SELECT i.id FROM mcp_readiness_incidents i WHERE i.account_id=$2 AND i.app_id=$3) ORDER BY e.sequence LIMIT 1 FOR UPDATE;
+-- name: ReadMCPDeliveryEvent :one
+SELECT * FROM mcp_readiness_incident_events WHERE id=$1 FOR UPDATE;
+-- name: ReadMCPDeliveryRuleID :one
+SELECT rule_id FROM mcp_readiness_incident_events WHERE id=$1;
+-- name: InsertMCPRouteDelivery :one
+INSERT INTO alert_deliveries(id,rule_id,account_id,app_id,idempotency_key,payload,status,observed_value,fired_at,readiness_event_id,readiness_destination,readiness_failover_reason)
+VALUES($1,$2,$3,$4,$5,$6,'pending',$7,$8,$9,$10,$11) RETURNING id;
+-- name: ClaimMCPRouteEvent :exec
+UPDATE mcp_readiness_incident_events SET delivery_version=delivery_version+1,attempt_count=$2,lease_token=$3,lease_until=$4,delivery_status='pending',last_delivery_id=$5,last_attempt_at=$6,delivery_routing=$7 WHERE id=$1;
+-- name: ReadMCPRouteDeliveryResult :one
+SELECT status,last_status_code FROM alert_deliveries WHERE id=$1;
+-- name: FailIncompleteMCPRouteDelivery :exec
+UPDATE alert_deliveries SET status='failed',last_error='dispatch incomplete' WHERE id=$1;
+-- name: CompleteMCPRouteEvent :exec
+UPDATE mcp_readiness_incident_events SET delivery_version=delivery_version+1,delivery_status=$2,last_status_code=$3,lease_token=NULL,lease_until=NULL,available_at=$4,delivery_routing=$5 WHERE id=$1;
+
+-- name: ListMCPDestinationEvents :many
+SELECT sqlc.embed(e),sqlc.embed(i) FROM mcp_readiness_incident_events e JOIN mcp_readiness_incidents i ON i.id=e.incident_id
+WHERE e.rule_id=sqlc.arg(rule_id) AND i.account_id=sqlc.arg(account_id) AND i.app_id=sqlc.arg(app_id)
+AND e.delivery_status NOT IN ('delivered','suppressed','abandoned') ORDER BY e.sequence;
+
+-- name: SaveMCPDestinationEvent :exec
+UPDATE mcp_readiness_incident_events SET delivery_version=sqlc.arg(delivery_version),attempt_count=sqlc.arg(attempt_count),
+ delivery_status=sqlc.arg(delivery_status),available_at=sqlc.arg(available_at),lease_token=sqlc.narg(lease_token),lease_until=sqlc.narg(lease_until),
+ last_delivery_id=sqlc.narg(last_delivery_id),last_attempt_at=sqlc.narg(last_attempt_at),last_status_code=sqlc.narg(last_status_code),
+ delivery_routing=sqlc.arg(delivery_routing),destination_deliveries=sqlc.arg(destination_deliveries),last_operator_action=sqlc.narg(last_operator_action)
+WHERE id=sqlc.arg(id);
+
+-- name: ReadMCPReminderDefaults :one
+SELECT * FROM mcp_readiness_reminder_defaults WHERE rule_id=$1;
+
+-- name: SaveMCPReminderDefaults :exec
+INSERT INTO mcp_readiness_reminder_defaults(rule_id,version,interval_seconds,max_reminders)
+VALUES($1,$2,$3,$4) ON CONFLICT(rule_id) DO UPDATE SET version=excluded.version,interval_seconds=excluded.interval_seconds,max_reminders=excluded.max_reminders;
+
+-- name: ReadMCPPagerDutyPolicy :one
+SELECT * FROM mcp_readiness_pagerduty_policies WHERE rule_id=$1;
+-- name: SaveMCPPagerDutyPolicy :exec
+INSERT INTO mcp_readiness_pagerduty_policies(rule_id,version,enabled,integration_key_sealed,fingerprint,region)
+VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(rule_id) DO UPDATE SET version=excluded.version,enabled=excluded.enabled,integration_key_sealed=excluded.integration_key_sealed,fingerprint=excluded.fingerprint,region=excluded.region;
+-- name: CompleteMCPProviderDelivery :exec
+UPDATE alert_deliveries SET status=sqlc.arg(status),attempt_count=1,last_status_code=sqlc.arg(status_code),last_error=sqlc.arg(last_error),delivered_at=sqlc.narg(delivered_at) WHERE id=sqlc.arg(id);
+
+-- name: ReadMCPPagerDutyAcknowledgements :one
+SELECT * FROM mcp_readiness_pagerduty_acknowledgements WHERE rule_id=sqlc.arg(rule_id) AND ((sqlc.arg(destination)::text='' AND legacy_receiver) OR destination=sqlc.arg(destination));
+-- name: SaveMCPPagerDutyAcknowledgements :exec
+INSERT INTO mcp_readiness_pagerduty_acknowledgements(rule_id,version,enabled,signing_secret_sealed,pagerduty_version,region,fingerprint,service_id,destination,fallback_version,legacy_receiver,sync_unacknowledgements)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT(rule_id,destination) DO UPDATE SET version=excluded.version,enabled=excluded.enabled,signing_secret_sealed=excluded.signing_secret_sealed,pagerduty_version=excluded.pagerduty_version,region=excluded.region,fingerprint=excluded.fingerprint,service_id=excluded.service_id,destination=excluded.destination,fallback_version=excluded.fallback_version,sync_unacknowledgements=excluded.sync_unacknowledgements;
+-- name: ReadMCPPagerDutyAcknowledgementReceiver :one
+SELECT sqlc.embed(p),r.account_id,r.app_id FROM mcp_readiness_pagerduty_acknowledgements p JOIN alert_rules r ON r.id=p.rule_id JOIN apps a ON a.id=r.app_id AND a.account_id=r.account_id
+WHERE p.rule_id=sqlc.arg(rule_id) AND ((sqlc.arg(destination)::text='' AND p.legacy_receiver) OR p.destination=sqlc.arg(destination)) AND p.enabled AND a.status<>'deleted' AND r.metric='mcp_readiness_unhealthy' AND r.action='webhook';
+-- name: ReadMCPPagerDutyAcknowledgementEvent :one
+SELECT * FROM mcp_readiness_pagerduty_ack_events WHERE rule_id=$1 AND event_id=$2 ORDER BY delivery_destination LIMIT 1;
+-- name: ReadMCPPagerDutyReleaseEvent :one
+SELECT * FROM mcp_readiness_pagerduty_ack_events WHERE rule_id=$1 AND event_id=$2 AND delivery_destination=$3;
+-- name: CountMCPPagerDutyAcknowledgementEvents :one
+SELECT count(*) FROM mcp_readiness_pagerduty_ack_events WHERE incident_id=$1;
+-- name: InsertMCPPagerDutyAcknowledgementEvent :exec
+INSERT INTO mcp_readiness_pagerduty_ack_events(rule_id,event_id,id,incident_id,digest,receipt,received_at,delivery_destination) VALUES($1,$2,$3,$4,$5,$6,$7,$8);
+-- name: ListMCPPagerDutyAcknowledgementEvents :many
+SELECT receipt FROM mcp_readiness_pagerduty_ack_events WHERE rule_id=sqlc.arg(rule_id)
+AND (sqlc.narg(before_at)::timestamptz IS NULL OR received_at<sqlc.narg(before_at) OR (received_at=sqlc.narg(before_at) AND id<sqlc.narg(before_id)))
+ORDER BY received_at DESC,id DESC LIMIT sqlc.arg(page_limit);

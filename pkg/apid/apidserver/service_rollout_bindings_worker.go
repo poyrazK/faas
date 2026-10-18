@@ -137,6 +137,9 @@ func (s *server) serviceRolloutBindingSweep(ctx context.Context, cursor *int) er
 		} else if errors.Is(err, state.ErrServiceRolloutNotReady) {
 			code = "service_rollout_not_ready"
 			blockers = []api.BindingCheckFinding{{Code: code, DeploymentID: gate.DeploymentID, Message: "The exact recipient must have ready service capacity before routing can change."}}
+		} else if state.IsMCPReadinessRequired(err) {
+			code = api.CodeMCPReadinessRequired
+			blockers = []api.BindingCheckFinding{{Code: code, DeploymentID: candidate.ID, Message: "Refresh platform MCP readiness or create an audited emergency override before moving traffic."}}
 		} else if errors.Is(err, state.ErrMCPTaskCompatibilityGate) {
 			problem := api.ErrMCPTaskCompatibilityGate(err.Error())
 			code = problem.Code
