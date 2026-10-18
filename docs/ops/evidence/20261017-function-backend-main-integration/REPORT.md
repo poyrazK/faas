@@ -289,8 +289,32 @@ configuration isolation blockers, and ten deployment/incident/delivery tables
 remain operational source state. Alert rules and deliveries retain their prior
 configuration and operational classifications. The existing regression contract
 checks these boundaries and all seven isolation blockers; unknown tables and
-columns must still fail before an operation is reserved. Fresh-head hosted CI
-and the corrected combined-source race run must verify this inventory change.
+columns must still fail before an operation is reserved. The corrected source
+`2884470d07efc858a90d05ec5f0a4b4767d39ce3` passes 202 selected race contracts:
+76 state, 44 managed PostgreSQL, 6 API, 75 simulated host/function/MCP and one
+log-buffer test/subtest, with zero skips or failures. Compilation took 553
+seconds with a 5 GiB/GOGC 50 target; executed tests retained 2 GiB/GOGC 10, two
+processors and three-minute deadlines. No native test body ran.
+
+## Light shard compilation budget
+
+On source `2884470d07efc858a90d05ec5f0a4b4767d39ce3`, light shard 3 was
+cancelled after 20 minutes and 16 seconds, at its configured twenty-minute job
+limit. Binding harness preparation took five minutes and eleven seconds, while
+the four actual binding package test runs each took about one second. The
+main race compilation pass took another six minutes and twenty-nine seconds.
+Its full test run was cancelled seven minutes and twenty-seven seconds into
+the unchanged ten-minute test allowance. No completed assertion failure was
+reported before cancellation; the run is not counted as passing.
+
+The binding harness now precompiles its four binaries without executing test
+bodies, using a 5 GiB/GOGC 50 target. The main race preparation pass also compiles
+serially with those compiler targets. Executed binding and main tests retain
+their existing 2 GiB/GOGC 10 bounds, selections, concurrency and deadlines; the
+job limit remains twenty minutes. Workflow actionlint and all fifteen package
+selector tests pass. The full affected shard selection and fresh-head hosted
+CI must verify the correction. This is a compiler-budget correction, not a
+transient-infrastructure retry or native qualification.
 
 ## Qualification boundary
 

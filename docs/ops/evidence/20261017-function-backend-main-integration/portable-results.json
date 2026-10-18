@@ -875,7 +875,77 @@
       "changed_table_column_sets_equal_canonical_schema": 19
     },
     "regression_contract": "existing type-boundary and live full-schema tests now cover MCP policies and all seven configuration blockers; unknown/missing schema still fails before reservation",
-    "corrected_source_validation": "pending local race rerun and all applicable exact-head hosted CI; no success claimed here",
+    "corrected_source_validation": {
+      "source": "2884470d07efc858a90d05ec5f0a4b4767d39ce3",
+      "passed_tests": 202,
+      "failed_tests": [],
+      "skipped_tests": [],
+      "packages": {
+        "state": {
+          "passed_tests": 76,
+          "skipped_tests": [],
+          "failed_tests": [],
+          "seconds": 57.882,
+          "selection": "^(TestFunction(Migration|Destination|Resource|Execution)|TestPgStoreFunctionMigrationSource|TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries|TestPgCloneSchemaRegistryCoversMigratedApplicationTablesAndFailsBeforeReservation)"
+        },
+        "managedpostgres": {
+          "passed_tests": 44,
+          "skipped_tests": [],
+          "failed_tests": [],
+          "seconds": 19.483,
+          "selection": "^Test(ConnectionBudget|ConnectionCapacity|DecodeConnectionAllocationBoundsAndDocuments|PostgresCutoverSourceFenceExclusionAndNeverDispatchedCancellation)"
+        },
+        "api": {
+          "passed_tests": 6,
+          "skipped_tests": [],
+          "failed_tests": [],
+          "seconds": 1.138,
+          "selection": "^TestConnectionBudgetClient"
+        },
+        "fcvm": {
+          "passed_tests": 75,
+          "skipped_tests": [],
+          "failed_tests": [],
+          "seconds": 12.22,
+          "selection": "^(TestFunction(Migration|Destination|Resource|Execution)|TestSnapshotGrant|TestSnapshotAcknowledgment|TestMCP)"
+        },
+        "logbuf": {
+          "passed_tests": 1,
+          "skipped_tests": [],
+          "failed_tests": [],
+          "seconds": 1.038,
+          "selection": "^TestCommitObservationNotReplayedOrEvictedTwice$"
+        }
+      },
+      "compile_seconds": 553.407,
+      "runtime": {
+        "GOMEMLIMIT": "2GiB",
+        "GOGC": "10",
+        "GOMAXPROCS": "2",
+        "per_package_timeout": "3m"
+      },
+      "native_execution": false
+    },
+    "native_acceptance": false,
+    "production_activation": false
+  },
+  "light_shard_compilation_budget_correction": {
+    "source": "2884470d07efc858a90d05ec5f0a4b4767d39ce3",
+    "run_id": 39098539460,
+    "job_id": 117589937272,
+    "conclusion": "cancelled",
+    "started_at": "2026-10-18T05:02:26Z",
+    "completed_at": "2026-10-18T05:22:42Z",
+    "configured_pr_job_minutes": 20,
+    "binding_preparation_seconds": 311,
+    "main_race_preparation_seconds": 389,
+    "full_race_run_seconds_before_cancellation": 447,
+    "full_race_test_timeout_minutes": 10,
+    "reported_completed_assertion_failures": [],
+    "correction": "binding compile-only -c phase and serial main race preparation use 5GiB/GOGC50; actual tests keep 2GiB/GOGC10 and existing selections/concurrency/deadlines; twenty-minute job budget unchanged",
+    "actionlint": "pass",
+    "package_selector_tests": 15,
+    "full_shard_and_hosted_ci": "pending; cancelled source is not counted as green",
     "native_acceptance": false,
     "production_activation": false
   }
