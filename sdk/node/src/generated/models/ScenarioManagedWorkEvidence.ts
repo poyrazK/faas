@@ -5,6 +5,7 @@
 import type { ScenarioManagedWorkBinding } from './ScenarioManagedWorkBinding.js';
 import type { ScenarioManagedWorkJob } from './ScenarioManagedWorkJob.js';
 import type { ScenarioManagedWorkPlan } from './ScenarioManagedWorkPlan.js';
+import type { ScenarioPostgresFaultReceipt } from './ScenarioPostgresFaultReceipt.js';
 import type { ScenarioWorkerFault } from './ScenarioWorkerFault.js';
 /**
  * Bounded participant inventory and managed async completion proof. A complete result requires worker execution, successful receipts and closed admission.
@@ -17,6 +18,7 @@ export type ScenarioManagedWorkEvidence = {
   closing: boolean;
   plan: ScenarioManagedWorkPlan;
   worker_fault?: ScenarioWorkerFault;
+  postgres_fault?: ScenarioPostgresFaultReceipt;
   bindings: Array<ScenarioManagedWorkBinding>;
   jobs: Array<ScenarioManagedWorkJob>;
   reason?: string;
