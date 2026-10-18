@@ -267,6 +267,23 @@ func assertNativeLiveTableRepair(t *testing.T, ctx context.Context, store *Postg
 			}
 		}
 	}
+	clear := func(current func(context.Context) error) error {
+		attempt, cancel := context.WithTimeout(ctx, time.Minute)
+		defer cancel()
+		for {
+			err := clearRecoveredTable(attempt, approved, publisher, target, current)
+			var lockErr *pgconn.PgError
+			if err == nil || !errors.As(err, &lockErr) || (lockErr.Code != "55P03" && lockErr.Code != "40P01") || attempt.Err() != nil {
+				return err
+			}
+			t.Logf("retrying live repair clear lock contention: %s", lockErr.Code)
+			select {
+			case <-attempt.Done():
+				return attempt.Err()
+			case <-time.After(20 * time.Millisecond):
+			}
+		}
+	}
 	publish(false)
 	checks := 0
 	err = retireRecoveredRelation(ctx, approved, publisher, target, func(context.Context) error {
@@ -284,13 +301,13 @@ func assertNativeLiveTableRepair(t *testing.T, ctx context.Context, store *Postg
 	if _, err = source.Exec(ctx, `ALTER TABLE public.customers ADD COLUMN repair_drift text`); err != nil {
 		t.Fatal(err)
 	}
-	if err = clearRecoveredTable(ctx, approved, publisher, target, always); !isBlockedReason(err, "table_addition_source_changed") {
+	if err = clear(always); !isBlockedReason(err, "table_addition_source_changed") {
 		t.Fatal("changed source allowed clearing", err)
 	}
 	if _, err = source.Exec(ctx, `ALTER TABLE public.customers DROP COLUMN repair_drift`); err != nil {
 		t.Fatal(err)
 	}
-	if err = clearRecoveredTable(ctx, approved, publisher, target, func(context.Context) error { return ErrConflict }); !errors.Is(err, ErrConflict) {
+	if err = clear(func(context.Context) error { return ErrConflict }); !errors.Is(err, ErrConflict) {
 		t.Fatal("unfenced clear accepted", err)
 	}
 	if err = target.QueryRow(ctx, `SELECT name='corrupt live imported row' FROM public.customers WHERE id=3`).Scan(&valid); err != nil || !valid {
