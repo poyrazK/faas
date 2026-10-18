@@ -40,6 +40,8 @@ class OutboundAIRequestLogEntry:
     """The call's X-Gregale-AI-User value (ADR-994)."""
     content_captured: bool
     """Whether the call's bodies can be read from its content endpoint (ADR-996)."""
+    tags: list[str]
+    """The call's X-Gregale-AI-Tags as key=value, sorted by key (ADR-1436)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -83,6 +85,8 @@ class OutboundAIRequestLogEntry:
 
         content_captured = self.content_captured
 
+        tags = self.tags
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -104,6 +108,7 @@ class OutboundAIRequestLogEntry:
                 "attempts": attempts,
                 "end_user": end_user,
                 "content_captured": content_captured,
+                "tags": tags,
             }
         )
 
@@ -169,6 +174,8 @@ class OutboundAIRequestLogEntry:
 
         content_captured = d.pop("content_captured")
 
+        tags = cast(list[str], d.pop("tags"))
+
         outbound_ai_request_log_entry = cls(
             id=id,
             created_at=created_at,
@@ -187,6 +194,7 @@ class OutboundAIRequestLogEntry:
             attempts=attempts,
             end_user=end_user,
             content_captured=content_captured,
+            tags=tags,
         )
 
         outbound_ai_request_log_entry.additional_properties = d

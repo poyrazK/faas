@@ -24,6 +24,11 @@ make auth-staging-canary
 The account needs capacity for three apps, one managed database, PostgreSQL
 egress and release tasks.
 
+Application Auth is dark-launched: apid serves it only to accounts listed in
+`FAAS_APPLICATION_AUTH_ACCOUNTS` (or to all with `FAAS_APPLICATION_AUTH_ENABLED`),
+so add the isolated account there first. The script turns the hidden
+`gregale auth` commands on for the CLI it builds.
+
 ## Checks
 
 Every deployment's build provenance must name an allowlisted native builder.

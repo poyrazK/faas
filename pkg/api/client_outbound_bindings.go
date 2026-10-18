@@ -156,6 +156,60 @@ func (c *Client) GetOutboundAIPriceCatalog(ctx context.Context, provider, model 
 
 // GetOutboundAIUserUsage lists one UTC day's AI usage by end user; an empty
 // date is today and an empty endUser lists the top users (ADR-994).
+// GetOutboundAITagUsage reads one UTC day's usage by tag, optionally for
+// one tag key (ADR-1436).
+func (c *Client) GetOutboundAITagUsage(ctx context.Context, integrationID, date, key string, limit int) (OutboundAITagUsageResponse, error) {
+	query := url.Values{}
+	if date != "" {
+		query.Set("date", date)
+	}
+	if key != "" {
+		query.Set("key", key)
+	}
+	if limit > 0 {
+		query.Set("limit", strconv.Itoa(limit))
+	}
+	path := "/v1/outbound/integrations/" + url.PathEscape(integrationID) + "/ai-usage/tags"
+	if encoded := query.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	var out OutboundAITagUsageResponse
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// ExportOutboundAITagUsage returns a day range of usage by tag as NDJSON
+// or CSV, optionally for one key (ADR-1438).
+func (c *Client) ExportOutboundAITagUsage(ctx context.Context, integrationID, from, to, key, format string) ([]byte, error) {
+	query := url.Values{}
+	for name, value := range map[string]string{"from": from, "to": to, "key": key, "format": format} {
+		if value != "" {
+			query.Set(name, value)
+		}
+	}
+	path := "/v1/outbound/integrations/" + url.PathEscape(integrationID) + "/ai-usage/tags/export"
+	if encoded := query.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	var out []byte
+	return out, c.doBytes(ctx, "GET", path, nil, &out)
+}
+
+// GetOutboundAITagLimits reads an integration's tag limits (ADR-1436).
+func (c *Client) GetOutboundAITagLimits(ctx context.Context, integrationID string) (OutboundAITagLimits, error) {
+	var out OutboundAITagLimits
+	return out, c.do(ctx, "GET", "/v1/outbound/integrations/"+url.PathEscape(integrationID)+"/ai-tag-limits", nil, &out)
+}
+
+// SetOutboundAITagLimits replaces an integration's tag limits; an empty
+// list removes them (ADR-1436).
+func (c *Client) SetOutboundAITagLimits(ctx context.Context, integrationID string, limits []OutboundAITagLimit) error {
+	if limits == nil {
+		limits = []OutboundAITagLimit{}
+	}
+	return c.do(ctx, "PUT", "/v1/outbound/integrations/"+url.PathEscape(integrationID)+"/ai-tag-limits",
+		PutOutboundAITagLimitsRequest{Limits: limits}, nil)
+}
+
 func (c *Client) GetOutboundAIUserUsage(ctx context.Context, integrationID, date, endUser string, limit int) (OutboundAIUserUsageResponse, error) {
 	query := url.Values{}
 	if date != "" {
@@ -209,11 +263,88 @@ func (c *Client) GetOutboundAIRoute(ctx context.Context, routeID string) (Outbou
 }
 
 func (c *Client) SetOutboundAIRouteTargets(ctx context.Context, routeID string, targets []OutboundAIRouteTarget) error {
-	return c.do(ctx, "PUT", "/v1/outbound/ai-routes/"+url.PathEscape(routeID)+"/targets", PutOutboundAIRouteTargetsRequest{Targets: targets}, nil)
+	return c.SetOutboundAIRouteRouting(ctx, routeID, PutOutboundAIRouteTargetsRequest{Targets: targets})
+}
+
+// SetOutboundAIRouteRouting replaces a route's targets and its strategy
+// (ADR-1434).
+func (c *Client) SetOutboundAIRouteRouting(ctx context.Context, routeID string, req PutOutboundAIRouteTargetsRequest) error {
+	return c.do(ctx, "PUT", "/v1/outbound/ai-routes/"+url.PathEscape(routeID)+"/targets", req, nil)
 }
 
 func (c *Client) DeleteOutboundAIRoute(ctx context.Context, routeID string) error {
 	return c.do(ctx, "DELETE", "/v1/outbound/ai-routes/"+url.PathEscape(routeID), nil, nil)
+}
+
+// SetOutboundAIRouteCanary starts or replaces a route's model canary
+// (ADR-1340).
+func (c *Client) SetOutboundAIRouteCanary(ctx context.Context, routeID string, req PutOutboundAIRouteCanaryRequest) (OutboundAIRouteCanary, error) {
+	var out OutboundAIRouteCanary
+	return out, c.do(ctx, "PUT", "/v1/outbound/ai-routes/"+url.PathEscape(routeID)+"/canary", req, &out)
+}
+
+// GetOutboundAIRouteCanary returns a route's canary with both targets'
+// counts over its window.
+func (c *Client) GetOutboundAIRouteCanary(ctx context.Context, routeID string) (OutboundAIRouteCanaryStatus, error) {
+	var out OutboundAIRouteCanaryStatus
+	return out, c.do(ctx, "GET", "/v1/outbound/ai-routes/"+url.PathEscape(routeID)+"/canary", nil, &out)
+}
+
+// PromoteOutboundAIRouteCanary makes the canary target the route's first
+// target and ends the canary.
+func (c *Client) PromoteOutboundAIRouteCanary(ctx context.Context, routeID string) (OutboundAIRoute, error) {
+	var out OutboundAIRoute
+	return out, c.do(ctx, "POST", "/v1/outbound/ai-routes/"+url.PathEscape(routeID)+"/canary/promote", nil, &out)
+}
+
+// CreateOutboundAIEvaluation evaluates a route target against the route's
+// first target (ADR-1431). The evaluation runs later; read it back with
+// GetOutboundAIEvaluation.
+func (c *Client) CreateOutboundAIEvaluation(ctx context.Context, routeID string, req CreateOutboundAIEvaluationRequest) (OutboundAIEvaluation, error) {
+	var out OutboundAIEvaluation
+	return out, c.do(ctx, "POST", "/v1/outbound/ai-routes/"+url.PathEscape(routeID)+"/evaluations", req, &out)
+}
+
+// ListOutboundAIEvaluations lists a route's latest evaluations.
+func (c *Client) ListOutboundAIEvaluations(ctx context.Context, routeID string) (OutboundAIEvaluationList, error) {
+	var out OutboundAIEvaluationList
+	return out, c.do(ctx, "GET", "/v1/outbound/ai-routes/"+url.PathEscape(routeID)+"/evaluations", nil, &out)
+}
+
+// GetOutboundAIEvaluation reads an evaluation with its samples.
+func (c *Client) GetOutboundAIEvaluation(ctx context.Context, evaluationID string) (OutboundAIEvaluation, error) {
+	var out OutboundAIEvaluation
+	return out, c.do(ctx, "GET", "/v1/outbound/ai-evaluations/"+url.PathEscape(evaluationID), nil, &out)
+}
+
+// CreateOutboundAIAccessToken issues an AI gateway access token for an app
+// (ADR-1431). The secret is returned only here.
+func (c *Client) CreateOutboundAIAccessToken(ctx context.Context, appSlug string, req CreateOutboundAIAccessTokenRequest) (CreatedOutboundAIAccessToken, error) {
+	var out CreatedOutboundAIAccessToken
+	return out, c.do(ctx, "POST", "/v1/apps/"+url.PathEscape(appSlug)+"/ai-access-tokens", req, &out)
+}
+
+// ListOutboundAIAccessTokens lists an app's AI gateway access tokens.
+func (c *Client) ListOutboundAIAccessTokens(ctx context.Context, appSlug string) (OutboundAIAccessTokenList, error) {
+	var out OutboundAIAccessTokenList
+	return out, c.do(ctx, "GET", "/v1/apps/"+url.PathEscape(appSlug)+"/ai-access-tokens", nil, &out)
+}
+
+// RevokeOutboundAIAccessToken revokes one of an app's access tokens.
+func (c *Client) RevokeOutboundAIAccessToken(ctx context.Context, appSlug, tokenID string) error {
+	return c.do(ctx, "DELETE", "/v1/apps/"+url.PathEscape(appSlug)+"/ai-access-tokens/"+url.PathEscape(tokenID), nil, nil)
+}
+
+// GetOutboundAIRouteStats returns each route target's settled attempts
+// over the window latency and cost routes judge (ADR-1434).
+func (c *Client) GetOutboundAIRouteStats(ctx context.Context, routeID string) (OutboundAIRouteStats, error) {
+	var out OutboundAIRouteStats
+	return out, c.do(ctx, "GET", "/v1/outbound/ai-routes/"+url.PathEscape(routeID)+"/stats", nil, &out)
+}
+
+// DeleteOutboundAIRouteCanary ends a route's canary.
+func (c *Client) DeleteOutboundAIRouteCanary(ctx context.Context, routeID string) error {
+	return c.do(ctx, "DELETE", "/v1/outbound/ai-routes/"+url.PathEscape(routeID)+"/canary", nil, nil)
 }
 
 // GetOutboundIntegrationAIUsage reads one UTC day (YYYY-MM-DD, empty for

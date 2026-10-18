@@ -19,4 +19,8 @@ work_dir="$(mktemp -d "${TMPDIR:-/tmp}/gregale-auth-staging.XXXXXX")"
 trap 'rm -rf -- "$work_dir"' EXIT
 go build -p 1 -o "$work_dir/gregale" ./cmd/gregale
 export GREGALE_CANARY_BIN="$work_dir/gregale"
+# Application Auth is dark-launched (ADR-1190): the CLI hides `gregale auth`
+# unless this is set, and apid serves it only to accounts on
+# FAAS_APPLICATION_AUTH_ACCOUNTS, which must include the staging account.
+export FAAS_APPLICATION_AUTH_ENABLED=1
 node tests/auth/staging/canary.mjs
