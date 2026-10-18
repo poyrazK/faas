@@ -124,7 +124,7 @@ func TestWakePromotesWarmRowRecordsResumePhase(t *testing.T) {
 	assertWarmPoolGauge(t, e.ops, string(api.PlanPro), 0)
 }
 
-// ADR-1345: a warm promotion decided from a stale owner cache entry is
+// ADR-1741: a warm promotion decided from a stale owner cache entry is
 // refused before vmmd resumes the VM.
 func TestWarmPromotionChecksTheOwnerCacheGeneration(t *testing.T) {
 	ctx := context.Background()

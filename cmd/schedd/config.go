@@ -204,14 +204,14 @@ type Config struct {
 	// FAAS_FROZEN_TIER_APPS overrides it.
 	FrozenTierApps bool `toml:"frozen_tier_apps"`
 
-	// FrozenFastPath (ADR-1342) thaws a frozen VM from a ticket recorded
+	// FrozenFastPath (ADR-1740) thaws a frozen VM from a ticket recorded
 	// when it froze: one runtime-values read beside the vmmd thaw and one
 	// guarded update instead of the ordinary wake path's reads. Off by
 	// default; tickets live in memory, so turning it off takes effect at
 	// once. FAAS_FROZEN_FAST_PATH overrides it.
 	FrozenFastPath bool `toml:"frozen_fast_path"`
 
-	// OwnerCache (ADR-1345) serves a production wake's reads from an in-memory
+	// OwnerCache (ADR-1741) serves a production wake's reads from an in-memory
 	// entry per app, dropped when the app's runtime generation moves
 	// (app_runtime_changed); the admission insert commits only while that
 	// generation holds. Off by default. FAAS_OWNER_CACHE overrides it.
@@ -544,7 +544,7 @@ func LoadConfig(path string) (*Config, error) {
 		}
 		c.FrozenTier = enabled
 	}
-	// ADR-1342: FAAS_FROZEN_FAST_PATH overrides frozen_fast_path.
+	// ADR-1740: FAAS_FROZEN_FAST_PATH overrides frozen_fast_path.
 	if v := os.Getenv("FAAS_FROZEN_FAST_PATH"); v != "" {
 		enabled, err := strconv.ParseBool(v)
 		if err != nil {
@@ -552,7 +552,7 @@ func LoadConfig(path string) (*Config, error) {
 		}
 		c.FrozenFastPath = enabled
 	}
-	// ADR-1345: FAAS_OWNER_CACHE overrides owner_cache.
+	// ADR-1741: FAAS_OWNER_CACHE overrides owner_cache.
 	if v := os.Getenv("FAAS_OWNER_CACHE"); v != "" {
 		enabled, err := strconv.ParseBool(v)
 		if err != nil {

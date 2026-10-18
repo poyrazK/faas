@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-// adr: 1345 — the generation's notification arrives at commit, never for a
+// adr: 1741 — the generation's notification arrives at commit, never for a
 // rolled-back change, and deleting an app with its triggers works.
 package state_test
 

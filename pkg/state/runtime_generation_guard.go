@@ -11,7 +11,7 @@ import (
 )
 
 // ErrRuntimeGenerationMoved refuses an admission decided from an app's
-// runtime generation that has since moved (ADR-1345). Nothing was written;
+// runtime generation that has since moved (ADR-1741). Nothing was written;
 // the caller rereads and decides again.
 var ErrRuntimeGenerationMoved = fmt.Errorf("%w: app runtime generation moved", ErrConflict)
 
@@ -23,7 +23,7 @@ type runtimeGenerationGuard struct {
 }
 
 // WithRuntimeGenerationGuard makes instance admission inserts made with ctx
-// require appID's runtime generation to still be generation (ADR-1345): a
+// require appID's runtime generation to still be generation (ADR-1741): a
 // schedd that decided from its owner cache commits only if nothing the
 // decision read has changed since.
 func WithRuntimeGenerationGuard(ctx context.Context, appID string, generation int64) context.Context {

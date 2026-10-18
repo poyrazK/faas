@@ -2231,7 +2231,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	}
 	ownerCacheTotal := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_owner_cache_total",
-		Help: "schedd owner cache (ADR-1345) by outcome: hit, miss, invalidated (an app's generation moved), resync (every entry dropped), refused (an admission found its entry's generation moved).",
+		Help: "schedd owner cache (ADR-1741) by outcome: hit, miss, invalidated (an app's generation moved), resync (every entry dropped), refused (an admission found its entry's generation moved).",
 	}, []string{"outcome"})
 	for _, outcome := range OwnerCacheOutcomes {
 		ownerCacheTotal.WithLabelValues(outcome)
@@ -6163,7 +6163,7 @@ var (
 	FrozenFreezeOutcomes = []string{"frozen", "busy", "error", "ineligible", "no_snapshot", "node_full"}
 	FrozenThawOutcomes   = []string{"success", "failed", "no_capacity", "fast", "fast_refused"}
 	// OwnerCacheOutcomes are schedd_owner_cache_total's closed label set
-	// (ADR-1345).
+	// (ADR-1741).
 	OwnerCacheOutcomes = []string{"hit", "miss", "invalidated", "resync", "refused"}
 	FrozenParkReasons  = []string{"ttl", "memory_pressure", "superseded", "config_changed", "stale",
 		"ineligible", "no_capacity", "thaw_failed", "publish_failed", "node_restart", "park"}
@@ -6188,7 +6188,7 @@ func (m *OpsMetrics) FrozenThawTotal(outcome string) prometheus.Counter {
 	return m.frozenThawTotal.WithLabelValues(outcome)
 }
 
-// OwnerCacheTotal is the owner cache counter for one outcome (ADR-1345).
+// OwnerCacheTotal is the owner cache counter for one outcome (ADR-1741).
 func (m *OpsMetrics) OwnerCacheTotal(outcome string) prometheus.Counter {
 	if m == nil {
 		return nil

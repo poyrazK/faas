@@ -1,4 +1,4 @@
-// adr: 1342, 1345 — a ticketed thaw is a ledger check, the vmmd call and
+// adr: 1740, 1741 — a ticketed thaw is a ledger check, the vmmd call and
 // one update guarded by the app's runtime generation.
 package sched
 
@@ -14,13 +14,13 @@ import (
 )
 
 // EnableFrozenFastPath thaws a frozen VM from the ticket recorded when it
-// froze (schedd `frozen_fast_path`, off by default; ADR-1342). Turning it
+// froze (schedd `frozen_fast_path`, off by default; ADR-1740). Turning it
 // off returns every thaw to ADR-1151's path at once.
 func (e *Engine) EnableFrozenFastPath() { e.frozenFastPath.Store(true) }
 
 // frozenTicket is what a thaw needs, recorded when the VM froze: the plan,
 // the config fence its proof captured, the app's runtime generation read
-// before everything else (ADR-1345) and the frozen charge to restore when
+// before everything else (ADR-1741) and the frozen charge to restore when
 // the thaw is refused.
 type frozenTicket struct {
 	plan       frozenThawPlan
@@ -106,7 +106,7 @@ func (e *Engine) issueThawTicket(ctx context.Context, ins state.Instance, charge
 }
 
 // thawTicketFor reads, off the request path, everything the ordinary wake
-// path would read to thaw ins, and refuses a ticket wherever ADR-1342's
+// path would read to thaw ins, and refuses a ticket wherever ADR-1740's
 // guards could not stand in for those reads.
 func (e *Engine) thawTicketFor(ctx context.Context, ins state.Instance, chargeMB int) (frozenTicket, error) {
 	guards, ok := e.store.(state.FrozenThawStore)
@@ -121,6 +121,15 @@ func (e *Engine) thawTicketFor(ctx context.Context, ins state.Instance, chargeMB
 		return frozenTicket{}, err
 	}
 	if !basis.Selected || basis.Generation <= 0 {
+		return frozenTicket{}, errNoThawTicket
+	}
+	// An operator cold boot (ADR-1523) advances the deployment's recovery
+	// generation, a deployments column, so one after the read above moves the
+	// generation the guarded thaw compares. One before it shows here: the
+	// frozen VM predates the recovery and must cold boot, not thaw.
+	if fresh, err := e.snapshotRecoveryFresh(ctx, ins.ID); err != nil {
+		return frozenTicket{}, err
+	} else if !fresh {
 		return frozenTicket{}, errNoThawTicket
 	}
 	// The ticket stands in for the wake's workload-retirement gate; a
@@ -199,7 +208,7 @@ func (e *Engine) thawTicketFor(ctx context.Context, ins state.Instance, chargeMB
 	return frozenTicket{plan: plan, fence: captured, generation: basis.Generation, chargeMB: chargeMB}, nil
 }
 
-// thawFromTicketLocked is wake phase 1's fast path (ADR-1342). It runs
+// thawFromTicketLocked is wake phase 1's fast path (ADR-1740). It runs
 // under the app lock before any read and reports handled=false whenever the
 // ordinary path must decide: no ticket, a running instance phase 1 would
 // return, a capacity refusal, or a thaw the guards refused (the VM is then

@@ -13,8 +13,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
-// FrozenThawBasis is what a frozen VM's thaw guard compares with (ADR-1342,
-// ADR-1345), read first when the VM freezes.
+// FrozenThawBasis is what a frozen VM's thaw guard compares with (ADR-1740,
+// ADR-1741), read first when the VM freezes.
 type FrozenThawBasis struct {
 	// Generation is the app's runtime generation. Any change the ordinary
 	// wake path would read moves it, so the guarded thaw requires it
@@ -28,7 +28,7 @@ type FrozenThawBasis struct {
 	Selected bool
 }
 
-// FrozenThaw is a ticketed thaw's guarded publication (ADR-1342): the
+// FrozenThaw is a ticketed thaw's guarded publication (ADR-1740): the
 // instance, the config fence its proof captured and the generation the
 // ticket read.
 type FrozenThaw struct {
@@ -39,7 +39,7 @@ type FrozenThaw struct {
 }
 
 // FrozenThawStore reads a thaw guard's basis at freeze and runs the guarded
-// thaw (ADR-1342).
+// thaw (ADR-1740).
 type FrozenThawStore interface {
 	FrozenThawBasis(ctx context.Context, appID, deploymentID string) (FrozenThawBasis, error)
 	// ThawFrozenInstance moves the instance FROZEN -> RUNNING when the app's

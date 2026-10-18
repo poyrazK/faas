@@ -1,4 +1,4 @@
-// adr: 1345 — the owner cache serves a production wake's reads, and a stale
+// adr: 1741 — the owner cache serves a production wake's reads, and a stale
 // entry is refused at admission, never used.
 package sched
 

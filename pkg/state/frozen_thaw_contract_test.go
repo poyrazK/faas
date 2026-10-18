@@ -1,4 +1,4 @@
-// adr: 1342 — a ticketed thaw publishes only while every guard the ordinary
+// adr: 1740 — a ticketed thaw publishes only while every guard the ordinary
 // wake path would have read still holds.
 package state_test
 
@@ -87,7 +87,7 @@ func testFrozenThawGuards(t *testing.T, store runtimeAppEnvTestStore) {
 			return store.MarkAppRuntimeConfigChanged(ctx, f.app.ID)
 		}},
 		// A value written without a runtime-config stamp still moves the
-		// generation (ADR-1345), in the write's own transaction.
+		// generation (ADR-1741), in the write's own transaction.
 		{name: "environment variable edited", change: func(ctx context.Context, f runtimeAppEnvFixture, _ *state.FrozenThaw) error {
 			return store.UpsertAppEnvInScope(ctx, f.account.ID, f.app.ID, "production", "MODE", "edited")
 		}},

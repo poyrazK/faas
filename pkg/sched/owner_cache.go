@@ -1,4 +1,4 @@
-// adr: 1345 — schedd's owner cache: what a production wake reads about an
+// adr: 1741 — schedd's owner cache: what a production wake reads about an
 // app, as of one runtime generation.
 package sched
 
@@ -82,7 +82,7 @@ func (c *ownerCache) invalidateAll() int {
 	return n
 }
 
-// WithOwnerCache turns on schedd's owner cache (ADR-1345, schedd
+// WithOwnerCache turns on schedd's owner cache (ADR-1741, schedd
 // `owner_cache`, off by default). The caller feeds it app_runtime_changed
 // notifications and resyncs through HandleOwnerCacheNotification.
 func (e *Engine) WithOwnerCache() *Engine {

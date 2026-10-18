@@ -12,7 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
-// AppRuntimeGenerationReader reads an app's runtime generation (ADR-1345).
+// AppRuntimeGenerationReader reads an app's runtime generation (ADR-1741).
 // It changes whenever anything a wake depends on changes: the app, its
 // account, its deployments and releases, its runtime configuration, its
 // standards enrollment and workload retirements. Callers compare it for
@@ -68,7 +68,16 @@ func (m *MemStore) appRuntimeGenerationLocked(appID string) (int64, error) {
 	sort.Slice(deployments, func(i, j int) bool { return deployments[i].ID < deployments[j].ID })
 	for _, dep := range deployments {
 		write(dep)
+		// Fields hidden from JSON are still deployments columns, which the
+		// Postgres trigger compares as whole rows.
+		write([]any{dep.RuntimeBase, dep.SecretReloadSignal, dep.SecretReloadSignalKnown,
+			dep.EnvironmentWorkloadRuntime, dep.EnvironmentWorkloadHeldValue, dep.TrafficPercentExplicit,
+			dep.MCPTaskMigrationOverride, dep.ExpectedReview, dep.ReviewedRolloutMode, dep.StagedReview,
+			dep.ReviewedSettings})
 		write(m.deploymentRuntimeEnvironmentOwners[dep.ID])
+		// deployments.snapshot_recovery_generation in Postgres: an operator
+		// cold boot (ADR-1523) must reach every cached wake input and ticket.
+		write(m.snapshotRecoveryGenerations[dep.ID])
 	}
 	var keys []string
 	for key, env := range m.envs {

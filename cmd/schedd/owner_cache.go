@@ -12,7 +12,7 @@ import (
 )
 
 // startOwnerCache subscribes to app_runtime_changed before turning the
-// owner cache on (ADR-1345), so no entry is ever loaded without the
+// owner cache on (ADR-1741), so no entry is ever loaded without the
 // notification that would drop it. A resync, sent after a reconnect or a
 // dropped delivery, drops every entry.
 func startOwnerCache(ctx context.Context, pool *pgxpool.Pool, engine *sched.Engine, log *slog.Logger) error {

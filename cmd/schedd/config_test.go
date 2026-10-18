@@ -328,7 +328,7 @@ func TestLoadConfig_FrozenTier(t *testing.T) {
 	}
 }
 
-// ADR-1342: the frozen fast path is off by default; frozen_fast_path or
+// ADR-1740: the frozen fast path is off by default; frozen_fast_path or
 // FAAS_FROZEN_FAST_PATH turns it on, and the env wins.
 func TestLoadConfig_FrozenFastPath(t *testing.T) {
 	t.Setenv("FAAS_FROZEN_FAST_PATH", "")
@@ -353,7 +353,7 @@ func TestLoadConfig_FrozenFastPath(t *testing.T) {
 	}
 }
 
-// ADR-1345: the owner cache is off by default; owner_cache or
+// ADR-1741: the owner cache is off by default; owner_cache or
 // FAAS_OWNER_CACHE turns it on, and the env wins.
 func TestLoadConfig_OwnerCache(t *testing.T) {
 	t.Setenv("FAAS_OWNER_CACHE", "")

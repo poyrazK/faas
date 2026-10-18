@@ -179,7 +179,7 @@ func (e *Engine) frozenCandidateNode(ctx context.Context, nodeID string) frozenC
 }
 
 // frozenThawPlan is what thawing one frozen VM needs: from the ordinary
-// path's reads (ADR-1151) or from a ticket recorded at freeze (ADR-1342).
+// path's reads (ADR-1151) or from a ticket recorded at freeze (ADR-1740).
 // app is resolved for the deployment; node holds the VM's node admission
 // limits, zero for a node that could not be read (global defaults).
 type frozenThawPlan struct {

@@ -1655,17 +1655,17 @@ RETURNING id::text AS id, app_id::text AS app_id, deployment_id::text AS deploym
     node_id::text AS node_id, wake_id::text AS wake_id, framework_ready_at, tail_count, mode, request_count;
 
 -- name: LockAppRuntimeGeneration :one
--- ADR-1345: an admission insert decided from schedd's owner cache commits
+-- ADR-1741: an admission insert decided from schedd's owner cache commits
 -- only while the app's generation is the one the decision read.
 SELECT generation FROM app_runtime_generations WHERE app_id=sqlc.arg(app_id)::uuid FOR SHARE;
 
 -- name: AppRuntimeGeneration :one
--- ADR-1345: the app's runtime generation, which triggers bump in the
+-- ADR-1741: the app's runtime generation, which triggers bump in the
 -- writer's transaction for every change a wake depends on.
 SELECT generation FROM app_runtime_generations WHERE app_id=sqlc.arg(app_id)::uuid;
 
 -- name: FrozenThawBasis :one
--- ADR-1342, ADR-1345: read first when a VM freezes, before the rest of its
+-- ADR-1740, ADR-1741: read first when a VM freezes, before the rest of its
 -- ticket, so any change after it moves the generation the guarded thaw
 -- compares. selected is true when the thaw a ticket would allow is the one
 -- the ordinary wake path would choose: the app's active production release
@@ -1687,7 +1687,7 @@ FROM apps a JOIN deployments d ON d.app_id=a.id
 WHERE a.id=sqlc.arg(app_id)::uuid AND d.id=sqlc.arg(deployment_id)::uuid;
 
 -- name: ThawFrozenInstance :one
--- ADR-1342, ADR-1345: a ticketed thaw's one control-plane round trip. The
+-- ADR-1740, ADR-1741: a ticketed thaw's one control-plane round trip. The
 -- FROZEN -> RUNNING compare-and-set holds when the app's runtime generation
 -- is the one the ticket read: every change the ordinary wake path would have
 -- read moves it, in the writer's transaction. The generation row is the only

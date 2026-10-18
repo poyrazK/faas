@@ -1,8 +1,8 @@
-# ADR-1342: Frozen fast path — a thaw is a ledger check, the vmmd call beside one read, and one guarded update
+# ADR-1740: Frozen fast path — a thaw is a ledger check, the vmmd call beside one read, and one guarded update
 
 - Status: Proposed. Built behind schedd's `frozen_fast_path` switch, off by
   default; it only matters once ADR-1151's `frozen_tier` is on. Amended by
-  ADR-1345 (2026-10-16): the guarded thaw checks the app's runtime
+  ADR-1741 (2026-10-16): the guarded thaw checks the app's runtime
   generation, which every change in section 3's table moves in the writer's
   own transaction, so the column guards, the stamps and the runtime-values
   read are gone. A ticket reads the generation first; `ThawFrozenInstance`
@@ -151,7 +151,7 @@ that was running when the edit landed.
   remove the read by keeping the runtime values in memory.
 - Measured on real Postgres (`TestPostgresTicketedThawStatements`): a
   ticketed thaw runs 4 statements in 2 sequential round trips, against 24
-  statements in about 19 for ADR-1151's thaw. With ADR-1345's generation
+  statements in about 19 for ADR-1151's thaw. With ADR-1741's generation
   guard it runs one statement, `ThawFrozenInstance`.
 - The guards restate the ordinary path's selection rule in SQL. Conformance
   tests on MemStore and Postgres refuse a thaw after each change the guards

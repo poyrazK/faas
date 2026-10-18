@@ -769,7 +769,7 @@ const (
 	NotifyBuildLog        = "build_log"
 	NotifyDomainVerify    = "domain_verify"
 	NotifyInstanceChanged = "instance_changed"
-	// NotifyAppRuntimeChanged (ADR-1345) announces at commit that an app's
+	// NotifyAppRuntimeChanged (ADR-1741) announces at commit that an app's
 	// runtime generation moved: triggers bump it in the writer's transaction
 	// for every change a wake depends on. Payload {"app_id","generation"};
 	// generation 0 means the app was deleted.

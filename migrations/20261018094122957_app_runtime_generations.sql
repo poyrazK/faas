@@ -1,5 +1,5 @@
--- filename: 20261016110154007_app_runtime_generations.sql
--- ADR-1345: a per-app runtime generation, bumped in the writer's transaction
+-- filename: 20261018094122957_app_runtime_generations.sql
+-- ADR-1741: a per-app runtime generation, bumped in the writer's transaction
 -- by every change a wake depends on, and announced on app_runtime_changed at
 -- commit. schedd's owner cache keys its entries by it, and every write a wake
 -- makes rechecks it, so a stale entry can never commit a decision.

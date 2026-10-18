@@ -1,4 +1,4 @@
-// adr: 1342, 1345 — a ticketed thaw skips the ordinary wake path's reads, and any
+// adr: 1740, 1741 — a ticketed thaw skips the ordinary wake path's reads, and any
 // change it cannot vouch for sends the VM back to that path.
 package sched
 
@@ -96,6 +96,13 @@ func TestTicketedThawFallsBackToTheOrdinaryPath(t *testing.T) {
 		{name: "workload retired", wantRefusals: 1, wantErr: state.ErrEnvironmentWorkloadRetired, change: func(t *testing.T, f *frozenFixture) {
 			retireWithoutNotification(t, f.e, f.store, f.app)
 		}},
+		// An operator cold boot (ADR-1523) after the freeze moves the
+		// generation; the ordinary path then parks the VM it predates.
+		{name: "operator cold boot", wantRefusals: 1, change: func(t *testing.T, f *frozenFixture) {
+			if _, err := f.store.InvalidateSnapshotRecovery(t.Context(), f.dep.ID); err != nil {
+				t.Fatal(err)
+			}
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f, ops := frozenWithTicket(t)
@@ -138,5 +145,24 @@ func TestTicketedThawLeavesARunningInstanceToPhaseOne(t *testing.T) {
 	}
 	if _, ok := f.e.thawTickets.byApp[f.app.ID][f.ins.ID]; !ok {
 		t.Fatal("the skipped ticket was dropped")
+	}
+}
+
+// An operator cold boot (ADR-1523) that lands after the freeze checked the
+// instance's recovery lineage but before the ticket read the generation must
+// not leave a ticket: the guarded thaw would compare a generation that
+// already includes the recovery and thaw the VM it predates.
+func TestThawTicketRefusesAVMThatPredatesAnOperatorColdBoot(t *testing.T) {
+	f := newFrozenFixture(t, true)
+	f.e.EnableFrozenTier()
+	f.e.EnableFrozenFastPath()
+	if _, err := f.e.thawTicketFor(t.Context(), f.ins, 150); err != nil {
+		t.Fatalf("thawTicketFor before any recovery: %v", err)
+	}
+	if _, err := f.store.InvalidateSnapshotRecovery(t.Context(), f.dep.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.e.thawTicketFor(t.Context(), f.ins, 150); !errors.Is(err, errNoThawTicket) {
+		t.Fatalf("thawTicketFor after an operator cold boot = %v, want errNoThawTicket", err)
 	}
 }

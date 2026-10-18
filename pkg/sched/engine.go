@@ -647,11 +647,11 @@ type Engine struct {
 	// instances in place instead of parking them. Thaw and frozen parks run
 	// either way.
 	frozenTier atomic.Bool
-	// frozenFastPath (ADR-1342, schedd `frozen_fast_path`) thaws a frozen
+	// frozenFastPath (ADR-1740, schedd `frozen_fast_path`) thaws a frozen
 	// VM from the ticket recorded when it froze; thawTickets holds them.
 	frozenFastPath atomic.Bool
 	thawTickets    frozenTickets
-	// ownerCacheEnabled (ADR-1345, schedd `owner_cache`) serves production
+	// ownerCacheEnabled (ADR-1741, schedd `owner_cache`) serves production
 	// admissions from owners, the per-app owner cache.
 	ownerCacheEnabled atomic.Bool
 	owners            ownerCache
@@ -1774,7 +1774,7 @@ func (e *Engine) wake(ctx context.Context, appID, deploymentID, scope, trigger s
 	// e2e) keep byte-identical behaviour.
 	ctx = WithScope(ctx, scope)
 	scope = ScopeFrom(ctx)
-	// ADR-1345: a thaw ticket or an owner cache entry carries the
+	// ADR-1741: a thaw ticket or an owner cache entry carries the
 	// workload-retirement gate's verdict under the app's runtime generation;
 	// the gate is read only when the wake goes on to decide from fresh reads.
 	if trigger != TriggerDeploymentSmoke && e.gateGuardedByGeneration(ctx, appID, deploymentID) {
@@ -1785,7 +1785,7 @@ func (e *Engine) wake(ctx context.Context, appID, deploymentID, scope, trigger s
 	// ── Phase 1: fast path under appMu ─────────────────────────────
 	wakeStarted := time.Now()
 	release := e.lockApp(appID)
-	// ADR-1342: a frozen VM with a thaw ticket thaws before any read.
+	// ADR-1740: a frozen VM with a thaw ticket thaws before any read.
 	if result, handled := e.thawFromTicketLocked(ctx, appID, deploymentID, scope, wakeStarted); handled {
 		release()
 		return result, nil
@@ -1802,7 +1802,7 @@ func (e *Engine) wake(ctx context.Context, appID, deploymentID, scope, trigger s
 	)
 	appFromCache := false
 	if entry, ok := e.ownerEntryForPhaseOne(ctx, appID, deploymentID); ok {
-		// ADR-1345: the owner cache holds the app (its standards check
+		// ADR-1741: the owner cache holds the app (its standards check
 		// passed) and the production deployment; only the instances are read.
 		app, appFromCache = entry.app, true
 		ins, insErr = e.runningInstanceOfDeployment(ctx, appID, entry.dep)
@@ -2881,7 +2881,7 @@ func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploym
 	used := new(bool)
 	result, err := e.admitAndDispatchOnce(withOwnerCacheUse(ctx, used), appID, deploymentID, mode, trigger, liftCapacityToResult, bypassGates)
 	if *used && errors.Is(err, state.ErrConflict) {
-		// ADR-1345: an admission decided from the owner cache found its
+		// ADR-1741: an admission decided from the owner cache found its
 		// entry stale: the admission insert refused the moved generation, or
 		// a read checked against the entry (the runtime values' owner)
 		// disagreed first. Nothing was admitted; decide again from fresh reads.
@@ -2900,7 +2900,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 	// The barrier is read while the app is resolved below, and checked
 	// before anything resolved is used.
 	barrier := make(chan error, 1)
-	// ADR-1345: an owner cache entry exists only while the barrier is clear
+	// ADR-1741: an owner cache entry exists only while the barrier is clear
 	// at its generation, and the admission insert rechecks that generation.
 	cached, useCache := e.ownerEntryForAdmission(ctx, appID, deploymentID)
 	if !useCache {
@@ -2949,7 +2949,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		// is the deployment this private verification request may wake.
 		app, acct, limits, err = e.resolveAppAccount(ctx, appID)
 	} else if useCache {
-		// ADR-1345: the owner cache serves the production reads; the
+		// ADR-1741: the owner cache serves the production reads; the
 		// admission insert commits only while their generation holds.
 		markOwnerCacheUse(ctx)
 		app, acct, limits, dep = cached.resolved, cached.acct, cached.limits, cached.dep
@@ -3237,7 +3237,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 	// an ephemeral secret into an older persistent capture.
 	var runtimeValues runtimeDeploymentValues
 	if useCache && dep.ID == cached.dep.ID {
-		// ADR-1345: built from the entry's reads; the admission insert
+		// ADR-1741: built from the entry's reads; the admission insert
 		// below commits only while their generation holds.
 		runtimeValues, err = buildRuntimeDeploymentValues(app, dep, cached.valueReads, false)
 	} else {

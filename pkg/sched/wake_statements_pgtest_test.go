@@ -269,7 +269,7 @@ func TestPostgresThawStatements(t *testing.T) {
 	}
 }
 
-// ADR-1342: a ticketed thaw sends the runtime-values reads beside the vmmd
+// ADR-1740: a ticketed thaw sends the runtime-values reads beside the vmmd
 // call and then one guarded statement; none of the ordinary path's reads.
 func TestPostgresTicketedThawStatements(t *testing.T) {
 	pf := seedPostgresFrozen(t)
@@ -305,7 +305,7 @@ func TestPostgresTicketedThawStatements(t *testing.T) {
 		}
 	}
 	t.Logf("ticketed thaw: %v, %d sequential round trips", names, pf.tracer.sequentialRoundTrips(answered))
-	// The ticket carries the workload-retirement gate's verdict (ADR-1345):
+	// The ticket carries the workload-retirement gate's verdict (ADR-1741):
 	// the thaw is one statement guarded by the app's runtime generation.
 	want := map[string]int{"ThawFrozenInstance": 1}
 	got := map[string]int{}
@@ -332,12 +332,12 @@ func TestPostgresTicketedThawStatements(t *testing.T) {
 }
 
 // The ordinary path's statements for a wake with no VM to reuse: a cold boot,
-// and a restore from the deployment's snapshot. The baseline for ADR-1345.
+// and a restore from the deployment's snapshot. The baseline for ADR-1741.
 func TestPostgresBootStatements(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
 		snapshot bool
-		// ownerCache wakes once with schedd's owner cache on (ADR-1345),
+		// ownerCache wakes once with schedd's owner cache on (ADR-1741),
 		// parks, and traces the next wake, which finds the entry cached.
 		ownerCache bool
 	}{

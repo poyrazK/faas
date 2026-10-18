@@ -1,4 +1,4 @@
-// adr: 1345 — an app's runtime generation moves with every change a wake
+// adr: 1741 — an app's runtime generation moves with every change a wake
 // depends on, and stays put for bookkeeping and for other apps.
 package state_test
 

@@ -1,12 +1,12 @@
-# ADR-1345: schedd owner cache — per-app runtime generations and one guarded write per wake
+# ADR-1741: schedd owner cache — per-app runtime generations and one guarded write per wake
 
 - Status: Proposed. Built behind schedd's `owner_cache` switch, off by
   default.
 - Date: 2026-10-16
-- Builds on: ADR-1342 (frozen fast path), ADR-1151 (pause tiers), the
+- Builds on: ADR-1740 (frozen fast path), ADR-1151 (pause tiers), the
   scaling roadmap's wake rule (zero control-plane round trips per request,
   at most one per wake)
-- Amends: ADR-1342 (its column guards and runtime-values read give way to the
+- Amends: ADR-1740 (its column guards and runtime-values read give way to the
   generation check), the roadmap's "one guarded write" for boots (section 5)
 - Related: ADR-1344 (availability; its node-lease epochs join the guard when
   they land)
@@ -21,7 +21,7 @@ two wakes of the same app. Measured on real Postgres
 |---|---|---|
 | cold boot | 54 | 48 |
 | thaw, ADR-1151 path | 24 | about 19 |
-| thaw, ADR-1342 ticket | 5 | 3 |
+| thaw, ADR-1740 ticket | 5 | 3 |
 
 A cold boot's 54 statements are 26 reads before the boot (workload
 retirement gate, app, production release, deployment, standards enrollment,
@@ -46,7 +46,7 @@ they change. An inventory of the schema (2026-10-16) found:
   traffic and release sets, not the rest.
 
 The runtime-config stamps are not complete either: apid writes a value and
-stamps the change in a separate call (ADR-1342 section 4). A cache refreshed
+stamps the change in a separate call (ADR-1740 section 4). A cache refreshed
 by these signals would serve stale rows, and a cache refreshed by a time
 limit would serve them for the length of the limit.
 
@@ -130,7 +130,7 @@ fresh reads: in wake phase 1 when no entry serves it, or before a retry. A
 wake answered by a running instance writes nothing; it trusts the entry
 until the notification drops it.
 
-The guard replaces ADR-1342's column guards and its runtime-values read: a
+The guard replaces ADR-1740's column guards and its runtime-values read: a
 config edit bumps the counter in the edit's own transaction, so the counter
 answers what the stamps could not.
 
@@ -206,7 +206,7 @@ transactions.
    method that reads a generation, and the writer conformance test.
 3. The cache in schedd: load, invalidation, resync, metrics
    (`schedd_owner_cache_total{outcome}`), behind `owner_cache`.
-4. Thaw and warm promotion use the generation guard, replacing ADR-1342's
+4. Thaw and warm promotion use the generation guard, replacing ADR-1740's
    column guards.
 5. Cold boot and restore: the admission insert and the publication carry the
    guard; their bookkeeping folds in.
