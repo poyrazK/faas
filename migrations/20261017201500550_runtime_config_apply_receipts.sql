@@ -1,3 +1,4 @@
+-- migration-compat: expand
 -- +goose Up
 -- ADR-1700: each daemon instance that consumes a hot runtime-configuration
 -- key records the version it applied (or the error that stopped it), so the
