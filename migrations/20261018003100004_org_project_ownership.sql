@@ -1,3 +1,5 @@
+-- migration-compat: contract
+-- Full-release maintenance cutover: ADR-202610171900 and ADR-202610171908.
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
 -- migration-lint: allow not-null projects.org_id: bind_project_resource_owner derives the organization from the existing personal/project root for legacy INSERTs; backfill is validated before tightening.

@@ -1,3 +1,5 @@
+-- migration-compat: contract
+-- Full-release maintenance cutover: ADR-202610171900 and ADR-202610171908.
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
 -- migration-lint: allow not-null managed_postgres_databases.org_id: bind_managed_postgres_resource_owner derives existing organization/restore/personal roots for legacy INSERTs after validated backfill.

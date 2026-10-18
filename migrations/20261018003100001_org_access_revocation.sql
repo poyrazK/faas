@@ -1,3 +1,5 @@
+-- migration-compat: contract
+-- Full-release maintenance cutover: ADR-202610171900 and ADR-202610171908.
 -- Organization employee offboarding and transaction fencing (ADR-202610171902).
 -- +goose Up
 SET LOCAL lock_timeout = '5s';

@@ -1,3 +1,5 @@
+-- migration-compat: contract
+-- Full-release maintenance cutover: ADR-202610171900 and ADR-202610171908.
 -- Organization object ownership and human credential revocation (ADR-202610171907).
 -- +goose Up
 SET LOCAL lock_timeout = '5s';

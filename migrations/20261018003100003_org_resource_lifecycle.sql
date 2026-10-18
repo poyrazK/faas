@@ -1,3 +1,5 @@
+-- migration-compat: contract
+-- Full-release maintenance cutover: ADR-202610171900 and ADR-202610171908.
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
 -- Replay completed expansion without replacing functions refined by later migrations.

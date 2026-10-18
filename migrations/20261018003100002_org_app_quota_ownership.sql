@@ -1,3 +1,5 @@
+-- migration-compat: contract
+-- Full-release maintenance cutover: ADR-202610171900 and ADR-202610171908.
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
 -- migration-lint: allow index-build apps: Atomic quota ownership cutover with metadata writers paused (ADR-202610171903/202610171904); production table-size and pause-duration qualification remains required before rollout.

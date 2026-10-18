@@ -453,3 +453,9 @@ reproduce the merged SDK source with no drift; Node build and both operational
 summary tests pass, and 66 Python Auth, organization, MCP and operational-summary
 tests pass. Current ownership/recovery checks and fresh GitHub CI must qualify
 this merged revision before release. Native KVM qualification remains pending.
+
+Main's subsequent per-unit migration policy requires explicit compatibility
+classes. All seven unreleased ownership migrations are marked `contract`, so
+these maintenance cutovers require a full release. Only comments and the source
+fingerprint change; SQL, the canonical database schema and runtime code are
+unchanged from the qualified `9472bb1c4` revision.
