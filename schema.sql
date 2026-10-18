@@ -37367,6 +37367,22 @@ CREATE TABLE public.node_join_jobs (
 
 
 --
+-- Name: node_leases; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.node_leases (
+    node_id uuid NOT NULL,
+    holder text NOT NULL,
+    epoch bigint NOT NULL,
+    renewed_at timestamp with time zone NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT node_leases_check CHECK ((expires_at > renewed_at)),
+    CONSTRAINT node_leases_epoch_check CHECK ((epoch >= 1)),
+    CONSTRAINT node_leases_holder_check CHECK (((length(holder) >= 1) AND (length(holder) <= 255)))
+);
+
+
+--
 -- Name: node_lifecycle_completions; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -52756,6 +52772,14 @@ ALTER TABLE ONLY public.node_join_jobs
 
 ALTER TABLE ONLY public.node_join_jobs
     ADD CONSTRAINT node_join_jobs_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: node_leases node_leases_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.node_leases
+    ADD CONSTRAINT node_leases_pkey PRIMARY KEY (node_id);
 
 
 --
@@ -79038,6 +79062,14 @@ ALTER TABLE ONLY public.native_issue_ticket_receipts
 
 ALTER TABLE ONLY public.native_issue_ticket_receipts
     ADD CONSTRAINT native_issue_ticket_receipts_issue_id_fkey FOREIGN KEY (issue_id) REFERENCES public.app_issues(id) ON DELETE CASCADE;
+
+
+--
+-- Name: node_leases node_leases_node_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.node_leases
+    ADD CONSTRAINT node_leases_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.compute_nodes(id) ON DELETE CASCADE;
 
 
 --
