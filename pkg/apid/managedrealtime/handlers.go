@@ -197,6 +197,14 @@ func (s *Service) syncManagedRealtimeEndpoint(ctx context.Context, row state.Man
 	if err != nil {
 		return err
 	}
+	var liveRoutes []realtime.LiveRoute
+	if s.LiveRoutes != nil {
+		// A failed lookup leaves the node's registration as it was rather
+		// than withdrawing routes that may still be valid.
+		if liveRoutes, err = s.LiveRoutes(ctx, row.AccountID, row.AppID); err != nil {
+			return fmt.Errorf("live routes for endpoint %s: %w", row.ID, err)
+		}
+	}
 	authMode := row.AuthMode
 	if authMode == "" {
 		if len(authToken) > 0 {
@@ -222,7 +230,28 @@ func (s *Service) syncManagedRealtimeEndpoint(ctx context.Context, row state.Man
 		MaxConnections:   row.MaxConnections,
 		MaxMessageBytes:  row.MaxMessageBytes,
 		MaxConnectionAge: time.Duration(row.MaxConnectionAgeSeconds) * time.Second,
+		LiveRoutes:       liveRoutes,
 	})
+}
+
+// SyncAppEndpoints registers an app's endpoints again, so a change to its
+// live routes reaches realtimed without waiting for reconciliation.
+func (s *Service) SyncAppEndpoints(ctx context.Context, appID string) error {
+	store, ok := realtimeEndpointStore(s)
+	if !ok || s.Registrar == nil {
+		return nil
+	}
+	rows, err := store.ListManagedRealtimeEndpointsForApp(ctx, appID)
+	if err != nil {
+		return fmt.Errorf("list realtime endpoints for app %s: %w", appID, err)
+	}
+	var errs []error
+	for _, row := range rows {
+		if err := s.syncManagedRealtimeEndpoint(ctx, row); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
 }
 
 func (s *Service) unsealRealtimeCredential(ctx context.Context, sealed []byte) ([]byte, error) {

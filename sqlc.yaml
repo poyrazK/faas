@@ -124,6 +124,18 @@ sql:
         emit_methods_with_db_argument: true
         emit_empty_slices: true
 
+  # ADR-20261016151947 live-query keys; projection mirrors its migration-owned table.
+  - engine: "postgresql"
+    queries: "pkg/state/livekeys/queries.sql"
+    schema: "pkg/state/livekeys/schema.sql"
+    gen:
+      go:
+        package: "sqlc"
+        out: "pkg/state/livekeys/sqlc"
+        sql_package: "pgx/v5"
+        emit_methods_with_db_argument: true
+        emit_empty_slices: true
+
   # Disposable SQL workload acceptance through delivered app credentials.
   - engine: "postgresql"
     queries: "pkg/managedpostgres/credentialdelivery/probe_queries.sql"

@@ -230,7 +230,7 @@ func TestAuthTemplateRuntimeBounds(t *testing.T) {
 		"bodyBytes": api.AuthMaxRequestBytes, "authzBodyBytes": api.AuthAuthzBodyBytes, "authzConfigBytes": api.AuthAuthzConfigBytes, "redirectURLs": api.AuthMaxRedirectURLs,
 		"migrationStatementMs": api.AuthMigrationStatementTimeoutMS, "invitationSeconds": api.AuthInvitationTTLSeconds,
 		"emailTimeoutMs": api.AuthEmailTimeoutMs, "hookBodyBytes": api.AuthHookBodyBytes, "storageURLSeconds": api.AuthStorageURLSeconds,
-		"adminBodyBytes": api.AuthAdminBodyBytes, "importBatch": api.AuthImportBatch, "signingKeys": api.AuthMaxSigningKeys,
+		"adminBodyBytes": api.AuthAdminBodyBytes, "importBatch": api.AuthImportBatch, "adminPageSize": api.AuthAdminPageSize, "reauthenticationSeconds": api.AuthReauthenticationSeconds, "emailSubjectChars": api.AuthEmailSubjectMaxChars, "emailBodyBytes": api.AuthEmailBodyMaxBytes, "signingKeys": api.AuthMaxSigningKeys,
 		"emailGrantSeconds": api.ProductControlEmailGrantSeconds,
 		"teamMembers":       api.ProductControlTeamMaxMembers, "teamInvitations": api.ProductControlTeamMaxInvitations,
 		"teamEmailBytes": api.ProductControlTeamEmailMaxBytes, "teamContextBytes": api.ProductControlTeamContextMaxBytes,
@@ -248,6 +248,10 @@ func TestAuthTemplateRuntimeBounds(t *testing.T) {
 	authorization, err := os.ReadFile("templates/auth/sql/0001_authorization.sql")
 	if err != nil {
 		t.Fatal(err)
+	}
+	templates, err := os.ReadFile("templates/auth/sql/0014_email_templates.sql")
+	if err != nil || !strings.Contains(string(templates), fmt.Sprintf("char_length(subject) BETWEEN 1 AND %d", api.AuthEmailSubjectMaxChars)) || !strings.Contains(string(templates), fmt.Sprintf("octet_length(body) BETWEEN 1 AND %d", api.AuthEmailBodyMaxBytes)) {
+		t.Fatalf("email template SQL differs from the canonical limits: %v", err)
 	}
 	// 0009 replaces create_organization; both must keep the bound.
 	anonymous, err := os.ReadFile("templates/auth/sql/0009_anonymous_users.sql")
@@ -544,8 +548,8 @@ func TestAuthConfigAnonymousUsersAndLinking(t *testing.T) {
 	oldErr := osStderr
 	osStderr = &stderr
 	t.Cleanup(func() { osStderr = oldErr })
-	if code := cmdAuth([]string{"config", "shop-auth", "--anonymous", "on", "--anonymous-retention", "30", "--identity-linking", "on"}); code != 0 ||
-		sealed["GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED"] != "true" || sealed["AUTH_ANONYMOUS_RETENTION_DAYS"] != "30" || sealed["AUTH_IDENTITY_LINKING"] != "1" {
+	if code := cmdAuth([]string{"config", "shop-auth", "--anonymous", "on", "--anonymous-retention", "30", "--identity-linking", "on", "--self-deletion", "on", "--org-claims", "on"}); code != 0 ||
+		sealed["GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED"] != "true" || sealed["AUTH_ANONYMOUS_RETENTION_DAYS"] != "30" || sealed["AUTH_IDENTITY_LINKING"] != "1" || sealed["AUTH_SELF_DELETION"] != "1" || sealed["AUTH_ORG_CLAIMS"] != "1" {
 		t.Fatalf("config = %d, sealed %v", code, sortedKeys(sealed))
 	}
 	if !strings.Contains(stderr.String(), "turn on CAPTCHA") {

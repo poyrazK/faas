@@ -181,6 +181,21 @@ seals an `AUTH_AUTHZ` document (`roles` and `policies`), and the release task
 replaces custom roles and every policy from it. The `owner` role always holds
 every permission, and a role still assigned cannot be removed.
 
+With `AUTH_ORG_CLAIMS` on, a session chooses the organization it acts in
+(`gregale_auth.set_active_organization()`, a member's own session only), and
+GoTrue's custom access token hook adds `org_id`, `org_slug`, `org_role` and
+`org_permissions` to its first-party tokens, joining the choice with the
+current membership and role. The choice is per session, not per user, so
+devices and tabs act independently; a foreign key to `auth.sessions` and to
+the organization removes it with either. Backends then authorize from a
+verified token without a call, accepting that a removed member or changed role
+holds until the token expires (`AuthAccessTokenTTLSeconds`); `authorize()`
+remains the current check. The hook, which otherwise runs only with the OAuth
+server, runs whenever either is on, so apps that use neither pay nothing per
+token. Client tokens never carry the claims, and nothing is chosen
+implicitly: a user in one organization still sets it, so a token's claims are
+never a guess.
+
 ### One authorization function
 
 Permissions are resolved in PostgreSQL when access is checked, never copied
@@ -271,6 +286,19 @@ reauthentication and security notifications are supported; HTML is escaped.
 Gregale operates no sender for application email. Without a provider, email
 flows fail with `email_provider_unconfigured`. Links and codes are never
 logged.
+
+Owners replace the subject and body of each of eight email types. A template
+is plain text with per-type `{{placeholders}}`; the front escapes every value
+and builds the HTML itself, so a template cannot carry markup or scripts into
+recipients' mail, and an email's link or code is appended when the body does
+not place it. Full HTML templates were left out for that reason. Templates live
+in the app's database (`gregale_auth.email_templates`), not in app secrets:
+they are not secret, the CLI and dashboard must read them back to edit them,
+an edit should not need a restart, and Free apps have eight secrets in all.
+They are edited through `/admin/v1/emails` with an admin key (CLI and the
+dashboard's Emails tab, from the owner's browser), with a preview that renders
+example values and can send through the provider. The hook reads them per
+email and falls back to the defaults if the database cannot be read.
 
 Organization invitations are emailed when a provider is configured. The send
 happens inside the invitation transaction, so a failed send leaves no pending
@@ -388,6 +416,33 @@ challenge, verification, recovery codes and the assurance level. Applications
 enforce `aal2` themselves, through the `aal` claim. GoTrue texts a phone
 factor's challenge through the SMS provider even for numbers in
 `GOTRUE_SMS_TEST_OTP`, which covers sign-in codes only.
+
+The hosted account page `/ui/account` gives people the self-service that
+GoTrue's user API allows without each application building it: email and
+password changes, second factors and recovery codes, passkeys, linked
+providers, connected OAuth apps and their own sessions. Like the consent page
+it signs in through the usual pages (so the session is `aal2` for anyone with
+a second factor, which removing a factor requires), keeps the session only in
+the tab's memory and ends it on leaving; it never reuses the application's
+session, which would need a token handed across origins. GoTrue v2.197.0 can
+end the current session, the others or all, but cannot list sessions or end
+one, so `gregale_auth.list_sessions()` and `end_session()` (owner-only, run by
+the front under the caller's verified claims like the organization
+functions) serve `/authz/v1/sessions`. They leave third-party OAuth clients'
+sessions to connected apps, and the current session to GoTrue's logout. The
+page's image policy adds `data:` for the QR code GoTrue returns inline.
+
+GoTrue has no endpoint for people to delete themselves. With
+`AUTH_SELF_DELETION` on (off by default: an app may need to settle billing
+or data first), `DELETE /authz/v1/account` deletes the caller through the
+same path as an owner's deletion, so the last-owner refusal and the removal
+of organizations left without members are shared. It requires the token's
+session to be younger than `AuthReauthenticationSeconds` and, for a user
+with a verified second factor, `aal2`; anonymous users are exempt because
+they cannot sign in again. A third-party client's token cannot reach it.
+GoTrue's audit log records the deletion as an administrator's, since it goes
+through the admin API; the lifecycle event `auth.user.deleted` is the same
+either way.
 
 ### Phone sign-in
 
