@@ -240,6 +240,11 @@ func (m *MemStore) FailScenarioWorkerFault(ctx context.Context, id string) error
 	return nil
 }
 func (m *MemStore) scenarioWorkerDispatchBlockedLocked(app string) bool {
+	for _, f := range m.scenarioPostgresFaults {
+		if f.AppID == app && (f.State == "requested" || f.State == "cutting") {
+			return true
+		}
+	}
 	for _, r := range m.scenarioSuspendResumes {
 		if r.AppID == app && r.InvocationID != "" && r.State != "complete" {
 			return true
