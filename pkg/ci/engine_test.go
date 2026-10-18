@@ -115,7 +115,7 @@ func TestExecutionQualificationPostgres(t *testing.T) {
 	if _, err := s.Execution(t.Context(), account, execution); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("account deletion leaked execution output: %v", err)
 	}
-	// ADR-1656 / ADR-1580: roll back empty recovery/source journals before execution storage.
+	// ADR-1656 / ADR-1592: roll back empty recovery/source journals before execution storage.
 	// The append-only rollback still preserves the original metadata receipts.
 	for _, name := range []string{"20261017111942534_ci_source_check_recovery.sql", "20261017103328494_ci_automation_path_filters.sql", "20261017095313973_ci_execution_reruns.sql", "20261017085604854_ci_pull_request_automation.sql", "20261017074525544_ci_automation_branch_concurrency.sql", "20261017070545475_ci_automation_event_recovery.sql", "20261016175839317_ci_execution_archival.sql", "20261016175839311_ci_github_automation.sql", "20261016175839288_ci_execution_qualification.sql"} {
 		data, err := os.ReadFile("../../migrations/" + name)
