@@ -701,8 +701,14 @@ jobs:
             GOMEMLIMIT=2GiB GOGC=10 GOMAXPROCS=2 go test -race -count=1 -run '^$' $PKGS
             echo "::endgroup::"
             echo "testing with -race: $PKGS"
+            # Shard 3 includes the complete GitOps PostgreSQL suite (195
+            # top-level tests on the diagnosed head). It reached test 157
+            # before the 10m package deadline. Retain every test and the
+            # 40m job bound while giving this shard a bounded 15m package run.
+            package_timeout=10m
+            if [[ "$SHARD" == 3 ]]; then package_timeout=15m; fi
             # shellcheck disable=SC2086 # space-separated package list
-            GOMEMLIMIT=2GiB GOGC=10 GOMAXPROCS=2 go test -race -count=1 -p 4 -timeout=10m $PKGS || status=1
+            GOMEMLIMIT=2GiB GOGC=10 GOMAXPROCS=2 go test -race -count=1 -p 4 -timeout="$package_timeout" $PKGS || status=1
           fi
           for pkg in $LARGE; do
             run="$(python3 scripts/ci/select_package_tests.py --package "${pkg#./}" --cap "$SELECTIVE_CAP" --base "$LIGHT_DIFF_BASE" < "$RUNNER_TEMP/changed-paths.txt")"

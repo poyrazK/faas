@@ -45,9 +45,11 @@ func shortDir(t *testing.T) string {
 }
 
 // migratedPool returns a pgtest pool with the schema migrated, or skips.
+// In template mode each fixture has its own database, so another package's
+// transaction cannot block this fixture's concurrent-index migrations.
 func migratedPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if err := db.MigrateUp(context.Background(), pool); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
