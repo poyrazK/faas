@@ -56,6 +56,8 @@ func TestPlatformTenantInvocationPathsAllowed(t *testing.T) {
 		{"POST", "/v1/platform-tenant-self/customer-operations/id/milestones", false},
 		{"GET", "/v1/platform-tenant-self/customer-operations/id/milestones/extra", false},
 		{"GET", "/v1/platform-tenant-self/customer-operation-milestones", true},
+		{"GET", "/v1/platform-tenant-self/customer-operations/op_1/children", true},
+		{"POST", "/v1/platform-tenant-self/customer-operations/op_1/children", false},
 		{"POST", "/v1/platform-tenant-self/customer-operation-schedules", true},
 		{"GET", "/v1/platform-tenant-self/customer-operation-schedules", true},
 		{"DELETE", "/v1/platform-tenant-self/customer-operation-schedules", false},

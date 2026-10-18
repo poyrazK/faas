@@ -283,6 +283,7 @@ func (s *Service) cancelScopedOperation(w http.ResponseWriter, r *http.Request, 
 		WriteOperationError(w, err)
 		return
 	}
+	s.cancelOperationChildren(r.Context(), store, acct.ID, tenant, op.ID)
 	httpkit.WriteJSON(w, http.StatusOK, got.OperationResponse)
 }
 

@@ -815,7 +815,7 @@ func platformTenantSelfPathAllowed(method, path string) bool {
 			return method == http.MethodGet
 		}
 		if len(parts) == 3 && parts[1] != "" {
-			return ((parts[2] == "events" || parts[2] == "milestones") && method == http.MethodGet) || ((parts[2] == "cancel" || parts[2] == "signals") && method == http.MethodPost)
+			return ((parts[2] == "events" || parts[2] == "milestones" || parts[2] == "children") && method == http.MethodGet) || ((parts[2] == "cancel" || parts[2] == "signals") && method == http.MethodPost)
 		}
 		if len(parts) == 4 && parts[1] != "" && parts[2] == "artifacts" && parts[3] != "" {
 			return method == http.MethodGet
