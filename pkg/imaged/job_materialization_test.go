@@ -19,6 +19,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 	"github.com/onebox-faas/faas/pkg/storage"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -39,7 +40,7 @@ type gatedJobMaterializationBuilder struct {
 }
 
 type replacingJobMaterializationStore struct {
-	*state.MemStore
+	MemStore       *state.MemStore
 	once           sync.Once
 	replacementRef string
 	err            error
@@ -368,7 +369,7 @@ func TestMaterializeJobCancelsWhenLeaseRenewalLosesClaim(t *testing.T) {
 	release := make(chan struct{})
 	root := t.TempDir()
 	backend := mustLocalStorage(t, root)
-	h := New(store, &fakeNotifier{}, puller, &gatedJobMaterializationBuilder{
+	h := New(statetest.NewMem(store), &fakeNotifier{}, puller, &gatedJobMaterializationBuilder{
 		fakeBuilder: &fakeBuilder{}, keyReady: keyReady, release: release, body: "stale artifact",
 	}, "./guest-init", root, silentLogger()).WithStorage(backend)
 	h.jobMaterializationLeaseOverride = 600 * time.Millisecond
@@ -384,11 +385,11 @@ func TestMaterializeJobCancelsWhenLeaseRenewalLosesClaim(t *testing.T) {
 		close(release)
 		t.Fatal("builder did not stop after lease renewal failed")
 	}
-	current, err := store.JobGetByID(ctx, job.ID)
+	current, err := store.MemStore.JobGetByID(ctx, job.ID)
 	if err != nil || current.ImageRef != store.replacementRef || current.ImageMaterializationStatus != "pending" || current.ImageMaterializationAttempts != 1 {
 		t.Fatalf("replacement job = %+v, %v", current, err)
 	}
-	if _, err := store.JobClaimImageMaterialization(ctx, job.ID, "third-worker", time.Minute); !errors.Is(err, state.ErrNotFound) {
+	if _, err := store.MemStore.JobClaimImageMaterialization(ctx, job.ID, "third-worker", time.Minute); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("replacement claim was lost: %v, want ErrNotFound", err)
 	}
 	if _, err := backend.Get(ctx, key); !storage.IsNotFound(err) {
@@ -506,8 +507,8 @@ func TestJobMaterializationRetryDelayIsBounded(t *testing.T) {
 }
 
 type failingPendingJobClaimStore struct {
-	*state.MemStore
-	err error
+	MemStore *state.MemStore
+	err      error
 }
 
 func (s *failingPendingJobClaimStore) JobClaimPendingImageMaterialization(context.Context, int, string, time.Duration) ([]state.Job, error) {
@@ -517,7 +518,7 @@ func (s *failingPendingJobClaimStore) JobClaimPendingImageMaterialization(contex
 func TestPendingJobMaterializationClaimFailureIsObservable(t *testing.T) {
 	store := &failingPendingJobClaimStore{MemStore: state.NewMemStore(), err: errors.New("claim failed")}
 	ops := wire.NewOpsMetrics("imaged_test")
-	h := New(store, &fakeNotifier{}, nil, nil, "", t.TempDir(), silentLogger()).WithOpsMetrics(ops)
+	h := New(statetest.NewMem(store), &fakeNotifier{}, nil, nil, "", t.TempDir(), silentLogger()).WithOpsMetrics(ops)
 	if err := h.MaterializePendingJobs(context.Background()); !errors.Is(err, store.err) {
 		t.Fatalf("MaterializePendingJobs error = %v, want %v", err, store.err)
 	}
