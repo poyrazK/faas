@@ -15533,5 +15533,25 @@
       "workflow_name"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "app_issue_compound_alert_policies",
+    "columns": [
+      "app_id",
+      "revision",
+      "rules"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "issue_compound_alert_receipts",
+    "columns": [
+      "app_id",
+      "issue_id",
+      "last_alert_at",
+      "rule_hash",
+      "rule_key"
+    ],
+    "kind": "operational"
   }
 ]

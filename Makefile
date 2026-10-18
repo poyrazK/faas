@@ -1756,6 +1756,10 @@ test-data-repair-native: ## Repair rehearsal acceptance on a designated native L
 issues-grouping-eval: ## Compare grouping strategies against the labeled offline corpus
 	$(GO) run ./cmd/issues-grouping-eval
 
+.PHONY: issues-grouping-check
+issues-grouping-check: ## Check newly incorrect grouping pairs against the reviewed synthetic baseline
+	$(GO) run ./cmd/issues-grouping-eval -strategy cause-chain-v1 -baseline pkg/issues/evaluation/testdata/cause-chain-v1.baseline.json -check
+
 .PHONY: check-binding-runner-sync
 check-binding-runner-sync:
 	python3 scripts/sync_binding_runner.py --check

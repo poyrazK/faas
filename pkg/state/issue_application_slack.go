@@ -4,6 +4,8 @@ import (
 	"context"
 	"slices"
 	"sort"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 type IssueApplicationSlackPolicy struct {
@@ -26,13 +28,13 @@ type IssueApplicationSlackStore interface {
 
 func ApplicationSlackEvent(event string) bool {
 	switch event {
-	case "created", "regressed", "impact_threshold_reached", "frequency_threshold_reached":
+	case "created", "regressed", "impact_threshold_reached", "frequency_threshold_reached", "compound_threshold_reached":
 		return true
 	}
 	return false
 }
 func normalizeApplicationSlackEvents(events []string) ([]string, error) {
-	if len(events) > 4 {
+	if len(events) > api.IssueApplicationSlackMaxEvents {
 		return nil, ErrInvalidArgument
 	}
 	out := append([]string{}, events...)
