@@ -194,8 +194,7 @@ type appLogDrainOwnerStore interface {
 }
 
 func (m *appLogDrainManager) Run(ctx context.Context) {
-	if err := m.acquireLogSpoolLease(); err != nil {
-		m.log.WarnContext(ctx, "acquire log drain spool", slog.String("code", "spool_unavailable"))
+	if !m.waitForLogSpoolLease(ctx, time.Second) {
 		return
 	}
 	defer func() { _ = m.spoolLease.Unlock() }()

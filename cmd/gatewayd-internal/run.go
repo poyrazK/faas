@@ -62,7 +62,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/capdecl/runtimecheck"
 	"github.com/onebox-faas/faas/pkg/chaos"
 	"github.com/onebox-faas/faas/pkg/circuit"
-	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/edgewaf"
 	"github.com/onebox-faas/faas/pkg/events"
@@ -1077,6 +1076,9 @@ type runDeps struct {
 	egressGRPC *egressGRPCListener
 	// Tests use a private ledger; an empty value retains the production path.
 	egressPendingPath string
+	// onHandoff stops node-level work run() started before runWithDeps once
+	// a hand-off's successor serves (ADR-1580).
+	onHandoff []func()
 	// lastSeen flushes per-instance last_request_at to schedd (spec §4.1). nil in
 	// tests (the wake/routing path doesn't need it); production wires the
 	// schedFlushSink.
@@ -1342,7 +1344,7 @@ type runDeps struct {
 func defaultDeps() runDeps {
 	return runDeps{
 		listen:       wire.ListenInherited,
-		listenPacket: net.ListenPacket,
+		listenPacket: wire.ListenPacketInherited,
 		newSrv:       defaultServer,
 		backend:      unwiredBackend{},
 		controlAddr:  controlAddr,
@@ -1437,6 +1439,12 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return fmt.Errorf("gatewayd: load schedd TLS: %w", err)
 	}
 	deps := defaultDeps()
+	// handoffCtx carries the work that speaks for this node's gateway rather
+	// than for one request: a hand-off ends it here and the successor takes it
+	// over (ADR-1580). Requests and their sinks keep ctx.
+	handoffCtx, endHandoffWork := context.WithCancel(ctx)
+	defer endHandoffWork()
+	deps.onHandoff = append(deps.onHandoff, endHandoffWork)
 	// Issue #477 / ADR-079: resolve the host key directory the
 	// secretbox unsealer reads from. Mirrors the FAAS_HOST_KEY_PATH
 	// convention cmd/vmmd + cmd/meterd use (same env var so an
@@ -1766,8 +1774,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 		if runtimeDrainEnabled {
 			repairStore = gatewayconfirmation.DrainRepair{Store: pgStore, Tracker: runtimeActivity}
 		}
-		go gatewayconfirmation.Run(ctx, repairStore, backend, log)
-		go gatewayconfirmation.RunHeartbeat(ctx, pgStore, runtimeGatewaySlot, runtimeGatewaySession, log)
+		go gatewayconfirmation.Run(handoffCtx, repairStore, backend, log)
+		go gatewayconfirmation.RunHeartbeat(handoffCtx, pgStore, runtimeGatewaySlot, runtimeGatewaySession, log)
 	}
 	deps.backend = backend
 	// Flush per-instance last_request_at to schedd so its idle reaper sees
@@ -2079,7 +2087,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// tick, so a durable hot enable takes effect without restarting
 	// gatewayd-internal.
 	renewer := gateway.NewSurfaceCertRenewer(pgStore, log).SetEnabled(tenantSurfacesFlag.Load)
-	go renewer.Run(ctx)
+	go renewer.Run(handoffCtx)
 
 	// ADR-132: routing and certificate lifecycle consume the same durable
 	// runtime flag as apid. The watcher applies only acknowledged values and
@@ -2528,6 +2536,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err := capCheck(); err != nil {
 		return err
 	}
+	// handoffCtx carries the work that speaks for this node's gateway rather
+	// than for one request: a hand-off ends it here and the successor takes it
+	// over (ADR-1580). Requests and their sinks keep ctx.
+	handoffCtx, endHandoffWork := context.WithCancel(ctx)
+	defer endHandoffWork()
+	stores := &generationStores{log: log}
+	defer stores.close()
 	var metricsRegisterer prometheus.Registerer
 	var metricPrefix string
 	if deps.opsMetrics != nil {
@@ -2968,7 +2983,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if egressPendingPath == "" {
 		egressPendingPath = egressgrpc.DefaultPendingPath
 	}
-	egressGRPCSrv, err := egressgrpc.NewPersistentServer(egressSink, log, egressPendingPath)
+	egressGRPCSrv, err := stores.openEgress(egressSink, egressPendingPath)
 	if err != nil {
 		return fmt.Errorf("gatewayd: open durable egress replay ledger: %w", err)
 	}
@@ -3056,7 +3071,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Financial usage has a separate, fsynced gateway outbox. Open it before
 	// accepting traffic even when the optional request debugger is disabled.
 	usageRoot := envOrGateway("FAAS_CONSUMER_USAGE_OUTBOX_ROOT", usageoutbox.DefaultRoot)
-	usageQueue, usageErr := usageoutbox.Open(usageRoot, usageoutbox.DefaultMaxBytes)
+	usageQueue, usageErr := stores.openUsage(usageRoot)
 	if usageErr != nil {
 		return fmt.Errorf("gatewayd: open consumer usage outbox: %w", usageErr)
 	}
@@ -3071,7 +3086,17 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 	}
 	handler.WithUsageOutbox(usageQueue)
-	go deliverConsumerUsage(ctx, usageQueue, usageTarget, usageTLS, log, handler.Metrics())
+	// The outbox's slot returns home only after delivery stops (stores.close
+	// runs after this defer).
+	usageCtx, stopUsageDelivery := context.WithCancel(ctx)
+	usageDelivered := make(chan struct{})
+	go func() {
+		defer close(usageDelivered)
+		deliverConsumerUsage(usageCtx, usageQueue, usageTarget, usageTLS, log, handler.Metrics())
+	}()
+	defer func() { stopUsageDelivery(); <-usageDelivered }()
+	stores.adopt()
+	go stores.adoptLoop(handoffCtx)
 
 	// ADR-127 production debugger — request_telemetry data plane.
 	// Wires the recorder into Handler.observe + launches the
@@ -3440,7 +3465,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if cfg.NodeName != "" {
 			manager.owns = newAppLogDrainOwnership(deps.pgStore, cfg.NodeName)
 		}
-		go manager.Run(ctx)
+		go manager.Run(handoffCtx)
 	}
 
 	// Tier A9 / ADR-084: standby write-redirect gate. The gate
@@ -3892,7 +3917,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		wakeAheadPersisted = make(chan struct{})
 		go func(dir string) {
 			defer close(wakeAheadPersisted)
-			gateway.PersistWakeAhead(ctx, wakeAheadLearner, dir, api.ServiceWakeAheadSnapshotInterval, nil, log)
+			gateway.PersistWakeAhead(handoffCtx, wakeAheadLearner, dir, api.ServiceWakeAheadSnapshotInterval, nil, log)
 		}(envOrGateway("FAAS_GATEWAY_WAKE_AHEAD_STATE_DIR", gateway.DefaultWakeAheadStateDir))
 		handler.SetWakeAhead(gateway.WakeAheadConfig{
 			Learner:   wakeAheadLearner,
@@ -3985,6 +4010,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// than Close: Shutdown lets in-flight requests finish; Close does not.
 	errc := make(chan error, 6)
 	var servers []drainedServer
+	// sessionDrains stop raw listeners and wait for their sessions; a
+	// hand-off's old generation runs them (ADR-1580).
+	var sessionDrains []func(context.Context) error
 	var serviceDiscoveryServers []*dns.Server
 	addSrv := func(s *http.Server) *wire.HTTPDrain {
 		drain := wire.NewHTTPDrain(s)
@@ -4172,9 +4200,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if guestServices == nil {
 			return errors.New("gatewayd: service_tcp_listen requires an available guest service proxy")
 		}
-		if err := startServiceTCPProxy(ctx, deps, serviceTCPAddr, guestServices, deps.pgStore, errc, log); err != nil {
+		drainServiceTCP, err := startServiceTCPProxy(ctx, deps, serviceTCPAddr, guestServices, deps.pgStore, errc, log)
+		if err != nil {
 			return err
 		}
+		sessionDrains = append(sessionDrains, drainServiceTCP)
 	}
 	if serviceProxyAddr != "" {
 		if err := validateServiceProxyListen(serviceProxyAddr); err != nil {
@@ -4262,7 +4292,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				dnsAddr := net.JoinHostPort(bridgeIP.String(), strconv.Itoa(dnsPort))
 				listenPacket := deps.listenPacket
 				if listenPacket == nil {
-					listenPacket = net.ListenPacket
+					listenPacket = wire.ListenPacketInherited
 				}
 				packetConn, packetErr := listenPacket("udp", dnsAddr)
 				if packetErr != nil {
@@ -4293,7 +4323,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	go func() {
 		log.Info("gatewayd control listening", "addr", ctrlAddr)
-		errc <- gateway.RunControlServer(ctx, ctrlAddr, controlMux)
+		// A hand-off ends handoffCtx: the successor answers /metrics and probes.
+		if err := gateway.RunControlServer(handoffCtx, ctrlAddr, controlMux); err != nil {
+			errc <- err
+		}
 	}()
 
 	// Internal unix-socket RPC for schedd's cron dispatch (spec §4.4,
@@ -4312,92 +4345,106 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return err
 	}
 
-	notifyStop := daemonunit.NotifyReadyWhen(ctx, readyProbe.ReadyFunc())
+	notifyStop := wire.NotifyReadyWhen(ctx, readyProbe.ReadyFunc())
 	defer notifyStop()
 	defer wire.StartWatchdog(ctx, wire.NewLiveness(), deps.opsMetrics, log)()
 
-	select {
-	case err := <-errc:
-		return err
-	case <-ctx.Done():
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), drain.DrainGrace)
-		defer cancel()
-		if deps.drain != nil {
-			// SSE and WebSocket sessions end now: their clients reconnect,
-			// and the replacement process cannot start until this one exits.
-			deps.drain.BeginShutdown()
-		}
-		//nolint:contextcheck // shutdown ctx must outlive the cancelled caller ctx (net/http contract).
-		shutdownListeners(shutdownCtx, servers, serviceDiscoveryServers, deps.synth)
-		if wakeAheadPersisted != nil {
-			select {
-			case <-wakeAheadPersisted:
-			case <-shutdownCtx.Done():
+	handoffs := wire.HandoffRequests(ctx)
+	for {
+		select {
+		case err := <-errc:
+			return err
+		case <-handoffs:
+			if _, err := wire.Handoff(ctx, wire.HandoffOptions{Log: log}); err != nil {
+				log.Warn("gatewayd-internal: hand-off failed; this generation keeps serving", "err", err)
+				continue
 			}
-		}
-		// ADR-068 / Tier A7 split: tlsBundle.Close + tlsCertExpiryCancel
-		// moved to gatewayd-public's shutdown path (cmd/gatewayd-public/main.go).
-		if deps.nodeCache != nil {
-			// Closing every cached *grpc.ClientConn here means
-			// in-flight ForwardHTTPStream RPCs see a "transport
-			// closing" error → handler maps it to 502; the
-			// listener is already draining so no new requests
-			// land.
-			_ = deps.nodeCache.Close()
-		}
-		// Issue #587 / PR-A: wait for the per-request drain
-		// tracker to flush before exiting. shutdownCtx has
-		// already been wired to drain.DrainGrace (25s) — that
-		// sits inside systemd's TimeoutStopSec=30s with 5s
-		// headroom. The drain sets its own internal `draining`
-		// flag so any post-Shutdown stragglers become no-op
-		// Begin closures (pkg/gateway/drain.Drain doc).
-		//
-		// Exit-code discipline (systemd Restart=on-failure
-		// contract, pkg/deploycontroller/controller.go:43-115):
-		//   clean drain → return nil (no restart)
-		//   deadline_exceeded / ctx_cancelled → return ctx.Err()
-		//     so systemd restarts the daemon
-		// Pre-PR-A this branch returned nil unconditionally,
-		// which hid ctx-cancellation bugs from operators. The
-		// PR-A fix surfaces them so a hung drain doesn't quietly
-		// recycle on the next deploy.
-		if deps.drain != nil {
-			drainStart := time.Now()
-			//nolint:contextcheck // shutdownCtx is intentionally
-			// derived from context.Background() (line 1834)
-			// because it must outlive the cancelled caller
-			// ctx — the deadline budget for the drain comes
-			// from drain.DrainGrace, not from the caller's
-			// already-cancelled ctx. The Drain contract is to
-			// honour shutdownCtx's deadline + cancellation;
-			// the `deadline` param on Drain is the
-			// upper-bound knob.
-			outcome, drainErr := deps.drain.Drain(shutdownCtx, drain.DrainGrace)
-			drainElapsed := time.Since(drainStart).Seconds()
-			// Issue #587 / PR-A: record the drain histogram on
-			// every shutdown so an operator can spot a
-			// pattern of forced exits from the dashboard
-			// without re-reading the daemon log. Recorded
-			// against deps.metrics (gateway.Metrics) so the
-			// existing /metrics scrape picks it up alongside
-			// the rest of the gateway_* series.
-			deps.metrics.ObserveDrainWait("gatewayd-internal", string(outcome), drainElapsed)
-			if drainErr != nil {
-				log.Warn("gatewayd-internal drain exited non-clean",
-					"outcome", string(outcome),
-					"max_inflight", deps.drain.MaxInflight(),
-					"err", drainErr)
-				return drainErr
+			stores.markHandedOff()
+			endHandoffWork()
+			for _, stop := range deps.onHandoff {
+				stop()
 			}
-			if outcome != drain.OutcomeClean {
-				log.Warn("gatewayd-internal drain exited non-clean",
-					"outcome", string(outcome),
-					"max_inflight", deps.drain.MaxInflight())
-				return ctx.Err()
+			return drainOldGeneration(ctx, log, servers, serviceDiscoveryServers, sessionDrains, deps)
+		case <-ctx.Done():
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), drain.DrainGrace)
+			defer cancel()
+			if deps.drain != nil {
+				// SSE and WebSocket sessions end now: their clients reconnect,
+				// and the replacement process cannot start until this one exits.
+				deps.drain.BeginShutdown()
 			}
+			//nolint:contextcheck // shutdown ctx must outlive the cancelled caller ctx (net/http contract).
+			shutdownListeners(shutdownCtx, servers, serviceDiscoveryServers, deps.synth)
+			if wakeAheadPersisted != nil {
+				select {
+				case <-wakeAheadPersisted:
+				case <-shutdownCtx.Done():
+				}
+			}
+			// ADR-068 / Tier A7 split: tlsBundle.Close + tlsCertExpiryCancel
+			// moved to gatewayd-public's shutdown path (cmd/gatewayd-public/main.go).
+			if deps.nodeCache != nil {
+				// Closing every cached *grpc.ClientConn here means
+				// in-flight ForwardHTTPStream RPCs see a "transport
+				// closing" error → handler maps it to 502; the
+				// listener is already draining so no new requests
+				// land.
+				_ = deps.nodeCache.Close()
+			}
+			// Issue #587 / PR-A: wait for the per-request drain
+			// tracker to flush before exiting. shutdownCtx has
+			// already been wired to drain.DrainGrace (25s) — that
+			// sits inside systemd's TimeoutStopSec=30s with 5s
+			// headroom. The drain sets its own internal `draining`
+			// flag so any post-Shutdown stragglers become no-op
+			// Begin closures (pkg/gateway/drain.Drain doc).
+			//
+			// Exit-code discipline (systemd Restart=on-failure
+			// contract, pkg/deploycontroller/controller.go:43-115):
+			//   clean drain → return nil (no restart)
+			//   deadline_exceeded / ctx_cancelled → return ctx.Err()
+			//     so systemd restarts the daemon
+			// Pre-PR-A this branch returned nil unconditionally,
+			// which hid ctx-cancellation bugs from operators. The
+			// PR-A fix surfaces them so a hung drain doesn't quietly
+			// recycle on the next deploy.
+			if deps.drain != nil {
+				drainStart := time.Now()
+				//nolint:contextcheck // shutdownCtx is intentionally
+				// derived from context.Background() (line 1834)
+				// because it must outlive the cancelled caller
+				// ctx — the deadline budget for the drain comes
+				// from drain.DrainGrace, not from the caller's
+				// already-cancelled ctx. The Drain contract is to
+				// honour shutdownCtx's deadline + cancellation;
+				// the `deadline` param on Drain is the
+				// upper-bound knob.
+				outcome, drainErr := deps.drain.Drain(shutdownCtx, drain.DrainGrace)
+				drainElapsed := time.Since(drainStart).Seconds()
+				// Issue #587 / PR-A: record the drain histogram on
+				// every shutdown so an operator can spot a
+				// pattern of forced exits from the dashboard
+				// without re-reading the daemon log. Recorded
+				// against deps.metrics (gateway.Metrics) so the
+				// existing /metrics scrape picks it up alongside
+				// the rest of the gateway_* series.
+				deps.metrics.ObserveDrainWait("gatewayd-internal", string(outcome), drainElapsed)
+				if drainErr != nil {
+					log.Warn("gatewayd-internal drain exited non-clean",
+						"outcome", string(outcome),
+						"max_inflight", deps.drain.MaxInflight(),
+						"err", drainErr)
+					return drainErr
+				}
+				if outcome != drain.OutcomeClean {
+					log.Warn("gatewayd-internal drain exited non-clean",
+						"outcome", string(outcome),
+						"max_inflight", deps.drain.MaxInflight())
+					return ctx.Err()
+				}
+			}
+			return nil
 		}
-		return nil
 	}
 }
 

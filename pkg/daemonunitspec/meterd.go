@@ -48,6 +48,9 @@ func UnitMeterd() daemonunit.Unit {
 
 		EnvironmentFile: "-/etc/faas/compute-db.env -/etc/faas/secrets/meterd/billing.env -/etc/faas/otel.env",
 		Environment: []daemonunit.KV{
+			{Key: "FAAS_INTERNAL_MAIL_QUOTA_WARNING_OUTBOX_ENABLED", Value: "0"},
+			{Key: "FAAS_INTERNAL_MAIL_NONPAYMENT_DELETION_OUTBOX_ENABLED", Value: "0"},
+			{Key: "FAAS_INTERNAL_MAIL_ACCOUNT_SUSPENDED_OUTBOX_ENABLED", Value: "0"},
 			{Key: "FAAS_BILLING_MODE", Value: "live"},
 			{Key: "FAAS_PROMETHEUS_URL", Value: "http://127.0.0.1:9095"},
 			{Key: "FAAS_HOST_AGE_IDENTITY_PATH", Value: "%d/faas_fleet_age_identity"},

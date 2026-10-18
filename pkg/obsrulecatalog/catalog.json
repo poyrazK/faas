@@ -4,7 +4,7 @@
   "sets": [
     {
       "id": "gregale-core-v1",
-      "revision": "cea1fe6f4694ab1d2102313100f01bd89c7d26807ccba64afce583fda58ba37a",
+      "revision": "f0c151d44d2d2bd73db4561064a29fe29fb7c2438ced1fa42400e4d2240cfb0f",
       "files": [
         "faas.rules.yml"
       ],
@@ -140,6 +140,19 @@
           }
         },
         {
+          "id": "0519ae0e5ea4429f6a837071907ee9fe91e37fde674988716a3bd7ee71d830c1",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas-internal-mail",
+          "rule_name": "InternalMailUncertainSubmission",
+          "definition": {
+            "expression_hash": "5d59025ce50d0e96c1c8c3fe6c4181ccea0e433e65f88c8790fda1311204b28a",
+            "labels_hash": "50c1fb647cf1200e735dd9ad5695e828859e45433dddf3082895d33ba7409db2",
+            "for_seconds": 120,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "d15e8ab69203b537c0a2a47c89a502392d8b34ab43e1f7967184a96780a1b1df"
+          }
+        },
+        {
           "id": "05a803cf6c3124eb816bca45e4b4bac9792a7352bc9f7ffcfe03649978a4c60d",
           "file_name": "faas.rules.yml",
           "group_name": "faas_durable_queue",
@@ -150,6 +163,19 @@
             "for_seconds": 600,
             "keep_firing_for_seconds": 0,
             "fingerprint": "3638b3f3af9156952f4419fbc6d99cdd53d19885c074d8c88dac946a644f9273"
+          }
+        },
+        {
+          "id": "069ba7e4ed4d8f060a3c5eb9064a3a835684023bf9ecce7deb4a52f04da380be",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas-internal-mail",
+          "rule_name": "InternalMailDKIMRotationFailed",
+          "definition": {
+            "expression_hash": "e1ea2c9049149604b3452b3c65e8d297103922576d60524ae30d736838932159",
+            "labels_hash": "50c1fb647cf1200e735dd9ad5695e828859e45433dddf3082895d33ba7409db2",
+            "for_seconds": 120,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "fa67977146ab602ced6256ac270f24a0a8587331db335d2190167b55bbeb9ff6"
           }
         },
         {
@@ -1739,6 +1765,19 @@
           }
         },
         {
+          "id": "59ec2c696e3e5d6acb40616c004d4bc328dc8bc7b423df760bfccd1e40c150fe",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas-internal-mail",
+          "rule_name": "InternalMailComplaint",
+          "definition": {
+            "expression_hash": "86db51703f5784a69e6ddaf9a91f1f34165440cc8bd0db04955acea36e9dfecc",
+            "labels_hash": "50c1fb647cf1200e735dd9ad5695e828859e45433dddf3082895d33ba7409db2",
+            "for_seconds": 60,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "fa8d88e88f242e033b29d2ea9d4ee08e348526e9e9b009e67bbaa4d17069113a"
+          }
+        },
+        {
           "id": "5a3d287b0fcf9ce9e9511ffa998865b8777f0451d61aa53e25eff3b1218f9a72",
           "file_name": "faas.rules.yml",
           "group_name": "faas_billing",
@@ -2792,6 +2831,32 @@
           }
         },
         {
+          "id": "9b06d4aff8043081cb2be8807d8a9ec1f3d669f0f496affe3ac0ca9cb6add071",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas-internal-mail",
+          "rule_name": "InternalMailBounceRateHigh",
+          "definition": {
+            "expression_hash": "666aa4bbef03d63ac856c00188460230906a2271dd202750940170ec1c65848d",
+            "labels_hash": "50c1fb647cf1200e735dd9ad5695e828859e45433dddf3082895d33ba7409db2",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "6aea77a0cf6832d5b772d4e347adc19d7e1e3dc976f4cb0039a90aa8e7a51e1c"
+          }
+        },
+        {
+          "id": "9bc06f054660cd0b93201b1a9baf5dab35f0e819bcc89b9efad36b137f1397cf",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas-internal-mail",
+          "rule_name": "InternalMailDomainAuthorizationFailed",
+          "definition": {
+            "expression_hash": "9e97b3bb13859d03b603a6949f79bbc1554ee9e323a983605368b54132ddfdb5",
+            "labels_hash": "50c1fb647cf1200e735dd9ad5695e828859e45433dddf3082895d33ba7409db2",
+            "for_seconds": 120,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "f0f14c94eacfdd48bf05c77a9955d8393d18bb15f16f10d099a7e5d4445d6e7c"
+          }
+        },
+        {
           "id": "9c2d6f579eb108abcb02ebb0fa26433cacad8e4a2ed654275a5f80ccbd6f9fc7",
           "file_name": "faas.rules.yml",
           "group_name": "faas_mcp_protocol",
@@ -2880,6 +2945,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "d24e2dae8c8851260e3b6ce836b71a954a7b9479e1f5c18b7bfb9ba5043bc18e"
+          }
+        },
+        {
+          "id": "a11841a47349b0bb2201a48d8221326442a7a9b79b02267551eeb7df701fb8be",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas-internal-mail",
+          "rule_name": "InternalMailStatisticsUnavailable",
+          "definition": {
+            "expression_hash": "d775c978f831b6bd45067dfb1dbd814cfd88cd3598684188f5c32115b89a08bf",
+            "labels_hash": "50c1fb647cf1200e735dd9ad5695e828859e45433dddf3082895d33ba7409db2",
+            "for_seconds": 120,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "a2d1c82043a87623a3551d3f68d6c57b73568cd0483ffd58db826a7854f823ff"
           }
         },
         {
@@ -3377,6 +3455,19 @@
           }
         },
         {
+          "id": "c0794a9e2ad620fab75843e3ae80c737ff8d7ad6de3933d2639c8e49e90ae0b2",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas-internal-mail",
+          "rule_name": "InternalMailMonitoringUnavailable",
+          "definition": {
+            "expression_hash": "042fc666f966c583cc4f7fa4318cccc9040254ca7b709bf59a4004616a758ce3",
+            "labels_hash": "50c1fb647cf1200e735dd9ad5695e828859e45433dddf3082895d33ba7409db2",
+            "for_seconds": 120,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "7acd1ea2f3af65c9e3fd59ebfd75fe0e50697b3b8c8c17ac9db8c06926e853c1"
+          }
+        },
+        {
           "id": "c0dc27ee66629227f62d3f04d023867cd5ad76c55c1a6110174d4ee4cd2a7be5",
           "file_name": "faas.rules.yml",
           "group_name": "compute_heartbeat_retention",
@@ -3663,6 +3754,19 @@
           }
         },
         {
+          "id": "d3db4e29bdcfacfaa93db2f76a451bbbe93a75059aeea836878ebe50b8d2494d",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas-internal-mail",
+          "rule_name": "InternalMailReportsStuck",
+          "definition": {
+            "expression_hash": "ab501c8892ba164f4c1da48921bd7e239f84e6238404d4c5f87f1108d957fbdb",
+            "labels_hash": "50c1fb647cf1200e735dd9ad5695e828859e45433dddf3082895d33ba7409db2",
+            "for_seconds": 120,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "33114ba6574906c3d59be468bf0cc8dcdc1eb782a014de8880cd179209ba873e"
+          }
+        },
+        {
           "id": "d4b714c06020b67775c12b512d6db442a50272713176b82eb5b732293d483f4b",
           "file_name": "faas.rules.yml",
           "group_name": "faas_billing",
@@ -3728,6 +3832,19 @@
           }
         },
         {
+          "id": "d8c82d12edc4a09a8b616aebfb8a885482aa6ae9463af574ecce9533e15d3594",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas-internal-mail",
+          "rule_name": "InternalMailQueueStalled",
+          "definition": {
+            "expression_hash": "ba6bc98a08343201f2a6996f43045624beeb4225986ca77e654515fc3db6d705",
+            "labels_hash": "50c1fb647cf1200e735dd9ad5695e828859e45433dddf3082895d33ba7409db2",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "acbe5000ecce13b62bc82a15c3ad9e0bf9f9d05d047d8108736feed734eeecd5"
+          }
+        },
+        {
           "id": "d9853c695dae43dc7939d91d6e1777224017adf791bdc82d873b2af7b2d39ebb",
           "file_name": "faas.rules.yml",
           "group_name": "faas_slo",
@@ -3738,6 +3855,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "9018c0290ac56e683180f2dc698ddaca4203ff125b5d7ae35c1eb1f6d91a7b64"
+          }
+        },
+        {
+          "id": "d9d378607cf757e0b2165fd652851c17dc63db72c6e115c500da3716738640c5",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas-internal-mail",
+          "rule_name": "InternalMailRetentionFailed",
+          "definition": {
+            "expression_hash": "7edd0072096bfb03f111777dc6178a8c464846f295606fd6b61ae732ba1b75be",
+            "labels_hash": "50c1fb647cf1200e735dd9ad5695e828859e45433dddf3082895d33ba7409db2",
+            "for_seconds": 120,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "6de8837e6e2a70708f598db923ba622361f157009724113f50f5382f51e8ab0f"
           }
         },
         {
@@ -4524,7 +4654,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "0da2a92cae2e1850ee024020af2a35d0c205f67895381188597ee14bc6fae3a7",
+      "revision": "f87fa41670773ff7d43a04ec64fe04e6d1e1fad9f927e03b0e13bcf7961ea391",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -4677,6 +4807,19 @@
           }
         },
         {
+          "id": "0519ae0e5ea4429f6a837071907ee9fe91e37fde674988716a3bd7ee71d830c1",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas-internal-mail",
+          "rule_name": "InternalMailUncertainSubmission",
+          "definition": {
+            "expression_hash": "5d59025ce50d0e96c1c8c3fe6c4181ccea0e433e65f88c8790fda1311204b28a",
+            "labels_hash": "50c1fb647cf1200e735dd9ad5695e828859e45433dddf3082895d33ba7409db2",
+            "for_seconds": 120,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "d15e8ab69203b537c0a2a47c89a502392d8b34ab43e1f7967184a96780a1b1df"
+          }
+        },
+        {
           "id": "05a803cf6c3124eb816bca45e4b4bac9792a7352bc9f7ffcfe03649978a4c60d",
           "file_name": "faas.rules.yml",
           "group_name": "faas_durable_queue",
@@ -4687,6 +4830,19 @@
             "for_seconds": 600,
             "keep_firing_for_seconds": 0,
             "fingerprint": "3638b3f3af9156952f4419fbc6d99cdd53d19885c074d8c88dac946a644f9273"
+          }
+        },
+        {
+          "id": "069ba7e4ed4d8f060a3c5eb9064a3a835684023bf9ecce7deb4a52f04da380be",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas-internal-mail",
+          "rule_name": "InternalMailDKIMRotationFailed",
+          "definition": {
+            "expression_hash": "e1ea2c9049149604b3452b3c65e8d297103922576d60524ae30d736838932159",
+            "labels_hash": "50c1fb647cf1200e735dd9ad5695e828859e45433dddf3082895d33ba7409db2",
+            "for_seconds": 120,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "fa67977146ab602ced6256ac270f24a0a8587331db335d2190167b55bbeb9ff6"
           }
         },
         {
@@ -6367,6 +6523,19 @@
           }
         },
         {
+          "id": "59ec2c696e3e5d6acb40616c004d4bc328dc8bc7b423df760bfccd1e40c150fe",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas-internal-mail",
+          "rule_name": "InternalMailComplaint",
+          "definition": {
+            "expression_hash": "86db51703f5784a69e6ddaf9a91f1f34165440cc8bd0db04955acea36e9dfecc",
+            "labels_hash": "50c1fb647cf1200e735dd9ad5695e828859e45433dddf3082895d33ba7409db2",
+            "for_seconds": 60,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "fa8d88e88f242e033b29d2ea9d4ee08e348526e9e9b009e67bbaa4d17069113a"
+          }
+        },
+        {
           "id": "5a3d287b0fcf9ce9e9511ffa998865b8777f0451d61aa53e25eff3b1218f9a72",
           "file_name": "faas.rules.yml",
           "group_name": "faas_billing",
@@ -7472,6 +7641,32 @@
           }
         },
         {
+          "id": "9b06d4aff8043081cb2be8807d8a9ec1f3d669f0f496affe3ac0ca9cb6add071",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas-internal-mail",
+          "rule_name": "InternalMailBounceRateHigh",
+          "definition": {
+            "expression_hash": "666aa4bbef03d63ac856c00188460230906a2271dd202750940170ec1c65848d",
+            "labels_hash": "50c1fb647cf1200e735dd9ad5695e828859e45433dddf3082895d33ba7409db2",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "6aea77a0cf6832d5b772d4e347adc19d7e1e3dc976f4cb0039a90aa8e7a51e1c"
+          }
+        },
+        {
+          "id": "9bc06f054660cd0b93201b1a9baf5dab35f0e819bcc89b9efad36b137f1397cf",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas-internal-mail",
+          "rule_name": "InternalMailDomainAuthorizationFailed",
+          "definition": {
+            "expression_hash": "9e97b3bb13859d03b603a6949f79bbc1554ee9e323a983605368b54132ddfdb5",
+            "labels_hash": "50c1fb647cf1200e735dd9ad5695e828859e45433dddf3082895d33ba7409db2",
+            "for_seconds": 120,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "f0f14c94eacfdd48bf05c77a9955d8393d18bb15f16f10d099a7e5d4445d6e7c"
+          }
+        },
+        {
           "id": "9c2d6f579eb108abcb02ebb0fa26433cacad8e4a2ed654275a5f80ccbd6f9fc7",
           "file_name": "faas.rules.yml",
           "group_name": "faas_mcp_protocol",
@@ -7560,6 +7755,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "d24e2dae8c8851260e3b6ce836b71a954a7b9479e1f5c18b7bfb9ba5043bc18e"
+          }
+        },
+        {
+          "id": "a11841a47349b0bb2201a48d8221326442a7a9b79b02267551eeb7df701fb8be",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas-internal-mail",
+          "rule_name": "InternalMailStatisticsUnavailable",
+          "definition": {
+            "expression_hash": "d775c978f831b6bd45067dfb1dbd814cfd88cd3598684188f5c32115b89a08bf",
+            "labels_hash": "50c1fb647cf1200e735dd9ad5695e828859e45433dddf3082895d33ba7409db2",
+            "for_seconds": 120,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "a2d1c82043a87623a3551d3f68d6c57b73568cd0483ffd58db826a7854f823ff"
           }
         },
         {
@@ -8109,6 +8317,19 @@
           }
         },
         {
+          "id": "c0794a9e2ad620fab75843e3ae80c737ff8d7ad6de3933d2639c8e49e90ae0b2",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas-internal-mail",
+          "rule_name": "InternalMailMonitoringUnavailable",
+          "definition": {
+            "expression_hash": "042fc666f966c583cc4f7fa4318cccc9040254ca7b709bf59a4004616a758ce3",
+            "labels_hash": "50c1fb647cf1200e735dd9ad5695e828859e45433dddf3082895d33ba7409db2",
+            "for_seconds": 120,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "7acd1ea2f3af65c9e3fd59ebfd75fe0e50697b3b8c8c17ac9db8c06926e853c1"
+          }
+        },
+        {
           "id": "c0dc27ee66629227f62d3f04d023867cd5ad76c55c1a6110174d4ee4cd2a7be5",
           "file_name": "faas.rules.yml",
           "group_name": "compute_heartbeat_retention",
@@ -8395,6 +8616,19 @@
           }
         },
         {
+          "id": "d3db4e29bdcfacfaa93db2f76a451bbbe93a75059aeea836878ebe50b8d2494d",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas-internal-mail",
+          "rule_name": "InternalMailReportsStuck",
+          "definition": {
+            "expression_hash": "ab501c8892ba164f4c1da48921bd7e239f84e6238404d4c5f87f1108d957fbdb",
+            "labels_hash": "50c1fb647cf1200e735dd9ad5695e828859e45433dddf3082895d33ba7409db2",
+            "for_seconds": 120,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "33114ba6574906c3d59be468bf0cc8dcdc1eb782a014de8880cd179209ba873e"
+          }
+        },
+        {
           "id": "d4b714c06020b67775c12b512d6db442a50272713176b82eb5b732293d483f4b",
           "file_name": "faas.rules.yml",
           "group_name": "faas_billing",
@@ -8473,6 +8707,19 @@
           }
         },
         {
+          "id": "d8c82d12edc4a09a8b616aebfb8a885482aa6ae9463af574ecce9533e15d3594",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas-internal-mail",
+          "rule_name": "InternalMailQueueStalled",
+          "definition": {
+            "expression_hash": "ba6bc98a08343201f2a6996f43045624beeb4225986ca77e654515fc3db6d705",
+            "labels_hash": "50c1fb647cf1200e735dd9ad5695e828859e45433dddf3082895d33ba7409db2",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "acbe5000ecce13b62bc82a15c3ad9e0bf9f9d05d047d8108736feed734eeecd5"
+          }
+        },
+        {
           "id": "d9853c695dae43dc7939d91d6e1777224017adf791bdc82d873b2af7b2d39ebb",
           "file_name": "faas.rules.yml",
           "group_name": "faas_slo",
@@ -8483,6 +8730,19 @@
             "for_seconds": 300,
             "keep_firing_for_seconds": 0,
             "fingerprint": "9018c0290ac56e683180f2dc698ddaca4203ff125b5d7ae35c1eb1f6d91a7b64"
+          }
+        },
+        {
+          "id": "d9d378607cf757e0b2165fd652851c17dc63db72c6e115c500da3716738640c5",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas-internal-mail",
+          "rule_name": "InternalMailRetentionFailed",
+          "definition": {
+            "expression_hash": "7edd0072096bfb03f111777dc6178a8c464846f295606fd6b61ae732ba1b75be",
+            "labels_hash": "50c1fb647cf1200e735dd9ad5695e828859e45433dddf3082895d33ba7409db2",
+            "for_seconds": 120,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "6de8837e6e2a70708f598db923ba622361f157009724113f50f5382f51e8ab0f"
           }
         },
         {

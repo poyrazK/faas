@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
-# Build the unsigned part of a per-unit control-plane release
+# Build the unsigned part of a per-unit release
 # (docs/adr/1650-per-unit-control-plane-releases.md) from an
-# affected_units.py report: every deployable control-plane binary, built with
-# build-release-batch's flags and stamped with its unit version, plus
-# units-manifest.json describing them. release-units.yml signs the tarball.
+# affected_units.py report: every binary of an eligible lane (control-plane,
+# edge), built with build-release-batch's flags and stamped with its unit
+# version, plus units-manifest.json describing them, and the deployctl the
+# deploy hosts run (tools/deployctl). release-units.yml signs the tarball.
 #
 #   REPORT=report.json OUT_DIR=out scripts/build-unit-release.sh
 #
-# Writes units.tar.gz (bin/<unit>..., units-manifest.json), a copy of
+# Writes units.tar.gz (bin/<unit>..., tools/deployctl, units-manifest.json), a copy of
 # units-manifest.json, and SHA256SUMS into OUT_DIR. The tarball's bytes
 # depend only on the binaries and the head commit's timestamp.
 set -euo pipefail
@@ -34,7 +35,7 @@ head_sha=$(jq -er .head "$report")
 
 work=$(mktemp -d "${TMPDIR:-/tmp}/gregale-units.XXXXXX")
 trap 'rm -rf "$work"' EXIT
-mkdir -p "$work/bin" "$out_dir"
+mkdir -p "$work/bin" "$work/tools" "$out_dir"
 rm -f "$out_dir/units.tar.gz" "$out_dir/units-manifest.json" "$out_dir/units.cosign.bundle" "$out_dir/SHA256SUMS"
 
 while read -r unit version; do
@@ -46,6 +47,13 @@ while read -r unit version; do
   make -C "$repo_root" --no-print-directory build-release-unit \
     UNIT="$unit" VERSION="$version" BINDIR="$work/bin" GOOS=linux GOARCH=amd64
 done < <(jq -r '.deployable[] as $u | "\($u) \(.binaries[$u].version)"' "$report")
+
+# The deploy controller rides in the signed release, so deploy jobs neither
+# build it nor trust a runner-built copy. Same flags as the full lane's.
+echo "building deployctl"
+(cd "$repo_root" && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 "${GO:-go}" build -trimpath -buildvcs=false \
+  -ldflags "-s -w -X github.com/onebox-faas/faas/pkg/wire.Version=${head_sha}" \
+  -o "$work/tools/deployctl" ./cmd/deployctl)
 
 python3 - "$report" "$lanes" "$work" <<'PY'
 import hashlib
@@ -65,20 +73,29 @@ for name in report["deployable"]:
         digest = hashlib.sha256(fh.read()).hexdigest()
     entry = report["binaries"][name]
     units[name] = {
+        "lane": entry["lane"],
         "version": entry["version"],
         "commit": entry["commit"],
         "sha256": digest,
         "size": os.path.getsize(path),
         "services": lanes[name]["services"],
     }
+tools = {}
+for name in sorted(os.listdir(os.path.join(work, "tools"))):
+    path = os.path.join(work, "tools", name)
+    with open(path, "rb") as fh:
+        tools[name] = {"sha256": hashlib.sha256(fh.read()).hexdigest(), "size": os.path.getsize(path)}
 manifest = {
-    "format_version": 1,
+    "format_version": 2,
     "kind": "gregale-unit-release",
     "git_sha": report["head"],
     "base_sha": report["base"],
     "base_ref": report["base_ref"],
     "target": "linux/amd64",
     "units": units,
+    "tools": tools,
+    "lanes": {lane: {"eligible": v["eligible"], "units": v["changed"] if v["eligible"] else []}
+              for lane, v in report["lanes"].items()},
     "pending": report["pending"],
     "flags": report["flags"],
 }
@@ -89,7 +106,7 @@ PY
 
 mtime=$(git -C "$repo_root" log -1 --format=%ct "$head_sha")
 "$tar_bin" --create --sort=name --owner=0 --group=0 --numeric-owner --mtime="@$mtime" \
-  --directory "$work" bin units-manifest.json | gzip -n > "$out_dir/units.tar.gz"
+  --directory "$work" bin tools units-manifest.json | gzip -n > "$out_dir/units.tar.gz"
 install -m 0644 "$work/units-manifest.json" "$out_dir/units-manifest.json"
 (cd "$out_dir" && sha256sum units.tar.gz units-manifest.json > SHA256SUMS)
 echo "unit release ready in $out_dir: $(jq -r '.deployable | join(" ")' "$report")"

@@ -38,12 +38,17 @@ func UnitGatewaydPublic() daemonunit.Unit {
 		StartLimitIntervalSec: "60s",
 		StartLimitBurst:       "5",
 
-		Type:       "notify",
-		User:       "faas",
-		Group:      "faas",
-		ExecStart:  `/opt/faas/current/bin/gatewayd-public`,
-		Restart:    "on-failure",
-		RestartSec: "2s",
+		Type: "notify",
+		// `systemctl reload` hands off to a second generation that serves
+		// new connections while this one finishes its own (ADR-1580).
+		NotifyAccess: "main",
+		ExecReload:   handoffReload,
+		OOMPolicy:    "continue",
+		User:         "faas",
+		Group:        "faas",
+		ExecStart:    `/opt/faas/current/bin/gatewayd-public`,
+		Restart:      "on-failure",
+		RestartSec:   "2s",
 		// ADR-190: the only public listener on the node; replace a
 		// stalled runtime quickly. Socket activation keeps the
 		// listening socket open across the restart.

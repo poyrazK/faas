@@ -104,6 +104,7 @@ require (
 	github.com/corazawaf/libinjection-go v0.3.3 // indirect
 	github.com/dennwc/varint v1.0.0 // indirect
 	github.com/dlclark/regexp2/v2 v2.2.1 // indirect
+	github.com/emersion/go-msgauth v0.7.0
 	github.com/envoyproxy/go-control-plane/envoy v1.37.0 // indirect
 	github.com/envoyproxy/protoc-gen-validate v1.3.3 // indirect
 	github.com/goccy/go-json v0.10.5 // indirect

@@ -6787,3 +6787,142 @@ groups:
           summary: "MCP starter telemetry heartbeats stopped"
           description: "An opted-in executing instance has stopped reporting heartbeats after its startup grace period. This indicates missing process telemetry, independently of MCP readiness and tool success. Paused and retired host log lifecycles are excluded."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasMCPProtocolPerformance.md"
+
+  - name: faas-internal-mail
+    rules:
+      - alert: InternalMailMonitoringUnavailable
+        expr: '(maild_mail_monitoring_up == 0) or (time() - maild_mail_monitoring_collected_at_seconds > 120)'
+        for: 2m
+        labels:
+          severity: warn
+          component: maild
+          family: internal_mail
+          public_status: internal
+        annotations:
+          summary: "Internal mail monitoring is unavailable or stale"
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/internal-mail.md"
+
+      - alert: InternalMailStatisticsUnavailable
+        expr: '(maild_mail_stats_up == 0) or (maild_mail_postfix_stats_up == 0)'
+        for: 2m
+        labels:
+          severity: warn
+          component: maild
+          family: internal_mail
+          public_status: internal
+        annotations:
+          summary: "Internal mail database or Postfix statistics are unavailable"
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/internal-mail.md"
+
+      - alert: InternalMailQueueStalled
+        expr: '(maild_mail_oldest_pending_seconds > 300) or (max without (kind) (maild_mail_postfix_oldest_seconds{kind="delivery"}) > 900)'
+        for: 5m
+        labels:
+          severity: warn
+          component: maild
+          family: internal_mail
+          public_status: internal
+        annotations:
+          summary: "Internal mail delivery queue is aging"
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/internal-mail.md"
+
+      - alert: InternalMailReportsStuck
+        expr: '(max without (kind) (maild_mail_postfix_oldest_seconds{kind="report"}) > 120) or (maild_mail_oldest_report_wait_seconds > 7200)'
+        for: 2m
+        labels:
+          severity: warn
+          component: maild
+          family: internal_mail
+          public_status: internal
+        annotations:
+          summary: "Internal mail reports are waiting too long"
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/internal-mail.md"
+
+      - alert: InternalMailUncertainSubmission
+        expr: 'max without (state) (maild_mail_recipients{state="uncertain"}) > 0'
+        for: 2m
+        labels:
+          severity: warn
+          component: maild
+          family: internal_mail
+          public_status: internal
+        annotations:
+          summary: "Internal mail has an uncertain SMTP submission"
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/internal-mail.md"
+
+      - alert: InternalMailBounceRateHigh
+        expr: '(sum without (kind) (maild_mail_outcomes_last_day{kind="bounced"}) / clamp_min(sum without (kind) (maild_mail_outcomes_last_day{kind=~"accepted|bounced"}), 1) > 0.2) and (sum without (kind) (maild_mail_outcomes_last_day{kind=~"accepted|bounced"}) >= 5)'
+        for: 5m
+        labels:
+          severity: warn
+          component: maild
+          family: internal_mail
+          public_status: internal
+        annotations:
+          summary: "Internal mail bounces exceed the pilot threshold"
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/internal-mail.md"
+
+      - alert: InternalMailComplaint
+        expr: 'sum without (kind) (maild_mail_outcomes_last_day{kind="complained"}) > 0'
+        for: 1m
+        labels:
+          severity: warn
+          component: maild
+          family: internal_mail
+          public_status: internal
+        annotations:
+          summary: "Internal mail received a complaint"
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/internal-mail.md"
+
+      - alert: InternalMailRetentionFailed
+        expr: 'maild_mail_retention_enabled == 1 and (maild_mail_retention_last_run_up == 0 or maild_mail_retention_stats_up == 0 or time() - maild_mail_retention_last_attempt_seconds > 7200)'
+        for: 2m
+        labels:
+          severity: warn
+          component: maild
+          family: internal_mail
+          public_status: internal
+        annotations:
+          summary: "Internal mail payload retention is failing or stale"
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/internal-mail.md"
+
+      - alert: InternalMailDKIMRotationFailed
+        expr: |
+          (maild_mail_dkim_rotation_enabled == 1)
+          and on(job,instance)
+          (
+            (maild_mail_domain_lifecycle_stats_up == 0)
+            or (maild_mail_dkim_failed_keys > 0)
+            or (maild_mail_dkim_oldest_staged_seconds > 86400)
+          )
+        for: 2m
+        labels:
+          severity: warn
+          component: maild
+          family: internal_mail
+          public_status: internal
+        annotations:
+          summary: "Internal mail DKIM rotation is failing or stalled"
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/internal-mail.md"
+
+      - alert: InternalMailDomainAuthorizationFailed
+        expr: |
+          (maild_mail_domain_reverify_enabled == 1)
+          and on(job,instance)
+          (
+            (maild_mail_domain_lifecycle_stats_up == 0)
+            or (maild_mail_domain_paused > 0)
+            or (maild_mail_domain_stale > 0)
+            or (maild_mail_domain_lookup_unavailable > 0)
+            or (maild_mail_domain_check_last_run_up == 0)
+            or ((time() - maild_mail_domain_check_last_attempt_seconds) > 180)
+          )
+        for: 2m
+        labels:
+          severity: warn
+          component: maild
+          family: internal_mail
+          public_status: internal
+        annotations:
+          summary: "Internal mail domain authorization is failing or stale"
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/internal-mail.md"
