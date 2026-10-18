@@ -491,13 +491,15 @@ jobs:
   tests:
     name: "light: tests (shard ${{ matrix.shard }})"
     runs-on: ubuntu-latest
-    # Light-tier budget: about 10 minutes per shard. Changed packages run in
-    # full with -race; cmd/gregale, pkg/state and pkg/apid/apidserver (one per
-    # shard, see affected_packages.py SELECTIVE_SHARD) run only the tests
-    # related to the change, without -race. The mega tier (ci.yml) runs every
+    # Changed packages run in full with -race; cmd/gregale, pkg/state and
+    # pkg/apid/apidserver (one per shard, see affected_packages.py
+    # SELECTIVE_SHARD) run only the tests related to the change, without -race.
+    # The mega tier (ci.yml) runs every
     # suite in full with -race nightly and before every release. Main pushes
-    # also warm the large-package build for later pull requests.
-    timeout-minutes: ${{ github.ref == 'refs/heads/main' && 40 || 20 }}
+    # also warm the large-package build for later pull requests. PRs can still
+    # invalidate that cache, so allow the same bounded compilation and setup
+    # budget as main; the Go test execution deadlines below stay unchanged.
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
