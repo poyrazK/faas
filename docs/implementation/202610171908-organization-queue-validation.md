@@ -563,3 +563,20 @@ credential revocation behavior are unchanged.
 On `2503dd151`, CI passes lint/vet/build and the full mail-outbox suite
 (287.689s), apid (103.946s), and selected apidserver tests (29.612s). Fresh CI
 must qualify the final fixture correction.
+
+## Integration with node liveness leases
+
+Main through `622ea65b9` is integrated, retaining the node-lease phase-one
+renew/observe behavior and the newer test/build helpers. The SQL configuration
+contains the union of 115 root state query files. All 949 unique table policies
+and exact column sets match a freshly migrated PostgreSQL database; node leases
+remain platform operational metadata. Existing company policy classifications
+and erasure guards are preserved.
+
+Canonical schema generation, deterministic SQL bindings, migration lint, OpenAPI
+parity/duplicate-key checks and ADR uniqueness pass. Ownership apply-and-walk,
+all seven migration replays and down/up recovery pass (27.137s). The node-lease
+keeper suite passes (0.022s), and daemon environment tests pass (1.628s). The
+OpenAPI and SDK inputs are unchanged by this integration. Earlier fixture,
+state, HTTP and CI evidence remains scoped to its recorded revision. Fresh
+GitHub checks must qualify the merged source.
