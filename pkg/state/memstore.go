@@ -225,6 +225,7 @@ type MemStore struct {
 	lifecycleRecovery                          bool
 	routeLifecycleApprovals                    map[string]api.RouteLifecycleApproval
 	routeRemovalPolicies                       map[string]api.RouteRemovalPolicy
+	productData                                *productMemory
 	scenarioManagedWork                        map[string]scenarioManagedJob
 	scenarioWorkerFaults                       map[string]rehearsalwork.WorkerFault
 	scenarioColdPreparations                   map[string]rehearsalcold.Preparation

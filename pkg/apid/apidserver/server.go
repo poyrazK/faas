@@ -36,6 +36,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/operation"
 	"github.com/onebox-faas/faas/pkg/apid/operatorobs"
 	"github.com/onebox-faas/faas/pkg/apid/outboundai"
+	"github.com/onebox-faas/faas/pkg/apid/product"
 	"github.com/onebox-faas/faas/pkg/apid/queueleases"
 	"github.com/onebox-faas/faas/pkg/apid/servicemap"
 	"github.com/onebox-faas/faas/pkg/apid/statementinvoices"
@@ -121,7 +122,8 @@ type server struct {
 	devBridgeEnabled                       bool
 	devBridgeURL                           string
 	devBridgeObserver                      *devbridge.Observer
-	operation                              operation.Service  // ADR-977; Host wired in newServer
+	operation                              operation.Service // ADR-977; Host wired in newServer
+	productControl                         product.Service
 	appEvents                              appevents.Service  // ADR-977; Host wired in newServer
 	serviceMap                             servicemap.Service // ADR-1131; Host wired in newServer
 	featureFlagsEnabled                    bool
@@ -1313,6 +1315,12 @@ func newServerWithDeps(
 	}
 	s.object.InventoryWake = make(chan struct{}, 1)
 	s.operation.Host = operationHost{s}
+	s.productControl.Host = operationHost{s}
+	s.productControl.StartOperation = s.operation.StartProductOperation
+	s.productControl.AuthOrigin = s.productAuthOrigin
+	s.productControl.OwnerSessions = func() *session.Manager { return s.sessions }
+	s.productControl.OwnerRender = s.renderProductOwner
+	s.productControl.OperationDoctor = s.operation.ObserveProductDefinitionDoctor
 	s.edgeRules.Host = edgeRulesHost{s}
 	s.queueLeases.Host = queueLeasesHost{s}
 	s.realtime.Host = realtimeHost{s}
@@ -1372,6 +1380,7 @@ func (noopNotifier) WaitFor(_ context.Context, _ string, _ func(payload string) 
 // New routes append here; do not introduce per-feature sub-muxes.
 func (s *server) handler() http.Handler {
 	mux := http.NewServeMux()
+	s.registerProductControl(mux)
 	s.registerInternalCI(mux)
 	s.registerInternalCIRuntime(mux)
 	mux.HandleFunc("POST /integrations/slack/issues/{app_id}", s.issueSlackInteractionHandler)
@@ -4683,9 +4692,9 @@ func (s *server) handler() http.Handler {
 	// + JSON so the gate is unconditionally true.
 	return middleware.RequestID(httpsec.Static(httpsec.Nonce(
 		func(*http.Request) bool { return true },
-		s.observeWrap(s.hosting.HideDisabled(operation.OperationCustomerCORS(ciapi.HideDisabledRoutes(
+		s.observeWrap(s.hosting.HideDisabled(operation.OperationCustomerCORS(s.productControl.SurfaceGate(ciapi.HideDisabledRoutes(
 			func() ci.Config { return s.ciConfig }, apiContractHandler(mux, s.durable.Hidden),
-		)))),
+		))))),
 	)))
 }
 
