@@ -262,10 +262,13 @@ func (c *client) subscribe(id, sealed string) {
 	c.send(liveproto.ClientFrame{Type: liveproto.TypeSubscribe, Subscription: id, Sealed: sealed})
 }
 
-// until applies frames until cond holds.
+// until applies frames until cond holds. The first result after a hub starts
+// waits for its replication slot to stream, which on a busy database server
+// can take until the next running-transactions record (every 15 s), so the
+// bound leaves room for that on a loaded CI host.
 func (c *client) until(what string, cond func() bool) {
 	c.t.Helper()
-	deadline := time.After(20 * time.Second)
+	deadline := time.After(60 * time.Second)
 	for !cond() {
 		select {
 		case frame, ok := <-c.frames:
