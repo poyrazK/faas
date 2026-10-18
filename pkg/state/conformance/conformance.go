@@ -90,6 +90,14 @@ func Run(t *testing.T, open Open) {
 		{"service_rollout_abort_handoff_is_durable", testServiceRolloutAbortHandoff},
 		{"service_recovery_claim_and_retry_are_durable", testServiceRecoveryClaims},
 		{"service_recovery_candidates_are_active_owned_and_bounded", testServiceRecoveryCandidates},
+		{"worker_recovery_claim_and_retry_are_durable", testWorkerRecoveryClaims},
+		{"worker_recovery_observations_are_fenced_and_copied", testWorkerRecoveryObservations},
+		{"worker_recovery_diagnostics_are_owned_fresh_and_eligible", testWorkerRecoveryDiagnostics},
+		{"worker_recovery_candidates_are_active_owned_and_bounded", testWorkerRecoveryCandidates},
+		{"worker_recovery_discovers_captured_environments", testWorkerRecoveryCapturedEnvironment},
+		{"worker_recovery_discovers_unfinished_mode_cleanup", testWorkerRecoveryModeCleanup},
+		{"worker_recovery_clone_inventory_preserves_runtime_authority", testWorkerRecoveryCloneInventory},
+		{"mcp_readiness_clone_inventory_requires_isolation_and_resets_runtime", testMCPReadinessCloneInventory},
 		{"ownership_recovery_pages_are_scoped_exclusive_and_bounded", testOwnershipRecoveryPages},
 		{"ownership_recovery_transfer_fences_health_cooldown_and_peers", testOwnershipRecoveryTransfer},
 		{"scenario_rehearsal_reads_for_unenrolled_app", testScenarioRehearsalReadsForUnenrolledApp},
@@ -192,6 +200,7 @@ func Run(t *testing.T, open Open) {
 		{"app_deletion_claim_closes_restore_window", testAppDeletionClaim},
 		{"preview_lifecycle_is_scoped_and_reclaimable", testPreviewLifecycle},
 		{"scenario_test_namespace_is_scoped_and_reaped", testScenarioTestNamespace},
+		{"scenario_action_policy_readers_retain_isolation_after_cleanup", testScenarioActionPolicyReaders},
 		{"mcp_compatibility_snapshots_and_recovery_leases_are_fenced", testMCPCompatibilityAndRecovery},
 		{"preview_teardown_claim_fences_reopen", testPreviewTeardownClaim},
 		{"pr_preview_lease_reopens_and_renews", testPRPreviewLease},
@@ -3977,6 +3986,18 @@ func testLiveStateReaders(t *testing.T, fx *Fixture) {
 	}
 	if capRAM != wantRAM {
 		t.Errorf("OperatorCapacity RAM total = %d, want %d", capRAM, wantRAM)
+	}
+	if err := fx.Store.SetAppNodeID(fx.Ctx, fx.App.ID, fx.Node.ID); err != nil {
+		t.Fatal(err)
+	}
+	if rows, err := fx.Store.ListLiveInstancesByNodeID(fx.Ctx, fx.Node.ID); err != nil || len(rows) != wantLive {
+		t.Errorf("owned live instances = %d, %v; want %d without parked history", len(rows), err, wantLive)
+	}
+	if rows, err := fx.Store.ListInstancesByNodeID(fx.Ctx, fx.Node.ID); err != nil || len(rows) != wantLive+1 {
+		t.Errorf("owned history = %d, %v; want %d including parked history", len(rows), err, wantLive+1)
+	}
+	if rows, err := fx.Store.ListLiveInstancesByNodeID(fx.Ctx, uuid.NewString()); err != nil || len(rows) != 0 {
+		t.Errorf("another node received owned live instances: %+v, %v", rows, err)
 	}
 }
 

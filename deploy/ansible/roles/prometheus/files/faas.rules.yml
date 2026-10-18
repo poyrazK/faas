@@ -253,7 +253,13 @@ groups:
     interval: 30s
     rules:
       - alert: FaasRequestIDJournalWriteFailures
-        expr: sum(rate(gateway_request_id_journal_write_total{result="failed"}[5m])) > (1 / 60)
+        # ADR-1521: records are written in batches, so one failed batch counts
+        # up to 128 failed records. Alert on a failure share, not a count alone.
+        expr: |
+          sum(rate(gateway_request_id_journal_write_total{result="failed"}[5m])) > (1 / 60)
+          and
+          sum(rate(gateway_request_id_journal_write_total{result="failed"}[5m]))
+            / sum(rate(gateway_request_id_journal_write_total{result=~"recorded|rejected|failed"}[5m])) > 0.05
         for: 2m
         labels:
           severity: warn
@@ -261,7 +267,7 @@ groups:
           family: request_id_journal
         annotations:
           summary: "Exact request-ID journal writes are failing"
-          description: "The gateway's mandatory pre-proxy request-ID journal has failed above 1 write per minute for 2 minutes. Affected requests are rejected with 503 before guest execution; check the apid private gRPC path and Postgres write health."
+          description: "More than 5% of exact request-ID journal records (and more than 1 per minute) failed to reach apid for 2 minutes. Requests are still served (ADR-634), but their public request IDs may not resolve in the debugger; check the apid private gRPC path and Postgres write health."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRequestIDJournalWriteFailures.md"
 
   - name: outbound_webhook_delivery
@@ -4607,6 +4613,47 @@ groups:
           description: "schedd recorded a routing or request-drain timeout/error during a service rollout in the last ten minutes. Inspect the deployment's service_rollout_handoff status for the action, generation, missing gateways, retry count, and last error. The predecessor remains live while reconciliation retries."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasServiceRolloutHandoffBlocked.md"
 
+  # ADR-20261017223000: fresh persisted observations, with no customer labels.
+  - name: faas_worker_recovery
+    interval: 30s
+    rules:
+      - alert: FaasWorkerPoolUnderCapacity
+        expr: (sum without (state) (schedd_worker_recovery_replicas{state="missing"}) > 0) and (time() - schedd_worker_recovery_observed_timestamp_seconds <= 60)
+        for: 10m
+        labels:
+          severity: warn
+          component: schedd
+          family: worker_recovery
+          public_status: internal
+        annotations:
+          summary: "Worker pools remain below required capacity on {{ $labels.instance }}"
+          description: "Fresh scheduler observations show missing required workers for ten minutes. Inspect gregale inspect and the recovery ledger for capacity, startup or dependency failures. Intentional zero targets do not contribute a deficit."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/continuous-service-recovery.md"
+      - alert: FaasWorkerRecoveryStalled
+        expr: (sum without (condition) (schedd_worker_recovery_apps{condition="overdue"}) > 0) and (time() - schedd_worker_recovery_observed_timestamp_seconds <= 60)
+        for: 2m
+        labels:
+          severity: warn
+          component: schedd
+          family: worker_recovery
+          public_status: internal
+        annotations:
+          summary: "Worker reconciliation is overdue on {{ $labels.instance }}"
+          description: "An eligible owned app has exceeded both its retry deadline and reconciliation lease by at least sixty seconds for two minutes. Inspect scheduler work saturation, ownership and dependencies; an active lease or future retry deadline does not count as overdue."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/continuous-service-recovery.md"
+      - alert: FaasWorkerRecoveryObservationUnavailable
+        expr: (sum without (condition) (schedd_worker_recovery_apps{condition="unknown"}) > 0) or (time() - schedd_worker_recovery_observed_timestamp_seconds > 60)
+        for: 5m
+        labels:
+          severity: warn
+          component: schedd
+          family: worker_recovery
+          public_status: internal
+        annotations:
+          summary: "Worker recovery observations are unavailable on {{ $labels.instance }}"
+          description: "An eligible worker app has no fresh pool observation, or database collection has not succeeded for over sixty seconds, for five minutes. Counts are unknown. Check schedd recovery logs, database connectivity, deployment availability and scheduler version."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/continuous-service-recovery.md"
+
   - name: faas_durable_queue
     interval: 30s
     rules:
@@ -5569,3 +5616,142 @@ groups:
           summary: "MCP starter telemetry heartbeats stopped"
           description: "An opted-in executing instance has stopped reporting heartbeats after its startup grace period. This indicates missing process telemetry, independently of MCP readiness and tool success. Paused and retired host log lifecycles are excluded."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasMCPProtocolPerformance.md"
+
+  - name: faas-internal-mail
+    rules:
+      - alert: InternalMailMonitoringUnavailable
+        expr: '(maild_mail_monitoring_up == 0) or (time() - maild_mail_monitoring_collected_at_seconds > 120)'
+        for: 2m
+        labels:
+          severity: warn
+          component: maild
+          family: internal_mail
+          public_status: internal
+        annotations:
+          summary: "Internal mail monitoring is unavailable or stale"
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/internal-mail.md"
+
+      - alert: InternalMailStatisticsUnavailable
+        expr: '(maild_mail_stats_up == 0) or (maild_mail_postfix_stats_up == 0)'
+        for: 2m
+        labels:
+          severity: warn
+          component: maild
+          family: internal_mail
+          public_status: internal
+        annotations:
+          summary: "Internal mail database or Postfix statistics are unavailable"
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/internal-mail.md"
+
+      - alert: InternalMailQueueStalled
+        expr: '(maild_mail_oldest_pending_seconds > 300) or (max without (kind) (maild_mail_postfix_oldest_seconds{kind="delivery"}) > 900)'
+        for: 5m
+        labels:
+          severity: warn
+          component: maild
+          family: internal_mail
+          public_status: internal
+        annotations:
+          summary: "Internal mail delivery queue is aging"
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/internal-mail.md"
+
+      - alert: InternalMailReportsStuck
+        expr: '(max without (kind) (maild_mail_postfix_oldest_seconds{kind="report"}) > 120) or (maild_mail_oldest_report_wait_seconds > 7200)'
+        for: 2m
+        labels:
+          severity: warn
+          component: maild
+          family: internal_mail
+          public_status: internal
+        annotations:
+          summary: "Internal mail reports are waiting too long"
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/internal-mail.md"
+
+      - alert: InternalMailUncertainSubmission
+        expr: 'max without (state) (maild_mail_recipients{state="uncertain"}) > 0'
+        for: 2m
+        labels:
+          severity: warn
+          component: maild
+          family: internal_mail
+          public_status: internal
+        annotations:
+          summary: "Internal mail has an uncertain SMTP submission"
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/internal-mail.md"
+
+      - alert: InternalMailBounceRateHigh
+        expr: '(sum without (kind) (maild_mail_outcomes_last_day{kind="bounced"}) / clamp_min(sum without (kind) (maild_mail_outcomes_last_day{kind=~"accepted|bounced"}), 1) > 0.2) and (sum without (kind) (maild_mail_outcomes_last_day{kind=~"accepted|bounced"}) >= 5)'
+        for: 5m
+        labels:
+          severity: warn
+          component: maild
+          family: internal_mail
+          public_status: internal
+        annotations:
+          summary: "Internal mail bounces exceed the pilot threshold"
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/internal-mail.md"
+
+      - alert: InternalMailComplaint
+        expr: 'sum without (kind) (maild_mail_outcomes_last_day{kind="complained"}) > 0'
+        for: 1m
+        labels:
+          severity: warn
+          component: maild
+          family: internal_mail
+          public_status: internal
+        annotations:
+          summary: "Internal mail received a complaint"
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/internal-mail.md"
+
+      - alert: InternalMailRetentionFailed
+        expr: 'maild_mail_retention_enabled == 1 and (maild_mail_retention_last_run_up == 0 or maild_mail_retention_stats_up == 0 or time() - maild_mail_retention_last_attempt_seconds > 7200)'
+        for: 2m
+        labels:
+          severity: warn
+          component: maild
+          family: internal_mail
+          public_status: internal
+        annotations:
+          summary: "Internal mail payload retention is failing or stale"
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/internal-mail.md"
+
+      - alert: InternalMailDKIMRotationFailed
+        expr: |
+          (maild_mail_dkim_rotation_enabled == 1)
+          and on(job,instance)
+          (
+            (maild_mail_domain_lifecycle_stats_up == 0)
+            or (maild_mail_dkim_failed_keys > 0)
+            or (maild_mail_dkim_oldest_staged_seconds > 86400)
+          )
+        for: 2m
+        labels:
+          severity: warn
+          component: maild
+          family: internal_mail
+          public_status: internal
+        annotations:
+          summary: "Internal mail DKIM rotation is failing or stalled"
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/internal-mail.md"
+
+      - alert: InternalMailDomainAuthorizationFailed
+        expr: |
+          (maild_mail_domain_reverify_enabled == 1)
+          and on(job,instance)
+          (
+            (maild_mail_domain_lifecycle_stats_up == 0)
+            or (maild_mail_domain_paused > 0)
+            or (maild_mail_domain_stale > 0)
+            or (maild_mail_domain_lookup_unavailable > 0)
+            or (maild_mail_domain_check_last_run_up == 0)
+            or ((time() - maild_mail_domain_check_last_attempt_seconds) > 180)
+          )
+        for: 2m
+        labels:
+          severity: warn
+          component: maild
+          family: internal_mail
+          public_status: internal
+        annotations:
+          summary: "Internal mail domain authorization is failing or stale"
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/internal-mail.md"

@@ -1,3 +1,4 @@
+-- migration-compat: expand
 -- filename: 20261017091338430_config_revisions_and_guards.sql
 --
 -- ADR-1451: guarded, reversible config changes. Customer writes to an app

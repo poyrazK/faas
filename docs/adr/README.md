@@ -186,7 +186,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 1583 | [Default-off same-repository PR execution automation](1583-internal-ci-pull-request-automation.md) | implemented behind default-off CI gates; native qualification pending | Explicit PR target filters, fresh source verification, per-PR slots and existing cleanup fences |
 | 1582 | [Bounded internal CI JUnit diagnostics](1582-internal-ci-junit-reports.md) | implemented behind default-off CI gates; native qualification pending | Verified attempt-bound reports, bounded failure detail and aggregate-only GitHub Checks |
 | 1581 | [Internal CI branch serialization and verified-head supersession](1581-internal-ci-branch-concurrency.md) | implemented behind default-off CI gates; native qualification pending | One automatic branch slot, verified-head opt-in supersession, durable cancellation and cleanup fencing |
-| 1580 | [Bounded recovery for internal CI automation admission](1580-internal-ci-automation-admission-recovery.md) | implemented behind default-off CI gates; native qualification pending | Explicit account-scoped recovery of never-admitted authenticated pushes; permanent bounded audit receipts |
+| 1592 | [Bounded recovery for internal CI automation admission](1592-internal-ci-automation-admission-recovery.md) | implemented behind default-off CI gates; native qualification pending | Explicit account-scoped recovery of never-admitted authenticated pushes; permanent bounded audit receipts |
 | 1579 | [Internal CI health and bounded worker observations](1579-internal-ci-health-observability.md) | accepted for internal implementation; native acceptance pending | Default-off Gregale CI; account-scoped operator admission and separate compute/provider qualification |
 | 1575 | [Internal CI operational alerts and dashboard](1575-internal-ci-alerts-and-dashboard.md) | accepted for internal implementation; native acceptance pending | Default-off Gregale CI; account-scoped operator admission and separate compute/provider qualification |
 | 1289 | [Reusable automation test cases](1289-reusable-automation-test-cases.md) | accepted | Automation authoring, verification and trust lifecycle |
@@ -1482,7 +1482,9 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 
 - [ADR-1331: Retained GitOps workload retirement and reviewed recovery](1331-gitops-workload-retirement.md)
 
+- [ADR-1520: Rate-limit token leasing](1520-rate-limit-token-leasing.md)
 - [ADR-1522: Recoverable operator restart execution](1522-recoverable-operator-restart-execution.md)
+- [ADR-1521: The request-ID journal is written in batches](1521-batched-request-id-journal.md)
 - [ADR-1523: Durable operator cold-boot recovery](1523-durable-operator-cold-boot-recovery.md)
 - [ADR-1524: Durable operator recovery submissions](1524-durable-operator-recovery-submissions.md)
 
@@ -1608,6 +1610,10 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-20261017191528: Native PagerDuty readiness fallback](20261017191528-mcp-readiness-pagerduty-fallback.md)
 - [ADR 20261017191529: Independent PagerDuty acknowledgement bindings](20261017191529-mcp-readiness-independent-pagerduty-bindings.md)
 - [ADR 20261017191530: Opt-in PagerDuty acknowledgement release](20261017191530-mcp-readiness-pagerduty-release.md)
+
+- [Durable worker-pool recovery](20261017221000-durable-worker-recovery.md)
+- [Worker recovery diagnostics and alerts](20261017223000-worker-recovery-diagnostics.md)
+- [Worker admission explanations](20261018090000-worker-admission-explanations.md)
 - [ADR 202610171900: Release compatibility gates (N±1, deploy order, skew and migration checks, SLO gate)](202610171900-release-compatibility-gates.md)
 
 - [ADR-1650: Per-unit control-plane releases](1650-per-unit-control-plane-releases.md)

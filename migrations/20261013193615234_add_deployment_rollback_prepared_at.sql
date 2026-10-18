@@ -1,3 +1,4 @@
+-- migration-compat: expand
 -- filename: 20261013193615234_add_deployment_rollback_prepared_at.sql
 --
 -- ADR-1446 follow-up: a plain rollback (`POST /v1/apps/{slug}/rollback`,

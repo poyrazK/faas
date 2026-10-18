@@ -21,6 +21,16 @@ import (
 	"time"
 )
 
+// Email verification keeps its existing 24-hour, single-use credential policy.
+const (
+	EmailVerificationTTL        = 24 * time.Hour
+	EmailVerificationTokenBytes = 32
+	PasswordResetTTL            = 15 * time.Minute
+	PasswordResetTokenBytes     = 32
+	MagicLinkTTL                = 15 * time.Minute
+	MagicLinkTokenBytes         = 32
+)
+
 // Product Control internal contract bounds. Customer quotas are explicit grants.
 const (
 	ProductControlMaxFeatures                             = 32
@@ -1451,6 +1461,8 @@ const (
 	// CertIssuanceFailedAfter is the sustained failure window before the
 	// platform raises the customer-facing certificate issuance alert.
 	CertIssuanceFailedAfter = 15 * time.Minute
+	// AccountDeletionGraceDays preserves the self-service account restore window.
+	AccountDeletionGraceDays = 30
 	// AppDeleteGraceDays is the restore window for customer app deletes.
 	// App metadata and deployment artifacts remain available during this
 	// period, after which the grace sweeper permanently removes the app.
@@ -12514,7 +12526,7 @@ const CIExecutionCheckSummaryMaxBytes = 8 << 10
 // (ADR-1577, ADR-1586). Each delivery has its own lifetime budget.
 const CICheckRetryMaxGenerations = 3
 
-// Explicit recovery of a retained, never-admitted automatic source (ADR-1580).
+// Explicit recovery of a retained, never-admitted automatic source (ADR-1592).
 const CIAutomationRetryMaxGenerations = 3
 
 // Automatic runs serialize per account, binding and branch (ADR-1581).
@@ -12890,6 +12902,25 @@ const ServiceMapDefaultRange = "1h"
 
 // ServiceMapHighErrorRatePct is the edge error rate the dashboard highlights.
 const ServiceMapHighErrorRatePct = 5.0
+
+// Durable worker recovery is bounded independently of events and queue polling.
+const (
+	// Diagnostics become unknown after fifteen minutes without a pool observation.
+	WorkerRecoveryObservationFreshnessSeconds = 900
+	// Bound persisted per-pool refusal evidence, including a cooldown marker.
+	WorkerAdmissionBlockersMax = 16
+	// A retry/lease is overdue only after discovery has had a minute to reclaim it.
+	WorkerRecoveryOverdueGraceSeconds     = 60
+	WorkerRecoveryMetricsFreshnessSeconds = 60
+	WorkerRecoveryPollIntervalSeconds     = 5
+	WorkerRecoveryHealthyIntervalSeconds  = 30
+	WorkerRecoveryRetryBaseSeconds        = 5
+	WorkerRecoveryRetryMaxSeconds         = 300
+	WorkerRecoveryAttemptTimeoutSeconds   = 600
+	WorkerRecoveryFailureCountMax         = 32
+	WorkerRecoveryConcurrentApps          = 8
+	WorkerRecoveryBatchSize               = 32
+)
 
 // MCPReadinessFallbackMaxFailures bounds completed primary failures before failover.
 const MCPReadinessFallbackMaxFailures = 10

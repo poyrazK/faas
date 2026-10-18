@@ -1,3 +1,4 @@
+-- migration-compat: expand
 -- filename: 20261017133300986_post_release_watch_rollbacks.sql
 --
 -- ADR-1445: post-release watch. A release that regresses within thirty

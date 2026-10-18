@@ -1,3 +1,4 @@
+-- migration-compat: expand
 -- filename: 20261013193623910_deployment_rollback_outcomes.sql
 --
 -- ADR-1446 follow-up: verified rollback outcomes. A plain rollback (manual,

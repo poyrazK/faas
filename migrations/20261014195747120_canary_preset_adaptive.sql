@@ -1,3 +1,4 @@
+-- migration-compat: expand
 -- filename: 20261014195747120_canary_preset_adaptive.sql
 --
 -- ADR-1321: evidence-paced default rollouts. deployments.canary_preset

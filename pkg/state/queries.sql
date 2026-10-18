@@ -6027,6 +6027,41 @@ ON CONFLICT (id) DO UPDATE SET id = EXCLUDED.id
    AND request_id_journal.expires_at = EXCLUDED.expires_at
 RETURNING id;
 
+-- name: RecordRequestIDJournalBatch :many
+-- ADR-1521: RecordRequestIDJournal for many records in one statement. The
+-- same ownership join and idempotent-retry rule apply per row; a row whose app
+-- is not owned by its account, or whose id holds different content, is left
+-- out of RETURNING. Record ids must be unique within one call: ON CONFLICT DO
+-- UPDATE cannot touch the same row twice in a statement.
+INSERT INTO request_id_journal (
+    id, account_id, app_id, request_id, trace_id, received_at, expires_at
+)
+SELECT r.id,
+       a.account_id,
+       a.id,
+       r.request_id,
+       NULLIF(r.trace_id, ''),
+       r.received_at,
+       r.expires_at
+  FROM (
+         SELECT unnest(sqlc.arg(ids)::uuid[]) AS id,
+                unnest(sqlc.arg(account_ids)::uuid[]) AS account_id,
+                unnest(sqlc.arg(app_ids)::uuid[]) AS app_id,
+                unnest(sqlc.arg(request_ids)::text[]) AS request_id,
+                unnest(sqlc.arg(trace_ids)::text[]) AS trace_id,
+                unnest(sqlc.arg(received_ats)::timestamptz[]) AS received_at,
+                unnest(sqlc.arg(expires_ats)::timestamptz[]) AS expires_at
+       ) AS r
+  JOIN apps a ON a.id = r.app_id AND a.account_id = r.account_id
+ON CONFLICT (id) DO UPDATE SET id = EXCLUDED.id
+ WHERE request_id_journal.account_id = EXCLUDED.account_id
+   AND request_id_journal.app_id = EXCLUDED.app_id
+   AND request_id_journal.request_id = EXCLUDED.request_id
+   AND request_id_journal.trace_id IS NOT DISTINCT FROM EXCLUDED.trace_id
+   AND request_id_journal.received_at = EXCLUDED.received_at
+   AND request_id_journal.expires_at = EXCLUDED.expires_at
+RETURNING id;
+
 -- name: GetRequestIDJournalByAppAndIdentifier :one
 -- Exact app/account-scoped lookup, latest first when callers reuse an ID.
 -- expires_at is checked as well as received_at so plan downgrades do not
@@ -21977,6 +22012,11 @@ JOIN managed_postgres_bindings b ON b.id = s.managed_postgres_binding_id
 JOIN managed_postgres_databases db ON db.id = b.database_id AND db.deleted_at IS NULL
 WHERE s.app_id = sqlc.arg(app_id)::text::uuid AND s.scope = sqlc.arg(scope)::text
 ORDER BY db.name, database_id;
+
+-- Identity writes use the account lock before the provider-qualified row.
+-- This matches subscription termination and SMTP lifecycle fencing.
+-- name: LockBillingIdentityAccount :one
+SELECT id::text FROM accounts WHERE id=sqlc.arg(account_id)::text::uuid FOR UPDATE;
 
 -- name: EventAckPolicyGet :one
 SELECT acknowledgment_lease_seconds FROM event_subscriptions s JOIN apps a ON a.id=s.app_id AND a.account_id=s.account_id

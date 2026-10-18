@@ -1,3 +1,4 @@
+-- migration-compat: expand
 -- filename: 20261014074443400_rollout_decisions.sql
 --
 -- ADR-1447: explained rollout decisions.
