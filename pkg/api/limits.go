@@ -5003,6 +5003,12 @@ const (
 	// The host receiver stays open longer than this window so a no-bind
 	// worker can use the entire observation budget before reporting.
 	CharacterizationDeadline = 10 * time.Second
+	// ProvenWorkerCharacterizationWindow replaces CharacterizationDeadline for
+	// a declared worker whose deployment already passed the full window on
+	// the same node (ADR-1420). The full window still validates a deployment's
+	// first boot there; a later boot only shows its process started and
+	// stayed up, so a pool scales out without waiting ten seconds per worker.
+	ProvenWorkerCharacterizationWindow = time.Second
 	// CharacterizationPreferredPortGrace is how long waitForBind waits for
 	// the app's expected port once it sees another listener first: an app
 	// may open a private TCP (ADR-576), metrics or admin port before its

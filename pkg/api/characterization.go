@@ -1,5 +1,12 @@
 package api
 
+// ProvenWorkerBootArg is the kernel command-line flag vmmd adds to a cold boot
+// of a declared worker whose deployment already passed the full
+// characterization window on that node. guest-init then observes for
+// ProvenWorkerCharacterizationWindow instead of CharacterizationDeadline
+// (ADR-1420).
+const ProvenWorkerBootArg = "faas.worker=proven"
+
 // CharacterizationReport is the payload guest-init ships to the host
 // over AF_VSOCK STREAM at port 1026 / msgtype 3 (ADR-051 §"Wire
 // constants") during the FIRST cold boot of a new deployment. The

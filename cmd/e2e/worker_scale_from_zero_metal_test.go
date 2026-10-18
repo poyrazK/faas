@@ -18,8 +18,11 @@
 // change a consumer waited out the whole characterization window.
 //
 // Workers and jobs never restore from a snapshot (ADR-138), so every scale
-// from zero is a cold boot. A burst of one message per pool slot then shows
-// how the pool admits several workers at once.
+// from zero is a cold boot. The deployment's first boot passes the full
+// characterization window; later boots of it on the node only show that the
+// process started (ADR-1420), so each is RUNNING well inside the window. A
+// burst of one message per pool slot shows the pool admitting one worker
+// after another.
 // FAAS_WORKER_SCALE_FROM_ZERO_CYCLES repeats the single-message cycle; each
 // cycle first waits for the pool to drain back to zero, which takes
 // api.WorkerScaleInStabilizationSeconds.
@@ -170,6 +173,16 @@ func TestWorkerScaleFromZeroMetal(t *testing.T) {
 		if w.token == 0 || w.running == 0 || w.token >= w.running {
 			t.Errorf("worker %s: token at %s, RUNNING at %s; a booting worker must get its queue token before readiness",
 				w.instanceID, msOrDash(w.token), msOrDash(w.running))
+		}
+	}
+	// ADR-1420: the deployment's first boot passed the full characterization
+	// window, so every pool boot after it only has to show its process
+	// started. Before, each worker took the whole window to become RUNNING
+	// and the pool admitted the next one only then.
+	for _, w := range append(singles, burst...) {
+		if w.running == 0 || w.running-w.admit >= api.CharacterizationDeadline {
+			t.Errorf("worker %s: RUNNING %s after admission; a proven worker must not wait the %s window",
+				w.instanceID, msOrDash(w.running-w.admit), api.CharacterizationDeadline)
 		}
 	}
 }

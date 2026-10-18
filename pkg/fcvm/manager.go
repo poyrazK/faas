@@ -863,8 +863,13 @@ type Manager struct {
 	// ProcessExited records a pending marker only for this narrow phase;
 	// an exit observed after explicit Destroy has removed live must not
 	// be mistaken for a future Wake of the same id.
-	waking     map[string]wakingInstance
-	exportDirs map[string]string // instance -> host export dir (builder VMs only, M6)
+	waking map[string]wakingInstance
+	// provenWorkers holds the deployments whose declared worker passed the
+	// full characterization window on this node; their later cold boots
+	// use the short window (ADR-1420). Guarded by mu. Losing it on restart
+	// costs one full window per deployment.
+	provenWorkers map[string]struct{}
+	exportDirs    map[string]string // instance -> host export dir (builder VMs only, M6)
 	// cidToID (issue #470 / PR #470-FU-B) is the reverse
 	// Firecracker-vsock-CID → instance id index the framework_ready
 	// DGRAM receipt path uses to resolve the peer CID to a live
@@ -2822,6 +2827,44 @@ func (m *Manager) WorkloadTokenIdentity(instance string) (appID, accountID strin
 		return booting.appID, booting.accountID, nil
 	}
 	return "", "", fmt.Errorf("fcvm: WorkloadTokenIdentity %s: not live or booting", instance)
+}
+
+// workerProven reports whether a declared worker's deployment already
+// passed the full characterization window on this node, so its next cold
+// boot only has to show that the process started (ADR-1420).
+func (m *Manager) workerProven(req WakeRequest) bool {
+	if req.ExecutionMode != api.ExecutionModeWorker || req.DeploymentID == "" {
+		return false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	_, ok := m.provenWorkers[req.DeploymentID]
+	return ok
+}
+
+// recordProvenWorkerLocked remembers a declared worker's deployment once one
+// of its cold boots characterized as a worker. The caller holds mu.
+func (m *Manager) recordProvenWorkerLocked(inst *Instance) {
+	if inst.Method != WakeColdBoot || inst.ExecutionMode != api.ExecutionModeWorker || inst.DeploymentID == "" ||
+		inst.Characterization.ObservedClass != api.ExecutionModeWorker {
+		return
+	}
+	if m.provenWorkers == nil {
+		m.provenWorkers = make(map[string]struct{})
+	}
+	m.provenWorkers[inst.DeploymentID] = struct{}{}
+}
+
+// forgetProvenWorker sends a deployment's next cold boot back through the
+// full window after one failed, so a regression surfaces as a startup
+// failure rather than as a crash after readiness.
+func (m *Manager) forgetProvenWorker(deploymentID string) {
+	if deploymentID == "" {
+		return
+	}
+	m.mu.Lock()
+	delete(m.provenWorkers, deploymentID)
+	m.mu.Unlock()
 }
 
 // HasInstanceOwnership gates recovered failure reports (ADR-471). An absent
@@ -5033,6 +5076,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		}
 		delete(m.waking, req.Instance)
 		m.live[req.Instance] = inst
+		m.recordProvenWorkerLocked(inst)
 		// Issue #470 / PR #470-FU-B: maintain the CID→instance
 		// reverse index so the framework_ready DGRAM receipt path
 		// can resolve the peer CID to a live Instance in O(1)
@@ -5276,6 +5320,7 @@ func (m *Manager) bringUp(ctx context.Context, lease Lease, nc netns.Config, req
 		timings.coldBootMs = time.Since(coldBootStartedAt).Milliseconds()
 	}
 	if coldBootErr != nil {
+		m.forgetProvenWorker(req.DeploymentID)
 		// Issue #1059 / ADR-127: terminal cold-boot failure
 		// counter. Distinct from the restore-fallback
 		// IncrementAbove because BootColdBoot is reached only

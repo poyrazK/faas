@@ -494,6 +494,12 @@ type Trigger struct {
 	// direct test/integration callers safe.
 	admissionMu      sync.Mutex
 	admissionBackoff map[string]admissionBackoffState
+
+	// Worker pools reconcile in background runs, one per account at a time
+	// (ADR-1420); workerRunning holds the accounts with a run in progress.
+	workerRunMu   sync.Mutex
+	workerRunning map[string]bool
+	workerRuns    sync.WaitGroup
 }
 
 // Options is the functional-options bag for New(). All fields are
@@ -718,6 +724,8 @@ func (t *Trigger) Tick(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("targets: list apps: %w", err)
 	}
+	var workerPools workerPoolRuns
+	defer func() { t.startWorkerPoolRuns(ctx, workerPools) }()
 	for _, app := range apps {
 		// A parked or suspended app is not scaled: the reaper parks whatever
 		// a target admits for it (H5-54).
@@ -771,12 +779,7 @@ func (t *Trigger) Tick(ctx context.Context) error {
 				if t.admissionBackoffActive(app.ID, now) {
 					continue
 				}
-				if err := pool.ReconcileWorkerPools(ctx, app.ID, workerPoolTriggerTargets); err != nil {
-					t.recordAdmissionFailure(app.ID, now)
-					t.log.Warn("targets: reconcile worker environments failed", "app_id", app.ID, "err", err)
-				} else {
-					t.clearAdmissionBackoff(app.ID)
-				}
+				workerPools.add(pool, app)
 				continue
 			}
 		}
