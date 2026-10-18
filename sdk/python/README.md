@@ -2804,6 +2804,28 @@ work and cleanup join. Frozen aggregate `.result` progress accompanies failure,
 native cancellation and uncertain-COMMIT exceptions. The host schedules later
 passes. See [budgets, ownership and progress](../../docs/event-acknowledgment-python-recovery-pass.md).
 
+Set `retry_policy=EventAcknowledgmentIntentRetryPolicy(initial_backoff_ms=1000,
+max_backoff_ms=300000)` for capped exponential full jitter using persisted claims.
+Single-intent recovery and `claim.deliver` accept the same option. Leave
+`backoff_ms` omitted/None with a policy; without a policy the effective fixed
+default remains 1000 ms. See the
+[adaptive retry contract](../../docs/event-acknowledgment-python-retry-policy.md).
+
+Durable staging accepts `retry_policy=EventAcknowledgmentIntentRetryPolicy(...)`
+to atomically bind a new intent. Recovery uses its captured binding instead of
+worker fallback, and status exposes frozen `retry_policy` metadata. Apply
+`event_acknowledgment_intent_stored_retry_policy_schema` to existing installations
+before upgrading current intent workers. See the
+[shared binding and rollout contract](../../docs/event-acknowledgment-stored-retry-policy.md).
+
+Use `aadopt_event_acknowledgment_intent_retry_policy` for existing unbound backlog.
+Pass frozen `EventAcknowledgmentIntentAdoptRetryPolicyOptions` with a saved command
+UUID and the exact timestamp/count from intent listing. Install the optional
+`event_acknowledgment_intent_policy_adoption_schema` first. Frozen receipts resolve
+original retries across SDKs; typed rejection errors expose their `.receipt`.
+Python preserves full int64 generations, callback data, attempts and due time. See
+the [adoption and uncertainty contract](../../docs/event-acknowledgment-policy-adoption.md#python-adoption-and-replay).
+
 `save_retry_intent(connection, reason)` and `save_dead_letter_intent(connection,
 reason)` stage explicit failure decisions for the same recovery host. Establish
 known rollback, stopped work and exclusive ownership first, and persist the chosen
@@ -2823,7 +2845,7 @@ metrics. See [Python recovery health](../../docs/event-acknowledgment-intent-hea
 
 `awatch_event_acknowledgment_intent_health(connection_factory, account_id, app_id,
 EventAcknowledgmentIntentWatchOptions(...), notify, stop_event=...)` watches
-sustained due/stalled backlog. The factory returns a fresh async connection scope
+sustained due/stalled/parked backlog. The factory returns a fresh async connection scope
 per poll. Confirmation requires fresh complete evidence; failed reads or lost
 coverage produce unknown states. Callbacks are awaited serially, cancellation
 joins active work, and callback errors expose only the affected metadata alert.
@@ -2839,3 +2861,49 @@ with `validate_event_acknowledgment_intent_checkpoint`. Storage fencing and
 idempotent delivery remain application-owned. Cancellation exposes the detached
 final result through `EventAcknowledgmentIntentCheckpointWatchCancelled.result`.
 See the [Python checkpoint protocol](../../docs/event-acknowledgment-python-checkpoints.md).
+
+Set the keyword-only `parked_threshold` to enable `parked_intents` alerts in
+either watch, including a parked-only selection. Enabled checkpointed alerts use
+version 2; zero/omission preserves version 1 and its saved policy keys/order.
+Upgrade every host that can resume or acknowledge version 2 first. Incomplete
+evidence stays unknown, and a lower parked count after operator resume or newer
+staging does not establish callback confirmation. See
+[parked evidence and rollout](../../docs/event-acknowledgment-python-checkpoints.md#parked-intent-alerts).
+
+`EventAcknowledgmentIntentHealthMetrics(account_id, app_id, options)` caches one
+bounded recovery-health sample. Feed completed reads explicitly or use
+`awatch_event_acknowledgment_intent_health_metrics` with exclusive connection
+scopes and host cancellation. Format a fresh snapshot per scrape with
+`format_event_acknowledgment_intent_health_metrics`. The same thirteen Node gauge
+families cover due/stalled/parked work, completeness and age, without identity
+labels; missing reads omit sample gauges. See the
+[Python cache/poller contract](../../docs/event-acknowledgment-python-recovery-prometheus.md)
+and [shared Prometheus/Grafana integration](../../examples/event-acknowledgment-monitoring/README.md#recovery-health-python).
+
+### Recovery claim budgets and parked callbacks
+
+All durable staging methods accept `retry_budget=EventAcknowledgmentIntentRetryBudget(8,
+EventAcknowledgmentIntentRetryPolicy(1000, 300000))`, mutually exclusive with
+`retry_policy`. Install `event_acknowledgment_intent_retry_budget_schema` after the
+v1 upgrade before current helpers, including v1-only hosts. Parked callbacks retain
+protected inputs; recovery progress and health expose `parked`. Install the
+optional `event_acknowledgment_intent_retry_resume_schema`, read exact metadata
+with `aget_event_acknowledgment_intent_retry_resume_candidate`, durably persist
+`EventAcknowledgmentIntentResumeRetryBudgetOptions`, then call
+`aresume_event_acknowledgment_intent_retry_budget`. Exact original retries resolve
+uncertain commits through historical receipts. Python retains full int64 generations
+and exact microsecond fences. See
+[budget installation, exhaustion and operator resume](../../docs/event-acknowledgment-retry-budgets.md#python-budgets-and-guarded-resume).
+
+### Adopt recovery budgets for existing callback backlog
+
+`aadopt_event_acknowledgment_intent_retry_budget` attaches v2 to selected active
+unbound/v1 work with exact timestamp/count/policy guards, no live claim and no newer
+attempt. Install `event_acknowledgment_intent_budget_adoption_schema`, select metadata
+with `aget_event_acknowledgment_intent_budget_adoption_candidate`, then durably save
+`EventAcknowledgmentIntentAdoptRetryBudgetOptions` before execution. None expected
+policy requires unbound work; complete v1 timing is preserved. Frozen receipts
+resolve exact original retries across SDKs, preserving native int64 generations
+and microsecond fences. Known rejection errors expose their `.receipt`; uncertain
+COMMIT requires retrying the saved command on a fresh connection. See
+[budget adoption, guards and cancellation](../../docs/event-acknowledgment-budget-adoption.md#python-selection-adoption-and-replay).

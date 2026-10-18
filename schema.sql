@@ -27455,6 +27455,40 @@ CREATE TABLE public.customer_workflow_readiness_subscriptions (
 
 
 --
+-- Name: data_api_runtime_connection_observations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.data_api_runtime_connection_observations (
+    binding_id uuid NOT NULL,
+    instance_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    database_id uuid NOT NULL,
+    deployment_id uuid NOT NULL,
+    node_id uuid NOT NULL,
+    wake_id uuid NOT NULL,
+    backend_fingerprint text NOT NULL,
+    data_resource_id text NOT NULL,
+    database_generation bigint NOT NULL,
+    credential_generation bigint NOT NULL,
+    provider_identity_id text NOT NULL,
+    state text NOT NULL,
+    runtime_model text NOT NULL,
+    engine_connections integer NOT NULL,
+    refresh_connections integer NOT NULL,
+    observed_at timestamp with time zone NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT data_api_runtime_connection_observa_credential_generation_check CHECK ((credential_generation > 0)),
+    CONSTRAINT data_api_runtime_connection_observati_database_generation_check CHECK ((database_generation > 0)),
+    CONSTRAINT data_api_runtime_connection_observati_refresh_connections_check CHECK (((refresh_connections >= 0) AND (refresh_connections <= 1))),
+    CONSTRAINT data_api_runtime_connection_observatio_engine_connections_check CHECK (((engine_connections >= 1) AND (engine_connections <= 2))),
+    CONSTRAINT data_api_runtime_connection_observations_check CHECK (((engine_connections + refresh_connections) = 2)),
+    CONSTRAINT data_api_runtime_connection_observations_check1 CHECK (((expires_at > observed_at) AND (expires_at <= (observed_at + '00:00:30'::interval)))),
+    CONSTRAINT data_api_runtime_connection_observations_runtime_model_check CHECK ((runtime_model = 'postgrest-14.3-pools-v1'::text)),
+    CONSTRAINT data_api_runtime_connection_observations_state_check CHECK ((state = ANY (ARRAY['observed'::text, 'unknown'::text])))
+);
+
+
+--
 -- Name: data_upstream_probes; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -34334,6 +34368,36 @@ CREATE TABLE public.managed_postgres_checkpoint_maintenance (
     CONSTRAINT managed_postgres_checkpoint_maintenance_owner_oid_check CHECK (((owner_oid > 0) AND (owner_oid <= '4294967295'::bigint))),
     CONSTRAINT managed_postgres_checkpoint_maintenance_state_check CHECK ((state = ANY (ARRAY['reserved'::text, 'role_requested'::text, 'role_reserved'::text, 'database_requested'::text, 'database_created'::text, 'activation_requested'::text, 'ready'::text]))),
     CONSTRAINT managed_postgres_maintenance_original_owner CHECK (((((reserved_by_operation_id IS NOT NULL))::integer + ((reserved_by_cutover_id IS NOT NULL))::integer) = 1))
+);
+
+
+--
+-- Name: managed_postgres_connection_capacity; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_postgres_connection_capacity (
+    database_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    backend_id text NOT NULL,
+    backend_fingerprint text NOT NULL,
+    provider_resource_id text NOT NULL,
+    data_resource_id text NOT NULL,
+    generation bigint NOT NULL,
+    state text DEFAULT 'unknown'::text NOT NULL,
+    evidence jsonb,
+    checked_at timestamp with time zone NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    lease_token text,
+    lease_until timestamp with time zone,
+    CONSTRAINT managed_postgres_connection_capacity_backend_fingerprint_check CHECK ((backend_fingerprint ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT managed_postgres_connection_capacity_backend_id_check CHECK ((backend_id <> ''::text)),
+    CONSTRAINT managed_postgres_connection_capacity_check CHECK (((expires_at >= checked_at) AND (expires_at <= (checked_at + '00:00:30'::interval)))),
+    CONSTRAINT managed_postgres_connection_capacity_check1 CHECK (((lease_token IS NULL) = (lease_until IS NULL))),
+    CONSTRAINT managed_postgres_connection_capacity_check2 CHECK ((((state = 'verified'::text) AND (evidence IS NOT NULL) AND (jsonb_typeof(evidence) = 'object'::text)) OR ((state = 'unknown'::text) AND (evidence IS NULL)))),
+    CONSTRAINT managed_postgres_connection_capacity_data_resource_id_check CHECK ((data_resource_id <> ''::text)),
+    CONSTRAINT managed_postgres_connection_capacity_generation_check CHECK ((generation > 0)),
+    CONSTRAINT managed_postgres_connection_capacity_provider_resource_id_check CHECK ((provider_resource_id <> ''::text)),
+    CONSTRAINT managed_postgres_connection_capacity_state_check CHECK ((state = ANY (ARRAY['unknown'::text, 'verified'::text])))
 );
 
 
@@ -47611,6 +47675,14 @@ ALTER TABLE ONLY public.customer_workflow_readiness_subscriptions
 
 
 --
+-- Name: data_api_runtime_connection_observations data_api_runtime_connection_observations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_api_runtime_connection_observations
+    ADD CONSTRAINT data_api_runtime_connection_observations_pkey PRIMARY KEY (binding_id, instance_id);
+
+
+--
 -- Name: data_upstream_probes data_upstream_probes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -50632,6 +50704,14 @@ ALTER TABLE ONLY public.managed_postgres_checkpoint_maintenance
 
 ALTER TABLE ONLY public.managed_postgres_checkpoint_maintenance
     ADD CONSTRAINT managed_postgres_checkpoint_maintenance_source_database_id_key UNIQUE (source_database_id);
+
+
+--
+-- Name: managed_postgres_connection_capacity managed_postgres_connection_capacity_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_connection_capacity
+    ADD CONSTRAINT managed_postgres_connection_capacity_pkey PRIMARY KEY (database_id);
 
 
 --
@@ -72599,6 +72679,54 @@ ALTER TABLE ONLY public.customer_workflow_readiness_subscriptions
 
 
 --
+-- Name: data_api_runtime_connection_observations data_api_runtime_connection_observations_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_api_runtime_connection_observations
+    ADD CONSTRAINT data_api_runtime_connection_observations_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: data_api_runtime_connection_observations data_api_runtime_connection_observations_binding_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_api_runtime_connection_observations
+    ADD CONSTRAINT data_api_runtime_connection_observations_binding_id_fkey FOREIGN KEY (binding_id) REFERENCES public.managed_postgres_bindings(id) ON DELETE CASCADE;
+
+
+--
+-- Name: data_api_runtime_connection_observations data_api_runtime_connection_observations_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_api_runtime_connection_observations
+    ADD CONSTRAINT data_api_runtime_connection_observations_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE CASCADE;
+
+
+--
+-- Name: data_api_runtime_connection_observations data_api_runtime_connection_observations_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_api_runtime_connection_observations
+    ADD CONSTRAINT data_api_runtime_connection_observations_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: data_api_runtime_connection_observations data_api_runtime_connection_observations_instance_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_api_runtime_connection_observations
+    ADD CONSTRAINT data_api_runtime_connection_observations_instance_id_fkey FOREIGN KEY (instance_id) REFERENCES public.instances(id) ON DELETE CASCADE;
+
+
+--
+-- Name: data_api_runtime_connection_observations data_api_runtime_connection_observations_node_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.data_api_runtime_connection_observations
+    ADD CONSTRAINT data_api_runtime_connection_observations_node_id_fkey FOREIGN KEY (node_id) REFERENCES public.compute_nodes(id) ON DELETE CASCADE;
+
+
+--
 -- Name: data_upstreams data_upstreams_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -76092,6 +76220,22 @@ ALTER TABLE ONLY public.managed_postgres_checkpoint_maintenance
 
 ALTER TABLE ONLY public.managed_postgres_checkpoint_maintenance
     ADD CONSTRAINT managed_postgres_checkpoint_maintenance_source_database_id_fkey FOREIGN KEY (source_database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: managed_postgres_connection_capacity managed_postgres_connection_capacity_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_connection_capacity
+    ADD CONSTRAINT managed_postgres_connection_capacity_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_postgres_connection_capacity managed_postgres_connection_capacity_database_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_connection_capacity
+    ADD CONSTRAINT managed_postgres_connection_capacity_database_id_fkey FOREIGN KEY (database_id) REFERENCES public.managed_postgres_databases(id) ON DELETE CASCADE;
 
 
 --

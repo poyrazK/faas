@@ -15,7 +15,8 @@ from ._event_acknowledgment_protocol import (
     settings,
 )
 from .client import AuthenticatedClient
-from .event_acknowledgment_intent_recovery import _backoff, _duration
+from .event_acknowledgment_intent_recovery import _duration
+from .event_acknowledgment_intent_retry_policy import EventAcknowledgmentIntentRetryPolicy, _retry_schedule
 from .event_consumer_transactions import EventConsumerCommitUnknownError, _uuid
 
 
@@ -24,8 +25,9 @@ class EventAcknowledgmentIntentRecoveryPassOptions:
     max_attempts: int = 100
     concurrency: int = 4
     claim_duration_ms: int = 30000
-    backoff_ms: int = 1000
+    backoff_ms: int | None = None
     callback_options: EventAcknowledgmentWorkerOptions | None = None
+    retry_policy: EventAcknowledgmentIntentRetryPolicy | None = None
 
 
 @dataclass(frozen=True)
@@ -43,6 +45,7 @@ class EventAcknowledgmentIntentRecoveryPassResult:
     failed: int = 0
     commit_unknown: int = 0
     cleanup_failures: int = 0
+    parked: int = 0
 
 
 class EventAcknowledgmentIntentRecoveryPassError(RuntimeError):
@@ -81,7 +84,7 @@ def _policy(options: EventAcknowledgmentIntentRecoveryPassOptions) -> Policy:
     if type(limit) is not int or not 1 <= limit <= 10000 or type(concurrency) is not int or not 1 <= concurrency <= 32:
         raise ValueError("invalid acknowledgment intent recovery pass options")
     _duration(duration)
-    _backoff(backoff)
+    schedule = _retry_schedule(backoff, options.retry_policy)
     if callback is not None:
         if not isinstance(callback, EventAcknowledgmentWorkerOptions):
             raise ValueError("invalid acknowledgment intent recovery callback options")
@@ -89,7 +92,7 @@ def _policy(options: EventAcknowledgmentIntentRecoveryPassOptions) -> Policy:
             callback.callback_attempts, callback.callback_timeout_ms, callback.retry_backoff_ms
         )
     settings(callback, 300)  # The existing primitive additionally checks each row's actual lease.
-    return Policy(limit, concurrency, duration, backoff, callback)
+    return Policy(limit, concurrency, duration, schedule.backoff_ms, callback, schedule.retry_policy)
 
 
 async def arecover_event_acknowledgment_intents(

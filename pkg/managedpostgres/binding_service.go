@@ -453,6 +453,7 @@ func bindingCredentialRequestForGeneration(binding Binding, providerResourceID s
 	identityKey := bindingCredentialIdentity(binding)
 	return CredentialRequest{
 		ProviderResourceID: providerResourceID,
+		BindingID:          binding.ID,
 		IdentityKey:        identityKey,
 		Access:             binding.Access,
 		IdempotencyKey:     "credentials-" + identityKey,

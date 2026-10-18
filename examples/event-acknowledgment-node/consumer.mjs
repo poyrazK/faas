@@ -74,6 +74,7 @@ export async function recoverAcknowledgmentsPass(scope, pool, signal) {
   const target = owner(scope);
   return recoverEventAcknowledgmentIntents(pool, target.accountId, target.appId, {
     signal, maxAttempts: 100, concurrency: 4,
+    retryPolicy: { initialBackoffMs: 1000, maxBackoffMs: 300000 },
   });
 }
 
@@ -90,7 +91,7 @@ export async function watchAcknowledgmentRecovery(scope, pool, signal, notify) {
   const target = owner(scope);
   return watchEventAcknowledgmentIntentHealth(pool, target.accountId, target.appId, {
     signal, health: { scanLimit: 1000, stallAfterMs: 300000 },
-    dueThreshold: 100, stalledThreshold: 1, sustainMs: 30000,
+    dueThreshold: 100, stalledThreshold: 1, parkedThreshold: 1, sustainMs: 30000,
   }, notify);
 }
 
@@ -100,7 +101,7 @@ export async function watchAcknowledgmentRecoveryWithCheckpoint(scope, pool, sig
   const saved = await store.loadOwned(signal);
   const result = await watchEventAcknowledgmentIntentHealthWithCheckpoint(pool, target.accountId, target.appId, {
     signal, health: { scanLimit: 1000, stallAfterMs: 300000 },
-    dueThreshold: 100, stalledThreshold: 1, sustainMs: 30000, resume: saved ?? undefined,
+    dueThreshold: 100, stalledThreshold: 1, parkedThreshold: 1, sustainMs: 30000, resume: saved ?? undefined,
     pollAcknowledgments: (checkpoint, callbackSignal) => store.listAcknowledgments(checkpoint, callbackSignal),
     onProgress: async (progress, callbackSignal) => {
       // Commit the checkpoint BEFORE any external notification attempt.

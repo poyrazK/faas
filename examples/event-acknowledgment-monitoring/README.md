@@ -8,6 +8,9 @@ One shared pack provides seven recording rules, nine warning alerts and a
 twelve-panel dashboard for either SDK or a mixed deployment. Nothing is deployed
 or enabled by importing an SDK or example.
 
+For retained due/stalled/parked callback backlog, use the separate
+[Node recovery-health pack](#recovery-health-node) below.
+
 ## Choose the worker host
 
 | SDK | Observer and scrape adapter | Configuration example |
@@ -156,3 +159,203 @@ Local validation covers Prometheus configuration/rule lint, embedded query
 parsing, JSON/YAML structure, metadata and documentation checks. No tests or
 assertions were added or changed and no local tests were run. Hosted alert
 evaluation and Grafana rendering remain unverified before production use.
+
+## Recovery health (Node)
+
+The separate recovery pack observes retained callback backlog, including exhausted
+parked intents. It uses Node's
+[`EventAcknowledgmentIntentHealthMetrics`](../../docs/event-acknowledgment-node-recovery-prometheus.md),
+an application-owned poller and a cache-only scrape handler. Its five recordings,
+six warning alerts and nine-panel dashboard do not change the preparation pack.
+Python uses the same metric names, rules and dashboard through the
+[Python recovery host](#recovery-health-python). Keep SDK-specific host lifetimes
+and typed checkpoints separate.
+
+1. Start the [Node recovery metrics host](../event-acknowledgment-node/README.md#export-recovery-health-to-prometheus)
+   explicitly with trusted account/app scope and a bounded PostgreSQL pool. The
+   example reads at most 1000 unfinished rows, uses a five-minute stall interval,
+   polls five seconds after each completed read and allows a thirty-second sample
+   age. Each read has a cooperative five-second deadline. Importing starts nothing.
+2. Bind its scrape server to loopback port 9466 in the worker's namespace. The
+   preparation examples use other ports. Prometheus must share that namespace or
+   use an explicitly protected reachable address. Do not expose metrics through
+   delivery ingress. Use one owner scope per collector/target and keep authorized
+   scope mapping in host configuration, outside metric labels.
+3. Copy `recovery.rules.yml` and merge `prometheus-recovery.yml` into application
+   Prometheus configuration. Preserve target label `gregale_event_recovery="true"`
+   and unique `(job, instance)` identities. Install each rule group once. Check
+   syntax with `promtool check rules recovery.rules.yml` and
+   `promtool check config prometheus-recovery.yml`, then explicitly reload under
+   the application's deployment process.
+4. Import `recovery-dashboard.json`, UID `gregale-event-recovery`, and choose its
+   datasource/job/instance. Load the recordings first. Counts come from one
+   bounded retained scope; duplicate observers cannot be summed into a global
+   total. This section creates no deployment, listener or notification route.
+
+All raw names use `gregale_event_acknowledgment_recovery`; custom formatter
+prefixes require replacing every raw prefix in rules/dashboard. The aliases
+`gregale_event_recovery:*` remain fixed. All metrics are gauges without identity
+labels. Before a valid read or after failure, sample gauges are omitted and
+`read_success`/`evidence_eligible` are zero. Incomplete/stale observations retain
+their sampled raw counts but cannot populate eligible backlog recordings. The
+dashboard leaves unknown counts missing and does not interpolate gaps as zero.
+
+The eligible-evidence recording requires `up == 1`, successful recording, complete
+fresh advancing evidence and a database timestamp within the exported age bound
+relative to Prometheus time. It also checks the exported conservative age. A
+stopped poller, frozen snapshot, read failure, invalid/truncated sample or clock
+problem therefore cannot establish a healthy backlog. Scrape/evaluation delays
+still apply; defaults are fifteen/thirty seconds. Synchronize clocks and tune age
+and scan bounds to the workload. This is metadata coverage, not worker availability.
+
+| Alert | Starting condition | Hold time |
+| --- | --- | --- |
+| `GregaleEventRecoveryParked` | Eligible parked count >= 1 | 5 minutes |
+| `GregaleEventRecoveryDueBacklog` | Eligible due count >= 100 | 5 minutes |
+| `GregaleEventRecoveryStalled` | Eligible stalled count >= 1 | 5 minutes |
+| `GregaleEventRecoveryEvidenceUnavailable` | Reachable target without eligible evidence | 2 minutes |
+| `GregaleEventRecoveryScrapeDown` | Discovered target has `up == 0` | 5 minutes |
+| `GregaleEventRecoveryTargetsMissing` | No opted-in target exists | 10 minutes |
+
+These are configurable starting thresholds, not delivery SLOs. Disable the absence
+alert if intentional zero-target intervals are normal; removed subsets need an
+inventory policy. All alerts link the
+[recovery runbook](../../docs/runbooks/GregaleEventRecovery.md), including exact
+guarded budget-resume commands and retained command identity after uncertainty.
+No alert resumes an intent or chooses a business/negative callback action.
+
+Prometheus backlog alerts can stop matching when evidence disappears and issue
+resolved notifications. That does not prove recovery: inspect unavailable/down/
+absence alerts and authoritative rows. A budget grant or newer staging can lower
+parked count without callback confirmation. Use the
+[checkpointed watch](../../docs/event-acknowledgment-node-checkpoints.md) for stable
+incident identity retained across unknown evidence and restart.
+
+CI statically checks rules/config, dashboard JSON and alert metadata. Local query
+parsing does not evaluate time series. Live scraping, alert transitions, notification
+routing and Grafana rendering require hosted qualification before production use.
+
+## Recovery health (Python)
+
+Use the [Python cache/formatter and explicit poller](../../docs/event-acknowledgment-python-recovery-prometheus.md)
+with the [same-loop ASGI host](../event-acknowledgment-python/README.md#export-recovery-health-to-prometheus).
+Its default scan, stall, poll, query and freshness budgets match the Node example.
+Keep the cache, poller and ASGI application in the same process/event-loop thread.
+A separate Uvicorn process or worker would hold a different cache. Serialize any
+cross-thread access explicitly, disable ASGI lifespan and join polling before
+closing database resources. Reads require fresh exclusive idle autocommit async
+connection scopes and bounded driver/acquisition/cleanup calls.
+
+Copy [prometheus-recovery-python.yml](prometheus-recovery-python.yml), using job
+`gregale-event-recovery-python` and loopback port 9467. Node's recovery example
+keeps its existing job/9466 target; preparation listeners use other ports. When
+combining hosts, merge distinct scrape jobs with one copy of `recovery.rules.yml`.
+Never scrape one cache under both jobs or sum duplicate scope observers. The
+same `gregale_event_recovery="true"` label, raw metric prefix and recording aliases
+apply. Custom prefixes require matching rule/dashboard substitutions.
+
+The dashboard retains UID `gregale-event-recovery`, panel identities, queries and
+thresholds; version 2 updates its language description. All five recordings and
+six alert expressions/hold times are shared unchanged. Python's native integer
+nanosecond freshness handling and exact microsecond timestamp text preserve the
+same evidence semantics. Failed/missing reads omit sample gauges, incomplete/
+stale observations cannot confirm backlog and unknown panels remain missing.
+
+Use the [Python operator mappings](../../docs/runbooks/GregaleEventRecovery.md#python-hosts-and-guarded-recovery)
+for exact budget-resume fences, persisted command identity and uncertain-commit
+replay. Shared metrics do not translate protected jobs or checkpoints between
+SDKs. No alert starts a recovery pass or grants additional claims.
+
+CI statically checks the Python scrape configuration with the existing shared
+rules/dashboard/metadata gates. Local syntax, generation and package checks do
+not qualify live ASGI scraping, notification routing or alert evaluation; hosted
+behavioral qualification remains pending before production use.
+
+## Recovery health (Go)
+
+Use the [Go concurrent cache, poller and HTTP adapter](../../docs/event-acknowledgment-go-recovery-prometheus.md)
+with the [buildable host](../../sdk/go/examples/event-acknowledgment-recovery/README.md#export-recovery-health-to-prometheus).
+It uses the same scan, stall, poll, query and freshness defaults as Node/Python.
+Mutex-protected state supports concurrent polling/scrapes, and each scrape copies
+its sample before formatting. The host explicitly supervises polling and its
+separate unbound `net/http` server. Cancel/join polling and shut down/join HTTP
+before closing the configured database pool; bound actual driver operations.
+
+Copy [prometheus-recovery-go.yml](prometheus-recovery-go.yml), using job
+`gregale-event-recovery-go` and loopback port 9468. Existing Node/Python configs,
+jobs and ports remain usable. Combine distinct jobs with one copy of the shared
+rules; never scrape one cache under multiple jobs or sum duplicate owner scopes.
+The opt-in target label, thirteen raw gauges, five recordings, six alert meanings
+and hold times are identical. Owner mapping remains in trusted host configuration.
+
+Dashboard version 3 adds Go to the description while preserving its UID, panels,
+queries and thresholds. Go uses UTC database timestamps, conservative wall/local
+monotonic ages, independent snapshots and exact fractional Unix timestamp text.
+Failed reads omit sample gauges; stale/incomplete samples stay ineligible and
+backlog panels remain Unknown when evidence is missing. Use
+[Go operator mappings](../../docs/runbooks/GregaleEventRecovery.md#go-hosts-and-guarded-recovery)
+for precise guarded resume/adoption and unknown-COMMIT replay. Shared metrics do
+not translate protected jobs or typed SDK checkpoints. No alert grants claims.
+
+CI statically checks the Go scrape configuration alongside the shared monitoring
+assets. Local builds/vet and static checks do not qualify concurrent HTTP scraping,
+driver cancellation, live alerts or Grafana rendering; hosted behavioral
+qualification remains pending before production use.
+
+## Actual recovery-worker activity (Go)
+
+The [Go worker observer](../../docs/event-acknowledgment-go-worker-liveness.md)
+records actual bounded pass start/joined return independently from health polling.
+Use the [combined host](../../sdk/go/examples/event-acknowledgment-recovery/README.md#observe-actual-recovery-worker-activity)
+and [worker scrape job](prometheus-recovery-go-worker.yml) instead of the health-only
+job for the same 9468 target. Explicitly schedule passes through the monitored
+wrapper and supervise health polling/HTTP separately. Neither construction nor
+scraping starts recovery work.
+
+The additional `gregale_event_recovery_worker="true"` opt-in leaves existing Go,
+Node and Python health-only jobs compatible. Keep the original recovery opt-in
+label for existing down/absence/backlog alerts. Never scrape the same cache with
+both jobs or sum duplicate observers. Missing subsets require expected inventory.
+
+Three worker recordings and three warning alerts are separate from the original
+five health recordings and six alerts. Worker evidence requires reachable opted-
+in timing/clock metadata; recorded age is the greater of host conservative age
+and Prometheus time since actual activity. Healthy scraping or database reading
+cannot refresh that timestamp. Default idle/active expectations are one/five
+minutes, followed by a two-minute alert hold; these are not deadlines or SLOs.
+
+| Alert | Condition held two minutes |
+| --- | --- |
+| `GregaleEventRecoveryWorkerOverdue` | First/next-pass idle age or active-pass duration exceeds its expected bound. |
+| `GregaleEventRecoveryWorkerEvidenceUnavailable` | Reachable opted-in target lacks valid worker timing/clock metadata. |
+| `GregaleEventRecoveryWorkerPassFailed` | Latest valid joined pass retains failed or unknown-COMMIT admissions. |
+
+Dashboard version 4 keeps the original nine health panels and adds eight worker
+panels for state, age/bounds, latest duration, start/return times and scalar pass
+outcomes. These outcomes are latest-pass gauges, not cumulative counters/rates
+or current database backlog, and may describe the previous pass while another
+is active. Missing data stays Unknown. Callback confirmation/business success
+cannot be inferred from a completed/empty pass or a resolved notification.
+
+See the [worker runbook](../../docs/runbooks/GregaleEventRecovery.md#worker-liveness)
+for overlap protection, clock repair and unknown-COMMIT handling. Alerts start no
+recovery, grant no claims and retain no durable incident identity. Static CI
+checks cover the opt-in config, shared rules, dashboard and metadata. Hosted
+behavioral qualification for clocks, concurrency, cancellation and live alerts
+remains pending. Python worker-metric parity can follow independently.
+
+## Node worker activity and cleanup
+
+The [Node actual-pass observer](../../docs/event-acknowledgment-node-worker-liveness.md)
+uses the same 23 worker gauges and adds `last_pass_cleanup_failures`. Use
+[prometheus-recovery-node-worker.yml](prometheus-recovery-node-worker.yml) with
+the combined Node host on 9466 instead of the health-only job for that endpoint.
+Both recovery and worker opt-in labels are required. Keep one target per cache.
+
+The shared pass-failure alert also includes Node pool-cleanup failures. Such
+failures and typed commit uncertainty can overlap a known settlement; preserve
+the original progress/error and never sum all outcomes into deliveries. Dashboard
+version 5 adds Node wording and the cleanup series to the worker outcomes panel.
+The original nine health panels remain unchanged; cleanup stays Unknown on Go
+targets. See the [Node cleanup runbook](../../docs/runbooks/GregaleEventRecovery.md#node-worker-hosts-and-cleanup).
+Hosted behavioral qualification remains pending.

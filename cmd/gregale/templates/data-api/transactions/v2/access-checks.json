@@ -1,0 +1,102 @@
+{
+  "version": 2,
+  "scenarios": [
+    {
+      "name": "transaction_v2_access",
+      "requests": [
+        {
+          "name": "Tenant stock visible",
+          "method": "GET",
+          "path": "/rest/v1/__OP___v2_inventory?select=tenant_id,sku,stock&order=sku",
+          "identity": "alice",
+          "expect": {
+            "status": 200,
+            "json": [
+              {
+                "tenant_id": "alpha",
+                "sku": "a_widget",
+                "stock": 10
+              },
+              {
+                "tenant_id": "alpha",
+                "sku": "z_widget",
+                "stock": 1
+              }
+            ]
+          }
+        },
+        {
+          "name": "Receipts require the recovery RPC",
+          "method": "GET",
+          "path": "/rest/v1/__OP___v2_receipts?select=request_key",
+          "identity": "alice",
+          "expect": {
+            "status": 200,
+            "json": []
+          }
+        },
+        {
+          "name": "Invalid v1 key refused",
+          "method": "POST",
+          "path": "/rest/v1/rpc/__OP___v2",
+          "identity": "alice",
+          "body": {
+            "request_key": "00000000-0000-4000-8000-000000000001",
+            "skus": [
+              "a_widget"
+            ],
+            "quantities": [
+              1
+            ]
+          },
+          "expect": {
+            "status": 400
+          }
+        },
+        {
+          "name": "Direct stock mutation refused",
+          "method": "PATCH",
+          "path": "/rest/v1/__OP___v2_inventory?sku=eq.a_widget&select=stock",
+          "identity": "alice",
+          "body": {
+            "stock": 999
+          },
+          "expect": {
+            "status": 200,
+            "json": []
+          }
+        },
+        {
+          "name": "Stock unchanged",
+          "method": "GET",
+          "path": "/rest/v1/__OP___v2_inventory?sku=eq.a_widget&select=stock",
+          "identity": "alice",
+          "expect": {
+            "status": 200,
+            "json": [
+              {
+                "stock": 10
+              }
+            ]
+          }
+        },
+        {
+          "name": "Bob sees only beta",
+          "method": "GET",
+          "path": "/rest/v1/__OP___v2_inventory?select=tenant_id,sku,stock",
+          "identity": "bob",
+          "expect": {
+            "status": 200,
+            "json": [
+              {
+                "tenant_id": "beta",
+                "sku": "a_widget",
+                "stock": 10
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}
