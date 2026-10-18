@@ -9,7 +9,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
-	"golang.org/x/sys/unix"
 )
 
 // preparedReplay is an in-process proof for one immutable upload. It is never
@@ -169,7 +168,7 @@ func (p *preparedReplay) install() error {
 		if err := s.canRetainBlob(size); err != nil {
 			return err
 		}
-		if err := unix.Renameat2(unix.AT_FDCWD, p.temp, unix.AT_FDCWD, destination, unix.RENAME_NOREPLACE); err != nil {
+		if err := renameNoReplace(p.temp, destination); err != nil {
 			return err
 		}
 		p.temp = ""
