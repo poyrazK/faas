@@ -237,6 +237,11 @@ export function runtimeConfig(env) {
     GOTRUE_JWT_KEYS: keys.gotrue,
     GOTRUE_JWT_EXP: String(limits.accessTokenSeconds),
     GOTRUE_JWT_AUD: 'authenticated',
+    // GoTrue stores this as each new user's role, and a token's role claim
+    // is the user's role; unset, every token says role "". v2.197.0 calls it
+    // deprecated at start (logs.mjs drops that line) but still applies it;
+    // check it on any GoTrue upgrade. sql/0012 fixes users made before.
+    GOTRUE_JWT_DEFAULT_GROUP_NAME: 'authenticated',
     GOTRUE_JWT_ISSUER: api,
     GOTRUE_JWT_ADMIN_ROLES: 'service_role',
     GOTRUE_EXTERNAL_EMAIL_ENABLED: passthrough.GOTRUE_EXTERNAL_EMAIL_ENABLED ?? 'true',
