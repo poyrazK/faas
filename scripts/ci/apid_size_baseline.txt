@@ -8,4 +8,7 @@
 # In-place major upgrades add 18 lines: their two routes, the handler glue
 # that reads the configured service per request, and the capability (the
 # handlers live in pkg/apid/managedpg).
-155975
+# Hiding them until launch adds 14: the FAAS_MANAGED_POSTGRES_UPGRADE_ACCOUNTS
+# field and its parsing, and main's hidden-route hook in apiContractHandler
+# (the gate itself lives in pkg/apid/managedpg).
+155989

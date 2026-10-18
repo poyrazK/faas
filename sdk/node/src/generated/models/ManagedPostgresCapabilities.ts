@@ -30,10 +30,6 @@ export type ManagedPostgresCapabilities = {
    * Growing the storage limit of existing databases is supported by the configured regional backend, up to storage_limit_bytes. Storage never shrinks.
    */
   storage_resize: boolean;
-  /**
-   * Upgrading existing databases in place to a later major in postgres_majors is supported by the configured regional backend.
-   */
-  major_upgrade: boolean;
   storage_limit_bytes: number;
   restore_window_seconds: number;
 };

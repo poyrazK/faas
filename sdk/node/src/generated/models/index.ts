@@ -873,7 +873,6 @@ export type { ManagedPostgresDatabase } from './ManagedPostgresDatabase.js';
 export type { ManagedPostgresDatabaseList } from './ManagedPostgresDatabaseList.js';
 export type { ManagedPostgresHealth } from './ManagedPostgresHealth.js';
 export type { ManagedPostgresID } from './ManagedPostgresID.js';
-export type { ManagedPostgresMajorUpgrade } from './ManagedPostgresMajorUpgrade.js';
 export type { ManagedPostgresResize } from './ManagedPostgresResize.js';
 export type { ManagedPostgresUsageImportReading } from './ManagedPostgresUsageImportReading.js';
 export type { ManagedPostgresUsageImportRequest } from './ManagedPostgresUsageImportRequest.js';
@@ -1953,7 +1952,6 @@ export type { UpdateTenantWorkflowScheduleRequest } from './UpdateTenantWorkflow
 export type { UpdateTriggerRequest } from './UpdateTriggerRequest.js';
 export type { UpdateUDPListenerRequest } from './UpdateUDPListenerRequest.js';
 export type { UpdateUpstreamCircuitBreakerRequest } from './UpdateUpstreamCircuitBreakerRequest.js';
-export type { UpgradeManagedPostgresDatabaseRequest } from './UpgradeManagedPostgresDatabaseRequest.js';
 export type { UploadDeployOptions } from './UploadDeployOptions.js';
 export type { UploadSessionResponse } from './UploadSessionResponse.js';
 export type { UploadStartRequest } from './UploadStartRequest.js';

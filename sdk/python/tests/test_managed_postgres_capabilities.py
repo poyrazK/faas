@@ -21,7 +21,6 @@ def test_capabilities_keep_reader_support_separate_from_rollout() -> None:
         "point_in_time_restore": True,
         "class_resize": True,
         "storage_resize": True,
-        "major_upgrade": True,
         "scale_to_zero_update": True,
         "storage_limit_bytes": 10737418240,
         "restore_window_seconds": 604800,

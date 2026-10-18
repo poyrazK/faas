@@ -19,7 +19,7 @@ import (
 
 func cmdPostgres(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale postgres <list|capabilities|usage|diagnostics|usage-import|reconcile|create|get|delete|resize|resize-status|upgrade|upgrade-status|compute-policy|compute-policy-status|restore|bindings|attach|cutover>", "postgres")
+		PrintUsage(os.Stderr, "usage: gregale postgres <list|capabilities|usage|diagnostics|usage-import|reconcile|create|get|delete|resize|resize-status|compute-policy|compute-policy-status|restore|bindings|attach|cutover>", "postgres")
 		return 1
 	}
 	switch args[0] {
@@ -49,6 +49,9 @@ func cmdPostgres(args []string) int {
 		return cmdPostgresResize(args[1:])
 	case "resize-status":
 		return cmdPostgresResizeStatus(args[1:])
+	// ADR-1027 major upgrades: a preview, callable but out of customer
+	// help, completions and the CLI reference until launch (the API hides
+	// it outside FAAS_MANAGED_POSTGRES_UPGRADE_ACCOUNTS).
 	case "upgrade":
 		return cmdPostgresUpgrade(args[1:])
 	case "upgrade-status":

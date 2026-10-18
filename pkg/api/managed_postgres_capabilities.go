@@ -19,7 +19,6 @@ type ManagedPostgresCapabilities struct {
 	ScaleToZeroUpdate    bool     `json:"scale_to_zero_update"`
 	ClassResize          bool     `json:"class_resize"`
 	StorageResize        bool     `json:"storage_resize"`
-	MajorUpgrade         bool     `json:"major_upgrade"`
 	StorageLimitBytes    int64    `json:"storage_limit_bytes"`
 	RestoreWindowSeconds int64    `json:"restore_window_seconds"`
 }

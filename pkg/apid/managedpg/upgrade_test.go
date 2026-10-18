@@ -39,7 +39,10 @@ func TestUpgradesJournalAndReport(t *testing.T) {
 		TargetPostgresMajor: 17, Generation: 3, State: managedpostgres.ResizePending, CreatedAt: created}}
 	var problems []error
 	audit := &fakeAudit{}
-	u := Upgrades{Service: service, Problem: func(w http.ResponseWriter, err error) { problems = append(problems, err); w.WriteHeader(http.StatusTeapot) },
+	u := Upgrades{Service: service, Problem: func(w http.ResponseWriter, err error) {
+		problems = append(problems, err)
+		w.WriteHeader(http.StatusTeapot)
+	},
 		NotConfigured: func(w http.ResponseWriter) { w.WriteHeader(http.StatusServiceUnavailable) }, Audit: audit}
 	post := func(body string) *httptest.ResponseRecorder {
 		r := httptest.NewRequest(http.MethodPost, "/v1/postgres/databases/orders/upgrade", strings.NewReader(body))

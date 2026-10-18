@@ -1317,9 +1317,18 @@ drives it (migration `20261017145204318_managed_postgres_major_upgrade`):
   (native: when it offers two majors or more) and the target in its
   majors.
 - **API.** `POST /v1/postgres/databases/{id}/upgrade` and `GET
-  .../upgrades/{upgrade_id}` (served from `pkg/apid/managedpg`), `gregale
-  postgres upgrade|upgrade-status`, the SDKs, and `major_upgrade` in
-  capabilities. Every plan may upgrade.
+  .../upgrades/{upgrade_id}` (served from `pkg/apid/managedpg`) and `gregale
+  postgres upgrade|upgrade-status`. Every plan may upgrade.
+- **Hidden until launch.** Customers see nothing of upgrades until the owner
+  has tested them on production. `FAAS_MANAGED_POSTGRES_UPGRADE_ACCOUNTS`
+  (empty: nobody; `*` at launch) lists who sees them. Everyone else gets
+  what an unregistered route answers: before authentication while nobody
+  is listed, right after it otherwise, and a method mismatch is 404, not a
+  405 with `Allow`. The routes stay out of the OpenAPI spec and the
+  generated SDKs (both `routeExclude` lists). Capabilities carry no
+  `major_upgrade`. The CLI commands work but are out of help, completions
+  and the CLI reference. The customer guide has no section yet; the
+  operator runbook (Previewing major upgrades) says how to launch.
 - **Qualification.** A backend that advertises it must pass
   `major_upgrade_probe` (`MajorUpgradeEvidence`). The disposable
   qualification database is upgraded to the next offered major above its

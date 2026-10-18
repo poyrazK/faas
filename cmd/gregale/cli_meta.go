@@ -4003,11 +4003,6 @@ var cliCommands = []cliCommand{
 				{Name: "request-id", Short: "stable request UUID; reuse after uncertain responses", Req: true, Value: "UUID"},
 			}},
 			{Name: "resize-status", Short: "Read compute resize progress", Positionals: []string{"<database>", "<request_uuid>"}},
-			{Name: "upgrade", Short: "Durably upgrade to a later PostgreSQL major; clients disconnect once", Positionals: []string{"<database>"}, Flags: []cliFlag{
-				{Name: "major", Short: "target PostgreSQL major", Req: true, Value: "N"},
-				{Name: "request-id", Short: "stable request UUID; reuse after uncertain responses", Req: true, Value: "UUID"},
-			}},
-			{Name: "upgrade-status", Short: "Read major upgrade progress", Positionals: []string{"<database>", "<request_uuid>"}},
 			{Name: "restore", Short: "Restore a database to a new database", Flags: []cliFlag{
 				{Name: "name", Short: "name for the restored database", Req: true, Value: "NAME"},
 				{Name: "point-in-time", Short: "RFC3339 restore timestamp", Req: true, Value: "TIMESTAMP"},

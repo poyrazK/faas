@@ -1828,60 +1828,6 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
-  /v1/postgres/databases/{id}/upgrade:
-    parameters:
-      - $ref: '#/components/parameters/ManagedPostgresID'
-    post:
-      operationId: upgradeManagedPostgresDatabase
-      summary: Upgrade managed PostgreSQL to a later major
-      description: Durably reserves an in-place upgrade of the database to a later PostgreSQL major offered by its backend (capabilities major_upgrade). Nothing else changes. The database stops for the upgrade and starts on the new major, so clients disconnect once; planner statistics are rebuilt after it serves again. The request_id UUID is the durable idempotency key; repeat the same UUID and major to recover progress, and a request never upgrades twice. Another resize, deletion, binding change, restore or cutover conflicts while updating. An upgrade can fail for good. With upgrade_refused, PostgreSQL refused to upgrade the cluster, which stays on its major unchanged; remove what it reported and request a new upgrade. With upgrade_failed, the database needs a point-in-time restore to before the upgrade, which recovers on the old major. Points in time before an upgrade restore on the major the database ran then.
-      tags: [managed_postgres]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/UpgradeManagedPostgresDatabaseRequest' }
-      responses:
-        '202':
-          description: Accepted upgrade or current progress for an existing request
-          headers:
-            Location:
-              description: Progress URL for the upgrade
-              schema: { type: string }
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ManagedPostgresMajorUpgrade' }
-        default:
-          description: Upgrade validation, concurrency, entitlement or provider admission failure
-          content:
-            application/problem+json:
-              schema: { $ref: '#/components/schemas/Problem' }
-
-  /v1/postgres/databases/{id}/upgrades/{upgrade_id}:
-    parameters:
-      - $ref: '#/components/parameters/ManagedPostgresID'
-      - name: upgrade_id
-        in: path
-        required: true
-        description: Canonical UUID supplied as request_id when reserving this upgrade.
-        schema: { type: string, format: uuid }
-    get:
-      operationId: getManagedPostgresMajorUpgrade
-      summary: Get managed PostgreSQL major upgrade progress
-      description: Reads a durable major upgrade for the authenticated account and database. Responses are not cached and omit private provider identity.
-      tags: [managed_postgres]
-      responses:
-        '200':
-          description: Account and database scoped upgrade progress
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ManagedPostgresMajorUpgrade' }
-        default:
-          description: Authentication or upgrade lookup error
-          content:
-            application/problem+json:
-              schema: { $ref: '#/components/schemas/Problem' }
-
   /v1/postgres/databases/{id}/restore:
     parameters:
       - $ref: '#/components/parameters/ManagedPostgresID'
@@ -49998,7 +49944,7 @@ components:
     ManagedPostgresCapabilities:
       description: Versioned PostgreSQL support for the default backend in a region, intersected with customer plan limits. Provider identities, costs, endpoints and credentials are excluded. Capabilities remain visible while the rollout gate is closed.
       type: object
-      required: [contract_version, region, provisioning_enabled, database_limit, postgres_majors, service_classes, availability, credential_access, scale_to_zero, always_on, pooled_connections, point_in_time_restore, class_resize, storage_resize, major_upgrade, scale_to_zero_update, storage_limit_bytes, restore_window_seconds]
+      required: [contract_version, region, provisioning_enabled, database_limit, postgres_majors, service_classes, availability, credential_access, scale_to_zero, always_on, pooled_connections, point_in_time_restore, class_resize, storage_resize, scale_to_zero_update, storage_limit_bytes, restore_window_seconds]
       properties:
         contract_version: { type: integer, minimum: 1 }
         region: { type: string }
@@ -50015,7 +49961,6 @@ components:
         scale_to_zero_update: { type: boolean, description: "Changing scale-to-zero on existing databases is supported. Disabling suspension additionally requires always_on plan entitlement; reservations require the pinned backend and admission." }
         class_resize: { type: boolean, description: "Compute-class resizing supported by the configured regional backend. Reservations still require admission and the database pinned backend." }
         storage_resize: { type: boolean, description: "Growing the storage limit of existing databases is supported by the configured regional backend, up to storage_limit_bytes. Storage never shrinks." }
-        major_upgrade: { type: boolean, description: "Upgrading existing databases in place to a later major in postgres_majors is supported by the configured regional backend." }
         storage_limit_bytes: { type: integer, format: int64, minimum: 0 }
         restore_window_seconds: { type: integer, format: int64, minimum: 0 }
     ChangeManagedPostgresComputePolicyRequest:
@@ -50039,29 +49984,6 @@ components:
         state: { type: string, enum: [pending, succeeded] }
         connection_interruption_expected: { type: boolean }
         last_error_code: { type: string, description: "Safe policy-change diagnostic; an uncertain outcome keeps the accepted intent pending for recovery." }
-        created_at: { type: string, format: date-time }
-        completed_at: { type: string, format: date-time }
-    UpgradeManagedPostgresDatabaseRequest:
-      description: Canonical UUID request for an in-place upgrade of an existing managed PostgreSQL database to a later major.
-      type: object
-      additionalProperties: false
-      required: [request_id, postgres_major]
-      properties:
-        request_id: { type: string, format: uuid, description: "Canonical nonzero UUID for this upgrade; replay with the same database and major after uncertain responses." }
-        postgres_major: { type: integer, minimum: 12, maximum: 99, description: "Target major; later than the database's and offered by its backend." }
-    ManagedPostgresMajorUpgrade:
-      description: Durable major upgrade progress. Provider identity and credentials are never returned; existing connections are interrupted once.
-      type: object
-      required: [id, database_id, from_postgres_major, target_postgres_major, generation, state, connection_interruption_expected, created_at]
-      properties:
-        id: { type: string, format: uuid }
-        database_id: { type: string }
-        from_postgres_major: { type: integer }
-        target_postgres_major: { type: integer }
-        generation: { type: integer, format: int64, minimum: 2 }
-        state: { type: string, enum: [pending, succeeded, failed] }
-        connection_interruption_expected: { type: boolean }
-        last_error_code: { type: string, description: "While pending, the latest retry's diagnostic. Once failed, why: upgrade_refused (the cluster stays on its major unchanged) or upgrade_failed (restore to a point before the upgrade)." }
         created_at: { type: string, format: date-time }
         completed_at: { type: string, format: date-time }
     ResizeManagedPostgresDatabaseRequest:

@@ -216,6 +216,9 @@ func managedPostgresUsageCeilings(limits api.ManagedPostgresPlanLimits) managedp
 	return managedpostgres.UsageCeilings{MaxMonthlyStorageByteSeconds: accountStorageBytes * secondsPerBillingMonth}
 }
 
+// upgrades is read per request: apid tests build the handler first.
+func (s *server) upgrades() managedpg.Rollout { return s.postgresUpgrades }
+
 // managedPostgresUpgrade serves a major-upgrade route with the service as
 // configured when the request arrives.
 func (s *server) managedPostgresUpgrade(serve func(managedpg.Upgrades, http.ResponseWriter, *http.Request, state.Account)) accountHandler {

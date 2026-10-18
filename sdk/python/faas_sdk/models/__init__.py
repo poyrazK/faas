@@ -1744,8 +1744,6 @@ from .managed_postgres_health_compute_state import ManagedPostgresHealthComputeS
 from .managed_postgres_health_last_error_code import ManagedPostgresHealthLastErrorCode
 from .managed_postgres_health_provider_status import ManagedPostgresHealthProviderStatus
 from .managed_postgres_health_status import ManagedPostgresHealthStatus
-from .managed_postgres_major_upgrade import ManagedPostgresMajorUpgrade
-from .managed_postgres_major_upgrade_state import ManagedPostgresMajorUpgradeState
 from .managed_postgres_resize import ManagedPostgresResize
 from .managed_postgres_resize_from_class import ManagedPostgresResizeFromClass
 from .managed_postgres_resize_state import ManagedPostgresResizeState
@@ -3754,7 +3752,6 @@ from .update_trigger_request_broker_poison_strategy_type_3_type_1 import (
 from .update_trigger_request_config_type_0 import UpdateTriggerRequestConfigType0
 from .update_udp_listener_request import UpdateUDPListenerRequest
 from .update_upstream_circuit_breaker_request import UpdateUpstreamCircuitBreakerRequest
-from .upgrade_managed_postgres_database_request import UpgradeManagedPostgresDatabaseRequest
 from .upload_deploy_options import UploadDeployOptions
 from .upload_session_response import UploadSessionResponse
 from .upload_session_response_status import UploadSessionResponseStatus
@@ -5661,8 +5658,6 @@ __all__ = (
     "ManagedPostgresHealthLastErrorCode",
     "ManagedPostgresHealthProviderStatus",
     "ManagedPostgresHealthStatus",
-    "ManagedPostgresMajorUpgrade",
-    "ManagedPostgresMajorUpgradeState",
     "ManagedPostgresResize",
     "ManagedPostgresResizeFromClass",
     "ManagedPostgresResizeState",
@@ -7521,7 +7516,6 @@ __all__ = (
     "UpdateTriggerRequestConfigType0",
     "UpdateUDPListenerRequest",
     "UpdateUpstreamCircuitBreakerRequest",
-    "UpgradeManagedPostgresDatabaseRequest",
     "UploadDeployOptions",
     "UploadSessionResponse",
     "UploadSessionResponseStatus",

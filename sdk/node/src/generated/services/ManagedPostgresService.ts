@@ -12,14 +12,12 @@ import type { ManagedPostgresComputePolicyChange } from '../models/ManagedPostgr
 import type { ManagedPostgresCutover } from '../models/ManagedPostgresCutover.js';
 import type { ManagedPostgresDatabase } from '../models/ManagedPostgresDatabase.js';
 import type { ManagedPostgresDatabaseList } from '../models/ManagedPostgresDatabaseList.js';
-import type { ManagedPostgresMajorUpgrade } from '../models/ManagedPostgresMajorUpgrade.js';
 import type { ManagedPostgresResize } from '../models/ManagedPostgresResize.js';
 import type { ManagedPostgresUsageResponse } from '../models/ManagedPostgresUsageResponse.js';
 import type { PrepareManagedPostgresCutoverRequest } from '../models/PrepareManagedPostgresCutoverRequest.js';
 import type { Problem } from '../models/Problem.js';
 import type { ResizeManagedPostgresDatabaseRequest } from '../models/ResizeManagedPostgresDatabaseRequest.js';
 import type { RestoreManagedPostgresDatabaseRequest } from '../models/RestoreManagedPostgresDatabaseRequest.js';
-import type { UpgradeManagedPostgresDatabaseRequest } from '../models/UpgradeManagedPostgresDatabaseRequest.js';
 import type { CancelablePromise } from '../core/CancelablePromise.js';
 import { OpenAPI } from '../core/OpenAPI.js';
 import { request as __request } from '../core/request.js';
@@ -388,62 +386,6 @@ export class ManagedPostgresService {
       path: {
         'id': id,
         'resize_id': resizeId,
-      },
-    });
-  }
-  /**
-   * Upgrade managed PostgreSQL to a later major
-   * Durably reserves an in-place upgrade of the database to a later PostgreSQL major offered by its backend (capabilities major_upgrade). Nothing else changes. The database stops for the upgrade and starts on the new major, so clients disconnect once; planner statistics are rebuilt after it serves again. The request_id UUID is the durable idempotency key; repeat the same UUID and major to recover progress, and a request never upgrades twice. Another resize, deletion, binding change, restore or cutover conflicts while updating. An upgrade can fail for good. With upgrade_refused, PostgreSQL refused to upgrade the cluster, which stays on its major unchanged; remove what it reported and request a new upgrade. With upgrade_failed, the database needs a point-in-time restore to before the upgrade, which recovers on the old major. Points in time before an upgrade restore on the major the database ran then.
-   * @returns Problem Upgrade validation, concurrency, entitlement or provider admission failure
-   * @returns ManagedPostgresMajorUpgrade Accepted upgrade or current progress for an existing request
-   * @throws ApiError
-   */
-  public static upgradeManagedPostgresDatabase({
-    id,
-    requestBody,
-  }: {
-    /**
-     * Opaque Gregale managed PostgreSQL resource identifier.
-     */
-    id: string,
-    requestBody: UpgradeManagedPostgresDatabaseRequest,
-  }): CancelablePromise<Problem | ManagedPostgresMajorUpgrade> {
-    return __request(OpenAPI, {
-      method: 'POST',
-      url: '/v1/postgres/databases/{id}/upgrade',
-      path: {
-        'id': id,
-      },
-      body: requestBody,
-      mediaType: 'application/json',
-    });
-  }
-  /**
-   * Get managed PostgreSQL major upgrade progress
-   * Reads a durable major upgrade for the authenticated account and database. Responses are not cached and omit private provider identity.
-   * @returns ManagedPostgresMajorUpgrade Account and database scoped upgrade progress
-   * @returns Problem Authentication or upgrade lookup error
-   * @throws ApiError
-   */
-  public static getManagedPostgresMajorUpgrade({
-    id,
-    upgradeId,
-  }: {
-    /**
-     * Opaque Gregale managed PostgreSQL resource identifier.
-     */
-    id: string,
-    /**
-     * Canonical UUID supplied as request_id when reserving this upgrade.
-     */
-    upgradeId: string,
-  }): CancelablePromise<ManagedPostgresMajorUpgrade | Problem> {
-    return __request(OpenAPI, {
-      method: 'GET',
-      url: '/v1/postgres/databases/{id}/upgrades/{upgrade_id}',
-      path: {
-        'id': id,
-        'upgrade_id': upgradeId,
       },
     });
   }

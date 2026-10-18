@@ -361,3 +361,40 @@ If schedd stops mid-copy, the move aborts the same way. Without `--node`,
 schedd picks the active node with the most free volume capacity that
 offers the database's major.
 
+
+## Previewing major upgrades
+
+In-place major upgrades (ADR-1027) are hidden from customers until they
+are tested on production. Outside `FAAS_MANAGED_POSTGRES_UPGRADE_ACCOUNTS`
+(apid, comma-separated account UUIDs; `*` at launch; unset is nobody),
+their routes answer exactly like unregistered ones. They are not in the
+OpenAPI spec, the generated SDKs, `major_upgrade` capabilities or CLI help.
+For a listed account:
+
+```sh
+gregale postgres upgrade DATABASE --major 17 --request-id REQUEST_UUID
+gregale postgres upgrade-status DATABASE REQUEST_UUID --json
+```
+
+These call `POST /v1/postgres/databases/{id}/upgrade` (`request_id`,
+`postgres_major`) and `GET /v1/postgres/databases/{id}/upgrades/{upgrade_id}`.
+The upgrade shares the compute-change journal with resizes, so one change
+runs at a time. A request UUID never upgrades twice. A later major the
+backend does not offer is `managed_postgres_unsupported`.
+
+- `succeeded`: the database serves on the new major. Clients reconnected
+  once; planner statistics are rebuilt in the background.
+- `failed` with `upgrade_refused`: PostgreSQL's check refused the cluster
+  (a `reg*` column, an extension without a build for the new major). The
+  database stays on its major, unchanged. Remove the cause, then request a
+  new upgrade.
+- `failed` with `upgrade_failed`: see FaasDatabaseUpgradeFailed above.
+
+Restores keep working across an upgrade: a point before it restores on the
+old major, and the restore request must name that major.
+
+At launch, set `*`, then add the routes, schemas and `major_upgrade` back
+to `api/openapi.yaml` and regenerate the SDKs. Drop them from both
+`routeExclude` lists (`scripts/ci/speccompliance` and `cmd/sdk-coverage`),
+and add the subcommands back to `cli_meta.go`. Move this section to
+docs/managed-postgres.md.

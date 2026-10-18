@@ -856,7 +856,6 @@ export type { ManagedPostgresDatabase } from './models/ManagedPostgresDatabase.j
 export type { ManagedPostgresDatabaseList } from './models/ManagedPostgresDatabaseList.js';
 export type { ManagedPostgresHealth } from './models/ManagedPostgresHealth.js';
 export type { ManagedPostgresID } from './models/ManagedPostgresID.js';
-export type { ManagedPostgresMajorUpgrade } from './models/ManagedPostgresMajorUpgrade.js';
 export type { ManagedPostgresResize } from './models/ManagedPostgresResize.js';
 export type { ManagedPostgresUsageImportReading } from './models/ManagedPostgresUsageImportReading.js';
 export type { ManagedPostgresUsageImportRequest } from './models/ManagedPostgresUsageImportRequest.js';
@@ -1959,7 +1958,6 @@ export type { UpdateTenantWorkflowScheduleRequest } from './models/UpdateTenantW
 export type { UpdateTriggerRequest } from './models/UpdateTriggerRequest.js';
 export type { UpdateUDPListenerRequest } from './models/UpdateUDPListenerRequest.js';
 export type { UpdateUpstreamCircuitBreakerRequest } from './models/UpdateUpstreamCircuitBreakerRequest.js';
-export type { UpgradeManagedPostgresDatabaseRequest } from './models/UpgradeManagedPostgresDatabaseRequest.js';
 export type { UploadDeployOptions } from './models/UploadDeployOptions.js';
 export type { UploadSessionResponse } from './models/UploadSessionResponse.js';
 export type { UploadStartRequest } from './models/UploadStartRequest.js';
