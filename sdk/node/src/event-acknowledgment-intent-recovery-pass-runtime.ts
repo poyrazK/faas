@@ -4,9 +4,10 @@ import { EventAcknowledgmentIntentError, intentStoreError } from './event-acknow
 import { recoverNextEventAcknowledgmentIntent } from './event-acknowledgment-intent-recovery.js';
 import { settings, type EventAcknowledgmentWorkerOptions } from './event-acknowledgment-protocol.js';
 import type { EventAcknowledgmentIntentRecoveryPassOptions, EventAcknowledgmentIntentRecoveryPassResult } from './event-acknowledgment-intent-recovery-pass.js';
+import { intentRetrySchedule, type IntentRetrySchedule } from './event-acknowledgment-intent-retry-policy.js';
 
 export interface RecoveryPassPolicy {
-  readonly maxAttempts: number; readonly concurrency: number; readonly claimDurationMs: number; readonly backoffMs: number;
+  readonly maxAttempts: number; readonly concurrency: number; readonly claimDurationMs: number; readonly retry: IntentRetrySchedule;
   readonly callbackOptions?: Readonly<EventAcknowledgmentWorkerOptions>; readonly signal?: AbortSignal;
 }
 function invalid(): never { throw new TypeError('invalid acknowledgment intent recovery pass options'); }
@@ -29,7 +30,7 @@ function integer(value: unknown, fallback: number, maximum: number, minimum = 1)
 }
 export function recoveryPassPolicy(options: EventAcknowledgmentIntentRecoveryPassOptions): RecoveryPassPolicy {
   try {
-    const data = dataObject(options, ['maxAttempts', 'concurrency', 'claimDurationMs', 'backoffMs', 'callbackOptions', 'signal']);
+    const data = dataObject(options, ['maxAttempts', 'concurrency', 'claimDurationMs', 'backoffMs', 'retryPolicy', 'callbackOptions', 'signal']);
     if (data.signal !== undefined && !(data.signal instanceof AbortSignal)) invalid();
     let callbackOptions: Readonly<EventAcknowledgmentWorkerOptions> | undefined;
     if (data.callbackOptions !== undefined) {
@@ -42,12 +43,12 @@ export function recoveryPassPolicy(options: EventAcknowledgmentIntentRecoveryPas
     }
     settings(callbackOptions ?? {}, 300); // Existing claim validates the selected row's actual lease too.
     return Object.freeze({ maxAttempts: integer(data.maxAttempts, 100, 10000), concurrency: integer(data.concurrency, 4, 32),
-      claimDurationMs: integer(data.claimDurationMs, 30000, 300000, 1000), backoffMs: integer(data.backoffMs, 1000, 3600000),
+      claimDurationMs: integer(data.claimDurationMs, 30000, 300000, 1000), retry: intentRetrySchedule(data),
       callbackOptions, signal: data.signal as AbortSignal | undefined });
   } catch { return invalid(); }
 }
 
-type Kind = 'confirmed' | 'unconfirmed' | 'superseded' | 'empty' | 'claimLost' | 'interrupted' | 'failed' | 'commitUnknown';
+type Kind = 'confirmed' | 'unconfirmed' | 'parked' | 'superseded' | 'empty' | 'claimLost' | 'interrupted' | 'failed' | 'commitUnknown';
 type Counts = { -readonly [Key in Exclude<keyof EventAcknowledgmentIntentRecoveryPassResult, 'stopReason'>]: number };
 function kind(error: unknown): Kind {
   try {
@@ -63,7 +64,7 @@ function kind(error: unknown): Kind {
 
 export async function runRecoveryPass(pool: EventConsumerPool, account: string, app: string, policy: RecoveryPassPolicy):
 Promise<{ result: EventAcknowledgmentIntentRecoveryPassResult; unsupportedGeneration: boolean }> {
-  const counts: Counts = { attempts: 0, confirmed: 0, unconfirmed: 0, superseded: 0, empty: 0, claimLost: 0,
+  const counts: Counts = { attempts: 0, confirmed: 0, unconfirmed: 0, parked: 0, superseded: 0, empty: 0, claimLost: 0,
     interrupted: 0, failed: 0, commitUnknown: 0, cleanupFailures: 0 };
   let closed = false, interrupted = false, unexpected = false, unsupportedGeneration = false;
   const connect = pool.connect.bind(pool);
@@ -106,10 +107,10 @@ Promise<{ result: EventAcknowledgmentIntentRecoveryPassResult; unsupportedGenera
     let outcome: Kind = 'failed';
     try {
       const status = await recoverNextEventAcknowledgmentIntent(guarded, account, app, {
-        signal: local.signal, claimDurationMs: policy.claimDurationMs, backoffMs: policy.backoffMs,
+        signal: local.signal, claimDurationMs: policy.claimDurationMs, ...policy.retry,
         callbackOptions: policy.callbackOptions,
       });
-      if (status.state !== 'confirmed' && status.state !== 'unconfirmed' && status.state !== 'superseded') throw intentStoreError();
+      if (status.state !== 'confirmed' && status.state !== 'unconfirmed' && status.state !== 'parked' && status.state !== 'superseded') throw intentStoreError();
       outcome = status.state;
     } catch (error) {
       outcome = kind(error);

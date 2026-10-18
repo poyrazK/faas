@@ -41,6 +41,11 @@ type EventAcknowledgmentIntentStatus struct {
 	LastCode         string     `json:"last_code,omitempty"`
 	CreatedAt        time.Time  `json:"created_at"`
 	UpdatedAt        time.Time  `json:"updated_at"`
+
+	// RetryPolicy is the stored binding; nil selects worker fallback settings.
+	RetryPolicy *EventAcknowledgmentIntentStoredRetryPolicy `json:"retry_policy,omitempty"`
+	// DeliveryAttemptLimit is the current v2 grant. Zero means unlimited.
+	DeliveryAttemptLimit int64 `json:"delivery_attempt_limit,omitempty"`
 }
 type EventAcknowledgmentIntentResult struct {
 	Receipt          EventConsumerTransactionResult
@@ -48,16 +53,28 @@ type EventAcknowledgmentIntentResult struct {
 	Intent           EventAcknowledgmentIntentStatus
 }
 
-const eventIntentStatusColumns = `invocation_id::text,replay_generation,attempt,action,reason,state,delivery_attempts,next_attempt_at,claim_expires_at,last_code,created_at,updated_at`
+const eventIntentStatusColumns = `invocation_id::text,replay_generation,attempt,action,reason,state,delivery_attempts,next_attempt_at,claim_expires_at,last_code,created_at,updated_at,retry_policy_version,retry_initial_backoff_ms,retry_max_backoff_ms,retry_max_delivery_attempts,delivery_attempt_limit`
 
 type eventIntentScanner interface{ Scan(...any) error }
 
 func eventIntentStatus(row eventIntentScanner) (EventAcknowledgmentIntentStatus, error) {
 	var s EventAcknowledgmentIntentStatus
 	var expiry sql.NullTime
-	err := row.Scan(&s.InvocationID, &s.ReplayGeneration, &s.Attempt, &s.Action, &s.Reason, &s.State, &s.DeliveryAttempts, &s.NextAttemptAt, &expiry, &s.LastCode, &s.CreatedAt, &s.UpdatedAt)
+	var version, initial, maximum, budget, limit sql.NullInt64
+	err := row.Scan(&s.InvocationID, &s.ReplayGeneration, &s.Attempt, &s.Action, &s.Reason, &s.State, &s.DeliveryAttempts, &s.NextAttemptAt, &expiry, &s.LastCode, &s.CreatedAt, &s.UpdatedAt, &version, &initial, &maximum, &budget, &limit)
+	if err != nil {
+		return EventAcknowledgmentIntentStatus{}, err
+	}
+	s.RetryPolicy, err = eventIntentStoredBudgetPolicy(version, initial, maximum, budget, limit)
+	if err != nil {
+		return EventAcknowledgmentIntentStatus{}, err
+	}
 	if expiry.Valid {
 		s.ClaimExpiresAt = &expiry.Time
+	}
+	s.DeliveryAttemptLimit = limit.Int64
+	if !eventIntentBudgetStatus(s) {
+		return EventAcknowledgmentIntentStatus{}, ErrEventAcknowledgmentIntentStore
 	}
 	return s, err
 }
@@ -82,7 +99,7 @@ func (s *eventAcknowledgmentWorker) intentLock(ctx context.Context, tx *sql.Tx) 
 	}
 	return nil
 }
-func (s *eventAcknowledgmentWorker) saveIntent(ctx context.Context, tx *sql.Tx, action, reason string, body json.RawMessage) (EventAcknowledgmentIntentStatus, error) {
+func (s *eventAcknowledgmentWorker) saveIntent(ctx context.Context, tx *sql.Tx, action, reason string, body json.RawMessage, policy *EventAcknowledgmentIntentStoredRetryPolicy) (EventAcknowledgmentIntentStatus, error) {
 	var zero EventAcknowledgmentIntentStatus
 	if len(s.app) > 256 {
 		return zero, ErrInvalidEventConsumerRequest
@@ -97,7 +114,7 @@ func (s *eventAcknowledgmentWorker) saveIntent(ctx context.Context, tx *sql.Tx, 
 	var generation int64
 	var attempt int
 	var oldIdentity, oldRequest []byte
-	err := tx.QueryRowContext(ctx, `SELECT replay_generation,attempt,identity_digest,request_digest FROM public.gregale_event_acknowledgment_intents WHERE account_id=$1::uuid AND app_id=$2::uuid AND invocation_id=$3::uuid ORDER BY replay_generation DESC,attempt DESC LIMIT 1`, id.AccountID, id.AppID, s.delivery.InvocationID).Scan(&generation, &attempt, &oldIdentity, &oldRequest)
+	err := tx.QueryRowContext(ctx, `SELECT replay_generation,attempt,identity_digest,request_digest FROM public.gregale_event_acknowledgment_intents WHERE account_id=$1::uuid AND app_id=$2::uuid AND invocation_id=$3::uuid ORDER BY replay_generation DESC,attempt DESC LIMIT 1 FOR UPDATE`, id.AccountID, id.AppID, s.delivery.InvocationID).Scan(&generation, &attempt, &oldIdentity, &oldRequest)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return zero, eventIntentStoreError(ctx)
 	}
@@ -123,25 +140,29 @@ func (s *eventAcknowledgmentWorker) saveIntent(ctx context.Context, tx *sql.Tx, 
 			if status.State == "superseded" {
 				return zero, ErrEventAcknowledgmentIntentSuperseded
 			}
+			if policy != nil && (status.RetryPolicy == nil || *status.RetryPolicy != *policy) {
+				return zero, ErrEventAcknowledgmentIntentConflict
+			}
 			return status, nil
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE public.gregale_event_acknowledgment_intents SET state='superseded',token=NULL,result_body=NULL,claim_token=NULL,claim_expires_at=NULL,last_code='claim_replaced',updated_at=clock_timestamp() WHERE account_id=$1::uuid AND app_id=$2::uuid AND invocation_id=$3::uuid AND state IN ('pending','unconfirmed')`, id.AccountID, id.AppID, s.delivery.InvocationID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE public.gregale_event_acknowledgment_intents SET state='superseded',token=NULL,result_body=NULL,claim_token=NULL,claim_expires_at=NULL,last_code='claim_replaced',updated_at=clock_timestamp() WHERE account_id=$1::uuid AND app_id=$2::uuid AND invocation_id=$3::uuid AND state IN ('pending','unconfirmed','parked')`, id.AccountID, id.AppID, s.delivery.InvocationID); err != nil {
 		return zero, eventIntentStoreError(ctx)
 	}
 	var result any
 	if action == "complete" {
 		result = string(body)
 	}
-	status, err := eventIntentStatus(tx.QueryRowContext(ctx, `INSERT INTO public.gregale_event_acknowledgment_intents(account_id,app_id,invocation_id,replay_generation,attempt,identity_digest,request_digest,capability_digest,action_digest,app_slug,lease_seconds,action,reason,token,result_body,state) VALUES($1::uuid,$2::uuid,$3::uuid,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,'pending') RETURNING `+eventIntentStatusColumns, id.AccountID, id.AppID, s.delivery.InvocationID, s.delivery.ReplayGeneration, s.delivery.Attempt, identity[:], request[:], capability[:], payload[:], s.app, s.seconds, action, reason, s.token, result))
+	version, initial, maximum, budget := eventIntentRetryPolicyValues(policy)
+	status, err := eventIntentStatus(tx.QueryRowContext(ctx, `INSERT INTO public.gregale_event_acknowledgment_intents(account_id,app_id,invocation_id,replay_generation,attempt,identity_digest,request_digest,capability_digest,action_digest,app_slug,lease_seconds,action,reason,token,result_body,state,retry_policy_version,retry_initial_backoff_ms,retry_max_backoff_ms,retry_max_delivery_attempts,delivery_attempt_limit) VALUES($1::uuid,$2::uuid,$3::uuid,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,'pending',$16,$17,$18,$19,$19) RETURNING `+eventIntentStatusColumns, id.AccountID, id.AppID, s.delivery.InvocationID, s.delivery.ReplayGeneration, s.delivery.Attempt, identity[:], request[:], capability[:], payload[:], s.app, s.seconds, action, reason, s.token, result, version, initial, maximum, budget))
 	if err != nil {
 		return zero, eventIntentStoreError(ctx)
 	}
 	return status, nil
 }
-func (s *eventAcknowledgmentWorker) intentHook(status *EventAcknowledgmentIntentStatus) func(context.Context, *sql.Tx, EventConsumerTransactionResult) error {
+func (s *eventAcknowledgmentWorker) intentHook(status *EventAcknowledgmentIntentStatus, policy *EventAcknowledgmentIntentStoredRetryPolicy) func(context.Context, *sql.Tx, EventConsumerTransactionResult) error {
 	return func(ctx context.Context, tx *sql.Tx, receipt EventConsumerTransactionResult) error {
-		saved, err := s.saveIntent(ctx, tx, "complete", "", receipt.Body)
+		saved, err := s.saveIntent(ctx, tx, "complete", "", receipt.Body, policy)
 		if err == nil {
 			*status = saved
 		}
@@ -152,13 +173,16 @@ func (s *eventAcknowledgmentWorker) intentHook(status *EventAcknowledgmentIntent
 // SaveCompletionIntent reads a committed receipt and atomically stages its callback.
 // It never invokes business code, and is safe after an uncertain transaction commit.
 func (w *EventAcknowledgmentWorker) SaveCompletionIntent(ctx context.Context, db *sql.DB) (EventAcknowledgmentIntentResult, error) {
+	return w.saveCompletionIntent(ctx, db, nil)
+}
+func (w *EventAcknowledgmentWorker) saveCompletionIntent(ctx context.Context, db *sql.DB, policy *EventAcknowledgmentIntentStoredRetryPolicy) (EventAcknowledgmentIntentResult, error) {
 	var out EventAcknowledgmentIntentResult
 	s, err := w.lock(ctx, db)
 	if err != nil {
 		return out, err
 	}
 	defer s.mu.Unlock()
-	receipt, err := withEventConsumerTransaction(ctx, db, s.input, func(EventConsumerSQLTransaction) (json.RawMessage, error) { return nil, ErrEventConsumerReceiptMissing }, nil, s.intentHook(&out.Intent))
+	receipt, err := withEventConsumerTransaction(ctx, db, s.input, func(EventConsumerSQLTransaction) (json.RawMessage, error) { return nil, ErrEventConsumerReceiptMissing }, nil, s.intentHook(&out.Intent, policy))
 	if err != nil {
 		if errors.Is(err, ErrEventConsumerCommitUnknown) {
 			return EventAcknowledgmentIntentResult{}, eventIntentCommitError(ctx)
@@ -172,15 +196,15 @@ func (w *EventAcknowledgmentWorker) SaveCompletionIntent(ctx context.Context, db
 // RunDurable commits a completion intent with business writes and the receipt.
 // It sends no terminal HTTP callback; a recovery host must claim and deliver intents.
 func (w *EventAcknowledgmentWorker) RunDurable(ctx context.Context, db *sql.DB, handler func(context.Context, EventConsumerSQLTransaction) (json.RawMessage, error)) (EventAcknowledgmentIntentResult, error) {
-	return w.runDurable(ctx, db, nil, handler)
+	return w.runDurable(ctx, db, nil, nil, handler)
 }
 
 // RunDurableWithProcessingLease additionally fences the existing local preparation
 // lease; like RunWithProcessingLease, it does not renew that locked local lease.
 func (w *EventAcknowledgmentWorker) RunDurableWithProcessingLease(ctx context.Context, db *sql.DB, lease EventConsumerProcessingLease, handler func(context.Context, EventConsumerSQLTransaction) (json.RawMessage, error)) (EventAcknowledgmentIntentResult, error) {
-	return w.runDurable(ctx, db, &lease, handler)
+	return w.runDurable(ctx, db, &lease, nil, handler)
 }
-func (w *EventAcknowledgmentWorker) runDurable(ctx context.Context, db *sql.DB, lease *EventConsumerProcessingLease, handler func(context.Context, EventConsumerSQLTransaction) (json.RawMessage, error)) (EventAcknowledgmentIntentResult, error) {
+func (w *EventAcknowledgmentWorker) runDurable(ctx context.Context, db *sql.DB, lease *EventConsumerProcessingLease, policy *EventAcknowledgmentIntentStoredRetryPolicy, handler func(context.Context, EventConsumerSQLTransaction) (json.RawMessage, error)) (EventAcknowledgmentIntentResult, error) {
 	var out EventAcknowledgmentIntentResult
 	s, err := w.lock(ctx, db)
 	if err != nil {
@@ -198,7 +222,7 @@ func (w *EventAcknowledgmentWorker) runDurable(ctx context.Context, db *sql.DB, 
 		}
 	}
 	noop := func(EventConsumerSQLTransaction) (json.RawMessage, error) { return nil, ErrEventConsumerReceiptMissing }
-	receipt, err := withEventConsumerTransaction(ctx, db, s.input, noop, nil, s.intentHook(&out.Intent))
+	receipt, err := withEventConsumerTransaction(ctx, db, s.input, noop, nil, s.intentHook(&out.Intent, policy))
 	if err == nil {
 		out.Receipt, out.ReceiptConfirmed = receipt, true
 		return out, nil
@@ -214,7 +238,7 @@ func (w *EventAcknowledgmentWorker) runDurable(ctx context.Context, db *sql.DB, 
 	stop := s.monitor(workCtx, cancelWork)
 	defer stop()
 	callback := func(tx EventConsumerSQLTransaction) (json.RawMessage, error) { return handler(workCtx, tx) }
-	receipt, err = withEventConsumerTransaction(workCtx, db, s.input, callback, lease, s.intentHook(&out.Intent))
+	receipt, err = withEventConsumerTransaction(workCtx, db, s.input, callback, lease, s.intentHook(&out.Intent, policy))
 	stop()
 	if err != nil {
 		return EventAcknowledgmentIntentResult{}, errors.Join(sanitizeIntentCommit(ctx, err), context.Cause(workCtx))
@@ -231,14 +255,14 @@ func sanitizeIntentCommit(ctx context.Context, err error) error {
 
 // SaveRetryIntent requires known rollback and exclusive, stopped job ownership.
 func (w *EventAcknowledgmentWorker) SaveRetryIntent(ctx context.Context, db *sql.DB, reason string) (EventAcknowledgmentIntentStatus, error) {
-	return w.saveNegativeIntent(ctx, db, "retry", reason)
+	return w.saveNegativeIntent(ctx, db, "retry", reason, nil)
 }
 
 // SaveDeadLetterIntent has the same ownership and rollback requirements.
 func (w *EventAcknowledgmentWorker) SaveDeadLetterIntent(ctx context.Context, db *sql.DB, reason string) (EventAcknowledgmentIntentStatus, error) {
-	return w.saveNegativeIntent(ctx, db, "dead-letter", reason)
+	return w.saveNegativeIntent(ctx, db, "dead-letter", reason, nil)
 }
-func (w *EventAcknowledgmentWorker) saveNegativeIntent(ctx context.Context, db *sql.DB, action, reason string) (EventAcknowledgmentIntentStatus, error) {
+func (w *EventAcknowledgmentWorker) saveNegativeIntent(ctx context.Context, db *sql.DB, action, reason string, policy *EventAcknowledgmentIntentStoredRetryPolicy) (EventAcknowledgmentIntentStatus, error) {
 	var zero EventAcknowledgmentIntentStatus
 	s, err := w.lock(ctx, db)
 	if err != nil {
@@ -268,7 +292,7 @@ func (w *EventAcknowledgmentWorker) saveNegativeIntent(ctx context.Context, db *
 	if !errors.Is(err, sql.ErrNoRows) {
 		return zero, eventIntentStoreError(ctx)
 	}
-	status, err := s.saveIntent(ctx, tx, action, reason, nil)
+	status, err := s.saveIntent(ctx, tx, action, reason, nil, policy)
 	if err != nil {
 		return zero, err
 	}
