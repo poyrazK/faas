@@ -115,12 +115,9 @@ func TestDeploymentServiceExplanationReadBoundaries(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		// App access hides another account's app before scope checks (#4882).
 		r = e.Do(t, "GET", "/v1/apps/"+app.Slug+"/bindings/services/private/explanation?deployment_id="+dep.ID, nil, nil)
-		want := 404
-		if tc.status == 403 {
-			want = 403
-		}
-		if r.Code != want {
+		if r.Code != 404 {
 			t.Fatalf("foreign caller: %d %s", r.Code, r.Body)
 		}
 	}
