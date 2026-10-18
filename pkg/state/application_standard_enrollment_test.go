@@ -14,14 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/appstandards"
 )
 
-type standardEnrollmentTestStore interface {
-	Store
-	ApplicationStandardStore
-	ApplicationStandardEnrollmentStore
-	PRPreviewBatchStore
-	OrgActivityAppLifecycleMutationStore
-	ProjectReconcileStore
-}
+type standardEnrollmentTestStore = contractTestStore
 
 func TestMemApplicationStandardEnrollment(t *testing.T) {
 	store := NewMemStore()

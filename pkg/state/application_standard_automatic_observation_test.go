@@ -14,12 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 )
 
-type standardAutomaticObservationTestStore interface {
-	standardObservationTestStore
-	ApplicationStandardAutomaticMaterializationStore
-	ApplicationStandardAutomaticObservationStore
-	ApplicationStandardLocalIntentStore
-}
+type standardAutomaticObservationTestStore = contractTestStore
 
 func automaticObservationAdmission(t *testing.T, s standardAutomaticObservationTestStore, owner CreateAccountWithPersonalOrgResult) {
 	t.Helper()

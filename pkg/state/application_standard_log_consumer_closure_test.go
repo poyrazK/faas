@@ -10,11 +10,7 @@ import (
 	"github.com/google/uuid"
 )
 
-type standardLogClosureTestStore interface {
-	standardLogHealthTestStore
-	ApplicationStandardLogConsumerClosureStore
-	ApplicationStandardConsumerRosterStore
-}
+type standardLogClosureTestStore = contractTestStore
 
 func TestMemApplicationStandardLogConsumerClosure(t *testing.T) {
 	standardLogConsumerClosureLifecycle(t, NewMemStore())

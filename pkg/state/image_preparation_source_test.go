@@ -8,11 +8,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/buildpublisher"
 )
 
-type sourcePreparationTestStore interface {
-	sourceRootfsTestStore
-	DeploymentImagePreparationStore
-	SourceImagePreparationStore
-}
+type sourcePreparationTestStore = contractTestStore
 
 func sourceImagePreparationContract(t *testing.T, s sourcePreparationTestStore, runtime, outcome string) {
 	t.Helper()

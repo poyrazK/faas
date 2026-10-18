@@ -13,14 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/appstandards"
 )
 
-type legacyStandardOwnerTestStore interface {
-	Store
-	ApplicationStandardStore
-	ApplicationStandardEnrollmentStore
-	ApplicationStandardReviewStore
-	InstanceApplicationStandardAdmissionStore
-	AccountAbuseHoldStore
-}
+type legacyStandardOwnerTestStore = contractTestStore
 
 type legacyOwnerWrites struct {
 	create func(App) (App, error)

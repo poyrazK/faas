@@ -10,10 +10,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-type standardLogExceptionTestStore interface {
-	standardLogDeliveryTestStore
-	ApplicationStandardExceptionStore
-}
+type standardLogExceptionTestStore = contractTestStore
 
 func TestMemApplicationStandardLogDeliveryExceptionDeadline(t *testing.T) {
 	standardLogDeliveryExceptionDeadline(t, NewMemStore())

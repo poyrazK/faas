@@ -16,10 +16,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/imagepublisher"
 )
 
-type artifactScanTestStore interface {
-	registryRootfsTestStore
-	DeploymentArtifactScanStore
-}
+type artifactScanTestStore = contractTestStore
 
 // This fixture tests private store facts, not a native scanner or VM ACK.
 func artifactScanFixture(t *testing.T, s artifactScanTestStore, sidecar bool) (DeploymentArtifactScanInput, DeploymentRegistryRootfs, App, Deployment) {

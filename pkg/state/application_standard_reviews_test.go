@@ -20,13 +20,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/appstandards"
 )
 
-type standardReviewTestStore interface {
-	Store
-	ApplicationStandardStore
-	ApplicationStandardResourceStore
-	ApplicationStandardEnrollmentStore
-	ApplicationStandardReviewStore
-}
+type standardReviewTestStore = contractTestStore
 
 func TestMemApplicationStandardReviews(t *testing.T) {
 	standardReviewLifecycle(t, NewMemStore())

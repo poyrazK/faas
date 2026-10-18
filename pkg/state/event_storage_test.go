@@ -18,15 +18,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-type eventStorageTestStore interface {
-	state.Store
-	state.EventStorageUsageStore
-	state.PublishedEventWorkStore
-	state.PublishedEventRetentionStore
-	state.EventReceiptAcceptanceStore
-	state.EventSubscriptionStore
-	AppendEventAt(context.Context, string, string, *string, []byte, time.Time) error
-}
+type eventStorageTestStore = contractTestStore
 
 func forEventStorageStores(t *testing.T, test func(*testing.T, eventStorageTestStore, *pgxpool.Pool)) {
 	t.Run("memory", func(t *testing.T) { test(t, state.NewMemStore(), nil) })

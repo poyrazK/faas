@@ -16,12 +16,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 )
 
-type standardRuntimeQualificationTestStore interface {
-	nativeArtifactTestStore
-	InstanceApplicationStandardRuntimeQualificationStore
-	InstanceApplicationStandardRuntimeReceiptStore
-	SetComputeNodeActive(context.Context, string, bool) error
-}
+type standardRuntimeQualificationTestStore = contractTestStore
 
 func standardRuntimeQualificationRead(t *testing.T, s standardRuntimeQualificationTestStore, ins Instance, reason string) InstanceApplicationStandardRuntimeQualification {
 	t.Helper()

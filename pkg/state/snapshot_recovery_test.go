@@ -15,12 +15,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-type coldBootTestStore interface {
-	state.Store
-	state.SnapshotRecoveryStore
-	state.OperatorColdBootStore
-	state.AuditEventOutboxStore
-}
+type coldBootTestStore = contractTestStore
 
 type coldBootFixture struct {
 	store     coldBootTestStore
