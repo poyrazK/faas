@@ -293,7 +293,8 @@ def with_operation_transaction(
 
 
 def _with_operation_transaction(
-    connection: Any, input: OperationRequest, handler: Callable[[Any], OperationOutcome]
+    connection: Any, input: OperationRequest, handler: Callable[[Any], OperationOutcome],
+    guard: Callable[[Any, bytes, bool], None] | None = None,
 ) -> OperationTransactionResult:
     request = _normalize(input)
     digest = operation_request_digest(request)
@@ -314,6 +315,8 @@ def _with_operation_transaction(
                         body = _encode(handler(business_cursor))
                 if row is None:
                     cursor.execute(insert_query, _params(request, digest, body))
+                if guard is not None:
+                    guard(cursor, body, row is not None)
                 completed = True
     except Exception as error:
         if completed:
@@ -332,7 +335,8 @@ async def awith_operation_transaction(
 
 
 async def _awith_operation_transaction(
-    connection: Any, input: OperationRequest, handler: Callable[[Any], Awaitable[OperationOutcome]]
+    connection: Any, input: OperationRequest, handler: Callable[[Any], Awaitable[OperationOutcome]],
+    guard: Callable[[Any, bytes, bool], Awaitable[None]] | None = None,
 ) -> OperationTransactionResult:
     request = _normalize(input)
     digest = operation_request_digest(request)
@@ -353,6 +357,8 @@ async def _awith_operation_transaction(
                         body = _encode(await handler(business_cursor))
                 if row is None:
                     await cursor.execute(insert_query, _params(request, digest, body))
+                if guard is not None:
+                    await guard(cursor, body, row is not None)
                 completed = True
     except Exception as error:
         if completed:

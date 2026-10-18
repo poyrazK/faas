@@ -22,6 +22,9 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
+	Vmmd_DataRepairRehearsalIdentity_FullMethodName             = "/onebox.faas.vmmd.v1.Vmmd/DataRepairRehearsalIdentity"
+	Vmmd_RunDataRepairRehearsal_FullMethodName                  = "/onebox.faas.vmmd.v1.Vmmd/RunDataRepairRehearsal"
+	Vmmd_RetireDataRepairRehearsal_FullMethodName               = "/onebox.faas.vmmd.v1.Vmmd/RetireDataRepairRehearsal"
 	Vmmd_CreateRehearsalColdBoot_FullMethodName                 = "/onebox.faas.vmmd.v1.Vmmd/CreateRehearsalColdBoot"
 	Vmmd_CreateRehearsalFromSnapshot_FullMethodName             = "/onebox.faas.vmmd.v1.Vmmd/CreateRehearsalFromSnapshot"
 	Vmmd_RuntimeAdmissionIdentity_FullMethodName                = "/onebox.faas.vmmd.v1.Vmmd/RuntimeAdmissionIdentity"
@@ -104,6 +107,11 @@ const (
 // auth model (mode 0660 group `faas`, ADR-015) is the only authentication
 // story for v1.0 — Gate-A multi-host replaces it with mTLS.
 type VmmdClient interface {
+	// Dedicated one-shot, networkless repair guests. The first stream message
+	// carries immutable metadata only; following messages carry bounded input.
+	DataRepairRehearsalIdentity(ctx context.Context, in *DataRepairRehearsalIdentityRequest, opts ...grpc.CallOption) (*DataRepairRehearsalIdentityResponse, error)
+	RunDataRepairRehearsal(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[DataRepairRehearsalChunk, DataRepairRehearsalResult], error)
+	RetireDataRepairRehearsal(ctx context.Context, in *RetireDataRepairRehearsalRequest, opts ...grpc.CallOption) (*RetireDataRepairRehearsalResponse, error)
 	// ADR-20261017201005: old nodes reject these methods before releasing guest code.
 	CreateRehearsalColdBoot(ctx context.Context, in *CreateColdBootRequest, opts ...grpc.CallOption) (*WakeResponse, error)
 	CreateRehearsalFromSnapshot(ctx context.Context, in *CreateFromSnapshotRequest, opts ...grpc.CallOption) (*WakeResponse, error)
@@ -612,6 +620,39 @@ func NewVmmdClient(cc grpc.ClientConnInterface) VmmdClient {
 	return &vmmdClient{cc}
 }
 
+func (c *vmmdClient) DataRepairRehearsalIdentity(ctx context.Context, in *DataRepairRehearsalIdentityRequest, opts ...grpc.CallOption) (*DataRepairRehearsalIdentityResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DataRepairRehearsalIdentityResponse)
+	err := c.cc.Invoke(ctx, Vmmd_DataRepairRehearsalIdentity_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *vmmdClient) RunDataRepairRehearsal(ctx context.Context, opts ...grpc.CallOption) (grpc.ClientStreamingClient[DataRepairRehearsalChunk, DataRepairRehearsalResult], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[0], Vmmd_RunDataRepairRehearsal_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[DataRepairRehearsalChunk, DataRepairRehearsalResult]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Vmmd_RunDataRepairRehearsalClient = grpc.ClientStreamingClient[DataRepairRehearsalChunk, DataRepairRehearsalResult]
+
+func (c *vmmdClient) RetireDataRepairRehearsal(ctx context.Context, in *RetireDataRepairRehearsalRequest, opts ...grpc.CallOption) (*RetireDataRepairRehearsalResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RetireDataRepairRehearsalResponse)
+	err := c.cc.Invoke(ctx, Vmmd_RetireDataRepairRehearsal_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *vmmdClient) CreateRehearsalColdBoot(ctx context.Context, in *CreateColdBootRequest, opts ...grpc.CallOption) (*WakeResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(WakeResponse)
@@ -784,7 +825,7 @@ func (c *vmmdClient) ExecuteExecution(ctx context.Context, in *ExecuteExecutionR
 
 func (c *vmmdClient) ExecuteExecutionStream(ctx context.Context, in *ExecuteExecutionRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ExecuteExecutionEvent], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[0], Vmmd_ExecuteExecutionStream_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[1], Vmmd_ExecuteExecutionStream_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -803,7 +844,7 @@ type Vmmd_ExecuteExecutionStreamClient = grpc.ServerStreamingClient[ExecuteExecu
 
 func (c *vmmdClient) ExecuteExecutionBrokerStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ExecuteExecutionBrokerRequest, ExecuteExecutionBrokerEvent], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[1], Vmmd_ExecuteExecutionBrokerStream_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[2], Vmmd_ExecuteExecutionBrokerStream_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -856,7 +897,7 @@ func (c *vmmdClient) ExecuteAppTask(ctx context.Context, in *ExecuteAppTaskReque
 
 func (c *vmmdClient) ExecuteAppTaskStream(ctx context.Context, in *ExecuteAppTaskRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[ExecuteAppTaskEvent], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[2], Vmmd_ExecuteAppTaskStream_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[3], Vmmd_ExecuteAppTaskStream_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -875,7 +916,7 @@ type Vmmd_ExecuteAppTaskStreamClient = grpc.ServerStreamingClient[ExecuteAppTask
 
 func (c *vmmdClient) AttachAppTask(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[AttachAppTaskRequest, AttachAppTaskEvent], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[3], Vmmd_AttachAppTask_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[4], Vmmd_AttachAppTask_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1178,7 +1219,7 @@ func (c *vmmdClient) SeccompStatus(ctx context.Context, in *SeccompStatusRequest
 
 func (c *vmmdClient) Logs(ctx context.Context, in *LogsRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[LogsResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[4], Vmmd_Logs_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[5], Vmmd_Logs_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1197,7 +1238,7 @@ type Vmmd_LogsClient = grpc.ServerStreamingClient[LogsResponse]
 
 func (c *vmmdClient) ForwardHTTPStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ForwardHTTPStreamRequest, ForwardHTTPStreamResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[5], Vmmd_ForwardHTTPStream_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[6], Vmmd_ForwardHTTPStream_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1210,7 +1251,7 @@ type Vmmd_ForwardHTTPStreamClient = grpc.BidiStreamingClient[ForwardHTTPStreamRe
 
 func (c *vmmdClient) ForwardRawStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ForwardRawRequest, ForwardRawResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[6], Vmmd_ForwardRawStream_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[7], Vmmd_ForwardRawStream_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1223,7 +1264,7 @@ type Vmmd_ForwardRawStreamClient = grpc.BidiStreamingClient[ForwardRawRequest, F
 
 func (c *vmmdClient) ForwardTCPStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ForwardTCPRequest, ForwardTCPResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[7], Vmmd_ForwardTCPStream_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[8], Vmmd_ForwardTCPStream_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1236,7 +1277,7 @@ type Vmmd_ForwardTCPStreamClient = grpc.BidiStreamingClient[ForwardTCPRequest, F
 
 func (c *vmmdClient) ForwardUDPStream(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ForwardUDPRequest, ForwardUDPResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[8], Vmmd_ForwardUDPStream_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Vmmd_ServiceDesc.Streams[9], Vmmd_ForwardUDPStream_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1385,6 +1426,11 @@ func (c *vmmdClient) RetireManagedPostgresDrain(ctx context.Context, in *RetireM
 // auth model (mode 0660 group `faas`, ADR-015) is the only authentication
 // story for v1.0 — Gate-A multi-host replaces it with mTLS.
 type VmmdServer interface {
+	// Dedicated one-shot, networkless repair guests. The first stream message
+	// carries immutable metadata only; following messages carry bounded input.
+	DataRepairRehearsalIdentity(context.Context, *DataRepairRehearsalIdentityRequest) (*DataRepairRehearsalIdentityResponse, error)
+	RunDataRepairRehearsal(grpc.ClientStreamingServer[DataRepairRehearsalChunk, DataRepairRehearsalResult]) error
+	RetireDataRepairRehearsal(context.Context, *RetireDataRepairRehearsalRequest) (*RetireDataRepairRehearsalResponse, error)
 	// ADR-20261017201005: old nodes reject these methods before releasing guest code.
 	CreateRehearsalColdBoot(context.Context, *CreateColdBootRequest) (*WakeResponse, error)
 	CreateRehearsalFromSnapshot(context.Context, *CreateFromSnapshotRequest) (*WakeResponse, error)
@@ -1893,6 +1939,15 @@ type VmmdServer interface {
 // pointer dereference when methods are called.
 type UnimplementedVmmdServer struct{}
 
+func (UnimplementedVmmdServer) DataRepairRehearsalIdentity(context.Context, *DataRepairRehearsalIdentityRequest) (*DataRepairRehearsalIdentityResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DataRepairRehearsalIdentity not implemented")
+}
+func (UnimplementedVmmdServer) RunDataRepairRehearsal(grpc.ClientStreamingServer[DataRepairRehearsalChunk, DataRepairRehearsalResult]) error {
+	return status.Error(codes.Unimplemented, "method RunDataRepairRehearsal not implemented")
+}
+func (UnimplementedVmmdServer) RetireDataRepairRehearsal(context.Context, *RetireDataRepairRehearsalRequest) (*RetireDataRepairRehearsalResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RetireDataRepairRehearsal not implemented")
+}
 func (UnimplementedVmmdServer) CreateRehearsalColdBoot(context.Context, *CreateColdBootRequest) (*WakeResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CreateRehearsalColdBoot not implemented")
 }
@@ -2128,6 +2183,49 @@ func RegisterVmmdServer(s grpc.ServiceRegistrar, srv VmmdServer) {
 		t.testEmbeddedByValue()
 	}
 	s.RegisterService(&Vmmd_ServiceDesc, srv)
+}
+
+func _Vmmd_DataRepairRehearsalIdentity_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DataRepairRehearsalIdentityRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).DataRepairRehearsalIdentity(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_DataRepairRehearsalIdentity_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).DataRepairRehearsalIdentity(ctx, req.(*DataRepairRehearsalIdentityRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Vmmd_RunDataRepairRehearsal_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(VmmdServer).RunDataRepairRehearsal(&grpc.GenericServerStream[DataRepairRehearsalChunk, DataRepairRehearsalResult]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Vmmd_RunDataRepairRehearsalServer = grpc.ClientStreamingServer[DataRepairRehearsalChunk, DataRepairRehearsalResult]
+
+func _Vmmd_RetireDataRepairRehearsal_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RetireDataRepairRehearsalRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).RetireDataRepairRehearsal(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_RetireDataRepairRehearsal_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).RetireDataRepairRehearsal(ctx, req.(*RetireDataRepairRehearsalRequest))
+	}
+	return interceptor(ctx, in, info, handler)
 }
 
 func _Vmmd_CreateRehearsalColdBoot_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -3347,6 +3445,14 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 	HandlerType: (*VmmdServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
+			MethodName: "DataRepairRehearsalIdentity",
+			Handler:    _Vmmd_DataRepairRehearsalIdentity_Handler,
+		},
+		{
+			MethodName: "RetireDataRepairRehearsal",
+			Handler:    _Vmmd_RetireDataRepairRehearsal_Handler,
+		},
+		{
 			MethodName: "CreateRehearsalColdBoot",
 			Handler:    _Vmmd_CreateRehearsalColdBoot_Handler,
 		},
@@ -3600,6 +3706,11 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 		},
 	},
 	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "RunDataRepairRehearsal",
+			Handler:       _Vmmd_RunDataRepairRehearsal_Handler,
+			ClientStreams: true,
+		},
 		{
 			StreamName:    "ExecuteExecutionStream",
 			Handler:       _Vmmd_ExecuteExecutionStream_Handler,

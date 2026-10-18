@@ -55,6 +55,10 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		"scenario_test_action_policies": CloneSchemaOperational,
 		"scenario_worker_faults":        CloneSchemaOperational,
 
+		// ADR-20261016: repair execution, rehearsal leases and receipts remain
+		// with the original operation; cloning never creates repair authority.
+		"data_repair_rehearsals": CloneSchemaOperational,
+
 		// MCP readiness policies and operator-authored maintenance windows need
 		// isolated configuration strategies. Original evidence, leases, incidents
 		// and delivery receipts never become clone authority.
