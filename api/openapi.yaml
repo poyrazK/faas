@@ -36906,6 +36906,89 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '504': { $ref: '#/components/responses/LongPollTimeout' }
 
+  /v1/deployments/response-check/capabilities:
+    get:
+      tags: [deployments]
+      operationId: getDeploymentResponseCheckCapabilities
+      summary: Read deployment response-check compatibility before deploying.
+      description: |
+        Requires deployment-write access. This read-only preflight does not require
+        MFA, resolve an app, allocate capacity, create work, or contact a guest.
+        Queries the configured gateway control listener with a three-second bound
+        and returns protocol support and forwarding configuration. An unavailable
+        gateway is reported in a 200 response with available=false and a stable
+        unavailable_reason: gateway_unsupported, gateway_unconfigured, or
+        gateway_unavailable. Account credentials and internal addresses are not
+        forwarded or returned. A successful preflight is not a capacity or future
+        availability guarantee. Responses use Cache-Control: no-store.
+      responses:
+        '200':
+          description: Current API/gateway compatibility; never cached.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeploymentResponseCheckCapabilities' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/deployments/{deployment}/response-check:
+    post:
+      tags: [deployments]
+      operationId: checkDeploymentResponse
+      summary: Check one GET against an owned deployment.
+      description: |
+        Requires deployment-write access and MFA. Pins a live deployment, app UUID
+        and runtime scope; named scopes also require project and environment UUIDs.
+        Gatewayd may wake that exact deployment through existing scheduler admission.
+        Sends one GET without forwarding API credentials, cookies, arbitrary headers
+        or a request body. Does not follow redirects or use public response caches.
+        Returns the actual application HTTP status, selected identities and a bounded
+        UTF-8 response preview. A 200 API envelope includes application failures; only
+        the inner HTTP status describes the workload response. This is owner access,
+        not proof of public routing or customer authentication. Application-owned
+        authentication is preserved. Rechecks target identity after forwarding.
+        Timeout is 20 seconds, path limit 2048 bytes, preview limit 4096 bytes.
+        Response content and path queries are ephemeral. Responses are not cached.
+      parameters:
+        - $ref: '#/components/parameters/Slug'
+        - name: deployment
+          in: path
+          required: true
+          description: Exact accepted deployment UUID; revisions and aliases are not accepted.
+          schema: { type: string, pattern: '^[a-f0-9-]{32,36}$' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DeploymentResponseCheckRequest' }
+      responses:
+        '200':
+          description: Ephemeral HTTP response evidence; Cache-Control no-store.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeploymentResponseCheckResult' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The deployment or catalog lifetime no longer matches the requested target.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '413':
+          description: The control request exceeds the 64 KiB envelope limit.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503':
+          description: The selected deployment could not be reached or evidence was unavailable.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/apps/{slug}/entities/quotas:
     get:
       tags:
@@ -95981,6 +96064,44 @@ components:
       properties:
         on_success: { type: string, format: uuid, description: "Webhook subscription receiving a job.finished event after completion." }
         on_failure: { type: string, format: uuid, description: "Webhook subscription receiving a job.finished event after permanent failure or DLQ routing." }
+
+    DeploymentResponseCheckCapabilities:
+      type: object
+      additionalProperties: false
+      required: [protocol_version, available]
+      description: Installed deployment-check protocol and forwarding configuration; no workload admission is performed.
+      properties:
+        protocol_version: { type: integer, minimum: 1, description: Protocol implemented by this API; clients require a compatible version. }
+        available: { type: boolean }
+        unavailable_reason: { type: string, description: "Stable gateway_unsupported, gateway_unconfigured, or gateway_unavailable code when unavailable." }
+
+    DeploymentResponseCheckRequest:
+      type: object
+      additionalProperties: false
+      required: [app_id, scope, path]
+      description: Explicit identity and one GET path; named scopes require project_id and environment_id.
+      properties:
+        app_id: { type: string, pattern: '^[a-f0-9-]{32,36}$' }
+        scope: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,39}$' }
+        project_id: { type: string, pattern: '^[a-f0-9-]{32,36}$' }
+        environment_id: { type: string, pattern: '^[a-f0-9-]{32,36}$' }
+        path: { type: string, maxLength: 2048, description: App-relative GET path with optional query; no fragment or controls. }
+
+    DeploymentResponseCheckResult:
+      type: object
+      additionalProperties: false
+      required: [app_id, deployment_id, scope, instance_id, http_status, body, body_truncated]
+      description: Ephemeral owner-authorized HTTP evidence; does not establish public ingress access.
+      properties:
+        app_id: { type: string, pattern: '^[a-f0-9-]{32,36}$' }
+        deployment_id: { type: string, pattern: '^[a-f0-9-]{32,36}$' }
+        scope: { type: string }
+        project_id: { type: string, pattern: '^[a-f0-9-]{32,36}$' }
+        environment_id: { type: string, pattern: '^[a-f0-9-]{32,36}$' }
+        instance_id: { type: string, pattern: '^[a-f0-9-]{32,36}$' }
+        http_status: { type: integer, minimum: 200, maximum: 599 }
+        body: { type: string, maxLength: 4096, description: UTF-8 response preview bounded to 4096 bytes. }
+        body_truncated: { type: boolean }
 
     InvokeRequest:
       description: "Body for POST /v1/apps/{slug}/invoke[/async]. Method defaults to POST; path defaults to `/`."
