@@ -68,7 +68,7 @@ func TestWorkflowRecoveryCandidateEvidenceSurvivesPruning(t *testing.T) {
 			if _, err = pg.pool.Exec(ctx, "DELETE FROM event_recovery_jobs WHERE id=$1", r.JobID); err != nil {
 				t.Fatal(err)
 			}
-			s = NewPgStore(pg.pool)
+			s = NewPgStore(pg.pool.Pool)
 		}
 		proposed := recoveryPolicyClone(r.Policy)
 		proposed.FailureStatuses = []string{r.Decisions[0].FailureStatus}

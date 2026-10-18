@@ -408,7 +408,7 @@ func TestMCPReadinessAttention(t *testing.T) {
 			r.ExpiresAt = nil
 			receipt := f.act(first.IncidentID, r, at)
 			if pg, ok := s.(*PgStore); ok {
-				restarted := NewPgStore(pg.pool)
+				restarted := NewPgStore(pg.pool.Pool)
 				f.source = restarted
 				f.outbox = restarted
 			}

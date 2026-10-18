@@ -31,6 +31,9 @@ func (m *MemStore) publishProjectReleaseSet(ctx context.Context, accountID, proj
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return ProjectReleaseSet{}, err
+	}
 	defer m.invalidateChangedLifecycleSuccessorsLocked()
 	project, ok := m.projects[projectID]
 	if !ok || project.AccountID != accountID {

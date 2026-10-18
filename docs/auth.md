@@ -33,6 +33,11 @@ Both scopes remain account-wide; they do not bind a key to an individual run.
 
 Interactive users can enable MFA from the account settings page. A `401` means the session or token is missing/expired; a `403` means the identity is valid but lacks the required project or organization scope. Rotate a compromised token immediately and review the audit log.
 
+For shared applications, the current organization role and the credential's
+scope both apply. Use an organization-bound key to work on a teammate's app;
+see [team application access](organization-app-access.md) for the permission
+matrix and the current migration boundary.
+
 ## Dashboard OAuth and PKCE
 
 The Google and GitHub dashboard authorization-code redirects use RFC 7636
@@ -97,3 +102,11 @@ For GitHub Actions, first-use account lookup accepts both the legacy
 `repo:OWNER@OWNER_ID/REPO@REPO_ID:...` form. Gregale uses the owner/repository
 names only to locate an existing GitHub App binding. It verifies and pins the
 complete signed subject, including immutable IDs, in the trust policy.
+## Organization queue permissions
+
+Organization-owned queue operations apply current membership roles alongside
+the credential's scopes and MFA checks. Owners, admins and developers can
+configure bindings and process messages; viewers can inspect metadata and
+counters. Payload inspection requires an operating role. Dead-letter replay
+requires an owner or admin. All five roles can read aggregate usage with the
+corresponding scope. See [organization queues](organization-queues.md).

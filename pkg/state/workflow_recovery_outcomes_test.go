@@ -58,7 +58,7 @@ func TestWorkflowRecoveryExecutionObservations(t *testing.T) {
 			t.Fatalf("admission=%v %v", did, err)
 		}
 		if pg, ok := store.(*PgStore); ok {
-			recovery = NewPgStore(pg.pool)
+			recovery = NewPgStore(pg.pool.Pool)
 		}
 		check := func(want string) {
 			t.Helper()

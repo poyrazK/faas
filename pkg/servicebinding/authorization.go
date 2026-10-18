@@ -56,7 +56,7 @@ func NewAuthorizer(store AuthorizationStore) gateway.ServiceProxyAuthorizer {
 		}
 		// An empty account on either side is a broken row rather than a
 		// match; fail closed instead of letting "" == "" authorize the call.
-		if caller.AccountID == "" || caller.AccountID != target.AccountID {
+		if !state.SameAppResourceOwner(caller, target) {
 			return gateway.ServiceCaller{}, gateway.ErrServiceProxyDenied
 		}
 		if caller.Status == state.AppDeleted || target.Status == state.AppDeleted {
