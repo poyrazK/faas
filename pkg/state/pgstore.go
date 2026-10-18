@@ -26632,7 +26632,7 @@ func (s *PgStore) DeleteAccount(ctx context.Context, id string) error {
 	}
 
 	q := ownersql.New()
-	for _, purge := range []func(context.Context, ownersql.DBTX, pgtype.UUID) error{q.PurgePersonalSecrets, q.PurgePersonalSigners, q.PurgePersonalRegistry, q.PurgePersonalInvocations, q.PurgePersonalDailyUsage, q.PurgePersonalBuilderUsage, q.PurgePersonalSnapshotStorage} {
+	for _, purge := range []func(context.Context, ownersql.DBTX, pgtype.UUID) error{q.PurgePersonalSecrets, q.PurgePersonalSigners, q.PurgePersonalRegistry, q.PurgePersonalOperations, q.PurgePersonalInvocations, q.PurgePersonalDailyUsage, q.PurgePersonalBuilderUsage, q.PurgePersonalSnapshotStorage} {
 		if err := purge(ctx, tx, mustPgUUID(id)); err != nil {
 			return fmt.Errorf("state: purge personal app children: %w", err)
 		}
