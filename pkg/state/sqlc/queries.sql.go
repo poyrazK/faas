@@ -68261,18 +68261,57 @@ func (q *Queries) ReadCloneCheckpointObjectPublicationGrants(ctx context.Context
 }
 
 const readCloneCheckpointObjectPublicationSecrets = `-- name: ReadCloneCheckpointObjectPublicationSecrets :many
-SELECT account_id, app_id, key, ciphertext, created_at, updated_at, org_id, kid, scope, value_hash, managed_postgres_binding_id, managed_credential_ref, managed_credential_generation, managed_object_storage_credential_id, delivery_version, delivered_version, delivery_status, last_delivery_attempt_at, last_delivered_at, last_delivery_error_code, last_delivered_wake_id, last_delivered_instance_id, last_runtime_reload_version, last_runtime_reload_revision, last_runtime_reload_projection, last_runtime_reload_signal, last_runtime_reload_at, last_runtime_reload_error_code, last_runtime_reload_instance_id, secret_version, secret_class FROM app_secrets WHERE managed_object_storage_credential_id=$1 ORDER BY key,app_id,scope FOR UPDATE
+SELECT s.account_id, s.app_id, s.key, s.ciphertext, s.created_at, s.updated_at, s.org_id, s.kid, s.scope, s.value_hash, s.managed_postgres_binding_id, s.managed_credential_ref, s.managed_credential_generation, s.managed_object_storage_credential_id, s.delivery_version, s.delivered_version, s.delivery_status, s.last_delivery_attempt_at, s.last_delivered_at, s.last_delivery_error_code, s.last_delivered_wake_id, s.last_delivered_instance_id, s.last_runtime_reload_version, s.last_runtime_reload_revision, s.last_runtime_reload_projection, s.last_runtime_reload_signal, s.last_runtime_reload_at, s.last_runtime_reload_error_code, s.last_runtime_reload_instance_id, s.secret_version, s.secret_class, (s.org_id IS NOT DISTINCT FROM a.org_id)::boolean AS org_matches_app
+FROM app_secrets s LEFT JOIN apps a ON a.id=s.app_id
+WHERE s.managed_object_storage_credential_id=$1 ORDER BY s.key,s.app_id,s.scope FOR UPDATE OF s
 `
 
-func (q *Queries) ReadCloneCheckpointObjectPublicationSecrets(ctx context.Context, db DBTX, managedObjectStorageCredentialID pgtype.UUID) ([]AppSecret, error) {
+type ReadCloneCheckpointObjectPublicationSecretsRow struct {
+	AccountID                        pgtype.UUID
+	AppID                            pgtype.UUID
+	Key                              string
+	Ciphertext                       []byte
+	CreatedAt                        pgtype.Timestamptz
+	UpdatedAt                        pgtype.Timestamptz
+	OrgID                            pgtype.UUID
+	Kid                              pgtype.Text
+	Scope                            string
+	ValueHash                        pgtype.Text
+	ManagedPostgresBindingID         pgtype.UUID
+	ManagedCredentialRef             pgtype.Text
+	ManagedCredentialGeneration      pgtype.Int8
+	ManagedObjectStorageCredentialID pgtype.UUID
+	DeliveryVersion                  int64
+	DeliveredVersion                 pgtype.Int8
+	DeliveryStatus                   string
+	LastDeliveryAttemptAt            pgtype.Timestamptz
+	LastDeliveredAt                  pgtype.Timestamptz
+	LastDeliveryErrorCode            pgtype.Text
+	LastDeliveredWakeID              pgtype.Text
+	LastDeliveredInstanceID          pgtype.Text
+	LastRuntimeReloadVersion         pgtype.Int8
+	LastRuntimeReloadRevision        pgtype.Text
+	LastRuntimeReloadProjection      pgtype.Text
+	LastRuntimeReloadSignal          pgtype.Text
+	LastRuntimeReloadAt              pgtype.Timestamptz
+	LastRuntimeReloadErrorCode       pgtype.Text
+	LastRuntimeReloadInstanceID      pgtype.Text
+	SecretVersion                    pgtype.Int8
+	SecretClass                      string
+	OrgMatchesApp                    bool
+}
+
+// Publication inserts its secrets without org_id and app_core_resource_org
+// stamps the app's organization, so only that exact value is its own.
+func (q *Queries) ReadCloneCheckpointObjectPublicationSecrets(ctx context.Context, db DBTX, managedObjectStorageCredentialID pgtype.UUID) ([]ReadCloneCheckpointObjectPublicationSecretsRow, error) {
 	rows, err := db.Query(ctx, readCloneCheckpointObjectPublicationSecrets, managedObjectStorageCredentialID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []AppSecret{}
+	items := []ReadCloneCheckpointObjectPublicationSecretsRow{}
 	for rows.Next() {
-		var i AppSecret
+		var i ReadCloneCheckpointObjectPublicationSecretsRow
 		if err := rows.Scan(
 			&i.AccountID,
 			&i.AppID,
@@ -68305,6 +68344,7 @@ func (q *Queries) ReadCloneCheckpointObjectPublicationSecrets(ctx context.Contex
 			&i.LastRuntimeReloadInstanceID,
 			&i.SecretVersion,
 			&i.SecretClass,
+			&i.OrgMatchesApp,
 		); err != nil {
 			return nil, err
 		}

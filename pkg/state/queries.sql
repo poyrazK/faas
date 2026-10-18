@@ -17970,7 +17970,11 @@ AND o.lease_token=sqlc.arg(worker_token)::uuid AND o.lease_until>clock_timestamp
 SELECT * FROM object_storage_s3_credentials WHERE bucket_id=$1 ORDER BY id FOR UPDATE;
 
 -- name: ReadCloneCheckpointObjectPublicationSecrets :many
-SELECT * FROM app_secrets WHERE managed_object_storage_credential_id=$1 ORDER BY key,app_id,scope FOR UPDATE;
+-- Publication inserts its secrets without org_id and app_core_resource_org
+-- stamps the app's organization, so only that exact value is its own.
+SELECT s.*, (s.org_id IS NOT DISTINCT FROM a.org_id)::boolean AS org_matches_app
+FROM app_secrets s LEFT JOIN apps a ON a.id=s.app_id
+WHERE s.managed_object_storage_credential_id=$1 ORDER BY s.key,s.app_id,s.scope FOR UPDATE OF s;
 
 -- name: ReadCloneCheckpointObjectPublicationGrants :many
 SELECT * FROM object_storage_access_grants WHERE bucket_id=$1 ORDER BY api_key_id FOR UPDATE;
