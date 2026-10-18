@@ -1480,6 +1480,8 @@ func NewHandlerWith(backend Backend, m *Metrics, log *slog.Logger) *Handler {
 	// race with parallel ServeHTTP readers — the load test under -race
 	// caught that pattern; see the field doc).
 	h.proxyFor = defaultProxy
+	// Route priorities also order the cold-wake queue (ADR-20261018181846).
+	h.gate.classifier = h
 	return h
 }
 
@@ -6936,6 +6938,8 @@ haveApp:
 			attribute.String("app_plan", string(app.Plan)),
 			attribute.Int("desired_instances", maxInstances),
 		)
+		// The wake queue orders and admits waiters by route priority.
+		wakeCtx = withRoutePriorityRequest(wakeCtx, r)
 		//nolint:contextcheck // request ctx at handler boundary.
 		cold, wakeID, wakeMethod, err = h.ensureCapacity(wakeCtx, app.ID, app.AccountID, app.Scope, maxInstances, app.Plan, app.AutoscaleTargetRPS, sched.TriggerGateway, concurrencyConfigForApp(app))
 		wakeSpan.SetAttributes(
