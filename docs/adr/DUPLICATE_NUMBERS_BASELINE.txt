@@ -212,10 +212,3 @@
 1258
 1259
 1260
-# Refreshed from main @ fc212c23a239 after PR #4898; the internal-CI recovery
-# ADR collided with the existing zero-downtime restart ADR on the merged base.
-1580
-# Refreshed from main @ 53116be8b341 after #4868; independently merged ADRs
-# use duplicate date identifiers for mail/static-hosting and mail-outbox/repair.
-20261015
-20261016
