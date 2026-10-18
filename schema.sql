@@ -38388,6 +38388,425 @@ CREATE TABLE public.private_networks (
 
 
 --
+-- Name: product_control_billing_documents; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.product_control_billing_documents (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    tenant_id uuid NOT NULL,
+    period text NOT NULL,
+    kind text NOT NULL,
+    currency text NOT NULL,
+    amount_millicents bigint NOT NULL,
+    statement_id uuid,
+    operation_id uuid,
+    reason text DEFAULT ''::text NOT NULL,
+    snapshot jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT product_billing_document_kind CHECK ((((kind = 'statement'::text) AND (amount_millicents >= 0) AND (statement_id IS NULL) AND (operation_id IS NULL) AND (reason = ''::text)) OR ((kind = 'credit_note'::text) AND (amount_millicents < 0) AND (statement_id IS NOT NULL) AND (operation_id IS NOT NULL) AND (reason <> ''::text)))),
+    CONSTRAINT product_control_billing_documents_currency_check CHECK ((currency ~ '^[A-Z]{3}$'::text)),
+    CONSTRAINT product_control_billing_documents_kind_check CHECK ((kind = ANY (ARRAY['statement'::text, 'credit_note'::text]))),
+    CONSTRAINT product_control_billing_documents_period_check CHECK ((period ~ '^[0-9]{4}-[0-9]{2}$'::text)),
+    CONSTRAINT product_control_billing_documents_reason_check CHECK ((octet_length(reason) <= 512)),
+    CONSTRAINT product_control_billing_documents_snapshot_check CHECK ((jsonb_typeof(snapshot) = 'object'::text))
+);
+
+
+--
+-- Name: product_control_customer_changes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.product_control_customer_changes (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    tenant_id uuid NOT NULL,
+    fingerprint text NOT NULL,
+    receipt jsonb NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    CONSTRAINT product_control_customer_changes_fingerprint_check CHECK ((fingerprint ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT product_control_customer_changes_receipt_check CHECK ((jsonb_typeof(receipt) = 'object'::text))
+);
+
+
+--
+-- Name: product_control_customers; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.product_control_customers (
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    tenant_id uuid NOT NULL,
+    revision text NOT NULL,
+    plan text NOT NULL,
+    suspended boolean DEFAULT false NOT NULL,
+    auth_organization_id uuid,
+    CONSTRAINT product_control_customers_auth_organization_id_check CHECK (((auth_organization_id IS NULL) OR (auth_organization_id <> '00000000-0000-0000-0000-000000000000'::uuid)))
+);
+
+
+--
+-- Name: product_control_email_deliveries; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.product_control_email_deliveries (
+    id uuid NOT NULL,
+    subscription_id uuid NOT NULL,
+    preference_version bigint NOT NULL,
+    source_revision text NOT NULL,
+    notification jsonb NOT NULL,
+    status text NOT NULL,
+    reason text NOT NULL,
+    attempts integer NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    next_at timestamp with time zone NOT NULL,
+    deadline timestamp with time zone NOT NULL,
+    provider_id uuid,
+    delivered_at timestamp with time zone,
+    bounced_at timestamp with time zone,
+    complained_at timestamp with time zone,
+    hard_bounced boolean DEFAULT false NOT NULL,
+    recipient_generation bigint DEFAULT 1 NOT NULL,
+    recipient_sealed bytea DEFAULT '\x'::bytea NOT NULL,
+    unsubscribe_hash bytea,
+    unsubscribe_sealed bytea DEFAULT '\x'::bytea NOT NULL,
+    CONSTRAINT product_control_email_deliveries_attempts_check CHECK (((attempts >= 0) AND (attempts <= 6))),
+    CONSTRAINT product_control_email_deliveries_bounced_at_check CHECK (((bounced_at IS NULL) OR isfinite(bounced_at))),
+    CONSTRAINT product_control_email_deliveries_check CHECK ((isfinite(deadline) AND (deadline > created_at))),
+    CONSTRAINT product_control_email_deliveries_complained_at_check CHECK (((complained_at IS NULL) OR isfinite(complained_at))),
+    CONSTRAINT product_control_email_deliveries_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT product_control_email_deliveries_delivered_at_check CHECK (((delivered_at IS NULL) OR isfinite(delivered_at))),
+    CONSTRAINT product_control_email_deliveries_next_at_check CHECK (isfinite(next_at)),
+    CONSTRAINT product_control_email_deliveries_notification_check CHECK ((jsonb_typeof(notification) = 'object'::text)),
+    CONSTRAINT product_control_email_deliveries_preference_version_check CHECK (((preference_version >= 1) AND (preference_version <= 1000000))),
+    CONSTRAINT product_control_email_deliveries_reason_check CHECK ((reason = ANY (ARRAY[''::text, 'access_changed'::text, 'preferences_changed'::text, 'source_changed'::text, 'authorization_unavailable'::text, 'transport_unavailable'::text, 'provider_rejected'::text, 'retry_exhausted'::text, 'expired'::text, 'recipient_suppressed'::text, 'unsubscribed'::text]))),
+    CONSTRAINT product_control_email_deliveries_recipient_generation_check CHECK (((recipient_generation >= 1) AND (recipient_generation <= 1000000))),
+    CONSTRAINT product_control_email_deliveries_recipient_sealed_check CHECK ((octet_length(recipient_sealed) <= 4096)),
+    CONSTRAINT product_control_email_deliveries_source_revision_check CHECK ((source_revision ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT product_control_email_deliveries_status_check CHECK ((status = ANY (ARRAY['queued'::text, 'leased'::text, 'captured'::text, 'provider_accepted'::text, 'delivered'::text, 'bounced'::text, 'complained'::text, 'failed'::text, 'cancelled'::text]))),
+    CONSTRAINT product_control_email_deliveries_unsubscribe_hash_check CHECK (((unsubscribe_hash IS NULL) OR (octet_length(unsubscribe_hash) = 32))),
+    CONSTRAINT product_control_email_deliveries_unsubscribe_sealed_check CHECK ((octet_length(unsubscribe_sealed) <= 4096)),
+    CONSTRAINT product_control_email_deliveries_updated_at_check CHECK (isfinite(updated_at)),
+    CONSTRAINT product_email_feedback_shape CHECK ((((provider_id IS NOT NULL) OR ((delivered_at IS NULL) AND (bounced_at IS NULL) AND (complained_at IS NULL))) AND ((NOT hard_bounced) OR (bounced_at IS NOT NULL)))),
+    CONSTRAINT product_email_feedback_status_shape CHECK ((((status <> 'delivered'::text) OR (delivered_at IS NOT NULL)) AND ((status <> 'bounced'::text) OR (bounced_at IS NOT NULL)) AND ((status <> 'complained'::text) OR (complained_at IS NOT NULL)))),
+    CONSTRAINT product_email_unsubscribe_shape CHECK (((unsubscribe_hash IS NULL) = (octet_length(unsubscribe_sealed) = 0)))
+);
+
+
+--
+-- Name: product_control_email_opt_outs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.product_control_email_opt_outs (
+    id uuid NOT NULL,
+    subscription_id uuid NOT NULL,
+    delivery_id uuid NOT NULL,
+    expected_version bigint NOT NULL,
+    version bigint NOT NULL,
+    generation bigint NOT NULL,
+    unsubscribed_at timestamp with time zone NOT NULL,
+    CONSTRAINT product_control_email_opt_outs_check CHECK ((version = LEAST((expected_version + 1), (1000000)::bigint))),
+    CONSTRAINT product_control_email_opt_outs_expected_version_check CHECK (((expected_version >= 1) AND (expected_version <= 1000000))),
+    CONSTRAINT product_control_email_opt_outs_generation_check CHECK (((generation >= 1) AND (generation <= 1000000))),
+    CONSTRAINT product_control_email_opt_outs_id_check CHECK ((id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT product_control_email_opt_outs_unsubscribed_at_check CHECK (isfinite(unsubscribed_at))
+);
+
+
+--
+-- Name: product_control_email_pending_feedback; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.product_control_email_pending_feedback (
+    provider_id uuid NOT NULL,
+    kind text NOT NULL,
+    occurred_at timestamp with time zone NOT NULL,
+    hard_bounce boolean NOT NULL,
+    received_at timestamp with time zone NOT NULL,
+    CONSTRAINT product_control_email_pending_feedback_check CHECK (((NOT hard_bounce) OR (kind = 'bounced'::text))),
+    CONSTRAINT product_control_email_pending_feedback_kind_check CHECK ((kind = ANY (ARRAY['delivered'::text, 'bounced'::text, 'complained'::text]))),
+    CONSTRAINT product_control_email_pending_feedback_occurred_at_check CHECK (isfinite(occurred_at)),
+    CONSTRAINT product_control_email_pending_feedback_received_at_check CHECK (isfinite(received_at))
+);
+
+
+--
+-- Name: product_control_email_recoveries; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.product_control_email_recoveries (
+    id uuid NOT NULL,
+    subscription_id uuid NOT NULL,
+    expected_version bigint NOT NULL,
+    previous_generation bigint NOT NULL,
+    version bigint NOT NULL,
+    generation bigint NOT NULL,
+    work_outcomes boolean NOT NULL,
+    help_replies boolean NOT NULL,
+    recovered_at timestamp with time zone NOT NULL,
+    CONSTRAINT product_control_email_recoveries_check CHECK ((version = (expected_version + 1))),
+    CONSTRAINT product_control_email_recoveries_check1 CHECK ((generation = (previous_generation + 1))),
+    CONSTRAINT product_control_email_recoveries_expected_version_check CHECK (((expected_version >= 1) AND (expected_version <= 999999))),
+    CONSTRAINT product_control_email_recoveries_id_check CHECK ((id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT product_control_email_recoveries_previous_generation_check CHECK (((previous_generation >= 1) AND (previous_generation <= 999999))),
+    CONSTRAINT product_control_email_recoveries_recovered_at_check CHECK (isfinite(recovered_at)),
+    CONSTRAINT product_email_recovery_consent CHECK ((work_outcomes OR help_replies))
+);
+
+
+--
+-- Name: product_control_email_retry_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.product_control_email_retry_receipts (
+    delivery_id uuid NOT NULL,
+    failed_attempt integer NOT NULL,
+    queued_at timestamp with time zone NOT NULL,
+    CONSTRAINT product_control_email_retry_receipts_failed_attempt_check CHECK (((failed_attempt >= 1) AND (failed_attempt <= 5))),
+    CONSTRAINT product_control_email_retry_receipts_queued_at_check CHECK (isfinite(queued_at))
+);
+
+
+--
+-- Name: product_control_email_subscriptions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.product_control_email_subscriptions (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    tenant_id uuid NOT NULL,
+    auth_app_id uuid NOT NULL,
+    organization_id uuid NOT NULL,
+    actor_id uuid NOT NULL,
+    app_slug text NOT NULL,
+    auth_slug text NOT NULL,
+    version bigint NOT NULL,
+    work_outcomes boolean NOT NULL,
+    help_replies boolean NOT NULL,
+    work_since timestamp with time zone NOT NULL,
+    help_since timestamp with time zone NOT NULL,
+    expires_at timestamp with time zone,
+    grant_sealed bytea NOT NULL,
+    scan_cursor text NOT NULL,
+    pause_reason text DEFAULT ''::text NOT NULL,
+    paused_at timestamp with time zone,
+    recipient_generation bigint DEFAULT 1 NOT NULL,
+    pause_recipient_sealed bytea DEFAULT '\x'::bytea NOT NULL,
+    CONSTRAINT product_control_email_subscription_pause_recipient_sealed_check CHECK ((octet_length(pause_recipient_sealed) <= 4096)),
+    CONSTRAINT product_control_email_subscriptions_actor_id_check CHECK ((actor_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT product_control_email_subscriptions_app_slug_check CHECK (((octet_length(app_slug) >= 1) AND (octet_length(app_slug) <= 63))),
+    CONSTRAINT product_control_email_subscriptions_auth_app_id_check CHECK ((auth_app_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT product_control_email_subscriptions_auth_slug_check CHECK (((octet_length(auth_slug) >= 1) AND (octet_length(auth_slug) <= 63))),
+    CONSTRAINT product_control_email_subscriptions_check CHECK (((work_outcomes OR help_replies) = (expires_at IS NOT NULL))),
+    CONSTRAINT product_control_email_subscriptions_check1 CHECK (((expires_at IS NULL) OR (isfinite(expires_at) AND (octet_length(grant_sealed) > 0)))),
+    CONSTRAINT product_control_email_subscriptions_grant_sealed_check CHECK ((octet_length(grant_sealed) <= 4096)),
+    CONSTRAINT product_control_email_subscriptions_help_since_check CHECK (isfinite(help_since)),
+    CONSTRAINT product_control_email_subscriptions_organization_id_check CHECK ((organization_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT product_control_email_subscriptions_pause_reason_check CHECK ((pause_reason = ANY (ARRAY[''::text, 'hard_bounce'::text, 'complaint'::text]))),
+    CONSTRAINT product_control_email_subscriptions_paused_at_check CHECK (((paused_at IS NULL) OR isfinite(paused_at))),
+    CONSTRAINT product_control_email_subscriptions_recipient_generation_check CHECK (((recipient_generation >= 1) AND (recipient_generation <= 1000000))),
+    CONSTRAINT product_control_email_subscriptions_scan_cursor_check CHECK ((octet_length(scan_cursor) <= 1024)),
+    CONSTRAINT product_control_email_subscriptions_version_check CHECK (((version >= 1) AND (version <= 1000000))),
+    CONSTRAINT product_control_email_subscriptions_work_since_check CHECK (isfinite(work_since)),
+    CONSTRAINT product_email_pause_recipient_shape CHECK (((pause_reason <> ''::text) OR (octet_length(pause_recipient_sealed) = 0))),
+    CONSTRAINT product_email_pause_shape CHECK (((pause_reason = ''::text) = (paused_at IS NULL)))
+);
+
+
+--
+-- Name: product_control_heads; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.product_control_heads (
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    revision text NOT NULL
+);
+
+
+--
+-- Name: product_control_help_requests; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.product_control_help_requests (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    tenant_id uuid NOT NULL,
+    auth_app_id uuid NOT NULL,
+    auth_organization_id uuid NOT NULL,
+    fingerprint text NOT NULL,
+    kind text NOT NULL,
+    request jsonb NOT NULL,
+    context jsonb NOT NULL,
+    status text DEFAULT 'open'::text NOT NULL,
+    response text DEFAULT ''::text NOT NULL,
+    version bigint DEFAULT 1 NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    CONSTRAINT product_control_help_requests_auth_app_id_check CHECK ((auth_app_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT product_control_help_requests_auth_organization_id_check CHECK ((auth_organization_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT product_control_help_requests_check CHECK ((isfinite(updated_at) AND (updated_at >= created_at))),
+    CONSTRAINT product_control_help_requests_context_check CHECK (((jsonb_typeof(context) = 'object'::text) AND (octet_length((context)::text) <= 8192))),
+    CONSTRAINT product_control_help_requests_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT product_control_help_requests_fingerprint_check CHECK ((fingerprint ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT product_control_help_requests_id_check CHECK ((id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT product_control_help_requests_kind_check CHECK ((kind = ANY (ARRAY['workspace'::text, 'feature'::text, 'run'::text]))),
+    CONSTRAINT product_control_help_requests_request_check CHECK (((jsonb_typeof(request) = 'object'::text) AND (octet_length((request)::text) <= 8192))),
+    CONSTRAINT product_control_help_requests_response_check CHECK ((octet_length(response) <= 2000)),
+    CONSTRAINT product_control_help_requests_status_check CHECK ((status = ANY (ARRAY['open'::text, 'in_progress'::text, 'resolved'::text]))),
+    CONSTRAINT product_control_help_requests_version_check CHECK (((version >= 1) AND (version <= 1000)))
+);
+
+
+--
+-- Name: product_control_invoice_handoffs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.product_control_invoice_handoffs (
+    document_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    external_invoice_id text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT product_control_invoice_handoffs_external_invoice_id_check CHECK (((octet_length(external_invoice_id) >= 1) AND (octet_length(external_invoice_id) <= 255)))
+);
+
+
+--
+-- Name: TABLE product_control_invoice_handoffs; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.product_control_invoice_handoffs IS 'One immutable owner invoicing reference per Product Control statement or credit note; no payment or refund is executed.';
+
+
+--
+-- Name: product_control_notification_reads; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.product_control_notification_reads (
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    tenant_id uuid NOT NULL,
+    auth_app_id uuid NOT NULL,
+    auth_organization_id uuid NOT NULL,
+    source_kind text NOT NULL,
+    source_id uuid NOT NULL,
+    source_version text NOT NULL,
+    is_read boolean NOT NULL,
+    version bigint NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT product_control_notification_reads_auth_app_id_check CHECK ((auth_app_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT product_control_notification_reads_auth_organization_id_check CHECK ((auth_organization_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT product_control_notification_reads_check CHECK ((isfinite(expires_at) AND (expires_at > updated_at))),
+    CONSTRAINT product_control_notification_reads_source_id_check CHECK ((source_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT product_control_notification_reads_source_kind_check CHECK ((source_kind = ANY (ARRAY['help'::text, 'work'::text]))),
+    CONSTRAINT product_control_notification_reads_source_version_check CHECK (((octet_length(source_version) >= 1) AND (octet_length(source_version) <= 128))),
+    CONSTRAINT product_control_notification_reads_updated_at_check CHECK (isfinite(updated_at)),
+    CONSTRAINT product_control_notification_reads_version_check CHECK (((version >= 1) AND (version <= 1000000)))
+);
+
+
+--
+-- Name: product_control_onboardings; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.product_control_onboardings (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    tenant_id uuid NOT NULL,
+    auth_app_id uuid NOT NULL,
+    auth_organization_id uuid NOT NULL,
+    fingerprint text NOT NULL,
+    receipt jsonb NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    access_verified_at timestamp with time zone,
+    CONSTRAINT product_control_onboardings_auth_app_id_check CHECK ((auth_app_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT product_control_onboardings_auth_organization_id_check CHECK ((auth_organization_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT product_control_onboardings_check CHECK (((access_verified_at IS NULL) OR (access_verified_at >= created_at))),
+    CONSTRAINT product_control_onboardings_fingerprint_check CHECK ((fingerprint ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT product_control_onboardings_receipt_check CHECK ((jsonb_typeof(receipt) = 'object'::text))
+);
+
+
+--
+-- Name: product_control_plan_changes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.product_control_plan_changes (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    tenant_id uuid NOT NULL,
+    fingerprint text NOT NULL,
+    receipt jsonb NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    CONSTRAINT product_control_plan_changes_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT product_control_plan_changes_fingerprint_check CHECK ((fingerprint ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT product_control_plan_changes_id_check CHECK ((id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT product_control_plan_changes_receipt_check CHECK ((jsonb_typeof(receipt) = 'object'::text))
+);
+
+
+--
+-- Name: product_control_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.product_control_receipts (
+    operation_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    tenant_id uuid NOT NULL,
+    revision text NOT NULL,
+    feature text NOT NULL,
+    plan text NOT NULL,
+    currency text NOT NULL,
+    period text NOT NULL,
+    unit_price_millicents bigint NOT NULL,
+    admitted_at timestamp with time zone NOT NULL,
+    succeeded_at timestamp with time zone,
+    admission_evidence jsonb,
+    resolved_state text DEFAULT ''::text NOT NULL,
+    resolved_at timestamp with time zone,
+    CONSTRAINT product_control_receipts_admission_evidence_check CHECK (((admission_evidence IS NULL) OR (jsonb_typeof(admission_evidence) = 'object'::text))),
+    CONSTRAINT product_control_receipts_currency_check CHECK ((currency ~ '^[A-Z]{3}$'::text)),
+    CONSTRAINT product_control_receipts_period_check CHECK ((period ~ '^[0-9]{4}-[0-9]{2}$'::text)),
+    CONSTRAINT product_control_receipts_resolved_state_check CHECK ((resolved_state = ANY (ARRAY[''::text, 'succeeded'::text, 'failed'::text, 'cancelled'::text]))),
+    CONSTRAINT product_control_receipts_unit_price_millicents_check CHECK (((unit_price_millicents >= 0) AND (unit_price_millicents <= 1000000000))),
+    CONSTRAINT product_receipt_resolution CHECK (((resolved_state = ''::text) = (resolved_at IS NULL)))
+);
+
+
+--
+-- Name: product_control_revisions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.product_control_revisions (
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    revision text NOT NULL,
+    spec jsonb NOT NULL
+);
+
+
+--
+-- Name: product_control_waivers; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.product_control_waivers (
+    operation_id uuid NOT NULL,
+    reason text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT product_control_waivers_reason_check CHECK (((octet_length(reason) >= 1) AND (octet_length(reason) <= 512)))
+);
+
+
+--
 -- Name: production_dead_letter_events; Type: VIEW; Schema: public; Owner: -
 --
 
@@ -51180,6 +51599,206 @@ ALTER TABLE ONLY public.private_networks
 
 
 --
+-- Name: product_control_billing_documents product_control_billing_documents_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_billing_documents
+    ADD CONSTRAINT product_control_billing_documents_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: product_control_customer_changes product_control_customer_changes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_customer_changes
+    ADD CONSTRAINT product_control_customer_changes_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: product_control_customers product_control_customers_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_customers
+    ADD CONSTRAINT product_control_customers_pkey PRIMARY KEY (app_id, tenant_id);
+
+
+--
+-- Name: product_control_email_deliveries product_control_email_deliver_subscription_id_source_revisi_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_email_deliveries
+    ADD CONSTRAINT product_control_email_deliver_subscription_id_source_revisi_key UNIQUE (subscription_id, source_revision);
+
+
+--
+-- Name: product_control_email_deliveries product_control_email_deliveries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_email_deliveries
+    ADD CONSTRAINT product_control_email_deliveries_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: product_control_email_deliveries product_control_email_deliveries_provider_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_email_deliveries
+    ADD CONSTRAINT product_control_email_deliveries_provider_id_key UNIQUE (provider_id);
+
+
+--
+-- Name: product_control_email_deliveries product_control_email_deliveries_unsubscribe_hash_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_email_deliveries
+    ADD CONSTRAINT product_control_email_deliveries_unsubscribe_hash_key UNIQUE (unsubscribe_hash);
+
+
+--
+-- Name: product_control_email_opt_outs product_control_email_opt_out_subscription_id_expected_vers_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_email_opt_outs
+    ADD CONSTRAINT product_control_email_opt_out_subscription_id_expected_vers_key UNIQUE (subscription_id, expected_version);
+
+
+--
+-- Name: product_control_email_opt_outs product_control_email_opt_outs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_email_opt_outs
+    ADD CONSTRAINT product_control_email_opt_outs_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: product_control_email_pending_feedback product_control_email_pending_feedback_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_email_pending_feedback
+    ADD CONSTRAINT product_control_email_pending_feedback_pkey PRIMARY KEY (provider_id, kind);
+
+
+--
+-- Name: product_control_email_recoveries product_control_email_recover_subscription_id_previous_gene_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_email_recoveries
+    ADD CONSTRAINT product_control_email_recover_subscription_id_previous_gene_key UNIQUE (subscription_id, previous_generation);
+
+
+--
+-- Name: product_control_email_recoveries product_control_email_recoveries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_email_recoveries
+    ADD CONSTRAINT product_control_email_recoveries_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: product_control_email_retry_receipts product_control_email_retry_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_email_retry_receipts
+    ADD CONSTRAINT product_control_email_retry_receipts_pkey PRIMARY KEY (delivery_id, failed_attempt);
+
+
+--
+-- Name: product_control_email_subscriptions product_control_email_subscri_account_id_app_id_tenant_id_a_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_email_subscriptions
+    ADD CONSTRAINT product_control_email_subscri_account_id_app_id_tenant_id_a_key UNIQUE (account_id, app_id, tenant_id, auth_app_id, organization_id, actor_id);
+
+
+--
+-- Name: product_control_email_subscriptions product_control_email_subscriptions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_email_subscriptions
+    ADD CONSTRAINT product_control_email_subscriptions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: product_control_heads product_control_heads_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_heads
+    ADD CONSTRAINT product_control_heads_pkey PRIMARY KEY (app_id);
+
+
+--
+-- Name: product_control_help_requests product_control_help_requests_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_help_requests
+    ADD CONSTRAINT product_control_help_requests_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: product_control_invoice_handoffs product_control_invoice_hando_account_id_external_invoice_i_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_invoice_handoffs
+    ADD CONSTRAINT product_control_invoice_hando_account_id_external_invoice_i_key UNIQUE (account_id, external_invoice_id);
+
+
+--
+-- Name: product_control_invoice_handoffs product_control_invoice_handoffs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_invoice_handoffs
+    ADD CONSTRAINT product_control_invoice_handoffs_pkey PRIMARY KEY (document_id);
+
+
+--
+-- Name: product_control_notification_reads product_control_notification_reads_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_notification_reads
+    ADD CONSTRAINT product_control_notification_reads_pkey PRIMARY KEY (account_id, app_id, tenant_id, auth_app_id, auth_organization_id, source_kind, source_id);
+
+
+--
+-- Name: product_control_onboardings product_control_onboardings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_onboardings
+    ADD CONSTRAINT product_control_onboardings_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: product_control_plan_changes product_control_plan_changes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_plan_changes
+    ADD CONSTRAINT product_control_plan_changes_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: product_control_receipts product_control_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_receipts
+    ADD CONSTRAINT product_control_receipts_pkey PRIMARY KEY (operation_id);
+
+
+--
+-- Name: product_control_revisions product_control_revisions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_revisions
+    ADD CONSTRAINT product_control_revisions_pkey PRIMARY KEY (app_id, revision);
+
+
+--
+-- Name: product_control_waivers product_control_waivers_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_waivers
+    ADD CONSTRAINT product_control_waivers_pkey PRIMARY KEY (operation_id);
+
+
+--
 -- Name: production_lifecycle_reviews production_lifecycle_reviews_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -59953,6 +60572,174 @@ CREATE INDEX private_network_peerings_account_idx ON public.private_network_peer
 --
 
 CREATE INDEX private_networks_account_idx ON public.private_networks USING btree (account_id, name, id);
+
+
+--
+-- Name: product_control_billing_period; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX product_control_billing_period ON public.product_control_receipts USING btree (account_id, app_id, tenant_id, period, operation_id);
+
+
+--
+-- Name: product_control_credit_operation; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX product_control_credit_operation ON public.product_control_billing_documents USING btree (operation_id) WHERE (kind = 'credit_note'::text);
+
+
+--
+-- Name: product_control_customer_auth_organization; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX product_control_customer_auth_organization ON public.product_control_customers USING btree (app_id, auth_organization_id) WHERE (auth_organization_id IS NOT NULL);
+
+
+--
+-- Name: product_control_documents_page; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX product_control_documents_page ON public.product_control_billing_documents USING btree (account_id, app_id, tenant_id, period, id);
+
+
+--
+-- Name: product_control_email_due; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX product_control_email_due ON public.product_control_email_deliveries USING btree (next_at, id) WHERE (status = ANY (ARRAY['queued'::text, 'leased'::text]));
+
+
+--
+-- Name: product_control_email_expiry; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX product_control_email_expiry ON public.product_control_email_deliveries USING btree (created_at, id);
+
+
+--
+-- Name: product_control_email_owner_scope; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX product_control_email_owner_scope ON public.product_control_email_subscriptions USING btree (account_id, app_id, tenant_id, id);
+
+
+--
+-- Name: product_control_email_pending_feedback_expiry; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX product_control_email_pending_feedback_expiry ON public.product_control_email_pending_feedback USING btree (received_at, provider_id, kind);
+
+
+--
+-- Name: product_control_email_recent; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX product_control_email_recent ON public.product_control_email_deliveries USING btree (subscription_id, created_at DESC, id DESC);
+
+
+--
+-- Name: product_control_email_subscribers; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX product_control_email_subscribers ON public.product_control_email_subscriptions USING btree (id) WHERE (work_outcomes OR help_replies);
+
+
+--
+-- Name: product_control_finalized_month; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX product_control_finalized_month ON public.product_control_billing_documents USING btree (app_id, tenant_id, period) WHERE (kind = 'statement'::text);
+
+
+--
+-- Name: product_control_help_customer_history; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX product_control_help_customer_history ON public.product_control_help_requests USING btree (account_id, app_id, tenant_id, created_at DESC, id DESC);
+
+
+--
+-- Name: product_control_help_owner_queue; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX product_control_help_owner_queue ON public.product_control_help_requests USING btree (account_id, app_id, created_at DESC, id DESC);
+
+
+--
+-- Name: product_control_notification_expiry; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX product_control_notification_expiry ON public.product_control_notification_reads USING btree (account_id, app_id, tenant_id, expires_at);
+
+
+--
+-- Name: product_control_notification_outcomes; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX product_control_notification_outcomes ON public.product_control_receipts USING btree (account_id, app_id, tenant_id, resolved_at DESC, operation_id DESC) WHERE (resolved_state <> ''::text);
+
+
+--
+-- Name: product_control_notification_pending; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX product_control_notification_pending ON public.product_control_receipts USING btree (account_id, app_id, tenant_id, operation_id) WHERE (resolved_state = ''::text);
+
+
+--
+-- Name: product_control_onboarding_customer; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX product_control_onboarding_customer ON public.product_control_onboardings USING btree (account_id, app_id, tenant_id, created_at DESC, id DESC);
+
+
+--
+-- Name: product_control_onboarding_success; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX product_control_onboarding_success ON public.product_control_receipts USING btree (account_id, app_id, tenant_id, resolved_at, operation_id) WHERE (resolved_state = 'succeeded'::text);
+
+
+--
+-- Name: product_control_plan_changes_history; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX product_control_plan_changes_history ON public.product_control_plan_changes USING btree (account_id, app_id, tenant_id, created_at DESC, id DESC);
+
+
+--
+-- Name: product_control_quota; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX product_control_quota ON public.product_control_receipts USING btree (app_id, tenant_id, feature, period);
+
+
+--
+-- Name: product_control_recent_runs; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX product_control_recent_runs ON public.product_control_receipts USING btree (account_id, app_id, tenant_id, period, admitted_at DESC, operation_id DESC);
+
+
+--
+-- Name: product_email_opt_out_recent; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX product_email_opt_out_recent ON public.product_control_email_opt_outs USING btree (subscription_id, unsubscribed_at DESC, id DESC);
+
+
+--
+-- Name: product_email_recovery_expiry; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX product_email_recovery_expiry ON public.product_control_email_recoveries USING btree (recovered_at, id);
+
+
+--
+-- Name: product_email_recovery_recent; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX product_email_recovery_recent ON public.product_control_email_recoveries USING btree (subscription_id, recovered_at DESC, id DESC);
 
 
 --
@@ -76051,6 +76838,358 @@ ALTER TABLE ONLY public.private_network_peerings
 
 ALTER TABLE ONLY public.private_networks
     ADD CONSTRAINT private_networks_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: product_control_billing_documents product_control_billing_documents_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_billing_documents
+    ADD CONSTRAINT product_control_billing_documents_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: product_control_billing_documents product_control_billing_documents_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_billing_documents
+    ADD CONSTRAINT product_control_billing_documents_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: product_control_billing_documents product_control_billing_documents_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_billing_documents
+    ADD CONSTRAINT product_control_billing_documents_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.product_control_receipts(operation_id);
+
+
+--
+-- Name: product_control_billing_documents product_control_billing_documents_statement_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_billing_documents
+    ADD CONSTRAINT product_control_billing_documents_statement_id_fkey FOREIGN KEY (statement_id) REFERENCES public.product_control_billing_documents(id);
+
+
+--
+-- Name: product_control_billing_documents product_control_billing_documents_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_billing_documents
+    ADD CONSTRAINT product_control_billing_documents_tenant_id_fkey FOREIGN KEY (tenant_id) REFERENCES public.platform_tenants(id) ON DELETE CASCADE;
+
+
+--
+-- Name: product_control_customer_changes product_control_customer_changes_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_customer_changes
+    ADD CONSTRAINT product_control_customer_changes_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: product_control_customer_changes product_control_customer_changes_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_customer_changes
+    ADD CONSTRAINT product_control_customer_changes_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: product_control_customer_changes product_control_customer_changes_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_customer_changes
+    ADD CONSTRAINT product_control_customer_changes_tenant_id_fkey FOREIGN KEY (tenant_id) REFERENCES public.platform_tenants(id) ON DELETE CASCADE;
+
+
+--
+-- Name: product_control_customers product_control_customers_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_customers
+    ADD CONSTRAINT product_control_customers_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: product_control_customers product_control_customers_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_customers
+    ADD CONSTRAINT product_control_customers_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: product_control_customers product_control_customers_app_id_revision_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_customers
+    ADD CONSTRAINT product_control_customers_app_id_revision_fkey FOREIGN KEY (app_id, revision) REFERENCES public.product_control_revisions(app_id, revision);
+
+
+--
+-- Name: product_control_customers product_control_customers_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_customers
+    ADD CONSTRAINT product_control_customers_tenant_id_fkey FOREIGN KEY (tenant_id) REFERENCES public.platform_tenants(id) ON DELETE CASCADE;
+
+
+--
+-- Name: product_control_email_deliveries product_control_email_deliveries_subscription_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_email_deliveries
+    ADD CONSTRAINT product_control_email_deliveries_subscription_id_fkey FOREIGN KEY (subscription_id) REFERENCES public.product_control_email_subscriptions(id) ON DELETE CASCADE;
+
+
+--
+-- Name: product_control_email_opt_outs product_control_email_opt_outs_delivery_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_email_opt_outs
+    ADD CONSTRAINT product_control_email_opt_outs_delivery_id_fkey FOREIGN KEY (delivery_id) REFERENCES public.product_control_email_deliveries(id) ON DELETE CASCADE;
+
+
+--
+-- Name: product_control_email_opt_outs product_control_email_opt_outs_subscription_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_email_opt_outs
+    ADD CONSTRAINT product_control_email_opt_outs_subscription_id_fkey FOREIGN KEY (subscription_id) REFERENCES public.product_control_email_subscriptions(id) ON DELETE CASCADE;
+
+
+--
+-- Name: product_control_email_recoveries product_control_email_recoveries_subscription_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_email_recoveries
+    ADD CONSTRAINT product_control_email_recoveries_subscription_id_fkey FOREIGN KEY (subscription_id) REFERENCES public.product_control_email_subscriptions(id) ON DELETE CASCADE;
+
+
+--
+-- Name: product_control_email_retry_receipts product_control_email_retry_receipts_delivery_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_email_retry_receipts
+    ADD CONSTRAINT product_control_email_retry_receipts_delivery_id_fkey FOREIGN KEY (delivery_id) REFERENCES public.product_control_email_deliveries(id) ON DELETE CASCADE;
+
+
+--
+-- Name: product_control_email_subscriptions product_control_email_subscriptions_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_email_subscriptions
+    ADD CONSTRAINT product_control_email_subscriptions_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: product_control_email_subscriptions product_control_email_subscriptions_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_email_subscriptions
+    ADD CONSTRAINT product_control_email_subscriptions_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: product_control_email_subscriptions product_control_email_subscriptions_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_email_subscriptions
+    ADD CONSTRAINT product_control_email_subscriptions_tenant_id_fkey FOREIGN KEY (tenant_id) REFERENCES public.platform_tenants(id) ON DELETE CASCADE;
+
+
+--
+-- Name: product_control_heads product_control_heads_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_heads
+    ADD CONSTRAINT product_control_heads_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: product_control_heads product_control_heads_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_heads
+    ADD CONSTRAINT product_control_heads_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: product_control_heads product_control_heads_app_id_revision_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_heads
+    ADD CONSTRAINT product_control_heads_app_id_revision_fkey FOREIGN KEY (app_id, revision) REFERENCES public.product_control_revisions(app_id, revision);
+
+
+--
+-- Name: product_control_help_requests product_control_help_requests_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_help_requests
+    ADD CONSTRAINT product_control_help_requests_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: product_control_help_requests product_control_help_requests_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_help_requests
+    ADD CONSTRAINT product_control_help_requests_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: product_control_help_requests product_control_help_requests_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_help_requests
+    ADD CONSTRAINT product_control_help_requests_tenant_id_fkey FOREIGN KEY (tenant_id) REFERENCES public.platform_tenants(id) ON DELETE CASCADE;
+
+
+--
+-- Name: product_control_invoice_handoffs product_control_invoice_handoffs_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_invoice_handoffs
+    ADD CONSTRAINT product_control_invoice_handoffs_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: product_control_invoice_handoffs product_control_invoice_handoffs_document_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_invoice_handoffs
+    ADD CONSTRAINT product_control_invoice_handoffs_document_id_fkey FOREIGN KEY (document_id) REFERENCES public.product_control_billing_documents(id) ON DELETE CASCADE;
+
+
+--
+-- Name: product_control_notification_reads product_control_notification_reads_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_notification_reads
+    ADD CONSTRAINT product_control_notification_reads_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: product_control_notification_reads product_control_notification_reads_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_notification_reads
+    ADD CONSTRAINT product_control_notification_reads_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: product_control_notification_reads product_control_notification_reads_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_notification_reads
+    ADD CONSTRAINT product_control_notification_reads_tenant_id_fkey FOREIGN KEY (tenant_id) REFERENCES public.platform_tenants(id) ON DELETE CASCADE;
+
+
+--
+-- Name: product_control_onboardings product_control_onboardings_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_onboardings
+    ADD CONSTRAINT product_control_onboardings_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: product_control_onboardings product_control_onboardings_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_onboardings
+    ADD CONSTRAINT product_control_onboardings_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: product_control_onboardings product_control_onboardings_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_onboardings
+    ADD CONSTRAINT product_control_onboardings_tenant_id_fkey FOREIGN KEY (tenant_id) REFERENCES public.platform_tenants(id) ON DELETE CASCADE;
+
+
+--
+-- Name: product_control_plan_changes product_control_plan_changes_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_plan_changes
+    ADD CONSTRAINT product_control_plan_changes_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: product_control_plan_changes product_control_plan_changes_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_plan_changes
+    ADD CONSTRAINT product_control_plan_changes_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: product_control_plan_changes product_control_plan_changes_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_plan_changes
+    ADD CONSTRAINT product_control_plan_changes_tenant_id_fkey FOREIGN KEY (tenant_id) REFERENCES public.platform_tenants(id) ON DELETE CASCADE;
+
+
+--
+-- Name: product_control_receipts product_control_receipts_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_receipts
+    ADD CONSTRAINT product_control_receipts_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: product_control_receipts product_control_receipts_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_receipts
+    ADD CONSTRAINT product_control_receipts_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: product_control_receipts product_control_receipts_app_id_revision_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_receipts
+    ADD CONSTRAINT product_control_receipts_app_id_revision_fkey FOREIGN KEY (app_id, revision) REFERENCES public.product_control_revisions(app_id, revision);
+
+
+--
+-- Name: product_control_receipts product_control_receipts_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_receipts
+    ADD CONSTRAINT product_control_receipts_tenant_id_fkey FOREIGN KEY (tenant_id) REFERENCES public.platform_tenants(id) ON DELETE CASCADE;
+
+
+--
+-- Name: product_control_revisions product_control_revisions_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_revisions
+    ADD CONSTRAINT product_control_revisions_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: product_control_revisions product_control_revisions_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_revisions
+    ADD CONSTRAINT product_control_revisions_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: product_control_waivers product_control_waivers_operation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.product_control_waivers
+    ADD CONSTRAINT product_control_waivers_operation_id_fkey FOREIGN KEY (operation_id) REFERENCES public.product_control_receipts(operation_id) ON DELETE CASCADE;
 
 
 --

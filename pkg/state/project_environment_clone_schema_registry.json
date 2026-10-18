@@ -804,13 +804,13 @@
     "columns": [
       "app_id",
       "assignee_account_id",
+      "assignee_team_id",
       "exception_type",
       "route_prefix",
       "rule_order",
       "source_kind",
       "source_path_prefix",
-      "tag_filter",
-      "assignee_team_id"
+      "tag_filter"
     ],
     "kind": "configuration"
   },
@@ -833,6 +833,7 @@
       "account_id",
       "app_id",
       "assignee_account_id",
+      "assignee_team_id",
       "environment",
       "event_count",
       "fingerprint",
@@ -847,8 +848,7 @@
       "resolved_at",
       "split_source_issue_id",
       "state",
-      "title",
-      "assignee_team_id"
+      "title"
     ],
     "kind": "operational"
   },
@@ -2778,54 +2778,6 @@
       "tenant_id"
     ],
     "kind": "operational"
-  },
-  {
-    "table": "data_pipeline_connections",
-    "columns": [
-      "account_id",
-      "ciphertext",
-      "created_at",
-      "id",
-      "identity",
-      "name",
-      "revision"
-    ],
-    "kind": "account_identity"
-  },
-  {
-    "table": "data_pipelines",
-    "columns": [
-      "account_id",
-      "created_at",
-      "database_id",
-      "desired_state",
-      "generation",
-      "id",
-      "initialized",
-      "lease_token",
-      "lease_until",
-      "name",
-      "observed_at",
-      "observed_revision",
-      "read_subjects",
-      "reason",
-      "retained_wal_bytes",
-      "retry_at",
-      "revision",
-      "source_connection_id",
-      "state",
-      "tables",
-      "tables_ready",
-      "verification",
-      "verified_at",
-      "verify_requested",
-      "applied_through_at",
-      "reader_change",
-      "schema_approval",
-      "schema_change",
-      "verification_progress"
-    ],
-    "kind": "configuration"
   },
   {
     "table": "data_upstream_probes",
@@ -9291,26 +9243,26 @@
   {
     "table": "project_environment_clone_checkpoint_capture_catalogues",
     "columns": [
-      "operation_id",
-      "source_kind",
-      "source_id",
       "capture_identity",
-      "source_resource_id",
       "observation_sha256",
-      "retired_at"
+      "operation_id",
+      "retired_at",
+      "source_id",
+      "source_kind",
+      "source_resource_id"
     ],
     "kind": "operational"
   },
   {
     "table": "project_environment_clone_checkpoint_capture_retirements",
     "columns": [
-      "operation_id",
-      "plan",
-      "state",
-      "requested_at",
       "observation",
       "observation_sha256",
-      "retired_at"
+      "operation_id",
+      "plan",
+      "requested_at",
+      "retired_at",
+      "state"
     ],
     "kind": "operational"
   },
@@ -11440,160 +11392,6 @@
     "kind": "configuration"
   },
   {
-    "table": "scenario_cold_preparations",
-    "columns": [
-      "account_id",
-      "app_id",
-      "boot_instance_id",
-      "boot_recorder_session_id",
-      "created_at",
-      "deployment_id",
-      "id",
-      "instance_id",
-      "method",
-      "ready_at",
-      "recorder_session_id",
-      "run_id",
-      "startup_ms",
-      "state",
-      "wake_id"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "scenario_command_networks",
-    "columns": [
-      "active",
-      "host_ip",
-      "lease_token",
-      "node_id",
-      "task_id"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "scenario_managed_work",
-    "columns": [
-      "account_id",
-      "app_id",
-      "document",
-      "invocation_id",
-      "payload",
-      "run_id"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "scenario_object_fixtures",
-    "columns": [
-      "account_id",
-      "app_id",
-      "document",
-      "expires_at",
-      "id",
-      "run_id",
-      "status"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "scenario_postgres_fixtures",
-    "columns": [
-      "account_id",
-      "app_id",
-      "backend_sha256",
-      "database_name",
-      "evidence",
-      "expires_at",
-      "id",
-      "initial_snapshot",
-      "owner_id",
-      "role_name",
-      "run_id",
-      "spec",
-      "status"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "scenario_recorder_requests",
-    "columns": [
-      "attempt_id",
-      "id",
-      "session_id",
-      "status"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "scenario_recorder_sessions",
-    "columns": [
-      "app_id",
-      "command_result",
-      "created_at",
-      "deployment_id",
-      "id",
-      "instance_id",
-      "status"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "scenario_simulation_attempts",
-    "columns": [
-      "app_id",
-      "created_at",
-      "evidence",
-      "id"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "scenario_suspend_resumes",
-    "columns": [
-      "account_id",
-      "app_id",
-      "checkpoint_attempt_id",
-      "created_at",
-      "deployment_id",
-      "id",
-      "instance_id",
-      "invocation_attempt",
-      "invocation_id",
-      "method",
-      "pause_ms",
-      "paused_at",
-      "recorder_session_id",
-      "resume_ms",
-      "run_id",
-      "state"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "scenario_test_action_policies",
-    "columns": [
-      "account_id",
-      "app_id",
-      "cold_start_spec",
-      "created_at",
-      "managed_work_closing",
-      "managed_work_failed",
-      "managed_work_plan",
-      "network_mode",
-      "recorder_closing",
-      "run_id",
-      "sealed_at",
-      "sealed_snapshot",
-      "simulation_failed",
-      "simulation_plan",
-      "suspend_resume_spec",
-      "webhook_mode",
-      "workload_name"
-    ],
-    "kind": "operational"
-  },
-  {
     "table": "scenario_test_chaos_matches",
     "columns": [
       "account_id",
@@ -11616,23 +11414,6 @@
       "chaos_rules",
       "run_id",
       "workload_name"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "scenario_worker_faults",
-    "columns": [
-      "account_id",
-      "app_id",
-      "checkpoint_attempt_id",
-      "created_at",
-      "deployment_id",
-      "id",
-      "instance_id",
-      "invocation_id",
-      "recorder_session_id",
-      "run_id",
-      "state"
     ],
     "kind": "operational"
   },
@@ -12727,11 +12508,11 @@
   {
     "table": "app_issue_teams",
     "columns": [
-      "id",
       "app_id",
-      "team_key",
-      "name",
       "created_at",
+      "id",
+      "name",
+      "team_key",
       "updated_at",
       "updated_by_account_id"
     ],
@@ -12740,24 +12521,24 @@
   {
     "table": "app_issue_team_members",
     "columns": [
-      "team_id",
-      "account_id"
+      "account_id",
+      "team_id"
     ],
     "kind": "operational"
   },
   {
     "table": "issue_tracker_links",
     "columns": [
+      "created_at",
+      "created_by_account_id",
+      "external_key",
       "id",
       "issue_id",
       "provider",
-      "external_key",
-      "url",
       "title",
-      "created_at",
       "updated_at",
-      "created_by_account_id",
-      "updated_by_account_id"
+      "updated_by_account_id",
+      "url"
     ],
     "kind": "operational"
   },
@@ -13293,9 +13074,9 @@
     "table": "app_issue_lifecycle_alert_policies",
     "columns": [
       "app_id",
-      "revision",
+      "cooldown_seconds",
       "environments",
-      "cooldown_seconds"
+      "revision"
     ],
     "kind": "configuration"
   },
@@ -13309,96 +13090,276 @@
     "kind": "operational"
   },
   {
-    "table": "data_connection_checks",
+    "table": "product_control_billing_documents",
     "columns": [
       "account_id",
-      "connection_id",
-      "connection_revision",
+      "amount_millicents",
+      "app_id",
       "created_at",
-      "database_id",
+      "currency",
       "id",
-      "lease_token",
-      "lease_until",
-      "observed_at",
-      "result",
-      "state"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "data_pipeline_alert_deliveries",
-    "columns": [
-      "account_id",
-      "attempts",
-      "code",
-      "config_revision",
-      "created_at",
-      "id",
-      "incident_id",
       "kind",
-      "lease_token",
-      "lease_until",
-      "next_attempt_at",
-      "occurred_at",
-      "pipeline_id",
-      "response_code",
-      "result",
-      "sequence",
-      "status"
+      "operation_id",
+      "period",
+      "reason",
+      "snapshot",
+      "statement_id",
+      "tenant_id"
     ],
     "kind": "operational"
   },
   {
-    "table": "data_pipeline_alerts",
+    "table": "product_control_customer_changes",
     "columns": [
       "account_id",
-      "candidate_code",
-      "candidate_since",
-      "check_at",
-      "ciphertext",
-      "enabled",
-      "incident_code",
-      "incident_id",
-      "pipeline_id",
+      "app_id",
+      "created_at",
+      "fingerprint",
+      "id",
+      "receipt",
+      "tenant_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "product_control_customers",
+    "columns": [
+      "account_id",
+      "app_id",
+      "auth_organization_id",
+      "plan",
       "revision",
-      "updated_at"
+      "suspended",
+      "tenant_id"
     ],
     "kind": "configuration"
   },
   {
-    "table": "data_pipeline_schema_refreshes",
+    "table": "product_control_email_deliveries",
     "columns": [
-      "app_id",
-      "attempt",
-      "change_id",
+      "attempts",
+      "bounced_at",
+      "complained_at",
       "created_at",
-      "pipeline_id",
-      "wake_id"
+      "deadline",
+      "delivered_at",
+      "hard_bounced",
+      "id",
+      "next_at",
+      "notification",
+      "preference_version",
+      "provider_id",
+      "reason",
+      "recipient_generation",
+      "recipient_sealed",
+      "source_revision",
+      "status",
+      "subscription_id",
+      "unsubscribe_hash",
+      "unsubscribe_sealed",
+      "updated_at"
     ],
     "kind": "operational"
   },
   {
-    "table": "data_pipeline_setups",
+    "table": "product_control_email_opt_outs",
+    "columns": [
+      "delivery_id",
+      "expected_version",
+      "generation",
+      "id",
+      "subscription_id",
+      "unsubscribed_at",
+      "version"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "product_control_email_pending_feedback",
+    "columns": [
+      "hard_bounce",
+      "kind",
+      "occurred_at",
+      "provider_id",
+      "received_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "product_control_email_recoveries",
+    "columns": [
+      "expected_version",
+      "generation",
+      "help_replies",
+      "id",
+      "previous_generation",
+      "recovered_at",
+      "subscription_id",
+      "version",
+      "work_outcomes"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "product_control_email_retry_receipts",
+    "columns": [
+      "delivery_id",
+      "failed_attempt",
+      "queued_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "product_control_email_subscriptions",
+    "columns": [
+      "account_id",
+      "actor_id",
+      "app_id",
+      "app_slug",
+      "auth_app_id",
+      "auth_slug",
+      "expires_at",
+      "grant_sealed",
+      "help_replies",
+      "help_since",
+      "id",
+      "organization_id",
+      "pause_reason",
+      "pause_recipient_sealed",
+      "paused_at",
+      "recipient_generation",
+      "scan_cursor",
+      "tenant_id",
+      "version",
+      "work_outcomes",
+      "work_since"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "product_control_heads",
+    "columns": [
+      "account_id",
+      "app_id",
+      "revision"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "product_control_help_requests",
+    "columns": [
+      "account_id",
+      "app_id",
+      "auth_app_id",
+      "auth_organization_id",
+      "context",
+      "created_at",
+      "fingerprint",
+      "id",
+      "kind",
+      "request",
+      "response",
+      "status",
+      "tenant_id",
+      "updated_at",
+      "version"
+    ],
+    "kind": "customer_data"
+  },
+  {
+    "table": "product_control_invoice_handoffs",
     "columns": [
       "account_id",
       "created_at",
-      "data_api_plan",
-      "database_id",
+      "document_id",
+      "external_invoice_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "product_control_notification_reads",
+    "columns": [
+      "account_id",
+      "app_id",
+      "auth_app_id",
+      "auth_organization_id",
+      "expires_at",
+      "is_read",
+      "source_id",
+      "source_kind",
+      "source_version",
+      "tenant_id",
+      "updated_at",
+      "version"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "product_control_onboardings",
+    "columns": [
+      "access_verified_at",
+      "account_id",
+      "app_id",
+      "auth_app_id",
+      "auth_organization_id",
+      "created_at",
+      "fingerprint",
       "id",
-      "lease_token",
-      "lease_until",
-      "mirror_name",
-      "mirror_plan",
-      "name",
-      "phase",
-      "pipeline_id",
-      "reason",
-      "request",
-      "retry_at",
+      "receipt",
+      "tenant_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "product_control_plan_changes",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "fingerprint",
+      "id",
+      "receipt",
+      "tenant_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "product_control_receipts",
+    "columns": [
+      "account_id",
+      "admission_evidence",
+      "admitted_at",
+      "app_id",
+      "currency",
+      "feature",
+      "operation_id",
+      "period",
+      "plan",
+      "resolved_at",
+      "resolved_state",
       "revision",
-      "source_connection_id",
-      "state",
-      "updated_at"
+      "succeeded_at",
+      "tenant_id",
+      "unit_price_millicents"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "product_control_revisions",
+    "columns": [
+      "account_id",
+      "app_id",
+      "revision",
+      "spec"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "product_control_waivers",
+    "columns": [
+      "created_at",
+      "operation_id",
+      "reason"
     ],
     "kind": "operational"
   },
@@ -13474,28 +13435,6 @@
     "kind": "operational"
   },
   {
-    "table": "object_node_settlement_outbox",
-    "columns": [
-      "account_id",
-      "app_id",
-      "attempts",
-      "backend_fingerprint",
-      "backend_id",
-      "bucket_id",
-      "created_at",
-      "id",
-      "kind",
-      "last_error",
-      "lease_token",
-      "lease_until",
-      "payload",
-      "physical_name",
-      "ready_at",
-      "retry_at"
-    ],
-    "kind": "operational"
-  },
-  {
     "table": "operator_node_executions",
     "columns": [
       "audit_outbox_id",
@@ -13552,60 +13491,24 @@
     "kind": "operational"
   },
   {
-    "table": "postgres_capacity_reservations",
-    "columns": [
-      "connections",
-      "endpoint",
-      "generation",
-      "owner_id",
-      "owner_kind",
-      "placement",
-      "resource_key",
-      "senders",
-      "slots",
-      "workers"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "postgres_capacity_resources",
-    "columns": [
-      "connections",
-      "expires_at",
-      "generation",
-      "observed_at",
-      "placement",
-      "report_sha256",
-      "resource_key",
-      "senders",
-      "slots",
-      "workers"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "postgres_capacity_sources",
+    "table": "object_node_settlement_outbox",
     "columns": [
       "account_id",
-      "connection_id",
-      "connection_revision",
-      "generation",
-      "placement",
-      "resource_key"
-    ],
-    "kind": "operational"
-  },
-  {
-    "table": "postgres_capacity_targets",
-    "columns": [
-      "account_id",
+      "app_id",
+      "attempts",
       "backend_fingerprint",
-      "data_resource_id",
-      "database_generation",
-      "database_id",
-      "generation",
-      "placement",
-      "resource_key"
+      "backend_id",
+      "bucket_id",
+      "created_at",
+      "id",
+      "kind",
+      "last_error",
+      "lease_token",
+      "lease_until",
+      "payload",
+      "physical_name",
+      "ready_at",
+      "retry_at"
     ],
     "kind": "operational"
   },
@@ -13993,6 +13896,377 @@
       "id",
       "key_digest",
       "requested_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "scenario_cold_preparations",
+    "columns": [
+      "account_id",
+      "app_id",
+      "boot_instance_id",
+      "boot_recorder_session_id",
+      "created_at",
+      "deployment_id",
+      "id",
+      "instance_id",
+      "method",
+      "ready_at",
+      "recorder_session_id",
+      "run_id",
+      "startup_ms",
+      "state",
+      "wake_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "scenario_command_networks",
+    "columns": [
+      "active",
+      "host_ip",
+      "lease_token",
+      "node_id",
+      "task_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "scenario_managed_work",
+    "columns": [
+      "account_id",
+      "app_id",
+      "document",
+      "invocation_id",
+      "payload",
+      "run_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "scenario_object_fixtures",
+    "columns": [
+      "account_id",
+      "app_id",
+      "document",
+      "expires_at",
+      "id",
+      "run_id",
+      "status"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "scenario_postgres_fixtures",
+    "columns": [
+      "account_id",
+      "app_id",
+      "backend_sha256",
+      "database_name",
+      "evidence",
+      "expires_at",
+      "id",
+      "initial_snapshot",
+      "owner_id",
+      "role_name",
+      "run_id",
+      "spec",
+      "status"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "scenario_recorder_requests",
+    "columns": [
+      "attempt_id",
+      "id",
+      "session_id",
+      "status"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "scenario_recorder_sessions",
+    "columns": [
+      "app_id",
+      "command_result",
+      "created_at",
+      "deployment_id",
+      "id",
+      "instance_id",
+      "status"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "scenario_simulation_attempts",
+    "columns": [
+      "app_id",
+      "created_at",
+      "evidence",
+      "id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "scenario_suspend_resumes",
+    "columns": [
+      "account_id",
+      "app_id",
+      "checkpoint_attempt_id",
+      "created_at",
+      "deployment_id",
+      "id",
+      "instance_id",
+      "invocation_attempt",
+      "invocation_id",
+      "method",
+      "pause_ms",
+      "paused_at",
+      "recorder_session_id",
+      "resume_ms",
+      "run_id",
+      "state"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "scenario_test_action_policies",
+    "columns": [
+      "account_id",
+      "app_id",
+      "cold_start_spec",
+      "created_at",
+      "managed_work_closing",
+      "managed_work_failed",
+      "managed_work_plan",
+      "network_mode",
+      "recorder_closing",
+      "run_id",
+      "sealed_at",
+      "sealed_snapshot",
+      "simulation_failed",
+      "simulation_plan",
+      "suspend_resume_spec",
+      "webhook_mode",
+      "workload_name"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "scenario_worker_faults",
+    "columns": [
+      "account_id",
+      "app_id",
+      "checkpoint_attempt_id",
+      "created_at",
+      "deployment_id",
+      "id",
+      "instance_id",
+      "invocation_id",
+      "recorder_session_id",
+      "run_id",
+      "state"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "data_connection_checks",
+    "columns": [
+      "account_id",
+      "connection_id",
+      "connection_revision",
+      "created_at",
+      "database_id",
+      "id",
+      "lease_token",
+      "lease_until",
+      "observed_at",
+      "result",
+      "state"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "data_pipeline_alert_deliveries",
+    "columns": [
+      "account_id",
+      "attempts",
+      "code",
+      "config_revision",
+      "created_at",
+      "id",
+      "incident_id",
+      "kind",
+      "lease_token",
+      "lease_until",
+      "next_attempt_at",
+      "occurred_at",
+      "pipeline_id",
+      "response_code",
+      "result",
+      "sequence",
+      "status"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "data_pipeline_alerts",
+    "columns": [
+      "account_id",
+      "candidate_code",
+      "candidate_since",
+      "check_at",
+      "ciphertext",
+      "enabled",
+      "incident_code",
+      "incident_id",
+      "pipeline_id",
+      "revision",
+      "updated_at"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "data_pipeline_connections",
+    "columns": [
+      "account_id",
+      "ciphertext",
+      "created_at",
+      "id",
+      "identity",
+      "name",
+      "revision"
+    ],
+    "kind": "account_identity"
+  },
+  {
+    "table": "data_pipeline_schema_refreshes",
+    "columns": [
+      "app_id",
+      "attempt",
+      "change_id",
+      "created_at",
+      "pipeline_id",
+      "wake_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "data_pipeline_setups",
+    "columns": [
+      "account_id",
+      "created_at",
+      "data_api_plan",
+      "database_id",
+      "id",
+      "lease_token",
+      "lease_until",
+      "mirror_name",
+      "mirror_plan",
+      "name",
+      "phase",
+      "pipeline_id",
+      "reason",
+      "request",
+      "retry_at",
+      "revision",
+      "source_connection_id",
+      "state",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "data_pipelines",
+    "columns": [
+      "account_id",
+      "created_at",
+      "database_id",
+      "desired_state",
+      "generation",
+      "id",
+      "initialized",
+      "lease_token",
+      "lease_until",
+      "name",
+      "observed_at",
+      "observed_revision",
+      "read_subjects",
+      "reason",
+      "retained_wal_bytes",
+      "retry_at",
+      "revision",
+      "source_connection_id",
+      "state",
+      "tables",
+      "tables_ready",
+      "verification",
+      "verified_at",
+      "verify_requested",
+      "applied_through_at",
+      "reader_change",
+      "schema_approval",
+      "schema_change",
+      "verification_progress"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "postgres_capacity_reservations",
+    "columns": [
+      "connections",
+      "endpoint",
+      "generation",
+      "owner_id",
+      "owner_kind",
+      "placement",
+      "resource_key",
+      "senders",
+      "slots",
+      "workers"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "postgres_capacity_resources",
+    "columns": [
+      "connections",
+      "expires_at",
+      "generation",
+      "observed_at",
+      "placement",
+      "report_sha256",
+      "resource_key",
+      "senders",
+      "slots",
+      "workers"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "postgres_capacity_sources",
+    "columns": [
+      "account_id",
+      "connection_id",
+      "connection_revision",
+      "generation",
+      "placement",
+      "resource_key"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "postgres_capacity_targets",
+    "columns": [
+      "account_id",
+      "backend_fingerprint",
+      "data_resource_id",
+      "database_generation",
+      "database_id",
+      "generation",
+      "placement",
+      "resource_key"
     ],
     "kind": "operational"
   }

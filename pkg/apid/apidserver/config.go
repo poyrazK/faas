@@ -39,6 +39,7 @@ import (
 // many tools; pinning it here makes the daemon's config story
 // explicit).
 type Config struct {
+	ProductControlEnabled           bool                `toml:"product_control_enabled"`
 	EventAcknowledgmentWriterSlot   string              `toml:"event_acknowledgment_writer_slot"`
 	EventAcknowledgmentWriterRoster string              `toml:"event_acknowledgment_writer_roster"`
 	DataPipelines                   datapipeline.Config `toml:"data_pipelines"`

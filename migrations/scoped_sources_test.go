@@ -32,7 +32,11 @@ func TestIssuedMigrationDeclarationsRespectTargetSchema(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if bytes.Equal(original, body) || bytes.Contains(body, []byte("public.")) {
+			// This issued file already declares functions and row types without
+			// public qualifiers. search_path binds it to the target schema, so
+			// adapting it must preserve its bytes. The other four need rewriting.
+			alreadyScoped := entry.Name() == "20261003160458628_application_standard_runtime_default_base.sql"
+			if bytes.Equal(original, body) != alreadyScoped || bytes.Contains(body, []byte("public.")) {
 				t.Fatal("issued declaration escaped the target schema")
 			}
 			info, err := fs.Stat(scoped, entry.Name())
