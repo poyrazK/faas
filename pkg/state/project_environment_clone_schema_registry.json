@@ -2536,6 +2536,7 @@
     "table": "customer_operation_executions",
     "columns": [
       "created_at",
+      "data_repair_id",
       "execution_id",
       "execution_kind",
       "generation",
@@ -2770,6 +2771,7 @@
       "created_at",
       "current_execution_id",
       "current_invocation_id",
+      "data_repair_id",
       "deadline_at",
       "definition_id",
       "execution_generation",
@@ -14441,6 +14443,21 @@
       "recorder_session_id",
       "run_id",
       "state"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "data_repair_rehearsals",
+    "columns": [
+      "account_id",
+      "cancel_requested",
+      "created_at",
+      "deadline",
+      "id",
+      "node_id",
+      "operation_id",
+      "phase",
+      "record"
     ],
     "kind": "operational"
   }
