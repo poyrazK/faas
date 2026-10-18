@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/url"
 	"os"
 	"regexp"
@@ -22,7 +23,8 @@ func redactErrorText(text string) string {
 }
 
 func errorTextRedactor() func(string) string {
-	secrets := []string{loginErrorCredential, strings.TrimSpace(os.Getenv("FAAS_TOKEN")), loadToken()}
+	// Formatting an error must not emit credential-store diagnostics of its own.
+	secrets := []string{loginErrorCredential, strings.TrimSpace(os.Getenv("FAAS_TOKEN")), loadTokenWithDiagnostics(io.Discard)}
 	if endpoint, err := url.Parse(os.Getenv("FAAS_API")); err == nil && endpoint.User != nil {
 		if password, ok := endpoint.User.Password(); ok && password != "" {
 			secrets = append(secrets, password, url.QueryEscape(password), url.PathEscape(password))

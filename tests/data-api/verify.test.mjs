@@ -63,7 +63,7 @@ test('verify runs named readonly checks and authorization, reports failures and 
  assert.equal(await readFile(output, 'utf8'), original)
  assert.equal(await readFile(contract, 'utf8'), 'existing-contract-preserved')
  assert.equal(await readFile(fixture, 'utf8'), "INSERT INTO api.notes(subject,body) VALUES ('alice','private-fixture-value'),('bob','private-fixture-value');")
- await writeFile(join(directory, 'migrations/sql/0011_access_membership.sql'), `
+ await writeFile(join(directory, 'migrations/sql/0017_access_membership.sql'), `
  CREATE TABLE api.access_memberships(subject text PRIMARY KEY);
  ALTER TABLE api.access_memberships ENABLE ROW LEVEL SECURITY;
  ALTER TABLE api.access_memberships FORCE ROW LEVEL SECURITY;

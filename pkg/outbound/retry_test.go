@@ -1,3 +1,6 @@
+// adr: 251
+// adr: 294
+// adr: 296
 package outbound
 
 import (
@@ -66,13 +69,16 @@ func TestHandlerDoesNotRetryUnsafeOrUnselectedRequests(t *testing.T) {
 		method    string
 		body      io.Reader
 		query     string
-		override  string
+		override  http.Header
 		firstCode int
 		wantCalls int32
 	}{
 		{name: "post", method: http.MethodPost, body: strings.NewReader("body"), firstCode: http.StatusServiceUnavailable, wantCalls: 1},
 		{name: "get body", method: http.MethodGet, body: strings.NewReader("body"), firstCode: http.StatusServiceUnavailable, wantCalls: 1},
-		{name: "method override", method: http.MethodGet, override: "POST", firstCode: http.StatusServiceUnavailable, wantCalls: 1},
+		{name: "method override", method: http.MethodGet, override: http.Header{"X-Http-Method-Override": {"POST"}}, firstCode: http.StatusServiceUnavailable, wantCalls: 1},
+		{name: "empty first method override", method: http.MethodGet, override: http.Header{"X-Http-Method-Override": {"", "POST"}}, firstCode: http.StatusServiceUnavailable, wantCalls: 1},
+		{name: "empty first alternate override", method: http.MethodGet, override: http.Header{"X-Method-Override": {"", "POST"}}, firstCode: http.StatusServiceUnavailable, wantCalls: 1},
+		{name: "empty first method header", method: http.MethodGet, override: http.Header{"X-Http-Method": {"", "POST"}}, firstCode: http.StatusServiceUnavailable, wantCalls: 1},
 		{name: "query method override", method: http.MethodGet, query: "?_method=POST", firstCode: http.StatusServiceUnavailable, wantCalls: 1},
 		{name: "unselected 500", method: http.MethodGet, firstCode: http.StatusInternalServerError, wantCalls: 1},
 	}
@@ -104,8 +110,8 @@ func TestHandlerDoesNotRetryUnsafeOrUnselectedRequests(t *testing.T) {
 			}
 
 			req := gatewayRequest(Prefix+integration.ID+"/v1/items"+tc.query, "secret", "app-1", tc.method, tc.body)
-			if tc.override != "" {
-				req.Header.Set("X-HTTP-Method-Override", tc.override)
+			for name, values := range tc.override {
+				req.Header[name] = values
 			}
 			rr := httptest.NewRecorder()
 			handler.ServeHTTP(rr, req)

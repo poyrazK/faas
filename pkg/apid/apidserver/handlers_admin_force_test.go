@@ -63,6 +63,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -145,6 +146,46 @@ func (f *fakeStoreForIntent) InsertOperatorIntent(
 		return f.nextIntentID, nil
 	}
 	return f.inner.InsertOperatorIntent(ctx, kind, targetID, accountID, actorID, reason, metadata, traceID)
+}
+
+// SubmitOperatorRecovery observes the atomic admission seam introduced by
+// ADR-1524. Existing handler tests retain their deterministic response fixture;
+// the external submission suite verifies real persisted receipts end to end.
+func (f *fakeStoreForIntent) SubmitOperatorRecovery(ctx context.Context, in state.OperatorRecoverySubmission) (state.OperatorRecoveryReceipt, error) {
+	var targetID string
+	var app state.App
+	if in.Kind == state.OperatorIntentKindForceColdBoot {
+		app, _ = f.inner.AppBySlug(ctx, in.Target)
+		dep, _ := f.inner.LatestDeployment(ctx, app.ID)
+		targetID = dep.ID
+	} else {
+		instance, err := f.inner.InstanceByID(ctx, in.Target)
+		if err != nil {
+			instance, _ = f.inner.InstanceByID(ctx, strings.ReplaceAll(in.Target, "-", ""))
+		}
+		targetID = instance.ID
+		app, _ = f.inner.AppByID(ctx, instance.AppID)
+	}
+	call := intentInsertCall{Kind: in.Kind, Target: targetID, Account: &app.AccountID, Actor: in.ActorID, Reason: in.Reason, TraceID: in.TraceID}
+	if f.insertErr != nil {
+		f.insertCalls = append(f.insertCalls, call)
+		return state.OperatorRecoveryReceipt{}, f.insertErr
+	}
+	receipt, err := f.inner.SubmitOperatorRecovery(ctx, in)
+	if err != nil {
+		return receipt, err
+	}
+	f.insertCalls = append(f.insertCalls, call)
+	if f.nextIntentID != "" {
+		var response api.OperatorIntentAcceptedResponse
+		if err := json.Unmarshal(receipt.ResponseBody, &response); err != nil {
+			return state.OperatorRecoveryReceipt{}, err
+		}
+		receipt.IntentID, response.IntentID = f.nextIntentID, f.nextIntentID
+		response.StatusURL = "/v1/admin/operator-intents/" + f.nextIntentID
+		receipt.ResponseBody, err = json.Marshal(response)
+	}
+	return receipt, err
 }
 
 // newForceHarness wires a server with a MemStore + an optional

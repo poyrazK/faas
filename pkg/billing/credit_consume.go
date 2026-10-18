@@ -14,7 +14,7 @@
 //
 // Money is integer cents end-to-end (CLAUDE.md). The overage math is shared
 // with state.CurrentMonthOverageCents: the plan's included calendar-month
-// allowance is removed first, then the remainder is priced at €0.01/GB-h.
+// allowance is removed first, then the remainder is priced at $0.01/GB-h.
 // Floor division is performed at the final sub-cent boundary; the function
 // never round-trips through float.
 package billing

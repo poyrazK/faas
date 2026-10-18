@@ -2530,3 +2530,380 @@ Consume/close response bodies before leaving that block. Managed bindings reject
 raw `current()`. Stop admission and the coordinator before
 `storage.wait_for_retirement(timeout=5)`; timeout never closes leased clients.
 Without a hook, `current()` keeps caller-owned lifetime behavior.
+
+Checked project release graphs use the preparation and activation endpoints.
+Preparation returns a manifest with exact members, expected routing and policy
+revisions; activation independently rechecks binding evidence and service
+readiness. Internal service evidence is selected by `service_targets` together
+with an exact caller deployment. See the [qualification and activation workflow](../../docs/networking.md#qualify-and-activate-a-project-release-graph)
+for the CLI steps, consent requirements and graph limitations.
+
+
+Checked graph recovery uses the `prepare_checked_project_rollback` and
+`rollback_checked_project_release` project API modules to select retained history
+and commit the verified manifest. Historical membership and expiry are checked
+atomically under current binding policies. The new release records
+`rollback_source_release_id` and `rollback_previous_release_id`. See the
+[recovery workflow](../../docs/networking.md#recover-a-retained-project-release-graph).
+
+
+Checked graph deactivation uses the `prepare_checked_project_deactivation` and `deactivate_checked_project_release` project API modules.
+Preparation freezes one 100% weighted fallback per workload with current policy
+and service targets. Qualify this `deactivate: true`, `ttl_seconds: 0` manifest,
+then deactivate explicitly. Missing fallbacks, splits, stale intent and missing
+readiness block the switch. The retired release's `deactivation` field contains
+the durable receipt and exact fallback members. See the
+[deactivation workflow](../../docs/networking.md#deactivate-a-project-graph-with-checked-fallback-routing).
+
+Candidate service staging uses `POST .../release-sets/staging` with a complete
+prepared forward or rollback manifest and a 1–1800 second `ttl_seconds` lease.
+Read or cancel the stage with `GET` / `DELETE .../release-sets/staging/{stage}`.
+Staging capacity is billable, preserves current routes, uses ordinary admission
+limits, and excludes GitOps-managed workloads. Repeating the same manifest reuses
+its original expiry. `ready` is observed replica readiness, not binding proof;
+run verification and explicit activation/rollback afterwards. Cancellation or
+expiry removes temporary capacity while active graph allocations remain.
+
+
+Push queue canaries require an exact deployment, a declared safe `GREGALE_QUEUE_CANARY_BINDINGS` override and explicit publication consent. Create, get and cancel operations expose bounded publication/dispatch/completion status. The `handler_completion` queue release requirement checks fresh completion on the selected deployment plus normal consumer readiness. See [queue completion canaries](../../docs/networking.md#push-queue-binding-completion-canaries).
+
+Durable single-app binding verification exposes create, status, resume, atomic
+step admission, complete and cancel operations. Supply a stable run UUID and
+review digest; original consent and deadlines are immutable, and observing an
+existing task/message does not acquire ownership. See
+[durable verification runs](../../docs/networking.md#durable-single-app-binding-verification).
+
+Durable graph qualification preserves the reviewed manifest, member receipts and exact service targets. See [durable project graph verification](../../docs/networking.md#durable-project-graph-verification) for status, resume and cancel.
+
+Binding verification review endpoints return an executable plan and opaque digests without admitting work. Call `ReviewBindingVerification` / `reviewBindingVerification` / `review_binding_verification`, or the corresponding project review method. Check `ready`, show blockers and required consent, then forward the returned selection and digest to receipt creation. Graph creation also forwards the aggregate `review_digest`, member `review_digests` and unchanged consent. No client-side digest calculation is required. A ready review is not a passing verification result.
+
+### Run a durable binding verification receipt
+
+Use the configured `FaaSClient` or its generated `inner` client after explicit review and receipt creation:
+
+```python
+from faas_sdk import run_binding_verification, arun_project_binding_verification
+run = run_binding_verification(client, "api", saved_run_id, concurrency=2,
+                               on_progress=lambda progress: print(progress))
+graph = await arun_project_binding_verification(client, "project", "production",
+                                               saved_graph_run_id, concurrency=2)
+```
+
+Both app and graph helpers have synchronous and `arun_` asynchronous variants. The default poll interval is one second; concurrency defaults to two and ranges from one to eight unfinished resources across the graph. Progress callbacks run serially with frozen `BindingVerificationProgress` metadata; async helpers also accept async callbacks. A persisted passed receipt reports `qualifying` until server completion is reconfirmed.
+
+`BindingVerificationRecoveryError` retains `run_id`, `cause` and the latest observed receipt dictionary. Resume the original ID after transport, callback or local stop errors; these never cancel server work or renew expiry. Use `stop_event=threading.Event()` for synchronous observation or `asyncio.Event()` for async observation. Synchronous stops are checked between HTTP calls, and the runner preserves configured HTTP timeouts while bounding them to remaining lifetime. Async task cancellation keeps `asyncio.CancelledError` semantics and carries `run_id`. Explicit server cancellation uses the existing generated cancel API. Review, effect consent, receipt creation and route activation stay explicit.
+
+### Diagnose a stopped verification run
+
+```python
+from faas_sdk.api.apps import get_binding_verification_run_diagnostics
+from faas_sdk.api.projects import get_project_binding_verification_run_diagnostics
+diag = get_binding_verification_run_diagnostics.sync("api", saved_run_id, client=client.inner)
+graph_diag = await get_project_binding_verification_run_diagnostics.asyncio("project", "production", saved_graph_run_id, client=client.inner)
+```
+
+Inspect `blockers`, whitelisted public `changes` and suggested `recovery` actions after a runner error. `complete` describes diagnostic read completeness; optional `check_passed` describes public evidence and conveys no admission or completion authority. Diagnostics preserve the original deadline and perform no execution, cancellation or receipt mutation. Missing domain permission fails the read. Continue with the same run ID only when current server checks allow it, or explicitly cancel and obtain a new reviewed receipt as directed.
+
+Runner recovery errors now attach typed optional `diagnostics` containing server blockers, public changes and recovery suggestions. The read-only lookup has a two-second cap and respects the original receipt/caller deadlines. Unavailable, forbidden or mismatched diagnostics preserve the original cause and run ID. Cancellation and callback failures skip enrichment; no recovery action is executed automatically. Use `skip_diagnostics=True` to disable it.
+
+### Create from a reviewed binding selection
+
+Persist a canonical nonzero run UUID before creation. Pass a ready server review, lifetime and explicit effect consent; digests and selections are forwarded unchanged. Typed creation errors retain the UUID, original cause and whether creation was invoked. This flag does not prove acceptance. Reconcile uncertain creation by reading the same ID with the same review/options. Reconciliation never writes, resumes or replaces work; a failed read does not establish noncreation. Run a confirmed receipt explicitly using the existing runner.
+
+```python
+options = dict(run_id=saved_id, ttl_seconds=60, max_concurrency=2, queue_publish=True)
+run = create_binding_verification_from_review(client, "api", review, **options)
+# After an uncertain creation error, inspect the same identity:
+recovered = reconcile_binding_verification_creation(client, "api", review, **options)
+```
+
+Graph helpers are `create_project_binding_verification_from_review` and `reconcile_project_binding_verification_creation`; all four have async equivalents prefixed with `a`. `BindingVerificationCreationError` exposes `run_id`, `attempted` and `cause`. Native async cancellation carries `run_id` and `attempted`.
+
+Durable runner status GETs now retry temporary connection failures and HTTP 502/503/504 with bounded exponential jitter. Configure `status_read_retries` (default three; zero disables), maximum eight retries per read. Retry waits obey the original expiry and caller stop controls. Progress exposes `retrying`, `retry_attempt` and `retry_delay_ms`; callback failures stop observation. Lifecycle writes and invalid responses retain explicit recovery behavior.
+
+### Discover retained verification receipts
+
+Use `faas_sdk.api.apps.list_binding_verification_runs.sync(app, client=client, limit=20)` or `faas_sdk.api.projects.list_project_binding_verification_runs.sync(project, environment, client=client, limit=20)`; each also exposes `asyncio`. Filters include `cursor`, UUID `deployment_id` and `status`, plus app-only `scope`/`include_members`. Follow `next_cursor` with the same filters. The typed result contains `runs` and `observed_at`. Summaries describe retained receipt state without current requalification or private resource details. App lists omit graph members by default; included members carry `graph_run_id`. Project lists contain roots only. Existing retention remains unchanged.
+
+After an eligible admission/completion transport failure or HTTP 502/503/504, durable runners reconcile through a bounded GET of the original receipt. They continue only after validating proof of the exact owned admission or fresh passed completion, and never automatically replay the uncertain write. Progress exposes `reconciling` with `operation` and admission selectors. Reads obey existing status retry settings, original expiry and caller stop controls. Unproved results preserve explicit recovery with the original ID and write cause. See [ADR-1366](../../docs/adr/1366-verification-write-reconciliation.md).
+
+Reviewed creation now reconciles eligible transport failures and HTTP 502/503/504 through bounded reads of the original UUID. It returns only a matching usable receipt, without repeating creation or generating another UUID. Configure `status_read_retries`, `on_progress` and `stop_event`; read retries default to three, with zero disabling extra attempts. Progress emits `reconciling` with `operation: creation` and bounded `retrying` events. Recovery is capped at five seconds and the requested TTL measured from the attempt, plus caller context/stop controls. Unproved results preserve the typed creation error, attempted flag, original UUID and write cause. Explicit reconciliation remains a single read that can inspect terminal or expired receipts. See [ADR-1368](../../docs/adr/1368-verification-creation-reconciliation.md).
+
+### Synchronous PostgreSQL pool runtime
+
+Use `PostgresPoolBinding` to validate a fresh pool before atomic secret adoption and
+retire old pools after their transaction leases release. Validation and retirement
+callbacks are required; the application supplies its driver. Register the secret
+consumer with the reload coordinator, hold each lease through driver connection
+release, and invalidate before waiting for retirement at shutdown. See the
+[pool lifecycle and SDK examples](../../docs/postgres-pool-runtime.md) and the
+[runnable Node pg.Pool service](../../examples/postgres-pool-rotation/README.md).
+
+### Async PostgreSQL pool runtime
+
+Use `faas_sdk.async_postgres_pool_runtime.AsyncPostgresPoolBinding` and
+`faas_sdk.async_secret_reload_runtime.AsyncSecretReloadCoordinator` for async
+drivers. Factory, validation and retirement hooks run on the same owning event
+loop. Await coordinator startup before serving, hold `async with database.acquire()`
+through transaction completion and connection return, then stop admission,
+call `coordinator.stop()`, and await both `coordinator.wait_stopped()` and
+`database.wait_for_retirement()` before closing the loop.
+
+Manual reload supports an optional total `timeout` and `asyncio.Event` cancellation;
+native task cancellation preserves `CancelledError`. Failed adoption/revocation
+blocks new leases, existing transactions may finish, and cancelled late candidates
+are cleaned up without publication. Register every consumer with one coordinator;
+async consumers invalidate synchronously to fence work immediately. See the
+[async lifecycle contract](../../docs/postgres-pool-runtime.md#async-python) and
+[runnable FastAPI/psycopg service](../../examples/postgres-pool-rotation-python/README.md).
+
+For a self-contained deployment with schema-backed readiness, separate release
+migrations and bounded snapshot reconnect, use
+`gregale init --template rest-api-postgres-python --path notes-api`. The
+[built-in starter guide](../../cmd/gregale/templates/rest-api-postgres-python/README.md)
+covers managed bindings, verified TLS, restore failure and cold-boot fallback.
+
+### Async object-storage runtime
+
+`faas_sdk.async_object_storage_runtime.AsyncObjectStorageBinding` supplies async
+factories, application validation and retirement on one event loop. Register its
+secret consumer alongside PostgreSQL with one `AsyncSecretReloadCoordinator`;
+the coordinator ACKs only after all consumers validate and invalidates them all
+on failure. Keep `async with storage.acquire()` through complete upload/download
+body closure. Failed and cancelled candidates are fenced and retired; old clients
+close after their last lease. SDK core imports no S3 driver.
+
+See the [async storage lifecycle](../../docs/object-storage-compute.md#async-python-clients-and-streaming)
+and [FastAPI/aiobotocore streaming example](../../examples/object-storage-rotation-python/README.md)
+for explicit credentials, readiness validation, disconnect cleanup, mixed binding
+adoption and shutdown draining.
+
+For a self-contained private file service, use
+`gregale init --template object-storage-python --path files-app`. The
+[built-in starter guide](../../cmd/gregale/templates/object-storage-python/README.md)
+covers bearer authentication, bounded uploads, streaming downloads, managed
+read/write bindings and bounded transport recovery after snapshot restore.
+
+### Async deadline count alerts
+
+`awatch_event_subscription_deadlines(client.inner, target, options)` supports
+sustained total/reason deadline alerts, separate recovery counts, fresh-evidence
+progress, task cancellation, checkpoint/resume and exact alert acknowledgments.
+Configure `EventDeadlineTarget` and `EventDeadlineWatchOptions`; load saved state
+with `validate_event_deadline_checkpoint` and apply offline acknowledgments with
+`acknowledge_event_deadline_alerts`.
+
+Python uses its own deadline-only checkpoint format; Go/CLI and Node checkpoints
+are rejected. Applications own persistence and notification delivery. Persist before
+publishing and deduplicate replayed alerts. See [configuration and cancellation](../../docs/event-deadline-python-watch.md).
+
+`expired_ratio=EventDeadlineRatioOptions(warning_basis_points=1000,
+recovery_basis_points=500, minimum_recipients=100)` adds an expired backlog ratio
+condition with exact integer comparisons and retained source samples. Ratio watches
+use version 2 Python checkpoints; count-only checkpoints remain version 1. See
+[ratio policy and compatibility](../../docs/event-deadline-python-watch.md#expired-backlog-ratio-conditions).
+
+`ainvestigate_event_deadline_alert(client.inner, checkpoint, reference, options)`
+maps an exact retained Python incident/sequence pair to one current read-only triage
+page. `EventDeadlineInvestigationOptions` controls page size, opaque continuation
+and a cancellable read budget up to five seconds. Saved notification timestamps and
+ratio samples remain separate from current observations. See
+[investigation, validation and pagination](../../docs/event-deadline-python-investigation.md).
+
+### Async deferred event acknowledgment worker
+
+`AsyncEventAcknowledgmentWorker.from_headers(client.inner, app, headers, body,
+account_id, app_id, options)` coordinates confirmed platform renewal, atomic
+business SQL/consumer receipts and exact saved completion bytes. `run` invokes
+the async handler with its cursor and read-only cancellation view; `complete_receipt`
+recovers callbacks without business work. Explicit `retry`/`dead_letter` decisions
+check receipts first and require known rollback, stopped work and exclusive job
+ownership. Use an idle autocommit psycopg async connection and bounded driver calls.
+
+Owner/native cancellation signals cooperative work, joins active SQL/renewal and
+preserves confirmed receipt progress. Unknown COMMIT remains unknown. Configure
+bounded callback retries and retain the protected ingestion job until terminal
+confirmation. No schema, queue or host starts automatically. See the
+[worker protocol](../../docs/event-acknowledgment-python-worker.md) and
+[protected-job integration](../../examples/event-acknowledgment-python/README.md).
+
+### Durable acknowledgment handoff
+
+For side-effect-free preparation outside the final short SQL transaction,
+`aclaim_event_consumer_processing(connection, request, duration_ms)` returns a
+process-local lease with `renew` and `complete`. Explicitly install
+`event_consumer_processing_schema` beside the receipt table. Use
+`run_with_processing_lease` or `run_durable_with_processing_lease` for worker
+composition. Existing receipts replay without the old lease; new writes require
+its unexpired token/input fence. The host owns renewal during preparation and
+must stop/join local renewal before final completion. See the
+[Python processing protocol](../../docs/event-consumer-processing-python.md).
+
+`run_prepared_durable(connection_factory, prepare, handler, options, stop_event=...)`
+coordinates both leases during side-effect-free preparation, then commits the
+same fenced receipt/intent transaction. `EventAcknowledgmentPreparedOptions`
+requires `preparation_timeout_ms` and defaults `processing_lease_ms` to 30,000.
+The synchronous factory supplies fresh exclusive idle autocommit async connection
+scopes for each operation. Existing receipts skip preparation and new claims;
+local renewal is joined before completion while platform renewal continues.
+See [budgets, cleanup and uncertain commits](../../docs/event-acknowledgment-python-preparation.md).
+
+Set keyword-only `EventAcknowledgmentPreparedOptions.on_event` for best-effort
+preparation metadata. Frozen `EventAcknowledgmentPreparationEvent` variants report
+bounded durations, acquisition/preparation, renewal failure, confirmed/unknown
+commit and shutdown outcomes, without identities, payloads, tokens or raw errors.
+Use a synchronous nonblocking callback and an application-owned bounded queue.
+Observer exceptions preserve processing outcomes; no observer work is scheduled
+or awaited. See [event fields and isolation](../../docs/event-acknowledgment-python-telemetry.md).
+
+`EventAcknowledgmentPreparationMetrics` aggregates these events into fixed
+counters and cumulative duration histograms. Pass `metrics.record` as `on_event`
+and read detached JSON-safe `metrics.snapshot()` dictionaries from a separate
+export path. Serialize access in one execution context; no exporter, background
+task or retained event data is installed. Safe-integer saturation is explicit.
+See [counting and export rules](../../docs/event-acknowledgment-python-metrics.md).
+
+`format_event_acknowledgment_preparation_metrics(metrics.snapshot(), prefix=...)`
+renders Prometheus text 0.0.4 with fixed labels, cumulative histograms in seconds
+and saturation gauges. Serve with
+`EVENT_ACKNOWLEDGMENT_PREPARATION_PROMETHEUS_CONTENT_TYPE` from the host's independent
+scrape path. Complete validation precedes rendering; no registry, listener, task
+or metrics dependency is added. See [formatting and the ASGI scrape example](../../docs/event-acknowledgment-python-prometheus.md).
+
+The application-owned [shared Node/Python monitoring pack](../../examples/event-acknowledgment-monitoring/README.md)
+provides a Python scrape configuration, guarded recording/alert rules, Grafana
+dashboard and SDK-specific recovery runbook. Install one shared rule group per
+evaluation domain, preserve target/process identity and tune thresholds through
+your monitoring deployment process. No monitoring service is started by the SDK.
+
+`ainspect_event_consumer_processing(connection, request, stop_event=...)` reads
+frozen receipt/claim metadata for one original consumer request in one statement.
+It reports matching/completed, active, expired, absent or conflicting evidence and
+matching claim timing without selecting tokens, original bodies or saved results.
+Use a separately leased idle autocommit async connection. Inspection grants no
+ownership or acknowledgment proof; use existing live fences/receipt reconciliation
+for recovery. See [Python inspection](../../docs/event-consumer-processing-inspection.md#python-inspection).
+
+`run_durable` commits business SQL, the receipt and a completion intent together;
+`save_completion_intent` stages a saved receipt without business work. Explicitly
+install `event_acknowledgment_intent_schema` beside the inbox. A confirmed local
+commit transfers callback responsibility from the ingestion job to recovery.
+
+`arecover_next_event_acknowledgment_intent(client.inner, connection, account_id,
+app_id, ...)` claims one due intent and sends only its saved callback. Separate
+`aclaim_event_acknowledgment_intent` / `claim.deliver` calls and bounded
+`alist_event_acknowledgment_intents` diagnostics are also available. Applications
+own polling, protected storage, driver timeouts and retention. See the
+[durable Python protocol](../../docs/event-acknowledgment-python-intents.md).
+
+`arecover_event_acknowledgment_intents(client.inner, connection_factory, account_id,
+app_id, EventAcknowledgmentIntentRecoveryPassOptions(...), stop_event=...)` runs one
+finite concurrent pass. Each admission leases an exclusive connection scope and
+uses existing intent fences. Empty probes/hard failures stop admission; active
+work and cleanup join. Frozen aggregate `.result` progress accompanies failure,
+native cancellation and uncertain-COMMIT exceptions. The host schedules later
+passes. See [budgets, ownership and progress](../../docs/event-acknowledgment-python-recovery-pass.md).
+
+Set `retry_policy=EventAcknowledgmentIntentRetryPolicy(initial_backoff_ms=1000,
+max_backoff_ms=300000)` for capped exponential full jitter using persisted claims.
+Single-intent recovery and `claim.deliver` accept the same option. Leave
+`backoff_ms` omitted/None with a policy; without a policy the effective fixed
+default remains 1000 ms. See the
+[adaptive retry contract](../../docs/event-acknowledgment-python-retry-policy.md).
+
+Durable staging accepts `retry_policy=EventAcknowledgmentIntentRetryPolicy(...)`
+to atomically bind a new intent. Recovery uses its captured binding instead of
+worker fallback, and status exposes frozen `retry_policy` metadata. Apply
+`event_acknowledgment_intent_stored_retry_policy_schema` to existing installations
+before upgrading current intent workers. See the
+[shared binding and rollout contract](../../docs/event-acknowledgment-stored-retry-policy.md).
+
+Use `aadopt_event_acknowledgment_intent_retry_policy` for existing unbound backlog.
+Pass frozen `EventAcknowledgmentIntentAdoptRetryPolicyOptions` with a saved command
+UUID and the exact timestamp/count from intent listing. Install the optional
+`event_acknowledgment_intent_policy_adoption_schema` first. Frozen receipts resolve
+original retries across SDKs; typed rejection errors expose their `.receipt`.
+Python preserves full int64 generations, callback data, attempts and due time. See
+the [adoption and uncertainty contract](../../docs/event-acknowledgment-policy-adoption.md#python-adoption-and-replay).
+
+`save_retry_intent(connection, reason)` and `save_dead_letter_intent(connection,
+reason)` stage explicit failure decisions for the same recovery host. Establish
+known rollback, stopped work and exclusive ownership first, and persist the chosen
+action/reason before staging. Receipt presence blocks rejection; identical saves
+retain their claims/counters, and unknown COMMIT requires fresh-connection
+reconciliation. See [failure decisions](../../docs/event-acknowledgment-python-intents.md#persist-explicit-failure-decisions).
+
+### Acknowledgment recovery health
+
+`aget_event_acknowledgment_intent_health(connection, account_id, app_id,
+EventAcknowledgmentIntentHealthOptions(...), stop_event=...)` reads a bounded
+summary of unfinished intents using one database snapshot/clock. The immutable
+result includes due/leased/scheduled/stalled counts, expired claims, oldest ages
+and explicit completeness. Use an exclusively leased idle autocommit async
+connection, bounded driver calls, and always export `complete`/`truncated` alongside
+metrics. See [Python recovery health](../../docs/event-acknowledgment-intent-health.md#python-summary).
+
+`awatch_event_acknowledgment_intent_health(connection_factory, account_id, app_id,
+EventAcknowledgmentIntentWatchOptions(...), notify, stop_event=...)` watches
+sustained due/stalled/parked backlog. The factory returns a fresh async connection scope
+per poll. Confirmation requires fresh complete evidence; failed reads or lost
+coverage produce unknown states. Callbacks are awaited serially, cancellation
+joins active work, and callback errors expose only the affected metadata alert.
+State is in memory and resets on restart. See the
+[Python watch](../../docs/event-acknowledgment-intent-health.md#python-watch).
+
+`awatch_event_acknowledgment_intent_health_with_checkpoint(...,
+EventAcknowledgmentIntentCheckpointWatchOptions(on_progress=..., resume=..., ...))`
+adds stable incident IDs, a bounded pending outbox and fresh confirmation after
+resume. Persist each checkpoint before notification attempts, and apply exact
+pairs with `acknowledge_event_acknowledgment_intent_alerts`. Validate stored state
+with `validate_event_acknowledgment_intent_checkpoint`. Storage fencing and
+idempotent delivery remain application-owned. Cancellation exposes the detached
+final result through `EventAcknowledgmentIntentCheckpointWatchCancelled.result`.
+See the [Python checkpoint protocol](../../docs/event-acknowledgment-python-checkpoints.md).
+
+Set the keyword-only `parked_threshold` to enable `parked_intents` alerts in
+either watch, including a parked-only selection. Enabled checkpointed alerts use
+version 2; zero/omission preserves version 1 and its saved policy keys/order.
+Upgrade every host that can resume or acknowledge version 2 first. Incomplete
+evidence stays unknown, and a lower parked count after operator resume or newer
+staging does not establish callback confirmation. See
+[parked evidence and rollout](../../docs/event-acknowledgment-python-checkpoints.md#parked-intent-alerts).
+
+`EventAcknowledgmentIntentHealthMetrics(account_id, app_id, options)` caches one
+bounded recovery-health sample. Feed completed reads explicitly or use
+`awatch_event_acknowledgment_intent_health_metrics` with exclusive connection
+scopes and host cancellation. Format a fresh snapshot per scrape with
+`format_event_acknowledgment_intent_health_metrics`. The same thirteen Node gauge
+families cover due/stalled/parked work, completeness and age, without identity
+labels; missing reads omit sample gauges. See the
+[Python cache/poller contract](../../docs/event-acknowledgment-python-recovery-prometheus.md)
+and [shared Prometheus/Grafana integration](../../examples/event-acknowledgment-monitoring/README.md#recovery-health-python).
+
+### Recovery claim budgets and parked callbacks
+
+All durable staging methods accept `retry_budget=EventAcknowledgmentIntentRetryBudget(8,
+EventAcknowledgmentIntentRetryPolicy(1000, 300000))`, mutually exclusive with
+`retry_policy`. Install `event_acknowledgment_intent_retry_budget_schema` after the
+v1 upgrade before current helpers, including v1-only hosts. Parked callbacks retain
+protected inputs; recovery progress and health expose `parked`. Install the
+optional `event_acknowledgment_intent_retry_resume_schema`, read exact metadata
+with `aget_event_acknowledgment_intent_retry_resume_candidate`, durably persist
+`EventAcknowledgmentIntentResumeRetryBudgetOptions`, then call
+`aresume_event_acknowledgment_intent_retry_budget`. Exact original retries resolve
+uncertain commits through historical receipts. Python retains full int64 generations
+and exact microsecond fences. See
+[budget installation, exhaustion and operator resume](../../docs/event-acknowledgment-retry-budgets.md#python-budgets-and-guarded-resume).
+
+### Adopt recovery budgets for existing callback backlog
+
+`aadopt_event_acknowledgment_intent_retry_budget` attaches v2 to selected active
+unbound/v1 work with exact timestamp/count/policy guards, no live claim and no newer
+attempt. Install `event_acknowledgment_intent_budget_adoption_schema`, select metadata
+with `aget_event_acknowledgment_intent_budget_adoption_candidate`, then durably save
+`EventAcknowledgmentIntentAdoptRetryBudgetOptions` before execution. None expected
+policy requires unbound work; complete v1 timing is preserved. Frozen receipts
+resolve exact original retries across SDKs, preserving native int64 generations
+and microsecond fences. Known rejection errors expose their `.receipt`; uncertain
+COMMIT requires retrying the saved command on a fresh connection. See
+[budget adoption, guards and cancellation](../../docs/event-acknowledgment-budget-adoption.md#python-selection-adoption-and-replay).

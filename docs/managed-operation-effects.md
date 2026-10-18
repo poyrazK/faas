@@ -123,3 +123,50 @@ make Gregale reject the result after the customer transaction committed, so
 keep the configured receiver active before dispatch. This adapter does not
 provide arbitrary external API calls or interpret job/task stdout or ordinary
 workflow responses as effect requests.
+
+## Capture managed webhooks during a rehearsal
+
+A real-VM Gregale Test scenario can opt its isolated developer sessions into
+durable managed-webhook capture before source is deployed:
+
+```yaml
+actions:
+  webhooks: capture
+```
+
+Captured managed operation and managed workflow-step effects still validate the
+receiver, tenant/account scope and ownership generation. Gregale commits the
+result and effect record together, retains the named effect's receiver, type and
+payload, and creates **no outbound delivery**. Operation status and workflow
+attempt inspection return `status: captured`, `rehearsal_run_id`, and no
+`delivery_id`; attempts remain zero. Two differently named effects remain two
+intents. A stale repeated completion cannot create a second intent.
+
+The policy applies only to fresh test-session apps with no existing deployments,
+operations, workflows or deliveries. The CLI requires an explicit versioned
+acknowledgement from registration before deploying. Capture authority survives
+expiry and service-namespace cleanup. Unsupported ordinary webhook events from
+these apps are suppressed in the outbox with status `dead` and reason
+`rehearsal: unsupported webhook delivery suppressed`; manual retry cannot release
+them. Dispatcher policy checks and a database fence protect the delivery path.
+
+This adapter covers webhooks submitted through Gregale's managed-effect contract.
+It does not intercept an application's direct HTTP, email or payment SDK calls.
+The optional [serving-VM containment profile](scenario-tests.md#contain-serving-vm-outbound-traffic)
+blocks unsupported outbound connections. It does not simulate those integrations
+or add their attempts to the managed-webhook snapshot.
+The runner seals and collects committed intent before host fixture cleanup.
+Opt-in [contained command recipes](scenario-tests.md#execute-rehearsal-commands-in-microvms)
+run their cleanup commands before sealing, with durable command retirement
+receipts and the same simulated outbound boundary.
+`test rehearse` and `test compare` compare destination configuration fingerprints,
+event types and canonical payloads while preserving duplicate intents. Generated
+runtime IDs and completion order are excluded. Missing, oversized, unsealed or
+legacy evidence makes the comparison inconclusive. Update both API and
+completion/dispatch workers for complete evidence; older workers remain fenced
+from external delivery but can show suppressed ledger rows or lack fingerprints.
+See
+[scenario testing](scenario-tests.md#capture-managed-webhook-actions) for setup
+and the [capture decision](adr/20261017201003-rehearsal-webhook-capture.md) for the consistency
+and qualification boundaries, extended by
+[sealed action comparison](adr/20261017201004-sealed-rehearsal-action-comparison.md).

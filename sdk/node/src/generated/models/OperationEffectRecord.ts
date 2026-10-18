@@ -3,7 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 /**
- * Immutable effect identity and current delivery status from the signed webhook ledger.
+ * Immutable effect identity and current delivery status, or platform-captured intent for a rehearsal. Captured effects have no outbound delivery.
  */
 export type OperationEffectRecord = {
   id: string;
@@ -14,11 +14,15 @@ export type OperationEffectRecord = {
    * Stable across webhook retries; equals the effect ID.
    */
   delivery_id?: string;
+  /**
+   * Present only for platform-captured rehearsal effects; no outbound delivery was queued.
+   */
+  rehearsal_run_id?: string;
   type?: string;
   /**
-   * recorded is an opaque effect with no adapter; unavailable indicates deleted or pruned delivery history. Completion of the operation does not imply delivery succeeded.
+   * recorded is an opaque effect with no adapter; captured is retained rehearsal intent with no outbound delivery; unavailable indicates deleted or pruned delivery history. Completion of the operation does not imply delivery succeeded.
    */
-  status: 'recorded' | 'pending' | 'in_flight' | 'succeeded' | 'failed' | 'dead' | 'unavailable';
+  status: 'recorded' | 'captured' | 'pending' | 'in_flight' | 'succeeded' | 'failed' | 'dead' | 'unavailable';
   attempt: number;
   last_error?: string;
 };

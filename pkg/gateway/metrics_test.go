@@ -127,6 +127,7 @@ func TestConsumerUsageOutboxMetricsExposition(t *testing.T) {
 	m := NewMetrics()
 	m.SetUsageOutboxPending(3, 512)
 	m.IncUsageOutboxFailure()
+	m.IncUsageCommitAbort()
 	m.IncUsageDeliveryFailure()
 	m.IncUsageDelivered()
 	rec := httptest.NewRecorder()
@@ -135,6 +136,7 @@ func TestConsumerUsageOutboxMetricsExposition(t *testing.T) {
 		"gateway_consumer_usage_outbox_pending_records 3",
 		"gateway_consumer_usage_outbox_pending_bytes 512",
 		"gateway_consumer_usage_outbox_failures_total 1",
+		"gateway_usage_commit_aborts_total 1",
 		"gateway_consumer_usage_delivery_failures_total 1",
 		"gateway_consumer_usage_delivered_total 1",
 	} {

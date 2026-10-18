@@ -20,6 +20,8 @@ import (
 
 // Config is the on-disk representation of schedd's TOML config.
 type Config struct {
+	EventAcknowledgmentWriterSlot   string `toml:"event_acknowledgment_writer_slot"`
+	EventAcknowledgmentWriterRoster string `toml:"event_acknowledgment_writer_roster"`
 	// SocketPath is the unix-domain socket schedd's gRPC server binds when
 	// ListenAddr is empty (ADR-018, mode 0660 group `faas`). Defaults to
 	// /run/faas/schedd.sock.
@@ -480,6 +482,12 @@ func LoadConfig(path string) (*Config, error) {
 		if v := os.Getenv("FAAS_HOST_AGE_IDENTITY_PATH"); v != "" {
 			c.HostAgeIdentityPath = v
 		}
+		// The control-plane role renders this and faas-schedd.socket's
+		// ListenStream from one variable, so the durable socket always
+		// carries the address schedd serves (ADR-1580).
+		if v := os.Getenv("FAAS_SCHEDD_LISTEN_ADDR"); v != "" {
+			c.ListenAddr = v
+		}
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -490,6 +498,7 @@ func LoadConfig(path string) (*Config, error) {
 			// RoleSingleBox when the env is unset.
 			c.Role = role.FromConfig(string(c.Role), "FAAS_SCHEDD_ROLE")
 			applyRoutingEnv()
+			c.overlayEventAcknowledgmentWriterEnv()
 			return c, nil
 		}
 		return nil, fmt.Errorf("schedd: read %q: %w", path, err)
@@ -510,6 +519,7 @@ func LoadConfig(path string) (*Config, error) {
 	// 99-faas-node-name.conf) can override the TOML node_name on
 	// every control-plane box. Empty keeps the TOML value
 	// (single-box dev back-compat).
+	c.overlayEventAcknowledgmentWriterEnv()
 	if v := os.Getenv("FAAS_NODE_NAME"); v != "" {
 		c.NodeName = v
 	}
@@ -530,4 +540,13 @@ func LoadConfig(path string) (*Config, error) {
 	}
 	applyRoutingEnv()
 	return c, nil
+}
+
+func (c *Config) overlayEventAcknowledgmentWriterEnv() {
+	if v := os.Getenv("FAAS_EVENT_ACK_WRITER_SLOT"); v != "" {
+		c.EventAcknowledgmentWriterSlot = v
+	}
+	if v := os.Getenv("FAAS_EVENT_ACK_WRITER_ROSTER"); v != "" {
+		c.EventAcknowledgmentWriterRoster = v
+	}
 }

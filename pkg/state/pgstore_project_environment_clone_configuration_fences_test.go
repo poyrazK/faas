@@ -542,7 +542,7 @@ func TestPgCloneConfigurationFenceMigrationRoundTripAndOwnedDownRefusal(t *testi
 	if len(parts) != 2 {
 		t.Fatal("missing configuration guard downgrade")
 	}
-	// ADR-590's protection successor refines this function. Exercise the
+	// ADR-590's protection and purge successors refine these functions. Exercise the
 	// actual ordered downgrade/upgrade chain and compare the final schema.
 	successorRaw, err := migrations.FS.ReadFile("20261007125239060_object_protection_capture_admission.sql")
 	if err != nil {
@@ -576,15 +576,13 @@ func TestPgCloneConfigurationFenceMigrationRoundTripAndOwnedDownRefusal(t *testi
 	if len(unused) != 2 {
 		t.Fatal("missing unused reservation guard downgrade")
 	}
-	// H10-94 redefines assert_clone_configuration_mutable after the guard
-	// migration, so the chain must unwind and replay it too.
-	purgeOrderRaw, err := migrations.FS.ReadFile("20261016084512417_clone_guard_account_purge_order.sql")
+	accountPurgeRaw, err := migrations.FS.ReadFile("20261016084512417_clone_guard_account_purge_order.sql")
 	if err != nil {
 		t.Fatal(err)
 	}
-	purgeOrder := strings.SplitN(string(purgeOrderRaw), "-- +goose Down", 2)
-	if len(purgeOrder) != 2 {
-		t.Fatal("missing account purge order downgrade")
+	accountPurge := strings.SplitN(string(accountPurgeRaw), "-- +goose Down", 2)
+	if len(accountPurge) != 2 {
+		t.Fatal("missing account purge ordering downgrade")
 	}
 	f := newCloneConfigurationFenceFixture(t)
 	tx, err := f.pool.Begin(f.ctx)
@@ -610,7 +608,7 @@ func TestPgCloneConfigurationFenceMigrationRoundTripAndOwnedDownRefusal(t *testi
 	if err := tx.QueryRow(f.ctx, shape).Scan(&before); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tx.Exec(f.ctx, purgeOrder[1]); err != nil {
+	if _, err := tx.Exec(f.ctx, accountPurge[1]); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := tx.Exec(f.ctx, unused[1]); err != nil {
@@ -643,7 +641,7 @@ func TestPgCloneConfigurationFenceMigrationRoundTripAndOwnedDownRefusal(t *testi
 	if _, err := tx.Exec(f.ctx, unused[0]); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tx.Exec(f.ctx, purgeOrder[0]); err != nil {
+	if _, err := tx.Exec(f.ctx, accountPurge[0]); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.QueryRow(f.ctx, shape).Scan(&after); err != nil || before != after {

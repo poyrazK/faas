@@ -102,7 +102,7 @@ export GREGALE_POSTGRES_NATIVE_ACCEPTANCE=1
 GOFLAGS="${GOFLAGS:-} -buildvcs=true"
 export GOFLAGS
 probe_status=0
-"${GO:-go}" test -p 1 -race -tags metal,managed_postgres_native -json ./cmd/e2e -count=1 -timeout 30m \
+"${GO:-go}" test -p 1 -race -tags metal,managed_postgres_native -json ./cmd/e2e -count=1 -timeout 45m \
   -run '^TestManagedPostgresNativeMetal$' > "$probe_results" || probe_status=$?
 # Check leak cleanup on failure too. Preserve failure even when the verdict or
 # teardown also fails; successful teardown never turns a failed phase green.

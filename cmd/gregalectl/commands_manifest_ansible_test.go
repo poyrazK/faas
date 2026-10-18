@@ -136,6 +136,13 @@ func TestRenderManifestAnsibleFiles_DerivesRouting(t *testing.T) {
 	if !strings.Contains(controlVars, `faas_schedd_gateway_metrics_url: ""`) {
 		t.Errorf("control host vars should disable unreachable remote gateway metrics:\n%s", controlVars)
 	}
+	// ADR-1580: the durable schedd socket listens on exactly schedd's bind.
+	if !strings.Contains(controlVars, `faas_schedd_listen_addr: "tcp://0.0.0.0:7100"`) {
+		t.Errorf("control host vars missing schedd listen address from daemons.schedd.bind:\n%s", controlVars)
+	}
+	if strings.Contains(computeVars, "faas_schedd_listen_addr") {
+		t.Errorf("compute host vars must not drive the control-plane schedd socket:\n%s", computeVars)
+	}
 	if !strings.Contains(controlVars, "faas_meterd_config_managed: true") ||
 		!strings.Contains(controlVars, `faas_meterd_egress_socket: "tcp://egress.faas:9092"`) {
 		t.Errorf("control host vars missing managed meterd egress route:\n%s", controlVars)
@@ -483,5 +490,140 @@ func TestRenderManifestAnsibleFiles_CustomDomainEdge(t *testing.T) {
 	}
 	if strings.Contains(computeVars, "faas_custom_domain") {
 		t.Errorf("compute host vars carry public-edge custom-domain switches:\n%s", computeVars)
+	}
+}
+
+// ADR-1343: public_edge.compute_nodes runs the app edge on the compute nodes.
+// The control plane gets a private listener for the edges' forwarded routes,
+// each compute node gets that listener as its target and admits its peers'
+// edges for the compute-pool fallback; with the switch off nothing renders.
+func TestRenderManifestAnsibleFiles_ComputeEdge(t *testing.T) {
+	base := strings.Replace(validManifestYAML,
+		"    - name: fsn-1\n      role: control-plane\n",
+		"    - name: fsn-1\n      role: control-plane\n      address: 10.42.0.1:7100\n    - name: fsn-2\n      role: compute-only\n      address: 10.42.0.2:50051\n", 1)
+	for _, tc := range []struct {
+		name    string
+		yaml    string
+		enabled bool
+	}{
+		{name: "off", yaml: base},
+		{name: "on", yaml: base + "public_edge:\n  compute_nodes: true\n", enabled: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, err := manifest.Parse([]byte(tc.yaml))
+			if err != nil {
+				t.Fatalf("manifest.Parse: %v", err)
+			}
+			if errs := m.Validate(); errs != nil {
+				t.Fatalf("manifest.Validate: %v", errs)
+			}
+			files, err := renderManifestAnsibleFiles(m, t.TempDir())
+			if err != nil {
+				t.Fatalf("renderManifestAnsibleFiles: %v", err)
+			}
+			var controlVars, computeVars string
+			for _, file := range files {
+				switch {
+				case strings.HasSuffix(file.Path, "fsn-1.yml"):
+					controlVars = string(file.Body)
+				case strings.HasSuffix(file.Path, "fsn-2.yml"):
+					computeVars = string(file.Body)
+				}
+			}
+			if !tc.enabled {
+				if strings.Contains(controlVars+computeVars, "faas_edge_") {
+					t.Fatalf("edge switches rendered with public_edge.compute_nodes off:\n%s\n%s", controlVars, computeVars)
+				}
+				return
+			}
+			for _, want := range []string{"faas_edge_on_compute_nodes: true", `faas_edge_private_listen_addr: "10.42.0.1:8090"`} {
+				if !strings.Contains(controlVars, want) {
+					t.Errorf("control host vars missing %q:\n%s", want, controlVars)
+				}
+			}
+			for _, want := range []string{"faas_edge_on_compute_nodes: true", `faas_edge_control_plane_target: "http://10.42.0.1:8090"`, `faas_edge_peer_cidrs: ["10.42.0.2/32"]`} {
+				if !strings.Contains(computeVars, want) {
+					t.Errorf("compute host vars missing %q:\n%s", want, computeVars)
+				}
+			}
+			if strings.Contains(controlVars, "faas_edge_control_plane_target") || strings.Contains(computeVars, "faas_edge_private_listen_addr") {
+				t.Errorf("edge switches rendered on the wrong role:\n%s\n%s", controlVars, computeVars)
+			}
+		})
+	}
+}
+
+// ADR-1344 §8: postgresql.standby puts the warm standby in its own inventory
+// group, outside control_plane and compute_nodes, and tells the primary which
+// address to admit for replication. Without it nothing renders.
+func TestRenderManifestAnsibleFiles_PostgresStandby(t *testing.T) {
+	base := strings.Replace(validManifestYAML,
+		"    - name: fsn-1\n      role: control-plane\n",
+		"    - name: fsn-1\n      role: control-plane\n      address: 10.42.0.1:7100\n    - name: fsn-2\n      role: compute-only\n      address: 10.42.0.2:50051\n", 1)
+	withStandby := strings.Replace(base, "  policy: on-boot\n",
+		"  policy: on-boot\n  standby:\n    name: standby-1\n    address: 10.42.0.9\n    ssh_host: 198.51.100.9\n", 1)
+	for _, tc := range []struct {
+		name    string
+		yaml    string
+		standby bool
+	}{
+		{name: "absent", yaml: base},
+		{name: "declared", yaml: withStandby, standby: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, err := manifest.Parse([]byte(tc.yaml))
+			if err != nil {
+				t.Fatalf("manifest.Parse: %v", err)
+			}
+			if errs := m.Validate(); errs != nil {
+				t.Fatalf("manifest.Validate: %v", errs)
+			}
+			files, err := renderManifestAnsibleFiles(m, t.TempDir())
+			if err != nil {
+				t.Fatalf("renderManifestAnsibleFiles: %v", err)
+			}
+			var inventory, controlVars, computeVars, standbyVars string
+			for _, file := range files {
+				switch {
+				case strings.HasSuffix(file.Path, "hosts.ini"):
+					inventory = string(file.Body)
+				case strings.HasSuffix(file.Path, "fsn-1.yml"):
+					controlVars = string(file.Body)
+				case strings.HasSuffix(file.Path, "fsn-2.yml"):
+					computeVars = string(file.Body)
+				case strings.HasSuffix(file.Path, "standby-1.yml"):
+					standbyVars = string(file.Body)
+				}
+			}
+			if !tc.standby {
+				if strings.Contains(inventory, "postgres_standby") || strings.Contains(controlVars, "faas_postgres_standby") || standbyVars != "" {
+					t.Fatalf("standby rendered without postgresql.standby:\n%s\n%s", inventory, controlVars)
+				}
+				return
+			}
+			if !strings.Contains(inventory, "[postgres_standby]\nstandby-1\n") {
+				t.Errorf("inventory has no postgres_standby group:\n%s", inventory)
+			}
+			for _, group := range []string{"[control_plane]", "[compute_nodes]"} {
+				section := inventory[strings.Index(inventory, group):]
+				if next := strings.Index(section[1:], "["); next >= 0 {
+					section = section[:next+1]
+				}
+				if strings.Contains(section, "standby-1") {
+					t.Errorf("standby is in %s, which would turn on leases or count it as compute:\n%s", group, inventory)
+				}
+			}
+			if !strings.Contains(controlVars, `faas_postgres_standby_address: "10.42.0.9"`) {
+				t.Errorf("primary does not admit the standby:\n%s", controlVars)
+			}
+			if strings.Contains(computeVars, "faas_postgres_standby") {
+				t.Errorf("compute host carries standby vars:\n%s", computeVars)
+			}
+			for _, want := range []string{`ansible_host: "198.51.100.9"`, `faas_private_address: "10.42.0.9"`, "faas_postgres_standby_mode: true"} {
+				if !strings.Contains(standbyVars, want) {
+					t.Errorf("standby host vars missing %q:\n%s", want, standbyVars)
+				}
+			}
+		})
 	}
 }

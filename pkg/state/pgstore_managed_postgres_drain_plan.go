@@ -125,6 +125,25 @@ func (s *PgStore) ManagedPostgresDrainPlan(ctx context.Context, id string) (Mana
 		return ManagedPostgresDrainPlan{}, err
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	plan, err := readManagedPostgresDrainPlan(ctx, tx, id, true)
+	if err != nil {
+		return plan, err
+	}
+	return plan, mapErr(tx.Commit(ctx))
+}
+
+// ObserveManagedPostgresDrainPlan reads existing evidence without taking owner
+// locks or reserving work. The caller must supply a repeatable-read transaction
+// or hold the app lock to stabilize authority, inventory and retirement receipts.
+// This observation is never authority to retire a VM or publish credentials.
+func ObserveManagedPostgresDrainPlan(ctx context.Context, tx pgx.Tx, id string) (ManagedPostgresDrainPlan, error) {
+	if !qualificationRecoveryUUIDValid(id) {
+		return ManagedPostgresDrainPlan{}, ErrInvalidArgument
+	}
+	return readManagedPostgresDrainPlan(ctx, tx, id, false)
+}
+
+func readManagedPostgresDrainPlan(ctx context.Context, tx pgx.Tx, id string, lockOwner bool) (ManagedPostgresDrainPlan, error) {
 	q := sqlc.New()
 	header, err := q.GetManagedPostgresDrainPlan(ctx, tx, id)
 	if err != nil {
@@ -139,7 +158,14 @@ func (s *PgStore) ManagedPostgresDrainPlan(ctx context.Context, id string) (Mana
 	if header.BlockerCode != "" {
 		plan.Blockers = append(plan.Blockers, header.BlockerCode)
 	}
-	owner, err := q.LockManagedPostgresDrainPlanOwner(ctx, tx, f.AppID)
+	var owner sqlc.LockManagedPostgresDrainPlanOwnerRow
+	if lockOwner {
+		owner, err = q.LockManagedPostgresDrainPlanOwner(ctx, tx, f.AppID)
+	} else {
+		var row sqlc.ReadManagedPostgresDrainPlanOwnerRow
+		row, err = q.ReadManagedPostgresDrainPlanOwner(ctx, tx, f.AppID)
+		owner = sqlc.LockManagedPostgresDrainPlanOwnerRow(row)
+	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		plan.Blockers = append(plan.Blockers, "authority_missing")
 	} else if err != nil {
@@ -181,7 +207,7 @@ func (s *PgStore) ManagedPostgresDrainPlan(ctx context.Context, id string) (Mana
 	} else if plan.Retired == plan.InventoryCount && plan.InventoryCount > 0 {
 		plan.State = ManagedPostgresDrainPlanCatalogRetired
 	}
-	return plan, mapErr(tx.Commit(ctx))
+	return plan, nil
 }
 
 func drainPlanAuthorityBlocker(f ManagedPostgresDrainPlanFrame, owner sqlc.LockManagedPostgresDrainPlanOwnerRow) string {

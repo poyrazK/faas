@@ -69,6 +69,9 @@ type ObjectUploadCompletion struct {
 	EncryptionDefaultRevision int64                         `json:"-"`
 	// RuntimeSinglePutLimit is an admission input, never persisted or exposed.
 	RuntimeSinglePutLimit int64 `json:"-"`
+	// QueueNodeSettlement enrolls an owned-node acknowledgement at admission.
+	// It is transient; the durable outbox preserves the original placement.
+	QueueNodeSettlement bool `json:"-"`
 	// VerifiedEncryption is transient provider proof; snapshots alone cannot settle a write.
 	VerifiedEncryption api.ObjectEncryption `json:"-"`
 }

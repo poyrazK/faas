@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"time"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/apptaskproto"
@@ -20,6 +21,7 @@ type AppTaskRestoreSpec struct {
 }
 
 type AppTaskRestoreOutcome struct {
+	HostIP   string
 	Instance string
 	LeaseUID int
 	Method   fcvm.WakeMethod
@@ -34,18 +36,28 @@ func (c *VMMClient) RestoreAppTask(ctx context.Context, spec AppTaskRestoreSpec)
 	}
 	fields, _ := wire.FromContext(ctx)
 	ctx = wire.WithCorrelationOutgoing(ctx, fields)
-	resp, err := c.cli.RestoreAppTask(ctx, &vmmdpb.RestoreAppTaskRequest{
+	restore := c.cli.RestoreAppTask
+	if spec.App.RehearsalRunID != "" {
+		restore = c.cli.RestoreRehearsalAppTask
+	}
+	resp, err := restore(ctx, &vmmdpb.RestoreAppTaskRequest{
 		Instance: spec.Instance, App: spec.App.toProto(), Plan: string(spec.App.Plan),
 		AccountId: spec.App.AccountID, DeploymentId: spec.DeploymentID,
 	})
 	if err != nil {
 		return nil, liftErr(err)
 	}
+	if spec.App.RehearsalRunID != "" && (resp.GetRehearsalRunId() != spec.App.RehearsalRunID || resp.GetInstance() != spec.Instance || resp.GetNetns() == "" || resp.GetCommandVersion() != 1) {
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		_ = c.Destroy(cleanupCtx, spec.Instance)
+		return nil, errors.New("runtime did not acknowledge contained command support")
+	}
 	if err := c.confirmSecretAliasSupport(ctx, spec.App, spec.Instance, resp.GetSupportsSecretAliases()); err != nil {
 		return nil, err
 	}
 	return &AppTaskRestoreOutcome{
-		Instance: resp.GetInstance(), LeaseUID: int(resp.GetLeaseUid()), Method: fcvm.WakeMethod(resp.GetMethod()),
+		HostIP: resp.GetHostIp(), Instance: resp.GetInstance(), LeaseUID: int(resp.GetLeaseUid()), Method: fcvm.WakeMethod(resp.GetMethod()),
 	}, nil
 }
 

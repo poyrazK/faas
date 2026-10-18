@@ -1,6 +1,7 @@
 import { createDataClient, dataRequest, validatedRpc, validateRpcResponse, classifyDataError } from '@gregale/data'
 import type { DataClientOptions } from '@gregale/data'
 import type { Database } from './database.types.js'
+import { orderSummaryArgs, type OrderSummaryFilters } from './order-summary.js'
 
 export type Order = Pick<Database['api']['Tables']['team_orders']['Row'], 'id' | 'tenant_id' | 'created_by' | 'total_cents' | 'status' | 'version'>
 export type Status = Order['status']
@@ -24,6 +25,7 @@ export function teamsClient(options: DataClientOptions, tenant: string) {
   const db = createDataClient<Database>(options).schema('api')
   return {
     db, tenant,
+    summary: (filters: OrderSummaryFilters = {}) => db.rpc('summarize_team_orders', orderSummaryArgs(tenant, filters)).retry(false),
     async membership(): Promise<Membership | null> {
       const result = await dataRequest(db.from('team_members').select('tenant_id,subject,role').eq('tenant_id', tenant), { timeoutMs: 5000 })
       const checked = validateRpcResponse(result, { parse(value) {

@@ -2371,7 +2371,7 @@ func TestCmdDeployTarball_GithubFlag(t *testing.T) {
 	if !strings.Contains(out, "Ref: ${{ github.sha }}") {
 		t.Errorf("snippet missing ${{ github.sha }} placeholder; got:\n%s", out)
 	}
-	if !strings.Contains(out, "app: my-app") {
+	if !strings.Contains(out, `app: "my-app"`) {
 		t.Errorf("snippet missing the --app slug; got:\n%s", out)
 	}
 	if !strings.Contains(out, "uses: poyrazK/faas/.github/actions/deploy@"+githubActionDefaultSHA+" # v0") {
@@ -2718,5 +2718,41 @@ func TestStartupCrashExcerptShowsTheError(t *testing.T) {
 	}
 	if got := startupCrashExcerpt("build failed: exit status 1"); got != nil {
 		t.Fatalf("non-crash excerpt = %q, want nil", got)
+	}
+}
+
+// TestCmdTrafficStatusSeparatesScopes pins H10-114: a project app live in
+// three environments printed one table ending "Total 300%". Each scope now
+// carries its own total; a single-scope app keeps the original layout.
+func TestCmdTrafficStatusSeparatesScopes(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSONTest(w, api.DeploymentListResponse{Items: []api.DeploymentResponse{
+			{ID: "dep-staging", Revision: 6, Scope: "staging", Status: statusLive, TrafficPercent: 100},
+			{ID: "dep-prod", Revision: 5, Scope: "production", Status: statusLive, TrafficPercent: 100},
+			{ID: "dep-default", Revision: 1, Status: statusLive, TrafficPercent: 100},
+		}})
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_test_x")
+
+	out, restore := captureStdout(t)
+	defer restore()
+	if code := cmdTraffic([]string{"status", "demo"}); code != 0 {
+		t.Fatalf("traffic status exit = %d", code)
+	}
+	output := out.String()
+	for _, want := range []string{
+		"SCOPE\tREVISION\tDEPLOYMENT\tSTATUS\tTRAFFIC",
+		"default\tv1\tdep-default", "Total default\t\t\t\t100%",
+		"production\tv5\tdep-prod", "Total production\t\t\t\t100%",
+		"staging\tv6\tdep-staging", "Total staging\t\t\t\t100%",
+	} {
+		if !strings.Contains(output, want) {
+			t.Errorf("output missing %q: %s", want, output)
+		}
+	}
+	if strings.Contains(output, "300%") {
+		t.Errorf("scopes were summed into one total: %s", output)
 	}
 }

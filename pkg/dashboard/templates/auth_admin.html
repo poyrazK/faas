@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer">
 <title>{{.Title}} — Gregale</title>
-<style nonce="{{.Nonce}}">[hidden]{display:none!important}body{font:16px system-ui;max-width:1100px;margin:2rem auto;padding:0 1rem}section{margin:1.5rem 0}table{border-collapse:collapse;width:100%}th,td{padding:.5rem;text-align:left;border-bottom:1px solid #ccc;vertical-align:top}code{overflow-wrap:anywhere}button,select,input{font:inherit;padding:.4rem .6rem}nav{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;margin:.75rem 0}[aria-pressed="true"]{font-weight:700}.danger{color:#b00020}.muted{color:#555}dl{display:grid;grid-template-columns:max-content 1fr;gap:.25rem 1rem}dt{color:#555}form{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center}input[type=search]{min-width:16rem}#detail{border:1px solid #ccc;border-radius:6px;padding:1rem}#detail>button:last-child{margin-top:1rem}#settings-form,#provider-form,#email-form{display:grid;gap:.6rem;max-width:40rem}#settings-form label,#provider-form label,#email-form label{display:grid;gap:.2rem}fieldset{display:flex;flex-wrap:wrap;gap:.75rem}</style></head>
+<style nonce="{{.Nonce}}">[hidden]{display:none!important}body{font:16px system-ui;max-width:1100px;margin:2rem auto;padding:0 1rem}section{margin:1.5rem 0}table{border-collapse:collapse;width:100%}th,td{padding:.5rem;text-align:left;border-bottom:1px solid #ccc;vertical-align:top}code{overflow-wrap:anywhere}button,select,input{font:inherit;padding:.4rem .6rem}nav{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;margin:.75rem 0}[aria-pressed="true"]{font-weight:700}.danger{color:#b00020}.muted{color:#555}dl{display:grid;grid-template-columns:max-content 1fr;gap:.25rem 1rem}dt{color:#555}form{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center}input[type=search]{min-width:16rem}#detail{border:1px solid #ccc;border-radius:6px;padding:1rem}#detail>button:last-child{margin-top:1rem}#settings-form,#provider-form,#email-form{display:grid;gap:.6rem;max-width:40rem}#settings-form label,#provider-form label,#email-form label{display:grid;gap:.2rem}.sso-form{display:grid;gap:.5rem;max-width:40rem;margin:.5rem 0}.sso-form label{display:grid;gap:.2rem}fieldset{display:flex;flex-wrap:wrap;gap:.75rem}</style></head>
 <body><header><a href="/dashboard/apps/{{.Data.Slug}}">{{.Data.Slug}}</a> · <a href="/dashboard/apps/{{.Data.Slug}}/env">Environment &amp; secrets</a></header>
 <main id="auth-admin" data-origin="{{.Data.AuthOrigin}}" data-slug="{{.Data.Slug}}">{{template "email-verification-banner" .}}<h1>Application Auth</h1>
 <p>Settings, users and organizations of the Auth app <code>{{.Data.Slug}}</code>; these are your application's users, not your Gregale team.</p>
@@ -22,6 +22,8 @@
 <input type="hidden" name="password_require">
 <label>Refuse passwords found in known breaches (Have I Been Pwned)<select name="leaked_password_check"><option value="off">Off</option><option value="on">On</option></select></label>
 <label>Authenticator-app (TOTP) MFA<select name="mfa"><option value="on">Users may enrol</option><option value="off">No new enrolments; enrolled users keep using it</option></select></label>
+<label>SMS codes as a second factor (needs an SMS provider)<select name="mfa_phone"><option value="off">Off</option><option value="on">Users may enrol</option></select></label>
+<label>Recovery codes for users with a second factor<select name="recovery_codes"><option value="off">Off</option><option value="on">Users may create them</option></select></label>
 <label>Passkeys<select name="passkeys"><option value="off">Off</option><option value="on">Users may sign in with a passkey</option></select></label>
 <fieldset><legend>Hosted pages</legend>
 <label>Display name (also used in emails)<input name="brand_name" maxlength="60"></label>
@@ -33,7 +35,23 @@
 <label>Site key<input name="captcha_site_key" autocomplete="off" spellcheck="false" maxlength="100"></label>
 <label>Secret key (required whenever you change CAPTCHA)<input name="captcha_secret" type="password" autocomplete="off" maxlength="4096"></label>
 </fieldset>
+<fieldset><legend>Phone sign-in by text message, through your own SMS account</legend>
+<label>Provider<select name="sms_provider"><option value="">Off</option>{{range .Data.SMSProviders}}<option value="{{.}}">{{.}}</option>{{end}}</select></label>
+<label>Account (Twilio account SID or Vonage API key)<input name="sms_account" autocomplete="off" spellcheck="false" maxlength="256"></label>
+<label>Sender (Twilio messaging or Verify service SID, MessageBird originator, Textlocal sender or Vonage from)<input name="sms_sender" autocomplete="off" spellcheck="false" maxlength="256"></label>
+<label>Secret (auth token, access key, API key or API secret; required whenever you change SMS)<input name="sms_secret" type="password" autocomplete="off" maxlength="4096"></label>
+<label>Countries it may text: calling codes such as 1,44,49 (empty for every country)<input name="sms_countries" autocomplete="off" spellcheck="false" maxlength="250" pattern="[0-9, +]*"></label>
+</fieldset>
 <label>Keep sign-in activity for this many days (empty keeps it forever)<input name="activity_retention_days" type="number" min="1" max="3650"></label>
+<label>Organization single sign-on (SAML)<select name="sso"><option value="off">Off</option><option value="on">On (register identity providers with gregale auth sso add)</option></select></label>
+<label>Self-service SSO for organizations<select name="org_sso"><option value="off">Off</option><option value="on">Organizations may verify domains and connect their own identity provider</option></select></label>
+<p id="sso-status" class="muted"></p>
+<label>OAuth 2.1 server, for third-party apps and MCP clients<select name="oauth_server"><option value="off">Off</option><option value="on">On (register clients with gregale auth oauth-clients add)</option></select></label>
+<label>Clients register themselves (RFC 7591), as MCP clients do<select name="oauth_registration"><option value="off">Off</option><option value="on">On</option></select></label>
+<p id="oauth-status" class="muted"></p>
+<label>Anonymous users (people start without an account; turn on CAPTCHA with it)<select name="anonymous"><option value="off">Off</option><option value="on">On</option></select></label>
+<label>Delete anonymous users idle this many days (empty keeps them)<input name="anonymous_retention_days" type="number" min="1" max="3650"></label>
+<label>Users link and unlink sign-in methods<select name="identity_linking"><option value="off">Off</option><option value="on">On</option></select></label>
 <button type="submit">Save and restart</button>
 </form>
 <h3>Sign-in providers</h3>
@@ -73,7 +91,7 @@
 <p id="key-error" class="danger" role="alert"></p>
 <p>Create a key with <code>gregale auth admin-key create {{.Data.Slug}}</code>. This page sends it only to <code>{{.Data.AuthOrigin}}</code> and keeps it in this browser tab until you close the tab or choose Forget key. User records go from your Auth app to this browser and never through Gregale.</p></section>
 <section id="workspace" hidden>
-<nav aria-label="Views"><button type="button" data-tab="users" aria-pressed="true">Users</button><button type="button" data-tab="orgs" aria-pressed="false">Organizations</button><button type="button" data-tab="activity" aria-pressed="false">Activity</button><button type="button" id="forget">Forget key</button></nav>
+<nav aria-label="Views"><button type="button" data-tab="users" aria-pressed="true">Users</button><button type="button" data-tab="orgs" aria-pressed="false">Organizations</button><button type="button" data-tab="activity" aria-pressed="false">Activity</button><button type="button" data-tab="sso" aria-pressed="false">SSO</button><button type="button" id="forget">Forget key</button></nav>
 <form id="search" role="search"><label for="query" class="muted">Search</label><input type="search" id="query" maxlength="200"><button type="submit">Search</button><button type="button" id="export" hidden>Export CSV</button></form>
 <p id="status" role="status" aria-live="polite"></p>
 <table id="list"><thead></thead><tbody></tbody></table>
@@ -92,10 +110,15 @@
     clear() { try { sessionStorage.removeItem(storageKey) } catch { /* memory only */ } },
   }
   const perPage = 50
-  let key = store.get(), tab = 'users', page = 1, search = '', loads = 0
+  let key = store.get(), tab = 'users', page = 1, search = '', loads = 0, ssoInfo = null
   const messages = {
     last_owner: 'This user is the last owner of an organization that has other members. Make another member an owner first.',
     not_found: 'It no longer exists.', invalid_duration: 'Choose a ban duration.',
+    sso_disabled: 'Organization SSO is off. Turn it on under Settings first.', invalid_metadata: 'Give an HTTPS metadata URL or the metadata XML, not both.',
+    invalid_domains: 'List one or more email domains, such as acme.com.', organization_not_found: 'No organization has that slug or ID.',
+    invalid_role: 'An identity provider cannot grant the owner role.', unknown_role: 'That role does not exist.',
+    sso_domain_already_exists: 'Another identity provider already serves one of those domains.', saml_idp_already_exists: 'That identity provider is already registered.',
+    saml_metadata_fetch_failed: 'The Auth app could not fetch that metadata URL.',
   }
   const el = (tag, text, attrs = {}) => {
     const node = document.createElement(tag)
@@ -202,6 +225,21 @@
         setTable(['Time', 'Event', 'User'], activityRows(data.entries, true))
         pager(null, data.more)
         say(data.entries.length ? '' : 'No activity matches.')
+      } else if (tab === 'sso') {
+        let data
+        try { data = await fetchView('/admin/v1/sso') } catch (error) {
+          if (error.data?.code !== 'sso_disabled') throw error
+          setTable([], []); pager(0); say(messages.sso_disabled); return
+        }
+        setTable(['Email domains', 'Entity ID', 'Users join', ''], data.providers.map(provider => {
+          const row = el('tr')
+          row.append(el('td', provider.domains.join(', ')), el('td', provider.entity_id || '—'), el('td', provider.organization ? provider.organization.slug + ' as ' + provider.organization.role : '—'))
+          const cell = el('td'); cell.append(button('Open', () => showProvider(provider))); row.append(cell)
+          return row
+        }))
+        pager(data.providers.length)
+        say(data.providers.length ? '' : 'No identity providers yet.')
+        showAddProvider()
       } else {
         const data = await fetchView('/admin/v1/orgs?' + qs)
         setTable(['Slug', 'Name', 'Members', 'Created', ''], data.organizations.map(org => {
@@ -311,6 +349,73 @@
     } catch (error) { say(error.message) }
   }
 
+  // Identity providers for organization single sign-on. The owner gives the
+  // provider the entity ID and ACS URL below; provider records stay in the
+  // customer's database like users.
+  const field = (label, name, attrs = {}) => { const input = el(attrs.rows ? 'textarea' : 'input', null, { name, ...attrs }); const wrap = el('label', label); wrap.append(input); return wrap }
+  const serviceProvider = () => ssoInfo?.enabled
+    ? facts([['Entity ID (metadata URL)', ssoInfo.entity_id], ['ACS URL', ssoInfo.acs_url]])
+    : el('p', 'Organization SSO is off; turn it on under Settings.', { class: 'muted' })
+  const providerForm = (submitLabel, fields, toBody, send) => {
+    const form = el('form', null, { class: 'sso-form' })
+    const result = el('p', '', { role: 'status' })
+    form.append(...fields, el('button', submitLabel, { type: 'submit' }), result)
+    form.addEventListener('submit', async event => {
+      event.preventDefault()
+      const values = Object.fromEntries(new FormData(form))
+      result.textContent = 'Saving…'
+      try { result.textContent = await send(toBody(values)) } catch (error) { result.textContent = error.message }
+    })
+    return form
+  }
+  const domainsOf = value => value.split(/[\s,]+/).filter(Boolean)
+  const joined = data => data.members_added ? ' ' + data.members_added + ' existing user(s) joined the organization.' : ''
+
+  function showAddProvider() {
+    const panel = $('detail')
+    panel.replaceChildren(
+      el('h2', 'Add an identity provider'), el('p', 'Register these with the identity provider (Okta, Entra ID, Google Workspace or any SAML 2.0 provider):'), serviceProvider(),
+      providerForm('Add identity provider', [
+        field('Metadata URL (HTTPS)', 'metadata_url', { type: 'url', maxlength: '2048' }),
+        field('or metadata XML', 'metadata_xml', { rows: '4', spellcheck: 'false' }),
+        field('Email domains, comma-separated', 'domains', { required: '', placeholder: 'acme.com' }),
+        field('Organization its users join (slug or ID; optional)', 'organization', { maxlength: '64' }),
+        field('Role they join with', 'role', { value: 'member', maxlength: '32' }),
+      ], values => ({
+        ...(values.metadata_url ? { metadata_url: values.metadata_url } : {}), ...(values.metadata_xml.trim() ? { metadata_xml: values.metadata_xml } : {}),
+        domains: domainsOf(values.domains), ...(values.organization.trim() ? { organization: values.organization.trim(), role: values.role.trim() || 'member' } : {}),
+      }), async body => { const data = await call('POST', '/admin/v1/sso', body); await load(); say('Added the identity provider.' + joined(data)); return '' }),
+    )
+    panel.hidden = false
+  }
+
+  function showProvider(provider) {
+    const panel = $('detail')
+    const path = '/admin/v1/sso/' + encodeURIComponent(provider.id)
+    const patch = async (body, done) => { const data = await call('PATCH', path, body); await load(); showProvider(data.provider); return done(data) }
+    const confirmRemove = button('Confirm: remove this identity provider; its users can no longer sign in through it', async () => {
+      try { await call('DELETE', path); await load(); say('Removed the identity provider.') } catch (error) { say(error.message) }
+    }, { class: 'danger', hidden: '' })
+    panel.replaceChildren(
+      el('h2', provider.domains.join(', ')),
+      facts([['Provider ID', provider.id], ['Entity ID', provider.entity_id || '—'], ['Metadata URL', provider.metadata_url || 'Metadata XML'],
+        ['Users join', provider.organization ? provider.organization.slug + ' as ' + provider.organization.role : 'No organization']]),
+      el('h3', 'Email domains'),
+      providerForm('Save domains', [field('Comma-separated', 'domains', { required: '', value: provider.domains.join(', ') })], values => ({ domains: domainsOf(values.domains) }), body => patch(body, () => 'Saved.')),
+      el('h3', 'Organization'),
+      providerForm('Link', [field('Organization (slug or ID)', 'organization', { required: '', value: provider.organization?.slug ?? '' }), field('Role', 'role', { value: provider.organization?.role ?? 'member' })],
+        values => ({ organization: values.organization.trim(), role: values.role.trim() || 'member' }), body => patch(body, data => 'Linked.' + joined(data))),
+      ...(provider.organization ? [button('Unlink; members stay', async () => { try { await patch({ organization: null }, () => '') } catch (error) { say(error.message) } })] : []),
+      el('h3', 'Metadata'),
+      providerForm('Replace metadata URL', [field('Metadata URL (HTTPS)', 'metadata_url', { type: 'url', required: '', value: provider.metadata_url ?? '' })], values => ({ metadata_url: values.metadata_url }), body => patch(body, () => 'Saved.')),
+      el('h3', 'Register with the identity provider'), serviceProvider(),
+      button('Remove identity provider', () => { confirmRemove.hidden = false; confirmRemove.focus() }, { class: 'danger' }), confirmRemove,
+      button('Close', () => { showAddProvider() }),
+    )
+    panel.hidden = false
+    panel.scrollIntoView({ block: 'nearest' })
+  }
+
   function open() {
     $('key-section').hidden = true
     $('workspace').hidden = false
@@ -331,7 +436,8 @@
       page = 1
       for (const other of document.querySelectorAll('[data-tab]')) other.setAttribute('aria-pressed', String(other === tabButton))
       $('export').hidden = tab !== 'activity'
-      $('query').placeholder = { users: 'Email or name', orgs: 'Slug or name', activity: 'Email, or an event such as login' }[tab]
+      $('search').hidden = tab === 'sso'
+      $('query').placeholder = { users: 'Email or name', orgs: 'Slug or name', activity: 'Email, or an event such as login', sso: '' }[tab]
       load()
     })
   }
@@ -388,16 +494,24 @@
       site_url: settings.site_url, redirect_urls: settings.redirect_urls.join('\n'), signup: settings.signup.enabled ? 'on' : 'off',
       autoconfirm: settings.signup.autoconfirm ? 'on' : 'off', password_min_length: String(settings.password.min_length),
       leaked_password_check: settings.password.leaked_password_check ? 'on' : 'off', mfa: settings.mfa.totp ? 'on' : 'off',
+      mfa_phone: settings.mfa.phone ? 'on' : 'off', recovery_codes: settings.mfa.recovery_codes ? 'on' : 'off',
       passkeys: settings.passkeys?.enabled ? 'on' : 'off',
       brand_name: settings.branding?.name ?? '', brand_color: settings.branding?.color ?? '', brand_logo_url: settings.branding?.logo_url ?? '',
       captcha_provider: settings.captcha?.provider ?? '', captcha_site_key: settings.captcha?.site_key ?? '', captcha_secret: '',
       activity_retention_days: settings.activity?.retention_days ? String(settings.activity.retention_days) : '',
+      sms_provider: settings.phone?.enabled ? settings.phone.provider : '', sms_account: '', sms_sender: '', sms_secret: '',
+      sso: settings.sso?.enabled ? 'on' : 'off', sms_countries: (settings.phone?.countries ?? []).join(','), org_sso: settings.sso?.self_service ? 'on' : 'off',
+      oauth_server: settings.oauth?.enabled ? 'on' : 'off', oauth_registration: settings.oauth?.dynamic_registration ? 'on' : 'off',
+      anonymous: settings.anonymous?.enabled ? 'on' : 'off', anonymous_retention_days: settings.anonymous?.retention_days ? String(settings.anonymous.retention_days) : '',
+      identity_linking: settings.identity_linking ? 'on' : 'off',
     }
     for (const box of classes) box.checked = settings.password.required.includes(box.value)
     values.password_require = requireValue()
     for (const [name, value] of Object.entries(values)) { control(name).value = value; control(name).dataset.initial = value }
     const custom = settings.password.required.includes('custom')
     $('settings-status').textContent = custom ? 'Passwords also need characters from a custom set; saving password classes replaces it.' : ''
+    $('sso-status').textContent = settings.sso?.enabled ? 'Identity providers trust entity ID ' + settings.sso.entity_id + ' with ACS URL ' + settings.sso.acs_url + '.' : ''
+    $('oauth-status').textContent = settings.oauth?.enabled ? 'Issuer ' + settings.oauth.issuer + '; clients discover it at ' + settings.oauth.metadata_url + '.' : ''
     form.hidden = false
     $('provider-form').hidden = false
     const known = [...$('provider-form').elements.namedItem('provider').options].map(option => option.value)
@@ -416,6 +530,7 @@
     emailForm.elements.namedItem('email_provider').value = settings.email.provider ?? ''
     emailForm.elements.namedItem('email_from').value = settings.email.from ?? ''
     emailForm.hidden = false
+    ssoInfo = settings.sso ?? null
     $('events-status').textContent = settings.events?.lifecycle ? 'Lifecycle events (auth.user.created, signed_in, confirmed, banned, unbanned, deleted) are published to your event bus.' : 'Lifecycle events are off.'
     renderKeys(settings.keys)
   }
@@ -466,8 +581,10 @@
     control('password_require').value = requireValue()
     const changed = [...form.elements].filter(field => field.name && field.dataset.initial !== undefined && field.value !== field.dataset.initial)
     if (!changed.length) { event.preventDefault(); $('settings-status').textContent = 'Nothing changed.'; return }
-    // The CAPTCHA provider, site key and secret are saved together.
-    if (changed.some(field => field.name.startsWith('captcha_'))) for (const name of ['captcha_provider', 'captcha_site_key', 'captcha_secret']) if (!changed.includes(control(name))) changed.push(control(name))
+    // The CAPTCHA and SMS settings are each saved together.
+    for (const group of [['captcha_provider', 'captcha_site_key', 'captcha_secret'], ['sms_provider', 'sms_account', 'sms_sender', 'sms_secret']]) {
+      if (changed.some(field => group.includes(field.name))) for (const name of group) if (!changed.includes(control(name))) changed.push(control(name))
+    }
     for (const field of form.elements) if (field.dataset.initial !== undefined && !changed.includes(field)) field.disabled = true
   })
   loadSettings()

@@ -361,7 +361,7 @@ func dashboardMoneyBig(millicents *big.Int) string {
 	if negative {
 		sign = "-"
 	}
-	return fmt.Sprintf("EUR %s%s.%05d", sign, whole.String(), remainder.Int64())
+	return fmt.Sprintf("%s %s%s.%05d", api.BillingCurrency, sign, whole.String(), remainder.Int64())
 }
 
 func dashboardBillComponent(component string) string {

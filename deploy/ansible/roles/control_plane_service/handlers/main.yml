@@ -12,6 +12,7 @@
   listen:
     - restart faas-apid
     - restart faas-schedd
+    - restart faas-schedd listener
     - restart faas-meterd
     - restart faas-outboundd
     - restart faas-bridged
@@ -33,6 +34,20 @@
   ansible.builtin.command: systemctl try-restart faas-schedd.service  # noqa: command-instead-of-module (systemd module has no try-restart)
   changed_when: true
   listen: restart faas-schedd
+  when: not (faas_join_defer_service_handlers | default(false) | bool)
+
+# A listener change takes effect only when the socket rebinds, which needs
+# the running schedd to release the address first. A stopped schedd stays
+# stopped; its next start brings the socket up through Wants=.
+- name: control_plane_service — move faas-schedd onto its configured listener
+  ansible.builtin.shell: |
+    set -eu
+    if systemctl is-active --quiet faas-schedd.service; then
+      systemctl stop faas-schedd.service faas-schedd.socket
+      systemctl start faas-schedd.service
+    fi
+  changed_when: true
+  listen: restart faas-schedd listener
   when: not (faas_join_defer_service_handlers | default(false) | bool)
 
 - name: control_plane_service — try-restart faas-meterd

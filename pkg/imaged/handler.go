@@ -2938,7 +2938,7 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 		_ = h.markDeployFailed(ctx, dep.ID, err, "manifest overrides: decode failed")
 		return fmt.Errorf("imaged: apply overrides: %w", err)
 	}
-	manifest = applyAppLifecycle(manifest, app)
+	manifest = applyFunctionConcurrency(applyAppLifecycle(manifest, app), app)
 	manifest, err = state.ApplyDeploymentRuntime(manifest, dep)
 	if err != nil {
 		return fmt.Errorf("imaged: scoped runtime: %w", err)
@@ -3319,59 +3319,65 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		if ready.ExecutionMode != mode {
 			return fmt.Errorf("imaged: deployment_ready mode mismatch: payload=%q app=%q", ready.ExecutionMode, mode)
 		}
-		switch mode {
-		case api.ExecutionModeWorker:
-			if ready.NoSnapshotReason != "" {
-				return errors.New("imaged: worker deployment_ready must not carry no_snapshot_reason")
+		if ready.NoSnapshotReason == "rehearsal_cold_start" {
+			if err := h.validateColdStartActivation(ctx, app, dep, *ready); err != nil {
+				return err
 			}
-			if ready.InstanceID == "" {
-				return errors.New("imaged: worker deployment_ready missing instance_id")
+		} else {
+			switch mode {
+			case api.ExecutionModeWorker:
+				if ready.NoSnapshotReason != "" {
+					return errors.New("imaged: worker deployment_ready must not carry no_snapshot_reason")
+				}
+				if ready.InstanceID == "" {
+					return errors.New("imaged: worker deployment_ready missing instance_id")
+				}
+				if dep.Status == state.DeployLive {
+					return nil
+				}
+				ins, instanceErr := h.store.InstanceByID(ctx, ready.InstanceID)
+				if instanceErr != nil {
+					return fmt.Errorf("imaged: load ready worker instance: %w", instanceErr)
+				}
+				if ins.AppID != dep.AppID || ins.DeploymentID != dep.ID ||
+					ins.Mode != string(state.InstanceModeWorker) || ins.State != string(state.StateRunning) {
+					return fmt.Errorf("imaged: worker readiness proof does not match a running worker instance")
+				}
+			case api.ExecutionModeJob:
+				if ready.NoSnapshotReason != "" {
+					return errors.New("imaged: job deployment_ready must not carry no_snapshot_reason")
+				}
+				if ready.InstanceID != "" {
+					return errors.New("imaged: job deployment_ready must not carry instance_id")
+				}
+				if dep.Status == state.DeployLive {
+					return nil
+				}
+			case api.ExecutionModeRequest, api.ExecutionModeService:
+				if ready.NoSnapshotReason != "ephemeral_secret" {
+					return fmt.Errorf("imaged: %s deployment_ready requires snapshot activation unless an authorized ephemeral-secret proof is supplied", mode)
+				}
+				if ready.InstanceID == "" {
+					return fmt.Errorf("imaged: %s ephemeral-secret readiness missing instance_id", mode)
+				}
+				if dep.Status == state.DeployLive {
+					return nil
+				}
+				ins, instanceErr := h.store.InstanceByID(ctx, ready.InstanceID)
+				if instanceErr != nil {
+					return fmt.Errorf("imaged: load ready ephemeral-secret instance: %w", instanceErr)
+				}
+				wantMode := state.InstanceModeNormal
+				if mode == api.ExecutionModeService {
+					wantMode = state.InstanceModeService
+				}
+				if ins.AppID != dep.AppID || ins.DeploymentID != dep.ID ||
+					ins.Mode != string(wantMode) || ins.State != string(state.StateStopped) {
+					return fmt.Errorf("imaged: ephemeral-secret readiness proof does not match a stopped %s instance", mode)
+				}
+			default:
+				return fmt.Errorf("imaged: execution mode %q requires snapshot activation unless authorized ephemeral-secret readiness is supplied", mode)
 			}
-			if dep.Status == state.DeployLive {
-				return nil
-			}
-			ins, instanceErr := h.store.InstanceByID(ctx, ready.InstanceID)
-			if instanceErr != nil {
-				return fmt.Errorf("imaged: load ready worker instance: %w", instanceErr)
-			}
-			if ins.AppID != dep.AppID || ins.DeploymentID != dep.ID ||
-				ins.Mode != string(state.InstanceModeWorker) || ins.State != string(state.StateRunning) {
-				return fmt.Errorf("imaged: worker readiness proof does not match a running worker instance")
-			}
-		case api.ExecutionModeJob:
-			if ready.NoSnapshotReason != "" {
-				return errors.New("imaged: job deployment_ready must not carry no_snapshot_reason")
-			}
-			if ready.InstanceID != "" {
-				return errors.New("imaged: job deployment_ready must not carry instance_id")
-			}
-			if dep.Status == state.DeployLive {
-				return nil
-			}
-		case api.ExecutionModeRequest, api.ExecutionModeService:
-			if ready.NoSnapshotReason != "ephemeral_secret" {
-				return fmt.Errorf("imaged: %s deployment_ready requires snapshot activation unless an authorized ephemeral-secret proof is supplied", mode)
-			}
-			if ready.InstanceID == "" {
-				return fmt.Errorf("imaged: %s ephemeral-secret readiness missing instance_id", mode)
-			}
-			if dep.Status == state.DeployLive {
-				return nil
-			}
-			ins, instanceErr := h.store.InstanceByID(ctx, ready.InstanceID)
-			if instanceErr != nil {
-				return fmt.Errorf("imaged: load ready ephemeral-secret instance: %w", instanceErr)
-			}
-			wantMode := state.InstanceModeNormal
-			if mode == api.ExecutionModeService {
-				wantMode = state.InstanceModeService
-			}
-			if ins.AppID != dep.AppID || ins.DeploymentID != dep.ID ||
-				ins.Mode != string(wantMode) || ins.State != string(state.StateStopped) {
-				return fmt.Errorf("imaged: ephemeral-secret readiness proof does not match a stopped %s instance", mode)
-			}
-		default:
-			return fmt.Errorf("imaged: execution mode %q requires snapshot activation unless authorized ephemeral-secret readiness is supplied", mode)
 		}
 	}
 
@@ -4165,8 +4171,8 @@ func (h *Handler) transitionWithStage(ctx context.Context, depID string, from, t
 }
 
 // markDeployFailed transitions a deployment to `failed` with the given
-// RFC 7807 code (or "" if the upstream error didn't map to a sentinel)
-// and a free-text message. The code column carries the stable signal;
+// RFC 7807 code (deploy_failed if the upstream error didn't map to a
+// sentinel, as schedd's prime failure does; H10-107) and a free-text message. The code column carries the stable signal;
 // the message preserves the upstream string for debugging. Returns
 // the mark error so the caller can choose to log-and-continue or
 // bubble it up; in practice callers ignore the mark error (the
@@ -4191,6 +4197,9 @@ func (h *Handler) markDeployFailed(ctx context.Context, depID string, err error,
 	}
 	if errors.Is(err, errImageAbuseDetected) {
 		code = api.CodeImageAbuseDetected
+	}
+	if code == "" {
+		code = api.CodeDeployFailed
 	}
 	detail := err.Error()
 	if prefix != "" {

@@ -68,7 +68,9 @@ snapshot. Every boot path that already uses that snapshot (wake, prime boot,
 app tasks and cron runs, qualification) delivers them with no path of its own.
 GitOps-managed scheduled Jobs are the exception: they run exactly the reviewed,
 frozen variable set of their definition (ADR-568), so they inherit nothing; a
-shared value belongs in that definition.
+shared value belongs in that definition. vmmd's opt-in live runtime
+configuration reads the same values (`RuntimeAppEnvForDeployment`), so a
+process that polls it sees what it booted with.
 
 ### 5. Changes and freshness
 
@@ -91,7 +93,24 @@ Runtime configuration receipts keep recording only the app's own variables:
 `environment_runtime_inputs_fresh` compares them with `app_envs` exactly.
 Inherited values are covered by the scope-change stamp instead.
 
-### 6. Not in this decision
+### 6. Rollout beside release N-1
+
+Units release on their own (docs/release-compatibility.md), so each step must
+serve the previous release of the others:
+
+- **Data.** The migration adds two functions and an insert trigger, with
+  `lock_timeout` set. The trigger only stamps scope changes and marks
+  snapshots stale, so N-1 code keeps working; at worst it cold boots an
+  instance it could have restored.
+- **Control plane and node.** An N-1 schedd delivers no inherited values. The
+  configuration fence includes them only when there are any, so an instance
+  booted by one version and resumed by the other boots again instead of
+  resuming with the other set. An N-1 vmmd's live configuration omits
+  inherited keys until vmmd is upgraded; the boot environment is unaffected.
+- **Runtime.** Nothing: the values travel in the existing API environment, with
+  no new guest key or proto field.
+
+### 7. Not in this decision
 
 - Project-level secrets. Shared credentials stay per app (sealed secrets or
   secret references) until a separate decision covers sealing and rotation at

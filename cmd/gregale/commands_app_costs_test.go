@@ -29,7 +29,7 @@ func TestAppCostsCLIUsesStableAppIdentityAndFiltersAccountReport(t *testing.T) {
 				t.Errorf("cost request = %s %s", r.Method, r.URL)
 			}
 			_ = json.NewEncoder(w).Encode(api.FinancialCostsResponse{
-				Currency: "EUR", PeriodStart: time.Date(time.Now().UTC().Year(), time.Now().UTC().Month(), 1, 0, 0, 0, 0, time.UTC),
+				Currency: "USD", PeriodStart: time.Date(time.Now().UTC().Year(), time.Now().UTC().Month(), 1, 0, 0, 0, 0, time.UTC),
 				PeriodEnd: time.Now().UTC().AddDate(0, 1, 0), AsOf: time.Now().UTC(), KnownUsageMillicents: 1100,
 				Meters: []api.FinancialMeterCosts{{Meter: "compute", Coverage: api.FinancialMeterCoverage{Complete: true, Fresh: true, ExpectedMinutes: 1, CompleteMinutes: 1}, Accrued: financial.ContractCosts{Contracts: []financial.MeterCost{{Price: financial.Price{Unit: "GB-hour"}, Allocations: []financial.Allocation{
 					{Attribution: financial.Attribution{AppID: "app-1", Name: "my-api"}, Quantity: 2, NetMillicents: 1000},

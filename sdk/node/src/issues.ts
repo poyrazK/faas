@@ -1,8 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { registerIssueSourceMaps, type IssueSourceMap } from './issue-source-maps.js';
+import { loadIssueSourceMapManifest, type IssueSourceMapManifestOptions } from './issue-source-map-manifest.js';
+import { issueContextLimits, type IssueBreadcrumbEntry } from './issue-context.js';
 export type { IssueSourceMap } from './issue-source-maps.js';
 
 export interface IssueContext {
+  breadcrumbs?: readonly IssueBreadcrumbEntry[];
+  breadcrumbs_dropped?: number;
+  tags?: Readonly<Record<string,string>>;
   trace_id?: string;
   span_id?: string;
   request_id?: string;
@@ -23,6 +28,10 @@ export interface IssueReporterOptions {
   groupingStrategy?: 'legacy' | 'failure-site-v1' | 'cause-chain-v1';
   /** Deployment-local map artifacts; requires failure-site-v1 or cause-chain-v1 grouping. */
   sourceMaps?: readonly IssueSourceMap[];
+  /** Build manifest verified and loaded once against the running deployment. */
+  sourceMapManifest?: IssueSourceMapManifestOptions;
+  /** Request mapping with immutable artifacts published for the reporting deployment. */
+  symbolicationStrategy?: 'deployment-source-maps-v1';
 }
 function bounded(value: string, limit: number): string {
  const bytes=Buffer.from(value,'utf8');let cut=Math.min(bytes.length,limit);
@@ -35,8 +44,9 @@ interface FailureEvent extends IssueContext {
   exception_type: string;
   message: string;
   stack_trace?: string;
-  frames: Array<{ file: string; function: string; line: number; in_app: boolean }>;
+  frames: Array<{ file: string; function: string; line: number; column?: number; in_app: boolean }>;
   grouping_strategy?: 'failure-site-v1' | 'cause-chain-v1';
+  symbolication_strategy?: 'deployment-source-maps-v1';
   causes?: Array<{exception_type: string; message: string; error_code?: string; frames: FailureEvent['frames']; frame_order: 'newest-first'}>;
   causes_incomplete?: boolean;
   frame_order?: 'newest-first';
@@ -53,10 +63,20 @@ export function createIssueReporter(options: IssueReporterOptions) {
   if (options.groupingStrategy !== undefined && !['legacy', 'failure-site-v1', 'cause-chain-v1'].includes(options.groupingStrategy)) {
     throw new Error('Invalid issue grouping strategy');
   }
-  if (options.sourceMaps !== undefined && !['failure-site-v1', 'cause-chain-v1'].includes(options.groupingStrategy ?? '')) {
+  if ((options.sourceMaps !== undefined || options.sourceMapManifest !== undefined) && !['failure-site-v1', 'cause-chain-v1'].includes(options.groupingStrategy ?? '')) {
     throw new Error('Issue source maps require failure-site-v1 or cause-chain-v1 grouping');
   }
-  const sourceMaps = registerIssueSourceMaps(options.sourceMaps);
+  if (options.sourceMaps !== undefined && options.sourceMapManifest !== undefined) {
+    throw new Error('Configure sourceMaps or sourceMapManifest, not both');
+  }
+  if (options.symbolicationStrategy !== undefined && (options.symbolicationStrategy !== 'deployment-source-maps-v1' ||
+      !['failure-site-v1', 'cause-chain-v1'].includes(options.groupingStrategy ?? '') ||
+      options.sourceMaps !== undefined || options.sourceMapManifest !== undefined)) {
+    throw new Error('Server symbolication requires failure-site-v1 or cause-chain-v1 without local source maps');
+  }
+  const serverSymbolication = options.symbolicationStrategy;
+  const sourceMaps = registerIssueSourceMaps(options.sourceMapManifest === undefined
+    ? options.sourceMaps : loadIssueSourceMapManifest(options.sourceMapManifest));
   const groupingStrategy = options.groupingStrategy;
   const token = options.token;
   const endpoint = new URL(`/v1/apps/${encodeURIComponent(options.app)}/issue-events`, base);
@@ -82,7 +102,8 @@ export function createIssueReporter(options: IssueReporterOptions) {
         const match = line.match(/^\s*at\s+(?:(.*?)\s+\()?(.+?):(\d+):(\d+)\)?$/);
         if (match) {
           const generated = { file: match[2]!, function: match[1] ?? '<anonymous>',
-            line: Number(match[3]), in_app: !match[2]!.startsWith('node:') && !match[2]!.includes('/node_modules/') };
+            line: Number(match[3]), ...(serverSymbolication ? { column: Number(match[4]) } : {}),
+            in_app: !match[2]!.startsWith('node:') && !match[2]!.includes('/node_modules/') };
           const original = sourceMaps.resolve(generated, Number(match[4]));
           if (original) mappedFrames++;
           else if (sourceMaps.enabled && generated.in_app) unmappedFrames++;
@@ -101,11 +122,20 @@ export function createIssueReporter(options: IssueReporterOptions) {
       invocation_id: context.invocation_id, route: context.route, source_kind: context.source_kind,
       error_code: context.error_code === undefined ? undefined : bounded(context.error_code,256),
       fingerprint_override: context.fingerprint_override === undefined ? undefined : bounded(context.fingerprint_override,256),
+      breadcrumbs: context.breadcrumbs?.slice(-issueContextLimits.breadcrumbs).map(entry=>({
+        occurred_at:entry.occurred_at,category:entry.category,level:entry.level,message:bounded(entry.message,issueContextLimits.messageBytes),
+      })),
+      breadcrumbs_dropped: context.breadcrumbs===undefined?context.breadcrumbs_dropped:
+        Math.min(2147483647,Math.max(0,Math.floor(context.breadcrumbs_dropped??0))+Math.max(0,context.breadcrumbs.length-issueContextLimits.breadcrumbs)),
+      tags: context.tags===undefined?undefined:Object.fromEntries(Object.entries(context.tags).slice(0,issueContextLimits.tags)
+        .filter(([key,value])=>key.length<=issueContextLimits.keyBytes&&typeof value==='string')
+        .map(([key,value])=>[key,bounded(value,issueContextLimits.valueBytes)])),
     };
     if (groupingStrategy === 'failure-site-v1' || groupingStrategy === 'cause-chain-v1') {
       event.grouping_strategy = groupingStrategy;
       event.frame_order = 'newest-first';
     }
+    if (serverSymbolication) event.symbolication_strategy = serverSymbolication;
     if (groupingStrategy === 'cause-chain-v1') {
       const seen = new Set<Error>([value]);
       let current: Error = value;

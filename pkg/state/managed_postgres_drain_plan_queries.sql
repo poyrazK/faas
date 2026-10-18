@@ -39,6 +39,12 @@ SELECT a.node_id,a.scaling_policy_revision,a.status,a.managed_postgres_admission
 FROM apps a LEFT JOIN managed_postgres_cutovers c ON c.id=a.managed_postgres_admission_cutover_id
 WHERE a.id=sqlc.arg(app_id)::text::uuid FOR SHARE OF a;
 
+-- name: ReadManagedPostgresDrainPlanOwner :one
+SELECT a.node_id,a.scaling_policy_revision,a.status,a.managed_postgres_admission_cutover_id,a.managed_postgres_admission_fenced_at,
+ coalesce(c.state,'')::text AS cutover_state
+FROM apps a LEFT JOIN managed_postgres_cutovers c ON c.id=a.managed_postgres_admission_cutover_id
+WHERE a.id=sqlc.arg(app_id)::text::uuid;
+
 -- name: ListManagedPostgresDrainPlanMembers :many
 SELECT m.*, coalesce(i.id::text,'')::text AS current_instance_id,coalesce(i.app_id::text,'')::text AS current_app_id,coalesce(i.deployment_id::text,'')::text AS current_deployment_id,
  coalesce(i.node_id::text,'')::text AS current_node_id,coalesce(i.wake_id::text,'')::text AS current_wake_id,

@@ -282,6 +282,9 @@ func (m *Manager) unfreeze(ctx context.Context, inst *Instance) error {
 	resumeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
 	m.setFrozenSwap(inst.Lease, false)
+	if err := m.ensureRehearsalNetwork(resumeCtx, inst); err != nil {
+		return err
+	}
 	if err := m.vmm.ResumeVM(resumeCtx, inst.Lease); err != nil {
 		return fmt.Errorf("resume after failed freeze: %w", err)
 	}

@@ -37,9 +37,6 @@ func baseGuestDigest(raw string) string {
 }
 
 func (h *Handler) ensureVerifiedBaseExt4(ctx context.Context, r verifiedBaseRequest, resolver oci.ImageResolver) (BaseStageResult, error) {
-	if err := writeProducedBaseScanCompatibility(ctx, r.be, r.key, r.ref, r.out, state.BaseImageScan{}); err != nil {
-		return BaseStageResult{}, err
-	}
 	store, ok := h.store.(state.BaseImageProducerStore)
 	if !ok {
 		return BaseStageResult{}, fmt.Errorf("imaged: base producer store unavailable")
@@ -194,6 +191,9 @@ func (h *Handler) buildVerifiedBase(ctx context.Context, r verifiedBaseRequest, 
 		return build, err
 	}
 	defer closeContainerLayers(readers)
+	if err := invalidateScanBeforeRebuild(ctx, r); err != nil {
+		return build, err
+	}
 	build.result, err = h.builder.BuildBase(ctx, rootfs.BaseBuildInput{Layers: layersAsReaders(readers), Storage: r.be, StorageKey: r.key, GuestInitPath: h.guestInitPath})
 	if err != nil {
 		return build, err
@@ -257,6 +257,9 @@ func (h *Handler) applyVerifiedBaseDelta(ctx context.Context, r verifiedBaseRequ
 	if err != nil {
 		return build, err
 	}
+	if err := invalidateScanBeforeRebuild(ctx, r); err != nil {
+		return build, err
+	}
 	build.result, err = h.builder.BuildBaseFromStaging(ctx, staging, rootfs.BaseBuildInput{Storage: r.be, StorageKey: r.key, GuestInitPath: h.guestInitPath})
 	return build, err
 }
@@ -302,4 +305,15 @@ func (h *Handler) finishVerifiedBase(ctx context.Context, r verifiedBaseRequest,
 		return BaseStageResult{}, err
 	}
 	return BaseStageResult{OutImage: r.out, StorageKey: r.key, ConfigDigest: configDigest, Skipped: skipped, Producer: producer}, nil
+}
+
+// invalidateScanBeforeRebuild replaces the base's shared scan sidecar with a
+// fail-closed refusal immediately before the build overwrites the base
+// object, so the old result never vouches for new bytes. It used to run at
+// the start of every staging attempt: a reuse, an unchanged resolve failure
+// or a deferred child base (H10-95) then left the refusal on bytes that had
+// not changed, and every cold boot on that base returned 503 until a later
+// stage rewrote it (H10-103).
+func invalidateScanBeforeRebuild(ctx context.Context, r verifiedBaseRequest) error {
+	return writeProducedBaseScanCompatibility(ctx, r.be, r.key, r.ref, r.out, state.BaseImageScan{})
 }

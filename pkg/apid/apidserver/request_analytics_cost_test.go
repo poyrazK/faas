@@ -39,7 +39,45 @@ func TestAllocateRequestAnalyticsRouteCost_LeavesCostUnallocatedWithoutRequests(
 	}
 }
 
-func TestMillicentsAsEUR(t *testing.T) {
+// ADR-743: a slow route holds instances longer, so it carries more cost than
+// a fast route with many more requests.
+func TestAllocateRequestAnalyticsRouteCostByTime_WeightsByRequestTime(t *testing.T) {
+	routes := []api.RequestAnalyticsRoute{
+		{Route: "/health", Requests: 900, RequestTimeMS: 900 * 5},   // 4.5 s total
+		{Route: "/reports", Requests: 10, RequestTimeMS: 10 * 4000}, // 40 s total
+	}
+	// The omitted routes add 90 requests and 5.5 s.
+	requests, allocated, other, method := apidserver.AllocateRequestAnalyticsRouteCostByTime(routes, 90, 5500, 1000)
+	if method != apidserver.RouteCostByRequestTime {
+		t.Fatalf("method = %q, want %q", method, apidserver.RouteCostByRequestTime)
+	}
+	if requests != 1000 || allocated != 1000 {
+		t.Fatalf("requests=%d allocated=%d, want 1000 and the full 1000 millicents", requests, allocated)
+	}
+	if routes[0].EstimatedComputeCostMillicents != 90 || routes[1].EstimatedComputeCostMillicents != 800 || other != 110 {
+		t.Fatalf("cost = /health %d, /reports %d, other %d; want 90, 800, 110 (time shares 9%%, 80%%, 11%%)",
+			routes[0].EstimatedComputeCostMillicents, routes[1].EstimatedComputeCostMillicents, other)
+	}
+	if math.Abs(routes[1].RequestTimeSharePct-80) > 1e-9 || math.Abs(routes[1].RequestSharePct-1) > 1e-9 {
+		t.Fatalf("/reports shares = time %v%%, requests %v%%; want 80 and 1", routes[1].RequestTimeSharePct, routes[1].RequestSharePct)
+	}
+}
+
+func TestAllocateRequestAnalyticsRouteCostByTime_FallsBackWithoutTiming(t *testing.T) {
+	routes := []api.RequestAnalyticsRoute{{Route: "/a", Requests: 1}, {Route: "/b", Requests: 3}}
+	_, allocated, _, method := apidserver.AllocateRequestAnalyticsRouteCostByTime(routes, 0, 0, 100)
+	if method != apidserver.RouteCostByRequests || allocated != 100 {
+		t.Fatalf("method=%q allocated=%d, want request_share and 100", method, allocated)
+	}
+	if routes[0].EstimatedComputeCostMillicents != 25 || routes[1].EstimatedComputeCostMillicents != 75 {
+		t.Fatalf("fallback split = %d/%d, want 25/75 by requests", routes[0].EstimatedComputeCostMillicents, routes[1].EstimatedComputeCostMillicents)
+	}
+	if routes[0].RequestTimeSharePct != 0 {
+		t.Fatalf("time share must stay zero without timing: %v", routes[0].RequestTimeSharePct)
+	}
+}
+
+func TestMillicentsAsCurrency(t *testing.T) {
 	for _, tc := range []struct {
 		value int64
 		want  string
@@ -47,8 +85,8 @@ func TestMillicentsAsEUR(t *testing.T) {
 		{value: 0, want: "0.00000"},
 		{value: 1_234_567, want: "12.34567"},
 	} {
-		if got := apidserver.MillicentsAsEUR(tc.value); got != tc.want {
-			t.Errorf("millicentsAsEUR(%d) = %q, want %q", tc.value, got, tc.want)
+		if got := apidserver.MillicentsAsCurrency(tc.value); got != tc.want {
+			t.Errorf("millicentsAsCurrency(%d) = %q, want %q", tc.value, got, tc.want)
 		}
 	}
 }

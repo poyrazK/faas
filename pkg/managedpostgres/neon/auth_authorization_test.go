@@ -8,6 +8,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -22,8 +23,11 @@ const authorizationSQLDir = "../../../cmd/gregale/templates/auth/sql"
 
 // The tables and columns of GoTrue's schema that the helpers read. The
 // template's end-to-end run applies the real migrations.
-const goTrueStub = `CREATE TABLE auth.users (id uuid PRIMARY KEY, email varchar(255), email_confirmed_at timestamptz, banned_until timestamptz, deleted_at timestamptz, raw_app_meta_data jsonb, is_anonymous boolean NOT NULL DEFAULT false);
-CREATE TABLE auth.sessions (id uuid PRIMARY KEY, user_id uuid NOT NULL REFERENCES auth.users ON DELETE CASCADE, not_after timestamptz, aal text);
+const goTrueStub = `CREATE TABLE auth.users (id uuid PRIMARY KEY, email varchar(255), email_confirmed_at timestamptz, phone text, phone_confirmed_at timestamptz, banned_until timestamptz, deleted_at timestamptz, raw_app_meta_data jsonb, is_anonymous boolean NOT NULL DEFAULT false, is_sso_user boolean NOT NULL DEFAULT false, created_at timestamptz DEFAULT now());
+CREATE TABLE auth.identities (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id uuid NOT NULL REFERENCES auth.users ON DELETE CASCADE, provider text NOT NULL, provider_id text NOT NULL);
+CREATE TABLE auth.sso_providers (id uuid PRIMARY KEY);
+CREATE TABLE auth.sso_domains (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), sso_provider_id uuid NOT NULL REFERENCES auth.sso_providers ON DELETE CASCADE, domain text NOT NULL);
+CREATE TABLE auth.sessions (id uuid PRIMARY KEY, user_id uuid NOT NULL REFERENCES auth.users ON DELETE CASCADE, not_after timestamptz, aal text, created_at timestamptz DEFAULT now(), updated_at timestamptz DEFAULT now(), refreshed_at timestamp);
 CREATE TABLE auth.audit_log_entries (instance_id uuid, id uuid PRIMARY KEY, payload json, created_at timestamptz, ip_address varchar(64) NOT NULL DEFAULT '');`
 
 type authUser struct{ id, session uuid.UUID }
@@ -335,7 +339,7 @@ func TestSQLLifecycleEventsRecordUserChangesOnlyWhenEnabled(t *testing.T) {
 	}
 	want := []string{
 		`auth.user.created {"provider": "google", "anonymous": false}`,
-		`auth.user.confirmed {}`,
+		`auth.user.confirmed {"channel": "email"}`,
 		`auth.user.signed_in {"aal": "aal1", "session_id": "` + session.String() + `"}`,
 		`auth.user.banned`,
 		`auth.user.unbanned {}`,
@@ -349,11 +353,251 @@ func TestSQLLifecycleEventsRecordUserChangesOnlyWhenEnabled(t *testing.T) {
 			t.Fatalf("event %d = %q, want %q", i, got[i], want[i])
 		}
 	}
+	// A phone sign-up is confirmed by its code; the number is never recorded.
+	executeSQL(t, owner, `DELETE FROM gregale_auth.event_outbox`)
+	phone := uuid.New()
+	executeSQL(t, owner, `INSERT INTO auth.users (id, phone, raw_app_meta_data) VALUES ($1, '447700900123', '{"provider":"phone"}')`, phone)
+	executeSQL(t, owner, `UPDATE auth.users SET phone_confirmed_at = now() WHERE id = $1`, phone)
+	executeSQL(t, owner, `UPDATE auth.users SET phone_confirmed_at = now() WHERE id = $1`, phone)
+	var phoneEvents string
+	if err := owner.QueryRow(ctx, `SELECT string_agg(type || ' ' || data::text, '; ' ORDER BY occurred_at, ctid) FROM gregale_auth.event_outbox WHERE user_id = $1`, phone).Scan(&phoneEvents); err != nil {
+		t.Fatal(err)
+	}
+	if phoneEvents != `auth.user.created {"provider": "phone", "anonymous": false}; auth.user.confirmed {"channel": "phone"}` {
+		t.Fatalf("phone events = %s", phoneEvents)
+	}
 	// Only the auth credential reaches the outbox.
 	if err := f.manager.Ensure(ctx, f.material, f.runtime); err != nil {
 		t.Fatal(err)
 	}
 	if code, _ := sqlCode(t, f.connect(t, f.runtime.name), `SELECT count(*) FROM gregale_auth.event_outbox`); code != "42501" {
 		t.Fatalf("runtime credential read the outbox: %s", code)
+	}
+}
+
+func TestSQLOrganizationSSOJoinsLinkedProvidersAndBoundsInvitations(t *testing.T) {
+	f := newCredentialFixture(t)
+	ctx := context.Background()
+	_, owner := installAuthorization(t, f)
+	alice := newAuthUser(t, owner, "alice@example.test")
+	actAs(ctx, t, owner, alice)
+	var org uuid.UUID
+	if err := owner.QueryRow(ctx, `SELECT id FROM gregale_auth.create_organization('acme', 'Acme')`).Scan(&org); err != nil {
+		t.Fatal(err)
+	}
+	provider := uuid.New()
+	executeSQL(t, owner, `INSERT INTO auth.sso_providers (id) VALUES ($1)`, provider)
+	executeSQL(t, owner, `INSERT INTO auth.sso_domains (sso_provider_id, domain) VALUES ($1, 'Acme.com')`, provider)
+	ssoUser := func(email string) authUser {
+		u := newAuthUser(t, owner, email)
+		executeSQL(t, owner, `UPDATE auth.users SET is_sso_user = true WHERE id = $1`, u.id)
+		executeSQL(t, owner, `INSERT INTO auth.identities (user_id, provider, provider_id) VALUES ($1, $2, $3)`, u.id, "sso:"+provider.String(), email)
+		return u
+	}
+	member := func(u authUser) string {
+		var role string
+		if err := owner.QueryRow(ctx, `SELECT coalesce((SELECT role FROM gregale_auth.memberships WHERE org_id = $1 AND user_id = $2), '')`, org, u.id).Scan(&role); err != nil {
+			t.Fatal(err)
+		}
+		return role
+	}
+	// A user who signed in before the link joins when it is made.
+	early := ssoUser("early@acme.com")
+	var joined int
+	if err := owner.QueryRow(ctx, `SELECT gregale_auth.link_sso_organization($1, $2, 'member')`, provider, org).Scan(&joined); err != nil || joined != 1 || member(early) != "member" {
+		t.Fatalf("link joined %d (%v), early member %q", joined, err, member(early))
+	}
+	// Later users join on their first SSO sign-in; other providers do not.
+	later := ssoUser("later@acme.com")
+	other := newAuthUser(t, owner, "oauth@acme.com")
+	executeSQL(t, owner, `INSERT INTO auth.identities (user_id, provider, provider_id) VALUES ($1, 'google', 'g1')`, other.id)
+	if member(later) != "member" || member(other) != "" {
+		t.Fatalf("later %q, google user %q", member(later), member(other))
+	}
+	if code, _ := sqlCode(t, owner, `SELECT gregale_auth.link_sso_organization($1, $2, 'owner')`, provider, org); code != "23514" {
+		t.Fatalf("linking with the owner role: %s", code)
+	}
+	// An SSO user accepts invitations only for its provider's domains.
+	actAs(ctx, t, owner, alice)
+	inside, outside := tokenHash(t), tokenHash(t)
+	executeSQL(t, owner, `SELECT gregale_auth.invite($1, 'eve@acme.com', 'member', $2, 3600)`, org, inside)
+	executeSQL(t, owner, `SELECT gregale_auth.invite($1, 'eve@globex.com', 'member', $2, 3600)`, org, outside)
+	executeSQL(t, owner, `DELETE FROM gregale_auth.sso_organizations`)
+	claimed := ssoUser("eve@globex.com")
+	actAs(ctx, t, owner, claimed)
+	wantSQLError(t, owner, "42501", "invitation_email_mismatch", `SELECT gregale_auth.accept_invitation($1)`, outside)
+	eve := ssoUser("eve@acme.com")
+	actAs(ctx, t, owner, eve)
+	executeSQL(t, owner, `SELECT gregale_auth.accept_invitation($1)`, inside)
+	// Deleting the provider removes its link; members stay.
+	executeSQL(t, owner, `SELECT gregale_auth.link_sso_organization($1, $2, 'member')`, provider, org)
+	executeSQL(t, owner, `DELETE FROM auth.sso_providers WHERE id = $1`, provider)
+	var links int
+	if err := owner.QueryRow(ctx, `SELECT count(*) FROM gregale_auth.sso_organizations`).Scan(&links); err != nil || links != 0 || member(later) != "member" {
+		t.Fatalf("links %d (%v), later %q", links, err, member(later))
+	}
+	if err := f.manager.Ensure(ctx, f.material, f.runtime); err != nil {
+		t.Fatal(err)
+	}
+	if code, _ := sqlCode(t, f.connect(t, f.runtime.name), `SELECT gregale_auth.link_sso_organization(gen_random_uuid(), gen_random_uuid(), 'member')`); code != "42501" {
+		t.Fatalf("runtime credential linked a provider: %s", code)
+	}
+}
+
+func TestSQLSCIMLinksProvisionedPeopleOnFirstSignIn(t *testing.T) {
+	f := newCredentialFixture(t)
+	ctx := context.Background()
+	_, owner := installAuthorization(t, f)
+	alice := newAuthUser(t, owner, "alice@example.test")
+	actAs(ctx, t, owner, alice)
+	var org uuid.UUID
+	if err := owner.QueryRow(ctx, `SELECT id FROM gregale_auth.create_organization('acme', 'Acme')`).Scan(&org); err != nil {
+		t.Fatal(err)
+	}
+	provider := uuid.New()
+	executeSQL(t, owner, `INSERT INTO auth.sso_providers (id) VALUES ($1)`, provider)
+	executeSQL(t, owner, `SELECT gregale_auth.link_sso_organization($1, $2, 'member')`, provider, org)
+	executeSQL(t, owner, `INSERT INTO gregale_auth.scim_users (provider_id, user_name, active) VALUES ($1, 'Ada@Acme.com', true), ($1, 'gone@acme.com', false)`, provider)
+	signIn := func(email string) uuid.UUID {
+		id := uuid.New()
+		executeSQL(t, owner, `INSERT INTO auth.users (id, email, email_confirmed_at, is_sso_user) VALUES ($1, $2, now(), true)`, id, email)
+		executeSQL(t, owner, `INSERT INTO auth.identities (user_id, provider, provider_id) VALUES ($1, $2, $3)`, id, "sso:"+provider.String(), email)
+		return id
+	}
+	state := func(user uuid.UUID) (linked, banned, member bool) {
+		if err := owner.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM gregale_auth.scim_users WHERE user_id = $1),
+			coalesce((SELECT banned_until > now() FROM auth.users WHERE id = $1), false),
+			EXISTS (SELECT 1 FROM gregale_auth.memberships WHERE user_id = $1 AND org_id = $2)`, user, org).Scan(&linked, &banned, &member); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	// An active provisioned person is linked by email and joins.
+	if linked, banned, member := state(signIn("ada@acme.com")); !linked || banned || !member {
+		t.Fatalf("active person: linked %v banned %v member %v", linked, banned, member)
+	}
+	// A deprovisioned person is linked, banned and joins nothing.
+	if linked, banned, member := state(signIn("gone@acme.com")); !linked || !banned || member {
+		t.Fatalf("deprovisioned person: linked %v banned %v member %v", linked, banned, member)
+	}
+	// Someone the identity provider never provisioned is unaffected.
+	if linked, banned, member := state(signIn("walk-in@acme.com")); linked || banned || !member {
+		t.Fatalf("unprovisioned person: linked %v banned %v member %v", linked, banned, member)
+	}
+	if code, _ := sqlCode(t, owner, `INSERT INTO gregale_auth.scim_users (provider_id, user_name) VALUES ($1, 'ADA@acme.com')`, provider); code != "23505" {
+		t.Fatalf("duplicate user name: %s", code)
+	}
+	executeSQL(t, owner, `DELETE FROM auth.sso_providers WHERE id = $1`, provider)
+	var left int
+	if err := owner.QueryRow(ctx, `SELECT count(*) FROM gregale_auth.scim_users`).Scan(&left); err != nil || left != 0 {
+		t.Fatalf("records left after the provider was removed: %d %v", left, err)
+	}
+}
+
+func TestSQLSelfServiceOrganizationSSONeedsVerifiedDomainsAndPermission(t *testing.T) {
+	f := newCredentialFixture(t)
+	ctx := context.Background()
+	_, owner := installAuthorization(t, f)
+	alice, bob := newAuthUser(t, owner, "alice@acme.com"), newAuthUser(t, owner, "bob@globex.com")
+	var acme, globex uuid.UUID
+	actAs(ctx, t, owner, alice)
+	if err := owner.QueryRow(ctx, `SELECT id FROM gregale_auth.create_organization('acme', 'Acme')`).Scan(&acme); err != nil {
+		t.Fatal(err)
+	}
+	actAs(ctx, t, owner, bob)
+	if err := owner.QueryRow(ctx, `SELECT id FROM gregale_auth.create_organization('globex', 'Globex')`).Scan(&globex); err != nil {
+		t.Fatal(err)
+	}
+	token := strings.Repeat("a", 32)
+	// Only someone with sso:manage in the organization manages its domains.
+	wantSQLError(t, owner, "42501", "forbidden", `SELECT gregale_auth.add_org_domain($1, 'acme.com', $2)`, acme, token)
+	actAs(ctx, t, owner, alice)
+	executeSQL(t, owner, `SELECT gregale_auth.add_org_domain($1, 'Acme.com', $2)`, acme, token)
+	wantSQLError(t, owner, "22023", "invalid_domain", `SELECT gregale_auth.add_org_domain($1, 'localhost', $2)`, acme, token)
+	wantSQLError(t, owner, "42501", "domain_not_verified", `SELECT gregale_auth.check_org_sso($1, NULL, ARRAY['acme.com'], 'member')`, acme)
+	executeSQL(t, owner, `SELECT gregale_auth.verify_org_domain($1, 'acme.com')`, acme)
+	executeSQL(t, owner, `SELECT gregale_auth.check_org_sso($1, NULL, ARRAY['acme.com'], 'member')`, acme)
+	wantSQLError(t, owner, "22023", "unknown_role", `SELECT gregale_auth.check_org_sso($1, NULL, ARRAY['acme.com'], 'owner')`, acme)
+	// A domain verified by one organization cannot be claimed by another.
+	actAs(ctx, t, owner, bob)
+	wantSQLError(t, owner, "23505", "domain_taken", `SELECT gregale_auth.add_org_domain($1, 'acme.com', $2)`, globex, token)
+	wantSQLError(t, owner, "42501", "forbidden", `SELECT gregale_auth.list_org_domains($1)`, acme)
+	wantSQLError(t, owner, "42501", "forbidden", `SELECT gregale_auth.check_org_sso($1, NULL, ARRAY['acme.com'], 'member')`, acme)
+	wantSQLError(t, owner, "42501", "domain_not_verified", `SELECT gregale_auth.check_org_sso($1, NULL, ARRAY['acme.com'], 'member')`, globex)
+	// A domain an organization's provider serves cannot be removed.
+	actAs(ctx, t, owner, alice)
+	provider := uuid.New()
+	executeSQL(t, owner, `INSERT INTO auth.sso_providers (id) VALUES ($1)`, provider)
+	executeSQL(t, owner, `INSERT INTO auth.sso_domains (sso_provider_id, domain) VALUES ($1, 'acme.com')`, provider)
+	executeSQL(t, owner, `SELECT gregale_auth.link_sso_organization($1, $2, 'member')`, provider, acme)
+	wantSQLError(t, owner, "23503", "domain_in_use", `SELECT gregale_auth.remove_org_domain($1, 'acme.com')`, acme)
+	actAs(ctx, t, owner, bob)
+	wantSQLError(t, owner, "42501", "forbidden", `SELECT gregale_auth.check_org_sso($1, $2, NULL, NULL)`, acme, provider)
+	wantSQLError(t, owner, "P0002", "not_found", `SELECT gregale_auth.check_org_sso($1, $2, NULL, NULL)`, globex, provider)
+	if err := f.manager.Ensure(ctx, f.material, f.runtime); err != nil {
+		t.Fatal(err)
+	}
+	if code, _ := sqlCode(t, f.connect(t, f.runtime.name), `SELECT gregale_auth.list_org_domains(gen_random_uuid())`); code != "42501" {
+		t.Fatalf("runtime credential called the organization SSO functions: %s", code)
+	}
+}
+
+func TestSQLOAuthSessionResourcesEndWithTheirSessions(t *testing.T) {
+	f := newCredentialFixture(t)
+	_, owner := installAuthorization(t, f)
+	alice, bob := newAuthUser(t, owner, "alice@example.test"), newAuthUser(t, owner, "bob@example.test")
+	client := uuid.New()
+	// The custom access token hook records a client session's resource.
+	for _, u := range []authUser{alice, bob} {
+		executeSQL(t, owner, `INSERT INTO gregale_auth.oauth_session_resources (session_id, client_id, resource) VALUES ($1, $2, 'https://mcp.example.test/mcp')`, u.session, client)
+	}
+	executeSQL(t, owner, `INSERT INTO gregale_auth.oauth_session_resources (session_id, client_id, resource) VALUES ($1, $2, NULL)`, uuid.New(), client)
+	if code, _ := sqlCode(t, owner, `INSERT INTO gregale_auth.oauth_session_resources (session_id, client_id, resource) VALUES ($1, $2, '')`, uuid.New(), client); code != "23514" {
+		t.Fatalf("an empty resource = %s, want a check violation", code)
+	}
+	remembered := func(u authUser) bool {
+		return queryBool(t, owner, `SELECT EXISTS (SELECT 1 FROM gregale_auth.oauth_session_resources WHERE session_id = $1)`, u.session)
+	}
+	executeSQL(t, owner, `DELETE FROM auth.sessions WHERE id = $1`, alice.session)
+	executeSQL(t, owner, `DELETE FROM auth.users WHERE id = $1`, bob.id)
+	if remembered(alice) || remembered(bob) {
+		t.Fatal("an ended session kept its resource")
+	}
+}
+
+func TestSQLAnonymousUsersCannotOwnOrganizationsAndIdleOnesArePruned(t *testing.T) {
+	f := newCredentialFixture(t)
+	ctx := context.Background()
+	_, owner := installAuthorization(t, f)
+	guest, person := newAuthUser(t, owner, ""), newAuthUser(t, owner, "ada@example.test")
+	executeSQL(t, owner, `UPDATE auth.users SET email = NULL, is_anonymous = true WHERE id = $1`, guest.id)
+	actAs(ctx, t, owner, guest)
+	wantSQLError(t, owner, "42501", "anonymous_user", `SELECT gregale_auth.create_organization('guests', 'Guests')`)
+	actAs(ctx, t, owner, person)
+	executeSQL(t, owner, `SELECT gregale_auth.create_organization('acme', 'Acme')`)
+	// The template's own pruning statement, run with 30 days.
+	source, err := os.ReadFile(filepath.Join(authorizationSQLDir, "..", "retention.mjs"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	statement := regexp.MustCompile("(?s)const anonymousStatement = `([^`]+)`").FindSubmatch(source)
+	if statement == nil {
+		t.Fatal("no anonymousStatement in retention.mjs")
+	}
+	idle, active, refreshed := newAuthUser(t, owner, ""), newAuthUser(t, owner, ""), newAuthUser(t, owner, "")
+	for _, u := range []authUser{guest, idle, active, refreshed} {
+		executeSQL(t, owner, `UPDATE auth.users SET email = NULL, is_anonymous = true, created_at = now() - interval '40 days' WHERE id = $1`, u.id)
+		executeSQL(t, owner, `UPDATE auth.sessions SET created_at = now() - interval '40 days', updated_at = now() - interval '40 days' WHERE user_id = $1`, u.id)
+	}
+	executeSQL(t, owner, `UPDATE auth.users SET created_at = now() - interval '40 days' WHERE id = $1`, person.id)
+	executeSQL(t, owner, `UPDATE auth.sessions SET updated_at = now() - interval '2 days' WHERE user_id = $1`, active.id)
+	executeSQL(t, owner, `UPDATE auth.sessions SET refreshed_at = (now() - interval '1 day') AT TIME ZONE 'UTC' WHERE user_id = $1`, refreshed.id)
+	executeSQL(t, owner, `DELETE FROM auth.sessions WHERE user_id = $1`, guest.id)
+	executeSQL(t, owner, string(statement[1]), 30, 1000)
+	exists := func(u authUser) bool {
+		return queryBool(t, owner, `SELECT EXISTS (SELECT 1 FROM auth.users WHERE id = $1)`, u.id)
+	}
+	if exists(guest) || exists(idle) || !exists(active) || !exists(refreshed) || !exists(person) {
+		t.Fatalf("after pruning: guest %v idle %v active %v refreshed %v person %v", exists(guest), exists(idle), exists(active), exists(refreshed), exists(person))
 	}
 }
