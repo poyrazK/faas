@@ -1045,6 +1045,7 @@ const (
 	CodeDeploymentScopeCollision = "deployment_scope_collision"
 	// ADR-1239: app/release review changed before the atomic candidate insert.
 	CodeReleaseReviewChanged = "release_review_changed"
+	CodeRegressionChanged    = "regression_changed"
 
 	// Trusted cosign signers (issue #472 / ADR-054). Same shape as
 	// the env-var quota — config cap, not a credential one — but a
@@ -1961,7 +1962,7 @@ const MaxOrgSlugLen = 32
 // 500 — a reconstructed Problem is never served without a real status.
 func StatusForCode(code string) int {
 	switch code {
-	case CodeProfileGateBlocked, CodeReleaseReviewChanged, CodeGitHubAccountConflict:
+	case CodeProfileGateBlocked, CodeRegressionChanged, CodeReleaseReviewChanged, CodeGitHubAccountConflict:
 		return http.StatusConflict
 	case CodeProfileInvestigationLimit:
 		return http.StatusTooManyRequests

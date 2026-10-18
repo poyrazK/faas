@@ -16,7 +16,7 @@ func TestContextCatalogReadOnlyResourcesAndPrompts(t *testing.T) {
 		t.Fatalf("resources=%+v %v", resources, err)
 	}
 	templates, err := cs.ListResourceTemplates(ctx, nil)
-	if err != nil || len(templates.ResourceTemplates) != 7 {
+	if err != nil || len(templates.ResourceTemplates) != 8 {
 		t.Fatalf("templates=%+v %v", templates, err)
 	}
 	prompts, err := cs.ListPrompts(ctx, nil)

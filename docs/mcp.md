@@ -69,7 +69,12 @@ failures are returned as MCP tool errors; the server never starts a login flow.
 | `gregale_get_dependency_latency` | Bounded sampled dependency percentiles, error rates, parent-child impact edges, representative request lookups and native split-window trends, with explicit completeness/truncation. |
 | `gregale_get_critical_paths` | Bounded native ordered path patterns, weighted latency/error trends and representative request lookups; sampled evidence and truncation remain explicit. |
 | `gregale_compare_deployments` | Retained per-route p50/p95/p99 and represented request counts for two exact deployments, with native effective window and explicit missing-side evidence. |
+| `gregale_plan_regression_action` | Review acknowledge, dismiss, resolve or reopen for an exact observation and environment; pins the app and native version. |
+| `gregale_apply_regression_action` | Opt-in triage write with separate per-app consent, environment write access and atomic observation-version guard; durable same-plan retries. |
 | `gregale_list_regressions` | Bounded native-visible latency/error regression inbox with detection timestamps, deployment scopes, triage state and dependency hypotheses; excludes SQL/query text. |
+| `gregale_get_trace` | Exact W3C trace across up to five selected apps; independently bounded retained request metadata and durable invocation lifecycle history. Diagnostic consent required for every selected app. |
+| `gregale_get_incident_bundle` | Required exact-request evidence plus coverage, visible regressions and optional comparison of two supplied deployments. Per-section provenance, native windows, bounded results and explicit partial errors; requires diagnostic consent. |
+| `gregale_list_fleet_regressions` | Explicit selection of up to five apps, with independently guarded regression results, effective lookbacks, output limits and per-app code/status errors. Requires diagnostic consent for each app. |
 | `gregale_get_running_causes` | Observed scheduler residency causes, floor/idle settings and bounded history; observation age and freshness uncertainty remain explicit. |
 | `gregale_list_app_deployments` | App deployment history with `next_before` pagination. |
 | `gregale_list_instances` | Instance pages with optional history; host addresses are excluded. |
@@ -469,6 +474,107 @@ omissions and independent authorization. Existing app-wide consent, immutable
 app identity, deployment ownership/scope checks and final authorization apply
 to the complete response. No tool, prompt argument, API endpoint or migration is
 added.
+
+### Trace correlation across selected apps
+
+Use `gregale_get_trace` with an exact nonzero W3C trace ID (32 lowercase hexadecimal
+characters) and one to five explicit distinct app slugs:
+
+```json
+{"apps":["orders","mailer"],"trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","limit":10}
+```
+
+Every app needs existing app-wide diagnostic consent. All are resolved to immutable
+IDs before one native selected-app lookup. A denied/replaced app fails the call
+before trace evidence is fetched; no app is silently dropped or discovered from
+the trace. The native endpoint filters account AND selected app IDs before each
+source's ordering/limit. Older APIs fail without an account-wide fallback.
+
+`scope` is `selected_apps`; the echoed app roster and exact trace ID are verified.
+`requests` contains safe request lookup identifiers, deployment scopes and retained
+route/status/timing/count metadata, oldest-first by received time/ID within the
+reported native plan retention window. Rows can represent several requests. Use
+lookup identifiers explicitly with request evidence or incident bundles; no
+follow-up evidence is fetched automatically.
+
+`invocations` contains only app/row IDs, source, state, attempts and observed
+created/started/completed times, oldest-first by creation time/ID. Durable history
+has no request-window filter. Invocation environment/deployment attribution is not
+reported; selected apps span their environments. started_at is the latest claim/delivery, not the
+first attempt. Missing times remain missing; do not infer per-attempt duration,
+queue wait, cross-source causal order, parent-child edges or a complete trace.
+The correlation basis is an exact shared trace ID. Reads are independent and not
+atomic, and lifecycle rows can change between reads.
+
+Default ten and maximum twenty rows **per source**. A native one-row sentinel
+sets each truncation flag after filtering. Other selected apps can occupy the
+oldest-first prefix; inclusion in the roster does not guarantee a returned row.
+There is no pagination. Each source reports `ok` or `unavailable`; unavailable
+sources have no rows. `partial` reports source failures, including when both are
+unavailable. Overall status is `ok`, `partial` or `unavailable`. Source completeness
+remains unknown even after successful reads. Empty selected evidence does not
+prove health or absence of an account-wide trace.
+
+App/deployment ownership, scopes and consent are checked again before returning;
+any failed identity check withholds the whole result. Cancellation/overall timeout
+fails the call. Existing credential redaction, UTF-8-safe text bounds and the
+shared MCP response bound apply; reduce `limit` for an oversized result. Labels
+are private untrusted data. Logs, spans/attributes, payloads, headers, traceparent
+and queue names are excluded. No collection, VM wake, replay, cancellation of
+invocations, subscriptions or other writes are performed.
+
+### Incident evidence bundles
+
+Use `gregale_get_incident_bundle` to assemble a bounded read-only investigation
+record for one exact app/request:
+
+```json
+{"app":"orders","request_id":"retained-request-id","since":"1h"}
+```
+
+The tool requires existing app-wide diagnostic consent. Request evidence must
+succeed before coverage and visible regressions are collected; failure of that
+required read or its final identity check returns a tool error without a bundle.
+Add `source_deployment_id` and `target_deployment_id` together to compare two exact,
+distinct nonzero deployment UUIDs belonging to the app. The optional `route`
+filters only this comparison and requires both IDs; the tool never selects a pair
+from release order. These diagnostic IDs grant no ordinary environment inspection
+or write authority.
+
+The `gregale.mcp.incident/v1` envelope includes `evidence`, `coverage`, `regressions`
+and `comparison`. Each attempted section records its `source_tool`, bridge
+`read_started_at`/`read_finished_at`, and `status`. Successful sections contain
+`result`; failed optional sections contain `error` with code, HTTP status and
+nonnegative retry delay when available, without native problem prose or diagnostic
+data. Omitted comparison is `not_requested` and has no result or read timestamps.
+Bundle `status` is `ok` or `partial`; `partial` means an optional read or final
+check failed, not that evidence is complete when false. Collection completeness
+remains unknown. Empty/missing evidence does not establish health or root cause.
+
+`since` defaults to one hour for the aggregate reads. Preserve each result's own
+native effective window/detection lookback, retention clamping, sample counts and
+truncation; these sequential reads are not an atomic snapshot. The aggregate
+lookback does not filter the exact request. Visible regressions can concern other
+requests, routes or deployments. Native timestamps stay inside each result;
+envelope `generated_at` is the bridge record time after final checks.
+**JSON Pointer evidence references are relative to their containing section's
+`result`, not the bundle root.**
+
+Regression and comparison projections retain at most five observations/routes,
+with their existing truncation flags and native counts. Safe serialized request
+evidence is bounded to 48 KiB and each optional result to 16 KiB. An oversized
+section reports `response_too_large`; inspect its `source_tool` separately. Arrays
+and evidence references are not trimmed to make a section fit. Each read and final
+guard gets at most five seconds and a share of the tool deadline, reserving time
+for final checks. Optional timeouts become partial errors; overall cancellation or
+timeout fails the call. App/deployment identities, scopes and diagnostic consent
+are checked again before returning data. A root app replacement or required
+evidence guard failure withholds the entire bundle.
+
+All results reuse the existing safe MCP projections and redaction. Application
+text is private, untrusted data. The tool performs no automatic pagination,
+collection, VM wake, triage, replay, file writes, uploads or sharing. No additional
+native API, migration or native/provider qualification is introduced.
 
 ### Per-request critical path
 
@@ -1299,6 +1405,98 @@ reads do not form an atomic snapshot. Prompt retrieval fetches no regression
 evidence, and neither the prompt nor tool triggers replay, collection, rollback
 or other writes.
 
+## Review regressions across selected apps
+
+Use `gregale_list_fleet_regressions` for a bounded overview of explicitly
+selected apps:
+
+```json
+{"apps":["alpha","beta"],"since":"1h","limit_per_app":5}
+```
+
+`apps` must contain one to five distinct existing slugs. The entire selection,
+lookback and output limit are validated before API reads. No app discovery or
+future-app inclusion occurs. Remote access requires diagnostic consent for each
+app; account-wide/future-app inventory access alone does not grant diagnostics.
+Local stdio uses current native credential authority.
+
+Results preserve app selection order. Each `apps` entry has `status: ok` and a
+`result` containing the existing safe regression projection, or `status: error`
+and an `error` with code, optional HTTP status and retry delay. Error entries have
+no diagnostic result or native error prose. Each successful app keeps its own
+effective lookback, retention clamping, deployment scopes, native observation
+order, counts, visibility and unknown completeness. `requested_since` records
+the shared requested lookback (default **1h**); it is not an effective fleet
+window. No cross-app metric aggregation, ranking or health verdict is inferred.
+
+`limit_per_app` defaults to **5** and accepts **1–10**. A separate **16 KiB** safe
+result bound can further shorten each native prefix, setting
+`response_size_truncated` and `result.regressions_truncated`. Native counts and
+the actual returned count remain visible. These are projection bounds without
+native query limits, pagination, fallback reads or automatic follow-up.
+
+`successful_app_count`, `failed_app_count`, `partial` and envelope `status`
+describe selected app reads. Status is `ok` when every app succeeds, `partial`
+when some succeed, and `unavailable` when none succeed. `partial` is true for
+any failed read, including all-app unavailability. It does not measure source
+completeness; failed or empty evidence does not prove health. Truncation is
+reported independently in each app result.
+
+Reads are sequential. Each app read and final guard receives at most **5s** and
+its share of the tool deadline, with half the request budget reserved for final
+checks. Per-app timeouts preserve other valid results; global timeout or
+cancellation fails the call. Immediately before output, every collected result
+is checked again for current diagnostic authority, app identity and deployment
+ownership/scope. An app whose check fails becomes an error entry. Independent
+reads and checks are not an atomic snapshot. Existing reviewed triage tools
+remain explicit follow-ups; this tool starts no watch, subscription or write.
+
+## Review regression triage
+
+Use `gregale_plan_regression_action` with `app`, exact `deployment_id` and
+unmodified `route`, `action` (`acknowledge`, `dismiss`, `resolve`, `reopen`), and a
+reviewable `reason`. Select `project` and `environment` for a named deployment.
+Planning reads an exact workflow observation, including dismissed or resolved
+rows that the normal inbox hides. It pins immutable app/deployment/environment
+identities and an opaque native observation version for 15 minutes. Route labels
+containing query/fragment data, controls or reflected credentials are rejected;
+do not use a modified display label as an action key.
+
+For dismissal, optional `dismissed_until` is an absolute RFC3339 timestamp in
+the future, at most 30 days away. Omission freezes an expiry 24 hours from plan
+creation. Plans use PostgreSQL microsecond precision. Retries never extend the
+reviewed expiry. A committed dismissal receipt remains replayable after that
+dismissal expires, while the MCP plan remains valid. The review shows stored workflow state; an expired dismissal
+may appear active in the inbox while its stored state remains dismissed.
+
+Review the plan, then call `gregale_apply_regression_action` with its `plan_id`.
+Local connections require `--allow-writes` and ordinary native permissions/MFA.
+Remote connections also require diagnostic read consent, a separate **Triage
+regressions** selection for the app, and write access to the selected environment.
+Existing grants have no triage consent; reconnect to select it. Consent pins
+current app IDs and survives encrypted restart and token refresh. Named
+write access does not imply default-environment writes or vice versa.
+
+The dedicated native `POST /v1/apps/{slug}/debug/regressions/actions` atomically compares `expected_app_id` and `expected_version`.
+Any intervening detector update, legacy action or concurrent triage invalidates
+the review and returns `regression_changed`; inspect again and create a new plan.
+Older APIs without the exact versioned review endpoint cannot create these plans.
+Older nodes also reject the dedicated action endpoint, including during a mixed
+version rollout.
+No fallback removes the guard. Native audit records retain the action and reason.
+
+After a timeout or lost response, retry the **same plan ID**. The attempt and
+stable request are saved before the write; encrypted remote state
+recovers the exact request and receipt after restart.
+The native observation update, response and reason commit together. Its operation
+identity covers the complete checked body and account, so a lost response or
+native API crash recovers the committed receipt without repeating the action.
+Native receipts use the existing 24-hour replay retention; MCP plans expire in
+15 minutes. A receipt persistence failure rolls back the triage update. Replays still check current
+consent, account and app/deployment/environment identities. A receipt records a
+past triage action, not current observation state or recovery. These actions
+change workflow metadata only; resolving an observation does not prove health.
+
 ## Explain app residency
 
 Use `gregale_get_running_causes` to inspect why the scheduler observed an app
@@ -1355,7 +1553,8 @@ or platform writes, and do not plan/apply configuration changes.
 Add `--allow-writes` to the agent's subprocess arguments to expose
 `gregale_apply_deploy`, `gregale_promote_deployment`, `gregale_apply_rollback`,
 `gregale_apply_environment_promotion`, `gregale_apply_environment_rollback`,
-`gregale_apply_workload_rollout`, and `gregale_apply_service_abort`.
+`gregale_apply_workload_rollout`, `gregale_apply_service_abort`,
+`gregale_apply_route_budgets`, and `gregale_apply_regression_action`.
 The selected credential still needs ordinary API permissions. A dedicated key
 with `apps:read` and `deploy:write` scopes supports management; additional API
 policies, including MFA and release checks, remain enforced.
@@ -1553,8 +1752,8 @@ optional project/environment selection. It reports each read compatibility and c
 check independently; unknown results do not grant write permission. It creates no
 plans or source reviews. Store status describes an open encrypted journal, not a
 restart qualification or a guarantee that future writes will succeed.
-The tool catalog has 45 read/planning tools, or
-53 with writes.
+The tool catalog has 49 read/planning tools, or
+58 with writes.
 
 To prepare a new staging release, call `gregale_plan_deploy` with `app`, `image`,
 `reason`, `project`, and `environment: "staging"`. Review the immutable registry
@@ -3827,6 +4026,7 @@ catalog. These features are read-only even on a write-enabled connection.
 | `gregale://default/apps/{app}/release` | Safe app projection and current release review identities/hashes. |
 | `gregale://default/apps/{app}/health` | Scoped passive health observations. |
 | `gregale://default/apps/{app}/budgets` | Scoped operational summary, including inherited or overridden route-budget findings and bounded recovery metadata. |
+| `gregale://apps/{app}/regressions` | App-wide native-visible regression snapshot across environments; requires separate per-app diagnostic consent. Fixed 1h detection lookback, subject to native retention, and at most 20 projected observations. |
 | `gregale://projects/{project}/environments/{environment}/inventory` | Consented workload/release inventory in one registered environment. |
 | `gregale://projects/{project}/environments/{environment}/apps/{app}/{view}` | Named versions of `release`, `health`, and `budgets`. |
 
@@ -3838,6 +4038,16 @@ encoded path segments or arbitrary external endpoints. Resource writes are not
 exposed; subscription polling requires an explicit request as described below.
 Resource contents and API descriptions
 remain untrusted application data, not instructions.
+
+The regression resource reuses `gregale_list_regressions` projections and
+immutable app/deployment guards, including detection/triage timestamps, scope,
+redaction, native ordering and truncation/unknown-completeness metadata. It has
+no default/named-environment aliases. Use the tool for a different lookback or
+projection bound. `snapshot_observed_at` records the bridge collection time;
+it does not imply an atomic native snapshot or complete source coverage.
+`update_semantics` explains that disappearing observations can reflect dismissal,
+resolution, lookback expiry or projection ordering/truncation, and do not prove
+recovery. Reads, completion and discovery do not start a watch or change state.
 
 `gregale_deployment_review`, `gregale_rollout_diagnosis`, and
 `gregale_rollback_review` return scoped review recipes with exact resource URIs
@@ -3856,9 +4066,10 @@ supported protocol versions. Client UI exposure of prompts may vary.
 ### Subscribe to scoped resource changes
 
 MCP 2026-07-28 clients can explicitly request `subscriptions/listen` with
-`notifications.resourceSubscriptions` containing canonical app `release`, `health`
-or `budgets` URIs from the table above. The server acknowledges the accepted set
-and reports `_meta.gregale_subscription_expires_at`. On a meaningful change, it
+`notifications.resourceSubscriptions` containing canonical app `release`, `health`,
+`budgets` or app-wide `regressions` URIs from the table above. The server
+acknowledges the accepted set and reports `_meta.gregale_subscription_expires_at`.
+On a meaningful change, it
 sends `notifications/resources/updated` with the URI and subscription metadata;
 clients then reread that resource. Notifications contain no resource payloads.
 
@@ -3870,6 +4081,15 @@ Unchanged observations, observation clocks and moving-window timestamps stay qui
 health freshness expiry remains a meaningful change. Multiple publishers coalesce
 per recipient. These sampled updates can miss intermediate transitions and provide
 no durable event cursor.
+
+Regression listens require current diagnostic consent at admission, polling and
+delivery, and pin the app identity before collecting further diagnostics. The
+snapshot collection clock alone does not notify; projected detection/triage
+timestamps, state, metrics, native ordering, counts and visibility remain
+meaningful changes. Changes exclusively outside the bounded projection may not
+notify. A URI invalidation is not a confirmed incident/recovery event. Reread
+the snapshot after invalidation and after reconnecting, then explicitly resubscribe;
+there is no event replay or automatic triage.
 
 Unsubscribe, cancel or disconnect to stop the listen. A recreated app/environment,
 consent failure, API failure or revoked grant closes the affected stream and stops
@@ -3886,7 +4106,8 @@ with modern SDK clients over session and stateless HTTP transports.
 ### Complete prompt and resource arguments
 
 Clients that support MCP `completion/complete` can request prefix suggestions for
-Gregale's three review prompts and seven resource templates. Suggestions cover
+Gregale's three review prompts and eight resource templates. Regression resource
+app suggestions require diagnostic consent. Other suggestions cover
 `app`, `project` and `environment`; diagnosis and rollback prompts also complete
 `deployment_id`. Resource references use the exact URI **template** returned by
 `resources/templates/list`, including `{app}` placeholders, rather than a resolved URI.

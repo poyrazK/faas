@@ -85,7 +85,7 @@ const (
 func cmdBackup(args []string) int {
 	parent, _ := lookupCliCommand("backup")
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregalectl backup <subcommand> [flags]\n  known subcommands: init, unseal-rclone, unseal-archive-creds", "backup")
+		PrintUsage(os.Stderr, "usage: gregalectl backup <subcommand> [flags]\n  known subcommands: init, unseal-rclone, unseal-archive-creds, seal-cp-state, restore-cp-state", "backup")
 		return 1
 	}
 	switch args[0] {
@@ -95,9 +95,13 @@ func cmdBackup(args []string) int {
 		return cmdBackupUnsealRclone(args[1:])
 	case subUnsealArchiveCreds:
 		return cmdBackupUnsealArchiveCreds(args[1:])
+	case subSealCPState:
+		return cmdBackupSealCPState(args[1:])
+	case subRestoreCPState:
+		return cmdBackupRestoreCPState(args[1:])
 	default:
 		sug, _ := suggestSubcommand(args[0], parent)
-		fmt.Fprintf(os.Stderr, "gregalectl backup: unknown subcommand %q (known: init, unseal-rclone, unseal-archive-creds)\n", args[0])
+		fmt.Fprintf(os.Stderr, "gregalectl backup: unknown subcommand %q (known: init, unseal-rclone, unseal-archive-creds, seal-cp-state, restore-cp-state)\n", args[0])
 		maybeSuggestSub(sug)
 		return 1
 	}

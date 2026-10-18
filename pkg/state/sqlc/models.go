@@ -3022,6 +3022,7 @@ type DebugRegressionObservation struct {
 	ErrorRatePct        pgtype.Numeric
 	ErrorRateBasePct    pgtype.Numeric
 	ErrorCount          int32
+	ReviewVersion       pgtype.UUID
 }
 
 type DeployToken struct {

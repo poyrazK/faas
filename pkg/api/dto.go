@@ -12076,6 +12076,22 @@ type DebugRegressionsResponse struct {
 	Regressions []DebugRegressionItem `json:"regressions"`
 }
 
+// DebugRegressionReview is an exact workflow observation, including hidden
+// dismissed/resolved rows. Version changes on every database update or insert.
+// It contains no raw dependency, request, SQL or application evidence.
+type DebugRegressionReview struct {
+	AppID           string `json:"app_id"`
+	DeploymentID    string `json:"deployment_id"`
+	Route           string `json:"route"`
+	Version         string `json:"version"`
+	State           string `json:"state"`
+	FirstDetectedAt string `json:"first_detected_at"`
+	LastDetectedAt  string `json:"last_detected_at"`
+	AcknowledgedAt  string `json:"acknowledged_at,omitempty"`
+	DismissedUntil  string `json:"dismissed_until,omitempty"`
+	ResolvedAt      string `json:"resolved_at,omitempty"`
+}
+
 // DebugRegressionActionRequest is the body for PATCH
 // /v1/apps/{slug}/debug/regressions. Actions change only the debugger's
 // workflow state; they never alter traffic or deployment state.
@@ -12086,10 +12102,23 @@ type DebugRegressionActionRequest struct {
 	DismissedUntil string `json:"dismissed_until,omitempty"`
 }
 
+// GuardedDebugRegressionActionRequest is required by the dedicated checked
+// action endpoint. Older API nodes cannot accept that endpoint unguarded.
+type GuardedDebugRegressionActionRequest struct {
+	DeploymentID    string `json:"deployment_id"`
+	Route           string `json:"route"`
+	Action          string `json:"action"`
+	DismissedUntil  string `json:"dismissed_until,omitempty"`
+	ExpectedAppID   string `json:"expected_app_id"`
+	ExpectedVersion string `json:"expected_version"`
+	Reason          string `json:"reason"`
+}
+
 // DebugRegressionActionResponse returns the updated observation so API,
 // CLI, dashboard, and event consumers share one post-action representation.
 type DebugRegressionActionResponse struct {
-	Regression DebugRegressionItem `json:"regression"`
+	Review     *DebugRegressionReview `json:"review,omitempty"`
+	Regression DebugRegressionItem    `json:"regression"`
 }
 
 // AllowedDebugRegressionActions is the closed workflow vocabulary for a
@@ -13374,4 +13403,56 @@ type EventRoutingRecoveryExpectation struct {
 
 func (e EventRoutingRecoveryExpectation) Valid() bool {
 	return strings.TrimSpace(e.WorkflowName) != "" && e.PublishedVersion > 0 && e.ReplayCount >= 0 && (e.Generation == nil || *e.Generation >= 0)
+}
+
+// SelectedTraceApp binds an explicit native selection to an immutable app ID.
+type SelectedTraceApp struct {
+	ID   string `json:"id"`
+	Slug string `json:"slug"`
+}
+
+// SelectedTraceRequest contains only retained request metadata, never spans.
+type SelectedTraceRequest struct {
+	AppID        string `json:"app_id"`
+	ID           string `json:"id"`
+	DeploymentID string `json:"deployment_id,omitempty"`
+	Route        string `json:"route"`
+	Method       string `json:"method"`
+	Status       int    `json:"status"`
+	LatencyMS    int    `json:"latency_ms"`
+	Count        int    `json:"count"`
+	ColdBoot     bool   `json:"cold_boot"`
+	ReceivedAt   string `json:"received_at"`
+}
+
+// SelectedTraceInvocation omits headers, payloads, results and queue names.
+type SelectedTraceInvocation struct {
+	AppID       string `json:"app_id"`
+	ID          string `json:"id"`
+	Source      string `json:"source"`
+	State       string `json:"state"`
+	Attempts    int    `json:"attempts"`
+	CreatedAt   string `json:"created_at"`
+	StartedAt   string `json:"started_at,omitempty"`
+	CompletedAt string `json:"completed_at,omitempty"`
+}
+
+// SelectedTraceLookupResponse is separate from the account-wide trace DTO.
+// Each source has its own bound, status and live-read truncation flag.
+type SelectedTraceLookupResponse struct {
+	Selection            string                    `json:"selection"`
+	TraceID              string                    `json:"trace_id"`
+	Apps                 []SelectedTraceApp        `json:"apps"`
+	GeneratedAt          string                    `json:"generated_at"`
+	Limit                int                       `json:"limit"`
+	RequestWindowStart   string                    `json:"request_window_start"`
+	RequestWindowEnd     string                    `json:"request_window_end"`
+	RequestRetentionDays int                       `json:"request_retention_days"`
+	Requests             []SelectedTraceRequest    `json:"requests"`
+	RequestsStatus       string                    `json:"requests_status"`
+	RequestsTruncated    bool                      `json:"requests_truncated"`
+	Invocations          []SelectedTraceInvocation `json:"invocations"`
+	InvocationsStatus    string                    `json:"invocations_status"`
+	InvocationsTruncated bool                      `json:"invocations_truncated"`
+	Partial              bool                      `json:"partial"`
 }
