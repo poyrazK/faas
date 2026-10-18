@@ -29,6 +29,14 @@ type proxyState struct {
 	nextConnectDelay    time.Duration
 }
 
+// ConnectionCount observes live downstream sessions without decoding TLS or
+// exposing credentials. Acceptance uses it to prove checkpoint pool draining.
+func (p Proxy) ConnectionCount() int {
+	p.state.mu.Lock()
+	defer p.state.mu.Unlock()
+	return len(p.state.connections)
+}
+
 // Disconnect retires existing sessions while allowing new TLS sessions.
 func (p Proxy) Disconnect() {
 	p.state.mu.Lock()

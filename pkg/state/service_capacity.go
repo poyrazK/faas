@@ -274,6 +274,16 @@ func (m *MemStore) serviceCapacitySnapshotLocked() serviceCapacitySnapshot {
 	}
 	var largest int64
 	for _, n := range m.computeNodes {
+		if c := m.functionMigrationNodeUsageLocked(n.ID); c != (capacityResources{}) {
+			resident, other := s.Resident[n.ID], s.Other[n.ID]
+			resident.RAM += c.RAM
+			resident.CPU += c.CPU
+			resident.VCPU += c.VCPU
+			other.RAM += c.RAM
+			other.CPU += c.CPU
+			other.VCPU += c.VCPU
+			s.Resident[n.ID], s.Other[n.ID] = resident, other
+		}
 		if n.Lifecycle != NodeLifecycleActive || n.AdmissionCeilingMB <= 0 || n.VPCPUs <= 0 || n.VCPUBudget <= 0 || time.Since(n.LastHeartbeatAt) > DefaultHeartbeatStaleness {
 			delete(s.Other, n.ID)
 			continue
@@ -398,6 +408,9 @@ func (m *MemStore) checkServiceCapacityAppLocked(app App) error {
 }
 
 func (m *MemStore) checkServiceCapacityInstanceLocked(ins Instance) error {
+	if err := m.functionDestinationInstanceCapacityLocked(ins); err != nil {
+		return err
+	}
 	if err := m.checkMigrationAdmissionCapacityLocked(ins); err != nil {
 		return err
 	}

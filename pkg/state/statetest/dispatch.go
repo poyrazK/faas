@@ -1028,6 +1028,8 @@ func (s *Mem) WarmPoolReconciliationAppIDs(p0 context.Context, p1 string) ([]str
 
 // pgDispatched lists the methods Pg forwards to its override.
 var pgDispatched = map[string]bool{
+	"MigrateInstanceOwnerWithRuntimeConfig":                              true,
+	"ResolveInstanceMigrationCommit":                                     true,
 	"ScenarioWebhookDeliveryBlocked":                                     true,
 	"SubmitOperatorRecovery":                                             true,
 	"AbandonProjectEnvironmentCloneConfigurationFence":                   true,
@@ -2351,6 +2353,24 @@ func (s *Pg) WithdrawProjectEnvironmentCloneCheckpointObjects(p0 context.Context
 		return o.WithdrawProjectEnvironmentCloneCheckpointObjects(p0, p1)
 	}
 	return s.PgStore.WithdrawProjectEnvironmentCloneCheckpointObjects(p0, p1)
+}
+
+func (s *Pg) MigrateInstanceOwnerWithRuntimeConfig(ctx context.Context, id, from, to, lease string, input state.RuntimeConfigMigration) error {
+	if o, ok := s.over.(interface {
+		MigrateInstanceOwnerWithRuntimeConfig(context.Context, string, string, string, string, state.RuntimeConfigMigration) error
+	}); ok {
+		return o.MigrateInstanceOwnerWithRuntimeConfig(ctx, id, from, to, lease, input)
+	}
+	return s.PgStore.MigrateInstanceOwnerWithRuntimeConfig(ctx, id, from, to, lease, input)
+}
+
+func (s *Pg) ResolveInstanceMigrationCommit(ctx context.Context, attempt state.MigrationCommitAttempt) (state.MigrationCommitResolution, error) {
+	if o, ok := s.over.(interface {
+		ResolveInstanceMigrationCommit(context.Context, state.MigrationCommitAttempt) (state.MigrationCommitResolution, error)
+	}); ok {
+		return o.ResolveInstanceMigrationCommit(ctx, attempt)
+	}
+	return s.PgStore.ResolveInstanceMigrationCommit(ctx, attempt)
 }
 
 func (s *Pg) WithdrawProjectEnvironmentCloneCheckpointPgBindings(p0 context.Context, p1 state.ProjectEnvironmentCloneLease) error {

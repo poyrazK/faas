@@ -2332,8 +2332,12 @@ message CancelLiveMigrationRequest {
 }
 
 message CancelLiveMigrationResponse {
-  // Empty struct reserved for future fields. Same shape as
-  // AcknowledgeMigrationResponse.
+  // True only after confirmed physical retirement of a qualified function
+  // source. schedd must complete STOPPED instead of publishing RUNNING.
+  bool source_retired = 1;
+  // Qualified callers require version 1. An older empty response proves
+  // neither recovery nor retirement and must not authorize RUNNING.
+  uint32 source_protocol_version = 2;
 }
 
 // ForwardRawRequestInit (issue #676 / ADR-080) is the first frame

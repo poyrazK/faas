@@ -2336,6 +2336,10 @@ func toProblem(err error) *api.Problem {
 	if err == nil {
 		return nil
 	}
+	if errors.Is(err, fcvm.ErrFunctionWarmCapture) {
+		return api.NewProblem(500, api.CodeInternal,
+			"Function warm capture failed", "function checkpoint or resource recovery did not complete; retire the source VM before replacing it")
+	}
 	if errors.Is(err, fcvm.ErrAppAdmissionFenced) {
 		return api.NewProblem(409, api.CodeDatabaseCutoverFenced,
 			"Database cutover in progress", "app admission is fenced for a managed PostgreSQL cutover")

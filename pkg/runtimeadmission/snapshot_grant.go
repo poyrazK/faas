@@ -57,7 +57,7 @@ func (g SnapshotGrant) Validate(now time.Time) error {
 
 func validSnapshotGrantMode(g SnapshotGrant) bool {
 	warm := strings.Contains(g.MemoryKey, "/warm/captures/")
-	return g.Mode == "warm" && warm && !g.BeforeCheckpoint || g.Mode == "park" && !warm || g.Mode == "migration" && !warm && !g.BeforeCheckpoint
+	return g.Mode == "warm" && warm || g.Mode == "park" && !warm || g.Mode == "migration" && !warm && !g.BeforeCheckpoint
 }
 
 type SnapshotAcknowledgment struct {

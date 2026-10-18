@@ -259,6 +259,8 @@ func (s *Server) wakeAdmittedWithBridge(ctx context.Context, vmm admittedRuntime
 func admissionStatus(err error) error {
 	var code codes.Code
 	switch {
+	case errors.Is(err, fcvm.ErrFunctionWarmCapture):
+		return grpcerr.ToStatus(toProblem(err))
 	case errors.Is(err, runtimeadmission.ErrUnavailable):
 		code = codes.Unimplemented
 	case errors.Is(err, runtimeadmission.ErrInvalid):

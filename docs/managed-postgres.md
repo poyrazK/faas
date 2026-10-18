@@ -159,7 +159,8 @@ restore callback; both must succeed before it accepts traffic.
 
 The [combined rollout verifier](ops/managed-postgres-native-acceptance.md#combined-rollout-verification)
 joins provider v8 evidence with a versioned report from actual execution of all
-nineteen guest phases, including both shipped Node and Python starters.
+twenty guest phases (suite version 4), including both shipped Node and Python
+starters and the Node frozen-thaw recovery witness.
 `managed-postgres-qualify --verify --rollout` checks the
 approved qualification-bundle manifest, PostgreSQL major, native host class,
 cleanup and expiry without making provider or SQL calls. Before a staging

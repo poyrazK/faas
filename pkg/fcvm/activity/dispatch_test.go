@@ -35,3 +35,25 @@ func TestOnlyDispatchRequiresExactSoleOriginalForward(t *testing.T) {
 		t.Fatal("forgotten owner was reconstructed")
 	}
 }
+
+func TestOnlyDispatchRefusesIndependentExecutionOwnership(t *testing.T) {
+	a := New(nil)
+	a.BeginDispatch("vm", "job", 1)
+	a.BeginExecution("vm")
+	if a.OnlyDispatch("vm", "job", 1) {
+		t.Fatal("a held forward hid independently owned execution")
+	}
+	a.EndDispatch("vm", "job", 1)
+	if inflight, _ := a.Inflight("vm"); inflight != 1 {
+		t.Fatalf("HTTP completion released background execution: %d", inflight)
+	}
+	a.BeginDispatch("vm", "job", 1)
+	a.EndExecution("vm")
+	if !a.OnlyDispatch("vm", "job", 1) {
+		t.Fatal("retired execution still blocks the sole original forward")
+	}
+	a.EndDispatch("vm", "job", 1)
+	if inflight, _ := a.Inflight("vm"); inflight != 0 {
+		t.Fatalf("retired owners still pin activity: %d", inflight)
+	}
+}

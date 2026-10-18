@@ -9,6 +9,7 @@ import (
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/functionlifetime"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -153,9 +154,9 @@ func (e *Engine) thawFrozenLocked(ctx context.Context, thawer FrozenVMM, app sta
 	}
 	started := time.Now()
 	thawCtx, cancel := context.WithTimeout(ctx, frozenRPCTimeout)
-	// An app that declared after_restore reconnects its clients after the
-	// time it spent frozen, as it does after a restore.
-	req := ThawRequest{ImageHealthcheckRequired: imageHealthcheckRequiredFromDep(dep), RunAfterRestore: app.Manifest.AfterRestore != nil}
+	// Declared callbacks and qualified automatic resources reconnect their
+	// clients after the time spent frozen, as they do after a restore.
+	req := ThawRequest{ImageHealthcheckRequired: imageHealthcheckRequiredFromDep(dep), RunAfterRestore: app.Manifest.AfterRestore != nil || app.Type == state.AppTypeFunction && functionlifetime.NativeNode(app.Runtime)}
 	result, thawErr := thawer.ThawInstance(thawCtx, e.nodeForRoute(frozen.NodeID), frozen.ID, req)
 	cancel()
 	if thawErr == nil {

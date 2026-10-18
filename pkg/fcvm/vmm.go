@@ -131,6 +131,8 @@ type JailerVMM struct {
 	// bind VMADDR_CID_HOST, so daemon-wide AF_VSOCK listeners are not a valid
 	// transport on the supported nested-virtualization topology.
 	guestVsockStreamHandlers map[uint32]GuestVsockStreamHandler
+	guestVsockLeaseHandlers  map[uint32]func(Lease, net.Conn) (string, error)
+	functionPauseBarrier     func(string) error
 	guestVsockObserver       GuestVsockTransportObserver
 	// characterizationReceipts coordinate the receiver started during boot
 	// with Manager.Wake's later WaitCharacterizationReport call. A single
@@ -2180,7 +2182,12 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		// startJailer), so the UDS is live by the time /snapshot/load
 		// completes. Trigger the resume hook now to re-seed entropy and step
 		// the clock before the app can bind :8080 (spec §11 V6).
-		if err = v.TriggerResumeHook(ctx, l, time.Now().UnixNano()); err != nil {
+		if spec.verifiedSnapshot != nil && spec.verifiedSnapshot.request.FunctionMigration != nil {
+			err = v.triggerResumeHookOnce(ctx, l, time.Now().UnixNano(), nil)
+		} else {
+			err = v.TriggerResumeHook(ctx, l, time.Now().UnixNano())
+		}
+		if err != nil {
 			return fmt.Errorf("vmm: resume hook: %w", err)
 		}
 	}
@@ -2360,11 +2367,35 @@ func (v *JailerVMM) RegisterGuestVsockStreamHandler(port uint32, handler GuestVs
 	if v.guestVsockStreamHandlers == nil {
 		v.guestVsockStreamHandlers = make(map[uint32]GuestVsockStreamHandler)
 	}
-	if _, exists := v.guestVsockStreamHandlers[port]; exists {
+	if _, exists := v.guestVsockStreamHandlers[port]; exists || v.guestVsockLeaseHandlers[port] != nil {
 		v.mu.Unlock()
 		return fmt.Errorf("guest vsock handler already registered on port %d", port)
 	}
 	v.guestVsockStreamHandlers[port] = handler
+	observer := v.guestVsockObserver
+	v.mu.Unlock()
+	if observer != nil {
+		observer(port, "", nil)
+	}
+	return nil
+}
+
+// Lease-scoped receivers capture the boot/restore process generation before
+// accepting traffic. A delayed connection cannot bind to a later VM with the
+// same allocator slot and instance ID.
+func (v *JailerVMM) registerGuestVsockLeaseHandler(port uint32, handler func(Lease, net.Conn) (string, error)) error {
+	if v == nil || port == 0 || handler == nil {
+		return errors.New("invalid lease-scoped guest receiver")
+	}
+	v.mu.Lock()
+	if v.guestVsockStreamHandlers[port] != nil || v.guestVsockLeaseHandlers[port] != nil {
+		v.mu.Unlock()
+		return errors.New("guest receiver port already registered")
+	}
+	if v.guestVsockLeaseHandlers == nil {
+		v.guestVsockLeaseHandlers = make(map[uint32]func(Lease, net.Conn) (string, error))
+	}
+	v.guestVsockLeaseHandlers[port] = handler
 	observer := v.guestVsockObserver
 	v.mu.Unlock()
 	if observer != nil {
@@ -2399,6 +2430,9 @@ func (v *JailerVMM) prepareRegisteredGuestVsockListeners(l Lease) error {
 	handlers := make(map[uint32]GuestVsockStreamHandler, len(v.guestVsockStreamHandlers))
 	for port, handler := range v.guestVsockStreamHandlers {
 		handlers[port] = handler
+	}
+	for port, handler := range v.guestVsockLeaseHandlers {
+		handlers[port] = func(_ string, conn net.Conn) (string, error) { return handler(l, conn) }
 	}
 	v.mu.Unlock()
 	for port, handler := range handlers {
@@ -7363,6 +7397,23 @@ func (e *fcAPIError) Error() string {
 }
 
 func (v *JailerVMM) apiCall(ctx context.Context, method, instance, path string, body any) error {
+	if method == http.MethodPatch && path == "/vm" && v.functionPauseBarrier != nil {
+		data, err := json.Marshal(body)
+		if err != nil {
+			return err
+		}
+		var change struct {
+			State string `json:"state"`
+		}
+		if err := json.Unmarshal(data, &change); err != nil {
+			return err
+		}
+		if change.State == "Paused" {
+			if err := v.functionPauseBarrier(instance); err != nil {
+				return err
+			}
+		}
+	}
 	return v.apiCallWithClient(ctx, v.fcClient(instance), method, path, body)
 }
 

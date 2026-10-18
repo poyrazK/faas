@@ -8494,9 +8494,15 @@ func (x *CancelLiveMigrationRequest) GetLeaseToken() string {
 }
 
 type CancelLiveMigrationResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// True only after confirmed physical retirement of a qualified function
+	// source. schedd must complete STOPPED instead of publishing RUNNING.
+	SourceRetired bool `protobuf:"varint,1,opt,name=source_retired,json=sourceRetired,proto3" json:"source_retired,omitempty"`
+	// Qualified callers require version 1. An older empty response proves
+	// neither recovery nor retirement and must not authorize RUNNING.
+	SourceProtocolVersion uint32 `protobuf:"varint,2,opt,name=source_protocol_version,json=sourceProtocolVersion,proto3" json:"source_protocol_version,omitempty"`
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
 }
 
 func (x *CancelLiveMigrationResponse) Reset() {
@@ -8527,6 +8533,20 @@ func (x *CancelLiveMigrationResponse) ProtoReflect() protoreflect.Message {
 // Deprecated: Use CancelLiveMigrationResponse.ProtoReflect.Descriptor instead.
 func (*CancelLiveMigrationResponse) Descriptor() ([]byte, []int) {
 	return file_onebox_faas_vmmd_v1_vmmd_proto_rawDescGZIP(), []int{104}
+}
+
+func (x *CancelLiveMigrationResponse) GetSourceRetired() bool {
+	if x != nil {
+		return x.SourceRetired
+	}
+	return false
+}
+
+func (x *CancelLiveMigrationResponse) GetSourceProtocolVersion() uint32 {
+	if x != nil {
+		return x.SourceProtocolVersion
+	}
+	return 0
 }
 
 // ForwardRawRequestInit (issue #676 / ADR-080) is the first frame
@@ -15238,8 +15258,10 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\vinstance_id\x18\x01 \x01(\tR\n" +
 	"instanceId\x12\x1f\n" +
 	"\vlease_token\x18\x02 \x01(\tR\n" +
-	"leaseToken\"\x1d\n" +
-	"\x1bCancelLiveMigrationResponse\"s\n" +
+	"leaseToken\"|\n" +
+	"\x1bCancelLiveMigrationResponse\x12%\n" +
+	"\x0esource_retired\x18\x01 \x01(\bR\rsourceRetired\x126\n" +
+	"\x17source_protocol_version\x18\x02 \x01(\rR\x15sourceProtocolVersion\"s\n" +
 	"\x15ForwardRawRequestInit\x12\x1a\n" +
 	"\binstance\x18\x01 \x01(\tR\binstance\x12\x12\n" +
 	"\x04port\x18\x02 \x01(\rR\x04port\x12*\n" +
