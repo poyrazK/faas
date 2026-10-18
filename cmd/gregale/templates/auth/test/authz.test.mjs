@@ -27,8 +27,8 @@ function fakePool(respond) {
   }
 }
 
-async function serve(t, pool, { authenticate = async () => ({ sub: member, session_id: 'session' }), origins = ['https://app.example.test'], invitations, storage, workflows, teamEnabled = false, deleteAccount = null } = {}) {
-  const server = createServer({ upstreamPort: 1, authz: createAuthzHandler({ pool, authenticate, origins, invitations, storage, workflows, teamEnabled, deleteAccount }) })
+async function serve(t, pool, { authenticate = async () => ({ sub: member, session_id: 'session' }), origins = ['https://app.example.test'], invitations, storage, workflows, teamEnabled = false, deleteAccount = null, orgClaims = false } = {}) {
+  const server = createServer({ upstreamPort: 1, authz: createAuthzHandler({ pool, authenticate, origins, invitations, storage, workflows, teamEnabled, deleteAccount, orgClaims }) })
   server.listen(0, '127.0.0.1')
   await once(server, 'listening')
   t.after(() => server.close())
@@ -271,4 +271,16 @@ test('deletes the caller own account only when the app allows it', async t => {
   assert.deepEqual(deleted, [member])
   const client = await serve(t, pool, { authenticate: async () => ({ sub: member, session_id: 'session', client_id: 'c1' }), deleteAccount: async () => { throw new Error('reached') } })
   assert.equal((await client('DELETE', '/account')).body.code, 'oauth_client_token')
+})
+
+test('chooses the session organization only when organization claims are on', async t => {
+  const pool = fakePool((sql, args) => sql.includes('set_active_organization') ? { rows: args[0] ? [{ id: args[0], slug: 'acme', role: 'member' }] : [] } : { rows: [] })
+  const off = await serve(t, pool)
+  assert.equal((await off('POST', '/active-organization', { body: { org } })).status, 404)
+  const on = await serve(t, pool, { orgClaims: true })
+  assert.deepEqual((await on('POST', '/active-organization', { body: { org } })).body, { organization: { id: org, slug: 'acme', role: 'member' } })
+  assert.deepEqual((await on('POST', '/active-organization', { body: { org: null } })).body, { organization: null })
+  assert.deepEqual(pool.log.filter(q => q.sql.includes('set_active_organization')).map(q => q.args), [[org], [null]])
+  assert.equal((await on('POST', '/active-organization', { body: { org: 'acme' } })).status, 400)
+  assert.equal((await on('POST', '/active-organization', { body: {} })).status, 400)
 })

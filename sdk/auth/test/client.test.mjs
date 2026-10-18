@@ -354,3 +354,23 @@ test('deletes the user own account and forgets the session', async () => {
   assert.equal(await auth.getSession(), null)
   assert.deepEqual(events, ['SIGNED_OUT'])
 })
+
+test('chooses the active organization and reads it from the refreshed token', async () => {
+  const jwt = claims => `eyJhbGciOiJFUzI1NiJ9.${Buffer.from(JSON.stringify(claims)).toString('base64url')}.sig`
+  const org = { org_id: 'o1', org_slug: 'acme', org_role: 'admin', org_permissions: ['org:read', 7] }
+  let next = { ...tokens(1), access_token: jwt({ sub: 'u1' }) }
+  const api = server({
+    'POST /auth/v1/token': () => [200, next],
+    'POST /authz/v1/active-organization': call => [200, { organization: call.body.org ? { id: call.body.org, slug: 'acme', role: 'admin' } : null }],
+  })
+  const auth = createAuthClient({ url: origin, fetch: api.fetch, store: null })
+  await auth.signInWithPassword({ email: 'a@example.test', password: 'pw' })
+  assert.equal(await auth.organizations.active(), null)
+  next = { ...tokens(2), access_token: jwt({ sub: 'u1', ...org }) }
+  assert.deepEqual(await auth.organizations.setActive('o1'), { id: 'o1', slug: 'acme', role: 'admin', permissions: ['org:read'] })
+  assert.deepEqual(api.calls.map(c => c.key).slice(-2), ['POST /authz/v1/active-organization', 'POST /auth/v1/token'], 'set, then refresh')
+  assert.equal((await auth.organizations.active()).slug, 'acme')
+  next = { ...tokens(3), access_token: jwt({ sub: 'u1' }) }
+  assert.equal(await auth.organizations.setActive(null), null)
+  assert.deepEqual(api.calls.at(-2).body, { org: null })
+})

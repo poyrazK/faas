@@ -203,3 +203,12 @@ func TestSelfDeletion(t *testing.T) {
 		}
 	}
 }
+
+func TestOrgClaims(t *testing.T) {
+	for value, want := range map[bool]string{true: "1", false: "0"} {
+		set, unset, err := Change{OrgClaims: ptr(value)}.Secrets()
+		if err != nil || len(unset) != 0 || !reflect.DeepEqual(set, map[string]string{"AUTH_ORG_CLAIMS": want}) {
+			t.Fatalf("OrgClaims %v: set %v unset %v err %v", value, set, unset, err)
+		}
+	}
+}

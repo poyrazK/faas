@@ -68,6 +68,7 @@ const (
 	secretAnonRetention   = "AUTH_ANONYMOUS_RETENTION_DAYS"
 	secretIdentityLinking = "AUTH_IDENTITY_LINKING"
 	secretSelfDeletion    = "AUTH_SELF_DELETION"
+	secretOrgClaims       = "AUTH_ORG_CLAIMS"
 )
 
 // CaptchaProviders are the CAPTCHA services GoTrue verifies and the hosted
@@ -149,6 +150,9 @@ type Change struct {
 	// SelfDeletion lets signed-in users delete their own accounts after a
 	// recent sign-in (the hosted account page, deleteAccount()).
 	SelfDeletion *bool
+	// OrgClaims puts each session's active organization, role and
+	// permissions into its access tokens (org_* claims).
+	OrgClaims *bool
 }
 
 // Captcha is a CAPTCHA provider and its keys; the secret stays in the app.
@@ -278,6 +282,9 @@ func (c Change) Secrets() (map[string]string, []string, error) {
 	}
 	if c.SelfDeletion != nil {
 		set[secretSelfDeletion] = flag(*c.SelfDeletion)
+	}
+	if c.OrgClaims != nil {
+		set[secretOrgClaims] = flag(*c.OrgClaims)
 	}
 	if c.AnonymousRetentionDays != nil {
 		days := *c.AnonymousRetentionDays

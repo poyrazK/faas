@@ -16,7 +16,8 @@ export function newHookSecret() {
 }
 
 // The custom access token hook runs on every token GoTrue issues, so it is
-// on only with the OAuth server, whose client tokens it changes (oauth.mjs).
+// on only when it changes tokens: with the OAuth server (client tokens,
+// oauth.mjs) or organization claims (AUTH_ORG_CLAIMS, authz.mjs).
 export function hookEnv(secret, { accessToken = false } = {}) {
   return {
     GOTRUE_HOOK_SEND_EMAIL_ENABLED: 'true',

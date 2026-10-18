@@ -181,6 +181,21 @@ seals an `AUTH_AUTHZ` document (`roles` and `policies`), and the release task
 replaces custom roles and every policy from it. The `owner` role always holds
 every permission, and a role still assigned cannot be removed.
 
+With `AUTH_ORG_CLAIMS` on, a session chooses the organization it acts in
+(`gregale_auth.set_active_organization()`, a member's own session only), and
+GoTrue's custom access token hook adds `org_id`, `org_slug`, `org_role` and
+`org_permissions` to its first-party tokens, joining the choice with the
+current membership and role. The choice is per session, not per user, so
+devices and tabs act independently; a foreign key to `auth.sessions` and to
+the organization removes it with either. Backends then authorize from a
+verified token without a call, accepting that a removed member or changed role
+holds until the token expires (`AuthAccessTokenTTLSeconds`); `authorize()`
+remains the current check. The hook, which otherwise runs only with the OAuth
+server, runs whenever either is on, so apps that use neither pay nothing per
+token. Client tokens never carry the claims, and nothing is chosen
+implicitly: a user in one organization still sets it, so a token's claims are
+never a guess.
+
 ### One authorization function
 
 Permissions are resolved in PostgreSQL when access is checked, never copied

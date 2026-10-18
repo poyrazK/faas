@@ -380,6 +380,40 @@ No organization can lose its last owner. Invitations last seven days by default
 (300 seconds to 14 days); a user can create up to 100 organizations, and an
 organization can hold 500 pending invitations.
 
+### The active organization in tokens
+
+Turn on organization claims to let your backend read a user's organization
+and role from the token it already verifies, without calling the Auth app:
+
+```sh
+gregale auth config shop-auth --org-claims on
+```
+
+The browser picks the organization a session acts in; the session's next
+tokens carry it:
+
+```ts
+await auth.organizations.setActive(org.id) // refreshes the session
+const active = await auth.organizations.active() // { id, slug, role, permissions } or null
+await auth.organizations.setActive(null) // act in none
+```
+
+Tokens then hold `org_id`, `org_slug`, `org_role` and `org_permissions` (the
+role's permissions, `*` for owners). The backend SDKs return them as
+`claims.organization` (Node and Python) and `claims.Organization` (Go), and
+row-level security can read `gregale_auth.claims() ->> 'org_id'`. Each session
+has its own choice, so two tabs can act in different organizations; ending the
+session or deleting the organization clears it.
+
+A token keeps the role it was issued with until it expires, at most ten
+minutes later; removing a member or changing their role shows in their next
+token. For checks that must be current, such as removing members or changing
+billing, use `authorize()`, which reads the membership each time.
+`POST /authz/v1/active-organization` `{org}` (or `{"org": null}`) is the API
+behind `setActive`; it answers `not_found` for an organization the caller
+does not belong to. Tokens issued to third-party OAuth clients never carry
+these claims.
+
 ## Organization single sign-on
 
 Let your business customers sign in through their company's identity
