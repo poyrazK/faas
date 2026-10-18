@@ -1540,6 +1540,8 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-1528: Node admission generation fencing](1528-node-admission-generation-fencing.md) — transactional lifecycle/generation checks, fresh placement retries and migration destination validation.
 
 - [ADR-1529: Durable inbound migration reservations](1529-durable-inbound-migration-reservations.md) — persistent destination capacity, one adoption dispatch, original-generation cleanup and atomic ownership conversion.
+- [ADR-1740: Frozen fast path — a thaw is a ledger check, the vmmd call beside one read, and one guarded update](1740-frozen-fast-path.md)
+- [ADR-1741: schedd owner cache — per-app runtime generations and one guarded write per wake](1741-schedd-owner-cache.md)
 
 - [ADR-1530: Durable migration source retirement](1530-durable-migration-source-retirement.md) — original physical source receipts, atomic retirement accounting and maintenance fencing after ownership moves.
 

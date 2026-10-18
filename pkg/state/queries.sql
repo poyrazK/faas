@@ -1654,14 +1654,113 @@ RETURNING id::text AS id, app_id::text AS app_id, deployment_id::text AS deploym
     coalesce(host(host_ip),'')::text AS host_ip, ram_mb, started_at, last_request_at, parked_at,
     node_id::text AS node_id, wake_id::text AS wake_id, framework_ready_at, tail_count, mode, request_count;
 
--- name: SaveRuntimeInstanceConfigProof :exec
-INSERT INTO runtime_instance_config_proofs(instance_id,wake_id,node_id,deployment_id,environment_id,scope,secret_fingerprint,config_fingerprint)
-SELECT id,wake_id,node_id,deployment_id,sqlc.narg(environment_id)::uuid,sqlc.arg(scope)::text,
-    sqlc.arg(secret_fingerprint)::text,sqlc.arg(config_fingerprint)::text
-FROM instances WHERE id=sqlc.arg(instance_id)::uuid
-ON CONFLICT(instance_id) DO UPDATE SET wake_id=excluded.wake_id,node_id=excluded.node_id,
-    deployment_id=excluded.deployment_id,environment_id=excluded.environment_id,scope=excluded.scope,
-    secret_fingerprint=excluded.secret_fingerprint,config_fingerprint=excluded.config_fingerprint;
+-- name: LockAppRuntimeGeneration :one
+-- ADR-1741: an admission insert decided from schedd's owner cache commits
+-- only while the app's generation is the one the decision read.
+SELECT generation FROM app_runtime_generations WHERE app_id=sqlc.arg(app_id)::uuid FOR SHARE;
+
+-- name: AppRuntimeGeneration :one
+-- ADR-1741: the app's runtime generation, which triggers bump in the
+-- writer's transaction for every change a wake depends on.
+SELECT generation FROM app_runtime_generations WHERE app_id=sqlc.arg(app_id)::uuid;
+
+-- name: FrozenThawBasis :one
+-- ADR-1740, ADR-1741: read first when a VM freezes, before the rest of its
+-- ticket, so any change after it moves the generation the guarded thaw
+-- compares. selected is true when the thaw a ticket would allow is the one
+-- the ordinary wake path would choose: the app's active production release
+-- pins the deployment, or no release pins the app and the deployment is its
+-- only live production-lane deployment with traffic.
+SELECT COALESCE((SELECT g.generation FROM app_runtime_generations g WHERE g.app_id=a.id),0)::bigint AS generation,
+    (a.status='active' AND a.managed_postgres_admission_cutover_id IS NULL
+        AND d.status='live' AND d.traffic_percent>0 AND d.scope IN ('production','default','')
+        AND d.parked_reason IS DISTINCT FROM 'security_scan_regressed'
+        AND (EXISTS (SELECT 1 FROM project_release_sets rs JOIN project_release_members rm ON rm.release_id=rs.id AND rm.app_id=a.id
+                WHERE rs.project_id=a.project_id AND rs.account_id=a.account_id AND rs.environment_slug='production' AND rs.active
+                    AND rm.deployment_id=d.id AND d.scope='production')
+            OR (NOT EXISTS (SELECT 1 FROM project_release_sets rs JOIN project_release_members rm ON rm.release_id=rs.id AND rm.app_id=a.id
+                    WHERE rs.project_id=a.project_id AND rs.account_id=a.account_id AND rs.environment_slug='production' AND rs.active
+                        AND rm.deployment_id IS NOT NULL)
+                AND NOT EXISTS (SELECT 1 FROM deployments o WHERE o.app_id=a.id AND o.id<>d.id AND o.status='live'
+                    AND o.traffic_percent>0 AND o.scope IN ('production','default','')))))::boolean AS selected
+FROM apps a JOIN deployments d ON d.app_id=a.id
+WHERE a.id=sqlc.arg(app_id)::uuid AND d.id=sqlc.arg(deployment_id)::uuid;
+
+-- name: ThawFrozenInstance :one
+-- ADR-1740, ADR-1741: a ticketed thaw's one control-plane round trip. The
+-- FROZEN -> RUNNING compare-and-set holds when the app's runtime generation
+-- is the one the ticket read: every change the ordinary wake path would have
+-- read moves it, in the writer's transaction. The generation row is the only
+-- lock taken, FOR SHARE, so a writer bumping it waits for this statement or
+-- this statement waits for the writer and then sees the new generation. The
+-- config proof must still be the ticket's, and an enrollment exception,
+-- which expires with time and moves no generation, must not have expired.
+-- The transition event and instance_changed notification commit with it.
+-- No row means a guard refused and nothing changed.
+WITH generation_lock AS (
+    SELECT g.app_id FROM app_runtime_generations g
+    WHERE g.app_id=sqlc.arg(app_id)::uuid AND g.generation=sqlc.arg(generation)::bigint
+    FOR SHARE
+), standards AS (
+    SELECT a.id FROM apps a WHERE a.id=sqlc.arg(app_id)::uuid AND (a.org_id IS NULL OR EXISTS (
+        SELECT 1 FROM app_application_standards s WHERE s.org_id=a.org_id AND s.app_id=a.id
+            AND (s.exception_expires_at IS NULL OR now()<s.exception_expires_at)))
+), thawed AS (
+    UPDATE instances SET started_at=clock_timestamp(), state='running'
+    WHERE id=sqlc.arg(instance_id)::uuid AND app_id=sqlc.arg(app_id)::uuid
+        AND deployment_id=sqlc.arg(deployment_id)::uuid AND node_id=sqlc.arg(node_id)::uuid
+        AND wake_id=sqlc.arg(wake_id)::uuid AND state='frozen'
+        AND EXISTS (SELECT 1 FROM generation_lock) AND EXISTS (SELECT 1 FROM standards)
+        AND EXISTS (SELECT 1 FROM runtime_instance_config_proofs proof WHERE proof.instance_id=instances.id
+            AND proof.wake_id=instances.wake_id AND proof.node_id=instances.node_id
+            AND proof.deployment_id=instances.deployment_id AND proof.config_fingerprint=sqlc.arg(config_fingerprint)::text)
+    RETURNING id::text AS id, app_id::text AS app_id, deployment_id::text AS deployment_id,
+        state, coalesce(netns,'')::text AS netns, coalesce(guest_uid,0)::integer AS guest_uid,
+        coalesce(host(host_ip),'')::text AS host_ip, ram_mb, started_at, last_request_at, parked_at,
+        node_id::text AS node_id, wake_id::text AS wake_id, framework_ready_at, tail_count, mode, request_count
+), transition_event AS (
+    INSERT INTO events(actor,kind,subject,data)
+    SELECT 'schedd',sqlc.narg(event_kind)::text,thawed.id::uuid,sqlc.narg(event_data)::jsonb FROM thawed
+    WHERE sqlc.narg(event_kind)::text IS NOT NULL
+    RETURNING id
+), notification AS (
+    SELECT pg_notify(sqlc.narg(notify_channel)::text,sqlc.narg(notify_payload)::text) FROM thawed
+    WHERE sqlc.narg(notify_channel)::text IS NOT NULL
+)
+SELECT thawed.*, (SELECT count(*) FROM transition_event)::integer AS events_recorded,
+    (SELECT count(*) FROM notification)::integer AS notifications_sent
+FROM thawed;
+
+-- name: SaveRuntimeInstanceConfigProof :one
+-- Saves the config proof a publication commits with. A wake's bookkeeping
+-- rides in the same statement, so it costs no round trip: the transition
+-- event and the instance_changed notification (pg_notify delivers at
+-- commit) commit with the publication or not at all. The deployment's
+-- snapshot-miss backoff is only reported, never cleared here: the
+-- publication holds a share lock on the deployment row, and an update
+-- would deadlock concurrent publications of the same deployment.
+WITH proof AS (
+    INSERT INTO runtime_instance_config_proofs(instance_id,wake_id,node_id,deployment_id,environment_id,scope,secret_fingerprint,config_fingerprint)
+    SELECT id,wake_id,node_id,deployment_id,sqlc.narg(environment_id)::uuid,sqlc.arg(scope)::text,
+        sqlc.arg(secret_fingerprint)::text,sqlc.arg(config_fingerprint)::text
+    FROM instances WHERE id=sqlc.arg(instance_id)::uuid
+    ON CONFLICT(instance_id) DO UPDATE SET wake_id=excluded.wake_id,node_id=excluded.node_id,
+        deployment_id=excluded.deployment_id,environment_id=excluded.environment_id,scope=excluded.scope,
+        secret_fingerprint=excluded.secret_fingerprint,config_fingerprint=excluded.config_fingerprint
+    RETURNING deployment_id
+), transition_event AS (
+    INSERT INTO events(actor,kind,subject,data)
+    SELECT 'schedd',sqlc.narg(event_kind)::text,sqlc.arg(instance_id)::uuid,sqlc.narg(event_data)::jsonb
+    WHERE sqlc.narg(event_kind)::text IS NOT NULL
+    RETURNING id
+), notification AS (
+    SELECT pg_notify(sqlc.narg(notify_channel)::text,sqlc.narg(notify_payload)::text)
+    WHERE sqlc.narg(notify_channel)::text IS NOT NULL
+)
+SELECT EXISTS(SELECT 1 FROM deployments d JOIN proof ON proof.deployment_id=d.id
+        WHERE d.snapshot_miss_count<>0 OR d.snapshot_miss_last_at IS NOT NULL OR d.snapshot_miss_backoff_until IS NOT NULL)::boolean AS snapshot_backoff_recorded,
+    (SELECT count(*) FROM transition_event)::integer AS events_recorded,
+    (SELECT count(*) FROM notification)::integer AS notifications_sent;
 
 -- name: ReadRuntimeInstanceConfigProof :one
 SELECT proof.deployment_id::text AS deployment_id,COALESCE(proof.environment_id::text,'')::text AS environment_id,
@@ -4566,11 +4665,14 @@ WHERE id = $1;
 -- recreate sweep has restored the destination's snapshot set, OR by
 -- the wake flow on a successful cold boot. Resets the counter and
 -- clears the backoff_until so future wakes don't short-circuit.
+-- A deployment with nothing recorded is left alone: no row version and no
+-- update triggers for the common case.
 UPDATE deployments
 SET snapshot_miss_count         = 0,
     snapshot_miss_last_at       = NULL,
     snapshot_miss_backoff_until = NULL
-WHERE id = $1;
+WHERE id = $1
+  AND (snapshot_miss_count <> 0 OR snapshot_miss_last_at IS NOT NULL OR snapshot_miss_backoff_until IS NOT NULL);
 
 -- name: DeploymentSnapshotBackoffActive :one
 -- The wake-side gate. Returns the row while a backoff timestamp is

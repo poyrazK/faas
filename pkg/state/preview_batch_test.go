@@ -20,11 +20,17 @@ func TestMemStorePRPreviewBatchAtomicQuotaAndRetry(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	// A preview's project must exist and belong to the same owner (#4882
+	// made MemStore enforce this, as PostgreSQL's foreign key always did).
+	project, err := store.CreateProject(ctx, Project{AccountID: account.ID, Slug: "previews"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	limits := api.Limits{DeployedApps: 5, PreviewApps: 2}
 	previews := []App{
-		{AccountID: account.ID, ProjectID: "project", Slug: "pr-42-api", PreviewOfSlug: "api", PreviewPrNumber: 42, Status: AppActive},
-		{AccountID: account.ID, ProjectID: "project", Slug: "pr-42-db", PreviewOfSlug: "db", PreviewPrNumber: 42, Status: AppActive},
-		{AccountID: account.ID, ProjectID: "project", Slug: "pr-42-worker", PreviewOfSlug: "worker", PreviewPrNumber: 42, Status: AppActive},
+		{AccountID: account.ID, ProjectID: project.ID, Slug: "pr-42-api", PreviewOfSlug: "api", PreviewPrNumber: 42, Status: AppActive},
+		{AccountID: account.ID, ProjectID: project.ID, Slug: "pr-42-db", PreviewOfSlug: "db", PreviewPrNumber: 42, Status: AppActive},
+		{AccountID: account.ID, ProjectID: project.ID, Slug: "pr-42-worker", PreviewOfSlug: "worker", PreviewPrNumber: 42, Status: AppActive},
 	}
 	if _, err := store.CreatePRPreviewAppsIfUnderQuota(ctx, previews, limits); !errors.Is(err, ErrQuotaExceeded) {
 		t.Fatalf("over-quota batch = %v, want quota error", err)

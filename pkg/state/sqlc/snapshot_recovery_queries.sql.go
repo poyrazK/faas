@@ -24,6 +24,41 @@ func (q *Queries) AdvanceSnapshotRecoveryGeneration(ctx context.Context, db DBTX
 	return snapshot_recovery_generation, err
 }
 
+const bindAdmittedInstanceSnapshotRecovery = `-- name: BindAdmittedInstanceSnapshotRecovery :execrows
+INSERT INTO instance_snapshot_recovery (instance_id, wake_id, generation, snapshot_id)
+SELECT $1::uuid, $2::uuid, d.snapshot_recovery_generation, $3::uuid
+FROM deployments d JOIN apps a ON a.id = d.app_id
+WHERE d.id = $4::uuid AND a.status <> 'deleted'
+  AND ($3::uuid IS NULL OR EXISTS (
+    SELECT 1 FROM snapshots s WHERE s.id = $3::uuid AND s.deployment_id = d.id
+      AND NOT s.stale AND NOT s.delete_pending AND s.recovery_generation = d.snapshot_recovery_generation))
+FOR SHARE OF d, a
+`
+
+type BindAdmittedInstanceSnapshotRecoveryParams struct {
+	InstanceID   pgtype.UUID
+	WakeID       pgtype.UUID
+	SnapshotID   pgtype.UUID
+	DeploymentID pgtype.UUID
+}
+
+// ADR-1741: the admission insert binds the new instance's recovery lineage
+// in its own transaction. Share locks on the deployment and app order an
+// operator cold boot, which advances the generation with an UPDATE, before
+// or after the admission; no row means the binding is refused.
+func (q *Queries) BindAdmittedInstanceSnapshotRecovery(ctx context.Context, db DBTX, arg BindAdmittedInstanceSnapshotRecoveryParams) (int64, error) {
+	result, err := db.Exec(ctx, bindAdmittedInstanceSnapshotRecovery,
+		arg.InstanceID,
+		arg.WakeID,
+		arg.SnapshotID,
+		arg.DeploymentID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const bindInstanceSnapshotRecovery = `-- name: BindInstanceSnapshotRecovery :one
 INSERT INTO instance_snapshot_recovery (instance_id, wake_id, generation, snapshot_id)
 VALUES ($1::uuid, $2::uuid, $3::bigint, $4::uuid)

@@ -280,6 +280,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_FRONTEND_HOSTING_R2_SECRET_KEY` | apid, shared | `secrets-env` |  |  | `` | optional internal pilot credential delivered by /etc/faas/sealed.env; never required for disabled hosting |
 | `FAAS_FRONTEND_HOSTING_RESERVED_DOMAINS` | apid, shared | `default` |  |  | `` | additional platform domains excluded from internal custom-hostname claims |
 | `FAAS_FRONTEND_HOSTING_RETENTION_ENABLED` | apid, shared | `runtime-config` |  | 0 | `` | optional bootstrap default for internal hosting; persisted runtime configuration is authoritative; keep off for customer releases |
+| `FAAS_FROZEN_FAST_PATH` | schedd | `default` |  |  | `` | optional boolean switch for the ADR-1740 frozen fast path (thaw from a ticket recorded at freeze); needs FAAS_FROZEN_TIER; production default is off |
 | `FAAS_FROZEN_TIER` | schedd | `default` |  |  | `` | optional boolean switch for the ADR-1151 frozen tier; production default is off |
 | `FAAS_FROZEN_TIER_APPS` | schedd | `default` |  |  | `` | optional boolean switch extending the ADR-1151 frozen tier to request-mode apps; needs FAAS_FROZEN_TIER; production default is off |
 | `FAAS_FUNCTION_CONCURRENCY` | guest, shared | `guest` |  |  | `` | stamped by imaged on function deployments whose function_concurrency is above one (ADR-1342) |
@@ -516,6 +517,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_OUTBOUNDD_ROLE` | outboundd, shared | `dropin` |  |  | `` |  |
 | `FAAS_OVERLAY_INTERFACE` | vmmd | `default` |  |  | `` |  |
 | `FAAS_OVERLAY_IP` | vmmd | `default` |  |  | `` | optional local encrypted-overlay IPv4; vmmd can auto-detect it when private-network transport is enabled |
+| `FAAS_OWNER_CACHE` | schedd | `default` |  |  | `` | optional boolean switch for the ADR-1741 schedd owner cache (wake inputs cached per app, writes guarded by the app runtime generation); production default is off |
 | `FAAS_PADDLE_API_KEY` | shared | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
 | `FAAS_PADDLE_SANDBOX` | shared | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
 | `FAAS_PADDLE_WEBHOOK_SECRET` | shared | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
