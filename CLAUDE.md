@@ -187,3 +187,8 @@ Cron limits: Free 0 · Hobby 5/app 10/acct · Pro 20/app 50/acct · Scale 100/ap
   `statetest.NewMem(fake)` (or `NewPg`, `NewStore`) where a store is needed. Overriding a method
   for the first time needs a dispatch method in `pkg/state/statetest/dispatch.go`; the
   constructor panics with that instruction if it is missing.
+- Test code must not declare its own interface that embeds `state.Store` (named or as a literal
+  parameter type): the compiler generates a wrapper for every method of every interface a package
+  declares and converts to, ~10 MB per Store-sized interface. In `pkg/state` contract tests, alias
+  the shared one (`type fooTestStore = contractTestStore`) and add any new optional store
+  interface to `contractTestStore`.

@@ -154,6 +154,7 @@ sql:
       - "pkg/state/automation_live_queries.sql"
       - "pkg/state/binding_verification_run_queries.sql"
       - "pkg/state/build_dependency_queries.sql"
+      - "pkg/state/config_revision_queries.sql"
       - "pkg/state/data_api_connection_budget_queries.sql"
       - "pkg/state/data_api_runtime_connections_queries.sql"
       - "pkg/state/data_repair_queries.sql"
@@ -230,6 +231,7 @@ sql:
       - "pkg/state/org_queue_ownership_queries.sql"
       - "pkg/state/password_credential_queries.sql"
       - "pkg/state/plain_replay_queries.sql"
+      - "pkg/state/post_release_watch_queries.sql"
       - "pkg/state/product_activity_queries.sql"
       - "pkg/state/product_billing_queries.sql"
       - "pkg/state/product_control_queries.sql"
@@ -271,6 +273,7 @@ sql:
       - "pkg/state/telemetry_coverage_queries.sql"
       - "pkg/state/work_admission_queries.sql"
       - "pkg/state/worker_recovery_queries.sql"
+
     schema: "schema.sql"
     gen:
       go:

@@ -14,10 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/appstandards"
 )
 
-type standardOperationTestStore interface {
-	standardReviewTestStore
-	ApplicationStandardOperationStore
-}
+type standardOperationTestStore = contractTestStore
 
 func TestMemApplicationStandardApprovalLegacyAliases(t *testing.T) {
 	m := NewMemStore()

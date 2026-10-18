@@ -17,11 +17,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/appstandards"
 )
 
-type standardArtifactReviewTestStore interface {
-	standardMaterializationTestStore
-	sourceRootfsTestStore
-	runtimeScanTestStore
-}
+type standardArtifactReviewTestStore = contractTestStore
 
 func TestMemApplicationStandardArtifactSecurityReview(t *testing.T) {
 	standardArtifactSecurityReview(t, func(*testing.T) standardArtifactReviewTestStore { return NewMemStore() })

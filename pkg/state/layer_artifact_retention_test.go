@@ -12,11 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-type layerRetentionTestStore interface {
-	cloneWorkloadTestStore
-	state.DeploymentAliasStore
-	state.ProjectReleaseSetStore
-}
+type layerRetentionTestStore = contractTestStore
 
 // ADR-590: consumers retain retired deployments and cannot resurrect a deleted
 // artifact after their final reference is removed.

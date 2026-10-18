@@ -13,10 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-type accountingStore interface {
-	recoveryStore
-	state.ObjectStorageAccountingStore
-}
+type accountingStore = contractTestStore
 
 func accountingPolicy() api.ObjectStoragePolicy {
 	return api.ObjectStoragePolicy{MaxAccountBytes: 100, MaxBucketBytes: 100, MaxAccountKeys: 20, MaxMonthlyCostMillicents: 100, MaxMonthlyRequests: 100, MaxMonthlyEgressBytes: 100, MaxMonthlyAuthorizations: 100, MaxReportAgeSeconds: 3600}

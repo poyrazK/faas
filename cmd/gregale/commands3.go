@@ -515,6 +515,7 @@ func secretsSet(args []string) int {
 	waitForAck := fs.Bool("wait-for-ack", false, "wait for application acknowledgements for every updated key")
 	timeout := fs.Duration("timeout", 2*time.Minute, "maximum restart and acknowledgement wait after saving values")
 	restart := fs.Bool("restart", false, "restart app with the updated secrets")
+	noGuard := fs.Bool("no-guard", false, "do not open a config guard for this change (ADR-1451)")
 	orderedArgs, err := reorderSecretsSetArgs(args)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "secret set:", err)
@@ -629,6 +630,9 @@ func secretsSet(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
+	if *noGuard {
+		client = client.WithoutConfigGuard()
+	}
 
 	printMutationTarget(*app, *scope, appSource, scopeSource)
 	return writeSecretsPairs(context.Background(), client, *app, pairs, *scope, *secretClass, *restart, secretSetWaitOptions{enabled: *waitForAck, timeout: *timeout})
@@ -648,6 +652,7 @@ func writeSecretsPairs(ctx context.Context, client *Client, app string, pairs []
 			PrintOK(osStdout, "%s set (scope=%s)", p.Key, scopeOrDefault(scope))
 		}
 	}
+	printConfigGuardNotice(ctx, client, app, scope)
 	if len(waitOptions) > 0 && waitOptions[0].enabled {
 		return finishSecretSetWait(ctx, client, app, scope, keys, restart, waitOptions[0].timeout)
 	}
@@ -949,6 +954,7 @@ func secretsUnset(args []string) int {
 	waitForAck := fs.Bool("wait-for-ack", false, "wait until every active authorized runtime confirms it removed the secret")
 	timeout := fs.Duration("timeout", 2*time.Minute, "maximum time to wait for runtime acknowledgements")
 	restart := fs.Bool("restart", false, "restart the app so running instances drop the removed secret now")
+	noGuard := fs.Bool("no-guard", false, "do not open a config guard for this change (ADR-1451)")
 	orderedArgs, err := reorderSecretsSetArgs(args)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "secret unset:", err)
@@ -1019,6 +1025,9 @@ func secretsUnset(args []string) int {
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
+	}
+	if *noGuard {
+		client = client.WithoutConfigGuard()
 	}
 	printMutationTarget(*app, *scope, appSource, scopeSource)
 	if len(keys) > 1 {

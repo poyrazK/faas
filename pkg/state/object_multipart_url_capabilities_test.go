@@ -16,12 +16,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-type multipartURLTestStore interface {
-	objectURLTestStore
-	state.ObjectMultipartURLCapabilityStore
-	state.ObjectMultipartUploadStore
-	state.ObjectMultipartTransferStore
-}
+type multipartURLTestStore = contractTestStore
 
 // adr: 558
 func TestObjectMultipartURLCapabilitiesMem(t *testing.T) {

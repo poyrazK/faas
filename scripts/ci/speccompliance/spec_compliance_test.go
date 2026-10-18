@@ -86,6 +86,9 @@ const (
 	runtimeReleasesFile              = "runtime_releases.go"           // ADR-736 immutable runtime identity and update preview DTOs
 	devBucketsFile                   = "dev_buckets.go"
 	imageRunsFile                    = "image_runs.go"           // ADR-1161 — docker-run-shaped image run DTOs
+	rolloutDecisionFile              = "rollout_decision.go"     // ADR-1447 explained rollout decisions
+	releaseRollbackFile              = "release_rollback.go"     // ADR-1448 releases that change the database
+	configRevisionsFile              = "config_revisions.go"     // ADR-1451 guarded, reversible config changes
 	changeTimelineFile               = "change_timeline.go"      // ADR-751 app change timeline DTOs
 	customMetricSeriesFile           = "custom_metric_series.go" // ADR-745 custom metric history DTOs
 )
@@ -644,6 +647,8 @@ var dtoExclude = map[string]bool{
 	"MigrationDependencyReport":         true, // Private guest task protocol, not an HTTP DTO.
 	"ResolvedCreateAppTaskRequest":      true, // validated state admission input, not a public DTO
 	"RecoverDeploymentRolloutRequest":   true, // loopback-only meterd ↔ apid contract; intentionally absent from the public OpenAPI spec
+	"RecordRolloutHoldRequest":          true, // ADR-1447 loopback-only meterd ↔ apid hold route; intentionally absent from the public OpenAPI spec
+	"RecordRolloutHoldResponse":         true, // ADR-1447 loopback-only meterd ↔ apid hold route
 	"AlertRuleRow":                      true, // internal conversion struct (state row → wire DTO); never sent over the wire on its own
 	"RouteCapturedOperation":            true, // ADR-446: internal inventory rows are excluded from reports with json:"-".
 	"CanaryRouteHealthRecoveryRequest":  true, // loopback-only fresh check and recovery contract
@@ -1648,6 +1653,9 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "outbound_ai_access_tokens.go"),
 		filepath.Join(root, "pkg", "api", "outbound_ai_tags.go"), // ADR-1436 usage tags and tag limits
 		filepath.Join(root, "pkg", "api", runtimeReleasesFile),
+		filepath.Join(root, "pkg", "api", rolloutDecisionFile),
+		filepath.Join(root, "pkg", "api", releaseRollbackFile),
+		filepath.Join(root, "pkg", "api", configRevisionsFile),
 		filepath.Join(root, "pkg", "api", platformTenantsFile),
 		filepath.Join(root, "pkg", "api", platformTenantCredentialsFile),
 		filepath.Join(root, "pkg", "api", runtimePolicyFile),

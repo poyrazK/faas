@@ -11,11 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-type productionWorkloadCollectionsStore interface {
-	state.Store
-	state.ProjectEnvironmentWorkloadSpecStore
-	state.DeploymentWorkloadSpecReader
-}
+type productionWorkloadCollectionsStore = contractTestStore
 
 func TestMemProductionAppEditPreservesWorkloadCollections(t *testing.T) {
 	testProductionAppEditPreservesWorkloadCollections(t, state.NewMemStore())
