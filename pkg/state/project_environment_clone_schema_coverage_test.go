@@ -151,19 +151,6 @@ func TestCloneSchemaRegistryNamesConfigurationDataAndResetBoundaries(t *testing.
 		"financial_evidence_coverage":              CloneSchemaOperational,
 		"financial_sampling_windows":               CloneSchemaOperational,
 
-		// Rehearsal grants, fixture journals and evidence stay with their original run.
-		"scenario_cold_preparations":    CloneSchemaOperational,
-		"scenario_command_networks":     CloneSchemaOperational,
-		"scenario_managed_work":         CloneSchemaOperational,
-		"scenario_object_fixtures":      CloneSchemaOperational,
-		"scenario_postgres_fixtures":    CloneSchemaOperational,
-		"scenario_recorder_requests":    CloneSchemaOperational,
-		"scenario_recorder_sessions":    CloneSchemaOperational,
-		"scenario_simulation_attempts":  CloneSchemaOperational,
-		"scenario_suspend_resumes":      CloneSchemaOperational,
-		"scenario_test_action_policies": CloneSchemaOperational,
-		"scenario_worker_faults":        CloneSchemaOperational,
-
 		// Capacity and runtime observations are source-bound, expiring evidence.
 		"managed_postgres_connection_capacity":     CloneSchemaOperational,
 		"data_api_runtime_connection_observations": CloneSchemaOperational,
