@@ -48,7 +48,7 @@ func main() {
 	if path := configPathArg(os.Args[1:]); path != "" {
 		configPath = path
 	}
-	wire.Daemon("gatewayd-internal", run)
+	wire.HandoffDaemon("gatewayd-internal", run)
 }
 
 // configPathArg keeps the systemd ExecStart contract honest. The service

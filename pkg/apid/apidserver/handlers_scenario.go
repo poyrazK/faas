@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/rehearsal"
 	"github.com/onebox-faas/faas/pkg/chaos"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -20,23 +21,21 @@ func (s *server) registerScenarioTest(w http.ResponseWriter, r *http.Request, ac
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
 		return
 	}
-	if len(req.Members) == 0 || len(req.Members) > 16 {
-		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid workloads", "members must contain 1 to 16 workloads"))
+	if !s.scenarioSuspendResumeSupported(w, req) {
 		return
 	}
-	members := make([]state.ScenarioTestMember, 0, len(req.Members))
-	for _, spec := range req.Members {
-		if !validSlug(spec.Workload) || !validSlug(spec.AppSlug) {
-			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid workload", "workload and app_slug must be valid slugs"))
-			return
-		}
-		app, err := s.store.AppBySlug(r.Context(), spec.AppSlug)
-		if err != nil || app.AccountID != acct.ID || app.PreviewPrNumber != 0 || app.PreviewOfSlug == "" ||
-			devSessionSlug(acct.ID, app.PreviewOfSlug, runID) != app.Slug {
-			s.notFound(w, "no such test developer session")
-			return
-		}
-		members = append(members, state.ScenarioTestMember{Workload: spec.Workload, AppID: app.ID})
+	if !s.scenarioColdStartSupported(w, req) {
+		return
+	}
+	if !s.scenarioManagedWorkSupported(w, req) {
+		return
+	}
+	if !s.scenarioTestPolicySupported(w, req) {
+		return
+	}
+	members := s.resolveScenarioTestMembers(w, r, acct.ID, runID, req)
+	if members == nil {
+		return
 	}
 	if err := s.store.RegisterScenarioTestMembers(r.Context(), acct.ID, runID, members); err != nil {
 		switch {
@@ -49,7 +48,69 @@ func (s *server) registerScenarioTest(w http.ResponseWriter, r *http.Request, ac
 		}
 		return
 	}
+	if req.WebhookMode != "" {
+		writeJSON(w, http.StatusOK, api.RegisterScenarioTestResponse{SuspendResumeSHA256: scenarioSuspendResumeDigest(req), ColdStartSHA256: scenarioColdStartDigest(req), ManagedWorkSHA256: scenarioManagedWorkDigest(req), CommandVersion: req.CommandVersion, WebhookMode: req.WebhookMode, PolicyVersion: 1, ActionEvidenceVersion: req.ActionEvidenceVersion, NetworkMode: req.NetworkMode, SimulationSHA256: scenarioSimulationEnrollmentDigest(req), RecorderVersion: scenarioRecorderVersion(req)})
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *server) scenarioTestPolicySupported(w http.ResponseWriter, req api.RegisterScenarioTestRequest) bool {
+	if (req.NetworkMode != "" && (req.NetworkMode != state.ScenarioNetworkContained || req.WebhookMode != state.ScenarioWebhookCaptureMode)) || len(req.Members) == 0 || len(req.Members) > 16 || req.WebhookMode != "" && req.WebhookMode != state.ScenarioWebhookCaptureMode ||
+		req.ActionEvidenceVersion != 0 && ((req.ActionEvidenceVersion != api.ScenarioActionSnapshotVersion && req.ActionEvidenceVersion != api.ScenarioSimulationSnapshotVersion) || req.WebhookMode != state.ScenarioWebhookCaptureMode) {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid test policy", "members must contain 1 to 16 workloads; capture supports action_evidence_version 1 and optional network_mode contained"))
+		return false
+	}
+	if req.NetworkMode != "" && !s.rehearsalNetworkEnabled {
+		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity, "Rehearsal containment unavailable", "The operator must qualify and enable rehearsal network containment before enrolling apps"))
+		return false
+	}
+	if problem := rehearsal.ValidateEnrollment(req, s.rehearsalCommandsEnabled && s.appTaskAPIEnabled); problem != nil {
+		api.WriteProblem(w, problem)
+		return false
+	}
+	if req.CommandVersion != 0 {
+		if _, ok := s.store.(state.ScenarioCommandStore); !ok {
+			api.WriteProblem(w, api.ErrCapacity("register contained command support"))
+			return false
+		}
+	}
+	if !s.scenarioSimulationSupported(w, req) {
+		return false
+	}
+	if req.ActionEvidenceVersion == api.ScenarioSimulationSnapshotVersion && req.Simulation == nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Missing simulation fixtures", "Action evidence version 2 requires simulation fixtures"))
+		return false
+	}
+	if req.ActionEvidenceVersion != 0 {
+		if _, ok := s.store.(state.ScenarioActionSnapshotStore); !ok {
+			api.WriteProblem(w, api.ErrCapacity("register action evidence support"))
+			return false
+		}
+	}
+	return true
+}
+
+func (s *server) resolveScenarioTestMembers(w http.ResponseWriter, r *http.Request, accountID, runID string, req api.RegisterScenarioTestRequest) []state.ScenarioTestMember {
+	simulationJSON, _, _ := scenarioSimulationEnrollment(req)
+	workJSON, _ := scenarioManagedWorkEnrollment(req)
+	coldJSON, _, _ := api.ScenarioColdStartEnrollment(req)
+	resumeJSON, _, _ := api.ScenarioSuspendResumeEnrollment(req)
+	members := make([]state.ScenarioTestMember, 0, len(req.Members))
+	for _, spec := range req.Members {
+		if !validSlug(spec.Workload) || !validSlug(spec.AppSlug) {
+			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid workload", "workload and app_slug must be valid slugs"))
+			return nil
+		}
+		app, err := s.store.AppBySlug(r.Context(), spec.AppSlug)
+		if err != nil || app.AccountID != accountID || app.PreviewPrNumber != 0 || app.PreviewOfSlug == "" ||
+			devSessionSlug(accountID, app.PreviewOfSlug, runID) != app.Slug {
+			s.notFound(w, "no such test developer session")
+			return nil
+		}
+		members = append(members, state.ScenarioTestMember{Workload: spec.Workload, AppID: app.ID, WebhookMode: req.WebhookMode, NetworkMode: req.NetworkMode, ColdStartJSON: coldJSON, SuspendResumeJSON: resumeJSON, SimulationJSON: simulationJSON, ManagedWorkJSON: workJSON})
+	}
+	return members
 }
 
 func (s *server) deleteScenarioTest(w http.ResponseWriter, r *http.Request, acct state.Account) {

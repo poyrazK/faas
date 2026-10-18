@@ -158,7 +158,7 @@ func (h *uploadHandler) lookupUploadRoute(w http.ResponseWriter, r *http.Request
 
 func (h *uploadHandler) prepareUpload(w http.ResponseWriter, r *http.Request, app state.App, route state.ObjectUploadRoute, acct state.Account, key state.APIKey) (state.ObjectUploadCompletion, bool) {
 	subject := keySubject(acct, key)
-	c := state.ObjectUploadCompletion{ID: uuid.NewString(), RouteID: route.ID, AccountID: app.AccountID, AppID: app.ID, BucketID: route.BucketID, SubjectID: subject, Key: generatedUploadKey(route.KeyPrefix, subject), Bytes: max(r.ContentLength, 0), ContentType: normalizedContentType(r.Header.Get("Content-Type")), RequestID: r.Header.Get("X-Request-ID"), Status: "pending", CreatedAt: h.now()}
+	c := state.ObjectUploadCompletion{ID: NewWriteReceiptID(), RouteID: route.ID, AccountID: app.AccountID, AppID: app.ID, BucketID: route.BucketID, SubjectID: subject, Key: generatedUploadKey(route.KeyPrefix, subject), Bytes: max(r.ContentLength, 0), ContentType: normalizedContentType(r.Header.Get("Content-Type")), RequestID: r.Header.Get("X-Request-ID"), Status: "pending", CreatedAt: h.now()}
 	if !h.validateUpload(w, r, route, c) {
 		return c, false
 	}

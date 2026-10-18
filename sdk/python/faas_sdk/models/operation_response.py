@@ -12,6 +12,7 @@ from ..models.operation_response_state import OperationResponseState, check_oper
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.operation_data_repair import OperationDataRepair
     from ..models.operation_delivery_response import OperationDeliveryResponse
     from ..models.operation_limits import OperationLimits
     from ..models.operation_progress import OperationProgress
@@ -52,6 +53,8 @@ class OperationResponse:
     (ADR-1196)."""
     waiting: OperationWaitingState | Unset = UNSET
     """Why a waiting operation holds no execution. until is the timer's wake time or the approval deadline."""
+    data_repair: OperationDataRepair | Unset = UNSET
+    """Repair plan metadata in Operation history; captured row values remain in the application executor."""
     limits: OperationLimits | Unset = UNSET
     """ADR-1196 bounds fixed onto each accepted Operation. Every field is optional and bounded by the plan;
     workflow definitions take only a deadline, and job definitions take none."""
@@ -105,6 +108,10 @@ class OperationResponse:
         if not isinstance(self.waiting, Unset):
             waiting = self.waiting.to_dict()
 
+        data_repair: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.data_repair, Unset):
+            data_repair = self.data_repair.to_dict()
+
         limits: dict[str, Any] | Unset = UNSET
         if not isinstance(self.limits, Unset):
             limits = self.limits.to_dict()
@@ -145,6 +152,8 @@ class OperationResponse:
             field_dict["failure_code"] = failure_code
         if waiting is not UNSET:
             field_dict["waiting"] = waiting
+        if data_repair is not UNSET:
+            field_dict["data_repair"] = data_repair
         if limits is not UNSET:
             field_dict["limits"] = limits
         if deadline_at is not UNSET:
@@ -156,6 +165,7 @@ class OperationResponse:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.operation_data_repair import OperationDataRepair
         from ..models.operation_delivery_response import OperationDeliveryResponse
         from ..models.operation_limits import OperationLimits
         from ..models.operation_progress import OperationProgress
@@ -219,6 +229,13 @@ class OperationResponse:
         else:
             waiting = OperationWaitingState.from_dict(_waiting)
 
+        _data_repair = d.pop("data_repair", UNSET)
+        data_repair: OperationDataRepair | Unset
+        if isinstance(_data_repair, Unset):
+            data_repair = UNSET
+        else:
+            data_repair = OperationDataRepair.from_dict(_data_repair)
+
         _limits = d.pop("limits", UNSET)
         limits: OperationLimits | Unset
         if isinstance(_limits, Unset):
@@ -257,6 +274,7 @@ class OperationResponse:
             artifacts=artifacts,
             failure_code=failure_code,
             waiting=waiting,
+            data_repair=data_repair,
             limits=limits,
             deadline_at=deadline_at,
             usage=usage,

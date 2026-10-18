@@ -22,6 +22,7 @@ import (
 const (
 	maxPreparedNetworks    = api.MaxPreparedNetworkCacheSize
 	preparedNetworkTTL     = api.PreparedNetworkCacheTTLSeconds * time.Second
+	preparedNetworkTick    = api.PreparedNetworkMaintenanceSeconds * time.Second
 	preparedNetworkTimeout = api.PreparedNetworkOperationTimeoutSeconds * time.Second
 	preparedNetworkRefill  = api.PreparedNetworkRefillDelayMillis * time.Millisecond
 )
@@ -127,7 +128,7 @@ func (m *Manager) ClosePreparedNetworks() error {
 // pool with apps on 8080. The full resulting config is checked again after
 // Wake validates its request.
 func (m *Manager) preparedPolicy(req WakeRequest) (preparedNetworkPolicy, bool) {
-	if !req.Plan.Valid() || req.ExecutionOnly || req.ExportDir != "" || req.StaticEgressIP != "" ||
+	if req.RehearsalRunID != "" || !req.Plan.Valid() || req.ExecutionOnly || req.ExportDir != "" || req.StaticEgressIP != "" ||
 		len(req.EgressAllowlist) != 0 || len(m.mergeOperatorBundle(nil)) != 0 ||
 		req.Port < 0 || req.Port > 65535 {
 		return preparedNetworkPolicy{}, false
@@ -211,7 +212,9 @@ func (p *preparedNetworkPool) run() {
 	// Refresh ahead of hard expiry. A partially consumed pool can retain an
 	// old spare while successful wakes replace only its younger entries.
 	// Waiting until hard expiry leaves that spare unusable between ticks.
-	ticker := time.NewTicker(preparedNetworkTTL / 4)
+	// The tick also retries failed teardowns, so it stays short while the
+	// refresh age is long.
+	ticker := time.NewTicker(preparedNetworkTick)
 	defer ticker.Stop()
 	defer func() {
 		p.mu.Lock()

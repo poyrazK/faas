@@ -96,7 +96,7 @@ func configure(w http.ResponseWriter, r *http.Request, source state.MCPCatalogMo
 		api.WriteProblem(w, api.ErrValidation("invalid catalog monitor configuration"))
 		return
 	}
-	if !api.ValidCatalogMonitorRole(req.Role) || !api.ValidCatalogMonitorTokenEnv(req.TokenEnv) {
+	if !api.ValidCatalogMonitorRole(req.Role) || !api.ValidCatalogMonitorTokenEnv(req.TokenEnv) || api.ValidateScope(api.MCPConnectionScope(req.Scope)) != nil {
 		api.WriteProblem(w, api.ErrValidation("invalid monitor role or token environment name"))
 		return
 	}
@@ -128,7 +128,7 @@ func configure(w http.ResponseWriter, r *http.Request, source state.MCPCatalogMo
 	if !validateObserverIntent(w, r, &req) {
 		return
 	}
-	config := api.MCPCatalogMonitorConfig{Observer: req.Observer, Role: req.Role, TokenEnv: req.TokenEnv, Enabled: req.Enabled, Revision: uuid.NewString(), Baseline: raw, BaselineSHA256: digest(raw), FreshnessSeconds: req.FreshnessSeconds}
+	config := api.MCPCatalogMonitorConfig{Scope: req.Scope, Observer: req.Observer, Role: req.Role, TokenEnv: req.TokenEnv, Enabled: req.Enabled, Revision: uuid.NewString(), Baseline: raw, BaselineSHA256: digest(raw), FreshnessSeconds: req.FreshnessSeconds}
 	out, err := source.ConfigureMCPCatalogMonitor(r.Context(), account.ID, app.ID, config)
 	out.State = api.CatalogMonitorSignal(out, r.PathValue("slug"), time.Now().UTC()).State
 	out.OAuthLifecycle = api.CatalogOAuthLifecyclePublic(out.OAuthLifecycle)

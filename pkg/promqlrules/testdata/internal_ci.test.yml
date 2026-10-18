@@ -1,0 +1,1545 @@
+# ADR-1575: synthetic operational evidence; no native/provider calls.
+rule_files:
+- ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+evaluation_interval: 30s
+tests:
+- name: missing collection is unknown and never healthy zero evidence
+  interval: 30s
+  input_series: []
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasCIHealthUnavailable
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasCIWorkerUnavailable
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasCILeaseRecoveryStalled
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasCICheckDeliveryDead
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasCIQuotaPressure
+    exp_alerts: []
+  promql_expr_test:
+  - expr: faas_ci:observation_status:by_daemon
+    eval_time: 20m
+    exp_samples:
+    - labels: '{__name__="faas_ci:observation_status:by_daemon", daemon="apid"}'
+      value: 3
+    - labels: '{__name__="faas_ci:observation_status:by_daemon", daemon="githubd"}'
+      value: 3
+  - expr: faas_ci:worker_status:by_worker
+    eval_time: 20m
+    exp_samples:
+    - labels: '{__name__="faas_ci:worker_status:by_worker", worker="automation_admission"}'
+      value: 7
+    - labels: '{__name__="faas_ci:worker_status:by_worker", worker="dispatcher"}'
+      value: 7
+    - labels: '{__name__="faas_ci:worker_status:by_worker", worker="execution_checks"}'
+      value: 7
+    - labels: '{__name__="faas_ci:worker_status:by_worker", worker="metadata_admission"}'
+      value: 7
+    - labels: '{__name__="faas_ci:worker_status:by_worker", worker="metadata_checks"}'
+      value: 7
+    - labels: '{__name__="faas_ci:worker_status:by_worker", worker="retention"}'
+      value: 7
+  - expr: faas_ci:queue_items:by_queue_condition
+    eval_time: 20m
+    exp_samples: []
+  - expr: faas_ci:resource_headroom:by_resource
+    eval_time: 20m
+    exp_samples: []
+- name: all shipped flags off ignores leftover data without alerts
+  interval: 30s
+  input_series:
+  - series: up{job="apid",instance="a"}
+    values: 1x44
+  - series: apid_ci_health_enabled{job="apid",instance="a"}
+    values: '0x44'
+  - series: apid_ci_health_up{job="apid",instance="a"}
+    values: 1x44
+  - series: up{job="githubd",instance="a"}
+    values: 1x44
+  - series: githubd_ci_health_enabled{job="githubd",instance="a"}
+    values: '0x44'
+  - series: githubd_ci_health_up{job="githubd",instance="a"}
+    values: 1x44
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="dispatcher"}
+    values: '0x44'
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="metadata_admission"}
+    values: '0x44'
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="automation_admission"}
+    values: '0x44'
+  - series: githubd_ci_worker_enabled{job="githubd",instance="a",worker="metadata_checks"}
+    values: '0x44'
+  - series: githubd_ci_worker_enabled{job="githubd",instance="a",worker="execution_checks"}
+    values: '0x44'
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="retention"}
+    values: '0x44'
+  - series: apid_ci_queue_items{job="apid",instance="a",queue="executions",condition="stale_leases"}
+    values: 9x44
+  - series: apid_ci_queue_items{job="apid",instance="a",queue="execution_checks",condition="dead"}
+    values: 9x44
+  - series: apid_ci_resource_used{job="apid",instance="a",resource="storage_objects"}
+    values: 100x44
+  - series: apid_ci_resource_limit{job="apid",instance="a",resource="storage_objects"}
+    values: 100x44
+  - series: apid_ci_worker_replicas{job="apid",instance="a",worker="dispatcher",condition="stale"}
+    values: 8x44
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasCIHealthUnavailable
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasCIWorkerUnavailable
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasCILeaseRecoveryStalled
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasCICheckDeliveryDead
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasCIQuotaPressure
+    exp_alerts: []
+  promql_expr_test:
+  - expr: faas_ci:observation_status:by_daemon
+    eval_time: 20m
+    exp_samples:
+    - labels: '{__name__="faas_ci:observation_status:by_daemon", daemon="apid"}'
+      value: 0
+    - labels: '{__name__="faas_ci:observation_status:by_daemon", daemon="githubd"}'
+      value: 0
+  - expr: faas_ci:worker_status:by_worker
+    eval_time: 20m
+    exp_samples:
+    - labels: '{__name__="faas_ci:worker_status:by_worker", worker="automation_admission"}'
+      value: 0
+    - labels: '{__name__="faas_ci:worker_status:by_worker", worker="dispatcher"}'
+      value: 0
+    - labels: '{__name__="faas_ci:worker_status:by_worker", worker="execution_checks"}'
+      value: 0
+    - labels: '{__name__="faas_ci:worker_status:by_worker", worker="metadata_admission"}'
+      value: 0
+    - labels: '{__name__="faas_ci:worker_status:by_worker", worker="metadata_checks"}'
+      value: 0
+    - labels: '{__name__="faas_ci:worker_status:by_worker", worker="retention"}'
+      value: 0
+  - expr: faas_ci:queue_items:by_queue_condition
+    eval_time: 20m
+    exp_samples: []
+- name: intentional worker pause keeps retained backlog visible and quiet
+  interval: 30s
+  input_series:
+  - series: up{job="apid",instance="a"}
+    values: 1x44
+  - series: apid_ci_health_enabled{job="apid",instance="a"}
+    values: 1x44
+  - series: apid_ci_health_up{job="apid",instance="a"}
+    values: 1x44
+  - series: up{job="githubd",instance="a"}
+    values: 1x44
+  - series: githubd_ci_health_enabled{job="githubd",instance="a"}
+    values: 1x44
+  - series: githubd_ci_health_up{job="githubd",instance="a"}
+    values: 1x44
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="dispatcher"}
+    values: '0x44'
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="metadata_admission"}
+    values: '0x44'
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="automation_admission"}
+    values: '0x44'
+  - series: githubd_ci_worker_enabled{job="githubd",instance="a",worker="metadata_checks"}
+    values: '0x44'
+  - series: githubd_ci_worker_enabled{job="githubd",instance="a",worker="execution_checks"}
+    values: '0x44'
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="retention"}
+    values: '0x44'
+  - series: apid_ci_queue_items{job="apid",instance="a",queue="executions",condition="stale_leases"}
+    values: 2x44
+  - series: apid_ci_queue_items{job="apid",instance="a",queue="metadata_admission",condition="stale_leases"}
+    values: 2x44
+  - series: apid_ci_queue_items{job="apid",instance="a",queue="automation_admission",condition="stale_leases"}
+    values: 2x44
+  - series: apid_ci_queue_items{job="apid",instance="a",queue="metadata_checks",condition="stale_leases"}
+    values: 2x44
+  - series: apid_ci_queue_items{job="apid",instance="a",queue="execution_checks",condition="stale_leases"}
+    values: 2x44
+  - series: apid_ci_queue_items{job="apid",instance="a",queue="check_retries",condition="stale_leases"}
+    values: 2x44
+  - series: apid_ci_queue_items{job="apid",instance="a",queue="retirement",condition="stale_leases"}
+    values: 2x44
+  - series: apid_ci_queue_items{job="apid",instance="a",queue="metadata_checks",condition="dead"}
+    values: 2x44
+  - series: apid_ci_queue_items{job="apid",instance="a",queue="execution_checks",condition="dead"}
+    values: 2x44
+  - series: apid_ci_resource_used{job="apid",instance="a",resource="storage_objects"}
+    values: 99x44
+  - series: apid_ci_resource_limit{job="apid",instance="a",resource="storage_objects"}
+    values: 100x44
+  - series: apid_ci_worker_replicas{job="apid",instance="a",worker="dispatcher",condition="stale"}
+    values: 8x44
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasCIHealthUnavailable
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasCIWorkerUnavailable
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasCILeaseRecoveryStalled
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasCICheckDeliveryDead
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasCIQuotaPressure
+    exp_alerts: []
+  promql_expr_test:
+  - expr: faas_ci:queue_items:by_queue_condition{queue="execution_checks",condition="dead"}
+    eval_time: 20m
+    exp_samples:
+    - labels: '{__name__="faas_ci:queue_items:by_queue_condition", queue="execution_checks", condition="dead"}'
+      value: 2
+- name: missing and failed health reads raise one internal warning per daemon
+  interval: 30s
+  input_series:
+  - series: up{job="apid",instance="a"}
+    values: 1x44
+  - series: apid_ci_health_enabled{job="apid",instance="a"}
+    values: 1x44
+  - series: up{job="githubd",instance="a"}
+    values: 1x44
+  - series: githubd_ci_health_enabled{job="githubd",instance="a"}
+    values: 1x44
+  - series: githubd_ci_health_up{job="githubd",instance="a"}
+    values: '0x44'
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="dispatcher"}
+    values: 1x44
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="metadata_admission"}
+    values: 1x44
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="automation_admission"}
+    values: 1x44
+  - series: githubd_ci_worker_enabled{job="githubd",instance="a",worker="metadata_checks"}
+    values: 1x44
+  - series: githubd_ci_worker_enabled{job="githubd",instance="a",worker="execution_checks"}
+    values: 1x44
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="retention"}
+    values: 1x44
+  - series: apid_ci_queue_items{job="apid",instance="a",queue="execution_checks",condition="dead"}
+    values: 9x44
+  - series: apid_ci_resource_used{job="apid",instance="a",resource="storage_objects"}
+    values: 100x44
+  - series: apid_ci_resource_limit{job="apid",instance="a",resource="storage_objects"}
+    values: 100x44
+  - series: apid_ci_worker_replicas{job="apid",instance="a",worker="dispatcher",condition="healthy"}
+    values: 1x44
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasCIWorkerUnavailable
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasCILeaseRecoveryStalled
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasCICheckDeliveryDead
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasCIQuotaPressure
+    exp_alerts: []
+  - eval_time: 4m30s
+    alertname: FaasCIHealthUnavailable
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasCIHealthUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: platform
+        family: internal_ci
+        public_status: internal
+        daemon: apid
+      exp_annotations: &id001
+        summary: Internal CI health cannot be read
+        description: An observed daemon is configured for CI monitoring but has no successful durable health read. Inspect database access and CI migrations; unavailable evidence must not be interpreted as an empty queue.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasInternalCIOperations.md
+    - exp_labels:
+        severity: warn
+        component: platform
+        family: internal_ci
+        public_status: internal
+        daemon: githubd
+      exp_annotations: *id001
+  promql_expr_test:
+  - expr: faas_ci:queue_items:by_queue_condition
+    eval_time: 20m
+    exp_samples: []
+  - expr: faas_ci:resource_utilization:by_resource
+    eval_time: 20m
+    exp_samples: []
+  - expr: faas_ci:worker_available:by_worker
+    eval_time: 20m
+    exp_samples: []
+  - expr: faas_ci:worker_status:by_worker{worker="dispatcher"}
+    eval_time: 20m
+    exp_samples:
+    - labels: '{__name__="faas_ci:worker_status:by_worker", worker="dispatcher"}'
+      value: 7
+- name: enabled dispatcher unavailable with stalled observation
+  interval: 30s
+  input_series:
+  - series: up{job="apid",instance="a"}
+    values: 1x44
+  - series: apid_ci_health_enabled{job="apid",instance="a"}
+    values: 1x44
+  - series: apid_ci_health_up{job="apid",instance="a"}
+    values: 1x44
+  - series: up{job="githubd",instance="a"}
+    values: 1x44
+  - series: githubd_ci_health_enabled{job="githubd",instance="a"}
+    values: '0x44'
+  - series: githubd_ci_health_up{job="githubd",instance="a"}
+    values: 1x44
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="dispatcher"}
+    values: 1x44
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="metadata_admission"}
+    values: '0x44'
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="automation_admission"}
+    values: '0x44'
+  - series: githubd_ci_worker_enabled{job="githubd",instance="a",worker="metadata_checks"}
+    values: '0x44'
+  - series: githubd_ci_worker_enabled{job="githubd",instance="a",worker="execution_checks"}
+    values: '0x44'
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="retention"}
+    values: '0x44'
+  - series: apid_ci_worker_replicas{job="apid",instance="a",worker="dispatcher",condition="stalled"}
+    values: 1x44
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasCIHealthUnavailable
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasCILeaseRecoveryStalled
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasCICheckDeliveryDead
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasCIQuotaPressure
+    exp_alerts: []
+  - eval_time: 4m30s
+    alertname: FaasCIWorkerUnavailable
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasCIWorkerUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: platform
+        family: internal_ci
+        public_status: internal
+        worker: dispatcher
+      exp_annotations: &id002
+        summary: An enabled internal CI worker has no available observation
+        description: No healthy or starting group is observed for an enabled worker. Inspect unknown, stale, stalled, blocked and degraded states, dependency wiring and diagnostic slot capacity before changing work intent.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasInternalCIOperations.md
+  promql_expr_test:
+  - expr: faas_ci:worker_status:by_worker{worker="dispatcher"}
+    eval_time: 20m
+    exp_samples:
+    - labels: '{__name__="faas_ci:worker_status:by_worker", worker="dispatcher"}'
+      value: 5
+- name: enabled dispatcher unavailable with stale observation
+  interval: 30s
+  input_series:
+  - series: up{job="apid",instance="a"}
+    values: 1x44
+  - series: apid_ci_health_enabled{job="apid",instance="a"}
+    values: 1x44
+  - series: apid_ci_health_up{job="apid",instance="a"}
+    values: 1x44
+  - series: up{job="githubd",instance="a"}
+    values: 1x44
+  - series: githubd_ci_health_enabled{job="githubd",instance="a"}
+    values: '0x44'
+  - series: githubd_ci_health_up{job="githubd",instance="a"}
+    values: 1x44
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="dispatcher"}
+    values: 1x44
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="metadata_admission"}
+    values: '0x44'
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="automation_admission"}
+    values: '0x44'
+  - series: githubd_ci_worker_enabled{job="githubd",instance="a",worker="metadata_checks"}
+    values: '0x44'
+  - series: githubd_ci_worker_enabled{job="githubd",instance="a",worker="execution_checks"}
+    values: '0x44'
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="retention"}
+    values: '0x44'
+  - series: apid_ci_worker_replicas{job="apid",instance="a",worker="dispatcher",condition="stale"}
+    values: 1x44
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasCIHealthUnavailable
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasCILeaseRecoveryStalled
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasCICheckDeliveryDead
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasCIQuotaPressure
+    exp_alerts: []
+  - eval_time: 4m30s
+    alertname: FaasCIWorkerUnavailable
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasCIWorkerUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: platform
+        family: internal_ci
+        public_status: internal
+        worker: dispatcher
+      exp_annotations: *id002
+  promql_expr_test:
+  - expr: faas_ci:worker_status:by_worker{worker="dispatcher"}
+    eval_time: 20m
+    exp_samples:
+    - labels: '{__name__="faas_ci:worker_status:by_worker", worker="dispatcher"}'
+      value: 6
+- name: enabled dispatcher unavailable with degraded observation
+  interval: 30s
+  input_series:
+  - series: up{job="apid",instance="a"}
+    values: 1x44
+  - series: apid_ci_health_enabled{job="apid",instance="a"}
+    values: 1x44
+  - series: apid_ci_health_up{job="apid",instance="a"}
+    values: 1x44
+  - series: up{job="githubd",instance="a"}
+    values: 1x44
+  - series: githubd_ci_health_enabled{job="githubd",instance="a"}
+    values: '0x44'
+  - series: githubd_ci_health_up{job="githubd",instance="a"}
+    values: 1x44
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="dispatcher"}
+    values: 1x44
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="metadata_admission"}
+    values: '0x44'
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="automation_admission"}
+    values: '0x44'
+  - series: githubd_ci_worker_enabled{job="githubd",instance="a",worker="metadata_checks"}
+    values: '0x44'
+  - series: githubd_ci_worker_enabled{job="githubd",instance="a",worker="execution_checks"}
+    values: '0x44'
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="retention"}
+    values: '0x44'
+  - series: apid_ci_worker_replicas{job="apid",instance="a",worker="dispatcher",condition="degraded"}
+    values: 1x44
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasCIHealthUnavailable
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasCILeaseRecoveryStalled
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasCICheckDeliveryDead
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasCIQuotaPressure
+    exp_alerts: []
+  - eval_time: 4m30s
+    alertname: FaasCIWorkerUnavailable
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasCIWorkerUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: platform
+        family: internal_ci
+        public_status: internal
+        worker: dispatcher
+      exp_annotations: *id002
+  promql_expr_test:
+  - expr: faas_ci:worker_status:by_worker{worker="dispatcher"}
+    eval_time: 20m
+    exp_samples:
+    - labels: '{__name__="faas_ci:worker_status:by_worker", worker="dispatcher"}'
+      value: 3
+- name: enabled dispatcher unavailable with blocked observation
+  interval: 30s
+  input_series:
+  - series: up{job="apid",instance="a"}
+    values: 1x44
+  - series: apid_ci_health_enabled{job="apid",instance="a"}
+    values: 1x44
+  - series: apid_ci_health_up{job="apid",instance="a"}
+    values: 1x44
+  - series: up{job="githubd",instance="a"}
+    values: 1x44
+  - series: githubd_ci_health_enabled{job="githubd",instance="a"}
+    values: '0x44'
+  - series: githubd_ci_health_up{job="githubd",instance="a"}
+    values: 1x44
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="dispatcher"}
+    values: 1x44
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="metadata_admission"}
+    values: '0x44'
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="automation_admission"}
+    values: '0x44'
+  - series: githubd_ci_worker_enabled{job="githubd",instance="a",worker="metadata_checks"}
+    values: '0x44'
+  - series: githubd_ci_worker_enabled{job="githubd",instance="a",worker="execution_checks"}
+    values: '0x44'
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="retention"}
+    values: '0x44'
+  - series: apid_ci_worker_replicas{job="apid",instance="a",worker="dispatcher",condition="blocked"}
+    values: 1x44
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasCIHealthUnavailable
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasCILeaseRecoveryStalled
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasCICheckDeliveryDead
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasCIQuotaPressure
+    exp_alerts: []
+  - eval_time: 4m30s
+    alertname: FaasCIWorkerUnavailable
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasCIWorkerUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: platform
+        family: internal_ci
+        public_status: internal
+        worker: dispatcher
+      exp_annotations: *id002
+  promql_expr_test:
+  - expr: faas_ci:worker_status:by_worker{worker="dispatcher"}
+    eval_time: 20m
+    exp_samples:
+    - labels: '{__name__="faas_ci:worker_status:by_worker", worker="dispatcher"}'
+      value: 4
+- name: enabled dispatcher unavailable with None observation
+  interval: 30s
+  input_series:
+  - series: up{job="apid",instance="a"}
+    values: 1x44
+  - series: apid_ci_health_enabled{job="apid",instance="a"}
+    values: 1x44
+  - series: apid_ci_health_up{job="apid",instance="a"}
+    values: 1x44
+  - series: up{job="githubd",instance="a"}
+    values: 1x44
+  - series: githubd_ci_health_enabled{job="githubd",instance="a"}
+    values: '0x44'
+  - series: githubd_ci_health_up{job="githubd",instance="a"}
+    values: 1x44
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="dispatcher"}
+    values: 1x44
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="metadata_admission"}
+    values: '0x44'
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="automation_admission"}
+    values: '0x44'
+  - series: githubd_ci_worker_enabled{job="githubd",instance="a",worker="metadata_checks"}
+    values: '0x44'
+  - series: githubd_ci_worker_enabled{job="githubd",instance="a",worker="execution_checks"}
+    values: '0x44'
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="retention"}
+    values: '0x44'
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasCIHealthUnavailable
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasCILeaseRecoveryStalled
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasCICheckDeliveryDead
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasCIQuotaPressure
+    exp_alerts: []
+  - eval_time: 4m30s
+    alertname: FaasCIWorkerUnavailable
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasCIWorkerUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: platform
+        family: internal_ci
+        public_status: internal
+        worker: dispatcher
+      exp_annotations: *id002
+  promql_expr_test:
+  - expr: faas_ci:worker_status:by_worker{worker="dispatcher"}
+    eval_time: 20m
+    exp_samples:
+    - labels: '{__name__="faas_ci:worker_status:by_worker", worker="dispatcher"}'
+      value: 7
+- name: healthy group permits old stale slots without an unavailable alert
+  interval: 30s
+  input_series:
+  - series: up{job="apid",instance="a"}
+    values: 1x44
+  - series: apid_ci_health_enabled{job="apid",instance="a"}
+    values: 1x44
+  - series: apid_ci_health_up{job="apid",instance="a"}
+    values: 1x44
+  - series: up{job="githubd",instance="a"}
+    values: 1x44
+  - series: githubd_ci_health_enabled{job="githubd",instance="a"}
+    values: '0x44'
+  - series: githubd_ci_health_up{job="githubd",instance="a"}
+    values: 1x44
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="dispatcher"}
+    values: 1x44
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="metadata_admission"}
+    values: '0x44'
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="automation_admission"}
+    values: '0x44'
+  - series: githubd_ci_worker_enabled{job="githubd",instance="a",worker="metadata_checks"}
+    values: '0x44'
+  - series: githubd_ci_worker_enabled{job="githubd",instance="a",worker="execution_checks"}
+    values: '0x44'
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="retention"}
+    values: '0x44'
+  - series: apid_ci_worker_replicas{job="apid",instance="a",worker="dispatcher",condition="healthy"}
+    values: 1x44
+  - series: apid_ci_worker_replicas{job="apid",instance="a",worker="dispatcher",condition="stale"}
+    values: 7x44
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasCIHealthUnavailable
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasCIWorkerUnavailable
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasCILeaseRecoveryStalled
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasCICheckDeliveryDead
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasCIQuotaPressure
+    exp_alerts: []
+  promql_expr_test:
+  - expr: faas_ci:worker_status:by_worker{worker="dispatcher"}
+    eval_time: 20m
+    exp_samples:
+    - labels: '{__name__="faas_ci:worker_status:by_worker", worker="dispatcher"}'
+      value: 1
+- name: starting group permits old stale slots without an unavailable alert
+  interval: 30s
+  input_series:
+  - series: up{job="apid",instance="a"}
+    values: 1x44
+  - series: apid_ci_health_enabled{job="apid",instance="a"}
+    values: 1x44
+  - series: apid_ci_health_up{job="apid",instance="a"}
+    values: 1x44
+  - series: up{job="githubd",instance="a"}
+    values: 1x44
+  - series: githubd_ci_health_enabled{job="githubd",instance="a"}
+    values: '0x44'
+  - series: githubd_ci_health_up{job="githubd",instance="a"}
+    values: 1x44
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="dispatcher"}
+    values: 1x44
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="metadata_admission"}
+    values: '0x44'
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="automation_admission"}
+    values: '0x44'
+  - series: githubd_ci_worker_enabled{job="githubd",instance="a",worker="metadata_checks"}
+    values: '0x44'
+  - series: githubd_ci_worker_enabled{job="githubd",instance="a",worker="execution_checks"}
+    values: '0x44'
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="retention"}
+    values: '0x44'
+  - series: apid_ci_worker_replicas{job="apid",instance="a",worker="dispatcher",condition="starting"}
+    values: 1x44
+  - series: apid_ci_worker_replicas{job="apid",instance="a",worker="dispatcher",condition="stale"}
+    values: 7x44
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasCIHealthUnavailable
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasCIWorkerUnavailable
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasCILeaseRecoveryStalled
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasCICheckDeliveryDead
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasCIQuotaPressure
+    exp_alerts: []
+  promql_expr_test:
+  - expr: faas_ci:worker_status:by_worker{worker="dispatcher"}
+    eval_time: 20m
+    exp_samples:
+    - labels: '{__name__="faas_ci:worker_status:by_worker", worker="dispatcher"}'
+      value: 2
+- name: each expired lease uses its owning worker configuration
+  interval: 30s
+  input_series:
+  - series: up{job="apid",instance="a"}
+    values: 1x44
+  - series: apid_ci_health_enabled{job="apid",instance="a"}
+    values: 1x44
+  - series: apid_ci_health_up{job="apid",instance="a"}
+    values: 1x44
+  - series: up{job="githubd",instance="a"}
+    values: 1x44
+  - series: githubd_ci_health_enabled{job="githubd",instance="a"}
+    values: 1x44
+  - series: githubd_ci_health_up{job="githubd",instance="a"}
+    values: 1x44
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="dispatcher"}
+    values: 1x44
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="metadata_admission"}
+    values: 1x44
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="automation_admission"}
+    values: 1x44
+  - series: githubd_ci_worker_enabled{job="githubd",instance="a",worker="metadata_checks"}
+    values: 1x44
+  - series: githubd_ci_worker_enabled{job="githubd",instance="a",worker="execution_checks"}
+    values: 1x44
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="retention"}
+    values: 1x44
+  - series: apid_ci_worker_replicas{job="apid",instance="a",worker="dispatcher",condition="healthy"}
+    values: 1x44
+  - series: apid_ci_worker_replicas{job="apid",instance="a",worker="metadata_admission",condition="healthy"}
+    values: 1x44
+  - series: apid_ci_worker_replicas{job="apid",instance="a",worker="automation_admission",condition="healthy"}
+    values: 1x44
+  - series: apid_ci_worker_replicas{job="apid",instance="a",worker="metadata_checks",condition="healthy"}
+    values: 1x44
+  - series: apid_ci_worker_replicas{job="apid",instance="a",worker="execution_checks",condition="healthy"}
+    values: 1x44
+  - series: apid_ci_worker_replicas{job="apid",instance="a",worker="retention",condition="healthy"}
+    values: 1x44
+  - series: apid_ci_queue_items{job="apid",instance="a",queue="executions",condition="stale_leases"}
+    values: 1x44
+  - series: apid_ci_queue_items{job="apid",instance="a",queue="metadata_admission",condition="stale_leases"}
+    values: 1x44
+  - series: apid_ci_queue_items{job="apid",instance="a",queue="automation_admission",condition="stale_leases"}
+    values: 1x44
+  - series: apid_ci_queue_items{job="apid",instance="a",queue="metadata_checks",condition="stale_leases"}
+    values: 1x44
+  - series: apid_ci_queue_items{job="apid",instance="a",queue="execution_checks",condition="stale_leases"}
+    values: 1x44
+  - series: apid_ci_queue_items{job="apid",instance="a",queue="retirement",condition="stale_leases"}
+    values: 1x44
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasCIHealthUnavailable
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasCIWorkerUnavailable
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasCICheckDeliveryDead
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasCIQuotaPressure
+    exp_alerts: []
+  - eval_time: 4m30s
+    alertname: FaasCILeaseRecoveryStalled
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasCILeaseRecoveryStalled
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: platform
+        family: internal_ci
+        public_status: internal
+        queue: executions
+        condition: stale_leases
+      exp_annotations: &id003
+        summary: Internal CI expired leases are not recovering
+        description: Expired work leases remain while their owning worker is enabled. Inspect worker health and durable execution or delivery state. Preserve attempt identity, fences and native retirement safety; do not force lease or object deletion.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasInternalCIOperations.md
+    - exp_labels:
+        severity: warn
+        component: platform
+        family: internal_ci
+        public_status: internal
+        queue: metadata_admission
+        condition: stale_leases
+      exp_annotations: *id003
+    - exp_labels:
+        severity: warn
+        component: platform
+        family: internal_ci
+        public_status: internal
+        queue: automation_admission
+        condition: stale_leases
+      exp_annotations: *id003
+    - exp_labels:
+        severity: warn
+        component: platform
+        family: internal_ci
+        public_status: internal
+        queue: metadata_checks
+        condition: stale_leases
+      exp_annotations: *id003
+    - exp_labels:
+        severity: warn
+        component: platform
+        family: internal_ci
+        public_status: internal
+        queue: execution_checks
+        condition: stale_leases
+      exp_annotations: *id003
+    - exp_labels:
+        severity: warn
+        component: platform
+        family: internal_ci
+        public_status: internal
+        queue: retirement
+        condition: stale_leases
+      exp_annotations: *id003
+  promql_expr_test: []
+- name: dead metadata and execution Checks alert once after five minutes
+  interval: 30s
+  input_series:
+  - series: up{job="apid",instance="a"}
+    values: 1x44
+  - series: apid_ci_health_enabled{job="apid",instance="a"}
+    values: 1x44
+  - series: apid_ci_health_up{job="apid",instance="a"}
+    values: 1x44
+  - series: up{job="githubd",instance="a"}
+    values: 1x44
+  - series: githubd_ci_health_enabled{job="githubd",instance="a"}
+    values: 1x44
+  - series: githubd_ci_health_up{job="githubd",instance="a"}
+    values: 1x44
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="dispatcher"}
+    values: '0x44'
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="metadata_admission"}
+    values: '0x44'
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="automation_admission"}
+    values: '0x44'
+  - series: githubd_ci_worker_enabled{job="githubd",instance="a",worker="metadata_checks"}
+    values: 1x44
+  - series: githubd_ci_worker_enabled{job="githubd",instance="a",worker="execution_checks"}
+    values: 1x44
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="retention"}
+    values: '0x44'
+  - series: apid_ci_worker_replicas{job="apid",instance="a",worker="metadata_checks",condition="healthy"}
+    values: 1x44
+  - series: apid_ci_queue_items{job="apid",instance="a",queue="metadata_checks",condition="dead"}
+    values: 2x44
+  - series: githubd_ci_queue_items{job="githubd",instance="a",queue="metadata_checks",condition="dead"}
+    values: 2x44
+  - series: apid_ci_worker_replicas{job="apid",instance="a",worker="execution_checks",condition="healthy"}
+    values: 1x44
+  - series: apid_ci_queue_items{job="apid",instance="a",queue="execution_checks",condition="dead"}
+    values: 2x44
+  - series: githubd_ci_queue_items{job="githubd",instance="a",queue="execution_checks",condition="dead"}
+    values: 2x44
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasCIHealthUnavailable
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasCIWorkerUnavailable
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasCILeaseRecoveryStalled
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasCIQuotaPressure
+    exp_alerts: []
+  - eval_time: 4m30s
+    alertname: FaasCICheckDeliveryDead
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: FaasCICheckDeliveryDead
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: platform
+        family: internal_ci
+        public_status: internal
+        queue: metadata_checks
+        condition: dead
+      exp_annotations: &id004
+        summary: Internal CI Check delivery exhausted its retry budget
+        description: A Check outbox contains dead delivery while publication is enabled. Inspect repository authority and the safe failure code. For eligible execution Checks use the bounded audited retry API after fixing the cause; execution work must not be replayed.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasInternalCIOperations.md
+    - exp_labels:
+        severity: warn
+        component: platform
+        family: internal_ci
+        public_status: internal
+        queue: execution_checks
+        condition: dead
+      exp_annotations: *id004
+  promql_expr_test:
+  - expr: faas_ci:queue_items:by_queue_condition{condition="dead"}
+    eval_time: 20m
+    exp_samples:
+    - labels: '{__name__="faas_ci:queue_items:by_queue_condition", queue="metadata_checks", condition="dead"}'
+      value: 2
+    - labels: '{__name__="faas_ci:queue_items:by_queue_condition", queue="execution_checks", condition="dead"}'
+      value: 2
+- name: storage pressure at 79.9 percent with retention-only draining
+  interval: 30s
+  input_series:
+  - series: up{job="apid",instance="a"}
+    values: 1x44
+  - series: apid_ci_health_enabled{job="apid",instance="a"}
+    values: 1x44
+  - series: apid_ci_health_up{job="apid",instance="a"}
+    values: 1x44
+  - series: up{job="githubd",instance="a"}
+    values: 1x44
+  - series: githubd_ci_health_enabled{job="githubd",instance="a"}
+    values: '0x44'
+  - series: githubd_ci_health_up{job="githubd",instance="a"}
+    values: 1x44
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="dispatcher"}
+    values: '0x44'
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="metadata_admission"}
+    values: '0x44'
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="automation_admission"}
+    values: '0x44'
+  - series: githubd_ci_worker_enabled{job="githubd",instance="a",worker="metadata_checks"}
+    values: '0x44'
+  - series: githubd_ci_worker_enabled{job="githubd",instance="a",worker="execution_checks"}
+    values: '0x44'
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="retention"}
+    values: 1x44
+  - series: apid_ci_worker_replicas{job="apid",instance="a",worker="retention",condition="healthy"}
+    values: 1x44
+  - series: apid_ci_resource_used{job="apid",instance="a",resource="storage_objects"}
+    values: 79.9x44
+  - series: apid_ci_resource_limit{job="apid",instance="a",resource="storage_objects"}
+    values: 100x44
+  - series: apid_ci_resource_used{job="apid",instance="a",resource="active_executions"}
+    values: 100x44
+  - series: apid_ci_resource_limit{job="apid",instance="a",resource="active_executions"}
+    values: 100x44
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasCIHealthUnavailable
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasCIWorkerUnavailable
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasCILeaseRecoveryStalled
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasCICheckDeliveryDead
+    exp_alerts: []
+  - eval_time: 9m30s
+    alertname: FaasCIQuotaPressure
+    exp_alerts: []
+  - eval_time: 10m
+    alertname: FaasCIQuotaPressure
+    exp_alerts: []
+  promql_expr_test: []
+- name: storage pressure at 80 percent with retention-only draining
+  interval: 30s
+  input_series:
+  - series: up{job="apid",instance="a"}
+    values: 1x44
+  - series: apid_ci_health_enabled{job="apid",instance="a"}
+    values: 1x44
+  - series: apid_ci_health_up{job="apid",instance="a"}
+    values: 1x44
+  - series: up{job="githubd",instance="a"}
+    values: 1x44
+  - series: githubd_ci_health_enabled{job="githubd",instance="a"}
+    values: '0x44'
+  - series: githubd_ci_health_up{job="githubd",instance="a"}
+    values: 1x44
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="dispatcher"}
+    values: '0x44'
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="metadata_admission"}
+    values: '0x44'
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="automation_admission"}
+    values: '0x44'
+  - series: githubd_ci_worker_enabled{job="githubd",instance="a",worker="metadata_checks"}
+    values: '0x44'
+  - series: githubd_ci_worker_enabled{job="githubd",instance="a",worker="execution_checks"}
+    values: '0x44'
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="retention"}
+    values: 1x44
+  - series: apid_ci_worker_replicas{job="apid",instance="a",worker="retention",condition="healthy"}
+    values: 1x44
+  - series: apid_ci_resource_used{job="apid",instance="a",resource="storage_objects"}
+    values: 80x44
+  - series: apid_ci_resource_limit{job="apid",instance="a",resource="storage_objects"}
+    values: 100x44
+  - series: apid_ci_resource_used{job="apid",instance="a",resource="active_executions"}
+    values: 100x44
+  - series: apid_ci_resource_limit{job="apid",instance="a",resource="active_executions"}
+    values: 100x44
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasCIHealthUnavailable
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasCIWorkerUnavailable
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasCILeaseRecoveryStalled
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasCICheckDeliveryDead
+    exp_alerts: []
+  - eval_time: 9m30s
+    alertname: FaasCIQuotaPressure
+    exp_alerts: []
+  - eval_time: 10m
+    alertname: FaasCIQuotaPressure
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: platform
+        family: internal_ci
+        public_status: internal
+        resource: storage_objects
+      exp_annotations: &id005
+        summary: Internal CI global quota is under sustained pressure
+        description: At least 80 percent of an existing global budget is used while its execution or retention path is enabled. Inspect usage and headroom. Permanent storage tombstones remain charged; never delete deduplication or retirement evidence to manufacture capacity.
+        runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasInternalCIOperations.md
+  promql_expr_test: []
+- name: execution pressure requires the dispatcher and includes storage admission
+  interval: 30s
+  input_series:
+  - series: up{job="apid",instance="a"}
+    values: 1x44
+  - series: apid_ci_health_enabled{job="apid",instance="a"}
+    values: 1x44
+  - series: apid_ci_health_up{job="apid",instance="a"}
+    values: 1x44
+  - series: up{job="githubd",instance="a"}
+    values: 1x44
+  - series: githubd_ci_health_enabled{job="githubd",instance="a"}
+    values: '0x44'
+  - series: githubd_ci_health_up{job="githubd",instance="a"}
+    values: 1x44
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="dispatcher"}
+    values: 1x44
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="metadata_admission"}
+    values: '0x44'
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="automation_admission"}
+    values: '0x44'
+  - series: githubd_ci_worker_enabled{job="githubd",instance="a",worker="metadata_checks"}
+    values: '0x44'
+  - series: githubd_ci_worker_enabled{job="githubd",instance="a",worker="execution_checks"}
+    values: '0x44'
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="retention"}
+    values: '0x44'
+  - series: apid_ci_worker_replicas{job="apid",instance="a",worker="dispatcher",condition="healthy"}
+    values: 1x44
+  - series: apid_ci_resource_used{job="apid",instance="a",resource="active_executions"}
+    values: 80x44
+  - series: apid_ci_resource_limit{job="apid",instance="a",resource="active_executions"}
+    values: 100x44
+  - series: apid_ci_resource_used{job="apid",instance="a",resource="storage_journal"}
+    values: 80x44
+  - series: apid_ci_resource_limit{job="apid",instance="a",resource="storage_journal"}
+    values: 100x44
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasCIHealthUnavailable
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasCIWorkerUnavailable
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasCILeaseRecoveryStalled
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasCICheckDeliveryDead
+    exp_alerts: []
+  - eval_time: 10m
+    alertname: FaasCIQuotaPressure
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: platform
+        family: internal_ci
+        public_status: internal
+        resource: active_executions
+      exp_annotations: *id005
+    - exp_labels:
+        severity: warn
+        component: platform
+        family: internal_ci
+        public_status: internal
+        resource: storage_journal
+      exp_annotations: *id005
+  promql_expr_test: []
+- name: multiple replicas and daemons deduplicate fleet state and discard unreadable snapshots
+  interval: 30s
+  input_series:
+  - series: up{job="apid",instance="a"}
+    values: 1x44
+  - series: apid_ci_health_enabled{job="apid",instance="a"}
+    values: 1x44
+  - series: apid_ci_health_up{job="apid",instance="a"}
+    values: 1x44
+  - series: up{job="apid",instance="b"}
+    values: 1x44
+  - series: apid_ci_health_enabled{job="apid",instance="b"}
+    values: 1x44
+  - series: apid_ci_health_up{job="apid",instance="b"}
+    values: '0x44'
+  - series: up{job="githubd",instance="a"}
+    values: 1x44
+  - series: githubd_ci_health_enabled{job="githubd",instance="a"}
+    values: 1x44
+  - series: githubd_ci_health_up{job="githubd",instance="a"}
+    values: 1x44
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="dispatcher"}
+    values: 1x44
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="metadata_admission"}
+    values: '0x44'
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="automation_admission"}
+    values: '0x44'
+  - series: githubd_ci_worker_enabled{job="githubd",instance="a",worker="metadata_checks"}
+    values: '0x44'
+  - series: githubd_ci_worker_enabled{job="githubd",instance="a",worker="execution_checks"}
+    values: '0x44'
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="retention"}
+    values: '0x44'
+  - series: apid_ci_worker_enabled{job="apid",instance="b",worker="dispatcher"}
+    values: '0x44'
+  - series: apid_ci_resource_used{job="apid",instance="a",resource="storage_objects"}
+    values: 4x44
+  - series: apid_ci_resource_limit{job="apid",instance="a",resource="storage_objects"}
+    values: 100x44
+  - series: apid_ci_queue_items{job="apid",instance="a",queue="executions",condition="pending"}
+    values: 3x44
+  - series: apid_ci_worker_replicas{job="apid",instance="a",worker="dispatcher",condition="healthy"}
+    values: 1x44
+  - series: apid_ci_resource_used{job="apid",instance="b",resource="storage_objects"}
+    values: 999x44
+  - series: apid_ci_resource_limit{job="apid",instance="b",resource="storage_objects"}
+    values: 1x44
+  - series: apid_ci_queue_items{job="apid",instance="b",queue="executions",condition="pending"}
+    values: 999x44
+  - series: apid_ci_worker_replicas{job="apid",instance="b",worker="dispatcher",condition="healthy"}
+    values: 99x44
+  - series: githubd_ci_resource_used{job="githubd",instance="a",resource="storage_objects"}
+    values: 3x44
+  - series: githubd_ci_resource_limit{job="githubd",instance="a",resource="storage_objects"}
+    values: 80x44
+  - series: githubd_ci_queue_items{job="githubd",instance="a",queue="executions",condition="pending"}
+    values: 3x44
+  - series: githubd_ci_worker_replicas{job="githubd",instance="a",worker="dispatcher",condition="healthy"}
+    values: 1x44
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasCIHealthUnavailable
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasCIWorkerUnavailable
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasCILeaseRecoveryStalled
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasCICheckDeliveryDead
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasCIQuotaPressure
+    exp_alerts: []
+  promql_expr_test:
+  - expr: faas_ci:queue_items:by_queue_condition
+    eval_time: 20m
+    exp_samples:
+    - labels: '{__name__="faas_ci:queue_items:by_queue_condition", queue="executions", condition="pending"}'
+      value: 3
+  - expr: faas_ci:resource_used:by_resource
+    eval_time: 20m
+    exp_samples:
+    - labels: '{__name__="faas_ci:resource_used:by_resource", resource="storage_objects"}'
+      value: 4
+  - expr: faas_ci:resource_limit:by_resource
+    eval_time: 20m
+    exp_samples:
+    - labels: '{__name__="faas_ci:resource_limit:by_resource", resource="storage_objects"}'
+      value: 80
+  - expr: faas_ci:resource_headroom:by_resource
+    eval_time: 20m
+    exp_samples:
+    - labels: '{__name__="faas_ci:resource_headroom:by_resource", resource="storage_objects"}'
+      value: 76
+  - expr: faas_ci:worker_replicas:by_worker_condition
+    eval_time: 20m
+    exp_samples:
+    - labels: '{__name__="faas_ci:worker_replicas:by_worker_condition", worker="dispatcher", condition="healthy"}'
+      value: 1
+- name: health failure recovery resets alert state and allows startup grace
+  interval: 30s
+  input_series:
+  - series: up{job="apid",instance="a"}
+    values: 1x44
+  - series: apid_ci_health_enabled{job="apid",instance="a"}
+    values: 1x44
+  - series: up{job="githubd",instance="a"}
+    values: 1x44
+  - series: githubd_ci_health_enabled{job="githubd",instance="a"}
+    values: '0x44'
+  - series: githubd_ci_health_up{job="githubd",instance="a"}
+    values: 1x44
+  - series: apid_ci_health_up{job="apid",instance="a"}
+    values: 0x11 1x32
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="dispatcher"}
+    values: 1x44
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="metadata_admission"}
+    values: '0x44'
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="automation_admission"}
+    values: '0x44'
+  - series: githubd_ci_worker_enabled{job="githubd",instance="a",worker="metadata_checks"}
+    values: '0x44'
+  - series: githubd_ci_worker_enabled{job="githubd",instance="a",worker="execution_checks"}
+    values: '0x44'
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="retention"}
+    values: '0x44'
+  - series: apid_ci_worker_replicas{job="apid",instance="a",worker="dispatcher",condition="starting"}
+    values: 0x11 1x3 0x28
+  - series: apid_ci_worker_replicas{job="apid",instance="a",worker="dispatcher",condition="healthy"}
+    values: 0x15 1x28
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: FaasCIHealthUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: platform
+        family: internal_ci
+        public_status: internal
+        daemon: apid
+      exp_annotations: *id001
+  - eval_time: 6m
+    alertname: FaasCIHealthUnavailable
+    exp_alerts: []
+  - eval_time: 6m
+    alertname: FaasCIWorkerUnavailable
+    exp_alerts: []
+  - eval_time: 6m
+    alertname: FaasCILeaseRecoveryStalled
+    exp_alerts: []
+  - eval_time: 6m
+    alertname: FaasCICheckDeliveryDead
+    exp_alerts: []
+  - eval_time: 6m
+    alertname: FaasCIQuotaPressure
+    exp_alerts: []
+  - eval_time: 8m
+    alertname: FaasCIHealthUnavailable
+    exp_alerts: []
+  - eval_time: 8m
+    alertname: FaasCIWorkerUnavailable
+    exp_alerts: []
+  - eval_time: 8m
+    alertname: FaasCILeaseRecoveryStalled
+    exp_alerts: []
+  - eval_time: 8m
+    alertname: FaasCICheckDeliveryDead
+    exp_alerts: []
+  - eval_time: 8m
+    alertname: FaasCIQuotaPressure
+    exp_alerts: []
+  promql_expr_test:
+  - expr: faas_ci:worker_status:by_worker{worker="dispatcher"}
+    eval_time: 6m
+    exp_samples:
+    - labels: '{__name__="faas_ci:worker_status:by_worker", worker="dispatcher"}'
+      value: 2
+  - expr: faas_ci:worker_status:by_worker{worker="dispatcher"}
+    eval_time: 8m
+    exp_samples:
+    - labels: '{__name__="faas_ci:worker_status:by_worker", worker="dispatcher"}'
+      value: 1
+- name: disabling a worker silences expired work without hiding retained counts
+  interval: 30s
+  input_series:
+  - series: up{job="apid",instance="a"}
+    values: 1x44
+  - series: apid_ci_health_enabled{job="apid",instance="a"}
+    values: 1x44
+  - series: apid_ci_health_up{job="apid",instance="a"}
+    values: 1x44
+  - series: up{job="githubd",instance="a"}
+    values: 1x44
+  - series: githubd_ci_health_enabled{job="githubd",instance="a"}
+    values: '0x44'
+  - series: githubd_ci_health_up{job="githubd",instance="a"}
+    values: 1x44
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="dispatcher"}
+    values: 1x11 0x32
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="metadata_admission"}
+    values: '0x44'
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="automation_admission"}
+    values: '0x44'
+  - series: githubd_ci_worker_enabled{job="githubd",instance="a",worker="metadata_checks"}
+    values: '0x44'
+  - series: githubd_ci_worker_enabled{job="githubd",instance="a",worker="execution_checks"}
+    values: '0x44'
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="retention"}
+    values: '0x44'
+  - series: apid_ci_worker_replicas{job="apid",instance="a",worker="dispatcher",condition="stale"}
+    values: 1x44
+  - series: apid_ci_queue_items{job="apid",instance="a",queue="executions",condition="stale_leases"}
+    values: 1x44
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: FaasCIWorkerUnavailable
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: platform
+        family: internal_ci
+        public_status: internal
+        worker: dispatcher
+      exp_annotations: *id002
+  - eval_time: 5m
+    alertname: FaasCILeaseRecoveryStalled
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: platform
+        family: internal_ci
+        public_status: internal
+        queue: executions
+        condition: stale_leases
+      exp_annotations: *id003
+  - eval_time: 6m
+    alertname: FaasCIHealthUnavailable
+    exp_alerts: []
+  - eval_time: 6m
+    alertname: FaasCIWorkerUnavailable
+    exp_alerts: []
+  - eval_time: 6m
+    alertname: FaasCILeaseRecoveryStalled
+    exp_alerts: []
+  - eval_time: 6m
+    alertname: FaasCICheckDeliveryDead
+    exp_alerts: []
+  - eval_time: 6m
+    alertname: FaasCIQuotaPressure
+    exp_alerts: []
+  promql_expr_test:
+  - expr: faas_ci:worker_status:by_worker{worker="dispatcher"}
+    eval_time: 6m
+    exp_samples:
+    - labels: '{__name__="faas_ci:worker_status:by_worker", worker="dispatcher"}'
+      value: 0
+- name: successful reconciliation and quota recovery clear all warnings
+  interval: 30s
+  input_series:
+  - series: up{job="apid",instance="a"}
+    values: 1x44
+  - series: apid_ci_health_enabled{job="apid",instance="a"}
+    values: 1x44
+  - series: apid_ci_health_up{job="apid",instance="a"}
+    values: 1x44
+  - series: up{job="githubd",instance="a"}
+    values: 1x44
+  - series: githubd_ci_health_enabled{job="githubd",instance="a"}
+    values: 1x44
+  - series: githubd_ci_health_up{job="githubd",instance="a"}
+    values: 1x44
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="dispatcher"}
+    values: 1x44
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="metadata_admission"}
+    values: '0x44'
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="automation_admission"}
+    values: '0x44'
+  - series: githubd_ci_worker_enabled{job="githubd",instance="a",worker="metadata_checks"}
+    values: '0x44'
+  - series: githubd_ci_worker_enabled{job="githubd",instance="a",worker="execution_checks"}
+    values: 1x44
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="retention"}
+    values: '0x44'
+  - series: apid_ci_worker_replicas{job="apid",instance="a",worker="dispatcher",condition="healthy"}
+    values: 1x44
+  - series: apid_ci_worker_replicas{job="apid",instance="a",worker="execution_checks",condition="healthy"}
+    values: 1x44
+  - series: apid_ci_queue_items{job="apid",instance="a",queue="executions",condition="stale_leases"}
+    values: 1x11 0x32
+  - series: apid_ci_queue_items{job="apid",instance="a",queue="execution_checks",condition="dead"}
+    values: 1x11 0x32
+  - series: apid_ci_resource_used{job="apid",instance="a",resource="storage_objects"}
+    values: 90x21 40x22
+  - series: apid_ci_resource_limit{job="apid",instance="a",resource="storage_objects"}
+    values: 100x44
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: FaasCILeaseRecoveryStalled
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: platform
+        family: internal_ci
+        public_status: internal
+        queue: executions
+        condition: stale_leases
+      exp_annotations: *id003
+  - eval_time: 5m
+    alertname: FaasCICheckDeliveryDead
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: platform
+        family: internal_ci
+        public_status: internal
+        queue: execution_checks
+        condition: dead
+      exp_annotations: *id004
+  - eval_time: 10m
+    alertname: FaasCIQuotaPressure
+    exp_alerts:
+    - exp_labels:
+        severity: warn
+        component: platform
+        family: internal_ci
+        public_status: internal
+        resource: storage_objects
+      exp_annotations: *id005
+  - eval_time: 11m
+    alertname: FaasCIHealthUnavailable
+    exp_alerts: []
+  - eval_time: 11m
+    alertname: FaasCIWorkerUnavailable
+    exp_alerts: []
+  - eval_time: 11m
+    alertname: FaasCILeaseRecoveryStalled
+    exp_alerts: []
+  - eval_time: 11m
+    alertname: FaasCICheckDeliveryDead
+    exp_alerts: []
+  - eval_time: 11m
+    alertname: FaasCIQuotaPressure
+    exp_alerts: []
+  promql_expr_test: []
+- name: missing scrape produces unknown states despite retained raw metrics
+  interval: 30s
+  input_series:
+  - series: up{job="apid",instance="a"}
+    values: 1x5 0x38
+  - series: apid_ci_health_enabled{job="apid",instance="a"}
+    values: 1x44
+  - series: apid_ci_health_up{job="apid",instance="a"}
+    values: 1x44
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="dispatcher"}
+    values: 1x44
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="metadata_admission"}
+    values: '0x44'
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="automation_admission"}
+    values: '0x44'
+  - series: githubd_ci_worker_enabled{job="githubd",instance="a",worker="metadata_checks"}
+    values: '0x44'
+  - series: githubd_ci_worker_enabled{job="githubd",instance="a",worker="execution_checks"}
+    values: '0x44'
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="retention"}
+    values: '0x44'
+  - series: apid_ci_worker_replicas{job="apid",instance="a",worker="dispatcher",condition="healthy"}
+    values: 1x44
+  - series: apid_ci_queue_items{job="apid",instance="a",queue="executions",condition="pending"}
+    values: 3x44
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasCIHealthUnavailable
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasCIWorkerUnavailable
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasCILeaseRecoveryStalled
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasCICheckDeliveryDead
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasCIQuotaPressure
+    exp_alerts: []
+  promql_expr_test:
+  - expr: faas_ci:observation_status:by_daemon{daemon="apid"}
+    eval_time: 20m
+    exp_samples:
+    - labels: '{__name__="faas_ci:observation_status:by_daemon", daemon="apid"}'
+      value: 3
+  - expr: faas_ci:worker_status:by_worker{worker="dispatcher"}
+    eval_time: 20m
+    exp_samples:
+    - labels: '{__name__="faas_ci:worker_status:by_worker", worker="dispatcher"}'
+      value: 7
+  - expr: faas_ci:queue_items:by_queue_condition
+    eval_time: 20m
+    exp_samples: []
+- name: retained running item age is not a queue latency SLO
+  interval: 30s
+  input_series:
+  - series: up{job="apid",instance="a"}
+    values: 1x44
+  - series: apid_ci_health_enabled{job="apid",instance="a"}
+    values: 1x44
+  - series: apid_ci_health_up{job="apid",instance="a"}
+    values: 1x44
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="dispatcher"}
+    values: 1x44
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="metadata_admission"}
+    values: '0x44'
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="automation_admission"}
+    values: '0x44'
+  - series: githubd_ci_worker_enabled{job="githubd",instance="a",worker="metadata_checks"}
+    values: '0x44'
+  - series: githubd_ci_worker_enabled{job="githubd",instance="a",worker="execution_checks"}
+    values: '0x44'
+  - series: apid_ci_worker_enabled{job="apid",instance="a",worker="retention"}
+    values: '0x44'
+  - series: apid_ci_worker_replicas{job="apid",instance="a",worker="dispatcher",condition="healthy"}
+    values: 1x44
+  - series: apid_ci_queue_items{job="apid",instance="a",queue="executions",condition="in_flight"}
+    values: 1x44
+  - series: apid_ci_queue_oldest_item_age_seconds{job="apid",instance="a",queue="executions"}
+    values: 86400x44
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: FaasCIHealthUnavailable
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasCIWorkerUnavailable
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasCILeaseRecoveryStalled
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasCICheckDeliveryDead
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: FaasCIQuotaPressure
+    exp_alerts: []
+  promql_expr_test: []

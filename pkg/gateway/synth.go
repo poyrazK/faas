@@ -28,6 +28,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // batchDispatchStatus values are the per-record terminal states the
@@ -144,8 +145,10 @@ type SynthServer struct {
 	dispatcher SynthDispatcher
 	log        *slog.Logger
 	srv        *http.Server
-	mux        *http.ServeMux
-	calls      atomic.Int64
+	// drain lets connections accepted before Stop deliver their requests.
+	drain *wire.HTTPDrain
+	mux   *http.ServeMux
+	calls atomic.Int64
 	// internalSvcVerifier (ADR-119) is the per-service
 	// public-key allowlist consulted by the synth-side gate
 	// (synth_internal_only.go). nil = gate disabled; an
@@ -293,6 +296,17 @@ func (s *SynthServer) Start() error {
 	if s.srv == nil {
 		return fmt.Errorf("gateway synth: server not configured (call NewSynthServer first)")
 	}
+	// Production inherits the socket from faas-gatewayd-internal.socket, which
+	// keeps it open across restarts so gatewayd-public's connections queue
+	// for the replacement instead of failing. The unit sets mode 0660.
+	inherited, ok, err := inheritedSynthListener("unix", s.socketPath)
+	if err != nil {
+		return fmt.Errorf("gateway synth: %w", err)
+	}
+	if ok {
+		s.serve(inherited)
+		return nil
+	}
 	// Remove any stale socket from a previous run (server crashed, etc).
 	// The platform treats the socket as owned by this process; recreate
 	// is safer than failing on EADDRINUSE.
@@ -311,19 +325,33 @@ func (s *SynthServer) Start() error {
 		_ = lis.Close()
 		return fmt.Errorf("gateway synth: chmod: %w", err)
 	}
+	wire.Share(lis) // a hand-off successor serves the same socket (ADR-1580)
+	s.serve(lis)
+	return nil
+}
+
+func (s *SynthServer) serve(lis net.Listener) {
 	s.log.Info("gateway synth: listening", "socket", s.socketPath)
+	s.drain = wire.NewHTTPDrain(s.srv)
+	lis = s.drain.Listener(lis)
 	go func() {
-		if err := s.srv.Serve(lis); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := s.drain.ServeErr(s.srv.Serve(lis)); err != nil {
 			s.log.Warn("gateway synth: serve", "err", err)
 		}
 	}()
-	return nil
 }
+
+// inheritedSynthListener is wire.InheritedListener; tests substitute a
+// socket they hold open across a simulated restart.
+var inheritedSynthListener = wire.InheritedListener
 
 // Stop tears down the listener. Idempotent.
 func (s *SynthServer) Stop(ctx context.Context) error {
 	if s.srv == nil {
 		return nil
+	}
+	if s.drain != nil {
+		return s.drain.Shutdown(ctx, s.srv)
 	}
 	return s.srv.Shutdown(ctx)
 }

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	core "github.com/onebox-faas/faas/pkg/datarepair"
 )
 
 func (j *nativeLaunchJournal) records(ctx context.Context) ([]nativeLaunchRecord, error) {
@@ -30,7 +31,7 @@ func (j *nativeLaunchJournal) records(ctx context.Context) ([]nativeLaunchRecord
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		if entry.Name() == "retired" || entry.Name() == "helpers" || entry.Name() == "loop-mounts" || entry.Name() == "image-sources" || entry.Name() == "tun-binds" || entry.Name() == "qualifications" || entry.Name() == "migration-admissions" || entry.Name() == "migration-sources" || strings.HasPrefix(entry.Name(), ".launch-") || strings.HasSuffix(entry.Name(), ".lock") {
+		if entry.Name() == "retired" || entry.Name() == "helpers" || entry.Name() == "loop-mounts" || entry.Name() == "image-sources" || entry.Name() == "tun-binds" || entry.Name() == "qualifications" || entry.Name() == "data-repair" || entry.Name() == "migration-admissions" || entry.Name() == "migration-sources" || strings.HasPrefix(entry.Name(), ".launch-") || strings.HasSuffix(entry.Name(), ".lock") {
 			continue
 		}
 		instance, ok := strings.CutSuffix(entry.Name(), ".json")
@@ -73,6 +74,9 @@ func (j *nativeLaunchJournal) records(ctx context.Context) ([]nativeLaunchRecord
 		return nil, err
 	}
 	if _, err := j.qualifications("").recoveryLeases(ctx, records); err != nil {
+		return nil, err
+	}
+	if err := j.validateDataRepairRecords(ctx, records); err != nil {
 		return nil, err
 	}
 	return records, ctx.Err()
@@ -123,6 +127,9 @@ func (j *nativeLaunchJournal) confirmResourcesRemoved(ctx context.Context, expec
 // but only the daemon holding this exact retired generation can replace it.
 // Completed prior generations remain immutable in the private archive.
 func (j *nativeLaunchJournal) replace(ctx context.Context, lease Lease, expectedGeneration string, requireResourcesRemoved bool) (record nativeLaunchRecord, err error) {
+	if _, readErr := readDataRepairRecord(filepath.Join(j.root, "data-repair", lease.Instance+".json")); !errors.Is(readErr, os.ErrNotExist) {
+		return record, core.ErrConflict
+	}
 	migrationLock, migrationErr := j.lockMigrationPreparation(ctx, lease.Instance)
 	if migrationErr != nil {
 		return record, migrationErr
@@ -152,6 +159,9 @@ func (j *nativeLaunchJournal) replace(ctx context.Context, lease Lease, expected
 	old, err := j.read(lease.Instance)
 	if err != nil {
 		return record, err
+	}
+	if old.Producer != (nativeProducerIdentity{}) {
+		return record, errors.New("native producer: enrolled repair generation cannot be replaced")
 	}
 	if !old.Revoked || !old.ExitConfirmed || old.Generation != expectedGeneration || requireResourcesRemoved && !old.ResourcesRemoved || !requireResourcesRemoved && !sameNativeJournalLease(old.Lease, lease) {
 		return record, errors.New("native journal: prior launch is not replaceable by this owner")

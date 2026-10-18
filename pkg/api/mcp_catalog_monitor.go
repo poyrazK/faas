@@ -19,6 +19,7 @@ func IsMCPCatalogMonitorMetric(metric string) bool {
 }
 
 type MCPCatalogMonitorConfigRequest struct {
+	Scope            string                    `json:"scope,omitempty"`
 	Observer         *MCPCatalogObserverConfig `json:"observer,omitempty"`
 	TokenEnv         string                    `json:"token_env,omitempty"`
 	Role             string                    `json:"role,omitempty"`
@@ -27,6 +28,7 @@ type MCPCatalogMonitorConfigRequest struct {
 	FreshnessSeconds int                       `json:"freshness_seconds"`
 }
 type MCPCatalogMonitorConfig struct {
+	Scope            string                    `json:"scope,omitempty"`
 	Observer         *MCPCatalogObserverConfig `json:"observer,omitempty"`
 	TokenEnv         string                    `json:"token_env,omitempty"`
 	Role             string                    `json:"role,omitempty"`
@@ -200,4 +202,12 @@ func (c *Client) GetMCPCatalogMonitorSummary(ctx context.Context, slug string) (
 	var out MCPCatalogMonitorSummary
 	err := c.do(ctx, "GET", "/v1/apps/"+url.PathEscape(slug)+"/mcp-catalog-monitor?all_roles=true", nil, &out)
 	return out, err
+}
+
+// MCPConnectionScope preserves legacy connections in the default environment.
+func MCPConnectionScope(scope string) string {
+	if scope == "" {
+		return DefaultEnvScope
+	}
+	return scope
 }

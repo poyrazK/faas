@@ -9,6 +9,7 @@ import (
 
 // MCPOAuthRetirement is account-owned metadata that outlives its source app.
 type MCPOAuthRetirement struct {
+	Scope                      string                     `json:"scope,omitempty"`
 	ID                         string                     `json:"id"`
 	AppID                      string                     `json:"app_id"`
 	AppSlug                    string                     `json:"app_slug"`

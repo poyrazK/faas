@@ -357,6 +357,13 @@ printf '//go:build metal\n\npackage e2e_test\n\nfunc TestProbeAlpha(t *testing.T
   > "${probe_root}/cmd/e2e/a_probe_test.go"
 printf '//go:build metal\n\npackage e2e_test\n\nfunc helperOnly() {}\n' \
   > "${probe_root}/cmd/e2e/zz_no_tests_test.go"
+# A file that also needs a dedicated tag is compiled only by its own target,
+# never by `-tags metal`, so its tests are not the gate's to require. A plain
+# platform conjunction is still compiled and must stay in the set.
+printf '//go:build metal && dedicated_probe\n\npackage e2e_test\n\nfunc TestProbeDedicated(t *testing.T) {}\n' \
+  > "${probe_root}/cmd/e2e/b_dedicated_probe_test.go"
+printf '//go:build metal && linux\n\npackage e2e_test\n\nfunc TestProbeLinux(t *testing.T) {}\n' \
+  > "${probe_root}/cmd/e2e/c_linux_probe_test.go"
 probe_out="$(bash -c '
   set -Eeuo pipefail
   source "$1"
@@ -365,9 +372,9 @@ probe_out="$(bash -c '
   rm -rf "${probe_root}"
   fail "the derivation dies under set -Eeuo pipefail when a metal-tagged file declares no tests"
 }
-[[ "${probe_out}" == "TestProbeAlpha" ]] || {
+[[ "${probe_out}" == $'TestProbeAlpha\nTestProbeLinux' ]] || {
   rm -rf "${probe_root}"
-  fail "the derivation returned '${probe_out}', want just TestProbeAlpha"
+  fail "the derivation returned '${probe_out}', want TestProbeAlpha and TestProbeLinux"
 }
 rm -rf "${probe_root}"
 

@@ -2731,3 +2731,201 @@ page. `EventDeadlineInvestigationOptions` controls page size, opaque continuatio
 and a cancellable read budget up to five seconds. Saved notification timestamps and
 ratio samples remain separate from current observations. See
 [investigation, validation and pagination](../../docs/event-deadline-python-investigation.md).
+
+### Async deferred event acknowledgment worker
+
+`AsyncEventAcknowledgmentWorker.from_headers(client.inner, app, headers, body,
+account_id, app_id, options)` coordinates confirmed platform renewal, atomic
+business SQL/consumer receipts and exact saved completion bytes. `run` invokes
+the async handler with its cursor and read-only cancellation view; `complete_receipt`
+recovers callbacks without business work. Explicit `retry`/`dead_letter` decisions
+check receipts first and require known rollback, stopped work and exclusive job
+ownership. Use an idle autocommit psycopg async connection and bounded driver calls.
+
+Owner/native cancellation signals cooperative work, joins active SQL/renewal and
+preserves confirmed receipt progress. Unknown COMMIT remains unknown. Configure
+bounded callback retries and retain the protected ingestion job until terminal
+confirmation. No schema, queue or host starts automatically. See the
+[worker protocol](../../docs/event-acknowledgment-python-worker.md) and
+[protected-job integration](../../examples/event-acknowledgment-python/README.md).
+
+### Durable acknowledgment handoff
+
+For side-effect-free preparation outside the final short SQL transaction,
+`aclaim_event_consumer_processing(connection, request, duration_ms)` returns a
+process-local lease with `renew` and `complete`. Explicitly install
+`event_consumer_processing_schema` beside the receipt table. Use
+`run_with_processing_lease` or `run_durable_with_processing_lease` for worker
+composition. Existing receipts replay without the old lease; new writes require
+its unexpired token/input fence. The host owns renewal during preparation and
+must stop/join local renewal before final completion. See the
+[Python processing protocol](../../docs/event-consumer-processing-python.md).
+
+`run_prepared_durable(connection_factory, prepare, handler, options, stop_event=...)`
+coordinates both leases during side-effect-free preparation, then commits the
+same fenced receipt/intent transaction. `EventAcknowledgmentPreparedOptions`
+requires `preparation_timeout_ms` and defaults `processing_lease_ms` to 30,000.
+The synchronous factory supplies fresh exclusive idle autocommit async connection
+scopes for each operation. Existing receipts skip preparation and new claims;
+local renewal is joined before completion while platform renewal continues.
+See [budgets, cleanup and uncertain commits](../../docs/event-acknowledgment-python-preparation.md).
+
+Set keyword-only `EventAcknowledgmentPreparedOptions.on_event` for best-effort
+preparation metadata. Frozen `EventAcknowledgmentPreparationEvent` variants report
+bounded durations, acquisition/preparation, renewal failure, confirmed/unknown
+commit and shutdown outcomes, without identities, payloads, tokens or raw errors.
+Use a synchronous nonblocking callback and an application-owned bounded queue.
+Observer exceptions preserve processing outcomes; no observer work is scheduled
+or awaited. See [event fields and isolation](../../docs/event-acknowledgment-python-telemetry.md).
+
+`EventAcknowledgmentPreparationMetrics` aggregates these events into fixed
+counters and cumulative duration histograms. Pass `metrics.record` as `on_event`
+and read detached JSON-safe `metrics.snapshot()` dictionaries from a separate
+export path. Serialize access in one execution context; no exporter, background
+task or retained event data is installed. Safe-integer saturation is explicit.
+See [counting and export rules](../../docs/event-acknowledgment-python-metrics.md).
+
+`format_event_acknowledgment_preparation_metrics(metrics.snapshot(), prefix=...)`
+renders Prometheus text 0.0.4 with fixed labels, cumulative histograms in seconds
+and saturation gauges. Serve with
+`EVENT_ACKNOWLEDGMENT_PREPARATION_PROMETHEUS_CONTENT_TYPE` from the host's independent
+scrape path. Complete validation precedes rendering; no registry, listener, task
+or metrics dependency is added. See [formatting and the ASGI scrape example](../../docs/event-acknowledgment-python-prometheus.md).
+
+The application-owned [shared Node/Python monitoring pack](../../examples/event-acknowledgment-monitoring/README.md)
+provides a Python scrape configuration, guarded recording/alert rules, Grafana
+dashboard and SDK-specific recovery runbook. Install one shared rule group per
+evaluation domain, preserve target/process identity and tune thresholds through
+your monitoring deployment process. No monitoring service is started by the SDK.
+
+`ainspect_event_consumer_processing(connection, request, stop_event=...)` reads
+frozen receipt/claim metadata for one original consumer request in one statement.
+It reports matching/completed, active, expired, absent or conflicting evidence and
+matching claim timing without selecting tokens, original bodies or saved results.
+Use a separately leased idle autocommit async connection. Inspection grants no
+ownership or acknowledgment proof; use existing live fences/receipt reconciliation
+for recovery. See [Python inspection](../../docs/event-consumer-processing-inspection.md#python-inspection).
+
+`run_durable` commits business SQL, the receipt and a completion intent together;
+`save_completion_intent` stages a saved receipt without business work. Explicitly
+install `event_acknowledgment_intent_schema` beside the inbox. A confirmed local
+commit transfers callback responsibility from the ingestion job to recovery.
+
+`arecover_next_event_acknowledgment_intent(client.inner, connection, account_id,
+app_id, ...)` claims one due intent and sends only its saved callback. Separate
+`aclaim_event_acknowledgment_intent` / `claim.deliver` calls and bounded
+`alist_event_acknowledgment_intents` diagnostics are also available. Applications
+own polling, protected storage, driver timeouts and retention. See the
+[durable Python protocol](../../docs/event-acknowledgment-python-intents.md).
+
+`arecover_event_acknowledgment_intents(client.inner, connection_factory, account_id,
+app_id, EventAcknowledgmentIntentRecoveryPassOptions(...), stop_event=...)` runs one
+finite concurrent pass. Each admission leases an exclusive connection scope and
+uses existing intent fences. Empty probes/hard failures stop admission; active
+work and cleanup join. Frozen aggregate `.result` progress accompanies failure,
+native cancellation and uncertain-COMMIT exceptions. The host schedules later
+passes. See [budgets, ownership and progress](../../docs/event-acknowledgment-python-recovery-pass.md).
+
+Set `retry_policy=EventAcknowledgmentIntentRetryPolicy(initial_backoff_ms=1000,
+max_backoff_ms=300000)` for capped exponential full jitter using persisted claims.
+Single-intent recovery and `claim.deliver` accept the same option. Leave
+`backoff_ms` omitted/None with a policy; without a policy the effective fixed
+default remains 1000 ms. See the
+[adaptive retry contract](../../docs/event-acknowledgment-python-retry-policy.md).
+
+Durable staging accepts `retry_policy=EventAcknowledgmentIntentRetryPolicy(...)`
+to atomically bind a new intent. Recovery uses its captured binding instead of
+worker fallback, and status exposes frozen `retry_policy` metadata. Apply
+`event_acknowledgment_intent_stored_retry_policy_schema` to existing installations
+before upgrading current intent workers. See the
+[shared binding and rollout contract](../../docs/event-acknowledgment-stored-retry-policy.md).
+
+Use `aadopt_event_acknowledgment_intent_retry_policy` for existing unbound backlog.
+Pass frozen `EventAcknowledgmentIntentAdoptRetryPolicyOptions` with a saved command
+UUID and the exact timestamp/count from intent listing. Install the optional
+`event_acknowledgment_intent_policy_adoption_schema` first. Frozen receipts resolve
+original retries across SDKs; typed rejection errors expose their `.receipt`.
+Python preserves full int64 generations, callback data, attempts and due time. See
+the [adoption and uncertainty contract](../../docs/event-acknowledgment-policy-adoption.md#python-adoption-and-replay).
+
+`save_retry_intent(connection, reason)` and `save_dead_letter_intent(connection,
+reason)` stage explicit failure decisions for the same recovery host. Establish
+known rollback, stopped work and exclusive ownership first, and persist the chosen
+action/reason before staging. Receipt presence blocks rejection; identical saves
+retain their claims/counters, and unknown COMMIT requires fresh-connection
+reconciliation. See [failure decisions](../../docs/event-acknowledgment-python-intents.md#persist-explicit-failure-decisions).
+
+### Acknowledgment recovery health
+
+`aget_event_acknowledgment_intent_health(connection, account_id, app_id,
+EventAcknowledgmentIntentHealthOptions(...), stop_event=...)` reads a bounded
+summary of unfinished intents using one database snapshot/clock. The immutable
+result includes due/leased/scheduled/stalled counts, expired claims, oldest ages
+and explicit completeness. Use an exclusively leased idle autocommit async
+connection, bounded driver calls, and always export `complete`/`truncated` alongside
+metrics. See [Python recovery health](../../docs/event-acknowledgment-intent-health.md#python-summary).
+
+`awatch_event_acknowledgment_intent_health(connection_factory, account_id, app_id,
+EventAcknowledgmentIntentWatchOptions(...), notify, stop_event=...)` watches
+sustained due/stalled/parked backlog. The factory returns a fresh async connection scope
+per poll. Confirmation requires fresh complete evidence; failed reads or lost
+coverage produce unknown states. Callbacks are awaited serially, cancellation
+joins active work, and callback errors expose only the affected metadata alert.
+State is in memory and resets on restart. See the
+[Python watch](../../docs/event-acknowledgment-intent-health.md#python-watch).
+
+`awatch_event_acknowledgment_intent_health_with_checkpoint(...,
+EventAcknowledgmentIntentCheckpointWatchOptions(on_progress=..., resume=..., ...))`
+adds stable incident IDs, a bounded pending outbox and fresh confirmation after
+resume. Persist each checkpoint before notification attempts, and apply exact
+pairs with `acknowledge_event_acknowledgment_intent_alerts`. Validate stored state
+with `validate_event_acknowledgment_intent_checkpoint`. Storage fencing and
+idempotent delivery remain application-owned. Cancellation exposes the detached
+final result through `EventAcknowledgmentIntentCheckpointWatchCancelled.result`.
+See the [Python checkpoint protocol](../../docs/event-acknowledgment-python-checkpoints.md).
+
+Set the keyword-only `parked_threshold` to enable `parked_intents` alerts in
+either watch, including a parked-only selection. Enabled checkpointed alerts use
+version 2; zero/omission preserves version 1 and its saved policy keys/order.
+Upgrade every host that can resume or acknowledge version 2 first. Incomplete
+evidence stays unknown, and a lower parked count after operator resume or newer
+staging does not establish callback confirmation. See
+[parked evidence and rollout](../../docs/event-acknowledgment-python-checkpoints.md#parked-intent-alerts).
+
+`EventAcknowledgmentIntentHealthMetrics(account_id, app_id, options)` caches one
+bounded recovery-health sample. Feed completed reads explicitly or use
+`awatch_event_acknowledgment_intent_health_metrics` with exclusive connection
+scopes and host cancellation. Format a fresh snapshot per scrape with
+`format_event_acknowledgment_intent_health_metrics`. The same thirteen Node gauge
+families cover due/stalled/parked work, completeness and age, without identity
+labels; missing reads omit sample gauges. See the
+[Python cache/poller contract](../../docs/event-acknowledgment-python-recovery-prometheus.md)
+and [shared Prometheus/Grafana integration](../../examples/event-acknowledgment-monitoring/README.md#recovery-health-python).
+
+### Recovery claim budgets and parked callbacks
+
+All durable staging methods accept `retry_budget=EventAcknowledgmentIntentRetryBudget(8,
+EventAcknowledgmentIntentRetryPolicy(1000, 300000))`, mutually exclusive with
+`retry_policy`. Install `event_acknowledgment_intent_retry_budget_schema` after the
+v1 upgrade before current helpers, including v1-only hosts. Parked callbacks retain
+protected inputs; recovery progress and health expose `parked`. Install the
+optional `event_acknowledgment_intent_retry_resume_schema`, read exact metadata
+with `aget_event_acknowledgment_intent_retry_resume_candidate`, durably persist
+`EventAcknowledgmentIntentResumeRetryBudgetOptions`, then call
+`aresume_event_acknowledgment_intent_retry_budget`. Exact original retries resolve
+uncertain commits through historical receipts. Python retains full int64 generations
+and exact microsecond fences. See
+[budget installation, exhaustion and operator resume](../../docs/event-acknowledgment-retry-budgets.md#python-budgets-and-guarded-resume).
+
+### Adopt recovery budgets for existing callback backlog
+
+`aadopt_event_acknowledgment_intent_retry_budget` attaches v2 to selected active
+unbound/v1 work with exact timestamp/count/policy guards, no live claim and no newer
+attempt. Install `event_acknowledgment_intent_budget_adoption_schema`, select metadata
+with `aget_event_acknowledgment_intent_budget_adoption_candidate`, then durably save
+`EventAcknowledgmentIntentAdoptRetryBudgetOptions` before execution. None expected
+policy requires unbound work; complete v1 timing is preserved. Frozen receipts
+resolve exact original retries across SDKs, preserving native int64 generations
+and microsecond fences. Known rejection errors expose their `.receipt`; uncertain
+COMMIT requires retrying the saved command on a fresh connection. See
+[budget adoption, guards and cancellation](../../docs/event-acknowledgment-budget-adoption.md#python-selection-adoption-and-replay).

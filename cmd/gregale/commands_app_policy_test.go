@@ -267,7 +267,7 @@ func TestAppPolicyControlsHelpCompletionManAndReference(t *testing.T) {
 		t.Fatal("app command missing from CLI manifest")
 	}
 	var help, man, reference bytes.Buffer
-	printLocalCommandHelp(&help, command)
+	printLocalCommandHelpDetail(&help, command, true)
 	renderManCommand(&man, command)
 	renderMarkdownReference(&reference, []cliCommand{command})
 	for surface, render := range map[string]func(io.Writer, cliCommand){

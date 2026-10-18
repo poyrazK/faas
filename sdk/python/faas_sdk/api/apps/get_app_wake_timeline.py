@@ -8,6 +8,9 @@ import httpx
 from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.app_wake_timeline_response import AppWakeTimelineResponse
+from ...models.get_app_wake_timeline_pagination import (
+    GetAppWakeTimelinePagination,
+)
 from ...models.problem import Problem
 from ...types import UNSET, Response, Unset
 
@@ -17,6 +20,9 @@ def _get_kwargs(
     *,
     since: datetime.datetime | Unset = UNSET,
     until: datetime.datetime | Unset = UNSET,
+    pagination: GetAppWakeTimelinePagination | Unset = UNSET,
+    limit: int | Unset = 20,
+    cursor: str | Unset = UNSET,
 ) -> dict[str, Any]:
 
     params: dict[str, Any] = {}
@@ -30,6 +36,16 @@ def _get_kwargs(
     if not isinstance(until, Unset):
         json_until = until.isoformat()
     params["until"] = json_until
+
+    json_pagination: str | Unset = UNSET
+    if not isinstance(pagination, Unset):
+        json_pagination = pagination
+
+    params["pagination"] = json_pagination
+
+    params["limit"] = limit
+
+    params["cursor"] = cursor
 
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
@@ -52,6 +68,11 @@ def _parse_response(
 
         return response_200
 
+    if response.status_code == 400:
+        response_400 = Problem.from_dict(response.json())
+
+        return response_400
+
     if response.status_code == 401:
         response_401 = Problem.from_dict(response.json())
 
@@ -71,6 +92,11 @@ def _parse_response(
         response_429 = Problem.from_dict(response.json())
 
         return response_429
+
+    if response.status_code == 503:
+        response_503 = Problem.from_dict(response.json())
+
+        return response_503
 
     if client.raise_on_unexpected_status:
         raise errors.UnexpectedStatus(response.status_code, response.content)
@@ -95,6 +121,9 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     since: datetime.datetime | Unset = UNSET,
     until: datetime.datetime | Unset = UNSET,
+    pagination: GetAppWakeTimelinePagination | Unset = UNSET,
+    limit: int | Unset = 20,
+    cursor: str | Unset = UNSET,
 ) -> Response[AppWakeTimelineResponse | Problem]:
     """Per-app wake timeline (JSON mirror of the dashboard page).
 
@@ -105,7 +134,7 @@ def sync_detailed(
     emits the same data as JSON so a separate frontend agent can
     render without re-parsing HTML.
 
-    Returns the 50 most-recent instance rows for the app, joined
+    Legacy requests select 100 recent candidates before time filtering, joined
     against the events table's `wake.boot_started` rows for the
     per-row telemetry (Trigger, QueuedCount, ConcurrencyAtAdmit,
     AtCapacity, ReadyInMS). The aggregation math is shared with
@@ -124,6 +153,17 @@ def sync_detailed(
         to `wake_count_24h` but not the denominator — same
         posture as the HTML page.
 
+    Opt-in keyset_v1 filters app and inclusive since/until before limiting
+    and seeking in descending (started_at, instance ID) order. Missing
+    start times are excluded. Bounds normalize to PostgreSQL microseconds;
+    default until resolves once to now and must not be in the future.
+    since must precede until. Repeat the original bounds/limit on every
+    page. Boot and completion metadata are app-scoped. Source failures
+    return errors, not successful empty/partial results. Page metadata
+    echoes selection and cursor; counts/histograms describe this page
+    only. Complete marks the end of this live retained read, not complete
+    capture or a snapshot. Inserts, retention and metadata can affect pages.
+
     Plan-gated Hobby+ (mirror of /v1/apps/{slug}/metrics —
     same `code` so a downgrade between the two endpoints flips
     both at once).
@@ -132,6 +172,9 @@ def sync_detailed(
         slug (str):
         since (datetime.datetime | Unset):
         until (datetime.datetime | Unset):
+        pagination (GetAppWakeTimelinePagination | Unset):
+        limit (int | Unset):  Default: 20.
+        cursor (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -145,6 +188,9 @@ def sync_detailed(
         slug=slug,
         since=since,
         until=until,
+        pagination=pagination,
+        limit=limit,
+        cursor=cursor,
     )
 
     response = client.get_httpx_client().request(
@@ -160,6 +206,9 @@ def sync(
     client: AuthenticatedClient | Client,
     since: datetime.datetime | Unset = UNSET,
     until: datetime.datetime | Unset = UNSET,
+    pagination: GetAppWakeTimelinePagination | Unset = UNSET,
+    limit: int | Unset = 20,
+    cursor: str | Unset = UNSET,
 ) -> AppWakeTimelineResponse | Problem | None:
     """Per-app wake timeline (JSON mirror of the dashboard page).
 
@@ -170,7 +219,7 @@ def sync(
     emits the same data as JSON so a separate frontend agent can
     render without re-parsing HTML.
 
-    Returns the 50 most-recent instance rows for the app, joined
+    Legacy requests select 100 recent candidates before time filtering, joined
     against the events table's `wake.boot_started` rows for the
     per-row telemetry (Trigger, QueuedCount, ConcurrencyAtAdmit,
     AtCapacity, ReadyInMS). The aggregation math is shared with
@@ -189,6 +238,17 @@ def sync(
         to `wake_count_24h` but not the denominator — same
         posture as the HTML page.
 
+    Opt-in keyset_v1 filters app and inclusive since/until before limiting
+    and seeking in descending (started_at, instance ID) order. Missing
+    start times are excluded. Bounds normalize to PostgreSQL microseconds;
+    default until resolves once to now and must not be in the future.
+    since must precede until. Repeat the original bounds/limit on every
+    page. Boot and completion metadata are app-scoped. Source failures
+    return errors, not successful empty/partial results. Page metadata
+    echoes selection and cursor; counts/histograms describe this page
+    only. Complete marks the end of this live retained read, not complete
+    capture or a snapshot. Inserts, retention and metadata can affect pages.
+
     Plan-gated Hobby+ (mirror of /v1/apps/{slug}/metrics —
     same `code` so a downgrade between the two endpoints flips
     both at once).
@@ -197,6 +257,9 @@ def sync(
         slug (str):
         since (datetime.datetime | Unset):
         until (datetime.datetime | Unset):
+        pagination (GetAppWakeTimelinePagination | Unset):
+        limit (int | Unset):  Default: 20.
+        cursor (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -211,6 +274,9 @@ def sync(
         client=client,
         since=since,
         until=until,
+        pagination=pagination,
+        limit=limit,
+        cursor=cursor,
     ).parsed
 
 
@@ -220,6 +286,9 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     since: datetime.datetime | Unset = UNSET,
     until: datetime.datetime | Unset = UNSET,
+    pagination: GetAppWakeTimelinePagination | Unset = UNSET,
+    limit: int | Unset = 20,
+    cursor: str | Unset = UNSET,
 ) -> Response[AppWakeTimelineResponse | Problem]:
     """Per-app wake timeline (JSON mirror of the dashboard page).
 
@@ -230,7 +299,7 @@ async def asyncio_detailed(
     emits the same data as JSON so a separate frontend agent can
     render without re-parsing HTML.
 
-    Returns the 50 most-recent instance rows for the app, joined
+    Legacy requests select 100 recent candidates before time filtering, joined
     against the events table's `wake.boot_started` rows for the
     per-row telemetry (Trigger, QueuedCount, ConcurrencyAtAdmit,
     AtCapacity, ReadyInMS). The aggregation math is shared with
@@ -249,6 +318,17 @@ async def asyncio_detailed(
         to `wake_count_24h` but not the denominator — same
         posture as the HTML page.
 
+    Opt-in keyset_v1 filters app and inclusive since/until before limiting
+    and seeking in descending (started_at, instance ID) order. Missing
+    start times are excluded. Bounds normalize to PostgreSQL microseconds;
+    default until resolves once to now and must not be in the future.
+    since must precede until. Repeat the original bounds/limit on every
+    page. Boot and completion metadata are app-scoped. Source failures
+    return errors, not successful empty/partial results. Page metadata
+    echoes selection and cursor; counts/histograms describe this page
+    only. Complete marks the end of this live retained read, not complete
+    capture or a snapshot. Inserts, retention and metadata can affect pages.
+
     Plan-gated Hobby+ (mirror of /v1/apps/{slug}/metrics —
     same `code` so a downgrade between the two endpoints flips
     both at once).
@@ -257,6 +337,9 @@ async def asyncio_detailed(
         slug (str):
         since (datetime.datetime | Unset):
         until (datetime.datetime | Unset):
+        pagination (GetAppWakeTimelinePagination | Unset):
+        limit (int | Unset):  Default: 20.
+        cursor (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -270,6 +353,9 @@ async def asyncio_detailed(
         slug=slug,
         since=since,
         until=until,
+        pagination=pagination,
+        limit=limit,
+        cursor=cursor,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -283,6 +369,9 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     since: datetime.datetime | Unset = UNSET,
     until: datetime.datetime | Unset = UNSET,
+    pagination: GetAppWakeTimelinePagination | Unset = UNSET,
+    limit: int | Unset = 20,
+    cursor: str | Unset = UNSET,
 ) -> AppWakeTimelineResponse | Problem | None:
     """Per-app wake timeline (JSON mirror of the dashboard page).
 
@@ -293,7 +382,7 @@ async def asyncio(
     emits the same data as JSON so a separate frontend agent can
     render without re-parsing HTML.
 
-    Returns the 50 most-recent instance rows for the app, joined
+    Legacy requests select 100 recent candidates before time filtering, joined
     against the events table's `wake.boot_started` rows for the
     per-row telemetry (Trigger, QueuedCount, ConcurrencyAtAdmit,
     AtCapacity, ReadyInMS). The aggregation math is shared with
@@ -312,6 +401,17 @@ async def asyncio(
         to `wake_count_24h` but not the denominator — same
         posture as the HTML page.
 
+    Opt-in keyset_v1 filters app and inclusive since/until before limiting
+    and seeking in descending (started_at, instance ID) order. Missing
+    start times are excluded. Bounds normalize to PostgreSQL microseconds;
+    default until resolves once to now and must not be in the future.
+    since must precede until. Repeat the original bounds/limit on every
+    page. Boot and completion metadata are app-scoped. Source failures
+    return errors, not successful empty/partial results. Page metadata
+    echoes selection and cursor; counts/histograms describe this page
+    only. Complete marks the end of this live retained read, not complete
+    capture or a snapshot. Inserts, retention and metadata can affect pages.
+
     Plan-gated Hobby+ (mirror of /v1/apps/{slug}/metrics —
     same `code` so a downgrade between the two endpoints flips
     both at once).
@@ -320,6 +420,9 @@ async def asyncio(
         slug (str):
         since (datetime.datetime | Unset):
         until (datetime.datetime | Unset):
+        pagination (GetAppWakeTimelinePagination | Unset):
+        limit (int | Unset):  Default: 20.
+        cursor (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -335,5 +438,8 @@ async def asyncio(
             client=client,
             since=since,
             until=until,
+            pagination=pagination,
+            limit=limit,
+            cursor=cursor,
         )
     ).parsed

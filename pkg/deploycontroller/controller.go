@@ -50,6 +50,18 @@ func New(config Config, runtime Runtime) (*Controller, error) {
 }
 
 func (c *Controller) Deploy(ctx context.Context, releaseID string) error {
+	return c.DeployOver(ctx, releaseID, "")
+}
+
+// DeployOver is Deploy for a release built on top of another one: a per-unit
+// release (docs/adr/1650-per-unit-control-plane-releases.md) copies every
+// file it does not replace from the release that was active when it was
+// assembled. Activating it over any other release would silently roll that
+// release's other daemons back, so under the deploy lock the active release
+// must still be expectedCurrent (by release id). An empty expectedCurrent
+// accepts any active release, as Deploy does. Re-running an activation that
+// already completed is still a converged no-op.
+func (c *Controller) DeployOver(ctx context.Context, releaseID, expectedCurrent string) error {
 	lock, err := acquireLock(c.config.LockPath)
 	if err != nil {
 		return err
@@ -101,6 +113,13 @@ func (c *Controller) Deploy(ctx context.Context, releaseID string) error {
 			}
 		}
 		return nil
+	}
+	if expectedCurrent != "" && filepath.Base(previous) != expectedCurrent {
+		active := filepath.Base(previous)
+		if previous == "" {
+			active = "<none>"
+		}
+		return fmt.Errorf("deploycontroller: release %q was built over %q, but the active release is %q", releaseID, expectedCurrent, active)
 	}
 	rollbackTarget := previous
 	// Prefer the active release as the rollback target. An operator hotfix can

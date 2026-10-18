@@ -20,6 +20,9 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api/canary"
+	"github.com/onebox-faas/faas/pkg/rehearsalcold"
+	"github.com/onebox-faas/faas/pkg/rehearsalresume"
+	"github.com/onebox-faas/faas/pkg/rehearsalwork"
 	"github.com/onebox-faas/faas/pkg/statefuldenylist"
 )
 
@@ -888,7 +891,30 @@ type DevSessionResponse struct {
 // RegisterScenarioTestRequest binds developer sessions to one isolated run.
 // Workload is the logical .svc name seen by sibling applications.
 type RegisterScenarioTestRequest struct {
-	Members []ScenarioTestWorkload `json:"members"`
+	SuspendResume         *rehearsalresume.Spec   `json:"suspend_resume,omitempty"`
+	ColdStart             *rehearsalcold.Spec     `json:"cold_start,omitempty"`
+	ManagedWork           *rehearsalwork.Plan     `json:"managed_work,omitempty"`
+	CommandVersion        int                     `json:"command_version,omitempty"`
+	Simulation            *ScenarioSimulationPlan `json:"simulation,omitempty"`
+	NetworkMode           string                  `json:"network_mode,omitempty"`
+	Members               []ScenarioTestWorkload  `json:"members"`
+	WebhookMode           string                  `json:"webhook_mode,omitempty"`
+	ActionEvidenceVersion int                     `json:"action_evidence_version,omitempty"`
+}
+
+// RegisterScenarioTestResponse acknowledges durable capture before deployment.
+// Ordinary namespace registration keeps its existing 204 response.
+type RegisterScenarioTestResponse struct {
+	SuspendResumeSHA256   string `json:"suspend_resume_sha256,omitempty"`
+	ColdStartSHA256       string `json:"cold_start_sha256,omitempty"`
+	ManagedWorkSHA256     string `json:"managed_work_sha256,omitempty"`
+	CommandVersion        int    `json:"command_version,omitempty"`
+	RecorderVersion       int    `json:"recorder_version,omitempty"`
+	SimulationSHA256      string `json:"simulation_sha256,omitempty"`
+	NetworkMode           string `json:"network_mode,omitempty"`
+	WebhookMode           string `json:"webhook_mode"`
+	PolicyVersion         int    `json:"policy_version"`
+	ActionEvidenceVersion int    `json:"action_evidence_version,omitempty"`
 }
 
 type ScenarioTestWorkload struct {
@@ -6849,6 +6875,21 @@ type AppWakeTimelineResponse struct {
 	TriggerClassHistogram map[string]int        `json:"trigger_class_histogram"` // empty map, not nil
 	Rows                  []WakeTimelineJSONRow `json:"rows"`
 	AsOf                  string                `json:"as_of"` // RFC3339Nano UTC
+	Page                  *AppWakeHistoryPage   `json:"page,omitempty"`
+}
+
+// AppWakeHistoryPage describes one live page of retained instance records.
+// Counts and histograms describe this page, not the complete requested range.
+type AppWakeHistoryPage struct {
+	Mode         string `json:"mode"`
+	Since        string `json:"since"`
+	Until        string `json:"until"`
+	Limit        int    `json:"limit"`
+	Cursor       string `json:"cursor,omitempty"`
+	NextCursor   string `json:"next_cursor,omitempty"`
+	Complete     bool   `json:"complete"`
+	SourceStatus string `json:"source_status"`
+	CountScope   string `json:"count_scope"`
 }
 
 // WakeTimelineApp is the slim per-app DTO embedded inside
@@ -11723,10 +11764,15 @@ type RequestAnalyticsRoute struct {
 	OtherDeploymentRequests                       int64 `json:"other_deployment_requests,omitempty"`
 	OtherDeploymentEstimatedComputeCostMillicents int64 `json:"other_deployment_estimated_compute_cost_millicents,omitempty"`
 	// EstimatedComputeCostMillicents allocates this app's estimated raw
-	// RAM-hour value to the route by its share of observed requests. It is
+	// RAM-hour value to the route by its share of observed request time
+	// (ADR-743), falling back to request share when no timing exists. It is
 	// an estimate at the current compute overage rate, not an invoice line.
 	EstimatedComputeCostMillicents int64   `json:"estimated_compute_cost_millicents,omitempty"`
 	RequestSharePct                float64 `json:"request_share_pct,omitempty"`
+	// RequestTimeMS is the route's total gateway-observed request time in the
+	// window; RequestTimeSharePct is its share of the app's total.
+	RequestTimeMS       int64   `json:"request_time_ms,omitempty"`
+	RequestTimeSharePct float64 `json:"request_time_share_pct,omitempty"`
 }
 
 // RequestAnalyticsRouteDeploymentObservation is one route's request-share
@@ -12054,9 +12100,17 @@ type DebugCompareRouteStats struct {
 // endpoint. Routes is empty when both deployments had no traffic
 // in the window.
 type DebugCompareResponse struct {
-	Source string                   `json:"source"`
-	Mirror string                   `json:"mirror"`
-	Routes []DebugCompareRouteStats `json:"routes"`
+	// Optional on older servers; diagnostic clients must require these fields
+	// before claiming an effective retained window (ADR-1623).
+	AppID            string                   `json:"app_id,omitempty"`
+	Since            string                   `json:"since,omitempty"`
+	WindowStart      string                   `json:"window_start,omitempty"`
+	WindowEnd        string                   `json:"window_end,omitempty"`
+	RetentionClamped *bool                    `json:"retention_clamped,omitempty"`
+	RouteFilter      string                   `json:"route_filter,omitempty"`
+	Source           string                   `json:"source"`
+	Mirror           string                   `json:"mirror"`
+	Routes           []DebugCompareRouteStats `json:"routes"`
 }
 
 // DebugReplayRequest is the optional body for POST
@@ -12738,6 +12792,9 @@ type CustomMetricResponse struct {
 	// therefore NOT driving scaling. Computed server-side so the API and
 	// the scheduler cannot disagree about which rows count.
 	Stale bool `json:"stale"`
+	// Kind is "gauge" (pushed, a scaling signal) or "counter" (an ADR-745
+	// OTLP cumulative sum, charted as a rate and never a scaling signal).
+	Kind string `json:"kind,omitempty"`
 }
 
 // CustomMetricListResponse carries the rows plus the two limits an operator

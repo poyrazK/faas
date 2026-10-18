@@ -245,7 +245,7 @@ func readSourceRefArchiveFileBytes(sourcePath, sourceRoot string, names []string
 		if nextErr != nil {
 			return nil, "", false, fmt.Errorf("read source archive: %w", nextErr)
 		}
-		name := strings.TrimPrefix(strings.TrimSuffix(hdr.Name, "/"), "./")
+		name := strings.TrimSuffix(tarball.TrimLeadingDotSlash(hdr.Name), "/")
 		rank, ok := wanted[name]
 		if !ok || hdr.Typeflag != tar.TypeReg {
 			continue
@@ -278,7 +278,7 @@ func sourceRefManifestCandidates(sourcePath, sourceRoot string) ([]string, error
 	}
 	roots := make([]string, 0, 2)
 	for _, root := range []string{selected, prefix} {
-		root = strings.Trim(path.Clean(root), "/.")
+		root = strings.Trim(path.Clean(root), "/")
 		if root == "." {
 			root = ""
 		}

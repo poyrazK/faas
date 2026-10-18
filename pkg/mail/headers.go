@@ -39,8 +39,9 @@ import (
 //
 // The header infrastructure is generic so a future template
 // category (e.g. newsletter) can plug in by extending the
-// allow-list without touching this file. Until then, only the
-// quota-warning path calls ApplyMarketingHeaders.
+// allow-list without touching this file. Product Control also applies these
+// generic headers to its separately gated, opt-in work/help updates, using
+// per-delivery unsubscribe capabilities rather than the platform quota URL.
 func MarketingHeaders(unsubscribeURL string) string {
 	if unsubscribeURL == "" {
 		// Empty URL is a programming error rather than a runtime

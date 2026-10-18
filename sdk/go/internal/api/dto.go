@@ -2628,15 +2628,16 @@ type ManagedOperationResult struct {
 // OperationEffectRecord correlates immutable effect identity with the existing
 // webhook ledger. Unavailable means the delivery history was deleted or pruned.
 type OperationEffectRecord struct {
-	ID         string `json:"id"`
-	Name       string `json:"name"`
-	Generation int64  `json:"generation"`
-	WebhookID  string `json:"webhook_id,omitempty"`
-	DeliveryID string `json:"delivery_id,omitempty"`
-	Type       string `json:"type,omitempty"`
-	Status     string `json:"status"`
-	Attempt    int    `json:"attempt"`
-	LastError  string `json:"last_error,omitempty"`
+	RehearsalRunID string `json:"rehearsal_run_id,omitempty"`
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	Generation     int64  `json:"generation"`
+	WebhookID      string `json:"webhook_id,omitempty"`
+	DeliveryID     string `json:"delivery_id,omitempty"`
+	Type           string `json:"type,omitempty"`
+	Status         string `json:"status"`
+	Attempt        int    `json:"attempt"`
+	LastError      string `json:"last_error,omitempty"`
 }
 
 // OperationEffectPayload is the data in an operation.effect webhook. Scope and

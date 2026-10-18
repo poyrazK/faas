@@ -2039,7 +2039,7 @@ func StatusForCode(code string) int {
 		CodeSecurityQuarantineRecoveryBlocked, CodeDevSourceDiverged,
 		CodeInstanceNotFreezable, CodeInstanceBusy, CodeFrozenInstanceRefused, CodeFrozenCompressUnavailable:
 		return http.StatusConflict
-	case CodeMCPAccessPolicyChanged, CodeBindingReleaseRequired, CodeBindingReleasePolicyChanged, CodeTrafficPercentSumInvalid, CodeTrafficServingChanged, CodeTrafficChangeDuringCanary, CodeMCPTaskCompatibilityGate, CodeCanaryStepConflict, CodeRouteGateBlocked, CodeRouteHealthBlocked, CodeDeploymentNotLive:
+	case CodeMCPReadinessRequired, CodeMCPAccessPolicyChanged, CodeBindingReleaseRequired, CodeBindingReleasePolicyChanged, CodeTrafficPercentSumInvalid, CodeTrafficServingChanged, CodeTrafficChangeDuringCanary, CodeMCPTaskCompatibilityGate, CodeCanaryStepConflict, CodeRouteGateBlocked, CodeRouteHealthBlocked, CodeDeploymentNotLive:
 		// 409 — traffic state conflicts, including a stale expected
 		// serving revision. Sits next to CodeConflict /
 		// CodeDomainNotVerified / CodeNoRollbackTarget because the
@@ -6713,7 +6713,7 @@ func ErrMCPGatewayPromotion(code string) *Problem {
 
 func IsMCPPromotionConditionFailure(code string) bool {
 	switch code {
-	case CodeMCPAdmissionEvidenceUnavailable, CodeMCPAccessPolicyChanged, CodeMCPAccountRevisionChanged, CodeMCPGatewayEvidenceUnavailable, CodeMCPGatewayEvidenceStale, CodeMCPGatewayReplayPending:
+	case CodeMCPReadinessRequired, CodeMCPAdmissionEvidenceUnavailable, CodeMCPAccessPolicyChanged, CodeMCPAccountRevisionChanged, CodeMCPGatewayEvidenceUnavailable, CodeMCPGatewayEvidenceStale, CodeMCPGatewayReplayPending:
 		return true
 	}
 	return false

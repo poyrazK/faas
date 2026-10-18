@@ -53,12 +53,17 @@ func UnitApid() daemonunit.Unit {
 		StartLimitIntervalSec: "60s",
 		StartLimitBurst:       "5",
 
-		Type:       "notify",
-		User:       "faas-apid",
-		Group:      "faas",
-		ExecStart:  `/opt/faas/current/bin/apid --config /etc/faas/apid.toml`,
-		Restart:    "on-failure",
-		RestartSec: "2s",
+		Type: "notify",
+		// `systemctl reload` hands off to a second generation that serves
+		// new connections while this one finishes its own (ADR-1580).
+		NotifyAccess: "main",
+		ExecReload:   handoffReload,
+		OOMPolicy:    "continue",
+		User:         "faas-apid",
+		Group:        "faas",
+		ExecStart:    `/opt/faas/current/bin/apid --config /etc/faas/apid.toml`,
+		Restart:      "on-failure",
+		RestartSec:   "2s",
 		// ADR-190: restart when the daemon stops pinging the systemd
 		// watchdog (gated on pkg/wire.Liveness).
 		WatchdogSec: "90s",
@@ -88,6 +93,18 @@ func UnitApid() daemonunit.Unit {
 			{Key: "FAAS_REALTIME_SOCKET", Value: "/run/faas/realtimed.sock"},
 			{Key: "FAAS_APP_TASK_API_ENABLED", Value: "0"},
 			{Key: "FAAS_EXECUTION_API_ENABLED", Value: "0"},
+			{Key: "FAAS_CI_INTERNAL_ENABLED", Value: "0"},
+			{Key: "FAAS_CI_INTERNAL_ACCOUNTS", Value: ""},
+			{Key: "FAAS_CI_GITHUB_ENABLED", Value: "0"},
+			{Key: "FAAS_CI_GITHUB_CHECKS_ENABLED", Value: "0"},
+			{Key: "FAAS_CI_EXECUTION_CHECKS_ENABLED", Value: "0"},
+			{Key: "FAAS_CI_AUTOMATION_ENABLED", Value: "0"},
+			{Key: "FAAS_CI_DISPATCH_ENABLED", Value: "0"},
+			{Key: "FAAS_CI_WORKER_ENABLED", Value: "0"},
+			{Key: "FAAS_CI_TRANSPORT_ENABLED", Value: "0"},
+			{Key: "FAAS_CI_RETENTION_ENABLED", Value: "0"},
+			{Key: "FAAS_CI_GCS_BUCKET", Value: ""},
+			{Key: "FAAS_CI_RUNTIME_URL", Value: ""},
 			{Key: "FAAS_WORKFLOWS_ENABLED", Value: "1"},
 		},
 		LoadCredential: []daemonunit.LoadCred{
