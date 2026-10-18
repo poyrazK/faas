@@ -4795,8 +4795,14 @@ func (c *Client) DeleteAppRegistryCredential(ctx context.Context, slug, registry
 // ListSecrets/SetSecret/UnsetSecret which the gate tolerates as
 // pre-existing helpers — new surfaces follow MethodResource).
 func (c *Client) GetAppsSlugEnv(ctx context.Context, slug string) (AppEnvListResponse, error) {
+	return c.GetAppsSlugEnvWithScope(ctx, slug, "")
+}
+
+// GetAppsSlugEnvWithScope lists runtime variable names in one scope. Empty
+// scope preserves the default endpoint; values are never returned.
+func (c *Client) GetAppsSlugEnvWithScope(ctx context.Context, slug, scope string) (AppEnvListResponse, error) {
 	var out AppEnvListResponse
-	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/env", nil, &out)
+	return out, c.do(ctx, "GET", c.scopeQuery("/v1/apps/"+slug+"/env", scope), nil, &out)
 }
 func (c *Client) PutAppsSlugEnvKey(ctx context.Context, slug, key, value string) error {
 	return c.do(ctx, "PUT", "/v1/apps/"+slug+"/env/"+key,
