@@ -7054,7 +7054,9 @@ type CloneEnvironmentCleanupHasScopeBorrowersParams struct {
 
 // Original clone journals and historical secret/runtime-change tombstones are
 // retained evidence, as are production_lifecycle_reviews attached to retained
-// deployments. All other known operational references must close first.
+// deployments and append-only binding policy history. MCP readiness history and
+// scoped alert selectors remain borrowers while retained. All other known
+// operational references must close first.
 func (q *Queries) CloneEnvironmentCleanupHasScopeBorrowers(ctx context.Context, db DBTX, arg CloneEnvironmentCleanupHasScopeBorrowersParams) (bool, error) {
 	row := db.QueryRow(ctx, cloneEnvironmentCleanupHasScopeBorrowers,
 		arg.Environment,
@@ -48834,6 +48836,18 @@ SELECT lock_clone_environment_cleanup_scope_borrowers()
 
 func (q *Queries) LockCloneEnvironmentCleanupScopeBorrowers(ctx context.Context, db DBTX) error {
 	_, err := db.Exec(ctx, lockCloneEnvironmentCleanupScopeBorrowers)
+	return err
+}
+
+const lockCloneMCPReadinessEnvironmentCleanupBorrowers = `-- name: LockCloneMCPReadinessEnvironmentCleanupBorrowers :exec
+LOCK TABLE app_mcp_readiness_policies,mcp_readiness_incidents,mcp_readiness_maintenance_windows IN SHARE MODE
+`
+
+// Environment-scoped MCP readiness policies, incidents and maintenance windows
+// were also added after the migration-owned writer fence. Their scope-only rows
+// have no environment foreign key, so keep their writers out of the deletion window.
+func (q *Queries) LockCloneMCPReadinessEnvironmentCleanupBorrowers(ctx context.Context, db DBTX) error {
+	_, err := db.Exec(ctx, lockCloneMCPReadinessEnvironmentCleanupBorrowers)
 	return err
 }
 

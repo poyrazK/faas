@@ -21,7 +21,7 @@ import (
 const cloneEnvironmentCleanupMigration = "20261011232006408_clone_environment_metadata_cleanups.sql"
 
 func TestPgCloneEnvironmentCleanupAtomicRecovery(t *testing.T) {
-	for _, fault := range []string{"none", "write", "domain", "route_budget", "scope", "binding_verification", "project_binding_verification", "release_stage", "protected", "stale", "missing_workloads", "deployed", "foreign_deployment", "non_fk_uuid", "other_clone"} {
+	for _, fault := range []string{"none", "write", "domain", "route_budget", "scope", "binding_verification", "project_binding_verification", "release_stage", "hosting_site", "mcp_readiness_policy", "mcp_readiness_incident", "mcp_readiness_maintenance", "protected", "stale", "missing_workloads", "deployed", "foreign_deployment", "non_fk_uuid", "other_clone"} {
 		t.Run(fault, func(t *testing.T) {
 			phase := "materialized"
 			if fault == "deployed" {
@@ -57,6 +57,15 @@ func TestPgCloneEnvironmentCleanupAtomicRecovery(t *testing.T) {
 				_, err = pool.Exec(t.Context(), "INSERT INTO project_binding_verification_runs(id,account_id,project_id,environment_slug,status,snapshot,created_at,expires_at) VALUES(gen_random_uuid(),$1,$2,$3,'passed','{}',clock_timestamp()-interval '1 hour',clock_timestamp()-interval '55 minutes')", l.Operation.AccountID, l.Operation.ProjectID, l.Operation.TargetEnvironment)
 			case "release_stage":
 				_, err = pool.Exec(t.Context(), "INSERT INTO project_release_stages(id,account_id,project_id,environment_slug,manifest,targets,created_at,expires_at,cancelled) VALUES(gen_random_uuid(),$1,$2,$3,'{}','{\"retained\":true}',clock_timestamp()-interval '1 hour',clock_timestamp()-interval '55 minutes',true)", l.Operation.AccountID, l.Operation.ProjectID, l.Operation.TargetEnvironment)
+			case "hosting_site":
+				_, err = pool.Exec(t.Context(), "INSERT INTO hosting_sites(id,account_id,project_id,environment,name,hostname,origin_id) VALUES(gen_random_uuid(),$1,$2,$3,'borrowed','borrowed.hosting.example',repeat('a',64))", l.Operation.AccountID, l.Operation.ProjectID, l.Operation.TargetEnvironment)
+			case "mcp_readiness_policy":
+				_, err = pool.Exec(t.Context(), "INSERT INTO app_mcp_readiness_policies(app_id,scope,policy) VALUES($1,$2,jsonb_build_object('scope',$2::text,'enabled',false))", appID, l.Operation.TargetEnvironment)
+			case "mcp_readiness_incident":
+				_, err = pool.Exec(t.Context(), `WITH rule AS (INSERT INTO alert_rules(account_id,app_id,name,metric,comparison,threshold,window_spec,webhook_url,webhook_secret_sealed,mcp_readiness_scope) VALUES($1,$2,'borrowed','mcp_readiness_unhealthy','gte',1,'5m','https://example.com/hook','\x00',$3) RETURNING id)
+				INSERT INTO mcp_readiness_incidents(id,rule_id,account_id,app_id,scope,coverage,opened_at,resolved_at) SELECT gen_random_uuid(),rule.id,$1,$2,$3,'',clock_timestamp()-interval '1 hour',clock_timestamp()-interval '55 minutes' FROM rule`, l.Operation.AccountID, appID, l.Operation.TargetEnvironment)
+			case "mcp_readiness_maintenance":
+				_, err = pool.Exec(t.Context(), "INSERT INTO mcp_readiness_maintenance_windows(id,account_id,app_id,scope,starts_at,ends_at,reason,created_by,created_at,cancelled_at,cancelled_by,cancel_reason) VALUES(gen_random_uuid(),$1,$2,$3,clock_timestamp()-interval '2 hours',clock_timestamp()-interval '1 hour',$4,$1,clock_timestamp()-interval '2 hours',clock_timestamp()-interval '90 minutes',$1,$4)", l.Operation.AccountID, appID, l.Operation.TargetEnvironment, "borrowed")
 			case "foreign_deployment":
 				_, err = pool.Exec(t.Context(), `INSERT INTO deployments SELECT (jsonb_populate_record(NULL::deployments,to_jsonb(d)||jsonb_build_object('id',$1::text,'scope',$2::text,'reason','foreign','revision',d.revision+1))).* FROM deployments d WHERE d.id=$3`, uuid.NewString(), l.Operation.TargetEnvironment, original.Plan.Workloads[0].SourceDeploymentID)
 			case "non_fk_uuid":
@@ -267,7 +276,7 @@ func TestPgCloneEnvironmentCleanupScopeColumnInventory(t *testing.T) {
 		"app_envs.scope",
 		"app_issues.environment",
 		"app_mcp_readiness_policies.scope",
-		"app_mcp_readiness_policy_history.scope",
+		"app_mcp_readiness_policy_history.scope", // Retained policy history blocks cleanup until its own lifecycle removes it.
 		"app_runtime_config_scope_changes.scope",
 		"app_secret_revocations.scope",
 		"app_secret_runtime_reload_observations.scope",

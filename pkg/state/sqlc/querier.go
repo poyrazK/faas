@@ -349,7 +349,9 @@ type Querier interface {
 	CloneEnvironmentCleanupHasReplacement(ctx context.Context, db DBTX, arg CloneEnvironmentCleanupHasReplacementParams) (bool, error)
 	// Original clone journals and historical secret/runtime-change tombstones are
 	// retained evidence, as are production_lifecycle_reviews attached to retained
-	// deployments. All other known operational references must close first.
+	// deployments and append-only binding policy history. MCP readiness history and
+	// scoped alert selectors remain borrowers while retained. All other known
+	// operational references must close first.
 	CloneEnvironmentCleanupHasScopeBorrowers(ctx context.Context, db DBTX, arg CloneEnvironmentCleanupHasScopeBorrowersParams) (bool, error)
 	CloneManagedSecretWithdrawalHasExternalOwners(ctx context.Context, db DBTX, environmentID pgtype.UUID) (pgtype.Bool, error)
 	CloneObjectGrantRevocationDispatch(ctx context.Context, db DBTX, arg CloneObjectGrantRevocationDispatchParams) (ProjectEnvironmentCloneObjectGrantRevocation, error)
@@ -2960,6 +2962,10 @@ type Querier interface {
 	// a foreign-key lock; exclude their writers through deletion and receipt commit.
 	LockCloneDeploymentCleanupRetirementWriters(ctx context.Context, db DBTX) error
 	LockCloneEnvironmentCleanupScopeBorrowers(ctx context.Context, db DBTX) error
+	// Environment-scoped MCP readiness policies, incidents and maintenance windows
+	// were also added after the migration-owned writer fence. Their scope-only rows
+	// have no environment foreign key, so keep their writers out of the deletion window.
+	LockCloneMCPReadinessEnvironmentCleanupBorrowers(ctx context.Context, db DBTX) error
 	LockCloneWorkloadCleanupSpecs(ctx context.Context, db DBTX, environmentID pgtype.UUID) ([]pgtype.UUID, error)
 	// Keep the historical broad lock key, also shared with refund compensation.
 	LockCreditConsumption(ctx context.Context, db DBTX, providerInvoiceID string) error

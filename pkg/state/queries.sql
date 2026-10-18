@@ -18411,7 +18411,9 @@ SELECT EXISTS(SELECT 1 FROM project_environments WHERE id=sqlc.arg(environment_i
 -- name: CloneEnvironmentCleanupHasScopeBorrowers :one
 -- Original clone journals and historical secret/runtime-change tombstones are
 -- retained evidence, as are production_lifecycle_reviews attached to retained
--- deployments. All other known operational references must close first.
+-- deployments and append-only binding policy history. MCP readiness history and
+-- scoped alert selectors remain borrowers while retained. All other known
+-- operational references must close first.
 WITH scoped_apps AS (SELECT id FROM apps WHERE project_id=sqlc.arg(project_id)::uuid)
 SELECT
  (EXISTS(SELECT 1 FROM app_binding_release_policies p WHERE p.app_id IN (SELECT id FROM scoped_apps) AND p.scope=sqlc.arg(environment)::text)
@@ -18471,6 +18473,12 @@ SELECT lock_clone_environment_cleanup_scope_borrowers();
 -- writer fence. Keep their writers out of the deletion window, including writers
 -- of resolved incidents, cancelled maintenance and retained policy history.
 LOCK TABLE binding_verification_runs,project_binding_verification_runs,project_release_stages,app_mcp_readiness_policies,app_mcp_readiness_policy_history,mcp_readiness_incidents,mcp_readiness_maintenance_windows,alert_rules IN SHARE MODE;
+
+-- name: LockCloneMCPReadinessEnvironmentCleanupBorrowers :exec
+-- Environment-scoped MCP readiness policies, incidents and maintenance windows
+-- were also added after the migration-owned writer fence. Their scope-only rows
+-- have no environment foreign key, so keep their writers out of the deletion window.
+LOCK TABLE app_mcp_readiness_policies,mcp_readiness_incidents,mcp_readiness_maintenance_windows IN SHARE MODE;
 
 -- name: ReadCloneDeploymentBorrowers :one
 SELECT (jsonb_build_object(
