@@ -25734,6 +25734,19 @@ CREATE TABLE public.app_health_history (
 
 
 --
+-- Name: app_issue_compound_alert_policies; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_issue_compound_alert_policies (
+    app_id uuid NOT NULL,
+    revision bigint NOT NULL,
+    rules jsonb NOT NULL,
+    CONSTRAINT app_issue_compound_alert_policies_revision_check CHECK ((revision > 0)),
+    CONSTRAINT app_issue_compound_alert_policies_rules_check CHECK (((jsonb_typeof(rules) = 'array'::text) AND (jsonb_array_length(rules) <= 10)))
+);
+
+
+--
 -- Name: app_issue_frequency_alert_policies; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -26640,7 +26653,7 @@ CREATE TABLE public.app_webhook_event_outbox (
     payload jsonb NOT NULL,
     recipient_webhook_ids uuid[] NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT app_webhook_event_outbox_event_chk CHECK (((event = ANY (ARRAY['usage_statement.finalized'::text, 'app.parked'::text, 'app.woken'::text, 'issue.created'::text, 'issue.assigned'::text, 'issue.resolved'::text, 'issue.reopened'::text, 'issue.ignored'::text, 'issue.regressed'::text, 'issue.impact_threshold_reached'::text, 'routes.requirements.violated'::text, 'routes.requirements.recovered'::text, 'routes.requirements.changed'::text, 'routes.health.blocked'::text, 'routes.health.resumed'::text, 'routes.health.aborted'::text, 'routes.monitor.violated'::text, 'routes.monitor.escalated'::text, 'routes.monitor.recovered'::text, 'workflow.finished'::text, 'app.health.changed'::text, 'event_recovery.completed'::text, 'event_recovery.cancelled'::text, 'event_recovery.expired'::text, 'event_recovery.execution_finished'::text, 'profile.route_regressed'::text, 'profile.route_recovered'::text])) OR (event = 'automation.paused'::text) OR (event = 'event_recovery.execution_attention'::text) OR (event = 'automation.recovery_review_ready'::text) OR (event = 'automation.recovery_review_finished'::text) OR (event = 'automation.recovery_policy_paused'::text) OR (event = 'automation.recovery_queue_blocked'::text) OR (event = ANY (ARRAY['automation.recovery_health_alert'::text, 'automation.recovery_health_recovered'::text])) OR (event = 'outbound.ai_budget.threshold'::text) OR (event = 'realtime.channel.published'::text) OR (event = 'realtime.channel.acknowledged'::text) OR (event = 'realtime.consumer_group.dead_lettered'::text) OR (event = ANY (ARRAY['realtime.consumer_group.lag_exceeded'::text, 'realtime.consumer_group.lag_recovered'::text])) OR (event = 'realtime.consumer_group.dead_letter_expiring'::text) OR (event = 'realtime.consumer_group.delivery_expired'::text) OR (event = ANY (ARRAY['realtime.consumer_group.worker_lost'::text, 'realtime.consumer_group.worker_recovered'::text])) OR (event = ANY (ARRAY['realtime.consumer_group.circuit_opened'::text, 'realtime.consumer_group.circuit_half_open'::text, 'realtime.consumer_group.circuit_closed'::text])) OR (event = ANY (ARRAY['realtime.replay_job.completed'::text, 'realtime.replay_job.cancelled'::text, 'realtime.replay_job.processing_failed'::text])) OR (event = 'automation.recovery_polling_status'::text) OR (event = ANY (ARRAY['issue.tracker_sync.attention'::text, 'issue.tracker_sync.recovered'::text])) OR (event = 'issue.frequency_threshold_reached'::text))),
+    CONSTRAINT app_webhook_event_outbox_event_chk CHECK (((event = ANY (ARRAY['issue.compound_threshold_reached'::text, 'usage_statement.finalized'::text, 'app.parked'::text, 'app.woken'::text, 'issue.created'::text, 'issue.assigned'::text, 'issue.resolved'::text, 'issue.reopened'::text, 'issue.ignored'::text, 'issue.regressed'::text, 'issue.impact_threshold_reached'::text, 'routes.requirements.violated'::text, 'routes.requirements.recovered'::text, 'routes.requirements.changed'::text, 'routes.health.blocked'::text, 'routes.health.resumed'::text, 'routes.health.aborted'::text, 'routes.monitor.violated'::text, 'routes.monitor.escalated'::text, 'routes.monitor.recovered'::text, 'workflow.finished'::text, 'app.health.changed'::text, 'event_recovery.completed'::text, 'event_recovery.cancelled'::text, 'event_recovery.expired'::text, 'event_recovery.execution_finished'::text, 'profile.route_regressed'::text, 'profile.route_recovered'::text])) OR (event = 'automation.paused'::text) OR (event = 'event_recovery.execution_attention'::text) OR (event = 'automation.recovery_review_ready'::text) OR (event = 'automation.recovery_review_finished'::text) OR (event = 'automation.recovery_policy_paused'::text) OR (event = 'automation.recovery_queue_blocked'::text) OR (event = ANY (ARRAY['automation.recovery_health_alert'::text, 'automation.recovery_health_recovered'::text])) OR (event = 'outbound.ai_budget.threshold'::text) OR (event = 'realtime.channel.published'::text) OR (event = 'realtime.channel.acknowledged'::text) OR (event = 'realtime.consumer_group.dead_lettered'::text) OR (event = ANY (ARRAY['realtime.consumer_group.lag_exceeded'::text, 'realtime.consumer_group.lag_recovered'::text])) OR (event = 'realtime.consumer_group.dead_letter_expiring'::text) OR (event = 'realtime.consumer_group.delivery_expired'::text) OR (event = ANY (ARRAY['realtime.consumer_group.worker_lost'::text, 'realtime.consumer_group.worker_recovered'::text])) OR (event = ANY (ARRAY['realtime.consumer_group.circuit_opened'::text, 'realtime.consumer_group.circuit_half_open'::text, 'realtime.consumer_group.circuit_closed'::text])) OR (event = ANY (ARRAY['realtime.replay_job.completed'::text, 'realtime.replay_job.cancelled'::text, 'realtime.replay_job.processing_failed'::text])) OR (event = 'automation.recovery_polling_status'::text) OR (event = ANY (ARRAY['issue.tracker_sync.attention'::text, 'issue.tracker_sync.recovered'::text])) OR (event = 'issue.frequency_threshold_reached'::text))),
     CONSTRAINT app_webhook_event_outbox_payload_chk CHECK ((jsonb_typeof(payload) = 'object'::text)),
     CONSTRAINT app_webhook_event_outbox_recipients_chk CHECK ((cardinality(recipient_webhook_ids) > 0))
 );
@@ -34843,7 +34856,7 @@ CREATE TABLE public.issue_activity (
     actor_account_id uuid,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     details jsonb DEFAULT '{}'::jsonb NOT NULL,
-    CONSTRAINT issue_activity_action_check CHECK ((action = ANY (ARRAY['created'::text, 'assigned'::text, 'resolved'::text, 'reopened'::text, 'ignored'::text, 'regressed'::text, 'impact_threshold_reached'::text, 'frequency_threshold_reached'::text, 'merged'::text, 'split'::text, 'split_rule_created'::text, 'split_rule_updated'::text, 'tracker_linked'::text, 'tracker_link_updated'::text, 'tracker_unlinked'::text]))),
+    CONSTRAINT issue_activity_action_check CHECK ((action = ANY (ARRAY['compound_threshold_reached'::text, 'created'::text, 'assigned'::text, 'resolved'::text, 'reopened'::text, 'ignored'::text, 'regressed'::text, 'impact_threshold_reached'::text, 'frequency_threshold_reached'::text, 'merged'::text, 'split'::text, 'split_rule_created'::text, 'split_rule_updated'::text, 'tracker_linked'::text, 'tracker_link_updated'::text, 'tracker_unlinked'::text]))),
     CONSTRAINT issue_activity_details_check CHECK ((jsonb_typeof(details) = 'object'::text))
 );
 
@@ -34919,7 +34932,7 @@ CREATE TABLE public.issue_application_slack_policies (
     skipped_deliveries bigint DEFAULT 0 NOT NULL,
     unrouted_alerts bigint DEFAULT 0 NOT NULL,
     CONSTRAINT issue_application_slack_policies_check CHECK (((NOT enabled) OR (cardinality(events) > 0))),
-    CONSTRAINT issue_application_slack_policies_events_check CHECK (((cardinality(events) <= 4) AND (events <@ ARRAY['created'::text, 'regressed'::text, 'impact_threshold_reached'::text, 'frequency_threshold_reached'::text]))),
+    CONSTRAINT issue_application_slack_policies_events_check CHECK (((cardinality(events) <= 5) AND (events <@ ARRAY['compound_threshold_reached'::text, 'created'::text, 'regressed'::text, 'impact_threshold_reached'::text, 'frequency_threshold_reached'::text]))),
     CONSTRAINT issue_application_slack_policies_revision_check CHECK ((revision > 0)),
     CONSTRAINT issue_application_slack_policies_skipped_deliveries_check CHECK ((skipped_deliveries >= 0)),
     CONSTRAINT issue_application_slack_policies_unrouted_alerts_check CHECK ((unrouted_alerts >= 0))
@@ -35081,6 +35094,21 @@ CREATE TABLE public.issue_application_triage_activity (
     CONSTRAINT issue_application_triage_activity_action_check CHECK ((action = ANY (ARRAY['acknowledge'::text, 'snooze'::text, 'unsnooze'::text, 'reset'::text]))),
     CONSTRAINT issue_application_triage_activity_reason_check CHECK ((octet_length(reason) <= 1024)),
     CONSTRAINT issue_application_triage_activity_revision_check CHECK ((revision > 0))
+);
+
+
+--
+-- Name: issue_compound_alert_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.issue_compound_alert_receipts (
+    app_id uuid NOT NULL,
+    rule_key text NOT NULL,
+    issue_id uuid NOT NULL,
+    rule_hash text NOT NULL,
+    last_alert_at timestamp with time zone NOT NULL,
+    CONSTRAINT issue_compound_alert_receipts_rule_hash_check CHECK ((rule_hash ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT issue_compound_alert_receipts_rule_key_check CHECK ((rule_key ~ '^[a-z0-9][a-z0-9-]{0,47}$'::text))
 );
 
 
@@ -48695,6 +48723,14 @@ ALTER TABLE ONLY public.app_health_history
 
 
 --
+-- Name: app_issue_compound_alert_policies app_issue_compound_alert_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_issue_compound_alert_policies
+    ADD CONSTRAINT app_issue_compound_alert_policies_pkey PRIMARY KEY (app_id);
+
+
+--
 -- Name: app_issue_frequency_alert_policies app_issue_frequency_alert_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -53100,6 +53136,14 @@ ALTER TABLE ONLY public.issue_application_triage_activity
 
 ALTER TABLE ONLY public.issue_application_triage
     ADD CONSTRAINT issue_application_triage_pkey PRIMARY KEY (issue_id);
+
+
+--
+-- Name: issue_compound_alert_receipts issue_compound_alert_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_compound_alert_receipts
+    ADD CONSTRAINT issue_compound_alert_receipts_pkey PRIMARY KEY (app_id, rule_key, issue_id);
 
 
 --
@@ -74616,6 +74660,14 @@ ALTER TABLE ONLY public.app_health_history
 
 
 --
+-- Name: app_issue_compound_alert_policies app_issue_compound_alert_policies_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_issue_compound_alert_policies
+    ADD CONSTRAINT app_issue_compound_alert_policies_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
 -- Name: app_issue_frequency_alert_policies app_issue_frequency_alert_policies_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -79845,6 +79897,22 @@ ALTER TABLE ONLY public.issue_application_triage
 
 ALTER TABLE ONLY public.issue_application_triage
     ADD CONSTRAINT issue_application_triage_snoozed_by_fkey FOREIGN KEY (snoozed_by) REFERENCES public.accounts(id) ON DELETE SET NULL;
+
+
+--
+-- Name: issue_compound_alert_receipts issue_compound_alert_receipts_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_compound_alert_receipts
+    ADD CONSTRAINT issue_compound_alert_receipts_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.app_issue_compound_alert_policies(app_id) ON DELETE CASCADE;
+
+
+--
+-- Name: issue_compound_alert_receipts issue_compound_alert_receipts_issue_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.issue_compound_alert_receipts
+    ADD CONSTRAINT issue_compound_alert_receipts_issue_id_fkey FOREIGN KEY (issue_id) REFERENCES public.app_issues(id) ON DELETE CASCADE;
 
 
 --

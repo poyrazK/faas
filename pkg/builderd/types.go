@@ -37,18 +37,19 @@ type WarmVM interface {
 // VMRequest is the input to a builder VM spawn. The orchestrator at
 // builderd.go::ProcessOne populates this from a queued Build row.
 type VMRequest struct {
-	BuildID        string
-	TenantID       string
-	DeploymentID   string
-	SourcePath     string // tarball or dockerfile source on disk
-	SourceSHA256   string // digest already verified by the orchestrator
-	SourceRoot     string // repository-relative build root inside the archive; empty = archive root
-	DockerfilePath string // relative to SourceRoot; empty selects Dockerfile
-	Framework      Framework
-	Runtime        string // app runtime id (node22, python312, go124-alpine, ...)
-	RuntimeBaseRef string // resolved OCI ref used by Railpack for this build
-	Function       bool   // handler build; allows markerless Node/Python sources
-	SharedRuntime  bool   // container app built on a shared runner base (H10-140)
+	BuildID         string
+	TenantID        string
+	DeploymentID    string
+	SourcePath      string // tarball or dockerfile source on disk
+	SourceSHA256    string // digest already verified by the orchestrator
+	SourceRoot      string // repository-relative build root inside the archive; empty = archive root
+	DockerfilePath  string // relative to SourceRoot; empty selects Dockerfile
+	Framework       Framework
+	Runtime         string // app runtime id (node22, python312, go124-alpine, ...)
+	RuntimeBaseRef  string // resolved OCI ref used by Railpack for this build
+	IssueSourceMaps *api.IssueSourceMapBuildConfig
+	Function        bool // handler build; allows markerless Node/Python sources
+	SharedRuntime   bool // container app built on a shared runner base (H10-140)
 	// DevWatchCommand builds a watch-mode developer image (ADR-1170).
 	DevWatchCommand string
 	// DevWatchHost is the developer app's public hostname for that image.
