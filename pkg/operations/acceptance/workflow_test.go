@@ -597,8 +597,14 @@ func TestOperationWorkflowRetryAfterTransportCarriesOperationAuthority(t *testin
 			}
 			encoded, _ := json.Marshal(headers)
 			inv := state.Invocation{ID: "workflow-test", AppID: f.app.ID, PlatformTenantID: f.tenant.ID, Source: state.InvocationSource("workflow"), Path: path, Method: "POST", Headers: encoded, Payload: input}
-			if _, version, err := state.ResolveInvocationVersion(ctx, store, inv); err != nil || version.DeploymentID != f.definition.DeploymentID {
+			resolved, version, err := state.ResolveInvocationVersion(ctx, store, inv)
+			if err != nil || version.DeploymentID != f.definition.DeploymentID {
 				t.Fatalf("gateway would refuse the step: %+v %v", version, err)
+			}
+			// gatewayd renders the guest's Operation headers from this ledger identity.
+			step := resolved.WorkflowOperation
+			if step == nil || step.OperationID != op.ID || step.RunID != op.WorkflowRunID || "/"+step.StepName != path || step.Capability != headers[api.OperationWorkflowCapabilityHeader] || step.Generation != op.Generation || step.Attempt < 1 {
+				t.Fatalf("resolved step identity %+v", step)
 			}
 			calls = append(calls, path)
 			if path == "/finish" {

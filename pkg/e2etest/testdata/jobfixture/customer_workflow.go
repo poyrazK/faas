@@ -123,7 +123,9 @@ func workflowFixtureProof(r *http.Request) (string, api.OperationWorkflowRuntime
 	switch {
 	case r.Header.Get(api.OperationExecutionKindHeader) != "workflow":
 		return "", p, fmt.Errorf("invalid native proof: execution kind")
-	case r.Header.Get(api.InvocationIDHeader) != "":
+	case isHTTPInvocationID(r.Header.Get(api.InvocationIDHeader)):
+		// gatewayd names every synthetic delivery (workflow-...); an HTTP
+		// Operation claim carries a UUID invocation instead.
 		return "", p, fmt.Errorf("invalid native proof: HTTP invocation id present")
 	case p.StepName != strings.TrimPrefix(r.URL.Path, "/"):
 		return "", p, fmt.Errorf("invalid native proof: step does not match path")
@@ -272,4 +274,9 @@ func (f workflowFixtureServer) fixtureEvent(ctx context.Context, id string, proo
 		return response.StatusCode, fmt.Errorf("fixture barrier unavailable")
 	}
 	return response.StatusCode, nil
+}
+
+func isHTTPInvocationID(value string) bool {
+	_, err := uuid.Parse(value)
+	return value != "" && err == nil
 }

@@ -43,7 +43,8 @@ func resolveWorkflowOperationInvocationVersion(ctx context.Context, store invoca
 		return inv, InvocationVersion{}, true, ErrInvalidArgument
 	}
 	attempt := int(attemptValue)
-	if _, err := reader.GetWorkflowOutboundAttempt(ctx, runID, name, attempt); err != nil {
+	outbound, err := reader.GetWorkflowOutboundAttempt(ctx, runID, name, attempt)
+	if err != nil {
 		return inv, InvocationVersion{}, true, ErrOperationStaleAttempt
 	}
 	spec := api.WorkflowRuntimeStep(run.DefinitionSnapshot, name)
@@ -85,6 +86,7 @@ func resolveWorkflowOperationInvocationVersion(ctx context.Context, store invoca
 		return inv, InvocationVersion{}, true, fmt.Errorf("%w: operation deployment %s is not live in its environment (status %q)", ErrConflict, op.DeploymentID, deployment.Status)
 	}
 	inv.AccountID, inv.DeploymentScope = op.AccountID, op.Scope
+	inv.WorkflowOperation = &WorkflowOperationStep{OperationID: op.ID, RunID: runID, StepName: name, Generation: op.Generation, Attempt: attempt, Capability: outbound.Token}
 	inv.Headers, err = json.Marshal(headers)
 	return inv, InvocationVersion{DeploymentID: op.DeploymentID, ReleaseID: op.ReleaseID, Scope: op.Scope}, true, err
 }
