@@ -1,10 +1,9 @@
 from typing import Literal
 
-ManagedPostgresConnectionBudgetModel = Literal["canonical_runtime_pools", "qualified_shared_connection_limits"]
+ManagedPostgresConnectionBudgetModel = Literal["canonical_runtime_pools"]
 
 MANAGED_POSTGRES_CONNECTION_BUDGET_MODEL_VALUES: set[ManagedPostgresConnectionBudgetModel] = {
     "canonical_runtime_pools",
-    "qualified_shared_connection_limits",
 }
 
 

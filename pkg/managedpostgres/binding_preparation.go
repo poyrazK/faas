@@ -29,7 +29,7 @@ func (s *BindingService) PrepareReservedCredential(ctx context.Context, requeste
 		binding.CredentialGeneration != 1 || binding.State != BindingStateProvisioning || binding.LeaseToken != "" || binding.ProviderIdentityID != "" || binding.CredentialRef != "" || binding.RotationPreviousGeneration != 0 || binding.RotationWakeID != "" {
 		return "", "", ErrConflict
 	}
-	database, err := s.databases.Get(ctx, binding.AccountID, binding.DatabaseID)
+	database, err := s.databases.Get(ctx, binding.DatabaseNamespace(), binding.DatabaseID)
 	if err != nil {
 		return "", "", err
 	}

@@ -16,7 +16,7 @@ const postgresBindingColumns = `id::text, account_id::text, database_id::text,
 app_id::text, scope, environment_key, access, provider_identity_id,
 credential_ref, credential_generation, rotation_previous_generation,
 rotation_wake_id::text, rotation_cleanup_ready, state, last_error_code, lease_token,
-lease_until, attempt_count, retry_at, created_at, updated_at, deleted_at, connection_limit`
+lease_until, attempt_count, retry_at, created_at, updated_at, deleted_at, connection_limit, database_account_id::text`
 
 var _ BindingStore = (*PostgresStore)(nil)
 
@@ -44,7 +44,7 @@ func (s *PostgresStore) ReserveBinding(ctx context.Context, binding Binding) (Bi
 		binding.RetryAt = binding.CreatedAt
 	}
 
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := s.catalog.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return Binding{}, false, fmt.Errorf("managed postgres: begin binding reservation: %w", err)
 	}
@@ -60,50 +60,30 @@ func (s *PostgresStore) ReserveBinding(ctx context.Context, binding Binding) (Bi
 		return Binding{}, false, mapPostgresError(err)
 	}
 
-	var accountStatus string
-	if err := tx.QueryRow(ctx,
-		`SELECT status FROM accounts WHERE id = $1 FOR KEY SHARE`,
-		accountID,
-	).Scan(&accountStatus); err != nil {
+	appOwner, err := sqlc.New().LockManagedPostgresBindingAppOwner(ctx, tx, sqlc.LockManagedPostgresBindingAppOwnerParams{AppID: appID, DatabaseID: databaseID})
+	if err != nil {
 		return Binding{}, false, mapPostgresError(err)
 	}
-	if accountStatus == "deleted_pending" {
-		return Binding{}, false, ErrConflict
-	}
-
-	var databaseAccountID, databaseState string
-	// Admitted targets need the exclusive lifecycle lock before a key-share
-	// lock. Concurrent key-share upgrades would deadlock in the mirror guard.
-	if err := capacitySQL.New().CapacityLockBindingTarget(ctx, tx, capacitySQL.CapacityLockBindingTargetParams{AccountID: binding.AccountID, DatabaseID: binding.DatabaseID}); err != nil {
-		return Binding{}, false, mapPostgresError(err)
-	}
-	if _, err := new(sqlc.Queries).LockManagedPostgresCustomerDatabase(ctx, tx, sqlc.LockManagedPostgresCustomerDatabaseParams{AccountID: accountID, ID: databaseID}); err != nil {
-		return Binding{}, false, mapPostgresError(err)
-	}
-	if err := tx.QueryRow(ctx,
-		`SELECT account_id::text, state FROM managed_postgres_databases WHERE id = $1 FOR KEY SHARE`,
-		databaseID,
-	).Scan(&databaseAccountID, &databaseState); err != nil {
-		return Binding{}, false, mapPostgresError(err)
-	}
-	if databaseAccountID != binding.AccountID {
+	if databaseUUID(appOwner) != binding.AccountID {
 		return Binding{}, false, ErrNotFound
 	}
-	if State(databaseState) != StateReady && State(databaseState) != StateProvisioning {
-		return Binding{}, false, ErrConflict
+	databaseNamespace, err := postgresUUID(binding.DatabaseNamespace())
+	if err != nil {
+		return Binding{}, false, err
 	}
-
-	var appAccountID, appStatus string
-	if err := tx.QueryRow(ctx,
-		`SELECT account_id::text, status FROM apps WHERE id = $1 FOR KEY SHARE`,
-		appID,
-	).Scan(&appAccountID, &appStatus); err != nil {
+	// Lock the admitted mirror exclusively before taking the lifecycle key-share
+	// lock below. This avoids concurrent key-share upgrades in capacity admission.
+	if err := capacitySQL.New().CapacityLockBindingTarget(ctx, tx, capacitySQL.CapacityLockBindingTargetParams{AccountID: databaseNamespace, DatabaseID: databaseID}); err != nil {
 		return Binding{}, false, mapPostgresError(err)
 	}
-	if appAccountID != binding.AccountID {
-		return Binding{}, false, ErrNotFound
+	if _, err := sqlc.New().LockManagedPostgresCustomerDatabase(ctx, tx, sqlc.LockManagedPostgresCustomerDatabaseParams{AccountID: databaseNamespace, ID: databaseID}); err != nil {
+		return Binding{}, false, mapPostgresError(err)
 	}
-	if appStatus == "deleted" {
+	database, err := sqlc.New().ReadManagedPostgresLifecycleRestoreSource(ctx, tx, databaseID)
+	if err != nil {
+		return Binding{}, false, mapPostgresError(err)
+	}
+	if database.State != "ready" && database.State != "provisioning" {
 		return Binding{}, false, ErrConflict
 	}
 
@@ -184,7 +164,7 @@ func (s *PostgresStore) GetBinding(ctx context.Context, accountID, bindingID str
 	if err != nil {
 		return Binding{}, err
 	}
-	return queryBinding(ctx, s.pool,
+	return queryBinding(ctx, s.catalog,
 		`SELECT `+postgresBindingColumns+` FROM managed_postgres_bindings
 		 WHERE account_id = $1 AND id = $2`,
 		account, id,
@@ -200,9 +180,9 @@ func (s *PostgresStore) ListBindings(ctx context.Context, accountID, databaseID 
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.pool.Query(ctx,
+	rows, err := s.catalog.Query(ctx,
 		`SELECT `+postgresBindingColumns+` FROM managed_postgres_bindings
-		 WHERE account_id = $1 AND database_id = $2 AND state <> 'deleted'
+		 WHERE database_account_id = $1 AND database_id = $2 AND state <> 'deleted'
 		 ORDER BY created_at, id`,
 		account, database,
 	)
@@ -228,7 +208,7 @@ func (s *PostgresStore) DueBindings(ctx context.Context, includeProvisioning boo
 	if limit < 1 || limit > 100 || now.IsZero() {
 		return nil, ErrInvalid
 	}
-	rows, err := new(sqlc.Queries).ManagedPostgresDueBindings(ctx, s.pool, sqlc.ManagedPostgresDueBindingsParams{
+	rows, err := new(sqlc.Queries).ManagedPostgresDueBindings(ctx, s.catalog, sqlc.ManagedPostgresDueBindingsParams{
 		IncludeProvisioning: includeProvisioning, ObservedAt: pgtype.Timestamptz{Time: now, Valid: true}, BatchLimit: int32(limit)})
 	if err != nil {
 		return nil, mapPostgresError(err)
@@ -241,7 +221,7 @@ func (s *PostgresStore) DueBindings(ctx context.Context, includeProvisioning boo
 }
 
 func bindingFromSQL(row sqlc.ManagedPostgresBinding) Binding {
-	binding := Binding{ID: databaseUUID(row.ID), AccountID: databaseUUID(row.AccountID), DatabaseID: databaseUUID(row.DatabaseID), AppID: databaseUUID(row.AppID), ConnectionLimit: row.ConnectionLimit,
+	binding := Binding{ID: databaseUUID(row.ID), AccountID: databaseUUID(row.AccountID), DatabaseAccountID: databaseUUID(row.DatabaseAccountID), DatabaseID: databaseUUID(row.DatabaseID), AppID: databaseUUID(row.AppID), ConnectionLimit: row.ConnectionLimit,
 		Scope: row.Scope, EnvironmentKey: row.EnvironmentKey, Access: CredentialAccess(row.Access), ProviderIdentityID: row.ProviderIdentityID.String,
 		CredentialRef: row.CredentialRef.String, CredentialGeneration: row.CredentialGeneration, RotationPreviousGeneration: row.RotationPreviousGeneration.Int64,
 		RotationWakeID: databaseUUID(row.RotationWakeID), RotationCleanupReady: row.RotationCleanupReady, State: BindingState(row.State),
@@ -270,7 +250,7 @@ func (s *PostgresStore) BeginBindingRotation(ctx context.Context, accountID, bin
 	if err != nil {
 		return Binding{}, false, err
 	}
-	binding, err := queryBinding(ctx, s.pool,
+	binding, err := queryBinding(ctx, s.catalog,
 		`UPDATE managed_postgres_bindings SET
 			credential_generation = credential_generation + 1,
 			rotation_previous_generation = credential_generation,
@@ -290,7 +270,7 @@ func (s *PostgresStore) BeginBindingRotation(ctx context.Context, accountID, bin
 	if !errors.Is(err, ErrNotFound) {
 		return Binding{}, false, err
 	}
-	existing, getErr := queryBinding(ctx, s.pool,
+	existing, getErr := queryBinding(ctx, s.catalog,
 		`SELECT `+postgresBindingColumns+` FROM managed_postgres_bindings WHERE account_id = $1 AND id = $2`,
 		account, id,
 	)
@@ -317,7 +297,7 @@ func (s *PostgresStore) ClaimBinding(ctx context.Context, accountID, bindingID, 
 		return Binding{}, err
 	}
 	if operation == BindingStateRetiring {
-		row, claimErr := sqlc.New().ClaimManagedPostgresBindingRetirement(ctx, s.pool, sqlc.ClaimManagedPostgresBindingRetirementParams{LeaseToken: leaseToken, LeaseUntil: pgtype.Timestamptz{Time: leaseUntil, Valid: true}, Now: pgtype.Timestamptz{Time: now, Valid: true}, AccountID: account, ID: id})
+		row, claimErr := sqlc.New().ClaimManagedPostgresBindingRetirement(ctx, s.catalog, sqlc.ClaimManagedPostgresBindingRetirementParams{LeaseToken: leaseToken, LeaseUntil: pgtype.Timestamptz{Time: leaseUntil, Valid: true}, Now: pgtype.Timestamptz{Time: now, Valid: true}, AccountID: account, ID: id})
 		if errors.Is(claimErr, pgx.ErrNoRows) {
 			if _, lookupErr := s.GetBinding(ctx, accountID, bindingID); lookupErr != nil {
 				return Binding{}, lookupErr
@@ -329,7 +309,7 @@ func (s *PostgresStore) ClaimBinding(ctx context.Context, accountID, bindingID, 
 		}
 		return bindingFromDeliveryRow(sqlc.FinishManagedPostgresBindingProvisionRow(row)), nil
 	}
-	binding, err := queryBinding(ctx, s.pool,
+	binding, err := queryBinding(ctx, s.catalog,
 		`UPDATE managed_postgres_bindings SET
 			state = $1, lease_token = $2, lease_until = $3, updated_at = $4,
 			attempt_count = CASE WHEN $1 IN ('deleting','retiring') AND state <> $1
@@ -349,7 +329,7 @@ func (s *PostgresStore) ClaimBinding(ctx context.Context, accountID, bindingID, 
 		return binding, err
 	}
 	var exists bool
-	if existsErr := s.pool.QueryRow(ctx,
+	if existsErr := s.catalog.QueryRow(ctx,
 		`SELECT EXISTS(SELECT 1 FROM managed_postgres_bindings WHERE account_id = $1 AND id = $2)`,
 		account, id,
 	).Scan(&exists); existsErr != nil {
@@ -369,7 +349,7 @@ func (s *PostgresStore) FinishBindingProvision(ctx context.Context, bindingID, l
 	if err != nil {
 		return Binding{}, err
 	}
-	row, err := sqlc.New().FinishManagedPostgresBindingProvision(ctx, s.pool, sqlc.FinishManagedPostgresBindingProvisionParams{ProviderIdentityID: providerIdentityID, CredentialRef: credentialRef, Now: pgtype.Timestamptz{Time: now, Valid: true}, ID: id, LeaseToken: leaseToken})
+	row, err := sqlc.New().FinishManagedPostgresBindingProvision(ctx, s.catalog, sqlc.FinishManagedPostgresBindingProvisionParams{ProviderIdentityID: providerIdentityID, CredentialRef: credentialRef, Now: pgtype.Timestamptz{Time: now, Valid: true}, ID: id, LeaseToken: leaseToken})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Binding{}, ErrConflict
 	}
@@ -388,7 +368,7 @@ func (s *PostgresStore) ReleaseBinding(ctx context.Context, bindingID, leaseToke
 	if err != nil {
 		return err
 	}
-	command, err := s.pool.Exec(ctx,
+	command, err := s.catalog.Exec(ctx,
 		`UPDATE managed_postgres_bindings SET state = $1, last_error_code = NULLIF($2, ''),
 			lease_token = NULL, lease_until = NULL, retry_at = $3, updated_at = $4
 		 WHERE id = $5 AND lease_token = $6 AND lease_until > $4`,
@@ -415,7 +395,7 @@ func (s *PostgresStore) FinishBindingRotationCleanup(ctx context.Context, bindin
 	if err != nil {
 		return Binding{}, err
 	}
-	binding, err := queryBinding(ctx, s.pool,
+	binding, err := queryBinding(ctx, s.catalog,
 		`UPDATE managed_postgres_bindings SET state = 'ready',
 			rotation_previous_generation = NULL, rotation_wake_id = NULL,
 			rotation_cleanup_ready = false, last_error_code = NULL,
@@ -441,7 +421,7 @@ func (s *PostgresStore) FinishBindingDelete(ctx context.Context, bindingID, leas
 	if err != nil {
 		return Binding{}, err
 	}
-	binding, err := queryBinding(ctx, s.pool,
+	binding, err := queryBinding(ctx, s.catalog,
 		`UPDATE managed_postgres_bindings AS binding SET state = 'deleted',
 			last_error_code = NULL, lease_token = NULL, lease_until = NULL,
 			rotation_previous_generation = NULL, rotation_wake_id = NULL, rotation_cleanup_ready = false,
@@ -482,7 +462,7 @@ func scanBinding(row bindingScanner) (Binding, error) {
 		&rotationPreviousGeneration, &rotationWakeID, &binding.RotationCleanupReady,
 		&binding.State, &lastErrorCode, &leaseToken, &leaseUntil,
 		&binding.AttemptCount, &binding.RetryAt, &binding.CreatedAt,
-		&binding.UpdatedAt, &deletedAt, &binding.ConnectionLimit,
+		&binding.UpdatedAt, &deletedAt, &binding.ConnectionLimit, &binding.DatabaseAccountID,
 	); err != nil {
 		return Binding{}, mapPostgresError(err)
 	}

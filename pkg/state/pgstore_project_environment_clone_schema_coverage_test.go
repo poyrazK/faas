@@ -51,20 +51,9 @@ func TestPgCloneSchemaRegistryCoversMigratedApplicationTablesAndFailsBeforeReser
 		t.Fatalf("schema inventory is incomplete: %d/%d %v", len(coverage.Tables), len(policies), err)
 	}
 	for _, want := range []state.ProjectEnvironmentCloneCoverageBlocker{
-		{Table: "data_pipelines", Code: "isolated_strategy_unavailable"},
 		{Table: "app_mcp_readiness_policies", Code: "isolated_strategy_unavailable"},
-		{Table: "app_mcp_readiness_policy_history", Code: "isolated_strategy_unavailable"},
-		{Table: "mcp_readiness_fallback_policies", Code: "isolated_strategy_unavailable"},
 		{Table: "mcp_readiness_maintenance_windows", Code: "isolated_strategy_unavailable"},
-		{Table: "mcp_readiness_pagerduty_acknowledgements", Code: "isolated_strategy_unavailable"},
-		{Table: "mcp_readiness_pagerduty_policies", Code: "isolated_strategy_unavailable"},
-		{Table: "mcp_readiness_reminder_defaults", Code: "isolated_strategy_unavailable"},
-		{Table: "data_pipeline_alerts", Code: "isolated_strategy_unavailable"},
-		{Table: "notification_channels", Code: "isolated_strategy_unavailable"},
-		{Table: "alert_rule_channels", Code: "isolated_strategy_unavailable"},
-		{Table: "app_slos", Code: "isolated_strategy_unavailable"},
-		{Table: "synthetic_checks", Code: "isolated_strategy_unavailable"},
-
+		{Table: "mcp_readiness_incident_events", Code: "isolated_data_strategy_unavailable"},
 		{Table: "product_control_heads", Code: "isolated_strategy_unavailable"},
 		{Table: "product_control_revisions", Code: "isolated_strategy_unavailable"},
 		{Table: "product_control_customers", Code: "isolated_strategy_unavailable"},
@@ -100,6 +89,18 @@ func TestPgCloneSchemaRegistryCoversMigratedApplicationTablesAndFailsBeforeReser
 		{Table: "issue_slack_interaction_policies", Code: "isolated_strategy_unavailable"},
 		{Table: "issue_slack_routing_policies", Code: "isolated_strategy_unavailable"},
 		{Table: "issue_ingest_tokens", Code: "isolated_strategy_unavailable"},
+		// Pipeline and readiness customer intent also requires an explicit isolated strategy.
+		{Table: "alert_rule_channels", Code: "isolated_strategy_unavailable"},
+		{Table: "app_mcp_readiness_policy_history", Code: "isolated_strategy_unavailable"},
+		{Table: "app_slos", Code: "isolated_strategy_unavailable"},
+		{Table: "data_pipeline_alerts", Code: "isolated_strategy_unavailable"},
+		{Table: "data_pipelines", Code: "isolated_strategy_unavailable"},
+		{Table: "mcp_readiness_fallback_policies", Code: "isolated_strategy_unavailable"},
+		{Table: "mcp_readiness_pagerduty_acknowledgements", Code: "isolated_strategy_unavailable"},
+		{Table: "mcp_readiness_pagerduty_policies", Code: "isolated_strategy_unavailable"},
+		{Table: "mcp_readiness_reminder_defaults", Code: "isolated_strategy_unavailable"},
+		{Table: "notification_channels", Code: "isolated_strategy_unavailable"},
+		{Table: "synthetic_checks", Code: "isolated_strategy_unavailable"},
 	} {
 		assertCloneCoverageBlocker(t, coverage, want)
 	}

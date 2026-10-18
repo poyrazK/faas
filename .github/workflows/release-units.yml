@@ -11,10 +11,14 @@
 # every one is lane-eligible (declared `-- migration-compat: expand` and
 # free of contract changes, docs/adr/20261018084150-unit-lane-expand-
 # migrations.md): the control-plane lane applies them before it restarts
-# anything. Full releases (release.yml on a v*.*.* tag) are unchanged and
-# remain the only path for contract migrations, deploy/ changes, dependency
-# bumps and the other compute daemons; this workflow says so and exits when
-# a range needs one.
+# anything. So do changes to control-plane host roles (docs/adr/
+# 20261018133100-host-configuration-lane.md): cd-controlplane's
+# converge-host-config job converges the roles whose content hash changed
+# first, with the gregalectl the release carries. Full releases (release.yml
+# on a v*.*.* tag) are unchanged and remain the only path for contract
+# migrations, release unit files, deploy/ changes no control-plane role
+# reads, compute host roles, dependency bumps and the other compute
+# daemons; this workflow says so and exits when a range needs one.
 #
 # The base defaults to the newest full release tag reachable from the
 # commit, the release CI checked every merge against. The deploy refuses any
@@ -128,6 +132,8 @@ jobs:
             fi
             pending="$(jq -r '[.pending[][]] | join(", ")' "$OUT_DIR/report.json")"
             [[ -z "$pending" ]] || echo "Waiting for the next full release: ${pending}."
+            host_roles="$(jq -r '.host_config | select(.version) | .roles | join(", ")' "$OUT_DIR/report.json")"
+            [[ -z "$host_roles" ]] || echo "Control-plane host roles converged first: ${host_roles}."
             if [[ "$(jq '.data.migrations | length' "$OUT_DIR/report.json")" != 0 ]]; then
               echo
               echo "| migration | class | lane | blockers |"

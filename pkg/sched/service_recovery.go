@@ -38,7 +38,7 @@ func (e *Engine) ReconcileServiceApp(ctx context.Context, appID string) {
 		_ = e.reconcileServiceAppOnce(ctx, appID)
 		return
 	}
-	account, err := e.store.AccountByID(readCtx, app.AccountID)
+	account, err := state.AppResourceAccount(readCtx, e.store, app)
 	if err != nil || !account.Active() {
 		return
 	}

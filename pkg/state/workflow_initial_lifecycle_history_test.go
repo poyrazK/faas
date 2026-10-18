@@ -131,7 +131,7 @@ func TestWorkflowInitialLifecycleHistory(t *testing.T) {
 					}
 				}
 				if pg, ok := s.(*PgStore); ok {
-					s = NewPgStore(pg.pool)
+					s = NewPgStore(pg.pool.Pool)
 					history = s.(WorkflowRecoveryHistoryStore)
 				}
 				// Source review pruning must not erase durable lifecycle evidence.

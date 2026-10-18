@@ -886,6 +886,7 @@ type Database struct {
 	Health             *HealthSummary
 	ID                 string
 	AccountID          string
+	OrgID              string
 	Name               string
 	Spec               Spec
 	BackendID          string
@@ -927,6 +928,7 @@ type Binding struct {
 	ConnectionLimit      int64
 	ID                   string
 	AccountID            string
+	DatabaseAccountID    string
 	DatabaseID           string
 	AppID                string
 	Scope                string

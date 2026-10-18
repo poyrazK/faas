@@ -49,7 +49,7 @@ func ComputeInvoiceOverageCents(ctx context.Context, store state.Store, inv stat
 	}
 	if !plan.Valid() {
 		// Compatibility for invoice rows created before plan snapshots shipped.
-		acct, err := store.AccountByID(ctx, inv.AccountID)
+		acct, err := state.BillingResourceAccount(ctx, store, inv.AccountID)
 		if err != nil {
 			return 0, fmt.Errorf("billing: invoice account fetch: %w", err)
 		}

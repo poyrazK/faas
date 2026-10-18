@@ -98,7 +98,7 @@ func TestMCPReadinessPagerDutyFallbackLifecycle(t *testing.T) {
 						t.Fatal("missing fallback progress")
 					}
 					if pg, ok := s.(*PgStore); ok {
-						s = NewPgStore(pg.pool)
+						s = NewPgStore(pg.pool.Pool)
 						f.store = s
 						f.outbox = s.(MCPReadinessOutboxStore)
 						f.source = s.(MCPReadinessAttentionStore)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/onebox-faas/faas/pkg/apid/mailoutbox"
 	"github.com/onebox-faas/faas/pkg/internalmail"
@@ -111,6 +112,10 @@ func (s *server) markDeletionPendingWithMail(ctx context.Context, id string) (bo
 		return false, s.store.MarkAccountDeletionPending(ctx, id)
 	}
 	err := s.deletionMailOutbox.ScheduleDeletion(ctx, id)
+	var pgerr *pgconn.PgError
+	if errors.As(err, &pgerr) && pgerr.ConstraintName == "account_shared_app_ownership_pending" {
+		return true, state.ErrOrgAppOwnershipPending
+	}
 	if errors.Is(err, mailoutbox.ErrAccountUnavailable) {
 		err = state.ErrNotFound
 	}
