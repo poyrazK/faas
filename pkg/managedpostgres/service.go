@@ -149,6 +149,20 @@ func (s *Service) reservationLimit(ctx context.Context, accountID string) (int, 
 }
 
 func (s *Service) Create(ctx context.Context, request CreateRequest) (Database, error) {
+	return s.create(ctx, request, "")
+}
+
+// CreateWithID is for durable workflows which reserve a resource identity
+// before asking the provider to create it. A name collision must not adopt a
+// different database, even if its configuration happens to match.
+func (s *Service) CreateWithID(ctx context.Context, request CreateRequest, id string) (Database, error) {
+	if _, err := uuid.Parse(id); err != nil {
+		return Database{}, ErrInvalid
+	}
+	return s.create(ctx, request, id)
+}
+
+func (s *Service) create(ctx context.Context, request CreateRequest, reservedID string) (Database, error) {
 	if !s.provisioningEnabled() {
 		return Database{}, ErrProvisioningClosed
 	}

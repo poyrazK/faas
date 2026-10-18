@@ -73,7 +73,7 @@ func (s *PostgresStore) ReserveBinding(ctx context.Context, binding Binding) (Bi
 	}
 	// Lock the admitted mirror exclusively before taking the lifecycle key-share
 	// lock below. This avoids concurrent key-share upgrades in capacity admission.
-	if err := capacitySQL.New().CapacityLockBindingTarget(ctx, tx, capacitySQL.CapacityLockBindingTargetParams{AccountID: databaseNamespace, DatabaseID: databaseID}); err != nil {
+	if err := capacitySQL.New().CapacityLockBindingTarget(ctx, tx, capacitySQL.CapacityLockBindingTargetParams{AccountID: binding.DatabaseNamespace(), DatabaseID: binding.DatabaseID}); err != nil {
 		return Binding{}, false, mapPostgresError(err)
 	}
 	if _, err := sqlc.New().LockManagedPostgresCustomerDatabase(ctx, tx, sqlc.LockManagedPostgresCustomerDatabaseParams{AccountID: databaseNamespace, ID: databaseID}); err != nil {
