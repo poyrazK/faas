@@ -38,6 +38,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_APID_GITHUBD_BRIDGE_SOCK` | apid, githubd | `default` |  |  | `` |  |
 | `FAAS_APID_INTERNAL_BASE_URL` | meterd | `default` |  | http://127.0.0.1:9101 | `` | Safe Deploy meterd-to-apid operator listener; must remain a loopback HTTP origin |
 | `FAAS_APID_LISTEN` | apid | `default` |  |  | `` |  |
+| `FAAS_APID_LIVE_KEY_RECIPIENT_FILE` | apid | `default` |  |  | `` | operator-only live-query preview (ADR-20261016151947): livequeryd's age recipient file; apid seals each database's live secret to it and cannot read one back; unset leaves live queries unavailable |
 | `FAAS_APID_LOOPBACK` | gatewayd-internal | `default` |  |  | `` |  |
 | `FAAS_APID_METRICS_ADDR` | apid | `default` |  |  | `` |  |
 | `FAAS_APID_OTEL_SPANS_WRITER_SOCKET` | apid, gatewayd-internal, gatewayd-public, outboundd, vmmd | `default` |  |  | `` |  |
@@ -443,6 +444,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_LINEAR_OAUTH_CLIENT_ID` | apid, shared | `secrets-env` |  |  | `` | optional Issues Linear OAuth client; delivered by /etc/faas/sealed.env on apid (ADR-1478) |
 | `FAAS_LINEAR_OAUTH_CLIENT_SECRET` | apid, shared | `secrets-env` |  |  | `` | optional Issues Linear OAuth client secret; delivered by /etc/faas/sealed.env on apid (ADR-1478) |
 | `FAAS_LINEAR_OAUTH_REDIRECT_URI` | apid, shared | `secrets-env` |  |  | `` | optional Issues Linear OAuth callback URI; delivered by /etc/faas/sealed.env on apid (ADR-1478) |
+| `FAAS_LIVE_QUERIES_ACCOUNTS` | apid | `default` |  |  | `` | ADR-20261016151947 live-query rollout: comma-separated account UUIDs that see live queries, or * for every account; unset hides the live API routes and realtime protocol from every account |
 | `FAAS_LOG_ARCHIVE_AUTH_MODE` | shared | `default` |  |  | `` | optional environment override; production metadata auth is normally loaded from the archive credential envelope |
 | `FAAS_LOG_ARCHIVE_BUCKET` | shared | `default` |  |  | `` |  |
 | `FAAS_LOG_ARCHIVE_CREDS_PATH` | shared | `unit` |  |  | `` |  |
@@ -595,6 +597,9 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_REALTIME_HISTORY_TLS_CA_PATH` | realtimed | `default` |  |  | `` |  |
 | `FAAS_REALTIME_HISTORY_TLS_CERT_PATH` | realtimed | `default` |  |  | `` |  |
 | `FAAS_REALTIME_HISTORY_TLS_KEY_PATH` | realtimed | `default` |  |  | `` |  |
+| `FAAS_REALTIME_LIVE_TLS_CA_FILE` | realtimed | `default` |  |  | `` | live-query preview (ADR-20261016151947): CA that verifies livequeryd hubs dialed over wss://; unset uses the system roots |
+| `FAAS_REALTIME_LIVE_TLS_CERT_FILE` | realtimed | `default` |  |  | `` | live-query preview (ADR-20261016151947): realtimed's client certificate for livequeryd hubs that require one (-client-ca); set with FAAS_REALTIME_LIVE_TLS_KEY_FILE |
+| `FAAS_REALTIME_LIVE_TLS_KEY_FILE` | realtimed | `default` |  |  | `` | live-query preview (ADR-20261016151947): private key for FAAS_REALTIME_LIVE_TLS_CERT_FILE |
 | `FAAS_REALTIME_MAX_AGE` | realtimed | `default` |  |  | `` |  |
 | `FAAS_REALTIME_MAX_CONNECTIONS` | realtimed | `default` |  | 10000 | `` | node connection cap; 6000 with FAAS_REALTIME_FAIR_USE_ENABLED=1, sized to realtimed's 512 MB MemoryMax at ~52 KB per idle connection (ADR-1323); raise only with MemoryMax |
 | `FAAS_REALTIME_MAX_MESSAGE_BYTES` | realtimed | `default` |  |  | `` |  |

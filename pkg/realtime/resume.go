@@ -172,6 +172,7 @@ type resumeSubscription struct {
 }
 
 func (m *Manager) runResumeConnection(ctx context.Context, c *connection) {
+	defer c.closeLive()
 	for {
 		kind, data, err := c.ws.ReadMessage()
 		if err != nil {
@@ -184,6 +185,14 @@ func (m *Manager) runResumeConnection(ctx context.Context, c *connection) {
 		if kind != websocket.TextMessage {
 			_ = c.close(websocket.CloseUnsupportedData, "v2 requires JSON text frames")
 			return
+		}
+		// An endpoint without live routes (its account is outside the
+		// FAAS_LIVE_QUERIES_ACCOUNTS rollout, or no live database is bound)
+		// answers live frames like any unknown frame, so the protocol is not
+		// discoverable; a session already open keeps receiving its frames.
+		if kind, subscription := liveFrameType(data); kind != "" && (c.live != nil || len(c.liveRoutes()) > 0) {
+			m.handleLive(ctx, c, data, subscription)
+			continue
 		}
 		var frame resumeClientFrame
 		if err := json.Unmarshal(data, &frame); err != nil {
