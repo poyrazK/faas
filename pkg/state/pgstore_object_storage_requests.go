@@ -47,13 +47,15 @@ func (s *PgStore) ListObjectStorageProviderRequestMetrics(ctx context.Context, b
 }
 
 func (s *PgStore) ListObjectStorageProviderBuckets(ctx context.Context, backendID, fingerprint string) ([]ObjectBucket, error) {
-	rows, err := sqlc.New().ObjectStorageProviderBuckets(ctx, s.pool, sqlc.ObjectStorageProviderBucketsParams{BackendID: backendID, BackendFingerprint: fingerprint})
+	rows, err := sqlc.New().ObjectStorageProviderBuckets(ctx, s.pool, sqlc.ObjectStorageProviderBucketsParams{BackendID: backendID, BackendFingerprint: fingerprint, PeriodStart: objectUsageTime(objectUsagePeriod(ctx))})
 	if err != nil {
 		return nil, err
 	}
 	out := make([]ObjectBucket, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, objectBucketFromSQL(row))
+		b := objectBucketFromSQL(row.ObjectBucket)
+		b.UsageSubjectID = pgUUIDString(row.BillingSubjectID)
+		out = append(out, b)
 	}
 	return out, nil
 }

@@ -72,6 +72,7 @@ func drainOrgActivityOutboxOnce(ctx context.Context, outbox state.OrgActivityOut
 }
 
 func (s *server) deliverOrgActivityOutbox(ctx context.Context, id int64) {
+	ctx = state.WithoutOrgAccessFence(ctx)
 	outbox, ok := s.store.(state.OrgActivityOutboxStore)
 	if !ok {
 		return

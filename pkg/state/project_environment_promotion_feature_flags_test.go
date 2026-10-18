@@ -14,14 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-type promotionFlagTestStore interface {
-	cloneFlagTestStore
-	state.ProjectReleaseSetStore
-	state.ProjectReleaseSetReader
-	state.ProjectEnvironmentPromotionReleaseSetStore
-	state.ProjectEnvironmentPromotionFeatureFlagStore
-	state.ProjectPromotionDeploymentStore
-}
+type promotionFlagTestStore = contractTestStore
 
 type promotionFlagFixture struct {
 	store          promotionFlagTestStore

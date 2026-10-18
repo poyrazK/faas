@@ -374,7 +374,7 @@ func (s *server) rollbackSourceRefManifestEdgeRule(ctx context.Context, appID st
 			convergence.Abort(ctx)
 			return err
 		}
-		acct, err := s.store.AccountByID(ctx, app.AccountID)
+		acct, err := state.AppResourceAccount(ctx, s.store, app)
 		if err != nil {
 			convergence.Abort(ctx)
 			return err

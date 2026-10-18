@@ -380,6 +380,40 @@ No organization can lose its last owner. Invitations last seven days by default
 (300 seconds to 14 days); a user can create up to 100 organizations, and an
 organization can hold 500 pending invitations.
 
+### The active organization in tokens
+
+Turn on organization claims to let your backend read a user's organization
+and role from the token it already verifies, without calling the Auth app:
+
+```sh
+gregale auth config shop-auth --org-claims on
+```
+
+The browser picks the organization a session acts in; the session's next
+tokens carry it:
+
+```ts
+await auth.organizations.setActive(org.id) // refreshes the session
+const active = await auth.organizations.active() // { id, slug, role, permissions } or null
+await auth.organizations.setActive(null) // act in none
+```
+
+Tokens then hold `org_id`, `org_slug`, `org_role` and `org_permissions` (the
+role's permissions, `*` for owners). The backend SDKs return them as
+`claims.organization` (Node and Python) and `claims.Organization` (Go), and
+row-level security can read `gregale_auth.claims() ->> 'org_id'`. Each session
+has its own choice, so two tabs can act in different organizations; ending the
+session or deleting the organization clears it.
+
+A token keeps the role it was issued with until it expires, at most ten
+minutes later; removing a member or changing their role shows in their next
+token. For checks that must be current, such as removing members or changing
+billing, use `authorize()`, which reads the membership each time.
+`POST /authz/v1/active-organization` `{org}` (or `{"org": null}`) is the API
+behind `setActive`; it answers `not_found` for an organization the caller
+does not belong to. Tokens issued to third-party OAuth clients never carry
+these claims.
+
 ## Organization single sign-on
 
 Let your business customers sign in through their company's identity
@@ -502,6 +536,41 @@ inviter. Without a provider, flows that need email fail with
 `email_provider_unconfigured`; use OAuth providers, or `--autoconfirm` during
 development. Links and codes are never logged.
 
+### Your wording
+
+Each email has a default subject and body that you can replace, in any
+language. A template is plain text with placeholders; the Auth app escapes
+every value and lays the text out as HTML in the same simple style for every
+email, so templates cannot add markup. Separate paragraphs with a blank line.
+
+| Type | Sent when | Placeholders |
+| --- | --- | --- |
+| `signup` | someone signs up and must confirm their address | `{{app}}` `{{email}}` `{{link}}` `{{code}}` |
+| `invite` | you invite someone to create an account | `{{app}}` `{{email}}` `{{link}}` `{{code}}` |
+| `magiclink` | someone asks for a sign-in link | `{{app}}` `{{email}}` `{{link}}` `{{code}}` |
+| `recovery` | someone resets their password | `{{app}}` `{{email}}` `{{link}}` `{{code}}` |
+| `email_change` | someone changes their address (sent to both addresses) | `{{app}}` `{{email}}` `{{new_email}}` `{{link}}` `{{code}}` |
+| `code` | a one-time code is needed, such as before a sensitive change | `{{app}}` `{{email}}` `{{code}}` |
+| `security_notice` | a password, address, phone, sign-in method or second factor changes | `{{app}}` `{{email}}` `{{event}}` |
+| `organization_invitation` | a member invites someone to an organization | `{{app}}` `{{email}}` `{{org}}` `{{link}}` |
+
+When an email carries a link or code and your body does not place
+`{{link}}` or `{{code}}`, it is added at the end. Subjects take at most 150
+characters and cannot contain the link or code; bodies take at most 4,000
+bytes. Edit templates on the dashboard's **Emails** tab, or with the admin key
+from a terminal:
+
+```sh
+gregale auth emails list shop-auth
+gregale auth emails set shop-auth signup --subject 'Welcome to {{app}}' --body-file signup.txt
+gregale auth emails preview shop-auth signup --send-to you@example.com
+gregale auth emails reset shop-auth signup
+```
+
+A preview renders with example values and, with `--send-to`, goes out through
+your provider; it saves nothing. Saved templates apply to the next email, with
+no restart. They are kept in your database, in `gregale_auth.email_templates`.
+
 ## Hosted pages
 
 Send users to `https://<auth-host>/ui/sign-in?redirect_to=<your URL>`. The
@@ -518,7 +587,8 @@ gregale auth config shop-auth --brand-name Shop --brand-color '#4f46e5' --brand-
 ```
 
 The name also appears in emails and passkey prompts. The logo loads from its
-HTTPS URL; the pages allow that URL's origin for images and nothing else.
+HTTPS URL; besides the pages' own files, the only images allowed are from that
+URL's origin and the inline QR code of an authenticator app.
 
 Read the session with `@gregale/auth`:
 
@@ -529,6 +599,55 @@ const auth = createAuthClient({ url: 'https://shop-auth.gregale.app' })
 await auth.sessionFromUrl()
 const token = await auth.getAccessToken()
 ```
+
+### Account page
+
+Link signed-in users to `https://<auth-host>/ui/account?redirect_to=<your URL>`,
+or `auth.hostedAccountUrl({ redirectTo })`. The page signs them in again,
+including their second step, and lets them:
+
+- change their email address (confirmed by link) and password;
+- add or remove an authenticator app or text-message codes and create
+  recovery codes, as far as `--mfa`, `--mfa-phone` and `--recovery-codes`
+  allow (turning one on signs out every session that has not passed a second
+  step, which may include your app in the same browser);
+- add and remove passkeys;
+- link and unlink sign-in providers when identity linking is on;
+- revoke apps they allowed through the OAuth server;
+- see where they are signed in (device, IP address and last activity) and
+  sign out any of those sessions, or all but the page's own;
+- delete their account, if you allow it (below).
+
+The page keeps its session only in the tab and ends it when the person
+returns or closes the tab. People whose organization signs them in (SSO)
+cannot change their email address or password here.
+
+Your own pages can do the same with `@gregale/auth`:
+
+```ts
+const sessions = await auth.sessions.list() // { id, user_agent, ip, last_active_at, current, … }
+await auth.sessions.revoke(sessions[1].id)
+await auth.signOut({ scope: 'others' }) // every session but this one
+```
+
+### Let people delete their accounts
+
+Self-service deletion is off until you turn it on:
+
+```sh
+gregale auth config shop-auth --self-deletion on
+```
+
+Then the account page offers it, and `await auth.deleteAccount()` does it
+from your own pages. Either way the person needs a sign-in from the last ten
+minutes, including their second step if they have one; otherwise the call
+fails with `reauthentication_required`. Anonymous users can always delete
+themselves, since they cannot sign in again. Deletion follows the same rules
+as yours from the dashboard: the only owner of an organization that has other
+members is refused (`last_owner`, naming the organizations), and
+organizations whose only member they were are deleted with them. With
+lifecycle events on, `auth.user.deleted` tells your app to remove the
+person's data.
 
 ## Files, realtime channels and workflows
 
@@ -648,6 +767,24 @@ them (a ban also ends their sessions), and delete them, and browse
 organizations with their members and pending invitations. Deleting the last
 owner of an organization that has other members is refused; organizations
 whose only member was the deleted user are removed with them.
+
+The same actions work from a terminal with the key, which the CLI prompts for
+or reads with `--admin-key-stdin`. Name a user by ID or email address, and an
+organization by ID or slug. A ban lasts hours (`24h`), days (`7d`) or
+`forever`. Deleting asks you to type `delete user`; with `--admin-key-stdin`,
+pass `--yes` instead. User records go straight from your Auth app to your
+terminal:
+
+```sh
+gregale auth users list shop-auth --search example.com
+gregale auth users get shop-auth ada@example.com
+gregale auth users sign-out shop-auth ada@example.com
+gregale auth users ban shop-auth ada@example.com --for 7d
+gregale auth users unban shop-auth ada@example.com
+gregale auth users delete shop-auth ada@example.com
+gregale auth orgs list shop-auth
+gregale auth orgs get shop-auth acme
+```
 
 The **Activity** tab lists GoTrue's audit log newest first: sign-ins,
 sign-ups, password resets and changes, and administrator actions such as bans

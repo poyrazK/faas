@@ -14,17 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-type migrationAdmissionStore interface {
-	state.Store
-	state.ComputeNodeUsageBatcher
-	state.ComputeNodeCPUUsageBatcher
-	state.MigrationAdmissionStore
-	state.MigrationLeaseStore
-	state.MigrationSourceStore
-	state.RuntimeConfigMigrationStore
-	state.NodeLifecycleCompletionStore
-	state.MigrationCommitRecoveryStore
-}
+type migrationAdmissionStore = contractTestStore
 
 type migrationAdmissionFixture struct {
 	s            migrationAdmissionStore

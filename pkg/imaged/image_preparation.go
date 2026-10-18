@@ -153,7 +153,7 @@ func (h *Handler) prepareImageLayer(ctx context.Context, images state.Deployment
 	if err := h.openImagePreparationStage(ctx, app, dep); err != nil {
 		return err
 	}
-	acct, err := h.store.AccountByID(ctx, app.AccountID)
+	acct, err := state.AppResourceAccount(ctx, h.store, app)
 	if err != nil {
 		return err
 	}

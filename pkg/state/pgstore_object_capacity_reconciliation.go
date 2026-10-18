@@ -73,7 +73,10 @@ func (s *PgStore) RequestObjectCapacityReconciliation(ctx context.Context, accou
 	q := sqlc.New()
 	// Admissions hold the account before the bucket's Object Lock SHARE fence.
 	// Keep that order when excluding multipart reservation and bucket deletion.
-	if _, err = q.ObjectUsageLockAccount(ctx, tx, mustPgUUID(account)); err != nil {
+	if _, err = q.ObjectStorageLockScope(ctx, tx, sqlc.ObjectStorageLockScopeParams{BucketID: mustPgUUID(bucket), AccountID: mustPgUUID(account)}); err != nil {
+		return ObjectCapacityReconciliation{}, mapErr(err)
+	}
+	if _, err = lockObjectUsageScope(ctx, tx, mustPgUUID(account), mustPgUUID(bucket)); err != nil {
 		return ObjectCapacityReconciliation{}, mapErr(err)
 	}
 	if _, err = q.ObjectCapacityLockBucket(ctx, tx, sqlc.ObjectCapacityLockBucketParams{ID: mustPgUUID(bucket), AccountID: mustPgUUID(account), AppID: mustPgUUID(app)}); err != nil {
@@ -111,7 +114,7 @@ func (s *PgStore) RequestObjectCapacityReconciliation(ctx context.Context, accou
 	if count > 0 {
 		return ObjectCapacityReconciliation{}, ErrConflict
 	}
-	snap, err := readObjectUsage(ctx, tx, account, time.Now())
+	snap, err := readObjectBucketUsage(ctx, tx, account, bucket, time.Now())
 	if err != nil {
 		return ObjectCapacityReconciliation{}, err
 	}
@@ -148,7 +151,10 @@ func (s *PgStore) lockObjectCapacityJob(ctx context.Context, id string) (pgx.Tx,
 		return nil, j, err
 	}
 	q := sqlc.New()
-	if _, err = q.ObjectUsageLockAccount(ctx, tx, mustPgUUID(j.AccountID)); err == nil {
+	if _, err = q.ObjectStorageLockScope(ctx, tx, sqlc.ObjectStorageLockScopeParams{BucketID: mustPgUUID(j.BucketID), AccountID: mustPgUUID(j.AccountID)}); err == nil {
+		_, err = lockObjectUsageScope(ctx, tx, mustPgUUID(j.AccountID), mustPgUUID(j.BucketID))
+	}
+	if err == nil {
 		_, err = q.ObjectCapacityLock(ctx, tx, mustPgUUID(id))
 	}
 	if err == nil {
@@ -218,7 +224,7 @@ func (s *PgStore) ClaimObjectCapacityReconciliation(ctx context.Context, id, tok
 	if err != nil {
 		return j, err
 	}
-	snap, err := readObjectUsage(ctx, tx, j.AccountID, now)
+	snap, err := readObjectBucketUsage(ctx, tx, j.AccountID, j.BucketID, now)
 	if err != nil {
 		return j, err
 	}

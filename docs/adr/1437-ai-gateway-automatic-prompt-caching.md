@@ -1,0 +1,42 @@
+# ADR-1437 · AI gateway phase 15: automatic prompt caching for Claude
+
+- **Status:** accepted
+- **Date:** 2026-10-17
+- **Relates to:** ADR-990 (AI policy), ADR-991 (OpenAI-format routes), ADR-1435 (request rewriting before admission)
+- **Decision:**
+  - **Opt-in.** The AI policy gains `auto_prompt_cache` (default off).
+    - With it on, the gateway adds prompt-cache breakpoints to Claude requests that carry none.
+    - Covered paths: the Anthropic Messages API, Vertex AI's Anthropic endpoints, and Bedrock InvokeModel and Converse for Claude models.
+    - OpenAI-format routes to those targets are covered too, since the integration sees the translated request.
+    - A request that already has any `cache_control` (or, for Converse, any `cachePoint`) is left as the caller wrote it.
+  - **Two breakpoints at most**, within the providers' limit of four. Both use the default five-minute lifetime.
+    - **Prefix:** the end of the stable part of the prompt: the last system block, or the last tool when there is no system prompt.
+      - It is added when that part is at least `OutboundAIPromptCacheMinTokens` (at four bytes per token).
+      - And only when the same tools and system prompt for the same model were seen on the integration within the cache lifetime, or the call names `X-Gregale-AI-Session`.
+      - A prompt sent once therefore never pays the write premium. Repeated prompts are written on their second call and read afterwards.
+    - **Conversation:** the last eligible block of the last message. It is added when the request carries earlier turns (an assistant message) or names `X-Gregale-AI-Session`, and the whole prompt is at least the minimum.
+      - The next turn reads everything up to it, through the providers' lookback over earlier block boundaries.
+      - Eligible blocks are non-empty text, images, documents, tool uses and tool results, never thinking blocks.
+  - **Wire forms:**
+    - Anthropic-format bodies (Messages API, Vertex, Bedrock invoke with `anthropic_version`) get `"cache_control": {"type": "ephemeral"}` on the block. A string system prompt or message becomes one text block that carries it.
+    - Converse bodies get a `{"cachePoint": {"type": "default"}}` block appended to the system list, the tool list or the last message. This applies only for model IDs naming Anthropic or Claude.
+    - Explicit block breakpoints are used everywhere, rather than Anthropic's top-level automatic `cache_control`, because Bedrock's InvokeModel and Converse integration refuses the top-level field.
+  - **Visibility.**
+    - `X-Gregale-AI-Prompt-Cache: prefix,conversation` names what the gateway added.
+    - `outbound_ai_prompt_cache_marks_total{mark}` counts the marks.
+    - Cache reads and writes already settle as cached input and cache-write tokens (ADR-990), so usage shows the effect.
+- **Why:**
+  - Claude caches only what a request marks. Many apps send long system prompts, tool lists and conversation history unmarked and pay full input price on every call. A cache read costs a tenth of the input price or less; a five-minute write costs 1.25 times.
+  - The gateway sees every call of an integration, so it can tell a repeated prefix from a one-off prompt and mark only what is likely to be reused.
+  - OpenAI and Gemini already cache prompts without markers, so they need nothing from the gateway.
+- **Consequences:**
+  - **Write premiums can still be paid in vain.** A conversation that stops after a turn, or a prefix seen twice and never again, pays 1.25 times input on the written tokens once.
+  - **Repetition is detected per outboundd process.** With several replicas, a prefix may need one more call per replica before it is marked.
+  - **Re-encoded bodies.** A body the gateway marks is re-encoded as JSON, so key order changes; the content does not. The reservation is unchanged; cache writes settle at their own price.
+  - **Bedrock application inference profiles** with opaque IDs are not recognized as Claude on Converse and are left unmarked; InvokeModel bodies are recognized by `anthropic_version`.
+  - **New column:** `outbound_integrations.ai_auto_prompt_cache`.
+- **Rejected alternatives:**
+  - **Anthropic's top-level automatic caching.** It is simpler but refused by the Bedrock integration Gregale uses. It also only caches the full prompt, so single-question workloads with a shared system prompt never read it.
+  - **Marking every long prompt.** One-off prompts would pay the write premium without any read.
+  - **The one-hour lifetime.** Writes cost twice the input price, and older models refuse the field.
+  - **Setting OpenAI's `prompt_cache_key`.** OpenAI caches automatically; the key only steers routing, and its traffic guidance (about 15 requests per minute per key) depends on the app's traffic shape.

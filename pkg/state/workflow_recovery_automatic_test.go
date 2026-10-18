@@ -104,7 +104,7 @@ func TestWorkflowRecoveryAutomaticPauseAndRestart(t *testing.T) {
 			t.Fatal(e)
 		}
 		if pg, ok := s.(*PgStore); ok {
-			s = NewPgStore(pg.pool)
+			s = NewPgStore(pg.pool.Pool)
 		}
 		// Concurrent/restarted polls cannot create a second child or launch another
 		// action until the first has proven its final execution outcome.

@@ -1072,6 +1072,24 @@ type AppRegistryCredential struct {
 	LastUsedAt        pgtype.Timestamptz
 }
 
+type AppResourceAccount struct {
+	AppID                  pgtype.UUID
+	ID                     pgtype.UUID
+	PastDueAt              pgtype.Timestamptz
+	DeletionRequestedAt    pgtype.Timestamptz
+	LastQuotaWarningAt     pgtype.Timestamptz
+	SuspendedReason        pgtype.Text
+	Plan                   string
+	Status                 string
+	AbuseHoldAt            pgtype.Timestamptz
+	AbuseHoldReason        pgtype.Text
+	EgressAllowlistExtra   int32
+	CreatedAt              pgtype.Timestamptz
+	Email                  string
+	ProviderCustomerID     pgtype.Text
+	StripeSubscriptionItem pgtype.Text
+}
+
 type AppRoutePriority struct {
 	AppID     pgtype.UUID
 	AccountID pgtype.UUID
@@ -1784,6 +1802,13 @@ type BillingQuotaWarning struct {
 	FollowupCompletedAt pgtype.Timestamptz
 	LeaseID             pgtype.UUID
 	LeaseUntil          pgtype.Timestamptz
+}
+
+type BillingResourceAccount struct {
+	ID          pgtype.UUID
+	Plan        string
+	Status      string
+	AbuseHoldAt pgtype.Timestamptz
 }
 
 // Month-end billing runs (ADR-1301): one ended UTC month billed for every customer with billable usage; worker-leased.
@@ -5636,6 +5661,7 @@ type Invocation struct {
 	EnvironmentID            pgtype.UUID
 	ReplayRootInvocationID   pgtype.UUID
 	ReplayRootCreatedAt      pgtype.Timestamptz
+	AsyncQuotaSubjectID      pgtype.UUID
 }
 
 type InvocationAttemptHistory struct {
@@ -6674,6 +6700,7 @@ type ManagedPostgresBinding struct {
 	RotationWakeID             pgtype.UUID
 	RotationCleanupReady       bool
 	CutoverID                  pgtype.UUID
+	DatabaseAccountID          pgtype.UUID
 }
 
 type ManagedPostgresCheckpointMaintenance struct {
@@ -6903,6 +6930,7 @@ type ManagedPostgresDatabase struct {
 	DataResourceID              pgtype.Text
 	CloneResourceRole           string
 	AccountingRequired          bool
+	OrgID                       pgtype.UUID
 }
 
 type ManagedPostgresHealth struct {
@@ -6921,6 +6949,17 @@ type ManagedPostgresHealth struct {
 	LeaseToken         pgtype.Text
 	LeaseUntil         pgtype.Timestamptz
 	AttemptCount       int32
+}
+
+// ADR-20261016151947 live-query secrets per managed database, sealed to livequeryd; at most one active and one retiring key.
+type ManagedPostgresLiveKey struct {
+	Kid          string
+	AccountID    pgtype.UUID
+	DatabaseID   pgtype.UUID
+	SealedSecret []byte
+	Recipient    string
+	CreatedAt    pgtype.Timestamptz
+	RetiresAt    pgtype.Timestamptz
 }
 
 type ManagedPostgresResize struct {
@@ -8124,6 +8163,7 @@ type ObjectBucket struct {
 	ServeAt                        pgtype.Text
 	EnvironmentCloneSourceBucketID pgtype.UUID
 	EnvironmentCloneOperationID    pgtype.UUID
+	OrgID                          pgtype.UUID
 }
 
 type ObjectBucketEncryption struct {
@@ -8511,28 +8551,30 @@ type ObjectStorageRequestMetric struct {
 }
 
 type ObjectStorageS3Credential struct {
-	ID                pgtype.UUID
-	AccountID         pgtype.UUID
-	BucketID          pgtype.UUID
-	AccessKeyID       string
-	SecretSealed      []byte
-	Kid               string
-	Label             string
-	Permission        string
-	Status            string
-	CreatedAt         pgtype.Timestamptz
-	LastUsedAt        pgtype.Timestamptz
-	RevokedAt         pgtype.Timestamptz
-	ManagedAppID      pgtype.UUID
-	ManagedScope      pgtype.Text
-	ManagedPrefix     pgtype.Text
-	RotationParentID  pgtype.UUID
-	RotationWakeID    pgtype.UUID
-	RotationStampedAt pgtype.Timestamptz
-	UrlRequest        []byte
-	UrlApiKeyID       pgtype.UUID
-	UrlExpiresAt      pgtype.Timestamptz
-	UrlReceiptID      pgtype.UUID
+	ID                   pgtype.UUID
+	AccountID            pgtype.UUID
+	BucketID             pgtype.UUID
+	AccessKeyID          string
+	SecretSealed         []byte
+	Kid                  string
+	Label                string
+	Permission           string
+	Status               string
+	CreatedAt            pgtype.Timestamptz
+	LastUsedAt           pgtype.Timestamptz
+	RevokedAt            pgtype.Timestamptz
+	ManagedAppID         pgtype.UUID
+	ManagedScope         pgtype.Text
+	ManagedPrefix        pgtype.Text
+	RotationParentID     pgtype.UUID
+	RotationWakeID       pgtype.UUID
+	RotationStampedAt    pgtype.Timestamptz
+	UrlRequest           []byte
+	UrlApiKeyID          pgtype.UUID
+	UrlExpiresAt         pgtype.Timestamptz
+	UrlReceiptID         pgtype.UUID
+	IssuerAccountID      pgtype.UUID
+	IssuerAccessRevision pgtype.Int8
 }
 
 type ObjectStorageUploadGrant struct {
@@ -8774,18 +8816,29 @@ type OperatorRestartExecution struct {
 }
 
 type Org struct {
-	ID                     pgtype.UUID
-	Slug                   string
-	Name                   string
-	PersonalOrg            bool
-	PersonalOwnerAccountID pgtype.UUID
-	Plan                   string
-	Status                 string
-	ProviderCustomerID     pgtype.Text
-	StripeSubscriptionItem pgtype.Text
-	DeletedPending         bool
-	CreatedAt              pgtype.Timestamptz
-	UpdatedAt              pgtype.Timestamptz
+	ID                       pgtype.UUID
+	Slug                     string
+	Name                     string
+	PersonalOrg              bool
+	PersonalOwnerAccountID   pgtype.UUID
+	Plan                     string
+	Status                   string
+	ProviderCustomerID       pgtype.Text
+	StripeSubscriptionItem   pgtype.Text
+	DeletedPending           bool
+	CreatedAt                pgtype.Timestamptz
+	UpdatedAt                pgtype.Timestamptz
+	ResourceOwnershipEnabled bool
+	PastDueAt                pgtype.Timestamptz
+	LastQuotaWarningAt       pgtype.Timestamptz
+	SuspendedReason          pgtype.Text
+	AbuseHoldAt              pgtype.Timestamptz
+	AbuseHoldReason          pgtype.Text
+	BillingEmail             string
+	BusinessName             string
+	BillingAddress           string
+	TaxID                    string
+	ObjectStorageOwnedFrom   pgtype.Timestamptz
 }
 
 // Curated organization activity timeline; safe display facts only, FK-free and append-only
@@ -8847,6 +8900,7 @@ type OrgMembership struct {
 	InvitedByAccountID pgtype.UUID
 	JoinedAt           pgtype.Timestamptz
 	RemovedAt          pgtype.Timestamptz
+	AccessRevision     int64
 }
 
 type OutboundAdmissionLease struct {
@@ -8858,6 +8912,7 @@ type OutboundAdmissionLease struct {
 	AiReservedTokens         int64
 	AiReservedCostMillicents int64
 	AiEndUser                pgtype.Text
+	AiTags                   []string
 }
 
 type OutboundAdmissionState struct {
@@ -8882,6 +8937,44 @@ type OutboundAdmissionState struct {
 	MonthlyAiCostMillicents        int64
 }
 
+type OutboundAiAccessToken struct {
+	ID             pgtype.UUID
+	AccountID      pgtype.UUID
+	AppID          pgtype.UUID
+	Name           string
+	TokenHash      []byte
+	TokenPrefix    string
+	IntegrationIds []pgtype.UUID
+	ExpiresAt      pgtype.Timestamptz
+	CreatedAt      pgtype.Timestamptz
+	LastUsedAt     pgtype.Timestamptz
+	RevokedAt      pgtype.Timestamptz
+}
+
+type OutboundAiBatch struct {
+	ID                     pgtype.UUID
+	IntegrationID          pgtype.UUID
+	AccountID              pgtype.UUID
+	Caller                 string
+	BindingAppID           pgtype.UUID
+	Provider               string
+	ProviderBatchID        pgtype.Text
+	RequestPath            string
+	RequestQuery           string
+	Model                  string
+	Requests               int32
+	ReservedTokens         int64
+	ReservedCostMillicents int64
+	State                  string
+	Outcome                pgtype.Text
+	SettledTokens          pgtype.Int8
+	SettledCostMillicents  pgtype.Int8
+	Checks                 int32
+	NextCheckAt            pgtype.Timestamptz
+	CreatedAt              pgtype.Timestamptz
+	SettledAt              pgtype.Timestamptz
+}
+
 type OutboundAiBudgetAlert struct {
 	ID               pgtype.UUID
 	IntegrationID    pgtype.UUID
@@ -8894,6 +8987,61 @@ type OutboundAiBudgetAlert struct {
 	UsedValue        int64
 	CrossedAt        pgtype.Timestamptz
 	EndUser          pgtype.Text
+	Tag              pgtype.Text
+}
+
+type OutboundAiEvaluation struct {
+	ID                      pgtype.UUID
+	AccountID               pgtype.UUID
+	RouteID                 pgtype.UUID
+	Position                int16
+	JudgeIntegrationID      pgtype.UUID
+	JudgeModel              string
+	SampleSize              int16
+	MaxLossRate             int16
+	Canary                  []byte
+	State                   string
+	Verdict                 pgtype.Text
+	ErrorCode               pgtype.Text
+	Samples                 int32
+	Wins                    int32
+	Ties                    int32
+	Losses                  int32
+	CandidateErrors         int32
+	JudgeErrors             int32
+	BaselineCostMillicents  int64
+	CandidateCostMillicents int64
+	BaselineTtfbMsTotal     int64
+	BaselineTtfbCalls       int32
+	CandidateTtfbMsTotal    int64
+	CandidateTtfbCalls      int32
+	CanaryStarted           bool
+	CreatedAt               pgtype.Timestamptz
+	StartedAt               pgtype.Timestamptz
+	FinishedAt              pgtype.Timestamptz
+}
+
+type OutboundAiEvaluationItem struct {
+	EvaluationID            pgtype.UUID
+	Ordinal                 int16
+	LogID                   pgtype.UUID
+	Verdict                 string
+	CandidateStatus         pgtype.Int2
+	CandidateCostMillicents int64
+	CandidateTtfbMs         pgtype.Int4
+	BaselineCostMillicents  int64
+	BaselineTtfbMs          pgtype.Int4
+	BaselineOutputText      string
+	CandidateOutputText     string
+}
+
+type OutboundAiLogExport struct {
+	ID         int64
+	AppID      pgtype.UUID
+	AccountID  pgtype.UUID
+	CreatedAt  pgtype.Timestamptz
+	Line       string
+	Attributes []byte
 }
 
 type OutboundAiPriceEntry struct {
@@ -8908,6 +9056,10 @@ type OutboundAiPriceEntry struct {
 	MillicentsPerImage             pgtype.Int8
 	MillicentsPerAudioMinute       pgtype.Int8
 	MillicentsPerMillionCharacters pgtype.Int8
+	MillicentsPerVideoSecond       pgtype.Int8
+	MillicentsPerWebSearch         pgtype.Int8
+	MillicentsPerFileSearch        pgtype.Int8
+	MillicentsPerCodeSessionGb     pgtype.Int8
 }
 
 type OutboundAiPriceList struct {
@@ -8981,6 +9133,7 @@ type OutboundAiRequestLog struct {
 	TtfbMs            pgtype.Int4
 	Attempts          int16
 	EndUser           pgtype.Text
+	Tags              []string
 }
 
 type OutboundAiRoute struct {
@@ -8990,6 +9143,22 @@ type OutboundAiRoute struct {
 	CreatedAt pgtype.Timestamptz
 	UpdatedAt pgtype.Timestamptz
 	Format    string
+	Strategy  string
+	MaxTtfbMs pgtype.Int4
+}
+
+type OutboundAiRouteCanary struct {
+	RouteID                   pgtype.UUID
+	Position                  int16
+	Percent                   int16
+	MaxErrorRateIncrease      int16
+	MaxLatencyIncreasePercent pgtype.Int4
+	MinCalls                  int32
+	WindowMinutes             int16
+	State                     string
+	Reason                    pgtype.Text
+	StartedAt                 pgtype.Timestamptz
+	DecidedAt                 pgtype.Timestamptz
 }
 
 type OutboundAiRouteTarget struct {
@@ -8997,6 +9166,18 @@ type OutboundAiRouteTarget struct {
 	Position      int16
 	IntegrationID pgtype.UUID
 	Model         pgtype.Text
+	Weight        pgtype.Int2
+}
+
+type OutboundAiRouteTargetMinute struct {
+	RouteID        pgtype.UUID
+	Position       int16
+	Minute         pgtype.Timestamptz
+	Calls          int64
+	Errors         int64
+	TtfbCalls      int64
+	TtfbMsTotal    int64
+	CostMillicents int64
 }
 
 type OutboundAiSettlement struct {
@@ -9005,23 +9186,49 @@ type OutboundAiSettlement struct {
 	SettledAt     pgtype.Timestamptz
 }
 
+type OutboundAiTagLimit struct {
+	IntegrationID            pgtype.UUID
+	Tag                      string
+	DailyCostLimitMillicents int64
+	CreatedAt                pgtype.Timestamptz
+}
+
+type OutboundAiTagUsageDaily struct {
+	IntegrationID  pgtype.UUID
+	UsageDate      pgtype.Date
+	Tag            string
+	Requests       int64
+	ErrorRequests  int64
+	InputTokens    int64
+	OutputTokens   int64
+	CostMillicents int64
+	UpdatedAt      pgtype.Timestamptz
+}
+
 type OutboundAiUsageDaily struct {
-	IntegrationID        pgtype.UUID
-	UsageDate            pgtype.Date
-	Caller               string
-	Model                string
-	Requests             int64
-	ErrorRequests        int64
-	UsageUnknownRequests int64
-	InputTokens          int64
-	CachedInputTokens    int64
-	CacheWriteTokens     int64
-	OutputTokens         int64
-	UpdatedAt            pgtype.Timestamptz
-	CostMillicents       int64
-	Images               int64
-	AudioSeconds         int64
-	Characters           int64
+	IntegrationID              pgtype.UUID
+	UsageDate                  pgtype.Date
+	Caller                     string
+	Model                      string
+	Requests                   int64
+	ErrorRequests              int64
+	UsageUnknownRequests       int64
+	InputTokens                int64
+	CachedInputTokens          int64
+	CacheWriteTokens           int64
+	OutputTokens               int64
+	UpdatedAt                  pgtype.Timestamptz
+	CostMillicents             int64
+	Images                     int64
+	AudioSeconds               int64
+	Characters                 int64
+	VideoSeconds               int64
+	WebSearches                int64
+	FileSearches               int64
+	CodeSessionGb              int64
+	CachedRequests             int64
+	CacheSavedMillicents       int64
+	PromptCacheSavedMillicents int64
 }
 
 type OutboundAiUserUsageDaily struct {
@@ -9100,6 +9307,21 @@ type OutboundIntegration struct {
 	AiContentIban                  string
 	AiContentSecret                string
 	AiContentBlockedTerms          []string
+	AiLogExport                    bool
+	AiModerationAction             string
+	AiModerationKind               pgtype.Text
+	AiModerationIntegrationID      pgtype.UUID
+	AiModerationModel              pgtype.Text
+	AiModerationCategories         []string
+	AiModerationOnError            string
+	AiAllowUnmetered               bool
+	AiResponseEmail                string
+	AiResponsePaymentCard          string
+	AiResponseIban                 string
+	AiResponseSecret               string
+	AiResponseBlockedTerms         string
+	AiResponseModeration           string
+	AiAutoPromptCache              bool
 }
 
 type OutboundIntegrationApp struct {
@@ -11064,6 +11286,7 @@ type QueueBinding struct {
 	RetiredAt       pgtype.Timestamptz
 	DeploymentScope string
 	EnvironmentID   pgtype.UUID
+	OrgID           pgtype.UUID
 }
 
 type QueueBindingCanary struct {
@@ -11366,6 +11589,10 @@ type ReservedIpLease struct {
 	StatusDetail string
 	CreatedAt    pgtype.Timestamptz
 	UpdatedAt    pgtype.Timestamptz
+}
+
+type ResourceNamespace struct {
+	ID pgtype.UUID
 }
 
 type ResponseCachePurgeChangeLog struct {

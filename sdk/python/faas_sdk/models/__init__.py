@@ -882,10 +882,14 @@ from .create_object_storage_compute_binding_request_permission import CreateObje
 from .create_object_upload_route_request import CreateObjectUploadRouteRequest
 from .create_org_api_key_request import CreateOrgAPIKeyRequest
 from .create_org_api_key_request_scopes_item import CreateOrgAPIKeyRequestScopesItem
+from .create_org_object_bucket_body import CreateOrgObjectBucketBody
 from .create_org_request import CreateOrgRequest
+from .create_outbound_ai_access_token_request import CreateOutboundAIAccessTokenRequest
+from .create_outbound_ai_evaluation_request import CreateOutboundAIEvaluationRequest
 from .create_outbound_ai_replay_request import CreateOutboundAIReplayRequest
 from .create_outbound_ai_route_request import CreateOutboundAIRouteRequest
 from .create_outbound_ai_route_request_format import CreateOutboundAIRouteRequestFormat
+from .create_outbound_ai_route_request_strategy import CreateOutboundAIRouteRequestStrategy
 from .create_outbound_credential_key_request import CreateOutboundCredentialKeyRequest
 from .create_outbound_integration_request import CreateOutboundIntegrationRequest
 from .create_outbound_integration_request_ai_provider import CreateOutboundIntegrationRequestAiProvider
@@ -956,6 +960,7 @@ from .create_trigger_request_config import CreateTriggerRequestConfig
 from .create_udp_listener_request import CreateUDPListenerRequest
 from .create_udp_listener_request_public_port_type_0 import CreateUDPListenerRequestPublicPortType0
 from .create_workflow_callback_webhook_binding_request import CreateWorkflowCallbackWebhookBindingRequest
+from .created_outbound_ai_access_token import CreatedOutboundAIAccessToken
 from .cron_response import CronResponse
 from .cron_response_kind import CronResponseKind
 from .cron_response_suspended_reason import CronResponseSuspendedReason
@@ -1810,6 +1815,7 @@ from .execution_workflow_status_counts import ExecutionWorkflowStatusCounts
 from .execution_workflow_usage import ExecutionWorkflowUsage
 from .export_app_debug_requests_format import ExportAppDebugRequestsFormat
 from .export_focus_invoices_format import ExportFOCUSInvoicesFormat
+from .export_outbound_ai_tag_usage_format import ExportOutboundAITagUsageFormat
 from .export_outbound_integration_ai_user_usage_format import ExportOutboundIntegrationAIUserUsageFormat
 from .failure_rule import FailureRule
 from .failure_rule_action import FailureRuleAction
@@ -2241,6 +2247,9 @@ from .list_operator_runtime_config_revisions_response_200 import ListOperatorRun
 from .list_org_activity_actor_type import ListOrgActivityActorType
 from .list_org_activity_response import ListOrgActivityResponse
 from .list_org_api_keys_response import ListOrgAPIKeysResponse
+from .list_org_bucket_objects_response_200 import ListOrgBucketObjectsResponse200
+from .list_org_bucket_objects_response_200_items_item import ListOrgBucketObjectsResponse200ItemsItem
+from .list_org_project_environment_promotions_status import ListOrgProjectEnvironmentPromotionsStatus
 from .list_platform_tenant_self_operations_state import ListPlatformTenantSelfOperationsState
 from .list_platform_tenant_self_workflow_attention_dependency_status import (
     ListPlatformTenantSelfWorkflowAttentionDependencyStatus,
@@ -3554,11 +3563,20 @@ from .org_member_response import OrgMemberResponse
 from .org_member_response_role import OrgMemberResponseRole
 from .org_membership_export_response import OrgMembershipExportResponse
 from .org_membership_export_response_role import OrgMembershipExportResponseRole
+from .org_plan_response import OrgPlanResponse
+from .org_plan_response_plan import OrgPlanResponsePlan
+from .org_project_delete_deployment_scope_exclusion_response_200 import (
+    OrgProjectDeleteDeploymentScopeExclusionResponse200,
+)
+from .org_queue_usage_response import OrgQueueUsageResponse
+from .org_queue_usage_response_plan import OrgQueueUsageResponsePlan
 from .org_response import OrgResponse
 from .org_response_plan import OrgResponsePlan
 from .org_response_status import OrgResponseStatus
 from .org_with_role import OrgWithRole
 from .org_with_role_role import OrgWithRoleRole
+from .outbound_ai_access_token import OutboundAIAccessToken
+from .outbound_ai_access_token_list import OutboundAIAccessTokenList
 from .outbound_ai_budget_alert import OutboundAIBudgetAlert
 from .outbound_ai_budget_alert_budget import OutboundAIBudgetAlertBudget
 from .outbound_ai_budget_alert_list import OutboundAIBudgetAlertList
@@ -3575,6 +3593,18 @@ from .outbound_ai_content_policy_email import OutboundAIContentPolicyEmail
 from .outbound_ai_content_policy_iban import OutboundAIContentPolicyIban
 from .outbound_ai_content_policy_payment_card import OutboundAIContentPolicyPaymentCard
 from .outbound_ai_content_policy_secret import OutboundAIContentPolicySecret
+from .outbound_ai_evaluation import OutboundAIEvaluation
+from .outbound_ai_evaluation_item import OutboundAIEvaluationItem
+from .outbound_ai_evaluation_item_verdict import OutboundAIEvaluationItemVerdict
+from .outbound_ai_evaluation_list import OutboundAIEvaluationList
+from .outbound_ai_evaluation_state import OutboundAIEvaluationState
+from .outbound_ai_evaluation_target_stats import OutboundAIEvaluationTargetStats
+from .outbound_ai_evaluation_verdict_type_0 import OutboundAIEvaluationVerdictType0
+from .outbound_ai_moderation import OutboundAIModeration
+from .outbound_ai_moderation_action import OutboundAIModerationAction
+from .outbound_ai_moderation_categories_item import OutboundAIModerationCategoriesItem
+from .outbound_ai_moderation_kind import OutboundAIModerationKind
+from .outbound_ai_moderation_on_error import OutboundAIModerationOnError
 from .outbound_ai_price_catalog_response import OutboundAIPriceCatalogResponse
 from .outbound_ai_price_entry import OutboundAIPriceEntry
 from .outbound_ai_price_list_response import OutboundAIPriceListResponse
@@ -3587,10 +3617,30 @@ from .outbound_ai_request_content import OutboundAIRequestContent
 from .outbound_ai_request_log_entry import OutboundAIRequestLogEntry
 from .outbound_ai_request_log_entry_outcome import OutboundAIRequestLogEntryOutcome
 from .outbound_ai_request_log_list import OutboundAIRequestLogList
+from .outbound_ai_response_policy import OutboundAIResponsePolicy
+from .outbound_ai_response_policy_blocked_terms import OutboundAIResponsePolicyBlockedTerms
+from .outbound_ai_response_policy_email import OutboundAIResponsePolicyEmail
+from .outbound_ai_response_policy_iban import OutboundAIResponsePolicyIban
+from .outbound_ai_response_policy_moderation import OutboundAIResponsePolicyModeration
+from .outbound_ai_response_policy_payment_card import OutboundAIResponsePolicyPaymentCard
+from .outbound_ai_response_policy_secret import OutboundAIResponsePolicySecret
 from .outbound_ai_route import OutboundAIRoute
+from .outbound_ai_route_canary import OutboundAIRouteCanary
+from .outbound_ai_route_canary_reason_type_0 import OutboundAIRouteCanaryReasonType0
+from .outbound_ai_route_canary_state import OutboundAIRouteCanaryState
+from .outbound_ai_route_canary_status import OutboundAIRouteCanaryStatus
 from .outbound_ai_route_format import OutboundAIRouteFormat
 from .outbound_ai_route_list import OutboundAIRouteList
+from .outbound_ai_route_stats import OutboundAIRouteStats
+from .outbound_ai_route_stats_strategy import OutboundAIRouteStatsStrategy
+from .outbound_ai_route_strategy import OutboundAIRouteStrategy
 from .outbound_ai_route_target import OutboundAIRouteTarget
+from .outbound_ai_route_target_stats import OutboundAIRouteTargetStats
+from .outbound_ai_tag_limit import OutboundAITagLimit
+from .outbound_ai_tag_limits import OutboundAITagLimits
+from .outbound_ai_tag_usage_export_row import OutboundAITagUsageExportRow
+from .outbound_ai_tag_usage_item import OutboundAITagUsageItem
+from .outbound_ai_tag_usage_response import OutboundAITagUsageResponse
 from .outbound_ai_usage_item import OutboundAIUsageItem
 from .outbound_ai_usage_response import OutboundAIUsageResponse
 from .outbound_ai_user_usage_export_row import OutboundAIUserUsageExportRow
@@ -4133,7 +4183,10 @@ from .put_operation_webhook_binding_request import PutOperationWebhookBindingReq
 from .put_outbound_ai_policy_request import PutOutboundAIPolicyRequest
 from .put_outbound_ai_policy_request_ai_provider import PutOutboundAIPolicyRequestAiProvider
 from .put_outbound_ai_prices_request import PutOutboundAIPricesRequest
+from .put_outbound_ai_route_canary_request import PutOutboundAIRouteCanaryRequest
 from .put_outbound_ai_route_targets_request import PutOutboundAIRouteTargetsRequest
+from .put_outbound_ai_route_targets_request_strategy import PutOutboundAIRouteTargetsRequestStrategy
+from .put_outbound_ai_tag_limits_request import PutOutboundAITagLimitsRequest
 from .put_outbound_binding_ai_budget_request import PutOutboundBindingAIBudgetRequest
 from .put_outbound_binding_ai_guardrails_request import PutOutboundBindingAIGuardrailsRequest
 from .put_outbound_binding_daily_request_budget_request import PutOutboundBindingDailyRequestBudgetRequest
@@ -6258,6 +6311,7 @@ __all__ = (
     "CreateDeployTokenRequest",
     "CreateDevBridgeRequest",
     "CreateDevBridgeResponse",
+    "CreatedOutboundAIAccessToken",
     "CreateEdgeRuleListRequest",
     "CreateEdgeRuleListRequestKind",
     "CreateEdgeRuleRequest",
@@ -6316,10 +6370,14 @@ __all__ = (
     "CreateObjectUploadRouteRequest",
     "CreateOrgAPIKeyRequest",
     "CreateOrgAPIKeyRequestScopesItem",
+    "CreateOrgObjectBucketBody",
     "CreateOrgRequest",
+    "CreateOutboundAIAccessTokenRequest",
+    "CreateOutboundAIEvaluationRequest",
     "CreateOutboundAIReplayRequest",
     "CreateOutboundAIRouteRequest",
     "CreateOutboundAIRouteRequestFormat",
+    "CreateOutboundAIRouteRequestStrategy",
     "CreateOutboundCredentialKeyRequest",
     "CreateOutboundIntegrationRequest",
     "CreateOutboundIntegrationRequestAiProvider",
@@ -7194,6 +7252,7 @@ __all__ = (
     "ExecutionWorkflowUsage",
     "ExportAppDebugRequestsFormat",
     "ExportFOCUSInvoicesFormat",
+    "ExportOutboundAITagUsageFormat",
     "ExportOutboundIntegrationAIUserUsageFormat",
     "FailureRule",
     "FailureRuleAction",
@@ -7611,6 +7670,9 @@ __all__ = (
     "ListOrgActivityActorType",
     "ListOrgActivityResponse",
     "ListOrgAPIKeysResponse",
+    "ListOrgBucketObjectsResponse200",
+    "ListOrgBucketObjectsResponse200ItemsItem",
+    "ListOrgProjectEnvironmentPromotionsStatus",
     "ListPlatformTenantSelfOperationsState",
     "ListPlatformTenantSelfWorkflowAttentionDependencyStatus",
     "ListPlatformTenantSelfWorkflowAttentionPriority",
@@ -8762,11 +8824,18 @@ __all__ = (
     "OrgMembershipExportResponse",
     "OrgMembershipExportResponseRole",
     "OrgMeResponse",
+    "OrgPlanResponse",
+    "OrgPlanResponsePlan",
+    "OrgProjectDeleteDeploymentScopeExclusionResponse200",
+    "OrgQueueUsageResponse",
+    "OrgQueueUsageResponsePlan",
     "OrgResponse",
     "OrgResponsePlan",
     "OrgResponseStatus",
     "OrgWithRole",
     "OrgWithRoleRole",
+    "OutboundAIAccessToken",
+    "OutboundAIAccessTokenList",
     "OutboundAIBudgetAlert",
     "OutboundAIBudgetAlertBudget",
     "OutboundAIBudgetAlertList",
@@ -8781,6 +8850,18 @@ __all__ = (
     "OutboundAIContentPolicyIban",
     "OutboundAIContentPolicyPaymentCard",
     "OutboundAIContentPolicySecret",
+    "OutboundAIEvaluation",
+    "OutboundAIEvaluationItem",
+    "OutboundAIEvaluationItemVerdict",
+    "OutboundAIEvaluationList",
+    "OutboundAIEvaluationState",
+    "OutboundAIEvaluationTargetStats",
+    "OutboundAIEvaluationVerdictType0",
+    "OutboundAIModeration",
+    "OutboundAIModerationAction",
+    "OutboundAIModerationCategoriesItem",
+    "OutboundAIModerationKind",
+    "OutboundAIModerationOnError",
     "OutboundAIPriceCatalogResponse",
     "OutboundAIPriceEntry",
     "OutboundAIPriceListResponse",
@@ -8793,10 +8874,30 @@ __all__ = (
     "OutboundAIRequestLogEntry",
     "OutboundAIRequestLogEntryOutcome",
     "OutboundAIRequestLogList",
+    "OutboundAIResponsePolicy",
+    "OutboundAIResponsePolicyBlockedTerms",
+    "OutboundAIResponsePolicyEmail",
+    "OutboundAIResponsePolicyIban",
+    "OutboundAIResponsePolicyModeration",
+    "OutboundAIResponsePolicyPaymentCard",
+    "OutboundAIResponsePolicySecret",
     "OutboundAIRoute",
+    "OutboundAIRouteCanary",
+    "OutboundAIRouteCanaryReasonType0",
+    "OutboundAIRouteCanaryState",
+    "OutboundAIRouteCanaryStatus",
     "OutboundAIRouteFormat",
     "OutboundAIRouteList",
+    "OutboundAIRouteStats",
+    "OutboundAIRouteStatsStrategy",
+    "OutboundAIRouteStrategy",
     "OutboundAIRouteTarget",
+    "OutboundAIRouteTargetStats",
+    "OutboundAITagLimit",
+    "OutboundAITagLimits",
+    "OutboundAITagUsageExportRow",
+    "OutboundAITagUsageItem",
+    "OutboundAITagUsageResponse",
     "OutboundAIUsageItem",
     "OutboundAIUsageResponse",
     "OutboundAIUserUsageExportRow",
@@ -9293,7 +9394,10 @@ __all__ = (
     "PutOutboundAIPolicyRequest",
     "PutOutboundAIPolicyRequestAiProvider",
     "PutOutboundAIPricesRequest",
+    "PutOutboundAIRouteCanaryRequest",
     "PutOutboundAIRouteTargetsRequest",
+    "PutOutboundAIRouteTargetsRequestStrategy",
+    "PutOutboundAITagLimitsRequest",
     "PutOutboundBindingAIBudgetRequest",
     "PutOutboundBindingAIGuardrailsRequest",
     "PutOutboundBindingDailyRequestBudgetRequest",

@@ -88,6 +88,27 @@ type fixture struct {
 	sender  *fakeSender
 }
 
+// Billing lifecycle fixtures also exercise the real state store. Its organization
+// lookup needs these policy columns even when the account is personal.
+func addOrgBillingPolicyFixture(t *testing.T, pool *pgxpool.Pool) {
+	t.Helper()
+	if _, err := pool.Exec(t.Context(), `ALTER TABLE orgs
+ADD COLUMN resource_ownership_enabled boolean NOT NULL DEFAULT false,
+ADD COLUMN deleted_pending boolean NOT NULL DEFAULT false,
+ADD COLUMN created_at timestamptz NOT NULL DEFAULT now(),
+ADD COLUMN past_due_at timestamptz,
+ADD COLUMN last_quota_warning_at timestamptz,
+ADD COLUMN suspended_reason text,
+ADD COLUMN abuse_hold_at timestamptz,
+ADD COLUMN abuse_hold_reason text,
+ADD COLUMN billing_email text NOT NULL DEFAULT '',
+ADD COLUMN business_name text NOT NULL DEFAULT '',
+ADD COLUMN billing_address text NOT NULL DEFAULT '',
+ADD COLUMN tax_id text NOT NULL DEFAULT ''`); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
 	pool := pgtest.Open(t)
@@ -98,6 +119,7 @@ func newFixture(t *testing.T) *fixture {
 	if _, err := pool.Exec(t.Context(), up); err != nil {
 		t.Fatal("migration replay", err)
 	}
+	addOrgBillingPolicyFixture(t, pool)
 	env := testEnv()
 	service, err := NewFromEnv(pool, func(k string) string { return env[k] })
 	if err != nil {

@@ -180,7 +180,7 @@ func TestWorkflowRecoveryAutomaticBlockedNotifications(t *testing.T) {
 					}
 				}
 				if pg, ok := s.(*PgStore); ok {
-					s = NewPgStore(pg.pool)
+					s = NewPgStore(pg.pool.Pool)
 					worker = s.(WorkflowRecoveryAutomaticBlockedStore)
 				}
 				retained, err := s.(WorkflowRecoveryPolicyStore).GetWorkflowRecoveryPolicyReview(ctx, app.AccountID, app.ID, review.ID)

@@ -60,7 +60,7 @@ func (m *MemStore) CompleteEnvironmentGitOpsPullQueueDelivery(ctx context.Contex
 	}
 	acknowledgement := &EnvironmentWorkloadQueueServingAcknowledgement{Mode: "pull", DeploymentID: deploymentID,
 		InvocationID: invocationID}
-	return m.completeInvocationWithQueueServingAck(invocationID, attempt, result, acknowledgement)
+	return m.completeInvocationWithQueueServingAck(ctx, invocationID, attempt, result, acknowledgement)
 }
 
 func (m *MemStore) recordEnvironmentGitOpsQueueServingAcknowledgementLocked(

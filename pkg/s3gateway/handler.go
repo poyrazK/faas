@@ -283,6 +283,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeS3Error(w, http.StatusForbidden, "InvalidAccessKeyId", "The AWS access key ID you provided does not exist in Gregale.", r.URL.Path, requestID)
 		return
 	}
+	if credential.IssuerAccountID != "" && bucket.OrgID != "" {
+		fenced, release := state.WithOrgAccessFence(ctx, state.OrgAccessFence{OrgID: bucket.OrgID, AccountID: credential.IssuerAccountID, Revision: credential.IssuerAccessRevision})
+		defer release(nil)
+		ctx = fenced
+		r = r.WithContext(ctx)
+	}
 	secret, err := h.openSecret(credential.SecretSealed)
 	if err != nil || presigned && verifyPresignedSigV4(ctx, r, parsed, secret, h.region) != nil || !presigned && verifySigV4(ctx, r, parsed, secret, h.region) != nil {
 		writeS3Error(w, http.StatusForbidden, "SignatureDoesNotMatch", "The request signature we calculated does not match the signature you provided.", r.URL.Path, requestID)
@@ -645,7 +651,9 @@ func (h *Handler) admit(w http.ResponseWriter, r *http.Request, req requestConte
 func (h *Handler) writeAdmissionError(w http.ResponseWriter, r *http.Request, req requestContext, err error) bool {
 	if err != nil {
 		status, code, message := http.StatusServiceUnavailable, "ServiceUnavailable", "Object storage accounting is temporarily unavailable."
-		if errors.Is(err, state.ErrObjectBudget) {
+		if errors.Is(err, state.ErrOrgAccessRevoked) {
+			status, code, message = http.StatusForbidden, "AccessDenied", "The storage credential is no longer authorized."
+		} else if errors.Is(err, state.ErrObjectBudget) {
 			status, code, message = http.StatusPaymentRequired, "AccountProblem", "The object storage safety budget has been reached."
 		} else if errors.Is(err, state.ErrObjectCapacity) {
 			status, code, message = http.StatusConflict, "OperationAborted", "The object storage capacity reservation would be exceeded."
@@ -962,6 +970,9 @@ func (h *Handler) recordProviderRequest(w http.ResponseWriter, r *http.Request, 
 		return h.writeAdmissionError(w, r, req, metrics.ReserveObjectStorageGatewayRequest(r.Context(), req.bucket.ID, h.now().UTC(), h.registry.Accounting))
 	}
 	if err := h.requestMetrics.RecordObjectStorageProviderRequest(r.Context(), req.bucket.ID, h.now().UTC()); err != nil {
+		if errors.Is(err, state.ErrOrgAccessRevoked) {
+			return h.writeAdmissionError(w, r, req, err)
+		}
 		h.log.Warn("S3 provider request metric write failed", "request_id", req.requestID)
 		writeS3Error(w, http.StatusServiceUnavailable, "ServiceUnavailable", "Gregale could not record object storage usage.", r.URL.Path, req.requestID)
 		return false

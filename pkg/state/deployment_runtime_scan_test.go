@@ -18,10 +18,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/scanview"
 )
 
-type runtimeScanTestStore interface {
-	runtimeProducerInputTestStore
-	DeploymentRuntimeScanStore
-}
+type runtimeScanTestStore = contractTestStore
 
 func runtimeScanInputFixture(t *testing.T, inputs DeploymentRuntimeProducerInputs) DeploymentRuntimeScanInput {
 	t.Helper()

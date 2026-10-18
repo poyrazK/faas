@@ -99,7 +99,7 @@ func (e *Engine) refreshRuntimeConfigRolling(ctx context.Context, appID, wakeID 
 		}
 		app.Status = state.AppActive
 	}
-	account, err := e.store.AccountByID(ctx, app.AccountID)
+	account, err := state.AppResourceAccount(ctx, e.store, app)
 	if err != nil {
 		return CoordOutcome{}, fmt.Errorf("sched: runtime config restart: load account %s: %w", app.AccountID, err)
 	}

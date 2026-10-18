@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { once } from 'node:events'
-import { allowedRedirect, consentView, errorMessage, fragmentParams, handoffURL, secondFactors, tokenAAL } from '../ui/app.js'
+import { allowedRedirect, consentView, deviceName, errorMessage, fragmentParams, handoffURL, qrImage, secondFactors, tokenAAL } from '../ui/app.js'
 import { createServer } from '../server.mjs'
 
 const site = 'https://shop.example.com'
@@ -39,7 +39,7 @@ test('serves the hosted pages with a strict policy', async t => {
   await once(server, 'listening')
   t.after(() => server.close())
   const base = `http://127.0.0.1:${server.address().port}`
-  for (const path of ['/ui', '/ui/sign-in', '/ui/sign-up', '/ui/forgot-password', '/ui/reset-password', '/ui/invitation', '/ui/phone', '/ui/sso']) {
+  for (const path of ['/ui', '/ui/sign-in', '/ui/sign-up', '/ui/forgot-password', '/ui/reset-password', '/ui/invitation', '/ui/phone', '/ui/sso', '/ui/account']) {
     const response = await fetch(base + path)
     assert.equal(response.status, 200, path)
     assert.match(response.headers.get('content-type'), /^text\/html/)
@@ -97,7 +97,7 @@ test('branding and CAPTCHA widen the page policy by exact origins only', async t
   t.after(() => server.close())
   const base = `http://127.0.0.1:${server.address().port}`
   const page = await fetch(`${base}/ui/sign-in`)
-  assert.equal(page.headers.get('content-security-policy'), "default-src 'none'; script-src 'self' https://challenges.cloudflare.com; style-src 'self' https://challenges.cloudflare.com; connect-src 'self' https://challenges.cloudflare.com; img-src 'self' https://cdn.example.com; frame-src https://challenges.cloudflare.com; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
+  assert.equal(page.headers.get('content-security-policy'), "default-src 'none'; script-src 'self' https://challenges.cloudflare.com; style-src 'self' https://challenges.cloudflare.com; connect-src 'self' https://challenges.cloudflare.com; img-src 'self' data: https://cdn.example.com; frame-src https://challenges.cloudflare.com; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
   assert.deepEqual(await (await fetch(`${base}/ui/config.json`)).json(), { site_url: site, redirect_urls: redirects, app: 'Shop', logo_url: 'https://cdn.example.com/logo.svg',
     captcha: { provider: 'turnstile', site_key: '1x00000000000000000000AA', script: 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit' } })
   assert.equal(await (await fetch(`${base}/ui/brand.css`)).text(), ':root { --accent: #4f46e5; }\n')
@@ -135,4 +135,26 @@ test('the consent page names the client, its permissions, its resource and where
   assert.equal(consentView({ client: { name: '' } }).name, 'An application')
   assert.equal(consentView({ client: { name: 'x'.repeat(500) } }).name.length, 100)
   assert.equal(allowedRedirect('https://shop-auth.gregale.app/ui/consent?authorization_id=a', 'https://shop.example.com', ['https://shop-auth.gregale.app/ui/consent']), 'https://shop-auth.gregale.app/ui/consent?authorization_id=a')
+})
+
+test('names a session device from its user agent', () => {
+  for (const [agent, name] of [
+    ['Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36', 'Chrome on macOS'],
+    ['Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1', 'Safari on iPhone'],
+    ['Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/141.0 Mobile/15E148 Safari/604.1', 'Chrome on iPhone'],
+    ['Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36 Edg/141.0.0.0', 'Edge on Windows'],
+    ['Mozilla/5.0 (Linux; Android 15) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0 Mobile Safari/537.36', 'Chrome on Android'],
+    ['Mozilla/5.0 (X11; Linux x86_64; rv:144.0) Gecko/20100101 Firefox/144.0', 'Firefox on Linux'],
+    ['okhttp/4.12.0', 'An app or script'],
+    ['', 'Unknown device'],
+    [null, 'Unknown device'],
+  ]) assert.equal(deviceName(agent), name, agent)
+})
+
+test('shows the SVG QR code GoTrue returns as an image URL', () => {
+  const svg = '<?xml version="1.0"?>\n<svg xmlns="http://www.w3.org/2000/svg"><rect fill="#000"/></svg>'
+  const url = qrImage(svg)
+  assert.ok(url.startsWith('data:image/svg+xml;charset=utf-8,%3C%3Fxml'))
+  assert.equal(decodeURIComponent(url.slice(url.indexOf(',') + 1)), svg)
+  assert.equal(qrImage('data:image/png;base64,AAAA'), 'data:image/png;base64,AAAA')
 })

@@ -41,6 +41,9 @@ func outboundOfferResponse(offer state.OutboundIntegrationOffer) api.OutboundInt
 		AIUserDailyCostLimitMillicents: copyOutboundDailyLimit(offer.AIUserDailyCostLimit),
 		AIRequestLogContent:            offer.AIRequestLogContent,
 		AIContentPolicy:                offer.AIContentPolicy.Normalized(),
+		AILogExport:                    offer.AILogExport,
+		AIAllowUnmetered:               offer.AIAllowUnmetered,
+		AIAutoPromptCache:              offer.AIAutoPromptCache,
 	}
 }
 

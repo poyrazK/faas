@@ -27,6 +27,19 @@ Customer traffic is not affected.
   `faas_standby`, the `pg_hba` replication line for the standby's address,
   and `max_slot_wal_keep_size` (default 16GB). nftables admits the standby's
   address on 5432.
+- Replication runs over TLS that the standby verifies, so it is encrypted
+  and authenticated whatever network carries it (a `static` overlay has no
+  encryption of its own):
+  - the primary issues a self-signed certificate in `/etc/postgresql/faas-tls/`
+    for the names the standby dials (its private address and inventory name;
+    override with `faas_postgres_replication_tls_names`) and serves it from
+    `conf.d/80-faas-replication-tls.conf`;
+  - `pg_hba` admits the replicator with `hostssl` only;
+  - the standby pins a copy at `/var/lib/postgresql/faas-primary-replication.crt`
+    and connects with `sslmode=verify-full`.
+
+  The primary reissues the certificate when its names change or within 30
+  days of its 10-year expiry; the standby then needs a converge to pin it.
 - `make bootstrap-postgres-standby` seeds the standby with `pg_basebackup`
   and starts it as a hot standby. `conf.d/90-faas-standby.conf` holds
   `primary_conninfo`, the slot, and the primary's `max_connections` and
@@ -65,7 +78,19 @@ journalctl -u 'postgresql@*-main' --since '-30m' --no-pager | tail -40
 - the standby is down, so start it;
 - the overlay link is down;
 - the standby's disk is full;
-- the password changed, so reconverge both hosts.
+- the password changed, so reconverge both hosts;
+- the standby's PostgreSQL log shows `certificate verify failed`: the
+  primary reissued its certificate and the standby pins the old one, so run
+  `make bootstrap-postgres-standby` to pin the new one;
+- the log shows `does not match host name`: the standby dials a name that
+  is not on the certificate. Add it to `faas_postgres_replication_tls_names`
+  on the control-plane host, converge the control plane, then the standby;
+- the log shows `no pg_hba.conf entry ... no encryption`: something
+  connected without TLS, which the primary refuses. Check that the standby's
+  `conf.d/90-faas-standby.conf` has `sslmode=verify-full`.
+
+To rotate the certificate by hand, delete `/etc/postgresql/faas-tls/server.san`
+on the primary, converge the control plane, then the standby.
 
 It catches up from the slot by itself. Rerunning
 `make bootstrap-postgres-standby` is safe: it doesn't reseed a seeded

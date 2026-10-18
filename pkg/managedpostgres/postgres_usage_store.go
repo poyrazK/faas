@@ -25,7 +25,7 @@ func (s *PostgresStore) ListUsageDatabases(ctx context.Context, after UsageDatab
 		params.AfterID = id
 		params.AfterUpdatedAt = pgtype.Timestamptz{Time: after.UpdatedAt, Valid: true}
 	}
-	rows, err := sqlc.New().ListManagedPostgresUsageResources(ctx, s.pool, params)
+	rows, err := sqlc.New().ListManagedPostgresUsageResources(ctx, s.catalog, params)
 	if err != nil {
 		return nil, mapPostgresError(err)
 	}
@@ -49,7 +49,7 @@ func (s *PostgresStore) UsageProgress(ctx context.Context, accountID, databaseID
 	if err != nil {
 		return UsageProgress{}, err
 	}
-	row, err := sqlc.New().GetManagedPostgresUsageProgress(ctx, s.pool, sqlc.GetManagedPostgresUsageProgressParams{
+	row, err := sqlc.New().GetManagedPostgresUsageProgress(ctx, s.catalog, sqlc.GetManagedPostgresUsageProgressParams{
 		AccountID: account, DatabaseID: database, WindowSeconds: int64(window / time.Second),
 	})
 	if err != nil {
@@ -92,7 +92,7 @@ func (s *PostgresStore) RecordUsage(ctx context.Context, records []UsageRecord) 
 	if err != nil {
 		return err
 	}
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := s.catalog.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return mapPostgresError(err)
 	}
@@ -175,7 +175,7 @@ func (s *PostgresStore) RecordSharedUsage(ctx context.Context, accountID, databa
 	if err != nil {
 		return err
 	}
-	count, err := sqlc.New().RecordManagedPostgresSharedUsage(ctx, s.pool, sqlc.RecordManagedPostgresSharedUsageParams{
+	count, err := sqlc.New().RecordManagedPostgresSharedUsage(ctx, s.catalog, sqlc.RecordManagedPostgresSharedUsageParams{
 		AccountID: account, DatabaseID: database, SourceID: source, WindowSeconds: int64(window / time.Second),
 	})
 	if err != nil {
@@ -194,25 +194,20 @@ func (s *PostgresStore) UsageSnapshot(ctx context.Context, accountID string, per
 	}
 	periodStart = monthStart(periodStart)
 	periodEnd := monthStart(periodStart.AddDate(0, 1, 0))
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	tx, err := s.catalog.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
 	if err != nil {
 		return UsageSnapshot{}, mapPostgresError(err)
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	snapshot := UsageSnapshot{PeriodStart: periodStart}
 	// Resource deletion must not erase consumption already incurred this month.
-	err = tx.QueryRow(ctx, `SELECT
- COALESCE(sum(quantity) FILTER (WHERE meter = 'compute_unit_seconds'), 0)::bigint,
- COALESCE(sum(quantity) FILTER (WHERE meter = 'storage_byte_seconds'), 0)::bigint,
- COALESCE(sum(quantity) FILTER (WHERE meter = 'history_byte_seconds'), 0)::bigint,
- COALESCE(sum(quantity) FILTER (WHERE meter = 'egress_bytes'), 0)::bigint,
- COALESCE(sum(cost_millicents), 0)::bigint
- FROM managed_postgres_usage WHERE account_id = $1 AND window_from >= $2 AND window_from < $3`,
-		account, periodStart, periodEnd).Scan(&snapshot.ComputeUnitSeconds, &snapshot.StorageByteSeconds,
-		&snapshot.HistoryByteSeconds, &snapshot.EgressBytes, &snapshot.CostMillicents)
+
+	totals, err := sqlc.New().ManagedPostgresUsageForSubject(ctx, tx, sqlc.ManagedPostgresUsageForSubjectParams{SubjectID: account, PeriodStart: databaseNullableTime(periodStart), PeriodEnd: databaseNullableTime(periodEnd)})
 	if err != nil {
 		return UsageSnapshot{}, mapPostgresError(err)
 	}
+	snapshot.ComputeUnitSeconds, snapshot.StorageByteSeconds = totals.ComputeUnitSeconds, totals.StorageByteSeconds
+	snapshot.HistoryByteSeconds, snapshot.EgressBytes, snapshot.CostMillicents = totals.HistoryByteSeconds, totals.EgressBytes, totals.CostMillicents
 	rows, err := sqlc.New().ListManagedPostgresAccountingCoverage(ctx, tx, sqlc.ListManagedPostgresAccountingCoverageParams{AccountID: account})
 	if err != nil {
 		return UsageSnapshot{}, mapPostgresError(err)

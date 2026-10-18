@@ -38,7 +38,7 @@ func (s *PgStore) dispatchMultipartPart(ctx context.Context, b ObjectBucket, id 
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	q := sqlc.New()
-	if _, err = q.ObjectUsageLockAccount(ctx, tx, mustPgUUID(b.AccountID)); err != nil {
+	if _, err = lockObjectUsageScope(ctx, tx, mustPgUUID(b.AccountID), mustPgUUID(b.ID)); err != nil {
 		return ObjectBucketMutation{}, mapErr(err)
 	}
 	if _, err = lockObjectMutationBucket(ctx, tx, b); err != nil {
@@ -66,7 +66,7 @@ func (s *PgStore) FinishObjectMultipartPartMutation(ctx context.Context, r Objec
 	}
 	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	q := sqlc.New()
-	if _, err = q.ObjectUsageLockAccount(ctx, tx, mustPgUUID(b.AccountID)); err != nil {
+	if _, err = lockObjectUsageScope(ctx, tx, mustPgUUID(b.AccountID), mustPgUUID(b.ID)); err != nil {
 		return mapErr(err)
 	}
 	if _, err = lockObjectMutationBucket(ctx, tx, b); err != nil {

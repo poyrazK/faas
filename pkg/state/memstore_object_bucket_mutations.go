@@ -18,6 +18,11 @@ func (m *MemStore) BeginObjectBucketMutation(ctx context.Context, b ObjectBucket
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectBucketMutation
+		return zero0, err
+	}
+
 	if !sameObjectMutationBucket(b, m.objectBuckets[b.ID]) {
 		return ObjectBucketMutation{}, ErrConflict
 	}
@@ -41,6 +46,10 @@ func (m *MemStore) FinishObjectBucketMutation(ctx context.Context, receipt Objec
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return err
+	}
+
 	actual, exists := m.objectMutations[receipt.ID]
 	if !exists || actual.UploadID != "" || actual.MultipartUploadID != "" || actual.MultipartPartWriterID != "" || actual.Kind != receipt.Kind || !sameObjectMutationBucket(receipt.Bucket, actual.Bucket) || !sameObjectMutationBucket(receipt.Bucket, m.objectBuckets[receipt.Bucket.ID]) {
 		return ErrConflict
@@ -111,6 +120,11 @@ func (m *MemStore) AcquireObjectBucketWriteFence(ctx context.Context, b ObjectBu
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectBucketWriteFence
+		return zero0, err
+	}
+
 	if !sameObjectMutationBucket(b, m.objectBuckets[b.ID]) {
 		return ObjectBucketWriteFence{}, ErrConflict
 	}
@@ -135,6 +149,11 @@ func (m *MemStore) ReadObjectBucketWriteFence(ctx context.Context, b ObjectBucke
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectBucketWriteFence
+		return zero0, err
+	}
+
 	return m.objectWriteFenceLocked(b, token)
 }
 
@@ -147,6 +166,10 @@ func (m *MemStore) ReleaseObjectBucketWriteFence(ctx context.Context, b ObjectBu
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return err
+	}
+
 	if _, err := m.objectWriteFenceLocked(b, token); err != nil {
 		return err
 	}

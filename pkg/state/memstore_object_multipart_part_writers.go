@@ -49,6 +49,11 @@ func (m *MemStore) dispatchMultipartPart(ctx context.Context, b ObjectBucket, id
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectBucketMutation
+		return zero0, err
+	}
+
 	key := multipartPartWriterKey{id, part, token}
 	d, ok := m.objectMultipartPartWriters[key]
 	u := m.objectMultipartUploads[id]
@@ -86,6 +91,10 @@ func (m *MemStore) FinishObjectMultipartPartMutation(ctx context.Context, r Obje
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return err
+	}
+
 	actual, ok := m.objectMutations[r.ID]
 	if !ok || r.ID == "" || r.MultipartPartWriterID != r.ID || r.UploadID != "" || r.MultipartUploadID != "" || actual.MultipartPartWriterID != r.ID || r.Kind != ObjectBucketMutationRequest || !sameObjectMutationBucket(r.Bucket, actual.Bucket) || !sameObjectMutationBucket(r.Bucket, m.objectBuckets[r.Bucket.ID]) {
 		return ErrConflict
@@ -113,6 +122,11 @@ func (m *MemStore) ReadObjectMultipartPartCopyIntent(ctx context.Context, r Obje
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectMultipartPartCopyIntent
+		return zero0, err
+	}
+
 	if r.ID == "" || r.ID != r.MultipartPartWriterID || r.Kind != ObjectBucketMutationRequest || r.UploadID != "" || r.MultipartUploadID != "" || !sameObjectMutationBucket(r.Bucket, m.objectBuckets[r.Bucket.ID]) {
 		return ObjectMultipartPartCopyIntent{}, ErrConflict
 	}

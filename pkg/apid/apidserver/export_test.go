@@ -51,6 +51,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/profiling"
 	"github.com/onebox-faas/faas/pkg/promql"
+	"github.com/onebox-faas/faas/pkg/realtime"
 	objruntime "github.com/onebox-faas/faas/pkg/rehearsalobj/runtime"
 	pgruntime "github.com/onebox-faas/faas/pkg/rehearsalpg/runtime"
 	"github.com/onebox-faas/faas/pkg/session"
@@ -1499,4 +1500,17 @@ func (s *server) RehearsalWorkerFaultsEnabled() *bool   { return &s.rehearsalWor
 
 func (s *server) StartInternalCIWorker(ctx context.Context, log *slog.Logger) func() {
 	return s.startInternalCIWorker(ctx, log)
+}
+
+// ConfigureLiveQueriesForTest wires live queries without managed Postgres:
+// the rollout gate applies, and admitted accounts meet
+// live_queries_unavailable.
+func (s *server) ConfigureLiveQueriesForTest(getenv func(string) string) error {
+	return s.configureLiveQueries(nil, getenv)
+}
+
+// LiveRoutesForTest lists an app's live routes; accounts outside the rollout
+// get none before the store is read.
+func (s *server) LiveRoutesForTest(ctx context.Context, accountID, appID string) ([]realtime.LiveRoute, error) {
+	return s.liveRoutes(ctx, nil, accountID, appID)
 }

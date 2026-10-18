@@ -10,10 +10,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-type reviewedStore interface {
-	state.Store
-	state.ReleaseReviewStore
-}
+type reviewedStore = contractTestStore
 
 func TestMemReleaseReview(t *testing.T) { testReleaseReview(t, state.NewMemStore()) }
 

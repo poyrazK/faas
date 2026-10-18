@@ -270,17 +270,30 @@ func authAdminRequest(origin, key, path string, body, out any) error {
 
 // authAdminCall sends one /admin/v1 request; body is nil for a GET.
 func authAdminCall(method, origin, key, path string, body, out any) error {
+	status, raw, err := authAdminDo(method, origin, key, path, body)
+	if err != nil {
+		return err
+	}
+	if status != http.StatusOK && status != http.StatusCreated {
+		return authAdminError(status, raw)
+	}
+	return json.Unmarshal(raw, out)
+}
+
+// authAdminDo returns the Auth app's status and body for one /admin/v1
+// request, so a caller can read the details of a refusal.
+func authAdminDo(method, origin, key, path string, body any) (int, []byte, error) {
 	var reader io.Reader
 	if body != nil {
 		payload, err := json.Marshal(body)
 		if err != nil {
-			return err
+			return 0, nil, err
 		}
 		reader = bytes.NewReader(payload)
 	}
 	request, err := http.NewRequest(method, origin+path, reader)
 	if err != nil {
-		return err
+		return 0, nil, err
 	}
 	request.Header.Set("Authorization", "Bearer "+key)
 	if body != nil {
@@ -288,24 +301,25 @@ func authAdminCall(method, origin, key, path string, body, out any) error {
 	}
 	response, err := authAdminHTTPClient.Do(request)
 	if err != nil {
-		return fmt.Errorf("reach the Auth app: %w", err)
+		return 0, nil, fmt.Errorf("reach the Auth app: %w", err)
 	}
 	defer func() { _ = response.Body.Close() }()
 	raw, err := io.ReadAll(io.LimitReader(response.Body, api.AuthAdminBodyBytes))
 	if err != nil {
-		return fmt.Errorf("read the Auth app response: %w", err)
+		return 0, nil, fmt.Errorf("read the Auth app response: %w", err)
 	}
-	if response.StatusCode != http.StatusOK && response.StatusCode != http.StatusCreated {
-		var problem struct {
-			Code string `json:"code"`
-		}
-		_ = json.Unmarshal(raw, &problem)
-		if problem.Code == "" {
-			problem.Code = http.StatusText(response.StatusCode)
-		}
-		return fmt.Errorf("the Auth app answered %d %s", response.StatusCode, problem.Code)
+	return response.StatusCode, raw, nil
+}
+
+func authAdminError(status int, raw []byte) error {
+	var problem struct {
+		Code string `json:"code"`
 	}
-	return json.Unmarshal(raw, out)
+	_ = json.Unmarshal(raw, &problem)
+	if problem.Code == "" {
+		problem.Code = http.StatusText(status)
+	}
+	return fmt.Errorf("the Auth app answered %d %s", status, problem.Code)
 }
 
 func renderAuthImport(result authImportResult) int {
@@ -465,12 +479,12 @@ func cmdAuthActivity(args []string) int {
 	fs := newFlagSet("auth activity", flag.ContinueOnError)
 	user := fs.String("user", "", "only this user's activity (user ID)")
 	search := fs.String("search", "", "an event such as login, or part of an email address")
-	limit := fs.Int("limit", 50, "entries to show (1-100)")
+	limit := fs.Int("limit", 50, fmt.Sprintf("entries to show (1-%d)", api.AuthAdminPageSize))
 	keyStdin := fs.Bool("admin-key-stdin", false, "read the admin key from stdin (prompted on a terminal)")
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
-	if fs.NArg() != 1 || !api.ValidAppSlug(fs.Arg(0)) || *limit < 1 || *limit > 100 || len(*search) > 200 {
+	if fs.NArg() != 1 || !api.ValidAppSlug(fs.Arg(0)) || *limit < 1 || *limit > api.AuthAdminPageSize || len(*search) > 200 {
 		PrintUsage(os.Stderr, "usage: gregale auth activity NAME [--user ID] [--search TEXT] [--limit N] [--admin-key-stdin]", "auth")
 		return 1
 	}

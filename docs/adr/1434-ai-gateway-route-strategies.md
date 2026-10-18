@@ -1,0 +1,32 @@
+# ADR-1434 · AI gateway phase 12: weighted, latency and cost route strategies
+
+- **Status:** accepted
+- **Date:** 2026-10-17
+- **Relates to:** ADR-990 (fallback routes), ADR-991 (OpenAI-format routes), ADR-1340 (model canaries)
+- **Decision:**
+  - **A route has a strategy** that picks the target each call tries first. The other targets follow as fallbacks, as before.
+    - `ordered` (the default): route order, as before this ADR.
+    - `weighted`: each target has a weight from 0 to 100. The first target is drawn by weight, then the rest follow in route order. A call naming `X-Gregale-AI-Session`, or else `X-Gregale-AI-User`, always draws the same target, so a conversation stays on one model. A weight of 0 makes a target a fallback only.
+    - `latency`: the healthy target with the lowest mean time to first byte goes first.
+    - `cost`: the healthy target with the lowest mean cost per successful call goes first. With `max_ttfb_ms`, targets whose mean time to first byte is above it come after those within it.
+  - **Health and ordering for `latency` and `cost`** use each target's settled attempts over the last `OutboundAIRouteStatsWindowMinutes`.
+    - A target with fewer than `OutboundAIRouteStatsMinCalls` attempts has no data. One whose error rate is above `OutboundAIRouteUnhealthyErrorPercent` is unhealthy.
+    - The order is: targets with data and in health, best first; then targets without data, in route order; then unhealthy targets, in route order.
+    - `OutboundAIRouteExplorePercent` of calls put a target without data first, at random, so every target keeps current numbers.
+  - **Statistics.** Settled route attempts add to the per-minute target rows (ADR-1340) when the route's strategy is `latency` or `cost`, as well as during a canary. The route query that outboundd already runs for each call reads the window's sums for those routes, so routing adds no round trip.
+  - **Canaries win their share.** A route with an active canary sends the canary's share to the canary target first; the strategy orders the remaining targets.
+  - **Visibility.** `GET /v1/outbound/ai-routes/{route}/stats` returns each target's attempts, errors, mean time to first byte and mean cost over the window. `outbound_ai_route_calls_total` counts calls by strategy and by how the first target was picked.
+- **Why:**
+  - Routes were fallback lists: every call went to the first target until it failed.
+  - Customers who spread load across providers, or want the fastest or cheapest model that is up, had to build that in their app.
+  - Weighted, latency and cost routing are standard in other AI gateways. The canary work already collects per-target numbers, so the gateway can decide with data it has.
+- **Consequences:**
+  - **Cost means measured cost.** `cost` compares what each target's calls actually cost over the window, including tool fees and caching, not list prices. A target with little traffic is judged on few calls, and exploration keeps sending it some.
+  - **Cold start.** A route with no data routes in route order, apart from exploration, until targets reach `OutboundAIRouteStatsMinCalls`.
+  - **Replacing targets resets the numbers.** Positions name targets, so new targets delete the route's per-minute rows, as they already ended its canary. Starting, stopping or promoting a canary also deletes them (ADR-1340), so a latency or cost route routes from fresh counts afterwards.
+  - **A canary still compares with the first target.** On a latency or cost route that target may serve few calls; the canary waits for its own `min_calls` as before. A rolled-back canary's counts stop at its decision, although a latency or cost route keeps writing rows.
+  - **New columns:** `outbound_ai_routes.strategy` and `max_ttfb_ms`, and `outbound_ai_route_targets.weight`.
+- **Rejected alternatives:**
+  - **Cost by list price.** Prompt sizes, cache hits and tool calls differ per model; measured cost per call reflects the route's own traffic. A list-price order also needed every target's price list resolved per call.
+  - **A separate statistics cache in outboundd.** The route is already read per call; reading its sums in that query keeps one source and adds no round trip.
+  - **Latency by full response time.** Generation length dominates it; time to first byte is what users feel first and what canaries already compare.

@@ -9,9 +9,12 @@ import (
 
 var _ EnvironmentGitOpsControlStore = (*MemStore)(nil)
 
-func (m *MemStore) UpdateEnvironmentGitSource(_ context.Context, accountID, sourceID string, update EnvironmentGitSourceUpdate) (EnvironmentGitSource, error) {
+func (m *MemStore) UpdateEnvironmentGitSource(ctx context.Context, accountID, sourceID string, update EnvironmentGitSourceUpdate) (EnvironmentGitSource, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return EnvironmentGitSource{}, err
+	}
 	memory, ok := m.environmentGitOps[sourceID]
 	if !ok || memory.source.AccountID != accountID {
 		return EnvironmentGitSource{}, ErrNotFound
@@ -36,12 +39,15 @@ func (m *MemStore) UpdateEnvironmentGitSource(_ context.Context, accountID, sour
 	return memory.source, nil
 }
 
-func (m *MemStore) SetEnvironmentGitOpsOverride(_ context.Context, accountID, sourceID string, request EnvironmentGitOpsOverrideRequest) error {
+func (m *MemStore) SetEnvironmentGitOpsOverride(ctx context.Context, accountID, sourceID string, request EnvironmentGitOpsOverrideRequest) error {
 	if err := validateGitOpsOverride(request, time.Now()); err != nil {
 		return err
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return err
+	}
 	memory, ok := m.environmentGitOps[sourceID]
 	if !ok || memory.source.AccountID != accountID {
 		return ErrNotFound
