@@ -230,7 +230,7 @@ func TestAuthTemplateRuntimeBounds(t *testing.T) {
 		"bodyBytes": api.AuthMaxRequestBytes, "authzBodyBytes": api.AuthAuthzBodyBytes, "authzConfigBytes": api.AuthAuthzConfigBytes, "redirectURLs": api.AuthMaxRedirectURLs,
 		"migrationStatementMs": api.AuthMigrationStatementTimeoutMS, "invitationSeconds": api.AuthInvitationTTLSeconds,
 		"emailTimeoutMs": api.AuthEmailTimeoutMs, "hookBodyBytes": api.AuthHookBodyBytes, "storageURLSeconds": api.AuthStorageURLSeconds,
-		"adminBodyBytes": api.AuthAdminBodyBytes, "importBatch": api.AuthImportBatch, "adminPageSize": api.AuthAdminPageSize, "signingKeys": api.AuthMaxSigningKeys,
+		"adminBodyBytes": api.AuthAdminBodyBytes, "importBatch": api.AuthImportBatch, "adminPageSize": api.AuthAdminPageSize, "reauthenticationSeconds": api.AuthReauthenticationSeconds, "signingKeys": api.AuthMaxSigningKeys,
 		"emailGrantSeconds": api.ProductControlEmailGrantSeconds,
 		"teamMembers":       api.ProductControlTeamMaxMembers, "teamInvitations": api.ProductControlTeamMaxInvitations,
 		"teamEmailBytes": api.ProductControlTeamEmailMaxBytes, "teamContextBytes": api.ProductControlTeamContextMaxBytes,
@@ -544,8 +544,8 @@ func TestAuthConfigAnonymousUsersAndLinking(t *testing.T) {
 	oldErr := osStderr
 	osStderr = &stderr
 	t.Cleanup(func() { osStderr = oldErr })
-	if code := cmdAuth([]string{"config", "shop-auth", "--anonymous", "on", "--anonymous-retention", "30", "--identity-linking", "on"}); code != 0 ||
-		sealed["GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED"] != "true" || sealed["AUTH_ANONYMOUS_RETENTION_DAYS"] != "30" || sealed["AUTH_IDENTITY_LINKING"] != "1" {
+	if code := cmdAuth([]string{"config", "shop-auth", "--anonymous", "on", "--anonymous-retention", "30", "--identity-linking", "on", "--self-deletion", "on"}); code != 0 ||
+		sealed["GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED"] != "true" || sealed["AUTH_ANONYMOUS_RETENTION_DAYS"] != "30" || sealed["AUTH_IDENTITY_LINKING"] != "1" || sealed["AUTH_SELF_DELETION"] != "1" {
 		t.Fatalf("config = %d, sealed %v", code, sortedKeys(sealed))
 	}
 	if !strings.Contains(stderr.String(), "turn on CAPTCHA") {

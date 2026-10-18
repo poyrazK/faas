@@ -11357,6 +11357,9 @@ const (
 	AuthAdminBodyBytes = 1 << 20
 	AuthImportBatch    = 100
 	AuthAdminPageSize  = 100
+	// AuthReauthenticationSeconds is how recent a sign-in must be for a
+	// user to delete their own account.
+	AuthReauthenticationSeconds = 600
 	// AuthImportFileMaxBytes bounds a `gregale auth import` file.
 	AuthImportFileMaxBytes = 256 << 20
 	// AuthMaxSigningKeys bounds an Auth app's ES256 keys: the signer, a

@@ -113,6 +113,35 @@ const lastOwnerSQL = `SELECT o.slug FROM gregale_auth.memberships m JOIN gregale
 const soleMemberSQL = `SELECT m.org_id FROM gregale_auth.memberships m
   WHERE m.user_id = $1 AND NOT EXISTS (SELECT 1 FROM gregale_auth.memberships x WHERE x.org_id = m.org_id AND x.user_id <> $1)`
 
+// deleteUser removes a user through GoTrue's admin API and returns
+// [status, body]. The last owner of an organization with other members is
+// refused; organizations only this user belonged to would be unreachable,
+// so they go too.
+export async function deleteUser({ pool, admin }, user) {
+  const { rows: blocked } = await pool.query(lastOwnerSQL, [user])
+  if (blocked.length) return [409, { status: 409, code: 'last_owner', organizations: blocked.map(r => r.slug) }]
+  const sole = (await pool.query(soleMemberSQL, [user])).rows.map(r => r.org_id)
+  const response = await admin('DELETE', `/admin/users/${user}`)
+  if (response.status !== 200) throw goTrueError(response)
+  const { rowCount } = sole.length
+    ? await pool.query('DELETE FROM gregale_auth.organizations o WHERE o.id = ANY($1::uuid[]) AND NOT EXISTS (SELECT 1 FROM gregale_auth.memberships x WHERE x.org_id = o.id)', [sole])
+    : { rowCount: 0 }
+  return [200, { deleted: true, organizations_deleted: rowCount }]
+}
+
+// deleteOwnAccount lets a signed-in person delete themselves (AUTH_SELF_DELETION).
+// Their session must be recent and, if they have a second factor, have
+// passed it; an anonymous user cannot sign in again, so only holds the
+// session. claims come from a token GoTrue verified.
+export async function deleteOwnAccount({ pool, admin }, claims) {
+  const { rows: [session] } = await pool.query(`SELECT u.is_anonymous OR (s.created_at > now() - make_interval(secs => $3)
+      AND (s.aal = 'aal2' OR NOT EXISTS (SELECT 1 FROM auth.mfa_factors f WHERE f.user_id = u.id AND f.status = 'verified' AND f.factor_type::text <> 'recovery_code'))) AS allowed
+    FROM auth.sessions s JOIN auth.users u ON u.id = s.user_id WHERE s.id = $2 AND s.user_id = $1`, [claims.sub, claims.session_id, limits.reauthenticationSeconds])
+  if (!session) throw new HTTPError(401, 'not_authenticated')
+  if (!session.allowed) throw new HTTPError(403, 'reauthentication_required')
+  return deleteUser({ pool, admin }, claims.sub)
+}
+
 const hashFormats = [/^\$2[aby]\$\d{2}\$[./A-Za-z0-9]{53}$/, /^\$argon2(id|i|d)\$v=(16|19)\$m=\d+,t=\d+,p=\d+(,[^$]*)?\$[^$]*\$[^$]+$/, /^\$fbscrypt\$v=\d+,n=\d+,r=\d+,p=\d+(,[^$]*)?\$[^$]+\$[^$]+$/]
 
 // importRecord validates one user before it reaches GoTrue. Plain-text
@@ -239,18 +268,7 @@ export async function adminRoute({ pool, admin, external }, method, url, body) {
     if (duration !== 'none') await pool.query('DELETE FROM auth.sessions WHERE user_id = $1', [user])
     return [200, { user: userView(response.data) }]
   }
-  if (user && parts.length === 2 && method === 'DELETE') {
-    const blocked = await query(lastOwnerSQL, [user])
-    if (blocked.length) return [409, { status: 409, code: 'last_owner', organizations: blocked.map(r => r.slug) }]
-    const sole = (await query(soleMemberSQL, [user])).map(r => r.org_id)
-    const response = await admin('DELETE', `/admin/users/${user}`)
-    if (response.status !== 200) throw goTrueError(response)
-    // Organizations only this user belonged to would be unreachable.
-    const { rowCount } = sole.length
-      ? await pool.query('DELETE FROM gregale_auth.organizations o WHERE o.id = ANY($1::uuid[]) AND NOT EXISTS (SELECT 1 FROM gregale_auth.memberships x WHERE x.org_id = o.id)', [sole])
-      : { rowCount: 0 }
-    return [200, { deleted: true, organizations_deleted: rowCount }]
-  }
+  if (user && parts.length === 2 && method === 'DELETE') return deleteUser({ pool, admin }, user)
   if (path === '/activity' && method === 'GET') return [200, await activity(query, url.searchParams)]
   if (path === '/orgs' && method === 'GET') {
     const { page, perPage, search } = pageParams(url.searchParams)

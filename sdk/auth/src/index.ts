@@ -58,6 +58,8 @@ function aal(token: string): 'aal1' | 'aal2' {
 
 /** A third-party app (an OAuth client) the user allowed to use their account. */
 export type ConnectedApp = Readonly<{ client: { id: string; name: string; uri?: string; logo_uri?: string }; scopes: string[]; granted_at: string }>
+/** One of the signed-in user's own sessions; current is the one making the call. */
+export type UserSession = Readonly<{ id: string; created_at: string; last_active_at: string; user_agent: string | null; ip: string | null; aal: string | null; current: boolean }>
 
 export type Organization = Readonly<{ id: string; slug: string; name: string; role?: string; created_at: string }>
 export type Member = Readonly<{ user_id: string; email: string; role: string; created_at: string }>
@@ -285,9 +287,16 @@ export function createAuthClient(options: AuthClientOptions) {
      */
     mfa: {
       listFactors: async (): Promise<Factor[]> => (await call<{ factors?: Factor[] }>('GET', '/auth/v1/user', { token: await bearer() })).factors ?? [],
-      /** Starts enrolling an authenticator app; show totp.qr_code, then challenge and verify to activate it. */
-      enrollTOTP: async (input: { friendlyName?: string; issuer?: string } = {}): Promise<TOTPEnrollment> =>
-        call<TOTPEnrollment>('POST', '/auth/v1/factors', { token: await bearer(), body: { factor_type: 'totp', ...(input.friendlyName ? { friendly_name: input.friendlyName } : {}), ...(input.issuer ? { issuer: input.issuer } : {}) } }),
+      /**
+       * Starts enrolling an authenticator app; show totp.qr_code (an image
+       * URL) or totp.secret, then challenge and verify to activate it.
+       */
+      enrollTOTP: async (input: { friendlyName?: string; issuer?: string } = {}): Promise<TOTPEnrollment> => {
+        const enrollment = await call<TOTPEnrollment>('POST', '/auth/v1/factors', { token: await bearer(), body: { factor_type: 'totp', ...(input.friendlyName ? { friendly_name: input.friendlyName } : {}), ...(input.issuer ? { issuer: input.issuer } : {}) } })
+        // GoTrue v2.197.0 returns the QR code as SVG markup.
+        const qr = enrollment.totp.qr_code
+        return { ...enrollment, totp: { ...enrollment.totp, qr_code: qr.startsWith('data:') ? qr : `data:image/svg+xml;charset=utf-8,${encodeURIComponent(qr)}` } }
+      },
       /** Starts enrolling a phone for SMS codes; challenge and verify to activate it. */
       enrollPhone: async (input: { phone: string; friendlyName?: string }): Promise<Factor> =>
         call<Factor>('POST', '/auth/v1/factors', { token: await bearer(), body: { factor_type: 'phone', phone: input.phone, ...(input.friendlyName ? { friendly_name: input.friendlyName } : {}) } }),
@@ -359,6 +368,14 @@ export function createAuthClient(options: AuthClientOptions) {
       return withRedirect(`${origin}/ui/sign-in`, input.redirectTo)
     },
     /**
+     * The hosted account page, where people change their email address and
+     * password, second factors, passkeys, sign-in methods, connected apps and
+     * sessions. It signs in on its own; Back returns to redirectTo.
+     */
+    hostedAccountUrl(input: { redirectTo?: string } = {}): string {
+      return withRedirect(`${origin}/ui/account`, input.redirectTo)
+    },
+    /**
      * Completes a redirect from the hosted pages, a magic link or OAuth: reads
      * the session from the URL fragment, stores it and removes it from the
      * address bar. Returns null when the URL carries no session.
@@ -389,20 +406,43 @@ export function createAuthClient(options: AuthClientOptions) {
     async resetPasswordForEmail(email: string, input: { redirectTo?: string } & Captcha = {}): Promise<void> {
       await call('POST', withRedirect('/auth/v1/recover', input.redirectTo ?? `${origin}/ui/reset-password`), { body: { email, ...captcha(input) } })
     },
-    /** Ends this session, or every session of the user with scope "global". */
-    async signOut(input: { scope?: 'local' | 'global' } = {}): Promise<void> {
+    /**
+     * Ends this session, every session of the user with scope "global", or
+     * every session but this one with scope "others".
+     */
+    async signOut(input: { scope?: 'local' | 'global' | 'others' } = {}): Promise<void> {
       const session = parseSession(await store.get())
       try {
         if (session) await call('POST', `/auth/v1/logout?scope=${input.scope ?? 'local'}`, { token: session.accessToken })
       } catch (err) {
         if (!(err instanceof AuthError) || err.status >= 500) throw err
       } finally {
-        await clear()
+        if (input.scope !== 'others') await clear()
       }
     },
     onAuthStateChange(listener: (event: AuthEvent, session: Session | null) => void): () => void {
       listeners.add(listener)
       return () => { listeners.delete(listener) }
+    },
+    /**
+     * The signed-in user's own sessions, most recently active first. Ending
+     * one signs that device out; end this one with signOut().
+     */
+    sessions: {
+      list: async () => (await authz<{ sessions: UserSession[] }>('GET', '/sessions')).sessions,
+      revoke: (session: string) => authz<null>('DELETE', `/sessions/${id(session)}`),
+    },
+    /**
+     * Deletes the signed-in user's account, when the Auth app allows it. The
+     * session must come from a sign-in in the last ten minutes (with the
+     * second step, if the user has one), else this fails with
+     * reauthentication_required; the last owner of an organization with
+     * other members gets last_owner. Clears the stored session.
+     */
+    async deleteAccount(): Promise<{ organizations_deleted: number }> {
+      const result = await authz<{ deleted: boolean; organizations_deleted: number }>('DELETE', '/account')
+      await clear()
+      return { organizations_deleted: result.organizations_deleted }
     },
     organizations: {
       list: async () => (await authz<{ organizations: Organization[] }>('GET', '/orgs')).organizations,
