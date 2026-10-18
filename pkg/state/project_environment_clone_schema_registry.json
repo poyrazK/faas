@@ -3601,6 +3601,34 @@
     "kind": "operational"
   },
   {
+    "table": "environment_binding_release_receipts",
+    "columns": [
+      "graph_id",
+      "members",
+      "recorded_at",
+      "release_id",
+      "valid_until"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "environment_binding_retirement_receipts",
+    "columns": [
+      "generation",
+      "intent_version",
+      "plan_hash",
+      "policies",
+      "prior_release",
+      "recorded_at",
+      "release_id",
+      "retirement_ids",
+      "revision_id",
+      "source_id",
+      "valid_until"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "environment_desired_revisions",
     "columns": [
       "approved_at",
@@ -3895,6 +3923,17 @@
     "kind": "operational"
   },
   {
+    "table": "environment_qualification_service_receipts",
+    "columns": [
+      "attempt",
+      "binding",
+      "recorded_at",
+      "request_id",
+      "route"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "environment_qualification_smoke_receipts",
     "columns": [
       "attempt",
@@ -3958,6 +3997,7 @@
       "app_id",
       "artifact",
       "attempt",
+      "binding_context",
       "created_at",
       "deployment_id",
       "execution_mode",
@@ -3979,6 +4019,7 @@
       "account_id",
       "acknowledged_gateways",
       "app_id",
+      "binding_policy_context",
       "deployment_ids",
       "environment_id",
       "expected_gateways",

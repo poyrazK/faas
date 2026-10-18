@@ -373,7 +373,10 @@ func TestPostgresCutoverSourceFenceExclusionAndNeverDispatchedCancellation(t *te
 	if err != nil || !coverage.Known {
 		t.Fatal("SQL journal schema escaped clone classification", coverage.Blockers, err)
 	}
-	for _, name := range []string{"managed_postgres_cutover_source_fences", "managed_postgres_cutover_preflights"} {
+	// ADR-1646/1647: probe/activation/removal receipts are source-bound
+	// authority and audit evidence, never configuration to copy into a clone.
+	for _, name := range []string{"managed_postgres_cutover_source_fences", "managed_postgres_cutover_preflights",
+		"environment_binding_release_receipts", "environment_binding_retirement_receipts", "environment_qualification_service_receipts"} {
 		i := slices.IndexFunc(coverage.Tables, func(p state.ProjectEnvironmentCloneSchemaPolicy) bool { return p.TableName == name })
 		if i < 0 || coverage.Tables[i].Kind != state.CloneSchemaOperational {
 			t.Fatal("private recovery table is cloneable", name)
