@@ -68,10 +68,24 @@ func (r wakeSnapshotReads) guestRAMMB(e *Engine, deploymentID string, appRAMMB i
 // snapshots. dep is the deployment being woken; the freshness check uses it
 // instead of reading it again.
 func (e *Engine) chooseWakeSnapshotFrom(ctx context.Context, r wakeSnapshotReads, dep state.Deployment, expectedRAMMB int, appProtocol string) wakeSnapshotChoice {
-	var receipt snapshotReceipt
-	if r.readWarm && r.warmErr == nil &&
-		e.snapshotRejectionFor(ctx, r.warm, &dep, expectedRAMMB, appProtocol, &receipt) == "" {
-		return wakeSnapshotChoice{snap: r.warm, ok: true, tier: wakeTierWarm, receipt: receipt}
+	// Each candidate's locality is read while the candidate is checked;
+	// placement needs it only for the chosen one (ADR-1741).
+	check := func(snap state.Snapshot) (string, snapshotReceipt, snapshotLocalityRead) {
+		var (
+			reason   string
+			receipt  snapshotReceipt
+			locality snapshotLocalityRead
+		)
+		concurrently(
+			func() { reason = e.snapshotRejectionFor(ctx, snap, &dep, expectedRAMMB, appProtocol, &receipt) },
+			func() { locality = e.readSnapshotLocality(ctx, snap.ID) },
+		)
+		return reason, receipt, locality
+	}
+	if r.readWarm && r.warmErr == nil {
+		if reason, receipt, locality := check(r.warm); reason == "" {
+			return wakeSnapshotChoice{snap: r.warm, ok: true, tier: wakeTierWarm, receipt: receipt, locality: locality}
+		}
 	}
 	switch {
 	case errors.Is(r.initErr, state.ErrNotFound):
@@ -79,9 +93,9 @@ func (e *Engine) chooseWakeSnapshotFrom(ctx context.Context, r wakeSnapshotReads
 	case r.initErr != nil:
 		return wakeSnapshotChoice{tier: wakeTierColdBootFallback, coldReason: ColdReasonLookupFailed}
 	}
-	receipt = snapshotReceipt{}
-	if reason := e.snapshotRejectionFor(ctx, r.init, &dep, expectedRAMMB, appProtocol, &receipt); reason != "" {
+	reason, receipt, locality := check(r.init)
+	if reason != "" {
 		return wakeSnapshotChoice{tier: wakeTierColdBootFallback, coldReason: reason, rejected: r.init}
 	}
-	return wakeSnapshotChoice{snap: r.init, ok: true, tier: wakeTierInit, receipt: receipt}
+	return wakeSnapshotChoice{snap: r.init, ok: true, tier: wakeTierInit, receipt: receipt, locality: locality}
 }

@@ -3262,6 +3262,8 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 	// the node's RAM/capacity under a hot request loop.
 	// The gate's and the choice's reads run concurrently; the gate still
 	// decides before the choice can retire a snapshot (ADR-1741).
+	// Placement's nodes and usage load while the snapshot reads run.
+	placementAhead := e.startPlacementPrefetch(ctx, Request{AppID: appID, ownerApp: &app})
 	var snapshotReads wakeSnapshotReads
 	if !secretPolicyBlocksSnapshots {
 		snapshotReads = e.readWakeSnapshotInputs(ctx, dep.ID, string(acct.Plan), true)
@@ -3371,7 +3373,11 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 	}
 	var snapshotNodes []string
 	if haveSnap {
-		warmHint, snapshotNodes, snapshotLocalityKnown = e.snapshotPlacementHints(ctx, snap.ID, warmHint)
+		if choice.locality.snapshotID == snap.ID {
+			warmHint, snapshotNodes, snapshotLocalityKnown = e.placementHintsFrom(ctx, choice.locality, warmHint)
+		} else {
+			warmHint, snapshotNodes, snapshotLocalityKnown = e.snapshotPlacementHints(ctx, snap.ID, warmHint)
+		}
 	}
 	// ADR-098 PR-D: connection-aware placement bias. Score is
 	// the synchronous read (per ADR §D2 — schedd does NOT
@@ -3424,7 +3430,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 	// ADR-1741: the admission insert binds the snapshot-recovery lineage in
 	// its own transaction; a store that cannot is bound separately below.
 	recovery := &state.SnapshotRecoveryAdmission{SnapshotID: snap.ID}
-	ins, placement, releaseRestorePressure, err = e.createWithNodePlacement(ctx, placementRequest, haveSnap && snap.StorageKey != "", func(admitCtx context.Context, p Placement) (state.Instance, error) {
+	ins, placement, releaseRestorePressure, err = e.createWithNodePlacement(withPlacementPrefetch(ctx, placementAhead), placementRequest, haveSnap && snap.StorageKey != "", func(admitCtx context.Context, p Placement) (state.Instance, error) {
 		return e.store.CreateInstanceWithMode(state.WithSnapshotRecoveryAdmission(admitCtx, recovery), appID, dep.ID, string(initState), app.RAMMB, p.NodeID, wakeID, mode)
 	})
 	if err != nil {
@@ -4805,6 +4811,13 @@ func (s placementSnapshot) choose(r Request) (Placement, error) {
 }
 
 func (e *Engine) loadPlacementSnapshot(ctx context.Context, r Request) (placementSnapshot, error) {
+	if snapshot, err, ok := prefetchedPlacement(ctx, r); ok {
+		return snapshot, err
+	}
+	return e.loadPlacementSnapshotFresh(ctx, r)
+}
+
+func (e *Engine) loadPlacementSnapshotFresh(ctx context.Context, r Request) (placementSnapshot, error) {
 	// Phase 2 / Gate A: authorize the app against this schedd's owner and
 	// prefer that node for locality. Capacity remains fleet-wide: a saturated
 	// owner may spill to a peer through the routed VMM. An empty ownerNodeID
@@ -8766,6 +8779,9 @@ type wakeSnapshotChoice struct {
 	// choice read it. A receipt is written with its snapshot and never
 	// changes, so the boot reuses it instead of reading it again.
 	receipt snapshotReceipt
+	// locality is the chosen snapshot's locality, read while the choice
+	// checked it.
+	locality snapshotLocalityRead
 }
 
 // snapshotReceipt is one read of a snapshot's runtime-config receipt.
