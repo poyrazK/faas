@@ -2725,14 +2725,23 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Limiter on its noop backend — behaviour unchanged from
 	// pre-Phase-4. mode = "central" wires the production
 	// PGRateLimitBackend + the LISTEN-side invalidator (C4).
-	if deps.config != nil && deps.config.RateLimit.Mode == "central" {
-		backend, rps := buildCentralRateLimitBackend(deps.pool, log)
-		if backend != nil {
+	if deps.config != nil {
+		leaseCfg, err := deps.config.RateLimit.leaseConfig()
+		if err != nil {
+			return fmt.Errorf("gatewayd-internal: %w", err)
+		}
+		if deps.config.RateLimit.Mode == "central" {
+			backend, rps := buildCentralRateLimitBackend(deps.pool, log)
+			if backend == nil {
+				return fmt.Errorf("gatewayd-internal: [ratelimit] mode = \"central\" requires a Postgres pool")
+			}
 			handler.WithCentralBackend(backend)
+			// ADR-1520: spend central tokens from local leases.
+			if deps.config.RateLimit.Lease {
+				handler.WithRateLimitLeasing(leaseCfg)
+			}
 			log.Info("gatewayd-internal: rate-limit central mode armed",
-				"rps_resolver", rpsKind(rps))
-		} else {
-			return fmt.Errorf("gatewayd-internal: [ratelimit] mode = \"central\" requires a Postgres pool")
+				"rps_resolver", rpsKind(rps), "lease", deps.config.RateLimit.Lease)
 		}
 	}
 	// Exact pre-auth routes opt into a shared source budget independently of
@@ -3104,9 +3113,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Unix socket; split-box deployments reuse the private mTLS AppErrors
 	// endpoint, which is served by the same apid gRPC server.
 	// The exact request-ID journal is independent of this optional,
-	// sampled telemetry stream. It is written synchronously before guest
-	// work so a debugger-enabled request can always be looked up by its
-	// public x-faas-request-id.
+	// sampled telemetry stream, so a debugger-enabled request can be looked
+	// up by its public x-faas-request-id. It is written asynchronously
+	// (ADR-634) in batches (ADR-1521).
 	journalTarget := cfg.GetRequestTelemetryTarget(osGetenv)
 	journalTLS, journalTLSErr := cfg.LoadAppErrorsTLS()
 	if journalTLSErr != nil {
@@ -3114,29 +3123,16 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	journalClient, journalDialErr := apidgrpc.DialRequestTelemetry(ctx, journalTarget, journalTLS)
 	if journalDialErr != nil {
-		log.Warn("request ID journal: apid client unavailable; debugger-enabled requests will fail closed", "err", journalDialErr)
+		log.Warn("request ID journal: apid client unavailable; journal records will be counted as failed", "err", journalDialErr)
 	}
 	// ADR-634: the handler only enqueues; a bounded writer pool talks to apid,
-	// so a slow journal never delays or fails a customer request.
-	journalQueue := gateway.NewRequestIDJournalQueue(func(ctx context.Context, record gateway.RequestIDJournalRecord) error {
-		if journalClient == nil {
-			return errors.New("request ID journal apid client unavailable")
-		}
-		rpcCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
-		defer cancel()
-		response, err := journalClient.RecordRequestIDJournal(rpcCtx, &apidpb.RecordRequestIDJournalRequest{
-			RecordId: record.ID, AccountId: record.AccountID, AppId: record.AppID,
-			RequestId: record.RequestID, TraceId: record.TraceID,
-			ReceivedAtUnixMs: record.ReceivedAt.UnixMilli(),
-		})
-		if err != nil {
-			return fmt.Errorf("persist request ID journal: %w", err)
-		}
-		if response == nil || !response.GetRecorded() {
-			return errors.New("apid did not record the request ID journal entry")
-		}
-		return nil
-	}, deps.metrics, log)
+	// so a slow journal never delays or fails a customer request. ADR-1521:
+	// the pool writes batches, one apid RPC and insert per flush.
+	var journalRPC requestIDJournalClient
+	if journalClient != nil {
+		journalRPC = journalClient
+	}
+	journalQueue := gateway.NewRequestIDJournalQueue(newRequestIDJournalWriter(journalRPC, log).Write, deps.metrics, log)
 	go journalQueue.Run(ctx)
 	handler.WithRequestIDJournalWriter(journalQueue.Submit)
 	if journalClient != nil {

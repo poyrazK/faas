@@ -36,6 +36,15 @@ artifact() {
     no-deployctl) jq 'del(.tools.deployctl)' "$src/units-manifest.json" > "$src/m" && mv "$src/m" "$src/units-manifest.json" && rm "$src/tools/deployctl" ;;
     bad-digest) printf 'tampered' > "$src/bin/apid" ;;
     old-format) jq '.format_version = 1' "$src/units-manifest.json" > "$src/m" && mv "$src/m" "$src/units-manifest.json" ;;
+    data|data-ineligible|data-no-migrate)
+      printf 'migrate-binary' > "$src/tools/migrate"
+      jq --arg m "$(sha256sum "$src/tools/migrate" | awk '{print $1}')" --arg kind "$2" '
+        .tools.migrate = {sha256: $m}
+        | .data = {eligible: true, version: "data-1111111111111111111111111111111111111111",
+                   migrations: [{path: "migrations/20261018000000001_a.sql", eligible: ($kind != "data-ineligible")}]}
+        | if $kind == "data-no-migrate" then del(.tools.migrate) else . end' \
+        "$src/units-manifest.json" > "$src/m" && mv "$src/m" "$src/units-manifest.json"
+      [[ "$2" != data-no-migrate ]] || rm "$src/tools/migrate" ;;
   esac
   tar -czf "$dir/units.tar.gz" -C "$src" bin tools units-manifest.json
   cp "$src/units-manifest.json" "$dir/units-manifest.json"
@@ -53,7 +62,10 @@ grep -Fq -- "--certificate-identity https://github.com/poyrazK/faas/.github/work
   "$COSIGN_LOG" || fail "cosign was not asked for the release-units.yml identity on main"
 [[ -s "$dir/unpacked/bin/apid" && -s "$dir/unpacked/tools/deployctl" ]] || fail "release not unpacked"
 
-for mutation in extra-binary extra-tool bad-digest bad-tool no-deployctl old-format other-manifest; do
+dir="$(artifact data data)"
+[[ "$(bash "$verifier" "$dir" 2>/dev/null)" == "$commit" ]] || fail "a release with a lane-eligible data step did not verify"
+
+for mutation in extra-binary extra-tool bad-digest bad-tool no-deployctl old-format other-manifest data-ineligible data-no-migrate; do
   dir="$(artifact "$mutation" "$mutation")"
   if bash "$verifier" "$dir" >/dev/null 2>&1; then fail "verified a release with $mutation"; fi
 done

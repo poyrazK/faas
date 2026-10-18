@@ -1,3 +1,4 @@
+-- migration-compat: expand
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
 ALTER TABLE managed_postgres_bindings ADD COLUMN IF NOT EXISTS connection_limit bigint NOT NULL DEFAULT 0 CHECK(connection_limit BETWEEN 0 AND 84);

@@ -1,3 +1,4 @@
+-- migration-compat: expand
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
 ALTER TABLE data_pipelines ADD COLUMN IF NOT EXISTS schema_approval text NOT NULL DEFAULT '' CHECK(schema_approval='' OR schema_approval ~ '^[a-f0-9]{64}$');

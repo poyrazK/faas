@@ -11615,6 +11615,21 @@
     "kind": "operational"
   },
   {
+    "table": "worker_recovery",
+    "columns": [
+      "app_id",
+      "claim_token",
+      "failures",
+      "lease_until",
+      "next_attempt_at",
+      "pools",
+      "revision",
+      "status",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "sessions",
     "columns": [
       "account_id",

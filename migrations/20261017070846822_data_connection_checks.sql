@@ -1,3 +1,4 @@
+-- migration-compat: expand
 -- filename: 20261017070846822_data_connection_checks.sql
 -- +goose Up
 SET LOCAL lock_timeout = '5s';

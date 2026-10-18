@@ -41,10 +41,11 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	RequestTelemetry_RecordTelemetryCoverage_FullMethodName   = "/onebox.faas.apid.v1.RequestTelemetry/RecordTelemetryCoverage"
-	RequestTelemetry_IncrementRequestTelemetry_FullMethodName = "/onebox.faas.apid.v1.RequestTelemetry/IncrementRequestTelemetry"
-	RequestTelemetry_RecordConsumerUsage_FullMethodName       = "/onebox.faas.apid.v1.RequestTelemetry/RecordConsumerUsage"
-	RequestTelemetry_RecordRequestIDJournal_FullMethodName    = "/onebox.faas.apid.v1.RequestTelemetry/RecordRequestIDJournal"
+	RequestTelemetry_RecordTelemetryCoverage_FullMethodName     = "/onebox.faas.apid.v1.RequestTelemetry/RecordTelemetryCoverage"
+	RequestTelemetry_IncrementRequestTelemetry_FullMethodName   = "/onebox.faas.apid.v1.RequestTelemetry/IncrementRequestTelemetry"
+	RequestTelemetry_RecordConsumerUsage_FullMethodName         = "/onebox.faas.apid.v1.RequestTelemetry/RecordConsumerUsage"
+	RequestTelemetry_RecordRequestIDJournal_FullMethodName      = "/onebox.faas.apid.v1.RequestTelemetry/RecordRequestIDJournal"
+	RequestTelemetry_RecordRequestIDJournalBatch_FullMethodName = "/onebox.faas.apid.v1.RequestTelemetry/RecordRequestIDJournalBatch"
 )
 
 // RequestTelemetryClient is the client API for RequestTelemetry service.
@@ -81,6 +82,12 @@ type RequestTelemetryClient interface {
 	// request telemetry, this identity mapping is not sampled or rate-limited.
 	// Apid applies the account's request-time debugger retention window.
 	RecordRequestIDJournal(ctx context.Context, in *RecordRequestIDJournalRequest, opts ...grpc.CallOption) (*RecordRequestIDJournalResponse, error)
+	// RecordRequestIDJournalBatch commits up to 512 journal records with one
+	// account lookup per distinct account and one multi-row insert (ADR-1521).
+	// An invalid record is counted as rejected instead of failing the batch;
+	// storage failures are gRPC errors for the whole batch. Gateways fall back
+	// to RecordRequestIDJournal while apid answers Unimplemented.
+	RecordRequestIDJournalBatch(ctx context.Context, in *RecordRequestIDJournalBatchRequest, opts ...grpc.CallOption) (*RecordRequestIDJournalBatchResponse, error)
 }
 
 type requestTelemetryClient struct {
@@ -134,6 +141,16 @@ func (c *requestTelemetryClient) RecordRequestIDJournal(ctx context.Context, in 
 	return out, nil
 }
 
+func (c *requestTelemetryClient) RecordRequestIDJournalBatch(ctx context.Context, in *RecordRequestIDJournalBatchRequest, opts ...grpc.CallOption) (*RecordRequestIDJournalBatchResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RecordRequestIDJournalBatchResponse)
+	err := c.cc.Invoke(ctx, RequestTelemetry_RecordRequestIDJournalBatch_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // RequestTelemetryServer is the server API for RequestTelemetry service.
 // All implementations must embed UnimplementedRequestTelemetryServer
 // for forward compatibility.
@@ -168,6 +185,12 @@ type RequestTelemetryServer interface {
 	// request telemetry, this identity mapping is not sampled or rate-limited.
 	// Apid applies the account's request-time debugger retention window.
 	RecordRequestIDJournal(context.Context, *RecordRequestIDJournalRequest) (*RecordRequestIDJournalResponse, error)
+	// RecordRequestIDJournalBatch commits up to 512 journal records with one
+	// account lookup per distinct account and one multi-row insert (ADR-1521).
+	// An invalid record is counted as rejected instead of failing the batch;
+	// storage failures are gRPC errors for the whole batch. Gateways fall back
+	// to RecordRequestIDJournal while apid answers Unimplemented.
+	RecordRequestIDJournalBatch(context.Context, *RecordRequestIDJournalBatchRequest) (*RecordRequestIDJournalBatchResponse, error)
 	mustEmbedUnimplementedRequestTelemetryServer()
 }
 
@@ -189,6 +212,9 @@ func (UnimplementedRequestTelemetryServer) RecordConsumerUsage(context.Context, 
 }
 func (UnimplementedRequestTelemetryServer) RecordRequestIDJournal(context.Context, *RecordRequestIDJournalRequest) (*RecordRequestIDJournalResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RecordRequestIDJournal not implemented")
+}
+func (UnimplementedRequestTelemetryServer) RecordRequestIDJournalBatch(context.Context, *RecordRequestIDJournalBatchRequest) (*RecordRequestIDJournalBatchResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RecordRequestIDJournalBatch not implemented")
 }
 func (UnimplementedRequestTelemetryServer) mustEmbedUnimplementedRequestTelemetryServer() {}
 func (UnimplementedRequestTelemetryServer) testEmbeddedByValue()                          {}
@@ -272,6 +298,24 @@ func _RequestTelemetry_RecordRequestIDJournal_Handler(srv interface{}, ctx conte
 	return interceptor(ctx, in, info, handler)
 }
 
+func _RequestTelemetry_RecordRequestIDJournalBatch_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RecordRequestIDJournalBatchRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RequestTelemetryServer).RecordRequestIDJournalBatch(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: RequestTelemetry_RecordRequestIDJournalBatch_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RequestTelemetryServer).RecordRequestIDJournalBatch(ctx, req.(*RecordRequestIDJournalBatchRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // RequestTelemetry_ServiceDesc is the grpc.ServiceDesc for RequestTelemetry service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -290,6 +334,10 @@ var RequestTelemetry_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RecordRequestIDJournal",
 			Handler:    _RequestTelemetry_RecordRequestIDJournal_Handler,
+		},
+		{
+			MethodName: "RecordRequestIDJournalBatch",
+			Handler:    _RequestTelemetry_RecordRequestIDJournalBatch_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

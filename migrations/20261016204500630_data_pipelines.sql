@@ -1,3 +1,4 @@
+-- migration-compat: expand
 -- +goose Up
 SET LOCAL lock_timeout = '5s';
 -- The projection is also the source for the migration's owned tables.
