@@ -59,7 +59,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/ci"
 	"github.com/onebox-faas/faas/pkg/cosign"
 	"github.com/onebox-faas/faas/pkg/daemonenv"
-	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/daemonunitspec"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/eventrecording"
@@ -586,7 +585,9 @@ func apidConfigPath(lookup func(string) *flag.Flag) string {
 func Main() {
 	cloneWorker := flag.Bool("clone-worker", false, "run the bounded project-environment clone worker without API listeners")
 	runtimeUpgradeWorker := flag.Bool("runtime-upgrade-worker", false, "run the private runtime upgrade worker without API listeners; requires native qualification for each operation")
-	wire.Daemon("apid", func(ctx context.Context, log *slog.Logger) error {
+	// The API mode hands off on reload; the worker modes' units do not
+	// reload (ADR-2026101801).
+	wire.HandoffDaemon("apid", func(ctx context.Context, log *slog.Logger) error {
 		if *cloneWorker && *runtimeUpgradeWorker {
 			return errors.New("apid: worker modes are mutually exclusive")
 		}
@@ -1172,6 +1173,12 @@ func dpaPathFromEnv(getenv func(string) string) string {
 }
 
 func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
+	// stopping is the unit's SIGTERM. ctx also ends once a two-generation
+	// hand-off's successor serves (ADR-2026101801): this generation's background
+	// work stops with it while its requests finish.
+	stopping := ctx
+	ctx, endGeneration := context.WithCancel(ctx)
+	defer endGeneration()
 	ops := wire.NewOpsMetrics("apid")
 	traceShutdown, traceErr := trace.InitTracerWithRegistry(ctx, "apid", wire.Version, log, ops.Registry(), ops.MetricPrefix())
 	if traceErr != nil {
@@ -2212,7 +2219,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			IdleTimeout:       60 * time.Second,
 			MaxHeaderBytes:    int(api.DefaultMaxHeaderBytes),
 		}
-		mLis, err := net.Listen("tcp", metricsAddr)
+		mLis, err := wire.ListenInherited("tcp", metricsAddr)
 		if err != nil {
 			_ = l.Close()
 			return fmt.Errorf("apid: metrics listen %q: %w", metricsAddr, err)
@@ -2516,13 +2523,18 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	defer srv.startInternalCIWorker(ctx, log)()
 	defer srv.startEnvironmentGitDriftReporting(ctx, deps.getenv)()
 	defer srv.startEnvironmentGitAcceptanceEnforcement(ctx, deps.getenv)()
-	notifyStop := daemonunit.NotifyReadyWhen(ctx, apidProbe.ReadyFunc())
+	notifyStop := wire.NotifyReadyWhen(ctx, apidProbe.ReadyFunc())
 	defer notifyStop()
 	defer wire.StartWatchdog(ctx, wire.NewLiveness(), ops, log)()
 	// The drain lets a connection faas-apid.socket handed over just before
 	// shutdown deliver its request; net/http drops one it reads after
 	// Shutdown began (ADR-2026101801).
 	httpDrain := wire.NewHTTPDrain(httpSrv)
+	// Requests run under streamsCtx so a hand-off's old generation can end
+	// its SSE streams and long polls before its drain bound cuts them.
+	streamsCtx, endStreams := context.WithCancel(context.WithoutCancel(stopping))
+	defer endStreams()
+	httpSrv.BaseContext = func(net.Listener) context.Context { return streamsCtx }
 	errc := make(chan error, 1)
 	go func() {
 		log.Info("apid listening", "addr", listenBind)
@@ -2530,37 +2542,35 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			errc <- err
 		}
 	}()
+	// On `systemctl reload` a successor takes the sockets; this generation
+	// then stops its background work (ctx) and finishes its requests.
+	handedOff := make(chan struct{})
+	wire.WatchHandoffs(ctx, "apid", log, func() {
+		close(handedOff)
+		endGeneration()
+	})
 	select {
 	case err := <-errc:
 		return err
 	case <-ctx.Done():
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(stopping), 10*time.Second)
+		select {
+		case <-handedOff:
+			cancel()
+			shutdownCtx, cancel = wire.OldGenerationDrain(stopping, 10*time.Second, endStreams, log)
+		default:
+		}
 		defer cancel()
+		// Internal gRPC and /metrics stop within the restart grace either
+		// way: their clients reconnect, after a hand-off to the successor.
+		sideStopped := make(chan struct{})
+		go func() {
+			defer close(sideStopped)
+			stopAPIDSideServers(stopping, metricsSrv, advisorySrv, bridgeSrv, appErrSrv, spansWriterSrv)
+		}()
 		//nolint:contextcheck // shutdown context must outlive request ctx; detached from caller per net/http contract.
 		_ = httpDrain.Shutdown(shutdownCtx, httpSrv)
-		if metricsSrv != nil {
-			//nolint:contextcheck // shutdown context must outlive request ctx; detached from caller per net/http contract.
-			_ = metricsSrv.Shutdown(shutdownCtx)
-		}
-		if advisorySrv != nil {
-			// GracefulStop lets in-flight ForwardStatelessAdvisory
-			// calls finish writing their audit row before exit.
-			advisorySrv.GracefulStop()
-		}
-		if bridgeSrv != nil {
-			// GracefulStop lets in-flight EnqueueBuild RPCs finish
-			// writing the deployment + build rows before exit.
-			// A non-graceful Stop would leave the githubd dispatcher
-			// with a gRPC error mid-enqueue, which the dispatcher
-			// handles with log + skip — but graceful is cheaper.
-			bridgeSrv.GracefulStop()
-		}
-		if appErrSrv != nil {
-			appErrSrv.GracefulStop()
-		}
-		if spansWriterSrv != nil {
-			spansWriterSrv.GracefulStop()
-		}
+		<-sideStopped
 		// Issue #286: drain the async failed-login audit channel
 		// so in-flight rows land in the events table before the
 		// daemon exits. Close is idempotent — safe to call from
@@ -2571,6 +2581,34 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		return nil
 	}
+}
+
+// stopAPIDSideServers stops /metrics and the internal gRPC servers within the
+// restart grace. GracefulStop lets in-flight RPCs (an advisory's audit row, a
+// bridge EnqueueBuild's deployment and build rows) finish; a stream still
+// open at the grace is closed and its client reconnects.
+func stopAPIDSideServers(stopping context.Context, metricsSrv *http.Server, grpcServers ...*grpc.Server) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(stopping), 10*time.Second)
+	defer cancel()
+	var wg sync.WaitGroup
+	if metricsSrv != nil {
+		wg.Go(func() { _ = metricsSrv.Shutdown(ctx) })
+	}
+	for _, gs := range grpcServers {
+		if gs == nil {
+			continue
+		}
+		wg.Go(func() {
+			done := make(chan struct{})
+			go func() { gs.GracefulStop(); close(done) }()
+			select {
+			case <-done:
+			case <-ctx.Done():
+				gs.Stop()
+			}
+		})
+	}
+	wg.Wait()
 }
 
 // pgNotifier is the production notification adapter. Writes delegate to
