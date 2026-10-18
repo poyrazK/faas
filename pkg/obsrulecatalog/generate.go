@@ -17,6 +17,7 @@ var sourceFiles = []string{
 	"deploy/ansible/roles/prometheus/files/bridge.rules.yml",
 	"deploy/ansible/roles/prometheus/files/pg_backup.rules.yml",
 	"pkg/promqlrules/data_placement.yaml",
+	"deploy/ansible/roles/prometheus/files/data_repair.rules.yml",
 }
 
 type sourceGroup struct {
@@ -32,7 +33,7 @@ type sourceGroup struct {
 	} `yaml:"rules"`
 }
 
-// Generate uses the four repository-owned alert files. Runtime never calls it.
+// Generate uses the repository-owned alert files. Runtime never calls it.
 func Generate(root string) ([]byte, error) {
 	core := Set{ID: CoreSetID, Files: []string{"faas.rules.yml"}, Rules: []Rule{}}
 	full := Set{ID: FullSetID, Files: []string{}, Rules: []Rule{}}

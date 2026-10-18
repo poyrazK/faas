@@ -67,12 +67,18 @@ func TestCatalogDriftAndIsolation(t *testing.T) {
 		t.Fatal(err)
 	}
 	core, full := catalog.Sets[0], catalog.Sets[1]
-	if core.ID != CoreSetID || full.ID != FullSetID || len(core.Files) != 1 || core.Files[0] != "faas.rules.yml" || len(full.Files) != 4 || len(core.Rules) < 200 || len(full.Rules) <= len(core.Rules) {
+	if core.ID != CoreSetID || full.ID != FullSetID || len(core.Files) != 1 || core.Files[0] != "faas.rules.yml" || len(full.Files) != 5 || len(core.Rules) < 200 || len(full.Rules) <= len(core.Rules) {
 		t.Fatalf("unexpected catalog membership: core=%d full=%d", len(core.Rules), len(full.Rules))
 	}
 	fullIDs := map[string]bool{}
 	for _, r := range full.Rules {
 		fullIDs[r.ID] = true
+	}
+	for _, name := range []string{"FaasDataRepairStalled", "FaasDataRepairNodeUnavailable", "FaasDataRepairOutcomeUnknown", "FaasDataRepairHealthStale"} {
+		id, ok := Identity("data_repair.rules.yml", "data-repair-health", name)
+		if !ok || !fullIDs[id] {
+			t.Errorf("full expectation set omits shipped repair alert %s", name)
+		}
 	}
 	for _, r := range core.Rules {
 		if !fullIDs[r.ID] || r.FileName != core.Files[0] {

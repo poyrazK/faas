@@ -18,7 +18,7 @@ Add GET `/v1/admin/obs/recording-coverage` and
 operator read scope, MFA, allowlist, rate limits and strict query handling.
 Use the existing explicitly selected minimum file profiles: `gregale-core-v1`
 selects `faas.rules.yml`; `gregale-full-v1` also selects `bridge.rules.yml`,
-`pg_backup.rules.yml` and `data_placement.yaml`. Without selection, advertise
+`pg_backup.rules.yml`, `data_placement.yaml` and `data_repair.rules.yml`. Without selection, advertise
 available metadata, return unknown and make no Prometheus request. Catalog
 presence is not installation intent. Additional valid source identities are
 allowed. Existing alert-only coverage and its revision remain unchanged.

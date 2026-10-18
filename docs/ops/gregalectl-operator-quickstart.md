@@ -840,8 +840,8 @@ gregalectl obs rule-coverage --expected-set gregale-full-v1 --json
 The API equivalent is
 `GET /v1/admin/obs/rule-coverage?expected_set=gregale-core-v1`, with the usual
 operator read scope, MFA and allowlist. Core expects `faas.rules.yml` alerts;
-full also expects `bridge.rules.yml`, `pg_backup.rules.yml` and
-`data_placement.yaml`. These are minimum sets: additional valid rules are counted
+full also expects `bridge.rules.yml`, `pg_backup.rules.yml`,
+`data_placement.yaml` and `data_repair.rules.yml`. These are minimum sets: additional valid rules are counted
 and allowed. The catalog in the binary is not evidence of what was intended to
 be installed. Each set includes its exact definition revision and file basenames.
 

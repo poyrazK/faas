@@ -2538,13 +2538,14 @@
       ]
     },
     {
-      "revision": "d7b04d4c5edd2a0e6322167833f35b3b7bc8891b85ef7dd1825ddc0f8da948e6",
+      "revision": "0c171bd4b319a7f8fc6f148c9d9f70f25f6f8d9f7e84ec0de348a2057588a49f",
       "expected": {
         "id": "gregale-full-v1",
-        "revision": "ee3fb74813aadd79bd3d71501757ea0393e256daa26fc945d89c24d89175a9bf",
+        "revision": "17ef46f0a1105660d88f41ce20977e2566aabce34766fa2953b53fb4b687812b",
         "files": [
           "bridge.rules.yml",
           "data_placement.yaml",
+          "data_repair.rules.yml",
           "faas.rules.yml",
           "pg_backup.rules.yml"
         ],
@@ -3630,8 +3631,8 @@
           }
         ]
       },
-      "alert_set_revision": "cae7fea7f36b67f16be5a1acebddba865471fe53597e332af50be2426cedbd09",
-      "alert_count": 361,
+      "alert_set_revision": "0da2a92cae2e1850ee024020af2a35d0c205f67895381188597ee14bc6fae3a7",
+      "alert_count": 365,
       "dependents": [
         {
           "rule_id": "04e71a8f5cf3db701f2c7083e95693cd02058aa3b83e91279b44abcac2192ea5",

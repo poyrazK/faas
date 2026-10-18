@@ -6614,9 +6614,15 @@ const (
 	//
 	// Hard limits policy (CLAUDE.md): every limit is a constant
 	// here, never inlined.
-	GatewayDrainGraceSeconds        = 25
-	ReplicaHeartbeatIntervalSeconds = 5
-	WarmHintCacheSize               = 1000
+	GatewayDrainGraceSeconds = 25
+	// ComputeGatewayRestartWaitSeconds caps how long gatewayd-public keeps
+	// sending new requests to a compute node whose gatewayd-internal stopped
+	// answering (for example while it restarts behind its durable socket)
+	// before failing over to another node (ADR-1580). Override with
+	// FAAS_COMPUTE_GATEWAY_RESTART_WAIT.
+	ComputeGatewayRestartWaitSeconds = 3
+	ReplicaHeartbeatIntervalSeconds  = 5
+	WarmHintCacheSize                = 1000
 	// ServiceRouteConvergenceTimeoutSeconds bounds one routing-generation
 	// acknowledgement round. A timeout does not retire the predecessor; the
 	// scheduler leaves it serving and retries reconciliation.
@@ -6946,6 +6952,15 @@ const (
 	// change cannot widen the attack surface on this listener; a single
 	// tenant-crafted 1 MiB header is fine, 64 MiB is not.
 	DefaultMaxHeaderBytes = 1 << 20 // 1 MiB
+
+	// InternalHopReplayableBodyBytes is the largest request body
+	// gatewayd-public buffers before forwarding it to gatewayd-internal, so
+	// the HTTP/2 hop can resend it. A request that crosses gatewayd-internal's
+	// graceful-restart GOAWAY was never processed; the transport retries it on
+	// a new connection only when it can rewind the body. Larger or chunked
+	// bodies keep streaming and can still fail in that window
+	// (docs/adr/1580-zero-downtime-daemon-restarts.md).
+	InternalHopReplayableBodyBytes = 64 << 10 // 64 KiB
 )
 
 // EffectiveRetryMaxAttempts resolves a requested durable-invocation attempt
@@ -12979,4 +12994,51 @@ const (
 	MCPReadinessPagerDutySummaryMaxBytes          = 1024
 	MCPReadinessPagerDutyTimeoutSeconds           = 30
 	MCPReadinessPagerDutyMaxRetryAfterSeconds     = 86400
+)
+
+// Selective repair is an internal, explicitly enrolled PostgreSQL contract.
+const (
+	DataRepairMaxRows                  = 1000
+	DataRepairMaxJournalBytes          = 4 << 20
+	DataRepairMaxPlanBytes             = 16 << 20
+	DataRepairMaxRequestBytes          = 16 << 10
+	DataRepairMaxObservedRowBytes      = 16 << 10
+	DataRepairMaxObservedPlanBytes     = 256 << 10
+	DataRepairSourcePageSize           = 25
+	DataRepairSourceMaxPageSize        = 100
+	DataRepairSourceMaxCursorBytes     = 1024
+	DataRepairSourceMaxFilterBytes     = 1024
+	DataRepairSourceMaxResponseBytes   = 512 << 10
+	DataRepairDoctorMaxResponseBytes   = 64 << 10
+	DataRepairDoctorMaxObjects         = 64
+	DataRepairDoctorTimeoutSeconds     = 10
+	DataRepairCaptureContextMaxBytes   = 256
+	DataRepairMaxChecks                = 16
+	DataRepairCheckNameMaxBytes        = 64
+	DataRepairActorMaxBytes            = 256
+	DataRepairMaxSnapshotBytes         = 64 << 20
+	DataRepairPlanTTLSeconds           = 15 * 60
+	DataRepairTimeoutSeconds           = 120
+	DataRepairSandboxMemoryMB          = 512
+	DataRepairSandboxDiskBytes         = 1 << 30
+	DataRepairRehearsalsPerAccount     = 1
+	DataRepairRehearsalsPerNode        = 1
+	DataRepairRehearsalPageSize        = 64
+	DataRepairRehearsalChunkBytes      = 64 << 10
+	DataRepairRehearsalCleanupSeconds  = 30
+	DataRepairSandboxVCPUs             = 1
+	DataRepairSandboxCPUMillicores     = 1000
+	DataRepairHealthPollSeconds        = 30
+	DataRepairHealthQuerySeconds       = 10
+	DataRepairHealthStaleSeconds       = 120
+	DataRepairHealthQueueWarnSeconds   = 120
+	DataRepairHealthCleanupWarnSeconds = 60
+	DataRepairHealthPublishWarnSeconds = 60
+	DataRepairRetentionMinSeconds      = 7 * 24 * 60 * 60
+	DataRepairPurgeMaxItems            = 32
+	DataRepairPurgeMaxBytes            = 64 << 20
+	DataRepairPurgeMaxPlanBytes        = 1 << 20
+	DataRepairPurgePlanTTLSeconds      = 15 * 60
+	DataRepairPurgeTimeoutSeconds      = 10
+	DataRepairPurgeLockTimeoutMS       = 2000
 )

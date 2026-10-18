@@ -24,6 +24,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/consumerbilling"
 	"github.com/onebox-faas/faas/pkg/apid/consumercontrols"
 	"github.com/onebox-faas/faas/pkg/apid/consumercredits"
+	repairapi "github.com/onebox-faas/faas/pkg/apid/datarepair"
 	"github.com/onebox-faas/faas/pkg/apid/durable"
 	"github.com/onebox-faas/faas/pkg/apid/edgerules"
 	hostingapi "github.com/onebox-faas/faas/pkg/apid/hosting"
@@ -87,6 +88,7 @@ import (
 // wires a stub that returns 503 for every RPC; slices 7-8 replace with a
 // live socket-dialed client.
 type server struct {
+	dataRepair                             repairapi.Managed
 	rehearsalNetworkEnabled                bool
 	rehearsalSimulationEnabled             bool
 	rehearsalWorkersEnabled                bool
@@ -1325,6 +1327,7 @@ func newServerWithDeps(
 	s.productControl.OwnerSessions = func() *session.Manager { return s.sessions }
 	s.productControl.OwnerRender = s.renderProductOwner
 	s.productControl.OperationDoctor = s.operation.ObserveProductDefinitionDoctor
+	s.dataRepair.Host = operationHost{s}
 	s.edgeRules.Host = edgeRulesHost{s}
 	s.queueLeases.Host = queueLeasesHost{s}
 	s.realtime.Host = realtimeHost{s}
@@ -1387,6 +1390,23 @@ func (s *server) handler() http.Handler {
 	s.registerProductControl(mux)
 	s.registerInternalCI(mux)
 	s.registerInternalCIRuntime(mux)
+	// Fixed-executor internal preview; see docs/data-repair.md. These routes
+	// stay outside the public SDK contract until native qualification.
+	mux.HandleFunc("GET /v1/apps/{slug}/data-repair/review", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.dataRepair.Review))))
+	mux.HandleFunc("GET /v1/apps/{slug}/data-repair/sources", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.dataRepair.Sources))))
+	mux.HandleFunc("GET /v1/apps/{slug}/data-repair/doctor", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.dataRepair.Doctor))))
+	mux.HandleFunc("GET /v1/apps/{slug}/data-repair/sources/{id}/history", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.dataRepair.History))))
+	mux.HandleFunc("GET /v1/apps/{slug}/data-repair/sources/{id}/plans/{plan}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.dataRepair.HistoryPlan))))
+	mux.HandleFunc("POST /v1/apps/{slug}/data-repair/sources/{id}/plans/{plan}/verify", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.requireSameOrigin(s.dataRepair.HistoryVerify)))))
+	mux.HandleFunc("GET /v1/apps/{slug}/data-repair/source-scopes", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.dataRepair.SourceScopes))))
+	mux.HandleFunc("GET /v1/apps/{slug}/data-repair/{asset}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.dataRepair.Review))))
+	mux.HandleFunc("POST /v1/apps/{slug}/data-repair/operations", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireSameOrigin(s.dataRepair.Create)))))
+	mux.HandleFunc("GET /v1/apps/{slug}/data-repair/operations/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.dataRepair.Get))))
+	mux.HandleFunc("POST /v1/apps/{slug}/data-repair/operations/{id}/validate", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.requireSameOrigin(s.dataRepair.Validate)))))
+	mux.HandleFunc("POST /v1/apps/{slug}/data-repair/operations/{id}/verify", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.requireSameOrigin(s.dataRepair.Verify)))))
+	mux.HandleFunc("POST /v1/apps/{slug}/data-repair/operations/{id}/replace", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireSameOrigin(s.dataRepair.Replace)))))
+	mux.HandleFunc("POST /v1/apps/{slug}/data-repair/operations/{id}/resolve", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireSameOrigin(s.dataRepair.Resolve)))))
+	mux.HandleFunc("POST /v1/apps/{slug}/data-repair/operations/{id}/{action}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireSameOrigin(s.dataRepair.Action)))))
 	mux.HandleFunc("POST /integrations/slack/issues/{app_id}", s.issueSlackInteractionHandler)
 	mux.HandleFunc("POST /integrations/slack/actions", s.issueSlackManagedActions)
 	mux.HandleFunc("POST /integrations/slack/events", s.issueSlackManagedEvents)
@@ -1918,7 +1938,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/apps/{slug}/operations/{id}/cancel", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.operation.CancelOperation))))
 	mux.HandleFunc("POST /v1/apps/{slug}/operations/{id}/signals", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.operation.SignalOperation))))
 	mux.HandleFunc("POST /v1/apps/{slug}/operation-signals", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.operation.SignalOperationsBySubject))))
-	mux.HandleFunc("POST /v1/apps/{slug}/operations/{id}/approvals/{step}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.operation.DecideOperationApproval))))
+	mux.HandleFunc("POST /v1/apps/{slug}/operations/{id}/approvals/{step}", s.authLimited(s.requireMFA(s.requireScope(api.ScopeAdmin, api.ScopeDeployWrite, api.ScopeManagedPostgresManage)(s.requireSameOrigin(s.operation.DecideOperationApproval)))))
 	mux.HandleFunc("POST /v1/platform-tenant-self/customer-operations", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsManage)(s.operation.StartPlatformTenantSelfOperation)))
 	mux.HandleFunc("POST /v1/platform-tenant-self/customer-operations/submissions/lookup", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsRead)(s.operation.LookupPlatformTenantSelfOperationSubmission)))
 	mux.HandleFunc("GET /v1/platform-tenant-self/customer-operations/identity", s.authLimited(s.requireScope(api.ScopePlatformTenantOperationsManage)(s.operation.GetPlatformTenantSelfOperationIdentity)))
@@ -3785,6 +3805,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/admin/obs/rule-coverage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsRuleCoverage))))
 	mux.HandleFunc("GET /v1/admin/obs/recording-coverage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsRecordingCoverage))))
 	mux.HandleFunc("GET /v1/admin/obs/input-health", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsInputHealth))))
+	mux.HandleFunc("GET /v1/admin/ops/data-repairs",
+		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.getOperatorDataRepairHealth))))
 	// Unified incident inbox. This is a read-only correlation projection over
 	// the existing deployment, job-run, compute-node, and alert surfaces;
 	// it keeps operator triage out of the deployment request path.

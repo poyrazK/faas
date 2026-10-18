@@ -5,12 +5,16 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
 
 func TestMCPProtocolAlertMigrationReplayAndRollback(t *testing.T) {
 	pool := pgtest.OpenMigrated(t)
 	ctx := t.Context()
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
 	raw, err := os.ReadFile("20261017181314876_mcp_protocol_alerts.sql")
 	if err != nil {
 		t.Fatal(err)

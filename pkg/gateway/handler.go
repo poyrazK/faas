@@ -5678,6 +5678,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// statusRecorder creation so even panic-recovered paths keep
 	// the drain balanced.
 	defer h.serveHTTPWithDrain()()
+	// Stream forwarders end SSE and upgraded sessions when shutdown begins.
+	r = r.WithContext(drain.WithShutdownNotice(r.Context(), h.drain))
 
 	// Status-class capture (used for metrics + slog). Doesn't buffer the body
 	// or alter the headers — strictly observability.

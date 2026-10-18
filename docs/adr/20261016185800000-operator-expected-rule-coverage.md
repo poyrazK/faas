@@ -20,11 +20,11 @@ or `--expected-set`. No selection returns unknown, advertises available sets,
 and makes no Prometheus request. Unknown, empty, repeated and extra query keys
 are rejected. This feature changes no installation configuration or historian.
 
-Compile a generated digest-only catalog from four repository rule files:
+Compile a generated digest-only catalog from five repository rule files:
 
 - `gregale-core-v1`: alerts in `faas.rules.yml`.
-- `gregale-full-v1`: core plus `bridge.rules.yml`, `pg_backup.rules.yml` and
-  `data_placement.yaml` alerts.
+- `gregale-full-v1`: core plus `bridge.rules.yml`, `pg_backup.rules.yml`,
+  `data_placement.yaml` and `data_repair.rules.yml` alerts.
 
 Both sets are minimum expectations; additional valid identities are counted
 and allowed. A set ID describes its selection policy, while its SHA-256 revision

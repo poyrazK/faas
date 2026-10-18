@@ -498,7 +498,9 @@ jobs:
     # suite in full with -race nightly and before every release. Main pushes
     # also warm the large-package build for later pull requests. PRs can still
     # invalidate that cache, so allow the same bounded compilation and setup
-    # budget as main; the Go test execution deadlines below stay unchanged.
+    # budget as main. State and apidserver shards also need cold non-race
+    # builds after race suites; shard 3 first compiles binding/guest contracts.
+    # The Go test execution deadlines below stay unchanged.
     timeout-minutes: 40
     strategy:
       fail-fast: false
@@ -668,7 +670,7 @@ jobs:
           GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
           SHARD: ${{ matrix.shard }}
           # Related-test cap per large package: enough for a focused change,
-          # small enough for the shard's 10-minute budget.
+          # bounded for focused pull-request runs.
           SELECTIVE_CAP: "150"
         run: |
           set -euo pipefail

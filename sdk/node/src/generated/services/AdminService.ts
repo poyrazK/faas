@@ -16,6 +16,7 @@ import type { BillingCatalogResponse } from '../models/BillingCatalogResponse.js
 import type { BillingPaddleOveragePreflightResponse } from '../models/BillingPaddleOveragePreflightResponse.js';
 import type { BillingReconcileResponse } from '../models/BillingReconcileResponse.js';
 import type { ConsumeInvoiceResponse } from '../models/ConsumeInvoiceResponse.js';
+import type { DataRepairHealth } from '../models/DataRepairHealth.js';
 import type { EgressFlowLogResponse } from '../models/EgressFlowLogResponse.js';
 import type { GithubRecoveryRetryResponse } from '../models/GithubRecoveryRetryResponse.js';
 import type { GithubRecoveryStatusResponse } from '../models/GithubRecoveryStatusResponse.js';
@@ -1800,6 +1801,54 @@ export class AdminService {
         \`profile_investigation_limit\`.
         `,
         500: `Store call failed (transient PG hiccup; retry with the same threshold).`,
+      },
+    });
+  }
+  /**
+   * Observe active data repairs and retained rehearsal capacity.
+   * Operator metadata from one primary-database snapshot. Summary counts
+   * and oldest phase clocks cover the whole active set; only detail rows
+   * are paginated. Source data, SQL and native ownership frames are excluded.
+   * Requires admin scope, MFA and membership in FAAS_ADMIN_EMAILS.
+   * A failed observation returns 503 instead of a healthy empty queue.
+   * Responses use Cache-Control no-store and grant no recovery authority.
+   *
+   * @returns DataRepairHealth Global repair health and a bounded page of operator metadata.
+   * @throws ApiError
+   */
+  public static getDataRepairHealth({
+    limit = 64,
+    cursor,
+  }: {
+    /**
+     * Maximum detail rows; values outside 1 through 500 are rejected.
+     */
+    limit?: number,
+    /**
+     * Opaque next_cursor from the preceding response.
+     */
+    cursor?: string,
+  }): CancelablePromise<DataRepairHealth> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/admin/ops/data-repairs',
+      query: {
+        'limit': limit,
+        'cursor': cursor,
+      },
+      errors: {
+        400: `code: bad_request — generic 400 envelope. Specific codes (missing Upload-Offset header on PATCH /v1/uploads/{id}, malformed JSON body, plan cap exceeded as \`source_too_large\`) ship as the \`code\` field.`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
+        host age recipient not loaded → registry credential PUT
+        returns 503 instead of accepting plaintext).
+        `,
       },
     });
   }

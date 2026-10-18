@@ -48,6 +48,10 @@ ANSIBLE_PLAYBOOK = ANSIBLE_CONFIG="$(ANSIBLE_CONFIG)" ansible-playbook
 
 .PHONY: test-customer-platform
 .PHONY: test-commit
+.PHONY: test-data-repair
+test-data-repair: ## Run strict internal repair PostgreSQL, SDK and isolated operator-CLI acceptance
+	@GO="$(GO)" bash scripts/test-data-repair.sh
+
 test-commit: ## Run strict PostgreSQL and Linux process acceptance for Gregale Commit
 	@GO="$(GO)" sh scripts/test-commit.sh
 
@@ -1709,6 +1713,9 @@ obs-rule-catalog-generate: ## Regenerate the explicit operator alert expectation
 obs-rule-catalog-check: ## Verify the operator alert catalog matches shipped sources
 	$(GO) run ./cmd/obs-rule-catalog -root . -check
 
+.PHONY: test-data-repair-native
+test-data-repair-native: ## Repair rehearsal acceptance on a designated native Linux KVM host
+	@GO="$(GO)" "$${PYTHON:-python3}" scripts/ci/run-data-repair-native.py
 .PHONY: issues-grouping-eval
 issues-grouping-eval: ## Compare grouping strategies against the labeled offline corpus
 	$(GO) run ./cmd/issues-grouping-eval
