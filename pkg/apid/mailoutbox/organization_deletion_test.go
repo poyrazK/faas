@@ -29,7 +29,10 @@ func TestPGProducerOutboxCompanyDeletionOwnershipFence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, member := range []struct{ id, role string }{{owner.ID, state.OrgRoleOwner}, {creator.ID, state.OrgRoleDeveloper}} {
+	for _, member := range []struct {
+		id   string
+		role state.OrgRole
+	}{{owner.ID, state.OrgRoleOwner}, {creator.ID, state.OrgRoleDeveloper}} {
 		if err := store.AddOrgMember(ctx, org.ID, member.id, member.role, nil); err != nil {
 			t.Fatal(err)
 		}

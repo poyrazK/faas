@@ -391,3 +391,47 @@ pass (5.54s). Local Go checks use 1.26.9 while the Go SDK module minimum remains
 detection; database-package tests use race detection. Fresh GitHub PR checks must
 qualify this integrated source before merge. Production deployment and native KVM
 acceptance remain pending.
+
+## Integration with main's internal mail service
+
+Main through `53116be8b` is integrated, including selective repair, daemon
+handoff, release SLO slices and the default-off internal mail service. Fresh
+PostgreSQL 16 schema generation produces 85,254 lines; SQLC generation and
+deterministic checks cover the union of 111 state query files. All 946 unique
+clone policies and their column sets match the live catalogue. Existing MCP
+configuration/customer-data policies and all nine unsupported-resource erasure
+guards retain their isolation rules.
+
+The mail outbox writes account status within its notification transaction.
+The ownership expansion therefore also guards the database transition into
+`deleted_pending`, and both memory and PostgreSQL status setters preserve that
+barrier. The HTTP adapter maps the ownership constraint to the existing conflict
+response. A real mail-outbox regression proves that blocked erasure saves no
+intent and leaves the identity active; permitted erasure clears personal mail
+history while preserving the company application and its namespace.
+
+Global platform-mail records do not become company-owned application resources.
+Personal credentials and notification history remain identity metadata that
+cascades with erasure; treating the deletion notification itself as a company
+resource would prevent its own eventual purge. Main's deployment notifications
+retain their current-membership checks. Mail feature flags remain default off.
+
+Organization, clone-catalogue, repair and account-status state tests pass
+(89.845s), as does the real company-deletion outbox regression (10.134s).
+Migration apply-and-walk, replay of all seven ownership expansions and ownership
+down/up recovery pass (28.557s), including the new status trigger. These checks
+use Go 1.26.9 and PostgreSQL 16 without race detection.
+
+The complete database package passes with race detection (106.153s), including
+both branches' four migration-lock regressions and concurrent full-chain
+migrators. Environment-contract static and generated checks also pass (1.361s
+for the Go checks).
+
+Public OpenAPI and all three SDK trees are byte-identical to the previously
+qualified `83185b69a` revision, so its generation and client-test evidence still
+applies. ADR uniqueness, systemd hardening for twelve production units and all
+seven durable-listener checks pass. The colliding mail ADR identifiers are
+renumbered to `202610180920` and `202610180921`, with scoped links updated.
+Internal CI recovery retains `202610180816`; restart ADR-1580 remains unchanged.
+The CI workflow retains main's forty-minute shard budget and all qualification
+commands. Fresh GitHub checks must qualify the final revision before merge.
