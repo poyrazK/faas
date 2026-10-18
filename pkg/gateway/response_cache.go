@@ -3,6 +3,7 @@ package gateway
 import (
 	"container/list"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"sync"
@@ -80,68 +81,52 @@ type SharedResponseCacheStore interface {
 
 // CacheKey is the closed set of dimensions that uniquely
 // identifies one cached response. The runtime computes it from
-// the matched rule + request fields in
-// handler_apply_edge_rule_cache.go::computeCacheKey.
+// the matched rule + request fields in responseCacheKeyForRequest.
 //
 // AppID + DeploymentID + RuleID partition the cache so two apps
-// (or two releases of one app) can never cross-serve. Method +
-// Path + Query discriminate per-route (Query is the SORTED
-// r.URL.RawQuery — sorting is the caller's job because the
-// applier already needs to canonicalise for the rule matcher;
-// without the sort, ?id=1&id=2 and ?id=2&id=1 would collide,
-// silently serving the wrong body). VaryHash is the sha-256 of
-// the (sorted, lower-cased) vary_on header values, so the same
-// (host, path, vary) tuple is a single key.
+// (or two releases of one app) can never cross-serve. Method, path
+// escaping and the original query distinguish requests as the origin sees
+// them. Sorting query parameters loses meaningful ordering, including the
+// first value of a repeated parameter. VaryHash includes the hostname and
+// configured vary_on request header values.
 //
 // Method is included because a kind=cache rule can target
 // {GET, HEAD} — HEAD requests are common from monitoring agents
-// and must not share a body with GET. NormalizedPath is the
-// post-glob match path (per the matched rule's match_path),
-// bounded by the rule cardinality so an unbounded per-path
-// attacker can't enumerate.
+// and must not share a body with GET. NormalizedPath remains the decoded
+// path for matching rules and purges. RawPath is net/url's optional escaped
+// path; ForceQuery preserves a trailing '?' even when Query is empty.
 type CacheKey struct {
 	AppID          string
 	DeploymentID   string
 	RuleID         string
 	Method         string
 	NormalizedPath string
+	RawPath        string `json:",omitempty"`
 	Query          string
+	ForceQuery     bool `json:",omitempty"`
 	VaryHash       [32]byte
 }
 
-// String returns a stable hex form for logging + tests. The
-// hot path ALSO calls String (it's the map key for Get/Put),
-// so this MUST be a stable, collision-free encoding of every
-// field — including long NormalizedPath / Query strings. The
-// previous fixed-[404]byte buffer implementation silently
-// truncated fields past 293 bytes, which caused distinct
-// URLs to collide on the same map key. The fix is a dynamic
-// buffer; the hex envelope is 2 bytes per source byte, so
-// the allocation is bounded by the size of the input fields,
-// not by a guessed ceiling.
-//
-// Field order is fixed so two keys with identical fields
-// always encode to the same string:
-//
-//	VaryHash | AppID | ':' | DeploymentID | ':' | RuleID |
-//	':' | Method | ':' | NormalizedPath | ':' | Query
+// String returns a versioned hexadecimal encoding for local and shared cache
+// lookups. Each variable-length field carries its byte length: delimiters such
+// as ':' can occur in both paths and queries and cannot separate them safely.
+// The version prefix isolates earlier encodings and URL identity rules
+// while entries written by older gateways expire normally.
 func (k CacheKey) String() string {
 	// Append grows the buffer with checked allocation arithmetic, without
 	// summing caller-sized fields into a potentially overflowing capacity.
 	b := make([]byte, 0, len(k.VaryHash))
 	b = append(b, k.VaryHash[:]...)
-	b = append(b, k.AppID...)
-	b = append(b, ':')
-	b = append(b, k.DeploymentID...)
-	b = append(b, ':')
-	b = append(b, k.RuleID...)
-	b = append(b, ':')
-	b = append(b, k.Method...)
-	b = append(b, ':')
-	b = append(b, k.NormalizedPath...)
-	b = append(b, ':')
-	b = append(b, k.Query...)
-	return hex.EncodeToString(b)
+	if k.ForceQuery {
+		b = append(b, 1)
+	} else {
+		b = append(b, 0)
+	}
+	for _, field := range []string{k.AppID, k.DeploymentID, k.RuleID, k.Method, k.NormalizedPath, k.RawPath, k.Query} {
+		b = binary.AppendUvarint(b, uint64(len(field)))
+		b = append(b, field...)
+	}
+	return "v3:" + hex.EncodeToString(b)
 }
 
 // cacheEntry is the LRU list element. Body is the cached
