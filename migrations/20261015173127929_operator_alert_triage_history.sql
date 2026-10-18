@@ -1,3 +1,4 @@
+-- migration-compat: expand
 -- filename: 20261015173127929_operator_alert_triage_history.sql
 
 -- +goose NO TRANSACTION

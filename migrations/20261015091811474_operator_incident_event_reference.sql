@@ -1,3 +1,4 @@
+-- migration-compat: expand
 -- Operator actions historically use an account subject and put the affected
 -- resource in data. Index that explicit reference so incident evidence can
 -- include existing cancellations/retries/outcomes without account-wide scans.

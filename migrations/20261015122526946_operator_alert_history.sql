@@ -1,3 +1,4 @@
+-- migration-compat: expand
 -- +goose Up
 CREATE TABLE IF NOT EXISTS operator_alert_collection (
     singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),

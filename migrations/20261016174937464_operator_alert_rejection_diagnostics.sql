@@ -1,3 +1,4 @@
+-- migration-compat: expand
 -- filename: 20261016174937464_operator_alert_rejection_diagnostics.sql
 
 -- +goose Up

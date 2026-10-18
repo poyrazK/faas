@@ -1,3 +1,4 @@
+-- migration-compat: expand
 -- filename: 20261017112758515_image_preparation_phase_timing.sql
 
 -- +goose Up

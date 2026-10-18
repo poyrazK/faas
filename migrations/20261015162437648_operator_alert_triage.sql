@@ -1,3 +1,4 @@
+-- migration-compat: expand
 -- filename: 20261015162437648_operator_alert_triage.sql
 
 -- +goose Up

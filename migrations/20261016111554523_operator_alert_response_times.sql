@@ -1,3 +1,4 @@
+-- migration-compat: expand
 -- filename: 20261016111554523_operator_alert_response_times.sql
 
 -- +goose Up

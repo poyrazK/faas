@@ -1,3 +1,4 @@
+-- migration-compat: expand
 -- filename: 20261017083124969_builds_queued_count_index.sql
 
 -- +goose NO TRANSACTION

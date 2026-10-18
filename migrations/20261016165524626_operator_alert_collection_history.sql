@@ -1,3 +1,4 @@
+-- migration-compat: expand
 -- filename: 20261016165524626_operator_alert_collection_history.sql
 
 -- +goose Up

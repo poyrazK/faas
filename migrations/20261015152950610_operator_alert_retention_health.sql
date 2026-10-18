@@ -1,3 +1,4 @@
+-- migration-compat: expand
 -- filename: 20261015152950610_operator_alert_retention_health.sql
 
 -- +goose Up
