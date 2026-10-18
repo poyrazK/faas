@@ -1,0 +1,40 @@
+{
+  "help_cases": [
+    {
+      "name": "alice-help",
+      "tenant_id": "",
+      "request_id": "",
+      "kind": "run",
+      "operation_id": "",
+      "expected_status": "resolved",
+      "expected_version": 2,
+      "message_sha256": "",
+      "response_sha256": "",
+      "context_sha256": ""
+    },
+    {
+      "name": "bob-help",
+      "tenant_id": "",
+      "request_id": "",
+      "kind": "run",
+      "operation_id": "",
+      "expected_status": "resolved",
+      "expected_version": 2,
+      "message_sha256": "",
+      "response_sha256": "",
+      "context_sha256": ""
+    },
+    {
+      "name": "carol-help",
+      "tenant_id": "",
+      "request_id": "",
+      "kind": "run",
+      "operation_id": "",
+      "expected_status": "resolved",
+      "expected_version": 2,
+      "message_sha256": "",
+      "response_sha256": "",
+      "context_sha256": ""
+    }
+  ]
+}

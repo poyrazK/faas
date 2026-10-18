@@ -6,11 +6,13 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
+	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/operations"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -26,6 +28,12 @@ func (s *Service) OperationStore(w http.ResponseWriter) (state.OperationStore, b
 
 func WriteOperationError(w http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, state.ErrProductQuoteChanged):
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "product_quote_changed", "Confirm current price", "the confirmed product terms have changed; refresh the assigned plan and confirm again before starting new work"))
+	case errors.Is(err, state.ErrProductAccess):
+		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, "product_entitlement_denied", "Feature unavailable", "the assigned product plan does not permit this feature"))
+	case errors.Is(err, state.ErrProductBindingUnavailable):
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "product_operation_binding_unavailable", "Feature temporarily unavailable", "the feature requires its named Operation on one fully serving deployment; retry with the same key after deployment completes"))
 	case errors.Is(err, state.ErrWorkflowPerformanceCohortChanged):
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, "workflow_performance_cohort_changed", "Workflow performance changed", "refresh the performance summary before opening its contributors"))
 	case errors.Is(err, state.ErrNotFound):
@@ -231,16 +239,33 @@ func (s *Service) GetPlatformTenantSelfOperationEvents(w http.ResponseWriter, r 
 }
 
 func (s *Service) StartPlatformTenantSelfOperation(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	store, ok := s.OperationStore(w)
-	if !ok {
-		return
-	}
 	tenant, ok := httpkit.PlatformTenantSelfID(w, r)
 	if !ok {
 		return
 	}
 	var req api.OperationStartRequest
 	if !DecodeOperationBody(w, r, &req, api.OperationSubmissionMaxBytes+api.OperationStartBodyOverheadBytes) {
+		return
+	}
+	s.startTenantOperation(w, r, acct, tenant, req, "", false, "")
+}
+
+// StartProductOperation preserves the separate scoped Operations preview gate.
+func (s *Service) StartProductOperation(w http.ResponseWriter, r *http.Request, acct state.Account, req api.ProductStartRequest) {
+	if !s.ProductControlEnabled {
+		api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "Product Control is unavailable"))
+		return
+	}
+	tenant, ok := httpkit.PlatformTenantSelfID(w, r)
+	if !ok {
+		return
+	}
+	s.startTenantOperation(w, r, acct, tenant, api.OperationStartRequest{DefinitionID: req.DefinitionID, Input: req.Input}, req.Feature, true, req.ExpectedQuote)
+}
+
+func (s *Service) startTenantOperation(w http.ResponseWriter, r *http.Request, acct state.Account, tenant string, req api.OperationStartRequest, feature string, productEnabled bool, quote string) {
+	store, ok := s.OperationStore(w)
+	if !ok {
 		return
 	}
 	def, err := store.OperationDefinitionByID(r.Context(), acct.ID, req.DefinitionID)
@@ -251,12 +276,20 @@ func (s *Service) StartPlatformTenantSelfOperation(w http.ResponseWriter, r *htt
 	if !s.operationAdmissionOpen(w, acct.ID, def.AppID, def.Scope, tenant, def.Spec) {
 		return
 	}
-	op, _, err := store.AdmitOperation(r.Context(), state.OperationAdmission{AccountID: acct.ID, PlatformTenantID: tenant, DefinitionID: req.DefinitionID, ExpectedIdentity: req.ExpectedIdentity, ExpectedScope: req.ExpectedScope, IdempotencyKey: r.Header.Get("Idempotency-Key"), Input: req.Input})
+	admission := state.OperationAdmission{AccountID: acct.ID, PlatformTenantID: tenant, DefinitionID: req.DefinitionID, ExpectedIdentity: req.ExpectedIdentity, ExpectedScope: req.ExpectedScope, IdempotencyKey: r.Header.Get("Idempotency-Key"), Input: req.Input, ProductFeature: feature, ProductControlEnabled: productEnabled, ExpectedProductQuote: quote, RequireProductQuote: productEnabled}
+	if identity, ok := authmw.ProductCustomerFromContext(r.Context()); ok && productEnabled {
+		admission.ProductAuthOrganizationID, admission.ProductAuthApp = identity.OrganizationID, identity.AuthApp
+	}
+	op, _, err := store.AdmitOperation(r.Context(), admission)
 	if err != nil {
 		WriteOperationError(w, err)
 		return
 	}
-	httpkit.WriteJSON(w, http.StatusAccepted, api.OperationAcceptedResponse{ID: op.ID, StatusURL: "/v1/platform-tenant-self/customer-operations/" + op.ID, EventsURL: "/v1/platform-tenant-self/customer-operations/" + op.ID + "/events"})
+	path := "/v1/platform-tenant-self/customer-operations/" + op.ID
+	if identity, ok := authmw.ProductCustomerFromContext(r.Context()); ok {
+		path = "/v1/product-control/customer/" + url.PathEscape(identity.ProductSlug) + "/operations/" + op.ID
+	}
+	httpkit.WriteJSON(w, http.StatusAccepted, api.OperationAcceptedResponse{ID: op.ID, StatusURL: path, EventsURL: path + "/events"})
 }
 
 func (s *Service) CancelOperation(w http.ResponseWriter, r *http.Request, acct state.Account) {
