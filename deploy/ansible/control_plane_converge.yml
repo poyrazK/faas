@@ -11,6 +11,14 @@
 # same faas_join_bootstrap_contract_current fast path bootstrap.yml already
 # honors. The hash is recorded only after the whole play succeeds, so a
 # failed convergence is retried by the next rollout.
+#
+# The host-configuration lane (docs/adr/20261018133100-host-configuration-
+# lane.md) runs this playbook with `--roles`: the command passes
+# faas_cp_converge_roles_requested (the roles whose content hash changed
+# since the host's record), and bootstrap.yml's control-plane play skips
+# every other role. A host whose operator variables or rendered inventory
+# changed since its record converges every role instead. The lane records
+# the contract and the role hashes itself, after its SLO gate passes.
 - name: Probe the control-plane bootstrap contract
   hosts: control_plane
   gather_facts: false
@@ -40,12 +48,46 @@
           {{ faas_cp_contract_probe.rc == 0
              and (faas_cp_contract_probe.stdout | trim) == faas_cp_bootstrap_contract_sha256 }}
 
+    # The lane never restarts PostgreSQL or pgbouncer: those roles report a
+    # restart-needing change in check mode and fail the run instead.
+    - name: Require the stateful restart guard in lane mode
+      ansible.builtin.assert:
+        that:
+          - not (faas_stateful_restart_allowed | default(true) | bool)
+        fail_msg: >-
+          --roles converges in the host-configuration lane, which must pass
+          faas_stateful_restart_allowed=false (docs/adr/20261018133100-host-configuration-lane.md).
+      when: faas_cp_converge_roles_requested is defined
+
+    - name: Read the recorded control-plane role hashes
+      ansible.builtin.command:
+        argv:
+          - cat
+          - /var/lib/faas/bootstrap/control-plane-roles.json
+      register: faas_cp_roles_probe
+      changed_when: false
+      failed_when: false
+      when: faas_cp_converge_roles_requested is defined
+
+    # An operator variable or inventory change since the record reaches
+    # every role, as it does through the full contract.
+    - name: Select the roles the host-configuration lane converges
+      ansible.builtin.set_fact:
+        faas_cp_converge_roles: >-
+          {{ none
+             if (faas_cp_roles_probe.rc == 0
+                 and ((faas_cp_roles_probe.stdout | from_json).environment | default('')) != faas_cp_environment_sha256)
+             else faas_cp_converge_roles_requested }}
+      when: faas_cp_converge_roles_requested is defined
+
     - name: Report the control-plane convergence decision
       ansible.builtin.debug:
         msg: >-
           {{ 'Control-plane bootstrap contract is current; skipping role convergence.'
              if faas_join_bootstrap_contract_current | bool
-             else 'Control-plane bootstrap contract changed; converging the control-plane roles.' }}
+             else ('Control-plane bootstrap contract changed; converging the control-plane roles'
+                   + ((': ' + (faas_cp_converge_roles | join(', ')))
+                      if (faas_cp_converge_roles | default(none)) is not none else '.')) }}
 
 - name: Converge the control-plane roles
   ansible.builtin.import_playbook: bootstrap.yml
@@ -58,6 +100,12 @@
     - name: End when the contract was already current
       ansible.builtin.meta: end_host
       when: faas_join_bootstrap_contract_current | bool
+
+    # The host-configuration lane records after its SLO gate, so a gate
+    # failure leaves the record describing the content it rolls back to.
+    - name: End when the lane records the contract after its gate
+      ansible.builtin.meta: end_host
+      when: not (faas_cp_record_contract | default(true) | bool)
 
     - name: Ensure the bootstrap contract directory exists
       ansible.builtin.file:

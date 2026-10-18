@@ -179,7 +179,7 @@ func TestWorkerScopedDemandLifecycle(t *testing.T) {
 }
 
 type busyOnceWorkerAdmissionStore struct {
-	state.Store
+	Store          state.Store
 	createAttempts int
 }
 
@@ -201,7 +201,7 @@ func TestWorkerScopedDemandRetriesTransientRuntimeAdmissionLock(t *testing.T) {
 
 	store := &busyOnceWorkerAdmissionStore{Store: base}
 	vmm := &fakeVMM{}
-	engine := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+	engine := newEngine(t, statetest.NewStore(store), vmm, &fakeNotifier{}, "1.10.0")
 	if err := engine.SeedLedger(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -209,7 +209,7 @@ func TestWorkerScopedDemandRetriesTransientRuntimeAdmissionLock(t *testing.T) {
 		t.Fatalf("reconcile after transient runtime admission lock: %v", err)
 	}
 
-	counts := scopedWorkerCounts(t, store, app.ID)
+	counts := scopedWorkerCounts(t, statetest.NewStore(store), app.ID)
 	if counts["default"] != 2 || counts["staging"] != 1 || vmm.coldBoots != 2 || store.createAttempts != 3 {
 		t.Fatalf("reconciled pools=%v boots=%d create attempts=%d", counts, vmm.coldBoots, store.createAttempts)
 	}

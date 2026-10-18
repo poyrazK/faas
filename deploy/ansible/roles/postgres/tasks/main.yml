@@ -180,6 +180,9 @@
     create: false
   register: pg_listen
   failed_when: false  # chroot/CI may not have the conf file
+  # Host-configuration lane (ADR 20261018133100): never restart the
+  # postmaster outside a full release; only report the change.
+  check_mode: "{{ not (faas_stateful_restart_allowed | default(true) | bool) }}"
   notify: restart postgresql
 
 - name: postgres — narrow pg_hba.conf to peer/local auth (spec §11)
@@ -265,6 +268,9 @@
     create: false
   register: pg_wal_level
   failed_when: false  # chroot/CI may not have the conf file
+  # Host-configuration lane (ADR 20261018133100): never restart the
+  # postmaster outside a full release; only report the change.
+  check_mode: "{{ not (faas_stateful_restart_allowed | default(true) | bool) }}"
   notify: restart postgresql
 
 - name: postgres — enable archive_mode (restart-needed)
@@ -275,6 +281,9 @@
     create: false
   register: pg_archive_mode
   failed_when: false
+  # Host-configuration lane (ADR 20261018133100): never restart the
+  # postmaster outside a full release; only report the change.
+  check_mode: "{{ not (faas_stateful_restart_allowed | default(true) | bool) }}"
   notify: restart postgresql
 
 # CAUTION (observed on the live control plane, 2026-09-12): this host's
@@ -537,6 +546,9 @@
   ansible.builtin.file:
     path: "{{ postgres_config_dir }}/conf.d/90-faas-standby.conf"
     state: absent
+  # Host-configuration lane (ADR 20261018133100): never restart the
+  # postmaster outside a full release; only report the change.
+  check_mode: "{{ not (faas_stateful_restart_allowed | default(true) | bool) }}"
   notify: restart postgresql
   when: not (faas_postgres_standby_mode | default(false) | bool)
 
