@@ -95,6 +95,17 @@ func (q *Queries) ConfigureCapture(ctx context.Context, db DBTX) error {
 	return err
 }
 
+const databaseConnectionsAllowed = `-- name: DatabaseConnectionsAllowed :one
+SELECT datallowconn::boolean FROM pg_catalog.pg_database WHERE datname=$1::text
+`
+
+func (q *Queries) DatabaseConnectionsAllowed(ctx context.Context, db DBTX, databaseName string) (bool, error) {
+	row := db.QueryRow(ctx, databaseConnectionsAllowed, databaseName)
+	var datallowconn bool
+	err := row.Scan(&datallowconn)
+	return datallowconn, err
+}
+
 const databaseExists = `-- name: DatabaseExists :one
 SELECT EXISTS(SELECT 1 FROM pg_catalog.pg_database WHERE datname=$1::text)::boolean
 `
@@ -104,6 +115,24 @@ func (q *Queries) DatabaseExists(ctx context.Context, db DBTX, databaseName stri
 	var column_1 bool
 	err := row.Scan(&column_1)
 	return column_1, err
+}
+
+const faultAccessProbe = `-- name: FaultAccessProbe :one
+SELECT current_database()=$1::text AND
+ pg_catalog.has_database_privilege($2::text,current_database(),'CONNECT') AND
+ EXISTS(SELECT 1 FROM pg_catalog.pg_roles WHERE rolname=$2::text AND rolcanlogin) AS ready
+`
+
+type FaultAccessProbeParams struct {
+	DatabaseName string
+	RoleName     string
+}
+
+func (q *Queries) FaultAccessProbe(ctx context.Context, db DBTX, arg FaultAccessProbeParams) (pgtype.Bool, error) {
+	row := db.QueryRow(ctx, faultAccessProbe, arg.DatabaseName, arg.RoleName)
+	var ready pgtype.Bool
+	err := row.Scan(&ready)
+	return ready, err
 }
 
 const formatConfigureDatabase = `-- name: FormatConfigureDatabase :one
@@ -221,6 +250,17 @@ func (q *Queries) FormatFreezeRole(ctx context.Context, db DBTX, roleName string
 	return column_1, err
 }
 
+const formatRecoverDatabase = `-- name: FormatRecoverDatabase :one
+SELECT pg_catalog.format('ALTER DATABASE %I ALLOW_CONNECTIONS true',$1::text)::text
+`
+
+func (q *Queries) FormatRecoverDatabase(ctx context.Context, db DBTX, databaseName string) (string, error) {
+	row := db.QueryRow(ctx, formatRecoverDatabase, databaseName)
+	var column_1 string
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const formatRotateRole = `-- name: FormatRotateRole :one
 SELECT pg_catalog.format('ALTER ROLE %I PASSWORD %L',$1::text,$2::text)::text
 `
@@ -255,6 +295,15 @@ func (q *Queries) FormatSelect(ctx context.Context, db DBTX, arg FormatSelectPar
 	var column_1 string
 	err := row.Scan(&column_1)
 	return column_1, err
+}
+
+const lockFixtureDatabase = `-- name: LockFixtureDatabase :exec
+SELECT pg_catalog.pg_advisory_lock(pg_catalog.hashtextextended('rehearsal-fixture:'||$1::text,0))
+`
+
+func (q *Queries) LockFixtureDatabase(ctx context.Context, db DBTX, databaseName string) error {
+	_, err := db.Exec(ctx, lockFixtureDatabase, databaseName)
+	return err
 }
 
 const otherSessions = `-- name: OtherSessions :one

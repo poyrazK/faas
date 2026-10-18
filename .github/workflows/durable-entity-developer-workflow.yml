@@ -3,7 +3,7 @@ on:
   pull_request:
     # Only this suite's own code. Shared hot paths (pkg/api, pkg/state,
     # pkg/apid, migrations, go.mod, cmd/gregale) changed on nearly every
-    # pull request; ci.yml runs this suite nightly and in the release gate.
+    # pull request; ci.yml runs this suite nightly and on dispatch.
     paths:
       - 'sdk/node/**'
       - 'cmd/gregale/templates/durable-entity-node/**'
@@ -13,7 +13,7 @@ on:
       - 'pkg/apid/durable/**'
       - 'scripts/gen-durable-entity-contract.py'
       - '.github/workflows/durable-entity-developer-workflow.yml'
-  # Nightly and release gate: ci.yml calls this workflow.
+  # Nightly and on dispatch: ci.yml calls this workflow.
   workflow_call:
   workflow_dispatch:
 permissions:

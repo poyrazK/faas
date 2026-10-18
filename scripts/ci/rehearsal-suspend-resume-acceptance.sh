@@ -22,5 +22,5 @@ done
 
 export FAAS_TEST_REHEARSAL_SUSPEND_RESUME=1
 export RUN_REGEX='^TestMetalRehearsalSuspendResume$'
-make test-metal PKGS='./pkg/fcvm' RUN_ARGS='-p=1'
+make test-metal PKGS='./pkg/fcvm' RUN_ARGS='-p=1 -v'
 make leakcheck

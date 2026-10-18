@@ -7,6 +7,10 @@ import (
 )
 
 func (s *server) scenarioManagedWorkSupported(w http.ResponseWriter, req api.RegisterScenarioTestRequest) bool {
+	if p := rehearsal.ValidatePostgresFault(req, s.rehearsalPostgresFaultsEnabled); p != nil {
+		api.WriteProblem(w, p)
+		return false
+	}
 	if p := rehearsal.ValidateWorkerTermination(req, s.rehearsalWorkerFaultsEnabled); p != nil {
 		api.WriteProblem(w, p)
 		return false

@@ -84,6 +84,7 @@ type ScenarioSimulationRequest struct {
 }
 
 type ScenarioSimulationDecision struct {
+	PostgresFaultID string
 	Attempt         ScenarioSimulationAttempt
 	Response        ScenarioSimulationResponse
 	WorkerFaultID   string

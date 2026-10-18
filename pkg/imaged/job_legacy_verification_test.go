@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 	"github.com/onebox-faas/faas/pkg/storage"
 )
 
@@ -19,7 +20,7 @@ type legacyArtifactDecision struct {
 }
 
 type legacyVerificationTestStore struct {
-	*state.MemStore
+	MemStore *state.MemStore
 	jobs     []state.Job
 	claimed  bool
 	finished []legacyArtifactDecision
@@ -119,7 +120,7 @@ func TestVerifyLegacyJobArtifacts(t *testing.T) {
 				MemStore: state.NewMemStore(),
 				jobs:     []state.Job{{ID: "legacy-job", ImageRef: ref, ImageStorageKey: ref, ImageMaterializationStatus: "verifying_legacy", ImageMaterializationAttempts: 1}},
 			}
-			h := New(store, &fakeNotifier{}, nil, nil, "", t.TempDir(), silentLogger()).WithStorage(selected)
+			h := New(statetest.NewMem(store), &fakeNotifier{}, nil, nil, "", t.TempDir(), silentLogger()).WithStorage(selected)
 			if err := h.MaterializePendingJobs(ctx); err != nil {
 				t.Fatalf("MaterializePendingJobs: %v", err)
 			}

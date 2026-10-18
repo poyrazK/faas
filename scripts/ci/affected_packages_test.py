@@ -4,6 +4,7 @@ import importlib.util
 import io
 import pathlib
 import sys
+import tempfile
 import unittest
 from unittest import mock
 
@@ -72,6 +73,57 @@ class SelectTest(unittest.TestCase):
     def test_dotfile_paths_are_not_mangled(self):
         everything, _, _, _ = ap.select([".github/workflows/ci-light.yml"], PKGS)
         self.assertTrue(everything)
+
+
+class TextContractTest(unittest.TestCase):
+    """Tests that read workflows and scripts as text run when those change."""
+
+    PKGS = dict(PKGS, **{"cmd/gregalectl": {"path": f"{M}/cmd/gregalectl", "imports": set()}})
+    INPUTS = {"cmd/gregalectl": {".github/workflows/", "scripts/ci/unit_deploy.sh", "deploy/ansible/roles/"}}
+
+    def test_cases(self):
+        cases = [
+            # name, changed paths, selected
+            ("a script the contract reads", ["scripts/ci/unit_deploy.sh"], ["cmd/gregalectl"]),
+            ("a workflow", [".github/workflows/cd-controlplane.yml"], ["cmd/gregalectl"]),
+            ("a role file", ["deploy/ansible/roles/postgres/tasks/main.yml"], ["cmd/gregalectl"]),
+            ("a script nobody reads", ["scripts/ci/slo_gate.py"], []),
+            ("a sibling with a shared prefix", ["scripts/ci/unit_deploy.sh.orig"], []),
+        ]
+        for name, paths, want in cases:
+            with self.subTest(name):
+                _, changed, _, test = ap.select(paths, self.PKGS, self.INPUTS)
+                self.assertEqual(changed, want)
+                self.assertEqual(test, want)
+
+    def test_literal_path(self):
+        self.assertEqual(ap.literal_path(['"scripts"', '"ci"', '"unit_deploy.sh"']), "scripts/ci/unit_deploy.sh")
+        self.assertEqual(ap.literal_path(['"deploy"', '"roles"', "role", '"main.yml"']), "deploy/roles/")
+        self.assertEqual(ap.literal_path(['"roles"', '"*"', '"x"']), "roles/")
+        self.assertEqual(ap.literal_path(["name"]), "")
+
+    def test_inputs_are_read_from_the_tests(self):
+        with tempfile.TemporaryDirectory() as root:
+            pkg = pathlib.Path(root, "cmd", "tool")
+            pkg.mkdir(parents=True)
+            (pkg / "x_test.go").write_text(
+                'package main\n'
+                'func a() { readRepoFile(t, "scripts", "ci", "unit_deploy.sh") }\n'
+                'func b() { readWorkflow(t, "release-units.yml"); readWorkflow(t, name) }\n'
+                'func c() { os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "roles", role, "main.yml")) }\n'
+                'func d() { filepath.Join(repoRoot, "deploy", "manifest", "x.yaml"); filepath.Join(dir, "tmp.txt") }\n'
+                'func e() { filepath.Join("..", "testdata", "x") }\n')
+            self.assertEqual(ap.text_inputs("cmd/tool", root), {
+                "scripts/ci/unit_deploy.sh", ".github/workflows/release-units.yml", ".github/workflows/",
+                "deploy/ansible/roles/", "deploy/manifest/x.yaml"})
+
+    def test_gregalectl_reads_the_unit_lane_scripts(self):
+        # The regression: a change to these scripts must run cmd/gregalectl.
+        inputs = ap.text_inputs("cmd/gregalectl", str(pathlib.Path(__file__).parents[2]))
+        for path in ("scripts/ci/unit_deploy.sh", "scripts/ci/verify_unit_release.sh",
+                     ".github/workflows/release-units.yml", ".github/workflows/cd-edge-units.yml"):
+            with self.subTest(path):
+                self.assertTrue(ap.reads(path, inputs), path)
 
 
 class ShardTest(unittest.TestCase):
