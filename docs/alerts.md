@@ -91,6 +91,116 @@ Deliveries include an event id, timestamp, alert state, and signature. Verify th
 
 For dashboards and SLOs, use the app metrics endpoint and correlate alert event ids with deployment ids. Never put credentials in an alert URL.
 
+## Notification channels
+
+Channels deliver alerts to Slack, PagerDuty or email without a webhook
+receiver of your own (ADR-749). Add a channel once per account, then send a
+test:
+
+```bash
+# Slack: create an incoming webhook in Slack, then paste its URL.
+printf '%s\n' "$SLACK_WEBHOOK_URL" | gregale channels add --name ops-slack --kind slack --secret-stdin
+# PagerDuty: an Events API v2 integration key from the service's Integrations tab.
+printf '%s\n' "$PD_ROUTING_KEY" | gregale channels add --name oncall --kind pagerduty --secret-stdin --pagerduty-region eu
+# Email: your account's own address.
+gregale channels add --name me --kind email --email you@example.com
+
+gregale channels test CHANNEL_ID
+gregale channels list
+```
+
+- Slack URLs must be `https://hooks.slack.com/services/…`; PagerDuty
+  notifications go only to PagerDuty's Events API. Both destinations are
+  sealed at rest and never shown again; `list` shows a short hint instead.
+- Email channels can only send to the account's own email address for now.
+- `list` shows each channel's last successful delivery or last error, so a
+  revoked Slack webhook shows up before an incident does.
+
+Point a rule at channels with `--channel` (repeatable, up to five). A rule
+with at least one channel needs no webhook:
+
+```bash
+gregale alerts add --app shop --name "checkout errors" --metric error_rate_pct \
+  --comparison gt --threshold 5 --window-spec 5m --channel OPS_SLACK_ID --channel ONCALL_PD_ID
+```
+
+Channels receive the fire and, when the rule recovers, a resolve: PagerDuty
+closes the incident the fire opened, and Slack and email get a "Resolved"
+message. Each channel is delivered to independently, so a broken Slack
+webhook never delays PagerDuty, the rule's webhook, or a rollback action.
+Presets take channels too: `gregale alerts preset enable availability --app
+shop --channel OPS_SLACK_ID`.
+
+Deleting a channel removes it from every rule; a rule left with no webhook
+and no channel stops notifying. The app dashboard's Alerts panel shows where
+each rule delivers ("Delivers to") and lists every channel with its last
+delivery or error, so a rule delivering nowhere or a revoked Slack webhook is
+visible before an incident.
+## Alert on unusual values
+
+A fixed threshold has to be chosen in advance: 1% errors is an emergency for
+one app and a normal day for another. A baseline rule instead compares a metric
+with its usual value for that app at the same time of day, so you can alert on
+"three times the normal error rate" without picking a number.
+
+```bash
+printf '%s\n' "$ALERT_SECRET" | gregale alerts add --app my-api --name errors-unusual \
+  --metric error_rate_pct --comparison above_baseline --threshold 3 --window-spec 15m \
+  --webhook-url https://example.com/hooks/gregale --webhook-secret-stdin
+
+# Traffic dropped to under a third of normal, for example a broken client release.
+printf '%s\n' "$ALERT_SECRET" | gregale alerts add --app my-api --name traffic-drop \
+  --metric request_count --comparison below_baseline --threshold 0.3 --window-spec 1h \
+  --webhook-url https://example.com/hooks/gregale --webhook-secret-stdin
+```
+
+The usual value is the median of the same metric, over the same window length,
+at the same time of day on each of the previous seven days. With
+`above_baseline` the threshold is a multiplier from 1.5 to 20; with
+`below_baseline` (request count only) it is a fraction from 0.05 to 0.67.
+Supported metrics are `error_rate_pct`, `latency_p95_ms`, `latency_p99_ms`,
+`cold_start_pct`, and `request_count`.
+
+To avoid alerts on tiny numbers, a baseline rule does not fire when:
+
+- the window had fewer than 50 requests;
+- the value is below a sensible minimum (1% errors, 50 ms latency, 5% cold
+  starts) even if it is several times the usual value;
+- the usual value is zero;
+- fewer than five of the previous seven days had traffic, for example for a new
+  app. The rule shows as unknown until enough history exists.
+
+The webhook payload adds `baseline` (the usual value), `baseline_days`, and
+`ratio` (observed divided by baseline) to the usual fields. Baseline rules are a
+preview (ADR-744) and must be enabled for your deployment.
+## Log alerts
+
+`log_error_lines` and `log_warn_lines` count the lines your app wrote at
+error or warning level during the window, across every instance and node:
+
+```bash
+printf '%s\n' "$ALERT_SECRET" | gregale alerts add --app shop --name "error log burst" \
+  --metric log_error_lines --comparison gt --threshold 50 --window-spec 5m \
+  --webhook-url https://example.com/hooks/gregale --webhook-secret-stdin
+```
+
+A line's level comes from a structured `level` or `severity` field when the
+line is JSON, otherwise from common prefixes such as `[ERROR]`, `level=error`
+or `[warn]` in the first 512 bytes. This is the same classification as
+`gregale logs --level error`, so the command shows the lines an alert
+counted. A line that only mentions "error" in prose is not counted. Build
+logs are never counted. Log alerts support every alert action, including
+rollback, and every window.
+## SLO alerts
+
+`slo_budget_burn` and `slo_budget_remaining_pct` watch one of the app's own
+SLOs, named with `slo_id`. See [SLOs and error budgets](slos.md#alert-on-an-slo).
+## Synthetic check alerts
+
+`synthetic_check_consecutive_failures` and `synthetic_check_latency_p95_ms`
+watch one of the app's synthetic checks, named with `synthetic_check_id`. See
+[synthetic checks](synthetic-checks.md#alert-on-a-check).
+
 ## Event consumer routing alerts
 
 Consumer health rules require an app subscription UUID in the immutable
@@ -112,3 +222,23 @@ missing roots, unknown states, or insufficient samples produce `unknown`.
 Failure percentages require 20 retained success/failure attempts, and completion
 latency requires one success. See [consumer execution health](event-driven.md#consumer-execution-health)
 for retention coverage and the distinction between backlog and formation rate.
+
+## Custom metric alerts
+
+Where custom metric history is enabled (preview, ADR-745), you can alert on a
+number you push yourself — orders waiting, failed payments, documents awaiting
+OCR. Name the metric with `custom_metric_name` (`--custom-metric` in the CLI):
+
+```bash
+printf '%s\n' "$ALERT_SECRET" | gregale alerts add --app shop --name "orders backing up" \
+  --metric custom_metric --custom-metric orders_pending --comparison gt --threshold 1000 \
+  --window-spec 15m --webhook-url https://example.com/hooks/gregale --webhook-secret-stdin
+```
+
+A gauge is compared on its average over the window, so `5m` follows the
+current value and `1h` asks whether it stayed there. A counter (an
+OpenTelemetry cumulative sum) is compared on its per-second rate over the
+window. If nothing was pushed in the window, or the metric was deleted, the
+rule is `unknown` and does not fire: a stopped pusher never satisfies a "below"
+rule by silence. These rules are webhook-only and support windows up to `24h`.
+See [custom metrics](scaling-policy.md#custom-metrics) for pushing values.

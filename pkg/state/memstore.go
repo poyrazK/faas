@@ -336,6 +336,12 @@ type MemStore struct {
 	// what PgStore's count(*) over (app_id) measures.
 	customMetrics               map[string]map[string]CustomMetric
 	mcpTaskCompatibilityReports map[string]MCPTaskCompatibilityReport
+	notificationChannels        map[string][]NotificationChannel // account id → channels (ADR-749), lazily made
+	alertRuleChannels           map[string][]string              // rule id → channel ids (ADR-749)
+	appSLOs                     map[string][]SLO                 // app id → definitions (ADR-747), lazily made
+	sloHours                    map[string]map[time.Time]memSLOHour
+	syntheticChecks             map[string][]SyntheticCheck // app id → checks (ADR-748), lazily made
+	syntheticRuns               map[string][]SyntheticCheckRun
 	objectBuckets               map[string]ObjectBucket
 	objectMutations             map[string]ObjectBucketMutation
 	objectNodeSettlements       map[string]ObjectNodeSettlement

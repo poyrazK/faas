@@ -53,14 +53,13 @@ func newCreditRefundPolar(t *testing.T) (*httptest.Server, func() int) {
 		switch {
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/products/"):
 			id := strings.TrimPrefix(r.URL.Path, "/v1/products/")
-			fixedCents := int64(900)
-			switch id {
-			case "pro-product":
-				fixedCents = 2900
-			case "scale-product":
-				fixedCents = 9900
+			plan, ok := map[string]api.Plan{"hobby-product": api.PlanHobby, "pro-product": api.PlanPro, "scale-product": api.PlanScale}[id]
+			if !ok {
+				http.NotFound(w, r)
+				return
 			}
-			_, _ = fmt.Fprintf(w, `{"id":%q,"recurring_interval":"month","recurring_interval_count":1,"is_recurring":true,"is_archived":false,"prices":[{"amount_type":"fixed","price_currency":"eur","price_amount":%d,"is_archived":false},{"amount_type":"metered_unit","price_currency":"eur","unit_amount":"1","meter_id":"meter-1","cap_amount":null,"is_archived":false}],"benefits":[]}`, id, fixedCents)
+			fixedCents := api.MustLimitsFor(plan).PriceMillicents / 1000
+			_, _ = fmt.Fprintf(w, `{"id":%q,"recurring_interval":"month","recurring_interval_count":1,"is_recurring":true,"is_archived":false,"prices":[{"amount_type":"fixed","price_currency":%q,"price_amount":%d,"is_archived":false},{"amount_type":"metered_unit","price_currency":%q,"unit_amount":"1","meter_id":"meter-1","cap_amount":null,"is_archived":false}],"benefits":[]}`, id, api.BillingCurrencyLower, fixedCents, api.BillingCurrencyLower)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/meters/meter-1":
 			_, _ = fmt.Fprint(w, `{"id":"meter-1","unit":"scalar","archived_at":null,"filter":{"conjunction":"and","clauses":[{"property":"name","operator":"eq","value":"ram_usage"}]},"aggregation":{"func":"sum","property":"gb_ram_hours"}}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/refunds":
@@ -424,7 +423,7 @@ func TestE2E_CreditConsume_HappyPathAndIdempotent(t *testing.T) {
 		t.Fatalf("seed instance: %v", err)
 	}
 
-	// Plant 50 included GB-hours plus 250 billable GB-hours.
+	// Plant the current plan allowance plus 250 billable GB-hours.
 	if err := store.AppendUsage(ctx, targetAcct.ID, app.ID, ins.ID,
 		time.Now().UTC(), int64(targetAcct.Plan.PlanIncludedGBHours()+250)*api.SecondsPerGBHour, 0, 0, 0, 0, 0, 0, 0); err != nil {
 		t.Fatalf("seed usage: %v", err)

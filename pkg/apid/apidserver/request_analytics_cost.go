@@ -60,6 +60,50 @@ func allocateRequestShareMillicents(requestCounts []int64, totalMillicents int64
 	return allocations, totalRequests, allocated
 }
 
+// Route cost allocation methods reported in RequestAnalyticsComputeCost.
+const (
+	routeCostByRequestTime = "request_time_share"
+	routeCostByRequests    = "request_share"
+)
+
+// allocateRequestAnalyticsRouteCostByTime distributes an estimated compute
+// value across routes and the omitted-route bucket by their share of observed
+// request time (ADR-743): a 5 s report call holds an instance far longer than
+// a 5 ms health check, so request count alone misattributes RAM-hours. When
+// the window has no request time (every latency was 0 ms), it falls back to
+// request share and says so in the returned method. Request shares and time
+// shares are both filled for display.
+func allocateRequestAnalyticsRouteCostByTime(routes []api.RequestAnalyticsRoute, otherRouteRequests, otherRouteTimeMS, totalMillicents int64) (requestCount, allocatedMillicents, otherRouteMillicents int64, method string) {
+	weights := make([]int64, len(routes)+1)
+	var totalTimeMS int64
+	for i := range routes {
+		weights[i] = routes[i].RequestTimeMS
+		if routes[i].RequestTimeMS > 0 && routes[i].RequestTimeMS <= math.MaxInt64-totalTimeMS {
+			totalTimeMS += routes[i].RequestTimeMS
+		}
+	}
+	weights[len(routes)] = otherRouteTimeMS
+	if otherRouteTimeMS > 0 && otherRouteTimeMS <= math.MaxInt64-totalTimeMS {
+		totalTimeMS += otherRouteTimeMS
+	}
+	if totalTimeMS == 0 {
+		requestCount, allocatedMillicents, otherRouteMillicents = allocateRequestAnalyticsRouteCost(routes, otherRouteRequests, totalMillicents)
+		return requestCount, allocatedMillicents, otherRouteMillicents, routeCostByRequests
+	}
+	// The request-share pass fills RequestSharePct and the request count;
+	// its cost allocations are then replaced by the time-share ones.
+	requestCount, _, _ = allocateRequestAnalyticsRouteCost(routes, otherRouteRequests, totalMillicents)
+	allocations, _, allocatedMillicents := allocateRequestShareMillicents(weights, totalMillicents)
+	for i := range routes {
+		routes[i].EstimatedComputeCostMillicents = allocations[i]
+		routes[i].RequestTimeSharePct = 0
+		if routes[i].RequestTimeMS > 0 {
+			routes[i].RequestTimeSharePct = float64(routes[i].RequestTimeMS) * 100 / float64(totalTimeMS)
+		}
+	}
+	return requestCount, allocatedMillicents, allocations[len(routes)], routeCostByRequestTime
+}
+
 // allocateRequestAnalyticsRouteCost distributes an estimated compute value
 // across the bounded route rows and the omitted-route bucket by observed
 // request share. The route query adds an __other__ group when its top-N limit
