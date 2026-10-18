@@ -3,8 +3,13 @@
 -- by every change a wake depends on, and announced on app_runtime_changed at
 -- commit. schedd's owner cache keys its entries by it, and every write a wake
 -- makes rechecks it, so a stale entry can never commit a decision.
+--
+-- The previous release neither reads the counter nor depends on its
+-- triggers' absence; its writes simply bump it too.
+-- migration-compat: expand
 
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 CREATE TABLE IF NOT EXISTS app_runtime_generations (
     app_id uuid PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE,
