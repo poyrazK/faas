@@ -6027,6 +6027,41 @@ ON CONFLICT (id) DO UPDATE SET id = EXCLUDED.id
    AND request_id_journal.expires_at = EXCLUDED.expires_at
 RETURNING id;
 
+-- name: RecordRequestIDJournalBatch :many
+-- ADR-1521: RecordRequestIDJournal for many records in one statement. The
+-- same ownership join and idempotent-retry rule apply per row; a row whose app
+-- is not owned by its account, or whose id holds different content, is left
+-- out of RETURNING. Record ids must be unique within one call: ON CONFLICT DO
+-- UPDATE cannot touch the same row twice in a statement.
+INSERT INTO request_id_journal (
+    id, account_id, app_id, request_id, trace_id, received_at, expires_at
+)
+SELECT r.id,
+       a.account_id,
+       a.id,
+       r.request_id,
+       NULLIF(r.trace_id, ''),
+       r.received_at,
+       r.expires_at
+  FROM (
+         SELECT unnest(sqlc.arg(ids)::uuid[]) AS id,
+                unnest(sqlc.arg(account_ids)::uuid[]) AS account_id,
+                unnest(sqlc.arg(app_ids)::uuid[]) AS app_id,
+                unnest(sqlc.arg(request_ids)::text[]) AS request_id,
+                unnest(sqlc.arg(trace_ids)::text[]) AS trace_id,
+                unnest(sqlc.arg(received_ats)::timestamptz[]) AS received_at,
+                unnest(sqlc.arg(expires_ats)::timestamptz[]) AS expires_at
+       ) AS r
+  JOIN apps a ON a.id = r.app_id AND a.account_id = r.account_id
+ON CONFLICT (id) DO UPDATE SET id = EXCLUDED.id
+ WHERE request_id_journal.account_id = EXCLUDED.account_id
+   AND request_id_journal.app_id = EXCLUDED.app_id
+   AND request_id_journal.request_id = EXCLUDED.request_id
+   AND request_id_journal.trace_id IS NOT DISTINCT FROM EXCLUDED.trace_id
+   AND request_id_journal.received_at = EXCLUDED.received_at
+   AND request_id_journal.expires_at = EXCLUDED.expires_at
+RETURNING id;
+
 -- name: GetRequestIDJournalByAppAndIdentifier :one
 -- Exact app/account-scoped lookup, latest first when callers reuse an ID.
 -- expires_at is checked as well as received_at so plan downgrades do not
@@ -9614,24 +9649,40 @@ ORDER BY totals.request_count DESC, totals.decision_type, totals.decision_value
 LIMIT 101;
 
 -- name: EnqueueInvocationRow :one
-WITH replay_parent AS (
-  SELECT i.id, i.replay_root_invocation_id, coalesce(i.replay_root_created_at, i.created_at) AS root_created_at
-  FROM invocations i JOIN apps a ON a.id=i.app_id AND a.account_id=i.account_id
-  WHERE i.id=sqlc.narg(replayed_from_invocation_id)::uuid
-    AND i.account_id=sqlc.arg(account_id)::uuid AND i.app_id=sqlc.arg(app_id)::uuid
-    AND i.deployment_scope=coalesce(nullif(sqlc.arg(deployment_scope)::text, ''),
-      CASE WHEN a.project_id IS NOT NULL AND coalesce(a.preview_of_slug, '')='' THEN 'production' ELSE 'default' END)
-    AND i.platform_tenant_id IS NOT DISTINCT FROM sqlc.narg(platform_tenant_id)::uuid
-    AND i.state IN ('failed', 'dead_letter') AND sqlc.arg(source)::text='replay'
-    AND (i.work_policy_name IS NULL OR (
-      i.work_policy_name=nullif(sqlc.arg(work_policy_name)::text, '')
-      AND i.work_key_digest=sqlc.narg(work_key_digest)::bytea
-      AND i.work_policy_revision IS NOT DISTINCT FROM sqlc.narg(work_policy_revision)::bigint
-      AND i.work_fairness_digest IS NOT DISTINCT FROM sqlc.narg(work_fairness_digest)::bytea
-      AND i.work_fairness_limit IS NOT DISTINCT FROM sqlc.narg(work_fairness_limit)::int
-      AND i.work_expires_at IS NOT DISTINCT FROM sqlc.narg(work_expires_at)::timestamptz
-    ))
-  FOR SHARE OF i, a
+-- Managed-work capture takes this action-run lock in its trigger; acquire it before replay-parent row locks.
+WITH scenario_action_run_locks AS MATERIALIZED (
+  SELECT pg_advisory_xact_lock(hashtextextended(
+    'scenario-action-run:' || p.account_id::text || ':' || p.run_id, 0)) AS acquired
+  FROM scenario_test_action_policies p
+  WHERE p.app_id=sqlc.arg(app_id)::uuid AND p.managed_work_plan IS NOT NULL
+  ORDER BY p.account_id, p.run_id
+),
+scenario_action_lock_gate AS MATERIALIZED (
+  SELECT count(acquired)>=0 AS ready FROM scenario_action_run_locks
+),
+replay_parent AS (
+  SELECT parent.id, parent.replay_root_invocation_id, parent.root_created_at
+  FROM scenario_action_lock_gate gate
+  CROSS JOIN LATERAL (
+    SELECT i.id, i.replay_root_invocation_id, coalesce(i.replay_root_created_at, i.created_at) AS root_created_at
+    FROM invocations i JOIN apps a ON a.id=i.app_id AND a.account_id=i.account_id
+    WHERE i.id=sqlc.narg(replayed_from_invocation_id)::uuid
+      AND i.account_id=sqlc.arg(account_id)::uuid AND i.app_id=sqlc.arg(app_id)::uuid
+      AND i.deployment_scope=coalesce(nullif(sqlc.arg(deployment_scope)::text, ''),
+        CASE WHEN a.project_id IS NOT NULL AND coalesce(a.preview_of_slug, '')='' THEN 'production' ELSE 'default' END)
+      AND i.platform_tenant_id IS NOT DISTINCT FROM sqlc.narg(platform_tenant_id)::uuid
+      AND i.state IN ('failed', 'dead_letter') AND sqlc.arg(source)::text='replay'
+      AND (i.work_policy_name IS NULL OR (
+        i.work_policy_name=nullif(sqlc.arg(work_policy_name)::text, '')
+        AND i.work_key_digest=sqlc.narg(work_key_digest)::bytea
+        AND i.work_policy_revision IS NOT DISTINCT FROM sqlc.narg(work_policy_revision)::bigint
+        AND i.work_fairness_digest IS NOT DISTINCT FROM sqlc.narg(work_fairness_digest)::bytea
+        AND i.work_fairness_limit IS NOT DISTINCT FROM sqlc.narg(work_fairness_limit)::int
+        AND i.work_expires_at IS NOT DISTINCT FROM sqlc.narg(work_expires_at)::timestamptz
+      ))
+    FOR SHARE OF i, a
+  ) parent
+  WHERE gate.ready
 )
 INSERT INTO invocations (
   id, app_id, account_id, source, queue_name, state, method, path,
@@ -9655,8 +9706,10 @@ INSERT INTO invocations (
   sqlc.narg(platform_tenant_id), nullif(sqlc.arg(deployment_scope)::text, ''), sqlc.narg(queue_binding_id),
   sqlc.narg(occurrence_id)::uuid, sqlc.narg(start_deadline_at)::timestamptz, sqlc.narg(failure_rules)::jsonb,
   sqlc.narg(environment_id)::uuid, replay_parent.id, coalesce(replay_parent.replay_root_invocation_id, replay_parent.id), replay_parent.root_created_at
-FROM (SELECT 1) seed LEFT JOIN replay_parent ON true
-WHERE sqlc.narg(replayed_from_invocation_id)::uuid IS NULL OR replay_parent.id IS NOT NULL
+FROM scenario_action_lock_gate gate
+LEFT JOIN replay_parent ON true
+WHERE gate.ready
+  AND (sqlc.narg(replayed_from_invocation_id)::uuid IS NULL OR replay_parent.id IS NOT NULL)
 RETURNING *;
 
 -- Queue binding/consumer publication (ADR-393). Parent locks also serialize

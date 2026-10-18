@@ -16,14 +16,25 @@ lane on one host role:
             one listing a unit of this lane that this release does not
             carry;
   deploy    a carried unit of this lane that runs on this host role has a
-            version the host does not run: assemble an overlay over the
-            active release that replaces those binaries, restart only their
-            services, then gate them on the SLO gate;
+            version the host does not run, or (control-plane lane on the
+            control plane) the release's data step is not applied yet:
+            assemble an overlay over the active release that replaces those
+            binaries and bin/migrate, restart only their services, then
+            gate them on the SLO gate;
   converge  nothing changed, but the active release replaced units of this
             lane: re-run its activation and gate, so a restart or gate an
             interrupted run never finished still happens;
   none      nothing changed and the active release replaced no unit of this
             lane.
+
+The data step (docs/adr/20261018084150-unit-lane-expand-migrations.md):
+a unit release whose range added lane-eligible migrations carries
+tools/migrate, built at its commit. The control-plane lane's overlay
+replaces bin/migrate with it, and `deployctl deploy` runs bin/migrate
+before it activates or restarts anything, as a full release does; a
+failed migration stops the lane there. unit-versions.json records the
+applied data version. The edge lane refuses a control plane that has not
+applied it (deploy order: data, control plane, edge).
 
 Writes plan.json and, for deploy, unit-versions.json into --out.
 
@@ -61,11 +72,27 @@ def git_is_ancestor(ancestor, descendant, root="."):
     return out.returncode == 0
 
 
-def overlay_id(current, commit, versions):
+def overlay_id(current, commit, versions, data_version=None):
     """Deterministic 40-hex release id: a rerun assembles the same directory,
     and retention and rollback treat it like any release."""
-    body = "\n".join([KIND_RELEASE + "/1", current, commit] + [f"{k}={v}" for k, v in sorted(versions.items())])
-    return hashlib.sha1((body + "\n").encode()).hexdigest()
+    lines = [KIND_RELEASE + "/1", current, commit] + [f"{k}={v}" for k, v in sorted(versions.items())]
+    if data_version:
+        lines.append(f"@data={data_version}")
+    return hashlib.sha1(("\n".join(lines) + "\n").encode()).hexdigest()
+
+
+def data_of(release):
+    """(data version, migrations) the release must apply before restarts;
+    (None, []) when its range added no migration."""
+    data = release.get("data") or {}
+    migrations = data.get("migrations") or []
+    if not migrations:
+        return None, []
+    if not data.get("eligible") or not data.get("version") or not all(m.get("eligible") for m in migrations):
+        raise Refused("unit release carries migrations that are not lane-eligible; only a full release applies them")
+    if "migrate" not in (release.get("tools") or {}):
+        raise Refused("unit release carries migrations but no tools/migrate")
+    return data["version"], migrations
 
 
 def host_services(unit, host_role):
@@ -112,6 +139,12 @@ def plan(release, host, lane, host_role, is_ancestor=git_is_ancestor, expect=Non
                       "deploy that full release first")
     current = host["current"]
     previous = host.get("unit_versions") or None
+    data_version, migrations = data_of(release)
+    host_data = (previous or {}).get("data_version")
+    apply_data = bool(data_version) and host_data != data_version and lane == "control-plane" and host_role == "control-plane"
+    if data_version and host_data != data_version and lane == "edge" and host_role == "control-plane":
+        raise Refused(f"deploy order: the control plane has not applied this release's migrations ({data_version}); "
+                      "deploy its control-plane lane first")
     host_versions, host_lanes = {}, {}
     if previous:
         if previous.get("kind") != KIND_VERSIONS or previous.get("base_sha") != base:
@@ -129,7 +162,7 @@ def plan(release, host, lane, host_role, is_ancestor=git_is_ancestor, expect=Non
         raise Refused(f"host runs {lane} unit versions this release does not carry: {', '.join(missing)}")
 
     changed = [name for name in scope if host_versions.get(name) != release["units"][name]["version"]]
-    if not changed:
+    if not changed and not apply_data:
         replaced = [n for n in (previous or {}).get("replaced", []) if n in scope]
         if replaced:
             only, verify, gate = activation(release, replaced, host_role)
@@ -156,12 +189,23 @@ def plan(release, host, lane, host_role, is_ancestor=git_is_ancestor, expect=Non
         "unit_lanes": lanes,
         "replaced": changed,
     }
+    # The data version this host's database has applied, carried forward
+    # by every later overlay over it.
+    recorded_data = data_version if apply_data else host_data
+    if recorded_data:
+        record["data_version"] = recorded_data
     replace = {f"bin/{name}": f"bin/{name}" for name in changed}
     replace["bin/deployctl"] = "bin/deployctl"
     replace["unit-versions.json"] = "unit-versions.json"
-    return {"action": "deploy", "lane": lane, "release_id": overlay_id(current, commit, versions),
+    if apply_data:
+        # deployctl deploy runs the release's bin/migrate before it
+        # activates anything; the data tier has its own SLO rules.
+        replace["bin/migrate"] = "bin/migrate"
+        gate = gate + [["--unit", "migrations"]]
+    return {"action": "deploy", "lane": lane, "release_id": overlay_id(current, commit, versions, recorded_data),
             "expect_current": current, "commit": commit, "units": changed, "only": only, "verify": verify,
-            "gate": gate, "replace": replace, "unit_versions": record}
+            "gate": gate, "replace": replace, "unit_versions": record,
+            "migrations": [m["path"] for m in migrations] if apply_data else []}
 
 
 def main():

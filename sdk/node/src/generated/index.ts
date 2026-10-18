@@ -226,6 +226,8 @@ export type { AppWebhookDeliveryListResponse } from './models/AppWebhookDelivery
 export type { AppWebhookDeliveryResponse } from './models/AppWebhookDeliveryResponse.js';
 export type { AppWebhookResponse } from './models/AppWebhookResponse.js';
 export type { AppWebhookRetryDeliveryResponse } from './models/AppWebhookRetryDeliveryResponse.js';
+export type { AppWorkerPoolObservation } from './models/AppWorkerPoolObservation.js';
+export type { AppWorkerRecovery } from './models/AppWorkerRecovery.js';
 export type { AssignAPIConsumerPlanRequest } from './models/AssignAPIConsumerPlanRequest.js';
 export type { AssignPlatformTenantPlanRequest } from './models/AssignPlatformTenantPlanRequest.js';
 export type { AsyncInvokeResponse } from './models/AsyncInvokeResponse.js';
@@ -2620,6 +2622,7 @@ export type { WakeTimelineResponse } from './models/WakeTimelineResponse.js';
 export type { WebhookAutomationBindingResponse } from './models/WebhookAutomationBindingResponse.js';
 export type { WebhookAutomationReceiptResponse } from './models/WebhookAutomationReceiptResponse.js';
 export type { WorkDecision } from './models/WorkDecision.js';
+export type { WorkerAdmissionBlocker } from './models/WorkerAdmissionBlocker.js';
 export type { WorkerRolloutObservation } from './models/WorkerRolloutObservation.js';
 export type { WorkerScaling } from './models/WorkerScaling.js';
 export type { WorkflowCallbackResponse } from './models/WorkflowCallbackResponse.js';

@@ -1419,17 +1419,22 @@ func (e *Engine) convergeServiceReplicasToTarget(ctx context.Context, deployment
 	return nil
 }
 
-// scheduleWorkerReconcile restores the worker allocation after an
-// infrastructure failure without coupling explicit StopInstance calls to an
-// automatic restart. Customer-requested stops remain stops; dead-node,
-// liveness, and deployment lifecycle paths call this helper explicitly. The
-// app-scoped reconciler derives a queue-backed pool target when configured and
-// otherwise preserves the singleton contract.
+// scheduleWorkerReconcile submits an event-driven worker recovery pass.
+// Periodic recovery also maintains the configured pool target. Parking the
+// app or reducing desired demand, rather than stopping an individual replica,
+// changes the target that recovery maintains.
 func (e *Engine) scheduleWorkerReconcile(ctx context.Context, deploymentID string) {
 	if e == nil || e.store == nil || deploymentID == "" {
 		return
 	}
-	go e.ReconcileWorkerDeployment(detachedServiceContext(ctx), deploymentID)
+	lookupCtx, cancel := context.WithTimeout(detachedServiceContext(ctx), 5*time.Second)
+	defer cancel()
+	dep, err := e.store.DeploymentByID(lookupCtx, deploymentID)
+	if err != nil {
+		e.log.Warn("sched: load worker recovery deployment", "deployment", deploymentID, "err", err)
+		return
+	}
+	e.scheduleWorkerAppReconcile(ctx, dep.AppID)
 }
 
 // ReconcileWorkerDeployment resolves the app for an instance/deployment

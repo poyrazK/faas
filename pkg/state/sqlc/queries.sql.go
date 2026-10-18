@@ -13407,24 +13407,39 @@ func (q *Queries) EnqueueExclusiveWebhookEffect(ctx context.Context, db DBTX, ar
 }
 
 const enqueueInvocationRow = `-- name: EnqueueInvocationRow :one
-WITH replay_parent AS (
-  SELECT i.id, i.replay_root_invocation_id, coalesce(i.replay_root_created_at, i.created_at) AS root_created_at
-  FROM invocations i JOIN apps a ON a.id=i.app_id AND a.account_id=i.account_id
-  WHERE i.id=$35::uuid
-    AND i.account_id=$3::uuid AND i.app_id=$2::uuid
-    AND i.deployment_scope=coalesce(nullif($29::text, ''),
-      CASE WHEN a.project_id IS NOT NULL AND coalesce(a.preview_of_slug, '')='' THEN 'production' ELSE 'default' END)
-    AND i.platform_tenant_id IS NOT DISTINCT FROM $28::uuid
-    AND i.state IN ('failed', 'dead_letter') AND $4::text='replay'
-    AND (i.work_policy_name IS NULL OR (
-      i.work_policy_name=nullif($21::text, '')
-      AND i.work_key_digest=$22::bytea
-      AND i.work_policy_revision IS NOT DISTINCT FROM $25::bigint
-      AND i.work_fairness_digest IS NOT DISTINCT FROM $26::bytea
-      AND i.work_fairness_limit IS NOT DISTINCT FROM $27::int
-      AND i.work_expires_at IS NOT DISTINCT FROM $23::timestamptz
-    ))
-  FOR SHARE OF i, a
+WITH scenario_action_run_locks AS MATERIALIZED (
+  SELECT pg_advisory_xact_lock(hashtextextended(
+    'scenario-action-run:' || p.account_id::text || ':' || p.run_id, 0)) AS acquired
+  FROM scenario_test_action_policies p
+  WHERE p.app_id=$2::uuid AND p.managed_work_plan IS NOT NULL
+  ORDER BY p.account_id, p.run_id
+),
+scenario_action_lock_gate AS MATERIALIZED (
+  SELECT count(acquired)>=0 AS ready FROM scenario_action_run_locks
+),
+replay_parent AS (
+  SELECT parent.id, parent.replay_root_invocation_id, parent.root_created_at
+  FROM scenario_action_lock_gate gate
+  CROSS JOIN LATERAL (
+    SELECT i.id, i.replay_root_invocation_id, coalesce(i.replay_root_created_at, i.created_at) AS root_created_at
+    FROM invocations i JOIN apps a ON a.id=i.app_id AND a.account_id=i.account_id
+    WHERE i.id=$35::uuid
+      AND i.account_id=$3::uuid AND i.app_id=$2::uuid
+      AND i.deployment_scope=coalesce(nullif($29::text, ''),
+        CASE WHEN a.project_id IS NOT NULL AND coalesce(a.preview_of_slug, '')='' THEN 'production' ELSE 'default' END)
+      AND i.platform_tenant_id IS NOT DISTINCT FROM $28::uuid
+      AND i.state IN ('failed', 'dead_letter') AND $4::text='replay'
+      AND (i.work_policy_name IS NULL OR (
+        i.work_policy_name=nullif($21::text, '')
+        AND i.work_key_digest=$22::bytea
+        AND i.work_policy_revision IS NOT DISTINCT FROM $25::bigint
+        AND i.work_fairness_digest IS NOT DISTINCT FROM $26::bytea
+        AND i.work_fairness_limit IS NOT DISTINCT FROM $27::int
+        AND i.work_expires_at IS NOT DISTINCT FROM $23::timestamptz
+      ))
+    FOR SHARE OF i, a
+  ) parent
+  WHERE gate.ready
 )
 INSERT INTO invocations (
   id, app_id, account_id, source, queue_name, state, method, path,
@@ -13448,8 +13463,10 @@ INSERT INTO invocations (
   $28, nullif($29::text, ''), $30,
   $31::uuid, $32::timestamptz, $33::jsonb,
   $34::uuid, replay_parent.id, coalesce(replay_parent.replay_root_invocation_id, replay_parent.id), replay_parent.root_created_at
-FROM (SELECT 1) seed LEFT JOIN replay_parent ON true
-WHERE $35::uuid IS NULL OR replay_parent.id IS NOT NULL
+FROM scenario_action_lock_gate gate
+LEFT JOIN replay_parent ON true
+WHERE gate.ready
+  AND ($35::uuid IS NULL OR replay_parent.id IS NOT NULL)
 RETURNING id, app_id, account_id, source, state, payload, headers, due_at, method, path, cron_id, scheduled_at, ack_url, result, lease_expires_at, received_at, completed_at, instance_id, attempts, last_error, created_at, org_id, outcome, deadline_at, retry_policy, result_retention_until, replayed_from_invocation_id, last_replayed_at, on_success_destination_id, on_failure_destination_id, queue_name, quota_reserved, work_policy_name, work_key_digest, work_expires_at, work_sequence, work_policy_revision, work_fairness_digest, work_fairness_limit, platform_tenant_id, failure_rules, occurrence_id, start_deadline_at, work_decision, operation_id, deployment_scope, queue_binding_id, replay_generation, outcome_code, environment_id, replay_root_invocation_id, replay_root_created_at
 `
 
@@ -13491,6 +13508,7 @@ type EnqueueInvocationRowParams struct {
 	ReplayedFromInvocationID pgtype.UUID
 }
 
+// Managed-work capture takes this action-run lock in its trigger; acquire it before replay-parent row locks.
 func (q *Queries) EnqueueInvocationRow(ctx context.Context, db DBTX, arg EnqueueInvocationRowParams) (Invocation, error) {
 	row := db.QueryRow(ctx, enqueueInvocationRow,
 		arg.ID,
@@ -77490,6 +77508,80 @@ func (q *Queries) RecordRequestIDJournal(ctx context.Context, db DBTX, arg Recor
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const recordRequestIDJournalBatch = `-- name: RecordRequestIDJournalBatch :many
+INSERT INTO request_id_journal (
+    id, account_id, app_id, request_id, trace_id, received_at, expires_at
+)
+SELECT r.id,
+       a.account_id,
+       a.id,
+       r.request_id,
+       NULLIF(r.trace_id, ''),
+       r.received_at,
+       r.expires_at
+  FROM (
+         SELECT unnest($1::uuid[]) AS id,
+                unnest($2::uuid[]) AS account_id,
+                unnest($3::uuid[]) AS app_id,
+                unnest($4::text[]) AS request_id,
+                unnest($5::text[]) AS trace_id,
+                unnest($6::timestamptz[]) AS received_at,
+                unnest($7::timestamptz[]) AS expires_at
+       ) AS r
+  JOIN apps a ON a.id = r.app_id AND a.account_id = r.account_id
+ON CONFLICT (id) DO UPDATE SET id = EXCLUDED.id
+ WHERE request_id_journal.account_id = EXCLUDED.account_id
+   AND request_id_journal.app_id = EXCLUDED.app_id
+   AND request_id_journal.request_id = EXCLUDED.request_id
+   AND request_id_journal.trace_id IS NOT DISTINCT FROM EXCLUDED.trace_id
+   AND request_id_journal.received_at = EXCLUDED.received_at
+   AND request_id_journal.expires_at = EXCLUDED.expires_at
+RETURNING id
+`
+
+type RecordRequestIDJournalBatchParams struct {
+	Ids         []pgtype.UUID
+	AccountIds  []pgtype.UUID
+	AppIds      []pgtype.UUID
+	RequestIds  []string
+	TraceIds    []string
+	ReceivedAts []pgtype.Timestamptz
+	ExpiresAts  []pgtype.Timestamptz
+}
+
+// ADR-1521: RecordRequestIDJournal for many records in one statement. The
+// same ownership join and idempotent-retry rule apply per row; a row whose app
+// is not owned by its account, or whose id holds different content, is left
+// out of RETURNING. Record ids must be unique within one call: ON CONFLICT DO
+// UPDATE cannot touch the same row twice in a statement.
+func (q *Queries) RecordRequestIDJournalBatch(ctx context.Context, db DBTX, arg RecordRequestIDJournalBatchParams) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, recordRequestIDJournalBatch,
+		arg.Ids,
+		arg.AccountIds,
+		arg.AppIds,
+		arg.RequestIds,
+		arg.TraceIds,
+		arg.ReceivedAts,
+		arg.ExpiresAts,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const recordRouteProbeObservation = `-- name: RecordRouteProbeObservation :exec
