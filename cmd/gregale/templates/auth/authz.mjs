@@ -4,6 +4,8 @@ import { gotrue, limits } from './config.mjs'
 import { EmailError, invitationMessage } from './email.mjs'
 import { objectResource, objectURL, presign } from './storage.mjs'
 import { WorkflowError } from './workflows.mjs'
+import { routeTeam, TeamError } from './team.mjs'
+import { emailPath, emailConsent, resolveEmailRecipient, ProductEmailError } from './product-email.mjs'
 import { orgSSORoute } from './orgsso.mjs'
 
 // /authz/v1: organizations, members, invitations and authorization checks
@@ -18,7 +20,7 @@ const codes = new Map([
 // Messages raised by gregale_auth functions; anything else is never echoed.
 const stableMessages = new Set(['not_authenticated', 'forbidden', 'not_found', 'slug_taken', 'invalid_organization', 'organization_limit', 'anonymous_user',
   'unknown_role', 'invalid_invitation', 'invitation_limit', 'invitation_invalid', 'invitation_email_mismatch', 'already_member', 'last_owner',
-  'domain_taken', 'domain_limit', 'invalid_domain', 'domain_in_use', 'domain_not_verified', 'sso_provider_limit'])
+  'domain_taken', 'domain_limit', 'invalid_domain', 'domain_in_use', 'domain_not_verified', 'sso_provider_limit', 'team_limit'])
 
 export class HTTPError extends Error {
   constructor(status, code) { super(code); this.status = status; this.code = code }
@@ -77,6 +79,8 @@ export async function inSession(pool, claims, work) {
 
 function sqlError(err) {
   if (err instanceof HTTPError) return err
+  if (err instanceof ProductEmailError) return new HTTPError(err.status, err.code)
+  if (err instanceof TeamError) return new HTTPError(err.status, err.code)
   if (err instanceof EmailError || err instanceof WorkflowError) return new HTTPError(err.status, err.code)
   const status = codes.get(err?.code)
   if (status) return new HTTPError(status, stableMessages.has(err.message) ? err.message : 'invalid_request')
@@ -111,6 +115,14 @@ export async function route(pool, claims, method, path, body, services = {}) {
   }
   if (parts[0] === 'orgs' && parts.length >= 3) {
     const org = requireUUID(parts[1])
+    if (parts[2] === 'email-recipient') {
+      if (services.emailEnabled !== true) throw new HTTPError(404, 'not_found')
+      return emailConsent(run, method, parts, body)
+    }
+    if (parts[2] === 'team' || parts[2] === 'team-actions') {
+      if (services.teamEnabled !== true) throw new HTTPError(404, 'not_found')
+      return routeTeam({ run, method, parts, body, invitations, query: services.query })
+    }
     if (parts[2] === 'domains' || parts[2] === 'sso') {
       if (!services.orgSSO) throw new HTTPError(403, 'org_sso_disabled')
       return orgSSORoute({ rows, ...services.orgSSO }, org, method, parts.slice(2), body)
@@ -200,23 +212,33 @@ export function readJSON(req, maxBytes) {
   })
 }
 
-export function createAuthzHandler({ pool, authenticate, origins = [], invitations = {}, storage, workflows, orgSSO }) {
+export function createAuthzHandler({ pool, authenticate, origins = [], invitations = {}, storage, workflows, orgSSO, teamEnabled = false, emailEnabled = false }) {
   const allowed = new Set(origins)
   return async (req, res, path) => {
     const origin = req.headers.origin
     const headers = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }
     if (origin && allowed.has(origin)) Object.assign(headers, { 'Access-Control-Allow-Origin': origin, Vary: 'Origin' })
+    if (emailEnabled !== true && emailPath(path)) {
+      res.writeHead(404, headers); return res.end('{"status":404,"code":"not_found"}')
+    }
+    if (teamEnabled !== true && /^\/orgs\/[^/]+\/(?:team|team-actions)(?:\/|$)/.test(path)) {
+      res.writeHead(404, headers); return res.end('{"status":404,"code":"not_found"}')
+    }
     if (req.method === 'OPTIONS') {
       if (!origin || !allowed.has(origin)) { res.writeHead(403, headers); return res.end('{"code":"origin_not_allowed"}') }
       res.writeHead(204, { ...headers, 'Access-Control-Allow-Methods': 'GET,POST,PATCH,DELETE,OPTIONS', 'Access-Control-Allow-Headers': 'Authorization,Content-Type', 'Access-Control-Max-Age': '600' })
       return res.end()
     }
     try {
+      if (emailEnabled && emailPath(path) && path.split('/').filter(Boolean).length === 4) {
+        const [status, payload] = await resolveEmailRecipient(pool, req.method, path, req.headers.authorization)
+        res.writeHead(status, headers); return res.end(JSON.stringify(payload))
+      }
       const token = req.headers.authorization?.match(/^Bearer ([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)$/)?.[1]
       if (!token) throw new HTTPError(401, 'not_authenticated')
       const body = await readJSON(req, limits.authzBodyBytes)
       const claims = await authenticate(token)
-      const [status, payload] = await route(pool, claims, req.method, path, body, { invitations, storage, workflows, orgSSO })
+      const [status, payload] = await route(pool, claims, req.method, path, body, { invitations, storage, workflows, orgSSO, teamEnabled, emailEnabled, query: new URL(req.url, 'http://auth.local').searchParams })
       res.writeHead(status, headers)
       res.end(payload === null ? undefined : JSON.stringify(payload))
     } catch (err) {

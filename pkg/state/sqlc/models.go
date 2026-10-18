@@ -8839,6 +8839,227 @@ type PrivateNetworkPeering struct {
 	UpdatedAt      pgtype.Timestamptz
 }
 
+type ProductControlBillingDocument struct {
+	ID               pgtype.UUID
+	AccountID        pgtype.UUID
+	AppID            pgtype.UUID
+	TenantID         pgtype.UUID
+	Period           string
+	Kind             string
+	Currency         string
+	AmountMillicents int64
+	StatementID      pgtype.UUID
+	OperationID      pgtype.UUID
+	Reason           string
+	Snapshot         []byte
+	CreatedAt        pgtype.Timestamptz
+}
+
+type ProductControlCustomer struct {
+	AccountID          pgtype.UUID
+	AppID              pgtype.UUID
+	TenantID           pgtype.UUID
+	Revision           string
+	Plan               string
+	Suspended          bool
+	AuthOrganizationID pgtype.UUID
+}
+
+type ProductControlCustomerChange struct {
+	ID          pgtype.UUID
+	AccountID   pgtype.UUID
+	AppID       pgtype.UUID
+	TenantID    pgtype.UUID
+	Fingerprint string
+	Receipt     []byte
+	CreatedAt   pgtype.Timestamptz
+}
+
+type ProductControlEmailDelivery struct {
+	ID                  pgtype.UUID
+	SubscriptionID      pgtype.UUID
+	PreferenceVersion   int64
+	SourceRevision      string
+	Notification        []byte
+	Status              string
+	Reason              string
+	Attempts            int32
+	CreatedAt           pgtype.Timestamptz
+	UpdatedAt           pgtype.Timestamptz
+	NextAt              pgtype.Timestamptz
+	Deadline            pgtype.Timestamptz
+	ProviderID          pgtype.UUID
+	DeliveredAt         pgtype.Timestamptz
+	BouncedAt           pgtype.Timestamptz
+	ComplainedAt        pgtype.Timestamptz
+	HardBounced         bool
+	RecipientGeneration int64
+	RecipientSealed     []byte
+	UnsubscribeHash     []byte
+	UnsubscribeSealed   []byte
+}
+
+type ProductControlEmailOptOut struct {
+	ID              pgtype.UUID
+	SubscriptionID  pgtype.UUID
+	DeliveryID      pgtype.UUID
+	ExpectedVersion int64
+	Version         int64
+	Generation      int64
+	UnsubscribedAt  pgtype.Timestamptz
+}
+
+type ProductControlEmailPendingFeedback struct {
+	ProviderID pgtype.UUID
+	Kind       string
+	OccurredAt pgtype.Timestamptz
+	HardBounce bool
+	ReceivedAt pgtype.Timestamptz
+}
+
+type ProductControlEmailRecovery struct {
+	ID                 pgtype.UUID
+	SubscriptionID     pgtype.UUID
+	ExpectedVersion    int64
+	PreviousGeneration int64
+	Version            int64
+	Generation         int64
+	WorkOutcomes       bool
+	HelpReplies        bool
+	RecoveredAt        pgtype.Timestamptz
+}
+
+type ProductControlEmailRetryReceipt struct {
+	DeliveryID    pgtype.UUID
+	FailedAttempt int32
+	QueuedAt      pgtype.Timestamptz
+}
+
+type ProductControlEmailSubscription struct {
+	ID                   pgtype.UUID
+	AccountID            pgtype.UUID
+	AppID                pgtype.UUID
+	TenantID             pgtype.UUID
+	AuthAppID            pgtype.UUID
+	OrganizationID       pgtype.UUID
+	ActorID              pgtype.UUID
+	AppSlug              string
+	AuthSlug             string
+	Version              int64
+	WorkOutcomes         bool
+	HelpReplies          bool
+	WorkSince            pgtype.Timestamptz
+	HelpSince            pgtype.Timestamptz
+	ExpiresAt            pgtype.Timestamptz
+	GrantSealed          []byte
+	ScanCursor           string
+	PauseReason          string
+	PausedAt             pgtype.Timestamptz
+	RecipientGeneration  int64
+	PauseRecipientSealed []byte
+}
+
+type ProductControlHead struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	Revision  string
+}
+
+type ProductControlHelpRequest struct {
+	ID                 pgtype.UUID
+	AccountID          pgtype.UUID
+	AppID              pgtype.UUID
+	TenantID           pgtype.UUID
+	AuthAppID          pgtype.UUID
+	AuthOrganizationID pgtype.UUID
+	Fingerprint        string
+	Kind               string
+	Request            []byte
+	Context            []byte
+	Status             string
+	Response           string
+	Version            int64
+	CreatedAt          pgtype.Timestamptz
+	UpdatedAt          pgtype.Timestamptz
+}
+
+// One immutable owner invoicing reference per Product Control statement or credit note; no payment or refund is executed.
+type ProductControlInvoiceHandoff struct {
+	DocumentID        pgtype.UUID
+	AccountID         pgtype.UUID
+	ExternalInvoiceID string
+	CreatedAt         pgtype.Timestamptz
+}
+
+type ProductControlNotificationRead struct {
+	AccountID          pgtype.UUID
+	AppID              pgtype.UUID
+	TenantID           pgtype.UUID
+	AuthAppID          pgtype.UUID
+	AuthOrganizationID pgtype.UUID
+	SourceKind         string
+	SourceID           pgtype.UUID
+	SourceVersion      string
+	IsRead             bool
+	Version            int64
+	UpdatedAt          pgtype.Timestamptz
+	ExpiresAt          pgtype.Timestamptz
+}
+
+type ProductControlOnboarding struct {
+	ID                 pgtype.UUID
+	AccountID          pgtype.UUID
+	AppID              pgtype.UUID
+	TenantID           pgtype.UUID
+	AuthAppID          pgtype.UUID
+	AuthOrganizationID pgtype.UUID
+	Fingerprint        string
+	Receipt            []byte
+	CreatedAt          pgtype.Timestamptz
+	AccessVerifiedAt   pgtype.Timestamptz
+}
+
+type ProductControlPlanChange struct {
+	ID          pgtype.UUID
+	AccountID   pgtype.UUID
+	AppID       pgtype.UUID
+	TenantID    pgtype.UUID
+	Fingerprint string
+	Receipt     []byte
+	CreatedAt   pgtype.Timestamptz
+}
+
+type ProductControlReceipt struct {
+	OperationID         pgtype.UUID
+	AccountID           pgtype.UUID
+	AppID               pgtype.UUID
+	TenantID            pgtype.UUID
+	Revision            string
+	Feature             string
+	Plan                string
+	Currency            string
+	Period              string
+	UnitPriceMillicents int64
+	AdmittedAt          pgtype.Timestamptz
+	SucceededAt         pgtype.Timestamptz
+	AdmissionEvidence   []byte
+	ResolvedState       string
+	ResolvedAt          pgtype.Timestamptz
+}
+
+type ProductControlRevision struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	Revision  string
+	Spec      []byte
+}
+
+type ProductControlWaiver struct {
+	OperationID pgtype.UUID
+	Reason      string
+	CreatedAt   pgtype.Timestamptz
+}
+
 type ProductionDeadLetterEvent struct {
 	ID               pgtype.UUID
 	AccountID        pgtype.UUID
