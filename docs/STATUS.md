@@ -34,8 +34,9 @@ realtimed binary:
 - a restart after a hand-off drains for the 25 s grace.
 The first native run found that a successor started by the old process was an
 alien main process to systemd, which SIGKILLed it on restart; successors are
-now systemd's children. Open: apid's memory headroom (256 M), a WebSocket
-across a gateway hand-off on a real node, and a deploy through deployctl.
+now systemd's children. apid's cap rose to 512 M with a 256 MiB GOMEMLIMIT
+(ADR 20261018132058). Open: a WebSocket across a gateway hand-off on a real
+node, and a deploy through deployctl.
 
 ## Zero-downtime daemon restarts — 2026-10-17 (branch, not released)
 
@@ -1048,6 +1049,225 @@ lint is clean. These checks are separate from native execution. This
 implementation workspace has no `/dev/kvm`; supported native
 execution and host leak qualification remain pending. No feature or rollout gate
 is enabled. Python guest and live-provider qualification remain separate.
+## Organization queues — local implementation, 2026-10-17
+
+[ADR-202610171908](adr/202610171908-organization-queue-ownership.md) gives queue bindings immutable
+organization ownership. Company backlogs, private consumers, stage runtime sets,
+receipt authority and dead-letter/replay history survive creator erasure.
+Reviewed organization routes enforce current roles, scopes and offboarding
+fences; existing workload identities keep processing the same accepted work.
+Company plans and quotas apply across creator namespaces after billing adoption,
+and reservation snapshots release the correct counter through retries and
+completion. Personal cleanup and inventories exclude company queues.
+
+Twenty organization operations are available in OpenAPI and the Go, Node and
+Python SDKs. Memory/PostgreSQL race and HTTP worker acceptance pass, including
+revocation during an enqueue request and retained stage configuration.
+See [implementation evidence](implementation/202610171908-organization-queue-validation.md).
+This supersedes ADR-202610171907's queue ownership restriction. External trigger
+administration, jobs, GitOps and full cloning retain their separate restrictions.
+
+The accumulated enterprise changes are under review in
+[PR #4882](https://github.com/poyrazK/faas/pull/4882). The migration requires a
+coordinated restart of async quota writers while admission and dispatch are
+paused. Deployment and native KVM acceptance remain pending.
+
+## Organization object storage — local implementation, 2026-10-17
+
+[ADR-202610171907](adr/202610171907-organization-object-storage-ownership.md) adds immutable company
+ownership to app/environment buckets, reviewed organization storage routes and
+aggregate usage. Human S3 credentials record their issuer and membership revision;
+role changes and departure revoke them. Application bindings retain their sealed
+credentials and bucket/provider identities through creator erasure. Shared quotas
+and provider exports use the company's financial subject after billing adoption.
+Personal cleanup/exports exclude company storage; organization deletion requires
+bucket cleanup. This supersedes ADR-202610171906's object-storage erasure restriction.
+Unreviewed storage settings, transfer control APIs, cloning, queues and GitHub/GitOps
+integration still require their own ownership review.
+
+Validation details are recorded in
+[the implementation evidence](implementation/202610171907-organization-object-storage-validation.md).
+Memory/PostgreSQL race and HTTP/S3 acceptance, schema/API/SDK contracts and
+configured Go static checks pass.
+Changes remain local; deployment and native KVM acceptance are pending.
+
+## Organization managed PostgreSQL — local implementation, 2026-10-17
+
+[ADR-202610171906](adr/202610171906-organization-managed-postgres-ownership.md) gives managed
+PostgreSQL databases an immutable organization owner. Company database and
+app/environment binding routes enforce current roles, credential scopes and
+membership fences before mutation or replay. Shared source manifests resolve
+company databases within their persisted organization. Database and binding
+storage namespaces remain distinct, preserving existing provider IDs, sealed
+credentials and operation history through creator erasure.
+
+Adopted company plans, quotas and usage aggregate across legacy namespaces.
+Personal inventories and exports exclude company databases and historical audit
+references. Creator erasure retains company accounting; organization deletion
+requires database cleanup. Unreviewed cutover/clone HTTP routes, object storage,
+queues and other unsupported services retain their existing shared-access or
+erasure restrictions. This entry supersedes ADR-202610171905's database restriction.
+
+Race regressions pass for ownership backfill and mixed-root rejection, concurrent
+quota admission, offboarding commit ordering, personal isolation, retained usage
+and creator erasure. A PostgreSQL HTTP regression verifies unchanged sealed
+credentials and usable SQL access after erasure, teammate image deployment and
+credential rotation, and denial of cached binding replay after demotion.
+
+Canonical schema and SQL generation, OpenAPI lint and route/schema parity,
+Node client build, Python SDK compilation and generated client regressions,
+Go SDK path tests, and runtime/customer documentation checks pass. Enabled Go
+static checks report zero findings across all eleven packages changed in this
+slice. The broad historical migration test package still has failures and hit
+its ten-minute timeout; focused migration checks pass. Details are recorded in
+[the implementation evidence](implementation/202610171906-organization-postgres-validation.md).
+
+Changes remain local. Deployment and native KVM acceptance are pending.
+
+## Organization projects and environments — local implementation, 2026-10-17
+
+[ADR-202610171905](adr/202610171905-organization-project-ownership.md) makes persisted project
+organization ownership independent of creator identities. Organization project
+URLs cover source deployment, environments, configuration, releases, protected
+plan approvals, promotions and rollback. Current roles, credential scopes and
+membership transaction fences apply before replay; legacy inventories hide
+company projects after departure. Stable resource namespaces preserve core
+project/environment history and sealed bindings through creator erasure.
+
+Migration backfill refuses mixed ownership. Unsupported data-service and
+GitHub/GitOps references remain erasure blockers. Shared source uploads cannot
+resolve personal database/async-route bindings, and resource cloning remains
+outside the reviewed shared surface. OpenAPI and Go/Node/Python clients expose
+the new organization routes.
+
+Focused MemStore/PostgreSQL and HTTP regressions pass with race detection for
+ownership backfill and isolation, raced offboarding, creator erasure (including
+empty projects), protected approvals, source/image deployment admission,
+promotion, rollback and authorization before cached response replay.
+Reconciliation, personal export filtering and Go client tests also pass with
+race detection.
+
+Canonical schema regeneration, SQL generation, OpenAPI route/schema parity and
+lint, generated Node/Python client builds and selected SDK regressions, and
+repository policy checks pass. Enabled Go static checks report zero findings
+across all ten packages changed in this slice.
+
+Changes remain local. Deployment and native KVM runtime acceptance are pending.
+
+## Organization core resource ownership — local implementation, 2026-10-17
+
+[ADR-202610171904](adr/202610171904-organization-resource-lifecycle.md) separates human identities
+from stable resource namespaces. Adopted organizations own core app policy,
+configuration, deployment lifecycle, request budgets, abuse controls and future
+usage; erasing a former creator preserves these resources. Paid adoption requires
+an organization-owned provider-qualified subscription. Existing billing and
+provider handles are preserved until confirmation, and adoption never reverts to
+a person after cancellation. Free organizations adopt immediately.
+
+MemStore/PostgreSQL and HTTP race regressions pass for creator erasure, sealed
+configuration preservation, permanent billing adoption, usage replay, owner
+safety, current-member access, credential revocation and personal export
+isolation. Scheduler, image, builder, metering, gateway, billing and Go API
+regressions also pass with race detection. A PostgreSQL runtime-admission
+snapshot remains unchanged after erasing the creator.
+
+Canonical schema regeneration, SQL generation, OpenAPI route/schema parity and
+lint, generated Node/Python clients and billing checks, and repository policy
+checks pass. Enabled Go static checks report zero issues across all 18 changed
+packages. Targeted network-usage and billing-adoption checks also pass after
+the final accounting cleanup.
+
+Changes remain local; no production rollout or native KVM acceptance is claimed.
+This environment lacks KVM and cannot inspect the host loop devices required by
+the native leak check. Unsupported project, data-service and installation
+bindings continue to block identity erasure. ADR-202610171905 above supersedes the core
+project/environment restriction recorded in this historical entry.
+
+
+## Local organization application quota ownership — 2026-10-17
+
+This entry records the original ADR-202610171903 boundary. ADR-202610171904 above supersedes its
+core lifecycle restrictions for adopted organizations.
+
+[ADR-202610171903](adr/202610171903-organization-application-quota-ownership.md) moves app
+admission from a creator-wide count to the persisted organization's shared plan
+pool. Production, developer and PR-preview caps remain in `pkg/api/limits.go`.
+Create/restore and plan changes serialize across different creators; personal
+app quotas, account/dashboard counts and scan preflight exclude company apps.
+Missing personal app attribution is repaired without rewriting existing shared
+ownership.
+
+Personal-account deletion scheduling and hard purge now refuse legacy shared-app
+storage/billing references before any child data can be removed. The API returns
+409 with the migration requirement. This change moves app quotas and prevents
+data loss. App child ownership, runtime/metering subjects and organization billing
+still need a coordinated migration. The creator's account cannot yet be erased
+while company apps depend on it.
+
+Focused MemStore/PostgreSQL race suites pass, including both plan-change orders,
+rollback, create/restore contention, separate quota pools, personal display counts
+and preservation during blocked erasure. API scan, account-count, creation,
+restoration, idempotency, offboarding and authorization regressions pass under the
+race detector. Static checks pass with zero issues for the state, app-access and
+API packages. SQL generation and repository policy/docs checks pass.
+
+Implementation and acceptance checks are local; no deployment is implied.
+
+## Local organization application offboarding — 2026-10-16
+
+[ADR-202610171902](adr/202610171902-organization-offboarding-fences.md) adds membership revisions
+and PostgreSQL transaction fences to the shared application and organization
+control plane. Member removal atomically revokes the member's organization keys,
+app deploy tokens and outstanding org invitations, including previously removed
+members in the migration backfill. Personal identities, other org credentials,
+deployed applications and accepted workloads remain intact.
+
+Live/archive logs and app debugger/task tunnels recheck access every second and
+cancel their upstream connections on removal, demotion, key revocation/expiry or
+lookup failure. Direct notification writes also take the membership fence.
+Indirect domain/cron/edge-rule/invocation URLs check their app, and app,
+deployment, build, domain, cron, instance, secret, invocation and app-metrics
+inventories filter resources the departed creator can no longer read. Filtered
+pagination preserves access to older personal resources without exposing hidden
+company cursor values.
+
+Acceptance covers real PostgreSQL commit ordering and rollback, raced credential
+issuance, membership restoration, CI OIDC credential checks, paused HTTP mutations,
+and active HTTP/WebSocket connection revocation. See the [team access
+guide](organization-app-access.md) for guarantees and migration boundaries.
+
+Focused race suites for state/database, API, gateway and authorization middleware
+pass, as do enabled static checks for all seven touched packages, SQL generation,
+documentation links and repository policy gates. CI bearer coverage also fixed
+an existing OIDC insert that omitted the token UUID without a database default.
+
+This is local implementation with no deployment. Additional shared permissions,
+account-owned jobs, projects/environments and other account-wide data services,
+organization billing/quotas, SSO/SCIM and service principals remain separate work.
+
+## Local organization application authorization — 2026-10-16
+
+[ADR-202610171901](adr/202610171901-organization-application-authorization.md) adds current
+organization membership and operation-specific role checks to 39 reviewed app,
+configuration, secret, deployment/build and gateway log routes. Authentication,
+key scopes, MFA and actor attribution remain attached to the caller; existing
+storage, plan limits and billing remain attached to the resource account.
+Authorization precedes mutation replay. Collaborator receipts and activity
+deduplication are partitioned by caller and credential; creator receipts retain
+their existing namespace for upgrade compatibility. Deployment cancellation also
+checks the named app, including when another organization's app shares its legacy
+account.
+
+Portable race checks cover the authorization/middleware packages, focused API
+regressions including real PostgreSQL role changes and owner-scoped storage, and
+gateway live/archive authorization. Touched-package static analysis and repository
+policy/docs checks pass. The [team access guide](organization-app-access.md)
+records the permission matrix and exact migration boundary.
+
+This was the initial authorization slice. The offboarding entry above adds
+stream revocation, transaction fencing and filtered core inventories. Shared
+access beyond the reviewed route list and organization billing/quotas remain
+separate work.
 
 ## Containers: image runs, process identity and Compose build context — 2026-10-15
 

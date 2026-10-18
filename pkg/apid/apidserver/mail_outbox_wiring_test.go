@@ -80,3 +80,30 @@ func TestProducerOutboxAccountDeletionSaveFailureDoesNotStartDeletion(t *testing
 		t.Fatal("deletion committed without notification intent", err)
 	}
 }
+
+func TestProducerOutboxAccountDeletionPreservesCompanyOwnershipConflict(t *testing.T) {
+	env := apidserver.SetupPGHandler(t, api.PlanPro)
+	store := *env.Store()
+	org, err := store.CreateOrg(t.Context(), state.Org{Slug: "mail-owner-conflict", Name: "Mail Owner Conflict", Plan: api.PlanPro})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AddOrgMember(t.Context(), org.ID, env.Acct().ID, state.OrgRoleOwner, nil); err != nil {
+		t.Fatal(err)
+	}
+	server := *env.S()
+	pool := *env.Pool()
+	flags := map[string]string{internalmail.ProducerOutboxEnableEnv: "1", internalmail.EnableEnv: "1", internalmail.ProducersEnableEnv: "1", internalmail.SchedulingEnableEnv: "1", "FAAS_MAIL_TRANSPORT": "internal-producer", "FAAS_MAIL_FROM": "notify@example.test", "FAAS_INTERNAL_MAIL_PRODUCER_ID": "auth", "FAAS_INTERNAL_MAIL_PRODUCER_TOKEN": "private-apid-outbox-test-token-32-bytes"}
+	if err := server.ConfigureMailOutbox(t.Context(), pool, func(k string) string { return flags[k] }); err != nil {
+		t.Fatal(err)
+	}
+	response := env.Do(t, http.MethodDelete, "/v1/account", nil, nil)
+	if response.Code != http.StatusConflict {
+		t.Fatalf("company ownership conflict changed: %d %s", response.Code, response.Body.String())
+	}
+	var status string
+	var intents int
+	if err := pool.QueryRow(t.Context(), `SELECT status,(SELECT count(*) FROM platform_mail_producer_outbox WHERE account_id=$1) FROM accounts WHERE id=$1`, env.Acct().ID).Scan(&status, &intents); err != nil || status != "active" || intents != 0 {
+		t.Fatalf("blocked deletion changed state: %s %d %v", status, intents, err)
+	}
+}

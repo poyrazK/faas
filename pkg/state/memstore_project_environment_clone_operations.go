@@ -5,12 +5,15 @@ import (
 	"time"
 )
 
-func (m *MemStore) CreateProjectEnvironmentCloneOperation(_ context.Context, op ProjectEnvironmentCloneOperation) (ProjectEnvironmentCloneOperation, error) {
+func (m *MemStore) CreateProjectEnvironmentCloneOperation(ctx context.Context, op ProjectEnvironmentCloneOperation) (ProjectEnvironmentCloneOperation, error) {
 	if err := validateProjectEnvironmentCloneOperation(op); err != nil {
 		return ProjectEnvironmentCloneOperation{}, err
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return ProjectEnvironmentCloneOperation{}, err
+	}
 	project, ok := m.projects[op.ProjectID]
 	if !ok || project.AccountID != op.AccountID {
 		return ProjectEnvironmentCloneOperation{}, ErrNotFound

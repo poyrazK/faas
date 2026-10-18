@@ -20,8 +20,9 @@
 // pins the seam WITHOUT real LISTEN; THIS test pins it WITH
 // real LISTEN. Both layers matter.
 //
-// The test runs against a fresh schema per pgtest.Open (see
-// pkg/db/pgtest/pgtest.go) and migrates via db.MigrateUp. The
+// The test uses pgtest.OpenMigrated so template mode provides a private
+// database. Concurrent index builds must not share snapshots with unrelated
+// suites' open transactions. The
 // `compute_nodes` table is a goose-managed migration (00079+)
 // so we don't have to create it by hand. A real compute_node
 // row is seeded with active=true; we then UPDATE active=false
@@ -40,7 +41,6 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -53,9 +53,6 @@ import (
 func TestScheddRouter_WatchNodeChanges_LiveNotify(t *testing.T) {
 	pool := pgtest.OpenMigrated(t)
 	ctx := context.Background()
-	if err := db.MigrateUp(ctx, pool); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
 
 	// Seed a compute_node row the router can cache. The router
 	// only knows the cache by node_id; the ScheddTargetURL must

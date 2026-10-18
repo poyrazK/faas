@@ -29,6 +29,11 @@ func (m *MemStore) ReadObjectMultipartInitiation(ctx context.Context, u ObjectMu
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectMultipartInitiation
+		return zero0, err
+	}
+
 	return m.multipartInitiationLocked(u)
 }
 
@@ -38,6 +43,10 @@ func (m *MemStore) DispatchObjectMultipartInitiation(ctx context.Context, u Obje
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return err
+	}
+
 	d, err := m.multipartInitiationLocked(u)
 	if err != nil {
 		return err
@@ -56,6 +65,10 @@ func (m *MemStore) ObserveObjectMultipartInitiation(ctx context.Context, u Objec
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return err
+	}
+
 	d, err := m.multipartInitiationLocked(u)
 	if err != nil {
 		return err

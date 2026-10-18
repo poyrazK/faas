@@ -71,6 +71,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/appaccess"
 	"github.com/onebox-faas/faas/pkg/apislogs"
 	mwauth "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/logarchive"
@@ -183,7 +184,7 @@ func (h *ArchiveLogsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		api.WriteProblem(w, api.ErrAppLogsUnavailable())
 		return
 	}
-	slug := r.URL.Query().Get("slug")
+	slug := r.PathValue("slug")
 	if slug == "" {
 		// r.PathValue is not bound when the mux registers this
 		// handler directly; the wrapping mux (run.go::logsMux)
@@ -191,12 +192,12 @@ func (h *ArchiveLogsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// through. Tests that mount the handler bare must pass
 		// the slug explicitly via ?slug=. The "no slug" branch
 		// here is the fail-closed default.
-		slug = r.PathValue("slug")
+		slug = r.URL.Query().Get("slug")
 	}
 	inner := mwauth.AccountHandler(func(w http.ResponseWriter, r *http.Request, acct state.Account) {
 		h.stream(w, r, acct, slug)
 	})
-	chain := h.Auth.RequireScope(api.ScopesReadSurface...)(h.Auth.RequireMFA(inner))
+	chain := h.Auth.RequireScope(api.ScopesReadSurface...)(h.Auth.RequireMFA(appaccess.Wrap(h.Store, h.Auth.Audit, inner)))
 	h.Auth.RequireLimited(chain)(w, r)
 }
 

@@ -10,6 +10,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 func newStandardCaptureService(t *testing.T) (*state.MemStore, state.App, state.Deployment) {
@@ -92,7 +93,7 @@ func TestApplicationStandardChangeDuringBootDestroysStaleRuntime(t *testing.T) {
 }
 
 type staleRuntimeCaptureStore struct {
-	*state.MemStore
+	MemStore     *state.MemStore
 	beforeInsert func()
 }
 
@@ -112,7 +113,7 @@ func TestApplicationStandardCaptureRejectsOldSchedulerRead(t *testing.T) {
 		}
 	}}
 	vmm := &fakeVMM{}
-	e := newEngine(t, wrapped, vmm, &fakeNotifier{}, "1.10.0")
+	e := newEngine(t, statetest.NewMem(wrapped), vmm, &fakeNotifier{}, "1.10.0")
 	if _, err := e.Wake(t.Context(), app.ID, dep.ID, "", TriggerGateway); !errors.Is(err, state.ErrApplicationStandardRuntimeStale) {
 		t.Fatalf("old read booted under newer capture: %v", err)
 	}

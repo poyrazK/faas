@@ -3,6 +3,8 @@ package state
 import (
 	"context"
 	"fmt"
+	"github.com/jackc/pgx/v5/pgtype"
+	ownersql "github.com/onebox-faas/faas/pkg/state/resourceownership/sqlc"
 	"time"
 )
 
@@ -14,6 +16,16 @@ var (
 // SetAccountAbuseHold implements AccountAbuseHoldStore. An existing hold is
 // kept as is, so the first reason and time stay on record.
 func (s *PgStore) SetAccountAbuseHold(ctx context.Context, accountID, reason string, at time.Time) (bool, error) {
+	if shared, err := s.isOrgBillingSubject(ctx, accountID); err != nil {
+		return false, err
+	} else if shared {
+		if !validAbuseHoldReason(reason) {
+			return false, ErrInvalidArgument
+		}
+		n, err := ownersql.New().SetAbuseHold(ctx, s.pool, ownersql.SetAbuseHoldParams{ID: mustPgUUID(accountID), AbuseHoldReason: pgtype.Text{String: reason, Valid: true}, AbuseHoldAt: pgtype.Timestamptz{Time: at.UTC(), Valid: true}})
+		return n > 0, mapErr(err)
+	}
+
 	tag, err := s.pool.Exec(ctx, `
 		update accounts
 		   set abuse_hold_at = $3, abuse_hold_reason = $2
@@ -32,6 +44,13 @@ func (s *PgStore) SetAccountAbuseHold(ctx context.Context, accountID, reason str
 
 // ReleaseAccountAbuseHold implements AccountAbuseHoldStore.
 func (s *PgStore) ReleaseAccountAbuseHold(ctx context.Context, accountID string) (bool, error) {
+	if shared, err := s.isOrgBillingSubject(ctx, accountID); err != nil {
+		return false, err
+	} else if shared {
+		n, err := ownersql.New().ReleaseAbuseHold(ctx, s.pool, mustPgUUID(accountID))
+		return n > 0, mapErr(err)
+	}
+
 	tag, err := s.pool.Exec(ctx, `
 		update accounts
 		   set abuse_hold_at = null, abuse_hold_reason = null
@@ -55,6 +74,20 @@ func (m *MemStore) SetAccountAbuseHold(_ context.Context, accountID, reason stri
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if org, ok := m.orgs[accountID]; ok && !org.Personal {
+		if org.AbuseHoldAt != nil {
+			return false, nil
+		}
+		held := at.UTC()
+		org.AbuseHoldAt = &held
+		org.AbuseHoldReason = reason
+		m.orgs[accountID] = org
+		policy := m.orgResourceAccountLocked(org)
+		policy.AbuseHoldAt = &held
+		policy.AbuseHoldReason = reason
+		m.saveOrgResourcePolicyLocked(policy)
+		return true, nil
+	}
 	a, ok := m.accounts[accountID]
 	if !ok {
 		return false, ErrNotFound
@@ -72,6 +105,19 @@ func (m *MemStore) SetAccountAbuseHold(_ context.Context, accountID, reason stri
 func (m *MemStore) ReleaseAccountAbuseHold(_ context.Context, accountID string) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if org, ok := m.orgs[accountID]; ok && !org.Personal {
+		if org.AbuseHoldAt == nil {
+			return false, nil
+		}
+		org.AbuseHoldAt = nil
+		org.AbuseHoldReason = ""
+		m.orgs[accountID] = org
+		policy := m.orgResourceAccountLocked(org)
+		policy.AbuseHoldAt = nil
+		policy.AbuseHoldReason = ""
+		m.saveOrgResourcePolicyLocked(policy)
+		return true, nil
+	}
 	a, ok := m.accounts[accountID]
 	if !ok {
 		return false, ErrNotFound
@@ -82,4 +128,8 @@ func (m *MemStore) ReleaseAccountAbuseHold(_ context.Context, accountID string) 
 	a.AbuseHoldAt, a.AbuseHoldReason = nil, ""
 	m.storeRouteCheckAccountLocked(accountID, a)
 	return true, nil
+}
+
+func validAbuseHoldReason(reason string) bool {
+	return reason == AccountAbuseHoldEgressFanout || reason == AccountAbuseHoldEgressFlood || reason == AccountAbuseHoldOperator
 }

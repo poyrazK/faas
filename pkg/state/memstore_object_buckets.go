@@ -13,23 +13,31 @@ func (m *MemStore) ReserveObjectBucket(ctx context.Context, b ObjectBucket, limi
 	return reserved, err
 }
 
-func (m *MemStore) ReserveObjectBucketWithResult(_ context.Context, b ObjectBucket, limit int) (ObjectBucket, bool, error) {
+func (m *MemStore) ReserveObjectBucketWithResult(ctx context.Context, b ObjectBucket, limit int) (ObjectBucket, bool, error) {
 	if b.EnvironmentCloneOperationID != "" {
 		return ObjectBucket{}, false, ErrConflict
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return ObjectBucket{}, false, err
+	}
 	return m.reserveObjectBucketLocked(b, limit)
 }
 
 func (m *MemStore) reserveObjectBucketLocked(b ObjectBucket, limit int) (ObjectBucket, bool, error) {
-	if a, ok := m.accounts[b.AccountID]; !ok || a.Status != AccountActive {
-		return ObjectBucket{}, false, ErrConflict
-	}
 	app, ok := m.apps[b.AppID]
 	if !ok || app.AccountID != b.AccountID || app.Status == AppDeleted {
 		return ObjectBucket{}, false, ErrNotFound
 	}
+	owner, ok := m.appResourceAccountLocked(app)
+	if !ok || !owner.Active() {
+		return ObjectBucket{}, false, ErrConflict
+	}
+	if b.OrgID != "" && b.OrgID != app.OrgID {
+		return ObjectBucket{}, false, ErrConflict
+	}
+	b.OrgID = app.OrgID
 	count := 0
 	for _, row := range m.objectBuckets {
 		if row.AppID != b.AppID || row.AccountID != b.AccountID || row.State == "deleted" {
@@ -57,9 +65,14 @@ func (m *MemStore) reserveObjectBucketLocked(b ObjectBucket, limit int) (ObjectB
 	return b, true, nil
 }
 
-func (m *MemStore) ListObjectBuckets(_ context.Context, accountID, appID string) ([]ObjectBucket, error) {
+func (m *MemStore) ListObjectBuckets(ctx context.Context, accountID, appID string) ([]ObjectBucket, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 []ObjectBucket
+		return zero0, err
+	}
+
 	rows := make([]ObjectBucket, 0)
 	for _, b := range m.objectBuckets {
 		if b.AccountID == accountID && b.AppID == appID && b.State != "deleted" && m.cloneBucketAccessibleLocked(b) {
@@ -72,9 +85,14 @@ func (m *MemStore) ListObjectBuckets(_ context.Context, accountID, appID string)
 	return rows, nil
 }
 
-func (m *MemStore) GetObjectBucket(_ context.Context, accountID, appID, id string) (ObjectBucket, error) {
+func (m *MemStore) GetObjectBucket(ctx context.Context, accountID, appID, id string) (ObjectBucket, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 ObjectBucket
+		return zero0, err
+	}
+
 	b, ok := m.objectBuckets[id]
 	if !ok || b.AccountID != accountID || b.AppID != appID || b.State == "deleted" || !m.cloneBucketAccessibleLocked(b) {
 		return ObjectBucket{}, ErrNotFound
@@ -135,9 +153,13 @@ func (m *MemStore) claimObjectBucket(accountID, appID, id, token, next string, r
 	return b, nil
 }
 
-func (m *MemStore) FinishObjectBucket(_ context.Context, id, token, next string) error {
+func (m *MemStore) FinishObjectBucket(ctx context.Context, id, token, next string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return err
+	}
+
 	b, ok := m.objectBuckets[id]
 	if !ok || b.LeaseToken != token || token == "" {
 		return ErrConflict
@@ -168,9 +190,13 @@ func (m *MemStore) FinishObjectBucket(_ context.Context, id, token, next string)
 	return nil
 }
 
-func (m *MemStore) RetryObjectBucket(_ context.Context, id, token, code string, delay time.Duration) error {
+func (m *MemStore) RetryObjectBucket(ctx context.Context, id, token, code string, delay time.Duration) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		return err
+	}
+
 	b, ok := m.objectBuckets[id]
 	if !ok || token == "" || b.LeaseToken != token || !validObjectBucketRetry(code, delay) || (b.State != "provisioning" && b.State != "deleting") {
 		return ErrConflict
@@ -181,12 +207,17 @@ func (m *MemStore) RetryObjectBucket(_ context.Context, id, token, code string, 
 	return nil
 }
 
-func (m *MemStore) DueObjectBuckets(_ context.Context, provision bool, limit int32) ([]ObjectBucket, error) {
+func (m *MemStore) DueObjectBuckets(ctx context.Context, provision bool, limit int32) ([]ObjectBucket, error) {
 	if limit < 1 || limit > 100 {
 		return nil, ErrConflict
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkOrgAccessLocked(ctx); err != nil {
+		var zero0 []ObjectBucket
+		return zero0, err
+	}
+
 	rows := make([]ObjectBucket, 0)
 	now := m.clock()
 	for _, b := range m.objectBuckets {

@@ -65,7 +65,7 @@ func (e *Engine) resolveWakeEnvironmentForDeployment(ctx context.Context, appID 
 	if selected.app.ID != appID {
 		return selected, state.ErrConflict
 	}
-	account, err := e.store.AccountByID(ctx, selected.app.AccountID)
+	account, err := state.AppResourceAccount(ctx, e.store, selected.app)
 	if err != nil {
 		return selected, fmt.Errorf("sched: wake environment: account: %w", err)
 	}

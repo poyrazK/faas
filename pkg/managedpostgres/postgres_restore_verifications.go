@@ -22,7 +22,7 @@ func (s *PostgresStore) RecordRestoreVerification(ctx context.Context, database 
 	if err != nil {
 		return err
 	}
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.catalog.Begin(ctx)
 	if err != nil {
 		return mapPostgresError(err)
 	}
@@ -65,7 +65,7 @@ func (s *PostgresStore) GetRestoreVerification(ctx context.Context, accountID, d
 	if err != nil {
 		return RestoreVerification{}, err
 	}
-	row, err := new(sqlc.Queries).ReadManagedPostgresRestoreVerification(ctx, s.pool, sqlc.ReadManagedPostgresRestoreVerificationParams{AccountID: account, DatabaseID: id})
+	row, err := new(sqlc.Queries).ReadManagedPostgresRestoreVerification(ctx, s.catalog, sqlc.ReadManagedPostgresRestoreVerificationParams{AccountID: account, DatabaseID: id})
 	if err != nil {
 		return RestoreVerification{}, mapPostgresError(err)
 	}
