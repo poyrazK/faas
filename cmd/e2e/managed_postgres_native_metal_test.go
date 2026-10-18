@@ -117,6 +117,8 @@ func TestManagedPostgresNativeMetal(t *testing.T) {
 	environment := []string{
 		"FAAS_HOST_HMAC_KEY_PATH=" + hmacPath,
 		"FAAS_RELEASE_PHASE_ENABLED=1",
+		// apid gates the public app task API separately from schedd dispatch.
+		"FAAS_APP_TASK_API_ENABLED=1",
 		"FAAS_APP_TASK_DISPATCH=1",
 		"FAAS_HOST_KEY_PATH=" + filepath.Join(keys, "host.age"),
 		"FAAS_HOST_AGE_IDENTITY_PATH=" + filepath.Join(keys, "host.age"),
