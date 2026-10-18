@@ -280,7 +280,7 @@ func TestRenderGithubSnippet(t *testing.T) {
 				"# App: my-app",
 				"Repo: ${{ github.repository }}",
 				"Ref: ${{ github.sha }}",
-				"app: my-app",
+				`app: "my-app"`,
 				"# Action: poyrazK/faas/.github/actions/deploy@" + githubActionDefaultSHA,
 				"# pin this Action for reproducibility: poyrazK/faas/.github/actions/deploy@" + githubActionDefaultSHA,
 				"uses: poyrazK/faas/.github/actions/deploy@" + githubActionDefaultSHA + " # v0",
@@ -306,7 +306,7 @@ func TestRenderGithubSnippet(t *testing.T) {
 			mustLines: []string{
 				"Repo: onebox-faas/hello",
 				"Ref: a1b2c3d4e5f6789012345678901234567890abcd",
-				"app: hello",
+				`app: "hello"`,
 				// The body uses the env values directly — the
 				// `${{ github.* }}` expressions do NOT appear in the
 				// rendered snippet when the runner env is set.
@@ -338,7 +338,7 @@ func TestRenderGithubSnippet(t *testing.T) {
 			mustLines: []string{
 				"Repo: onebox-faas/hello",
 				"# pin this Action for reproducibility: poyrazK/faas/.github/actions/deploy@f1e2d3c4b5a6987654321098765432109abcdef0",
-				"app: hello",
+				`app: "hello"`,
 				"uses: poyrazK/faas/.github/actions/deploy@f1e2d3c4b5a6987654321098765432109abcdef0",
 			},
 		},
@@ -539,7 +539,7 @@ func TestCmdDeployGithubSnippet(t *testing.T) {
 		if !strings.HasPrefix(out, "# Gregale deploy") {
 			t.Errorf("happy path: stdout missing sentinel; got:\n%s", out)
 		}
-		if !strings.Contains(out, "app: my-app") {
+		if !strings.Contains(out, `app: "my-app"`) {
 			t.Errorf("happy path: stdout missing app slug; got:\n%s", out)
 		}
 		if stderr.Len() != 0 {

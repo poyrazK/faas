@@ -6,20 +6,28 @@ inferred from flags + the cwd's git state; this page captures the
 non-obvious pieces (which files actually get shipped and what the
 `--json` envelope looks like).
 
+Use `gregale deploy --help` for common options and runnable examples. Add
+`--all` for every flag grouped into source, resources, projects, rollout,
+access, and other tasks. `gregale app --help` follows the same pattern;
+`gregale app my-api scale --help` explains resource changes and saved plans.
+Connection profiles go before the command (`gregale --profile staging deploy`);
+RAM/CPU resource profiles go after it (`gregale deploy --profile small`).
+
 ## Your first deployment with `gregale start`
 
 Run one command in a terminal:
 
 ```bash
 gregale start
+# Or select a project from another directory:
+gregale start ./my-api
 ```
 
-`start` takes no flags or arguments. It asks what to launch, chooses sensible
-defaults, and gets your first app live. For a new app from an existing project
-with a saved login, the healthy path needs just two answers:
-
-1. Deploy this directory, create a starter, or choose another directory.
-2. Review the source, app name, account, environment, access, and billing, then confirm deployment.
+`start` accepts one optional project directory and needs no deployment flags.
+It selects an unambiguous app automatically. For a healthy project with a saved
+login, review the source, app, connection, detected build, environment, access,
+and resources, then confirm deployment. New apps use account plan resource
+defaults; existing apps keep their resource settings.
 
 Browser login appears only when needed. Starters ask for a language (Node.js,
 Python, or Go) and a local directory. Recognized workspaces offer a service picker.
@@ -32,8 +40,10 @@ per read and do not guarantee that capacity will remain available after review.
 Start uses the selected source's nearest `.gregale/project.json` when it is linked
 with `gregale link`. It verifies the project, workload membership, and any named
 environment, then shows that target in the review. A project without a default
-app offers a workload picker when needed. Picking a workload for this launch
-does not change your linked defaults. A link in the original working directory
+app offers a workload picker when needed. After a successful launch finishes,
+Start remembers the selected app next to the source, including standalone apps.
+It preserves conflicting saved defaults and keeps accepted-deployment recovery
+available. A link in the original working directory
 does not apply to a different source tree you select.
 
 Without a link, the app name comes from the selected directory and the environment
@@ -126,8 +136,9 @@ declining before confirmation submits no update.
 Function-set manifests use the regular `gregale deploy` flow; a guided launch
 keeps its single app target.
 
-Finishing prints commands for deploying changes, reading logs, and opening
-the app. Built-in starters offer an optional next step with two answers: enter a
+Finishing prints commands for deploying changes, reading logs, opening
+the app, and deleting it. Commands retain the connection, source, and deployment
+scope; deletion still asks for confirmation. Built-in starters offer an optional next step with two answers: enter a
 greeting, then approve a combined file-edit and deployment preview. Press Enter at
 the greeting prompt to finish. Declining or closing before confirmation keeps the
 original files and submits no deployment. After approval, the local edit remains
@@ -138,8 +149,8 @@ complete the walkthrough, and serving deployment headers are checked when presen
 ### Continue an interrupted launch
 
 An accepted deployment ID is saved before waiting. Ctrl-C stops the local session
-and leaves the remote deployment running. Run `gregale start` again from the same
-original directory and choose **Continue** to reconnect without submitting another
+and leaves the remote deployment running. Repeat `gregale start [path]` with the same
+original project directory and choose **Continue** to reconnect without submitting another
 deployment. The saved session also remembers source selected from another directory.
 For an update, the newly accepted ID is saved immediately while the previous
 successful response check's deployment ID remains recorded until the new check
@@ -215,6 +226,11 @@ deployment offers logs and a reviewed retry, including secrets-file configuratio
 when needed.
 
 ## Source-root semantics
+
+App and environment defaults come from the selected source directory's nearest
+saved context. `--name` and `--environment` override those defaults. Selecting
+`--path` does not replace a saved app name with the directory name or inherit an
+unrelated environment from the caller's directory.
 
 When cwd is inside a git repository with an `origin` remote, `gregale
 deploy` without a source selector still ships the
@@ -302,6 +318,26 @@ use `--worktree` when the plan reports that local changes are excluded. JSON
 output remains a single machine-readable deployment receipt and does not
 include this human preflight block. A dirty checkout also prints an exclusion
 warning to stderr, including with `--json`, so a script's stdout stays parseable.
+
+## Understand a preview
+
+`deploy --plan` and `deploy --dry-run` show the same connection, app,
+environment, source, and local-change summary. Their verification differs:
+
+- `--plan` performs local inference without authentication. It does not check
+  the app's current remote configuration or guarantee build success.
+- `--dry-run` compares supported changes against remote state. It does not run
+  the build or verify readiness, and state can change before deployment.
+
+The single-app diff engine cannot compare named project environments. A saved
+or explicit named environment produces an explanation; use a project preview,
+or `--environment=` to intentionally compare the default scope. It never silently
+switches a named environment to the default scope.
+
+Structured previews retain their existing fields and add summary metadata.
+Scale plans and secret-update previews use the same human summary and explain
+their verification limits. Secret previews compare key metadata without reading
+remote secret values or verifying their delivery.
 
 ## Safe production rollouts
 
@@ -591,6 +627,11 @@ Submission failures now include recovery details: the stage (`upload`,
 `submission`, or `deployment`), app, any confirmed deployment ID, an inspection
 command, and the logical idempotency key when that transport uses one.
 In JSON mode, these appear in the stderr Problem object's `recovery` field.
+Its `next_command` identifies the recommended action: resume observation of an
+accepted deployment, or inspect history when acceptance is unknown. Failed
+deployment receipts recommend logs for that exact deployment instead of waiting
+again. `inspect --errors` includes the same recovery data alongside its existing
+deployment fields, including when the server has not recorded a failure code.
 
 If no deployment ID was confirmed, inspect the app's history before retrying:
 
