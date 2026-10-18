@@ -37,7 +37,7 @@ import (
 // would silently mint JWTs that no gatewayd-internal can
 // verify — the cross-box mint/verify would diverge silently.
 func TestLoadClusterInternalSvcKey_RoundTrip(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if err := db.MigrateUp(context.Background(), pool); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
@@ -115,7 +115,7 @@ func TestLoadClusterInternalSvcKey_RoundTrip(t *testing.T) {
 }
 
 func TestNewSchedInternalSvcMinterFailsClosedForForeignFleetEnvelope(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if err := db.MigrateUp(context.Background(), pool); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
@@ -186,7 +186,7 @@ func TestScheddHostAgeKeyDirFallsBackToCanonicalPath(t *testing.T) {
 // which the minter-side caller (newSchedInternalSvcMinter)
 // translates into "fall back to per-host FAAS_INTERNAL_SVC_KEY_PATH".
 func TestLoadClusterInternalSvcKey_EmptyTableReturnsErrClusterKeyUnavailable(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if err := db.MigrateUp(context.Background(), pool); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
@@ -210,7 +210,7 @@ func TestLoadClusterInternalSvcKey_EmptyTableReturnsErrClusterKeyUnavailable(t *
 // rotation; loud refusal at boot prevents a silent cross-box
 // auth break.
 func TestLoadClusterInternalSvcKey_RefusesKidMismatch(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	if err := db.MigrateUp(context.Background(), pool); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}

@@ -51,7 +51,7 @@ import (
 // regression that touches the wire shape (channel name, payload
 // field rename, trigger definition) must fail this test.
 func TestScheddRouter_WatchNodeChanges_LiveNotify(t *testing.T) {
-	pool := pgtest.Open(t)
+	pool := pgtest.OpenMigrated(t)
 	ctx := context.Background()
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatalf("migrate: %v", err)
