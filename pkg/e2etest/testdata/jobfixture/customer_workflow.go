@@ -91,7 +91,7 @@ func (f workflowFixtureServer) ServeHTTP(w http.ResponseWriter, r *http.Request)
 	}
 	id, proof, err := workflowFixtureProof(r)
 	if err != nil {
-		http.Error(w, "trusted workflow proof required", http.StatusBadRequest)
+		http.Error(w, "trusted workflow proof required: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 	var input workflowFixtureInput
@@ -114,13 +114,21 @@ func workflowFixtureProof(r *http.Request) (string, api.OperationWorkflowRuntime
 	p := api.OperationWorkflowRuntimeProof{RunID: r.Header.Get(api.OperationWorkflowRunHeader), StepName: r.Header.Get(api.OperationWorkflowStepHeader), Capability: r.Header.Get(api.OperationWorkflowCapabilityHeader)}
 	p.Generation, _ = strconv.Atoi(r.Header.Get(api.OperationGenerationHeader))
 	p.Attempt, _ = strconv.Atoi(r.Header.Get(api.OperationAttemptHeader))
-	for _, value := range []string{id, p.RunID, p.Capability} {
+	for name, value := range map[string]string{"operation id": id, "run id": p.RunID, "capability": p.Capability} {
 		if _, err := uuid.Parse(value); err != nil {
-			return "", p, fmt.Errorf("invalid native identity")
+			return "", p, fmt.Errorf("invalid native identity: %s", name)
 		}
 	}
-	if r.Header.Get(api.OperationExecutionKindHeader) != "workflow" || r.Header.Get(api.InvocationIDHeader) != "" || p.StepName != strings.TrimPrefix(r.URL.Path, "/") || p.Generation < 1 || p.Attempt < 1 {
-		return "", p, fmt.Errorf("invalid native proof")
+	// Name the failing check (never a value): the acceptance run reports it.
+	switch {
+	case r.Header.Get(api.OperationExecutionKindHeader) != "workflow":
+		return "", p, fmt.Errorf("invalid native proof: execution kind")
+	case r.Header.Get(api.InvocationIDHeader) != "":
+		return "", p, fmt.Errorf("invalid native proof: HTTP invocation id present")
+	case p.StepName != strings.TrimPrefix(r.URL.Path, "/"):
+		return "", p, fmt.Errorf("invalid native proof: step does not match path")
+	case p.Generation < 1 || p.Attempt < 1:
+		return "", p, fmt.Errorf("invalid native proof: generation or attempt")
 	}
 	return id, p, nil
 }
