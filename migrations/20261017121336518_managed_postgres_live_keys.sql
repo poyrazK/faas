@@ -1,4 +1,5 @@
 -- filename: 20261017121336518_managed_postgres_live_keys.sql
+-- migration-compat: expand
 
 -- +goose Up
 -- The foreign key locks managed_postgres_databases briefly.
