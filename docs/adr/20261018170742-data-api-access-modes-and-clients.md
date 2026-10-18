@@ -170,6 +170,16 @@ approved RPCs, user tokens and server keys. They never retry writes
 automatically. They embed the schema fingerprint, and `--check` detects drift
 exactly like the TypeScript export.
 
+### Live queries
+
+RLS-mode live queries (ADR-20261016151947) set the same gateway-owned claims
+as REST: `gregale_access` is `user`, and other `gregale_*` claims from the
+token are removed. Live reads from the SDK decode values as the Data API's
+JSON does, so generated row types apply to live rows. Anonymous and
+server-key live subscriptions are not supported yet. They need endpoint
+admission without a user token, and the public-read allowlist and key hashes
+delivered to realtimed.
+
 ## Consequences
 
 - Public reads and server keys widen who can reach SQL. Both are owner opt-ins
