@@ -47,7 +47,7 @@ func newReleaseHistory(t *testing.T, slug string) releaseHistory {
 			t.Fatal(err)
 		}
 		if len(command) > 0 {
-			runRelease(t, store, (*e.Acct()).ID, app.ID, d.ID)
+			runRelease(ctx, t, store, (*e.Acct()).ID, app.ID, d.ID)
 		}
 		if err := store.MarkDeploymentLive(ctx, d.ID); err != nil {
 			t.Fatal(err)
@@ -71,13 +71,12 @@ func newReleaseHistory(t *testing.T, slug string) releaseHistory {
 }
 
 // runRelease runs the deployment's release task to success now.
-func runRelease(t *testing.T, store state.Store, accountID, appID, deploymentID string) {
+func runRelease(ctx context.Context, t *testing.T, store state.Store, accountID, appID, deploymentID string) {
 	t.Helper()
 	tasks, ok := store.(state.AppTaskStore)
 	if !ok {
 		t.Fatal("store has no app tasks")
 	}
-	ctx := context.Background()
 	now := time.Now().UTC()
 	task, err := tasks.CreateAppTask(ctx, state.CreateAppTaskParams{
 		AccountID: accountID, AppID: appID, DeploymentID: deploymentID,

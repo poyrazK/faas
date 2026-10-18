@@ -493,7 +493,7 @@ func (p *Progression) circuitBreakerReady(ctx context.Context, row CanaryRow, st
 		return false, nil
 	default:
 		held := elapsed - stage.Duration
-		if held < 0 && !(earlyAdvanceAllowed(stage, elapsed) && ProbeEvidenceAdvanceAllowed(decision, observation)) {
+		if held < 0 && (!earlyAdvanceAllowed(stage, elapsed) || !ProbeEvidenceAdvanceAllowed(decision, observation)) {
 			return true, nil
 		}
 		if ProbeEvidenceAdvanceAllowed(decision, observation) {

@@ -21,10 +21,9 @@ type decisionFixture struct {
 	canary state.Deployment
 }
 
-func newDecisionFixture(t *testing.T, slug string) decisionFixture {
+func newDecisionFixture(ctx context.Context, t *testing.T, slug string) decisionFixture {
 	t.Helper()
 	e := apidserver.Setup(t, api.PlanPro)
-	ctx := context.Background()
 	app, err := (*e.Store()).CreateApp(ctx, state.App{AccountID: (*e.Acct()).ID, Slug: slug})
 	if err != nil {
 		t.Fatal(err)
@@ -76,8 +75,8 @@ func (f decisionFixture) get(t *testing.T) api.DeploymentResponse {
 }
 
 func TestSafeDeployRoutesRecordRolloutDecisions(t *testing.T) {
-	f := newDecisionFixture(t, "decision-worker")
 	ctx := context.Background()
+	f := newDecisionFixture(ctx, t, "decision-worker")
 	canaryToken := "canary-service-secret-0000000000000001"
 	actionToken := "action-service-secret-0000000000000001"
 	mux := http.NewServeMux()
@@ -174,7 +173,7 @@ func TestSafeDeployWorkerAdvancesPacedStageOnEvidence(t *testing.T) {
 			decision: ptrDecision(api.RolloutRuleAdvanceProbeEvidence)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			f := newDecisionFixture(t, "paced-worker")
+			f := newDecisionFixture(ctx, t, "paced-worker")
 			if err := (*f.e.Store()).SetDeploymentCanaryState(ctx, f.canary.ID, tc.preset, 0, 4, time.Now().Add(-70*time.Second), "rolling_out"); err != nil {
 				t.Fatal(err)
 			}
@@ -218,7 +217,7 @@ func ptrDecision(rule string) *api.RolloutDecision {
 }
 
 func TestCustomerRolloutTransitionsRecordManualDecisions(t *testing.T) {
-	f := newDecisionFixture(t, "decision-manual")
+	f := newDecisionFixture(context.Background(), t, "decision-manual")
 	path := "/v1/deployments/" + f.canary.ID + "/canary/advance"
 	forged := breakerDecision(api.RolloutRuleAdvanceHealthy, 0, f.prior.ID)
 	rec := f.e.Do(t, http.MethodPost, path, api.AdvanceCanaryRequest{ExpectedStep: 0, Decision: &forged}, nil)

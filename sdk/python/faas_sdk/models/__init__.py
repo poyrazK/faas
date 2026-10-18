@@ -4722,6 +4722,9 @@ from .scenario_postgres_delta_inserted_item import ScenarioPostgresDeltaInserted
 from .scenario_postgres_evidence import ScenarioPostgresEvidence
 from .scenario_postgres_evidence_provenance import ScenarioPostgresEvidenceProvenance
 from .scenario_postgres_evidence_status import ScenarioPostgresEvidenceStatus
+from .scenario_postgres_fault_receipt import ScenarioPostgresFaultReceipt
+from .scenario_postgres_fault_receipt_state import ScenarioPostgresFaultReceiptState
+from .scenario_postgres_fault_spec import ScenarioPostgresFaultSpec
 from .scenario_postgres_receipt import ScenarioPostgresReceipt
 from .scenario_postgres_receipt_version import ScenarioPostgresReceiptVersion
 from .scenario_postgres_snapshot import ScenarioPostgresSnapshot
@@ -9872,6 +9875,9 @@ __all__ = (
     "ScenarioPostgresEvidence",
     "ScenarioPostgresEvidenceProvenance",
     "ScenarioPostgresEvidenceStatus",
+    "ScenarioPostgresFaultReceipt",
+    "ScenarioPostgresFaultReceiptState",
+    "ScenarioPostgresFaultSpec",
     "ScenarioPostgresReceipt",
     "ScenarioPostgresReceiptVersion",
     "ScenarioPostgresSnapshot",
