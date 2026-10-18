@@ -977,6 +977,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		log.Warn("seed ledger", "err", err)
 	}
 	if err := engine.SeedDataRepairRehearsals(ctx); err != nil {
+		// As with init engine above: a cancel that lands before startup
+		// completes is a clean drain, not a seeding failure.
+		if errors.Is(err, context.Canceled) && ctx.Err() != nil {
+			return nil
+		}
 		return fmt.Errorf("schedd: seed repair rehearsal capacity: %w", err)
 	}
 	if err := startDataRepairRehearsals(ctx, engine, store, vmmRouter, ownerNodeID, seedLedgerReady, log); err != nil {
