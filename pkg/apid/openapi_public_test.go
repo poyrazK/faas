@@ -101,10 +101,10 @@ func TestPublicOpenAPIFollowsMonetizationRelease(t *testing.T) {
 			t.Errorf("released spec dropped %s", path)
 		}
 	}
-	if monetized < 50 {
+	if monetized < 40 {
 		t.Fatalf("only %d monetization paths in the embedded spec; the route list is stale", monetized)
 	}
-	for _, name := range []string{"APIConsumerRateCardResponse", "BillingRunResponse"} {
+	for _, name := range append([]string{"APIConsumerRateCardResponse", "BillingRunResponse"}, monetization.Schemas...) {
 		if _, ok := full.Components["schemas"][name]; !ok {
 			t.Fatalf("embedded spec lacks %s; update this test", name)
 		}

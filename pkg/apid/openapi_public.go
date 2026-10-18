@@ -69,6 +69,15 @@ func publicSpec(raw []byte, showMonetization bool) []byte {
 		return raw
 	}
 	paths.Content = kept
+	if !showMonetization {
+		schemas := mappingValue(mappingValue(root, "components"), "schemas")
+		for _, name := range monetization.Schemas {
+			if body := mappingValue(schemas, name); body != nil {
+				removed = append(removed, body)
+				deleteMappingKey(schemas, name)
+			}
+		}
+	}
 	pruneComponents(root, removed)
 	if !showMonetization {
 		dropListValues(root, monetization.WebhookEvent)

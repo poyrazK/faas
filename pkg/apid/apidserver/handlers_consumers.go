@@ -85,6 +85,12 @@ func (s *server) createAPIConsumer(w http.ResponseWriter, r *http.Request, acct 
 			"Invalid consumer", "external_ref must be 1-256 characters and name must be 1-128 characters"))
 		return
 	}
+	if req.TrialDays != 0 && !s.apiMonetizationEnabled() {
+		// Trials are API monetization: until it is released the field is
+		// answered like any unknown one (ADR-20261018090210).
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", `json: unknown field "trial_days"`))
+		return
+	}
 	if req.TrialDays != 0 && !consumercontrols.ValidTrialDays(req.TrialDays) {
 		api.WriteProblem(w, api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
 			"Invalid consumer", fmt.Sprintf("trial_days must be 1 to %d", state.MaxAPIConsumerTrialDays)))

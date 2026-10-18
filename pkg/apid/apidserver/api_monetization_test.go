@@ -61,6 +61,11 @@ func TestAPIMonetizationHiddenUntilReleased(t *testing.T) {
 	if res := e.Do(t, http.MethodGet, "/v1/apps/shop/consumers", nil, nil); res.Code != http.StatusOK {
 		t.Errorf("consumers stay available: %d %s", res.Code, res.Body)
 	}
+	trial := api.CreateAPIConsumerRequest{ExternalRef: "c1", Name: "C1", TrialDays: 7}
+	if res := e.Do(t, http.MethodPost, "/v1/apps/shop/consumers", trial, nil); res.Code != http.StatusBadRequest ||
+		!strings.Contains(res.Body.String(), `unknown field \"trial_days\"`) {
+		t.Errorf("trial on create: %d %s", res.Code, res.Body)
+	}
 	hook := api.CreateAppWebhookRequest{TargetURL: "https://example.com/hook", WebhookSecret: "shh-test",
 		EventFilter: []string{"usage_statement.finalized"}}
 	if res := e.Do(t, http.MethodPost, "/v1/apps/shop/webhooks", hook, nil); res.Code == http.StatusCreated ||

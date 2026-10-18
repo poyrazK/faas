@@ -76,6 +76,14 @@ var WebhookEvents = []string{
 	"platform_tenant.statement.finalized",
 }
 
+// Schemas are the OpenAPI components only API monetization's webhook events
+// use. No path references them, so the served spec removes them by name.
+var Schemas = []string{
+	"APIConsumerUsageThresholdWebhookPayload",
+	"APIConsumerUsageStatementFinalizedWebhookPayload",
+	"PlatformTenantStatementFinalizedWebhookPayload",
+}
+
 // WebhookEvent reports whether event is one of WebhookEvents.
 func WebhookEvent(event string) bool { return slices.Contains(WebhookEvents, event) }
 
