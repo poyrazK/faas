@@ -9,7 +9,10 @@ import (
 // supplied by a customer. BackendID/Fingerprint and PhysicalName never change
 // during ordinary CRUD; migration must explicitly copy and verify the data.
 type ObjectBucket struct {
-	ID                 string
+	ID    string
+	OrgID string
+	// UsageSubjectID is hydrated only by the provider accounting projection.
+	UsageSubjectID     string
 	AccountID          string
 	AppID              string
 	Name               string

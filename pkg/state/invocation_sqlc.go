@@ -27,7 +27,7 @@ func invocationFromSQLC(row sqlc.Invocation) (Invocation, error) {
 		Payload: row.Payload, Headers: row.Headers, DueAt: row.DueAt.Time, ScheduledAt: invocationTimePointer(row.ScheduledAt),
 		AckURL: row.AckUrl.String, Result: row.Result, LeaseExpiresAt: invocationTimePointer(row.LeaseExpiresAt),
 		ReceivedAt: invocationTimePointer(row.ReceivedAt), CompletedAt: invocationTimePointer(row.CompletedAt),
-		Attempts: int(row.Attempts), QuotaReserved: row.QuotaReserved, LastError: row.LastError.String, CreatedAt: row.CreatedAt.Time, InstanceID: row.InstanceID.String,
+		Attempts: int(row.Attempts), QuotaReserved: row.QuotaReserved, AsyncQuotaSubjectID: pgUUIDString(row.AsyncQuotaSubjectID), LastError: row.LastError.String, CreatedAt: row.CreatedAt.Time, InstanceID: row.InstanceID.String,
 		DeadlineAt: invocationTimePointer(row.DeadlineAt), RetryPolicyJSON: row.RetryPolicy, ResultRetentionUntil: invocationTimePointer(row.ResultRetentionUntil),
 		LastReplayedAt: invocationTimePointer(row.LastReplayedAt), OnSuccessDestinationID: pgUUIDString(row.OnSuccessDestinationID), OnFailureDestinationID: pgUUIDString(row.OnFailureDestinationID),
 		WorkPolicyName: row.WorkPolicyName.String, WorkKeyDigest: row.WorkKeyDigest, WorkExpiresAt: invocationTimePointer(row.WorkExpiresAt),

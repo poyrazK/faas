@@ -13,7 +13,7 @@ func customerDatabase(ctx context.Context, store Store, accountID, databaseID st
 		return customers.GetCustomerDatabase(ctx, accountID, databaseID)
 	}
 	database, err := store.Get(ctx, accountID, databaseID)
-	if err == nil && database.EnvironmentCloneOperationID != "" {
+	if err == nil && (database.EnvironmentCloneOperationID != "" || !inOwnershipScope(ctx, database, accountID)) {
 		return Database{}, ErrNotFound
 	}
 	return database, err
@@ -48,8 +48,12 @@ func (s *PostgresStore) GetCustomerDatabase(ctx context.Context, accountID, data
 	if err != nil {
 		return Database{}, err
 	}
-	row, err := new(sqlc.Queries).GetManagedPostgresCustomerDatabase(ctx, s.pool, sqlc.GetManagedPostgresCustomerDatabaseParams{AccountID: account, ID: id})
-	return databaseFromSQL(row), mapPostgresError(err)
+	row, err := new(sqlc.Queries).GetManagedPostgresCustomerDatabase(ctx, s.catalog, sqlc.GetManagedPostgresCustomerDatabaseParams{AccountID: account, ID: id})
+	database := databaseFromSQL(row)
+	if err == nil && !inOwnershipScope(ctx, database, accountID) {
+		return Database{}, ErrNotFound
+	}
+	return database, mapPostgresError(err)
 }
 
 func (s *PostgresStore) ListCustomerDatabases(ctx context.Context, accountID string) ([]Database, error) {
@@ -57,7 +61,7 @@ func (s *PostgresStore) ListCustomerDatabases(ctx context.Context, accountID str
 	if err != nil {
 		return nil, err
 	}
-	rows, err := new(sqlc.Queries).ListManagedPostgresCustomerDatabases(ctx, s.pool, account)
+	rows, err := new(sqlc.Queries).ListManagedPostgresCustomerDatabases(ctx, s.catalog, sqlc.ListManagedPostgresCustomerDatabasesParams{AccountID: account, OwnerOrgID: databaseNullableUUID(Organization(ctx))})
 	if err != nil {
 		return nil, mapPostgresError(err)
 	}
@@ -76,7 +80,7 @@ func databaseUUID(value pgtype.UUID) string {
 }
 
 func databaseFromSQL(row sqlc.ManagedPostgresDatabase) Database {
-	database := Database{ID: databaseUUID(row.ID), AccountID: databaseUUID(row.AccountID), Name: row.Name,
+	database := Database{ID: databaseUUID(row.ID), AccountID: databaseUUID(row.AccountID), OrgID: databaseUUID(row.OrgID), Name: row.Name,
 		Spec: Spec{Region: row.Region, PostgresMajor: int(row.PostgresMajor), Class: ServiceClass(row.ServiceClass), Availability: Availability(row.Availability),
 			ScaleToZero: row.ScaleToZero, StorageLimitBytes: row.StorageLimitBytes, RestoreWindowSeconds: row.RestoreWindowSeconds},
 		BackendID: row.BackendID, BackendFingerprint: row.BackendFingerprint, ProviderResourceID: row.ProviderResourceID.String, DataResourceID: row.DataResourceID.String,

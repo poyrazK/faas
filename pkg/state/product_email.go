@@ -14,5 +14,5 @@ func (m *MemStore) ProductEmailRepository() productemail.Store {
 	return d.email
 }
 func (s *PgStore) ProductEmailRepository() productemail.Store {
-	return productemail.NewPostgres(s.pool)
+	return productemail.NewPostgres(s.pool.Pool)
 }

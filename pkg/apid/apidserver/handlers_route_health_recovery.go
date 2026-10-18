@@ -65,7 +65,7 @@ func (s *server) internalRecoverCanaryRouteHealth(w http.ResponseWriter, r *http
 		s.internalSafeDeployLookupError(w, r, err, "deployment")
 		return
 	}
-	acct, err := s.store.AccountByID(r.Context(), app.AccountID)
+	acct, err := state.AppResourceAccount(r.Context(), s.store, app)
 	if err != nil {
 		s.internalSafeDeployLookupError(w, r, err, "deployment")
 		return

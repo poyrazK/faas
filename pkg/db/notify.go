@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	accesssql "github.com/onebox-faas/faas/pkg/state/orgaccess/sqlc"
 )
 
 // ErrWaitTimeout is returned by WaitForNotification when the timeout
@@ -353,11 +354,29 @@ func Notify(ctx context.Context, pool *pgxpool.Pool, channel, payload string) er
 		return fmt.Errorf("%w: channel %s, %d bytes > %d",
 			ErrNotifyPayloadTooLarge, channel, len(payload), NotifyPayloadMaxBytes)
 	}
+	if hasIntentFence(ctx) {
+		return notifyFenced(ctx, pool, channel, payload)
+	}
 	_, err := pool.Exec(ctx, "SELECT pg_notify($1, $2)", channel, payload)
 	if err != nil {
 		return fmt.Errorf("db: notify %s: %w", channel, err)
 	}
 	return nil
+}
+
+func notifyFenced(ctx context.Context, pool *pgxpool.Pool, channel, payload string) error {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("db: fenced notify begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	if err := checkIntentFence(ctx, tx); err != nil {
+		return err
+	}
+	if err := accesssql.New().NotifyIntent(ctx, tx, accesssql.NotifyIntentParams{Channel: channel, Payload: payload}); err != nil {
+		return fmt.Errorf("db: fenced notify: %w", err)
+	}
+	return tx.Commit(ctx)
 }
 
 // enqueueAndNotify makes the durable row and its wakeup one commit boundary.
@@ -389,6 +408,9 @@ func enqueueAndNotify(ctx context.Context, pool *pgxpool.Pool, channel, payload 
 func EnqueueDurableNotificationTx(ctx context.Context, tx pgx.Tx, channel, payload string) error {
 	if tx == nil || !IsDurableNotificationChannel(channel) {
 		return fmt.Errorf("db: enqueue notification %s: transaction and durable channel required", channel)
+	}
+	if err := checkIntentFence(ctx, tx); err != nil {
+		return err
 	}
 	var id int64
 	availableAt := time.Now().UTC().Add(notificationOutboxWakeDelay)

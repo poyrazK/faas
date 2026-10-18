@@ -40,6 +40,9 @@ func (s *PgStore) projectEnvironmentQueueConsumers(ctx context.Context, accountI
 
 func projectEnvironmentQueueConsumersDB(ctx context.Context, db sqlc.DBTX, accountID, projectID, deploymentID string, prepare, requireLive bool) (ProjectEnvironmentQueueRuntimeSet, error) {
 	queries := sqlc.New()
+	if err := lockQueueProjectPolicy(ctx, db, accountID, projectID); err != nil {
+		return ProjectEnvironmentQueueRuntimeSet{}, err
+	}
 	// Environment ownership is locked first, matching admission and deletion.
 	envID, err := queries.LockProjectEnvironmentQueuePreparationEnvironment(ctx, db, sqlc.LockProjectEnvironmentQueuePreparationEnvironmentParams{
 		AccountID: mustPgUUID(accountID), ProjectID: mustPgUUID(projectID), DeploymentID: mustPgUUID(deploymentID), RequireLive: requireLive,

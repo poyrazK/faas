@@ -25,9 +25,9 @@ func pgRoutePolicySnapshot(ctx context.Context, tx pgx.Tx, accountID, appID stri
 	var rules [][]byte
 	var err error
 	if lock {
-		account, err = q.LockRoutePolicyAccount(ctx, tx, accountID)
+		account, err = q.LockRoutePolicyAccount(ctx, tx, sqlc.LockRoutePolicyAccountParams{AccountID: accountID, AppID: appID})
 	} else {
-		account, err = q.ReadRoutePolicyAccount(ctx, tx, accountID)
+		account, err = q.ReadRoutePolicyAccount(ctx, tx, sqlc.ReadRoutePolicyAccountParams{AccountID: accountID, AppID: appID})
 	}
 	if err != nil {
 		return RoutePolicySnapshot{}, routePolicyReadError(err)

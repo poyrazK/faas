@@ -573,7 +573,7 @@ type AlertsEvaluator = alerts.Evaluator
 // pgstore.go:380-381, :668); today's behaviour is acceptable per
 // the cap's documented "advisory for the overage row only" contract.
 func (l *Loop) runQuotaOnce(ctx context.Context) {
-	accounts, err := l.store.ListAllAccounts(ctx)
+	accounts, err := state.ListBillingResourceAccounts(ctx, l.store)
 	if err != nil {
 		l.log.Warn("meter: quota list_accounts", "err", err)
 		return
@@ -684,7 +684,7 @@ func (l *Loop) emitFloorApplied(ctx context.Context, rows []RolledRow) {
 	// is fetched via ListAllApps; if that fails the floor
 	// counter still increments with plan="" so the ops
 	// surface never silently drops a metric row.
-	accounts, err := l.store.ListAllAccounts(ctx)
+	accounts, err := state.ListBillingResourceAccounts(ctx, l.store)
 	if err != nil {
 		l.log.Warn("meter: floor emit list_accounts", "err", err)
 		for range floorApps {
@@ -706,7 +706,7 @@ func (l *Loop) emitFloorApplied(ctx context.Context, rows []RolledRow) {
 	}
 	appAccount := make(map[string]string, len(apps))
 	for _, a := range apps {
-		appAccount[a.ID] = a.AccountID
+		appAccount[a.ID] = meterAppSubject(a, accountPlan)
 	}
 	for appID := range floorApps {
 		acctID, ok := appAccount[appID]
