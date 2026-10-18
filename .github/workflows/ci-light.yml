@@ -497,7 +497,9 @@ jobs:
     # related to the change, without -race. The mega tier (ci.yml) runs every
     # suite in full with -race nightly and before every release. Main pushes
     # also warm the large-package build for later pull requests.
-    timeout-minutes: ${{ github.ref == 'refs/heads/main' && 40 || 20 }}
+    # Pull requests need main's allowance for cold compilation, service setup
+    # and the unchanged race/related suites; 20 minutes can cancel passing tests.
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
