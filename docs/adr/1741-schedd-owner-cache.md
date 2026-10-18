@@ -272,13 +272,16 @@ schedd that starts before its release's migrations admits as before.
 
 | wake, owner cache warm | before step 5 | after the first round | now |
 |---|---|---|---|
-| snapshot restore | 52 | 31 | 8 (7 before vmmd, 1 after) |
+| snapshot restore | 52 | 31 | 8–9 (7–8 before vmmd, 1 after) |
 | cold boot | 44 | 28 | 7 (6 before, 1 after) |
 | thaw, frozen fast path | 1 | 1 | 1 |
 
 The earlier columns predate the test's live capacity reports (which take
 two usage reads off the path) and node ownership (which adds one app read),
-so they are not exact baselines for the last column.
+so they are not exact baselines for the last column. A restore runs the
+same statements every time (19 before vmmd, 2 after); whether two of its
+concurrent reads overlap depends on scheduling, so repeated runs count 8
+or 9.
 
 What a warm-cache restore still waits for: wake phase 1's
 running-instance lookup, the snapshot reads with placement, the receipt
@@ -288,7 +291,7 @@ path would mean speculative reads on every wake a running instance
 answers; folding the standards check into the admission would tie the
 function to the standards capture's format; taking the lease lock earlier
 would hold the fleet-wide restore lock longer during bursts. With the
-cache cold (the first wake after a change), a restore is 27 round trips.
+cache cold (the first wake after a change), a restore is 27 or 28 round trips.
 
 1. This ADR.
 2. Migration: the counter table, triggers and notification, the store
