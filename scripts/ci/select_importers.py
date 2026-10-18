@@ -18,7 +18,7 @@ all of its declarations. References are matched as selectors (`.Name`), which
 covers qualified identifiers, field and method access. Importers that only
 reach the API through another package, or that implement a touched interface
 without naming it, are left to the mega tier, which vets the whole tree
-nightly and before every release.
+nightly.
 
 Reads changed paths on stdin and prints the selected package directories
 (./a ./b). A summary goes to stderr.
