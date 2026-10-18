@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -175,7 +176,10 @@ func (r hostRuntime) restartServices(manifest releasebundle.Manifest) ([]string,
 		return nil, err
 	}
 	if !present {
-		return order, nil
+		// A host-managed release (no systemd units: a compute host's
+		// `gregalectl release install`) still restarts only --only. Before
+		// this, it restarted the whole order, vmmd first (fsn-4, 2026-10-18).
+		return r.onlyServices(order)
 	}
 	filtered := make([]string, 0, len(services))
 	for _, service := range order {
@@ -231,9 +235,96 @@ func healthAddressForManifest(manifest releasebundle.Manifest) (string, error) {
 	return "", errors.New("release has no gateway health endpoint")
 }
 
-func (r hostRuntime) Preflight(_ context.Context, manifest releasebundle.Manifest, releaseRoot string) error {
+// hostManagedUnits reports whether a release ships no systemd units. A
+// compute host's release is installed by `gregalectl release install` and
+// its units are owned by the host's Ansible roles, so a per-unit release on
+// it (docs/adr/1650-per-unit-control-plane-releases.md) swaps binaries
+// only: no unit install, no migration, and --only is mandatory.
+func hostManagedUnits(releaseRoot string) bool {
+	_, err := os.Stat(filepath.Join(releaseRoot, "systemd"))
+	return errors.Is(err, os.ErrNotExist)
+}
+
+// preflightHostManaged checks a release without units: each --only service
+// is installed on the host and its binary is in the release.
+func (r hostRuntime) preflightHostManaged(releaseRoot string) error {
+	if r.only == nil {
+		return errors.New("release ships no systemd units: deploy it with --only")
+	}
+	for service := range r.only {
+		unit, err := daemonunitspec.UnitByName(service)
+		if err != nil {
+			return err
+		}
+		if _, err := os.Stat(filepath.Join(r.unitDir, serviceFilePrefix+service+serviceFileSuffix)); err != nil {
+			return fmt.Errorf("service %s is not installed on this host: %w", service, err)
+		}
+		exec := strings.Fields(unit.ExecStart)
+		if len(exec) == 0 {
+			return fmt.Errorf("service %s has no ExecStart", service)
+		}
+		if _, err := os.Stat(filepath.Join(releaseRoot, "bin", filepath.Base(exec[0]))); err != nil {
+			return fmt.Errorf("service %s binary: %w", service, err)
+		}
+	}
+	return nil
+}
+
+// requireDependenciesUp refuses a --only deploy that would start a stopped
+// daemon. systemd starts a restarted unit's Wants=/Requires=/BindsTo= units
+// that are down and orders the restart behind them: gatewayd-internal Wants
+// vmmd, so restarting it on a node whose vmmd is stopped (a maintenance, a
+// drain) starts vmmd (fsn-4, 2026-10-18). A masked dependency cannot start
+// and is fine.
+func (r hostRuntime) requireDependenciesUp(ctx context.Context) error {
+	if r.only == nil {
+		return nil
+	}
+	services, err := r.onlyServices(r.serviceOrder)
+	if err != nil {
+		return err
+	}
+	for _, service := range services {
+		out, err := commandOutput(ctx, "systemctl", "show", serviceFilePrefix+service+serviceFileSuffix,
+			"-p", "Wants", "-p", "Requires", "-p", "BindsTo", "--value")
+		if err != nil {
+			return err
+		}
+		for _, dep := range strings.Fields(out) {
+			if !strings.HasPrefix(dep, serviceFilePrefix) || !strings.HasSuffix(dep, serviceFileSuffix) {
+				continue
+			}
+			// Key=Value lines: systemctl prints properties in its own
+			// order, not the order asked for (LoadState comes first).
+			out, err := commandOutput(ctx, "systemctl", "show", dep, "-p", "ActiveState", "-p", "LoadState")
+			if err != nil {
+				return err
+			}
+			props := map[string]string{}
+			for _, line := range strings.Split(out, "\n") {
+				if key, value, ok := strings.Cut(strings.TrimSpace(line), "="); ok {
+					props[key] = value
+				}
+			}
+			if props["ActiveState"] == "active" || props["LoadState"] == "masked" {
+				continue
+			}
+			return fmt.Errorf("%s depends on %s, which is %s (%s): restarting %s alone would start it; deploy when it is active",
+				service, dep, props["ActiveState"], props["LoadState"], service)
+		}
+	}
+	return nil
+}
+
+func (r hostRuntime) Preflight(ctx context.Context, manifest releasebundle.Manifest, releaseRoot string) error {
 	if manifest.Target != "linux/amd64" {
 		return fmt.Errorf("unsupported release target %q", manifest.Target)
+	}
+	if err := r.requireDependenciesUp(ctx); err != nil {
+		return err
+	}
+	if hostManagedUnits(releaseRoot) {
+		return r.preflightHostManaged(releaseRoot)
 	}
 	services, err := servicesInUnitDir(filepath.Join(releaseRoot, "systemd"))
 	if err != nil {
@@ -265,6 +356,10 @@ func (r hostRuntime) Preflight(_ context.Context, manifest releasebundle.Manifes
 }
 
 func (r hostRuntime) Migrate(ctx context.Context, manifest releasebundle.Manifest, releaseRoot, _ string) error {
+	if hostManagedUnits(releaseRoot) {
+		// Compute hosts never migrate; the control plane owns the schema.
+		return nil
+	}
 	migrate := filepath.Join(releaseRoot, "bin", "migrate")
 	if _, err := os.Stat(migrate); err != nil {
 		return fmt.Errorf("migration binary: %w", err)
@@ -274,6 +369,18 @@ func (r hostRuntime) Migrate(ctx context.Context, manifest releasebundle.Manifes
 }
 
 func (r hostRuntime) Activate(ctx context.Context, releaseRoot string) error {
+	if hostManagedUnits(releaseRoot) {
+		// The host's units stay as its roles installed them. Restarted
+		// services still retire a canary override, as a full release does.
+		restarted, err := r.onlyServices(r.serviceOrder)
+		if err != nil {
+			return err
+		}
+		if err := removeCanaryExecOverrides(r.unitDir, restarted); err != nil {
+			return fmt.Errorf("remove canary exec overrides: %w", err)
+		}
+		return runCommand(ctx, "systemctl", "daemon-reload")
+	}
 	units := filepath.Join(releaseRoot, "systemd")
 	services, err := servicesInUnitDir(units)
 	if err != nil {
@@ -660,14 +767,25 @@ func (r hostRuntime) Restart(ctx context.Context, manifest releasebundle.Manifes
 		if err := r.preloadDaemon(ctx, service); err != nil {
 			return err
 		}
-		if err := runCommand(ctx, "systemctl", "reset-failed", "faas-"+service+".service"); err != nil {
-			return err
-		}
 		if err := r.ensureRunFaasOwnership(ctx); err != nil {
 			return err
 		}
-		if err := runCommand(ctx, "systemctl", "restart", "faas-"+service+".service"); err != nil {
+		// A reload hands off to a second generation, which keeps the old
+		// one's long requests and streams (ADR-1736); otherwise restart.
+		handedOff, reason, err := r.reloadByHandoff(ctx, service)
+		if err != nil {
 			return err
+		}
+		if !handedOff {
+			if reason != "" {
+				fmt.Fprintf(os.Stderr, "deployctl: restarting %s instead of handing off: %s\n", service, reason)
+			}
+			if err := runCommand(ctx, "systemctl", "reset-failed", "faas-"+service+".service"); err != nil {
+				return err
+			}
+			if err := runCommand(ctx, "systemctl", "restart", "faas-"+service+".service"); err != nil {
+				return err
+			}
 		}
 		if err := r.waitReady(ctx, service); err != nil {
 			return err
@@ -890,6 +1008,14 @@ func installAtomic(source, destination string, mode fs.FileMode) error {
 	body, err := os.ReadFile(source)
 	if err != nil {
 		return err
+	}
+	// An unchanged unit keeps its mtime: a reload by hand-off is allowed
+	// only while every file the unit read at start is older than the start
+	// (ADR-1736).
+	if current, err := os.ReadFile(destination); err == nil && bytes.Equal(current, body) {
+		if info, err := os.Stat(destination); err == nil && info.Mode().Perm() == mode.Perm() {
+			return nil
+		}
 	}
 	tmp, err := os.CreateTemp(filepath.Dir(destination), ".deploy-unit-*.tmp")
 	if err != nil {
