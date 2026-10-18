@@ -1199,6 +1199,299 @@ jobs:
 
       # Legacy mutable upload/restart steps removed; deployment is handled by the immutable release controller above.
 
+  # Host configuration (docs/adr/20261018133100-host-configuration-lane.md).
+  # When the unit release's range changed a control-plane host role, this
+  # converges the roles whose content hash differs from the host's record
+  # before deploy-units restarts anything: the ADR-580 path
+  # (gregalectl deploy converge-control-plane, from the signed release, at
+  # the release commit) with --roles, FaaS daemon handlers deferred. Then
+  # `deployctl restart-changed` restarts, one at a time to readiness, only
+  # the daemons whose start inputs the roles changed, under the public-path
+  # observer, and the SLO gate holds the control plane. A failure anywhere
+  # converges the same roles back to the record's commit (or the host's full
+  # release) and restarts what that changes. The record and the contract
+  # are written only after the gate passes.
+  converge-host-config:
+    name: Converge changed control-plane host roles
+    environment: ${{ inputs.deploy_environment }}
+    runs-on: ${{ inputs.hosted_runner && 'ubuntu-latest' || fromJSON(inputs.deploy_environment == 'production-us' && '["self-hosted","linux","faas-fleet-us"]' || '["self-hosted","linux","faas-fleet"]') }}
+    if: github.repository == 'poyrazK/faas' && inputs.units_run_id != '' && inputs.units_lane == 'control-plane'
+    permissions:
+      contents: read
+      actions: read
+    concurrency:
+      group: cd-cp-units-${{ inputs.deploy_environment }}
+      cancel-in-progress: false
+    # The first run on a host has no role record and converges every role,
+    # which took about 30 minutes on production-us through ADR-580.
+    timeout-minutes: 75
+    env:
+      CP_HOST: ${{ secrets.CP_HOST || secrets.DO_HOST }}
+      CP_SSH_KEY: ${{ secrets.CP_SSH_KEY || secrets.DO_SSH_KEY }}
+      SLO_GATE: ${{ inputs.slo_gate }}
+    steps:
+      - name: Install pinned cosign verifier
+        env:
+          COSIGN_VERSION: "2.4.1"
+          COSIGN_SHA256: "8b24b946dd5809c6bd93de08033bcf6bc0ed7d336b7785787c080f574b89249b"
+        run: |
+          set -euo pipefail
+          echo "TUF_ROOT=$RUNNER_TEMP/sigstore-tuf" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/release-tools"
+          curl --fail --silent --show-error --location \
+            --proto '=https' --tlsv1.2 \
+            -o "$RUNNER_TEMP/release-tools/cosign" \
+            "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-linux-amd64"
+          echo "${COSIGN_SHA256}  $RUNNER_TEMP/release-tools/cosign" | sha256sum -c -
+          chmod 0755 "$RUNNER_TEMP/release-tools/cosign"
+          echo "$RUNNER_TEMP/release-tools" >> "$GITHUB_PATH"
+
+      - name: Download unit release
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: gregale-unit-release
+          run-id: ${{ inputs.units_run_id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/gregale-units
+
+      # The verifier comes from the workflow's own ref; the release commit's
+      # checkout below is only trusted once its signature verified.
+      - uses: actions/checkout@v7
+        with:
+          path: workflow-src
+          sparse-checkout: scripts/ci/verify_unit_release.sh
+          sparse-checkout-cone-mode: false
+
+      - name: Verify unit release
+        id: verify
+        run: |
+          set -euo pipefail
+          git_sha="$(workflow-src/scripts/ci/verify_unit_release.sh "$RUNNER_TEMP/gregale-units")"
+          echo "git_sha=$git_sha" >> "$GITHUB_OUTPUT"
+          echo "UNITS_DIR=$RUNNER_TEMP/gregale-units/unpacked" >> "$GITHUB_ENV"
+          echo "UNITS_SHA=$git_sha" >> "$GITHUB_ENV"
+          if jq -e '.host_config.version' "$RUNNER_TEMP/gregale-units/unpacked/units-manifest.json" >/dev/null; then
+            echo "carries=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "carries=false" >> "$GITHUB_OUTPUT"
+            echo "The unit release changed no control-plane host role." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - uses: actions/checkout@v7
+        if: steps.verify.outputs.carries == 'true'
+        with:
+          # The roles converge from the unit release's commit; the planner's
+          # ancestry and N±1 checks need history and tags.
+          ref: ${{ steps.verify.outputs.git_sha }}
+          fetch-depth: 0
+
+      - name: Install pinned Ansible toolchain
+        if: steps.verify.outputs.carries == 'true'
+        run: |
+          set -euo pipefail
+          toolchain="$(scripts/ci/ensure-ansible-toolchain.sh 'ansible-core==2.21.2' deploy/ansible/requirements.yml)"
+          venv_bin="$(sed -n 's/^ANSIBLE_VENV_BIN=//p' <<<"$toolchain")"
+          collections="$(sed -n 's/^ANSIBLE_COLLECTIONS_PATH=//p' <<<"$toolchain")"
+          [[ -x "$venv_bin/ansible-playbook" && -d "$collections" ]]
+          echo "$venv_bin" >> "$GITHUB_PATH"
+          echo "ANSIBLE_COLLECTIONS_PATH=$collections" >> "$GITHUB_ENV"
+
+      - name: Set up SSH
+        if: steps.verify.outputs.carries == 'true'
+        env:
+          COMPUTE_KNOWN_HOSTS: ${{ secrets.COMPUTE_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          echo "${{ env.CP_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          [[ -n "${COMPUTE_KNOWN_HOSTS:-}" ]] || {
+            echo "::error::COMPUTE_KNOWN_HOSTS is required to verify the control-plane host key" >&2
+            exit 1
+          }
+          scanned="$(ssh-keyscan -T 10 -t ed25519,ecdsa,rsa "$CP_HOST" 2>/dev/null || true)"
+          pinned=0
+          while read -r _ key_type key; do
+            [[ -n "${key:-}" ]] || continue
+            if awk -v t="$key_type" -v k="$key" '!/^#/ { for (i = 1; i < NF; i++) if ($i == t && $(i + 1) == k) found = 1 } END { exit !found }' <<<"$COMPUTE_KNOWN_HOSTS"; then
+              printf '%s %s %s\n' "$CP_HOST" "$key_type" "$key" >> ~/.ssh/known_hosts
+              pinned=1
+            fi
+          done <<<"$scanned"
+          [[ $pinned == 1 ]] || {
+            echo "::error::$CP_HOST presented no host key listed in COMPUTE_KNOWN_HOSTS" >&2
+            exit 1
+          }
+          chmod 600 ~/.ssh/known_hosts
+          {
+            echo "UNIT_SSH_TARGET=root@${CP_HOST}"
+            echo "UNIT_SSH_KEY=$HOME/.ssh/deploy_key"
+            echo "UNIT_SSH_KNOWN_HOSTS=$HOME/.ssh/known_hosts"
+          } >> "$GITHUB_ENV"
+
+      - name: Plan the host configuration
+        id: plan
+        if: steps.verify.outputs.carries == 'true'
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/host-config"
+          install -d -m 0700 "$work"
+          echo "HOST_CONFIG_WORK=$work" >> "$GITHUB_ENV"
+          scripts/ci/unit_deploy.sh host-state > "$work/host-state.json"
+          jq 'del(.record.roles)' "$work/host-state.json"
+          # N±1, as for the units: the release CI checked these roles with.
+          previous_tag="$(git describe --tags --abbrev=0 --match 'v[0-9]*.[0-9]*.[0-9]*' "$UNITS_SHA")"
+          previous="$(git rev-parse "${previous_tag}^{commit}")"
+          python3 scripts/ci/plan_host_config.py \
+            --units-manifest "$UNITS_DIR/units-manifest.json" \
+            --host-state "$work/host-state.json" \
+            --previous-release "$previous" \
+            --out "$work"
+          plan="$work/plan.json"
+          {
+            echo "action=$(jq -r .action "$plan")"
+            echo "roles=$(jq -r '.roles | join(",")' "$plan")"
+            echo "previous=$(jq -r .previous "$plan")"
+          } >> "$GITHUB_OUTPUT"
+          {
+            echo "## Host configuration \`${UNITS_SHA:0:12}\` on the control plane"
+            echo
+            echo "Plan: **$(jq -r .action "$plan")** ($(jq -r .reason "$plan")): $(jq -r '.roles | join(", ") | if . == "" then "none" else . end' "$plan")."
+            echo "Rollback target: \`$(jq -r '.previous[0:12]' "$plan")\`."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Converge the changed roles
+        id: converge
+        if: steps.plan.outputs.action == 'converge'
+        env:
+          CP_ANSIBLE_VARS_B64: ${{ secrets.CP_ANSIBLE_VARS_B64 }}
+          COMPUTE_SSH_KEY: ${{ secrets.COMPUTE_SSH_KEY }}
+          COMPUTE_KNOWN_HOSTS: ${{ secrets.COMPUTE_KNOWN_HOSTS }}
+          DEPLOY_ENVIRONMENT: ${{ inputs.deploy_environment }}
+          HOSTED_RUNNER: ${{ inputs.hosted_runner }}
+          ROLES: ${{ steps.plan.outputs.roles }}
+        run: |
+          set -euo pipefail
+          # ADR-580: a GitHub-hosted runner cannot resolve the fleet's
+          # private names. Skipping would let the units deploy over roles
+          # this release changed, so stop instead.
+          if [[ "$HOSTED_RUNNER" == true ]]; then
+            echo "::error::host configuration converges only from the fleet runner; rerun without hosted_runner" >&2
+            exit 1
+          fi
+          for name in CP_ANSIBLE_VARS_B64 COMPUTE_SSH_KEY COMPUTE_KNOWN_HOSTS; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "::error::${name} is not set in the ${DEPLOY_ENVIRONMENT} environment; host configuration needs it (docs/adr/580-control-plane-convergence-in-cd.md)" >&2
+              exit 1
+            fi
+          done
+          work="$HOST_CONFIG_WORK"
+          printf '%s' "$CP_ANSIBLE_VARS_B64" | base64 --decode > "$work/vars.yml"
+          printf '%s\n' "$COMPUTE_SSH_KEY" > "$work/ssh-key"
+          printf '%s\n' "$COMPUTE_KNOWN_HOSTS" > "$work/known_hosts"
+          chmod 0600 "$work/vars.yml" "$work/ssh-key" "$work/known_hosts"
+          [[ -d "${ANSIBLE_COLLECTIONS_PATH:-}/ansible_collections/community/postgresql" ]] || {
+            echo "::error::pinned Ansible collections are missing from ANSIBLE_COLLECTIONS_PATH" >&2
+            exit 1
+          }
+          # The fleet topology is the full release's: its signed production
+          # manifest, read from the host and checked against the release
+          # manifest's hash.
+          scripts/ci/unit_deploy.sh host-manifest "$work/host-state.json" "$work/production-manifest.yaml"
+          remote="$(scripts/ci/unit_deploy.sh host-stage "$UNITS_DIR/tools/deployctl")"
+          # The SLO gate ignores alerts that were already firing before this.
+          {
+            echo "REMOTE_STAGE=$remote"
+            echo "DEPLOYED_AT=$(scripts/ci/unit_deploy.sh now)"
+            echo "HOST_CONFIG_STARTED=true"
+          } >> "$GITHUB_ENV"
+          # The signed release's gregalectl, built at the release commit.
+          "$UNITS_DIR/tools/gregalectl" deploy converge-control-plane \
+            --manifest-file "$work/production-manifest.yaml" \
+            --ssh-known-hosts-file "$work/known_hosts" \
+            --ssh-key "$work/ssh-key" \
+            --ansible-vars-file "$work/vars.yml" \
+            --repo-root "$GITHUB_WORKSPACE" \
+            --roles "$ROLES" \
+            --json > "$work/converge.json"
+          jq . "$work/converge.json"
+
+      - name: Restart the daemons the roles changed
+        if: steps.plan.outputs.action == 'converge'
+        run: |
+          set -euo pipefail
+          script="$HOST_CONFIG_WORK/restart.sh"
+          scripts/ci/unit_deploy.sh host-restart-script "$REMOTE_STAGE" "$script"
+          ROLLOUT_BASELINE_SAMPLE_COUNT=3 \
+            scripts/ci/observe_remote_rollout.sh \
+            "root@${{ env.CP_HOST }}" ~/.ssh/deploy_key "$script"
+          scripts/ci/unit_deploy.sh host-restarted "$REMOTE_STAGE" > "$HOST_CONFIG_WORK/restarted.json"
+          echo "Restarted: $(jq -r '[.restarted[]? | "\(.service) (\(.reason))"] | join(", ") | if . == "" then "none" else . end' "$HOST_CONFIG_WORK/restarted.json")." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Hold the control plane on the SLO gate
+        if: steps.plan.outputs.action == 'converge'
+        run: |
+          set -euo pipefail
+          python3 scripts/ci/plan_host_config.py --gate-from "$HOST_CONFIG_WORK/restarted.json" --out "$HOST_CONFIG_WORK"
+          scripts/ci/unit_deploy.sh gate "$HOST_CONFIG_WORK/gate.json" "$DEPLOYED_AT" "$SLO_GATE"
+
+      - name: Record the converged roles
+        if: steps.plan.outputs.action == 'converge'
+        run: |
+          set -euo pipefail
+          work="$HOST_CONFIG_WORK"
+          jq --arg env "$(jq -r .environment_sha256 "$work/converge.json")" '.environment = $env' \
+            "$work/record.json" > "$work/record-final.json"
+          scripts/ci/unit_deploy.sh host-record "$work/record-final.json" "$(jq -r .contract_sha256 "$work/converge.json")"
+          echo "Recorded host configuration \`${UNITS_SHA:0:12}\`." >> "$GITHUB_STEP_SUMMARY"
+
+      # The record still names the content the host had before this run, so
+      # converging the same roles at that commit puts them back.
+      - name: Converge the roles back after a failure
+        if: failure() && env.HOST_CONFIG_STARTED == 'true'
+        env:
+          PREVIOUS: ${{ steps.plan.outputs.previous }}
+          ROLES: ${{ steps.plan.outputs.roles }}
+        run: |
+          set -euo pipefail
+          work="$HOST_CONFIG_WORK"
+          [[ "$PREVIOUS" =~ ^[0-9a-f]{40}$ ]]
+          git worktree add --detach "$work/previous" "$PREVIOUS"
+          # A role this release added has no earlier content to go back to.
+          back="$(python3 scripts/ci/host_roles.py hashes --commit "$PREVIOUS" \
+            | jq -r --arg roles "$ROLES" '[.order[] | select(. as $r | $roles | split(",") | index($r))] | join(",")')"
+          if [[ -n "$back" ]]; then
+            "$UNITS_DIR/tools/gregalectl" deploy converge-control-plane \
+              --manifest-file "$work/production-manifest.yaml" \
+              --ssh-known-hosts-file "$work/known_hosts" \
+              --ssh-key "$work/ssh-key" \
+              --ansible-vars-file "$work/vars.yml" \
+              --repo-root "$work/previous" \
+              --roles "$back" \
+              --json
+          fi
+          script="$work/restart-back.sh"
+          scripts/ci/unit_deploy.sh host-restart-script "$REMOTE_STAGE" "$script"
+          scripts/ci/unit_deploy.sh run "$script"
+          echo "::error::converged ${back:-no role} back to ${PREVIOUS:0:12} after a failed host-configuration step" >&2
+          exit 1
+
+      - name: Upload host-config rollout probe evidence
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: control-plane-host-config-probes-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/gregale-rollout-availability-${{ github.run_id }}-${{ github.run_attempt }}-*.tsv
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Remove host-config secrets and stage
+        if: always()
+        run: |
+          rm -rf -- "${HOST_CONFIG_WORK:-/nonexistent}/vars.yml" "${HOST_CONFIG_WORK:-/nonexistent}/ssh-key" \
+            "${HOST_CONFIG_WORK:-/nonexistent}/known_hosts"
+          if [[ -n "${REMOTE_STAGE:-}" ]]; then scripts/ci/unit_deploy.sh cleanup "$REMOTE_STAGE"; fi
+
   # Per-unit releases (docs/adr/1650-per-unit-control-plane-releases.md).
   # The unit release carries every daemon of an eligible lane changed since
   # its base full release, which must be the previous full release (N±1) and
@@ -1221,7 +1514,11 @@ jobs:
     name: Deploy unit release to Control Plane Host
     environment: ${{ inputs.deploy_environment }}
     runs-on: ${{ inputs.hosted_runner && 'ubuntu-latest' || fromJSON(inputs.deploy_environment == 'production-us' && '["self-hosted","linux","faas-fleet-us"]' || '["self-hosted","linux","faas-fleet"]') }}
-    if: github.repository == 'poyrazK/faas' && inputs.units_run_id != ''
+    # Host configuration first (ADR 20261018133100); the edge lane skips it.
+    needs: [converge-host-config]
+    if: >-
+      !cancelled() && github.repository == 'poyrazK/faas' && inputs.units_run_id != ''
+      && (needs.converge-host-config.result == 'success' || needs.converge-host-config.result == 'skipped')
     permissions:
       contents: read
       # Download the unit release artifact from its release-units.yml run.

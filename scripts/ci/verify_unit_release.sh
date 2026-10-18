@@ -47,6 +47,15 @@ if jq -e '(.data.migrations // []) | length > 0' "$manifest" >/dev/null; then
     exit 1
   }
 fi
+# A host-config step rides with the converge command built at the release
+# commit (docs/adr/20261018133100-host-configuration-lane.md).
+if jq -e '.host_config.version' "$manifest" >/dev/null; then
+  jq -e '(.host_config.version | test("^host-[0-9a-f]{40}$")) and (.host_config.roles | length > 0)
+         and (.tools.gregalectl.sha256 | type == "string")' "$manifest" >/dev/null || {
+    echo "verify_unit_release: the release carries a host-config step without its roles and tools/gregalectl" >&2
+    exit 1
+  }
+fi
 jq -r '(.units | to_entries[] | "\(.value.sha256)  bin/\(.key)"), (.tools | to_entries[] | "\(.value.sha256)  tools/\(.key)")' "$manifest" \
   | (cd "$dir/unpacked" && sha256sum -c --quiet -) >&2
 if [[ "$(find "$dir/unpacked/bin" -type f | wc -l | tr -d ' ')" -ne "$(jq '.units | length' "$manifest")" ||
