@@ -3752,6 +3752,13 @@ type Store interface {
 	MarkRuntimeConfigOperationBlocked(ctx context.Context, id, phase, reason string) error
 	ListRuntimeConfigRevisions(ctx context.Context, key string, scope RuntimeConfigScope, scopeID string, limit int) ([]RuntimeConfigRevision, error)
 	GetRuntimeConfigRevision(ctx context.Context, key string, scope RuntimeConfigScope, scopeID string, version int64) (RuntimeConfigRevision, error)
+	// RecordRuntimeConfigApplyReceipt (ADR-1700) upserts what one daemon
+	// instance applied for a key. A receipt for an older version than the
+	// stored one is ignored, so a slow instance cannot regress the record.
+	RecordRuntimeConfigApplyReceipt(ctx context.Context, receipt RuntimeConfigApplyReceipt) error
+	// ListRuntimeConfigApplyReceipts returns receipts for the given keys
+	// (every key when keys is empty), ordered by key, daemon and instance.
+	ListRuntimeConfigApplyReceipts(ctx context.Context, keys []string) ([]RuntimeConfigApplyReceipt, error)
 
 	// OperatorIntentOutcomeMissingCounts (Obs-Meta + Trace-IDs Mega-PR / C7)
 	// powers GET /v1/admin/obs/health. Returns a map of kind → count

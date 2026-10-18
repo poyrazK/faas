@@ -1152,6 +1152,17 @@ const (
 	FlagsMaxProgressiveWindowSeconds         = 604800
 )
 
+// Platform flag (ADR-1700) structural bounds. They keep every daemon's
+// compiled snapshot small; larger audiences belong in a group or a rollout.
+const (
+	PlatformFlagsMaxRules            = 32
+	PlatformFlagsMaxAccountsPerRule  = 1000
+	PlatformFlagsMaxGroups           = 100
+	PlatformFlagsMaxAccountsPerGroup = 5000
+	PlatformFlagsMaxDefinitionBytes  = 64 << 10
+	PlatformFlagsMaxGroupsBytes      = 512 << 10
+)
+
 // MaxOutboundRequestsPerDay is the structural upper bound for a
 // customer-configured daily request budget on one integration. Plan ceilings
 // below are at or below this value. See ADR-257.

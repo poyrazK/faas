@@ -41322,6 +41322,31 @@ CREATE TABLE public.runtime_artifact_bindings (
 
 
 --
+-- Name: runtime_config_apply_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.runtime_config_apply_receipts (
+    config_key text NOT NULL,
+    scope text DEFAULT 'global'::text NOT NULL,
+    scope_id text DEFAULT ''::text NOT NULL,
+    daemon text NOT NULL,
+    instance text NOT NULL,
+    version bigint NOT NULL,
+    status text NOT NULL,
+    error text,
+    reported_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT runtime_config_apply_receipts_config_key_check CHECK (((char_length(config_key) >= 1) AND (char_length(config_key) <= 128))),
+    CONSTRAINT runtime_config_apply_receipts_daemon_check CHECK ((daemon ~ '^[a-z][a-z0-9-]{0,63}$'::text)),
+    CONSTRAINT runtime_config_apply_receipts_error_check CHECK (((error IS NULL) OR (char_length(error) <= 1024))),
+    CONSTRAINT runtime_config_apply_receipts_instance_check CHECK (((char_length(instance) >= 1) AND (char_length(instance) <= 255))),
+    CONSTRAINT runtime_config_apply_receipts_scope_check CHECK ((scope = ANY (ARRAY['global'::text, 'control_plane'::text, 'daemon'::text, 'node'::text]))),
+    CONSTRAINT runtime_config_apply_receipts_scope_id_check CHECK ((char_length(scope_id) <= 255)),
+    CONSTRAINT runtime_config_apply_receipts_status_check CHECK ((status = ANY (ARRAY['applied'::text, 'failed'::text]))),
+    CONSTRAINT runtime_config_apply_receipts_version_check CHECK ((version >= 0))
+);
+
+
+--
 -- Name: runtime_config_entries; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -52499,6 +52524,14 @@ ALTER TABLE ONLY public.route_removal_policy_history
 
 ALTER TABLE ONLY public.runtime_artifact_bindings
     ADD CONSTRAINT runtime_artifact_bindings_pkey PRIMARY KEY (account_id, rootfs_key);
+
+
+--
+-- Name: runtime_config_apply_receipts runtime_config_apply_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.runtime_config_apply_receipts
+    ADD CONSTRAINT runtime_config_apply_receipts_pkey PRIMARY KEY (config_key, scope, scope_id, daemon, instance);
 
 
 --

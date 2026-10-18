@@ -606,6 +606,9 @@ type MemStore struct {
 	runtimeConfigs          map[string]RuntimeConfig
 	runtimeConfigOperations map[string]RuntimeConfigOperation
 	runtimeConfigRevisions  []RuntimeConfigRevision
+	// runtimeConfigApplyReceipts mirrors runtime_config_apply_receipts
+	// (ADR-1700), keyed by the table's primary key.
+	runtimeConfigApplyReceipts map[string]RuntimeConfigApplyReceipt
 	// alertRules mirrors alert_rules for handler tests. Keyed by
 	// ruleID. AlertDelivery rows are kept separately so the
 	// delivery list query can walk just the matching subset on
@@ -1529,6 +1532,7 @@ func NewMemStore() *MemStore {
 		fireNowRequests:                 map[string]FireNowRequest{},
 		operatorIntents:                 map[string]OperatorIntent{},
 		runtimeConfigs:                  map[string]RuntimeConfig{},
+		runtimeConfigApplyReceipts:      map[string]RuntimeConfigApplyReceipt{},
 		runtimeConfigOperations:         map[string]RuntimeConfigOperation{},
 		runtimeConfigRevisions:          []RuntimeConfigRevision{},
 		alertRules:                      map[string]AlertRule{},

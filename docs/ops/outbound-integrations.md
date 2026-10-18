@@ -382,8 +382,11 @@ status codes.
 > **Preview rollout (ADR-998).** With the gate on, the AI gateway serves
 > accounts whose plan includes it (Hobby, Pro, Scale).
 >
-> - During the preview, `ai_gateway_accounts` in both daemons (or
->   `FAAS_AI_GATEWAY_ACCOUNTS`, comma-separated) limits it to listed accounts.
+> - During the preview, the `ai_gateway` platform flag limits it to the
+>   accounts its rules include ([platform flags](platform-flags.md),
+>   ADR-1700). The gate and `ai_gateway_accounts` /
+>   `FAAS_AI_GATEWAY_ACCOUNTS` are only its boot fallback until an operator
+>   writes the flag.
 > - Other accounts get `403 outbound_ai_gateway_unavailable`.
 > - A Free account gets `402 plan_feature_gated` from apid and `403` from
 >   outboundd.

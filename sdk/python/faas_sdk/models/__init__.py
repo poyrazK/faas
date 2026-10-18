@@ -3340,6 +3340,7 @@ from .operation_workflow_unmet_invariant import OperationWorkflowUnmetInvariant
 from .operation_workflow_unmet_invariant_reason import OperationWorkflowUnmetInvariantReason
 from .operation_workflow_verification_duration import OperationWorkflowVerificationDuration
 from .operation_workflow_verification_performance import OperationWorkflowVerificationPerformance
+from .operator_account_platform_flags import OperatorAccountPlatformFlags
 from .operator_intent_accepted_response import OperatorIntentAcceptedResponse
 from .operator_intent_accepted_response_kind import OperatorIntentAcceptedResponseKind
 from .operator_intent_accepted_response_previous_state import OperatorIntentAcceptedResponsePreviousState
@@ -3351,10 +3352,22 @@ from .operator_park_execution_response import OperatorParkExecutionResponse
 from .operator_park_execution_response_action import OperatorParkExecutionResponseAction
 from .operator_park_execution_response_phase import OperatorParkExecutionResponsePhase
 from .operator_park_execution_response_terminal_state import OperatorParkExecutionResponseTerminalState
+from .operator_platform_flag import OperatorPlatformFlag
+from .operator_platform_flag_convergence import OperatorPlatformFlagConvergence
+from .operator_platform_flag_decision import OperatorPlatformFlagDecision
+from .operator_platform_flag_decision_reason import OperatorPlatformFlagDecisionReason
+from .operator_platform_flag_groups import OperatorPlatformFlagGroups
+from .operator_platform_flag_groups_groups import OperatorPlatformFlagGroupsGroups
+from .operator_platform_flag_groups_references import OperatorPlatformFlagGroupsReferences
+from .operator_platform_flag_list import OperatorPlatformFlagList
+from .operator_platform_flag_source import OperatorPlatformFlagSource
+from .operator_platform_flag_status import OperatorPlatformFlagStatus
 from .operator_restart_execution_response import OperatorRestartExecutionResponse
 from .operator_restart_execution_response_phase import OperatorRestartExecutionResponsePhase
 from .operator_runtime_config import OperatorRuntimeConfig
 from .operator_runtime_config_apply_mode import OperatorRuntimeConfigApplyMode
+from .operator_runtime_config_apply_receipt import OperatorRuntimeConfigApplyReceipt
+from .operator_runtime_config_apply_receipt_status import OperatorRuntimeConfigApplyReceiptStatus
 from .operator_runtime_config_kind import OperatorRuntimeConfigKind
 from .operator_runtime_config_operation import OperatorRuntimeConfigOperation
 from .operator_runtime_config_operation_apply_mode import OperatorRuntimeConfigOperationApplyMode
@@ -3472,6 +3485,9 @@ from .plan_workload_class import PlanWorkloadClass
 from .plan_workload_depends_on_conditions import PlanWorkloadDependsOnConditions
 from .plan_workload_depends_on_conditions_additional_property import PlanWorkloadDependsOnConditionsAdditionalProperty
 from .plan_workload_tier import PlanWorkloadTier
+from .platform_flag_definition import PlatformFlagDefinition
+from .platform_flag_rule import PlatformFlagRule
+from .platform_flag_rule_plans_item import PlatformFlagRulePlansItem
 from .platform_tenant_access_token_list_response import PlatformTenantAccessTokenListResponse
 from .platform_tenant_access_token_response import PlatformTenantAccessTokenResponse
 from .platform_tenant_access_token_response_scopes_item import PlatformTenantAccessTokenResponseScopesItem
@@ -8341,6 +8357,7 @@ __all__ = (
     "OperationWorkflowUnmetInvariantReason",
     "OperationWorkflowVerificationDuration",
     "OperationWorkflowVerificationPerformance",
+    "OperatorAccountPlatformFlags",
     "OperatorIntentAcceptedResponse",
     "OperatorIntentAcceptedResponseKind",
     "OperatorIntentAcceptedResponsePreviousState",
@@ -8352,10 +8369,22 @@ __all__ = (
     "OperatorParkExecutionResponseAction",
     "OperatorParkExecutionResponsePhase",
     "OperatorParkExecutionResponseTerminalState",
+    "OperatorPlatformFlag",
+    "OperatorPlatformFlagConvergence",
+    "OperatorPlatformFlagDecision",
+    "OperatorPlatformFlagDecisionReason",
+    "OperatorPlatformFlagGroups",
+    "OperatorPlatformFlagGroupsGroups",
+    "OperatorPlatformFlagGroupsReferences",
+    "OperatorPlatformFlagList",
+    "OperatorPlatformFlagSource",
+    "OperatorPlatformFlagStatus",
     "OperatorRestartExecutionResponse",
     "OperatorRestartExecutionResponsePhase",
     "OperatorRuntimeConfig",
     "OperatorRuntimeConfigApplyMode",
+    "OperatorRuntimeConfigApplyReceipt",
+    "OperatorRuntimeConfigApplyReceiptStatus",
     "OperatorRuntimeConfigKind",
     "OperatorRuntimeConfigOperation",
     "OperatorRuntimeConfigOperationApplyMode",
@@ -8471,6 +8500,9 @@ __all__ = (
     "PlanWorkloadDependsOnConditions",
     "PlanWorkloadDependsOnConditionsAdditionalProperty",
     "PlanWorkloadTier",
+    "PlatformFlagDefinition",
+    "PlatformFlagRule",
+    "PlatformFlagRulePlansItem",
     "PlatformTenantAccessTokenListResponse",
     "PlatformTenantAccessTokenResponse",
     "PlatformTenantAccessTokenResponseScopesItem",
