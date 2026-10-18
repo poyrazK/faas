@@ -22265,6 +22265,27 @@ $$;
 
 
 --
+-- Name: snapshot_restore_pressure_acquire(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.snapshot_restore_pressure_acquire(p_lock_name text) RETURNS TABLE(locked boolean, node_id text, active bigint)
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF NOT pg_try_advisory_lock(hashtextextended(p_lock_name, 0)) THEN
+        RETURN QUERY SELECT false, NULL::text, NULL::bigint;
+        RETURN;
+    END IF;
+    DELETE FROM snapshot_restore_pressure_leases WHERE expires_at <= now();
+    RETURN QUERY SELECT true, l.node_id::text, count(*) FROM snapshot_restore_pressure_leases l
+                  WHERE l.expires_at > now() GROUP BY l.node_id;
+    IF NOT FOUND THEN
+        RETURN QUERY SELECT true, NULL::text, NULL::bigint;
+    END IF;
+END $$;
+
+
+--
 -- Name: snapshot_stale_after_app_delete(); Type: FUNCTION; Schema: public; Owner: -
 --
 

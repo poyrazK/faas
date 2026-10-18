@@ -198,8 +198,30 @@ BEGIN
 END $$;
 -- +goose StatementEnd
 
+-- snapshot_restore_pressure_acquire takes the fleet-wide restore-pressure
+-- session lock and, only once it holds it, expires stale leases and counts
+-- the active ones per node, in one call. The count is its own statement, so
+-- it sees every lease committed before the lock was granted.
+-- +goose StatementBegin
+CREATE OR REPLACE FUNCTION snapshot_restore_pressure_acquire(p_lock_name text)
+RETURNS TABLE(locked boolean, node_id text, active bigint) LANGUAGE plpgsql AS $$
+BEGIN
+    IF NOT pg_try_advisory_lock(hashtextextended(p_lock_name, 0)) THEN
+        RETURN QUERY SELECT false, NULL::text, NULL::bigint;
+        RETURN;
+    END IF;
+    DELETE FROM snapshot_restore_pressure_leases WHERE expires_at <= now();
+    RETURN QUERY SELECT true, l.node_id::text, count(*) FROM snapshot_restore_pressure_leases l
+                  WHERE l.expires_at > now() GROUP BY l.node_id;
+    IF NOT FOUND THEN
+        RETURN QUERY SELECT true, NULL::text, NULL::bigint;
+    END IF;
+END $$;
+-- +goose StatementEnd
+
 -- +goose Down
 -- +goose StatementBegin
+DROP FUNCTION IF EXISTS snapshot_restore_pressure_acquire(text);
 DROP FUNCTION IF EXISTS publish_instance_on_generation(uuid, uuid, uuid, uuid, uuid, text, text, text, inet, integer, text, uuid, text, text, text, jsonb, text, text, boolean, text, timestamptz, jsonb, jsonb, boolean, jsonb, jsonb, bigint);
 DROP FUNCTION IF EXISTS admit_wake_instance(uuid, text, text, integer, uuid, text, text, bigint, boolean, integer, boolean, uuid, bigint);
 DROP FUNCTION IF EXISTS admission_reserve_node(uuid, bigint, integer, boolean, integer);

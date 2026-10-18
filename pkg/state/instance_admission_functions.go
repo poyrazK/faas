@@ -41,6 +41,7 @@ func (s *PgStore) admissionFunctionsUsable(ctx context.Context) bool {
 	var ok bool
 	err := s.pool.QueryRow(ctx, `select to_regprocedure('admit_wake_instance(uuid,text,text,integer,uuid,text,text,bigint,boolean,integer,boolean,uuid,bigint)') is not null
 		and to_regprocedure('admission_reserve_node(uuid,bigint,integer,boolean,integer)') is not null
+		and to_regprocedure('snapshot_restore_pressure_acquire(text)') is not null
 		and to_regprocedure('publish_instance_on_generation(uuid,uuid,uuid,uuid,uuid,text,text,text,inet,integer,text,uuid,text,text,text,jsonb,text,text,boolean,text,timestamptz,jsonb,jsonb,boolean,jsonb,jsonb,bigint)') is not null`).Scan(&ok)
 	if err != nil {
 		return false

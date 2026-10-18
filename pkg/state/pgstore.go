@@ -18604,6 +18604,18 @@ func (s *PgStore) ComputeNodeUsedCPUMillicoresByNode(ctx context.Context, nodeID
 		}
 		parsedIDs = append(parsedIDs, parsed)
 	}
+	// The live sum and the migration reservations are independent reads; a
+	// wake's placement waits for both, so they run concurrently (ADR-1741).
+	var (
+		resources     []sqlc.MigrationAdmissionNodeResourcesRow
+		resourcesErr  error
+		resourcesRead = make(chan struct{})
+	)
+	go func() {
+		defer close(resourcesRead)
+		resources, resourcesErr = s.migrationAdmissionResources(ctx, nodeIDs)
+	}()
+	defer func() { <-resourcesRead }()
 	rows, err := s.pool.Query(ctx, `
 		select i.node_id::text,
 		       coalesce(sum(case
@@ -18632,9 +18644,9 @@ func (s *PgStore) ComputeNodeUsedCPUMillicoresByNode(ctx context.Context, nodeID
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("state: iterate compute nodes used_cpu_millicores: %w", err)
 	}
-	resources, err := s.migrationAdmissionResources(ctx, nodeIDs)
-	if err != nil {
-		return nil, err
+	<-resourcesRead
+	if resourcesErr != nil {
+		return nil, resourcesErr
 	}
 	for _, resource := range resources {
 		used[resource.NodeID] += resource.CpuMillicores
