@@ -503,6 +503,34 @@ checks pass, including four HTTP fixtures. Fresh hosted exact-head checks and
 native compilation remain required; physical acceptance and activation stay
 pending.
 
+## Migration release compatibility declarations (2026-10-18)
+
+Hosted job `117648546009` on source head
+`73220ee13d44099adfb73e430417244dc8efbb7a` rejected the three function
+migrations because main's newer release policy requires explicit compatibility
+declarations. Main through `6e2e9441958137100584776cbc95ff5542e06df6` is
+integrated. The source journal and admission migrations declare `expand`;
+the destination migration declares `contract` because it changes existing
+publication, runtime and capacity guards. Only a full release may apply that
+destination migration; the per-unit lane must refuse it.
+
+Only compatibility comments change the three SQL sources. The canonical schema
+remains byte-identical with SHA-256
+`b5a03e0b85235a93c9893c241df260e166ea11ff13530051b21a6396b364a214`.
+The refreshed migration-source digest is
+`4f9c05d9d676126d0c4b66f6a53aa68ec483db74dae31ff1ce28f1659487f465`.
+SQLC drift validation and the exact migration compatibility check pass.
+All 51 compatibility-policy tests, 25 affected-unit tests, 19 deployment-plan
+tests and both hermetic deployment/release-verifier shell suites pass. The
+first affected-unit attempt used the older default Go toolchain and failed
+before executing its end-to-end cases; the rerun uses the repository's pinned
+Go toolchain. Shell fixtures stub remote execution and do not deploy.
+
+Function host/scheduler sources, protobufs, OpenAPI and SDKs are unchanged from
+the preceding worker-integration head. No assertion, policy or resource limit is
+weakened. Fresh exact-head hosted checks remain required; physical acceptance
+and activation remain pending.
+
 ## Qualification boundary
 
 Production activation remains disabled. This managed container has no supported

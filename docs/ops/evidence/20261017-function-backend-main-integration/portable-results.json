@@ -1476,5 +1476,32 @@
     "fresh_hosted_current_head_checks": "required",
     "native_physical_acceptance": false,
     "production_activation": false
+  },
+  "migration_release_compatibility": {
+    "integrated_main": "6e2e9441958137100584776cbc95ff5542e06df6",
+    "hosted_failure_head": "73220ee13d44099adfb73e430417244dc8efbb7a",
+    "hosted_failure_job": 117648546009,
+    "migration_classes": {
+      "20261018095849457_function_migration_sources.sql": "expand",
+      "20261018095850003_function_migration_admission.sql": "expand",
+      "20261018095850501_function_migration_destination.sql": "contract"
+    },
+    "destination_requires_full_release": true,
+    "only_migration_comments_changed": true,
+    "schema_byte_identical_to_worker_integration": true,
+    "schema_sha256": "b5a03e0b85235a93c9893c241df260e166ea11ff13530051b21a6396b364a214",
+    "migration_source_digest": "4f9c05d9d676126d0c4b66f6a53aa68ec483db74dae31ff1ce28f1659487f465",
+    "sqlc_drift": "pass",
+    "migration_compatibility": "pass",
+    "compatibility_policy_tests_passed": 51,
+    "affected_units_tests_passed": 25,
+    "deployment_plan_tests_passed": 19,
+    "unit_deployment_fixture": "pass; remote execution stubbed",
+    "unit_release_verifier_fixture": "pass; remote execution stubbed",
+    "initial_affected_units_attempt": "older default Go toolchain; rerun passed with repository-pinned toolchain",
+    "function_host_scheduler_proto_openapi_sdk_unchanged": true,
+    "fresh_hosted_current_head_checks": "required",
+    "native_physical_acceptance": false,
+    "production_activation": false
   }
 }

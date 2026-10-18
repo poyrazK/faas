@@ -1,4 +1,5 @@
 -- filename: 20261018095849457_function_migration_sources.sql
+-- migration-compat: expand
 
 -- ADR-20261018030613: retain source ownership until pool recovery or retirement is confirmed.
 -- +goose Up
