@@ -1,0 +1,11 @@
+# Managed by Ansible (gatewayd_internal_service).
+# Split-box compute nodes serve the control plane's gateway traffic on a
+# private TCP listener (FAAS_GATEWAY_LISTEN, 99-faas-public-listen.conf).
+# Holding it in the socket unit keeps it accepting across gatewayd-internal
+# restarts. It must equal the service's FAAS_GATEWAY_LISTEN: gatewayd-internal
+# refuses to start with an inherited listener it does not serve.
+{% set data_listen = faas_gateway_listen | default('off') %}
+[Socket]
+{% if data_listen not in ['off', ''] %}
+ListenStream={{ data_listen }}
+{% endif %}

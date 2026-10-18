@@ -60,7 +60,10 @@ func TestPgCloneMigrationFenceRetainsOriginalLeaseAndInstance(t *testing.T) {
 			requireCloneMigrationRetained(t, err)
 			_, err = pool.Exec(ctx, "DELETE FROM deployments WHERE id=$1", w.TargetDeploymentID)
 			requireCloneMigrationRetained(t, err)
-			_, err = pool.Exec(ctx, "TRUNCATE migration_leases")
+			// Migration admissions and sources reference leases (ADR-1529/1530),
+			// so a plain TRUNCATE stops at their foreign keys. CASCADE reaches
+			// the lease table's own retention trigger, which must still refuse.
+			_, err = pool.Exec(ctx, "TRUNCATE migration_leases CASCADE")
 			requireCloneMigrationRetained(t, err)
 			for _, q := range []string{
 				"UPDATE migration_leases SET lease_expires_at=clock_timestamp()+interval '1 minute' WHERE instance_id=$1",

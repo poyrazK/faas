@@ -84,6 +84,41 @@ client tests, ADR uniqueness, core test citations, Go formatting, embedded
 OpenAPI parity and whitespace checks. Production rollout and native runtime
 acceptance remain pending.
 
+## Integration with selective PostgreSQL data repair
+
+Main through `2a9ef97bc` is integrated, including selective repair operations and
+their rehearsal journals. SQL generation retains both repair query files and
+the organization ownership query sets. Gateway request quotas retain the
+organization resource owner alongside upstream shutdown notices. Memory and
+PostgreSQL operation cancellation retain the organization async-quota subject.
+
+All nine erasure-guard definitions retain the new account-linked repair rehearsal
+journal. Repair operations and journals remain unreviewed company surfaces. The
+clone registry adds the journal's operational policy and both new repair identity
+fields, covering all 903 migrated tables and their columns without duplicates.
+Broad organization, clone-schema and data-repair state tests pass (81.430s).
+
+The canonical PostgreSQL 16 schema is rebuilt from a fresh database. SQL
+generation/checks and migration lint pass. Migration apply-and-walk, replay of
+all seven ownership migrations and ownership down/up recovery pass (25.860s).
+The full database package passes with race detection on this chain (76.814s).
+Organization, shared-application, observability and portable repair history/MFA
+and operator-health HTTP regressions pass (20.875s, without race detection).
+
+Full Go SDK tests/vet, Node generation/build and complete pinned Python generation
+pass. Existing Python Auth, organization and MCP tests pass (61 tests). Against
+disposable PostgreSQL databases and the generated repair schema, five Node repair
+client tests pass, and six Python repair tests plus four subtests pass. These
+checks cover capture, receipts, replay, readiness and transaction rollback.
+
+The upstream ADR-1580 collision is resolved by assigning internal CI automation
+admission recovery the unique identifier ADR-202610180816 and updating its scoped
+citations. The restart decision retains ADR-1580. This changes references only;
+runtime values and architecture decisions are unchanged. ADR uniqueness,
+environment-contract and systemd hardening checks pass. Fresh GitHub PR checks
+must qualify the combined source before merge; native KVM acceptance and
+production deployment remain pending.
+
 Organization state and HTTP regressions also pass with race detection on
 `a23dea529`, including current membership, shared quotas, retained worker
 receipts and creator erasure. OpenAPI route/schema compliance and typed SDK

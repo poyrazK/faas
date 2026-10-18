@@ -19,6 +19,9 @@ func validateOperationCancellation(op Operation, accountID, tenantID string, gen
 	if generation < 1 {
 		return ErrInvalidArgument
 	}
+	if op.DataRepair != nil {
+		return ErrConflict
+	}
 	if generation != op.Generation || op.State == api.OperationRequiresReconciliation {
 		return ErrConflict
 	}
@@ -72,6 +75,9 @@ func (s *PgStore) CancelOperation(ctx context.Context, accountID, tenantID, oper
 	snapshot, err := s.OperationByID(ctx, accountID, tenantID, operationID)
 	if err != nil {
 		return Operation{}, err
+	}
+	if snapshot.DataRepair != nil {
+		return Operation{}, ErrConflict
 	}
 	if snapshot.WorkflowRunID != "" {
 		return s.cancelOperationWorkflow(ctx, snapshot, generation)

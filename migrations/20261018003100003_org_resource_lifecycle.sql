@@ -482,6 +482,7 @@ BEGIN
         'product_control_revisions',
         'managed_postgres_connection_capacity',
         'data_api_runtime_connection_observations',
+        'data_repair_rehearsals',
         'scenario_cold_preparations',
         'scenario_managed_work',
         'scenario_object_fixtures',

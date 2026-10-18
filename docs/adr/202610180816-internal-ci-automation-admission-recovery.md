@@ -1,4 +1,4 @@
-# ADR-1580: Bounded recovery for internal CI automation admission
+# ADR-202610180816: Bounded recovery for internal CI automation admission
 
 - Status: implemented behind existing default-off CI gates; native qualification pending
 - Date: 2026-10-17

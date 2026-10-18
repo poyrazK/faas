@@ -670,7 +670,7 @@ jobs:
           GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
           SHARD: ${{ matrix.shard }}
           # Related-test cap per large package: enough for a focused change,
-          # small enough for the shard's 10-minute budget.
+          # bounded for focused pull-request runs.
           SELECTIVE_CAP: "150"
         run: |
           set -euo pipefail

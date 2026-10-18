@@ -63,6 +63,10 @@ Custom SLO definitions, synthetic checks and account notification channels also
 require separate ownership coverage. Their creator account references block
 identity erasure, including channels that otherwise cascade with the account.
 
+Selective data-repair operations and their rehearsal journals retain their
+existing account references and erasure blockers. Their organization ownership,
+approval and recovery paths require separate review.
+
 Denormalized core child organization references follow the app root. The
 migration repairs legacy personal-org references without changing billing
 subject UUIDs, encrypted bytes or usage quantities. New writes enforce the same

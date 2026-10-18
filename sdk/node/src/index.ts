@@ -57,6 +57,9 @@ export { InboundWebhooksService } from './generated/services/InboundWebhooksServ
 export type * from './generated/models/index.js';
 
 // Hand-written wrapper façade.
+export { withDataRepairCapture, type DataRepairCapture } from './data-repair.js';
+export { withRepairableOperationTransaction, withRepairableCustomerOperationTransaction, DataRepairCaptureError } from './data-repair-transactions.js';
+export { checkDataRepairCapture, type DataRepairCaptureReadinessOptions, type DataRepairCaptureReadinessReport, type DataRepairReadinessFinding, type DataRepairReadinessStatus } from './data-repair-readiness.js';
 export {
   FaaSClient,
   type FaaSClientOptions,

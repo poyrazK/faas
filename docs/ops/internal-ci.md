@@ -721,7 +721,7 @@ operator records intent. Reads keep their existing internal/MFA/HTTPS protection
 and remain available with new admission disabled. All shipped flags remain off.
 Receipts retain their lifetime quota evidence and are not pruned by archival;
 the migration refuses rollback while recovery evidence exists. See
-[ADR-1580](../adr/1580-internal-ci-automation-admission-recovery.md).
+[ADR-202610180816](../adr/202610180816-internal-ci-automation-admission-recovery.md).
 
 ## Execution progress and results in GitHub
 
