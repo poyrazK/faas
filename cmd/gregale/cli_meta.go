@@ -146,7 +146,7 @@ func cliHelpGroup(command cliCommand) string {
 		return "Data"
 	case "canary", "mirror", "park", "ps", "queue", "dlq", "traffic", "wake", "wake-ahead", "wake-timeline", "workers":
 		return "Delivery"
-	case "alerts", "analytics", "audit-events", "debug", "inspect", "log-drains", "logs", "metrics", "realtime", "slo", "status", "tail", "throttle-suggestions", "trace":
+	case "alerts", "analytics", "channels", "audit-events", "debug", "inspect", "log-drains", "logs", "metrics", "realtime", "slo", "slos", "status", "synthetics", "tail", "throttle-suggestions", "trace":
 		return "Observe"
 	default:
 		return "Core"
@@ -640,6 +640,18 @@ var cliCommands = []cliCommand{
 				{Name: "prefix", Short: "injected storage secret prefix", Value: "PREFIX"},
 				{Name: "wait-timeout", Short: "readiness timeout", Value: "DURATION"},
 			}},
+			{Name: "datadog", Short: "Send the app's logs and deployment events to Datadog (ADR-752)", Examples: []string{
+				"DD_API_KEY=... gregale add datadog --app my-api --site eu1",
+				"gregale add datadog --app my-api --dry-run",
+				"gregale add datadog --app my-api --remove",
+			}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Req: true, Value: "APP"},
+				{Name: "site", Short: "Datadog site (default us1)", Value: "SITE", ClosedSet: []string{"ap1", "eu1", "us1", "us3", "us5"}},
+				{Name: "api-key-env", Short: "environment variable holding the API key (default DD_API_KEY)", Value: "NAME"},
+				{Name: "api-key-stdin", Short: "read the API key from stdin"},
+				{Name: "dry-run", Short: "show the plan without changing anything"},
+				{Name: "remove", Short: "remove the app's Datadog log drain and webhook"},
+			}},
 		},
 	},
 	{
@@ -959,6 +971,78 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
+		Name:    "channels",
+		DocSlug: "channels",
+		Short:   "Alert notification channels: Slack, PagerDuty, email (channels list|add|test|rm)",
+		Subcommands: []cliSub{
+			{Name: "list", Short: "List channels with their last delivery"},
+			{Name: "add", Short: "Add a channel; Slack URLs and PagerDuty keys are read from stdin", Flags: []cliFlag{
+				{Name: "name", Short: "channel name, unique per account", Req: true, Value: "NAME"},
+				{Name: "kind", Short: "destination type", Req: true, Value: "KIND", ClosedSet: []string{"slack", "pagerduty", "email"}},
+				{Name: "secret-stdin", Short: "read the Slack webhook URL or PagerDuty routing key from stdin"},
+				{Name: "pagerduty-region", Short: "PagerDuty service region", Value: "REGION", ClosedSet: []string{"us", "eu"}},
+				{Name: "email", Short: "your account email (kind email)", Value: "EMAIL"},
+			}},
+			{Name: "test", Short: "Send a marked test notification", Positionals: []string{"<channel-id>"}},
+			{Name: "rm", Short: "Delete a channel", Positionals: []string{"<channel-id>"}},
+		},
+	},
+	{
+		Name:    "slos",
+		DocSlug: "slos",
+		Short:   "Customer-defined SLOs and error budgets (slos list|create|status|rm --app <slug>)",
+		Subcommands: []cliSub{
+			{Name: "list", Short: "List the app's SLOs", Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+			}},
+			{Name: "create", Short: "Define an availability or latency SLO", Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+				{Name: "name", Short: "SLO name, unique per app", Req: true, Value: "NAME"},
+				{Name: "objective", Short: "objective percentage, 90 to 99.99", Req: true, Value: "PCT"},
+				{Name: "sli", Short: "service level indicator", Value: "SLI", ClosedSet: []string{"availability", "latency"}},
+				{Name: "latency-threshold-ms", Short: "latency threshold (5|10|25|50|100|250|500|1000|2000|5000|10000)", Value: "MS"},
+				{Name: "window-days", Short: "rolling window", Value: "DAYS", ClosedSet: []string{"7", "30"}},
+			}},
+			{Name: "status", Short: "Show an SLO's attainment, budget remaining and burn rate", Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+			}, Positionals: []string{"<slo-id>"}},
+			{Name: "rm", Short: "Delete one SLO", Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+			}, Positionals: []string{"<slo-id>"}},
+		},
+	},
+	{
+		Name:    "synthetics",
+		DocSlug: "synthetics",
+		Short:   "Scheduled HTTP checks against an app (synthetics list|create|status|pause|resume|rm --app <slug>)",
+		Subcommands: []cliSub{
+			{Name: "list", Short: "List the app's synthetic checks", Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+			}},
+			{Name: "create", Short: "Schedule a GET or HEAD check on a path", Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+				{Name: "name", Short: "check name, unique per app", Req: true, Value: "NAME"},
+				{Name: "path", Short: "path on the app (default /)", Value: "PATH"},
+				{Name: "method", Short: "HTTP method", Value: "METHOD", ClosedSet: []string{"GET", "HEAD"}},
+				{Name: "expect-status", Short: "exact expected status (default any 2xx)", Value: "N"},
+				{Name: "timeout-ms", Short: "timeout including any wake, 1000-30000", Value: "MS"},
+				{Name: "every-minutes", Short: "interval", Value: "MIN", ClosedSet: []string{"5", "15", "60"}},
+			}},
+			{Name: "status", Short: "Show a check's uptime, latency and recent runs", Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+			}, Positionals: []string{"<check-id>"}},
+			{Name: "pause", Short: "Stop running a check", Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+			}, Positionals: []string{"<check-id>"}},
+			{Name: "resume", Short: "Resume a paused check", Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+			}, Positionals: []string{"<check-id>"}},
+			{Name: "rm", Short: "Delete a check and its history", Flags: []cliFlag{
+				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+			}, Positionals: []string{"<check-id>"}},
+		},
+	},
+	{
 		Name:    "alerts",
 		DocSlug: "alerts",
 		Short:   "Per-app alert rules (alerts list|add|info|update|rm|rotate-secret|preset|actions --app <slug>)",
@@ -978,13 +1062,17 @@ var cliCommands = []cliCommand{
 				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
 				{Name: "name", Short: "rule name (3..120 chars)", Req: true, Value: "NAME"},
 				{Name: "metric", Short: "metric; MCP task gauges: mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale (includes min=0 observer heartbeat)", Value: "METRIC"},
-				{Name: "comparison", Short: "gt|gte|lt|lte", Value: "OP"},
+				{Name: "comparison", Short: "gt|gte|lt|lte|above_baseline|below_baseline", Value: "OP"},
 				{Name: "threshold", Short: "threshold value", Value: "N"},
 				{Name: "window-spec", Short: "5m|15m|1h|6h|24h|7d|15d", Value: "WINDOW"},
 				{Name: "event-subscription-id", Short: "Subscription UUID for event consumer metrics", Value: "UUID"},
 				{Name: "edge-rule-id", Short: "edge rule for edge_rule_hits / edge_rule_log_hits (empty = all rules)", Value: "ID"},
 				{Name: "failure-source", Short: "any|cron|queue|delayed_task|async_invoke|inbound_webhook", Value: "SOURCE"},
-				{Name: "webhook-url", Short: "http(s) webhook URL (https recommended: deliveries are signed, not encrypted)", Req: true, Value: "URL"},
+				{Name: "channel", Short: "notification channel id (repeatable); with one, the webhook is optional", Value: "CHANNEL_ID", Repeatable: true},
+				{Name: "custom-metric", Short: "Pushed custom metric to watch; required with --metric custom_metric", Value: "NAME"},
+				{Name: "slo", Short: "SLO id for slo_budget_burn or slo_budget_remaining_pct", Value: "SLO_ID"},
+				{Name: "synthetic-check", Short: "synthetic check id for synthetic_check_* metrics", Value: "CHECK_ID"},
+				{Name: "webhook-url", Short: "http(s) webhook URL (https recommended: deliveries are signed, not encrypted); required unless --channel", Value: "URL"},
 				{Name: flagNameAction, Short: "alert action", Value: "ACTION", ClosedSet: api.AllowedAlertRuleActions},
 				{Name: "post-deploy-rollback-window", Short: "completed-release rollback window (0 off; up to 1h)", Value: "duration"},
 				{Name: "webhook-secret-stdin", Short: "read the webhook signing secret from stdin (this or --webhook-secret is required)"},
@@ -1354,6 +1442,13 @@ var cliCommands = []cliCommand{
 				{Name: "limit", Short: "history page size", Value: "N"},
 				{Name: "before", Short: "history cursor", Value: "CURSOR"},
 				{Name: "environment", Short: "assess this project environment instead of the default scope; excludes history options", Value: "SLUG"},
+			}},
+			{Name: subChanges, Short: "List recorded changes and health transitions, newest first (ADR-751)", Examples: []string{
+				"gregale app my-api changes",
+				"gregale app my-api changes --since 2026-10-08T12:00:00Z --json",
+			}, Flags: []cliFlag{
+				{Name: "since", Short: "window start, RFC3339 (default: 24h before until)", Value: "RFC3339"},
+				{Name: "until", Short: "window end, RFC3339 (default: now)", Value: "RFC3339"},
 			}},
 			{Name: "scale", Short: "Preview, save, apply or update app resource and runtime settings", Examples: []string{
 				"gregale app my-api scale --interactive",
@@ -4163,9 +4258,10 @@ var cliCommands = []cliCommand{
 		DocSlug: "metrics",
 		Short:   "Per-app or account-wide metrics, or the service map (slug defaults to linked context)",
 		Flags: []cliFlag{
-			{Name: "range", Short: "window (5m|15m|1h|6h|24h|7d)", Value: "WINDOW", ClosedSet: []string{"5m", "15m", "1h", "6h", "24h", "7d"}},
+			{Name: "range", Short: "window (5m|15m|1h|6h|24h|7d|15d)", Value: "WINDOW", ClosedSet: []string{"5m", "15m", "1h", "6h", "24h", "7d", "15d"}},
 			{Name: "account", Short: "account-wide roll-up"},
 			{Name: "services", Short: "service map of app-to-app calls (default range 1h)"},
+			{Name: "custom", Short: "history of one pushed custom metric (ranges 1h|6h|24h|7d|15d)", Value: "NAME"},
 		},
 		Positionals: []string{"[<slug>]"},
 	},

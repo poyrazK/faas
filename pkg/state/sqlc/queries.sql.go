@@ -11776,6 +11776,17 @@ func (q *Queries) DeleteAccountEnvironmentGitSources(ctx context.Context, db DBT
 	return err
 }
 
+const deleteAlertRuleChannels = `-- name: DeleteAlertRuleChannels :exec
+
+DELETE FROM alert_rule_channels WHERE rule_id = $1::uuid
+`
+
+// ADR-749 slice 2: alert rule -> notification channel bindings.
+func (q *Queries) DeleteAlertRuleChannels(ctx context.Context, db DBTX, ruleID pgtype.UUID) error {
+	_, err := db.Exec(ctx, deleteAlertRuleChannels, ruleID)
+	return err
+}
+
 const deleteApp = `-- name: DeleteApp :exec
 update apps
 set status = 'deleted',
@@ -11825,6 +11836,23 @@ DELETE FROM app_errors WHERE id = ANY($1::uuid[])
 func (q *Queries) DeleteAppErrorsByIDs(ctx context.Context, db DBTX, dollar_1 []pgtype.UUID) error {
 	_, err := db.Exec(ctx, deleteAppErrorsByIDs, dollar_1)
 	return err
+}
+
+const deleteAppSLO = `-- name: DeleteAppSLO :execrows
+DELETE FROM app_slos WHERE app_id = $1::uuid AND id = $2::uuid
+`
+
+type DeleteAppSLOParams struct {
+	AppID pgtype.UUID
+	ID    pgtype.UUID
+}
+
+func (q *Queries) DeleteAppSLO(ctx context.Context, db DBTX, arg DeleteAppSLOParams) (int64, error) {
+	result, err := db.Exec(ctx, deleteAppSLO, arg.AppID, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const deleteAutomation = `-- name: DeleteAutomation :exec
@@ -12544,6 +12572,23 @@ func (q *Queries) DeleteGitLabOAuthConnection(ctx context.Context, db DBTX, acco
 	return result.RowsAffected(), nil
 }
 
+const deleteNotificationChannel = `-- name: DeleteNotificationChannel :execrows
+DELETE FROM notification_channels WHERE account_id = $1::uuid AND id = $2::uuid
+`
+
+type DeleteNotificationChannelParams struct {
+	AccountID pgtype.UUID
+	ID        pgtype.UUID
+}
+
+func (q *Queries) DeleteNotificationChannel(ctx context.Context, db DBTX, arg DeleteNotificationChannelParams) (int64, error) {
+	result, err := db.Exec(ctx, deleteNotificationChannel, arg.AccountID, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteOIDCExchangedToken = `-- name: DeleteOIDCExchangedToken :exec
 delete from oidc_exchanged_tokens where id = $1
 `
@@ -12639,6 +12684,23 @@ func (q *Queries) DeleteReadinessSubscription(ctx context.Context, db DBTX, arg 
 		arg.Scope,
 		arg.Tenant,
 	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteSyntheticCheck = `-- name: DeleteSyntheticCheck :execrows
+DELETE FROM synthetic_checks WHERE app_id = $1::uuid AND id = $2::uuid
+`
+
+type DeleteSyntheticCheckParams struct {
+	AppID pgtype.UUID
+	ID    pgtype.UUID
+}
+
+func (q *Queries) DeleteSyntheticCheck(ctx context.Context, db DBTX, arg DeleteSyntheticCheckParams) (int64, error) {
+	result, err := db.Exec(ctx, deleteSyntheticCheck, arg.AppID, arg.ID)
 	if err != nil {
 		return 0, err
 	}
@@ -20036,6 +20098,33 @@ func (q *Queries) GetAppErrorSample(ctx context.Context, db DBTX, arg GetAppErro
 	return i, err
 }
 
+const getAppSLO = `-- name: GetAppSLO :one
+SELECT id, account_id, app_id, name, sli, latency_threshold_ms, objective_bp, window_days, created_at, updated_at FROM app_slos WHERE app_id = $1::uuid AND id = $2::uuid
+`
+
+type GetAppSLOParams struct {
+	AppID pgtype.UUID
+	ID    pgtype.UUID
+}
+
+func (q *Queries) GetAppSLO(ctx context.Context, db DBTX, arg GetAppSLOParams) (AppSlo, error) {
+	row := db.QueryRow(ctx, getAppSLO, arg.AppID, arg.ID)
+	var i AppSlo
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Name,
+		&i.Sli,
+		&i.LatencyThresholdMs,
+		&i.ObjectiveBp,
+		&i.WindowDays,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getAppSecretRevocation = `-- name: GetAppSecretRevocation :one
 SELECT id::text, account_id::text, app_id::text, scope, key, created_at
   FROM app_secret_revocations
@@ -23257,6 +23346,36 @@ func (q *Queries) GetNativeWorkflowRun(ctx context.Context, db DBTX, id pgtype.U
 	return i, err
 }
 
+const getNotificationChannel = `-- name: GetNotificationChannel :one
+SELECT id, account_id, name, kind, target_sealed, target_hint, pagerduty_region, email, last_delivered_at, last_error, last_error_at, created_at, updated_at FROM notification_channels WHERE account_id = $1::uuid AND id = $2::uuid
+`
+
+type GetNotificationChannelParams struct {
+	AccountID pgtype.UUID
+	ID        pgtype.UUID
+}
+
+func (q *Queries) GetNotificationChannel(ctx context.Context, db DBTX, arg GetNotificationChannelParams) (NotificationChannel, error) {
+	row := db.QueryRow(ctx, getNotificationChannel, arg.AccountID, arg.ID)
+	var i NotificationChannel
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.Name,
+		&i.Kind,
+		&i.TargetSealed,
+		&i.TargetHint,
+		&i.PagerdutyRegion,
+		&i.Email,
+		&i.LastDeliveredAt,
+		&i.LastError,
+		&i.LastErrorAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getOIDCExchangedTokenByHash = `-- name: GetOIDCExchangedTokenByHash :one
 select id, account_id, token_hash, expires_at, issuer_url, subject,
        audience, coalesce(jti, '') as jti, scopes, created_at
@@ -23949,6 +24068,35 @@ func (q *Queries) GetSourceBuildRootfsPointer(ctx context.Context, db DBTX, depl
 	var artifact_id pgtype.UUID
 	err := row.Scan(&artifact_id)
 	return artifact_id, err
+}
+
+const getSyntheticCheck = `-- name: GetSyntheticCheck :one
+SELECT id, account_id, app_id, name, method, path, expected_status, timeout_ms, interval_seconds, enabled, created_at, updated_at FROM synthetic_checks WHERE app_id = $1::uuid AND id = $2::uuid
+`
+
+type GetSyntheticCheckParams struct {
+	AppID pgtype.UUID
+	ID    pgtype.UUID
+}
+
+func (q *Queries) GetSyntheticCheck(ctx context.Context, db DBTX, arg GetSyntheticCheckParams) (SyntheticCheck, error) {
+	row := db.QueryRow(ctx, getSyntheticCheck, arg.AppID, arg.ID)
+	var i SyntheticCheck
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Name,
+		&i.Method,
+		&i.Path,
+		&i.ExpectedStatus,
+		&i.TimeoutMs,
+		&i.IntervalSeconds,
+		&i.Enabled,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const getTenantWorkflowScheduleCursor = `-- name: GetTenantWorkflowScheduleCursor :one
@@ -24909,6 +25057,25 @@ func (q *Queries) InsertAlertRollback(ctx context.Context, db DBTX, arg InsertAl
 	return err
 }
 
+const insertAlertRuleChannels = `-- name: InsertAlertRuleChannels :exec
+INSERT INTO alert_rule_channels (rule_id, channel_id)
+SELECT r.id, c.id FROM alert_rules r
+JOIN notification_channels c ON c.account_id = r.account_id AND c.id = ANY ($1::uuid[])
+WHERE r.id = $2::uuid
+ON CONFLICT DO NOTHING
+`
+
+type InsertAlertRuleChannelsParams struct {
+	ChannelIds []pgtype.UUID
+	RuleID     pgtype.UUID
+}
+
+// Only channels owned by the rule's account are bound.
+func (q *Queries) InsertAlertRuleChannels(ctx context.Context, db DBTX, arg InsertAlertRuleChannelsParams) error {
+	_, err := db.Exec(ctx, insertAlertRuleChannels, arg.ChannelIds, arg.RuleID)
+	return err
+}
+
 const insertAppErrorRequest = `-- name: InsertAppErrorRequest :exec
 INSERT INTO app_error_requests (
     id, account_id, app_id, fingerprint, request_id, received_at,
@@ -25002,6 +25169,56 @@ func (q *Queries) InsertAppHealthHistory(ctx context.Context, db DBTX, arg Inser
 		arg.Entry,
 	)
 	return err
+}
+
+const insertAppSLO = `-- name: InsertAppSLO :one
+
+INSERT INTO app_slos (account_id, app_id, name, sli, latency_threshold_ms, objective_bp, window_days)
+SELECT $1::uuid, $2::uuid, $3::text, $4::text,
+ $5::integer, $6::integer, $7::integer
+WHERE (SELECT count(*) FROM app_slos WHERE app_id = $2::uuid) < $8::integer
+RETURNING id, account_id, app_id, name, sli, latency_threshold_ms, objective_bp, window_days, created_at, updated_at
+`
+
+type InsertAppSLOParams struct {
+	AccountID          pgtype.UUID
+	AppID              pgtype.UUID
+	Name               string
+	Sli                string
+	LatencyThresholdMs pgtype.Int4
+	ObjectiveBp        int32
+	WindowDays         int32
+	MaxPerApp          int32
+}
+
+// ADR-747: customer-defined SLO definitions (apid is the only writer).
+// The per-app cap is enforced inside the insert, so two concurrent creates
+// cannot both pass a count taken before either row exists.
+func (q *Queries) InsertAppSLO(ctx context.Context, db DBTX, arg InsertAppSLOParams) (AppSlo, error) {
+	row := db.QueryRow(ctx, insertAppSLO,
+		arg.AccountID,
+		arg.AppID,
+		arg.Name,
+		arg.Sli,
+		arg.LatencyThresholdMs,
+		arg.ObjectiveBp,
+		arg.WindowDays,
+		arg.MaxPerApp,
+	)
+	var i AppSlo
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Name,
+		&i.Sli,
+		&i.LatencyThresholdMs,
+		&i.ObjectiveBp,
+		&i.WindowDays,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const insertApplicationStandardApprovedAssignment = `-- name: InsertApplicationStandardApprovedAssignment :exec
@@ -26792,11 +27009,11 @@ func (q *Queries) InsertComputeNodeHeartbeat(ctx context.Context, db DBTX, arg I
 
 const insertCustomerAlertRule = `-- name: InsertCustomerAlertRule :one
 INSERT INTO alert_rules(account_id,app_id,name,enabled,metric,comparison,threshold,window_spec,failure_source,event_subscription_id,
- edge_rule_id,action,webhook_url,webhook_secret_sealed,cooldown_minutes,state,post_deploy_rollback_window_seconds)
+ edge_rule_id,action,webhook_url,webhook_secret_sealed,cooldown_minutes,state,post_deploy_rollback_window_seconds,custom_metric_name,slo_id,synthetic_check_id)
 VALUES($1,$2,$3,$4,$5,$6,
  $7,$8,$9,$10,$11,$12,$13,
- $14,$15,$16,$17)
-RETURNING id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id
+ $14,$15,$16,$17,$18,$19,$20)
+RETURNING id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id
 `
 
 type InsertCustomerAlertRuleParams struct {
@@ -26817,6 +27034,9 @@ type InsertCustomerAlertRuleParams struct {
 	CooldownMinutes                 int32
 	State                           string
 	PostDeployRollbackWindowSeconds int32
+	CustomMetricName                pgtype.Text
+	SloID                           pgtype.UUID
+	SyntheticCheckID                pgtype.UUID
 }
 
 func (q *Queries) InsertCustomerAlertRule(ctx context.Context, db DBTX, arg InsertCustomerAlertRuleParams) (AlertRule, error) {
@@ -26838,6 +27058,9 @@ func (q *Queries) InsertCustomerAlertRule(ctx context.Context, db DBTX, arg Inse
 		arg.CooldownMinutes,
 		arg.State,
 		arg.PostDeployRollbackWindowSeconds,
+		arg.CustomMetricName,
+		arg.SloID,
+		arg.SyntheticCheckID,
 	)
 	var i AlertRule
 	err := row.Scan(
@@ -26864,6 +27087,9 @@ func (q *Queries) InsertCustomerAlertRule(ctx context.Context, db DBTX, arg Inse
 		&i.PostDeployRollbackWindowSeconds,
 		&i.EventSubscriptionID,
 		&i.EdgeRuleID,
+		&i.CustomMetricName,
+		&i.SloID,
+		&i.SyntheticCheckID,
 	)
 	return i, err
 }
@@ -29047,6 +29273,58 @@ func (q *Queries) InsertManagedPostgresUsageImport(ctx context.Context, db DBTX,
 		arg.CreatedAt,
 	)
 	return err
+}
+
+const insertNotificationChannel = `-- name: InsertNotificationChannel :one
+
+INSERT INTO notification_channels (account_id, name, kind, target_sealed, target_hint, pagerduty_region, email)
+SELECT $1::uuid, $2::text, $3::text, $4::bytea,
+ $5::text, $6::text, $7::text
+WHERE (SELECT count(*) FROM notification_channels WHERE account_id = $1::uuid) < $8::integer
+RETURNING id, account_id, name, kind, target_sealed, target_hint, pagerduty_region, email, last_delivered_at, last_error, last_error_at, created_at, updated_at
+`
+
+type InsertNotificationChannelParams struct {
+	AccountID       pgtype.UUID
+	Name            string
+	Kind            string
+	TargetSealed    []byte
+	TargetHint      string
+	PagerdutyRegion pgtype.Text
+	Email           pgtype.Text
+	MaxPerAccount   int32
+}
+
+// ADR-749: alert notification channels (apid writes definitions).
+// The per-account cap is enforced inside the insert.
+func (q *Queries) InsertNotificationChannel(ctx context.Context, db DBTX, arg InsertNotificationChannelParams) (NotificationChannel, error) {
+	row := db.QueryRow(ctx, insertNotificationChannel,
+		arg.AccountID,
+		arg.Name,
+		arg.Kind,
+		arg.TargetSealed,
+		arg.TargetHint,
+		arg.PagerdutyRegion,
+		arg.Email,
+		arg.MaxPerAccount,
+	)
+	var i NotificationChannel
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.Name,
+		&i.Kind,
+		&i.TargetSealed,
+		&i.TargetHint,
+		&i.PagerdutyRegion,
+		&i.Email,
+		&i.LastDeliveredAt,
+		&i.LastError,
+		&i.LastErrorAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const insertOIDCExchangedToken = `-- name: InsertOIDCExchangedToken :one
@@ -31584,6 +31862,87 @@ func (q *Queries) InsertSourceBuildRootfs(ctx context.Context, db DBTX, arg Inse
 		&i.ExpiresAt,
 	)
 	return i, err
+}
+
+const insertSyntheticCheck = `-- name: InsertSyntheticCheck :one
+
+INSERT INTO synthetic_checks (account_id, app_id, name, method, path, expected_status, timeout_ms, interval_seconds)
+SELECT $1::uuid, $2::uuid, $3::text, $4::text, $5::text,
+ $6::integer, $7::integer, $8::integer
+WHERE (SELECT count(*) FROM synthetic_checks WHERE app_id = $2::uuid) < $9::integer
+RETURNING id, account_id, app_id, name, method, path, expected_status, timeout_ms, interval_seconds, enabled, created_at, updated_at
+`
+
+type InsertSyntheticCheckParams struct {
+	AccountID       pgtype.UUID
+	AppID           pgtype.UUID
+	Name            string
+	Method          string
+	Path            string
+	ExpectedStatus  pgtype.Int4
+	TimeoutMs       int32
+	IntervalSeconds int32
+	MaxPerApp       int32
+}
+
+// ADR-748: synthetic check definitions (apid is the only writer).
+// The per-app cap is enforced inside the insert, like app_slos.
+func (q *Queries) InsertSyntheticCheck(ctx context.Context, db DBTX, arg InsertSyntheticCheckParams) (SyntheticCheck, error) {
+	row := db.QueryRow(ctx, insertSyntheticCheck,
+		arg.AccountID,
+		arg.AppID,
+		arg.Name,
+		arg.Method,
+		arg.Path,
+		arg.ExpectedStatus,
+		arg.TimeoutMs,
+		arg.IntervalSeconds,
+		arg.MaxPerApp,
+	)
+	var i SyntheticCheck
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Name,
+		&i.Method,
+		&i.Path,
+		&i.ExpectedStatus,
+		&i.TimeoutMs,
+		&i.IntervalSeconds,
+		&i.Enabled,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const insertSyntheticCheckRun = `-- name: InsertSyntheticCheckRun :exec
+INSERT INTO synthetic_check_runs (check_id, started_at, ok, status_code, latency_ms, error_class)
+VALUES ($1::uuid, $2::timestamptz, $3::boolean,
+ $4::integer, $5::integer, $6::text)
+ON CONFLICT (check_id, started_at) DO NOTHING
+`
+
+type InsertSyntheticCheckRunParams struct {
+	CheckID    pgtype.UUID
+	StartedAt  pgtype.Timestamptz
+	Ok         bool
+	StatusCode int32
+	LatencyMs  int32
+	ErrorClass string
+}
+
+func (q *Queries) InsertSyntheticCheckRun(ctx context.Context, db DBTX, arg InsertSyntheticCheckRunParams) error {
+	_, err := db.Exec(ctx, insertSyntheticCheckRun,
+		arg.CheckID,
+		arg.StartedAt,
+		arg.Ok,
+		arg.StatusCode,
+		arg.LatencyMs,
+		arg.ErrorClass,
+	)
+	return err
 }
 
 const insertTenantScheduledWorkflowRun = `-- name: InsertTenantScheduledWorkflowRun :one
@@ -36086,6 +36445,82 @@ func (q *Queries) ListAlertRollbacks(ctx context.Context, db DBTX, arg ListAlert
 	return items, nil
 }
 
+const listAlertRuleChannels = `-- name: ListAlertRuleChannels :many
+SELECT c.id, c.account_id, c.name, c.kind, c.target_sealed, c.target_hint, c.pagerduty_region, c.email, c.last_delivered_at, c.last_error, c.last_error_at, c.created_at, c.updated_at FROM alert_rule_channels b JOIN notification_channels c ON c.id = b.channel_id
+WHERE b.rule_id = $1::uuid ORDER BY c.name
+`
+
+func (q *Queries) ListAlertRuleChannels(ctx context.Context, db DBTX, ruleID pgtype.UUID) ([]NotificationChannel, error) {
+	rows, err := db.Query(ctx, listAlertRuleChannels, ruleID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []NotificationChannel{}
+	for rows.Next() {
+		var i NotificationChannel
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.Name,
+			&i.Kind,
+			&i.TargetSealed,
+			&i.TargetHint,
+			&i.PagerdutyRegion,
+			&i.Email,
+			&i.LastDeliveredAt,
+			&i.LastError,
+			&i.LastErrorAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAllAppSLOs = `-- name: ListAllAppSLOs :many
+
+SELECT id, account_id, app_id, name, sli, latency_threshold_ms, objective_bp, window_days, created_at, updated_at FROM app_slos ORDER BY id
+`
+
+// ADR-747 slice 2: hourly SLO budget rows (meterd is the only writer).
+func (q *Queries) ListAllAppSLOs(ctx context.Context, db DBTX) ([]AppSlo, error) {
+	rows, err := db.Query(ctx, listAllAppSLOs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AppSlo{}
+	for rows.Next() {
+		var i AppSlo
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.AppID,
+			&i.Name,
+			&i.Sli,
+			&i.LatencyThresholdMs,
+			&i.ObjectiveBp,
+			&i.WindowDays,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listAllEventsPaged = `-- name: ListAllEventsPaged :many
 select id, at, actor, kind, subject, data
 from events
@@ -36154,6 +36589,125 @@ func (q *Queries) ListAllEventsPaged(ctx context.Context, db DBTX, arg ListAllEv
 			&i.Kind,
 			&i.Subject,
 			&i.Data,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAppDeploymentAuditBetween = `-- name: ListAppDeploymentAuditBetween :many
+SELECT da.id, da.deployment_id::text AS deployment_id, da.kind, da.at
+FROM deployment_audit da
+JOIN deployments d ON d.id = da.deployment_id
+JOIN apps a ON a.id = d.app_id
+WHERE a.id = $1::text::uuid
+  AND a.account_id = $2::text::uuid
+  AND da.at >= $3::timestamptz
+  AND da.at < $4::timestamptz
+ORDER BY da.at DESC, da.id DESC
+LIMIT $5::int
+`
+
+type ListAppDeploymentAuditBetweenParams struct {
+	AppID     string
+	AccountID string
+	Since     pgtype.Timestamptz
+	Until     pgtype.Timestamptz
+	RowLimit  int32
+}
+
+type ListAppDeploymentAuditBetweenRow struct {
+	ID           int64
+	DeploymentID string
+	Kind         string
+	At           pgtype.Timestamptz
+}
+
+// ADR-751 change timeline: one app's deployment_audit rows in [since, until).
+func (q *Queries) ListAppDeploymentAuditBetween(ctx context.Context, db DBTX, arg ListAppDeploymentAuditBetweenParams) ([]ListAppDeploymentAuditBetweenRow, error) {
+	rows, err := db.Query(ctx, listAppDeploymentAuditBetween,
+		arg.AppID,
+		arg.AccountID,
+		arg.Since,
+		arg.Until,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAppDeploymentAuditBetweenRow{}
+	for rows.Next() {
+		var i ListAppDeploymentAuditBetweenRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.DeploymentID,
+			&i.Kind,
+			&i.At,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAppEdgeRuleChangesBetween = `-- name: ListAppEdgeRuleChangesBetween :many
+SELECT e.id, e.rule_id::text AS rule_id, e.operation, e.created_at
+FROM edge_rule_change_log e
+JOIN apps a ON a.id = e.app_id
+WHERE a.id = $1::text::uuid
+  AND a.account_id = $2::text::uuid
+  AND e.created_at >= $3::timestamptz
+  AND e.created_at < $4::timestamptz
+ORDER BY e.created_at DESC, e.id DESC
+LIMIT $5::int
+`
+
+type ListAppEdgeRuleChangesBetweenParams struct {
+	AppID     string
+	AccountID string
+	Since     pgtype.Timestamptz
+	Until     pgtype.Timestamptz
+	RowLimit  int32
+}
+
+type ListAppEdgeRuleChangesBetweenRow struct {
+	ID        int64
+	RuleID    string
+	Operation string
+	CreatedAt pgtype.Timestamptz
+}
+
+// ADR-751 change timeline: one app's edge-rule mutations in [since, until).
+func (q *Queries) ListAppEdgeRuleChangesBetween(ctx context.Context, db DBTX, arg ListAppEdgeRuleChangesBetweenParams) ([]ListAppEdgeRuleChangesBetweenRow, error) {
+	rows, err := db.Query(ctx, listAppEdgeRuleChangesBetween,
+		arg.AppID,
+		arg.AccountID,
+		arg.Since,
+		arg.Until,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAppEdgeRuleChangesBetweenRow{}
+	for rows.Next() {
+		var i ListAppEdgeRuleChangesBetweenRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.RuleID,
+			&i.Operation,
+			&i.CreatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -36555,6 +37109,41 @@ func (q *Queries) ListAppPendingRollbacks(ctx context.Context, db DBTX, arg List
 			return nil, err
 		}
 		items = append(items, receipt)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAppSLOs = `-- name: ListAppSLOs :many
+SELECT id, account_id, app_id, name, sli, latency_threshold_ms, objective_bp, window_days, created_at, updated_at FROM app_slos WHERE app_id = $1::uuid ORDER BY name
+`
+
+func (q *Queries) ListAppSLOs(ctx context.Context, db DBTX, appID pgtype.UUID) ([]AppSlo, error) {
+	rows, err := db.Query(ctx, listAppSLOs, appID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AppSlo{}
+	for rows.Next() {
+		var i AppSlo
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.AppID,
+			&i.Name,
+			&i.Sli,
+			&i.LatencyThresholdMs,
+			&i.ObjectiveBp,
+			&i.WindowDays,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -38399,7 +38988,7 @@ func (q *Queries) ListCronsForApp(ctx context.Context, db DBTX, appID pgtype.UUI
 }
 
 const listCustomerAlertRulesByPreset = `-- name: ListCustomerAlertRulesByPreset :many
-SELECT r.id, r.account_id, r.app_id, r.name, r.enabled, r.metric, r.comparison, r.threshold, r.window_spec, r.failure_source, r.webhook_url, r.webhook_secret_sealed, r.cooldown_minutes, r.state, r.last_fired_at, r.last_evaluated_at, r.created_at, r.updated_at, r.org_id, r.action, r.post_deploy_rollback_window_seconds, r.event_subscription_id, r.edge_rule_id FROM alert_rules r WHERE r.account_id=$1 AND r.app_id=$2
+SELECT r.id, r.account_id, r.app_id, r.name, r.enabled, r.metric, r.comparison, r.threshold, r.window_spec, r.failure_source, r.webhook_url, r.webhook_secret_sealed, r.cooldown_minutes, r.state, r.last_fired_at, r.last_evaluated_at, r.created_at, r.updated_at, r.org_id, r.action, r.post_deploy_rollback_window_seconds, r.event_subscription_id, r.edge_rule_id, r.custom_metric_name, r.slo_id, r.synthetic_check_id FROM alert_rules r WHERE r.account_id=$1 AND r.app_id=$2
  AND r.name LIKE (SELECT p.display_name||' (%' FROM alert_presets p WHERE p.name=$3)
  ORDER BY r.created_at DESC LIMIT 2
 `
@@ -38443,6 +39032,9 @@ func (q *Queries) ListCustomerAlertRulesByPreset(ctx context.Context, db DBTX, a
 			&i.PostDeployRollbackWindowSeconds,
 			&i.EventSubscriptionID,
 			&i.EdgeRuleID,
+			&i.CustomMetricName,
+			&i.SloID,
+			&i.SyntheticCheckID,
 		); err != nil {
 			return nil, err
 		}
@@ -38455,7 +39047,7 @@ func (q *Queries) ListCustomerAlertRulesByPreset(ctx context.Context, db DBTX, a
 }
 
 const listCustomerAlertRulesForAccount = `-- name: ListCustomerAlertRulesForAccount :many
-SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id FROM alert_rules WHERE account_id=$1 ORDER BY created_at DESC
+SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id FROM alert_rules WHERE account_id=$1 ORDER BY created_at DESC
 `
 
 func (q *Queries) ListCustomerAlertRulesForAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]AlertRule, error) {
@@ -38491,6 +39083,9 @@ func (q *Queries) ListCustomerAlertRulesForAccount(ctx context.Context, db DBTX,
 			&i.PostDeployRollbackWindowSeconds,
 			&i.EventSubscriptionID,
 			&i.EdgeRuleID,
+			&i.CustomMetricName,
+			&i.SloID,
+			&i.SyntheticCheckID,
 		); err != nil {
 			return nil, err
 		}
@@ -40575,7 +41170,7 @@ func (q *Queries) ListEnabledCrons(ctx context.Context, db DBTX) ([]ListEnabledC
 }
 
 const listEnabledCustomerAlertRules = `-- name: ListEnabledCustomerAlertRules :many
-SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id FROM alert_rules WHERE enabled=true ORDER BY account_id
+SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id FROM alert_rules WHERE enabled=true ORDER BY account_id
 `
 
 func (q *Queries) ListEnabledCustomerAlertRules(ctx context.Context, db DBTX) ([]AlertRule, error) {
@@ -40611,6 +41206,9 @@ func (q *Queries) ListEnabledCustomerAlertRules(ctx context.Context, db DBTX) ([
 			&i.PostDeployRollbackWindowSeconds,
 			&i.EventSubscriptionID,
 			&i.EdgeRuleID,
+			&i.CustomMetricName,
+			&i.SloID,
+			&i.SyntheticCheckID,
 		); err != nil {
 			return nil, err
 		}
@@ -42582,6 +43180,44 @@ func (q *Queries) ListMatchingEventWorkflows(ctx context.Context, db DBTX, arg L
 			return nil, err
 		}
 		items = append(items, recipient)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listNotificationChannels = `-- name: ListNotificationChannels :many
+SELECT id, account_id, name, kind, target_sealed, target_hint, pagerduty_region, email, last_delivered_at, last_error, last_error_at, created_at, updated_at FROM notification_channels WHERE account_id = $1::uuid ORDER BY name
+`
+
+func (q *Queries) ListNotificationChannels(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]NotificationChannel, error) {
+	rows, err := db.Query(ctx, listNotificationChannels, accountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []NotificationChannel{}
+	for rows.Next() {
+		var i NotificationChannel
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.Name,
+			&i.Kind,
+			&i.TargetSealed,
+			&i.TargetHint,
+			&i.PagerdutyRegion,
+			&i.Email,
+			&i.LastDeliveredAt,
+			&i.LastError,
+			&i.LastErrorAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -44956,6 +45592,70 @@ func (q *Queries) ListRouteProbeTargets(ctx context.Context, db DBTX, batchLimit
 	return items, nil
 }
 
+const listRunnableSyntheticChecks = `-- name: ListRunnableSyntheticChecks :many
+
+SELECT c.id, c.account_id, c.app_id, c.name, c.method, c.path, c.expected_status, c.timeout_ms, c.interval_seconds, c.enabled, c.created_at, c.updated_at, a.slug AS app_slug,
+ (SELECT max(r.started_at) FROM synthetic_check_runs r WHERE r.check_id = c.id)::timestamptz AS last_run_at
+FROM synthetic_checks c JOIN apps a ON a.id = c.app_id
+WHERE c.enabled AND a.status <> 'deleted'
+ORDER BY c.id
+`
+
+type ListRunnableSyntheticChecksRow struct {
+	ID              pgtype.UUID
+	AccountID       pgtype.UUID
+	AppID           pgtype.UUID
+	Name            string
+	Method          string
+	Path            string
+	ExpectedStatus  pgtype.Int4
+	TimeoutMs       int32
+	IntervalSeconds int32
+	Enabled         bool
+	CreatedAt       pgtype.Timestamptz
+	UpdatedAt       pgtype.Timestamptz
+	AppSlug         string
+	LastRunAt       pgtype.Timestamptz
+}
+
+// ADR-748 slice 2: synthetic check runs (meterd is the only writer).
+// Every enabled check on a live app, with its app slug and last run time;
+// the runner decides which are due.
+func (q *Queries) ListRunnableSyntheticChecks(ctx context.Context, db DBTX) ([]ListRunnableSyntheticChecksRow, error) {
+	rows, err := db.Query(ctx, listRunnableSyntheticChecks)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListRunnableSyntheticChecksRow{}
+	for rows.Next() {
+		var i ListRunnableSyntheticChecksRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.AppID,
+			&i.Name,
+			&i.Method,
+			&i.Path,
+			&i.ExpectedStatus,
+			&i.TimeoutMs,
+			&i.IntervalSeconds,
+			&i.Enabled,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.AppSlug,
+			&i.LastRunAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRuntimeReleases = `-- name: ListRuntimeReleases :many
 SELECT id, runtime, architecture, source_ref, guest_init_sha256, layout_version, base_sha256, created_at FROM runtime_releases WHERE runtime=$1 AND architecture=$2 ORDER BY created_at DESC,id LIMIT $3
 `
@@ -45054,6 +45754,35 @@ func (q *Queries) ListRuntimeUpgradeGatewayRepairApps(ctx context.Context, db DB
 			return nil, err
 		}
 		items = append(items, d_app_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSLOHourStarts = `-- name: ListSLOHourStarts :many
+SELECT hour FROM app_slo_hourly WHERE slo_id = $1::uuid AND hour >= $2::timestamptz
+`
+
+type ListSLOHourStartsParams struct {
+	SloID pgtype.UUID
+	Since pgtype.Timestamptz
+}
+
+func (q *Queries) ListSLOHourStarts(ctx context.Context, db DBTX, arg ListSLOHourStartsParams) ([]pgtype.Timestamptz, error) {
+	rows, err := db.Query(ctx, listSLOHourStarts, arg.SloID, arg.Since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.Timestamptz{}
+	for rows.Next() {
+		var hour pgtype.Timestamptz
+		if err := rows.Scan(&hour); err != nil {
+			return nil, err
+		}
+		items = append(items, hour)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -45164,6 +45893,80 @@ func (q *Queries) ListSnapshotDeploymentIDs(ctx context.Context, db DBTX) ([]str
 			return nil, err
 		}
 		items = append(items, deployment_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSyntheticCheckRuns = `-- name: ListSyntheticCheckRuns :many
+SELECT check_id, started_at, ok, status_code, latency_ms, error_class FROM synthetic_check_runs WHERE check_id = $1::uuid
+ORDER BY started_at DESC LIMIT $2::integer
+`
+
+type ListSyntheticCheckRunsParams struct {
+	CheckID pgtype.UUID
+	MaxRows int32
+}
+
+func (q *Queries) ListSyntheticCheckRuns(ctx context.Context, db DBTX, arg ListSyntheticCheckRunsParams) ([]SyntheticCheckRun, error) {
+	rows, err := db.Query(ctx, listSyntheticCheckRuns, arg.CheckID, arg.MaxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SyntheticCheckRun{}
+	for rows.Next() {
+		var i SyntheticCheckRun
+		if err := rows.Scan(
+			&i.CheckID,
+			&i.StartedAt,
+			&i.Ok,
+			&i.StatusCode,
+			&i.LatencyMs,
+			&i.ErrorClass,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSyntheticChecks = `-- name: ListSyntheticChecks :many
+SELECT id, account_id, app_id, name, method, path, expected_status, timeout_ms, interval_seconds, enabled, created_at, updated_at FROM synthetic_checks WHERE app_id = $1::uuid ORDER BY name
+`
+
+func (q *Queries) ListSyntheticChecks(ctx context.Context, db DBTX, appID pgtype.UUID) ([]SyntheticCheck, error) {
+	rows, err := db.Query(ctx, listSyntheticChecks, appID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SyntheticCheck{}
+	for rows.Next() {
+		var i SyntheticCheck
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.AppID,
+			&i.Name,
+			&i.Method,
+			&i.Path,
+			&i.ExpectedStatus,
+			&i.TimeoutMs,
+			&i.IntervalSeconds,
+			&i.Enabled,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -63384,6 +64187,30 @@ func (q *Queries) PurgeAccountManagedPostgresCreationReceipts(ctx context.Contex
 	return err
 }
 
+const purgeSLOHoursBefore = `-- name: PurgeSLOHoursBefore :execrows
+DELETE FROM app_slo_hourly WHERE hour < $1::timestamptz
+`
+
+func (q *Queries) PurgeSLOHoursBefore(ctx context.Context, db DBTX, before pgtype.Timestamptz) (int64, error) {
+	result, err := db.Exec(ctx, purgeSLOHoursBefore, before)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const purgeSyntheticCheckRunsBefore = `-- name: PurgeSyntheticCheckRunsBefore :execrows
+DELETE FROM synthetic_check_runs WHERE started_at < $1::timestamptz
+`
+
+func (q *Queries) PurgeSyntheticCheckRunsBefore(ctx context.Context, db DBTX, before pgtype.Timestamptz) (int64, error) {
+	result, err := db.Exec(ctx, purgeSyntheticCheckRunsBefore, before)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const putCustomerOperationIdempotency = `-- name: PutCustomerOperationIdempotency :exec
 INSERT INTO customer_operation_idempotency(scope_digest,account_id,app_id,operation_id,fingerprint,expires_at)
 VALUES($1::text,$2::uuid,$3::uuid,
@@ -67245,7 +68072,7 @@ func (q *Queries) ReadCloneWorkloadConfigurationBorrowers(ctx context.Context, d
 }
 
 const readCustomerAlertRule = `-- name: ReadCustomerAlertRule :one
-SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id FROM alert_rules WHERE id=$1
+SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id FROM alert_rules WHERE id=$1
 `
 
 func (q *Queries) ReadCustomerAlertRule(ctx context.Context, db DBTX, id pgtype.UUID) (AlertRule, error) {
@@ -67275,6 +68102,9 @@ func (q *Queries) ReadCustomerAlertRule(ctx context.Context, db DBTX, id pgtype.
 		&i.PostDeployRollbackWindowSeconds,
 		&i.EventSubscriptionID,
 		&i.EdgeRuleID,
+		&i.CustomMetricName,
+		&i.SloID,
+		&i.SyntheticCheckID,
 	)
 	return i, err
 }
@@ -74269,6 +75099,26 @@ func (q *Queries) RecordManagedPostgresSharedUsage(ctx context.Context, db DBTX,
 	return result.RowsAffected(), nil
 }
 
+const recordNotificationChannelDelivery = `-- name: RecordNotificationChannelDelivery :exec
+UPDATE notification_channels SET
+ last_delivered_at = CASE WHEN $1::text IS NULL THEN $2::timestamptz ELSE last_delivered_at END,
+ last_error = CASE WHEN $1::text IS NULL THEN last_error ELSE left($1::text, 256) END,
+ last_error_at = CASE WHEN $1::text IS NULL THEN last_error_at ELSE $2::timestamptz END
+WHERE id = $3::uuid
+`
+
+type RecordNotificationChannelDeliveryParams struct {
+	Err pgtype.Text
+	At  pgtype.Timestamptz
+	ID  pgtype.UUID
+}
+
+// meterd and apid's test send record the latest outcome; err NULL = success.
+func (q *Queries) RecordNotificationChannelDelivery(ctx context.Context, db DBTX, arg RecordNotificationChannelDeliveryParams) error {
+	_, err := db.Exec(ctx, recordNotificationChannelDelivery, arg.Err, arg.At, arg.ID)
+	return err
+}
+
 const recordProjectEnvironmentClonePostgresArchive = `-- name: RecordProjectEnvironmentClonePostgresArchive :one
 UPDATE project_environment_clone_postgres_archives a SET state='retained',retained_at=clock_timestamp(),
     plaintext_bytes=$1::bigint,ciphertext_bytes=$2::bigint,ciphertext_sha256=$3::text
@@ -76958,7 +77808,10 @@ WITH filtered AS (
            method,
            COALESCE(SUM(request_count), 0)::bigint AS requests,
            COALESCE(SUM(request_count) FILTER (WHERE status >= 400), 0)::bigint AS error_requests,
-           COALESCE(SUM(request_count) FILTER (WHERE cold_boot), 0)::bigint AS cold_boots
+           COALESCE(SUM(request_count) FILTER (WHERE cold_boot), 0)::bigint AS cold_boots,
+           -- Total gateway-observed request time; route cost is allocated by
+           -- this share (ADR-743) because time, not request count, holds RAM.
+           COALESCE(SUM(latency_ms::bigint * request_count), 0)::bigint AS request_time_ms
     FROM assigned
     GROUP BY dimension, method
 )
@@ -76967,6 +77820,7 @@ SELECT totals.dimension,
        totals.requests,
        totals.error_requests,
        totals.cold_boots,
+       totals.request_time_ms,
        percentiles.p50_ms,
        percentiles.p95_ms,
        percentiles.p99_ms,
@@ -77002,6 +77856,7 @@ type RequestTelemetryAnalyticsByDimensionRow struct {
 	Requests            int64
 	ErrorRequests       int64
 	ColdBoots           int64
+	RequestTimeMs       int64
 	P50Ms               int32
 	P95Ms               int32
 	P99Ms               int32
@@ -77040,6 +77895,7 @@ func (q *Queries) RequestTelemetryAnalyticsByDimension(ctx context.Context, db D
 			&i.Requests,
 			&i.ErrorRequests,
 			&i.ColdBoots,
+			&i.RequestTimeMs,
 			&i.P50Ms,
 			&i.P95Ms,
 			&i.P99Ms,
@@ -82598,6 +83454,37 @@ func (q *Queries) SetServiceCapacityProtection(ctx context.Context, db DBTX, ena
 	return snapshot, err
 }
 
+const setSyntheticCheckEnabled = `-- name: SetSyntheticCheckEnabled :one
+UPDATE synthetic_checks SET enabled = $1::boolean, updated_at = now()
+WHERE app_id = $2::uuid AND id = $3::uuid RETURNING id, account_id, app_id, name, method, path, expected_status, timeout_ms, interval_seconds, enabled, created_at, updated_at
+`
+
+type SetSyntheticCheckEnabledParams struct {
+	Enabled bool
+	AppID   pgtype.UUID
+	ID      pgtype.UUID
+}
+
+func (q *Queries) SetSyntheticCheckEnabled(ctx context.Context, db DBTX, arg SetSyntheticCheckEnabledParams) (SyntheticCheck, error) {
+	row := db.QueryRow(ctx, setSyntheticCheckEnabled, arg.Enabled, arg.AppID, arg.ID)
+	var i SyntheticCheck
+	err := row.Scan(
+		&i.ID,
+		&i.AccountID,
+		&i.AppID,
+		&i.Name,
+		&i.Method,
+		&i.Path,
+		&i.ExpectedStatus,
+		&i.TimeoutMs,
+		&i.IntervalSeconds,
+		&i.Enabled,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const setUDPListenerEnabled = `-- name: SetUDPListenerEnabled :one
 UPDATE app_udp_listeners SET enabled = $1, updated_at = now()
 WHERE id = $2::text::uuid RETURNING id, account_id, app_id, listener_name, guest_port, public_port, protocol, enabled, created_at, updated_at
@@ -83172,6 +84059,29 @@ func (q *Queries) SumOpenUploadSessionBytesByAccount(ctx context.Context, db DBT
 	var bytes int64
 	err := row.Scan(&bytes)
 	return bytes, err
+}
+
+const sumSLOHours = `-- name: SumSLOHours :one
+SELECT coalesce(sum(good), 0)::bigint AS good, coalesce(sum(total), 0)::bigint AS total, count(*)::bigint AS hours
+FROM app_slo_hourly WHERE slo_id = $1::uuid AND hour >= $2::timestamptz
+`
+
+type SumSLOHoursParams struct {
+	SloID pgtype.UUID
+	Since pgtype.Timestamptz
+}
+
+type SumSLOHoursRow struct {
+	Good  int64
+	Total int64
+	Hours int64
+}
+
+func (q *Queries) SumSLOHours(ctx context.Context, db DBTX, arg SumSLOHoursParams) (SumSLOHoursRow, error) {
+	row := db.QueryRow(ctx, sumSLOHours, arg.SloID, arg.Since)
+	var i SumSLOHoursRow
+	err := row.Scan(&i.Good, &i.Total, &i.Hours)
+	return i, err
 }
 
 const summarizeCustomerOperationWorkflowAttention = `-- name: SummarizeCustomerOperationWorkflowAttention :one
@@ -83856,6 +84766,30 @@ WHERE scaling.app_id=a.id AND a.id=$1::uuid AND scaling.scope='production'
 func (q *Queries) SyncProductionScalingStates(ctx context.Context, db DBTX, appID pgtype.UUID) error {
 	_, err := db.Exec(ctx, syncProductionScalingStates, appID)
 	return err
+}
+
+const syntheticCheckRunStats = `-- name: SyntheticCheckRunStats :one
+SELECT count(*)::bigint AS runs, count(*) FILTER (WHERE ok)::bigint AS ok_runs,
+ coalesce(percentile_cont(0.95) WITHIN GROUP (ORDER BY latency_ms) FILTER (WHERE ok), 0)::double precision AS p95_latency_ms
+FROM synthetic_check_runs WHERE check_id = $1::uuid AND started_at >= $2::timestamptz
+`
+
+type SyntheticCheckRunStatsParams struct {
+	CheckID pgtype.UUID
+	Since   pgtype.Timestamptz
+}
+
+type SyntheticCheckRunStatsRow struct {
+	Runs         int64
+	OkRuns       int64
+	P95LatencyMs float64
+}
+
+func (q *Queries) SyntheticCheckRunStats(ctx context.Context, db DBTX, arg SyntheticCheckRunStatsParams) (SyntheticCheckRunStatsRow, error) {
+	row := db.QueryRow(ctx, syntheticCheckRunStats, arg.CheckID, arg.Since)
+	var i SyntheticCheckRunStatsRow
+	err := row.Scan(&i.Runs, &i.OkRuns, &i.P95LatencyMs)
+	return i, err
 }
 
 const touchCustomerOperationWorkflowStep = `-- name: TouchCustomerOperationWorkflowStep :exec
@@ -84786,7 +85720,7 @@ UPDATE alert_rules SET name=coalesce($1::text,name),enabled=coalesce($2::boolean
  webhook_secret_sealed=coalesce($9::bytea,webhook_secret_sealed),
  cooldown_minutes=coalesce($10::integer,cooldown_minutes),
  post_deploy_rollback_window_seconds=coalesce($11::integer,post_deploy_rollback_window_seconds),updated_at=now()
-WHERE id=$12 RETURNING id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id
+WHERE id=$12 RETURNING id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id
 `
 
 type UpdateCustomerAlertRuleParams struct {
@@ -84844,6 +85778,9 @@ func (q *Queries) UpdateCustomerAlertRule(ctx context.Context, db DBTX, arg Upda
 		&i.PostDeployRollbackWindowSeconds,
 		&i.EventSubscriptionID,
 		&i.EdgeRuleID,
+		&i.CustomMetricName,
+		&i.SloID,
+		&i.SyntheticCheckID,
 	)
 	return i, err
 }
@@ -86116,6 +87053,29 @@ func (q *Queries) UpsertRegressionObservation(ctx context.Context, db DBTX, arg 
 		arg.ErrorRatePct,
 		arg.ErrorRateBasePct,
 		arg.ErrorCount,
+	)
+	return err
+}
+
+const upsertSLOHour = `-- name: UpsertSLOHour :exec
+INSERT INTO app_slo_hourly (slo_id, hour, good, total)
+VALUES ($1::uuid, $2::timestamptz, $3::bigint, $4::bigint)
+ON CONFLICT (slo_id, hour) DO UPDATE SET good = EXCLUDED.good, total = EXCLUDED.total
+`
+
+type UpsertSLOHourParams struct {
+	SloID pgtype.UUID
+	Hour  pgtype.Timestamptz
+	Good  int64
+	Total int64
+}
+
+func (q *Queries) UpsertSLOHour(ctx context.Context, db DBTX, arg UpsertSLOHourParams) error {
+	_, err := db.Exec(ctx, upsertSLOHour,
+		arg.SloID,
+		arg.Hour,
+		arg.Good,
+		arg.Total,
 	)
 	return err
 }

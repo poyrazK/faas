@@ -1103,6 +1103,8 @@ func cmdAppDispatch(args []string) int {
 		switch args[1] {
 		case subHealth:
 			return cmdAppHealth(slug, args[2:])
+		case subChanges:
+			return cmdAppChanges(slug, args[2:])
 		case subScale:
 			return cmdAppScale(slug, args[2:])
 		case "costs":

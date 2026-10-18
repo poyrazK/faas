@@ -22,6 +22,7 @@ package api
 // the FK lookup.
 
 import (
+	"fmt"
 	"math"
 	"strings"
 	"time"
@@ -160,6 +161,9 @@ var AllowedAlertRuleMetrics = []string{
 	"workflow_pending_age_seconds",
 	"workflow_waiting_age_seconds",
 	"workflow_due_age_seconds",
+	// ADR-746: guest log lines classified as error / warn by vmmd.
+	"log_error_lines",
+	"log_warn_lines",
 	// ADR-1192: edge-rule activity from the ADR-960 hourly hit counts.
 	"edge_rule_hits",
 	"edge_rule_log_hits",
@@ -168,6 +172,12 @@ var AllowedAlertRuleMetrics = []string{
 	"cold_wake_rate_pct",
 	"daily_cost_cents",
 	"slo_burn_rate",
+	// ADR-747: one customer SLO, named by slo_id.
+	AlertRuleMetricSLOBudgetBurn,
+	AlertRuleMetricSLOBudgetRemaining,
+	// ADR-748: one synthetic check, named by synthetic_check_id.
+	AlertRuleMetricSyntheticConsecutiveFailures,
+	AlertRuleMetricSyntheticLatencyP95,
 	// SAFE-RELEASES-OBS PR-B (issue #976 / ADR-122): 4 new
 	// Prometheus-counter-backed tripwires for the canary/safedeploy
 	// lifecycle. The actual firing happens in Prometheus against
@@ -186,10 +196,84 @@ var AllowedAlertRuleMetrics = []string{
 	"mcp_policy_unverified",
 	MetricMCPCatalogDrift, MetricMCPCatalogMonitorUnavailable,
 	MetricMCPOAuthReauthorization, MetricMCPOAuthRenewalFailed, MetricMCPOAuthRetirementExpiring, MetricMCPOAuthIssuanceUnknown,
+	// ADR-745: one pushed custom metric, named by custom_metric_name.
+	AlertRuleMetricCustomMetric,
+}
+
+// AlertRuleMetricCustomMetric is the metric whose rules name one pushed
+// custom metric (ADR-745). The rule is app-scoped and webhook-only.
+const AlertRuleMetricCustomMetric = "custom_metric"
+
+// CustomMetricAlertWindowSpecs are the windows a custom_metric rule may use:
+// longer windows average a pushed gauge over days, which hides the incident
+// the alert exists to catch. Mirrors alert_rules_custom_metric_chk.
+var CustomMetricAlertWindowSpecs = []string{"5m", "15m", "1h", "6h", "24h"}
+
+// ADR-747 SLO alert metrics. Both are app-scoped and name one SLO by slo_id.
+// slo_budget_burn is the multi-window burn rate against the SLO's own
+// objective; slo_budget_remaining_pct is the share of its budget left.
+const (
+	AlertRuleMetricSLOBudgetBurn      = "slo_budget_burn"
+	AlertRuleMetricSLOBudgetRemaining = "slo_budget_remaining_pct"
+)
+
+// IsSLOAlertMetric reports whether a metric names a customer SLO via slo_id.
+func IsSLOAlertMetric(metric string) bool {
+	return metric == AlertRuleMetricSLOBudgetBurn || metric == AlertRuleMetricSLOBudgetRemaining
+}
+
+// ADR-748 synthetic check alert metrics. Both are app-scoped and name one
+// check by synthetic_check_id: the count of failed runs since the last
+// success, and the p95 latency of successful runs in the rule window.
+const (
+	AlertRuleMetricSyntheticConsecutiveFailures = "synthetic_check_consecutive_failures"
+	AlertRuleMetricSyntheticLatencyP95          = "synthetic_check_latency_p95_ms"
+)
+
+// IsSyntheticCheckAlertMetric reports whether a metric names a check via synthetic_check_id.
+func IsSyntheticCheckAlertMetric(metric string) bool {
+	return metric == AlertRuleMetricSyntheticConsecutiveFailures || metric == AlertRuleMetricSyntheticLatencyP95
 }
 
 // AllowedAlertRuleComparisons is the closed set for the `comparison` field.
 var AllowedAlertRuleComparisons = []string{"gt", "gte", "lt", "lte"}
+
+// Baseline comparisons (ADR-744): threshold is a multiplier of the app's
+// usual value rather than an absolute number.
+const (
+	AlertComparisonAboveBaseline = "above_baseline"
+	AlertComparisonBelowBaseline = "below_baseline"
+)
+
+// IsAnomalyAlertComparison reports whether comparison is a baseline one.
+func IsAnomalyAlertComparison(comparison string) bool {
+	return comparison == AlertComparisonAboveBaseline || comparison == AlertComparisonBelowBaseline
+}
+
+// ValidateAnomalyAlertRule checks a baseline rule's metric, multiplier, and
+// scope. It returns "" when valid, otherwise a customer-facing reason.
+func ValidateAnomalyAlertRule(metric, comparison string, multiplier float64, appScoped bool) string {
+	if _, ok := AnomalyAlertMetrics[metric]; !ok {
+		return "baseline comparisons support error_rate_pct, latency_p95_ms, latency_p99_ms, cold_start_pct, and request_count"
+	}
+	if !appScoped {
+		return "baseline comparisons require an app-scoped rule"
+	}
+	switch comparison {
+	case AlertComparisonAboveBaseline:
+		if multiplier < AnomalyAboveMultiplierMin || multiplier > AnomalyAboveMultiplierMax {
+			return fmt.Sprintf("above_baseline threshold is a multiplier between %.1f and %.0f", AnomalyAboveMultiplierMin, AnomalyAboveMultiplierMax)
+		}
+	case AlertComparisonBelowBaseline:
+		if metric != "request_count" {
+			return "below_baseline is supported for request_count only"
+		}
+		if multiplier < AnomalyBelowMultiplierMin || multiplier > AnomalyBelowMultiplierMax {
+			return fmt.Sprintf("below_baseline threshold is a fraction between %.2f and %.2f", AnomalyBelowMultiplierMin, AnomalyBelowMultiplierMax)
+		}
+	}
+	return ""
+}
 
 // AllowedAlertRuleWindowSpecs is the closed set for the `window_spec` field.
 // Bounded by Prometheus retention (15d).
@@ -241,7 +325,7 @@ func AlertRuleActionAllowedForMetric(metric, action string) bool {
 	if IsEventRetentionAlertMetric(metric) || IsEventRecoveryAlertMetric(metric) || IsEventConsumerAlertMetric(metric) || IsEdgeSecurityAlertMetric(metric) ||
 		metric == "workflow_failures" || metric == "workflow_schedule_quota_skips" ||
 		metric == "workflow_pending_age_seconds" || metric == "workflow_waiting_age_seconds" || metric == "workflow_due_age_seconds" ||
-		IsEdgeRuleAlertMetric(metric) {
+		metric == AlertRuleMetricCustomMetric || IsEdgeRuleAlertMetric(metric) {
 		return action == "" || action == "webhook"
 	}
 	if IsMCPConnectionHealthMetric(metric) || IsMCPCatalogMonitorMetric(metric) || IsMCPPolicyConvergenceMetric(metric) || metric == "mcp_tasks_oldest_age_seconds" || metric == "mcp_tasks_metrics_stale" || metric == "mcp_task_promotion_hold_age_seconds" {
@@ -264,10 +348,16 @@ type CreateAlertRuleRequest struct {
 	Threshold                       float64 `json:"threshold"`
 	WindowSpec                      string  `json:"window_spec"`
 	FailureSource                   string  `json:"failure_source,omitempty"`
-	Action                          *string `json:"action,omitempty"`
-	WebhookURL                      string  `json:"webhook_url"`
-	WebhookSecret                   string  `json:"webhook_secret"`
-	CooldownMinutes                 *int    `json:"cooldown_minutes,omitempty"`
+	CustomMetricName                string  `json:"custom_metric_name,omitempty"`
+	SLOID                           string  `json:"slo_id,omitempty"`
+	SyntheticCheckID                string  `json:"synthetic_check_id,omitempty"`
+	// ChannelIDs are ADR-749 notification channels the rule delivers to.
+	// With at least one channel, webhook_url and webhook_secret may be omitted.
+	ChannelIDs      []string `json:"channel_ids,omitempty"`
+	Action          *string  `json:"action,omitempty"`
+	WebhookURL      string   `json:"webhook_url"`
+	WebhookSecret   string   `json:"webhook_secret"`
+	CooldownMinutes *int     `json:"cooldown_minutes,omitempty"`
 }
 
 // UpdateAlertRuleRequest is the PATCH body. Every editable field is
@@ -289,10 +379,13 @@ type UpdateAlertRuleRequest struct {
 	Comparison                      *string  `json:"comparison,omitempty"`
 	Threshold                       *float64 `json:"threshold,omitempty"`
 	WindowSpec                      *string  `json:"window_spec,omitempty"`
-	Action                          *string  `json:"action,omitempty"`
-	WebhookURL                      *string  `json:"webhook_url,omitempty"`
-	WebhookSecret                   *string  `json:"webhook_secret,omitempty"`
-	CooldownMinutes                 *int     `json:"cooldown_minutes,omitempty"`
+	// ChannelIDs replaces the rule's notification channels; an empty list
+	// clears them (allowed only while the rule has a webhook).
+	ChannelIDs      *[]string `json:"channel_ids,omitempty"`
+	Action          *string   `json:"action,omitempty"`
+	WebhookURL      *string   `json:"webhook_url,omitempty"`
+	WebhookSecret   *string   `json:"webhook_secret,omitempty"`
+	CooldownMinutes *int      `json:"cooldown_minutes,omitempty"`
 }
 
 // RotateAlertRuleSecretRequest carries a caller-supplied replacement. The
@@ -313,27 +406,31 @@ type RotateAlertRuleSecretRequest struct {
 // state.* typed values at the boundary (handles the import cycle
 // for us).
 type AlertRuleResponse struct {
-	EventSubscriptionID             string  `json:"event_subscription_id,omitempty"`
-	EdgeRuleID                      string  `json:"edge_rule_id,omitempty"`
-	PostDeployRollbackWindowSeconds int     `json:"post_deploy_rollback_window_seconds,omitempty"`
-	ID                              string  `json:"id"`
-	AppID                           string  `json:"app_id"`
-	Name                            string  `json:"name"`
-	Enabled                         bool    `json:"enabled"`
-	Metric                          string  `json:"metric"`
-	Comparison                      string  `json:"comparison"`
-	Threshold                       float64 `json:"threshold"`
-	WindowSpec                      string  `json:"window_spec"`
-	FailureSource                   string  `json:"failure_source,omitempty"`
-	Action                          string  `json:"action"`
-	WebhookURL                      string  `json:"webhook_url"`
-	WebhookSecretSealedMasked       string  `json:"webhook_secret_sealed_masked"`
-	CooldownMinutes                 int     `json:"cooldown_minutes"`
-	State                           string  `json:"state"`
-	LastFiredAt                     string  `json:"last_fired_at,omitempty"`
-	LastEvaluatedAt                 string  `json:"last_evaluated_at,omitempty"`
-	CreatedAt                       string  `json:"created_at"`
-	UpdatedAt                       string  `json:"updated_at"`
+	EventSubscriptionID             string   `json:"event_subscription_id,omitempty"`
+	EdgeRuleID                      string   `json:"edge_rule_id,omitempty"`
+	PostDeployRollbackWindowSeconds int      `json:"post_deploy_rollback_window_seconds,omitempty"`
+	ID                              string   `json:"id"`
+	AppID                           string   `json:"app_id"`
+	Name                            string   `json:"name"`
+	Enabled                         bool     `json:"enabled"`
+	Metric                          string   `json:"metric"`
+	Comparison                      string   `json:"comparison"`
+	Threshold                       float64  `json:"threshold"`
+	WindowSpec                      string   `json:"window_spec"`
+	FailureSource                   string   `json:"failure_source,omitempty"`
+	CustomMetricName                string   `json:"custom_metric_name,omitempty"`
+	SLOID                           string   `json:"slo_id,omitempty"`
+	SyntheticCheckID                string   `json:"synthetic_check_id,omitempty"`
+	ChannelIDs                      []string `json:"channel_ids,omitempty"`
+	Action                          string   `json:"action"`
+	WebhookURL                      string   `json:"webhook_url"`
+	WebhookSecretSealedMasked       string   `json:"webhook_secret_sealed_masked"`
+	CooldownMinutes                 int      `json:"cooldown_minutes"`
+	State                           string   `json:"state"`
+	LastFiredAt                     string   `json:"last_fired_at,omitempty"`
+	LastEvaluatedAt                 string   `json:"last_evaluated_at,omitempty"`
+	CreatedAt                       string   `json:"created_at"`
+	UpdatedAt                       string   `json:"updated_at"`
 }
 
 // AlertRuleRow is the closed-set-typed counterpart of AlertRuleResponse,
@@ -355,6 +452,9 @@ type AlertRuleRow struct {
 	Threshold                       float64
 	WindowSpec                      string
 	FailureSource                   string
+	CustomMetricName                string
+	SLOID                           string
+	SyntheticCheckID                string
 	Action                          string
 	WebhookURL                      string
 	CooldownMinutes                 int
@@ -388,6 +488,9 @@ func AlertRuleResponseFromRow(r AlertRuleRow) AlertRuleResponse {
 		Threshold:                       r.Threshold,
 		WindowSpec:                      r.WindowSpec,
 		FailureSource:                   r.FailureSource,
+		CustomMetricName:                r.CustomMetricName,
+		SLOID:                           r.SLOID,
+		SyntheticCheckID:                r.SyntheticCheckID,
 		Action:                          r.Action,
 		WebhookURL:                      r.WebhookURL,
 		WebhookSecretSealedMasked:       AlertRuleWebhookSecretMasked,

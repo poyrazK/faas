@@ -2210,6 +2210,9 @@ type CustomMetric struct {
 	Name       string
 	Value      float64
 	ObservedAt time.Time
+	// Kind is CustomMetricKindGauge (ADR-202 pushes) or
+	// CustomMetricKindCounter (ADR-745 OTLP cumulative sums).
+	Kind string
 }
 
 // MCPTaskHandlerCompatibility is a bounded, payload-free queue summary for a
@@ -2234,6 +2237,13 @@ type MCPTaskCompatibilityReport struct {
 	Truncated  bool
 	ObservedAt time.Time
 }
+
+// Custom metric kinds (ADR-745). Counters are charted with rate() and are
+// never a scaling signal: a cumulative value only grows.
+const (
+	CustomMetricKindGauge   = "gauge"
+	CustomMetricKindCounter = "counter"
+)
 
 // EffectiveTargets is the ADR-194 reader for a policy's declared signals.
 // It is the ONLY way a trigger should reach the targets: callers that read
@@ -3539,12 +3549,24 @@ const (
 	AlertMetricWorkflowPendingAge     AlertMetric = "workflow_pending_age_seconds"
 	AlertMetricWorkflowWaitingAge     AlertMetric = "workflow_waiting_age_seconds"
 	AlertMetricWorkflowDueAge         AlertMetric = "workflow_due_age_seconds"
-	AlertMetricEdgeRuleHits           AlertMetric = "edge_rule_hits"     // ADR-1192
-	AlertMetricEdgeRuleLogHits        AlertMetric = "edge_rule_log_hits" // ADR-1192
+	// ADR-746: guest log lines vmmd classified as error / warn in the window.
+	AlertMetricLogErrorLines   AlertMetric = "log_error_lines"
+	AlertMetricLogWarnLines    AlertMetric = "log_warn_lines"
+	AlertMetricEdgeRuleHits    AlertMetric = "edge_rule_hits"     // ADR-1192
+	AlertMetricEdgeRuleLogHits AlertMetric = "edge_rule_log_hits" // ADR-1192
 	// AlertMetricSLOBurnRate is the customer-facing ADR-082 API
 	// availability burn-rate signal. The evaluator combines the 1h
 	// 14.4x and 6h 6x Google SRE windows into one effective value.
 	AlertMetricSLOBurnRate AlertMetric = "slo_burn_rate"
+	// AlertMetricCustomMetric watches one ADR-202 pushed metric, named by
+	// AlertRule.CustomMetricName (ADR-745).
+	AlertMetricCustomMetric AlertMetric = "custom_metric"
+	// ADR-747: rules on one customer SLO, named by AlertRule.SLOID.
+	AlertMetricSLOBudgetBurn      AlertMetric = "slo_budget_burn"
+	AlertMetricSLOBudgetRemaining AlertMetric = "slo_budget_remaining_pct"
+	// ADR-748: rules on one synthetic check, named by AlertRule.SyntheticCheckID.
+	AlertMetricSyntheticConsecutiveFailures AlertMetric = "synthetic_check_consecutive_failures"
+	AlertMetricSyntheticLatencyP95          AlertMetric = "synthetic_check_latency_p95_ms"
 	// AlertMetricCanaryStuckStep (SAFE-RELEASES-OBS PR-B) is the
 	// Prometheus-counter-backed tripwire for a canary sitting at the
 	// same step past StuckAfterDuration. The actual firing happens
@@ -3587,6 +3609,9 @@ const (
 	AlertGte AlertComparison = "gte"
 	AlertLt  AlertComparison = "lt"
 	AlertLte AlertComparison = "lte"
+	// ADR-744: threshold is a multiplier of the app's usual value.
+	AlertAboveBaseline AlertComparison = "above_baseline"
+	AlertBelowBaseline AlertComparison = "below_baseline"
 )
 
 // AlertWindowSpec is the closed window vocabulary; sharing it with the
@@ -3746,6 +3771,9 @@ type AlertRule struct {
 	Threshold                       float64
 	WindowSpec                      AlertWindowSpec
 	FailureSource                   AlertFailureSource // empty unless Metric == failed_invocations
+	CustomMetricName                string             // empty unless Metric == custom_metric (ADR-745)
+	SLOID                           string             // set only for the ADR-747 SLO metrics
+	SyntheticCheckID                string             // set only for the ADR-748 synthetic check metrics
 	Action                          AlertAction        // issue #976 / ADR-122 / SAFE-RELEASES-B
 	WebhookURL                      string
 	WebhookSecretSealed             []byte // age/X25519 ciphertext; never logged
@@ -9282,6 +9310,7 @@ type AppLogDrainKind string
 const (
 	AppLogDrainKindHTTPJSON AppLogDrainKind = "http_json"
 	AppLogDrainKindOTLP     AppLogDrainKind = "otlp"
+	AppLogDrainKindDatadog  AppLogDrainKind = "datadog" // ADR-752
 )
 
 // AppLogDrain is one customer-owned runtime log destination. AuthHeaderSealed

@@ -43,6 +43,7 @@ class AlertRuleResponse:
     threshold: float
     window_spec: AlertRuleResponseWindowSpec
     webhook_url: str
+    """Signed webhook destination; empty for a rule that delivers only to notification channels."""
     webhook_secret_sealed_masked: str
     """Literal "***" — the plaintext is never returned."""
     cooldown_minutes: int
@@ -67,6 +68,15 @@ class AlertRuleResponse:
     deployment-specific error_rate_pct evidence, a gt or gte comparison, and recorded predecessor lineage."""
     failure_source: AlertRuleResponseFailureSource | Unset = UNSET
     """Source dimension for failed_invocations; omit when metric is not failed_invocations (xor_chk)."""
+    custom_metric_name: str | Unset = UNSET
+    """The pushed custom metric a custom_metric rule watches (ADR-745). Present only when metric is custom_metric."""
+    slo_id: UUID | Unset = UNSET
+    """The customer SLO an slo_budget_burn or slo_budget_remaining_pct rule watches (ADR-747); absent for other
+    metrics."""
+    synthetic_check_id: UUID | Unset = UNSET
+    """The synthetic check a synthetic_check_* rule watches (ADR-748); absent for other metrics."""
+    channel_ids: list[UUID] | Unset = UNSET
+    """Notification channels (ADR-749) the rule delivers fires and resolves to."""
     last_fired_at: datetime.datetime | Unset = UNSET
     last_evaluated_at: datetime.datetime | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -116,6 +126,23 @@ class AlertRuleResponse:
         if not isinstance(self.failure_source, Unset):
             failure_source = self.failure_source
 
+        custom_metric_name = self.custom_metric_name
+
+        slo_id: str | Unset = UNSET
+        if not isinstance(self.slo_id, Unset):
+            slo_id = str(self.slo_id)
+
+        synthetic_check_id: str | Unset = UNSET
+        if not isinstance(self.synthetic_check_id, Unset):
+            synthetic_check_id = str(self.synthetic_check_id)
+
+        channel_ids: list[str] | Unset = UNSET
+        if not isinstance(self.channel_ids, Unset):
+            channel_ids = []
+            for channel_ids_item_data in self.channel_ids:
+                channel_ids_item = str(channel_ids_item_data)
+                channel_ids.append(channel_ids_item)
+
         last_fired_at: str | Unset = UNSET
         if not isinstance(self.last_fired_at, Unset):
             last_fired_at = self.last_fired_at.isoformat()
@@ -153,6 +180,14 @@ class AlertRuleResponse:
             field_dict["post_deploy_rollback_window_seconds"] = post_deploy_rollback_window_seconds
         if failure_source is not UNSET:
             field_dict["failure_source"] = failure_source
+        if custom_metric_name is not UNSET:
+            field_dict["custom_metric_name"] = custom_metric_name
+        if slo_id is not UNSET:
+            field_dict["slo_id"] = slo_id
+        if synthetic_check_id is not UNSET:
+            field_dict["synthetic_check_id"] = synthetic_check_id
+        if channel_ids is not UNSET:
+            field_dict["channel_ids"] = channel_ids
         if last_fired_at is not UNSET:
             field_dict["last_fired_at"] = last_fired_at
         if last_evaluated_at is not UNSET:
@@ -216,6 +251,31 @@ class AlertRuleResponse:
         else:
             failure_source = check_alert_rule_response_failure_source(_failure_source)
 
+        custom_metric_name = d.pop("custom_metric_name", UNSET)
+
+        _slo_id = d.pop("slo_id", UNSET)
+        slo_id: UUID | Unset
+        if isinstance(_slo_id, Unset):
+            slo_id = UNSET
+        else:
+            slo_id = UUID(_slo_id)
+
+        _synthetic_check_id = d.pop("synthetic_check_id", UNSET)
+        synthetic_check_id: UUID | Unset
+        if isinstance(_synthetic_check_id, Unset):
+            synthetic_check_id = UNSET
+        else:
+            synthetic_check_id = UUID(_synthetic_check_id)
+
+        _channel_ids = d.pop("channel_ids", UNSET)
+        channel_ids: list[UUID] | Unset = UNSET
+        if _channel_ids is not UNSET:
+            channel_ids = []
+            for channel_ids_item_data in _channel_ids:
+                channel_ids_item = UUID(channel_ids_item_data)
+
+                channel_ids.append(channel_ids_item)
+
         _last_fired_at = d.pop("last_fired_at", UNSET)
         last_fired_at: datetime.datetime | Unset
         if isinstance(_last_fired_at, Unset):
@@ -250,6 +310,10 @@ class AlertRuleResponse:
             edge_rule_id=edge_rule_id,
             post_deploy_rollback_window_seconds=post_deploy_rollback_window_seconds,
             failure_source=failure_source,
+            custom_metric_name=custom_metric_name,
+            slo_id=slo_id,
+            synthetic_check_id=synthetic_check_id,
+            channel_ids=channel_ids,
             last_fired_at=last_fired_at,
             last_evaluated_at=last_evaluated_at,
         )

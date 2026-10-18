@@ -7,6 +7,7 @@ CreateAlertRuleRequestMetric = Literal[
     "cert_issuance_failed",
     "cold_start_pct",
     "cold_wake_rate_pct",
+    "custom_metric",
     "daily_cost_cents",
     "deployment_failed",
     "edge_rejections",
@@ -47,6 +48,8 @@ CreateAlertRuleRequestMetric = Literal[
     "latency_p50_ms",
     "latency_p95_ms",
     "latency_p99_ms",
+    "log_error_lines",
+    "log_warn_lines",
     "mcp_catalog_drift",
     "mcp_catalog_monitor_unavailable",
     "mcp_oauth_issuance_unknown",
@@ -64,7 +67,11 @@ CreateAlertRuleRequestMetric = Literal[
     "pre_auth_target_threshold",
     "queue_depth",
     "request_count",
+    "slo_budget_burn",
+    "slo_budget_remaining_pct",
     "slo_burn_rate",
+    "synthetic_check_consecutive_failures",
+    "synthetic_check_latency_p95_ms",
 ]
 
 CREATE_ALERT_RULE_REQUEST_METRIC_VALUES: set[CreateAlertRuleRequestMetric] = {
@@ -74,6 +81,7 @@ CREATE_ALERT_RULE_REQUEST_METRIC_VALUES: set[CreateAlertRuleRequestMetric] = {
     "cert_issuance_failed",
     "cold_start_pct",
     "cold_wake_rate_pct",
+    "custom_metric",
     "daily_cost_cents",
     "deployment_failed",
     "edge_rejections",
@@ -114,6 +122,8 @@ CREATE_ALERT_RULE_REQUEST_METRIC_VALUES: set[CreateAlertRuleRequestMetric] = {
     "latency_p50_ms",
     "latency_p95_ms",
     "latency_p99_ms",
+    "log_error_lines",
+    "log_warn_lines",
     "mcp_catalog_drift",
     "mcp_catalog_monitor_unavailable",
     "mcp_oauth_issuance_unknown",
@@ -131,7 +141,11 @@ CREATE_ALERT_RULE_REQUEST_METRIC_VALUES: set[CreateAlertRuleRequestMetric] = {
     "pre_auth_target_threshold",
     "queue_depth",
     "request_count",
+    "slo_budget_burn",
+    "slo_budget_remaining_pct",
     "slo_burn_rate",
+    "synthetic_check_consecutive_failures",
+    "synthetic_check_latency_p95_ms",
 }
 
 

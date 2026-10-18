@@ -9,7 +9,7 @@ export type AppLogDrainResponse = {
   id: string;
   app_id: string;
   account_id: string;
-  kind: 'http_json' | 'otlp';
+  kind: 'http_json' | 'otlp' | 'datadog';
   target_url: string;
   auth_header_masked: '' | '***';
   enabled: boolean;

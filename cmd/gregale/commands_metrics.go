@@ -38,7 +38,7 @@ import (
 // metricsCmdUsage is the top-of-failure-line shown for `gregale metrics`
 // errors. Mirrors PrintUsage's docs URL convention (output.go:144) so
 // the line carries the stable docs site pointer.
-const metricsCmdUsage = "usage: gregale metrics <slug> [--range 5m] | --account [--range 5m] | --services [--range 1h]"
+const metricsCmdUsage = "usage: gregale metrics <slug> [--range 5m] [--custom NAME] | --account [--range 5m] | --services [--range 1h]"
 
 // metricsCmdDocsTopic is the docs topic slug passed to PrintUsage
 // when PrintUsage emits the trailing "Docs:" row. Keeps the CLI's
@@ -57,6 +57,7 @@ func cmdMetrics(args []string) int {
 	account := fs.Bool("account", false, "account-wide rollup (GET /v1/apps/metrics) — mutually exclusive with <slug>")
 	services := fs.Bool("services", false, "account service map of app-to-app calls (GET /v1/service-map)")
 	app := fs.String("app", "", appSlugFlagUsage)
+	custom := fs.String("custom", "", "show the history of one pushed custom metric (ADR-745)")
 	flags, pos := splitArgsForFlags(args, "account", "services")
 	if err := fs.Parse(flags); err != nil {
 		return 1
@@ -67,7 +68,7 @@ func cmdMetrics(args []string) int {
 		return 1
 	}
 	if *services {
-		if *account || len(pos) != 0 {
+		if *account || len(pos) != 0 || *custom != "" {
 			PrintUsage(os.Stderr, metricsCmdUsage, metricsCmdDocsTopic)
 			return 1
 		}
@@ -81,7 +82,7 @@ func cmdMetrics(args []string) int {
 		})
 		return cmdMetricsServices(serviceRange)
 	}
-	if *account && len(pos) != 0 {
+	if *account && (len(pos) != 0 || *custom != "") {
 		PrintUsage(os.Stderr, metricsCmdUsage, metricsCmdDocsTopic)
 		return 1
 	}
@@ -116,6 +117,17 @@ func cmdMetrics(args []string) int {
 		return 0
 	}
 	slug := pos[0]
+	if *custom != "" {
+		// An omitted --range defers to the history default (24h); the 5m
+		// per-app default above is not a history window.
+		seriesRange := ""
+		fs.Visit(func(f *flag.Flag) {
+			if f.Name == "range" {
+				seriesRange = *rng
+			}
+		})
+		return cmdMetricsCustom(client, slug, *custom, seriesRange)
+	}
 	m, err := client.GetAppMetrics(context.Background(), slug, *rng)
 	if err != nil {
 		return printErr("Could not fetch metrics", err)

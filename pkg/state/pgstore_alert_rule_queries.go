@@ -49,7 +49,13 @@ func alertOptionalInt(p *int) pgtype.Int4 {
 	return pgtype.Int4{Int32: int32(n), Valid: true}
 }
 func customerAlertRule(row sqlc.AlertRule) AlertRule {
-	r := AlertRule{ID: uuid.UUID(row.ID.Bytes).String(), AccountID: uuid.UUID(row.AccountID.Bytes).String(), Name: row.Name, Enabled: row.Enabled, Metric: AlertMetric(row.Metric), Comparison: AlertComparison(row.Comparison), Threshold: row.Threshold, WindowSpec: AlertWindowSpec(row.WindowSpec), Action: AlertAction(row.Action), WebhookURL: row.WebhookUrl, WebhookSecretSealed: row.WebhookSecretSealed, CooldownMinutes: int(row.CooldownMinutes), PostDeployRollbackWindowSeconds: int(row.PostDeployRollbackWindowSeconds), State: AlertState(row.State), CreatedAt: row.CreatedAt.Time, UpdatedAt: row.UpdatedAt.Time, LastFiredAt: row.LastFiredAt.Time, LastEvaluatedAt: row.LastEvaluatedAt.Time, FailureSource: AlertFailureSource(row.FailureSource.String)}
+	r := AlertRule{ID: uuid.UUID(row.ID.Bytes).String(), AccountID: uuid.UUID(row.AccountID.Bytes).String(), Name: row.Name, Enabled: row.Enabled, Metric: AlertMetric(row.Metric), Comparison: AlertComparison(row.Comparison), Threshold: row.Threshold, WindowSpec: AlertWindowSpec(row.WindowSpec), Action: AlertAction(row.Action), WebhookURL: row.WebhookUrl, WebhookSecretSealed: row.WebhookSecretSealed, CooldownMinutes: int(row.CooldownMinutes), PostDeployRollbackWindowSeconds: int(row.PostDeployRollbackWindowSeconds), State: AlertState(row.State), CreatedAt: row.CreatedAt.Time, UpdatedAt: row.UpdatedAt.Time, LastFiredAt: row.LastFiredAt.Time, LastEvaluatedAt: row.LastEvaluatedAt.Time, FailureSource: AlertFailureSource(row.FailureSource.String), CustomMetricName: row.CustomMetricName.String}
+	if row.SloID.Valid {
+		r.SLOID = uuid.UUID(row.SloID.Bytes).String()
+	}
+	if row.SyntheticCheckID.Valid {
+		r.SyntheticCheckID = uuid.UUID(row.SyntheticCheckID.Bytes).String()
+	}
 	if row.EventSubscriptionID.Valid {
 		r.EventSubscriptionID = uuid.UUID(row.EventSubscriptionID.Bytes).String()
 	}
@@ -107,7 +113,19 @@ func insertCustomerAlertRule(ctx context.Context, db sqlc.DBTX, in AlertRule) (A
 	if in.FailureSource != "" {
 		source = pgtype.Text{String: string(in.FailureSource), Valid: true}
 	}
-	return customerAlertRuleResult(sqlc.New().InsertCustomerAlertRule(ctx, db, sqlc.InsertCustomerAlertRuleParams{EventSubscriptionID: sub, EdgeRuleID: edgeRule, AccountID: acct, AppID: app, Name: in.Name, Enabled: in.Enabled, Metric: string(in.Metric), Comparison: string(in.Comparison), Threshold: in.Threshold, WindowSpec: string(in.WindowSpec), FailureSource: source, Action: string(in.Action), WebhookUrl: in.WebhookURL, WebhookSecretSealed: in.WebhookSecretSealed, CooldownMinutes: alertOptionalInt(&in.CooldownMinutes).Int32, State: string(in.State), PostDeployRollbackWindowSeconds: alertOptionalInt(&in.PostDeployRollbackWindowSeconds).Int32}))
+	customMetric := pgtype.Text{}
+	if in.CustomMetricName != "" {
+		customMetric = pgtype.Text{String: in.CustomMetricName, Valid: true}
+	}
+	sloID, err := alertPgUUID(in.SLOID)
+	if err != nil {
+		return AlertRule{}, err
+	}
+	checkID, err := alertPgUUID(in.SyntheticCheckID)
+	if err != nil {
+		return AlertRule{}, err
+	}
+	return customerAlertRuleResult(sqlc.New().InsertCustomerAlertRule(ctx, db, sqlc.InsertCustomerAlertRuleParams{EventSubscriptionID: sub, EdgeRuleID: edgeRule, AccountID: acct, AppID: app, Name: in.Name, Enabled: in.Enabled, Metric: string(in.Metric), Comparison: string(in.Comparison), Threshold: in.Threshold, WindowSpec: string(in.WindowSpec), FailureSource: source, Action: string(in.Action), WebhookUrl: in.WebhookURL, WebhookSecretSealed: in.WebhookSecretSealed, CooldownMinutes: alertOptionalInt(&in.CooldownMinutes).Int32, State: string(in.State), PostDeployRollbackWindowSeconds: alertOptionalInt(&in.PostDeployRollbackWindowSeconds).Int32, CustomMetricName: customMetric, SloID: sloID, SyntheticCheckID: checkID}))
 }
 func (s *PgStore) UpdateAlertRule(ctx context.Context, id string, p UpdateAlertRuleParams) (AlertRule, error) {
 	rule, err := alertPgUUID(id)
