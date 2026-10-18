@@ -34,6 +34,9 @@ metadata; billing seats may read aggregate usage. Credentials are never returned
 Current membership, credential binding, scopes and MFA apply before replay.
 Membership fences serialize intent commits with offboarding. Unreviewed cutover
 and environment-clone endpoints remain unavailable for company databases.
+Connection-capacity qualification and Data API runtime-connection evidence
+remain unreviewed organization surfaces. Their identity references block
+creator erasure until separately reviewed ownership coverage is available.
 
 Plan and usage policy follows the existing permanent organization billing
 adoption marker. Quotas and usage aggregate across its database namespaces;

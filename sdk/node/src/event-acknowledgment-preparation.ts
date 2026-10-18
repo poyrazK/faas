@@ -4,8 +4,13 @@ import { EventAcknowledgmentWorkerError, type EventAcknowledgmentWorkerOperation
 import { claimEventConsumerProcessing, type EventConsumerProcessingLease } from './event-consumer-processing.js';
 import { EventConsumerCommitUnknownError, type EventConsumerPool, type EventConsumerRequest } from './event-consumer-transactions.js';
 import type { EventAcknowledgmentPreparationEvent, PreparationEvents } from './event-acknowledgment-preparation-events.js';
+import type { EventAcknowledgmentIntentRetryPolicy, EventAcknowledgmentIntentRetryBudget } from './event-acknowledgment-intent-retry-policy.js';
 
 export interface EventAcknowledgmentPreparedOptions extends EventAcknowledgmentWorkerOperationOptions {
+  /** Optional immutable policy bound during final intent staging. */
+  retryPolicy?: EventAcknowledgmentIntentRetryPolicy;
+  /** Optional finite claim budget, mutually exclusive with retryPolicy. */
+  retryBudget?: EventAcknowledgmentIntentRetryBudget;
   /** Required whole milliseconds, 1..2147483647. Covers platform startup, claim and preparation, before the final transaction. */
   preparationTimeoutMs: number;
   /** Whole milliseconds, 3..2147483647; default 30000. Renewed serially at one third of this duration. */

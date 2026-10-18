@@ -54,6 +54,43 @@ VALUES ($1,$2,'unreviewed','sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 	}
 }
 
+func TestPostgresOrgResourceUnreviewedConnectionCapacityBlocksErasure(t *testing.T) {
+	pool := pgtest.OpenMigrated(t)
+	store := state.NewPgStore(pool)
+	f := setupOffboarding(t, store)
+	ctx := t.Context()
+	if err := store.UpdateAccountProviderCustomerID(ctx, f.org.ID, "cus_capacity_guard"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdateAccountStripeSubscriptionItem(ctx, f.org.ID, "si_capacity_guard"); err != nil {
+		t.Fatal(err)
+	}
+	databaseID := uuid.NewString()
+	if _, err := pool.Exec(ctx, `INSERT INTO managed_postgres_databases
+(id,account_id,org_id,name,region,postgres_major,service_class,availability,backend_id,backend_fingerprint,state,deleted_at)
+VALUES ($1,$2,$3,'capacity-guard','eu',17,'development','single_zone','test',repeat('a',64),'deleted',now())`, databaseID, f.actor.ID, f.org.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO managed_postgres_connection_capacity
+(database_id,account_id,backend_id,backend_fingerprint,provider_resource_id,data_resource_id,generation,checked_at,expires_at)
+VALUES ($1,$2,'test',repeat('a',64),'provider-guard','data-guard',1,now(),now())`, databaseID, f.actor.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RemoveOrgMember(ctx, f.org.ID, f.actor.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkAccountDeletionPending(ctx, f.actor.ID); !errors.Is(err, state.ErrOrgAppOwnershipPending) {
+		t.Fatalf("unreviewed connection evidence allowed erasure: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `DELETE FROM accounts WHERE id=$1`, f.actor.ID); err == nil {
+		t.Fatal("raw account deletion bypassed connection evidence ownership guard")
+	}
+	var exists bool
+	if err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM managed_postgres_connection_capacity WHERE database_id=$1)`, databaseID).Scan(&exists); err != nil || !exists {
+		t.Fatalf("connection evidence ownership guard discarded the evidence: %v", err)
+	}
+}
+
 func TestPostgresOrgResourceUnreviewedProductControlBlocksErasure(t *testing.T) {
 	pool := pgtest.OpenMigrated(t)
 	store := state.NewPgStore(pool)

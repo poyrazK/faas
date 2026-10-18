@@ -8,6 +8,8 @@ export interface EventAcknowledgmentIntentWatchOptions extends EventAcknowledgme
   /** Integer counts 0..scanLimit; zero disables. Enable at least one threshold. */
   dueThreshold?: number;
   stalledThreshold?: number;
+  /** Integer count 0..scanLimit; zero disables. Enables version 2 in checkpoint mode. */
+  parkedThreshold?: number;
   /** Whole milliseconds 100..60000; default 5000, after the prior poll/callbacks finish. */
   pollIntervalMs?: number;
   /** Cooperative read deadline, whole milliseconds 10..30000; default 5000. */
@@ -17,7 +19,7 @@ export interface EventAcknowledgmentIntentWatchOptions extends EventAcknowledgme
   /** Whole milliseconds pollIntervalMs..86400000; default max(30000, pollIntervalMs). */
   sustainMs?: number;
 }
-export type EventAcknowledgmentIntentWatchMetric = 'due_backlog' | 'stalled_recovery';
+export type EventAcknowledgmentIntentWatchMetric = 'due_backlog' | 'stalled_recovery' | 'parked_intents';
 export type EventAcknowledgmentIntentAlertChange = 'unknown' | 'confirmation_lost' | 'firing' | 'resolved';
 export type EventAcknowledgmentIntentAlertReason = 'read_failed' | 'incomplete' | 'stale' | 'out_of_order'
   | 'sample_gap' | 'threshold_exceeded' | 'threshold_cleared';
@@ -51,15 +53,19 @@ export function intentWatchPolicy(options: EventAcknowledgmentIntentWatchOptions
   const health = intentHealthOptions(options.health === undefined ? {} : options.health);
   const dueThreshold = options.dueThreshold === undefined ? 0 : options.dueThreshold;
   const stalledThreshold = options.stalledThreshold === undefined ? 0 : options.stalledThreshold;
+  const parkedThreshold = options.parkedThreshold === undefined ? 0 : options.parkedThreshold;
   const pollIntervalMs = options.pollIntervalMs === undefined ? 5000 : options.pollIntervalMs;
   const queryTimeoutMs = options.queryTimeoutMs === undefined ? 5000 : options.queryTimeoutMs;
   const maxAgeMs = options.maxAgeMs === undefined ? Math.max(3 * pollIntervalMs, 2 * queryTimeoutMs) : options.maxAgeMs;
   const sustainMs = options.sustainMs === undefined ? Math.max(30000, pollIntervalMs) : options.sustainMs;
   if (!integer(dueThreshold, 0, health.scanLimit) || !integer(stalledThreshold, 0, health.scanLimit)
-    || dueThreshold === 0 && stalledThreshold === 0 || !integer(pollIntervalMs, 100, 60000)
+    || !integer(parkedThreshold, 0, health.scanLimit) || dueThreshold === 0 && stalledThreshold === 0 && parkedThreshold === 0
+    || !integer(pollIntervalMs, 100, 60000)
     || !integer(queryTimeoutMs, 10, 30000) || !integer(maxAgeMs, Math.max(2 * pollIntervalMs, queryTimeoutMs), 300000)
     || !integer(sustainMs, pollIntervalMs, 86400000)) throw new TypeError('invalid acknowledgment intent watch policy');
-  return Object.freeze({ health, dueThreshold, stalledThreshold, pollIntervalMs, queryTimeoutMs, maxAgeMs, sustainMs });
+  // Preserve the version 1 policy shape and field order when parked alerts are disabled.
+  return Object.freeze({ health, dueThreshold, stalledThreshold, ...(parkedThreshold === 0 ? {} : { parkedThreshold }),
+    pollIntervalMs, queryTimeoutMs, maxAgeMs, sustainMs });
 }
 export type IntentWatchPolicy = ReturnType<typeof intentWatchPolicy>;
 export type IntentWatchLoss = Exclude<EventAcknowledgmentIntentAlertReason, 'threshold_exceeded' | 'threshold_cleared'>;

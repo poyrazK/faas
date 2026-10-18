@@ -19,6 +19,9 @@ from ._event_acknowledgment_protocol import (
     owned_operation,
     reason_code,
 )
+from .event_acknowledgment_intent_retry_policy import (
+    EventAcknowledgmentIntentStoredRetryPolicy,
+)
 from .event_consumer_transactions import (
     EventConsumerCommitUnknownError,
     EventConsumerConflictError,
@@ -33,6 +36,11 @@ from .event_consumer_transactions import (
 event_acknowledgment_intent_schema = (
     files(__package__).joinpath("event_acknowledgment_intent_schema.sql").read_text(encoding="utf-8")
 )
+event_acknowledgment_intent_stored_retry_policy_schema = (
+    files(__package__)
+    .joinpath("event_acknowledgment_intent_stored_retry_policy_schema.sql")
+    .read_text(encoding="utf-8")
+)
 
 _MESSAGES = {
     "event_acknowledgment_intent_conflict": "immutable acknowledgment intent conflicts",
@@ -40,6 +48,8 @@ _MESSAGES = {
     "event_acknowledgment_intent_store": "acknowledgment intent storage operation failed",
     "event_acknowledgment_intent_empty": "no acknowledgment intent is due",
     "event_acknowledgment_intent_claim_lost": "acknowledgment intent recovery lease expired or replaced",
+    "event_acknowledgment_intent_parked": "acknowledgment intent retry budget exhausted",
+    "event_acknowledgment_intent_not_found": "acknowledgment intent was not found",
 }
 
 
@@ -51,6 +61,14 @@ class EventAcknowledgmentIntentError(RuntimeError):
             raise ValueError("invalid acknowledgment intent error code")
         super().__init__(_MESSAGES[code])
         self.code = code
+
+
+class EventAcknowledgmentIntentParkedError(EventAcknowledgmentIntentError):
+    """Known committed parking metadata, never a claim or remote confirmation."""
+
+    def __init__(self, intent: EventAcknowledgmentIntentStatus):
+        super().__init__("event_acknowledgment_intent_parked")
+        self.intent = intent
 
 
 class _CallbackOptionsError(ValueError):
@@ -76,6 +94,8 @@ class EventAcknowledgmentIntentStatus:
     last_code: str
     created_at: str
     updated_at: str
+    retry_policy: EventAcknowledgmentIntentStoredRetryPolicy | None = None
+    delivery_attempt_limit: int | None = None
 
 
 @dataclass(frozen=True)
@@ -87,7 +107,7 @@ class EventAcknowledgmentIntentResult:
     receipt_confirmed: bool = field(default=True, init=False)
 
 
-_COLUMNS = "invocation_id::text,replay_generation,attempt,action,reason,state,delivery_attempts,next_attempt_at,claim_expires_at,last_code,created_at,updated_at"
+_COLUMNS = "invocation_id::text,replay_generation,attempt,action,reason,state,delivery_attempts,next_attempt_at,claim_expires_at,last_code,created_at,updated_at,retry_policy_version,retry_initial_backoff_ms,retry_max_backoff_ms,retry_max_delivery_attempts,delivery_attempt_limit"
 _TABLE = "public.gregale_event_acknowledgment_intents"
 _KEY = "account_id=%s::uuid AND app_id=%s::uuid AND invocation_id=%s::uuid"
 _T = TypeVar("_T")
@@ -110,7 +130,7 @@ def _instant(value: Any) -> str:
 
 
 def _status(row: Any) -> EventAcknowledgmentIntentStatus:
-    if not isinstance(row, (tuple, list)) or len(row) < 12:
+    if not isinstance(row, (tuple, list)) or len(row) < 17:
         raise _store_error()
     invocation, generation, attempt, action, reason, state, deliveries, due, expiry, code, created, updated = row[:12]
     if (
@@ -118,8 +138,26 @@ def _status(row: Any) -> EventAcknowledgmentIntentStatus:
         or _uuid(invocation) != invocation
         or action not in ("complete", "retry", "dead-letter")
         or (reason != "" if action == "complete" else not reason_code(reason))
-        or state not in ("pending", "unconfirmed", "confirmed", "superseded")
-        or code not in ("", "unconfirmed", "lease_lost", "callback_confirmed", "claim_replaced", "receipt_committed")
+        or state not in ("pending", "unconfirmed", "parked", "confirmed", "superseded")
+        or code
+        not in (
+            "",
+            "unconfirmed",
+            "lease_lost",
+            "callback_confirmed",
+            "claim_replaced",
+            "receipt_committed",
+            "attempts_exhausted",
+        )
+    ):
+        raise _store_error()
+    policy = _stored_retry_policy(row[12:17])
+    deliveries = _integer(deliveries, 0, 2147483647)
+    limit = None if policy is None or policy.version == 1 else _integer(row[16], 1, 2147483647)
+    if (
+        (state == "parked") != (code == "attempts_exhausted")
+        or state == "parked"
+        and (limit is None or deliveries < limit or expiry is not None)
     ):
         raise _store_error()
     return EventAcknowledgmentIntentStatus(
@@ -135,7 +173,24 @@ def _status(row: Any) -> EventAcknowledgmentIntentStatus:
         code,
         _instant(created),
         _instant(updated),
+        policy,
+        limit,
     )
+
+
+def _stored_retry_policy(values: Any) -> EventAcknowledgmentIntentStoredRetryPolicy | None:
+    version, initial, maximum, budget, limit = values
+    if version is None and initial is None and maximum is None and budget is None and limit is None:
+        return None
+    version = _integer(version, 1, 2)
+    initial, maximum = _integer(initial, 1, 3600000), _integer(maximum, 1, 3600000)
+    if maximum < initial or version == 1 and (budget is not None or limit is not None):
+        raise _store_error()
+    if version == 1:
+        return EventAcknowledgmentIntentStoredRetryPolicy(version, initial, maximum)
+    budget = _integer(budget, 1, 2147483647)
+    _integer(limit, budget, 2147483647)
+    return EventAcknowledgmentIntentStoredRetryPolicy(version, initial, maximum, budget)
 
 
 def _hash(value: str) -> bytes:
@@ -227,6 +282,7 @@ async def _save_completion(
     token: str,
     receipt: EventConsumerTransactionResult,
     control: Control,
+    policy: EventAcknowledgmentIntentStoredRetryPolicy | None = None,
 ) -> EventAcknowledgmentIntentStatus:
     return await _save_intent(
         cursor,
@@ -241,6 +297,7 @@ async def _save_completion(
         "",
         receipt.body.decode("utf-8"),
         control,
+        policy,
     )
 
 
@@ -257,6 +314,7 @@ async def _save_intent(
     reason: str,
     body: str | None,
     control: Control,
+    policy: EventAcknowledgmentIntentStoredRetryPolicy | None = None,
 ) -> EventAcknowledgmentIntentStatus:
     identity, digest = _digests(request)
     key = (request.account_id, request.app_id, invocation)
@@ -270,7 +328,7 @@ async def _save_intent(
     )
     old = await _query(
         cursor,
-        f"SELECT replay_generation,attempt,identity_digest,request_digest,capability_digest,action_digest,app_slug,lease_seconds FROM {_TABLE} WHERE {_KEY} ORDER BY replay_generation DESC,attempt DESC LIMIT 1",
+        f"SELECT replay_generation,attempt,identity_digest,request_digest,capability_digest,action_digest,app_slug,lease_seconds FROM {_TABLE} WHERE {_KEY} ORDER BY replay_generation DESC,attempt DESC LIMIT 1 FOR UPDATE",
         key,
         control,
     )
@@ -293,10 +351,12 @@ async def _save_intent(
             )
             if status.state == "superseded":
                 raise EventAcknowledgmentIntentError("event_acknowledgment_intent_superseded")
+            if policy is not None and status.retry_policy != policy:
+                raise EventAcknowledgmentIntentError("event_acknowledgment_intent_conflict")
             return status
     await _query(
         cursor,
-        f"UPDATE {_TABLE} SET state='superseded',token=NULL,result_body=NULL,claim_token=NULL,claim_expires_at=NULL,last_code='claim_replaced',updated_at=clock_timestamp() WHERE {_KEY} AND state IN ('pending','unconfirmed')",
+        f"UPDATE {_TABLE} SET state='superseded',token=NULL,result_body=NULL,claim_token=NULL,claim_expires_at=NULL,last_code='claim_replaced',updated_at=clock_timestamp() WHERE {_KEY} AND state IN ('pending','unconfirmed','parked')",
         key,
         control,
         fetch="none",
@@ -304,7 +364,7 @@ async def _save_intent(
     return _status(
         await _query(
             cursor,
-            f"INSERT INTO {_TABLE}(account_id,app_id,invocation_id,replay_generation,attempt,identity_digest,request_digest,capability_digest,action_digest,app_slug,lease_seconds,action,reason,token,result_body,state) VALUES(%s::uuid,%s::uuid,%s::uuid,%s::bigint,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'pending') RETURNING {_COLUMNS}",
+            f"INSERT INTO {_TABLE}(account_id,app_id,invocation_id,replay_generation,attempt,identity_digest,request_digest,capability_digest,action_digest,app_slug,lease_seconds,action,reason,token,result_body,state,retry_policy_version,retry_initial_backoff_ms,retry_max_backoff_ms,retry_max_delivery_attempts,delivery_attempt_limit) VALUES(%s::uuid,%s::uuid,%s::uuid,%s::bigint,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'pending',%s,%s,%s,%s,%s) RETURNING {_COLUMNS}",
             (
                 *key,
                 generation,
@@ -319,6 +379,11 @@ async def _save_intent(
                 reason,
                 token,
                 body,
+                None if policy is None else policy.version,
+                None if policy is None else policy.initial_backoff_ms,
+                None if policy is None else policy.max_backoff_ms,
+                None if policy is None else policy.max_delivery_attempts,
+                None if policy is None else policy.max_delivery_attempts,
             ),
             control,
         )
@@ -335,6 +400,7 @@ async def _save_negative(
     action: str,
     reason: str,
     control: Control,
+    policy: EventAcknowledgmentIntentStoredRetryPolicy | None = None,
 ) -> EventAcknowledgmentIntentStatus:
     """Known rollback/stopped work/exclusive ownership are caller preconditions."""
     if action not in ("retry", "dead-letter") or not reason_code(reason):
@@ -385,6 +451,7 @@ async def _save_negative(
             reason,
             None,
             control,
+            policy,
         )
 
     return await _transaction(connection, save, control)

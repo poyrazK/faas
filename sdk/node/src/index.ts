@@ -628,15 +628,34 @@ export type { ObjectStorageComputeBindingList } from './generated/models/ObjectS
 export type { CreateObjectStorageComputeBindingRequest } from './generated/models/CreateObjectStorageComputeBindingRequest.js';
 export type { ObjectStorageComputeBindingSecretKeys } from './generated/models/ObjectStorageComputeBindingSecretKeys.js';
 
-export { eventAcknowledgmentIntentSchema, EventAcknowledgmentIntentError, listEventAcknowledgmentIntents,
+export { eventAcknowledgmentIntentSchema, eventAcknowledgmentIntentStoredRetryPolicySchema, EventAcknowledgmentIntentError, EventAcknowledgmentIntentParkedError, listEventAcknowledgmentIntents,
   type EventAcknowledgmentIntentErrorCode, type EventAcknowledgmentIntentStatus,
-  type EventAcknowledgmentIntentResult } from './event-acknowledgment-intent-store.js';
+  type EventAcknowledgmentIntentResult, type EventAcknowledgmentIntentStagingOptions } from './event-acknowledgment-intent-store.js';
 export { EventAcknowledgmentIntentClaim, claimEventAcknowledgmentIntent, recoverNextEventAcknowledgmentIntent,
   type EventAcknowledgmentIntentClaimOptions, type EventAcknowledgmentIntentDeliveryOptions,
   type EventAcknowledgmentIntentRecoveryOptions } from './event-acknowledgment-intent-recovery.js';
+export type { EventAcknowledgmentIntentRetryPolicy, EventAcknowledgmentIntentStoredRetryPolicy, EventAcknowledgmentIntentRetryBudget } from './event-acknowledgment-intent-retry-policy.js';
+export { eventAcknowledgmentIntentPolicyAdoptionSchema, getEventAcknowledgmentIntentPolicyAdoptionCandidate,
+  adoptEventAcknowledgmentIntentRetryPolicy, EventAcknowledgmentIntentPolicyAdoptionError,
+  type EventAcknowledgmentIntentAdoptRetryPolicyOptions,
+  type EventAcknowledgmentIntentPolicyAdoptionReceipt } from './event-acknowledgment-intent-policy-adoption.js';
+
+export { eventAcknowledgmentIntentRetryBudgetSchema, eventAcknowledgmentIntentRetryResumeSchema,
+  getEventAcknowledgmentIntentRetryResumeCandidate, resumeEventAcknowledgmentIntentRetryBudget, EventAcknowledgmentIntentRetryResumeError,
+  type EventAcknowledgmentIntentResumeRetryBudgetOptions, type EventAcknowledgmentIntentRetryResumeReceipt } from './event-acknowledgment-intent-retry-resume.js';
+
+export { eventAcknowledgmentIntentBudgetAdoptionSchema, getEventAcknowledgmentIntentBudgetAdoptionCandidate,
+  adoptEventAcknowledgmentIntentRetryBudget, EventAcknowledgmentIntentBudgetAdoptionError,
+  type EventAcknowledgmentIntentAdoptRetryBudgetOptions, type EventAcknowledgmentIntentBudgetAdoptionReceipt } from './event-acknowledgment-intent-budget-adoption.js';
 
 export { getEventAcknowledgmentIntentHealth, type EventAcknowledgmentIntentHealthOptions,
   type EventAcknowledgmentIntentHealth } from './event-acknowledgment-intent-health.js';
+
+export { EventAcknowledgmentIntentHealthMetrics, formatEventAcknowledgmentIntentHealthMetrics,
+  EVENT_ACKNOWLEDGMENT_INTENT_HEALTH_PROMETHEUS_CONTENT_TYPE,
+  type EventAcknowledgmentIntentHealthMetricsOptions, type EventAcknowledgmentIntentHealthMetricsSample,
+  type EventAcknowledgmentIntentHealthMetricsSnapshot,
+  type EventAcknowledgmentIntentHealthPrometheusOptions } from './event-acknowledgment-intent-health-metrics.js';
 
 export { watchEventAcknowledgmentIntentHealth, EventAcknowledgmentIntentWatchCallbackError,
   type EventAcknowledgmentIntentWatchOptions, type EventAcknowledgmentIntentWatchMetric,
@@ -667,3 +686,9 @@ export { formatEventAcknowledgmentPreparationMetrics, EVENT_ACKNOWLEDGMENT_PREPA
 export { recoverEventAcknowledgmentIntents, EventAcknowledgmentIntentRecoveryPassError,
   EventAcknowledgmentIntentRecoveryPassCommitUnknownError, EventAcknowledgmentIntentRecoveryPassCancelled,
   type EventAcknowledgmentIntentRecoveryPassOptions, type EventAcknowledgmentIntentRecoveryPassResult } from './event-acknowledgment-intent-recovery-pass.js';
+
+export { EventAcknowledgmentIntentRecoveryWorkerMetrics, recoverEventAcknowledgmentIntentsWithMetrics,
+  type EventAcknowledgmentIntentRecoveryWorkerMetricsOptions, type EventAcknowledgmentIntentRecoveryWorkerPassSample,
+  type EventAcknowledgmentIntentRecoveryWorkerMetricsSnapshot } from './event-acknowledgment-intent-worker-metrics.js';
+export { formatEventAcknowledgmentIntentRecoveryWorkerMetrics,
+  type EventAcknowledgmentIntentRecoveryWorkerPrometheusOptions } from './event-acknowledgment-intent-worker-prometheus.js';

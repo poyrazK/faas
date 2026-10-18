@@ -8,7 +8,7 @@ export async function verifyPermissions({ root, owner, admin, role, migrationURL
   const options = { apply: true }
   const preview = await permissions(migrationURL)
   assert.equal(preview.role, role)
-  assert.deepEqual(preview.missing, ['create_note_with_tags', 'create_note_with_tags_once'])
+  assert.deepEqual(preview.missing, ['apply_note_batch_once_v2', 'create_note_with_tags', 'create_note_with_tags_once', 'create_note_with_tags_once_v2', 'delete_note_once_v2', 'read_note_batch_receipt_v2', 'read_note_changes', 'read_note_create_receipt', 'read_note_create_receipt_v2', 'read_note_delete_receipt_v2', 'read_note_update_receipt_v2', 'search_notes', 'start_note_sync', 'update_note_once_v2'])
   assert.equal(preview.ready, false)
   await assert.rejects(permissions(loginURL, options), /API schema owner required/)
   const applied = await release(migrationURL)

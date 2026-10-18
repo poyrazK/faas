@@ -241,3 +241,37 @@ CI comments now describe its actual selected-package lint scope; a YAML
 semantic comparison confirms that these comment corrections do not change
 workflow behavior. Fresh GitHub checks must qualify this integrated source
 before merge. Production deployment and native KVM acceptance remain pending.
+
+## Integration with Data API, callback recovery and developer workflows
+
+Main through `54e5f0150` is integrated, retaining its storage/source hardening,
+Data API runtime controls, durable callback recovery and CLI workflow updates.
+The SQL generator checks retain both ownership packages and main's new
+connection-capacity package. The storage starter retains main's 30-minute
+allowance and every qualification command. Node clients are regenerated from
+the merged public schema, preserving both API surfaces.
+
+The two new PostgreSQL evidence tables precede the ownership migration range
+and introduce no replacement runtime functions. All nine erasure-guard
+definitions retain their account references. Connection-capacity qualification
+and Data API runtime-connection evidence remain unreviewed company surfaces;
+identity erasure refuses to discard those records. The new regression verifies
+both erasure entry points preserve connection-capacity evidence even after its
+database reaches the deleted state.
+
+Existing organization and clone-registry cases pass in the broader state run.
+Its new evidence fixture was corrected to include the required database deletion
+timestamp; focused unreviewed-resource erasure and clone-catalogue checks then
+pass (12.116s). The registry covers all 879 migrated tables with unique policies.
+Migration apply-and-walk, replay of all seven ownership migrations and ownership
+down/up recovery pass (26.579s). Fresh schema/SQL generation and deterministic
+SQL checks, migration lint, OpenAPI duplicate-key/parity checks, Node
+generation/build, full Go SDK tests/vet and 42 Python Auth/organization client
+tests pass. These local reruns use Go 1.26.9 and PostgreSQL 16 without race
+detection; fresh PR checks must qualify the integrated source before merge.
+
+The seven PR workflows on the preceding `5bba14a8f` source passed with 24
+successful jobs and one intentional image-matrix skip. The actual main branch
+had advanced while the PR's base-SHA field remained stale. Subsequent
+mergeability checks must inspect the current branch ref directly. Production
+deployment and native KVM acceptance remain pending.

@@ -1,10 +1,16 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
+
+from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.connection_budget_runtime_observations import ConnectionBudgetRuntimeObservations
+
 
 T = TypeVar("T", bound="ConnectionBudgetDemand")
 
@@ -19,6 +25,10 @@ class ConnectionBudgetDemand:
     control_headroom: int
     migration_headroom: int
     modeled_peak_connections: int
+    runtime_observations: ConnectionBudgetRuntimeObservations | Unset = UNSET
+    """Authenticated workload reports of configured resident Data API pools, including the refresh reader. Not live
+    SQL sessions or independent guest attestation. Parked runtimes and future wakes remain estimates; this does not
+    verify Auth or external consumers."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -34,6 +44,10 @@ class ConnectionBudgetDemand:
 
         modeled_peak_connections = self.modeled_peak_connections
 
+        runtime_observations: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.runtime_observations, Unset):
+            runtime_observations = self.runtime_observations.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -46,11 +60,15 @@ class ConnectionBudgetDemand:
                 "modeled_peak_connections": modeled_peak_connections,
             }
         )
+        if runtime_observations is not UNSET:
+            field_dict["runtime_observations"] = runtime_observations
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.connection_budget_runtime_observations import ConnectionBudgetRuntimeObservations
+
         d = dict(src_dict)
         data_api_resident_estimate = d.pop("data_api_resident_estimate")
 
@@ -64,6 +82,13 @@ class ConnectionBudgetDemand:
 
         modeled_peak_connections = d.pop("modeled_peak_connections")
 
+        _runtime_observations = d.pop("runtime_observations", UNSET)
+        runtime_observations: ConnectionBudgetRuntimeObservations | Unset
+        if isinstance(_runtime_observations, Unset):
+            runtime_observations = UNSET
+        else:
+            runtime_observations = ConnectionBudgetRuntimeObservations.from_dict(_runtime_observations)
+
         connection_budget_demand = cls(
             data_api_resident_estimate=data_api_resident_estimate,
             data_api_wake_estimate=data_api_wake_estimate,
@@ -71,6 +96,7 @@ class ConnectionBudgetDemand:
             control_headroom=control_headroom,
             migration_headroom=migration_headroom,
             modeled_peak_connections=modeled_peak_connections,
+            runtime_observations=runtime_observations,
         )
 
         connection_budget_demand.additional_properties = d

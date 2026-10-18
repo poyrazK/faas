@@ -13,6 +13,11 @@ import { createHash } from 'node:crypto'
 import { verifyPermissions } from './rpc-permissions.mjs'
 import { verifyRetention } from './retention.mjs'
 import { verifyIdempotency } from './idempotency.mjs'
+import { verifyReplayExpiry } from './replay-expiry.mjs'
+import { verifyNoteMutations } from './note-mutations.mjs'
+import { verifyNoteBatches } from './note-batches.mjs'
+import { verifyNoteChanges } from './note-changes.mjs'
+import { verifyNoteSearch } from './note-search.mjs'
 import { verifyNoteForm } from './note-form.mjs'
 import { verifySchemaEvolution } from './schema-evolution.mjs'
 import { verifyQueryPlans } from './query-plans.mjs'
@@ -36,7 +41,9 @@ async function port() {
   return value
 }
 
-test('starter migrations, generated contract, packed client and two-user RLS', { skip: !enabled, timeout: 180000 }, async t => {
+// Includes the 30k-row query-plan fixture, feed retention, native mutation/expiry
+// races, browser acceptance and schema evolution.
+test('starter migrations, generated contract, packed client and two-user RLS', { skip: !enabled, timeout: 360000 }, async t => {
   const journeyStarted = performance.now()
   const phase = name => t.diagnostic(`starter: ${name} after ${Math.round(performance.now() - journeyStarted)}ms`)
   phase('migration setup')
@@ -85,17 +92,17 @@ test('starter migrations, generated contract, packed client and two-user RLS', {
   // Exercise exactly the stable-owner migration session and restricted API role.
   await migrate(migrationURL.toString())
   await migrate(migrationURL.toString())
-  assert.equal((await owner.query('SELECT count(*)::integer AS count FROM gregale_migrations.applied')).rows[0].count, 10)
+  assert.equal((await owner.query('SELECT count(*)::integer AS count FROM gregale_migrations.applied')).rows[0].count, 16)
   const firstSQL = join(root, 'migrations/sql/0001_notes.sql')
   const originalSQL = await readFile(firstSQL, 'utf8')
   await writeFile(firstSQL, originalSQL + '\n-- changed after deployment\n')
   try { await assert.rejects(migrate(migrationURL.toString()), /changed or removed/) }
   finally { await writeFile(firstSQL, originalSQL) }
-  const failedSQL = join(root, 'migrations/sql/0011_failure.sql')
+  const failedSQL = join(root, 'migrations/sql/0017_failure.sql')
   await writeFile(failedSQL, 'ALTER TABLE api.notes ADD COLUMN rolled_back text; SELECT 1/0;')
   try { await assert.rejects(migrate(migrationURL.toString())) }
   finally { await rm(failedSQL) }
-  assert.equal((await owner.query('SELECT count(*)::integer AS count FROM gregale_migrations.applied')).rows[0].count, 10)
+  assert.equal((await owner.query('SELECT count(*)::integer AS count FROM gregale_migrations.applied')).rows[0].count, 16)
   assert.equal((await owner.query("SELECT count(*)::integer AS count FROM information_schema.columns WHERE table_schema='api' AND column_name='rolled_back'")).rows[0].count, 0)
   phase('migration permissions')
   await verifyPermissions({ root, owner, admin, role, migrationURL: migrationURL.toString(), loginURL: loginURL.toString(), scope, database })
@@ -191,7 +198,7 @@ test('starter migrations, generated contract, packed client and two-user RLS', {
     }
     assert.equal(healthy, true, 'schema_refresh_not_ready')
   }
-  const sign = (subject, audience = 'notes') => new SignJWT({ sub: subject, role: 'postgres' }).setProtectedHeader({ alg: 'ES256' }).setIssuer(config.auth.issuer).setAudience(audience).setExpirationTime('5m').sign(privateKey)
+  const sign = (subject, audience = 'notes') => new SignJWT({ sub: subject, role: 'postgres' }).setProtectedHeader({ alg: 'ES256' }).setIssuer(config.auth.issuer).setAudience(audience).setExpirationTime('10m').sign(privateKey)
   const userA = { subject: 'identity|alice', token: await sign('identity|alice') }
   const userB = { subject: 'identity|bob', token: await sign('identity|bob') }
   const contractHeaders = { Authorization: `Bearer ${userA.token}` }
@@ -220,12 +227,22 @@ test('starter migrations, generated contract, packed client and two-user RLS', {
   // The RPC's explicit isolation must win over a stronger role default.
   await admin.query(`ALTER ROLE "${role}" SET default_transaction_isolation = 'repeatable read'`)
   await refresh()
-  try { await verifyIdempotency({ owner, client, url, userA, userB, makeClient: notesClient }) }
+  try { await verifyIdempotency({ owner, client, url, userA, userB, makeClient: notesClient, pg, loginURL: loginURL.toString() }) }
   finally {
     await admin.query(`ALTER ROLE "${role}" RESET default_transaction_isolation`)
     await refresh()
   }
   await verifyRetention({ owner, client, root, migrationURL: migrationURL.toString(), loginURL: loginURL.toString(), pg, userA })
+  phase('replay expiry')
+  await verifyReplayExpiry({ owner, client, root, migrationURL: migrationURL.toString(), loginURL: loginURL.toString(), pg, userA, userB, url })
+  phase('versioned update/delete receipts')
+  await verifyNoteMutations({ owner, client, root, migrationURL: migrationURL.toString(), loginURL: loginURL.toString(), pg, userA, userB, url, makeClient: notesClient })
+  phase('atomic note batches')
+  await verifyNoteBatches({ owner, client, root, migrationURL: migrationURL.toString(), loginURL: loginURL.toString(), pg, userA, userB, url, makeClient: notesClient })
+  phase('incremental note changes')
+  await verifyNoteChanges({ owner, client, root, loginURL: loginURL.toString(), pg, userA, userB, url, makeClient: notesClient })
+  await verifyNoteSearch({ owner, client, root, loginURL: loginURL.toString(), pg, userA, userB, url, makeClient: notesClient })
+  phase('ranked search verified')
   const expired = await new SignJWT({ sub: userA.subject }).setProtectedHeader({ alg: 'ES256' }).setIssuer(config.auth.issuer).setAudience('notes').setExpirationTime('0s').sign(privateKey)
   if (origins) {
     const fixtures = await owner.query('INSERT INTO api.notes(subject, body) VALUES ($1, $3), ($2, $3) RETURNING id, subject', [userA.subject, userB.subject, 'browser-cors-fixture'])
