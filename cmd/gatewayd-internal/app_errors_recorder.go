@@ -677,26 +677,39 @@ type statusRecorder struct {
 }
 
 func (r *statusRecorder) WriteHeader(code int) {
-	if !r.wroteHeader {
-		r.status = code
-		r.wroteHeader = true
+	if r.wroteHeader {
+		return
 	}
+	if code >= 100 && code < 200 && code != http.StatusSwitchingProtocols {
+		r.ResponseWriter.WriteHeader(code)
+		return
+	}
+	r.status = code
+	r.wroteHeader = true
 	r.ResponseWriter.WriteHeader(code)
 }
 
 // lgtm[go/reflected-xss] false-positive: statusRecorder is a pass-through; gatewayd-internal serves application/json (api.WriteProblem via cmd/apid handlers) or text/event-stream SSE (cmd/gatewayd-internal/app_logs.go::ServeHTTP), never HTML — the XSS sink is unreachable. Mirrors the pattern at pkg/middleware/authlimit.go:81 and pkg/gateway/handler.go:3973.
 func (r *statusRecorder) Write(p []byte) (int, error) {
 	if !r.wroteHeader {
+		r.status = http.StatusOK
 		r.wroteHeader = true
 	}
 	// lgtm[go/reflected-xss] false-positive: see doc-comment above; pass-through forwards bytes unchanged to the underlying ResponseWriter.
 	return r.ResponseWriter.Write(p)
 }
 
+// Unwrap lets the gateway extend stream deadlines through error recording.
+func (r *statusRecorder) Unwrap() http.ResponseWriter { return r.ResponseWriter }
+
 // Flush forwards to the underlying writer if it implements
 // http.Flusher (SSE / streaming responses need this).
 func (r *statusRecorder) Flush() {
 	if f, ok := r.ResponseWriter.(http.Flusher); ok {
+		if !r.wroteHeader {
+			r.status = http.StatusOK
+			r.wroteHeader = true
+		}
 		f.Flush()
 	}
 }
