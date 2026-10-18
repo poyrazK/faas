@@ -9,7 +9,8 @@ import (
 )
 
 // Readiness policy and receiver credentials need an isolated copy strategy;
-// evidence and probe leases must remain operational state of the source.
+// incident events carry customer evidence and need an isolated data strategy;
+// probe leases must remain operational state of the source.
 func testMCPReadinessCloneInventory(t *testing.T, fx *Fixture) {
 	tables, err := state.ProjectEnvironmentCloneSchemaPolicies()
 	if err != nil {
@@ -42,7 +43,17 @@ func testMCPReadinessCloneInventory(t *testing.T, fx *Fixture) {
 			t.Fatalf("configuration capture must still require isolation: %s", table)
 		}
 	}
-	for _, table := range []string{"deployment_mcp_readiness_monitors", "mcp_readiness_incident_events"} {
+	const events = "mcp_readiness_incident_events"
+	index := slices.IndexFunc(tables, func(p state.ProjectEnvironmentCloneSchemaPolicy) bool { return p.TableName == events })
+	if index < 0 || tables[index].Kind != state.CloneSchemaData {
+		t.Fatalf("readiness incident events lost their customer data boundary: %s", events)
+	}
+	if catalog && !slices.ContainsFunc(blockers, func(b state.ProjectEnvironmentCloneCoverageBlocker) bool {
+		return b.Table == events && b.Code == "isolated_data_strategy_unavailable"
+	}) {
+		t.Fatalf("customer readiness evidence must still require an isolated data strategy: %s", events)
+	}
+	for _, table := range []string{"deployment_mcp_readiness_monitors"} {
 		index := slices.IndexFunc(tables, func(p state.ProjectEnvironmentCloneSchemaPolicy) bool { return p.TableName == table })
 		if index < 0 || tables[index].Kind != state.CloneSchemaOperational {
 			t.Fatalf("readiness evidence or leases became copied configuration: %s", table)
