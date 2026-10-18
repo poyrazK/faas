@@ -1,0 +1,204 @@
+[
+  {
+    "name": "unordered result, changes, progress and awaitTxId",
+    "steps": [
+      {
+        "frame": {"type": "live.rows", "subscription": "s1", "database": "db_1", "version": 1, "snapshot": "100:104:102", "expires": 1800000060,
+          "columns": [{"name": "id", "type": "int8"}, {"name": "body", "type": "text"}],
+          "rows": [{"id": "a", "values": ["1", "hello"]}, {"id": "b", "values": ["2", null]}], "complete": true},
+        "expect": {"ready": true, "version": 1, "rows": [{"id": "a", "values": ["1", "hello"]}, {"id": "b", "values": ["2", null]}]},
+        "sees": {"99": true, "101": true, "102": false, "103": true, "104": false}
+      },
+      {
+        "frame": {"type": "live.changes", "subscription": "s1", "base": 1, "version": 2, "snapshot": "100:106:", "xids": ["102", "104"],
+          "changes": [{"op": "upsert", "id": "c", "values": ["3", "new"]}, {"op": "remove", "id": "a"}, {"op": "upsert", "id": "b", "values": ["2", "edited"]}]},
+        "expect": {"ready": true, "version": 2, "rows": [{"id": "b", "values": ["2", "edited"]}, {"id": "c", "values": ["3", "new"]}]},
+        "sees": {"102": true, "105": true, "106": false}
+      },
+      {
+        "frame": {"type": "live.progress", "database": "db_1", "snapshot": "105:108:106"},
+        "expect": {"ready": true, "version": 2, "rows": [{"id": "b", "values": ["2", "edited"]}, {"id": "c", "values": ["3", "new"]}]},
+        "sees": {"104": true, "106": false, "107": true, "108": false}
+      },
+      {
+        "frame": {"type": "live.progress", "database": "db_other", "snapshot": "200:300:"},
+        "sees": {"107": true, "250": false}
+      }
+    ]
+  },
+  {
+    "name": "a result spanning several live.rows frames applies at once",
+    "steps": [
+      {
+        "frame": {"type": "live.rows", "subscription": "s1", "database": "db_1", "version": 3, "snapshot": "10:10:", "expires": 1800000060,
+          "columns": [{"name": "n", "type": "int4"}], "rows": [{"id": "a", "values": ["1"]}], "complete": false},
+        "expect": {"ready": false}
+      },
+      {
+        "frame": {"type": "live.rows", "subscription": "s1", "database": "db_1", "version": 3, "snapshot": "10:10:", "expires": 1800000060,
+          "columns": [{"name": "n", "type": "int4"}], "rows": [{"id": "b", "values": ["2"]}], "complete": true},
+        "expect": {"ready": true, "version": 3, "rows": [{"id": "a", "values": ["1"]}, {"id": "b", "values": ["2"]}]}
+      },
+      {
+        "frame": {"type": "live.rows", "subscription": "s1", "database": "db_1", "version": 4, "snapshot": "12:12:", "expires": 1800000060,
+          "columns": [{"name": "n", "type": "int4"}], "rows": [], "complete": true},
+        "expect": {"ready": true, "version": 4, "rows": []}
+      }
+    ]
+  },
+  {
+    "name": "an ordered latest-N feed",
+    "steps": [
+      {
+        "frame": {"type": "live.rows", "subscription": "feed", "database": "db_1", "version": 1, "snapshot": "50:50:", "expires": 1800000060,
+          "columns": [{"name": "id", "type": "int8"}], "ordered": true,
+          "rows": [{"id": "r3", "values": ["3"]}, {"id": "r2", "values": ["2"]}, {"id": "r1", "values": ["1"]}], "complete": true},
+        "expect": {"ready": true, "version": 1, "rows": [{"id": "r3", "values": ["3"]}, {"id": "r2", "values": ["2"]}, {"id": "r1", "values": ["1"]}]}
+      },
+      {
+        "frame": {"type": "live.changes", "subscription": "feed", "base": 1, "version": 2, "snapshot": "51:51:", "xids": ["50"],
+          "changes": [{"op": "upsert", "id": "r4", "values": ["4"]}, {"op": "remove", "id": "r1"}], "order": ["r4", "r3", "r2"]},
+        "expect": {"ready": true, "version": 2, "rows": [{"id": "r4", "values": ["4"]}, {"id": "r3", "values": ["3"]}, {"id": "r2", "values": ["2"]}]}
+      },
+      {
+        "frame": {"type": "live.changes", "subscription": "feed", "base": 2, "version": 3, "snapshot": "52:52:", "xids": ["51"],
+          "changes": [{"op": "remove", "id": "r3"}]},
+        "expect": {"ready": true, "version": 3, "rows": [{"id": "r4", "values": ["4"]}, {"id": "r2", "values": ["2"]}]}
+      },
+      {
+        "frame": {"type": "live.changes", "subscription": "feed", "base": 3, "version": 4, "snapshot": "53:53:", "xids": ["52"],
+          "changes": [{"op": "upsert", "id": "r5", "values": ["5"]}]},
+        "error": true
+      },
+      {
+        "frame": {"type": "live.changes", "subscription": "feed", "base": 3, "version": 4, "snapshot": "53:53:", "xids": ["52"],
+          "changes": [], "order": ["r4", "r4"]},
+        "error": true
+      },
+      {
+        "frame": {"type": "live.changes", "subscription": "feed", "base": 3, "version": 4, "snapshot": "53:53:", "xids": ["52"],
+          "changes": [{"op": "upsert", "id": "r2", "values": ["9"]}], "order": ["r2", "r4"]},
+        "expect": {"ready": true, "version": 4, "rows": [{"id": "r2", "values": ["9"]}, {"id": "r4", "values": ["4"]}]}
+      }
+    ]
+  },
+  {
+    "name": "a lapsed seal makes the subscription stale until renewed",
+    "steps": [
+      {
+        "frame": {"type": "live.rows", "subscription": "s1", "database": "db_1", "version": 1, "snapshot": "20:20:", "expires": 1800000060,
+          "columns": [{"name": "n", "type": "int4"}], "rows": [{"id": "a", "values": ["1"]}], "complete": true},
+        "expect": {"ready": true, "version": 1, "expires": 1800000060}
+      },
+      {
+        "frame": {"type": "live.error", "subscription": "s1", "code": "seal_expired", "message": "renew the subscription", "closed": false},
+        "expect": {"ready": true, "stale": true, "version": 1}
+      },
+      {
+        "frame": {"type": "live.progress", "database": "db_1", "snapshot": "30:30:"},
+        "sees": {"25": false}
+      },
+      {
+        "frame": {"type": "live.changes", "subscription": "s1", "base": 1, "version": 2, "snapshot": "30:30:", "xids": [], "changes": []},
+        "error": true
+      },
+      {
+        "frame": {"type": "live.renewed", "subscription": "s1", "expires": 1800000300},
+        "expect": {"ready": true, "stale": false, "version": 1, "expires": 1800000300}
+      },
+      {
+        "frame": {"type": "live.changes", "subscription": "s1", "base": 1, "version": 2, "snapshot": "30:30:", "xids": ["25"],
+          "changes": [{"op": "upsert", "id": "a", "values": ["2"]}]},
+        "expect": {"ready": true, "version": 2, "rows": [{"id": "a", "values": ["2"]}]},
+        "sees": {"25": true}
+      },
+      {
+        "frame": {"type": "live.error", "subscription": "s1", "code": "schema_changed", "message": "messages was altered", "closed": true},
+        "expect": {"ready": true, "closed": true, "version": 2}
+      },
+      {
+        "frame": {"type": "live.progress", "database": "db_1", "snapshot": "40:40:"},
+        "error": true
+      }
+    ]
+  },
+  {
+    "name": "after resubscribing, a full result may start a new version sequence",
+    "steps": [
+      {
+        "frame": {"type": "live.rows", "subscription": "s1", "database": "db_1", "version": 7, "snapshot": "60:60:", "expires": 1800000060,
+          "columns": [{"name": "n", "type": "int4"}], "rows": [{"id": "a", "values": ["1"]}], "complete": true},
+        "expect": {"ready": true, "version": 7}
+      },
+      {
+        "frame": {"type": "live.rows", "subscription": "s1", "database": "db_1", "version": 2, "snapshot": "61:61:", "expires": 1800000060,
+          "columns": [{"name": "n", "type": "int4"}], "rows": [], "complete": true},
+        "error": true
+      },
+      {"action": "resubscribe"},
+      {
+        "frame": {"type": "live.changes", "subscription": "s1", "base": 7, "version": 8, "snapshot": "62:62:", "xids": ["61"],
+          "changes": [{"op": "upsert", "id": "a", "values": ["2"]}]},
+        "expect": {"ready": true, "version": 8, "rows": [{"id": "a", "values": ["2"]}]}
+      },
+      {"action": "resubscribe"},
+      {
+        "frame": {"type": "live.rows", "subscription": "s1", "database": "db_1", "version": 1, "snapshot": "70:70:", "expires": 1800000120,
+          "columns": [{"name": "n", "type": "int4"}], "rows": [{"id": "b", "values": ["3"]}], "complete": true},
+        "expect": {"ready": true, "version": 1, "rows": [{"id": "b", "values": ["3"]}], "expires": 1800000120}
+      },
+      {
+        "frame": {"type": "live.changes", "subscription": "s1", "base": 1, "version": 2, "snapshot": "71:71:", "xids": ["70"], "changes": [{"op": "remove", "id": "b"}]},
+        "expect": {"ready": true, "version": 2, "rows": []}
+      }
+    ]
+  },
+  {
+    "name": "frames that break the contract are refused",
+    "steps": [
+      {
+        "frame": {"type": "live.changes", "subscription": "s1", "base": 0, "version": 1, "snapshot": "1:1:", "xids": [], "changes": []},
+        "error": true
+      },
+      {
+        "frame": {"type": "live.rows", "subscription": "s1", "database": "db_1", "version": 5, "snapshot": "100:110:105", "expires": 1800000060,
+          "columns": [{"name": "n", "type": "int4"}], "rows": [{"id": "a", "values": ["1"]}], "complete": true},
+        "expect": {"ready": true, "version": 5}
+      },
+      {
+        "frame": {"type": "live.changes", "subscription": "s1", "base": 4, "version": 6, "snapshot": "100:110:105", "xids": [], "changes": []},
+        "error": true
+      },
+      {
+        "frame": {"type": "live.changes", "subscription": "s1", "base": 5, "version": 6, "snapshot": "100:109:105", "xids": [], "changes": []},
+        "error": true
+      },
+      {
+        "frame": {"type": "live.changes", "subscription": "s1", "base": 5, "version": 6, "snapshot": "100:110:105", "xids": ["105"], "changes": []},
+        "error": true
+      },
+      {
+        "frame": {"type": "live.changes", "subscription": "s1", "base": 5, "version": 6, "snapshot": "100:110:105", "xids": [], "changes": [{"op": "remove", "id": "zz"}]},
+        "error": true
+      },
+      {
+        "frame": {"type": "live.changes", "subscription": "s1", "base": 5, "version": 6, "snapshot": "100:110:105", "xids": [], "changes": [{"op": "upsert", "id": "b", "values": ["1", "2"]}]},
+        "error": true
+      },
+      {
+        "frame": {"type": "live.changes", "subscription": "s1", "base": 5, "version": 6, "snapshot": "100:110:105", "xids": [], "changes": [], "order": ["a"]},
+        "error": true
+      },
+      {
+        "frame": {"type": "live.rows", "subscription": "s1", "database": "db_1", "version": 5, "snapshot": "100:110:", "expires": 1800000060,
+          "columns": [{"name": "n", "type": "int4"}], "rows": [], "complete": true},
+        "error": true
+      },
+      {
+        "frame": {"type": "live.changes", "subscription": "s1", "base": 5, "version": 6, "snapshot": "100:111:", "xids": ["105", "110"], "changes": []},
+        "expect": {"ready": true, "version": 6, "rows": [{"id": "a", "values": ["1"]}]},
+        "sees": {"105": true, "110": true}
+      }
+    ]
+  }
+]

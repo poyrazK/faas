@@ -93,8 +93,21 @@ type Claims struct {
 	// app's own sessions.
 	ClientID string
 	Scopes   []string
+	// Organization is the session's active organization, when the Auth app
+	// has organization claims on; nil otherwise. A changed membership
+	// shows at the next token, within its lifetime.
+	Organization *Organization
 	// Raw holds every claim, including ones this type does not name.
 	Raw map[string]json.RawMessage
+}
+
+// Organization is a session's active organization, the user's role in it
+// and that role's permissions.
+type Organization struct {
+	ID          string
+	Slug        string
+	Role        string
+	Permissions []string
 }
 
 // Error is a refusal from the Auth app's API: the HTTP status and the stable
@@ -242,6 +255,10 @@ func (c *Client) claims(segment string) (*Claims, error) {
 		IsAnonymous  bool            `json:"is_anonymous"`
 		ClientID     string          `json:"client_id"`
 		Scope        string          `json:"scope"`
+		OrgID        string          `json:"org_id"`
+		OrgSlug      string          `json:"org_slug"`
+		OrgRole      string          `json:"org_role"`
+		OrgPerms     []string        `json:"org_permissions"`
 		AppMetadata  map[string]any  `json:"app_metadata"`
 		UserMetadata map[string]any  `json:"user_metadata"`
 	}
@@ -267,6 +284,9 @@ func (c *Client) claims(segment string) (*Claims, error) {
 		IsAnonymous: p.IsAnonymous, ExpiresAt: unix(*p.Exp), ClientID: p.ClientID, Scopes: strings.Fields(p.Scope), AppMetadata: p.AppMetadata, UserMetadata: p.UserMetadata, Raw: raw}
 	if p.Iat != nil {
 		claims.IssuedAt = unix(*p.Iat)
+	}
+	if p.OrgID != "" && p.OrgSlug != "" && p.OrgRole != "" {
+		claims.Organization = &Organization{ID: p.OrgID, Slug: p.OrgSlug, Role: p.OrgRole, Permissions: p.OrgPerms}
 	}
 	return claims, nil
 }

@@ -1194,10 +1194,41 @@ const (
 	// the per-million-token ceiling.
 	MaxOutboundAIPriceMillicentsPerImage       int64 = 10_000_000
 	MaxOutboundAIPriceMillicentsPerAudioMinute int64 = 10_000_000
-	OutboundAIPriceEntriesMax                        = 64
+	// Video (ADR-1432): the ceiling of a price per second of video; the
+	// largest video request body the gateway reads to size it; the
+	// duration a request without one reserves; and the bounds of one
+	// request's seconds per video and videos.
+	MaxOutboundAIPriceMillicentsPerVideoSecond int64 = 10_000_000
+	OutboundAIVideoBodyMaxBytes                int64 = 32 << 20
+	OutboundAIVideoDefaultSeconds                    = 8
+	OutboundAIVideoSecondsMax                        = 600
+	OutboundAIVideosPerCallMax                       = 8
+	// Built-in tools (ADR-1433): the uses a request that declares a tool
+	// reserves when it names no limit; how long a code-interpreter
+	// container's session is charged once; the largest container memory in
+	// GB; the uses one response may report; and the ceiling of a price per
+	// web search, file search or GB container session.
+	OutboundAIToolReserveWebSearches             = 5
+	OutboundAIToolReserveFileSearches            = 2
+	OutboundAIContainerSessionMinutes            = 20
+	OutboundAIContainerMemoryGBMax               = 64
+	OutboundAIToolUsesPerCallMax                 = 1_000
+	MaxOutboundAIPriceMillicentsPerToolUse int64 = 10_000_000
+	OutboundAIPriceEntriesMax                    = 64
 	// AI fallback routes (ADR-990).
 	OutboundAIRouteTargetsMax     = 5
 	MaxOutboundAIRoutesPerAccount = 25
+	// Route strategies (ADR-1434): the window latency and cost routes judge
+	// targets over; the attempts a target needs in it to be judged; the
+	// error rate above which it is unhealthy; the share of calls that try a
+	// target without data first; the largest target weight; and the largest
+	// latency target of a cost route.
+	OutboundAIRouteStatsWindowMinutes    = 15
+	OutboundAIRouteStatsMinCalls         = 10
+	OutboundAIRouteUnhealthyErrorPercent = 25
+	OutboundAIRouteExplorePercent        = 5
+	OutboundAIRouteWeightMax             = 100
+	OutboundAIRouteMaxTTFBMSMax          = 600_000
 	// Admission-time reservations (ADR-991): the output reserve when a call
 	// names no output ceiling, and the bytes per estimated input token.
 	OutboundAIDefaultOutputReserveTokens int64 = 4096
@@ -1224,7 +1255,22 @@ const (
 	OutboundAIUsersPerDay            = 10_000
 	OutboundAIUserUsageRetentionDays = 31
 	OutboundAIUserUsagePageMax       = 1_000
-	OutboundAIUserIDMaxBytes         = 64
+	// Usage tags (ADR-1436): tags per call, the longest key and value, the
+	// distinct tags one integration tracks per UTC day (later ones add to
+	// their key's overflow row), and the tag limits per integration. Tag
+	// rows follow OutboundAIUserUsageRetentionDays.
+	OutboundAITagsPerCall      = 5
+	OutboundAITagKeyMaxBytes   = 32
+	OutboundAITagValueMaxBytes = 64
+	OutboundAITagsPerDay       = 1_000
+	OutboundAITagLimitsMax     = 20
+	OutboundAITagUsagePageMax  = 1_000
+	// Automatic prompt caching (ADR-1437): the estimated prompt or prefix
+	// tokens below which no breakpoint is added, and the cache lifetime a
+	// repeated prefix must recur within.
+	OutboundAIPromptCacheMinTokens       = 1_024
+	OutboundAIPromptCacheLifetimeSeconds = 300
+	OutboundAIUserIDMaxBytes             = 64
 	// Opt-in content capture (ADR-996): the bytes kept of each logged
 	// call's request and response body, the captures per integration and
 	// UTC day, and how long they stay.
@@ -1268,6 +1314,78 @@ const (
 	OutboundAISettlementAttempts              = 3
 	OutboundAISettlementAttemptTimeoutSeconds = 5
 	OutboundAISettlementKeyRetentionMinutes   = 60
+	// Model canaries (ADR-1340): the largest share of a route's calls a
+	// canary may take; the bounds and defaults of its error-rate margin in
+	// percentage points, latency margin in percent, minimum calls and
+	// window; how often outboundd judges canaries; and how long per-minute
+	// target rows stay.
+	OutboundAIRouteCanaryPercentMax              = 50
+	OutboundAIRouteCanaryErrorIncreaseDefault    = 5
+	OutboundAIRouteCanaryErrorIncreaseMax        = 100
+	OutboundAIRouteCanaryLatencyIncreaseMax      = 1_000
+	OutboundAIRouteCanaryMinCallsMin             = 10
+	OutboundAIRouteCanaryMinCallsDefault         = 50
+	OutboundAIRouteCanaryMinCallsMax             = 100_000
+	OutboundAIRouteCanaryWindowMinutesMin        = 5
+	OutboundAIRouteCanaryWindowMinutesDefault    = 30
+	OutboundAIRouteCanaryWindowMinutesMax        = 1_440
+	OutboundAIRouteCanaryEvaluateIntervalSeconds = 30
+	OutboundAIRouteStatsRetentionHours           = 48
+	// Log export (ADR-1340): how long an export line waits before the
+	// gateways read it, how long it stays, how many lines one read returns,
+	// and the longest line.
+	OutboundAILogExportVisibilitySeconds = 15
+	OutboundAILogExportRetentionHours    = 24
+	OutboundAILogExportBatchMax          = 500
+	OutboundAILogExportLineMaxBytes      = 4 << 10
+	// Moderation (ADR-1340): the request text one check reads, latest text
+	// first, and the deadline of the check's call.
+	OutboundAIModerationTextMaxBytes       = 32 << 10
+	OutboundAIModerationCallTimeoutSeconds = 10
+	// Response guardrails (ADR-1435): the largest whole response read
+	// before release, the text of a stream channel held back so a finding
+	// split across events is caught, and how far back each stream scan
+	// reads.
+	OutboundAIResponseCheckMaxBytes     int64 = 4 << 20
+	OutboundAIResponseHoldBackBytes           = 512
+	OutboundAIResponseScanLookbackBytes       = 8 << 10
+	// Batches (ADR-1431): the share of the list price a batch costs; the
+	// largest OpenAI input file read at creation, Anthropic batch body and
+	// JSONL line the gateway parses; how often open batches are polled and
+	// how long one may stay open before it settles at its reservation; how
+	// long an unconfirmed batch keeps its reservation; and how long settled
+	// batches stay.
+	OutboundAIBatchPricePercent               = 50
+	OutboundAIBatchInputMaxBytes        int64 = 256 << 20
+	OutboundAIBatchBodyMaxBytes         int64 = 32 << 20
+	OutboundAIBatchLineMaxBytes               = 4 << 20
+	OutboundAIBatchPollIntervalSeconds        = 60
+	OutboundAIBatchAbandonHours               = 72
+	OutboundAIBatchPendingExpiryMinutes       = 60
+	OutboundAIBatchRetentionDays              = 7
+	// Access tokens (ADR-1431): tokens per app, the longest and default
+	// lifetime, the integrations one token may name, how long outboundd
+	// caches a token check, and how long expired or revoked tokens stay.
+	OutboundAIAccessTokensPerApp         = 20
+	OutboundAIAccessTokenTTLMaxHours     = 2_160
+	OutboundAIAccessTokenTTLDefaultHours = 168
+	OutboundAIAccessTokenIntegrationsMax = 32
+	OutboundAIAccessTokenCacheSeconds    = 30
+	OutboundAIAccessTokenRetentionDays   = 30
+	// Evaluations (ADR-1431): the largest and default sample, the default
+	// loss-rate threshold, evaluations per route and UTC day, how long they
+	// stay, the deadline of one candidate or judge call, how long one may
+	// run before it fails as interrupted, how many samples run at once, and
+	// the share of judge errors above which an evaluation fails.
+	OutboundAIEvaluationSampleMax               = 50
+	OutboundAIEvaluationSampleDefault           = 20
+	OutboundAIEvaluationMaxLossRateDefault      = 20
+	OutboundAIEvaluationsPerDay                 = 20
+	OutboundAIEvaluationRetentionDays           = 30
+	OutboundAIEvaluationCallTimeoutSeconds      = 120
+	OutboundAIEvaluationInterruptedAfterMinutes = 90
+	OutboundAIEvaluationParallelCalls           = 4
+	OutboundAIEvaluationJudgeErrorMaxPercent    = 50
 )
 
 // Operator-only managed realtime resume preview safety bounds. These are not
@@ -11371,9 +11489,18 @@ const (
 	// signs after authorize() allows the read or write.
 	AuthStorageURLSeconds = 60
 	// AuthAdminBodyBytes bounds one /admin/v1 request; AuthImportBatch is
-	// the most users one import request creates.
+	// the most users one import request creates; AuthAdminPageSize is the
+	// most users, organizations or activity entries one list page returns.
 	AuthAdminBodyBytes = 1 << 20
 	AuthImportBatch    = 100
+	AuthAdminPageSize  = 100
+	// AuthReauthenticationSeconds is how recent a sign-in must be for a
+	// user to delete their own account.
+	AuthReauthenticationSeconds = 600
+	// AuthEmailSubjectMaxChars and AuthEmailBodyMaxBytes bound one email
+	// template (`gregale auth emails set`).
+	AuthEmailSubjectMaxChars = 150
+	AuthEmailBodyMaxBytes    = 4000
 	// AuthImportFileMaxBytes bounds a `gregale auth import` file.
 	AuthImportFileMaxBytes = 256 << 20
 	// AuthMaxSigningKeys bounds an Auth app's ES256 keys: the signer, a
@@ -11606,6 +11733,50 @@ const (
 
 // Maximum payload-free outbox rows mirrored per source for the inspector.
 const RealtimeInspectorSampleMax = 32
+
+// Live queries (ADR-20261016151947): sealed-query bounds and live frame sizes. The SQL
+// and parameter bounds match Neon Realtime's; the sealed payload bound keeps a
+// subscribe frame well inside LiveQueryClientFrameMaxBytes.
+const (
+	LiveQuerySealDefaultTTL        = 60 * time.Second
+	LiveQuerySealMaxTTL            = 5 * time.Minute
+	LiveQuerySealClockSkew         = 30 * time.Second
+	LiveQuerySQLMaxBytes           = 32 << 10
+	LiveQueryParamsMax             = 256
+	LiveQueryParamMaxBytes         = 16 << 10
+	LiveQuerySealPayloadMaxBytes   = 48 << 10
+	LiveQueryDatabaseIDMaxBytes    = 128
+	LiveQuerySecretRotationOverlap = 24 * time.Hour
+	// A rotation may keep the previous secret for at most this long.
+	LiveQuerySecretRotationOverlapMax = 7 * 24 * time.Hour
+	LiveQuerySubscriptionIDMax        = 64
+	// A realtime endpoint routes at most this many live secrets: two per
+	// live database its app is bound to.
+	LiveQueryRoutesPerEndpoint   = 64
+	LiveQueryClientFrameMaxBytes = 80 << 10
+	LiveQueryServerFrameMaxBytes = 256 << 10
+	LiveQueryResultRowsMax       = 10000
+	// RLS mode (ADR-20261016151947): a Data API read is at most LiveQueryRESTMaxBytes
+	// and a user's token (or its claims) at most LiveQueryTokenMaxBytes.
+	LiveQueryRESTMaxBytes  = 8 << 10
+	LiveQueryTokenMaxBytes = 8 << 10
+	// A result sent whole (a new subscriber, a reset, a resubscription) is at
+	// most this many bytes of rows: half of realtimed's per-connection
+	// outbound queue, so delivering it cannot close the connection as a slow
+	// consumer on its own.
+	LiveQueryResultBytesMax = 2 << 20
+	// Starting values for the operator preview, to be set per database class
+	// from measurements before general availability.
+	LiveQuerySubscriptionsPerDatabase   = 10000
+	LiveQueryCompiledQueriesPerDatabase = 1000
+	LiveQuerySubscriptionsPerConnection = 64
+	// RLS-mode subscriptions share maintenance only with identical claims,
+	// so they have their own, lower, per-database limit.
+	LiveQueryRLSSubscriptionsPerDatabase = 2000
+	// A connection whose outbound queue holds this many frames is closed as
+	// a slow consumer.
+	LiveQueryConnectionQueueFrames = 1024
+)
 
 // Bounded backend-worker realtime consumer groups (ADR-1030).
 const (

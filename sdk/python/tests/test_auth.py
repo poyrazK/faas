@@ -19,6 +19,7 @@ from faas_sdk.auth import (  # noqa: E402
     AuthUnavailableError,
     InvalidTokenError,
     NoTokenError,
+    Organization,
     TokenExpiredError,
     bearer_token,
     resource,
@@ -128,6 +129,16 @@ def test_verify_accepts_an_auth_app_token():
     assert claims.issued_at == datetime.fromtimestamp(NOW, tz=UTC)
     assert claims.app_metadata == {"provider": "email"}
     assert claims.raw["aal"] == "aal1"
+    assert claims.organization is None
+
+
+def test_verify_reads_the_active_organization():
+    key, clock = Key("0A1B2C3D"), Clock()
+    auth = AuthApp(key).client(clock)
+    org = {"org_id": "o1", "org_slug": "acme", "org_role": "admin", "org_permissions": ["org:read", 7]}
+    claims = auth.verify(key.sign({**user_claims(clock), **org}))
+    assert claims.organization == Organization(id="o1", slug="acme", role="admin", permissions=("org:read",))
+    assert auth.verify(key.sign({**user_claims(clock), "org_id": "o1"})).organization is None
     assert claims.is_anonymous is False
 
 
