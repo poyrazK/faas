@@ -49,7 +49,7 @@
 ## env_file
 
 `env_file` accepts a path, a list of paths, and `{path, required, format}`
-entries (`format: raw` only). Paths must stay inside the source. The scan
+entries (`format: raw` only). A path outside the source is not read and warns. The scan
 reads the dotenv grammar Compose accepts: `KEY=value`, `KEY=` with an empty
 value, `KEY` alone, `export` prefixes, blank lines, `#` comments, an inline
 `# comment` after an unquoted value, and single- or double-quoted values with

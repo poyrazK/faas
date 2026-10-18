@@ -138,7 +138,11 @@ func composeEnvFileKeys(fsys fs.FS, value any) ([]string, []string, error) {
 	for _, entry := range paths {
 		clean := normalizeComposeRelativePath(entry.path)
 		if clean == "" || clean == "." || !fs.ValidPath(clean) || strings.HasPrefix(clean, "../") {
-			return nil, nil, fmt.Errorf("env_file %q must be a file inside the source", entry.path)
+			// Valid Compose that the scan cannot read: the file is outside the
+			// uploaded source. Before ADR-1337 env_file was ignored, so this
+			// warns instead of failing a project that deploys today.
+			warnings = append(warnings, fmt.Sprintf("env_file %q is outside the source and was not read; set its variables with `gregale env set`", entry.path))
+			continue
 		}
 		body, err := readValidFile(fsys, clean)
 		if errors.Is(err, fs.ErrNotExist) || errors.Is(err, fs.ErrInvalid) {

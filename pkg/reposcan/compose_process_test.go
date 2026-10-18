@@ -153,8 +153,6 @@ func TestComposeEnvFileRejectsMalformedDeclaration(t *testing.T) {
 		files       []string
 		want        string
 	}{
-		{"env_file: ../secrets.env", nil, "must be a file inside the source"},
-		{"env_file: /etc/app.env", nil, "must be a file inside the source"},
 		{"env_file: [{path: app.env, required: maybe}]", nil, "required must be a boolean"},
 		{"env_file: [{path: app.env, format: json}]", nil, "format"},
 		{"env_file: {path: app.env}", nil, "env_file must be"},
@@ -164,6 +162,29 @@ func TestComposeEnvFileRejectsMalformedDeclaration(t *testing.T) {
 			_, err := scanCompose(t, body, tc.files...)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("err = %v; want it to mention %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// An env_file outside the uploaded source is valid Compose the scan cannot
+// read; it was ignored before ADR-1337, so it must warn, not fail the scan.
+func TestComposeEnvFileOutsideSourceWarns(t *testing.T) {
+	for _, path := range []string{"../secrets.env", "/etc/app.env"} {
+		t.Run(path, func(t *testing.T) {
+			body := "services:\n  web:\n    image: nginx:1.27\n    environment: [PORT]\n    env_file: " + path + "\n"
+			result, err := scanCompose(t, body)
+			if err != nil {
+				t.Fatalf("scan failed: %v", err)
+			}
+			found := false
+			for _, warning := range result.Warnings {
+				if strings.Contains(warning, path) && strings.Contains(warning, "outside the source") {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("warnings = %q; want one naming %s as outside the source", result.Warnings, path)
 			}
 		})
 	}
