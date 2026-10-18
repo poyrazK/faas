@@ -1,6 +1,6 @@
 # Operator alert response timing
 
-Status: Accepted, 2026-10-16. Extends retained episodes, triage history and [ADR-1747 workload summary](1747-operator-alert-workload-summary.md).
+Status: Accepted, 2026-10-16. Extends retained episodes, triage history and [ADR-20261016120000000 workload summary](20261016120000000-operator-alert-workload-summary.md).
 
 ## Decision
 
@@ -8,7 +8,7 @@ GET `/v1/admin/obs/incidents/platform_alert/response-times` reports retained
 platform alert episodes activated within the inclusive `[since, as_of]` cohort.
 The default window is 24 hours; maximum is 30 days. Since must precede as_of.
 Older active episodes are outside this activation cohort; use the [workload
-summary](1747-operator-alert-workload-summary.md) for current attention. Recurrences
+summary](20261016120000000-operator-alert-workload-summary.md) for current attention. Recurrences
 remain distinct immutable episode IDs.
 Collection and retention health accompany every response, with explicit retained
 history limitations. They do not establish complete first-ever incident history.

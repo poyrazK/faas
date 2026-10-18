@@ -17970,7 +17970,11 @@ AND o.lease_token=sqlc.arg(worker_token)::uuid AND o.lease_until>clock_timestamp
 SELECT * FROM object_storage_s3_credentials WHERE bucket_id=$1 ORDER BY id FOR UPDATE;
 
 -- name: ReadCloneCheckpointObjectPublicationSecrets :many
-SELECT * FROM app_secrets WHERE managed_object_storage_credential_id=$1 ORDER BY key,app_id,scope FOR UPDATE;
+-- Publication inserts its secrets without org_id and app_core_resource_org
+-- stamps the app's organization, so only that exact value is its own.
+SELECT s.*, (s.org_id IS NOT DISTINCT FROM a.org_id)::boolean AS org_matches_app
+FROM app_secrets s LEFT JOIN apps a ON a.id=s.app_id
+WHERE s.managed_object_storage_credential_id=$1 ORDER BY s.key,s.app_id,s.scope FOR UPDATE OF s;
 
 -- name: ReadCloneCheckpointObjectPublicationGrants :many
 SELECT * FROM object_storage_access_grants WHERE bucket_id=$1 ORDER BY api_key_id FOR UPDATE;
@@ -18679,6 +18683,8 @@ SELECT (jsonb_build_object(
     'deployment_revision_pins_deployment_id_fkey', (SELECT count(*) FROM deployment_revision_pins WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
     'deployment_rollback_operations_current_deployment_id_fkey', (SELECT count(*) FROM deployment_rollback_operations WHERE current_deployment_id = sqlc.arg(deployment_id)::uuid),
     'deployment_rollback_operations_target_deployment_id_fkey', (SELECT count(*) FROM deployment_rollback_operations WHERE target_deployment_id = sqlc.arg(deployment_id)::uuid),
+    'deployment_rollbacks_from_deployment_id_fkey', (SELECT count(*) FROM deployment_rollbacks WHERE from_deployment_id = sqlc.arg(deployment_id)::uuid),
+    'deployment_rollbacks_target_deployment_id_fkey', (SELECT count(*) FROM deployment_rollbacks WHERE target_deployment_id = sqlc.arg(deployment_id)::uuid),
     'deployment_route_policy_snapshots_deployment_id_fkey', (SELECT count(*) FROM deployment_route_policy_snapshots WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
     'deployment_runtime_environment_owners_deployment_id_fkey', (SELECT count(*) FROM deployment_runtime_environment_owners WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
     'deployment_sidecar_layers_deployment_id_fkey', (SELECT count(*) FROM deployment_sidecar_layers WHERE deployment_id = sqlc.arg(deployment_id)::uuid),
@@ -19165,20 +19171,21 @@ SELECT now()::timestamptz AS observed_at,ac.plan,
 FROM current_run selected JOIN apps a ON a.id=selected.app_id JOIN app_resource_accounts ac ON ac.app_id = a.id;
 
 -- name: ClaimAppHealth :one
--- Lock order matches ApplyProjectPlan (account, then its apps). The insert's
--- account_id foreign key needs a key-share lock on the account; taking it
--- here with SKIP LOCKED skips an app whose account is mid-apply instead of
--- holding the app row while waiting for the account (deadlock 40P01).
+-- Lock order matches ApplyProjectPlan (resource namespace, then its apps).
+-- The insert's account_id foreign key needs a key-share lock on the
+-- namespace; taking it here with SKIP LOCKED skips an app whose namespace is
+-- mid-apply instead of holding the app row while waiting for it (40P01).
 WITH candidate AS (
  SELECT a.id, a.account_id FROM apps a
  JOIN app_resource_accounts acct ON acct.app_id = a.id
+ JOIN resource_namespaces rn ON rn.id = a.account_id
  LEFT JOIN app_health_collection_state h ON h.app_id = a.id
  WHERE a.status <> 'deleted' AND a.deleted_at IS NULL
  AND COALESCE(a.manifest->>'execution_mode', '') IN ('', 'request', 'service')
  AND (h.next_check_at IS NULL OR h.next_check_at <= sqlc.arg(checked_now)::timestamptz)
  AND (h.lease_until IS NULL OR h.lease_until <= sqlc.arg(checked_now)::timestamptz)
  ORDER BY COALESCE(h.next_check_at, '-infinity'::timestamptz), a.id
- LIMIT 1 FOR UPDATE OF a SKIP LOCKED
+ LIMIT 1 FOR UPDATE OF a SKIP LOCKED FOR KEY SHARE OF rn SKIP LOCKED
 )
 INSERT INTO app_health_collection_state(app_id, account_id, next_check_at, lease_token, lease_started_at, lease_until)
 SELECT id, account_id, sqlc.arg(checked_now)::timestamptz, sqlc.arg(token)::text, sqlc.arg(checked_now)::timestamptz, sqlc.arg(expires_at)::timestamptz FROM candidate
@@ -19187,10 +19194,10 @@ WHERE app_health_collection_state.lease_until IS NULL OR app_health_collection_s
 RETURNING app_id::text, account_id::text, lease_token, lease_started_at, lease_until;
 
 -- name: LockAppHealthAccount :exec
--- FinishAppHealth takes the account first, before history inserts reach the
--- app and account rows through their foreign keys, in the same order as
--- ApplyProjectPlan.
-SELECT 1 FROM accounts WHERE id = sqlc.arg(account_id)::text::uuid FOR KEY SHARE;
+-- FinishAppHealth takes the resource namespace first, before history inserts
+-- reach the app and namespace rows through their foreign keys, in the same
+-- order as ApplyProjectPlan.
+SELECT 1 FROM resource_namespaces WHERE id = sqlc.arg(account_id)::text::uuid FOR KEY SHARE;
 
 -- name: LockAppHealthCollection :one
 SELECT h.assessment, h.assessment_key, h.checked_at, h.notification_state FROM app_health_collection_state h

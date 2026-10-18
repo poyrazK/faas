@@ -236,7 +236,20 @@ func TestPGCloneObjectSecretWithdrawalWithoutEnvelopes(t *testing.T) {
 		}
 		// Convert the original managed credentials into standalone credentials,
 		// so the captured catalogue truthfully has no app-secret bindings.
-		if _, err := f.pool.Exec(t.Context(), "UPDATE object_storage_s3_credentials SET managed_app_id=NULL,managed_scope=NULL,managed_prefix=NULL WHERE bucket_id IN(SELECT b.id FROM object_buckets b JOIN apps a ON a.id=b.app_id WHERE a.project_id=$1 AND b.scope='production')", f.lease.Operation.ProjectID); err != nil {
+		// Credential ownership is immutable in production, so forge it with
+		// triggers off.
+		tx, err := f.pool.Begin(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = tx.Rollback(t.Context()) }()
+		if _, err := tx.Exec(t.Context(), "SET LOCAL session_replication_role = replica"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tx.Exec(t.Context(), "UPDATE object_storage_s3_credentials SET managed_app_id=NULL,managed_scope=NULL,managed_prefix=NULL WHERE bucket_id IN(SELECT b.id FROM object_buckets b JOIN apps a ON a.id=b.app_id WHERE a.project_id=$1 AND b.scope='production')", f.lease.Operation.ProjectID); err != nil {
+			t.Fatal(err)
+		}
+		if err := tx.Commit(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 	})

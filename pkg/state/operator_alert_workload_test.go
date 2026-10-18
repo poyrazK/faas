@@ -11,7 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// ADR-1747: workload aggregation covers all retained rows before pagination.
+// ADR-20261016120000000: workload aggregation covers all retained rows before pagination.
 func workloadFixture(now time.Time, n int) state.OperatorAlertSnapshot {
 	s := alertSnapshotFixture(now, "a", "", time.Time{})
 	for i := range n {
