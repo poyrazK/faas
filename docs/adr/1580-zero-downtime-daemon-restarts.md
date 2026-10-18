@@ -115,7 +115,15 @@ The daemon (`wire.HandoffRequests`, `wire.Handoff`):
    readiness pipe (`FAAS_HANDOFF_READY_FD`) and its own PID
    (`FAAS_HANDOFF_PARENT`). The successor inherits the environment, minus
    systemd's activation and watchdog PID variables, and the unit's
-   credentials directory.
+   credentials directory. It is started through a short-lived intermediate
+   copy of the binary (`FAAS_HANDOFF_SPAWN`), which starts the successor,
+   reports its PID on the pipe and exits. The orphaned successor is
+   re-parented to PID 1, so it is systemd's child before it becomes the main
+   process. systemd treats a main process it did not start as alien: on
+   stop it sends SIGTERM and SIGKILL at once instead of waiting for the
+   drain, and it cannot learn the exit status that `Restart=` needs. A
+   native run on systemd 255 showed the first: a restart after a hand-off
+   cut 35 s requests 5 s in and reported the stop done in 162 ms.
 4. The successor claims the inherited sockets by address, as it would a
    socket unit's. Its listeners accept nothing until it is ready
    (`daemonunit.HandoffReady`): meanwhile the old generation takes every
@@ -131,8 +139,9 @@ The daemon (`wire.HandoffRequests`, `wire.Handoff`):
 
 Any failure before step 5 completes stops the successor and leaves the old
 generation serving; the unit never has zero processes. A second reload while
-an old generation still drains sends that generation SIGTERM: at most two
-generations hold requests, plus briefly a third finishing its last grace.
+an old generation still drains sends that generation SIGTERM (it is found
+by sharing the unit's cgroup): at most two generations hold requests, plus
+briefly a third finishing its last grace.
 
 ### What the old generation keeps and stops
 

@@ -21,10 +21,21 @@ closes its WebSocket sessions at the hand-off (fan-out is per process).
 Portable tests cover a 30 s request across a hand-off with no failed request,
 a refused hand-off, both gateways' drains with requests longer than the grace,
 store adoption across generations, a realtimed hand-off under load, and
-deployctl's reload-or-restart decision. Open: the hand-off under real systemd
-(`MAINPID=` adoption, `NotifyAccess=main`, watchdog, `OOMPolicy`) on a native
-host, apid's tests on Linux, apid's memory headroom (256 M), and a WebSocket
-across a gateway hand-off on a real node.
+deployctl's reload-or-restart decision. Native run on fsn-4 (systemd 255,
+2026-10-18), with transient units using pkg/wire's hand-off and the real
+realtimed binary:
+- a reload under load: 235,434 requests, 0 failures; three 35 s requests and a
+  90 s SSE stream finished on the old process, and systemd adopted the new one
+  as main in 0.4 s with the watchdog satisfied;
+- two reloads 10 s apart: 0 failures;
+- a successor that never becomes ready: 0 failures, `STATUS=hand-off failed`;
+- realtimed reloaded twice under load: 0 failures;
+- a successor that crashes is restarted by systemd;
+- a restart after a hand-off drains for the 25 s grace.
+The first native run found that a successor started by the old process was an
+alien main process to systemd, which SIGKILLed it on restart; successors are
+now systemd's children. Open: apid's memory headroom (256 M), a WebSocket
+across a gateway hand-off on a real node, and a deploy through deployctl.
 
 ## Zero-downtime daemon restarts — 2026-10-17 (branch, not released)
 
@@ -41,10 +52,12 @@ wake RPCs wait out a schedd restart, outboundd and bridged drain before
 exiting, and HTTP daemons answer requests on connections accepted just before
 shutdown instead of closing them
 ([ADR-1580](adr/1580-zero-downtime-daemon-restarts.md)). Portable
-restart-under-load tests show no failed requests. Open: a native systemd
-restart under load on a compute node and the control plane, the first
-socket conversion through `node_join` and deployctl, and the listeners the
-ADR leaves without socket activation.
+restart-under-load tests show no failed requests. On fsn-4 (systemd 255),
+gatewayd-internal's synth server behind a socket unit and a TCP schedd
+listener behind a socket unit each restarted five times under load with 0 of
+138,179 and 0 of 127,987 requests failing; without the socket unit the gateway
+returned 103,323 502s. Open: the first socket conversion through `node_join`
+and deployctl, and the listeners the ADR leaves without socket activation.
 
 ## Durable migration source retirement — 2026-10-17
 

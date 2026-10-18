@@ -26,6 +26,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -365,7 +366,11 @@ func confirmSystemdMainPID(ctx context.Context, pid int) error {
 	}
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		out, err := exec.CommandContext(ctx, "systemctl", "show", "--property=MainPID", "--value", unit).Output()
+		show := exec.CommandContext(ctx, "systemctl", "show", "--property=MainPID", "--value", unit)
+		// systemctl must not speak for the unit: once the successor is
+		// main, systemd rejects and logs its notifications.
+		show.Env = withoutEnv(os.Environ(), "NOTIFY_SOCKET", "WATCHDOG_PID", "WATCHDOG_USEC")
+		out, err := show.Output()
 		if err == nil && strings.TrimSpace(string(out)) == strconv.Itoa(pid) {
 			return nil
 		}
@@ -435,4 +440,16 @@ func cgroupMemory() (current, limit int64, ok bool) {
 	limit, okLimit := read("memory.max") // "max" fails to parse: unlimited
 	current, okCurrent := read("memory.current")
 	return current, limit, okLimit && okCurrent
+}
+
+// withoutEnv returns env without the named variables.
+func withoutEnv(env []string, names ...string) []string {
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		key, _, _ := strings.Cut(kv, "=")
+		if !slices.Contains(names, key) {
+			out = append(out, kv)
+		}
+	}
+	return out
 }
