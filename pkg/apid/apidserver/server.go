@@ -30,6 +30,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/edgerules"
 	hostingapi "github.com/onebox-faas/faas/pkg/apid/hosting"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
+	"github.com/onebox-faas/faas/pkg/apid/mailoutbox"
+
 	"github.com/onebox-faas/faas/pkg/apid/issuetrackers"
 	"github.com/onebox-faas/faas/pkg/apid/managedrealtime"
 	"github.com/onebox-faas/faas/pkg/apid/mcpadmission"
@@ -199,7 +201,26 @@ type server struct {
 	resendWebhookSecret string
 	// mailer emits the dunning + quota-warning emails. nil falls back
 	// to the noop sender so callers never need to nil-check.
-	mailer Mailer
+	deletionMailOutbox                  *mailoutbox.Service
+	verificationMailOutboxRequested     func() bool
+	passwordResetMailOutboxRequested    func() bool
+	passwordResetCredentials            *mailoutbox.ResetCredentials
+	magicLinkMailOutboxRequested        func() bool
+	mfaRecoveryAlertOutboxRequested     func() bool
+	mfaDisabledAlertOutboxRequested     func() bool
+	deploymentFailedOutboxRequested     func() bool
+	subscriptionEndedOutboxRequested    func() bool
+	quotaWarningOutboxRequested         func() bool
+	nonpaymentDeletionOutboxRequested   func() bool
+	accountSuspendedOutboxRequested     func() bool
+	accountRestoredOutboxRequested      func() bool
+	paymentFailedOutboxRequested        func() bool
+	mfaEnabledAlertOutboxRequested      func() bool
+	passwordChangedAlertOutboxRequested func() bool
+	magicLinkCredentials                *mailoutbox.MagicLinkCredentials
+	mfaDisableMailOutboxRequested       func() bool
+	mfaDisableCredentials               *mailoutbox.MFADisableCredentials
+	mailer                              Mailer
 	// mailBounce dispatches Resend bounce / complaint events into
 	// the suppression + dunning pipeline (issue #246 acceptance
 	// item 8). Wired via WithMailBounce from cmd/apid/main.go
@@ -4117,6 +4138,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/account/mfa/recover", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.idempotent(s.mfaRecover)))))
 	mux.HandleFunc("POST /v1/account/mfa/disable", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.idempotent(s.mfaDisable)))))
 	mux.HandleFunc("POST /v1/account/mfa/disable-email", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.mfaDisableEmail))))
+	mux.HandleFunc("/auth/reset/mfa", s.mfaDisableEmailPageRoute())
 	mux.HandleFunc("POST /v1/account/mfa/disable-email/confirm", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.mfaDisableEmailConfirm))))
 
 	// Stripe webhook (no auth — Stripe signs requests; for M5 we accept

@@ -172,12 +172,17 @@ func orgAppQuotaSuite(t *testing.T, newStore func(*testing.T) state.Store) {
 		if err := f.store.MarkAccountDeletionPending(t.Context(), f.actor.ID); !errors.Is(err, state.ErrOrgAppOwnershipPending) {
 			t.Fatalf("scheduled erasure with company storage reference: %v", err)
 		}
-		// Dunning may have scheduled deletion before this code was deployed.
-		if err := f.store.UpdateAccountStatus(t.Context(), f.actor.ID, state.AccountDeletedPending); err != nil {
-			t.Fatal(err)
+		// Generic status writers must preserve the same barrier. A direct
+		// purge must also fail without changing company resources.
+		if err := f.store.UpdateAccountStatus(t.Context(), f.actor.ID, state.AccountDeletedPending); !errors.Is(err, state.ErrOrgAppOwnershipPending) {
+			t.Fatalf("status writer scheduled unsupported company erasure: %v", err)
 		}
-		if err := f.store.DeleteAccount(t.Context(), f.actor.ID); !errors.Is(err, state.ErrOrgAppOwnershipPending) {
+		if err := f.store.DeleteAccount(t.Context(), f.actor.ID); err == nil {
 			t.Fatalf("purged company storage reference: %v", err)
+		}
+		account, err := f.store.AccountByID(t.Context(), f.actor.ID)
+		if err != nil || account.Status != state.AccountActive {
+			t.Fatalf("blocked erasure changed the identity: %+v %v", account, err)
 		}
 		if _, err := f.store.AppByID(t.Context(), f.app.ID); err != nil {
 			t.Fatalf("company app erased: %v", err)

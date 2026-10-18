@@ -1,6 +1,7 @@
 package deploycontroller
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -70,7 +71,7 @@ func (c *Controller) AssembleOverlay(req OverlayRequest) (string, error) {
 		return "", fmt.Errorf("deploycontroller: overlay: remove incomplete %s: %w", req.ReleaseID, err)
 	}
 
-	base, err := releasebundle.Read(current)
+	base, err := baseManifest(current)
 	if err != nil {
 		return "", fmt.Errorf("deploycontroller: overlay: read active release: %w", err)
 	}
@@ -105,6 +106,48 @@ func (c *Controller) AssembleOverlay(req OverlayRequest) (string, error) {
 		return "", fmt.Errorf("deploycontroller: overlay: publish %s: %w", req.ReleaseID, err)
 	}
 	return target, nil
+}
+
+// baseManifest reads the active release's integrity manifest. A compute
+// host's release comes from `gregalectl release install`, which writes the
+// canonical release-manifest.json but no deployment manifest; give it one,
+// built from exactly the files it has, so the overlay can inherit its
+// hashes and the controller can verify it as a rollback target. The host's
+// SBOM baseline sidecar is lifecycle state, never part of a release.
+func baseManifest(root string) (releasebundle.Manifest, error) {
+	manifest, err := releasebundle.Read(root)
+	if err == nil {
+		return manifest, nil
+	}
+	if _, statErr := os.Stat(filepath.Join(root, releasebundle.ManifestName)); !errors.Is(statErr, os.ErrNotExist) {
+		return releasebundle.Manifest{}, err
+	}
+	id := filepath.Base(root)
+	body, err := os.ReadFile(filepath.Join(root, releaseinstall.ManifestName))
+	if err != nil {
+		return releasebundle.Manifest{}, fmt.Errorf("release %s has neither a deployment nor a canonical manifest: %w", id, err)
+	}
+	var canonical struct {
+		GitSHA string `json:"git_sha"`
+	}
+	if err := json.Unmarshal(body, &canonical); err != nil || !releaseinstall.ValidGitSHA(canonical.GitSHA) {
+		return releasebundle.Manifest{}, fmt.Errorf("release %s canonical manifest names no commit", id)
+	}
+	built, err := releasebundle.Build(root, id, canonical.GitSHA, "linux/amd64", time.Now().UTC())
+	if err != nil {
+		return releasebundle.Manifest{}, err
+	}
+	files := built.Files[:0]
+	for _, file := range built.Files {
+		if file.Path != releaseinstall.SBOMBaselineName {
+			files = append(files, file)
+		}
+	}
+	built.Files = files
+	if err := releasebundle.Write(root, built); err != nil {
+		return releasebundle.Manifest{}, err
+	}
+	return built, nil
 }
 
 // linkTree hard-links every release file of src into dst, recreating the

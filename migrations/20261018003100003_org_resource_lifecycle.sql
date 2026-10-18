@@ -57,6 +57,8 @@ BEGIN
     AND EXISTS (SELECT 1 FROM pg_proc WHERE pronamespace=current_schema()::regnamespace AND proname='activate_org_billing_identity')
     AND EXISTS (SELECT 1 FROM pg_proc WHERE pronamespace=current_schema()::regnamespace AND proname='org_app_identity_erasure_blocked')
     AND EXISTS (SELECT 1 FROM pg_proc WHERE pronamespace=current_schema()::regnamespace AND proname='guard_account_shared_app_purge')
+    AND EXISTS (SELECT 1 FROM pg_proc WHERE pronamespace=current_schema()::regnamespace AND proname='guard_account_shared_app_deletion_transition')
+    AND EXISTS (SELECT 1 FROM pg_trigger WHERE tgrelid=to_regclass('accounts') AND tgname='accounts_shared_app_deletion_transition' AND NOT tgisinternal)
     AND EXISTS (SELECT 1 FROM pg_proc WHERE pronamespace=current_schema()::regnamespace AND proname='application_standard_egress_guard')
     AND EXISTS (SELECT 1 FROM pg_proc WHERE pronamespace=current_schema()::regnamespace AND proname='application_standard_egress_target')
     AND EXISTS (SELECT 1 FROM pg_proc WHERE pronamespace=current_schema()::regnamespace AND proname='application_standard_lock_observation_evidence')
@@ -514,6 +516,22 @@ BEGIN
     END IF;
     RETURN OLD;
 END $$;
+
+-- Alternate transactional writers, including the notification outbox, must
+-- enforce the same ownership barrier before changing identity status.
+CREATE OR REPLACE FUNCTION guard_account_shared_app_deletion_transition() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    PERFORM id FROM accounts WHERE id=OLD.id FOR UPDATE;
+    IF org_app_identity_erasure_blocked(OLD.id) THEN
+        RAISE EXCEPTION 'organization ownership or unsupported resource migration required before account deletion'
+            USING ERRCODE='23514', CONSTRAINT='account_shared_app_ownership_pending';
+    END IF;
+    RETURN NEW;
+END $$;
+CREATE TRIGGER accounts_shared_app_deletion_transition
+    BEFORE UPDATE OF status ON accounts
+    FOR EACH ROW WHEN (NEW.status='deleted_pending' AND OLD.status IS DISTINCT FROM NEW.status)
+    EXECUTE FUNCTION guard_account_shared_app_deletion_transition();
 
 CREATE OR REPLACE FUNCTION public.application_standard_egress_guard() RETURNS trigger
     LANGUAGE plpgsql
@@ -2179,6 +2197,8 @@ DROP TRIGGER org_app_resource_policy ON orgs;
 DROP FUNCTION notify_org_app_resource_policy();
 DROP FUNCTION lock_app_resource_account(uuid,boolean,boolean);
 DROP VIEW app_resource_accounts;
+DROP TRIGGER accounts_shared_app_deletion_transition ON accounts;
+DROP FUNCTION guard_account_shared_app_deletion_transition();
 CREATE OR REPLACE FUNCTION guard_account_shared_app_purge() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     IF EXISTS (SELECT 1 FROM apps a JOIN orgs o ON o.id=a.org_id WHERE a.account_id=OLD.id AND NOT o.personal_org) THEN

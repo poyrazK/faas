@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/apidgrpc"
+	"github.com/onebox-faas/faas/pkg/genslot"
 	"github.com/onebox-faas/faas/pkg/oci"
 	"github.com/onebox-faas/faas/pkg/realtime"
 	"github.com/onebox-faas/faas/pkg/role"
@@ -30,10 +31,15 @@ const defaultSocket = "/run/faas/realtimed.sock"
 const defaultHealthListen = "127.0.0.1:9107"
 
 func main() {
-	wire.Daemon("realtimed", run)
+	wire.HandoffDaemon("realtimed", run)
 }
 
 func run(ctx context.Context, log *slog.Logger) error {
+	// stopping is the unit's SIGTERM. ctx also ends once a two-generation
+	// hand-off's successor serves (ADR-1580).
+	stopping := ctx
+	ctx, endGeneration := context.WithCancel(ctx)
+	defer endGeneration()
 	ops := wire.NewOpsMetrics("realtimed")
 	traceShutdown, traceErr := trace.InitTracerWithRegistry(ctx, "realtimed", wire.Version, log, ops.Registry(), ops.MetricPrefix())
 	if traceErr != nil {
@@ -62,8 +68,16 @@ func run(ctx context.Context, log *slog.Logger) error {
 			return fmt.Errorf("realtimed: migrate callback outbox: %w", err)
 		}
 	}
+	// Each generation owns a slot of the outbox, so a hand-off's two
+	// generations never deliver the same callback file (ADR-1580).
+	outboxSlot, err := genslot.Acquire(outboxRoot)
+	if err != nil {
+		return fmt.Errorf("realtimed: claim callback outbox: %w", err)
+	}
+	handedOff := false
+	defer func() { returnCallbackOutboxHome(outboxSlot, handedOff, log) }()
 	outbox, err := realtime.NewCallbackOutbox(realtime.CallbackOutboxConfig{
-		Root:               outboxRoot,
+		Root:               outboxSlot.Dir(),
 		DeadLetterMaxBytes: int64(envInt("FAAS_REALTIME_CALLBACK_DEAD_MAX_BYTES", int(realtime.DefaultCallbackDeadLetterMaxBytes))),
 		ReplayWorkers:      envInt("FAAS_REALTIME_CALLBACK_REPLAY_WORKERS", realtime.DefaultCallbackOutboxReplayWorkers),
 		MaxRetryInterval:   envDuration("FAAS_REALTIME_CALLBACK_RETRY_MAX_INTERVAL", realtime.DefaultCallbackOutboxMaxRetryInterval),
@@ -71,6 +85,19 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	adoptCallbackOutboxes(outboxSlot, outbox, log)
+	go func() {
+		t := time.NewTicker(genslot.AdoptInterval)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				adoptCallbackOutboxes(outboxSlot, outbox, log)
+			}
+		}
+	}()
 	hooks := realtime.HTTPHooks{
 		Client:       newCallbackHTTPClient(callbackTimeout),
 		DurableQueue: outbox,
@@ -151,7 +178,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return err
 	}
 	defer func() { _ = listener.Close() }()
-	healthListener, err := net.Listen("tcp", getenv("FAAS_REALTIME_HEALTH_LISTEN", defaultHealthListen))
+	healthListener, err := wire.ListenInherited("tcp", getenv("FAAS_REALTIME_HEALTH_LISTEN", defaultHealthListen))
 	if err != nil {
 		_ = listener.Close()
 		return err
@@ -177,7 +204,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 		ReadHeaderTimeout: 5 * time.Second,
 		MaxHeaderBytes:    64 << 10,
 	}
+	replayDone := make(chan struct{})
+	// The outbox returns home (deferred above) only after replay stops.
+	defer func() { endGeneration(); <-replayDone }()
 	go func() {
+		defer close(replayDone)
 		superviseCallbackReplay(ctx, log, callbackReplayRetryInitial, callbackReplayRetryMax, func(replayCtx context.Context) error {
 			return outbox.Run(replayCtx, func(deliveryCtx context.Context, event realtime.Event) error {
 				callbackCtx, cancel := context.WithTimeout(deliveryCtx, callbackTimeout)
@@ -186,10 +217,14 @@ func run(ctx context.Context, log *slog.Logger) error {
 			})
 		}, callbackReplayRestarts.Inc)
 	}()
+	// The drains let a connection accepted just before shutdown deliver its
+	// request; net/http drops one it reads after Shutdown began (ADR-1580).
+	// During a hand-off the successor accepts on the same sockets.
+	serverDrain, healthDrain := wire.NewHTTPDrain(server), wire.NewHTTPDrain(healthServer)
 	serverErr := make(chan error, 2)
 	go func() {
 		log.Info("realtimed listening", "socket", socketPath)
-		if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := serverDrain.ServeErr(server.Serve(serverDrain.Listener(listener))); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			serverErr <- err
 			return
 		}
@@ -198,22 +233,42 @@ func run(ctx context.Context, log *slog.Logger) error {
 	readySignal.Set(true, "")
 	go func() {
 		log.Info("realtimed health listening", "address", healthListener.Addr().String())
-		if err := healthServer.Serve(healthListener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := healthDrain.ServeErr(healthServer.Serve(healthDrain.Listener(healthListener))); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			serverErr <- err
 			return
 		}
 		serverErr <- nil
 	}()
 
+	notifyStop := wire.NotifyReadyWhen(ctx, readyProbe.ReadyFunc())
+	defer notifyStop()
+	defer wire.StartWatchdog(ctx, wire.NewLiveness(), ops, log)()
+	// WebSocket fan-out is per process: a session left on the old generation
+	// would miss what is published to the successor. A hand-off therefore
+	// closes the old generation's sessions once the successor serves, and
+	// their clients reconnect to it at once.
+	handoff := make(chan struct{})
+	wire.WatchHandoffs(ctx, "realtimed", log, func() {
+		close(handoff)
+		endGeneration()
+	})
 	select {
 	case err := <-serverErr:
 		return err
 	case <-ctx.Done():
-		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		select {
+		case <-handoff:
+			handedOff = true
+		default:
+		}
+		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(stopping), 10*time.Second)
 		defer cancel()
 		_ = manager.Close()
-		_ = healthServer.Shutdown(shutdownCtx)
-		return server.Shutdown(shutdownCtx)
+		healthDone := make(chan struct{})
+		go func() { defer close(healthDone); _ = healthDrain.Shutdown(shutdownCtx, healthServer) }()
+		err := serverDrain.Shutdown(shutdownCtx, server)
+		<-healthDone
+		return err
 	}
 }
 
@@ -240,7 +295,44 @@ func listenRealtimeSocket(path string) (net.Listener, error) {
 		_ = l.Close()
 		return nil, err
 	}
+	wire.Share(l) // a hand-off successor serves the same socket (ADR-1580)
 	return l, nil
+}
+
+// adoptCallbackOutboxes moves callbacks an exited generation left in its
+// outbox slot into this generation's outbox.
+func adoptCallbackOutboxes(slot *genslot.Slot, outbox *realtime.CallbackOutbox, log *slog.Logger) {
+	err := slot.AdoptOrphans(func(dir string) error {
+		n, err := outbox.Absorb(dir)
+		if n > 0 {
+			log.Info("realtimed: adopted an exited generation's callbacks", "callbacks", n, "dir", dir)
+		}
+		return err
+	})
+	if err != nil {
+		log.Warn("realtimed: adopt callbacks; retrying", "err", err)
+	}
+}
+
+// returnCallbackOutboxHome moves this generation's callbacks to the root
+// slot at exit, where a release without slots looks. A handed-off generation
+// does not wait: its successor adopts them.
+func returnCallbackOutboxHome(slot *genslot.Slot, handedOff bool, log *slog.Logger) {
+	wait := 5 * time.Second
+	if handedOff {
+		wait = 0
+	}
+	err := slot.ReturnHome(wait, func(from, home string) error {
+		q, err := realtime.NewCallbackOutbox(realtime.CallbackOutboxConfig{Root: home})
+		if err != nil {
+			return err
+		}
+		_, err = q.Absorb(from)
+		return err
+	})
+	if err != nil {
+		log.Warn("realtimed: callbacks stay for the next generation", "err", err)
+	}
 }
 
 func getenv(key, fallback string) string {

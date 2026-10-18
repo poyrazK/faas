@@ -116,56 +116,41 @@ func (a *authHandlers) renderLogin(w http.ResponseWriter, r *http.Request, statu
 // invalid, returns 410 Gone (semantically correct: the resource was
 // consumed). No information leak between cases — they all return 410.
 func (a *authHandlers) verify(w http.ResponseWriter, r *http.Request) {
-	token := strings.TrimSpace(r.URL.Query().Get("token"))
-	if token == "" {
+	hash, ok := magicLinkHash(r.URL.Query().Get("token"))
+	if !ok {
 		api.WriteProblemForRequest(w, r, api.ErrVerificationLinkInvalid())
 		return
 	}
-	// The magic-link mailer encodes the token base64url; legacy links used
-	// hex. Accept both so neither generation of link 410s.
+	acct, problem := a.srv.magicLinkAccount(r.Context(), hash)
+	if problem != nil {
+		api.WriteProblemForRequest(w, r, problem)
+		return
+	}
+	a.finishMagicLink(w, r, acct)
+}
+
+// Accept the original hex links and the current base64url form.
+func magicLinkHash(token string) ([]byte, bool) {
+	token = strings.TrimSpace(token)
 	raw, err := hex.DecodeString(token)
 	if err != nil {
 		raw, err = base64.RawURLEncoding.DecodeString(token)
 	}
-	if err != nil || len(raw) != 32 {
-		api.WriteProblemForRequest(w, r, api.ErrVerificationLinkInvalid())
-		return
+	defer clear(raw)
+	if err != nil || len(raw) != api.MagicLinkTokenBytes {
+		return nil, false
 	}
-	hash := api.HashToken(raw) // SHA-256 of the raw 32 bytes
-	accountID, err := a.srv.store.ConsumeLoginToken(r.Context(), hash)
-	if err != nil {
-		a.log.Info("auth.verify.invalid_token", "err", err)
-		api.WriteProblemForRequest(w, r, api.ErrVerificationLinkInvalid())
-		return
-	}
-	// IAM-2 (issue #186): fetch the account so we can stamp the
-	// mfa-pending flag on the cookie when the policy requires it.
-	// A missing account is a token-mismatch race (the row was
-	// hard-deleted between token mint and verify); treat as 410
-	// Gone, matching the expired-token path above.
-	acct, err := a.srv.store.AccountByID(r.Context(), accountID)
-	if err != nil {
-		a.log.Info("auth.verify.account_missing", "err", err, "account", accountID)
-		api.WriteProblemForRequest(w, r, api.ErrVerificationLinkInvalid())
-		return
-	}
-	// The magic link was delivered to acct.Email, so consuming it also
-	// proves address ownership. This leaves OAuth behavior unchanged and
-	// avoids sending passwordless customers through a second email loop.
-	if _, err := a.srv.claimAccountByEmailOwnership(r.Context(), acct); err != nil {
-		a.log.Error("auth.verify.mark_email_verified", "err", err, "account", accountID)
-		api.WriteProblemForRequest(w, r, api.ErrInternal(
-			"Gregale could not verify this email address.",
-		).WithHint("Retry the link; if it still fails, request a new verification email."))
-		return
-	}
+	return api.HashToken(raw), true
+}
+
+func (a *authHandlers) finishMagicLink(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	mfaPending := mfaSessionPending(acct)
 	// IAM-3 (ADR-039): the magic-link verify path now mints a sid
 	// + creates the sessions row + emits auth.session.created
 	// through the unified helper. The route never reaches the
 	// dashboardAuthChain (it lives outside s.auth) so this is the
 	// only authoritative stamp the verify path leaves.
-	cookie, _, err := a.srv.issueDashboardSession(r.Context(), r, accountID, mfaPending, "magic_link")
+	cookie, _, err := a.srv.issueDashboardSession(r.Context(), r, acct.ID, mfaPending, "magic_link")
 	if err != nil {
 		a.log.Error("auth.verify.issue_session", "err", err)
 		api.WriteProblemForRequest(w, r, api.ErrInternal(
@@ -186,7 +171,7 @@ func (a *authHandlers) verify(w http.ResponseWriter, r *http.Request) {
 	// IAM-2: extend the data shape with mfa_pending so the
 	// dashboard audit list can pivot "which logins landed while
 	// the account was required but unenrolled?".
-	a.srv.audit.Emit(r.Context(), "auth.login", &accountID, map[string]any{
+	a.srv.audit.Emit(r.Context(), "auth.login", &acct.ID, map[string]any{
 		"method":      "magic_link",
 		"mfa_pending": mfaPending,
 	})

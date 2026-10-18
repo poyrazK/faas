@@ -87,7 +87,7 @@ func AcquireMigrationLock(ctx context.Context, pool *pgxpool.Pool) (release func
 	// CREATE INDEX CONCURRENTLY can then wait for that snapshot while its
 	// migrator owns this lock. Complete each failed try before waiting so
 	// competing daemons do not prevent the current migrator from progressing.
-	tick := time.NewTicker(100 * time.Millisecond)
+	tick := time.NewTicker(migrationLockPollInterval)
 	defer tick.Stop()
 	for {
 		var acquired bool
@@ -141,3 +141,5 @@ func discardMigrationLockConn(parent context.Context, conn *pgxpool.Conn) {
 
 // Bound both the unlock round-trip and closing an uncertain lock owner.
 const pgxLockUnlockTimeout = 5 * time.Second
+
+const migrationLockPollInterval = 100 * time.Millisecond

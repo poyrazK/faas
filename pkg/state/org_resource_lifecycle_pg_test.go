@@ -93,6 +93,13 @@ VALUES ($1,$2,'unreviewed','email','unreviewed@example.com')`, `SELECT EXISTS(SE
 			if err := store.MarkAccountDeletionPending(ctx, f.actor.ID); !errors.Is(err, state.ErrOrgAppOwnershipPending) {
 				t.Fatalf("unreviewed observability record allowed erasure: %v", err)
 			}
+			if _, err := pool.Exec(ctx, `UPDATE accounts SET status='deleted_pending',deletion_requested_at=now() WHERE id=$1`, f.actor.ID); err == nil {
+				t.Fatal("transactional status writer bypassed observability ownership guard")
+			}
+			var status string
+			if err := pool.QueryRow(ctx, `SELECT status FROM accounts WHERE id=$1`, f.actor.ID).Scan(&status); err != nil || status != string(state.AccountActive) {
+				t.Fatalf("blocked deletion changed the account status: %s %v", status, err)
+			}
 			if _, err := pool.Exec(ctx, `DELETE FROM accounts WHERE id=$1`, f.actor.ID); err == nil {
 				t.Fatal("raw account deletion bypassed observability ownership guard")
 			}
@@ -101,6 +108,46 @@ VALUES ($1,$2,'unreviewed','email','unreviewed@example.com')`, `SELECT EXISTS(SE
 				t.Fatalf("observability ownership guard discarded the record: %v", err)
 			}
 		})
+	}
+}
+
+func TestPostgresOrgResourcePersonalMailHistoryDoesNotOwnCompanyResources(t *testing.T) {
+	pool := pgtest.OpenMigrated(t)
+	store := state.NewPgStore(pool)
+	f := setupOffboarding(t, store)
+	ctx := t.Context()
+	if err := store.UpdateAccountProviderCustomerID(ctx, f.org.ID, "cus_mail_history"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpdateAccountStripeSubscriptionItem(ctx, f.org.ID, "si_mail_history"); err != nil {
+		t.Fatal(err)
+	}
+	id := uuid.NewString()
+	// A restored account can retain a cancelled personal deletion notice. Its
+	// history must be erased with the person while company resources survive.
+	if _, err := pool.Exec(ctx, `INSERT INTO platform_mail_producer_outbox
+(id,account_id,namespace,producer_id,from_address,recipient_address,template,template_version,
+deletion_requested_at,restore_until,expires_at,state,code)
+VALUES ($1,$2,'platform','apid','notice@example.test','','account_deletion_pending',1,
+now()-interval '1 day',now()+interval '29 days',now()+interval '1 day','cancelled','account_changed')`, id, f.actor.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RemoveOrgMember(ctx, f.org.ID, f.actor.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkAccountDeletionPending(ctx, f.actor.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.DeleteAccount(ctx, f.actor.ID); err != nil {
+		t.Fatal(err)
+	}
+	var exists bool
+	if err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM platform_mail_producer_outbox WHERE id=$1)`, id).Scan(&exists); err != nil || exists {
+		t.Fatalf("personal notification history survived identity erasure: %v", err)
+	}
+	app, err := store.AppByID(ctx, f.app.ID)
+	if err != nil || app.AccountID != f.app.AccountID || app.OrgID != f.org.ID {
+		t.Fatalf("personal notification cleanup changed company resources: %+v %v", app, err)
 	}
 }
 

@@ -67,6 +67,12 @@ Selective data-repair operations and their rehearsal journals retain their
 existing account references and erasure blockers. Their organization ownership,
 approval and recovery paths require separate review.
 
+All writers that enter `deleted_pending`, including the personal notification
+outbox, enforce the ownership barrier under the account row lock. The outbox
+transition and intent remain atomic. Personal credential and notification
+history follows identity erasure; it does not acquire ownership of retained
+company applications. Internal mail remains behind its upstream default-off gates.
+
 Denormalized core child organization references follow the app root. The
 migration repairs legacy personal-org references without changing billing
 subject UUIDs, encrypted bytes or usage quantities. New writes enforce the same
