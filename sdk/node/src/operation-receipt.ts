@@ -14,6 +14,8 @@ export interface OperationTransactionResult {
   replayed: boolean;
 }
 
+export type OperationReceiptGuard = (transaction: OperationTransaction, body: string, replayed: boolean) => Promise<void>;
+
 export class OperationConflictError extends Error {
   readonly code = "operation_receipt_conflict";
   constructor() { super("operation receipt scope or input differs"); this.name = "OperationConflictError"; }
@@ -38,6 +40,7 @@ export async function operationReceiptTransaction(
   pool: OperationPool, request: ReceiptIdentity, digest: Buffer,
   protocol: 'managed' | 'customer', handler: (transaction: OperationTransaction) => Promise<string>,
   validate: (body: string) => void,
+  guard?: OperationReceiptGuard,
 ): Promise<OperationTransactionResult> {
   const table = protocol === 'managed' ? 'public.gregale_operation_inbox' : 'public.gregale_customer_operation_inbox';
   const namespace = protocol === 'managed' ? 'gregale.operation-inbox.v1:' : 'gregale.customer-operation-inbox.v1:';
@@ -66,6 +69,7 @@ export async function operationReceiptTransaction(
         [request.operationId, request.accountId, request.appId, request.platformTenantId ?? "", digest, body],
       );
     }
+    if (guard) await guard(connection, body, stored !== undefined);
     try { await connection.query("COMMIT"); }
     catch (error) { throw new OperationCommitUnknownError(error); }
     return { body, replayed: stored !== undefined };

@@ -18,6 +18,8 @@ T = TypeVar("T", bound="ListConfigRevisionsResponse")
 
 @_attrs_define
 class ListConfigRevisionsResponse:
+    """A scope's config revisions, newest first, and its newest config guard (ADR-1451)."""
+
     revisions: list[ConfigRevision]
     guard: ConfigGuard | Unset = UNSET
     """A scope's config guard (ADR-1451)."""

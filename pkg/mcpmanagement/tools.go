@@ -67,6 +67,7 @@ func (m *management) connection(ctx context.Context, _ noArgs) (any, error) {
 		"capabilities":       capabilities,
 		"allowed_apps":       m.opts.AllowedApps,
 		"environment_access": m.opts.Environments,
+		"request_access":     m.requestAccessMetadata(),
 	}, nil
 }
 

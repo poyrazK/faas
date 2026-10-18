@@ -111,6 +111,10 @@ class AppResponse:
     idle_timeout_s: int | None | Unset = UNSET
     request_timeout_s: int | Unset = UNSET
     """Configured per-app request wall-clock timeout in seconds; 0 means the plan/type default."""
+    function_concurrency: int | Unset = UNSET
+    """Requests one Node or Python function worker serves at once (ADR-1342). 0 or 1 keeps one request per worker;
+    the plan's concurrency_per_vm bound caps it. Python runs sync handlers on threads. Takes effect on the next
+    deploy."""
     deployment_availability: AppResponseDeploymentAvailability | Unset = UNSET
     """Present on app list/detail reads. Reports whether any deployment is currently live; this is independent from
     the app lifecycle status and does not assert that a historical artifact is safe to restore."""
@@ -327,6 +331,8 @@ class AppResponse:
             idle_timeout_s = self.idle_timeout_s
 
         request_timeout_s = self.request_timeout_s
+
+        function_concurrency = self.function_concurrency
 
         deployment_availability: str | Unset = UNSET
         if not isinstance(self.deployment_availability, Unset):
@@ -573,6 +579,8 @@ class AppResponse:
             field_dict["idle_timeout_s"] = idle_timeout_s
         if request_timeout_s is not UNSET:
             field_dict["request_timeout_s"] = request_timeout_s
+        if function_concurrency is not UNSET:
+            field_dict["function_concurrency"] = function_concurrency
         if deployment_availability is not UNSET:
             field_dict["deployment_availability"] = deployment_availability
         if deleted_at is not UNSET:
@@ -765,6 +773,8 @@ class AppResponse:
         idle_timeout_s = _parse_idle_timeout_s(d.pop("idle_timeout_s", UNSET))
 
         request_timeout_s = d.pop("request_timeout_s", UNSET)
+
+        function_concurrency = d.pop("function_concurrency", UNSET)
 
         _deployment_availability = d.pop("deployment_availability", UNSET)
         deployment_availability: AppResponseDeploymentAvailability | Unset
@@ -1122,6 +1132,7 @@ class AppResponse:
             resource_profile=resource_profile,
             idle_timeout_s=idle_timeout_s,
             request_timeout_s=request_timeout_s,
+            function_concurrency=function_concurrency,
             deployment_availability=deployment_availability,
             deleted_at=deleted_at,
             delete_grace_until=delete_grace_until,

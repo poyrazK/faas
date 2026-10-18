@@ -133,7 +133,8 @@ type Ring struct {
 	// Same callback indirection rationale as onSlowSubscriber:
 	// pkg/logarchive imports pkg/wire, not the other way
 	// around; the callback keeps logbuf a leaf.
-	onEvict func(Line)
+	onEvict  func(Line)
+	onCommit func(Line)
 
 	closed bool
 }
@@ -170,6 +171,14 @@ func New(maxBytes int) *Ring {
 func (r *Ring) SetSlowSubscriberCallback(cb func()) {
 	r.mu.Lock()
 	r.onSlowSubscriber = cb
+	r.mu.Unlock()
+}
+
+// SetCommitCallback observes each accepted line exactly once at intake.
+// The callback runs under the ring lock and must perform bounded work with no I/O.
+func (r *Ring) SetCommitCallback(cb func(Line)) {
+	r.mu.Lock()
+	r.onCommit = cb
 	r.mu.Unlock()
 }
 
@@ -299,6 +308,9 @@ func (r *Ring) commitLocked(stream, line string, now time.Time) {
 		Line:      line,
 		Level:     detectLevel(line),
 		WrittenAt: now,
+	}
+	if r.onCommit != nil {
+		r.onCommit(ln)
 	}
 	// Evict from head until totalBytes + len(line) <= maxBytes. We must
 	// evict BEFORE assigning to the slot because the slot overwrites the

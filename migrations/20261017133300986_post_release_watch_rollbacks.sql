@@ -7,6 +7,7 @@
 -- admit now is kept.
 
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 DO $watch$
 DECLARE previous_check text;
@@ -29,6 +30,7 @@ END $watch$;
 -- +goose StatementEnd
 
 -- +goose Down
+SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 -- Rows recorded by the watch keep their history under the nearest older
 -- values: an alert-style rollback, and a threshold rollback.

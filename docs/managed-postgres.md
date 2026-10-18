@@ -283,15 +283,6 @@ credential mode and the dedicated `api` schema. See the
 and schema refresh. Neon advertises this mode only when the backend explicitly
 sets `data_api_enabled: true` and passes fresh qualification for that configuration.
 
-Application Auth ([ADR-1190](adr/1190-application-auth.md)) uses the separately
-qualified `auth` credential mode. GoTrue enables row-level security on every
-table it creates, so the auth login acts as a dedicated non-login owner of only
-the `auth` and `gregale_auth` schemas. That owner never joins the customer
-schema owner and has no database `CREATE`, temporary-object or customer-schema
-access. Issuance fails closed when an `auth` schema already belongs to another
-role. Neon advertises the mode only when the backend sets `auth_enabled: true`
-and passes fresh qualification including the `auth_credentials_probe`.
-
 Neon's create-project operation is non-idempotent. The adapter never retries
 that POST at the HTTP layer. It assigns a deterministic, hashed project name,
 discovers that exact name before creation, and returns the Neon project ID as
@@ -321,7 +312,6 @@ codes without response bodies, connection strings, endpoint hosts, or API keys.
 | `migration` | Direct required; release tasks only | Schema changes through a stable non-login schema owner; no role/database administration or replication |
 | `read_only` | Replica when available, otherwise pooled/direct primary | Public-schema SELECT and sequence inspection; no sequence advancement, DML, DDL, administration or RLS bypass |
 | `data_api` | Pooled, with direct fallback | `api`-schema DML only for the [Data API](data-api.md); RLS enforced |
-| `auth` | Direct required; serving and release tasks | Acts as the owner of only the `auth` and `gregale_auth` schemas for [application Auth](adr/1190-application-auth.md); no customer-schema access |
 
 Runtime logins cannot create tables, temporary objects, schemas, or roles,
 truncate tables, or bypass row-level security. Runtime grants cover existing

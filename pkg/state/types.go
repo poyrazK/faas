@@ -2008,6 +2008,9 @@ type AppManifest struct {
 	// ReleaseProbePaths (ADR-1449): GET paths the default rollout probe checks
 	// instead of "/".
 	ReleaseProbePaths []string `json:"release_probe_paths,omitempty"`
+	// FunctionConcurrency is how many requests one function worker serves
+	// at once (ADR-1342); zero keeps one.
+	FunctionConcurrency int `json:"function_concurrency,omitempty"`
 }
 
 // EffectiveCrawlerPolicy returns the persisted policy or the backwards-
@@ -2048,7 +2051,7 @@ func (m AppManifest) IsZero() bool {
 		m.BuildDockerfile == "" && m.ProjectImage == "" && m.ProjectImageCommand == nil && m.ProjectImagePort == 0 && m.ProjectImageHealthcheck == nil && len(m.ProjectDependencyConditions) == 0 && len(m.ServiceBindings) == 0 && len(m.ServiceReliability) == 0 && m.ServiceBindingPolicy == "" && m.ServiceBindingTransport == "" && m.PreviewServiceCallsPolicy == "" && m.AllowedServiceCallers == nil && m.AllowedServiceCallScopes == nil && m.WorkingDir == "" &&
 		m.Port == 0 && len(m.Ports) == 0 && m.Healthz == "" && m.User == "" &&
 		m.ExecutionMode == "" && m.RestartPolicy == "" && m.AfterRestore == nil && m.BeforeCheckpoint == nil && m.Pause == "" && m.Profiling == nil && m.Tracing == nil &&
-		m.StartupDeadlineS == 0 && m.MaxRetries == 0 && m.RequestTimeoutS == 0 &&
+		m.StartupDeadlineS == 0 && m.MaxRetries == 0 && m.RequestTimeoutS == 0 && m.FunctionConcurrency == 0 &&
 		m.StopGracePeriodS == 0 && m.StopSignal == "" &&
 		m.ServiceReplicas == nil && m.WorkerReplicas == nil && len(m.Favicon) == 0 &&
 		m.RobotsTxt == "" && !m.HeadWakes && m.CrawlerPolicy == "" && m.PreAuthRateLimit == nil &&
@@ -2216,6 +2219,9 @@ type CustomMetric struct {
 	Name       string
 	Value      float64
 	ObservedAt time.Time
+	// Kind is CustomMetricKindGauge (ADR-202 pushes) or
+	// CustomMetricKindCounter (ADR-745 OTLP cumulative sums).
+	Kind string
 }
 
 // MCPTaskHandlerCompatibility is a bounded, payload-free queue summary for a
@@ -2240,6 +2246,13 @@ type MCPTaskCompatibilityReport struct {
 	Truncated  bool
 	ObservedAt time.Time
 }
+
+// Custom metric kinds (ADR-745). Counters are charted with rate() and are
+// never a scaling signal: a cumulative value only grows.
+const (
+	CustomMetricKindGauge   = "gauge"
+	CustomMetricKindCounter = "counter"
+)
 
 // EffectiveTargets is the ADR-194 reader for a policy's declared signals.
 // It is the ONLY way a trigger should reach the targets: callers that read
@@ -3381,16 +3394,17 @@ type FireNowRequest struct {
 // operator_intents.status (migrations/00431). Mirrors the audit-event
 // `operator.action.<verb>.outcome` shape — only `succeeded` and
 // `failed` are emitted by schedd's terminal transition; `cancelled`
-// is reserved for a future operator-cancel surface (schema is
-// forward-compatible).
+// is reserved for a future operator-cancel surface. outcome_unknown pauses an
+// uncertain restart until physical evidence permits reconciliation (ADR-1522).
 type OperatorIntentStatus string
 
 const (
-	OperatorIntentPending   OperatorIntentStatus = "pending"
-	OperatorIntentRunning   OperatorIntentStatus = "running"
-	OperatorIntentSucceeded OperatorIntentStatus = "succeeded"
-	OperatorIntentFailed    OperatorIntentStatus = "failed"
-	OperatorIntentCancelled OperatorIntentStatus = "cancelled"
+	OperatorIntentPending        OperatorIntentStatus = "pending"
+	OperatorIntentRunning        OperatorIntentStatus = "running"
+	OperatorIntentSucceeded      OperatorIntentStatus = "succeeded"
+	OperatorIntentFailed         OperatorIntentStatus = "failed"
+	OperatorIntentCancelled      OperatorIntentStatus = "cancelled"
+	OperatorIntentOutcomeUnknown OperatorIntentStatus = "outcome_unknown"
 )
 
 // OperatorIntentKind is the closed vocabulary for
@@ -3430,8 +3444,9 @@ const (
 // the closed kind, then transitions status to terminal.
 //
 // Invariant: a single row represents a single admin-action attempt.
-// Admin actions are deliberate re-clicks, not retries, so there is
-// no per-request idempotency wrapper — two clicks produce two intents.
+// Node actions are deliberate requests; two submissions produce two intents.
+// Workload recovery submissions may reuse their durable request key (ADR-1524).
+// Node execution receipts fence mutation and completion per intent (ADR-1526).
 //
 // Target_id is free-text (NOT a uuid column) because it can be an instance,
 // deployment, or compute-node identifier. The kind column disambiguates.
@@ -3443,20 +3458,25 @@ const (
 // the action arrived via a path that did not stamp a trace_id
 // (e.g. legacy cron-fired reclaim_build).
 type OperatorIntent struct {
-	ID                 string
-	Kind               OperatorIntentKind
-	TargetID           string
-	AccountID          *string // nil for fleet-level actions; set for per-account actions
-	ActorID            string
-	Reason             string
-	Metadata           json.RawMessage
-	Status             OperatorIntentStatus
-	RequestedAt        time.Time
-	StartedAt          *time.Time
-	FinishedAt         *time.Time
-	Error              string
-	SnapIDsMarkedStale []string
-	TraceID            *string
+	ClaimToken              string
+	CompletionAuditOutboxID int64
+	ColdBootGeneration      int64
+	RestartExecution        *OperatorRestartExecution
+	ParkExecution           *OperatorParkExecution
+	ID                      string
+	Kind                    OperatorIntentKind
+	TargetID                string
+	AccountID               *string // nil for fleet-level actions; set for per-account actions
+	ActorID                 string
+	Reason                  string
+	Metadata                json.RawMessage
+	Status                  OperatorIntentStatus
+	RequestedAt             time.Time
+	StartedAt               *time.Time
+	FinishedAt              *time.Time
+	Error                   string
+	SnapIDsMarkedStale      []string
+	TraceID                 *string
 }
 
 // AlertMetric is a closed vocabulary for the metric side of an AlertRule
@@ -3541,12 +3561,24 @@ const (
 	AlertMetricWorkflowPendingAge     AlertMetric = "workflow_pending_age_seconds"
 	AlertMetricWorkflowWaitingAge     AlertMetric = "workflow_waiting_age_seconds"
 	AlertMetricWorkflowDueAge         AlertMetric = "workflow_due_age_seconds"
-	AlertMetricEdgeRuleHits           AlertMetric = "edge_rule_hits"     // ADR-1192
-	AlertMetricEdgeRuleLogHits        AlertMetric = "edge_rule_log_hits" // ADR-1192
+	// ADR-746: guest log lines vmmd classified as error / warn in the window.
+	AlertMetricLogErrorLines   AlertMetric = "log_error_lines"
+	AlertMetricLogWarnLines    AlertMetric = "log_warn_lines"
+	AlertMetricEdgeRuleHits    AlertMetric = "edge_rule_hits"     // ADR-1192
+	AlertMetricEdgeRuleLogHits AlertMetric = "edge_rule_log_hits" // ADR-1192
 	// AlertMetricSLOBurnRate is the customer-facing ADR-082 API
 	// availability burn-rate signal. The evaluator combines the 1h
 	// 14.4x and 6h 6x Google SRE windows into one effective value.
 	AlertMetricSLOBurnRate AlertMetric = "slo_burn_rate"
+	// AlertMetricCustomMetric watches one ADR-202 pushed metric, named by
+	// AlertRule.CustomMetricName (ADR-745).
+	AlertMetricCustomMetric AlertMetric = "custom_metric"
+	// ADR-747: rules on one customer SLO, named by AlertRule.SLOID.
+	AlertMetricSLOBudgetBurn      AlertMetric = "slo_budget_burn"
+	AlertMetricSLOBudgetRemaining AlertMetric = "slo_budget_remaining_pct"
+	// ADR-748: rules on one synthetic check, named by AlertRule.SyntheticCheckID.
+	AlertMetricSyntheticConsecutiveFailures AlertMetric = "synthetic_check_consecutive_failures"
+	AlertMetricSyntheticLatencyP95          AlertMetric = "synthetic_check_latency_p95_ms"
 	// AlertMetricCanaryStuckStep (SAFE-RELEASES-OBS PR-B) is the
 	// Prometheus-counter-backed tripwire for a canary sitting at the
 	// same step past StuckAfterDuration. The actual firing happens
@@ -3574,6 +3606,8 @@ const (
 	// missing, expired, or invalid. For min=0 worker apps it also requires a fresh
 	// observer heartbeat equal to 1. Unlike the gauge alert, it evaluates to a
 	// binary 1/0 so a broken publisher can notify operators.
+	AlertMetricMCPProtocolErrorRate           AlertMetric = "mcp_protocol_error_rate_pct"
+	AlertMetricMCPProtocolP95                 AlertMetric = "mcp_protocol_execution_p95_ms"
 	AlertMetricMCPTasksMetricsStale           AlertMetric = "mcp_tasks_metrics_stale"
 	AlertMetricMCPTaskPromotionHoldAgeSeconds AlertMetric = "mcp_task_promotion_hold_age_seconds"
 )
@@ -3589,6 +3623,9 @@ const (
 	AlertGte AlertComparison = "gte"
 	AlertLt  AlertComparison = "lt"
 	AlertLte AlertComparison = "lte"
+	// ADR-744: threshold is a multiplier of the app's usual value.
+	AlertAboveBaseline AlertComparison = "above_baseline"
+	AlertBelowBaseline AlertComparison = "below_baseline"
 )
 
 // AlertWindowSpec is the closed window vocabulary; sharing it with the
@@ -3707,6 +3744,7 @@ func IsValidAlertAction(v string) bool {
 // ignore a FailureSource change, which is a footgun — the field
 // exists nowhere on this struct on purpose.
 type UpdateAlertRuleParams struct {
+	MCPMinCalls, MCPForMinutes      *int
 	PostDeployRollbackWindowSeconds *int
 	Name                            *string
 	Enabled                         *bool
@@ -3732,7 +3770,9 @@ type UpdateAlertRuleParams struct {
 // never surfaced on a read — the apid response carries a masked
 // constant.
 type AlertRule struct {
-	EventSubscriptionID string
+	MCPReadinessScope          string
+	MCPMinCalls, MCPForMinutes int
+	EventSubscriptionID        string
 	// EdgeRuleID scopes an edge-rule activity alert to one rule (ADR-1192);
 	// empty counts every rule of the app. Immutable, and not a foreign key:
 	// a rule-set restore re-inserts rules under the same ids.
@@ -3748,6 +3788,9 @@ type AlertRule struct {
 	Threshold                       float64
 	WindowSpec                      AlertWindowSpec
 	FailureSource                   AlertFailureSource // empty unless Metric == failed_invocations
+	CustomMetricName                string             // empty unless Metric == custom_metric (ADR-745)
+	SLOID                           string             // set only for the ADR-747 SLO metrics
+	SyntheticCheckID                string             // set only for the ADR-748 synthetic check metrics
 	Action                          AlertAction        // issue #976 / ADR-122 / SAFE-RELEASES-B
 	WebhookURL                      string
 	WebhookSecretSealed             []byte // age/X25519 ciphertext; never logged
@@ -3770,20 +3813,23 @@ type AlertRule struct {
 // list endpoint is the only opt-in path to surface test rows in
 // the operator pane; the default customer-facing read hides them.
 type AlertDelivery struct {
-	ID             string
-	RuleID         string
-	AccountID      string
-	AppID          string // empty when the rule was account-wide
-	IdempotencyKey string
-	Payload        json.RawMessage
-	Status         AlertDeliveryStatus
-	AttemptCount   int
-	LastStatusCode int    // 0 when the attempt never reached the wire
-	LastError      string // empty when no error
-	ObservedValue  float64
-	FiredAt        time.Time
-	DeliveredAt    time.Time // zero until status=delivered
-	IsTest         bool      // true iff row written by Dispatcher.DispatchTest
+	ReadinessEventID        string
+	ReadinessDestination    string
+	ReadinessFailoverReason string
+	ID                      string
+	RuleID                  string
+	AccountID               string
+	AppID                   string // empty when the rule was account-wide
+	IdempotencyKey          string
+	Payload                 json.RawMessage
+	Status                  AlertDeliveryStatus
+	AttemptCount            int
+	LastStatusCode          int    // 0 when the attempt never reached the wire
+	LastError               string // empty when no error
+	ObservedValue           float64
+	FiredAt                 time.Time
+	DeliveredAt             time.Time // zero until status=delivered
+	IsTest                  bool      // true iff row written by Dispatcher.DispatchTest
 }
 
 // AlertDeliveryRow embeds AlertDelivery with a pinned list return —
@@ -5461,6 +5507,8 @@ type ComputeNode struct {
 	// get the same answer. Writers must go through SetNodeLifecycle
 	// (CAS) so the arbiter and the drain handler can't race.
 	Lifecycle NodeLifecycle
+	// LifecycleGeneration identifies a drain/recovery cycle (ADR-1527).
+	LifecycleGeneration int64
 	// DrainInitiatedAt is stamped when lifecycle flips to 'draining'.
 	// nil until the first drain request lands; nil after a successful
 	// reactivate (the column is reused on the next drain).
@@ -6600,6 +6648,9 @@ type Snapshot struct {
 	ID           string
 	DeploymentID string
 	FCVersion    string
+	// RecoveryGeneration is inherited from immutable boot admission lineage.
+	// Only imaged's source-checked publication can introduce a nonzero value.
+	RecoveryGeneration int64
 	// BaseImageVersion pins the runner base generation used by HTTP/2 and
 	// gRPC snapshots. HTTP/1 restores do not depend on this field. Empty
 	// identifies a legacy row and forces one cold-boot re-prime for H2C.
@@ -9283,6 +9334,7 @@ type AppLogDrainKind string
 const (
 	AppLogDrainKindHTTPJSON AppLogDrainKind = "http_json"
 	AppLogDrainKindOTLP     AppLogDrainKind = "otlp"
+	AppLogDrainKindDatadog  AppLogDrainKind = "datadog" // ADR-752
 )
 
 // AppLogDrain is one customer-owned runtime log destination. AuthHeaderSealed

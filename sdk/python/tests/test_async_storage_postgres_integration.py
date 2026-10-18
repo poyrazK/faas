@@ -17,13 +17,14 @@ pytest.importorskip("fastapi")
 import psycopg
 from async_storage_fixture import SignedS3, finish_stream, load_example, open_stream, projection
 from botocore.exceptions import ClientError
+from psycopg import sql
+from psycopg.conninfo import conninfo_to_dict
+from psycopg_pool import AsyncConnectionPool
+
 from faas_sdk.async_postgres_pool_runtime import AsyncPostgresPoolBinding
 from faas_sdk.object_storage_runtime import ObjectStorageBindingError
 from faas_sdk.postgres_pool_runtime import PostgresPoolBindingError
 from faas_sdk.secret_reload_runtime import SecretReloadError
-from psycopg import sql
-from psycopg.conninfo import conninfo_to_dict
-from psycopg_pool import AsyncConnectionPool
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("GREGALE_ASYNC_STORAGE_POSTGRES_TEST") != "1",

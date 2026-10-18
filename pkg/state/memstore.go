@@ -26,11 +26,17 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/appstandards"
 	"github.com/onebox-faas/faas/pkg/chaos"
+	"github.com/onebox-faas/faas/pkg/ci"
 	"github.com/onebox-faas/faas/pkg/cursor"
 	"github.com/onebox-faas/faas/pkg/devbridge"
 	"github.com/onebox-faas/faas/pkg/frameworkprofile"
 	"github.com/onebox-faas/faas/pkg/hostport"
 	"github.com/onebox-faas/faas/pkg/publicstatus"
+	"github.com/onebox-faas/faas/pkg/rehearsalcold"
+	"github.com/onebox-faas/faas/pkg/rehearsalobj"
+	"github.com/onebox-faas/faas/pkg/rehearsalpg"
+	"github.com/onebox-faas/faas/pkg/rehearsalresume"
+	"github.com/onebox-faas/faas/pkg/rehearsalwork"
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
@@ -140,6 +146,12 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
+	productData                                *productMemory
+	scenarioManagedWork                        map[string]scenarioManagedJob
+	scenarioWorkerFaults                       map[string]rehearsalwork.WorkerFault
+	scenarioColdPreparations                   map[string]rehearsalcold.Preparation
+	scenarioSuspendResumes                     map[string]rehearsalresume.Receipt
+	internalCI                                 *ci.MemoryStore
 	hostingOIDCTrusts                          map[string]api.HostingOIDCTrust
 	hostingCredentials                         map[string]api.HostingAutomationCredential
 	hostingRetentionPolicies                   map[string]api.HostingRetentionPolicy
@@ -286,6 +298,7 @@ type MemStore struct {
 	eventRecoveryJobs                 map[string]*memEventRecoveryJob
 	workflowCodePins                  map[string]time.Time
 	qualificationSnapshots            map[string]EnvironmentQualificationSnapshotReceipt
+	mcpReadiness                      *memMCPReadiness
 	// Restore evidence survives cleanup of the target's runtime receipt.
 	qualificationRestoreReceipts map[string]EnvironmentQualificationRestoreReceipt
 	// Guest configuration hashes survive cleanup of private qualification VMs.
@@ -332,8 +345,15 @@ type MemStore struct {
 	// what PgStore's count(*) over (app_id) measures.
 	customMetrics               map[string]map[string]CustomMetric
 	mcpTaskCompatibilityReports map[string]MCPTaskCompatibilityReport
+	notificationChannels        map[string][]NotificationChannel // account id → channels (ADR-749), lazily made
+	alertRuleChannels           map[string][]string              // rule id → channel ids (ADR-749)
+	appSLOs                     map[string][]SLO                 // app id → definitions (ADR-747), lazily made
+	sloHours                    map[string]map[time.Time]memSLOHour
+	syntheticChecks             map[string][]SyntheticCheck // app id → checks (ADR-748), lazily made
+	syntheticRuns               map[string][]SyntheticCheckRun
 	objectBuckets               map[string]ObjectBucket
 	objectMutations             map[string]ObjectBucketMutation
+	objectNodeSettlements       map[string]ObjectNodeSettlement
 	objectWriteFences           map[string]ObjectBucketWriteFence
 	objectUploadGrants          map[string]ObjectUploadGrant
 	objectUsage                 map[string]ObjectBucketUsage
@@ -393,6 +413,9 @@ type MemStore struct {
 	deployTokenByHash         map[string]DeployToken
 	apps                      map[string]App
 	scenarioTestMembers       map[string]ScenarioTestMember
+	scenarioPostgres          map[string]rehearsalpg.Resource
+	scenarioObjects           map[string]rehearsalobj.Resource
+	scenarioActionPolicies    map[string]scenarioActionPolicy
 	scenarioTestChaosPlans    map[string]chaos.Lease
 	scenarioTestChaosMatches  map[string]map[string]int64
 	previewSets               map[string]PRPreviewSet
@@ -549,7 +572,10 @@ type MemStore struct {
 	// migrationLeases mirrors the durable source-side migration lease table.
 	// It lets vmmd migration tests exercise restart-safe lease semantics without
 	// requiring Postgres.
-	migrationLeases map[string]MigrationLease // lease_token → lease
+	migrationLeases       map[string]MigrationLease // lease_token → lease
+	migrationSources      map[string]MigrationSource
+	migrationAdmissions   map[string]MigrationAdmission
+	migrationResumeFences map[string]bool
 
 	// workflows / workflowSteps / workflowEvents mirror ADR-081 (the
 	// timestamped workflow schema migration).
@@ -583,7 +609,14 @@ type MemStore struct {
 	// operatorIntents mirrors operator_intents (migrations/00431)
 	// for handler + subscriber tests. Keyed by intent id (UUID);
 	// status transitions follow the production 5-state CHECK.
-	operatorIntents map[string]OperatorIntent
+	operatorIntents             map[string]OperatorIntent
+	operatorRestarts            map[string]OperatorRestartExecution
+	operatorParks               map[string]OperatorParkExecution
+	operatorNodes               map[string]OperatorNodeResult
+	nodeLifecycleCompletions    map[nodeLifecycleCompletionKey]NodeLifecycleCompletionResult
+	operatorRecoverySubmissions map[string]operatorRecoverySubmissionRow
+	snapshotRecoveryGenerations map[string]int64
+	instanceSnapshotRecovery    map[string]instanceSnapshotRecovery
 	// runtimeConfigs mirrors runtime_config_entries (migration 00466).
 	// The key is config_key + scope + scope_id, matching the production
 	// unique constraint and the reconciliation lookup path.
@@ -600,8 +633,21 @@ type MemStore struct {
 	// translates a "win" into an INSERT-after-claim so two parallel
 	// claims inside the same bucket produce exactly one delivery
 	// row (mirrors the UNIQUE-index floor in Postgres).
-	alertRules      map[string]AlertRule
-	alertDeliveries map[string]AlertDelivery
+	readinessIncidents            map[string]readinessIncident
+	readinessIncidentEvents       map[string]readinessIncidentEventRecord
+	readinessIncidentCursors      map[string]time.Time
+	readinessIncidentSequence     int64
+	readinessPagerDutyAckPolicies map[string]MCPReadinessPagerDutyAcknowledgementConfig
+	readinessPagerDutyAckEvents   map[string]readinessPagerDutyAcknowledgementRecord
+	readinessPagerDutyPolicies    map[string]MCPReadinessPagerDutyConfig
+	readinessReminderDefaults     map[string]api.MCPReadinessReminderDefaults
+	readinessFallbackPolicies     map[string]MCPReadinessFallbackConfig
+	readinessMaintenance          map[string]readinessMaintenanceRecord
+	readinessNotificationActions  map[string]readinessNotificationActionRecord
+	readinessAttention            map[string]readinessAttentionRecord
+	readinessAttentionActions     map[string]readinessAttentionActionRecord
+	alertRules                    map[string]AlertRule
+	alertDeliveries               map[string]AlertDelivery
 	// appWebhooks + appWebhookDeliveries back the issue #476
 	// outbound webhook subscription + ledger surface. Keyed by
 	// webhookID / deliveryID. The unique (app_id, target_url)
@@ -1515,6 +1561,18 @@ func NewMemStore() *MemStore {
 		runtimeConfigs:                  map[string]RuntimeConfig{},
 		runtimeConfigOperations:         map[string]RuntimeConfigOperation{},
 		runtimeConfigRevisions:          []RuntimeConfigRevision{},
+		readinessMaintenance:            map[string]readinessMaintenanceRecord{},
+		readinessNotificationActions:    map[string]readinessNotificationActionRecord{},
+		readinessAttention:              map[string]readinessAttentionRecord{},
+		readinessAttentionActions:       map[string]readinessAttentionActionRecord{},
+		readinessIncidents:              map[string]readinessIncident{},
+		readinessPagerDutyAckPolicies:   map[string]MCPReadinessPagerDutyAcknowledgementConfig{},
+		readinessPagerDutyAckEvents:     map[string]readinessPagerDutyAcknowledgementRecord{},
+		readinessPagerDutyPolicies:      map[string]MCPReadinessPagerDutyConfig{},
+		readinessReminderDefaults:       map[string]api.MCPReadinessReminderDefaults{},
+		readinessFallbackPolicies:       map[string]MCPReadinessFallbackConfig{},
+		readinessIncidentEvents:         map[string]readinessIncidentEventRecord{},
+		readinessIncidentCursors:        map[string]time.Time{},
 		alertRules:                      map[string]AlertRule{},
 		alertDeliveries:                 map[string]AlertDelivery{},
 		appWebhooks:                     map[string]AppWebhook{},
@@ -4616,6 +4674,7 @@ func (m *MemStore) CreatePRPreviewAppsIfUnderQuota(_ context.Context, apps []App
 	addressCursorsBefore := maps.Clone(m.serviceAddressCursors)
 	rollback := func(err error) ([]App, error) {
 		for _, id := range insertedIDs {
+			m.deleteScenarioWorkerFaultsForAppLocked(id)
 			delete(m.apps, id)
 			delete(m.applicationStandardEnrollments, id)
 			m.eraseStandardAppExceptionsLocked(id)
@@ -5653,6 +5712,24 @@ func (m *MemStore) ListInstancesByNodeID(_ context.Context, nodeID string) ([]In
 	return out, nil
 }
 
+// ListLiveInstancesByNodeID mirrors PgStore.ListLiveInstancesByNodeID: live
+// instances of the node's non-deleted apps.
+func (m *MemStore) ListLiveInstancesByNodeID(_ context.Context, nodeID string) ([]Instance, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	owned := make(map[string]bool, len(m.apps))
+	for _, a := range m.apps {
+		owned[a.ID] = a.NodeID == nodeID && a.Status != AppDeleted
+	}
+	var out []Instance
+	for _, ins := range m.instances {
+		if owned[ins.AppID] && IsLive(ins.State) {
+			out = append(out, ins)
+		}
+	}
+	return out, nil
+}
+
 // ListInstancesOnNodeID mirrors PgStore.ListInstancesOnNodeID. This is the
 // physical-placement view used by drain safety and node observability; it
 // intentionally does not consult the app's scheduler-owner NodeID because a
@@ -5982,6 +6059,9 @@ func (m *MemStore) MigrateInstanceOwner(ctx context.Context, instanceID, fromNod
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.checkNodeAdmissionLocked(ctx, toNodeID); err != nil {
+		return err
+	}
 	ins, ok := m.instances[instanceID]
 	if !ok {
 		return ErrNotFound
@@ -6009,7 +6089,11 @@ func (m *MemStore) MigrateInstanceOwner(ctx context.Context, instanceID, fromNod
 	if err := m.guardInstanceRuntimeTransitionLocked(ctx, m.instances[instanceID], ins); err != nil {
 		return err
 	}
+	if err := m.validateMigrationAdmissionCommitLocked(ctx, ins, fromNodeID, toNodeID, leaseToken); err != nil {
+		return err
+	}
 	m.instances[instanceID] = ins
+	m.consumeMigrationAdmissionLocked(ins, fromNodeID, leaseToken)
 	// Stamp apps.migrated_at to match the SQL transaction's
 	// second UPDATE.
 	delete(m.instanceRuntimeConfigReceipts, instanceID)
@@ -6966,6 +7050,7 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 	m.deleteEnvironmentWorkloadIntentsLocked(id, "")
 	m.deleteWorkflowDispatchCursorsLocked(id)
 	m.deleteEventExecutionLedgerAppLocked(id)
+	m.deleteScenarioWorkerFaultsForAppLocked(id)
 	delete(m.apps, id)
 	delete(m.applicationStandardEnrollments, id)
 	m.eraseStandardAppExceptionsLocked(id)
@@ -7554,6 +7639,17 @@ func (m *MemStore) createDeployment(d Deployment, activity *OrgActivity, promoti
 	proposal := d
 	if proposal.Status == "" {
 		proposal.Status = DeployPending
+	}
+	if proposal.Status == DeployLive {
+		gateSubject := proposal
+		gateSubject.Status = DeployPending
+		percent := proposal.TrafficPercent
+		if percent == 0 && !proposal.TrafficPercentExplicit && proposal.CanaryTotalSteps <= 0 && !serviceRollout {
+			percent = 100
+		}
+		if err := m.checkMCPReadinessLocked(gateSubject, percent); err != nil {
+			return Deployment{}, 0, err
+		}
 	}
 	if proposal.Status == DeployLive && m.environmentGitOpsManagedForScopeLocked(d.AppID, d.Scope) {
 		return Deployment{}, 0, ErrInvalidStateTransition
@@ -8937,6 +9033,9 @@ func (m *MemStore) UpdateDeploymentStatus(_ context.Context, id string, status D
 	}
 
 	if status == DeployLive {
+		if err := m.checkMCPReadinessLocked(d, d.TrafficPercent); err != nil {
+			return err
+		}
 		if _, err := m.checkDeploymentDependenciesLocked(id, time.Now().UTC(), false); err != nil {
 			return err
 		}
@@ -9205,6 +9304,11 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceLates
 	if _, gateErr := m.checkDeploymentDependenciesLocked(id, time.Now().UTC(), false); gateErr != nil {
 		return gateErr
 	}
+	if d.Status == DeployLive || (d.CanaryTotalSteps <= 0 && IsServiceRollout(d)) {
+		if err := m.checkMCPReadinessLocked(d, d.TrafficPercent); err != nil {
+			return err
+		}
+	}
 	// Build the post-transition rows locally first. The callback can fail
 	// (for example, if the canonical spec cannot be loaded); keeping all
 	// mutations local until it succeeds gives MemStore the same atomic
@@ -9297,6 +9401,9 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceLates
 		return err
 	}
 	if d.CanaryTotalSteps <= 0 {
+		if err := m.checkMCPReadinessLocked(d, 100); err != nil {
+			return err
+		}
 		if err := m.checkRouteRemovalTrafficLocked(map[string]int{id: 100}); err != nil {
 			return err
 		}
@@ -9361,6 +9468,9 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceLates
 	}
 	sort.SliceStable(siblings, func(i, j int) bool { return siblings[i].ID < siblings[j].ID })
 	if len(siblings) == 0 && d.TrafficPercent != 100 {
+		if err := m.checkMCPReadinessLocked(d, 100); err != nil {
+			return err
+		}
 		// There is no previous revision to receive the residual. A
 		// first deployment cannot be meaningfully canaried, so make it
 		// a safe 100% completion instead of publishing a broken split.
@@ -10003,6 +10113,9 @@ func (m *MemStore) AutoRollbackDeploymentsTx(_ context.Context, appID, currentDe
 		return "", err
 	}
 	if err := m.rejectUncheckedBindingReleaseLocked(cur.AppID, cur.Scope); err != nil {
+		return "", err
+	}
+	if err := m.checkMCPReadinessLocked(m.deployments[targetID], 100); err != nil {
 		return "", err
 	}
 	if err := m.checkRouteRemovalTrafficLocked(map[string]int{targetID: 100}); err != nil {
@@ -12729,7 +12842,14 @@ func (m *MemStore) ClaimPendingOperatorIntent(_ context.Context) (OperatorIntent
 	var oldestID string
 	var oldestAt time.Time
 	for id, r := range m.operatorIntents {
-		if r.Status != OperatorIntentPending {
+		execution := m.operatorRestarts[id]
+		instance := m.instances[execution.Target.InstanceID]
+		recovered := r.Status == OperatorIntentOutcomeUnknown && execution.Phase == RestartDestroyed &&
+			execution.Target.MatchesInstance(instance) && (instance.State == string(StateRunning) || instance.State == string(StateStopped))
+		park := m.operatorParks[id]
+		parkInstance := m.instances[park.Target.InstanceID]
+		recoveredPark := r.Kind == OperatorIntentKindForcePark && r.Status == OperatorIntentOutcomeUnknown && park.Phase == ParkAcknowledged && park.CanReconcile(parkInstance)
+		if r.Status != OperatorIntentPending && !recovered && !recoveredPark {
 			continue
 		}
 		if oldestID == "" || r.RequestedAt.Before(oldestAt) ||
@@ -12743,6 +12863,9 @@ func (m *MemStore) ClaimPendingOperatorIntent(_ context.Context) (OperatorIntent
 	}
 	r := m.operatorIntents[oldestID]
 	r.Status = OperatorIntentRunning
+	r.ClaimToken = uuid.NewString()
+	r.Error = ""
+	r.FinishedAt = nil
 	now := time.Now().UTC()
 	r.StartedAt = &now
 	m.operatorIntents[oldestID] = r
@@ -12755,6 +12878,9 @@ func (m *MemStore) MarkOperatorIntentSucceeded(_ context.Context, id string, sna
 	r, ok := m.operatorIntents[id]
 	if !ok || r.Status != OperatorIntentRunning {
 		return ErrOperatorIntentNotFound
+	}
+	if r.Kind == OperatorIntentKindForceRestart || r.Kind == OperatorIntentKindForceColdBoot || r.Kind == OperatorIntentKindForcePark || IsOperatorNodeKind(r.Kind) {
+		return ErrConflict
 	}
 	r.Status = OperatorIntentSucceeded
 	r.SnapIDsMarkedStale = snapIDs
@@ -12770,6 +12896,9 @@ func (m *MemStore) MarkOperatorIntentFailed(_ context.Context, id, errMsg string
 	r, ok := m.operatorIntents[id]
 	if !ok || r.Status != OperatorIntentRunning {
 		return ErrOperatorIntentNotFound
+	}
+	if r.Kind == OperatorIntentKindForceRestart || r.Kind == OperatorIntentKindForceColdBoot || r.Kind == OperatorIntentKindForcePark || IsOperatorNodeKind(r.Kind) {
+		return ErrConflict
 	}
 	errMsg = safetext.Truncate(errMsg, api.AuditReasonMaxBytes)
 	r.Status = OperatorIntentFailed
@@ -12796,6 +12925,15 @@ func (m *MemStore) GetOperatorIntent(_ context.Context, id string) (OperatorInte
 	if !ok {
 		return OperatorIntent{}, ErrOperatorIntentNotFound
 	}
+	if execution, exists := m.operatorRestarts[id]; exists {
+		execution = cloneOperatorRestart(execution)
+		r.RestartExecution = &execution
+	}
+	if execution, exists := m.operatorParks[id]; exists {
+		execution = cloneOperatorPark(execution)
+		r.ParkExecution = &execution
+	}
+	r.SnapIDsMarkedStale = slices.Clone(r.SnapIDsMarkedStale)
 	return r, nil
 }
 
@@ -12846,11 +12984,12 @@ func (m *MemStore) ReclaimStuckRunningOperatorIntents(_ context.Context, thresho
 		if r.StartedAt == nil {
 			continue
 		}
-		if r.StartedAt.After(threshold) {
+		if !r.StartedAt.Before(threshold) {
 			continue
 		}
 		r.Status = OperatorIntentPending
 		r.StartedAt = nil
+		r.ClaimToken = ""
 		m.operatorIntents[id] = r
 		n++
 	}
@@ -12867,13 +13006,17 @@ func (m *MemStore) OperatorIntentOutcomeMissingCounts(_ context.Context, thresho
 	defer m.mu.Unlock()
 	out := make(map[string]int)
 	for _, r := range m.operatorIntents {
+		if r.Status == OperatorIntentOutcomeUnknown {
+			out[string(r.Kind)]++
+			continue
+		}
 		if r.Status != OperatorIntentRunning {
 			continue
 		}
 		if r.StartedAt == nil {
 			continue
 		}
-		if r.StartedAt.After(threshold) {
+		if !r.StartedAt.Before(threshold) {
 			continue
 		}
 		out[string(r.Kind)]++
@@ -13511,6 +13654,9 @@ func (m *MemStore) enqueueInvocationLocked(inv Invocation) (Invocation, error) {
 			m.recordEventDeliverySlotLocked(inv.ID, slot)
 		}
 	}
+	if err := m.admitScenarioManagedWorkLocked(&inv); err != nil {
+		return Invocation{}, err
+	}
 	m.setInvocationLocked(inv.ID, inv)
 	inv.ReplayRootCreatedAt = cloneEventReceiptTime(inv.ReplayRootCreatedAt)
 	return inv, nil
@@ -13669,6 +13815,12 @@ func (m *MemStore) ClaimInvocation(_ context.Context, id, instanceID string, lea
 	}
 	if _, owned := m.invocationEnvironmentQueueAdmissions[id]; owned {
 		return Invocation{}, ErrConflict
+	}
+	if m.scenarioWorkerDispatchBlockedLocked(inv.AppID) {
+		return Invocation{}, ErrConflict
+	}
+	if instanceID == "" && m.scenarioActionPolicies[inv.AppID].Member.ManagedWorkJSON != "" {
+		inv.InstanceID = ""
 	}
 	now := time.Now()
 	if inv.ReceivedAt == nil && inv.StartDeadlineAt != nil && inv.StartDeadlineAt.Before(now) {
@@ -14630,6 +14782,11 @@ func (m *MemStore) CreateInstance(ctx context.Context, appID, deploymentID, stat
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if IsLive(strings.ToLower(state)) {
+		if err := m.checkNodeAdmissionLocked(ctx, nodeID); err != nil {
+			return Instance{}, err
+		}
+	}
 	if err := m.requireInstanceLayerArtifactsLocked(deploymentID, state); err != nil {
 		return Instance{}, err
 	}
@@ -14720,6 +14877,11 @@ func (m *MemStore) CreateInstanceWithMode(ctx context.Context, appID, deployment
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if IsLive(strings.ToLower(state)) {
+		if err := m.checkNodeAdmissionLocked(ctx, nodeID); err != nil {
+			return Instance{}, err
+		}
+	}
 	if err := m.requireInstanceLayerArtifactsLocked(deploymentID, state); err != nil {
 		return Instance{}, err
 	}
@@ -14777,12 +14939,17 @@ func (m *MemStore) CreateInstanceWithMode(ctx context.Context, appID, deployment
 // CreateJobInstance mirrors the PostgreSQL job-task insert. Job instances
 // have no app or deployment row: the job definition owns the OCI image and
 // the run/task coordinates live on the job task row.
-func (m *MemStore) CreateJobInstance(_ context.Context, instanceID, jobID, runID string, taskIndex int, state string, ramMB int, nodeID, wakeID string) (Instance, error) {
+func (m *MemStore) CreateJobInstance(ctx context.Context, instanceID, jobID, runID string, taskIndex int, state string, ramMB int, nodeID, wakeID string) (Instance, error) {
 	if err := validateMemStoreCreateInstanceState(state); err != nil {
 		return Instance{}, err
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if IsLive(strings.ToLower(state)) {
+		if err := m.checkNodeAdmissionLocked(ctx, nodeID); err != nil {
+			return Instance{}, err
+		}
+	}
 	if _, ok := m.jobs[jobID]; !ok {
 		return Instance{}, ErrNotFound
 	}
@@ -15590,6 +15757,9 @@ func (m *MemStore) DeleteParkedInstancesOlderThan(_ context.Context, threshold t
 func (m *MemStore) DeleteInstance(_ context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.migrationPendingLocked(id, "", false) {
+		return ErrConflict
+	}
 	if m.qualificationExecutionUnretiredLocked(id) {
 		return ErrConflict
 	}
@@ -15614,6 +15784,7 @@ func (m *MemStore) DeleteInstance(_ context.Context, id string) error {
 		return ErrNotFound
 	}
 	delete(m.instances, id)
+	delete(m.instanceSnapshotRecovery, id)
 	m.deleteNativeInstanceInputsLocked(id)
 	delete(m.instanceRuntimeConfigReceipts, id)
 	m.deleteSecretRuntimeProcessesLocked(id)
@@ -15800,6 +15971,9 @@ func (m *MemStore) TouchInstancesWithRequestDelta(_ context.Context, touches []I
 func (m *MemStore) CreateSnapshot(_ context.Context, snap Snapshot) (Snapshot, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if snap.RecoveryGeneration != 0 {
+		return Snapshot{}, ErrInvalidArgument
+	}
 	return m.createSnapshotLocked(snap)
 }
 
@@ -15842,6 +16016,11 @@ func (m *MemStore) PublishSnapshotIfRuntimeFresh(_ context.Context, snap Snapsho
 	if err := m.checkStandardSnapshotRuntimeFreshLocked(snap, sourceInstanceID, sourceStartedAt); err != nil {
 		return Snapshot{}, err
 	}
+	generation := m.snapshotRecoveryGenerations[snap.DeploymentID]
+	if generation > 0 && (sourceInstanceID == "" || !m.instanceSnapshotRecoveryFreshLocked(sourceInstanceID)) {
+		return Snapshot{}, ErrSnapshotRuntimeStale
+	}
+	snap.RecoveryGeneration = generation
 	stored, err := m.createSnapshotLocked(snap)
 	if err == nil && haveReceipt {
 		if m.snapshotRuntimeConfigReceipts == nil {
@@ -15853,6 +16032,9 @@ func (m *MemStore) PublishSnapshotIfRuntimeFresh(_ context.Context, snap Snapsho
 }
 
 func (m *MemStore) createSnapshotLocked(snap Snapshot) (Snapshot, error) {
+	if snap.RecoveryGeneration < 0 || !snap.Stale && snap.RecoveryGeneration != m.snapshotRecoveryGenerations[snap.DeploymentID] {
+		return Snapshot{}, ErrSnapshotRuntimeStale
+	}
 	// StorageKey is required on both backends (see PgStore for the
 	// rationale). The in-memory store doesn't have a DB DEFAULT to
 	// fall back on, so the contract is enforced here as well —
@@ -15902,7 +16084,7 @@ func (m *MemStore) LatestSnapshot(_ context.Context, deploymentID string) (Snaps
 	var latest Snapshot
 	found := false
 	for _, s := range m.snapshots {
-		if s.DeploymentID != deploymentID || s.Stale {
+		if s.DeploymentID != deploymentID || s.Stale || s.RecoveryGeneration != m.snapshotRecoveryGenerations[deploymentID] {
 			continue
 		}
 		if deployment, ok := m.deployments[s.DeploymentID]; !ok ||
@@ -15948,7 +16130,7 @@ func (m *MemStore) LatestSnapshotForTier(_ context.Context, deploymentID, tier s
 	var latest Snapshot
 	found := false
 	for _, s := range m.snapshots {
-		if s.DeploymentID != deploymentID || s.Stale || s.Tier != tier {
+		if s.DeploymentID != deploymentID || s.Stale || s.Tier != tier || s.RecoveryGeneration != m.snapshotRecoveryGenerations[deploymentID] {
 			continue
 		}
 		if deployment, ok := m.deployments[s.DeploymentID]; !ok ||
@@ -16270,11 +16452,12 @@ func (m *MemStore) seedDefaultLocalNodeLocked() {
 		// synthetic default-local row carries api.VCPUSlots so a
 		// single-box install sees identical behaviour to the
 		// pre-migration box-wide gate.
-		VCPUBudget:      api.VCPUSlots,
-		Active:          true,
-		Lifecycle:       NodeLifecycleActive,
-		LastHeartbeatAt: now,
-		CreatedAt:       now,
+		VCPUBudget:          api.VCPUSlots,
+		Active:              true,
+		Lifecycle:           NodeLifecycleActive,
+		LifecycleGeneration: 1,
+		LastHeartbeatAt:     now,
+		CreatedAt:           now,
 		// Phase 2 / Gate A: per-node schedd dial target. The
 		// single-box synthetic row points at the legacy
 		// /run/faas/schedd.sock so the gateway's per-node cache
@@ -16352,7 +16535,17 @@ func (m *MemStore) ComputeNodeUsedMB(_ context.Context, nodeID string) (int64, e
 		}
 		switch ins.State {
 		case "waking", "cold_booting", "running", "draining", "warm":
-			used += int64(ins.RAMMB + api.PerVMOverheadMB)
+			used += m.migrationResidentRAMLocked(ins)
+		}
+	}
+	for _, a := range m.migrationAdmissions {
+		if a.Pending() && a.DestinationNodeID == nodeID {
+			used += int64(a.RAMMB)
+		}
+	}
+	for _, r := range m.migrationSources {
+		if r.SourceNodeID == nodeID {
+			used += m.migrationSourceCostLocked(r, true).RAM
 		}
 	}
 	return used, nil
@@ -16403,6 +16596,19 @@ func (m *MemStore) ComputeNodeUsedCPUMillicoresByNode(_ context.Context, nodeIDs
 				cpu = api.DefaultAppCPUMillicores
 			}
 			used[ins.NodeID] += int64(cpu)
+			if m.migrationResidentLocked(ins) || m.originalMigrationSourceLocked(ins) {
+				used[ins.NodeID] += max(0, m.capacityInstanceResources[ins.ID].CPU-int64(cpu))
+			}
+		}
+	}
+	for _, a := range m.migrationAdmissions {
+		if _, ok := wanted[a.DestinationNodeID]; ok && a.Pending() {
+			used[a.DestinationNodeID] += int64(a.CPUMillicores)
+		}
+	}
+	for _, r := range m.migrationSources {
+		if _, ok := wanted[r.SourceNodeID]; ok {
+			used[r.SourceNodeID] += m.migrationSourceCostLocked(r, true).CPU
 		}
 	}
 	return used, nil
@@ -16434,8 +16640,8 @@ func (m *MemStore) MarkComputeNodeInactive(_ context.Context, nodeID string) err
 	}
 	n.Lifecycle = NodeLifecycleUnavailable
 	n.Active = false
-	m.computeNodes[nodeID] = n
-	return nil
+	_, err := m.storeComputeNodeLifecycleLocked(n)
+	return err
 }
 
 // SetComputeNodeRole overwrites the role column on a row by id
@@ -16502,8 +16708,7 @@ func (m *MemStore) CreateComputeNode(_ context.Context, node ComputeNode) (Compu
 		}
 	}
 	n.Active = n.Lifecycle == NodeLifecycleActive || n.Lifecycle == NodeLifecycleRecovering
-	m.computeNodes[n.ID] = n
-	return n, nil
+	return m.storeComputeNodeLifecycleLocked(n)
 }
 
 // UpsertComputeNode mirrors pgstore's INSERT ... ON CONFLICT DO UPDATE
@@ -16524,11 +16729,10 @@ func (m *MemStore) UpsertComputeNode(_ context.Context, node ComputeNode) (Compu
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var existing *ComputeNode
-	for id, current := range m.computeNodes {
+	for _, current := range m.computeNodes {
 		if current.Name == node.Name {
 			current := current
 			existing = &current
-			delete(m.computeNodes, id)
 			break
 		}
 	}
@@ -16536,6 +16740,7 @@ func (m *MemStore) UpsertComputeNode(_ context.Context, node ComputeNode) (Compu
 	if existing != nil {
 		n.ID = existing.ID
 		n.CreatedAt = existing.CreatedAt
+		n.DrainInitiatedAt, n.DrainCompletedAt, n.RecoveryInitiatedAt = existing.DrainInitiatedAt, existing.DrainCompletedAt, existing.RecoveryInitiatedAt
 		if existing.Lifecycle == NodeLifecycleRetired {
 			n.Lifecycle = NodeLifecycleRetired
 		}
@@ -16558,8 +16763,7 @@ func (m *MemStore) UpsertComputeNode(_ context.Context, node ComputeNode) (Compu
 		n.Lifecycle = NodeLifecycleActive
 	}
 	n.Active = n.Lifecycle == NodeLifecycleActive || n.Lifecycle == NodeLifecycleRecovering
-	m.computeNodes[n.ID] = n
-	return n, nil
+	return m.storeComputeNodeLifecycleLocked(n)
 }
 
 // UpsertComputeNodeFromOperator mirrors pgstore's operator-side
@@ -16617,11 +16821,10 @@ func (m *MemStore) upsertComputeNodeLocked(node ComputeNode, preserveTargetURLOn
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var existing *ComputeNode
-	for id, current := range m.computeNodes {
+	for _, current := range m.computeNodes {
 		if current.Name == node.Name {
 			current := current
 			existing = &current
-			delete(m.computeNodes, id)
 			break
 		}
 	}
@@ -16633,6 +16836,7 @@ func (m *MemStore) upsertComputeNodeLocked(node ComputeNode, preserveTargetURLOn
 		}
 		n.ID = existing.ID
 		n.CreatedAt = existing.CreatedAt
+		n.DrainInitiatedAt, n.DrainCompletedAt, n.RecoveryInitiatedAt = existing.DrainInitiatedAt, existing.DrainCompletedAt, existing.RecoveryInitiatedAt
 		if preserveTargetURLOnConflict && existing.TargetURL != "" {
 			n.TargetURL = existing.TargetURL
 		}
@@ -16666,8 +16870,7 @@ func (m *MemStore) upsertComputeNodeLocked(node ComputeNode, preserveTargetURLOn
 		n.Lifecycle = existing.Lifecycle
 	}
 	n.Active = n.Lifecycle == NodeLifecycleActive || n.Lifecycle == NodeLifecycleRecovering
-	m.computeNodes[n.ID] = n
-	return n, nil
+	return m.storeComputeNodeLifecycleLocked(n)
 }
 
 // UpsertNodeKey inserts or updates a (compute_node_id, key_id) row
@@ -16746,8 +16949,8 @@ func (m *MemStore) SetComputeNodeActive(_ context.Context, id string, active boo
 		n.Lifecycle = NodeLifecycleUnavailable
 	}
 	n.Active = active
-	m.computeNodes[id] = n
-	return nil
+	_, err := m.storeComputeNodeLifecycleLocked(n)
+	return err
 }
 
 // NodeGet returns one ComputeNode by id with lifecycle fields populated.
@@ -16826,8 +17029,8 @@ func (m *MemStore) NodeSetLifecycle(_ context.Context, id string, expected, next
 			n.DrainCompletedAt = &now
 		}
 	}
-	m.computeNodes[id] = n
-	return nil
+	_, err := m.storeComputeNodeLifecycleLocked(n)
+	return err
 }
 
 // NodeListRecoverable excludes terminally stale unavailable inventory while
@@ -16879,43 +17082,20 @@ func (m *MemStore) NodeListDrainable(_ context.Context) ([]ComputeNode, error) {
 	return out, nil
 }
 
-// NodeMarkDrainCompleted flips lifecycle 'draining' → 'maintenance' and
-// stamps drain_completed_at (CAS on a draining state).
-func (m *MemStore) NodeMarkDrainCompleted(_ context.Context, id string, completedAt time.Time) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	n, ok := m.computeNodes[id]
-	if !ok {
-		return ErrNotFound
+// NodeMarkDrainCompleted is an unfenced legacy setter. Use CompleteNodeLifecycle.
+func (m *MemStore) NodeMarkDrainCompleted(ctx context.Context, id string, _ time.Time) error {
+	if _, err := m.NodeGet(ctx, id); err != nil {
+		return err
 	}
-	if n.Lifecycle != NodeLifecycleDraining && n.Lifecycle != NodeLifecycleForceDraining {
-		return ErrConflict
-	}
-	n.Lifecycle = NodeLifecycleMaintenance
-	n.Active = false
-	n.DrainCompletedAt = &completedAt
-	m.computeNodes[id] = n
-	return nil
+	return ErrConflict
 }
 
-// NodeMarkRecovered flips lifecycle 'recovering' → 'active' and
-// stamps last_recovery_outcome='succeeded' (CAS on 'recovering').
-func (m *MemStore) NodeMarkRecovered(_ context.Context, id string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	n, ok := m.computeNodes[id]
-	if !ok {
-		return ErrNotFound
+// NodeMarkRecovered is an unfenced legacy setter. Use CompleteNodeLifecycle.
+func (m *MemStore) NodeMarkRecovered(ctx context.Context, id string) error {
+	if _, err := m.NodeGet(ctx, id); err != nil {
+		return err
 	}
-	if n.Lifecycle != NodeLifecycleRecovering {
-		return ErrConflict
-	}
-	n.Lifecycle = NodeLifecycleActive
-	n.Active = true
-	outcome := "succeeded"
-	n.LastRecoveryOutcome = &outcome
-	m.computeNodes[id] = n
-	return nil
+	return ErrConflict
 }
 
 // InstanceListByNodeForRecovery returns the live and in-flight instances on
@@ -17060,6 +17240,9 @@ func (m *MemStore) DeleteComputeNode(_ context.Context, id string) error {
 		if instance.NodeID == id {
 			return ErrConflict
 		}
+	}
+	if m.nodeMigrationPendingLocked(id) {
+		return ErrConflict
 	}
 	delete(m.computeNodes, id)
 	delete(m.computeNodeRuntimeIncarnations, id)
@@ -22323,6 +22506,7 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 			m.deleteEnvironmentSecretRefsLocked(aid, "")
 			m.deleteEnvironmentWorkloadIntentsLocked(aid, "")
 			m.deleteWorkflowDispatchCursorsLocked(aid)
+			m.deleteScenarioWorkerFaultsForAppLocked(aid)
 			delete(m.apps, aid)
 			delete(m.applicationStandardEnrollments, aid)
 			m.eraseStandardAppExceptionsLocked(aid)
@@ -22529,6 +22713,9 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 		}
 	}
 	delete(m.accounts, id)
+	if m.internalCI != nil {
+		m.internalCI.RemoveAccount(id)
+	}
 	delete(m.serviceAddressCursors, id)
 	return nil
 }
@@ -22704,7 +22891,8 @@ func (m *MemStore) ListCronsForAccount(_ context.Context, accountID string) ([]C
 // same field values the PgStore does (default gen_random_uuid +
 // default now() are faked by MemStore with newID/time.Now).
 func (m *MemStore) CreateAlertRule(_ context.Context, in AlertRule) (AlertRule, error) {
-	if !validAlertRollbackWindow(in) {
+	in = defaultMCPProtocolAlert(in)
+	if !validMCPProtocolAlert(in) || !validAlertRollbackWindow(in) {
 		return AlertRule{}, ErrInvalidArgument
 	}
 	m.mu.Lock()
@@ -22737,7 +22925,8 @@ func (m *MemStore) CreateAlertRule(_ context.Context, in AlertRule) (AlertRule, 
 // gates the count + insert. Account-wide rules (AppID == "") skip
 // the per-app branch but still hit the per-account branch.
 func (m *MemStore) CreateAlertRuleIfUnderQuota(_ context.Context, in AlertRule, limits api.Limits) (AlertRule, error) {
-	if !validAlertRollbackWindow(in) {
+	in = defaultMCPProtocolAlert(in)
+	if !validMCPProtocolAlert(in) || !validAlertRollbackWindow(in) {
 		return AlertRule{}, ErrInvalidArgument
 	}
 	m.mu.Lock()
@@ -22866,6 +23055,12 @@ func (m *MemStore) UpdateAlertRule(_ context.Context, id string, p UpdateAlertRu
 	if !ok {
 		return AlertRule{}, ErrNotFound
 	}
+	if p.MCPMinCalls != nil {
+		r.MCPMinCalls = *p.MCPMinCalls
+	}
+	if p.MCPForMinutes != nil {
+		r.MCPForMinutes = *p.MCPForMinutes
+	}
 	if p.Name != nil {
 		r.Name = *p.Name
 	}
@@ -22906,7 +23101,7 @@ func (m *MemStore) UpdateAlertRule(_ context.Context, id string, p UpdateAlertRu
 	if p.PostDeployRollbackWindowSeconds != nil {
 		r.PostDeployRollbackWindowSeconds = *p.PostDeployRollbackWindowSeconds
 	}
-	if !validAlertRollbackWindow(r) {
+	if !validMCPProtocolAlert(r) || !validAlertRollbackWindow(r) {
 		return AlertRule{}, ErrInvalidArgument
 	}
 	r.UpdatedAt = time.Now()
@@ -22921,6 +23116,38 @@ func (m *MemStore) DeleteAlertRule(_ context.Context, id string) error {
 		return ErrNotFound
 	}
 	delete(m.alertRules, id)
+	delete(m.readinessIncidentCursors, id)
+	delete(m.readinessPagerDutyPolicies, id)
+	delete(m.readinessPagerDutyAckPolicies, id+":primary")
+	delete(m.readinessPagerDutyAckPolicies, id+":fallback")
+	for key, event := range m.readinessPagerDutyAckEvents {
+		if event.RuleID == id {
+			delete(m.readinessPagerDutyAckEvents, key)
+		}
+	}
+	delete(m.readinessReminderDefaults, id)
+	delete(m.readinessFallbackPolicies, id)
+	for key, event := range m.readinessIncidentEvents {
+		if event.RuleID == id {
+			delete(m.readinessIncidentEvents, key)
+			for receiptKey, action := range m.readinessNotificationActions {
+				if action.Request.EventID == key {
+					delete(m.readinessNotificationActions, receiptKey)
+				}
+			}
+		}
+	}
+	for key, incident := range m.readinessIncidents {
+		if incident.RuleID == id {
+			delete(m.readinessIncidents, key)
+			delete(m.readinessAttention, key)
+			for actionKey, action := range m.readinessAttentionActions {
+				if action.IncidentID == key {
+					delete(m.readinessAttentionActions, actionKey)
+				}
+			}
+		}
+	}
 	for key, delivery := range m.alertDeliveries {
 		if delivery.RuleID == id {
 			delete(m.alertDeliveries, key)
@@ -23892,6 +24119,10 @@ func (m *MemStore) ClaimAlertFire(_ context.Context, ruleID, idempotencyKey stri
 	r, ok := m.alertRules[ruleID]
 	if !ok {
 		return "", false, ErrNotFound
+	}
+	// Fire and recovery/retry writers share the journal's unique key.
+	if _, exists := m.alertDeliveries[idempotencyKey]; exists {
+		return "", false, nil
 	}
 	cacheKey := ruleID + "\x00" + idempotencyKey
 	if _, dup := m.alertClaimKeys[cacheKey]; dup {
@@ -26482,6 +26713,12 @@ func (m *MemStore) ClaimInvocationWithCap(_ context.Context, id, instanceID stri
 	}
 	if inv.State != InvocationPending {
 		return Invocation{}, ErrNotFound
+	}
+	if m.scenarioWorkerDispatchBlockedLocked(inv.AppID) {
+		return Invocation{}, ErrConflict
+	}
+	if instanceID == "" && m.scenarioActionPolicies[inv.AppID].Member.ManagedWorkJSON != "" {
+		inv.InstanceID = ""
 	}
 	now := time.Now()
 	if inv.ReceivedAt == nil && inv.StartDeadlineAt != nil && inv.StartDeadlineAt.Before(now) {

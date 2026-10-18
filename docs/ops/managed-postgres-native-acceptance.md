@@ -49,9 +49,11 @@ The strict verdict requires all nineteen phases and the parent test to pass:
    exactly one note through the shipped HTTP handler.
 8. Run an ordinary Node application task and require a runtime credential while
    rejecting the migration credential. Serving startup also rejects that secret.
-9. Read to retain a real `pg` pool, capture a fresh snapshot, disconnect external
-   SQL sessions, and require the gateway's `restore` receipt with the same note.
-   A forwarded external request to the lifecycle path must be forbidden.
+9. Read to retain a real `pg` pool, capture a fresh snapshot, and require that
+   the starter's `before_checkpoint` drain left no client session in the
+   customer database. Disconnect external SQL sessions and require the
+   gateway's `restore` receipt with the same note. A forwarded external request
+   to the lifecycle path must be forbidden.
 10. Capture again and delay the next SQL connection by 2.5 seconds: beyond the
     starter's 1.5-second recovery budget. The one-shot fault is consumed by
     restore, so SQL is healthy for the fresh cold boot.
@@ -74,7 +76,8 @@ The strict verdict requires all nineteen phases and the parent test to pass:
     of all Node notes and one new Python HTTP write.
 14. Run an ordinary Python application task and require the runtime credential
     while rejecting the migration credential. Serving startup also rejects it.
-15. Retain the shipped `psycopg_pool` pool, capture a fresh snapshot, disconnect
+15. Retain the shipped `psycopg_pool` pool, capture a fresh snapshot, require
+    that its `before_checkpoint` drain left no client session, disconnect
     external SQL sessions and require a real restore with every existing note.
     Require external lifecycle requests to be forbidden.
 16. Delay the next SQL connection beyond the recovery budget and require a

@@ -39,6 +39,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/managedrealtime"
 	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/apid/operation"
+	"github.com/onebox-faas/faas/pkg/apid/product"
 	"github.com/onebox-faas/faas/pkg/apid/statementinvoices"
 	"github.com/onebox-faas/faas/pkg/apid/tenantplans"
 	"github.com/onebox-faas/faas/pkg/billing"
@@ -49,6 +50,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/profiling"
 	"github.com/onebox-faas/faas/pkg/promql"
+	objruntime "github.com/onebox-faas/faas/pkg/rehearsalobj/runtime"
+	pgruntime "github.com/onebox-faas/faas/pkg/rehearsalpg/runtime"
 	"github.com/onebox-faas/faas/pkg/session"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -63,6 +66,7 @@ type Auditor = auditor
 type BatchCreateResponse = batchCreateResponse
 type CachedSource = cachedSource
 type CaptureNotifier = captureNotifier
+type ChannelDeliverer = channelDeliverer
 type CloneCaptureBarrierObservation = cloneCaptureBarrierObservation
 type CloneCoordinatorFixture = cloneCoordinatorFixture
 type ComputeNodeHeartbeatsResponse = computeNodeHeartbeatsResponse
@@ -149,6 +153,7 @@ const DashboardJobsCSRFCookie = dashboardJobsCSRFCookie
 const DashboardKeyConfirmField = dashboardKeyConfirmField
 const DashboardKeyDeleteCSRFCookie = dashboardKeyDeleteCSRFCookie
 const DashboardMFAPath = dashboardMFAPath
+const DashboardMCPAlertCookie = dashboardMCPAlertCookie
 const DashboardMirrorsCSRFCookie = dashboardMirrorsCSRFCookie
 const DashboardReplayFailedAction = dashboardReplayFailedAction
 const DashboardReplayFailedCSRFCookie = dashboardReplayFailedCSRFCookie
@@ -203,6 +208,8 @@ const ProfileInvestigationCSRFCookie = profileInvestigationCSRFCookie
 const PromtailMetricsDiscoveryPath = promtailMetricsDiscoveryPath
 const RealtimedMetricsDiscoveryPath = realtimedMetricsDiscoveryPath
 const RequestAnalyticsRouteMaxLength = requestAnalyticsRouteMaxLength
+const RouteCostByRequestTime = routeCostByRequestTime
+const RouteCostByRequests = routeCostByRequests
 const RuntimeConfigDataPlacement = runtimeConfigDataPlacement
 const RuntimeConfigDomainDoctor = runtimeConfigDomainDoctor
 const RuntimeConfigDomainDoctorTTL = runtimeConfigDomainDoctorTTL
@@ -211,6 +218,8 @@ const RuntimeConfigS3 = runtimeConfigS3
 const SafeReleaseEmergencyGrace = safeReleaseEmergencyGrace
 const ScanSpoolRootEnv = scanSpoolRootEnv
 const ScheddMetricsDiscoveryPath = scheddMetricsDiscoveryPath
+const GatewaydPublicEdgeMetricsDiscoveryPath = gatewaydPublicEdgeMetricsDiscoveryPath
+const CloudflaredMetricsDiscoveryPath = cloudflaredMetricsDiscoveryPath
 const ServiceCallerKeysCacheControl = serviceCallerKeysCacheControl
 const SessionCookie = sessionCookie
 const SessionCookieLifetime = sessionCookieLifetime
@@ -226,6 +235,7 @@ var BuildPlanCacheOnce = &buildPlanCacheOnce
 var CapsDecl = &capsDecl
 var CertDialContextFunc = &certDialContextFunc
 var CertLookupIPFunc = &certLookupIPFunc
+var ChannelSender = &channelSender
 var CnameLookupFunc = &cnameLookupFunc
 var DialCertFunc = &dialCertFunc
 var ErrCertAddressBlocked = &errCertAddressBlocked
@@ -262,8 +272,10 @@ var TxtLookupFunc = &txtLookupFunc
 var AccountAbuseHoldView = accountAbuseHoldView
 var ActivatedAPIDListener = activatedAPIDListener
 var AggregateWakeTimeline = aggregateWakeTimeline
+var AlertChannelItem = alertChannelItem
 var AlertRuleReq = alertRuleReq
 var AllocateRequestAnalyticsRouteCost = allocateRequestAnalyticsRouteCost
+var AllocateRequestAnalyticsRouteCostByTime = allocateRequestAnalyticsRouteCostByTime
 var AnnotateDeploymentCPURegressions = annotateDeploymentCPURegressions
 var AnnotateRouteDeploymentCPURegressions = annotateRouteDeploymentCPURegressions
 var ApiManifestFromState = apiManifestFromState
@@ -437,6 +449,7 @@ var MapReconcileError = mapReconcileError
 var MarshalAppRetryPolicy = marshalAppRetryPolicy
 var MillicentsAsCurrency = millicentsAsCurrency
 var MintDashboardSession = mintDashboardSession
+var MustCreateAlertRule = mustCreateAlertRule
 var MustSeedApp = mustSeedApp
 var MustSeedAppFor = mustSeedAppFor
 var MustSeedDeployment = mustSeedDeployment
@@ -550,6 +563,8 @@ var ResendReason = resendReason
 var ReserveRecoveryBucket = reserveRecoveryBucket
 var ResolveManagedPostgresDatabaseRecord = resolveManagedPostgresDatabaseRecord
 var ResolveSourceOperations = resolveSourceOperations
+var ArchiveHasSourceRoot = archiveHasSourceRoot
+var ArchiveHasRootDockerfileAtRoot = archiveHasRootDockerfileAtRoot
 var RestartProgressDashboardCookie = restartProgressDashboardCookie
 var RestartProgressDashboardGET = restartProgressDashboardGET
 var RollbackOn5xxBreached = rollbackOn5xxBreached
@@ -1230,6 +1245,12 @@ func (r *server) RollbackSourceRefManifest(p0 context.Context, p1 sourceRefManif
 func (r *server) RotateManagedPostgresBinding(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.rotateManagedPostgresBinding(p0, p1, p2)
 }
+func (r *server) RuleDestinations(p0 context.Context, p1 state.AlertRule) string {
+	return r.ruleDestinations(p0, p1)
+}
+func (r *server) CreateManagedPostgresBinding(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
+	r.createManagedPostgresBinding(p0, p1, p2)
+}
 func (r *server) SaveOwnedProfileInvestigation(p0 context.Context, p1 state.Account, p2 state.App, p3 state.ProfileInvestigationStore, p4 string, p5 api.SaveProfileInvestigationRequest) (api.ProfileInvestigation, *api.Problem) {
 	return r.saveOwnedProfileInvestigation(p0, p1, p2, p3, p4, p5)
 }
@@ -1238,6 +1259,12 @@ func (r *server) SavedProfilePage(p0 http.ResponseWriter, p1 *http.Request, p2 s
 }
 func (r *server) ScheddMetricsDiscovery(p0 http.ResponseWriter, p1 *http.Request) {
 	r.scheddMetricsDiscovery(p0, p1)
+}
+func (r *server) GatewaydPublicEdgeMetricsDiscovery(p0 http.ResponseWriter, p1 *http.Request) {
+	r.gatewaydPublicEdgeMetricsDiscovery(p0, p1)
+}
+func (r *server) CloudflaredMetricsDiscovery(p0 http.ResponseWriter, p1 *http.Request) {
+	r.cloudflaredMetricsDiscovery(p0, p1)
 }
 func (r *server) SendTestAlertPresetCore(p0 context.Context, p1 state.Account, p2 string, p3 string) (api.TestAlertPresetResponse, *api.Problem) {
 	return r.sendTestAlertPresetCore(p0, p1, p2, p3)
@@ -1426,4 +1453,33 @@ func StageApplyTarball(ctx context.Context, scanDir, accountID, projectID string
 // WorkloadTrust exposes workload-trust setting precedence (ADR-1141).
 func WorkloadTrust(cfg Config, getenv func(string) string, pathEnv, path, issuerEnv, issuer string) (string, string) {
 	return workloadTrust(cfg, getenv, pathEnv, path, issuerEnv, issuer)
+}
+
+func (r *server) ProductControl() *product.Service { return &r.productControl }
+
+func (r *server) ConfigureProductEmail(getenv func(string) string) error {
+	return r.configureProductEmail(getenv)
+}
+
+func (s *server) RehearsalNetworkEnabled() *bool { return &s.rehearsalNetworkEnabled }
+
+func (s *server) RehearsalSimulationEnabled() *bool { return &s.rehearsalSimulationEnabled }
+func (s *server) RehearsalCommandsEnabled() *bool   { return &s.rehearsalCommandsEnabled }
+
+func (s *server) SetRehearsalPostgresForTest(service *pgruntime.Service, enabled bool) {
+	s.rehearsalPostgres, s.rehearsalPostgresEnabled = service, enabled
+}
+
+func (s *server) SetRehearsalObjectsForTest(service *objruntime.Service, enabled bool) {
+	s.rehearsalObjects, s.rehearsalObjectsEnabled = service, enabled
+}
+
+func (s *server) RehearsalWorkersEnabled() *bool        { return &s.rehearsalWorkersEnabled }
+func (s *server) RehearsalSuspendResumeEnabled() *bool  { return &s.rehearsalSuspendResumeEnabled }
+func (s *server) RehearsalRunningSuspendEnabled() *bool { return &s.rehearsalRunningSuspendEnabled }
+func (s *server) RehearsalColdStartEnabled() *bool      { return &s.rehearsalColdStartEnabled }
+func (s *server) RehearsalWorkerFaultsEnabled() *bool   { return &s.rehearsalWorkerFaultsEnabled }
+
+func (s *server) StartInternalCIWorker(ctx context.Context, log *slog.Logger) func() {
+	return s.startInternalCIWorker(ctx, log)
 }

@@ -231,6 +231,8 @@ func (s *server) writeCanaryAdvanceError(ctx context.Context, w http.ResponseWri
 	var routeBlocked *state.RouteGateBlockedError
 	var healthBlocked *state.RouteHealthBlockedError
 	switch {
+	case state.IsMCPReadinessRequired(err):
+		api.WriteProblem(w, api.NewProblem(409, api.CodeMCPReadinessRequired, "MCP readiness required", "Refresh deployment readiness before increasing traffic."))
 	case errors.As(err, &profileBlocked):
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeProfileGateBlocked, "Canary profiling gate held", profileBlocked.Decision.Reason).WithHint("Inspect GET /v1/deployments/"+id+"/canary/profile-gate for the exact stage, baseline, route and code evidence. A customer may explicitly override this profile gate with the current policy revision and a reason."))
 	case errors.Is(err, state.ErrInvalidArgument):

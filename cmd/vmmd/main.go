@@ -40,14 +40,17 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/capdecl/runtimecheck"
 	"github.com/onebox-faas/faas/pkg/daemonunit"
+	"github.com/onebox-faas/faas/pkg/datarepair"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/fcvm/activity"
 	"github.com/onebox-faas/faas/pkg/fcvm/cpustats"
+	"github.com/onebox-faas/faas/pkg/fcvm/logbuf"
 	"github.com/onebox-faas/faas/pkg/fcvm/netstats"
 	"github.com/onebox-faas/faas/pkg/frameworkready"
 	"github.com/onebox-faas/faas/pkg/imaged"
+	"github.com/onebox-faas/faas/pkg/mcpprotocol"
 	"github.com/onebox-faas/faas/pkg/netns"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/sched"
@@ -889,9 +892,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if cfg.PmemBaseDir != "" && fcvm.PmemBaseSupported(fcVersion) && !cfg.NativeProcessRecovery {
 		pmemBaseDir = cfg.PmemBaseDir
 	}
+	protocolMetrics := mcpprotocol.New(ops.Registry())
+	protocolCoverage := mcpprotocol.NewCoverage(ops.Registry())
 	jailer := fcvm.NewJailerVMM(fcvm.JailChrootBase, 30*time.Second).
 		WithRuntimeSourceRoot(vmmdRuntimeSourceRoot(storageBackend)).
 		WithServiceProxyCA(serviceProxyCAPEM).
+		WithLogCommitCallback(func(appID string, line logbuf.Line) { protocolMetrics.Observe(appID, line.Line, line.WrittenAt) }).
+		WithInstanceLogObserver(protocolCoverage.Start).
+		WithInstancePauseObserver(protocolCoverage.Pause).
 		// Same registry the Manager gets below, so per-artifact
 		// materialization lands next to the wake phases in one scrape.
 		WithWakePhaseMetrics(wpm).
@@ -928,6 +936,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		jailer.WithLogEvictionCallback(archiveSink.Enqueue)
 		jailer.WithLogRetireCallback(archiveSink.Retire)
 	}
+	// ADR-746: count error and warn guest log lines per app for log alerts.
+	jailer.WithLogCommitCallback(newAppLogLineCounter(ops.Registry()).Observe)
 	// Activity tracker (PR-B, issue #462): per-instance in-flight
 	// ForwardHTTP request counter. It is shared by the gRPC server's
 	// stats surface and the liveness loop so load-correlated probe misses
@@ -966,6 +976,20 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Wake RPC contexts are canceled when the request returns and
 	// must not own either background activity.
 	mgr.WithLifecycleContext(ctx)
+	if store != nil {
+		policies, ok := store.(state.ScenarioNetworkPolicyStore)
+		if !ok {
+			return errors.New("vmmd: rehearsal network policy storage is unavailable")
+		}
+		mgr.WithRehearsalNetworkPolicies(policies)
+		if fencer, ok := store.(interface {
+			RevokeScenarioCommandNetworksForNode(context.Context, string) error
+		}); ok {
+			if err := fencer.RevokeScenarioCommandNetworksForNode(ctx, nodeID); err != nil {
+				return fmt.Errorf("vmmd: revoke prior command network identities: %w", err)
+			}
+		}
+	}
 	// Native recovery owns the physical inventory, but must also exclude a
 	// concurrent legacy daemon and refuse any outstanding legacy leases. Hold
 	// the legacy journal lock for this daemon's entire lifetime before native
@@ -1018,6 +1042,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if cfg.NativeProcessRecovery {
 		qualificationNodeID = failureNodeID
 		mgr.WithNativeQualificationNodeID(qualificationNodeID)
+	}
+	repairRunner, repairConfigured, repairErr := datarepair.RunnerFromEnv(os.Getenv)
+	if repairErr != nil || repairConfigured && (!cfg.NativeProcessRecovery || qualificationNodeID == "") {
+		return fmt.Errorf("vmmd: data repair runner requires complete artifact metadata and native process recovery")
+	}
+	if cfg.NativeProcessRecovery {
+		mgr.WithDataRepairRehearsals(qualificationNodeID, repairRunner)
 	}
 	// The schedd client mTLS material is loaded further down, after the
 	// node verifier exists; delivery reads it through this reference.
@@ -1342,7 +1373,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			if store == nil || pool == nil {
 				return errors.New("event publish persistence is not configured")
 			}
-			_, accountID, identityErr := mgr.InstanceIdentity(instance)
+			_, accountID, identityErr := mgr.InstanceExternalActionIdentity(publishCtx, instance)
 			if identityErr != nil {
 				return identityErr
 			}
@@ -1631,6 +1662,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if store != nil {
 		impl.WithEvents(events.NewPlatform("vmmd", store, log, ops, nil))
 		impl.WithMigrationStore(store)
+		if parks, ok := store.(state.OperatorParkStore); ok {
+			impl.WithOperatorParkStore(parks, qualificationNodeID)
+		}
+		if restarts, ok := store.(state.OperatorRestartStore); ok {
+			impl.WithOperatorRestartStore(restarts, qualificationNodeID)
+		}
 		if authority, ok := store.(state.ManagedPostgresDrainAuthority); ok {
 			impl.WithManagedPostgresDrainAuthority(authority)
 		}

@@ -205,6 +205,12 @@ func renderManifestAnsibleFiles(m *manifest.Manifest, outputDir string) ([]manif
 		body := renderManifestHostVars(host, ansibleHost, targetURL, gatewaySynthTarget, hostScheddTarget, controlPlaneAPIDLoopback, privateHosts, overlayCIDRs, m.Overlay.Provider, m.DNS.Mode, m.PrivateDNS.Mode, m.PrivateDNS.Zone, postgresListenAddress, postgresAllowedCIDRs, computeAllowedCIDRs, controlPlaneAllowedCIDRs, m.Storage.FastRoot)
 		if host.Role == roleControlPlane {
 			body += renderCustomDomainEdgeVars(m.PublicEdge.CustomDomains)
+			body += renderScheddListenVars(m)
+			if standby := m.PostgreSQL.Standby; standby != nil {
+				// ADR-1344 §8: the primary admits replication from the
+				// standby's address and keeps its slot.
+				body += fmt.Sprintf("faas_postgres_standby_address: %q\n", standby.Address)
+			}
 		}
 		body += renderComputeEdgeVars(m.PublicEdge.ComputeNodes, host.Role, postgresListenAddress, computeAllowedCIDRs)
 		if host.Role == roleComputeOnly && m.Egress.TenantGateway != nil {
@@ -238,6 +244,16 @@ func renderManifestAnsibleFiles(m *manifest.Manifest, outputDir string) ([]manif
 			Body: []byte(gatewayVars),
 		})
 	}
+	if standby := m.PostgreSQL.Standby; standby != nil {
+		if gw := m.Egress.TenantGateway; gw != nil && standby.Name == tenantEgressGatewayHost {
+			return nil, fmt.Errorf("postgresql.standby name %q is reserved for the tenant egress gateway", tenantEgressGatewayHost)
+		}
+		writeInventoryGroup(&inventory, "postgres_standby", []string{standby.Name})
+		hostVars = append(hostVars, manifestAnsibleFile{
+			Path: filepath.Join(outputDir, "inventory", "host_vars", standby.Name+".yml"),
+			Body: []byte(renderPostgresStandbyHostVars(standby)),
+		})
+	}
 	files := []manifestAnsibleFile{{
 		Path: filepath.Join(outputDir, "inventory", "hosts.ini"),
 		Body: inventory.Bytes(),
@@ -250,6 +266,17 @@ func renderManifestAnsibleFiles(m *manifest.Manifest, outputDir string) ([]manif
 	}
 	files = append(files, hostVars...)
 	return files, nil
+}
+
+// renderScheddListenVars hands the control plane's schedd bind to the
+// control_plane_service role, which renders it into both schedd's
+// FAAS_SCHEDD_LISTEN_ADDR and faas-schedd.socket (ADR-1580). The renderer
+// writes the same bind into schedd.toml, so the three cannot disagree.
+func renderScheddListenVars(m *manifest.Manifest) string {
+	if m.Daemons.Schedd == nil || m.Daemons.Schedd.Bind == "" {
+		return ""
+	}
+	return fmt.Sprintf("faas_schedd_listen_addr: %q\n", m.Daemons.Schedd.Bind)
 }
 
 // manifestScheddTarget returns the endpoint a host-local daemon should use.
@@ -662,6 +689,18 @@ const tenantEgressGatewayHost = "tenant-egress-gateway"
 
 // renderTenantEgressGatewayHostVars is the gateway host's side of the
 // tunnel contract; compute peers register themselves at converge time.
+// renderPostgresStandbyHostVars writes the warm standby's host vars (ADR-1344
+// §8). Its private address is the replication source the primary admits, so
+// the discovery play publishes it rather than the default route's address.
+func renderPostgresStandbyHostVars(s *manifest.PostgresStandby) string {
+	var b strings.Builder
+	b.WriteString("# Generated from the split-box manifest; do not hand-edit.\n")
+	fmt.Fprintf(&b, "ansible_host: %q\n", s.AnsibleHost())
+	fmt.Fprintf(&b, "faas_private_address: %q\n", s.Address)
+	b.WriteString("faas_postgres_standby_mode: true\n")
+	return b.String()
+}
+
 func renderTenantEgressGatewayHostVars(g *manifest.TenantEgressGateway) (string, error) {
 	addr, err := manifest.TenantGatewayAddress(g.TunnelCIDR)
 	if err != nil {

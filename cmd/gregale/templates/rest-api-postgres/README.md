@@ -12,6 +12,13 @@ rejects snapshot restoration so Gregale can cold-boot the deployment. Cold boot
 uses `/healthz`; an empty notes table is valid, a missing schema is not. Existing
 apps must deploy the new source and lifecycle configuration to adopt this hook.
 
+It also declares a two-second `before_checkpoint` hook. Before each capture, the
+callback closes admission, cancels unfinished work and waits until every SQL
+session has closed, so no snapshot holds a connection or open transaction.
+Repeated calls report the completed drain; only a restore reopens the pool. The
+platform turns off warm captures for apps that declare this hook; remove it if
+you prefer warm captures, and `after_restore` still replaces captured pools.
+
 Requests have a five-second SQL deadline and bounded pool admission. HTTP
 disconnects cancel unfinished transactions; idle and active connection errors
 discard the failed session. Writes are never automatically replayed. Cancellation observed

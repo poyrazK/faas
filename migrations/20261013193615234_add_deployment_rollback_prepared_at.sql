@@ -9,11 +9,13 @@
 -- Nullable and additive: existing rows and readers are unaffected.
 
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 ALTER TABLE deployments ADD COLUMN IF NOT EXISTS rollback_prepared_at timestamptz;
 -- +goose StatementEnd
 
 -- +goose Down
+SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 ALTER TABLE deployments DROP COLUMN IF EXISTS rollback_prepared_at;
 -- +goose StatementEnd

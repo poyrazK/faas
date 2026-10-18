@@ -15,7 +15,8 @@ name: ci-light
 #                             only the tests related to the change, without
 #                             -race (scripts/ci/select_package_tests.py);
 #                             boot-contract, generated-code drift, policy
-#                             gates and migration ID/apply/replay checks.
+#                             gates, version-skew (N±1) checks and migration
+#                             ID/expand-contract/apply/replay checks.
 #                             Three test shards, no gate job.
 #   ci.yml (mega)             the complete suite: every unit shard with -race,
 #                             vet and build of the whole tree, e2e, migration
@@ -110,10 +111,10 @@ jobs:
     runs-on: ubuntu-latest
     # Light-tier budget: about 10 minutes. golangci-lint (govet included) runs
     # on the changed packages; compiling their importers moved to the mega
-    # tier, because a pkg/api change recompiles most of the module. Main
-    # pushes also lint the three large packages to keep their analysis in
-    # the cache, which takes longer.
-    timeout-minutes: ${{ github.ref == 'refs/heads/main' && 40 || 20 }}
+    # tier, because a pkg/api change recompiles most of the module. Broad
+    # changes can touch all three large packages and need the same 40-minute
+    # cold-cache budget as main. Keep every selected package in the check.
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7
         with:
@@ -339,6 +340,22 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: false
+      - name: resolve diff base
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          # A pull_request checkout is the merge commit: its first parent is
+          # the base branch tip, so HEAD^1..HEAD is exactly the PR's change.
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            base="$(git rev-parse HEAD^1)"
+          elif [[ -n "$BEFORE" && ! "$BEFORE" =~ ^0+$ ]] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            base="$BEFORE"
+          else
+            base="$(git rev-parse HEAD~1)"
+          fi
+          echo "LIGHT_DIFF_BASE=$base" >> "$GITHUB_ENV"
 
       # ---- policy gates (static, seconds each) ----
       - name: light-tier package selector tests
@@ -347,6 +364,18 @@ jobs:
           python3 scripts/ci/select_package_tests_test.py
           python3 scripts/ci/select_importers_test.py
           python3 scripts/ci/cancel_conflicted_pr_runs_test.py
+      - name: release-safety tool tests (migration lint, SLO gate)
+        run: |
+          python3 scripts/ci/check_migration_expand_contract_test.py
+          python3 scripts/ci/slo_gate_test.py
+      - name: per-unit release selection and planning tests
+        run: |
+          python3 scripts/ci/affected_units_test.py
+          python3 scripts/ci/plan_unit_deploy_test.py
+          python3 scripts/ci/plan_edge_rollout_test.py
+          bash scripts/unit-release-verify_test.sh
+          bash scripts/ci/unit_deploy_test.sh
+          bash scripts/ci/verify_unit_release_test.sh
       - name: MemStore stub guard
         run: make memstore-stubs-check
       - name: daemon environment contract
@@ -397,6 +426,12 @@ jobs:
           go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.2
       - name: proto-check
         run: make proto-check
+      # Units deploy independently, so release N runs beside N-1. Compares
+      # the gRPC protos and the host/guest JSON files (pkg/api AppManifest,
+      # BuildManifest, BuildDone) with the previous release tag; needs the
+      # protoc installed above and the tags fetch-depth 0 brings.
+      - name: version skew (protos and guest protocol vs the previous release)
+        run: go run ./scripts/ci/versionskew -base "$LIGHT_DIFF_BASE"
       - name: install vacuum
         run: |
           set -euo pipefail
@@ -419,22 +454,17 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: make migration-version-hygiene-check
+      # New migrations must be online-safe for the previous release still
+      # running: expand/contract, lock_timeout, no blocking index builds.
+      - name: migration expand/contract lint
+        run: python3 scripts/ci/check_migration_expand_contract.py --base "$LIGHT_DIFF_BASE"
       - name: migrations check (static)
         run: make migrations-check
       - name: select migration changes
         id: migrations
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          BEFORE: ${{ github.event.before }}
         run: |
           set -euo pipefail
-          if [[ "$EVENT_NAME" == "pull_request" ]]; then
-            base="$(git rev-parse HEAD^1)"
-          elif [[ -n "$BEFORE" && ! "$BEFORE" =~ ^0+$ ]] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
-            base="$BEFORE"
-          else
-            base="$(git rev-parse HEAD~1)"
-          fi
+          base="$LIGHT_DIFF_BASE"
           if git diff --name-only "$base" HEAD | grep -qE '^(migrations/|schema\.sql$|go\.(mod|sum)$)'; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
           else
@@ -464,13 +494,15 @@ jobs:
   tests:
     name: "light: tests (shard ${{ matrix.shard }})"
     runs-on: ubuntu-latest
-    # Light-tier budget: about 10 minutes per shard. Changed packages run in
-    # full with -race; cmd/gregale, pkg/state and pkg/apid/apidserver (one per
-    # shard, see affected_packages.py SELECTIVE_SHARD) run only the tests
+    # Changed packages run in full with -race. The large packages
+    # cmd/gregale, pkg/state and pkg/apid/apidserver (one per shard, see
+    # affected_packages.py SELECTIVE_SHARD) run only the tests
     # related to the change, without -race. The mega tier (ci.yml) runs every
     # suite in full with -race nightly and before every release. Main pushes
     # also warm the large-package build for later pull requests.
-    timeout-minutes: ${{ github.ref == 'refs/heads/main' && 40 || 20 }}
+    # State and apidserver shards also need cold non-race builds after their
+    # race suites; shard 3 first compiles portable binding/guest contracts.
+    timeout-minutes: ${{ github.ref == 'refs/heads/main' && 40 || (matrix.shard == 2 || matrix.shard == 3) && 30 || 20 }}
     strategy:
       fail-fast: false
       matrix:
@@ -639,7 +671,7 @@ jobs:
           GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
           SHARD: ${{ matrix.shard }}
           # Related-test cap per large package: enough for a focused change,
-          # small enough for the shard's 10-minute budget.
+          # bounded for focused pull-request runs.
           SELECTIVE_CAP: "150"
         run: |
           set -euo pipefail

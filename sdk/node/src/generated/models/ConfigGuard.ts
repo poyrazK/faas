@@ -2,11 +2,21 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { ConfigGuardDecision } from './ConfigGuardDecision.js';
 /**
- * `false` opts this env or secret write out of the config guard
- * (ADR-1451): no guard opens, and a guard already watching the scope
- * closes as superseded. Omitted or `true` guards the change when the
- * scope has a live deployment.
- *
+ * A scope's config guard (ADR-1451).
  */
-export type ConfigGuard = boolean;
+export type ConfigGuard = {
+  id: string;
+  scope: string;
+  status: 'watching' | 'clean' | 'restored' | 'regressed' | 'no_traffic' | 'superseded';
+  base_revision: number;
+  head_revision: number;
+  restorable: boolean;
+  opened_at: string;
+  last_change_at: string;
+  window_ends_at?: string;
+  closed_at?: string;
+  decision?: ConfigGuardDecision;
+};
+

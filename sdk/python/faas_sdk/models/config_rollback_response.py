@@ -18,6 +18,8 @@ T = TypeVar("T", bound="ConfigRollbackResponse")
 
 @_attrs_define
 class ConfigRollbackResponse:
+    """What a config rollback changed, and the secrets it could not restore (ADR-1451)."""
+
     restored_revision: int
     set_: list[str]
     deleted: list[str]

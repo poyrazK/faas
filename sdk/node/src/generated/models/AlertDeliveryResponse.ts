@@ -12,6 +12,18 @@
  *
  */
 export type AlertDeliveryResponse = {
+  /**
+   * Stable readiness logical event associated with this physical delivery.
+   */
+  readiness_event_id?: string;
+  /**
+   * Selected receiver role for this physical readiness dispatch.
+   */
+  readiness_destination?: 'primary' | 'fallback';
+  /**
+   * Destination selection reason recorded on this physical readiness delivery.
+   */
+  readiness_failover_reason?: 'primary_failure_threshold' | 'incident_sticky_fallback' | 'recovery_to_primary' | 'primary_queue_blocked';
   id: string;
   rule_id: string;
   account_id: string;

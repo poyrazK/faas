@@ -136,6 +136,9 @@ export class EnvService {
      *
      */
     scope?: string,
+    /**
+     * Revisions to return, newest first.
+     */
     limit?: number,
   }): CancelablePromise<ListConfigRevisionsResponse> {
     return __request(OpenAPI, {
@@ -175,6 +178,9 @@ export class EnvService {
      * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
      */
     slug: string,
+    /**
+     * The scope's config revision number, from the config history.
+     */
     revision: number,
     /**
      * Env-var scope (ADR-090). A domain-valid slug (1..40 chars,

@@ -8,6 +8,7 @@
 -- admits.
 
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 -- Extend whatever the constraint admits now (goose runs with allow-missing).
 DO $presets$
@@ -24,6 +25,7 @@ END $presets$;
 -- +goose StatementEnd
 
 -- +goose Down
+SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 -- An adaptive rollout keeps its ladder under the balanced name: same
 -- percentages and timers, without the early advance.

@@ -116,7 +116,7 @@ func sealCheckpointPgConnectionValue(p state.ProjectEnvironmentCloneCheckpointPg
 	if p.CredentialObservationSHA256 != c.ObservationSHA256 || p.CredentialCiphertextSHA256 != c.CiphertextSHA256 || state.ProjectEnvironmentCloneCheckpointPostgresCredentialPlanSHA256(p.Credential) != state.ProjectEnvironmentCloneCheckpointPostgresCredentialPlanSHA256(c.Plan) || setSecretRecipient == nil || mfaIdentities == nil {
 		return "", nil, errCloneCheckpointUnavailable
 	}
-	recipient := setSecretRecipient()
+	recipient := hostSecretRecipient()
 	if recipient == nil || !cloneInventoryCanOpen(recipient, mfaIdentities()) {
 		return "", nil, errCloneCheckpointUnavailable
 	}

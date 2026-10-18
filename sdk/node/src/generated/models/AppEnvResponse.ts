@@ -15,7 +15,7 @@ export type AppEnvResponse = {
   created_at: string;
   updated_at: string;
   /**
-   * Present on writes: the config revision recorded and the config guard watching it (ADR-1451).
+   * Present on env writes: the revision this write recorded and the config guard watching it (ADR-1451).
    */
   config_change?: ConfigChangeReceipt;
 };

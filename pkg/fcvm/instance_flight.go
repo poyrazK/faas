@@ -99,6 +99,10 @@ func (m *Manager) beginLiveInstanceFlight(ctx context.Context, instance string) 
 }
 
 func (m *Manager) registerLiveInstanceFlight(ctx context.Context, instance string) (context.Context, *Instance, *instanceFlight, error) {
+	return m.registerLiveInstanceGeneration(ctx, instance, "")
+}
+
+func (m *Manager) registerLiveInstanceGeneration(ctx context.Context, instance, generation string) (context.Context, *Instance, *instanceFlight, error) {
 	if v := m.nativeVMM(); v != nil {
 		if err := v.nativeRecoveryRuntime().journal.checkQualificationProducer(ctx, instance); err != nil {
 			return nil, nil, nil, err
@@ -119,6 +123,10 @@ func (m *Manager) registerLiveInstanceFlight(ctx context.Context, instance strin
 	if !ok {
 		flight.cancel()
 		return nil, nil, nil, fmt.Errorf("instance is not live")
+	}
+	if generation != "" && physicalOperatorGeneration(inst) != generation {
+		flight.cancel()
+		return nil, nil, nil, fmt.Errorf("operator park: physical VM generation changed")
 	}
 	if _, ok := m.instanceFlights[instance]; ok {
 		flight.cancel()

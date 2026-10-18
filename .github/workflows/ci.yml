@@ -975,7 +975,11 @@ jobs:
             gitops_acceptance: false
             state_coverage: false
             test_timeout: 30m
-            job_timeout_minutes: 45
+            # Shard b alone runs the PostgreSQL native verdict, starter TLS,
+            # fixture and GitOps compilation gates before its tests: about
+            # 28 minutes on 2026-10-18 (20 on 2026-10-17), ahead of a ~20
+            # minute test step. 45 cancelled it mid-suite.
+            job_timeout_minutes: 60
     # Keep main's bounded PostgreSQL budgets: 30 minutes for parity and
     # reconciliation, 20 minutes for CLI/daemons. The full state suite runs
     # in its four deterministic shards above.
@@ -1817,7 +1821,19 @@ jobs:
           sudo mv "/tmp/prometheus-${PROM_VERSION}.linux-amd64/promtool" /usr/local/bin/promtool
           promtool check rules \
             deploy/ansible/roles/prometheus/files/faas.rules.yml \
-            pkg/promqlrules/data_placement.yaml
+            deploy/ansible/roles/prometheus/files/data_repair.rules.yml \
+            pkg/promqlrules/data_placement.yaml \
+            examples/event-acknowledgment-monitoring/preparation.rules.yml \
+            examples/event-acknowledgment-monitoring/recovery.rules.yml
+          promtool check config \
+            examples/event-acknowledgment-monitoring/prometheus.yml \
+            examples/event-acknowledgment-monitoring/prometheus-python.yml \
+            examples/event-acknowledgment-monitoring/prometheus-recovery.yml \
+            examples/event-acknowledgment-monitoring/prometheus-recovery-python.yml \
+            examples/event-acknowledgment-monitoring/prometheus-recovery-go.yml \
+            examples/event-acknowledgment-monitoring/prometheus-recovery-go-worker.yml \
+            examples/event-acknowledgment-monitoring/prometheus-recovery-node-worker.yml
+          python3 -m json.tool examples/event-acknowledgment-monitoring/recovery-dashboard.json >/dev/null
           # Every rule fixture, not a hand-picked list: an unlisted
           # fixture (slo_low_traffic) broke unnoticed when an alert changed.
           for fixture in deploy/ansible/roles/prometheus/files/*.test.yml pkg/promqlrules/testdata/*.test.yml; do
@@ -1857,6 +1873,7 @@ jobs:
           set -euo pipefail
           pip install --quiet 'ansible-core==2.21.2'
           python3 scripts/ci/test_udp_deployment.py
+          python3 scripts/ci/test_durable_listeners.py
           cd deploy/ansible
           COLLECTIONS_PATH="${RUNNER_TEMP}/ansible-collections"
           export ANSIBLE_COLLECTIONS_PATH="${COLLECTIONS_PATH}"
@@ -1997,7 +2014,7 @@ jobs:
 
           rules_dir="$RUNNER_TEMP/prometheus-rules"
           mkdir -p "$rules_dir"
-          cp roles/prometheus/files/{faas.rules.yml,bridge.rules.yml,pg_backup.rules.yml} "$rules_dir/"
+          cp roles/prometheus/files/{faas.rules.yml,bridge.rules.yml,pg_backup.rules.yml,data_repair.rules.yml} "$rules_dir/"
           cp ../../pkg/promqlrules/data_placement.yaml "$rules_dir/"
           sed "s#/etc/prometheus#$rules_dir#g" \
             "$RUNNER_TEMP/prometheus.yml" > "$RUNNER_TEMP/prometheus-checked.yml"

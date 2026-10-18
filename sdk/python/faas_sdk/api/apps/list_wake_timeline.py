@@ -7,6 +7,7 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
+from ...models.list_wake_timeline_pagination import ListWakeTimelinePagination
 from ...models.problem import Problem
 from ...models.wake_timeline_response import WakeTimelineResponse
 from ...types import UNSET, Response, Unset
@@ -18,6 +19,8 @@ def _get_kwargs(
     *,
     since: datetime.datetime | Unset = UNSET,
     limit: int | Unset = 200,
+    pagination: ListWakeTimelinePagination | Unset = UNSET,
+    cursor: str | Unset = UNSET,
 ) -> dict[str, Any]:
 
     params: dict[str, Any] = {}
@@ -28,6 +31,14 @@ def _get_kwargs(
     params["since"] = json_since
 
     params["limit"] = limit
+
+    json_pagination: str | Unset = UNSET
+    if not isinstance(pagination, Unset):
+        json_pagination = pagination
+
+    params["pagination"] = json_pagination
+
+    params["cursor"] = cursor
 
     params = {k: v for k, v in params.items() if v is not UNSET and v is not None}
 
@@ -100,6 +111,8 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     since: datetime.datetime | Unset = UNSET,
     limit: int | Unset = 200,
+    pagination: ListWakeTimelinePagination | Unset = UNSET,
+    cursor: str | Unset = UNSET,
 ) -> Response[Problem | WakeTimelineResponse]:
     """List the canonical wake-timeline frames for one wake.
 
@@ -142,6 +155,8 @@ def sync_detailed(
         wake_id (str):
         since (datetime.datetime | Unset):
         limit (int | Unset):  Default: 200.
+        pagination (ListWakeTimelinePagination | Unset):
+        cursor (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -156,6 +171,8 @@ def sync_detailed(
         wake_id=wake_id,
         since=since,
         limit=limit,
+        pagination=pagination,
+        cursor=cursor,
     )
 
     response = client.get_httpx_client().request(
@@ -172,6 +189,8 @@ def sync(
     client: AuthenticatedClient | Client,
     since: datetime.datetime | Unset = UNSET,
     limit: int | Unset = 200,
+    pagination: ListWakeTimelinePagination | Unset = UNSET,
+    cursor: str | Unset = UNSET,
 ) -> Problem | WakeTimelineResponse | None:
     """List the canonical wake-timeline frames for one wake.
 
@@ -214,6 +233,8 @@ def sync(
         wake_id (str):
         since (datetime.datetime | Unset):
         limit (int | Unset):  Default: 200.
+        pagination (ListWakeTimelinePagination | Unset):
+        cursor (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -229,6 +250,8 @@ def sync(
         client=client,
         since=since,
         limit=limit,
+        pagination=pagination,
+        cursor=cursor,
     ).parsed
 
 
@@ -239,6 +262,8 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     since: datetime.datetime | Unset = UNSET,
     limit: int | Unset = 200,
+    pagination: ListWakeTimelinePagination | Unset = UNSET,
+    cursor: str | Unset = UNSET,
 ) -> Response[Problem | WakeTimelineResponse]:
     """List the canonical wake-timeline frames for one wake.
 
@@ -281,6 +306,8 @@ async def asyncio_detailed(
         wake_id (str):
         since (datetime.datetime | Unset):
         limit (int | Unset):  Default: 200.
+        pagination (ListWakeTimelinePagination | Unset):
+        cursor (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -295,6 +322,8 @@ async def asyncio_detailed(
         wake_id=wake_id,
         since=since,
         limit=limit,
+        pagination=pagination,
+        cursor=cursor,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -309,6 +338,8 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     since: datetime.datetime | Unset = UNSET,
     limit: int | Unset = 200,
+    pagination: ListWakeTimelinePagination | Unset = UNSET,
+    cursor: str | Unset = UNSET,
 ) -> Problem | WakeTimelineResponse | None:
     """List the canonical wake-timeline frames for one wake.
 
@@ -351,6 +382,8 @@ async def asyncio(
         wake_id (str):
         since (datetime.datetime | Unset):
         limit (int | Unset):  Default: 200.
+        pagination (ListWakeTimelinePagination | Unset):
+        cursor (str | Unset):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -367,5 +400,7 @@ async def asyncio(
             client=client,
             since=since,
             limit=limit,
+            pagination=pagination,
+            cursor=cursor,
         )
     ).parsed

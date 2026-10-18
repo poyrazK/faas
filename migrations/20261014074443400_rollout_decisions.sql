@@ -11,6 +11,7 @@
 --     an abort.
 
 -- +goose Up
+SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 ALTER TABLE deployments ADD COLUMN IF NOT EXISTS rollout_decision jsonb;
 ALTER TABLE deployments DROP CONSTRAINT IF EXISTS deployments_rollout_decision_chk;
@@ -90,6 +91,7 @@ $$;
 -- +goose StatementEnd
 
 -- +goose Down
+SET LOCAL lock_timeout = '5s';
 -- +goose StatementBegin
 DO $$ BEGIN
     IF EXISTS (SELECT 1 FROM deployment_audit WHERE kind = 'deploy.rollout_held') THEN

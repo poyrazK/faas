@@ -157,6 +157,9 @@ class AppManifest:
     means 'use plan default'."""
     request_timeout_s: int | None | Unset = UNSET
     """Runtime request wall-clock timeout in seconds. 0 inherits the plan/type default."""
+    function_concurrency: int | None | Unset = UNSET
+    """Per-worker request concurrency imaged stamps into the function's build as FAAS_FUNCTION_CONCURRENCY
+    (ADR-1342). 0 or 1 means one request per worker."""
     service_replicas: ServiceReplicas | Unset = UNSET
     """Per-deployment replica scaffold for execution_mode='service' (ADR-137 §Decision 3, M-2 + M-4 workstream E).
     Replica count is bounded by ServiceReplicasMax per plan (Hobby 3, Pro 5, Scale 20), and desired must also fit
@@ -334,6 +337,12 @@ class AppManifest:
         else:
             request_timeout_s = self.request_timeout_s
 
+        function_concurrency: int | None | Unset
+        if isinstance(self.function_concurrency, Unset):
+            function_concurrency = UNSET
+        else:
+            function_concurrency = self.function_concurrency
+
         service_replicas: dict[str, Any] | Unset = UNSET
         if not isinstance(self.service_replicas, Unset):
             service_replicas = self.service_replicas.to_dict()
@@ -437,6 +446,8 @@ class AppManifest:
             field_dict["max_retries"] = max_retries
         if request_timeout_s is not UNSET:
             field_dict["request_timeout_s"] = request_timeout_s
+        if function_concurrency is not UNSET:
+            field_dict["function_concurrency"] = function_concurrency
         if service_replicas is not UNSET:
             field_dict["service_replicas"] = service_replicas
         if worker_replicas is not UNSET:
@@ -786,6 +797,15 @@ class AppManifest:
 
         request_timeout_s = _parse_request_timeout_s(d.pop("request_timeout_s", UNSET))
 
+        def _parse_function_concurrency(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        function_concurrency = _parse_function_concurrency(d.pop("function_concurrency", UNSET))
+
         _service_replicas = d.pop("service_replicas", UNSET)
         service_replicas: ServiceReplicas | Unset
         if isinstance(_service_replicas, Unset):
@@ -880,6 +900,7 @@ class AppManifest:
             startup_deadline_s=startup_deadline_s,
             max_retries=max_retries,
             request_timeout_s=request_timeout_s,
+            function_concurrency=function_concurrency,
             service_replicas=service_replicas,
             worker_replicas=worker_replicas,
             favicon=favicon,

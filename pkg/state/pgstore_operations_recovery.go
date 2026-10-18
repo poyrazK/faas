@@ -19,6 +19,9 @@ func (s *PgStore) RecoverOperation(ctx context.Context, accountID, tenantID, ope
 	if err != nil {
 		return Operation{}, err
 	}
+	if snapshot.DataRepair != nil {
+		return Operation{}, ErrConflict
+	}
 	if replay, err := s.replayOperationRecovery(ctx, snapshot, req); err != nil {
 		return Operation{}, err
 	} else if replay {

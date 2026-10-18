@@ -102,7 +102,8 @@ def sync_detailed(
     Args:
         slug (str):
         scope (str | Unset):
-        body (ConfigRollbackRequest):
+        body (ConfigRollbackRequest): The config revision whose variables a rollback restores
+            (ADR-1451).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -140,7 +141,8 @@ def sync(
     Args:
         slug (str):
         scope (str | Unset):
-        body (ConfigRollbackRequest):
+        body (ConfigRollbackRequest): The config revision whose variables a rollback restores
+            (ADR-1451).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -173,7 +175,8 @@ async def asyncio_detailed(
     Args:
         slug (str):
         scope (str | Unset):
-        body (ConfigRollbackRequest):
+        body (ConfigRollbackRequest): The config revision whose variables a rollback restores
+            (ADR-1451).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -209,7 +212,8 @@ async def asyncio(
     Args:
         slug (str):
         scope (str | Unset):
-        body (ConfigRollbackRequest):
+        body (ConfigRollbackRequest): The config revision whose variables a rollback restores
+            (ADR-1451).
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

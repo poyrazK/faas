@@ -75,6 +75,10 @@ export type CreateAppRequest = {
    */
   request_timeout_s?: number;
   /**
+   * Requests one Node or Python function worker may serve at once (ADR-1342). Omitted, 0 or 1 keeps one request per worker; the plan's concurrency_per_vm bound caps it. Python runs sync handlers on threads.
+   */
+  function_concurrency?: number;
+  /**
    * Lifecycle contract for the app. Default is request; service/worker/job are plan-gated.
    */
   execution_mode?: 'request' | 'service' | 'worker' | 'job';

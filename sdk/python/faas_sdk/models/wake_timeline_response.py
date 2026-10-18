@@ -11,6 +11,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.wake_timeline_event import WakeTimelineEvent
+    from ..models.wake_timeline_page import WakeTimelinePage
 
 
 T = TypeVar("T", bound="WakeTimelineResponse")
@@ -28,7 +29,12 @@ class WakeTimelineResponse:
     limit: int
     """Effective limit applied (always 1..1000)."""
     next_cursor: str | Unset = UNSET
-    """Opaque RFC 3339 cursor for the next page. Empty when this is the last page."""
+    """Legacy timestamp hint, sent back as since. Can skip equal-time events. keyset_v1 uses page.next_cursor
+    instead."""
+    page: WakeTimelinePage | Unset = UNSET
+    """Opt-in keyset_v1 metadata. App scoping and canonical boot selection precede the exclusive timestamp/event-ID
+    seek and page limit. Complete means no further retained row in this live read, not complete capture or a frozen
+    snapshot. Native event IDs stay inside the opaque cursor."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -45,6 +51,10 @@ class WakeTimelineResponse:
 
         next_cursor = self.next_cursor
 
+        page: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.page, Unset):
+            page = self.page.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -57,12 +67,15 @@ class WakeTimelineResponse:
         )
         if next_cursor is not UNSET:
             field_dict["next_cursor"] = next_cursor
+        if page is not UNSET:
+            field_dict["page"] = page
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.wake_timeline_event import WakeTimelineEvent
+        from ..models.wake_timeline_page import WakeTimelinePage
 
         d = dict(src_dict)
         wake_id = d.pop("wake_id")
@@ -80,12 +93,20 @@ class WakeTimelineResponse:
 
         next_cursor = d.pop("next_cursor", UNSET)
 
+        _page = d.pop("page", UNSET)
+        page: WakeTimelinePage | Unset
+        if isinstance(_page, Unset):
+            page = UNSET
+        else:
+            page = WakeTimelinePage.from_dict(_page)
+
         wake_timeline_response = cls(
             wake_id=wake_id,
             app_id=app_id,
             events=events,
             limit=limit,
             next_cursor=next_cursor,
+            page=page,
         )
 
         wake_timeline_response.additional_properties = d

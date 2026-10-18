@@ -207,7 +207,7 @@ const (
 // silently drop valid inputs like `--ram 0` or `--idle -1`.
 func cmdApp(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale app <slug> [--environment SLUG] [--visibility public|internal] [--profile micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--concurrency-overflow queue|drop] [--max-queue-depth N] [--max-queue-wait DURATION|--max-queue-wait-ms N] [--wake-max-queue-depth N] [--wake-max-queue-wait-seconds N] [--idle SEC] [--request-timeout SEC] [--revision-pin-ttl DURATION] [--min N] [--warm-pool-size N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--concurrency] [--require-authn] [--no-require-authn] [--maintenance] [--no-maintenance] [--streaming-enabled] [--no-streaming-enabled] [--websocket-enabled] [--no-websocket] [--route-metrics] [--no-route-metrics] [--consumer-auth-mode optional|required] [--platform-tenant-required|--no-platform-tenant-required] [--head-wakes[=true|false]] [--crawler-policy wake|cached|block] [--release-policy safe|fast|immediate] [--release-probe-paths PATH,PATH] [--pre-auth off|observe|enforce] [--pre-auth-rps N] [--pre-auth-burst N] [--health-path PATH] [--health-path-wakes] [--no-health-path-wakes] [--public-auth open|bearer|basic|ip_allowlist|internal_only] [--ip-allowlist CIDR (repeatable)] [--basic-user USER --basic-pass PASS] [--app-protocol http1|http2|grpc]", "apps")
+		PrintUsage(os.Stderr, "usage: gregale app <slug> [--environment SLUG] [--visibility public|internal] [--profile micro|small|medium|large|xlarge] [--ram N] [--cpu-millicores 250|500|1000] [--max-concurrency N] [--concurrency-overflow queue|drop] [--max-queue-depth N] [--max-queue-wait DURATION|--max-queue-wait-ms N] [--wake-max-queue-depth N] [--wake-max-queue-wait-seconds N] [--idle SEC] [--request-timeout SEC] [--function-concurrency N] [--revision-pin-ttl DURATION] [--min N] [--warm-pool-size N] [--autoscale-target-rps N] [--autoscale-target-cpu-pct N] [--warm-snapshot] [--no-warm-snapshot] [--warm-snapshot-min-requests N] [--warm-snapshot-min-ms N] [--concurrency] [--require-authn] [--no-require-authn] [--maintenance] [--no-maintenance] [--streaming-enabled] [--no-streaming-enabled] [--websocket-enabled] [--no-websocket] [--route-metrics] [--no-route-metrics] [--consumer-auth-mode optional|required] [--platform-tenant-required|--no-platform-tenant-required] [--head-wakes[=true|false]] [--crawler-policy wake|cached|block] [--release-policy safe|fast|immediate] [--release-probe-paths PATH,PATH] [--pre-auth off|observe|enforce] [--pre-auth-rps N] [--pre-auth-burst N] [--health-path PATH] [--health-path-wakes] [--no-health-path-wakes] [--public-auth open|bearer|basic|ip_allowlist|internal_only] [--ip-allowlist CIDR (repeatable)] [--basic-user USER --basic-pass PASS] [--app-protocol http1|http2|grpc]", "apps")
 		return 1
 	}
 	slug := args[0]
@@ -228,6 +228,7 @@ func cmdApp(args []string) int {
 	idle := fs.Int("idle", 0, "update idle timeout (seconds)")
 	revisionPinTTL := fs.Duration("revision-pin-ttl", 0, "revision pin lifetime (0 disables; whole seconds, maximum 168h)")
 	requestTimeout := fs.Int("request-timeout", 0, "per-app request timeout in seconds (0 = plan default, max 30)")
+	functionConcurrency := fs.Int("function-concurrency", 0, "requests one Node/Python function worker serves at once (0 = one; applies from the next deploy)")
 	// --min sets the per-app cold-wake floor (ux_spec §6.5).
 	// Pro/Scale only — the API rejects Hobby/Free with 403
 	// plan_min_instances_not_allowed, which surfaces here as an
@@ -478,6 +479,10 @@ func cmdApp(args []string) int {
 	if explicit["request-timeout"] {
 		v := *requestTimeout
 		req.RequestTimeoutS = &v
+	}
+	if explicit["function-concurrency"] {
+		v := *functionConcurrency
+		req.FunctionConcurrency = &v
 	}
 	if explicit["min"] {
 		v := *min
@@ -757,7 +762,7 @@ func cmdApp(args []string) int {
 		req.OverflowNode = &v
 	}
 
-	if req.RAMMB == nil && req.CPUMillicores == nil && req.ResourceProfile == nil && req.MaxConcurrency == nil && req.IdleTimeoutS == nil && req.RequestTimeoutS == nil && req.RevisionPinTTLSeconds == nil && req.MinInstances == nil &&
+	if req.RAMMB == nil && req.CPUMillicores == nil && req.ResourceProfile == nil && req.MaxConcurrency == nil && req.IdleTimeoutS == nil && req.RequestTimeoutS == nil && req.FunctionConcurrency == nil && req.RevisionPinTTLSeconds == nil && req.MinInstances == nil &&
 		req.AutoscaleTargetRPS == nil && req.AutoscaleTargetCPUPct == nil &&
 		req.WarmSnapshotEnabled == nil && req.WarmSnapshotMinRequests == nil && req.WarmSnapshotMinMs == nil && req.WarmPoolSize == nil &&
 		req.EvictionPriority == nil && req.RequireAuthn == nil && req.PublicAuth == nil &&
@@ -814,6 +819,9 @@ func cmdApp(args []string) int {
 			fmt.Printf("%-30s %s\n", "request timeout:", "plan default")
 		} else {
 			fmt.Printf("%-30s %ds\n", "request timeout:", a.RequestTimeoutS)
+		}
+		if a.FunctionConcurrency > 1 {
+			fmt.Printf("%-30s %d\n", "function concurrency:", a.FunctionConcurrency)
 		}
 		// ux_spec §6.5: show the cold-wake floor alongside the
 		// other knobs so the customer sees why an instance is
@@ -970,6 +978,9 @@ func cmdApp(args []string) int {
 	if hint := requireAuthnStillOnHint(req, updated); hint != "" {
 		fmt.Fprintln(os.Stderr, hint)
 	}
+	if hint := functionConcurrencyDeployHint(req, updated); hint != "" {
+		fmt.Fprintln(os.Stderr, hint)
+	}
 	if explicit["min"] && *min > 0 {
 		// Silent on Whoami failure: the customer just updated an app
 		// successfully, don't surface an unrelated auth/network blip
@@ -1124,7 +1135,7 @@ func validateDeploySourceSelection(sourcePath string, worktree bool, image, arch
 	if archive != "" {
 		selected = append(selected, "--tarball")
 	}
-	if repo != "" {
+	if repo != "" && !githubSnippet {
 		selected = append(selected, "--repo")
 	}
 	if templateName != "" {
@@ -1133,7 +1144,7 @@ func validateDeploySourceSelection(sourcePath string, worktree bool, image, arch
 	if githubSnippet {
 		selected = append(selected, "--github")
 	}
-	if ref != "" && repo == "" {
+	if ref != "" && repo == "" && !githubSnippet {
 		return errors.New("--ref requires --repo")
 	}
 	if sourceBranch != "" && repo == "" {
@@ -1362,6 +1373,16 @@ func requireAuthnStillOnHint(req api.UpdateAppRequest, updated api.AppResponse) 
 		return ""
 	}
 	return "Requests still need a Gregale bearer token: require_authn is on. Pass --no-require-authn to make the app public."
+}
+
+// functionConcurrencyDeployHint says when a function_concurrency change
+// reaches requests: imaged stamps it into the function's build (ADR-1342),
+// so the live deployment keeps its workers until the next deploy.
+func functionConcurrencyDeployHint(req api.UpdateAppRequest, updated api.AppResponse) string {
+	if req.FunctionConcurrency == nil || updated.Type != "function" {
+		return ""
+	}
+	return fmt.Sprintf("function_concurrency=%d applies from the next deploy; run `gregale deploy` to rebuild %s with it.", *req.FunctionConcurrency, updated.Slug)
 }
 
 func openPublicAuthAfterTokenRemoval(current api.AppResponse) *api.PublicAuthBlock {
@@ -2137,6 +2158,13 @@ func deployManifestQueueBindings(ctx context.Context, client manifestQueueBindin
 	if err := m.Validate(); err != nil {
 		return err
 	}
+	return reconcileQueueBindings(ctx, client, slug, m.QueueBindings, "pull", "worker")
+}
+
+// reconcileQueueBindings makes an app's default-environment queue bindings
+// match bindings, by name. An omitted mode or workload class takes the
+// caller's default: pull/worker for an app, push/http for a function.
+func reconcileQueueBindings(ctx context.Context, client manifestQueueBindingClient, slug string, bindings []gregalemanifest.QueueBinding, defaultMode, defaultClass string) error {
 	existing, err := client.ListQueueBindings(ctx, slug)
 	if err != nil {
 		return fmt.Errorf("list existing queue bindings: %w", err)
@@ -2148,8 +2176,8 @@ func deployManifestQueueBindings(ctx context.Context, client manifestQueueBindin
 		}
 		existingByName[row.Name] = row
 	}
-	desired := make(map[string]gregalemanifest.QueueBinding, len(m.QueueBindings))
-	for _, binding := range m.QueueBindings {
+	desired := make(map[string]gregalemanifest.QueueBinding, len(bindings))
+	for _, binding := range bindings {
 		desired[binding.Name] = binding
 	}
 	for _, row := range existing {
@@ -2162,14 +2190,14 @@ func deployManifestQueueBindings(ctx context.Context, client manifestQueueBindin
 			}
 		}
 	}
-	for _, binding := range m.QueueBindings {
+	for _, binding := range bindings {
 		mode := binding.Mode
 		if mode == "" {
-			mode = "pull"
+			mode = defaultMode
 		}
 		class := binding.WorkloadClass
 		if class == "" {
-			class = "worker"
+			class = defaultClass
 		}
 		maxConcurrency := binding.MaxConcurrency
 		if maxConcurrency == 0 {
@@ -2258,12 +2286,15 @@ func cmdDeployTarball(args []string) int {
 // behavior below.
 type deployExecution struct {
 	onQueued         func(api.DeploymentResponse)
+	onSubmission     func(deploySubmission) error
+	onUploadSession  func(deployUploadIdentity) error
 	onSourceSync     func(time.Duration, error)
 	onStage          func(string, string, int64, string)
 	onTerminal       func(api.DeploymentResponse) int
 	onWaitEnd        func()
 	onFailure        func(api.DeploymentResponse, string, string)
 	onError          func(error)
+	resolveApp       func(context.Context, *Client, api.CreateAppRequest) (api.AppResponse, error)
 	prefixBuildLogs  bool
 	compactProgress  bool // Guided sessions own their review and progress display.
 	streamLogsOnJSON bool
@@ -2524,7 +2555,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	deployedBy := fs.String("deployed-by", "", "operator label (auto-resolved from `git config user.name` when in a repo)")
 	prNumber := fs.Int("pr-number", 0, "PR number (positive int; 0 = absent). Default unset; CI paths stamp via the GitHub Action.")
 	if err := fs.Parse(args); err != nil {
-		PrintUsage(os.Stderr, "usage: gregale deploy [--plan|--dry-run|--diff|--create-only|--safe|--no-traffic] [--platform-tenant-required|--no-platform-tenant-required] [--doctor-strict|--no-doctor] [--path DIR] [--source auto|head|worktree] [--worktree] --image REF | --tarball PATH | --repo OWNER/NAME --ref REF [--source-branch BRANCH] | --template NAME [--repository OWNER/NAME --install-id N --production-branch BRANCH]", "deploy")
+		// newFlagSet already renders the error and help hint, or one JSON
+		// problem. A second usage message would corrupt structured stderr.
 		return 1
 	}
 	// Deploy has no positional arguments. Go's flag parser stops at the
@@ -2620,18 +2652,22 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	if *mcpTaskMigrationOverride && (*diff || *simplePlan || *githubSnippet) {
 		return printErr("Invalid flags", errors.New("--mcp-task-migration-override requires a single-app deployment and cannot be used with preview, --plan, or --github"))
 	}
-	// A linked environment is meaningful for real deployments and project
-	// previews. The single-app diff engine has no environment input, so keep
-	// its existing read-only behavior when the scope was not explicit.
-	if !explicit["environment"] && (!preview || projectRequested) {
-		resolvedEnvironment, resolveErr := resolveEnvironmentFlagOrContext(*environment)
+	// Resolve one environment for preview and deployment. The single-app
+	// diff engine cannot compare named environments, so refuse that target
+	// instead of silently comparing the default scope.
+	contextDir, contextErr := deployContextDirectory(*sourcePath)
+	if contextErr != nil {
+		return printErr("Could not resolve deploy source", contextErr)
+	}
+	if !explicit["environment"] {
+		resolvedEnvironment, resolveErr := resolveEnvironmentFromContext(*environment, contextDir)
 		if resolveErr != nil {
 			return printErr("Could not read local project context", resolveErr)
 		}
 		*environment = resolvedEnvironment
 	}
 	if *environment != "" && *diff && !projectRequested && *repo == "" {
-		return printErr("Invalid flags", fmt.Errorf("--environment cannot be combined with --dry-run or --diff"))
+		return printErr("Unsupported preview environment", fmt.Errorf("single-app --dry-run and --diff cannot compare environment %q; use a project preview, or pass --environment= to explicitly preview the default scope", *environment))
 	}
 	// --strict / --lenient mutex. Same rationale as
 	// --require-authn / --no-require-authn above.
@@ -2779,7 +2815,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	deployFunction, deployApp := *function, *app
 	deployRuntime, deployHandler := *runtime, *handler
 	if *templateName != "" {
-		if !templates.Exists(*templateName) {
+		if !templateAvailable(*templateName) {
 			return printErr("Invalid --template", fmt.Errorf("unknown template %q (known: %s)", *templateName, strings.Join(templates.ListedNames(), ", ")))
 		}
 		if rt, hnd, functionTemplate := templateFunctionConfig(*templateName); functionTemplate {
@@ -2930,12 +2966,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	}
 	slug := *name
 	if slug == "" {
-		cwdForContext, cwdErr := os.Getwd()
-		if cwdErr != nil {
-			return printErr("Could not read current directory", cwdErr)
-		}
 		var nameErr error
-		slug, nameErr = linkedDefaultAppName(cwdForContext)
+		slug, nameErr = linkedDefaultAppName(contextDir)
 		if nameErr != nil {
 			return printErr("Could not read local project context", nameErr)
 		}
@@ -2966,6 +2998,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 	// customer can run `gregale deploy --github --name my-app` without
 	// a --ref. The slug is the only required input.
 	if *githubSnippet {
+		if err := validateGithubSnippetFlags(explicit); err != nil {
+			return printErr("Unsupported workflow options", err)
+		}
 		if platformTenantRequiredPtr != nil {
 			return printErr("Invalid flags", fmt.Errorf("--platform-tenant-required and --no-platform-tenant-required cannot be combined with --github"))
 		}
@@ -2979,6 +3014,14 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			return printErr("Invalid flags", fmt.Errorf("--no-traffic cannot be combined with --github; add deployment traffic policy to the generated workflow explicitly"))
 		}
 		snippetArgs := []string{"--app", slug}
+		if *diffJSON {
+			snippetArgs = append(snippetArgs, "--json")
+		}
+		for _, pair := range [][2]string{{"--repo", *repo}, {"--ref", *ref}, {"--environment", *environment}} {
+			if pair[1] != "" {
+				snippetArgs = append(snippetArgs, pair[0], pair[1])
+			}
+		}
 		if *pinnedActionSHA != "" {
 			snippetArgs = append(snippetArgs, "--pinned-sha", *pinnedActionSHA)
 		}
@@ -3221,9 +3264,6 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if sourceErr != nil {
 			return printErr("Invalid deploy source", sourceErr)
 		}
-		if *name == "" {
-			slug = sanitizeSlug(filepath.Base(sourceDir))
-		}
 		// Resolve workspace membership independently of GitHub provenance so
 		// --worktree also gets the same repository context when the repo has no
 		// origin. Only an explicitly selected workload can expand the upload
@@ -3253,6 +3293,11 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			return printErr("Invalid deploy manifest", fnErr)
 		}
 		if isFunctionSet {
+			// A guided single-app launch owns its target; fan-out would
+			// bypass that resolver and deploy different app names.
+			if execution.resolveApp != nil {
+				return printErr("Function set needs a separate deployment", errors.New("this guided launch targets one app; use gregale deploy to review and deploy the function set"))
+			}
 			if len(queueCanaryBindings) > 0 {
 				return printErr("Invalid flags", errors.New("--queue-canary-binding requires a single workload"))
 			}
@@ -3411,7 +3456,10 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if planErr != nil {
 			return printErr("Could not resolve simple app plan", planErr)
 		}
-		return renderSimpleAppPlan(osStdout, plan, jsonOutput || *diffJSON)
+		source, changes := deployPreflightSource(prov, *worktree, dirtyFileCount, *image, *templateName, originalTarball, *sourcePath)
+		preview := newCLIPreview("local inference", slug, *environment, source, changes, "No login or remote state checked; resource defaults and runtime inference are not a deployment guarantee.")
+		deploymentPreviewTargetSources(preview, contextDir, *name != "", explicit["environment"])
+		return renderSimpleAppPlan(osStdout, plan, jsonOutput || *diffJSON, preview)
 	}
 	if (deployRuntime != "" || deployHandler != "") && !deployFunction {
 		functionSource := localZeroConfig && detectShape(sourceDir) == shapeFunction
@@ -3836,6 +3884,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				*diffStrict || !*diffLenient, *noTriggers, *environment, platformTenantRequiredPtr)
 		}
 		opts := buildDiffOptionsWithLifecycle(slug, resolvedShape, deployRuntime, deployHandler, *image, sourceDir, requireAuthnPtr, appProtocolPtr, *profile, *vcpu, *executionMode, *restartPolicy, *startupDeadlineS, *maxRetries)
+		source, changes := deployPreflightSource(prov, *worktree, dirtyFileCount, *image, *templateName, originalTarball, *sourcePath)
+		opts.Preview = newCLIPreview("remote comparison", slug, "", source, changes, "Compares current remote settings; build execution and readiness are not verified. State can change before deployment.")
+		deploymentPreviewTargetSources(opts.Preview, contextDir, *name != "", explicit["environment"])
 		opts.BuildPlan = buildPreviewBuildPlan(sourceDir, resolvedShape, deployRuntime, deployHandler, sourceSHA256, *image != "", *dockerfile)
 		opts.TrafficPercent = optTrafficPercent(*trafficPercent)
 		opts.Canary = canarySpec
@@ -4044,7 +4095,12 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if err := requireTemplateSecretsBeforeFirstStart(ctx, client, *templateName, *secretsFile, *createOnly, slug); err != nil {
 			return printErr("Template needs secrets", err)
 		}
-		if err := createOrFetchApp(ctx, client, createReq, requireAuthnPtr, appProtocolPtr, publicAuthPtr, &resolvedApp); err != nil {
+		if execution.resolveApp != nil {
+			resolvedApp, err = execution.resolveApp(ctx, client, createReq)
+		} else {
+			err = createOrFetchApp(ctx, client, createReq, requireAuthnPtr, appProtocolPtr, publicAuthPtr, &resolvedApp)
+		}
+		if err != nil {
 			return printErr("Could not create or fetch app", err)
 		}
 		if *createOnly {
@@ -4213,8 +4269,14 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			}
 			var uploadErr error
 			uploadCtx := api.ContextWithIdempotencyKey(ctx, deployKey)
-			dep, sourceSHA256, usedResumable, uploadErr = DeployResumableTarball(client, uploadCtx, slug, *tarball, progress, uploadOptions)
+			if err := execution.preparingSubmission(deployKey, "resumable", resolvedApp.ID, *tarball); err != nil {
+				return printErr("Could not save source submission", err)
+			}
+			dep, sourceSHA256, usedResumable, uploadErr = deployResumableTarball(client, uploadCtx, slug, *tarball, progress, execution.onUploadSession, uploadOptions)
 			if uploadErr == nil && !usedResumable {
+				if err := execution.preparingSubmission(deployKey, "multipart", resolvedApp.ID, *tarball); err != nil {
+					return printErr("Could not save source submission", err)
+				}
 				multipartCtx := api.ContextWithIdempotencyKey(ctx, deployOperationIdempotencyKey(deployKey, "multipart"))
 				dep, uploadErr = DeployTarballWithSourceRoot(client, multipartCtx, slug, *tarball, deployRuntime, deployHandler, *dockerfile, sourceRoot, ann)
 			}
@@ -4227,6 +4289,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			}
 		} else {
 			var deployErr error
+			if err := execution.preparingSubmission(deployKey, "multipart", resolvedApp.ID, *tarball); err != nil {
+				return printErr("Could not save source submission", err)
+			}
 			multipartCtx := api.ContextWithIdempotencyKey(ctx, deployOperationIdempotencyKey(deployKey, "multipart"))
 			dep, deployErr = DeployTarballWithSourceRoot(client, multipartCtx, slug, *tarball, deployRuntime, deployHandler, *dockerfile, sourceRoot, ann)
 			if deployErr != nil {

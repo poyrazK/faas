@@ -34,12 +34,13 @@ type nativeProcessRecoveryRuntime struct {
 	tunBinds         nativeTunBindBackend
 	// Startup/test wiring only; ordinary release selection uses the staged
 	// helper belonging to this vmmd executable.
-	helper     string
-	mu         sync.Mutex
-	owned      map[string]string // launch generation registered by this daemon
-	daemonLock *os.File          // held for this daemon's lifetime, never by a boot RPC
-	diskLock   *os.File          // persistent staging root has one process-lifetime owner
-	lockWait   time.Duration
+	helper         string
+	mu             sync.Mutex
+	owned          map[string]string // launch generation registered by this daemon
+	daemonLock     *os.File          // held for this daemon's lifetime, never by a boot RPC
+	diskLock       *os.File          // persistent staging root has one process-lifetime owner
+	lockWait       time.Duration
+	producerExited func(context.Context, nativeProducerIdentity) error // startup/test wiring; never supplied by a request
 }
 
 // WithNativeProcessRecovery enables the journal-backed lifecycle. Configure it
@@ -223,6 +224,10 @@ func (v *JailerVMM) prepareNativeLease(ctx context.Context, lease Lease) error {
 	if err := r.acquireDaemonOwnership(ctx); err != nil {
 		return err
 	}
+	ctx, err := r.repairProducerContext(ctx, lease)
+	if err != nil {
+		return err
+	}
 	roots, err := v.nativeInstanceRoots(lease.Instance)
 	if err != nil {
 		return err
@@ -346,6 +351,9 @@ func (v *JailerVMM) ensureNativeLaunch(ctx context.Context, lease Lease) error {
 	}
 	if r.generation(lease.Instance) != record.Generation || !sameNativeJournalLease(record.Lease, lease) {
 		return errors.New("native recovery: lease has no local launch producer")
+	}
+	if err := r.journal.requireRepairProducerContext(ctx, record); err != nil {
+		return err
 	}
 	if record.Revoked {
 		record, err = r.journal.replace(ctx, lease, record.Generation, false)

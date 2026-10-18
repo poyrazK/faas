@@ -69,6 +69,25 @@ var setSecretRecipient func() *age.X25519Recipient
 // Tests that don't seal pass without plumbing.
 var hostHMACKey func() []byte
 
+// hostSecretRecipient is setSecretRecipient's value, or nil when apid started
+// without a host recipient. Callers answer 503 on nil; calling the nil
+// setSecretRecipient directly panicked instead.
+func hostSecretRecipient() *age.X25519Recipient {
+	if setSecretRecipient == nil {
+		return nil
+	}
+	return setSecretRecipient()
+}
+
+// hostHMACKeyBytes is hostHMACKey's value, or nil when apid started without
+// a host HMAC key.
+func hostHMACKeyBytes() []byte {
+	if hostHMACKey == nil {
+		return nil
+	}
+	return hostHMACKey()
+}
+
 // listSecrets returns every secret on the app, key + timestamps only.
 // Ciphertext never leaves apid except via schedd → vmmd. Quota info is
 // included so the CLI can show "3/25 secrets" without a separate call.
@@ -385,13 +404,13 @@ func (s *server) setSecret(w http.ResponseWriter, r *http.Request, acct state.Ac
 // HMAC key is a misconfiguration that must surface as a 5xx, not
 // a silently empty value_hash.
 func (s *server) sealAndPersist(c stdctx, acct state.Account, app state.App, scope, key, value, secretClass string, limits api.Limits) *api.Problem {
-	recipient := setSecretRecipient()
+	recipient := hostSecretRecipient()
 	if recipient == nil {
 		return customerCapacityProblem(s.log, "store app secret", "Secret storage temporarily unavailable",
 			"Gregale could not securely store this value.",
 			"Retry in a few seconds; if it still fails, contact support.", nil)
 	}
-	hmacKey := hostHMACKey()
+	hmacKey := hostHMACKeyBytes()
 	if len(hmacKey) == 0 {
 		// ADR-117 PR-C: defensible refuse-to-seal for the case where
 		// env-driven secrets are enabled but the per-host HMAC key

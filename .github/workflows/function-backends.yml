@@ -1,0 +1,110 @@
+name: function backend concurrency
+
+on:
+  pull_request:
+    paths:
+      - 'guest/runners/**'
+      - 'pkg/rootfs/**'
+      - 'sdk/node/src/postgres-pool-runtime.ts'
+      - 'sdk/node/src/binding-client-runtime.ts'
+      - 'sdk/node/src/secret-reload-runtime.ts'
+      - 'sdk/node/test/postgres-pool*'
+      - 'sdk/node/scripts/sync-binding-starters.mjs'
+      - 'sdk/node/package*.json'
+      - 'cmd/gregale/templates/rest-api-postgres/**'
+      - 'cmd/gregale/templates/secret-reload-node/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/function-backends.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: function-backends-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  portable:
+    name: shared workers and TLS PostgreSQL
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GOMEMLIMIT: 2GiB
+      GOGC: 10
+      GOMAXPROCS: 2
+    services:
+      postgres:
+        image: postgres@sha256:1a6ab3f5345eb6dbe04a1349529caabdb0ab09293a09590fad07b2246bfa4b54
+        env:
+          POSTGRES_USER: faas
+          POSTGRES_PASSWORD: function_fixture
+          POSTGRES_DB: faas
+          POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U faas -d faas"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-function-backends-${{ runner.os }}-${{ hashFiles('go.sum') }}
+          restore-keys: |
+            go-light-test-1-${{ runner.os }}-go1.26.9-${{ hashFiles('go.sum') }}-
+            go-e2e-${{ runner.os }}-
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            sdk/node/package-lock.json
+            cmd/gregale/templates/rest-api-postgres/package-lock.json
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: enable disposable SQL TLS
+        env:
+          SQL_CONTAINER: ${{ job.services.postgres.id }}
+        run: |
+          set -eu
+          umask 077
+          mkdir -p "$RUNNER_TEMP/function-sql"
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+            -subj '/CN=localhost' -addext 'subjectAltName=DNS:localhost,IP:127.0.0.1' \
+            -keyout "$RUNNER_TEMP/function-sql/server.key" \
+            -out "$RUNNER_TEMP/function-sql/ca.pem" 2>/dev/null
+          docker cp "$RUNNER_TEMP/function-sql/ca.pem" "$SQL_CONTAINER:/var/lib/postgresql/data/server.crt"
+          docker cp "$RUNNER_TEMP/function-sql/server.key" "$SQL_CONTAINER:/var/lib/postgresql/data/server.key"
+          docker exec "$SQL_CONTAINER" sh -c 'chown postgres:postgres /var/lib/postgresql/data/server.crt /var/lib/postgresql/data/server.key && chmod 600 /var/lib/postgresql/data/server.key'
+          docker exec "$SQL_CONTAINER" psql -U faas -d faas -v ON_ERROR_STOP=1 -c "ALTER SYSTEM SET ssl = 'on'"
+          docker exec "$SQL_CONTAINER" psql -U faas -d faas -v ON_ERROR_STOP=1 -c 'SELECT pg_reload_conf()'
+      - name: check canonical SDK helper and package
+        working-directory: sdk/node
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm run build
+          npm run starter:sync -- --check
+          npm run test:build
+          node --test dist-test/test/postgres-pool-runtime.test.js
+      - name: runner, adapter and real SQL race checks
+        env:
+          DATABASE_URL: postgres://faas:function_fixture@127.0.0.1:5432/faas?sslmode=require
+          NODE_EXTRA_CA_CERTS: ${{ runner.temp }}/function-sql/ca.pem
+          FAAS_TEST_FUNCTION_POSTGRES: '1'
+        run: |
+          umask 022
+          go test -race ./guest/runners/... ./pkg/rootfs -count=1 -timeout=3m
+      - name: remove fixture private key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/function-sql/server.key"

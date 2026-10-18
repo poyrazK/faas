@@ -109,6 +109,7 @@ func lifecycleManifestFromCreate(req api.CreateAppRequest) api.AppManifest {
 		StopGracePeriod:              stopGrace,
 		StopSignal:                   req.StopSignal,
 		RequestTimeoutS:              req.RequestTimeoutS,
+		FunctionConcurrency:          req.FunctionConcurrency,
 		ServiceReplicas:              req.ServiceReplicas,
 		WorkerReplicas:               req.WorkerReplicas,
 		Ports:                        cloneWorkloadPorts(req.Ports),
@@ -161,6 +162,7 @@ func stateManifestFromAPI(manifest api.AppManifest) state.AppManifest {
 		StopGracePeriodS:             stopGracePeriodS,
 		StopSignal:                   manifest.StopSignal,
 		RequestTimeoutS:              manifest.RequestTimeoutS,
+		FunctionConcurrency:          manifest.FunctionConcurrency,
 		ServiceReplicas:              replicas,
 		WorkerReplicas:               workerReplicas,
 		Ports:                        cloneWorkloadPorts(manifest.Ports),
@@ -213,6 +215,7 @@ func apiManifestFromState(manifest state.AppManifest) api.AppManifest {
 		StopGracePeriod:              stopGrace,
 		StopSignal:                   manifest.StopSignal,
 		RequestTimeoutS:              manifest.RequestTimeoutS,
+		FunctionConcurrency:          manifest.FunctionConcurrency,
 		ServiceReplicas:              replicas,
 		WorkerReplicas:               workerReplicas,
 		Ports:                        cloneWorkloadPorts(manifest.Ports),
@@ -234,7 +237,7 @@ func apiManifestFromState(manifest state.AppManifest) api.AppManifest {
 
 func mergedLifecycleManifest(app state.App, req *api.UpdateAppRequest) (api.AppManifest, bool) {
 	changed := req.ExecutionMode != nil || req.RestartPolicy != nil ||
-		req.StartupDeadlineS != nil || req.MaxRetries != nil || req.RequestTimeoutS != nil || req.ServiceReplicas != nil ||
+		req.StartupDeadlineS != nil || req.MaxRetries != nil || req.RequestTimeoutS != nil || req.FunctionConcurrency != nil || req.ServiceReplicas != nil ||
 		req.AfterRestore != nil || req.Pause != nil ||
 		req.BeforeCheckpoint != nil || req.Profiling != nil || req.Tracing != nil ||
 		req.WorkerReplicas != nil || req.StopGracePeriodS != nil || req.StopSignal != nil ||
@@ -290,6 +293,9 @@ func mergedLifecycleManifest(app state.App, req *api.UpdateAppRequest) (api.AppM
 	}
 	if req.RequestTimeoutS != nil {
 		manifest.RequestTimeoutS = *req.RequestTimeoutS
+	}
+	if req.FunctionConcurrency != nil {
+		manifest.FunctionConcurrency = *req.FunctionConcurrency
 	}
 	if req.ServiceReplicas != nil {
 		manifest.ServiceReplicas = req.ServiceReplicas
@@ -367,6 +373,7 @@ func stateManifestForUpdate(app state.App, req *api.UpdateAppRequest) (*state.Ap
 	updated.StopGracePeriodS = stateManifestFromAPI(manifest).StopGracePeriodS
 	updated.StopSignal = manifest.StopSignal
 	updated.RequestTimeoutS = manifest.RequestTimeoutS
+	updated.FunctionConcurrency = manifest.FunctionConcurrency
 	updated.ServiceReplicas = stateManifestFromAPI(manifest).ServiceReplicas
 	updated.WorkerReplicas = stateManifestFromAPI(manifest).WorkerReplicas
 	updated.Ports = cloneWorkloadPorts(manifest.Ports)
