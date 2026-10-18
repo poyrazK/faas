@@ -241,6 +241,7 @@ type MemStore struct {
 	capacityInstanceResources                  map[string]capacityResources
 	serviceCapacityProtection                  bool
 	serviceRecovery                            map[string]ServiceRecovery
+	workerRecovery                             map[string]WorkerRecovery
 	imagePreparations                          map[string]ImagePreparation
 	operationData                              *operationMemory
 	operationCodePins                          map[string]time.Time
@@ -7040,6 +7041,7 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 		}
 	}
 	delete(m.serviceRecovery, id)
+	delete(m.workerRecovery, id)
 	m.deleteEnvironmentSecretRefsLocked(id, "")
 	m.deleteEnvironmentWorkloadIntentsLocked(id, "")
 	m.deleteWorkflowDispatchCursorsLocked(id)
@@ -22500,6 +22502,7 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 	for aid, a := range m.apps {
 		if a.AccountID == id {
 			delete(m.serviceRecovery, aid)
+			delete(m.workerRecovery, aid)
 			m.deleteEnvironmentSecretRefsLocked(aid, "")
 			m.deleteEnvironmentWorkloadIntentsLocked(aid, "")
 			m.deleteWorkflowDispatchCursorsLocked(aid)

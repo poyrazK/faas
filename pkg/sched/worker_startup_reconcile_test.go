@@ -10,10 +10,10 @@ import (
 
 // spec: §6
 // H10-136: a worker whose delayed replacement was pending when schedd
-// restarted had no event left to bring it back. The startup pass admits a
+// restarted had no event left to bring it back. The durable sweep admits a
 // worker for an active worker app with none live, and leaves request apps and
 // evicted worker apps alone.
-func TestWorkerStartupReconcileReplacesAFailedWorker(t *testing.T) {
+func TestWorkerRecoveryReplacesAFailedWorker(t *testing.T) {
 	tests := []struct {
 		name      string
 		mode      string
@@ -43,7 +43,8 @@ func TestWorkerStartupReconcileReplacesAFailedWorker(t *testing.T) {
 			vmm := &fakeVMM{}
 			loop := NewLoop(nil, newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0"), testLog())
 
-			loop.runWorkerStartupReconcile(ctx)
+			loop.dispatchWorkerRecovery(ctx)
+			loop.workPool().drain()
 
 			if vmm.coldBoots+vmm.restores != tt.wantBoots {
 				t.Fatalf("boots = %d cold + %d restore, want %d", vmm.coldBoots, vmm.restores, tt.wantBoots)
