@@ -88,7 +88,9 @@ func newCustomerHTTPFixture(t *testing.T) *customerHTTPFixture {
 	mustCustomerHTTP(t, secretbox.WriteHostKeyAtPath(agePath, ageKey))
 	// imaged and apid load fleet.age beside host.age; the same key serves both.
 	mustCustomerHTTP(t, secretbox.WriteHostKeyAtPath(filepath.Join(filepath.Dir(agePath), "fleet.age"), ageKey))
-	// apid seals inbound webhook secrets to this recipient.
+	// apid seals inbound webhook secrets to this recipient. vmmd rewrites it
+	// from FAAS_HOST_KEY_PATH on boot, so it must hold the same key; left at
+	// its default it is the host's own /etc/faas/secrets/host.age.
 	recipientPath := filepath.Join(filepath.Dir(agePath), "host.age.pub")
 	mustCustomerHTTP(t, os.WriteFile(recipientPath, []byte(ageKey.Recipient().String()), 0o444))
 	receiver := f.webhookReceiver(t)
@@ -106,7 +108,7 @@ func newCustomerHTTPFixture(t *testing.T) *customerHTTPFixture {
 	f.h = e2etest.Start(t, pool, e2etest.DeployWake|e2etest.GatewaydPublic|e2etest.Meterd,
 		"FAAS_E2E_APID_CONFIG="+configPath, "FAAS_WORKLOAD_IDENTITY_KEY_PATH="+keyPath, "FAAS_OBJECT_STORAGE_CONFIG="+objectPath,
 		"FAAS_WORKFLOW_S3_ACCESS=fixture-access", "FAAS_WORKFLOW_S3_SECRET=fixture-secret",
-		"FAAS_HOST_AGE_IDENTITY_PATH="+agePath, "FAAS_HOST_AGE_RECIPIENT_PATH="+recipientPath, "FAAS_EGRESS_ALLOW_LOOPBACK=1")
+		"FAAS_HOST_AGE_IDENTITY_PATH="+agePath, "FAAS_HOST_AGE_RECIPIENT_PATH="+recipientPath, "FAAS_HOST_KEY_PATH="+agePath, "FAAS_EGRESS_ALLOW_LOOPBACK=1")
 	t.Cleanup(func() { f.cleanup(t) })
 	f.store = state.NewPgStore(pool)
 	f.owner = api.NewClient(f.h.APIDURL, f.h.SeedAccount(t.Context(), api.PlanPro, "customer-http"))

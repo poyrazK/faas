@@ -572,3 +572,48 @@ func TestOperationWorkflowInvalidOutputDoesNotRestartSuccessfulRun(t *testing.T)
 		}
 	})
 }
+
+// operationRetryAfterExecutor is the production transport's shape: it can
+// return a Retry-After time, so the orchestrator takes its Retry-After path.
+type operationRetryAfterExecutor struct{ operationWorkflowExecutor }
+
+func (e operationRetryAfterExecutor) ExecuteWorkflowStepWithRetryAfter(ctx context.Context, _ string, identity sched.WorkflowStepIdentity, path, _ string, headers map[string]string, input []byte, _ time.Duration, _ string, _ int64) (int, []byte, time.Time, error) {
+	status, body, err := e.execute(ctx, identity, path, headers, input)
+	return status, body, time.Time{}, err
+}
+
+// A Retry-After capable transport must carry the same Operation authority as
+// the plain one: the version pin the gateway resolves, and the step's
+// capability. Without it every linked step reached the gateway unpinned.
+func TestOperationWorkflowRetryAfterTransportCarriesOperationAuthority(t *testing.T) {
+	operationWorkflowStores(t, func(t *testing.T, store state.Store) {
+		f := workflowOperationSetup(t, store)
+		op := f.start(t)
+		ctx := context.Background()
+		var calls []string
+		executor := operationRetryAfterExecutor{operationWorkflowExecutor{execute: func(ctx context.Context, identity sched.WorkflowStepIdentity, path string, headers map[string]string, input []byte) (int, []byte, error) {
+			if headers[api.RevisionHeader] != f.definition.DeploymentID || headers[api.OperationIDHeader] != op.ID || headers[api.OperationWorkflowCapabilityHeader] == "" {
+				t.Fatalf("Retry-After transport lost the Operation's authority: %v", headers)
+			}
+			encoded, _ := json.Marshal(headers)
+			inv := state.Invocation{ID: "workflow-test", AppID: f.app.ID, PlatformTenantID: f.tenant.ID, Source: state.InvocationSource("workflow"), Path: path, Method: "POST", Headers: encoded, Payload: input}
+			if _, version, err := state.ResolveInvocationVersion(ctx, store, inv); err != nil || version.DeploymentID != f.definition.DeploymentID {
+				t.Fatalf("gateway would refuse the step: %+v %v", version, err)
+			}
+			calls = append(calls, path)
+			if path == "/finish" {
+				return 200, []byte(`{"file":"export.csv"}`), nil
+			}
+			return 200, []byte(`{"rows":[1,2,3]}`), nil
+		}}}
+		orchestrator := sched.NewWorkflowOrchestrator(store, executor, nil, nil, nil)
+		for i := 0; i < 6 && f.read(ctx, t, op.ID).State != api.OperationSucceeded; i++ {
+			if err := orchestrator.DispatchTick(ctx); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if got := f.read(ctx, t, op.ID); got.State != api.OperationSucceeded || len(calls) == 0 {
+			t.Fatalf("operation %s after %v", got.State, calls)
+		}
+	})
+}

@@ -74,8 +74,11 @@ func resolveWorkflowOperationInvocationVersion(ctx context.Context, store invoca
 		return inv, InvocationVersion{}, true, fmt.Errorf("%w: workflow step %q attempt %d input does not match its recorded step", ErrConflict, name, attempt)
 	}
 	revision, release, err := invocationPinHeaders(headers)
-	if err != nil || (op.ReleaseID != "" && (release != op.ReleaseID || revision != "")) || (op.ReleaseID == "" && (revision != op.DeploymentID || release != "")) {
-		return inv, InvocationVersion{}, true, fmt.Errorf("%w: workflow step version pin (revision %q, release %q, parse %v) does not match the operation (deployment %q, release %q)", ErrConflict, revision, release, err, op.DeploymentID, op.ReleaseID)
+	if err != nil {
+		return inv, InvocationVersion{}, true, fmt.Errorf("%w: workflow step version pin headers: %w", ErrConflict, err)
+	}
+	if (op.ReleaseID != "" && (release != op.ReleaseID || revision != "")) || (op.ReleaseID == "" && (revision != op.DeploymentID || release != "")) {
+		return inv, InvocationVersion{}, true, fmt.Errorf("%w: workflow step version pin (revision %q, release %q) does not match the operation (deployment %q, release %q)", ErrConflict, revision, release, op.DeploymentID, op.ReleaseID)
 	}
 	deployment, err := reader.DeploymentByID(ctx, op.DeploymentID)
 	if err != nil || deployment.AppID != app.ID || deployment.Scope != op.Scope || deployment.Status != DeployLive {
