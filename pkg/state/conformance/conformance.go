@@ -3971,6 +3971,18 @@ func testLiveStateReaders(t *testing.T, fx *Fixture) {
 	if capRAM != wantRAM {
 		t.Errorf("OperatorCapacity RAM total = %d, want %d", capRAM, wantRAM)
 	}
+	if err := fx.Store.SetAppNodeID(fx.Ctx, fx.App.ID, fx.Node.ID); err != nil {
+		t.Fatal(err)
+	}
+	if rows, err := fx.Store.ListLiveInstancesByNodeID(fx.Ctx, fx.Node.ID); err != nil || len(rows) != wantLive {
+		t.Errorf("owned live instances = %d, %v; want %d without parked history", len(rows), err, wantLive)
+	}
+	if rows, err := fx.Store.ListInstancesByNodeID(fx.Ctx, fx.Node.ID); err != nil || len(rows) != wantLive+1 {
+		t.Errorf("owned history = %d, %v; want %d including parked history", len(rows), err, wantLive+1)
+	}
+	if rows, err := fx.Store.ListLiveInstancesByNodeID(fx.Ctx, uuid.NewString()); err != nil || len(rows) != 0 {
+		t.Errorf("another node received owned live instances: %+v, %v", rows, err)
+	}
 }
 
 // testFrozenInstanceState pins ADR-1151's FROZEN state: an idle VM kept

@@ -272,9 +272,10 @@ func (p *Poller) Tick(ctx context.Context) error {
 	var instances []state.Instance
 	var err error
 	if p.FleetStats != nil && p.OwnerNodeID != "" {
-		// ListInstancesByNodeID follows app ownership, not physical
-		// placement. An owner's app may have instances on any active node.
-		instances, err = p.Store.ListInstancesByNodeID(ctx, p.OwnerNodeID)
+		// The owner listing follows app ownership, not physical placement:
+		// an owner's app may have instances on any active node. Only live
+		// instances have stats, so terminal history stays in Postgres.
+		instances, err = p.Store.ListLiveInstancesByNodeID(ctx, p.OwnerNodeID)
 	} else {
 		instances, err = p.Store.ListAllInstances(ctx)
 	}
