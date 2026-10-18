@@ -3,6 +3,11 @@
 -- role's permissions, into the session's access tokens. Ending the session
 -- or deleting the organization forgets it; leaving the organization drops
 -- the claims at the next token, because the hook reads the membership.
+-- The foreign key locks auth.sessions against writes while it is added;
+-- the release task runs beside the serving deployment, so it waits at most
+-- five seconds for sign-ins in flight and fails rather than stall them.
+SET LOCAL lock_timeout = '5s';
+
 CREATE TABLE gregale_auth.session_organizations (
     session_id uuid PRIMARY KEY REFERENCES auth.sessions (id) ON DELETE CASCADE,
     org_id uuid NOT NULL REFERENCES gregale_auth.organizations (id) ON DELETE CASCADE,
