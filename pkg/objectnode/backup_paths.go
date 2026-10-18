@@ -159,7 +159,7 @@ func publishBackupDirectory(ctx context.Context, stage, destination string, chec
 	if err := backupCheckpoint(ctx, checkpoint, "ready"); err != nil {
 		return err
 	}
-	if err := unix.Renameat2(unix.AT_FDCWD, stage, unix.AT_FDCWD, destination, unix.RENAME_NOREPLACE); err != nil {
+	if err := renameNoReplace(stage, destination); err != nil {
 		return fmt.Errorf("object backup: publish directory: %w", err)
 	}
 	if err := syncDirectory(filepath.Dir(destination)); err != nil {

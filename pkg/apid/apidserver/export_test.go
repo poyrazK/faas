@@ -68,6 +68,7 @@ type Auditor = auditor
 type BatchCreateResponse = batchCreateResponse
 type CachedSource = cachedSource
 type CaptureNotifier = captureNotifier
+type ChannelDeliverer = channelDeliverer
 type CloneCaptureBarrierObservation = cloneCaptureBarrierObservation
 type CloneCoordinatorFixture = cloneCoordinatorFixture
 type ComputeNodeHeartbeatsResponse = computeNodeHeartbeatsResponse
@@ -209,6 +210,8 @@ const ProfileInvestigationCSRFCookie = profileInvestigationCSRFCookie
 const PromtailMetricsDiscoveryPath = promtailMetricsDiscoveryPath
 const RealtimedMetricsDiscoveryPath = realtimedMetricsDiscoveryPath
 const RequestAnalyticsRouteMaxLength = requestAnalyticsRouteMaxLength
+const RouteCostByRequestTime = routeCostByRequestTime
+const RouteCostByRequests = routeCostByRequests
 const RuntimeConfigDataPlacement = runtimeConfigDataPlacement
 const RuntimeConfigDomainDoctor = runtimeConfigDomainDoctor
 const RuntimeConfigDomainDoctorTTL = runtimeConfigDomainDoctorTTL
@@ -234,6 +237,7 @@ var BuildPlanCacheOnce = &buildPlanCacheOnce
 var CapsDecl = &capsDecl
 var CertDialContextFunc = &certDialContextFunc
 var CertLookupIPFunc = &certLookupIPFunc
+var ChannelSender = &channelSender
 var CnameLookupFunc = &cnameLookupFunc
 var DialCertFunc = &dialCertFunc
 var ErrCertAddressBlocked = &errCertAddressBlocked
@@ -269,8 +273,10 @@ var TxtLookupFunc = &txtLookupFunc
 var AccountAbuseHoldView = accountAbuseHoldView
 var ActivatedAPIDListener = activatedAPIDListener
 var AggregateWakeTimeline = aggregateWakeTimeline
+var AlertChannelItem = alertChannelItem
 var AlertRuleReq = alertRuleReq
 var AllocateRequestAnalyticsRouteCost = allocateRequestAnalyticsRouteCost
+var AllocateRequestAnalyticsRouteCostByTime = allocateRequestAnalyticsRouteCostByTime
 var AnnotateDeploymentCPURegressions = annotateDeploymentCPURegressions
 var AnnotateRouteDeploymentCPURegressions = annotateRouteDeploymentCPURegressions
 var ApiManifestFromState = apiManifestFromState
@@ -443,6 +449,7 @@ var MapReconcileError = mapReconcileError
 var MarshalAppRetryPolicy = marshalAppRetryPolicy
 var MillicentsAsCurrency = millicentsAsCurrency
 var MintDashboardSession = mintDashboardSession
+var MustCreateAlertRule = mustCreateAlertRule
 var MustSeedApp = mustSeedApp
 var MustSeedAppFor = mustSeedAppFor
 var MustSeedDeployment = mustSeedDeployment
@@ -1216,6 +1223,9 @@ func (r *server) RollbackSourceRefManifest(p0 context.Context, p1 sourceRefManif
 }
 func (r *server) RotateManagedPostgresBinding(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.rotateManagedPostgresBinding(p0, p1, p2)
+}
+func (r *server) RuleDestinations(p0 context.Context, p1 state.AlertRule) string {
+	return r.ruleDestinations(p0, p1)
 }
 func (r *server) CreateManagedPostgresBinding(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.createManagedPostgresBinding(p0, p1, p2)

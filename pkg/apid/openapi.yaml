@@ -18223,6 +18223,344 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/MCPTaskCompatibilityReportResponse' }
         '404': { $ref: '#/components/responses/NotFound' }
+  /v1/notification-channels:
+    get:
+      operationId: listNotificationChannels
+      summary: List the account's alert notification channels (ADR-749)
+      description: "Returns Slack, PagerDuty and email channels with their last delivery outcome. Destinations are shown as non-secret hints only."
+      tags: [alert_rules]
+      responses:
+        '200':
+          description: The account's channels.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/NotificationChannelResponse' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+    post:
+      operationId: createNotificationChannel
+      summary: Add an alert notification channel (ADR-749)
+      description: "Slack takes an incoming-webhook URL on hooks.slack.com; PagerDuty takes an Events API v2 routing key and region; email may only address the account's own email. Secret destinations are sealed at rest and never returned."
+      tags: [alert_rules]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateNotificationChannelRequest' }
+      responses:
+        '201':
+          description: The channel was created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NotificationChannelResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '409':
+          description: The account already has a channel with this name.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '422':
+          description: The account is at its channel cap; the problem carries limit and observed.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /v1/notification-channels/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: "Notification channel identifier returned when the channel was created."
+        schema: { type: string, format: uuid }
+    get:
+      operationId: getNotificationChannel
+      summary: Get one notification channel (ADR-749)
+      description: "Returns one channel with its last delivery outcome."
+      tags: [alert_rules]
+      responses:
+        '200':
+          description: The channel.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/NotificationChannelResponse' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      operationId: deleteNotificationChannel
+      summary: Delete a notification channel (ADR-749)
+      description: "Removes the channel; alert rules stop delivering to it."
+      tags: [alert_rules]
+      responses:
+        '204':
+          description: The channel was deleted.
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /v1/notification-channels/{id}/test:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: "Identifier of the channel to send the test notification through."
+        schema: { type: string, format: uuid }
+    post:
+      operationId: testNotificationChannel
+      summary: Send a test notification through a channel (ADR-749)
+      description: "Sends a clearly marked test message and records the outcome on the channel. Returns 200 whether or not the destination accepted it; delivered and error say which."
+      tags: [alert_rules]
+      responses:
+        '200':
+          description: The test outcome.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TestNotificationChannelResponse' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /v1/apps/{slug}/custom-metrics/{name}/series:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: name
+        in: path
+        required: true
+        description: "The pushed custom metric whose history to read."
+        schema: { type: string, pattern: '^[a-z][a-z0-9_]{0,62}$' }
+    get:
+      operationId: getCustomMetricSeries
+      summary: Read a custom metric's history (ADR-745)
+      description: |
+        ADR-745 internal preview, enabled by `FAAS_CUSTOM_METRIC_HISTORY_ENABLED=1`;
+        otherwise 503 `custom_metric_history_unavailable`.
+
+        Returns the values Prometheus recorded from pushed custom metrics over
+        `range` (`1h`, `6h`, `24h` default, `7d`, `15d`). Only fresh pushes are
+        recorded, so a gap means nothing was pushed then. Prometheus failure
+        returns 200 with `source: "degraded: <reason>"` and null `points`.
+      tags: [apps]
+      parameters:
+        - name: range
+          in: query
+          required: false
+          description: History window. Default 24h.
+          schema: { type: string, enum: ['1h', '6h', '24h', '7d', '15d'], default: '24h' }
+      responses:
+        '200':
+          description: The recorded history.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CustomMetricSeriesResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /v1/apps/{slug}/otlp/v1/metrics:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    post:
+      operationId: postOTLPMetrics
+      summary: Ingest OTLP/HTTP metrics as custom metrics (ADR-745)
+      description: |
+        ADR-745 internal preview, enabled by `FAAS_CUSTOM_METRIC_HISTORY_ENABLED=1`;
+        otherwise 503. Point an OpenTelemetry exporter's metrics endpoint here
+        with a `metrics:write` API key as the bearer token.
+
+        Accepts an OTLP `ExportMetricsServiceRequest` as `application/x-protobuf`
+        or `application/json` (at most 1 MiB) and answers in the same encoding.
+        Gauges are stored as gauges and cumulative monotonic sums as counters;
+        metric names are lowercased with `.`, `-` and `/` mapped to `_`. Delta
+        or non-monotonic sums, histograms, data points with attributes,
+        negative values, and names beyond the per-app limit are not stored and
+        are reported through `partialSuccess`.
+      tags: [apps]
+      requestBody:
+        required: true
+        content:
+          application/x-protobuf:
+            schema: { type: string, format: binary }
+          application/json:
+            schema: { type: object, description: OTLP ExportMetricsServiceRequest in its JSON encoding. }
+      responses:
+        '200':
+          description: The export was processed; rejected data points are reported in partialSuccess.
+          content:
+            application/x-protobuf:
+              schema: { type: string, format: binary }
+            application/json:
+              schema: { type: object, description: OTLP ExportMetricsServiceResponse in its JSON encoding. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /v1/apps/{slug}/slos:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      operationId: listSLOs
+      summary: List the app's customer-defined SLOs (ADR-747)
+      description: "Returns every SLO defined on the app, name-ordered. Distinct from GET /v1/apps/{slug}/slo, which reports ADR-082's fixed 99.5% availability panel."
+      tags: [apps]
+      responses:
+        '200':
+          description: The app's SLO definitions.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/SLOResponse' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      operationId: createSLO
+      summary: Define an SLO on the app (ADR-747)
+      description: "Creates an availability or latency SLO with an objective between 90% and 99.99% over a rolling 7- or 30-day window. Latency thresholds are limited to the gateway histogram bucket bounds so attainment is exact. An app can hold at most 10 SLOs."
+      tags: [apps]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateSLORequest' }
+      responses:
+        '201':
+          description: The SLO was created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SLOResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The app already has an SLO with this name.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '422':
+          description: The app is at its SLO cap; the problem carries limit and observed.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /v1/apps/{slug}/slos/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: id
+        in: path
+        required: true
+        description: "SLO identifier returned when the SLO was created."
+        schema: { type: string, format: uuid }
+    get:
+      operationId: getSLO
+      summary: Get one customer-defined SLO and its error budget (ADR-747)
+      description: "Returns one SLO definition with its status: attainment and budget remaining over the window from hourly history, and live 1h/6h burn rates. An id belonging to another app returns 404."
+      tags: [apps]
+      responses:
+        '200':
+          description: The SLO definition.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SLOResponse' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      operationId: deleteSLO
+      summary: Delete a customer-defined SLO (ADR-747)
+      description: "Removes the SLO and frees a slot against the per-app cap."
+      tags: [apps]
+      responses:
+        '204':
+          description: The SLO was deleted.
+  /v1/apps/{slug}/synthetics:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      operationId: listSyntheticChecks
+      summary: List the app's synthetic checks (ADR-748)
+      description: "Returns every scheduled HTTP check defined on the app, name-ordered."
+      tags: [apps]
+      responses:
+        '200':
+          description: The app's synthetic checks.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/SyntheticCheckResponse' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      operationId: createSyntheticCheck
+      summary: Define a synthetic check on the app (ADR-748)
+      description: "Schedules a GET or HEAD request to a path on the app's own hostname every 5, 15, or 60 minutes, through the public edge. A probe that wakes a parked app is billed like any request. An app can have at most 5 checks."
+      tags: [apps]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateSyntheticCheckRequest' }
+      responses:
+        '201':
+          description: The check was created and will run within one interval.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SyntheticCheckResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The app already has a synthetic check with this name.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '422':
+          description: The app is at its synthetic check cap; the problem carries limit and observed.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /v1/apps/{slug}/synthetics/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: id
+        in: path
+        required: true
+        description: "Synthetic check identifier returned when the check was created."
+        schema: { type: string, format: uuid }
+    get:
+      operationId: getSyntheticCheck
+      summary: Get one synthetic check and its recent results (ADR-748)
+      description: "Returns one check definition with 24-hour and 7-day uptime, 24-hour p95 latency, and the last 20 runs. An id belonging to another app returns 404."
+      tags: [apps]
+      responses:
+        '200':
+          description: The check definition.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SyntheticCheckResponse' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      operationId: updateSyntheticCheck
+      summary: Pause or resume a synthetic check (ADR-748)
+      description: "Sets whether the check runs. To change its path, schedule or expectations, delete and recreate it."
+      tags: [apps]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateSyntheticCheckRequest' }
+      responses:
+        '200':
+          description: The updated check.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SyntheticCheckResponse' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      operationId: deleteSyntheticCheck
+      summary: Delete a synthetic check (ADR-748)
+      description: "Removes the check and its run history."
+      tags: [apps]
+      responses:
+        '204':
+          description: The check was deleted.
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '404': { $ref: '#/components/responses/NotFound' }
   /v1/apps/{slug}/pre-auth-observations:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -18403,6 +18741,46 @@ paths:
               schema: { $ref: '#/components/schemas/AppHealthHistoryPage' }
         default:
           description: Invalid page parameters, access denial, missing cursor, or unavailable storage.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /v1/apps/{slug}/changes:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getAppChangeTimeline
+      summary: Read an app's change timeline.
+      description: |
+        ADR-751 internal preview, enabled by `FAAS_CHANGE_TIMELINE_ENABLED=1`;
+        otherwise 503 `change_timeline_unavailable`. Requires apps:read or
+        admin; no MFA required.
+
+        Merges deployment audit, edge-rule changes, the latest runtime-config
+        change, route incidents, recorded health transitions, and environment
+        and domain activity into one newest-first list. The window defaults to
+        the last 24 hours, `until` is clamped to now, and the window is at most
+        7 days. At most 200 events are returned (`truncated: true` when more
+        exist). A source that cannot be read is named in `unavailable_sources`
+        and the remaining sources are still returned. Summaries never contain
+        values, credentials, actors, or raw error text.
+      parameters:
+        - name: since
+          in: query
+          description: Window start (RFC 3339). Defaults to 24 hours before until.
+          schema: { type: string, format: date-time }
+        - name: until
+          in: query
+          description: Window end (RFC 3339), exclusive. Defaults to and is clamped to now.
+          schema: { type: string, format: date-time }
+      responses:
+        '200':
+          description: The change timeline; Cache-Control no-store.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppChangeTimelineResponse' }
+        default:
+          description: Invalid window, access denial, or the preview is disabled.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -78517,6 +78895,239 @@ components:
           type: number
           minimum: 0
           example: 1284
+    CreateNotificationChannelRequest:
+      description: 'Adds a Slack, PagerDuty or email alert channel (ADR-749). Set only the fields for the chosen kind.'
+      type: object
+      required: [name, kind]
+      properties:
+        name:
+          type: string
+          pattern: '^[a-z][a-z0-9_-]{0,62}$'
+          description: 'Unique per account.'
+          example: ops-slack
+        kind: { type: string, enum: [slack, pagerduty, email], description: 'Destination type.' }
+        slack_webhook_url:
+          type: string
+          format: uri
+          description: 'Slack incoming webhook, https://hooks.slack.com/services/… (kind slack).'
+        pagerduty_routing_key:
+          type: string
+          pattern: '^[A-Za-z0-9]{32}$'
+          description: 'Events API v2 integration key (kind pagerduty).'
+        pagerduty_region:
+          type: string
+          enum: [us, eu]
+          default: us
+          description: 'PagerDuty service region (kind pagerduty).'
+        email:
+          type: string
+          format: email
+          description: "The account's own email address (kind email)."
+    NotificationChannelResponse:
+      description: 'One alert notification channel (ADR-749).'
+      type: object
+      required: [id, name, kind, target, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string, example: ops-slack }
+        kind: { type: string, enum: [slack, pagerduty, email] }
+        target:
+          type: string
+          description: 'Non-secret hint: Slack workspace and hook ids, the routing key last four characters, or the email address.'
+        pagerduty_region: { type: string, enum: [us, eu], description: 'Region of a PagerDuty channel.' }
+        last_delivered_at: { type: string, format: date-time, description: 'Last successful delivery or test.' }
+        last_error: { type: string, description: 'Most recent delivery error, if any.' }
+        last_error_at: { type: string, format: date-time, description: 'When last_error occurred.' }
+        created_at: { type: string, format: date-time }
+    TestNotificationChannelResponse:
+      description: 'Outcome of a test notification.'
+      type: object
+      required: [delivered]
+      properties:
+        delivered: { type: boolean, description: 'Whether the destination accepted the test.' }
+        error: { type: string, description: 'Why delivery failed, when it did.' }
+    CreateSLORequest:
+      description: 'Defines a customer SLO on an app (ADR-747).'
+      type: object
+      required: [name, sli, objective_pct, window_days]
+      properties:
+        name:
+          type: string
+          pattern: '^[a-z][a-z0-9_-]{0,62}$'
+          description: 'Unique per app; lowercase letters, digits, dashes and underscores.'
+          example: checkout-latency
+        sli:
+          type: string
+          enum: [availability, latency]
+          description: 'availability counts non-5xx responses among 2xx and 5xx; latency counts requests completing within latency_threshold_ms.'
+        latency_threshold_ms:
+          type: integer
+          enum: [5, 10, 25, 50, 100, 250, 500, 1000, 2000, 5000, 10000]
+          description: 'Required for the latency SLI and rejected otherwise; one of the gateway histogram bucket bounds.'
+        objective_pct:
+          type: number
+          format: double
+          minimum: 90
+          maximum: 99.99
+          description: 'Target share of good requests, as a percentage with at most two decimals.'
+          example: 99.9
+        window_days:
+          type: integer
+          enum: [7, 30]
+          description: 'Rolling window over which the error budget is measured.'
+    SLOResponse:
+      description: 'One customer-defined SLO (ADR-747).'
+      type: object
+      required: [id, name, sli, objective_pct, window_days, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string, example: checkout-latency }
+        sli: { type: string, enum: [availability, latency] }
+        latency_threshold_ms:
+          type: integer
+          description: 'Threshold for a latency SLO; absent for availability.'
+        objective_pct: { type: number, format: double, example: 99.9 }
+        window_days: { type: integer, enum: [7, 30] }
+        created_at: { type: string, format: date-time }
+        status:
+          $ref: '#/components/schemas/SLOStatus'
+    SLOStatus:
+      description: 'Error-budget position of one SLO, returned by GET /v1/apps/{slug}/slos/{id} (ADR-747).'
+      type: object
+      required: [window_start, hours_recorded, hours_expected, good, total, attainment_pct, budget_remaining_pct, burn_rate_1h, burn_rate_6h, source]
+      properties:
+        window_start:
+          type: string
+          format: date-time
+          description: 'Start of the rolling window: the later of window_days ago and the hour the SLO was created.'
+        hours_recorded:
+          type: integer
+          description: 'Completed hours meterd has recorded in the window.'
+        hours_expected:
+          type: integer
+          description: 'Completed hours in the window; fewer recorded hours means history is still being backfilled or was lost.'
+        good: { type: integer, format: int64, description: 'Requests that met the SLI in the recorded hours.' }
+        total: { type: integer, format: int64, description: 'Requests the SLI counted in the recorded hours.' }
+        attainment_pct:
+          type: [number, 'null']
+          format: double
+          description: 'good / total as a percentage; null when the window had no requests.'
+        budget_remaining_pct:
+          type: [number, 'null']
+          format: double
+          description: 'Share of the error budget left: 100 when nothing failed, 0 when it is spent, negative once the objective is missed.'
+        burn_rate_1h:
+          type: [number, 'null']
+          format: double
+          description: 'Budget burn over the last hour, live from Prometheus: 1 spends exactly the budget over the window.'
+        burn_rate_6h:
+          type: [number, 'null']
+          format: double
+          description: 'Budget burn over the last six hours, live from Prometheus.'
+        source:
+          type: string
+          description: 'prometheus, or degraded: <reason> when budget history or burn rates are unavailable.'
+    CreateSyntheticCheckRequest:
+      description: 'Defines a scheduled HTTP check against the app (ADR-748).'
+      type: object
+      required: [name, path, interval_seconds]
+      properties:
+        name:
+          type: string
+          pattern: '^[a-z][a-z0-9_-]{0,62}$'
+          description: 'Unique per app.'
+          example: health
+        method:
+          type: string
+          enum: [GET, HEAD]
+          default: GET
+          description: 'HTTP method of the probe.'
+        path:
+          type: string
+          maxLength: 512
+          pattern: '^/([^/\s\\][^\s\\]*)?$'
+          description: "Origin-relative path, query string allowed. The host is always the app's own default hostname."
+          example: /healthz
+        expected_status:
+          type: integer
+          minimum: 100
+          maximum: 599
+          description: 'Exact status that counts as success; omit to accept any 2xx. Redirects are not followed.'
+        timeout_ms:
+          type: integer
+          minimum: 1000
+          maximum: 30000
+          default: 10000
+          description: 'Whole-request timeout, including any wake of a parked app.'
+        interval_seconds:
+          type: integer
+          enum: [300, 900, 3600]
+          description: 'How often the check runs. Five minutes is the floor so a check never keeps an app permanently awake.'
+    UpdateSyntheticCheckRequest:
+      description: 'Pauses or resumes a synthetic check.'
+      type: object
+      required: [enabled]
+      properties:
+        enabled: { type: boolean, description: 'false pauses the check; true resumes it.' }
+    SyntheticCheckResponse:
+      description: 'One synthetic check definition (ADR-748).'
+      type: object
+      required: [id, name, method, path, url, timeout_ms, interval_seconds, enabled, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string, example: health }
+        method: { type: string, enum: [GET, HEAD] }
+        path: { type: string, example: /healthz }
+        url:
+          type: string
+          format: uri
+          description: 'The full URL each probe requests.'
+        expected_status:
+          type: integer
+          description: 'Exact expected status; absent means any 2xx.'
+        timeout_ms: { type: integer }
+        interval_seconds: { type: integer, enum: [300, 900, 3600] }
+        enabled: { type: boolean }
+        created_at: { type: string, format: date-time }
+        results:
+          $ref: '#/components/schemas/SyntheticCheckResults'
+    SyntheticCheckResults:
+      description: 'Recent outcomes of one synthetic check, returned by GET /v1/apps/{slug}/synthetics/{id} (ADR-748).'
+      type: object
+      required: [uptime_24h_pct, uptime_7d_pct, runs_24h, p95_latency_ms_24h, recent]
+      properties:
+        uptime_24h_pct:
+          type: [number, 'null']
+          format: double
+          description: 'Share of runs in the last 24 hours that succeeded; null when none ran.'
+        uptime_7d_pct:
+          type: [number, 'null']
+          format: double
+          description: 'Share of runs in the last 7 days that succeeded; null when none ran.'
+        runs_24h: { type: integer, format: int64, description: 'Runs in the last 24 hours.' }
+        p95_latency_ms_24h:
+          type: number
+          format: double
+          description: '95th-percentile latency of successful runs in the last 24 hours, including any wake; 0 when none succeeded.'
+        recent:
+          type: array
+          description: 'The most recent runs, newest first (at most 20).'
+          items: { $ref: '#/components/schemas/SyntheticCheckRun' }
+    SyntheticCheckRun:
+      description: 'One synthetic check probe.'
+      type: object
+      required: [started_at, ok, latency_ms]
+      properties:
+        started_at: { type: string, format: date-time }
+        ok: { type: boolean }
+        status_code:
+          type: integer
+          description: 'HTTP status received; absent when no response arrived.'
+        latency_ms: { type: integer }
+        error_class:
+          type: string
+          enum: [status, timeout, dns, connect, tls, other]
+          description: 'Why the run failed; absent on success. status means a response arrived with an unexpected code.'
     CustomMetricResponse:
       description: "One stored ADR-202 gauge."
       type: object
@@ -78528,7 +79139,32 @@ components:
         stale:
           description: "True when this row is older than the freshness window and is therefore NOT driving scaling. Computed server-side so the API and the scheduler cannot disagree about which rows count."
           type: boolean
-      example: { name: orders_pending, value: 1284, observed_at: "2026-09-21T12:00:00Z", stale: false }
+        kind:
+          type: string
+          enum: [gauge, counter]
+          description: "gauge for pushed values (a scaling signal); counter for ADR-745 OTLP cumulative sums, which never drive scaling."
+      example: { name: orders_pending, value: 1284, observed_at: "2026-09-21T12:00:00Z", stale: false, kind: gauge }
+    CustomMetricSeriesResponse:
+      description: "ADR-745 history of one pushed custom metric. Degraded responses carry null points."
+      type: object
+      required: [app_id, name, kind, range, step, source, points]
+      properties:
+        app_id: { type: string }
+        name: { type: string }
+        kind: { type: string, enum: [gauge, counter], description: "counter histories are a per-second rate of the cumulative count." }
+        range: { type: string, enum: ['1h', '6h', '24h', '7d', '15d'] }
+        step: { type: string, description: "Prometheus step between points." }
+        source: { type: string, description: '"prometheus", or "degraded: <reason>" when the metric history could not be read.' }
+        points:
+          type: [array, "null"]
+          items: { $ref: '#/components/schemas/CustomMetricSeriesPoint' }
+    CustomMetricSeriesPoint:
+      description: One recorded custom metric value.
+      type: object
+      required: [at, value]
+      properties:
+        at: { type: string, format: date-time }
+        value: { type: number, format: double }
     CustomMetricListResponse:
       description: "The app's ADR-202 gauges, plus the two limits needed to interpret them so debugging does not require reading the docs."
       type: object
@@ -92364,11 +93000,18 @@ components:
             - workflow_pending_age_seconds
             - workflow_waiting_age_seconds
             - workflow_due_age_seconds
+            - custom_metric
+            - log_error_lines
+            - log_warn_lines
+            - slo_budget_burn
+            - slo_budget_remaining_pct
+            - synthetic_check_consecutive_failures
+            - synthetic_check_latency_p95_ms
             - edge_rule_hits
             - edge_rule_log_hits
         comparison:
           type: string
-          enum: [gt, gte, lt, lte]
+          enum: [gt, gte, lt, lte, above_baseline, below_baseline]
         threshold: { type: number, format: double, example: 500 }
         window_spec:
           type: string
@@ -92377,7 +93020,27 @@ components:
           type: string
           description: 'Source dimension for failed_invocations; omit when metric is not failed_invocations (xor_chk).'
           enum: [any, cron, queue, delayed_task, async_invoke, inbound_webhook]
-        webhook_url: { type: string, format: uri, example: "https://example.com/hook" }
+        custom_metric_name:
+          type: string
+          pattern: '^[a-z][a-z0-9_]{0,62}$'
+          description: 'The pushed custom metric a custom_metric rule watches (ADR-745). Present only when metric is custom_metric.'
+          example: orders_pending
+        slo_id:
+          type: string
+          format: uuid
+          description: 'The customer SLO an slo_budget_burn or slo_budget_remaining_pct rule watches (ADR-747); absent for other metrics.'
+        synthetic_check_id:
+          type: string
+          format: uuid
+          description: 'The synthetic check a synthetic_check_* rule watches (ADR-748); absent for other metrics.'
+        webhook_url:
+          type: string
+          example: "https://example.com/hook"
+          description: 'Signed webhook destination; empty for a rule that delivers only to notification channels.'
+        channel_ids:
+          type: array
+          items: { type: string, format: uuid }
+          description: 'Notification channels (ADR-749) the rule delivers fires and resolves to.'
         webhook_secret_sealed_masked:
           type: string
           description: 'Literal "***" — the plaintext is never returned.'
@@ -92405,7 +93068,7 @@ components:
     CreateAlertRuleRequest:
       description: 'Create an alert rule on an app.'
       type: object
-      required: [name, metric, comparison, threshold, window_spec, webhook_url, webhook_secret]
+      required: [name, metric, comparison, threshold, window_spec]
       properties:
         mcp_readiness_scope:
           type: string
@@ -92440,15 +93103,40 @@ components:
         metric:
           type: string
           description: 'Selected metric for the existing alert rule. MCP task age reads a fresh app gauge in seconds and degrades when unavailable; mcp_tasks_metrics_stale is 1 when either task gauge is missing, stale, or invalid. Min=0 worker apps also require a fresh observer heartbeat with value 1. mcp_task_promotion_hold_age_seconds reads the oldest active hold directly from state (seconds, zero with no holds); its alerts support webhook action only.'
-          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds, mcp_policy_unconverged_gateways, mcp_policy_unverified, mcp_readiness_unhealthy, mcp_catalog_drift, mcp_catalog_monitor_unavailable, mcp_oauth_reauthorization_required, mcp_oauth_renewal_failed, mcp_oauth_retirement_expiring, mcp_oauth_issuance_unknown, mcp_protocol_error_rate_pct, mcp_protocol_execution_p95_ms, edge_rule_hits, edge_rule_log_hits]
-        comparison: { type: string, enum: [gt, gte, lt, lte] }
+          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds, mcp_policy_unconverged_gateways, mcp_policy_unverified, mcp_readiness_unhealthy, mcp_catalog_drift, mcp_catalog_monitor_unavailable, mcp_oauth_reauthorization_required, mcp_oauth_renewal_failed, mcp_oauth_retirement_expiring, mcp_oauth_issuance_unknown, mcp_protocol_error_rate_pct, mcp_protocol_execution_p95_ms, edge_rule_hits, edge_rule_log_hits, custom_metric, log_error_lines, log_warn_lines, slo_budget_burn, slo_budget_remaining_pct, synthetic_check_consecutive_failures, synthetic_check_latency_p95_ms]
+        comparison:
+          type: string
+          enum: [gt, gte, lt, lte, above_baseline, below_baseline]
+          description: "above_baseline and below_baseline (ADR-744, preview behind FAAS_ANOMALY_ALERTS_ENABLED) compare against the median of the same metric at the same time of day over the previous 7 days; threshold is then a multiplier (1.5-20 above, 0.05-0.67 below). Supported for error_rate_pct, latency_p95_ms, latency_p99_ms, cold_start_pct and request_count (below_baseline: request_count only)."
         threshold: { type: number, format: double, example: 500 }
         window_spec: { type: string, enum: ['5m', '15m', '1h', '6h', '24h', '7d', '15d'] }
         failure_source:
           type: string
           description: 'Required when metric == failed_invocations; omit otherwise (xor_chk).'
           enum: [any, cron, queue, delayed_task, async_invoke, inbound_webhook]
-        webhook_url: { type: string, format: uri, example: "https://example.com/hook" }
+        custom_metric_name:
+          type: string
+          pattern: '^[a-z][a-z0-9_]{0,62}$'
+          description: 'Required when metric is custom_metric; omit otherwise. A gauge is compared on its average over the window and a counter on its per-second rate. custom_metric rules support webhook action only and windows up to 24h.'
+          example: orders_pending
+        slo_id:
+          type: string
+          format: uuid
+          description: 'Required for slo_budget_burn (multi-window burn rate; 14.4 is the paging threshold) and slo_budget_remaining_pct (percent of the error budget left); names one of this app''s SLOs. The rule window_spec is ignored for these metrics.'
+        synthetic_check_id:
+          type: string
+          format: uuid
+          description: 'Required for synthetic_check_consecutive_failures (failed runs since the last success; window_spec ignored) and synthetic_check_latency_p95_ms (p95 of successful runs in the window); names one of this app''s checks.'
+        webhook_url:
+          type: string
+          format: uri
+          example: "https://example.com/hook"
+          description: 'Signed webhook destination. Required with webhook_secret unless channel_ids is set.'
+        channel_ids:
+          type: array
+          maxItems: 5
+          items: { type: string, format: uuid }
+          description: 'Notification channels (ADR-749) to deliver fires and resolves to. With at least one, webhook_url and webhook_secret may be omitted.'
         webhook_secret:
           type: string
           description: 'Plaintext HMAC secret (max 256 bytes). Sealed at rest; never echoed.'
@@ -92495,11 +93183,17 @@ components:
         metric:
           type: string
           description: 'Cannot cross metric families (e.g. error_rate_pct → failed_invocations) — returns 400. MCP task metrics are notification-only.'
-          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds, mcp_policy_unconverged_gateways, mcp_policy_unverified, mcp_readiness_unhealthy, mcp_catalog_drift, mcp_catalog_monitor_unavailable, mcp_oauth_reauthorization_required, mcp_oauth_renewal_failed, mcp_oauth_retirement_expiring, mcp_oauth_issuance_unknown, mcp_protocol_error_rate_pct, mcp_protocol_execution_p95_ms, edge_rule_hits, edge_rule_log_hits]
-        comparison: { type: string, enum: [gt, gte, lt, lte] }
+          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds, mcp_policy_unconverged_gateways, mcp_policy_unverified, mcp_readiness_unhealthy, mcp_catalog_drift, mcp_catalog_monitor_unavailable, mcp_oauth_reauthorization_required, mcp_oauth_renewal_failed, mcp_oauth_retirement_expiring, mcp_oauth_issuance_unknown, mcp_protocol_error_rate_pct, mcp_protocol_execution_p95_ms, edge_rule_hits, edge_rule_log_hits, custom_metric, log_error_lines, log_warn_lines, slo_budget_burn, slo_budget_remaining_pct, synthetic_check_consecutive_failures, synthetic_check_latency_p95_ms]
+        comparison: { type: string, enum: [gt, gte, lt, lte, above_baseline, below_baseline] }
         threshold: { type: number, format: double }
         window_spec: { type: string, enum: ['5m', '15m', '1h', '6h', '24h', '7d', '15d'] }
         webhook_url: { type: string, format: uri }
+        channel_ids:
+          type: array
+          maxItems: 5
+          items: { type: string, format: uuid }
+          description: 'Replaces the rule''s notification channels; an empty list clears them, which a rule without a webhook cannot do.'
+
         webhook_secret:
           type: string
           description: 'New plaintext HMAC secret. Omit to keep the existing secret.'
@@ -92605,17 +93299,23 @@ components:
         catalog; the caller supplies the delivery-side fields and an
         optional safe-release action.
       type: object
-      required: [webhook_url, webhook_secret]
       properties:
         webhook_url:
           type: string
           format: uri
           maxLength: 2048
           example: "https://hooks.example.com/alerts"
+          description: 'Signed webhook destination; required with webhook_secret unless channel_ids is set.'
         webhook_secret:
           type: string
           maxLength: 256
           example: "shh"
+          description: 'HMAC secret for the webhook; required with webhook_url unless channel_ids is set.'
+        channel_ids:
+          type: array
+          maxItems: 5
+          items: { type: string, format: uuid }
+          description: 'Notification channels (ADR-749) the instantiated rule delivers to; with at least one, the webhook fields may be omitted.'
         action:
           type: string
           enum: [webhook, rollback, demote, promote]
@@ -95696,6 +96396,33 @@ components:
           type: array
           items: { type: string }
         history_path: { type: string, description: Authenticated cursor-paged history; locate transition_id while retained. }
+    AppChangeTimelineResponse:
+      description: ADR-751 change timeline for one app over [since, until), newest first.
+      type: object
+      required: [app_id, app_slug, since, until, events, truncated, unavailable_sources]
+      properties:
+        app_id: { type: string }
+        app_slug: { type: string }
+        since: { type: string, format: date-time }
+        until: { type: string, format: date-time }
+        events:
+          type: array
+          items: { $ref: '#/components/schemas/AppChangeEvent' }
+        truncated: { type: boolean, description: Older events in the window were dropped at the 200-event cap. }
+        unavailable_sources:
+          type: array
+          description: Sources that could not be read; their events are missing, not absent.
+          items: { type: string, enum: [deployment, edge_rule, runtime_config, incident, health, activity] }
+    AppChangeEvent:
+      description: One change timeline entry with a platform-generated summary.
+      type: object
+      required: [at, source, kind, summary]
+      properties:
+        at: { type: string, format: date-time }
+        source: { type: string, enum: [deployment, edge_rule, runtime_config, incident, health, activity] }
+        kind: { type: string, description: Source-specific kind such as deploy.rolled_back or env.set. }
+        deployment_id: { type: string }
+        summary: { type: string }
     AppHealthHistoryPage:
       description: Retained default HTTP health observations with independent background collection freshness.
       type: object
@@ -97422,8 +98149,10 @@ components:
           items: { $ref: '#/components/schemas/RequestAnalyticsRouteDeploymentObservation' }
         other_deployment_requests: { type: integer, format: int64, minimum: 0, description: "Route requests from deployments outside the top-five list." }
         other_deployment_estimated_compute_cost_millicents: { type: integer, format: int64, minimum: 0, description: "This route's estimated compute value allocated to deployments outside the top-five list by request share." }
-        estimated_compute_cost_millicents: { type: integer, format: int64, minimum: 0, description: "Estimated raw RAM-hour value allocated to this route by observed request share; excludes account-level included allowance and egress." }
+        estimated_compute_cost_millicents: { type: integer, format: int64, minimum: 0, description: "Estimated raw RAM-hour value allocated to this route by its share of observed request time (ADR-743), or by request share when no timing exists; excludes account-level included allowance and egress." }
         request_share_pct: { type: number, format: double, minimum: 0, maximum: 100 }
+        request_time_ms: { type: integer, format: int64, minimum: 0, description: "Total gateway-observed request time for this route in the window, in milliseconds." }
+        request_time_share_pct: { type: number, format: double, minimum: 0, maximum: 100, description: "This route's share of all observed app request time in the window." }
 
     RequestAnalyticsRouteDeploymentObservation:
       type: object
@@ -97499,7 +98228,7 @@ components:
         other_route_request_share_pct: { type: number, format: double, minimum: 0, maximum: 100 }
         rate_millicents_per_gb_hour: { type: integer, format: int64, minimum: 0 }
         currency: { type: string, enum: [EUR] }
-        allocation_method: { type: string, enum: [request_share] }
+        allocation_method: { type: string, enum: [request_time_share, request_share], description: "request_time_share (ADR-743) splits by observed request time; request_share is the fallback when the window has no timing." }
         basis: { type: string, enum: [raw_ram_hours_at_current_overage_rate_before_allowance] }
         request_count: { type: integer, format: int64, minimum: 0 }
 
@@ -102909,6 +103638,7 @@ components:
           enum:
             - json
             - cloudevents
+            - datadog
         enabled:
           type: boolean
         created_at:
@@ -103729,7 +104459,7 @@ components:
         id: { type: string, pattern: '^[0-9a-f]{32}$' }
         app_id: { type: string, pattern: '^[0-9a-f]{32}$' }
         account_id: { type: string, format: uuid }
-        kind: { type: string, enum: [http_json, otlp] }
+        kind: { type: string, enum: [http_json, otlp, datadog] }
         target_url: { type: string, format: uri, minLength: 8, maxLength: 2048 }
         auth_header_masked: { type: string, enum: ["", "***"] }
         enabled: { type: boolean }
@@ -103812,7 +104542,7 @@ components:
       description: Create a provider-neutral runtime log destination.
       required: [kind, target_url]
       properties:
-        kind: { type: string, enum: [http_json, otlp] }
+        kind: { type: string, enum: [http_json, otlp, datadog] }
         target_url: { type: string, format: uri, minLength: 8, maxLength: 2048 }
         auth_header: { type: string, maxLength: 4096, description: "One Name: value pair; sealed at rest and never returned." }
         enabled: { type: boolean, default: true }
@@ -103821,7 +104551,7 @@ components:
       type: object
       description: Partially update a runtime log destination; omitted fields remain unchanged.
       properties:
-        kind: { type: string, enum: [http_json, otlp] }
+        kind: { type: string, enum: [http_json, otlp, datadog] }
         target_url: { type: string, format: uri, minLength: 8, maxLength: 2048 }
         auth_header: { type: string, maxLength: 4096, description: "One Name: value pair; an empty value clears credentials." }
         enabled: { type: boolean }
@@ -103940,8 +104670,9 @@ components:
           enum:
             - json
             - cloudevents
+            - datadog
           default: json
-          description: Wire envelope. json preserves the legacy Gregale body; cloudevents opts into CloudEvents 1.0 structured mode.
+          description: "Wire envelope. json preserves the legacy Gregale body; cloudevents opts into CloudEvents 1.0 structured mode; datadog (ADR-752) posts Datadog Events API bodies to a Datadog Events endpoint and sends webhook_secret as DD-API-KEY, for deployment and rollout events only."
         enabled:
           type: boolean
           default: true
@@ -104116,7 +104847,8 @@ components:
           enum:
             - json
             - cloudevents
-          description: Wire envelope for future deliveries; existing delivery rows are unchanged.
+            - datadog
+          description: "Wire envelope for future deliveries; existing delivery rows are unchanged. Switching to datadog requires a new webhook_secret holding the Datadog API key."
         enabled:
           type: boolean
       example:
