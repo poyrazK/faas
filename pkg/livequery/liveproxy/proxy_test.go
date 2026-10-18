@@ -9,7 +9,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/livequery/liveproto"
 )
 
-// adr: 1384 — a session reaches only what its router routes to: without a
+// adr: 20261016151947 — a session reaches only what its router routes to: without a
 // router nothing, and a renewal sealed with a key of another database is
 // refused even though the endpoint may route that key.
 func TestSessionRoutesOnlyThroughItsRouter(t *testing.T) {

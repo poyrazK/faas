@@ -37,7 +37,7 @@ type hooks struct{ realtime.NopHooks }
 
 func (hooks) AuthorizeChannel(context.Context, realtime.Event) (bool, error) { return true, nil }
 
-// adr: 1384 — the whole path: a browser's v2 realtime connection carries a
+// adr: 20261016151947 — the whole path: a browser's v2 realtime connection carries a
 // sealed live query through realtimed's proxy to the database's hub and
 // back, with every frame checked by the reference client.
 func TestRealtimeCarriesLiveQueries(t *testing.T) {

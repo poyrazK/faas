@@ -10,7 +10,7 @@ import (
 	pgq "github.com/pganalyze/pg_query_go/v6"
 )
 
-// Ordered windows (ADR-1384): ORDER BY ... LIMIT [OFFSET] over a
+// Ordered windows (ADR-20261016151947): ORDER BY ... LIMIT [OFFSET] over a
 // select-project-join query. The engine keeps each member's window, the first
 // LIMIT + OFFSET rows, ordered by the query's sort items and then by every
 // relation's primary key, which makes the order total; with ties the query

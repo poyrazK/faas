@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// adr: 1384 — aggregates stay exact across column type changes that alter
+// adr: 20261016151947 — aggregates stay exact across column type changes that alter
 // how values print, interleaved with writes and restarts, including changes
 // made while the engine is down. The types are all scaled, so equal values
 // always print alike (see oracleSchema.schemaChange).

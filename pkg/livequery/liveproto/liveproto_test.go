@@ -31,7 +31,7 @@ type session struct {
 	} `json:"steps"`
 }
 
-// adr: 1384 — the reference client applies the shared session fixtures
+// adr: 20261016151947 — the reference client applies the shared session fixtures
 // exactly; the JavaScript SDK runs the same file.
 func TestSessions(t *testing.T) {
 	data, err := os.ReadFile("testdata/sessions.json")
@@ -89,7 +89,7 @@ func TestSessions(t *testing.T) {
 	}
 }
 
-// adr: 1384 — client frames are validated before realtimed acts on them.
+// adr: 20261016151947 — client frames are validated before realtimed acts on them.
 func TestParseClientFrame(t *testing.T) {
 	for _, tc := range []struct {
 		frame string
@@ -116,7 +116,7 @@ func TestParseClientFrame(t *testing.T) {
 	}
 }
 
-// adr: 1384 — a large result splits into frames under the limit that
+// adr: 20261016151947 — a large result splits into frames under the limit that
 // reassemble to the same result.
 func TestRowsSplit(t *testing.T) {
 	f := Rows{Subscription: "s", Database: "db", Version: 9, Snapshot: "5:5:", Columns: []Column{{Name: "v", Type: "text"}}}
@@ -172,7 +172,7 @@ func TestRowsSplit(t *testing.T) {
 	}
 }
 
-// adr: 1384 — Covers decides whether a snapshot is not older than another.
+// adr: 20261016151947 — Covers decides whether a snapshot is not older than another.
 func TestSnapshotCovers(t *testing.T) {
 	for _, tc := range []struct {
 		s, o string

@@ -1,4 +1,4 @@
-// Package livequery is the Phase 0 prototype of ADR-1384 live queries.
+// Package livequery is the Phase 0 prototype of ADR-20261016151947 live queries.
 //
 // A live query is a read-only SELECT whose result the engine keeps current as
 // transactions commit. Changes come from logical decoding (pgoutput). The

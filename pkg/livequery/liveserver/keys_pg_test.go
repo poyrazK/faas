@@ -52,7 +52,7 @@ func (f *fixture) waitKeys(what string, cond func() bool) {
 	}
 }
 
-// adr: 1384 — livequeryd opens seals with the keys apid stored for its
+// adr: 20261016151947 — livequeryd opens seals with the keys apid stored for its
 // database, and removing a key (rotation without overlap, disabling live
 // queries) closes the subscriptions its seals opened.
 func TestHubWatchesItsKeys(t *testing.T) {

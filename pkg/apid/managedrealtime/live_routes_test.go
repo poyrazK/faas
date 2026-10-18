@@ -18,7 +18,7 @@ func (r *liveRouteRegistrar) RegisterEndpoint(_ context.Context, e realtime.Endp
 
 func (r *liveRouteRegistrar) RemoveEndpoint(context.Context, string) error { return nil }
 
-// adr: 1384 — an endpoint is registered with the live routes of databases
+// adr: 20261016151947 — an endpoint is registered with the live routes of databases
 // bound to its app; a failed lookup leaves the node's registration alone.
 func TestEndpointRegistrationCarriesLiveRoutes(t *testing.T) {
 	ctx := context.Background()

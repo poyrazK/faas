@@ -14,7 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Remote compilation (ADR-1384). Compiling a query needs PostgreSQL's
+// Remote compilation (ADR-20261016151947). Compiling a query needs PostgreSQL's
 // parser, which runs as WebAssembly: starting it costs tens of MiB of
 // resident memory, and a database VM's memory is the customer's. Rounds
 // never parse; they run statements compiled ahead of time. So an engine

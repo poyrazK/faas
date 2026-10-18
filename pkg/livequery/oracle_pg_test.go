@@ -15,7 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// The differential oracle (ADR-1384 Phase 0). Random schemas, queries and
+// The differential oracle (ADR-20261016151947 Phase 0). Random schemas, queries and
 // concurrent write workloads; after every round each maintained result must
 // equal the query executed at the round snapshot (Engine.VerifyEachRound),
 // and every simulated client must equal the engine.
@@ -428,7 +428,7 @@ func (s oracleSchema) statement(r *rand.Rand, t string, strs []any) (string, []a
 	}
 }
 
-// adr: 1384 — Phase 0 exit gate: zero divergences between maintained results
+// adr: 20261016151947 — Phase 0 exit gate: zero divergences between maintained results
 // and the query at each round snapshot, under concurrent writes.
 func TestOracleRandomWorkloads(t *testing.T) {
 	if testing.Short() {

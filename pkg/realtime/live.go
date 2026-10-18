@@ -16,7 +16,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/livequery/seal"
 )
 
-// Live queries (ADR-1384) ride v2 connections as live.* frames. realtimed
+// Live queries (ADR-20261016151947) ride v2 connections as live.* frames. realtimed
 // only carries them: Config.Live (pkg/livequery/liveproxy in cmd/realtimed)
 // sends each client's frames to the hub serving the sealed query's database
 // and queues the hub's frames back. Live frames are not channel traffic, so

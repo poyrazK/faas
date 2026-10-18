@@ -11,7 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/livequery/rest"
 )
 
-// RLS mode (ADR-1384): a client subscribes with a Data API read and its
+// RLS mode (ADR-20261016151947): a client subscribes with a Data API read and its
 // user's token; realtimed verifies the token and forwards its claims with
 // the endpoint app's Data API binding login. The hub compiles the read and
 // maintains it as that login with the claims, as the Data API gateway runs

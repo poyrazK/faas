@@ -17,7 +17,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state/livekeys"
 )
 
-// configureLiveQueries wires ADR-1384 live-query enablement. Only accounts in
+// configureLiveQueries wires ADR-20261016151947 live-query enablement. Only accounts in
 // FAAS_LIVE_QUERIES_ACCOUNTS see it at all (empty: nobody); for them, without
 // managed Postgres or FAAS_APID_LIVE_KEY_RECIPIENT_FILE (livequeryd's age
 // recipient) the routes answer live_queries_unavailable.

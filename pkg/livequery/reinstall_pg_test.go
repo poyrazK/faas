@@ -2,7 +2,7 @@ package livequery
 
 import "testing"
 
-// adr: 1384 — installing the schema-change log again (every livequeryd start
+// adr: 20261016151947 — installing the schema-change log again (every livequeryd start
 // does) is not itself a schema change: no query is recompiled.
 func TestReinstallIsQuiet(t *testing.T) {
 	h := newHarness(t, chatSchema)

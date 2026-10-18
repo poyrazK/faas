@@ -2,7 +2,7 @@ package livequery
 
 import "testing"
 
-// adr: 1384 — array parameters and array sort keys survive batching: unnest
+// adr: 20261016151947 — array parameters and array sort keys survive batching: unnest
 // flattens an array of arrays, so they travel as text and are cast where
 // they are used.
 func TestArrayParametersAndSortKeys(t *testing.T) {

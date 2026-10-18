@@ -2,7 +2,7 @@ package livequery
 
 import "testing"
 
-// adr: 1384 — a subscriber that joins a result the engine already maintains
+// adr: 20261016151947 — a subscriber that joins a result the engine already maintains
 // receives it whole, and a result that outgrows its limit is closed with
 // live_query_limit.
 func TestLateSubscribersAndLimits(t *testing.T) {

@@ -70,7 +70,7 @@ type Service struct {
 	HistoryPreviewEnabled bool
 	HistoryMetrics        *ManagedRealtimeHistoryMetrics
 	// LiveRoutes lists the live-query keys an app's endpoints route
-	// (ADR-1384): those of live databases bound to the app. Nil routes none.
+	// (ADR-20261016151947): those of live databases bound to the app. Nil routes none.
 	LiveRoutes func(ctx context.Context, accountID, appID string) ([]realtime.LiveRoute, error)
 
 	publishIdempotencySweep atomic.Uint64

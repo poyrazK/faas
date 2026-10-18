@@ -35358,7 +35358,7 @@ CREATE TABLE public.managed_postgres_live_keys (
 -- Name: TABLE managed_postgres_live_keys; Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON TABLE public.managed_postgres_live_keys IS 'ADR-1384 live-query secrets per managed database, sealed to livequeryd; at most one active and one retiring key.';
+COMMENT ON TABLE public.managed_postgres_live_keys IS 'ADR-20261016151947 live-query secrets per managed database, sealed to livequeryd; at most one active and one retiring key.';
 
 
 --

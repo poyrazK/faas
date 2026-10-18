@@ -26,7 +26,7 @@ func outcomes(deltas []Delta) string {
 	return strings.Join(parts, " ")
 }
 
-// adr: 1384 — schema changes reach live queries in the round where they
+// adr: 20261016151947 — schema changes reach live queries in the round where they
 // commit: untouched queries are left alone, touched ones are recompiled and
 // diffed, a changed result shape sends a full result, and a query that no
 // longer compiles is closed with schema_changed.

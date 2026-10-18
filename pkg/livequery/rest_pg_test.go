@@ -21,7 +21,7 @@ ALTER TABLE messages ENABLE ROW LEVEL SECURITY;
 CREATE POLICY readable ON messages FOR SELECT TO %[1]s USING (channel_id IN (SELECT channel_id FROM members WHERE user_id = current_setting('request.jwt.claims', true)::json->>'sub'));
 `
 
-// adr: 1384 — PostgREST reads compile to SQL the engine maintains, sealed
+// adr: 20261016151947 — PostgREST reads compile to SQL the engine maintains, sealed
 // and as a session, through writes to the queried relation, to embedded
 // relations and to what the policy reads; VerifyEachRound checks each
 // result against PostgreSQL.

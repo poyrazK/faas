@@ -1,4 +1,4 @@
-// Package liveproto is the live-query frame contract (ADR-1384): the JSON
+// Package liveproto is the live-query frame contract (ADR-20261016151947): the JSON
 // frames a client and realtimed exchange over an app's realtime endpoint, and
 // Result, the reference client that applies them. The JavaScript SDK runs the
 // same session fixtures (testdata/sessions.json) as this package's tests.

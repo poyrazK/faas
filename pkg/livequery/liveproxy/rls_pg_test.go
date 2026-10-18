@@ -118,7 +118,7 @@ func ids(r *liveproto.Result) string {
 	return strings.Join(out, ",")
 }
 
-// adr: 1384 — RLS mode end to end: a browser subscribes with a Data API read
+// adr: 20261016151947 — RLS mode end to end: a browser subscribes with a Data API read
 // and its user's token; realtimed verifies the token and routes by the
 // database bound to the endpoint's app; the hub compiles the read and
 // maintains it as the token's role, so row-level security decides each

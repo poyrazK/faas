@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// ADR-1384: only backends that declare a hub run live queries, and Neon
+// ADR-20261016151947: only backends that declare a hub run live queries, and Neon
 // backends cannot declare one.
 func TestRegistryLiveHubURL(t *testing.T) {
 	provider := &fakeProvider{capabilities: testCapabilities()}

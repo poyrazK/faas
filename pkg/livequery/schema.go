@@ -12,7 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Schema changes (ADR-1384). pgoutput does not carry DDL, so Install adds an
+// Schema changes (ADR-20261016151947). pgoutput does not carry DDL, so Install adds an
 // event trigger that logs every DDL command into gregale_live.ddl_log. The
 // table is published like any other, so a command's log row is decoded in
 // the round where the command commits. That round recompiles every plan

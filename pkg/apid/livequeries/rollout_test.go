@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// adr: 1384 — FAAS_LIVE_QUERIES_ACCOUNTS: nobody by default, the listed
+// adr: 20261016151947 — FAAS_LIVE_QUERIES_ACCOUNTS: nobody by default, the listed
 // accounts, or everyone; live paths stay hidden from 405s until everyone.
 func TestRollout(t *testing.T) {
 	const ours = "6F1C2B4A-0D3E-4F5A-8B9C-0123456789AB"

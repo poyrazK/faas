@@ -431,7 +431,7 @@ generations. Existing connections may disconnect and reconnect using their
 existing credentials. Rollback of the additive migration is blocked once any
 policy history exists so completed receipts cannot silently disappear.
 
-## Live queries (ADR-1384)
+## Live queries (ADR-20261016151947)
 
 Live queries keep a SQL result current in browsers. A customer enables them
 per database; enabling issues the database's live secret, which backends

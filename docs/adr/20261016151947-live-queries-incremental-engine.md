@@ -1,4 +1,4 @@
-# ADR-1384 · Live queries: an incremental SQL engine for native managed Postgres
+# ADR-20261016151947 · Live queries: an incremental SQL engine for native managed Postgres
 
 - **Status:** proposed (owner direction, 2026-10-16: build a Gregale answer to
   Neon Realtime; full incremental engine; native Postgres first; sealed-query

@@ -327,7 +327,7 @@ var routeExclude = map[string]bool{
 	"POST /v1/webhooks/mcp-readiness/pagerduty/{id}/{destination}":           true, // Destination-scoped provider HMAC ingress (ADR-20261017191529).
 	"POST /dashboard/mcp/apps/{slug}/alerts/{id}/pagerduty-acknowledgements": true, // Named-CSRF browser adapter.
 
-	// ADR-1384 live queries: a preview gated by FAAS_LIVE_QUERIES_ACCOUNTS
+	// ADR-20261016151947 live queries: a preview gated by FAAS_LIVE_QUERIES_ACCOUNTS
 	// and answering like unregistered routes outside it, so it stays out of
 	// the public OpenAPI spec and generated SDKs until launch. pkg/api keeps
 	// its client for the operator CLI. Mirror across this list AND cmd/sdk-coverage/main.go::routeExclude.

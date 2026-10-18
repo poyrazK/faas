@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// adr: 1384 — live queries are an operator preview until launch: `gregale
+// adr: 20261016151947 — live queries are an operator preview until launch: `gregale
 // postgres live` stays callable but out of customer help, completions and
 // the published CLI reference.
 func TestLiveQueriesHiddenFromCustomerDiscovery(t *testing.T) {

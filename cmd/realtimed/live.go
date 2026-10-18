@@ -11,7 +11,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/livequery/liveproxy"
 )
 
-// liveProxy builds the live-query proxy (ADR-1384). Routes come with each
+// liveProxy builds the live-query proxy (ADR-20261016151947). Routes come with each
 // endpoint's registration; the environment only configures how hubs are
 // dialed. FAAS_REALTIME_LIVE_TLS_CA_FILE verifies wss:// hubs, and
 // FAAS_REALTIME_LIVE_TLS_CERT_FILE with _KEY_FILE is realtimed's client

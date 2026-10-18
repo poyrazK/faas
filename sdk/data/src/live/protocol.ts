@@ -1,5 +1,5 @@
 /**
- * The live-query frame contract (ADR-1384), mirroring the Go reference client
+ * The live-query frame contract (ADR-20261016151947), mirroring the Go reference client
  * in pkg/livequery/liveproto. Both run the shared session fixtures.
  */
 

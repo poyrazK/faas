@@ -1,7 +1,7 @@
 package api
 
 // ManagedPostgresLiveQueries is a managed database's live-query state
-// (ADR-1384).
+// (ADR-20261016151947).
 type ManagedPostgresLiveQueries struct {
 	DatabaseID string                   `json:"database_id"`
 	Enabled    bool                     `json:"enabled"`

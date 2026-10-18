@@ -1,4 +1,4 @@
-// End-to-end driver for the live-query SDK (ADR-1384). The Go test
+// End-to-end driver for the live-query SDK (ADR-20261016151947). The Go test
 // TestSDKEndToEnd in pkg/livequery/liveserver starts a hub over real
 // PostgreSQL and runs this script against it: LIVE_URL is the WebSocket and
 // SEAL_URL returns fresh seals. The script reports the query's state as JSON

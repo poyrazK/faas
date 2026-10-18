@@ -1,4 +1,4 @@
-// Package seal implements sealed live queries (ADR-1384): a customer backend
+// Package seal implements sealed live queries (ADR-20261016151947): a customer backend
 // seals a query, its parameters and its database with the per-database live
 // secret, and realtimed opens the seal before it subscribes a browser to the
 // query. A seal is a short-lived bearer capability: whoever holds it may

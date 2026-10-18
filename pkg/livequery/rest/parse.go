@@ -1,5 +1,5 @@
 // Package rest compiles the PostgREST reads that @gregale/data emits into
-// SQL for live queries in RLS mode (ADR-1384). The client sends the request
+// SQL for live queries in RLS mode (ADR-20261016151947). The client sends the request
 // it would send to the Data API ("messages?select=id,author:users(name)&
 // channel_id=eq.1&order=id.desc&limit=50"); livequeryd compiles it here,
 // against the database's catalog, and maintains the SQL as the client's

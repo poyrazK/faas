@@ -654,7 +654,7 @@ func (s *Service) Get(ctx context.Context, accountID, databaseID string) (Databa
 }
 
 // LiveHub returns the livequeryd hub serving database's live queries
-// (ADR-1384), or "" when its backend runs none.
+// (ADR-20261016151947), or "" when its backend runs none.
 func (s *Service) LiveHub(database Database) (string, error) {
 	backend, err := s.registry.Resolve(database.BackendID, database.BackendFingerprint)
 	if err != nil {

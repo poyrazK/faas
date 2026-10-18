@@ -41,7 +41,7 @@ func (h *harness) ids(id string) string {
 	return strings.Join(vals, "")
 }
 
-// adr: 1384 — RLS mode: each session reads through PostgreSQL's row-level
+// adr: 20261016151947 — RLS mode: each session reads through PostgreSQL's row-level
 // security, so a change to what a policy reads (membership) changes a
 // result although no row the query reads changed; an opaque policy is
 // re-read on every change; a revoked grant closes only that session's
@@ -110,7 +110,7 @@ func TestSessionsReadThroughRowLevelSecurity(t *testing.T) {
 	}
 }
 
-// adr: 1384 — the policy walk finds tables read through policies, SQL
+// adr: 20261016151947 — the policy walk finds tables read through policies, SQL
 // functions (by probing a BEGIN ATOMIC copy), views and other tables'
 // policies, and marks other languages opaque.
 func TestPolicyDependencies(t *testing.T) {
@@ -163,7 +163,7 @@ func TestPolicyDependencies(t *testing.T) {
 	}
 }
 
-// adr: 1384 — live queries never read as a role that bypasses row-level
+// adr: 20261016151947 — live queries never read as a role that bypasses row-level
 // security, nor as one the engine's login may not become.
 func TestSessionsRefusePrivilegedRoles(t *testing.T) {
 	role := fmt.Sprintf("lq_reader_%d", rand.Uint32())

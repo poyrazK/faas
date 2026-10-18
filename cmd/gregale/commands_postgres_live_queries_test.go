@@ -1,4 +1,4 @@
-// adr: 1384 — live-query enablement and the shown-once live secret.
+// adr: 20261016151947 — live-query enablement and the shown-once live secret.
 package main
 
 import (

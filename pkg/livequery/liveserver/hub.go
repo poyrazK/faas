@@ -1,4 +1,4 @@
-// Package liveserver serves live queries to clients (ADR-1384): the realtimed
+// Package liveserver serves live queries to clients (ADR-20261016151947): the realtimed
 // half of the frame contract in pkg/livequery/liveproto, over one database's
 // engine. A Hub owns the engine and runs its rounds; each client connection
 // is a Session. realtimed embeds a Hub per database it serves; livequeryd's

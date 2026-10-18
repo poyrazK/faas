@@ -11,7 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-// Session is who a subscription reads as (ADR-1384 RLS mode): every
+// Session is who a subscription reads as (ADR-20261016151947 RLS mode): every
 // statement of its plan group runs as Role, with Claims as
 // request.jwt.claims, so PostgreSQL's row-level security policies filter
 // every row of every delta exactly as the Data API does. Subscriptions share

@@ -10,7 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-// Incremental aggregates (ADR-1384). Counts and exact sums are kept per group
+// Incremental aggregates (ADR-20261016151947). Counts and exact sums are kept per group
 // in the engine and updated from input row changes. PostgreSQL decides every
 // comparison (min, max) and evaluates the select list and HAVING from the
 // group keys and aggregate values, so output text is PostgreSQL's own.

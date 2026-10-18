@@ -193,7 +193,7 @@ func rows(r *liveproto.Result) string {
 	return strings.Join(out, ",")
 }
 
-// adr: 1384 — realtimed's proxy carries client subscriptions over one
+// adr: 20261016151947 — realtimed's proxy carries client subscriptions over one
 // upstream per database: frames reach the right client with its own IDs,
 // progress reaches every session once, and when the upstream drops the
 // subscriptions resume above the versions the clients hold, including one

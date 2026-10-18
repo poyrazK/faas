@@ -237,7 +237,7 @@ const chatSchema = `
 	CREATE TABLE members (channel_id bigint, user_id bigint, PRIMARY KEY (channel_id, user_id));
 	CREATE TABLE messages (id bigint PRIMARY KEY, channel_id bigint, author bigint, body text);`
 
-// adr: 1384 — every maintenance mode stays equal to the query at each round
+// adr: 20261016151947 — every maintenance mode stays equal to the query at each round
 // snapshot through inserts, key changes, deletes, outer-join match changes
 // and truncation.
 func TestEngineMaintainsEveryMode(t *testing.T) {

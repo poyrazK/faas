@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// adr: 1384 — capture decodes committed transactions only, in commit order,
+// adr: 20261016151947 — capture decodes committed transactions only, in commit order,
 // and a non-transactional marker arrives after everything committed before it.
 func TestCaptureDecodesCommittedTransactionsAndMarkers(t *testing.T) {
 	dsn, pool := openLogicalDB(t)

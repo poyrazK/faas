@@ -1,5 +1,5 @@
 // Package liveproxy carries live-query frames between clients on realtime
-// connections and the hubs that serve each database (ADR-1384). realtimed
+// connections and the hubs that serve each database (ADR-20261016151947). realtimed
 // owns client connections; each database's hub runs in livequeryd beside the
 // database and opens seals itself, so live secrets never leave the database
 // node. The proxy needs only routing: a seal's clear header names its key,

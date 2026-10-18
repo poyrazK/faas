@@ -200,7 +200,7 @@ type Endpoint struct {
 	MaxConnectionAge time.Duration
 
 	// LiveRoutes are the live-query keys this endpoint's connections may use
-	// (ADR-1384): those of databases bound to the endpoint's app. A seal
+	// (ADR-20261016151947): those of databases bound to the endpoint's app. A seal
 	// whose key is not listed is refused before it reaches a hub.
 	LiveRoutes []LiveRoute
 }
@@ -233,7 +233,7 @@ func (NopHooks) Disconnect(context.Context, Event) error      { return nil }
 // Config contains bounded resource and lifecycle settings. Zero values use
 // conservative defaults; all limits are enforced at the data-plane boundary.
 type Config struct {
-	// Live, when set, carries live-query frames on v2 connections (ADR-1384).
+	// Live, when set, carries live-query frames on v2 connections (ADR-20261016151947).
 	Live LiveQueries
 
 	MaxConnections  int

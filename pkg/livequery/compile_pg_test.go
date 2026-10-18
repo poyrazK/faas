@@ -27,7 +27,7 @@ func compileFixture(t *testing.T) *pgx.Conn {
 	return conn
 }
 
-// adr: 1384 — the compiler picks a keyed strategy where one exists and falls
+// adr: 20261016151947 — the compiler picks a keyed strategy where one exists and falls
 // back to recompute, or refuses, everywhere else.
 func TestCompileModes(t *testing.T) {
 	conn := compileFixture(t)

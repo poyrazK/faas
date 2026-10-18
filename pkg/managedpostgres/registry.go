@@ -89,7 +89,7 @@ type BackendConfig struct {
 	// AuthEnabled advertises the ADR-1190 auth credential mode under the same
 	// rule: a fresh qualification report must carry its evidence.
 	AuthEnabled bool `json:"auth_enabled,omitempty"`
-	// LiveHubURL enables ADR-1384 live queries on this backend's databases:
+	// LiveHubURL enables ADR-20261016151947 live queries on this backend's databases:
 	// the ws:// or wss:// URL of the livequeryd hub serving a database, where
 	// {database_id} stands for the database's ID. Empty leaves live queries
 	// off. Neon backends cannot set it: a replication consumer would keep

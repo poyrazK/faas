@@ -47,7 +47,7 @@ func sample() Query {
 	}
 }
 
-// adr: 1384 — a sealed query opens to exactly what was sealed, renewals keep
+// adr: 20261016151947 — a sealed query opens to exactly what was sealed, renewals keep
 // the fingerprint, and anything else changes it.
 func TestSealRoundTrip(t *testing.T) {
 	_, s := mustSecret(t)
@@ -101,7 +101,7 @@ func TestSealRoundTrip(t *testing.T) {
 	}
 }
 
-// adr: 1384 — Open refuses forged, tampered, retired, expired, oversized and
+// adr: 20261016151947 — Open refuses forged, tampered, retired, expired, oversized and
 // cross-database seals.
 func TestSealRefusals(t *testing.T) {
 	_, a := mustSecret(t)
@@ -183,7 +183,7 @@ func sealPlain(t *testing.T, s Secret, plain string) string {
 	return header + "." + base64.RawURLEncoding.EncodeToString(s.aead.Seal(nonce, nonce, []byte(plain), []byte(header)))
 }
 
-// adr: 1384 — Seal enforces the ADR's SQL, parameter and lifetime limits.
+// adr: 20261016151947 — Seal enforces the ADR's SQL, parameter and lifetime limits.
 func TestSealLimits(t *testing.T) {
 	_, s := mustSecret(t)
 	many := make([]*string, api.LiveQueryParamsMax+1)
@@ -236,7 +236,7 @@ type vector struct {
 	Token     string `json:"token"`
 }
 
-// adr: 1384 — the seal format is pinned by a known-answer vector so the
+// adr: 20261016151947 — the seal format is pinned by a known-answer vector so the
 // JavaScript SDK and realtimed cannot drift apart.
 func TestSealVector(t *testing.T) {
 	material := make([]byte, keyLength)

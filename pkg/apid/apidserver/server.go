@@ -152,7 +152,7 @@ type server struct {
 	totp            *totpGuard
 	objectStorage   *objectstorage.Registry
 	managedPostgres *managedpostgres.Service
-	liveQueries     *livequeries.Service // ADR-1384 live queries per managed database
+	liveQueries     *livequeries.Service // ADR-20261016151947 live queries per managed database
 	// liveRollout is who sees live queries (FAAS_LIVE_QUERIES_ACCOUNTS);
 	// nobody until configured.
 	liveRollout                   livequeries.Rollout
@@ -1559,7 +1559,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/postgres/databases/{id}/bindings", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.idempotent(s.createManagedPostgresBinding))))))
 	mux.HandleFunc("GET /v1/postgres/bindings/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.getManagedPostgresBinding))))
 	mux.HandleFunc("DELETE /v1/postgres/bindings/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.idempotent(s.deleteManagedPostgresBinding)))))
-	// ADR-1384 live queries: hidden like unregistered routes outside
+	// ADR-20261016151947 live queries: hidden like unregistered routes outside
 	// FAAS_LIVE_QUERIES_ACCOUNTS (liveRoute, liveAccount).
 	mux.HandleFunc("GET /v1/postgres/databases/{id}/live", s.liveRoute(s.authLimited(s.liveAccount(s.requireMFA(s.requireScope(api.ScopesManagedPostgresReadSurface...)(s.getLiveQueries))))))
 	mux.HandleFunc("POST /v1/postgres/databases/{id}/live", s.liveRoute(s.authLimited(s.liveAccount(s.requireMFA(s.requireScope(api.ScopesManagedPostgresManageSurface...)(s.requireVerifiedEmail(s.enableLiveQueries)))))))

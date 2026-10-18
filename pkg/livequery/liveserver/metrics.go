@@ -9,7 +9,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/livequery"
 )
 
-// Metrics are the live-query metrics named in ADR-1384 section 7. A nil
+// Metrics are the live-query metrics named in ADR-20261016151947 section 7. A nil
 // *Metrics records nothing.
 type Metrics struct {
 	subscriptions  prometheus.Gauge

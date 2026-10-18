@@ -25,7 +25,7 @@ type sdkEvent struct {
 	Xid    string   `json:"xid"`
 }
 
-// adr: 1384 — the JavaScript SDK holds a live query end to end against real
+// adr: 20261016151947 — the JavaScript SDK holds a live query end to end against real
 // PostgreSQL: the initial result, changes, awaitTxId, seal renewal, resuming
 // after the connection drops, and the close when the table goes away. It
 // needs node and a built SDK (npm run build in sdk/data).

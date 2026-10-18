@@ -343,7 +343,7 @@ func values(r *liveproto.Result) string {
 const schema = `CREATE TABLE messages (id bigint PRIMARY KEY, channel_id bigint NOT NULL, body text);
 	CREATE TABLE reads (id bigint PRIMARY KEY, n int)`
 
-// adr: 1384 — a client subscribes with a seal over a WebSocket and holds the
+// adr: 20261016151947 — a client subscribes with a seal over a WebSocket and holds the
 // query's result through changes, progress, expiry and renewal, with every
 // frame checked by the reference client.
 func TestHubServesSealedQueries(t *testing.T) {
@@ -441,7 +441,7 @@ func (f *fixture) sync(fn func()) {
 	<-done
 }
 
-// adr: 1384 — connections are bounded: per-connection subscriptions, and a
+// adr: 20261016151947 — connections are bounded: per-connection subscriptions, and a
 // connection that closes takes its subscriptions with it.
 func TestHubLimitsAndDisconnects(t *testing.T) {
 	f := newFixture(t, schema, Config{MaxPerConnection: 2})
@@ -492,7 +492,7 @@ func (f *fixture) waitSubscriptionsWithin(n int, when string, within time.Durati
 	}
 }
 
-// adr: 1384 — subscriptions restored from a checkpoint keep their results
+// adr: 20261016151947 — subscriptions restored from a checkpoint keep their results
 // warm for reconnecting clients, then are released.
 func TestHubReleasesRestoredSubscriptions(t *testing.T) {
 	feed := `SELECT id, body FROM messages WHERE channel_id = $1`

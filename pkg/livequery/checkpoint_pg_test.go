@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// adr: 1384 — an engine restored from a checkpoint resumes from the slot as
+// adr: 20261016151947 — an engine restored from a checkpoint resumes from the slot as
 // if it had never stopped: writes made while it was down arrive as ordinary
 // changes, transactions the slot delivers again are skipped, and only a lost
 // slot or a changed plan makes subscribers start over.

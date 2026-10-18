@@ -11588,7 +11588,7 @@ const (
 // Maximum payload-free outbox rows mirrored per source for the inspector.
 const RealtimeInspectorSampleMax = 32
 
-// Live queries (ADR-1384): sealed-query bounds and live frame sizes. The SQL
+// Live queries (ADR-20261016151947): sealed-query bounds and live frame sizes. The SQL
 // and parameter bounds match Neon Realtime's; the sealed payload bound keeps a
 // subscribe frame well inside LiveQueryClientFrameMaxBytes.
 const (
@@ -11610,7 +11610,7 @@ const (
 	LiveQueryClientFrameMaxBytes = 80 << 10
 	LiveQueryServerFrameMaxBytes = 256 << 10
 	LiveQueryResultRowsMax       = 10000
-	// RLS mode (ADR-1384): a Data API read is at most LiveQueryRESTMaxBytes
+	// RLS mode (ADR-20261016151947): a Data API read is at most LiveQueryRESTMaxBytes
 	// and a user's token (or its claims) at most LiveQueryTokenMaxBytes.
 	LiveQueryRESTMaxBytes  = 8 << 10
 	LiveQueryTokenMaxBytes = 8 << 10

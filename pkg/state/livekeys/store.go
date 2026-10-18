@@ -1,5 +1,5 @@
 // Package livekeys stores the live-query keys of managed databases
-// (ADR-1384). apid writes them; livequeryd reads its database's key ring.
+// (ADR-20261016151947). apid writes them; livequeryd reads its database's key ring.
 // Secrets are sealed before they reach this package, to livequeryd's age
 // recipient, so neither the store nor apid can read one back.
 package livekeys

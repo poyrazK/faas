@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// adr: 1384 — an engine can hand compilation to a remote compiler, so the
+// adr: 20261016151947 — an engine can hand compilation to a remote compiler, so the
 // SQL parser never starts beside the database: plans survive the trip
 // unchanged, every maintenance mode runs from them, schema changes recompile
 // remotely, and a compiler outage fails the round instead of closing

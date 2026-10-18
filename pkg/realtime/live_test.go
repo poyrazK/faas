@@ -69,7 +69,7 @@ func newLiveTestManager(t *testing.T, live LiveQueries) *httptest.Server {
 	return server
 }
 
-// adr: 1384 — an endpoint's live routes are checked when it registers, and
+// adr: 20261016151947 — an endpoint's live routes are checked when it registers, and
 // a live session reads them as they are now, so a re-registration reaches
 // connections already open.
 func TestLiveRoutesFollowRegistration(t *testing.T) {
@@ -129,7 +129,7 @@ func TestLiveRoutesFollowRegistration(t *testing.T) {
 	}
 }
 
-// adr: 1384 — an endpoint without live routes (its account is outside the
+// adr: 20261016151947 — an endpoint without live routes (its account is outside the
 // FAAS_LIVE_QUERIES_ACCOUNTS rollout) answers live frames exactly like an
 // unknown frame type, and nothing reaches a live session.
 func TestLiveProtocolHiddenWithoutRoutes(t *testing.T) {
@@ -191,7 +191,7 @@ func (claimsJWT) AuthorizeClaims(_ context.Context, token string, _ AuthPolicy) 
 	return json.RawMessage(`{"sub":"` + sub + `","role":"authenticated","exp":4102444800}`), time.Unix(4102444800, 0), nil
 }
 
-// adr: 1384 — an RLS-mode frame reaches the live session with the token's
+// adr: 20261016151947 — an RLS-mode frame reaches the live session with the token's
 // verified claims in place of the token; a client may not send claims, and
 // a token the endpoint cannot verify is refused.
 func TestLiveTokensBecomeClaims(t *testing.T) {
@@ -259,7 +259,7 @@ func TestLiveTokensBecomeClaims(t *testing.T) {
 	}
 }
 
-// adr: 1384 — live frames count against the connection's outbound queue like
+// adr: 20261016151947 — live frames count against the connection's outbound queue like
 // any other traffic (ADR-1323): a client too slow for them is closed with
 // 1013 so it reconnects, rather than growing realtimed's memory.
 func TestLiveFramesUseTheOutboundBudget(t *testing.T) {
@@ -314,7 +314,7 @@ func TestLiveFramesUseTheOutboundBudget(t *testing.T) {
 	}
 }
 
-// adr: 1384 — v2 connections carry live.* frames to the live-query proxy
+// adr: 20261016151947 — v2 connections carry live.* frames to the live-query proxy
 // unchanged and queue its frames back; without one, a live subscription is
 // refused, and closing the connection ends the live session.
 func TestLiveFramesRideV2Connections(t *testing.T) {

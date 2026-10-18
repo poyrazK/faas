@@ -1,5 +1,5 @@
 /**
- * Sealed live queries (ADR-1384). A backend seals a query, its parameters and
+ * Sealed live queries (ADR-20261016151947). A backend seals a query, its parameters and
  * its database with the per-database live secret; the browser presents the
  * seal to subscribe. Sealing is local Web Crypto (Node 22, browsers, edge
  * runtimes) and makes no network call. The format matches pkg/livequery/seal

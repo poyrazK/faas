@@ -1,5 +1,5 @@
 // Command livequeryd maintains live queries for one PostgreSQL database
-// (ADR-1384). It runs beside the database: it decodes the database's logical
+// (ADR-20261016151947). It runs beside the database: it decodes the database's logical
 // slot, keeps every subscribed query's result current, checkpoints its state
 // so a restart or a park resumes from the slot, and serves clients. In
 // production realtimed carries the client connections; for development,
@@ -52,7 +52,7 @@ func main() {
 	wire.Daemon("livequeryd", run)
 }
 
-// The roles split livequeryd in two (ADR-1384): the engine runs beside the
+// The roles split livequeryd in two (ADR-20261016151947): the engine runs beside the
 // database, inside its VM, and never parses SQL; the compiler runs on the
 // host with the parser and the memory it needs. -role all runs both in one
 // process.

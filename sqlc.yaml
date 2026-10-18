@@ -124,7 +124,7 @@ sql:
         emit_methods_with_db_argument: true
         emit_empty_slices: true
 
-  # ADR-1384 live-query keys; projection mirrors its migration-owned table.
+  # ADR-20261016151947 live-query keys; projection mirrors its migration-owned table.
   - engine: "postgresql"
     queries: "pkg/state/livekeys/queries.sql"
     schema: "pkg/state/livekeys/schema.sql"

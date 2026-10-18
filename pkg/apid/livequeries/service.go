@@ -1,4 +1,4 @@
-// Package livequeries is apid's half of ADR-1384 live queries: it enables
+// Package livequeries is apid's half of ADR-20261016151947 live queries: it enables
 // them per managed database and issues, rotates and revokes the database's
 // live secret. Secrets are sealed to livequeryd's age recipient before they
 // are stored, so apid cannot read one back; the customer sees each secret

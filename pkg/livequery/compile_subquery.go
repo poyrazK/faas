@@ -8,7 +8,7 @@ import (
 	pgq "github.com/pganalyze/pg_query_go/v6"
 )
 
-// Keyed subqueries (ADR-1384). EXISTS / NOT EXISTS anywhere in WHERE, and IN
+// Keyed subqueries (ADR-20261016151947). EXISTS / NOT EXISTS anywhere in WHERE, and IN
 // / op ANY as top-level AND conditions, over one keyed table. The subquery's
 // table becomes a relation whose rows the result never carries. A pair cache
 // per subquery holds which FROM rows match which subquery rows (an inner

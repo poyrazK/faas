@@ -2,7 +2,7 @@ package livequery
 
 import "testing"
 
-// adr: 1384 — a FULL JOIN followed by a LEFT JOIN over a self-joined table:
+// adr: 20261016151947 — a FULL JOIN followed by a LEFT JOIN over a self-joined table:
 // NULL-extended rows must vanish when the nullable side gains a match.
 func TestOuterJoinNullExtendedRowsFollowMatches(t *testing.T) {
 	h := newHarness(t, `

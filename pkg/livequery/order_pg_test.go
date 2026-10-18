@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// adr: 1384 — a latest-N feed is maintained without re-reading its window:
+// adr: 20261016151947 — a latest-N feed is maintained without re-reading its window:
 // a new row enters and pushes the last one out, edits that keep the order
 // update in place, rows past a full window stay out, and only a window that
 // loses rows nothing replaces is read again. Every ordered delta carries the

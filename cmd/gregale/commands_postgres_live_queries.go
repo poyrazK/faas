@@ -1,6 +1,6 @@
 package main
 
-// `gregale postgres live` enables ADR-1384 live queries on a managed database
+// `gregale postgres live` enables ADR-20261016151947 live queries on a managed database
 // and manages its live secret. The API returns a secret only in the response
 // that issues it, so enable and rotate either store it as an app secret
 // (--app) or print it once.

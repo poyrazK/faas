@@ -57,7 +57,7 @@ func (a *realtimeJWTAuthorizer) AuthorizeIdentity(ctx context.Context, rawToken 
 	return realtime.JWTIdentity{Principal: claims.Subject, SessionID: claims.Custom["session_id"], ExpiresAt: claims.Exp}, nil
 }
 
-// AuthorizeClaims verifies a token for RLS-mode live queries (ADR-1384) and
+// AuthorizeClaims verifies a token for RLS-mode live queries (ADR-20261016151947) and
 // returns its whole claims object, which the database reads as
 // request.jwt.claims. The payload is read only after the signature, issuer,
 // audience and lifetime have been verified; the token must expire.

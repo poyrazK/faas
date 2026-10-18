@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// adr: 1384 — live queries are invisible outside FAAS_LIVE_QUERIES_ACCOUNTS:
+// adr: 20261016151947 — live queries are invisible outside FAAS_LIVE_QUERIES_ACCOUNTS:
 // every live route, any method, with or without credentials, answers like an
 // unregistered route, and the account's realtime endpoints get no live
 // routes. A listed account reaches the routes.

@@ -135,7 +135,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		routeReporter = reader
 		fleetClient = reader
 	}
-	// Live queries (ADR-1384): apid registers each endpoint with the live
+	// Live queries (ADR-20261016151947): apid registers each endpoint with the live
 	// routes of databases bound to its app.
 	proxy, err := liveProxy(os.Getenv, log)
 	if err != nil {

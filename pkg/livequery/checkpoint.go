@@ -16,7 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Checkpoints (ADR-1384). A checkpoint is the engine's state as of its last
+// Checkpoints (ADR-20261016151947). A checkpoint is the engine's state as of its last
 // round: every registration, and each member's caches and windows, all
 // reflecting that round's snapshot S. A restored engine streams from the
 // slot's confirmed position; transactions the slot delivers again that are
