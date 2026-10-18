@@ -1,3 +1,5 @@
+// spec: §4.7
+// adr: 1162
 package meter
 
 import (

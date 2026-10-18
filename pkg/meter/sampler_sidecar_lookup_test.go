@@ -1,3 +1,5 @@
+// spec: §4.7
+// adr: 070
 package meter
 
 import (

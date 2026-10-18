@@ -178,6 +178,7 @@ func TestConcurrentAcquireNoCollision(t *testing.T) {
 
 // Every static-egress slot maps to a host address inside 10.200.0.0/16 that
 // is neither the network address, .0.1, nor the broadcast address.
+// adr: 119
 func TestStaticEgressHostIPForSlotStaysInsideUsableRange(t *testing.T) {
 	pool := netip.MustParsePrefix(staticEgressPoolBase + "/16")
 	first := staticEgressHostIPForSlot(0)
