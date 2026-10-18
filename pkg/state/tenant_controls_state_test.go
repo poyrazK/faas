@@ -116,7 +116,8 @@ func checkTenantControls(t *testing.T, ctx context.Context, st state.Store, acco
 		t.Fatal(err)
 	}
 	now := time.Now().UTC()
-	due, next := now.AddDate(0, 0, -20), now.AddDate(0, 0, 1)
+	// Postgres keeps microseconds; Linux clocks have nanoseconds.
+	due, next := now.AddDate(0, 0, -20).Truncate(time.Microsecond), now.AddDate(0, 0, 1)
 	if _, err := st.(state.StatementInvoicePaymentStore).RecordStatementInvoicePayment(ctx, export.ID, state.StatementInvoicePayment{
 		Status: state.InvoicePaymentOpen, AmountRemainingMinor: 5, DueAt: &due}, now, &next); err != nil {
 		t.Fatal(err)
@@ -131,7 +132,7 @@ func checkTenantControls(t *testing.T, ctx context.Context, st state.Store, acco
 	}
 	budgets := st.(state.PlatformTenantRequestBudgetStore)
 	if decision, err := budgets.AdmitPlatformTenantRequest(ctx, accountID, tenant.ID); err != nil || decision.Allowed ||
-		decision.Scope != state.PlatformTenantBudgetScopeOverdue || !decision.OverdueDueAt.Equal(due.Truncate(time.Microsecond)) {
+		decision.Scope != state.PlatformTenantBudgetScopeOverdue || !decision.OverdueDueAt.Equal(due) {
 		t.Fatalf("held tenant admission = %+v, %v", decision, err)
 	}
 	if holds, err := overdue.ListPlatformTenantOverdueHolds(ctx, accountID); err != nil || len(holds) != 1 {
