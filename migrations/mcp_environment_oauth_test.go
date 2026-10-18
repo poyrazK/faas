@@ -1,6 +1,7 @@
 package migrations_test
 
 import (
+	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"os"
 	"strings"
@@ -10,6 +11,9 @@ import (
 func TestMCPEnvironmentOAuthMigrationReplay(t *testing.T) {
 	pool := pgtest.OpenMigrated(t)
 	ctx := t.Context()
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
