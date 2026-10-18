@@ -170,7 +170,7 @@ func TestStartServiceTCPProxy(t *testing.T) {
 		return runDeps{listen: listen, metrics: gateway.NewMetrics(), nodeCache: makeNodeCacheForTest(&fakeSubscribe{}, nil, nil)}
 	}
 
-	if err := startServiceTCPProxy(context.Background(), runDeps{}, "10.100.0.1:10082", services, store, nil, log); err == nil {
+	if _, err := startServiceTCPProxy(context.Background(), runDeps{}, "10.100.0.1:10082", services, store, nil, log); err == nil {
 		t.Fatal("started without the vmmd node cache and metrics")
 	}
 	noIdentity := gateway.NewServiceProxy(gateway.ServiceProxyConfig{
@@ -179,11 +179,11 @@ func TestStartServiceTCPProxy(t *testing.T) {
 			return gateway.ServiceCaller{}, nil
 		},
 	})
-	if err := startServiceTCPProxy(context.Background(), newDeps(net.Listen), "10.100.0.1:10082", noIdentity, store, nil, log); err == nil {
+	if _, err := startServiceTCPProxy(context.Background(), newDeps(net.Listen), "10.100.0.1:10082", noIdentity, store, nil, log); err == nil {
 		t.Fatal("started without source-address caller identity")
 	}
 	refuse := func(string, string) (net.Listener, error) { return nil, errors.New("address in use") }
-	if err := startServiceTCPProxy(context.Background(), newDeps(refuse), "10.100.0.1:10082", services, store, nil, log); err == nil {
+	if _, err := startServiceTCPProxy(context.Background(), newDeps(refuse), "10.100.0.1:10082", services, store, nil, log); err == nil {
 		t.Fatal("a listen failure was not reported")
 	}
 
@@ -198,7 +198,7 @@ func TestStartServiceTCPProxy(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	errc := make(chan error, 1)
-	if err := startServiceTCPProxy(ctx, deps, "10.100.0.1:10082", services, store, errc, log); err != nil {
+	if _, err := startServiceTCPProxy(ctx, deps, "10.100.0.1:10082", services, store, errc, log); err != nil {
 		t.Fatalf("startServiceTCPProxy: %v", err)
 	}
 	conn, err := net.Dial("tcp", bound.Addr().String())
@@ -220,6 +220,34 @@ func TestStartServiceTCPProxy(t *testing.T) {
 	select {
 	case err := <-errc:
 		t.Fatalf("cancellation surfaced as a serve error: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	// ADR-20261018072701: a hand-off's old generation stops accepting and returns once
+	// its sessions end, without reporting the closed listener as a failure.
+	handoffCtx, handoffCancel := context.WithCancel(context.Background())
+	defer handoffCancel()
+	deps = newDeps(func(network, _ string) (net.Listener, error) {
+		ln, err := net.Listen(network, "127.0.0.1:0")
+		bound = ln
+		return ln, err
+	})
+	drainSessions, err := startServiceTCPProxy(handoffCtx, deps, "10.100.0.1:10082", services, store, errc, log)
+	if err != nil {
+		t.Fatalf("startServiceTCPProxy: %v", err)
+	}
+	drainCtx, drainCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer drainCancel()
+	if err := drainSessions(drainCtx); err != nil {
+		t.Fatalf("drain: %v", err)
+	}
+	if c, err := net.Dial("tcp", bound.Addr().String()); err == nil {
+		_ = c.Close()
+		t.Fatal("the old generation still accepts after its drain began")
+	}
+	select {
+	case err := <-errc:
+		t.Fatalf("the drain surfaced as a serve error: %v", err)
 	case <-time.After(100 * time.Millisecond):
 	}
 }

@@ -2,8 +2,9 @@
 """Map a commit range to the release binaries it changed, for per-unit releases.
 
 A per-unit release (docs/adr/1650-per-unit-control-plane-releases.md)
-ships only the control-plane daemons whose code changed since the full
-release the host runs, on top of that release. This script decides which
+ships only the daemons whose code changed since the full release the hosts
+run, on top of that release, through two lanes: control-plane daemons, then
+the edge (the gateways, one host at a time). This script decides which
 ones, and whether anything outside Go code changed that only a full release
 can carry.
 
@@ -29,12 +30,14 @@ Non-Go inputs map to flags (scripts/ci/release_units.json):
             ineligible: the per-unit lane reuses them from the base release.
   pending   guest/, images/, kernel, and deploy/ roles only compute hosts
             run (compute_only_paths). They ship with the next full release
-            and do not stop control-plane units from deploying alone.
+            and do not stop control-plane units from deploying alone. A
+            compute-only role does block the edge lane, which deploys onto
+            compute hosts without converging their roles.
 
-Binaries outside the control-plane lane (shared with compute hosts,
-compute-only, CLIs) are reported as pending as well: the per-unit lane
-leaves them at base, which is the mixed state every rolling rollout already
-passes through while compute hosts trail the control plane.
+Binaries outside both lanes (shared with compute hosts, compute-only, CLIs)
+are reported as pending: the per-unit lanes leave them at base, which is the
+mixed state every rolling rollout already passes through while compute hosts
+trail the control plane.
 
 The checkout must be at --head (`go list` reads the working tree).
 
@@ -51,7 +54,10 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_CONFIG = os.path.join(HERE, "release_units.json")
 
-LANES = ("control-plane", "shared", "compute", "tool")
+LANES = ("control-plane", "edge", "shared", "compute", "tool")
+# Lanes a unit release deploys, in deploy order.
+DEPLOY_LANES = ("control-plane", "edge")
+HOST_ROLES = ("control-plane", "compute-only")  # pkg/daemonunitspec roles
 LIST_FIELDS = ",".join([
     "ImportPath", "Dir", "Imports", "GoFiles", "CgoFiles", "SFiles", "CFiles",
     "HFiles", "SysoFiles", "EmbedFiles", "Module", "Error", "DepsErrors",
@@ -76,8 +82,11 @@ def load_config(path=DEFAULT_CONFIG):
     for name, entry in config["binaries"].items():
         if entry.get("lane") not in LANES:
             raise ValueError(f"{path}: binary {name} has unknown lane {entry.get('lane')!r}")
-        if entry.get("services") and entry["lane"] != "control-plane":
-            raise ValueError(f"{path}: only control-plane binaries list services ({name})")
+        if entry.get("services") and entry["lane"] not in DEPLOY_LANES:
+            raise ValueError(f"{path}: only deployable lanes list services ({name})")
+        for service in entry.get("services") or []:
+            if service.get("host", "control-plane") not in HOST_ROLES:
+                raise ValueError(f"{path}: {name} service {service.get('name')} has unknown host {service['host']!r}")
     return config
 
 
@@ -276,22 +285,34 @@ def analyze(commits, closures, config, exists, recipe_shas=frozenset()):
     if recipe_shas:
         flags["build_recipe"] = {"blocking": False, "count": len(recipe_shas), "paths": ["Makefile"]}
 
-    deployable = sorted(n for n, b in binaries.items() if b["changed"] and b["lane"] == "control-plane")
+    blocking = sorted(f for f, v in flags.items() if v["blocking"])
+    lanes = {}
+    for lane in DEPLOY_LANES:
+        changed = sorted(n for n, b in binaries.items() if b["changed"] and b["lane"] == lane)
+        # The edge lane lands on compute hosts as they are: a change to a
+        # role those hosts run waits for the full release that converges it.
+        blocked = sorted(blocking + (["compute_deploy"] if lane == "edge" and "compute_deploy" in flags else []))
+        reasons = [f"{f} changed since base ({flags[f]['count']} paths, e.g. {flags[f]['paths'][0]})" for f in blocked]
+        if not changed:
+            reasons.append(f"no {lane} daemon changed since base")
+        lanes[lane] = {"changed": changed, "blocked_by": blocked, "eligible": bool(changed) and not blocked,
+                       "reasons": reasons}
+    deployable = sorted(n for lane in lanes.values() if lane["eligible"] for n in lane["changed"])
     pending = {lane: sorted(n for n, b in binaries.items() if b["changed"] and b["lane"] == lane)
                for lane in ("shared", "compute", "tool")}
-    blocked_by = sorted(f for f, v in flags.items() if v["blocking"])
-    reasons = [f"{f} changed since base ({flags[f]['count']} paths, e.g. {flags[f]['paths'][0]})" for f in blocked_by]
-    if not deployable:
-        reasons.append("no control-plane daemon changed since base")
+    for lane, v in lanes.items():
+        pending[lane] = [] if v["eligible"] else v["changed"]
+    eligible = any(lane["eligible"] for lane in lanes.values())
     return {
-        "format_version": 1,
+        "format_version": 2,
         "binaries": binaries,
         "flags": flags,
+        "lanes": lanes,
         "deployable": deployable,
         "pending": pending,
-        "blocked_by": blocked_by,
-        "eligible": bool(deployable) and not blocked_by,
-        "reasons": reasons,
+        "blocked_by": blocking,
+        "eligible": eligible,
+        "reasons": [] if eligible else [r for lane in lanes.values() for r in lane["reasons"]],
         "commits": len(commits),
     }
 
@@ -329,6 +350,9 @@ def summary(rep):
     for flag, v in sorted(rep["flags"].items()):
         kind = "blocking" if v["blocking"] else "pending"
         lines.append(f"  flag {flag} ({kind}): {v['count']} paths, e.g. {v['paths'][0]}")
+    for lane, v in rep["lanes"].items():
+        state = "eligible" if v["eligible"] else "not eligible: " + "; ".join(v["reasons"])
+        lines.append(f"{lane} lane: {' '.join(v['changed']) or '<none>'} ({state})")
     lines.append(f"deployable: {' '.join(rep['deployable']) or '<none>'}")
     lines.append(f"eligible: {str(rep['eligible']).lower()}" +
                  ("" if rep["eligible"] else f" ({'; '.join(rep['reasons'])})"))

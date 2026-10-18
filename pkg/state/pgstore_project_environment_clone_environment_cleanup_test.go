@@ -312,6 +312,8 @@ func TestPgCloneEnvironmentCleanupScopeColumnInventory(t *testing.T) {
 		"hosting_oidc_trusts.environment", // External GitHub claim; its site FK retains the actual Gregale environment.
 		"hosting_sites.environment",       // Composite environment FK blocks cleanup until hosting retirement.
 		"instance_runtime_config_receipts.scope",
+		"internal_mail_reputation_events.scope", // Mail producer/domain enum; not a Gregale environment.
+		"internal_mail_reputation_holds.scope",  // Mail producer/domain enum; not a Gregale environment.
 		"invocation_environment_queue_admissions.environment_id",
 		"invocation_work_environment_admissions.environment_id",
 		"invocation_work_environment_domains.environment_id",
@@ -328,6 +330,7 @@ func TestPgCloneEnvironmentCleanupScopeColumnInventory(t *testing.T) {
 		"object_buckets.scope",
 		"object_storage_s3_credentials.managed_scope",
 		"pg_ratelimit_counters.scope",
+		"platform_mail_deployment_fences.scope",              // Retain monotonic app/scope tombstones across cleanup; never reset delivery fences.
 		"production_lifecycle_reviews.scope",                 // Retained historical deployment review evidence.
 		"project_binding_verification_runs.environment_slug", // Scope-only verification receipts block metadata cleanup.
 		"project_environment_approvals.environment_slug",

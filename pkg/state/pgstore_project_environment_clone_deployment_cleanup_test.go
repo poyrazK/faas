@@ -295,7 +295,7 @@ func TestPgCloneDeploymentCleanupBlocksConcurrentBorrowers(t *testing.T) {
 		case <-ticker.C:
 		}
 	}
-	for _, borrower := range []string{"foreign_key", "soft", "soft_partition", "drain_plan", "retirement_journal", "scenario_cold_preparations", "scenario_recorder_sessions", "scenario_suspend_resumes", "scenario_worker_faults", "replacement"} {
+	for _, borrower := range []string{"foreign_key", "soft", "soft_partition", "drain_plan", "retirement_journal", "scenario_cold_preparations", "scenario_recorder_sessions", "scenario_suspend_resumes", "scenario_worker_faults", "platform_mail_deployment_observations", "platform_mail_producer_outbox", "replacement"} {
 		tx, err := pool.Begin(ctx)
 		if err != nil {
 			t.Fatal(err)
@@ -317,7 +317,7 @@ func TestPgCloneDeploymentCleanupBlocksConcurrentBorrowers(t *testing.T) {
 			_, err = tx.Exec(ctx, drainPlanDeploymentBorrowerSQL, id)
 		case "retirement_journal":
 			_, err = tx.Exec(ctx, "LOCK TABLE environment_workload_retirements IN ROW EXCLUSIVE MODE")
-		case "scenario_cold_preparations", "scenario_recorder_sessions", "scenario_suspend_resumes", "scenario_worker_faults":
+		case "scenario_cold_preparations", "scenario_recorder_sessions", "scenario_suspend_resumes", "scenario_worker_faults", "platform_mail_deployment_observations", "platform_mail_producer_outbox":
 			// These retained rehearsal receipts have no deployment FK. Every writer
 			// must remain fenced until deletion and its receipt commit together.
 			_, err = tx.Exec(ctx, "LOCK TABLE "+borrower+" IN ROW EXCLUSIVE MODE")
@@ -387,6 +387,65 @@ func TestPgCloneDeploymentCleanupRetainsRehearsalEvidence(t *testing.T) {
 			var after []byte
 			if err = pool.QueryRow(t.Context(), "SELECT to_jsonb(f) FROM scenario_worker_faults f WHERE app_id=$1", workload.AppID).Scan(&after); err != nil || string(before) != string(after) {
 				t.Fatal("original rehearsal evidence changed", err)
+			}
+		})
+	}
+}
+
+// ADR-20261017155842: even terminal mail observations retain their exact
+// deployment. Original source evidence and monotonic scope fences survive cleanup.
+func TestPgCloneDeploymentCleanupRetainsMailEvidence(t *testing.T) {
+	for _, target := range []bool{false, true} {
+		t.Run(fmt.Sprint("target=", target), func(t *testing.T) {
+			s, pool, l, native := deploymentCleanupFixture(t)
+			workload := native.Plan.Workloads[0]
+			deploymentID := workload.SourceDeploymentID
+			if target {
+				deploymentID = workload.TargetDeploymentID
+			}
+			var before []byte
+			err := pool.QueryRow(t.Context(), `INSERT INTO platform_mail_deployment_observations
+(deployment_id,failure_revision,account_id,disposition) VALUES($1,1,$2,'cooldown')
+RETURNING to_jsonb(platform_mail_deployment_observations)`, deploymentID, l.Operation.AccountID).Scan(&before)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var revision, success int64
+			if err = pool.QueryRow(t.Context(), "SELECT revision,success_revision FROM platform_mail_deployment_fences WHERE app_id=$1 AND scope=$2", workload.AppID, l.Operation.TargetEnvironment).Scan(&revision, &success); err != nil {
+				t.Fatal(err)
+			}
+			report, err := s.ProjectEnvironmentCloneDeploymentBorrowersForLease(t.Context(), l)
+			want := int64(0)
+			if target {
+				want = 1
+			}
+			if err != nil || report.SoftReferences[workload.TargetDeploymentID]["platform_mail_deployment_observations.deployment_id"] != want {
+				t.Fatal("mail evidence miscounted", report, err)
+			}
+			err = s.CleanupProjectEnvironmentCloneDeploymentsForLease(t.Context(), l)
+			if target && !errors.Is(err, state.ErrConflict) || !target && err != nil {
+				t.Fatal("mail borrower cleanup", err)
+			}
+			var live, owner, receipt bool
+			if err = pool.QueryRow(t.Context(), "SELECT EXISTS(SELECT 1 FROM deployments WHERE id=$1),EXISTS(SELECT 1 FROM deployment_runtime_environment_owners WHERE deployment_id=$1),EXISTS(SELECT 1 FROM project_environment_clone_deployment_cleanups WHERE operation_id=$2)", workload.TargetDeploymentID, l.Operation.ID).Scan(&live, &owner, &receipt); err != nil {
+				t.Fatal(err)
+			}
+			if live != target || owner != target || receipt == target {
+				t.Fatal("partial mail borrower cleanup", live, owner, receipt)
+			}
+			var after []byte
+			if err = pool.QueryRow(t.Context(), "SELECT to_jsonb(o) FROM platform_mail_deployment_observations o WHERE deployment_id=$1", deploymentID).Scan(&after); err != nil || string(before) != string(after) {
+				t.Fatal("original mail observation changed", err)
+			}
+			if !target {
+				if err = s.CleanupProjectEnvironmentCloneEnvironmentForLease(t.Context(), l); err != nil {
+					t.Fatal("metadata cleanup", err)
+				}
+				revision++ // The authored deployment DELETE trigger advances its permanent fence.
+			}
+			var gotRevision, gotSuccess int64
+			if err = pool.QueryRow(t.Context(), "SELECT revision,success_revision FROM platform_mail_deployment_fences WHERE app_id=$1 AND scope=$2", workload.AppID, l.Operation.TargetEnvironment).Scan(&gotRevision, &gotSuccess); err != nil || gotRevision != revision || gotSuccess != success {
+				t.Fatal("mail fence erased or rewound", gotRevision, revision, gotSuccess, success, err)
 			}
 		})
 	}

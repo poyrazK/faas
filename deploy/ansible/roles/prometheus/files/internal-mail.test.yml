@@ -1,0 +1,187 @@
+rule_files:
+  - faas.rules.yml
+
+evaluation_interval: 1m
+
+tests:
+  - name: disabled internal mail produces no alerts
+    interval: 1m
+    input_series: []
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: InternalMailMonitoringUnavailable
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: InternalMailStatisticsUnavailable
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: InternalMailQueueStalled
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: InternalMailReportsStuck
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: InternalMailUncertainSubmission
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: InternalMailBounceRateHigh
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: InternalMailComplaint
+        exp_alerts: []
+  - name: pilot faults fire actionable internal alerts
+    interval: 1m
+    input_series:
+      - series: 'maild_mail_monitoring_up{job="node",instance="pilot"}'
+        values: '0+0x20'
+      - series: 'maild_mail_monitoring_collected_at_seconds{job="node",instance="pilot"}'
+        values: '0+60x20'
+      - series: 'maild_mail_stats_up{job="node",instance="pilot"}'
+        values: '0+0x20'
+      - series: 'maild_mail_oldest_pending_seconds{job="node",instance="pilot"}'
+        values: '600+0x20'
+      - series: 'maild_mail_postfix_oldest_seconds{job="node",instance="pilot",kind="report"}'
+        values: '300+0x20'
+      - series: 'maild_mail_recipients{job="node",instance="pilot",state="uncertain"}'
+        values: '1+0x20'
+      - series: 'maild_mail_outcomes_last_day{job="node",instance="pilot",kind="accepted"}'
+        values: '3+0x20'
+      - series: 'maild_mail_outcomes_last_day{job="node",instance="pilot",kind="bounced"}'
+        values: '2+0x20'
+      - series: 'maild_mail_outcomes_last_day{job="node",instance="pilot",kind="complained"}'
+        values: '1+0x20'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: InternalMailMonitoringUnavailable
+        exp_alerts:
+          - exp_labels:
+              job: node
+              instance: pilot
+              severity: warn
+              component: maild
+              family: internal_mail
+              public_status: internal
+            exp_annotations:
+              summary: "Internal mail monitoring is unavailable or stale"
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/internal-mail.md"
+      - eval_time: 10m
+        alertname: InternalMailStatisticsUnavailable
+        exp_alerts:
+          - exp_labels:
+              job: node
+              instance: pilot
+              severity: warn
+              component: maild
+              family: internal_mail
+              public_status: internal
+            exp_annotations:
+              summary: "Internal mail database or Postfix statistics are unavailable"
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/internal-mail.md"
+      - eval_time: 10m
+        alertname: InternalMailQueueStalled
+        exp_alerts:
+          - exp_labels:
+              job: node
+              instance: pilot
+              severity: warn
+              component: maild
+              family: internal_mail
+              public_status: internal
+            exp_annotations:
+              summary: "Internal mail delivery queue is aging"
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/internal-mail.md"
+      - eval_time: 10m
+        alertname: InternalMailReportsStuck
+        exp_alerts:
+          - exp_labels:
+              job: node
+              instance: pilot
+              severity: warn
+              component: maild
+              family: internal_mail
+              public_status: internal
+            exp_annotations:
+              summary: "Internal mail reports are waiting too long"
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/internal-mail.md"
+      - eval_time: 10m
+        alertname: InternalMailUncertainSubmission
+        exp_alerts:
+          - exp_labels:
+              job: node
+              instance: pilot
+              severity: warn
+              component: maild
+              family: internal_mail
+              public_status: internal
+            exp_annotations:
+              summary: "Internal mail has an uncertain SMTP submission"
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/internal-mail.md"
+      - eval_time: 10m
+        alertname: InternalMailBounceRateHigh
+        exp_alerts:
+          - exp_labels:
+              job: node
+              instance: pilot
+              severity: warn
+              component: maild
+              family: internal_mail
+              public_status: internal
+            exp_annotations:
+              summary: "Internal mail bounces exceed the pilot threshold"
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/internal-mail.md"
+      - eval_time: 10m
+        alertname: InternalMailComplaint
+        exp_alerts:
+          - exp_labels:
+              job: node
+              instance: pilot
+              severity: warn
+              component: maild
+              family: internal_mail
+              public_status: internal
+            exp_annotations:
+              summary: "Internal mail received a complaint"
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/ops/internal-mail.md"
+  - name: quiet healthy low volume pilot
+    interval: 1m
+    input_series:
+      - series: 'maild_mail_monitoring_up{job="node",instance="pilot"}'
+        values: '1+0x20'
+      - series: 'maild_mail_monitoring_collected_at_seconds{job="node",instance="pilot"}'
+        values: '0+60x20'
+      - series: 'maild_mail_stats_up{job="node",instance="pilot"}'
+        values: '1+0x20'
+      - series: 'maild_mail_postfix_stats_up{job="node",instance="pilot"}'
+        values: '1+0x20'
+      - series: 'maild_mail_oldest_pending_seconds{job="node",instance="pilot"}'
+        values: '0+0x20'
+      - series: 'maild_mail_postfix_oldest_seconds{job="node",instance="pilot",kind="report"}'
+        values: '0+0x20'
+      - series: 'maild_mail_recipients{job="node",instance="pilot",state="uncertain"}'
+        values: '0+0x20'
+      - series: 'maild_mail_outcomes_last_day{job="node",instance="pilot",kind="accepted"}'
+        values: '0+0x20'
+      - series: 'maild_mail_outcomes_last_day{job="node",instance="pilot",kind="bounced"}'
+        values: '1+0x20'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: InternalMailMonitoringUnavailable
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: InternalMailStatisticsUnavailable
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: InternalMailQueueStalled
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: InternalMailReportsStuck
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: InternalMailUncertainSubmission
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: InternalMailBounceRateHigh
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: InternalMailComplaint
+        exp_alerts: []

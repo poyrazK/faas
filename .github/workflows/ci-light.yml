@@ -372,7 +372,10 @@ jobs:
         run: |
           python3 scripts/ci/affected_units_test.py
           python3 scripts/ci/plan_unit_deploy_test.py
+          python3 scripts/ci/plan_edge_rollout_test.py
           bash scripts/unit-release-verify_test.sh
+          bash scripts/ci/unit_deploy_test.sh
+          bash scripts/ci/verify_unit_release_test.sh
       - name: MemStore stub guard
         run: make memstore-stubs-check
       - name: daemon environment contract
@@ -491,16 +494,14 @@ jobs:
   tests:
     name: "light: tests (shard ${{ matrix.shard }})"
     runs-on: ubuntu-latest
-    # Changed packages run in full with -race. The large packages
-    # cmd/gregale, pkg/state and pkg/apid/apidserver (one per shard, see
-    # affected_packages.py SELECTIVE_SHARD) run only the tests
-    # related to the change, without -race. The mega tier (ci.yml) runs every
-    # suite in full with -race nightly and before every release. Main pushes
-    # also warm the large-package build for later pull requests.
-    # Preserve the bounded 30-minute PR allowance for every shard.
-    # State and apidserver shards also need cold non-race builds after their
-    # race suites; shard 3 first compiles portable binding/guest contracts.
-    timeout-minutes: ${{ github.ref == 'refs/heads/main' && 40 || 30 }}
+    # Changed packages run in full with -race. Each shard also runs related
+    # tests of one large package (cmd/gregale, pkg/state or pkg/apid/apidserver;
+    # see SELECTIVE_SHARD in affected_packages.py), without -race. The mega
+    # tier (ci.yml) runs every suite in full with -race nightly and before
+    # every release. Main pushes also warm the large-package build for PRs.
+    # Cold native fixtures and large-package builds can exceed 20 minutes.
+    # Use main's budget on PRs too; the Go test deadlines below stay bounded.
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
@@ -676,8 +677,7 @@ jobs:
         env:
           GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
           SHARD: ${{ matrix.shard }}
-          # Related-test cap per large package: enough for a focused change,
-          # bounded for focused pull-request runs.
+          # Cap related tests independently of the cold build allowance.
           SELECTIVE_CAP: "150"
         run: |
           set -euo pipefail
@@ -747,6 +747,7 @@ jobs:
           POSTGRES_USER: faas
           POSTGRES_PASSWORD: faas
           POSTGRES_DB: faas
+          POSTGRES_INITDB_ARGS: "-c max_locks_per_transaction=512"
         ports:
           - 5432:5432
         options: >-

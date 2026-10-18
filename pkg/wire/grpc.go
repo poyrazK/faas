@@ -296,6 +296,7 @@ func ListenAs(ctx context.Context, target string, tlsCfg *tls.Config, daemonUser
 		if err != nil {
 			return nil, fmt.Errorf("wire: listen %s: %w", t, err)
 		}
+		Share(l)
 		lis = l
 	case SchemeDNS:
 		return nil, fmt.Errorf("wire: dns scheme is not a bind target")

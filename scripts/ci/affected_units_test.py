@@ -21,6 +21,7 @@ CONFIG = {
         "apid": {"lane": "control-plane", "services": [{"name": "apid"}]},
         "meterd": {"lane": "control-plane", "services": [{"name": "meterd"}]},
         "schedd": {"lane": "shared"},
+        "gatewayd-internal": {"lane": "edge", "services": [{"name": "gatewayd-internal", "host": "compute-only"}]},
         "vmmd": {"lane": "compute"},
         "gregalectl": {"lane": "tool"},
     },
@@ -41,6 +42,8 @@ CLOSURES = {
     "meterd": ({"cmd/meterd", "pkg/state"}, {"cmd/meterd/main.go", "pkg/state/store.go"}),
     "schedd": ({"cmd/schedd", "pkg/sched", "pkg/state"},
                {"cmd/schedd/main.go", "pkg/sched/sched.go", "pkg/state/store.go"}),
+    "gatewayd-internal": ({"cmd/gatewayd-internal", "pkg/gateway", "pkg/state"},
+                          {"cmd/gatewayd-internal/main.go", "pkg/gateway/proxy.go", "pkg/state/store.go"}),
     "vmmd": ({"cmd/vmmd", "pkg/fcvm"}, {"cmd/vmmd/main.go", "pkg/fcvm/vm_linux.go"}),
     "gregalectl": ({"cmd/gregalectl", "pkg/state"}, {"cmd/gregalectl/main.go", "pkg/state/store.go"}),
 }
@@ -56,14 +59,15 @@ def changed(rep):
 
 class AnalyzeTest(unittest.TestCase):
     CASES = [
-        # name, commits (newest first), changed binaries, deployable, blocked_by, eligible
+        # name, commits (newest first), changed binaries, deployable (eligible lanes), blocked_by, eligible
         ("docs only", [("c1", ["docs/quickstart.md"])], {}, [], [], False),
         ("apid-only package", [("c1", ["pkg/apid/server.go"])], {"apid": "c1"}, ["apid"], [], True),
         ("embedded file", [("c1", ["pkg/apid/static/index.html"])], {"apid": "c1"}, ["apid"], [], True),
         ("test file never ships", [("c1", ["pkg/apid/server_test.go"])], {}, [], [], False),
         ("shared package changes every importer",
          [("c1", ["pkg/state/store.go"])],
-         {"apid": "c1", "meterd": "c1", "schedd": "c1", "gregalectl": "c1"}, ["apid", "meterd"], [], True),
+         {"apid": "c1", "meterd": "c1", "schedd": "c1", "gatewayd-internal": "c1", "gregalectl": "c1"},
+         ["apid", "gatewayd-internal", "meterd"], [], True),
         ("compute-only change has no control-plane unit",
          [("c1", ["pkg/fcvm/vm_linux.go"])], {"vmmd": "c1"}, [], [], False),
         ("constrained-out file is not an input", [("c1", ["pkg/fcvm/vm_darwin.go"])], {}, [], [], False),
@@ -72,15 +76,15 @@ class AnalyzeTest(unittest.TestCase):
         ("deleted test file is not an input", [("c1", ["pkg/apid/gone_test.go"])], {}, [], [], False),
         ("go.mod changes every binary",
          [("c1", ["go.mod"])],
-         {"apid": "c1", "meterd": "c1", "schedd": "c1", "vmmd": "c1", "gregalectl": "c1"},
-         ["apid", "meterd"], [], True),
+         {"apid": "c1", "meterd": "c1", "schedd": "c1", "gatewayd-internal": "c1", "vmmd": "c1", "gregalectl": "c1"},
+         ["apid", "gatewayd-internal", "meterd"], [], True),
         ("migration blocks the lane",
          [("c2", ["pkg/apid/server.go"]), ("c1", ["migrations/00002_add.sql"])],
-         {"apid": "c2"}, ["apid"], ["migrations"], False),
+         {"apid": "c2"}, [], ["migrations"], False),
         ("migration test does not block",
          [("c1", ["pkg/apid/server.go", "migrations/00002_add_test.go"])], {"apid": "c1"}, ["apid"], [], True),
         ("deploy tree blocks", [("c1", ["pkg/apid/server.go", "deploy/ansible/site.yml"])],
-         {"apid": "c1"}, ["apid"], ["deploy"], False),
+         {"apid": "c1"}, [], ["deploy"], False),
         ("bundle file blocks", [("c1", ["docs/DPA.md"])], {}, [], ["control_plane_bundle"], False),
         ("guest change is pending, not blocking", [("c1", ["pkg/apid/server.go", "guest/init/main.go"])],
          {"apid": "c1"}, ["apid"], [], True),
@@ -92,7 +96,10 @@ class AnalyzeTest(unittest.TestCase):
          {}, [], ["deploy"], False),
         ("unit version is the newest commit that touched the unit",
          [("c3", ["pkg/sched/sched.go"]), ("c2", ["pkg/apid/server.go"]), ("c1", ["pkg/state/store.go"])],
-         {"apid": "c2", "meterd": "c1", "schedd": "c3", "gregalectl": "c1"}, ["apid", "meterd"], [], True),
+         {"apid": "c2", "meterd": "c1", "schedd": "c3", "gatewayd-internal": "c1", "gregalectl": "c1"},
+         ["apid", "gatewayd-internal", "meterd"], [], True),
+        ("edge-only change deploys through the edge lane",
+         [("c1", ["pkg/gateway/proxy.go"])], {"gatewayd-internal": "c1"}, ["gatewayd-internal"], [], True),
     ]
 
     def test_cases(self):
@@ -112,7 +119,27 @@ class AnalyzeTest(unittest.TestCase):
 
     def test_pending_lists_units_left_at_base(self):
         rep = au.analyze([("c1", ["pkg/state/store.go", "pkg/fcvm/vm_linux.go"])], CLOSURES, CONFIG, EXISTS)
-        self.assertEqual(rep["pending"], {"shared": ["schedd"], "compute": ["vmmd"], "tool": ["gregalectl"]})
+        self.assertEqual(rep["pending"], {"shared": ["schedd"], "compute": ["vmmd"], "tool": ["gregalectl"],
+                                          "control-plane": [], "edge": []})
+
+    def test_compute_only_role_blocks_the_edge_lane_only(self):
+        # The edge lane lands on compute hosts without converging their
+        # roles, so a compute role change waits for the full release; the
+        # control-plane lane is unaffected.
+        rep = au.analyze([("c1", ["pkg/state/store.go", "deploy/ansible/roles/vmmd_service/tasks/main.yml"])],
+                         CLOSURES, CONFIG, EXISTS)
+        self.assertTrue(rep["lanes"]["control-plane"]["eligible"])
+        self.assertEqual(rep["lanes"]["edge"]["blocked_by"], ["compute_deploy"])
+        self.assertFalse(rep["lanes"]["edge"]["eligible"])
+        self.assertEqual(rep["deployable"], ["apid", "meterd"])
+        self.assertEqual(rep["pending"]["edge"], ["gatewayd-internal"])
+        self.assertTrue(rep["eligible"])
+
+    def test_lanes_are_judged_separately(self):
+        rep = au.analyze([("c1", ["pkg/gateway/proxy.go"])], CLOSURES, CONFIG, EXISTS)
+        self.assertFalse(rep["lanes"]["control-plane"]["eligible"])
+        self.assertIn("no control-plane daemon changed", rep["lanes"]["control-plane"]["reasons"][0])
+        self.assertTrue(rep["lanes"]["edge"]["eligible"])
 
     def test_build_recipe_change_is_a_change_to_every_binary(self):
         rep = au.analyze([("c1", ["Makefile"])], CLOSURES, CONFIG, EXISTS, recipe_shas={"c1"})
@@ -126,9 +153,12 @@ class AnalyzeTest(unittest.TestCase):
 
     def test_reasons_explain_ineligibility(self):
         rep = au.analyze([("c1", ["migrations/00002_add.sql"])], CLOSURES, CONFIG, EXISTS)
-        self.assertEqual(len(rep["reasons"]), 2)
-        self.assertIn("migrations changed since base", rep["reasons"][0])
-        self.assertIn("no control-plane daemon changed", rep["reasons"][1])
+        self.assertEqual(rep["reasons"], [
+            "migrations changed since base (1 paths, e.g. migrations/00002_add.sql)",
+            "no control-plane daemon changed since base",
+            "migrations changed since base (1 paths, e.g. migrations/00002_add.sql)",
+            "no edge daemon changed since base",
+        ])
 
     def test_lane_table_and_loaded_binaries_must_agree(self):
         missing = dict(CLOSURES)
@@ -230,10 +260,17 @@ class RepositoryContractTest(unittest.TestCase):
                         self.assertIsNone(re.search(rf"(?:role:\s*|name:\s*|roles/|\.\./){role}\b", text),
                                           f"{path.relative_to(REPO)} names compute-only role {role}")
 
-    def test_control_plane_lane_names_services(self):
+    def test_deployable_lanes_name_services(self):
         for name, entry in self.config["binaries"].items():
-            if entry["lane"] == "control-plane":
+            if entry["lane"] in au.DEPLOY_LANES:
                 self.assertTrue(entry.get("services"), name)
+
+    def test_edge_lane_is_the_gateways(self):
+        # The edge lane rolls host by host without draining: only the
+        # gateways hand traffic over that way. vmmd and compute schedd are
+        # the vmmd session's (restart survival, ADR-20261018072701 and node drain).
+        edge = sorted(n for n, e in self.config["binaries"].items() if e["lane"] == "edge")
+        self.assertEqual(edge, ["gatewayd-internal", "gatewayd-public"])
 
 
 @unittest.skipUnless(shutil.which(os.environ.get("GO", "go")), "go toolchain not available")

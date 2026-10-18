@@ -45,6 +45,123 @@ CREATE TYPE public.compute_node_lifecycle AS ENUM (
 
 
 --
+-- Name: advance_account_billing_mail_revision(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.advance_account_billing_mail_revision() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF NEW.status IS DISTINCT FROM OLD.status OR NEW.past_due_at IS DISTINCT FROM OLD.past_due_at
+        OR NEW.deletion_requested_at IS DISTINCT FROM OLD.deletion_requested_at OR NEW.email IS DISTINCT FROM OLD.email THEN
+        NEW.billing_mail_revision := OLD.billing_mail_revision+1;
+    ELSE
+        NEW.billing_mail_revision := OLD.billing_mail_revision;
+    END IF;
+    RETURN NEW;
+END $$;
+
+
+--
+-- Name: advance_account_deployment_mail_revision(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.advance_account_deployment_mail_revision() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF NEW.email IS DISTINCT FROM OLD.email OR NEW.status IS DISTINCT FROM OLD.status
+        OR NEW.deletion_requested_at IS DISTINCT FROM OLD.deletion_requested_at
+        OR NEW.deployment_mail_revision IS DISTINCT FROM OLD.deployment_mail_revision THEN
+        NEW.deployment_mail_revision := OLD.deployment_mail_revision+1;
+    ELSE NEW.deployment_mail_revision := OLD.deployment_mail_revision;
+    END IF;
+    RETURN NEW;
+END $$;
+
+
+--
+-- Name: advance_account_quota_mail_revision(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.advance_account_quota_mail_revision() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF NEW.plan IS DISTINCT FROM OLD.plan OR NEW.email IS DISTINCT FROM OLD.email
+        OR NEW.status IS DISTINCT FROM OLD.status OR NEW.past_due_at IS DISTINCT FROM OLD.past_due_at
+        OR NEW.deletion_requested_at IS DISTINCT FROM OLD.deletion_requested_at
+        OR NEW.last_quota_warning_at IS DISTINCT FROM OLD.last_quota_warning_at THEN
+        NEW.quota_mail_revision := OLD.quota_mail_revision+1;
+    ELSE
+        NEW.quota_mail_revision := OLD.quota_mail_revision;
+    END IF;
+    RETURN NEW;
+END $$;
+
+
+--
+-- Name: advance_account_subscription_mail_revision(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.advance_account_subscription_mail_revision() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF NEW.plan IS DISTINCT FROM OLD.plan OR NEW.email IS DISTINCT FROM OLD.email
+        OR NEW.status IS DISTINCT FROM OLD.status OR NEW.past_due_at IS DISTINCT FROM OLD.past_due_at
+        OR NEW.deletion_requested_at IS DISTINCT FROM OLD.deletion_requested_at
+        OR NEW.provider_customer_id IS DISTINCT FROM OLD.provider_customer_id
+        OR NEW.stripe_subscription_item IS DISTINCT FROM OLD.stripe_subscription_item
+        OR NEW.subscription_mail_revision IS DISTINCT FROM OLD.subscription_mail_revision THEN
+        NEW.subscription_mail_revision := OLD.subscription_mail_revision+1;
+    ELSE
+        NEW.subscription_mail_revision := OLD.subscription_mail_revision;
+    END IF;
+    RETURN NEW;
+END $$;
+
+
+--
+-- Name: advance_app_deployment_mail_revision(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.advance_app_deployment_mail_revision() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF NEW.account_id IS DISTINCT FROM OLD.account_id OR NEW.org_id IS DISTINCT FROM OLD.org_id
+        OR NEW.project_id IS DISTINCT FROM OLD.project_id OR NEW.slug IS DISTINCT FROM OLD.slug
+        OR NEW.status IS DISTINCT FROM OLD.status OR NEW.deployment_mail_revision IS DISTINCT FROM OLD.deployment_mail_revision THEN
+        NEW.deployment_mail_revision := OLD.deployment_mail_revision+1;
+    ELSE NEW.deployment_mail_revision := OLD.deployment_mail_revision;
+    END IF;
+    RETURN NEW;
+END $$;
+
+
+--
+-- Name: advance_billing_subscription_mail_revision(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.advance_billing_subscription_mail_revision() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE old_account uuid; new_account uuid;
+BEGIN
+    IF TG_OP='UPDATE' AND NEW.account_id=OLD.account_id AND NEW.provider=OLD.provider
+        AND NEW.customer_id=OLD.customer_id AND NEW.subscription_id=OLD.subscription_id THEN
+        RETURN NULL;
+    END IF;
+    IF TG_OP<>'INSERT' THEN old_account := OLD.account_id; END IF;
+    IF TG_OP<>'DELETE' THEN new_account := NEW.account_id; END IF;
+    UPDATE accounts SET subscription_mail_revision=subscription_mail_revision+1
+        WHERE id=old_account OR id=new_account;
+    RETURN NULL;
+END $$;
+
+
+--
 -- Name: alert_presets_set_updated_at(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -749,6 +866,7 @@ CREATE TABLE public.apps (
     managed_postgres_admission_cutover_id uuid,
     managed_postgres_admission_fenced_at timestamp with time zone,
     service_address_index integer,
+    deployment_mail_revision bigint DEFAULT 1 NOT NULL,
     CONSTRAINT apps_app_cpu_policy_revision_positive CHECK ((app_cpu_policy_revision > 0)),
     CONSTRAINT apps_app_protocol_chk CHECK ((app_protocol = ANY (ARRAY['http1'::text, 'http2'::text, 'grpc'::text]))),
     CONSTRAINT apps_autoscale_target_cpu_pct_range CHECK (((autoscale_target_cpu_pct IS NULL) OR ((autoscale_target_cpu_pct >= 0) AND (autoscale_target_cpu_pct <= 100)))),
@@ -756,6 +874,7 @@ CREATE TABLE public.apps (
     CONSTRAINT apps_consumer_auth_mode_chk CHECK ((consumer_auth_mode = ANY (ARRAY['optional'::text, 'required'::text]))),
     CONSTRAINT apps_cpu_millicores_chk CHECK ((cpu_millicores = ANY (ARRAY[250, 500, 1000]))),
     CONSTRAINT apps_declared_routes_array_chk CHECK ((jsonb_typeof(declared_routes) = 'array'::text)),
+    CONSTRAINT apps_deployment_mail_revision_check CHECK ((deployment_mail_revision > 0)),
     CONSTRAINT apps_egress_allowlist_revision_positive CHECK ((egress_allowlist_revision > 0)),
     CONSTRAINT apps_egress_ports_valid CHECK (((cardinality(egress_ports) <= 64) AND (1 <= ALL (egress_ports)) AND (65535 >= ALL (egress_ports)))),
     CONSTRAINT apps_eviction_priority_chk CHECK ((eviction_priority = ANY (ARRAY['best_effort'::text, 'reserved'::text]))),
@@ -3171,6 +3290,12 @@ CREATE TABLE public.deployments (
     environment_workload_held boolean DEFAULT false NOT NULL,
     snapshot_recovery_generation bigint DEFAULT 0 NOT NULL,
     runtime_base text DEFAULT ''::text NOT NULL,
+    mail_failure_revision bigint DEFAULT 1 NOT NULL,
+    mail_failed_at timestamp with time zone,
+    mail_failure_account_id uuid,
+    mail_failure_account_revision bigint,
+    mail_failure_app_revision bigint,
+    mail_failure_success_revision bigint,
     CONSTRAINT deployments_canary_preset_chk CHECK ((canary_preset = ANY (ARRAY['none'::text, 'slow'::text, 'balanced'::text, 'aggressive'::text, '1-10-50-100'::text, 'custom'::text]))),
     CONSTRAINT deployments_canary_stages_shape CHECK (((canary_preset <> 'custom'::text) OR ((canary_stages IS NOT NULL) AND (jsonb_typeof(canary_stages) = 'array'::text) AND (jsonb_array_length(canary_stages) > 0)))),
     CONSTRAINT deployments_canary_step_nonneg_chk CHECK ((canary_step >= 0)),
@@ -3187,6 +3312,11 @@ CREATE TABLE public.deployments (
     CONSTRAINT deployments_kind_check CHECK ((kind = ANY (ARRAY['image'::text, 'tarball'::text, 'dockerfile'::text, 'github'::text, 'preview'::text]))),
     CONSTRAINT deployments_last_auto_rollback_reason_check CHECK (((last_auto_rollback_reason IS NULL) OR (last_auto_rollback_reason = ANY (ARRAY['threshold_exceeded'::text, 'first_window_expired'::text])))),
     CONSTRAINT deployments_liveness_restart_count_nonneg_chk CHECK ((liveness_restart_count >= 0)),
+    CONSTRAINT deployments_mail_failed_at_check CHECK (((mail_failed_at IS NULL) OR isfinite(mail_failed_at))),
+    CONSTRAINT deployments_mail_failure_account_revision_check CHECK (((mail_failure_account_revision IS NULL) OR (mail_failure_account_revision > 0))),
+    CONSTRAINT deployments_mail_failure_app_revision_check CHECK (((mail_failure_app_revision IS NULL) OR (mail_failure_app_revision > 0))),
+    CONSTRAINT deployments_mail_failure_revision_check CHECK ((mail_failure_revision > 0)),
+    CONSTRAINT deployments_mail_failure_success_revision_check CHECK (((mail_failure_success_revision IS NULL) OR (mail_failure_success_revision >= 0))),
     CONSTRAINT deployments_main_depends_on_shape_chk CHECK (((jsonb_typeof(override_main_depends_on) = 'array'::text) AND (jsonb_array_length(override_main_depends_on) <= 6))),
     CONSTRAINT deployments_min_instances_chk CHECK (((min_instances >= 0) AND (min_instances <= 100))),
     CONSTRAINT deployments_parked_reason_check CHECK (((parked_reason IS NULL) OR (parked_reason = ANY (ARRAY['liveness_exhausted'::text, 'lifecycle_park'::text, 'admin_park'::text, 'security_scan_regressed'::text])))),
@@ -22291,6 +22421,71 @@ $$;
 
 
 --
+-- Name: stamp_deployment_mail_failure(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.stamp_deployment_mail_failure() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE success bigint; recipient uuid; app_revision bigint; account_revision bigint; became_live boolean; became_failed boolean;
+BEGIN
+    IF TG_OP='DELETE' THEN
+        UPDATE platform_mail_deployment_fences SET revision=revision+1 WHERE app_id=OLD.app_id AND scope=OLD.scope;
+        RETURN OLD;
+    END IF;
+    -- Acquire the ordinary parent FK key-share before the scope fence on
+    -- insert/reassignment. Capturers use NO KEY UPDATE for the cooldown,
+    -- which is compatible with this lock and avoids a parent/fence cycle.
+    IF TG_OP='INSERT' THEN
+        PERFORM 1 FROM apps WHERE id=NEW.app_id FOR KEY SHARE;
+    ELSIF NEW.app_id<>OLD.app_id THEN
+        PERFORM 1 FROM apps WHERE id=NEW.app_id FOR KEY SHARE;
+    END IF;
+    IF TG_OP='UPDATE' THEN
+        NEW.mail_failed_at := OLD.mail_failed_at;
+        NEW.mail_failure_account_id := OLD.mail_failure_account_id;
+        NEW.mail_failure_account_revision := OLD.mail_failure_account_revision;
+        NEW.mail_failure_app_revision := OLD.mail_failure_app_revision;
+        NEW.mail_failure_success_revision := OLD.mail_failure_success_revision;
+        IF NEW.status IS NOT DISTINCT FROM OLD.status AND NEW.app_id=OLD.app_id AND NEW.scope=OLD.scope
+            AND NEW.deployed_by_user_id IS NOT DISTINCT FROM OLD.deployed_by_user_id
+            AND NEW.deleted_at IS NOT DISTINCT FROM OLD.deleted_at
+            AND NEW.mail_failure_revision=OLD.mail_failure_revision THEN RETURN NEW;
+        END IF;
+        NEW.mail_failure_revision := OLD.mail_failure_revision+1;
+        -- Ordered fences for the exceptional app/scope reassignment path.
+        PERFORM 1 FROM platform_mail_deployment_fences
+            WHERE (app_id=OLD.app_id AND scope=OLD.scope) OR (app_id=NEW.app_id AND scope=NEW.scope)
+            ORDER BY app_id,scope FOR UPDATE;
+        IF NEW.app_id<>OLD.app_id OR NEW.scope<>OLD.scope THEN
+            UPDATE platform_mail_deployment_fences SET revision=revision+1 WHERE app_id=OLD.app_id AND scope=OLD.scope;
+        END IF;
+        became_live := NEW.status='live' AND (OLD.status<>'live' OR NEW.app_id<>OLD.app_id OR NEW.scope<>OLD.scope);
+        became_failed := NEW.status='failed' AND OLD.status<>'failed';
+    ELSE
+        NEW.mail_failure_revision := 1;
+        NEW.mail_failed_at := NULL; NEW.mail_failure_account_id := NULL;
+        NEW.mail_failure_account_revision := NULL; NEW.mail_failure_app_revision := NULL; NEW.mail_failure_success_revision := NULL;
+        became_live := NEW.status='live'; became_failed := NEW.status='failed';
+    END IF;
+    INSERT INTO platform_mail_deployment_fences(app_id,scope,success_revision)
+        VALUES(NEW.app_id,NEW.scope,CASE WHEN became_live THEN 1 ELSE 0 END)
+        ON CONFLICT(app_id,scope) DO UPDATE SET revision=platform_mail_deployment_fences.revision+1,
+            success_revision=platform_mail_deployment_fences.success_revision+CASE WHEN became_live THEN 1 ELSE 0 END
+        RETURNING success_revision INTO success;
+    IF became_failed THEN
+        SELECT coalesce(NEW.deployed_by_user_id,a.account_id),a.deployment_mail_revision
+            INTO recipient,app_revision FROM apps a WHERE a.id=NEW.app_id;
+        SELECT deployment_mail_revision INTO account_revision FROM accounts WHERE id=recipient;
+        NEW.mail_failed_at := clock_timestamp(); NEW.mail_failure_account_id := recipient;
+        NEW.mail_failure_account_revision := account_revision; NEW.mail_failure_app_revision := app_revision;
+        NEW.mail_failure_success_revision := success;
+    END IF;
+    RETURN NEW;
+END $$;
+
+
+--
 -- Name: stamp_deployment_serving_ended_at(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -23124,15 +23319,27 @@ CREATE TABLE public.accounts (
     suspended_reason text,
     abuse_hold_at timestamp with time zone,
     abuse_hold_reason text,
+    password_reset_revision bigint DEFAULT 1 NOT NULL,
+    mfa_revision bigint DEFAULT 1 NOT NULL,
+    billing_mail_revision bigint DEFAULT 1 NOT NULL,
+    quota_mail_revision bigint DEFAULT 1 NOT NULL,
+    subscription_mail_revision bigint DEFAULT 1 NOT NULL,
+    deployment_mail_revision bigint DEFAULT 1 NOT NULL,
     CONSTRAINT accounts_abuse_hold_valid CHECK ((((abuse_hold_at IS NULL) = (abuse_hold_reason IS NULL)) AND ((abuse_hold_reason IS NULL) OR (abuse_hold_reason = ANY (ARRAY['egress_fanout'::text, 'egress_flood'::text, 'operator'::text]))))),
     CONSTRAINT accounts_billing_address_length_chk CHECK (((billing_address IS NULL) OR ((char_length(billing_address) >= 1) AND (char_length(billing_address) <= 1000)))),
+    CONSTRAINT accounts_billing_mail_revision_check CHECK ((billing_mail_revision > 0)),
     CONSTRAINT accounts_business_name_length_chk CHECK (((business_name IS NULL) OR ((char_length(business_name) >= 1) AND (char_length(business_name) <= 256)))),
+    CONSTRAINT accounts_deployment_mail_revision_check CHECK ((deployment_mail_revision > 0)),
     CONSTRAINT accounts_egress_allowlist_extra_check CHECK ((egress_allowlist_extra >= 0)),
     CONSTRAINT accounts_key_grace_window_days_check CHECK (((key_grace_window_days IS NULL) OR (key_grace_window_days >= 0))),
     CONSTRAINT accounts_mfa_enrolled_shape_chk CHECK (((mfa_enrolled_at IS NULL) OR ((mfa_secret_encrypted IS NOT NULL) AND ((mfa_recovery_codes_hash IS NULL) OR (array_length(mfa_recovery_codes_hash, 1) >= 0))))),
+    CONSTRAINT accounts_mfa_revision_check CHECK ((mfa_revision > 0)),
     CONSTRAINT accounts_overage_cap_cents_chk CHECK (((overage_cap_cents IS NULL) OR (overage_cap_cents >= 0))),
+    CONSTRAINT accounts_password_reset_revision_check CHECK ((password_reset_revision > 0)),
     CONSTRAINT accounts_plan_check CHECK ((plan = ANY (ARRAY['free'::text, 'hobby'::text, 'pro'::text, 'scale'::text]))),
+    CONSTRAINT accounts_quota_mail_revision_check CHECK ((quota_mail_revision > 0)),
     CONSTRAINT accounts_status_check CHECK ((status = ANY (ARRAY['active'::text, 'past_due'::text, 'suspended'::text, 'deleted_pending'::text]))),
+    CONSTRAINT accounts_subscription_mail_revision_check CHECK ((subscription_mail_revision > 0)),
     CONSTRAINT accounts_suspended_reason_check CHECK (((suspended_reason IS NULL) OR ((suspended_reason = 'free_quota'::text) AND (status = 'suspended'::text)))),
     CONSTRAINT accounts_tax_id_length_chk CHECK (((tax_id IS NULL) OR ((char_length(tax_id) >= 1) AND (char_length(tax_id) <= 128))))
 );
@@ -25862,6 +26069,54 @@ CREATE TABLE public.base_image_scans (
 
 
 --
+-- Name: billing_account_nonpayment_deletions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.billing_account_nonpayment_deletions (
+    account_id uuid NOT NULL,
+    past_due_at timestamp with time zone NOT NULL,
+    intent_id uuid NOT NULL,
+    deletion_requested_at timestamp with time zone NOT NULL,
+    billing_revision bigint NOT NULL,
+    followup_completed_at timestamp with time zone,
+    lease_id uuid,
+    lease_until timestamp with time zone,
+    CONSTRAINT billing_account_nonpayment_deletion_deletion_requested_at_check CHECK (isfinite(deletion_requested_at)),
+    CONSTRAINT billing_account_nonpayment_deletion_followup_completed_at_check CHECK (((followup_completed_at IS NULL) OR isfinite(followup_completed_at))),
+    CONSTRAINT billing_account_nonpayment_deletions_billing_revision_check CHECK ((billing_revision > 0)),
+    CONSTRAINT billing_account_nonpayment_deletions_check CHECK (((lease_id IS NULL) = (lease_until IS NULL))),
+    CONSTRAINT billing_account_nonpayment_deletions_check1 CHECK (((followup_completed_at IS NULL) OR (lease_id IS NOT NULL))),
+    CONSTRAINT billing_account_nonpayment_deletions_lease_id_check CHECK (((lease_id IS NULL) OR (lease_id <> '00000000-0000-0000-0000-000000000000'::uuid))),
+    CONSTRAINT billing_account_nonpayment_deletions_lease_until_check CHECK (((lease_until IS NULL) OR isfinite(lease_until))),
+    CONSTRAINT billing_account_nonpayment_deletions_past_due_at_check CHECK (isfinite(past_due_at))
+);
+
+
+--
+-- Name: billing_account_suspensions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.billing_account_suspensions (
+    account_id uuid NOT NULL,
+    past_due_at timestamp with time zone NOT NULL,
+    intent_id uuid NOT NULL,
+    suspended_at timestamp with time zone NOT NULL,
+    billing_revision bigint NOT NULL,
+    followup_completed_at timestamp with time zone,
+    lease_id uuid,
+    lease_until timestamp with time zone,
+    CONSTRAINT billing_account_suspensions_billing_revision_check CHECK ((billing_revision > 0)),
+    CONSTRAINT billing_account_suspensions_check CHECK (((lease_id IS NULL) = (lease_until IS NULL))),
+    CONSTRAINT billing_account_suspensions_check1 CHECK (((followup_completed_at IS NULL) OR (lease_id IS NOT NULL))),
+    CONSTRAINT billing_account_suspensions_followup_completed_at_check CHECK (((followup_completed_at IS NULL) OR isfinite(followup_completed_at))),
+    CONSTRAINT billing_account_suspensions_lease_id_check CHECK (((lease_id IS NULL) OR (lease_id <> '00000000-0000-0000-0000-000000000000'::uuid))),
+    CONSTRAINT billing_account_suspensions_lease_until_check CHECK (((lease_until IS NULL) OR isfinite(lease_until))),
+    CONSTRAINT billing_account_suspensions_past_due_at_check CHECK (isfinite(past_due_at)),
+    CONSTRAINT billing_account_suspensions_suspended_at_check CHECK (isfinite(suspended_at))
+);
+
+
+--
 -- Name: billing_identities; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -25892,6 +26147,68 @@ CREATE TABLE public.billing_meter_usage_deliveries (
     CONSTRAINT billing_meter_usage_deliveries_meter_check CHECK ((meter = ANY (ARRAY['compute'::text, 'egress'::text]))),
     CONSTRAINT billing_meter_usage_deliveries_provider_check CHECK ((provider = ANY (ARRAY['stripe'::text, 'paddle'::text, 'polar'::text]))),
     CONSTRAINT billing_meter_usage_deliveries_quantity_check CHECK ((quantity >= 0))
+);
+
+
+--
+-- Name: billing_payment_failure_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.billing_payment_failure_receipts (
+    provider text NOT NULL,
+    event_id text NOT NULL,
+    account_id uuid NOT NULL,
+    event_type text NOT NULL,
+    processed_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT billing_payment_failure_receipts_event_id_check CHECK ((((length(event_id) >= 1) AND (length(event_id) <= 256)) AND (POSITION((chr(10)) IN (event_id)) = 0) AND (POSITION((chr(13)) IN (event_id)) = 0))),
+    CONSTRAINT billing_payment_failure_receipts_event_type_check CHECK ((event_type = ANY (ARRAY['payment_failed'::text, 'subscription_past_due'::text]))),
+    CONSTRAINT billing_payment_failure_receipts_processed_at_check CHECK (isfinite(processed_at)),
+    CONSTRAINT billing_payment_failure_receipts_provider_check CHECK ((provider = ANY (ARRAY['stripe'::text, 'paddle'::text, 'polar'::text])))
+);
+
+
+--
+-- Name: billing_payment_recovery_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.billing_payment_recovery_receipts (
+    provider text NOT NULL,
+    event_id text NOT NULL,
+    account_id uuid NOT NULL,
+    processed_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT billing_payment_recovery_receipts_event_id_check CHECK ((((length(event_id) >= 1) AND (length(event_id) <= 256)) AND (POSITION((chr(10)) IN (event_id)) = 0) AND (POSITION((chr(13)) IN (event_id)) = 0))),
+    CONSTRAINT billing_payment_recovery_receipts_processed_at_check CHECK (isfinite(processed_at)),
+    CONSTRAINT billing_payment_recovery_receipts_provider_check CHECK ((provider = ANY (ARRAY['stripe'::text, 'paddle'::text, 'polar'::text])))
+);
+
+
+--
+-- Name: billing_quota_warnings; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.billing_quota_warnings (
+    account_id uuid NOT NULL,
+    warning_day timestamp with time zone NOT NULL,
+    intent_id uuid NOT NULL,
+    observed_at timestamp with time zone NOT NULL,
+    plan text NOT NULL,
+    used_mb_seconds bigint NOT NULL,
+    quota_gb integer NOT NULL,
+    quota_revision bigint NOT NULL,
+    followup_completed_at timestamp with time zone,
+    lease_id uuid,
+    lease_until timestamp with time zone,
+    CONSTRAINT billing_quota_warnings_check CHECK ((isfinite(observed_at) AND (observed_at >= warning_day) AND (observed_at < (warning_day + '24:00:00'::interval)))),
+    CONSTRAINT billing_quota_warnings_check1 CHECK (((lease_id IS NULL) = (lease_until IS NULL))),
+    CONSTRAINT billing_quota_warnings_check2 CHECK (((followup_completed_at IS NULL) OR (lease_id IS NOT NULL))),
+    CONSTRAINT billing_quota_warnings_followup_completed_at_check CHECK (((followup_completed_at IS NULL) OR isfinite(followup_completed_at))),
+    CONSTRAINT billing_quota_warnings_lease_id_check CHECK (((lease_id IS NULL) OR (lease_id <> '00000000-0000-0000-0000-000000000000'::uuid))),
+    CONSTRAINT billing_quota_warnings_lease_until_check CHECK (((lease_until IS NULL) OR isfinite(lease_until))),
+    CONSTRAINT billing_quota_warnings_plan_check CHECK ((plan = ANY (ARRAY['hobby'::text, 'pro'::text, 'scale'::text]))),
+    CONSTRAINT billing_quota_warnings_quota_gb_check CHECK ((quota_gb > 0)),
+    CONSTRAINT billing_quota_warnings_quota_revision_check CHECK ((quota_revision > 0)),
+    CONSTRAINT billing_quota_warnings_used_mb_seconds_check CHECK ((used_mb_seconds >= 0)),
+    CONSTRAINT billing_quota_warnings_warning_day_check CHECK ((isfinite(warning_day) AND (warning_day = (date_trunc('day'::text, (warning_day AT TIME ZONE 'UTC'::text)) AT TIME ZONE 'UTC'::text))))
 );
 
 
@@ -26005,6 +26322,43 @@ CREATE TABLE public.billing_runs (
 --
 
 COMMENT ON TABLE public.billing_runs IS 'Month-end billing runs (ADR-1301): one ended UTC month billed for every customer with billable usage; worker-leased.';
+
+
+--
+-- Name: billing_subscription_end_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.billing_subscription_end_receipts (
+    provider text NOT NULL,
+    event_id text NOT NULL,
+    account_id uuid NOT NULL,
+    customer_hash bytea NOT NULL,
+    subscription_hash bytea NOT NULL,
+    processed_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT billing_subscription_end_receipts_customer_hash_check CHECK ((octet_length(customer_hash) = 32)),
+    CONSTRAINT billing_subscription_end_receipts_event_id_check CHECK ((((length(event_id) >= 1) AND (length(event_id) <= 256)) AND (POSITION((chr(10)) IN (event_id)) = 0) AND (POSITION((chr(13)) IN (event_id)) = 0))),
+    CONSTRAINT billing_subscription_end_receipts_processed_at_check CHECK (isfinite(processed_at)),
+    CONSTRAINT billing_subscription_end_receipts_provider_check CHECK ((provider = ANY (ARRAY['stripe'::text, 'paddle'::text, 'polar'::text]))),
+    CONSTRAINT billing_subscription_end_receipts_subscription_hash_check CHECK ((octet_length(subscription_hash) = 32))
+);
+
+
+--
+-- Name: billing_subscription_ends; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.billing_subscription_ends (
+    account_id uuid NOT NULL,
+    provider text NOT NULL,
+    subscription_hash bytea NOT NULL,
+    ended_at timestamp with time zone NOT NULL,
+    from_plan text NOT NULL,
+    intent_id uuid,
+    CONSTRAINT billing_subscription_ends_ended_at_check CHECK (isfinite(ended_at)),
+    CONSTRAINT billing_subscription_ends_from_plan_check CHECK ((from_plan = ANY (ARRAY['free'::text, 'hobby'::text, 'pro'::text, 'scale'::text]))),
+    CONSTRAINT billing_subscription_ends_provider_check CHECK ((provider = ANY (ARRAY['stripe'::text, 'paddle'::text, 'polar'::text]))),
+    CONSTRAINT billing_subscription_ends_subscription_hash_check CHECK ((octet_length(subscription_hash) = 32))
+);
 
 
 --
@@ -29268,7 +29622,9 @@ CREATE TABLE public.email_verification_tokens (
     account_id uuid NOT NULL,
     expires_at timestamp with time zone NOT NULL,
     consumed_at timestamp with time zone,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    email_address text DEFAULT ''::text NOT NULL,
+    CONSTRAINT email_verification_tokens_email_address_check CHECK (((length(email_address) <= 254) AND (POSITION((chr(10)) IN (email_address)) = 0) AND (POSITION((chr(13)) IN (email_address)) = 0)))
 );
 
 
@@ -32382,6 +32738,633 @@ CREATE TABLE public.instance_snapshot_recovery (
 
 
 --
+-- Name: internal_mail_delivery_controls; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.internal_mail_delivery_controls (
+    namespace text NOT NULL,
+    scope_id uuid NOT NULL,
+    domain_id uuid,
+    mode text NOT NULL,
+    revision bigint NOT NULL,
+    request_id uuid NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT internal_mail_delivery_controls_check CHECK ((((domain_id IS NULL) AND (scope_id = '00000000-0000-0000-0000-000000000000'::uuid)) OR ((domain_id IS NOT NULL) AND (scope_id = domain_id) AND (scope_id <> '00000000-0000-0000-0000-000000000000'::uuid)))),
+    CONSTRAINT internal_mail_delivery_controls_mode_check CHECK ((mode = ANY (ARRAY['running'::text, 'paused'::text, 'draining'::text]))),
+    CONSTRAINT internal_mail_delivery_controls_namespace_check CHECK ((namespace ~ '^[a-z][a-z0-9_-]{0,63}$'::text)),
+    CONSTRAINT internal_mail_delivery_controls_revision_check CHECK ((revision > 0))
+);
+
+
+--
+-- Name: internal_mail_dispatch_reservations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.internal_mail_dispatch_reservations (
+    namespace text NOT NULL,
+    producer_id text NOT NULL,
+    lease_id uuid NOT NULL,
+    started_at timestamp with time zone NOT NULL,
+    CONSTRAINT internal_mail_dispatch_reservations_started_at_check CHECK (isfinite(started_at))
+);
+
+
+--
+-- Name: internal_mail_dkim_keys; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.internal_mail_dkim_keys (
+    id uuid NOT NULL,
+    namespace text NOT NULL,
+    domain_id uuid NOT NULL,
+    selector text NOT NULL,
+    public_key text NOT NULL,
+    sealed_key bytea NOT NULL,
+    legacy boolean DEFAULT false NOT NULL,
+    state text NOT NULL,
+    check_result text DEFAULT 'unchecked'::text NOT NULL,
+    checked_at timestamp with time zone,
+    first_verified_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    activated_at timestamp with time zone,
+    deactivated_at timestamp with time zone,
+    CONSTRAINT internal_mail_dkim_keys_check CHECK (((NOT legacy) OR (id = domain_id))),
+    CONSTRAINT internal_mail_dkim_keys_check1 CHECK (((state <> ALL (ARRAY['retiring'::text, 'retired'::text])) OR (deactivated_at IS NOT NULL))),
+    CONSTRAINT internal_mail_dkim_keys_check2 CHECK (((state <> 'retired'::text) OR (octet_length(sealed_key) = 0))),
+    CONSTRAINT internal_mail_dkim_keys_check_result_check CHECK ((check_result = ANY (ARRAY['unchecked'::text, 'valid'::text, 'mismatch'::text, 'unavailable'::text]))),
+    CONSTRAINT internal_mail_dkim_keys_selector_check CHECK ((selector ~ '^[a-z0-9]{1,63}$'::text)),
+    CONSTRAINT internal_mail_dkim_keys_state_check CHECK ((state = ANY (ARRAY['staged'::text, 'active'::text, 'retiring'::text, 'retired'::text])))
+);
+
+
+--
+-- Name: internal_mail_domain_pacing; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.internal_mail_domain_pacing (
+    namespace text NOT NULL,
+    recipient_domain text NOT NULL,
+    next_allowed_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT internal_mail_domain_pacing_namespace_check CHECK ((namespace ~ '^[a-z][a-z0-9_-]{0,63}$'::text)),
+    CONSTRAINT internal_mail_domain_pacing_next_allowed_at_check CHECK (isfinite(next_allowed_at)),
+    CONSTRAINT internal_mail_domain_pacing_recipient_domain_check CHECK (((recipient_domain = lower(recipient_domain)) AND ((length(recipient_domain) >= 1) AND (length(recipient_domain) <= 253)) AND (recipient_domain ~ '^[a-z0-9][a-z0-9.-]*[a-z0-9]$'::text))),
+    CONSTRAINT internal_mail_domain_pacing_updated_at_check CHECK (isfinite(updated_at))
+);
+
+
+--
+-- Name: internal_mail_domains; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.internal_mail_domains (
+    id uuid NOT NULL,
+    namespace text NOT NULL,
+    name text NOT NULL,
+    status text DEFAULT 'pending'::text NOT NULL,
+    selector text NOT NULL,
+    verification_token text NOT NULL,
+    public_key text NOT NULL,
+    sealed_key bytea NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    dkim_key_id uuid,
+    dns_revision bigint DEFAULT 0 NOT NULL,
+    authorization_state text DEFAULT 'unchecked'::text NOT NULL,
+    last_checked_at timestamp with time zone,
+    last_verified_at timestamp with time zone,
+    verified_sending_ip text DEFAULT ''::text NOT NULL,
+    check_result text DEFAULT 'unchecked'::text NOT NULL,
+    failure_count integer DEFAULT 0 NOT NULL,
+    first_failure_at timestamp with time zone,
+    CONSTRAINT internal_mail_domains_authorization_check CHECK (((authorization_state = ANY (ARRAY['unchecked'::text, 'valid'::text, 'failing'::text, 'paused'::text])) AND (check_result = ANY (ARRAY['unchecked'::text, 'valid'::text, 'mismatch'::text, 'unavailable'::text])) AND ((failure_count >= 0) AND (failure_count <= 2)) AND (dns_revision >= 0))),
+    CONSTRAINT internal_mail_domains_name_check CHECK (((name = lower(name)) AND ((length(name) >= 3) AND (length(name) <= 253)))),
+    CONSTRAINT internal_mail_domains_namespace_check CHECK ((namespace ~ '^[a-z][a-z0-9_-]{0,63}$'::text)),
+    CONSTRAINT internal_mail_domains_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'verified'::text, 'disabled'::text])))
+);
+
+
+--
+-- Name: internal_mail_encryption_keys; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.internal_mail_encryption_keys (
+    namespace text NOT NULL,
+    key_id text NOT NULL,
+    retired_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT internal_mail_encryption_keys_key_id_check CHECK ((key_id ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT internal_mail_encryption_keys_retired_at_check CHECK (isfinite(retired_at))
+);
+
+
+--
+-- Name: internal_mail_encryption_state; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.internal_mail_encryption_state (
+    namespace text NOT NULL,
+    active_key_id text NOT NULL,
+    legacy_key_id text NOT NULL,
+    revision bigint NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT internal_mail_encryption_state_active_key_id_check CHECK ((active_key_id ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT internal_mail_encryption_state_legacy_key_id_check CHECK ((legacy_key_id ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT internal_mail_encryption_state_namespace_check CHECK ((namespace ~ '^[a-z][a-z0-9_-]{0,63}$'::text)),
+    CONSTRAINT internal_mail_encryption_state_revision_check CHECK ((revision > 0)),
+    CONSTRAINT internal_mail_encryption_state_updated_at_check CHECK (isfinite(updated_at))
+);
+
+
+--
+-- Name: internal_mail_event_consumers; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.internal_mail_event_consumers (
+    namespace text NOT NULL,
+    producer_id text NOT NULL,
+    name text NOT NULL,
+    generation bigint DEFAULT 1 NOT NULL,
+    checkpoint bigint DEFAULT 0 NOT NULL,
+    pending_receipt uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    last_pull_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    last_ack_at timestamp with time zone,
+    CONSTRAINT internal_mail_event_consumers_checkpoint_check CHECK ((checkpoint >= 0)),
+    CONSTRAINT internal_mail_event_consumers_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT internal_mail_event_consumers_generation_check CHECK ((generation > 0)),
+    CONSTRAINT internal_mail_event_consumers_last_ack_at_check CHECK (isfinite(last_ack_at)),
+    CONSTRAINT internal_mail_event_consumers_last_pull_at_check CHECK (isfinite(last_pull_at)),
+    CONSTRAINT internal_mail_event_consumers_name_check CHECK ((name ~ '^[a-z][a-z0-9_-]{0,31}$'::text)),
+    CONSTRAINT internal_mail_event_consumers_namespace_check CHECK ((namespace ~ '^[a-z][a-z0-9_-]{0,63}$'::text)),
+    CONSTRAINT internal_mail_event_consumers_producer_id_check CHECK ((producer_id ~ '^[a-z][a-z0-9_-]{0,31}$'::text))
+);
+
+
+--
+-- Name: internal_mail_event_feed; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.internal_mail_event_feed (
+    namespace text NOT NULL,
+    producer_id text NOT NULL,
+    "position" bigint NOT NULL,
+    id uuid NOT NULL,
+    source_event_id text NOT NULL,
+    message_id uuid NOT NULL,
+    recipient_id uuid NOT NULL,
+    domain_id uuid NOT NULL,
+    kind text NOT NULL,
+    occurred_at timestamp with time zone NOT NULL,
+    published_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT internal_mail_event_feed_kind_check CHECK ((kind = ANY (ARRAY['queued'::text, 'submitted'::text, 'accepted'::text, 'bounced'::text, 'complained'::text, 'suppressed'::text, 'failed'::text, 'uncertain'::text, 'deferred'::text, 'retry'::text, 'cancelled'::text, 'expired'::text]))),
+    CONSTRAINT internal_mail_event_feed_position_check CHECK (("position" > 0)),
+    CONSTRAINT internal_mail_event_feed_published_at_check CHECK (isfinite(published_at))
+);
+
+
+--
+-- Name: internal_mail_event_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.internal_mail_event_receipts (
+    namespace text NOT NULL,
+    producer_id text NOT NULL,
+    consumer text NOT NULL,
+    id uuid NOT NULL,
+    generation bigint NOT NULL,
+    from_position bigint NOT NULL,
+    to_position bigint NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    acknowledged_at timestamp with time zone,
+    CONSTRAINT internal_mail_event_receipts_acknowledged_at_check CHECK (isfinite(acknowledged_at)),
+    CONSTRAINT internal_mail_event_receipts_check CHECK ((to_position > from_position)),
+    CONSTRAINT internal_mail_event_receipts_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT internal_mail_event_receipts_from_position_check CHECK ((from_position >= 0)),
+    CONSTRAINT internal_mail_event_receipts_generation_check CHECK ((generation > 0))
+);
+
+
+--
+-- Name: internal_mail_event_streams; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.internal_mail_event_streams (
+    namespace text NOT NULL,
+    producer_id text NOT NULL,
+    last_position bigint NOT NULL,
+    CONSTRAINT internal_mail_event_streams_last_position_check CHECK ((last_position > 0)),
+    CONSTRAINT internal_mail_event_streams_namespace_check CHECK ((namespace ~ '^[a-z][a-z0-9_-]{0,63}$'::text)),
+    CONSTRAINT internal_mail_event_streams_producer_id_check CHECK ((producer_id ~ '^[a-z][a-z0-9_-]{0,31}$'::text))
+);
+
+
+--
+-- Name: internal_mail_events; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.internal_mail_events (
+    id text NOT NULL,
+    namespace text NOT NULL,
+    recipient_id uuid NOT NULL,
+    kind text NOT NULL,
+    code text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT internal_mail_events_code_check CHECK ((length(code) <= 512)),
+    CONSTRAINT internal_mail_events_id_check CHECK (((length(id) >= 1) AND (length(id) <= 128))),
+    CONSTRAINT internal_mail_events_kind_check CHECK ((kind = ANY (ARRAY['queued'::text, 'submitted'::text, 'accepted'::text, 'bounced'::text, 'complained'::text, 'suppressed'::text, 'failed'::text, 'uncertain'::text, 'deferred'::text, 'retry'::text, 'cancelled'::text, 'expired'::text])))
+);
+
+
+--
+-- Name: internal_mail_messages; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.internal_mail_messages (
+    id uuid NOT NULL,
+    namespace text NOT NULL,
+    domain_id uuid NOT NULL,
+    idempotency_key text NOT NULL,
+    sealed_payload bytea NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    payload_fingerprint bytea,
+    payload_pruned_at timestamp with time zone,
+    producer_id text DEFAULT ''::text NOT NULL,
+    sender_address text DEFAULT ''::text NOT NULL,
+    send_at timestamp with time zone,
+    expires_at timestamp with time zone,
+    CONSTRAINT internal_mail_messages_fingerprint_check CHECK (((payload_fingerprint IS NULL) OR (octet_length(payload_fingerprint) = 32) OR ((octet_length(payload_fingerprint) = 103) AND (SUBSTRING(payload_fingerprint FROM 1 FOR 6) = convert_to('GMFP2:'::text, 'UTF8'::name)) AND (encode(SUBSTRING(payload_fingerprint FROM 7 FOR 64), 'escape'::text) ~ '^[0-9a-f]{64}$'::text) AND (SUBSTRING(payload_fingerprint FROM 71 FOR 1) = convert_to(':'::text, 'UTF8'::name))))),
+    CONSTRAINT internal_mail_messages_idempotency_key_check CHECK (((length(idempotency_key) >= 1) AND (length(idempotency_key) <= 128))),
+    CONSTRAINT internal_mail_messages_producer_check CHECK ((((producer_id = ''::text) AND (sender_address = ''::text)) OR ((producer_id ~ '^[a-z][a-z0-9_-]{0,31}$'::text) AND ((length(sender_address) >= 3) AND (length(sender_address) <= 254)) AND (POSITION(('@'::text) IN (sender_address)) > 1)))),
+    CONSTRAINT internal_mail_messages_pruned_check CHECK (((payload_pruned_at IS NULL) OR ((octet_length(sealed_payload) = 0) AND (payload_fingerprint IS NOT NULL)))),
+    CONSTRAINT internal_mail_messages_timing_check CHECK ((((send_at IS NULL) OR (isfinite(send_at) AND (send_at >= created_at))) AND ((expires_at IS NULL) OR (isfinite(expires_at) AND (expires_at > COALESCE(send_at, created_at))))))
+);
+
+
+--
+-- Name: internal_mail_operations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.internal_mail_operations (
+    namespace text NOT NULL,
+    id uuid NOT NULL,
+    action text NOT NULL,
+    resource text NOT NULL,
+    actor text NOT NULL,
+    reason text NOT NULL,
+    evidence text NOT NULL,
+    request_hash bytea NOT NULL,
+    result jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT internal_mail_operations_action_check CHECK ((action = ANY (ARRAY['reconcile'::text, 'retention_apply'::text, 'dkim_stage'::text, 'dkim_verify'::text, 'dkim_activate'::text, 'dkim_retire'::text, 'domain_reverify'::text, 'delivery_pause'::text, 'delivery_resume'::text, 'delivery_drain'::text, 'message_cancel'::text, 'recipient_cancel'::text, 'reputation_release'::text, 'event_feed_replay'::text, 'producer_rotate'::text, 'producer_revoke'::text, 'producer_suspend'::text, 'producer_resume'::text, 'encryption_activate'::text, 'encryption_rewrap'::text, 'encryption_retire'::text, 'suppression_add'::text, 'suppression_release'::text, 'recovery_start'::text, 'recovery_review'::text, 'recovery_release'::text]))),
+    CONSTRAINT internal_mail_operations_actor_check CHECK ((actor ~ '^[a-zA-Z0-9][a-zA-Z0-9_.@-]{0,127}$'::text)),
+    CONSTRAINT internal_mail_operations_evidence_check CHECK ((evidence ~ '^[a-zA-Z0-9][a-zA-Z0-9:/._-]{0,255}$'::text)),
+    CONSTRAINT internal_mail_operations_namespace_check CHECK ((namespace ~ '^[a-z][a-z0-9_-]{0,63}$'::text)),
+    CONSTRAINT internal_mail_operations_reason_check CHECK ((reason ~ '^[a-z][a-z0-9_]{0,63}$'::text)),
+    CONSTRAINT internal_mail_operations_request_hash_check CHECK ((octet_length(request_hash) = 32)),
+    CONSTRAINT internal_mail_operations_resource_check CHECK (((length(resource) >= 1) AND (length(resource) <= 64))),
+    CONSTRAINT internal_mail_operations_result_check CHECK ((jsonb_typeof(result) = 'object'::text))
+);
+
+
+--
+-- Name: internal_mail_producer_access; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.internal_mail_producer_access (
+    namespace text NOT NULL,
+    producer_id text NOT NULL,
+    revision bigint DEFAULT 0 NOT NULL,
+    suspended boolean DEFAULT false NOT NULL,
+    active_credential_id text DEFAULT ''::text NOT NULL,
+    request_id uuid,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT internal_mail_producer_access_active_credential_id_check CHECK (((active_credential_id = ''::text) OR (active_credential_id ~ '^[0-9a-f]{64}$'::text))),
+    CONSTRAINT internal_mail_producer_access_namespace_check CHECK ((namespace ~ '^[a-z][a-z0-9_-]{0,63}$'::text)),
+    CONSTRAINT internal_mail_producer_access_producer_id_check CHECK ((producer_id ~ '^[a-z][a-z0-9_-]{0,31}$'::text)),
+    CONSTRAINT internal_mail_producer_access_revision_check CHECK ((revision >= 0)),
+    CONSTRAINT internal_mail_producer_access_updated_at_check CHECK (isfinite(updated_at))
+);
+
+
+--
+-- Name: internal_mail_producer_credentials; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.internal_mail_producer_credentials (
+    namespace text NOT NULL,
+    producer_id text NOT NULL,
+    credential_id text NOT NULL,
+    retires_at timestamp with time zone,
+    revoked_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT internal_mail_producer_credentials_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT internal_mail_producer_credentials_credential_id_check CHECK ((credential_id ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT internal_mail_producer_credentials_retires_at_check CHECK (isfinite(retires_at)),
+    CONSTRAINT internal_mail_producer_credentials_revoked_at_check CHECK (isfinite(revoked_at))
+);
+
+
+--
+-- Name: internal_mail_producer_dispatch; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.internal_mail_producer_dispatch (
+    namespace text NOT NULL,
+    producer_id text NOT NULL,
+    last_turn bigint DEFAULT 0 NOT NULL,
+    CONSTRAINT internal_mail_producer_dispatch_last_turn_check CHECK ((last_turn >= 0)),
+    CONSTRAINT internal_mail_producer_dispatch_namespace_check CHECK ((namespace ~ '^[a-z][a-z0-9_-]{0,63}$'::text)),
+    CONSTRAINT internal_mail_producer_dispatch_producer_id_check CHECK (((producer_id = ''::text) OR (producer_id ~ '^[a-z][a-z0-9_-]{0,31}$'::text)))
+);
+
+
+--
+-- Name: internal_mail_recipients; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.internal_mail_recipients (
+    id uuid NOT NULL,
+    namespace text NOT NULL,
+    message_id uuid NOT NULL,
+    address text NOT NULL,
+    status text DEFAULT 'queued'::text NOT NULL,
+    attempts integer DEFAULT 0 NOT NULL,
+    lease_id uuid,
+    lease_until timestamp with time zone,
+    next_attempt_at timestamp with time zone DEFAULT now() NOT NULL,
+    code text DEFAULT ''::text NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    signing_selector text DEFAULT ''::text NOT NULL,
+    suppression_revision bigint DEFAULT 0 NOT NULL,
+    recovery_id uuid DEFAULT '00000000-0000-0000-0000-000000000000'::uuid NOT NULL,
+    CONSTRAINT internal_mail_recipients_attempts_check CHECK ((attempts >= 0)),
+    CONSTRAINT internal_mail_recipients_check CHECK (((status = ANY (ARRAY['claimed'::text, 'submitting'::text])) = ((lease_id IS NOT NULL) AND (lease_until IS NOT NULL)))),
+    CONSTRAINT internal_mail_recipients_code_check CHECK ((length(code) <= 512)),
+    CONSTRAINT internal_mail_recipients_selector_check CHECK ((length(signing_selector) <= 63)),
+    CONSTRAINT internal_mail_recipients_status_check CHECK ((status = ANY (ARRAY['queued'::text, 'claimed'::text, 'submitting'::text, 'submitted'::text, 'accepted'::text, 'bounced'::text, 'complained'::text, 'suppressed'::text, 'failed'::text, 'uncertain'::text, 'deferred'::text, 'cancelled'::text, 'expired'::text]))),
+    CONSTRAINT internal_mail_recipients_suppression_revision_check CHECK ((suppression_revision >= 0))
+);
+
+
+--
+-- Name: internal_mail_recovery_runs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.internal_mail_recovery_runs (
+    namespace text NOT NULL,
+    recovery_id uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT internal_mail_recovery_runs_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT internal_mail_recovery_runs_namespace_check CHECK ((namespace ~ '^[a-z][a-z0-9_-]{0,63}$'::text)),
+    CONSTRAINT internal_mail_recovery_runs_recovery_id_check CHECK ((recovery_id <> '00000000-0000-0000-0000-000000000000'::uuid))
+);
+
+
+--
+-- Name: internal_mail_recovery_state; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.internal_mail_recovery_state (
+    namespace text NOT NULL,
+    recovery_id uuid NOT NULL,
+    revision bigint NOT NULL,
+    held boolean NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT internal_mail_recovery_state_revision_check CHECK ((revision > 0)),
+    CONSTRAINT internal_mail_recovery_state_updated_at_check CHECK (isfinite(updated_at))
+);
+
+
+--
+-- Name: internal_mail_relay_events; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.internal_mail_relay_events (
+    namespace text NOT NULL,
+    id uuid NOT NULL,
+    revision bigint NOT NULL,
+    state text NOT NULL,
+    reason text NOT NULL,
+    observation_id uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT internal_mail_relay_events_namespace_check CHECK ((namespace ~ '^[a-z][a-z0-9_-]{0,63}$'::text)),
+    CONSTRAINT internal_mail_relay_events_reason_check CHECK ((reason = ANY (ARRAY['unobserved'::text, 'stale'::text, 'inventory_unavailable'::text, 'smtp_unavailable'::text, 'queue_depth'::text, 'queue_age'::text, 'recovering'::text, 'healthy'::text]))),
+    CONSTRAINT internal_mail_relay_events_revision_check CHECK ((revision > 0)),
+    CONSTRAINT internal_mail_relay_events_state_check CHECK ((state = ANY (ARRAY['paused'::text, 'recovering'::text, 'healthy'::text])))
+);
+
+
+--
+-- Name: internal_mail_relay_health; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.internal_mail_relay_health (
+    namespace text NOT NULL,
+    state text DEFAULT 'paused'::text NOT NULL,
+    reason text DEFAULT 'unobserved'::text NOT NULL,
+    revision bigint DEFAULT 0 NOT NULL,
+    observation_id uuid,
+    observed_at timestamp with time zone,
+    received_at timestamp with time zone,
+    inventory_ok boolean DEFAULT false NOT NULL,
+    smtp_up boolean DEFAULT false NOT NULL,
+    queue_messages bigint DEFAULT 0 NOT NULL,
+    oldest_seconds bigint DEFAULT 0 NOT NULL,
+    healthy_since timestamp with time zone,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT internal_mail_relay_health_check CHECK ((((observation_id IS NULL) AND (observed_at IS NULL) AND (received_at IS NULL)) OR ((observation_id IS NOT NULL) AND (observed_at IS NOT NULL) AND (received_at IS NOT NULL)))),
+    CONSTRAINT internal_mail_relay_health_check1 CHECK ((((state = 'paused'::text) AND (healthy_since IS NULL) AND (reason <> ALL (ARRAY['recovering'::text, 'healthy'::text]))) OR ((state = 'recovering'::text) AND (healthy_since IS NOT NULL) AND (reason = 'recovering'::text)) OR ((state = 'healthy'::text) AND (healthy_since IS NOT NULL) AND (reason = 'healthy'::text)))),
+    CONSTRAINT internal_mail_relay_health_healthy_since_check CHECK (isfinite(healthy_since)),
+    CONSTRAINT internal_mail_relay_health_namespace_check CHECK ((namespace ~ '^[a-z][a-z0-9_-]{0,63}$'::text)),
+    CONSTRAINT internal_mail_relay_health_observed_at_check CHECK (isfinite(observed_at)),
+    CONSTRAINT internal_mail_relay_health_oldest_seconds_check CHECK ((oldest_seconds >= 0)),
+    CONSTRAINT internal_mail_relay_health_queue_messages_check CHECK ((queue_messages >= 0)),
+    CONSTRAINT internal_mail_relay_health_reason_check CHECK ((reason = ANY (ARRAY['unobserved'::text, 'stale'::text, 'inventory_unavailable'::text, 'smtp_unavailable'::text, 'queue_depth'::text, 'queue_age'::text, 'recovering'::text, 'healthy'::text]))),
+    CONSTRAINT internal_mail_relay_health_received_at_check CHECK (isfinite(received_at)),
+    CONSTRAINT internal_mail_relay_health_revision_check CHECK ((revision >= 0)),
+    CONSTRAINT internal_mail_relay_health_state_check CHECK ((state = ANY (ARRAY['paused'::text, 'recovering'::text, 'healthy'::text]))),
+    CONSTRAINT internal_mail_relay_health_updated_at_check CHECK (isfinite(updated_at))
+);
+
+
+--
+-- Name: internal_mail_reputation_events; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.internal_mail_reputation_events (
+    namespace text NOT NULL,
+    id uuid NOT NULL,
+    sequence bigint NOT NULL,
+    scope text NOT NULL,
+    scope_key text NOT NULL,
+    revision bigint NOT NULL,
+    held boolean NOT NULL,
+    reason text NOT NULL,
+    evidence jsonb NOT NULL,
+    request_id uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT internal_mail_reputation_events_evidence_check CHECK ((jsonb_typeof(evidence) = 'object'::text)),
+    CONSTRAINT internal_mail_reputation_events_namespace_check CHECK ((namespace ~ '^[a-z][a-z0-9_-]{0,63}$'::text)),
+    CONSTRAINT internal_mail_reputation_events_reason_check CHECK ((reason = ANY (ARRAY['bounce_rate'::text, 'complaint_rate'::text]))),
+    CONSTRAINT internal_mail_reputation_events_revision_check CHECK ((revision > 0)),
+    CONSTRAINT internal_mail_reputation_events_scope_check CHECK ((scope = ANY (ARRAY['producer'::text, 'domain'::text])))
+);
+
+
+--
+-- Name: internal_mail_reputation_events_sequence_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.internal_mail_reputation_events ALTER COLUMN sequence ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.internal_mail_reputation_events_sequence_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: internal_mail_reputation_feedback; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.internal_mail_reputation_feedback (
+    namespace text NOT NULL,
+    recipient_id uuid NOT NULL,
+    bounced_at timestamp with time zone,
+    complained_at timestamp with time zone,
+    bounce_event_id text,
+    complaint_event_id text,
+    CONSTRAINT internal_mail_reputation_feedback_bounced_at_check CHECK (isfinite(bounced_at)),
+    CONSTRAINT internal_mail_reputation_feedback_check CHECK (((bounced_at IS NULL) = (bounce_event_id IS NULL))),
+    CONSTRAINT internal_mail_reputation_feedback_check1 CHECK (((complained_at IS NULL) = (complaint_event_id IS NULL))),
+    CONSTRAINT internal_mail_reputation_feedback_check2 CHECK (((bounced_at IS NOT NULL) OR (complained_at IS NOT NULL))),
+    CONSTRAINT internal_mail_reputation_feedback_complained_at_check CHECK (isfinite(complained_at))
+);
+
+
+--
+-- Name: internal_mail_reputation_holds; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.internal_mail_reputation_holds (
+    namespace text NOT NULL,
+    scope text NOT NULL,
+    scope_key text NOT NULL,
+    held boolean NOT NULL,
+    revision bigint NOT NULL,
+    reason text NOT NULL,
+    samples bigint NOT NULL,
+    bounces bigint NOT NULL,
+    complaints bigint NOT NULL,
+    window_start timestamp with time zone NOT NULL,
+    window_end timestamp with time zone NOT NULL,
+    trigger_recipient_id uuid NOT NULL,
+    trigger_event_id text NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT internal_mail_reputation_holds_bounces_check CHECK ((bounces >= 0)),
+    CONSTRAINT internal_mail_reputation_holds_check CHECK ((isfinite(window_end) AND (window_end > window_start))),
+    CONSTRAINT internal_mail_reputation_holds_check1 CHECK (((bounces + complaints) <= samples)),
+    CONSTRAINT internal_mail_reputation_holds_check2 CHECK ((((scope = 'producer'::text) AND ((scope_key = ''::text) OR (scope_key ~ '^[a-z][a-z0-9_-]{0,63}$'::text))) OR ((scope = 'domain'::text) AND (scope_key ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'::text)))),
+    CONSTRAINT internal_mail_reputation_holds_complaints_check CHECK ((complaints >= 0)),
+    CONSTRAINT internal_mail_reputation_holds_namespace_check CHECK ((namespace ~ '^[a-z][a-z0-9_-]{0,63}$'::text)),
+    CONSTRAINT internal_mail_reputation_holds_reason_check CHECK ((reason = ANY (ARRAY['bounce_rate'::text, 'complaint_rate'::text]))),
+    CONSTRAINT internal_mail_reputation_holds_revision_check CHECK ((revision > 0)),
+    CONSTRAINT internal_mail_reputation_holds_samples_check CHECK ((samples > 0)),
+    CONSTRAINT internal_mail_reputation_holds_scope_check CHECK ((scope = ANY (ARRAY['producer'::text, 'domain'::text]))),
+    CONSTRAINT internal_mail_reputation_holds_updated_at_check CHECK (isfinite(updated_at)),
+    CONSTRAINT internal_mail_reputation_holds_window_start_check CHECK (isfinite(window_start))
+);
+
+
+--
+-- Name: internal_mail_suppression_events; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.internal_mail_suppression_events (
+    namespace text NOT NULL,
+    address text NOT NULL,
+    revision bigint NOT NULL,
+    blocked boolean NOT NULL,
+    reason text NOT NULL,
+    cause text NOT NULL,
+    source_kind text NOT NULL,
+    source_id text DEFAULT ''::text NOT NULL,
+    recipient_id uuid,
+    event_ref text DEFAULT ''::text NOT NULL,
+    request_id uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT internal_mail_suppression_events_cause_check CHECK ((cause = ANY (ARRAY['legacy'::text, 'manual_add'::text, 'release'::text, 'hard_bounce'::text, 'complaint'::text]))),
+    CONSTRAINT internal_mail_suppression_events_check CHECK (((reason <> 'complained'::text) OR blocked)),
+    CONSTRAINT internal_mail_suppression_events_check1 CHECK (((cause = 'release'::text) = (NOT blocked))),
+    CONSTRAINT internal_mail_suppression_events_check2 CHECK (((source_kind = 'provider'::text) = (source_id <> ''::text))),
+    CONSTRAINT internal_mail_suppression_events_check3 CHECK (((source_kind = 'operator'::text) = (request_id IS NOT NULL))),
+    CONSTRAINT internal_mail_suppression_events_check4 CHECK (((source_kind = ANY (ARRAY['service_report'::text, 'postfix'::text, 'provider'::text])) = ((recipient_id IS NOT NULL) AND (event_ref <> ''::text)))),
+    CONSTRAINT internal_mail_suppression_events_check5 CHECK ((((cause = 'legacy'::text) AND (source_kind = 'legacy'::text)) OR ((cause = ANY (ARRAY['manual_add'::text, 'release'::text])) AND (source_kind = 'operator'::text)) OR ((cause = ANY (ARRAY['hard_bounce'::text, 'complaint'::text])) AND (source_kind = ANY (ARRAY['service_report'::text, 'postfix'::text, 'provider'::text]))))),
+    CONSTRAINT internal_mail_suppression_events_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT internal_mail_suppression_events_event_ref_check CHECK (((event_ref = ''::text) OR (event_ref ~ '^[0-9a-f]{64}$'::text))),
+    CONSTRAINT internal_mail_suppression_events_reason_check CHECK ((reason = ANY (ARRAY['manual'::text, 'bounced'::text, 'complained'::text]))),
+    CONSTRAINT internal_mail_suppression_events_revision_check CHECK ((revision > 0)),
+    CONSTRAINT internal_mail_suppression_events_source_id_check CHECK (((source_id = ''::text) OR (source_id ~ '^[a-z][a-z0-9_-]{0,31}$'::text))),
+    CONSTRAINT internal_mail_suppression_events_source_kind_check CHECK ((source_kind = ANY (ARRAY['legacy'::text, 'operator'::text, 'service_report'::text, 'postfix'::text, 'provider'::text])))
+);
+
+
+--
+-- Name: internal_mail_suppression_state; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.internal_mail_suppression_state (
+    namespace text NOT NULL,
+    address text NOT NULL,
+    revision bigint NOT NULL,
+    last_block_revision bigint NOT NULL,
+    blocked boolean NOT NULL,
+    reason text NOT NULL,
+    cause text NOT NULL,
+    source_kind text NOT NULL,
+    source_id text DEFAULT ''::text NOT NULL,
+    recipient_id uuid,
+    event_ref text DEFAULT ''::text NOT NULL,
+    request_id uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT internal_mail_suppression_state_address_check CHECK (((address = lower(address)) AND ((length(address) >= 3) AND (length(address) <= 254)))),
+    CONSTRAINT internal_mail_suppression_state_cause_check CHECK ((cause = ANY (ARRAY['legacy'::text, 'manual_add'::text, 'release'::text, 'hard_bounce'::text, 'complaint'::text]))),
+    CONSTRAINT internal_mail_suppression_state_check CHECK (((last_block_revision > 0) AND (last_block_revision <= revision))),
+    CONSTRAINT internal_mail_suppression_state_check1 CHECK (((reason <> 'complained'::text) OR blocked)),
+    CONSTRAINT internal_mail_suppression_state_check2 CHECK (((cause = 'release'::text) = (NOT blocked))),
+    CONSTRAINT internal_mail_suppression_state_check3 CHECK (((NOT blocked) OR (last_block_revision = revision))),
+    CONSTRAINT internal_mail_suppression_state_check4 CHECK (((source_kind = 'provider'::text) = (source_id <> ''::text))),
+    CONSTRAINT internal_mail_suppression_state_check5 CHECK (((source_kind = 'operator'::text) = (request_id IS NOT NULL))),
+    CONSTRAINT internal_mail_suppression_state_check6 CHECK (((source_kind = ANY (ARRAY['service_report'::text, 'postfix'::text, 'provider'::text])) = ((recipient_id IS NOT NULL) AND (event_ref <> ''::text)))),
+    CONSTRAINT internal_mail_suppression_state_check7 CHECK ((((cause = 'legacy'::text) AND (source_kind = 'legacy'::text)) OR ((cause = ANY (ARRAY['manual_add'::text, 'release'::text])) AND (source_kind = 'operator'::text)) OR ((cause = ANY (ARRAY['hard_bounce'::text, 'complaint'::text])) AND (source_kind = ANY (ARRAY['service_report'::text, 'postfix'::text, 'provider'::text]))))),
+    CONSTRAINT internal_mail_suppression_state_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT internal_mail_suppression_state_event_ref_check CHECK (((event_ref = ''::text) OR (event_ref ~ '^[0-9a-f]{64}$'::text))),
+    CONSTRAINT internal_mail_suppression_state_namespace_check CHECK ((namespace ~ '^[a-z][a-z0-9_-]{0,63}$'::text)),
+    CONSTRAINT internal_mail_suppression_state_reason_check CHECK ((reason = ANY (ARRAY['manual'::text, 'bounced'::text, 'complained'::text]))),
+    CONSTRAINT internal_mail_suppression_state_revision_check CHECK ((revision > 0)),
+    CONSTRAINT internal_mail_suppression_state_source_id_check CHECK (((source_id = ''::text) OR (source_id ~ '^[a-z][a-z0-9_-]{0,31}$'::text))),
+    CONSTRAINT internal_mail_suppression_state_source_kind_check CHECK ((source_kind = ANY (ARRAY['legacy'::text, 'operator'::text, 'service_report'::text, 'postfix'::text, 'provider'::text]))),
+    CONSTRAINT internal_mail_suppression_state_updated_at_check CHECK (isfinite(updated_at))
+);
+
+
+--
+-- Name: internal_mail_suppressions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.internal_mail_suppressions (
+    namespace text NOT NULL,
+    address text NOT NULL,
+    reason text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT internal_mail_suppressions_address_check CHECK ((address = lower(address))),
+    CONSTRAINT internal_mail_suppressions_reason_check CHECK ((reason = ANY (ARRAY['bounced'::text, 'complained'::text, 'manual'::text])))
+);
+
+
+--
 -- Name: invocation_attempt_history; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -34351,6 +35334,32 @@ CREATE TABLE public.login_tokens (
     account_id uuid NOT NULL,
     expires_at timestamp with time zone NOT NULL,
     consumed_at timestamp with time zone
+);
+
+
+--
+-- Name: magic_link_tokens; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.magic_link_tokens (
+    token_hash bytea NOT NULL,
+    account_id uuid NOT NULL,
+    email_address text NOT NULL,
+    password_revision bigint NOT NULL,
+    email_verified_at timestamp with time zone,
+    namespace text NOT NULL,
+    recovery_id uuid NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    consumed_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT magic_link_tokens_check CHECK ((isfinite(created_at) AND (expires_at > created_at))),
+    CONSTRAINT magic_link_tokens_consumed_at_check CHECK (((consumed_at IS NULL) OR isfinite(consumed_at))),
+    CONSTRAINT magic_link_tokens_email_address_check CHECK ((((length(email_address) >= 3) AND (length(email_address) <= 254)) AND (email_address = lower(email_address)) AND (POSITION((chr(10)) IN (email_address)) = 0) AND (POSITION((chr(13)) IN (email_address)) = 0))),
+    CONSTRAINT magic_link_tokens_email_verified_at_check CHECK (((email_verified_at IS NULL) OR isfinite(email_verified_at))),
+    CONSTRAINT magic_link_tokens_expires_at_check CHECK (isfinite(expires_at)),
+    CONSTRAINT magic_link_tokens_namespace_check CHECK ((namespace ~ '^[a-z][a-z0-9_-]{0,63}$'::text)),
+    CONSTRAINT magic_link_tokens_password_revision_check CHECK ((password_revision > 0)),
+    CONSTRAINT magic_link_tokens_token_hash_check CHECK ((octet_length(token_hash) = 32))
 );
 
 
@@ -36643,6 +37652,36 @@ CREATE TABLE public.mfa_disable_requests (
 
 
 --
+-- Name: mfa_disable_tokens; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.mfa_disable_tokens (
+    token_hash bytea NOT NULL,
+    account_id uuid NOT NULL,
+    email_address text NOT NULL,
+    password_revision bigint NOT NULL,
+    mfa_revision bigint NOT NULL,
+    mfa_enrolled_at timestamp with time zone NOT NULL,
+    namespace text NOT NULL,
+    recovery_id uuid NOT NULL,
+    requested_at timestamp with time zone NOT NULL,
+    ready_at timestamp with time zone NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    consumed_at timestamp with time zone,
+    CONSTRAINT mfa_disable_tokens_check CHECK ((isfinite(ready_at) AND (ready_at = (requested_at + '24:00:00'::interval)))),
+    CONSTRAINT mfa_disable_tokens_check1 CHECK ((isfinite(expires_at) AND (expires_at = (ready_at + '24:00:00'::interval)))),
+    CONSTRAINT mfa_disable_tokens_consumed_at_check CHECK (((consumed_at IS NULL) OR isfinite(consumed_at))),
+    CONSTRAINT mfa_disable_tokens_email_address_check CHECK ((((length(email_address) >= 3) AND (length(email_address) <= 254)) AND (email_address = lower(email_address)) AND (POSITION((chr(10)) IN (email_address)) = 0) AND (POSITION((chr(13)) IN (email_address)) = 0))),
+    CONSTRAINT mfa_disable_tokens_mfa_enrolled_at_check CHECK (isfinite(mfa_enrolled_at)),
+    CONSTRAINT mfa_disable_tokens_mfa_revision_check CHECK ((mfa_revision > 0)),
+    CONSTRAINT mfa_disable_tokens_namespace_check CHECK ((namespace ~ '^[a-z][a-z0-9_-]{0,63}$'::text)),
+    CONSTRAINT mfa_disable_tokens_password_revision_check CHECK ((password_revision > 0)),
+    CONSTRAINT mfa_disable_tokens_requested_at_check CHECK (isfinite(requested_at)),
+    CONSTRAINT mfa_disable_tokens_token_hash_check CHECK ((octet_length(token_hash) = 32))
+);
+
+
+--
 -- Name: migration_admissions; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -38753,6 +39792,30 @@ CREATE TABLE public.paddle_overage_dedupe (
 
 
 --
+-- Name: password_reset_tokens; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.password_reset_tokens (
+    token_hash bytea NOT NULL,
+    account_id uuid NOT NULL,
+    email_address text NOT NULL,
+    password_revision bigint NOT NULL,
+    namespace text NOT NULL,
+    recovery_id uuid NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    consumed_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT password_reset_tokens_check CHECK ((isfinite(created_at) AND (expires_at > created_at))),
+    CONSTRAINT password_reset_tokens_consumed_at_check CHECK (((consumed_at IS NULL) OR isfinite(consumed_at))),
+    CONSTRAINT password_reset_tokens_email_address_check CHECK ((((length(email_address) >= 3) AND (length(email_address) <= 254)) AND (email_address = lower(email_address)) AND (POSITION((chr(10)) IN (email_address)) = 0) AND (POSITION((chr(13)) IN (email_address)) = 0))),
+    CONSTRAINT password_reset_tokens_expires_at_check CHECK (isfinite(expires_at)),
+    CONSTRAINT password_reset_tokens_namespace_check CHECK ((namespace ~ '^[a-z][a-z0-9_-]{0,63}$'::text)),
+    CONSTRAINT password_reset_tokens_password_revision_check CHECK ((password_revision > 0)),
+    CONSTRAINT password_reset_tokens_token_hash_check CHECK ((octet_length(token_hash) = 32))
+);
+
+
+--
 -- Name: pg_preauth_failure_counters; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -38778,6 +39841,172 @@ CREATE TABLE public.pg_ratelimit_counters (
     CONSTRAINT pg_ratelimit_counters_plan_check CHECK ((plan = ANY (ARRAY['free'::text, 'hobby'::text, 'pro'::text, 'scale'::text]))),
     CONSTRAINT pg_ratelimit_counters_scope_check CHECK ((scope = ANY (ARRAY['app'::text, 'account'::text, 'rule'::text, 'preauth'::text]))),
     CONSTRAINT pg_ratelimit_counters_tokens_check CHECK ((tokens >= 0))
+);
+
+
+--
+-- Name: platform_mail_deployment_capture; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.platform_mail_deployment_capture (
+    namespace text NOT NULL,
+    producer_id text NOT NULL,
+    started_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    recovery_id uuid NOT NULL,
+    CONSTRAINT platform_mail_deployment_capture_namespace_check CHECK ((namespace ~ '^[a-z][a-z0-9_-]{0,63}$'::text)),
+    CONSTRAINT platform_mail_deployment_capture_producer_id_check CHECK ((producer_id ~ '^[a-z][a-z0-9_-]{0,31}$'::text)),
+    CONSTRAINT platform_mail_deployment_capture_started_at_check CHECK (isfinite(started_at))
+);
+
+
+--
+-- Name: platform_mail_deployment_fences; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.platform_mail_deployment_fences (
+    app_id uuid NOT NULL,
+    scope text NOT NULL,
+    revision bigint DEFAULT 1 NOT NULL,
+    success_revision bigint DEFAULT 0 NOT NULL,
+    CONSTRAINT platform_mail_deployment_fences_revision_check CHECK ((revision > 0)),
+    CONSTRAINT platform_mail_deployment_fences_scope_check CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text)),
+    CONSTRAINT platform_mail_deployment_fences_success_revision_check CHECK ((success_revision >= 0))
+);
+
+
+--
+-- Name: platform_mail_deployment_observations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.platform_mail_deployment_observations (
+    deployment_id uuid NOT NULL,
+    failure_revision bigint NOT NULL,
+    account_id uuid NOT NULL,
+    disposition text NOT NULL,
+    intent_id uuid,
+    observed_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT platform_mail_deployment_observations_check CHECK (((disposition = 'queued'::text) OR (intent_id IS NULL))),
+    CONSTRAINT platform_mail_deployment_observations_disposition_check CHECK ((disposition = ANY (ARRAY['queued'::text, 'cooldown'::text, 'stale'::text, 'unavailable'::text, 'expired'::text]))),
+    CONSTRAINT platform_mail_deployment_observations_failure_revision_check CHECK ((failure_revision > 0)),
+    CONSTRAINT platform_mail_deployment_observations_observed_at_check CHECK (isfinite(observed_at))
+);
+
+
+--
+-- Name: platform_mail_outbox_reconciliations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.platform_mail_outbox_reconciliations (
+    namespace text NOT NULL,
+    request_id uuid NOT NULL,
+    intent_id uuid NOT NULL,
+    message_id uuid NOT NULL,
+    recovery_id uuid NOT NULL,
+    expected_revision bigint NOT NULL,
+    resulting_revision bigint NOT NULL,
+    previous_state text NOT NULL,
+    actor text NOT NULL,
+    reason text NOT NULL,
+    evidence text NOT NULL,
+    request_hash bytea NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    template text DEFAULT 'account_deletion_pending'::text NOT NULL,
+    CONSTRAINT platform_mail_outbox_reconciliations_actor_check CHECK ((actor ~ '^[a-zA-Z0-9][a-zA-Z0-9_.@-]{0,127}$'::text)),
+    CONSTRAINT platform_mail_outbox_reconciliations_check CHECK ((resulting_revision = (expected_revision + 1))),
+    CONSTRAINT platform_mail_outbox_reconciliations_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT platform_mail_outbox_reconciliations_evidence_check CHECK ((evidence ~ '^[a-zA-Z0-9][a-zA-Z0-9:/._-]{0,255}$'::text)),
+    CONSTRAINT platform_mail_outbox_reconciliations_expected_revision_check CHECK ((expected_revision > 0)),
+    CONSTRAINT platform_mail_outbox_reconciliations_intent_id_check CHECK ((intent_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT platform_mail_outbox_reconciliations_message_id_check CHECK ((message_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT platform_mail_outbox_reconciliations_namespace_check CHECK ((namespace ~ '^[a-z][a-z0-9_-]{0,63}$'::text)),
+    CONSTRAINT platform_mail_outbox_reconciliations_previous_state_check CHECK ((previous_state = ANY (ARRAY['queued'::text, 'claimed'::text, 'failed'::text, 'expired'::text]))),
+    CONSTRAINT platform_mail_outbox_reconciliations_reason_check CHECK ((reason ~ '^[a-z][a-z0-9_]{0,63}$'::text)),
+    CONSTRAINT platform_mail_outbox_reconciliations_request_hash_check CHECK ((octet_length(request_hash) = 32)),
+    CONSTRAINT platform_mail_outbox_reconciliations_request_id_check CHECK ((request_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT platform_mail_outbox_reconciliations_template_check CHECK ((template = ANY (ARRAY['account_deletion_pending'::text, 'email_verification'::text, 'password_reset'::text, 'magic_link'::text, 'mfa_recovery_used'::text, 'mfa_disable_request'::text, 'mfa_disabled'::text, 'password_changed'::text, 'mfa_enabled'::text, 'payment_failed'::text, 'account_restored'::text, 'account_suspended'::text, 'nonpayment_deletion'::text, 'quota_warning'::text, 'subscription_ended'::text, 'deployment_failed'::text])))
+);
+
+
+--
+-- Name: platform_mail_producer_outbox; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.platform_mail_producer_outbox (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    namespace text NOT NULL,
+    producer_id text NOT NULL,
+    from_address text NOT NULL,
+    recipient_address text NOT NULL,
+    template text NOT NULL,
+    template_version integer NOT NULL,
+    deletion_requested_at timestamp with time zone,
+    restore_until timestamp with time zone,
+    expires_at timestamp with time zone NOT NULL,
+    recovery_id uuid DEFAULT '00000000-0000-0000-0000-000000000000'::uuid NOT NULL,
+    state text DEFAULT 'queued'::text NOT NULL,
+    attempts integer DEFAULT 0 NOT NULL,
+    next_attempt_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    lease_id uuid,
+    lease_until timestamp with time zone,
+    code text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    revision bigint DEFAULT 1 NOT NULL,
+    verification_token_hash bytea,
+    sealed_verification bytea DEFAULT '\x'::bytea NOT NULL,
+    verification_key_id text DEFAULT ''::text NOT NULL,
+    verification_origin text DEFAULT ''::text NOT NULL,
+    sealed_security_alert bytea DEFAULT '\x'::bytea NOT NULL,
+    security_alert_key_id text DEFAULT ''::text NOT NULL,
+    payment_past_due_at timestamp with time zone,
+    account_restored_revision bigint,
+    suspension_past_due_at timestamp with time zone,
+    account_suspended_revision bigint,
+    nonpayment_past_due_at timestamp with time zone,
+    nonpayment_deletion_revision bigint,
+    nonpayment_deletion_at timestamp with time zone,
+    quota_warning_day timestamp with time zone,
+    quota_warning_plan text,
+    quota_warning_revision bigint,
+    subscription_ended_revision bigint,
+    deployment_failure_id uuid,
+    deployment_failure_app_id uuid,
+    deployment_failure_scope text,
+    deployment_failure_revision bigint,
+    deployment_failure_account_revision bigint,
+    deployment_failure_app_revision bigint,
+    deployment_failure_success_revision bigint,
+    deployment_failure_at timestamp with time zone,
+    CONSTRAINT platform_mail_producer_outbox_attempts_check CHECK ((attempts >= 0)),
+    CONSTRAINT platform_mail_producer_outbox_check CHECK ((isfinite(restore_until) AND (restore_until > deletion_requested_at))),
+    CONSTRAINT platform_mail_producer_outbox_check1 CHECK ((isfinite(expires_at) AND (expires_at > deletion_requested_at))),
+    CONSTRAINT platform_mail_producer_outbox_check2 CHECK (((state = 'claimed'::text) = ((lease_id IS NOT NULL) AND (lease_until IS NOT NULL)))),
+    CONSTRAINT platform_mail_producer_outbox_check3 CHECK (((state = ANY (ARRAY['queued'::text, 'claimed'::text])) = (recipient_address <> ''::text))),
+    CONSTRAINT platform_mail_producer_outbox_code_check CHECK ((code = ANY (ARRAY[''::text, 'maild_unavailable'::text, 'maild_rejected'::text, 'attempt_limit'::text, 'notification_expired'::text, 'account_changed'::text, 'platform_suppressed'::text, 'token_unavailable'::text, 'payload_unavailable'::text]))),
+    CONSTRAINT platform_mail_producer_outbox_created_at_check CHECK (isfinite(created_at)),
+    CONSTRAINT platform_mail_producer_outbox_deletion_requested_at_check CHECK (isfinite(deletion_requested_at)),
+    CONSTRAINT platform_mail_producer_outbox_deployment_failure_check CHECK ((((template = 'deployment_failed'::text) AND (deployment_failure_id IS NOT NULL) AND (deployment_failure_app_id IS NOT NULL) AND (deployment_failure_scope IS NOT NULL) AND (deployment_failure_scope ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text) AND (deployment_failure_revision IS NOT NULL) AND (deployment_failure_revision > 0) AND (deployment_failure_account_revision IS NOT NULL) AND (deployment_failure_account_revision > 0) AND (deployment_failure_app_revision IS NOT NULL) AND (deployment_failure_app_revision > 0) AND (deployment_failure_success_revision IS NOT NULL) AND (deployment_failure_success_revision >= 0) AND (deployment_failure_at IS NOT NULL) AND isfinite(deployment_failure_at)) OR ((template <> 'deployment_failed'::text) AND (deployment_failure_id IS NULL) AND (deployment_failure_app_id IS NULL) AND (deployment_failure_scope IS NULL) AND (deployment_failure_revision IS NULL) AND (deployment_failure_account_revision IS NULL) AND (deployment_failure_app_revision IS NULL) AND (deployment_failure_success_revision IS NULL) AND (deployment_failure_at IS NULL)))),
+    CONSTRAINT platform_mail_producer_outbox_from_address_check CHECK (((length(from_address) >= 3) AND (length(from_address) <= 1024))),
+    CONSTRAINT platform_mail_producer_outbox_id_check CHECK ((id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT platform_mail_producer_outbox_lease_until_check CHECK (((lease_until IS NULL) OR isfinite(lease_until))),
+    CONSTRAINT platform_mail_producer_outbox_namespace_check CHECK ((namespace ~ '^[a-z][a-z0-9_-]{0,63}$'::text)),
+    CONSTRAINT platform_mail_producer_outbox_next_attempt_at_check CHECK (isfinite(next_attempt_at)),
+    CONSTRAINT platform_mail_producer_outbox_nonpayment_deletion_check CHECK ((((template = 'nonpayment_deletion'::text) AND (nonpayment_past_due_at IS NOT NULL) AND isfinite(nonpayment_past_due_at) AND (nonpayment_deletion_at IS NOT NULL) AND isfinite(nonpayment_deletion_at) AND (nonpayment_deletion_revision IS NOT NULL) AND (nonpayment_deletion_revision > 0)) OR ((template <> 'nonpayment_deletion'::text) AND (nonpayment_past_due_at IS NULL) AND (nonpayment_deletion_revision IS NULL) AND (nonpayment_deletion_at IS NULL)))),
+    CONSTRAINT platform_mail_producer_outbox_payment_check CHECK ((((template = 'payment_failed'::text) AND (payment_past_due_at IS NOT NULL) AND isfinite(payment_past_due_at) AND (expires_at > payment_past_due_at)) OR ((template <> 'payment_failed'::text) AND (payment_past_due_at IS NULL)))),
+    CONSTRAINT platform_mail_producer_outbox_producer_id_check CHECK ((producer_id ~ '^[a-z][a-z0-9_-]{0,31}$'::text)),
+    CONSTRAINT platform_mail_producer_outbox_quota_warning_check CHECK ((((template = 'quota_warning'::text) AND (quota_warning_day IS NOT NULL) AND isfinite(quota_warning_day) AND (quota_warning_day = (date_trunc('day'::text, (quota_warning_day AT TIME ZONE 'UTC'::text)) AT TIME ZONE 'UTC'::text)) AND (quota_warning_plan IS NOT NULL) AND (quota_warning_plan = ANY (ARRAY['hobby'::text, 'pro'::text, 'scale'::text])) AND (quota_warning_revision IS NOT NULL) AND (quota_warning_revision > 0)) OR ((template <> 'quota_warning'::text) AND (quota_warning_day IS NULL) AND (quota_warning_plan IS NULL) AND (quota_warning_revision IS NULL)))),
+    CONSTRAINT platform_mail_producer_outbox_recipient_address_check CHECK (((length(recipient_address) <= 254) AND (POSITION((chr(10)) IN (recipient_address)) = 0) AND (POSITION((chr(13)) IN (recipient_address)) = 0))),
+    CONSTRAINT platform_mail_producer_outbox_restored_check CHECK ((((template = 'account_restored'::text) AND (account_restored_revision IS NOT NULL) AND (account_restored_revision > 0)) OR ((template <> 'account_restored'::text) AND (account_restored_revision IS NULL)))),
+    CONSTRAINT platform_mail_producer_outbox_revision_check CHECK ((revision > 0)),
+    CONSTRAINT platform_mail_producer_outbox_security_alert_check CHECK ((((template <> ALL (ARRAY['mfa_recovery_used'::text, 'mfa_disabled'::text, 'password_changed'::text, 'mfa_enabled'::text, 'payment_failed'::text, 'account_restored'::text, 'account_suspended'::text, 'nonpayment_deletion'::text, 'quota_warning'::text, 'subscription_ended'::text, 'deployment_failed'::text])) AND (octet_length(sealed_security_alert) = 0) AND (security_alert_key_id = ''::text)) OR ((template = ANY (ARRAY['mfa_recovery_used'::text, 'mfa_disabled'::text, 'password_changed'::text, 'mfa_enabled'::text, 'payment_failed'::text, 'account_restored'::text, 'account_suspended'::text, 'nonpayment_deletion'::text, 'quota_warning'::text, 'subscription_ended'::text, 'deployment_failed'::text])) AND (((state = ANY (ARRAY['queued'::text, 'claimed'::text])) AND ((octet_length(sealed_security_alert) >= 64) AND (octet_length(sealed_security_alert) <= 4096)) AND (security_alert_key_id ~ '^[0-9a-f]{64}$'::text)) OR ((state <> ALL (ARRAY['queued'::text, 'claimed'::text])) AND (octet_length(sealed_security_alert) = 0) AND (security_alert_key_id = ''::text)))))),
+    CONSTRAINT platform_mail_producer_outbox_state_check CHECK ((state = ANY (ARRAY['queued'::text, 'claimed'::text, 'admitted'::text, 'failed'::text, 'expired'::text, 'cancelled'::text, 'suppressed'::text]))),
+    CONSTRAINT platform_mail_producer_outbox_subscription_ended_check CHECK ((((template = 'subscription_ended'::text) AND (subscription_ended_revision IS NOT NULL) AND (subscription_ended_revision > 0)) OR ((template <> 'subscription_ended'::text) AND (subscription_ended_revision IS NULL)))),
+    CONSTRAINT platform_mail_producer_outbox_suspended_check CHECK ((((template = 'account_suspended'::text) AND (suspension_past_due_at IS NOT NULL) AND isfinite(suspension_past_due_at) AND (account_suspended_revision IS NOT NULL) AND (account_suspended_revision > 0)) OR ((template <> 'account_suspended'::text) AND (suspension_past_due_at IS NULL) AND (account_suspended_revision IS NULL)))),
+    CONSTRAINT platform_mail_producer_outbox_template_check CHECK ((template = ANY (ARRAY['account_deletion_pending'::text, 'email_verification'::text, 'password_reset'::text, 'magic_link'::text, 'mfa_recovery_used'::text, 'mfa_disable_request'::text, 'mfa_disabled'::text, 'password_changed'::text, 'mfa_enabled'::text, 'payment_failed'::text, 'account_restored'::text, 'account_suspended'::text, 'nonpayment_deletion'::text, 'quota_warning'::text, 'subscription_ended'::text, 'deployment_failed'::text]))),
+    CONSTRAINT platform_mail_producer_outbox_template_version_check CHECK ((template_version = 1)),
+    CONSTRAINT platform_mail_producer_outbox_updated_at_check CHECK (isfinite(updated_at)),
+    CONSTRAINT platform_mail_producer_outbox_verification_check CHECK ((((template = 'account_deletion_pending'::text) AND (deletion_requested_at IS NOT NULL) AND (restore_until IS NOT NULL) AND (verification_token_hash IS NULL) AND (octet_length(sealed_verification) = 0) AND (verification_key_id = ''::text) AND (verification_origin = ''::text)) OR ((template = ANY (ARRAY['mfa_recovery_used'::text, 'mfa_disabled'::text, 'password_changed'::text, 'mfa_enabled'::text, 'payment_failed'::text, 'account_restored'::text, 'account_suspended'::text, 'nonpayment_deletion'::text, 'quota_warning'::text, 'subscription_ended'::text, 'deployment_failed'::text])) AND (deletion_requested_at IS NULL) AND (restore_until IS NULL) AND (verification_token_hash IS NULL) AND (octet_length(sealed_verification) = 0) AND (verification_key_id = ''::text) AND (verification_origin = ''::text)) OR ((template = ANY (ARRAY['email_verification'::text, 'password_reset'::text, 'magic_link'::text, 'mfa_disable_request'::text])) AND (deletion_requested_at IS NULL) AND (restore_until IS NULL) AND (((state = ANY (ARRAY['queued'::text, 'claimed'::text])) AND (verification_token_hash IS NOT NULL) AND (octet_length(verification_token_hash) = 32) AND ((octet_length(sealed_verification) >= 64) AND (octet_length(sealed_verification) <= 4096)) AND (verification_key_id ~ '^[0-9a-f]{64}$'::text) AND ((length(verification_origin) >= 9) AND (length(verification_origin) <= 2048)) AND (verification_origin ~ '^https://[^/?#[:space:]]+$'::text)) OR ((state <> ALL (ARRAY['queued'::text, 'claimed'::text])) AND (verification_token_hash IS NULL) AND (octet_length(sealed_verification) = 0) AND (verification_key_id = ''::text) AND (verification_origin = ''::text))))))
 );
 
 
@@ -46831,6 +48060,38 @@ ALTER TABLE ONLY public.base_image_scans
 
 
 --
+-- Name: billing_account_nonpayment_deletions billing_account_nonpayment_deletions_intent_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.billing_account_nonpayment_deletions
+    ADD CONSTRAINT billing_account_nonpayment_deletions_intent_id_key UNIQUE (intent_id);
+
+
+--
+-- Name: billing_account_nonpayment_deletions billing_account_nonpayment_deletions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.billing_account_nonpayment_deletions
+    ADD CONSTRAINT billing_account_nonpayment_deletions_pkey PRIMARY KEY (account_id, past_due_at);
+
+
+--
+-- Name: billing_account_suspensions billing_account_suspensions_intent_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.billing_account_suspensions
+    ADD CONSTRAINT billing_account_suspensions_intent_id_key UNIQUE (intent_id);
+
+
+--
+-- Name: billing_account_suspensions billing_account_suspensions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.billing_account_suspensions
+    ADD CONSTRAINT billing_account_suspensions_pkey PRIMARY KEY (account_id, past_due_at);
+
+
+--
 -- Name: billing_identities billing_identities_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -46855,6 +48116,38 @@ ALTER TABLE ONLY public.billing_meter_usage_deliveries
 
 
 --
+-- Name: billing_payment_failure_receipts billing_payment_failure_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.billing_payment_failure_receipts
+    ADD CONSTRAINT billing_payment_failure_receipts_pkey PRIMARY KEY (provider, event_id);
+
+
+--
+-- Name: billing_payment_recovery_receipts billing_payment_recovery_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.billing_payment_recovery_receipts
+    ADD CONSTRAINT billing_payment_recovery_receipts_pkey PRIMARY KEY (provider, event_id);
+
+
+--
+-- Name: billing_quota_warnings billing_quota_warnings_intent_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.billing_quota_warnings
+    ADD CONSTRAINT billing_quota_warnings_intent_id_key UNIQUE (intent_id);
+
+
+--
+-- Name: billing_quota_warnings billing_quota_warnings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.billing_quota_warnings
+    ADD CONSTRAINT billing_quota_warnings_pkey PRIMARY KEY (account_id, warning_day);
+
+
+--
 -- Name: billing_run_items billing_run_items_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -46876,6 +48169,30 @@ ALTER TABLE ONLY public.billing_run_schedules
 
 ALTER TABLE ONLY public.billing_runs
     ADD CONSTRAINT billing_runs_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: billing_subscription_end_receipts billing_subscription_end_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.billing_subscription_end_receipts
+    ADD CONSTRAINT billing_subscription_end_receipts_pkey PRIMARY KEY (provider, event_id);
+
+
+--
+-- Name: billing_subscription_ends billing_subscription_ends_intent_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.billing_subscription_ends
+    ADD CONSTRAINT billing_subscription_ends_intent_id_key UNIQUE (intent_id);
+
+
+--
+-- Name: billing_subscription_ends billing_subscription_ends_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.billing_subscription_ends
+    ADD CONSTRAINT billing_subscription_ends_pkey PRIMARY KEY (account_id, provider, subscription_hash);
 
 
 --
@@ -49815,6 +51132,326 @@ ALTER TABLE ONLY public.instances
 
 
 --
+-- Name: internal_mail_delivery_controls internal_mail_delivery_controls_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.internal_mail_delivery_controls
+    ADD CONSTRAINT internal_mail_delivery_controls_pkey PRIMARY KEY (namespace, scope_id);
+
+
+--
+-- Name: internal_mail_dispatch_reservations internal_mail_dispatch_reservations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.internal_mail_dispatch_reservations
+    ADD CONSTRAINT internal_mail_dispatch_reservations_pkey PRIMARY KEY (namespace, lease_id);
+
+
+--
+-- Name: internal_mail_dkim_keys internal_mail_dkim_keys_namespace_domain_id_selector_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.internal_mail_dkim_keys
+    ADD CONSTRAINT internal_mail_dkim_keys_namespace_domain_id_selector_key UNIQUE (namespace, domain_id, selector);
+
+
+--
+-- Name: internal_mail_dkim_keys internal_mail_dkim_keys_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.internal_mail_dkim_keys
+    ADD CONSTRAINT internal_mail_dkim_keys_pkey PRIMARY KEY (namespace, id);
+
+
+--
+-- Name: internal_mail_domain_pacing internal_mail_domain_pacing_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.internal_mail_domain_pacing
+    ADD CONSTRAINT internal_mail_domain_pacing_pkey PRIMARY KEY (namespace, recipient_domain);
+
+
+--
+-- Name: internal_mail_domains internal_mail_domains_namespace_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.internal_mail_domains
+    ADD CONSTRAINT internal_mail_domains_namespace_id_key UNIQUE (namespace, id);
+
+
+--
+-- Name: internal_mail_domains internal_mail_domains_namespace_name_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.internal_mail_domains
+    ADD CONSTRAINT internal_mail_domains_namespace_name_key UNIQUE (namespace, name);
+
+
+--
+-- Name: internal_mail_domains internal_mail_domains_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.internal_mail_domains
+    ADD CONSTRAINT internal_mail_domains_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: internal_mail_encryption_keys internal_mail_encryption_keys_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.internal_mail_encryption_keys
+    ADD CONSTRAINT internal_mail_encryption_keys_pkey PRIMARY KEY (namespace, key_id);
+
+
+--
+-- Name: internal_mail_encryption_state internal_mail_encryption_state_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.internal_mail_encryption_state
+    ADD CONSTRAINT internal_mail_encryption_state_pkey PRIMARY KEY (namespace);
+
+
+--
+-- Name: internal_mail_event_consumers internal_mail_event_consumers_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.internal_mail_event_consumers
+    ADD CONSTRAINT internal_mail_event_consumers_pkey PRIMARY KEY (namespace, producer_id, name);
+
+
+--
+-- Name: internal_mail_event_feed internal_mail_event_feed_namespace_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.internal_mail_event_feed
+    ADD CONSTRAINT internal_mail_event_feed_namespace_id_key UNIQUE (namespace, id);
+
+
+--
+-- Name: internal_mail_event_feed internal_mail_event_feed_namespace_source_event_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.internal_mail_event_feed
+    ADD CONSTRAINT internal_mail_event_feed_namespace_source_event_id_key UNIQUE (namespace, source_event_id);
+
+
+--
+-- Name: internal_mail_event_feed internal_mail_event_feed_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.internal_mail_event_feed
+    ADD CONSTRAINT internal_mail_event_feed_pkey PRIMARY KEY (namespace, producer_id, "position");
+
+
+--
+-- Name: internal_mail_event_receipts internal_mail_event_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.internal_mail_event_receipts
+    ADD CONSTRAINT internal_mail_event_receipts_pkey PRIMARY KEY (namespace, producer_id, consumer, id);
+
+
+--
+-- Name: internal_mail_event_streams internal_mail_event_streams_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.internal_mail_event_streams
+    ADD CONSTRAINT internal_mail_event_streams_pkey PRIMARY KEY (namespace, producer_id);
+
+
+--
+-- Name: internal_mail_events internal_mail_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.internal_mail_events
+    ADD CONSTRAINT internal_mail_events_pkey PRIMARY KEY (namespace, id);
+
+
+--
+-- Name: internal_mail_messages internal_mail_messages_namespace_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.internal_mail_messages
+    ADD CONSTRAINT internal_mail_messages_namespace_id_key UNIQUE (namespace, id);
+
+
+--
+-- Name: internal_mail_messages internal_mail_messages_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.internal_mail_messages
+    ADD CONSTRAINT internal_mail_messages_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: internal_mail_messages internal_mail_messages_producer_idempotency_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.internal_mail_messages
+    ADD CONSTRAINT internal_mail_messages_producer_idempotency_key UNIQUE (namespace, producer_id, idempotency_key);
+
+
+--
+-- Name: internal_mail_operations internal_mail_operations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.internal_mail_operations
+    ADD CONSTRAINT internal_mail_operations_pkey PRIMARY KEY (namespace, id);
+
+
+--
+-- Name: internal_mail_producer_access internal_mail_producer_access_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.internal_mail_producer_access
+    ADD CONSTRAINT internal_mail_producer_access_pkey PRIMARY KEY (namespace, producer_id);
+
+
+--
+-- Name: internal_mail_producer_credentials internal_mail_producer_credentials_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.internal_mail_producer_credentials
+    ADD CONSTRAINT internal_mail_producer_credentials_pkey PRIMARY KEY (namespace, producer_id, credential_id);
+
+
+--
+-- Name: internal_mail_producer_dispatch internal_mail_producer_dispatch_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.internal_mail_producer_dispatch
+    ADD CONSTRAINT internal_mail_producer_dispatch_pkey PRIMARY KEY (namespace, producer_id);
+
+
+--
+-- Name: internal_mail_recipients internal_mail_recipients_message_id_address_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.internal_mail_recipients
+    ADD CONSTRAINT internal_mail_recipients_message_id_address_key UNIQUE (message_id, address);
+
+
+--
+-- Name: internal_mail_recipients internal_mail_recipients_namespace_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.internal_mail_recipients
+    ADD CONSTRAINT internal_mail_recipients_namespace_id_key UNIQUE (namespace, id);
+
+
+--
+-- Name: internal_mail_recipients internal_mail_recipients_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.internal_mail_recipients
+    ADD CONSTRAINT internal_mail_recipients_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: internal_mail_recovery_runs internal_mail_recovery_runs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.internal_mail_recovery_runs
+    ADD CONSTRAINT internal_mail_recovery_runs_pkey PRIMARY KEY (namespace, recovery_id);
+
+
+--
+-- Name: internal_mail_recovery_state internal_mail_recovery_state_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.internal_mail_recovery_state
+    ADD CONSTRAINT internal_mail_recovery_state_pkey PRIMARY KEY (namespace);
+
+
+--
+-- Name: internal_mail_relay_events internal_mail_relay_events_namespace_revision_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.internal_mail_relay_events
+    ADD CONSTRAINT internal_mail_relay_events_namespace_revision_key UNIQUE (namespace, revision);
+
+
+--
+-- Name: internal_mail_relay_events internal_mail_relay_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.internal_mail_relay_events
+    ADD CONSTRAINT internal_mail_relay_events_pkey PRIMARY KEY (namespace, id);
+
+
+--
+-- Name: internal_mail_relay_health internal_mail_relay_health_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.internal_mail_relay_health
+    ADD CONSTRAINT internal_mail_relay_health_pkey PRIMARY KEY (namespace);
+
+
+--
+-- Name: internal_mail_reputation_events internal_mail_reputation_even_namespace_scope_scope_key_rev_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.internal_mail_reputation_events
+    ADD CONSTRAINT internal_mail_reputation_even_namespace_scope_scope_key_rev_key UNIQUE (namespace, scope, scope_key, revision);
+
+
+--
+-- Name: internal_mail_reputation_events internal_mail_reputation_events_namespace_sequence_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.internal_mail_reputation_events
+    ADD CONSTRAINT internal_mail_reputation_events_namespace_sequence_key UNIQUE (namespace, sequence);
+
+
+--
+-- Name: internal_mail_reputation_events internal_mail_reputation_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.internal_mail_reputation_events
+    ADD CONSTRAINT internal_mail_reputation_events_pkey PRIMARY KEY (namespace, id);
+
+
+--
+-- Name: internal_mail_reputation_feedback internal_mail_reputation_feedback_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.internal_mail_reputation_feedback
+    ADD CONSTRAINT internal_mail_reputation_feedback_pkey PRIMARY KEY (namespace, recipient_id);
+
+
+--
+-- Name: internal_mail_reputation_holds internal_mail_reputation_holds_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.internal_mail_reputation_holds
+    ADD CONSTRAINT internal_mail_reputation_holds_pkey PRIMARY KEY (namespace, scope, scope_key);
+
+
+--
+-- Name: internal_mail_suppression_events internal_mail_suppression_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.internal_mail_suppression_events
+    ADD CONSTRAINT internal_mail_suppression_events_pkey PRIMARY KEY (namespace, address, revision);
+
+
+--
+-- Name: internal_mail_suppression_state internal_mail_suppression_state_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.internal_mail_suppression_state
+    ADD CONSTRAINT internal_mail_suppression_state_pkey PRIMARY KEY (namespace, address);
+
+
+--
+-- Name: internal_mail_suppressions internal_mail_suppressions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.internal_mail_suppressions
+    ADD CONSTRAINT internal_mail_suppressions_pkey PRIMARY KEY (namespace, address);
+
+
+--
 -- Name: invocation_attempt_history invocation_attempt_history_invocation_id_replay_generation__key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -50564,6 +52201,14 @@ ALTER TABLE ONLY public.log_events_default
 
 ALTER TABLE ONLY public.login_tokens
     ADD CONSTRAINT login_tokens_pkey PRIMARY KEY (token_hash);
+
+
+--
+-- Name: magic_link_tokens magic_link_tokens_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.magic_link_tokens
+    ADD CONSTRAINT magic_link_tokens_pkey PRIMARY KEY (token_hash);
 
 
 --
@@ -51436,6 +53081,14 @@ ALTER TABLE ONLY public.meterd_tenant_surface_cert_expiry_state
 
 ALTER TABLE ONLY public.mfa_disable_requests
     ADD CONSTRAINT mfa_disable_requests_pkey PRIMARY KEY (token_hash);
+
+
+--
+-- Name: mfa_disable_tokens mfa_disable_tokens_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mfa_disable_tokens
+    ADD CONSTRAINT mfa_disable_tokens_pkey PRIMARY KEY (token_hash);
 
 
 --
@@ -52319,6 +53972,14 @@ ALTER TABLE ONLY public.paddle_overage_dedupe
 
 
 --
+-- Name: password_reset_tokens password_reset_tokens_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.password_reset_tokens
+    ADD CONSTRAINT password_reset_tokens_pkey PRIMARY KEY (token_hash);
+
+
+--
 -- Name: pg_preauth_failure_counters pg_preauth_failure_counters_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -52332,6 +53993,70 @@ ALTER TABLE ONLY public.pg_preauth_failure_counters
 
 ALTER TABLE ONLY public.pg_ratelimit_counters
     ADD CONSTRAINT pg_ratelimit_counters_pkey PRIMARY KEY (scope, subject_id, plan);
+
+
+--
+-- Name: platform_mail_deployment_capture platform_mail_deployment_capture_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_mail_deployment_capture
+    ADD CONSTRAINT platform_mail_deployment_capture_pkey PRIMARY KEY (namespace, producer_id);
+
+
+--
+-- Name: platform_mail_deployment_fences platform_mail_deployment_fences_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_mail_deployment_fences
+    ADD CONSTRAINT platform_mail_deployment_fences_pkey PRIMARY KEY (app_id, scope);
+
+
+--
+-- Name: platform_mail_deployment_observations platform_mail_deployment_observations_intent_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_mail_deployment_observations
+    ADD CONSTRAINT platform_mail_deployment_observations_intent_id_key UNIQUE (intent_id);
+
+
+--
+-- Name: platform_mail_deployment_observations platform_mail_deployment_observations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_mail_deployment_observations
+    ADD CONSTRAINT platform_mail_deployment_observations_pkey PRIMARY KEY (deployment_id, failure_revision);
+
+
+--
+-- Name: platform_mail_outbox_reconciliations platform_mail_outbox_reconciliations_namespace_intent_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_mail_outbox_reconciliations
+    ADD CONSTRAINT platform_mail_outbox_reconciliations_namespace_intent_id_key UNIQUE (namespace, intent_id);
+
+
+--
+-- Name: platform_mail_outbox_reconciliations platform_mail_outbox_reconciliations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_mail_outbox_reconciliations
+    ADD CONSTRAINT platform_mail_outbox_reconciliations_pkey PRIMARY KEY (namespace, request_id);
+
+
+--
+-- Name: platform_mail_producer_outbox platform_mail_producer_outbox_account_id_template_deletion__key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_mail_producer_outbox
+    ADD CONSTRAINT platform_mail_producer_outbox_account_id_template_deletion__key UNIQUE (account_id, template, deletion_requested_at);
+
+
+--
+-- Name: platform_mail_producer_outbox platform_mail_producer_outbox_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_mail_producer_outbox
+    ADD CONSTRAINT platform_mail_producer_outbox_pkey PRIMARY KEY (id);
 
 
 --
@@ -56779,6 +58504,20 @@ CREATE INDEX billing_meter_usage_deliveries_window_idx ON public.billing_meter_u
 
 
 --
+-- Name: billing_payment_failure_receipts_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX billing_payment_failure_receipts_account_idx ON public.billing_payment_failure_receipts USING btree (account_id);
+
+
+--
+-- Name: billing_payment_recovery_receipts_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX billing_payment_recovery_receipts_account_idx ON public.billing_payment_recovery_receipts USING btree (account_id);
+
+
+--
 -- Name: billing_run_items_pending_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -56825,6 +58564,13 @@ CREATE UNIQUE INDEX billing_runs_one_active_idx ON public.billing_runs USING btr
 --
 
 CREATE UNIQUE INDEX billing_runs_scheduled_month_idx ON public.billing_runs USING btree (account_id, period_start) WHERE (trigger = 'schedule'::text);
+
+
+--
+-- Name: billing_subscription_end_receipts_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX billing_subscription_end_receipts_account_idx ON public.billing_subscription_end_receipts USING btree (account_id);
 
 
 --
@@ -58022,6 +59768,13 @@ CREATE INDEX deployments_failed_error_code_idx ON public.deployments USING btree
 --
 
 CREATE INDEX deployments_live_traffic_idx ON public.deployments USING btree (app_id) INCLUDE (traffic_percent, id) WHERE (status = 'live'::text);
+
+
+--
+-- Name: deployments_mail_failures_pending_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX deployments_mail_failures_pending_idx ON public.deployments USING btree (mail_failed_at, id) WHERE ((status = 'failed'::text) AND (deleted_at IS NULL) AND (mail_failed_at IS NOT NULL));
 
 
 --
@@ -59509,6 +61262,83 @@ CREATE INDEX instances_watchdog_state_idx ON public.instances USING btree (state
 
 
 --
+-- Name: internal_mail_dispatch_window_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX internal_mail_dispatch_window_idx ON public.internal_mail_dispatch_reservations USING btree (namespace, producer_id, started_at);
+
+
+--
+-- Name: internal_mail_dkim_keys_active_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX internal_mail_dkim_keys_active_idx ON public.internal_mail_dkim_keys USING btree (namespace, domain_id) WHERE (state = 'active'::text);
+
+
+--
+-- Name: internal_mail_dkim_keys_staged_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX internal_mail_dkim_keys_staged_idx ON public.internal_mail_dkim_keys USING btree (namespace, domain_id) WHERE (state = 'staged'::text);
+
+
+--
+-- Name: internal_mail_events_recipient_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX internal_mail_events_recipient_idx ON public.internal_mail_events USING btree (namespace, recipient_id, created_at);
+
+
+--
+-- Name: internal_mail_messages_created_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX internal_mail_messages_created_idx ON public.internal_mail_messages USING btree (namespace, created_at);
+
+
+--
+-- Name: internal_mail_messages_producer_created_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX internal_mail_messages_producer_created_idx ON public.internal_mail_messages USING btree (namespace, producer_id, created_at);
+
+
+--
+-- Name: internal_mail_messages_retention_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX internal_mail_messages_retention_idx ON public.internal_mail_messages USING btree (namespace, created_at, id) WHERE (payload_pruned_at IS NULL);
+
+
+--
+-- Name: internal_mail_operations_resource_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX internal_mail_operations_resource_idx ON public.internal_mail_operations USING btree (namespace, resource, created_at);
+
+
+--
+-- Name: internal_mail_recipients_ready_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX internal_mail_recipients_ready_idx ON public.internal_mail_recipients USING btree (namespace, next_attempt_at) WHERE (status = ANY (ARRAY['queued'::text, 'deferred'::text, 'claimed'::text]));
+
+
+--
+-- Name: internal_mail_reputation_exposures_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX internal_mail_reputation_exposures_idx ON public.internal_mail_events USING btree (namespace, created_at, recipient_id) WHERE (kind = ANY (ARRAY['submitted'::text, 'uncertain'::text, 'accepted'::text, 'bounced'::text, 'complained'::text]));
+
+
+--
+-- Name: internal_mail_reputation_feedback_window_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX internal_mail_reputation_feedback_window_idx ON public.internal_mail_reputation_feedback USING btree (namespace, COALESCE(complained_at, bounced_at));
+
+
+--
 -- Name: invocation_attempt_history_retention_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -60328,6 +62158,13 @@ CREATE INDEX login_tokens_account_idx ON public.login_tokens USING btree (accoun
 
 
 --
+-- Name: magic_link_tokens_expiry_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX magic_link_tokens_expiry_idx ON public.magic_link_tokens USING btree (expires_at, token_hash);
+
+
+--
 -- Name: mail_suppressions_email_lower_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -60927,6 +62764,20 @@ CREATE INDEX meterd_tenant_surface_cert_expiry_stale_idx ON public.meterd_tenant
 --
 
 CREATE INDEX mfa_disable_requests_account_idx ON public.mfa_disable_requests USING btree (account_id, requested_at DESC) WHERE (consumed_at IS NULL);
+
+
+--
+-- Name: mfa_disable_tokens_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX mfa_disable_tokens_account_idx ON public.mfa_disable_tokens USING btree (account_id) WHERE (consumed_at IS NULL);
+
+
+--
+-- Name: mfa_disable_tokens_expiry_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX mfa_disable_tokens_expiry_idx ON public.mfa_disable_tokens USING btree (expires_at, token_hash);
 
 
 --
@@ -61665,6 +63516,13 @@ CREATE INDEX paddle_overage_dedupe_pending_idx ON public.paddle_overage_dedupe U
 
 
 --
+-- Name: password_reset_tokens_expiry_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX password_reset_tokens_expiry_idx ON public.password_reset_tokens USING btree (expires_at, token_hash);
+
+
+--
 -- Name: pg_preauth_failure_counters_refill_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -61683,6 +63541,174 @@ CREATE INDEX pg_ratelimit_counters_preauth_refill_idx ON public.pg_ratelimit_cou
 --
 
 CREATE INDEX pg_ratelimit_counters_subject_id_app_idx ON public.pg_ratelimit_counters USING btree (subject_id) WHERE (scope = 'app'::text);
+
+
+--
+-- Name: platform_mail_deployment_observations_account_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX platform_mail_deployment_observations_account_idx ON public.platform_mail_deployment_observations USING btree (account_id);
+
+
+--
+-- Name: platform_mail_producer_outbox_account_restored_keys_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX platform_mail_producer_outbox_account_restored_keys_idx ON public.platform_mail_producer_outbox USING btree (namespace, producer_id, security_alert_key_id) WHERE ((template = 'account_restored'::text) AND (state = ANY (ARRAY['queued'::text, 'claimed'::text])));
+
+
+--
+-- Name: platform_mail_producer_outbox_account_suspended_keys_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX platform_mail_producer_outbox_account_suspended_keys_idx ON public.platform_mail_producer_outbox USING btree (namespace, producer_id, security_alert_key_id) WHERE ((template = 'account_suspended'::text) AND (state = ANY (ARRAY['queued'::text, 'claimed'::text])));
+
+
+--
+-- Name: platform_mail_producer_outbox_deployment_failure_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX platform_mail_producer_outbox_deployment_failure_idx ON public.platform_mail_producer_outbox USING btree (deployment_failure_id, deployment_failure_revision) WHERE (template = 'deployment_failed'::text);
+
+
+--
+-- Name: platform_mail_producer_outbox_deployment_failure_keys_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX platform_mail_producer_outbox_deployment_failure_keys_idx ON public.platform_mail_producer_outbox USING btree (namespace, producer_id, security_alert_key_id) WHERE ((template = 'deployment_failed'::text) AND (state = ANY (ARRAY['queued'::text, 'claimed'::text])));
+
+
+--
+-- Name: platform_mail_producer_outbox_magic_keys_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX platform_mail_producer_outbox_magic_keys_idx ON public.platform_mail_producer_outbox USING btree (namespace, producer_id, verification_key_id) WHERE ((template = 'magic_link'::text) AND (state = ANY (ARRAY['queued'::text, 'claimed'::text])));
+
+
+--
+-- Name: platform_mail_producer_outbox_mfa_alert_keys_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX platform_mail_producer_outbox_mfa_alert_keys_idx ON public.platform_mail_producer_outbox USING btree (namespace, producer_id, security_alert_key_id) WHERE ((template = 'mfa_recovery_used'::text) AND (state = ANY (ARRAY['queued'::text, 'claimed'::text])));
+
+
+--
+-- Name: platform_mail_producer_outbox_mfa_disable_keys_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX platform_mail_producer_outbox_mfa_disable_keys_idx ON public.platform_mail_producer_outbox USING btree (namespace, producer_id, verification_key_id) WHERE ((template = 'mfa_disable_request'::text) AND (state = ANY (ARRAY['queued'::text, 'claimed'::text])));
+
+
+--
+-- Name: platform_mail_producer_outbox_mfa_disabled_keys_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX platform_mail_producer_outbox_mfa_disabled_keys_idx ON public.platform_mail_producer_outbox USING btree (namespace, producer_id, security_alert_key_id) WHERE ((template = 'mfa_disabled'::text) AND (state = ANY (ARRAY['queued'::text, 'claimed'::text])));
+
+
+--
+-- Name: platform_mail_producer_outbox_mfa_enabled_keys_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX platform_mail_producer_outbox_mfa_enabled_keys_idx ON public.platform_mail_producer_outbox USING btree (namespace, producer_id, security_alert_key_id) WHERE ((template = 'mfa_enabled'::text) AND (state = ANY (ARRAY['queued'::text, 'claimed'::text])));
+
+
+--
+-- Name: platform_mail_producer_outbox_nonpayment_deletion_keys_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX platform_mail_producer_outbox_nonpayment_deletion_keys_idx ON public.platform_mail_producer_outbox USING btree (namespace, producer_id, security_alert_key_id) WHERE ((template = 'nonpayment_deletion'::text) AND (state = ANY (ARRAY['queued'::text, 'claimed'::text])));
+
+
+--
+-- Name: platform_mail_producer_outbox_nonpayment_deletion_period_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX platform_mail_producer_outbox_nonpayment_deletion_period_idx ON public.platform_mail_producer_outbox USING btree (account_id, nonpayment_past_due_at) WHERE (template = 'nonpayment_deletion'::text);
+
+
+--
+-- Name: platform_mail_producer_outbox_password_changed_keys_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX platform_mail_producer_outbox_password_changed_keys_idx ON public.platform_mail_producer_outbox USING btree (namespace, producer_id, security_alert_key_id) WHERE ((template = 'password_changed'::text) AND (state = ANY (ARRAY['queued'::text, 'claimed'::text])));
+
+
+--
+-- Name: platform_mail_producer_outbox_payment_episode_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX platform_mail_producer_outbox_payment_episode_idx ON public.platform_mail_producer_outbox USING btree (account_id, payment_past_due_at) WHERE (template = 'payment_failed'::text);
+
+
+--
+-- Name: platform_mail_producer_outbox_payment_failed_keys_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX platform_mail_producer_outbox_payment_failed_keys_idx ON public.platform_mail_producer_outbox USING btree (namespace, producer_id, security_alert_key_id) WHERE ((template = 'payment_failed'::text) AND (state = ANY (ARRAY['queued'::text, 'claimed'::text])));
+
+
+--
+-- Name: platform_mail_producer_outbox_quota_warning_day_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX platform_mail_producer_outbox_quota_warning_day_idx ON public.platform_mail_producer_outbox USING btree (account_id, quota_warning_day) WHERE (template = 'quota_warning'::text);
+
+
+--
+-- Name: platform_mail_producer_outbox_quota_warning_keys_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX platform_mail_producer_outbox_quota_warning_keys_idx ON public.platform_mail_producer_outbox USING btree (namespace, producer_id, security_alert_key_id) WHERE ((template = 'quota_warning'::text) AND (state = ANY (ARRAY['queued'::text, 'claimed'::text])));
+
+
+--
+-- Name: platform_mail_producer_outbox_ready_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX platform_mail_producer_outbox_ready_idx ON public.platform_mail_producer_outbox USING btree (namespace, producer_id, next_attempt_at, id) WHERE (state = ANY (ARRAY['queued'::text, 'claimed'::text]));
+
+
+--
+-- Name: platform_mail_producer_outbox_reset_keys_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX platform_mail_producer_outbox_reset_keys_idx ON public.platform_mail_producer_outbox USING btree (namespace, producer_id, verification_key_id) WHERE ((template = 'password_reset'::text) AND (state = ANY (ARRAY['queued'::text, 'claimed'::text])));
+
+
+--
+-- Name: platform_mail_producer_outbox_restored_revision_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX platform_mail_producer_outbox_restored_revision_idx ON public.platform_mail_producer_outbox USING btree (account_id, account_restored_revision) WHERE (template = 'account_restored'::text);
+
+
+--
+-- Name: platform_mail_producer_outbox_subscription_ended_keys_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX platform_mail_producer_outbox_subscription_ended_keys_idx ON public.platform_mail_producer_outbox USING btree (namespace, producer_id, security_alert_key_id) WHERE ((template = 'subscription_ended'::text) AND (state = ANY (ARRAY['queued'::text, 'claimed'::text])));
+
+
+--
+-- Name: platform_mail_producer_outbox_subscription_ended_revision_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX platform_mail_producer_outbox_subscription_ended_revision_idx ON public.platform_mail_producer_outbox USING btree (account_id, subscription_ended_revision) WHERE (template = 'subscription_ended'::text);
+
+
+--
+-- Name: platform_mail_producer_outbox_suspended_period_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX platform_mail_producer_outbox_suspended_period_idx ON public.platform_mail_producer_outbox USING btree (account_id, suspension_past_due_at) WHERE (template = 'account_suspended'::text);
+
+
+--
+-- Name: platform_mail_producer_outbox_verification_keys_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX platform_mail_producer_outbox_verification_keys_idx ON public.platform_mail_producer_outbox USING btree (namespace, verification_key_id) WHERE ((template = 'email_verification'::text) AND (state = ANY (ARRAY['queued'::text, 'claimed'::text])));
 
 
 --
@@ -64276,6 +66302,34 @@ CREATE TRIGGER account_managed_postgres_databases_guard BEFORE UPDATE OF status 
 
 
 --
+-- Name: accounts accounts_billing_mail_revision_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER accounts_billing_mail_revision_guard BEFORE UPDATE OF status, past_due_at, deletion_requested_at, email, billing_mail_revision ON public.accounts FOR EACH ROW EXECUTE FUNCTION public.advance_account_billing_mail_revision();
+
+
+--
+-- Name: accounts accounts_deployment_mail_revision_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER accounts_deployment_mail_revision_guard BEFORE UPDATE OF email, status, deletion_requested_at, deployment_mail_revision ON public.accounts FOR EACH ROW EXECUTE FUNCTION public.advance_account_deployment_mail_revision();
+
+
+--
+-- Name: accounts accounts_quota_mail_revision_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER accounts_quota_mail_revision_guard BEFORE UPDATE OF plan, email, status, past_due_at, deletion_requested_at, last_quota_warning_at, quota_mail_revision ON public.accounts FOR EACH ROW EXECUTE FUNCTION public.advance_account_quota_mail_revision();
+
+
+--
+-- Name: accounts accounts_subscription_mail_revision_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER accounts_subscription_mail_revision_guard BEFORE UPDATE OF plan, email, status, past_due_at, deletion_requested_at, provider_customer_id, stripe_subscription_item, subscription_mail_revision ON public.accounts FOR EACH ROW EXECUTE FUNCTION public.advance_account_subscription_mail_revision();
+
+
+--
 -- Name: alert_presets alert_presets_set_updated_at_trg; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -64990,6 +67044,13 @@ CREATE TRIGGER apps_declared_routes_policy_notify_trg AFTER UPDATE OF only_decla
 
 
 --
+-- Name: apps apps_deployment_mail_revision_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER apps_deployment_mail_revision_guard BEFORE UPDATE OF account_id, org_id, project_id, slug, status, deployment_mail_revision ON public.apps FOR EACH ROW EXECUTE FUNCTION public.advance_app_deployment_mail_revision();
+
+
+--
 -- Name: apps apps_egress_allowlist_cidr; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -65120,6 +67181,13 @@ CREATE TRIGGER base_scan_current_private_guard BEFORE INSERT OR DELETE OR UPDATE
 --
 
 CREATE TRIGGER base_scan_private_guard BEFORE INSERT OR DELETE OR UPDATE ON public.base_image_scans FOR EACH ROW EXECUTE FUNCTION public.base_image_scan_guard();
+
+
+--
+-- Name: billing_identities billing_identities_subscription_mail_revision_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER billing_identities_subscription_mail_revision_guard AFTER INSERT OR DELETE OR UPDATE ON public.billing_identities FOR EACH ROW EXECUTE FUNCTION public.advance_billing_subscription_mail_revision();
 
 
 --
@@ -66037,6 +68105,13 @@ CREATE TRIGGER deployments_layer_artifact_guard BEFORE INSERT OR UPDATE OF rootf
 --
 
 CREATE TRIGGER deployments_lifecycle_webhooks AFTER UPDATE OF status ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.enqueue_deployment_lifecycle_webhooks();
+
+
+--
+-- Name: deployments deployments_mail_failure_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER deployments_mail_failure_guard BEFORE INSERT OR DELETE OR UPDATE OF status, app_id, scope, deployed_by_user_id, deleted_at, mail_failure_revision, mail_failed_at, mail_failure_account_id, mail_failure_account_revision, mail_failure_app_revision, mail_failure_success_revision ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.stamp_deployment_mail_failure();
 
 
 --
@@ -71575,6 +73650,38 @@ ALTER TABLE ONLY public.base_image_scans
 
 
 --
+-- Name: billing_account_nonpayment_deletions billing_account_nonpayment_deletions_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.billing_account_nonpayment_deletions
+    ADD CONSTRAINT billing_account_nonpayment_deletions_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: billing_account_nonpayment_deletions billing_account_nonpayment_deletions_intent_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.billing_account_nonpayment_deletions
+    ADD CONSTRAINT billing_account_nonpayment_deletions_intent_id_fkey FOREIGN KEY (intent_id) REFERENCES public.platform_mail_producer_outbox(id) ON DELETE CASCADE;
+
+
+--
+-- Name: billing_account_suspensions billing_account_suspensions_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.billing_account_suspensions
+    ADD CONSTRAINT billing_account_suspensions_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: billing_account_suspensions billing_account_suspensions_intent_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.billing_account_suspensions
+    ADD CONSTRAINT billing_account_suspensions_intent_id_fkey FOREIGN KEY (intent_id) REFERENCES public.platform_mail_producer_outbox(id) ON DELETE CASCADE;
+
+
+--
 -- Name: billing_identities billing_identities_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -71588,6 +73695,38 @@ ALTER TABLE ONLY public.billing_identities
 
 ALTER TABLE ONLY public.billing_meter_usage_deliveries
     ADD CONSTRAINT billing_meter_usage_deliveries_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: billing_payment_failure_receipts billing_payment_failure_receipts_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.billing_payment_failure_receipts
+    ADD CONSTRAINT billing_payment_failure_receipts_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: billing_payment_recovery_receipts billing_payment_recovery_receipts_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.billing_payment_recovery_receipts
+    ADD CONSTRAINT billing_payment_recovery_receipts_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: billing_quota_warnings billing_quota_warnings_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.billing_quota_warnings
+    ADD CONSTRAINT billing_quota_warnings_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: billing_quota_warnings billing_quota_warnings_intent_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.billing_quota_warnings
+    ADD CONSTRAINT billing_quota_warnings_intent_id_fkey FOREIGN KEY (intent_id) REFERENCES public.platform_mail_producer_outbox(id) ON DELETE CASCADE;
 
 
 --
@@ -71612,6 +73751,30 @@ ALTER TABLE ONLY public.billing_run_schedules
 
 ALTER TABLE ONLY public.billing_runs
     ADD CONSTRAINT billing_runs_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: billing_subscription_end_receipts billing_subscription_end_receipts_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.billing_subscription_end_receipts
+    ADD CONSTRAINT billing_subscription_end_receipts_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: billing_subscription_ends billing_subscription_ends_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.billing_subscription_ends
+    ADD CONSTRAINT billing_subscription_ends_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: billing_subscription_ends billing_subscription_ends_intent_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.billing_subscription_ends
+    ADD CONSTRAINT billing_subscription_ends_intent_id_fkey FOREIGN KEY (intent_id) REFERENCES public.platform_mail_producer_outbox(id) ON DELETE SET NULL;
 
 
 --
@@ -75111,6 +77274,166 @@ ALTER TABLE ONLY public.instances
 
 
 --
+-- Name: internal_mail_delivery_controls internal_mail_delivery_controls_namespace_domain_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.internal_mail_delivery_controls
+    ADD CONSTRAINT internal_mail_delivery_controls_namespace_domain_id_fkey FOREIGN KEY (namespace, domain_id) REFERENCES public.internal_mail_domains(namespace, id);
+
+
+--
+-- Name: internal_mail_dispatch_reservations internal_mail_dispatch_reservations_namespace_producer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.internal_mail_dispatch_reservations
+    ADD CONSTRAINT internal_mail_dispatch_reservations_namespace_producer_id_fkey FOREIGN KEY (namespace, producer_id) REFERENCES public.internal_mail_producer_dispatch(namespace, producer_id);
+
+
+--
+-- Name: internal_mail_dkim_keys internal_mail_dkim_keys_namespace_domain_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.internal_mail_dkim_keys
+    ADD CONSTRAINT internal_mail_dkim_keys_namespace_domain_id_fkey FOREIGN KEY (namespace, domain_id) REFERENCES public.internal_mail_domains(namespace, id);
+
+
+--
+-- Name: internal_mail_encryption_keys internal_mail_encryption_keys_namespace_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.internal_mail_encryption_keys
+    ADD CONSTRAINT internal_mail_encryption_keys_namespace_fkey FOREIGN KEY (namespace) REFERENCES public.internal_mail_encryption_state(namespace);
+
+
+--
+-- Name: internal_mail_event_feed internal_mail_event_feed_namespace_domain_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.internal_mail_event_feed
+    ADD CONSTRAINT internal_mail_event_feed_namespace_domain_id_fkey FOREIGN KEY (namespace, domain_id) REFERENCES public.internal_mail_domains(namespace, id);
+
+
+--
+-- Name: internal_mail_event_feed internal_mail_event_feed_namespace_message_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.internal_mail_event_feed
+    ADD CONSTRAINT internal_mail_event_feed_namespace_message_id_fkey FOREIGN KEY (namespace, message_id) REFERENCES public.internal_mail_messages(namespace, id);
+
+
+--
+-- Name: internal_mail_event_feed internal_mail_event_feed_namespace_producer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.internal_mail_event_feed
+    ADD CONSTRAINT internal_mail_event_feed_namespace_producer_id_fkey FOREIGN KEY (namespace, producer_id) REFERENCES public.internal_mail_event_streams(namespace, producer_id);
+
+
+--
+-- Name: internal_mail_event_feed internal_mail_event_feed_namespace_recipient_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.internal_mail_event_feed
+    ADD CONSTRAINT internal_mail_event_feed_namespace_recipient_id_fkey FOREIGN KEY (namespace, recipient_id) REFERENCES public.internal_mail_recipients(namespace, id);
+
+
+--
+-- Name: internal_mail_event_feed internal_mail_event_feed_namespace_source_event_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.internal_mail_event_feed
+    ADD CONSTRAINT internal_mail_event_feed_namespace_source_event_id_fkey FOREIGN KEY (namespace, source_event_id) REFERENCES public.internal_mail_events(namespace, id);
+
+
+--
+-- Name: internal_mail_event_receipts internal_mail_event_receipts_namespace_producer_id_consume_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.internal_mail_event_receipts
+    ADD CONSTRAINT internal_mail_event_receipts_namespace_producer_id_consume_fkey FOREIGN KEY (namespace, producer_id, consumer) REFERENCES public.internal_mail_event_consumers(namespace, producer_id, name);
+
+
+--
+-- Name: internal_mail_event_receipts internal_mail_event_receipts_namespace_producer_id_to_posi_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.internal_mail_event_receipts
+    ADD CONSTRAINT internal_mail_event_receipts_namespace_producer_id_to_posi_fkey FOREIGN KEY (namespace, producer_id, to_position) REFERENCES public.internal_mail_event_feed(namespace, producer_id, "position");
+
+
+--
+-- Name: internal_mail_events internal_mail_events_namespace_recipient_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.internal_mail_events
+    ADD CONSTRAINT internal_mail_events_namespace_recipient_id_fkey FOREIGN KEY (namespace, recipient_id) REFERENCES public.internal_mail_recipients(namespace, id) ON DELETE CASCADE;
+
+
+--
+-- Name: internal_mail_messages internal_mail_messages_namespace_domain_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.internal_mail_messages
+    ADD CONSTRAINT internal_mail_messages_namespace_domain_id_fkey FOREIGN KEY (namespace, domain_id) REFERENCES public.internal_mail_domains(namespace, id);
+
+
+--
+-- Name: internal_mail_producer_credentials internal_mail_producer_credentials_namespace_producer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.internal_mail_producer_credentials
+    ADD CONSTRAINT internal_mail_producer_credentials_namespace_producer_id_fkey FOREIGN KEY (namespace, producer_id) REFERENCES public.internal_mail_producer_access(namespace, producer_id);
+
+
+--
+-- Name: internal_mail_recipients internal_mail_recipients_namespace_message_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.internal_mail_recipients
+    ADD CONSTRAINT internal_mail_recipients_namespace_message_id_fkey FOREIGN KEY (namespace, message_id) REFERENCES public.internal_mail_messages(namespace, id) ON DELETE CASCADE;
+
+
+--
+-- Name: internal_mail_recovery_state internal_mail_recovery_state_namespace_recovery_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.internal_mail_recovery_state
+    ADD CONSTRAINT internal_mail_recovery_state_namespace_recovery_id_fkey FOREIGN KEY (namespace, recovery_id) REFERENCES public.internal_mail_recovery_runs(namespace, recovery_id);
+
+
+--
+-- Name: internal_mail_reputation_feedback internal_mail_reputation_feed_namespace_complaint_event_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.internal_mail_reputation_feedback
+    ADD CONSTRAINT internal_mail_reputation_feed_namespace_complaint_event_id_fkey FOREIGN KEY (namespace, complaint_event_id) REFERENCES public.internal_mail_events(namespace, id);
+
+
+--
+-- Name: internal_mail_reputation_feedback internal_mail_reputation_feedbac_namespace_bounce_event_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.internal_mail_reputation_feedback
+    ADD CONSTRAINT internal_mail_reputation_feedbac_namespace_bounce_event_id_fkey FOREIGN KEY (namespace, bounce_event_id) REFERENCES public.internal_mail_events(namespace, id);
+
+
+--
+-- Name: internal_mail_reputation_feedback internal_mail_reputation_feedback_namespace_recipient_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.internal_mail_reputation_feedback
+    ADD CONSTRAINT internal_mail_reputation_feedback_namespace_recipient_id_fkey FOREIGN KEY (namespace, recipient_id) REFERENCES public.internal_mail_recipients(namespace, id);
+
+
+--
+-- Name: internal_mail_suppression_events internal_mail_suppression_events_namespace_address_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.internal_mail_suppression_events
+    ADD CONSTRAINT internal_mail_suppression_events_namespace_address_fkey FOREIGN KEY (namespace, address) REFERENCES public.internal_mail_suppression_state(namespace, address);
+
+
+--
 -- Name: invocation_attempt_history invocation_attempt_history_invocation_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -76143,6 +78466,14 @@ ALTER TABLE ONLY public.login_tokens
 
 
 --
+-- Name: magic_link_tokens magic_link_tokens_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.magic_link_tokens
+    ADD CONSTRAINT magic_link_tokens_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
 -- Name: mail_suppressions mail_suppressions_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -77156,6 +79487,14 @@ ALTER TABLE ONLY public.meterd_tenant_surface_cert_expiry_state
 
 ALTER TABLE ONLY public.mfa_disable_requests
     ADD CONSTRAINT mfa_disable_requests_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: mfa_disable_tokens mfa_disable_tokens_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.mfa_disable_tokens
+    ADD CONSTRAINT mfa_disable_tokens_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --
@@ -78188,6 +80527,46 @@ ALTER TABLE ONLY public.paddle_overage_dedupe
 
 ALTER TABLE ONLY public.paddle_overage_dedupe
     ADD CONSTRAINT paddle_overage_dedupe_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: password_reset_tokens password_reset_tokens_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.password_reset_tokens
+    ADD CONSTRAINT password_reset_tokens_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: platform_mail_deployment_fences platform_mail_deployment_fences_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_mail_deployment_fences
+    ADD CONSTRAINT platform_mail_deployment_fences_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: platform_mail_deployment_observations platform_mail_deployment_observations_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_mail_deployment_observations
+    ADD CONSTRAINT platform_mail_deployment_observations_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: platform_mail_deployment_observations platform_mail_deployment_observations_intent_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_mail_deployment_observations
+    ADD CONSTRAINT platform_mail_deployment_observations_intent_id_fkey FOREIGN KEY (intent_id) REFERENCES public.platform_mail_producer_outbox(id) ON DELETE SET NULL;
+
+
+--
+-- Name: platform_mail_producer_outbox platform_mail_producer_outbox_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.platform_mail_producer_outbox
+    ADD CONSTRAINT platform_mail_producer_outbox_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --

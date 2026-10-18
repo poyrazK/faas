@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -167,5 +168,160 @@ func writeFile(t *testing.T, path, body string) {
 	}
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// A compute host's release ships no units: --only is mandatory, the
+// services must be installed on the host, and nothing migrates.
+func TestHostManagedReleaseSwapsBinariesOnly(t *testing.T) {
+	root := t.TempDir()
+	release := filepath.Join(root, "release")
+	unitDir := filepath.Join(root, "units")
+	writeFile(t, filepath.Join(release, "bin", "gatewayd-internal"), "binary")
+	writeFile(t, filepath.Join(unitDir, "faas-gatewayd-internal.service"), "[Unit]\n")
+	writeFile(t, filepath.Join(unitDir, "faas-gatewayd-internal.service.d", "zz-canary.conf"),
+		"[Service]\nExecStart=\nExecStart=/opt/faas/canaries/x/bin/gatewayd-internal\n")
+	if !hostManagedUnits(release) {
+		t.Fatal("a release without systemd/ is host-managed")
+	}
+	orig := runCommand
+	t.Cleanup(func() { runCommand = orig })
+	var calls []string
+	runCommand = func(_ context.Context, name string, args ...string) error {
+		calls = append(calls, name+" "+strings.Join(args, " "))
+		return nil
+	}
+	order, err := daemonunitspec.RestartOrder()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stubSystemdShow(t, map[string]string{"faas-gatewayd-internal.service": "faas-vmmd.service", "faas-vmmd.service": "active loaded"})
+	manifest := releasebundle.Manifest{Target: "linux/amd64"}
+
+	all := hostRuntime{unitDir: unitDir, serviceOrder: order}
+	if err := all.Preflight(context.Background(), manifest, release); err == nil || !strings.Contains(err.Error(), "--only") {
+		t.Fatalf("Preflight without --only = %v", err)
+	}
+	r := hostRuntime{unitDir: unitDir, serviceOrder: order, only: set("gatewayd-internal")}
+	if err := r.Preflight(context.Background(), manifest, release); err != nil {
+		t.Fatalf("Preflight: %v", err)
+	}
+	missing := hostRuntime{unitDir: unitDir, serviceOrder: order, only: set("vmmd")}
+	if err := missing.Preflight(context.Background(), manifest, release); err == nil || !strings.Contains(err.Error(), "not installed") {
+		t.Fatalf("Preflight for an uninstalled service = %v", err)
+	}
+	if err := r.Migrate(context.Background(), manifest, release, ""); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	if err := r.Activate(context.Background(), release); err != nil {
+		t.Fatalf("Activate: %v", err)
+	}
+	if want := []string{"systemctl daemon-reload"}; !reflect.DeepEqual(calls, want) {
+		t.Fatalf("host-managed activation ran %v, want only %v (no unit install, no migration)", calls, want)
+	}
+	if _, err := os.Stat(filepath.Join(unitDir, "faas-gatewayd-internal.service.d", "zz-canary.conf")); !os.IsNotExist(err) {
+		t.Fatalf("restarted service kept its canary override: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(unitDir, "faas-gatewayd-internal.service")); err != nil {
+		t.Fatalf("host unit removed: %v", err)
+	}
+}
+
+// A release without unit files carries no service list, so restarts fall
+// back to the registry's restart order. --only must still narrow it: an edge
+// deploy of gatewayd-internal on a compute host restarted vmmd first.
+func TestOnlyNarrowsTheRestartOrderOfAHostManagedRelease(t *testing.T) {
+	order, err := daemonunitspec.RestartOrder()
+	if err != nil {
+		t.Fatal(err)
+	}
+	hostManaged := releasebundle.Manifest{Files: []releasebundle.File{{Path: "bin/gatewayd-internal"}}}
+	r := hostRuntime{serviceOrder: order, only: set("gatewayd-internal")}
+	got, err := r.restartServices(hostManaged)
+	if err != nil || !reflect.DeepEqual(got, []string{"gatewayd-internal"}) {
+		t.Fatalf("restartServices = %v, %v; want only gatewayd-internal", got, err)
+	}
+
+	orig := runCommand
+	t.Cleanup(func() { runCommand = orig })
+	var restarted []string
+	runCommand = func(_ context.Context, name string, args ...string) error {
+		if name == "systemctl" && len(args) >= 2 && (args[0] == "restart" || args[0] == "reload") {
+			restarted = append(restarted, args[1])
+		}
+		return nil
+	}
+	r.binaryDir = t.TempDir()
+	if err := os.WriteFile(filepath.Join(r.binaryDir, "gatewayd-internal"), []byte("binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	r.readyTimeout = 100 * time.Millisecond
+	r.waitReadyOverride = func(context.Context, string) error { return nil }
+	if err := r.Restart(context.Background(), hostManaged); err != nil {
+		t.Fatalf("Restart: %v", err)
+	}
+	if want := []string{"faas-gatewayd-internal.service"}; !reflect.DeepEqual(restarted, want) {
+		t.Fatalf("host-managed --only restarted %v, want %v", restarted, want)
+	}
+}
+
+// stubSystemdShow answers `systemctl show` for the dependency guard: a
+// service's entry is its Wants/Requires/BindsTo values, a dependency's its
+// "ActiveState LoadState", printed the way systemctl does: Key=Value lines
+// in systemd's own order (LoadState before ActiveState), whatever order -p
+// asked for.
+func stubSystemdShow(t *testing.T, units map[string]string) {
+	t.Helper()
+	orig := commandOutput
+	t.Cleanup(func() { commandOutput = orig })
+	commandOutput = func(_ context.Context, name string, args ...string) (string, error) {
+		if name != "systemctl" || len(args) < 2 || args[0] != "show" {
+			return "", fmt.Errorf("unexpected %s %v", name, args)
+		}
+		value := units[args[1]]
+		if strings.Contains(strings.Join(args, " "), "ActiveState") {
+			states := strings.Fields(value)
+			return "LoadState=" + states[1] + "\nActiveState=" + states[0] + "\n", nil
+		}
+		return value + "\n", nil
+	}
+}
+
+func TestOnlyDeployRefusesToStartAStoppedDependency(t *testing.T) {
+	order, err := daemonunitspec.RestartOrder()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, vmmd, want string
+	}{
+		{name: "dependency active", vmmd: "active loaded"},
+		{name: "dependency masked", vmmd: "inactive masked"},
+		{name: "dependency stopped", vmmd: "inactive loaded", want: "faas-vmmd.service, which is inactive (loaded)"},
+		{name: "dependency crash-looping", vmmd: "activating loaded", want: "which is activating (loaded)"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stubSystemdShow(t, map[string]string{
+				// gatewayd-internal Wants vmmd and realtimed, and the slice.
+				"faas-gatewayd-internal.service": "faas-cp.slice faas-vmmd.service faas-realtimed.service",
+				"faas-vmmd.service":              tc.vmmd,
+				"faas-realtimed.service":         "active loaded",
+			})
+			r := hostRuntime{serviceOrder: order, only: set("gatewayd-internal")}
+			err := r.requireDependenciesUp(context.Background())
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("requireDependenciesUp: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("requireDependenciesUp = %v, want %q", err, tc.want)
+			}
+		})
+	}
+	// A full deploy restarts every daemon anyway, so it is not guarded.
+	if err := (hostRuntime{serviceOrder: order}).requireDependenciesUp(context.Background()); err != nil {
+		t.Fatalf("full deploy guarded: %v", err)
 	}
 }

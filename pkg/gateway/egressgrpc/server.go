@@ -255,6 +255,69 @@ func (s *Server) AckBytes(_ context.Context, req *egresspb.AckBytesRequest) (*eg
 	return &egresspb.AckBytesResponse{Acknowledged: acknowledged}, nil
 }
 
+// Flush moves what the sink holds into the replay ledger, so a generation
+// that stops serving meterd (a hand-off's old generation, ADR-20261018072701) or exits
+// keeps every record for whichever generation replays the ledger next.
+func (s *Server) Flush() error {
+	if s.sink == nil {
+		return nil
+	}
+	_, err := s.replayRecords()
+	return err
+}
+
+// Absorb adds the records of the ledger at path to this server's ledger and
+// removes that file. Event IDs are kept, so a record replayed from both
+// ledgers after a crash is one record to meterd.
+func (s *Server) Absorb(path string) (int, error) {
+	records, err := readPendingFile(path)
+	if err != nil || len(records) == 0 {
+		if err == nil {
+			err = removeLedger(path)
+		}
+		return 0, err
+	}
+	s.pendingMu.Lock()
+	next := make(map[string]egresssink.Record, len(s.pending)+len(records))
+	for eventID, record := range s.pending {
+		next[eventID] = record
+	}
+	added := 0
+	for eventID, record := range records {
+		if _, ok := next[eventID]; !ok {
+			next[eventID] = record
+			added++
+		}
+	}
+	err = s.persistPendingLocked(next)
+	if err == nil {
+		s.pending = next
+	}
+	s.pendingMu.Unlock()
+	if err != nil {
+		return 0, fmt.Errorf("absorb egress replay ledger %s: %w", path, err)
+	}
+	return added, removeLedger(path)
+}
+
+// MergeLedger moves the records of the ledger at from into the ledger at
+// into, for a generation that is not serving either of them.
+func MergeLedger(from, into string, log *slog.Logger) error {
+	s, err := NewPersistentServer(nil, log, into)
+	if err != nil {
+		return err
+	}
+	_, err = s.Absorb(from)
+	return err
+}
+
+func removeLedger(path string) error {
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
 type pendingFile struct {
 	Version int                 `json:"version"`
 	Records []pendingFileRecord `json:"records"`
@@ -266,27 +329,39 @@ type pendingFileRecord struct {
 }
 
 func (s *Server) loadPending() error {
-	b, err := os.ReadFile(s.pendingPath)
+	records, err := readPendingFile(s.pendingPath)
+	if err != nil {
+		return err
+	}
+	for eventID, record := range records {
+		s.pending[eventID] = record
+	}
+	return nil
+}
+
+func readPendingFile(path string) (map[string]egresssink.Record, error) {
+	b, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil
+		return nil, nil
 	}
 	if err != nil {
-		return fmt.Errorf("read egress replay ledger %s: %w", s.pendingPath, err)
+		return nil, fmt.Errorf("read egress replay ledger %s: %w", path, err)
 	}
 	var file pendingFile
 	if err := json.Unmarshal(b, &file); err != nil {
-		return fmt.Errorf("decode egress replay ledger %s: %w", s.pendingPath, err)
+		return nil, fmt.Errorf("decode egress replay ledger %s: %w", path, err)
 	}
 	if file.Version != 1 {
-		return fmt.Errorf("decode egress replay ledger %s: unsupported version %d", s.pendingPath, file.Version)
+		return nil, fmt.Errorf("decode egress replay ledger %s: unsupported version %d", path, file.Version)
 	}
+	records := make(map[string]egresssink.Record, len(file.Records))
 	for _, row := range file.Records {
 		if _, err := uuid.Parse(row.EventID); err != nil || row.Record.InstanceID == "" || row.Record.Minute.IsZero() {
-			return fmt.Errorf("decode egress replay ledger %s: invalid record %q", s.pendingPath, row.EventID)
+			return nil, fmt.Errorf("decode egress replay ledger %s: invalid record %q", path, row.EventID)
 		}
-		s.pending[row.EventID] = row.Record
+		records[row.EventID] = row.Record
 	}
-	return nil
+	return records, nil
 }
 
 // persistPendingLocked replaces the ledger through an fsync+rename sequence.
