@@ -41,13 +41,18 @@ seconds, Gregale may return the stale response immediately and refresh that
 exact key in the background. If the origin fails, the response remains eligible
 for stale-on-error for up to 300 seconds after freshness expires.
 
-Cache keys include the app, rule, HTTP method, normalized path, sorted query,
-and the configured `vary_on` header values. The allowed vary headers are
-`Accept-Language` and `Accept-Encoding`.
+Cache keys distinguish the app, deployment cohort, rule, HTTP method, hostname,
+path escaping, original query string and configured `vary_on` header values.
+Query order is preserved: `?id=1&id=2` and `?id=2&id=1` can select different
+resources. Encoded slashes and an explicit empty `?` also keep separate entries.
+The allowed vary headers are `Accept-Language` and `Accept-Encoding`. Rule
+matching and path purges continue to use decoded paths.
 
 ## Safety rules
 
-Requests with `Authorization` or any cookie bypass the cache. Responses with
+Requests with `Authorization` or any application cookie bypass the cache.
+This checks header presence, including empty or repeated authorization fields
+and cookies an origin may parse differently. Responses with
 `Set-Cookie`, `Cache-Control: no-store`, or `Cache-Control: private` are not
 stored. Only the documented safe status codes and bodies up to 1 MiB are
 eligible. A cache miss or cache-backend failure always falls through to the

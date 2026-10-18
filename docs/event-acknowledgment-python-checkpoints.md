@@ -38,7 +38,7 @@ try:
     await awatch_event_acknowledgment_intent_health_with_checkpoint(
         lambda: application_pool.connection(timeout=3), account_id, app_id,
         EventAcknowledgmentIntentCheckpointWatchOptions(
-            due_threshold=100, stalled_threshold=1, sustain_ms=30000,
+            due_threshold=100, stalled_threshold=1, parked_threshold=1, sustain_ms=30000,
             resume=saved, on_progress=progress, poll_acknowledgments=poll,
         ),
         stop_event=shutdown,
@@ -65,13 +65,34 @@ and receive the same read-only cancellation view as ordinary notifications.
 ## Format and validation
 
 `validate_event_acknowledgment_intent_checkpoint(value)` returns a detached
-canonical dictionary. Version 1 uses kind
+canonical dictionary. Both versions use kind
 `gregale.python.event-acknowledgment-intent-watch`, distinct from Node, Go/CLI and
 Python deadline checkpoints. It contains normalized `target`, complete effective
 `policy`, a random canonical UUID `session`, `sequence`, optional database
-`last_observed_at`, up to two `conditions`, and ordered `pending`/`acknowledged`
+`last_observed_at`, enabled `conditions`, and ordered `pending`/`acknowledged`
 notification arrays. Timestamps are canonical UTC RFC 3339 strings with six
 fractional digits. Sequence is a native integer 0..9007199254740991.
+
+| Format | Selection and conditions |
+| --- | --- |
+| Version 1 | `parked_threshold` is zero or omitted. Saved policy omits that field and preserves the existing keys/order, with one or two due/stalled conditions. |
+| Version 2 | `parked_threshold` is positive. Saved policy includes the threshold, with one through three enabled conditions in due, stalled, parked order. |
+
+The new option is keyword-only, preserving existing positional arguments for
+ordinary and inherited checkpoint options. The validator rejects version/selection
+mismatches: version 1 cannot enable parked alerts and version 2 cannot omit or
+disable them. Counts require native integers; booleans/floats are rejected.
+Other saved policy settings stay explicit. Older Python validators reject version
+2. Upgrade every host that may resume or acknowledge such checkpoints before
+enabling parked alerts. These monitoring versions are independent of retry-policy
+versions, and snapshots remain distinct from Go/Node formats.
+
+Changing thresholds requires a new watch session. A saved version 1 checkpoint
+cannot resume with parked alerts enabled, and changing only its version is
+invalid. Finish/reconcile the previous session and retain its checkpoint,
+unresolved incidents and pending notifications under the application's writer
+fence before starting the new selection. Do not discard notifications or
+synthesize resolutions.
 
 Validation checks bounds, timestamps, policy, condition order, native integer
 types, incident lineage and acknowledgment ordering. It reconstructs known fields,
@@ -107,6 +128,28 @@ confirmation status appear in progress. Every notification contains `sequence`,
 `threshold`. IDs combine session UUID and opening sequence. A resolution keeps
 that ID and uses a later global sequence. Deliver pending entries in sequence
 order and deduplicate by owner scope plus incident ID and sequence.
+
+### Parked-intent alerts
+
+Set `parked_threshold` to a native integer count from 1 through the effective
+health `scan_limit`. Zero/omission disables it; due and stalled thresholds may
+both be zero for a parked-only watch. Metric `parked_intents` uses health `parked`,
+with equality breaching the threshold. Due/stalled values exclude parked work,
+so clearing automatic backlog cannot clear a parked incident.
+
+Opening and recovery use the same complete, fresh, advancing observations across
+`sustain_ms` as the other metrics. Failed reads, invalid/truncated coverage, stale,
+repeated/regressing timestamps and sample gaps leave confirmation unknown and
+retain unresolved identity. Even an incomplete lower bound already above the
+threshold cannot open an incident. Startup replays pending parked notifications
+before health reads and requires fresh proof before reconfirming or resolving.
+Existing outbox and safe-sequence limits reserve capacity for its resolution.
+
+A resolution means only that retained parked count stayed below the threshold.
+An operator budget resume or newer staging can reduce that count without callback
+confirmation or business success. This watch only reads metadata; it never grants
+claims, resumes work or sends platform callbacks. The ordinary Python watch also
+accepts `parked_threshold` with in-memory lifecycle notifications.
 
 ## Exact acknowledgments and capacity
 
@@ -185,4 +228,6 @@ pool/loop. No helper keeps a parked VM awake or changes event ordering, consumer
 deduplication or business side effects. See the
 [checkpoint example](../examples/event-acknowledgment-python/README.md#persist-recovery-alert-checkpoints).
 Local evidence covers builds, generation and static checks; hosted restart,
-replay, fencing, timing and cancellation qualification remains pending before release.
+replay, fencing, timing and cancellation qualification remains pending before release,
+including parked-only/mixed alerts, incomplete evidence, operator resume/supersession
+and version 1/version 2 compatibility.

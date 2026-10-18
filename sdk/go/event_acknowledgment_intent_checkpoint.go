@@ -26,6 +26,7 @@ type EventAcknowledgmentIntentCheckpointPolicy struct {
 	StallAfter       time.Duration `json:"stall_after_ns"`
 	DueThreshold     int64         `json:"due_threshold"`
 	StalledThreshold int64         `json:"stalled_threshold"`
+	ParkedThreshold  int64         `json:"parked_threshold,omitempty"` // Version 2 only; absent in version 1.
 	PollInterval     time.Duration `json:"poll_interval_ns"`
 	QueryTimeout     time.Duration `json:"query_timeout_ns"`
 	MaxAge           time.Duration `json:"max_age_ns"`
@@ -59,6 +60,7 @@ type EventAcknowledgmentIntentAcknowledgment struct {
 // EventAcknowledgmentIntentCheckpoint is application-persisted metadata. It
 // contains no capabilities/payloads or unfinished monotonic confirmation proof.
 // Validation cannot authenticate a snapshot or detect rollback to an older one.
+// Version 1 has due/stalled conditions; version 2 requires parked alerts enabled.
 type EventAcknowledgmentIntentCheckpoint struct {
 	Kind           string                                         `json:"kind"`
 	Version        int                                            `json:"version"`
@@ -74,13 +76,24 @@ type EventAcknowledgmentIntentCheckpoint struct {
 }
 
 func eventIntentCheckpointPolicy(o EventAcknowledgmentIntentWatchOptions) EventAcknowledgmentIntentCheckpointPolicy {
-	return EventAcknowledgmentIntentCheckpointPolicy{o.Health.ScanLimit, o.Health.StallAfter, o.DueThreshold, o.StalledThreshold, o.PollInterval, o.QueryTimeout, o.MaxAge, o.Sustain}
+	return EventAcknowledgmentIntentCheckpointPolicy{
+		ScanLimit: o.Health.ScanLimit, StallAfter: o.Health.StallAfter,
+		DueThreshold: o.DueThreshold, StalledThreshold: o.StalledThreshold, ParkedThreshold: o.ParkedThreshold,
+		PollInterval: o.PollInterval, QueryTimeout: o.QueryTimeout, MaxAge: o.MaxAge, Sustain: o.Sustain,
+	}
+}
+
+func eventIntentCheckpointVersion(p EventAcknowledgmentIntentCheckpointPolicy) int {
+	if p.ParkedThreshold > 0 {
+		return 2
+	}
+	return 1
 }
 
 func (p EventAcknowledgmentIntentCheckpointPolicy) options() EventAcknowledgmentIntentWatchOptions {
 	return EventAcknowledgmentIntentWatchOptions{
 		Health:       EventAcknowledgmentIntentHealthOptions{ScanLimit: p.ScanLimit, StallAfter: p.StallAfter},
-		DueThreshold: p.DueThreshold, StalledThreshold: p.StalledThreshold,
+		DueThreshold: p.DueThreshold, StalledThreshold: p.StalledThreshold, ParkedThreshold: p.ParkedThreshold,
 		PollInterval: p.PollInterval, QueryTimeout: p.QueryTimeout, MaxAge: p.MaxAge, Sustain: p.Sustain,
 	}
 }
@@ -92,6 +105,9 @@ func eventIntentCheckpointRules(p EventAcknowledgmentIntentCheckpointPolicy) []E
 	}
 	if p.StalledThreshold > 0 {
 		rules = append(rules, EventAcknowledgmentIntentCheckpointCondition{Metric: "stalled_recovery", Threshold: p.StalledThreshold, State: "unknown"})
+	}
+	if p.ParkedThreshold > 0 {
+		rules = append(rules, EventAcknowledgmentIntentCheckpointCondition{Metric: "parked_intents", Threshold: p.ParkedThreshold, State: "unknown"})
 	}
 	return rules
 }
@@ -143,7 +159,7 @@ func cloneEventIntentCheckpoint(c EventAcknowledgmentIntentCheckpoint) EventAckn
 // not retained. Bounds, policy, timestamps and incident/ack lineage are validated.
 func ValidateEventAcknowledgmentIntentCheckpoint(saved EventAcknowledgmentIntentCheckpoint) (EventAcknowledgmentIntentCheckpoint, error) {
 	var zero EventAcknowledgmentIntentCheckpoint
-	if saved.Kind != EventAcknowledgmentIntentCheckpointKind || saved.Version != 1 || !operationUUID(saved.Session) || saved.Session != strings.ToLower(saved.Session) || saved.Sequence < 0 || saved.Sequence > EventAcknowledgmentIntentSequenceMax || len(saved.Pending) > EventAcknowledgmentIntentOutboxMax || len(saved.Acknowledged) > EventAcknowledgmentIntentOutboxMax {
+	if saved.Kind != EventAcknowledgmentIntentCheckpointKind || saved.Version != eventIntentCheckpointVersion(saved.Policy) || !operationUUID(saved.Session) || saved.Session != strings.ToLower(saved.Session) || saved.Sequence < 0 || saved.Sequence > EventAcknowledgmentIntentSequenceMax || len(saved.Pending) > EventAcknowledgmentIntentOutboxMax || len(saved.Acknowledged) > EventAcknowledgmentIntentOutboxMax {
 		return zero, ErrInvalidEventAcknowledgmentIntentCheckpoint
 	}
 	account, app, err := eventIntentScope(saved.AccountID, saved.AppID)

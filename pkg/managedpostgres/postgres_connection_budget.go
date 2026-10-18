@@ -26,6 +26,9 @@ func (s *PostgresStore) ReadConnectionBudget(ctx context.Context, accountID, dat
 	if err := json.Unmarshal(row.Bindings, &out.Bindings); err != nil {
 		return out, fmt.Errorf("managedpostgres: decode connection inventory: %w", err)
 	}
+	if err := json.Unmarshal(row.Capacity, &out.Capacity); err != nil {
+		return out, fmt.Errorf("managedpostgres: decode capacity evidence: %w", err)
+	}
 	return out, nil
 }
 

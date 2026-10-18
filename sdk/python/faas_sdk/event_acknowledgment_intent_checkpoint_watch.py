@@ -24,7 +24,9 @@ from .event_acknowledgment_intent_checkpoint import (
     KIND,
     MAX_SEQUENCE,
     acknowledge_event_acknowledgment_intent_alerts,
+    checkpoint_policy,
     checkpoint_time,
+    checkpoint_version,
     rules,
     validate_event_acknowledgment_intent_checkpoint,
 )
@@ -93,9 +95,9 @@ async def awatch_event_acknowledgment_intent_health_with_checkpoint(
     checkpoint = (
         {
             "kind": KIND,
-            "version": 1,
+            "version": checkpoint_version(settings),
             "target": {"account_id": account, "app_id": app},
-            "policy": asdict(settings),
+            "policy": checkpoint_policy(settings),
             "session": str(uuid4()),
             "sequence": 0,
             "conditions": [{**rule, "state": "unknown"} for rule in rules(settings)],
@@ -105,7 +107,9 @@ async def awatch_event_acknowledgment_intent_health_with_checkpoint(
         if options.resume is None
         else validate_event_acknowledgment_intent_checkpoint(options.resume)
     )
-    if checkpoint["target"] != {"account_id": account, "app_id": app} or checkpoint["policy"] != asdict(settings):
+    if checkpoint["target"] != {"account_id": account, "app_id": app} or checkpoint["policy"] != checkpoint_policy(
+        settings
+    ):
         raise ValueError("intent checkpoint owner or effective policy mismatch")
     proofs = reset_proofs(checkpoint)
     result: dict[str, Any] = {

@@ -24,7 +24,26 @@ byte for byte from the Go SDK schema by `scripts/gen-operation-inbox-schema.py`.
 No helper installs, migrates or prunes either table. Existing immediate worker
 methods continue to use only the receipt table.
 
-Pending/unconfirmed intents contain the raw platform token and completion JSON.
+Apply `event_acknowledgment_intent_stored_retry_policy_schema` once in an
+application migration transaction before upgrading existing intent workers.
+Durable staging accepts `retry_policy` to bind new intents atomically; recovery
+captures and honors bindings across all three SDKs. See
+[upgrade, staging and rollout](event-acknowledgment-stored-retry-policy.md).
+
+For existing unbound backlog, use
+`aadopt_event_acknowledgment_intent_retry_policy` with frozen options holding a
+saved command UUID and the selected timestamp/count. Install the additional
+optional receipt schema first. Adoption preserves callback data, counts and due
+times, and resolves original retries with retained receipts. See
+[policy adoption and cancellation](event-acknowledgment-policy-adoption.md#python-adoption-and-replay).
+
+Current Python helpers also require `event_acknowledgment_intent_retry_budget_schema`
+after the v1 upgrade, even for unbound/v1-only work. Optional `retry_budget` binds a
+finite total of committed recovery claims. Exhaustion parks protected callbacks;
+an explicit guarded command grants a larger total and retains an idempotent
+receipt. See [budget installation, parking and resume](event-acknowledgment-retry-budgets.md#python-budgets-and-guarded-resume).
+
+Pending/unconfirmed/parked intents contain the raw platform token and completion JSON.
 Restrict database/backup/worker access and protect their storage. Status objects
 contain metadata only. Claims redact string/repr and reject copying/pickling;
 they are process-local capabilities, never a persistence format. Python private
@@ -167,9 +186,16 @@ For separate steps, use `aclaim_event_acknowledgment_intent(connection, account_
 app_id, ...)`, then `claim.deliver(client.inner, connection, ...)`. Both accept
 `stop_event` and `callback_options=EventAcknowledgmentWorkerOptions(...)`.
 Acquisition accepts `claim_duration_ms` (whole milliseconds 1000..300000; default
-30000). Delivery accepts `backoff_ms` (whole milliseconds 1..3600000; default 1000).
+30000). Delivery accepts `backoff_ms` (native integer milliseconds 1..3600000;
+omitted/None selects a fixed 1000 ms delay without a retry policy).
 The combined helper accepts both. Callback budgets use the live worker's
 lease-dependent bounds and are checked against the row before its claim commits.
+
+Delivery, single-iteration recovery and the bounded pass also accept
+`retry_policy=EventAcknowledgmentIntentRetryPolicy(...)` for capped exponential
+full jitter using persisted claim counts. Leave `backoff_ms` omitted/None with a
+policy. The shared schema and callback fences are unchanged. See
+[adaptive retry scheduling](event-acknowledgment-python-retry-policy.md).
 
 Claims use owner scope, database time, 32 random bytes and `FOR UPDATE SKIP LOCKED`.
 Each claim increments the saturating delivery-attempt counter. Recovery verifies
@@ -242,3 +268,10 @@ See the [versioned durable integration](../examples/event-acknowledgment-python/
 Local evidence covers generation, packaging, compilation, lint and static checks.
 Hosted PostgreSQL/callback/restart/cancellation and cross-SDK qualification remains
 required before release; no local tests or assertion changes are included.
+
+For existing active unbound/v1 backlog, use the separate
+`aadopt_event_acknowledgment_intent_retry_budget` command. Install its optional
+receipt schema, select precise metadata, authorize and durably save original
+options, then apply timestamp/count/policy guards. It rejects live claims/newer
+attempts and preserves v1 timing, callbacks, counts and due times. See
+[Python budget adoption and replay](event-acknowledgment-budget-adoption.md#python-selection-adoption-and-replay).

@@ -12,6 +12,7 @@ rules_files=(
   "$repo_root/deploy/ansible/roles/prometheus/files/data_repair.rules.yml"
   "$repo_root/pkg/promqlrules/data_placement.yaml"
   "$repo_root/examples/event-acknowledgment-monitoring/preparation.rules.yml"
+  "$repo_root/examples/event-acknowledgment-monitoring/recovery.rules.yml"
 )
 
 status=0

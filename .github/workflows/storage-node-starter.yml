@@ -27,6 +27,7 @@ jobs:
           key: go-storage-starter-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}
           restore-keys: |
             go-light-test-1-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
+            go-light-test-2-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
             go-e2e-${{ runner.os }}-
       - uses: actions/setup-go@v7
         with:

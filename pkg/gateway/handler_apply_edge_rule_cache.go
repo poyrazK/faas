@@ -68,7 +68,7 @@ func (h *Handler) applyEdgeRuleCache(w http.ResponseWriter, r *http.Request, app
 	// no cache rule would inflate the counter (the
 	// counter's load-bearing meaning is "rule matched, wrong
 	// verb mix").
-	method := strings.ToUpper(r.Method)
+	method := r.Method
 	if method != "GET" && method != "HEAD" {
 		return false, nil
 	}
@@ -96,22 +96,14 @@ func (h *Handler) applyEdgeRuleCache(w http.ResponseWriter, r *http.Request, app
 	// informative signal the dashboard surfaces. The security
 	// property (authed requests are NEVER cached) is enforced
 	// by the absence of a storage path here, not by the counter.
-	if r.Header.Get("Authorization") != "" || hasSessionCookie(r) {
+	if hasCacheCredentials(r) {
 		h.metricsIncCacheOutcome(app.ID, "bypass_authed")
 		return false, nil
 	}
 	// Keyed rollout traffic is partitioned by the deployment cohort before
 	// the wake/picker path. Unkeyed traffic retains the existing empty
 	// deployment dimension and its cursor-based behavior.
-	key := CacheKey{
-		AppID:          app.ID,
-		DeploymentID:   versionAffinityDeploymentForRequest(h.backend, app.ID, r),
-		RuleID:         rule.ID,
-		Method:         method,
-		NormalizedPath: path,
-		Query:          sortQuery(r.URL.RawQuery),
-		VaryHash:       computeVaryHash(r, rule.VaryOn),
-	}
+	key := responseCacheKeyForRequest(r, app.ID, versionAffinityDeploymentForRequest(h.backend, app.ID, r), rule)
 	outcome, entry := h.responseCache.Get(key)
 	switch outcome {
 	case "fresh":
@@ -231,26 +223,20 @@ func (h *Handler) metricsIncCacheOutcome(appID, outcome string) {
 	h.metrics.ObserveResponseCacheOutcome(appID, outcome)
 }
 
-// hasSessionCookie reports whether the request carries a session
-// cookie. The set of cookie names treated as "session" is the
-// platform's auth-cookie vocabulary (the same set the authn
-// middleware recognises). An empty Set-Cookie in any name means
-// authed → bypass.
+// hasCacheCredentials applies the shared cache's presence-based credential
+// bypass. Header.Get cannot detect an empty first Authorization field followed
+// by a credential in another field, and even an empty field must bypass.
+func hasCacheCredentials(r *http.Request) bool {
+	return r != nil && (len(r.Header.Values("Authorization")) != 0 || hasSessionCookie(r))
+}
+
+// hasSessionCookie treats any remaining Cookie field as session state. The
+// gateway removes its managed routing cookies before this check. Do not parse
+// application cookies here: Go silently skips invalid values and returns no
+// cookies when its count limit is exceeded, but the origin still receives the
+// fields and may recognize them using a different parser.
 func hasSessionCookie(r *http.Request) bool {
-	if r == nil {
-		return false
-	}
-	for _, c := range r.Cookies() {
-		// Conservative: any cookie is treated as a session
-		// for the v1 cache. Future ADRs can introduce a
-		// non-session allowlist (analytics cookies etc.)
-		// without changing the store; the predicate is the
-		// single chokepoint.
-		if c.Name != "" {
-			return true
-		}
-	}
-	return false
+	return r != nil && len(r.Header.Values("Cookie")) != 0
 }
 
 // isHopByHopHeader reports whether k is a hop-by-hop header

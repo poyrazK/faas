@@ -4,7 +4,7 @@ import { createTimings, timingPhases } from './timing.mjs'
 const trace = Symbol('requestTrace')
 const codes = new Set(['origin_not_allowed', 'not_found', 'invalid_path', 'method_not_allowed',
   'token_required', 'token_invalid', 'read_only_identity', 'serving_contract_unavailable', 'data_api_unavailable',
-  'data_api_refresh_paused', 'data_api_refresh_unavailable', 'data_api_overloaded', 'data_api_rate_limited',
+  'data_api_refresh_paused', 'data_api_refresh_unavailable', 'data_api_overloaded', 'data_api_rate_limited', 'data_api_concurrency_limited',
   'request_too_large', 'response_too_large', 'query_timeout', 'request_deadline_exceeded', 'schema_document_too_large', 'schema_contract_mismatch', 'upstream_error'])
 
 function route(url) {
@@ -46,7 +46,7 @@ export function traceRequest(req, res, emit = writeLog) {
     const result = completed ? outcome(state.code, status) : 'aborted'
     const record = { time: new Date().toISOString(), level: completed && status < 400 ? 'info' : 'warn',
       event: 'data_api_request', request_id: state.id, method, route: category, status,
-      duration_ms: Math.round((finishedAt - started) * 1000) / 1000, outcome: result, code: state.code, ...(state.admission ? { admission: state.admission } : {}), ...(state.deadline ? { deadline: state.deadline } : {}), ...(state.responseLimit ? { response_limit: state.responseLimit } : {}), ...(state.rateLimit ? { rate_limit: state.rateLimit } : {}), ...(timings ? { timings } : {}), ...(state.query ?? {}) }
+      duration_ms: Math.round((finishedAt - started) * 1000) / 1000, outcome: result, code: state.code, ...(state.admission ? { admission: state.admission } : {}), ...(state.deadline ? { deadline: state.deadline } : {}), ...(state.responseLimit ? { response_limit: state.responseLimit } : {}), ...(state.rateLimit ? { rate_limit: state.rateLimit } : {}), ...(state.concurrencyLimit ? { concurrency_limit: state.concurrencyLimit } : {}), ...(timings ? { timings } : {}), ...(state.databaseTimings ? { database_timings: state.databaseTimings } : {}), ...(state.query ?? {}) }
     try { emit(record) } catch { /* Logging failure must not change the response. */ }
   }
   res.once('finish', () => finish(true))
@@ -73,11 +73,19 @@ export function markRateLimit(res, limit) {
   if (res[trace] && !res[trace].closed) res[trace].rateLimit = limit
 }
 
+export function markConcurrencyLimit(res, limit) {
+  if (res[trace] && !res[trace].closed) res[trace].concurrencyLimit = limit
+}
+
 export function markPhase(res, phase) {
   const state = res[trace]
   if (!state || state.closed || !timingPhases.includes(phase)) return
   state.timing ??= createTimings()
   state.timing.enter(phase, performance.now())
+}
+
+export function markDatabaseTimings(res, timings) {
+  if (res[trace] && !res[trace].closed) res[trace].databaseTimings = timings
 }
 
 export function requestID(res) { return res[trace]?.id }

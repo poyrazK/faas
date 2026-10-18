@@ -7,7 +7,7 @@ import math
 import re
 import secrets
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 import httpx
@@ -22,11 +22,17 @@ from ._event_acknowledgment_protocol import (
     settings,
 )
 from .client import AuthenticatedClient
+from .event_acknowledgment_intent_retry_policy import (
+    EventAcknowledgmentIntentRetryPolicy,
+    _retry_delay,
+    _retry_schedule,
+)
 from .event_acknowledgment_intents import (
     _COLUMNS,
     _KEY,
     _TABLE,
     EventAcknowledgmentIntentError,
+    EventAcknowledgmentIntentParkedError,
     EventAcknowledgmentIntentStatus,
     _bytes,
     _CallbackOptionsError,
@@ -57,6 +63,9 @@ class _Saved:
     action: str
     reason: str
     body: bytes | None
+    delivery_attempts: int
+    retry_policy: EventAcknowledgmentIntentRetryPolicy | None = None
+    delivery_attempt_limit: int | None = None
 
     def __repr__(self) -> str:
         return "SavedAcknowledgmentIntent{redacted}"
@@ -67,9 +76,9 @@ class _Saved:
 
 def _saved(row: Any, account: str, app: str, claim: bytes) -> _Saved:
     status = _status(row)
-    if len(row) != 20:
+    if len(row) != 25:
         raise _store_error()
-    token, slug, seconds, body, identity, request, action_digest, capability_digest = row[12:]
+    token, slug, seconds, body, identity, request, action_digest, capability_digest = row[17:]
     if (
         status.state not in ("pending", "unconfirmed")
         or not isinstance(token, str)
@@ -112,18 +121,19 @@ def _saved(row: Any, account: str, app: str, claim: bytes) -> _Saved:
         status.action,
         status.reason,
         result,
+        status.delivery_attempts,
+        None
+        if status.retry_policy is None
+        else EventAcknowledgmentIntentRetryPolicy(
+            status.retry_policy.initial_backoff_ms, status.retry_policy.max_backoff_ms
+        ),
+        status.delivery_attempt_limit,
     )
 
 
 def _duration(value: int) -> int:
     if type(value) is not int or not 1000 <= value <= 300000:
         raise ValueError("invalid acknowledgment intent claim duration")
-    return value
-
-
-def _backoff(value: int) -> int:
-    if type(value) is not int or not 1 <= value <= 3600000:
-        raise ValueError("invalid acknowledgment intent backoff")
     return value
 
 
@@ -162,13 +172,17 @@ class EventAcknowledgmentIntentClaim:
         client: AuthenticatedClient,
         connection: Any,
         *,
-        backoff_ms: int = 1000,
+        backoff_ms: int | None = None,
         callback_options: EventAcknowledgmentWorkerOptions | None = None,
+        retry_policy: EventAcknowledgmentIntentRetryPolicy | None = None,
         stop_event: asyncio.Event | None = None,
     ) -> EventAcknowledgmentIntentStatus:
         """Send the saved callback and return committed local status, including uncertainty."""
         http = _client(client)
-        _backoff(backoff_ms)
+        schedule = _retry_schedule(backoff_ms, retry_policy)
+        if self._saved.retry_policy is not None:
+            schedule = _retry_schedule(None, self._saved.retry_policy)
+        delay = _retry_delay(schedule, self._saved.claim, self._saved.delivery_attempts)
         budget = settings(callback_options, self._saved.seconds)
         if self._loop is not asyncio.get_running_loop():
             raise ValueError("recovery claim belongs to another event loop")
@@ -177,7 +191,7 @@ class EventAcknowledgmentIntentClaim:
         self._busy = True
         try:
             return await owned_operation(
-                lambda control: self._deliver(http, connection, budget, backoff_ms, control), stop_event
+                lambda control: self._deliver(http, connection, budget, delay, control), stop_event
             )
         finally:
             self._busy = False
@@ -258,6 +272,13 @@ class EventAcknowledgmentIntentClaim:
             watcher.cancel()
             await asyncio.gather(watcher, return_exceptions=True)
 
+        if (
+            state == "unconfirmed"
+            and saved.delivery_attempt_limit is not None
+            and saved.delivery_attempts >= saved.delivery_attempt_limit
+        ):
+            state, code = "parked", "attempts_exhausted"
+
         async def settle(cursor: Any) -> EventAcknowledgmentIntentStatus:
             row = await _query(
                 cursor,
@@ -282,7 +303,7 @@ async def _claim(
 ) -> EventAcknowledgmentIntentClaim:
     claim = secrets.token_bytes(32)
 
-    async def acquire(cursor: Any) -> _Saved:
+    async def acquire(cursor: Any) -> _Saved | EventAcknowledgmentIntentStatus:
         row = await _query(
             cursor,
             f"SELECT {_COLUMNS},token,app_slug,lease_seconds,result_body,identity_digest,request_digest,action_digest,capability_digest FROM {_TABLE} WHERE account_id=%s::uuid AND app_id=%s::uuid AND state IN ('pending','unconfirmed') AND next_attempt_at<=clock_timestamp() AND (claim_expires_at IS NULL OR claim_expires_at<=clock_timestamp()) ORDER BY next_attempt_at,created_at,invocation_id,replay_generation,attempt LIMIT 1 FOR UPDATE SKIP LOCKED",
@@ -292,6 +313,17 @@ async def _claim(
         if row is None:
             raise EventAcknowledgmentIntentError("event_acknowledgment_intent_empty")
         saved = _saved(row, account, app, claim)
+        if saved.delivery_attempt_limit is not None and saved.delivery_attempts >= saved.delivery_attempt_limit:
+            parked = await _query(
+                cursor,
+                f"UPDATE {_TABLE} SET state='parked',last_code='attempts_exhausted',claim_token=NULL,claim_expires_at=NULL,updated_at=greatest(clock_timestamp(),updated_at+interval '1 microsecond') WHERE {_KEY} AND replay_generation=%s::bigint AND attempt=%s AND state IN ('pending','unconfirmed') AND retry_policy_version=2 AND delivery_attempts>=delivery_attempt_limit AND (claim_expires_at IS NULL OR claim_expires_at<=clock_timestamp()) RETURNING {_COLUMNS}",
+                (account, app, saved.invocation_id, saved.replay_generation, saved.attempt),
+                control,
+            )
+            status = _status(parked)
+            if status.state != "parked":
+                raise _store_error()
+            return status
         invalid = False
         try:
             settings(callback_options, saved.seconds)
@@ -299,16 +331,19 @@ async def _claim(
             invalid = True
         if invalid:
             raise _CallbackOptionsError()
-        await _query(
+        updated = await _query(
             cursor,
-            f"UPDATE {_TABLE} SET claim_token=%s,claim_expires_at=clock_timestamp()+%s::bigint*interval '1 millisecond',delivery_attempts=least(delivery_attempts+1,2147483647),updated_at=clock_timestamp() WHERE {_KEY} AND replay_generation=%s::bigint AND attempt=%s",
+            f"UPDATE {_TABLE} SET claim_token=%s,claim_expires_at=clock_timestamp()+%s::bigint*interval '1 millisecond',delivery_attempts=least(delivery_attempts+1,2147483647),updated_at=clock_timestamp() WHERE {_KEY} AND replay_generation=%s::bigint AND attempt=%s RETURNING delivery_attempts",
             (claim, duration, account, app, saved.invocation_id, saved.replay_generation, saved.attempt),
             control,
-            fetch="none",
         )
-        return saved
+        if not isinstance(updated, (tuple, list)) or len(updated) != 1:
+            raise _store_error()
+        return replace(saved, delivery_attempts=_integer(updated[0], 1, 2147483647))
 
     saved = await _transaction(connection, acquire, control)
+    if type(saved) is EventAcknowledgmentIntentStatus:
+        raise EventAcknowledgmentIntentParkedError(saved)
     return EventAcknowledgmentIntentClaim(_SUPPORTED, saved)
 
 
@@ -335,17 +370,23 @@ async def arecover_next_event_acknowledgment_intent(
     app_id: str,
     *,
     claim_duration_ms: int = 30000,
-    backoff_ms: int = 1000,
+    backoff_ms: int | None = None,
     callback_options: EventAcknowledgmentWorkerOptions | None = None,
+    retry_policy: EventAcknowledgmentIntentRetryPolicy | None = None,
     stop_event: asyncio.Event | None = None,
 ) -> EventAcknowledgmentIntentStatus:
     """One bounded claim/delivery iteration; never renews a platform lease or runs business code."""
     http = _client(client)
     account, app = _uuid(account_id), _uuid(app_id)
-    duration, delay = _duration(claim_duration_ms), _backoff(backoff_ms)
+    duration, schedule = _duration(claim_duration_ms), _retry_schedule(backoff_ms, retry_policy)
 
     async def recover(control: Control) -> EventAcknowledgmentIntentStatus:
-        claim = await _claim(connection, account, app, duration, callback_options, control)
+        try:
+            claim = await _claim(connection, account, app, duration, callback_options, control)
+        except EventAcknowledgmentIntentParkedError as parked:
+            return parked.intent
+        effective = schedule if claim._saved.retry_policy is None else _retry_schedule(None, claim._saved.retry_policy)
+        delay = _retry_delay(effective, claim._saved.claim, claim._saved.delivery_attempts)
         return await claim._deliver(http, connection, settings(callback_options, claim._saved.seconds), delay, control)
 
     return await owned_operation(recover, stop_event)

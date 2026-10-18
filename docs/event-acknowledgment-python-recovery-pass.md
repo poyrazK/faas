@@ -41,8 +41,17 @@ Frozen `EventAcknowledgmentIntentRecoveryPassOptions` has these fields:
 | `max_attempts` | 100 | Native integer 1..10000; maximum admitted recovery iterations. |
 | `concurrency` | 4 | Native integer 1..32; at most this many admitted iterations/scopes run at once. |
 | `claim_duration_ms` | 30000 | Existing database recovery claim duration, 1000..300000 whole milliseconds. |
-| `backoff_ms` | 1000 | Existing persisted backoff after unconfirmed settlement, 1..3600000 whole milliseconds. |
+| `backoff_ms` | None, selecting 1000 ms without a policy | Fixed persisted delay after unconfirmed settlement, 1..3600000 native integer milliseconds. Leave None with a policy. |
 | `callback_options` | `None` | Optional frozen `EventAcknowledgmentWorkerOptions`, copied before I/O. |
+| `retry_policy` | `None` | Optional frozen `EventAcknowledgmentIntentRetryPolicy` for capped exponential full jitter using durable recovery claims. |
+
+See the [retry policy contract](event-acknowledgment-python-retry-policy.md) for
+bounds, count semantics and worker coordination. Policy values are copied before
+I/O. Combining a policy and explicit `backoff_ms` is invalid before scope acquisition.
+
+Bound intents use their captured stored policy instead of this worker fallback.
+Current intent recovery requires upgraded columns even for unbound rows; see
+[binding precedence and rollout](event-acknowledgment-stored-retry-policy.md).
 
 An admission reserves one budget slot before invoking the factory. Successful
 settlements, empty probes, acquisition failures and interrupted attempts all
@@ -115,6 +124,7 @@ reason strings, per-job statuses, connections or raw errors.
 | `attempts` | Total admitted iterations, including acquisition failures/empty probes. |
 | `confirmed` | Returned locally committed confirmed settlements. |
 | `unconfirmed` | Returned locally committed unconfirmed settlements, with persisted backoff. |
+| `parked` | Known parking mutations, including exhausted crashed claims without callback delivery. |
 | `superseded` | Returned locally committed superseded settlements. |
 | `empty` | Actual recovery probes reporting no due unclaimed row. |
 | `claim_lost` | Recovery claims expired/replaced before a valid settlement was obtained. |
@@ -153,8 +163,14 @@ repeat business work or infer a negative action from a pass exception.
 The [host example](../examples/event-acknowledgment-python/README.md#recover-a-bounded-callback-pass)
 demonstrates explicit invocation and progress handling. Local validation covers
 compilation/lint, Python 3.11 syntax, isolated generation, wheel/sdist inclusion,
-unchanged primitive/SQL and existing-example source comparisons, and schema/ADR/
+shared callback/settlement and existing-example source comparisons, and schema/ADR/
 documentation checks. No tests/assertions are added or changed and no local tests
 are run. Hosted concurrency/admission, connection isolation, empty races, callback
 retry, cancellation, cleanup replacement/suppression and uncertain-commit
 qualification remains pending before release.
+
+Budgeted recovery adds a scalar `parked` count and continues admissions after known
+parking. Already parked rows are excluded from automatic claims, so empty/limit
+can coexist with work awaiting an operator. Apply the budget upgrade before
+current helpers, even for v1-only use. See
+[parking, exact fences and guarded resume](event-acknowledgment-retry-budgets.md#python-budgets-and-guarded-resume).

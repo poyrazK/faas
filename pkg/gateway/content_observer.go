@@ -68,7 +68,7 @@ func (o *contentObserver) observe(key string, sum uint64, now time.Time) string 
 // contentObservable reports whether a request's response may be compared:
 // an anonymous, whole-body GET the edge cache could serve.
 func contentObservable(r *http.Request) bool {
-	if r.Method != http.MethodGet || r.Header.Get("Authorization") != "" || hasSessionCookie(r) ||
+	if r.Method != http.MethodGet || hasCacheCredentials(r) ||
 		r.Header.Get("Range") != "" || r.Header.Get("Upgrade") != "" ||
 		strings.Contains(strings.ToLower(r.Header.Get("Accept")), "text/event-stream") {
 		return false
@@ -89,6 +89,7 @@ type contentTee struct {
 	hash     maphash.Hash
 	size     int64
 	over     bool
+	failed   bool
 	status   int
 	headerOK bool
 	wrote    bool
@@ -99,7 +100,7 @@ type contentTee struct {
 
 func newContentTee(w http.ResponseWriter, observer *contentObserver, appID string, r *http.Request) *contentTee {
 	t := &contentTee{ResponseWriter: w, observer: observer, status: http.StatusOK,
-		key: appID + "\x00" + r.URL.Path + "\x00" + sortQuery(r.URL.RawQuery) + "\x00" + strings.ToLower(r.Header.Get("Accept-Encoding"))}
+		key: appID + "\x00" + hostname(r.Host) + "\x00" + r.URL.RequestURI() + "\x00" + strings.ToLower(strings.Join(r.Header.Values("Accept-Encoding"), ", "))}
 	t.hash.SetSeed(observer.seed)
 	return t
 }
@@ -116,7 +117,7 @@ func (t *contentTee) ProblemHTMLRequest() *http.Request {
 }
 
 func (t *contentTee) WriteHeader(code int) {
-	if !t.headerOK {
+	if !t.headerOK && !isInformationalStatus(code) {
 		t.status, t.headerOK = code, true
 		t.header = t.ResponseWriter.Header().Clone()
 	}
@@ -127,7 +128,7 @@ func (t *contentTee) Write(b []byte) (int, error) {
 	if !t.headerOK {
 		t.WriteHeader(http.StatusOK)
 	}
-	if !t.over {
+	if !t.over && !t.failed {
 		if t.size+int64(len(b)) > ResponseCachePerEntryMaxBytes {
 			t.over = true
 		} else {
@@ -136,7 +137,13 @@ func (t *contentTee) Write(b []byte) (int, error) {
 		}
 	}
 	t.wrote = true
-	return t.ResponseWriter.Write(b)
+	n, err := t.ResponseWriter.Write(b)
+	// An incomplete response cannot establish that caching would have served
+	// the same body. A later successful write must not clear this failure.
+	if err != nil || n != len(b) {
+		t.failed = true
+	}
+	return n, err
 }
 
 func (t *contentTee) Flush() {
@@ -163,23 +170,16 @@ func (t *contentTee) finish(now time.Time) string {
 	return t.outcome
 }
 
-// storable mirrors cacheWriter.shouldStore for a rule without vary_on.
+// storable uses the cache's eligibility predicate with no vary_on rule, so
+// cache recommendations honor the same status, cookie and header vetoes.
 func (t *contentTee) storable() bool {
-	if t.over || !t.wrote || t.header == nil {
+	if t.header == nil {
 		return false
 	}
-	switch t.status {
-	case 200, 203, 300, 301, 308, 404, 410:
-	default:
-		return false
-	}
-	if len(t.header.Values("Set-Cookie")) != 0 {
-		return false
-	}
-	if cc := strings.ToLower(t.header.Get("Cache-Control")); strings.Contains(cc, "no-store") || strings.Contains(cc, "private") {
-		return false
-	}
-	return (&cacheWriter{header: t.header}).varyCoveredByKey()
+	return (&cacheWriter{
+		header: t.header, status: t.status,
+		wroteBody: t.wrote, bypass: t.over || t.failed,
+	}).shouldStore()
 }
 
 type contentTeeKey struct{}

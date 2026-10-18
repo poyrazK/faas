@@ -14,6 +14,17 @@ database. Add `EventConsumerProcessingSchema` only when using local preparation
 leases. No helper installs, migrates or prunes application tables automatically.
 This is application-owned DDL, separate from Gregale's platform schema/registries.
 
+Existing installs must explicitly apply
+`EventAcknowledgmentIntentStoredRetryPolicySchema` once in an application
+migration transaction before upgrading Go intent staging/listing/recovery.
+Fresh intent DDL includes the nullable binding columns. See
+[schema and compatible-worker rollout](event-acknowledgment-stored-retry-policy.md#install-or-upgrade-first).
+
+Current Go helpers additionally require the retry-budget columns. Existing v1
+tables apply `EventAcknowledgmentIntentRetryBudgetSchema` once before upgrading
+Go, even if budgets remain disabled. See
+[the budget schema and rollout order](event-acknowledgment-retry-budgets.md#install-and-roll-out).
+
 Pending/unconfirmed rows contain the raw acknowledgment token and, for completion,
 the saved JSON result. Restrict table and backup access to trusted worker/database
 roles and use protected storage. Tokens never appear in diagnostic status structs.
@@ -59,6 +70,20 @@ from a failed commit or blindly submit a negative acknowledgment. A successful
 retry of durable staging returns the existing intent without changing its payload,
 claim, due time or confirmation state. Unknown staging commits return no confirmed
 status; repeat the same staging operation after recovery.
+
+Use `RunDurableWithRetryPolicy`, `SaveCompletionIntentWithRetryPolicy` or
+`RunDurableWithProcessingLeaseAndRetryPolicy` to atomically bind a versioned
+retry schedule to a new saved completion. Negative staging has corresponding
+`WithRetryPolicy` variants. Repeating a different policy conflicts; existing
+unbound duplicates are not adopted by staging. A separate
+[guarded adoption command](event-acknowledgment-policy-adoption.md) can bind an
+existing unresolved intent without changing its callback, count or due time. See the
+[immutable binding contract](event-acknowledgment-stored-retry-policy.md).
+
+`WithRetryBudget` staging variants bind an initial total recovery-claim limit.
+The final unconfirmed claim parks its saved callback; a guarded receipt-backed
+resume grants a larger total. See
+[retry exhaustion and explicit resume](event-acknowledgment-retry-budgets.md).
 
 ## Save an explicit negative decision
 
@@ -108,6 +133,13 @@ be whole milliseconds from one second through five minutes. Callback options hav
 the same bounds as the worker helper; the final argument is retry scheduling
 backoff, from one millisecond through one hour in whole milliseconds.
 
+Go also offers `RecoverNextEventAcknowledgmentIntentWithRetryPolicy` and
+`claim.DeliverWithRetryPolicy` for optional capped exponential full jitter using
+the persisted recovery-claim count. The bounded pass accepts the same policy.
+See [adaptive retry scheduling](event-acknowledgment-go-retry-policy.md) for bounds,
+database-clock scheduling and worker coordination. Fixed-delay calls keep their
+existing behavior for unbound rows. A captured binding takes precedence over that fallback.
+
 `ClaimEventAcknowledgmentIntent` plus `claim.Deliver` exposes the same two steps
 when the host needs separate scheduling. The database lease bounds the HTTP context
 using remaining database-clock time and a conservative round-trip allowance. Saved
@@ -133,6 +165,7 @@ Delivery attempts count local recovery claims and saturate at 2,147,483,647.
 | --- | --- |
 | `pending` | Saved callback is ready or leased for its first recovery attempt. |
 | `unconfirmed` | Callback outcome is uncertain; saved inputs remain and next due time uses database time plus backoff. |
+| `parked` | A v2 recovery budget is exhausted; saved callback inputs remain for explicit operator action. |
 | `confirmed` | Platform callback returned a matching successful disposition and local settlement committed. |
 | `superseded` | A newer local claim replaced unfinished work, the platform rejected an unavailable claim, or a committed receipt blocked a negative callback. |
 
@@ -153,3 +186,9 @@ rollout. Failures and recovery remain independent per consumer delivery.
 
 For bounded backlog summaries and sustained local stall alerts, see
 [acknowledgment intent recovery health](event-acknowledgment-intent-health.md).
+
+Go can also attach budgets to selected existing unbound/v1 backlog using
+`AdoptEventAcknowledgmentIntentRetryBudget`, with a separate optional receipt
+schema, expected-policy/timestamp/count guards and no live claim or newer attempt.
+It preserves callbacks, counts and due time, and retains exact command outcomes.
+See [guarded budget adoption](event-acknowledgment-budget-adoption.md).
