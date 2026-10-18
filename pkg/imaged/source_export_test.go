@@ -22,6 +22,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/rootfs"
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 type sourceExportFixture struct {
@@ -214,7 +215,7 @@ func TestApprovedSourceExportRefusesChangedOrRevokedInput(t *testing.T) {
 			case "cross account":
 				f.app.AccountID = uuid.NewString()
 			case "expired approval":
-				f.h.store = expiredSourceStore{f.store}
+				f.h.store = statetest.NewMem(expiredSourceStore{f.store})
 			}
 			if err := f.h.consumeSourceBuild(t.Context(), f.app, f.dep, f.acct); err == nil {
 				t.Fatal("unapproved source converted")
@@ -226,7 +227,7 @@ func TestApprovedSourceExportRefusesChangedOrRevokedInput(t *testing.T) {
 	}
 }
 
-type expiredSourceStore struct{ *state.MemStore }
+type expiredSourceStore struct{ MemStore *state.MemStore }
 
 func (s expiredSourceStore) GetFreshBuildExportPublication(context.Context, string, string, string, string) (state.BuildExportPublication, error) {
 	return state.BuildExportPublication{}, state.ErrApplicationStandardRuntimeStale

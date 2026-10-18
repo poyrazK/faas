@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/statetest"
 )
 
 func approveEgressAdmission(t *testing.T, s *state.MemStore, owner state.CreateAccountWithPersonalOrgResult) {
@@ -152,15 +153,15 @@ func TestApplicationStandardAutomaticPersistencePermitsWakeWithoutObservation(t 
 }
 
 type enrollmentReadFailureStore struct {
-	*state.MemStore
-	failure error
+	MemStore *state.MemStore
+	failure  error
 }
 
 func (s *enrollmentReadFailureStore) GetApplicationStandardEnrollment(context.Context, string, string) (state.ApplicationStandardEnrollment, error) {
 	return state.ApplicationStandardEnrollment{}, s.failure
 }
 
-type admissionStoreWithoutReader struct{ state.Store }
+type admissionStoreWithoutReader struct{ Store state.Store }
 
 func TestApplicationStandardRuntimeReadFailsClosed(t *testing.T) {
 	base := state.NewMemStore()
@@ -174,9 +175,9 @@ func TestApplicationStandardRuntimeReadFailsClosed(t *testing.T) {
 		store   state.Store
 		pending bool
 	}{
-		{"missing enrollment", &enrollmentReadFailureStore{MemStore: base, failure: state.ErrNotFound}, true},
-		{"storage unavailable", &enrollmentReadFailureStore{MemStore: base, failure: errors.New("storage unavailable")}, false},
-		{"missing reader capability", &admissionStoreWithoutReader{Store: base}, false},
+		{"missing enrollment", statetest.NewMem(&enrollmentReadFailureStore{MemStore: base, failure: state.ErrNotFound}), true},
+		{"storage unavailable", statetest.NewMem(&enrollmentReadFailureStore{MemStore: base, failure: errors.New("storage unavailable")}), false},
+		{"missing reader capability", statetest.NewStore(&admissionStoreWithoutReader{Store: base}), false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			vmm := &fakeVMM{}
