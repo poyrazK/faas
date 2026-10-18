@@ -191,11 +191,7 @@ func TestStartGuidedSecretsStayOutOfSourceUploadAndSession(t *testing.T) {
 	if code := cmdStart(nil); code != 0 || secrets.Load() != 1 || deployments.Load() != 1 {
 		t.Fatalf("code=%d secrets=%d deployments=%d stderr=%s stdout=%s", code, secrets.Load(), deployments.Load(), stderr(), stdout)
 	}
-	path, err := startSessionPath(source)
-	if err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(startTestSessionRecord(t, source))
 	if err != nil || bytes.Contains(data, []byte(value)) || bytes.Contains(data, []byte(file)) || strings.Contains(stdout.String()+stderr(), value) || strings.Contains(stderr(), "env-required") {
 		t.Fatalf("secret metadata/output leak or duplicate doctor failure: %s, %v, stderr=%s", data, err, stderr())
 	}
