@@ -328,6 +328,27 @@ func TestIsSyncInvokeRequest(t *testing.T) {
 	}
 }
 
+func TestIsDeploymentResponseCheckRequest(t *testing.T) {
+	for _, tc := range []struct {
+		method, path string
+		want         bool
+	}{
+		{http.MethodPost, "/v1/apps/private-api/deployments/accepted-id/response-check", true},
+		{http.MethodGet, "/v1/apps/private-api/deployments/accepted-id/response-check", false},
+		{http.MethodPost, "/v1/apps/private-api/deployments/accepted-id/response-check/extra", false},
+		{http.MethodPost, "/v1/apps//deployments/accepted-id/response-check", false},
+		{http.MethodPost, "/v1/apps/private-api/deployments//response-check", false},
+		{http.MethodPost, "/v1/apps/private-api/deployments/accepted-id", false},
+	} {
+		if got := IsDeploymentResponseCheckRequest(httptest.NewRequest(tc.method, tc.path, nil)); got != tc.want {
+			t.Errorf("budget classification for %s %s = %t", tc.method, tc.path, got)
+		}
+	}
+	if IsDeploymentResponseCheckRequest(nil) {
+		t.Fatal("nil request selected a response-check budget")
+	}
+}
+
 // TestIsDeploySubmissionRequest pins H9-157: deploy source uploads and
 // submissions must be recognised so apid can lift them off its 5 s default;
 // on production-us a 12 MB Dockerfile commit spent its budget scanning the
