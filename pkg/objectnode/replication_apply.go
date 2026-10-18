@@ -9,7 +9,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
-	"golang.org/x/sys/unix"
 )
 
 func (s *Store) installJournalBlob(ctx context.Context, source string, blob *ReplicationBlob) error {
@@ -68,7 +67,7 @@ func installReplicationFileBudget(ctx context.Context, source, destination strin
 	if digest != expected {
 		return ErrDigest
 	}
-	if err = unix.Renameat2(unix.AT_FDCWD, temporary, unix.AT_FDCWD, destination, unix.RENAME_NOREPLACE); err != nil {
+	if err = renameNoReplace(temporary, destination); err != nil {
 		return err
 	}
 	return syncDirectory(filepath.Dir(destination))
