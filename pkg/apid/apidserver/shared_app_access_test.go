@@ -241,14 +241,6 @@ func TestSharedAppCreatorCannotBypassRoleOrMembership(t *testing.T) {
 	if rec = e.Do(t, "GET", "/v1/apps/team-api", nil, nil); rec.Code != 404 {
 		t.Fatalf("removed creator bypass: %d %s", rec.Code, rec.Body)
 	}
-	app, err := (*e.Store()).AppBySlug(t.Context(), "team-api")
-	if err != nil {
-		t.Fatal(err)
-	}
-	tracePath := "/v1/account/traces/4bf92f3577b34da6a3ce929d0e0e4736/selected-apps?app_id=" + app.ID
-	if rec = e.Do(t, "GET", tracePath, nil, nil); rec.Code != 404 {
-		t.Fatalf("removed creator used account diagnostics for company app: %d %s", rec.Code, rec.Body)
-	}
 }
 
 func TestSharedAppCreatorKeepsLegacyDeploymentReceipt(t *testing.T) {

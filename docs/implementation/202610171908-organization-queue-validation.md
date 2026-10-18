@@ -510,3 +510,13 @@ drift. Node build, three diagnostic client tests and 68 Python Auth,
 organization, MCP, regression-triage and trace tests pass. ADR uniqueness,
 twelve systemd units and seven durable-listener checks pass. Broader ownership,
 migration recovery, HTTP and fresh GitHub checks must qualify this integration.
+
+Current integrated organization, clone-catalogue, selected-trace and checked
+regression state tests pass (85.747s). Migration apply-and-walk, replay of all
+seven ownership migrations and ownership down/up recovery pass (27.254s). The
+HTTP regression uses migrated PostgreSQL and confirms a real legacy company
+namespace matches the former creator's UUID before checking denial after
+offboarding. Organization/shared-app, mail, trace and regression HTTP tests pass
+(36.253s), environment-contract checks pass (1.329s for Go checks), and full Go
+SDK tests/vet pass. Trace-domain configured lint reports zero issues; current
+OpenAPI parity and duplicate-key checks pass. Fresh CI remains required.
