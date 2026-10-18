@@ -91,6 +91,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 	} else if *role == "engine" {
 		return errors.New("livequeryd: -role engine needs -compiler-url")
 	}
+	awake, err := awakeProbe()
+	if err != nil {
+		return err
+	}
 	ops := wire.NewOpsMetrics("livequeryd")
 	metrics := liveserver.NewMetrics(ops.Registry())
 	if *install {
@@ -113,6 +117,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return err
 	}
 	engine.VerifyEachRound = *verify
+	// Close the capture the engine holds at exit, which a resume may have
+	// replaced.
+	defer func() { _ = engine.Release() }() //nolint:contextcheck // Release bounds its own shutdown
 	if capture.Created && engine.Queries() > 0 {
 		metrics.SlotLost(engine.Queries())
 		log.Warn("livequeryd: the slot was lost; every query starts over", "queries", engine.Queries())
@@ -125,7 +132,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 	hub := liveserver.New(liveserver.Config{
 		Database: *databaseID, Keyring: keyring, Engine: engine, Checkpoint: *checkpointPath,
 		CheckpointEvery: *checkpointEvery, Metrics: metrics, Logger: log, MaxPerConnection: *perConnection,
-		Pool: pool,
+		Pool:         pool,
+		ReleaseAfter: *releaseAfter, Awake: awake, AwakeEvery: *awakeEvery,
+		Reconnect: func(ctx context.Context) (*livequery.Capture, error) {
+			return livequery.OpenSlot(ctx, *databaseURL, *slotName, *publication)
+		},
 	})
 
 	var servers []*http.Server
@@ -166,7 +177,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 			return err
 		}
 		servers = append(servers, srv)
-		go pollSlotLag(ctx, pool, *slotName, metrics, log)
+		go pollSlotLag(ctx, pool, *slotName, metrics, hub.Released, log)
 	}
 	if *devListen != "" {
 		if keyring == nil && *keysDSNFile == "" {
@@ -285,17 +296,20 @@ func serveTLS(addr string, h http.Handler, conf *tls.Config, log *slog.Logger) (
 }
 
 // pollSlotLag records how much WAL the slot holds back.
-func pollSlotLag(ctx context.Context, pool *pgxpool.Pool, slot string, metrics *liveserver.Metrics, log *slog.Logger) {
+func pollSlotLag(ctx context.Context, pool *pgxpool.Pool, slot string, metrics *liveserver.Metrics, released func() bool, log *slog.Logger) {
 	tick := time.NewTicker(15 * time.Second)
 	defer tick.Stop()
 	for {
-		var lag int64
-		err := pool.QueryRow(ctx, `SELECT coalesce(pg_wal_lsn_diff(pg_current_wal_lsn(), confirmed_flush_lsn), 0)::bigint
-			FROM pg_replication_slots WHERE slot_name = $1`, slot).Scan(&lag)
-		if err == nil {
-			metrics.SetSlotLag(lag)
-		} else if ctx.Err() == nil {
-			log.Warn("livequeryd: read slot lag", "err", err)
+		// A released database is left alone: reading the lag would wake it.
+		if !released() {
+			var lag int64
+			err := pool.QueryRow(ctx, `SELECT coalesce(pg_wal_lsn_diff(pg_current_wal_lsn(), confirmed_flush_lsn), 0)::bigint
+				FROM pg_replication_slots WHERE slot_name = $1`, slot).Scan(&lag)
+			if err == nil {
+				metrics.SetSlotLag(lag)
+			} else if ctx.Err() == nil {
+				log.Warn("livequeryd: read slot lag", "err", err)
+			}
 		}
 		select {
 		case <-ctx.Done():

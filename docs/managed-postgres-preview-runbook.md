@@ -479,8 +479,9 @@ Live queries are invisible to customers until launch.
    example `"wss://live.fsn-1.internal:9480/{database_id}/live"`. apid
    substitutes the database ID, and realtimed connects there.
    - Backends without `live_hub_url` answer `live_queries_unsupported`.
-   - Configuration refuses `live_hub_url` on `neon` backends, because a
-     replication consumer would keep their computes awake.
+   - On `neon` backends, run livequeryd with `-release-after` and
+     `-awake neon` (step 4). Otherwise its replication connection keeps
+     each database's compute awake.
    - The fingerprint excludes `live_hub_url`, so adding it moves no
      database.
 3. Apply migration `20261017121336518_managed_postgres_live_keys` before
@@ -496,6 +497,34 @@ Live queries are invisible to customers until launch.
    revocations reach open subscriptions within that. The metrics
    `livequery_keys` and `livequery_key_refreshes_total{result}` show the
    ring and its reads.
+
+   **Scale to zero.** With `-release-after 5m`, a hub with no transaction
+   to apply for five minutes checkpoints and closes every connection to
+   the database (replication and pooled), so the database can park or
+   suspend.
+   - Subscribers keep their results. A new subscriber to a result the hub
+     holds is served without the database.
+   - The hub reconnects, and catches up exactly from the slot, when:
+     - `-awake` reports the database running again;
+     - a subscription needs a result it does not hold (an RLS-mode read
+       always does, because it compiles against the catalog).
+   - `-awake neon` polls the Neon API every `-awake-every` (5 seconds) with
+     `-neon-api-key-file`, `-neon-project` and `-neon-endpoint`. Commits made
+     while released reach subscribers within that interval.
+   - A native database's wake will come from schedd, which is not wired to
+     livequeryd yet, so `-release-after` refuses to start without `-awake`.
+   - Metrics: `livequery_released` (1 while released),
+     `livequery_releases_total`, and `livequery_resumes_total{reason}`
+     (`database_active`, `subscription`, `woken`, `failed`).
+   - The slot-lag metric is not read while released, because reading it
+     would wake the database.
+
+   **Neon prerequisites, not yet verified on a Neon database:**
+   - logical replication enabled for the project;
+   - the schema-change log's event triggers (`-install`), which need a role
+     allowed to create them;
+   - the slot surviving a suspend and resume. A lost slot is recovered by
+     reading every result again.
 5. Give realtimed `FAAS_REALTIME_LIVE_TLS_CA_FILE`. When livequeryd sets
    `-client-ca`, also give it `FAAS_REALTIME_LIVE_TLS_CERT_FILE` and
    `FAAS_REALTIME_LIVE_TLS_KEY_FILE`. Roll realtimed out before apid.
