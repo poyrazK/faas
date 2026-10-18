@@ -12,19 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 )
 
-type standardRuntimeCaptureTestStore interface {
-	Store
-	ApplicationStandardStore
-	ApplicationStandardReviewStore
-	ApplicationStandardOperationStore
-	ApplicationStandardMaterializationStore
-	ApplicationStandardAutomaticMaterializationStore
-	ApplicationStandardEnrollmentStore
-	InstanceApplicationStandardAdmissionStore
-	InstanceApplicationStandardBootStore
-	InstanceApplicationStandardPromotionStore
-	ComputeNodeRuntimeIdentityStore
-}
+type standardRuntimeCaptureTestStore = contractTestStore
 
 type runtimeCaptureFixture struct {
 	owner  CreateAccountWithPersonalOrgResult

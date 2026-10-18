@@ -14,11 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/appstandards"
 )
 
-type standardAssignmentInventoryTestStore interface {
-	standardOperationTestStore
-	ApplicationStandardOperationControlStore
-	ApplicationStandardAssignmentInventoryStore
-}
+type standardAssignmentInventoryTestStore = contractTestStore
 
 func TestMemApplicationStandardAssignmentInventoryLifecycle(t *testing.T) {
 	standardAssignmentInventoryLifecycle(t, NewMemStore())

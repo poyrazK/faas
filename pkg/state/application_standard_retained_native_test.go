@@ -13,10 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 )
 
-type retainedNativeTestStore interface {
-	standardRuntimeQualificationTestStore
-	ApplicationStandardOperationControlStore
-}
+type retainedNativeTestStore = contractTestStore
 
 func uninstalledNativeScopeFixture(t *testing.T, s retainedNativeTestStore, move func(App, Project) error) {
 	t.Helper()

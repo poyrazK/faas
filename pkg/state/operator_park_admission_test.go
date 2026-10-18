@@ -9,11 +9,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 )
 
-type parkAdmissionTestStore interface {
-	standardSnapshotTestStore
-	OperatorParkStore
-	Store
-}
+type parkAdmissionTestStore = contractTestStore
 
 func runParkAdmission(t *testing.T, s parkAdmissionTestStore) {
 	t.Helper()

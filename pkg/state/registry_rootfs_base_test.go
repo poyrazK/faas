@@ -10,10 +10,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/imagechain"
 )
 
-type registryBaseTestStore interface {
-	registryRootfsTestStore
-	BaseImageProducerStore
-}
+type registryBaseTestStore = contractTestStore
 
 func registryRootfsBaseBinding(t *testing.T, s registryBaseTestStore) {
 	inBase := baseProducerFixture(t, "base/bound.ext4", "parent")

@@ -10,13 +10,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-type environmentQueueTestStore interface {
-	state.Store
-	state.ProjectEnvironmentWorkPolicyStore
-	state.DeploymentWorkloadSpecReader
-	state.ProjectEnvironmentWorkloadQualificationStore
-	state.ProjectReleaseSetStore
-}
+type environmentQueueTestStore = contractTestStore
 
 func TestMemEnvironmentQueueSettingsAreIsolatedAndPinned(t *testing.T) {
 	testEnvironmentQueueSettings(t, state.NewMemStore())
