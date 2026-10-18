@@ -103,6 +103,36 @@ func TestMetricsRateLimitDegraded(t *testing.T) {
 	}
 }
 
+// TestMetricsRateLimitLeasing pins the ADR-1520 series: closed scope labels
+// and a bounded outcome set, so an unexpected value cannot grow cardinality.
+func TestMetricsRateLimitLeasing(t *testing.T) {
+	m := NewMetrics()
+	m.ObserveLeaseRequest("app", LeaseResultPartial)
+	m.ObserveLeaseRequest("app", "invented")
+	m.ObserveLeaseTokens("account", LeaseTokensSpent, 7)
+	m.ObserveLeaseTokens("preauth", LeaseTokensAllowance, 2)
+	m.ObserveLeaseTokens("app", "invented", 9)
+	m.ObserveRateLimitSyncConsult("rule")
+
+	rec := httptest.NewRecorder()
+	m.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/metrics", nil))
+	body := rec.Body.String()
+	for _, want := range []string{
+		`gateway_ratelimit_lease_requests_total{result="partial",scope="app"} 1`,
+		`gateway_ratelimit_lease_requests_total{result="failed",scope="rule"} 0`,
+		`gateway_ratelimit_lease_tokens_total{outcome="spent",scope="account"} 7`,
+		`gateway_ratelimit_lease_tokens_total{outcome="allowance",scope="other"} 2`,
+		`gateway_ratelimit_sync_consults_total{scope="rule"} 1`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("metrics body missing %q", want)
+		}
+	}
+	if strings.Contains(body, "invented") {
+		t.Error("an unknown result or outcome reached a label")
+	}
+}
+
 func TestRequestTelemetryMetricsExposition(t *testing.T) {
 	m := NewMetrics()
 	m.IncRequestTelemetryOverwritten()

@@ -84,3 +84,6 @@ app_errors_tls_ca_path = "{{ gatewayd_app_errors_tls_ca_path }}"
 # ignores them. TestGatewaydTemplateHasNoUndecodedKeys pins this.
 [ratelimit]
 mode = "{{ gatewayd_ratelimit_mode | default('central') }}"
+# ADR-1520: spend central counters from local leases instead of one
+# Postgres consult per request. Off until an environment opts in.
+lease = {{ gatewayd_ratelimit_lease | default(false) | string | lower }}

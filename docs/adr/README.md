@@ -1490,7 +1490,9 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 
 - [ADR-1331: Retained GitOps workload retirement and reviewed recovery](1331-gitops-workload-retirement.md)
 
+- [ADR-1520: Rate-limit token leasing](1520-rate-limit-token-leasing.md)
 - [ADR-1522: Recoverable operator restart execution](1522-recoverable-operator-restart-execution.md)
+- [ADR-1521: The request-ID journal is written in batches](1521-batched-request-id-journal.md)
 - [ADR-1523: Durable operator cold-boot recovery](1523-durable-operator-cold-boot-recovery.md)
 - [ADR-1524: Durable operator recovery submissions](1524-durable-operator-recovery-submissions.md)
 
