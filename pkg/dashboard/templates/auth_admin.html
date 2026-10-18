@@ -54,6 +54,9 @@
 <label>Users link and unlink sign-in methods<select name="identity_linking"><option value="off">Off</option><option value="on">On</option></select></label>
 <label>Users delete their own accounts (after a recent sign-in)<select name="self_deletion"><option value="off">Off</option><option value="on">On</option></select></label>
 <label>Access tokens carry the active organization, role and permissions<select name="org_claims"><option value="off">Off</option><option value="on">On</option></select></label>
+<label>End sessions this long after sign-in (45m, 12h or 30d; empty for never)<input name="session_max_age" maxlength="8" pattern="[1-9][0-9]{0,5}[mhd]"></label>
+<label>End sessions not used for this long (45m, 12h or 30d; empty for never)<input name="session_idle" maxlength="8" pattern="[1-9][0-9]{0,5}[mhd]"></label>
+<label>Keep only each user's most recently used session<select name="single_session"><option value="off">Off</option><option value="on">On</option></select></label>
 <button type="submit">Save and restart</button>
 </form>
 <h3>Sign-in providers</h3>
@@ -541,6 +544,8 @@
   // app secrets are write-only. Saving sends only the fields that changed.
   const form = $('settings-form')
   const control = name => form.elements.namedItem(name)
+  // Minutes back to the 45m / 12h / 30d form the setting takes.
+  const sessionLimit = minutes => !minutes ? '' : minutes % 1440 === 0 ? (minutes / 1440) + 'd' : minutes % 60 === 0 ? (minutes / 60) + 'h' : minutes + 'm'
   const classes = [...document.querySelectorAll('#password-classes input')]
   const requireValue = () => classes.filter(box => box.checked).map(box => box.value).join(',') || 'none'
   async function loadSettings() {
@@ -567,6 +572,7 @@
       oauth_server: settings.oauth?.enabled ? 'on' : 'off', oauth_registration: settings.oauth?.dynamic_registration ? 'on' : 'off',
       anonymous: settings.anonymous?.enabled ? 'on' : 'off', anonymous_retention_days: settings.anonymous?.retention_days ? String(settings.anonymous.retention_days) : '',
       identity_linking: settings.identity_linking ? 'on' : 'off', self_deletion: settings.self_deletion ? 'on' : 'off', org_claims: settings.organization_claims ? 'on' : 'off',
+      session_max_age: sessionLimit(settings.sessions?.max_age_minutes), session_idle: sessionLimit(settings.sessions?.idle_minutes), single_session: settings.sessions?.single_per_user ? 'on' : 'off',
     }
     for (const box of classes) box.checked = settings.password.required.includes(box.value)
     values.password_require = requireValue()

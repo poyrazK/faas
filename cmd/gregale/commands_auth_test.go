@@ -230,7 +230,7 @@ func TestAuthTemplateRuntimeBounds(t *testing.T) {
 		"bodyBytes": api.AuthMaxRequestBytes, "authzBodyBytes": api.AuthAuthzBodyBytes, "authzConfigBytes": api.AuthAuthzConfigBytes, "redirectURLs": api.AuthMaxRedirectURLs,
 		"migrationStatementMs": api.AuthMigrationStatementTimeoutMS, "invitationSeconds": api.AuthInvitationTTLSeconds,
 		"emailTimeoutMs": api.AuthEmailTimeoutMs, "hookBodyBytes": api.AuthHookBodyBytes, "storageURLSeconds": api.AuthStorageURLSeconds,
-		"adminBodyBytes": api.AuthAdminBodyBytes, "importBatch": api.AuthImportBatch, "adminPageSize": api.AuthAdminPageSize, "reauthenticationSeconds": api.AuthReauthenticationSeconds, "emailSubjectChars": api.AuthEmailSubjectMaxChars, "emailBodyBytes": api.AuthEmailBodyMaxBytes, "signingKeys": api.AuthMaxSigningKeys,
+		"adminBodyBytes": api.AuthAdminBodyBytes, "importBatch": api.AuthImportBatch, "adminPageSize": api.AuthAdminPageSize, "reauthenticationSeconds": api.AuthReauthenticationSeconds, "sessionMinMinutes": api.AuthSessionMinMinutes, "sessionMaxMinutes": api.AuthSessionMaxMinutes, "emailSubjectChars": api.AuthEmailSubjectMaxChars, "emailBodyBytes": api.AuthEmailBodyMaxBytes, "signingKeys": api.AuthMaxSigningKeys,
 		"emailGrantSeconds": api.ProductControlEmailGrantSeconds,
 		"teamMembers":       api.ProductControlTeamMaxMembers, "teamInvitations": api.ProductControlTeamMaxInvitations,
 		"teamEmailBytes": api.ProductControlTeamEmailMaxBytes, "teamContextBytes": api.ProductControlTeamContextMaxBytes,
@@ -548,8 +548,8 @@ func TestAuthConfigAnonymousUsersAndLinking(t *testing.T) {
 	oldErr := osStderr
 	osStderr = &stderr
 	t.Cleanup(func() { osStderr = oldErr })
-	if code := cmdAuth([]string{"config", "shop-auth", "--anonymous", "on", "--anonymous-retention", "30", "--identity-linking", "on", "--self-deletion", "on", "--org-claims", "on"}); code != 0 ||
-		sealed["GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED"] != "true" || sealed["AUTH_ANONYMOUS_RETENTION_DAYS"] != "30" || sealed["AUTH_IDENTITY_LINKING"] != "1" || sealed["AUTH_SELF_DELETION"] != "1" || sealed["AUTH_ORG_CLAIMS"] != "1" {
+	if code := cmdAuth([]string{"config", "shop-auth", "--anonymous", "on", "--anonymous-retention", "30", "--identity-linking", "on", "--self-deletion", "on", "--org-claims", "on", "--session-max-age", "30d", "--session-idle", "off", "--single-session", "on"}); code != 0 ||
+		sealed["GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED"] != "true" || sealed["AUTH_ANONYMOUS_RETENTION_DAYS"] != "30" || sealed["AUTH_IDENTITY_LINKING"] != "1" || sealed["AUTH_SELF_DELETION"] != "1" || sealed["AUTH_ORG_CLAIMS"] != "1" || sealed["AUTH_SESSION_MAX_AGE_MINUTES"] != "43200" || sealed["AUTH_SINGLE_SESSION"] != "1" {
 		t.Fatalf("config = %d, sealed %v", code, sortedKeys(sealed))
 	}
 	if !strings.Contains(stderr.String(), "turn on CAPTCHA") {

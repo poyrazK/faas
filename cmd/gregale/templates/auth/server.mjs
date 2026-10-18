@@ -228,7 +228,7 @@ export function start(env = process.env) {
   const goTrue = goTrueAdmin(signingKey(config.gotrueEnv.GOTRUE_JWT_KEYS))
   const orgSSO = config.orgSSO ? { admin: goTrue, goTrueError, external: config.external } : null
   const deleteAccount = config.selfDeletion ? claims => deleteOwnAccount({ pool, admin: goTrue }, claims) : null
-  const authz = createAuthzHandler({ pool, authenticate: goTrueAuthenticator(), origins: config.origins, invitations, storage: storageBindings(env), workflows: workflows && createWorkflowStarter(workflows), orgSSO, teamEnabled: config.productControlTeamEnabled, emailEnabled: config.productControlEmailEnabled, deleteAccount, orgClaims: config.orgClaims })
+  const authz = createAuthzHandler({ pool, authenticate: goTrueAuthenticator(), origins: config.origins, invitations, storage: storageBindings(env), workflows: workflows && createWorkflowStarter(workflows), orgSSO, teamEnabled: config.productControlTeamEnabled, emailEnabled: config.productControlEmailEnabled, deleteAccount, orgClaims: config.orgClaims, sessions: config.sessions })
   const realtime = createRealtimeAuthorizer({ pool, tokens: callbackTokens(env) })
   // The dashboard is served from the Gregale API origin.
   let dashboard = []

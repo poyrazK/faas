@@ -432,6 +432,18 @@ functions) serve `/authz/v1/sessions`. They leave third-party OAuth clients'
 sessions to connected apps, and the current session to GoTrue's logout. The
 page's image policy adds `data:` for the QR code GoTrue returns inline.
 
+Session limits are typed settings over GoTrue's own: `AUTH_SESSION_MAX_AGE_MINUTES`
+becomes `GOTRUE_SESSIONS_TIMEBOX`, `AUTH_SESSION_IDLE_MINUTES` the inactivity
+timeout and `AUTH_SINGLE_SESSION` `GOTRUE_SESSIONS_SINGLE_PER_USER`, which keeps a
+user's most recently refreshed session and refuses the others at their next
+refresh. GoTrue checks all three when a session refreshes, so they are bounded
+from `AuthSessionMinMinutes` (above the access token lifetime) to
+`AuthSessionMaxMinutes`, and an issued token outlives its session by at most
+`AuthAccessTokenTTLSeconds`, as after a sign-out. `GOTRUE_SESSIONS_*` stays
+managed, not passed through. An idle limit above the maximum age is accepted
+and has no effect: the two are set separately, and refusing the combination
+at start would take the app down.
+
 GoTrue has no endpoint for people to delete themselves. With
 `AUTH_SELF_DELETION` on (off by default: an app may need to settle billing
 or data first), `DELETE /authz/v1/account` deletes the caller through the

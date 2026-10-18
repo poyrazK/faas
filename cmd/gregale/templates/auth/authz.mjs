@@ -74,6 +74,15 @@ export async function organizationClaims(pool, { sub, session_id: session }) {
   return org ? { org_id: org.id, org_slug: org.slug, org_role: org.role, org_permissions: org.permissions } : {}
 }
 
+// sessionLive leaves out sessions past the app's limits: GoTrue refuses to
+// refresh them but keeps their rows until they are signed out.
+export function sessionLive(session, policy, now = Date.now()) {
+  const minutes = value => value * 60 * 1000
+  if (policy?.maxAgeMinutes && new Date(session.created_at).getTime() + minutes(policy.maxAgeMinutes) < now) return false
+  if (policy?.idleMinutes && new Date(session.last_active_at).getTime() + minutes(policy.idleMinutes) < now) return false
+  return true
+}
+
 export async function inSession(pool, claims, work) {
   const client = await pool.connect()
   try {
@@ -178,7 +187,8 @@ export async function route(pool, claims, method, path, body, services = {}) {
   // The caller's own sessions (sql/0013); the current one ends through
   // GoTrue's logout, and all the others through logout?scope=others.
   if (path === '/sessions' && method === 'GET') {
-    return [200, { sessions: await rows('SELECT id, created_at, last_active_at, user_agent, ip, aal, current FROM gregale_auth.list_sessions()') }]
+    const listed = await rows('SELECT id, created_at, last_active_at, user_agent, ip, aal, current FROM gregale_auth.list_sessions()')
+    return [200, { sessions: listed.filter(session => session.current || sessionLive(session, services.sessions)) }]
   }
   if (parts[0] === 'sessions' && parts.length === 2 && method === 'DELETE') {
     await rows('SELECT gregale_auth.end_session($1)', [requireUUID(parts[1])])
@@ -247,7 +257,7 @@ export function readJSON(req, maxBytes) {
   })
 }
 
-export function createAuthzHandler({ pool, authenticate, origins = [], invitations = {}, storage, workflows, orgSSO, teamEnabled = false, emailEnabled = false, deleteAccount = null, orgClaims = false }) {
+export function createAuthzHandler({ pool, authenticate, origins = [], invitations = {}, storage, workflows, orgSSO, teamEnabled = false, emailEnabled = false, deleteAccount = null, orgClaims = false, sessions = null }) {
   const allowed = new Set(origins)
   return async (req, res, path) => {
     const origin = req.headers.origin
@@ -273,7 +283,7 @@ export function createAuthzHandler({ pool, authenticate, origins = [], invitatio
       if (!token) throw new HTTPError(401, 'not_authenticated')
       const body = await readJSON(req, limits.authzBodyBytes)
       const claims = await authenticate(token)
-      const [status, payload] = await route(pool, claims, req.method, path, body, { invitations, storage, workflows, orgSSO, teamEnabled, emailEnabled, deleteAccount, orgClaims, query: new URL(req.url, 'http://auth.local').searchParams })
+      const [status, payload] = await route(pool, claims, req.method, path, body, { invitations, storage, workflows, orgSSO, teamEnabled, emailEnabled, deleteAccount, orgClaims, sessions, query: new URL(req.url, 'http://auth.local').searchParams })
       res.writeHead(status, headers)
       res.end(payload === null ? undefined : JSON.stringify(payload))
     } catch (err) {

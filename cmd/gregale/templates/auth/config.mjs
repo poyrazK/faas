@@ -1,5 +1,5 @@
 // Mirrors pkg/api/limits.go; TestAuthTemplateRuntimeBounds checks this contract.
-export const limits = Object.freeze({ accessTokenSeconds: 600, pool: 4, frontPool: 2, bodyBytes: 1048576, authzBodyBytes: 65536, authzConfigBytes: 65536, redirectURLs: 50, migrationStatementMs: 600000, invitationSeconds: 604800, emailTimeoutMs: 10000, hookBodyBytes: 262144, storageURLSeconds: 60, adminBodyBytes: 1048576, importBatch: 100, adminPageSize: 100, reauthenticationSeconds: 600, emailSubjectChars: 150, emailBodyBytes: 4000, signingKeys: 4, uiNameChars: 60, auditRetentionMaxDays: 3650, auditPruneBatch: 5000, auditPruneBatches: 20, auditPruneIntervalSeconds: 21600, eventBatch: 50, eventLeaseSeconds: 120, eventMaxBackoffSeconds: 3600, eventRetentionSeconds: 259200, smsCodeSeconds: 300, ssoMetadataBytes: 524288, ssoDomains: 50, smsCountries: 50, goTrueMemoryDivisor: 3, goTrueMemoryMinMiB: 32, scimPageSize: 100, scimBodyBytes: 65536, oauthClients: 1000, anonymousRetentionMaxDays: 3650, teamMembers: 500, teamInvitations: 500, teamEmailBytes: 320, teamContextBytes: 4096, teamInvitationMinSeconds: 300, teamInvitationMaxSeconds: 1209600, teamHistoryPageSize: 100, teamCursorBytes: 1024, emailGrantSeconds: 2592000 })
+export const limits = Object.freeze({ accessTokenSeconds: 600, pool: 4, frontPool: 2, bodyBytes: 1048576, authzBodyBytes: 65536, authzConfigBytes: 65536, redirectURLs: 50, migrationStatementMs: 600000, invitationSeconds: 604800, emailTimeoutMs: 10000, hookBodyBytes: 262144, storageURLSeconds: 60, adminBodyBytes: 1048576, importBatch: 100, adminPageSize: 100, reauthenticationSeconds: 600, sessionMinMinutes: 15, sessionMaxMinutes: 525600, emailSubjectChars: 150, emailBodyBytes: 4000, signingKeys: 4, uiNameChars: 60, auditRetentionMaxDays: 3650, auditPruneBatch: 5000, auditPruneBatches: 20, auditPruneIntervalSeconds: 21600, eventBatch: 50, eventLeaseSeconds: 120, eventMaxBackoffSeconds: 3600, eventRetentionSeconds: 259200, smsCodeSeconds: 300, ssoMetadataBytes: 524288, ssoDomains: 50, smsCountries: 50, goTrueMemoryDivisor: 3, goTrueMemoryMinMiB: 32, scimPageSize: 100, scimBodyBytes: 65536, oauthClients: 1000, anonymousRetentionMaxDays: 3650, teamMembers: 500, teamInvitations: 500, teamEmailBytes: 320, teamContextBytes: 4096, teamInvitationMinSeconds: 300, teamInvitationMaxSeconds: 1209600, teamHistoryPageSize: 100, teamCursorBytes: 1024, emailGrantSeconds: 2592000 })
 
 import { createECDH, createPrivateKey } from 'node:crypto'
 import { totalmem } from 'node:os'
@@ -260,7 +260,8 @@ export function runtimeConfig(env) {
   }
   const email = emailConfig(env)
   const branding = brandingConfig(env, site)
-  Object.assign(gotrueEnv, smsEnv(passthrough, branding.name), samlEnv(env), phoneMFAEnv(passthrough, branding.name), oauthEnv(env))
+  const sessions = sessionPolicy(env)
+  Object.assign(gotrueEnv, smsEnv(passthrough, branding.name), samlEnv(env), phoneMFAEnv(passthrough, branding.name), oauthEnv(env), sessions.gotrueEnv)
   const captcha = captchaConfig(env)
   const retention = env.AUTH_AUDIT_RETENTION_DAYS ?? ''
   if (retention !== '' && (!/^[1-9][0-9]{0,3}$/.test(retention) || Number(retention) > limits.auditRetentionMaxDays)) throw new Error(`AUTH_AUDIT_RETENTION_DAYS must be 1 to ${limits.auditRetentionMaxDays}`)
@@ -269,7 +270,7 @@ export function runtimeConfig(env) {
   const config = { external, api, gotrueEnv, redirects, keys: { signing: keys.signing, verifying: keys.verifying }, authz: authzConfig(env.AUTH_AUTHZ), origins: browserOrigins(site, redirects), email, app: branding.name, branding, captcha, lifecycleEvents: env.AUTH_LIFECYCLE_EVENTS === '1', auditRetentionDays: retention === '' ? null : Number(retention), smsCountries: smsCountries(env),
     // Self-service organization SSO needs SSO itself.
     orgSSO: env.AUTH_ORG_SSO === '1' && gotrueEnv.GOTRUE_SAML_ENABLED === 'true',
-    oauth: env.AUTH_OAUTH_SERVER === '1', selfDeletion: env.AUTH_SELF_DELETION === '1', orgClaims: env.AUTH_ORG_CLAIMS === '1', anonymousRetentionDays: anonymousRetention === '' ? null : Number(anonymousRetention), productControlTeamEnabled: env.AUTH_PRODUCT_CONTROL_TEAM_ENABLED === '1', productControlEmailEnabled: env.AUTH_PRODUCT_CONTROL_EMAIL_ENABLED === '1' }
+    oauth: env.AUTH_OAUTH_SERVER === '1', selfDeletion: env.AUTH_SELF_DELETION === '1', orgClaims: env.AUTH_ORG_CLAIMS === '1', sessions: sessions.policy, anonymousRetentionDays: anonymousRetention === '' ? null : Number(anonymousRetention), productControlTeamEnabled: env.AUTH_PRODUCT_CONTROL_TEAM_ENABLED === '1', productControlEmailEnabled: env.AUTH_PRODUCT_CONTROL_EMAIL_ENABLED === '1' }
   return { ...config, settings: publicSettings(config) }
 }
 
@@ -277,7 +278,7 @@ export function runtimeConfig(env) {
 // anyway (published key IDs, enabled providers, rules a sign-up form shows)
 // or harmless. The CLI and dashboard read settings here because app secrets
 // are write-only.
-export function publicSettings({ gotrueEnv: g, redirects, keys, email, app, branding, captcha, lifecycleEvents, auditRetentionDays, smsCountries: countries, orgSSO, anonymousRetentionDays, selfDeletion, orgClaims }) {
+export function publicSettings({ gotrueEnv: g, redirects, keys, email, app, branding, captcha, lifecycleEvents, auditRetentionDays, smsCountries: countries, orgSSO, anonymousRetentionDays, selfDeletion, orgClaims, sessions }) {
   const passkeys = g.GOTRUE_PASSKEY_ENABLED === 'true'
   const flag = (value, fallback) => value === undefined ? fallback : value === 'true'
   const required = (g.GOTRUE_PASSWORD_REQUIRED_CHARACTERS ?? '').split(':').filter(Boolean)
@@ -299,6 +300,8 @@ export function publicSettings({ gotrueEnv: g, redirects, keys, email, app, bran
     // Anonymous users idle longer than retention_days are deleted.
     anonymous: { enabled: g.GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED === 'true', retention_days: anonymousRetentionDays },
     identity_linking: g.GOTRUE_SECURITY_MANUAL_LINKING_ENABLED === 'true',
+    // Session limits GoTrue enforces at refresh; null means none.
+    sessions: { max_age_minutes: sessions?.maxAgeMinutes ?? null, idle_minutes: sessions?.idleMinutes ?? null, single_per_user: sessions?.singlePerUser === true },
     // Signed-in users may delete their own accounts (/authz/v1/account).
     self_deletion: selfDeletion === true,
     // Access tokens carry the session's active organization (org_* claims).
@@ -387,6 +390,36 @@ export function authzConfig(value) {
   try { parsed = JSON.parse(value) } catch { throw new Error('Invalid AUTH_AUTHZ') }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('AUTH_AUTHZ must be a JSON object')
   return JSON.stringify(parsed)
+}
+
+// sessionPolicy reads the owner's session limits: a maximum age from sign-in
+// and an inactivity timeout, in minutes, and whether a user keeps only their
+// most recently refreshed session. GoTrue enforces them when a session
+// refreshes, so the bounds start at 15 minutes, above an access token's
+// ten-minute lifetime.
+export function sessionPolicy(env) {
+  const minutes = name => {
+    const value = env[name] ?? ''
+    if (value === '') return null
+    if (!/^[1-9][0-9]{1,5}$/.test(value) || Number(value) < limits.sessionMinMinutes || Number(value) > limits.sessionMaxMinutes) {
+      throw new Error(`${name} must be ${limits.sessionMinMinutes} to ${limits.sessionMaxMinutes} minutes`)
+    }
+    return Number(value)
+  }
+  // An idle limit longer than the maximum age has no effect; it is not an
+  // error, because the two are set separately and a refusal here would stop
+  // the app from starting.
+  const maxAge = minutes('AUTH_SESSION_MAX_AGE_MINUTES'), idle = minutes('AUTH_SESSION_IDLE_MINUTES')
+  if (env.AUTH_SINGLE_SESSION !== undefined && env.AUTH_SINGLE_SESSION !== '1' && env.AUTH_SINGLE_SESSION !== '0') throw new Error('Invalid AUTH_SINGLE_SESSION')
+  const single = env.AUTH_SINGLE_SESSION === '1'
+  return {
+    policy: { maxAgeMinutes: maxAge, idleMinutes: idle, singlePerUser: single },
+    gotrueEnv: {
+      ...(maxAge !== null ? { GOTRUE_SESSIONS_TIMEBOX: `${maxAge}m` } : {}),
+      ...(idle !== null ? { GOTRUE_SESSIONS_INACTIVITY_TIMEOUT: `${idle}m` } : {}),
+      ...(single ? { GOTRUE_SESSIONS_SINGLE_PER_USER: 'true' } : {}),
+    },
+  }
 }
 
 // AUTH_EMAIL_* select the HTTPS email provider. Without them, flows that send

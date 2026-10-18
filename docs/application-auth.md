@@ -300,6 +300,27 @@ widget's token as `captchaToken` to `signUp`, `signInWithPassword`,
 `--captcha off` removes the keys. Changing CAPTCHA always takes all three
 values.
 
+### Session limits
+
+By default a session lasts until the user signs out. Limit how long a sign-in
+lasts, how long it may go unused, or how many sessions a user keeps:
+
+```sh
+gregale auth config shop-auth --session-max-age 30d --session-idle 7d --single-session on
+```
+
+- `--session-max-age` ends a session that long after sign-in, whatever its use.
+- `--session-idle` ends a session nobody has used for that long.
+- `--single-session on` keeps only each user's most recently used session:
+  signing in elsewhere ends the older ones.
+
+Limits take `45m`, `12h` or `30d` (15 minutes to 365 days), or `off`. The
+dashboard's Settings form has the same fields. The Auth app applies them when
+a session renews its access token, so a session past its limit ends at its
+next renewal, and an access token already issued keeps working until it
+expires, at most ten minutes later. The user then signs in again. The account
+page's list of sessions leaves out the ones past their limits.
+
 ### Other GoTrue settings
 
 Other `GOTRUE_EXTERNAL_*`, `GOTRUE_MFA_*`, `GOTRUE_PASSWORD_*`,

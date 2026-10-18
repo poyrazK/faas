@@ -415,7 +415,12 @@ type authPublicSettings struct {
 	IdentityLinking    bool `json:"identity_linking"`
 	SelfDeletion       bool `json:"self_deletion"`
 	OrganizationClaims bool `json:"organization_claims"`
-	Keys               struct {
+	Sessions           struct {
+		MaxAgeMinutes *int `json:"max_age_minutes"`
+		IdleMinutes   *int `json:"idle_minutes"`
+		SinglePerUser bool `json:"single_per_user"`
+	} `json:"sessions"`
+	Keys struct {
 		Signing   string   `json:"signing"`
 		Verifying []string `json:"verifying"`
 	} `json:"keys"`

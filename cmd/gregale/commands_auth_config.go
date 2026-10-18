@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	authConfigUsage    = "usage: gregale auth config NAME [--site-url URL] [--redirect-urls URLS] [--signup on|off] [--autoconfirm on|off] [--password-min-length N] [--password-require CLASSES] [--leaked-password-check on|off] [--mfa on|off] [--mfa-phone on|off] [--recovery-codes on|off] [--email-provider resend|postmark|none --email-from FROM --email-api-key-stdin] [--authz FILE] [--events on|off] [--passkeys on|off] [--passkey-rp-id DOMAIN|none] [--brand-name NAME] [--brand-color #RRGGBB] [--brand-logo-url URL] [--captcha turnstile|hcaptcha|off --captcha-site-key KEY --captcha-secret-stdin] [--activity-retention DAYS|forever] [--sms twilio|twilio_verify|messagebird|textlocal|vonage|off --sms-account ID --sms-sender SENDER --sms-secret-stdin] [--sms-countries CODES|all] [--sso on|off] [--anonymous on|off] [--anonymous-retention DAYS|forever] [--identity-linking on|off] [--self-deletion on|off] [--org-claims on|off] [--oauth-server on|off] [--oauth-registration on|off] [--org-sso on|off]"
+	authConfigUsage    = "usage: gregale auth config NAME [--site-url URL] [--redirect-urls URLS] [--signup on|off] [--autoconfirm on|off] [--password-min-length N] [--password-require CLASSES] [--leaked-password-check on|off] [--mfa on|off] [--mfa-phone on|off] [--recovery-codes on|off] [--email-provider resend|postmark|none --email-from FROM --email-api-key-stdin] [--authz FILE] [--events on|off] [--passkeys on|off] [--passkey-rp-id DOMAIN|none] [--brand-name NAME] [--brand-color #RRGGBB] [--brand-logo-url URL] [--captcha turnstile|hcaptcha|off --captcha-site-key KEY --captcha-secret-stdin] [--activity-retention DAYS|forever] [--sms twilio|twilio_verify|messagebird|textlocal|vonage|off --sms-account ID --sms-sender SENDER --sms-secret-stdin] [--sms-countries CODES|all] [--sso on|off] [--anonymous on|off] [--anonymous-retention DAYS|forever] [--identity-linking on|off] [--self-deletion on|off] [--org-claims on|off] [--session-max-age DURATION|off] [--session-idle DURATION|off] [--single-session on|off] [--oauth-server on|off] [--oauth-registration on|off] [--org-sso on|off]"
 	authProvidersUsage = "usage: gregale auth providers list NAME | gregale auth providers enable NAME PROVIDER --client-id ID [--client-secret-stdin] [--url URL] | gregale auth providers disable NAME PROVIDER"
 )
 
@@ -66,6 +66,9 @@ func cmdAuthConfig(args []string) int {
 	identityLinking := fs.String("identity-linking", "", "on or off: let signed-in users link and unlink sign-in methods")
 	selfDeletion := fs.String("self-deletion", "", "on or off: let signed-in users delete their own accounts after a recent sign-in")
 	orgClaims := fs.String("org-claims", "", "on or off: put each session's active organization, role and permissions in its access tokens")
+	sessionMaxAge := fs.String("session-max-age", "", "end sessions this long after sign-in, as 45m, 12h or 30d, or off")
+	sessionIdle := fs.String("session-idle", "", "end sessions not used for this long, as 45m, 12h or 30d, or off")
+	singleSession := fs.String("single-session", "", "on or off: keep only each user's most recently used session")
 	sms := authSMSFlags{
 		provider:  fs.String("sms", "", "phone sign-in by text message through your own SMS account: twilio, twilio_verify, messagebird, textlocal, vonage, or off"),
 		account:   fs.String("sms-account", "", "Twilio account SID or Vonage API key"),
@@ -97,7 +100,7 @@ func cmdAuthConfig(args []string) int {
 		field **bool
 	}{"sso": {sso, &change.SSO}, "org-sso": {orgSSO, &change.OrgSSO}, "oauth-server": {oauthServer, &change.OAuthServer}, "oauth-registration": {oauthRegistration, &change.OAuthRegistration},
 		"mfa-phone": {mfaPhone, &change.MFAPhone}, "recovery-codes": {recoveryCodes, &change.RecoveryCodes},
-		"anonymous": {anonymous, &change.Anonymous}, "identity-linking": {identityLinking, &change.IdentityLinking}, "self-deletion": {selfDeletion, &change.SelfDeletion}, "org-claims": {orgClaims, &change.OrgClaims}} {
+		"anonymous": {anonymous, &change.Anonymous}, "identity-linking": {identityLinking, &change.IdentityLinking}, "self-deletion": {selfDeletion, &change.SelfDeletion}, "org-claims": {orgClaims, &change.OrgClaims}, "single-session": {singleSession, &change.SingleSession}} {
 		if !given[name] {
 			continue
 		}
@@ -113,6 +116,22 @@ func cmdAuthConfig(args []string) int {
 			return printErr("Invalid Auth settings", err)
 		}
 		change.AnonymousRetentionDays = &days
+	}
+	for name, target := range map[string]struct {
+		value *string
+		field **int
+	}{"session-max-age": {sessionMaxAge, &change.SessionMaxAgeMinutes}, "session-idle": {sessionIdle, &change.SessionIdleMinutes}} {
+		if !given[name] {
+			continue
+		}
+		minutes, err := authsettings.ParseSessionLimit(*target.value)
+		if err != nil {
+			return printErr("Invalid Auth settings", fmt.Errorf("--%s: %w", name, err))
+		}
+		*target.field = &minutes
+	}
+	if change.SessionMaxAgeMinutes != nil && change.SessionIdleMinutes != nil && *change.SessionMaxAgeMinutes > 0 && *change.SessionIdleMinutes > *change.SessionMaxAgeMinutes {
+		PrintWarn(osStderr, "the idle limit is longer than the maximum age, so it has no effect")
 	}
 	if change.Anonymous != nil && *change.Anonymous && !given["captcha"] {
 		PrintWarn(osStderr, "anyone can now create users in %s; turn on CAPTCHA (--captcha) unless it already is", fs.Arg(0))
@@ -503,7 +522,7 @@ func showAuthConfig(ctx context.Context, app api.AppResponse) int {
 	for _, row := range [][2]string{
 		{"site URL", settings.SiteURL}, {"redirect URLs", redirects}, {"sign-up", signup},
 		{"sign-in methods", strings.Join(providers, ", ")}, {"passwords", passwords},
-		{"MFA", authMFASummary(settings)}, {"passkeys", passkeys}, {"phone (SMS)", phone}, {"organization SSO", sso}, {"OAuth server", oauth}, {"anonymous users", anonymousUsers}, {"identity linking", onOff(settings.IdentityLinking)}, {"self-deletion", onOff(settings.SelfDeletion)}, {"org claims", onOff(settings.OrganizationClaims)}, {"CAPTCHA", captchaState}, {"hosted pages", branding},
+		{"MFA", authMFASummary(settings)}, {"passkeys", passkeys}, {"phone (SMS)", phone}, {"organization SSO", sso}, {"OAuth server", oauth}, {"anonymous users", anonymousUsers}, {"identity linking", onOff(settings.IdentityLinking)}, {"self-deletion", onOff(settings.SelfDeletion)}, {"org claims", onOff(settings.OrganizationClaims)}, {"sessions", authSessionsSummary(settings)}, {"CAPTCHA", captchaState}, {"hosted pages", branding},
 		{"email delivery", email}, {"lifecycle events", events}, {"activity kept", retention}, {"signing key", keys},
 	} {
 		_, _ = fmt.Fprintf(osStdout, "  %-16s %s\n", row[0]+":", row[1])
@@ -600,4 +619,22 @@ func listAuthProviders(ctx context.Context, app api.AppResponse) int {
 		_, _ = fmt.Fprintln(osStdout, provider)
 	}
 	return 0
+}
+
+// authSessionsSummary describes the session limits the running app enforces.
+func authSessionsSummary(settings authPublicSettings) string {
+	var parts []string
+	if m := settings.Sessions.MaxAgeMinutes; m != nil && *m > 0 {
+		parts = append(parts, "end "+authsettings.FormatSessionLimit(*m)+" after sign-in")
+	}
+	if m := settings.Sessions.IdleMinutes; m != nil && *m > 0 {
+		parts = append(parts, "end after "+authsettings.FormatSessionLimit(*m)+" unused")
+	}
+	if settings.Sessions.SinglePerUser {
+		parts = append(parts, "one per user")
+	}
+	if len(parts) == 0 {
+		return "no limits"
+	}
+	return strings.Join(parts, ", ")
 }
