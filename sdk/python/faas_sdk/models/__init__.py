@@ -2061,6 +2061,10 @@ from .issue_breadcrumb_level import IssueBreadcrumbLevel
 from .issue_browser_csrf_token_action import IssueBrowserCSRFTokenAction
 from .issue_cause import IssueCause
 from .issue_cause_frame_order import IssueCauseFrameOrder
+from .issue_compound_alert_policy import IssueCompoundAlertPolicy
+from .issue_compound_alert_preview import IssueCompoundAlertPreview
+from .issue_compound_alert_preview_reason import IssueCompoundAlertPreviewReason
+from .issue_compound_alert_rule import IssueCompoundAlertRule
 from .issue_detail import IssueDetail
 from .issue_event import IssueEvent
 from .issue_event_frame_order import IssueEventFrameOrder
@@ -3885,6 +3889,7 @@ from .preview_event_request import PreviewEventRequest
 from .preview_event_request_data_content_type import PreviewEventRequestDataContentType
 from .preview_event_request_datacontenttype import PreviewEventRequestDatacontenttype
 from .preview_event_response import PreviewEventResponse
+from .preview_issue_compound_alert_request import PreviewIssueCompoundAlertRequest
 from .preview_issue_lifecycle_alert_request import PreviewIssueLifecycleAlertRequest
 from .preview_issue_lifecycle_alert_request_event import PreviewIssueLifecycleAlertRequestEvent
 from .preview_platform_tenant_self_workflow_actions_body import PreviewPlatformTenantSelfWorkflowActionsBody
@@ -5190,6 +5195,7 @@ from .update_edge_rule_request_validate_mode import UpdateEdgeRuleRequestValidat
 from .update_feature_flags_request import UpdateFeatureFlagsRequest
 from .update_financial_budget_request import UpdateFinancialBudgetRequest
 from .update_inbound_webhook_endpoint_request import UpdateInboundWebhookEndpointRequest
+from .update_issue_compound_alert_policy_request import UpdateIssueCompoundAlertPolicyRequest
 from .update_issue_frequency_alert_policy_request import UpdateIssueFrequencyAlertPolicyRequest
 from .update_issue_impact_alert_policy_request import UpdateIssueImpactAlertPolicyRequest
 from .update_issue_lifecycle_alert_policy_request import UpdateIssueLifecycleAlertPolicyRequest
@@ -7515,6 +7521,10 @@ __all__ = (
     "IssueBrowserCSRFTokenAction",
     "IssueCause",
     "IssueCauseFrameOrder",
+    "IssueCompoundAlertPolicy",
+    "IssueCompoundAlertPreview",
+    "IssueCompoundAlertPreviewReason",
+    "IssueCompoundAlertRule",
     "IssueDetail",
     "IssueEvent",
     "IssueEventFrameOrder",
@@ -9143,6 +9153,7 @@ __all__ = (
     "PreviewEventRequestDatacontenttype",
     "PreviewEventRequestDataContentType",
     "PreviewEventResponse",
+    "PreviewIssueCompoundAlertRequest",
     "PreviewIssueLifecycleAlertRequest",
     "PreviewIssueLifecycleAlertRequestEvent",
     "PreviewPlatformTenantSelfWorkflowActionsBody",
@@ -10386,6 +10397,7 @@ __all__ = (
     "UpdateFeatureFlagsRequest",
     "UpdateFinancialBudgetRequest",
     "UpdateInboundWebhookEndpointRequest",
+    "UpdateIssueCompoundAlertPolicyRequest",
     "UpdateIssueFrequencyAlertPolicyRequest",
     "UpdateIssueImpactAlertPolicyRequest",
     "UpdateIssueLifecycleAlertPolicyRequest",

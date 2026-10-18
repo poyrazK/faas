@@ -1,5 +1,10 @@
 # Architecture Decision Records
 
+- [ADR-1739: Shared-window compound Issues alerts](1739-shared-window-issue-compound-alerts.md)
+- [ADR-1738: Offline grouping previews and reviewed regression baselines](1738-issue-grouping-previews-and-baselines.md)
+- [ADR-1737: Publish final Node build source maps with build completion](1737-builder-issue-source-map-publication.md)
+- [ADR-1736: Publish prebuilt Issues source maps during CLI deployment](1736-deploy-issue-source-map-publication.md)
+
 - [Preserve request identity in response caching](20261017214848-response-cache-request-identity.md)
 
 - [Restart-safe Go acknowledgment recovery alerts](20261017182028-go-recovery-alert-checkpoints.md)
