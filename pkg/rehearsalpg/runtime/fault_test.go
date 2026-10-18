@@ -41,8 +41,8 @@ func (c *dependencyCatalog) ScenarioPostgresFault(context.Context, string) (rehe
 	defer c.mu.Unlock()
 	return rehearsalfault.Clone(c.fault), nil
 }
-func (c *dependencyCatalog) ScenarioPostgresFaultForRun(context.Context, string, string) (rehearsalfault.Row, error) {
-	return c.ScenarioPostgresFault(context.Background(), "")
+func (c *dependencyCatalog) ScenarioPostgresFaultForRun(ctx context.Context, _, _ string) (rehearsalfault.Row, error) {
+	return c.ScenarioPostgresFault(ctx, "")
 }
 func (c *dependencyCatalog) PendingScenarioPostgresFaults(context.Context) ([]rehearsalfault.Row, error) {
 	c.mu.Lock()
