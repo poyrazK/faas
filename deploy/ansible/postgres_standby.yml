@@ -52,3 +52,28 @@
     # Stages the primary's control-plane files for a takeover; rerun after
     # rotating any of them (docs/runbooks/ControlPlaneFailover.md).
     - role: control_plane_standby
+
+# The slowest parts of a control-plane bootstrap, done ahead of time so a
+# takeover does not wait for them: building the Firecracker guest kernel from
+# source (in /usr/src, so a later storage mount over /srv does not undo it)
+# and fetching the pinned Firecracker and supply-chain scanner binaries and
+# the scanner database. Both roles only download,
+# verify and build. They start no service, read no /etc/faas file and write
+# nothing to the database, so they are safe beside a replica; the takeover's
+# bootstrap then finds their output current and skips it. Roles installed
+# through apt (Caddy, Grafana, PgBouncer, ...) are left out on purpose: the
+# packages start their services on install.
+- name: Pre-install the control plane's slow software on the standby
+  hosts: postgres_standby
+  gather_facts: false
+  become: true
+  serial: 1
+  max_fail_percentage: 0
+  vars:
+    # What the host becomes at a takeover; selects the control plane's
+    # kernel path (built from the pinned source, as on the control plane).
+    faas_box_role: control-plane
+
+  roles:
+    - role: firecracker
+    - role: supply_chain_scanners

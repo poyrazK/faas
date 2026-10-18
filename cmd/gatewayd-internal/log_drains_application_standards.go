@@ -125,8 +125,17 @@ func (m *appLogDrainManager) retireLogDrainWorkerLocked(w *appLogDrainWorker) bo
 func (m *appLogDrainManager) runLogDrainWorker(ctx context.Context, w *appLogDrainWorker, sender *logdrain.Sender) {
 	w.done = make(chan struct{})
 	var joined sync.WaitGroup
-	joined.Add(2)
+	exports, exporting := m.store.(aiLogExportStore)
+	if exporting {
+		joined.Add(3)
+	} else {
+		joined.Add(2)
+	}
 	go func() { defer joined.Done(); sender.Run(ctx) }()
 	go func() { defer joined.Done(); m.streamWorker(ctx, w.spec, sender, w.standardHealth) }()
+	if exporting {
+		// ADR-1340: the app's AI gateway lines share the drain's sender.
+		go func() { defer joined.Done(); m.aiLogExportWorker(ctx, w.spec, sender, exports) }()
+	}
 	go func() { joined.Wait(); close(w.done) }()
 }
