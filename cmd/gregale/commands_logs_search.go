@@ -54,6 +54,18 @@ func (f logSearchFlags) values() url.Values {
 	return q
 }
 
+// pageValues adds paging to the filters; the default limit is left to the server.
+func (f logSearchFlags) pageValues(limit int, cursor string) url.Values {
+	q := f.values()
+	if limit != 100 {
+		q.Set("limit", strconv.Itoa(limit))
+	}
+	if cursor != "" {
+		q.Set("cursor", cursor)
+	}
+	return q
+}
+
 // parseLogSearchArgs parses flags around an optional app positional and
 // resolves the target app (explicit, --app, or the linked project app).
 func parseLogSearchArgs(fs *flag.FlagSet, f logSearchFlags, args []string, usage string) (string, bool) {
@@ -93,13 +105,7 @@ func cmdLogsSearch(args []string) int {
 	if !ok {
 		return 1
 	}
-	q := f.values()
-	if *limit != 100 {
-		q.Set("limit", strconv.Itoa(*limit))
-	}
-	if *cursor != "" {
-		q.Set("cursor", *cursor)
-	}
+	q := f.pageValues(*limit, *cursor)
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)

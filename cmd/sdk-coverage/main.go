@@ -752,6 +752,9 @@ var methodRouteMap = map[string]string{
 
 	// ADR-751: the change timeline reads as one noun, not "apps slug changes".
 	"GET /v1/apps/{slug}/changes": "GetAppChangeTimeline",
+	// ADR-20261018083536: hyphenated log-events segment; search reads as a verb.
+	"GET /v1/apps/{slug}/log-events":        "SearchAppLogEvents",
+	"GET /v1/apps/{slug}/log-events/facets": "GetAppLogEventFacets",
 	// ADR-745: hyphenated custom-metrics segment.
 	"GET /v1/apps/{slug}/custom-metrics/{name}/series": "GetCustomMetricSeries",
 	// ADR-1131: the hyphenated path segment has no derivable Go identifier.
