@@ -432,7 +432,7 @@ func (e *Engine) wakeJobOnce(ctx context.Context, accountID, runID string, taskI
 		command = job.Command
 	}
 	// An image run takes the image's USER, WORKDIR and ENV, as Docker does
-	// (ADR-1335); other jobs keep the guest default.
+	// (ADR-1790); other jobs keep the guest default.
 	imageProcess := job.Kind == state.JobKindImageRun
 	interactive, err := e.jobRunAttach(ctx, runID)
 	if ciOwned {
@@ -494,7 +494,7 @@ func (e *Engine) wakeJobOnce(ctx context.Context, accountID, runID string, taskI
 		return JobWakeResult{}, fmt.Errorf("sched: WakeJob vmmd held-start mismatch: requested=%t returned=%t", startHeld, out.StartHeld)
 	}
 	if out.ImageProcess != imageProcess {
-		// A vmmd that predates ADR-1335 runs the command without the image's
+		// A vmmd that predates ADR-1790 runs the command without the image's
 		// USER, WORKDIR and ENV, and ignores -u/-w.
 		e.rollbackJobAdmission(ctx, runID, taskIndex, instanceID, tok, task.Attempt, 0,
 			"job_vmm_image_process_unsupported", "this node cannot run image runs with the image's user and environment yet; start the run again after the platform update")
@@ -1329,7 +1329,7 @@ type JobVmmSpec struct {
 	// (ADR-1330). Only the token digest is carried.
 	Interactive *state.JobRunAttach
 	// ImageProcess runs an image run with the image's ENV, USER and
-	// WORKDIR; ProcessUser and ProcessWorkdir override them (ADR-1335).
+	// WORKDIR; ProcessUser and ProcessWorkdir override them (ADR-1790).
 	ImageProcess   bool
 	ProcessUser    string
 	ProcessWorkdir string
@@ -1346,7 +1346,7 @@ type JobVmmResult struct {
 	// Interactive echoes JobVmmSpec.Interactive; an older vmmd leaves it
 	// false.
 	Interactive bool
-	// ImageProcess echoes JobVmmSpec.ImageProcess (ADR-1335).
+	// ImageProcess echoes JobVmmSpec.ImageProcess (ADR-1790).
 	ImageProcess bool
 }
 

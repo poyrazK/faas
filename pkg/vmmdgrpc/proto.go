@@ -147,7 +147,7 @@ func jobInteractiveFromProto(req *vmmdpb.JobColdBootRequest) (*fcvm.JobInteracti
 	return &fcvm.JobInteractive{TTY: in.GetTty(), AttachTimeoutSec: int(window / time.Second)}, nil
 }
 
-// validateJobImageProcess checks ADR-1335's user and workdir overrides, which
+// validateJobImageProcess checks ADR-1790's user and workdir overrides, which
 // apply only to an image process.
 func validateJobImageProcess(req *vmmdpb.JobColdBootRequest) *api.Problem {
 	invalid := func(detail string) *api.Problem {

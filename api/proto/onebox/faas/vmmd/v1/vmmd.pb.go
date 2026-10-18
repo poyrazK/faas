@@ -2827,7 +2827,7 @@ type JobColdBootRequest struct {
 	// command until one client attaches through AttachAppTask with the token
 	// whose digest is given here.
 	Interactive *JobInteractiveAttach `protobuf:"bytes,18,opt,name=interactive,proto3" json:"interactive,omitempty"`
-	// ADR-1335: an image run executes with the image's ENV, USER and WORKDIR,
+	// ADR-1790: an image run executes with the image's ENV, USER and WORKDIR,
 	// as Docker does. process_user and process_workdir override USER and
 	// WORKDIR (`gregale run -u/-w`) and are valid only with image_process.
 	ImageProcess   bool   `protobuf:"varint,19,opt,name=image_process,json=imageProcess,proto3" json:"image_process,omitempty"`
@@ -3093,7 +3093,7 @@ type JobColdBootResponse struct {
 	// leaves this false, and schedd fails the task instead of running the
 	// command without stdin.
 	Interactive bool `protobuf:"varint,7,opt,name=interactive,proto3" json:"interactive,omitempty"`
-	// Echoes JobColdBootRequest.image_process (ADR-1335). A vmmd that predates
+	// Echoes JobColdBootRequest.image_process (ADR-1790). A vmmd that predates
 	// it leaves this false, and schedd fails the task instead of running the
 	// command without the image's identity and environment.
 	ImageProcess  bool `protobuf:"varint,8,opt,name=image_process,json=imageProcess,proto3" json:"image_process,omitempty"`

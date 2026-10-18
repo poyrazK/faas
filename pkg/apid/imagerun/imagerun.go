@@ -63,7 +63,7 @@ type Handler struct {
 	Log    *slog.Logger
 	// SetRegistryCredential seals and stores a registry credential on a
 	// runner job, exactly as PUT /v1/jobs/{name}/registry-credentials does
-	// (ADR-1335). Nil means the store cannot hold job credentials.
+	// (ADR-1790). Nil means the store cannot hold job credentials.
 	SetRegistryCredential func(ctx context.Context, acct state.Account, job state.Job, cred api.PutJobRegistryCredentialRequest) *api.Problem
 }
 
@@ -112,7 +112,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request, acct state.Acco
 	}
 	// The credential lands on the runner job before imaged is told to pull,
 	// and every run that supplies it refreshes it, so an evicted and
-	// recreated runner job picks it up again (ADR-1335).
+	// recreated runner job picks it up again (ADR-1790).
 	if req.credential != nil {
 		if prob := h.SetRegistryCredential(r.Context(), acct, res.Job, *req.credential); prob != nil {
 			api.WriteProblem(w, prob)
@@ -280,7 +280,7 @@ func resolve(acct state.Account, body api.CreateImageRunRequest) (request, *api.
 }
 
 // validateProcess checks the `-u/-w` overrides of the image's USER and
-// WORKDIR (ADR-1335).
+// WORKDIR (ADR-1790).
 func validateProcess(body api.CreateImageRunRequest) *api.Problem {
 	if len(body.User) > api.ImageRunUserMaxBytes || ociidentity.ValidateSpec(body.User) != nil {
 		return api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid user",

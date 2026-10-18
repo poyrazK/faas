@@ -103,7 +103,7 @@ func (s *server) setJobRegistryCredential(w http.ResponseWriter, r *http.Request
 
 // storeJobRegistryCredential validates, seals and upserts one job registry
 // credential. req.Registry must already be a normalized host. Image runs
-// (ADR-1335) store their registry_auth on the runner job through it, so both
+// (ADR-1790) store their registry_auth on the runner job through it, so both
 // paths share the plan gate, quota, seal and audit. The password never
 // reaches a log line or the audit payload.
 func (s *server) storeJobRegistryCredential(ctx context.Context, acct state.Account, job state.Job, req api.PutJobRegistryCredentialRequest) (state.JobRegistryCredential, *api.Problem) {

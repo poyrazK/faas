@@ -4145,7 +4145,7 @@ type JobBootRequest struct {
 	// Interactive holds the command until one client attaches (ADR-1330).
 	Interactive *JobInteractive
 	// ImageProcess, ProcessUser and ProcessWorkdir select the image's process
-	// configuration and its overrides (ADR-1335).
+	// configuration and its overrides (ADR-1790).
 	ImageProcess   bool
 	ProcessUser    string
 	ProcessWorkdir string

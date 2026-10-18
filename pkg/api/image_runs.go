@@ -61,11 +61,11 @@ type CreateImageRunRequest struct {
 	Interactive bool `json:"interactive,omitempty"`
 	TTY         bool `json:"tty,omitempty"`
 	// User and Workdir override the image's USER and WORKDIR, as
-	// `docker run -u/-w` do (ADR-1335). User is `name|uid[:group|gid]`;
+	// `docker run -u/-w` do (ADR-1790). User is `name|uid[:group|gid]`;
 	// Workdir is an absolute path, created when missing.
 	User    string `json:"user,omitempty"`
 	Workdir string `json:"workdir,omitempty"`
-	// RegistryAuth authenticates the pull of a private image (ADR-1335). It
+	// RegistryAuth authenticates the pull of a private image (ADR-1790). It
 	// is stored sealed on the runner job for the image's registry, as
 	// PUT /v1/jobs/{name}/registry-credentials would, and never returned.
 	RegistryAuth *ImageRunRegistryAuth `json:"registry_auth,omitempty"`

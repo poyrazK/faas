@@ -1,8 +1,8 @@
--- filename: 20261015120000001_job_run_process_overrides.sql
+-- filename: 20261018120000001_job_run_process_overrides.sql
 
 -- +goose Up
 -- +goose StatementBegin
--- ADR-1335: an image run's `gregale run -u/-w` overrides of the image's USER
+-- ADR-1790: an image run's `gregale run -u/-w` overrides of the image's USER
 -- and WORKDIR, snapshotted with the run like its command. NULL keeps the
 -- image's own. A replay of the run keeps them.
 ALTER TABLE job_runs

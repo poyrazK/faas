@@ -173,7 +173,7 @@ type JobRun struct {
 	// created. Nil denotes a legacy row that predates run snapshots.
 	Command []string
 	// ProcessUser and ProcessWorkdir override the image's USER and WORKDIR
-	// for an image run (ADR-1335); empty keeps the image's own.
+	// for an image run (ADR-1790); empty keeps the image's own.
 	ProcessUser                 string
 	ProcessWorkdir              string
 	ImageRefSnapshot            string
@@ -217,7 +217,7 @@ type JobRunOptions struct {
 	// session row is written in the run's transaction.
 	Attach *JobRunAttach
 	// ProcessUser and ProcessWorkdir snapshot an image run's USER and
-	// WORKDIR overrides (ADR-1335).
+	// WORKDIR overrides (ADR-1790).
 	ProcessUser    string
 	ProcessWorkdir string
 }

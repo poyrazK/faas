@@ -89,7 +89,7 @@ type JobManifest struct {
 	// task rather than running the command without stdin.
 	Interactive *JobInteractive `json:"interactive,omitempty"`
 	// ImageProcess runs the command with the image's ENV, USER and WORKDIR
-	// from /etc/faas/app.json (ADR-1335); User and Workdir override them.
+	// from /etc/faas/app.json (ADR-1790); User and Workdir override them.
 	ImageProcess bool   `json:"image_process,omitempty"`
 	User         string `json:"user,omitempty"`
 	Workdir      string `json:"workdir,omitempty"`
@@ -227,7 +227,7 @@ func (s JobColdBootSpec) Validate() error {
 	return nil
 }
 
-// validateImageProcess checks ADR-1335's overrides, which apply only to an
+// validateImageProcess checks ADR-1790's overrides, which apply only to an
 // image process.
 func (s JobColdBootSpec) validateImageProcess() error {
 	if !s.ImageProcess {
